@@ -35,9 +35,9 @@ The world server's modules, by layer:
 | Layer | Modules |
 |---|---|
 | Protocol | `opcodes` (values), `packets` (fixed layouts), `queries` (variable layouts), `crypt` (header cipher), `addons` |
-| Session | `session` (framing, handshake), the handler groups `charscreen`, `inworld`, `teleport`, `grouphandlers`, `channelhandlers` and `commands`, `context` (shared state) |
+| Session | `session` (framing, handshake), the handler groups `charscreen`, `inworld`, `teleport`, `grouphandlers`, `channelhandlers`, and the command groups `commands`, `gmtravel`, `gmcharacter`, `gmadmin`, `gmdebug`; `context` (shared state) |
 | Game objects | `player` (a character in the world), `objects` (update packets), `updatefields` (the field table), `movement`, `stats` |
-| World | `map` (players on a map, visibility, broadcasting), `online` (what groups and channels see of players), `group` (parties and raids), `channel` (chat channels), `context` (maps, the players online, groups, channels) |
+| World | `map` (players and objects on a map, visibility, broadcasting), `grid` (cells), `creature`, `gameobject`, `online` (what groups and channels see of players), `group` (parties and raids), `channel` (chat channels), `context` (maps, the players online, groups, channels) |
 | Game rules | `playercreate` (`Player::Create`, and the spells relearned at login), `characters` (character list), `names`, `defines` |
 | Static data | `clientdata` (DBC files), `worlddata` (world database), `spells` |
 | Persistence | `database` (the interface, plus an in-memory version for tests), `characterdb` (the SQL) |
@@ -111,7 +111,11 @@ final class WorldSession : NetSession, Kickable, OnlinePlayer
     mixin TeleportHandlers;         // teleport.d: Player::TeleportTo, the teleport acks, area triggers
     mixin GroupHandlers;            // grouphandlers.d: GroupHandler.cpp
     mixin ChannelHandlers;          // channelhandlers.d: ChannelHandler.cpp
-    mixin ChatCommands;             // commands.d: ChatHandler::ParseCommands, Level*.cpp
+    mixin ChatCommands;             // commands.d: ChatHandler::ParseCommands, general commands
+    mixin TravelCommands;           // gmtravel.d, gmcharacter.d, gmadmin.d, gmdebug.d: GM commands
+    mixin CharacterCommands;
+    mixin AdminCommands;
+    mixin DebugCommands;
 }
 ```
 
@@ -217,6 +221,36 @@ recipient, because each client's header encryption is different.
   `watchers`, the group view or the stranger's view. `sendInRange` reaches everyone within a
   distance, seen or not: say (25 yards), yell (300) and emotes (25).
 
+## The update loop
+
+`net/server.d` runs the world's tick every `update_interval` (50 ms) between socket events, as
+Ember's map runner does, and logs a tick that takes longer than half a second.
+`WorldContext.update` hands every player the time since the last tick (`OnlinePlayer.update`), then
+every map, then counts a shutdown down. A session's `updateInWorld` keeps its periods in
+`IntervalTimer`s (`dmangos.timer`, like Ember's `DeltaTimer`):
+
+* the 20-second logout (`loggingOut`), which completes the logout when it runs out;
+* regeneration every 2 seconds (`Player.regenerate`, CMaNGOS's `RegenerateAll` formulas);
+* rest every second: leaving the inn's area trigger ends it, and every 10 seconds of resting adds
+  rested XP (`ComputeRest`); capitals rest by their `AreaTable` flag on zone updates;
+* the periodic save.
+
+Game time comes from `context.clock` (and `context.unixTime`, derived from it), so tests move time
+by replacing the clock and calling `context.update`.
+
+## Creatures and game objects
+
+`WorldData.loadSpawns` reads `creature_template`, `gameobject_template` and their companion tables,
+and decides which spawns exist: pool members are chosen (`PoolChooser`, `PoolManager`'s rules),
+spawn groups choose members and entries (`SpawnGroups`), and spawns that belong to game events are
+left out. The spawns are indexed by map and grid cell (`grid.d`).
+
+A `Map` creates the objects of a cell the first time a player comes near it (`Spawner`, given by
+the context, which picks a level and model and looks up equipment, addon and model data). Objects
+are `MapObject`s: `Creature` (`creature.d`) and `GameObject` (`gameobject.d`), each with its own
+update fields and create block. A player's client is told about the objects within the visibility
+distance, a few dozen create blocks per packet, and they go out of range like players.
+
 ## Teleports
 
 `teleport.d: teleportTo` is `Player::TeleportTo`. On the same map it is a near teleport: the
@@ -264,10 +298,16 @@ is an `SMSG_CHANNEL_NOTIFY`, built by `notice(type, channel, extra...)`.
 
 ## Chat commands
 
-A chat message starting with `.` may be a command (`commands.d`). Commands are `WorldSession`
-methods with a `@Command(name, level, syntax, help)` attribute. `collectCommands` builds the table
-from them at compile time, and `call` is a `switch` generated over it. A player's message that is
-not one of its commands is said aloud, as in CMaNGOS.
+A chat message starting with `.` may be a command. Commands are `WorldSession` methods with a
+`@Command(name, level, syntax, help, aliases)` attribute, spread over the handler groups
+`commands.d` (the framework and general commands), `gmtravel.d`, `gmcharacter.d`, `gmadmin.d` and
+`gmdebug.d`. `collectCommands` builds the table from every group at compile time, `call` is a
+`switch` generated over it, and `readArguments!required(args, a, b, ...)` converts the arguments to
+the variables' types. `.modify`'s field commands are generated from one table, `modifiableFields`.
+A command acting on another player calls that player's session (`sessionOf`), as `.summon` does.
+Account and ban commands use the login server's `LoginDatabase` (`context.accounts`). A timed
+shutdown is a `ShutdownTimer` that `WorldContext.update`, run every second by the server loop,
+counts down. The full list is in COMMANDS.md.
 
 ## Testing
 

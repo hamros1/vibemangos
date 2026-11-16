@@ -57,6 +57,14 @@ final class MySqlLoginDatabase : LoginDatabase
         checkSchema();
     }
 
+    /// Works on an open connection, such as the world server's to the login database.
+    this(MySqlConnection db)
+    in (db !is null)
+    {
+        this.db = db;
+        checkSchema();
+    }
+
     /// Closes the connection.
     void close()
     {

@@ -13,9 +13,16 @@
  *
  * The map knows players through `Inhabitant`, which `WorldSession` implements:
  * the character, and a way to deliver a packet. Tests implement it directly.
+ *
+ * Creatures and game objects (`MapObject`) are kept in the same cells. A
+ * cell's spawns are created when a player first comes near it
+ * (`ObjectGridLoader`), through the `Spawner` the map was given, and stay.
+ * Players see objects within the visibility distance; the create blocks of
+ * everything that came into sight are sent together.
  */
 module dmangos.world.map;
 
+import core.time : Duration;
 import std.math : floor;
 
 import dmangos.serialization : serialize;
@@ -39,8 +46,27 @@ interface Inhabitant
     UpdateData appearanceFor(const Inhabitant viewer, uint serverTime) const;
 }
 
-/// Side of a grid cell, in yards (`SIZE_OF_GRID_CELL`: 533.33 / 8).
-enum float cellSize = 533.3333f / 8;
+public import dmangos.world.grid : cellSize;
+import dmangos.world.grid : cellCoordinate, cellKey;
+
+/// A creature or game object on a map, as players see it.
+interface MapObject
+{
+    /// Its guid.
+    @property ulong guid() const;
+
+    /// Where it is.
+    @property Position position() const;
+
+    /// Its create block.
+    UpdateData appearance(uint serverTime) const;
+}
+
+/// Creates the spawns of one cell of a map: called once per cell, when a player first comes near.
+alias Spawner = MapObject[] delegate(uint map, ulong cell);
+
+/// The most create blocks in one update packet, so that a crowded place does not make one huge packet.
+private enum maxBlocksPerPacket = 40;
 
 /// Distances that decide who sees and hears whom (`mangosd.conf`'s `Visibility.*`, `ListenRange.*`).
 struct MapSettings
@@ -84,17 +110,85 @@ final class Map
         ulong[ulong] cellOf;            // guid -> cell key
         bool[ulong][ulong] sees;        // guid -> guids it sees (and that see it)
         Position[ulong] visibilityAt;   // where visibility was last computed
+
+        Spawner spawner;
+        MapObject[ulong] objects;       // creatures and game objects, by guid
+        bool[ulong][ulong] objectCells; // cell key -> object guids in it
+        bool[ulong] loadedCells;        // cells whose spawns exist
+        bool[ulong][ulong] seesObjects; // player guid -> object guids its client has
     }
 
-    invariant (members.length == cellOf.length && members.length == sees.length);
+    invariant (members.length == cellOf.length && members.length == sees.length
+        && members.length == seesObjects.length);
 
     ///
-    this(uint id, MapSettings settings, uint delegate() serverTime)
+    this(uint id, MapSettings settings, uint delegate() serverTime, Spawner spawner = null)
     in (serverTime !is null)
     {
         this.id = id;
         this.settings = settings;
         this.serverTime = serverTime;
+        this.spawner = spawner;
+    }
+
+    /// Number of creatures and game objects created so far.
+    @property size_t objectCount() const
+    {
+        return objects.length;
+    }
+
+    /// The creature or game object with this guid, if its cell is loaded; null otherwise.
+    MapObject findObject(ulong guid)
+    {
+        return objects.get(guid, null);
+    }
+
+    /// Whether the player's client has the object.
+    bool seesObject(ulong player, ulong object) const
+    {
+        if (const seen = player in seesObjects)
+            return (object in *seen) !is null;
+        return false;
+    }
+
+    /// The creatures and game objects within `range` yards of `center`, loading their cells if needed.
+    MapObject[] objectsNear(Position center, float range)
+    {
+        MapObject[] found;
+        const reach = cast(int)(range / cellSize) + 1;
+        const cx = cellCoordinate(center.x), cy = cellCoordinate(center.y);
+        foreach (x; cx - reach .. cx + reach + 1)
+            foreach (y; cy - reach .. cy + reach + 1)
+            {
+                const key = cellKey(x, y);
+                loadCell(key);
+                if (const cell = key in objectCells)
+                    foreach (guid, _; *cell)
+                    {
+                        auto object = objects[guid];
+                        if (distanceSquared(center, object.position) <= range ^^ 2)
+                            found ~= object;
+                    }
+            }
+        return found;
+    }
+
+    /// `ObjectGridLoader::Load` for one cell: its spawns, once.
+    private void loadCell(ulong key)
+    {
+        if (spawner is null || key in loadedCells)
+            return;
+        loadedCells[key] = true;
+        foreach (object; spawner(id, key))
+        {
+            objects[object.guid] = object;
+            objectCells[key][object.guid] = true;
+        }
+    }
+
+    /// One tick of the world update (`Map::Update`): creatures and game objects come with their update.
+    void update(Duration elapsed)
+    {
     }
 
     /// Number of players on the map.
@@ -124,6 +218,7 @@ final class Map
         const guid = who.character.guid;
         members[guid] = who;
         sees[guid] = null;
+        seesObjects[guid] = null;
         place(guid, who.character.position);
         updateVisibility(who);
     }
@@ -141,6 +236,7 @@ final class Map
         cells[cellOf[guid]].remove(guid);
         cellOf.remove(guid);
         sees.remove(guid);
+        seesObjects.remove(guid);
         visibilityAt.remove(guid);
         members.remove(guid);
     }
@@ -240,8 +336,6 @@ private:
         foreach (other, _; sees[guid])
             if (other !in inSight)
                 gone ~= other;
-        if (gone.length == 0)
-            return;
         foreach (other; gone)
         {
             sees[guid].remove(other);
@@ -250,19 +344,36 @@ private:
             forget.addOutOfRange([guid]);
             deliverUpdate(members[other], forget);
         }
+
+        // Creatures and game objects: those that came into sight, in packets of a few dozen, and those that left.
+        bool[ulong] objectsInSight;
+        UpdateData created;
+        foreach (object; objectsNear(who.character.position, settings.visibilityDistance))
+        {
+            objectsInSight[object.guid] = true;
+            if (object.guid in seesObjects[guid])
+                continue;
+            seesObjects[guid][object.guid] = true;
+            created.append(object.appearance(serverTime()));
+            if (created.blockCount >= maxBlocksPerPacket)
+            {
+                deliverUpdate(who, created);
+                created = UpdateData.init;
+            }
+        }
+        if (!created.empty)
+            deliverUpdate(who, created);
+        foreach (object, _; seesObjects[guid])
+            if (object !in objectsInSight)
+                gone ~= object;
+        foreach (object; gone)
+            seesObjects[guid].remove(object);
+
+        if (gone.length == 0)
+            return;
         UpdateData forgetAll;
         forgetAll.addOutOfRange(gone);
         deliverUpdate(who, forgetAll);
-    }
-
-    static int cellCoordinate(float coordinate) pure nothrow @nogc @safe
-    {
-        return cast(int) floor(coordinate / cellSize);
-    }
-
-    static ulong cellKey(int x, int y) pure nothrow @nogc @safe
-    {
-        return ulong(cast(uint) x) << 32 | cast(uint) y;
     }
 
     static float distanceSquared(Position a, Position b) pure nothrow @nogc @safe
@@ -273,6 +384,7 @@ private:
 
 version (unittest)
 {
+    import std.algorithm.searching : count;
     import dmangos.auth.accounts : AccountLevel;
     import dmangos.world.player : CharacterData;
     import dmangos.world.playercreate : CharacterBuilder, CreationSettings, KnownAbilities;
@@ -369,4 +481,59 @@ unittest
     map.remove(bob);
     assert(carol.take() == [Opcode.SMSG_DESTROY_OBJECT] && alice.take() == [] && map.population == 2);
     assert(map.find(2) is null && map.find(1) is alice);
+}
+
+/// Creatures and game objects: cells load when a player comes near, and objects come and go with sight.
+unittest
+{
+    static final class Thing : MapObject
+    {
+        ulong id;
+        Position at;
+        this(ulong id, Position at) { this.id = id; this.at = at; }
+        @property ulong guid() const { return id; }
+        @property Position position() const { return at; }
+        UpdateData appearance(uint) const
+        {
+            import dmangos.world.objects : MovementBlock, UpdateFlags, UpdateType, UpdateValues;
+            import dmangos.world.updatefields : TypeId, Visibility;
+
+            UpdateData update;
+            MovementBlock block;
+            block.flags = UpdateFlags.hasPosition;
+            auto values = UpdateValues(TypeId.gameObject);
+            update.addCreate(UpdateType.createObject, id, block, values, Visibility.public_);
+            return update;
+        }
+    }
+
+    ulong[] loaded;
+    MapObject[] spawner(uint, ulong cell)
+    {
+        import dmangos.world.grid : cellKeyAt;
+
+        loaded ~= cell;
+        if (cell == cellKeyAt(10, 0))
+            return [new Thing(0xF110_0000_0000_0001, Position(10, 0, 0)), new Thing(0xF110_0000_0000_0002, Position(60, 0, 0))];
+        return null;
+    }
+
+    auto map = new Map(0, MapSettings.init, () => 1000u, &spawner);
+    auto alice = new Watcher(1, Position(0, 0, 0));
+    map.add(alice);
+    assert(map.objectCount == 2 && map.seesObject(1, 0xF110_0000_0000_0001) && map.seesObject(1, 0xF110_0000_0000_0002));
+    assert(alice.take() == [Opcode.SMSG_UPDATE_OBJECT], "both objects in one packet");
+    const cellsLoaded = loaded.length;
+
+    // Walking 120 yards on: the first object is out of sight, the second still in; nothing loads twice.
+    alice.moveTo(120, 0);
+    map.relocated(alice);
+    assert(!map.seesObject(1, 0xF110_0000_0000_0001) && map.seesObject(1, 0xF110_0000_0000_0002));
+    assert(alice.take() == [Opcode.SMSG_UPDATE_OBJECT], "an out-of-range block");
+    alice.moveTo(0, 0);
+    map.relocated(alice);
+    assert(map.seesObject(1, 0xF110_0000_0000_0001) && map.objectCount == 2);
+    foreach (cell; loaded)
+        assert(loaded.count(cell) == 1, "a cell is loaded once");
+    assert(loaded.length >= cellsLoaded);
 }

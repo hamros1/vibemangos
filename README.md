@@ -186,16 +186,27 @@ What works now:
     and custom ones with owners, moderators, passwords, muting, kicks, bans, invitations,
     announcements and moderation. One set per faction, unless
     `allow_two_side_interaction_channel` is on.
-  * **Commands** typed in chat: for moderators and up `.gps`, `.go xyz`, `.tele`, `.appear`,
-    `.summon`, `.recall`, `.gm on|off`, `.gm chat on|off` and `.announce`; for everyone `.help`,
-    `.commands`, `.save` and `.server info`.
+  * **GM commands** typed in chat, about 130 of them, following ArcEmu and Ascent (with their
+    aliases): teleports and `game_tele` places, `.modify` (health, stats, speed, money, level,
+    looks, ...), `.levelup`, `.learn`, skills, `.additem`/`.removeitem`, lookups in the world
+    database, kicks, bans, mutes, accounts, timed shutdowns and restarts, announcements, whisper
+    blocking and debugging. See [docs/COMMANDS.md](docs/COMMANDS.md); what needs creatures, combat
+    or quests is listed there as not done yet.
   * **Queries:** name, item (`SMSG_ITEM_QUERY_SINGLE_RESPONSE`, from every `item_template`
     column), time and played time.
   * **Settings:** sitting and standing, target selection, action bar buttons and toggles, and
     tutorial flags, saved as they change.
-  * **Logout** saves the position, zone, health and powers, played time and settings. It is
-    instant for everyone, since there are no timers yet; mangosd makes players wait 20 seconds
-    unless they are resting. A connection that drops in the world is saved the same way.
+  * **Creatures and game objects:** every `creature` and `gameobject` spawn of the world database
+    (pools, spawn groups and game events decide which), created when a player first comes near
+    their cell, with CMaNGOS's levels, health, models, equipment, mounts and emotes. Their names come
+    from `CMSG_CREATURE_QUERY` and `CMSG_GAMEOBJECT_QUERY`. They stand still: movement, AI, combat
+    and gossip come next.
+  * **The update tick** (every 50 ms, `update_interval`): health, mana, rage and energy regenerate
+    as in CMaNGOS; inns and capitals give rested XP, also while offline; characters are saved every
+    15 minutes (`player_save_interval`).
+  * **Logout** takes 20 seconds, sitting and rooted, unless the player rests or its account level
+    reaches `instant_logout`; it can be cancelled. It saves the position, zone, level, money, health
+    and powers, rest, played time and settings. A connection that drops is saved the same way.
   * At start-up, every character and account of the realm is marked offline, as mangosd does.
 
 Character, item, mail and group ids are allocated from `MAX(id) + 1` at start-up, as mangosd does. Never
@@ -222,6 +233,11 @@ time.
 | `gm_level_channel_moderation`, `gm_level_channel_silent_join` | `GM.ChannelModerationLevel`, `GM.ChannelSilentJoinLevel` (0 = nobody) | `1`, `0` |
 | `chat_restricted_raid_warnings` | `Chat.RestrictedRaidWarnings` | `false` |
 | `instance_ignore_level`, `instance_ignore_raid` | `Instance.IgnoreLevel`, `Instance.IgnoreRaid` | `false`, `false` |
+| `update_interval` | the world tick, in ms (mangosd's `WORLD_SLEEP_CONST`) | `50` |
+| `instant_logout`, `player_save_interval` | `InstantLogout`, `PlayerSave.Interval` (seconds here) | `1`, `900` |
+| `rate_health`, `rate_mana`, `rate_rage_loss`, `rate_energy` | `Rate.Health`, `Rate.Mana`, `Rate.Rage.Loss`, `Rate.Energy` | `1` |
+| `rate_rest_ingame`, `rate_rest_offline_in_tavern_or_city`, `rate_rest_offline_in_wilderness` | `Rate.Rest.*` | `1` |
+| `max_player_level` | `MaxPlayerLevel` | `60` |
 | `movement_speed_check`, `movement_speed_tolerance`, `movement_speed_slack` | n/a (CMaNGOS leaves it to its anticheat module): allow this factor over running speed, plus these yards | `true`, `1.5`, `15` |
 | `start_player_level`, `start_gm_level`, `start_player_money` | `StartPlayerLevel`, `GM.StartLevel`, `StartPlayerMoney` | `1`, `1`, `0` |
 | `max_primary_trade_skill`, `trade_skill_gm_ignore_max_primary` | `MaxPrimaryTradeSkill`, `TradeSkill.GMIgnore.MaxPrimarySkillsCount` | `2`, `4` |
@@ -266,6 +282,7 @@ source/dmangos/             code shared by every server
   json.d                      struct <-> JSON mapping by introspection (configuration)
   hex.d                       hex <-> bytes, usable in CTFE (hexLiteral!"...")
   log.d                       leveled logger with compile-time checked format strings
+  timer.d                     IntervalTimer: periods of the update tick
   crypto/                     SRP6, SHA-1 helpers, BigInt <-> little-endian, OS randomness
   mysql/                      run-time loaded MySQL C API binding; connection with compile-time checked queries
   net/                        select() event loop (server.d); compile-time packet dispatch (dispatch.d)
@@ -287,8 +304,12 @@ source/dmangos/world/       the world server (mangosd)
   teleport.d                  handlers and TeleportTo: near and far teleports, area triggers
   grouphandlers.d             handlers: invitations, raids, loot settings, icons, ready checks, rolls
   channelhandlers.d           handlers: chat channels
-  commands.d                  chat commands (.tele, .gps, ...), a table built from @Command attributes
-  map.d                       players on a map: cells, who sees whom, broadcasting
+  commands.d                  chat commands: the table built from @Command attributes, general commands
+  gmtravel.d, gmcharacter.d   GM commands: teleports and recall places; .modify, items, spells, skills
+  gmadmin.d, gmdebug.d        GM commands: accounts, bans, kicks, server; lookups, debugging
+  map.d                       players, creatures and game objects on a map: cells, sight, broadcasting
+  grid.d                      grid cells shared by maps and the spawn index
+  creature.d, gameobject.d    creature_template/creature and gameobject_template/gameobject: the objects
   online.d                    OnlinePlayer and Directory: what groups and channels see of players
   group.d                     groups: members, leaders, raids, the group list, member stats
   channel.d                   chat channels: members, owners, moderation, notices
@@ -329,6 +350,8 @@ excludes. This is how DCD builds `dcd-server` and `dcd-client` from one package.
   behaviour, D's structure.
 * [docs/DEVELOPING.md](docs/DEVELOPING.md): recipes (new packet, handler group, DBC, table,
   config key), testing (unit and live), and pitfalls found so far.
+* [docs/COMMANDS.md](docs/COMMANDS.md): every GM command, its level and arguments, and the ArcEmu
+  and Ascent commands not done yet.
 * [docs/ROADMAP.md](docs/ROADMAP.md): what works, known gaps, and the next milestones with their
   CMaNGOS references.
 

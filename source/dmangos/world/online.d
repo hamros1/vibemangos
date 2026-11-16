@@ -8,6 +8,8 @@
  */
 module dmangos.world.online;
 
+import core.time : Duration;
+
 import dmangos.auth.accounts : AccountLevel;
 import dmangos.world.map : Inhabitant;
 
@@ -25,6 +27,9 @@ interface OnlinePlayer : Inhabitant
      * what the players around it see of its health may have to change.
      */
     void groupChanged();
+
+    /// One tick of the world update (`Player::Update`, `WorldSession::Update`): `elapsed` since the last.
+    void update(Duration elapsed);
 }
 
 /// Finds the players online (CMaNGOS `ObjectAccessor`, `ObjectMgr::GetPlayer`).

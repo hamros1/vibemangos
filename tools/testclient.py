@@ -28,6 +28,7 @@ in order:
     join:CHANNEL  part:CHANNEL  chan:CHANNEL:TEXT  chanlist:CHANNEL
                               chat channels
     afk:TEXT  dnd:TEXT        away and busy (an empty TEXT clears it)
+    objects:N                 count the creatures and game objects seen, and query N of each
 
 Teleports are answered as the client answers them: MSG_MOVE_TELEPORT_ACK for
 a near one, MSG_MOVE_WORLDPORT_ACK after SMSG_NEW_WORLD, whenever they come.
@@ -135,7 +136,9 @@ def enum():
     return chars
 
 OBJECT_END, ITEM_END, CONTAINER_END, UNIT_END, PLAYER_END = 6, 48, 122, 188, 1282
-COUNTS = {1: ITEM_END, 2: CONTAINER_END, 4: PLAYER_END}
+GAMEOBJECT_END = OBJECT_END + 0x1A
+COUNTS = {1: ITEM_END, 2: CONTAINER_END, 3: UNIT_END, 4: PLAYER_END, 5: GAMEOBJECT_END}
+seen_objects = {}
 
 def packed_guid(p, pos):
     mask = p[pos]; pos += 1; g = 0
@@ -204,7 +207,11 @@ OPS = {0x236: "LOGIN_VERIFY_WORLD", 0x209: "ACCOUNT_DATA_TIMES", 0x332: "EXPECTE
        0x03E: "NEW_WORLD", 0x040: "TRANSFER_ABORTED", 0x06F: "GROUP_INVITE", 0x074: "GROUP_DECLINE", 0x077: "GROUP_UNINVITE",
        0x079: "GROUP_SET_LEADER", 0x07C: "GROUP_DESTROYED", 0x07D: "GROUP_LIST", 0x07E: "PARTY_MEMBER_STATS",
        0x07F: "PARTY_COMMAND_RESULT", 0x099: "CHANNEL_NOTIFY", 0x09B: "CHANNEL_LIST", 0x2B8: "AREA_TRIGGER_MESSAGE",
-       0x1CB: "NOTIFICATION", 0x2F2: "PARTY_MEMBER_STATS_FULL"}
+       0x1CB: "NOTIFICATION", 0x2F2: "PARTY_MEMBER_STATS_FULL", 0x166: "ITEM_PUSH_RESULT", 0x1D4: "LEVELUP_INFO",
+       0x12B: "LEARNED_SPELL", 0x203: "REMOVED_SPELL", 0x291: "SERVER_MESSAGE", 0x2D2: "PLAY_SOUND",
+       0x0E2: "FORCE_RUN_SPEED_CHANGE", 0x0E6: "FORCE_SWIM_SPEED_CHANGE", 0x0E4: "FORCE_RUN_BACK_SPEED_CHANGE",
+       0x2DC: "FORCE_SWIM_BACK_SPEED_CHANGE", 0x0E8: "FORCE_MOVE_ROOT", 0x0EA: "FORCE_MOVE_UNROOT",
+       0x2C3: "UPDATE_WORLD_STATE", 0x0EF: "MOVE_KNOCK_BACK"}
 
 import select, time
 MOVES = set(range(0x0B5, 0x0C4)) | {0x0C9, 0x0CA, 0x0CB, 0x0DA, 0x0DB, 0x0EE}
@@ -219,7 +226,14 @@ def describe(op, p):
                 print(f"  [appears] player {g}: race {b0 & 0xFF} class {(b0 >> 8) & 0xFF} level {v[OBJECT_END + 0x1C]}, "
                       f"health {v.get(OBJECT_END + 0x10)}/{v.get(OBJECT_END + 0x16)} (percent), {len(v)} fields, "
                       f"at {move[0]:.1f} {move[1]:.1f} {move[2]:.1f}")
-            elif kind in (2, 3) and t == 4: pass
+            elif kind in (2, 3) and t in (3, 5):
+                entry = v.get(3, 0); seen_objects[g] = (t, entry)
+                if t == 3:
+                    print(f"  [creature] {entry} guid {g & 0xFFFFFF}: level {v.get(OBJECT_END + 0x1C)}, health {v.get(OBJECT_END + 0x10)}, "
+                          f"display {v.get(OBJECT_END + 0x7D)}, faction {v.get(OBJECT_END + 0x1D)}, npc flags {v.get(0x93, 0)}, "
+                          f"at {move[0]:.1f} {move[1]:.1f} {move[2]:.1f}")
+                else:
+                    print(f"  [game object] {entry} guid {g & 0xFFFFFF}: type {v.get(OBJECT_END + 0x15)}, display {v.get(OBJECT_END + 0x8)}")
             elif kind == 0:
                 health = f", health {v[OBJECT_END + 0x10]}/{v.get(OBJECT_END + 0x16, '?')}" if OBJECT_END + 0x10 in v else ""
                 print(f"  [changes] {g}: fields {sorted(v)}{health}")
@@ -245,6 +259,21 @@ def describe(op, p):
         print("  [new world] map %d at %.1f %.1f %.1f; answering" % struct.unpack("<I4f", p)[:4]); wsend(0x0DC, b"")
     elif op == 0x040: print(f"  [transfer aborted] reason {p[0]}")
     elif op == 0x2B8: print(f"  [area trigger message] '{p[4:-1].decode()}'")
+    elif op == 0x291: print(f"  [server message] type {struct.unpack_from('<I', p)[0]} '{p[4:-1].decode()}'")
+    elif op == 0x166:
+        received, created, show, bag, slot, entry, suffix, prop, count = struct.unpack_from("<IIIBIIIiI", p, 8)
+        print(f"  [item received] {count} x {entry} in bag {bag} slot {slot if slot != 0xFFFFFFFF else 'stack'}")
+    elif op == 0x1D4: print(f"  [level up] to level {struct.unpack_from('<I', p)[0]}")
+    elif op == 0x12B: print(f"  [learned spell] {struct.unpack_from('<I', p)[0]}")
+    elif op == 0x061:
+        entry = struct.unpack_from("<I", p)[0]
+        if entry & 0x80000000: print(f"  [creature query] {entry & 0x7FFFFFFF}: unknown")
+        else:
+            end = p.index(b"\0", 4); name = p[4:end].decode(); sub_end = p.index(b"\0", end + 4)
+            print(f"  [creature query] {entry}: '{name}' <{p[end + 4:sub_end].decode()}>")
+    elif op == 0x05F:
+        entry, kind, display = struct.unpack_from("<III", p); end = p.index(b"\0", 12)
+        print(f"  [object query] {entry}: '{p[12:end].decode()}' type {kind}")
     elif op == 0x1CB: print(f"  [notification] '{p[:-1].decode()}'")
     elif op == 0x06F: print(f"  [invited by] {p[:-1].decode()}")
     elif op == 0x074: print(f"  [declined] {p[:-1].decode()}")
@@ -392,8 +421,19 @@ for action in actions:
         print(f"to channel {args[0]}: '{':'.join(args[1:])}'")
     elif kind in ("afk", "dnd"):
         wsend(0x095, struct.pack("<II", 0x14 if kind == "afk" else 0x15, 0) + ":".join(args).encode() + b"\0"); print(f"{kind} '{':'.join(args)}'")
+    elif kind == "objects":
+        wanted = int(args[0]) if args else 5
+        creatures = [(g, e) for g, (t, e) in seen_objects.items() if t == 3][:wanted]
+        objects = [(g, e) for g, (t, e) in seen_objects.items() if t == 5][:wanted]
+        print(f"seen {sum(1 for t, _ in seen_objects.values() if t == 3)} creatures and "
+              f"{sum(1 for t, _ in seen_objects.values() if t == 5)} game objects; querying a few")
+        for g, e in creatures: wsend(0x060, struct.pack("<IQ", e, g))
+        for g, e in objects: wsend(0x05E, struct.pack("<IQ", e, g))
+        listen_for(1.5)
     elif kind == "logout":
-        wsend(0x04B, b""); op, p = expect(0x04C); got = [(op, p)] + until(0x04D); print("logout:", " ".join(OPS.get(op, hex(op)) for op, _ in got))
+        wsend(0x04B, b""); op, p = expect(0x04C)
+        if p[4] == 0: print("logout: waiting 20 seconds"); w.settimeout(30)
+        got = [(op, p)] + until(0x04D); w.settimeout(5); print("logout:", " ".join(OPS.get(op, hex(op)) for op, _ in got))
     elif kind == "drop":
         w.close(); print("connection dropped"); sys.exit(0)
     elif kind == "create":

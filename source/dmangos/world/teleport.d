@@ -55,6 +55,7 @@ mixin template TeleportHandlers()
     import dmangos.world.movement : MovementFlags, MovementInfo, Position;
     import dmangos.world.opcodes;
     import dmangos.world.packets;
+    import dmangos.world.player : RestType;
     import dmangos.world.teleport : AreaLockStatus, Teleport;
     import dmangos.world.worlddata : AreaTriggerTeleport;
 
@@ -133,7 +134,7 @@ private:
     {
         if (mapEntry is null)
             return AreaLockStatus.unknownError;
-        if (gameMaster)
+        if (gameMaster || ignoreTriggerRequirements)
             return AreaLockStatus.ok;
         if (player.data.level < trigger.requiredLevel && !context.config.instanceIgnoreLevel)
         {
@@ -245,11 +246,22 @@ private:
         if (!entry.contains(player.data.map, p.x, p.y, p.z, delta))
             return trace!"%s: '%s' is too far from area trigger %s"(remoteAddress, player.data.name, request.id);
 
-        // Taverns, quest objectives and scripts are not handled yet: only teleports.
+        // An inn: rested XP while inside (a city's rest wins). Quest objectives and scripts are not handled yet.
+        if (request.id in context.data.taverns)
+        {
+            import std.datetime.systime : Clock;
+
+            if (player.restType != RestType.city)
+            {
+                player.setRestType(RestType.tavern, context.unixTime, request.id);
+                flushPlayerChanges();
+            }
+            return;
+        }
         const trigger = request.id in context.data.areaTriggers;
         if (trigger is null)
             return;
-        if (trigger.conditionId && !gameMaster)
+        if (trigger.conditionId && !gameMaster && !ignoreTriggerRequirements)
         {
             // The `conditions` table is not loaded yet, so a trigger behind one stays closed.
             if (trigger.failedText.length)

@@ -135,16 +135,26 @@ have the same type, and a contract checks that. To show an object to *another* p
 
 ### Add a chat command
 
-In `world/commands.d`, add a method to `ChatCommands`. Its name starts with `command`, and it
-returns false when the arguments are wrong (the player is then shown the syntax):
+Add a method to the command group it belongs to (`gmtravel.d`, `gmcharacter.d`, `gmadmin.d`,
+`gmdebug.d`, or `commands.d` for general ones). Its name starts with `command`, and it returns false
+when the arguments are wrong (the player is then shown the syntax):
 
 ```d
-@Command("go xyz", AccountLevel.moderator, "x y z [map]", "Teleports you to a position.")
-bool commandGoXyz(string args) { ... }
+@Command("go xyz", AccountLevel.moderator, "x y z [map]", "Teleports you to a position.", ["goxyz"])
+bool commandGoXyz(string args)
+{
+    float x, y, z;
+    uint map = player.data.map;
+    if (!readArguments!3(args, x, y, z, map))   // three required, the map optional
+        return false;
+    ...
+}
 ```
 
-That is all: the table and the dispatch are generated from the attribute. A teleport should go
-through `commandTeleport`, which remembers where `.recall` returns to.
+That is all: the table, the aliases, `.help` and the dispatch come from the attribute. Use
+`selectedOrSelf()` for "the selected player", and call that session's methods to change it (they
+send its packets). A teleport should go through `commandTeleport`, which remembers where `.recall`
+returns to. Add the command to `docs/COMMANDS.md`.
 
 ### Teleport a player
 
@@ -169,7 +179,7 @@ channel the player may talk in.
 
 ### Unit tests
 
-`dub test` runs every module's tests: 48 modules, in a few seconds. Session tests use
+`dub test` runs every module's tests: 56 modules, in a few seconds. Session tests use
 `world/testclient.d`. Importing it gives you a scripted client (`TestClient`), a pre-filled
 in-memory database (`newDatabase`), contexts (`newContext`, `newCreationContext`),
 `authenticate`, and for tests in the world `loggedIn` (an account and a character, logged in),
@@ -271,6 +281,23 @@ find.
   (CMaNGOS's `ForceValuesUpdateAtIndex`).
 * **The client sends `MSG_MOVE_TELEPORT_ACK` with a full 8-byte guid**, not a packed one; the
   server's `MSG_MOVE_TELEPORT_ACK` has a packed one.
+* **Packets for another player are sent by the server loop.** A session that delivers to another
+  (chat, moves, group updates, GM commands) only queues the bytes; `TcpServer.run` collects every
+  session's output on each pass. It used to collect it only when that client sent something, which
+  delayed everything an idle player should see until its next ping. Scripted clients that keep
+  sending hide that kind of bug, so live tests should include a client that only listens.
+* **`.modify` field types:** the typed setters reject a float for an integer field at compile
+  time, so a `modifiableFields` row with the wrong field does not compile.
+* **Update field offsets are absolute.** CMaNGOS's table, and `updatefields.d`, give every field its
+  slot from the start of the object (`UNIT_NPC_FLAGS` is slot 0x93); some tools and posts give them
+  relative to the type's start. The Python client's debug prints once added `OBJECT_END` twice.
+* **Creature health comes from `creature_template_classlevelstats`**, times the template's
+  `HealthMultiplier`, not from `MinLevelHealth`. The latter is used only without a stats row.
+* **`creature.id` can be 0**: the spawn takes an entry from `creature_spawn_entry` or its spawn
+  group. Pools and spawn groups decide which spawns are up; spawning every row gives several copies
+  of rare creatures and thousands of extra herbs and veins.
+* **Logging out takes 20 seconds** for player accounts. Session tests log out at once because
+  `newCreationContext` sets `instant_logout` to 0; the tick test sets it back.
 * **Ids** come from `MAX(id) + 1` at start-up. Never run dmangos and mangosd on the same characters
   database at once.
 * **Client builds:** 5875, 6005 and 6141 share the world protocol. The login protocol differs

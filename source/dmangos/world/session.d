@@ -30,12 +30,13 @@
  */
 module dmangos.world.session;
 
-import core.time : MonoTime, seconds;
+import core.time : Duration, MonoTime, seconds;
 import std.algorithm.searching : canFind;
 import std.bitmanip : nativeToLittleEndian;
 
 import dmangos.auth.accounts : AccountLevel;
 import dmangos.bytes;
+import dmangos.timer : IntervalTimer;
 import dmangos.crypto.hash : constantTimeEqual, sha1;
 import dmangos.crypto.random : secureRandom;
 import dmangos.log;
@@ -45,6 +46,10 @@ import dmangos.world.addons : buildAddonInfo, parseAddons;
 import dmangos.world.channelhandlers : ChannelHandlers;
 import dmangos.world.charscreen : CharacterScreenHandlers;
 import dmangos.world.commands : ChatCommands;
+import dmangos.world.gmadmin : AdminCommands;
+import dmangos.world.gmcharacter : CharacterCommands;
+import dmangos.world.gmdebug : DebugCommands;
+import dmangos.world.gmtravel : TravelCommands;
 import dmangos.world.grouphandlers : GroupHandlers;
 import dmangos.world.inworld : InWorldHandlers;
 import dmangos.world.teleport : Teleport, TeleportHandlers;
@@ -118,6 +123,16 @@ final class WorldSession : NetSession, Kickable, OnlinePlayer
         bool gameMaster;          // `.gm on`: requirements and checks do not apply
         uint recallMap;           // where `.recall` goes: the place before the last command teleport
         Position recallPosition;
+        bool ignoreTriggerRequirements; // `.cheat triggerpass`
+        bool acceptWhispers = true;     // `.gm whisperblock` (Player::isAcceptWhispers)
+        bool[ulong] whisperExceptions;  // `.gm allowwhispers`
+
+        // The update tick: the 20-second logout, regeneration, rest, saving.
+        bool loggingOut;
+        MonoTime logoutRequestedAt;
+        IntervalTimer regenTimer = IntervalTimer(2.seconds);  // REGEN_TIME_FULL
+        IntervalTimer restTimer = IntervalTimer(1.seconds);
+        IntervalTimer saveTimer;
 
         // The movement check: where the player was, and when.
         Position checkpoint;
@@ -240,6 +255,13 @@ final class WorldSession : NetSession, Kickable, OnlinePlayer
     UpdateData appearanceFor(const Inhabitant viewer, uint serverTime) const
     {
         return player.createForOthers(serverTime, context.groups.sameGroup(player.guid, viewer.character.guid));
+    }
+
+    /// One tick of the world update; see `InWorldHandlers.updateInWorld`.
+    void update(Duration elapsed)
+    {
+        if (player !is null)
+            updateInWorld(elapsed);
     }
 
     /// The account's level.
@@ -508,6 +530,17 @@ private:
     mixin GroupHandlers;
     mixin ChannelHandlers;
     mixin ChatCommands;
+    mixin TravelCommands;
+    mixin CharacterCommands;
+    mixin AdminCommands;
+    mixin DebugCommands;
+
+    /// Whether a whisper from `sender` reaches this player (`Player::isAcceptWhispers`, ArcEmu's exceptions).
+    bool acceptsWhisperFrom(const OnlinePlayer sender) const
+    {
+        return acceptWhispers || sender.security > AccountLevel.player
+            || (sender.character.guid in whisperExceptions) !is null;
+    }
 }
 
 // ---------------------------------------------------------------------------

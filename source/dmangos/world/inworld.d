@@ -18,6 +18,7 @@ module dmangos.world.inworld;
 mixin template InWorldHandlers()
 {
     import std.datetime.systime : Clock;
+    import std.format : format;
     import dmangos.auth.accounts : AccountLevel;
     import dmangos.bytes : ByteWriter;
     import dmangos.log;
@@ -25,12 +26,14 @@ mixin template InWorldHandlers()
     import dmangos.world.defines : maxActionButtons;
     import dmangos.world.group : GroupUpdate;
     import dmangos.world.movement : baseMoveSpeed, MovementFlags, MovementInfo, MoveType, movingOrTurning, Position;
-    import dmangos.world.player : PlayerFlags;
+    import core.time : Duration;
+    import dmangos.world.player : PlayerFlags, RestType;
     import dmangos.world.teleport : Teleport;
     import dmangos.world.objects : lowGuid, putPackedGuid;
     import dmangos.world.opcodes;
     import dmangos.world.packets;
-    import dmangos.world.queries : chatMessage, ClientChat, itemQueryResponse;
+    import dmangos.world.queries : chatMessage, ClientChat, creatureQueryResponse, gameObjectQueryResponse,
+        itemQueryResponse;
     import dmangos.world.updatefields : PLAYER_FIELD_BYTES, UNIT_FIELD_BYTES_1;
 
     enum ubyte standStateStand = 0;
@@ -55,25 +58,124 @@ private:
         if (group !is null)
             group.updatePlayerOnlineStatus(this, false); // the others see the player offline
         player = null;
+        loggingOut = false;
         teleporting = Teleport.none;
         gameMaster = false;
         state_ = WorldState.characterScreen;
     }
 
+    /**
+     * `WorldSession::HandleLogoutRequestOpcode`: not while jumping or falling; at once when resting
+     * or for accounts of `instant_logout`'s level; otherwise sitting, stunned, for 20 seconds.
+     */
     @Handles(Opcode.CMSG_LOGOUT_REQUEST, WorldState.inWorld)
     void handleLogoutRequest()
     {
-        // CMaNGOS makes players wait 20 seconds unless they are resting. This server has no
-        // timers yet, so everyone logs out at once.
-        send(ServerLogoutResponse(0, 1));
-        leaveWorld("logged out", true);
-        send(ServerLogoutComplete());
+        const cantLogout = player.movement.has(MovementFlags.jumping) || player.movement.has(MovementFlags.fallingFar);
+        const instant = player.hasFlag(PlayerFlags.resting) || account.level >= context.config.instantLogout;
+        send(ServerLogoutResponse(cantLogout ? 1 : 0, instant && !cantLogout ? 1 : 0));
+        if (cantLogout)
+            return;
+        if (instant)
+            return completeLogout();
+        logoutRequestedAt = context.clock();
+        loggingOut = true;
+        player.setLogoutStun(true);
+        send(ServerMovementOrder!(Opcode.SMSG_FORCE_MOVE_ROOT)(player.guid, moveOrderCounter++));
+        flushPlayerChanges();
     }
 
     @Handles(Opcode.CMSG_LOGOUT_CANCEL, WorldState.inWorld)
     void handleLogoutCancel()
     {
         send(ServerLogoutCancelAck());
+        if (!loggingOut)
+            return;
+        loggingOut = false;
+        player.setLogoutStun(false);
+        send(ServerMovementOrder!(Opcode.SMSG_FORCE_MOVE_UNROOT)(player.guid, moveOrderCounter++));
+        flushPlayerChanges();
+    }
+
+    /// The end of a logout: saved, out of the world, and back on the character screen.
+    void completeLogout()
+    {
+        loggingOut = false;
+        leaveWorld("logged out", true);
+        send(ServerLogoutComplete());
+    }
+
+    /**
+     * One tick (`WorldSession::Update`, `Player::Update`): the logout countdown, regeneration every
+     * two seconds, rest, and the periodic save.
+     */
+    void updateInWorld(Duration elapsed)
+    {
+        import core.time : seconds;
+        import std.datetime.systime : Clock;
+
+        if (loggingOut && context.clock() - logoutRequestedAt >= 20.seconds)
+            return completeLogout();
+        if (transferring)
+            return;
+        const config = context.config;
+
+        if (regenTimer.update(elapsed))
+        {
+            const ms = cast(uint) regenTimer.takeAll().total!"msecs";
+            if (player.regenerate(ms, config.rateHealth, config.rateMana, config.rateRageLoss, config.rateEnergy))
+            {
+                flushPlayerChanges();
+                if (auto group = context.groups.of(player.guid))
+                    group.updatePlayerOutOfRange(this, GroupUpdate.currentHealth | GroupUpdate.currentPower);
+            }
+        }
+
+        if (restTimer.update(elapsed) && restTimer.consume())
+        {
+            const now = context.unixTime;
+            // Player::Update: leaving the inn ends the rest.
+            if (player.restType == RestType.tavern)
+            {
+                const inn = context.client.areaTriggers.lookup(player.innTrigger);
+                const p = player.position;
+                if (inn is null || !inn.contains(player.data.map, p.x, p.y, p.z, 0))
+                {
+                    player.setRestType(RestType.none, now);
+                    flushPlayerChanges();
+                }
+            }
+            // Rested XP, counted in steps of 10 seconds as CMaNGOS does.
+            if (player.restType != RestType.none && now - player.restCountedAt >= 10)
+            {
+                player.setRestBonus(player.restBonus + player.computeRest(now - player.restCountedAt,
+                    config.rateRestInGame), config.maxPlayerLevel);
+                player.restCountedAt = now;
+                flushPlayerChanges();
+            }
+        }
+
+        // A save starts the interval again (SaveToDB resets m_nextSave): no catching up after a stall.
+        if (saveTimer.update(elapsed))
+            savePlayer();
+    }
+
+    /// `Player::UpdateZone`'s rest: a capital (AREA_FLAG_CAPITAL) rests; leaving it does not.
+    void updateCityRest()
+    {
+        import std.datetime.systime : Clock;
+
+        enum uint areaFlagCapital = 0x100;
+        const zone = context.client.areas.lookup(player.data.zone);
+        const now = context.unixTime;
+        if (zone !is null && (zone.flags & areaFlagCapital))
+        {
+            if (player.restType != RestType.city)
+                player.setRestType(RestType.city, now);
+        }
+        else if (player.restType == RestType.city)
+            player.setRestType(RestType.none, now);
+        flushPlayerChanges();
     }
 
     // -----------------------------------------------------------------------
@@ -90,8 +192,9 @@ private:
             warning!"%s: '%s' sent an invalid position; disconnecting"(remoteAddress, player.data.name);
             return disconnect();
         }
-        // Until the client confirms a teleport, its movement packets are from before it.
-        if (teleporting != Teleport.none)
+        // Until the client confirms a teleport, its movement packets are from before it; a player
+        // logging out is rooted.
+        if (teleporting != Teleport.none || loggingOut)
             return;
         // On a transport the position is relative to it; without transports, keep the last world position.
         if (movement.has(MovementFlags.onTransport))
@@ -201,10 +304,24 @@ private:
             context.data.spells)));
     }
 
+    @Handles(Opcode.CMSG_CREATURE_QUERY, WorldState.inWorld)
+    void handleCreatureQuery(const ClientObjectQuery request)
+    {
+        send(ServerCreatureQueryResponse(creatureQueryResponse(request.entry,
+            request.entry in context.data.creatureTemplates)));
+    }
+
+    @Handles(Opcode.CMSG_GAMEOBJECT_QUERY, WorldState.inWorld)
+    void handleGameObjectQuery(const ClientObjectQuery request)
+    {
+        send(ServerGameObjectQueryResponse(gameObjectQueryResponse(request.entry,
+            request.entry in context.data.gameObjectTemplates)));
+    }
+
     @Handles(Opcode.CMSG_QUERY_TIME, WorldState.inWorld)
     void handleQueryTime()
     {
-        send(ServerQueryTimeResponse(cast(uint) Clock.currTime.toUnixTime));
+        send(ServerQueryTimeResponse(cast(uint) context.unixTime));
     }
 
     @Handles(Opcode.CMSG_PLAYED_TIME, WorldState.inWorld)
@@ -293,6 +410,7 @@ private:
             return;
         player.data.zone = request.zone;
         send(ServerInitWorldStates(player.data.map, request.zone));
+        updateCityRest();
         context.channelsFor(this).zoneChanged(this, context.client.areaName(request.zone));
         if (auto group = context.groups.of(player.guid))
             group.updatePlayerOutOfRange(this, GroupUpdate.zone);
@@ -321,6 +439,10 @@ private:
             return setAway(chat.type, chat.text);
         if (chat.text.length == 0)
             return;
+        // `.account mute` (WorldSession::m_muteTime): no chat until then, commands included.
+        const now = context.unixTime;
+        if (account.muteTime > now)
+            return sendNotification(format!"Your chat is disabled for %s more seconds."(account.muteTime - now));
         switch (chat.type)
         {
         case ChatType.CHAT_MSG_SAY, ChatType.CHAT_MSG_YELL, ChatType.CHAT_MSG_EMOTE, ChatType.CHAT_MSG_WHISPER,
@@ -395,7 +517,8 @@ private:
     void whisper(string to, string text)
     {
         auto target = context.onlinePlayer(to);
-        if (target is null)
+        // A game master blocking whispers looks offline to players (Player::isAcceptWhispers).
+        if (target is null || target.security > AccountLevel.player && !sessionOf(target).acceptsWhisperFrom(this))
             return send(ServerChatPlayerNotFound(to));
         const receiver = target.character;
         const sameTeam = context.client.teamForRace(receiver.data.race) == context.client.teamForRace(player.data.race);
@@ -530,6 +653,9 @@ unittest
     ushort[] opcodes;
     foreach (packet; login)
         opcodes ~= packet.opcode;
+    // Then the creatures and objects around Northshire Abbey, after the login packets.
+    assert(opcodes[$ - 1] == Opcode.SMSG_COMPRESSED_UPDATE_OBJECT);
+    opcodes = opcodes[0 .. $ - 1];
     with (Opcode)
         assert(opcodes == [SMSG_LOGIN_VERIFY_WORLD, SMSG_ACCOUNT_DATA_TIMES, SMSG_EXPECTED_SPAM_RECORDS,
             SMSG_MESSAGECHAT, SMSG_MESSAGECHAT, SMSG_SET_REST_START, SMSG_BINDPOINTUPDATE, SMSG_TUTORIAL_FLAGS,
@@ -744,4 +870,113 @@ unittest
     assert(opcodes(gone) == [Opcode.SMSG_DESTROY_OBJECT] && gone[0].body_ == [8, 0, 0, 0, 0, 0, 0, 0]);
     anduin.session.disconnected();
     assert(context.worldPopulation == 0 && context.map(0).population == 0);
+}
+
+/// The update tick: the 20-second logout, regeneration, inns and cities, the periodic save.
+unittest
+{
+    import core.time : Duration, MonoTime, seconds;
+    import dmangos.world.player : Player, PlayerFlags, RestType;
+    import dmangos.world.updatefields;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db, (ref WorldConfig c) { c.instantLogout = 1; c.playerSaveInterval = 60; });
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    void tick(Duration step)
+    {
+        now += step;
+        context.update(now);
+    }
+
+    context.data.xpForNextLevel = [0, 400];
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(0, 0, 0));
+    auto me = cast(Player) anduin.session.character; // the test changes the player directly
+    tick(Duration.zero);
+
+    // Health comes back, faster when sitting; rage drains.
+    me.values.set!UNIT_FIELD_HEALTH(10u);
+    me.values.set!UNIT_FIELD_POWER1(1, 100u);
+    tick(2.seconds);
+    const standing = me.values[UNIT_FIELD_HEALTH];
+    assert(standing > 10 && me.values[UNIT_FIELD_POWER1 + 1] == 75, "2.5 rage per 2 s");
+    assert(opcodesOf(anduin.read()).canFind(Opcode.SMSG_COMPRESSED_UPDATE_OBJECT));
+
+    // Logging out takes 20 seconds, sitting and rooted; cancelling stands up.
+    anduin.write(Opcode.CMSG_LOGOUT_REQUEST, null);
+    const asked = anduin.read();
+    assert(asked[0].opcode == Opcode.SMSG_LOGOUT_RESPONSE && asked[0].body_ == [0, 0, 0, 0, 0]);
+    assert(opcodesOf(asked).canFind(Opcode.SMSG_FORCE_MOVE_ROOT) && me.values.getByte!UNIT_FIELD_BYTES_1(0) == 1);
+    anduin.write(Opcode.CMSG_LOGOUT_CANCEL, null);
+    assert(opcodesOf(anduin.read()).canFind(Opcode.SMSG_FORCE_MOVE_UNROOT) && me.values.getByte!UNIT_FIELD_BYTES_1(0) == 0);
+    anduin.write(Opcode.CMSG_LOGOUT_REQUEST, null);
+    tick(19.seconds);
+    assert(anduin.session.state == WorldState.inWorld);
+    tick(1.seconds);
+    assert(anduin.session.state == WorldState.characterScreen);
+    assert(opcodesOf(anduin.read()).canFind(Opcode.SMSG_LOGOUT_COMPLETE));
+
+    // An inn: resting, rested XP every 10 seconds, instant logout; walking out ends it.
+    anduin = loggedIn(context, db, 7, "Anduin", Position(innPosition[0], innPosition[1], innPosition[2]));
+    me = cast(Player) anduin.session.character;
+    anduin.write(Opcode.CMSG_AREATRIGGER, ClientAreaTrigger(triggerInn));
+    assert(me.hasFlag(PlayerFlags.resting) && me.restType == RestType.tavern);
+    tick(1.seconds);
+    tick(3600.seconds); // 400 XP to the next level: 400 / 1152000 per second, 1.25 in an hour
+    assert(me.restBonus > 1.2f && me.restBonus < 1.3f && me.values[PLAYER_REST_STATE_EXPERIENCE] == 1);
+    me.movement.position.x += 50;
+    tick(1.seconds);
+    assert(!me.hasFlag(PlayerFlags.resting));
+
+    // A capital rests too.
+    anduin.write(Opcode.CMSG_ZONEUPDATE, ClientZoneUpdate(zoneStormwind));
+    assert(me.restType == RestType.city);
+    anduin.write(Opcode.CMSG_ZONEUPDATE, ClientZoneUpdate(zoneElwynn));
+    assert(me.restType == RestType.none);
+
+    // The periodic save, every player_save_interval (60 s here); the hour above made one due already.
+    tick(1.seconds);
+    const saves = db.progressSaves.length;
+    foreach (_; 0 .. 60)
+        tick(1.seconds);
+    assert(db.progressSaves.length == saves + 1 && db.progressSaves[$ - 1].restBonus == me.restBonus);
+}
+
+/// Entering Northshire: the deputy and the mailbox appear, and the client can ask what they are.
+unittest
+{
+    import dmangos.world.objects : HighGuid, makeGuid;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto anduin = TestClient(new WorldSession(context, "127.0.0.1"), testKey);
+    db.loadable[7] = () {
+        import dmangos.world.player : CharacterData;
+
+        CharacterData c;
+        c.guid = 7;
+        c.account = 4;
+        c.name = "Anduin";
+        c.race = raceHuman;
+        c.classId = classWarrior;
+        c.level = 1;
+        c.cinematic = 1;
+        c.position = Position(-8949.95f, -132.49f, 83.53f);
+        return c;
+    }();
+    authenticate(anduin);
+    anduin.write(Opcode.CMSG_PLAYER_LOGIN, ClientPlayerLogin(7));
+    const login = opcodesOf(anduin.read());
+    assert(login.count(Opcode.SMSG_COMPRESSED_UPDATE_OBJECT) + login.count(Opcode.SMSG_UPDATE_OBJECT) == 2,
+        "the player, then what it sees");
+    const deputy = makeGuid(HighGuid.unit, creatureWillem, 79942);
+    assert(context.map(0).objectCount == 2 && context.map(0).seesObject(7, deputy));
+
+    anduin.write(Opcode.CMSG_CREATURE_QUERY, ClientObjectQuery(creatureWillem, deputy));
+    const reply = anduin.read();
+    assert(reply[0].opcode == Opcode.SMSG_CREATURE_QUERY_RESPONSE && reply[0].body_[4 .. 18] == "Deputy Willem\0");
+    anduin.write(Opcode.CMSG_GAMEOBJECT_QUERY, ClientObjectQuery(32349, 0));
+    assert(anduin.read()[0].opcode == Opcode.SMSG_GAMEOBJECT_QUERY_RESPONSE);
+    anduin.write(Opcode.CMSG_CREATURE_QUERY, ClientObjectQuery(424242, 0));
+    assert(anduin.read()[0].body_ == [0x32, 0x79, 0x06, 0x80]);
 }

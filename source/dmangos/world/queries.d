@@ -5,6 +5,9 @@
  */
 module dmangos.world.queries;
 
+import dmangos.world.creature : CreatureTemplate;
+import dmangos.world.gameobject : GameObjectTemplate;
+
 import dmangos.bytes;
 import dmangos.world.defines : ItemClass;
 import dmangos.world.opcodes : ChatType, Language;
@@ -116,6 +119,55 @@ ubyte[] itemQueryResponse(uint entry, const ItemTemplate* item, const SpellData 
     return w.data.dup;
 }
 
+/// `WorldSession::HandleCreatureQueryOpcode`: the name, title and kind of a creature; the entry with its top
+/// bit set if there is none.
+ubyte[] creatureQueryResponse(uint entry, const(CreatureTemplate)* t) pure @safe
+{
+    ByteWriter w;
+    if (t is null)
+    {
+        w.put(entry | 0x8000_0000);
+        return w.data.dup;
+    }
+    w.put(entry);
+    w.putCString(t.name);
+    w.put(ubyte(0));
+    w.put(ubyte(0));
+    w.put(ubyte(0)); // the other three names
+    w.putCString(t.subName);
+    w.put(t.typeFlags);
+    w.put(t.creatureType);
+    w.put(t.family);
+    w.put(t.rank);
+    w.put(uint(0));
+    w.put(t.petSpellDataId);
+    w.put(t.modelIds[0]);
+    w.put(cast(ushort) t.civilian);
+    return w.data.dup;
+}
+
+/// `WorldSession::HandleGameObjectQueryOpcode`: type, model, name, icon and the 24 data fields.
+ubyte[] gameObjectQueryResponse(uint entry, const(GameObjectTemplate)* t) pure @safe
+{
+    ByteWriter w;
+    if (t is null)
+    {
+        w.put(entry | 0x8000_0000);
+        return w.data.dup;
+    }
+    w.put(entry);
+    w.put(t.type);
+    w.put(t.displayId);
+    w.putCString(t.name);
+    w.put(ubyte(0));
+    w.put(ubyte(0));
+    w.put(ubyte(0)); // the other three names
+    w.putCString(""); // the icon name; classic-db has none
+    foreach (value; t.data)
+        w.put(value);
+    return w.data.dup;
+}
+
 /**
  * `ChatHandler::BuildChatPacket`: the body of `SMSG_MESSAGECHAT` for the message types a player
  * sends. `channel` is the channel's name for `CHAT_MSG_CHANNEL`.
@@ -171,6 +223,21 @@ struct ClientChat
         chat.text = reader.readCString();
         return chat;
     }
+}
+
+unittest
+{
+    CreatureTemplate hogger;
+    hogger.name = "Hogger";
+    hogger.modelId1 = 384;
+    hogger.rank = 1;
+    const reply = creatureQueryResponse(448, &hogger);
+    assert(reply[0 .. 4] == [0xC0, 1, 0, 0] && reply[4 .. 11] == "Hogger\0");
+    assert(reply.length == 4 + 7 + 3 + 1 + 4 * 7 + 2, "entry, name, empty names, title, seven numbers, civilian");
+    assert(creatureQueryResponse(5, null) == [5, 0, 0, 0x80]);
+    GameObjectTemplate mailbox;
+    mailbox.name = "Mailbox";
+    assert(gameObjectQueryResponse(32349, &mailbox).length == 4 * 3 + 8 + 3 + 1 + 24 * 4);
 }
 
 unittest

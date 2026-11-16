@@ -93,6 +93,23 @@ struct WorldConfig
     @JsonName("listen_range_say") float listenRangeSay = 25;
     @JsonName("listen_range_text_emote") float listenRangeTextEmote = 25; /// ditto
     @JsonName("listen_range_yell") float listenRangeYell = 300;           /// ditto
+    /// The world update tick, in milliseconds (mangosd's `WORLD_SLEEP_CONST`, 50).
+    @JsonName("update_interval") uint updateIntervalMs = 50;
+    /// `InstantLogout`: the account level that logs out at once; others wait 20 seconds unless resting.
+    @JsonName("instant_logout") uint instantLogout = 1;
+    /// `PlayerSave.Interval`, in seconds (mangosd: milliseconds).
+    @JsonName("player_save_interval") uint playerSaveInterval = 900;
+    /// `Rate.Health`, `Rate.Mana`, `Rate.Rage.Loss`, `Rate.Energy`: regeneration rates.
+    @JsonName("rate_health") float rateHealth = 1;
+    @JsonName("rate_mana") float rateMana = 1;              /// ditto
+    @JsonName("rate_rage_loss") float rateRageLoss = 1;     /// ditto
+    @JsonName("rate_energy") float rateEnergy = 1;          /// ditto
+    /// `Rate.Rest.InGame`, `Rate.Rest.Offline.InTavernOrCity`, `Rate.Rest.Offline.InWilderness`.
+    @JsonName("rate_rest_ingame") float rateRestInGame = 1;
+    @JsonName("rate_rest_offline_in_tavern_or_city") float rateRestOfflineInTavernOrCity = 1; /// ditto
+    @JsonName("rate_rest_offline_in_wilderness") float rateRestOfflineInWilderness = 1;       /// ditto
+    /// `MaxPlayerLevel`
+    @JsonName("max_player_level") uint maxPlayerLevel = 60;
     /// `StartPlayerLevel`
     @JsonName("start_player_level") uint startPlayerLevel = 1;
     /// `GM.StartLevel`, for moderator accounts and up.

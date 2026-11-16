@@ -25,12 +25,13 @@ import dmangos.world.clientdata : ClientData, maskOf, skillFlagMaximized;
 import dmangos.world.movement;
 import dmangos.world.objects;
 import dmangos.world.opcodes : ChatTag;
+import dmangos.world.packets : ServerLevelUpInfo;
 import dmangos.world.defines;
 import dmangos.world.playercreate : KnownAbilities, KnownSkill, NewSkill, NewSpell;
 import dmangos.world.spells : SpellEffect;
 import dmangos.world.stats;
 import dmangos.world.updatefields;
-import dmangos.world.worlddata : CreateAction, ItemTemplate, WorldData;
+import dmangos.world.worlddata : CreateAction, ItemTemplate, maxLevel, WorldData;
 
 /// Number of `character_tutorial` fields.
 enum tutorialFields = 8;
@@ -101,6 +102,9 @@ struct CharacterData
     HomeBind homeBind;
     uint[tutorialFields] tutorials;
     bool[uint] rewardedQuests;   /// `character_queststatus` rows with `rewarded` set
+    float restBonus = 0;         /// `rest_bonus`: rested XP
+    long logoutTime;             /// `logout_time`, Unix time
+    bool logoutResting;          /// `is_logout_resting`: logged out in an inn or a city
 }
 
 /// What logging out writes back (`Player::SaveToDB`, the fields that can change in the world so far).
@@ -117,6 +121,12 @@ struct CharacterProgress
     ubyte actionBars;
     uint cinematic;
     uint atLogin;
+    uint level;
+    uint xp;
+    uint money;
+    string exploredZones; /// 64 numbers
+    float restBonus = 0;
+    bool resting;         /// `is_logout_resting`
 }
 
 /// An item object the player owns.
@@ -162,6 +172,15 @@ enum PlayerFlags : uint
     afk = 0x02,
     dnd = 0x04,
     gm = 0x08,
+    resting = 0x20,
+}
+
+/// `RestType`: why a player is resting.
+enum RestType
+{
+    none,
+    tavern, /// inside an inn's area trigger
+    city,   /// in a capital
 }
 
 private enum : uint
@@ -241,7 +260,21 @@ final class Player
         self.flags = UpdateFlags.all | UpdateFlags.living | UpdateFlags.hasPosition | UpdateFlags.self;
         self.info = movement;
         self.info.time = serverTime;
+        self.speeds = speeds;
         update.addCreate(UpdateType.createObject2, guid, self, values, seenBySelf);
+        return update;
+    }
+
+    /// The create block of one of the player's items, for the player (an item it was just given).
+    UpdateData createItemForSelf(uint itemGuid) const
+    {
+        UpdateData update;
+        MovementBlock itemMovement;
+        itemMovement.flags = UpdateFlags.all;
+        foreach (ref item; items)
+            if (item.guid == itemGuid)
+                update.addCreate(UpdateType.createObject, item.fullGuid, itemMovement, item.values,
+                    seenBySelf | seenByOwner);
         return update;
     }
 
@@ -257,6 +290,7 @@ final class Player
         other.flags = UpdateFlags.all | UpdateFlags.living | UpdateFlags.hasPosition;
         other.info = movement;
         other.info.time = serverTime;
+        other.speeds = speeds;
         update.addCreate(UpdateType.createObject, guid, other, values, groupMate ? seenByGroup : seenByEveryone,
             groupMate ? null : &strangerValue);
         return update;
@@ -340,18 +374,7 @@ final class Player
     /// `Player::HasItemCount`: carried or equipped, not in the bank.
     bool hasItem(uint entry, uint count = 1) const
     {
-        enum bankStart = 39, bankEnd = 69; // the bank's slots and bag slots: `BANK_SLOT_ITEM_START` .. `BANK_SLOT_BAG_END`
-        uint found;
-        foreach (ref item; items)
-        {
-            if (item.template_.entry != entry)
-                continue;
-            const slot = item.bag == 0 ? item.slot : bagSlotOf(item.bag);
-            if (slot >= bankStart && slot < bankEnd)
-                continue;
-            found += item.values[ITEM_FIELD_STACK_COUNT];
-        }
-        return found >= count;
+        return itemCount(entry) >= count;
     }
 
     /// The player's slot holding the bag with this low guid.
@@ -417,7 +440,375 @@ final class Player
         p.actionBars = values.getByte!PLAYER_FIELD_BYTES(2);
         p.cinematic = data.cinematic;
         p.atLogin = data.atLogin;
+        p.level = data.level;
+        p.xp = values[PLAYER_XP];
+        p.money = values[PLAYER_FIELD_COINAGE];
+        p.exploredZones = exploredZonesText();
+        p.restBonus = restBonus;
+        p.resting = hasFlag(PlayerFlags.resting);
         return p;
+    }
+
+    /// `PLAYER_EXPLORED_ZONES_1`, as `characters.exploredZones` stores it.
+    string exploredZonesText() const
+    {
+        import std.algorithm.iteration : map;
+        import std.array : join;
+        import std.conv : to;
+
+        uint[64] zones;
+        foreach (i, ref zone; zones)
+            zone = values.get!PLAYER_EXPLORED_ZONES_1(i);
+        return zones[].map!(z => z.to!string).join(" ") ~ " ";
+    }
+
+    // -----------------------------------------------------------------------
+    // Regeneration and rest (Player::RegenerateAll, SetRestBonus, ComputeRest)
+    // -----------------------------------------------------------------------
+
+    /// Rested XP: the bonus left, why the player rests, and since when it has been counted.
+    float restBonus = 0;
+    RestType restType; /// ditto
+    uint innTrigger;   /// the inn's area trigger, while resting in it
+    long restCountedAt; /// Unix time
+
+    /// `Unit::OCTRegenHPPerSpirit`: health per second out of combat, from spirit and class.
+    float healthRegenPerSecond() const
+    {
+        const spirit = float(values.get!UNIT_FIELD_STAT0(Stat.spirit));
+        switch (cast(PlayerClass) data.classId)
+        {
+        default: return 0;
+        case PlayerClass.druid: return spirit * 0.11f + 1;
+        case PlayerClass.hunter: return spirit * 0.43f - 5.5f;
+        case PlayerClass.mage: return spirit * 0.11f + 1;
+        case PlayerClass.paladin: return spirit * 0.25f;
+        case PlayerClass.priest: return spirit * 0.15f + 1.4f;
+        case PlayerClass.rogue: return spirit * 0.84f - 13;
+        case PlayerClass.shaman: return spirit * 0.28f - 3.6f;
+        case PlayerClass.warlock: return spirit * 0.12f + 1.5f;
+        case PlayerClass.warrior: return spirit * 1.26f - 22.6f;
+        }
+    }
+
+    /// `Unit::OCTRegenMPPerSpirit`: mana per second, from spirit and class.
+    float manaRegenPerSecond() const
+    {
+        const spirit = float(values.get!UNIT_FIELD_STAT0(Stat.spirit));
+        float perTick;
+        switch (cast(PlayerClass) data.classId)
+        {
+        case PlayerClass.druid, PlayerClass.hunter, PlayerClass.paladin, PlayerClass.warlock:
+            perTick = spirit / 5 + 15;
+            break;
+        case PlayerClass.mage, PlayerClass.priest:
+            perTick = spirit / 4 + 12.5f;
+            break;
+        case PlayerClass.shaman:
+            perTick = spirit / 5 + 17;
+            break;
+        default:
+            perTick = 0;
+            break;
+        }
+        return perTick / 2; // the values above are per two-second tick
+    }
+
+    /**
+     * `Player::RegenerateAll` for `milliseconds` out of combat: health (half again as fast sitting),
+     * mana, energy, and rage decaying. Returns whether anything changed.
+     */
+    bool regenerate(uint milliseconds, float healthRate, float manaRate, float rageLoss, float energyRate)
+    {
+        import std.algorithm.comparison : max;
+
+        bool changed;
+        const health = values.get!UNIT_FIELD_HEALTH, maxHealth = values.get!UNIT_FIELD_MAXHEALTH;
+        if (health < maxHealth && health > 0)
+        {
+            float add = max(0, healthRegenPerSecond() * healthRate);
+            if (values.getByte!UNIT_FIELD_BYTES_1(0) != 0)
+                add *= 1.5f; // not standing
+            const gained = cast(uint)(add * milliseconds / 1000);
+            if (gained)
+            {
+                values.set!UNIT_FIELD_HEALTH(min(health + gained, maxHealth));
+                changed = true;
+            }
+        }
+        changed |= addPower(Power.mana, cast(int)(manaRegenPerSecond() * manaRate * (milliseconds / 1000)));
+        changed |= addPower(Power.energy, cast(int)((milliseconds / 100) * energyRate));
+        changed |= addPower(Power.rage, -cast(int)((milliseconds / 200) * 2.5f * rageLoss));
+        return changed;
+    }
+
+    /// Adds (or takes) power, within 0 and the maximum. Returns whether it changed.
+    private bool addPower(Power power, int amount)
+    {
+        const now = values.get!UNIT_FIELD_POWER1(power), maximum = values.get!UNIT_FIELD_MAXPOWER1(power);
+        const next = cast(uint) (amount < 0 ? (now > -amount ? now + amount : 0) : min(now + amount, maximum));
+        if (next == now)
+            return false;
+        values.set!UNIT_FIELD_POWER1(power, next);
+        return true;
+    }
+
+    /// `Player::SetRestBonus`: at most one and a half levels, shown as "rested" over 10.
+    void setRestBonus(float bonus, uint maxPlayerLevel)
+    {
+        if (data.level >= maxPlayerLevel || bonus < 0)
+            bonus = 0;
+        const maximum = values.get!PLAYER_NEXT_LEVEL_XP * 1.5f / 2;
+        restBonus = bonus > maximum ? maximum : bonus;
+        if (restBonus > 10)
+            values.setByte!PLAYER_BYTES_2(3, RestState.rested);
+        else if (restBonus <= 1)
+            values.setByte!PLAYER_BYTES_2(3, RestState.normal);
+        values.set!PLAYER_REST_STATE_EXPERIENCE(cast(uint) restBonus);
+    }
+
+    /// `Player::ComputeRest`: the rested XP of `seconds`; a full level takes 1152000 s (13.3 days) at rate 1.
+    float computeRest(long seconds, float rate) const
+    {
+        return seconds * (values.get!PLAYER_NEXT_LEVEL_XP / 1_152_000.0f) * rate;
+    }
+
+    /// `Player::SetRestType`
+    void setRestType(RestType type, long now, uint trigger = 0)
+    {
+        restType = type;
+        setFlag(PlayerFlags.resting, type != RestType.none);
+        if (type != RestType.none)
+        {
+            innTrigger = trigger;
+            restCountedAt = now;
+        }
+    }
+
+    /// `Unit::SetStunned` for logging out: the stunned flag, and sitting down if standing.
+    void setLogoutStun(bool on)
+    {
+        enum uint unitFlagStunned = 0x00040000; // UNIT_FLAG_STUNNED
+        const flags = values.get!UNIT_FIELD_FLAGS;
+        values.set!UNIT_FIELD_FLAGS(on ? flags | unitFlagStunned : flags & ~unitFlagStunned);
+        if (on && values.getByte!UNIT_FIELD_BYTES_1(0) == 0)
+            setStandState(1);
+        else if (!on && values.getByte!UNIT_FIELD_BYTES_1(0) == 1)
+            setStandState(0);
+    }
+
+    // -----------------------------------------------------------------------
+    // What GM commands change
+    // -----------------------------------------------------------------------
+
+    /**
+     * `Player::GiveLevel` and `InitStatsForLevel`: the stats of `level`, with full health and mana
+     * and no XP. Returns what the level added (`SMSG_LEVELUP_INFO`).
+     */
+    ServerLevelUpInfo changeLevel(uint level, const WorldData world, const ClientData client)
+    in (level >= 1 && level <= maxLevel)
+    {
+        const before = world.classStats(data.classId, data.level), beforeStats = world.levelStats(data.race,
+            data.classId, data.level);
+        const earnedBefore = data.level < 10 ? 0 : data.level - 9;
+        const spentTalents = earnedBefore - min(earnedBefore, values[PLAYER_CHARACTER_POINTS1]);
+        const xp = data.level == level ? values[PLAYER_XP] : 0;
+
+        data.level = level;
+        data.health = 0;              // full
+        data.power[Power.mana] = uint.max; // full; rage and energy keep what they have
+        data.xp = xp;
+        data.money = values[PLAYER_FIELD_COINAGE];
+        data.exploredZones = exploredZonesText();
+        computeDerived(world);
+        setPlayerFields(world, client);
+        const earned = level < 10 ? 0 : level - 9;
+        values.set!PLAYER_CHARACTER_POINTS1(earned > spentTalents ? earned - spentTalents : 0);
+
+        const after = world.classStats(data.classId, level), afterStats = world.levelStats(data.race, data.classId, level);
+        ServerLevelUpInfo info;
+        info.level = level;
+        info.health = after.baseHealth - before.baseHealth;
+        info.powers[0] = after.baseMana - before.baseMana;
+        foreach (i; 0 .. 5)
+            info.stats[i] = afterStats.stats[i] - beforeStats.stats[i];
+        return info;
+    }
+
+    /// Movement speeds, in yards per second (`Unit::m_speed_rate` times the base speeds).
+    float[MoveType.max + 1] speeds = baseMoveSpeed;
+
+    /// The fastest the player can move on the ground or in water.
+    @property float fastestSpeed() const
+    {
+        import std.algorithm.comparison : max;
+
+        return max(speeds[MoveType.run], speeds[MoveType.swim], speeds[MoveType.runBack], speeds[MoveType.walk]);
+    }
+
+    /// `Player::ExploreArea` for everything: every bit of `PLAYER_EXPLORED_ZONES_1`.
+    void exploreAll()
+    {
+        foreach (i; 0 .. 64)
+            values.set!PLAYER_EXPLORED_ZONES_1(i, uint.max);
+    }
+
+    /// The skill slot of `skill`, or -1.
+    ptrdiff_t skillSlot(uint skill) const
+    {
+        foreach (i; 0 .. maxPlayerSkills)
+            if ((values[PLAYER_SKILL_INFO_1_1 + 3 * i] & 0xFFFF) == skill && skill != 0)
+                return i;
+        return -1;
+    }
+
+    /// A skill's value and maximum, or [0, 0] if the player does not have it.
+    ushort[2] skillValue(uint skill) const
+    {
+        const slot = skillSlot(skill);
+        if (slot < 0)
+            return [0, 0];
+        const word = values[PLAYER_SKILL_INFO_1_1 + 3 * slot + 1];
+        return [cast(ushort) word, cast(ushort)(word >> 16)];
+    }
+
+    /// The skills the player has: id, value and maximum.
+    uint[3][] skillList() const
+    {
+        uint[3][] list;
+        foreach (i; 0 .. maxPlayerSkills)
+            if (const id = values[PLAYER_SKILL_INFO_1_1 + 3 * i] & 0xFFFF)
+            {
+                const word = values[PLAYER_SKILL_INFO_1_1 + 3 * i + 1];
+                list ~= [id, word & 0xFFFF, word >> 16];
+            }
+        return list;
+    }
+
+    /// `Player::SetSkill`: adds the skill or changes it; a maximum of 0 removes it. False if no slot is free.
+    bool setSkill(uint skill, ushort value, ushort maxValue)
+    in (skill > 0 && skill <= ushort.max)
+    {
+        auto slot = skillSlot(skill);
+        if (maxValue == 0)
+        {
+            if (slot >= 0)
+                foreach (i; 0 .. 3)
+                    values.set!PLAYER_SKILL_INFO_1_1(3 * slot + i, 0u);
+            return true;
+        }
+        if (slot < 0)
+            foreach (i; 0 .. maxPlayerSkills)
+                if (values[PLAYER_SKILL_INFO_1_1 + 3 * i] == 0)
+                {
+                    slot = i;
+                    break;
+                }
+        if (slot < 0)
+            return false;
+        values.set!PLAYER_SKILL_INFO_1_1(3 * slot, skill);
+        values.set!PLAYER_SKILL_INFO_1_1(3 * slot + 1, value | uint(maxValue) << 16);
+        return true;
+    }
+
+    /// Whether the spellbook has the spell.
+    bool knowsSpell(uint spell) const
+    {
+        foreach (id; spells)
+            if (id == spell)
+                return true;
+        return false;
+    }
+
+    /**
+     * `Player::_LoadInventory` for one more item: adds the item object and points its slot at it.
+     * Returns why it could not, or null.
+     */
+    string addItem(const ItemRecord record, const WorldData world)
+    {
+        return placeItem(record, world);
+    }
+
+    /// `Player::RemoveItem` and `DestroyItem`: forgets the item and clears its slot.
+    void removeItem(uint itemGuid)
+    {
+        import std.algorithm.mutation : remove;
+
+        foreach (i, ref item; items)
+            if (item.guid == itemGuid)
+            {
+                if (item.bag == 0)
+                {
+                    values.set!PLAYER_FIELD_INV_SLOT_HEAD(item.slot, 0UL);
+                    if (item.slot < equipmentSlotEnd)
+                        clearVisibleItem(item.slot);
+                }
+                else
+                    foreach (ref bag; items)
+                        if (bag.guid == item.bag)
+                            bag.values.set!CONTAINER_FIELD_SLOT_1(item.slot, 0UL);
+                items = items.remove(i);
+                return;
+            }
+    }
+
+    /// The item object with this low guid, or null.
+    InventoryItem* item(uint itemGuid)
+    {
+        foreach (ref it; items)
+            if (it.guid == itemGuid)
+                return &it;
+        return null;
+    }
+
+    /**
+     * Where a new item of `template_` can go (`Player::CanStoreNewItem`, without its merging of
+     * several destinations): the backpack first, then the equipped bags that may hold it. Returns
+     * false if there is no room.
+     */
+    bool freeSlot(const ref ItemTemplate template_, out uint bag, out ubyte slot) const
+    {
+        foreach (ubyte s; inventorySlotItemStart .. inventorySlotItemEnd)
+            if (values.get!PLAYER_FIELD_INV_SLOT_HEAD(s) == 0)
+            {
+                slot = s;
+                return true;
+            }
+        foreach (ref container; items)
+        {
+            if (container.typeId != TypeId.container || container.bag != 0 || container.slot < inventorySlotBagStart
+                || container.slot >= inventorySlotBagEnd)
+                continue;
+            // A special bag (quiver, soul bag, ...) takes only what belongs in it.
+            if (container.template_.bagFamily && !(container.template_.bagFamily & template_.bagFamily))
+                continue;
+            foreach (ubyte s; 0 .. cast(ubyte) container.values[CONTAINER_FIELD_NUM_SLOTS])
+                if (container.values.get!CONTAINER_FIELD_SLOT_1(s) == 0)
+                {
+                    bag = container.guid;
+                    slot = s;
+                    return true;
+                }
+        }
+        return false;
+    }
+
+    /// How many items of `entry` the player carries, equipped or in bags, not in the bank.
+    uint itemCount(uint entry) const
+    {
+        uint n;
+        foreach (ref item; items)
+            if (item.template_.entry == entry && !inBank(item))
+                n += item.values[ITEM_FIELD_STACK_COUNT];
+        return n;
+    }
+
+    /// Whether the item is in the bank, or in a bag in the bank.
+    bool inBank(const ref InventoryItem item) const
+    {
+        enum bankStart = 39, bankEnd = 69; // `BANK_SLOT_ITEM_START` .. `BANK_SLOT_BAG_END`
+        const slot = item.bag == 0 ? item.slot : bagSlotOf(item.bag);
+        return slot >= bankStart && slot < bankEnd;
     }
 
 private:
@@ -514,6 +905,16 @@ private:
         v.set!ITEM_FIELD_DURABILITY(min(record.durability, template_.maxDurability));
         if (item.typeId == TypeId.container)
             v.set!CONTAINER_FIELD_NUM_SLOTS(template_.containerSlots);
+    }
+
+    /// `Player::SetVisibleItemSlot` for an empty slot.
+    void clearVisibleItem(ubyte slot)
+    {
+        const block = slot * visibleItemStride;
+        values.set!PLAYER_VISIBLE_ITEM_1_CREATOR(block / 2, 0UL);
+        foreach (i; 0 .. 1 + visibleEnchantments)
+            values.set!PLAYER_VISIBLE_ITEM_1_0(block + i, 0u);
+        values.set!PLAYER_VISIBLE_ITEM_1_PROPERTIES(block, 0u);
     }
 
     /// `Player::SetVisibleItemSlot`

@@ -395,6 +395,27 @@ struct ServerItemQueryResponse
     @Remainder ubyte[] body_;
 }
 
+/// `CMSG_CREATURE_QUERY`, `CMSG_GAMEOBJECT_QUERY`
+struct ClientObjectQuery
+{
+    uint entry;
+    ulong guid;
+}
+
+/// `SMSG_CREATURE_QUERY_RESPONSE`, built by `queries.creatureQueryResponse`.
+struct ServerCreatureQueryResponse
+{
+    mixin ServerPacket!(Opcode.SMSG_CREATURE_QUERY_RESPONSE);
+    @Remainder ubyte[] body_;
+}
+
+/// `SMSG_GAMEOBJECT_QUERY_RESPONSE`, built by `queries.gameObjectQueryResponse`.
+struct ServerGameObjectQueryResponse
+{
+    mixin ServerPacket!(Opcode.SMSG_GAMEOBJECT_QUERY_RESPONSE);
+    @Remainder ubyte[] body_;
+}
+
 /// `SMSG_MESSAGECHAT`; the body is built by `dmangos.world.chat`.
 struct ServerMessageChat
 {
@@ -791,6 +812,116 @@ struct ClientChannelTarget
     @CString string channel;
     @CString string target;
 }
+
+// ---------------------------------------------------------------------------
+// What GM commands change (Player::SetSpeedRate, SetRoot, LearnSpell, GiveLevel, ...)
+// ---------------------------------------------------------------------------
+
+/// The orders that only name the player and count: `SMSG_FORCE_MOVE_ROOT`, `SMSG_FORCE_MOVE_UNROOT`,
+/// `SMSG_MOVE_WATER_WALK`, `SMSG_MOVE_LAND_WALK`. The client acknowledges each.
+struct ServerMovementOrder(Opcode code)
+{
+    mixin ServerPacket!code;
+    @PackedGuid ulong guid;
+    uint counter;
+}
+
+/// `SMSG_FORCE_*_SPEED_CHANGE`: the player's own speed.
+struct ServerForceSpeedChange(Opcode code)
+{
+    mixin ServerPacket!code;
+    @PackedGuid ulong guid;
+    uint counter;
+    float speed = 0;
+}
+
+/// `SMSG_MOVE_KNOCK_BACK`
+struct ServerKnockBack
+{
+    mixin ServerPacket!(Opcode.SMSG_MOVE_KNOCK_BACK);
+    @PackedGuid ulong guid;
+    uint counter;
+    float cos = 0;
+    float sin = 0;
+    float horizontalSpeed = 0;
+    float verticalSpeed = 0;
+}
+
+/// `SMSG_LEARNED_SPELL`
+struct ServerLearnedSpell
+{
+    mixin ServerPacket!(Opcode.SMSG_LEARNED_SPELL);
+    uint spell;
+}
+
+/// `SMSG_REMOVED_SPELL`
+struct ServerRemovedSpell
+{
+    mixin ServerPacket!(Opcode.SMSG_REMOVED_SPELL);
+    ushort spell;
+}
+
+/// `SMSG_ITEM_PUSH_RESULT` (`Player::SendNewItem`): "You receive item: ..."
+struct ServerItemPushResult
+{
+    mixin ServerPacket!(Opcode.SMSG_ITEM_PUSH_RESULT);
+    ulong player;
+    uint received;      /// 0 looted, 1 from an NPC
+    uint created;       /// 0 received, 1 created
+    uint showInChat = 1;
+    ubyte bag;          /// the bag's slot, or 255 for the player's own slots
+    uint slot;          /// `uint.max` when added to a stack
+    uint entry;
+    uint suffixFactor;
+    int randomPropertyId;
+    uint count;
+}
+
+/// `SMSG_LEVELUP_INFO`: the level reached and what it added.
+struct ServerLevelUpInfo
+{
+    mixin ServerPacket!(Opcode.SMSG_LEVELUP_INFO);
+    uint level;
+    uint health;
+    uint[5] powers;
+    uint[5] stats;
+}
+
+/// `ServerMessageType`
+enum ServerMessageType : uint
+{
+    shutdownTime = 1,
+    restartTime = 2,
+    text = 3,
+    shutdownCancelled = 4,
+    restartCancelled = 5,
+}
+
+/// `SMSG_SERVER_MESSAGE`: a red message in the middle of the screen, such as a shutdown countdown.
+struct ServerServerMessage
+{
+    mixin ServerPacket!(Opcode.SMSG_SERVER_MESSAGE);
+    ServerMessageType type;
+    @CString string text;
+}
+
+/// `SMSG_UPDATE_WORLD_STATE`
+struct ServerUpdateWorldState
+{
+    mixin ServerPacket!(Opcode.SMSG_UPDATE_WORLD_STATE);
+    uint state;
+    uint value;
+}
+
+/// `SMSG_PLAY_SOUND`
+struct ServerPlaySound
+{
+    mixin ServerPacket!(Opcode.SMSG_PLAY_SOUND);
+    uint sound;
+}
+
+static assert(wireSize!ServerItemPushResult == 8 + 4 * 3 + 1 + 4 * 5);
+static assert(wireSize!ServerLevelUpInfo == 48);
 
 static assert(wireSize!ServerNewWorld == 20);
 static assert(wireSize!ClientWorldTeleport == 24);

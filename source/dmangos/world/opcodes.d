@@ -35,6 +35,10 @@ enum Opcode : uint
     SMSG_NAME_QUERY_RESPONSE = 0x051,
     CMSG_ITEM_QUERY_SINGLE = 0x056,
     SMSG_ITEM_QUERY_SINGLE_RESPONSE = 0x058,
+    CMSG_GAMEOBJECT_QUERY = 0x05E,
+    SMSG_GAMEOBJECT_QUERY_RESPONSE = 0x05F,
+    CMSG_CREATURE_QUERY = 0x060,
+    SMSG_CREATURE_QUERY_RESPONSE = 0x061,
     SMSG_FRIEND_LIST = 0x067,
     SMSG_IGNORE_LIST = 0x06B,
     CMSG_GROUP_INVITE = 0x06E,
@@ -96,10 +100,22 @@ enum Opcode : uint
     MSG_MOVE_FALL_LAND = 0x0C9,
     MSG_MOVE_START_SWIM = 0x0CA,
     MSG_MOVE_STOP_SWIM = 0x0CB,
+    MSG_MOVE_SET_RUN_SPEED = 0x0CD,
+    MSG_MOVE_SET_RUN_BACK_SPEED = 0x0CF,
+    MSG_MOVE_SET_SWIM_SPEED = 0x0D3,
+    MSG_MOVE_SET_SWIM_BACK_SPEED = 0x0D5,
     MSG_MOVE_SET_FACING = 0x0DA,
     MSG_MOVE_SET_PITCH = 0x0DB,
     MSG_MOVE_WORLDPORT_ACK = 0x0DC,
+    SMSG_MOVE_WATER_WALK = 0x0DE,
+    SMSG_MOVE_LAND_WALK = 0x0DF,
+    SMSG_FORCE_RUN_SPEED_CHANGE = 0x0E2,
+    SMSG_FORCE_RUN_BACK_SPEED_CHANGE = 0x0E4,
+    SMSG_FORCE_SWIM_SPEED_CHANGE = 0x0E6,
+    SMSG_FORCE_MOVE_ROOT = 0x0E8,
+    SMSG_FORCE_MOVE_UNROOT = 0x0EA,
     MSG_MOVE_HEARTBEAT = 0x0EE,
+    SMSG_MOVE_KNOCK_BACK = 0x0EF,
     SMSG_TRIGGER_CINEMATIC = 0x0FA,
     SMSG_TUTORIAL_FLAGS = 0x0FD,
     CMSG_TUTORIAL_FLAG = 0x0FE,
@@ -114,13 +130,16 @@ enum Opcode : uint
     CMSG_SET_ACTION_BUTTON = 0x128,
     SMSG_ACTION_BUTTONS = 0x129,
     SMSG_INITIAL_SPELLS = 0x12A,
+    SMSG_LEARNED_SPELL = 0x12B,
     CMSG_SET_SELECTION = 0x13D,
     SMSG_BINDPOINTUPDATE = 0x155,
+    SMSG_ITEM_PUSH_RESULT = 0x166,
     SMSG_NOTIFICATION = 0x1CB,
     CMSG_PLAYED_TIME = 0x1CC,
     SMSG_PLAYED_TIME = 0x1CD,
     CMSG_QUERY_TIME = 0x1CE,
     SMSG_QUERY_TIME_RESPONSE = 0x1CF,
+    SMSG_LEVELUP_INFO = 0x1D4,
     MSG_MINIMAP_PING = 0x1D5,
     CMSG_PING = 0x1DC,
     SMSG_PONG = 0x1DD,
@@ -130,6 +149,7 @@ enum Opcode : uint
     CMSG_ZONEUPDATE = 0x1F4,
     SMSG_COMPRESSED_UPDATE_OBJECT = 0x1F6,
     MSG_RANDOM_ROLL = 0x1FB,
+    SMSG_REMOVED_SPELL = 0x203,
     SMSG_ACCOUNT_DATA_TIMES = 0x209,
     SMSG_CHAT_WRONG_FACTION = 0x219,
     SMSG_SET_REST_START = 0x21E,
@@ -139,13 +159,17 @@ enum Opcode : uint
     CMSG_GROUP_SWAP_SUB_GROUP = 0x280,
     CMSG_GROUP_RAID_CONVERT = 0x28E,
     CMSG_GROUP_ASSISTANT_LEADER = 0x28F,
+    SMSG_SERVER_MESSAGE = 0x291,
     SMSG_STANDSTATE_UPDATE = 0x29D,
     SMSG_CHAT_PLAYER_NOT_FOUND = 0x2A9,
     SMSG_AREA_TRIGGER_MESSAGE = 0x2B8,
     CMSG_SET_ACTIONBAR_TOGGLES = 0x2BF,
     SMSG_INIT_WORLD_STATES = 0x2C2,
+    SMSG_UPDATE_WORLD_STATE = 0x2C3,
     SMSG_RAID_INSTANCE_INFO = 0x2CC,
     CMSG_REQUEST_RAID_INFO = 0x2CD,
+    SMSG_PLAY_SOUND = 0x2D2,
+    SMSG_FORCE_SWIM_BACK_SPEED_CHANGE = 0x2DC,
     SMSG_ADDON_INFO = 0x2EF,
     SMSG_PARTY_MEMBER_STATS_FULL = 0x2F2,
     MSG_MOVE_TIME_SKIPPED = 0x319,
@@ -257,7 +281,8 @@ enum Language : uint
 /**
  * The client's movement opcodes, whose bodies are a `MovementInfo` and nothing
  * else: every `MSG_MOVE_*` opcode except `MSG_MOVE_TIME_SKIPPED` (a guid and a
- * time) and the teleport messages, which have handlers of their own. Collected
+ * time), the teleport messages, which have handlers of their own, and the
+ * speed changes the server sends. Collected
  * from `Opcode` at compile time, so an opcode added there is routed to the
  * movement handler without further changes.
  */
@@ -265,7 +290,8 @@ enum Opcode[] movementOpcodes = () {
     import std.algorithm.searching : canFind, startsWith;
 
     // Not a MovementInfo, or a reply to the server rather than a move to show others.
-    enum notMovement = ["MSG_MOVE_TIME_SKIPPED", "MSG_MOVE_TELEPORT", "MSG_MOVE_TELEPORT_ACK", "MSG_MOVE_WORLDPORT_ACK"];
+    enum notMovement = ["MSG_MOVE_TIME_SKIPPED", "MSG_MOVE_TELEPORT", "MSG_MOVE_TELEPORT_ACK", "MSG_MOVE_WORLDPORT_ACK",
+        "MSG_MOVE_SET_RUN_SPEED", "MSG_MOVE_SET_RUN_BACK_SPEED", "MSG_MOVE_SET_SWIM_SPEED", "MSG_MOVE_SET_SWIM_BACK_SPEED"];
     Opcode[] opcodes;
     static foreach (name; __traits(allMembers, Opcode))
         static if (name.startsWith("MSG_MOVE_") && !notMovement.canFind(name))

@@ -14,7 +14,9 @@
 | Teleports | Near and far teleports with the client's acknowledgements, area trigger teleports with CMaNGOS's entry checks, `worldport` | `world/teleport.d` |
 | Groups | Parties and raids, saved and reloaded; invitations, leaders, assistants, sub-groups, kicks, loot settings, icons, ready checks, rolls, pings, member stats, group chat, real health for members | `world/group.d`, `world/grouphandlers.d` |
 | Chat | Channels (built-in ones following the zone, custom ones with moderation), AFK/DND with replies and chat tags, raid warnings | `world/channel.d`, `world/channelhandlers.d`, `world/inworld.d` |
-| GM commands | `.gps`, `.go xyz`, `.tele`, `.appear`, `.summon`, `.recall`, `.gm`, `.gm chat`, `.announce`, `.help`, `.commands`, `.save`, `.server info` | `world/commands.d` |
+| GM commands | About 130 commands following ArcEmu and Ascent: teleports, `.modify`, levels, items, spells, skills, lookups, accounts, bans, kicks, mutes, shutdowns, announcements, debugging (docs/COMMANDS.md) | `world/commands.d`, `world/gm*.d` |
+| Update loop | A 50 ms tick: 20-second logout, regeneration, rested XP in inns and capitals (and offline), periodic saves, timed shutdowns | `net/server.d`, `context.d`, `inworld.d`, `timer.d` |
+| Creatures and game objects | Every spawn (with pools, spawn groups and game events), loaded per grid cell when players come near, with levels, health, models, equipment, mounts and emotes; creature and game object queries; `.npc info` | `creature.d`, `gameobject.d`, `map.d`, `worlddata.d` |
 | Movement checks | Speed checked against running speed; offenders put back. Positions outside the map disconnect | `world/inworld.d` |
 
 ### Known gaps in what exists
@@ -24,8 +26,10 @@
 * **Not loaded:** reputation (needs `Faction.dbc` and `character_reputation`), guild membership
   (`PLAYER_GUILDID`), quests, auras, cooldowns, pets, corpses and death. A dead character loads
   alive.
-* **Logout is instant** for everyone (mangosd: 20 seconds unless resting), because there is no
-  timer loop yet.
+* **Creatures** stand still and never die, so they never respawn; there is no gossip, vendor,
+  trainer or quest dialog yet. Elevators are created but do not move. Ships and zeppelins are not
+  spawned. Cells are never unloaded (mangosd unloads idle grids after a while).
+* **Rested XP** is earned but not spent, because there is no XP gain yet.
 * **Movement:** the speed check assumes running speed; it must learn mounts, speed auras,
   knockbacks and taxis when those exist. Explored zones are not updated; that needs map data.
 * **Teleports:** there is one map per map id, so everyone entering a dungeon shares one copy.
@@ -51,29 +55,19 @@ Players see each other (`world/map.d`), teleport between maps (`world/teleport.d
 ARCHITECTURE.md's sections on maps, teleports, groups, channels and commands, and the gaps
 listed above. Transports (boats, zeppelins) need game objects and come with milestone 3.
 
-### 2. An update loop and timers
+### 2. An update loop and timers: done
 
-CMaNGOS references: `World/World.cpp` (`World::Update`), `Server/WorldSession.cpp`
-(`WorldSession::Update`), `Entities/Player.cpp` (`Player::Update`, `RegenerateAll`).
+See ARCHITECTURE.md's "The update loop". Still to do here: AFK kicks, the online-time
+`played` update while in the world, mail and auction timers, weather.
 
-* A tick in `net/server.d` (`select` with a timeout), calling `WorldContext.update(diff)`, then each
-  session's update.
-* The 20-second logout and the in-combat check. Health, mana and energy regeneration. Rest state
-  and rested XP. Periodic saves (`PlayerSaveInterval`).
-* Map updates for milestone 3. Visibility is driven by movement packets today; creatures will need
-  the map to update on its own.
+### 3. Creatures and game objects: started
 
-### 3. Creatures and game objects
-
-CMaNGOS references: `Entities/Creature.cpp`, `GameObject.cpp`, `Globals/ObjectMgr.cpp`
-(`LoadCreatures`, `LoadGameObjects`), and `QueryHandler.cpp` (creature and game object queries).
-
-* Load `creature`/`creature_template` and `gameobject`/`gameobject_template` into `WorldData`, and
-  spawn them into maps by cell.
-* Create blocks with the `UNIT`/`GAMEOBJECT` field ranges; `updatefields.d` already has them.
-* `CMSG_CREATURE_QUERY`, `CMSG_GAMEOBJECT_QUERY`, and `SMSG_*_QUERY_RESPONSE`.
-* NPC interaction follows: gossip, vendors, trainers, flight masters, bankers, innkeepers
-  (`GossipHandler.cpp`, `NPCHandler.cpp`, `TaxiHandler.cpp`).
+Spawned and visible, with queries (ARCHITECTURE.md, "Creatures and game objects"). Next: creature
+movement (random and waypoint, `creature_movement`), gossip and the NPC services (vendors,
+trainers, flight masters, bankers, innkeepers), using game objects (doors, chests, mailboxes),
+respawn timers, and unloading idle cells. CMaNGOS references: `MotionGenerators/`,
+`Entities/GossipDef.cpp`, `GossipHandler.cpp`, `NPCHandler.cpp`, `TaxiHandler.cpp`,
+`ItemHandler.cpp` (vendors).
 
 ### 4. Map data
 
@@ -108,7 +102,8 @@ The largest area. CMaNGOS references: `Spells/`, `Entities/Unit.cpp`, `Combat/`,
 * Friends and ignore lists, guilds, mail, auction house and trade, each a handler group and
   module of its own, like `grouphandlers.d`.
 * Quests (`QuestHandler.cpp`, `ObjectMgr::LoadQuests`).
-* More GM commands (`Chat/Level*.cpp`): each is one `@Command` method in `commands.d`.
+* The rest of ArcEmu's and Ascent's GM commands, as their systems arrive (COMMANDS.md lists them):
+  each is one `@Command` method.
 
 ### Infrastructure, as needed
 

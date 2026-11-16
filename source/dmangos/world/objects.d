@@ -27,12 +27,33 @@ enum HighGuid : ushort
 {
     player = 0x0000,
     item = 0x4000, /// items and containers alike
+    gameObject = 0xF110,
+    unit = 0xF130,
 }
 
 /// The full guid of an object with low guid `low`.
 ulong makeGuid(HighGuid high, uint low) pure nothrow @nogc @safe
 {
     return ulong(high) << 48 | low;
+}
+
+/// The guid of a creature or game object: its spawn's database guid (24 bits) and its entry (`ObjectGuid`).
+ulong makeGuid(HighGuid high, uint entry, uint counter) pure nothrow @nogc @safe
+in (counter < 1 << 24, "a creature or game object counter has 24 bits")
+{
+    return ulong(high) << 48 | ulong(entry) << 24 | counter;
+}
+
+/// The kind of object a guid names.
+HighGuid highGuidOf(ulong guid) pure nothrow @nogc @safe
+{
+    return cast(HighGuid)(guid >> 48);
+}
+
+/// The spawn's database guid in a creature's or game object's guid.
+uint counterOf(ulong guid) pure nothrow @nogc @safe
+{
+    return cast(uint)(guid & 0xFF_FFFF);
 }
 
 /// The low 32 bits of a guid: the database id.
@@ -68,12 +89,12 @@ alias ValueAdjuster = uint delegate(size_t slot, uint value) const;
 /// What a value written into a field of type `type` must be (see `UpdateValues.set`).
 private template accepts(FieldType type, T)
 {
-    import std.traits : isFloatingPoint, isIntegral, isSomeChar;
+    import std.traits : isFloatingPoint, isIntegral, isSomeChar, Unqual;
 
     static if (type == FieldType.float_)
         enum accepts = is(T : float) && isFloatingPoint!T;
     else static if (type == FieldType.guid)
-        enum accepts = is(T == ulong);
+        enum accepts = is(Unqual!T == ulong);
     else // integers, and bytes and two shorts set whole (or part by part with setByte / setHalf)
         enum accepts = (isIntegral!T || is(T == enum) || is(T == bool)) && !isFloatingPoint!T && !isSomeChar!T;
 }
@@ -265,6 +286,13 @@ struct UpdateValues
         return found;
     }
 
+    /// Sets a slot by number, whatever its type: for `.debug setvalue`, not for game code.
+    void setSlot(size_t slot, uint value) pure nothrow @safe
+    in (slot < slots.length)
+    {
+        writeSlot(slot, value);
+    }
+
     /// Whether a viewer that sees `seen` has changes to be told about.
     bool hasChangesFor(Visibility seen) const pure nothrow @safe
     {
@@ -386,6 +414,7 @@ struct MovementBlock
     float[MoveType.max + 1] speeds = baseMoveSpeed; /// for `living`
     Position position;   /// for `hasPosition` without `living`
     uint highGuid;       /// for `highGuid`
+    uint transportTime;  /// for `transport`: the path's time (elevators)
 
     /// `Object::BuildMovementUpdate`, without splines, transports or attack targets.
     void write(ref ByteWriter writer) const
@@ -408,6 +437,8 @@ struct MovementBlock
             writer.put(highGuid);
         if (flags & UpdateFlags.all)
             writer.put(uint(1));
+        if (flags & UpdateFlags.transport)
+            writer.put(transportTime);
     }
 }
 
@@ -463,6 +494,13 @@ struct UpdateData
         foreach (guid; guids)
             putPackedGuid(blocks, guid);
         ++count;
+    }
+
+    /// Adds the blocks of another update.
+    void append()(auto ref const UpdateData other)
+    {
+        blocks.putBytes(other.blocks.data);
+        count += other.count;
     }
 
     /// Whether no block has been added.

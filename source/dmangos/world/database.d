@@ -15,7 +15,8 @@ import dmangos.mysql : MySqlConnection;
 import dmangos.auth.accounts : AccountLevel, canonicalAccountName, decodeBigNumberHex, toAccountLevel;
 import dmangos.world.characterdb : CharacterOwner, CharacterStatements, DeleteOptions, GuidCounters, NameInfo;
 public import dmangos.world.characterdb : GroupMemberRecord, GroupRecord;
-import dmangos.world.player : CharacterData, CharacterProgress, HomeBind, tutorialFields;
+import dmangos.world.player : CharacterData, CharacterProgress, HomeBind, ItemRecord, tutorialFields;
+import dmangos.world.worlddata : AreaTriggerTeleport, areaTriggerTeleportQuery, GameTele, gameTeleQuery;
 import dmangos.world.playercreate : NewCharacter;
 
 /// The parts of an `account` row a world session needs.
@@ -30,6 +31,7 @@ struct WorldAccount
     string lockedIp;
     string os;           /// As recorded by the login server: "Win" or "OSX".
     string platform;     /// "x86" or "PPC"
+    long muteTime;       /// `account.mutetime`: chat is off until this Unix time
 }
 
 /// One row of CMaNGOS's character list query, in its column order.
@@ -153,6 +155,61 @@ interface WorldDatabase
 
     /// `Group::_removeMember`
     void removeGroupMember(uint guid);
+
+    // --- what GM commands change ---
+
+    /// `account.mutetime`: chat is off until `until` (Unix time); 0 lifts it.
+    void setMuteTime(uint accountId, long until);
+
+    /// The guid of the character called `name`, or 0.
+    uint characterGuid(string name);
+
+    /// Gives an offline character a new name (`characters.name`).
+    void renameCharacter(uint guid, string newName);
+
+    /// `Player::_SaveSpells` for one spell learned or forgotten.
+    void saveSpell(uint guid, uint spell, bool learned);
+
+    /// `Player::_SaveSkills` for one skill; a `max` of 0 removes it.
+    void saveSkill(uint guid, uint skill, uint value, uint max);
+
+    /// `Item::SaveToDB` for a new item and its `character_inventory` row.
+    void insertItem(uint owner, const ItemRecord item);
+
+    /// `Item::SaveToDB` for a changed stack size and durability.
+    void updateItem(uint itemGuid, uint count, uint durability);
+
+    /// `Item::DeleteFromDB` and `DeleteFromInventoryDB`.
+    void deleteItem(uint itemGuid);
+
+    /// Ids and names in a world table whose name contains `text` (`.lookup`), at most `limit`.
+    LookupResult[] lookup(LookupTable table, string text, uint limit);
+
+    /// `game_tele`: adds a place (`.recall add`), or deletes one by name; false if there was none.
+    void addTeleport(const GameTele tele);
+    /// ditto
+    bool deleteTeleport(string name);
+
+    /// `areatrigger_teleport` and `game_tele`, read again (`.server reloadtable`).
+    AreaTriggerTeleport[] loadAreaTriggerTeleports();
+    /// ditto
+    GameTele[] loadTeleports();
+}
+
+/// The world tables `.lookup` searches.
+enum LookupTable
+{
+    quest,
+    creature,
+    gameObject,
+    spell,
+}
+
+/// One `.lookup` match.
+struct LookupResult
+{
+    uint id;
+    string name;
 }
 
 /// `account_logons.loginSource` for connections to the world server (`LOGIN_TYPE_MANGOSD`).
@@ -163,14 +220,16 @@ final class MySqlWorldDatabase : WorldDatabase
 {
     private MySqlConnection login;
     private MySqlConnection characterDb;
+    private MySqlConnection world;
     private CharacterStatements statements;
 
     ///
-    this(MySqlConnection login, MySqlConnection characterDb)
-    in (login !is null && characterDb !is null)
+    this(MySqlConnection login, MySqlConnection characterDb, MySqlConnection world)
+    in (login !is null && characterDb !is null && world !is null)
     {
         this.login = login;
         this.characterDb = characterDb;
+        this.world = world;
         this.statements = new CharacterStatements(characterDb, login);
     }
 
@@ -197,6 +256,64 @@ final class MySqlWorldDatabase : WorldDatabase
     void addGroupMember(uint groupId, const GroupMemberRecord member) { statements.addGroupMember(groupId, member); }
     void updateGroupMember(const GroupMemberRecord member) { statements.updateGroupMember(member); }
     void removeGroupMember(uint guid) { statements.removeGroupMember(guid); }
+    uint characterGuid(string name) { return statements.characterGuid(name); }
+    void renameCharacter(uint guid, string newName) { statements.renameCharacter(guid, newName); }
+    void saveSpell(uint guid, uint spell, bool learned) { statements.saveSpell(guid, spell, learned); }
+    void saveSkill(uint guid, uint skill, uint value, uint max) { statements.saveSkill(guid, skill, value, max); }
+    void insertItem(uint owner, const ItemRecord item) { statements.insertItem(owner, item); }
+    void updateItem(uint itemGuid, uint count, uint durability) { statements.updateItem(itemGuid, count, durability); }
+    void deleteItem(uint itemGuid) { statements.deleteItem(itemGuid); }
+
+    void setMuteTime(uint accountId, long until)
+    {
+        login.execute!"UPDATE account SET mutetime = ? WHERE id = ?"(until, accountId);
+    }
+
+    LookupResult[] lookup(LookupTable table, string text, uint limit)
+    {
+        const pattern = "%" ~ text ~ "%";
+        final switch (table)
+        {
+        case LookupTable.quest:
+            return world.queryAs!(LookupResult, "SELECT entry, Title FROM quest_template WHERE Title LIKE ? "
+                ~ "ORDER BY entry LIMIT ?")(pattern, limit);
+        case LookupTable.creature:
+            return world.queryAs!(LookupResult, "SELECT Entry, Name FROM creature_template WHERE Name LIKE ? "
+                ~ "ORDER BY Entry LIMIT ?")(pattern, limit);
+        case LookupTable.gameObject:
+            return world.queryAs!(LookupResult, "SELECT entry, name FROM gameobject_template WHERE name LIKE ? "
+                ~ "ORDER BY entry LIMIT ?")(pattern, limit);
+        case LookupTable.spell:
+            return world.queryAs!(LookupResult, "SELECT Id, SpellName FROM spell_template WHERE SpellName LIKE ? "
+                ~ "ORDER BY Id LIMIT ?")(pattern, limit);
+        }
+    }
+
+    /// `ObjectMgr::AddGameTele`
+    void addTeleport(const GameTele t)
+    {
+        world.execute!("INSERT INTO game_tele (position_x, position_y, position_z, orientation, map, name) "
+            ~ "VALUES (?, ?, ?, ?, ?, ?)")(t.x, t.y, t.z, t.orientation, t.map, t.name);
+    }
+
+    /// `ObjectMgr::DeleteGameTele`
+    bool deleteTeleport(string name)
+    {
+        if (world.query!"SELECT id FROM game_tele WHERE name = ?"(name).length == 0)
+            return false;
+        world.execute!"DELETE FROM game_tele WHERE name = ?"(name);
+        return true;
+    }
+
+    AreaTriggerTeleport[] loadAreaTriggerTeleports()
+    {
+        return world.queryAs!(AreaTriggerTeleport, areaTriggerTeleportQuery)();
+    }
+
+    GameTele[] loadTeleports()
+    {
+        return world.queryAs!(GameTele, gameTeleQuery)();
+    }
 
     void saveNewCharacter(const ref NewCharacter character, bool insertTutorialData)
     {
@@ -227,12 +344,13 @@ final class MySqlWorldDatabase : WorldDatabase
         uint locked;
         string os;
         string platform;
+        long mutetime;
     }
 
     Nullable!WorldAccount findAccount(string username)
     {
         const rows = login.queryAs!(AccountRow, "SELECT a.id, a.username, a.gmlevel, a.sessionkey, a.lockedIp, "
-            ~ "a.locked, a.os, a.platform FROM account a WHERE username = ?")(username);
+            ~ "a.locked, a.os, a.platform, a.mutetime FROM account a WHERE username = ?")(username);
         if (rows.length == 0)
             return Nullable!WorldAccount.init;
 
@@ -245,6 +363,7 @@ final class MySqlWorldDatabase : WorldDatabase
         account.lockedIp = row.lockedIp;
         account.os = row.os;
         account.platform = row.platform;
+        account.muteTime = row.mutetime;
         // CMaNGOS accepts only a full 80-digit key: anything shorter (an empty string in
         // particular) would let a client compute the proof without knowing the key.
         if (row.sessionkey.length == 2 * sessionKeyLength)
@@ -311,6 +430,117 @@ final class MemoryWorldDatabase : WorldDatabase
     uint[4][] actionButtonWrites;     /// guid, button, action, type
     uint[tutorialFields][uint] tutorialSaves; /// by account
     GroupRecord[uint] groups;         /// `groups` and `group_member`, by group id
+    long[uint] muteTimes;             /// by account id
+    bool[uint][uint] spellRows;       /// guid -> spells learned through `saveSpell`
+    uint[2][uint][uint] skillRows;    /// guid -> skill -> value, max
+    ItemRecord[uint] itemRows;        /// item guid -> the item, as inserted and updated
+    uint[uint] itemOwners;            /// item guid -> owner
+    LookupResult[][LookupTable] lookupRows; /// what `lookup` searches
+    GameTele[] teleportRows;          /// `game_tele`
+    AreaTriggerTeleport[] areaTriggerRows;
+
+    void setMuteTime(uint accountId, long until)
+    {
+        muteTimes[accountId] = until;
+        foreach (ref account; accounts)
+            if (account.id == accountId)
+                account.muteTime = until;
+    }
+
+    uint characterGuid(string name)
+    {
+        foreach (list; characterLists)
+            foreach (record; list)
+                if (record.name == name)
+                    return record.guid;
+        foreach (guid, c; loadable)
+            if (c.name == name)
+                return guid;
+        return 0;
+    }
+
+    void renameCharacter(uint guid, string newName)
+    {
+        foreach (ref list; characterLists)
+            foreach (ref record; list)
+                if (record.guid == guid)
+                    record.name = newName;
+        if (auto c = guid in loadable)
+            c.name = newName;
+    }
+
+    void saveSpell(uint guid, uint spell, bool learned)
+    {
+        if (learned)
+            spellRows[guid][spell] = true;
+        else if (auto spells = guid in spellRows)
+            (*spells).remove(spell);
+    }
+
+    void saveSkill(uint guid, uint skill, uint value, uint max)
+    {
+        if (max)
+            skillRows[guid][skill] = [value, max];
+        else if (auto skills = guid in skillRows)
+            (*skills).remove(skill);
+    }
+
+    void insertItem(uint owner, const ItemRecord item)
+    {
+        itemRows[item.guid] = cast(ItemRecord) item;
+        itemOwners[item.guid] = owner;
+    }
+
+    void updateItem(uint itemGuid, uint count, uint durability)
+    {
+        if (auto item = itemGuid in itemRows)
+        {
+            item.count = count;
+            item.durability = durability;
+        }
+    }
+
+    void deleteItem(uint itemGuid)
+    {
+        itemRows.remove(itemGuid);
+        itemOwners.remove(itemGuid);
+    }
+
+    LookupResult[] lookup(LookupTable table, string text, uint limit)
+    {
+        import std.algorithm.searching : canFind;
+        import std.uni : toLower;
+
+        LookupResult[] found;
+        foreach (row; lookupRows.get(table, null))
+            if (found.length < limit && row.name.toLower.canFind(text.toLower))
+                found ~= row;
+        return found;
+    }
+
+    void addTeleport(const GameTele tele)
+    {
+        teleportRows ~= tele;
+    }
+
+    bool deleteTeleport(string name)
+    {
+        import std.algorithm.mutation : remove;
+
+        const before = teleportRows.length;
+        teleportRows = teleportRows.remove!(t => t.name == name);
+        return teleportRows.length < before;
+    }
+
+    AreaTriggerTeleport[] loadAreaTriggerTeleports()
+    {
+        return areaTriggerRows.dup;
+    }
+
+    GameTele[] loadTeleports()
+    {
+        return teleportRows.dup;
+    }
 
     GroupRecord[] loadGroups()
     {
@@ -481,6 +711,8 @@ final class MemoryWorldDatabase : WorldDatabase
             foreach (record; list)
                 if (record.guid == guid)
                     return nullable(CharacterOwner(account, record.name, record.level));
+        if (auto c = guid in loadable)
+            return nullable(CharacterOwner(c.account, c.name, cast(ubyte) c.level));
         return Nullable!CharacterOwner.init;
     }
 

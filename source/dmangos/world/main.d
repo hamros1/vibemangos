@@ -7,13 +7,14 @@
  */
 module dmangos.world.main;
 
-import core.time : minutes, MonoTime, seconds;
+import core.time : minutes, MonoTime, msecs, seconds;
 import std.getopt : defaultGetoptPrinter, getopt, GetOptException, GetoptResult;
 import std.stdio : stderr;
 
 import dmangos.log;
 import dmangos.mysql : ConnectionInfo, MySqlConnection;
-import dmangos.net.server : installShutdownHandlers, NetSession, ServerOptions, TcpServer;
+import dmangos.auth.mysqldb : MySqlLoginDatabase;
+import dmangos.net.server : installShutdownHandlers, NetSession, requestShutdown, ServerOptions, TcpServer;
 import dmangos.world.clientdata : ClientData;
 import dmangos.world.config : loadWorldConfig, WorldConfig;
 import dmangos.world.context : WorldContext;
@@ -49,8 +50,7 @@ int main(string[] args)
     {
         auto config = loadWorldConfig(configPath);
         setLogLevel(config.logLevel);
-        run(config);
-        return 0;
+        return run(config);
     }
     catch (Exception e)
     {
@@ -59,8 +59,12 @@ int main(string[] args)
     }
 }
 
-private void run(WorldConfig config)
+/// `mangosd`'s exit code for a restart (`RESTART_EXIT_CODE`), for a script that starts it again.
+private enum restartExitCode = 2;
+
+private int run(WorldConfig config)
 {
+    int exitCode = 0;
     auto login = connect(config.loginDatabase, config.mysqlLibrary, "login");
     scope (exit)
         login.close();
@@ -73,7 +77,8 @@ private void run(WorldConfig config)
 
     auto client = ClientData.load(config.dataDir);
     auto data = WorldData.load(world, client);
-    auto context = new WorldContext(config, new MySqlWorldDatabase(login, characters), data, client);
+    auto context = new WorldContext(config, new MySqlWorldDatabase(login, characters, world), data, client,
+        new MySqlLoginDatabase(login));
     context.database.markAllOffline(config.realmId); // as clearOnlineAccounts: nobody is online after a restart
     info!"next ids: character %s, item %s, mail %s"(context.next.character, context.next.item, context.next.mail);
 
@@ -88,9 +93,12 @@ private void run(WorldConfig config)
 
     installShutdownHandlers();
     auto server = new TcpServer(
-        ServerOptions(config.bindAddress, config.port, config.idleTimeoutSeconds.seconds, config.maxConnections),
+        ServerOptions(config.bindAddress, config.port, config.idleTimeoutSeconds.seconds, config.maxConnections,
+            config.updateIntervalMs.msecs),
         (string address) => cast(NetSession) new WorldSession(context, address),
         (MonoTime now) {
+            if (context.update(now))
+                requestShutdown();
             if (now - lastPopulation >= 1.minutes)
             {
                 realm.updatePopulation(context.sessionCount, config.playerLimit);
@@ -104,6 +112,9 @@ private void run(WorldConfig config)
         });
     server.run();
     realm.updateUptime(cast(uint) context.peakSessions);
+    if (context.restartRequested)
+        exitCode = restartExitCode;
+    return exitCode;
 }
 
 private MySqlConnection connect(string connectionString, string library, string what)

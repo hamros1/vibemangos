@@ -205,7 +205,8 @@ final class CharacterStatements
         const rows = characters.query!("SELECT guid, account, name, race, class, gender, level, xp, money, "
             ~ "playerBytes, playerBytes2, playerFlags, position_x, position_y, position_z, orientation, map, zone, "
             ~ "cinematic, totaltime, leveltime, at_login, watchedFaction, health, power1, power2, power3, power4, "
-            ~ "power5, exploredZones, ammoId, actionBars FROM characters WHERE guid = ?")(guid);
+            ~ "power5, exploredZones, ammoId, actionBars, rest_bonus, logout_time, is_logout_resting "
+            ~ "FROM characters WHERE guid = ?")(guid);
         if (rows.length == 0)
             return Nullable!CharacterData.init;
 
@@ -240,6 +241,9 @@ final class CharacterStatements
         c.exploredZones = r.get!string(29);
         c.ammoId = r.get!uint(30);
         c.actionBars = r.get!ubyte(31);
+        c.restBonus = r.get!float(32);
+        c.logoutTime = r.get!long(33);
+        c.logoutResting = r.get!int(34) != 0;
 
         // _LoadInventory orders by bag, so bags come before what is in them.
         c.items = characters.queryAs!(ItemRecord, "SELECT ci.bag, ci.slot, ci.item, ii.itemEntry, ii.creatorGuid, "
@@ -296,10 +300,71 @@ final class CharacterStatements
         const now = Clock.currTime.toUnixTime;
         characters.execute!("UPDATE characters SET position_x = ?, position_y = ?, position_z = ?, orientation = ?, "
             ~ "map = ?, zone = ?, totaltime = ?, leveltime = ?, logout_time = ?, health = ?, power1 = ?, "
-            ~ "power2 = ?, power3 = ?, power4 = ?, power5 = ?, actionBars = ?, cinematic = ?, at_login = ? "
-            ~ "WHERE guid = ?")(p.position.x, p.position.y, p.position.z, p.position.orientation, p.map, p.zone,
-            p.totalTime, p.levelTime, now, p.health, p.power[0], p.power[1], p.power[2], p.power[3], p.power[4],
-            p.actionBars, p.cinematic, p.atLogin, p.guid);
+            ~ "power2 = ?, power3 = ?, power4 = ?, power5 = ?, actionBars = ?, cinematic = ?, at_login = ?, "
+            ~ "level = ?, xp = ?, money = ?, exploredZones = ?, rest_bonus = ?, is_logout_resting = ? WHERE guid = ?")(
+            p.position.x, p.position.y, p.position.z, p.position.orientation, p.map, p.zone, p.totalTime, p.levelTime,
+            now, p.health, p.power[0], p.power[1], p.power[2], p.power[3], p.power[4], p.actionBars, p.cinematic,
+            p.atLogin, p.level, p.xp, p.money, p.exploredZones, p.restBonus, p.resting ? 1 : 0, p.guid);
+    }
+
+    /// `ObjectMgr::GetPlayerGuidByName`: the guid of the character called `name`, or 0.
+    uint characterGuid(string name)
+    {
+        const rows = characters.query!"SELECT guid FROM characters WHERE name = ?"(name);
+        return rows.length ? rows[0].get!uint(0) : 0;
+    }
+
+    /// `.character rename` for an offline character.
+    void renameCharacter(uint guid, string newName)
+    {
+        characters.execute!"UPDATE characters SET name = ? WHERE guid = ?"(newName, guid);
+    }
+
+    /// `Player::_SaveSpells` for one spell.
+    void saveSpell(uint guid, uint spell, bool learned)
+    {
+        characters.execute!"DELETE FROM character_spell WHERE guid = ? AND spell = ?"(guid, spell);
+        if (learned)
+            characters.execute!"INSERT INTO character_spell (guid, spell, active, disabled) VALUES (?, ?, 1, 0)"(
+                guid, spell);
+    }
+
+    /// `Player::_SaveSkills` for one skill; a `max` of 0 deletes it.
+    void saveSkill(uint guid, uint skill, uint value, uint max)
+    {
+        characters.execute!"DELETE FROM character_skills WHERE guid = ? AND skill = ?"(guid, skill);
+        if (max)
+            characters.execute!"INSERT INTO character_skills (guid, skill, value, max) VALUES (?, ?, ?, ?)"(guid,
+                skill, value, max);
+    }
+
+    /// `Item::SaveToDB` (ITEM_NEW) and `Player::_SaveInventory` for a new item.
+    void insertItem(uint owner, const ItemRecord i)
+    {
+        characters.transaction({
+            characters.execute!("INSERT INTO item_instance (guid, owner_guid, itemEntry, creatorGuid, giftCreatorGuid, "
+                ~ "count, duration, charges, flags, enchantments, randomPropertyId, durability, itemTextId) "
+                ~ "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")(i.guid, owner, i.entry, i.creator, i.giftCreator,
+                i.count, i.duration, i.charges, i.flags, i.enchantments, i.randomPropertyId, i.durability, i.textId);
+            characters.execute!("INSERT INTO character_inventory (guid, bag, slot, item, item_template) "
+                ~ "VALUES (?, ?, ?, ?, ?)")(owner, i.bag, i.slot, i.guid, i.entry);
+        });
+    }
+
+    /// `Item::SaveToDB` (ITEM_CHANGED) for the stack size and durability.
+    void updateItem(uint itemGuid, uint count, uint durability)
+    {
+        characters.execute!"UPDATE item_instance SET count = ?, durability = ? WHERE guid = ?"(count, durability,
+            itemGuid);
+    }
+
+    /// `Item::DeleteFromDB` and `Item::DeleteFromInventoryDB`
+    void deleteItem(uint itemGuid)
+    {
+        characters.transaction({
+            characters.execute!"DELETE FROM character_inventory WHERE item = ?"(itemGuid);
+            characters.execute!"DELETE FROM item_instance WHERE guid = ?"(itemGuid);
+        });
     }
 
     /// `Player::_SaveActions` for one button. An action of 0 removes the button.

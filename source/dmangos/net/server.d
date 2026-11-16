@@ -11,7 +11,7 @@
 module dmangos.net.server;
 
 import core.atomic : atomicLoad, atomicStore;
-import core.time : Duration, MonoTime, seconds;
+import core.time : Duration, MonoTime, msecs, seconds;
 import std.socket;
 
 import dmangos.log;
@@ -42,7 +42,12 @@ struct ServerOptions
     ushort port;
     Duration idleTimeout = 60.seconds;
     uint maxConnections = 512;
+    /// How often the maintenance callback runs: the world server's update tick.
+    Duration tickInterval = 1.seconds;
 }
+
+/// A tick slower than this is logged, as Ember's watchdog reports a stalled map loop.
+private enum slowTick = 500.msecs;
 
 private shared bool shutdownRequested;
 
@@ -152,7 +157,8 @@ final class TcpServer
             }
 
             // Returns -1 when a signal interrupts the wait; the loop condition then sees the shutdown flag.
-            immutable ready = Socket.select(readable, writable, null, 1.seconds);
+            immutable wait = options.tickInterval - (MonoTime.currTime - lastMaintenance);
+            immutable ready = Socket.select(readable, writable, null, wait > Duration.zero ? wait : Duration.zero);
             immutable now = MonoTime.currTime;
             if (ready > 0)
             {
@@ -168,15 +174,27 @@ final class TcpServer
                     accept(listener, now);
             }
 
-            reap(now);
-            if (maintenance !is null && now - lastMaintenance >= 1.seconds)
+            if (maintenance !is null && now - lastMaintenance >= options.tickInterval)
             {
                 lastMaintenance = now;
                 try
                     maintenance(now);
                 catch (Exception e)
                     error!"periodic maintenance failed: %s"(e.msg);
+                immutable took = MonoTime.currTime - now;
+                if (took > slowTick)
+                    warning!"the update tick took %s ms"(took.total!"msecs");
             }
+            // A session may have been given packets by another one (a chat message, a move it sees) or by the
+            // maintenance: send them now, not when its own client next sends something.
+            foreach (connection; connections)
+                if (!connection.broken)
+                {
+                    connection.pending ~= connection.session.takeOutput();
+                    if (connection.pending.length)
+                        flush(connection);
+                }
+            reap(now);
         }
         info!"shutting down, closing %s connection(s)"(connections.length);
     }

@@ -13,6 +13,9 @@ import dmangos.dbc : buildDbc;
 import dmangos.world.clientdata;
 import dmangos.world.spells;
 import dmangos.world.worlddata;
+import dmangos.world.creature : CreatureSpawn, CreatureTemplate;
+import dmangos.world.gameobject : GameObjectSpawn, GameObjectTemplate;
+import dmangos.world.grid : cellKeyAt;
 
 enum ubyte raceHuman = 1, raceOrc = 2;
 enum ubyte classWarrior = 1, classHunter = 3, classMage = 8;
@@ -23,6 +26,10 @@ enum uint itemBow = 2504, itemQuiver = 2101, itemArrow = 2512;
 /// Maps of `Map.dbc`, by their real ids, and the Deadmines entrance (`AreaTrigger.dbc` 78).
 enum uint mapEasternKingdoms = 0, mapKalimdor = 1, mapDeadmines = 36, mapMoltenCore = 409, mapWarsongGulch = 489;
 enum uint triggerDeadmines = 78; /// ditto
+enum uint triggerInn = 562;       /// an inn's area trigger (the Lion's Pride Inn), at `innPosition`
+enum float[3] innPosition = [-9459.6f, 42.1f, 57.5f]; /// ditto
+enum uint zoneElwynn = 12, zoneStormwind = 1519;      /// `AreaTable.dbc`: a zone, and a capital
+enum uint creatureWillem = 823;                        /// Deputy Willem, spawned near Northshire Abbey
 enum float[3] deadminesEntrance = [-11208.5f, 1685.34f, 25.76f]; /// ditto
 enum float[4] deadminesInside = [-16.4f, -383.07f, 61.78f, 1.86f]; /// ditto
 
@@ -103,7 +110,19 @@ ClientData testClientData()
     // AreaTrigger: id, map, x, y, z, radius, box.
     client.areaTriggers = typeof(client.areaTriggers).parse(buildDbc(areaTriggerFormat, [[triggerDeadmines,
         mapEasternKingdoms, floatBits(deadminesEntrance[0]), floatBits(deadminesEntrance[1]),
-        floatBits(deadminesEntrance[2]), floatBits(5), 0, 0, 0, 0]]), "AreaTrigger.dbc");
+        floatBits(deadminesEntrance[2]), floatBits(5), 0, 0, 0, 0], [triggerInn, mapEasternKingdoms,
+        floatBits(innPosition[0]), floatBits(innPosition[1]), floatBits(innPosition[2]), floatBits(10), 0, 0, 0, 0]]),
+        "AreaTrigger.dbc");
+    // AreaTable: id, map, zone, explore flag, flags (0x100 for a capital), ...
+    uint[] areaRecord(uint id, uint flags)
+    {
+        auto record = new uint[areaTableFormat.length];
+        record[0] = id;
+        record[4] = flags;
+        return record;
+    }
+    client.areas = typeof(client.areas).parse(buildDbc(areaTableFormat, [areaRecord(zoneElwynn, 0),
+        areaRecord(zoneStormwind, 0x100)]), "AreaTable.dbc");
     client.buildIndexes();
     return client;
 }
@@ -127,11 +146,38 @@ WorldData testWorldData(const ClientData client)
     world.items[itemQuiver].containerSlots = 6;
     world.items[itemArrow] = item(itemArrow, 6, 2, 5996, 24, 200, 200, 0, 0); // arrows, ammo
     world.items[itemArrow].bagFamily = 1;
+    world.items[itemSword].details.name = "Worn Shortsword";
+    world.items[itemJerky].details.name = "Tough Jerky";
 
     // The Deadmines entrance needs level 10; a place for `.tele`.
     world.areaTriggers[triggerDeadmines] = AreaTriggerTeleport(triggerDeadmines, "Deadmines - Entering", 10, 0, 0, 0,
         mapDeadmines, deadminesInside[0], deadminesInside[1], deadminesInside[2], deadminesInside[3],
         "You must be at least level 10 to enter.", 0);
+    world.taverns[triggerInn] = true;
+
+    // Northshire: Deputy Willem (a quest giver) by the abbey, and a mailbox.
+    CreatureTemplate willem;
+    willem.entry = creatureWillem;
+    willem.name = "Deputy Willem";
+    willem.subName = "";
+    willem.minLevel = willem.maxLevel = 18;
+    willem.modelId1 = 1906;
+    willem.faction = 12;
+    willem.npcFlags = 2;
+    willem.unitClass = 1;
+    willem.minLevelHealth = willem.maxLevelHealth = 1342;
+    willem.meleeBaseAttackTime = 2000;
+    world.creatureTemplates[creatureWillem] = willem;
+    world.creatureSpawns = [CreatureSpawn(79942, creatureWillem, mapEasternKingdoms, -8933, -136, 83, 3)];
+    world.creatureCells[mapEasternKingdoms][cellKeyAt(-8933, -136)] = [0];
+    GameObjectTemplate mailbox;
+    mailbox.entry = 32349;
+    mailbox.type = 19;
+    mailbox.displayId = 3851;
+    mailbox.name = "Mailbox";
+    world.gameObjectTemplates[32349] = mailbox;
+    world.gameObjectSpawns = [GameObjectSpawn(26880, 32349, mapEasternKingdoms, -8940, -140, 83, 0.5f)];
+    world.gameObjectCells[mapEasternKingdoms][cellKeyAt(-8940, -140)] = [0];
     world.teleports = [GameTele(-9464, 62, 56, 0, mapEasternKingdoms, "Goldshire"),
         GameTele(1629, -4373, 31, 3.5f, mapKalimdor, "Orgrimmar")];
 

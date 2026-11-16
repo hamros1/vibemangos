@@ -898,6 +898,7 @@ final class Groups
 
 version (unittest)
 {
+    import core.time : Duration;
     import dmangos.auth.accounts : AccountLevel;
     import dmangos.world.database : MemoryWorldDatabase;
     import dmangos.world.map : Inhabitant;
@@ -939,6 +940,7 @@ version (unittest)
         @property AccountLevel security() const { return AccountLevel.player; }
         @property bool transferring() const { return false; }
         void groupChanged() { ++groupChanges; }
+        void update(Duration) {}
 
         Opcode[] take()
         {

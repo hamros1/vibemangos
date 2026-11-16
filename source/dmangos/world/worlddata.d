@@ -8,9 +8,15 @@
  */
 module dmangos.world.worlddata;
 
+import std.random : Random;
+
 import dmangos.log;
 import dmangos.mysql : MySqlConnection;
 import dmangos.world.clientdata : ClientData, maskOf, maxSkillStep, playableClassMask, playableRaceMask;
+import dmangos.world.creature : CreatureAddon, CreatureClassStats, CreatureSpawn, CreatureTemplate, classStatsKey,
+    creatureTemplateQuery;
+import dmangos.world.gameobject : GameObjectSpawn, GameObjectTemplate, GameObjectType;
+import dmangos.world.grid : cellKeyAt;
 import dmangos.world.spells : SpellData;
 
 /// The `item_template` fields the character screen and character creation use.
@@ -159,6 +165,7 @@ struct ModelInfo
 {
     float boundingRadius = 0;
     float combatReach = 0;
+    ubyte gender;
 }
 
 /// `PlayerCreateInfoItem`
@@ -245,6 +252,14 @@ struct GameTele
     string name;
 }
 
+/// The columns of `AreaTriggerTeleport`, as `ObjectMgr::LoadAreaTriggerTeleports` reads them.
+enum areaTriggerTeleportQuery = "SELECT id, IFNULL(name, ''), required_level, required_item, required_item2, "
+    ~ "required_quest_done, target_map, target_position_x, target_position_y, target_position_z, target_orientation, "
+    ~ "IFNULL(status_failed_text, ''), condition_id FROM areatrigger_teleport";
+
+/// The columns of `GameTele`, as `ObjectMgr::LoadGameTele` reads them.
+enum gameTeleQuery = "SELECT position_x, position_y, position_z, orientation, map, name FROM game_tele ORDER BY id";
+
 final class WorldData
 {
     ItemTemplate[uint] items;               /// by entry
@@ -257,6 +272,18 @@ final class WorldData
     ModelInfo[uint] models;                 /// `creature_model_info`, by display id
     AreaTriggerTeleport[uint] areaTriggers; /// `areatrigger_teleport`, by trigger id
     GameTele[] teleports;                   /// `game_tele`, in id order
+    bool[uint] taverns;                     /// `areatrigger_tavern`: the inns' area triggers
+
+    CreatureTemplate[uint] creatureTemplates;       /// by entry
+    GameObjectTemplate[uint] gameObjectTemplates;   /// by entry
+    CreatureSpawn[] creatureSpawns;                 /// the spawns in the world now (pools chosen, events off)
+    GameObjectSpawn[] gameObjectSpawns;             /// ditto
+    size_t[][ulong][uint] creatureCells;            /// map -> cell key -> indexes into `creatureSpawns`
+    size_t[][ulong][uint] gameObjectCells;          /// ditto, into `gameObjectSpawns`
+    CreatureAddon[uint] creatureAddons;             /// `creature_addon`, by spawn guid
+    CreatureAddon[uint] creatureTemplateAddons;     /// `creature_template_addon`, by entry
+    uint[3][uint] creatureEquipment;                /// `creature_equip_template`: item entries, by id
+    CreatureClassStats[uint] creatureClassStats;    /// by `classStatsKey`
 
     /**
      * `ObjectMgr::GetMapEntranceTrigger`: a trigger that leads into `map` from another map, whose
@@ -365,14 +392,15 @@ final class WorldData
                 data.xpForNextLevel.length = level + 1;
             data.xpForNextLevel[level] = row.get!uint(1);
         }
-        foreach (row; world.query!"SELECT modelid, bounding_radius, combat_reach FROM creature_model_info"())
-            data.models[row.get!uint(0)] = ModelInfo(row.get!float(1), row.get!float(2));
+        foreach (row; world.query!"SELECT modelid, bounding_radius, combat_reach, gender FROM creature_model_info"())
+            data.models[row.get!uint(0)] = ModelInfo(row.get!float(1), row.get!float(2), cast(ubyte) row.get!uint(3));
         foreach (row; world.query!"SELECT Entry, Family FROM creature_template"())
             data.creatureFamilies[row.get!uint(0)] = cast(ubyte) row.get!int(1);
         foreach (row; world.query!"SELECT name FROM reserved_name"())
             data.reservedNames[toLowerName(row.get!string(0))] = true;
 
         data.loadTeleports(world, client);
+        data.loadSpawns(world, client);
         data.loadPlayerInfo(world, client);
         info!"loaded %s item templates, %s creature templates, %s race/class combinations, %s reserved names"(
             data.items.length, data.creatureFamilies.length, data.playerInfo.length, data.reservedNames.length);
@@ -381,15 +409,149 @@ final class WorldData
         return data;
     }
 
-private:
-    /// `ObjectMgr::LoadPlayerInfo`
+    /**
+     * `ObjectMgr::LoadCreatureTemplates`, `LoadCreatures`, `LoadGameObjectTemplate`, `LoadGameObjects`,
+     * and what decides which spawns are in the world: pools (`PoolManager`, one choice per start-up) and
+     * game events (spawns that only exist during an event are left out; no event is running).
+     */
+    void loadSpawns(MySqlConnection world, const ClientData client)
+    {
+        import std.random : Random, unpredictableSeed;
+
+        foreach (row; world.queryAs!(CreatureTemplate, creatureTemplateQuery)())
+            creatureTemplates[row.entry] = row;
+        foreach (row; world.query!("SELECT entry, type, displayId, name, faction, flags, size, data0, data1, data2, "
+            ~ "data3, data4, data5, data6, data7, data8, data9, data10, data11, data12, data13, data14, data15, data16, "
+            ~ "data17, data18, data19, data20, data21, data22, data23 FROM gameobject_template")())
+        {
+            GameObjectTemplate t;
+            t.entry = row.get!uint(0);
+            t.type = row.get!uint(1);
+            t.displayId = row.get!uint(2);
+            t.name = row.get!string(3);
+            t.faction = row.get!uint(4);
+            t.flags = row.get!uint(5);
+            t.size = row.get!float(6);
+            foreach (i; 0 .. 24)
+                t.data[i] = row.get!int(7 + i);
+            gameObjectTemplates[t.entry] = t;
+        }
+        foreach (row; world.query!"SELECT entry, equipentry1, equipentry2, equipentry3 FROM creature_equip_template"())
+            creatureEquipment[row.get!uint(0)] = [row.get!uint(1), row.get!uint(2), row.get!uint(3)];
+        foreach (row; world.query!"SELECT guid, mount, stand_state, sheath_state, emote FROM creature_addon"())
+            creatureAddons[row.get!uint(0)] = CreatureAddon(row.get!uint(1), row.get!uint(2), row.get!uint(3), row.get!uint(4));
+        foreach (row; world.query!"SELECT entry, mount, stand_state, sheath_state, emote FROM creature_template_addon"())
+            creatureTemplateAddons[row.get!uint(0)] = CreatureAddon(row.get!uint(1), row.get!uint(2), row.get!uint(3),
+                row.get!uint(4));
+        foreach (row; world.query!"SELECT Level, Class, BaseHealthExp0, BaseMana FROM creature_template_classlevelstats"())
+            creatureClassStats[classStatsKey(row.get!uint(0), row.get!uint(1))] = CreatureClassStats(row.get!uint(2),
+                row.get!uint(3));
+
+        // Which spawns are out: those of events, and the pool members not chosen this time.
+        bool[uint] eventCreatures, eventObjects;
+        foreach (row; world.query!"SELECT guid FROM game_event_creature WHERE event > 0"())
+            eventCreatures[row.get!uint(0)] = true;
+        foreach (row; world.query!"SELECT guid FROM game_event_gameobject WHERE event > 0"())
+            eventObjects[row.get!uint(0)] = true;
+        auto pools = new PoolChooser;
+        foreach (row; world.query!"SELECT entry, max_limit FROM pool_template"())
+            pools.limits[row.get!uint(0)] = row.get!uint(1);
+        foreach (row; world.query!"SELECT pool_id, mother_pool, chance FROM pool_pool"())
+            pools.add(row.get!uint(1), PoolMember(PoolMember.Kind.pool, row.get!uint(0), row.get!float(2)));
+        foreach (row; world.query!"SELECT guid, pool_entry, chance FROM pool_creature"())
+            pools.add(row.get!uint(1), PoolMember(PoolMember.Kind.creature, row.get!uint(0), row.get!float(2)));
+        foreach (row; world.query!"SELECT guid, pool_entry, chance FROM pool_gameobject"())
+            pools.add(row.get!uint(1), PoolMember(PoolMember.Kind.gameObject, row.get!uint(0), row.get!float(2)));
+        auto rng = Random(unpredictableSeed);
+        pools.choose(rng);
+
+        // Spawn groups (`SpawnGroup`): at most MaxCount members up at once, entries for members without one;
+        // groups that depend on a world state stay down, as no world state is kept yet.
+        auto groups = new SpawnGroups;
+        foreach (row; world.query!"SELECT Id, Type, MaxCount, WorldState, WorldStateExpression FROM spawn_group"())
+            groups.add(row.get!uint(0), row.get!uint(1), row.get!int(2), row.get!int(3) != 0 || row.get!int(4) != 0);
+        foreach (row; world.query!"SELECT Id, Guid FROM spawn_group_spawn"())
+            groups.addSpawn(row.get!uint(0), row.get!uint(1));
+        foreach (row; world.query!"SELECT Id, Entry, Chance FROM spawn_group_entry"())
+            groups.addEntry(row.get!uint(0), row.get!uint(1), row.get!uint(2));
+        groups.choose(rng);
+
+        // Spawns without an entry take one of `creature_spawn_entry`'s, or their group's.
+        uint[][uint] spawnEntries;
+        foreach (row; world.query!"SELECT guid, entry FROM creature_spawn_entry"())
+            spawnEntries[row.get!uint(0)] ~= row.get!uint(1);
+        size_t skipped;
+        foreach (row; world.queryAs!(CreatureSpawn, "SELECT guid, id, map, position_x, position_y, position_z, "
+            ~ "orientation, spawntimesecsmin, spawndist, MovementType FROM creature")())
+        {
+            import std.random : uniform;
+
+            if (row.guid in eventCreatures || !pools.spawns(PoolMember.Kind.creature, row.guid) || row.guid >= 1 << 24
+                || !groups.spawns(0, row.guid))
+                continue;
+            if (row.entry == 0)
+            {
+                if (auto entries = row.guid in spawnEntries)
+                    row.entry = (*entries)[uniform(0, entries.length, rng)];
+                else
+                    row.entry = groups.entryFor(row.guid, rng);
+            }
+            if (row.entry !in creatureTemplates || !client.isValidMapCoord(row.map, row.x, row.y, row.z))
+            {
+                ++skipped;
+                continue;
+            }
+            creatureCells[row.map][cellKeyAt(row.x, row.y)] ~= creatureSpawns.length;
+            creatureSpawns ~= row;
+        }
+        foreach (row; world.query!("SELECT guid, id, map, position_x, position_y, position_z, orientation, rotation0, "
+            ~ "rotation1, rotation2, rotation3, spawntimesecsmin FROM gameobject")())
+        {
+            GameObjectSpawn s;
+            s.guid = row.get!uint(0);
+            s.entry = row.get!uint(1);
+            s.map = row.get!uint(2);
+            s.x = row.get!float(3);
+            s.y = row.get!float(4);
+            s.z = row.get!float(5);
+            s.orientation = row.get!float(6);
+            foreach (i; 0 .. 4)
+                s.rotation[i] = row.get!float(7 + i);
+            s.respawnSeconds = row.get!int(11);
+            if (s.guid in eventObjects || !pools.spawns(PoolMember.Kind.gameObject, s.guid) || s.guid >= 1 << 24
+                || !groups.spawns(1, s.guid))
+                continue;
+            if (s.entry == 0)
+                s.entry = groups.entryFor(s.guid, rng);
+            const t = s.entry in gameObjectTemplates;
+            if (t is null || t.type == GameObjectType.moTransport || !client.isValidMapCoord(s.map, s.x, s.y, s.z))
+            {
+                ++skipped;
+                continue;
+            }
+            gameObjectCells[s.map][cellKeyAt(s.x, s.y)] ~= gameObjectSpawns.length;
+            gameObjectSpawns ~= s;
+        }
+        info!"loaded %s creature and %s game object templates; %s creatures and %s game objects spawn (%s skipped)"(
+            creatureTemplates.length, gameObjectTemplates.length, creatureSpawns.length, gameObjectSpawns.length,
+            skipped);
+    }
+
     /// `ObjectMgr::LoadAreaTriggerTeleports` and `LoadGameTele`, with the same checks.
     void loadTeleports(MySqlConnection world, const ClientData client)
     {
-        foreach (row; world.queryAs!(AreaTriggerTeleport, "SELECT id, IFNULL(name, ''), required_level, "
-            ~ "required_item, required_item2, required_quest_done, target_map, target_position_x, target_position_y, "
-            ~ "target_position_z, target_orientation, IFNULL(status_failed_text, ''), condition_id "
-            ~ "FROM areatrigger_teleport")())
+        setTeleports(world.queryAs!(AreaTriggerTeleport, areaTriggerTeleportQuery)(),
+            world.queryAs!(GameTele, gameTeleQuery)(), client);
+        foreach (row; world.query!"SELECT id FROM areatrigger_tavern"())
+            taverns[row.get!uint(0)] = true;
+    }
+
+    /// Replaces the area trigger teleports and `.tele` places with those of these rows that are valid.
+    void setTeleports(AreaTriggerTeleport[] triggers, GameTele[] places, const ClientData client)
+    {
+        areaTriggers = null;
+        teleports = null;
+        foreach (row; triggers)
         {
             if (client.areaTriggers.lookup(row.id) is null)
                 warning!"areatrigger_teleport: trigger %s is not in AreaTrigger.dbc"(row.id);
@@ -402,8 +564,7 @@ private:
             else
                 areaTriggers[row.id] = row;
         }
-        foreach (row; world.queryAs!(GameTele, "SELECT position_x, position_y, position_z, orientation, map, name "
-            ~ "FROM game_tele ORDER BY id")())
+        foreach (row; places)
         {
             if (client.isValidMapCoord(row.map, row.x, row.y, row.z, row.orientation))
                 teleports ~= row;
@@ -413,6 +574,8 @@ private:
         info!"loaded %s area trigger teleports and %s teleport locations"(areaTriggers.length, teleports.length);
     }
 
+private:
+    /// `ObjectMgr::LoadPlayerInfo`
     void loadPlayerInfo(MySqlConnection world, const ClientData client)
     {
         static bool playable(uint race, uint classId)
@@ -623,4 +786,239 @@ unittest
     assert(toLowerName("ThRALL") == "thrall"d);
     assert(wcharToUpper('ä') == 'Ä' && wcharToLower('Ä') == 'ä');
     assert(wcharToUpper('ж') == 'Ж' && wcharToLower('Ё') == 'ё');
+}
+
+/// One member of a pool: a creature, a game object, or another pool.
+struct PoolMember
+{
+    enum Kind
+    {
+        creature,
+        gameObject,
+        pool,
+    }
+
+    Kind kind;
+    uint id;
+    float chance = 0; /// percent; 0 for "as likely as the others"
+}
+
+/**
+ * `PoolManager` at start-up: each pool spawns at most its `max_limit` members, chosen at random
+ * (those with a chance by their chance, the others evenly), and a pool inside another one only if
+ * that one chose it. Spawns that are in no pool always spawn.
+ */
+final class PoolChooser
+{
+    uint[uint] limits;                 /// `pool_template.max_limit`, by pool
+    private PoolMember[][uint] members; // by pool
+    private bool[uint] childPools;
+    private bool[uint][PoolMember.Kind] pooled, chosen;
+
+    /// Adds a member to a pool.
+    void add(uint pool, PoolMember member)
+    {
+        members[pool] ~= member;
+        pooled[member.kind][member.id] = true;
+        if (member.kind == PoolMember.Kind.pool)
+            childPools[member.id] = true;
+    }
+
+    /// Chooses the members of every top-level pool, and of the pools those choose.
+    void choose(ref Random rng)
+    {
+        foreach (pool, _; members)
+            if (pool !in childPools)
+                choosePool(pool, rng);
+    }
+
+    /// Whether a spawn is in the world: in no pool, or chosen.
+    bool spawns(PoolMember.Kind kind, uint id) const
+    {
+        const inPool = kind in pooled;
+        if (inPool is null || id !in *inPool)
+            return true;
+        const picked = kind in chosen;
+        return picked !is null && (id in *picked) !is null;
+    }
+
+private:
+    void choosePool(uint pool, ref Random rng)
+    {
+        import std.random : randomShuffle, uniform01;
+
+        auto candidates = members.get(pool, null).dup;
+        const limit = limits.get(pool, 1);
+        size_t picked;
+        // Members with a chance get one roll among them; the rest share what remains, evenly.
+        float roll = uniform01(rng) * 100;
+        foreach (ref member; candidates)
+            if (member.chance > 0 && picked < limit)
+            {
+                if (roll < member.chance)
+                {
+                    pick(member, rng);
+                    ++picked;
+                    break;
+                }
+                roll -= member.chance;
+            }
+        randomShuffle(candidates, rng);
+        foreach (ref member; candidates)
+        {
+            if (picked >= limit)
+                break;
+            if (member.chance > 0)
+                continue;
+            pick(member, rng);
+            ++picked;
+        }
+    }
+
+    void pick(const PoolMember member, ref Random rng)
+    {
+        chosen[member.kind][member.id] = true;
+        if (member.kind == PoolMember.Kind.pool)
+            choosePool(member.id, rng);
+    }
+}
+
+unittest
+{
+    auto pools = new PoolChooser;
+    pools.limits[1] = 1;
+    pools.limits[2] = 2;
+    foreach (guid; [10u, 11, 12])
+        pools.add(1, PoolMember(PoolMember.Kind.gameObject, guid));
+    pools.add(3, PoolMember(PoolMember.Kind.pool, 2));
+    pools.limits[3] = 0;
+    foreach (guid; [20u, 21, 22])
+        pools.add(2, PoolMember(PoolMember.Kind.creature, guid));
+    auto rng = Random(7);
+    pools.choose(rng);
+    size_t spawned;
+    foreach (guid; [10u, 11, 12])
+        spawned += pools.spawns(PoolMember.Kind.gameObject, guid);
+    assert(spawned == 1, "one of the three");
+    assert(!pools.spawns(PoolMember.Kind.creature, 20) && !pools.spawns(PoolMember.Kind.creature, 21),
+        "pool 3 may spawn no member, so pool 2 is not chosen");
+    assert(pools.spawns(PoolMember.Kind.creature, 99), "not in a pool");
+}
+
+/**
+ * CMaNGOS's spawn groups (`spawn_group`, `spawn_group_spawn`, `spawn_group_entry`), as far as a
+ * world without world states needs them: which members are up, and what a member without its own
+ * entry is.
+ */
+final class SpawnGroups
+{
+    private static struct Group
+    {
+        uint type;          // 0 creatures, 1 game objects
+        int maxCount;       // 0: every member
+        bool conditional;   // depends on a world state
+        uint[] guids;
+        uint[] entries;
+        uint[] chances;
+    }
+
+    private Group[uint] groups;
+    private uint[uint][2] groupOf;     // type -> spawn guid -> group
+    private bool[uint][2] active;      // type -> spawn guids that are up
+
+    ///
+    void add(uint id, uint type, int maxCount, bool conditional)
+    {
+        groups[id] = Group(type, maxCount, conditional);
+    }
+
+    ///
+    void addSpawn(uint id, uint guid)
+    {
+        if (auto group = id in groups)
+            if (group.type < 2)
+            {
+                group.guids ~= guid;
+                groupOf[group.type][guid] = id;
+            }
+    }
+
+    ///
+    void addEntry(uint id, uint entry, uint chance)
+    {
+        if (auto group = id in groups)
+        {
+            group.entries ~= entry;
+            group.chances ~= chance;
+        }
+    }
+
+    /// Chooses which members of each group are up.
+    void choose(ref Random rng)
+    {
+        import std.random : randomShuffle;
+
+        foreach (ref group; groups)
+        {
+            if (group.conditional || group.type >= 2)
+                continue;
+            auto members = group.guids.dup;
+            randomShuffle(members, rng);
+            const count = group.maxCount > 0 && group.maxCount < members.length ? group.maxCount : members.length;
+            foreach (guid; members[0 .. count])
+                active[group.type][guid] = true;
+        }
+    }
+
+    /// Whether a spawn is up: in no group, or chosen.
+    bool spawns(uint type, uint guid) const
+    {
+        return guid !in groupOf[type] || (guid in active[type]) !is null;
+    }
+
+    /// An entry for a member without one: by the entries' chances, or evenly; 0 if the group has none.
+    uint entryFor(uint guid, ref Random rng) const
+    {
+        import std.random : uniform;
+
+        foreach (type; 0 .. 2)
+            if (const id = guid in groupOf[type])
+            {
+                const group = groups[*id];
+                if (group.entries.length == 0)
+                    return 0;
+                uint total;
+                foreach (chance; group.chances)
+                    total += chance;
+                if (total == 0)
+                    return group.entries[uniform(0, group.entries.length, rng)];
+                auto roll = uniform(0, total, rng);
+                foreach (i, chance; group.chances)
+                {
+                    if (roll < chance)
+                        return group.entries[i];
+                    roll -= chance;
+                }
+                return group.entries[$ - 1];
+            }
+        return 0;
+    }
+}
+
+unittest
+{
+    auto groups = new SpawnGroups;
+    groups.add(1, 0, 1, false);
+    groups.add(2, 0, 0, true);
+    foreach (guid; [5u, 6, 7])
+        groups.addSpawn(1, guid);
+    groups.addSpawn(2, 9);
+    groups.addEntry(1, 100, 0);
+    groups.addEntry(1, 101, 0);
+    auto rng = Random(3);
+    groups.choose(rng);
+    assert(groups.spawns(0, 5) + groups.spawns(0, 6) + groups.spawns(0, 7) == 1, "MaxCount 1");
+    assert(!groups.spawns(0, 9) && groups.spawns(0, 42) && groups.spawns(1, 5));
+    const entry = groups.entryFor(5, rng);
+    assert(entry == 100 || entry == 101);
 }

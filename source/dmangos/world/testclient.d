@@ -160,6 +160,7 @@ WorldContext newCreationContext(MemoryWorldDatabase db, void delegate(ref WorldC
 {
     auto client = testClientData();
     WorldConfig config;
+    config.instantLogout = 0; // everyone logs out at once, unless a test sets the 20-second wait up
     if (adjust)
         adjust(config);
     setLogLevel(LogLevel.error);
@@ -182,18 +183,21 @@ ubyte[] deleteCharacter(ref TestClient client, ulong guid)
 }
 
 /**
- * A character in the world: its account (named after it, upper case, with id `guid + 100`) and the
- * character are added to `db`, then the client authenticates and logs in. The login packets are read.
+ * A character in the world: its account (named after it, upper case) is created in the login
+ * database and `db`, the character in `db`; then the client authenticates and logs in. The login
+ * packets are read.
  */
 TestClient loggedIn(WorldContext context, MemoryWorldDatabase db, uint guid, string name, Position position,
     AccountLevel level = AccountLevel.player, ubyte race = raceHuman, uint map = 0, uint characterLevel = 1)
 {
     import std.uni : toUpper;
 
+    // The account is created in the login database too, so GM commands find it under the same id.
     WorldAccount account = db.accounts["PLAYER"];
-    account.id = guid + 100;
     account.username = name.toUpper;
     account.level = level;
+    const existing = context.accounts.findAccount(account.username);
+    account.id = existing.isNull ? context.accounts.createAccount(account.username, "test", level).id : existing.get.id;
     db.accounts[account.username] = account;
     CharacterData c;
     c.guid = guid;
@@ -242,4 +246,24 @@ const(ubyte)[] bodyOf(const(ServerPacketRead)[] packets, Opcode opcode)
         if (p.opcode == opcode)
             return p.body_;
     return null;
+}
+
+/// Types a chat command (or anything said), as `/say text`.
+void say(ref TestClient client, string text)
+{
+    client.write(Opcode.CMSG_MESSAGECHAT, chatBody(ChatType.CHAT_MSG_SAY, text));
+}
+
+/// The texts of the system messages among some packets.
+string[] systemMessages(const(ServerPacketRead)[] packets)
+{
+    string[] texts;
+    foreach (p; packets)
+        if (p.opcode == Opcode.SMSG_MESSAGECHAT && p.body_[0] == ChatType.CHAT_MSG_SYSTEM)
+        {
+            auto reader = ByteReader(p.body_[13 .. $]);
+            const length = reader.read!uint;
+            texts ~= cast(string) p.body_[17 .. 17 + length - 1].idup;
+        }
+    return texts;
 }
