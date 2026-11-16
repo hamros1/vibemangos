@@ -95,26 +95,23 @@ ubyte[] buildAddonInfo(const(ClientAddon)[] addons)
     return writer.release();
 }
 
-version (unittest)
+/// Builds an addon block as the client does: entry list, zlib-compressed, size first (tests, the load generator).
+ubyte[] makeAddonBlock(const(ClientAddon)[] addons)
 {
-    /// Builds an addon block as the client does: entry list, zlib-compressed, size first.
-    ubyte[] makeAddonBlock(const(ClientAddon)[] addons)
-    {
-        import std.zlib : compress;
+    import std.zlib : compress;
 
-        ByteWriter entries;
-        foreach (ref addon; addons)
-        {
-            entries.putCString(addon.name);
-            entries.put(addon.flags);
-            entries.put(addon.crc);
-            entries.put(addon.unknown);
-        }
-        ByteWriter block;
-        block.put(cast(uint) entries.length);
-        block.putBytes(cast(const(ubyte)[]) compress(entries.data));
-        return block.release();
+    ByteWriter entries;
+    foreach (ref addon; addons)
+    {
+        entries.putCString(addon.name);
+        entries.put(addon.flags);
+        entries.put(addon.crc);
+        entries.put(addon.unknown);
     }
+    ByteWriter block;
+    block.put(cast(uint) entries.length);
+    block.putBytes(cast(const(ubyte)[]) compress(entries.data));
+    return block.release();
 }
 
 unittest

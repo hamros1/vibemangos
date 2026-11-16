@@ -5,8 +5,9 @@
  * built from the two, as `Creature::Create`, `InitEntry`, `UpdateEntry` and
  * `SelectLevel` build it.
  *
- * Creatures stand where they spawned for now: movement, AI, combat, death
- * and respawning come with the milestones that need them.
+ * A creature moves as its movement generator (`dmangos.world.motion`) has it
+ * move, as the map ticks; AI, combat, death and respawning come with the
+ * milestones that need them.
  */
 module dmangos.world.creature;
 
@@ -14,8 +15,12 @@ import std.algorithm.comparison : max, min;
 import std.random : Random, uniform;
 
 import dmangos.world.clientdata : ClientData;
-import dmangos.world.map : MapObject;
-import dmangos.world.movement : baseMoveSpeed, MovementInfo, MoveType, Position;
+import dmangos.world.map : Moving;
+import dmangos.world.replication : Replicable;
+import dmangos.world.motion : followSpline, IdleMovement, MotionWorld, MovementGenerator;
+import dmangos.world.movement : baseMoveSpeed, MovementFlags, MovementInfo, MoveType, Position;
+import dmangos.bytes : ByteReader, ByteWriter;
+import dmangos.world.spline : MoveSpline;
 import dmangos.world.objects;
 import dmangos.world.updatefields;
 
@@ -140,7 +145,11 @@ struct CreatureParts
     float boundingRadius = 0.5f;     /// from `creature_model_info`
     float combatReach = 1.5f;        /// ditto
     ubyte gender;                    /// ditto
+    float collisionHeight = 0;       /// the model's (`CreatureModelData.dbc`), before scaling; 0 if unknown
 }
+
+/// `DEFAULT_COLLISION_HEIGHT`
+enum float defaultCollisionHeight = 2.03128f;
 
 private enum : uint
 {
@@ -149,7 +158,7 @@ private enum : uint
 }
 
 /// See the module documentation.
-final class Creature : MapObject
+final class Creature : Moving, Replicable
 {
     immutable ulong guid_;
     const(CreatureTemplate)* template_;
@@ -157,6 +166,12 @@ final class Creature : MapObject
     MovementInfo movement;
     UpdateValues values;
     float[MoveType.max + 1] speeds = baseMoveSpeed;
+    float collisionHeight = defaultCollisionHeight; /// `Unit::GetCollisionHeight`
+
+    MoveSpline spline;              /// `movespline`: the walk under way, if not finalized
+    int positionTimer;              /// milliseconds until the position follows the walk
+    MovementGenerator generator;      /// how it moves on its own; idle unless set before its first tick
+    private bool motionStarted;
 
     /**
      * `Creature::Create` from a spawn: a level between the template's, a model among its models,
@@ -170,10 +185,15 @@ final class Creature : MapObject
         this.template_ = template_;
         guid_ = makeGuid(HighGuid.unit, spawn.entry, spawn.guid);
         movement.position = Position(spawn.x, spawn.y, spawn.z, spawn.orientation);
+        movement.flags = MovementFlags.walkMode; // SetWalk(true, true)
+        generator = new IdleMovement;
         speeds[MoveType.walk] = baseMoveSpeed[MoveType.walk] * template_.speedWalk;
         speeds[MoveType.run] = baseMoveSpeed[MoveType.run] * template_.speedRun;
         values = UpdateValues(TypeId.unit);
         setFields(display, level, parts, client);
+        // Unit::GetCollisionHeight: the model's, scaled; DEFAULT_COLLISION_HEIGHT if it has none.
+        const height = parts.collisionHeight * values.get!OBJECT_FIELD_SCALE_X;
+        collisionHeight = height == 0 ? defaultCollisionHeight : height;
         values.clearChanges();
     }
 
@@ -252,17 +272,110 @@ final class Creature : MapObject
         return movement.position;
     }
 
-    /// `Object::BuildCreateUpdateBlockForPlayer`: a unit with its movement and public fields.
+    /**
+     * `Creature::Update` for movement: follows the walk under way, then lets the movement generator
+     * decide, starting it on the first tick.
+     */
+    void tick(MotionWorld world, int diff)
+    {
+        if (!motionStarted)
+        {
+            motionStarted = true;
+            generator.initialize(this, world);
+        }
+        followSpline(this, diff);
+        generator.update(this, world, diff);
+    }
+
+    /// `Object::BuildCreateUpdateBlockForPlayer`: a unit with its movement, its walk and public fields.
     UpdateData appearance(uint serverTime) const
     {
         UpdateData update;
+        const block = motion(serverTime);
+        update.addCreate(UpdateType.createObject, guid_, block, values, seenByEveryone);
+        return update;
+    }
+
+    /// See `Moving.resting`: idle, standing, and started (a creature needs its first tick).
+    @property bool resting() const
+    {
+        import dmangos.world.motion : IdleMovement;
+
+        return motionStarted && spline.finalized && cast(const IdleMovement) generator !is null;
+    }
+
+    /// See `Replicable.motion`: living, with its speeds and the walk under way.
+    MovementBlock motion(uint serverTime) const
+    {
         MovementBlock block;
         block.flags = UpdateFlags.all | UpdateFlags.living | UpdateFlags.hasPosition;
         block.info = movement;
         block.info.time = serverTime;
         block.speeds = speeds;
-        update.addCreate(UpdateType.createObject, guid_, block, values, seenByEveryone);
-        return update;
+        block.spline = &spline;
+        return block;
+    }
+
+    /**
+     * Writes everything about the creature that changes once it exists, for its next owner to go on
+     * with (docs/CLUSTER.md, phase 4): every field, its movement and walk, its movement generator's
+     * state and its vendor stock.
+     */
+    void saveState(ref ByteWriter w) const
+    {
+        w.put(cast(ushort) values.length);
+        foreach (slot; 0 .. values.length)
+            w.put(values[slot]);
+        movement.write(w);
+        foreach (speed; speeds)
+            w.put(speed);
+        spline.writeExact(w);
+        w.put(positionTimer);
+        w.put(motionStarted);
+        w.put(cast(ubyte) generator.type);
+        ByteWriter state;
+        generator.save(state);
+        w.put(cast(ushort) state.length);
+        w.putBytes(state.data);
+        w.put(cast(ushort) vendorStock.length);
+        foreach (item, stock; vendorStock)
+        {
+            w.put(item);
+            w.put(stock.count);
+            w.put(stock.lastIncrement);
+        }
+    }
+
+    /**
+     * Reads what `saveState` wrote into a creature made anew from the same spawn (whose generator was
+     * chosen as for any spawn): it is then the creature its last owner had, where it had it.
+     */
+    void loadState(ref ByteReader r)
+    {
+        const count = r.read!ushort;
+        foreach (slot; 0 .. count)
+        {
+            const value = r.read!uint;
+            if (slot < values.length)
+                values.setSlot(slot, value);
+        }
+        values.clearChanges();
+        movement = MovementInfo.read(r);
+        foreach (ref speed; speeds)
+            speed = r.read!float;
+        spline = MoveSpline.readExact(r);
+        positionTimer = r.read!int;
+        motionStarted = r.read!bool;
+        const type = r.read!ubyte;
+        auto state = ByteReader(r.readBytes(r.read!ushort));
+        if (type == generator.type)
+            generator.load(state);
+        vendorStock = null;
+        foreach (_; 0 .. r.read!ushort)
+        {
+            const item = r.read!uint;
+            vendorStock[item] = VendorStock(r.read!uint, r.read!long);
+        }
     }
 
 private:

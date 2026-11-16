@@ -1,0 +1,183 @@
+# Benchmarks
+
+Measurements of the standalone world server under load: the baseline the cluster is compared
+against (docs/CLUSTER.md, phase 0), and the guide to where performance work goes.
+
+## Method
+
+* **Load:** `bin/loadgen` (`dub build -c loadgen`), many headless 1.12 clients in one process. Each
+  logs in with a session key the generator puts in the login database (the login server stays out
+  of the measurement), enters the world as a human warrior, and plays like a player: runs at
+  6.5 yards a second between points with a heartbeat every 500 ms, stops for up to 3 seconds, says
+  something on average once a minute and pings every 30 seconds. It reads and decrypts everything the
+  server sends.
+* **Scenarios:** `crowd` (everyone within 30 yards of Goldshire, running within 15 yards of where they
+  entered), `spread` (each at a random creature spawn of the two continents, running within 30
+  yards), `travel` (each at a random creature spawn, running 300 yards out and back), `idle` (as
+  spread, standing still, no chat). Logins ramp at 50 a second; measuring starts 10 seconds after the
+  last one and lasts 60 seconds.
+* **Server side:** the server's own `metrics:` lines every 5 seconds (`metrics_interval_seconds`):
+  tick time, **event loop busy time** (packets, tick and sending: the tick alone leaves out the
+  packet handling, which is most of the work in a crowd), GC collections, pauses and bytes allocated,
+  players and objects. CPU time and memory from `/proc`. `tools/bench.sh` runs one scenario against
+  a freshly started server.
+* **Machine:** Intel i9-13900K (32 threads), 31 GiB, Linux 6.14; server, MariaDB and load generator on
+  the same machine. The server's loop is single-threaded, so 100% (one core) is its budget; the D GC
+  marks with several threads, which is why CPU can exceed 100%.
+* **Caveat: variance.** Two identical runs of a 500-player crowd gave the same allocation
+  (2.48 and 2.49 MB a tick) and loop busy time (13.5% and 14.3%), but CPU of 47% and 63%, GC pauses
+  of 664 and 951 ms and a ping p99 of 7 and 51 ms: those depend on when collections fall. Compare
+  allocation and busy time; treat CPU, pauses and tail latency within about a third as noise. The
+  load generator stayed under 60% of a core in every run, so it was not the bottleneck.
+
+## Baseline (before any optimization)
+
+| Scenario | Bots | Loop busy | Tick avg | Ping p99 | CPU | Allocated per tick | GC per minute | Worst loop iteration |
+|---|---|---|---|---|---|---|---|---|
+| crowd | 100 | 1.2% | 0.03 ms | 0.66 ms | 3% | 0.20 MB | 1 collection, 41 ms paused | 42 ms |
+| crowd | 250 | 4.5% | 0.07 ms | 2.31 ms | 25% | 1.16 MB | 8, 401 ms | 54 ms |
+| crowd | 500 | 15.0% | 0.26 ms | 13.5 ms | 74% | 4.97 MB | 27, 1150 ms | 52 ms |
+| crowd | 900 | 48.9% | 2.6 ms | 3372 ms | 197% | 16.3 MB | 69, 2970 ms | 81 ms (3.7 s during logins) |
+| spread | 500 | 8.2% | 3.42 ms | 1.03 ms | 9% | 0.15 MB | none | 6 ms |
+| travel | 500 | 10.4% | 4.34 ms | 1.61 ms | 15% | 0.19 MB | 1, 75 ms | 78 ms |
+| idle | 500 | 6.3% | 2.96 ms | 1.27 ms | 7% | 0.07 MB | none | 5 ms |
+
+The idle run had 23,116 creatures and game objects loaded; memory was 360 MiB with a crowd and
+565 to 636 MiB with players spread out (cells loaded across both continents). Logins took 5 to
+20 ms (median) until the server was overloaded.
+
+## What the baseline shows
+
+1. **Crowds cost by the square of their size, and the garbage collector pays most of it.** Every
+   movement packet is relayed to everyone who sees the mover, so 500 players in one place mean about
+   500,000 deliveries a second. Each delivery allocated a framed copy of the packet and was copied
+   twice more on its way to the socket: 5 MB allocated per tick at 500 players, 27 collections a
+   minute, and a process using 74% of a core while its loop was busy only 15% of the time. At 900 the
+   server falls behind (ping p99 of seconds) and the backlog makes it worse.
+2. **Players spread out cost by the creatures around them.** Every cell a player has been near stays
+   loaded and its creatures tick forever (cells are never unloaded yet): 500 players loaded 23,000
+   objects, which take 3 ms of every 50 ms tick, about 130 ns each. This is the cost spatial
+   partitioning divides between nodes directly; unloading idle cells would cut it on one node too.
+3. **The worst latency is a GC pause.** Every scenario with collections has a worst loop iteration
+   of 40 to 90 ms, the length of one collection. The heap is 360 to 640 MiB, mostly static data
+   (world, client and terrain data) that every collection scans; fewer collections help, and so would
+   keeping static data out of the scanned heap.
+4. **Logins into a crowd stall the server.** With 900 players logging into one place, one loop
+   iteration took 3.7 seconds, all of it receiving and handling packets, while no single packet took
+   over 200 ms and the tick took nothing. Each login builds and compresses the newcomer's create block
+   once per player who sees it, and sends the newcomer one compressed packet per player already
+   there: about 1,800 zlib compressions per login in a crowd of 900. (Confirmed below.)
+5. **The event loop is capped at 1000 connections** (`max_connections`), because it uses `select`,
+   which also scans every socket on every iteration.
+6. **The speed check misfires under overload:** queued movement packets arrive together, so a
+   player seems to have covered 16 yards in no time and is put back.
+
+## First optimization: framing in place
+
+From finding 1, the delivery path: `appendPacket` frames a packet straight onto the receiving
+session's output (no temporary array and one copy instead of three), the server adopts a session's
+output array as its send buffer instead of copying it, and `NetSession.takeOutput` now hands the
+array over (cluster links included).
+
+| Crowd | Allocated per tick | GC per minute | CPU | Ping p99 | Loop busy |
+|---|---|---|---|---|---|
+| 250 | 1.16 → 0.61 MB | 8 → 4 collections, 401 → 191 ms | 25% → 14% | 2.3 → 3.1 ms | 4.5% → 4.4% |
+| 500 | 4.97 → 2.49 MB | 27 → 14, 1150 → 671 ms | 74% → 48% | 13.5 → 10.9 ms | 15.0% → 13.9% |
+| 900 | 16.3 → 7.5 MB | 69 → 36, 2970 → 1726 ms | 197% → 131% | overloaded either way | 48.9% → 44.4% |
+
+Allocation and collections halved; the 3.7 s login stall did not change, so allocation was not its
+cause (finding 4).
+
+## Second optimization: logins into crowds
+
+Profiled with `tools/gdb-sample.py` (300 samples at 10 Hz while 900 players logged into one
+place; `perf` is not available on the test machine). Of the busy samples, 57% were in
+`Map.updateVisibility` called from the login handler: 30% compressing (zlib's `deflate_slow`) and
+20% building create blocks (`appearanceFor`, `UpdateValues.writeCreate`). Relaying movement was
+26%.
+
+The fix, in `Map.updateVisibility`:
+
+* A player's create block comes in two versions only, a stranger's view and a group member's
+  (`Inhabitant.appearanceKind`), so it is built and compressed once per version and the same bytes go
+  to everyone who gets that version, instead of once per viewer.
+* The blocks a newcomer receives go out together, as many as fit in 32 KB before compression
+  (CMaNGOS's `MAX_NETCLIENT_PACKET_SIZE` less its reserve), instead of one packet each.
+* Update packets are compressed at zlib level 1, as CMaNGOS does by default (`Compression = 1`), not
+  zlib's default 6. `compression` in the configuration sets it.
+
+| Crowd of 900 | Before | After |
+|---|---|---|
+| Login, median / max | 92 ms / 7.2 s | 16 ms / 115 ms |
+| Ping p99 / max | 3.4 s / 4.6 s | 65 ms / 78 ms |
+| Worst loop iteration | 3.8 s (during the logins) | 75 ms (a GC pause) |
+| Loop busy, steady state | 44.4% | 44.9% |
+| Allocated per tick | 7.5 MB | 7.4 MB |
+
+The stall is gone: no iteration was slow enough to be logged. The steady state did not change, as
+expected: the crowd's standing cost is relaying movement, which this did not touch. At 250 and 500
+players the steady-state figures were the same as before within the variance above.
+
+## Next, in order of what the numbers say
+
+1. **The rest of the crowd allocation** (2.5 MB a tick at 500): serialized bodies per broadcast, the
+   output arrays each session grows anew every iteration (a buffer handed back after sending would
+   end that), and movement handling. Relaying movement is now the largest cost in a crowd.
+2. **GC pauses:** fewer collections from the above, then static data allocated outside the scanned
+   heap, and the collector's options (`--DRT-gcopt`: initial heap size, mark threads), measured.
+3. **Unloading idle cells** (CMaNGOS unloads grids nobody has been near for a while).
+4. **`epoll` instead of `select`,** to go past 1000 connections.
+
+## After phase 2 (cluster ownership)
+
+Standalone, idle with 500 players: tick 3.12 ms (2.96 before), loop busy 6.6% (6.3%), 53 KB allocated
+a tick (67 KB): the same within the variance, and one stray allocation found on the way (a copy of the
+online players' table every tick, from the slow-tick report, now gone).
+
+## Phase 3a: replicas (two nodes, 500 players spread out, all on the coordinator)
+
+| | Tick | Loop busy | Objects | Allocated per tick |
+|---|---|---|---|---|
+| Standalone | 3.42 to 3.53 ms | 8.2 to 8.6% | about 26,500 | 149 to 188 KB |
+| Coordinator | 3.51 ms | 9.7% | 24,447 (about half replicas) | 166 KB |
+| Node 2 (no players) | 1.94 ms | | 13,600 | |
+
+Every object costs about 143 ns a tick on either node, creature or replica: the cost is keeping
+objects (iterating the movers, which are in an associative array, and checking positions), not their
+AI. With every player on one node, the cluster moves AI but not bookkeeping, and total CPU goes up.
+Load divides when players are on different nodes (phase 3b). Next here: movers in an array, and
+replicas that stand still left out of the tick.
+
+## Fewer objects in the tick (array of movers, resting objects left out)
+
+| 500 players, standalone | Tick before → after | Loop busy before → after |
+|---|---|---|
+| idle | 2.96 → 2.27 ms | 6.3 → 4.9% |
+| spread | 3.42–3.53 → 2.66 ms | 8.2–8.6 → 6.7% |
+
+Creatures that wander or walk paths (two thirds of the spawns) still tick, about 150 ns each; per-object
+update timers (CMaNGOS's `SetNextUpdateTime`) would be the next step.
+
+## Phase 3b: players divided between two nodes
+
+500 players spread over the continents, 250 connected to each node:
+
+| | Players | Tick | Loop busy | Objects (own and replicas) | CPU |
+|---|---|---|---|---|---|
+| Standalone | 500 | 2.66 ms | 6.7% | about 26,000 | about 12.7% |
+| Coordinator | 250 | 1.55 ms | 4.6% | 18,639 | 4.9% |
+| Node 2 | 250 | 1.81 ms | 4.9% | 20,040 | 8.7% |
+
+Each node's tick fell by a third or more; not by half, because players dropped anywhere on two
+continents see much the same objects, so each node still holds three quarters as many. The two
+together use the CPU one server does. The less two nodes' players overlap, the closer each comes to
+half; a cluster's gain is in carrying more players than one machine can, not in using less CPU.
+
+## For the cluster
+
+* In a crowd the expensive part is the fan-out to sockets, which happens on the node that holds each
+  client's connection (its home, docs/CLUSTER.md). Spreading connections over nodes spreads that
+  cost, but only if each node receives an entity's update **once** and fans it out to its own
+  clients: traffic between nodes must be per (entity, node), never per (entity, client).
+* Spread-out players are where partitioning pays most: creature ticking divides cleanly by region.
+* Every comparison of the cluster against these numbers uses the same scenarios and `tools/bench.sh`.

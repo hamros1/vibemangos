@@ -219,6 +219,10 @@ recipient, because each client's header encryption is different.
   When that starts, each gets the other's create block, built by `Player.createForOthers`: public
   fields only, and health in percent (`Visibility.FogOfWar.Health` 0). When it ends, each gets an
   out-of-range block. When one leaves the world, the others get `SMSG_DESTROY_OBJECT`.
+* **Arriving.** A player's create block exists in two versions, a stranger's view and a group
+  member's (`Inhabitant.appearanceKind`); each is built and compressed once per visibility update and
+  the same bytes go to everyone who gets it. The blocks a newcomer receives go out batched, up to
+  32 KB per packet before compression, at zlib level 1 (`compression`), as CMaNGOS sends them.
 * **Relocation.** Visibility is recomputed after a player has moved
   `visibility_relocation_lower_limit` (10) yards since the last time. Cells update on every move.
 * **Broadcasts.** `sendToWatchers` reaches everyone who sees a player: its movement (the same
@@ -256,6 +260,36 @@ the context, which picks a level and model and looks up equipment, addon and mod
 are `MapObject`s: `Creature` (`creature.d`) and `GameObject` (`gameobject.d`), each with its own
 update fields and create block. A player's client is told about the objects within the visibility
 distance, a few dozen create blocks per packet, and they go out of range like players.
+
+### Creature movement
+
+CMaNGOS's split, without its class hierarchy of units:
+
+* **The spline** (`spline.d`, `Movement/MoveSpline.cpp`): `MoveSpline` is a walk along points at a
+  speed, with the time of each point (CMaNGOS's rounding kept, so durations match to the
+  millisecond), followed by `update(ms)` and asked `position`. `monsterMove` and `monsterStop`
+  build `SMSG_MONSTER_MOVE` (the destination, then the points before it as packed offsets), and
+  `writeSplineCreate` the walk so far for a create block (`PacketBuilder::WriteCreate`). Only linear
+  paths: catmull-rom, cyclic and falling splines come with flying and knockbacks.
+* **Launching** (`motion.d`: `launch`, `stopMoving`, `interruptMoving`, `followSpline`): as
+  `MoveSplineInit::Launch`, the walk starts where the creature is (or where its current walk has got
+  to), sets the walk mode, spline and forward flags, and goes to `sendToObservers`. The creature's
+  position follows the walk every 400 ms and at the end (`Unit::UpdateSplineMovement`).
+* **Generators** (`MovementGenerator`): chosen per spawn when the cell loads (`selectMovement`, from
+  `creature.MovementType` as `ObjectMgr::LoadCreatures` corrects it), started on the creature's first
+  tick. `WanderMovement` and `WaypointMovement` are ports of `WanderMovementGenerator` and
+  `WaypointMovementGenerator` (with `LinearWPMovementGenerator`'s turns), timers and all: a waypoint
+  walk takes in the points after the next until it lasts six seconds, and is sent again 1.5 s before
+  its end. `WaypointStore` holds the paths (`WaypointManager`).
+* **The map** ticks every `Moving` object (`Map.update`, with the time in whole milliseconds). One
+  that moved changes cell, and after `visibility_relocation_lower_limit` yards the players it came
+  near get its create block and those it left an out-of-range block (`updateObjectVisibility`). The
+  map is the generators' `MotionWorld`: heights (`Map::GetHeight`, `GetWaterOrGroundLevel`) from its
+  `Terrain`, packets, and random numbers.
+
+Without movement maps, `PathFinder` comes down to a straight line; CMaNGOS then leaves a wander's
+end at the spawn point's height unless `PathFinder.NormalizeZ` is on, which would leave creatures
+walking through hills, so here it is always put on the ground (`allowedPositionZ`).
 
 ## Talking to NPCs
 

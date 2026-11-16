@@ -1,7 +1,7 @@
 /// State shared by every session on a world server.
 module dmangos.world.context;
 
-import core.time : Duration, MonoTime;
+import core.time : Duration, MonoTime, msecs;
 
 import std.path : buildPath;
 import std.random : Random, unpredictableSeed;
@@ -9,6 +9,12 @@ import std.typecons : Nullable;
 
 import dmangos.auth.accounts : AccountLevel;
 import dmangos.auth.database : LoginDatabase, MemoryLoginDatabase;
+import dmangos.cluster.node : SessionHandler;
+import dmangos.cluster.ownership : IdCounters, IdKind, IdPool;
+import dmangos.cluster.regions : Region;
+import dmangos.world.creature : Creature, CreatureSpawn;
+import dmangos.world.migration : Migrant;
+import dmangos.world.replication : Replicator;
 import dmangos.world.channel : ChannelManagers, Channels, ChannelSettings;
 import dmangos.world.characterdb : DeleteOptions, GuidCounters;
 import dmangos.world.clientdata : ClientData;
@@ -28,6 +34,9 @@ interface Kickable
     /// Closes the session.
     void kick(string reason);
 
+    /// The session may enter the world (at once standalone; in a cluster once the account is its: phase 3b).
+    void admit();
+
     /// The client's address.
     @property string address() const;
 }
@@ -45,7 +54,7 @@ struct ShutdownTimer
  *
  * The server runs a single-threaded event loop, so none of this needs locking.
  */
-final class WorldContext : Directory
+final class WorldContext : Directory, IdCounters, SessionHandler
 {
     WorldConfig config;
     WorldDatabase database;
@@ -81,6 +90,27 @@ final class WorldContext : Directory
 
     /// Set when the server stopped for a restart.
     bool restartRequested;
+
+    /**
+     * In a cluster, whether this node owns a cell of a map (docs/CLUSTER.md, phase 2); null when
+     * standalone, where every cell is this server's.
+     */
+    bool delegate(uint map, ulong cell) ownsCell;
+
+    /// In a cluster, where maps send replicas of their objects (phase 3); null when standalone.
+    Replicator replicator;
+
+    /// On a cluster member, the id blocks the coordinator handed out (phase 2); null otherwise.
+    IdPool idPool;
+
+    /**
+     * In a cluster, where sessions are claimed when they start and released when they end (their
+     * characters saved), so that an account plays on one node at a time (phase 3b); null standalone.
+     */
+    void delegate(uint account, ulong serial) claimSession, releaseSession;
+
+    private ulong[Kickable] serials;   // each session's number on this node
+    private ulong nextSerial = 1;
 
     /// When `update` last ran.
     private MonoTime lastUpdate;
@@ -121,6 +151,11 @@ final class WorldContext : Directory
         this.data = data;
         this.client = client;
         this.clock = () => MonoTime.currTime;
+        {
+            import dmangos.world.objects : updateCompression;
+
+            updateCompression = config.compression;
+        }
         this.spawnRandom = Random(unpredictableSeed);
         {
             import std.datetime.systime : Clock;
@@ -221,8 +256,98 @@ final class WorldContext : Directory
 
     Map map(uint id)
     {
-        return maps.require(id, new Map(id, MapSettings(config.visibilityDistance, config.visibilityRelocationLimit),
-            &serverTime, &spawnCell));
+        if (auto found = id in maps)
+            return *found;
+        bool delegate(ulong) owns;
+        if (ownsCell !is null)
+            owns = (ulong cell) => ownsCell(id, cell);
+        auto created = new Map(id, MapSettings(config.visibilityDistance, config.visibilityRelocationLimit),
+            &serverTime, &spawnCell, terrain(id), owns);
+        created.replicator = replicator;
+        return maps[id] = created;
+    }
+
+    /// The map `id` if it exists; null otherwise.
+    Map existingMap(uint id)
+    {
+        return maps.get(id, null);
+    }
+
+    /// Every map that exists.
+    Map[] allMaps()
+    {
+        return maps.values;
+    }
+
+    /**
+     * The cluster moved regions (phase 2): what was lost leaves the maps, players near what was
+     * gained see it load.
+     */
+    void regionsChanged(const(Region)[] gained, const(Region)[] lost, const(ubyte)[][uint] arriving,
+        ref ubyte[][uint] leaving)
+    {
+        import dmangos.log : info;
+
+        foreach (ref r; lost)
+            if (auto m = r.map in maps)
+            {
+                if (r.next) // moving to another node: its objects go along (phase 4)
+                {
+                    const before = m.objectCount - m.replicaCount;
+                    leaving[r.id] = cast(ubyte[]) m.migrateOut((ulong cell) => r.rect.containsKey(cell), r.next,
+                        &saveMigrant);
+                    info!"migration: region %s leaves for node %s with %s objects (%s KiB)"(r.id, r.next,
+                        before - (m.objectCount - m.replicaCount), leaving[r.id].length / 1024);
+                }
+                else
+                    m.release((ulong cell) => r.rect.containsKey(cell));
+            }
+        // Every arrival first: a map that looks around for gained cells would otherwise spawn afresh what is
+        // still on its way in another region's bundle.
+        foreach (ref r; gained)
+            if (auto objects = r.id in arriving)
+            {
+                auto m = map(r.map);
+                const before = m.objectCount - m.replicaCount;
+                m.migrateIn(*objects, &restoreMigrant);
+                info!"migration: region %s arrived with %s objects"(r.id, m.objectCount - m.replicaCount - before);
+            }
+        bool[uint] looked;
+        foreach (ref r; gained)
+            if (r.map !in looked)
+            {
+                looked[r.map] = true;
+                if (auto m = r.map in maps)
+                    m.ownershipGained();
+            }
+    }
+
+    /// `IdCounters.take`: a block of ids for a cluster member, from this server's counters.
+    uint take(IdKind kind, uint count)
+    {
+        auto counter = counterOf(kind);
+        const first = *counter;
+        *counter += count;
+        return first;
+    }
+
+    /// `IdCounters.raise`: a member holds ids up to `atLeast`; they are not handed out again.
+    void raise(IdKind kind, uint atLeast)
+    {
+        auto counter = counterOf(kind);
+        if (*counter < atLeast)
+            *counter = atLeast;
+    }
+
+    private uint* counterOf(IdKind kind) return
+    {
+        final switch (kind)
+        {
+        case IdKind.character: return &next.character;
+        case IdKind.item: return &next.item;
+        case IdKind.mail: return &next.mail;
+        case IdKind.group: return &groups.nextId; // the groups keep their own counter
+        }
     }
 
     /**
@@ -231,42 +356,13 @@ final class WorldContext : Directory
      */
     MapObject[] spawnCell(uint mapId, ulong cell)
     {
-        import dmangos.world.creature : chooseDisplay, chooseLevel, classStatsKey, Creature, CreatureParts, VirtualItem;
         import dmangos.world.gameobject : GameObject;
 
         MapObject[] spawned;
         if (auto cells = mapId in data.creatureCells)
             foreach (index; (*cells).get(cell, null))
-            {
-                const spawn = &data.creatureSpawns[index];
-                const template_ = spawn.entry in data.creatureTemplates;
-                const display = chooseDisplay(*template_, spawnRandom);
-                if (display == 0)
-                    continue;
-                CreatureParts parts;
-                const level = chooseLevel(*template_, spawnRandom);
-                if (const stats = classStatsKey(level, template_.unitClass) in data.creatureClassStats)
-                {
-                    parts.classStats = *stats;
-                    parts.hasClassStats = true;
-                }
-                parts.addon = spawn.guid in data.creatureAddons;
-                if (parts.addon is null)
-                    parts.addon = spawn.entry in data.creatureTemplateAddons;
-                if (const model = display in data.models)
-                {
-                    parts.boundingRadius = model.boundingRadius;
-                    parts.combatReach = model.combatReach;
-                    parts.gender = model.gender;
-                }
-                if (const equipment = template_.equipmentTemplateId in data.creatureEquipment)
-                    foreach (slot, entry; *equipment)
-                        if (const item = entry in data.items)
-                            parts.equipment[slot] = VirtualItem(item.displayId, cast(ubyte) item.itemClass,
-                                cast(ubyte) item.subClass, cast(ubyte) item.details.material, item.inventoryType,
-                                cast(ubyte) item.details.sheath);
-                spawned ~= new Creature(*spawn, template_, display, level, parts, client);
-            }
+                if (auto creature = makeCreature(&data.creatureSpawns[index]))
+                    spawned ~= creature;
         if (auto cells = mapId in data.gameObjectCells)
             foreach (index; (*cells).get(cell, null))
             {
@@ -275,6 +371,110 @@ final class WorldContext : Directory
             }
         return spawned;
     }
+
+    /**
+     * A creature from its spawn (`Creature::Create`): a level and model chosen, its addon, equipment
+     * and model data looked up, and its movement generator; null if its template has no model.
+     */
+    Creature makeCreature(const(CreatureSpawn)* spawn)
+    {
+        import dmangos.world.creature : chooseDisplay, chooseLevel, classStatsKey, CreatureParts, VirtualItem;
+        import dmangos.world.motion : selectMovement;
+
+        const template_ = spawn.entry in data.creatureTemplates;
+        const display = chooseDisplay(*template_, spawnRandom);
+        if (display == 0)
+            return null;
+        CreatureParts parts;
+        const level = chooseLevel(*template_, spawnRandom);
+        if (const stats = classStatsKey(level, template_.unitClass) in data.creatureClassStats)
+        {
+            parts.classStats = *stats;
+            parts.hasClassStats = true;
+        }
+        parts.addon = spawn.guid in data.creatureAddons;
+        if (parts.addon is null)
+            parts.addon = spawn.entry in data.creatureTemplateAddons;
+        if (const model = display in data.models)
+        {
+            parts.boundingRadius = model.boundingRadius;
+            parts.combatReach = model.combatReach;
+            parts.gender = model.gender;
+        }
+        parts.collisionHeight = client.collisionHeight(display);
+        if (const equipment = template_.equipmentTemplateId in data.creatureEquipment)
+            foreach (slot, entry; *equipment)
+                if (const item = entry in data.items)
+                    parts.equipment[slot] = VirtualItem(item.displayId, cast(ubyte) item.itemClass,
+                        cast(ubyte) item.subClass, cast(ubyte) item.details.material, item.inventoryType,
+                        cast(ubyte) item.details.sheath);
+        auto creature = new Creature(*spawn, template_, display, level, parts, client);
+        creature.generator = selectMovement(creature, data.waypoints);
+        return creature;
+    }
+
+    // -----------------------------------------------------------------------
+    // Migration (docs/CLUSTER.md, phase 4)
+    // -----------------------------------------------------------------------
+
+    /// An object's state for its next owner.
+    Migrant saveMigrant(MapObject object)
+    {
+        import dmangos.bytes : ByteWriter;
+        import dmangos.world.gameobject : GameObject;
+        import dmangos.world.migration : MigrantKind;
+
+        ByteWriter w;
+        if (auto creature = cast(Creature) object)
+        {
+            creature.saveState(w);
+            return Migrant(MigrantKind.creature, creature.spawn.guid, 0, w.data);
+        }
+        auto gameObject = cast(GameObject) object;
+        gameObject.saveState(w);
+        return Migrant(MigrantKind.gameObject, gameObject.spawn.guid, 0, w.data);
+    }
+
+    /// An object rebuilt from its spawn and the state its last owner sent; null if the spawn is unknown here.
+    MapObject restoreMigrant(const ref Migrant m)
+    {
+        import dmangos.bytes : ByteReader;
+        import dmangos.log : warning;
+        import dmangos.world.gameobject : GameObject;
+        import dmangos.world.migration : MigrantKind;
+
+        if (spawnIndex is null)
+        {
+            foreach (i, ref s; data.creatureSpawns)
+                spawnIndex[s.guid] = i;
+            foreach (i, ref s; data.gameObjectSpawns)
+                gameObjectSpawnIndex[s.guid] = i;
+        }
+        auto r = ByteReader(m.state);
+        if (m.kind == MigrantKind.creature)
+        {
+            const at = m.spawn in spawnIndex;
+            if (at is null)
+                return null;
+            auto creature = makeCreature(&data.creatureSpawns[*at]);
+            if (creature is null)
+                return null;
+            creature.loadState(r);
+            return creature;
+        }
+        const at = m.spawn in gameObjectSpawnIndex;
+        if (at is null)
+        {
+            warning!"migration: game object spawn %s is not known here"(m.spawn);
+            return null;
+        }
+        const spawn = &data.gameObjectSpawns[*at];
+        auto gameObject = new GameObject(*spawn, spawn.entry in data.gameObjectTemplates);
+        gameObject.loadState(r);
+        return gameObject;
+    }
+
+    private size_t[uint] spawnIndex, gameObjectSpawnIndex; // spawn guid -> its place in the world data
 
     /// Puts a player in the world: on its map and in the lists of who is online.
     void enterWorld(OnlinePlayer who)
@@ -394,10 +594,30 @@ final class WorldContext : Directory
         const elapsed = lastUpdate == MonoTime.init || now < lastUpdate ? Duration.zero : now - lastUpdate;
         if (now > lastUpdate)
             lastUpdate = now;
-        foreach (player; online.values)
+        // A slow tick says where its time went (net/server.d warns about it).
+        import dmangos.log : warning;
+        const started = MonoTime.currTime;
+        Duration slowestPlayer;
+        ulong slowestGuid;
+        foreach (player; online.values) // a copy: an update may log a player out
+        {
+            const guid = player.character.guid;
+            const before = MonoTime.currTime;
             player.update(elapsed);
+            if (MonoTime.currTime - before > slowestPlayer)
+            {
+                slowestPlayer = MonoTime.currTime - before;
+                slowestGuid = guid;
+            }
+        }
+        const playersDone = MonoTime.currTime;
         foreach (map_; maps)
             map_.update(elapsed);
+        const mapsDone = MonoTime.currTime;
+        if (mapsDone - started > 500.msecs)
+            warning!"slow tick: %s ms in %s players (slowest %s ms, guid %s), %s ms in %s maps"(
+                (playersDone - started).total!"msecs", online.length, slowestPlayer.total!"msecs", slowestGuid & 0xFFFF_FFFF,
+                (mapsDone - playersDone).total!"msecs", maps.length);
 
         if (shutdown.isNull)
             return false;
@@ -440,16 +660,48 @@ final class WorldContext : Directory
         return text;
     }
 
-    /// Allocates the next item guid.
-    uint nextItemGuid()
+    /**
+     * The next id of `kind`: from this server's counters, or on a cluster member from its blocks;
+     * false if a member has none left (its next block has not come).
+     */
+    bool takeId(IdKind kind, out uint id)
     {
-        return next.item++;
+        if (idPool !is null)
+            return idPool.take(kind, id);
+        auto counter = counterOf(kind);
+        id = (*counter)++;
+        return true;
     }
 
-    /// Allocates the next mail id.
+    /// Allocates the next item guid; throws if a cluster member has none (rather than reuse one).
+    uint nextItemGuid()
+    {
+        return takeIdOrThrow(IdKind.item);
+    }
+
+    /// Allocates the next mail id; throws if a cluster member has none.
     uint nextMailId()
     {
-        return next.mail++;
+        return takeIdOrThrow(IdKind.mail);
+    }
+
+    private uint takeIdOrThrow(IdKind kind)
+    {
+        import std.conv : to;
+
+        uint id;
+        if (!takeId(kind, id))
+            throw new Exception("no " ~ kind.to!string ~ " ids: the coordinator's next block has not come");
+        return id;
+    }
+
+    /// Creatures and game objects on every map.
+    @property size_t objectCount() const
+    {
+        size_t count;
+        foreach (map_; maps)
+            count += map_.objectCount;
+        return count;
     }
 
     /// Number of authenticated sessions.
@@ -468,13 +720,70 @@ final class WorldContext : Directory
         ++acceptedSessions;
         if (sessions.length > peakSessions)
             peakSessions = sessions.length;
+        const serial = serials[session] = nextSerial++;
+        if (claimSession is null)
+            session.admit();
+        else
+            claimSession(accountId, serial);
     }
 
-    /// Forgets a session, unless a newer one for the account has replaced it.
+    /**
+     * Forgets a session, unless a newer one for the account has replaced it. In a cluster its
+     * account is released, whether or not a newer one replaced it: the newer one waits for that.
+     */
     void removeSession(uint accountId, Kickable session)
     {
         if (auto current = accountId in sessions)
             if (*current is session)
                 sessions.remove(accountId);
+        if (auto serial = session in serials)
+        {
+            if (releaseSession !is null)
+                releaseSession(accountId, *serial);
+            serials.remove(session);
+        }
+    }
+
+    /// See `SessionHandler.sessionGranted`.
+    void sessionGranted(uint account, ulong serial)
+    {
+        if (auto session = account in sessions)
+            if (serials.get(*session, 0) == serial)
+                session.admit();
+    }
+
+    /// See `SessionHandler.sessionEvicted`.
+    void sessionEvicted(uint account, ulong serial)
+    {
+        foreach (session, s; serials)
+            if (s == serial)
+                return session.kick("logged in on another node of the realm");
+    }
+
+    /// Whether this server may write to the databases (false on a cluster node whose lease lapsed).
+    bool canWrite()
+    {
+        import dmangos.world.fencing : FencedBase;
+
+        if (auto fenced = cast(FencedBase) database)
+            return fenced.writesAllowedNow;
+        return true;
+    }
+
+    /// Ends every session (a cluster node whose lease lapsed: its writes are fenced, docs/CLUSTER.md phase 4).
+    void kickAll(string reason)
+    {
+        foreach (session; sessions.values)
+            session.kick(reason);
+    }
+
+    /// See `SessionHandler.claimAll`: every session of this node, again.
+    void claimAll()
+    {
+        if (claimSession is null)
+            return;
+        foreach (account, session; sessions)
+            if (auto serial = session in serials)
+                claimSession(account, *serial);
     }
 }

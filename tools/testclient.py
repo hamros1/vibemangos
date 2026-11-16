@@ -94,7 +94,8 @@ s.close()
 if flags & 0x02: print("realm is OFFLINE"); sys.exit(3)
 
 # ---- world server ----
-host, port = addr.decode().rsplit(":", 1)
+# WORLD=host:port picks the world server instead of the realm list (a given node of a cluster).
+host, port = os.environ.get("WORLD", addr.decode()).rsplit(":", 1)
 w = socket.create_connection((host, int(port)), timeout=5)
 class Cipher:
     def __init__(self): self.i = 0; self.j = 0
@@ -203,6 +204,11 @@ def parse_update(op, p):
                 if mflags & 0x00002000: pos += 16
                 if mflags & 0x04000000: pos += 4
                 speeds = struct.unpack_from("<6f", p, pos); pos += 24
+                if mflags & 0x00400000:  # walking a spline: flags, facing, times, id, path, destination
+                    sflags = struct.unpack_from("<I", p, pos)[0]; pos += 4
+                    pos += 12 if sflags & 0x10000 else 8 if sflags & 0x20000 else 4 if sflags & 0x40000 else 0
+                    passed, duration, sid, nodes = struct.unpack_from("<IIII", p, pos); pos += 16 + 12 * nodes + 12
+                    print(f"  [walking] {guid & 0xFFFFFF}: {passed}/{duration} ms along spline {sid} of {nodes} points")
                 move = (x, y, z, o, speeds)
             elif flags & 0x40:
                 pos += 16
@@ -240,7 +246,7 @@ OPS = {0x236: "LOGIN_VERIFY_WORLD", 0x209: "ACCOUNT_DATA_TIMES", 0x332: "EXPECTE
        0x12B: "LEARNED_SPELL", 0x203: "REMOVED_SPELL", 0x291: "SERVER_MESSAGE", 0x2D2: "PLAY_SOUND",
        0x0E2: "FORCE_RUN_SPEED_CHANGE", 0x0E6: "FORCE_SWIM_SPEED_CHANGE", 0x0E4: "FORCE_RUN_BACK_SPEED_CHANGE",
        0x2DC: "FORCE_SWIM_BACK_SPEED_CHANGE", 0x0E8: "FORCE_MOVE_ROOT", 0x0EA: "FORCE_MOVE_UNROOT",
-       0x2C3: "UPDATE_WORLD_STATE", 0x0EF: "MOVE_KNOCK_BACK"}
+       0x2C3: "UPDATE_WORLD_STATE", 0x0EF: "MOVE_KNOCK_BACK", 0x0DD: "MONSTER_MOVE"}
 
 import select, time
 MOVES = set(range(0x0B5, 0x0C4)) | {0x0C9, 0x0CA, 0x0CB, 0x0DA, 0x0DB, 0x0EE}
@@ -270,6 +276,20 @@ def describe(op, p):
             elif kind == 0:
                 health = f", health {v[OBJECT_END + 0x10]}/{v.get(OBJECT_END + 0x16, '?')}" if OBJECT_END + 0x10 in v else ""
                 print(f"  [changes] {g}: fields {sorted(v)}{health}")
+    elif op == 0x0DD:
+        g, pos = packed_guid(p, 0)
+        x, y, z, sid, kind = struct.unpack_from("<3fIB", p, pos); pos += 17
+        if kind == 1:
+            print(f"  [monster stops] {g & 0xFFFFFF} at {x:.1f} {y:.1f} {z:.1f}")
+            return
+        facing = ""
+        if kind == 4: facing = f", facing {struct.unpack_from('<f', p, pos)[0]:.2f}"; pos += 4
+        elif kind == 2: pos += 12
+        elif kind == 3: pos += 8
+        flags, duration, count, dx, dy, dz = struct.unpack_from("<III3f", p, pos)
+        entry = seen_objects.get(g, (0, 0))[1]
+        print(f"  [monster moves] {entry} guid {g & 0xFFFFFF}: from {x:.1f} {y:.1f} {z:.1f} to {dx:.1f} {dy:.1f} {dz:.1f}, "
+              f"{count} points, {duration} ms, flags {flags:#x}{facing}")
     elif op in MOVES:
         g, pos = packed_guid(p, 0); flags, t, x, y, z, o = struct.unpack_from("<II4f", p, pos)
         print(f"  [moves] {g} {OPS.get(op, hex(op))} to {x:.1f} {y:.1f} {z:.1f}")

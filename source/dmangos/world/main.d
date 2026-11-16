@@ -7,11 +7,17 @@
  */
 module dmangos.world.main;
 
-import core.time : minutes, MonoTime, msecs, seconds;
+import core.time : Duration, minutes, MonoTime, msecs, seconds;
+import std.conv : to;
 import std.getopt : defaultGetoptPrinter, getopt, GetOptException, GetoptResult;
 import std.stdio : stderr;
 
+import dmangos.cluster.link : LoadReport;
+import dmangos.cluster.node : ClusterNode, CoordinatorSetup;
+import dmangos.world.clusterbridge : ClusterBridge;
+import dmangos.world.fencing : FencedDatabase;
 import dmangos.log;
+import dmangos.metrics : ServerMetrics;
 import dmangos.mysql : ConnectionInfo, MySqlConnection;
 import dmangos.auth.mysqldb : MySqlLoginDatabase;
 import dmangos.net.server : installShutdownHandlers, NetSession, requestShutdown, ServerOptions, TcpServer;
@@ -75,44 +81,190 @@ private int run(WorldConfig config, string configPath)
         world.close();
 
     auto client = ClientData.load(config.dataDir);
-    auto data = WorldData.load(world, client);
+    // The nodes of a cluster must choose the same pooled and grouped spawns: they share a seed made from the
+    // cluster's name and the realm (docs/CLUSTER.md, phase 4). Standalone, the choice is new at every start.
+    ulong spawnSeed;
+    if (config.cluster.enabled)
+    {
+        import std.digest.crc : crc32Of;
+
+        const crc = crc32Of(config.cluster.name ~ "/" ~ to!string(config.realmId));
+        spawnSeed = (ulong(crc[0]) | crc[1] << 8 | crc[2] << 16 | ulong(crc[3]) << 24) | 1;
+    }
+    auto data = WorldData.load(world, client, spawnSeed);
     auto context = new WorldContext(config, new MySqlWorldDatabase(login, characters, world), data, client,
         new MySqlLoginDatabase(login));
     context.configPath = configPath;
-    context.database.markAllOffline(config.realmId); // as clearOnlineAccounts: nobody is online after a restart
+    // Every node serves clients (docs/CLUSTER.md, phase 3b); only a standalone server or a cluster's coordinator speaks
+    // for the realm: its row in the realm list, and marking everyone offline at start.
+    const speaksForRealm = !config.cluster.enabled || config.cluster.isCoordinator;
+    if (speaksForRealm)
+        context.database.markAllOffline(config.realmId); // as clearOnlineAccounts: nobody is online after a restart
+    if (config.cluster.enabled && config.cluster.clientAddress.length == 0)
+        config.cluster.clientAddress = "127.0.0.1:" ~ to!string(config.port);
     info!"next ids: character %s, item %s, mail %s"(context.next.character, context.next.item, context.next.mail);
-
     auto realm = new RealmRegistration(login, config.realmId);
-    realm.markOnline(config.allowedBuilds, config.gameType, config.realmZone);
+    if (speaksForRealm)
+        realm.markOnline(config.allowedBuilds, config.gameType, config.realmZone);
     scope (exit)
-        realm.markOffline();
+        if (speaksForRealm)
+            realm.markOffline();
+    string realmAddress;     // where the realm list sends clients now (a cluster's coordinator chooses)
+    auto lastSteering = MonoTime.currTime;
 
     auto lastPopulation = MonoTime.currTime;
     auto lastUptime = MonoTime.currTime;
     const uptimeInterval = config.uptimeUpdateMinutes.minutes;
 
+    ServerMetrics metrics;
+    auto lastMetrics = MonoTime.currTime;
+    const metricsInterval = config.metricsIntervalSeconds.seconds;
+    double tickAverageUs = 0; // a moving average, for the cluster's load reports
+
+    TcpServer server;
+    ClusterNode cluster;
+    ClusterBridge bridge;
+    bool leaseHeld;
+    if (config.cluster.enabled)
+    {
+        const linkIdle = (2 * config.cluster.failureTimeoutMs).msecs; // the links time out first, on heartbeats
+        CoordinatorSetup setup;
+        if (config.cluster.isCoordinator)
+            setup = coordinatorSetup(config.cluster.regionCount, data, client, context);
+        cluster = new ClusterNode(config.cluster, ClusterNode.newIncarnation(), () => MonoTime.currTime,
+            (host, port, session) => server.connect(host, port, session, linkIdle),
+            () => LoadReport(cast(uint) tickAverageUs, cast(uint) context.sessionCount, cast(uint) context.objectCount),
+            setup);
+        // The world simulates only what this node owns: maps ask, and are told of changes.
+        context.ownsCell = (uint map, ulong cell) => cluster.regions.ownsCell(map, cell);
+        cluster.onOwnership = &context.regionsChanged;
+        // Replicas go both ways between nodes (phase 3).
+        bridge = new ClusterBridge(cluster, context);
+        cluster.replication = bridge;
+        context.replicator = bridge;
+        // A node whose lease lapsed writes nothing: by the time its accounts and regions go elsewhere it has
+        // certainly stopped, and writes after that could overwrite theirs (phase 4).
+        context.database = new FencedDatabase(context.database, () => cluster.regions.leaseHolds(MonoTime.currTime));
+        // One login per account across the cluster (phase 3b), and members' ids from the coordinator's blocks.
+        cluster.sessions = context;
+        context.claimSession = (uint account, ulong serial) => cluster.claimSession(account, serial);
+        context.releaseSession = (uint account, ulong serial) => cluster.releaseSession(account, serial);
+        if (!cluster.isCoordinator)
+        {
+            context.idPool = cluster.pool;
+            context.groups.idSource = () {
+                import dmangos.cluster.ownership : IdKind;
+
+                uint id;
+                if (!cluster.pool.take(IdKind.group, id))
+                    throw new Exception("no group ids: the coordinator's next block has not come");
+                return id;
+            };
+        }
+        info!"cluster: node %s, incarnation %s, %s; clients at %s"(cluster.id, cluster.incarnation,
+            cluster.isCoordinator ? "coordinator" : "member of " ~ config.cluster.coordinator,
+            config.cluster.clientAddress);
+    }
+
     installShutdownHandlers();
-    auto server = new TcpServer(
-        ServerOptions(config.bindAddress, config.port, config.idleTimeoutSeconds.seconds, config.maxConnections,
-            config.updateIntervalMs.msecs),
+    server = new TcpServer(
+        ServerOptions(config.bindAddress, config.port, config.idleTimeoutSeconds.seconds,
+            config.maxConnections, config.updateIntervalMs.msecs),
         (string address) => cast(NetSession) new WorldSession(context, address),
         (MonoTime now) {
             if (context.update(now))
                 requestShutdown();
-            if (now - lastPopulation >= 1.minutes)
+            if (cluster !is null)
+            {
+                bridge.tick();
+                cluster.tick();
+                // A lapsed lease ends every session; their characters are not saved (the database is fenced).
+                const holds = cluster.regions.leaseHolds(MonoTime.currTime);
+                if (leaseHeld && !holds)
+                {
+                    error!"cluster: this node's lease lapsed: every session ends, and nothing more is written"();
+                    context.kickAll("this server lost contact with the rest of the realm");
+                }
+                leaseHeld = holds;
+            }
+            const took = MonoTime.currTime - now;
+            metrics.recordTick(took);
+            tickAverageUs = tickAverageUs * 0.95 + took.total!"usecs" * 0.05;
+            if (metricsInterval > Duration.zero && now - lastMetrics >= metricsInterval)
+            {
+                lastMetrics = now;
+                info!"%s; world: %s players, %s objects"(metrics.report(&server.busy), context.sessionCount,
+                    context.objectCount);
+                if (cluster !is null)
+                    foreach (line; cluster.describe())
+                        info!"%s"(line);
+            }
+            // The coordinator sends new clients to the node with the fewest players (phase 3b).
+            if (cluster !is null && cluster.isCoordinator && now - lastSteering >= 10.seconds)
+            {
+                lastSteering = now;
+                const target = cluster.leastBusyClientAddress();
+                if (target.length && target != realmAddress)
+                {
+                    import dmangos.cluster.config : splitAddress;
+
+                    string host;
+                    ushort port;
+                    splitAddress(target, host, port);
+                    realm.setAddress(host, port);
+                    realmAddress = target;
+                }
+            }
+            if (speaksForRealm && now - lastPopulation >= 1.minutes)
             {
                 realm.updatePopulation(context.sessionCount, config.playerLimit);
                 lastPopulation = now;
             }
-            if (now - lastUptime >= uptimeInterval)
+            if (speaksForRealm && now - lastUptime >= uptimeInterval)
             {
                 realm.updateUptime(cast(uint) context.peakSessions);
                 lastUptime = now;
             }
         });
+    if (cluster !is null)
+        server.addListener(config.cluster.listenAddress, config.cluster.listenPort,
+            (string address) => cluster.accept(address), (2 * config.cluster.failureTimeoutMs).msecs);
     server.run();
-    realm.updateUptime(cast(uint) context.peakSessions);
+    if (speaksForRealm)
+        realm.updateUptime(cast(uint) context.peakSessions);
     return context.restartRequested ? restartExitCode : 0;
+}
+
+/**
+ * The coordinator's start (docs/CLUSTER.md, phase 2): every map of `Map.dbc` divided into about
+ * `regionCount` regions by where creatures and game objects spawn, and the counters ids come from.
+ */
+private CoordinatorSetup coordinatorSetup(uint regionCount, WorldData data, ClientData client, WorldContext context)
+{
+    import dmangos.cluster.regions : CellCosts, costOf, partition;
+
+    CellCosts costs;
+    foreach (cells; [data.creatureCells, data.gameObjectCells])
+        foreach (map, byCell; cells)
+            foreach (cell, spawns; byCell)
+                costs[map][cell] = costs.get(map, null).get(cell, 0) + cast(uint) spawns.length;
+    uint[] maps;
+    foreach (ref entry; client.maps.rows)
+        maps ~= entry.mapId;
+    CoordinatorSetup setup;
+    setup.regions = partition(maps, costs, regionCount);
+    foreach (ref r; setup.regions)
+        setup.cost[r.id] = costOf(costs, r.map, r.rect);
+    setup.ids = context;
+    size_t split;
+    foreach (ref r; setup.regions)
+        split += r.map == 0 || r.map == 1;
+    info!"cluster: the world is divided into %s regions (%s of them on the two continents)"(setup.regions.length, split);
+    foreach (ref r; setup.regions)
+        if (setup.cost[r.id])
+            info!"cluster:   region %s: map %s, cells x %s..%s, y %s..%s, %s spawns"(r.id, r.map, r.rect.x0, r.rect.x1 - 1,
+                r.rect.y0, r.rect.y1 - 1, setup.cost[r.id]);
+    return setup;
 }
 
 private MySqlConnection connect(string connectionString, string library, string what)

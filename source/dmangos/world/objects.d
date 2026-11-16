@@ -20,6 +20,7 @@ import std.zlib : compress;
 
 import dmangos.bytes;
 import dmangos.world.movement;
+import dmangos.world.spline : MoveSpline, writeSplineCreate;
 import dmangos.world.updatefields;
 
 /// `HighGuid`: the top 16 bits of a guid.
@@ -279,6 +280,28 @@ struct UpdateValues
         writeSlot(slot, value);
     }
 
+    /// The slots everyone may see that are not zero, as (slot, value): a replica's state (phase 3).
+    SlotValue[] publicSlots() const pure nothrow @safe
+    {
+        const visibility = visibilityOf(type_);
+        SlotValue[] found;
+        foreach (i, value; slots)
+            if (value && (visibility[i] & seenByEveryone))
+                found ~= SlotValue(cast(ushort) i, value);
+        return found;
+    }
+
+    /// The slots everyone may see that changed since `clearChanges`, zeros included: a replica's update.
+    SlotValue[] changedPublicSlots() const pure nothrow @safe
+    {
+        const visibility = visibilityOf(type_);
+        SlotValue[] found;
+        foreach (i, value; slots)
+            if ((changed[i / 32] & (1u << (i % 32))) && (visibility[i] & seenByEveryone))
+                found ~= SlotValue(cast(ushort) i, value);
+        return found;
+    }
+
     /// Whether a viewer that sees `seen` has changes to be told about.
     bool hasChangesFor(Visibility seen) const pure nothrow @safe
     {
@@ -389,6 +412,13 @@ enum UpdateFlags : ubyte
     hasPosition = 0x40,   /// adds a position, for objects that are not living
 }
 
+/// A slot of an object's fields and its value (replication, phase 3).
+struct SlotValue
+{
+    ushort slot;
+    uint value;
+}
+
 /// What the movement part of a create block contains.
 struct MovementBlock
 {
@@ -398,16 +428,24 @@ struct MovementBlock
     Position position;   /// for `hasPosition` without `living`
     uint highGuid;       /// for `highGuid`
     uint transportTime;  /// for `transport`: the path's time (elevators)
+    const(MoveSpline)* spline; /// for `living` with `MovementFlags.splineEnabled`: the walk under way
 
-    /// `Object::BuildMovementUpdate`, without splines, transports or attack targets.
+    /// `Object::BuildMovementUpdate`, without transports or attack targets.
     void write(ref ByteWriter writer) const
     {
         writer.put(flags);
         if (flags & UpdateFlags.living)
         {
-            info.write(writer);
+            // A unit that is not walking a spline has no spline to show, whatever its flags say.
+            const walking = info.has(MovementFlags.splineEnabled) && spline !is null && spline.initialized;
+            MovementInfo living = info;
+            if (!walking && info.has(MovementFlags.splineEnabled))
+                living.flags &= ~(MovementFlags.splineEnabled | MovementFlags.forward);
+            living.write(writer);
             foreach (speed; speeds)
                 writer.put(speed);
+            if (walking)
+                writeSplineCreate(writer, *spline);
         }
         else if (flags & UpdateFlags.hasPosition)
         {
@@ -496,6 +534,12 @@ struct UpdateData
      * `UpdateData::BuildPacketOfBlocks`: the block count and transport flag,
      * then the blocks. Bodies over 100 bytes are compressed, as CMaNGOS does.
      */
+    /// Bytes of blocks so far, before compression.
+    @property size_t byteSize() const pure nothrow @nogc @safe
+    {
+        return blocks.length;
+    }
+
     UpdatePacket build() const
     {
         ByteWriter body_;
@@ -507,10 +551,22 @@ struct UpdateData
 
         ByteWriter compressed;
         compressed.put(cast(uint) body_.length);
-        compressed.putBytes(cast(const(ubyte)[]) compress(body_.data));
+        compressed.putBytes(cast(const(ubyte)[]) compress(body_.data, updateCompression));
         return UpdatePacket(true, compressed.data.dup);
     }
 }
+
+/**
+ * The zlib level update packets are compressed with (`Compression` in mangosd.conf: 1, the fastest,
+ * by default); set from the configuration at start-up.
+ */
+int updateCompression = 1;
+
+/**
+ * The most bytes of blocks one update packet should carry before it is compressed:
+ * `MAX_NETCLIENT_PACKET_SIZE` less what CMaNGOS keeps in reserve (`UpdateData::GetPacketEnd`).
+ */
+enum size_t maxUpdatePacketBytes = 32_766 - 128;
 
 /// An `SMSG_UPDATE_OBJECT` or `SMSG_COMPRESSED_UPDATE_OBJECT` body.
 struct UpdatePacket

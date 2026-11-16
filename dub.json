@@ -9,8 +9,9 @@
 			"targetName": "authserver",
 			"mainSourceFile": "source/dmangos/auth/main.d",
 			"excludedSourceFiles": [
-				"source/dmangos/world/main.d",
-				"source/dmangos/extractor/main.d"
+				"source/dmangos/extractor/main.d",
+				"source/dmangos/loadgen/main.d",
+				"source/dmangos/world/main.d"
 			]
 		},
 		{
@@ -20,7 +21,8 @@
 			"mainSourceFile": "source/dmangos/world/main.d",
 			"excludedSourceFiles": [
 				"source/dmangos/auth/main.d",
-				"source/dmangos/extractor/main.d"
+				"source/dmangos/extractor/main.d",
+				"source/dmangos/loadgen/main.d"
 			]
 		},
 		{
@@ -30,7 +32,19 @@
 			"mainSourceFile": "source/dmangos/extractor/main.d",
 			"excludedSourceFiles": [
 				"source/dmangos/auth/main.d",
+				"source/dmangos/loadgen/main.d",
 				"source/dmangos/world/main.d"
+			]
+		},
+		{
+			"name": "loadgen",
+			"targetType": "executable",
+			"targetName": "loadgen",
+			"mainSourceFile": "source/dmangos/loadgen/main.d",
+			"excludedSourceFiles": [
+				"source/dmangos/auth/main.d",
+				"source/dmangos/world/main.d",
+				"source/dmangos/extractor/main.d"
 			]
 		}
 	]

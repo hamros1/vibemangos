@@ -15,6 +15,7 @@ import core.time : Duration, MonoTime, msecs, seconds;
 import std.socket;
 
 import dmangos.log;
+import dmangos.metrics : TickStats;
 
 /// One client's protocol state, driven by the server.
 interface NetSession
@@ -22,7 +23,10 @@ interface NetSession
     /// Bytes received from the client.
     void receive(scope const(ubyte)[] data);
 
-    /// Bytes to send to the client; the session forgets them.
+    /**
+     * Bytes to send to the client. The array is handed over: the server may keep it as its send
+     * buffer, so the session must not write into it again.
+     */
     ubyte[] takeOutput();
 
     /// True once the connection should close (after pending output is flushed).
@@ -93,19 +97,49 @@ final class TcpServer
         NetSession session;
         ubyte[] pending; // output not yet accepted by the kernel
         MonoTime lastActivity;
+        Duration idleTimeout;
+        bool connecting; // an outgoing connection not yet established
         bool broken;
 
-        this(Socket socket, NetSession session, MonoTime now)
+        this(Socket socket, NetSession session, MonoTime now, Duration idleTimeout)
         {
             this.socket = socket;
             this.session = session;
             this.lastActivity = now;
+            this.idleTimeout = idleTimeout;
         }
     }
 
+    /// A port connections are accepted on, and what serves them.
+    private static struct Listener
+    {
+        string bindAddress;
+        ushort port;
+        SessionFactory createSession;
+        Duration idleTimeout;
+        Socket socket;
+    }
+
+    /// An outgoing connection asked for, opened at the top of the next loop.
+    private static struct Dial
+    {
+        string host;
+        ushort port;
+        NetSession session;
+        Duration idleTimeout;
+    }
+
+    /**
+     * The time each loop iteration spent working (from the wait returning to the next wait):
+     * packets, the maintenance tick and sending. Its worst case is the longest any client waited
+     * on the server. Whoever reports it resets it.
+     */
+    TickStats busy;
+
     private ServerOptions options;
-    private SessionFactory createSession;
     private Maintenance maintenance;
+    private Listener[] listeners;
+    private Dial[] dials;
     private Connection[] connections;
 
     ///
@@ -114,8 +148,29 @@ final class TcpServer
     in (options.maxConnections > 0)
     {
         this.options = options;
-        this.createSession = createSession;
         this.maintenance = maintenance;
+        if (options.port != 0) // port 0: no client port (a cluster member before it serves clients)
+            listeners ~= Listener(options.bindAddress, options.port, createSession, options.idleTimeout);
+    }
+
+    /**
+     * Also accepts connections on `bindAddress:port`, served by sessions from `createSession` (the
+     * cluster port). Call before `run`.
+     */
+    void addListener(string bindAddress, ushort port, SessionFactory createSession, Duration idleTimeout)
+    in (createSession !is null)
+    {
+        listeners ~= Listener(bindAddress, port, createSession, idleTimeout);
+    }
+
+    /**
+     * Opens a connection to `host:port` for `session`, without blocking: it starts at the top of the
+     * next loop, and the session's first output goes out once it is established. If it cannot be
+     * made, or breaks later, the session gets `disconnected` as an accepted one would.
+     */
+    void connect(string host, ushort port, NetSession session, Duration idleTimeout)
+    {
+        dials ~= Dial(host, port, session, idleTimeout);
     }
 
     /// Number of open connections.
@@ -127,15 +182,19 @@ final class TcpServer
     /// Serves clients until `requestShutdown` is called.
     void run()
     {
-        auto address = getAddress(options.bindAddress, options.port)[0];
-        auto listener = new TcpSocket(address.addressFamily);
+        foreach (ref listener; listeners)
+        {
+            auto address = getAddress(listener.bindAddress, listener.port)[0];
+            listener.socket = new TcpSocket(address.addressFamily);
+            listener.socket.setOption(SocketOptionLevel.SOCKET, SocketOption.REUSEADDR, true);
+            listener.socket.bind(address);
+            listener.socket.listen(128);
+            listener.socket.blocking = false;
+            info!"listening on %s"(address.toString);
+        }
         scope (exit)
-            listener.close();
-        listener.setOption(SocketOptionLevel.SOCKET, SocketOption.REUSEADDR, true);
-        listener.bind(address);
-        listener.listen(128);
-        listener.blocking = false;
-        info!"listening on %s"(address.toString);
+            foreach (ref listener; listeners)
+                listener.socket.close();
 
         scope (exit)
             closeAll();
@@ -146,13 +205,15 @@ final class TcpServer
 
         while (!atomicLoad(shutdownRequested))
         {
+            startDials(MonoTime.currTime);
             readable.reset();
             writable.reset();
-            readable.add(listener);
+            foreach (ref listener; listeners)
+                readable.add(listener.socket);
             foreach (connection; connections)
             {
                 readable.add(connection.socket);
-                if (connection.pending.length > 0)
+                if (connection.pending.length > 0 || connection.connecting)
                     writable.add(connection.socket);
             }
 
@@ -164,16 +225,24 @@ final class TcpServer
             {
                 foreach (connection; connections)
                 {
+                    if (connection.connecting)
+                    {
+                        if (writable.isSet(connection.socket) || readable.isSet(connection.socket))
+                            established(connection, now);
+                        continue;
+                    }
                     if (readable.isSet(connection.socket))
                         receiveFrom(connection, now);
                     if (!connection.broken && writable.isSet(connection.socket))
                         flush(connection);
                 }
                 // Accept last, so new sockets are never tested against sets they were not added to.
-                if (readable.isSet(listener))
-                    accept(listener, now);
+                foreach (ref listener; listeners)
+                    if (readable.isSet(listener.socket))
+                        accept(listener, now);
             }
 
+            immutable received = MonoTime.currTime;
             if (maintenance !is null && now - lastMaintenance >= options.tickInterval)
             {
                 lastMaintenance = now;
@@ -181,30 +250,46 @@ final class TcpServer
                     maintenance(now);
                 catch (Exception e)
                     error!"periodic maintenance failed: %s"(e.msg);
-                immutable took = MonoTime.currTime - now;
-                if (took > slowTick)
-                    warning!"the update tick took %s ms"(took.total!"msecs");
             }
+            immutable ticked = MonoTime.currTime;
             // A session may have been given packets by another one (a chat message, a move it sees) or by the
             // maintenance: send them now, not when its own client next sends something.
             foreach (connection; connections)
                 if (!connection.broken)
                 {
-                    connection.pending ~= connection.session.takeOutput();
-                    if (connection.pending.length)
+                    collectOutput(connection);
+                    if (connection.pending.length && !connection.connecting)
                         flush(connection);
                 }
             reap(now);
+            immutable finished = MonoTime.currTime;
+            busy.record(finished - now);
+            if (finished - now > slowTick)
+                warning!"a loop iteration took %s ms: %s receiving, %s in the tick, %s sending (%s connections)"(
+                    (finished - now).total!"msecs", (received - now).total!"msecs", (ticked - received).total!"msecs",
+                    (finished - ticked).total!"msecs", connections.length);
         }
         info!"shutting down, closing %s connection(s)"(connections.length);
     }
 
 private:
-    void accept(Socket listener, MonoTime now)
+    /// The session's new output joins what is waiting to be sent; adopted, not copied, when nothing is.
+    static void collectOutput(Connection connection)
+    {
+        auto output = connection.session.takeOutput();
+        if (output.length == 0)
+            return;
+        if (connection.pending.length == 0)
+            connection.pending = output;
+        else
+            connection.pending ~= output;
+    }
+
+    void accept(ref Listener listener, MonoTime now)
     {
         Socket client;
         try
-            client = listener.accept();
+            client = listener.socket.accept();
         catch (SocketAcceptException e)
         {
             verbose!"accept failed: %s"(e.msg);
@@ -222,10 +307,61 @@ private:
         client.blocking = false;
         client.setOption(SocketOptionLevel.TCP, SocketOption.TCP_NODELAY, true);
         verbose!"%s: connected"(remote);
-        auto connection = new Connection(client, createSession(remote), now);
+        auto connection = new Connection(client, listener.createSession(remote), now, listener.idleTimeout);
         connections ~= connection;
         // Some protocols speak first (the world server's SMSG_AUTH_CHALLENGE).
-        connection.pending ~= connection.session.takeOutput();
+        collectOutput(connection);
+        flush(connection);
+    }
+
+    /// Starts the outgoing connections asked for since the last loop.
+    void startDials(MonoTime now)
+    {
+        foreach (dial; dials)
+        {
+            Socket socket;
+            try
+            {
+                auto address = getAddress(dial.host, dial.port)[0];
+                socket = new TcpSocket(address.addressFamily);
+                socket.blocking = false;
+                socket.setOption(SocketOptionLevel.TCP, SocketOption.TCP_NODELAY, true);
+                socket.connect(address); // returns at once; `established` sees how it went
+            }
+            catch (Exception e)
+            {
+                verbose!"connecting to %s:%s failed: %s"(dial.host, dial.port, e.msg);
+                if (socket !is null)
+                    socket.close();
+                try
+                    dial.session.disconnected();
+                catch (Exception e2)
+                    error!"%s: cleanup failed: %s"(dial.session.address, e2.msg);
+                continue;
+            }
+            auto connection = new Connection(socket, dial.session, now, dial.idleTimeout);
+            connection.connecting = true;
+            collectOutput(connection);
+            connections ~= connection;
+        }
+        dials.length = 0;
+        dials.assumeSafeAppend();
+    }
+
+    /// An outgoing connection finished connecting, or failed to.
+    void established(Connection connection, MonoTime now)
+    {
+        int error;
+        connection.socket.getOption(SocketOptionLevel.SOCKET, SocketOption.ERROR, error);
+        if (error != 0)
+        {
+            verbose!"%s: connection failed (error %s)"(connection.session.address, error);
+            connection.broken = true;
+            return;
+        }
+        connection.connecting = false;
+        connection.lastActivity = now;
+        verbose!"%s: connected"(connection.session.address);
         flush(connection);
     }
 
@@ -254,7 +390,7 @@ private:
             connection.broken = true;
             return;
         }
-        connection.pending ~= connection.session.takeOutput();
+        collectOutput(connection);
         flush(connection);
     }
 
@@ -282,7 +418,7 @@ private:
         {
             auto connection = connections[i];
             immutable finished = connection.session.wantsClose && connection.pending.length == 0;
-            immutable idle = now - connection.lastActivity > options.idleTimeout;
+            immutable idle = now - connection.lastActivity > connection.idleTimeout;
             if (!connection.broken && !finished && !idle)
             {
                 ++i;

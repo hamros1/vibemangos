@@ -10,7 +10,8 @@ A World of Warcraft **1.12.x (vanilla)** server written in **D**, modelled on
   session key from the login server, list, create and delete characters, and enter the world
   with them: the character has its gear, bags, skills, spellbook and action bars, and is saved on
   logout. Players on the same map see each other move, sit and emote, hear each other's say, yell
-  and emotes, and can whisper. There are no creatures or objects yet.
+  and emotes, and can whisper. Creatures and game objects are spawned; creatures wander and walk
+  their waypoints, and vendors, trainers, innkeepers and bankers serve.
 * **extractor** copies the DBC files out of a 1.12 client's MPQ archives into a `dbc/` folder, and
   converts its terrain into CMaNGOS's `.map` files in a `maps/` folder.
   That folder is the client data the world server reads.
@@ -33,6 +34,7 @@ Then:
 ```sh
 dub build -c authserver        # -> bin/authserver (the default configuration)
 dub build -c worldserver       # -> bin/worldserver
+dub build -c loadgen           # -> bin/loadgen: headless clients for load tests (docs/BENCHMARKS.md)
 dub build -c extractor         # -> bin/extractor
 dub test                       # every unit test
 ```
@@ -209,8 +211,13 @@ What works now:
   * **Creatures and game objects:** every `creature` and `gameobject` spawn of the world database
     (pools, spawn groups and game events decide which), created when a player first comes near
     their cell, with CMaNGOS's levels, health, models, equipment, mounts and emotes. Their names come
-    from `CMSG_CREATURE_QUERY` and `CMSG_GAMEOBJECT_QUERY`. They stand still: movement, AI, combat
-    and gossip come next.
+    from `CMSG_CREATURE_QUERY` and `CMSG_GAMEOBJECT_QUERY`.
+  * **Creature movement:** creatures move as their spawn's `MovementType` says, as in CMaNGOS:
+    wandering within `spawndist` of their spawn point (type 1), or walking their `creature_movement`
+    or `creature_movement_template` path (type 2 round and round, type 4 back and forth), waiting
+    and facing where the path says. Clients get `SMSG_MONSTER_MOVE`, and a creature that comes into
+    sight mid-walk arrives with its walk in its create block. Paths are straight lines; a wander's
+    end is put on the ground from the maps and vmaps. AI, combat and waypoint scripts come next.
   * **The update tick** (every 50 ms, `update_interval`): health, mana, rage and energy regenerate
     as in CMaNGOS; inns and capitals give rested XP, also while offline; characters are saved every
     15 minutes (`player_save_interval`).
@@ -243,6 +250,9 @@ time.
 | `chat_restricted_raid_warnings` | `Chat.RestrictedRaidWarnings` | `false` |
 | `instance_ignore_level`, `instance_ignore_raid` | `Instance.IgnoreLevel`, `Instance.IgnoreRaid` | `false`, `false` |
 | `update_interval` | the world tick, in ms (mangosd's `WORLD_SLEEP_CONST`) | `50` |
+| `compression` | `Compression`: zlib level of update packets, 1 (fastest) to 9 | `1` |
+| `metrics_interval_seconds` | n/a: seconds between log lines with tick times and GC figures; 0 for none | `60` |
+| `cluster` | n/a: this node's place in a cluster (docs/CLUSTER.md); standalone without it | none |
 | `logout_delay`, `player_save_interval` | seconds a logout takes (GMs and resting players: none), `PlayerSave.Interval` (seconds here) | `20`, `900` |
 | `gm_permissions` | ArcEmu's permission letters for `account.gmlevel` 1, 2 and 3 | `{"1": "bcghiltuv", "2": "a", "3": "az"}` |
 | `command_overrides` | ArcEmu's `command_overrides` table: `[{"command": "gm on", "group": "m"}]` | none |
@@ -347,7 +357,19 @@ source/dmangos/world/       the world server (mangosd)
   gmactions.d                 what GM commands do to players: levels, speeds, items, skills, saving
   gmlevel0.d .. gmlevel3.d    GM commands from ArcEmu's Level0.cpp .. Level3.cpp
   gmdebug.d                   GM commands from debugcmds.cpp, RecallCommands.cpp, BattlegroundCommands.cpp
-  map.d                       players, creatures and game objects on a map: cells, sight, broadcasting
+  ../cluster/                 several world servers as one (docs/CLUSTER.md): config.d, protocol.d (framing,
+                              messages), link.d (a link between nodes), node.d (membership, fencing, routing),
+                              regions.d and ownership.d (regions, leases, ids), sessions.d (one login per account)
+  replication.d               replicas of other nodes' creatures, game objects and players
+  migration.d                 objects moving to another node with their region (their state)
+  fencing.d                   a cluster node writes nothing once its lease has lapsed
+  clusterbridge.d             replication between the maps and the cluster's links
+  ../metrics.d                tick, event loop and GC measurements
+  ../loadgen/                 the load generator: headless clients (bot.d) and scenarios (main.d)
+  map.d                       players, creatures and game objects on a map: cells, sight, broadcasting,
+                              the tick that moves creatures
+  motion.d                    creature movement generators (idle, wander, waypoints) and waypoint paths
+  spline.d                    walks along a path in time, SMSG_MONSTER_MOVE and its create block part
   grid.d                      grid cells shared by maps and the spawn index
   creature.d, gameobject.d    creature_template/creature and gameobject_template/gameobject: the objects
   online.d                    OnlinePlayer and Directory: what groups and channels see of players
@@ -421,5 +443,5 @@ compiler. `UpdateValues.set!UNIT_FIELD_STAT0(22.5f)` does not compile, because s
 
 ## Roadmap
 
-Next: an update loop with timers, then creatures and game objects.
+Next: flight masters, game objects that can be used, respawns, then creature AI and combat.
 See [docs/ROADMAP.md](docs/ROADMAP.md).

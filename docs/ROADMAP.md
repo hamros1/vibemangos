@@ -18,6 +18,7 @@
 | GM system | ArcEmu's: its command tables, permission letters (from `gmlevel` via `gm_permissions`), lookup, messages, GM tag, whisper blocking, GM log. 135 of its 298 commands work: teleports, `.modify`, levels, items, spells, skills, lookups, accounts, bans, kicks, mutes, shutdowns, announcements, cheats, debugging (docs/COMMANDS.md) | `world/commandtable.d`, `world/commands.d`, `world/gm*.d` |
 | Update loop | A 50 ms tick: 20-second logout, regeneration, rested XP in inns and capitals (and offline), periodic saves, timed shutdowns | `net/server.d`, `context.d`, `inworld.d`, `timer.d` |
 | Creatures and game objects | Every spawn (with pools, spawn groups and game events), loaded per grid cell when players come near, with levels, health, models, equipment, mounts and emotes; creature and game object queries; `.npc info` | `creature.d`, `gameobject.d`, `map.d`, `worlddata.d` |
+| Creature movement | Wandering (`spawndist`) and waypoint paths (`creature_movement`, `creature_movement_template`; round, or back and forth) with waits and facings; `SMSG_MONSTER_MOVE`; walks in create blocks; moving creatures change cell and come into and out of sight | `spline.d`, `motion.d`, `map.d` |
 | NPC services | Gossip menus with their texts, conditions and map flags; trainers (lists with each spell's state, lessons that teach spells, ranks and profession skills); innkeepers (binding the hearthstone); bankers (opening the bank); vendors' lists | `npchandlers.d`, `npcdata.d`, `conditions.d` |
 | Inventory and trade | CMaNGOS's inventory rules, shared by creation and the world: moving, swapping, splitting, equipping (two-handers, dual wield, quivers, unique items), bags, the bank and its bag slots, the keyring, destroying, ammo; buying (with vendors' limited stock), selling, buyback and repairs; every change saved at once with the money | `inventory.d`, `itemhandlers.d` |
 | Movement checks | Speed checked against running speed; offenders put back. Positions outside the map disconnect | `world/inworld.d` |
@@ -29,15 +30,17 @@
 * **Not loaded:** reputation (needs `Faction.dbc` and `character_reputation`), guild membership
   (`PLAYER_GUILDID`), quests, auras, cooldowns, pets, corpses and death. A dead character loads
   alive.
-* **Creatures** stand still and never die, so they never respawn. There is no quest dialog yet. Flight masters,
+* **Creatures** wander and walk their waypoints, but never fight or die, so they never respawn.
+  Waypoint scripts (`ScriptId`) are not run, type 3 paths (flying) are walked as waypoints, formations
+  do not follow their leader, and creatures in water do not swim. There is no quest dialog yet. Flight masters,
   auctioneers, stable masters, battlemasters and guild NPCs are not offered in menus yet. Conditions
   that need auras, reputation, quests in the log, world states or scripts are never met. Elevators
   are created but do not move. Ships and zeppelins are not
   spawned. Cells are never unloaded (mangosd unloads idle grids after a while).
 * **Rested XP** is earned but not spent: only kills spend it, and there are none yet. Exploration
   is the only experience so far.
-* **Terrain:** heights and line of sight are there to use, but nothing uses them yet: creatures
-  do not move and spells are not cast. Game objects' models (doors, elevators) are extracted but
+* **Terrain:** heights put wandering creatures on the ground; line of sight is there to use, but
+  nothing uses it yet, as spells are not cast. Game objects' models (doors, elevators) are extracted but
   do not block sight (CMaNGOS's dynamic tree). Without mmaps there are no paths.
 * **Movement:** the speed check assumes running speed; it must learn mounts, speed auras,
   knockbacks and taxis when those exist.
@@ -81,8 +84,8 @@ See ARCHITECTURE.md's "The update loop". Still to do here: AFK kicks, the online
 ### 3. Creatures and game objects: started
 
 Spawned and visible, with queries (ARCHITECTURE.md, "Creatures and game objects"), and gossip,
-trainers, innkeepers, bankers and vendors ("Talking to NPCs", and "Items" for trading). Next:
-creature movement (random and waypoint, `creature_movement`), flight masters, using game objects
+trainers, innkeepers, bankers and vendors ("Talking to NPCs", and "Items" for trading), and
+movement: wandering and waypoints ("Creature movement"). Next: flight masters, using game objects
 (doors, chests, mailboxes), respawn timers, and unloading idle cells. CMaNGOS references:
 `MotionGenerators/`, `Entities/GossipDef.cpp`, `GossipHandler.cpp`, `NPCHandler.cpp`,
 `TaxiHandler.cpp`.

@@ -9,7 +9,9 @@ module dmangos.world.gameobject;
 
 import std.math : cos, sin;
 
+import dmangos.bytes : ByteReader, ByteWriter;
 import dmangos.world.map : MapObject;
+import dmangos.world.replication : Replicable;
 import dmangos.world.movement : Position;
 import dmangos.world.objects;
 import dmangos.world.updatefields;
@@ -59,7 +61,7 @@ private enum : uint
 }
 
 /// See the module documentation.
-final class GameObject : MapObject
+final class GameObject : Replicable
 {
     immutable ulong guid_;
     const(GameObjectTemplate)* template_;
@@ -100,14 +102,42 @@ final class GameObject : MapObject
     UpdateData appearance(uint serverTime) const
     {
         UpdateData update;
+        const block = motion(serverTime);
+        update.addCreate(UpdateType.createObject, guid_, block, values, seenByEveryone);
+        return update;
+    }
+
+    /// Its fields, for its next owner (docs/CLUSTER.md, phase 4).
+    void saveState(ref ByteWriter w) const
+    {
+        w.put(cast(ushort) values.length);
+        foreach (slot; 0 .. values.length)
+            w.put(values[slot]);
+    }
+
+    /// Reads what `saveState` wrote into one made anew from the same spawn.
+    void loadState(ref ByteReader r)
+    {
+        const count = r.read!ushort;
+        foreach (slot; 0 .. count)
+        {
+            const value = r.read!uint;
+            if (slot < values.length)
+                values.setSlot(slot, value);
+        }
+        values.clearChanges();
+    }
+
+    /// See `Replicable.motion`: a position, and an elevator's path time.
+    MovementBlock motion(uint serverTime) const
+    {
         MovementBlock block;
         block.flags = UpdateFlags.all | UpdateFlags.hasPosition;
         if (template_.type == GameObjectType.transport)
             block.flags |= UpdateFlags.transport;
         block.position = position;
         block.transportTime = serverTime;
-        update.addCreate(UpdateType.createObject, guid_, block, values, seenByEveryone);
-        return update;
+        return block;
     }
 
 private:

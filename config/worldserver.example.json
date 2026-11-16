@@ -20,6 +20,8 @@
 	"idle_timeout": 120,
 	"max_connections": 1000,
 	"update_interval": 50,
+	"metrics_interval_seconds": 60,
+	"compression": 1,
 	"log_level": "info",
 	"characters_creating_disabled": 0,
 	"characters_per_account": 50,

@@ -290,14 +290,39 @@ final class Player : InventoryOwner
     UpdateData createForOthers(uint serverTime, bool groupMate) const
     {
         UpdateData update;
+        const other = motionForOthers(serverTime);
+        update.addCreate(UpdateType.createObject, guid, other, values, groupMate ? seenByGroup : seenByEveryone,
+            groupMate ? null : &strangerValue);
+        return update;
+    }
+
+    /// The movement part of the player's create block for others.
+    MovementBlock motionForOthers(uint serverTime) const
+    {
         MovementBlock other;
         other.flags = UpdateFlags.all | UpdateFlags.living | UpdateFlags.hasPosition;
         other.info = movement;
         other.info.time = serverTime;
         other.speeds = speeds;
-        update.addCreate(UpdateType.createObject, guid, other, values, groupMate ? seenByGroup : seenByEveryone,
-            groupMate ? null : &strangerValue);
-        return update;
+        return other;
+    }
+
+    /// The fields a stranger sees, as (slot, value): a replica's state on another node (phase 3).
+    SlotValue[] strangerSlots() const
+    {
+        auto slots = values.publicSlots;
+        foreach (ref s; slots)
+            s.value = strangerValue(s.slot, s.value);
+        return slots;
+    }
+
+    /// Those changed since `clearChanges`.
+    SlotValue[] changedStrangerSlots() const
+    {
+        auto slots = values.changedPublicSlots;
+        foreach (ref s; slots)
+            s.value = strangerValue(s.slot, s.value);
+        return slots;
     }
 
     /// Adds a values block with the fields changed since `clearChanges` that `viewer` may see; false if none.

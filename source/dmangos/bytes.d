@@ -59,6 +59,25 @@ struct ByteWriter
         }
     }
 
+    /**
+     * Forgets what was written but keeps the memory, so a writer that is used again and again
+     * (a cluster link's output) stops allocating once it has grown to its working size. Slices of
+     * `data` taken before must no longer be used.
+     */
+    void clear() pure nothrow @trusted
+    {
+        buffer.length = 0;
+        buffer.assumeSafeAppend();
+    }
+
+    /// Overwrites a scalar written earlier at `offset` (a length known only at the end).
+    void patch(T)(size_t offset, const T value) if (isWireScalar!T)
+    in (offset + T.sizeof <= buffer.length)
+    {
+        const bytes = nativeToLittleEndian(value);
+        buffer[offset .. offset + T.sizeof] = bytes[];
+    }
+
     /// Appends raw bytes.
     void putBytes(scope const(ubyte)[] bytes) pure nothrow @safe
     {
@@ -282,4 +301,18 @@ struct ByteReader
     catch (PacketException)
     {
     }
+}
+
+unittest
+{
+    ByteWriter w;
+    w.put(uint(0));
+    w.put(ubyte(7));
+    w.patch(0, uint(0xDEADBEEF));
+    assert(w.data == [0xEF, 0xBE, 0xAD, 0xDE, 7]);
+    const before = w.data.ptr;
+    w.clear();
+    assert(w.length == 0);
+    w.put(ulong(1));
+    assert(w.data.ptr is before, "the memory is reused");
 }

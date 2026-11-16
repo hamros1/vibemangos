@@ -17,6 +17,7 @@ import dmangos.world.creature : CreatureAddon, CreatureClassStats, CreatureSpawn
     creatureTemplateQuery;
 import dmangos.world.gameobject : GameObjectSpawn, GameObjectTemplate, GameObjectType;
 import dmangos.world.grid : cellKeyAt;
+import dmangos.world.motion : MotionType, WaypointNode, WaypointStore;
 import dmangos.world.npcdata : NpcData;
 import dmangos.world.spells : SpellData;
 
@@ -287,11 +288,13 @@ final class WorldData
     uint[3][uint] creatureEquipment;                /// `creature_equip_template`: item entries, by id
     CreatureClassStats[uint] creatureClassStats;    /// by `classStatsKey`
     NpcData npcs;                                   /// gossip, texts, trainers, vendors
+    WaypointStore waypoints;                        /// `creature_movement` and `creature_movement_template`
 
     ///
     this()
     {
         npcs = new NpcData;
+        waypoints = new WaypointStore;
     }
 
     /**
@@ -380,7 +383,7 @@ final class WorldData
     }
 
     /// Reads the tables from a world database. `client` is needed to validate create skills.
-    static WorldData load(MySqlConnection world, const ClientData client)
+    static WorldData load(MySqlConnection world, const ClientData client, ulong spawnSeed = 0)
     {
         auto data = new WorldData;
         data.spells = SpellData.load(world, client);
@@ -426,7 +429,8 @@ final class WorldData
 
         data.npcs = NpcData.load(world, data.spells);
         data.loadTeleports(world, client);
-        data.loadSpawns(world, client);
+        data.loadSpawns(world, client, spawnSeed);
+        data.loadWaypoints(world);
         data.loadPlayerInfo(world, client);
         info!"loaded %s item templates, %s creature templates, %s race/class combinations, %s reserved names"(
             data.items.length, data.creatureFamilies.length, data.playerInfo.length, data.reservedNames.length);
@@ -441,7 +445,11 @@ final class WorldData
      * and what decides which spawns are in the world: pools (`PoolManager`, one choice per start-up) and
      * game events (spawns that only exist during an event are left out; no event is running).
      */
-    void loadSpawns(MySqlConnection world, const ClientData client)
+    /**
+     * `spawnSeed` decides pools, spawn groups and spawns' entries; 0 for an unpredictable one. Every
+     * node of a cluster must choose the same (docs/CLUSTER.md, phase 4), so they pass the same seed.
+     */
+    void loadSpawns(MySqlConnection world, const ClientData client, ulong spawnSeed = 0)
     {
         import std.random : unpredictableSeed;
 
@@ -492,7 +500,7 @@ final class WorldData
             pools.add(row.get!uint(1), PoolMember(PoolMember.Kind.creature, row.get!uint(0), row.get!float(2)));
         foreach (row; world.query!"SELECT guid, pool_entry, chance FROM pool_gameobject"())
             pools.add(row.get!uint(1), PoolMember(PoolMember.Kind.gameObject, row.get!uint(0), row.get!float(2)));
-        auto rng = Random(unpredictableSeed);
+        auto rng = Random(spawnSeed ? cast(uint)(spawnSeed ^ spawnSeed >> 32) : unpredictableSeed);
         pools.choose(rng);
 
         // Spawn groups (`SpawnGroup`): at most MaxCount members up at once, entries for members without one;
@@ -531,6 +539,15 @@ final class WorldData
                 ++skipped;
                 continue;
             }
+            // ObjectMgr::LoadCreatures: a wander needs a distance, and only a wander has one.
+            if (row.wanderDistance < 0)
+                row.wanderDistance = 0;
+            else if (row.movementType == MotionType.random && row.wanderDistance == 0)
+                row.movementType = MotionType.idle;
+            else if (row.movementType == MotionType.idle)
+                row.wanderDistance = 0;
+            if (row.movementType > MotionType.max)
+                row.movementType = MotionType.idle;
             creatureCells[row.map][cellKeyAt(row.x, row.y)] ~= creatureSpawns.length;
             creatureSpawns ~= row;
         }
@@ -565,6 +582,61 @@ final class WorldData
         info!"loaded %s creature and %s game object templates; %s creatures and %s game objects spawn (%s skipped)"(
             creatureTemplates.length, gameObjectTemplates.length, creatureSpawns.length, gameObjectSpawns.length,
             skipped);
+    }
+
+    /**
+     * `WaypointManager::Load` for `creature_movement` (by spawn guid) and `creature_movement_template`
+     * (by entry and path): points outside the world are left out (CMaNGOS moves them inside and
+     * writes them back; the database is not changed here), and so are paths with a point 0.
+     */
+    void loadWaypoints(MySqlConnection world)
+    {
+        import std.math : abs;
+
+        static bool valid(const ref WaypointNode n)
+        {
+            enum float limit = 17_066.6656f; // MAP_HALFSIZE - 0.5 (IsValidMapCoord)
+            return abs(n.x) <= limit && abs(n.y) <= limit && abs(n.z) <= limit;
+        }
+
+        static WaypointNode node(R)(R row, size_t first)
+        {
+            WaypointNode n;
+            n.point = row.get!uint(first);
+            n.x = row.get!float(first + 1);
+            n.y = row.get!float(first + 2);
+            n.z = row.get!float(first + 3);
+            const orientation = row.get!float(first + 4);
+            n.orientation = orientation == 100 ? float.nan : orientation; // 100: no facing
+            n.delay = row.get!uint(first + 5);
+            n.scriptId = row.get!uint(first + 6);
+            return n;
+        }
+
+        bool[uint] spawnGuids;
+        foreach (row; world.query!"SELECT guid FROM creature"())
+            spawnGuids[row.get!uint(0)] = true;
+        size_t skipped;
+        foreach (row; world.query!("SELECT Id, Point, PositionX, PositionY, PositionZ, Orientation, WaitTime, ScriptId "
+            ~ "FROM creature_movement")())
+        {
+            const n = node(row, 1);
+            if (row.get!uint(0) !in spawnGuids || !valid(n))
+                ++skipped;
+            else
+                waypoints.addSpawnNode(row.get!uint(0), n);
+        }
+        foreach (row; world.query!("SELECT Entry, PathId, Point, PositionX, PositionY, PositionZ, Orientation, "
+            ~ "WaitTime, ScriptId FROM creature_movement_template")())
+        {
+            const n = node(row, 2);
+            if (row.get!uint(0) !in creatureTemplates || !valid(n))
+                ++skipped;
+            else
+                waypoints.addEntryNode(row.get!uint(0), row.get!uint(1), n);
+        }
+        waypoints.finish();
+        info!"loaded %s creature waypoint paths (%s points skipped)"(waypoints.length, skipped);
     }
 
     /// `ObjectMgr::LoadAreaTriggerTeleports` and `LoadGameTele`, with the same checks.

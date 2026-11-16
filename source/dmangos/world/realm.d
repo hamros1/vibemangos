@@ -65,6 +65,13 @@ final class RealmRegistration
         login.execute!"UPDATE realmlist SET population = ? WHERE id = ?"(population, realmId);
     }
 
+    /// `realmlist.address` and `port`: where clients of the realm connect (in a cluster, the least busy node).
+    void setAddress(string host, ushort port)
+    {
+        login.execute!"UPDATE realmlist SET address = ?, port = ? WHERE id = ?"(host, port, realmId);
+        info!"realm %s now sends clients to %s:%s"(realmId, host, port);
+    }
+
     /// Updates this run's `uptime` row.
     void updateUptime(uint maxPlayers)
     {

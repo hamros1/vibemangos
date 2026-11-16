@@ -10,6 +10,7 @@ module dmangos.world.config;
 import std.exception : enforce;
 import std.format : format;
 
+import dmangos.cluster.config : ClusterConfig;
 import dmangos.json;
 import dmangos.log : LogLevel;
 
@@ -121,6 +122,12 @@ struct WorldConfig
     @JsonName("listen_range_yell") float listenRangeYell = 300;           /// ditto
     /// The world update tick, in milliseconds (mangosd's `WORLD_SLEEP_CONST`, 50).
     @JsonName("update_interval") uint updateIntervalMs = 50;
+    /// `Compression`: the zlib level of update packets, 1 (fastest) to 9 (smallest).
+    uint compression = 1;
+    /// Seconds between the tick and GC measurement lines in the log (`dmangos.metrics`); 0: none.
+    @JsonName("metrics_interval_seconds") uint metricsIntervalSeconds = 60;
+    /// The cluster this node belongs to (docs/CLUSTER.md); standalone without it.
+    ClusterConfig cluster;
     /// Seconds a logout takes away from inns and cities (ArcEmu and CMaNGOS: 20); 0 logs out at once.
     @JsonName("logout_delay") uint logoutDelay = 20;
     /// `PlayerSave.Interval`, in seconds (mangosd: milliseconds).
@@ -206,6 +213,8 @@ struct WorldConfig
         import dmangos.auth.protocol : versionName;
 
         enforce(realmId > 0, "realm_id must be at least 1");
+        cluster.validate();
+        enforce(compression >= 1 && compression <= 9, "compression must be between 1 and 9");
         enforce(allowedBuilds.length > 0, "allowed_builds must list at least one build");
         foreach (build; allowedBuilds)
             enforce(versionName(build) !is null, format!"build %s is not supported"(build));

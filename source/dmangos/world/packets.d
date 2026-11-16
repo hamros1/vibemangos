@@ -973,6 +973,30 @@ out (bytes; bytes.length == serverHeaderLength + body_.length)
     return header ~ body_;
 }
 
+/**
+ * Frames a body straight onto the end of `output`, as `encodePacket` does but without a temporary
+ * array: the hot path of every packet relayed to many players.
+ */
+void appendPacket(ref ubyte[] output, Opcode opcode, scope const(ubyte)[] body_, ref HeaderCrypt crypt)
+{
+    enforce!PacketException(body_.length + 2 <= ushort.max, "packet too large");
+
+    ubyte[serverHeaderLength] header;
+    header[0 .. 2] = nativeToBigEndian(cast(ushort)(body_.length + 2));
+    header[2 .. 4] = nativeToLittleEndian(cast(ushort) opcode);
+    crypt.encryptHeader(header);
+    output ~= header[];
+    output ~= body_;
+}
+
+unittest
+{
+    HeaderCrypt plain;
+    ubyte[] appended;
+    appendPacket(appended, Opcode.SMSG_AUTH_CHALLENGE, [0x44, 0x33, 0x22, 0x11], plain);
+    assert(appended == encodePacket(ServerAuthChallenge(0x11223344), plain));
+}
+
 unittest
 {
     HeaderCrypt plain;

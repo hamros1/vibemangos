@@ -220,6 +220,15 @@ python3 tools/testclient.py 3724 tester PASS login:Me listen:2 move:-9463:88:58.
 `inv` prints the items as the client knows them, so a slot pointing at an item the client was
 never sent, or one it was told to forget, fails the run.
 
+Creature movement: listening in Goldshire prints every `SMSG_MONSTER_MOVE` (`[monster moves]`, with
+its start, destination, point count and duration) and, for creatures that come into sight mid-walk,
+the walk in their create block (`[walking]`). The second login shows the latter: the cells are
+loaded and their creatures under way.
+
+```sh
+python3 tools/testclient.py 3724 tester PASS login:Me listen:25 logout
+```
+
 
 `tools/testclient.py` is a scripted 1.12.1 client written in Python, independent of the D code
 (see its header for the actions):
@@ -245,6 +254,53 @@ a setup from scratch without root:
 
 Restart the servers after rebuilding. Right after a start, the realm shows as offline for up to
 5 seconds, until the login server's next realm list refresh.
+
+### Load tests
+
+`bin/loadgen` (`dub build -c loadgen`) logs in hundreds of headless clients and makes them play;
+`tools/bench.sh` starts a fresh server, runs one scenario and appends the report. Point both at a
+test copy of the databases: the generator creates accounts, writes session keys and moves
+characters. docs/BENCHMARKS.md has the scenarios, the baseline and how to read the numbers.
+
+```sh
+CONFIG=bench.json WORLD=127.0.0.1:8085 LOGIN_DB=... CHARACTER_DB=... WORLD_DB=... \
+    tools/bench.sh crowd 250 --duration 60 --warmup 10
+```
+
+Without `perf`, `tools/gdb-sample.py` profiles by sampling: gdb runs the server (built with `-g`)
+and records the main thread's stack whenever the server is interrupted, and
+`tools/gdb-summary.py` counts the functions. While a load test runs:
+
+```sh
+SAMPLE_OUT=samples.txt gdb -q -batch -x tools/gdb-sample.py --args $PWD/bin/worldserver -c bench.json &
+while kill -INT "$(pgrep -f "^$PWD/bin/worldserver")"; do sleep 0.1; done &   # stop it when done
+touch samples.txt.stop      # then interrupt once more: gdb detaches
+python3 tools/gdb-summary.py samples.txt
+```
+
+A server slower than it should be says where: a loop iteration over 500 ms is logged with its
+time split between receiving, the tick and sending; a tick over 500 ms with its time in players and
+maps; and a single packet over 200 ms with its opcode.
+
+### A local cluster
+
+Three nodes on one machine: copy `worldserver.json` three times and give each a `cluster` object
+with its own `node_id` (1, 2, 3) and `listen_port` (9000, 9001, 9002), all with
+`"coordinator": "127.0.0.1:9000"`, and `metrics_interval_seconds` at 10 to see the links in the log.
+Node 1 is the coordinator.
+
+```sh
+for n in 1 2 3; do bin/worldserver -c node$n.json > node$n.log 2>&1 & done
+grep -h "cluster:" node*.log
+```
+
+Every node serves clients on its own world port. `tools/testclient.py` normally connects where the
+realm list points (the coordinator steers it to the least busy node); `WORLD=127.0.0.1:38086` in its
+environment connects it to a given node instead.
+
+`kill -9` a member to see it leave the view at once, `kill -STOP` one to see it dropped after
+`failure_timeout_ms`, and start a second process with a node's id (on another port) to see the
+older one fenced. docs/CLUSTER.md lists what each phase was tested with.
 
 ### The real client
 

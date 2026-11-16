@@ -671,7 +671,16 @@ final class ClientData
         return model is null ? display.scale : display.scale * model.scale;
     }
 
-    /// `GetTalentSpellPos`
+    /// `CreatureModelData.CollisionHeight` of a display's model, unscaled; 0 if unknown.
+    float collisionHeight(uint displayId) const
+    {
+        if (const display = creatureDisplays.lookup(displayId))
+            if (const model = creatureModels.lookup(display.modelId))
+                return model.collisionHeight;
+        return 0;
+    }
+
+        /// `GetTalentSpellPos`
     const(TalentSpellPos)* talentSpellPos(uint spellId) const
     {
         return spellId in talentSpellPositions;

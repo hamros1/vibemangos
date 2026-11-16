@@ -30,7 +30,7 @@
  */
 module dmangos.world.session;
 
-import core.time : Duration, MonoTime, seconds;
+import core.time : Duration, MonoTime, msecs, seconds;
 import std.algorithm.searching : canFind;
 import std.bitmanip : bigEndianToNative, littleEndianToNative, nativeToLittleEndian;
 
@@ -90,6 +90,10 @@ private enum maxBufferedInput = 2 * (clientHeaderLength + maxClientPacketSize);
 /// See the module documentation.
 final class WorldSession : NetSession, Kickable, OnlinePlayer
 {
+    private bool admitted;                 // the account is this session's (see `Kickable.admit`)
+    private bool loginWaiting;             // a player login waits for that
+    private ClientPlayerLogin pendingLogin;
+
     mixin PacketDispatch!Handles;
 
     private
@@ -194,6 +198,9 @@ final class WorldSession : NetSession, Kickable, OnlinePlayer
     }
 
     /// Feeds received bytes and handles every complete packet among them.
+    /// A packet whose handling takes longer than this is logged: every other client waits meanwhile.
+    private enum slowPacket = 200.msecs;
+
     void receive(scope const(ubyte)[] data)
     {
         if (wantsClose)
@@ -233,7 +240,11 @@ final class WorldSession : NetSession, Kickable, OnlinePlayer
             auto reader = ByteReader(input[0 .. bodyLength]);
             input = input[bodyLength .. $];
             haveHeader = false;
+            const started = MonoTime.currTime;
             handle(cast(Opcode) pendingOpcode, reader);
+            const took = MonoTime.currTime - started;
+            if (took > slowPacket)
+                warning!"%s: handling %s took %s ms"(remoteAddress, cast(Opcode) pendingOpcode, took.total!"msecs");
         }
         if (input.length == 0 || wantsClose)
             input = null;
@@ -257,13 +268,19 @@ final class WorldSession : NetSession, Kickable, OnlinePlayer
     void deliver(Opcode opcode, const(ubyte)[] body_)
     {
         if (!wantsClose)
-            output ~= encodePacket(opcode, body_, crypt);
+            appendPacket(output, opcode, body_, crypt);
     }
 
     /// The create block a player who just came into sight gets: group mates see real health.
     UpdateData appearanceFor(const Inhabitant viewer, uint serverTime) const
     {
-        return player.createForOthers(serverTime, context.groups.sameGroup(player.guid, viewer.character.guid));
+        return player.createForOthers(serverTime, appearanceKind(viewer) == 1);
+    }
+
+    /// 1 for a member of this player's group (who sees its group fields), 0 for anyone else.
+    uint appearanceKind(const Inhabitant viewer) const
+    {
+        return context.groups.sameGroup(player.guid, viewer.character.guid) ? 1 : 0;
     }
 
     /// One tick of the world update; see `InWorldHandlers.updateInWorld`.
@@ -341,6 +358,17 @@ final class WorldSession : NetSession, Kickable, OnlinePlayer
         state_ = WorldState.closed;
     }
 
+    /// See `Kickable.admit`: a login that waited for it goes on.
+    void admit()
+    {
+        admitted = true;
+        if (loginWaiting && state_ == WorldState.characterScreen)
+        {
+            loginWaiting = false;
+            handlePlayerLogin(pendingLogin);
+        }
+    }
+
     /// Ends the session, e.g. because the account logged in again.
     void kick(string reason)
     {
@@ -381,7 +409,11 @@ private:
 
     void send(T)(auto ref const T packet)
     {
-        output ~= encodePacket(packet, crypt);
+        import dmangos.serialization : serialize;
+
+        ByteWriter payload;
+        serialize(payload, packet);
+        appendPacket(output, T.opcode, payload.data, crypt);
     }
 
     void finish()
@@ -438,6 +470,8 @@ private:
                 watcher.deliver(packet.compressed ? Opcode.SMSG_COMPRESSED_UPDATE_OBJECT : Opcode.SMSG_UPDATE_OBJECT,
                     packet.body_);
         }
+        if (!transferring)
+            map.playerChanged(this); // nodes holding a replica of this player (phase 3b)
         player.clearChanges();
     }
 
@@ -739,3 +773,42 @@ unittest
     assert(context.sessionCount == 1, "closing the kicked session must not remove its replacement");
 }
 
+
+/// In a cluster (phase 3b) a player login waits until the coordinator grants the account; an eviction kicks.
+unittest
+{
+    import dmangos.world.player : CharacterData;
+
+    auto db = newDatabase();
+    auto context = newContext(db);
+    uint[] claimed, released;
+    ulong lastSerial;
+    context.claimSession = (uint account, ulong serial) { claimed ~= account; lastSerial = serial; };
+    context.releaseSession = (uint account, ulong serial) { released ~= account; };
+
+    auto client = TestClient(new WorldSession(context, "127.0.0.1"), testKey);
+    CharacterData c;
+    c.guid = 7;
+    c.account = db.accounts["PLAYER"].id;
+    c.name = "Waiter";
+    c.race = 2;    // an orc shaman: what `newContext` can create
+    c.classId = 7;
+    c.level = 1;
+    db.loadable[7] = c;
+    authenticate(client);
+    assert(claimed == [c.account], "the session claimed its account");
+
+    client.write(Opcode.CMSG_PLAYER_LOGIN, ClientPlayerLogin(7));
+    assert(!opcodesOf(client.read()).canFind(Opcode.SMSG_LOGIN_VERIFY_WORLD), "not before the grant");
+    context.sessionGranted(c.account, lastSerial + 1);
+    assert(!opcodesOf(client.read()).canFind(Opcode.SMSG_LOGIN_VERIFY_WORLD), "a grant for another session counts for nothing");
+    context.sessionGranted(c.account, lastSerial);
+    assert(opcodesOf(client.read()).canFind(Opcode.SMSG_LOGIN_VERIFY_WORLD), "in the world once granted");
+    assert(client.session.character !is null);
+
+    // Another node takes the account: this session is kicked, and on closing releases it.
+    context.sessionEvicted(c.account, lastSerial);
+    assert(client.session.wantsClose);
+    client.session.disconnected();
+    assert(released == [c.account]);
+}

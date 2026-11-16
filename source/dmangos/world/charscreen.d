@@ -21,6 +21,7 @@ module dmangos.world.charscreen;
 mixin template CharacterScreenHandlers()
 {
     import core.time : seconds;
+    import dmangos.cluster.ownership : IdKind;
     import dmangos.timer : IntervalTimer;
     import std.algorithm.iteration : map;
     import std.algorithm.searching : canFind;
@@ -77,6 +78,8 @@ private:
     {
         alias R = CharacterResponse;
         const config = context.config;
+        if (!admitted) // in a cluster, the account may still be in the world on another node (phase 3b)
+            return R.CHAR_CREATE_ERROR;
         const isPlayer = account.level == AccountLevel.player;
 
         if (isPlayer && config.charactersCreatingDisabled)
@@ -138,9 +141,11 @@ private:
         auto builder = new CharacterBuilder(context.data, context.client, context.creationSettings,
             &context.nextItemGuid);
         NewCharacter character;
-        if (!builder.create(context.next.character, account.id, account.level, create, skipCinematic, character))
+        uint characterGuid;
+        if (!context.takeId(IdKind.character, characterGuid))
+            return R.CHAR_CREATE_ERROR; // a cluster member whose block of ids has not come
+        if (!builder.create(characterGuid, account.id, account.level, create, skipCinematic, character))
             return R.CHAR_CREATE_ERROR;
-        ++context.next.character;
 
         context.database.saveNewCharacter(character, tutorialRowMissing);
         tutorialRowMissing = false;
@@ -155,6 +160,8 @@ private:
     void handleCharDelete(const ClientCharDelete request)
     {
         const guid = lowGuid(request.guid);
+        if (!admitted) // in a cluster, the character may be in the world on another node (phase 3b)
+            return send(ServerCharDelete(CharacterResponse.CHAR_DELETE_FAILED));
         if (context.database.isGuildLeader(guid))
             return send(ServerCharDelete(CharacterResponse.CHAR_DELETE_FAILED_GUILD_LEADER));
 
@@ -175,6 +182,13 @@ private:
     @Handles(Opcode.CMSG_PLAYER_LOGIN, WorldState.characterScreen)
     void handlePlayerLogin(const ClientPlayerLogin request)
     {
+        // In a cluster the account may still be in the world on another node: wait until it is ours.
+        if (!admitted)
+        {
+            pendingLogin = request;
+            loginWaiting = true;
+            return;
+        }
         const guid = lowGuid(request.guid);
         auto loaded = context.database.loadCharacter(guid);
         if (loaded.isNull || loaded.get.account != account.id)

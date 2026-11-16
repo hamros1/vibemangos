@@ -394,7 +394,7 @@ final class Group
     void create()
     in (!isCreated && leader != 0)
     {
-        id = owner.nextId++;
+        id = owner.takeId();
         type = GroupType.normal;
         lootMethod = LootMethod.groupLoot;
         lootThreshold = 2;
@@ -775,12 +775,19 @@ final class Groups
         WorldDatabase database;
         Directory directory;
         uint nextId;
+        uint delegate() idSource;  // a cluster member's group ids (phase 2); null: `nextId`
         Group[uint] byId;
         Group[ulong] memberOf;   // player guid -> created group
         Group[ulong] invitedTo;  // player guid -> group it is invited to (or leads, before creation)
     }
 
     ///
+    /// The next group id.
+    uint takeId()
+    {
+        return idSource !is null ? idSource() : nextId++;
+    }
+
     this(WorldDatabase database, Directory directory, uint nextId)
     in (database !is null && directory !is null && nextId > 0)
     {
@@ -929,6 +936,11 @@ version (unittest)
         UpdateData appearanceFor(const Inhabitant viewer, uint serverTime) const
         {
             return player.createForOthers(serverTime, false);
+        }
+
+        uint appearanceKind(const Inhabitant viewer) const
+        {
+            return 0;
         }
         @property AccountLevel security() const { return AccountLevel.player; }
         bool canUseCommand(char) const { return false; }
