@@ -15,6 +15,7 @@ module dmangos.world.exploration;
 /// See the module documentation.
 mixin template Exploration()
 {
+    import dmangos.world.channelservice : ChannelOp;
     import std.algorithm.comparison : max, min;
     import dmangos.log;
     import dmangos.world.defines : exploredZonesSize;
@@ -128,7 +129,8 @@ private:
         {
             player.data.zone = zone;
             send(ServerInitWorldStates(player.data.map, zone));
-            context.channelsFor(this).zoneChanged(this, context.client.areaName(zone));
+            if (const zoneName = context.client.areaName(zone))
+                context.channelCommand(this, ChannelOp.zoneChanged, null, zoneName);
         }
         zoneTimer.reset();
         updateArea(area);

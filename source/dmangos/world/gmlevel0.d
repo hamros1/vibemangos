@@ -9,6 +9,7 @@ module dmangos.world.gmlevel0;
 /// See the module documentation.
 mixin template Level0Commands()
 {
+    import dmangos.world.context : PresenceFlags;
     import core.time : seconds;
     import std.algorithm.searching : countUntil;
     import std.format : format;
@@ -152,10 +153,16 @@ private:
             if (other.hasPermissions)
                 ++gm;
         }
+        // In a cluster, the other nodes' players too (phase 5b).
+        const elsewhere = context.remotePlayers;
+        foreach (ref r; elsewhere)
+            if (r.entry.flags & PresenceFlags.permissions)
+                ++gm;
         greenSystemMessage(format!"Server Revision: |r%sdmangos %s(a World of Warcraft 1.12 server in D)"(
             MSG_COLOR_WHITE, MSG_COLOR_LIGHTBLUE));
         greenSystemMessage("Server Uptime: |r" ~ uptimeString());
-        greenSystemMessage(format!"Current Players: |r%d (%d GMs, %d queued)"(context.sessionCount, gm, 0));
+        greenSystemMessage(format!"Current Players: |r%d (%d GMs, %d queued)"(context.sessionCount + elsewhere.length,
+            gm, 0));
         greenSystemMessage(format!"Active Thread Count: |r%u"(1)); // one thread runs the world
         greenSystemMessage(format!"Free Thread Count: |r%u"(0));
         greenSystemMessage(format!"Average Latency: |r%.3fms"(cast(float) latency / count));
@@ -226,24 +233,28 @@ private:
         bool first = true;
         const isGM = hasPermissions;
         const onlyActive = context.config.gamemasterListOnlyActiveGMs;
-        foreach (other; context.onlinePlayers)
+        void list(string name, string permissions, bool tagOn)
         {
-            if (!other.hasPermissions)
-                continue;
-            const tagOn = other.character.gmTagOn;
             if (!(isGM || !onlyActive || tagOn))
-                continue;
+                return;
             if (first)
                 greenSystemMessage("There are following active GMs on this server:");
-            const name = other.character.data.name;
             if (context.config.gamemasterHidePermissions && !isGM)
                 systemMessage(" - " ~ name);
             else if (onlyActive && !tagOn)
-                systemMessage(format!"|cff888888 - %s [%s]|r"(name, sessionOf(other).permissions));
+                systemMessage(format!"|cff888888 - %s [%s]|r"(name, permissions));
             else
-                systemMessage(format!" - %s [%s]"(name, sessionOf(other).permissions));
+                systemMessage(format!" - %s [%s]"(name, permissions));
             first = false;
         }
+
+        foreach (other; context.onlinePlayers)
+            if (other.hasPermissions)
+                list(other.character.data.name, sessionOf(other).permissions, other.character.gmTagOn);
+        // In a cluster, the other nodes' GMs too, as presence says (phase 5b).
+        foreach (ref r; context.remotePlayers)
+            if (r.entry.flags & PresenceFlags.permissions)
+                list(r.entry.name, r.entry.permissions, (r.entry.flags & PresenceFlags.gmTag) != 0);
         if (first)
             systemMessage("There are no GMs currently logged in on this server.");
         return true;

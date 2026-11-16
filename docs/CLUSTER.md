@@ -10,7 +10,11 @@ foundation), 2 (distributed world ownership) and 3 (replication: creatures, game
 seen across nodes, every node serving clients, one login per account) are implemented and tested,
 and so is phase 4: creatures and game objects migrate with their region, players move to the node
 that owns the ground they stand on while their client stays connected where it is, and a node whose
-lease lapsed writes nothing.** Phases 5 to 7 are design.
+lease lapsed writes nothing; and most of phase 5: speech, whispers, the who list, NPC services
+(limited vendor stock counted on the vendor's node), chat channels, groups, GM commands and world
+texts across nodes; nodes drain on a clean stop; phase 6, load balancing by measured cost;
+and phase 7, a standby coordinator that takes over.** Trades and duels (not written yet), splitting
+regions, and a quorum of coordinators are design.
 
 ## What the client allows
 
@@ -235,7 +239,8 @@ Partitioning is deterministic, and the coordinator logs every region with its ce
 
 Regions are dealt out longest-processing-time first (the most expensive to the least loaded node).
 When a node joins, as few regions as it takes move to it until the busiest and idlest nodes are
-within 20% of the mean load of each other (`rebalance`). Phase 6 makes both continuous and measured.
+within 20% of the mean load of each other (`rebalance`). Phase 6 makes both continuous and measured
+(below).
 
 ### Ownership, epochs and leases (`cluster/ownership.d`)
 
@@ -278,7 +283,8 @@ has. Members do not create anything yet (they serve no clients until phase 3).
 ### Settings
 
 `cluster.lease_ms` (5000; longer than `failure_timeout_ms`), `cluster.region_count` (32),
-`cluster.id_block` (1000).
+`cluster.id_block` (1000), and for phase 6 `cluster.balance_interval_seconds` (30),
+`cluster.balance_min_load_us` (20000) and `cluster.region_cooldown_seconds` (120).
 
 ### Tested
 
@@ -468,8 +474,8 @@ associative array, and keep replicas that are not walking out of the tick.
 
 * **Players** still stay with the node their client is connected to. Moving a player's simulation to
   the node that owns the region it walks into (the home and owner split) is phase 4b.
-* **A node shutting down cleanly** is treated like one that failed: its regions wait out its lease and
-  are spawned afresh. Handing them over with their objects first (a drain) is a small addition.
+* ~~A node shutting down cleanly is treated like one that failed~~: it drains first (phase 5b,
+  below).
 
 ## Phase 4b: players move between nodes (implemented)
 
@@ -483,7 +489,7 @@ associative array, and keep replicas that are not walking out of the tick.
 * **When.** Once a second (the zone check) a player checks whose ground it stands on
   (`migrationTarget`): it moves when the ground 25 yards around it in all four directions is one other
   node's (so walking along a border does not bounce it), not within 10 seconds of its last move, and
-  not while teleporting or logging out. Away from home it goes back home first, and on from there.
+  not while teleporting or logging out. Away from home it goes straight on to a third node.
 * **How** (`migrateTo`, `arrive`). The simulating node saves the character (saves are synchronous) and
   sends the account, the guid, the movement, and every guid the client has (`Map.knownTo`). It takes
   the player off its map without a destroy packet: players there who saw it see a replica owned by the
@@ -519,11 +525,239 @@ associative array, and keep replicas that are not walking out of the tick.
 
 ### Not yet
 
-* **One owner at a time:** a player away from home goes back home before going on to a third node.
+* ~~One owner at a time: a player away from home goes back home before going on to a third node~~:
+  it goes straight there (below).
 * **Carried over:** the character as saved, its movement and what its client has. Not carried: timers
   that only shape timing (regeneration, rest, flood protection), `.gm allowwhispers` targets and
   `.cheat triggerpass`, which start afresh on the new node.
 * **Across nodes** (phase 5): chat, whispers, groups, channels and GM commands that find players by
   name see only the players their node simulates.
 * **Cost:** every packet of a player away from home crosses one more link; not yet benchmarked.
+
+## Phase 5a: speech, whispers and NPCs across nodes (implemented)
+
+Since phase 4b, players standing together are simulated by the same node, so most interaction is
+local; what crosses nodes is what happens near a region border, and whispers.
+
+* **Range packets** (say, yell, text emotes, and anything else `Map.sendInRange` sends): delivered to
+  the node's own players in range, and sent (`InRange`) to every node interested in a cell within the
+  range, which delivers it to its own players in range (`Map.deliverInRange`). Each node delivers only
+  to the players it simulates, so nobody hears anything twice. Emotes and moves already reach other
+  nodes with the replicas (phase 3).
+* **Presence** (`ClusterBridge.sendPresence`, `WorldContext.presence`): once a second every node tells
+  the others what changed of the players it simulates (name, race, class, level, gender, zone, the GM
+  tag, away and busy with their message, whether it has GM permissions), and a node that links gets
+  them all. A lost node's players are forgotten with it.
+* **Whispers** (`dmangos.world.whisper`) are checked and delivered where the receiver is simulated:
+  a whisper to another node's player goes there (`Whisper`, with the sender's guid, race, permissions
+  and chat tag), which runs the same `deliverWhisper` as for a local one (the GM tag against its own
+  `.gm allowwhispers` list, factions) and sends the sender's copy, the away or busy reply or the
+  refusal back (`DeliverTo`).
+* **The who list** (`CMSG_WHO`, `whoList`, CMaNGOS's `HandleWhoOpcode`) lists the node's own players
+  and those presence reports, with CMaNGOS's filters: the viewer's team unless
+  `allow_two_side_who_list`, no account above `gm_level_in_who_list` for players (presence carries the
+  account level), the level range, class and race masks, zones, and name, guild and zone-name parts.
+  At most 49 are shown, the count capped by `max_who_list_returns`. Nobody is in a guild yet.
+* **NPC services** (gossip, trainers, vendors, innkeepers, bankers, repairs) take a `Npc`: a creature,
+  or for a replica of another node's creature an `NpcStandIn` with the replica's fields and position
+  and the template every node shares. All the player's side (money, items, spells, its bind point)
+  is on the player's node, where it belongs. Limited vendor stock is the creature's, counted on its
+  node: buying a limited item from a stand-in first reserves it there (`StockRequest`, answered with
+  `StockReply` and what is left), the purchase goes on when the answer comes, and stock reserved for
+  a purchase that then fails (bags full, not enough money) goes back (`StockRelease`).
+
+### Tested
+
+* **Unit tests:** a say heard by a player in range on another node and not by one out of range; a
+  whisper to a player another node simulates going to that node, with the sender's copy and the away
+  reply, and "player not found" for a name nobody has and once its node is lost; a whisper from
+  another node to a GM with its tag on refused there unless the GM allowed it; a replica of a vendor
+  served through a stand-in with its template, spawn and flags, one stand-in per creature; limited
+  stock of another node's vendor reserved there, refused when sold out, and given back when the
+  purchase fails; the who list's filters and caps.
+* **Live, two nodes:** Gamma on node 1 and Alpha on node 2, 60 yards apart across the Elwynn and
+  Duskwood border: Alpha heard Gamma's yell and not Gamma's say (beyond its 25 yards), and Gamma got
+  Alpha's whisper.
+
+### Still on one node (phase 5b)
+
+Trades and duels (not implemented at all yet), and GM commands that find players by name (now
+phase 5b).
+
+## Phase 5b: cluster services
+
+What belongs to no place and to players anywhere is kept in one place: the coordinator. Other nodes
+send it their players' commands, and it sends what it has to tell a player to the node simulating it
+(`DeliverTo`, found by presence). Standalone, the same service runs in the one server.
+
+### Chat channels (implemented)
+
+* `ChannelService` (`dmangos.world.channelservice`) holds every channel. Each channel command a
+  player gives (joining, leaving, talking, the list, passwords, moderation, kicks, bans, invitations,
+  and logging out and changing zone, which leave or move zone channels) is a `ChannelCommand`
+  carrying what the channels need of the player: guid, name, race, chat tag and ArcEmu's `c`
+  permission. The checks that are the player's node's (names, the GM client channel) stay there.
+* Channels see players as `ChannelMember`s; a member's messages go to its node, the one presence
+  says simulates it, or failing that the one its last command came from. A target named in a command
+  is found among the coordinator's players or through presence.
+* A lost node's players leave their channels, as if they had logged out.
+* **Not yet:** a new coordinator (phase 7) starts with no channels; players rejoin when they next
+  log in or change zone. A message sent to a member in the second between its moving to another
+  node and presence saying so is lost.
+* **Tested:** a unit test with a player on the coordinator and one on another node joining one
+  channel, talking, being made moderator by name, and leaving with its lost node; live, Alpha on
+  node 2 and Gamma on the coordinator in one channel: both heard each other, the list showed both,
+  and Alpha was told when Gamma logged out.
+
+### Groups (implemented)
+
+* **One place changes groups:** the coordinator's `Groups`, loaded from and saved to `groups` and
+  `group_member` as before; no other node writes them, and none needs group ids any more. What
+  changes a group (invitations, accepting and declining, kicks, the leader, leaving and disbanding,
+  loot settings, target icons, raids, sub-groups, assistants, and logging out) is a `GroupCommand`
+  that `GroupService` (`dmangos.world.groupservice`, CMaNGOS's `GroupHandler` rules) runs there,
+  with what the rules need of the player: guid, name, race and whether it has GM permissions.
+* **Every other node mirrors the groups** (`Groups.mirror`): the coordinator sends a group's whole
+  state (`GroupState`: members, sub-groups, assistants, leader, loot, icons) after each change, its
+  removal when disbanded, and all of them to a node that links. What only reads a group is decided
+  on the player's node with its mirror: who sees whose health (group mates see more), party, raid
+  and raid-warning chat, member stats, ready checks, rolls, minimap pings, the icon list. When a
+  mirror changes, its players there see their mates anew, and a newcomer's stats go out.
+* **Telling members** (`GroupDirectory`, the context): a packet for a member goes to its node,
+  found by presence, or for a few seconds after a command by the node the command came from (a
+  player who just logged in is in no presence report yet). A member's status in the list (online,
+  away, busy) comes from presence for another node's player. `CMSG_REQUEST_PARTY_MEMBER_STATS` for
+  a member another node simulates is answered by that node (`MemberStatsRequest`).
+* **Not yet:** a new coordinator (phase 7) reloads groups from the database but loses invitations
+  in flight; nodes keep their mirrors until it sends its own.
+* **Tested:** a unit test with Anduin on the coordinator inviting Jaina of node 2, the group
+  created when she accepts, the lists going to both, node 2's mirror making them group mates there
+  and sending her stats to node 1, party chat from node 2 reaching node 1, and the mirror forgetting
+  the disbanded group; every standalone group test runs through the service. Live: node 2's mirror
+  gave Alpha its saved raid at login and the coordinator refused Alpha's invitation (not the
+  leader), as CMaNGOS does; then Alpha on node 2 invited Gamma on the coordinator, both got the
+  list, party chat crossed both ways, and Alpha's leaving disbanded the party for both.
+
+### GM commands and world texts (implemented)
+
+* **World texts** (`World::SendWorldText`, `SendGMWorldText`, `SendWorldWideScreenText`: `.announce`,
+  `.wannounce`, kick and ban notices, and the rest) reach every node's players (`ToEveryone`, with
+  the `u` permission filter for GM texts).
+* **Commands that name a player** another node simulates are sent there (`GmRemote`): `.kickplayer`,
+  `.summon`, `.appear`, `.playerinfo`, `.kill` by name, `.ban character` (the account is banned where
+  the GM is; the player is kicked where it is) and `.rename` (the database renamed where the GM is;
+  the player renamed where it is). What each does to its player is a method of the player's session
+  (`dmangos.world.gmtargets`), the same one a GM on the player's node uses, with a `GmSink` for the
+  GM's messages, which go back to the GM's node. `.appear` sends the player's place back
+  (`appearAt`) and the GM teleports there. `.gm allowwhispers` and `.gm blockwhispers` find the
+  player through presence, and `.gm list` and `.info` count the GMs and players presence reports
+  (presence carries each GM's permission letters).
+* **Not yet:** `.saveall` and `.masssummon` act on this node's players only; `.playerinfo` on a player
+  simulated away from its client's node shows that node for its address, and build 0.
+* **Tested:** a unit test with `.summon` and `.kickplayer` naming a player of node 2 (the command
+  sent there with the GM's place), `.gm list` naming node 2's GM, and on the target's node a summons,
+  an appear sending the place back, and a kick whose notice goes to every node. Live: Gamma on the
+  coordinator ran `.playerinfo Alpha` (answered by node 2, where Alpha played in Kalimdor) and
+  `.appear Alpha`: Gamma went to Kalimdor and moved to node 2; `.summon` of a player simulated by
+  the coordinator brought it, and `.gm list` listed Gamma.
+
+### A third node, and a clean shutdown (implemented)
+
+* **Straight to a third node.** A player simulated away from its home that walks onto a third node's
+  ground moves there directly: its state names its home (the node holding its client), the new
+  owner makes its session for that home, and the old owner tells the home (`PlayerMessage.moved`),
+  which sends the client's packets there from then on. Packets the client sent before its home heard
+  are passed on by the old owner for a few seconds; a home that hears from a new owner before the
+  old one's word takes it as the owner. One handover and one save instead of two.
+* **A drain.** A member stopped cleanly (SIGTERM, SIGINT, `.server shutdown`) does not stop at once:
+  it sends the coordinator `Drain`, which revokes each of its regions toward the member that carries
+  least (`RegionAuthority.drain`) and gives it none from then on. Its regions go with their objects,
+  as when the load is balanced; the players it simulates for other nodes' clients move on at once
+  (no margin, no cool-down), and the players whose clients it holds stay and are logged out, saved,
+  when it stops. It stops when it owns nothing and has no visitors, or after 20 seconds whatever is
+  left. The coordinator itself does not drain (phase 7).
+* **Tested:** unit tests with three nodes in memory (a player handed from node 2 straight to node 3,
+  its home following, the client's packets going to node 3 and its answers coming back, then home
+  from node 3), and the authority draining a node toward the others and never granting it again.
+  Live: Gamma, connected to node 1, played in Durotar, which node 2 simulated; node 2 got SIGTERM,
+  handed over its 32 regions (Durotar's with 102 objects), Gamma moved home, and node 2 stopped
+  1 second after the signal; Gamma's client noticed nothing (`.gps` and a say worked after).
+
+### Trades and duels (design)
+
+Neither exists yet, even on one server. When they are written: both need the two players simulated
+together (trade windows and duel combat change both players at once, and a node may only change
+what it simulates). Two players near enough to trade or duel usually are on the same node already
+(phase 4b moves a player to the owner of its ground); when they are not (within the 25-yard
+hysteresis of a border), the one who asked moves to the other's node before the trade or duel
+starts, through the same migration, and stays there until it ends.
+
+## Phase 6: load balancing by measured cost (implemented, without splits)
+
+* **Measured.** Every 10 seconds each node divides the loop's busy time (packets, tick and sending,
+  `TcpServer.busyTotal`) among the regions it owns, by what each holds now (`Map.weighCells`): an
+  object in the tick weighs 10, a resting one 1, a player 100 (a player's packets and what it sees
+  cost far more than a creature). The result, µs of loop time a second per region, goes to the
+  coordinator (`RegionLoads`), which keeps each region's cost as the mean of its last value and the
+  new one. The first report replaces the spawn counts of phase 2 everywhere; a region nobody
+  reports costs nothing, as nothing of it is loaded.
+* **Balanced with hysteresis** (`RegionAuthority.balanceMeasured`): every `balance_interval_seconds`
+  (30) the coordinator moves regions from the busiest node to the idlest while the gap is over a
+  quarter of the mean, only when the busiest takes at least `balance_min_load_us` (20,000: 2% of a
+  core), at most two regions a look, each only if it narrows the gap (at most half the gap), and
+  never one that moved in the last `region_cooldown_seconds` (120): no region goes back and forth.
+  A move is the handover of phase 4 (revoke, release with the objects, grant); players move with
+  their ground (phase 4b).
+* **Not yet: splits and merges.** The regions are still the leaves of the start-up partition. A
+  crowd in one region is that region's node's to carry; balancing moves the node's other regions
+  away, which is what lets it. Splitting a hot region (a new cut through its k-d leaf, two new
+  region ids, both handed over like any move) and merging cold neighbours are the next step.
+* **Tested:** unit tests for the threshold, the cap of two moves, the cool-down and the smoothing.
+  Live, two nodes on one machine: 300 bots spread over both continents measured 19 and 24 ms/s,
+  within the tolerance, and nothing moved; with 250 more crowded in Goldshire the two measured 176
+  and 132 ms/s, and the coordinator moved one region of 21 ms/s (to 155 and 153); a minute later,
+  at 181 and 135, another of 19 ms/s. Every bot stayed in the world (ping p99 17 ms spread out, 28
+  ms in the crowd).
+
+## Phase 7: the standby coordinator (implemented)
+
+When the coordinator dies, everything it keeps is needed within a lease: without lease
+confirmations every member stops writing and ends its sessions after `lease_ms`. So a member can be
+the **standby** (`cluster.standby`): it computes the coordinator's start-up partition and costs too,
+and like every member it has the latest region table.
+
+* **Taking over** (`ClusterNode.promote`): when the standby has had no link to the coordinator for
+  half a second after losing it (`standbyGrace`; the link itself closes at once if the process
+  died, after `failure_timeout_ms` if it hangs), it becomes the coordinator. It adopts the table it
+  has (`RegionAuthority.adopt`): every grant stands with its epoch, so no member loses or reloads a
+  region, regions on their way somewhere still go there, new epochs start above every epoch in the
+  table, and the old coordinator's regions are held until its lease is surely over, then dealt out
+  (spawned afresh, as after any failure). The view and table versions go on from the old ones. As
+  after any start, nothing new is granted, and no ids, for a lease: grants and blocks the old
+  coordinator made that the standby never heard of have lapsed or been reported by then.
+* **Members follow it** (`Takeover`, sent again each second until accepted): a member takes the
+  standby as its coordinator once it has lost the old one itself (while its own link to the old one
+  is alive, it waits). The standby's heartbeats on the link they already have renew its lease at
+  once; it re-claims its sessions and reports its ids, as to any new coordinator, and from then on
+  dials the new coordinator's address. Heartbeats every 500 ms, a failure timeout of 3 s and a lease
+  of 5 s leave about a second and a half to spare.
+* **The world server's part** (`onPromoted`): the groups are loaded from the database (the old
+  coordinator saved every change) and sent to every mirror; channels are kept here from now on,
+  starting empty; ids come from this node's counters, raised to what the database holds and what
+  members report; and the node speaks for the realm (its row, and steering new clients).
+* **Not yet:** there is one standby, and none after a takeover until one is configured. Without a
+  quorum, a coordinator that is alive but cut off from the standby (while the members still reach
+  it) is not told apart from a dead one; run the two where that cannot happen (one machine, one
+  switch), or add a third voter. The old coordinator must come back as a member of the new one (its
+  `coordinator` pointing there). Players whose client was connected to the old coordinator lose
+  their connection and log in again (the realm list now sends them to a live node); channels, and
+  invitations in flight, are gone.
+* **Tested:** a unit test with three nodes in memory: the coordinator dies, the standby takes over
+  within the failure timeout, the member follows; neither node's lease lapses at any 50 ms tick,
+  neither loses a region; both have the same view; the dead coordinator's regions are dealt out
+  after its lease; the member's id blocks come from the new coordinator's counters. Live, two
+  nodes: Alpha playing on node 2 (the standby) in Durotar; `kill -9` of the coordinator; node 2 took
+  over 3 seconds later with its lease holding, Alpha stayed in the world and was heard after it,
+  node 2 took all 74 regions once the old lease was over, and Gamma logged in through node 2
+  afterwards, its session granted by the new coordinator.
 

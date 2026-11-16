@@ -535,6 +535,29 @@ final class Map : MotionWorld
             startTicking(*mover);
     }
 
+    /**
+     * What each cell holds, weighed for how much of the loop it takes (phase 6): an object in the tick
+     * `ticking`, a resting one `resting`, a player simulated here `player`. Replicas count for nothing
+     * here: the node that simulates them weighs them.
+     */
+    void weighCells(uint ticking, uint resting, uint player, scope void delegate(ulong cell, ulong weight) sink)
+    {
+        ulong[ulong] weights;
+        foreach (guid, object; objects)
+        {
+            if (guid in replicas)
+                continue;
+            const cell = objectCellOf.get(guid, homeCellOf.get(guid, ulong.max));
+            if (cell == ulong.max)
+                continue;
+            weights[cell] = weights.get(cell, 0) + (guid in tickingAt ? ticking : resting);
+        }
+        foreach (guid, cell; cellOf)
+            weights[cell] = weights.get(cell, 0) + player;
+        foreach (cell, weight; weights)
+            sink(cell, weight);
+    }
+
     /// Objects in the tick now (not resting).
     @property size_t tickingCount() const
     {
@@ -959,8 +982,26 @@ final class Map : MotionWorld
         return found;
     }
 
-    /// Delivers a packet to every player within `range` yards of `center`, whether they see each other or not.
+    /**
+     * Delivers a packet to every player within `range` yards of `center`, whether they see each other or
+     * not, on this node and on every other with players near (phase 5).
+     */
     void sendInRange(Position center, float range, Opcode opcode, const(ubyte)[] body_)
+    {
+        deliverInRange(center, range, opcode, body_);
+        if (replicator is null)
+            return;
+        bool[ushort] peers;
+        foreach (key; cellKeysNear(center, range))
+            if (auto wanting = key in peerCells)
+                foreach (peer, _; *wanting)
+                    peers[peer] = true;
+        foreach (peer, _; peers)
+            replicator.inRange(peer, id, center, range, cast(ushort) opcode, body_);
+    }
+
+    /// `sendInRange` for this node's players only: what another node sent it (each node delivers to its own).
+    void deliverInRange(Position center, float range, Opcode opcode, const(ubyte)[] body_)
     {
         foreach (who; near(center, range))
             who.deliver(opcode, body_);
@@ -1671,6 +1712,7 @@ unittest
         void values(ushort peer, uint, ulong guid, const(ubyte)[] slots) { node[peer].replicaValues(from, guid, slots); }
         void move(ushort peer, uint, ulong guid, ushort op, const(ubyte)[] b, const(ubyte)[] m) { node[peer].replicaMoved(from, guid, op, b, m); }
         void remove(ushort peer, uint, ulong guid) { node[peer].replicaRemoved(from, guid); }
+        void inRange(ushort peer, uint, Position c, float r, ushort op, const(ubyte)[] b) { node[peer].deliverInRange(c, r, cast(Opcode) op, b); }
     }
 
     auto boar = new Boar(Position(500, 0, 0));
@@ -1758,6 +1800,7 @@ unittest
         void values(ushort, uint, ulong guid, const(ubyte)[] slots) { to.replicaValues(from, guid, slots); }
         void move(ushort, uint, ulong guid, ushort op, const(ubyte)[] b, const(ubyte)[] m) { to.replicaMoved(from, guid, op, b, m); }
         void remove(ushort, uint, ulong guid) { to.replicaRemoved(from, guid); }
+        void inRange(ushort, uint, Position c, float r, ushort op, const(ubyte)[] b) { to.deliverInRange(c, r, cast(Opcode) op, b); }
     }
     static bool has(const(Opcode)[] got, Opcode op)
     {
@@ -1869,6 +1912,7 @@ unittest
         void values(ushort peer, uint, ulong guid, const(ubyte)[] slots) { node[peer].replicaValues(from, guid, slots); }
         void move(ushort peer, uint, ulong guid, ushort op, const(ubyte)[] b, const(ubyte)[] m) { node[peer].replicaMoved(from, guid, op, b, m); }
         void remove(ushort peer, uint, ulong guid) { node[peer].replicaRemoved(from, guid); }
+        void inRange(ushort peer, uint, Position c, float r, ushort op, const(ubyte)[] b) { node[peer].deliverInRange(c, r, cast(Opcode) op, b); }
     }
 
     Stag stag = new Stag(Position(500, 0, 0), 42);
@@ -2009,6 +2053,7 @@ unittest
         void values(ushort, uint, ulong guid, const(ubyte)[] slots) { to.replicaValues(from, guid, slots); }
         void move(ushort, uint, ulong guid, ushort op, const(ubyte)[] b, const(ubyte)[] m) { to.replicaMoved(from, guid, op, b, m); }
         void remove(ushort, uint, ulong guid) { to.replicaRemoved(from, guid); }
+        void inRange(ushort, uint, Position c, float r, ushort op, const(ubyte)[] b) { to.deliverInRange(c, r, cast(Opcode) op, b); }
     }
 
     auto home = new Map(0, MapSettings.init, () => 1000u);
@@ -2062,4 +2107,44 @@ unittest
     owner.sendToWatchers(arrived, Opcode.MSG_MOVE_HEARTBEAT, heartbeat);
     assert(ownerWatcher.take() == [Opcode.MSG_MOVE_HEARTBEAT]);
     assert(homeWatcher.take() == [Opcode.MSG_MOVE_HEARTBEAT] && home.findObject(1).position.x == 5);
+}
+
+/// Speech across nodes (phase 5): a say reaches players in range on other nodes, each node delivering to its own.
+unittest
+{
+    import dmangos.world.replication : Replicator;
+
+    static final class Wire : Replicator
+    {
+        Map to;
+        ushort from;
+        void create(ushort, uint, ulong cell, ulong guid, const(ubyte)[] state) { to.replicaCreated(from, cell, guid, state); }
+        void values(ushort, uint, ulong guid, const(ubyte)[] slots) { to.replicaValues(from, guid, slots); }
+        void move(ushort, uint, ulong guid, ushort op, const(ubyte)[] b, const(ubyte)[] m) { to.replicaMoved(from, guid, op, b, m); }
+        void remove(ushort, uint, ulong guid) { to.replicaRemoved(from, guid); }
+        void inRange(ushort, uint, Position c, float r, ushort op, const(ubyte)[] b) { to.deliverInRange(c, r, cast(Opcode) op, b); }
+    }
+    auto one = new Map(0, MapSettings.init, () => 1000u);
+    auto two = new Map(0, MapSettings.init, () => 1000u);
+    auto a = new Wire, b = new Wire;
+    a.to = two, a.from = 1;
+    b.to = one, b.from = 2;
+    one.replicator = a;
+    two.replicator = b;
+    auto alice = new Watcher(1, Position(0, 0, 0));
+    auto near = new Watcher(2, Position(20, 0, 0));
+    auto far = new Watcher(3, Position(60, 0, 0));
+    one.add(alice);
+    two.add(near);
+    two.add(far);
+    ulong[] added, removed;
+    two.takeInterest(added, removed);
+    one.peerInterest(2, added, removed);
+    foreach (w; [alice, near, far])
+        w.take();
+
+    const ubyte[1] say = [5];
+    one.sendInRange(alice.player.position, 25, Opcode.SMSG_MESSAGECHAT, say);
+    assert(alice.take() == [Opcode.SMSG_MESSAGECHAT] && near.take() == [Opcode.SMSG_MESSAGECHAT]);
+    assert(far.take() == [], "40 yards beyond a say's range");
 }

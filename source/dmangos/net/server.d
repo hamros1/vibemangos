@@ -91,6 +91,12 @@ final class TcpServer
     /// Called about once a second with the current time, for periodic work.
     alias Maintenance = void delegate(MonoTime now);
 
+    /**
+     * Once a stop is asked for, asked each loop iteration whether the server may stop now; the loop
+     * goes on until it says so (a cluster node handing its work over first). Null: stop at once.
+     */
+    bool delegate() mayStop;
+
     private static final class Connection
     {
         Socket socket;
@@ -135,6 +141,9 @@ final class TcpServer
      * on the server. Whoever reports it resets it.
      */
     TickStats busy;
+
+    /// All the loop's busy time since the start; unlike `busy`, never reset (cluster balancing, phase 6).
+    Duration busyTotal;
 
     private ServerOptions options;
     private Maintenance maintenance;
@@ -203,7 +212,7 @@ final class TcpServer
         auto writable = new SocketSet;
         auto lastMaintenance = MonoTime.currTime;
 
-        while (!atomicLoad(shutdownRequested))
+        while (!atomicLoad(shutdownRequested) || (mayStop !is null && !mayStop()))
         {
             startDials(MonoTime.currTime);
             readable.reset();
@@ -264,6 +273,7 @@ final class TcpServer
             reap(now);
             immutable finished = MonoTime.currTime;
             busy.record(finished - now);
+            busyTotal += finished - now;
             if (finished - now > slowTick)
                 warning!"a loop iteration took %s ms: %s receiving, %s in the tick, %s sending (%s connections)"(
                     (finished - now).total!"msecs", (received - now).total!"msecs", (ticked - received).total!"msecs",

@@ -245,7 +245,8 @@ struct Move
  * granted region of the busiest node that still leaves it at least as busy as the idlest one, again
  * and again, while the gap is over `tolerance` (a fraction of the mean load).
  */
-Move[] rebalance(const Region[] regions, const ulong[uint] cost, const ushort[] nodes, double tolerance = 0.2)
+Move[] rebalance(const Region[] regions, const ulong[uint] cost, const ushort[] nodes, double tolerance = 0.2,
+    const bool[uint] frozen = null, size_t maxMoves = size_t.max)
 {
     if (nodes.length < 2)
         return null;
@@ -273,8 +274,8 @@ Move[] rebalance(const Region[] regions, const ulong[uint] cost, const ushort[] 
         foreach (ref r; regions)
         {
             const c = cost.get(r.id, 0);
-            if (r.owner == busiest && r.state == RegionState.granted && r.id !in moved && c > 0 && 2 * c <= gap
-                && (best is null || c > cost.get(best.id, 0)))
+            if (r.owner == busiest && r.state == RegionState.granted && r.id !in moved && r.id !in frozen && c > 0
+                && 2 * c <= gap && (best is null || c > cost.get(best.id, 0)))
                 best = &r;
         }
         if (best is null)
@@ -282,6 +283,8 @@ Move[] rebalance(const Region[] regions, const ulong[uint] cost, const ushort[] 
         const c = cost.get(best.id, 0);
         moves ~= Move(best.id, busiest, idlest);
         moved[best.id] = true;
+        if (moves.length >= maxMoves)
+            break;
         load[busiest] -= c;
         load[idlest] += c;
     }

@@ -7,7 +7,12 @@
  * at start-up, as `ObjectMgr::LoadGroups` does, so an offline member keeps
  * its place. A `Group` is one party or raid. Its methods are those of
  * CMaNGOS's `Group`: they keep the database up to date and tell the members
- * online, through `Directory`, what changed.
+ * online, through `GroupDirectory`, what changed.
+ *
+ * In a cluster (docs/CLUSTER.md, phase 5b) the coordinator's `Groups` is the
+ * only one that changes; it tells its members on any node, and every other
+ * node keeps a mirror of its groups (`mirror`) for what it decides itself:
+ * who sees whose health, party chat, member stats.
  *
  * A group is created in two steps, as in CMaNGOS: the first invitation makes
  * a group that only has a leader and invitees (`isCreated` is false, `id` is
@@ -23,7 +28,8 @@ import dmangos.log;
 import dmangos.world.database : GroupMemberRecord, GroupRecord, WorldDatabase;
 import dmangos.world.defines : Power;
 import dmangos.world.objects : HighGuid, lowGuid, makeGuid;
-import dmangos.world.online : Directory, OnlinePlayer;
+import dmangos.world.online : OnlinePlayer;
+import dmangos.cluster.protocol : GroupMemberState, GroupState;
 import dmangos.world.opcodes : Opcode;
 import dmangos.world.player : Player;
 import dmangos.world.updatefields;
@@ -218,6 +224,22 @@ ubyte[] partyMemberStatsFull(ulong guid, const Player player, ubyte status)
     return w.data.dup;
 }
 
+/// Finds group members online, on this node or (in a cluster) another.
+interface GroupDirectory
+{
+    /// The player, if this node simulates it; null otherwise.
+    OnlinePlayer local(ulong guid);
+
+    /// Sends a packet to a player online on any node; false if it is not online.
+    bool deliverTo(ulong guid, Opcode opcode, const(ubyte)[] body_);
+
+    /// `GetGroupMemberStatus` of a player on any node; `MemberStatus.offline` if not online.
+    ubyte statusOf(ulong guid);
+
+    /// Whether two players see each other.
+    bool seeEachOther(ulong a, ulong b);
+}
+
 /// One member: `Group::MemberSlot`.
 struct MemberSlot
 {
@@ -245,7 +267,7 @@ final class Group
     {
         Groups owner;
         MemberSlot[] slots;
-        bool[ulong] invitees;
+        string[ulong] invitees;  // guid -> name
     }
 
     invariant (slots.length <= maxRaidSize);
@@ -329,14 +351,13 @@ final class Group
         return (guid in invitees) !is null;
     }
 
-    /// `GetInvited` by name.
-    OnlinePlayer invited(string name)
+    /// `GetInvited` by name: the invitee's guid, or 0.
+    ulong invitedGuid(string name) const
     {
-        foreach (guid, _; invitees)
-            if (auto player = owner.directory.find(guid))
-                if (player.character.data.name == name)
-                    return player;
-        return null;
+        foreach (guid, invitee; invitees)
+            if (invitee == name)
+                return guid;
+        return 0;
     }
 
     // -----------------------------------------------------------------------
@@ -344,23 +365,22 @@ final class Group
     // -----------------------------------------------------------------------
 
     /// `AddInvite`: false if the player is already invited somewhere or in a group.
-    bool addInvite(OnlinePlayer player)
+    bool addInvite(ulong guid, string name)
     {
-        const guid = player.character.guid;
         if (owner.invitationOf(guid) !is null || owner.of(guid) !is null)
             return false;
-        invitees[guid] = true;
+        invitees[guid] = name;
         owner.invitedTo[guid] = this;
         return true;
     }
 
     /// `AddLeaderInvite`: the leader of a group that is not created yet.
-    bool addLeaderInvite(OnlinePlayer player)
+    bool addLeaderInvite(ulong guid, string name)
     {
-        if (!addInvite(player))
+        if (!addInvite(guid, name))
             return false;
-        leader = player.character.guid;
-        leaderName = player.character.data.name;
+        leader = guid;
+        leaderName = name;
         return true;
     }
 
@@ -428,7 +448,7 @@ final class Group
         owner.database.addGroupMember(id, GroupMemberRecord(lowGuid(guid), name, false, subGroup));
 
         sendUpdate();
-        if (auto player = owner.directory.find(guid))
+        if (auto player = owner.directory.local(guid))
         {
             player.groupChanged(); // both ways: what it sees of the members in sight, and they of it
             updatePlayerOutOfRange(player, GroupUpdate.full);
@@ -448,13 +468,11 @@ final class Group
             return 0;
         }
         const leaderChanged = removeSlot(guid);
-        if (auto player = owner.directory.find(guid))
-        {
-            if (method == RemoveMethod.kick)
-                player.deliver(Opcode.SMSG_GROUP_UNINVITE, null);
-            sendEmptyList(player);
+        if (method == RemoveMethod.kick)
+            owner.directory.deliverTo(guid, Opcode.SMSG_GROUP_UNINVITE, null);
+        sendEmptyList(guid);
+        if (auto player = owner.directory.local(guid))
             player.groupChanged();
-        }
         if (leaderChanged)
             broadcast(Opcode.SMSG_GROUP_SET_LEADER, cstring(leaderName));
         sendUpdate();
@@ -480,19 +498,19 @@ final class Group
         foreach (ref slot; former)
         {
             owner.memberOf.remove(slot.guid);
-            if (auto player = owner.directory.find(slot.guid))
-            {
-                if (!hideDestroy)
-                    player.deliver(Opcode.SMSG_GROUP_DESTROYED, null);
-                sendEmptyList(player);
+            if (!hideDestroy)
+                owner.directory.deliverTo(slot.guid, Opcode.SMSG_GROUP_DESTROYED, null);
+            sendEmptyList(slot.guid);
+            if (auto player = owner.directory.local(slot.guid))
                 player.groupChanged();
-            }
         }
         removeAllInvites();
         if (id)
         {
             owner.database.deleteGroup(id);
             owner.byId.remove(id);
+            if (owner.removed !is null)
+                owner.removed(id);
         }
         leader = 0;
         leaderName = null;
@@ -557,10 +575,11 @@ final class Group
         w.put(icon);
         w.put(target);
         broadcast(Opcode.MSG_RAID_TARGET_UPDATE, w.data);
+        changed();
     }
 
     /// `Group::SendTargetIconList`
-    void sendTargetIconList(OnlinePlayer to)
+    void sendTargetIconList(ulong to)
     {
         ByteWriter w;
         w.put(ubyte(1)); // the whole list
@@ -570,7 +589,7 @@ final class Group
                 w.put(i);
                 w.put(target);
             }
-        to.deliver(Opcode.MSG_RAID_TARGET_UPDATE, w.data);
+        owner.directory.deliverTo(to, Opcode.MSG_RAID_TARGET_UPDATE, w.data);
     }
 
     // -----------------------------------------------------------------------
@@ -581,14 +600,15 @@ final class Group
     void sendUpdate()
     {
         foreach (ref slot; slots)
-            if (auto player = owner.directory.find(slot.guid))
-                sendUpdateTo(player);
+            if (owner.directory.statusOf(slot.guid) != MemberStatus.offline)
+                sendUpdateTo(slot.guid);
+        changed();
     }
 
     /// `Group::SendUpdateTo`: the `SMSG_GROUP_LIST` a member sees, everyone but itself.
-    void sendUpdateTo(OnlinePlayer player)
+    void sendUpdateTo(ulong guid)
     {
-        const self = slotIndex(player.character.guid);
+        const self = slotIndex(guid);
         if (self < 0)
             return;
         ByteWriter w;
@@ -601,7 +621,7 @@ final class Group
                 continue;
             w.putCString(slot.name);
             w.put(slot.guid);
-            w.put(memberStatus(owner.directory.find(slot.guid)));
+            w.put(owner.directory.statusOf(slot.guid));
             w.put(flagsOf(slot));
         }
         w.put(leader);
@@ -611,7 +631,7 @@ final class Group
             w.put(lootMethod == LootMethod.masterLoot ? looter : 0UL);
             w.put(lootThreshold);
         }
-        player.deliver(Opcode.SMSG_GROUP_LIST, w.data);
+        owner.directory.deliverTo(guid, Opcode.SMSG_GROUP_LIST, w.data);
     }
 
     /**
@@ -622,8 +642,7 @@ final class Group
     {
         foreach (ref slot; slots)
             if (slot.guid != except && (subGroup < 0 || slot.subGroup == subGroup))
-                if (auto player = owner.directory.find(slot.guid))
-                    player.deliver(opcode, body_);
+                owner.directory.deliverTo(slot.guid, opcode, body_);
     }
 
     /**
@@ -638,8 +657,7 @@ final class Group
         const body_ = partyMemberStats(player.character, mask, memberStatus(player));
         foreach (ref slot; slots)
             if (slot.guid != guid && !owner.directory.seeEachOther(slot.guid, guid))
-                if (auto member = owner.directory.find(slot.guid))
-                    member.deliver(Opcode.SMSG_PARTY_MEMBER_STATS, body_);
+                owner.directory.deliverTo(slot.guid, Opcode.SMSG_PARTY_MEMBER_STATS, body_);
     }
 
     /// `Group::UpdatePlayerOnlineStatus`: a member logged in or out.
@@ -704,7 +722,7 @@ private:
         ulong first, chosen;
         foreach (ref slot; slots)
         {
-            if (owner.directory.find(slot.guid) is null)
+            if (owner.directory.statusOf(slot.guid) == MemberStatus.offline)
                 continue;
             if (isRaid && !slot.assistant)
             {
@@ -734,7 +752,7 @@ private:
         leaderName = slots[i].name;
         save();
         foreach (who; only(previous, guid))
-            if (auto player = owner.directory.find(who))
+            if (auto player = owner.directory.local(who))
                 player.groupChanged(); // the leader flag moves
     }
 
@@ -753,10 +771,17 @@ private:
             slot.subGroup));
     }
 
-    static void sendEmptyList(OnlinePlayer player)
+    void sendEmptyList(ulong guid)
     {
         const ubyte[24] empty = 0;
-        player.deliver(Opcode.SMSG_GROUP_LIST, empty[]);
+        owner.directory.deliverTo(guid, Opcode.SMSG_GROUP_LIST, empty[]);
+    }
+
+    /// A created group changed: other nodes' mirrors follow (phase 5b).
+    void changed()
+    {
+        if (id && owner.changes !is null)
+            owner.changes(this);
     }
 
     static const(ubyte)[] cstring(string text)
@@ -773,13 +798,17 @@ final class Groups
     package
     {
         WorldDatabase database;
-        Directory directory;
+        GroupDirectory directory;
         uint nextId;
         uint delegate() idSource;  // a cluster member's group ids (phase 2); null: `nextId`
         Group[uint] byId;
         Group[ulong] memberOf;   // player guid -> created group
         Group[ulong] invitedTo;  // player guid -> group it is invited to (or leads, before creation)
     }
+
+    /// In a cluster, on the coordinator: a group changed, or was disbanded (`stateOf`, for the mirrors).
+    void delegate(const Group group) changes;
+    void delegate(uint id) removed; /// ditto
 
     ///
     /// The next group id.
@@ -788,7 +817,7 @@ final class Groups
         return idSource !is null ? idSource() : nextId++;
     }
 
-    this(WorldDatabase database, Directory directory, uint nextId)
+    this(WorldDatabase database, GroupDirectory directory, uint nextId)
     in (database !is null && directory !is null && nextId > 0)
     {
         this.database = database;
@@ -872,6 +901,107 @@ final class Groups
     {
         const first = a in memberOf, second = b in memberOf;
         return first !is null && second !is null && *first is *second;
+    }
+
+    // -----------------------------------------------------------------------
+    // Mirrors (phase 5b)
+    // -----------------------------------------------------------------------
+
+    /// A group as other nodes' mirrors get it.
+    static GroupState stateOf(const Group g)
+    {
+        GroupState s;
+        s.id = g.id;
+        s.groupType = g.type;
+        s.leader = g.leader;
+        s.leaderName = g.leaderName;
+        s.mainTank = g.mainTank;
+        s.mainAssistant = g.mainAssistant;
+        s.lootMethod = g.lootMethod;
+        s.looter = g.looter;
+        s.lootThreshold = g.lootThreshold;
+        s.icons = g.targetIcons.dup;
+        foreach (ref slot; g.slots)
+            s.members ~= GroupMemberState(slot.guid, slot.name, slot.subGroup, slot.assistant);
+        return s;
+    }
+
+    /// Every group, for a node that links.
+    GroupState[] states()
+    {
+        GroupState[] all;
+        foreach (g; byId)
+            all ~= stateOf(g);
+        return all;
+    }
+
+    /// Forgets every group: this node mirrors the coordinator's from now on.
+    void clear()
+    {
+        byId = null;
+        memberOf = null;
+        invitedTo = null;
+    }
+
+    /**
+     * The mirror of a group of the coordinator's (never saved here): its members here see each other
+     * anew, and one that has just joined tells the members who do not see it how it is.
+     */
+    void mirror(const ref GroupState s)
+    {
+        import std.algorithm.searching : canFind;
+
+        ulong[] before, after;
+        auto group = byId.get(s.id, null);
+        if (group !is null)
+            foreach (ref slot; group.slots)
+            {
+                before ~= slot.guid;
+                if (memberOf.get(slot.guid, null) is group)
+                    memberOf.remove(slot.guid);
+            }
+        if (s.removed)
+            byId.remove(s.id);
+        else
+        {
+            if (group is null)
+            {
+                group = new Group(this);
+                group.id = s.id;
+                byId[s.id] = group;
+            }
+            group.type = s.groupType == GroupType.raid ? GroupType.raid : GroupType.normal;
+            group.leader = s.leader;
+            group.leaderName = s.leaderName;
+            group.mainTank = s.mainTank;
+            group.mainAssistant = s.mainAssistant;
+            group.lootMethod = s.lootMethod <= LootMethod.max ? cast(LootMethod) s.lootMethod : LootMethod.groupLoot;
+            group.looter = s.looter;
+            group.lootThreshold = s.lootThreshold;
+            group.targetIcons[] = 0;
+            foreach (i, icon; s.icons[0 .. s.icons.length < targetIconCount ? s.icons.length : targetIconCount])
+                group.targetIcons[i] = icon;
+            group.slots = null;
+            foreach (ref m; s.members[0 .. s.members.length < maxRaidSize ? s.members.length : maxRaidSize])
+            {
+                group.slots ~= MemberSlot(m.guid, m.name, m.subGroup, m.assistant);
+                memberOf[m.guid] = group;
+                after ~= m.guid;
+            }
+        }
+        bool[ulong] seen;
+        foreach (guid; before ~ after)
+        {
+            if (guid in seen)
+                continue;
+            seen[guid] = true;
+            if (auto player = directory.local(guid))
+            {
+                player.groupChanged(); // its leader flag, and who sees its health
+                if (!before.canFind(guid) && after.canFind(guid))
+                    group.updatePlayerOutOfRange(player, GroupUpdate.full);
+            }
+        }
     }
 
     /// `Player::UninviteFromGroup`: drops a pending invitation, and the group if nobody is left in it.
@@ -958,18 +1088,21 @@ version (unittest)
         }
     }
 
-    /// Players by guid and name; nobody sees anybody.
-    final class FakeDirectory : Directory
+    /// Players by guid; nobody sees anybody.
+    final class FakeDirectory : GroupDirectory
     {
         FakePlayer[ulong] players;
-        OnlinePlayer find(ulong guid) { return players.get(guid, null); }
-        OnlinePlayer find(string name)
+        OnlinePlayer local(ulong guid) { return players.get(guid, null); }
+        bool deliverTo(ulong guid, Opcode opcode, const(ubyte)[] body_)
         {
-            foreach (p; players)
-                if (p.player.data.name == name)
-                    return p;
-            return null;
+            if (auto p = guid in players)
+            {
+                p.deliver(opcode, body_);
+                return true;
+            }
+            return false;
         }
+        ubyte statusOf(ulong guid) { return memberStatus(players.get(guid, null)); }
         bool seeEachOther(ulong a, ulong b) { return false; }
     }
 }
@@ -986,9 +1119,9 @@ unittest
 
     // The first invitation makes a group that is not created yet.
     auto group = groups.newGroup();
-    assert(group.addLeaderInvite(anduin) && group.addInvite(jaina));
+    assert(group.addLeaderInvite(1, "Anduin") && group.addInvite(2, "Jaina"));
     assert(!group.isCreated && groups.invitationOf(2) is group && groups.invitationOf(1) is group);
-    assert(!group.addInvite(jaina), "invited once");
+    assert(!group.addInvite(2, "Jaina"), "invited once");
 
     // Accepting creates it, with the leader first.
     group.removeInvite(2);
@@ -1004,7 +1137,7 @@ unittest
 
     // Anduin's list shows Jaina, online, and Anduin as leader, with the loot settings.
     anduin.take();
-    group.sendUpdateTo(anduin);
+    group.sendUpdateTo(1);
     const list = anduin.bodies[0];
     assert(list[0] == GroupType.normal && list[2 .. 6] == [1, 0, 0, 0]);
     assert(list[6 .. 12] == "Jaina\0" && list[20] == MemberStatus.online);

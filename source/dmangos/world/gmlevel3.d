@@ -181,6 +181,7 @@ mixin template Level3Commands()
     import dmangos.world.database : LookupResult, LookupTable;
     import dmangos.world.defines : exploredZonesSize, PlayerClass;
     import dmangos.world.gmlevel3;
+    import dmangos.world.gmtargets : GmRemoteOp;
     import dmangos.world.map : packetBody;
     import dmangos.world.movement : Position;
     import dmangos.world.names : normalizedName;
@@ -275,7 +276,8 @@ private:
             auto found = context.onlinePlayer(name);
             if (found is null)
             {
-                redSystemMessage(format!"Unable to locate player %s."(name));
+                if (!gmElsewhere(name, GmRemoteOp.playerInfo))
+                    redSystemMessage(format!"Unable to locate player %s."(name));
                 return true;
             }
             plr = sessionOf(found);
@@ -284,24 +286,7 @@ private:
             plr = getSelectedChar(true);
         if (plr is null)
             return true;
-        static immutable string[12] classes = ["None", "Warrior", "Paladin", "Hunter", "Rogue", "Priest", "None",
-            "Shaman", "Mage", "Warlock", "None", "Druid"];
-        static immutable string[12] races = ["None", "Human", "Orc", "Dwarf", "Night Elf", "Undead", "Tauren", "Gnome",
-            "Troll", "None", "Blood Elf", "Draenei"];
-        const p = plr.player;
-        const progress = p.progress(plr.secondsInWorld());
-        const female = p.data.gender != 0;
-        greenSystemMessage(format!"%s is a %s %s %s"(p.data.name, female ? "Female" : "Male",
-            races[p.data.race < races.length ? p.data.race : 0],
-            classes[p.data.classId < classes.length ? p.data.classId : 0]));
-        blueSystemMessage(format!"%s has played %s at this level"(female ? "She" : "He",
-            playedText(progress.levelTime)));
-        blueSystemMessage(format!"and %s overall"(playedText(progress.totalTime)));
-        blueSystemMessage(format!"%s is connecting from account '%s'[%u] with permissions '%s'"(female ? "She" : "He",
-            plr.account.username, plr.account.id, plr.permissions));
-        blueSystemMessage(format!"%s uses %s (build %u)"(female ? "She" : "He", "WoW", plr.build));
-        blueSystemMessage(format!"%s IP is '%s', and has a latency of %ums"(female ? "Her" : "His", plr.address,
-            plr.latencyMs));
+        plr.describeTo(gmSink);
         return true;
     }
 
@@ -443,9 +428,7 @@ private:
     /// The message `DisconnectUsersWith*` sends for each session it closes, then the close.
     void disconnect(WorldSession session)
     {
-        systemMessage(format!"Disconnecting user with account `%s` IP `%s` Player `%s`."(session.account.username,
-            session.address, session.player is null ? "noplayer" : session.player.data.name));
-        session.kick(format!"disconnected by %s"(player.data.name));
+        session.disconnectedBy(gmSink, player.data.name);
     }
 
     /// `World::DisconnectUsersWithIP`
@@ -478,6 +461,9 @@ private:
         // always adds "There is no body online"; this does not.
         if (auto found = context.onlinePlayer(name))
             disconnect(sessionOf(found));
+        else if (gmElsewhere(name, GmRemoteOp.disconnect))
+        {
+        }
         else
             systemMessage(format!"There is no body online with the name [%s]"(name));
         gmLog("disconnected player " ~ name);
@@ -545,8 +531,14 @@ private:
             return false;
 
         auto online = context.onlinePlayer(name);
+        const elsewhere = online is null ? context.remotePlayer(name) : null;
         uint accountId;
-        if (online is null)
+        if (elsewhere !is null)
+        {
+            accountId = elsewhere.entry.account;
+            systemMessage(format!"Banning player '%s' ingame for '%s'."(name, reason));
+        }
+        else if (online is null)
         {
             const owner = context.database.characterOwner(context.database.characterGuid(normalizedName(name)));
             if (owner.isNull)
@@ -567,10 +559,9 @@ private:
         systemMessage(format!"This ban is due to expire %s%s."("on ",
             convertTimeStampToDataTime(context.unixTime + banTime)));
         if (online !is null)
-        {
-            systemMessage(format!"Kicking %s."(online.character.data.name));
-            sessionOf(online).kick(format!"banned by %s"(player.data.name));
-        }
+            sessionOf(online).bannedBy(gmSink, player.data.name);
+        else if (elsewhere !is null)
+            gmElsewhere(name, GmRemoteOp.banKick);
         gmLog(format!"banned %s, reason %s, for %s"(name, reason, convertTimeStampToString(banTime)));
         const message = format!"%sGM: %s has been banned by %s for %s. Reason: %s"(MSG_COLOR_RED, name,
             player.data.name, convertTimeStampToString(banTime), reason);
@@ -612,6 +603,8 @@ private:
     {
         if (auto online = context.onlinePlayer(name))
             greenSystemMessage(format!"Unbanned player %s ingame."(online.character.data.name));
+        else if (const remote = context.remotePlayer(name))
+            greenSystemMessage(format!"Unbanned player %s ingame."(remote.entry.name));
         else
             greenSystemMessage(format!"Player %s not found ingame."(name));
         const owner = context.database.characterOwner(context.database.characterGuid(normalizedName(name)));
@@ -892,14 +885,25 @@ private:
     {
         if (name.length < 2)
             return false;
-        auto plr = context.onlinePlayer(name);
-        if (plr is null)
+        ulong guid;
+        string found;
+        if (auto plr = context.onlinePlayer(name))
+        {
+            guid = plr.character.guid;
+            found = plr.character.data.name;
+        }
+        else if (const remote = context.remotePlayer(name)) // another node's player (phase 5b)
+        {
+            guid = remote.entry.guid;
+            found = remote.entry.name;
+        }
+        else
         {
             redSystemMessage("Player not found.");
             return true;
         }
-        gmTargets[plr.character.guid] = true;
-        blueSystemMessage(format!"Now accepting whispers from %s."(plr.character.data.name));
+        gmTargets[guid] = true;
+        blueSystemMessage(format!"Now accepting whispers from %s."(found));
         return true;
     }
 
@@ -907,14 +911,25 @@ private:
     {
         if (name.length < 2)
             return false;
-        auto plr = context.onlinePlayer(name);
-        if (plr is null)
+        ulong guid;
+        string found;
+        if (auto plr = context.onlinePlayer(name))
+        {
+            guid = plr.character.guid;
+            found = plr.character.data.name;
+        }
+        else if (const remote = context.remotePlayer(name)) // another node's player (phase 5b)
+        {
+            guid = remote.entry.guid;
+            found = remote.entry.name;
+        }
+        else
         {
             redSystemMessage("Player not found.");
             return true;
         }
-        gmTargets.remove(plr.character.guid);
-        blueSystemMessage(format!"Now blocking whispers from %s."(plr.character.data.name));
+        gmTargets.remove(guid);
+        blueSystemMessage(format!"Now blocking whispers from %s."(found));
         return true;
     }
 
@@ -1098,14 +1113,9 @@ private:
         }
         context.database.renameCharacter(guid, newName);
         if (auto online = context.onlinePlayer(name1))
-        {
-            auto plr = sessionOf(online);
-            const oldName = plr.player.data.name;
-            plr.player.data.name = newName;
-            context.renamed(plr, oldName);
-            plr.blueSystemMessage(format!"%s changed your name to '%s'."(player.data.name, newName));
-            plr.savePlayer();
-        }
+            sessionOf(online).renamedBy(gmSink, player.data.name, newName);
+        else
+            gmElsewhere(name1, GmRemoteOp.rename, newName);
         greenSystemMessage(format!"Changed name of '%s' to '%s'."(name1, name2));
         gmLog(format!"renamed character %s (GUID: %u) to %s"(name1, guid, name2));
         return true;

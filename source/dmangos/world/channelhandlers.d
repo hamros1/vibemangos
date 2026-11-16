@@ -1,8 +1,8 @@
 /**
  * Handlers of CMaNGOS `Chat/ChannelHandler.cpp`, mixed into
  * `dmangos.world.session.WorldSession`. Each finds the channel in the
- * player's team's `Channels` and calls the `Channel` method of the same
- * name; `dmangos.world.channel` does the rest.
+ * player's command to the channels, wherever they are kept
+ * (`dmangos.world.channelservice`); `dmangos.world.channel` does the rest.
  */
 module dmangos.world.channelhandlers;
 
@@ -13,6 +13,7 @@ mixin template ChannelHandlers()
     import std.uni : sicmp;
     import dmangos.auth.accounts : AccountLevel;
     import dmangos.world.channel;
+    import dmangos.world.channelservice : ChannelOp;
     import dmangos.world.names : normalizedName;
     import dmangos.world.opcodes;
     import dmangos.world.packets;
@@ -37,10 +38,10 @@ private:
         return true;
     }
 
-    /// The channel `name`, or null after telling the client it is not in it.
-    Channel channelNamed(string name)
+    /// Runs `op` on `channel` where the channels are (`ChannelService`).
+    void channelCommand(ChannelOp op, string channel, string arg = null)
     {
-        return context.channelsFor(this).find(name, this);
+        context.channelCommand(this, op, channel, arg);
     }
 
     @Handles(Opcode.CMSG_JOIN_CHANNEL, WorldState.inWorld)
@@ -53,53 +54,44 @@ private:
         const gmChannel = context.config.gmClientChannel;
         if (gmChannel.length && sicmp(gmChannel, name) == 0 && !hasPermissions)
             return;
-        context.channelsFor(this).getOrCreate(name).join(this, request.password);
+        channelCommand(ChannelOp.join, name, request.password);
     }
 
     @Handles(Opcode.CMSG_LEAVE_CHANNEL, WorldState.inWorld)
     void handleLeaveChannel(const ClientChannelName request)
     {
-        if (request.channel.length == 0)
-            return;
-        auto channels = context.channelsFor(this);
-        if (auto channel = channels.find(request.channel, this))
-            channel.leave(this);
-        channels.leftChannel(request.channel);
+        if (request.channel.length)
+            channelCommand(ChannelOp.leave, request.channel);
     }
 
     @Handles(Opcode.CMSG_CHANNEL_LIST, WorldState.inWorld)
     void handleChannelList(const ClientChannelName request)
     {
-        if (auto channel = channelNamed(request.channel))
-            channel.sendList(this);
+        channelCommand(ChannelOp.list, request.channel);
     }
 
     @Handles(Opcode.CMSG_CHANNEL_PASSWORD, WorldState.inWorld)
     void handleChannelPassword(const ClientChannelPassword request)
     {
-        if (auto channel = channelNamed(request.channel))
-            channel.setPassword(this, request.password);
+        channelCommand(ChannelOp.password, request.channel, request.password);
     }
 
     @Handles(Opcode.CMSG_CHANNEL_OWNER, WorldState.inWorld)
     void handleChannelOwner(const ClientChannelName request)
     {
-        if (auto channel = channelNamed(request.channel))
-            channel.sendOwner(this);
+        channelCommand(ChannelOp.owner, request.channel);
     }
 
     @Handles(Opcode.CMSG_CHANNEL_ANNOUNCEMENTS, WorldState.inWorld)
     void handleChannelAnnouncements(const ClientChannelName request)
     {
-        if (auto channel = channelNamed(request.channel))
-            channel.toggleAnnouncements(this);
+        channelCommand(ChannelOp.announcements, request.channel);
     }
 
     @Handles(Opcode.CMSG_CHANNEL_MODERATE, WorldState.inWorld)
     void handleChannelModerate(const ClientChannelName request)
     {
-        if (auto channel = channelNamed(request.channel))
-            channel.toggleModeration(this);
+        channelCommand(ChannelOp.moderate, request.channel);
     }
 
     /// The commands aimed at a player, told apart by their opcode.
@@ -111,29 +103,22 @@ private:
         const target = normalizedName(request.target);
         if (target is null)
             return;
-        auto channel = channelNamed(request.channel);
-        if (channel is null)
-            return;
+        ChannelOp op;
         switch (opcode)
         {
-        case Opcode.CMSG_CHANNEL_SET_OWNER:
-            return channel.setOwner(this, target);
-        case Opcode.CMSG_CHANNEL_MODERATOR:
-        case Opcode.CMSG_CHANNEL_UNMODERATOR:
-            return channel.setModeFlags(this, target, MemberFlags.moderator, opcode == Opcode.CMSG_CHANNEL_MODERATOR);
-        case Opcode.CMSG_CHANNEL_MUTE:
-        case Opcode.CMSG_CHANNEL_UNMUTE:
-            return channel.setModeFlags(this, target, MemberFlags.muted, opcode == Opcode.CMSG_CHANNEL_MUTE);
-        case Opcode.CMSG_CHANNEL_INVITE:
-            return channel.invite(this, target);
-        case Opcode.CMSG_CHANNEL_KICK:
-        case Opcode.CMSG_CHANNEL_BAN:
-            return channel.kickOrBan(this, target, opcode == Opcode.CMSG_CHANNEL_BAN);
-        case Opcode.CMSG_CHANNEL_UNBAN:
-            return channel.unban(this, target);
+        case Opcode.CMSG_CHANNEL_SET_OWNER: op = ChannelOp.setOwner; break;
+        case Opcode.CMSG_CHANNEL_MODERATOR: op = ChannelOp.moderator; break;
+        case Opcode.CMSG_CHANNEL_UNMODERATOR: op = ChannelOp.unmoderator; break;
+        case Opcode.CMSG_CHANNEL_MUTE: op = ChannelOp.mute; break;
+        case Opcode.CMSG_CHANNEL_UNMUTE: op = ChannelOp.unmute; break;
+        case Opcode.CMSG_CHANNEL_INVITE: op = ChannelOp.invite; break;
+        case Opcode.CMSG_CHANNEL_KICK: op = ChannelOp.kick; break;
+        case Opcode.CMSG_CHANNEL_BAN: op = ChannelOp.ban; break;
+        case Opcode.CMSG_CHANNEL_UNBAN: op = ChannelOp.unban; break;
         default:
             assert(0, "every opcode of the @Handles list has a case");
         }
+        channelCommand(op, request.channel, target);
     }
 }
 
@@ -189,5 +174,5 @@ unittest
 
     // Leaving, and logging out, empties the channel, which then goes away.
     anduin.write(Opcode.CMSG_LOGOUT_REQUEST, null);
-    assert(context.channels.alliance.count == 0);
+    assert(context.channelService.channels.alliance.count == 0);
 }

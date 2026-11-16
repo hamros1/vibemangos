@@ -296,3 +296,146 @@ unittest
     const chat = ClientChat.read(r);
     assert(chat.type == ChatType.CHAT_MSG_WHISPER && chat.target == "Someone" && chat.text == "hello");
 }
+
+/// `CMSG_WHO`: what /who asks for (`WorldSession::HandleWhoOpcode`).
+struct ClientWho
+{
+    uint levelMin, levelMax;
+    string name, guild;   /// parts of them, any case
+    uint raceMask, classMask;
+    uint[] zones;         /// at most 10
+    string[] strings;     /// at most 4: parts of a name, guild or zone
+
+    static ClientWho read(ref ByteReader r)
+    {
+        import std.exception : enforce;
+
+        ClientWho who;
+        who.levelMin = r.read!uint;
+        who.levelMax = r.read!uint;
+        who.name = r.readCString();
+        who.guild = r.readCString();
+        who.raceMask = r.read!uint;
+        who.classMask = r.read!uint;
+        const zoneCount = r.read!uint;
+        enforce!PacketException(zoneCount <= 10, "too many zones in a who request");
+        foreach (_; 0 .. zoneCount)
+            who.zones ~= r.read!uint;
+        const stringCount = r.read!uint;
+        enforce!PacketException(stringCount <= 4, "too many strings in a who request");
+        foreach (_; 0 .. stringCount)
+            who.strings ~= r.readCString();
+        return who;
+    }
+}
+
+/// One player of the who list.
+struct WhoEntry
+{
+    string name, guild;
+    uint level, classId, race, zone;
+    uint team;
+    uint security;
+}
+
+/**
+ * The `SMSG_WHO` body for `request`, from `candidates`, as `HandleWhoOpcode` chooses them: a player
+ * (security 0) sees only its own team unless `twoSide`, and no one above `gmLevel`; then the level
+ * range (a maximum of 100 or more means any), the class and race masks, the zones, and the name, guild
+ * and strings as parts, in any case (`areaName` gives a zone's name for the strings). At most 49 are
+ * listed; the count of matches is capped at `maxReturns` (0: no cap).
+ */
+const(ubyte)[] whoList(const ref ClientWho request, const(WhoEntry)[] candidates, uint viewerTeam, uint viewerSecurity,
+    bool twoSide, uint gmLevel, uint maxReturns, scope string delegate(uint zone) areaName)
+{
+    import std.algorithm.searching : canFind;
+    import std.uni : toLower;
+
+    const levelMax = request.levelMax >= 100 ? 255 : request.levelMax;
+    const name = request.name.toLower, guild = request.guild.toLower;
+    string[] strings;
+    foreach (s; request.strings)
+        strings ~= s.toLower;
+    uint matches, shown;
+    ByteWriter entries;
+    foreach (ref p; candidates)
+    {
+        if (viewerSecurity == 0 && ((p.team != viewerTeam && !twoSide) || p.security > gmLevel))
+            continue;
+        if (p.level < request.levelMin || p.level > levelMax)
+            continue;
+        if (!(request.classMask & (1u << p.classId)) || !(request.raceMask & (1u << p.race)))
+            continue;
+        if (request.zones.length && !request.zones.canFind(p.zone))
+            continue;
+        const pname = p.name.toLower, gname = p.guild.toLower;
+        if (name.length && !pname.canFind(name))
+            continue;
+        if (guild.length && !gname.canFind(guild))
+            continue;
+        if (strings.length)
+        {
+            const area = areaName(p.zone).toLower;
+            bool any;
+            foreach (s; strings)
+                if (s.length == 0 || gname.canFind(s) || pname.canFind(s) || area.canFind(s))
+                {
+                    any = true;
+                    break;
+                }
+            if (!any)
+                continue;
+        }
+        if (++matches > 49)
+            continue;
+        ++shown;
+        entries.putCString(p.name);
+        entries.putCString(p.guild);
+        entries.put(p.level);
+        entries.put(p.classId);
+        entries.put(p.race);
+        entries.put(p.zone);
+    }
+    if (maxReturns && matches > maxReturns)
+        matches = maxReturns;
+    ByteWriter w;
+    w.put(shown);
+    w.put(matches);
+    w.putBytes(entries.data);
+    return w.data;
+}
+
+unittest
+{
+    const everyone = [WhoEntry("Thrall", "", 60, 7, 2, 1637, 67, 0), WhoEntry("Anduin", "", 10, 2, 1, 1519, 469, 0),
+        WhoEntry("Keeper", "", 60, 1, 2, 1637, 67, 3), WhoEntry("Grunt", "", 12, 1, 2, 14, 67, 0)];
+    ClientWho all;
+    all.levelMax = 100;
+    all.raceMask = all.classMask = uint.max;
+    string zoneName(uint zone) { return zone == 1637 ? "Orgrimmar" : "Durotar"; }
+    uint shown(const(ubyte)[] body_) { auto r = ByteReader(body_); return r.read!uint; }
+
+    // A horde player: horde only, and no GM above level 2 (with the setting at 2).
+    assert(shown(whoList(all, everyone, 67, 0, false, 2, 49, &zoneName)) == 2);
+    assert(shown(whoList(all, everyone, 67, 0, true, 3, 49, &zoneName)) == 4, "both factions, GMs listed");
+    assert(shown(whoList(all, everyone, 469, 3, false, 0, 49, &zoneName)) == 4, "a GM sees everyone");
+
+    auto search = all;
+    search.strings = ["orgri"];
+    assert(shown(whoList(search, everyone, 67, 0, false, 3, 49, &zoneName)) == 2, "by zone name, in part");
+    search = all;
+    search.name = "gru";
+    search.levelMin = 10;
+    assert(shown(whoList(search, everyone, 67, 0, false, 3, 49, &zoneName)) == 1);
+    search = all;
+    search.guild = "x";
+    assert(shown(whoList(search, everyone, 67, 0, false, 3, 49, &zoneName)) == 0, "nobody is in a guild yet");
+
+    // Capped: 60 matches, 49 shown, the count of matches capped by the setting.
+    WhoEntry[] crowd;
+    foreach (i; 0 .. 60)
+        crowd ~= WhoEntry("Grunt", "", 5, 1, 2, 14, 67, 0);
+    auto r = ByteReader(whoList(all, crowd, 67, 0, false, 3, 55, &zoneName));
+    assert(r.read!uint == 49 && r.read!uint == 55);
+}
+

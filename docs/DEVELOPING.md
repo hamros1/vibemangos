@@ -287,14 +287,17 @@ maps; and a single packet over 200 ms with its opcode.
 Three nodes on one machine: copy `worldserver.json` three times and give each a `cluster` object
 with its own `node_id` (1, 2, 3) and `listen_port` (9000, 9001, 9002), all with
 `"coordinator": "127.0.0.1:9000"`, and `metrics_interval_seconds` at 10 to see the links in the log.
-Node 1 is the coordinator.
+Node 1 is the coordinator. Give one other node `"standby": true` and it takes over when the
+coordinator dies (`kill -9` the coordinator to see it); `kill` (SIGTERM) a member to see it drain
+its regions to the others first (docs/CLUSTER.md, phases 5b and 7).
 
 ```sh
 for n in 1 2 3; do bin/worldserver -c node$n.json > node$n.log 2>&1 & done
 grep -h "cluster:" node*.log
 ```
 
-Every node serves clients on its own world port. `tools/testclient.py` normally connects where the
+Every node serves clients on its own world port (`say:`, `yell:` and `whisper:` in the test client
+show speech crossing nodes). `tools/testclient.py` normally connects where the
 realm list points (the coordinator steers it to the least busy node); `WORLD=127.0.0.1:38086` in its
 environment connects it to a given node instead.
 

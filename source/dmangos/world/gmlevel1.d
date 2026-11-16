@@ -37,6 +37,7 @@ mixin template Level1Commands()
     import std.format : format;
     import std.math : floor;
     import dmangos.world.commands;
+    import dmangos.world.gmtargets : GmRemoteOp;
     import dmangos.world.names : normalizedName;
     import dmangos.world.gmlevel1 : announceColor, itemQualityColor;
     import dmangos.world.movement : Position;
@@ -172,24 +173,18 @@ private:
         auto found = context.onlinePlayer(name);
         if (found is null)
         {
+            if (const remote = context.remotePlayer(name))
+                if (gmElsewhere(name, GmRemoteOp.kick, kickReason))
+                {
+                    gmLog(format!"Kicked player %s from the server for %s"(remote.entry.name, kickReason));
+                    return true;
+                }
             redSystemMessage("Player is not online at the moment.");
             return true;
         }
         auto chr = sessionOf(found);
-        const chrName = chr.player.data.name;
-        blueSystemMessage(format!"Attempting to kick %s from the server for \"%s\"."(chrName, kickReason));
-        gmLog(format!"Kicked player %s from the server for %s"(chrName, kickReason));
-        if (!canUseCommand('z') && chr.canUseCommand('z'))
-        {
-            redSystemMessage(format!"You cannot kick %s, as they are a higher level gm than you."(chrName));
-            return true;
-        }
-        const message = format!"%sGM: %s was kicked from the server by %s. Reason: %s"(MSG_COLOR_RED, chrName,
-            player.data.name, kickReason);
-        sendWorldText(message.length > 199 ? message[0 .. 199] : message);
-        chr.systemMessage(format!"You are being kicked from the server by %s. Reason: %s"(player.data.name,
-            kickReason));
-        chr.kick(format!"kicked by %s: %s"(player.data.name, kickReason));
+        gmLog(format!"Kicked player %s from the server for %s"(chr.player.data.name, kickReason));
+        chr.kickedBy(gmSink, player.data.name, canUseCommand('z'), kickReason);
         return true;
     }
 
@@ -222,16 +217,9 @@ private:
         const p = player.position;
         gmLog(format!"summoned %s on map %u, %f %f %f"(name, player.data.map, p.x, p.y, p.z));
         if (auto found = context.onlinePlayer(name))
+            sessionOf(found).summonedBy(gmSink, player.data.name, player.data.map, p);
+        else if (gmElsewhere(name, GmRemoteOp.summon))
         {
-            auto chr = sessionOf(found);
-            if (chr.transferring)
-            {
-                systemMessage(format!"%s is already being teleported."(chr.player.data.name));
-                return true;
-            }
-            systemMessage(format!"You are summoning %s."(chr.player.data.name));
-            chr.systemMessage(format!"You are being summoned by %s."(player.data.name));
-            chr.commandTeleport(player.data.map, p);
         }
         else
         {
@@ -253,18 +241,11 @@ private:
         auto found = context.onlinePlayer(name);
         if (found is null)
         {
-            systemMessage(format!"Player (%s) does not exist or is not logged in."(name));
+            if (!gmElsewhere(name, GmRemoteOp.appear))
+                systemMessage(format!"Player (%s) does not exist or is not logged in."(name));
             return true;
         }
-        auto chr = sessionOf(found);
-        if (chr.transferring)
-        {
-            systemMessage(format!"%s is already being teleported."(chr.player.data.name));
-            return true;
-        }
-        systemMessage(format!"Appearing at %s's location."(chr.player.data.name));
-        chr.systemMessage(format!"%s is appearing to your location."(player.data.name));
-        commandTeleport(chr.player.data.map, chr.player.position);
+        sessionOf(found).appearedToBy(gmSink, player.data.name, (uint map, Position at) { commandTeleport(map, at); });
         return true;
     }
 

@@ -149,10 +149,8 @@ private:
     /// `World::SendGMWorldText`: a system message to everyone with the `u` permission.
     void sendGMWorldText(string text)
     {
-        const body_ = chatMessage(ChatType.CHAT_MSG_SYSTEM, Language.LANG_UNIVERSAL, 0, text);
-        foreach (other; context.onlinePlayers)
-            if (other.canUseCommand('u'))
-                other.deliver(Opcode.SMSG_MESSAGECHAT, body_);
+        context.toEveryone(Opcode.SMSG_MESSAGECHAT, chatMessage(ChatType.CHAT_MSG_SYSTEM, Language.LANG_UNIVERSAL, 0,
+            text), 'u');
     }
 
     /// `World::SendWorldWideScreenText`: `SMSG_AREA_TRIGGER_MESSAGE` to everyone, in the middle of the screen.
@@ -161,10 +159,9 @@ private:
         toEveryone(Opcode.SMSG_AREA_TRIGGER_MESSAGE, packetBody(ServerAreaTriggerMessage(text)));
     }
 
-    /// Sends a body to everyone in the world.
+    /// Sends a body to everyone in the world, on every node.
     void toEveryone(Opcode opcode, const(ubyte)[] body_)
     {
-        foreach (other; context.onlinePlayers)
-            other.deliver(opcode, body_);
+        context.toEveryone(opcode, body_);
     }
 }

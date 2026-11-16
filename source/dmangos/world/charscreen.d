@@ -236,7 +236,7 @@ private:
         // The group, which the character may have been in while offline (CharacterHandler.cpp).
         if (auto group = context.groups.of(player.guid))
         {
-            group.sendUpdateTo(this);
+            group.sendUpdateTo(player.guid);
             group.updatePlayerOnlineStatus(this, true);
         }
         updateLeaderFlag(); // as saved, or not

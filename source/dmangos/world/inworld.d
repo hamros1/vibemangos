@@ -30,7 +30,8 @@ mixin template InWorldHandlers()
     import dmangos.world.opcodes;
     import dmangos.world.packets;
     import dmangos.world.player : PlayerFlags, RestType;
-    import dmangos.world.queries : chatMessage, ClientChat, creatureQueryResponse, gameObjectQueryResponse,
+    import dmangos.world.channelservice : ChannelOp;
+    import dmangos.world.queries : chatMessage, ClientChat, ClientWho, whoList, WhoEntry, creatureQueryResponse, gameObjectQueryResponse,
         itemQueryResponse;
     import dmangos.world.teleport : Teleport;
     import dmangos.world.updatefields : PLAYER_FIELD_BYTES, UNIT_FIELD_BYTES_1;
@@ -55,11 +56,13 @@ private:
             warning!"%s: '%s' left the world (%s); '%s' NOT saved: this node may no longer write (cluster lease lapsed)"(
                 remoteAddress, account.username, why, player.data.name);
         leaveGroupsOnLogout(loggingOut);
-        context.channelsFor(this).leaveAll(this);
+        context.channelCommand(this, ChannelOp.leaveAll, null);
         auto group = context.groups.of(player.guid);
         context.leaveWorld(this);
-        if (group !is null)
-            group.updatePlayerOnlineStatus(this, false); // the others see the player offline
+        // The others see the player offline; a party it left tells them itself (in a cluster, the
+        // group here is a mirror that has not heard yet).
+        if (group !is null && (group.isRaid || !loggingOut))
+            group.updatePlayerOnlineStatus(this, false);
         player = null;
         teleporting = Teleport.none;
         state_ = WorldState.characterScreen;
@@ -83,7 +86,7 @@ private:
      * The node this player's simulation should move to now, or 0. It moves when it stands well inside
      * another node's ground (`migrationMargin` all round: no going back and forth along a border), not
      * within ten seconds of its last move, nor while teleporting or logging out. Away from home, it
-     * goes back home first (and on from there).
+     * goes straight on to a third node, its home told.
      */
     ushort migrationTarget()
     {
@@ -91,17 +94,27 @@ private:
 
         if (context.regionOwnerAround is null || teleporting != Teleport.none || loggingOut || transferring)
             return 0;
+        if (context.draining)
+        {
+            // This node is going: a visiting player moves on as soon as its ground is another's; one
+            // whose client is here stays, and is logged out (saved) when the node stops.
+            if (homeNode == 0)
+                return 0;
+            const next = context.regionOwnerAround(player.data.map, player.position, 0);
+            return next == context.nodeId ? 0 : next;
+        }
         if (migratedAt != MonoTime.init && context.clock() - migratedAt < 10.seconds)
             return 0;
         const owner = context.regionOwnerAround(player.data.map, player.position, migrationMargin);
         if (owner == 0 || owner == context.nodeId)
             return 0;
-        return homeNode ? homeNode : owner;
+        return owner;
     }
 
     /**
      * Moves this player's simulation to node `target`: saved here, then loaded there with what its
-     * client already has, so the client sees nothing of it. The client stays connected to its home.
+     * client already has, so the client sees nothing of it. The client stays connected to its home,
+     * whose id the state ends with (0: this node, when the player leaves home).
      */
     void migrateTo(ushort target)
     {
@@ -123,6 +136,7 @@ private:
         w.put(cast(uint) known.length);
         foreach (k; known)
             w.put(k);
+        w.put(homeNode);
 
         info!"%s: '%s' moves to node %s (at map %s %.1f %.1f)"(remoteAddress, player.data.name, target,
             player.data.map, player.position.x, player.position.y);
@@ -132,7 +146,10 @@ private:
         context.playerRelay.migrate(target, account.id, w.data);
         if (homeNode)
         {
-            context.playerRelay.remoteDone(account.id); // back to its home: this session's part is over
+            // Back home, or on to a third node, which the home is told of: this session's part is over.
+            if (target != homeNode)
+                context.playerRelay.moved(homeNode, account.id, target);
+            context.playerRelay.remoteDone(account.id);
             state_ = WorldState.closed;
         }
         else
@@ -152,6 +169,14 @@ private:
         a.level = cast(AccountLevel) r.read!ubyte;
         a.muteTime = r.read!long;
         return a;
+    }
+
+    /// The node holding the client of a `migrateTo` state; 0 if it is the node that sent it.
+    package static ushort migrationHome(const(ubyte)[] state)
+    {
+        if (state.length < 2)
+            return 0;
+        return cast(ushort)(state[$ - 2] | state[$ - 1] << 8);
     }
 
     /// The player's simulation arrives here (`migrateTo`'s state): false if its character cannot be loaded.
@@ -622,8 +647,7 @@ private:
                 player.chatTag));
             break;
         case ChatType.CHAT_MSG_CHANNEL:
-            if (auto channel = context.channelsFor(this).find(chat.channel, this))
-                channel.say(this, chat.text, language, player.chatTag);
+            context.channelCommand(this, ChannelOp.say, chat.channel, chat.text, language);
             break;
         default:
             trace!"%s: chat type %s is not supported yet"(remoteAddress, chat.type);
@@ -632,6 +656,31 @@ private:
     }
 
     /// Everyone within `range` yards hears it, the speaker included (`Player::Say`, `Yell`, `TextEmote`).
+    /// `HandleWhoOpcode`: who is online, on this node and (in a cluster) on the others.
+    @Handles(Opcode.CMSG_WHO, WorldState.inWorld)
+    void handleWho(const ClientWho request)
+    {
+        WhoEntry[] candidates;
+        foreach (who; context.onlinePlayers)
+        {
+            const p = who.character;
+            candidates ~= WhoEntry(p.data.name, "", p.data.level, p.data.classId, p.data.race, p.data.zone,
+                cast(uint) context.client.teamForRace(p.data.race), who.security);
+        }
+        foreach (ref r; context.remotePlayers)
+            candidates ~= WhoEntry(r.entry.name, "", r.entry.level, r.entry.classId, r.entry.race, r.entry.zone,
+                cast(uint) context.client.teamForRace(r.entry.race), r.entry.security);
+        const config = context.config;
+        string areaName(uint zone)
+        {
+            if (const area = context.client.areas.lookup(zone))
+                return area.name[0];
+            return "";
+        }
+        deliver(Opcode.SMSG_WHO, whoList(request, candidates, cast(uint) context.client.teamForRace(player.data.race),
+            account.level, config.allowTwoSideWhoList, config.gmLevelInWhoList, config.maxWhoListReturns, &areaName));
+    }
+
     void sayAround(ChatType type, Language language, string text, float range)
     {
         if (teleporting == Teleport.far)
@@ -648,26 +697,24 @@ private:
      */
     void whisper(string to, string text)
     {
-        auto target = context.onlinePlayer(to);
-        if (target is null)
+        import dmangos.world.whisper : deliverWhisper, WhisperFrom;
+
+        const from = WhisperFrom(player.guid, player.data.race, hasPermissions, player.chatTag);
+        if (auto target = context.onlinePlayer(to))
+            return deliverWhisper(target, from, text, context.config.allowTwoSideInteractionChat,
+                (ulong sender) => sessionOf(target).allowsWhispersFrom(sender),
+                (ubyte race) => cast(uint) context.client.teamForRace(race), (Opcode op, const(ubyte)[] b) => deliver(op, b));
+        // Another node's player (phase 5): its node checks and delivers, and answers this one.
+        const remote = context.remotePlayer(to);
+        if (remote is null || context.whisperRemote is null)
             return send(ServerChatPlayerNotFound(to));
-        const receiver = target.character;
-        if (!hasPermissions && receiver.gmTagOn && player.guid !in sessionOf(target).gmTargets)
-            return send(ServerMessageChat(chatMessage(ChatType.CHAT_MSG_WHISPER, Language.LANG_UNIVERSAL,
-                receiver.guid, "This Game Master does not currently have an open ticket from you and did not receive "
-                ~ "your whisper. Please submit a new GM Ticket request if you need to speak to a GM. This is an "
-                ~ "automatic message.", ChatTag.CHAT_TAG_GM)));
-        const sameTeam = context.client.teamForRace(receiver.data.race) == context.client.teamForRace(player.data.race);
-        if (!sameTeam && !context.config.allowTwoSideInteractionChat && !hasPermissions && !target.hasPermissions)
-            return send(ServerChatWrongFaction());
-        // Whispers are always readable (LANG_UNIVERSAL); the sender gets a copy addressed to the receiver.
-        target.deliver(Opcode.SMSG_MESSAGECHAT,
-            chatMessage(ChatType.CHAT_MSG_WHISPER, Language.LANG_UNIVERSAL, player.guid, text, player.chatTag));
-        send(ServerMessageChat(chatMessage(ChatType.CHAT_MSG_WHISPER_INFORM, Language.LANG_UNIVERSAL, receiver.guid,
-            text, receiver.chatTag)));
-        if (receiver.hasFlag(PlayerFlags.afk) || receiver.hasFlag(PlayerFlags.dnd))
-            send(ServerMessageChat(chatMessage(receiver.hasFlag(PlayerFlags.afk) ? ChatType.CHAT_MSG_AFK
-                : ChatType.CHAT_MSG_DND, Language.LANG_UNIVERSAL, receiver.guid, receiver.autoReply)));
+        context.whisperRemote(remote.node, remote.entry.guid, from, text);
+    }
+
+    /// Whether this player, a GM with its tag on, hears whispers from `sender` (`.gm allowwhispers`).
+    package bool allowsWhispersFrom(ulong sender)
+    {
+        return (sender in gmTargets) !is null;
     }
 
     /**

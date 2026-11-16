@@ -139,6 +139,12 @@ final class Link : NetSession
     }
 
     /// The peer's hello, once open.
+    /// The peer has become the coordinator (phase 7: the standby took over).
+    void markCoordinator() pure nothrow @nogc @safe
+    {
+        peer_.coordinator = true;
+    }
+
     @property ref const(Hello) peer() const pure nothrow @nogc @safe
     {
         return peer_;

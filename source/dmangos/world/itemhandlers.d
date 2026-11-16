@@ -19,7 +19,7 @@ mixin template ItemHandlers()
 {
     import std.algorithm.searching : countUntil;
     import dmangos.log;
-    import dmangos.world.creature : Creature;
+    import dmangos.world.creature : Creature, Npc;
     import dmangos.world.defines;
     import dmangos.world.inventory;
     import dmangos.world.npcdata : VendorItem;
@@ -67,13 +67,13 @@ private:
     }
 
     /// `Player::SendBuyError`
-    void sendBuyError(BuyResult result, const Creature vendor, size_t vendorSlot)
+    void sendBuyError(BuyResult result, const Npc vendor, size_t vendorSlot)
     {
         send(ServerBuyFailed(vendor is null ? 0 : vendor.guid, cast(uint) vendorSlot + 1, result));
     }
 
     /// `Player::SendSellError`
-    void sendSellError(SellResult result, const Creature vendor, ulong item)
+    void sendSellError(SellResult result, const Npc vendor, ulong item)
     {
         send(ServerSellItem(vendor is null ? 0 : vendor.guid, item, result));
     }
@@ -460,12 +460,34 @@ private:
         buyItemFromVendor(request.vendor, request.item, request.count, bag, request.slot);
     }
 
-    /// `Player::BuyItemFromVendor`: `count` times the item's buy count, into `bag` and `slot` if given.
-    void buyItemFromVendor(ulong vendorGuid, uint entry, ubyte count, ubyte bag, ubyte slot)
+    /// Limited stock reserved on the node simulating a vendor this node serves through a stand-in (phase 5).
+    static struct StockReservation
     {
+        bool held;
+        ushort owner;      /// the node simulating the vendor
+        uint map;
+        uint maxCount;     /// the item's limit, and how many were reserved: what goes back if unused
+        uint count;
+        uint left;         /// what the vendor has left
+    }
+
+    /**
+     * `Player::BuyItemFromVendor`: `count` times the item's buy count, into `bag` and `slot` if given.
+     * A limited item of a vendor another node simulates is reserved there first, and the purchase goes
+     * on when the answer comes (`reserved`); stock it reserved but did not use goes back.
+     */
+    void buyItemFromVendor(ulong vendorGuid, uint entry, ubyte count, ubyte bag, ubyte slot,
+        StockReservation reserved = StockReservation.init)
+    {
+        import dmangos.world.creature : NpcStandIn;
+
+        bool used;
+        scope (exit)
+            if (reserved.held && !used && context.releaseStock !is null)
+                context.releaseStock(reserved.owner, reserved.map, vendorGuid, entry, reserved.maxCount, reserved.count);
         if (count < 1)
             count = 1;
-        if (!player.alive)
+        if (player is null || !player.alive)
             return;
         const proto = entry in context.data.items;
         if (proto is null)
@@ -485,7 +507,25 @@ private:
 
         const totalCount = proto.buyCount * count;
         const now = context.unixTime;
-        if (ware.maxCount != 0
+        auto standIn = cast(NpcStandIn) vendor;
+        if (ware.maxCount != 0 && standIn !is null && context.reserveStock !is null && !reserved.held)
+        {
+            // The stock is the creature's node's to count: ask it, and buy when it answers.
+            auto reservation = StockReservation(true, standIn.owner, player.data.map, ware.maxCount, totalCount);
+            context.reserveStock(reservation.owner, reservation.map, vendorGuid, entry, ware.maxCount, ware.incrTime,
+                proto.buyCount, totalCount, (bool ok, uint left) {
+                    if (!ok)
+                    {
+                        if (player !is null)
+                            sendBuyError(BuyResult.itemAlreadySold, null, 0);
+                        return;
+                    }
+                    reservation.left = left;
+                    buyItemFromVendor(vendorGuid, entry, count, bag, slot, reservation);
+                });
+            return;
+        }
+        if (ware.maxCount != 0 && !reserved.held
             && vendor.vendorItemCount(entry, ware.maxCount, ware.incrTime, proto.buyCount, now) < totalCount)
             return sendBuyError(BuyResult.itemAlreadySold, vendor, vendorSlot);
         // No reputation yet: every faction is neutral (3). No honor ranks yet: the highest is 0.
@@ -523,7 +563,9 @@ private:
         if (item is null)
             return flushInventory(true);
 
-        const left = vendor.takeVendorItems(entry, ware.maxCount, ware.incrTime, proto.buyCount, totalCount, now);
+        used = true;
+        const left = reserved.held ? reserved.left
+            : vendor.takeVendorItems(entry, ware.maxCount, ware.incrTime, proto.buyCount, totalCount, now);
         send(ServerBuyItem(vendor.guid, cast(uint) vendorSlot + 1, ware.maxCount > 0 ? left : uint.max, totalCount));
         sendNewItem(item, totalCount, true, false);
         flushInventory(true);
@@ -693,4 +735,58 @@ unittest
     // The bank's bag slots have no prices in the test data: none can be bought.
     anduin.write(Opcode.CMSG_BUY_BANK_SLOT, ClientNpcGuid(makeGuid(HighGuid.unit, creatureBanker, bankerSpawn)));
     assert(packet!ServerBuyBankSlotResult(anduin.read()).result == 0);
+}
+
+/// Limited stock of a vendor another node simulates (phase 5): reserved there, used, refused or given back.
+unittest
+{
+    import dmangos.world.grid : cellKeyAt;
+    import dmangos.world.npcdata : VendorItem;
+    import dmangos.world.replication : encodeState, Replicable;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    context.data.npcs.vendors[creatureInnkeeper] = [VendorItem(itemJerky, 3, 600, 0, 0)]; // three lots, then sold out
+    void setup(ref CharacterData c)
+    {
+        c.money = 60;
+    }
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f), AccountLevel.player,
+        raceHuman, 0, 1, &setup);
+    anduin.read();
+
+    // The innkeeper is node 2's now: this node holds a replica of it.
+    const innkeeper = makeGuid(HighGuid.unit, creatureInnkeeper, innkeeperSpawn);
+    auto map = context.map(0);
+    auto spawned = cast(Replicable) map.findObject(innkeeper);
+    const state = encodeState(spawned, 0);
+    const home = cellKeyAt(-8951, -130);
+    map.release((ulong cell) => cell == home);
+    map.replicaCreated(2, home, innkeeper, state);
+    anduin.read();
+
+    // Node 2 has two lots left: it reserves one, and the purchase goes on with what it says is left.
+    struct Asked { ushort owner; uint wanted; void delegate(bool, uint) then; }
+    Asked asked;
+    uint[] released;
+    context.reserveStock = (ushort owner, uint, ulong, uint, uint, uint, uint, uint wanted, void delegate(bool, uint) then) {
+        asked = Asked(owner, wanted, then);
+    };
+    context.releaseStock = (ushort, uint, ulong, uint, uint, uint count) { released ~= count; };
+    anduin.write(Opcode.CMSG_BUY_ITEM, ClientBuyItem(innkeeper, itemJerky, 1, 1));
+    assert(anduin.read().length == 0 && asked.owner == 2 && asked.wanted == 5, "nothing until node 2 answers");
+    asked.then(true, 1);
+    const receipt = packet!ServerBuyItem(anduin.read());
+    assert(receipt.newCount == 1 && anduin.session.character.money == 35);
+
+    // Sold out there: refused.
+    anduin.write(Opcode.CMSG_BUY_ITEM, ClientBuyItem(innkeeper, itemJerky, 1, 1));
+    asked.then(false, 0);
+    assert(packet!ServerBuyFailed(anduin.read()).result == BuyResult.itemAlreadySold && released.length == 0);
+
+    // Two lots reserved, but 35 copper does not pay for them (50): the reservation goes back.
+    anduin.write(Opcode.CMSG_BUY_ITEM, ClientBuyItem(innkeeper, itemJerky, 2, 1));
+    asked.then(true, 0);
+    assert(packet!ServerBuyFailed(anduin.read()).result == BuyResult.notEnoughMoney);
+    assert(released == [10], "two lots of five back to node 2");
 }

@@ -47,6 +47,7 @@ import dmangos.world.channelhandlers : ChannelHandlers;
 import dmangos.world.charscreen : CharacterScreenHandlers;
 import dmangos.world.commands : ChatCommands;
 import dmangos.world.gmactions : GmActions;
+import dmangos.world.gmtargets : GmTargets;
 import dmangos.world.gmdebug : DebugCommands;
 import dmangos.world.gmlevel0 : Level0Commands;
 import dmangos.world.gmlevel1 : Level1Commands;
@@ -242,6 +243,13 @@ final class WorldSession : NetSession, Kickable, OnlinePlayer
         state_ = toCharacterScreen ? WorldState.characterScreen : WorldState.closed;
         if (!toCharacterScreen)
             finish();
+    }
+
+    /// Home: the player's simulation moved on to node `next` (from one third node to another).
+    void ownerMoved(ushort next)
+    {
+        if (state_ == WorldState.elsewhere)
+            ownerNode = next;
     }
 
     /// Owner: the client is gone; the player leaves the world here, saved.
@@ -700,6 +708,7 @@ private:
     mixin Exploration;
     mixin ChatCommands;
     mixin GmActions;
+    mixin GmTargets;
     mixin Level0Commands;
     mixin Level1Commands;
     mixin Level2Commands;
@@ -946,6 +955,7 @@ unittest
             (cast(WorldSession) homeContext.sessionOf(account)).ownerLeft(toCharacterScreen);
         }
         void remoteDone(uint) { log ~= "done"; }
+        void moved(ushort, uint, ushort) { log ~= "moved"; }
     }
     auto pipe = new Pipe;
     pipe.homeContext = home;
@@ -991,4 +1001,194 @@ unittest
     client.read();
     assert(pipe.log == ["migrate", "left", "done"]);
     assert(client.session.state == WorldState.characterScreen && client.session.owner == 0);
+}
+
+/**
+ * A player away from home moving on to a third node (phase 4b): straight there, its home told, the
+ * client's packets then going there; and back home from there.
+ */
+unittest
+{
+    import core.time : seconds;
+    import std.format : format;
+    import dmangos.world.context : PlayerRelay;
+    import dmangos.world.player : CharacterData;
+    import dmangos.world.objects : HighGuid, makeGuid;
+
+    auto db = newDatabase();
+    WorldContext[ushort] nodes;
+    foreach (ushort id; 1 .. 4)
+    {
+        nodes[id] = newContext(db);
+        nodes[id].nodeId = id;
+    }
+
+    // Three nodes joined in memory; each knows which one it is.
+    static final class Mesh
+    {
+        WorldContext[ushort] nodes;
+        WorldSession[uint][ushort] remotes; // node -> account -> owner-side session
+        string[] log;
+    }
+    static final class Relay : PlayerRelay
+    {
+        Mesh mesh;
+        ushort self;
+        this(Mesh mesh, ushort self) { this.mesh = mesh; this.self = self; }
+        void toHome(ushort home, uint account, ushort opcode, const(ubyte)[] body_)
+        {
+            auto session = cast(WorldSession) mesh.nodes[home].sessionOf(account);
+            if (session.state == WorldState.elsewhere && session.owner != self)
+                session.ownerMoved(self);
+            session.fromOwner(opcode, body_);
+        }
+        void toOwner(ushort owner, uint account, ushort opcode, const(ubyte)[] body_)
+        {
+            mesh.log ~= format!"to %s"(owner);
+            if (auto s = account in mesh.remotes.require(owner, null))
+                s.fromHome(opcode, body_);
+        }
+        void disconnect(ushort owner, uint account) { mesh.remotes[owner][account].clientGone(); }
+        void migrate(ushort target, uint account, const(ubyte)[] state)
+        {
+            mesh.log ~= format!"migrate %s->%s"(self, target);
+            if (auto home = cast(WorldSession) mesh.nodes[target].sessionOf(account))
+                if (home.state == WorldState.elsewhere)
+                {
+                    assert(home.arrive(state));
+                    return;
+                }
+            const homeNode = WorldSession.migrationHome(state);
+            auto session = new WorldSession(mesh.nodes[target], WorldSession.migrationAccount(state),
+                homeNode ? homeNode : self);
+            mesh.remotes.require(target, null)[account] = session;
+            assert(session.arrive(state));
+        }
+        void left(ushort home, uint account, bool toCharacterScreen)
+        {
+            (cast(WorldSession) mesh.nodes[home].sessionOf(account)).ownerLeft(toCharacterScreen);
+        }
+        void remoteDone(uint account) { mesh.remotes[self].remove(account); }
+        void moved(ushort home, uint account, ushort next)
+        {
+            mesh.log ~= format!"moved %s"(next);
+            (cast(WorldSession) mesh.nodes[home].sessionOf(account)).ownerMoved(next);
+        }
+    }
+    auto mesh = new Mesh;
+    mesh.nodes = nodes;
+    foreach (id, node; nodes)
+        node.playerRelay = new Relay(mesh, id);
+    // Node 2 owns the ground at first; then node 3; then node 1, the home.
+    ushort groundOwner = 2;
+    foreach (node; nodes)
+        node.regionOwnerAround = (uint, Position, float) => groundOwner;
+    auto now = MonoTime.currTime;
+    foreach (node; nodes)
+        node.clock = () => now;
+
+    CharacterData c;
+    c.guid = 7;
+    c.account = db.accounts["PLAYER"].id;
+    c.name = "Wanderer";
+    c.race = 2; // an orc shaman: what `newContext` can create
+    c.classId = 7;
+    c.level = 1;
+    db.loadable[7] = c;
+    auto client = TestClient(new WorldSession(nodes[1], "127.0.0.1"), testKey);
+    authenticate(client);
+    client.write(Opcode.CMSG_PLAYER_LOGIN, ClientPlayerLogin(7));
+    client.read();
+    const guid = makeGuid(HighGuid.player, 7);
+
+    client.session.update(1.seconds);
+    assert(mesh.log == ["migrate 1->2"] && client.session.owner == 2);
+
+    // Node 3's ground now: node 2 hands the player straight to node 3, and the home follows it.
+    groundOwner = 3;
+    now += 11.seconds;
+    mesh.remotes[2][c.account].update(1.seconds);
+    assert(mesh.log == ["migrate 1->2", "migrate 2->3", "moved 3"], "no stop at home on the way");
+    assert(client.session.owner == 3 && client.session.state == WorldState.elsewhere);
+    assert(nodes[3].onlinePlayer(guid) !is null && nodes[2].onlinePlayer(guid) is null);
+    auto third = mesh.remotes[3][c.account];
+    assert(third.home == 1, "node 3 knows the client is on node 1, not node 2");
+
+    // The client sits: node 3 handles it, and the answer comes to the client from there.
+    client.write(Opcode.CMSG_STANDSTATECHANGE, ClientStandStateChange(1));
+    assert(mesh.log[$ - 1] == "to 3");
+    assert(opcodesOf(client.read()).canFind(Opcode.SMSG_STANDSTATE_UPDATE));
+
+    // Home's ground: back home from node 3.
+    groundOwner = 1;
+    now += 11.seconds;
+    third.update(1.seconds);
+    assert(mesh.log[$ - 1] == "migrate 3->1" && client.session.state == WorldState.inWorld);
+    assert(client.session.owner == 0 && nodes[1].onlinePlayer(guid) !is null);
+}
+
+/// Whispers across nodes (phase 5): to a player another node simulates, checked and delivered by that node.
+unittest
+{
+    import dmangos.cluster.protocol : PresenceEntry;
+    import dmangos.world.context : PresenceFlags;
+    import dmangos.world.player : CharacterData;
+    import dmangos.world.whisper : WhisperFrom;
+
+    auto db = newDatabase();
+    auto context = newContext(db);
+    ushort sentTo;
+    ulong sentGuid;
+    WhisperFrom sentFrom;
+    context.whisperRemote = (ushort node, ulong guid, WhisperFrom from, string text) {
+        sentTo = node;
+        sentGuid = guid;
+        sentFrom = from;
+        assert(text == "hello");
+    };
+    context.presence(2, true, [PresenceEntry(0x77, "Faraway", 9, 2, 7, 10, 0, 12, PresenceFlags.afk, 0, "brb")], null);
+    auto client = loggedIn(context, db, 7, "Whisperer", Position(0, 0, 0), AccountLevel.player, raceOrc, 0, 1,
+        (ref CharacterData c) { c.classId = 7; }); // an orc shaman: what `newContext` can load
+    assert(client.session.state == WorldState.inWorld);
+
+    client.write(Opcode.CMSG_MESSAGECHAT, chatBody(ChatType.CHAT_MSG_WHISPER, "hello", "faraway"));
+    assert(client.read().length == 0, "the receiver's node answers, not this one");
+    assert(sentTo == 2 && sentGuid == 0x77 && sentFrom.guid == client.session.character.guid && sentFrom.race == 2);
+
+    client.write(Opcode.CMSG_MESSAGECHAT, chatBody(ChatType.CHAT_MSG_WHISPER, "hello", "nobody"));
+    assert(opcodesOf(client.read()) == [Opcode.SMSG_CHAT_PLAYER_NOT_FOUND]);
+
+    // Node 2 is lost: its players with it.
+    context.presenceLost(2);
+    client.write(Opcode.CMSG_MESSAGECHAT, chatBody(ChatType.CHAT_MSG_WHISPER, "hello", "faraway"));
+    assert(opcodesOf(client.read()) == [Opcode.SMSG_CHAT_PLAYER_NOT_FOUND]);
+}
+
+/// Whispers from another node (phase 5): checked where the receiver is, the answers going back to the sender.
+unittest
+{
+    import dmangos.world.player : CharacterData;
+    import dmangos.world.whisper : deliverWhisper, WhisperFrom;
+
+    auto db = newDatabase();
+    auto context = newContext(db);
+    auto gm = loggedIn(context, db, 8, "Keeper", Position(0, 0, 0), AccountLevel.player, raceOrc, 0, 1,
+        (ref CharacterData c) { c.classId = 7; });
+    gm.session.player.gmTagOn = true;
+    gm.read();
+
+    Opcode[] back;
+    auto from = WhisperFrom(0x99, 2, false, 0); // a player on another node
+    void whisperTo(TestClient* target)
+    {
+        back = null;
+        deliverWhisper(target.session, from, "help", false,
+            (ulong sender) => target.session.allowsWhispersFrom(sender),
+            (ubyte race) => cast(uint) context.client.teamForRace(race), (Opcode op, const(ubyte)[]) { back ~= op; });
+    }
+    whisperTo(&gm);
+    assert(back == [Opcode.SMSG_MESSAGECHAT] && gm.read().length == 0, "the GM's automatic reply, back to the sender");
+    gm.session.gmTargets[0x99] = true;
+    whisperTo(&gm);
+    assert(gm.read().length == 1 && back == [Opcode.SMSG_MESSAGECHAT], "allowed: the GM hears it, the sender gets its copy");
 }

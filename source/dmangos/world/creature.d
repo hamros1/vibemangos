@@ -16,7 +16,7 @@ import std.random : Random, uniform;
 
 import dmangos.world.clientdata : ClientData;
 import dmangos.world.map : Moving;
-import dmangos.world.replication : Replicable;
+import dmangos.world.replication : Replica, Replicable;
 import dmangos.world.motion : followSpline, IdleMovement, MotionWorld, MovementGenerator;
 import dmangos.world.movement : baseMoveSpeed, MovementFlags, MovementInfo, MoveType, Position;
 import dmangos.bytes : ByteReader, ByteWriter;
@@ -157,8 +157,139 @@ private enum : uint
     sheathMelee = 1,           // SHEATH_STATE_MELEE
 }
 
+/// A vendor's limited items (`Creature::m_vendorItemCounts`): how many are left, and since when.
+struct VendorStocks
+{
+    /// A limited item's stock since it was first bought, and when it last grew.
+    static struct Stock
+    {
+        uint count;
+        long lastIncrement;
+    }
+
+    Stock[uint] items; /// by item
+
+    /**
+     * `Creature::GetVendorItemCurrentCount`: how many of a limited item (`maxCount` > 0) the vendor
+     * has at Unix time `now`; it grows by `buyCount` every `incrTime` seconds, back to `maxCount`.
+     */
+    uint count(uint item, uint maxCount, uint incrTime, uint buyCount, long now)
+    {
+        if (maxCount == 0)
+            return 0;
+        auto stock = item in items;
+        if (stock is null)
+            return maxCount;
+        if (stock.lastIncrement + incrTime <= now)
+        {
+            // A restock time of 0 would divide by zero in CMaNGOS: here the item is simply back.
+            const steps = incrTime == 0 ? maxCount : cast(uint)((now - stock.lastIncrement) / incrTime);
+            if (stock.count + steps * buyCount >= maxCount)
+            {
+                items.remove(item);
+                return maxCount;
+            }
+            stock.count += steps * buyCount;
+            stock.lastIncrement = now;
+        }
+        return stock.count;
+    }
+
+    /// `Creature::UpdateVendorItemCurrentCount`: `used` were bought; returns how many are left.
+    uint take(uint item, uint maxCount, uint incrTime, uint buyCount, uint used, long now)
+    {
+        if (maxCount == 0)
+            return 0;
+        auto stock = item in items;
+        if (stock is null)
+        {
+            const left = maxCount > used ? maxCount - used : 0;
+            items[item] = Stock(left, now);
+            return left;
+        }
+        if (stock.lastIncrement + incrTime <= now)
+        {
+            const steps = incrTime == 0 ? maxCount : cast(uint)((now - stock.lastIncrement) / incrTime);
+            stock.count = stock.count + steps * buyCount < maxCount ? stock.count + steps * buyCount : maxCount;
+        }
+        stock.count = stock.count > used ? stock.count - used : 0;
+        stock.lastIncrement = now;
+        return stock.count;
+    }
+
+    /// Puts back `count` of a limited item a purchase did not complete with (stock it reserved: phase 5).
+    void giveBack(uint item, uint maxCount, uint count)
+    {
+        if (auto stock = item in items)
+            stock.count = stock.count + count < maxCount ? stock.count + count : maxCount;
+    }
+}
+
+/**
+ * What NPC services (gossip, trainers, vendors, innkeepers, bankers) need of a creature: the creature
+ * itself, or on a cluster node a stand-in for a replica of another node's (`NpcStandIn`, phase 5).
+ */
+interface Npc
+{
+    @property ulong guid() const;
+    @property Position position() const;
+    ref inout(UpdateValues) npcValues() inout;
+    @property const(CreatureTemplate)* npcTemplate() const;
+    /// Its `creature` row (`npc_gossip` and the like are by spawn).
+    @property uint spawnId() const;
+    uint vendorItemCount(uint item, uint maxCount, uint incrTime, uint buyCount, long now);
+    uint takeVendorItems(uint item, uint maxCount, uint incrTime, uint buyCount, uint used, long now);
+}
+
+/**
+ * An NPC another node simulates, as this node serves it (phase 5): its replica's fields and position,
+ * its template from the world data every node shares. Limited vendor stock is counted here, apart from
+ * the real creature's: a known gap until it is kept by the creature's node.
+ */
+final class NpcStandIn : Npc
+{
+    private Replica replica;
+    private const(CreatureTemplate)* template_;
+    private VendorStocks stock;
+
+    ///
+    this(Replica replica, const(CreatureTemplate)* template_)
+    {
+        this.replica = replica;
+        this.template_ = template_;
+    }
+
+    /// The node simulating the real creature: limited stock is reserved there (phase 5).
+    @property ushort owner() const
+    {
+        return replica.owner;
+    }
+
+    /// The replica it stands for now (replicas are replaced when their owner changes).
+    void follow(Replica replica)
+    {
+        this.replica = replica;
+    }
+
+    @property ulong guid() const { return replica.guid; }
+    @property Position position() const { return replica.position; }
+    ref inout(UpdateValues) npcValues() inout { return replica.fieldsOf; }
+    @property const(CreatureTemplate)* npcTemplate() const { return template_; }
+    @property uint spawnId() const { return cast(uint) counterOf(replica.guid); } // a creature's guid holds its spawn
+
+    uint vendorItemCount(uint item, uint maxCount, uint incrTime, uint buyCount, long now)
+    {
+        return stock.count(item, maxCount, incrTime, buyCount, now);
+    }
+
+    uint takeVendorItems(uint item, uint maxCount, uint incrTime, uint buyCount, uint used, long now)
+    {
+        return stock.take(item, maxCount, incrTime, buyCount, used, now);
+    }
+}
+
 /// See the module documentation.
-final class Creature : Moving, Replicable
+final class Creature : Moving, Replicable, Npc
 {
     immutable ulong guid_;
     const(CreatureTemplate)* template_;
@@ -203,61 +334,42 @@ final class Creature : Moving, Replicable
         return guid_;
     }
 
-    /// `VendorItemCount`: a limited item's stock since it was first bought, and when it last grew.
-    private struct VendorStock
-    {
-        uint count;
-        long lastIncrement;
-    }
+    private VendorStocks vendorStock; // `m_vendorItemCounts`
 
-    private VendorStock[uint] vendorStock; // by item: `m_vendorItemCounts`
-
-    /**
-     * `Creature::GetVendorItemCurrentCount`: how many of a limited item (`maxCount` > 0) the vendor
-     * has at Unix time `now`; it grows by `buyCount` every `incrTime` seconds, back to `maxCount`.
-     */
+    /// See `VendorStocks.count`.
     uint vendorItemCount(uint item, uint maxCount, uint incrTime, uint buyCount, long now)
     {
-        if (maxCount == 0)
-            return 0;
-        auto stock = item in vendorStock;
-        if (stock is null)
-            return maxCount;
-        if (stock.lastIncrement + incrTime <= now)
-        {
-            // A restock time of 0 would divide by zero in CMaNGOS: here the item is simply back.
-            const steps = incrTime == 0 ? maxCount : cast(uint)((now - stock.lastIncrement) / incrTime);
-            if (stock.count + steps * buyCount >= maxCount)
-            {
-                vendorStock.remove(item);
-                return maxCount;
-            }
-            stock.count += steps * buyCount;
-            stock.lastIncrement = now;
-        }
-        return stock.count;
+        return vendorStock.count(item, maxCount, incrTime, buyCount, now);
     }
 
-    /// `Creature::UpdateVendorItemCurrentCount`: `used` were bought; returns how many are left.
+    /// See `VendorStocks.take`.
     uint takeVendorItems(uint item, uint maxCount, uint incrTime, uint buyCount, uint used, long now)
     {
-        if (maxCount == 0)
-            return 0;
-        auto stock = item in vendorStock;
-        if (stock is null)
-        {
-            const left = maxCount > used ? maxCount - used : 0;
-            vendorStock[item] = VendorStock(left, now);
-            return left;
-        }
-        if (stock.lastIncrement + incrTime <= now)
-        {
-            const steps = incrTime == 0 ? maxCount : cast(uint)((now - stock.lastIncrement) / incrTime);
-            stock.count = stock.count + steps * buyCount < maxCount ? stock.count + steps * buyCount : maxCount;
-        }
-        stock.count = stock.count > used ? stock.count - used : 0;
-        stock.lastIncrement = now;
-        return stock.count;
+        return vendorStock.take(item, maxCount, incrTime, buyCount, used, now);
+    }
+
+    /// See `VendorStocks.giveBack`.
+    void giveBackVendorItems(uint item, uint maxCount, uint count)
+    {
+        vendorStock.giveBack(item, maxCount, count);
+    }
+
+    /// See `Npc`.
+    ref inout(UpdateValues) npcValues() inout
+    {
+        return values;
+    }
+
+    /// ditto
+    @property const(CreatureTemplate)* npcTemplate() const
+    {
+        return template_;
+    }
+
+    /// ditto
+    @property uint spawnId() const
+    {
+        return spawn.guid;
     }
 
     /// See `MapObject.fields`.
@@ -337,8 +449,8 @@ final class Creature : Moving, Replicable
         generator.save(state);
         w.put(cast(ushort) state.length);
         w.putBytes(state.data);
-        w.put(cast(ushort) vendorStock.length);
-        foreach (item, stock; vendorStock)
+        w.put(cast(ushort) vendorStock.items.length);
+        foreach (item, stock; vendorStock.items)
         {
             w.put(item);
             w.put(stock.count);
@@ -370,11 +482,11 @@ final class Creature : Moving, Replicable
         auto state = ByteReader(r.readBytes(r.read!ushort));
         if (type == generator.type)
             generator.load(state);
-        vendorStock = null;
+        vendorStock.items = null;
         foreach (_; 0 .. r.read!ushort)
         {
             const item = r.read!uint;
-            vendorStock[item] = VendorStock(r.read!uint, r.read!long);
+            vendorStock.items[item] = VendorStocks.Stock(r.read!uint, r.read!long);
         }
     }
 

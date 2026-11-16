@@ -21,7 +21,7 @@
  */
 module dmangos.cluster.ownership;
 
-import core.time : Duration, MonoTime, msecs;
+import core.time : Duration, MonoTime, msecs, seconds;
 import std.algorithm.comparison : max;
 
 import dmangos.cluster.regions;
@@ -38,17 +38,36 @@ final class RegionAuthority
         Region[] regions_;
         ulong[uint] cost;
         immutable ushort self;
-        immutable ulong epochBase;
+        ulong epochBase;
         uint epochCount;
         ulong tableVersion = 1;
         bool[ushort] members;          // live members, the coordinator included
+        bool[ushort] draining;         // members shutting down: their regions go, none come
         ushort[uint] movingTo;         // region id -> its next owner, while it is being revoked
         MonoTime[uint] heldUntil;      // region id -> when its lost owner's lease has surely run out
         MonoTime grantsFrom;
         Duration lease;
         MonoTime delegate() clock;
         bool changed_ = true;
+
+        // Phase 6: measured costs replace spawn counts once the first report comes.
+        bool measured_;
+        MonoTime lastBalance;
+        MonoTime[uint] movedAt;        // region id -> when it last moved for the load
     }
+
+    /// How load balancing by measured cost behaves (phase 6; `ClusterConfig`).
+    static struct Balancing
+    {
+        Duration interval = 30.seconds;
+        ulong minLoadUs = 20_000;     /// the busiest node's µs a second below which nothing moves
+        Duration cooldown = 120.seconds;
+        double tolerance = 0.25;      /// the gap between busiest and idlest that is tolerated, of the mean
+        size_t maxMoves = 2;          /// regions moved at most per look
+    }
+
+    /// ditto
+    Balancing balancing;
 
     /**
      * `regions` from `partition`, with what each costs; `incarnation` is the coordinator's (epochs
@@ -65,6 +84,35 @@ final class RegionAuthority
         this.clock = clock;
         grantsFrom = clock() + lease + leaseMargin;
         members[self] = true;
+    }
+
+    /**
+     * Phase 7: the standby takes over from a coordinator that is gone, with the last table it had.
+     * Every grant stands with its epoch, so no member loses a region; a region on its way somewhere
+     * still goes there; the old coordinator's regions are held until its lease has surely run out
+     * (`lostHeard` is when it was last heard). New epochs start above every epoch in the table. As
+     * after any start, nothing new is granted for a lease: a grant the old coordinator made that
+     * the table here does not have yet has lapsed by then.
+     */
+    static RegionAuthority adopt(const(Region)[] table, ulong tableVersion, ulong[uint] cost, ushort self,
+        const(ushort)[] members, ushort lostCoordinator, MonoTime lostHeard, Duration lease, MonoTime delegate() clock)
+    {
+        ulong highest;
+        foreach (ref r; table)
+            if (r.epoch > highest)
+                highest = r.epoch;
+        auto a = new RegionAuthority(table.dup, cost, self, 0, lease, clock);
+        a.epochBase = highest + 1;
+        a.tableVersion = tableVersion; // its tables follow the old coordinator's
+        foreach (m; members)
+            a.members[m] = true;
+        a.members[lostCoordinator] = true;
+        foreach (ref r; a.regions_)
+            if (r.state == RegionState.revoking && r.next)
+                a.movingTo[r.id] = r.next;
+        a.lost(lostCoordinator, lostHeard);
+        a.touch();
+        return a;
     }
 
     ///
@@ -87,10 +135,40 @@ final class RegionAuthority
         return was;
     }
 
+    /// Whether costs are measured ones (a report has come) rather than spawn counts.
+    @property bool measured() const
+    {
+        return measured_;
+    }
+
+    /**
+     * What `node`'s regions cost it lately, µs of loop time a second (phase 6). The first report
+     * switches every cost to measured ones: a region nobody has reported costs nothing, which is
+     * right, as a node loads only the cells near its players. Each cost follows its reports smoothly
+     * (half the old value and half the new), so one busy moment does not move a region.
+     */
+    void measuredLoads(ushort node, const(uint[uint]) busyUs)
+    {
+        if (!measured_)
+        {
+            measured_ = true;
+            foreach (ref c; cost)
+                c = 0;
+            lastBalance = clock();
+        }
+        foreach (ref r; regions_)
+            if (r.owner == node && r.state != RegionState.unowned)
+            {
+                const now = busyUs.get(r.id, 0);
+                cost[r.id] = (cost.get(r.id, 0) + now) / 2;
+            }
+    }
+
     /// A member joined: once grants are allowed, regions move to it so that the load evens out.
     void joined(ushort node)
     {
         members[node] = true;
+        draining.remove(node);
         if (clock() >= grantsFrom)
             balance();
     }
@@ -102,6 +180,7 @@ final class RegionAuthority
     void lost(ushort node, MonoTime lastHeard)
     {
         members.remove(node);
+        draining.remove(node);
         foreach (ref r; regions_)
         {
             if (r.owner == node && r.state != RegionState.unowned)
@@ -120,6 +199,49 @@ final class RegionAuthority
                     touch();
                 }
         }
+    }
+
+    /**
+     * `node` is shutting down cleanly (a drain): each of its regions is revoked for the member that
+     * carries least, so its objects are handed over as when the load is balanced, and no region goes
+     * to it any more. With no other member, its regions stay until it is lost.
+     */
+    void drain(ushort node)
+    {
+        if (node !in members || node == self && members.length == 1)
+            return;
+        draining[node] = true;
+        const others = memberList;
+        if (others.length == 0)
+            return;
+        auto load = loads(regions_, cost, others);
+        foreach (ref r; regions_)
+        {
+            if (auto target = r.id in movingTo)
+                if (*target == node)
+                {
+                    *target = 0; // on its way there: it stops at its owner's release
+                    r.next = 0;
+                    touch();
+                }
+            if (r.owner != node || r.state != RegionState.granted)
+                continue;
+            ushort to = others[0];
+            foreach (n; others)
+                if (load[n] < load[to])
+                    to = n;
+            load[to] += cost.get(r.id, 0);
+            r.state = RegionState.revoking;
+            r.next = to;
+            movingTo[r.id] = to;
+            touch();
+        }
+    }
+
+    /// Whether `node` is draining.
+    bool isDraining(ushort node) const
+    {
+        return (node in draining) !is null;
     }
 
     /// `node` has stopped simulating a region it was asked to give up.
@@ -170,6 +292,48 @@ final class RegionAuthority
             foreach (ref r; regions_)
                 if (r.id == id)
                     grant(r, r.owner);
+        if (measured_ && now - lastBalance >= balancing.interval)
+        {
+            lastBalance = now;
+            balanceMeasured(now);
+        }
+    }
+
+    /**
+     * Phase 6: moves regions from the busiest node to the idlest by measured cost, when the busiest is
+     * busy enough to matter and the gap is over the tolerance; at most `maxMoves` a look, and none
+     * that moved within the cool-down (no region bounces between two nodes).
+     */
+    void balanceMeasured(MonoTime now)
+    {
+        const nodes = memberList;
+        if (nodes.length < 2)
+            return;
+        auto load = loads(regions_, cost, nodes);
+        ulong busiest;
+        foreach (l; load)
+            if (l > busiest)
+                busiest = l;
+        if (busiest < balancing.minLoadUs)
+            return;
+        bool[uint] frozen;
+        foreach (id, at; movedAt)
+            if (now - at < balancing.cooldown)
+                frozen[id] = true;
+        foreach (move; rebalance(regions_, cost, nodes, balancing.tolerance, frozen, balancing.maxMoves))
+            foreach (ref r; regions_)
+                if (r.id == move.region && r.state == RegionState.granted)
+                {
+                    import dmangos.log : info;
+
+                    info!"cluster: balancing: region %s (%s µs/s) moves from node %s (%s µs/s) to node %s (%s µs/s)"(
+                        r.id, cost.get(r.id, 0), move.from, load[move.from], move.to, load[move.to]);
+                    r.state = RegionState.revoking;
+                    r.next = move.to;
+                    movingTo[r.id] = move.to;
+                    movedAt[r.id] = now;
+                    touch();
+                }
     }
 
     /// What each member's regions cost, for the log.
@@ -185,7 +349,8 @@ private:
 
         ushort[] list;
         foreach (node, _; members)
-            list ~= node;
+            if (node !in draining)
+                list ~= node;
         list.sort();
         return list;
     }
@@ -225,7 +390,7 @@ final class RegionView
     private
     {
         immutable ushort self;
-        immutable bool authority;    // the coordinator: its own grants need no lease
+        bool authority;              // the coordinator: its own grants need no lease
         Duration lease;
         ulong tableCoordinator;
         ulong tableVersion;
@@ -241,6 +406,24 @@ final class RegionView
         this.self = self;
         this.authority = authority;
         this.lease = lease;
+    }
+
+    /// This node became the coordinator (phase 7): its own grants need no lease from now on.
+    void promote()
+    {
+        authority = true;
+    }
+
+    /// The latest table's version.
+    @property ulong latestVersion() const
+    {
+        return tableVersion;
+    }
+
+    /// The latest table, as received.
+    @property const(Region)[] latestTable() const
+    {
+        return table;
     }
 
     /// The coordinator incarnation the table comes from; 0 before the first.
@@ -576,4 +759,132 @@ unittest
         pool.take(IdKind.item, id);
     assert(id == 109 && pool.take(IdKind.item, id) && id == 500, "on to the spare block");
     assert(pool.highest(IdKind.item) == 510);
+}
+
+/// A clean shutdown (a drain): the node's regions go to the others, the least loaded first, and none come back.
+unittest
+{
+    import core.time : seconds;
+
+    auto now = MonoTime.currTime;
+    Region[] regions = [Region(1, 0, CellRect(0, 0, 10, 10)), Region(2, 0, CellRect(10, 0, 20, 10)),
+        Region(3, 0, CellRect(20, 0, 30, 10)), Region(4, 1, CellRect.init)];
+    ulong[uint] cost = [1: 100, 2: 100, 3: 100, 4: 100];
+    auto authority = new RegionAuthority(regions, cost, 1, 7, 5.seconds, () => now);
+    now += 6.seconds;
+    authority.tick();
+    authority.joined(2);
+    authority.joined(3);
+    // Let the balancing settle: every revoked region released to where it was going.
+    foreach (_; 0 .. 3)
+        foreach (ref r; authority.regions)
+            if (r.state == RegionState.revoking)
+                authority.released(r.owner, r.id, r.epoch);
+    uint[] ofNode3;
+    foreach (ref r; authority.regions)
+        if (r.owner == 3)
+            ofNode3 ~= r.id;
+    assert(ofNode3.length, "node 3 carries something");
+
+    // Node 3 drains: each of its regions is revoked toward 1 or 2, and granted there on release.
+    authority.drain(3);
+    assert(authority.isDraining(3));
+    foreach (ref r; authority.regions)
+        if (r.owner == 3)
+        {
+            assert(r.state == RegionState.revoking && (r.next == 1 || r.next == 2));
+            authority.released(3, r.id, r.epoch);
+            assert(r.state == RegionState.granted && r.owner != 3);
+        }
+
+    // Nothing goes to it any more, even when regions are handed out again.
+    authority.tick();
+    foreach (ref r; authority.regions)
+        assert(r.owner != 3 && r.next != 3);
+
+    // The only member cannot drain: there is nowhere to go.
+    auto alone = new RegionAuthority(regions.dup, cost, 1, 7, 5.seconds, () => now);
+    alone.drain(1);
+    assert(!alone.isDraining(1));
+}
+
+/// Phase 6: balancing by measured cost, with a threshold, a cap on moves and a cool-down.
+unittest
+{
+    auto now = MonoTime.currTime;
+    Region[] regions;
+    ulong[uint] cost;
+    foreach (uint id; 1 .. 7)
+    {
+        regions ~= Region(id, 0, CellRect(cast(int) id * 10, 0, cast(int) id * 10 + 10, 10));
+        cost[id] = 100;
+    }
+    auto authority = new RegionAuthority(regions, cost, 1, 7, 5.seconds, () => now);
+    authority.balancing.interval = 30.seconds;
+    authority.balancing.minLoadUs = 20_000;
+    authority.balancing.cooldown = 120.seconds;
+    now += 6.seconds;
+    authority.tick();
+    authority.joined(2);
+    foreach (ref r; authority.regions)
+        if (r.state == RegionState.revoking)
+            authority.released(r.owner, r.id, r.epoch);
+    uint[] of(ushort node)
+    {
+        uint[] ids;
+        foreach (ref r; authority.regions)
+            if (r.owner == node && r.state == RegionState.granted)
+                ids ~= r.id;
+        return ids;
+    }
+    assert(of(1).length == 3 && of(2).length == 3, "even by spawn counts");
+
+    // Measured: node 1's regions are busy, node 2's idle; but all of it is under the threshold: nothing moves.
+    uint[uint] busy1, busy2;
+    foreach (id; of(1))
+        busy1[id] = 5_000;
+    foreach (id; of(2))
+        busy2[id] = 0;
+    authority.measuredLoads(1, busy1);
+    authority.measuredLoads(2, busy2);
+    assert(authority.measured);
+    now += 31.seconds;
+    authority.tick();
+    foreach (ref r; authority.regions)
+        assert(r.state != RegionState.revoking, "under the threshold: nothing moves");
+
+    // Busy enough: at most two regions move to node 2 in one look.
+    foreach (id; of(1))
+        busy1[id] = 40_000;
+    foreach (_; 0 .. 4)
+        authority.measuredLoads(1, busy1); // smoothed: it takes a few reports to get there
+    now += 31.seconds;
+    authority.tick();
+    uint[] moving;
+    foreach (ref r; authority.regions)
+        if (r.state == RegionState.revoking)
+        {
+            assert(r.owner == 1 && r.next == 2);
+            moving ~= r.id;
+        }
+    assert(moving.length >= 1 && moving.length <= 2);
+    foreach (ref r; authority.regions)
+        if (r.state == RegionState.revoking)
+            authority.released(1, r.id, r.epoch);
+
+    // Now node 2 is the busy one, but what just moved stays there for the cool-down.
+    uint[uint] busy2b;
+    foreach (id; of(2))
+        busy2b[id] = 60_000;
+    foreach (_; 0 .. 4)
+        authority.measuredLoads(2, busy2b);
+    now += 31.seconds;
+    authority.tick();
+    foreach (ref r; authority.regions)
+        if (r.state == RegionState.revoking)
+        {
+            import std.algorithm.searching : canFind;
+
+            assert(!moving.canFind(r.id), "a region that just moved does not move back within the cool-down");
+        }
 }

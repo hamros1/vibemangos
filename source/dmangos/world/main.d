@@ -98,7 +98,7 @@ private int run(WorldConfig config, string configPath)
     context.configPath = configPath;
     // Every node serves clients (docs/CLUSTER.md, phase 3b); only a standalone server or a cluster's coordinator speaks
     // for the realm: its row in the realm list, and marking everyone offline at start.
-    const speaksForRealm = !config.cluster.enabled || config.cluster.isCoordinator;
+    bool speaksForRealm = !config.cluster.enabled || config.cluster.isCoordinator; // the standby may take it over
     if (speaksForRealm)
         context.database.markAllOffline(config.realmId); // as clearOnlineAccounts: nobody is online after a restart
     if (config.cluster.enabled && config.cluster.clientAddress.length == 0)
@@ -130,7 +130,7 @@ private int run(WorldConfig config, string configPath)
     {
         const linkIdle = (2 * config.cluster.failureTimeoutMs).msecs; // the links time out first, on heartbeats
         CoordinatorSetup setup;
-        if (config.cluster.isCoordinator)
+        if (config.cluster.isCoordinator || config.cluster.standby) // the standby keeps it for a takeover (phase 7)
             setup = coordinatorSetup(config.cluster.regionCount, data, client, context);
         cluster = new ClusterNode(config.cluster, ClusterNode.newIncarnation(), () => MonoTime.currTime,
             (host, port, session) => server.connect(host, port, session, linkIdle),
@@ -146,6 +146,24 @@ private int run(WorldConfig config, string configPath)
         // Players move to the node that owns the ground they stand on, their clients staying put (phase 4b).
         cluster.players = bridge;
         context.playerRelay = bridge;
+        // Whispers to players other nodes simulate (phase 5).
+        context.whisperRemote = &bridge.whisperRemote;
+        context.deliverRemote = &bridge.deliverRemote;
+        context.requestMemberStats = &bridge.requestMemberStats;
+        context.toEveryoneElsewhere = &bridge.toEveryoneElsewhere;
+        context.gmRemote = &bridge.sendGmRemote;
+        if (cluster.isCoordinator)
+        {
+            context.groups.changes = &bridge.groupChanged;
+            context.groups.removed = &bridge.groupRemoved;
+        }
+        else
+        {
+            context.forwardChannel = &bridge.forwardChannel;
+            context.forwardGroup = &bridge.forwardGroup;
+        }
+        context.reserveStock = &bridge.reserveStock;
+        context.releaseStock = &bridge.releaseStock;
         context.nodeId = cluster.id;
         context.regionOwnerAround = (uint map, Position at, float radius) {
             import dmangos.world.grid : cellKeyAt;
@@ -166,21 +184,31 @@ private int run(WorldConfig config, string configPath)
         if (!cluster.isCoordinator)
         {
             context.idPool = cluster.pool;
-            context.groups.idSource = () {
-                import dmangos.cluster.ownership : IdKind;
-
-                uint id;
-                if (!cluster.pool.take(IdKind.group, id))
-                    throw new Exception("no group ids: the coordinator's next block has not come");
-                return id;
-            };
+            // Groups are the coordinator's (phase 5b): this node mirrors them.
+            context.groups.clear();
         }
+        // Phase 7: the standby, become the coordinator, takes up the coordinator's part of the world server.
+        cluster.onPromoted = () {
+            context.forwardChannel = null; // the channels are kept here now (and start empty)
+            context.forwardGroup = null;
+            context.groups.clear();        // the groups too, from the database the old coordinator kept them in
+            context.groups.load(context.database.loadGroups());
+            context.groups.changes = &bridge.groupChanged;
+            context.groups.removed = &bridge.groupRemoved;
+            bridge.broadcastGroups();
+            context.takeOverIds();
+            speaksForRealm = true;
+            realm.markOnline(config.allowedBuilds, config.gameType, config.realmZone);
+            info!"cluster: this node is the coordinator now: groups, channels, ids and the realm are kept here"();
+        };
         info!"cluster: node %s, incarnation %s, %s; clients at %s"(cluster.id, cluster.incarnation,
             cluster.isCoordinator ? "coordinator" : "member of " ~ config.cluster.coordinator,
             config.cluster.clientAddress);
     }
 
     installShutdownHandlers();
+    MonoTime lastLoadReport;
+    Duration lastBusy;
     server = new TcpServer(
         ServerOptions(config.bindAddress, config.port, config.idleTimeoutSeconds.seconds,
             config.maxConnections, config.updateIntervalMs.msecs),
@@ -213,6 +241,15 @@ private int run(WorldConfig config, string configPath)
                     foreach (line; cluster.describe())
                         info!"%s"(line);
             }
+            // What this node's regions cost it, for the coordinator's balancing (phase 6).
+            if (cluster !is null && now - lastLoadReport >= 10.seconds)
+            {
+                const busyNow = server.busyTotal;
+                if (lastLoadReport != MonoTime.init)
+                    cluster.reportLoads(bridge.regionLoads(busyNow - lastBusy, now - lastLoadReport));
+                lastBusy = busyNow;
+                lastLoadReport = now;
+            }
             // The coordinator sends new clients to the node with the fewest players (phase 3b).
             if (cluster !is null && cluster.isCoordinator && now - lastSteering >= 10.seconds)
             {
@@ -240,6 +277,39 @@ private int run(WorldConfig config, string configPath)
                 lastUptime = now;
             }
         });
+    if (cluster !is null && !cluster.isCoordinator)
+    {
+        // A clean stop drains first: the regions go to the others with their objects, and the players
+        // visiting from other nodes move on; then the node stops (at most `drainLimit` later).
+        enum drainLimit = 20.seconds;
+        MonoTime drainStarted;
+        server.mayStop = () {
+            if (cluster.isCoordinator)
+                return true; // the standby that took over: a coordinator does not drain
+            const now = MonoTime.currTime;
+            if (drainStarted == MonoTime.init)
+            {
+                drainStarted = now;
+                if (!cluster.drain())
+                    return true; // no coordinator to hand them to: stop as if failed
+                context.draining = true;
+                info!"cluster: shutting down: handing this node's regions to the others first"();
+                return false;
+            }
+            if (cluster.ownsNothing && bridge.visitors == 0)
+            {
+                info!"cluster: drained in %s ms; stopping"((now - drainStarted).total!"msecs");
+                return true;
+            }
+            if (now - drainStarted >= drainLimit)
+            {
+                warning!"cluster: not drained after %s (%s region(s), %s visiting player(s) left); stopping anyway"(
+                    drainLimit, cluster.regions.ownedRegions.length, bridge.visitors);
+                return true;
+            }
+            return false;
+        };
+    }
     if (cluster !is null)
         server.addListener(config.cluster.listenAddress, config.cluster.listenPort,
             (string address) => cluster.accept(address), (2 * config.cluster.failureTimeoutMs).msecs);

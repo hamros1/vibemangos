@@ -1,7 +1,7 @@
 /// State shared by every session on a world server.
 module dmangos.world.context;
 
-import core.time : Duration, MonoTime, msecs;
+import core.time : Duration, MonoTime, msecs, seconds;
 
 import std.path : buildPath;
 import std.random : Random, unpredictableSeed;
@@ -11,21 +11,28 @@ import dmangos.auth.accounts : AccountLevel;
 import dmangos.auth.database : LoginDatabase, MemoryLoginDatabase;
 import dmangos.cluster.node : SessionHandler;
 import dmangos.cluster.ownership : IdCounters, IdKind, IdPool;
+import dmangos.cluster.protocol : PresenceEntry;
+import dmangos.world.whisper : WhisperFrom;
 import dmangos.cluster.regions : Region;
-import dmangos.world.creature : Creature, CreatureSpawn;
+import dmangos.world.creature : Creature, CreatureSpawn, Npc, NpcStandIn;
 import dmangos.world.movement : Position;
 import dmangos.world.migration : Migrant;
 import dmangos.world.replication : Replicator;
-import dmangos.world.channel : ChannelManagers, Channels, ChannelSettings;
+import dmangos.world.channel : ChannelSettings;
+import dmangos.world.channelservice : channelCommand, ChannelOp, ChannelService;
+import dmangos.cluster.protocol : ChannelCommand;
+import dmangos.world.opcodes : Language, Opcode;
 import dmangos.world.characterdb : DeleteOptions, GuidCounters;
 import dmangos.world.clientdata : ClientData;
 import dmangos.world.config : WorldConfig;
 import dmangos.world.database : WorldDatabase;
 import dmangos.vmap.maptree : ModelCache;
 import dmangos.world.terrain : Terrain;
-import dmangos.world.group : Groups;
+import dmangos.world.group : GroupDirectory, Groups, memberStatus, MemberStatus;
+import dmangos.world.groupservice : groupCommand, GroupOp, GroupService;
+import dmangos.cluster.protocol : GmRemote, GroupCommand;
 import dmangos.world.map : Inhabitant, Map, MapObject, MapSettings;
-import dmangos.world.online : Directory, OnlinePlayer;
+import dmangos.world.online : OnlinePlayer;
 import dmangos.world.playercreate : CreationSettings;
 import dmangos.world.worlddata : WorldData;
 
@@ -37,8 +44,26 @@ interface PlayerRelay
     void disconnect(ushort owner, uint account);
     void migrate(ushort target, uint account, const(ubyte)[] state);
     void left(ushort home, uint account, bool toCharacterScreen);
+    /// To the home: the player's simulation moved on from this node to `next`, a third node.
+    void moved(ushort home, uint account, ushort next);
     /// The owner-side session of `account` is done (its player left the world or moved on).
     void remoteDone(uint account);
+}
+
+/// A player another node of the cluster simulates (phase 5), as its node described it.
+struct RemotePlayer
+{
+    ushort node;
+    PresenceEntry entry;
+}
+
+/// What a `PresenceEntry.flags` says of a player.
+enum PresenceFlags : uint
+{
+    gmTag = 1,
+    afk = 2,
+    dnd = 4,
+    permissions = 8,  /// it has GM permissions (understands every language, ignores factions)
 }
 
 /// Implemented by sessions so the context can kick a duplicate login.
@@ -67,7 +92,7 @@ struct ShutdownTimer
  *
  * The server runs a single-threaded event loop, so none of this needs locking.
  */
-final class WorldContext : Directory, IdCounters, SessionHandler
+final class WorldContext : GroupDirectory, IdCounters, SessionHandler
 {
     WorldConfig config;
     WorldDatabase database;
@@ -92,8 +117,40 @@ final class WorldContext : Directory, IdCounters, SessionHandler
     /// Parties and raids, online or not (`ObjectMgr`'s groups).
     Groups groups;
 
-    /// The chat channels of each team.
-    ChannelManagers channels;
+    /// The chat channels (on the coordinator; other nodes send it their players' commands).
+    ChannelService channelService;
+
+    /// This node is shutting down cleanly (a drain): players visiting it move on at once (phase 4b).
+    bool draining;
+
+    /// The rules of what changes groups (on the coordinator; other nodes send it their players' commands).
+    GroupService groupService;
+
+    /// Sends a group command to the coordinator; null standalone and on the coordinator.
+    void delegate(const ref GroupCommand command) forwardGroup;
+
+    /// Sends a packet to every other node's players (with `permission`, those who have it); null standalone.
+    void delegate(ushort opcode, char permission, const(ubyte)[] body_) toEveryoneElsewhere;
+
+    /// Sends a GM command to the node simulating its target; null standalone.
+    void delegate(ushort node, const ref GmRemote command) gmRemote;
+
+    /// Asks node `node` for its player `member`'s full stats, for `requester` here; null standalone.
+    void delegate(ushort node, ulong requester, ulong member) requestMemberStats;
+
+    private static struct Heard
+    {
+        ushort node;
+        MonoTime at;
+    }
+    private Heard[ulong] lastHeard;   // players of other nodes by the node their last command came from
+    private enum presenceGrace = 3.seconds; // presence says where a player is within a second or two
+
+    /// Sends a channel command to the coordinator; null standalone and on the coordinator.
+    void delegate(const ref ChannelCommand command) forwardChannel;
+
+    /// Sends a packet to a player another node simulates; null standalone.
+    void delegate(ushort node, ulong guid, ushort opcode, const(ubyte)[] body_) deliverRemote;
 
     /// Accounts and bans in the login database, as the login server manages them (GM commands).
     LoginDatabase accounts;
@@ -175,6 +232,81 @@ final class WorldContext : Directory, IdCounters, SessionHandler
         onlineByName.remove(toLowerName(who.character.data.name));
     }
 
+    // Players other nodes simulate (phase 5): what each node said of its own.
+    private RemotePlayer[ulong][ushort] remoteByNode;
+
+    /**
+     * Reserves limited vendor stock on the node simulating the creature (phase 5); `then` gets
+     * whether it was there and what is left. Null standalone.
+     */
+    void delegate(ushort owner, uint map, ulong creature, uint item, uint maxCount, uint incrTime, uint buyCount,
+        uint wanted, void delegate(bool reserved, uint left) then) reserveStock;
+
+    /// Gives reserved stock back to the node simulating the creature (a purchase that did not complete).
+    void delegate(ushort owner, uint map, ulong creature, uint item, uint maxCount, uint count) releaseStock;
+
+    /// Sends a whisper to a player another node simulates, which checks it there; null standalone.
+    void delegate(ushort node, ulong guid, WhisperFrom from, string text) whisperRemote;
+
+    /// What node `node` said of its players: all of them (`full`), or what changed and who left.
+    void presence(ushort node, bool full, const(PresenceEntry)[] entries, const(ulong)[] gone)
+    {
+        if (full)
+            remoteByNode.remove(node);
+        auto players = &remoteByNode.require(node, null);
+        foreach (ref e; entries)
+        {
+            (*players)[e.guid] = RemotePlayer(node, e);
+            lastHeard.remove(e.guid); // presence knows where it is now
+        }
+        foreach (guid; gone)
+            (*players).remove(guid);
+    }
+
+    /// Node `node` is gone, and its players with it.
+    void presenceLost(ushort node)
+    {
+        remoteByNode.remove(node);
+        ulong[] stale;
+        foreach (guid, ref hint; lastHeard)
+            if (hint.node == node)
+                stale ~= guid;
+        foreach (guid; stale)
+            lastHeard.remove(guid);
+        channelService.nodeLost(node);
+    }
+
+    /// Every player other nodes simulate.
+    RemotePlayer[] remotePlayers()
+    {
+        RemotePlayer[] all;
+        foreach (node, players; remoteByNode)
+            all ~= players.values;
+        return all;
+    }
+
+    /// A player another node simulates, by guid; null if none.
+    const(RemotePlayer)* remotePlayer(ulong guid)
+    {
+        foreach (node, ref players; remoteByNode)
+            if (auto p = guid in players)
+                return p;
+        return null;
+    }
+
+    /// A player another node simulates, by name (any case); null if none.
+    const(RemotePlayer)* remotePlayer(string name)
+    {
+        import dmangos.world.worlddata : toLowerName;
+
+        const wanted = toLowerName(name);
+        foreach (node, players; remoteByNode)
+            foreach (ref p; players)
+                if (toLowerName(p.entry.name) == wanted)
+                    return &p;
+        return null;
+    }
+
     private ulong[Kickable] serials;   // each session's number on this node
     private ulong nextSerial = 1;
 
@@ -231,12 +363,10 @@ final class WorldContext : Directory, IdCounters, SessionHandler
         }
         this.next = database.highestGuids();
         this.groups = new Groups(database, this, next.group);
+        groupService = new GroupService(this);
         groups.load(database.loadGroups());
-        const channelSettings = ChannelSettings(config.allowTwoSideInteractionChannel);
         loadCommandOverrides();
-        channels.alliance = new Channels(this, client, channelSettings);
-        channels.horde = config.allowTwoSideInteractionChannel ? channels.alliance
-            : new Channels(this, client, channelSettings);
+        channelService = new ChannelService(this, client, ChannelSettings(config.allowTwoSideInteractionChannel));
     }
 
     /// `CommandTableStorage::Load`: the `command_overrides` setting.
@@ -339,6 +469,34 @@ final class WorldContext : Directory, IdCounters, SessionHandler
         return maps.get(id, null);
     }
 
+    /**
+     * What NPC services see of a map object (phase 5): a creature, or a stand-in for a replica of a
+     * creature another node simulates; null for anything else.
+     */
+    Npc npcFor(MapObject object)
+    {
+        import dmangos.world.creature : NpcStandIn;
+        import dmangos.world.replication : Replica;
+        import dmangos.world.updatefields : OBJECT_FIELD_ENTRY, TypeId;
+
+        if (auto creature = cast(Creature) object)
+            return creature;
+        auto replica = cast(Replica) object;
+        if (replica is null || replica.fields.type != TypeId.unit)
+            return null;
+        const template_ = replica.fields[OBJECT_FIELD_ENTRY] in data.creatureTemplates;
+        if (template_ is null)
+            return null;
+        if (auto standIn = replica.guid in standIns)
+        {
+            standIn.follow(replica);
+            return *standIn;
+        }
+        return standIns[replica.guid] = new NpcStandIn(replica, template_);
+    }
+
+    private NpcStandIn[ulong] standIns; // by guid: the vendor stock they count lives on
+
     /// Every map that exists.
     Map[] allMaps()
     {
@@ -395,6 +553,22 @@ final class WorldContext : Directory, IdCounters, SessionHandler
         const first = *counter;
         *counter += count;
         return first;
+    }
+
+    /**
+     * Phase 7: this node has become the coordinator: ids come from its counters from now on, raised
+     * to what the database holds (what the old coordinator and the members saved).
+     */
+    void takeOverIds()
+    {
+        idPool = null;
+        const saved = database.highestGuids();
+        raise(IdKind.character, saved.character);
+        raise(IdKind.item, saved.item);
+        raise(IdKind.mail, saved.mail);
+        raise(IdKind.group, saved.group);
+        if (groups.nextId < next.group)
+            groups.nextId = next.group;
     }
 
     /// `IdCounters.raise`: a member holds ids up to `atLeast`; they are not handed out again.
@@ -596,19 +770,97 @@ final class WorldContext : Directory, IdCounters, SessionHandler
         return online.values;
     }
 
-    /// `Directory.find`
-    OnlinePlayer find(ulong guid)
+    /**
+     * A packet for every player in the world, on every node (`World::SendGlobalMessage`); with
+     * `permission`, only for those with that GM permission letter.
+     */
+    void toEveryone(Opcode opcode, const(ubyte)[] body_, char permission = 0)
+    {
+        deliverToOwn(opcode, body_, permission);
+        if (toEveryoneElsewhere !is null)
+            toEveryoneElsewhere(cast(ushort) opcode, permission, body_);
+    }
+
+    /// `toEveryone`, for this node's players only.
+    void deliverToOwn(Opcode opcode, const(ubyte)[] body_, char permission = 0)
+    {
+        foreach (other; online)
+            if (permission == 0 || other.canUseCommand(permission))
+                other.deliver(opcode, body_);
+    }
+
+    /// `GroupDirectory.local`
+    OnlinePlayer local(ulong guid)
     {
         return onlinePlayer(guid);
     }
 
-    /// ditto
-    OnlinePlayer find(string name)
+    /**
+     * Sends a packet to a player online on any node (`GroupDirectory.deliverTo`): here, or to the node
+     * presence says simulates it, or (until presence says) the node its last command came from.
+     */
+    bool deliverTo(ulong guid, Opcode opcode, const(ubyte)[] body_)
     {
-        return onlinePlayer(name);
+        if (auto here = onlinePlayer(guid))
+        {
+            here.deliver(opcode, body_);
+            return true;
+        }
+        if (deliverRemote is null)
+            return false;
+        if (auto remote = remotePlayer(guid))
+        {
+            deliverRemote(remote.node, guid, cast(ushort) opcode, body_);
+            return true;
+        }
+        if (auto hint = guid in lastHeard)
+            if (MonoTime.currTime - hint.at < presenceGrace && hint.node != nodeId)
+            {
+                deliverRemote(hint.node, guid, cast(ushort) opcode, body_);
+                return true;
+            }
+        return false;
     }
 
-    /// `Directory.seeEachOther`: both on the same map, and in sight of each other.
+    /// `GroupDirectory.statusOf`: online, away, busy, between maps; for another node's player, by presence.
+    ubyte statusOf(ulong guid)
+    {
+        if (auto here = onlinePlayer(guid))
+            return memberStatus(here);
+        if (auto remote = remotePlayer(guid))
+        {
+            ubyte status = MemberStatus.online;
+            if (remote.entry.flags & PresenceFlags.afk)
+                status |= MemberStatus.afk;
+            if (remote.entry.flags & PresenceFlags.dnd)
+                status |= MemberStatus.dnd;
+            return status;
+        }
+        if (auto hint = guid in lastHeard)
+            if (MonoTime.currTime - hint.at < presenceGrace && hint.node != nodeId)
+                return MemberStatus.online;
+        return MemberStatus.offline;
+    }
+
+    /// A command from `guid` came from `node`: it is there, until presence says otherwise.
+    void heardFrom(ulong guid, ushort node)
+    {
+        if (node != nodeId)
+            lastHeard[guid] = Heard(node, MonoTime.currTime);
+    }
+
+    /// A group command of `who`'s, run by the coordinator's groups (here, standalone or on it).
+    void groupCommand(const OnlinePlayer who, GroupOp op, ulong target = 0, string text = null,
+        string text2 = null, uint number = 0, uint number2 = 0)
+    {
+        const command = .groupCommand(who, op, target, text, text2, number, number2);
+        if (forwardGroup !is null)
+            forwardGroup(command);
+        else
+            groupService.run(command, nodeId);
+    }
+
+    /// `GroupDirectory.seeEachOther`: both on the same map, and in sight of each other.
     bool seeEachOther(ulong a, ulong b)
     {
         auto first = onlinePlayer(a), second = onlinePlayer(b);
@@ -619,10 +871,15 @@ final class WorldContext : Directory, IdCounters, SessionHandler
         return false;
     }
 
-    /// The channels of the player's team.
-    Channels channelsFor(const OnlinePlayer who)
+    /// A channel command of `who`'s, run by the coordinator's channels (here, standalone or on it).
+    void channelCommand(const OnlinePlayer who, ChannelOp op, string channel, string arg = null,
+        Language language = Language.LANG_UNIVERSAL)
     {
-        return channels.forTeam(client.teamForRace(who.character.data.race));
+        const command = .channelCommand(who, op, channel, arg, language);
+        if (forwardChannel !is null)
+            forwardChannel(command);
+        else
+            channelService.run(command, nodeId);
     }
 
     /// Number of players in the world.
@@ -852,4 +1109,32 @@ final class WorldContext : Directory, IdCounters, SessionHandler
             if (auto serial = session in serials)
                 claimSession(account, *serial);
     }
+}
+
+/// NPC services across nodes (phase 5): a replica of a creature is served through a stand-in.
+unittest
+{
+    import dmangos.world.creature : CreatureParts, CreatureTemplate;
+    import dmangos.world.replication : encodeState, Replica;
+    import dmangos.world.testclient : newContext, newDatabase;
+    import dmangos.world.testdata : testClientData;
+    import dmangos.world.updatefields : UNIT_NPC_FLAGS;
+
+    auto context = newContext(newDatabase());
+    auto vendor = new CreatureTemplate;
+    vendor.entry = 2046;
+    vendor.minLevel = vendor.maxLevel = 10;
+    vendor.modelId1 = 1;
+    vendor.npcFlags = 4 | 4096; // vendor, repairs
+    context.data.creatureTemplates[2046] = *vendor;
+    auto spawn = CreatureSpawn(80339, 2046, 0, -9464, 88, 58, 0);
+    CreatureParts parts;
+    auto actual = new Creature(spawn, &context.data.creatureTemplates[2046], 1, 10, parts, testClientData());
+
+    auto replica = new Replica(actual.guid, 2, encodeState(actual, 0));
+    auto npc = context.npcFor(replica);
+    assert(npc !is null && npc.npcTemplate.entry == 2046 && npc.spawnId == 80339);
+    assert(npc.npcValues.get!UNIT_NPC_FLAGS == (4 | 4096) && npc.position == actual.position);
+    assert(context.npcFor(replica) is npc, "one stand-in per creature: its vendor stock lasts");
+    assert(context.npcFor(actual) is actual && context.npcFor(null) is null);
 }

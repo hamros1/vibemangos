@@ -24,7 +24,7 @@ import dmangos.cluster.regions : Region;
 import dmangos.serialization : deserialize, LengthPrefix, serialize;
 
 /// Changes whenever a message changes; nodes speaking another version are turned away.
-enum ushort protocolVersion = 6;
+enum ushort protocolVersion = 16;
 
 /// Size of a frame header.
 enum frameHeaderSize = 16;
@@ -55,6 +55,23 @@ enum MessageType : ushort
     sessionReleased = 18,
     regionHandover = 19,
     player = 20,
+    inRange = 21,
+    presence = 22,
+    deliverTo = 23,
+    whisper = 24,
+    stockRequest = 25,
+    stockReply = 26,
+    stockRelease = 27,
+    channelCommand = 28,
+    groupCommand = 29,
+    groupState = 30,
+    memberStatsRequest = 31,
+    toEveryone = 32,
+    gmRemote = 33,
+    drain = 34,
+    regionLoads = 35,
+    takeover = 36,
+    takeoverAccepted = 37,
 }
 
 /// Why a hello was refused.
@@ -288,6 +305,7 @@ enum PlayerMessageKind : ubyte
     toHome = 3,      /// a packet for the client, to the node that holds its connection
     left = 4,        /// the player left the world on the owner (`opcode` 1: to the character screen)
     disconnect = 5,  /// the client is gone: the owner saves the player and says `left`
+    moved = 6,       /// to the home: the player's simulation moved on to node `opcode`
 }
 
 /// See `PlayerMessageKind`. Players are known by their account: one session per account in the cluster.
@@ -299,6 +317,232 @@ struct PlayerMessage
     uint account;
     ushort opcode;
     @LengthPrefix!uint ubyte[] data;
+}
+
+/// A packet for every player within `range` of a point (say, yell, emotes: phase 5).
+struct InRange
+{
+    enum type = MessageType.inRange;
+
+    uint map;
+    float x, y, z;
+    float range;
+    ushort opcode;
+    @LengthPrefix!uint ubyte[] body_;
+}
+
+/// A player as other nodes need to know it to whisper it or list it (phase 5).
+struct PresenceEntry
+{
+    ulong guid;
+    @LengthPrefix!ubyte string name;
+    uint account;
+    ubyte race, classId, level, gender;
+    uint zone;
+    uint flags;          /// `PresenceFlags`
+    ubyte security;      /// the account's level (the who list hides GMs from players above `gm_level_in_who_list`)
+    @LengthPrefix!ubyte string autoReply; /// while away or busy
+    @LengthPrefix!ubyte string permissions; /// ArcEmu's GM permission letters (`.gm list`)
+}
+
+/// The players the sender simulates that changed (`entries`) or left (`gone`) (phase 5).
+struct Presence
+{
+    enum type = MessageType.presence;
+
+    bool full;           /// `entries` is everything: forget what the sender said before
+    @LengthPrefix!uint PresenceEntry[] entries;
+    @LengthPrefix!uint ulong[] gone;
+}
+
+/// A packet for one player the receiver simulates (a whisper: phase 5).
+struct DeliverTo
+{
+    enum type = MessageType.deliverTo;
+
+    ulong guid;
+    ushort opcode;
+    @LengthPrefix!uint ubyte[] body_;
+}
+
+/// A whisper for a player the receiver simulates; it checks and delivers it, and answers the sender (phase 5).
+struct WhisperMessage
+{
+    enum type = MessageType.whisper;
+
+    ulong to;
+    ulong from;
+    ubyte fromRace;
+    bool fromPermissions;
+    ubyte fromChatTag;
+    @LengthPrefix!uint string text;
+}
+
+/// A player on the sender buys a limited item from a creature the receiver simulates: reserve it (phase 5).
+struct StockRequest
+{
+    enum type = MessageType.stockRequest;
+
+    uint request;
+    uint map;
+    ulong creature;
+    uint item, maxCount, incrTime, buyCount, wanted;
+}
+
+/// Whether the stock was there (and is now the buyer's), and what is left.
+struct StockReply
+{
+    enum type = MessageType.stockReply;
+
+    uint request;
+    bool reserved;
+    uint left;
+}
+
+/// A purchase did not complete: the reserved stock goes back.
+struct StockRelease
+{
+    enum type = MessageType.stockRelease;
+
+    uint map;
+    ulong creature;
+    uint item, maxCount, count;
+}
+
+/// A player's chat channel command, for the coordinator, which keeps the channels (phase 5b).
+struct ChannelCommand
+{
+    enum type = MessageType.channelCommand;
+
+    ulong guid;
+    @LengthPrefix!uint string name;
+    ubyte race;
+    bool moderateAll;      /// ArcEmu's `c` permission
+    ubyte chatTag;
+    ubyte op;              /// `dmangos.world.channelservice.ChannelOp`
+    @LengthPrefix!uint string channel;
+    @LengthPrefix!uint string arg;
+    uint language;
+}
+
+/// A player's group command (invitations, kicks, the leader, loot, raids), for the coordinator (phase 5b).
+struct GroupCommand
+{
+    enum type = MessageType.groupCommand;
+
+    ulong guid;
+    @LengthPrefix!uint string name;
+    ubyte race;
+    bool permissions;      /// any GM permission: invites across factions
+    ubyte op;              /// `dmangos.world.groupservice.GroupOp`
+    ulong target;
+    @LengthPrefix!uint string text;
+    @LengthPrefix!uint string text2;
+    uint number;
+    uint number2;
+}
+
+/// One member of a `GroupState`.
+struct GroupMemberState
+{
+    ulong guid;
+    @LengthPrefix!uint string name;
+    ubyte subGroup;
+    bool assistant;
+}
+
+/// A group as the coordinator has it now, for the other nodes' mirrors; or that it is gone.
+struct GroupState
+{
+    enum type = MessageType.groupState;
+
+    uint id;
+    bool removed;
+    ubyte groupType;
+    ulong leader;
+    @LengthPrefix!uint string leaderName;
+    ulong mainTank;
+    ulong mainAssistant;
+    ubyte lootMethod;
+    ulong looter;
+    ubyte lootThreshold;
+    @LengthPrefix!uint ulong[] icons;
+    @LengthPrefix!uint GroupMemberState[] members;
+}
+
+/// A member's full stats, for a player on the sender (`CMSG_REQUEST_PARTY_MEMBER_STATS`).
+struct MemberStatsRequest
+{
+    enum type = MessageType.memberStatsRequest;
+
+    ulong requester;
+    ulong member;
+}
+
+/// A packet for every player the receiver simulates (world texts: phase 5b); with `permission`, only for
+/// those who have that GM permission letter.
+struct ToEveryone
+{
+    enum type = MessageType.toEveryone;
+
+    ushort opcode;
+    ubyte permission;
+    @LengthPrefix!uint ubyte[] body_;
+}
+
+/// A GM command for a player the receiver simulates (`dmangos.world.gmtargets.GmRemoteOp`), from a GM on
+/// the sender; what the GM is told goes back to it (`DeliverTo`).
+struct GmRemote
+{
+    enum type = MessageType.gmRemote;
+
+    ubyte op;
+    ulong gm;
+    @LengthPrefix!uint string gmName;
+    bool gmCanKickGms;       /// the GM has the `z` permission
+    ulong target;
+    uint map;
+    float x, y, z, orientation;
+    @LengthPrefix!uint string text;
+}
+
+/// To the coordinator: the sender is shutting down; its regions should go to the others first.
+struct Drain
+{
+    enum type = MessageType.drain;
+
+    ulong incarnation;
+}
+
+/// What one region cost its owner: µs of loop time a second (phase 6).
+struct RegionLoad
+{
+    uint region;
+    uint busyUs;
+}
+
+/// To the coordinator: what the sender's regions cost it lately.
+struct RegionLoads
+{
+    enum type = MessageType.regionLoads;
+
+    @LengthPrefix!uint RegionLoad[] loads;
+}
+
+/// From the standby: the coordinator is gone and the sender is the coordinator now (phase 7).
+struct Takeover
+{
+    enum type = MessageType.takeover;
+
+    ulong incarnation;
+}
+
+/// To the new coordinator: the sender takes it as its coordinator.
+struct TakeoverAccepted
+{
+    enum type = MessageType.takeoverAccepted;
+
+    ulong incarnation;
 }
 
 /// Appends a framed message to `writer`.

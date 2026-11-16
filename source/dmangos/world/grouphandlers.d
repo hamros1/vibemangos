@@ -1,8 +1,10 @@
 /**
  * Handlers of CMaNGOS `Groups/GroupHandler.cpp` and the loot method of
- * `LootHandler.cpp`, mixed into `dmangos.world.session.WorldSession`. The
- * rules live here, as there; what a change does to a group, its rows and
- * its members is in `dmangos.world.group`.
+ * `LootHandler.cpp`, mixed into `dmangos.world.session.WorldSession`. What
+ * changes a group is a command for the groups' service, wherever it is
+ * (`dmangos.world.groupservice`, which has the rules); what only reads one is
+ * answered here. What a change does to a group, its rows and its members is
+ * in `dmangos.world.group`.
  */
 module dmangos.world.grouphandlers;
 
@@ -12,6 +14,7 @@ mixin template GroupHandlers()
     import std.random : uniform;
     import dmangos.bytes : ByteReader, ByteWriter;
     import dmangos.world.group;
+    import dmangos.world.groupservice : GroupOp;
     import dmangos.world.map : packetBody;
     import dmangos.world.names : normalizedName;
     import dmangos.world.online : OnlinePlayer;
@@ -31,165 +34,64 @@ private:
         return cast(WorldSession) player;
     }
 
+    /// Runs a group command where the groups change (`GroupService`).
+    void groupCommand(GroupOp op, ulong target = 0, string text = null, string text2 = null, uint number = 0,
+        uint number2 = 0)
+    {
+        context.groupCommand(this, op, target, text, text2, number, number2);
+    }
+
     @Handles(Opcode.CMSG_GROUP_INVITE, WorldState.inWorld)
     void handleGroupInvite(const ClientGroupName request)
     {
-        with (PartyOperation) with (PartyResult)
-        {
-            const name = normalizedName(request.name);
-            if (name is null)
-                return sendPartyResult(PARTY_OP_INVITE, request.name, ERR_BAD_PLAYER_NAME_S);
-            auto recipient = context.onlinePlayer(name);
-            if (recipient is null || recipient is this)
-                return sendPartyResult(PARTY_OP_INVITE, name, ERR_BAD_PLAYER_NAME_S);
-            if (!hasPermissions && !context.config.allowTwoSideInteractionGroup
-                && context.client.teamForRace(player.data.race)
-                    != context.client.teamForRace(recipient.character.data.race))
-                return sendPartyResult(PARTY_OP_INVITE, name, ERR_PLAYER_WRONG_FACTION);
-
-            const guid = player.guid, recipientGuid = recipient.character.guid;
-            auto group = context.groups.of(guid);
-            if (group is null)
-                group = context.groups.invitationOf(guid);
-            if (context.groups.invitationOf(recipientGuid) !is null || context.groups.of(recipientGuid) !is null)
-                return sendPartyResult(PARTY_OP_INVITE, name, ERR_ALREADY_IN_GROUP_S);
-            if (group !is null)
-            {
-                if (!group.isLeader(guid) && !group.isAssistant(guid))
-                {
-                    if (group.isCreated)
-                        sendPartyResult(PARTY_OP_INVITE, "", ERR_NOT_LEADER);
-                    return;
-                }
-                if (group.isFull)
-                    return sendPartyResult(PARTY_OP_INVITE, "", ERR_GROUP_FULL);
-                if (!group.addInvite(recipient))
-                    return;
-            }
-            else
-            {
-                group = context.groups.newGroup();
-                if (!group.addLeaderInvite(this))
-                    return;
-                if (!group.addInvite(recipient))
-                    return group.removeAllInvites();
-            }
-            recipient.deliver(Opcode.SMSG_GROUP_INVITE, packetBody(ServerGroupInvite(player.data.name)));
-            sendPartyResult(PARTY_OP_INVITE, name, ERR_PARTY_RESULT_OK);
-        }
+        const name = normalizedName(request.name);
+        if (name is null)
+            return sendPartyResult(PartyOperation.PARTY_OP_INVITE, request.name, PartyResult.ERR_BAD_PLAYER_NAME_S);
+        groupCommand(GroupOp.invite, 0, name);
     }
 
     @Handles(Opcode.CMSG_GROUP_ACCEPT, WorldState.inWorld)
     void handleGroupAccept()
     {
-        auto group = context.groups.invitationOf(player.guid);
-        if (group is null || group.leader == player.guid)
-            return;
-        group.removeInvite(player.guid);
-        if (group.isFull)
-            return sendPartyResult(PartyOperation.PARTY_OP_INVITE, "", PartyResult.ERR_GROUP_FULL);
-        if (!group.isCreated)
-            group.create();
-        group.addMember(player.guid, player.data.name);
+        groupCommand(GroupOp.accept);
     }
 
     @Handles(Opcode.CMSG_GROUP_DECLINE, WorldState.inWorld)
     void handleGroupDecline()
     {
-        auto group = context.groups.invitationOf(player.guid);
-        if (group is null)
-            return;
-        auto leader = context.onlinePlayer(group.leader);
-        context.groups.uninvite(player.guid);
-        if (leader !is null)
-            leader.deliver(Opcode.SMSG_GROUP_DECLINE, packetBody(ServerGroupDecline(player.data.name)));
-    }
-
-    /// `Player::CanUninviteFromGroup`
-    PartyResult canUninvite()
-    {
-        auto group = context.groups.of(player.guid);
-        if (group is null)
-            return PartyResult.ERR_NOT_IN_GROUP;
-        if (!group.isLeader(player.guid) && !group.isAssistant(player.guid))
-            return PartyResult.ERR_NOT_LEADER;
-        return PartyResult.ERR_PARTY_RESULT_OK;
+        groupCommand(GroupOp.decline);
     }
 
     @Handles(Opcode.CMSG_GROUP_UNINVITE_GUID, WorldState.inWorld)
     void handleGroupUninviteGuid(const ClientGuid request)
     {
-        if (request.guid == player.guid)
-            return;
-        uninvite(request.guid, null);
+        groupCommand(GroupOp.uninviteGuid, request.guid);
     }
 
     @Handles(Opcode.CMSG_GROUP_UNINVITE, WorldState.inWorld)
     void handleGroupUninvite(const ClientGroupName request)
     {
-        const name = normalizedName(request.name);
-        if (name is null || name == player.data.name)
-            return;
-        auto group = context.groups.of(player.guid);
-        if (group is null)
-            return sendPartyResult(PartyOperation.PARTY_OP_LEAVE, "", canUninvite());
-        ulong guid = group.memberGuid(name);
-        if (guid == 0)
-            if (auto invited = group.invited(name))
-                guid = invited.character.guid;
-        uninvite(guid, name);
-    }
-
-    /// The common part of the two uninvite handlers: kick a member, or withdraw an invitation.
-    void uninvite(ulong guid, string name)
-    {
-        const allowed = canUninvite();
-        if (allowed != PartyResult.ERR_PARTY_RESULT_OK)
-            return sendPartyResult(PartyOperation.PARTY_OP_LEAVE, "", allowed);
-        auto group = context.groups.of(player.guid);
-        if (group.isLeader(guid))
-            return sendPartyResult(PartyOperation.PARTY_OP_LEAVE, "", PartyResult.ERR_NOT_LEADER);
-        if (guid && group.isMember(guid))
-            return cast(void) group.removeMember(guid, RemoveMethod.kick);
-        if (guid && group.isInvited(guid))
-            return context.groups.uninvite(guid);
-        sendPartyResult(PartyOperation.PARTY_OP_LEAVE, name is null ? "" : name, PartyResult.ERR_TARGET_NOT_IN_GROUP_S);
+        if (const name = normalizedName(request.name))
+            groupCommand(GroupOp.uninvite, 0, name);
     }
 
     @Handles(Opcode.CMSG_GROUP_SET_LEADER, WorldState.inWorld)
     void handleGroupSetLeader(const ClientGuid request)
     {
-        auto group = context.groups.of(player.guid);
-        if (group is null || !group.isLeader(player.guid) || context.onlinePlayer(request.guid) is null
-            || context.groups.of(request.guid) !is group)
-            return;
-        group.changeLeader(request.guid);
+        groupCommand(GroupOp.setLeader, request.guid);
     }
 
     /// Leaving the group, or giving up a group that never formed.
     @Handles(Opcode.CMSG_GROUP_DISBAND, WorldState.inWorld)
     void handleGroupDisband()
     {
-        if (auto group = context.groups.of(player.guid))
-        {
-            sendPartyResult(PartyOperation.PARTY_OP_LEAVE, player.data.name, PartyResult.ERR_PARTY_RESULT_OK);
-            group.removeMember(player.guid, RemoveMethod.leave);
-        }
-        else if (auto pending = context.groups.invitationOf(player.guid))
-            if (pending.leader == player.guid)
-            {
-                sendPartyResult(PartyOperation.PARTY_OP_LEAVE, player.data.name, PartyResult.ERR_PARTY_RESULT_OK);
-                pending.disband();
-            }
+        groupCommand(GroupOp.disband);
     }
 
     @Handles(Opcode.CMSG_LOOT_METHOD, WorldState.inWorld)
     void handleLootMethod(const ClientLootMethod request)
     {
-        auto group = context.groups.of(player.guid);
-        if (group is null || !group.isLeader(player.guid) || request.method > LootMethod.max)
-            return;
-        group.setLoot(cast(LootMethod) request.method, request.master, cast(ubyte) request.threshold);
+        groupCommand(GroupOp.lootMethod, request.master, null, null, request.method, request.threshold);
     }
 
     @Handles(Opcode.MSG_MINIMAP_PING, WorldState.inWorld)
@@ -222,55 +124,32 @@ private:
             return;
         const icon = reader.read!ubyte;
         if (icon == 0xFF)
-            return group.sendTargetIconList(this);
-        if (!group.isLeader(player.guid) && !group.isAssistant(player.guid))
-            return;
-        group.setTargetIcon(icon, reader.read!ulong);
+            return group.sendTargetIconList(player.guid);
+        groupCommand(GroupOp.targetIcon, reader.read!ulong, null, null, icon);
     }
 
     @Handles(Opcode.CMSG_GROUP_RAID_CONVERT, WorldState.inWorld)
     void handleGroupRaidConvert()
     {
-        auto group = context.groups.of(player.guid);
-        if (group is null || !group.isLeader(player.guid) || group.members.length < group.membersMinCount)
-            return;
-        sendPartyResult(PartyOperation.PARTY_OP_INVITE, "", PartyResult.ERR_PARTY_RESULT_OK);
-        group.convertToRaid();
+        groupCommand(GroupOp.raidConvert);
     }
 
     @Handles(Opcode.CMSG_GROUP_CHANGE_SUB_GROUP, WorldState.inWorld)
     void handleGroupChangeSubGroup(const ClientGroupChangeSubGroup request)
     {
-        auto group = context.groups.of(player.guid);
-        if (group is null || request.subGroup >= maxRaidSubGroups
-            || !group.isLeader(player.guid) && !group.isAssistant(player.guid) || !group.hasFreeSlot(request.subGroup))
-            return;
-        if (const guid = group.memberGuid(normalizedName(request.name)))
-            group.changeSubGroup(guid, request.subGroup);
+        groupCommand(GroupOp.changeSubGroup, 0, normalizedName(request.name), null, request.subGroup);
     }
 
     @Handles(Opcode.CMSG_GROUP_SWAP_SUB_GROUP, WorldState.inWorld)
     void handleGroupSwapSubGroup(const ClientGroupSwapSubGroup request)
     {
-        auto group = context.groups.of(player.guid);
-        if (group is null || !group.isRaid || !group.isLeader(player.guid) && !group.isAssistant(player.guid))
-            return;
-        const first = group.memberGuid(request.first), second = group.memberGuid(request.second);
-        if (first == 0 || second == 0)
-            return;
-        const a = group.subGroupOf(first), b = group.subGroupOf(second);
-        if (a == b)
-            return;
-        group.changeSubGroup(first, b);
-        group.changeSubGroup(second, a);
+        groupCommand(GroupOp.swapSubGroup, 0, request.first, request.second);
     }
 
     @Handles(Opcode.CMSG_GROUP_ASSISTANT_LEADER, WorldState.inWorld)
     void handleGroupAssistantLeader(const ClientGroupAssistantLeader request)
     {
-        auto group = context.groups.of(player.guid);
-        if (group !is null && group.isLeader(player.guid))
-            group.setAssistant(request.guid, request.flag != 0);
+        groupCommand(GroupOp.assistant, request.guid, null, null, request.flag != 0);
     }
 
     /// The leader asks (no body) and everyone is asked; a member answers (one byte) to the leader.
@@ -287,19 +166,20 @@ private:
             return;
         }
         const state = reader.read!ubyte;
-        if (auto leader = context.onlinePlayer(group.leader))
-        {
-            ByteWriter answer;
-            answer.put(player.guid);
-            answer.put(state);
-            leader.deliver(Opcode.MSG_RAID_READY_CHECK, answer.data);
-        }
+        ByteWriter answer;
+        answer.put(player.guid);
+        answer.put(state);
+        context.deliverTo(group.leader, Opcode.MSG_RAID_READY_CHECK, answer.data);
     }
 
+    /// A member's stats; one another node simulates is asked for them there.
     @Handles(Opcode.CMSG_REQUEST_PARTY_MEMBER_STATS, WorldState.inWorld)
     void handleRequestPartyMemberStats(const ClientGuid request)
     {
         auto member = context.onlinePlayer(request.guid);
+        if (member is null && context.requestMemberStats !is null)
+            if (auto remote = context.remotePlayer(request.guid))
+                return context.requestMemberStats(remote.node, player.guid, request.guid);
         deliver(Opcode.SMSG_PARTY_MEMBER_STATS_FULL, partyMemberStatsFull(request.guid,
             member is null ? null : member.character, memberStatus(member)));
     }
@@ -314,10 +194,7 @@ private:
     /// when logging out normally; the others see the player go offline.
     void leaveGroupsOnLogout(bool loggingOut)
     {
-        context.groups.uninvite(player.guid);
-        auto group = context.groups.of(player.guid);
-        if (group !is null && !group.isRaid && loggingOut)
-            group.removeMember(player.guid, RemoveMethod.leave);
+        groupCommand(GroupOp.logout, 0, null, null, loggingOut);
     }
 }
 

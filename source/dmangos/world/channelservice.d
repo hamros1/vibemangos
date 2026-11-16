@@ -1,0 +1,321 @@
+/**
+ * Chat channels as a cluster service (docs/CLUSTER.md, phase 5b).
+ *
+ * A channel's members may be simulated by any node, so its state lives in one place: the
+ * `ChannelService` of the coordinator (standalone, of the one server). Every channel command a
+ * player gives (joining, leaving, talking, moderating, logging out, changing zone) becomes a
+ * `ChannelCommand` with what the channels need of the player; another node sends it to the
+ * coordinator, which runs it as for its own players. What a channel tells a member goes to the
+ * node simulating it (`DeliverTo`), found by presence, or the node its last command came from.
+ */
+module dmangos.world.channelservice;
+
+import dmangos.cluster.protocol : ChannelCommand;
+import dmangos.world.channel;
+import dmangos.world.clientdata : ClientData;
+import dmangos.world.context : WorldContext;
+import dmangos.world.online : OnlinePlayer;
+import dmangos.world.opcodes : Language, Opcode;
+
+/// What a `ChannelCommand` does.
+enum ChannelOp : ubyte
+{
+    join,           /// `arg`: the password
+    leave,
+    list,
+    password,       /// `arg`: the new password
+    owner,
+    announcements,
+    moderate,
+    setOwner,       /// `arg`, here and below: the target's name
+    moderator,
+    unmoderator,
+    mute,
+    unmute,
+    invite,
+    kick,
+    ban,
+    unban,
+    say,            /// `arg`: the text, in `language`
+    leaveAll,       /// logging out
+    zoneChanged,    /// `arg`: the new zone's name
+}
+
+/// `op` on `channel`, by `who`.
+ChannelCommand channelCommand(const OnlinePlayer who, ChannelOp op, string channel, string arg = null,
+    Language language = Language.LANG_UNIVERSAL)
+{
+    const p = who.character;
+    return ChannelCommand(p.guid, p.data.name, p.data.race, who.canUseCommand('c'), p.chatTag, op, channel, arg,
+        cast(uint) language);
+}
+
+/// See the module documentation.
+final class ChannelService : MemberDirectory
+{
+    /// The channels of each team.
+    ChannelManagers channels;
+
+    private
+    {
+        WorldContext context;
+        Member[ulong] members;    // players who gave a command, while in a channel
+    }
+
+    ///
+    this(WorldContext context, const ClientData client, ChannelSettings settings)
+    {
+        this.context = context;
+        channels.alliance = new Channels(this, client, settings);
+        channels.horde = settings.crossFaction ? channels.alliance : new Channels(this, client, settings);
+    }
+
+    /// Runs a command that came from node `via` (this node's own id for its own players).
+    void run(const ChannelCommand c, ushort via)
+    {
+        if (c.op > ChannelOp.max)
+            return;
+        auto who = memberFor(c, via);
+        auto set = channels.forTeam(context.client.teamForRace(c.race));
+        Channel named()
+        {
+            return set.find(c.channel, who);
+        }
+
+        final switch (cast(ChannelOp) c.op)
+        {
+        case ChannelOp.join:
+            return set.getOrCreate(c.channel).join(who, c.arg);
+        case ChannelOp.leave:
+            if (auto channel = named())
+                channel.leave(who);
+            set.leftChannel(c.channel);
+            return forgetIfIdle(who);
+        case ChannelOp.list:
+            if (auto channel = named())
+                channel.sendList(who);
+            return;
+        case ChannelOp.password:
+            if (auto channel = named())
+                channel.setPassword(who, c.arg);
+            return;
+        case ChannelOp.owner:
+            if (auto channel = named())
+                channel.sendOwner(who);
+            return;
+        case ChannelOp.announcements:
+            if (auto channel = named())
+                channel.toggleAnnouncements(who);
+            return;
+        case ChannelOp.moderate:
+            if (auto channel = named())
+                channel.toggleModeration(who);
+            return;
+        case ChannelOp.setOwner:
+            if (auto channel = named())
+                channel.setOwner(who, c.arg);
+            return;
+        case ChannelOp.moderator:
+        case ChannelOp.unmoderator:
+            if (auto channel = named())
+                channel.setModeFlags(who, c.arg, MemberFlags.moderator, c.op == ChannelOp.moderator);
+            return;
+        case ChannelOp.mute:
+        case ChannelOp.unmute:
+            if (auto channel = named())
+                channel.setModeFlags(who, c.arg, MemberFlags.muted, c.op == ChannelOp.mute);
+            return;
+        case ChannelOp.invite:
+            if (auto channel = named())
+                channel.invite(who, c.arg);
+            return;
+        case ChannelOp.kick:
+        case ChannelOp.ban:
+            if (auto channel = named())
+                channel.kickOrBan(who, c.arg, c.op == ChannelOp.ban);
+            return;
+        case ChannelOp.unban:
+            if (auto channel = named())
+                channel.unban(who, c.arg);
+            return;
+        case ChannelOp.say:
+            if (auto channel = named())
+                channel.say(who, c.arg, cast(Language) c.language, c.chatTag);
+            return;
+        case ChannelOp.leaveAll:
+            set.leaveAll(who);
+            members.remove(c.guid);
+            return;
+        case ChannelOp.zoneChanged:
+            set.zoneChanged(who, c.arg);
+            return forgetIfIdle(who);
+        }
+    }
+
+    /// Node `node` was lost: its players leave their channels, as if they had logged out.
+    void nodeLost(ushort node)
+    {
+        Member[] gone;
+        foreach (m; members)
+            if (m.node == node && context.onlinePlayer(m.guid) is null)
+                gone ~= m;
+        foreach (m; gone)
+        {
+            channels.forTeam(context.client.teamForRace(m.race)).leaveAll(m);
+            members.remove(m.guid);
+        }
+    }
+
+    /// Players remembered (those in a channel, and the last to give a command).
+    @property size_t remembered() const
+    {
+        return members.length;
+    }
+
+    /// `MemberDirectory`: a player online on any node.
+    ChannelMember member(ulong guid)
+    {
+        if (auto known = guid in members)
+            return *known;
+        if (auto local = context.onlinePlayer(guid))
+        {
+            const p = local.character;
+            return new Member(context, guid, p.data.name, p.data.race, false, context.nodeId);
+        }
+        if (auto remote = context.remotePlayer(guid))
+            return new Member(context, guid, remote.entry.name, remote.entry.race, false, remote.node);
+        return null;
+    }
+
+    /// ditto
+    ChannelMember member(string name)
+    {
+        if (auto local = context.onlinePlayer(name))
+            return member(local.character.guid);
+        if (auto remote = context.remotePlayer(name))
+            return member(remote.entry.guid);
+        return null;
+    }
+
+private:
+    Member memberFor(const ref ChannelCommand c, ushort via)
+    {
+        if (auto known = c.guid in members)
+        {
+            known.update(c, via);
+            return *known;
+        }
+        auto m = new Member(context, c.guid, c.name, c.race, c.moderateAll, via);
+        members[c.guid] = m;
+        return m;
+    }
+
+    void forgetIfIdle(Member who)
+    {
+        if (channels.forTeam(context.client.teamForRace(who.race)).channelsOf(who.guid).length == 0)
+            members.remove(who.guid);
+    }
+}
+
+/// A player as a channel member: its messages go to its node, wherever that is now.
+private final class Member : ChannelMember
+{
+    immutable ulong guid_;
+    private
+    {
+        WorldContext context;
+        string name_;
+        ubyte race_;
+        bool moderatesAll_;
+        ushort node;              // where its last command came from
+    }
+
+    this(WorldContext context, ulong guid, string name, ubyte race, bool moderatesAll, ushort node)
+    {
+        this.context = context;
+        guid_ = guid;
+        name_ = name;
+        race_ = race;
+        moderatesAll_ = moderatesAll;
+        this.node = node;
+    }
+
+    void update(const ref ChannelCommand c, ushort via)
+    {
+        name_ = c.name;
+        race_ = c.race;
+        moderatesAll_ = c.moderateAll;
+        node = via;
+    }
+
+    @property ulong guid() const { return guid_; }
+    @property string name() const { return name_; }
+    @property ubyte race() const { return race_; }
+    @property bool moderatesAll() const { return moderatesAll_; }
+
+    void deliver(Opcode opcode, const(ubyte)[] body_)
+    {
+        if (auto local = context.onlinePlayer(guid_))
+            return local.deliver(opcode, body_);
+        if (context.deliverRemote is null)
+            return;
+        if (auto remote = context.remotePlayer(guid_))
+            node = remote.node; // presence follows it between nodes
+        if (node != context.nodeId)
+            context.deliverRemote(node, guid_, cast(ushort) opcode, body_);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+/// Players of two nodes in one channel, served by the coordinator; a lost node's players leave.
+unittest
+{
+    import dmangos.cluster.protocol : PresenceEntry;
+    import dmangos.world.movement : Position;
+    import dmangos.world.testclient;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    context.nodeId = 1;
+    struct Sent { ushort node; ulong guid; ushort opcode; ubyte code; }
+    Sent[] sent;
+    context.deliverRemote = (ushort node, ulong guid, ushort opcode, const(ubyte)[] body_) {
+        sent ~= Sent(node, guid, opcode, body_[0]);
+    };
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(0, 0, 0));
+    anduin.read();
+    auto service = context.channelService;
+
+    // Anduin, here, joins; Jaina, on node 2, joins too: both hear of each other.
+    service.run(channelCommand(anduin.session, ChannelOp.join, "Club"), 1);
+    anduin.read();
+    context.presence(2, true, [PresenceEntry(0x40, "Jaina", 9, 1, 8, 10, 1, 12, 0, 0, "")], null);
+    auto jaina = ChannelCommand(0x40, "Jaina", 1, false, 0, ChannelOp.join, "club", "", 0);
+    service.run(jaina, 2);
+    assert(sent.length == 1 && sent[0] == Sent(2, 0x40, Opcode.SMSG_CHANNEL_NOTIFY, ChatNotify.youJoined));
+    assert(anduin.read()[0].body_[0] == ChatNotify.joined);
+
+    // Jaina talks: Anduin hears it here, Jaina's copy goes to node 2.
+    sent = null;
+    auto say = ChannelCommand(0x40, "Jaina", 1, false, 0, ChannelOp.say, "Club", "hello", 7);
+    service.run(say, 2);
+    assert(anduin.read()[0].opcode == Opcode.SMSG_MESSAGECHAT);
+    assert(sent.length == 1 && sent[0].opcode == Opcode.SMSG_MESSAGECHAT);
+
+    // The owner, Anduin, makes Jaina a moderator by name: found through presence.
+    service.run(channelCommand(anduin.session, ChannelOp.moderator, "Club", "jaina"), 1);
+    assert(service.channels.alliance.find("Club", null).flagsOf(0x40) & MemberFlags.moderator);
+
+    // Node 2 is lost: Jaina leaves the channel, which Anduin is told.
+    anduin.read();
+    service.nodeLost(2);
+    assert(!service.channels.alliance.find("Club", null).isOn(0x40));
+    assert(anduin.read()[0].body_[0] == ChatNotify.left);
+
+    // Anduin logs out: the channel goes, and nobody is remembered.
+    service.run(channelCommand(anduin.session, ChannelOp.leaveAll, null), 1);
+    assert(service.channels.alliance.count == 0 && service.remembered == 0);
+}

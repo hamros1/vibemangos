@@ -5,11 +5,17 @@
  */
 module dmangos.world.clusterbridge;
 
-import core.time : MonoTime, msecs;
+import core.time : Duration, MonoTime, msecs;
 
 import dmangos.cluster.node : ClusterNode, PlayerHandler, ReplicationHandler;
-import dmangos.cluster.protocol : InterestUpdate, PlayerMessage, PlayerMessageKind, ReplicaCreate, ReplicaMove,
-    ReplicaRemove, ReplicaValues;
+import dmangos.cluster.protocol : DeliverTo, InRange, InterestUpdate, PlayerMessage, PlayerMessageKind, Presence,
+    PresenceEntry, ChannelCommand, GmRemote, GroupCommand, RegionLoad, ToEveryone, GroupState, MemberStatsRequest, ReplicaCreate, ReplicaMove, ReplicaRemove, ReplicaValues, StockRelease, StockReply, StockRequest,
+    WhisperMessage;
+import dmangos.world.creature : Creature;
+import dmangos.world.group : Group, Groups;
+import dmangos.world.whisper : deliverWhisper, WhisperFrom;
+import dmangos.world.movement : Position;
+import dmangos.world.opcodes : Opcode;
 import dmangos.log;
 import dmangos.world.context : PlayerRelay, WorldContext;
 import dmangos.world.replication : Replicator;
@@ -23,6 +29,10 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
     private WorldSession[uint] remote;         // owner: sessions whose client is on another node, by account
     private MonoTime[WorldSession] releaseAt;  // home: sessions whose owner was lost, released after its lease
     private uint leaseMs;
+    private PresenceEntry[ulong] presenceSent;  // what peers were last told of this node's players
+    private void delegate(bool, uint)[uint] stockWaiting; // stock requests sent, by number
+    private uint nextStockRequest = 1;
+    private MonoTime nextPresence;
 
     /// `leaseMs`: the cluster's lease, which a lost owner certainly stopped within.
     this(ClusterNode node, WorldContext context, uint leaseMs)
@@ -38,12 +48,17 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
         this.context = context;
     }
 
-    /// Sends what each map's players became near and left since the last tick.
+    /// Sends what each map's players became near and left since the last tick, and once a second what changed of them.
     void tick()
     {
+        const now = MonoTime.currTime;
+        if (now >= nextPresence)
+        {
+            nextPresence = now + 1000.msecs;
+            sendPresence();
+        }
         if (releaseAt.length)
         {
-            const now = MonoTime.currTime;
             WorldSession[] due;
             foreach (session, at; releaseAt)
                 if (now >= at)
@@ -89,6 +104,10 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
 
     void peerLinked(ushort peer)
     {
+        node.sendTo(peer, Presence(true, presenceSent.values, null));
+        if (node.isCoordinator)
+            foreach (ref state; context.groups.states())
+                node.sendTo(peer, state);
         foreach (map; context.allMaps)
         {
             auto cells = map.interestCells;
@@ -99,6 +118,7 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
 
     void peerLost(ushort peer)
     {
+        context.presenceLost(peer);
         foreach (map; context.allMaps)
             map.peerGone(peer);
         // Players it held the clients of: they leave the world here, saved (it cannot say they did).
@@ -116,6 +136,294 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
                     session.kick("the server simulating this character was lost");
                     releaseAt[session] = MonoTime.currTime + (leaseMs + 500).msecs;
                 }
+    }
+
+    void inRange(ushort peer, uint map, float x, float y, float z, float range, ushort opcode, const(ubyte)[] body_)
+    {
+        if (auto m = context.existingMap(map))
+            m.deliverInRange(Position(x, y, z, 0), range, cast(Opcode) opcode, body_);
+    }
+
+    void presence(ushort peer, bool full, const(PresenceEntry)[] entries, const(ulong)[] gone)
+    {
+        context.presence(peer, full, entries, gone);
+    }
+
+    void deliverTo(ushort peer, ulong guid, ushort opcode, const(ubyte)[] body_)
+    {
+        if (auto who = context.onlinePlayer(guid))
+            who.deliver(cast(Opcode) opcode, body_);
+    }
+
+    /// Replicator: a range packet for a peer's players.
+    void inRange(ushort peer, uint map, Position center, float range, ushort opcode, const(ubyte)[] body_)
+    {
+        node.sendTo(peer, InRange(map, center.x, center.y, center.z, range, opcode, cast(ubyte[]) body_));
+    }
+
+    /// For the context: reserves limited stock on the node simulating a vendor.
+    void reserveStock(ushort owner, uint map, ulong creature, uint item, uint maxCount, uint incrTime, uint buyCount,
+        uint wanted, void delegate(bool, uint) then)
+    {
+        const request = nextStockRequest++;
+        if (!node.sendTo(owner, StockRequest(request, map, creature, item, maxCount, incrTime, buyCount, wanted)))
+            return then(false, 0);
+        stockWaiting[request] = then;
+    }
+
+    /// For the context: gives reserved stock back.
+    void releaseStock(ushort owner, uint map, ulong creature, uint item, uint maxCount, uint count)
+    {
+        node.sendTo(owner, StockRelease(map, creature, item, maxCount, count));
+    }
+
+    /// Another node's player buys from a creature this node simulates: its stock, counted here.
+    void stockRequest(ushort peer, const ref StockRequest m)
+    {
+        auto vendor = vendorHere(m.map, m.creature);
+        bool reserved;
+        uint left;
+        if (vendor !is null)
+        {
+            const now = context.unixTime;
+            if (vendor.vendorItemCount(m.item, m.maxCount, m.incrTime, m.buyCount, now) >= m.wanted)
+            {
+                left = vendor.takeVendorItems(m.item, m.maxCount, m.incrTime, m.buyCount, m.wanted, now);
+                reserved = true;
+            }
+        }
+        node.sendTo(peer, StockReply(m.request, reserved, left));
+    }
+
+    void stockReply(ushort peer, const ref StockReply m)
+    {
+        if (auto then = m.request in stockWaiting)
+        {
+            auto callback = *then;
+            stockWaiting.remove(m.request);
+            callback(m.reserved, m.left);
+        }
+    }
+
+    void stockRelease(ushort peer, const ref StockRelease m)
+    {
+        if (auto vendor = vendorHere(m.map, m.creature))
+            vendor.giveBackVendorItems(m.item, m.maxCount, m.count);
+    }
+
+    /// A creature this node simulates (not a replica), or null.
+    private Creature vendorHere(uint map, ulong guid)
+    {
+        if (auto m = context.existingMap(map))
+            return cast(Creature) m.findObject(guid);
+        return null;
+    }
+
+    /// For the context: a packet for a player another node simulates.
+    void deliverRemote(ushort target, ulong guid, ushort opcode, const(ubyte)[] body_)
+    {
+        node.sendTo(target, DeliverTo(guid, opcode, cast(ubyte[]) body_));
+    }
+
+    /// For the context (not on the coordinator): a channel command, for the coordinator's channels.
+    void forwardChannel(const ref ChannelCommand command)
+    {
+        node.sendToCoordinator(command);
+    }
+
+    /// For the context (not on the coordinator): a group command, for the coordinator's groups.
+    void forwardGroup(const ref GroupCommand command)
+    {
+        node.sendToCoordinator(command);
+    }
+
+    /// On the coordinator: another node's player's group command.
+    void groupCommand(ushort peer, const ref GroupCommand m)
+    {
+        context.groupService.run(m, peer);
+    }
+
+    /// Not on the coordinator: a group changed there; the mirror here follows.
+    void groupState(ushort peer, const ref GroupState m)
+    {
+        context.groups.mirror(m);
+    }
+
+    /// For the context: asks a member's node for its full stats.
+    void requestMemberStats(ushort target, ulong requester, ulong member)
+    {
+        node.sendTo(target, MemberStatsRequest(requester, member));
+    }
+
+    /// A member's full stats, for a player on `peer`.
+    void memberStatsRequest(ushort peer, const ref MemberStatsRequest m)
+    {
+        import dmangos.world.group : memberStatus, partyMemberStatsFull;
+
+        auto member = context.onlinePlayer(m.member);
+        const body_ = partyMemberStatsFull(m.member, member is null ? null : member.character, memberStatus(member));
+        node.sendTo(peer, DeliverTo(m.requester, cast(ushort) Opcode.SMSG_PARTY_MEMBER_STATS_FULL, body_.dup));
+    }
+
+    /// How much a cell's contents weigh in the loop (phase 6): an object in the tick, a resting one, a player.
+    enum uint weightTicking = 10, weightResting = 1, weightPlayer = 100;
+
+    /**
+     * Phase 6: this node's loop time over `elapsed` (`busy` of it), divided among the regions it owns
+     * by what each holds (`Map.weighCells`), as µs a second.
+     */
+    RegionLoad[] regionLoads(Duration busy, Duration elapsed)
+    {
+        const owned = node.regions.ownedRegions;
+        if (owned.length == 0 || elapsed <= Duration.zero)
+            return null;
+        ulong[uint] weight;
+        ulong total;
+        foreach (m; context.allMaps)
+            m.weighCells(weightTicking, weightResting, weightPlayer, (ulong cell, ulong w) {
+                const x = cast(int)(cell >> 32), y = cast(int) cast(uint) cell;
+                foreach (ref r; owned)
+                    if (r.map == m.id && r.rect.contains(x, y))
+                    {
+                        weight[r.id] = weight.get(r.id, 0) + w;
+                        total += w;
+                        break;
+                    }
+            });
+        const perSecond = busy.total!"usecs" * 1_000_000 / elapsed.total!"usecs";
+        RegionLoad[] loads;
+        foreach (ref r; owned)
+            loads ~= RegionLoad(r.id, total ? cast(uint)(perSecond * weight.get(r.id, 0) / total) : 0);
+        return loads;
+    }
+
+    /// Players simulated here for clients on other nodes.
+    @property size_t visitors() const
+    {
+        return remote.length;
+    }
+
+    /// For the context: a packet for every other node's players.
+    void toEveryoneElsewhere(ushort opcode, char permission, const(ubyte)[] body_)
+    {
+        node.broadcast(ToEveryone(opcode, cast(ubyte) permission, body_.dup));
+    }
+
+    /// Another node's world text, for the players here.
+    void toEveryone(ushort peer, const ref ToEveryone m)
+    {
+        context.deliverToOwn(cast(Opcode) m.opcode, m.body_, cast(char) m.permission);
+    }
+
+    /// For the context: a GM command for a player another node simulates.
+    void sendGmRemote(ushort target, const ref GmRemote command)
+    {
+        node.sendTo(target, command);
+    }
+
+    /// A GM command of another node's GM, for a player here (or, `appearAt`, for that GM, here).
+    void gmRemote(ushort peer, const ref GmRemote m)
+    {
+        import dmangos.world.gmtargets : GmSink;
+        import dmangos.world.opcodes : ChatType, Language;
+        import dmangos.world.queries : chatMessage;
+
+        auto sink = GmSink((string text) {
+            node.sendTo(peer, DeliverTo(m.gm, cast(ushort) Opcode.SMSG_MESSAGECHAT,
+                chatMessage(ChatType.CHAT_MSG_SYSTEM, Language.LANG_UNIVERSAL, 0, text)));
+        });
+        auto session = cast(WorldSession) context.onlinePlayer(m.target);
+        if (session is null || session.character is null)
+            return sink.red("Player is not online at the moment.");
+        session.gmTargeted(m, sink, (GmRemote back) { node.sendTo(peer, back); });
+    }
+
+    /// Every group, for every other node's mirror (a coordinator that has just taken over: phase 7).
+    void broadcastGroups()
+    {
+        foreach (ref state; context.groups.states())
+            node.broadcast(state);
+    }
+
+    /// On the coordinator: groups for the other nodes' mirrors.
+    void groupChanged(const Group group)
+    {
+        node.broadcast(Groups.stateOf(group));
+    }
+
+    /// ditto
+    void groupRemoved(uint id)
+    {
+        GroupState gone;
+        gone.id = id;
+        gone.removed = true;
+        node.broadcast(gone);
+    }
+
+    /// On the coordinator: another node's player's channel command.
+    void channelCommand(ushort peer, const ref ChannelCommand m)
+    {
+        context.channelService.run(m, peer);
+    }
+
+    /// For the context: a whisper for a player another node simulates.
+    void whisperRemote(ushort target, ulong guid, WhisperFrom from, string text)
+    {
+        node.sendTo(target, WhisperMessage(guid, from.guid, from.race, from.permissions, from.chatTag, text));
+    }
+
+    /// A whisper from another node for a player this one simulates: checked and delivered here, answered there.
+    void whisper(ushort peer, const ref WhisperMessage m)
+    {
+        auto target = context.onlinePlayer(m.to);
+        if (target is null)
+            return; // it left meanwhile
+        auto session = cast(WorldSession) target;
+        deliverWhisper(target, WhisperFrom(m.from, m.fromRace, m.fromPermissions, m.fromChatTag), m.text,
+            context.config.allowTwoSideInteractionChat,
+            (ulong sender) => session !is null && session.allowsWhispersFrom(sender),
+            (ubyte race) => cast(uint) context.client.teamForRace(race),
+            (Opcode op, const(ubyte)[] b) { node.sendTo(peer, DeliverTo(m.from, cast(ushort) op, cast(ubyte[]) b)); });
+    }
+
+    /// What changed of this node's players since the last time, to every peer.
+    private void sendPresence()
+    {
+        import dmangos.world.context : PresenceFlags;
+        import dmangos.world.player : PlayerFlags;
+
+        PresenceEntry[] changed;
+        bool[ulong] here;
+        foreach (who; context.onlinePlayers)
+        {
+            const p = who.character;
+            uint flags;
+            if (p.gmTagOn)
+                flags |= PresenceFlags.gmTag;
+            if (p.hasFlag(PlayerFlags.afk))
+                flags |= PresenceFlags.afk;
+            if (p.hasFlag(PlayerFlags.dnd))
+                flags |= PresenceFlags.dnd;
+            if (who.hasPermissions)
+                flags |= PresenceFlags.permissions;
+            const entry = PresenceEntry(p.guid, p.data.name, p.data.account, p.data.race, p.data.classId,
+                cast(ubyte) p.data.level, p.data.gender, p.data.zone, flags, cast(ubyte) who.security, p.autoReply,
+                who.hasPermissions ? (cast(WorldSession) who).permissions : null);
+            here[p.guid] = true;
+            if (auto sent = p.guid in presenceSent)
+                if (*sent == entry)
+                    continue;
+            presenceSent[p.guid] = entry;
+            changed ~= entry;
+        }
+        ulong[] gone;
+        foreach (guid, _; presenceSent)
+            if (guid !in here)
+                gone ~= guid;
+        foreach (guid; gone)
+            presenceSent.remove(guid);
+        if (changed.length || gone.length)
+            node.broadcast(Presence(false, changed, gone));
     }
 
     // PlayerRelay: this node's half of players simulated away from their clients.
@@ -138,6 +446,35 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
     void migrate(ushort target, uint account, const(ubyte)[] state)
     {
         node.sendTo(target, PlayerMessage(PlayerMessageKind.migrate, account, 0, cast(ubyte[]) state));
+        if (account in remote)
+            movedOn[account] = MovedOn(target, MonoTime.currTime); // the client's packets still on their way
+    }
+
+    void moved(ushort home, uint account, ushort next)
+    {
+        node.sendTo(home, PlayerMessage(PlayerMessageKind.moved, account, next, null));
+    }
+
+    /// Where a player simulated here moved on to, for the client's packets sent before its home knew.
+    private static struct MovedOn
+    {
+        ushort node;
+        MonoTime at;
+    }
+    private MovedOn[uint] movedOn;
+
+    /// The node a player simulated here until moments ago moved on to; 0 if none (or long ago).
+    private ushort movedOnTo(uint account)
+    {
+        import core.time : seconds;
+
+        if (auto m = account in movedOn)
+        {
+            if (MonoTime.currTime - m.at < 5.seconds)
+                return m.node;
+            movedOn.remove(account);
+        }
+        return 0;
     }
 
     void left(ushort home, uint account, bool toCharacterScreen)
@@ -165,31 +502,48 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
                         home.kick("the character could not be loaded after moving between servers");
                     return;
                 }
-            auto session = new WorldSession(context, WorldSession.migrationAccount(data), peer);
+            // Its client's node: the sender's, or (from one third node to another) the one the state names.
+            const homeNode = WorldSession.migrationHome(data);
+            const clientAt = homeNode ? homeNode : peer;
+            movedOn.remove(account);
+            auto session = new WorldSession(context, WorldSession.migrationAccount(data), clientAt);
             remote[account] = session;
             if (!session.arrive(data))
             {
                 warning!"cluster: a player of account %s from node %s could not be loaded"(account, peer);
                 remote.remove(account);
-                left(peer, account, false);
+                left(clientAt, account, false);
             }
             return;
         case PlayerMessageKind.toOwner:
             if (auto session = account in remote)
                 session.fromHome(opcode, data);
+            else if (const next = movedOnTo(account))
+                toOwner(next, account, opcode, data); // sent before its home heard it moved on
             return;
         case PlayerMessageKind.toHome:
             if (auto session = cast(WorldSession) context.sessionOf(account))
+            {
+                if (session.state == WorldState.elsewhere && session.owner != peer)
+                    session.ownerMoved(peer); // its new owner spoke before its old one's word came
                 session.fromOwner(opcode, data);
+            }
             return;
         case PlayerMessageKind.left:
             if (auto session = cast(WorldSession) context.sessionOf(account))
-                if (session.owner == peer)
+                if (session.state == WorldState.elsewhere || session.owner == peer)
                     session.ownerLeft(opcode == 1);
             return;
         case PlayerMessageKind.disconnect:
             if (auto session = account in remote)
                 session.clientGone();
+            else if (const next = movedOnTo(account))
+                disconnect(next, account);
+            return;
+        case PlayerMessageKind.moved:
+            if (auto session = cast(WorldSession) context.sessionOf(account))
+                if (session.owner == peer)
+                    session.ownerMoved(opcode);
             return;
         }
     }

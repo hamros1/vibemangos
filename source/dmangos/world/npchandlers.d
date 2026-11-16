@@ -62,7 +62,7 @@ mixin template NpcHandlers()
     import std.math : floor, sqrt;
     import dmangos.log;
     import dmangos.world.conditions : ConditionSubject;
-    import dmangos.world.creature : Creature;
+    import dmangos.world.creature : Creature, Npc;
     import dmangos.world.defines : PlayerClass, SkillCategory;
     import dmangos.world.npcdata;
     import dmangos.world.npchandlers : NpcFlag, TrainerSpellState, TrainerType;
@@ -106,32 +106,32 @@ private:
     // -----------------------------------------------------------------------
 
     /// The creature `guid` on the player's map, if it has one of `npcFlags` (0: any) and is close enough.
-    Creature interactableNpc(ulong guid, uint npcFlags)
+    Npc interactableNpc(ulong guid, uint npcFlags)
     {
         if (transferring)
             return null;
-        auto creature = cast(Creature) map.findObject(guid);
+        auto creature = context.npcFor(map.findObject(guid)); // a creature, or another node's (phase 5)
         if (creature is null)
             return null;
-        if (npcFlags && !(creature.values.get!UNIT_NPC_FLAGS & npcFlags))
+        if (npcFlags && !(creature.npcValues.get!UNIT_NPC_FLAGS & npcFlags))
             return null;
         // WorldObject::IsWithinDistInMap: the distance plus both combat reaches.
         const a = player.position, b = creature.position;
         const reach = interactionDistance + player.values.get!UNIT_FIELD_COMBATREACH
-            + creature.values.get!UNIT_FIELD_COMBATREACH;
+            + creature.npcValues.get!UNIT_FIELD_COMBATREACH;
         if ((a.x - b.x) ^^ 2 + (a.y - b.y) ^^ 2 + (a.z - b.z) ^^ 2 >= reach ^^ 2)
             return null;
         return creature;
     }
 
     /// What conditions are checked for: this player, next to `source`.
-    ConditionSubject conditionSubject(Creature source)
+    ConditionSubject conditionSubject(Npc source)
     {
         bool creatureInRange(uint entry, float range)
         {
             foreach (object; map.objectsNear(source.position, range))
-                if (auto other = cast(Creature) object)
-                    if (other.template_.entry == entry && other !is source)
+                if (auto other = context.npcFor(object))
+                    if (other.npcTemplate.entry == entry && other.guid != source.guid)
                         return true;
             return false;
         }
@@ -139,15 +139,15 @@ private:
         return ConditionSubject(player, source is null ? null : &creatureInRange);
     }
 
-    bool conditionMet(uint conditionId, Creature source)
+    bool conditionMet(uint conditionId, Npc source)
     {
         const subject = conditionSubject(source);
         return context.data.npcs.conditions.satisfied(conditionId, subject, context.client);
     }
 
-    static bool isFemale(Creature creature)
+    static bool isFemale(Npc creature)
     {
-        return creature.values.getByte!UNIT_FIELD_BYTES_0(2) == 1;
+        return creature.npcValues.getByte!UNIT_FIELD_BYTES_0(2) == 1;
     }
 
     // -----------------------------------------------------------------------
@@ -160,7 +160,7 @@ private:
         auto creature = interactableNpc(request.guid, 0);
         if (creature is null)
             return;
-        prepareGossipMenu(creature, creature.template_.gossipMenuId);
+        prepareGossipMenu(creature, creature.npcTemplate.gossipMenuId);
         sendPreparedGossip(creature);
     }
 
@@ -172,18 +172,18 @@ private:
     }
 
     /// `Player::PrepareGossipMenu`
-    void prepareGossipMenu(Creature creature, uint menuId)
+    void prepareGossipMenu(Npc creature, uint menuId)
     {
         const npcs = context.data.npcs;
         gossipMenuId = menuId;
         gossipItems = null;
         const(GossipMenuOption)[] options = npcs.options.get(menuId, null);
         // The NPC's top menu without options of its own uses the default ones (menu 0).
-        if (options.length == 0 && menuId == creature.template_.gossipMenuId)
+        if (options.length == 0 && menuId == creature.npcTemplate.gossipMenuId)
             options = npcs.options.get(0, null);
 
         const female = isFemale(creature);
-        const npcFlags = creature.values.get!UNIT_NPC_FLAGS;
+        const npcFlags = creature.npcValues.get!UNIT_NPC_FLAGS;
         foreach (ref option; options)
         {
             if (option.conditionId && !conditionMet(option.conditionId, creature))
@@ -204,7 +204,7 @@ private:
     }
 
     /// The option checks of `PrepareGossipMenu`, and the services this server has.
-    bool offersOption(Creature creature, uint optionId)
+    bool offersOption(Npc creature, uint optionId)
     {
         switch (optionId)
         {
@@ -220,19 +220,19 @@ private:
     }
 
     /// `Player::SendPreparedGossip`
-    void sendPreparedGossip(Creature creature)
+    void sendPreparedGossip(Npc creature)
     {
         ServerGossipMessage message;
         message.guid = creature.guid;
         message.textId = gossipMenuId ? gossipTextId(gossipMenuId, creature)
-            : context.data.npcs.npcGossip.get(creature.spawn.guid, defaultGossipMessage);
+            : context.data.npcs.npcGossip.get(creature.spawnId, defaultGossipMessage);
         foreach (i, ref item; gossipItems)
             message.items ~= GossipMessageItem(cast(uint) i, cast(ubyte) item.icon, item.coded, item.message);
         send(message);
     }
 
     /// `Player::GetGossipTextId(menuId, source)`: the text whose condition is the highest one met.
-    uint gossipTextId(uint menuId, Creature creature)
+    uint gossipTextId(uint menuId, Npc creature)
     {
         uint textId = defaultGossipMessage, lastCondition;
         foreach (ref text; context.data.npcs.menus.get(menuId, null))
@@ -246,7 +246,7 @@ private:
     }
 
     /// `Player::OnGossipSelect`
-    void onGossipSelect(Creature creature, uint index)
+    void onGossipSelect(Npc creature, uint index)
     {
         if (index >= gossipItems.length)
             return;
@@ -376,22 +376,22 @@ private:
     }
 
     /// A trainer's spells: its own (`npc_trainer`), then its template's.
-    const(TrainerSpell)[] trainerSpells(Creature trainer)
+    const(TrainerSpell)[] trainerSpells(Npc trainer)
     {
         const npcs = context.data.npcs;
-        return npcs.trainers.get(trainer.template_.entry, null)
-            ~ npcs.trainerTemplates.get(trainer.template_.trainerTemplateId, null);
+        return npcs.trainers.get(trainer.npcTemplate.entry, null)
+            ~ npcs.trainerTemplates.get(trainer.npcTemplate.trainerTemplateId, null);
     }
 
     /**
      * `Creature::IsTrainerOf`: whether this trainer teaches the player. With `tell`, the trainer says why
      * not, with the text CMaNGOS shows.
      */
-    bool isTrainerOf(Creature trainer, bool tell)
+    bool isTrainerOf(Npc trainer, bool tell)
     {
-        if (!(trainer.values.get!UNIT_NPC_FLAGS & NpcFlag.trainer) || trainerSpells(trainer).length == 0)
+        if (!(trainer.npcValues.get!UNIT_NPC_FLAGS & NpcFlag.trainer) || trainerSpells(trainer).length == 0)
             return false;
-        const t = trainer.template_;
+        const t = trainer.npcTemplate;
         uint refusal;
         switch (t.trainerType)
         {
@@ -554,7 +554,7 @@ private:
             if (isProfessionSpell(trainerSpell.learnedSpell, false))
                 list.trainerType = TrainerType.tradeskills; // ObjectMgr::LoadTrainers
         }
-        list.greeting = context.data.npcs.trainerGreetings.get(trainer.template_.entry,
+        list.greeting = context.data.npcs.trainerGreetings.get(trainer.npcTemplate.entry,
             "Hello! Ready for some training?");
         send(list);
     }
@@ -645,11 +645,11 @@ private:
     // -----------------------------------------------------------------------
 
     /// A vendor's items: its own (`npc_vendor`), then its template's, as the slots number them.
-    const(VendorItem)[] vendorItems(Creature vendor)
+    const(VendorItem)[] vendorItems(Npc vendor)
     {
         const npcs = context.data.npcs;
-        return npcs.vendors.get(vendor.template_.entry, null)
-            ~ npcs.vendorTemplates.get(vendor.template_.vendorTemplateId, null);
+        return npcs.vendors.get(vendor.npcTemplate.entry, null)
+            ~ npcs.vendorTemplates.get(vendor.npcTemplate.vendorTemplateId, null);
     }
 
     @Handles(Opcode.CMSG_LIST_INVENTORY, WorldState.inWorld)
@@ -659,7 +659,7 @@ private:
     }
 
     /// `Player::CanSeeVendorItem`
-    bool canSeeVendorItem(Creature vendor, const ref VendorItem vendorItem, const ref ItemTemplate proto)
+    bool canSeeVendorItem(Npc vendor, const ref VendorItem vendorItem, const ref ItemTemplate proto)
     {
         enum uint bindWhenPickedUp = 1;
         enum uint rankNeutral = 3; // no reputation yet: every faction is neutral

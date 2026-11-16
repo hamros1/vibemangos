@@ -92,6 +92,12 @@ struct WorldConfig
     @JsonName("allow_two_side_interaction_channel") bool allowTwoSideInteractionChannel = false;
     /// `AllowTwoSide.Interaction.Group`: allow groups with both factions.
     @JsonName("allow_two_side_interaction_group") bool allowTwoSideInteractionGroup = false;
+    /// `AllowTwoSide.WhoList`: players see the other faction in /who.
+    @JsonName("allow_two_side_who_list") bool allowTwoSideWhoList = false;
+    /// `GM.InWhoList.Level`: the highest account level players see in /who.
+    @JsonName("gm_level_in_who_list") uint gmLevelInWhoList = 3;
+    /// `MaxWhoListReturns`: the most matches /who reports (it shows at most 49 either way).
+    @JsonName("max_who_list_returns") uint maxWhoListReturns = 49;
     /// `Chat.RestrictedRaidWarnings`: raid warnings only in raids.
     @JsonName("chat_restricted_raid_warnings") bool chatRestrictedRaidWarnings = false;
     /// `Instance.IgnoreLevel`: enter dungeons whatever the level.

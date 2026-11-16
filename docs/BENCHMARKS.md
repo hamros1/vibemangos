@@ -181,3 +181,16 @@ half; a cluster's gain is in carrying more players than one machine can, not in 
   clients: traffic between nodes must be per (entity, node), never per (entity, client).
 * Spread-out players are where partitioning pays most: creature ticking divides cleanly by region.
 * Every comparison of the cluster against these numbers uses the same scenarios and `tools/bench.sh`.
+
+## Phase 6: measured balancing (two nodes, one machine)
+
+| Load | Node 1 | Node 2 | Moves |
+|---|---|---|---|
+| 300 spread out | 19 ms/s | 24 ms/s | none (within the tolerance) |
+| 300 spread out and 250 in a crowd | 176 ms/s | 132 ms/s | one region of 21 ms/s: 155 and 153 |
+| the same, a minute later | 181 ms/s | 135 ms/s | one of 19 ms/s (the first stays: cool-down) |
+
+Costs are each node's loop busy time divided among its regions by what they hold
+(docs/CLUSTER.md, phase 6). The crowd's region cannot be divided until regions can be split; what
+balancing does is take the rest of that node's work away.
+

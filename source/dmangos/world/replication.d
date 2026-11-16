@@ -33,6 +33,9 @@ interface Replicator
 
     /// `peer` no longer holds a replica of `guid`.
     void remove(ushort peer, uint map, ulong guid);
+
+    /// A packet for every player within `range` of `center` (say, yell, emotes: phase 5), for `peer`'s players.
+    void inRange(ushort peer, uint map, Position center, float range, ushort opcode, const(ubyte)[] body_);
 }
 
 /// A map object that can be replicated: it can say how it moves, apart from its whole create block.
@@ -189,6 +192,12 @@ final class Replica : Replicable, Moving
     }
 
     ref UpdateValues fields()
+    {
+        return values_;
+    }
+
+    /// The fields, const or not.
+    ref inout(UpdateValues) fieldsOf() inout
     {
         return values_;
     }

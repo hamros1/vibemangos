@@ -187,7 +187,8 @@ What works now:
     `group_member` and survive restarts. Logging out of a party leaves it, as in CMaNGOS.
   * **Chat:** say, yell and emotes reach those in range; whispers reach anyone online of the same
     faction; party, raid, raid leader and raid warning messages reach the group. `/afk` and `/dnd`
-    set the flag, the chat tag and the reply to whispers.
+    set the flag, the chat tag and the reply to whispers. `/who` lists who is online, filtered as
+    in CMaNGOS.
   * **Channels:** the built-in ones (General, Trade, LocalDefense, ...), which follow the zone,
     and custom ones with owners, moderators, passwords, muting, kicks, bans, invitations,
     announcements and moderation. One set per faction, unless
@@ -248,6 +249,9 @@ time.
 | `allow_two_side_interaction_chat` | `AllowTwoSide.Interaction.Chat` (whispers between factions) | `false` |
 | `allow_two_side_interaction_channel`, `allow_two_side_interaction_group` | `AllowTwoSide.Interaction.Channel`, `AllowTwoSide.Interaction.Group` | `false`, `false` |
 | `chat_restricted_raid_warnings` | `Chat.RestrictedRaidWarnings` | `false` |
+| `allow_two_side_who_list` | `AllowTwoSide.WhoList` (the other faction in /who) | `false` |
+| `gm_level_in_who_list` | `GM.InWhoList.Level` (the highest account level players see in /who) | `3` |
+| `max_who_list_returns` | `MaxWhoListReturns` (the most matches /who counts; it lists at most 49) | `49` |
 | `instance_ignore_level`, `instance_ignore_raid` | `Instance.IgnoreLevel`, `Instance.IgnoreRaid` | `false`, `false` |
 | `update_interval` | the world tick, in ms (mangosd's `WORLD_SLEEP_CONST`) | `50` |
 | `compression` | `Compression`: zlib level of update packets, 1 (fastest) to 9 | `1` |

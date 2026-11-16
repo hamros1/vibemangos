@@ -54,6 +54,19 @@ interface ReplicationHandler
     void replicaValues(ushort peer, uint map, ulong guid, const(ubyte)[] slots);
     void replicaMove(ushort peer, uint map, ulong guid, ushort opcode, const(ubyte)[] body_, const(ubyte)[] motion);
     void replicaRemove(ushort peer, uint map, ulong guid);
+    void inRange(ushort peer, uint map, float x, float y, float z, float range, ushort opcode, const(ubyte)[] body_);
+    void presence(ushort peer, bool full, const(PresenceEntry)[] entries, const(ulong)[] gone);
+    void deliverTo(ushort peer, ulong guid, ushort opcode, const(ubyte)[] body_);
+    void whisper(ushort peer, const ref WhisperMessage message);
+    void stockRequest(ushort peer, const ref StockRequest message);
+    void stockReply(ushort peer, const ref StockReply message);
+    void stockRelease(ushort peer, const ref StockRelease message);
+    void channelCommand(ushort peer, const ref ChannelCommand message);
+    void groupCommand(ushort peer, const ref GroupCommand message);
+    void groupState(ushort peer, const ref GroupState message);
+    void memberStatsRequest(ushort peer, const ref MemberStatsRequest message);
+    void toEveryone(ushort peer, const ref ToEveryone message);
+    void gmRemote(ushort peer, const ref GmRemote message);
 }
 
 /// What a node does with messages about players simulated away from their client (phase 4b).
@@ -82,6 +95,9 @@ final class ClusterNode : LinkOwner
     /// The dial plan key for the coordinator, whose node id is not known before its hello.
     private enum ushort coordinatorKey = 0;
 
+    /// How long the standby waits, with no link to the coordinator, before taking over (phase 7).
+    enum Duration standbyGrace = 500.msecs;
+
     immutable ushort id;
     immutable ulong incarnation;
 
@@ -105,6 +121,15 @@ final class ClusterNode : LinkOwner
         Dial[ushort] dials;                // peers this node dials, and the coordinator (`coordinatorKey`)
         ushort coordinatorId;              // members: the coordinator's id, once known
         bool fenced_;
+
+        // Phase 7: the coordinator role can move to the standby.
+        bool coordinatorNow;               // whether this node is the coordinator now
+        CoordinatorSetup standbySetup;     // the standby: what it takes over with
+        ushort lostCoordinator;            // members: the coordinator whose link closed last, and when
+        MonoTime lostCoordinatorAt;
+        MonoTime lostCoordinatorHeard;
+        bool[ushort] takeoverPending;      // new coordinator: members that have not accepted it yet
+        MonoTime lastTakeoverSent;
 
         RegionAuthority authority;         // coordinator
         RegionView regions_;
@@ -137,6 +162,9 @@ final class ClusterNode : LinkOwner
     /// Where replication messages go (phase 3); null: they are dropped.
     ReplicationHandler replication;
 
+    /// Phase 7: this node, the standby, has just become the coordinator; the world server takes up its part.
+    void delegate() onPromoted;
+
     /**
      * Sends a message to node `peer` if it is linked; false if not (replication is resent in full when
      * a link opens, so a message that cannot go now is not needed later).
@@ -144,6 +172,51 @@ final class ClusterNode : LinkOwner
     bool sendTo(M)(ushort peer, auto ref const M message)
     {
         if (auto link = peer in links)
+        {
+            link.send(message);
+            return true;
+        }
+        return false;
+    }
+
+    /// What this node's regions cost it lately (phase 6), for the coordinator's balancing.
+    void reportLoads(RegionLoad[] loads)
+    {
+        if (isCoordinator)
+            authority.measuredLoads(id, byRegion(loads));
+        else
+            sendToCoordinator(RegionLoads(loads));
+    }
+
+    private static uint[uint] byRegion(const(RegionLoad)[] loads)
+    {
+        uint[uint] busy;
+        foreach (l; loads)
+            busy[l.region] = l.busyUs;
+        return busy;
+    }
+
+    /**
+     * Starts this node's clean shutdown: the coordinator hands its regions, with their objects, to the
+     * others. False if there is nobody to tell (the coordinator itself, or no link to it).
+     */
+    bool drain()
+    {
+        return sendToCoordinator(Drain(incarnation));
+    }
+
+    /// Whether this node owns no region any more (a drain is over).
+    @property bool ownsNothing()
+    {
+        return regions_.ownedRegions.length == 0;
+    }
+
+    /// Sends a message to the coordinator; false if this node is it, or not linked to it.
+    bool sendToCoordinator(M)(auto ref const M message)
+    {
+        if (isCoordinator)
+            return false;
+        if (auto link = coordinatorId in links)
         {
             link.send(message);
             return true;
@@ -226,16 +299,22 @@ final class ClusterNode : LinkOwner
         this.clock = clock;
         this.dialer = dialer;
         this.load = load;
+        coordinatorNow = config.isCoordinator;
         own = Hello(protocolVersion, config.name, id, incarnation, config.advertised, config.clientAddress,
             config.isCoordinator, 0);
         const lease = config.leaseMs.msecs;
         regions_ = new RegionView(id, isCoordinator, lease);
+        if (config.standby && !isCoordinator)
+            standbySetup = setup;
         if (isCoordinator)
         {
             viewCoordinator = incarnation;
             members = [self];
             viewVersion = 1;
             authority = new RegionAuthority(setup.regions, setup.cost, id, incarnation, lease, clock);
+            authority.balancing.interval = config.balanceIntervalSeconds.seconds;
+            authority.balancing.minLoadUs = config.balanceMinLoadUs;
+            authority.balancing.cooldown = config.regionCooldownSeconds.seconds;
             ids = setup.ids;
             idGrantsFrom = clock() + lease + leaseMargin;
             directory = new SessionDirectory;
@@ -267,10 +346,10 @@ final class ClusterNode : LinkOwner
         return cast(ulong)(Clock.currTime - SysTime.fromUnixTime(0)).total!"msecs";
     }
 
-    /// Whether this node is the coordinator.
+    /// Whether this node is the coordinator (the configured one, or the standby since it took over).
     @property bool isCoordinator() const @safe
     {
-        return config.isCoordinator;
+        return coordinatorNow;
     }
 
     /// Whether the coordinator refused this node as an older start of itself.
@@ -317,6 +396,15 @@ final class ClusterNode : LinkOwner
         updateOwnership(now);
         if (fenced_)
             return;
+        if (config.standby && !isCoordinator && lostCoordinator && coordinatorId == 0
+            && now - lostCoordinatorAt >= standbyGrace)
+            promote(now);
+        if (isCoordinator && takeoverPending.length && now - lastTakeoverSent >= 1.seconds)
+        {
+            lastTakeoverSent = now;
+            foreach (peer, _; takeoverPending)
+                sendTo(peer, Takeover(incarnation));
+        }
         foreach (key, ref dial; dials)
             if (dial.pending is null && now >= dial.due && (key == coordinatorKey || key !in links))
             {
@@ -419,16 +507,7 @@ final class ClusterNode : LinkOwner
         if (isCoordinator)
             directory.back(peer);
         else if (link.peer.coordinator)
-        {
-            foreach (claim; claimsWaiting)
-                link.send(claim);
-            foreach (release; releasesWaiting)
-                link.send(release);
-            claimsWaiting = null;
-            releasesWaiting = null;
-            if (sessions !is null)
-                sessions.claimAll(); // a new coordinator knows nothing of them
-        }
+            coordinatorLinked(link);
 
         if (isCoordinator)
         {
@@ -437,17 +516,173 @@ final class ClusterNode : LinkOwner
             link.send(RegionTable(incarnation, authority.version_, authority.regions.dup));
             authority.joined(peer);
         }
-        else if (link.peer.coordinator)
+    }
+
+    /// A member has a coordinator (anew, or the standby that took over): it learns what this node holds.
+    private void coordinatorLinked(Link link)
+    {
+        foreach (claim; claimsWaiting)
+            link.send(claim);
+        foreach (release; releasesWaiting)
+            link.send(release);
+        claimsWaiting = null;
+        releasesWaiting = null;
+        if (sessions !is null)
+            sessions.claimAll(); // a new coordinator knows nothing of them
+        link.send(IdReport(pool_.highest(IdKind.character), pool_.highest(IdKind.item),
+            pool_.highest(IdKind.mail), pool_.highest(IdKind.group)));
+        pool_.reset();
+    }
+
+    /**
+     * Phase 7: the standby has had no coordinator for `standbyGrace` after losing it, and takes over:
+     * the table it had stands, the members it is linked to are the view, and they are told
+     * (`Takeover`, again each second until each accepts).
+     */
+    private void promote(MonoTime now)
+    {
+        const old = lostCoordinator;
+        warning!"cluster: the coordinator (node %s) is gone: node %s, the standby, takes over"(old, id);
+        coordinatorNow = true;
+        own.coordinator = true;
+        dials.remove(coordinatorKey);
+        // The view and table go on from the old coordinator's versions: newer than anything members have.
+        viewCoordinator = incarnation;
+        ++viewVersion;
+        members = [self];
+        ushort[] live = [id];
+        foreach (peer, link; links)
         {
-            link.send(IdReport(pool_.highest(IdKind.character), pool_.highest(IdKind.item),
-                pool_.highest(IdKind.mail), pool_.highest(IdKind.group)));
-            pool_.reset();
+            highestIncarnation[peer] = link.peer.incarnation;
+            setMember(ViewMember(peer, link.peer.incarnation, link.peer.address, false));
+            live ~= peer;
+            takeoverPending[peer] = true;
         }
+        const lease = config.leaseMs.msecs;
+        authority = RegionAuthority.adopt(regions_.latestTable, regions_.latestVersion, standbySetup.cost.dup, id,
+            live, old, lostCoordinatorHeard, lease, clock);
+        authority.balancing.interval = config.balanceIntervalSeconds.seconds;
+        authority.balancing.minLoadUs = config.balanceMinLoadUs;
+        authority.balancing.cooldown = config.regionCooldownSeconds.seconds;
+        regions_.promote();
+        directory = new SessionDirectory;
+        ids = standbySetup.ids;
+        idGrantsFrom = now + lease + leaseMargin;
+        if (onPromoted !is null)
+            onPromoted();
+        if (ids !is null && pool_ !is null)
+            foreach (kind; [IdKind.character, IdKind.item, IdKind.mail, IdKind.group])
+                ids.raise(kind, pool_.highest(kind));
+        lastTakeoverSent = now;
+        foreach (peer, _; takeoverPending)
+            sendTo(peer, Takeover(incarnation));
+        publish();
     }
 
     void received(Link link, MessageType type, const(ubyte)[] payload)
     {
         const peer = link.peer.nodeId;
+        if (type >= MessageType.stockRequest && type <= MessageType.stockRelease)
+        {
+            if (replication is null)
+                return;
+            if (type == MessageType.stockRequest)
+            {
+                const m = decode!StockRequest(payload);
+                replication.stockRequest(peer, m);
+            }
+            else if (type == MessageType.stockReply)
+            {
+                const m = decode!StockReply(payload);
+                replication.stockReply(peer, m);
+            }
+            else
+            {
+                const m = decode!StockRelease(payload);
+                replication.stockRelease(peer, m);
+            }
+            return;
+        }
+        if (type == MessageType.toEveryone || type == MessageType.gmRemote)
+        {
+            if (replication is null)
+                return;
+            if (type == MessageType.toEveryone)
+            {
+                const m = decode!ToEveryone(payload);
+                replication.toEveryone(peer, m);
+            }
+            else
+            {
+                const m = decode!GmRemote(payload);
+                replication.gmRemote(peer, m);
+            }
+            return;
+        }
+        if (type >= MessageType.groupCommand && type <= MessageType.memberStatsRequest)
+        {
+            if (replication is null)
+                return;
+            if (type == MessageType.groupCommand)
+            {
+                if (!isCoordinator)
+                    return;
+                const m = decode!GroupCommand(payload);
+                replication.groupCommand(peer, m);
+            }
+            else if (type == MessageType.groupState)
+            {
+                if (isCoordinator)
+                    return;
+                const m = decode!GroupState(payload);
+                replication.groupState(peer, m);
+            }
+            else
+            {
+                const m = decode!MemberStatsRequest(payload);
+                replication.memberStatsRequest(peer, m);
+            }
+            return;
+        }
+        if (type == MessageType.channelCommand)
+        {
+            if (replication !is null && isCoordinator)
+            {
+                const m = decode!ChannelCommand(payload);
+                replication.channelCommand(peer, m);
+            }
+            return;
+        }
+        if (type == MessageType.whisper)
+        {
+            if (replication !is null)
+            {
+                const m = decode!WhisperMessage(payload);
+                replication.whisper(peer, m);
+            }
+            return;
+        }
+        if (type == MessageType.inRange || type == MessageType.presence || type == MessageType.deliverTo)
+        {
+            if (replication is null)
+                return;
+            if (type == MessageType.inRange)
+            {
+                const m = decode!InRange(payload);
+                replication.inRange(peer, m.map, m.x, m.y, m.z, m.range, m.opcode, m.body_);
+            }
+            else if (type == MessageType.presence)
+            {
+                const m = decode!Presence(payload);
+                replication.presence(peer, m.full, m.entries, m.gone);
+            }
+            else
+            {
+                const m = decode!DeliverTo(payload);
+                replication.deliverTo(peer, m.guid, m.opcode, m.body_);
+            }
+            return;
+        }
         if (type == MessageType.player)
         {
             if (players !is null)
@@ -461,6 +696,36 @@ final class ClusterNode : LinkOwner
             return session(peer, link, type, payload);
         if (type >= MessageType.interestUpdate && type <= MessageType.replicaRemove)
             return replicate(peer, type, payload);
+        if (type == MessageType.takeover)
+        {
+            // Phase 7: the standby took over. Taken once this node has lost the old coordinator too.
+            const m = decode!Takeover(payload);
+            if (isCoordinator || m.incarnation != link.peer.incarnation)
+                return;
+            if (coordinatorId && coordinatorId in links && coordinatorId != peer)
+                return; // the old one is still there for this node: not yet
+            if (coordinatorId != peer)
+            {
+                info!"cluster: node %s took over as the coordinator"(peer);
+                coordinatorId = peer;
+                link.markCoordinator();
+                if (auto dial = coordinatorKey in dials)
+                    dial.address = link.peer.address; // if this link breaks, dial the new coordinator
+                coordinatorLinked(link);
+            }
+            link.send(TakeoverAccepted(incarnation));
+            return;
+        }
+        if (type == MessageType.takeoverAccepted)
+        {
+            if (isCoordinator && takeoverPending.remove(peer))
+            {
+                // It ignored what came before it took this node as its coordinator: the view and table again.
+                link.send(View(viewCoordinator, viewVersion, members));
+                link.send(RegionTable(incarnation, authority.version_, authority.regions.dup));
+            }
+            return;
+        }
         if (!isCoordinator && link.peer.coordinator)
             switch (type)
             {
@@ -490,6 +755,19 @@ final class ClusterNode : LinkOwner
                 return handOver(release.region, release.objects);
             case MessageType.idRequest:
                 idRequests[peer] ~= decode!IdRequest(payload);
+                return;
+            case MessageType.regionLoads:
+                const report = decode!RegionLoads(payload);
+                authority.measuredLoads(peer, byRegion(report.loads));
+                return;
+            case MessageType.drain:
+                const drain = decode!Drain(payload);
+                if (const member = find(peer))
+                    if (member.incarnation == drain.incarnation)
+                    {
+                        info!"cluster: node %s is shutting down: its regions go to the others"(peer);
+                        authority.drain(peer);
+                    }
                 return;
             case MessageType.idReport:
                 if (ids is null)
@@ -547,7 +825,11 @@ final class ClusterNode : LinkOwner
         {
             coordinatorId = 0;
             dials[coordinatorKey].due = now + dials[coordinatorKey].backoff;
+            lostCoordinator = peer;
+            lostCoordinatorAt = now;
+            lostCoordinatorHeard = link.lastHeard;
         }
+        takeoverPending.remove(peer);
         if (isCoordinator)
         {
             dropMember(peer);
@@ -864,7 +1146,8 @@ version (unittest)
         static struct Wire { Link a, b; ClusterNode from, to; }
         Wire[] wires;
 
-        ClusterNode add(ushort id, ushort port, ulong incarnation = 1, CoordinatorSetup setup = CoordinatorSetup.init)
+        ClusterNode add(ushort id, ushort port, ulong incarnation = 1, CoordinatorSetup setup = CoordinatorSetup.init,
+            bool standby = false)
         {
             import std.format : format;
 
@@ -872,6 +1155,7 @@ version (unittest)
             c.nodeId = id;
             c.listenPort = port;
             c.coordinator = "127.0.0.1:9000";
+            c.standby = standby;
             ClusterNode node;
             node = new ClusterNode(c, incarnation, () => now, (h, p, s) => dial(node, h, p, s), null, setup);
             listening[c.advertised] = node;
@@ -1289,3 +1573,60 @@ unittest
     cluster.run(2000, coordinator, b);
     assert(here.events[$ - 1] == "grant 7/6");
 }
+
+/**
+ * Phase 7: the coordinator dies; the standby takes over with the table it had, the other member
+ * follows it, and nobody's lease lapses: every region stays where it was, and the dead
+ * coordinator's regions are dealt out once its lease is surely over.
+ */
+unittest
+{
+    import dmangos.world.grid : cellKey;
+
+    CellCosts costs;
+    foreach (x; -40 .. 40)
+        costs[0][cellKey(x, x % 7)] = 10;
+    auto regions = partition([0u], costs, 8);
+    ulong[uint] cost;
+    foreach (r; regions)
+        cost[r.id] = costOf(costs, r.map, r.rect);
+
+    auto cluster = new TestCluster;
+    auto coordinator = cluster.add(1, 9000, 1, CoordinatorSetup(regions.dup, cost.dup, new TestCounters));
+    auto standbyCounters = new TestCounters;
+    auto standby = cluster.add(2, 9001, 1, CoordinatorSetup(regions.dup, cost.dup, standbyCounters), true);
+    auto member = cluster.add(3, 9002);
+    bool promoted;
+    standby.onPromoted = () { promoted = true; };
+    cluster.run(8000, coordinator, standby, member);
+    assert(!standby.isCoordinator && standby.regions.ownedRegions.length && member.regions.ownedRegions.length);
+    const standbyHad = standby.regions.ownedRegions.length, memberHad = member.regions.ownedRegions.length;
+    const coordinatorHad = coordinator.regions.ownedRegions.length;
+    assert(standbyHad + memberHad + coordinatorHad == 8);
+
+    // The coordinator's process dies. Within the failure timeout and the grace the standby takes over;
+    // the member follows; their leases hold the whole time, and they keep what they had.
+    cluster.kill(coordinator);
+    foreach (_; 0 .. 120) // 6 seconds, longer than a lease
+    {
+        cluster.run(50, standby, member);
+        assert(standby.regions.leaseHolds(cluster.now) && member.regions.leaseHolds(cluster.now),
+            "no lease lapses while the standby takes over");
+        assert(standby.regions.ownedRegions.length >= standbyHad && member.regions.ownedRegions.length >= memberHad);
+    }
+    assert(standby.isCoordinator && promoted && !member.isCoordinator);
+    assert(member.linkTo(2).peer.coordinator, "the member takes the standby as its coordinator");
+    assert(ids(standby) == [2, 3] && ids(member) == [2, 3]);
+
+    // Once the old coordinator's lease is surely over, its regions are dealt out again.
+    cluster.run(4000, standby, member);
+    assert(standby.regions.ownedRegions.length + member.regions.ownedRegions.length == 8);
+    foreach (x; [-40, -20, 0, 20, 39])
+        assert(ownerSeen([standby, member], x, x % 7) != 0);
+
+    // Ids: the member's blocks now come from the new coordinator's counters (items start at 100 there).
+    uint taken;
+    assert(member.pool.take(IdKind.item, taken), "a block came from the new coordinator");
+    assert(taken >= 100 && taken < standbyCounters.next[IdKind.item]);
+}
+

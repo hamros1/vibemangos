@@ -46,6 +46,21 @@ struct ClusterConfig
     /// How many ids of a kind a member asks the coordinator for at a time.
     @JsonName("id_block") uint idBlock = 1000;
 
+    /**
+     * Load balancing by measured cost (docs/CLUSTER.md, phase 6): how often the coordinator looks, how
+     * busy (µs of loop time a second) the busiest node must be before anything moves, and how long a
+     * region that moved stays where it went.
+     */
+    @JsonName("balance_interval_seconds") uint balanceIntervalSeconds = 30;
+    @JsonName("balance_min_load_us") uint balanceMinLoadUs = 20_000; /// ditto: 2% of one core
+    @JsonName("region_cooldown_seconds") uint regionCooldownSeconds = 120; /// ditto
+
+    /**
+     * Phase 7: this member is the standby coordinator. It keeps what a coordinator needs, and takes
+     * over when it has lost the coordinator (docs/CLUSTER.md).
+     */
+    @JsonName("standby") bool standby;
+
     /// Whether the server is part of a cluster.
     @property bool enabled() const pure nothrow @nogc @safe
     {

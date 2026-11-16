@@ -14,8 +14,10 @@ in order:
     query                     name, item and time queries (after login)
     move:X:Y:Z                walk to a position (after login)
     say:TEXT                  say something and print what comes back
+    yell:TEXT                 yell something (heard 300 yards around)
     sit                       sit down and print the changed fields
     whisper:NAME:TEXT         whisper to another player
+    who[:TEXT]                /who, everyone or those matching TEXT, and print the list
     emote:ID                  a text emote (101 = /wave, 34 = /dance)
     wait:SECONDS              do nothing for a while (packets queue up)
     listen:SECONDS            print what other players do for a while
@@ -476,12 +478,27 @@ for action in actions:
     elif kind == "say":
         wsend(0x095, struct.pack("<II", 0, 7) + args[0].encode() + b"\0"); op, p = expect(0x096)
         n = struct.unpack_from("<I", p, 21)[0]; print(f"heard: '{p[25:25 + n - 1].decode()}'")
+    elif kind == "yell":
+        wsend(0x095, struct.pack("<II", 5, 7) + args[0].encode() + b"\0"); op, p = expect(0x096)
+        n = struct.unpack_from("<I", p, 21)[0]; print(f"heard: '{p[25:25 + n - 1].decode()}'")
     elif kind == "sit":
         wsend(0x101, struct.pack("<I", 1)); got = [expect(0x1F6)]
         objs = parse_update(*got[0]); print("sat down; update fields changed:", sorted(objs[0][3])); expect(0x29D)
     elif kind == "whisper":
         wsend(0x095, struct.pack("<II", 6, 7) + args[0].encode() + b"\0" + args[1].encode() + b"\0")
         op, p = wrecv(); describe(op, p)
+    elif kind == "who":
+        strings = [args[0]] if args and args[0] else []
+        body = struct.pack("<II", 0, 100) + b"\0\0" + struct.pack("<III", 0xFFFFFFFF, 0xFFFFFFFF, 0)
+        body += struct.pack("<I", len(strings)) + b"".join(x.encode() + b"\0" for x in strings)
+        wsend(0x062, body); op, p = expect(0x063)
+        shown, matches = struct.unpack_from("<II", p, 0); pos = 8
+        print(f"who: {shown} shown, {matches} matching")
+        for _ in range(shown):
+            e = p.index(b"\0", pos); name = p[pos:e].decode(); pos = e + 1
+            e = p.index(b"\0", pos); pos = e + 1
+            level, cls, race, zone = struct.unpack_from("<IIII", p, pos); pos += 16
+            print(f"  {name}: level {level} class {cls} race {race} zone {zone}")
     elif kind == "emote":
         wsend(0x104, struct.pack("<IIQ", int(args[0]), 0, 0)); print(f"emote {args[0]}")
     elif kind == "wait":
