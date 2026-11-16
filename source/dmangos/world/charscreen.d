@@ -1,0 +1,386 @@
+/**
+ * The character screen's handlers (CMaNGOS `Entities/CharacterHandler.cpp`):
+ * the character list, creation, deletion, and entering the world.
+ *
+ * `CharacterScreenHandlers` is mixed into `dmangos.world.session.WorldSession`.
+ * Its handlers are members of the session: they use its state (`account`,
+ * `context`, `player`) and helpers (`send`, `sendUpdate`) directly, and resolve
+ * `Handles` and `WorldState` where they are mixed in.
+ *
+ * Character creation follows `HandleCharCreateOpcode`, then
+ * `dmangos.world.playercreate` builds the character as `Player::Create` does.
+ * Deletion follows `HandleCharDeleteOpcode` and `Player::DeleteFromDB`.
+ * Logging in follows `HandlePlayerLogin`: the character is loaded
+ * (`dmangos.world.player`), the client is told the map and position, gets its
+ * spellbook, action bars and other settings, and then the update packet that
+ * creates its items and its player.
+ */
+module dmangos.world.charscreen;
+
+import std.datetime.systime : Clock;
+
+/// See the module documentation.
+mixin template CharacterScreenHandlers()
+{
+    import std.algorithm.iteration : map;
+    import std.array : array;
+    import dmangos.auth.accounts : AccountLevel;
+    import dmangos.log;
+    import dmangos.world.characters : buildCharacterEntry;
+    import dmangos.world.charscreen : gameTimeBits, motdLines;
+    import dmangos.world.clientdata : Team;
+    import dmangos.world.names;
+    import dmangos.world.objects : lowGuid;
+    import dmangos.world.opcodes;
+    import dmangos.world.packets;
+    import dmangos.world.player : HomeBind, Player;
+    import dmangos.world.playercreate : CharacterBuilder, CreateRequest, KnownAbilities, NewCharacter,
+        validateAppearance;
+    import dmangos.world.worlddata : toLowerName;
+
+private:
+    @Handles(Opcode.CMSG_CHAR_ENUM, WorldState.characterScreen)
+    void handleCharEnum()
+    {
+        ServerCharEnum list;
+        foreach (ref record; context.database.characters(account.id))
+        {
+            if (list.characters.length == maxCharactersPerRealm)
+            {
+                error!"account %s has more than %s characters; only the first %s are listed"(account.id,
+                    maxCharactersPerRealm, maxCharactersPerRealm);
+                break;
+            }
+            auto entry = buildCharacterEntry(record, context.data);
+            if (entry.isNull)
+            {
+                error!"character %s ('%s') has an invalid race/class pair (%s/%s); not listed"(record.guid,
+                    record.name, record.race, record.classId);
+                continue;
+            }
+            list.characters ~= entry.get;
+        }
+        send(list);
+    }
+
+    @Handles(Opcode.CMSG_CHAR_CREATE, WorldState.characterScreen)
+    void handleCharCreate(const ClientCharCreate request)
+    {
+        const result = createCharacter(request);
+        send(ServerCharCreate(result));
+    }
+
+    /// `WorldSession::HandleCharCreateOpcode`; returns the result code for `SMSG_CHAR_CREATE`.
+    ubyte createCharacter(const ref ClientCharCreate request)
+    {
+        alias R = CharacterResponse;
+        const config = context.config;
+        const isPlayer = account.level == AccountLevel.player;
+
+        if (isPlayer && config.charactersCreatingDisabled)
+        {
+            const team = context.client.teamForRace(request.race);
+            if ((team == Team.alliance && (config.charactersCreatingDisabled & 1))
+                || (team == Team.horde && (config.charactersCreatingDisabled & 2)))
+                return R.CHAR_CREATE_DISABLED;
+        }
+        if (context.client.classes.lookup(request.classId) is null || context.client.races.lookup(request.race) is null)
+        {
+            error!"account %s tried to create a character of invalid class %s or race %s"(account.id, request.classId,
+                request.race);
+            return R.CHAR_CREATE_FAILED;
+        }
+        if (!validateAppearance(context.client, request.race, request.gender, request.hairStyle, request.hairColor,
+            request.face, request.facialHair, request.skin))
+        {
+            error!"account %s tried to create a character with an invalid appearance"(account.id);
+            return R.CHAR_CREATE_FAILED;
+        }
+
+        string name = request.name;
+        if (!normalizePlayerName(name))
+            return CharNameResult.CHAR_NAME_NO_NAME;
+        const nameResult = checkPlayerName(name, config.minPlayerName, config.strictPlayerNames, config.realmZone);
+        if (nameResult != CharNameResult.CHAR_NAME_SUCCESS)
+            return nameResult;
+        if (isPlayer && (toLowerName(name) in context.data.reservedNames) !is null)
+            return CharNameResult.CHAR_NAME_RESERVED;
+        if (context.database.nameTaken(name))
+            return R.CHAR_CREATE_NAME_IN_USE;
+        if (context.database.accountCharacterTotal(account.id) >= config.charactersPerAccount)
+            return R.CHAR_CREATE_ACCOUNT_LIMIT;
+        const realmCount = context.database.realmCharacterCount(account.id);
+        if (realmCount >= config.charactersPerRealm)
+            return R.CHAR_CREATE_SERVER_LIMIT;
+
+        // GameType 1 (PvP), 8 (RP-PvP) and 16 (FFA PvP) are PvP realms.
+        const pvpRealm = config.gameType == 1 || config.gameType == 8 || config.gameType == 16;
+        const allowTwoSide = !pvpRealm || config.allowTwoSideAccounts || !isPlayer;
+        bool haveSameRace;
+        if (!allowTwoSide || config.skipCinematics == 1)
+        {
+            const races = context.database.characterRaces(account.id);
+            if (races.length)
+            {
+                if (!allowTwoSide && (races[0] == 0
+                    || context.client.teamForRace(races[0]) != context.client.teamForRace(request.race)))
+                    return R.CHAR_CREATE_PVP_TEAMS_VIOLATION;
+                // As CMaNGOS: the first row is only used for the faction check above.
+                if (config.skipCinematics == 1)
+                    foreach (race; races[1 .. $])
+                        if (race == request.race)
+                        {
+                            haveSameRace = true;
+                            break;
+                        }
+            }
+        }
+
+        const create = CreateRequest(name, request.race, request.classId, request.gender, request.skin, request.face,
+            request.hairStyle, request.hairColor, request.facialHair, request.outfitId);
+        const skipCinematic = (haveSameRace && config.skipCinematics == 1) || config.skipCinematics == 2;
+        auto builder = new CharacterBuilder(context.data, context.client, context.creationSettings,
+            &context.nextItemGuid);
+        NewCharacter character;
+        if (!builder.create(context.next.character, account.id, account.level, create, skipCinematic, character))
+            return R.CHAR_CREATE_ERROR;
+        ++context.next.character;
+
+        context.database.saveNewCharacter(character, tutorialRowMissing);
+        tutorialRowMissing = false;
+        context.database.setRealmCharacterCount(account.id, context.config.realmId, realmCount + 1);
+        info!"%s: account %s created character '%s' (guid %s, %s items, %s skills, %s spells)"(remoteAddress,
+            account.id, name, character.guid, character.items.length, character.skills.length,
+            character.spells.length);
+        return R.CHAR_CREATE_SUCCESS;
+    }
+
+    @Handles(Opcode.CMSG_CHAR_DELETE, WorldState.characterScreen)
+    void handleCharDelete(const ClientCharDelete request)
+    {
+        const guid = cast(uint)(request.guid & 0xFFFF_FFFF);
+        if (context.database.isGuildLeader(guid))
+            return send(ServerCharDelete(CharacterResponse.CHAR_DELETE_FAILED_GUILD_LEADER));
+
+        const owner = context.database.characterOwner(guid);
+        if (owner.isNull || owner.get.account != account.id)
+        {
+            warning!"%s: account %s tried to delete character %s, which is not theirs"(remoteAddress, account.id, guid);
+            return; // as CMaNGOS: no reply
+        }
+
+        info!"%s: account %s deleted character '%s' (guid %s)"(remoteAddress, account.id, owner.get.name, guid);
+        context.database.deleteCharacter(guid, account.id, context.deleteOptions, &context.nextMailId);
+        context.database.setRealmCharacterCount(account.id, context.config.realmId,
+            context.database.realmCharacterCount(account.id));
+        send(ServerCharDelete(CharacterResponse.CHAR_DELETE_SUCCESS));
+    }
+
+    @Handles(Opcode.CMSG_PLAYER_LOGIN, WorldState.characterScreen)
+    void handlePlayerLogin(const ClientPlayerLogin request)
+    {
+        const guid = lowGuid(request.guid);
+        auto loaded = context.database.loadCharacter(guid);
+        if (loaded.isNull || loaded.get.account != account.id)
+        {
+            warning!"%s: account %s tried to log in character %s, which is not theirs"(remoteAddress, account.id, guid);
+            return send(ServerCharacterLoginFailed(CharacterLoginFailure.CHAR_LOGIN_NO_CHARACTER));
+        }
+        auto character = loaded.get;
+        const createInfo = context.data.createInfo(character.race, character.classId);
+        if (createInfo is null)
+        {
+            error!"character %s has an invalid race/class pair (%s/%s); not logged in"(guid, character.race,
+                character.classId);
+            return send(ServerCharacterLoginFailed(CharacterLoginFailure.CHAR_LOGIN_NO_CHARACTER));
+        }
+
+        // Player::_LoadHomeBind: a character without a home is bound where its race starts.
+        if (!character.hasHomeBind)
+        {
+            character.homeBind = HomeBind(createInfo.map, createInfo.zone, createInfo.x, createInfo.y, createInfo.z);
+            character.hasHomeBind = true;
+            context.database.insertHomeBind(guid, character.homeBind);
+        }
+        // A position that is not a real number would hang the client's loading screen.
+        if (!character.position.isFinite)
+        {
+            warning!"character %s has an invalid position; moved home"(guid);
+            character.map = character.homeBind.map;
+            character.position.x = character.homeBind.x;
+            character.position.y = character.homeBind.y;
+            character.position.z = character.homeBind.z;
+        }
+
+        KnownAbilities abilities;
+        auto builder = new CharacterBuilder(context.data, context.client, context.creationSettings,
+            &context.nextItemGuid);
+        builder.loadAbilities(character.race, character.classId, character.level, account.level, character.skills,
+            character.spells, abilities);
+        player = new Player(character, abilities, context.data, context.client);
+        enteredWorld = context.clock();
+        state_ = WorldState.inWorld;
+        sendLoginPackets();
+        context.database.setOnline(guid, account.id, true, context.config.realmId);
+        info!"%s: '%s' entered the world as '%s' (guid %s, map %s at %.1f %.1f %.1f)"(remoteAddress,
+            account.username, character.name, guid, character.map, character.position.x, character.position.y,
+            character.position.z);
+    }
+
+    /// `WorldSession::HandlePlayerLogin`, from `SMSG_LOGIN_VERIFY_WORLD` to the player's create packet.
+    void sendLoginPackets()
+    {
+        const c = &player.data;
+        send(ServerLoginVerifyWorld(c.map, player.movement.position.x, player.movement.position.y,
+            player.movement.position.z, player.movement.position.orientation));
+        send(ServerAccountDataTimes());
+        send(ServerExpectedSpamRecords());
+        foreach (line; motdLines(context.config.motd))
+            sendSystemMessage(line);
+
+        // Player::SendInitialPacketsBeforeAddToMap
+        send(ServerSetRestStart());
+        send(ServerBindPointUpdate(c.homeBind.x, c.homeBind.y, c.homeBind.z, c.homeBind.map, c.homeBind.zone));
+        send(ServerTutorialFlags(c.tutorials));
+        ServerInitialSpells spells;
+        spells.spells = player.spells.map!(id => InitialSpell(cast(ushort) id)).array;
+        send(spells);
+        send(ServerActionButtons(player.actionButtons));
+        send(ServerInitializeFactions());
+        send(ServerLoginSetTimeSpeed(gameTimeBits()));
+        send(ServerSetProficiency(2, player.proficiency[0])); // ITEM_CLASS_WEAPON
+        send(ServerSetProficiency(4, player.proficiency[1])); // ITEM_CLASS_ARMOR
+
+        // The race's intro, the first time.
+        if (c.cinematic == 0)
+        {
+            player.data.cinematic = 1;
+            if (const race = context.client.races.lookup(c.race))
+                if (race.cinematicSequence)
+                    send(ServerTriggerCinematic(race.cinematicSequence));
+        }
+
+        // Map::Add: the client creates its items and itself, and the loading screen ends.
+        const update = player.createForSelf(serverTime());
+        sendUpdate(update);
+
+        // Player::SendInitialPacketsAfterAddToMap
+        send(ServerFriendList());
+        send(ServerIgnoreList());
+        send(ServerInitWorldStates(c.map, c.zone));
+    }
+}
+
+/// `WorldSession::SendMotd`: the message of the day, split at '@'.
+string[] motdLines(string motd) pure @safe
+{
+    import std.algorithm.iteration : filter, splitter;
+    import std.array : array;
+
+    return motd.splitter('@').filter!(line => line.length > 0).array;
+}
+
+/// `secsToTimeBitFields` for the local time, as `SMSG_LOGIN_SETTIMESPEED` carries the game time.
+uint gameTimeBits()
+{
+    const now = Clock.currTime;
+    return (now.year - 2000) << 24 | (now.month - 1) << 20 | (now.day - 1) << 14 | now.dayOfWeek << 11
+        | now.hour << 6 | now.minute;
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+version (unittest)
+{
+    import dmangos.world.opcodes;
+    import dmangos.world.packets;
+    import dmangos.world.session : WorldSession, WorldState;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+}
+
+unittest
+{
+    assert(motdLines("Hello@@world@") == ["Hello", "world"]);
+}
+
+/// Creating a character stores it, shows it in the list and counts it in realmcharacters.
+unittest
+{
+    auto db = newDatabase();
+    db.characterLists.remove(4);
+    auto context = newCreationContext(db);
+    auto client = TestClient(new WorldSession(context, "127.0.0.1"), testKey);
+    authenticate(client);
+
+    assert(createCharacter(client, "aNDUIN", raceHuman, classWarrior) == CharacterResponse.CHAR_CREATE_SUCCESS);
+    assert(db.saved.length == 1 && db.realmCounts[4] == 1 && db.tutorialRows.length == 1);
+    const saved = db.saved.values[0];
+    assert(saved.name == "Anduin" && saved.account == 4 && saved.items.length == 4);
+
+    client.write(Opcode.CMSG_CHAR_ENUM, null);
+    auto reader = ByteReader(client.read()[0].body_);
+    const list = deserialize!ServerCharEnum(reader);
+    assert(list.characters.length == 1 && list.characters[0].name == "Anduin");
+    assert(list.characters[0].firstLogin == 1 && list.characters[0].level == 0);
+    assert(list.characters[0].equipment[15].displayId == 1542); // main hand
+
+    // A second character: names are unique, the tutorial row is written only once.
+    assert(createCharacter(client, "anduin", raceHuman, classMage) == CharacterResponse.CHAR_CREATE_NAME_IN_USE);
+    assert(createCharacter(client, "Jaina", raceHuman, classMage) == CharacterResponse.CHAR_CREATE_SUCCESS);
+    assert(db.realmCounts[4] == 2 && db.tutorialRows.length == 1);
+}
+
+/// Names, looks, limits and factions are checked as CMaNGOS checks them.
+unittest
+{
+    auto db = newDatabase();
+    db.characterLists.remove(4);
+    auto context = newCreationContext(db, (ref WorldConfig c) { c.charactersPerRealm = 2; });
+    auto client = TestClient(new WorldSession(context, "127.0.0.1"), testKey);
+    authenticate(client);
+
+    with (CharNameResult)
+    {
+        assert(createCharacter(client, "", raceHuman, classWarrior) == CHAR_NAME_NO_NAME);
+        assert(createCharacter(client, "X", raceHuman, classWarrior) == CHAR_NAME_TOO_SHORT);
+        assert(createCharacter(client, "R2d2", raceHuman, classWarrior) == CHAR_NAME_MIXED_LANGUAGES);
+        assert(createCharacter(client, "thrall", raceHuman, classWarrior) == CHAR_NAME_RESERVED);
+    }
+    assert(createCharacter(client, "Anduin", raceHuman, classWarrior, 7) == CharacterResponse.CHAR_CREATE_FAILED,
+        "hair style 7 does not exist");
+    assert(createCharacter(client, "Anduin", 9, classWarrior) == CharacterResponse.CHAR_CREATE_FAILED, "no such race");
+
+    assert(createCharacter(client, "Anduin", raceHuman, classWarrior) == CharacterResponse.CHAR_CREATE_SUCCESS);
+    // The default realm type is PvP: an Alliance account cannot add a Horde character.
+    assert(createCharacter(client, "Garrosh", raceOrc, classHunter) == CharacterResponse.CHAR_CREATE_PVP_TEAMS_VIOLATION);
+    assert(createCharacter(client, "Jaina", raceHuman, classMage) == CharacterResponse.CHAR_CREATE_SUCCESS);
+    assert(createCharacter(client, "Varian", raceHuman, classWarrior) == CharacterResponse.CHAR_CREATE_SERVER_LIMIT);
+    assert(db.saved.length == 2);
+}
+
+/// Deleting: only your own characters, never a guild leader.
+unittest
+{
+    auto db = newDatabase(); // account 4 owns "Thrall", guid 1
+    CharacterRecord other;
+    other.guid = 50;
+    other.name = "Stranger";
+    db.characterLists[9] = [other];
+    auto context = newCreationContext(db);
+    auto client = TestClient(new WorldSession(context, "127.0.0.1"), testKey);
+    authenticate(client);
+
+    assert(deleteCharacter(client, 50) is null, "someone else's character: no reply, nothing deleted");
+    assert(db.deleted.length == 0);
+
+    db.guildLeaders[1] = true;
+    assert(deleteCharacter(client, 1) == [ubyte(CharacterResponse.CHAR_DELETE_FAILED_GUILD_LEADER)]);
+    db.guildLeaders.remove(1);
+
+    assert(deleteCharacter(client, 1) == [ubyte(CharacterResponse.CHAR_DELETE_SUCCESS)]);
+    assert(db.deleted == [1] && db.characterLists[4].length == 0 && db.realmCounts[4] == 0);
+}
+

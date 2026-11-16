@@ -1,0 +1,37 @@
+{
+	"name": "dmangos",
+	"description": "A World of Warcraft 1.12 (vanilla) server written in D, modelled on CMaNGOS and Ember.",
+	"targetPath": "bin",
+	"configurations": [
+		{
+			"name": "authserver",
+			"targetType": "executable",
+			"targetName": "authserver",
+			"mainSourceFile": "source/dmangos/auth/main.d",
+			"excludedSourceFiles": [
+				"source/dmangos/world/main.d",
+				"source/dmangos/extractor/main.d"
+			]
+		},
+		{
+			"name": "worldserver",
+			"targetType": "executable",
+			"targetName": "worldserver",
+			"mainSourceFile": "source/dmangos/world/main.d",
+			"excludedSourceFiles": [
+				"source/dmangos/auth/main.d",
+				"source/dmangos/extractor/main.d"
+			]
+		},
+		{
+			"name": "extractor",
+			"targetType": "executable",
+			"targetName": "extractor",
+			"mainSourceFile": "source/dmangos/extractor/main.d",
+			"excludedSourceFiles": [
+				"source/dmangos/auth/main.d",
+				"source/dmangos/world/main.d"
+			]
+		}
+	]
+}

@@ -1,0 +1,201 @@
+/**
+ * World protocol opcodes and result codes for 1.12.x clients.
+ *
+ * Names and values are those of CMaNGOS `Server/Opcodes.h` and
+ * `Globals/SharedDefines.h`. Unlike the rest of the code base they keep
+ * their upper-case spelling, so they can be looked up in any 1.12 protocol
+ * reference unchanged. Only the opcodes this server uses are listed, in
+ * value order; the client knows `numMessageTypes` of them.
+ */
+module dmangos.world.opcodes;
+
+/// World packet opcodes (subset).
+enum Opcode : uint
+{
+    CMSG_CHAR_CREATE = 0x036,
+    CMSG_CHAR_ENUM = 0x037,
+    CMSG_CHAR_DELETE = 0x038,
+    SMSG_CHAR_CREATE = 0x03A,
+    SMSG_CHAR_ENUM = 0x03B,
+    SMSG_CHAR_DELETE = 0x03C,
+    CMSG_PLAYER_LOGIN = 0x03D,
+    SMSG_CHARACTER_LOGIN_FAILED = 0x041,
+    SMSG_LOGIN_SETTIMESPEED = 0x042,
+    CMSG_PLAYER_LOGOUT = 0x04A,
+    CMSG_LOGOUT_REQUEST = 0x04B,
+    SMSG_LOGOUT_RESPONSE = 0x04C,
+    SMSG_LOGOUT_COMPLETE = 0x04D,
+    CMSG_LOGOUT_CANCEL = 0x04E,
+    SMSG_LOGOUT_CANCEL_ACK = 0x04F,
+    CMSG_NAME_QUERY = 0x050,
+    SMSG_NAME_QUERY_RESPONSE = 0x051,
+    CMSG_ITEM_QUERY_SINGLE = 0x056,
+    SMSG_ITEM_QUERY_SINGLE_RESPONSE = 0x058,
+    SMSG_FRIEND_LIST = 0x067,
+    SMSG_IGNORE_LIST = 0x06B,
+    CMSG_MESSAGECHAT = 0x095,
+    SMSG_MESSAGECHAT = 0x096,
+    SMSG_UPDATE_OBJECT = 0x0A9,
+    MSG_MOVE_START_FORWARD = 0x0B5,
+    MSG_MOVE_START_BACKWARD = 0x0B6,
+    MSG_MOVE_STOP = 0x0B7,
+    MSG_MOVE_START_STRAFE_LEFT = 0x0B8,
+    MSG_MOVE_START_STRAFE_RIGHT = 0x0B9,
+    MSG_MOVE_STOP_STRAFE = 0x0BA,
+    MSG_MOVE_JUMP = 0x0BB,
+    MSG_MOVE_START_TURN_LEFT = 0x0BC,
+    MSG_MOVE_START_TURN_RIGHT = 0x0BD,
+    MSG_MOVE_STOP_TURN = 0x0BE,
+    MSG_MOVE_START_PITCH_UP = 0x0BF,
+    MSG_MOVE_START_PITCH_DOWN = 0x0C0,
+    MSG_MOVE_STOP_PITCH = 0x0C1,
+    MSG_MOVE_SET_RUN_MODE = 0x0C2,
+    MSG_MOVE_SET_WALK_MODE = 0x0C3,
+    MSG_MOVE_FALL_LAND = 0x0C9,
+    MSG_MOVE_START_SWIM = 0x0CA,
+    MSG_MOVE_STOP_SWIM = 0x0CB,
+    MSG_MOVE_SET_FACING = 0x0DA,
+    MSG_MOVE_SET_PITCH = 0x0DB,
+    MSG_MOVE_HEARTBEAT = 0x0EE,
+    SMSG_TRIGGER_CINEMATIC = 0x0FA,
+    SMSG_TUTORIAL_FLAGS = 0x0FD,
+    CMSG_TUTORIAL_FLAG = 0x0FE,
+    CMSG_TUTORIAL_CLEAR = 0x0FF,
+    CMSG_TUTORIAL_RESET = 0x100,
+    CMSG_STANDSTATECHANGE = 0x101,
+    SMSG_INITIALIZE_FACTIONS = 0x122,
+    SMSG_SET_PROFICIENCY = 0x127,
+    CMSG_SET_ACTION_BUTTON = 0x128,
+    SMSG_ACTION_BUTTONS = 0x129,
+    SMSG_INITIAL_SPELLS = 0x12A,
+    SMSG_BINDPOINTUPDATE = 0x155,
+    SMSG_NOTIFICATION = 0x1CB,
+    CMSG_PLAYED_TIME = 0x1CC,
+    SMSG_PLAYED_TIME = 0x1CD,
+    CMSG_QUERY_TIME = 0x1CE,
+    SMSG_QUERY_TIME_RESPONSE = 0x1CF,
+    CMSG_PING = 0x1DC,
+    SMSG_PONG = 0x1DD,
+    SMSG_AUTH_CHALLENGE = 0x1EC,
+    CMSG_AUTH_SESSION = 0x1ED,
+    SMSG_AUTH_RESPONSE = 0x1EE,
+    CMSG_ZONEUPDATE = 0x1F4,
+    SMSG_COMPRESSED_UPDATE_OBJECT = 0x1F6,
+    SMSG_ACCOUNT_DATA_TIMES = 0x209,
+    SMSG_SET_REST_START = 0x21E,
+    SMSG_LOGIN_VERIFY_WORLD = 0x236,
+    SMSG_STANDSTATE_UPDATE = 0x29D,
+    CMSG_SET_ACTIONBAR_TOGGLES = 0x2BF,
+    SMSG_INIT_WORLD_STATES = 0x2C2,
+    SMSG_ADDON_INFO = 0x2EF,
+    MSG_MOVE_TIME_SKIPPED = 0x319,
+    SMSG_EXPECTED_SPAM_RECORDS = 0x332,
+}
+
+/// One past the highest opcode a 1.12 client uses (`NUM_MSG_TYPES`).
+enum uint numMessageTypes = 0x33C;
+
+/// Result codes of `SMSG_AUTH_RESPONSE` (`ResponseCodes`, AUTH_* range).
+enum AuthResponse : ubyte
+{
+    AUTH_OK = 0x0C,
+    AUTH_FAILED = 0x0D,
+    AUTH_REJECT = 0x0E,
+    AUTH_BAD_SERVER_PROOF = 0x0F,
+    AUTH_UNAVAILABLE = 0x10,
+    AUTH_SYSTEM_ERROR = 0x11,
+    AUTH_BILLING_ERROR = 0x12,
+    AUTH_BILLING_EXPIRED = 0x13,
+    AUTH_VERSION_MISMATCH = 0x14,
+    AUTH_UNKNOWN_ACCOUNT = 0x15,
+    AUTH_INCORRECT_PASSWORD = 0x16,
+    AUTH_SESSION_EXPIRED = 0x17,
+    AUTH_SERVER_SHUTTING_DOWN = 0x18,
+    AUTH_ALREADY_LOGGING_IN = 0x19,
+    AUTH_LOGIN_SERVER_NOT_FOUND = 0x1A,
+    AUTH_WAIT_QUEUE = 0x1B,
+    AUTH_BANNED = 0x1C,
+    AUTH_ALREADY_ONLINE = 0x1D,
+    AUTH_NO_TIME = 0x1E,
+    AUTH_DB_BUSY = 0x1F,
+    AUTH_SUSPENDED = 0x20,
+    AUTH_PARENTAL_CONTROL = 0x21,
+}
+
+/// Result codes of `SMSG_CHARACTER_LOGIN_FAILED` (`CharLoginFailReasons`).
+enum CharacterLoginFailure : ubyte
+{
+    CHAR_LOGIN_NO_WORLD = 0x01,
+    CHAR_LOGIN_DUPLICATE_CHARACTER = 0x02,
+    CHAR_LOGIN_NO_INSTANCES = 0x03,
+    CHAR_LOGIN_DISABLED = 0x04,
+    CHAR_LOGIN_NO_CHARACTER = 0x05,
+    CHAR_LOGIN_LOCKED_FOR_TRANSFER = 0x06,
+    CHAR_LOGIN_LOCKED_BY_BILLING = 0x07,
+    CHAR_LOGIN_FAILED = 0x08,
+}
+
+/// Result codes of `SMSG_CHAR_CREATE` and `SMSG_CHAR_DELETE` (`ResponseCodes`, CHAR_* range).
+enum CharacterResponse : ubyte
+{
+    CHAR_CREATE_IN_PROGRESS = 0x2D,
+    CHAR_CREATE_SUCCESS = 0x2E,
+    CHAR_CREATE_ERROR = 0x2F,
+    CHAR_CREATE_FAILED = 0x30,
+    CHAR_CREATE_NAME_IN_USE = 0x31,
+    CHAR_CREATE_PVP_TEAMS_VIOLATION = 0x33,
+    CHAR_CREATE_SERVER_LIMIT = 0x34,
+    CHAR_CREATE_ACCOUNT_LIMIT = 0x35,
+    CHAR_CREATE_DISABLED = 0x3A,
+    CHAR_DELETE_IN_PROGRESS = 0x38,
+    CHAR_DELETE_SUCCESS = 0x39,
+    CHAR_DELETE_FAILED = 0x3A,
+    CHAR_DELETE_FAILED_GUILD_LEADER = 0x3A, /// as CMaNGOS sends it ("unsure")
+}
+
+/// `ChatMsg`
+enum ChatType : uint
+{
+    CHAT_MSG_SAY = 0x00,
+    CHAT_MSG_PARTY = 0x01,
+    CHAT_MSG_RAID = 0x02,
+    CHAT_MSG_GUILD = 0x03,
+    CHAT_MSG_OFFICER = 0x04,
+    CHAT_MSG_YELL = 0x05,
+    CHAT_MSG_WHISPER = 0x06,
+    CHAT_MSG_WHISPER_INFORM = 0x07,
+    CHAT_MSG_EMOTE = 0x08,
+    CHAT_MSG_TEXT_EMOTE = 0x09,
+    CHAT_MSG_SYSTEM = 0x0A,
+    CHAT_MSG_CHANNEL = 0x0E,
+    CHAT_MSG_AFK = 0x14,
+    CHAT_MSG_DND = 0x15,
+}
+
+/// `Language`
+enum Language : uint
+{
+    LANG_UNIVERSAL = 0,
+    LANG_ORCISH = 1,
+    LANG_COMMON = 7,
+    LANG_ADDON = 0xFFFFFFFF,
+}
+
+/**
+ * The client's movement opcodes, whose bodies are a `MovementInfo` and nothing
+ * else: every `MSG_MOVE_*` opcode except `MSG_MOVE_TIME_SKIPPED`, which carries
+ * a guid and a time. Collected from `Opcode` at compile time, so an opcode
+ * added there is routed to the movement handler without further changes.
+ */
+enum Opcode[] movementOpcodes = () {
+    import std.algorithm.searching : startsWith;
+    import std.traits : EnumMembers;
+
+    Opcode[] opcodes;
+    static foreach (name; __traits(allMembers, Opcode))
+        static if (name.startsWith("MSG_MOVE_") && name != "MSG_MOVE_TIME_SKIPPED")
+            opcodes ~= __traits(getMember, Opcode, name);
+    return opcodes;
+}();
+
+static assert(movementOpcodes.length == 21);

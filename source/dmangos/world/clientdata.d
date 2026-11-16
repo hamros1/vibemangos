@@ -1,0 +1,492 @@
+/**
+ * The client's DBC tables needed to create characters, plus the indexes
+ * CMaNGOS builds from them (`Server/DBCStores.cpp`, `Spells/SpellMgr.cpp`).
+ *
+ * Every record struct follows CMaNGOS's `DBCStructure.h`, field for field,
+ * with its format string from `DBCfmt.h`. `DbcStore` verifies the pair at
+ * compile time. The files are read from `<data_dir>/dbc/`, the same layout
+ * mangosd uses for its `DataDir`.
+ *
+ * Indexes iterate the stores in ascending id order, as CMaNGOS's
+ * `for (i = 0; i < GetNumRows(); ++i) LookupEntry(i)` loops do, so
+ * multimap order (which decides "first match" lookups) is the same.
+ */
+module dmangos.world.clientdata;
+
+import std.algorithm.sorting : sort;
+import std.path : buildPath;
+
+import dmangos.dbc;
+import dmangos.log;
+
+/// Bitmask of the eight playable 1.12 races (`RACEMASK_ALL_PLAYABLE`).
+enum uint playableRaceMask = 0xFF;
+/// Bitmask of the nine playable 1.12 classes (`CLASSMASK_ALL_PLAYABLE`).
+enum uint playableClassMask = (1 << 0) | (1 << 1) | (1 << 2) | (1 << 3) | (1 << 4) | (1 << 6) | (1 << 7) | (1 << 8)
+    | (1 << 10);
+
+/// `1 << (value - 1)`, as CMaNGOS's `convertEnumToFlag`.
+uint maskOf(uint raceOrClass) pure nothrow @nogc @safe
+{
+    return raceOrClass ? 1u << (raceOrClass - 1) : 0;
+}
+
+/// `CharSectionType`
+enum CharSectionType : uint
+{
+    skin = 0,
+    face = 1,
+    facialHair = 2,
+    hair = 3,
+    underwear = 4,
+}
+
+/// `SECTION_FLAG_UNAVAILABLE`
+enum uint sectionFlagUnavailable = 0x01;
+
+/// `SKILL_FLAG_MAXIMIZED`
+enum uint skillFlagMaximized = 0x010;
+
+/// `MAX_SKILL_STEP`
+enum maxSkillStep = 16;
+
+// ---------------------------------------------------------------------------
+// Records (DBCStructure.h) with their formats (DBCfmt.h)
+// ---------------------------------------------------------------------------
+
+///
+struct CharSectionsEntry
+{
+    uint race;
+    uint gender;
+    uint baseSection;
+    uint variationIndex;
+    uint colorIndex;
+    uint flags;
+}
+
+enum charSectionsFormat = "diiiiixxxi"; ///
+
+///
+struct CharacterFacialHairStylesEntry
+{
+    uint raceId;
+    uint sexId;
+    uint variationId;
+}
+
+enum characterFacialHairStylesFormat = "iiixxxxxx"; ///
+
+///
+struct ChrClassesEntry
+{
+    uint classId;
+    uint powerType;
+    string[8] name;
+    uint spellFamily;
+}
+
+enum chrClassesFormat = "nxxixssssssssxxix"; ///
+
+///
+struct ChrRacesEntry
+{
+    uint raceId;
+    uint factionId;
+    uint maleDisplayId;
+    uint femaleDisplayId;
+    uint teamId;            /// 7 = Alliance, 1 = Horde
+    uint startingTaxiMask;
+    uint cinematicSequence;
+    string[8] name;
+}
+
+enum chrRacesFormat = "nxixiixxixxxxxixissssssssxxxx"; ///
+
+/// `CreatureDisplayInfoEntry`
+struct CreatureDisplayInfoEntry
+{
+    uint id;
+    uint modelId;
+    uint extendedDisplayInfoId;
+    float scale = 0;
+}
+
+enum creatureDisplayInfoFormat = "nixifxxxxxxx"; ///
+
+/// `CreatureModelDataEntry`
+struct CreatureModelDataEntry
+{
+    uint id;
+    uint flags;
+    float scale = 0;
+    float collisionWidth = 0;
+    float collisionHeight = 0;
+}
+
+enum creatureModelDataFormat = "nixxfxxxxxxxxxff"; ///
+
+/// Number of item slots in a starting outfit (`MAX_OUTFIT_ITEMS`).
+enum maxOutfitItems = 12;
+
+/**
+ * In the 1.12 file, race, class, gender and outfit are four one-byte fields.
+ * CMaNGOS reads them as one 32-bit `RaceClassGender` field. That works only
+ * because its loader never checks the record size, and the skipped fields
+ * after it absorb the difference. Here the layout is exact, and
+ * `raceClassGender` rebuilds the value CMaNGOS compares against.
+ */
+struct CharStartOutfitEntry
+{
+    ubyte race;
+    ubyte classId;
+    ubyte gender;
+    ubyte outfit;
+    int[maxOutfitItems] itemId;
+
+    /// race | class << 8 | gender << 16 | outfit << 24, as CMaNGOS's `RaceClassGender`.
+    @property uint raceClassGender() const pure nothrow @nogc @safe
+    {
+        return race | classId << 8 | gender << 16 | outfit << 24;
+    }
+}
+
+enum charStartOutfitFormat = "dbbbbiiiiiiiiiiiixxxxxxxxxxxxxxxxxxxxxxxx"; /// 41 fields, 152 bytes
+
+///
+struct FactionEntry
+{
+    uint id;
+    int reputationListId;
+    uint[4] baseRepRaceMask;
+    uint[4] baseRepClassMask;
+    int[4] baseRepValue;
+    uint[4] reputationFlags;
+    uint team;
+    string[8] name;
+
+    /// Whether the faction appears in the reputation list.
+    bool hasReputation() const pure nothrow @nogc @safe
+    {
+        return reputationListId >= 0;
+    }
+
+    /// Index of the base reputation entry that applies to a race and class, or -1.
+    int indexFitTo(uint raceMask, uint classMask) const pure nothrow @nogc @safe
+    {
+        foreach (i; 0 .. 4)
+            if ((baseRepRaceMask[i] == 0 || (baseRepRaceMask[i] & raceMask))
+                && (baseRepClassMask[i] == 0 || (baseRepClassMask[i] & classMask)))
+                return i;
+        return -1;
+    }
+}
+
+enum factionFormat = "niiiiiiiiiiiiiiiiiissssssssxxxxxxxxxx"; ///
+
+///
+struct SkillLineEntry
+{
+    uint id;
+    int categoryId;
+    string[8] name;
+    uint spellIcon;
+}
+
+enum skillLineFormat = "nixssssssssxxxxxxxxxxi"; ///
+
+///
+struct SkillLineAbilityEntry
+{
+    uint id;
+    uint skillId;
+    uint spellId;
+    uint raceMask;
+    uint classMask;
+    uint reqSkillValue;
+    uint forwardSpellId;
+    uint learnOnGetSkill;
+    uint maxValue;
+    uint minValue;
+    uint reqTrainPoints;
+}
+
+enum skillLineAbilityFormat = "niiiixxiiiiixxi"; ///
+
+///
+struct SkillRaceClassInfoEntry
+{
+    uint skillId;
+    uint raceMask;
+    uint classMask;
+    uint flags;
+    uint reqLevel;
+    uint skillTierId;
+}
+
+enum skillRaceClassInfoFormat = "diiiiiix"; ///
+
+///
+struct SkillTiersEntry
+{
+    uint id;
+    uint[maxSkillStep] skillValue;
+    uint[maxSkillStep] maxSkillValue;
+}
+
+enum skillTiersFormat = "niiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii"; ///
+
+/// Ranks a talent can have (`MAX_TALENT_RANK`).
+enum maxTalentRank = 5;
+
+///
+struct TalentEntry
+{
+    uint talentId;
+    uint talentTab;
+    uint row;
+    uint col;
+    uint[maxTalentRank] rankId;
+    uint dependsOn;
+    uint dependsOnRank;
+    uint dependsOnSpell;
+}
+
+enum talentFormat = "niiiiiiiixxxxixxixxxi"; ///
+
+///
+struct TalentTabEntry
+{
+    uint tabId;
+    uint classMask;
+    uint tabPage;
+}
+
+enum talentTabFormat = "nxxxxxxxxxxxiix"; ///
+
+/// Talent and rank a spell belongs to (`TalentSpellPos`).
+struct TalentSpellPos
+{
+    uint talentId;
+    uint rank; /// 0-based
+}
+
+// ---------------------------------------------------------------------------
+// The loaded data and its indexes
+// ---------------------------------------------------------------------------
+
+/**
+ * See the module documentation. `Faction.dbc` is not loaded: CMaNGOS writes no reputation rows when a
+ * character is created; they are initialized from it at the first login.
+ */
+final class ClientData
+{
+    DbcStore!(CharSectionsEntry, charSectionsFormat) charSections;
+    DbcStore!(CharacterFacialHairStylesEntry, characterFacialHairStylesFormat) facialHairStyles;
+    DbcStore!(ChrClassesEntry, chrClassesFormat) classes;
+    DbcStore!(ChrRacesEntry, chrRacesFormat) races;
+    DbcStore!(CharStartOutfitEntry, charStartOutfitFormat) startOutfits;
+    DbcStore!(SkillLineEntry, skillLineFormat) skillLines;
+    DbcStore!(SkillLineAbilityEntry, skillLineAbilityFormat) skillLineAbilities;
+    DbcStore!(SkillRaceClassInfoEntry, skillRaceClassInfoFormat) skillRaceClassInfos;
+    DbcStore!(SkillTiersEntry, skillTiersFormat) skillTiers;
+    DbcStore!(TalentEntry, talentFormat) talents;
+    DbcStore!(TalentTabEntry, talentTabFormat) talentTabs;
+    DbcStore!(CreatureDisplayInfoEntry, creatureDisplayInfoFormat) creatureDisplays;
+    DbcStore!(CreatureModelDataEntry, creatureModelDataFormat) creatureModels;
+
+    private
+    {
+        const(CharSectionsEntry)*[][uint] sectionsByKey;
+        const(CharacterFacialHairStylesEntry)*[uint] facialHairByKey;
+        const(SkillRaceClassInfoEntry)*[][uint] raceClassInfoBySkill;
+        const(SkillLineAbilityEntry)*[][uint] abilitiesBySpell;
+        const(SkillLineAbilityEntry)*[][uint] abilitiesBySkill;
+        TalentSpellPos[uint] talentSpellPositions;
+    }
+
+    /// Reads the DBC files from `<dataDir>/dbc/`.
+    static ClientData load(string dataDir)
+    {
+        auto data = new ClientData;
+        const dir = buildPath(dataDir, "dbc");
+        static foreach (member; ["charSections:CharSections", "facialHairStyles:CharacterFacialHairStyles",
+            "classes:ChrClasses", "races:ChrRaces", "startOutfits:CharStartOutfit", "skillLines:SkillLine", "skillLineAbilities:SkillLineAbility",
+            "skillRaceClassInfos:SkillRaceClassInfo", "skillTiers:SkillTiers", "talents:Talent",
+            "talentTabs:TalentTab", "creatureDisplays:CreatureDisplayInfo", "creatureModels:CreatureModelData"])
+        {{
+            enum field = member[0 .. indexOf(member, ':')];
+            enum file = member[indexOf(member, ':') + 1 .. $] ~ ".dbc";
+            __traits(getMember, data, field) = typeof(__traits(getMember, data, field)).load(buildPath(dir, file));
+        }}
+        data.buildIndexes();
+        info!"loaded client data from %s (%s races, %s classes, %s skill lines, %s skill abilities)"(dir,
+            data.races.rows.length, data.classes.rows.length, data.skillLines.rows.length,
+            data.skillLineAbilities.rows.length);
+        return data;
+    }
+
+    /// Builds the derived lookups. Call after filling the stores by hand (tests).
+    void buildIndexes()
+    {
+        sectionsByKey = null;
+        facialHairByKey = null;
+        raceClassInfoBySkill = null;
+        abilitiesBySpell = null;
+        abilitiesBySkill = null;
+        talentSpellPositions = null;
+
+        foreach (id; ascendingIds(charSections.ids))
+        {
+            const entry = charSections.lookup(id);
+            if (entry.race && (maskOf(entry.race) & playableRaceMask))
+                sectionsByKey[sectionKey(cast(ubyte) entry.race, entry.baseSection, cast(ubyte) entry.gender)] ~= entry;
+        }
+        foreach (id; ascendingIds(facialHairStyles.ids))
+        {
+            const entry = facialHairStyles.lookup(id);
+            if (entry.raceId && (maskOf(entry.raceId) & playableRaceMask))
+                facialHairByKey[entry.raceId | entry.sexId << 8 | entry.variationId << 16] = entry;
+        }
+        foreach (id; ascendingIds(skillRaceClassInfos.ids))
+        {
+            const entry = skillRaceClassInfos.lookup(id);
+            if (skillLines.lookup(entry.skillId) !is null)
+                raceClassInfoBySkill[entry.skillId] ~= entry;
+        }
+        foreach (id; ascendingIds(skillLineAbilities.ids))
+        {
+            const entry = skillLineAbilities.lookup(id);
+            abilitiesBySpell[entry.spellId] ~= entry;
+            abilitiesBySkill[entry.skillId] ~= entry;
+        }
+        foreach (id; ascendingIds(talents.ids))
+        {
+            const talent = talents.lookup(id);
+            foreach (rank, spell; talent.rankId)
+                if (spell)
+                    talentSpellPositions[spell] = TalentSpellPos(id, cast(uint) rank);
+        }
+    }
+
+    /// `GetCharSectionEntry`: an available section of a type, variation and color, or null.
+    const(CharSectionsEntry)* charSection(ubyte race, CharSectionType type, ubyte gender, ubyte variation,
+        ubyte color) const
+    {
+        foreach (entry; sectionsByKey.get(sectionKey(race, type, gender), null))
+            if (entry.variationIndex == variation && entry.colorIndex == color
+                && !(entry.flags & sectionFlagUnavailable))
+                return entry;
+        return null;
+    }
+
+    /// `GetCharFacialHairEntry`
+    const(CharacterFacialHairStylesEntry)* facialHair(ubyte race, ubyte gender, ubyte facialHairId) const
+    {
+        if (auto entry = (race | gender << 8 | facialHairId << 16) in facialHairByKey)
+            return *entry;
+        return null;
+    }
+
+    /// `GetSkillRaceClassInfoMapBounds`
+    const(SkillRaceClassInfoEntry*)[] raceClassInfo(uint skillId) const
+    {
+        return raceClassInfoBySkill.get(skillId, null);
+    }
+
+    /// `GetSkillLineAbilityMapBoundsBySpellId`
+    const(SkillLineAbilityEntry*)[] abilitiesForSpell(uint spellId) const
+    {
+        return abilitiesBySpell.get(spellId, null);
+    }
+
+    /// `GetSkillLineAbilityMapBoundsBySkillId`
+    const(SkillLineAbilityEntry*)[] abilitiesForSkill(uint skillId) const
+    {
+        return abilitiesBySkill.get(skillId, null);
+    }
+
+    /// Every spell id that has a SkillLineAbility entry, ascending (CMaNGOS's multimap order).
+    uint[] spellsWithAbilities() const
+    {
+        auto spells = abilitiesBySpell.keys;
+        spells.sort();
+        return spells;
+    }
+
+    /// `displayInfo->scale * modelData->Scale`, as `Player::InitDisplayIds` sets the object scale; 1 if unknown.
+    float displayScale(uint displayId) const
+    {
+        const display = creatureDisplays.lookup(displayId);
+        if (display is null)
+            return 1;
+        const model = creatureModels.lookup(display.modelId);
+        return model is null ? display.scale : display.scale * model.scale;
+    }
+
+    /// `GetTalentSpellPos`
+    const(TalentSpellPos)* talentSpellPos(uint spellId) const
+    {
+        return spellId in talentSpellPositions;
+    }
+
+    /// The team of a race: `Alliance` for TeamID 7, `Horde` for 1 (`Player::TeamForRace`).
+    Team teamForRace(ubyte race) const
+    {
+        if (auto entry = races.lookup(race))
+        {
+            if (entry.teamId == 7)
+                return Team.alliance;
+            if (entry.teamId == 1)
+                return Team.horde;
+            return Team.none;
+        }
+        return Team.alliance;
+    }
+
+    private static uint sectionKey(ubyte race, uint type, ubyte gender) pure nothrow @nogc @safe
+    {
+        return cast(ubyte) type | gender << 8 | race << 16;
+    }
+
+    private static uint[] ascendingIds(const(uint)[] ids)
+    {
+        auto sorted = ids.dup;
+        sorted.sort();
+        return sorted;
+    }
+}
+
+/// `Team`
+enum Team
+{
+    none,
+    alliance,
+    horde,
+}
+
+private size_t indexOf(string text, char c) pure @safe
+{
+    foreach (i, ch; text)
+        if (ch == c)
+            return i;
+    return text.length;
+}
+
+unittest
+{
+    auto data = new ClientData;
+    const uint[][] sections = [
+        [1, 1, 0, 0, 0, 2, 0, 0, 0, 0],  // human male skin, color 2
+        [2, 1, 0, 3, 4, 1, 0, 0, 0, 0],  // human male hair 4, color 1
+        [3, 1, 0, 3, 5, 1, 0, 0, 0, 1],  // hair 5 is unavailable
+        [4, 10, 0, 0, 0, 0, 0, 0, 0, 0], // a non-playable race, ignored
+    ];
+    data.charSections = typeof(data.charSections).parse(buildDbc(charSectionsFormat, sections), "CharSections.dbc");
+    data.buildIndexes();
+    assert(data.charSection(1, CharSectionType.skin, 0, 0, 2) !is null);
+    assert(data.charSection(1, CharSectionType.hair, 0, 4, 1) !is null);
+    assert(data.charSection(1, CharSectionType.hair, 0, 5, 1) is null, "unavailable sections do not count");
+    assert(data.charSection(1, CharSectionType.skin, 1, 0, 2) is null, "wrong gender");
+    assert(maskOf(1) == 1 && maskOf(8) == 0x80 && maskOf(0) == 0);
+}
