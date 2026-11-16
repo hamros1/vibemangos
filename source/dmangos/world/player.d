@@ -173,6 +173,8 @@ final class Player : InventoryOwner
     bool gmTagOn;
     /// `Player::CanDualWield`: a spell with `SPELL_EFFECT_DUAL_WIELD` is known.
     bool dualWield;
+    /// `Player::m_areaUpdateId`: the area within `data.zone`; the zone itself where there is no map data.
+    uint area;
 
     /**
      * Builds the player from its database rows and the skills and spells

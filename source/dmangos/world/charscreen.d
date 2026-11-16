@@ -301,6 +301,7 @@ private:
     /// `Player::SendInitialPacketsAfterAddToMap`
     void sendInitialPacketsAfterAddToMap()
     {
+        setZoneOnArrival();
         send(ServerFriendList());
         send(ServerIgnoreList());
         send(ServerInitWorldStates(player.data.map, player.data.zone));

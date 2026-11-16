@@ -2,36 +2,54 @@
  * Entry point of the client data extractor.
  *
  * ---
- * extractor [-i CLIENT] [-o OUTPUT]
+ * extractor [-i CLIENT] [-o OUTPUT] [-e MASK]
  * ---
  *
  * Reads the 1.12 client's MPQ archives from `CLIENT/Data` and writes the
- * DBC files to `OUTPUT/dbc`. Point the world server's `data_dir` (or
- * mangosd's `DataDir`) at `OUTPUT`.
+ * DBC files to `OUTPUT/dbc` and the terrain to `OUTPUT/maps`, as CMaNGOS's
+ * `ad` does, and on request the buildings to `OUTPUT/vmaps`, as its
+ * `vmap_extractor` and `vmap_assembler` do (the raw extraction stays in
+ * `OUTPUT/Buildings`). Point the world server's `data_dir` (or mangosd's
+ * `DataDir`) at `OUTPUT`.
  */
 module dmangos.extractor.main;
 
 import std.getopt : defaultGetoptPrinter, getopt, GetOptException, GetoptResult;
 import std.stdio : stderr, writefln, writeln;
 
+import dmangos.extractor.assembler;
 import dmangos.extractor.dbc;
+import dmangos.extractor.maps;
+import dmangos.extractor.vmaps;
 import dmangos.log;
 
 private enum usage = "dmangos client data extractor
 
-Extracts the DBC files from a 1.12 client into OUTPUT/dbc, for the world server's data_dir.
+Extracts the DBC files and the terrain of a 1.12 client into OUTPUT/dbc and OUTPUT/maps,
+and with -e 4 its buildings into OUTPUT/vmaps (by way of OUTPUT/Buildings), for the world
+server's data_dir.
 
 Usage:
-  extractor [-i CLIENT] [-o OUTPUT]
+  extractor [-i CLIENT] [-o OUTPUT] [-e MASK]
 ";
+
+/// What to extract, CMaNGOS's `-e` mask (`Extract`).
+enum Extract : uint
+{
+    maps = 1,
+    dbc = 2,
+    vmaps = 4,
+}
 
 int main(string[] args)
 {
     string input = ".", output = ".";
+    uint extract = Extract.maps | Extract.dbc;
     GetoptResult options;
     try
         options = getopt(args, "input|i", "Client directory, the one containing Data/ (default: .)", &input,
-            "output|o", "Output directory; dbc/ is created in it (default: .)", &output);
+            "output|o", "Output directory; dbc/ and maps/ are created in it (default: .)", &output,
+            "extract|e", "What to extract, added up: 1 maps, 2 DBC files, 4 vmaps (default: 3)", &extract);
     catch (GetOptException e)
     {
         stderr.writeln(e.msg);
@@ -53,12 +71,40 @@ int main(string[] args)
         writeln("Archives (newest first):");
         foreach (archive; archives)
             writefln("  %s", archive.name);
-        const report = extractDbcFiles(archives, output);
-        foreach (skipped; report.skipped)
-            warning!"skipped %s"(skipped);
-        writefln("Extracted %s DBC files to %s/dbc", report.extracted, output);
-        foreach (archive, count; report.perArchive)
-            writefln("  %4s from %s", count, archive);
+        if (extract & Extract.dbc)
+        {
+            const report = extractDbcFiles(archives, output);
+            foreach (skipped; report.skipped)
+                warning!"skipped %s"(skipped);
+            writefln("Extracted %s DBC files to %s/dbc", report.extracted, output);
+            foreach (archive, count; report.perArchive)
+                writefln("  %4s from %s", count, archive);
+        }
+        if (extract & Extract.maps)
+        {
+            const report = extractMaps(archives, output, (string line) { writefln("  %s", line); });
+            foreach (problem; report.problems)
+                warning!"%s"(problem);
+            writefln("Extracted %s tiles of %s maps to %s/maps", report.tiles, report.maps, output);
+        }
+        if (extract & Extract.vmaps)
+        {
+            auto vmapSources = openClientArchives(input, vmapArchives);
+            scope (exit)
+                foreach (archive; vmapSources)
+                    archive.close();
+            void delegate(string) print = (string line) { writefln("  %s", line); };
+            const raw = extractVmapData(vmapSources, output, print);
+            writefln("Extracted %s buildings and %s doodads, %s placements, to %s/Buildings", raw.wmos, raw.models,
+                raw.spawns, output);
+            if (raw.missing.length)
+                writefln("  %s models placed but not in the archives (a few are expected)", raw.missing.length);
+            const built = assembleVmaps(output, print);
+            foreach (problem; built.problems)
+                warning!"%s"(problem);
+            writefln("Assembled %s maps, %s tiles and %s models to %s/vmaps", built.maps, built.tiles, built.models,
+                output);
+        }
         return 0;
     }
     catch (Exception e)

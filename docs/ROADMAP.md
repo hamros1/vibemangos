@@ -5,7 +5,8 @@
 | Area | State | Where |
 |---|---|---|
 | Login server | Complete: SRP6, reconnect, realm list, bans, throttling, account CLI | `auth/` |
-| DBC extraction | Complete for DBCs; maps, vmaps and mmaps not started | `extractor/`, `mpq/` |
+| Client data extraction | DBC files, terrain as CMaNGOS's `.map` files, buildings and doodads as its vmaps; mmaps not started | `extractor/`, `mpq/`, `mapfile.d`, `vmap/` |
+| Terrain | Ground heights, areas and liquids from the `.map` files and the vmaps (floors, bridges, roofs, the areas of buildings, indoors, line of sight); the server decides zones and areas, explored areas give experience | `world/terrain.d`, `vmap/`, `world/exploration.d` |
 | World handshake | Complete: session key proof, header encryption, addons, ping | `world/session.d` |
 | Character list, creation, deletion | Full parity with CMaNGOS, incl. guild, group, auction and mail cleanup on delete | `world/charscreen.d`, `playercreate.d`, `characterdb.d` |
 | Entering the world | Character, inventory, skills, spellbook, action bars, stats with gear; same packet sequence as mangosd | `world/charscreen.d`, `player.d`, `stats.d` |
@@ -33,9 +34,13 @@
   that need auras, reputation, quests in the log, world states or scripts are never met. Elevators
   are created but do not move. Ships and zeppelins are not
   spawned. Cells are never unloaded (mangosd unloads idle grids after a while).
-* **Rested XP** is earned but not spent, because there is no XP gain yet.
+* **Rested XP** is earned but not spent: only kills spend it, and there are none yet. Exploration
+  is the only experience so far.
+* **Terrain:** heights and line of sight are there to use, but nothing uses them yet: creatures
+  do not move and spells are not cast. Game objects' models (doors, elevators) are extracted but
+  do not block sight (CMaNGOS's dynamic tree). Without mmaps there are no paths.
 * **Movement:** the speed check assumes running speed; it must learn mounts, speed auras,
-  knockbacks and taxis when those exist. Explored zones are not updated; that needs map data.
+  knockbacks and taxis when those exist.
 * **Teleports:** there is one map per map id, so everyone entering a dungeon shares one copy.
   Instance ids, binds (`character_instance`, `group_instance`) and resets come with milestone 3's
   map updates. Area triggers with a `condition_id` stay closed until conditions are loaded;
@@ -82,15 +87,11 @@ creature movement (random and waypoint, `creature_movement`), flight masters, us
 `MotionGenerators/`, `Entities/GossipDef.cpp`, `GossipHandler.cpp`, `NPCHandler.cpp`,
 `TaxiHandler.cpp`.
 
-### 4. Map data
+### 4. Map data: started
 
-CMaNGOS references: `contrib/extractor`, `contrib/vmap_extractor`, `contrib/mmap`,
-`src/game/Maps/GridMap.cpp`.
-
-* Extend the extractor to write CMaNGOS's `maps/*.map` files: heights, areas and liquids from ADT
-  and WDT. The MPQ reader already handles the archives.
-* Load them for ground height, area ids (explored zones, `CMSG_ZONEUPDATE` checks), and later
-  line of sight (vmaps) and pathfinding (mmaps, via recast/detour or the mmaps CMaNGOS writes).
+Done: `.map` files and vmaps, extracted and read; zones and areas, explored areas. See
+ARCHITECTURE.md's "Terrain". Next: mmaps (`contrib/mmap`, recast and detour) for paths, and game
+objects' models in line of sight (`vmap/DynamicTree.cpp`, `GameObjectModel.cpp`).
 
 ### 5. Inventory: done
 

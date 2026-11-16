@@ -417,6 +417,31 @@ struct DurabilityQualityEntry
 
 enum durabilityQualityFormat = "nf"; ///
 
+/// `LiquidTypeEntry`
+struct LiquidTypeEntry
+{
+    uint id;
+    uint liquidId;
+    uint type;    /// 0 magma, 2 slime, 3 water: the bit of `MAP_LIQUID_TYPE_*` it sets
+    uint spellId;
+}
+
+enum liquidTypeFormat = "niii"; ///
+
+/// `WMOAreaTableEntry`: the area a building group belongs to.
+struct WmoAreaTableEntry
+{
+    uint id;
+    int rootId;   /// the building's WMO id
+    int adtId;    /// the name set its placement gives
+    int groupId;  /// the group's WMO id
+    uint flags;
+    uint areaId;  /// `AreaTable.dbc`; 0 to take the land's
+    string[8] name;
+}
+
+enum wmoAreaTableFormat = "niiixxxxxiissssssssx"; ///
+
 /// Talent and rank a spell belongs to (`TalentSpellPos`).
 struct TalentSpellPos
 {
@@ -456,6 +481,8 @@ final class ClientData
     DbcStore!(BankBagSlotPricesEntry, bankBagSlotPricesFormat) bankBagSlotPrices;
     DbcStore!(DurabilityCostsEntry, durabilityCostsFormat) durabilityCosts;
     DbcStore!(DurabilityQualityEntry, durabilityQualityFormat) durabilityQualities;
+    DbcStore!(LiquidTypeEntry, liquidTypeFormat) liquidTypes;
+    DbcStore!(WmoAreaTableEntry, wmoAreaTableFormat) wmoAreas;
 
     private
     {
@@ -465,6 +492,9 @@ final class ClientData
         const(SkillLineAbilityEntry)*[][uint] abilitiesBySpell;
         const(SkillLineAbilityEntry)*[][uint] abilitiesBySkill;
         TalentSpellPos[uint] talentSpellPositions;
+        const(AreaTableEntry)*[][uint] areasByFlag; // explore flag -> areas, ascending ids
+        uint[uint] areaFlagByMap;                   // `sAreaFlagByMapID`
+        const(WmoAreaTableEntry)*[][int[3]] wmoAreasByTriple; // `sWMOAreaInfoByTripple`
     }
 
     /// Reads the DBC files from `<dataDir>/dbc/`.
@@ -481,7 +511,7 @@ final class ClientData
             "creatureModels:CreatureModelData", "emotesText:EmotesText", "emotes:Emotes", "maps:Map",
             "areas:AreaTable", "areaTriggers:AreaTrigger", "chatChannels:ChatChannels",
             "bankBagSlotPrices:BankBagSlotPrices", "durabilityCosts:DurabilityCosts",
-            "durabilityQualities:DurabilityQuality"])
+            "durabilityQualities:DurabilityQuality", "liquidTypes:LiquidType", "wmoAreas:WMOAreaTable"])
         {{
             enum parts = member.findSplit(":");
             enum field = parts[0];
@@ -504,7 +534,23 @@ final class ClientData
         abilitiesBySpell = null;
         abilitiesBySkill = null;
         talentSpellPositions = null;
+        areasByFlag = null;
+        areaFlagByMap = null;
+        wmoAreasByTriple = null;
+        foreach (id; ascendingIds(wmoAreas.ids))
+        {
+            const entry = wmoAreas.lookup(id);
+            wmoAreasByTriple[[entry.rootId, entry.adtId, entry.groupId]] ~= entry;
+        }
 
+        foreach (id; ascendingIds(areas.ids))
+        {
+            const area = areas.lookup(id);
+            areasByFlag[area.exploreFlag] ~= area;
+            // An instance's area, for maps without .map files (no sub-zones, no continents).
+            if (area.zone == 0 && area.mapId != 0 && area.mapId != 1)
+                areaFlagByMap.require(area.mapId, area.exploreFlag);
+        }
         foreach (id; ascendingIds(charSections.ids))
         {
             const entry = charSections.lookup(id);
@@ -536,6 +582,40 @@ final class ClientData
                 if (spell)
                     talentSpellPositions[spell] = TalentSpellPos(id, cast(uint) rank);
         }
+    }
+
+    /**
+     * `GetAreaEntryByAreaFlagAndMap`: the area whose explore flag a map cell holds. 1.12's
+     * `AreaTable.dbc` repeats flags, so the one on `map` is taken, else the last other one, else
+     * the map's own zone.
+     */
+    const(AreaTableEntry)* areaByFlag(uint flag, uint map) const
+    {
+        const(AreaTableEntry)* found;
+        if (flag != 0)
+            foreach (area; areasByFlag.get(flag, null))
+            {
+                if (area.mapId == map)
+                    return area;
+                found = area;
+            }
+        if (found !is null)
+            return found;
+        if (const entry = maps.lookup(map))
+            return areas.lookup(entry.linkedZone);
+        return null;
+    }
+
+    /// `GetWMOAreaTableEntriesByTripple`: the areas of a building group, by root, placement name set and group.
+    const(WmoAreaTableEntry*)[] wmoAreasOf(int rootId, int adtId, int groupId) const
+    {
+        return wmoAreasByTriple.get([rootId, adtId, groupId], null);
+    }
+
+    /// `GetAreaFlagByMapId`: the explore flag of an instance's area; 0 if it has none.
+    uint areaFlagOfMap(uint map) const
+    {
+        return areaFlagByMap.get(map, 0);
     }
 
     /// `GetCharSectionEntry`: an available section of a type, variation and color, or null.

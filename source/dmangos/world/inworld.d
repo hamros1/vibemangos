@@ -105,7 +105,7 @@ private:
 
     /**
      * One tick (`WorldSession::Update`, `Player::Update`): the logout countdown, regeneration every
-     * two seconds, rest, and the periodic save.
+     * two seconds, rest, the zone check every second, and the periodic save.
      */
     void updateInWorld(Duration elapsed)
     {
@@ -152,25 +152,12 @@ private:
             }
         }
 
+        if (zoneTimer.update(elapsed) && zoneTimer.consume())
+            checkZone();
+
         // A save starts the interval again (SaveToDB resets m_nextSave): no catching up after a stall.
         if (saveTimer.update(elapsed))
             savePlayer();
-    }
-
-    /// `Player::UpdateZone`'s rest: a capital (AREA_FLAG_CAPITAL) rests; leaving it does not.
-    void updateCityRest()
-    {
-        enum uint areaFlagCapital = 0x100;
-        const zone = context.client.areas.lookup(player.data.zone);
-        const now = context.unixTime;
-        if (zone !is null && (zone.flags & areaFlagCapital))
-        {
-            if (player.restType != RestType.city)
-                player.setRestType(RestType.city, now);
-        }
-        else if (player.restType == RestType.city)
-            player.setRestType(RestType.none, now);
-        flushPlayerChanges();
     }
 
     // -----------------------------------------------------------------------
@@ -223,6 +210,7 @@ private:
                 groupPositionAt = p;
                 group.updatePlayerOutOfRange(this, GroupUpdate.position);
             }
+        afterMove();
     }
 
     /**
@@ -396,20 +384,6 @@ private:
     {
         player.setTarget(request.guid); // others see whom the player has targeted
         flushPlayerChanges();
-    }
-
-    /// `Player::UpdateZone`: world states, zone channels, and the group's zone of the player.
-    @Handles(Opcode.CMSG_ZONEUPDATE, WorldState.inWorld)
-    void handleZoneUpdate(const ClientZoneUpdate request)
-    {
-        if (request.zone == player.data.zone)
-            return;
-        player.data.zone = request.zone;
-        send(ServerInitWorldStates(player.data.map, request.zone));
-        updateCityRest();
-        context.channelsFor(this).zoneChanged(this, context.client.areaName(request.zone));
-        if (auto group = context.groups.of(player.guid))
-            group.updatePlayerOutOfRange(this, GroupUpdate.zone);
     }
 
     // -----------------------------------------------------------------------

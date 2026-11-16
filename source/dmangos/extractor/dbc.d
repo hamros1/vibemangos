@@ -37,14 +37,14 @@ struct ExtractionReport
     string[] skipped;         /// names not written, with the reason
 }
 
-/// Opens the client's archives that exist, newest first.
-MpqArchive[] openClientArchives(string clientDir)
+/// Opens those of `names` (oldest first) the client has, newest first.
+MpqArchive[] openClientArchives(string clientDir, const(string)[] names = clientArchives)
 {
     const data = buildPath(clientDir, "Data");
     enforce(exists(data),
         format!"'%s' has no Data folder; point the extractor at the client's main directory"(clientDir));
     MpqArchive[] archives;
-    foreach_reverse (archive; clientArchives)
+    foreach_reverse (archive; names)
     {
         const path = buildPath(data, archive);
         if (exists(path))

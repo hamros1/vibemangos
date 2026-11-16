@@ -11,7 +11,8 @@ A World of Warcraft **1.12.x (vanilla)** server written in **D**, modelled on
   with them: the character has its gear, bags, skills, spellbook and action bars, and is saved on
   logout. Players on the same map see each other move, sit and emote, hear each other's say, yell
   and emotes, and can whisper. There are no creatures or objects yet.
-* **extractor** copies the DBC files out of a 1.12 client's MPQ archives into a `dbc/` folder.
+* **extractor** copies the DBC files out of a 1.12 client's MPQ archives into a `dbc/` folder, and
+  converts its terrain into CMaNGOS's `.map` files in a `maps/` folder.
   That folder is the client data the world server reads.
 
 Both run on **unmodified CMaNGOS MySQL/MariaDB databases** (`classicrealmd`,
@@ -105,8 +106,11 @@ cp config/worldserver.example.json worldserver.json # then edit the *_database e
 ./bin/worldserver                                   # listens on 0.0.0.0:8085
 ```
 
-`data_dir` must point at a directory containing a `dbc/` folder extracted from your client. Use
-dmangos's own extractor (below), or point it at mangosd's `DataDir`, which works as is. Character creation reads
+`data_dir` must point at a directory containing a `dbc/` folder extracted from your client, and
+preferably a `maps/` folder too. Use dmangos's own extractor (below), or point it at mangosd's
+`DataDir`, which works as is. Without `maps/` the server takes the client's word for which zone it
+is in, and nothing is explored. With `vmaps/` too, buildings count: heights on floors, bridges and
+roofs, the areas inside buildings, indoors and outdoors, and what blocks a line of sight. Character creation reads
 `ChrClasses`, `ChrRaces`, `CharStartOutfit`, `CharSections`, `CharacterFacialHairStyles`,
 `SkillLine`, `SkillLineAbility`, `SkillRaceClassInfo`, `SkillTiers`, `Talent` and `TalentTab`
 from it. Entering the world also reads `CreatureDisplayInfo`, `CreatureModelData`, `Emotes`,
@@ -250,6 +254,7 @@ time.
 | `announce_tag_color`, `announce_gm_tag_color`, `announce_name_color`, `announce_message_color` | ArcEmu's `Color.Ann*Color` (1-10) | `2`, `1`, `4`, `10` |
 | `rate_health`, `rate_mana`, `rate_rage_loss`, `rate_energy` | `Rate.Health`, `Rate.Mana`, `Rate.Rage.Loss`, `Rate.Energy` | `1` |
 | `rate_rest_ingame`, `rate_rest_offline_in_tavern_or_city`, `rate_rest_offline_in_wilderness` | `Rate.Rest.*` | `1` |
+| `rate_xp_explore` | `Rate.XP.Explore` | `1` |
 | `max_player_level` | `MaxPlayerLevel` | `60` |
 | `movement_speed_check`, `movement_speed_tolerance`, `movement_speed_slack` | n/a (CMaNGOS leaves it to its anticheat module): allow this factor over running speed, plus these yards | `true`, `1.5`, `15` |
 | `start_player_level`, `start_gm_level`, `start_player_money` | `StartPlayerLevel`, `GM.StartLevel`, `StartPlayerMoney` | `1`, `1`, `0` |
@@ -261,7 +266,9 @@ time.
 ## Extracting client data
 
 ```sh
-./bin/extractor -i "/path/to/WoW 1.12.1" -o /path/to/data   # writes /path/to/data/dbc/*.dbc
+./bin/extractor -i "/path/to/WoW 1.12.1" -o /path/to/data   # writes data/dbc/*.dbc and data/maps/*.map
+./bin/extractor -i "/path/to/WoW 1.12.1" -o /path/to/data -e 1   # maps only (-e 2: DBC files only)
+./bin/extractor -i "/path/to/WoW 1.12.1" -o /path/to/data -e 4   # vmaps: buildings and doodads
 ```
 
 The extractor follows CMaNGOS's `ad` extractor:
@@ -273,10 +280,21 @@ The extractor follows CMaNGOS's `ad` extractor:
 * It checks that each file is a complete DBC, and skips one-byte placeholders that patches use
   for removed files.
 
-A 1.12.1 client yields 158 files in well under a second. The MPQ reader (`source/dmangos/mpq/`)
+* It converts every map's terrain tiles (`World\Maps\NAME\NAME_X_Y.adt`, as each map's WDT lists
+  them) into `maps/MMMYYXX.map`: area flags, ground heights packed as CMaNGOS packs them, liquids
+  and holes. The files are CMaNGOS's version "z1.4", so either extractor's output serves either
+  server.
+
+* With `-e 4` it extracts the buildings and doodads as CMaNGOS's `vmap_extractor` does, into
+  `Buildings/`, and assembles them as its `vmap_assembler` does, into `vmaps/`: a tree over each
+  map's models, a file per tile, and each model with trees over its groups and triangles
+  (version "VMAP_7.0"). `Buildings/` is kept: CMaNGOS's mmap generator reads it.
+
+A 1.12.1 client yields 158 DBC files in well under a second, 2429 map tiles of 44 maps (150 MB)
+in about 13 seconds, and vmaps of 815 buildings and 3138 doodads, placed 505,837 times
+(276 MB, with 152 MB of `Buildings/`), in about 30 seconds. The MPQ reader (`source/dmangos/mpq/`)
 handles plain, encrypted, sector and single-unit files, compressed with zlib or PKWare DCL, which
-are the encodings 1.12 data files use. Maps, vmaps and mmaps still come from CMaNGOS's tools;
-nothing in dmangos reads them yet.
+are the encodings 1.12 data files use. Mmaps (paths) are not generated or read yet.
 
 ## Layout
 
@@ -320,6 +338,8 @@ source/dmangos/world/       the world server (mangosd)
   npchandlers.d               handlers: gossip, NPC texts, trainers, innkeepers, bankers, vendors
   npcdata.d                   gossip menus, texts, trainer and vendor lists from the world database
   itemhandlers.d              handlers: moving, equipping, banking and destroying items; buying, selling, repairs
+  terrain.d                   the .map files: ground heights, areas, liquids per tile, and zones from them
+  exploration.d               zones and areas from the map, explored areas, experience
   inventory.d                 items and bags, and CMaNGOS's rules for storing, equipping, swapping, saving them
   conditions.d                the conditions table: requirements of menus, lessons and wares
   commandtable.d              ArcEmu's GM command tables, row for row
@@ -356,7 +376,9 @@ source/dmangos/world/       the world server (mangosd)
   worlddata.d                 items, creatures, playercreateinfo_*, level stats from the world database
   realm.d                     realmlist/uptime registration, as mangosd does
   config.d, context.d         configuration; state shared by sessions
-source/dmangos/extractor/   the client data extractor: main.d, dbc.d (DBC extraction)
+source/dmangos/extractor/   the client data extractor: main.d, dbc.d (DBC files), maps.d (terrain to .map files),
+                              vmaps.d and assembler.d (buildings and doodads to vmaps)
+source/dmangos/vmap/        the vmap format and queries: math.d (G3D's), bih.d (the tree), model.d, maptree.d
 ```
 
 Each program is a dub configuration with its own `main.d`, which the other configuration

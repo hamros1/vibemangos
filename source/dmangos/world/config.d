@@ -74,7 +74,7 @@ struct WorldConfig
     /// `UpdateUptimeInterval`, in minutes.
     @JsonName("uptime_update_interval") uint uptimeUpdateMinutes = 10;
 
-    /// `DataDir`: the directory holding the extracted `dbc/` folder.
+    /// `DataDir`: the directory holding the extracted `dbc/` folder, and `maps/` if extracted.
     @JsonName("data_dir") string dataDir = ".";
 
     /// `CharactersCreatingDisabled`: bit 0 blocks Alliance, bit 1 Horde, for player accounts.
@@ -134,6 +134,8 @@ struct WorldConfig
     @JsonName("rate_rest_ingame") float rateRestInGame = 1;
     @JsonName("rate_rest_offline_in_tavern_or_city") float rateRestOfflineInTavernOrCity = 1; /// ditto
     @JsonName("rate_rest_offline_in_wilderness") float rateRestOfflineInWilderness = 1;       /// ditto
+    /// `Rate.XP.Explore`: experience for discovering an area.
+    @JsonName("rate_xp_explore") float rateXpExplore = 1;
     /// `MaxPlayerLevel`
     @JsonName("max_player_level") uint maxPlayerLevel = 60;
     /// `StartPlayerLevel`

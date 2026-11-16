@@ -155,8 +155,7 @@ private:
         case itemEquipped:
             return equipped(player, c.value1);
         case areaId:
-            // Without map data the area is not known: the zone stands for it.
-            return (player.data.zone == c.value1) == (c.value2 == 0);
+            return (player.data.zone == c.value1 || player.area == c.value1) == (c.value2 == 0);
         case team:
             const playerTeam = client.teamForRace(player.data.race);
             return (playerTeam == Team.alliance ? 469 : playerTeam == Team.horde ? 67 : 0) == c.value1;
@@ -175,7 +174,7 @@ private:
         case questNone:
             return (c.value1 in player.data.rewardedQuests) is null;
         case areaFlag:
-            const area = client.areas.lookup(player.data.zone);
+            const area = client.areas.lookup(player.area);
             return area !is null && (!c.value1 || (area.flags & c.value1)) && (!c.value2 || !(area.flags & c.value2));
         case raceClass:
             return (!c.value1 || (1u << (player.data.race - 1)) & c.value1)

@@ -297,6 +297,9 @@ def describe(op, p):
         received, created, show, bag, slot, entry, suffix, prop, count = struct.unpack_from("<IIIBIIIiI", p, 8)
         print(f"  [item received] {count} x {entry} in bag {bag} slot {slot if slot != 0xFFFFFFFF else 'stack'}")
     elif op == 0x1D4: print(f"  [level up] to level {struct.unpack_from('<I', p)[0]}")
+    elif op == 0x1D0: print("  [experience] %d (kind %d)" % struct.unpack_from("<IB", p, 8))
+    elif op == 0x1F8: print("  [discovered] area %d: %d experience" % struct.unpack("<II", p))
+    elif op == 0x2C2: print("  [world states] map %d zone %d" % struct.unpack_from("<II", p))
     elif op == 0x12B: print(f"  [learned spell] {struct.unpack_from('<I', p)[0]}")
     elif op == 0x061:
         entry = struct.unpack_from("<I", p)[0]

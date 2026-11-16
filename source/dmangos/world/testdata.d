@@ -31,6 +31,8 @@ enum uint triggerDeadmines = 78; /// ditto
 enum uint triggerInn = 562;       /// an inn's area trigger (the Lion's Pride Inn), at `innPosition`
 enum float[3] innPosition = [-9459.6f, 42.1f, 57.5f]; /// ditto
 enum uint zoneElwynn = 12, zoneStormwind = 1519;      /// `AreaTable.dbc`: a zone, and a capital
+enum uint areaGoldshire = 87;                          /// an area of Elwynn, level 5
+enum uint exploreElwynn = 40, exploreStormwind = 41, exploreGoldshire = 42; /// their explore flags
 enum uint creatureWillem = 823;                        /// Deputy Willem, spawned near Northshire Abbey
 /// NPCs right next to the Northshire start position: a warrior trainer, an innkeeper who sells food, a banker.
 enum uint creatureTrainer = 911, creatureInnkeeper = 6774, creatureBanker = 2455;
@@ -122,19 +124,34 @@ ClientData testClientData()
         floatBits(deadminesEntrance[2]), floatBits(5), 0, 0, 0, 0], [triggerInn, mapEasternKingdoms,
         floatBits(innPosition[0]), floatBits(innPosition[1]), floatBits(innPosition[2]), floatBits(10), 0, 0, 0, 0]]),
         "AreaTrigger.dbc");
-    // AreaTable: id, map, zone, explore flag, flags (0x100 for a capital), ...
-    uint[] areaRecord(uint id, uint flags)
+    // AreaTable: id, map, zone, explore flag, flags (0x100 for a capital), ..., area level (10)
+    uint[] areaRecord(uint id, uint flags, uint explore, uint zone = 0, uint level = 0)
     {
         auto record = new uint[areaTableFormat.length];
         record[0] = id;
+        record[2] = zone;
+        record[3] = explore;
         record[4] = flags;
+        record[10] = level;
         return record;
     }
-    client.areas = typeof(client.areas).parse(buildDbc(areaTableFormat, [areaRecord(zoneElwynn, 0),
-        areaRecord(zoneStormwind, 0x100)]), "AreaTable.dbc");
+    client.areas = typeof(client.areas).parse(buildDbc(areaTableFormat, [areaRecord(zoneElwynn, 0, exploreElwynn),
+        areaRecord(zoneStormwind, 0x100, exploreStormwind), areaRecord(areaGoldshire, 0, exploreGoldshire, zoneElwynn, 5)]),
+        "AreaTable.dbc");
+    // WMOAreaTable: the test house's group (root 500, name set 3, group 600) is in Goldshire.
+    auto wmoArea = new uint[wmoAreaTableFormat.length];
+    wmoArea[0] = 1;
+    wmoArea[1] = testHouseRoot;
+    wmoArea[2] = testHouseNameSet;
+    wmoArea[3] = testHouseGroup;
+    wmoArea[10] = areaGoldshire;
+    client.wmoAreas = typeof(client.wmoAreas).parse(buildDbc(wmoAreaTableFormat, [wmoArea]), "WMOAreaTable.dbc");
     client.buildIndexes();
     return client;
 }
+
+/// The building of the vmap tests: its WMO root and group ids and its placement's name set.
+enum int testHouseRoot = 500, testHouseGroup = 600, testHouseNameSet = 3;
 
 private uint floatBits(float value) @trusted
 {

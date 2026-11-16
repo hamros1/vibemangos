@@ -53,6 +53,7 @@ import dmangos.world.gmlevel1 : Level1Commands;
 import dmangos.world.gmlevel2 : Level2Commands;
 import dmangos.world.gmlevel3 : Level3Commands;
 import dmangos.world.grouphandlers : GroupHandlers;
+import dmangos.world.exploration : Exploration;
 import dmangos.world.inworld : InWorldHandlers;
 import dmangos.world.itemhandlers : ItemHandlers;
 import dmangos.world.npchandlers : NpcHandlers;
@@ -135,6 +136,13 @@ final class WorldSession : NetSession, Kickable, OnlinePlayer
         IntervalTimer regenTimer = IntervalTimer(2.seconds);  // REGEN_TIME_FULL
         IntervalTimer restTimer = IntervalTimer(1.seconds);
         IntervalTimer saveTimer;
+
+        // Zones: the once-a-second check (Player::m_zoneUpdateTimer), a zone the client announced
+        // (SetDelayedZoneUpdate), and the 100 ms position checks (m_positionStatusUpdateTimer).
+        IntervalTimer zoneTimer = IntervalTimer(1.seconds);
+        bool zoneUpdatePending;
+        uint pendingZone;
+        uint lastPositionCheck; // server time
 
         // The movement check: where the player was, and when.
         Position checkpoint;
@@ -561,6 +569,7 @@ private:
     mixin ChannelHandlers;
     mixin NpcHandlers;
     mixin ItemHandlers;
+    mixin Exploration;
     mixin ChatCommands;
     mixin GmActions;
     mixin Level0Commands;

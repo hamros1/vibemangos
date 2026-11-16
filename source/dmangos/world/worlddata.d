@@ -270,6 +270,7 @@ final class WorldData
     bool[dstring] reservedNames;            /// lower-cased
     SpellData spells;
     uint[] xpForNextLevel;                  /// `player_xp_for_level`, index = level
+    uint[uint] baseXp;                      /// `exploration_basexp`, by level (`ObjectMgr::GetBaseXP`)
     ModelInfo[uint] models;                 /// `creature_model_info`, by display id
     AreaTriggerTeleport[uint] areaTriggers; /// `areatrigger_teleport`, by trigger id
     GameTele[] teleports;                   /// `game_tele`, in id order
@@ -414,6 +415,8 @@ final class WorldData
                 data.xpForNextLevel.length = level + 1;
             data.xpForNextLevel[level] = row.get!uint(1);
         }
+        foreach (row; world.query!"SELECT level, basexp FROM exploration_basexp"())
+            data.baseXp[row.get!uint(0)] = row.get!uint(1);
         foreach (row; world.query!"SELECT modelid, bounding_radius, combat_reach, gender FROM creature_model_info"())
             data.models[row.get!uint(0)] = ModelInfo(row.get!float(1), row.get!float(2), cast(ubyte) row.get!uint(3));
         foreach (row; world.query!"SELECT Entry, Family FROM creature_template"())

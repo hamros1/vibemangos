@@ -6,7 +6,7 @@ dmangos is one dub package that builds three programs:
 |---|---|---|
 | `authserver` | `realmd` | `source/dmangos/auth/main.d` |
 | `worldserver` | `mangosd` | `source/dmangos/world/main.d` |
-| `extractor` | `ad` (the DBC part of `contrib/extractor`) | `source/dmangos/extractor/main.d` |
+| `extractor` | `ad` (`contrib/extractor`: DBC files and `.map` terrain) | `source/dmangos/extractor/main.d` |
 
 They share the code directly under `source/dmangos/`. Each program is a dub configuration, and
 each configuration excludes the other programs' `main.d` files. This is how DCD builds its client
@@ -25,6 +25,7 @@ source/dmangos/
   mysql/                                                   the MySQL C API loaded at run time; checked queries
   net/                                                     the TCP server loop; compile-time packet dispatch
   mpq/                                                     MPQ archives: tables, hashing, PKWare explode
+  vmap/                                                    buildings and doodads: G3D's math, the BIH tree, models, map trees
   auth/                                                    the login server
   world/                                                   the world server
   extractor/                                               the client data extractor
@@ -35,9 +36,9 @@ The world server's modules, by layer:
 | Layer | Modules |
 |---|---|
 | Protocol | `opcodes` (values), `packets` (fixed layouts), `queries` (variable layouts), `crypt` (header cipher), `addons` |
-| Session | `session` (framing, handshake), the handler groups `charscreen`, `inworld`, `teleport`, `grouphandlers`, `channelhandlers`, `npchandlers`, `itemhandlers`, and the GM system `commands`, `commandtable`, `gmactions`, `gmlevel0` .. `gmlevel3`, `gmdebug`; `context` (shared state) |
+| Session | `session` (framing, handshake), the handler groups `charscreen`, `inworld`, `teleport`, `grouphandlers`, `channelhandlers`, `npchandlers`, `itemhandlers`, `exploration`, and the GM system `commands`, `commandtable`, `gmactions`, `gmlevel0` .. `gmlevel3`, `gmdebug`; `context` (shared state) |
 | Game objects | `player` (a character in the world), `objects` (update packets), `updatefields` (the field table), `movement`, `stats` |
-| World | `map` (players and objects on a map, visibility, broadcasting), `grid` (cells), `creature`, `gameobject`, `online` (what groups and channels see of players), `group` (parties and raids), `channel` (chat channels), `context` (maps, the players online, groups, channels) |
+| World | `map` (players and objects on a map, visibility, broadcasting), `grid` (cells), `terrain` (ground, areas, liquids), `creature`, `gameobject`, `online` (what groups and channels see of players), `group` (parties and raids), `channel` (chat channels), `context` (maps, the players online, groups, channels) |
 | Game rules | `inventory` (items and every rule for moving them), `playercreate` (`Player::Create`, and the spells relearned at login), `conditions`, `characters` (character list), `names`, `defines` |
 | Static data | `clientdata` (DBC files), `worlddata` (world database), `spells` |
 | Persistence | `database` (the interface, plus an in-memory version for tests), `characterdb` (the SQL) |
@@ -113,6 +114,7 @@ final class WorldSession : NetSession, Kickable, OnlinePlayer
     mixin ChannelHandlers;          // channelhandlers.d: ChannelHandler.cpp
     mixin NpcHandlers;              // npchandlers.d: NPCHandler.cpp, the gossip half of Player.cpp
     mixin ItemHandlers;             // itemhandlers.d: ItemHandler.cpp, repairs, Player::BuyItemFromVendor
+    mixin Exploration;              // exploration.d: Player::UpdateZone, CheckAreaExploreAndOutdoor, GiveXP
     mixin ChatCommands;             // commands.d: ArcEmu's ParseCommands, ExecuteCommandInTable, messages
     mixin GmActions;                // gmactions.d: what the handlers do to players
     mixin Level0Commands;           // gmlevel0.d .. gmlevel3.d, gmdebug.d: ArcEmu's handlers,
@@ -276,6 +278,34 @@ characters: `loadAbilities` loads what the character knows (its saved spell rows
 `CharacterData.spells`, and its skills), then `learnInWorld` learns the spell and returns the new
 abilities, the packets CMaNGOS sends (`SMSG_LEARNED_SPELL`, or `SMSG_SUPERCEDED_SPELL` when a rank
 replaces another) and the rows to save.
+
+## Terrain
+
+The extractor (`extractor/maps.d`) turns each map's ADT tiles into CMaNGOS's `.map` files, whose
+layout `mapfile.d` holds for both sides. `world/terrain.d` reads them: `GridMap` is one 533-yard
+tile, and `Terrain` (CMaNGOS's `TerrainInfo`) a map's tiles, read the first time anything asks
+about them. `WorldContext.terrain(map)` keeps one per map.
+
+Buildings and doodads come from the vmaps (`vmap/`, CMaNGOS's `src/game/vmap/`): the extractor
+writes each model's collision triangles and every placement (`extractor/vmaps.d`), the assembler
+builds bounding interval hierarchies over a map's placements, each model's groups and each group's
+triangles (`extractor/assembler.d`, `vmap/bih.d`), and `vmap/maptree.d` loads a map's tree and its
+tiles' placements as the terrain's tiles load. `Terrain.heightStatic` is `GetHeightStatic`: the
+building surface or the terrain the point stands on. `buildingArea` finds the building group a point
+is in, which gives indoors and outdoors and, through `WMOAreaTable.dbc`, the areas inside buildings;
+`isInLineOfSight` casts a ray through the placed models. The math is G3D's, in `float`
+(`vmap/math.d`), computed as CMaNGOS computes it; the files have CMaNGOS's layout.
+
+A tile has 128 x 128 squares, each with four corner heights and a centre height; a height lookup
+finds the triangle of the square the point is in and solves its plane, as `GridMap::getHeight`
+does. Each of the tile's 16 x 16 cells holds an `AreaTable.dbc` explore flag, which
+`ClientData.areaByFlag` turns into the area, and the area into its zone. Liquids give a level and
+whether a point is above, in or under them.
+
+`exploration.d` uses them as `Player` does: the zone is the server's, checked once a second and
+after the client's `CMSG_ZONEUPDATE`; every 100 ms of movement, an area entered for the first time
+sets its `PLAYER_EXPLORED_ZONES` bit and gives experience by the area's level
+(`exploration_basexp`, `rate_xp_explore`). `giveXP` is `Player::GiveXP`, with level-ups.
 
 ## Items
 

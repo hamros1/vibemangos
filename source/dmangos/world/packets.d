@@ -1370,3 +1370,24 @@ struct ServerOpenContainer
     mixin ServerPacket!(Opcode.SMSG_OPEN_CONTAINER);
     ulong bag;
 }
+
+// ---------------------------------------------------------------------------
+// Experience (Player::SendLogXPGain, SendExplorationExperience)
+// ---------------------------------------------------------------------------
+
+/// `SMSG_LOG_XPGAIN` for experience not from a kill ("You gain N experience").
+struct ServerLogXpGain
+{
+    mixin ServerPacket!(Opcode.SMSG_LOG_XPGAIN);
+    ulong victim;       /// 0: not a kill
+    uint amount;        /// with the rested bonus
+    ubyte kind = 1;     /// 0 a kill, 1 anything else
+}
+
+/// `SMSG_EXPLORATION_EXPERIENCE`: "Discovered AREA: N experience gained".
+struct ServerExplorationExperience
+{
+    mixin ServerPacket!(Opcode.SMSG_EXPLORATION_EXPERIENCE);
+    uint area;
+    uint experience;
+}

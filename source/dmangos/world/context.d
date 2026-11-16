@@ -3,6 +3,7 @@ module dmangos.world.context;
 
 import core.time : Duration, MonoTime;
 
+import std.path : buildPath;
 import std.random : Random, unpredictableSeed;
 import std.typecons : Nullable;
 
@@ -13,6 +14,8 @@ import dmangos.world.characterdb : DeleteOptions, GuidCounters;
 import dmangos.world.clientdata : ClientData;
 import dmangos.world.config : WorldConfig;
 import dmangos.world.database : WorldDatabase;
+import dmangos.vmap.maptree : ModelCache;
+import dmangos.world.terrain : Terrain;
 import dmangos.world.group : Groups;
 import dmangos.world.map : Inhabitant, Map, MapObject, MapSettings;
 import dmangos.world.online : Directory, OnlinePlayer;
@@ -57,6 +60,8 @@ final class WorldContext : Directory
 
     /// The maps that have players on them, by map id.
     private Map[uint] maps;
+    private Terrain[uint] terrains;
+    private ModelCache vmapModels;     // the buildings and doodads all maps share
 
     /// Players in the world, by guid and by lower-cased name.
     private OnlinePlayer[ulong] online;
@@ -206,6 +211,14 @@ final class WorldContext : Directory
     }
 
     /// The map `id`, created when its first player arrives.
+    /// `TerrainManager::LoadTerrain`: a map's ground, from `data_dir`'s `.map` files.
+    Terrain terrain(uint mapId)
+    {
+        if (vmapModels is null)
+            vmapModels = new ModelCache(buildPath(config.dataDir, "vmaps"));
+        return terrains.require(mapId, new Terrain(mapId, config.dataDir, client, vmapModels));
+    }
+
     Map map(uint id)
     {
         return maps.require(id, new Map(id, MapSettings(config.visibilityDistance, config.visibilityRelocationLimit),
