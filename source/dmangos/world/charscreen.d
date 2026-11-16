@@ -213,7 +213,7 @@ private:
             &context.nextItemGuid);
         builder.loadAbilities(character.race, character.classId, character.level, account.level, character.skills,
             character.spells, abilities);
-        player = new Player(character, abilities, context.data, context.client);
+        player = new Player(character, abilities, context.data, context.client, &context.nextItemGuid);
         // Rested XP: the saved bonus, plus what the time offline earned (Player::LoadFromDB).
         const offline = character.logoutTime > 0 ? context.unixTime - character.logoutTime : 0;
         const rate = character.logoutResting ? context.config.rateRestOfflineInTavernOrCity
@@ -279,6 +279,7 @@ private:
         // Map::Add: the client creates its items and itself, and the loading screen ends.
         const update = player.createForSelf(serverTime());
         sendUpdate(update);
+        player.inventory.markAllSent();
         sendInitialPacketsAfterAddToMap();
     }
 

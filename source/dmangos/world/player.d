@@ -14,11 +14,11 @@
  */
 module dmangos.world.player;
 
-import std.algorithm.comparison : max, min;
+import std.algorithm.comparison : clamp, max, min;
 import std.algorithm.iteration : sum;
-import std.algorithm.searching : canFind, find;
+import std.algorithm.searching : canFind;
 import std.array : split;
-import std.conv : ConvException, to;
+import std.conv : to;
 
 import dmangos.auth.accounts : AccountLevel;
 import dmangos.log;
@@ -28,33 +28,16 @@ import dmangos.world.objects;
 import dmangos.world.opcodes : ChatTag;
 import dmangos.world.packets : ServerLevelUpInfo;
 import dmangos.world.defines;
+public import dmangos.world.inventory : ItemRecord, parseNumbers;
+import dmangos.world.inventory : Inventory, InventoryOwner, Item;
 import dmangos.world.playercreate : KnownAbilities, KnownSkill, NewSkill, NewSpell;
 import dmangos.world.spells : SpellEffect;
 import dmangos.world.stats;
 import dmangos.world.updatefields;
-import dmangos.world.worlddata : CreateAction, ItemTemplate, maxLevel, WorldData;
+import dmangos.world.worlddata : CreateAction, maxLevel, WorldData;
 
 /// Number of `character_tutorial` fields.
 enum tutorialFields = 8;
-
-/// One `character_inventory` row joined with its `item_instance`.
-struct ItemRecord
-{
-    uint bag;          /// the low guid of the bag it is in; 0 for the character's own slots
-    ubyte slot;
-    uint guid;
-    uint entry;
-    uint creator;
-    uint giftCreator;
-    uint count;
-    uint duration;
-    string charges;      /// five numbers
-    uint flags;
-    string enchantments; /// 21 numbers
-    int randomPropertyId;
-    uint durability;
-    uint textId;
-}
 
 /// `character_homebind`
 struct HomeBind
@@ -126,30 +109,10 @@ struct CharacterProgress
     uint xp;
     uint money;
     string exploredZones; /// 64 numbers
+    string equipmentCache; /// what the character screen shows worn: entry and enchantments per slot, then a bag
+    uint ammoId;
     float restBonus = 0;
     bool resting;         /// `is_logout_resting`
-}
-
-/// An item object the player owns.
-struct InventoryItem
-{
-    uint guid;
-    uint bag;  /// low guid of the containing bag, 0 for the player's own slots
-    ubyte slot;
-    const(ItemTemplate)* template_;
-    UpdateValues values;
-
-    /// An item or a container.
-    @property TypeId typeId() const pure nothrow @nogc @safe
-    {
-        return values.type;
-    }
-
-    /// The full guid.
-    @property ulong fullGuid() const pure nothrow @nogc @safe
-    {
-        return makeGuid(HighGuid.item, guid);
-    }
 }
 
 /// Who looks at a player: the player itself, a member of its group, or anyone else.
@@ -194,12 +157,12 @@ private enum : uint
 private enum float defaultBoundingRadius = 0.388999998569489f, defaultCombatReach = 1.5f;
 
 /// See the module documentation.
-final class Player
+final class Player : InventoryOwner
 {
     CharacterData data;
     ulong guid;
     UpdateValues values;
-    InventoryItem[] items;
+    Inventory inventory;
     MovementInfo movement;
     PlayerStats stats;
     uint[] spells;                       /// active, enabled spells: the spellbook
@@ -208,13 +171,16 @@ final class Player
     string autoReply;                    /// the AFK or DND message (`Player::autoReplyMsg`)
     /// ArcEmu's `Player::bGMTagOn`: the GM tag in chat (`.gm on`, `.gm whisperblock`)
     bool gmTagOn;
+    /// `Player::CanDualWield`: a spell with `SPELL_EFFECT_DUAL_WIELD` is known.
+    bool dualWield;
 
     /**
      * Builds the player from its database rows and the skills and spells
      * `CharacterBuilder.loadAbilities` worked out. Problems in the data are logged and skipped.
+     * `nextItemGuid` numbers the items it will be given.
      */
     this(const ref CharacterData character, const ref KnownAbilities abilities, const WorldData world,
-        const ClientData client)
+        const ClientData client, uint delegate() nextItemGuid)
     in (character.guid != 0, "guid 0 is no character")
     in (character.level > 0, "levels start at 1")
     out (; values.type == TypeId.player && !values.hasChanges, "a fresh player has nothing left to send")
@@ -223,8 +189,9 @@ final class Player
         guid = makeGuid(HighGuid.player, character.guid);
         movement.position = character.position;
         values = UpdateValues(TypeId.player);
+        inventory = new Inventory(world, this, &values, nextItemGuid);
 
-        loadItems(world);
+        loadItems();
         computeDerived(world);
         setPlayerFields(world, client);
         setSkills(abilities.skills);
@@ -233,25 +200,74 @@ final class Player
             if (action.button < maxActionButtons && world.isActionButtonDataValid(action))
                 actionButtons[action.button] = packActionButton(action.action, action.type);
         values.clearChanges();
-        foreach (ref item; items)
+        inventory.equipmentChanged = false;
+        foreach (item; inventory.all())
             item.values.clearChanges();
     }
 
     /// The equipped item in `slot` (0 .. 18), or null.
-    const(InventoryItem)* equipped(ubyte slot) const
+    const(Item) equipped(ubyte slot) const
     in (slot < equipmentSlotEnd)
     {
-        auto found = items.find!(item => item.bag == 0 && item.slot == slot);
-        return found.length ? &found[0] : null;
+        return inventory.equipped(slot);
     }
 
-    /// `Player::BuildCreateUpdateBlockForPlayer` for the player itself: its items, then the player.
+    // -----------------------------------------------------------------------
+    // InventoryOwner
+    // -----------------------------------------------------------------------
+
+    @property ulong ownerGuid() const
+    {
+        return guid;
+    }
+
+    @property uint ownerLevel() const
+    {
+        return data.level;
+    }
+
+    @property ubyte ownerClass() const
+    {
+        return data.classId;
+    }
+
+    @property ubyte ownerRace() const
+    {
+        return data.race;
+    }
+
+    ushort skillRank(uint skill) const
+    {
+        return skillValue(skill)[0];
+    }
+
+    @property bool dualWields() const
+    {
+        return dualWield;
+    }
+
+    /// Players do not die yet.
+    @property bool alive() const
+    {
+        return true;
+    }
+
+    /// Nobody fights yet.
+    @property bool inCombat() const
+    {
+        return false;
+    }
+
+    /**
+     * `Player::BuildCreateUpdateBlockForPlayer` for the player itself: its items, then the player.
+     * Once it is sent, call `inventory.markAllSent`.
+     */
     UpdateData createForSelf(uint serverTime) const
     {
         UpdateData update;
         MovementBlock itemMovement;
         itemMovement.flags = UpdateFlags.all;
-        foreach (ref item; items)
+        foreach (item; inventory.all())
             update.addCreate(UpdateType.createObject, item.fullGuid, itemMovement, item.values,
                 seenBySelf | seenByOwner);
 
@@ -261,19 +277,6 @@ final class Player
         self.info.time = serverTime;
         self.speeds = speeds;
         update.addCreate(UpdateType.createObject2, guid, self, values, seenBySelf);
-        return update;
-    }
-
-    /// The create block of one of the player's items, for the player (an item it was just given).
-    UpdateData createItemForSelf(uint itemGuid) const
-    {
-        UpdateData update;
-        MovementBlock itemMovement;
-        itemMovement.flags = UpdateFlags.all;
-        foreach (ref item; items)
-            if (item.guid == itemGuid)
-                update.addCreate(UpdateType.createObject, item.fullGuid, itemMovement, item.values,
-                    seenBySelf | seenByOwner);
         return update;
     }
 
@@ -373,16 +376,34 @@ final class Player
     /// `Player::HasItemCount`: carried or equipped, not in the bank.
     bool hasItem(uint entry, uint count = 1) const
     {
-        return itemCount(entry) >= count;
+        return inventory.count(entry) >= count;
     }
 
-    /// The player's slot holding the bag with this low guid.
-    private ubyte bagSlotOf(uint bagGuid) const
+    /// `PLAYER_FIELD_COINAGE`
+    @property uint money() const
     {
-        foreach (ref item; items)
-            if (item.guid == bagGuid)
-                return item.slot;
-        return ubyte.max;
+        return values[PLAYER_FIELD_COINAGE];
+    }
+
+    /// `Player::ModifyMoney`: adds `amount` (or takes it, if negative), within 0 and `MAX_MONEY_AMOUNT`.
+    void modifyMoney(long amount)
+    {
+        enum long maxMoney = int.max;
+        values.set!PLAYER_FIELD_COINAGE(cast(uint) clamp(money + amount, 0, maxMoney));
+    }
+
+    /**
+     * `Player::_ApplyItemMods` for every worn item at once: the stats, armor, damage and the rest
+     * worked out again from what is worn now. Health and mana keep their values, within the new maximums.
+     */
+    void refreshEquipmentStats(const WorldData world)
+    {
+        inventory.equipmentChanged = false;
+        computeDerived(world);
+        uint[maxPowers] power;
+        foreach (i; 0 .. maxPowers)
+            power[i] = values[UNIT_FIELD_POWER1 + i];
+        setStatFields(values[UNIT_FIELD_HEALTH], power);
     }
 
     /// Whether a `PlayerFlags` flag is set.
@@ -443,9 +464,31 @@ final class Player
         p.xp = values[PLAYER_XP];
         p.money = values[PLAYER_FIELD_COINAGE];
         p.exploredZones = exploredZonesText();
+        p.equipmentCache = equipmentCacheText();
+        p.ammoId = values[PLAYER_AMMO_ID];
         p.restBonus = restBonus;
         p.resting = hasFlag(PlayerFlags.resting);
         return p;
+    }
+
+    /**
+     * `characters.equipmentCache` as `Player::SaveToDB` writes it: per equipment slot the visible
+     * entry and its permanent and temporary enchantments as one number, then the first bag.
+     */
+    string equipmentCacheText() const
+    {
+        import std.array : appender;
+        import std.format : formattedWrite;
+
+        auto text = appender!string;
+        foreach (ubyte slot; 0 .. equipmentSlotEnd)
+        {
+            const block = PLAYER_VISIBLE_ITEM_1_0 + slot * visibleItemStride;
+            text.formattedWrite!"%s %s "(values[block], values[block + 1] | values[block + 2] << 16);
+        }
+        const bag = inventory[inventorySlotBag0, inventorySlotBagStart];
+        text.formattedWrite!"%s 0 "(bag is null ? 0 : bag.entry);
+        return text[];
     }
 
     /// `PLAYER_EXPLORED_ZONES_1`, as `characters.exploredZones` stores it.
@@ -712,103 +755,67 @@ final class Player
         return spells.canFind(spell);
     }
 
-    /**
-     * `Player::_LoadInventory` for one more item: adds the item object and points its slot at it.
-     * Returns why it could not, or null.
-     */
-    string addItem(const ItemRecord record, const WorldData world)
+    /// `Player::HasSpell`: in the spellbook, or a saved lower rank it replaced; not disabled.
+    bool hasSpell(uint spell) const
     {
-        return placeItem(record, world);
+        return knowsSpell(spell) || data.spells.canFind!(row => row.spell == spell && !row.disabled);
     }
 
-    /// `Player::RemoveItem` and `DestroyItem`: forgets the item and clears its slot.
-    void removeItem(uint itemGuid)
+    /// A `character_spell` row was written: `data.spells`, which the next `loadAbilities` starts from, follows.
+    void recordSpellRow(const NewSpell row)
+    {
+        foreach (ref saved; data.spells)
+            if (saved.spell == row.spell)
+            {
+                saved = row;
+                return;
+            }
+        data.spells ~= row;
+    }
+
+    /// A `character_spell` row was deleted.
+    void forgetSpellRow(uint spell)
     {
         import std.algorithm.mutation : remove;
 
-        foreach (i, ref item; items)
-            if (item.guid == itemGuid)
-            {
-                if (item.bag == 0)
-                {
-                    values.set!PLAYER_FIELD_INV_SLOT_HEAD(item.slot, 0UL);
-                    if (item.slot < equipmentSlotEnd)
-                        clearVisibleItem(item.slot);
-                }
-                else
-                    foreach (ref bag; items)
-                        if (bag.guid == item.bag)
-                            bag.values.set!CONTAINER_FIELD_SLOT_1(item.slot, 0UL);
-                items = items.remove(i);
-                return;
-            }
+        data.spells = data.spells.remove!(row => row.spell == spell);
     }
 
-    /// The item object with this low guid, or null.
-    InventoryItem* item(uint itemGuid)
+    /// A `character_skills` row was written; a `max` of 0 means it was deleted.
+    void recordSkillRow(const NewSkill row)
     {
-        foreach (ref it; items)
-            if (it.guid == itemGuid)
-                return &it;
-        return null;
+        import std.algorithm.mutation : remove;
+
+        data.skills = data.skills.remove!(saved => saved.skill == row.skill);
+        if (row.max)
+            data.skills ~= row;
     }
 
     /**
-     * Where a new item of `template_` can go (`Player::CanStoreNewItem`, without its merging of
-     * several destinations): the backpack first, then the equipped bags that may hold it. Returns
-     * false if there is no room.
+     * The spellbook, skills and proficiencies of new abilities (a spell learned in the world). True if
+     * the proficiencies changed, which the client is told with `SMSG_SET_PROFICIENCY`.
      */
-    bool freeSlot(const ref ItemTemplate template_, out uint bag, out ubyte slot) const
+    bool applyAbilities(const ref KnownAbilities abilities, const WorldData world, const ClientData client)
     {
-        foreach (ubyte s; inventorySlotItemStart .. inventorySlotItemEnd)
-            if (values.get!PLAYER_FIELD_INV_SLOT_HEAD(s) == 0)
-            {
-                slot = s;
-                return true;
-            }
-        foreach (ref container; items)
-        {
-            if (container.typeId != TypeId.container || container.bag != 0 || container.slot < inventorySlotBagStart
-                || container.slot >= inventorySlotBagEnd)
-                continue;
-            // A special bag (quiver, soul bag, ...) takes only what belongs in it.
-            if (container.template_.bagFamily && !(container.template_.bagFamily & template_.bagFamily))
-                continue;
-            foreach (ubyte s; 0 .. cast(ubyte) container.values[CONTAINER_FIELD_NUM_SLOTS])
-                if (container.values.get!CONTAINER_FIELD_SLOT_1(s) == 0)
-                {
-                    bag = container.guid;
-                    slot = s;
-                    return true;
-                }
-        }
-        return false;
-    }
-
-    /// How many items of `entry` the player carries, equipped or in bags, not in the bank.
-    uint itemCount(uint entry) const
-    {
-        uint n;
-        foreach (ref item; items)
-            if (item.template_.entry == entry && !inBank(item))
-                n += item.values[ITEM_FIELD_STACK_COUNT];
-        return n;
-    }
-
-    /// Whether the item is in the bank, or in a bag in the bank.
-    bool inBank(const ref InventoryItem item) const
-    {
-        enum bankStart = 39, bankEnd = 69; // `BANK_SLOT_ITEM_START` .. `BANK_SLOT_BAG_END`
-        const slot = item.bag == 0 ? item.slot : bagSlotOf(item.bag);
-        return slot >= bankStart && slot < bankEnd;
+        foreach (skill; skillList)
+            if (!abilities.skills.canFind!(known => known.skill == skill[0]))
+                setSkill(skill[0], 0, 0);
+        foreach (known; abilities.skills)
+            setSkill(known.skill, known.value, known.max);
+        const before = proficiency;
+        spells = null;
+        proficiency = [0, 0];
+        dualWield = false;
+        setSpells(abilities, world, client);
+        return proficiency != before;
     }
 
 private:
     // -----------------------------------------------------------------------
-    // Items (Player::_LoadInventory, Item::LoadFromDB, Bag::LoadFromDB)
+    // Items (Player::_LoadInventory)
     // -----------------------------------------------------------------------
 
-    void loadItems(const WorldData world)
+    void loadItems()
     {
         // Character slots first, so the bags exist before what is in them.
         foreach (pass; 0 .. 2)
@@ -816,110 +823,10 @@ private:
             {
                 if ((record.bag == 0) != (pass == 0))
                     continue;
-                if (auto problem = placeItem(record, world))
+                if (auto problem = inventory.load(record))
                     warning!"character %s: item %s (entry %s) in bag %s slot %s not loaded: %s"(data.guid,
                         record.guid, record.entry, record.bag, record.slot, problem);
             }
-    }
-
-    string placeItem(const ref ItemRecord record, const WorldData world)
-    {
-        const template_ = record.entry in world.items;
-        if (template_ is null)
-            return "no such item template";
-        foreach (ref other; items)
-            if (other.bag == record.bag && other.slot == record.slot)
-                return "the slot is taken";
-
-        InventoryItem* bag;
-        if (record.bag == 0)
-        {
-            if (record.slot >= playerInventorySlots)
-                return "no such inventory slot";
-        }
-        else
-        {
-            foreach (ref other; items)
-                if (other.guid == record.bag)
-                    bag = &other;
-            if (bag is null || bag.typeId != TypeId.container || bag.bag != 0)
-                return "the bag is not equipped";
-            if (record.slot >= bag.values[CONTAINER_FIELD_NUM_SLOTS])
-                return "the bag has no such slot";
-        }
-
-        const isBag = template_.containerSlots > 0 && template_.containerSlots <= maxBagSize
-            && (template_.itemClass == ItemClass.container || template_.itemClass == ItemClass.quiver);
-        InventoryItem item;
-        item.guid = record.guid;
-        item.bag = record.bag;
-        item.slot = record.slot;
-        item.template_ = template_;
-        item.values = UpdateValues(isBag ? TypeId.container : TypeId.item);
-        fillItemFields(item, record, *template_);
-
-        // Index of the new item, before taking pointers into the array again.
-        if (bag !is null)
-            bag.values.set!CONTAINER_FIELD_SLOT_1(record.slot, item.fullGuid);
-        else
-            values.set!PLAYER_FIELD_INV_SLOT_HEAD(record.slot, item.fullGuid);
-        if (record.bag == 0 && record.slot < equipmentSlotEnd)
-            setVisibleItem(record.slot, item);
-        item.values.set!ITEM_FIELD_CONTAINED(record.bag ? makeGuid(HighGuid.item, record.bag) : guid);
-        items ~= item;
-        return null;
-    }
-
-    void fillItemFields(ref InventoryItem item, const ref ItemRecord record, const ref ItemTemplate template_)
-    {
-        ref v = item.values;
-        v.set!OBJECT_FIELD_GUID(item.fullGuid);
-        v.set!OBJECT_FIELD_TYPE(TypeMask.object | TypeMask.item
-            | (item.typeId == TypeId.container ? TypeMask.container : 0));
-        v.set!OBJECT_FIELD_ENTRY(record.entry);
-        v.set!OBJECT_FIELD_SCALE_X(1.0f);
-        v.set!ITEM_FIELD_OWNER(guid);
-        if (record.creator)
-            v.set!ITEM_FIELD_CREATOR(makeGuid(HighGuid.player, record.creator));
-        if (record.giftCreator)
-            v.set!ITEM_FIELD_GIFTCREATOR(makeGuid(HighGuid.player, record.giftCreator));
-        v.set!ITEM_FIELD_STACK_COUNT(record.count);
-        v.set!ITEM_FIELD_DURATION((template_.duration == 0) != (record.duration == 0) ? template_.duration
-            : record.duration);
-        foreach (i, n; parseNumbers(record.charges, 5))
-            v.set!ITEM_FIELD_SPELL_CHARGES(i, n);
-        v.set!ITEM_FIELD_FLAGS(record.flags);
-        foreach (i, n; parseNumbers(record.enchantments, 21))
-            v.set!ITEM_FIELD_ENCHANTMENT(i, n);
-        v.set!ITEM_FIELD_RANDOM_PROPERTIES_ID(record.randomPropertyId);
-        v.set!ITEM_FIELD_ITEM_TEXT_ID(record.textId);
-        v.set!ITEM_FIELD_MAXDURABILITY(template_.maxDurability);
-        v.set!ITEM_FIELD_DURABILITY(min(record.durability, template_.maxDurability));
-        if (item.typeId == TypeId.container)
-            v.set!CONTAINER_FIELD_NUM_SLOTS(template_.containerSlots);
-    }
-
-    /// `Player::SetVisibleItemSlot` for an empty slot.
-    void clearVisibleItem(ubyte slot)
-    {
-        const block = slot * visibleItemStride;
-        values.set!PLAYER_VISIBLE_ITEM_1_CREATOR(block / 2, 0UL);
-        foreach (i; 0 .. 1 + visibleEnchantments)
-            values.set!PLAYER_VISIBLE_ITEM_1_0(block + i, 0u);
-        values.set!PLAYER_VISIBLE_ITEM_1_PROPERTIES(block, 0u);
-    }
-
-    /// `Player::SetVisibleItemSlot`
-    void setVisibleItem(ubyte slot, const ref InventoryItem item)
-    {
-        // Each equipment slot has a block of `visibleItemStride` slots: the creator's guid, the entry and
-        // seven enchantments, the random property.
-        const block = slot * visibleItemStride;
-        values.set!PLAYER_VISIBLE_ITEM_1_CREATOR(block / 2, item.values.get!ITEM_FIELD_CREATOR);
-        values.set!PLAYER_VISIBLE_ITEM_1_0(block, item.values.get!OBJECT_FIELD_ENTRY);
-        foreach (i; 0 .. visibleEnchantments)
-            values.set!PLAYER_VISIBLE_ITEM_1_0(block + 1 + i, item.values.get!ITEM_FIELD_ENCHANTMENT(3 * i));
-        values.set!PLAYER_VISIBLE_ITEM_1_PROPERTIES(block, item.values.get!ITEM_FIELD_RANDOM_PROPERTIES_ID);
     }
 
     // -----------------------------------------------------------------------
@@ -934,10 +841,10 @@ private:
         input.level = data.level;
         input.levelStats = world.levelStats(data.race, data.classId, data.level);
         input.classStats = world.classStats(data.classId, data.level);
-        foreach (ref item; items)
-            if (item.bag == 0 && item.slot < equipmentSlotEnd
-                && (item.values[ITEM_FIELD_DURABILITY] != 0 || item.template_.maxDurability == 0))
-                input.equipment[item.slot] = item.template_;
+        foreach (ubyte slot; 0 .. equipmentSlotEnd)
+            if (const item = inventory.equipped(slot))
+                if (item.durability != 0 || item.maxDurability == 0) // a broken item gives nothing
+                    input.equipment[slot] = item.proto;
         stats = computeStats(input);
     }
 
@@ -970,12 +877,34 @@ private:
         v.set!UNIT_MOD_CAST_SPEED(1.0f);
 
         // Health and powers: saved values, within the maximums.
+        setStatFields(data.health == 0 ? uint.max : data.health, data.power);
+
+        // Player
+        v.set!PLAYER_FLAGS(data.playerFlags & ~(PlayerFlags.afk | PlayerFlags.dnd | PlayerFlags.gm));
+        v.set!PLAYER_BYTES(data.playerBytes);
+        v.set!PLAYER_BYTES_2(data.playerBytes2);
+        v.setByte!PLAYER_BYTES_2(3, RestState.normal);
+        v.setHalf!PLAYER_BYTES_3(0, data.gender);
+        v.setByte!PLAYER_FIELD_BYTES(2, data.actionBars);
+        v.set!PLAYER_XP(data.xp);
+        v.set!PLAYER_NEXT_LEVEL_XP(world.xpForLevel(data.level));
+        v.set!PLAYER_FIELD_COINAGE(data.money);
+        v.set!PLAYER_AMMO_ID(data.ammoId);
+        v.set!PLAYER_FIELD_WATCHED_FACTION_INDEX(data.watchedFaction);
+        foreach (i, n; parseNumbers(data.exploredZones, exploredZonesSize))
+            v.set!PLAYER_EXPLORED_ZONES_1(i, n);
+    }
+
+    /// The fields `stats` decides; health and powers are set to `health` and `power`, within the maximums.
+    void setStatFields(uint health, const uint[maxPowers] power)
+    {
+        alias v = values;
         v.set!UNIT_FIELD_MAXHEALTH(stats.maxHealth);
-        v.set!UNIT_FIELD_HEALTH(data.health == 0 || data.health > stats.maxHealth ? stats.maxHealth : data.health);
+        v.set!UNIT_FIELD_HEALTH(min(health, stats.maxHealth));
         foreach (i; 0 .. maxPowers)
         {
             v.set!UNIT_FIELD_MAXPOWER1(i, stats.maxPower[i]);
-            v.set!UNIT_FIELD_POWER1(i, min(data.power[i], stats.maxPower[i]));
+            v.set!UNIT_FIELD_POWER1(i, min(power[i], stats.maxPower[i]));
         }
         v.set!UNIT_FIELD_BASE_HEALTH(stats.baseHealth);
         v.set!UNIT_FIELD_BASE_MANA(stats.baseMana);
@@ -1004,21 +933,6 @@ private:
         v.set!UNIT_FIELD_MAXOFFHANDDAMAGE(stats.damage[AttackType.offHand].max);
         v.set!UNIT_FIELD_MINRANGEDDAMAGE(stats.damage[AttackType.ranged].min);
         v.set!UNIT_FIELD_MAXRANGEDDAMAGE(stats.damage[AttackType.ranged].max);
-
-        // Player
-        v.set!PLAYER_FLAGS(data.playerFlags & ~(PlayerFlags.afk | PlayerFlags.dnd | PlayerFlags.gm));
-        v.set!PLAYER_BYTES(data.playerBytes);
-        v.set!PLAYER_BYTES_2(data.playerBytes2);
-        v.setByte!PLAYER_BYTES_2(3, RestState.normal);
-        v.setHalf!PLAYER_BYTES_3(0, data.gender);
-        v.setByte!PLAYER_FIELD_BYTES(2, data.actionBars);
-        v.set!PLAYER_XP(data.xp);
-        v.set!PLAYER_NEXT_LEVEL_XP(world.xpForLevel(data.level));
-        v.set!PLAYER_FIELD_COINAGE(data.money);
-        v.set!PLAYER_AMMO_ID(data.ammoId);
-        v.set!PLAYER_FIELD_WATCHED_FACTION_INDEX(data.watchedFaction);
-        foreach (i, n; parseNumbers(data.exploredZones, exploredZonesSize))
-            v.set!PLAYER_EXPLORED_ZONES_1(i, n);
     }
 
     /// The skill fields: id and step, value and maximum, bonus.
@@ -1054,6 +968,8 @@ private:
                 else if (info.equippedItemClass == ItemClass.armor)
                     proficiency[1] |= info.equippedItemSubClassMask;
             }
+            if (info.hasEffect(SpellEffect.dualWield)) // Spell::EffectDualWield
+                dualWield = true;
         }
 
         // Player::UpdateFreeTalentPoints
@@ -1068,23 +984,6 @@ private:
 private uint talentPointsForLevel(uint level) pure nothrow @nogc @safe
 {
     return level < 10 ? 0 : level - 9;
-}
-
-/// `count` space-separated numbers from a CMaNGOS text column; missing or malformed ones are 0.
-int[] parseNumbers(string text, size_t count) pure @safe
-out (numbers; numbers.length == count)
-{
-    auto numbers = new int[count];
-    foreach (i, token; text.split)
-    {
-        if (i == count)
-            break;
-        try
-            numbers[i] = cast(int) token.to!long;
-        catch (ConvException)
-            numbers[i] = 0;
-    }
-    return numbers;
 }
 
 unittest
@@ -1139,22 +1038,24 @@ unittest
     KnownAbilities abilities;
     assert(new CharacterBuilder(world, client, CreationSettings.init, () => 1u).loadAbilities(c.race, c.classId,
         c.level, AccountLevel.player, c.skills, c.spells, abilities));
-    auto p = new Player(c, abilities, world, client);
+    auto p = new Player(c, abilities, world, client, testItemGuids());
     assert(p.guid == 7);
-    assert(p.items.length == 4, "the unknown, overflowing and doubled-up items are not loaded");
+    const loaded = p.inventory.all();
+    assert(loaded.length == 4, "the unknown, overflowing and doubled-up items are not loaded");
 
     // The player's slots and the quiver's contents point at the item objects.
     assert(p.values.get!PLAYER_FIELD_INV_SLOT_HEAD(15) == makeGuid(HighGuid.item, 100));
     assert(p.values.get!PLAYER_FIELD_INV_SLOT_HEAD(19) == makeGuid(HighGuid.item, 102));
     assert(p.values.get!PLAYER_FIELD_PACK_SLOT_1 == makeGuid(HighGuid.item, 101));
-    const quiver = p.items[$ - 2];
-    assert(quiver.typeId == TypeId.container && quiver.values[CONTAINER_FIELD_NUM_SLOTS] == 6);
+    const quiver = p.inventory[inventorySlotBag0, 19];
+    assert(quiver.values.type == TypeId.container && quiver.values[CONTAINER_FIELD_NUM_SLOTS] == 6);
     assert(quiver.values.get!CONTAINER_FIELD_SLOT_1 == makeGuid(HighGuid.item, 103));
-    const arrows = p.items[$ - 1];
+    const arrows = p.inventory[19, 0];
     assert(arrows.values.get!ITEM_FIELD_CONTAINED == makeGuid(HighGuid.item, 102));
-    assert(arrows.values.get!ITEM_FIELD_OWNER == p.guid && arrows.values[ITEM_FIELD_STACK_COUNT] == 200);
-    assert(p.items[0].values[OBJECT_FIELD_TYPE] == (TypeMask.object | TypeMask.item));
-    assert(p.items[0].values[ITEM_FIELD_DURABILITY] == 20 && p.items[0].values[ITEM_FIELD_MAXDURABILITY] == 20);
+    assert(arrows.values.get!ITEM_FIELD_OWNER == p.guid && arrows.count == 200);
+    const sword = p.equipped(15);
+    assert(sword.values[OBJECT_FIELD_TYPE] == (TypeMask.object | TypeMask.item));
+    assert(sword.durability == 20 && sword.maxDurability == 20);
 
     // The sword is visible in the main hand.
     assert(p.values[PLAYER_VISIBLE_ITEM_1_0 + 15 * visibleItemStride] == itemSword);
@@ -1216,4 +1117,7 @@ unittest
     p.movement.position = Position(1, 2, 3, 4);
     const saved = p.progress(60);
     assert(saved.position == Position(1, 2, 3, 4) && saved.totalTime == 60 && saved.health == 31);
+    assert(saved.equipmentCache.split.length == 2 * (equipmentSlotEnd + 1));
+    assert(saved.equipmentCache.split[2 * equipmentSlotMainhand] == "25" && saved.equipmentCache.split[$ - 2] == "2101",
+        "the sword, and the quiver in the first bag slot");
 }

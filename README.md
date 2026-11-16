@@ -193,6 +193,11 @@ What works now:
     account levels, timed shutdowns and restarts, announcements, the GM tag and whisper blocking,
     cheats and debugging. The others need combat, spells, quests and the like, and say "Not yet
     implemented." See [docs/COMMANDS.md](docs/COMMANDS.md).
+  * **NPCs:** gossip menus with their texts and conditions, trainers (lists and lessons, with
+    ranks and professions), innkeepers binding the hearthstone, bankers, and vendors.
+  * **Items:** CMaNGOS's inventory rules: moving, stacking, splitting, equipping, bags, the bank and
+    its bag slots, the keyring, destroying, ammo; buying (with limited stock), selling, buyback and
+    repairs. Every change is saved to `character_inventory` and `item_instance` as it happens.
   * **Queries:** name, item (`SMSG_ITEM_QUERY_SINGLE_RESPONSE`, from every `item_template`
     column), time and played time.
   * **Settings:** sitting and standing, target selection, action bar buttons and toggles, and
@@ -312,6 +317,11 @@ source/dmangos/world/       the world server (mangosd)
   teleport.d                  handlers and TeleportTo: near and far teleports, area triggers
   grouphandlers.d             handlers: invitations, raids, loot settings, icons, ready checks, rolls
   channelhandlers.d           handlers: chat channels
+  npchandlers.d               handlers: gossip, NPC texts, trainers, innkeepers, bankers, vendors
+  npcdata.d                   gossip menus, texts, trainer and vendor lists from the world database
+  itemhandlers.d              handlers: moving, equipping, banking and destroying items; buying, selling, repairs
+  inventory.d                 items and bags, and CMaNGOS's rules for storing, equipping, swapping, saving them
+  conditions.d                the conditions table: requirements of menus, lessons and wares
   commandtable.d              ArcEmu's GM command tables, row for row
   commands.d                  ArcEmu's command lookup, permission letters, messages, .modify fields
   gmactions.d                 what GM commands do to players: levels, speeds, items, skills, saving
@@ -329,7 +339,7 @@ source/dmangos/world/       the world server (mangosd)
   crypt.d                     header encryption with the session key
   addons.d                    addon list parsing and SMSG_ADDON_INFO
   characters.d                character list entries (Player::BuildEnumData)
-  playercreate.d              character creation (Player::Create): skills, spells, outfit, inventory;
+  playercreate.d              character creation (Player::Create): skills, spells, starting items;
                               also the skills and spells re-learned at login
   player.d                    a character in the world: loading, item and player objects, saving
   stats.d                     derived stats: item bonuses, health, mana, armor, attack power, damage

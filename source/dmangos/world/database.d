@@ -16,7 +16,8 @@ import dmangos.auth.accounts : AccountLevel, canonicalAccountName, decodeBigNumb
 import dmangos.world.characterdb : CharacterOwner, CharacterStatements, DeleteOptions, GuidCounters, NameInfo;
 public import dmangos.world.characterdb : GroupMemberRecord, GroupRecord;
 import dmangos.world.movement : Position;
-import dmangos.world.player : CharacterData, CharacterProgress, HomeBind, ItemRecord, tutorialFields;
+import dmangos.world.inventory : ItemChange, ItemRecord, ItemState;
+import dmangos.world.player : CharacterData, CharacterProgress, HomeBind, tutorialFields;
 import dmangos.world.worlddata : AreaTriggerTeleport, areaTriggerTeleportQuery, GameTele, gameTeleQuery;
 import dmangos.world.playercreate : NewCharacter;
 
@@ -118,6 +119,9 @@ interface WorldDatabase
     /// Stores the home a character without one gets.
     void insertHomeBind(uint guid, const HomeBind bind);
 
+    /// `Player::SetHomebindToLocation`: the hearthstone's new place.
+    void updateHomeBind(uint guid, const HomeBind bind);
+
     /// Marks a character (and its account, on this realm) as online or offline.
     void setOnline(uint guid, uint accountId, bool online, uint realmId);
 
@@ -171,20 +175,21 @@ interface WorldDatabase
     /// Moves a character that is not online (ArcEmu's `.summon` of an offline player).
     void moveOfflineCharacter(uint guid, uint map, float x, float y, float z, uint zone);
 
-    /// `Player::_SaveSpells` for one spell learned or forgotten.
-    void saveSpell(uint guid, uint spell, bool learned);
+    /// `Player::_SaveSpells` for one spell learned, or changed (a higher rank made it inactive).
+    void saveSpell(uint guid, uint spell, bool active, bool disabled);
+
+    /// `Player::_SaveSpells` for a spell forgotten: its row is deleted.
+    void deleteSpell(uint guid, uint spell);
 
     /// `Player::_SaveSkills` for one skill; a `max` of 0 removes it.
     void saveSkill(uint guid, uint skill, uint value, uint max);
 
-    /// `Item::SaveToDB` for a new item and its `character_inventory` row.
-    void insertItem(uint owner, const ItemRecord item);
-
-    /// `Item::SaveToDB` for a changed stack size and durability.
-    void updateItem(uint itemGuid, uint count, uint durability);
-
-    /// `Item::DeleteFromDB` and `DeleteFromInventoryDB`.
-    void deleteItem(uint itemGuid);
+    /**
+     * `Player::_SaveInventory` with the money and `playerBytes2` (the bank bag slots bought) that
+     * paid for the changes, in one transaction: each item's `character_inventory` and
+     * `item_instance` rows written or deleted, as `Player::SaveItemToInventory` and `Item::SaveToDB` do.
+     */
+    void saveInventory(uint owner, uint money, uint playerBytes2, const(ItemChange)[] changes);
 
     /// Ids and names in a world table whose name contains `text` (`.lookup`), at most `limit`.
     LookupResult[] lookup(LookupTable table, string text, uint limit);
@@ -247,6 +252,7 @@ final class MySqlWorldDatabase : WorldDatabase
     bool isGuildLeader(uint guid) { return statements.isGuildLeader(guid); }
     Nullable!CharacterData loadCharacter(uint guid) { return statements.loadCharacter(guid); }
     void insertHomeBind(uint guid, const HomeBind bind) { statements.insertHomeBind(guid, bind); }
+    void updateHomeBind(uint guid, const HomeBind bind) { statements.updateHomeBind(guid, bind); }
     void setOnline(uint guid, uint accountId, bool online, uint realmId)
     {
         statements.setOnline(guid, accountId, online, realmId);
@@ -275,11 +281,16 @@ final class MySqlWorldDatabase : WorldDatabase
     {
         statements.moveOfflineCharacter(guid, map, x, y, z, zone);
     }
-    void saveSpell(uint guid, uint spell, bool learned) { statements.saveSpell(guid, spell, learned); }
+    void saveSpell(uint guid, uint spell, bool active, bool disabled)
+    {
+        statements.saveSpell(guid, spell, active, disabled);
+    }
+    void deleteSpell(uint guid, uint spell) { statements.deleteSpell(guid, spell); }
     void saveSkill(uint guid, uint skill, uint value, uint max) { statements.saveSkill(guid, skill, value, max); }
-    void insertItem(uint owner, const ItemRecord item) { statements.insertItem(owner, item); }
-    void updateItem(uint itemGuid, uint count, uint durability) { statements.updateItem(itemGuid, count, durability); }
-    void deleteItem(uint itemGuid) { statements.deleteItem(itemGuid); }
+    void saveInventory(uint owner, uint money, uint playerBytes2, const(ItemChange)[] changes)
+    {
+        statements.saveInventory(owner, money, playerBytes2, changes);
+    }
 
     void setMuteTime(uint accountId, long until)
     {
@@ -450,8 +461,9 @@ final class MemoryWorldDatabase : WorldDatabase
     long[uint] muteTimes;             /// by account id
     bool[uint][uint] spellRows;       /// guid -> spells learned through `saveSpell`
     uint[2][uint][uint] skillRows;    /// guid -> skill -> value, max
-    ItemRecord[uint] itemRows;        /// item guid -> the item, as inserted and updated
+    ItemRecord[uint] itemRows;        /// item guid -> the item, as saved
     uint[uint] itemOwners;            /// item guid -> owner
+    uint[2][uint] moneySaves;         /// guid -> money and playerBytes2, as `saveInventory` last saved them
     LookupResult[][LookupTable] lookupRows; /// what `lookup` searches
     GameTele[] teleportRows;          /// `game_tele`
     AreaTriggerTeleport[] areaTriggerRows;
@@ -496,11 +508,14 @@ final class MemoryWorldDatabase : WorldDatabase
             c.name = newName;
     }
 
-    void saveSpell(uint guid, uint spell, bool learned)
+    void saveSpell(uint guid, uint spell, bool active, bool disabled)
     {
-        if (learned)
-            spellRows[guid][spell] = true;
-        else if (auto spells = guid in spellRows)
+        spellRows[guid][spell] = true;
+    }
+
+    void deleteSpell(uint guid, uint spell)
+    {
+        if (auto spells = guid in spellRows)
             (*spells).remove(spell);
     }
 
@@ -512,25 +527,23 @@ final class MemoryWorldDatabase : WorldDatabase
             (*skills).remove(skill);
     }
 
-    void insertItem(uint owner, const ItemRecord item)
+    void saveInventory(uint owner, uint money, uint playerBytes2, const(ItemChange)[] changes)
     {
-        itemRows[item.guid] = cast(ItemRecord) item;
-        itemOwners[item.guid] = owner;
-    }
-
-    void updateItem(uint itemGuid, uint count, uint durability)
-    {
-        if (auto item = itemGuid in itemRows)
-        {
-            item.count = count;
-            item.durability = durability;
-        }
-    }
-
-    void deleteItem(uint itemGuid)
-    {
-        itemRows.remove(itemGuid);
-        itemOwners.remove(itemGuid);
+        foreach (change; changes)
+            final switch (change.state)
+            {
+            case ItemState.new_, ItemState.changed:
+                itemRows[change.record.guid] = cast(ItemRecord) change.record;
+                itemOwners[change.record.guid] = owner;
+                break;
+            case ItemState.removed:
+                itemRows.remove(change.record.guid);
+                itemOwners.remove(change.record.guid);
+                break;
+            case ItemState.unchanged:
+                break;
+            }
+        moneySaves[owner] = [money, playerBytes2];
     }
 
     LookupResult[] lookup(LookupTable table, string text, uint limit)
@@ -620,6 +633,11 @@ final class MemoryWorldDatabase : WorldDatabase
         if (auto c = guid in loadable)
             return nullable(*c);
         return Nullable!CharacterData.init;
+    }
+
+    void updateHomeBind(uint guid, const HomeBind bind)
+    {
+        homeBinds[guid] = bind;
     }
 
     void insertHomeBind(uint guid, const HomeBind bind)

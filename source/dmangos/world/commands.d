@@ -966,9 +966,9 @@ unittest
 
     // Optional words take their defaults: one item, no random property.
     gm.say(".character additem 117");
-    assert(gm.session.character.itemCount(itemJerky) == 1);
+    assert(gm.session.character.inventory.count(itemJerky) == 1);
     gm.say(".character additem 117 x");
-    assert(systemMessages(gm.read())[$ - 1] == "Adds item x count y" && gm.session.character.itemCount(itemJerky) == 1);
+    assert(systemMessages(gm.read())[$ - 1] == "Adds item x count y" && gm.session.character.inventory.count(itemJerky) == 1);
 
     // `Rest` takes the rest of the line; a missing `Rest` with a default takes the default.
     gm.say(".kickplayer jaina was rude to the guards");

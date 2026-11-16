@@ -29,6 +29,15 @@ in order:
                               chat channels
     afk:TEXT  dnd:TEXT        away and busy (an empty TEXT clears it)
     objects:N                 count the creatures and game objects seen, and query N of each
+    npc:ENTRY                 pick a creature in sight by entry, for the NPC actions:
+    gossip  select:N  text:ID  trainer  buyspell:ID  vendor  binder  bank
+    buy:ENTRY[:COUNT]  sell:SLOT  buyback:N  repair  buybankslot
+                              trade with the NPC (SLOT: a backpack or equipment slot;
+                              N: the buyback slot from 0)
+    inv                       print the carried items, as the client now knows them
+    equip:SLOT  swap:SRC:DST  split:SRC:DST:COUNT  destroy:SLOT[:COUNT]
+    tobank:SLOT  frombank:SLOT
+                              move items between the character's own slots
 
 Teleports are answered as the client answers them: MSG_MOVE_TELEPORT_ACK for
 a near one, MSG_MOVE_WORLDPORT_ACK after SMSG_NEW_WORLD, whenever they come.
@@ -139,6 +148,26 @@ OBJECT_END, ITEM_END, CONTAINER_END, UNIT_END, PLAYER_END = 6, 48, 122, 188, 128
 GAMEOBJECT_END = OBJECT_END + 0x1A
 COUNTS = {1: ITEM_END, 2: CONTAINER_END, 3: UNIT_END, 4: PLAYER_END, 5: GAMEOBJECT_END}
 seen_objects = {}
+item_objects = {}  # guid -> fields of the items the client was sent
+my_slots = {}      # the player's own slots: slot -> item guid
+player_guid = None
+SLOT_FIELD = UNIT_END + 0x12A  # PLAYER_FIELD_INV_SLOT_HEAD
+
+def track(objs):
+    """Keeps `item_objects` and `my_slots` as the client would."""
+    for kind, g, t, v, move in objs:
+        if kind == 4:
+            for gone in g: item_objects.pop(gone, None)
+        elif kind in (2, 3) and t in (1, 2): item_objects[g] = dict(v)
+        elif kind == 0 and g in item_objects: item_objects[g].update(v)
+        if g == player_guid and kind in (0, 2, 3):
+            for i in range(113):
+                if SLOT_FIELD + 2 * i in v or SLOT_FIELD + 2 * i + 1 in v:
+                    ig = v.get(SLOT_FIELD + 2 * i, 0) | v.get(SLOT_FIELD + 2 * i + 1, 0) << 32
+                    if ig: my_slots[i] = ig
+                    else: my_slots.pop(i, None)
+    for slot, ig in my_slots.items():
+        assert ig in item_objects, f"slot {slot} points at item {ig:#x}, which the client was not sent"
 
 def packed_guid(p, pos):
     mask = p[pos]; pos += 1; g = 0
@@ -219,8 +248,12 @@ MOVES = set(range(0x0B5, 0x0C4)) | {0x0C9, 0x0CA, 0x0CB, 0x0DA, 0x0DB, 0x0EE}
 def describe(op, p):
     """Prints a packet that another player caused."""
     if op in (0x0A9, 0x1F6):
-        for kind, g, t, v, move in parse_update(op, p):
-            if kind == 4: print(f"  [out of range] {g}")
+        objs = parse_update(op, p); track(objs)
+        for kind, g, t, v, move in objs:
+            if kind in (2, 3) and t in (1, 2): print(f"  [item created] {g & 0xFFFFFFFF}: entry {v[3]} count {v.get(OBJECT_END + 8)}")
+            elif kind == 0 and g in item_objects: print(f"  [item changed] {g & 0xFFFFFFFF}: fields {sorted(v)}")
+            elif kind == 0 and g == player_guid: print(f"  [player changed] {len(v)} fields")
+            elif kind == 4: print(f"  [out of range] {', '.join(str(x & 0xFFFFFFFF) for x in g)}")
             elif kind in (2, 3) and t == 4:
                 b0 = v[OBJECT_END + 0x1E]
                 print(f"  [appears] player {g}: race {b0 & 0xFF} class {(b0 >> 8) & 0xFF} level {v[OBJECT_END + 0x1C]}, "
@@ -302,7 +335,42 @@ def describe(op, p):
     elif op == 0x105:
         g, text, num, n = struct.unpack_from("<QIII", p); print(f"  [text emote] {text} by {g} at '{p[20:20 + n - 1].decode()}'")
     elif op == 0x0AA: print(f"  [destroyed] {struct.unpack('<Q', p)[0]}")
+    elif op == 0x17D:
+        g, text, n = struct.unpack_from("<QII", p); pos = 16; items = []
+        for _ in range(n):
+            index, icon, coded = struct.unpack_from("<IBB", p, pos); end = p.index(b"\0", pos + 6)
+            items.append(f"{index}:{p[pos + 6:end].decode()} (icon {icon})"); pos = end + 1
+        print(f"  [gossip] {g} text {text}: {'; '.join(items) if items else 'no options'}")
+    elif op == 0x17E: print("  [gossip closed]")
+    elif op == 0x224:
+        flags, x, y, icon, data = struct.unpack_from("<IffII", p); print(f"  [map flag] '{p[20:-1].decode()}' at {x:.0f} {y:.0f}")
+    elif op == 0x180:
+        text_id, prob = struct.unpack_from("<If", p); end = p.index(b"\0", 8)
+        print(f"  [npc text] {text_id}: '{p[8:end].decode()}'")
+    elif op == 0x1B1:
+        g, kind, n = struct.unpack_from("<QII", p); spells = []
+        for i in range(n):
+            spell, state, cost = struct.unpack_from("<IBI", p, 16 + 38 * i); level = p[16 + 38 * i + 17]
+            spells.append(f"{spell} {('green', 'red', 'gray')[state]} {cost}c lvl {level}")
+        print(f"  [trainer] type {kind}, {n} spells, greeting '{p[16 + 38 * n:-1].decode()}': {'; '.join(spells[:8])}")
+    elif op == 0x1B3: print("  [bought] trainer %d spell %d" % struct.unpack("<QI", p))
+    elif op == 0x12C: print("  [superseded] %d by %d" % struct.unpack("<HH", p))
+    elif op == 0x19F:
+        g, n = struct.unpack_from("<QB", p)
+        wares = [struct.unpack_from("<7I", p, 9 + 28 * i) for i in range(n)]
+        print(f"  [vendor] {n} items: " + "; ".join(f"{w[1]} for {w[4]}c" for w in wares[:8]))
+    elif op == 0x2EB: print(f"  [bind here?] {struct.unpack('<Q', p)[0]}")
+    elif op == 0x155: print("  [hearthstone bound] %.1f %.1f %.1f map %d zone %d" % struct.unpack("<3fII", p))
+    elif op == 0x158: print("  [bound by] %d in area %d" % struct.unpack("<QI", p))
+    elif op == 0x1B8: print(f"  [bank opened] {struct.unpack('<Q', p)[0]}")
     elif op == 0x2A9: print(f"  [no such player] {p[:-1].decode()}")
+    elif op == 0x112:
+        print(f"  [inventory error] {p[0]}" + (" items %d %d bag %d" % struct.unpack_from("<QQB", p, len(p) - 17) if len(p) > 1 else ""))
+    elif op == 0x1A4: print("  [bought] from %d slot %d, %d left, %d items" % struct.unpack("<QIII", p))
+    elif op == 0x1A5: print("  [buy failed] from %d slot %d: %d" % struct.unpack("<QIB", p))
+    elif op == 0x1A1: print("  [sell failed] at %d item %d: %d" % struct.unpack("<QQB", p))
+    elif op == 0x1BA: print(f"  [bank slot] result {struct.unpack('<I', p)[0]}")
+    elif op == 0x113: print(f"  [bag opened] {struct.unpack('<Q', p)[0] & 0xFFFFFFFF}")
     else: print(f"  [other] {OPS.get(op, hex(op))}")
 
 def expect(wanted):
@@ -328,6 +396,7 @@ def listen_for(seconds):
 def movement(op, x, y, z, o=0.0, flags=0):
     wsend(op, struct.pack("<II4fI", flags, 1000, x, y, z, o, 0))
 
+npc = None  # the creature the NPC actions talk to (`npc:ENTRY`)
 for action in actions:
     kind, *args = action.split(":")
     if kind == "login":
@@ -364,7 +433,7 @@ for action in actions:
                     else:
                         print(f"  {'bag ' if t == 2 else 'item'} {g & 0xFFFFFFFF}: entry {v[3]} count {v.get(OBJECT_END + 8)} contained in {(v.get(OBJECT_END + 2, 0) | v.get(OBJECT_END + 3, 0) << 32):#x}"
                               + (f", {v[ITEM_END]} slots" if t == 2 else ""))
-                me = [o for o in objs if o[2] == 4][0]; player_guid = me[1]
+                me = [o for o in objs if o[2] == 4][0]; player_guid = me[1]; track(objs)
                 items = {o[1]: o for o in objs if o[2] in (1, 2)}
                 pv = me[3]
                 for i in range(113):
@@ -430,6 +499,42 @@ for action in actions:
         for g, e in creatures: wsend(0x060, struct.pack("<IQ", e, g))
         for g, e in objects: wsend(0x05E, struct.pack("<IQ", e, g))
         listen_for(1.5)
+    elif kind == "npc":
+        entry = int(args[0])
+        npc = next((g for g, (t, e) in seen_objects.items() if t == 3 and e == entry), None)
+        print(f"npc {entry}: " + (str(npc) if npc else "not in sight"))
+    elif kind in ("gossip", "trainer", "vendor", "binder", "bank"):
+        print(kind); wsend({"gossip": 0x17B, "trainer": 0x1B0, "vendor": 0x19E, "binder": 0x1B5, "bank": 0x1B7}[kind],
+                           struct.pack("<Q", npc)); listen_for(1)
+    elif kind == "select":
+        print(f"select {args[0]}"); wsend(0x17C, struct.pack("<QI", npc, int(args[0]))); listen_for(1)
+    elif kind == "text":
+        print(f"text {args[0]}"); wsend(0x17F, struct.pack("<IQ", int(args[0]), npc)); listen_for(1)
+    elif kind == "buyspell":
+        print(f"buy spell {args[0]}"); wsend(0x1B2, struct.pack("<QI", npc, int(args[0]))); listen_for(1)
+    elif kind in ("buy", "sell", "buyback", "repair", "buybankslot", "equip", "swap", "split", "destroy", "tobank", "frombank"):
+        n = [int(a) for a in args]
+        print(action)
+        if kind == "buy": wsend(0x1A2, struct.pack("<QIBB", npc, n[0], n[1] if len(n) > 1 else 1, 1))
+        elif kind == "sell": wsend(0x1A0, struct.pack("<QQB", npc, my_slots[n[0]], 0))
+        elif kind == "buyback": wsend(0x290, struct.pack("<QI", npc, 69 + n[0]))
+        elif kind == "repair": wsend(0x2A8, struct.pack("<QQ", npc, 0))
+        elif kind == "buybankslot": wsend(0x1B9, struct.pack("<Q", npc))
+        elif kind == "equip": wsend(0x10A, struct.pack("<BB", 255, n[0]))
+        elif kind == "swap": wsend(0x10D, struct.pack("<BB", n[0], n[1]))
+        elif kind == "split": wsend(0x10E, struct.pack("<5B", 255, n[0], 255, n[1], n[2]))
+        elif kind == "destroy": wsend(0x111, struct.pack("<6B", 255, n[0], n[1] if len(n) > 1 else 0, 0, 0, 0))
+        elif kind == "tobank": wsend(0x283, struct.pack("<BB", 255, n[0]))
+        elif kind == "frombank": wsend(0x282, struct.pack("<BB", 255, n[0]))
+        listen_for(1)
+    elif kind == "inv":
+        for slot in sorted(my_slots):
+            v = item_objects[my_slots[slot]]
+            line = f"  slot {slot}: {v[3]} x{v.get(OBJECT_END + 8)}"
+            if ITEM_END in v:  # a bag: its slots
+                inside = [v.get(ITEM_END + 2 + 2 * i, 0) | v.get(ITEM_END + 3 + 2 * i, 0) << 32 for i in range(v[ITEM_END])]
+                line += f", holding {[item_objects[g][3] for g in inside if g]}"
+            print(line)
     elif kind == "logout":
         wsend(0x04B, b""); op, p = expect(0x04C)
         if p[4] == 0: print("logout: waiting 20 seconds"); w.settimeout(30)

@@ -1055,12 +1055,9 @@ private:
         auto plr = getSelectedChar(true);
         if (plr is null)
             return true;
-        foreach (ref item; plr.player.items) // `SendItemLinkToPlayer` with the count
-        {
-            const entry = item.template_.entry;
-            systemMessage(format!"Item %u %s Count %u Slot %u ContainerSlots %u"(entry, itemLink(entry),
-                cast(ubyte) plr.player.itemCount(entry), item.slot, item.template_.containerSlots));
-        }
+        foreach (item; plr.player.inventory.all()) // `SendItemLinkToPlayer` with the count
+            systemMessage(format!"Item %u %s Count %u Slot %u ContainerSlots %u"(item.entry, itemLink(item.entry),
+                cast(ubyte) plr.player.inventory.count(item.entry), item.slot, item.proto.containerSlots));
         gmLog(format!"used show items command on %s,"(plr.player.data.name));
         return true;
     }

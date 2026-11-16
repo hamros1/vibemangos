@@ -17,6 +17,7 @@ import dmangos.world.creature : CreatureAddon, CreatureClassStats, CreatureSpawn
     creatureTemplateQuery;
 import dmangos.world.gameobject : GameObjectSpawn, GameObjectTemplate, GameObjectType;
 import dmangos.world.grid : cellKeyAt;
+import dmangos.world.npcdata : NpcData;
 import dmangos.world.spells : SpellData;
 
 /// The `item_template` fields the character screen and character creation use.
@@ -284,6 +285,13 @@ final class WorldData
     CreatureAddon[uint] creatureTemplateAddons;     /// `creature_template_addon`, by entry
     uint[3][uint] creatureEquipment;                /// `creature_equip_template`: item entries, by id
     CreatureClassStats[uint] creatureClassStats;    /// by `classStatsKey`
+    NpcData npcs;                                   /// gossip, texts, trainers, vendors
+
+    ///
+    this()
+    {
+        npcs = new NpcData;
+    }
 
     /**
      * `ObjectMgr::GetMapEntranceTrigger`: a trigger that leads into `map` from another map, whose
@@ -382,7 +390,17 @@ final class WorldData
             ~ "stackable, ContainerSlots, spellcharges_1, spellcharges_2, spellcharges_3, spellcharges_4, "
             ~ "spellcharges_5, spellcategory_1, spellcategory_2, spellcategory_3, spellcategory_4, spellcategory_5, "
             ~ "bonding, RandomProperty, MaxDurability, BagFamily, Duration FROM item_template")())
-            data.items[row.entry] = row.toTemplate();
+        {
+            auto item = row.toTemplate();
+            // ObjectMgr::LoadItemPrototypes: every stack holds 1 to 255.
+            if (item.stackable == 0 || item.stackable > 255)
+            {
+                const fixed = item.stackable == 0 ? 1 : 255;
+                warning!"item %s has wrong value in stackable (%s), replaced by %s"(item.entry, item.stackable, fixed);
+                item.stackable = fixed;
+            }
+            data.items[row.entry] = item;
+        }
         foreach (row; world.query!itemDetailQuery())
             if (auto item = row.get!uint(0) in data.items)
                 static foreach (i, column; itemDetailColumns)
@@ -403,6 +421,7 @@ final class WorldData
         foreach (row; world.query!"SELECT name FROM reserved_name"())
             data.reservedNames[toLowerName(row.get!string(0))] = true;
 
+        data.npcs = NpcData.load(world, data.spells);
         data.loadTeleports(world, client);
         data.loadSpawns(world, client);
         data.loadPlayerInfo(world, client);

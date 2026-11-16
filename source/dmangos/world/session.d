@@ -54,6 +54,8 @@ import dmangos.world.gmlevel2 : Level2Commands;
 import dmangos.world.gmlevel3 : Level3Commands;
 import dmangos.world.grouphandlers : GroupHandlers;
 import dmangos.world.inworld : InWorldHandlers;
+import dmangos.world.itemhandlers : ItemHandlers;
+import dmangos.world.npchandlers : NpcHandlers;
 import dmangos.world.teleport : Teleport, TeleportHandlers;
 import dmangos.world.context : Kickable, WorldContext;
 import dmangos.world.crypt : clientHeaderLength, HeaderCrypt;
@@ -404,13 +406,14 @@ private:
     }
 
     /**
-     * Sends the player's changed fields to itself, and to each player who sees it the fields it may
-     * see: group mates and strangers see different health values.
+     * Sends the player's changed fields to itself (unless `toSelf` is false: they were sent already),
+     * and to each player who sees it the fields it may see: group mates and strangers see different
+     * health values.
      */
-    void flushPlayerChanges()
+    void flushPlayerChanges(bool toSelf = true)
     {
         UpdateData forSelf;
-        if (player.addChanges(forSelf, Viewer.self))
+        if (toSelf && player.addChanges(forSelf, Viewer.self))
             sendUpdate(forSelf);
         UpdatePacket[Viewer] built;
         foreach (watcher; transferring ? null : map.watchers(this))
@@ -556,6 +559,8 @@ private:
     mixin TeleportHandlers;
     mixin GroupHandlers;
     mixin ChannelHandlers;
+    mixin NpcHandlers;
+    mixin ItemHandlers;
     mixin ChatCommands;
     mixin GmActions;
     mixin Level0Commands;

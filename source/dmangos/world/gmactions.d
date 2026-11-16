@@ -10,19 +10,14 @@ module dmangos.world.gmactions;
 /// See the module documentation.
 mixin template GmActions()
 {
-    import std.algorithm.comparison : min;
-    import std.array : replicate;
-    import std.conv : to;
     import dmangos.bytes : ByteWriter;
     import dmangos.log;
     import dmangos.world.group : GroupUpdate;
-    import dmangos.world.map : deliverPacket, packetBody;
-    import dmangos.world.defines : inventorySlotBag0;
+    import dmangos.world.map : packetBody;
     import dmangos.world.movement : MovementInfo, MoveType;
-    import dmangos.world.objects : seenByOwner, seenBySelf, UpdateData;
     import dmangos.world.opcodes;
     import dmangos.world.packets;
-    import dmangos.world.player : ItemRecord;
+    import dmangos.world.playercreate : NewSkill, NewSpell;
     import dmangos.world.queries : chatMessage;
     import dmangos.world.updatefields;
 
@@ -76,7 +71,8 @@ private:
             return false;
         player.spells ~= spell;
         send(ServerLearnedSpell(spell));
-        context.database.saveSpell(player.data.guid, spell, true);
+        context.database.saveSpell(player.data.guid, spell, true, false);
+        player.recordSpellRow(NewSpell(spell, true, false));
         return true;
     }
 
@@ -89,7 +85,8 @@ private:
             return false;
         player.spells = player.spells.remove!(id => id == spell);
         send(ServerRemovedSpell(cast(ushort) spell));
-        context.database.saveSpell(player.data.guid, spell, false);
+        context.database.deleteSpell(player.data.guid, spell);
+        player.forgetSpellRow(spell);
         return true;
     }
 
@@ -100,122 +97,39 @@ private:
             return false;
         flushPlayerChanges();
         context.database.saveSkill(player.data.guid, skill, value, maximum);
+        player.recordSkillRow(NewSkill(skill, value, maximum));
         return true;
     }
 
     /**
-     * `Player::StoreNewItemInInventorySlot` for a GM: `count` of `entry`, first onto the stacks the
-     * player carries, then into free slots, as many as the item's maximum count and the free slots allow.
-     * Returns how many were given.
+     * CMaNGOS's `.additem`: `count` of `entry` carried, onto stacks first, then into free slots; as
+     * many as the item's limit and the room allow. Returns how many were given.
      */
     uint giveItem(uint entry, uint count)
     {
-        const template_ = entry in context.data.items;
-        if (template_ is null)
+        import dmangos.world.inventory : InventoryResult, ItemPosCount;
+        import dmangos.world.defines : nullBag, nullSlot;
+
+        ItemPosCount[] dest;
+        uint noSpace;
+        if (player.inventory.canStoreNew(nullBag, nullSlot, dest, entry, count, &noSpace) != InventoryResult.ok)
+            count -= noSpace; // what fits is still placed in `dest`
+        if (count == 0 || dest.length == 0)
             return 0;
-        if (template_.maxCount > 0 && player.itemCount(entry) + count > template_.maxCount)
-            count = player.itemCount(entry) >= template_.maxCount ? 0 : template_.maxCount - player.itemCount(entry);
-        const stack = template_.stackable ? template_.stackable : 1;
-        uint given;
-
-        // Onto the stacks carried.
-        foreach (ref item; player.items)
-        {
-            if (given == count)
-                break;
-            const has = item.values[ITEM_FIELD_STACK_COUNT];
-            if (item.template_.entry != entry || has >= stack || player.inBank(item))
-                continue;
-            const added = min(stack - has, count - given);
-            item.values.set!ITEM_FIELD_STACK_COUNT(has + added);
-            context.database.updateItem(item.guid, has + added, item.values[ITEM_FIELD_DURABILITY]);
-            UpdateData change;
-            change.addValues(item.fullGuid, item.values, seenBySelf | seenByOwner);
-            item.values.clearChanges();
-            sendUpdate(change);
-            send(ServerItemPushResult(player.guid, 0, 1, 1, bagSlotOfItem(item.bag), uint.max, entry, 0, 0, added));
-            given += added;
-        }
-
-        // New stacks in free slots.
-        while (given < count)
-        {
-            uint bag;
-            ubyte slot;
-            if (!player.freeSlot(*template_, bag, slot))
-                break;
-            const amount = min(stack, count - given);
-            ItemRecord record;
-            record.bag = bag;
-            record.slot = slot;
-            record.guid = context.nextItemGuid();
-            record.entry = entry;
-            record.count = amount;
-            record.duration = template_.duration;
-            foreach (charges; template_.spellCharges)
-                record.charges ~= charges.to!string ~ " ";
-            // Bound when picked up, or a quest item (BIND_WHEN_PICKED_UP, BIND_QUEST_ITEM): ITEM_DYNFLAG_BINDED.
-            record.flags = template_.bonding == 1 || template_.bonding == 4 ? 1 : 0;
-            record.enchantments = "0 ".replicate(21);
-            record.durability = template_.maxDurability;
-            if (const problem = player.addItem(record, context.data))
-            {
-                warning!"'%s': item %s not given: %s"(player.data.name, entry, problem);
-                break;
-            }
-            context.database.insertItem(player.data.guid, record);
-            const created = player.createItemForSelf(record.guid);
-            sendUpdate(created);
-            flushPlayerChanges(); // the slot now points at the item
-            send(ServerItemPushResult(player.guid, 0, 1, 1, bagSlotOfItem(bag), slot, entry, 0, 0, amount));
-            given += amount;
-        }
-        return given;
+        auto item = player.inventory.storeNew(dest, entry);
+        if (item is null)
+            return 0;
+        sendNewItem(item, count, false, true);
+        flushInventory();
+        return count;
     }
 
-    /// `Player::DestroyItemCount`: takes up to `count` of `entry` away, last stacks first. Returns how many.
+    /// `Player::DestroyItemCount`: takes up to `count` of `entry` away, the backpack first. Returns how many.
     uint takeItem(uint entry, uint count)
     {
-        uint taken;
-        for (size_t i = player.items.length; i-- > 0 && taken < count;)
-        {
-            auto item = &player.items[i];
-            if (item.template_.entry != entry || player.inBank(*item))
-                continue;
-            const has = item.values[ITEM_FIELD_STACK_COUNT];
-            if (has > count - taken)
-            {
-                const left = has - (count - taken);
-                item.values.set!ITEM_FIELD_STACK_COUNT(left);
-                context.database.updateItem(item.guid, left, item.values[ITEM_FIELD_DURABILITY]);
-                UpdateData change;
-                change.addValues(item.fullGuid, item.values, seenBySelf | seenByOwner);
-                item.values.clearChanges();
-                sendUpdate(change);
-                taken = count;
-            }
-            else
-            {
-                const itemGuid = item.guid, fullGuid = item.fullGuid;
-                taken += has;
-                player.removeItem(itemGuid);
-                context.database.deleteItem(itemGuid);
-                flushPlayerChanges();
-                deliverPacket(this, ServerDestroyObject(fullGuid));
-            }
-        }
-        return taken;
-    }
-
-    /// The `SMSG_ITEM_PUSH_RESULT` bag slot of an item in the bag `bag` (a low guid, 0 for none).
-    ubyte bagSlotOfItem(uint bag)
-    {
-        if (bag == 0)
-            return inventorySlotBag0;
-        foreach (ref item; player.items)
-            if (item.guid == bag)
-                return item.slot;
-        return inventorySlotBag0;
+        const left = player.inventory.destroyCount(entry, count);
+        flushInventory();
+        return count - left;
     }
 
     /// `Player::SaveToDB`, as far as this server saves.

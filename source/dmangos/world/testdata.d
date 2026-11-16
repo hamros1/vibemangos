@@ -15,7 +15,9 @@ import dmangos.world.spells;
 import dmangos.world.worlddata;
 import dmangos.world.creature : CreatureSpawn, CreatureTemplate;
 import dmangos.world.gameobject : GameObjectSpawn, GameObjectTemplate;
+import dmangos.world.conditions : Condition, ConditionType, Conditions;
 import dmangos.world.grid : cellKeyAt;
+import dmangos.world.npcdata;
 
 enum ubyte raceHuman = 1, raceOrc = 2;
 enum ubyte classWarrior = 1, classHunter = 3, classMage = 8;
@@ -30,6 +32,12 @@ enum uint triggerInn = 562;       /// an inn's area trigger (the Lion's Pride In
 enum float[3] innPosition = [-9459.6f, 42.1f, 57.5f]; /// ditto
 enum uint zoneElwynn = 12, zoneStormwind = 1519;      /// `AreaTable.dbc`: a zone, and a capital
 enum uint creatureWillem = 823;                        /// Deputy Willem, spawned near Northshire Abbey
+/// NPCs right next to the Northshire start position: a warrior trainer, an innkeeper who sells food, a banker.
+enum uint creatureTrainer = 911, creatureInnkeeper = 6774, creatureBanker = 2455;
+enum uint trainerSpawn = 79950, innkeeperSpawn = 79951, bankerSpawn = 79952; /// ditto, their spawn guids
+/// The trainer's lessons: Heroic Strike and its second rank, each taught by a trainer spell.
+enum uint spellHeroicStrike = 78, spellHeroicStrike2 = 284, spellTeachHeroicStrike = 9101,
+    spellTeachHeroicStrike2 = 9102;
 enum float[3] deadminesEntrance = [-11208.5f, 1685.34f, 25.76f]; /// ditto
 enum float[4] deadminesInside = [-16.4f, -383.07f, 61.78f, 1.86f]; /// ditto
 
@@ -133,6 +141,13 @@ private uint floatBits(float value) @trusted
     return *cast(uint*)&value;
 }
 
+/// Item guids for tests: 1000, 1001, ...
+uint delegate() testItemGuids()
+{
+    uint next = 1000;
+    return () => next++;
+}
+
 /// The world data fixture, consistent with `testClientData`.
 WorldData testWorldData(const ClientData client)
 {
@@ -149,6 +164,9 @@ WorldData testWorldData(const ClientData client)
     world.items[itemArrow].bagFamily = 1;
     world.items[itemSword].details.name = "Worn Shortsword";
     world.items[itemJerky].details.name = "Tough Jerky";
+    world.items[itemJerky].details.buyPrice = 25;
+    world.items[itemJerky].details.sellPrice = 1;
+    world.items[itemSword].details.sellPrice = 7;
 
     // The Deadmines entrance needs level 10; a place for `.tele`.
     world.areaTriggers[triggerDeadmines] = AreaTriggerTeleport(triggerDeadmines, "Deadmines - Entering", 10, 0, 0, 0,
@@ -170,7 +188,9 @@ WorldData testWorldData(const ClientData client)
     willem.meleeBaseAttackTime = 2000;
     world.creatureTemplates[creatureWillem] = willem;
     world.creatureSpawns = [CreatureSpawn(79942, creatureWillem, mapEasternKingdoms, -8933, -136, 83, 3)];
-    world.creatureCells[mapEasternKingdoms][cellKeyAt(-8933, -136)] = [0];
+    addNpcs(world);
+    foreach (i, ref spawn; world.creatureSpawns)
+        world.creatureCells[mapEasternKingdoms][cellKeyAt(spawn.x, spawn.y)] ~= i;
     GameObjectTemplate mailbox;
     mailbox.entry = 32349;
     mailbox.type = 19;
@@ -192,8 +212,20 @@ WorldData testWorldData(const ClientData client)
     spells.spells[spellPassiveTrainer].triggerSpell[0] = spellLearnedByPassive;
     spells.spells[spellDualWield].attributes = spellAttrPassive;
     spells.spells[spellDualWield].effect[0] = SpellEffect.dualWield;
+    foreach (id; [spellHeroicStrike, spellHeroicStrike2, spellTeachHeroicStrike, spellTeachHeroicStrike2])
+        spells.spells[id] = SpellInfo(id);
+    spells.spells[spellTeachHeroicStrike2].spellLevel = 8; // trainers read the level from their own spell
+    spells.spells[spellTeachHeroicStrike].effect[0] = SpellEffect.learnSpell;
+    spells.spells[spellTeachHeroicStrike].triggerSpell[0] = spellHeroicStrike;
+    spells.spells[spellTeachHeroicStrike2].effect[0] = SpellEffect.learnSpell;
+    spells.spells[spellTeachHeroicStrike2].triggerSpell[0] = spellHeroicStrike2;
     spells.build(client, null, null);
+    spells.chains[spellHeroicStrike2] = SpellChainNode(spellHeroicStrike, spellHeroicStrike, 2, 0);
     world.spells = spells;
+    world.npcs.trainers = NpcData.loadTrainers([
+        TrainerRow(creatureTrainer, spellTeachHeroicStrike, 10),
+        TrainerRow(creatureTrainer, spellTeachHeroicStrike2, 100),
+    ], spells);
 
     PlayerInfo human;
     human.map = 0;
@@ -286,4 +318,77 @@ private uint[] abilityRecord(uint id, uint skill, uint spell, uint learnOnGetSki
     r[2] = spell;
     r[9] = learnOnGetSkill;
     return r;
+}
+
+/// A `npc_trainer` row as `NpcData.loadTrainers` reads one: entry, spell, cost, and no requirements.
+private struct TrainerRow
+{
+    uint entry, spell, cost;
+
+    T get(T)(size_t column) const
+    {
+        switch (column)
+        {
+        case 0: return cast(T) entry;
+        case 1: return cast(T) spell;
+        case 2: return cast(T) cost;
+        default: return T.init;
+        }
+    }
+}
+
+/// The NPCs of `testWorldData`, their menus, texts, conditions, lessons and wares.
+private void addNpcs(WorldData world)
+{
+    CreatureTemplate npc(uint entry, string name, uint npcFlags)
+    {
+        CreatureTemplate t;
+        t.entry = entry;
+        t.name = name;
+        t.minLevel = t.maxLevel = 30;
+        t.modelId1 = 1906;
+        t.faction = 12;
+        t.npcFlags = npcFlags;
+        t.unitClass = 1;
+        t.minLevelHealth = t.maxLevelHealth = 1000;
+        t.meleeBaseAttackTime = 2000;
+        return t;
+    }
+
+    auto trainer = npc(creatureTrainer, "Llane Beshere", 0x1 | 0x10);
+    trainer.trainerType = 0;
+    trainer.trainerClass = classWarrior;
+    trainer.gossipMenuId = 100;
+    world.creatureTemplates[creatureTrainer] = trainer;
+    world.creatureTemplates[creatureInnkeeper] = npc(creatureInnkeeper, "Innkeeper Farley", 0x1 | 0x4 | 0x80);
+    world.creatureTemplates[creatureBanker] = npc(creatureBanker, "Olivia Burnside", 0x1 | 0x100);
+    world.creatureSpawns ~= [CreatureSpawn(trainerSpawn, creatureTrainer, mapEasternKingdoms, -8948, -132, 83.5f, 0),
+        CreatureSpawn(innkeeperSpawn, creatureInnkeeper, mapEasternKingdoms, -8951, -130, 83.5f, 0),
+        CreatureSpawn(bankerSpawn, creatureBanker, mapEasternKingdoms, -8951, -134, 83.5f, 0)];
+
+    auto npcs = world.npcs;
+    npcs.conditions = new Conditions([Condition(50, ConditionType.level, 10, 1),
+        Condition(51, ConditionType.raceClass, 1 << (raceOrc - 1), 0)]);
+    // The trainer's menu: a text for level 10 and up, training, more talk with a map flag, and an orc's option.
+    npcs.menus[100] = [GossipMenuText(100, 1001, 0, 0), GossipMenuText(100, 1002, 0, 50)];
+    npcs.menus[101] = [GossipMenuText(101, 1003, 0, 0)];
+    npcs.options[100] = [
+        GossipMenuOption(100, 0, 3, "I require training.", 0, GossipOption.trainer, 0x10),
+        GossipMenuOption(100, 1, 0, "Tell me more.", 0, GossipOption.gossip, 0x1, 101, 7),
+        GossipMenuOption(100, 2, 0, "For the Horde!", 0, GossipOption.gossip, 0x1, 101, 0, 0, false, 0, "", 0, 51),
+    ];
+    // The default menu: an innkeeper's, a vendor's and a banker's options, from their broadcast texts.
+    npcs.options[0] = [
+        GossipMenuOption(0, 1, 1, "GOSSIP_OPTION_VENDOR", 0, GossipOption.vendor, 0x4),
+        GossipMenuOption(0, 6, 5, "GOSSIP_OPTION_INNKEEPER", 2822, GossipOption.innkeeper, 0x80),
+        GossipMenuOption(0, 7, 6, "GOSSIP_OPTION_BANKER", 0, GossipOption.banker, 0x100),
+    ];
+    npcs.broadcastTexts[2822] = BroadcastText("Make this inn your home.", "", 0);
+    GossipText greeting;
+    greeting.options[0].text0 = "Hail, $c.";
+    greeting.options[0].probability = 1;
+    greeting.options[1].broadcastText = 2822;
+    npcs.texts[1001] = greeting;
+    npcs.pointsOfInterest[7] = PointOfInterest(-8900, -120, 7, 99, 0, "Northshire Abbey");
+    npcs.vendors[creatureInnkeeper] = [VendorItem(itemJerky, 0, 0, 0, 0), VendorItem(itemSword, 0, 0, 0, 51)];
 }

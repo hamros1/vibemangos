@@ -390,6 +390,33 @@ struct ChatChannelsEntry
 
 enum chatChannelsFormat = "iixssssssssxxxxxxxxxx"; ///
 
+///
+struct BankBagSlotPricesEntry
+{
+    uint id;
+    uint price;
+}
+
+enum bankBagSlotPricesFormat = "ni"; ///
+
+///
+struct DurabilityCostsEntry
+{
+    uint itemLevel;
+    uint[29] multiplier; /// by weapon sub-class, then armor sub-class + 21
+}
+
+enum durabilityCostsFormat = "niiiiiiiiiiiiiiiiiiiiiiiiiiiii"; ///
+
+///
+struct DurabilityQualityEntry
+{
+    uint id;
+    float qualityMod;
+}
+
+enum durabilityQualityFormat = "nf"; ///
+
 /// Talent and rank a spell belongs to (`TalentSpellPos`).
 struct TalentSpellPos
 {
@@ -426,6 +453,9 @@ final class ClientData
     DbcStore!(AreaTableEntry, areaTableFormat) areas;
     DbcStore!(AreaTriggerEntry, areaTriggerFormat) areaTriggers;
     DbcStore!(ChatChannelsEntry, chatChannelsFormat) chatChannels;
+    DbcStore!(BankBagSlotPricesEntry, bankBagSlotPricesFormat) bankBagSlotPrices;
+    DbcStore!(DurabilityCostsEntry, durabilityCostsFormat) durabilityCosts;
+    DbcStore!(DurabilityQualityEntry, durabilityQualityFormat) durabilityQualities;
 
     private
     {
@@ -449,7 +479,9 @@ final class ClientData
             "skillLineAbilities:SkillLineAbility", "skillRaceClassInfos:SkillRaceClassInfo", "skillTiers:SkillTiers",
             "talents:Talent", "talentTabs:TalentTab", "creatureDisplays:CreatureDisplayInfo",
             "creatureModels:CreatureModelData", "emotesText:EmotesText", "emotes:Emotes", "maps:Map",
-            "areas:AreaTable", "areaTriggers:AreaTrigger", "chatChannels:ChatChannels"])
+            "areas:AreaTable", "areaTriggers:AreaTrigger", "chatChannels:ChatChannels",
+            "bankBagSlotPrices:BankBagSlotPrices", "durabilityCosts:DurabilityCosts",
+            "durabilityQualities:DurabilityQuality"])
         {{
             enum parts = member.findSplit(":");
             enum field = parts[0];

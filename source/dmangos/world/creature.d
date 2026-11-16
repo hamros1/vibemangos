@@ -59,6 +59,12 @@ struct CreatureTemplate
     uint gossipMenuId;
     uint equipmentTemplateId;
     uint civilian;
+    uint trainerType;           /// `TrainerType`: class, mounts, tradeskills or pets
+    uint trainerSpell;          /// `TrainerSpell`: a tradeskill trainer teaches those who know this spell
+    uint trainerClass;          /// `TrainerClass`
+    uint trainerRace;           /// `TrainerRace`
+    uint trainerTemplateId;     /// `TrainerTemplateId`: its `npc_trainer_template` list
+    uint vendorTemplateId;      /// `VendorTemplateId`: its `npc_vendor_template` list
 
     /// The four models, `ModelId1` .. `ModelId4`.
     @property uint[4] modelIds() const pure nothrow @nogc @safe
@@ -72,7 +78,8 @@ enum creatureTemplateQuery = "SELECT Entry, Name, IFNULL(SubName, ''), MinLevel,
     ~ "ModelId3, ModelId4, Faction, Scale, Family, CreatureType, InhabitType, RacialLeader, NpcFlags, UnitFlags, "
     ~ "DynamicFlags, ExtraFlags, CreatureTypeFlags, SpeedWalk, SpeedRun, UnitClass, `Rank`, HealthMultiplier, "
     ~ "PowerMultiplier, MinLevelHealth, MaxLevelHealth, MinLevelMana, MaxLevelMana, MeleeBaseAttackTime, "
-    ~ "RangedBaseAttackTime, PetSpellDataId, MovementType, GossipMenuId, EquipmentTemplateId, Civilian "
+    ~ "RangedBaseAttackTime, PetSpellDataId, MovementType, GossipMenuId, EquipmentTemplateId, Civilian, "
+    ~ "TrainerType, TrainerSpell, TrainerClass, TrainerRace, TrainerTemplateId, VendorTemplateId "
     ~ "FROM creature_template";
 
 /// A `creature` row: one spawn.
@@ -174,6 +181,63 @@ final class Creature : MapObject
     @property ulong guid() const
     {
         return guid_;
+    }
+
+    /// `VendorItemCount`: a limited item's stock since it was first bought, and when it last grew.
+    private struct VendorStock
+    {
+        uint count;
+        long lastIncrement;
+    }
+
+    private VendorStock[uint] vendorStock; // by item: `m_vendorItemCounts`
+
+    /**
+     * `Creature::GetVendorItemCurrentCount`: how many of a limited item (`maxCount` > 0) the vendor
+     * has at Unix time `now`; it grows by `buyCount` every `incrTime` seconds, back to `maxCount`.
+     */
+    uint vendorItemCount(uint item, uint maxCount, uint incrTime, uint buyCount, long now)
+    {
+        if (maxCount == 0)
+            return 0;
+        auto stock = item in vendorStock;
+        if (stock is null)
+            return maxCount;
+        if (stock.lastIncrement + incrTime <= now)
+        {
+            // A restock time of 0 would divide by zero in CMaNGOS: here the item is simply back.
+            const steps = incrTime == 0 ? maxCount : cast(uint)((now - stock.lastIncrement) / incrTime);
+            if (stock.count + steps * buyCount >= maxCount)
+            {
+                vendorStock.remove(item);
+                return maxCount;
+            }
+            stock.count += steps * buyCount;
+            stock.lastIncrement = now;
+        }
+        return stock.count;
+    }
+
+    /// `Creature::UpdateVendorItemCurrentCount`: `used` were bought; returns how many are left.
+    uint takeVendorItems(uint item, uint maxCount, uint incrTime, uint buyCount, uint used, long now)
+    {
+        if (maxCount == 0)
+            return 0;
+        auto stock = item in vendorStock;
+        if (stock is null)
+        {
+            const left = maxCount > used ? maxCount - used : 0;
+            vendorStock[item] = VendorStock(left, now);
+            return left;
+        }
+        if (stock.lastIncrement + incrTime <= now)
+        {
+            const steps = incrTime == 0 ? maxCount : cast(uint)((now - stock.lastIncrement) / incrTime);
+            stock.count = stock.count + steps * buyCount < maxCount ? stock.count + steps * buyCount : maxCount;
+        }
+        stock.count = stock.count > used ? stock.count - used : 0;
+        stock.lastIncrement = now;
+        return stock.count;
     }
 
     /// See `MapObject.fields`.

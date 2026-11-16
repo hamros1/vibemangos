@@ -985,3 +985,388 @@ unittest
     list.characters = [CharacterEntry(1, "Test")];
     assert(encodePacket(list, plain).length == 4 + 1 + 158 + 5);
 }
+
+// ---------------------------------------------------------------------------
+// NPCs (GossipDef.cpp, NPCHandler.cpp, QueryHandler.cpp)
+// ---------------------------------------------------------------------------
+
+/// The NPC a player talks to: `CMSG_GOSSIP_HELLO`, `CMSG_BANKER_ACTIVATE`, `CMSG_BINDER_ACTIVATE`,
+/// `CMSG_TRAINER_LIST`, `CMSG_LIST_INVENTORY`.
+struct ClientNpcGuid
+{
+    ulong guid;
+}
+
+/// `CMSG_GOSSIP_SELECT_OPTION`; a coded option is followed by the code typed.
+struct ClientGossipSelectOption
+{
+    ulong guid;
+    uint option;
+    @Remainder ubyte[] code;
+}
+
+/// One line of a gossip menu.
+struct GossipMessageItem
+{
+    uint index;
+    ubyte icon;
+    ubyte coded;           /// the client asks for a code before selecting it
+    @CString string message;
+}
+
+/// One quest offered in a gossip menu.
+struct GossipQuestItem
+{
+    uint quest;
+    uint icon;
+    int level;
+    @CString string title;
+}
+
+/// `SMSG_GOSSIP_MESSAGE` (`PlayerMenu::SendGossipMenu`)
+struct ServerGossipMessage
+{
+    mixin ServerPacket!(Opcode.SMSG_GOSSIP_MESSAGE);
+    ulong guid;
+    uint textId;
+    @LengthPrefix!uint GossipMessageItem[] items;
+    @LengthPrefix!uint GossipQuestItem[] quests;
+}
+
+/// `SMSG_GOSSIP_COMPLETE`: the gossip window closes.
+struct ServerGossipComplete
+{
+    mixin ServerPacket!(Opcode.SMSG_GOSSIP_COMPLETE);
+}
+
+/// `SMSG_GOSSIP_POI`: a flag on the minimap (`PlayerMenu::SendPointOfInterest`).
+struct ServerGossipPoi
+{
+    mixin ServerPacket!(Opcode.SMSG_GOSSIP_POI);
+    uint flags;
+    float x = 0;
+    float y = 0;
+    uint icon;
+    uint data;
+    @CString string name;
+}
+
+/// `CMSG_NPC_TEXT_QUERY`
+struct ClientNpcTextQuery
+{
+    uint textId;
+    ulong guid;
+}
+
+/// An emote of an NPC text option: played after `delay`.
+struct NpcTextEmote
+{
+    uint delay;
+    uint emote;
+}
+
+/// One of an NPC text's eight options: the male and female text, chosen at random by probability.
+struct NpcTextOption
+{
+    float probability = 0;
+    @CString string text0;
+    @CString string text1;
+    uint language;
+    NpcTextEmote[3] emotes;
+}
+
+/// `SMSG_NPC_TEXT_UPDATE` (`WorldSession::HandleNpcTextQueryOpcode`)
+struct ServerNpcTextUpdate
+{
+    mixin ServerPacket!(Opcode.SMSG_NPC_TEXT_UPDATE);
+    uint textId;
+    NpcTextOption[8] options;
+}
+
+/// `SMSG_SHOW_BANK`
+struct ServerShowBank
+{
+    mixin ServerPacket!(Opcode.SMSG_SHOW_BANK);
+    ulong banker;
+}
+
+/// `SMSG_PLAYERBOUND`: the hearthstone is bound here (`Spell::EffectBind`).
+struct ServerPlayerBound
+{
+    mixin ServerPacket!(Opcode.SMSG_PLAYERBOUND);
+    ulong binder;
+    uint area;
+}
+
+/// One spell of `SMSG_TRAINER_LIST` (`SendTrainerSpellHelper`).
+struct TrainerListSpell
+{
+    uint spell;
+    ubyte state;             /// `TrainerSpellState`: 0 green, 1 red, 2 gray
+    uint cost;
+    uint talentCost;
+    uint primaryProfessionFirstRank; /// equal to the previous field for the learn button to be enabled
+    ubyte requiredLevel;
+    uint requiredSkill;
+    uint requiredSkillValue;
+    uint[3] requiredSpells;
+}
+
+/// `SMSG_TRAINER_LIST` (`WorldSession::SendTrainerList`)
+struct ServerTrainerList
+{
+    mixin ServerPacket!(Opcode.SMSG_TRAINER_LIST);
+    ulong trainer;
+    uint trainerType;
+    @LengthPrefix!uint TrainerListSpell[] spells;
+    @CString string greeting;
+}
+
+/// `CMSG_TRAINER_BUY_SPELL`
+struct ClientTrainerBuySpell
+{
+    ulong trainer;
+    uint spell;
+}
+
+/// `SMSG_TRAINER_BUY_SUCCEEDED`
+struct ServerTrainerBuySucceeded
+{
+    mixin ServerPacket!(Opcode.SMSG_TRAINER_BUY_SUCCEEDED);
+    ulong trainer;
+    uint spell;
+}
+
+/// `SMSG_PLAY_SPELL_VISUAL`: a visual kit (`SpellVisualKit.dbc`) on an object.
+struct ServerPlaySpellVisual
+{
+    mixin ServerPacket!(Opcode.SMSG_PLAY_SPELL_VISUAL);
+    ulong guid;
+    uint kit;
+}
+
+/// `SMSG_PLAY_SPELL_IMPACT`
+struct ServerPlaySpellImpact
+{
+    mixin ServerPacket!(Opcode.SMSG_PLAY_SPELL_IMPACT);
+    ulong guid;
+    uint kit;
+}
+
+/// `SMSG_SUPERCEDED_SPELL`: a higher rank replaces a spell in the spellbook and on the action bars.
+struct ServerSupercededSpell
+{
+    mixin ServerPacket!(Opcode.SMSG_SUPERCEDED_SPELL);
+    ushort oldSpell;
+    ushort newSpell;
+}
+
+static assert(wireSize!TrainerListSpell == 38);
+static assert(wireSize!ServerPlayerBound == 12);
+
+/// One item of `SMSG_LIST_INVENTORY`.
+struct VendorListItem
+{
+    uint slot;               /// numbered from 1
+    uint item;
+    uint displayId;
+    uint available;          /// 0xFFFFFFFF: unlimited
+    uint price;
+    uint maxDurability;
+    uint buyCount;
+}
+
+/// `SMSG_LIST_INVENTORY` (`WorldSession::SendListInventory`); an empty list is followed by an error byte.
+struct ServerListInventory
+{
+    mixin ServerPacket!(Opcode.SMSG_LIST_INVENTORY);
+    ulong vendor;
+    @LengthPrefix!ubyte VendorListItem[] items;
+    @Remainder ubyte[] error;
+}
+
+/// `SMSG_BINDER_CONFIRM`: the client asks whether to bind the hearthstone here (`Player::SetBindPoint`).
+struct ServerBinderConfirm
+{
+    mixin ServerPacket!(Opcode.SMSG_BINDER_CONFIRM);
+    ulong binder;
+}
+
+// ---------------------------------------------------------------------------
+// Items (ItemHandler.cpp, NPCHandler.cpp's repairs, Player::SendEquipError)
+// ---------------------------------------------------------------------------
+
+/// `CMSG_SWAP_INV_ITEM`: two of the character's own slots.
+struct ClientSwapInvItem
+{
+    ubyte srcSlot;
+    ubyte dstSlot;
+}
+
+/// `CMSG_SWAP_ITEM`
+struct ClientSwapItem
+{
+    ubyte dstBag;
+    ubyte dstSlot;
+    ubyte srcBag;
+    ubyte srcSlot;
+}
+
+/// `CMSG_SPLIT_ITEM`
+struct ClientSplitItem
+{
+    ubyte srcBag;
+    ubyte srcSlot;
+    ubyte dstBag;
+    ubyte dstSlot;
+    ubyte count;
+}
+
+/// An item by its place: `CMSG_AUTOEQUIP_ITEM`, `CMSG_AUTOBANK_ITEM`, `CMSG_AUTOSTORE_BANK_ITEM`.
+struct ClientItemPos
+{
+    ubyte bag;
+    ubyte slot;
+}
+
+/// `CMSG_AUTOEQUIP_ITEM_SLOT`
+struct ClientAutoEquipItemSlot
+{
+    ulong item;
+    ubyte dstSlot;
+}
+
+/// `CMSG_AUTOSTORE_BAG_ITEM`
+struct ClientAutoStoreBagItem
+{
+    ubyte srcBag;
+    ubyte srcSlot;
+    ubyte dstBag;
+}
+
+/// `CMSG_DESTROYITEM`
+struct ClientDestroyItem
+{
+    ubyte bag;
+    ubyte slot;
+    ubyte count; /// 0: all of it
+    ubyte[3] unknown;
+}
+
+/// `CMSG_SET_AMMO`
+struct ClientSetAmmo
+{
+    uint item;
+}
+
+/// `CMSG_SELL_ITEM`
+struct ClientSellItem
+{
+    ulong vendor;
+    ulong item;
+    ubyte count; /// 0: all of it
+}
+
+/// `CMSG_BUYBACK_ITEM`
+struct ClientBuybackItem
+{
+    ulong vendor;
+    uint slot; /// `BUYBACK_SLOT_START` + the index
+}
+
+/// `CMSG_BUY_ITEM`
+struct ClientBuyItem
+{
+    ulong vendor;
+    uint item;
+    ubyte count;
+    ubyte unknown; /// always 1
+}
+
+/// `CMSG_BUY_ITEM_IN_SLOT`: into a given bag (the player's guid for its own slots) and slot.
+struct ClientBuyItemInSlot
+{
+    ulong vendor;
+    uint item;
+    ulong bag;
+    ubyte slot;
+    ubyte count;
+}
+
+/// `CMSG_REPAIR_ITEM`; an item guid of 0 repairs everything.
+struct ClientRepairItem
+{
+    ulong npc;
+    ulong item;
+}
+
+/// `SMSG_INVENTORY_CHANGE_FAILURE`; built by `inventoryChangeFailure`.
+struct ServerInventoryChangeFailure
+{
+    mixin ServerPacket!(Opcode.SMSG_INVENTORY_CHANGE_FAILURE);
+    ubyte result;
+    @Remainder ubyte[] details;
+}
+
+/**
+ * `Player::SendEquipError`: for an error, the required level (for "too low level"), then the two
+ * items involved and the slot of the bag that refused the item.
+ */
+ServerInventoryChangeFailure inventoryChangeFailure(ubyte result, bool levelError, uint requiredLevel,
+    ulong item, ulong other, ubyte bagSlot)
+{
+    ServerInventoryChangeFailure packet;
+    packet.result = result;
+    if (result == 0)
+        return packet;
+    ByteWriter details;
+    if (levelError)
+        details.put(requiredLevel);
+    details.put(item);
+    details.put(other);
+    details.put(bagSlot);
+    packet.details = details.data.dup;
+    return packet;
+}
+
+/// `SMSG_BUY_ITEM`: bought; `newCount` is what the vendor has left, `uint.max` if unlimited.
+struct ServerBuyItem
+{
+    mixin ServerPacket!(Opcode.SMSG_BUY_ITEM);
+    ulong vendor;
+    uint vendorSlot; /// from 1
+    uint newCount;
+    uint count;
+}
+
+/// `SMSG_BUY_FAILED` (`Player::SendBuyError`)
+struct ServerBuyFailed
+{
+    mixin ServerPacket!(Opcode.SMSG_BUY_FAILED);
+    ulong vendor;
+    uint vendorSlot; /// from 1
+    ubyte result;
+}
+
+/// `SMSG_SELL_ITEM` (`Player::SendSellError`)
+struct ServerSellItem
+{
+    mixin ServerPacket!(Opcode.SMSG_SELL_ITEM);
+    ulong vendor;
+    ulong item;
+    ubyte result;
+}
+
+/// `SMSG_BUY_BANK_SLOT_RESULT`
+struct ServerBuyBankSlotResult
+{
+    mixin ServerPacket!(Opcode.SMSG_BUY_BANK_SLOT_RESULT);
+    uint result;
+}
+
+/// `SMSG_OPEN_CONTAINER` (`Player::SendOpenContainer`): opens a bag just put on.
+struct ServerOpenContainer
+{
+    mixin ServerPacket!(Opcode.SMSG_OPEN_CONTAINER);
+    ulong bag;
+}

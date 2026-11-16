@@ -109,7 +109,9 @@ enum : ubyte
 
 enum ubyte inventorySlotBagStart = 19, inventorySlotBagEnd = 23;   ///
 enum ubyte inventorySlotItemStart = 23, inventorySlotItemEnd = 39; ///
+enum ubyte bankSlotItemStart = 39, bankSlotItemEnd = 63;           ///
 enum ubyte bankBagSlotStart = 63, bankBagSlotEnd = 69;             ///
+enum ubyte buybackSlotStart = 69, buybackSlotEnd = 81;             ///
 enum ubyte keyringSlotStart = 81, keyringSlotEnd = 97;             ///
 enum playerSlots = keyringSlotEnd;                                  /// positions of bag 0 creation uses
 

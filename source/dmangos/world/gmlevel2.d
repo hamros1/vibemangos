@@ -12,7 +12,7 @@ mixin template Level2Commands()
     import core.time : MonoTime;
     import std.format : format;
     import dmangos.world.commands;
-    import dmangos.world.objects : seenByOwner, seenBySelf, UpdateData;
+    import dmangos.world.inventory : ItemState;
     import dmangos.world.opcodes;
     import dmangos.world.queries : chatMessage, monsterChatMessage;
     import dmangos.world.updatefields;
@@ -42,18 +42,16 @@ private:
         auto plr = getSelectedChar(false);
         if (plr is null)
             return false;
-        foreach (ref item; plr.player.items) // RepairItem2: back to full durability
+        foreach (item; plr.player.inventory.all()) // RepairItem2: back to full durability
         {
-            const maximum = item.values[ITEM_FIELD_MAXDURABILITY];
-            if (item.values[ITEM_FIELD_DURABILITY] == maximum)
+            if (item.durability == item.maxDurability)
                 continue;
-            item.values.set!ITEM_FIELD_DURABILITY(maximum);
-            context.database.updateItem(item.guid, item.values[ITEM_FIELD_STACK_COUNT], maximum);
-            UpdateData change;
-            change.addValues(item.fullGuid, item.values, seenBySelf | seenByOwner);
-            item.values.clearChanges();
-            plr.sendUpdate(change);
+            if (item.durability == 0 && item.isEquipped)
+                plr.player.inventory.equipmentChanged = true; // a broken worn item gives its stats again
+            item.values.set!ITEM_FIELD_DURABILITY(item.maxDurability);
+            plr.player.inventory.setState(item, ItemState.changed);
         }
+        plr.flushInventory();
         systemMessage("Items Repaired");
         return true;
     }

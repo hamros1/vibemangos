@@ -994,7 +994,8 @@ unittest
     assert(login.count(Opcode.SMSG_COMPRESSED_UPDATE_OBJECT) + login.count(Opcode.SMSG_UPDATE_OBJECT) == 2,
         "the player, then what it sees");
     const deputy = makeGuid(HighGuid.unit, creatureWillem, 79942);
-    assert(context.map(0).objectCount == 2 && context.map(0).seesObject(7, deputy));
+    // Deputy Willem, the mailbox and the trainer, innkeeper and banker by the start position.
+    assert(context.map(0).objectCount == 5 && context.map(0).seesObject(7, deputy));
 
     anduin.write(Opcode.CMSG_CREATURE_QUERY, ClientObjectQuery(creatureWillem, deputy));
     const reply = anduin.read();

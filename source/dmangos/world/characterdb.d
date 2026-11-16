@@ -13,7 +13,8 @@ import std.typecons : Nullable, nullable;
 
 import dmangos.log;
 import dmangos.mysql : MySqlConnection;
-import dmangos.world.player : CharacterData, CharacterProgress, HomeBind, ItemRecord, tutorialFields;
+import dmangos.world.inventory : ItemChange, ItemRecord, ItemState;
+import dmangos.world.player : CharacterData, CharacterProgress, HomeBind, tutorialFields;
 import dmangos.world.playercreate : NewCharacter, NewSkill, NewSpell, maxEnchantmentSlot;
 import dmangos.world.worlddata : CreateAction;
 
@@ -277,6 +278,13 @@ final class CharacterStatements
     }
 
     /// `_LoadHomeBind` for a character without one: binds it where it was created.
+    /// `Player::SetHomebindToLocation`
+    void updateHomeBind(uint guid, const HomeBind bind)
+    {
+        characters.execute!("UPDATE character_homebind SET map = ?, zone = ?, position_x = ?, position_y = ?, "
+            ~ "position_z = ? WHERE guid = ?")(bind.map, bind.zone, bind.x, bind.y, bind.z, guid);
+    }
+
     void insertHomeBind(uint guid, const HomeBind bind)
     {
         characters.execute!("INSERT INTO character_homebind (guid, map, zone, position_x, position_y, position_z) "
@@ -304,10 +312,12 @@ final class CharacterStatements
         characters.execute!("UPDATE characters SET position_x = ?, position_y = ?, position_z = ?, orientation = ?, "
             ~ "map = ?, zone = ?, totaltime = ?, leveltime = ?, logout_time = ?, health = ?, power1 = ?, "
             ~ "power2 = ?, power3 = ?, power4 = ?, power5 = ?, actionBars = ?, cinematic = ?, at_login = ?, "
-            ~ "level = ?, xp = ?, money = ?, exploredZones = ?, rest_bonus = ?, is_logout_resting = ? WHERE guid = ?")(
+            ~ "level = ?, xp = ?, money = ?, exploredZones = ?, equipmentCache = ?, ammoId = ?, rest_bonus = ?, "
+            ~ "is_logout_resting = ? WHERE guid = ?")(
             p.position.x, p.position.y, p.position.z, p.position.orientation, p.map, p.zone, p.totalTime, p.levelTime,
             now, p.health, p.power[0], p.power[1], p.power[2], p.power[3], p.power[4], p.actionBars, p.cinematic,
-            p.atLogin, p.level, p.xp, p.money, p.exploredZones, p.restBonus, p.resting ? 1 : 0, p.guid);
+            p.atLogin, p.level, p.xp, p.money, p.exploredZones, p.equipmentCache, p.ammoId, p.restBonus,
+            p.resting ? 1 : 0, p.guid);
     }
 
     /// `ObjectMgr::GetPlayerGuidByName`: the guid of the character called `name`, or 0.
@@ -331,12 +341,17 @@ final class CharacterStatements
     }
 
     /// `Player::_SaveSpells` for one spell.
-    void saveSpell(uint guid, uint spell, bool learned)
+    void saveSpell(uint guid, uint spell, bool active, bool disabled)
+    {
+        deleteSpell(guid, spell);
+        characters.execute!"INSERT INTO character_spell (guid, spell, active, disabled) VALUES (?, ?, ?, ?)"(
+            guid, spell, active, disabled);
+    }
+
+    /// `Player::_SaveSpells` for a removed spell.
+    void deleteSpell(uint guid, uint spell)
     {
         characters.execute!"DELETE FROM character_spell WHERE guid = ? AND spell = ?"(guid, spell);
-        if (learned)
-            characters.execute!"INSERT INTO character_spell (guid, spell, active, disabled) VALUES (?, ?, 1, 0)"(
-                guid, spell);
     }
 
     /// `Player::_SaveSkills` for one skill; a `max` of 0 deletes it.
@@ -348,32 +363,43 @@ final class CharacterStatements
                 skill, value, max);
     }
 
-    /// `Item::SaveToDB` (ITEM_NEW) and `Player::_SaveInventory` for a new item.
-    void insertItem(uint owner, const ItemRecord i)
+    /// See `CharacterDatabase.saveInventory`.
+    void saveInventory(uint owner, uint money, uint playerBytes2, const(ItemChange)[] changes)
     {
         characters.transaction({
-            characters.execute!("INSERT INTO item_instance (guid, owner_guid, itemEntry, creatorGuid, giftCreatorGuid, "
-                ~ "count, duration, charges, flags, enchantments, randomPropertyId, durability, itemTextId) "
-                ~ "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")(i.guid, owner, i.entry, i.creator, i.giftCreator,
-                i.count, i.duration, i.charges, i.flags, i.enchantments, i.randomPropertyId, i.durability, i.textId);
-            characters.execute!("INSERT INTO character_inventory (guid, bag, slot, item, item_template) "
-                ~ "VALUES (?, ?, ?, ?, ?)")(owner, i.bag, i.slot, i.guid, i.entry);
-        });
-    }
-
-    /// `Item::SaveToDB` (ITEM_CHANGED) for the stack size and durability.
-    void updateItem(uint itemGuid, uint count, uint durability)
-    {
-        characters.execute!"UPDATE item_instance SET count = ?, durability = ? WHERE guid = ?"(count, durability,
-            itemGuid);
-    }
-
-    /// `Item::DeleteFromDB` and `Item::DeleteFromInventoryDB`
-    void deleteItem(uint itemGuid)
-    {
-        characters.transaction({
-            characters.execute!"DELETE FROM character_inventory WHERE item = ?"(itemGuid);
-            characters.execute!"DELETE FROM item_instance WHERE guid = ?"(itemGuid);
+            foreach (change; changes)
+            {
+                const i = change.record;
+                final switch (change.state)
+                {
+                case ItemState.new_:
+                    characters.execute!("INSERT INTO character_inventory (guid, bag, slot, item, item_template) "
+                        ~ "VALUES (?, ?, ?, ?, ?)")(owner, i.bag, i.slot, i.guid, i.entry);
+                    characters.execute!("REPLACE INTO item_instance (owner_guid, itemEntry, creatorGuid, "
+                        ~ "giftCreatorGuid, count, duration, charges, flags, enchantments, randomPropertyId, durability, "
+                        ~ "itemTextId, guid) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")(owner, i.entry, i.creator,
+                        i.giftCreator, i.count, i.duration, i.charges, i.flags, i.enchantments, i.randomPropertyId,
+                        i.durability, i.textId, i.guid);
+                    break;
+                case ItemState.changed:
+                    characters.execute!("UPDATE character_inventory SET guid = ?, bag = ?, slot = ?, item_template = ? "
+                        ~ "WHERE item = ?")(owner, i.bag, i.slot, i.entry, i.guid);
+                    characters.execute!("UPDATE item_instance SET owner_guid = ?, itemEntry = ?, creatorGuid = ?, "
+                        ~ "giftCreatorGuid = ?, count = ?, duration = ?, charges = ?, flags = ?, enchantments = ?, "
+                        ~ "randomPropertyId = ?, durability = ?, itemTextId = ? WHERE guid = ?")(owner, i.entry,
+                        i.creator, i.giftCreator, i.count, i.duration, i.charges, i.flags, i.enchantments,
+                        i.randomPropertyId, i.durability, i.textId, i.guid);
+                    break;
+                case ItemState.removed:
+                    characters.execute!"DELETE FROM character_inventory WHERE item = ?"(i.guid);
+                    characters.execute!"DELETE FROM item_instance WHERE guid = ?"(i.guid);
+                    break;
+                case ItemState.unchanged:
+                    break;
+                }
+            }
+            characters.execute!"UPDATE characters SET money = ?, playerBytes2 = ? WHERE guid = ?"(money,
+                playerBytes2, owner);
         });
     }
 

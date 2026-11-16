@@ -13,7 +13,8 @@
  *        including the skills and spells each of them teaches in turn;)
  *   $(LI default action bars;)
  *   $(LI the starting outfit (`CharStartOutfit.dbc`) and `playercreateinfo_item`, equipped where
- *        possible, then everything in the backpack equipped or moved to its best place.)
+ *        possible, then everything in the backpack equipped or moved to its best place. The items
+ *        follow `dmangos.world.inventory`'s rules, the same a player in the world is held to.)
  * )
  *
  * The result is a `NewCharacter`, the rows CMaNGOS's `SaveToDB` would write.
@@ -31,7 +32,7 @@
  */
 module dmangos.world.playercreate;
 
-import std.algorithm.comparison : max, min;
+import std.algorithm.comparison : max;
 import std.algorithm.mutation : remove;
 import std.algorithm.searching : canFind;
 import std.algorithm.sorting : sort;
@@ -42,10 +43,12 @@ import std.math : round;
 import dmangos.auth.accounts : AccountLevel;
 import dmangos.log;
 import dmangos.world.clientdata;
+import dmangos.world.inventory;
+import dmangos.world.objects : HighGuid, makeGuid, UpdateValues;
 public import dmangos.world.defines; // the inventory positions are part of this module's interface
 import dmangos.world.spells;
 import dmangos.world.stats : healthBonusFromStamina, manaBonusFromIntellect;
-import dmangos.world.updatefields : maxPlayerSkills;
+import dmangos.world.updatefields : maxPlayerSkills, TypeId;
 import dmangos.world.worlddata;
 
 // ---------------------------------------------------------------------------
@@ -54,19 +57,7 @@ import dmangos.world.worlddata;
 
 private enum : uint
 {
-    itemSubclassFood = 5, itemSubclassContainer = 0, itemSubclassSoulContainer = 1, itemSubclassHerbContainer = 2,
-    itemSubclassEnchantingContainer = 3, itemSubclassEngineeringContainer = 4,
-    itemSubclassQuiver = 2, itemSubclassAmmoPouch = 3, itemSubclassWeaponFist = 13,
-    itemSubclassArmorMisc = 0, itemSubclassArmorLibram = 7, itemSubclassArmorIdol = 8, itemSubclassArmorTotem = 9,
-    bagFamilyArrows = 1, bagFamilyBullets = 2, bagFamilySoulShards = 3, bagFamilyHerbs = 6,
-    bagFamilyEnchantingSupp = 7, bagFamilyEngineeringSupp = 8, bagFamilyKeys = 9,
-    bindWhenPickedUp = 1, bindWhenEquipped = 2, bindQuestItem = 4,
-    itemFlagUniqueEquippable = 0x00080000,
-}
-
-private enum : uint
-{
-    skillPoisons = 40, skillLockpicking = 633, skillFistWeapons = 473, skillFishing = 356, skillCooking = 185,
+    skillPoisons = 40, skillLockpicking = 633, skillFishing = 356, skillCooking = 185,
     skillFirstAid = 129, skillRiding = 762,
     abilityLearnedOnGetRaceOrClassSkill = 2,
 }
@@ -79,35 +70,6 @@ enum maxEnchantmentSlot = 7;
 enum uint atLoginFirst = 0x20;
 
 private enum uint powerRageDefault = 1000, powerEnergyDefault = 100;
-
-/// `LevelUpKeyringSize`: keyring slots by level / 10.
-private immutable uint[7] keyringSizeByLevel = [4, 4, 4, 4, 8, 12, 12];
-
-/// Equip/store results (`InventoryResult`, subset). Only success matters to creation; the rest is for logs.
-enum InventoryResult
-{
-    ok,
-    itemNotFound,
-    cantCarryMoreOfThis,
-    itemCantBeEquipped,
-    noEquipmentSlotAvailable,
-    cantDualWield,
-    cantEquipWithTwoHanded,
-    noRequiredProficiency,
-    cantEquipSkill,
-    cantEquipLevel,
-    youCanNeverUseThatItem,
-    cantEquipRank,
-    cantEquipReputation,
-    canEquipOnlyOneQuiver,
-    canEquipOnlyOneAmmoPouch,
-    onlyAmmoCanGoHere,
-    itemDoesntGoIntoBag,
-    intBagError,
-    itemCantStack,
-    inventoryFull,
-    nonEmptyBagOverOtherBag,
-}
 
 // ---------------------------------------------------------------------------
 // Input and output
@@ -249,29 +211,6 @@ private struct SkillStatus
     SkillState state;
 }
 
-private final class ItemObject
-{
-    uint guid;
-    const(ItemTemplate)* proto;
-    uint count = 1;
-    bool bound;
-    ItemObject container;
-    ubyte slot;
-    ItemObject[] contents; // for bags, ContainerSlots long
-
-    @property uint entry() const { return proto.entry; }
-    @property bool isBag() const
-    {
-        return proto.itemClass == ItemClass.container || proto.itemClass == ItemClass.quiver;
-    }
-}
-
-private struct ItemPosCount
-{
-    ushort pos;
-    uint count;
-}
-
 /// A skill a character has, at its place in the skill list.
 struct KnownSkill
 {
@@ -289,8 +228,32 @@ struct KnownAbilities
     uint freePrimaryProfessions; /// primary professions that can still be learned
 }
 
+/// A packet `Player::learnSpell` sends to a player in the world.
+struct LearnEvent
+{
+    enum Kind
+    {
+        learned,    /// `SMSG_LEARNED_SPELL`
+        superseded, /// `SMSG_SUPERCEDED_SPELL`: `spell` is replaced by `newSpell`
+    }
+
+    Kind kind;
+    uint spell;
+    uint newSpell;
+}
+
+/// What `CharacterBuilder.learnInWorld` changed.
+struct LearnResult
+{
+    KnownAbilities abilities;    /// the abilities now
+    LearnEvent[] events;         /// in the order CMaNGOS sends them
+    NewSpell[] savedSpells;      /// `character_spell` rows to write
+    uint[] removedSpells;        /// `character_spell` rows to delete
+    NewSkill[] savedSkills;      /// `character_skills` rows to write; a `max` of 0 deletes the row
+}
+
 /// Creates one character, or loads one's abilities; see the module documentation. Use once per character.
-final class CharacterBuilder
+final class CharacterBuilder : InventoryOwner
 {
     private
     {
@@ -309,11 +272,14 @@ final class CharacterBuilder
         PlayerSpell[uint] spells;
         SkillStatus[uint] skills;
         uint[] skillOrder; // insertion order, for deterministic output
-        bool canDualWield;
-        ItemObject[playerSlots] items;
-        ItemObject[] createdItems; // every item ever created, in guid order
+        bool dualWield;
+        uint characterGuid;
+        UpdateValues fields;  // the new character's: the inventory writes its slot fields here
+        Inventory inventory;
         uint ammoId;
         bool loading; // loadAbilities: talent spells come from the database, not from creation
+        bool inWorld; // learnInWorld: the player is told what it learns
+        LearnEvent[] events;
     }
 
     ///
@@ -354,6 +320,9 @@ final class CharacterBuilder
         }
         raceMask = maskOf(req.race);
         classMask = maskOf(req.classId);
+        characterGuid = guid;
+        fields = UpdateValues(TypeId.player);
+        inventory = new Inventory(world, this, &fields, nextItemGuid);
 
         result.guid = guid;
         result.account = account;
@@ -469,7 +438,99 @@ final class CharacterBuilder
                 addSpell(saved.spell, saved.active, false, false, saved.disabled);
 
         learnDefaultSpells(*info);
+        result = abilities();
+        return true;
+    }
 
+    /**
+     * `Player::learnSpell` for a character in the world, as a trainer teaches it: after `loadAbilities`
+     * has loaded what the character knows, learns `id` and what comes with it (lower ranks, dependent
+     * spells, skills). The result says what to tell the player and what to save.
+     */
+    LearnResult learnInWorld(uint id)
+    {
+        loading = false;
+        inWorld = true;
+        learnSpell(id, false);
+
+        LearnResult result;
+        result.abilities = abilities();
+        result.events = events;
+        foreach (spellId, spell; spells)
+        {
+            if (spell.state == SpellState.removed)
+                result.removedSpells ~= spellId;
+            else if (spell.state != SpellState.unchanged)
+                result.savedSpells ~= NewSpell(spellId, spell.active, spell.disabled);
+        }
+        foreach (skillId; skillOrder)
+        {
+            const skill = skills[skillId];
+            if (skill.state == SkillState.deleted)
+                result.savedSkills ~= NewSkill(skillId, 0, 0);
+            else if (skill.state != SkillState.unchanged)
+                result.savedSkills ~= NewSkill(skillId, skill.value, skill.max);
+        }
+        return result;
+    }
+
+    // -----------------------------------------------------------------------
+    // InventoryOwner
+    // -----------------------------------------------------------------------
+
+    @property ulong ownerGuid() const
+    {
+        return makeGuid(HighGuid.player, characterGuid);
+    }
+
+    @property uint ownerLevel() const
+    {
+        return level;
+    }
+
+    @property ubyte ownerClass() const
+    {
+        return request.classId;
+    }
+
+    @property ubyte ownerRace() const
+    {
+        return request.race;
+    }
+
+    /// `Player::HasSpell`
+    bool hasSpell(uint id) const
+    {
+        if (auto spell = id in spells)
+            return spell.state != SpellState.removed && !spell.disabled;
+        return false;
+    }
+
+    ushort skillRank(uint skill) const
+    {
+        return skillValue(skill);
+    }
+
+    @property bool dualWields() const
+    {
+        return dualWield;
+    }
+
+    @property bool alive() const
+    {
+        return true;
+    }
+
+    @property bool inCombat() const
+    {
+        return false;
+    }
+
+private:
+    /// The skills, in slot order, and the spellbook as they are now.
+    KnownAbilities abilities() const
+    {
+        KnownAbilities result;
         foreach (id; skillOrder)
         {
             const skill = skills[id];
@@ -481,10 +542,9 @@ final class CharacterBuilder
                 result.spellbook ~= id;
         result.spellbook.sort();
         result.freePrimaryProfessions = freePrimaryProfessions;
-        return true;
+        return result;
     }
 
-private:
     /// `Player::InitPrimaryProfessions`: `MaxPrimaryTradeSkill`, or 10 from the `TradeSkill.GMIgnore` account level.
     void initPrimaryProfessions()
     {
@@ -505,13 +565,6 @@ private:
     // Spells (Player::addSpell, learnSpell, learnDefaultSpells)
     // -----------------------------------------------------------------------
 
-    bool hasSpell(uint id) const
-    {
-        if (auto spell = id in spells)
-            return spell.state != SpellState.removed && !spell.disabled;
-        return false;
-    }
-
     void learnDefaultSpells(const ref PlayerInfo info)
     {
         foreach (spell; info.spells)
@@ -523,7 +576,8 @@ private:
         const existing = id in spells;
         const disabled = existing ? existing.disabled : false;
         const active = disabled ? existing.active : true;
-        addSpell(id, active, true, dependent, false);
+        if (addSpell(id, active, true, dependent, false) && inWorld)
+            events ~= LearnEvent(LearnEvent.Kind.learned, id);
         if (disabled)
             foreach (next; world.spells.nextInChain(id))
                 if (auto spell = next in spells)
@@ -598,7 +652,7 @@ private:
                     setSkillStep(cast(ushort) spell.miscValue[i], cast(ushort) step);
                 break;
             case SpellEffect.dualWield:
-                canDualWield = true;
+                dualWield = true;
                 break;
             default:
                 break;
@@ -719,6 +773,8 @@ private:
                         {
                             if (nextId == id)
                             {
+                                if (inWorld)
+                                    events ~= LearnEvent(LearnEvent.Kind.superseded, otherId, id);
                                 other.active = false;
                                 if (other.state != SpellState.newSpell)
                                     other.state = SpellState.changed;
@@ -726,6 +782,8 @@ private:
                             }
                             else if (otherId == id)
                             {
+                                if (inWorld)
+                                    events ~= LearnEvent(LearnEvent.Kind.superseded, id, otherId);
                                 created.active = false;
                                 if (created.state != SpellState.newSpell)
                                     created.state = SpellState.changed;
@@ -758,7 +816,12 @@ private:
 
         foreach (node; world.spells.learnedWith(id))
             if (!node.autoLearned)
-                addSpell(node.spell, node.active, true, true, false);
+            {
+                if (inWorld && node.active)
+                    learnSpell(node.spell, true); // told, as a spell learned in the world
+                else
+                    addSpell(node.spell, node.active, true, true, false);
+            }
 
         return active && !disabled && !supercededOld;
     }
@@ -1052,7 +1115,7 @@ private:
     }
 
     // -----------------------------------------------------------------------
-    // Items (Player::StoreNewItemInBestSlots and the inventory functions it uses)
+    // Items (Player::StoreNewItemInBestSlots, on dmangos.world.inventory)
     // -----------------------------------------------------------------------
 
     void addStartingItems(const ref PlayerInfo info)
@@ -1097,24 +1160,24 @@ private:
         // Equip what can be equipped from the backpack; move the rest (e.g. arrows) to its best place.
         foreach (ubyte i; inventorySlotItemStart .. inventorySlotItemEnd)
         {
-            auto item = items[i];
+            auto item = inventory[inventorySlotBag0, i];
             if (item is null)
                 continue;
             ushort dest;
-            if (canEquipItem(nullSlot, dest, item, false) == InventoryResult.ok)
+            if (inventory.canEquip(nullSlot, dest, item, false) == InventoryResult.ok)
             {
-                removeItem(inventorySlotBag0, i);
-                equipItem(dest, item);
+                inventory.remove(inventorySlotBag0, i);
+                inventory.equip(dest, item);
                 continue;
             }
             ItemPosCount[] storeDest;
-            if (canStoreItem(nullBag, nullSlot, storeDest, item.entry, item.count, item) == InventoryResult.ok)
+            ubyte bagSlot;
+            if (inventory.canStore(nullBag, nullSlot, storeDest, item, false, bagSlot) == InventoryResult.ok)
             {
-                removeItem(inventorySlotBag0, i);
-                item = storeItem(storeDest, item);
+                inventory.remove(inventorySlotBag0, i);
+                item = inventory.store(storeDest, item);
             }
-            if (canUseAmmo(item.entry) == InventoryResult.ok)
-                setAmmo(item.entry);
+            setAmmo(item.entry);
         }
     }
 
@@ -1123,23 +1186,20 @@ private:
         while (amount > 0)
         {
             ushort dest;
-            if (canEquipNewItem(nullSlot, dest, entry) != InventoryResult.ok)
+            if (inventory.canEquipNew(nullSlot, dest, entry, false) != InventoryResult.ok)
                 break;
-            equipItem(dest, createItem(entry, 1));
-            autoUnequipOffhandIfNeeded();
+            inventory.equipNew(dest, entry);
+            inventory.autoUnequipOffhand();
             --amount;
         }
         if (amount == 0)
             return true;
 
         ItemPosCount[] dest;
-        const result = canStoreItem(inventorySlotBag0, nullSlot, dest, entry, amount, null);
+        const result = inventory.canStoreNew(inventorySlotBag0, nullSlot, dest, entry, amount);
         if (result == InventoryResult.ok)
         {
-            uint count;
-            foreach (position; dest)
-                count += position.count;
-            storeItem(dest, createItem(entry, count));
+            inventory.storeNew(dest, entry);
             return true;
         }
         error!"cannot equip or store initial item %s for race %s class %s: %s"(entry, request.race,
@@ -1147,620 +1207,11 @@ private:
         return false;
     }
 
-    /// `Item::CreateItem`: allocates a guid even for items that end up merged or thrown away, as CMaNGOS does.
-    ItemObject createItem(uint entry, uint count)
-    {
-        const proto = entry in world.items;
-        if (proto is null || count < 1)
-            return null;
-        auto item = new ItemObject;
-        item.guid = nextItemGuid();
-        item.proto = proto;
-        item.count = min(count, proto.stackable);
-        if (proto.randomProperty)
-            warning!"starting item %s has random properties; they are not generated"(entry);
-        if (item.isBag)
-            item.contents = new ItemObject[proto.containerSlots];
-        createdItems ~= item;
-        return item;
-    }
-
-    ItemObject itemAt(ubyte bag, ubyte slot)
-    {
-        if (bag == inventorySlotBag0)
-            return slot < playerSlots ? items[slot] : null;
-        if (bag >= inventorySlotBagStart && bag < inventorySlotBagEnd)
-            if (auto container = items[bag])
-                if (slot < container.contents.length)
-                    return container.contents[slot];
-        return null;
-    }
-
-    bool isTwoHandUsed()
-    {
-        const main = items[equipmentSlotMainhand];
-        return main !is null && main.proto.inventoryType == InventoryType.twoHandWeapon;
-    }
-
-    InventoryResult canUseItem(const(ItemTemplate)* proto)
-    {
-        if ((proto.allowableClass & classMask) == 0 || (proto.allowableRace & raceMask) == 0)
-            return InventoryResult.youCanNeverUseThatItem;
-        if (proto.requiredSkill != 0)
-        {
-            if (skillValue(proto.requiredSkill) == 0)
-                return InventoryResult.noRequiredProficiency;
-            if (skillValue(proto.requiredSkill) < proto.requiredSkillRank)
-                return InventoryResult.cantEquipSkill;
-        }
-        if (proto.requiredSpell != 0 && !hasSpell(proto.requiredSpell))
-            return InventoryResult.noRequiredProficiency;
-        if (proto.requiredHonorRank > 0) // a new character has no honor rank
-            return InventoryResult.cantEquipRank;
-        if (level < proto.requiredLevel)
-            return InventoryResult.cantEquipLevel;
-        return InventoryResult.ok;
-    }
-
-    /// `Item::GetSkill`
-    static uint itemSkill(const(ItemTemplate)* proto)
-    {
-        static immutable uint[21] weaponSkills = [44, 172, 45, 46, 54, 160, 229, 43, 55, 0, 136, 0, 0, 162, 0, 173,
-            176, 253, 226, 228, 356];
-        static immutable uint[10] armorSkills = [0, 415, 414, 413, 293, 0, 433, 0, 0, 0];
-        if (proto.itemClass == ItemClass.weapon)
-            return proto.subClass < weaponSkills.length ? weaponSkills[proto.subClass] : 0;
-        if (proto.itemClass == ItemClass.armor)
-            return proto.subClass < armorSkills.length ? armorSkills[proto.subClass] : 0;
-        return 0;
-    }
-
-    InventoryResult canUseItem(ItemObject item)
-    {
-        if (const result = canUseItem(item.proto))
-            return result;
-        if (uint skill = itemSkill(item.proto))
-        {
-            if (item.proto.subClass == itemSubclassWeaponFist)
-                skill = skillFistWeapons;
-            if (!skillValue(skill))
-                return InventoryResult.noRequiredProficiency;
-        }
-        // Reputations are not initialized until the first login: every faction is neutral (3).
-        if (item.proto.requiredReputationFaction && 3 < item.proto.requiredReputationRank)
-            return InventoryResult.cantEquipReputation;
-        return InventoryResult.ok;
-    }
-
-    /// `Player::ViableEquipSlots`
-    bool viableEquipSlots(const(ItemTemplate)* proto, ref ubyte[4] slots)
-    {
-        slots[] = nullSlot;
-        if (canUseItem(proto) != InventoryResult.ok)
-            return false;
-        switch (proto.inventoryType)
-        {
-        case InventoryType.head: slots[0] = equipmentSlotHead; break;
-        case InventoryType.neck: slots[0] = equipmentSlotNeck; break;
-        case InventoryType.shoulders: slots[0] = equipmentSlotShoulders; break;
-        case InventoryType.body: slots[0] = equipmentSlotBody; break;
-        case InventoryType.chest:
-        case InventoryType.robe: slots[0] = equipmentSlotChest; break;
-        case InventoryType.waist: slots[0] = equipmentSlotWaist; break;
-        case InventoryType.legs: slots[0] = equipmentSlotLegs; break;
-        case InventoryType.feet: slots[0] = equipmentSlotFeet; break;
-        case InventoryType.wrists: slots[0] = equipmentSlotWrists; break;
-        case InventoryType.hands: slots[0] = equipmentSlotHands; break;
-        case InventoryType.finger: slots[0] = equipmentSlotFinger1; slots[1] = equipmentSlotFinger2; break;
-        case InventoryType.trinket: slots[0] = equipmentSlotTrinket1; slots[1] = equipmentSlotTrinket2; break;
-        case InventoryType.cloak: slots[0] = equipmentSlotBack; break;
-        case InventoryType.weapon:
-        case InventoryType.twoHandWeapon:
-            slots[0] = equipmentSlotMainhand;
-            if (canDualWield)
-                slots[1] = equipmentSlotOffhand;
-            break;
-        case InventoryType.shield:
-        case InventoryType.weaponOffhand:
-        case InventoryType.holdable: slots[0] = equipmentSlotOffhand; break;
-        case InventoryType.ranged:
-        case InventoryType.thrown:
-        case InventoryType.rangedRight: slots[0] = equipmentSlotRanged; break;
-        case InventoryType.tabard: slots[0] = equipmentSlotTabard; break;
-        case InventoryType.weaponMainhand: slots[0] = equipmentSlotMainhand; break;
-        case InventoryType.bag:
-            foreach (i; 0 .. 4)
-                slots[i] = cast(ubyte)(inventorySlotBagStart + i);
-            break;
-        case InventoryType.relic:
-            const relicClass = proto.subClass == itemSubclassArmorLibram ? PlayerClass.paladin
-                : proto.subClass == itemSubclassArmorIdol ? PlayerClass.druid
-                : proto.subClass == itemSubclassArmorTotem ? PlayerClass.shaman
-                : proto.subClass == itemSubclassArmorMisc ? PlayerClass.warlock : 0;
-            if (relicClass && relicClass == request.classId)
-                slots[0] = equipmentSlotRanged;
-            break;
-        default:
-            break;
-        }
-        return slots[0] != nullSlot;
-    }
-
-    /// `Player::FindEquipSlot` with no slot requested and no swap.
-    ubyte findEquipSlot(const(ItemTemplate)* proto)
-    {
-        ubyte[4] slots;
-        if (!viableEquipSlots(proto, slots))
-            return nullSlot;
-        foreach (slot; slots)
-        {
-            if (slot == nullSlot || items[slot] !is null)
-                continue;
-            if (slot == equipmentSlotOffhand && (isTwoHandUsed() || proto.inventoryType == InventoryType.twoHandWeapon))
-                continue;
-            return slot;
-        }
-        return nullSlot;
-    }
-
-    InventoryResult canEquipNewItem(ubyte slot, out ushort dest, uint entry)
-    {
-        auto probe = createItem(entry, 1); // CMaNGOS creates (and numbers) a throw-away item for the check
-        if (probe is null)
-            return InventoryResult.itemNotFound;
-        createdItems = createdItems[0 .. $ - 1];
-        return canEquipItem(slot, dest, probe, false);
-    }
-
-    InventoryResult canEquipItem(ubyte slot, out ushort dest, ItemObject item, bool swap)
-    {
-        const proto = item.proto;
-        if (const res = canTakeMoreSimilarItems(item.entry, item.count, item))
-            return res;
-        const eslot = findEquipSlot(proto);
-        if (eslot == nullSlot)
-            return InventoryResult.itemCantBeEquipped;
-        if (const res = canUseItem(item))
-            return res;
-        if (items[eslot] !is null)
-            return InventoryResult.noEquipmentSlotAvailable;
-        if (proto.flags & itemFlagUniqueEquippable)
-            foreach (ubyte s; 0 .. equipmentSlotEnd)
-                if (items[s] !is null && items[s].entry == item.entry)
-                    return InventoryResult.itemCantBeEquipped;
-        if (proto.itemClass == ItemClass.quiver)
-            foreach (ubyte s; inventorySlotBagStart .. inventorySlotBagEnd)
-                if (auto bag = items[s])
-                    if (bag !is item && bag.proto.itemClass == proto.itemClass)
-                        return bag.proto.subClass == itemSubclassAmmoPouch ? InventoryResult.canEquipOnlyOneAmmoPouch
-                            : InventoryResult.canEquipOnlyOneQuiver;
-        const type = proto.inventoryType;
-        if (eslot == equipmentSlotOffhand)
-        {
-            if (type == InventoryType.weapon || type == InventoryType.weaponOffhand)
-            {
-                if (!canDualWield)
-                    return InventoryResult.cantDualWield;
-            }
-            else if (type == InventoryType.twoHandWeapon)
-                return InventoryResult.cantDualWield;
-            if (isTwoHandUsed())
-                return InventoryResult.cantEquipWithTwoHanded;
-        }
-        if (type == InventoryType.twoHandWeapon)
-        {
-            if (eslot != equipmentSlotMainhand)
-                return InventoryResult.itemCantBeEquipped;
-            if (auto offhand = items[equipmentSlotOffhand])
-            {
-                ItemPosCount[] offDest;
-                if (canStoreItem(nullBag, nullSlot, offDest, offhand.entry, offhand.count, offhand)
-                    != InventoryResult.ok)
-                    return InventoryResult.inventoryFull;
-            }
-        }
-        dest = inventorySlotBag0 << 8 | eslot;
-        return InventoryResult.ok;
-    }
-
-    InventoryResult canUseAmmo(uint entry)
-    {
-        const proto = entry in world.items;
-        if (proto is null)
-            return InventoryResult.itemNotFound;
-        if (proto.inventoryType != InventoryType.ammo)
-            return InventoryResult.onlyAmmoCanGoHere;
-        return canUseItem(proto);
-    }
-
+    /// `Player::SetAmmo`
     void setAmmo(uint entry)
     {
-        if (!entry || ammoId == entry)
-            return;
-        if (canUseAmmo(entry) == InventoryResult.ok)
+        if (entry && ammoId != entry && inventory.canUseAmmo(entry) == InventoryResult.ok)
             ammoId = entry;
-    }
-
-    void autoUnequipOffhandIfNeeded()
-    {
-        auto offhand = items[equipmentSlotOffhand];
-        if (offhand is null || !isTwoHandUsed())
-            return;
-        ItemPosCount[] dest;
-        if (canStoreItem(nullBag, nullSlot, dest, offhand.entry, offhand.count, offhand) == InventoryResult.ok)
-        {
-            removeItem(inventorySlotBag0, equipmentSlotOffhand);
-            storeItem(dest, offhand);
-        }
-        else
-            error!"no room for the off-hand item %s at character creation; CMaNGOS would mail it"(offhand.entry);
-    }
-
-    uint itemCount(uint entry, ItemObject skip)
-    {
-        uint count;
-        void add(ItemObject item)
-        {
-            if (item !is null && item !is skip && item.entry == entry)
-                count += item.count;
-        }
-
-        foreach (ubyte i; 0 .. inventorySlotItemEnd)
-            add(items[i]);
-        foreach (ubyte i; keyringSlotStart .. keyringSlotEnd)
-            add(items[i]);
-        foreach (ubyte i; inventorySlotBagStart .. inventorySlotBagEnd)
-            if (auto bag = items[i])
-                foreach (content; bag.contents)
-                    add(content);
-        return count;
-    }
-
-    InventoryResult canTakeMoreSimilarItems(uint entry, uint count, ItemObject item, uint* noSpace = null)
-    {
-        const proto = entry in world.items;
-        if (proto is null)
-        {
-            if (noSpace)
-                *noSpace = count;
-            return InventoryResult.cantCarryMoreOfThis;
-        }
-        if (proto.maxCount > 0)
-        {
-            const current = itemCount(entry, item);
-            if (current + count > cast(uint) proto.maxCount)
-            {
-                if (noSpace)
-                    *noSpace = count + current - proto.maxCount;
-                return InventoryResult.cantCarryMoreOfThis;
-            }
-        }
-        return InventoryResult.ok;
-    }
-
-    static bool itemFitsBag(const(ItemTemplate)* proto, const(ItemTemplate)* bag)
-    {
-        if (bag.itemClass == ItemClass.container)
-        {
-            switch (bag.subClass)
-            {
-            case itemSubclassContainer: return true;
-            case itemSubclassSoulContainer: return proto.bagFamily == bagFamilySoulShards;
-            case itemSubclassHerbContainer: return proto.bagFamily == bagFamilyHerbs;
-            case itemSubclassEnchantingContainer: return proto.bagFamily == bagFamilyEnchantingSupp;
-            case itemSubclassEngineeringContainer: return proto.bagFamily == bagFamilyEngineeringSupp;
-            default: return false;
-            }
-        }
-        if (bag.itemClass == ItemClass.quiver)
-        {
-            if (bag.subClass == itemSubclassQuiver)
-                return proto.bagFamily == bagFamilyArrows;
-            if (bag.subClass == itemSubclassAmmoPouch)
-                return proto.bagFamily == bagFamilyBullets;
-        }
-        return false;
-    }
-
-    /// `_CanStoreItem_InInventorySlots`
-    void storeInInventorySlots(ubyte begin, ubyte end, ref ItemPosCount[] dest, const(ItemTemplate)* proto,
-        ref uint count, bool merge, ItemObject source, ubyte skipBag, ubyte skipSlot)
-    {
-        foreach (ubyte j; begin .. end)
-        {
-            if (skipBag == inventorySlotBag0 && j == skipSlot)
-                continue;
-            auto other = items[j];
-            if (other is source)
-                other = null;
-            if ((other !is null) != merge)
-                continue;
-            uint needSpace = proto.stackable;
-            if (other)
-            {
-                if (other.entry != proto.entry || other.count >= proto.stackable)
-                    continue;
-                needSpace -= other.count;
-            }
-            if (needSpace > count)
-                needSpace = count;
-            const pos = cast(ushort)(inventorySlotBag0 << 8 | j);
-            if (!dest.canFind!(position => position.pos == pos))
-            {
-                dest ~= ItemPosCount(pos, needSpace);
-                count -= needSpace;
-                if (count == 0)
-                    return;
-            }
-        }
-    }
-
-    /// `_CanStoreItem_InBag`
-    InventoryResult storeInBag(ubyte bag, ref ItemPosCount[] dest, const(ItemTemplate)* proto, ref uint count,
-        bool merge, bool nonSpecialized, ItemObject source, ubyte skipBag, ubyte skipSlot)
-    {
-        if (bag == skipBag)
-            return InventoryResult.itemDoesntGoIntoBag;
-        auto container = items[bag];
-        if (container is null || container is source)
-            return InventoryResult.intBagError;
-        const bagProto = container.proto;
-        if (nonSpecialized != (bagProto.itemClass == ItemClass.container && bagProto.subClass == itemSubclassContainer))
-            return InventoryResult.itemDoesntGoIntoBag;
-        if (!itemFitsBag(proto, bagProto))
-            return InventoryResult.itemDoesntGoIntoBag;
-        foreach (j; 0 .. container.contents.length)
-        {
-            if (j == skipSlot)
-                continue;
-            auto other = container.contents[j];
-            if (other is source)
-                other = null;
-            if ((other !is null) != merge)
-                continue;
-            uint needSpace = proto.stackable;
-            if (other)
-            {
-                if (other.entry != proto.entry || other.count >= proto.stackable)
-                    continue;
-                needSpace -= other.count;
-            }
-            if (needSpace > count)
-                needSpace = count;
-            const pos = cast(ushort)(bag << 8 | j);
-            if (!dest.canFind!(position => position.pos == pos))
-            {
-                dest ~= ItemPosCount(pos, needSpace);
-                count -= needSpace;
-                if (count == 0)
-                    return InventoryResult.ok;
-            }
-        }
-        return InventoryResult.ok;
-    }
-
-    /// `Player::_CanStoreItem` without a specific slot and without swapping.
-    InventoryResult canStoreItem(ubyte bag, ubyte slot, ref ItemPosCount[] dest, uint entry, uint count,
-        ItemObject item)
-    {
-        const proto = entry in world.items;
-        if (proto is null)
-            return InventoryResult.itemNotFound;
-
-        uint noSimilar;
-        if (const res = canTakeMoreSimilarItems(entry, count, item, &noSimilar))
-        {
-            if (count == noSimilar)
-                return res;
-            count -= noSimilar;
-        }
-        InventoryResult done()
-        {
-            return noSimilar == 0 ? InventoryResult.ok : InventoryResult.cantCarryMoreOfThis;
-        }
-
-        // GetMaxKeyringClientSize: by level up to 60, every keyring slot above.
-        const keyringSize = level <= 60 ? keyringSizeByLevel[level / 10] : keyringSlotEnd - keyringSlotStart;
-
-        if (bag != nullBag)
-        {
-            if (proto.stackable > 1)
-            {
-                if (bag == inventorySlotBag0)
-                {
-                    storeInInventorySlots(keyringSlotStart, keyringSlotEnd, dest, proto, count, true, item, bag, slot);
-                    if (count == 0)
-                        return done();
-                    storeInInventorySlots(inventorySlotItemStart, inventorySlotItemEnd, dest, proto, count, true,
-                        item, bag, slot);
-                    if (count == 0)
-                        return done();
-                }
-                else
-                {
-                    if (storeInBag(bag, dest, proto, count, true, false, item, nullBag, slot) != InventoryResult.ok)
-                        if (const res = storeInBag(bag, dest, proto, count, true, true, item, nullBag, slot))
-                            return res;
-                    if (count == 0)
-                        return done();
-                }
-            }
-            if (bag == inventorySlotBag0)
-            {
-                if (proto.bagFamily == bagFamilyKeys)
-                {
-                    storeInInventorySlots(keyringSlotStart, cast(ubyte)(keyringSlotStart + keyringSize), dest,
-                        proto, count, false, item, bag, slot);
-                    if (count == 0)
-                        return done();
-                }
-                storeInInventorySlots(inventorySlotItemStart, inventorySlotItemEnd, dest, proto, count, false, item,
-                    bag, slot);
-                if (count == 0)
-                    return done();
-            }
-            else
-            {
-                if (storeInBag(bag, dest, proto, count, false, false, item, nullBag, slot) != InventoryResult.ok)
-                    if (const res = storeInBag(bag, dest, proto, count, false, true, item, nullBag, slot))
-                        return res;
-                if (count == 0)
-                    return done();
-            }
-        }
-
-        if (proto.stackable > 1)
-        {
-            storeInInventorySlots(keyringSlotStart, keyringSlotEnd, dest, proto, count, true, item, bag, slot);
-            if (count == 0)
-                return done();
-            storeInInventorySlots(inventorySlotItemStart, inventorySlotItemEnd, dest, proto, count, true, item, bag,
-                slot);
-            if (count == 0)
-                return done();
-            if (proto.bagFamily)
-                foreach (ubyte i; inventorySlotBagStart .. inventorySlotBagEnd)
-                {
-                    if (storeInBag(i, dest, proto, count, true, false, item, bag, slot) != InventoryResult.ok)
-                        continue;
-                    if (count == 0)
-                        return done();
-                }
-            foreach (ubyte i; inventorySlotBagStart .. inventorySlotBagEnd)
-            {
-                if (storeInBag(i, dest, proto, count, true, true, item, bag, slot) != InventoryResult.ok)
-                    continue;
-                if (count == 0)
-                    return done();
-            }
-        }
-
-        if (proto.bagFamily)
-        {
-            if (proto.bagFamily == bagFamilyKeys)
-            {
-                storeInInventorySlots(keyringSlotStart, cast(ubyte)(keyringSlotStart + keyringSize), dest, proto,
-                    count, false, item, bag, slot);
-                if (count == 0)
-                    return done();
-            }
-            foreach (ubyte i; inventorySlotBagStart .. inventorySlotBagEnd)
-            {
-                if (storeInBag(i, dest, proto, count, false, false, item, bag, slot) != InventoryResult.ok)
-                    continue;
-                if (count == 0)
-                    return done();
-            }
-        }
-
-        if (item !is null && item.isBag)
-            foreach (content; item.contents)
-                if (content !is null)
-                    return InventoryResult.nonEmptyBagOverOtherBag;
-
-        storeInInventorySlots(inventorySlotItemStart, inventorySlotItemEnd, dest, proto, count, false, item, bag, slot);
-        if (count == 0)
-            return done();
-        foreach (ubyte i; inventorySlotBagStart .. inventorySlotBagEnd)
-        {
-            if (storeInBag(i, dest, proto, count, false, true, item, bag, slot) != InventoryResult.ok)
-                continue;
-            if (count == 0)
-                return done();
-        }
-        return InventoryResult.inventoryFull;
-    }
-
-    /// `Player::StoreItem`: every position but the last gets a clone (a new item and guid).
-    ItemObject storeItem(const(ItemPosCount)[] dest, ItemObject item)
-    {
-        if (item is null)
-            return null;
-        ItemObject last = item;
-        foreach (index, position; dest)
-        {
-            const isLast = index + 1 == dest.length;
-            last = placeItem(position.pos, item, position.count, !isLast);
-        }
-        return last;
-    }
-
-    /// `Player::_StoreItem`
-    ItemObject placeItem(ushort pos, ItemObject item, uint count, bool clone)
-    {
-        const bag = cast(ubyte)(pos >> 8);
-        const slot = cast(ubyte)(pos & 0xFF);
-        auto existing = itemAt(bag, slot);
-        if (existing is null)
-        {
-            auto placed = clone ? createItem(item.entry, count) : item;
-            placed.count = count;
-            if (bindsWhenStored(placed.proto, pos))
-                placed.bound = true;
-            placed.slot = slot;
-            if (bag == inventorySlotBag0)
-            {
-                items[slot] = placed;
-                placed.container = null;
-            }
-            else
-            {
-                auto container = items[bag];
-                container.contents[slot] = placed;
-                placed.container = container;
-            }
-            return placed;
-        }
-        if (bindsWhenStored(existing.proto, pos))
-            existing.bound = true;
-        existing.count += count;
-        if (!clone)
-            forget(item); // merged into the stack: never saved
-        return existing;
-    }
-
-    /// Whether storing an item at `pos` binds it: always on pick-up and for quest items; when equipped, as a bag.
-    static bool bindsWhenStored(const(ItemTemplate)* proto, ushort pos)
-    {
-        const bonding = proto.bonding;
-        return bonding == bindWhenPickedUp || bonding == bindQuestItem
-            || (bonding == bindWhenEquipped && isBagPos(pos));
-    }
-
-    static bool isBagPos(ushort pos)
-    {
-        const bag = pos >> 8, slot = pos & 0xFF;
-        return bag == inventorySlotBag0 && slot >= inventorySlotBagStart && slot < inventorySlotBagEnd;
-    }
-
-    /// `Player::EquipItem` (through `VisualizeItem`)
-    void equipItem(ushort pos, ItemObject item)
-    {
-        const slot = cast(ubyte)(pos & 0xFF);
-        const bonding = item.proto.bonding;
-        if (bonding == bindWhenEquipped || bonding == bindWhenPickedUp || bonding == bindQuestItem)
-            item.bound = true;
-        items[slot] = item;
-        item.slot = slot;
-        item.container = null;
-    }
-
-    void removeItem(ubyte bag, ubyte slot)
-    {
-        if (bag == inventorySlotBag0)
-            items[slot] = null;
-        else if (auto container = items[bag])
-            container.contents[slot] = null;
-    }
-
-    void forget(ItemObject item)
-    {
-        foreach (i, created; createdItems)
-            if (created is item)
-            {
-                createdItems = createdItems[0 .. i] ~ createdItems[i + 1 .. $];
-                return;
-            }
     }
 
     // -----------------------------------------------------------------------
@@ -1770,34 +1221,25 @@ private:
     void collect(ref NewCharacter result)
     {
         foreach (ubyte slot; 0 .. equipmentSlotEnd)
-            if (auto item = items[slot])
+            if (const item = inventory.equipped(slot))
                 result.equipmentCache[slot][0] = item.entry;
-        if (auto bag = items[inventorySlotBagStart])
+        if (const bag = inventory[inventorySlotBag0, inventorySlotBagStart])
             result.equipmentCache[equipmentSlotEnd][0] = bag.entry;
 
-        // Only items that are actually somewhere are saved.
-        bool[ItemObject] placed;
-        foreach (item; items)
-            if (item !is null)
-            {
-                placed[item] = true;
-                foreach (content; item.contents)
-                    if (content !is null)
-                        placed[content] = true;
-            }
-        foreach (item; createdItems)
+        // What was created and put somewhere, in the order it was created.
+        auto placed = inventory.all();
+        placed.sort!((a, b) => a.guid < b.guid);
+        foreach (item; placed)
         {
-            if (item !in placed)
-                continue;
             NewItem row;
             row.guid = item.guid;
             row.entry = item.entry;
             row.count = item.count;
             row.duration = item.proto.duration;
             row.charges = item.proto.spellCharges;
-            row.flags = item.bound ? 1 : 0;
+            row.flags = item.bound ? itemDynFlagBound : 0;
             row.durability = item.proto.maxDurability;
-            row.containerGuid = item.container ? item.container.guid : 0;
+            row.containerGuid = item.container is null ? 0 : item.container.guid;
             row.slot = item.slot;
             result.items ~= row;
         }

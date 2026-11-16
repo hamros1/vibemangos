@@ -62,6 +62,7 @@ struct SpellInfo
     uint categoryRecoveryTime;  /// milliseconds
     int equippedItemClass = -1;
     int equippedItemSubClassMask;
+    uint spellLevel;            /// `SpellLevel`: the level a trainer teaches it from
 
     /// `IsPassiveSpell`
     bool isPassive() const pure nothrow @nogc @safe
@@ -172,7 +173,7 @@ final class SpellData
             ~ "EffectBaseDice1, EffectBaseDice2, EffectBaseDice3, EffectImplicitTargetA1, EffectImplicitTargetA2, "
             ~ "EffectImplicitTargetA3, EffectItemType1, EffectItemType2, EffectItemType3, EffectMiscValue1, "
             ~ "EffectMiscValue2, EffectMiscValue3, EffectTriggerSpell1, EffectTriggerSpell2, EffectTriggerSpell3, Category, RecoveryTime, "
-            ~ "CategoryRecoveryTime, EquippedItemClass, EquippedItemSubClassMask "
+            ~ "CategoryRecoveryTime, EquippedItemClass, EquippedItemSubClassMask, SpellLevel "
             ~ "FROM spell_template")())
             data.spells[row.id] = row.toInfo();
 
@@ -406,13 +407,14 @@ private struct SpellRow
     uint ts1, ts2, ts3;
     uint category, recoveryTime, categoryRecoveryTime;
     int equippedItemClass, equippedItemSubClassMask;
+    uint spellLevel;
 
     SpellInfo toInfo() const
     {
         return SpellInfo(id, attributes, attributesEx, attributesEx2, stances, casterAuraState,
             [r1, r2, r3, r4, r5, r6, r7, r8], [e1, e2, e3], [bp1, bp2, bp3], [bd1, bd2, bd3], [t1, t2, t3],
             [it1, it2, it3], [m1, m2, m3], [ts1, ts2, ts3], category, recoveryTime, categoryRecoveryTime,
-            equippedItemClass, equippedItemSubClassMask);
+            equippedItemClass, equippedItemSubClassMask, spellLevel);
     }
 }
 

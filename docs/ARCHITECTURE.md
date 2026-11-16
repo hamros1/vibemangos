@@ -35,10 +35,10 @@ The world server's modules, by layer:
 | Layer | Modules |
 |---|---|
 | Protocol | `opcodes` (values), `packets` (fixed layouts), `queries` (variable layouts), `crypt` (header cipher), `addons` |
-| Session | `session` (framing, handshake), the handler groups `charscreen`, `inworld`, `teleport`, `grouphandlers`, `channelhandlers`, and the GM system `commands`, `commandtable`, `gmactions`, `gmlevel0` .. `gmlevel3`, `gmdebug`; `context` (shared state) |
+| Session | `session` (framing, handshake), the handler groups `charscreen`, `inworld`, `teleport`, `grouphandlers`, `channelhandlers`, `npchandlers`, `itemhandlers`, and the GM system `commands`, `commandtable`, `gmactions`, `gmlevel0` .. `gmlevel3`, `gmdebug`; `context` (shared state) |
 | Game objects | `player` (a character in the world), `objects` (update packets), `updatefields` (the field table), `movement`, `stats` |
 | World | `map` (players and objects on a map, visibility, broadcasting), `grid` (cells), `creature`, `gameobject`, `online` (what groups and channels see of players), `group` (parties and raids), `channel` (chat channels), `context` (maps, the players online, groups, channels) |
-| Game rules | `playercreate` (`Player::Create`, and the spells relearned at login), `characters` (character list), `names`, `defines` |
+| Game rules | `inventory` (items and every rule for moving them), `playercreate` (`Player::Create`, and the spells relearned at login), `conditions`, `characters` (character list), `names`, `defines` |
 | Static data | `clientdata` (DBC files), `worlddata` (world database), `spells` |
 | Persistence | `database` (the interface, plus an in-memory version for tests), `characterdb` (the SQL) |
 | Process | `main`, `config`, `realm` (the `realmlist` row) |
@@ -111,6 +111,8 @@ final class WorldSession : NetSession, Kickable, OnlinePlayer
     mixin TeleportHandlers;         // teleport.d: Player::TeleportTo, the teleport acks, area triggers
     mixin GroupHandlers;            // grouphandlers.d: GroupHandler.cpp
     mixin ChannelHandlers;          // channelhandlers.d: ChannelHandler.cpp
+    mixin NpcHandlers;              // npchandlers.d: NPCHandler.cpp, the gossip half of Player.cpp
+    mixin ItemHandlers;             // itemhandlers.d: ItemHandler.cpp, repairs, Player::BuyItemFromVendor
     mixin ChatCommands;             // commands.d: ArcEmu's ParseCommands, ExecuteCommandInTable, messages
     mixin GmActions;                // gmactions.d: what the handlers do to players
     mixin Level0Commands;           // gmlevel0.d .. gmlevel3.d, gmdebug.d: ArcEmu's handlers,
@@ -165,8 +167,8 @@ server is single-threaded, so no locking is needed.
 2. **Relearn** the default spells and the spells its skills teach
    (`CharacterBuilder.loadAbilities`). CMaNGOS never saves these; it learns them again at every
    login. That is why creation and login share the spell-learning code in `playercreate.d`.
-3. **Build** the `Player` (`player.d`): item and bag objects for the inventory, the derived stats
-   (`stats.d`), and every update field.
+3. **Build** the `Player` (`player.d`): its `Inventory` with the item and bag objects (see
+   "Items"), the derived stats (`stats.d`), and every update field.
 4. **Send** the same packet sequence as mangosd. The update packet that creates the items and the
    player ends the client's loading screen.
 5. **Mark** the character online. Logging out or disconnecting saves its progress and marks it
@@ -252,6 +254,70 @@ the context, which picks a level and model and looks up equipment, addon and mod
 are `MapObject`s: `Creature` (`creature.d`) and `GameObject` (`gameobject.d`), each with its own
 update fields and create block. A player's client is told about the objects within the visibility
 distance, a few dozen create blocks per packet, and they go out of range like players.
+
+## Talking to NPCs
+
+`npcdata.d` loads what NPCs say and offer (`gossip_menu`, `gossip_menu_option`, `npc_text` and
+`npc_text_broadcast_text`, `broadcast_text`, `npc_gossip`, `points_of_interest`,
+`trainer_greeting`, `npc_trainer` and its templates, `npc_vendor` and its templates) into
+`WorldData.npcs`, and `conditions.d` evaluates the `conditions` those rows name (`ConditionEntry`,
+for the types this server has the data for; the others are never met).
+
+`npchandlers.d` (`NpcHandlers`, mixed into the session) follows `Player::PrepareGossipMenu`,
+`SendPreparedGossip` and `OnGossipSelect`: the menu is built from the NPC's options whose condition
+and NPC flag fit, shown with the `npc_text` whose condition is the highest one met, and its
+options open submenus, map flags, the trainer or vendor list, the bank, or the hearthstone binding.
+Options for services that do not exist yet are left out. `interactableNpc` is
+`GetNPCIfCanInteractWith`: the NPC must be on the map, have the flag asked for, and stand within
+5 yards plus both combat reaches.
+
+A trainer's lesson runs `Player::learnSpell` through the same `CharacterBuilder` that creates
+characters: `loadAbilities` loads what the character knows (its saved spell rows, kept current in
+`CharacterData.spells`, and its skills), then `learnInWorld` learns the spell and returns the new
+abilities, the packets CMaNGOS sends (`SMSG_LEARNED_SPELL`, or `SMSG_SUPERCEDED_SPELL` when a rank
+replaces another) and the rows to save.
+
+## Items
+
+`inventory.d` is CMaNGOS's item code: `Item` and `Bag` as one `Item` class (a bag has `contents`),
+and `Inventory`, which is `Player::m_items` with the functions that check and change it, ported one
+for one. A position is CMaNGOS's `ushort`: the bag in the high byte (`inventorySlotBag0` for the
+character's own slots, else the slot of a worn or banked bag), the slot in the low byte.
+
+```d
+ItemPosCount[] dest;
+if (inventory.canStoreNew(nullBag, nullSlot, dest, itemJerky, 10) == InventoryResult.ok)  // CanStoreNewItem
+    inventory.storeNew(dest, itemJerky);                                                   // StoreNewItem
+const error = inventory.swap(src, dst);                                                    // SwapItem
+```
+
+The checks (`canStore`, `canBank`, `canEquip`, `canUnequip`, `canUse`) only read; the changes
+(`store`, `equip`, `remove`, `destroy`, `split`, `swap`, the buyback slots) are applied by the
+caller once a check passes, as in CMaNGOS. What the rules ask about the owner (level, class, race,
+skills, spells, dual wield) comes through the `InventoryOwner` interface, which `CharacterBuilder`
+and `Player` both implement: character creation equips and stores its starting items with the same
+rules a player in the world is held to.
+
+The inventory keeps two lists of what changed:
+
+* **For the client:** items to create, items whose fields changed, items to forget. The owner's
+  own fields (slot guids, what others see worn, buyback prices) are written into the player's
+  `UpdateValues` directly. `itemhandlers.d: flushInventory` sends them all in one update, as
+  CMaNGOS does: new and changed items first, then the player's fields that point at them, then the
+  items gone.
+* **For the database:** `Item::SetState` and `Player::_SaveInventory`'s update queue. Each item
+  is new, changed or removed since the last save; `takeChanges` turns the queue into
+  `character_inventory` and `item_instance` rows, which `saveInventory` writes in one transaction
+  with the money. CMaNGOS saves them with the character every few minutes; here every request is
+  saved as it happens, so a crash can neither undo a purchase nor return a sold item. Sold items
+  wait in the buyback slots without rows, as in CMaNGOS, and are written again if bought back.
+
+`itemhandlers.d` (`ItemHandlers`) is `ItemHandler.cpp`: moving, splitting, equipping, destroying
+and banking items, ammo, bank bag slots, and the vendor's side, `Player::BuyItemFromVendor`
+(limited stock is kept per creature, `Creature::GetVendorItemCurrentCount`), selling, buyback and
+repairs (`DurabilityCosts.dbc` and `DurabilityQuality.dbc`). After a change to what is worn, the
+player's stats are worked out again (`Player.refreshEquipmentStats`, standing in for
+`_ApplyItemMods`).
 
 ## Teleports
 

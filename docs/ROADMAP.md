@@ -17,6 +17,8 @@
 | GM system | ArcEmu's: its command tables, permission letters (from `gmlevel` via `gm_permissions`), lookup, messages, GM tag, whisper blocking, GM log. 135 of its 298 commands work: teleports, `.modify`, levels, items, spells, skills, lookups, accounts, bans, kicks, mutes, shutdowns, announcements, cheats, debugging (docs/COMMANDS.md) | `world/commandtable.d`, `world/commands.d`, `world/gm*.d` |
 | Update loop | A 50 ms tick: 20-second logout, regeneration, rested XP in inns and capitals (and offline), periodic saves, timed shutdowns | `net/server.d`, `context.d`, `inworld.d`, `timer.d` |
 | Creatures and game objects | Every spawn (with pools, spawn groups and game events), loaded per grid cell when players come near, with levels, health, models, equipment, mounts and emotes; creature and game object queries; `.npc info` | `creature.d`, `gameobject.d`, `map.d`, `worlddata.d` |
+| NPC services | Gossip menus with their texts, conditions and map flags; trainers (lists with each spell's state, lessons that teach spells, ranks and profession skills); innkeepers (binding the hearthstone); bankers (opening the bank); vendors' lists | `npchandlers.d`, `npcdata.d`, `conditions.d` |
+| Inventory and trade | CMaNGOS's inventory rules, shared by creation and the world: moving, swapping, splitting, equipping (two-handers, dual wield, quivers, unique items), bags, the bank and its bag slots, the keyring, destroying, ammo; buying (with vendors' limited stock), selling, buyback and repairs; every change saved at once with the money | `inventory.d`, `itemhandlers.d` |
 | Movement checks | Speed checked against running speed; offenders put back. Positions outside the map disconnect | `world/inworld.d` |
 
 ### Known gaps in what exists
@@ -26,8 +28,10 @@
 * **Not loaded:** reputation (needs `Faction.dbc` and `character_reputation`), guild membership
   (`PLAYER_GUILDID`), quests, auras, cooldowns, pets, corpses and death. A dead character loads
   alive.
-* **Creatures** stand still and never die, so they never respawn; there is no gossip, vendor,
-  trainer or quest dialog yet. Elevators are created but do not move. Ships and zeppelins are not
+* **Creatures** stand still and never die, so they never respawn. There is no quest dialog yet. Flight masters,
+  auctioneers, stable masters, battlemasters and guild NPCs are not offered in menus yet. Conditions
+  that need auras, reputation, quests in the log, world states or scripts are never met. Elevators
+  are created but do not move. Ships and zeppelins are not
   spawned. Cells are never unloaded (mangosd unloads idle grids after a while).
 * **Rested XP** is earned but not spent, because there is no XP gain yet.
 * **Movement:** the speed check assumes running speed; it must learn mounts, speed auras,
@@ -42,6 +46,12 @@
 * **Chat:** no ignore list or `Channel.RestrictedLanguageMode`.
   LocalDefense and WorldDefense need PvP ranks, which do not exist, so WorldDefense is read-only.
   The GM tag and `.gm allowwhispers` are not kept between logins (nor are they in ArcEmu).
+* **Inventory:** prices have no reputation or honor discounts, and items that need a reputation or
+  an honor rank cannot be bought or used (there are neither). An off-hand item with no room left
+  when a two-hander is put on stays worn, where CMaNGOS mails it: there is no mail. Item
+  enchantments, random properties, item sets, item spells, readable items, wrapping and loot in
+  items (lockboxes, clams) are not done. A broken worn item's stats come back when it is repaired,
+  but nothing breaks it yet.
 * **GM system:** ArcEmu's commands that need missing systems answer "Not yet implemented."
   (COMMANDS.md lists them); GM invisibility (`.invisible`) needs sight to be one-sided first. The
   `c` letter makes speech universal but does not teach the language skills ArcEmu adds.
@@ -65,12 +75,12 @@ See ARCHITECTURE.md's "The update loop". Still to do here: AFK kicks, the online
 
 ### 3. Creatures and game objects: started
 
-Spawned and visible, with queries (ARCHITECTURE.md, "Creatures and game objects"). Next: creature
-movement (random and waypoint, `creature_movement`), gossip and the NPC services (vendors,
-trainers, flight masters, bankers, innkeepers), using game objects (doors, chests, mailboxes),
-respawn timers, and unloading idle cells. CMaNGOS references: `MotionGenerators/`,
-`Entities/GossipDef.cpp`, `GossipHandler.cpp`, `NPCHandler.cpp`, `TaxiHandler.cpp`,
-`ItemHandler.cpp` (vendors).
+Spawned and visible, with queries (ARCHITECTURE.md, "Creatures and game objects"), and gossip,
+trainers, innkeepers, bankers and vendors ("Talking to NPCs", and "Items" for trading). Next:
+creature movement (random and waypoint, `creature_movement`), flight masters, using game objects
+(doors, chests, mailboxes), respawn timers, and unloading idle cells. CMaNGOS references:
+`MotionGenerators/`, `Entities/GossipDef.cpp`, `GossipHandler.cpp`, `NPCHandler.cpp`,
+`TaxiHandler.cpp`.
 
 ### 4. Map data
 
@@ -82,15 +92,10 @@ CMaNGOS references: `contrib/extractor`, `contrib/vmap_extractor`, `contrib/mmap
 * Load them for ground height, area ids (explored zones, `CMSG_ZONEUPDATE` checks), and later
   line of sight (vmaps) and pathfinding (mmaps, via recast/detour or the mmaps CMaNGOS writes).
 
-### 5. Inventory
+### 5. Inventory: done
 
-CMaNGOS reference: `Entities/ItemHandler.cpp`, `Player.cpp` (`CanStoreItem`, `CanEquipItem`,
-`SwapItem`, ...).
-
-* Swap, split, equip, unequip, destroy and auto-store, with item create and values updates.
-* `playercreate.d` already ports `CanStoreItem`, `CanEquipItem` and friends for creation. Move
-  them to a shared inventory module used by both creation and the handlers.
-* Saving item changes (`Item::SaveToDB` states).
+See ARCHITECTURE.md's "Items" and the gaps above. What items do when used (food, potions,
+hearthstones, opening bags of loot) comes with milestone 6's spells and loot.
 
 ### 6. Spells, auras and combat
 

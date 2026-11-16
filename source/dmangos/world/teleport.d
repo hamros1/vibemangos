@@ -215,6 +215,7 @@ private:
         sendInitialPacketsBeforeAddToMap();
         const self = player.createForSelf(serverTime());
         sendUpdate(self);
+        player.inventory.markAllSent();
         map.add(this);
         sendInitialPacketsAfterAddToMap();
         resetMovementCheck();

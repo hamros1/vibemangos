@@ -430,7 +430,7 @@ version (unittest)
             KnownAbilities abilities;
             new CharacterBuilder(world, client, CreationSettings.init, () => 1u).loadAbilities(c.race, c.classId,
                 c.level, AccountLevel.player, null, null, abilities);
-            player = new Player(c, abilities, world, client);
+            player = new Player(c, abilities, world, client, testItemGuids());
         }
 
         @property const(Player) character() const

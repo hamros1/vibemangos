@@ -189,7 +189,8 @@ ubyte[] deleteCharacter(ref TestClient client, ulong guid)
  * packets are read.
  */
 TestClient loggedIn(WorldContext context, MemoryWorldDatabase db, uint guid, string name, Position position,
-    AccountLevel level = AccountLevel.player, ubyte race = raceHuman, uint map = 0, uint characterLevel = 1)
+    AccountLevel level = AccountLevel.player, ubyte race = raceHuman, uint map = 0, uint characterLevel = 1,
+    void delegate(ref CharacterData) setup = null)
 {
     import std.uni : toUpper;
 
@@ -210,6 +211,8 @@ TestClient loggedIn(WorldContext context, MemoryWorldDatabase db, uint guid, str
     c.cinematic = 1;
     c.map = map;
     c.position = position;
+    if (setup !is null)
+        setup(c);
     db.loadable[guid] = c;
 
     auto client = TestClient(new WorldSession(context, "127.0.0.1"), testKey);

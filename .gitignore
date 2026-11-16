@@ -6,3 +6,4 @@ bin/
 dub.selections.json
 accounts.json
 accounts.json.tmp
+__pycache__/

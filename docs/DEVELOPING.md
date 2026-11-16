@@ -210,6 +210,16 @@ python3 tools/testclient.py 3724 tester PASS login:Me "cmd:.recall port goldshir
 
 The client answers teleports by itself, as the real one does.
 
+Trading and moving items, next to a vendor with repairs (Andrew Krighton in Goldshire):
+
+```sh
+python3 tools/testclient.py 3724 tester PASS login:Me listen:2 move:-9463:88:58.3 npc:2046 vendor \
+    buy:1201 inv equip:27 sell:27 buyback:0 split:25:30:5 destroy:30 tobank:23 frombank:39 repair inv logout
+```
+
+`inv` prints the items as the client knows them, so a slot pointing at an item the client was
+never sent, or one it was told to forget, fails the run.
+
 
 `tools/testclient.py` is a scripted 1.12.1 client written in Python, independent of the D code
 (see its header for the actions):
