@@ -133,6 +133,32 @@ floats to `float_` fields, `ulong` to guids. An index may run on into the follow
 have the same type, and a contract checks that. To show an object to *another* player, send
 `seenByEveryone` (plus `seenByOwner` for its owner) instead of `seenBySelf`.
 
+### Add a chat command
+
+In `world/commands.d`, add a method to `ChatCommands`. Its name starts with `command`, and it
+returns false when the arguments are wrong (the player is then shown the syntax):
+
+```d
+@Command("go xyz", AccountLevel.moderator, "x y z [map]", "Teleports you to a position.")
+bool commandGoXyz(string args) { ... }
+```
+
+That is all: the table and the dispatch are generated from the attribute. A teleport should go
+through `commandTeleport`, which remembers where `.recall` returns to.
+
+### Teleport a player
+
+Call `teleportTo(map, Position(x, y, z, o))` (`world/teleport.d`). It checks the destination and,
+for another map, the map's entrance requirements; it returns false if the player may not go.
+Never set `player.data.map` yourself: the client must load the map first.
+
+### Reach a group or channel
+
+`context.groups.of(guid)` is the player's group (null if none). `group.broadcast(opcode, body)`
+sends to every member online, `group.updatePlayerOutOfRange(this, GroupUpdate.x)` sends member
+stats to those who do not see the player. `context.channelsFor(this).find(name, this)` is a
+channel the player may talk in.
+
 ### Add a configuration key
 
 1. Add a field to `WorldConfig` (`world/config.d`), with `@JsonName("snake_case")`, the default
@@ -143,12 +169,31 @@ have the same type, and a contract checks that. To show an object to *another* p
 
 ### Unit tests
 
-`dub test` runs every module's tests: about 41 modules, in a few seconds. Session tests use
+`dub test` runs every module's tests: 48 modules, in a few seconds. Session tests use
 `world/testclient.d`. Importing it gives you a scripted client (`TestClient`), a pre-filled
-in-memory database (`newDatabase`), contexts (`newContext`, `newCreationContext`), and
-`authenticate`.
+in-memory database (`newDatabase`), contexts (`newContext`, `newCreationContext`),
+`authenticate`, and for tests in the world `loggedIn` (an account and a character, logged in),
+`chatBody`, `opcodesOf` and `bodyOf`. To let time pass, replace `context.clock`, as the movement
+check's test does.
 
 ### Live tests against real data
+
+For two players, run two clients at once: one listening, one acting.
+
+```sh
+python3 tools/testclient.py 3724 tester PASS login:Me listen:2 accept listen:3 join:Club listen:5 logout &
+python3 tools/testclient.py 3724 tester2 PASS2 login:Other invite:Me listen:3 party:hi join:Club chan:Club:yo whisper:me:psst logout
+```
+
+A game master can try teleports and commands alone:
+
+```sh
+python3 tools/testclient.py 3724 tester PASS login:Me "cmd:.tele goldshire" cmd:.gps \
+    "cmd:.go xyz -11208.5 1685.34 25.76" trigger:78 "cmd:.gm on" trigger:78 cmd:.recall logout
+```
+
+The client answers teleports by itself, as the real one does.
+
 
 `tools/testclient.py` is a scripted 1.12.1 client written in Python, independent of the D code
 (see its header for the actions):
@@ -206,6 +251,26 @@ find.
   `ORDER BY bag` so bags exist before their contents. `PLAYER_FIELD_INV_SLOT_HEAD` continues over
   bags, backpack, bank, buyback and keyring: 113 guids in a row.
 * **`CharStartOutfit.dbc`**: race, class, gender and outfit are 4 separate bytes.
+* **`SMSG_MESSAGECHAT` starts with a one-byte chat type**, though `CMSG_MESSAGECHAT` sends it as a
+  uint32. The first version wrote four bytes. That passed its own unit test, but the independent
+  Python decoder caught it.
+* **Field constants share offsets across object types** (`ITEM_FIELD_SPELL_CHARGES` and
+  `UNIT_FIELD_TARGET` are both 16). D shares a template instance between alias arguments of equal
+  value, so `set!(alias field)` could not tell them apart. That's why field constants are
+  `UpdateFieldId` values carrying their table row.
+* **Not every `MSG_MOVE_*` is a move.** `MSG_MOVE_TELEPORT_ACK` and `MSG_MOVE_WORLDPORT_ACK` are
+  the client's answers to teleports, and `MSG_MOVE_TELEPORT` is sent to others. `movementOpcodes`
+  leaves them out; adding them to `Opcode` would otherwise route them to the movement handler.
+* **A far teleport makes the client forget every object.** After `MSG_MOVE_WORLDPORT_ACK` the
+  server sends most of the login packets again, and the player's create block with its items.
+* **Area trigger positions come from `AreaTrigger.dbc`**, and a trigger counts within its radius
+  plus 5 yards. Test positions should be taken from the file: a made-up one 13 yards off is
+  ignored, as CMaNGOS ignores it.
+* **Group health views:** health is `DYNAMIC`, so joining or leaving a group changes what members
+  in sight see without any field changing. `groupChanged` sends those values on purpose
+  (CMaNGOS's `ForceValuesUpdateAtIndex`).
+* **The client sends `MSG_MOVE_TELEPORT_ACK` with a full 8-byte guid**, not a packed one; the
+  server's `MSG_MOVE_TELEPORT_ACK` has a packed one.
 * **Ids** come from `MAX(id) + 1` at start-up. Never run dmangos and mangosd on the same characters
   database at once.
 * **Client builds:** 5875, 6005 and 6141 share the world protocol. The login protocol differs

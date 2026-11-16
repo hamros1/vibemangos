@@ -24,6 +24,7 @@ import dmangos.log;
 import dmangos.world.clientdata : ClientData, maskOf, skillFlagMaximized;
 import dmangos.world.movement;
 import dmangos.world.objects;
+import dmangos.world.opcodes : ChatTag;
 import dmangos.world.defines;
 import dmangos.world.playercreate : KnownAbilities, KnownSkill, NewSkill, NewSpell;
 import dmangos.world.spells : SpellEffect;
@@ -99,6 +100,7 @@ struct CharacterData
     bool hasHomeBind;
     HomeBind homeBind;
     uint[tutorialFields] tutorials;
+    bool[uint] rewardedQuests;   /// `character_queststatus` rows with `rewarded` set
 }
 
 /// What logging out writes back (`Player::SaveToDB`, the fields that can change in the world so far).
@@ -139,18 +141,35 @@ struct InventoryItem
     }
 }
 
+/// Who looks at a player: the player itself, a member of its group, or anyone else.
+enum Viewer
+{
+    self,
+    groupMate,
+    stranger,
+}
+
 /// A packed `SMSG_ACTION_BUTTONS` entry: the action in the low 24 bits, the type above.
 uint packActionButton(uint action, ubyte type) pure nothrow @nogc @safe
 {
     return (action & 0x00FF_FFFF) | uint(type) << 24;
 }
 
+/// `PlayerFlags` that change in the world.
+enum PlayerFlags : uint
+{
+    groupLeader = 0x01,
+    afk = 0x02,
+    dnd = 0x04,
+    gm = 0x08,
+}
+
 private enum : uint
 {
     unitFlagPlayerControlled = 0x00000008,
-    playerFlagsAfk = 0x02,
-    playerFlagsDnd = 0x04,
-    playerFlagsGm = 0x08,
+    playerFlagsAfk = PlayerFlags.afk,
+    playerFlagsDnd = PlayerFlags.dnd,
+    playerFlagsGm = PlayerFlags.gm,
     unitByte2FlagSupportable = 0x08,
     unitByte2FlagUnk5 = 0x20,
 }
@@ -169,6 +188,8 @@ final class Player
     uint[] spells;                       /// active, enabled spells: the spellbook
     uint[maxActionButtons] actionButtons; /// packed, 0 = empty
     uint[2] proficiency;                 /// item sub-class masks for weapons and armor (`SMSG_SET_PROFICIENCY`)
+    string autoReply;                    /// the AFK or DND message (`Player::autoReplyMsg`)
+    bool gmChat;                         /// the GM badge in chat (`.gm chat`)
 
     /**
      * Builds the player from its database rows and the skills and spells
@@ -224,20 +245,160 @@ final class Player
         return update;
     }
 
-    /// A values block with the player's changed fields, or none if nothing changed.
-    bool takeChanges(ref UpdateData update)
+    /**
+     * The player as another player first sees it: no items and no private fields. A stranger sees
+     * health in percent (`Visibility.FogOfWar.Health` 0); a group mate sees the real values and the
+     * group-only fields.
+     */
+    UpdateData createForOthers(uint serverTime, bool groupMate) const
     {
-        if (!values.hasChanges)
+        UpdateData update;
+        MovementBlock other;
+        other.flags = UpdateFlags.all | UpdateFlags.living | UpdateFlags.hasPosition;
+        other.info = movement;
+        other.info.time = serverTime;
+        update.addCreate(UpdateType.createObject, guid, other, values, groupMate ? seenByGroup : seenByEveryone,
+            groupMate ? null : &strangerValue);
+        return update;
+    }
+
+    /// Adds a values block with the fields changed since `clearChanges` that `viewer` may see; false if none.
+    bool addChanges(ref UpdateData update, Viewer viewer) const
+    {
+        const seen = seenBy(viewer);
+        if (!values.hasChangesFor(seen))
             return false;
-        update.addValues(guid, values, seenBySelf);
-        values.clearChanges();
+        update.addValues(guid, values, seen, viewer == Viewer.stranger ? &strangerValue : null);
         return true;
+    }
+
+    /**
+     * `Group::_updateMembersOnRosterChanged`: health, maximum health and the group-only fields as
+     * `viewer` should now see them, for a player who joined or left the viewer's group.
+     */
+    UpdateData groupView(Viewer viewer) const
+    in (viewer != Viewer.self)
+    {
+        size_t[] slots = [size_t(UNIT_FIELD_HEALTH), size_t(UNIT_FIELD_MAXHEALTH)];
+        if (viewer == Viewer.groupMate)
+            slots ~= values.slotsOnlyFor(seenByGroup);
+        UpdateData update;
+        update.addSlots(guid, values, slots, viewer == Viewer.stranger ? &strangerValue : null);
+        return update;
+    }
+
+    /// The fields `viewer` sees.
+    static Visibility seenBy(Viewer viewer) pure nothrow @nogc @safe
+    {
+        final switch (viewer)
+        {
+        case Viewer.self:
+            return seenBySelf;
+        case Viewer.groupMate:
+            return seenByGroup;
+        case Viewer.stranger:
+            return seenByEveryone;
+        }
+    }
+
+    /// Forgets the changes once every viewer has been told.
+    void clearChanges()
+    {
+        values.clearChanges();
+    }
+
+    /// The player's position.
+    @property Position position() const pure nothrow @nogc @safe
+    {
+        return movement.position;
     }
 
     /// `Unit::SetStandState`
     void setStandState(ubyte state)
     {
         values.setByte!UNIT_FIELD_BYTES_1(0, state);
+    }
+
+    /// `Unit::SetTargetGuid`: whom the player has selected; 0 for nobody.
+    void setTarget(ulong target)
+    {
+        values.set!UNIT_FIELD_TARGET(target);
+    }
+
+    /// `Unit::HandleEmoteState`: a looping emote (dancing, ...) or 0.
+    void setEmoteState(uint emote)
+    {
+        values.set!UNIT_NPC_EMOTESTATE(emote);
+    }
+
+    /// The power the class uses (`Unit::GetPowerType`).
+    @property Power powerType() const
+    {
+        return cast(Power) values.getByte!UNIT_FIELD_BYTES_0(3);
+    }
+
+    /// `Player::HasItemCount`: carried or equipped, not in the bank.
+    bool hasItem(uint entry, uint count = 1) const
+    {
+        enum bankStart = 39, bankEnd = 69; // the bank's slots and bag slots: `BANK_SLOT_ITEM_START` .. `BANK_SLOT_BAG_END`
+        uint found;
+        foreach (ref item; items)
+        {
+            if (item.template_.entry != entry)
+                continue;
+            const slot = item.bag == 0 ? item.slot : bagSlotOf(item.bag);
+            if (slot >= bankStart && slot < bankEnd)
+                continue;
+            found += item.values[ITEM_FIELD_STACK_COUNT];
+        }
+        return found >= count;
+    }
+
+    /// The player's slot holding the bag with this low guid.
+    private ubyte bagSlotOf(uint bagGuid) const
+    {
+        foreach (ref item; items)
+            if (item.guid == bagGuid)
+                return item.slot;
+        return ubyte.max;
+    }
+
+    /// Whether a `PlayerFlags` flag is set.
+    bool hasFlag(PlayerFlags flag) const
+    {
+        return (values.get!PLAYER_FLAGS & flag) != 0;
+    }
+
+    /// Sets or clears a `PlayerFlags` flag.
+    void setFlag(PlayerFlags flag, bool on)
+    {
+        const flags = values.get!PLAYER_FLAGS;
+        values.set!PLAYER_FLAGS(on ? flags | flag : flags & ~flag);
+    }
+
+    /// `Player::GetChatTag`
+    @property ChatTag chatTag() const
+    {
+        if (gmChat)
+            return ChatTag.CHAT_TAG_GM;
+        if (hasFlag(PlayerFlags.afk))
+            return ChatTag.CHAT_TAG_AFK;
+        if (hasFlag(PlayerFlags.dnd))
+            return ChatTag.CHAT_TAG_DND;
+        return ChatTag.CHAT_TAG_NONE;
+    }
+
+    /// `Object::BuildValuesUpdate` for a viewer outside the group: health in percent of 100.
+    uint strangerValue(size_t slot, uint value) const
+    {
+        import std.math : ceil;
+
+        if (slot == UNIT_FIELD_HEALTH)
+        {
+            const maximum = values.get!UNIT_FIELD_MAXHEALTH;
+            return maximum ? cast(uint) ceil(100.0 * value / maximum) : 0;
+        }
+        return slot == UNIT_FIELD_MAXHEALTH ? 100 : value;
     }
 
     /// What logging out saves, with `secondsInWorld` added to the played time.
@@ -634,12 +795,27 @@ unittest
 
     // Changes after loading are sent as a values block.
     UpdateData changes;
-    assert(!p.takeChanges(changes));
+    assert(!p.addChanges(changes, Viewer.self));
     p.setStandState(1);
-    assert(p.takeChanges(changes) && changes.blockCount == 1 && !p.values.hasChanges);
+    p.values.set!PLAYER_FIELD_COINAGE(1);
+    assert(p.addChanges(changes, Viewer.self) && p.addChanges(changes, Viewer.stranger) && changes.blockCount == 2);
+    p.clearChanges();
+    p.values.set!PLAYER_FIELD_COINAGE(2);
+    assert(p.addChanges(changes, Viewer.self) && !p.addChanges(changes, Viewer.stranger), "money is private");
+
+    // Others see health in percent, and no items.
+    p.values.set!UNIT_FIELD_HEALTH(31);
+    assert(p.strangerValue(UNIT_FIELD_HEALTH, 31) == 52 && p.strangerValue(UNIT_FIELD_MAXHEALTH, 60) == 100);
+    assert(p.createForOthers(1000, false).blockCount == 1 && p.groupView(Viewer.groupMate).blockCount == 1);
+
+    // Flags and the chat tag.
+    p.setFlag(PlayerFlags.afk, true);
+    assert(p.hasFlag(PlayerFlags.afk) && p.chatTag == ChatTag.CHAT_TAG_AFK);
+    p.gmChat = true;
+    assert(p.chatTag == ChatTag.CHAT_TAG_GM && p.powerType == Power.rage);
 
     // Saving adds the time played.
     p.movement.position = Position(1, 2, 3, 4);
     const saved = p.progress(60);
-    assert(saved.position == Position(1, 2, 3, 4) && saved.totalTime == 60 && saved.health == 60);
+    assert(saved.position == Position(1, 2, 3, 4) && saved.totalTime == 60 && saved.health == 31);
 }

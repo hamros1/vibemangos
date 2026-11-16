@@ -35,8 +35,9 @@ The world server's modules, by layer:
 | Layer | Modules |
 |---|---|
 | Protocol | `opcodes` (values), `packets` (fixed layouts), `queries` (variable layouts), `crypt` (header cipher), `addons` |
-| Session | `session` (framing, handshake), `charscreen` and `inworld` (handler groups), `context` (shared state) |
+| Session | `session` (framing, handshake), the handler groups `charscreen`, `inworld`, `teleport`, `grouphandlers`, `channelhandlers` and `commands`, `context` (shared state) |
 | Game objects | `player` (a character in the world), `objects` (update packets), `updatefields` (the field table), `movement`, `stats` |
+| World | `map` (players on a map, visibility, broadcasting), `online` (what groups and channels see of players), `group` (parties and raids), `channel` (chat channels), `context` (maps, the players online, groups, channels) |
 | Game rules | `playercreate` (`Player::Create`, and the spells relearned at login), `characters` (character list), `names`, `defines` |
 | Static data | `clientdata` (DBC files), `worlddata` (world database), `spells` |
 | Persistence | `database` (the interface, plus an in-memory version for tests), `characterdb` (the SQL) |
@@ -101,12 +102,16 @@ player exists exactly while the session is in the world.
 `*Handler.cpp` file:
 
 ```d
-final class WorldSession : NetSession, Kickable
+final class WorldSession : NetSession, Kickable, OnlinePlayer
 {
     mixin PacketDispatch!Handles;   // the generated switch
     ...                             // framing, handshake, ping, send helpers
     mixin CharacterScreenHandlers;  // charscreen.d: CharacterHandler.cpp
     mixin InWorldHandlers;          // inworld.d: MiscHandler, MovementHandler, QueryHandler, ChatHandler
+    mixin TeleportHandlers;         // teleport.d: Player::TeleportTo, the teleport acks, area triggers
+    mixin GroupHandlers;            // grouphandlers.d: GroupHandler.cpp
+    mixin ChannelHandlers;          // channelhandlers.d: ChannelHandler.cpp
+    mixin ChatCommands;             // commands.d: ChatHandler::ParseCommands, Level*.cpp
 }
 ```
 
@@ -182,9 +187,87 @@ values.set!UNIT_FIELD_STAT0(22.5f);              // compile error: stats are int
 ```
 
 `writeCreate` and `writeChanges` send only the fields the viewer may see (`seenBySelf`,
-`seenByEveryone`, `seenByOwner`), using cmangos's visibility rules. A player looking at itself sees
-its private fields; the next milestone, showing players to each other, gets the public subset
-without new code.
+`seenByGroup`, `seenByEveryone`, `seenByOwner`), using CMaNGOS's visibility rules. A player looking
+at itself sees its private fields, a group mate the group-only fields and real health, anyone else
+the public fields with health in percent. `Player` names these three views `Viewer.self`,
+`groupMate` and `stranger`.
+
+## Maps and visibility
+
+`context.map(id)` creates a `Map` when its first player arrives. A session joins its map in
+`context.enterWorld` and leaves it in `context.leaveWorld`. The context also indexes the players
+online by guid and by name, for name queries and whispers.
+
+The map knows players through the `Inhabitant` interface, which `WorldSession` implements:
+`character` (the `Player`), `deliver(opcode, body)` (frame and queue a packet) and
+`appearanceFor(viewer)` (the create block a viewer gets). A body is serialized once and framed per
+recipient, because each client's header encryption is different.
+
+* **Cells.** Players are kept in square cells of 66.67 yards (CMaNGOS's grid cell). `near(position,
+  range)` only looks at the cells in reach.
+* **Seeing is symmetric.** Within `visibility_distance` (100 yards), two players see each other.
+  When that starts, each gets the other's create block, built by `Player.createForOthers`: public
+  fields only, and health in percent (`Visibility.FogOfWar.Health` 0). When it ends, each gets an
+  out-of-range block. When one leaves the world, the others get `SMSG_DESTROY_OBJECT`.
+* **Relocation.** Visibility is recomputed after a player has moved
+  `visibility_relocation_lower_limit` (10) yards since the last time. Cells update on every move.
+* **Broadcasts.** `sendToWatchers` reaches everyone who sees a player: its movement (the same
+  `MSG_MOVE_*` opcode, with the mover's packed guid first) and one-shot emotes. Field changes go
+  through `flushPlayerChanges`, which sends the private view to the player and, to each of
+  `watchers`, the group view or the stranger's view. `sendInRange` reaches everyone within a
+  distance, seen or not: say (25 yards), yell (300) and emotes (25).
+
+## Teleports
+
+`teleport.d: teleportTo` is `Player::TeleportTo`. On the same map it is a near teleport: the
+player is at the destination at once, the client gets `MSG_MOVE_TELEPORT_ACK` and those around
+`MSG_MOVE_TELEPORT`. To another map it is a far teleport:
+
+```
+server: SMSG_TRANSFER_PENDING, takes the player off its map, SMSG_NEW_WORLD
+client: loads the map, MSG_MOVE_WORLDPORT_ACK
+server: SendInitialPacketsBeforeAddToMap, the player's create block, Map::Add, AfterAddToMap
+```
+
+The session's `teleporting` field is the semaphore: until the client's answer, movement packets
+are ignored. From the order on, the character's map and position are the destination's, so a
+logout halfway saves the destination. `transferring` (between the two halves of a far teleport)
+shows group members as "zone out" and keeps chat from reaching the old map.
+
+Area triggers, GM commands, the movement check (which puts a cheater back) and `worldport` all
+end in `teleportTo`. A map entrance is checked with `lockStatus` (`GetAreaTriggerLockStatus`):
+level, raid group, items, quests handed in (`character_queststatus.rewarded`).
+
+## Groups
+
+`group.d` has `Groups`, the registry (CMaNGOS keeps it in `ObjectMgr` and on `Player`), and
+`Group`. Groups are loaded at start-up with their offline members, so a member who logs in is
+put back in its group. `Group` methods are CMaNGOS's (`AddMember`, `RemoveMember`,
+`ChangeLeader`, `Disband`, `ConvertToRaid`, `SendUpdate`, ...); each writes its rows and tells the
+members online. The handlers in `grouphandlers.d` make the same checks as `GroupHandler.cpp`.
+
+Groups and channels reach players through `online.d`: an `OnlinePlayer` is an `Inhabitant` with
+its account level, whether it is transferring, and `groupChanged()`. The `Directory` (the
+context) finds players by guid or name, and says whether two see each other. When a player joins
+or leaves a group, `groupChanged` updates its leader flag and sends both ways the health views that
+changed (`Group::_updateMembersOnRosterChanged`). Members that do not see each other get
+`SMSG_PARTY_MEMBER_STATS`: everything on joining and logging in, then the position every
+`visibility_relocation_lower_limit` yards, the zone on zone changes, and the status on `/afk`.
+
+## Channels
+
+`channel.d` has `Channel` and `Channels` (`ChannelMgr`): one set per faction, or one shared set.
+A channel exists while somebody is in it. Built-in channels are recognized by the patterns of
+`ChatChannels.dbc` ("General - %s"). They have no owner, announce nobody, and follow the zone: on
+`CMSG_ZONEUPDATE` a player in "General - Elwynn Forest" is moved to "General - Westfall". Every reply
+is an `SMSG_CHANNEL_NOTIFY`, built by `notice(type, channel, extra...)`.
+
+## Chat commands
+
+A chat message starting with `.` may be a command (`commands.d`). Commands are `WorldSession`
+methods with a `@Command(name, level, syntax, help)` attribute. `collectCommands` builds the table
+from them at compile time, and `call` is a `switch` generated over it. A player's message that is
+not one of its commands is said aloud, as in CMaNGOS.
 
 ## Testing
 

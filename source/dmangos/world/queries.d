@@ -116,11 +116,15 @@ ubyte[] itemQueryResponse(uint entry, const ItemTemplate* item, const SpellData 
     return w.data.dup;
 }
 
-/// The body of `SMSG_MESSAGECHAT` for the message types a player sends to those around them.
-ubyte[] chatMessage(ChatType type, Language language, ulong sender, string text, ubyte chatTag = 0) pure @safe
+/**
+ * `ChatHandler::BuildChatPacket`: the body of `SMSG_MESSAGECHAT` for the message types a player
+ * sends. `channel` is the channel's name for `CHAT_MSG_CHANNEL`.
+ */
+ubyte[] chatMessage(ChatType type, Language language, ulong sender, string text, ubyte chatTag = 0,
+    string channel = null) pure @safe
 {
     ByteWriter w;
-    w.put(cast(uint) type);
+    w.put(cast(ubyte) type); // one byte here, though the client sends it as a uint32
     w.put(cast(uint) language);
     switch (type)
     {
@@ -128,6 +132,11 @@ ubyte[] chatMessage(ChatType type, Language language, ulong sender, string text,
     case ChatType.CHAT_MSG_PARTY:
     case ChatType.CHAT_MSG_YELL:
         w.put(sender);
+        w.put(sender);
+        break;
+    case ChatType.CHAT_MSG_CHANNEL:
+        w.putCString(channel);
+        w.put(uint(0)); // the speaker's PvP rank
         w.put(sender);
         break;
     default:
@@ -184,11 +193,16 @@ unittest
     assert(body_.length == 4 * numbers + "Worn Shortsword".length + 1 + 3 + 1);
     assert(body_[12 .. 12 + 15] == cast(const(ubyte)[]) "Worn Shortsword");
 
-    // Say: type, language, the sender twice, length with terminator, text, tag.
+    // Say: the type (uint8, as BuildChatPacket writes it), language, the sender twice, length with the
+    // terminator, text, tag.
     const say = chatMessage(ChatType.CHAT_MSG_SAY, Language.LANG_COMMON, 7, "hi");
-    assert(say.length == 4 + 4 + 8 + 8 + 4 + 3 + 1);
-    assert(say[24 .. 28] == [3, 0, 0, 0] && say[28 .. 31] == ['h', 'i', 0]);
-    assert(chatMessage(ChatType.CHAT_MSG_EMOTE, Language.LANG_UNIVERSAL, 7, "waves").length == 4 + 4 + 8 + 4 + 6 + 1);
+    assert(say.length == 1 + 4 + 8 + 8 + 4 + 3 + 1);
+    assert(say[0] == 0 && say[1 .. 5] == [7, 0, 0, 0] && say[5] == 7);
+    assert(say[21 .. 25] == [3, 0, 0, 0] && say[25 .. 28] == ['h', 'i', 0]);
+    assert(chatMessage(ChatType.CHAT_MSG_EMOTE, Language.LANG_UNIVERSAL, 7, "waves").length == 1 + 4 + 8 + 4 + 6 + 1);
+    // A channel message: the channel's name and the rank before the sender.
+    const inChannel = chatMessage(ChatType.CHAT_MSG_CHANNEL, Language.LANG_COMMON, 7, "hi", 0, "world");
+    assert(inChannel[5 .. 11] == "world\0" && inChannel[11 .. 15] == [0, 0, 0, 0] && inChannel[15] == 7);
 
     // Reading what the client sends.
     ByteWriter w;

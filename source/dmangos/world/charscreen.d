@@ -221,7 +221,17 @@ private:
         enteredWorld = context.clock();
         state_ = WorldState.inWorld;
         sendLoginPackets();
+        context.enterWorld(this); // after the player's own create block: now others see it, and it sees them
         context.database.setOnline(guid, account.id, true, context.config.realmId);
+        resetMovementCheck();
+
+        // The group, which the character may have been in while offline (CharacterHandler.cpp).
+        if (auto group = context.groups.of(player.guid))
+        {
+            group.sendUpdateTo(this);
+            group.updatePlayerOnlineStatus(this, true);
+        }
+        updateLeaderFlag(); // as saved, or not
         info!"%s: '%s' entered the world as '%s' (guid %s, map %s at %.1f %.1f %.1f)"(remoteAddress,
             account.username, character.name, guid, character.map, character.position.x, character.position.y,
             character.position.z);
@@ -238,16 +248,7 @@ private:
         foreach (line; motdLines(context.config.motd))
             sendSystemMessage(line);
 
-        // Player::SendInitialPacketsBeforeAddToMap
-        send(ServerSetRestStart());
-        send(ServerBindPointUpdate(c.homeBind.x, c.homeBind.y, c.homeBind.z, c.homeBind.map, c.homeBind.zone));
-        send(ServerTutorialFlags(c.tutorials));
-        ServerInitialSpells spells;
-        spells.spells = player.spells.map!(id => InitialSpell(cast(ushort) id)).array;
-        send(spells);
-        send(ServerActionButtons(player.actionButtons));
-        send(ServerInitializeFactions());
-        send(ServerLoginSetTimeSpeed(gameTimeBits()));
+        sendInitialPacketsBeforeAddToMap();
         send(ServerSetProficiency(2, player.proficiency[0])); // ITEM_CLASS_WEAPON
         send(ServerSetProficiency(4, player.proficiency[1])); // ITEM_CLASS_ARMOR
 
@@ -263,11 +264,30 @@ private:
         // Map::Add: the client creates its items and itself, and the loading screen ends.
         const update = player.createForSelf(serverTime());
         sendUpdate(update);
+        sendInitialPacketsAfterAddToMap();
+    }
 
-        // Player::SendInitialPacketsAfterAddToMap
+    /// `Player::SendInitialPacketsBeforeAddToMap`, at login and after a far teleport.
+    void sendInitialPacketsBeforeAddToMap()
+    {
+        const c = &player.data;
+        send(ServerSetRestStart());
+        send(ServerBindPointUpdate(c.homeBind.x, c.homeBind.y, c.homeBind.z, c.homeBind.map, c.homeBind.zone));
+        send(ServerTutorialFlags(c.tutorials));
+        ServerInitialSpells spells;
+        spells.spells = player.spells.map!(id => InitialSpell(cast(ushort) id)).array;
+        send(spells);
+        send(ServerActionButtons(player.actionButtons));
+        send(ServerInitializeFactions());
+        send(ServerLoginSetTimeSpeed(gameTimeBits()));
+    }
+
+    /// `Player::SendInitialPacketsAfterAddToMap`
+    void sendInitialPacketsAfterAddToMap()
+    {
         send(ServerFriendList());
         send(ServerIgnoreList());
-        send(ServerInitWorldStates(c.map, c.zone));
+        send(ServerInitWorldStates(player.data.map, player.data.zone));
     }
 }
 

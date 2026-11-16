@@ -8,9 +8,9 @@ A World of Warcraft **1.12.x (vanilla)** server written in **D**, modelled on
   the realm list. It is complete.
 * **worldserver** (CMaNGOS's `mangosd`), in progress. Clients can connect, authenticate with the
   session key from the login server, list, create and delete characters, and enter the world
-  with them: the character has its gear, bags, skills, spellbook and action bars, can walk around
-  and talk, and is saved on logout. The world itself is empty: no creatures, objects or other
-  players yet.
+  with them: the character has its gear, bags, skills, spellbook and action bars, and is saved on
+  logout. Players on the same map see each other move, sit and emote, hear each other's say, yell
+  and emotes, and can whisper. There are no creatures or objects yet.
 * **extractor** copies the DBC files out of a 1.12 client's MPQ archives into a `dbc/` folder.
   That folder is the client data the world server reads.
 
@@ -109,7 +109,8 @@ cp config/worldserver.example.json worldserver.json # then edit the *_database e
 dmangos's own extractor (below), or point it at mangosd's `DataDir`, which works as is. Character creation reads
 `ChrClasses`, `ChrRaces`, `CharStartOutfit`, `CharSections`, `CharacterFacialHairStyles`,
 `SkillLine`, `SkillLineAbility`, `SkillRaceClassInfo`, `SkillTiers`, `Talent` and `TalentTab`
-from it. Entering the world also reads `CreatureDisplayInfo` and `CreatureModelData`.
+from it. Entering the world also reads `CreatureDisplayInfo`, `CreatureModelData`, `Emotes`,
+`EmotesText`, `Map`, `AreaTable`, `AreaTrigger` and `ChatChannels`.
 
 As mangosd does, at start-up it marks its realm (`realm_id`) online in `realmlist`, writes
 `realmbuilds`, the realm type and the zone, and opens an `uptime` row. While running it
@@ -163,18 +164,41 @@ What works now:
   * **Update packets:** `SMSG_UPDATE_OBJECT` blocks built from a field mask, compressed over 100
     bytes, as CMaNGOS's `UpdateData` does.
 * In the world:
-  * **Movement** (`MSG_MOVE_*`) is remembered and saved, but not checked or shown to anyone else.
+  * **Other players:** players on the same map see each other within 100 yards: they appear,
+    move, sit and emote for each other, and disappear when out of sight or logged out. Strangers
+    see health in percent, group members the real values.
+  * **Movement** (`MSG_MOVE_*`) is shown to those who see the player and saved. It is checked
+    against the player's speed (`movement_speed_check`): a player that moves faster than it can
+    run is put back.
+  * **Teleports:** near and far teleports with the client's acknowledgements
+    (`MSG_MOVE_TELEPORT_ACK`, `SMSG_TRANSFER_PENDING`, `SMSG_NEW_WORLD`, `MSG_MOVE_WORLDPORT_ACK`).
+    Instance portals and the other `areatrigger_teleport` triggers apply CMaNGOS's checks (level,
+    raid group, items, quests handed in) with the trigger's own message. The client's `worldport`
+    command works for administrators.
+  * **Groups:** invitations, parties and raids of up to 40 in eight sub-groups, leaders and
+    assistants, kicking, leaving, loot settings, raid target icons, ready checks, rolls, minimap
+    pings, and member stats for members out of sight. Groups are kept in `groups` and
+    `group_member` and survive restarts. Logging out of a party leaves it, as in CMaNGOS.
+  * **Chat:** say, yell and emotes reach those in range; whispers reach anyone online of the same
+    faction; party, raid, raid leader and raid warning messages reach the group. `/afk` and `/dnd`
+    set the flag, the chat tag and the reply to whispers.
+  * **Channels:** the built-in ones (General, Trade, LocalDefense, ...), which follow the zone,
+    and custom ones with owners, moderators, passwords, muting, kicks, bans, invitations,
+    announcements and moderation. One set per faction, unless
+    `allow_two_side_interaction_channel` is on.
+  * **Commands** typed in chat: for moderators and up `.gps`, `.go xyz`, `.tele`, `.appear`,
+    `.summon`, `.recall`, `.gm on|off`, `.gm chat on|off` and `.announce`; for everyone `.help`,
+    `.commands`, `.save` and `.server info`.
   * **Queries:** name, item (`SMSG_ITEM_QUERY_SINGLE_RESPONSE`, from every `item_template`
     column), time and played time.
-  * **Chat:** say, yell and emote come back to the speaker; nobody else is there to hear them.
-  * **Settings:** sitting and standing, action bar buttons and toggles, and tutorial flags,
-    saved as they change.
+  * **Settings:** sitting and standing, target selection, action bar buttons and toggles, and
+    tutorial flags, saved as they change.
   * **Logout** saves the position, zone, health and powers, played time and settings. It is
     instant for everyone, since there are no timers yet; mangosd makes players wait 20 seconds
     unless they are resting. A connection that drops in the world is saved the same way.
   * At start-up, every character and account of the realm is marked offline, as mangosd does.
 
-Character, item and mail ids are allocated from `MAX(id) + 1` at start-up, as mangosd does. Never
+Character, item, mail and group ids are allocated from `MAX(id) + 1` at start-up, as mangosd does. Never
 run two world servers, or a world server and mangosd, on the same characters database at the same
 time.
 
@@ -191,6 +215,14 @@ time.
 | `characters_creating_disabled`, `characters_per_account`, `characters_per_realm` | `CharactersCreatingDisabled`, `CharactersPerAccount`, `CharactersPerRealm` | `0`, `50`, `10` |
 | `allow_two_side_accounts`, `skip_cinematics` | `AllowTwoSide.Accounts`, `SkipCinematics` | `false`, `0` |
 | `motd` | `Motd` (`@` starts a new line) | a short welcome |
+| `visibility_distance`, `visibility_relocation_lower_limit` | `Visibility.Distance.Continents`, `Visibility.RelocationLowerLimit` | `100`, `10` |
+| `listen_range_say`, `listen_range_text_emote`, `listen_range_yell` | `ListenRange.Say`, `ListenRange.TextEmote`, `ListenRange.Yell` | `25`, `25`, `300` |
+| `allow_two_side_interaction_chat` | `AllowTwoSide.Interaction.Chat` (whispers between factions) | `false` |
+| `allow_two_side_interaction_channel`, `allow_two_side_interaction_group` | `AllowTwoSide.Interaction.Channel`, `AllowTwoSide.Interaction.Group` | `false`, `false` |
+| `gm_level_channel_moderation`, `gm_level_channel_silent_join` | `GM.ChannelModerationLevel`, `GM.ChannelSilentJoinLevel` (0 = nobody) | `1`, `0` |
+| `chat_restricted_raid_warnings` | `Chat.RestrictedRaidWarnings` | `false` |
+| `instance_ignore_level`, `instance_ignore_raid` | `Instance.IgnoreLevel`, `Instance.IgnoreRaid` | `false`, `false` |
+| `movement_speed_check`, `movement_speed_tolerance`, `movement_speed_slack` | n/a (CMaNGOS leaves it to its anticheat module): allow this factor over running speed, plus these yards | `true`, `1.5`, `15` |
 | `start_player_level`, `start_gm_level`, `start_player_money` | `StartPlayerLevel`, `GM.StartLevel`, `StartPlayerMoney` | `1`, `1`, `0` |
 | `max_primary_trade_skill`, `trade_skill_gm_ignore_max_primary` | `MaxPrimaryTradeSkill`, `TradeSkill.GMIgnore.MaxPrimarySkillsCount` | `2`, `4` |
 | `strict_player_names`, `min_player_name` | `StrictPlayerNames`, `MinPlayerName` | `0`, `2` |
@@ -251,7 +283,15 @@ source/dmangos/world/       the world server (mangosd)
   main.d                      entry point
   session.d                   per-client state machine: framing, handshake, ping (sans-I/O)
   charscreen.d                handlers: character list, creation, deletion, entering the world
-  inworld.d                   handlers: logout, movement, queries, settings, chat
+  inworld.d                   handlers: logout, movement and its check, queries, settings, chat, emotes
+  teleport.d                  handlers and TeleportTo: near and far teleports, area triggers
+  grouphandlers.d             handlers: invitations, raids, loot settings, icons, ready checks, rolls
+  channelhandlers.d           handlers: chat channels
+  commands.d                  chat commands (.tele, .gps, ...), a table built from @Command attributes
+  map.d                       players on a map: cells, who sees whom, broadcasting
+  online.d                    OnlinePlayer and Directory: what groups and channels see of players
+  group.d                     groups: members, leaders, raids, the group list, member stats
+  channel.d                   chat channels: members, owners, moderation, notices
   defines.d                   shared game constants (SharedDefines.h): classes, powers, item classes, slots
   packets.d                   world packet layouts and framing
   opcodes.d                   opcode and result code values (CMaNGOS names)
@@ -316,5 +356,5 @@ compiler. `UpdateValues.set!UNIT_FIELD_STAT0(22.5f)` does not compile, because s
 
 ## Roadmap
 
-Next: other players on a shared map, an update loop with timers, then creatures and game objects.
+Next: an update loop with timers, then creatures and game objects.
 See [docs/ROADMAP.md](docs/ROADMAP.md).

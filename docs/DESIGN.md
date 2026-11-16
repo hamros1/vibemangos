@@ -20,6 +20,9 @@ are the default.
 | Packet (de)serialization is generated from the struct fields, with UDAs for the wire formats: `@CString`, `@LengthPrefix!T`, `@Remainder`, ... `wireSize!T` is computed with CTFE and `static assert`ed against the C++ sizes. | `serialization.d`, `*/packets.d` | Hand-written `operator<<` chains per packet. |
 | Packet dispatch is a `switch` generated from `@Handles` attributes. The dispatcher deserializes the handler's parameter type for it. | `net/dispatch.d` | CMaNGOS's opcode table with function pointers and manual `recv_data >>` reads. |
 | `movementOpcodes` is collected from the `Opcode` enum at compile time. | `world/opcodes.d` | A hand-maintained list. |
+| Chat commands are methods with a `@Command` attribute. The command table, and the `switch` that calls them, are generated from those attributes. | `world/commands.d` | CMaNGOS's `ChatCommand` tables of names, levels and function pointers, kept in step with the handlers by hand. |
+| `@PackedGuid` marks a `ulong` field sent in packed form; the serializer handles it like any other field. | `serialization.d` | `data << guid.WriteAsPacked()` in each packet's code. |
+| `notice(type, channel, extra...)` writes a channel notice from its arguments' types: a guid, a name or a number. | `world/channel.d` | Some thirty `Channel::Make*` functions. |
 | `item_template`'s query columns and their target fields are a CTFE table, and the loader is generated from it. | `world/worlddata.d` | 120 hand-written `fields[i].Get...()` lines. |
 | SQL is a template parameter. Placeholders are counted at compile time, so a wrong argument count fails the build. | `mysql/connection.d` | Runtime `PExecute` format strings. |
 | The SRP6 constants, the MPQ crypt table and the PKWare Huffman tables are computed during compilation. | `crypto/srp6.d`, `mpq/*.d` | Static initializers or init-time code. |
@@ -37,7 +40,9 @@ make it D data that the compiler reads. Derive the code from it, and cross-check
 * **`mixin ServerPacket!(Opcode.X)`** gives a packet struct its opcode, so
   `send(ServerPong(seq))` needs no opcode argument and can't send the wrong one.
 * **Interfaces only at real seams.** `WorldDatabase` has a MySQL and an in-memory implementation.
-  `NetSession` is what the server loop needs. Game objects are structs and final classes, not a
+  `NetSession` is what the server loop needs. `Inhabitant`, `OnlinePlayer` and `Directory` are what
+  maps, groups and channels need from sessions and the context, so their tests run on fakes
+  instead of whole sessions. Game objects are structs and final classes, not a
   `Object → Unit → Player` hierarchy: an item is just an `UpdateValues` of type `TypeId.item`.
 
 ## Contracts and invariants

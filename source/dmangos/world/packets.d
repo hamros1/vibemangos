@@ -482,6 +482,321 @@ struct ServerLogoutCancelAck
     mixin ServerPacket!(Opcode.SMSG_LOGOUT_CANCEL_ACK);
 }
 
+// ---------------------------------------------------------------------------
+// Other players
+// ---------------------------------------------------------------------------
+
+/// `SMSG_DESTROY_OBJECT`: the client forgets an object (a player that left the world).
+struct ServerDestroyObject
+{
+    mixin ServerPacket!(Opcode.SMSG_DESTROY_OBJECT);
+    ulong guid;
+}
+
+/// `CMSG_SET_SELECTION`
+struct ClientSetSelection
+{
+    ulong guid;
+}
+
+/// `SMSG_CHAT_WRONG_FACTION`: a whisper to the other faction.
+struct ServerChatWrongFaction
+{
+    mixin ServerPacket!(Opcode.SMSG_CHAT_WRONG_FACTION);
+}
+
+/// `SMSG_CHAT_PLAYER_NOT_FOUND`: a whisper to nobody.
+struct ServerChatPlayerNotFound
+{
+    mixin ServerPacket!(Opcode.SMSG_CHAT_PLAYER_NOT_FOUND);
+    @CString string name;
+}
+
+/// `CMSG_TEXT_EMOTE`: /wave, /dance, ...
+struct ClientTextEmote
+{
+    uint textEmote; /// `EmotesText.dbc` id
+    uint emoteNum;  /// which of the emote's texts
+    ulong target;
+}
+
+/// `SMSG_EMOTE`: a one-shot animation.
+struct ServerEmote
+{
+    mixin ServerPacket!(Opcode.SMSG_EMOTE);
+    uint emote;  /// `Emotes.dbc` id
+    ulong guid;
+}
+
+/// `SMSG_TEXT_EMOTE`: the text of an emote, in the chat window of those around.
+struct ServerTextEmote
+{
+    mixin ServerPacket!(Opcode.SMSG_TEXT_EMOTE);
+    ulong guid;
+    uint textEmote;
+    uint emoteNum;
+    uint targetNameLength; /// with the terminator; 1 for no target
+    @CString string targetName;
+}
+
+// ---------------------------------------------------------------------------
+// Teleports (MovementHandler.cpp, MiscHandler.cpp, Player::TeleportTo)
+// ---------------------------------------------------------------------------
+
+/// `SMSG_TRANSFER_PENDING`: the loading screen of a far teleport.
+struct ServerTransferPending
+{
+    mixin ServerPacket!(Opcode.SMSG_TRANSFER_PENDING);
+    uint map;
+}
+
+/// `SMSG_NEW_WORLD`: where the far teleport ends; the client answers `MSG_MOVE_WORLDPORT_ACK` once loaded.
+struct ServerNewWorld
+{
+    mixin ServerPacket!(Opcode.SMSG_NEW_WORLD);
+    uint map;
+    float x = 0;
+    float y = 0;
+    float z = 0;
+    float orientation = 0;
+}
+
+/// `TransferAbortReason`
+enum TransferAbortReason : ubyte
+{
+    TRANSFER_ABORT_NONE = 0x00,
+    TRANSFER_ABORT_MAX_PLAYERS = 0x01,
+    TRANSFER_ABORT_NOT_FOUND = 0x02,
+    TRANSFER_ABORT_TOO_MANY_INSTANCES = 0x03,
+    TRANSFER_ABORT_ZONE_IN_COMBAT = 0x05,
+}
+
+/// `SMSG_TRANSFER_ABORTED`
+struct ServerTransferAborted
+{
+    mixin ServerPacket!(Opcode.SMSG_TRANSFER_ABORTED);
+    TransferAbortReason reason;
+}
+
+/// `SMSG_AREA_TRIGGER_MESSAGE`: a yellow message, such as a dungeon's level requirement.
+struct ServerAreaTriggerMessage
+{
+    mixin ServerPacket!(Opcode.SMSG_AREA_TRIGGER_MESSAGE);
+    uint length; /// with the terminator
+    @CString string text;
+
+    ///
+    this(string text)
+    {
+        this.length = cast(uint) text.length + 1;
+        this.text = text;
+    }
+}
+
+/// `CMSG_AREATRIGGER`: the client walked into an `AreaTrigger.dbc` zone.
+struct ClientAreaTrigger
+{
+    uint id;
+}
+
+/// `CMSG_WORLD_TELEPORT`: the client's `worldport` console command, for administrators.
+struct ClientWorldTeleport
+{
+    uint time;
+    uint map;
+    float x = 0;
+    float y = 0;
+    float z = 0;
+    float orientation = 0;
+}
+
+/// `MSG_MOVE_TELEPORT_ACK` from the client: it has arrived at a near teleport's destination.
+struct ClientTeleportAck
+{
+    ulong guid;
+    uint counter;
+    uint time;
+}
+
+// ---------------------------------------------------------------------------
+// Groups (GroupHandler.cpp)
+// ---------------------------------------------------------------------------
+
+/// `PartyOperation`
+enum PartyOperation : uint
+{
+    PARTY_OP_INVITE = 0,
+    PARTY_OP_LEAVE = 2,
+}
+
+/// `PartyResult`
+enum PartyResult : uint
+{
+    ERR_PARTY_RESULT_OK = 0,
+    ERR_BAD_PLAYER_NAME_S = 1,
+    ERR_TARGET_NOT_IN_GROUP_S = 2,
+    ERR_GROUP_FULL = 3,
+    ERR_ALREADY_IN_GROUP_S = 4,
+    ERR_NOT_IN_GROUP = 5,
+    ERR_NOT_LEADER = 6,
+    ERR_PLAYER_WRONG_FACTION = 7,
+    ERR_IGNORING_YOU_S = 8,
+}
+
+/// `SMSG_PARTY_COMMAND_RESULT`
+struct ServerPartyCommandResult
+{
+    mixin ServerPacket!(Opcode.SMSG_PARTY_COMMAND_RESULT);
+    PartyOperation operation;
+    @CString string member;
+    PartyResult result;
+}
+
+/// `CMSG_GROUP_INVITE`, `CMSG_GROUP_UNINVITE`
+struct ClientGroupName
+{
+    @CString string name;
+}
+
+/// A packet that only carries a guid: `CMSG_GROUP_UNINVITE_GUID`, `CMSG_GROUP_SET_LEADER`,
+/// `CMSG_REQUEST_PARTY_MEMBER_STATS`.
+struct ClientGuid
+{
+    ulong guid;
+}
+
+/// `SMSG_GROUP_INVITE`: the invitation dialog.
+struct ServerGroupInvite
+{
+    mixin ServerPacket!(Opcode.SMSG_GROUP_INVITE);
+    @CString string inviter;
+}
+
+/// `SMSG_GROUP_DECLINE`: told to the leader.
+struct ServerGroupDecline
+{
+    mixin ServerPacket!(Opcode.SMSG_GROUP_DECLINE);
+    @CString string name;
+}
+
+/// `SMSG_GROUP_UNINVITE`: "You have been removed from the group."
+struct ServerGroupUninvite
+{
+    mixin ServerPacket!(Opcode.SMSG_GROUP_UNINVITE);
+}
+
+/// `SMSG_GROUP_SET_LEADER`
+struct ServerGroupSetLeader
+{
+    mixin ServerPacket!(Opcode.SMSG_GROUP_SET_LEADER);
+    @CString string name;
+}
+
+/// `SMSG_GROUP_DESTROYED`
+struct ServerGroupDestroyed
+{
+    mixin ServerPacket!(Opcode.SMSG_GROUP_DESTROYED);
+}
+
+/// `CMSG_LOOT_METHOD`
+struct ClientLootMethod
+{
+    uint method;
+    ulong master;
+    uint threshold;
+}
+
+/// `CMSG_GROUP_CHANGE_SUB_GROUP`
+struct ClientGroupChangeSubGroup
+{
+    @CString string name;
+    ubyte subGroup;
+}
+
+/// `CMSG_GROUP_SWAP_SUB_GROUP`
+struct ClientGroupSwapSubGroup
+{
+    @CString string first;
+    @CString string second;
+}
+
+/// `CMSG_GROUP_ASSISTANT_LEADER`
+struct ClientGroupAssistantLeader
+{
+    ulong guid;
+    ubyte flag;
+}
+
+/// `MSG_MINIMAP_PING` from the client.
+struct ClientMinimapPing
+{
+    float x = 0;
+    float y = 0;
+}
+
+/// `MSG_MINIMAP_PING` to the group.
+struct ServerMinimapPing
+{
+    mixin ServerPacket!(Opcode.MSG_MINIMAP_PING);
+    ulong guid;
+    float x = 0;
+    float y = 0;
+}
+
+/// `MSG_RANDOM_ROLL` from the client.
+struct ClientRandomRoll
+{
+    uint minimum;
+    uint maximum;
+}
+
+/// `MSG_RANDOM_ROLL`: the result, to the roller's group.
+struct ServerRandomRoll
+{
+    mixin ServerPacket!(Opcode.MSG_RANDOM_ROLL);
+    uint minimum;
+    uint maximum;
+    uint roll;
+    ulong guid;
+}
+
+/// `SMSG_RAID_INSTANCE_INFO`: the raids the player is saved to.
+struct ServerRaidInstanceInfo
+{
+    mixin ServerPacket!(Opcode.SMSG_RAID_INSTANCE_INFO);
+    uint count; /// instance binds are not kept yet
+}
+
+// ---------------------------------------------------------------------------
+// Channels (ChannelHandler.cpp)
+// ---------------------------------------------------------------------------
+
+/// `CMSG_JOIN_CHANNEL`, `CMSG_CHANNEL_PASSWORD`
+struct ClientChannelPassword
+{
+    @CString string channel;
+    @CString string password;
+}
+
+/// `CMSG_LEAVE_CHANNEL`, `CMSG_CHANNEL_LIST`, `CMSG_CHANNEL_OWNER`, `CMSG_CHANNEL_ANNOUNCEMENTS`,
+/// `CMSG_CHANNEL_MODERATE`
+struct ClientChannelName
+{
+    @CString string channel;
+}
+
+/// The channel commands aimed at a player: set owner, (un)moderator, (un)mute, invite, kick, (un)ban.
+struct ClientChannelTarget
+{
+    @CString string channel;
+    @CString string target;
+}
+
+static assert(wireSize!ServerNewWorld == 20);
+static assert(wireSize!ClientWorldTeleport == 24);
+static assert(wireSize!ClientLootMethod == 16);
+static assert(wireSize!ServerRandomRoll == 20);
+
 static assert(wireSize!ServerAccountDataTimes == 128);
 static assert(wireSize!ServerInitializeFactions == 4 + 64 * 5);
 static assert(wireSize!ServerActionButtons == 480);
@@ -496,14 +811,21 @@ out (bytes; bytes.length >= serverHeaderLength)
 {
     ByteWriter payload;
     serialize(payload, packet);
-    enforce!PacketException(payload.length + 2 <= ushort.max, "packet too large");
+    return encodePacket(T.opcode, payload.data, crypt);
+}
+
+/// Frames a body that is already serialized, e.g. one body sent to many players.
+ubyte[] encodePacket(Opcode opcode, const(ubyte)[] body_, ref HeaderCrypt crypt)
+out (bytes; bytes.length == serverHeaderLength + body_.length)
+{
+    enforce!PacketException(body_.length + 2 <= ushort.max, "packet too large");
 
     ubyte[serverHeaderLength] header;
-    header[0 .. 2] = nativeToBigEndian(cast(ushort)(payload.length + 2));
-    header[2] = cast(ubyte)(T.opcode & 0xFF);
-    header[3] = cast(ubyte)(T.opcode >> 8);
+    header[0 .. 2] = nativeToBigEndian(cast(ushort)(body_.length + 2));
+    header[2] = cast(ubyte)(opcode & 0xFF);
+    header[3] = cast(ubyte)(opcode >> 8);
     crypt.encryptHeader(header);
-    return header ~ payload.data;
+    return header ~ body_;
 }
 
 unittest

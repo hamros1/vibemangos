@@ -88,6 +88,22 @@ struct ByteWriter
         buffer ~= bytes[];
     }
 
+    /// Appends a guid in packed form: a byte with a bit per non-zero byte, then those bytes.
+    void putPackedGuid(ulong guid) pure nothrow @safe
+    {
+        ubyte mask;
+        ubyte[8] bytes;
+        size_t count;
+        foreach (i; 0 .. 8)
+            if (const b = cast(ubyte)(guid >> (8 * i)))
+            {
+                mask |= 1 << i;
+                bytes[count++] = b;
+            }
+        buffer ~= mask;
+        buffer ~= bytes[0 .. count];
+    }
+
     /// Returns the written bytes and resets the writer.
     ubyte[] release() pure nothrow @safe
     {
@@ -189,6 +205,17 @@ struct ByteReader
                 throw new PacketException("C string exceeds its maximum length");
         }
         throw new IncompletePacketException("unterminated C string");
+    }
+
+    /// Reads a guid in packed form; see `ByteWriter.putPackedGuid`.
+    ulong readPackedGuid() pure @safe
+    {
+        const mask = read!ubyte;
+        ulong guid;
+        foreach (i; 0 .. 8)
+            if (mask & (1 << i))
+                guid |= ulong(read!ubyte) << (8 * i);
+        return guid;
     }
 
     /// Reads a four-character code. See `ByteWriter.putFourCC` for the wire format.

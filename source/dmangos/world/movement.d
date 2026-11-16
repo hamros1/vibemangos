@@ -28,9 +28,17 @@ enum MovementFlags : uint
     fallingFar = 0x00004000,
     swimming = 0x00200000,    /// adds the pitch
     splineEnabled = 0x00400000,
+    pitchUp = 0x00000040,
+    pitchDown = 0x00000080,
     onTransport = 0x02000000, /// adds the transport guid and offset
     splineElevation = 0x04000000, /// adds one float
 }
+
+/// `MOVEFLAG_MASK_MOVING` with the turning flags: the player is moving or turning, so it stands up and
+/// stops a looping emote.
+enum uint movingOrTurning = MovementFlags.forward | MovementFlags.backward | MovementFlags.strafeLeft
+    | MovementFlags.strafeRight | MovementFlags.pitchUp | MovementFlags.pitchDown | MovementFlags.fallingFar
+    | MovementFlags.splineElevation | MovementFlags.turnLeft | MovementFlags.turnRight;
 
 /// A position and facing.
 struct Position

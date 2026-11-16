@@ -416,13 +416,30 @@ immutable UpdateField[] updateFields = () {
     ];
 }();
 
-// One ushort constant per field: `enum ushort UNIT_FIELD_HEALTH = 0x16;` and so on.
+/**
+ * A field's first slot, together with its row in `updateFields`.
+ *
+ * Fields of different object types share offsets (`ITEM_FIELD_SPELL_CHARGES`
+ * and `UNIT_FIELD_TARGET` are both slot 16), so the offset alone does not say
+ * which field is meant. The row does, and `UpdateValues.set!field` uses it
+ * to look up the field's type. Everywhere else a field is just its offset:
+ * `alias offset this` makes `UNIT_FIELD_STAT0 + 2` and `values[UNIT_FIELD_HEALTH]`
+ * work as with plain numbers.
+ */
+struct UpdateFieldId
+{
+    ushort offset;
+    ushort row;
+    alias offset this;
+}
+
+// One constant per field: `enum UNIT_FIELD_HEALTH = UpdateFieldId(0x16, 54);` and so on.
 mixin(() {
     import std.conv : to;
 
     string code;
-    foreach (field; updateFields)
-        code ~= "enum ushort " ~ field.name ~ " = " ~ field.offset.to!string ~ ";\n";
+    foreach (i, field; updateFields)
+        code ~= "enum " ~ field.name ~ " = UpdateFieldId(" ~ field.offset.to!string ~ ", " ~ i.to!string ~ ");\n";
     return code;
 }());
 
@@ -506,6 +523,8 @@ static assert(updateFields.length == 324, "CMaNGOS's g_updateFieldsData has 324 
 static assert(fieldCount!(TypeId.player) == PLAYER_END && fieldCount!(TypeId.unit) == UNIT_END);
 static assert(fieldCount!(TypeId.item) == ITEM_END && fieldCount!(TypeId.container) == CONTAINER_END);
 static assert(PLAYER_END == 1282 && UNIT_END == 188 && CONTAINER_END == 122);
+static assert(ITEM_FIELD_SPELL_CHARGES.offset == UNIT_FIELD_TARGET.offset
+    && ITEM_FIELD_SPELL_CHARGES.row != UNIT_FIELD_TARGET.row, "same slot, different fields");
 static assert(visibleItemStride == 12 && visibleEnchantments == 7);
 static assert(maxPlayerSkills == 128 && maxBagSize == 36);
 static assert(playerInventorySlots == 113, "INVENTORY_SLOT_BAG_0 positions 0 .. KEYRING_SLOT_END");

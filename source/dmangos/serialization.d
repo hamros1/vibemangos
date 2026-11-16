@@ -54,6 +54,11 @@ struct Remainder
 {
 }
 
+/// The field (a `ulong`) is a guid in packed form; see `ByteWriter.putPackedGuid`.
+struct PackedGuid
+{
+}
+
 /// On a packet struct: the body is preceded by its size as a `ushort`. Applied by the packet encoder.
 struct SizePrefixed
 {
@@ -76,6 +81,11 @@ void serialize(T)(ref ByteWriter writer, auto ref const T value) if (is(T == str
         {
             static assert(isSomeString!Field, "@FourCC requires a string field: " ~ fieldName);
             writer.putFourCC(value.tupleof[i]);
+        }
+        else static if (hasUDA!(T.tupleof[i], PackedGuid))
+        {
+            static assert(is(Unqual!Field == ulong), "@PackedGuid requires a ulong field: " ~ fieldName);
+            writer.putPackedGuid(value.tupleof[i]);
         }
         else static if (hasUDA!(T.tupleof[i], LengthPrefix))
         {
@@ -132,6 +142,8 @@ private T deserializeFields(T)(ref ByteReader reader)
             result.tupleof[i] = reader.readCString();
         else static if (hasUDA!(T.tupleof[i], FourCC))
             result.tupleof[i] = reader.readFourCC();
+        else static if (hasUDA!(T.tupleof[i], PackedGuid))
+            result.tupleof[i] = reader.readPackedGuid();
         else static if (hasUDA!(T.tupleof[i], LengthPrefix))
         {
             alias Attribute = getUDAs!(T.tupleof[i], LengthPrefix)[0];
@@ -183,7 +195,7 @@ private size_t computeWireSize(T)()
         static foreach (i; 0 .. T.tupleof.length)
         {{
             static if (hasUDA!(T.tupleof[i], CString) || hasUDA!(T.tupleof[i], LengthPrefix)
-                || hasUDA!(T.tupleof[i], Remainder))
+                || hasUDA!(T.tupleof[i], Remainder) || hasUDA!(T.tupleof[i], PackedGuid))
                 variable = true;
             else static if (hasUDA!(T.tupleof[i], FourCC))
                 total += 4;

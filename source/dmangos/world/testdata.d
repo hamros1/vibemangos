@@ -20,6 +20,12 @@ enum ubyte classWarrior = 1, classHunter = 3, classMage = 8;
 enum uint itemSword = 25, itemShirt = 38, itemJerky = 117, itemHearthstone = 6948, itemStaff = 35;
 enum uint itemBow = 2504, itemQuiver = 2101, itemArrow = 2512;
 
+/// Maps of `Map.dbc`, by their real ids, and the Deadmines entrance (`AreaTrigger.dbc` 78).
+enum uint mapEasternKingdoms = 0, mapKalimdor = 1, mapDeadmines = 36, mapMoltenCore = 409, mapWarsongGulch = 489;
+enum uint triggerDeadmines = 78; /// ditto
+enum float[3] deadminesEntrance = [-11208.5f, 1685.34f, 25.76f]; /// ditto
+enum float[4] deadminesInside = [-16.4f, -383.07f, 61.78f, 1.86f]; /// ditto
+
 enum uint skillSwords = 43, skillStaves = 136, skillBows = 45, skillUnarmed = 162, skillCommon = 98,
     skillOrcish = 109, skillFireMagic = 8;
 enum uint spellOneHandedSwords = 201, spellStaves = 227, spellBows = 264, spellLanguageCommon = 668,
@@ -83,8 +89,28 @@ ClientData testClientData()
         abilityRecord(4, skillCommon, spellLanguageCommon, 2),
         abilityRecord(5, skillFireMagic, spellFireball, 0),
     ]), "SkillLineAbility.dbc");
+    // Map: id, skip, type, skip, 8 names, ..., the area at 19, the loading screen at 38.
+    uint[] mapRecord(uint id, uint type)
+    {
+        auto record = new uint[mapFormat.length];
+        record[0] = id;
+        record[2] = type;
+        return record;
+    }
+    client.maps = typeof(client.maps).parse(buildDbc(mapFormat, [mapRecord(mapEasternKingdoms, MapType.common),
+        mapRecord(mapKalimdor, MapType.common), mapRecord(mapDeadmines, MapType.instance),
+        mapRecord(mapMoltenCore, MapType.raid), mapRecord(mapWarsongGulch, MapType.battleground)]), "Map.dbc");
+    // AreaTrigger: id, map, x, y, z, radius, box.
+    client.areaTriggers = typeof(client.areaTriggers).parse(buildDbc(areaTriggerFormat, [[triggerDeadmines,
+        mapEasternKingdoms, floatBits(deadminesEntrance[0]), floatBits(deadminesEntrance[1]),
+        floatBits(deadminesEntrance[2]), floatBits(5), 0, 0, 0, 0]]), "AreaTrigger.dbc");
     client.buildIndexes();
     return client;
+}
+
+private uint floatBits(float value) @trusted
+{
+    return *cast(uint*)&value;
 }
 
 /// The world data fixture, consistent with `testClientData`.
@@ -101,6 +127,13 @@ WorldData testWorldData(const ClientData client)
     world.items[itemQuiver].containerSlots = 6;
     world.items[itemArrow] = item(itemArrow, 6, 2, 5996, 24, 200, 200, 0, 0); // arrows, ammo
     world.items[itemArrow].bagFamily = 1;
+
+    // The Deadmines entrance needs level 10; a place for `.tele`.
+    world.areaTriggers[triggerDeadmines] = AreaTriggerTeleport(triggerDeadmines, "Deadmines - Entering", 10, 0, 0, 0,
+        mapDeadmines, deadminesInside[0], deadminesInside[1], deadminesInside[2], deadminesInside[3],
+        "You must be at least level 10 to enter.", 0);
+    world.teleports = [GameTele(-9464, 62, 56, 0, mapEasternKingdoms, "Goldshire"),
+        GameTele(1629, -4373, 31, 3.5f, mapKalimdor, "Orgrimmar")];
 
     auto spells = new SpellData;
     foreach (id; [spellOneHandedSwords, spellStaves, spellBows, spellLanguageCommon, spellFireball,

@@ -56,10 +56,43 @@ struct WorldConfig
     @JsonName("characters_per_realm") uint charactersPerRealm = 10;
     /// `AllowTwoSide.Accounts`: allow both factions on one account on PvP realms.
     @JsonName("allow_two_side_accounts") bool allowTwoSideAccounts = false;
+    /// `AllowTwoSide.Interaction.Chat`: allow whispers between the factions.
+    @JsonName("allow_two_side_interaction_chat") bool allowTwoSideInteractionChat = false;
+    /// `AllowTwoSide.Interaction.Channel`: one set of chat channels for both factions.
+    @JsonName("allow_two_side_interaction_channel") bool allowTwoSideInteractionChannel = false;
+    /// `AllowTwoSide.Interaction.Group`: allow groups with both factions.
+    @JsonName("allow_two_side_interaction_group") bool allowTwoSideInteractionGroup = false;
+    /// `GM.ChannelModerationLevel`: the account level that moderates every channel; 0 for none.
+    @JsonName("gm_level_channel_moderation") uint gmLevelChannelModeration = 1;
+    /// `GM.ChannelSilentJoinLevel`: the account level that joins and leaves channels unannounced; 0 for none.
+    @JsonName("gm_level_channel_silent_join") uint gmLevelChannelSilentJoin = 0;
+    /// `Chat.RestrictedRaidWarnings`: raid warnings only in raids.
+    @JsonName("chat_restricted_raid_warnings") bool chatRestrictedRaidWarnings = false;
+    /// `Instance.IgnoreLevel`: enter dungeons whatever the level.
+    @JsonName("instance_ignore_level") bool instanceIgnoreLevel = false;
+    /// `Instance.IgnoreRaid`: enter raids without a raid group.
+    @JsonName("instance_ignore_raid") bool instanceIgnoreRaid = false;
+    /**
+     * Not in `mangosd.conf` (CMaNGOS leaves this to its anticheat module): check that players move no
+     * faster than they can run, give or take `movement_speed_tolerance` (a factor) plus
+     * `movement_speed_slack` yards. A player caught is put back where it was. Game masters are not checked.
+     */
+    @JsonName("movement_speed_check") bool movementSpeedCheck = true;
+    @JsonName("movement_speed_tolerance") float movementSpeedTolerance = 1.5f; /// ditto
+    @JsonName("movement_speed_slack") float movementSpeedSlack = 15;           /// ditto
     /// `SkipCinematics`: 0 always show the intro, 1 skip it if the account has a character of that race, 2 never.
     @JsonName("skip_cinematics") uint skipCinematics = 0;
     /// `Motd`: shown in the chat window on entering the world; '@' starts a new line.
-    string motd = "Welcome to dmangos.@Entering the world works; creatures, other players and combat are still to come.";
+    string motd = "Welcome to dmangos.@Players see each other, group up and chat; creatures and combat are still to come.";
+
+    /// `Visibility.Distance.Continents`: how far players see each other, in yards.
+    @JsonName("visibility_distance") float visibilityDistance = 100;
+    /// `Visibility.RelocationLowerLimit`: yards a player moves before visibility is recomputed.
+    @JsonName("visibility_relocation_lower_limit") float visibilityRelocationLimit = 10;
+    /// `ListenRange.Say`, `ListenRange.TextEmote`, `ListenRange.Yell`, in yards.
+    @JsonName("listen_range_say") float listenRangeSay = 25;
+    @JsonName("listen_range_text_emote") float listenRangeTextEmote = 25; /// ditto
+    @JsonName("listen_range_yell") float listenRangeYell = 300;           /// ditto
     /// `StartPlayerLevel`
     @JsonName("start_player_level") uint startPlayerLevel = 1;
     /// `GM.StartLevel`, for moderator accounts and up.

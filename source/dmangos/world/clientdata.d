@@ -126,6 +126,26 @@ struct CreatureModelDataEntry
 
 enum creatureModelDataFormat = "nixxfxxxxxxxxxff"; ///
 
+/// `EmotesTextEntry`: what a text emote (/wave) animates.
+struct EmotesTextEntry
+{
+    uint id;
+    uint emote; /// `Emotes.dbc` id; 0 for none
+}
+
+enum emotesTextFormat = "nxixxxxxxxxxxxxxxxx"; ///
+
+/// `EmotesEntry`
+struct EmotesEntry
+{
+    uint id;
+    uint flags;
+    uint emoteType; /// 0 a one-shot animation; 1 and 2 a state that lasts (dancing)
+    uint standState;
+}
+
+enum emotesFormat = "nxxiiix"; ///
+
 /// Number of item slots in a starting outfit (`MAX_OUTFIT_ITEMS`).
 enum maxOutfitItems = 12;
 
@@ -264,6 +284,112 @@ struct TalentTabEntry
 
 enum talentTabFormat = "nxxxxxxxxxxxiix"; ///
 
+/// `MapEntry`
+struct MapEntry
+{
+    uint mapId;
+    uint mapType;    /// `MapTypes`
+    string[8] name;
+    uint linkedZone;
+    uint multimapId;
+
+    /// `MapEntry::IsDungeon`: an instance or a raid.
+    @property bool isDungeon() const pure nothrow @nogc @safe
+    {
+        return mapType == MapType.instance || mapType == MapType.raid;
+    }
+
+    /// `MapEntry::IsRaid`
+    @property bool isRaid() const pure nothrow @nogc @safe
+    {
+        return mapType == MapType.raid;
+    }
+
+    /// `MapEntry::IsBattleGround`
+    @property bool isBattleground() const pure nothrow @nogc @safe
+    {
+        return mapType == MapType.battleground;
+    }
+
+    /// `MapEntry::IsContinent`: Eastern Kingdoms or Kalimdor.
+    @property bool isContinent() const pure nothrow @nogc @safe
+    {
+        return mapId == 0 || mapId == 1;
+    }
+}
+
+enum mapFormat = "nxixssssssssxxxxxxxixxxxxxxxxxxxxxxxxxixxx"; ///
+
+/// `MapTypes`
+enum MapType : uint
+{
+    common = 0,
+    instance = 1,
+    raid = 2,
+    battleground = 3,
+}
+
+/// `AreaTableEntry`: zones and the areas inside them.
+struct AreaTableEntry
+{
+    uint id;
+    uint mapId;
+    uint zone;        /// the zone an area is part of; 0 for a zone
+    uint exploreFlag;
+    uint flags;
+    int areaLevel;
+    string[8] name;
+    uint team;
+    uint liquidTypeOverride;
+}
+
+enum areaTableFormat = "niiiixxxxxissssssssxixxxi"; ///
+
+/// `AreaTriggerEntry`: a sphere (radius) or a box the client reports entering.
+struct AreaTriggerEntry
+{
+    uint id;
+    uint mapId;
+    float x = 0;
+    float y = 0;
+    float z = 0;
+    float radius = 0;
+    float boxX = 0;
+    float boxY = 0;
+    float boxZ = 0;
+    float boxOrientation = 0;
+
+    /// `IsPointInAreaTriggerZone`: whether a point on `map` is inside, give or take `delta` yards.
+    bool contains(uint map, float px, float py, float pz, float delta) const pure nothrow @nogc @safe
+    {
+        import std.math : abs, cos, PI, sin;
+
+        if (map != mapId)
+            return false;
+        if (radius > 0)
+            return (px - x) ^^ 2 + (py - y) ^^ 2 + (pz - z) ^^ 2 <= (radius + delta) ^^ 2;
+        // A box: turn the point instead of the box, then compare each axis.
+        const rotation = 2 * PI - boxOrientation;
+        const dx = px - x, dy = py - y;
+        const rotatedX = dx * cos(rotation) - dy * sin(rotation);
+        const rotatedY = dy * cos(rotation) + dx * sin(rotation);
+        return abs(rotatedX) <= boxX / 2 + delta && abs(rotatedY) <= boxY / 2 + delta
+            && abs(pz - z) <= boxZ / 2 + delta;
+    }
+}
+
+enum areaTriggerFormat = "niffffffff"; ///
+
+/// `ChatChannelsEntry`: the built-in channels (General, Trade, LocalDefense, ...).
+struct ChatChannelsEntry
+{
+    uint channelId;
+    uint flags;       /// `ChannelDBCFlags`
+    string[8] pattern; /// "General - %s"
+}
+
+enum chatChannelsFormat = "iixssssssssxxxxxxxxxx"; ///
+
 /// Talent and rank a spell belongs to (`TalentSpellPos`).
 struct TalentSpellPos
 {
@@ -294,6 +420,12 @@ final class ClientData
     DbcStore!(TalentTabEntry, talentTabFormat) talentTabs;
     DbcStore!(CreatureDisplayInfoEntry, creatureDisplayInfoFormat) creatureDisplays;
     DbcStore!(CreatureModelDataEntry, creatureModelDataFormat) creatureModels;
+    DbcStore!(EmotesTextEntry, emotesTextFormat) emotesText;
+    DbcStore!(EmotesEntry, emotesFormat) emotes;
+    DbcStore!(MapEntry, mapFormat) maps;
+    DbcStore!(AreaTableEntry, areaTableFormat) areas;
+    DbcStore!(AreaTriggerEntry, areaTriggerFormat) areaTriggers;
+    DbcStore!(ChatChannelsEntry, chatChannelsFormat) chatChannels;
 
     private
     {
@@ -313,7 +445,9 @@ final class ClientData
         static foreach (member; ["charSections:CharSections", "facialHairStyles:CharacterFacialHairStyles",
             "classes:ChrClasses", "races:ChrRaces", "startOutfits:CharStartOutfit", "skillLines:SkillLine", "skillLineAbilities:SkillLineAbility",
             "skillRaceClassInfos:SkillRaceClassInfo", "skillTiers:SkillTiers", "talents:Talent",
-            "talentTabs:TalentTab", "creatureDisplays:CreatureDisplayInfo", "creatureModels:CreatureModelData"])
+            "talentTabs:TalentTab", "creatureDisplays:CreatureDisplayInfo", "creatureModels:CreatureModelData",
+            "emotesText:EmotesText", "emotes:Emotes", "maps:Map", "areas:AreaTable", "areaTriggers:AreaTrigger",
+            "chatChannels:ChatChannels"])
         {{
             enum field = member[0 .. indexOf(member, ':')];
             enum file = member[indexOf(member, ':') + 1 .. $] ~ ".dbc";
@@ -428,6 +562,51 @@ final class ClientData
     const(TalentSpellPos)* talentSpellPos(uint spellId) const
     {
         return spellId in talentSpellPositions;
+    }
+
+    /**
+     * `GetChatChannelsEntryFor`: the built-in channel a name belongs to, or null for a custom channel.
+     * A pattern with `%s` matches any name containing the rest ("General - " in "General - Elwynn Forest").
+     */
+    const(ChatChannelsEntry)* chatChannelFor(string name) const
+    {
+        import std.algorithm.searching : canFind;
+        import std.array : replace;
+        import std.uni : toLower;
+
+        if (name.length == 0)
+            return null;
+        const lowered = name.toLower;
+        foreach (ref entry; chatChannels.rows)
+            foreach (pattern; entry.pattern)
+            {
+                if (pattern.length == 0)
+                    continue;
+                const p = pattern.toLower;
+                if (p.canFind("%s") ? lowered.canFind(p.replace("%s", "")) : lowered == p)
+                    return &entry;
+            }
+        return null;
+    }
+
+    /// The English name of a zone or area, or null.
+    string areaName(uint id) const
+    {
+        const area = areas.lookup(id);
+        return area is null ? null : area.name[0];
+    }
+
+    /**
+     * `MapManager::IsValidMapCoord`: a map the client has, and a finite position within its
+     * 64 by 64 grids of 533.33 yards.
+     */
+    bool isValidMapCoord(uint map, float x, float y, float z, float orientation = 0) const
+    {
+        import std.math : abs, isFinite;
+
+        enum float mapHalfSize = 32 * 533.3333f;
+        return maps.lookup(map) !is null && x.isFinite && y.isFinite && z.isFinite && orientation.isFinite
+            && abs(x) <= mapHalfSize - 0.5f && abs(y) <= mapHalfSize - 0.5f;
     }
 
     /// The team of a race: `Alliance` for TeamID 7, `Horde` for 1 (`Player::TeamForRace`).

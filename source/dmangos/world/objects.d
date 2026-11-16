@@ -15,6 +15,7 @@
  */
 module dmangos.world.objects;
 
+import std.algorithm.searching : all;
 import std.zlib : compress;
 
 import dmangos.bytes;
@@ -40,42 +41,29 @@ uint lowGuid(ulong guid) pure nothrow @nogc @safe
     return cast(uint) guid;
 }
 
-/// Writes a guid in packed form: a byte with a bit per non-zero byte, then those bytes.
+/// Writes a guid in packed form (`ByteWriter.putPackedGuid`).
 void putPackedGuid(ref ByteWriter writer, ulong guid) pure nothrow @safe
 {
-    ubyte mask;
-    ubyte[8] bytes;
-    size_t count;
-    foreach (i; 0 .. 8)
-    {
-        const b = cast(ubyte)(guid >> (8 * i));
-        if (b)
-        {
-            mask |= 1 << i;
-            bytes[count++] = b;
-        }
-    }
-    writer.put(mask);
-    writer.putBytes(bytes[0 .. count]);
+    writer.putPackedGuid(guid);
 }
 
-/// Reads a packed guid.
-ulong readPackedGuid(ref ByteReader reader)
+/// Reads a packed guid (`ByteReader.readPackedGuid`).
+ulong readPackedGuid(ref ByteReader reader) pure @safe
 {
-    const mask = reader.read!ubyte;
-    ulong guid;
-    foreach (i; 0 .. 8)
-        if (mask & (1 << i))
-            guid |= ulong(reader.read!ubyte) << (8 * i);
-    return guid;
+    return reader.readPackedGuid();
 }
 
 /// Which fields a viewer sees (`Object::GetUpdateFieldFlagsForTarget`).
 enum Visibility seenByEveryone = Visibility.public_ | Visibility.dynamic;
 /// ditto: a player looking at itself.
 enum Visibility seenBySelf = seenByEveryone | Visibility.private_;
+/// ditto: a member of the player's group.
+enum Visibility seenByGroup = seenByEveryone | Visibility.groupOnly;
 /// ditto: the owner of an item, pet or other object, on top of what it otherwise sees.
 enum Visibility seenByOwner = Visibility.ownerOnly | Visibility.unk2;
+
+/// Changes the value of slot `slot` for one viewer.
+alias ValueAdjuster = uint delegate(size_t slot, uint value) const;
 
 /// What a value written into a field of type `type` must be (see `UpdateValues.set`).
 private template accepts(FieldType type, T)
@@ -90,13 +78,8 @@ private template accepts(FieldType type, T)
         enum accepts = (isIntegral!T || is(T == enum) || is(T == bool)) && !isFloatingPoint!T && !isSomeChar!T;
 }
 
-/// The table row of the field `field` names (an update field constant, passed as an alias).
-private enum UpdateField rowOf(alias field) = () {
-    foreach (row; updateFields)
-        if (row.name == __traits(identifier, field))
-            return row;
-    assert(0, __traits(identifier, field) ~ " is not an update field");
-}();
+/// The table row of an update field constant.
+private enum UpdateField rowOf(UpdateFieldId field) = updateFields[field.row];
 
 /**
  * An object's update fields, with a record of which have changed since
@@ -148,7 +131,7 @@ struct UpdateValues
     // -----------------------------------------------------------------------
 
     /// Sets element `index` of `field` (or the field itself) to `value`; see the struct documentation.
-    void set(alias field, T)(size_t index, T value)
+    void set(UpdateFieldId field, T)(size_t index, T value)
     in (slotOf!field(index) + (rowOf!field.type == FieldType.guid ? 1 : 0) < slots.length,
         "past the end of the object's fields")
     in (typeAt(slotOf!field(index)) == rowOf!field.type, "the index runs into a field of another type")
@@ -169,13 +152,13 @@ struct UpdateValues
     }
 
     /// ditto
-    void set(alias field, T)(T value)
+    void set(UpdateFieldId field, T)(T value)
     {
         set!field(0, value);
     }
 
     /// Element `index` of `field`, as its type: `float`, `ulong` for guids, `uint` otherwise.
-    auto get(alias field)(size_t index = 0) const
+    auto get(UpdateFieldId field)(size_t index = 0) const
     in (typeAt(slotOf!field(index)) == rowOf!field.type, "the index runs into a field of another type")
     {
         enum row = rowOf!field;
@@ -189,7 +172,7 @@ struct UpdateValues
     }
 
     /// Sets byte `offset` (0 = lowest) of a `bytes` field.
-    void setByte(alias field)(uint offset, ubyte value, size_t index = 0)
+    void setByte(UpdateFieldId field)(uint offset, ubyte value, size_t index = 0)
     in (offset < 4)
     {
         static assert(rowOf!field.type == FieldType.bytes, rowOf!field.name ~ " is not a bytes field");
@@ -198,7 +181,7 @@ struct UpdateValues
     }
 
     /// Byte `offset` of a `bytes` field.
-    ubyte getByte(alias field)(uint offset, size_t index = 0) const
+    ubyte getByte(UpdateFieldId field)(uint offset, size_t index = 0) const
     in (offset < 4)
     {
         static assert(rowOf!field.type == FieldType.bytes, rowOf!field.name ~ " is not a bytes field");
@@ -206,7 +189,7 @@ struct UpdateValues
     }
 
     /// Sets half `offset` (0 = low) of a `twoShort` field, or of a `bytes` field holding a 16-bit value.
-    void setHalf(alias field)(uint offset, ushort value, size_t index = 0)
+    void setHalf(UpdateFieldId field)(uint offset, ushort value, size_t index = 0)
     in (offset < 2)
     {
         static assert(rowOf!field.type == FieldType.twoShort || rowOf!field.type == FieldType.bytes,
@@ -240,30 +223,59 @@ struct UpdateValues
         changed[] = 0;
     }
 
-    /// Writes the values part of a create block: every non-zero field `seen` lets the viewer see.
-    void writeCreate(ref ByteWriter writer, Visibility seen) const pure nothrow @safe
+    /**
+     * Writes the values part of a create block: every non-zero field `seen` lets the viewer see.
+     * `adjust`, if given, changes what this viewer is told (`Object::BuildValuesUpdate`'s per-viewer
+     * cases, such as health in percent for strangers).
+     */
+    void writeCreate(ref ByteWriter writer, Visibility seen, scope ValueAdjuster adjust = null) const
     {
         const visibility = visibilityOf(type_);
         auto mask = new uint[changed.length];
         foreach (i, value; slots)
             if (value && (visibility[i] & seen))
                 mask[i / 32] |= 1u << (i % 32);
-        writeMasked(writer, mask);
+        writeMasked(writer, mask, adjust);
     }
 
     /// Writes the values part of a values block: the fields changed since `clearChanges` that `seen` covers.
-    void writeChanges(ref ByteWriter writer, Visibility seen) const pure nothrow @safe
+    void writeChanges(ref ByteWriter writer, Visibility seen, scope ValueAdjuster adjust = null) const
+    {
+        writeMasked(writer, changesSeen(seen), adjust);
+    }
+
+    /// Writes the values part of a values block with exactly the slots `which`, changed or not.
+    void writeSlots(ref ByteWriter writer, const(size_t)[] which, scope ValueAdjuster adjust = null) const
+    in (which.all!(slot => slot < slots.length))
+    {
+        auto mask = new uint[changed.length];
+        foreach (slot; which)
+            mask[slot / 32] |= 1u << (slot % 32);
+        writeMasked(writer, mask, adjust);
+    }
+
+    /// The slots that `seen` covers but `seenByEveryone` does not, and that are not zero.
+    size_t[] slotsOnlyFor(Visibility seen) const pure nothrow @safe
     {
         const visibility = visibilityOf(type_);
-        auto mask = changed.dup;
-        foreach (i; 0 .. slots.length)
-            if (!(visibility[i] & seen))
-                mask[i / 32] &= ~(1u << (i % 32));
-        writeMasked(writer, mask);
+        size_t[] found;
+        foreach (i, value; slots)
+            if (value && (visibility[i] & seen) && !(visibility[i] & seenByEveryone))
+                found ~= i;
+        return found;
+    }
+
+    /// Whether a viewer that sees `seen` has changes to be told about.
+    bool hasChangesFor(Visibility seen) const pure nothrow @safe
+    {
+        foreach (word; changesSeen(seen))
+            if (word)
+                return true;
+        return false;
     }
 
 private:
-    static size_t slotOf(alias field)(size_t index) pure nothrow @nogc @safe
+    static size_t slotOf(UpdateFieldId field)(size_t index) pure nothrow @nogc @safe
     {
         return field + index * (rowOf!field.type == FieldType.guid ? 2 : 1);
     }
@@ -283,14 +295,24 @@ private:
         }
     }
 
-    void writeMasked(ref ByteWriter writer, const(uint)[] mask) const pure nothrow @safe
+    uint[] changesSeen(Visibility seen) const pure nothrow @safe
+    {
+        const visibility = visibilityOf(type_);
+        auto mask = changed.dup;
+        foreach (i; 0 .. slots.length)
+            if (!(visibility[i] & seen))
+                mask[i / 32] &= ~(1u << (i % 32));
+        return mask;
+    }
+
+    void writeMasked(ref ByteWriter writer, const(uint)[] mask, scope ValueAdjuster adjust) const
     {
         writer.put(cast(ubyte) mask.length);
         foreach (word; mask)
             writer.put(word);
         foreach (i, value; slots)
             if (mask[i / 32] & (1u << (i % 32)))
-                writer.put(value);
+                writer.put(adjust is null ? value : adjust(i, value));
     }
 }
 
@@ -403,24 +425,50 @@ struct UpdateData
 
     /// `Object::BuildCreateUpdateBlockForPlayer`, for a viewer that sees the fields `seen` covers.
     void addCreate(UpdateType type, ulong guid, const ref MovementBlock movement, const ref UpdateValues values,
-        Visibility seen)
+        Visibility seen, scope ValueAdjuster adjust = null)
     in (type == UpdateType.createObject || type == UpdateType.createObject2)
     {
         blocks.put(cast(ubyte) type);
         putPackedGuid(blocks, guid);
         blocks.put(cast(ubyte) values.type);
         movement.write(blocks);
-        values.writeCreate(blocks, seen);
+        values.writeCreate(blocks, seen, adjust);
         ++count;
     }
 
     /// `Object::BuildValuesUpdateBlockForPlayer`: the fields changed since the last `clearChanges`.
-    void addValues(ulong guid, const ref UpdateValues values, Visibility seen)
+    void addValues(ulong guid, const ref UpdateValues values, Visibility seen, scope ValueAdjuster adjust = null)
     {
         blocks.put(cast(ubyte) UpdateType.values);
         putPackedGuid(blocks, guid);
-        values.writeChanges(blocks, seen);
+        values.writeChanges(blocks, seen, adjust);
         ++count;
+    }
+
+    /// A values block with the slots `which`, whether they changed or not (`ForceValuesUpdateAtIndex`).
+    void addSlots(ulong guid, const ref UpdateValues values, const(size_t)[] which, scope ValueAdjuster adjust = null)
+    {
+        blocks.put(cast(ubyte) UpdateType.values);
+        putPackedGuid(blocks, guid);
+        values.writeSlots(blocks, which, adjust);
+        ++count;
+    }
+
+    /// `UpdateData::AddOutOfRangeGUID`: objects the viewer should forget, sent as one block.
+    void addOutOfRange(const(ulong)[] guids)
+    in (guids.length > 0)
+    {
+        blocks.put(cast(ubyte) UpdateType.outOfRangeObjects);
+        blocks.put(cast(uint) guids.length);
+        foreach (guid; guids)
+            putPackedGuid(blocks, guid);
+        ++count;
+    }
+
+    /// Whether no block has been added.
+    @property bool empty() const pure nothrow @nogc @safe
+    {
+        return count == 0;
     }
 
     /**
@@ -533,4 +581,35 @@ unittest
     const size = large.body_[0] | large.body_[1] << 8 | large.body_[2] << 16 | large.body_[3] << 24;
     const plain = cast(const(ubyte)[]) uncompress(large.body_[4 .. $]);
     assert(plain.length == size && plain[0] == 31);
+}
+
+unittest
+{
+    auto values = UpdateValues(TypeId.player);
+    values.set!UNIT_FIELD_HEALTH(30);
+    values.set!UNIT_FIELD_MAXHEALTH(60);
+    values.set!PLAYER_FIELD_COINAGE(5);
+
+    // A viewer can be told something else than the stored value.
+    uint percent(size_t slot, uint value) const
+    {
+        return slot == UNIT_FIELD_HEALTH ? 50 : slot == UNIT_FIELD_MAXHEALTH ? 100 : value;
+    }
+    ByteWriter told;
+    values.writeCreate(told, seenByEveryone, &percent);
+    auto r = ByteReader(told.data);
+    r.skip(1 + 41 * 4);
+    assert(r.read!uint == 50 && r.read!uint == 100);
+
+    // Private changes are not for others.
+    values.clearChanges();
+    values.set!PLAYER_FIELD_COINAGE(6);
+    assert(values.hasChangesFor(seenBySelf) && !values.hasChangesFor(seenByEveryone));
+
+    // An out-of-range block: type 4, the count, packed guids.
+    UpdateData data;
+    assert(data.empty);
+    data.addOutOfRange([1, makeGuid(HighGuid.player, 2)]);
+    const packet = data.build();
+    assert(packet.body_ == [1, 0, 0, 0, 0, 4, 2, 0, 0, 0, 1, 1, 1, 2]);
 }

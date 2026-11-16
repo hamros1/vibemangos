@@ -9,7 +9,13 @@
 | World handshake | Complete: session key proof, header encryption, addons, ping | `world/session.d` |
 | Character list, creation, deletion | Full parity with CMaNGOS, incl. guild, group, auction and mail cleanup on delete | `world/charscreen.d`, `playercreate.d`, `characterdb.d` |
 | Entering the world | Character, inventory, skills, spellbook, action bars, stats with gear; same packet sequence as mangosd | `world/charscreen.d`, `player.d`, `stats.d` |
-| In the world | Movement remembered and saved, name, item, time and played-time queries, say/yell/emote echo, stand state, action buttons, tutorials, logout | `world/inworld.d` |
+| In the world | Movement saved, name, item, time and played-time queries, stand state, target selection, action buttons, tutorials, logout | `world/inworld.d` |
+| Other players | A shared map per map id: players see each other within 100 yards (created, out of range, destroyed), movement and field changes are relayed, say/yell/emote/text emotes reach those in range, whispers reach anyone online, names of online players | `world/map.d`, `world/inworld.d`, `world/context.d` |
+| Teleports | Near and far teleports with the client's acknowledgements, area trigger teleports with CMaNGOS's entry checks, `worldport` | `world/teleport.d` |
+| Groups | Parties and raids, saved and reloaded; invitations, leaders, assistants, sub-groups, kicks, loot settings, icons, ready checks, rolls, pings, member stats, group chat, real health for members | `world/group.d`, `world/grouphandlers.d` |
+| Chat | Channels (built-in ones following the zone, custom ones with moderation), AFK/DND with replies and chat tags, raid warnings | `world/channel.d`, `world/channelhandlers.d`, `world/inworld.d` |
+| GM commands | `.gps`, `.go xyz`, `.tele`, `.appear`, `.summon`, `.recall`, `.gm`, `.gm chat`, `.announce`, `.help`, `.commands`, `.save`, `.server info` | `world/commands.d` |
+| Movement checks | Speed checked against running speed; offenders put back. Positions outside the map disconnect | `world/inworld.d` |
 
 ### Known gaps in what exists
 
@@ -20,30 +26,30 @@
   alive.
 * **Logout is instant** for everyone (mangosd: 20 seconds unless resting), because there is no
   timer loop yet.
-* **Movement** is not validated. Explored zones and area triggers are not updated; both need map
-  data.
+* **Movement:** the speed check assumes running speed; it must learn mounts, speed auras,
+  knockbacks and taxis when those exist. Explored zones are not updated; that needs map data.
+* **Teleports:** there is one map per map id, so everyone entering a dungeon shares one copy.
+  Instance ids, binds (`character_instance`, `group_instance`) and resets come with milestone 3's
+  map updates. Area triggers with a `condition_id` stay closed until conditions are loaded;
+  taverns (rest) and quest triggers do nothing yet. Battlegrounds cannot be entered.
+* **Groups:** an offline leader is not replaced after a while (that needs a timer). Loot
+  settings are stored but nothing drops yet. The ignore list does not exist, so nobody can be
+  ignored. Two-faction groups do not show the other faction as friendly.
+* **Chat:** no ignore list, mutes, spam throttle or `Channel.RestrictedLanguageMode`.
+  LocalDefense and WorldDefense need PvP ranks, which do not exist, so WorldDefense is read-only.
+  GM visibility, whisper blocking and the `<GM>` state are not saved between logins.
 
 ## Next milestones
 
 The order follows dependencies: almost everything after milestone 2 needs a map with visibility
 and an update loop.
 
-### 1. Other players: a map with visibility
+### 1. Other players: done
 
-The point at which two people can see each other. CMaNGOS references: `Maps/Map.cpp`, `Grids/`,
-`Entities/Object.cpp` (`UpdateVisibilityOf`), `MotionGenerators/MovementHandler.cpp`,
-`Chat/ChatHandler.cpp`.
-
-* A `Map` per map id, holding the players on it. CMaNGOS uses grids and cells; a cell grid keyed by
-  position (an associative array of cell → players) is enough to start with.
-* On login, `Map.add`. Send the newcomer's create block, using `seenByEveryone`, to players in
-  range (`Visibility.Distance.Continents`, 90 yards by default), and theirs to the newcomer.
-  Remove them with `UPDATETYPE_OUT_OF_RANGE_OBJECTS` when they leave range or log out.
-* Relay `MSG_MOVE_*` to observers, with the mover's packed guid first. Recompute visibility after
-  significant moves.
-* Say (25 yards), yell (300 yards) and emotes go to nearby players, plus whispers by name.
-* `CMSG_NAME_QUERY` answers from online players first.
-* Health to non-group viewers: the `DYNAMIC` percentage rule from `Object::BuildValuesUpdate`.
+Players see each other (`world/map.d`), teleport between maps (`world/teleport.d`), group up
+(`world/group.d`), talk in channels (`world/channel.d`) and are checked for speed. See
+ARCHITECTURE.md's sections on maps, teleports, groups, channels and commands, and the gaps
+listed above. Transports (boats, zeppelins) need game objects and come with milestone 3.
 
 ### 2. An update loop and timers
 
@@ -54,7 +60,8 @@ CMaNGOS references: `World/World.cpp` (`World::Update`), `Server/WorldSession.cp
   session's update.
 * The 20-second logout and the in-combat check. Health, mana and energy regeneration. Rest state
   and rested XP. Periodic saves (`PlayerSaveInterval`).
-* Map updates for milestones 1 and 3.
+* Map updates for milestone 3. Visibility is driven by movement packets today; creatures will need
+  the map to update on its own.
 
 ### 3. Creatures and game objects
 
@@ -98,10 +105,10 @@ The largest area. CMaNGOS references: `Spells/`, `Entities/Unit.cpp`, `Combat/`,
 
 ### 7. Social and progression
 
-* Friends and ignore lists, channels, groups, guilds, mail, auction house and trade, each a
-  handler group and module of its own.
-* Quests (`QuestHandler.cpp`, `ObjectMgr::LoadQuests`). GM commands (`Chat/Level*.cpp`), parsed
-  from chat messages that start with `.`.
+* Friends and ignore lists, guilds, mail, auction house and trade, each a handler group and
+  module of its own, like `grouphandlers.d`.
+* Quests (`QuestHandler.cpp`, `ObjectMgr::LoadQuests`).
+* More GM commands (`Chat/Level*.cpp`): each is one `@Command` method in `commands.d`.
 
 ### Infrastructure, as needed
 

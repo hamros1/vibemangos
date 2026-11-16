@@ -7,8 +7,10 @@
  * `InWorldHandlers` is mixed into `dmangos.world.session.WorldSession`, like
  * `dmangos.world.charscreen.CharacterScreenHandlers`.
  *
- * There is no map yet, so nobody else is in the world: movement is remembered
- * and saved but not shown to others, and chat comes back only to the speaker.
+ * Movement is shown to those who see the player (`dmangos.world.map`) and
+ * checked against the player's speed. Chat reaches those in range, the
+ * group, a channel or one player, depending on its type; a message starting
+ * with `.` may be a command (`dmangos.world.commands`).
  */
 module dmangos.world.inworld;
 
@@ -16,26 +18,45 @@ module dmangos.world.inworld;
 mixin template InWorldHandlers()
 {
     import std.datetime.systime : Clock;
+    import dmangos.auth.accounts : AccountLevel;
+    import dmangos.bytes : ByteWriter;
     import dmangos.log;
+    import dmangos.world.map : packetBody;
     import dmangos.world.defines : maxActionButtons;
-    import dmangos.world.movement : MovementFlags, MovementInfo;
-    import dmangos.world.objects : lowGuid;
+    import dmangos.world.group : GroupUpdate;
+    import dmangos.world.movement : baseMoveSpeed, MovementFlags, MovementInfo, MoveType, movingOrTurning, Position;
+    import dmangos.world.player : PlayerFlags;
+    import dmangos.world.teleport : Teleport;
+    import dmangos.world.objects : lowGuid, putPackedGuid;
     import dmangos.world.opcodes;
     import dmangos.world.packets;
     import dmangos.world.queries : chatMessage, ClientChat, itemQueryResponse;
-    import dmangos.world.updatefields : PLAYER_FIELD_BYTES;
+    import dmangos.world.updatefields : PLAYER_FIELD_BYTES, UNIT_FIELD_BYTES_1;
+
+    enum ubyte standStateStand = 0;
     import dmangos.world.worlddata : CreateAction;
 
 private:
-    /// `WorldSession::LogoutPlayer`: saves the character and leaves the world.
-    void leaveWorld(string why)
+    /**
+     * `WorldSession::LogoutPlayer`: saves the character and leaves the world, its channels and
+     * (logging out normally, from a party) its group. `loggingOut` is false for a lost connection.
+     */
+    void leaveWorld(string why, bool loggingOut)
     {
         const progress = player.progress(secondsInWorld());
         context.database.saveProgress(progress);
         context.database.setOnline(player.data.guid, account.id, false, context.config.realmId);
         info!"%s: '%s' left the world (%s); '%s' saved at map %s %.1f %.1f %.1f"(remoteAddress, account.username,
             why, player.data.name, progress.map, progress.position.x, progress.position.y, progress.position.z);
+        leaveGroupsOnLogout(loggingOut);
+        context.channelsFor(this).leaveAll(this);
+        auto group = context.groups.of(player.guid);
+        context.leaveWorld(this);
+        if (group !is null)
+            group.updatePlayerOnlineStatus(this, false); // the others see the player offline
         player = null;
+        teleporting = Teleport.none;
+        gameMaster = false;
         state_ = WorldState.characterScreen;
     }
 
@@ -45,7 +66,7 @@ private:
         // CMaNGOS makes players wait 20 seconds unless they are resting. This server has no
         // timers yet, so everyone logs out at once.
         send(ServerLogoutResponse(0, 1));
-        leaveWorld("logged out");
+        leaveWorld("logged out", true);
         send(ServerLogoutComplete());
     }
 
@@ -56,21 +77,101 @@ private:
     }
 
     // -----------------------------------------------------------------------
-    // Movement (MovementHandler.cpp): remembered, not yet checked or shared.
+    // Movement (MovementHandler.cpp)
     // -----------------------------------------------------------------------
 
     @Handles(movementOpcodes, WorldState.inWorld)
-    void handleMovement(const MovementInfo movement)
+    void handleMovement(const MovementInfo movement, Opcode opcode)
     {
-        if (!movement.position.isFinite)
+        // WorldSession::VerifyMovementInfo: a position the client cannot be at.
+        const p = movement.position;
+        if (!context.client.isValidMapCoord(player.data.map, p.x, p.y, p.z, p.orientation))
         {
             warning!"%s: '%s' sent an invalid position; disconnecting"(remoteAddress, player.data.name);
             return disconnect();
         }
+        // Until the client confirms a teleport, its movement packets are from before it.
+        if (teleporting != Teleport.none)
+            return;
         // On a transport the position is relative to it; without transports, keep the last world position.
         if (movement.has(MovementFlags.onTransport))
             return;
+        if (!passesSpeedCheck(p))
+            return;
         player.movement = movement;
+
+        // HandleMovementOpcodes: moving stands the player up and ends a looping emote.
+        if (movement.flags & movingOrTurning)
+        {
+            if (player.values.getByte!UNIT_FIELD_BYTES_1(0) != standStateStand)
+                player.setStandState(standStateStand);
+            player.setEmoteState(0);
+            flushPlayerChanges();
+        }
+
+        // Those who see the player see it move: the same opcode, with the mover's guid and the server's time.
+        ByteWriter relay;
+        putPackedGuid(relay, player.guid);
+        MovementInfo relayed = movement;
+        relayed.time = serverTime();
+        relayed.write(relay);
+        map.sendToWatchers(this, opcode, relay.data);
+        map.relocated(this);
+
+        // Group members who do not see the player follow it on their map.
+        if (distance2d(groupPositionAt, p) >= context.config.visibilityRelocationLimit)
+            if (auto group = context.groups.of(player.guid))
+            {
+                groupPositionAt = p;
+                group.updatePlayerOutOfRange(this, GroupUpdate.position);
+            }
+    }
+
+    /**
+     * Whether the player can have got to `position` since the last checkpoint, running (the fastest
+     * it can move without spells or mounts), give or take the configured tolerance. A player that
+     * could not is put back at the checkpoint. The checkpoint moves on every two seconds.
+     */
+    bool passesSpeedCheck(Position position)
+    {
+        import core.time : seconds;
+        import std.algorithm.comparison : max;
+
+        if (!context.config.movementSpeedCheck || gameMaster || account.level > AccountLevel.player)
+            return true;
+        const now = context.clock();
+        const elapsed = (now - checkpointTime).total!"msecs" / 1000.0;
+        const fastest = max(baseMoveSpeed[MoveType.run], baseMoveSpeed[MoveType.swim]);
+        const allowed = fastest * context.config.movementSpeedTolerance * elapsed + context.config.movementSpeedSlack;
+        const moved = distance2d(checkpoint, position);
+        if (moved > allowed)
+        {
+            warning!"%s: '%s' moved %.1f yards in %.1f seconds (at most %.1f allowed); put back"(remoteAddress,
+                player.data.name, moved, elapsed, allowed);
+            teleportTo(player.data.map, checkpoint);
+            return false;
+        }
+        if (now - checkpointTime >= 2.seconds)
+        {
+            checkpoint = position;
+            checkpointTime = now;
+        }
+        return true;
+    }
+
+    /// Starts the movement check afresh at the player's position: at login and after teleports.
+    void resetMovementCheck()
+    {
+        checkpoint = player.position;
+        checkpointTime = context.clock();
+        groupPositionAt = player.position;
+    }
+
+    static float distance2d(Position a, Position b)
+    {
+        import std.math : sqrt;
+
+        return sqrt((a.x - b.x) ^^ 2 + (a.y - b.y) ^^ 2);
     }
 
     // -----------------------------------------------------------------------
@@ -80,9 +181,11 @@ private:
     @Handles(Opcode.CMSG_NAME_QUERY, WorldState.inWorld)
     void handleNameQuery(const ClientNameQuery request)
     {
-        if (request.guid == player.guid)
-            return send(ServerNameQueryResponse(player.guid, player.data.name, "", player.data.race,
-                player.data.gender, player.data.classId));
+        if (const other = context.onlinePlayer(request.guid))
+        {
+            const c = other.character;
+            return send(ServerNameQueryResponse(c.guid, c.data.name, "", c.data.race, c.data.gender, c.data.classId));
+        }
         if (request.guid >> 48 != 0) // only players have names
             return;
         const found = context.database.nameInfo(lowGuid(request.guid));
@@ -175,6 +278,14 @@ private:
         context.database.saveTutorials(account.id, player.data.tutorials);
     }
 
+    @Handles(Opcode.CMSG_SET_SELECTION, WorldState.inWorld)
+    void handleSetSelection(const ClientSetSelection request)
+    {
+        player.setTarget(request.guid); // others see whom the player has targeted
+        flushPlayerChanges();
+    }
+
+    /// `Player::UpdateZone`: world states, zone channels, and the group's zone of the player.
     @Handles(Opcode.CMSG_ZONEUPDATE, WorldState.inWorld)
     void handleZoneUpdate(const ClientZoneUpdate request)
     {
@@ -182,33 +293,184 @@ private:
             return;
         player.data.zone = request.zone;
         send(ServerInitWorldStates(player.data.map, request.zone));
+        context.channelsFor(this).zoneChanged(this, context.client.areaName(request.zone));
+        if (auto group = context.groups.of(player.guid))
+            group.updatePlayerOutOfRange(this, GroupUpdate.zone);
     }
 
     // -----------------------------------------------------------------------
-    // Chat (ChatHandler.cpp): nobody else is around, so only the speaker hears it.
+    // Chat (ChatHandler.cpp)
     // -----------------------------------------------------------------------
 
     @Handles(Opcode.CMSG_MESSAGECHAT, WorldState.inWorld)
     void handleMessageChat(const ClientChat chat)
     {
-        if (chat.language == Language.LANG_ADDON || chat.text.length == 0)
+        if (chat.language == Language.LANG_ADDON)
+            return; // `AddonChannel` is off
+        // Game masters, and with shared chat everyone, are understood by all (HandleMessagechatOpcode).
+        Language language = chat.language;
+        const config = context.config;
+        if (gameMaster || config.allowTwoSideInteractionChat)
+            language = Language.LANG_UNIVERSAL;
+        else if (config.allowTwoSideInteractionGroup && (chat.type == ChatType.CHAT_MSG_PARTY
+            || chat.type == ChatType.CHAT_MSG_RAID || chat.type == ChatType.CHAT_MSG_RAID_LEADER
+            || chat.type == ChatType.CHAT_MSG_RAID_WARNING))
+            language = Language.LANG_UNIVERSAL;
+
+        if (chat.type == ChatType.CHAT_MSG_AFK || chat.type == ChatType.CHAT_MSG_DND)
+            return setAway(chat.type, chat.text);
+        if (chat.text.length == 0)
             return;
         switch (chat.type)
         {
+        case ChatType.CHAT_MSG_SAY, ChatType.CHAT_MSG_YELL, ChatType.CHAT_MSG_EMOTE, ChatType.CHAT_MSG_WHISPER,
+            ChatType.CHAT_MSG_PARTY, ChatType.CHAT_MSG_RAID, ChatType.CHAT_MSG_RAID_LEADER:
+            if (runCommand(chat.text))
+                return;
+            break;
+        default:
+            break;
+        }
+
+        switch (chat.type)
+        {
         case ChatType.CHAT_MSG_SAY:
+            sayAround(chat.type, language, chat.text, config.listenRangeSay);
+            break;
         case ChatType.CHAT_MSG_YELL:
-            send(ServerMessageChat(chatMessage(chat.type, chat.language, player.guid, chat.text)));
+            sayAround(chat.type, language, chat.text, config.listenRangeYell);
             break;
         case ChatType.CHAT_MSG_EMOTE:
-            send(ServerMessageChat(chatMessage(chat.type, Language.LANG_UNIVERSAL, player.guid, chat.text)));
+            sayAround(chat.type, Language.LANG_UNIVERSAL, chat.text, config.listenRangeTextEmote);
             break;
         case ChatType.CHAT_MSG_WHISPER:
-            sendSystemMessage("Whispers are not supported yet.");
+            whisper(chat.target, chat.text);
+            break;
+        case ChatType.CHAT_MSG_PARTY:
+            if (auto group = context.groups.of(player.guid))
+                group.broadcast(Opcode.SMSG_MESSAGECHAT, chatMessage(chat.type, language, player.guid, chat.text,
+                    player.chatTag), group.subGroupOf(player.guid));
+            break;
+        case ChatType.CHAT_MSG_RAID:
+        case ChatType.CHAT_MSG_RAID_LEADER:
+            auto raid = context.groups.of(player.guid);
+            if (raid is null || !raid.isRaid || chat.type == ChatType.CHAT_MSG_RAID_LEADER && !raid.isLeader(player.guid))
+                break;
+            raid.broadcast(Opcode.SMSG_MESSAGECHAT, chatMessage(chat.type, language, player.guid, chat.text,
+                player.chatTag));
+            break;
+        case ChatType.CHAT_MSG_RAID_WARNING:
+            auto group = context.groups.of(player.guid);
+            if (group is null)
+                break;
+            if (group.isRaid ? !group.isLeader(player.guid) && !group.isAssistant(player.guid)
+                : config.chatRestrictedRaidWarnings)
+                break;
+            group.broadcast(Opcode.SMSG_MESSAGECHAT, chatMessage(chat.type, language, player.guid, chat.text,
+                player.chatTag));
+            break;
+        case ChatType.CHAT_MSG_CHANNEL:
+            if (auto channel = context.channelsFor(this).find(chat.channel, this))
+                channel.say(this, chat.text, language, player.chatTag);
             break;
         default:
             trace!"%s: chat type %s is not supported yet"(remoteAddress, chat.type);
             break;
         }
+    }
+
+    /// Everyone within `range` yards hears it, the speaker included (`Player::Say`, `Yell`, `TextEmote`).
+    void sayAround(ChatType type, Language language, string text, float range)
+    {
+        if (teleporting == Teleport.far)
+            return;
+        map.sendInRange(player.position, range, Opcode.SMSG_MESSAGECHAT,
+            chatMessage(type, language, player.guid, text, player.chatTag));
+    }
+
+    /**
+     * `HandleMessagechatOpcode`'s whisper case and `Player::Whisper`: anyone online, of the same
+     * faction unless one of the two is a game master; an away or busy player's message comes back.
+     */
+    void whisper(string to, string text)
+    {
+        auto target = context.onlinePlayer(to);
+        if (target is null)
+            return send(ServerChatPlayerNotFound(to));
+        const receiver = target.character;
+        const sameTeam = context.client.teamForRace(receiver.data.race) == context.client.teamForRace(player.data.race);
+        if (!sameTeam && !context.config.allowTwoSideInteractionChat && account.level == AccountLevel.player
+            && target.security == AccountLevel.player)
+            return send(ServerChatWrongFaction());
+        // Whispers are always readable (LANG_UNIVERSAL); the sender gets a copy addressed to the receiver.
+        target.deliver(Opcode.SMSG_MESSAGECHAT,
+            chatMessage(ChatType.CHAT_MSG_WHISPER, Language.LANG_UNIVERSAL, player.guid, text, player.chatTag));
+        send(ServerMessageChat(chatMessage(ChatType.CHAT_MSG_WHISPER_INFORM, Language.LANG_UNIVERSAL, receiver.guid,
+            text)));
+        if (receiver.hasFlag(PlayerFlags.afk) || receiver.hasFlag(PlayerFlags.dnd))
+            send(ServerMessageChat(chatMessage(receiver.hasFlag(PlayerFlags.afk) ? ChatType.CHAT_MSG_AFK
+                : ChatType.CHAT_MSG_DND, Language.LANG_UNIVERSAL, receiver.guid, receiver.autoReply)));
+    }
+
+    /**
+     * `/afk` and `/dnd` (`HandleMessagechatOpcode`, `ToggleAFK`, `ToggleDND`): set with a message, or
+     * the default one; the same command without a message clears it; the two exclude each other.
+     */
+    void setAway(ChatType type, string message)
+    {
+        const flag = type == ChatType.CHAT_MSG_AFK ? PlayerFlags.afk : PlayerFlags.dnd;
+        const other = flag == PlayerFlags.afk ? PlayerFlags.dnd : PlayerFlags.afk;
+        const defaultMessage = flag == PlayerFlags.afk ? "Away from Keyboard" : "Do not Disturb";
+        if (player.hasFlag(flag))
+        {
+            if (message.length == 0)
+                player.setFlag(flag, false);
+            else
+                player.autoReply = message;
+        }
+        else
+        {
+            player.autoReply = message.length ? message : defaultMessage;
+            player.setFlag(other, false);
+            player.setFlag(flag, true);
+        }
+        flushPlayerChanges();
+        if (auto group = context.groups.of(player.guid))
+            group.updatePlayerOutOfRange(this, GroupUpdate.status);
+    }
+
+    /// `HandleTextEmoteOpcode`: the animation for those who see the player, the text for those in range.
+    @Handles(Opcode.CMSG_TEXT_EMOTE, WorldState.inWorld)
+    void handleTextEmote(const ClientTextEmote request)
+    {
+        if (teleporting == Teleport.far)
+            return;
+        enum : uint { oneshotNone = 0, stateSleep = 12, stateSit = 13, stateKneel = 68 }
+        const textEntry = context.client.emotesText.lookup(request.textEmote);
+        if (textEntry is null)
+            return;
+
+        // Unit::HandleEmote: a one-shot animation, or a state that lasts until the player moves.
+        const emote = textEntry.emote;
+        if (emote != oneshotNone && emote != stateSleep && emote != stateSit && emote != stateKneel)
+            if (const entry = context.client.emotes.lookup(emote))
+            {
+                if (entry.emoteType)
+                {
+                    player.setEmoteState(emote);
+                    flushPlayerChanges();
+                }
+                else
+                    map.sendToWatchers(this, Opcode.SMSG_EMOTE, packetBody(ServerEmote(emote, player.guid)), true);
+            }
+
+        // EmoteChatBuilder: "<player> waves at <target>." for everyone within the text emote range.
+        string targetName;
+        if (const target = context.onlinePlayer(request.target))
+            targetName = target.character.data.name;
+        map.sendInRange(player.position, context.config.listenRangeTextEmote, Opcode.SMSG_TEXT_EMOTE,
+            packetBody(ServerTextEmote(player.guid, request.textEmote, request.emoteNum,
+            cast(uint) targetName.length + 1, targetName)));
     }
 }
 
@@ -218,13 +480,10 @@ private:
 
 version (unittest)
 {
-    import dmangos.bytes;
-    import dmangos.serialization : deserialize;
-    import dmangos.world.opcodes;
-    import dmangos.world.packets;
-    import dmangos.world.session : WorldSession, WorldState;
+    import core.time : MonoTime, seconds;
+    import std.algorithm.searching : count;
+    import std.typecons : tuple;
     import dmangos.world.testclient;
-    import dmangos.world.testdata;
 }
 
 /// Entering the world, playing a little, logging out and disconnecting from the world.
@@ -292,11 +551,11 @@ unittest
 
     // Movement is remembered.
     MovementInfo step;
-    step.position = Position(1, 2, 3, 0.5f);
+    step.position = Position(-8950, -130, 83.5f, 0.5f);
     ByteWriter moveBody;
     step.write(moveBody);
     client.write(Opcode.MSG_MOVE_HEARTBEAT, moveBody.data);
-    assert(client.session.currentPlayer.movement.position == Position(1, 2, 3, 0.5f));
+    assert(client.session.character.movement.position == Position(-8950, -130, 83.5f, 0.5f));
 
     // Queries.
     client.write(Opcode.CMSG_NAME_QUERY, ClientNameQuery(7));
@@ -338,7 +597,7 @@ unittest
     const logout = client.read();
     assert(logout.length == 2 && logout[0].body_ == [0, 0, 0, 0, 1] && logout[1].opcode == Opcode.SMSG_LOGOUT_COMPLETE);
     assert(client.session.state == WorldState.characterScreen && (7 in db.online) is null);
-    assert(db.progressSaves.length == 1 && db.progressSaves[0].position == Position(1, 2, 3, 0.5f));
+    assert(db.progressSaves.length == 1 && db.progressSaves[0].position == Position(-8950, -130, 83.5f, 0.5f));
     assert(db.progressSaves[0].cinematic == 1, "the intro is not shown again");
 
     // Disconnecting from the world saves too.
@@ -347,4 +606,142 @@ unittest
     client.session.disconnected();
     assert(db.progressSaves.length == 2 && (7 in db.online) is null);
     assert(client.session.state == WorldState.closed && context.sessionCount == 0);
+}
+
+/// Two players on one map: they see each other, each other's moves, chat and emotes, and part again.
+unittest
+{
+    import dmangos.dbc : buildDbc;
+    import dmangos.world.clientdata : emotesFormat, emotesTextFormat;
+    import dmangos.world.database : WorldAccount;
+    import dmangos.world.movement : MovementFlags, MovementInfo, Position;
+    import dmangos.world.objects : readPackedGuid;
+    import dmangos.world.player : CharacterData;
+
+    auto db = newDatabase();
+    WorldAccount second = db.accounts["PLAYER"];
+    second.id = 5;
+    second.username = "SECOND";
+    db.accounts["SECOND"] = second;
+    foreach (t; [tuple(7u, "Anduin", 4u, classWarrior, 0.0f), tuple(8u, "Jaina", 5u, classMage, 20.0f)])
+    {
+        const guid = t[0], name = t[1], account = t[2], classId = t[3], x = t[4];
+        CharacterData c;
+        c.guid = guid;
+        c.account = account;
+        c.name = name;
+        c.race = raceHuman;
+        c.classId = classId;
+        c.level = 1;
+        c.cinematic = 1;
+        c.position = Position(x, 0, 0);
+        db.loadable[guid] = c;
+    }
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    // /wave: text emote 101 plays the one-shot animation 3.
+    auto waveText = new uint[emotesTextFormat.length];
+    waveText[0] = 101;
+    waveText[2] = 3;
+    context.client.emotesText = typeof(context.client.emotesText).parse(buildDbc(emotesTextFormat, [waveText]), "");
+    context.client.emotes = typeof(context.client.emotes).parse(buildDbc(emotesFormat, [[3u, 0, 0, 0, 0, 0, 0]]), "");
+
+    auto anduin = TestClient(new WorldSession(context, "127.0.0.1"), testKey);
+    auto jaina = TestClient(new WorldSession(context, "127.0.0.2"), testKey);
+    authenticate(anduin);
+    authenticate(jaina, "SECOND");
+
+    static ushort[] opcodes(const(ServerPacketRead)[] packets)
+    {
+        ushort[] codes;
+        foreach (p; packets)
+            codes ~= p.opcode;
+        return codes;
+    }
+
+    // Anduin enters alone; then Jaina, 20 yards away: each is created for the other.
+    anduin.write(Opcode.CMSG_PLAYER_LOGIN, ClientPlayerLogin(7));
+    assert(opcodes(anduin.read()).count(Opcode.SMSG_COMPRESSED_UPDATE_OBJECT) == 1, "only itself");
+    jaina.write(Opcode.CMSG_PLAYER_LOGIN, ClientPlayerLogin(8));
+    assert(opcodes(jaina.read()).count(Opcode.SMSG_COMPRESSED_UPDATE_OBJECT) == 2, "itself, then Anduin");
+    assert(opcodes(anduin.read()) == [Opcode.SMSG_COMPRESSED_UPDATE_OBJECT], "Jaina appears");
+    assert(context.map(0).seeEachOther(7, 8) && context.worldPopulation == 2);
+
+    // Names of online players.
+    anduin.write(Opcode.CMSG_NAME_QUERY, ClientNameQuery(8));
+    auto nameReader = ByteReader(anduin.read()[0].body_);
+    assert(deserialize!ServerNameQueryResponse(nameReader).name == "Jaina");
+
+    // Jaina walks: Anduin sees the same opcode, with her guid in front.
+    MovementInfo step;
+    step.flags = MovementFlags.forward;
+    step.position = Position(25, 0, 0);
+    ByteWriter body_;
+    step.write(body_);
+    jaina.write(Opcode.MSG_MOVE_START_FORWARD, body_.data);
+    const moved = anduin.read();
+    assert(moved.length == 1 && moved[0].opcode == Opcode.MSG_MOVE_START_FORWARD);
+    auto moveReader = ByteReader(moved[0].body_);
+    assert(readPackedGuid(moveReader) == 8 && MovementInfo.read(moveReader).position == Position(25, 0, 0));
+    assert(jaina.read().length == 0, "the mover is not told about its own move");
+
+    // Say reaches 25 yards (they are 25 apart), whispers reach anyone online.
+    ByteWriter say;
+    say.put(uint(ChatType.CHAT_MSG_SAY));
+    say.put(uint(Language.LANG_COMMON));
+    say.putCString("hello");
+    jaina.write(Opcode.CMSG_MESSAGECHAT, say.data);
+    assert(opcodes(anduin.read()) == [Opcode.SMSG_MESSAGECHAT] && opcodes(jaina.read()) == [Opcode.SMSG_MESSAGECHAT]);
+    ByteWriter whisper;
+    whisper.put(uint(ChatType.CHAT_MSG_WHISPER));
+    whisper.put(uint(Language.LANG_COMMON));
+    whisper.putCString("anduin");
+    whisper.putCString("psst");
+    jaina.write(Opcode.CMSG_MESSAGECHAT, whisper.data);
+    assert(anduin.read()[0].body_[0] == ChatType.CHAT_MSG_WHISPER && jaina.read()[0].body_[0] == ChatType.CHAT_MSG_WHISPER_INFORM);
+    ByteWriter nobody;
+    nobody.put(uint(ChatType.CHAT_MSG_WHISPER));
+    nobody.put(uint(Language.LANG_COMMON));
+    nobody.putCString("Nobody");
+    nobody.putCString("hi");
+    jaina.write(Opcode.CMSG_MESSAGECHAT, nobody.data);
+    assert(opcodes(jaina.read()) == [Opcode.SMSG_CHAT_PLAYER_NOT_FOUND]);
+
+    // /wave at Anduin: the animation and the text, for both.
+    jaina.write(Opcode.CMSG_TEXT_EMOTE, ClientTextEmote(101, 0, 7));
+    assert(opcodes(anduin.read()) == [Opcode.SMSG_EMOTE, Opcode.SMSG_TEXT_EMOTE]);
+    const own = jaina.read();
+    assert(opcodes(own) == [Opcode.SMSG_EMOTE, Opcode.SMSG_TEXT_EMOTE]);
+    auto emoteReader = ByteReader(own[1].body_);
+    assert(deserialize!ServerTextEmote(emoteReader).targetName == "Anduin");
+
+    // Sitting down is a public field: Anduin gets a values block.
+    jaina.write(Opcode.CMSG_STANDSTATECHANGE, ClientStandStateChange(1));
+    assert(opcodes(anduin.read()) == [Opcode.SMSG_COMPRESSED_UPDATE_OBJECT]);
+    jaina.read();
+
+    // Walking out of sight and back, taking the time it takes.
+    now += 60.seconds;
+    step.position = Position(500, 0, 0);
+    body_ = ByteWriter.init;
+    step.write(body_);
+    jaina.write(Opcode.MSG_MOVE_HEARTBEAT, body_.data);
+    assert(!context.map(0).seeEachOther(7, 8));
+    const lost = anduin.read();
+    assert(opcodes(lost)[$ - 1] == Opcode.SMSG_UPDATE_OBJECT && lost[$ - 1].body_[5] == 4, "an out-of-range block");
+    now += 60.seconds;
+    step.position = Position(30, 0, 0);
+    body_ = ByteWriter.init;
+    step.write(body_);
+    jaina.write(Opcode.MSG_MOVE_HEARTBEAT, body_.data);
+    assert(context.map(0).seeEachOther(7, 8) && opcodes(anduin.read()).count(Opcode.SMSG_COMPRESSED_UPDATE_OBJECT) == 1);
+    jaina.read();
+
+    // Logging out: Anduin destroys Jaina; disconnecting takes Anduin off the map too.
+    jaina.write(Opcode.CMSG_LOGOUT_REQUEST, null);
+    const gone = anduin.read();
+    assert(opcodes(gone) == [Opcode.SMSG_DESTROY_OBJECT] && gone[0].body_ == [8, 0, 0, 0, 0, 0, 0, 0]);
+    anduin.session.disconnected();
+    assert(context.worldPopulation == 0 && context.map(0).population == 0);
 }

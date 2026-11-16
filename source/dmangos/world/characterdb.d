@@ -45,6 +45,32 @@ struct GuidCounters
     uint character = 1;
     uint item = 1;
     uint mail = 1;
+    uint group = 1;
+}
+
+/// A `groups` row with its `group_member` rows (`Group::LoadGroupFromDB`, `LoadMemberFromDB`).
+struct GroupRecord
+{
+    uint id;
+    uint leader;
+    uint mainTank;
+    uint mainAssistant;
+    ubyte lootMethod;
+    uint looter;
+    ubyte lootThreshold;
+    ulong[8] icons;
+    bool isRaid;
+    string leaderName;          /// null when the leader's character no longer exists
+    GroupMemberRecord[] members;
+}
+
+/// A `group_member` row, with the member's name.
+struct GroupMemberRecord
+{
+    uint guid;
+    string name;                /// null when the character no longer exists
+    bool assistant;
+    ubyte subGroup;
 }
 
 private enum : uint
@@ -81,6 +107,7 @@ final class CharacterStatements
         next.character = maxPlusOne!"SELECT MAX(guid) FROM characters";
         next.item = maxPlusOne!"SELECT MAX(guid) FROM item_instance";
         next.mail = maxPlusOne!"SELECT MAX(id) FROM mail";
+        next.group = maxPlusOne!"SELECT MAX(groupId) FROM `groups`";
         return next;
     }
 
@@ -224,6 +251,9 @@ final class CharacterStatements
             c.spells ~= NewSpell(row.get!uint(0), row.get!bool(1), row.get!bool(2));
         c.actions = characters.queryAs!(CreateAction,
             "SELECT button, action, type FROM character_action WHERE guid = ? ORDER BY button")(guid);
+        // Only whether a quest was handed in is used so far (area trigger requirements).
+        foreach (row; characters.query!"SELECT quest FROM character_queststatus WHERE guid = ? AND rewarded = 1"(guid))
+            c.rewardedQuests[row.get!uint(0)] = true;
         const bind = characters.queryAs!(HomeBind,
             "SELECT map, zone, position_x, position_y, position_z FROM character_homebind WHERE guid = ?")(guid);
         if (bind.length)
@@ -287,6 +317,94 @@ final class CharacterStatements
         characters.execute!("UPDATE character_tutorial SET tut0 = ?, tut1 = ?, tut2 = ?, tut3 = ?, tut4 = ?, "
             ~ "tut5 = ?, tut6 = ?, tut7 = ? WHERE account = ?")(t[0], t[1], t[2], t[3], t[4], t[5], t[6], t[7],
             accountId);
+    }
+
+    /// `ObjectMgr::LoadGroups`: every group with its members, and the names of both.
+    GroupRecord[] loadGroups()
+    {
+        GroupRecord[] groups;
+        size_t[uint] position;
+        foreach (row; characters.query!("SELECT g.groupId, g.leaderGuid, g.mainTank, g.mainAssistant, g.lootMethod, "
+            ~ "g.looterGuid, g.lootThreshold, g.icon1, g.icon2, g.icon3, g.icon4, g.icon5, g.icon6, g.icon7, g.icon8, "
+            ~ "g.isRaid, c.name FROM `groups` g LEFT JOIN characters c ON c.guid = g.leaderGuid ORDER BY g.groupId")())
+        {
+            GroupRecord g;
+            g.id = row.get!uint(0);
+            g.leader = row.get!uint(1);
+            g.mainTank = row.get!uint(2);
+            g.mainAssistant = row.get!uint(3);
+            g.lootMethod = cast(ubyte) row.get!uint(4);
+            g.looter = row.get!uint(5);
+            g.lootThreshold = cast(ubyte) row.get!uint(6);
+            foreach (i; 0 .. 8)
+                g.icons[i] = row.get!ulong(7 + i);
+            g.isRaid = row.get!uint(15) != 0;
+            g.leaderName = row.isNull(16) ? null : row.get!string(16);
+            position[g.id] = groups.length;
+            groups ~= g;
+        }
+        foreach (row; characters.query!("SELECT m.groupId, m.memberGuid, m.assistant, m.subgroup, c.name "
+            ~ "FROM group_member m LEFT JOIN characters c ON c.guid = m.memberGuid ORDER BY m.groupId")())
+        {
+            const member = GroupMemberRecord(row.get!uint(1), row.isNull(4) ? null : row.get!string(4),
+                row.get!uint(2) != 0, cast(ubyte) row.get!uint(3));
+            if (auto at = row.get!uint(0) in position)
+                groups[*at].members ~= member;
+            else
+                groups ~= GroupRecord(row.get!uint(0), 0, 0, 0, 0, 0, 0, (ulong[8]).init, false, null, [member]);
+        }
+        return groups;
+    }
+
+    /// `Group::Create`
+    void createGroup(const ref GroupRecord g)
+    {
+        characters.transaction({
+            characters.execute!"DELETE FROM `groups` WHERE groupId = ?"(g.id);
+            characters.execute!"DELETE FROM group_member WHERE groupId = ?"(g.id);
+            characters.execute!("INSERT INTO `groups` (groupId, leaderGuid, mainTank, mainAssistant, lootMethod, "
+                ~ "looterGuid, lootThreshold, icon1, icon2, icon3, icon4, icon5, icon6, icon7, icon8, isRaid) "
+                ~ "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")(g.id, g.leader, g.mainTank,
+                g.mainAssistant, g.lootMethod, g.looter, g.lootThreshold, g.icons[0], g.icons[1], g.icons[2],
+                g.icons[3], g.icons[4], g.icons[5], g.icons[6], g.icons[7], g.isRaid ? 1 : 0);
+        });
+    }
+
+    /// The `groups` columns that change after creation (`_setLeader`, `ConvertToRaid`, `SetLootMethod`, ...).
+    void updateGroup(const ref GroupRecord g)
+    {
+        characters.execute!("UPDATE `groups` SET leaderGuid = ?, mainTank = ?, mainAssistant = ?, lootMethod = ?, "
+            ~ "looterGuid = ?, lootThreshold = ?, isRaid = ? WHERE groupId = ?")(g.leader, g.mainTank, g.mainAssistant,
+            g.lootMethod, g.looter, g.lootThreshold, g.isRaid ? 1 : 0, g.id);
+    }
+
+    /// `Group::Disband`
+    void deleteGroup(uint groupId)
+    {
+        characters.transaction({
+            characters.execute!"DELETE FROM `groups` WHERE groupId = ?"(groupId);
+            characters.execute!"DELETE FROM group_member WHERE groupId = ?"(groupId);
+        });
+    }
+
+    /// `Group::_addMember`
+    void addGroupMember(uint groupId, const GroupMemberRecord m)
+    {
+        characters.execute!"INSERT INTO group_member (groupId, memberGuid, assistant, subgroup) VALUES (?, ?, ?, ?)"(
+            groupId, m.guid, m.assistant ? 1 : 0, m.subGroup);
+    }
+
+    /// `Group::_setAssistantFlag`, `_setMembersGroup`
+    void updateGroupMember(const GroupMemberRecord m)
+    {
+        characters.execute!"UPDATE group_member SET assistant = ?, subgroup = ? WHERE memberGuid = ?"(
+            m.assistant ? 1 : 0, m.subGroup, m.guid);
+    }
+
+    /// `Group::_removeMember`
+    void removeGroupMember(uint guid)
+    {
+        characters.execute!"DELETE FROM group_member WHERE memberGuid = ?"(guid);
     }
 
     /// `SendNameQueryResponseFromDB`

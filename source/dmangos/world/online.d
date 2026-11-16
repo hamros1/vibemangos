@@ -1,0 +1,41 @@
+/**
+ * What groups, channels and chat need to know about the players online, and
+ * how they find each other.
+ *
+ * `WorldSession` is an `OnlinePlayer`, and `WorldContext` is the `Directory`.
+ * Groups (`dmangos.world.group`) and channels (`dmangos.world.channel`) only
+ * use these interfaces, so their unit tests run on small fakes.
+ */
+module dmangos.world.online;
+
+import dmangos.auth.accounts : AccountLevel;
+import dmangos.world.map : Inhabitant;
+
+/// A player in the world, as other players' actions reach it.
+interface OnlinePlayer : Inhabitant
+{
+    /// The account's security level (`WorldSession::GetSecurity`).
+    @property AccountLevel security() const;
+
+    /// Whether the player is between the two halves of a far teleport (`Player::IsBeingTeleportedFar`).
+    @property bool transferring() const;
+
+    /**
+     * The player's group, or its place in it, changed: its leader flag and
+     * what the players around it see of its health may have to change.
+     */
+    void groupChanged();
+}
+
+/// Finds the players online (CMaNGOS `ObjectAccessor`, `ObjectMgr::GetPlayer`).
+interface Directory
+{
+    /// The player with this guid, or null.
+    OnlinePlayer find(ulong guid);
+
+    /// The player with this name, in any case, or null.
+    OnlinePlayer find(string name);
+
+    /// Whether two players are on the same map and see each other (`Player::HasAtClient`).
+    bool seeEachOther(ulong a, ulong b);
+}

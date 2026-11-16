@@ -15,6 +15,22 @@ in order:
     move:X:Y:Z                walk to a position (after login)
     say:TEXT                  say something and print what comes back
     sit                       sit down and print the changed fields
+    whisper:NAME:TEXT         whisper to another player
+    emote:ID                  a text emote (101 = /wave, 34 = /dance)
+    wait:SECONDS              do nothing for a while (packets queue up)
+    listen:SECONDS            print what other players do for a while
+    cmd:TEXT                  say a chat command (".tele Goldshire") and print what follows
+    trigger:ID                walk into an area trigger (78 = the Deadmines entrance)
+    worldport:MAP:X:Y:Z       the client's worldport command (administrators)
+    invite:NAME  accept  decline  leave  raid
+                              group invitations, leaving, converting to a raid
+    party:TEXT  raidsay:TEXT  party and raid chat
+    join:CHANNEL  part:CHANNEL  chan:CHANNEL:TEXT  chanlist:CHANNEL
+                              chat channels
+    afk:TEXT  dnd:TEXT        away and busy (an empty TEXT clears it)
+
+Teleports are answered as the client answers them: MSG_MOVE_TELEPORT_ACK for
+a near one, MSG_MOVE_WORLDPORT_ACK after SMSG_NEW_WORLD, whenever they come.
     logout                    log out to the character screen
     drop                      close the connection without logging out
 
@@ -134,6 +150,13 @@ def parse_update(op, p):
     count, transport = struct.unpack_from("<IB", p); pos = 5; objects = []
     for _ in range(count):
         kind = p[pos]; pos += 1
+        if kind == 4:  # out of range: a list of guids
+            n = struct.unpack_from("<I", p, pos)[0]; pos += 4
+            gone = []
+            for _ in range(n):
+                g, pos = packed_guid(p, pos); gone.append(g)
+            objects.append((4, gone, None, {}, None))
+            continue
         guid, pos = packed_guid(p, pos)
         typeid = None
         if kind in (2, 3):
@@ -177,13 +200,101 @@ OPS = {0x236: "LOGIN_VERIFY_WORLD", 0x209: "ACCOUNT_DATA_TIMES", 0x332: "EXPECTE
        0x0FA: "TRIGGER_CINEMATIC", 0x1F6: "COMPRESSED_UPDATE_OBJECT", 0x0A9: "UPDATE_OBJECT", 0x067: "FRIEND_LIST",
        0x06B: "IGNORE_LIST", 0x2C2: "INIT_WORLD_STATES", 0x051: "NAME_QUERY_RESPONSE", 0x058: "ITEM_QUERY_RESPONSE",
        0x04C: "LOGOUT_RESPONSE", 0x04D: "LOGOUT_COMPLETE", 0x1CF: "QUERY_TIME_RESPONSE", 0x29D: "STANDSTATE_UPDATE",
-       0x041: "CHARACTER_LOGIN_FAILED"}
+       0x041: "CHARACTER_LOGIN_FAILED", 0x0C7: "MOVE_TELEPORT_ACK", 0x0C5: "MOVE_TELEPORT", 0x03F: "TRANSFER_PENDING",
+       0x03E: "NEW_WORLD", 0x040: "TRANSFER_ABORTED", 0x06F: "GROUP_INVITE", 0x074: "GROUP_DECLINE", 0x077: "GROUP_UNINVITE",
+       0x079: "GROUP_SET_LEADER", 0x07C: "GROUP_DESTROYED", 0x07D: "GROUP_LIST", 0x07E: "PARTY_MEMBER_STATS",
+       0x07F: "PARTY_COMMAND_RESULT", 0x099: "CHANNEL_NOTIFY", 0x09B: "CHANNEL_LIST", 0x2B8: "AREA_TRIGGER_MESSAGE",
+       0x1CB: "NOTIFICATION", 0x2F2: "PARTY_MEMBER_STATS_FULL"}
+
+import select, time
+MOVES = set(range(0x0B5, 0x0C4)) | {0x0C9, 0x0CA, 0x0CB, 0x0DA, 0x0DB, 0x0EE}
+
+def describe(op, p):
+    """Prints a packet that another player caused."""
+    if op in (0x0A9, 0x1F6):
+        for kind, g, t, v, move in parse_update(op, p):
+            if kind == 4: print(f"  [out of range] {g}")
+            elif kind in (2, 3) and t == 4:
+                b0 = v[OBJECT_END + 0x1E]
+                print(f"  [appears] player {g}: race {b0 & 0xFF} class {(b0 >> 8) & 0xFF} level {v[OBJECT_END + 0x1C]}, "
+                      f"health {v.get(OBJECT_END + 0x10)}/{v.get(OBJECT_END + 0x16)} (percent), {len(v)} fields, "
+                      f"at {move[0]:.1f} {move[1]:.1f} {move[2]:.1f}")
+            elif kind in (2, 3) and t == 4: pass
+            elif kind == 0:
+                health = f", health {v[OBJECT_END + 0x10]}/{v.get(OBJECT_END + 0x16, '?')}" if OBJECT_END + 0x10 in v else ""
+                print(f"  [changes] {g}: fields {sorted(v)}{health}")
+    elif op in MOVES:
+        g, pos = packed_guid(p, 0); flags, t, x, y, z, o = struct.unpack_from("<II4f", p, pos)
+        print(f"  [moves] {g} {OPS.get(op, hex(op))} to {x:.1f} {y:.1f} {z:.1f}")
+    elif op == 0x096:
+        kind, lang = struct.unpack_from("<BI", p); pos = 5; channel = ""
+        if kind == 0x0E:
+            end = p.index(b"\0", pos); channel = " in " + p[pos:end].decode(); pos = end + 1 + 4
+        sender = struct.unpack_from("<Q", p, pos)[0]; pos += 16 if kind in (0, 1, 5) else 8
+        n = struct.unpack_from("<I", p, pos)[0]; tag = p[pos + 4 + n]
+        print(f"  [chat type {kind}{channel}] from {sender}: '{p[pos + 4:pos + 4 + n - 1].decode()}'" + (f" (tag {tag})" if tag else ""))
+    elif op == 0x0C7:
+        g, pos = packed_guid(p, 0); counter = struct.unpack_from("<I", p, pos)[0]
+        x, y, z = struct.unpack_from("<3f", p, pos + 12)
+        print(f"  [teleport] to {x:.1f} {y:.1f} {z:.1f}; answering")
+        wsend(0x0C7, struct.pack("<QII", g, counter, 0))
+    elif op == 0x0C5:
+        g, pos = packed_guid(p, 0); x, y, z = struct.unpack_from("<3f", p, pos + 8); print(f"  [teleports] {g} to {x:.1f} {y:.1f} {z:.1f}")
+    elif op == 0x03F: print(f"  [loading screen] map {struct.unpack('<I', p)[0]}")
+    elif op == 0x03E:
+        print("  [new world] map %d at %.1f %.1f %.1f; answering" % struct.unpack("<I4f", p)[:4]); wsend(0x0DC, b"")
+    elif op == 0x040: print(f"  [transfer aborted] reason {p[0]}")
+    elif op == 0x2B8: print(f"  [area trigger message] '{p[4:-1].decode()}'")
+    elif op == 0x1CB: print(f"  [notification] '{p[:-1].decode()}'")
+    elif op == 0x06F: print(f"  [invited by] {p[:-1].decode()}")
+    elif op == 0x074: print(f"  [declined] {p[:-1].decode()}")
+    elif op == 0x079: print(f"  [new leader] {p[:-1].decode()}")
+    elif op in (0x077, 0x07C): print(f"  [{OPS[op].lower()}]")
+    elif op == 0x07F:
+        operation = struct.unpack_from("<I", p)[0]; end = p.index(b"\0", 4)
+        print(f"  [party result] operation {operation} '{p[4:end].decode()}' result {struct.unpack_from('<I', p, end + 1)[0]}")
+    elif op == 0x07D:
+        if len(p) == 24 and not any(p): print("  [group list] empty"); return
+        kind, own, n = struct.unpack_from("<BBI", p); pos = 6; members = []
+        for _ in range(n):
+            end = p.index(b"\0", pos); name = p[pos:end].decode(); pos = end + 1
+            g, status, flags = struct.unpack_from("<QBB", p, pos); pos += 10; members.append(f"{name} ({g}, status {status}, group {flags & 0x7F})")
+        leader = struct.unpack_from("<Q", p, pos)[0]
+        print(f"  [group list] {'raid' if kind else 'party'}, leader {leader}: {', '.join(members)}")
+    elif op in (0x07E, 0x2F2):
+        g, pos = packed_guid(p, 0); mask = struct.unpack_from("<I", p, pos)[0]; print(f"  [member stats] {g} mask {mask:#x}")
+    elif op == 0x099:
+        end = p.index(b"\0", 1); print(f"  [channel] notice {p[0]:#04x} '{p[1:end].decode()}' {p[end + 1:].hex()}")
+    elif op == 0x09B:
+        end = p.index(b"\0"); n = struct.unpack_from("<I", p, end + 2)[0]
+        members = [struct.unpack_from("<QB", p, end + 6 + 9 * i) for i in range(n)]
+        print(f"  [channel list] '{p[:end].decode()}': {members}")
+    elif op == 0x103: print("  [animation] emote %d by %d" % struct.unpack("<IQ", p))
+    elif op == 0x105:
+        g, text, num, n = struct.unpack_from("<QIII", p); print(f"  [text emote] {text} by {g} at '{p[20:20 + n - 1].decode()}'")
+    elif op == 0x0AA: print(f"  [destroyed] {struct.unpack('<Q', p)[0]}")
+    elif op == 0x2A9: print(f"  [no such player] {p[:-1].decode()}")
+    else: print(f"  [other] {OPS.get(op, hex(op))}")
+
+def expect(wanted):
+    """Reads until a packet with opcode `wanted`, describing anything else on the way."""
+    while True:
+        op, p = wrecv()
+        if op == wanted: return op, p
+        describe(op, p)
 
 def until(last):
     got = []
     while True:
         op, p = wrecv(); got.append((op, p))
         if op == last or op == 0x041: return got
+
+def listen_for(seconds):
+    """Prints (and answers, for teleports) whatever arrives for a while."""
+    end = time.time() + seconds
+    while time.time() < end:
+        if select.select([w], [], [], max(0, end - time.time()))[0]:
+            op, p = wrecv(); describe(op, p)
 
 def movement(op, x, y, z, o=0.0, flags=0):
     wsend(op, struct.pack("<II4fI", flags, 1000, x, y, z, o, 0))
@@ -232,23 +343,57 @@ for action in actions:
                         ig = pv[UNIT_END + 0x12A + 2 * i] | pv.get(UNIT_END + 0x12B + 2 * i, 0) << 32
                         assert ig in items, f"slot {i} points at an object the client was not sent"
     elif kind == "query":
-        wsend(0x050, struct.pack("<Q", player_guid)); op, p = wrecv(); assert op == 0x051
+        wsend(0x050, struct.pack("<Q", player_guid)); op, p = expect(0x051)
         name = p[8:p.index(b"\0", 8)].decode(); print(f"name query: '{name}'")
         for o in list(items.values())[:3]:
-            entry = o[3][3]; wsend(0x056, struct.pack("<IQ", entry, 0)); op, p = wrecv(); assert op == 0x058
+            entry = o[3][3]; wsend(0x056, struct.pack("<IQ", entry, 0)); op, p = expect(0x058)
             iname = p[12:p.index(b"\0", 12)].decode(); print(f"item query {entry}: '{iname}', {len(p)} bytes")
-        wsend(0x1CE, b""); op, p = wrecv(); print("query time:", struct.unpack("<I", p)[0])
+        wsend(0x1CE, b""); op, p = expect(0x1CF); print("query time:", struct.unpack("<I", p)[0])
     elif kind == "move":
         x, y, z = map(float, args); movement(0x0B5, x, y, z, flags=1); movement(0x0EE, x, y, z, flags=1); movement(0x0B7, x, y, z)
         print(f"moved to {x} {y} {z}")
     elif kind == "say":
-        wsend(0x095, struct.pack("<II", 0, 7) + args[0].encode() + b"\0"); op, p = wrecv()
-        n = struct.unpack_from("<I", p, 24)[0]; print(f"heard: '{p[28:28 + n - 1].decode()}'")
+        wsend(0x095, struct.pack("<II", 0, 7) + args[0].encode() + b"\0"); op, p = expect(0x096)
+        n = struct.unpack_from("<I", p, 21)[0]; print(f"heard: '{p[25:25 + n - 1].decode()}'")
     elif kind == "sit":
-        wsend(0x101, struct.pack("<I", 1)); got = [wrecv(), wrecv()]
-        objs = parse_update(*got[0]); print("sat down; update fields changed:", sorted(objs[0][3]))
+        wsend(0x101, struct.pack("<I", 1)); got = [expect(0x1F6)]
+        objs = parse_update(*got[0]); print("sat down; update fields changed:", sorted(objs[0][3])); expect(0x29D)
+    elif kind == "whisper":
+        wsend(0x095, struct.pack("<II", 6, 7) + args[0].encode() + b"\0" + args[1].encode() + b"\0")
+        op, p = wrecv(); describe(op, p)
+    elif kind == "emote":
+        wsend(0x104, struct.pack("<IIQ", int(args[0]), 0, 0)); print(f"emote {args[0]}")
+    elif kind == "wait":
+        time.sleep(float(args[0]))
+    elif kind == "listen":
+        listen_for(float(args[0]))
+    elif kind == "cmd":
+        wsend(0x095, struct.pack("<II", 0, 7) + ":".join(args).encode() + b"\0"); print(f"command '{':'.join(args)}'")
+        listen_for(1.5)
+    elif kind == "trigger":
+        wsend(0x0B4, struct.pack("<I", int(args[0]))); print(f"area trigger {args[0]}"); listen_for(1.5)
+    elif kind == "worldport":
+        m, x, y, z = int(args[0]), *map(float, args[1:4])
+        wsend(0x008, struct.pack("<II4f", 0, m, x, y, z, 0)); print(f"worldport {m} {x} {y} {z}"); listen_for(1.5)
+    elif kind == "invite":
+        wsend(0x06E, args[0].encode() + b"\0"); print(f"invite {args[0]}")
+    elif kind in ("accept", "decline", "leave", "raid"):
+        wsend({"accept": 0x072, "decline": 0x073, "leave": 0x07B, "raid": 0x28E}[kind], b""); print(kind)
+    elif kind in ("party", "raidsay"):
+        wsend(0x095, struct.pack("<II", 1 if kind == "party" else 2, 7) + ":".join(args).encode() + b"\0"); print(f"{kind} '{':'.join(args)}'")
+    elif kind == "join":
+        wsend(0x097, args[0].encode() + b"\0\0"); print(f"join channel {args[0]}")
+    elif kind == "part":
+        wsend(0x098, args[0].encode() + b"\0"); print(f"leave channel {args[0]}")
+    elif kind == "chanlist":
+        wsend(0x09A, args[0].encode() + b"\0"); print(f"list channel {args[0]}")
+    elif kind == "chan":
+        wsend(0x095, struct.pack("<II", 0x0E, 7) + args[0].encode() + b"\0" + ":".join(args[1:]).encode() + b"\0")
+        print(f"to channel {args[0]}: '{':'.join(args[1:])}'")
+    elif kind in ("afk", "dnd"):
+        wsend(0x095, struct.pack("<II", 0x14 if kind == "afk" else 0x15, 0) + ":".join(args).encode() + b"\0"); print(f"{kind} '{':'.join(args)}'")
     elif kind == "logout":
-        wsend(0x04B, b""); got = until(0x04D); print("logout:", " ".join(OPS.get(op, hex(op)) for op, _ in got))
+        wsend(0x04B, b""); op, p = expect(0x04C); got = [(op, p)] + until(0x04D); print("logout:", " ".join(OPS.get(op, hex(op)) for op, _ in got))
     elif kind == "drop":
         w.close(); print("connection dropped"); sys.exit(0)
     elif kind == "create":

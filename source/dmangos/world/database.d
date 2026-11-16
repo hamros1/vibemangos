@@ -14,6 +14,7 @@ import dmangos.crypto.srp6 : sessionKeyLength;
 import dmangos.mysql : MySqlConnection;
 import dmangos.auth.accounts : AccountLevel, canonicalAccountName, decodeBigNumberHex, toAccountLevel;
 import dmangos.world.characterdb : CharacterOwner, CharacterStatements, DeleteOptions, GuidCounters, NameInfo;
+public import dmangos.world.characterdb : GroupMemberRecord, GroupRecord;
 import dmangos.world.player : CharacterData, CharacterProgress, HomeBind, tutorialFields;
 import dmangos.world.playercreate : NewCharacter;
 
@@ -131,6 +132,27 @@ interface WorldDatabase
 
     /// Name, race, gender and class of a character, or null.
     Nullable!NameInfo nameInfo(uint guid);
+
+    /// Every group with its members (`ObjectMgr::LoadGroups`).
+    GroupRecord[] loadGroups();
+
+    /// The `groups` row of a new group (`Group::Create`).
+    void createGroup(const ref GroupRecord group);
+
+    /// The `groups` columns that change after creation.
+    void updateGroup(const ref GroupRecord group);
+
+    /// Deletes a group and its members (`Group::Disband`).
+    void deleteGroup(uint groupId);
+
+    /// `Group::_addMember`
+    void addGroupMember(uint groupId, const GroupMemberRecord member);
+
+    /// A member's assistant flag and sub-group.
+    void updateGroupMember(const GroupMemberRecord member);
+
+    /// `Group::_removeMember`
+    void removeGroupMember(uint guid);
 }
 
 /// `account_logons.loginSource` for connections to the world server (`LOGIN_TYPE_MANGOSD`).
@@ -168,6 +190,13 @@ final class MySqlWorldDatabase : WorldDatabase
     void setActionButton(uint guid, ubyte button, uint action, ubyte type) { statements.setActionButton(guid, button, action, type); }
     void saveTutorials(uint accountId, const uint[tutorialFields] tutorials) { statements.saveTutorials(accountId, tutorials); }
     Nullable!NameInfo nameInfo(uint guid) { return statements.nameInfo(guid); }
+    GroupRecord[] loadGroups() { return statements.loadGroups(); }
+    void createGroup(const ref GroupRecord group) { statements.createGroup(group); }
+    void updateGroup(const ref GroupRecord group) { statements.updateGroup(group); }
+    void deleteGroup(uint groupId) { statements.deleteGroup(groupId); }
+    void addGroupMember(uint groupId, const GroupMemberRecord member) { statements.addGroupMember(groupId, member); }
+    void updateGroupMember(const GroupMemberRecord member) { statements.updateGroupMember(member); }
+    void removeGroupMember(uint guid) { statements.removeGroupMember(guid); }
 
     void saveNewCharacter(const ref NewCharacter character, bool insertTutorialData)
     {
@@ -281,6 +310,53 @@ final class MemoryWorldDatabase : WorldDatabase
     CharacterProgress[] progressSaves;
     uint[4][] actionButtonWrites;     /// guid, button, action, type
     uint[tutorialFields][uint] tutorialSaves; /// by account
+    GroupRecord[uint] groups;         /// `groups` and `group_member`, by group id
+
+    GroupRecord[] loadGroups()
+    {
+        return groups.values;
+    }
+
+    void createGroup(const ref GroupRecord group)
+    {
+        GroupRecord row = cast(GroupRecord) group;
+        row.members = null;
+        groups[group.id] = row;
+    }
+
+    void updateGroup(const ref GroupRecord group)
+    {
+        auto row = &groups[group.id];
+        auto members = row.members;
+        *row = cast(GroupRecord) group;
+        row.members = members;
+    }
+
+    void deleteGroup(uint groupId)
+    {
+        groups.remove(groupId);
+    }
+
+    void addGroupMember(uint groupId, const GroupMemberRecord member)
+    {
+        groups[groupId].members ~= member;
+    }
+
+    void updateGroupMember(const GroupMemberRecord member)
+    {
+        foreach (ref group; groups)
+            foreach (ref m; group.members)
+                if (m.guid == member.guid)
+                    m = member;
+    }
+
+    void removeGroupMember(uint guid)
+    {
+        import std.algorithm.mutation : remove;
+
+        foreach (ref group; groups)
+            group.members = group.members.remove!(m => m.guid == guid);
+    }
 
     Nullable!CharacterData loadCharacter(uint guid)
     {
@@ -336,7 +412,7 @@ final class MemoryWorldDatabase : WorldDatabase
             foreach (record; list)
                 if (record.guid > highest)
                     highest = record.guid;
-        return GuidCounters(highest + 1, 1, 1);
+        return GuidCounters(highest + 1, 1, 1, 1);
     }
 
     bool nameTaken(string name)

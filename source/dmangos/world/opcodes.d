@@ -12,6 +12,7 @@ module dmangos.world.opcodes;
 /// World packet opcodes (subset).
 enum Opcode : uint
 {
+    CMSG_WORLD_TELEPORT = 0x008,
     CMSG_CHAR_CREATE = 0x036,
     CMSG_CHAR_ENUM = 0x037,
     CMSG_CHAR_DELETE = 0x038,
@@ -19,6 +20,9 @@ enum Opcode : uint
     SMSG_CHAR_ENUM = 0x03B,
     SMSG_CHAR_DELETE = 0x03C,
     CMSG_PLAYER_LOGIN = 0x03D,
+    SMSG_NEW_WORLD = 0x03E,
+    SMSG_TRANSFER_PENDING = 0x03F,
+    SMSG_TRANSFER_ABORTED = 0x040,
     SMSG_CHARACTER_LOGIN_FAILED = 0x041,
     SMSG_LOGIN_SETTIMESPEED = 0x042,
     CMSG_PLAYER_LOGOUT = 0x04A,
@@ -33,9 +37,45 @@ enum Opcode : uint
     SMSG_ITEM_QUERY_SINGLE_RESPONSE = 0x058,
     SMSG_FRIEND_LIST = 0x067,
     SMSG_IGNORE_LIST = 0x06B,
+    CMSG_GROUP_INVITE = 0x06E,
+    SMSG_GROUP_INVITE = 0x06F,
+    CMSG_GROUP_ACCEPT = 0x072,
+    CMSG_GROUP_DECLINE = 0x073,
+    SMSG_GROUP_DECLINE = 0x074,
+    CMSG_GROUP_UNINVITE = 0x075,
+    CMSG_GROUP_UNINVITE_GUID = 0x076,
+    SMSG_GROUP_UNINVITE = 0x077,
+    CMSG_GROUP_SET_LEADER = 0x078,
+    SMSG_GROUP_SET_LEADER = 0x079,
+    CMSG_LOOT_METHOD = 0x07A,
+    CMSG_GROUP_DISBAND = 0x07B,
+    SMSG_GROUP_DESTROYED = 0x07C,
+    SMSG_GROUP_LIST = 0x07D,
+    SMSG_PARTY_MEMBER_STATS = 0x07E,
+    SMSG_PARTY_COMMAND_RESULT = 0x07F,
     CMSG_MESSAGECHAT = 0x095,
     SMSG_MESSAGECHAT = 0x096,
+    CMSG_JOIN_CHANNEL = 0x097,
+    CMSG_LEAVE_CHANNEL = 0x098,
+    SMSG_CHANNEL_NOTIFY = 0x099,
+    CMSG_CHANNEL_LIST = 0x09A,
+    SMSG_CHANNEL_LIST = 0x09B,
+    CMSG_CHANNEL_PASSWORD = 0x09C,
+    CMSG_CHANNEL_SET_OWNER = 0x09D,
+    CMSG_CHANNEL_OWNER = 0x09E,
+    CMSG_CHANNEL_MODERATOR = 0x09F,
+    CMSG_CHANNEL_UNMODERATOR = 0x0A0,
+    CMSG_CHANNEL_MUTE = 0x0A1,
+    CMSG_CHANNEL_UNMUTE = 0x0A2,
+    CMSG_CHANNEL_INVITE = 0x0A3,
+    CMSG_CHANNEL_KICK = 0x0A4,
+    CMSG_CHANNEL_BAN = 0x0A5,
+    CMSG_CHANNEL_UNBAN = 0x0A6,
+    CMSG_CHANNEL_ANNOUNCEMENTS = 0x0A7,
+    CMSG_CHANNEL_MODERATE = 0x0A8,
     SMSG_UPDATE_OBJECT = 0x0A9,
+    SMSG_DESTROY_OBJECT = 0x0AA,
+    CMSG_AREATRIGGER = 0x0B4,
     MSG_MOVE_START_FORWARD = 0x0B5,
     MSG_MOVE_START_BACKWARD = 0x0B6,
     MSG_MOVE_STOP = 0x0B7,
@@ -51,11 +91,14 @@ enum Opcode : uint
     MSG_MOVE_STOP_PITCH = 0x0C1,
     MSG_MOVE_SET_RUN_MODE = 0x0C2,
     MSG_MOVE_SET_WALK_MODE = 0x0C3,
+    MSG_MOVE_TELEPORT = 0x0C5,
+    MSG_MOVE_TELEPORT_ACK = 0x0C7,
     MSG_MOVE_FALL_LAND = 0x0C9,
     MSG_MOVE_START_SWIM = 0x0CA,
     MSG_MOVE_STOP_SWIM = 0x0CB,
     MSG_MOVE_SET_FACING = 0x0DA,
     MSG_MOVE_SET_PITCH = 0x0DB,
+    MSG_MOVE_WORLDPORT_ACK = 0x0DC,
     MSG_MOVE_HEARTBEAT = 0x0EE,
     SMSG_TRIGGER_CINEMATIC = 0x0FA,
     SMSG_TUTORIAL_FLAGS = 0x0FD,
@@ -63,17 +106,22 @@ enum Opcode : uint
     CMSG_TUTORIAL_CLEAR = 0x0FF,
     CMSG_TUTORIAL_RESET = 0x100,
     CMSG_STANDSTATECHANGE = 0x101,
+    SMSG_EMOTE = 0x103,
+    CMSG_TEXT_EMOTE = 0x104,
+    SMSG_TEXT_EMOTE = 0x105,
     SMSG_INITIALIZE_FACTIONS = 0x122,
     SMSG_SET_PROFICIENCY = 0x127,
     CMSG_SET_ACTION_BUTTON = 0x128,
     SMSG_ACTION_BUTTONS = 0x129,
     SMSG_INITIAL_SPELLS = 0x12A,
+    CMSG_SET_SELECTION = 0x13D,
     SMSG_BINDPOINTUPDATE = 0x155,
     SMSG_NOTIFICATION = 0x1CB,
     CMSG_PLAYED_TIME = 0x1CC,
     SMSG_PLAYED_TIME = 0x1CD,
     CMSG_QUERY_TIME = 0x1CE,
     SMSG_QUERY_TIME_RESPONSE = 0x1CF,
+    MSG_MINIMAP_PING = 0x1D5,
     CMSG_PING = 0x1DC,
     SMSG_PONG = 0x1DD,
     SMSG_AUTH_CHALLENGE = 0x1EC,
@@ -81,14 +129,28 @@ enum Opcode : uint
     SMSG_AUTH_RESPONSE = 0x1EE,
     CMSG_ZONEUPDATE = 0x1F4,
     SMSG_COMPRESSED_UPDATE_OBJECT = 0x1F6,
+    MSG_RANDOM_ROLL = 0x1FB,
     SMSG_ACCOUNT_DATA_TIMES = 0x209,
+    SMSG_CHAT_WRONG_FACTION = 0x219,
     SMSG_SET_REST_START = 0x21E,
     SMSG_LOGIN_VERIFY_WORLD = 0x236,
+    CMSG_GROUP_CHANGE_SUB_GROUP = 0x27E,
+    CMSG_REQUEST_PARTY_MEMBER_STATS = 0x27F,
+    CMSG_GROUP_SWAP_SUB_GROUP = 0x280,
+    CMSG_GROUP_RAID_CONVERT = 0x28E,
+    CMSG_GROUP_ASSISTANT_LEADER = 0x28F,
     SMSG_STANDSTATE_UPDATE = 0x29D,
+    SMSG_CHAT_PLAYER_NOT_FOUND = 0x2A9,
+    SMSG_AREA_TRIGGER_MESSAGE = 0x2B8,
     CMSG_SET_ACTIONBAR_TOGGLES = 0x2BF,
     SMSG_INIT_WORLD_STATES = 0x2C2,
+    SMSG_RAID_INSTANCE_INFO = 0x2CC,
+    CMSG_REQUEST_RAID_INFO = 0x2CD,
     SMSG_ADDON_INFO = 0x2EF,
+    SMSG_PARTY_MEMBER_STATS_FULL = 0x2F2,
     MSG_MOVE_TIME_SKIPPED = 0x319,
+    MSG_RAID_TARGET_UPDATE = 0x321,
+    MSG_RAID_READY_CHECK = 0x322,
     SMSG_EXPECTED_SPAM_RECORDS = 0x332,
 }
 
@@ -170,6 +232,17 @@ enum ChatType : uint
     CHAT_MSG_CHANNEL = 0x0E,
     CHAT_MSG_AFK = 0x14,
     CHAT_MSG_DND = 0x15,
+    CHAT_MSG_RAID_LEADER = 0x57,
+    CHAT_MSG_RAID_WARNING = 0x58,
+}
+
+/// `ChatTagFlags`: the badge shown next to a speaker's name.
+enum ChatTag : ubyte
+{
+    CHAT_TAG_NONE = 0,
+    CHAT_TAG_AFK = 1,
+    CHAT_TAG_DND = 2,
+    CHAT_TAG_GM = 3,
 }
 
 /// `Language`
@@ -183,17 +256,19 @@ enum Language : uint
 
 /**
  * The client's movement opcodes, whose bodies are a `MovementInfo` and nothing
- * else: every `MSG_MOVE_*` opcode except `MSG_MOVE_TIME_SKIPPED`, which carries
- * a guid and a time. Collected from `Opcode` at compile time, so an opcode
- * added there is routed to the movement handler without further changes.
+ * else: every `MSG_MOVE_*` opcode except `MSG_MOVE_TIME_SKIPPED` (a guid and a
+ * time) and the teleport messages, which have handlers of their own. Collected
+ * from `Opcode` at compile time, so an opcode added there is routed to the
+ * movement handler without further changes.
  */
 enum Opcode[] movementOpcodes = () {
-    import std.algorithm.searching : startsWith;
-    import std.traits : EnumMembers;
+    import std.algorithm.searching : canFind, startsWith;
 
+    // Not a MovementInfo, or a reply to the server rather than a move to show others.
+    enum notMovement = ["MSG_MOVE_TIME_SKIPPED", "MSG_MOVE_TELEPORT", "MSG_MOVE_TELEPORT_ACK", "MSG_MOVE_WORLDPORT_ACK"];
     Opcode[] opcodes;
     static foreach (name; __traits(allMembers, Opcode))
-        static if (name.startsWith("MSG_MOVE_") && name != "MSG_MOVE_TIME_SKIPPED")
+        static if (name.startsWith("MSG_MOVE_") && !notMovement.canFind(name))
             opcodes ~= __traits(getMember, Opcode, name);
     return opcodes;
 }();

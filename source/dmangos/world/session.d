@@ -42,13 +42,20 @@ import dmangos.log;
 import dmangos.net.dispatch : DispatchResult, HandlesFor = Handles, PacketDispatch;
 import dmangos.net.server : NetSession;
 import dmangos.world.addons : buildAddonInfo, parseAddons;
+import dmangos.world.channelhandlers : ChannelHandlers;
 import dmangos.world.charscreen : CharacterScreenHandlers;
+import dmangos.world.commands : ChatCommands;
+import dmangos.world.grouphandlers : GroupHandlers;
 import dmangos.world.inworld : InWorldHandlers;
+import dmangos.world.teleport : Teleport, TeleportHandlers;
 import dmangos.world.context : Kickable, WorldContext;
 import dmangos.world.crypt : clientHeaderLength, HeaderCrypt;
 import dmangos.world.database : WorldAccount;
-import dmangos.world.objects : UpdateData;
-import dmangos.world.player : Player;
+import dmangos.world.objects : UpdateData, UpdatePacket;
+import dmangos.world.map : deliverUpdate, Inhabitant, Map;
+import dmangos.world.movement : Position;
+import dmangos.world.online : OnlinePlayer;
+import dmangos.world.player : Player, PlayerFlags, Viewer;
 import dmangos.world.queries : chatMessage;
 import dmangos.world.opcodes;
 import dmangos.world.packets;
@@ -71,7 +78,7 @@ private enum minimumPingInterval = 27.seconds;
 private enum maxBufferedInput = 2 * (clientHeaderLength + maxClientPacketSize);
 
 /// See the module documentation.
-final class WorldSession : NetSession, Kickable
+final class WorldSession : NetSession, Kickable, OnlinePlayer
 {
     mixin PacketDispatch!Handles;
 
@@ -103,6 +110,19 @@ final class WorldSession : NetSession, Kickable
 
         Player player;           // while in the world
         MonoTime enteredWorld;
+
+        // Teleports (`Player::m_teleport_dest`, the teleport semaphores) and the order counter of
+        // MSG_MOVE_TELEPORT_ACK.
+        Teleport teleporting;
+        uint moveOrderCounter;
+        bool gameMaster;          // `.gm on`: requirements and checks do not apply
+        uint recallMap;           // where `.recall` goes: the place before the last command teleport
+        Position recallPosition;
+
+        // The movement check: where the player was, and when.
+        Position checkpoint;
+        MonoTime checkpointTime;
+        Position groupPositionAt; // where group members out of sight last heard the player was
     }
 
     invariant
@@ -204,16 +224,58 @@ final class WorldSession : NetSession, Kickable
     }
 
     /// The character being played, if any.
-    @property const(Player) currentPlayer() const
+    @property const(Player) character() const
     {
         return player;
+    }
+
+    /// Frames a packet another player's session (or the map) sends to this client.
+    void deliver(Opcode opcode, const(ubyte)[] body_)
+    {
+        if (!wantsClose)
+            output ~= encodePacket(opcode, body_, crypt);
+    }
+
+    /// The create block a player who just came into sight gets: group mates see real health.
+    UpdateData appearanceFor(const Inhabitant viewer, uint serverTime) const
+    {
+        return player.createForOthers(serverTime, context.groups.sameGroup(player.guid, viewer.character.guid));
+    }
+
+    /// The account's level.
+    @property AccountLevel security() const
+    {
+        return account.level;
+    }
+
+    /// Between `SMSG_NEW_WORLD` and the client's `MSG_MOVE_WORLDPORT_ACK`.
+    @property bool transferring() const
+    {
+        return teleporting == Teleport.far;
+    }
+
+    /// The group changed: the leader flag, and the health the players around see and are seen with.
+    void groupChanged()
+    {
+        if (player is null)
+            return;
+        updateLeaderFlag();
+        if (transferring)
+            return;
+        foreach (watcher; map.watchers(this))
+        {
+            const mates = context.groups.sameGroup(player.guid, watcher.character.guid);
+            const view = mates ? Viewer.groupMate : Viewer.stranger;
+            deliverUpdate(watcher, player.groupView(view));
+            deliverUpdate(this, watcher.character.groupView(view));
+        }
     }
 
     /// Saves the character if one is being played, and removes the session from the context's table.
     void disconnected()
     {
         if (player !is null)
-            leaveWorld("disconnected");
+            leaveWorld("disconnected", false);
         if (registered)
             context.removeSession(account.id, this);
         registered = false;
@@ -271,7 +333,7 @@ private:
     void disconnect()
     {
         if (player !is null)
-            leaveWorld("disconnected");
+            leaveWorld("disconnected", false);
         state_ = WorldState.closed;
     }
 
@@ -284,18 +346,52 @@ private:
             send(ServerUpdateObject(cast(ubyte[]) packet.body_));
     }
 
-    /// Sends the player's changed fields, if any.
+    /// `Player::UpdateGroupLeaderFlag`
+    void updateLeaderFlag()
+    {
+        auto group = context.groups.of(player.guid);
+        player.setFlag(PlayerFlags.groupLeader, group !is null && group.isLeader(player.guid));
+        flushPlayerChanges();
+    }
+
+    /**
+     * Sends the player's changed fields to itself, and to each player who sees it the fields it may
+     * see: group mates and strangers see different health values.
+     */
     void flushPlayerChanges()
     {
-        UpdateData update;
-        if (player.takeChanges(update))
-            sendUpdate(update);
+        UpdateData forSelf;
+        if (player.addChanges(forSelf, Viewer.self))
+            sendUpdate(forSelf);
+        UpdatePacket[Viewer] built;
+        foreach (watcher; transferring ? null : map.watchers(this))
+        {
+            const view = context.groups.sameGroup(player.guid, watcher.character.guid) ? Viewer.groupMate
+                : Viewer.stranger;
+            if (view !in built)
+            {
+                UpdateData update;
+                built[view] = player.addChanges(update, view) ? update.build() : UpdatePacket.init;
+            }
+            const packet = built[view];
+            if (packet.body_.length)
+                watcher.deliver(packet.compressed ? Opcode.SMSG_COMPRESSED_UPDATE_OBJECT : Opcode.SMSG_UPDATE_OBJECT,
+                    packet.body_);
+        }
+        player.clearChanges();
+    }
+
+    /// The map the player is on.
+    @property Map map()
+    in (player !is null)
+    {
+        return context.map(player.data.map);
     }
 
     /// Milliseconds on the server's clock, as movement packets carry them.
     uint serverTime()
     {
-        return cast(uint)(context.clock() - MonoTime.init).total!"msecs";
+        return context.serverTime();
     }
 
     /// Seconds since the character entered the world.
@@ -307,6 +403,12 @@ private:
     void sendSystemMessage(string text)
     {
         send(ServerMessageChat(chatMessage(ChatType.CHAT_MSG_SYSTEM, Language.LANG_UNIVERSAL, 0, text)));
+    }
+
+    /// `WorldSession::SendNotification`: a message in the middle of the screen.
+    void sendNotification(string text)
+    {
+        send(ServerNotification(text));
     }
 
     /// Replies with an error and closes, as CMaNGOS does for every failed check.
@@ -402,6 +504,10 @@ private:
 
     mixin CharacterScreenHandlers;
     mixin InWorldHandlers;
+    mixin TeleportHandlers;
+    mixin GroupHandlers;
+    mixin ChannelHandlers;
+    mixin ChatCommands;
 }
 
 // ---------------------------------------------------------------------------

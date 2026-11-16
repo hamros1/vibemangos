@@ -9,6 +9,9 @@ version (unittest):
 
 // What every session test speaks: importing this module is enough to write one.
 public import std.algorithm.searching : canFind;
+public import dmangos.auth.accounts : AccountLevel;
+public import dmangos.world.context : WorldContext;
+public import dmangos.world.movement : MovementFlags, MovementInfo, Position;
 public import dmangos.bytes;
 public import dmangos.crypto.srp6 : sessionKeyLength;
 public import dmangos.serialization : deserialize, serialize;
@@ -25,10 +28,10 @@ import std.bitmanip : nativeToLittleEndian;
 import dmangos.crypto.hash : sha1;
 import dmangos.log;
 import dmangos.world.addons : ClientAddon, makeAddonBlock, standardAddonCrc;
-import dmangos.world.context : WorldContext;
 import dmangos.world.crypt : CipherState;
 import dmangos.world.database : WorldAccount;
 import dmangos.world.worlddata : ItemTemplate, PlayerInfo, WorldData;
+import dmangos.world.player : CharacterData;
 
 struct ServerPacketRead
 {
@@ -176,4 +179,67 @@ ubyte[] deleteCharacter(ref TestClient client, ulong guid)
     client.write(Opcode.CMSG_CHAR_DELETE, ClientCharDelete(guid));
     const reply = client.read();
     return reply.length ? reply[0].body_.dup : null;
+}
+
+/**
+ * A character in the world: its account (named after it, upper case, with id `guid + 100`) and the
+ * character are added to `db`, then the client authenticates and logs in. The login packets are read.
+ */
+TestClient loggedIn(WorldContext context, MemoryWorldDatabase db, uint guid, string name, Position position,
+    AccountLevel level = AccountLevel.player, ubyte race = raceHuman, uint map = 0, uint characterLevel = 1)
+{
+    import std.uni : toUpper;
+
+    WorldAccount account = db.accounts["PLAYER"];
+    account.id = guid + 100;
+    account.username = name.toUpper;
+    account.level = level;
+    db.accounts[account.username] = account;
+    CharacterData c;
+    c.guid = guid;
+    c.account = account.id;
+    c.name = name;
+    c.race = race;
+    c.classId = race == raceOrc ? classHunter : classWarrior; // the combinations testWorldData has
+    c.level = characterLevel;
+    c.cinematic = 1;
+    c.map = map;
+    c.position = position;
+    db.loadable[guid] = c;
+
+    auto client = TestClient(new WorldSession(context, "127.0.0.1"), testKey);
+    authenticate(client, account.username);
+    client.write(Opcode.CMSG_PLAYER_LOGIN, ClientPlayerLogin(guid));
+    client.read();
+    return client;
+}
+
+/// A `CMSG_MESSAGECHAT` body; `target` is the whisper's receiver or the channel.
+ubyte[] chatBody(ChatType type, string text, string target = null, Language language = Language.LANG_COMMON)
+{
+    ByteWriter w;
+    w.put(uint(type));
+    w.put(uint(language));
+    if (type == ChatType.CHAT_MSG_WHISPER || type == ChatType.CHAT_MSG_CHANNEL)
+        w.putCString(target);
+    w.putCString(text);
+    return w.data.dup;
+}
+
+/// The opcodes of some packets.
+ushort[] opcodesOf(const(ServerPacketRead)[] packets)
+{
+    ushort[] codes;
+    foreach (p; packets)
+        codes ~= p.opcode;
+    return codes;
+}
+
+/// The body of the first packet with `opcode`, or null.
+const(ubyte)[] bodyOf(const(ServerPacketRead)[] packets, Opcode opcode)
+{
+    foreach (p; packets)
+        if (p.opcode == opcode)
+            return p.body_;
+    return null;
 }

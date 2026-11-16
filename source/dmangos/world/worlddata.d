@@ -216,6 +216,35 @@ struct PlayerInfo
 enum maxLevel = 255;
 
 /// See the module documentation.
+/// `areatrigger_teleport` (`AreaTrigger`): where an area trigger takes a player, and who may go.
+struct AreaTriggerTeleport
+{
+    uint id;
+    string name;
+    uint requiredLevel;
+    uint requiredItem;
+    uint requiredItem2;
+    uint requiredQuest;
+    uint targetMap;
+    float x = 0;
+    float y = 0;
+    float z = 0;
+    float orientation = 0;
+    string failedText;   /// `status_failed_text`, shown when a requirement is not met
+    uint conditionId;
+}
+
+/// `game_tele`: a named place for `.tele`.
+struct GameTele
+{
+    float x = 0;
+    float y = 0;
+    float z = 0;
+    float orientation = 0;
+    uint map;
+    string name;
+}
+
 final class WorldData
 {
     ItemTemplate[uint] items;               /// by entry
@@ -226,6 +255,44 @@ final class WorldData
     SpellData spells;
     uint[] xpForNextLevel;                  /// `player_xp_for_level`, index = level
     ModelInfo[uint] models;                 /// `creature_model_info`, by display id
+    AreaTriggerTeleport[uint] areaTriggers; /// `areatrigger_teleport`, by trigger id
+    GameTele[] teleports;                   /// `game_tele`, in id order
+
+    /**
+     * `ObjectMgr::GetMapEntranceTrigger`: a trigger that leads into `map` from another map, whose
+     * requirements are those of entering the map.
+     */
+    const(AreaTriggerTeleport)* mapEntranceTrigger(uint map, const ClientData client) const
+    {
+        foreach (id, ref trigger; areaTriggers)
+            if (trigger.targetMap == map)
+                if (const entry = client.areaTriggers.lookup(id))
+                    if (entry.mapId != map)
+                        return &trigger;
+        return null;
+    }
+
+    /**
+     * `ObjectMgr::GetGameTele`: the place called `name` (any case), or else the first whose name
+     * contains it; null if none.
+     */
+    const(GameTele)* findTeleport(string name) const
+    {
+        import std.algorithm.searching : canFind;
+        import std.uni : toLower;
+
+        const wanted = name.toLower;
+        const(GameTele)* partial;
+        foreach (ref tele; teleports)
+        {
+            const lowered = tele.name.toLower;
+            if (lowered == wanted)
+                return &tele;
+            if (partial is null && lowered.canFind(wanted))
+                partial = &tele;
+        }
+        return partial;
+    }
 
     /// `ObjectMgr::GetXPForLevel`
     uint xpForLevel(uint level) const
@@ -305,6 +372,7 @@ final class WorldData
         foreach (row; world.query!"SELECT name FROM reserved_name"())
             data.reservedNames[toLowerName(row.get!string(0))] = true;
 
+        data.loadTeleports(world, client);
         data.loadPlayerInfo(world, client);
         info!"loaded %s item templates, %s creature templates, %s race/class combinations, %s reserved names"(
             data.items.length, data.creatureFamilies.length, data.playerInfo.length, data.reservedNames.length);
@@ -315,6 +383,36 @@ final class WorldData
 
 private:
     /// `ObjectMgr::LoadPlayerInfo`
+    /// `ObjectMgr::LoadAreaTriggerTeleports` and `LoadGameTele`, with the same checks.
+    void loadTeleports(MySqlConnection world, const ClientData client)
+    {
+        foreach (row; world.queryAs!(AreaTriggerTeleport, "SELECT id, IFNULL(name, ''), required_level, "
+            ~ "required_item, required_item2, required_quest_done, target_map, target_position_x, target_position_y, "
+            ~ "target_position_z, target_orientation, IFNULL(status_failed_text, ''), condition_id "
+            ~ "FROM areatrigger_teleport")())
+        {
+            if (client.areaTriggers.lookup(row.id) is null)
+                warning!"areatrigger_teleport: trigger %s is not in AreaTrigger.dbc"(row.id);
+            else if (row.requiredItem && row.requiredItem !in items || row.requiredItem2 && row.requiredItem2 !in items)
+                warning!"areatrigger_teleport: trigger %s requires an item that does not exist"(row.id);
+            else if (client.maps.lookup(row.targetMap) is null)
+                warning!"areatrigger_teleport: trigger %s leads to map %s, which does not exist"(row.id, row.targetMap);
+            else if (row.x == 0 && row.y == 0 && row.z == 0)
+                warning!"areatrigger_teleport: trigger %s has no target position"(row.id);
+            else
+                areaTriggers[row.id] = row;
+        }
+        foreach (row; world.queryAs!(GameTele, "SELECT position_x, position_y, position_z, orientation, map, name "
+            ~ "FROM game_tele ORDER BY id")())
+        {
+            if (client.isValidMapCoord(row.map, row.x, row.y, row.z, row.orientation))
+                teleports ~= row;
+            else
+                warning!"game_tele: '%s' is not a valid position on map %s"(row.name, row.map);
+        }
+        info!"loaded %s area trigger teleports and %s teleport locations"(areaTriggers.length, teleports.length);
+    }
+
     void loadPlayerInfo(MySqlConnection world, const ClientData client)
     {
         static bool playable(uint race, uint classId)
