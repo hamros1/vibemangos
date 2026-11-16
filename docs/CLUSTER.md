@@ -8,8 +8,9 @@ This document records the decisions and why they were made; each phase adds to i
 Status: **phases 0 (measurement, with the standalone baseline in docs/BENCHMARKS.md), 1 (cluster
 foundation), 2 (distributed world ownership) and 3 (replication: creatures, game objects and players
 seen across nodes, every node serving clients, one login per account) are implemented and tested,
-and so is the first part of phase 4: creatures and game objects migrate with their region, and a
-node whose lease lapsed writes nothing.** Moving players between nodes and phases 5 to 7 are design.
+and so is phase 4: creatures and game objects migrate with their region, players move to the node
+that owns the ground they stand on while their client stays connected where it is, and a node whose
+lease lapsed writes nothing.** Phases 5 to 7 are design.
 
 ## What the client allows
 
@@ -469,4 +470,60 @@ associative array, and keep replicas that are not walking out of the tick.
   the node that owns the region it walks into (the home and owner split) is phase 4b.
 * **A node shutting down cleanly** is treated like one that failed: its regions wait out its lease and
   are spawned afresh. Handing them over with their objects first (a drain) is a small addition.
+
+## Phase 4b: players move between nodes (implemented)
+
+* **Home and owner.** The node a client connects to stays its *home*: it holds the socket and the
+  header encryption. The player is simulated by whichever node owns the ground it stands on, its
+  *owner*. On the owner the player has an ordinary `WorldSession` that has no socket
+  (`WorldSession(context, account, home)`): what it sends goes home as (opcode, body)
+  (`PlayerMessage.toHome`) and the home encrypts it for the client; what the client sends, the home
+  passes on unread (`toOwner`) while its own session is `WorldState.elsewhere`. Every in-world handler
+  runs unchanged on the owner.
+* **When.** Once a second (the zone check) a player checks whose ground it stands on
+  (`migrationTarget`): it moves when the ground 25 yards around it in all four directions is one other
+  node's (so walking along a border does not bounce it), not within 10 seconds of its last move, and
+  not while teleporting or logging out. Away from home it goes back home first, and on from there.
+* **How** (`migrateTo`, `arrive`). The simulating node saves the character (saves are synchronous) and
+  sends the account, the guid, the movement, and every guid the client has (`Map.knownTo`). It takes
+  the player off its map without a destroy packet: players there who saw it see a replica owned by the
+  next node (`Map.removeForMigration`). The next node loads the character through the login code but
+  sends none of the login packets, and puts it on its map knowing what its client has
+  (`Map.addMigrated`): in sight and known is just marked seen, in sight and new is created, known but
+  out of sight goes out of range, and known but not held here yet *lingers*: its replica, when it
+  comes, is adopted without a create block, and whatever has not come in 5 s goes out of range.
+  Players there who saw its replica now see it as itself.
+* **Leaving.** A logout or disconnect on the owner saves there and tells the home (`left`); a client
+  that disconnects at home is passed on (`disconnect`), and the home releases the account (phase 3b)
+  only when the owner says it has saved. If the owner is lost, the home disconnects the client and
+  releases the account after the owner's lease; if the home is lost, the owner logs the player out,
+  saved (before the coordinator frees the account, at the home's lease).
+
+### Tested
+
+* **Unit tests:** between two maps with players on both, a handover that sends nothing to anyone (the
+  migrating client, a watcher on each node), then a lingering object adopted without a create, and
+  the player's next move reaching both watchers; two sessions joined in memory: the zone check moves a
+  logged-in player to the other node, the client's packets are handled there and its answers come back
+  encrypted for it, and a logout there returns the home session to the character screen.
+* **Live, two nodes:**
+  * Gamma, connected to node 1, teleported into Duskwood (node 2's): node 2 took it over; `.gps` was
+    answered from node 2 through node 1; teleported back, it moved home after its 10 s, and logged out
+    at home, saved.
+  * Walking from Elwynn into Duskwood in 10-yard steps, it moved to node 2 at x = -9560 (the border is
+    at -9533.3, the margin 25 yards). Over the whole session the client got 123 create blocks, none for
+    an object it already had, and 106 out-of-range, none for one it did not have.
+  * The client vanished while Gamma was on node 2: node 2 saved it, and a login straight after found
+    it where node 2 had saved it. Node 2 killed while simulating Gamma: node 1 disconnected the client
+    the same second, and a login after the lease brought Gamma back as saved at the handover.
+
+### Not yet
+
+* **One owner at a time:** a player away from home goes back home before going on to a third node.
+* **Carried over:** the character as saved, its movement and what its client has. Not carried: timers
+  that only shape timing (regeneration, rest, flood protection), `.gm allowwhispers` targets and
+  `.cheat triggerpass`, which start afresh on the new node.
+* **Across nodes** (phase 5): chat, whispers, groups, channels and GM commands that find players by
+  name see only the players their node simulates.
+* **Cost:** every packet of a player away from home crosses one more link; not yet benchmarked.
 

@@ -22,6 +22,7 @@ mixin template CharacterScreenHandlers()
 {
     import core.time : seconds;
     import dmangos.cluster.ownership : IdKind;
+    import dmangos.world.player : CharacterData;
     import dmangos.timer : IntervalTimer;
     import std.algorithm.iteration : map;
     import std.algorithm.searching : canFind;
@@ -222,19 +223,7 @@ private:
             character.position.z = character.homeBind.z;
         }
 
-        KnownAbilities abilities;
-        auto builder = new CharacterBuilder(context.data, context.client, context.creationSettings,
-            &context.nextItemGuid);
-        builder.loadAbilities(character.race, character.classId, character.level, account.level, character.skills,
-            character.spells, abilities);
-        player = new Player(character, abilities, context.data, context.client, &context.nextItemGuid);
-        // Rested XP: the saved bonus, plus what the time offline earned (Player::LoadFromDB).
-        const offline = character.logoutTime > 0 ? context.unixTime - character.logoutTime : 0;
-        const rate = character.logoutResting ? context.config.rateRestOfflineInTavernOrCity
-            : context.config.rateRestOfflineInWilderness / 4;
-        player.setRestBonus(character.restBonus + (offline > 0 ? player.computeRest(offline, rate) : 0),
-            context.config.maxPlayerLevel);
-        player.clearChanges();
+        player = makePlayer(character, true);
         saveTimer = IntervalTimer(context.config.playerSaveInterval.seconds);
         regenTimer.reset();
         enteredWorld = context.clock();
@@ -254,6 +243,28 @@ private:
         info!"%s: '%s' entered the world as '%s' (guid %s, map %s at %.1f %.1f %.1f)"(remoteAddress,
             account.username, character.name, guid, character.map, character.position.x, character.position.y,
             character.position.z);
+    }
+
+    /**
+     * The player of a loaded character (`Player::LoadFromDB`): its spells and skills, and its rested
+     * XP, with what the time offline earned if `offlineRest` (not for a player arriving from another
+     * node, which was never offline).
+     */
+    Player makePlayer(ref CharacterData character, bool offlineRest)
+    {
+        KnownAbilities abilities;
+        auto builder = new CharacterBuilder(context.data, context.client, context.creationSettings,
+            &context.nextItemGuid);
+        builder.loadAbilities(character.race, character.classId, character.level, account.level, character.skills,
+            character.spells, abilities);
+        auto made = new Player(character, abilities, context.data, context.client, &context.nextItemGuid);
+        const offline = offlineRest && character.logoutTime > 0 ? context.unixTime - character.logoutTime : 0;
+        const rate = character.logoutResting ? context.config.rateRestOfflineInTavernOrCity
+            : context.config.rateRestOfflineInWilderness / 4;
+        made.setRestBonus(character.restBonus + (offline > 0 ? made.computeRest(offline, rate) : 0),
+            context.config.maxPlayerLevel);
+        made.clearChanges();
+        return made;
     }
 
     /// `WorldSession::HandlePlayerLogin`, from `SMSG_LOGIN_VERIFY_WORLD` to the player's create packet.

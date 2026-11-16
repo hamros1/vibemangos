@@ -348,6 +348,15 @@ final class RegionView
         return false;
     }
 
+    /// The node a cell of a map is granted to, as the latest table says; 0 if none.
+    ushort ownerAt(uint map, ulong cell) const
+    {
+        foreach (ref r; table)
+            if (r.map == map && r.state == RegionState.granted && r.rect.containsKey(cell))
+                return r.owner;
+        return 0;
+    }
+
     /// The regions this node owns, as of the last `refresh`.
     @property const(Region)[] ownedRegions() const
     {

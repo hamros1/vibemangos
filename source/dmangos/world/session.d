@@ -76,6 +76,7 @@ enum WorldState
     awaitingAuth,    /// challenge sent, waiting for CMSG_AUTH_SESSION
     characterScreen, /// authenticated; the client shows its character list
     inWorld,         /// playing a character
+    elsewhere,       /// playing a character simulated on another node of the cluster (phase 4b)
     closed,
 }
 
@@ -90,6 +91,12 @@ private enum maxBufferedInput = 2 * (clientHeaderLength + maxClientPacketSize);
 /// See the module documentation.
 final class WorldSession : NetSession, Kickable, OnlinePlayer
 {
+    // A player simulated on another node than its client's (docs/CLUSTER.md, phase 4b).
+    private ushort ownerNode;              // home: the node simulating this session's player; 0: here
+    private ushort homeNode;               // owner: the node holding this session's client; 0: here
+    private bool releaseWhenBack;          // home: the client left while elsewhere; release once the owner saved
+    private MonoTime migratedAt;           // when the player last moved between nodes
+
     private bool admitted;                 // the account is this session's (see `Kickable.admit`)
     private bool loginWaiting;             // a player login waits for that
     private ClientPlayerLogin pendingLogin;
@@ -156,9 +163,9 @@ final class WorldSession : NetSession, Kickable, OnlinePlayer
 
     invariant
     {
-        assert(state_ != WorldState.characterScreen && state_ != WorldState.inWorld
-            || (crypt.active && account.hasSessionKey),
-            "an authenticated session always encrypts with its account's session key");
+        assert(state_ != WorldState.characterScreen && state_ != WorldState.inWorld && state_ != WorldState.elsewhere
+            || (crypt.active && account.hasSessionKey) || homeNode != 0,
+            "an authenticated session always encrypts with its account's session key (unless its client is elsewhere)");
         assert((state_ == WorldState.inWorld) == (player !is null), "a player exists exactly while in the world");
         assert(input.length <= maxBufferedInput);
     }
@@ -171,6 +178,78 @@ final class WorldSession : NetSession, Kickable, OnlinePlayer
         this.remoteAddress = remoteAddress;
         serverSeed = littleEndianToNative!uint(secureRandom!4);
         send(ServerAuthChallenge(serverSeed));
+    }
+
+    /**
+     * A session whose client is on node `home` (phase 4b): its player's simulation came here. It has
+     * no socket: what it sends goes to `home`, what the client sends comes through `fromHome`.
+     */
+    this(WorldContext context, WorldAccount account, ushort home)
+    in (context !is null && home != 0)
+    {
+        import std.conv : to;
+
+        this.context = context;
+        this.remoteAddress = "client on node " ~ home.to!string;
+        this.account = account;
+        homeNode = home;
+        admitted = true;
+        state_ = WorldState.characterScreen;
+    }
+
+    /// The node holding this session's client, if it is another (phase 4b); 0 if here.
+    @property ushort home() const pure nothrow @nogc @safe
+    {
+        return homeNode;
+    }
+
+    /// The node simulating this session's player, if it is another (phase 4b); 0 if here.
+    @property ushort owner() const pure nothrow @nogc @safe
+    {
+        return ownerNode;
+    }
+
+    /// Owner: a packet from the client, relayed by its home node.
+    void fromHome(ushort opcode, const(ubyte)[] body_)
+    {
+        auto reader = ByteReader(body_);
+        handle(cast(Opcode) opcode, reader);
+    }
+
+    /// Home: a packet for the client from the node simulating its player.
+    void fromOwner(ushort opcode, const(ubyte)[] body_)
+    {
+        if (!wantsClose)
+            appendPacket(output, cast(Opcode) opcode, body_, crypt);
+    }
+
+    /**
+     * Home: the player's simulation came back here, or moved on to node `next` (0: it left the world
+     * there, `toCharacterScreen` saying whether by logging out).
+     */
+    void ownerLeft(bool toCharacterScreen)
+    {
+        ownerNode = 0;
+        if (releaseWhenBack || state_ == WorldState.closed)
+        {
+            // The client is gone and the owner has saved the character: the account is free.
+            if (registered)
+                context.removeSession(account.id, this);
+            registered = false;
+            state_ = WorldState.closed;
+            return;
+        }
+        state_ = toCharacterScreen ? WorldState.characterScreen : WorldState.closed;
+        if (!toCharacterScreen)
+            finish();
+    }
+
+    /// Owner: the client is gone; the player leaves the world here, saved.
+    void clientGone()
+    {
+        if (player !is null)
+            leaveWorld("disconnected", false);
+        state_ = WorldState.closed;
     }
 
     /// Current protocol state.
@@ -267,6 +346,8 @@ final class WorldSession : NetSession, Kickable, OnlinePlayer
     /// Frames a packet another player's session (or the map) sends to this client.
     void deliver(Opcode opcode, const(ubyte)[] body_)
     {
+        if (homeNode)
+            return context.relayToHome(homeNode, account.id, cast(ushort) opcode, body_);
         if (!wantsClose)
             appendPacket(output, opcode, body_, crypt);
     }
@@ -350,6 +431,14 @@ final class WorldSession : NetSession, Kickable, OnlinePlayer
     /// Saves the character if one is being played, and removes the session from the context's table.
     void disconnected()
     {
+        if (state_ == WorldState.elsewhere)
+        {
+            // The owner saves the player first; the account is released when it says so (`ownerLeft`).
+            context.relayDisconnect(ownerNode, account.id);
+            releaseWhenBack = true;
+            state_ = WorldState.closed;
+            return;
+        }
         if (player !is null)
             leaveWorld("disconnected", false);
         if (registered)
@@ -379,6 +468,9 @@ final class WorldSession : NetSession, Kickable, OnlinePlayer
 private:
     void handle(Opcode opcode, ref ByteReader reader)
     {
+        // Playing on another node: everything the client says goes there (phase 4b).
+        if (state_ == WorldState.elsewhere)
+            return context.relayToOwner(ownerNode, account.id, cast(ushort) opcode, reader.readBytes(reader.remaining));
         DispatchResult result;
         try
             result = dispatchPacket(opcode, state_, reader);
@@ -413,6 +505,8 @@ private:
 
         ByteWriter payload;
         serialize(payload, packet);
+        if (homeNode)
+            return context.relayToHome(homeNode, account.id, cast(ushort) T.opcode, payload.data);
         appendPacket(output, T.opcode, payload.data, crypt);
     }
 
@@ -811,4 +905,90 @@ unittest
     assert(client.session.wantsClose);
     client.session.disconnected();
     assert(released == [c.account]);
+}
+
+/// A player simulated on another node (phase 4b): handed over, relayed both ways, and back to the character screen.
+unittest
+{
+    import core.time : seconds;
+    import dmangos.world.context : PlayerRelay;
+    import dmangos.world.player : CharacterData;
+    import dmangos.world.objects : HighGuid, makeGuid;
+
+    auto db = newDatabase();
+    auto home = newContext(db);
+    auto owner = newContext(db);
+
+    // Two nodes joined in memory: what one relays, the other gets at once.
+    static final class Pipe : PlayerRelay
+    {
+        WorldContext homeContext, ownerContext;
+        WorldSession remote;
+        string[] log;
+        void toHome(ushort, uint account, ushort opcode, const(ubyte)[] body_)
+        {
+            (cast(WorldSession) homeContext.sessionOf(account)).fromOwner(opcode, body_);
+        }
+        void toOwner(ushort, uint, ushort opcode, const(ubyte)[] body_)
+        {
+            remote.fromHome(opcode, body_);
+        }
+        void disconnect(ushort, uint) { remote.clientGone(); }
+        void migrate(ushort, uint, const(ubyte)[] state)
+        {
+            log ~= "migrate";
+            remote = new WorldSession(ownerContext, WorldSession.migrationAccount(state), 1);
+            assert(remote.arrive(state));
+        }
+        void left(ushort, uint account, bool toCharacterScreen)
+        {
+            log ~= "left";
+            (cast(WorldSession) homeContext.sessionOf(account)).ownerLeft(toCharacterScreen);
+        }
+        void remoteDone(uint) { log ~= "done"; }
+    }
+    auto pipe = new Pipe;
+    pipe.homeContext = home;
+    pipe.ownerContext = owner;
+    home.playerRelay = owner.playerRelay = pipe;
+    home.nodeId = 1;
+    owner.nodeId = 2;
+    // Everything belongs to node 2: a player simulated on node 1 moves there.
+    home.regionOwnerAround = owner.regionOwnerAround = (uint, Position, float) => ushort(2);
+
+    CharacterData c;
+    c.guid = 7;
+    c.account = db.accounts["PLAYER"].id;
+    c.name = "Wanderer";
+    c.race = 2; // an orc shaman: what `newContext` can create
+    c.classId = 7;
+    c.level = 1;
+    db.loadable[7] = c;
+    auto client = TestClient(new WorldSession(home, "127.0.0.1"), testKey);
+    authenticate(client);
+    client.write(Opcode.CMSG_PLAYER_LOGIN, ClientPlayerLogin(7));
+    client.read();
+    assert(client.session.state == WorldState.inWorld);
+
+    // The zone check sees whose ground it stands on: the player moves to node 2.
+    client.session.update(1.seconds);
+    assert(pipe.log == ["migrate"] && client.session.state == WorldState.elsewhere && client.session.owner == 2);
+    assert(pipe.remote.state == WorldState.inWorld && owner.onlinePlayer(makeGuid(HighGuid.player, 7)) !is null);
+    assert(home.onlinePlayer(makeGuid(HighGuid.player, 7)) is null);
+
+    // The client sits down: node 2 handles it, and the answer comes back to the client, encrypted for it.
+    client.write(Opcode.CMSG_STANDSTATECHANGE, ClientStandStateChange(1));
+    const answer = client.read();
+    assert(answer.length >= 1 && opcodesOf(answer).canFind(Opcode.SMSG_STANDSTATE_UPDATE));
+
+    // It logs out there (the 20-second logout, on node 2's clock): node 1's session is back at the character screen.
+    auto now = MonoTime.currTime;
+    owner.clock = () => now;
+    client.write(Opcode.CMSG_LOGOUT_REQUEST, null);
+    client.read();
+    now += 30.seconds;
+    pipe.remote.update(30.seconds);
+    client.read();
+    assert(pipe.log == ["migrate", "left", "done"]);
+    assert(client.session.state == WorldState.characterScreen && client.session.owner == 0);
 }

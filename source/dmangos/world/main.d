@@ -15,6 +15,7 @@ import std.stdio : stderr;
 import dmangos.cluster.link : LoadReport;
 import dmangos.cluster.node : ClusterNode, CoordinatorSetup;
 import dmangos.world.clusterbridge : ClusterBridge;
+import dmangos.world.movement : Position;
 import dmangos.world.fencing : FencedDatabase;
 import dmangos.log;
 import dmangos.metrics : ServerMetrics;
@@ -139,9 +140,22 @@ private int run(WorldConfig config, string configPath)
         context.ownsCell = (uint map, ulong cell) => cluster.regions.ownsCell(map, cell);
         cluster.onOwnership = &context.regionsChanged;
         // Replicas go both ways between nodes (phase 3).
-        bridge = new ClusterBridge(cluster, context);
+        bridge = new ClusterBridge(cluster, context, config.cluster.leaseMs);
         cluster.replication = bridge;
         context.replicator = bridge;
+        // Players move to the node that owns the ground they stand on, their clients staying put (phase 4b).
+        cluster.players = bridge;
+        context.playerRelay = bridge;
+        context.nodeId = cluster.id;
+        context.regionOwnerAround = (uint map, Position at, float radius) {
+            import dmangos.world.grid : cellKeyAt;
+
+            const owner = cluster.regions.ownerAt(map, cellKeyAt(at.x, at.y));
+            foreach (offset; [[radius, 0], [-radius, 0], [0, radius], [0, -radius]])
+                if (cluster.regions.ownerAt(map, cellKeyAt(at.x + offset[0], at.y + offset[1])) != owner)
+                    return ushort(0);
+            return owner;
+        };
         // A node whose lease lapsed writes nothing: by the time its accounts and regions go elsewhere it has
         // certainly stopped, and writes after that could overwrite theirs (phase 4).
         context.database = new FencedDatabase(context.database, () => cluster.regions.leaseHolds(MonoTime.currTime));

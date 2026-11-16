@@ -13,6 +13,7 @@ import dmangos.cluster.node : SessionHandler;
 import dmangos.cluster.ownership : IdCounters, IdKind, IdPool;
 import dmangos.cluster.regions : Region;
 import dmangos.world.creature : Creature, CreatureSpawn;
+import dmangos.world.movement : Position;
 import dmangos.world.migration : Migrant;
 import dmangos.world.replication : Replicator;
 import dmangos.world.channel : ChannelManagers, Channels, ChannelSettings;
@@ -27,6 +28,18 @@ import dmangos.world.map : Inhabitant, Map, MapObject, MapSettings;
 import dmangos.world.online : Directory, OnlinePlayer;
 import dmangos.world.playercreate : CreationSettings;
 import dmangos.world.worlddata : WorldData;
+
+/// How a player simulated on another node than its client's talks to the other node (phase 4b).
+interface PlayerRelay
+{
+    void toHome(ushort home, uint account, ushort opcode, const(ubyte)[] body_);
+    void toOwner(ushort owner, uint account, ushort opcode, const(ubyte)[] body_);
+    void disconnect(ushort owner, uint account);
+    void migrate(ushort target, uint account, const(ubyte)[] state);
+    void left(ushort home, uint account, bool toCharacterScreen);
+    /// The owner-side session of `account` is done (its player left the world or moved on).
+    void remoteDone(uint account);
+}
 
 /// Implemented by sessions so the context can kick a duplicate login.
 interface Kickable
@@ -108,6 +121,59 @@ final class WorldContext : Directory, IdCounters, SessionHandler
      * characters saved), so that an account plays on one node at a time (phase 3b); null standalone.
      */
     void delegate(uint account, ulong serial) claimSession, releaseSession;
+
+    /// In a cluster, this node's id, and the node that owns a map's ground around a point (phase 4b):
+    /// a player simulated here moves to the owner of where it stands. Null when standalone.
+    ushort nodeId;
+    ushort delegate(uint map, Position at, float radius) regionOwnerAround;
+    PlayerRelay playerRelay; /// ditto
+
+    void relayToHome(ushort home, uint account, ushort opcode, const(ubyte)[] body_)
+    {
+        playerRelay.toHome(home, account, opcode, body_);
+    }
+
+    void relayToOwner(ushort owner, uint account, ushort opcode, const(ubyte)[] body_)
+    {
+        playerRelay.toOwner(owner, account, opcode, body_);
+    }
+
+    void relayDisconnect(ushort owner, uint account)
+    {
+        playerRelay.disconnect(owner, account);
+    }
+
+    /// The session of an account on this node, if any.
+    Kickable sessionOf(uint account)
+    {
+        return sessions.get(account, null);
+    }
+
+    /// Every session on this node.
+    Kickable[] allSessions()
+    {
+        return sessions.values;
+    }
+
+    /// A player arrives from another node (phase 4b): in the lists of who is online, and on its map.
+    void enterWorldMigrated(OnlinePlayer who, const(ulong)[] known)
+    {
+        import dmangos.world.worlddata : toLowerName;
+
+        online[who.character.guid] = who;
+        onlineByName[toLowerName(who.character.data.name)] = who;
+        map(who.character.data.map).addMigrated(who, known);
+    }
+
+    /// A player's simulation leaves for node `next` (phase 4b): off the map and the lists, without a word.
+    void leaveWorldForMigration(OnlinePlayer who, ushort next)
+    {
+        import dmangos.world.worlddata : toLowerName;
+
+        map(who.character.data.map).removeForMigration(who, next);
+        online.remove(who.character.guid);
+        onlineByName.remove(toLowerName(who.character.data.name));
+    }
 
     private ulong[Kickable] serials;   // each session's number on this node
     private ulong nextSerial = 1;

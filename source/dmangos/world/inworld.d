@@ -61,9 +61,131 @@ private:
         if (group !is null)
             group.updatePlayerOnlineStatus(this, false); // the others see the player offline
         player = null;
-        loggingOut = false;
         teleporting = Teleport.none;
         state_ = WorldState.characterScreen;
+        if (homeNode) // simulated here for another node's client: it hears, and this session ends
+        {
+            context.playerRelay.left(homeNode, account.id, loggingOut);
+            context.playerRelay.remoteDone(account.id);
+            state_ = WorldState.closed;
+        }
+        loggingOut = false;
+    }
+
+    // -----------------------------------------------------------------------
+    // Moving between nodes (docs/CLUSTER.md, phase 4b)
+    // -----------------------------------------------------------------------
+
+    /// How far around a player its ground must all be another node's before it moves there.
+    enum float migrationMargin = 25;
+
+    /**
+     * The node this player's simulation should move to now, or 0. It moves when it stands well inside
+     * another node's ground (`migrationMargin` all round: no going back and forth along a border), not
+     * within ten seconds of its last move, nor while teleporting or logging out. Away from home, it
+     * goes back home first (and on from there).
+     */
+    ushort migrationTarget()
+    {
+        import core.time : seconds;
+
+        if (context.regionOwnerAround is null || teleporting != Teleport.none || loggingOut || transferring)
+            return 0;
+        if (migratedAt != MonoTime.init && context.clock() - migratedAt < 10.seconds)
+            return 0;
+        const owner = context.regionOwnerAround(player.data.map, player.position, migrationMargin);
+        if (owner == 0 || owner == context.nodeId)
+            return 0;
+        return homeNode ? homeNode : owner;
+    }
+
+    /**
+     * Moves this player's simulation to node `target`: saved here, then loaded there with what its
+     * client already has, so the client sees nothing of it. The client stays connected to its home.
+     */
+    void migrateTo(ushort target)
+    {
+        if (!context.canWrite())
+            return;
+        flushPlayerChanges();
+        const progress = player.progress(secondsInWorld());
+        context.database.saveProgress(progress);
+
+        ByteWriter w;
+        w.put(account.id);
+        w.put(cast(uint) account.username.length);
+        w.putBytes(cast(const(ubyte)[]) account.username);
+        w.put(cast(ubyte) account.level);
+        w.put(account.muteTime);
+        w.put(player.data.guid);
+        player.movement.write(w);
+        const known = map.knownTo(player.guid);
+        w.put(cast(uint) known.length);
+        foreach (k; known)
+            w.put(k);
+
+        info!"%s: '%s' moves to node %s (at map %s %.1f %.1f)"(remoteAddress, player.data.name, target,
+            player.data.map, player.position.x, player.position.y);
+        context.leaveWorldForMigration(this, target);
+        player = null;
+        migratedAt = context.clock();
+        context.playerRelay.migrate(target, account.id, w.data);
+        if (homeNode)
+        {
+            context.playerRelay.remoteDone(account.id); // back to its home: this session's part is over
+            state_ = WorldState.closed;
+        }
+        else
+        {
+            ownerNode = target;
+            state_ = WorldState.elsewhere;
+        }
+    }
+
+    /// The account a `migrateTo` state is for, to make the session on the node it arrives at.
+    package static WorldAccount migrationAccount(const(ubyte)[] state)
+    {
+        auto r = ByteReader(state);
+        WorldAccount a;
+        a.id = r.read!uint;
+        a.username = r.readString(r.read!uint);
+        a.level = cast(AccountLevel) r.read!ubyte;
+        a.muteTime = r.read!long;
+        return a;
+    }
+
+    /// The player's simulation arrives here (`migrateTo`'s state): false if its character cannot be loaded.
+    package bool arrive(const(ubyte)[] state)
+    {
+        auto r = ByteReader(state);
+        r.read!uint;
+        r.readString(r.read!uint);
+        r.read!ubyte;
+        r.read!long;
+        const guid = r.read!uint;
+        const movement = MovementInfo.read(r);
+        auto known = new ulong[r.read!uint];
+        foreach (ref k; known)
+            k = r.read!ulong;
+
+        auto loaded = context.database.loadCharacter(guid);
+        if (loaded.isNull || loaded.get.account != account.id)
+            return false;
+        auto character = loaded.get;
+        character.position = movement.position;
+        player = makePlayer(character, false);
+        player.movement = movement;
+        saveTimer = IntervalTimer(context.config.playerSaveInterval.seconds);
+        regenTimer.reset();
+        enteredWorld = context.clock();
+        migratedAt = context.clock();
+        ownerNode = 0;
+        state_ = WorldState.inWorld;
+        context.enterWorldMigrated(this, known);
+        resetMovementCheck();
+        info!"%s: '%s' arrived from another node (map %s at %.1f %.1f)"(remoteAddress, character.name, character.map,
+            character.position.x, character.position.y);
+        return true;
     }
 
     /**
@@ -157,7 +279,11 @@ private:
         }
 
         if (zoneTimer.update(elapsed) && zoneTimer.consume())
+        {
             checkZone();
+            if (const target = migrationTarget())
+                return migrateTo(target); // the player is simulated there from now on (phase 4b)
+        }
 
         // A save starts the interval again (SaveToDB resets m_nextSave): no catching up after a stall.
         if (saveTimer.update(elapsed))

@@ -56,6 +56,12 @@ interface ReplicationHandler
     void replicaRemove(ushort peer, uint map, ulong guid);
 }
 
+/// What a node does with messages about players simulated away from their client (phase 4b).
+interface PlayerHandler
+{
+    void player(ushort peer, PlayerMessageKind kind, uint account, ushort opcode, const(ubyte)[] data);
+}
+
 /// What a node does with session decisions (phase 3b): the world server implements it.
 interface SessionHandler
 {
@@ -115,6 +121,9 @@ final class ClusterNode : LinkOwner
 
     /// Where session decisions go (phase 3b).
     SessionHandler sessions;
+
+    /// Where messages about players simulated on another node go (phase 4b).
+    PlayerHandler players;
 
     /**
      * The world server starts simulating `gained` and stops simulating `lost` (phase 2). For a gained
@@ -439,6 +448,15 @@ final class ClusterNode : LinkOwner
     void received(Link link, MessageType type, const(ubyte)[] payload)
     {
         const peer = link.peer.nodeId;
+        if (type == MessageType.player)
+        {
+            if (players !is null)
+            {
+                const m = decode!PlayerMessage(payload);
+                players.player(peer, m.kind, m.account, m.opcode, m.data);
+            }
+            return;
+        }
         if (type >= MessageType.sessionClaim && type <= MessageType.sessionReleased)
             return session(peer, link, type, payload);
         if (type >= MessageType.interestUpdate && type <= MessageType.replicaRemove)

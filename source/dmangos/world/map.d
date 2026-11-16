@@ -37,7 +37,7 @@
  */
 module dmangos.world.map;
 
-import core.time : Duration, msecs, usecs;
+import core.time : Duration, MonoTime, msecs, seconds, usecs;
 import std.random : Random, unpredictableSeed;
 
 import dmangos.serialization : serialize;
@@ -181,6 +181,11 @@ final class Map : MotionWorld
         uint[ulong] localInterest;         // cell key -> local players near it
         bool[ulong][ulong] interestOf;     // local player guid -> the cells near it
         bool[ulong] interestAdded, interestRemoved; // changes since `takeInterest`
+
+        // Players arriving from another node (phase 4b): guids their client has that this map does not
+        // hold yet; adopted without a create block when they come, forgotten after `lingerFor`.
+        bool[ulong][ulong] lingering;    // player guid -> guids
+        MonoTime[ulong] lingerUntil;
         Position[ulong] objectVisibilityAt; // where a mover's visibility was last computed
         Duration unticked;              // time not yet given to the movers (under a millisecond)
     }
@@ -330,6 +335,197 @@ final class Map : MotionWorld
         }
         foreach (mover; restingNow)
             stopTicking(mover.guid);
+        expireLingering();
+    }
+
+    // -----------------------------------------------------------------------
+    // Players moving between nodes (phase 4b)
+    // -----------------------------------------------------------------------
+
+    /// How long a guid an arriving player's client has may wait for this map to hold it.
+    enum Duration lingerFor = 5.seconds;
+
+    /// Every guid the player's client has from this map: objects and players.
+    ulong[] knownTo(ulong guid)
+    {
+        ulong[] known;
+        if (auto objects = guid in seesObjects)
+            known ~= (*objects).keys;
+        if (auto players = guid in sees)
+            known ~= (*players).keys;
+        return known;
+    }
+
+    /**
+     * A player's simulation leaves for node `next`: it goes without a destroy packet, and players here
+     * who saw it go on seeing a replica of it (the next node's replica replaces it).
+     */
+    void removeForMigration(Inhabitant who, ushort next)
+    {
+        const guid = who.character.guid;
+        auto placeholder = new Replica(guid, next, encodePlayerState(who.character, serverTime()));
+        const watchers = sees[guid].keys;
+        foreach (other; watchers)
+        {
+            sees[other].remove(guid);
+            seesObjects[other][guid] = true;
+        }
+        if (auto cells = guid in interestOf)
+        {
+            foreach (cell, _; *cells)
+                dropInterest(cell);
+            interestOf.remove(guid);
+        }
+        replicatedTo.remove(guid); // the next node's replica replaces those elsewhere
+        cells[cellOf[guid]].remove(guid);
+        cellOf.remove(guid);
+        sees.remove(guid);
+        seesObjects.remove(guid);
+        visibilityAt.remove(guid);
+        lingering.remove(guid);
+        lingerUntil.remove(guid);
+        members.remove(guid);
+        if (watchers.length)
+        {
+            objects[guid] = placeholder;
+            replicas[guid] = true;
+            movers[guid] = placeholder;
+            const at = cellKeyAt(placeholder.position.x, placeholder.position.y);
+            objectCells[at][guid] = true;
+            objectCellOf[guid] = at;
+            objectVisibilityAt[guid] = placeholder.position;
+        }
+    }
+
+    /**
+     * A player's simulation arrives from another node; its client already has `known`. Nothing it has
+     * is sent again: what is in sight and known is marked seen, what is in sight and new is created,
+     * what it has but is out of sight goes out of range, and what it has that this map does not hold
+     * yet lingers until its replica comes (adopted silently) or `lingerFor` passes (out of range).
+     * Players here who saw its replica go on seeing it, now as itself.
+     */
+    void addMigrated(Inhabitant who, const(ulong)[] known)
+    {
+        const guid = who.character.guid;
+        bool[ulong] knows;
+        foreach (k; known)
+            knows[k] = true;
+
+        // Its replica here, if any: those who saw it see the real one now.
+        bool[ulong] sawReplica;
+        if (guid in replicas)
+        {
+            foreach (player, ref seen; seesObjects)
+                if (seen.remove(guid))
+                    sawReplica[player] = true;
+            dropReplica(guid);
+        }
+
+        members[guid] = who;
+        sees[guid] = null;
+        seesObjects[guid] = null;
+        place(guid, who.character.position);
+        visibilityAt[guid] = who.character.position;
+        if (replicator !is null)
+            updateInterest(guid, who.character.position);
+        const time = serverTime();
+
+        // Players in sight: each pair gets what it does not have.
+        bool[ulong] inSight;
+        UpdateData received;
+        foreach (other; near(who.character.position, settings.visibilityDistance))
+        {
+            const o = other.character.guid;
+            if (o == guid)
+                continue;
+            inSight[o] = true;
+            sees[guid][o] = true;
+            sees[o][guid] = true;
+            if (o !in knows)
+                received.append(other.appearanceFor(who, time));
+            if (o !in sawReplica)
+                deliverUpdate(other, who.appearanceFor(other, time));
+        }
+        foreach (player, _; sawReplica)
+            if (player !in inSight)
+            {
+                UpdateData forget;
+                forget.addOutOfRange([guid]);
+                deliverUpdate(members[player], forget);
+            }
+
+        // Objects in sight.
+        foreach (object; objectsNear(who.character.position, settings.visibilityDistance))
+        {
+            inSight[object.guid] = true;
+            seesObjects[guid][object.guid] = true;
+            if (object.guid !in knows)
+            {
+                if (!received.empty && received.byteSize + object.appearance(time).byteSize > maxUpdatePacketBytes)
+                {
+                    deliverUpdate(who, received);
+                    received = UpdateData.init;
+                }
+                received.append(object.appearance(time));
+            }
+        }
+        if (!received.empty)
+            deliverUpdate(who, received);
+
+        // What the client has that is not in sight: out of range if this map holds it, lingering if not.
+        ulong[] gone;
+        foreach (k; known)
+        {
+            if (k in inSight || k == guid)
+                continue;
+            if (k in objects || k in members)
+                gone ~= k;
+            else
+                lingering[guid][k] = true;
+        }
+        if (gone.length)
+        {
+            UpdateData forget;
+            forget.addOutOfRange(gone);
+            deliverUpdate(who, forget);
+        }
+        if (auto l = guid in lingering)
+            lingerUntil[guid] = MonoTime.currTime + lingerFor;
+        replicatePlayer(who);
+    }
+
+    /// Whether `object` lingered for `player` (its client has it): now it is simply seen.
+    private bool adoptLingering(ulong player, ulong object)
+    {
+        if (auto l = player in lingering)
+            return (*l).remove(object);
+        return false;
+    }
+
+    /// Lingering guids whose replica did not come in time go out of range on the client.
+    private void expireLingering()
+    {
+        if (lingerUntil.length == 0)
+            return;
+        const now = MonoTime.currTime;
+        ulong[] done;
+        foreach (player, until; lingerUntil)
+            if (now >= until)
+            {
+                done ~= player;
+                if (auto l = player in lingering)
+                    if ((*l).length && player in members)
+                    {
+                        UpdateData forget;
+                        forget.addOutOfRange((*l).keys);
+                        deliverUpdate(members[player], forget);
+                    }
+            }
+        foreach (player; done)
+        {
+            lingering.remove(player);
+            lingerUntil.remove(player);
+        }
     }
 
     /// Puts a resting object back in the tick: something gave it something to do.
@@ -1026,6 +1222,8 @@ private:
             if (object.guid in seesObjects[guid])
                 continue;
             seesObjects[guid][object.guid] = true;
+            if (adoptLingering(guid, object.guid))
+                continue;
             const block = object.appearance(time);
             if (!created.empty && (created.blockCount >= maxBlocksPerPacket
                 || created.byteSize + block.byteSize > maxUpdatePacketBytes))
@@ -1060,6 +1258,8 @@ private:
             if (guid in *seen)
                 continue;
             (*seen)[guid] = true;
+            if (adoptLingering(who.character.guid, guid))
+                continue; // the client has it already (it came from another node with it)
             deliverUpdate(who, object.appearance(serverTime()));
         }
         foreach (player, ref seen; seesObjects)
@@ -1795,3 +1995,71 @@ unittest
     assert(map.objectCount == 1 && map.seesObject(1, 0xF110_0000_0000_0005));
 }
 
+
+/// Players moving between nodes (phase 4b): the handover sends nothing to anyone; what follows reaches everyone.
+unittest
+{
+    import dmangos.world.replication : Replicator;
+
+    static final class Wire : Replicator
+    {
+        Map to;
+        ushort from;
+        void create(ushort, uint, ulong cell, ulong guid, const(ubyte)[] state) { to.replicaCreated(from, cell, guid, state); }
+        void values(ushort, uint, ulong guid, const(ubyte)[] slots) { to.replicaValues(from, guid, slots); }
+        void move(ushort, uint, ulong guid, ushort op, const(ubyte)[] b, const(ubyte)[] m) { to.replicaMoved(from, guid, op, b, m); }
+        void remove(ushort, uint, ulong guid) { to.replicaRemoved(from, guid); }
+    }
+
+    auto home = new Map(0, MapSettings.init, () => 1000u);
+    auto owner = new Map(0, MapSettings.init, () => 1000u);
+    auto toOwner = new Wire, toHome = new Wire;
+    toOwner.to = owner, toOwner.from = 1;
+    toHome.to = home, toHome.from = 2;
+    home.replicator = toOwner;
+    owner.replicator = toHome;
+    void exchangeInterest()
+    {
+        ulong[] added, removed;
+        home.takeInterest(added, removed);
+        owner.peerInterest(1, added, removed);
+        owner.takeInterest(added, removed);
+        home.peerInterest(2, added, removed);
+    }
+
+    auto alice = new Watcher(1, Position(0, 0, 0));      // simulated at home, about to move
+    auto homeWatcher = new Watcher(2, Position(10, 0, 0));
+    auto ownerWatcher = new Watcher(3, Position(-10, 0, 0));
+    home.add(alice);
+    home.add(homeWatcher);
+    owner.add(ownerWatcher);
+    exchangeInterest();
+    assert(owner.isReplica(1) && home.isReplica(3));
+    // A guid alice's client has that the owner does not hold yet: an object only home knew of.
+    auto known = home.knownTo(1) ~ [ulong(0xF130_0000_0000_0099)];
+    foreach (w; [alice, homeWatcher, ownerWatcher])
+        w.take();
+
+    home.removeForMigration(alice, 2);
+    auto arrived = new Watcher(1, Position(0, 0, 0)); // the same player, now on the owner
+    owner.addMigrated(arrived, known);
+    foreach (w; [alice, arrived, homeWatcher, ownerWatcher])
+        assert(w.take() == [], "nobody's client noticed the handover");
+    assert(home.isReplica(1) && home.seesObject(2, 1), "home's player sees alice's replica now");
+    assert(!owner.isReplica(1) && owner.seeEachOther(1, 3), "the owner's player sees alice herself now");
+
+    // The object the owner did not hold arrives as a replica a moment later: adopted, not created again.
+    import dmangos.world.replication : encodePlayerState;
+
+    owner.replicaCreated(1, cellKeyAt(10, 0), 0xF130_0000_0000_0099, encodePlayerState(homeWatcher.player, 0));
+    assert(arrived.take() == [] && owner.seesObject(1, 0xF130_0000_0000_0099), "the client had it already");
+    assert(ownerWatcher.take().length == 1, "the owner's own player had not seen it: it gets its create block");
+
+    // Alice moves on the owner: its player sees it, and home's through the replica.
+    arrived.moveTo(5, 0);
+    owner.relocated(arrived);
+    const ubyte[1] heartbeat = [3];
+    owner.sendToWatchers(arrived, Opcode.MSG_MOVE_HEARTBEAT, heartbeat);
+    assert(ownerWatcher.take() == [Opcode.MSG_MOVE_HEARTBEAT]);
+    assert(homeWatcher.take() == [Opcode.MSG_MOVE_HEARTBEAT] && home.findObject(1).position.x == 5);
+}

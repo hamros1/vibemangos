@@ -24,7 +24,7 @@ import dmangos.cluster.regions : Region;
 import dmangos.serialization : deserialize, LengthPrefix, serialize;
 
 /// Changes whenever a message changes; nodes speaking another version are turned away.
-enum ushort protocolVersion = 5;
+enum ushort protocolVersion = 6;
 
 /// Size of a frame header.
 enum frameHeaderSize = 16;
@@ -54,6 +54,7 @@ enum MessageType : ushort
     sessionEvict = 17,
     sessionReleased = 18,
     regionHandover = 19,
+    player = 20,
 }
 
 /// Why a hello was refused.
@@ -277,6 +278,27 @@ struct SessionReleased
 
     uint account;
     ulong serial;
+}
+
+/// What a `PlayerMessage` is (phase 4b: a player simulated on another node than its client's).
+enum PlayerMessageKind : ubyte
+{
+    migrate = 1,     /// the player's simulation moves to the receiver (`data`: its state)
+    toOwner = 2,     /// a packet from the client, for the node that simulates the player
+    toHome = 3,      /// a packet for the client, to the node that holds its connection
+    left = 4,        /// the player left the world on the owner (`opcode` 1: to the character screen)
+    disconnect = 5,  /// the client is gone: the owner saves the player and says `left`
+}
+
+/// See `PlayerMessageKind`. Players are known by their account: one session per account in the cluster.
+struct PlayerMessage
+{
+    enum type = MessageType.player;
+
+    PlayerMessageKind kind;
+    uint account;
+    ushort opcode;
+    @LengthPrefix!uint ubyte[] data;
 }
 
 /// Appends a framed message to `writer`.
