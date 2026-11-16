@@ -19,6 +19,12 @@ interface OnlinePlayer : Inhabitant
     /// The account's security level (`WorldSession::GetSecurity`).
     @property AccountLevel security() const;
 
+    /// ArcEmu's `WorldSession::CanUseCommand`: whether the account has the permission letter `group`.
+    bool canUseCommand(char group) const;
+
+    /// ArcEmu's `WorldSession::GetPermissionCount() > 0`: any GM permission at all.
+    @property bool hasPermissions() const;
+
     /// Whether the player is between the two halves of a far teleport (`Player::IsBeingTeleportedFar`).
     @property bool transferring() const;
 

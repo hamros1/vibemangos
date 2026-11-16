@@ -13,6 +13,35 @@ import std.format : format;
 import dmangos.json;
 import dmangos.log : LogLevel;
 
+/// ArcEmu permission strings (`accounts.gm`) for CMaNGOS's account levels.
+struct GmPermissions
+{
+    @JsonName("1") string moderator = "bcghiltuv";  /// kick, tickets, GM tag, announcements, appear and summon
+    @JsonName("2") string gameMaster = "a";         /// every command but the `z` ones
+    @JsonName("3") string administrator = "az";     /// every command
+
+    /// The letters of a level, read as `WorldSession::LoadSecurity` reads them.
+    string forLevel(uint level) const pure @safe
+    {
+        import dmangos.world.commands : loadSecurity;
+
+        switch (level)
+        {
+        case 0: return null;
+        case 1: return loadSecurity(moderator);
+        case 2: return loadSecurity(gameMaster);
+        default: return loadSecurity(administrator);
+        }
+    }
+}
+
+/// A `command_overrides` row: "gm on" (or "gm *") gets the letter `group`.
+struct CommandOverride
+{
+    string command;
+    string group;
+}
+
 /// Settings for the world server.
 struct WorldConfig
 {
@@ -62,10 +91,6 @@ struct WorldConfig
     @JsonName("allow_two_side_interaction_channel") bool allowTwoSideInteractionChannel = false;
     /// `AllowTwoSide.Interaction.Group`: allow groups with both factions.
     @JsonName("allow_two_side_interaction_group") bool allowTwoSideInteractionGroup = false;
-    /// `GM.ChannelModerationLevel`: the account level that moderates every channel; 0 for none.
-    @JsonName("gm_level_channel_moderation") uint gmLevelChannelModeration = 1;
-    /// `GM.ChannelSilentJoinLevel`: the account level that joins and leaves channels unannounced; 0 for none.
-    @JsonName("gm_level_channel_silent_join") uint gmLevelChannelSilentJoin = 0;
     /// `Chat.RestrictedRaidWarnings`: raid warnings only in raids.
     @JsonName("chat_restricted_raid_warnings") bool chatRestrictedRaidWarnings = false;
     /// `Instance.IgnoreLevel`: enter dungeons whatever the level.
@@ -83,7 +108,8 @@ struct WorldConfig
     /// `SkipCinematics`: 0 always show the intro, 1 skip it if the account has a character of that race, 2 never.
     @JsonName("skip_cinematics") uint skipCinematics = 0;
     /// `Motd`: shown in the chat window on entering the world; '@' starts a new line.
-    string motd = "Welcome to dmangos.@Players see each other, group up and chat; creatures and combat are still to come.";
+    string motd = "Welcome to dmangos.@Players see each other, group up and chat; "
+        ~ "creatures and combat are still to come.";
 
     /// `Visibility.Distance.Continents`: how far players see each other, in yards.
     @JsonName("visibility_distance") float visibilityDistance = 100;
@@ -95,8 +121,8 @@ struct WorldConfig
     @JsonName("listen_range_yell") float listenRangeYell = 300;           /// ditto
     /// The world update tick, in milliseconds (mangosd's `WORLD_SLEEP_CONST`, 50).
     @JsonName("update_interval") uint updateIntervalMs = 50;
-    /// `InstantLogout`: the account level that logs out at once; others wait 20 seconds unless resting.
-    @JsonName("instant_logout") uint instantLogout = 1;
+    /// Seconds a logout takes away from inns and cities (ArcEmu and CMaNGOS: 20); 0 logs out at once.
+    @JsonName("logout_delay") uint logoutDelay = 20;
     /// `PlayerSave.Interval`, in seconds (mangosd: milliseconds).
     @JsonName("player_save_interval") uint playerSaveInterval = 900;
     /// `Rate.Health`, `Rate.Mana`, `Rate.Rage.Loss`, `Rate.Energy`: regeneration rates.
@@ -131,6 +157,42 @@ struct WorldConfig
     /// `MailDeliveryDelay`, in seconds, for mail returned to another account.
     @JsonName("mail_delivery_delay") uint mailDeliveryDelay = 3600;
 
+    // -----------------------------------------------------------------------
+    // The GM system, as ArcEmu's arcemu-world.conf and arcemu-optional.conf set it
+    // -----------------------------------------------------------------------
+
+    /// ArcEmu's permission letters for each CMaNGOS `account.gmlevel` (see `dmangos.world.commands`).
+    @JsonName("gm_permissions") GmPermissions gmPermissions;
+    /// `command_overrides` (an ArcEmu world table): give commands other permission letters.
+    @JsonName("command_overrides") CommandOverride[] commandOverrides;
+    /// `Server.AllowPlayerCommands`: accounts without permissions may use the `0` commands.
+    @JsonName("allow_player_commands") bool allowPlayerCommands = false;
+    /// `Log.GMCommands`: the file the GM command log is appended to; empty for none.
+    @JsonName("gm_command_log") string gmCommandLog;
+    /// `GameMaster.ListOnlyActiveGMs`: `.gm list` shows players only the GMs with the tag on.
+    @JsonName("gamemaster_list_only_active_gms") bool gamemasterListOnlyActiveGMs = false;
+    /// `GameMaster.HidePermissions`: `.gm list` hides the GMs' permissions from players.
+    @JsonName("gamemaster_hide_permissions") bool gamemasterHidePermissions = false;
+    /// `Server.SendStatsOnJoin`: everyone (not only GMs) is told the population on entering the world.
+    @JsonName("send_stats_on_join") bool sendStatsOnJoin = true;
+    /// `GMClient.GmClientChannel`: a channel only accounts with permissions may join; empty for none.
+    @JsonName("gm_client_channel") string gmClientChannel;
+    /// `FloodProtection.Lines`, `.Seconds`, `.SendMessage`: lines a player without permissions may say per period.
+    @JsonName("flood_lines") uint floodLines = 0;
+    @JsonName("flood_seconds") uint floodSeconds = 0;     /// ditto
+    @JsonName("flood_message") bool floodMessage = false; /// ditto
+    /// `Announce.Tag`, `.GMAdminTag`, `.NameinAnnounce`, `.NameinWAnnounce`: how `.announce` and `.wannounce` look.
+    @JsonName("announce_tag") string announceTag = "Staff";
+    @JsonName("announce_gm_admin_tag") bool announceGmAdminTag = false;      /// ditto
+    @JsonName("announce_name_in_announce") bool nameInAnnounce = true;       /// ditto
+    @JsonName("announce_name_in_wannounce") bool nameInWAnnounce = true;     /// ditto
+    /// `Color.AnnTagColor`, `.AnnGMTagColor`, `.AnnNameColor`, `.AnnMsgColor`: 1 light red, 2 light blue,
+    /// 3 blue, 4 green, 5 red, 6 gold, 7 grey, 8 white, 9 magenta, 10 yellow.
+    @JsonName("announce_tag_color") uint announceTagColor = 2;
+    @JsonName("announce_gm_tag_color") uint announceGmTagColor = 1;          /// ditto
+    @JsonName("announce_name_color") uint announceNameColor = 4;             /// ditto
+    @JsonName("announce_message_color") uint announceMessageColor = 10;      /// ditto
+
     /// Seconds without traffic before a connection is dropped (the client pings every 30 seconds).
     @JsonName("idle_timeout") uint idleTimeoutSeconds = 120;
     @JsonName("max_connections") uint maxConnections = 1000;
@@ -154,6 +216,11 @@ struct WorldConfig
         enforce(skipCinematics <= 2, "skip_cinematics must be 0, 1 or 2");
         enforce(startPlayerLevel >= 1 && startGmLevel >= startPlayerLevel, "start levels must be >= 1, GM >= player");
         enforce(charDeleteMethod <= 1, "char_delete_method must be 0 or 1");
+        foreach (row; commandOverrides)
+            enforce(row.command.length && row.group.length == 1,
+                format!"command_overrides: '%s' needs a command and a one-letter group"(row.command));
+        foreach (color; [announceTagColor, announceGmTagColor, announceNameColor, announceMessageColor])
+            enforce(color >= 1 && color <= 10, "announce colours must be between 1 and 10");
     }
 }
 

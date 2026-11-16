@@ -165,13 +165,20 @@ private int changeLevel(LoginDatabase database, string[] args)
     return 0;
 }
 
+/// The ban length and reason given to a ban command.
+private struct BanArguments
+{
+    uint seconds; /// 0 = permanent
+    string reason;
+}
+
 /// Parses the optional `[DAYS] [REASON...]` tail of the ban commands.
-private void parseBan(string[] args, out uint seconds, out string reason)
+private BanArguments parseBan(string[] args)
 {
     import std.array : join;
 
-    seconds = args.length > 0 ? args[0].to!uint * 86_400 : 0;
-    reason = args.length > 1 ? args[1 .. $].join(" ") : "no reason";
+    return BanArguments(args.length > 0 ? args[0].to!uint * 86_400 : 0,
+        args.length > 1 ? args[1 .. $].join(" ") : "no reason");
 }
 
 private string describeBan(uint seconds)
@@ -186,11 +193,9 @@ private int banAccount(LoginDatabase database, string[] args)
     enforce(args.length >= 1, "usage: account ban NAME [DAYS] [REASON]");
     const account = database.findAccount(args[0]);
     enforce(!account.isNull, "no account named '" ~ canonicalAccountName(args[0]) ~ "'");
-    uint seconds;
-    string reason;
-    parseBan(args[1 .. $], seconds, reason);
-    database.banAccount(account.get.id, seconds, consoleAuthor, reason);
-    writefln("%s banned %s", account.get.username, describeBan(seconds));
+    const ban = parseBan(args[1 .. $]);
+    database.banAccount(account.get.id, ban.seconds, consoleAuthor, ban.reason);
+    writefln("%s banned %s", account.get.username, describeBan(ban.seconds));
     return 0;
 }
 
@@ -217,11 +222,9 @@ private int listAccounts(LoginDatabase database, string[] args)
 private int banAddress(LoginDatabase database, string[] args)
 {
     enforce(args.length >= 1, "usage: ip ban ADDRESS [DAYS] [REASON]");
-    uint seconds;
-    string reason;
-    parseBan(args[1 .. $], seconds, reason);
-    database.banIp(args[0], seconds, consoleAuthor, reason);
-    writefln("%s banned %s", args[0], describeBan(seconds));
+    const ban = parseBan(args[1 .. $]);
+    database.banIp(args[0], ban.seconds, consoleAuthor, ban.reason);
+    writefln("%s banned %s", args[0], describeBan(ban.seconds));
     return 0;
 }
 

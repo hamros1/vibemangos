@@ -303,9 +303,7 @@ private:
     @Handles(Opcode.reconnectProof, State.awaitingReconnectProof)
     void handleReconnectProof(const ClientReconnectProof proof)
     {
-
-        ubyte[sessionKeyLength] sessionKey;
-        sessionKey[] = account.sessionKey[];
+        const ubyte[sessionKeyLength] sessionKey = account.sessionKey;
         const expected = computeReconnectProof(loginName, proof.proofData, reconnectChallenge, sessionKey);
         if (!constantTimeEqual(expected[], proof.clientProof[]))
         {

@@ -14,7 +14,7 @@
 | Teleports | Near and far teleports with the client's acknowledgements, area trigger teleports with CMaNGOS's entry checks, `worldport` | `world/teleport.d` |
 | Groups | Parties and raids, saved and reloaded; invitations, leaders, assistants, sub-groups, kicks, loot settings, icons, ready checks, rolls, pings, member stats, group chat, real health for members | `world/group.d`, `world/grouphandlers.d` |
 | Chat | Channels (built-in ones following the zone, custom ones with moderation), AFK/DND with replies and chat tags, raid warnings | `world/channel.d`, `world/channelhandlers.d`, `world/inworld.d` |
-| GM commands | About 130 commands following ArcEmu and Ascent: teleports, `.modify`, levels, items, spells, skills, lookups, accounts, bans, kicks, mutes, shutdowns, announcements, debugging (docs/COMMANDS.md) | `world/commands.d`, `world/gm*.d` |
+| GM system | ArcEmu's: its command tables, permission letters (from `gmlevel` via `gm_permissions`), lookup, messages, GM tag, whisper blocking, GM log. 135 of its 298 commands work: teleports, `.modify`, levels, items, spells, skills, lookups, accounts, bans, kicks, mutes, shutdowns, announcements, cheats, debugging (docs/COMMANDS.md) | `world/commandtable.d`, `world/commands.d`, `world/gm*.d` |
 | Update loop | A 50 ms tick: 20-second logout, regeneration, rested XP in inns and capitals (and offline), periodic saves, timed shutdowns | `net/server.d`, `context.d`, `inworld.d`, `timer.d` |
 | Creatures and game objects | Every spawn (with pools, spawn groups and game events), loaded per grid cell when players come near, with levels, health, models, equipment, mounts and emotes; creature and game object queries; `.npc info` | `creature.d`, `gameobject.d`, `map.d`, `worlddata.d` |
 | Movement checks | Speed checked against running speed; offenders put back. Positions outside the map disconnect | `world/inworld.d` |
@@ -39,9 +39,12 @@
 * **Groups:** an offline leader is not replaced after a while (that needs a timer). Loot
   settings are stored but nothing drops yet. The ignore list does not exist, so nobody can be
   ignored. Two-faction groups do not show the other faction as friendly.
-* **Chat:** no ignore list, mutes, spam throttle or `Channel.RestrictedLanguageMode`.
+* **Chat:** no ignore list or `Channel.RestrictedLanguageMode`.
   LocalDefense and WorldDefense need PvP ranks, which do not exist, so WorldDefense is read-only.
-  GM visibility, whisper blocking and the `<GM>` state are not saved between logins.
+  The GM tag and `.gm allowwhispers` are not kept between logins (nor are they in ArcEmu).
+* **GM system:** ArcEmu's commands that need missing systems answer "Not yet implemented."
+  (COMMANDS.md lists them); GM invisibility (`.invisible`) needs sight to be one-sided first. The
+  `c` letter makes speech universal but does not teach the language skills ArcEmu adds.
 
 ## Next milestones
 
@@ -102,8 +105,8 @@ The largest area. CMaNGOS references: `Spells/`, `Entities/Unit.cpp`, `Combat/`,
 * Friends and ignore lists, guilds, mail, auction house and trade, each a handler group and
   module of its own, like `grouphandlers.d`.
 * Quests (`QuestHandler.cpp`, `ObjectMgr::LoadQuests`).
-* The rest of ArcEmu's and Ascent's GM commands, as their systems arrive (COMMANDS.md lists them):
-  each is one `@Command` method.
+* The rest of ArcEmu's GM commands, as their systems arrive (COMMANDS.md lists them): each is one
+  method named after ArcEmu's handler.
 
 ### Infrastructure, as needed
 

@@ -4,6 +4,7 @@
  */
 module dmangos.world.names;
 
+import std.algorithm.searching : all;
 import std.utf : toUTF32, toUTF8, UTFException, validate;
 
 import dmangos.world.worlddata : wcharToLower, wcharToUpper;
@@ -47,6 +48,12 @@ bool normalizePlayerName(ref string name, size_t maxLength = maxInternalPlayerNa
         c = wcharToLower(c);
     name = text.toUTF8;
     return true;
+}
+
+/// `name` as `normalizePlayerName` makes it, or null if it cannot be a player's name.
+string normalizedName(string name) @safe
+{
+    return normalizePlayerName(name) ? name : null;
 }
 
 /// `ObjectMgr::CheckPlayerName` for a new character.
@@ -111,14 +118,6 @@ private bool isValidName(dstring text, uint strictMask, uint realmZone) pure not
     if (strictMask & 0x1)
         return all!isBasicLatin(text);
     return false;
-}
-
-private bool all(alias predicate)(dstring text) pure nothrow @nogc @safe
-{
-    foreach (c; text)
-        if (!predicate(c))
-            return false;
-    return true;
 }
 
 /// `isBasicLatinCharacter`

@@ -8,7 +8,8 @@
  */
 module dmangos.world.realm;
 
-import std.array : join;
+import std.algorithm.iteration : map;
+import std.array : array, join;
 import std.conv : to;
 import std.datetime.systime : Clock, SysTime;
 import std.format : format;
@@ -38,9 +39,7 @@ final class RealmRegistration
     /// Marks the realm online for `builds`, sets its type and zone, and opens an `uptime` row.
     void markOnline(const(ushort)[] builds, uint gameType, uint realmZone)
     {
-        string[] buildNames;
-        foreach (build; builds)
-            buildNames ~= build.to!string;
+        const buildNames = builds.map!(to!string).array;
 
         const changed = login.execute!("UPDATE realmlist SET realmflags = realmflags & ~(?), population = 0, "
             ~ "realmbuilds = ? WHERE id = ?")(realmFlagOffline, buildNames.join(" "), realmId);

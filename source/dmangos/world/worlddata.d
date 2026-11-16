@@ -152,10 +152,10 @@ private enum string[2][] itemDetailColumns = () {
 
 /// The statement that reads `itemDetailColumns`, entry first.
 private enum itemDetailQuery = () {
-    string sql = "SELECT entry";
-    foreach (column; itemDetailColumns)
-        sql ~= ", " ~ column[0];
-    return sql ~ " FROM item_template";
+    import std.algorithm.iteration : map;
+    import std.array : join;
+
+    return "SELECT entry, " ~ itemDetailColumns.map!(column => column[0]).join(", ") ~ " FROM item_template";
 }();
 
 static assert(itemDetailColumns.length == 6 + 20 + 15 + 7 + 3 + 20 + 12);
@@ -222,7 +222,6 @@ struct PlayerInfo
 /// Highest level the stats tables are read for (`MAX_LEVEL` for 1.12 data is 60; up to 255 accepted).
 enum maxLevel = 255;
 
-/// See the module documentation.
 /// `areatrigger_teleport` (`AreaTrigger`): where an area trigger takes a player, and who may go.
 struct AreaTriggerTeleport
 {
@@ -260,6 +259,7 @@ enum areaTriggerTeleportQuery = "SELECT id, IFNULL(name, ''), required_level, re
 /// The columns of `GameTele`, as `ObjectMgr::LoadGameTele` reads them.
 enum gameTeleQuery = "SELECT position_x, position_y, position_z, orientation, map, name FROM game_tele ORDER BY id";
 
+/// See the module documentation.
 final class WorldData
 {
     ItemTemplate[uint] items;               /// by entry
@@ -348,11 +348,13 @@ final class WorldData
     /// `GetPlayerLevelInfo`: stats for a level, falling back to the highest level known.
     LevelStats levelStats(ubyte race, ubyte classId, uint level) const
     {
+        import std.algorithm.comparison : min;
+
         if (auto player = createInfo(race, classId))
         {
             if (player.levelStats.length == 0 || level == 0)
                 return LevelStats.init;
-            return player.levelStats[(level <= player.levelStats.length ? level : player.levelStats.length) - 1];
+            return player.levelStats[min(level, player.levelStats.length) - 1];
         }
         return LevelStats.init;
     }
@@ -360,10 +362,12 @@ final class WorldData
     /// `GetPlayerClassLevelInfo`
     ClassLevelStats classStats(ubyte classId, uint level) const
     {
+        import std.algorithm.comparison : min;
+
         const table = classLevelStats.get(classId, null);
         if (table.length == 0 || level == 0)
             return ClassLevelStats.init;
-        return table[(level <= table.length ? level : table.length) - 1];
+        return table[min(level, table.length) - 1];
     }
 
     /// Reads the tables from a world database. `client` is needed to validate create skills.
@@ -405,7 +409,8 @@ final class WorldData
         info!"loaded %s item templates, %s creature templates, %s race/class combinations, %s reserved names"(
             data.items.length, data.creatureFamilies.length, data.playerInfo.length, data.reservedNames.length);
         if (data.playerInfo.length == 0)
-            warning!"playercreateinfo is empty: no character can be listed or created (is the world database populated?)"();
+            warning!("playercreateinfo is empty: no character can be listed or created "
+                ~ "(is the world database populated?)")();
         return data;
     }
 
@@ -416,13 +421,13 @@ final class WorldData
      */
     void loadSpawns(MySqlConnection world, const ClientData client)
     {
-        import std.random : Random, unpredictableSeed;
+        import std.random : unpredictableSeed;
 
         foreach (row; world.queryAs!(CreatureTemplate, creatureTemplateQuery)())
             creatureTemplates[row.entry] = row;
-        foreach (row; world.query!("SELECT entry, type, displayId, name, faction, flags, size, data0, data1, data2, "
-            ~ "data3, data4, data5, data6, data7, data8, data9, data10, data11, data12, data13, data14, data15, data16, "
-            ~ "data17, data18, data19, data20, data21, data22, data23 FROM gameobject_template")())
+        foreach (row; world.query!("SELECT entry, type, displayId, name, faction, flags, size, data0, data1, "
+            ~ "data2, data3, data4, data5, data6, data7, data8, data9, data10, data11, data12, data13, data14, data15, "
+            ~ "data16, data17, data18, data19, data20, data21, data22, data23 FROM gameobject_template")())
         {
             GameObjectTemplate t;
             t.entry = row.get!uint(0);
@@ -439,11 +444,14 @@ final class WorldData
         foreach (row; world.query!"SELECT entry, equipentry1, equipentry2, equipentry3 FROM creature_equip_template"())
             creatureEquipment[row.get!uint(0)] = [row.get!uint(1), row.get!uint(2), row.get!uint(3)];
         foreach (row; world.query!"SELECT guid, mount, stand_state, sheath_state, emote FROM creature_addon"())
-            creatureAddons[row.get!uint(0)] = CreatureAddon(row.get!uint(1), row.get!uint(2), row.get!uint(3), row.get!uint(4));
-        foreach (row; world.query!"SELECT entry, mount, stand_state, sheath_state, emote FROM creature_template_addon"())
+            creatureAddons[row.get!uint(0)] = CreatureAddon(row.get!uint(1), row.get!uint(2), row.get!uint(3),
+                row.get!uint(4));
+        foreach (row; world.query!("SELECT entry, mount, stand_state, sheath_state, emote "
+            ~ "FROM creature_template_addon")())
             creatureTemplateAddons[row.get!uint(0)] = CreatureAddon(row.get!uint(1), row.get!uint(2), row.get!uint(3),
                 row.get!uint(4));
-        foreach (row; world.query!"SELECT Level, Class, BaseHealthExp0, BaseMana FROM creature_template_classlevelstats"())
+        foreach (row; world.query!("SELECT Level, Class, BaseHealthExp0, BaseMana "
+            ~ "FROM creature_template_classlevelstats")())
             creatureClassStats[classStatsKey(row.get!uint(0), row.get!uint(1))] = CreatureClassStats(row.get!uint(2),
                 row.get!uint(3));
 
@@ -674,7 +682,7 @@ private:
                 table.length = level;
             (*table)[level - 1] = ClassLevelStats(row.get!uint(2), row.get!uint(3));
         }
-        foreach (classId, ref table; classLevelStats) // fill gaps with the level below, as CMaNGOS does
+        foreach (ref table; classLevelStats) // fill gaps with the level below, as CMaNGOS does
             foreach (level; 1 .. table.length)
                 if (table[level] == ClassLevelStats.init)
                     table[level] = table[level - 1];
@@ -690,7 +698,7 @@ private:
             player.levelStats[level - 1] = LevelStats([row.get!uint(3), row.get!uint(4), row.get!uint(5),
                 row.get!uint(6), row.get!uint(7)]);
         }
-        foreach (key, ref player; playerInfo)
+        foreach (ref player; playerInfo)
             foreach (level; 1 .. player.levelStats.length)
                 if (player.levelStats[level] == LevelStats.init)
                     player.levelStats[level] = player.levelStats[level - 1];

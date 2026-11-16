@@ -17,15 +17,15 @@
  */
 module dmangos.world.charscreen;
 
-import std.datetime.systime : Clock;
-
 /// See the module documentation.
 mixin template CharacterScreenHandlers()
 {
     import core.time : seconds;
     import dmangos.timer : IntervalTimer;
     import std.algorithm.iteration : map;
+    import std.algorithm.searching : canFind;
     import std.array : array;
+    import std.format : format;
     import dmangos.auth.accounts : AccountLevel;
     import dmangos.log;
     import dmangos.world.characters : buildCharacterEntry;
@@ -128,13 +128,7 @@ private:
                     || context.client.teamForRace(races[0]) != context.client.teamForRace(request.race)))
                     return R.CHAR_CREATE_PVP_TEAMS_VIOLATION;
                 // As CMaNGOS: the first row is only used for the faction check above.
-                if (config.skipCinematics == 1)
-                    foreach (race; races[1 .. $])
-                        if (race == request.race)
-                        {
-                            haveSameRace = true;
-                            break;
-                        }
+                haveSameRace = config.skipCinematics == 1 && races[1 .. $].canFind(request.race);
             }
         }
 
@@ -160,7 +154,7 @@ private:
     @Handles(Opcode.CMSG_CHAR_DELETE, WorldState.characterScreen)
     void handleCharDelete(const ClientCharDelete request)
     {
-        const guid = cast(uint)(request.guid & 0xFFFF_FFFF);
+        const guid = lowGuid(request.guid);
         if (context.database.isGuildLeader(guid))
             return send(ServerCharDelete(CharacterResponse.CHAR_DELETE_FAILED_GUILD_LEADER));
 
@@ -221,16 +215,12 @@ private:
             character.spells, abilities);
         player = new Player(character, abilities, context.data, context.client);
         // Rested XP: the saved bonus, plus what the time offline earned (Player::LoadFromDB).
-        {
-            import std.datetime.systime : Clock;
-
-            const offline = character.logoutTime > 0 ? context.unixTime - character.logoutTime : 0;
-            const rate = character.logoutResting ? context.config.rateRestOfflineInTavernOrCity
-                : context.config.rateRestOfflineInWilderness / 4;
-            player.setRestBonus(character.restBonus + (offline > 0 ? player.computeRest(offline, rate) : 0),
-                context.config.maxPlayerLevel);
-            player.clearChanges();
-        }
+        const offline = character.logoutTime > 0 ? context.unixTime - character.logoutTime : 0;
+        const rate = character.logoutResting ? context.config.rateRestOfflineInTavernOrCity
+            : context.config.rateRestOfflineInWilderness / 4;
+        player.setRestBonus(character.restBonus + (offline > 0 ? player.computeRest(offline, rate) : 0),
+            context.config.maxPlayerLevel);
+        player.clearChanges();
         saveTimer = IntervalTimer(context.config.playerSaveInterval.seconds);
         regenTimer.reset();
         enteredWorld = context.clock();
@@ -262,18 +252,28 @@ private:
         send(ServerExpectedSpamRecords());
         foreach (line; motdLines(context.config.motd))
             sendSystemMessage(line);
+        // ArcEmu's HandlePlayerLogin tells GMs, and with `send_stats_on_join` everyone, the population.
+        if (context.config.sendStatsOnJoin || hasGMPermissions)
+        {
+            import dmangos.world.commands : MSG_COLOR_WHITE;
+
+            systemMessage(format!"Online Players: %s%s |rPeak: %s%s|r Accepted Connections: %s%s"(MSG_COLOR_WHITE,
+                context.sessionCount, MSG_COLOR_WHITE, context.peakSessions, MSG_COLOR_WHITE,
+                context.acceptedSessions));
+        }
 
         sendInitialPacketsBeforeAddToMap();
         send(ServerSetProficiency(2, player.proficiency[0])); // ITEM_CLASS_WEAPON
         send(ServerSetProficiency(4, player.proficiency[1])); // ITEM_CLASS_ARMOR
 
-        // The race's intro, the first time.
+        // The race's intro, the first time; not for GMs (ArcEmu).
         if (c.cinematic == 0)
         {
             player.data.cinematic = 1;
-            if (const race = context.client.races.lookup(c.race))
-                if (race.cinematicSequence)
-                    send(ServerTriggerCinematic(race.cinematicSequence));
+            if (!hasGMPermissions)
+                if (const race = context.client.races.lookup(c.race))
+                    if (race.cinematicSequence)
+                        send(ServerTriggerCinematic(race.cinematicSequence));
         }
 
         // Map::Add: the client creates its items and itself, and the loading screen ends.
@@ -318,6 +318,8 @@ string[] motdLines(string motd) pure @safe
 /// `secsToTimeBitFields` for the local time, as `SMSG_LOGIN_SETTIMESPEED` carries the game time.
 uint gameTimeBits()
 {
+    import std.datetime.systime : Clock;
+
     const now = Clock.currTime;
     return (now.year - 2000) << 24 | (now.month - 1) << 20 | (now.day - 1) << 14 | now.dayOfWeek << 11
         | now.hour << 6 | now.minute;
@@ -390,7 +392,8 @@ unittest
 
     assert(createCharacter(client, "Anduin", raceHuman, classWarrior) == CharacterResponse.CHAR_CREATE_SUCCESS);
     // The default realm type is PvP: an Alliance account cannot add a Horde character.
-    assert(createCharacter(client, "Garrosh", raceOrc, classHunter) == CharacterResponse.CHAR_CREATE_PVP_TEAMS_VIOLATION);
+    assert(createCharacter(client, "Garrosh", raceOrc, classHunter)
+        == CharacterResponse.CHAR_CREATE_PVP_TEAMS_VIOLATION);
     assert(createCharacter(client, "Jaina", raceHuman, classMage) == CharacterResponse.CHAR_CREATE_SUCCESS);
     assert(createCharacter(client, "Varian", raceHuman, classWarrior) == CharacterResponse.CHAR_CREATE_SERVER_LIMIT);
     assert(db.saved.length == 2);

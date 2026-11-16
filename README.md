@@ -186,12 +186,13 @@ What works now:
     and custom ones with owners, moderators, passwords, muting, kicks, bans, invitations,
     announcements and moderation. One set per faction, unless
     `allow_two_side_interaction_channel` is on.
-  * **GM commands** typed in chat, about 130 of them, following ArcEmu and Ascent (with their
-    aliases): teleports and `game_tele` places, `.modify` (health, stats, speed, money, level,
-    looks, ...), `.levelup`, `.learn`, skills, `.additem`/`.removeitem`, lookups in the world
-    database, kicks, bans, mutes, accounts, timed shutdowns and restarts, announcements, whisper
-    blocking and debugging. See [docs/COMMANDS.md](docs/COMMANDS.md); what needs creatures, combat
-    or quests is listed there as not done yet.
+  * **The GM system is ArcEmu's:** its command tables, permission letters, lookup and replies,
+    word for word, with CMaNGOS's `gmlevel` mapped to letters by `gm_permissions`. 135 of its 298
+    commands work: teleports and `game_tele` recall places, `.modify` (health, stats, speed, money,
+    level, looks, ...), `.levelup`, `.character learn`, skills, items, lookups, kicks, bans, mutes,
+    account levels, timed shutdowns and restarts, announcements, the GM tag and whisper blocking,
+    cheats and debugging. The others need combat, spells, quests and the like, and say "Not yet
+    implemented." See [docs/COMMANDS.md](docs/COMMANDS.md).
   * **Queries:** name, item (`SMSG_ITEM_QUERY_SINGLE_RESPONSE`, from every `item_template`
     column), time and played time.
   * **Settings:** sitting and standing, target selection, action bar buttons and toggles, and
@@ -230,11 +231,18 @@ time.
 | `listen_range_say`, `listen_range_text_emote`, `listen_range_yell` | `ListenRange.Say`, `ListenRange.TextEmote`, `ListenRange.Yell` | `25`, `25`, `300` |
 | `allow_two_side_interaction_chat` | `AllowTwoSide.Interaction.Chat` (whispers between factions) | `false` |
 | `allow_two_side_interaction_channel`, `allow_two_side_interaction_group` | `AllowTwoSide.Interaction.Channel`, `AllowTwoSide.Interaction.Group` | `false`, `false` |
-| `gm_level_channel_moderation`, `gm_level_channel_silent_join` | `GM.ChannelModerationLevel`, `GM.ChannelSilentJoinLevel` (0 = nobody) | `1`, `0` |
 | `chat_restricted_raid_warnings` | `Chat.RestrictedRaidWarnings` | `false` |
 | `instance_ignore_level`, `instance_ignore_raid` | `Instance.IgnoreLevel`, `Instance.IgnoreRaid` | `false`, `false` |
 | `update_interval` | the world tick, in ms (mangosd's `WORLD_SLEEP_CONST`) | `50` |
-| `instant_logout`, `player_save_interval` | `InstantLogout`, `PlayerSave.Interval` (seconds here) | `1`, `900` |
+| `logout_delay`, `player_save_interval` | seconds a logout takes (GMs and resting players: none), `PlayerSave.Interval` (seconds here) | `20`, `900` |
+| `gm_permissions` | ArcEmu's permission letters for `account.gmlevel` 1, 2 and 3 | `{"1": "bcghiltuv", "2": "a", "3": "az"}` |
+| `command_overrides` | ArcEmu's `command_overrides` table: `[{"command": "gm on", "group": "m"}]` | none |
+| `allow_player_commands`, `gm_command_log` | ArcEmu's `Server.AllowPlayerCommands`, `Log.GMCommands` (a file name here) | `false`, none |
+| `gamemaster_list_only_active_gms`, `gamemaster_hide_permissions` | ArcEmu's `GameMaster.ListOnlyActiveGMs`, `.HidePermissions` | `false`, `false` |
+| `send_stats_on_join`, `gm_client_channel` | ArcEmu's `Server.SendStatsOnJoin`, `GMClient.GmClientChannel` | `true`, none |
+| `flood_lines`, `flood_seconds`, `flood_message` | ArcEmu's `FloodProtection.*` (0 = off) | `0`, `0`, `false` |
+| `announce_tag`, `announce_gm_admin_tag`, `announce_name_in_announce`, `announce_name_in_wannounce` | ArcEmu's `Announce.*` | `Staff`, `false`, `true`, `true` |
+| `announce_tag_color`, `announce_gm_tag_color`, `announce_name_color`, `announce_message_color` | ArcEmu's `Color.Ann*Color` (1-10) | `2`, `1`, `4`, `10` |
 | `rate_health`, `rate_mana`, `rate_rage_loss`, `rate_energy` | `Rate.Health`, `Rate.Mana`, `Rate.Rage.Loss`, `Rate.Energy` | `1` |
 | `rate_rest_ingame`, `rate_rest_offline_in_tavern_or_city`, `rate_rest_offline_in_wilderness` | `Rate.Rest.*` | `1` |
 | `max_player_level` | `MaxPlayerLevel` | `60` |
@@ -304,9 +312,11 @@ source/dmangos/world/       the world server (mangosd)
   teleport.d                  handlers and TeleportTo: near and far teleports, area triggers
   grouphandlers.d             handlers: invitations, raids, loot settings, icons, ready checks, rolls
   channelhandlers.d           handlers: chat channels
-  commands.d                  chat commands: the table built from @Command attributes, general commands
-  gmtravel.d, gmcharacter.d   GM commands: teleports and recall places; .modify, items, spells, skills
-  gmadmin.d, gmdebug.d        GM commands: accounts, bans, kicks, server; lookups, debugging
+  commandtable.d              ArcEmu's GM command tables, row for row
+  commands.d                  ArcEmu's command lookup, permission letters, messages, .modify fields
+  gmactions.d                 what GM commands do to players: levels, speeds, items, skills, saving
+  gmlevel0.d .. gmlevel3.d    GM commands from ArcEmu's Level0.cpp .. Level3.cpp
+  gmdebug.d                   GM commands from debugcmds.cpp, RecallCommands.cpp, BattlegroundCommands.cpp
   map.d                       players, creatures and game objects on a map: cells, sight, broadcasting
   grid.d                      grid cells shared by maps and the spawn index
   creature.d, gameobject.d    creature_template/creature and gameobject_template/gameobject: the objects
@@ -350,8 +360,8 @@ excludes. This is how DCD builds `dcd-server` and `dcd-client` from one package.
   behaviour, D's structure.
 * [docs/DEVELOPING.md](docs/DEVELOPING.md): recipes (new packet, handler group, DBC, table,
   config key), testing (unit and live), and pitfalls found so far.
-* [docs/COMMANDS.md](docs/COMMANDS.md): every GM command, its level and arguments, and the ArcEmu
-  and Ascent commands not done yet.
+* [docs/COMMANDS.md](docs/COMMANDS.md): the GM system, every ArcEmu command with its permission
+  letter, which work yet, and where this server differs from ArcEmu.
 * [docs/ROADMAP.md](docs/ROADMAP.md): what works, known gaps, and the next milestones with their
   CMaNGOS references.
 

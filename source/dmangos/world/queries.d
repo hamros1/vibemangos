@@ -5,15 +5,13 @@
  */
 module dmangos.world.queries;
 
-import dmangos.world.creature : CreatureTemplate;
-import dmangos.world.gameobject : GameObjectTemplate;
-
 import dmangos.bytes;
+import dmangos.world.creature : CreatureTemplate;
 import dmangos.world.defines : ItemClass;
+import dmangos.world.gameobject : GameObjectTemplate;
 import dmangos.world.opcodes : ChatType, Language;
 import dmangos.world.spells : SpellData;
 import dmangos.world.worlddata : ItemTemplate;
-
 
 /// The body of `SMSG_ITEM_QUERY_SINGLE_RESPONSE` for `item`.
 ubyte[] itemQueryResponse(uint entry, const ItemTemplate* item, const SpellData spells)
@@ -198,6 +196,23 @@ ubyte[] chatMessage(ChatType type, Language language, ulong sender, string text,
     w.put(cast(uint)(text.length + 1));
     w.putCString(text);
     w.put(chatTag);
+    return w.data.dup;
+}
+
+/// `ChatHandler::BuildChatPacket` for a creature's say or yell: its guid and name, and no listener.
+ubyte[] monsterChatMessage(ChatType type, ulong sender, string name, string text) pure @safe
+in (type == ChatType.CHAT_MSG_MONSTER_SAY || type == ChatType.CHAT_MSG_MONSTER_YELL)
+{
+    ByteWriter w;
+    w.put(cast(ubyte) type);
+    w.put(cast(uint) Language.LANG_UNIVERSAL);
+    w.put(sender);
+    w.put(cast(uint)(name.length + 1));
+    w.putCString(name);
+    w.put(ulong(0)); // the listener
+    w.put(cast(uint)(text.length + 1));
+    w.putCString(text);
+    w.put(ubyte(0));
     return w.data.dup;
 }
 

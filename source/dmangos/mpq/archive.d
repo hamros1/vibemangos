@@ -12,6 +12,8 @@
 module dmangos.mpq.archive;
 
 import std.algorithm.comparison : min;
+import std.algorithm.iteration : map;
+import std.array : array;
 import std.exception : basicExceptionCtors, enforce;
 import std.format : format;
 import std.stdio : File;
@@ -48,6 +50,9 @@ private enum Compression : ubyte
     adpcmMono = 0x40,
     adpcmStereo = 0x80,
 }
+
+/// The header's signature, "MPQ\x1A", and that of the user data block that may precede it, "MPQ\x1B".
+private enum uint headerMagic = 0x1A51504D, userDataMagic = 0x1B51504D;
 
 private enum uint hashEntryEmpty = 0xFFFFFFFF, hashEntryDeleted = 0xFFFFFFFE;
 
@@ -191,10 +196,7 @@ final class MpqArchive
     {
         if (!contains("(listfile)"))
             return null;
-        string[] names;
-        foreach (line; splitList(cast(const(char)[]) read("(listfile)")))
-            names ~= line.idup;
-        return names;
+        return splitList(cast(const(char)[]) read("(listfile)")).map!(line => line.idup).array;
     }
 
     /// Reads and decodes `file`.
@@ -245,7 +247,7 @@ final class MpqArchive
             decryptBlock(table, key - 1);
         foreach (i; 0 .. sectors)
         {
-            const from = word(table, i), to = word(table, i + 1);
+            const from = readWord(table, i), to = readWord(table, i + 1);
             enforce!MpqException(to >= from && to <= block.packedSize,
                 format!"%s: corrupt sector table in '%s'"(name, file));
             auto sector = source.read(start + from, to - from);
@@ -266,13 +268,13 @@ private:
         for (ulong offset = 0; offset + 32 <= source.length; offset += 512)
         {
             const probe = source.read(offset, 16);
-            const magic = word(probe, 0);
-            if (magic == 0x1B51504D) // "MPQ\x1B"
+            const magic = readWord(probe, 0);
+            if (magic == userDataMagic)
             {
-                base = offset + word(probe, 2);
+                base = offset + readWord(probe, 2);
                 break;
             }
-            if (magic == 0x1A51504D) // "MPQ\x1A"
+            if (magic == headerMagic)
             {
                 base = offset;
                 break;
@@ -281,27 +283,27 @@ private:
         }
 
         const header = source.read(base, 32);
-        enforce!MpqException(word(header, 0) == 0x1A51504D, name ~ ": not an MPQ archive");
+        enforce!MpqException(readWord(header, 0) == headerMagic, name ~ ": not an MPQ archive");
         const sectorShift = header[14] | header[15] << 8;
         sectorSize = 512u << sectorShift;
-        const hashTablePos = word(header, 4), blockTablePos = word(header, 5);
-        const hashCount = word(header, 6), blockCount = word(header, 7);
+        const hashTablePos = readWord(header, 4), blockTablePos = readWord(header, 5);
+        const hashCount = readWord(header, 6), blockCount = readWord(header, 7);
         enforce!MpqException(hashCount > 0, name ~ ": empty hash table");
 
         auto hashBytes = source.read(base + hashTablePos, hashCount * 16);
         decryptBlock(hashBytes, hashString("(hash table)", HashType.fileKey));
         hashes = new HashEntry[hashCount];
         foreach (i, ref entry; hashes)
-            entry = HashEntry(word(hashBytes, i * 4), word(hashBytes, i * 4 + 1),
-                cast(ushort) word(hashBytes, i * 4 + 2), cast(ushort)(word(hashBytes, i * 4 + 2) >> 16),
-                word(hashBytes, i * 4 + 3));
+            entry = HashEntry(readWord(hashBytes, i * 4), readWord(hashBytes, i * 4 + 1),
+                cast(ushort) readWord(hashBytes, i * 4 + 2), cast(ushort)(readWord(hashBytes, i * 4 + 2) >> 16),
+                readWord(hashBytes, i * 4 + 3));
 
         auto blockBytes = source.read(base + blockTablePos, blockCount * 16);
         decryptBlock(blockBytes, hashString("(block table)", HashType.fileKey));
         blocks = new BlockEntry[blockCount];
         foreach (i, ref entry; blocks)
-            entry = BlockEntry(word(blockBytes, i * 4), word(blockBytes, i * 4 + 1), word(blockBytes, i * 4 + 2),
-                word(blockBytes, i * 4 + 3));
+            entry = BlockEntry(readWord(blockBytes, i * 4), readWord(blockBytes, i * 4 + 1),
+                readWord(blockBytes, i * 4 + 2), readWord(blockBytes, i * 4 + 3));
     }
 
     /// The block of `file`, preferring the locale-neutral entry, or null.
@@ -355,11 +357,6 @@ private:
         return payload;
     }
 
-    static uint word(const(ubyte)[] bytes, size_t index) pure nothrow @nogc @safe
-    {
-        const o = index * 4;
-        return bytes[o] | bytes[o + 1] << 8 | bytes[o + 2] << 16 | bytes[o + 3] << 24;
-    }
 }
 
 /// Splits a `(listfile)` into names: one per line, `;` also separates, blanks ignored.
@@ -504,7 +501,7 @@ version (unittest)
         encryptBlock(blockBytes, hashString("(block table)", HashType.fileKey));
 
         ubyte[] header;
-        put32(header, 0x1A51504D);
+        put32(header, headerMagic);
         put32(header, 32);
         const hashPos = cast(uint)(32 + body.length);
         const blockPos = cast(uint)(hashPos + hashBytes.length);

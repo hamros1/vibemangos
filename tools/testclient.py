@@ -19,7 +19,7 @@ in order:
     emote:ID                  a text emote (101 = /wave, 34 = /dance)
     wait:SECONDS              do nothing for a while (packets queue up)
     listen:SECONDS            print what other players do for a while
-    cmd:TEXT                  say a chat command (".tele Goldshire") and print what follows
+    cmd:TEXT                  say a chat command (".recall port Goldshire") and print what follows
     trigger:ID                walk into an area trigger (78 = the Deadmines entrance)
     worldport:MAP:X:Y:Z       the client's worldport command (administrators)
     invite:NAME  accept  decline  leave  raid
@@ -339,7 +339,7 @@ for action in actions:
             if op == 0x041: print("  login failed, reason", p[0]); sys.exit(1)
             if op == 0x236: print("  verify world: map %d at %.2f %.2f %.2f o %.2f" % struct.unpack("<I4f", p))
             if op == 0x096:
-                n = struct.unpack_from("<I", p, 16)[0]; print("  system message:", p[20:20 + n - 1].decode())
+                n = struct.unpack_from("<I", p, 13)[0]; print("  system message:", p[17:17 + n - 1].decode())
             if op == 0x12A:
                 n = struct.unpack_from("<H", p, 1)[0]; print(f"  {n} spells:", [struct.unpack_from("<H", p, 3 + 4 * i)[0] for i in range(n)][:12], "...")
             if op == 0x129:

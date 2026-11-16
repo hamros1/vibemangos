@@ -15,7 +15,7 @@
  */
 module dmangos.world.objects;
 
-import std.algorithm.searching : all;
+import std.algorithm.searching : all, any;
 import std.zlib : compress;
 
 import dmangos.bytes;
@@ -62,17 +62,6 @@ uint lowGuid(ulong guid) pure nothrow @nogc @safe
     return cast(uint) guid;
 }
 
-/// Writes a guid in packed form (`ByteWriter.putPackedGuid`).
-void putPackedGuid(ref ByteWriter writer, ulong guid) pure nothrow @safe
-{
-    writer.putPackedGuid(guid);
-}
-
-/// Reads a packed guid (`ByteReader.readPackedGuid`).
-ulong readPackedGuid(ref ByteReader reader) pure @safe
-{
-    return reader.readPackedGuid();
-}
 
 /// Which fields a viewer sees (`Object::GetUpdateFieldFlagsForTarget`).
 enum Visibility seenByEveryone = Visibility.public_ | Visibility.dynamic;
@@ -232,10 +221,7 @@ struct UpdateValues
     /// Whether any field changed since `clearChanges`.
     @property bool hasChanges() const pure nothrow @nogc @safe
     {
-        foreach (word; changed)
-            if (word)
-                return true;
-        return false;
+        return changed.any!(word => word != 0);
     }
 
     /// Forgets the changes, e.g. once they have been sent.
@@ -296,10 +282,7 @@ struct UpdateValues
     /// Whether a viewer that sees `seen` has changes to be told about.
     bool hasChangesFor(Visibility seen) const pure nothrow @safe
     {
-        foreach (word; changesSeen(seen))
-            if (word)
-                return true;
-        return false;
+        return changesSeen(seen).any!(word => word != 0);
     }
 
 private:
@@ -460,7 +443,7 @@ struct UpdateData
     in (type == UpdateType.createObject || type == UpdateType.createObject2)
     {
         blocks.put(cast(ubyte) type);
-        putPackedGuid(blocks, guid);
+        blocks.putPackedGuid(guid);
         blocks.put(cast(ubyte) values.type);
         movement.write(blocks);
         values.writeCreate(blocks, seen, adjust);
@@ -471,7 +454,7 @@ struct UpdateData
     void addValues(ulong guid, const ref UpdateValues values, Visibility seen, scope ValueAdjuster adjust = null)
     {
         blocks.put(cast(ubyte) UpdateType.values);
-        putPackedGuid(blocks, guid);
+        blocks.putPackedGuid(guid);
         values.writeChanges(blocks, seen, adjust);
         ++count;
     }
@@ -480,7 +463,7 @@ struct UpdateData
     void addSlots(ulong guid, const ref UpdateValues values, const(size_t)[] which, scope ValueAdjuster adjust = null)
     {
         blocks.put(cast(ubyte) UpdateType.values);
-        putPackedGuid(blocks, guid);
+        blocks.putPackedGuid(guid);
         values.writeSlots(blocks, which, adjust);
         ++count;
     }
@@ -492,7 +475,7 @@ struct UpdateData
         blocks.put(cast(ubyte) UpdateType.outOfRangeObjects);
         blocks.put(cast(uint) guids.length);
         foreach (guid; guids)
-            putPackedGuid(blocks, guid);
+            blocks.putPackedGuid(guid);
         ++count;
     }
 
@@ -540,11 +523,11 @@ unittest
 {
     // Packed guids: only the non-zero bytes follow the mask.
     ByteWriter w;
-    putPackedGuid(w, makeGuid(HighGuid.item, 0x0102));
+    w.putPackedGuid(makeGuid(HighGuid.item, 0x0102));
     const ubyte[4] expected = [0b1000_0011, 0x02, 0x01, 0x40];
     assert(w.data == expected[]);
     auto r = ByteReader(w.data);
-    assert(readPackedGuid(r) == 0x4000_0000_0000_0102);
+    assert(r.readPackedGuid() == 0x4000_0000_0000_0102);
     assert(lowGuid(makeGuid(HighGuid.item, 77)) == 77);
 }
 
@@ -581,7 +564,8 @@ unittest
     ByteWriter self, other;
     values.writeCreate(self, seenBySelf);
     values.writeCreate(other, seenByEveryone);
-    assert(self.length == other.length + 4 * 4, "coinage, the third stat and the main hand's two-slot guid are private");
+    assert(self.length == other.length + 4 * 4,
+        "coinage, the third stat and the main hand's two-slot guid are private");
 
     // Changes: unchanged writes are not recorded.
     values.clearChanges();
@@ -607,7 +591,8 @@ unittest
     data.addCreate(UpdateType.createObject, makeGuid(HighGuid.item, 1), movement, values, seenBySelf);
     const small = data.build();
     assert(!small.compressed);
-    // count (4) + transport (1) + type (1) + guid (3) + type id (1) + flags (1) + 1 (4) + mask count (1) + 2 words + 2 values
+    // count (4) + transport (1) + type (1) + guid (3) + type id (1) + flags (1) + 1 (4) + mask count (1)
+    // + 2 words + 2 values
     assert(small.body_.length == 4 + 1 + 1 + 3 + 1 + 1 + 4 + 1 + 8 + 8);
     assert(small.body_[0 .. 6] == [1, 0, 0, 0, 0, 2]);
 

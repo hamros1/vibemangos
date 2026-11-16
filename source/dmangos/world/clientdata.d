@@ -440,17 +440,20 @@ final class ClientData
     /// Reads the DBC files from `<dataDir>/dbc/`.
     static ClientData load(string dataDir)
     {
+        import std.algorithm.searching : findSplit;
+
         auto data = new ClientData;
         const dir = buildPath(dataDir, "dbc");
         static foreach (member; ["charSections:CharSections", "facialHairStyles:CharacterFacialHairStyles",
-            "classes:ChrClasses", "races:ChrRaces", "startOutfits:CharStartOutfit", "skillLines:SkillLine", "skillLineAbilities:SkillLineAbility",
-            "skillRaceClassInfos:SkillRaceClassInfo", "skillTiers:SkillTiers", "talents:Talent",
-            "talentTabs:TalentTab", "creatureDisplays:CreatureDisplayInfo", "creatureModels:CreatureModelData",
-            "emotesText:EmotesText", "emotes:Emotes", "maps:Map", "areas:AreaTable", "areaTriggers:AreaTrigger",
-            "chatChannels:ChatChannels"])
+            "classes:ChrClasses", "races:ChrRaces", "startOutfits:CharStartOutfit", "skillLines:SkillLine",
+            "skillLineAbilities:SkillLineAbility", "skillRaceClassInfos:SkillRaceClassInfo", "skillTiers:SkillTiers",
+            "talents:Talent", "talentTabs:TalentTab", "creatureDisplays:CreatureDisplayInfo",
+            "creatureModels:CreatureModelData", "emotesText:EmotesText", "emotes:Emotes", "maps:Map",
+            "areas:AreaTable", "areaTriggers:AreaTrigger", "chatChannels:ChatChannels"])
         {{
-            enum field = member[0 .. indexOf(member, ':')];
-            enum file = member[indexOf(member, ':') + 1 .. $] ~ ".dbc";
+            enum parts = member.findSplit(":");
+            enum field = parts[0];
+            enum file = parts[2] ~ ".dbc";
             __traits(getMember, data, field) = typeof(__traits(getMember, data, field)).load(buildPath(dir, file));
         }}
         data.buildIndexes();
@@ -543,9 +546,7 @@ final class ClientData
     /// Every spell id that has a SkillLineAbility entry, ascending (CMaNGOS's multimap order).
     uint[] spellsWithAbilities() const
     {
-        auto spells = abilitiesBySpell.keys;
-        spells.sort();
-        return spells;
+        return abilitiesBySpell.keys.sort().release;
     }
 
     /// `displayInfo->scale * modelData->Scale`, as `Player::InitDisplayIds` sets the object scale; 1 if unknown.
@@ -630,9 +631,7 @@ final class ClientData
 
     private static uint[] ascendingIds(const(uint)[] ids)
     {
-        auto sorted = ids.dup;
-        sorted.sort();
-        return sorted;
+        return ids.dup.sort().release;
     }
 }
 
@@ -642,14 +641,6 @@ enum Team
     none,
     alliance,
     horde,
-}
-
-private size_t indexOf(string text, char c) pure @safe
-{
-    foreach (i, ch; text)
-        if (ch == c)
-            return i;
-    return text.length;
 }
 
 unittest

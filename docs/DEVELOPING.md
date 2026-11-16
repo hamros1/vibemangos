@@ -133,28 +133,34 @@ floats to `float_` fields, `ulong` to guids. An index may run on into the follow
 have the same type, and a contract checks that. To show an object to *another* player, send
 `seenByEveryone` (plus `seenByOwner` for its owner) instead of `seenBySelf`.
 
-### Add a chat command
+### Write a GM command
 
-Add a method to the command group it belongs to (`gmtravel.d`, `gmcharacter.d`, `gmadmin.d`,
-`gmdebug.d`, or `commands.d` for general ones). Its name starts with `command`, and it returns false
-when the arguments are wrong (the player is then shown the syntax):
+Every ArcEmu command is already in `commandtable.d`; the ones not written answer "Not yet
+implemented.". To write one, find its row (say `.npc come`, handler `HandleNpcComeCommand`), read
+ArcEmu's handler, and add the method with the same name, first letter in lower case, to the mixin of
+the ArcEmu file it comes from (`gmlevel2.d` for `Level2.cpp` if it does not exist yet: a new mixin
+template mixed into `WorldSession` like the others):
 
 ```d
-@Command("go xyz", AccountLevel.moderator, "x y z [map]", "Teleports you to a position.", ["goxyz"])
-bool commandGoXyz(string args)
+bool handleNpcComeCommand(uint distance = 5)     // the command's words, as typed parameters
 {
-    float x, y, z;
-    uint map = player.data.map;
-    if (!readArguments!3(args, x, y, z, map))   // three required, the map optional
-        return false;
+    auto creature = getSelectedCreature(true);   // ChatHandler::getSelectedCreature
+    if (creature is null)
+        return true;
     ...
+    blueSystemMessage("...");                    // ArcEmu's message, word for word
+    return true;                                 // false shows the row's help
 }
 ```
 
-That is all: the table, the aliases, `.help` and the dispatch come from the attribute. Use
-`selectedOrSelf()` for "the selected player", and call that session's methods to change it (they
-send its packets). A teleport should go through `commandTeleport`, which remembers where `.recall`
-returns to. Add the command to `docs/COMMANDS.md`.
+That is all: the compile-time `switch` finds the method. Its parameters are the command's words,
+converted with `std.conv.to`: a parameter with a default is optional, a `Nullable` one is null when
+missing, a `Rest` takes the rest of the line (a name, a reason), and `OnOff` reads "on" or "off". A
+word that is missing or does not convert shows the row's help, so the handler never sees bad input.
+Keep ArcEmu's checks and messages; use
+`getSelectedChar(showError)` for its "selected player" and call that session's methods to change it.
+Where CMaNGOS's schema forces a difference, say so in the module comment. Then run
+`python3 tools/commands_doc.py` to update `docs/COMMANDS.md`.
 
 ### Teleport a player
 
@@ -198,8 +204,8 @@ python3 tools/testclient.py 3724 tester2 PASS2 login:Other invite:Me listen:3 pa
 A game master can try teleports and commands alone:
 
 ```sh
-python3 tools/testclient.py 3724 tester PASS login:Me "cmd:.tele goldshire" cmd:.gps \
-    "cmd:.go xyz -11208.5 1685.34 25.76" trigger:78 "cmd:.gm on" trigger:78 cmd:.recall logout
+python3 tools/testclient.py 3724 tester PASS login:Me "cmd:.recall port goldshire" cmd:.gps \
+    "cmd:.worldport 0 -11208.5 1685.34 25.76" trigger:78 "cmd:.cheat triggerpass" trigger:78 logout
 ```
 
 The client answers teleports by itself, as the real one does.

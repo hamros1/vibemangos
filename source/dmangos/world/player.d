@@ -14,8 +14,9 @@
  */
 module dmangos.world.player;
 
-import std.algorithm.comparison : min;
-import std.algorithm.searching : find;
+import std.algorithm.comparison : max, min;
+import std.algorithm.iteration : sum;
+import std.algorithm.searching : canFind, find;
 import std.array : split;
 import std.conv : ConvException, to;
 
@@ -186,9 +187,6 @@ enum RestType
 private enum : uint
 {
     unitFlagPlayerControlled = 0x00000008,
-    playerFlagsAfk = PlayerFlags.afk,
-    playerFlagsDnd = PlayerFlags.dnd,
-    playerFlagsGm = PlayerFlags.gm,
     unitByte2FlagSupportable = 0x08,
     unitByte2FlagUnk5 = 0x20,
 }
@@ -208,7 +206,8 @@ final class Player
     uint[maxActionButtons] actionButtons; /// packed, 0 = empty
     uint[2] proficiency;                 /// item sub-class masks for weapons and armor (`SMSG_SET_PROFICIENCY`)
     string autoReply;                    /// the AFK or DND message (`Player::autoReplyMsg`)
-    bool gmChat;                         /// the GM badge in chat (`.gm chat`)
+    /// ArcEmu's `Player::bGMTagOn`: the GM tag in chat (`.gm on`, `.gm whisperblock`)
+    bool gmTagOn;
 
     /**
      * Builds the player from its database rows and the skills and spells
@@ -402,7 +401,7 @@ final class Player
     /// `Player::GetChatTag`
     @property ChatTag chatTag() const
     {
-        if (gmChat)
+        if (gmTagOn)
             return ChatTag.CHAT_TAG_GM;
         if (hasFlag(PlayerFlags.afk))
             return ChatTag.CHAT_TAG_AFK;
@@ -435,7 +434,7 @@ final class Player
         p.totalTime = data.totalTime + secondsInWorld;
         p.levelTime = data.levelTime + secondsInWorld;
         p.health = values[UNIT_FIELD_HEALTH];
-        foreach (i; 0 .. 5)
+        foreach (i; 0 .. maxPowers)
             p.power[i] = values[UNIT_FIELD_POWER1 + i];
         p.actionBars = values.getByte!PLAYER_FIELD_BYTES(2);
         p.cinematic = data.cinematic;
@@ -454,9 +453,8 @@ final class Player
     {
         import std.algorithm.iteration : map;
         import std.array : join;
-        import std.conv : to;
 
-        uint[64] zones;
+        uint[exploredZonesSize] zones;
         foreach (i, ref zone; zones)
             zone = values.get!PLAYER_EXPLORED_ZONES_1(i);
         return zones[].map!(z => z.to!string).join(" ") ~ " ";
@@ -520,8 +518,6 @@ final class Player
      */
     bool regenerate(uint milliseconds, float healthRate, float manaRate, float rageLoss, float energyRate)
     {
-        import std.algorithm.comparison : max;
-
         bool changed;
         const health = values.get!UNIT_FIELD_HEALTH, maxHealth = values.get!UNIT_FIELD_MAXHEALTH;
         if (health < maxHealth && health > 0)
@@ -610,7 +606,7 @@ final class Player
     {
         const before = world.classStats(data.classId, data.level), beforeStats = world.levelStats(data.race,
             data.classId, data.level);
-        const earnedBefore = data.level < 10 ? 0 : data.level - 9;
+        const earnedBefore = talentPointsForLevel(data.level);
         const spentTalents = earnedBefore - min(earnedBefore, values[PLAYER_CHARACTER_POINTS1]);
         const xp = data.level == level ? values[PLAYER_XP] : 0;
 
@@ -622,10 +618,11 @@ final class Player
         data.exploredZones = exploredZonesText();
         computeDerived(world);
         setPlayerFields(world, client);
-        const earned = level < 10 ? 0 : level - 9;
+        const earned = talentPointsForLevel(level);
         values.set!PLAYER_CHARACTER_POINTS1(earned > spentTalents ? earned - spentTalents : 0);
 
-        const after = world.classStats(data.classId, level), afterStats = world.levelStats(data.race, data.classId, level);
+        const after = world.classStats(data.classId, level),
+            afterStats = world.levelStats(data.race, data.classId, level);
         ServerLevelUpInfo info;
         info.level = level;
         info.health = after.baseHealth - before.baseHealth;
@@ -641,15 +638,13 @@ final class Player
     /// The fastest the player can move on the ground or in water.
     @property float fastestSpeed() const
     {
-        import std.algorithm.comparison : max;
-
         return max(speeds[MoveType.run], speeds[MoveType.swim], speeds[MoveType.runBack], speeds[MoveType.walk]);
     }
 
     /// `Player::ExploreArea` for everything: every bit of `PLAYER_EXPLORED_ZONES_1`.
     void exploreAll()
     {
-        foreach (i; 0 .. 64)
+        foreach (i; 0 .. exploredZonesSize)
             values.set!PLAYER_EXPLORED_ZONES_1(i, uint.max);
     }
 
@@ -714,10 +709,7 @@ final class Player
     /// Whether the spellbook has the spell.
     bool knowsSpell(uint spell) const
     {
-        foreach (id; spells)
-            if (id == spell)
-                return true;
-        return false;
+        return spells.canFind(spell);
     }
 
     /**
@@ -943,8 +935,8 @@ private:
         input.levelStats = world.levelStats(data.race, data.classId, data.level);
         input.classStats = world.classStats(data.classId, data.level);
         foreach (ref item; items)
-            if (item.bag == 0 && item.slot < equipmentSlotEnd && item.values[ITEM_FIELD_DURABILITY] != 0
-                || item.bag == 0 && item.slot < equipmentSlotEnd && item.template_.maxDurability == 0)
+            if (item.bag == 0 && item.slot < equipmentSlotEnd
+                && (item.values[ITEM_FIELD_DURABILITY] != 0 || item.template_.maxDurability == 0))
                 input.equipment[item.slot] = item.template_;
         stats = computeStats(input);
     }
@@ -980,7 +972,7 @@ private:
         // Health and powers: saved values, within the maximums.
         v.set!UNIT_FIELD_MAXHEALTH(stats.maxHealth);
         v.set!UNIT_FIELD_HEALTH(data.health == 0 || data.health > stats.maxHealth ? stats.maxHealth : data.health);
-        foreach (i; 0 .. 5)
+        foreach (i; 0 .. maxPowers)
         {
             v.set!UNIT_FIELD_MAXPOWER1(i, stats.maxPower[i]);
             v.set!UNIT_FIELD_POWER1(i, min(data.power[i], stats.maxPower[i]));
@@ -1014,7 +1006,7 @@ private:
         v.set!UNIT_FIELD_MAXRANGEDDAMAGE(stats.damage[AttackType.ranged].max);
 
         // Player
-        v.set!PLAYER_FLAGS(data.playerFlags & ~(playerFlagsAfk | playerFlagsDnd | playerFlagsGm));
+        v.set!PLAYER_FLAGS(data.playerFlags & ~(PlayerFlags.afk | PlayerFlags.dnd | PlayerFlags.gm));
         v.set!PLAYER_BYTES(data.playerBytes);
         v.set!PLAYER_BYTES_2(data.playerBytes2);
         v.setByte!PLAYER_BYTES_2(3, RestState.normal);
@@ -1025,7 +1017,7 @@ private:
         v.set!PLAYER_FIELD_COINAGE(data.money);
         v.set!PLAYER_AMMO_ID(data.ammoId);
         v.set!PLAYER_FIELD_WATCHED_FACTION_INDEX(data.watchedFaction);
-        foreach (i, n; parseNumbers(data.exploredZones, 64))
+        foreach (i, n; parseNumbers(data.exploredZones, exploredZonesSize))
             v.set!PLAYER_EXPLORED_ZONES_1(i, n);
     }
 
@@ -1065,13 +1057,17 @@ private:
         }
 
         // Player::UpdateFreeTalentPoints
-        uint spent;
-        foreach (ranks; talentRanks)
-            spent += ranks;
-        const earned = data.level < 10 ? 0 : data.level - 9;
+        const spent = talentRanks.byValue.sum;
+        const earned = talentPointsForLevel(data.level);
         values.set!PLAYER_CHARACTER_POINTS1(earned > spent ? earned - spent : 0);
         values.set!PLAYER_CHARACTER_POINTS2(abilities.freePrimaryProfessions);
     }
+}
+
+/// The talent points a character of `level` has earned: one per level from 10 on.
+private uint talentPointsForLevel(uint level) pure nothrow @nogc @safe
+{
+    return level < 10 ? 0 : level - 9;
 }
 
 /// `count` space-separated numbers from a CMaNGOS text column; missing or malformed ones are 0.
@@ -1135,7 +1131,8 @@ unittest
     ];
     c.skills = [NewSkill(skillSwords, 1, 5), NewSkill(12345, 1, 1)];
     c.spells = [NewSpell(spellOneHandedSwords, true, false), NewSpell(spellFireball, false, false)];
-    c.actions = [CreateAction(0, 6603, 0), CreateAction(1, spellOneHandedSwords, 0), CreateAction(200, 1, 0)]; // 6603 is not a test spell
+    // 6603 is not a test spell.
+    c.actions = [CreateAction(0, 6603, 0), CreateAction(1, spellOneHandedSwords, 0), CreateAction(200, 1, 0)];
 
     import dmangos.world.playercreate : CharacterBuilder, CreationSettings;
 
@@ -1212,7 +1209,7 @@ unittest
     // Flags and the chat tag.
     p.setFlag(PlayerFlags.afk, true);
     assert(p.hasFlag(PlayerFlags.afk) && p.chatTag == ChatTag.CHAT_TAG_AFK);
-    p.gmChat = true;
+    p.gmTagOn = true;
     assert(p.chatTag == ChatTag.CHAT_TAG_GM && p.powerType == Power.rage);
 
     // Saving adds the time played.

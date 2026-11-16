@@ -176,6 +176,12 @@ final class Creature : MapObject
         return guid_;
     }
 
+    /// See `MapObject.fields`.
+    ref UpdateValues fields()
+    {
+        return values;
+    }
+
     /// Where the creature is.
     @property Position position() const
     {
@@ -226,7 +232,8 @@ private:
         else
         {
             const span = t.maxLevel > t.minLevel ? float(level - t.minLevel) / (t.maxLevel - t.minLevel) : 0;
-            const lowHealth = min(t.minLevelHealth, t.maxLevelHealth), highHealth = max(t.minLevelHealth, t.maxLevelHealth);
+            const lowHealth = min(t.minLevelHealth, t.maxLevelHealth);
+            const highHealth = max(t.minLevelHealth, t.maxLevelHealth);
             const lowMana = min(t.minLevelMana, t.maxLevelMana), highMana = max(t.minLevelMana, t.maxLevelMana);
             health = lowHealth + cast(uint)(span * (highHealth - lowHealth));
             mana = lowMana + cast(uint)(span * (highMana - lowMana));

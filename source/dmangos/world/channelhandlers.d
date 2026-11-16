@@ -10,9 +10,10 @@ module dmangos.world.channelhandlers;
 mixin template ChannelHandlers()
 {
     import std.algorithm.searching : canFind;
+    import std.uni : sicmp;
     import dmangos.auth.accounts : AccountLevel;
     import dmangos.world.channel;
-    import dmangos.world.names : normalizePlayerName;
+    import dmangos.world.names : normalizedName;
     import dmangos.world.opcodes;
     import dmangos.world.packets;
 
@@ -20,8 +21,6 @@ private:
     /// `WorldSession::CheckChatChannelNameAndPassword`: names are cut at 128 characters, passwords are not.
     bool checkChannelName(ref string channel, string password)
     {
-        import dmangos.world.channel : ChatNotify, notice;
-
         if (channel.length > 128)
             channel = channel[0 .. 128];
         if (password.length > 128)
@@ -44,17 +43,15 @@ private:
         return context.channelsFor(this).find(name, this);
     }
 
-    /// A target name as `normalizePlayerName` makes it, or null.
-    static string targetName(string name)
-    {
-        return normalizePlayerName(name) ? name : null;
-    }
-
     @Handles(Opcode.CMSG_JOIN_CHANNEL, WorldState.inWorld)
     void handleJoinChannel(const ClientChannelPassword request)
     {
         string name = request.channel;
         if (name.length == 0 || !checkChannelName(name, request.password))
+            return;
+        // ArcEmu's `GMClient.GmClientChannel`: only accounts with permissions may join it.
+        const gmChannel = context.config.gmClientChannel;
+        if (gmChannel.length && sicmp(gmChannel, name) == 0 && !hasPermissions)
             return;
         context.channelsFor(this).getOrCreate(name).join(this, request.password);
     }
@@ -111,7 +108,7 @@ private:
         Opcode.CMSG_CHANNEL_BAN, Opcode.CMSG_CHANNEL_UNBAN], WorldState.inWorld)
     void handleChannelTarget(const ClientChannelTarget request, Opcode opcode)
     {
-        const target = targetName(request.target);
+        const target = normalizedName(request.target);
         if (target is null)
             return;
         auto channel = channelNamed(request.channel);
@@ -171,7 +168,8 @@ unittest
     // Far apart, they talk through the channel.
     jaina.write(Opcode.CMSG_MESSAGECHAT, chatBody(ChatType.CHAT_MSG_CHANNEL, "hi", "Stormwind"));
     const heard = anduin.read();
-    assert(heard.length == 1 && heard[0].opcode == Opcode.SMSG_MESSAGECHAT && heard[0].body_[0] == ChatType.CHAT_MSG_CHANNEL);
+    assert(heard.length == 1 && heard[0].opcode == Opcode.SMSG_MESSAGECHAT
+        && heard[0].body_[0] == ChatType.CHAT_MSG_CHANNEL);
     jaina.read();
 
     // The list: Anduin (owner and moderator) and Jaina.

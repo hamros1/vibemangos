@@ -15,7 +15,8 @@
  */
 module dmangos.world.group;
 
-import std.algorithm.searching : canFind, countUntil;
+import std.algorithm.searching : count, countUntil;
+import std.range : only;
 
 import dmangos.bytes : ByteWriter;
 import dmangos.log;
@@ -450,7 +451,7 @@ final class Group
         if (auto player = owner.directory.find(guid))
         {
             if (method == RemoveMethod.kick)
-                deliverPacket(player, Opcode.SMSG_GROUP_UNINVITE, null);
+                player.deliver(Opcode.SMSG_GROUP_UNINVITE, null);
             sendEmptyList(player);
             player.groupChanged();
         }
@@ -482,7 +483,7 @@ final class Group
             if (auto player = owner.directory.find(slot.guid))
             {
                 if (!hideDestroy)
-                    deliverPacket(player, Opcode.SMSG_GROUP_DESTROYED, null);
+                    player.deliver(Opcode.SMSG_GROUP_DESTROYED, null);
                 sendEmptyList(player);
                 player.groupChanged();
             }
@@ -675,11 +676,7 @@ private:
 
     size_t countIn(ubyte subGroup) const
     {
-        size_t n;
-        foreach (ref slot; slots)
-            if (slot.subGroup == subGroup)
-                ++n;
-        return n;
+        return slots.count!(s => s.subGroup == subGroup);
     }
 
     static ubyte flagsOf(const ref MemberSlot slot)
@@ -736,7 +733,7 @@ private:
         leader = guid;
         leaderName = slots[i].name;
         save();
-        foreach (who; [previous, guid])
+        foreach (who; only(previous, guid))
             if (auto player = owner.directory.find(who))
                 player.groupChanged(); // the leader flag moves
     }
@@ -760,11 +757,6 @@ private:
     {
         const ubyte[24] empty = 0;
         player.deliver(Opcode.SMSG_GROUP_LIST, empty[]);
-    }
-
-    static void deliverPacket(OnlinePlayer player, Opcode opcode, const(ubyte)[] body_)
-    {
-        player.deliver(opcode, body_);
     }
 
     static const(ubyte)[] cstring(string text)
@@ -899,6 +891,7 @@ final class Groups
 version (unittest)
 {
     import core.time : Duration;
+    import std.algorithm.searching : canFind;
     import dmangos.auth.accounts : AccountLevel;
     import dmangos.world.database : MemoryWorldDatabase;
     import dmangos.world.map : Inhabitant;
@@ -938,6 +931,8 @@ version (unittest)
             return player.createForOthers(serverTime, false);
         }
         @property AccountLevel security() const { return AccountLevel.player; }
+        bool canUseCommand(char) const { return false; }
+        @property bool hasPermissions() const { return false; }
         @property bool transferring() const { return false; }
         void groupChanged() { ++groupChanges; }
         void update(Duration) {}
@@ -991,7 +986,8 @@ unittest
     assert(db.groups[10].members.length == 2 && db.groups[10].leader == 1);
     // Both get the list; Anduin, who does not see Jaina, gets her stats (the client asks for the others').
     assert(anduin.received.canFind(Opcode.SMSG_GROUP_LIST) && jaina.received.canFind(Opcode.SMSG_GROUP_LIST));
-    assert(anduin.received.canFind(Opcode.SMSG_PARTY_MEMBER_STATS) && !jaina.received.canFind(Opcode.SMSG_PARTY_MEMBER_STATS));
+    assert(anduin.received.canFind(Opcode.SMSG_PARTY_MEMBER_STATS)
+        && !jaina.received.canFind(Opcode.SMSG_PARTY_MEMBER_STATS));
     assert(groups.sameGroup(1, 2) && !groups.sameGroup(1, 3));
 
     // Anduin's list shows Jaina, online, and Anduin as leader, with the loot settings.

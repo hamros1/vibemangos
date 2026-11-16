@@ -22,12 +22,12 @@ static immutable uint[0x500] cryptTable = () {
     uint seed = 0x00100001;
     foreach (index1; 0 .. 0x100)
     {
-        for (uint index2 = index1, i = 0; i < 5; ++i, index2 += 0x100)
+        foreach (i; 0 .. 5)
         {
             seed = (seed * 125 + 3) % 0x2AAAAB;
             const high = (seed & 0xFFFF) << 16;
             seed = (seed * 125 + 3) % 0x2AAAAB;
-            table[index2] = high | (seed & 0xFFFF);
+            table[index1 + i * 0x100] = high | (seed & 0xFFFF);
         }
     }
     return table;
@@ -89,7 +89,8 @@ uint fileKey(scope const(char)[] name, uint blockOffset, uint unpackedSize, bool
     return key;
 }
 
-private uint readWord(scope const(ubyte)[] data, size_t index) pure nothrow @nogc @safe
+/// The `index`th little-endian 32-bit word of `data`.
+package(dmangos) uint readWord(scope const(ubyte)[] data, size_t index) pure nothrow @nogc @safe
 {
     const o = index * 4;
     return data[o] | data[o + 1] << 8 | data[o + 2] << 16 | data[o + 3] << 24;

@@ -23,12 +23,13 @@
 module dmangos.world.map;
 
 import core.time : Duration;
-import std.math : floor;
 
 import dmangos.serialization : serialize;
 import dmangos.bytes : ByteWriter;
+public import dmangos.world.grid : cellSize;
+import dmangos.world.grid : cellCoordinate, cellKey, cellKeyAt;
 import dmangos.world.movement : Position;
-import dmangos.world.objects : UpdateData;
+import dmangos.world.objects : seenByEveryone, UpdateData, UpdateValues;
 import dmangos.world.opcodes : Opcode;
 import dmangos.world.packets : ServerDestroyObject;
 import dmangos.world.player : Player;
@@ -46,9 +47,6 @@ interface Inhabitant
     UpdateData appearanceFor(const Inhabitant viewer, uint serverTime) const;
 }
 
-public import dmangos.world.grid : cellSize;
-import dmangos.world.grid : cellCoordinate, cellKey;
-
 /// A creature or game object on a map, as players see it.
 interface MapObject
 {
@@ -60,6 +58,9 @@ interface MapObject
 
     /// Its create block.
     UpdateData appearance(uint serverTime) const;
+
+    /// Its update fields, to change them (`.modify`, `.npc` commands); `Map.flushObjectChanges` sends the changes.
+    ref UpdateValues fields();
 }
 
 /// Creates the spawns of one cell of a map: called once per cell, when a player first comes near.
@@ -143,6 +144,20 @@ final class Map
         return objects.get(guid, null);
     }
 
+    /// Sends what changed in an object's fields to the players whose clients have it, then forgets the changes.
+    void flushObjectChanges(MapObject object)
+    {
+        if (object.fields.hasChangesFor(seenByEveryone))
+        {
+            UpdateData update;
+            update.addValues(object.guid, object.fields, seenByEveryone);
+            foreach (guid, seen; seesObjects)
+                if (object.guid in seen)
+                    deliverUpdate(members[guid], update);
+        }
+        object.fields.clearChanges();
+    }
+
     /// Whether the player's client has the object.
     bool seesObject(ulong player, ulong object) const
     {
@@ -155,21 +170,17 @@ final class Map
     MapObject[] objectsNear(Position center, float range)
     {
         MapObject[] found;
-        const reach = cast(int)(range / cellSize) + 1;
-        const cx = cellCoordinate(center.x), cy = cellCoordinate(center.y);
-        foreach (x; cx - reach .. cx + reach + 1)
-            foreach (y; cy - reach .. cy + reach + 1)
-            {
-                const key = cellKey(x, y);
-                loadCell(key);
-                if (const cell = key in objectCells)
-                    foreach (guid, _; *cell)
-                    {
-                        auto object = objects[guid];
-                        if (distanceSquared(center, object.position) <= range ^^ 2)
-                            found ~= object;
-                    }
-            }
+        foreach (key; cellKeysNear(center, range))
+        {
+            loadCell(key);
+            if (const cell = key in objectCells)
+                foreach (guid, _; *cell)
+                {
+                    auto object = objects[guid];
+                    if (distanceSquared(center, object.position) <= range ^^ 2)
+                        found ~= object;
+                }
+        }
         return found;
     }
 
@@ -282,24 +293,21 @@ final class Map
     Inhabitant[] near(Position center, float range)
     {
         Inhabitant[] found;
-        const reach = cast(int)(range / cellSize) + 1;
-        const cx = cellCoordinate(center.x), cy = cellCoordinate(center.y);
-        foreach (x; cx - reach .. cx + reach + 1)
-            foreach (y; cy - reach .. cy + reach + 1)
-                if (const cell = cellKey(x, y) in cells)
-                    foreach (guid, _; *cell)
-                    {
-                        auto who = members[guid];
-                        if (distanceSquared(center, who.character.position) <= range ^^ 2)
-                            found ~= who;
-                    }
+        foreach (key; cellKeysNear(center, range))
+            if (const cell = key in cells)
+                foreach (guid, _; *cell)
+                {
+                    auto who = members[guid];
+                    if (distanceSquared(center, who.character.position) <= range ^^ 2)
+                        found ~= who;
+                }
         return found;
     }
 
 private:
     void place(ulong guid, Position position)
     {
-        const key = cellKey(cellCoordinate(position.x), cellCoordinate(position.y));
+        const key = cellKeyAt(position.x, position.y);
         if (const old = guid in cellOf)
         {
             if (*old == key)
@@ -374,6 +382,19 @@ private:
         UpdateData forgetAll;
         forgetAll.addOutOfRange(gone);
         deliverUpdate(who, forgetAll);
+    }
+
+    /// The keys of the cells that can hold something within `range` yards of `center`, row by row.
+    static auto cellKeysNear(Position center, float range)
+    {
+        import std.algorithm.iteration : joiner, map;
+        import std.range : iota;
+
+        const reach = cast(int)(range / cellSize) + 1;
+        const cx = cellCoordinate(center.x), cy = cellCoordinate(center.y);
+        return iota(cx - reach, cx + reach + 1)
+            .map!(x => iota(cy - reach, cy + reach + 1).map!(y => cellKey(x, y)))
+            .joiner;
     }
 
     static float distanceSquared(Position a, Position b) pure nothrow @nogc @safe
@@ -454,7 +475,8 @@ unittest
     assert(alice.take() == []);
     map.add(bob);
     assert(map.seeEachOther(1, 2) && map.seeEachOther(2, 1));
-    assert(alice.take() == [Opcode.SMSG_COMPRESSED_UPDATE_OBJECT] && bob.take() == [Opcode.SMSG_COMPRESSED_UPDATE_OBJECT]);
+    assert(alice.take() == [Opcode.SMSG_COMPRESSED_UPDATE_OBJECT]
+        && bob.take() == [Opcode.SMSG_COMPRESSED_UPDATE_OBJECT]);
     map.add(carol);
     assert(!map.seeEachOther(1, 3) && carol.take() == [] && map.population == 3);
 
@@ -486,17 +508,21 @@ unittest
 /// Creatures and game objects: cells load when a player comes near, and objects come and go with sight.
 unittest
 {
+    import dmangos.world.updatefields : TypeId;
+
     static final class Thing : MapObject
     {
         ulong id;
         Position at;
+        UpdateValues values = UpdateValues(TypeId.gameObject);
         this(ulong id, Position at) { this.id = id; this.at = at; }
+        ref UpdateValues fields() { return values; }
         @property ulong guid() const { return id; }
         @property Position position() const { return at; }
         UpdateData appearance(uint) const
         {
-            import dmangos.world.objects : MovementBlock, UpdateFlags, UpdateType, UpdateValues;
-            import dmangos.world.updatefields : TypeId, Visibility;
+            import dmangos.world.objects : MovementBlock, UpdateFlags, UpdateType;
+            import dmangos.world.updatefields : Visibility;
 
             UpdateData update;
             MovementBlock block;
@@ -510,18 +536,18 @@ unittest
     ulong[] loaded;
     MapObject[] spawner(uint, ulong cell)
     {
-        import dmangos.world.grid : cellKeyAt;
-
         loaded ~= cell;
         if (cell == cellKeyAt(10, 0))
-            return [new Thing(0xF110_0000_0000_0001, Position(10, 0, 0)), new Thing(0xF110_0000_0000_0002, Position(60, 0, 0))];
+            return [new Thing(0xF110_0000_0000_0001, Position(10, 0, 0)),
+                new Thing(0xF110_0000_0000_0002, Position(60, 0, 0))];
         return null;
     }
 
     auto map = new Map(0, MapSettings.init, () => 1000u, &spawner);
     auto alice = new Watcher(1, Position(0, 0, 0));
     map.add(alice);
-    assert(map.objectCount == 2 && map.seesObject(1, 0xF110_0000_0000_0001) && map.seesObject(1, 0xF110_0000_0000_0002));
+    assert(map.objectCount == 2 && map.seesObject(1, 0xF110_0000_0000_0001)
+        && map.seesObject(1, 0xF110_0000_0000_0002));
     assert(alice.take() == [Opcode.SMSG_UPDATE_OBJECT], "both objects in one packet");
     const cellsLoaded = loaded.length;
 

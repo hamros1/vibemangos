@@ -9,8 +9,11 @@
  */
 module dmangos.auth.database;
 
+import std.algorithm.iteration : filter;
 import std.algorithm.searching : canFind;
 import std.algorithm.sorting : sort;
+import std.array : array;
+import std.conv : to;
 import std.datetime.systime : Clock;
 import std.exception : enforce;
 import std.typecons : Nullable, nullable;
@@ -129,8 +132,14 @@ class MemoryLoginDatabase : LoginDatabase
         Account result = *account;
         result.ban = BanState.none;
         foreach (ban; accountBans.get(result.id, null))
-            if (ban.inForce(now()))
-                result.ban = ban.permanent ? BanState.banned : (result.ban == BanState.none ? BanState.suspended : result.ban);
+        {
+            if (!ban.inForce(now()))
+                continue;
+            if (ban.permanent)
+                result.ban = BanState.banned;
+            else if (result.ban == BanState.none)
+                result.ban = BanState.suspended;
+        }
         return nullable(result);
     }
 
@@ -177,11 +186,7 @@ class MemoryLoginDatabase : LoginDatabase
 
     RealmRecord[] loadRealms()
     {
-        RealmRecord[] valid;
-        foreach (realm; realms)
-            if ((realm.realmflags & 1) == 0)
-                valid ~= realm;
-        return valid;
+        return realms.filter!(realm => (realm.realmflags & 1) == 0).array;
     }
 
     ubyte[uint] characterCounts(uint accountId)
@@ -261,8 +266,6 @@ class MemoryLoginDatabase : LoginDatabase
         foreach (ref account; accounts)
             if (account.id == id)
                 return &account;
-        import std.conv : to;
-
         throw new Exception("no account with id " ~ id.to!string);
     }
 }

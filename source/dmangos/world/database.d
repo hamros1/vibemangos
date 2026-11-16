@@ -15,6 +15,7 @@ import dmangos.mysql : MySqlConnection;
 import dmangos.auth.accounts : AccountLevel, canonicalAccountName, decodeBigNumberHex, toAccountLevel;
 import dmangos.world.characterdb : CharacterOwner, CharacterStatements, DeleteOptions, GuidCounters, NameInfo;
 public import dmangos.world.characterdb : GroupMemberRecord, GroupRecord;
+import dmangos.world.movement : Position;
 import dmangos.world.player : CharacterData, CharacterProgress, HomeBind, ItemRecord, tutorialFields;
 import dmangos.world.worlddata : AreaTriggerTeleport, areaTriggerTeleportQuery, GameTele, gameTeleQuery;
 import dmangos.world.playercreate : NewCharacter;
@@ -167,6 +168,9 @@ interface WorldDatabase
     /// Gives an offline character a new name (`characters.name`).
     void renameCharacter(uint guid, string newName);
 
+    /// Moves a character that is not online (ArcEmu's `.summon` of an offline player).
+    void moveOfflineCharacter(uint guid, uint map, float x, float y, float z, uint zone);
+
     /// `Player::_SaveSpells` for one spell learned or forgotten.
     void saveSpell(uint guid, uint spell, bool learned);
 
@@ -243,11 +247,20 @@ final class MySqlWorldDatabase : WorldDatabase
     bool isGuildLeader(uint guid) { return statements.isGuildLeader(guid); }
     Nullable!CharacterData loadCharacter(uint guid) { return statements.loadCharacter(guid); }
     void insertHomeBind(uint guid, const HomeBind bind) { statements.insertHomeBind(guid, bind); }
-    void setOnline(uint guid, uint accountId, bool online, uint realmId) { statements.setOnline(guid, accountId, online, realmId); }
+    void setOnline(uint guid, uint accountId, bool online, uint realmId)
+    {
+        statements.setOnline(guid, accountId, online, realmId);
+    }
     void markAllOffline(uint realmId) { statements.markAllOffline(realmId); }
     void saveProgress(const ref CharacterProgress progress) { statements.saveProgress(progress); }
-    void setActionButton(uint guid, ubyte button, uint action, ubyte type) { statements.setActionButton(guid, button, action, type); }
-    void saveTutorials(uint accountId, const uint[tutorialFields] tutorials) { statements.saveTutorials(accountId, tutorials); }
+    void setActionButton(uint guid, ubyte button, uint action, ubyte type)
+    {
+        statements.setActionButton(guid, button, action, type);
+    }
+    void saveTutorials(uint accountId, const uint[tutorialFields] tutorials)
+    {
+        statements.saveTutorials(accountId, tutorials);
+    }
     Nullable!NameInfo nameInfo(uint guid) { return statements.nameInfo(guid); }
     GroupRecord[] loadGroups() { return statements.loadGroups(); }
     void createGroup(const ref GroupRecord group) { statements.createGroup(group); }
@@ -258,6 +271,10 @@ final class MySqlWorldDatabase : WorldDatabase
     void removeGroupMember(uint guid) { statements.removeGroupMember(guid); }
     uint characterGuid(string name) { return statements.characterGuid(name); }
     void renameCharacter(uint guid, string newName) { statements.renameCharacter(guid, newName); }
+    void moveOfflineCharacter(uint guid, uint map, float x, float y, float z, uint zone)
+    {
+        statements.moveOfflineCharacter(guid, map, x, y, z, zone);
+    }
     void saveSpell(uint guid, uint spell, bool learned) { statements.saveSpell(guid, spell, learned); }
     void saveSkill(uint guid, uint skill, uint value, uint max) { statements.saveSkill(guid, skill, value, max); }
     void insertItem(uint owner, const ItemRecord item) { statements.insertItem(owner, item); }
@@ -457,6 +474,16 @@ final class MemoryWorldDatabase : WorldDatabase
             if (c.name == name)
                 return guid;
         return 0;
+    }
+
+    void moveOfflineCharacter(uint guid, uint map, float x, float y, float z, uint zone)
+    {
+        if (auto c = guid in loadable)
+        {
+            c.map = map;
+            c.zone = zone;
+            c.position = Position(x, y, z, c.position.orientation);
+        }
     }
 
     void renameCharacter(uint guid, string newName)
@@ -666,10 +693,10 @@ final class MemoryWorldDatabase : WorldDatabase
 
     ubyte[] characterRaces(uint accountId)
     {
-        ubyte[] races;
-        foreach (record; characterLists.get(accountId, null))
-            races ~= record.race;
-        return races;
+        import std.algorithm.iteration : map;
+        import std.array : array;
+
+        return characterLists.get(accountId, null).map!(record => record.race).array;
     }
 
     bool hasTutorialData(uint accountId)
@@ -723,14 +750,13 @@ final class MemoryWorldDatabase : WorldDatabase
 
     void deleteCharacter(uint guid, uint accountId, DeleteOptions options, uint delegate() nextMailId)
     {
+        import std.algorithm.iteration : filter;
+        import std.array : array;
+
         auto list = accountId in characterLists;
         if (list is null)
             return;
-        CharacterRecord[] kept;
-        foreach (record; *list)
-            if (record.guid != guid)
-                kept ~= record;
-        *list = kept;
+        *list = (*list).filter!(record => record.guid != guid).array;
         deleted ~= guid;
     }
 

@@ -50,7 +50,7 @@ int main(string[] args)
     {
         auto config = loadWorldConfig(configPath);
         setLogLevel(config.logLevel);
-        return run(config);
+        return run(config, configPath);
     }
     catch (Exception e)
     {
@@ -62,9 +62,8 @@ int main(string[] args)
 /// `mangosd`'s exit code for a restart (`RESTART_EXIT_CODE`), for a script that starts it again.
 private enum restartExitCode = 2;
 
-private int run(WorldConfig config)
+private int run(WorldConfig config, string configPath)
 {
-    int exitCode = 0;
     auto login = connect(config.loginDatabase, config.mysqlLibrary, "login");
     scope (exit)
         login.close();
@@ -79,6 +78,7 @@ private int run(WorldConfig config)
     auto data = WorldData.load(world, client);
     auto context = new WorldContext(config, new MySqlWorldDatabase(login, characters, world), data, client,
         new MySqlLoginDatabase(login));
+    context.configPath = configPath;
     context.database.markAllOffline(config.realmId); // as clearOnlineAccounts: nobody is online after a restart
     info!"next ids: character %s, item %s, mail %s"(context.next.character, context.next.item, context.next.mail);
 
@@ -112,9 +112,7 @@ private int run(WorldConfig config)
         });
     server.run();
     realm.updateUptime(cast(uint) context.peakSessions);
-    if (context.restartRequested)
-        exitCode = restartExitCode;
-    return exitCode;
+    return context.restartRequested ? restartExitCode : 0;
 }
 
 private MySqlConnection connect(string connectionString, string library, string what)

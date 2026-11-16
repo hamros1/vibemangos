@@ -17,29 +17,28 @@ module dmangos.world.inworld;
 /// See the module documentation.
 mixin template InWorldHandlers()
 {
-    import std.datetime.systime : Clock;
+    import core.time : Duration;
     import std.format : format;
     import dmangos.auth.accounts : AccountLevel;
     import dmangos.bytes : ByteWriter;
     import dmangos.log;
-    import dmangos.world.map : packetBody;
     import dmangos.world.defines : maxActionButtons;
     import dmangos.world.group : GroupUpdate;
+    import dmangos.world.map : packetBody;
     import dmangos.world.movement : baseMoveSpeed, MovementFlags, MovementInfo, MoveType, movingOrTurning, Position;
-    import core.time : Duration;
-    import dmangos.world.player : PlayerFlags, RestType;
-    import dmangos.world.teleport : Teleport;
-    import dmangos.world.objects : lowGuid, putPackedGuid;
+    import dmangos.world.objects : lowGuid;
     import dmangos.world.opcodes;
     import dmangos.world.packets;
+    import dmangos.world.player : PlayerFlags, RestType;
     import dmangos.world.queries : chatMessage, ClientChat, creatureQueryResponse, gameObjectQueryResponse,
         itemQueryResponse;
+    import dmangos.world.teleport : Teleport;
     import dmangos.world.updatefields : PLAYER_FIELD_BYTES, UNIT_FIELD_BYTES_1;
-
-    enum ubyte standStateStand = 0;
     import dmangos.world.worlddata : CreateAction;
 
 private:
+    enum ubyte standStateStand = 0;
+
     /**
      * `WorldSession::LogoutPlayer`: saves the character and leaves the world, its channels and
      * (logging out normally, from a party) its group. `loggingOut` is false for a lost connection.
@@ -60,19 +59,18 @@ private:
         player = null;
         loggingOut = false;
         teleporting = Teleport.none;
-        gameMaster = false;
         state_ = WorldState.characterScreen;
     }
 
     /**
      * `WorldSession::HandleLogoutRequestOpcode`: not while jumping or falling; at once when resting
-     * or for accounts of `instant_logout`'s level; otherwise sitting, stunned, for 20 seconds.
+     * or for accounts with GM permissions (ArcEmu); otherwise sitting, stunned, for `logout_delay` seconds.
      */
     @Handles(Opcode.CMSG_LOGOUT_REQUEST, WorldState.inWorld)
     void handleLogoutRequest()
     {
         const cantLogout = player.movement.has(MovementFlags.jumping) || player.movement.has(MovementFlags.fallingFar);
-        const instant = player.hasFlag(PlayerFlags.resting) || account.level >= context.config.instantLogout;
+        const instant = player.hasFlag(PlayerFlags.resting) || hasPermissions || context.config.logoutDelay == 0;
         send(ServerLogoutResponse(cantLogout ? 1 : 0, instant && !cantLogout ? 1 : 0));
         if (cantLogout)
             return;
@@ -112,9 +110,8 @@ private:
     void updateInWorld(Duration elapsed)
     {
         import core.time : seconds;
-        import std.datetime.systime : Clock;
 
-        if (loggingOut && context.clock() - logoutRequestedAt >= 20.seconds)
+        if (loggingOut && context.clock() - logoutRequestedAt >= context.config.logoutDelay.seconds)
             return completeLogout();
         if (transferring)
             return;
@@ -163,8 +160,6 @@ private:
     /// `Player::UpdateZone`'s rest: a capital (AREA_FLAG_CAPITAL) rests; leaving it does not.
     void updateCityRest()
     {
-        import std.datetime.systime : Clock;
-
         enum uint areaFlagCapital = 0x100;
         const zone = context.client.areas.lookup(player.data.zone);
         const now = context.unixTime;
@@ -214,7 +209,7 @@ private:
 
         // Those who see the player see it move: the same opcode, with the mover's guid and the server's time.
         ByteWriter relay;
-        putPackedGuid(relay, player.guid);
+        relay.putPackedGuid(player.guid);
         MovementInfo relayed = movement;
         relayed.time = serverTime();
         relayed.write(relay);
@@ -240,7 +235,8 @@ private:
         import core.time : seconds;
         import std.algorithm.comparison : max;
 
-        if (!context.config.movementSpeedCheck || gameMaster || account.level > AccountLevel.player)
+        // ArcEmu's speed hack check skips accounts with permissions (MovementHandler.cpp).
+        if (!context.config.movementSpeedCheck || hasPermissions)
             return true;
         const now = context.clock();
         const elapsed = (now - checkpointTime).total!"msecs" / 1000.0;
@@ -420,15 +416,47 @@ private:
     // Chat (ChatHandler.cpp)
     // -----------------------------------------------------------------------
 
+    /**
+     * `HandleMessagechatOpcode`. The GM parts follow ArcEmu's `ChatHandler.cpp`: flood protection for
+     * players without permissions, the moderator's mute, commands in the chat types ArcEmu reads them
+     * from, everyone understanding the `c` permission, and the GM tag.
+     */
     @Handles(Opcode.CMSG_MESSAGECHAT, WorldState.inWorld)
     void handleMessageChat(const ClientChat chat)
     {
         if (chat.language == Language.LANG_ADDON)
             return; // `AddonChannel` is off
-        // Game masters, and with shared chat everyone, are understood by all (HandleMessagechatOpcode).
-        Language language = chat.language;
         const config = context.config;
-        if (gameMaster || config.allowTwoSideInteractionChat)
+        const now = context.unixTime;
+        if (!hasPermissions && config.floodLines && config.floodSeconds)
+        {
+            if (now >= floodTime)
+            {
+                floodLines = 0;
+                floodTime = now + config.floodSeconds;
+            }
+            if (++floodLines > config.floodLines)
+            {
+                if (config.floodMessage)
+                    systemMessage(format!("Your message has triggered serverside flood protection. "
+                        ~ "You can speak again in %s seconds.")(floodTime - now));
+                return;
+            }
+        }
+        switch (chat.type)
+        {
+        case ChatType.CHAT_MSG_EMOTE, ChatType.CHAT_MSG_SAY, ChatType.CHAT_MSG_YELL, ChatType.CHAT_MSG_WHISPER,
+            ChatType.CHAT_MSG_CHANNEL:
+            if (account.muteTime && account.muteTime >= now) // `.account mute` (WorldSession::m_muted)
+                return systemMessage("Your voice is currently muted by a moderator.");
+            break;
+        default:
+            break;
+        }
+
+        // The `c` permission, and with shared chat everyone, are understood by all.
+        Language language = chat.language;
+        if (canUseCommand('c') || config.allowTwoSideInteractionChat)
             language = Language.LANG_UNIVERSAL;
         else if (config.allowTwoSideInteractionGroup && (chat.type == ChatType.CHAT_MSG_PARTY
             || chat.type == ChatType.CHAT_MSG_RAID || chat.type == ChatType.CHAT_MSG_RAID_LEADER
@@ -439,15 +467,12 @@ private:
             return setAway(chat.type, chat.text);
         if (chat.text.length == 0)
             return;
-        // `.account mute` (WorldSession::m_muteTime): no chat until then, commands included.
-        const now = context.unixTime;
-        if (account.muteTime > now)
-            return sendNotification(format!"Your chat is disabled for %s more seconds."(account.muteTime - now));
         switch (chat.type)
         {
-        case ChatType.CHAT_MSG_SAY, ChatType.CHAT_MSG_YELL, ChatType.CHAT_MSG_EMOTE, ChatType.CHAT_MSG_WHISPER,
-            ChatType.CHAT_MSG_PARTY, ChatType.CHAT_MSG_RAID, ChatType.CHAT_MSG_RAID_LEADER:
-            if (runCommand(chat.text))
+        case ChatType.CHAT_MSG_SAY, ChatType.CHAT_MSG_YELL, ChatType.CHAT_MSG_PARTY, ChatType.CHAT_MSG_RAID,
+            ChatType.CHAT_MSG_RAID_LEADER, ChatType.CHAT_MSG_RAID_WARNING, ChatType.CHAT_MSG_GUILD,
+            ChatType.CHAT_MSG_OFFICER, ChatType.CHAT_MSG_CHANNEL:
+            if (parseCommands(chat.text))
                 return;
             break;
         default:
@@ -476,7 +501,8 @@ private:
         case ChatType.CHAT_MSG_RAID:
         case ChatType.CHAT_MSG_RAID_LEADER:
             auto raid = context.groups.of(player.guid);
-            if (raid is null || !raid.isRaid || chat.type == ChatType.CHAT_MSG_RAID_LEADER && !raid.isLeader(player.guid))
+            if (raid is null || !raid.isRaid
+                || chat.type == ChatType.CHAT_MSG_RAID_LEADER && !raid.isLeader(player.guid))
                 break;
             raid.broadcast(Opcode.SMSG_MESSAGECHAT, chatMessage(chat.type, language, player.guid, chat.text,
                 player.chatTag));
@@ -512,24 +538,29 @@ private:
 
     /**
      * `HandleMessagechatOpcode`'s whisper case and `Player::Whisper`: anyone online, of the same
-     * faction unless one of the two is a game master; an away or busy player's message comes back.
+     * faction unless one of the two has GM permissions; an away or busy player's message comes back.
+     * A player whispering a GM with the GM tag on gets ArcEmu's automatic reply instead, unless the GM
+     * allowed it (`.gm allowwhispers`).
      */
     void whisper(string to, string text)
     {
         auto target = context.onlinePlayer(to);
-        // A game master blocking whispers looks offline to players (Player::isAcceptWhispers).
-        if (target is null || target.security > AccountLevel.player && !sessionOf(target).acceptsWhisperFrom(this))
+        if (target is null)
             return send(ServerChatPlayerNotFound(to));
         const receiver = target.character;
+        if (!hasPermissions && receiver.gmTagOn && player.guid !in sessionOf(target).gmTargets)
+            return send(ServerMessageChat(chatMessage(ChatType.CHAT_MSG_WHISPER, Language.LANG_UNIVERSAL,
+                receiver.guid, "This Game Master does not currently have an open ticket from you and did not receive "
+                ~ "your whisper. Please submit a new GM Ticket request if you need to speak to a GM. This is an "
+                ~ "automatic message.", ChatTag.CHAT_TAG_GM)));
         const sameTeam = context.client.teamForRace(receiver.data.race) == context.client.teamForRace(player.data.race);
-        if (!sameTeam && !context.config.allowTwoSideInteractionChat && account.level == AccountLevel.player
-            && target.security == AccountLevel.player)
+        if (!sameTeam && !context.config.allowTwoSideInteractionChat && !hasPermissions && !target.hasPermissions)
             return send(ServerChatWrongFaction());
         // Whispers are always readable (LANG_UNIVERSAL); the sender gets a copy addressed to the receiver.
         target.deliver(Opcode.SMSG_MESSAGECHAT,
             chatMessage(ChatType.CHAT_MSG_WHISPER, Language.LANG_UNIVERSAL, player.guid, text, player.chatTag));
         send(ServerMessageChat(chatMessage(ChatType.CHAT_MSG_WHISPER_INFORM, Language.LANG_UNIVERSAL, receiver.guid,
-            text)));
+            text, receiver.chatTag)));
         if (receiver.hasFlag(PlayerFlags.afk) || receiver.hasFlag(PlayerFlags.dnd))
             send(ServerMessageChat(chatMessage(receiver.hasFlag(PlayerFlags.afk) ? ChatType.CHAT_MSG_AFK
                 : ChatType.CHAT_MSG_DND, Language.LANG_UNIVERSAL, receiver.guid, receiver.autoReply)));
@@ -650,30 +681,28 @@ unittest
 
     client.write(Opcode.CMSG_PLAYER_LOGIN, ClientPlayerLogin(7));
     const login = client.read();
-    ushort[] opcodes;
-    foreach (packet; login)
-        opcodes ~= packet.opcode;
+    auto opcodes = opcodesOf(login);
     // Then the creatures and objects around Northshire Abbey, after the login packets.
     assert(opcodes[$ - 1] == Opcode.SMSG_COMPRESSED_UPDATE_OBJECT);
     opcodes = opcodes[0 .. $ - 1];
     with (Opcode)
         assert(opcodes == [SMSG_LOGIN_VERIFY_WORLD, SMSG_ACCOUNT_DATA_TIMES, SMSG_EXPECTED_SPAM_RECORDS,
-            SMSG_MESSAGECHAT, SMSG_MESSAGECHAT, SMSG_SET_REST_START, SMSG_BINDPOINTUPDATE, SMSG_TUTORIAL_FLAGS,
-            SMSG_INITIAL_SPELLS, SMSG_ACTION_BUTTONS, SMSG_INITIALIZE_FACTIONS, SMSG_LOGIN_SETTIMESPEED,
-            SMSG_SET_PROFICIENCY, SMSG_SET_PROFICIENCY, SMSG_COMPRESSED_UPDATE_OBJECT, SMSG_FRIEND_LIST,
-            SMSG_IGNORE_LIST, SMSG_INIT_WORLD_STATES]);
+            SMSG_MESSAGECHAT, SMSG_MESSAGECHAT, SMSG_MESSAGECHAT, SMSG_SET_REST_START, SMSG_BINDPOINTUPDATE,
+            SMSG_TUTORIAL_FLAGS, SMSG_INITIAL_SPELLS, SMSG_ACTION_BUTTONS, SMSG_INITIALIZE_FACTIONS,
+            SMSG_LOGIN_SETTIMESPEED, SMSG_SET_PROFICIENCY, SMSG_SET_PROFICIENCY, SMSG_COMPRESSED_UPDATE_OBJECT,
+            SMSG_FRIEND_LIST, SMSG_IGNORE_LIST, SMSG_INIT_WORLD_STATES]);
     assert(client.session.state == WorldState.inWorld && (7 in db.online) !is null);
     assert(db.homeBinds[7].zone == 12, "a character without a home gets its start position");
 
     auto verify = ByteReader(login[0].body_);
     assert(deserialize!ServerLoginVerifyWorld(verify).x == anduin.position.x);
-    auto spellsReader = ByteReader(login[8].body_);
+    auto spellsReader = ByteReader(login[9].body_);
     const book = deserialize!ServerInitialSpells(spellsReader).spells;
     assert(book.canFind(InitialSpell(spellOneHandedSwords)) && book.canFind(InitialSpell(spellPassiveTrainer)),
         "saved spells and the re-learned default ones");
     // The update creates three items and the player.
-    const update = cast(const(ubyte)[]) uncompress(login[14].body_[4 .. $]);
-    assert(update.length == (login[14].body_[0] | login[14].body_[1] << 8) && update[0] == 4);
+    const update = cast(const(ubyte)[]) uncompress(login[15].body_[4 .. $]);
+    assert(update.length == (login[15].body_[0] | login[15].body_[1] << 8) && update[0] == 4);
 
     // Movement is remembered.
     MovementInfo step;
@@ -741,7 +770,6 @@ unittest
     import dmangos.world.clientdata : emotesFormat, emotesTextFormat;
     import dmangos.world.database : WorldAccount;
     import dmangos.world.movement : MovementFlags, MovementInfo, Position;
-    import dmangos.world.objects : readPackedGuid;
     import dmangos.world.player : CharacterData;
 
     auto db = newDatabase();
@@ -778,20 +806,12 @@ unittest
     authenticate(anduin);
     authenticate(jaina, "SECOND");
 
-    static ushort[] opcodes(const(ServerPacketRead)[] packets)
-    {
-        ushort[] codes;
-        foreach (p; packets)
-            codes ~= p.opcode;
-        return codes;
-    }
-
     // Anduin enters alone; then Jaina, 20 yards away: each is created for the other.
     anduin.write(Opcode.CMSG_PLAYER_LOGIN, ClientPlayerLogin(7));
-    assert(opcodes(anduin.read()).count(Opcode.SMSG_COMPRESSED_UPDATE_OBJECT) == 1, "only itself");
+    assert(opcodesOf(anduin.read()).count(Opcode.SMSG_COMPRESSED_UPDATE_OBJECT) == 1, "only itself");
     jaina.write(Opcode.CMSG_PLAYER_LOGIN, ClientPlayerLogin(8));
-    assert(opcodes(jaina.read()).count(Opcode.SMSG_COMPRESSED_UPDATE_OBJECT) == 2, "itself, then Anduin");
-    assert(opcodes(anduin.read()) == [Opcode.SMSG_COMPRESSED_UPDATE_OBJECT], "Jaina appears");
+    assert(opcodesOf(jaina.read()).count(Opcode.SMSG_COMPRESSED_UPDATE_OBJECT) == 2, "itself, then Anduin");
+    assert(opcodesOf(anduin.read()) == [Opcode.SMSG_COMPRESSED_UPDATE_OBJECT], "Jaina appears");
     assert(context.map(0).seeEachOther(7, 8) && context.worldPopulation == 2);
 
     // Names of online players.
@@ -809,7 +829,7 @@ unittest
     const moved = anduin.read();
     assert(moved.length == 1 && moved[0].opcode == Opcode.MSG_MOVE_START_FORWARD);
     auto moveReader = ByteReader(moved[0].body_);
-    assert(readPackedGuid(moveReader) == 8 && MovementInfo.read(moveReader).position == Position(25, 0, 0));
+    assert(moveReader.readPackedGuid() == 8 && MovementInfo.read(moveReader).position == Position(25, 0, 0));
     assert(jaina.read().length == 0, "the mover is not told about its own move");
 
     // Say reaches 25 yards (they are 25 apart), whispers reach anyone online.
@@ -818,33 +838,35 @@ unittest
     say.put(uint(Language.LANG_COMMON));
     say.putCString("hello");
     jaina.write(Opcode.CMSG_MESSAGECHAT, say.data);
-    assert(opcodes(anduin.read()) == [Opcode.SMSG_MESSAGECHAT] && opcodes(jaina.read()) == [Opcode.SMSG_MESSAGECHAT]);
+    assert(opcodesOf(anduin.read()) == [Opcode.SMSG_MESSAGECHAT]
+        && opcodesOf(jaina.read()) == [Opcode.SMSG_MESSAGECHAT]);
     ByteWriter whisper;
     whisper.put(uint(ChatType.CHAT_MSG_WHISPER));
     whisper.put(uint(Language.LANG_COMMON));
     whisper.putCString("anduin");
     whisper.putCString("psst");
     jaina.write(Opcode.CMSG_MESSAGECHAT, whisper.data);
-    assert(anduin.read()[0].body_[0] == ChatType.CHAT_MSG_WHISPER && jaina.read()[0].body_[0] == ChatType.CHAT_MSG_WHISPER_INFORM);
+    assert(anduin.read()[0].body_[0] == ChatType.CHAT_MSG_WHISPER
+        && jaina.read()[0].body_[0] == ChatType.CHAT_MSG_WHISPER_INFORM);
     ByteWriter nobody;
     nobody.put(uint(ChatType.CHAT_MSG_WHISPER));
     nobody.put(uint(Language.LANG_COMMON));
     nobody.putCString("Nobody");
     nobody.putCString("hi");
     jaina.write(Opcode.CMSG_MESSAGECHAT, nobody.data);
-    assert(opcodes(jaina.read()) == [Opcode.SMSG_CHAT_PLAYER_NOT_FOUND]);
+    assert(opcodesOf(jaina.read()) == [Opcode.SMSG_CHAT_PLAYER_NOT_FOUND]);
 
     // /wave at Anduin: the animation and the text, for both.
     jaina.write(Opcode.CMSG_TEXT_EMOTE, ClientTextEmote(101, 0, 7));
-    assert(opcodes(anduin.read()) == [Opcode.SMSG_EMOTE, Opcode.SMSG_TEXT_EMOTE]);
+    assert(opcodesOf(anduin.read()) == [Opcode.SMSG_EMOTE, Opcode.SMSG_TEXT_EMOTE]);
     const own = jaina.read();
-    assert(opcodes(own) == [Opcode.SMSG_EMOTE, Opcode.SMSG_TEXT_EMOTE]);
+    assert(opcodesOf(own) == [Opcode.SMSG_EMOTE, Opcode.SMSG_TEXT_EMOTE]);
     auto emoteReader = ByteReader(own[1].body_);
     assert(deserialize!ServerTextEmote(emoteReader).targetName == "Anduin");
 
     // Sitting down is a public field: Anduin gets a values block.
     jaina.write(Opcode.CMSG_STANDSTATECHANGE, ClientStandStateChange(1));
-    assert(opcodes(anduin.read()) == [Opcode.SMSG_COMPRESSED_UPDATE_OBJECT]);
+    assert(opcodesOf(anduin.read()) == [Opcode.SMSG_COMPRESSED_UPDATE_OBJECT]);
     jaina.read();
 
     // Walking out of sight and back, taking the time it takes.
@@ -855,19 +877,20 @@ unittest
     jaina.write(Opcode.MSG_MOVE_HEARTBEAT, body_.data);
     assert(!context.map(0).seeEachOther(7, 8));
     const lost = anduin.read();
-    assert(opcodes(lost)[$ - 1] == Opcode.SMSG_UPDATE_OBJECT && lost[$ - 1].body_[5] == 4, "an out-of-range block");
+    assert(opcodesOf(lost)[$ - 1] == Opcode.SMSG_UPDATE_OBJECT && lost[$ - 1].body_[5] == 4, "an out-of-range block");
     now += 60.seconds;
     step.position = Position(30, 0, 0);
     body_ = ByteWriter.init;
     step.write(body_);
     jaina.write(Opcode.MSG_MOVE_HEARTBEAT, body_.data);
-    assert(context.map(0).seeEachOther(7, 8) && opcodes(anduin.read()).count(Opcode.SMSG_COMPRESSED_UPDATE_OBJECT) == 1);
+    assert(context.map(0).seeEachOther(7, 8)
+        && opcodesOf(anduin.read()).count(Opcode.SMSG_COMPRESSED_UPDATE_OBJECT) == 1);
     jaina.read();
 
     // Logging out: Anduin destroys Jaina; disconnecting takes Anduin off the map too.
     jaina.write(Opcode.CMSG_LOGOUT_REQUEST, null);
     const gone = anduin.read();
-    assert(opcodes(gone) == [Opcode.SMSG_DESTROY_OBJECT] && gone[0].body_ == [8, 0, 0, 0, 0, 0, 0, 0]);
+    assert(opcodesOf(gone) == [Opcode.SMSG_DESTROY_OBJECT] && gone[0].body_ == [8, 0, 0, 0, 0, 0, 0, 0]);
     anduin.session.disconnected();
     assert(context.worldPopulation == 0 && context.map(0).population == 0);
 }
@@ -880,7 +903,7 @@ unittest
     import dmangos.world.updatefields;
 
     auto db = newDatabase();
-    auto context = newCreationContext(db, (ref WorldConfig c) { c.instantLogout = 1; c.playerSaveInterval = 60; });
+    auto context = newCreationContext(db, (ref WorldConfig c) { c.logoutDelay = 20; c.playerSaveInterval = 60; });
     auto now = MonoTime.currTime;
     context.clock = () => now;
     void tick(Duration step)
@@ -908,7 +931,8 @@ unittest
     assert(asked[0].opcode == Opcode.SMSG_LOGOUT_RESPONSE && asked[0].body_ == [0, 0, 0, 0, 0]);
     assert(opcodesOf(asked).canFind(Opcode.SMSG_FORCE_MOVE_ROOT) && me.values.getByte!UNIT_FIELD_BYTES_1(0) == 1);
     anduin.write(Opcode.CMSG_LOGOUT_CANCEL, null);
-    assert(opcodesOf(anduin.read()).canFind(Opcode.SMSG_FORCE_MOVE_UNROOT) && me.values.getByte!UNIT_FIELD_BYTES_1(0) == 0);
+    assert(opcodesOf(anduin.read()).canFind(Opcode.SMSG_FORCE_MOVE_UNROOT)
+        && me.values.getByte!UNIT_FIELD_BYTES_1(0) == 0);
     anduin.write(Opcode.CMSG_LOGOUT_REQUEST, null);
     tick(19.seconds);
     assert(anduin.session.state == WorldState.inWorld);

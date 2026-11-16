@@ -35,7 +35,7 @@ The world server's modules, by layer:
 | Layer | Modules |
 |---|---|
 | Protocol | `opcodes` (values), `packets` (fixed layouts), `queries` (variable layouts), `crypt` (header cipher), `addons` |
-| Session | `session` (framing, handshake), the handler groups `charscreen`, `inworld`, `teleport`, `grouphandlers`, `channelhandlers`, and the command groups `commands`, `gmtravel`, `gmcharacter`, `gmadmin`, `gmdebug`; `context` (shared state) |
+| Session | `session` (framing, handshake), the handler groups `charscreen`, `inworld`, `teleport`, `grouphandlers`, `channelhandlers`, and the GM system `commands`, `commandtable`, `gmactions`, `gmlevel0` .. `gmlevel3`, `gmdebug`; `context` (shared state) |
 | Game objects | `player` (a character in the world), `objects` (update packets), `updatefields` (the field table), `movement`, `stats` |
 | World | `map` (players and objects on a map, visibility, broadcasting), `grid` (cells), `creature`, `gameobject`, `online` (what groups and channels see of players), `group` (parties and raids), `channel` (chat channels), `context` (maps, the players online, groups, channels) |
 | Game rules | `playercreate` (`Player::Create`, and the spells relearned at login), `characters` (character list), `names`, `defines` |
@@ -111,10 +111,12 @@ final class WorldSession : NetSession, Kickable, OnlinePlayer
     mixin TeleportHandlers;         // teleport.d: Player::TeleportTo, the teleport acks, area triggers
     mixin GroupHandlers;            // grouphandlers.d: GroupHandler.cpp
     mixin ChannelHandlers;          // channelhandlers.d: ChannelHandler.cpp
-    mixin ChatCommands;             // commands.d: ChatHandler::ParseCommands, general commands
-    mixin TravelCommands;           // gmtravel.d, gmcharacter.d, gmadmin.d, gmdebug.d: GM commands
-    mixin CharacterCommands;
-    mixin AdminCommands;
+    mixin ChatCommands;             // commands.d: ArcEmu's ParseCommands, ExecuteCommandInTable, messages
+    mixin GmActions;                // gmactions.d: what the handlers do to players
+    mixin Level0Commands;           // gmlevel0.d .. gmlevel3.d, gmdebug.d: ArcEmu's handlers,
+    mixin Level1Commands;           //   by the ArcEmu file they come from
+    mixin Level2Commands;
+    mixin Level3Commands;
     mixin DebugCommands;
 }
 ```
@@ -298,16 +300,38 @@ is an `SMSG_CHANNEL_NOTIFY`, built by `notice(type, channel, extra...)`.
 
 ## Chat commands
 
-A chat message starting with `.` may be a command. Commands are `WorldSession` methods with a
-`@Command(name, level, syntax, help, aliases)` attribute, spread over the handler groups
-`commands.d` (the framework and general commands), `gmtravel.d`, `gmcharacter.d`, `gmadmin.d` and
-`gmdebug.d`. `collectCommands` builds the table from every group at compile time, `call` is a
-`switch` generated over it, and `readArguments!required(args, a, b, ...)` converts the arguments to
-the variables' types. `.modify`'s field commands are generated from one table, `modifiableFields`.
-A command acting on another player calls that player's session (`sessionOf`), as `.summon` does.
+The GM system is ArcEmu 2.4.3's, ported rather than imitated:
+
+* **Tables.** `commandtable.d` holds ArcEmu's `ChatCommand` tables (`CommandTableStorage::Init`), row
+  for row: name, permission letter, handler name, help text, sub-table, and for `.modify`'s field
+  rows the update field. Row order matters, because the first row a word abbreviates wins.
+* **Dispatch.** `commands.d` ports `ParseCommands` and `ExecuteCommandInTable`. A row's handler name
+  is ArcEmu's (`HandleGMOnCommand`); the session method of that name with a lower-case first letter
+  runs it. `callHandler` is a `switch` generated at compile time over every handler the tables name,
+  with a case for each method that exists; the rest answer like `HandleNYICommand`. So a new handler
+  is one method, and the tables never change.
+* **Permissions.** `WorldSession.permissions` is ArcEmu's letter string, from `account.gmlevel`
+  through the `gm_permissions` setting and `loadSecurity` (`LoadSecurity`); `canUseCommand` is
+  `CanUseCommand`. Other code asks the same questions ArcEmu asks: `hasPermissions` (instant logout,
+  no speed check, cross-faction invites, flood protection), `hasGMPermissions`, or a letter (`c` for
+  languages and channel moderation, `u` for `.gmannounce`). The `OnlinePlayer` interface carries
+  `canUseCommand` and `hasPermissions` to groups and channels.
+* **Handlers** live in `gmlevel0.d` .. `gmlevel3.d` and `gmdebug.d` (also recall and
+  battleground), by the ArcEmu file they come from, and keep ArcEmu's messages and checks; their
+  module comments note where CMaNGOS's schema differs. `gmactions.d` holds what they do to a
+  player (levels, speeds, items, skills, saving, world-wide messages); a handler acting on another
+  player calls that player's session. A handler's parameters are its arguments: `invoke` reads the
+  command's words into them with `std.conv.to`, using each parameter's type (`Rest` for the rest of
+  the line, `OnOff`, `Nullable` for optional words) and default value, and shows the command's help
+  when a word is missing or does not convert. ArcEmu's `strtok`/`atoi` reading took "12abc" as 12
+  and "abc" as 0; here both are mistakes.
+* **Messages** are ArcEmu's: `systemMessage`, `redSystemMessage`, `greenSystemMessage`,
+  `blueSystemMessage`, `sendMultilineMessage`; `gmLog` is `sGMLog.writefromsession`, written to
+  `gm_command_log`.
+
 Account and ban commands use the login server's `LoginDatabase` (`context.accounts`). A timed
-shutdown is a `ShutdownTimer` that `WorldContext.update`, run every second by the server loop,
-counts down. The full list is in COMMANDS.md.
+shutdown is a `ShutdownTimer` that `WorldContext.update` counts down. COMMANDS.md, generated by
+`tools/commands_doc.py`, lists every command and whether it works yet.
 
 ## Testing
 

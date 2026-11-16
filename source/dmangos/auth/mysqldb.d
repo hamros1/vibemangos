@@ -11,6 +11,8 @@
  */
 module dmangos.auth.mysqldb;
 
+import std.algorithm.iteration : map;
+import std.array : array;
 import std.exception : enforce;
 import std.typecons : Nullable, nullable;
 
@@ -173,10 +175,7 @@ final class MySqlLoginDatabase : LoginDatabase
 
     Account[] listAccounts()
     {
-        Account[] accounts;
-        foreach (row; db.queryAs!(AccountRow, selectAccounts ~ " ORDER BY a.id")())
-            accounts ~= toAccount(row);
-        return accounts;
+        return db.queryAs!(AccountRow, selectAccounts ~ " ORDER BY a.id")().map!toAccount.array;
     }
 
 private:

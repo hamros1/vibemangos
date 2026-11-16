@@ -19,6 +19,7 @@
 module dmangos.mysql.binding;
 
 import core.stdc.config : c_ulong;
+import std.array : join;
 import std.exception : enforce;
 import std.string : fromStringz, toStringz;
 
@@ -119,7 +120,7 @@ string loadMySqlLibrary(string path = null)
         }
     }
     enforce(handle !is null, "could not load a MySQL client library (tried "
-        ~ joinNames(candidates) ~ "); install libmariadb3 or libmysqlclient, or set mysql_library");
+        ~ candidates.join(", ") ~ "); install libmariadb3 or libmysqlclient, or set mysql_library");
 
     MySqlApi api;
     static foreach (i; 0 .. MySqlApi.tupleof.length)
@@ -139,13 +140,6 @@ string loadMySqlLibrary(string path = null)
 string clientLibraryVersion()
 {
     return mysql.mysql_get_client_info().fromStringz.idup;
-}
-
-private string joinNames(const(string)[] names)
-{
-    import std.array : join;
-
-    return names.join(", ");
 }
 
 version (Windows)

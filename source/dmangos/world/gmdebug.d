@@ -1,374 +1,352 @@
 /**
- * GM commands that look things up or poke at the protocol (ArcEmu's
- * `.lookup` and `.debug` groups, `.paralyze`, and the battleground group's
- * `playsound` and `setworldstate`). Mixed into
+ * ArcEmu's `debugcmds.cpp` handlers (the `.debug` group) that need no AI,
+ * spells or line of sight, `RecallCommands.cpp` (the `.recall` group) and
+ * `BattlegroundCommands.cpp`'s `playsound` and `setworldstate`. Mixed into
  * `dmangos.world.session.WorldSession`.
  *
- * `.lookup item` and `.lookup skill` search what the server has loaded;
- * quests, creatures, game objects and spells are searched in the world
- * database, since the server does not load their names.
+ * ArcEmu's recall locations are its `recall` table; CMaNGOS's is `game_tele`,
+ * which `.recall` reads and writes here, in name order.
  */
 module dmangos.world.gmdebug;
 
 /// See the module documentation.
 mixin template DebugCommands()
 {
-    import std.algorithm.comparison : min;
-    import std.algorithm.searching : canFind;
+    import std.algorithm.searching : canFind, startsWith;
     import std.algorithm.sorting : sort;
-    import std.conv : ConvException, to;
     import std.format : format;
     import std.math : cos, sin, sqrt;
-    import std.uni : toLower;
-    import dmangos.auth.accounts : AccountLevel;
-    import dmangos.world.commands : Command, readArguments;
-    import dmangos.world.database : LookupResult, LookupTable;
-    import dmangos.world.map : packetBody;
+    import std.uni : sicmp;
+    import dmangos.world.commands;
+    import dmangos.world.creature : Creature;
+    import dmangos.world.movement : Position;
+    import dmangos.world.objects : UpdateValues;
     import dmangos.world.opcodes;
     import dmangos.world.packets;
     import dmangos.world.updatefields;
+    import dmangos.world.worlddata : GameTele;
 
 private:
-    /// The most results a lookup shows.
-    enum maxLookupResults = 50;
-
-    void showLookup(string what, const(LookupResult)[] found)
+    /// What `GetMapMgr()->GetUnit(selection)` finds, or oneself without a selection.
+    struct SelectedUnit
     {
-        if (found.length == 0)
+        WorldSession player;
+        Creature creature;
+
+        @property bool found() const
         {
-            sendSystemMessage(format!"No %s found."(what));
-            return;
+            return player !is null || creature !is null;
         }
-        foreach (row; found)
-            sendSystemMessage(format!"%s - %s"(row.id, row.name));
-        if (found.length == maxLookupResults)
-            sendSystemMessage(format!"Only the first %s are shown."(maxLookupResults));
+
+        ref UpdateValues values() return
+        {
+            return player !is null ? player.player.values : creature.values;
+        }
+
+        /// Sends the changed fields to whoever sees them.
+        void flush(WorldSession by)
+        {
+            if (player !is null)
+                player.flushPlayerChanges();
+            else
+                by.map.flushObjectChanges(creature);
+        }
     }
 
-    @Command("lookup item", AccountLevel.moderator, "text", "Finds items by name.", ["lookupitem"])
-    bool commandLookupItem(string args)
+    /// The selected unit, oneself without a selection; not found after "You should select a character or a creature.".
+    SelectedUnit selectedUnit()
     {
-        if (args.length == 0)
-            return false;
-        LookupResult[] found;
-        foreach (entry, ref item; context.data.items)
-            if (item.details.name.toLower.canFind(args.toLower))
-                found ~= LookupResult(entry, item.details.name);
-        found.sort!((a, b) => a.id < b.id);
-        showLookup("items", found[0 .. min(found.length, maxLookupResults)]);
-        return true;
-    }
-
-    @Command("lookup skill", AccountLevel.moderator, "text", "Finds skills by name.")
-    bool commandLookupSkill(string args)
-    {
-        if (args.length == 0)
-            return false;
-        LookupResult[] found;
-        foreach (ref skill; context.client.skillLines.rows)
-            if (skill.name[0].toLower.canFind(args.toLower))
-                found ~= LookupResult(skill.id, skill.name[0]);
-        showLookup("skills", found[0 .. min(found.length, maxLookupResults)]);
-        return true;
-    }
-
-    /// The lookups that search a world table.
-    bool lookupInDatabase(LookupTable table, string what, string args)
-    {
-        if (args.length == 0)
-            return false;
-        showLookup(what, context.database.lookup(table, args, maxLookupResults));
-        return true;
-    }
-
-    @Command("lookup quest", AccountLevel.moderator, "text", "Finds quests by title.", ["lookupquest", "quest lookup"])
-    bool commandLookupQuest(string args)
-    {
-        return lookupInDatabase(LookupTable.quest, "quests", args);
-    }
-
-    @Command("lookup creature", AccountLevel.moderator, "text", "Finds creatures by name.", ["lookupcreature"])
-    bool commandLookupCreature(string args)
-    {
-        return lookupInDatabase(LookupTable.creature, "creatures", args);
-    }
-
-    @Command("lookup object", AccountLevel.moderator, "text", "Finds game objects by name.")
-    bool commandLookupObject(string args)
-    {
-        return lookupInDatabase(LookupTable.gameObject, "game objects", args);
-    }
-
-    @Command("lookup spell", AccountLevel.moderator, "text", "Finds spells by name.")
-    bool commandLookupSpell(string args)
-    {
-        return lookupInDatabase(LookupTable.spell, "spells", args);
+        SelectedUnit unit;
+        const guid = player.values.get!UNIT_FIELD_TARGET;
+        if (guid == 0)
+            unit.player = this;
+        else
+        {
+            unit.player = cast(WorldSession) map.find(guid);
+            if (unit.player is null)
+                unit.creature = cast(Creature) map.findObject(guid);
+        }
+        if (!unit.found)
+            systemMessage("You should select a character or a creature.");
+        return unit;
     }
 
     // -----------------------------------------------------------------------
-    // Movement orders
+    // debugcmds.cpp
     // -----------------------------------------------------------------------
 
-    @Command("paralyze", AccountLevel.gameMaster, "", "Roots the selected player to the spot.", ["debug root"])
-    bool commandParalyze(string)
+    bool handleDistanceCommand()
     {
-        auto target = selectedOrSelf();
-        target.sendMovementOrder!(Opcode.SMSG_FORCE_MOVE_ROOT)();
-        tellBoth(target, format!"%s is rooted."(target.player.data.name), "You have been rooted by a game master.");
+        const guid = player.values.get!UNIT_FIELD_TARGET;
+        Position at = player.position;
+        if (guid != 0)
+        {
+            if (auto other = map.find(guid))
+                at = other.character.position;
+            else if (auto object = map.findObject(guid))
+                at = object.position;
+            else
+            {
+                systemMessage("You should select a character or a creature.");
+                return true;
+            }
+        }
+        const me = player.position;
+        systemMessage(format!"Distance is: %g"(sqrt((at.x - me.x) ^^ 2 + (at.y - me.y) ^^ 2 + (at.z - me.z) ^^ 2)));
         return true;
     }
 
-    @Command("unparalyze", AccountLevel.gameMaster, "", "Lets the selected player move again.", ["debug unroot"])
-    bool commandUnparalyze(string)
+    bool handleSetBytesCommand(uint index, ubyte b0, ubyte b1, ubyte b2, ubyte b3)
     {
-        auto target = selectedOrSelf();
-        target.sendMovementOrder!(Opcode.SMSG_FORCE_MOVE_UNROOT)();
-        tellBoth(target, format!"%s can move again."(target.player.data.name), "You can move again.");
+        auto unit = selectedUnit();
+        if (!unit.found)
+            return true;
+        const ubyte[4] b = [b0, b1, b2, b3];
+        if (index >= unit.values.length)
+            return false; // past the object's fields (ArcEmu writes there regardless)
+        unit.values.setSlot(index, b[0] | b[1] << 8 | b[2] << 16 | uint(b[3]) << 24);
+        unit.flush(this);
+        systemMessage(format!"Set Field %s bytes to %s %s %s %s"(index, b[0], b[1], b[2], b[3]));
         return true;
     }
 
-    @Command("debug waterwalk", AccountLevel.administrator, "", "The selected player walks on water.")
-    bool commandWaterWalk(string)
+    bool handleGetBytesCommand(uint slot)
     {
-        selectedOrSelf().sendMovementOrder!(Opcode.SMSG_MOVE_WATER_WALK)();
-        return true;
-    }
-
-    @Command("debug landwalk", AccountLevel.administrator, "", "The selected player sinks in water again.")
-    bool commandLandWalk(string)
-    {
-        selectedOrSelf().sendMovementOrder!(Opcode.SMSG_MOVE_LAND_WALK)();
-        return true;
-    }
-
-    @Command("debug knockback", AccountLevel.administrator, "[speed]", "Knocks you back (and up).")
-    bool commandKnockBack(string args)
-    {
-        float speed = 10;
-        if (!readArguments!0(args, speed))
+        auto unit = selectedUnit();
+        if (!unit.found)
+            return true;
+        if (slot >= unit.values.length)
             return false;
+        const v = unit.values[slot];
+        systemMessage(format!"bytes for Field %s are %s %s %s %s"(slot, v & 0xFF, v >> 8 & 0xFF, v >> 16 & 0xFF,
+            v >> 24));
+        return true;
+    }
+
+    /// The four `SetMovement` tests: an order to the selected player, then "... Test Ran.".
+    bool movementTest(Opcode opcode)(string what, bool failWithoutSelection)
+    {
+        auto chr = getSelectedChar(true);
+        if (chr is null)
+        {
+            systemMessage("No character selected.");
+            return !failWithoutSelection;
+        }
+        chr.sendMovementOrder!opcode();
+        systemMessage(what ~ " Test Ran.");
+        return true;
+    }
+
+    bool handleDebugUnroot()
+    {
+        return movementTest!(Opcode.SMSG_FORCE_MOVE_UNROOT)("UnRoot", true);
+    }
+
+    bool handleDebugRoot()
+    {
+        return movementTest!(Opcode.SMSG_FORCE_MOVE_ROOT)("Root", false);
+    }
+
+    bool handleDebugLandWalk()
+    {
+        return movementTest!(Opcode.SMSG_MOVE_LAND_WALK)("Land Walk", true);
+    }
+
+    bool handleDebugWaterWalk()
+    {
+        return movementTest!(Opcode.SMSG_MOVE_WATER_WALK)("Water Walk", true);
+    }
+
+    bool handleKnockBackCommand(float f = 5)
+    {
+        if (f == 0)
+            f = 5;
         const o = player.position.orientation;
-        send(ServerKnockBack(player.guid, moveOrderCounter++, -cos(o), -sin(o), speed, -speed));
+        // ArcEmu's packet: cos, sin, the speed, and two thirds of it upwards.
+        send(ServerKnockBack(player.guid, moveOrderCounter++, cos(o), sin(o), f, f * 0.66f));
         resetMovementCheck();
         return true;
     }
 
-    // -----------------------------------------------------------------------
-    // Fields, distances, packets
-    // -----------------------------------------------------------------------
-
-    @Command("debug dist", AccountLevel.administrator, "", "Shows the distance to the selected player.",
-        ["debug rangecheck"])
-    bool commandDistance(string)
+    bool handleModifyBitCommand(ushort field, uint bit)
     {
-        auto target = selectedOrSelf();
-        const a = player.position, b = target.player.position;
-        sendSystemMessage(format!"Distance to %s: %.2f yards (%.2f on the ground)."(target.player.data.name,
-            sqrt((a.x - b.x) ^^ 2 + (a.y - b.y) ^^ 2 + (a.z - b.z) ^^ 2), sqrt((a.x - b.x) ^^ 2 + (a.y - b.y) ^^ 2)));
-        return true;
-    }
-
-    @Command("debug getvalue", AccountLevel.administrator, "slot", "Shows an update field slot of the selected player.",
-        ["debug getUint32Value"])
-    bool commandGetValue(string args)
-    {
-        uint slot;
-        if (!readArguments!1(args, slot))
-            return false;
-        auto target = selectedOrSelf();
-        if (slot >= target.player.values.length)
+        auto unit = selectedUnit();
+        if (!unit.found)
+            return true;
+        if (field < 1 || field >= PLAYER_END || field >= unit.values.length || bit < 1 || bit > 32)
         {
-            sendSystemMessage(format!"A player has %s slots."(target.player.values.length));
+            systemMessage("Incorrect values.");
             return true;
         }
-        const value = target.player.values[slot];
-        sendSystemMessage(format!"%s's slot %s: %s (0x%08X, as a float %s)"(target.player.data.name, slot, value,
-            value, *cast(const float*)&value));
+        const mask = 1u << (bit - 1);
+        const value = unit.values[field];
+        unit.values.setSlot(field, value ^ mask);
+        unit.flush(this);
+        systemMessage(format(value & mask ? "Removed bit %d in field %d." : "Set bit %d in field %d.", bit, field));
         return true;
     }
 
-    @Command("debug setvalue", AccountLevel.administrator, "slot value",
-        "Sets an update field slot of the selected player to a number (0x... for hex).")
-    bool commandSetValue(string args)
+    bool handleModifyValueCommand(ushort field, uint value)
     {
-        uint slot;
-        string text;
-        if (!readArguments!2(args, slot, text))
-            return false;
-        uint value;
-        try
-            value = text.length > 2 && text[0 .. 2] == "0x" ? text[2 .. $].to!uint(16) : text.to!uint;
-        catch (ConvException)
-            return false;
-        auto target = selectedOrSelf();
-        if (slot >= target.player.values.length)
-            return false;
-        target.player.values.setSlot(slot, value);
-        target.flushPlayerChanges();
-        sendSystemMessage(format!"%s's slot %s is now %s."(target.player.data.name, slot, value));
-        return true;
-    }
-
-    @Command("debug setbit", AccountLevel.administrator, "slot bit", "Sets a bit (0-31) of an update field slot.")
-    bool commandSetBit(string args)
-    {
-        uint slot, bit;
-        if (!readArguments!2(args, slot, bit) || bit > 31)
-            return false;
-        auto target = selectedOrSelf();
-        if (slot >= target.player.values.length)
-            return false;
-        target.player.values.setSlot(slot, target.player.values[slot] | 1u << bit);
-        target.flushPlayerChanges();
-        return true;
-    }
-
-    @Command("debug getbytes", AccountLevel.administrator, "slot", "Shows the four bytes of an update field slot.")
-    bool commandGetBytes(string args)
-    {
-        uint slot;
-        if (!readArguments!1(args, slot))
-            return false;
-        auto target = selectedOrSelf();
-        if (slot >= target.player.values.length)
-            return false;
-        const v = target.player.values[slot];
-        sendSystemMessage(format!"Slot %s: %s %s %s %s"(slot, v & 0xFF, v >> 8 & 0xFF, v >> 16 & 0xFF, v >> 24));
-        return true;
-    }
-
-    @Command("debug setbytes", AccountLevel.administrator, "slot b0 b1 b2 b3", "Sets the four bytes of an update field slot.")
-    bool commandSetBytes(string args)
-    {
-        uint slot;
-        ubyte b0, b1, b2, b3;
-        if (!readArguments!5(args, slot, b0, b1, b2, b3))
-            return false;
-        auto target = selectedOrSelf();
-        if (slot >= target.player.values.length)
-            return false;
-        target.player.values.setSlot(slot, b0 | b1 << 8 | b2 << 16 | uint(b3) << 24);
-        target.flushPlayerChanges();
-        return true;
-    }
-
-    @Command("debug sendpacket", AccountLevel.administrator, "opcode [hex body]", "Sends yourself a packet (opcode 0x...).")
-    bool commandSendPacket(string args)
-    {
-        import std.ascii : isHexDigit;
-
-        string opcodeText, hex;
-        if (!readArguments!1(args, opcodeText, hex))
-            return false;
-        uint opcode;
-        ubyte[] body_;
-        try
+        auto unit = selectedUnit();
+        if (!unit.found)
+            return true;
+        if (field < 1 || field >= PLAYER_END || field >= unit.values.length)
         {
-            opcode = opcodeText.length > 2 && opcodeText[0 .. 2] == "0x" ? opcodeText[2 .. $].to!uint(16) : opcodeText.to!uint;
-            string digits;
-            foreach (c; hex)
-                if (c.isHexDigit)
-                    digits ~= c;
-            if (digits.length % 2)
-                return false;
-            for (size_t i = 0; i < digits.length; i += 2)
-                body_ ~= digits[i .. i + 2].to!ubyte(16);
-        }
-        catch (ConvException)
-            return false;
-        if (opcode >= numMessageTypes)
-            return false;
-        deliver(cast(Opcode) opcode, body_);
-        sendSystemMessage(format!"Sent opcode 0x%03X with %s bytes."(opcode, body_.length));
-        return true;
-    }
-
-    @Command("npc info", AccountLevel.moderator, "", "Shows the selected creature: entry, spawn, level, faction, flags, model.")
-    bool commandNpcInfo(string)
-    {
-        import dmangos.world.creature : Creature;
-        import dmangos.world.objects : counterOf;
-
-        auto creature = cast(Creature) map.findObject(player.values.get!UNIT_FIELD_TARGET);
-        if (creature is null)
-        {
-            sendSystemMessage("Select a creature first.");
+            systemMessage("Incorrect Field.");
             return true;
         }
-        const t = creature.template_;
-        const v = &creature.values;
-        sendSystemMessage(format!"%s <%s>: entry %s, spawn %s, level %s, health %s/%s"(t.name, t.subName, t.entry,
-            counterOf(creature.guid), (*v)[UNIT_FIELD_LEVEL], (*v)[UNIT_FIELD_HEALTH], (*v)[UNIT_FIELD_MAXHEALTH]));
-        sendSystemMessage(format!"faction %s, npc flags 0x%X, unit flags 0x%X, model %s, respawn %s s, movement type %s"(
-            (*v)[UNIT_FIELD_FACTIONTEMPLATE], (*v)[UNIT_NPC_FLAGS], (*v)[UNIT_FIELD_FLAGS], (*v)[UNIT_FIELD_DISPLAYID],
-            creature.spawn.respawnSeconds, creature.spawn.movementType));
+        const oldValue = unit.values[field];
+        unit.values.setSlot(field, value);
+        unit.flush(this);
+        systemMessage(format!"Set Field %d from %d to %d."(field, oldValue, value));
         return true;
     }
 
-    @Command("battleground playsound", AccountLevel.gameMaster, "sound", "Plays a sound (SoundEntries.dbc) to you.",
-        ["playsound"])
-    bool commandPlaySound(string args)
+    /// ArcEmu compiles this command's body out (`_ONLY_FOOLS_TRY_THIS_`): it does nothing.
+    bool handleSendpacket()
     {
-        uint sound;
-        if (!readArguments!1(args, sound))
-            return false;
-        send(ServerPlaySound(sound));
         return true;
     }
 
-    @Command("battleground setworldstate", AccountLevel.gameMaster, "state value", "Sends you a world state.",
-        ["setworldstate"])
-    bool commandSetWorldState(string args)
+    bool handleGetUint32ValueCommand(uint index)
     {
-        uint state, value;
-        if (!readArguments!2(args, state, value))
-            return false;
-        send(ServerUpdateWorldState(state, value));
+        const guid = player.values.get!UNIT_FIELD_TARGET;
+        SelectedUnit unit;
+        unit.player = cast(WorldSession) map.find(guid);
+        if (unit.player is null)
+            unit.creature = cast(Creature) map.findObject(guid);
+        if (!unit.found)
+        {
+            redSystemMessage("You need to select a creature or character.");
+            return true;
+        }
+        const end = unit.player !is null ? PLAYER_END : UNIT_END;
+        if (index >= end)
+        {
+            redSystemMessage(format!"index must be less than %s."(end));
+            return true;
+        }
+        blueSystemMessage(format!"Value at index %s: %s."(index, unit.values[index]));
         return true;
     }
-}
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
+    // -----------------------------------------------------------------------
+    // RecallCommands.cpp, on game_tele
+    // -----------------------------------------------------------------------
 
-version (unittest)
-{
-    import dmangos.world.testclient;
-}
+    /// `SELECT * FROM recall ORDER BY name`
+    GameTele[] recallLocations()
+    {
+        auto places = context.data.teleports.dup;
+        places.sort!((a, b) => a.name < b.name);
+        return places;
+    }
 
-/// Lookups in loaded data and in the world database; fields and orders.
-unittest
-{
-    import dmangos.world.database : LookupResult, LookupTable;
+    /// `strnicmp(text, name, length)`: the first `length` letters of the two are the same, in any case.
+    static bool sameStart(string text, string name, size_t length)
+    {
+        const a = text.length < length ? text : text[0 .. length];
+        const b = name.length < length ? name : name[0 .. length];
+        return sicmp(a, b) == 0;
+    }
 
-    auto db = newDatabase();
-    db.lookupRows[LookupTable.quest] = [LookupResult(7, "Kobold Camp Cleanup"), LookupResult(33, "Wolves Across the Border")];
-    auto context = newCreationContext(db);
-    auto gm = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f), AccountLevel.administrator);
-    gm.read();
+    bool handleRecallListCommand()
+    {
+        auto places = recallLocations();
+        if (places.length == 0)
+            return false;
+        string text = MSG_COLOR_GREEN ~ "Recall locations|r:\n\n";
+        uint count;
+        foreach (ref place; places)
+        {
+            text ~= MSG_COLOR_LIGHTBLUE ~ place.name ~ "|r, ";
+            if (++count == 5)
+            {
+                text ~= "\n";
+                count = 0;
+            }
+        }
+        sendMultilineMessage(text);
+        return true;
+    }
 
-    gm.say(".lookup item shortsword");
-    assert(systemMessages(gm.read()) == ["25 - Worn Shortsword"]);
-    gm.say(".lookupquest kobold");
-    assert(systemMessages(gm.read()) == ["7 - Kobold Camp Cleanup"]);
-    gm.say(".lookup creature hogger");
-    assert(systemMessages(gm.read()) == ["No creatures found."]);
+    bool handleRecallGoCommand(Rest name)
+    {
+        foreach (ref place; recallLocations())
+            if (sameStart(name, place.name, name.length))
+            {
+                commandTeleport(place.map, Position(place.x, place.y, place.z, 0));
+                return true;
+            }
+        return false;
+    }
 
-    // Deputy Willem stands by the abbey (see testdata): select him and ask.
-    import dmangos.world.objects : HighGuid, makeGuid;
+    bool handleRecallAddCommand(Rest name)
+    {
+        if (context.data.teleports.canFind!(place => name.startsWith(place.name)))
+        {
+            redSystemMessage("Name in use, please use another name for your location.");
+            return true;
+        }
+        const p = player.position;
+        const place = GameTele(p.x, p.y, p.z, 0, player.data.map, name);
+        context.database.addTeleport(place);
+        context.data.teleports ~= place;
+        greenSystemMessage(format!"Added location to DB with MapID: %d, X: %f, Y: %f, Z: %f"(player.data.map, p.x, p.y,
+            p.z));
+        gmLog(format!"used recall add, added \"%s\" location to database."(name));
+        return true;
+    }
 
-    gm.say(".npc info");
-    assert(systemMessages(gm.read()) == ["Select a creature first."]);
-    gm.write(Opcode.CMSG_SET_SELECTION, ClientSetSelection(makeGuid(HighGuid.unit, creatureWillem, 79942)));
-    gm.read();
-    gm.say(".npc info");
-    assert(systemMessages(gm.read())[0].canFind("Deputy Willem"));
+    bool handleRecallDelCommand(Rest name)
+    {
+        import std.algorithm.mutation : remove;
 
-    gm.say(".debug setvalue 22 0x2A");
-    assert(gm.session.character.values[22] == 42);
-    gm.say(".paralyze");
-    assert(opcodesOf(gm.read()).canFind(Opcode.SMSG_FORCE_MOVE_ROOT));
-    gm.say(".debug sendpacket 0x2D2 01000000");
-    assert(gm.read()[0].opcode == Opcode.SMSG_PLAY_SOUND);
+        foreach (ref place; recallLocations())
+            if (sameStart(name, place.name, place.name.length))
+            {
+                const placeName = place.name;
+                context.database.deleteTeleport(placeName);
+                context.data.teleports = context.data.teleports.remove!(t => t.name == placeName);
+                greenSystemMessage("Recall location removed.");
+                gmLog(format!"used recall delete, removed \"%s\" location from database."(name));
+                return true;
+            }
+        return false;
+    }
+
+    bool handleRecallPortPlayerCommand(string name, string location)
+    {
+        auto found = context.onlinePlayer(name);
+        if (found is null)
+            return false;
+        auto plr = sessionOf(found);
+        // ArcEmu compares `strlen(args)` letters, the whole command line, and so finds nothing unless the
+        // location's name is that long; this compares the location's letters.
+        foreach (ref place; recallLocations())
+            if (sameStart(location, place.name, location.length))
+            {
+                gmLog(format!"ported %s to %s ( map: %u, x: %f, y: %f, z: %f )"(plr.player.data.name, place.name,
+                    place.map, place.x, place.y, place.z));
+                plr.commandTeleport(place.map, Position(place.x, place.y, place.z, 0));
+                return true;
+            }
+        return false;
+    }
+
+    // -----------------------------------------------------------------------
+    // BattlegroundCommands.cpp: there are no battlegrounds yet, so nobody is in one
+    // -----------------------------------------------------------------------
+
+    bool handleSetWorldStateCommand(uint id, uint value)
+    {
+        return true; // ArcEmu sets it in the player's battleground, if any
+    }
+
+    bool handlePlaySoundCommand()
+    {
+        systemMessage("You're not in a battleground!");
+        return true;
+    }
 }

@@ -23,7 +23,7 @@ public import dmangos.world.packets;
 public import dmangos.world.session : WorldSession, WorldState;
 public import dmangos.world.testdata;
 
-import std.bitmanip : nativeToLittleEndian;
+import std.bitmanip : bigEndianToNative, littleEndianToNative, nativeToBigEndian, nativeToLittleEndian;
 
 import dmangos.crypto.hash : sha1;
 import dmangos.log;
@@ -58,8 +58,8 @@ struct TestClient
             ubyte[4] header = inbox[0 .. 4];
             if (encrypted)
                 receiving.decrypt(header, key);
-            const size = header[0] << 8 | header[1];
-            packets ~= ServerPacketRead(cast(ushort)(header[2] | header[3] << 8), inbox[4 .. 2 + size].dup);
+            const size = bigEndianToNative!ushort(header[0 .. 2]);
+            packets ~= ServerPacketRead(littleEndianToNative!ushort(header[2 .. 4]), inbox[4 .. 2 + size].dup);
             inbox = inbox[2 + size .. $];
         }
         return packets;
@@ -68,14 +68,15 @@ struct TestClient
     /// Frames, encrypts (once authenticated) and delivers a client packet.
     void write(uint opcode, const(ubyte)[] body_, size_t chunk = size_t.max)
     {
-        const size = body_.length + 4;
-        ubyte[6] header = [cast(ubyte)(size >> 8), cast(ubyte) size, cast(ubyte) opcode,
-            cast(ubyte)(opcode >> 8), cast(ubyte)(opcode >> 16), cast(ubyte)(opcode >> 24)];
+        import std.range : chunks;
+
+        ubyte[6] header;
+        header[0 .. 2] = nativeToBigEndian(cast(ushort)(body_.length + 4));
+        header[2 .. 6] = nativeToLittleEndian(opcode);
         if (encrypted)
             sending.encrypt(header, key);
-        const bytes = header ~ body_;
-        for (size_t offset = 0; offset < bytes.length; offset += chunk)
-            session.receive(bytes[offset .. offset + chunk < bytes.length ? offset + chunk : bytes.length]);
+        foreach (piece; (header ~ body_).chunks(chunk))
+            session.receive(piece);
     }
 
     void write(T)(uint opcode, const T packet)
@@ -160,7 +161,7 @@ WorldContext newCreationContext(MemoryWorldDatabase db, void delegate(ref WorldC
 {
     auto client = testClientData();
     WorldConfig config;
-    config.instantLogout = 0; // everyone logs out at once, unless a test sets the 20-second wait up
+    config.logoutDelay = 0; // everyone logs out at once, unless a test sets the 20-second wait up
     if (adjust)
         adjust(config);
     setLogLevel(LogLevel.error);

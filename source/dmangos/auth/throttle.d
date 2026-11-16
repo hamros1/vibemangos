@@ -57,12 +57,7 @@ struct LoginThrottle
         if (!enabled)
             return;
 
-        auto record = address in records;
-        if (record is null)
-        {
-            records[address] = Record.init;
-            record = address in records;
-        }
+        auto record = &records.require(address);
 
         // Failures spread out over long periods do not add up.
         if (now - record.lastFailure > blockDuration)

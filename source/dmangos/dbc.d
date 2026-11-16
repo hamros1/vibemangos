@@ -30,7 +30,8 @@ class DbcException : Exception
     mixin basicExceptionCtors;
 }
 
-private enum uint dbcMagic = 0x43424457; // "WDBC" little-endian
+/// The first four bytes of a DBC file, "WDBC", read as a little-endian `uint`.
+enum uint dbcMagic = 0x43424457;
 
 /// Bytes a format character occupies in a record.
 private size_t fieldSize(char c) pure @safe
@@ -172,7 +173,8 @@ struct DbcStore(Entry, string fmt)
     {
         import std.file : exists, read;
 
-        enforce!DbcException(path.exists, path ~ ": not found (set data_dir to mangosd's DataDir, with its dbc/ folder)");
+        enforce!DbcException(path.exists,
+            path ~ ": not found (set data_dir to mangosd's DataDir, with its dbc/ folder)");
         return parse(cast(const(ubyte)[]) read(path), path);
     }
 

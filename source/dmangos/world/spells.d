@@ -8,6 +8,7 @@
  */
 module dmangos.world.spells;
 
+import std.algorithm.searching : canFind;
 import std.algorithm.sorting : sort;
 
 import dmangos.log;
@@ -18,6 +19,7 @@ import dmangos.world.clientdata : ClientData;
 enum SpellEffect : uint
 {
     none = 0,
+    instantKill = 1,
     applyAura = 6,
     createItem = 24,
     learnSpell = 36,
@@ -70,10 +72,7 @@ struct SpellInfo
     /// `IsSpellHaveEffect`
     bool hasEffect(SpellEffect wanted) const pure nothrow @nogc @safe
     {
-        foreach (e; effect)
-            if (e == wanted)
-                return true;
-        return false;
+        return effect[].canFind(wanted);
     }
 
     /// `CalculateSimpleValue`: base points plus base dice.
@@ -154,10 +153,7 @@ final class SpellData
     /// `IsSpellLearnToSpell`
     bool learnsSpell(uint spell, uint learned) const
     {
-        foreach (node; learnedWith(spell))
-            if (node.spell == learned)
-                return true;
-        return false;
+        return learnedWith(spell).canFind!(node => node.spell == learned);
     }
 
     /// `GetSpellLearnSkill`
@@ -178,7 +174,7 @@ final class SpellData
             ~ "EffectMiscValue2, EffectMiscValue3, EffectTriggerSpell1, EffectTriggerSpell2, EffectTriggerSpell3, Category, RecoveryTime, "
             ~ "CategoryRecoveryTime, EquippedItemClass, EquippedItemSubClassMask "
             ~ "FROM spell_template")())
-            data.spells[row.tupleof[0]] = row.toInfo();
+            data.spells[row.id] = row.toInfo();
 
         SpellChainRow[] chainRows = world.queryAs!(SpellChainRow,
             "SELECT spell_id, prev_spell, first_spell, `rank`, req_spell FROM spell_chain")();
@@ -365,11 +361,7 @@ private:
                     continue;
                 const autoLearned = entry.implicitTargetA[i] == targetUnitCasterPet
                     || client.talentSpellPos(id) !is null || entry.isPassive || entry.hasEffect(SpellEffect.skillStep);
-                bool found;
-                foreach (existing; learnSpells.get(id, null))
-                    if (existing.spell == learned)
-                        found = true;
-                if (!found)
+                if (!learnsSpell(id, learned))
                     learnSpells[id] ~= SpellLearnSpellNode(learned, true, autoLearned);
             }
         }

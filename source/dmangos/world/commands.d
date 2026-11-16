@@ -1,491 +1,780 @@
 /**
- * Chat commands: messages that start with `.` (or `!`), as CMaNGOS's
- * `ChatHandler::ParseCommands` reads them, with the command set of ArcEmu
- * and Ascent (`Chat.cpp`, `Level0.cpp` .. `Level3.cpp`).
+ * Chat commands as ArcEmu 2.4.3 has them (`arcemu-world/Chat.cpp`,
+ * `Level0.cpp` .. `Level3.cpp`, `debugcmds.cpp`, `RecallCommands.cpp`,
+ * `BattlegroundCommands.cpp`): the same tables, the same permission
+ * letters, the same lookup and the same replies.
  *
- * A command is a `WorldSession` method marked with `@Command`; the table
- * that `runCommand` searches is collected from those attributes at compile
- * time, from every handler group, so a new command is one method:
- * ---
- * @Command("gm chat", AccountLevel.moderator, "[on|off]", "Shows or hides the GM badge in chat.")
- * bool commandGmChat(string args) { ... }
- * ---
- * Commands are grouped as ArcEmu groups them (`.modify hp`, `.ban account`,
- * `.lookup item`, ...); a group name alone lists its commands. Ascent's flat
- * names for the same commands (`.gmon`, `.kickplayer`, `.additem`) are
- * aliases. Every word may be shortened (`.te Stormwind`), and longer names
- * are tried first. A method returns false when its arguments are wrong; the
- * player is then shown the syntax. A player typing something that is not a
- * command, or not one for its level, simply says it, as in CMaNGOS.
- *
- * The commands themselves are in `gmtravel`, `gmcharacter`, `gmadmin` and
- * `gmdebug`; the general ones are here.
+ * $(UL
+ *   $(LI $(B Permissions.) ArcEmu gives each account a string of letters (`accounts.gm`); a
+ *        command's letter must be in it (`WorldSession::CanUseCommand`), and `a` stands for
+ *        every letter but `z`. CMaNGOS's `account.gmlevel` is a number, so the
+ *        `gm_permissions` setting gives each level its string; the default gives game masters
+ *        (2) `a` and administrators (3) `az`. The string goes through ArcEmu's
+ *        `LoadSecurity`, so "3" means `a` there too.)
+ *   $(LI $(B Lookup.) A message starting with `.` or `!` is a command if the account has any
+ *        permission (or `allow_player_commands` is set); otherwise it is said aloud. Each word
+ *        is matched against `dmangos.world.commandtable`'s rows in order, and the first row the
+ *        word abbreviates, and whose letter the account has, is taken
+ *        (`ExecuteCommandInTable`). A sub-table without a matching word lists its commands.
+ *        A handler returning false shows the row's help, or "Incorrect syntax specified".)
+ *   $(LI $(B Handlers.) Each row names ArcEmu's handler; the `WorldSession` method of that name,
+ *        with a lower-case first letter, runs it. Its parameters say what it takes: the command's
+ *        words are converted to their types with `std.conv.to` (`invoke`); a `Rest` takes the rest
+ *        of the line, `OnOff` reads "on" or "off", and a word that is missing or does not convert
+ *        shows the command's help. The handlers are in `gmlevel0` .. `gmlevel3` and `gmdebug`, by
+ *        the ArcEmu file they come from. Rows whose handler is not
+ *        written yet (their systems do not exist yet) answer "Not yet implemented.", as ArcEmu's
+ *        `HandleNYICommand` does. docs/COMMANDS.md lists both.)
+ *   $(LI $(B GM log.) What ArcEmu writes with `sGMLog.writefromsession` goes to the file
+ *        `gm_command_log` names, if any.)
+ * )
+ * `command_overrides` changes a command's letter, like ArcEmu's `command_overrides` table.
  */
 module dmangos.world.commands;
 
-import std.typecons : Nullable;
-import std.uni : sicmp;
+public import std.typecons : Nullable; // handler parameters may be `Nullable`
 
-import dmangos.auth.accounts : AccountLevel;
+import dmangos.world.commandtable;
+import dmangos.world.updatefields;
 
-/// Marks a chat command. `name` has one or two words; `syntax` describes the arguments.
-struct Command
+/// The colours of ArcEmu's `Chat.h`.
+enum : string
 {
-    string name;
-    AccountLevel level;
-    string syntax;
-    string help;
-    string[] aliases; /// other names, such as Ascent's flat ones
+    MSG_COLOR_LIGHTRED = "|cffff6060",
+    MSG_COLOR_LIGHTBLUE = "|cff00ccff",
+    MSG_COLOR_BLUE = "|cff0000ff",
+    MSG_COLOR_GREEN = "|cff00ff00",
+    MSG_COLOR_RED = "|cffff0000",
+    MSG_COLOR_GOLD = "|cffffcc00",
+    MSG_COLOR_GREY = "|cff888888",
+    MSG_COLOR_WHITE = "|cffffffff",
+    MSG_COLOR_SUBWHITE = "|cffbbbbbb",
+    MSG_COLOR_MAGENTA = "|cffff00ff",
+    MSG_COLOR_YELLOW = "|cffffff00",
+    MSG_COLOR_CYAN = "|cff00ffff",
 }
 
-/// `hasStringAbbr`: whether `word` is a non-empty prefix of `full`, in any case.
-bool abbreviates(const(char)[] word, const(char)[] full) pure @safe
+/// `ChatHandler::hasStringAbbr(s1, s2)`: whether `typed` is the start of `name`, in any case.
+bool hasStringAbbr(const(char)[] name, const(char)[] typed) pure nothrow @safe @nogc
 {
-    return word.length > 0 && word.length <= full.length && sicmp(word, full[0 .. word.length]) == 0;
-}
+    import std.ascii : toLower;
 
-/**
- * Reads the words of `text` into `values`, converting each to its type; a last `string` takes the
- * rest of the text. The first `required` must be there; the others keep their values when missing.
- * False if a word does not convert, or too few are given.
- */
-bool readArguments(size_t required, Args...)(string text, ref Args values)
-{
-    import std.conv : ConvException, to;
-    import std.string : strip;
-
-    static assert(required <= Args.length);
-    string rest = text.strip;
-    static foreach (i, T; Args)
-    {{
-        if (rest.length == 0)
-            return i >= required;
-        static if (is(T == string) && i == Args.length - 1)
-        {
-            values[i] = rest;
-            rest = null;
-        }
-        else
-        {
-            size_t end;
-            while (end < rest.length && rest[end] != ' ')
-                ++end;
-            try
-                values[i] = rest[0 .. end].to!T;
-            catch (ConvException)
-                return false;
-            rest = rest[end .. $].strip;
-        }
-    }}
+    foreach (i, c; typed)
+        if (i >= name.length || toLower(name[i]) != toLower(c))
+            return false;
     return true;
 }
 
 unittest
 {
-    uint a;
-    float b = 7;
-    string c;
-    assert(readArguments!1("5", a, b, c) && a == 5 && b == 7 && c is null);
-    assert(readArguments!3("1 2.5 the rest of it", a, b, c) && b == 2.5f && c == "the rest of it");
-    assert(!readArguments!2("1", a, b) && !readArguments!1("x", a));
+    assert(hasStringAbbr("gmannounce", "gma") && hasStringAbbr("gm", "GM") && hasStringAbbr("gm", ""));
+    assert(!hasStringAbbr("gm", "gmon"));
 }
 
-/// Durations as GM commands take them: "1d2h30m10s", or a number of seconds. Null if the text is not one.
-Nullable!uint parseDuration(string text) pure @safe
+/**
+ * `WorldSession::LoadSecurity`: the permission letters of a security string, in lower case;
+ * `3` and `4` stand for `a`; after `a` only `z` is kept; a leading `0` means none.
+ */
+string loadSecurity(string security) pure @safe
 {
-    import std.ascii : isDigit;
+    import std.ascii : toLower;
 
-    if (text.length == 0)
-        return Nullable!uint.init;
-    ulong total, number;
-    bool digits;
-    foreach (c; text)
+    string letters;
+    bool hasA;
+    foreach (i, raw; security)
     {
-        if (c.isDigit)
+        char c = toLower(raw);
+        if (c == '4' || c == '3')
+            c = 'a';
+        if (c == 'a')
         {
-            number = number * 10 + (c - '0');
-            digits = true;
-            if (number > uint.max)
-                return Nullable!uint.init;
+            letters ~= 'a';
+            hasA = true;
+        }
+        else if (!hasA && c == '0' && i == 0)
+            break;
+        else if (!hasA || c == 'z')
+            letters ~= c;
+    }
+    return letters;
+}
+
+/// `WorldSession::CanUseCommand`
+bool canUseCommand(string permissions, char group) pure nothrow @safe @nogc
+{
+    if (permissions.length == 0)
+        return false;
+    if (group == 0)
+        return true;
+    if (permissions[0] == 'a' && group != 'z')
+        return true;
+    foreach (c; permissions)
+        if (c == group)
+            return true;
+    return false;
+}
+
+/// `WorldSession::HasGMPermissions`: an `a` among the letters.
+bool hasGMPermissions(string permissions) pure nothrow @safe @nogc
+{
+    foreach (c; permissions)
+        if (c == 'a')
+            return true;
+    return false;
+}
+
+unittest
+{
+    assert(loadSecurity("AZ") == "az" && loadSecurity("3") == "a" && loadSecurity("abz") == "az");
+    assert(loadSecurity("0bc") == "" && loadSecurity("bc0") == "bc0");
+    assert(canUseCommand("az", 'z') && canUseCommand("a", 'm') && !canUseCommand("a", 'z'));
+    assert(canUseCommand("bc", 'b') && !canUseCommand("bc", 'm') && !canUseCommand("bc", '0'));
+    assert(!canUseCommand("", 'b') && hasGMPermissions("bca") && !hasGMPermissions("bc"));
+}
+
+/**
+ * `CommandTableStorage::Override`: the letter `level` for the command `command` ("name" or "name sub",
+ * each the start of a row's name; "name *" for every row of a sub-table). Returns the full paths of
+ * the rows changed, which are empty if none matched.
+ */
+string[] overrideTargets(string command) pure @safe
+{
+    import std.string : indexOf;
+    import std.uni : sicmp;
+
+    const space = command.indexOf(' ');
+    const name = space < 0 ? command : command[0 .. space];
+    const sub = space < 0 ? null : command[space + 1 .. $];
+    // strnicmp(row, typed, strlen(typed)): the typed text starts the row's name.
+    static bool starts(string row, string typed)
+    {
+        return typed.length <= row.length && sicmp(row[0 .. typed.length], typed) == 0;
+    }
+
+    foreach (ref row; commandTable)
+    {
+        if (!starts(row.name, name))
             continue;
-        }
-        if (!digits)
-            return Nullable!uint.init;
-        switch (c)
+        if (sub is null)
+            return [row.name];
+        string[] paths;
+        foreach (ref child; row.children)
         {
-        case 'd': total += number * 86_400; break;
-        case 'h': total += number * 3600; break;
-        case 'm': total += number * 60; break;
-        case 's': total += number; break;
-        default: return Nullable!uint.init;
+            if (sub.length && sub[0] == '*')
+                paths ~= row.name ~ " " ~ child.name;
+            else if (starts(child.name, sub))
+                return [row.name ~ " " ~ child.name];
         }
-        number = 0;
-        digits = false;
+        return paths;
     }
-    total += number;
-    return total > uint.max ? Nullable!uint.init : Nullable!uint(cast(uint) total);
+    return null;
 }
 
 unittest
 {
-    assert(parseDuration("90").get == 90 && parseDuration("1d2h").get == 93_600 && parseDuration("10m5s").get == 605);
-    assert(parseDuration("").isNull && parseDuration("h").isNull && parseDuration("5x").isNull);
+    assert(overrideTargets("gm on") == ["gm on"] && overrideTargets("modify h") == ["modify hp"]);
+    assert(overrideTargets("gm *").length == 6 && overrideTargets("nosuch").length == 0);
 }
 
-/// An account level given by number (0-3) or name.
-Nullable!AccountLevel parseAccountLevel(string text) pure @safe
+/// The method that runs ArcEmu's handler `handler`: `HandleGMOnCommand` is `handleGMOnCommand`.
+string handlerMethod(string handler) pure @safe
 {
-    import std.uni : toLower;
+    import std.ascii : toLower;
 
-    switch (text.toLower)
+    return toLower(handler[0]) ~ handler[1 .. $];
+}
+
+/// Every handler named in `table` and its sub-tables, once each.
+string[] collectHandlers(immutable(ChatCommand)[] table) pure @safe
+{
+    import std.algorithm.searching : canFind;
+
+    string[] found;
+    foreach (ref row; table)
     {
-    case "0", "player": return Nullable!AccountLevel(AccountLevel.player);
-    case "1", "moderator", "mod": return Nullable!AccountLevel(AccountLevel.moderator);
-    case "2", "gamemaster", "gm": return Nullable!AccountLevel(AccountLevel.gameMaster);
-    case "3", "administrator", "admin": return Nullable!AccountLevel(AccountLevel.administrator);
-    default: return Nullable!AccountLevel.init;
+        if (row.handler.length && !found.canFind(row.handler))
+            found ~= row.handler;
+        foreach (handler; collectHandlers(row.children))
+            if (!found.canFind(handler))
+                found ~= handler;
+    }
+    return found;
+}
+
+/// Every update field the `.modify` rows name.
+string[] collectFields(immutable(ChatCommand)[] table) pure @safe
+{
+    import std.algorithm.searching : canFind;
+
+    string[] found;
+    foreach (ref row; table)
+        foreach (field; [row.field, row.fieldMax])
+            if (field.length && !found.canFind(field))
+                found ~= field;
+    return found;
+}
+
+private enum string[] modifyFields = collectFields(modifyCommandTable);
+
+/// The slot of an update field as a `.modify` row names it ("UNIT_FIELD_RESISTANCES + 1").
+size_t fieldSlot(string field) pure @safe
+{
+    switch (field)
+    {
+        static foreach (name; modifyFields)
+        {
+    case name:
+            return mixin(name);
+        }
+    default:
+        assert(0, "not a .modify field: " ~ field);
     }
 }
 
 unittest
 {
-    assert(abbreviates("te", "tele") && abbreviates("TELE", "tele") && !abbreviates("teles", "tele"));
-    assert(!abbreviates("", "gm"));
-    assert(parseAccountLevel("GM").get == AccountLevel.gameMaster && parseAccountLevel("7").isNull);
+    assert(fieldSlot("UNIT_FIELD_RESISTANCES + 1") == UNIT_FIELD_RESISTANCES + 1);
+    assert(fieldSlot("UNIT_FIELD_HEALTH") == UNIT_FIELD_HEALTH);
+}
+
+/**
+ * A handler parameter that takes the rest of the command's text, as many words as there are: an
+ * announcement, a ban reason, a player's name as ArcEmu reads it (`GetPlayer(args)`). It converts to
+ * `string`. With no default value it is required, like any other parameter.
+ */
+struct Rest
+{
+    string text;
+    alias text this;
+}
+
+/// A handler parameter for "on" or "off", which `std.conv.to` reads by name.
+enum OnOff
+{
+    off,
+    on,
+}
+
+/// The first space-separated word of `text`, which then holds what follows it; null when there is none.
+string nextWord(ref string text) pure nothrow @nogc @safe
+{
+    import std.algorithm.searching : countUntil;
+    import std.utf : byCodeUnit;
+
+    // Code units, not characters: chat text is not checked to be valid UTF-8.
+    const start = text.byCodeUnit.countUntil!(c => c != ' ');
+    if (start < 0)
+    {
+        text = null;
+        return null;
+    }
+    text = text[start .. $];
+    const end = text.byCodeUnit.countUntil(' ');
+    const word = end < 0 ? text : text[0 .. end];
+    text = text[word.length .. $];
+    return word;
+}
+
+/// `text` without the spaces around it.
+string trimSpaces(string text) pure nothrow @nogc @safe
+{
+    import std.algorithm.mutation : strip;
+    import std.utf : byCodeUnit;
+
+    return text.byCodeUnit.strip(' ').source;
+}
+
+unittest
+{
+    string text = "  Anduin  for spamming ";
+    assert(nextWord(text) == "Anduin" && trimSpaces(text) == "for spamming");
+    assert(nextWord(text) == "for" && nextWord(text) == "spamming" && nextWord(text) is null && text is null);
+    string invalid = "\xFF\xFE x";
+    assert(nextWord(invalid) == "\xFF\xFE", "bytes that are not UTF-8 are only bytes");
+}
+
+/// Whether `text` is a dotted IPv4 address: four numbers from 0 to 255.
+bool isIPv4Address(string text) pure @safe
+{
+    import std.algorithm.iteration : splitter;
+    import std.conv : ConvException, to;
+    import std.utf : byCodeUnit;
+
+    size_t parts;
+    foreach (part; text.byCodeUnit.splitter('.'))
+    {
+        try
+            cast(void) part.source.to!ubyte;
+        catch (ConvException)
+            return false;
+        ++parts;
+    }
+    return parts == 4;
+}
+
+unittest
+{
+    assert(isIPv4Address("127.0.0.1") && !isIPv4Address("127.0.0.256") && !isIPv4Address("1.2.3"));
+    assert(!isIPv4Address("1.2.3.4.5") && !isIPv4Address("a.b.c.d") && !isIPv4Address(""));
+}
+
+/// ArcEmu's `TIME_*` constants (`Common.h`): a month is 30 days, a year 12 months.
+enum : uint
+{
+    TIME_MINUTE = 60,
+    TIME_HOUR = TIME_MINUTE * 60,
+    TIME_DAY = TIME_HOUR * 24,
+    TIME_MONTH = TIME_DAY * 30,
+    TIME_YEAR = TIME_MONTH * 12,
+}
+
+/**
+ * ArcEmu's `GetTimePeriodFromString` (`Util.cpp`): numbers each followed by `y`, `m` (months), `d`
+ * or `h`, added up, in seconds. Reading stops at anything that is not a digit, and a number
+ * without a letter is ignored, so "perm" is 0. -1 for an unknown letter.
+ */
+int getTimePeriodFromString(const(char)[] text) pure nothrow @safe @nogc
+{
+    import std.ascii : isDigit, toLower;
+
+    uint total;
+    size_t i;
+    while (i < text.length && text[i].isDigit)
+    {
+        uint number;
+        while (i < text.length && text[i].isDigit)
+            number = number * 10 + (text[i++] - '0');
+        if (i == text.length)
+            break;
+        uint multiplier;
+        switch (toLower(text[i]))
+        {
+        case 'y': multiplier = TIME_YEAR; break;
+        case 'm': multiplier = TIME_MONTH; break;
+        case 'd': multiplier = TIME_DAY; break;
+        case 'h': multiplier = TIME_HOUR; break;
+        default: return -1;
+        }
+        ++i;
+        total += multiplier * number;
+    }
+    return cast(int) total;
+}
+
+/// ArcEmu's `ConvertTimeStampToString` (`Util.cpp`): "1 days, 2 hours, " and so on.
+string convertTimeStampToString(uint timestamp) pure @safe
+{
+    import std.conv : to;
+
+    const seconds = timestamp % 60;
+    const mins = timestamp / TIME_MINUTE % 60;
+    const hours = timestamp / TIME_HOUR % 24;
+    const days = timestamp / TIME_DAY % 30;
+    const months = timestamp / TIME_MONTH % 12;
+    const years = timestamp / TIME_YEAR;
+    string result;
+    if (years)
+        result ~= years.to!string ~ " years, ";
+    if (months)
+        result ~= months.to!string ~ " months, ";
+    if (days)
+        result ~= days.to!string ~ " days, ";
+    if (hours)
+        result ~= hours.to!string ~ " hours, ";
+    if (mins)
+        result ~= mins.to!string ~ " minutes, ";
+    if (seconds)
+        result ~= seconds.to!string ~ " seconds";
+    return result;
+}
+
+/// ArcEmu's `ConvertTimeStampToDataTime` (`Util.cpp`): "Monday, 05 January 2026, 09:04:01", in local time.
+string convertTimeStampToDataTime(long timestamp) @safe
+{
+    import std.datetime.systime : SysTime;
+    import std.format : format;
+
+    static immutable string[7] days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+    static immutable string[12] months = ["January", "February", "March", "April", "May", "June", "July", "August",
+        "September", "October", "November", "December"];
+    const t = SysTime.fromUnixTime(timestamp);
+    return format!"%s, %02d %s %d, %02d:%02d:%02d"(days[t.dayOfWeek], t.day, months[t.month - 1], t.year, t.hour,
+        t.minute, t.second);
+}
+
+/// C's `ctime`: "Wed Jun 30 21:49:08 1993\n", in local time, as ArcEmu's IP ban message prints it.
+string ctimeString(long timestamp) @safe
+{
+    import std.datetime.systime : SysTime;
+    import std.format : format;
+
+    static immutable string[7] days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    static immutable string[12] months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov",
+        "Dec"];
+    const t = SysTime.fromUnixTime(timestamp);
+    return format!"%s %s %2d %02d:%02d:%02d %d\n"(days[t.dayOfWeek], months[t.month - 1], t.day, t.hour, t.minute,
+        t.second, t.year);
+}
+
+unittest
+{
+    assert(getTimePeriodFromString("1d2h") == 93_600 && getTimePeriodFromString("perm") == 0);
+    assert(getTimePeriodFromString("5") == 0 && getTimePeriodFromString("3x") == -1);
+    assert(getTimePeriodFromString("1m") == 2_592_000);
+    assert(convertTimeStampToString(93_605) == "1 days, 2 hours, 5 seconds");
+    assert(convertTimeStampToString(TIME_YEAR + TIME_MONTH + 61) == "1 years, 1 months, 1 minutes, 1 seconds");
 }
 
 /// See the module documentation.
 mixin template ChatCommands()
 {
-    import std.algorithm.iteration : filter, map, splitter, uniq;
-    import std.algorithm.searching : canFind, startsWith;
-    import std.algorithm.sorting : sort;
-    import std.array : array, join, split;
     import std.format : format;
-    import std.string : strip;
-    import std.typecons : Nullable;
-    import std.uni : sicmp, toLower;
-    import dmangos.auth.accounts : AccountLevel;
     import dmangos.log;
-    import dmangos.world.commands : abbreviates, Command, readArguments;
-    import dmangos.world.online : OnlinePlayer;
+    import dmangos.world.commands;
+    import dmangos.world.commandtable;
+    import dmangos.world.creature : Creature;
+    import dmangos.world.objects : HighGuid, highGuidOf;
     import dmangos.world.opcodes;
     import dmangos.world.packets;
-    import dmangos.world.player : PlayerFlags;
     import dmangos.world.queries : chatMessage;
-    import dmangos.world.updatefields : UNIT_FIELD_TARGET;
+    import dmangos.world.updatefields;
 
 private:
-    struct CommandEntry
+    /// Every handler ArcEmu's tables name.
+    enum string[] arcHandlers = collectHandlers(commandTable);
+
+    // -----------------------------------------------------------------------
+    // Permissions (WorldSession::LoadSecurity, CanUseCommand)
+    // -----------------------------------------------------------------------
+
+    /// A row's letter, after `command_overrides`.
+    char commandGroup(string path, ref immutable ChatCommand row) const
     {
-        Command command;
-        string member;
+        if (auto overridden = path in context.commandOverrides)
+            return *overridden;
+        return row.group;
     }
 
-    /// One way to type a command: its name or an alias, split into words.
-    struct CommandSpelling
-    {
-        string[] words;
-        size_t entry; /// index into `chatCommands`
-    }
+    // -----------------------------------------------------------------------
+    // ChatHandler::ParseCommands and ExecuteCommandInTable
+    // -----------------------------------------------------------------------
 
-    /// Every `@Command` method of every handler group.
-    static CommandEntry[] collectCommands()
+    /// `ChatHandler::ParseCommands`: true if `text` was a command (run or refused), false if it is to be said.
+    bool parseCommands(string text)
     {
-        CommandEntry[] entries;
-        static foreach (member; __traits(allMembers, typeof(this)))
-            static if (member.startsWith("command") && member.length > "command".length)
-                static foreach (attribute; __traits(getAttributes, __traits(getMember, typeof(this), member)))
-                    static if (is(typeof(attribute) == Command))
-                        entries ~= CommandEntry(attribute, member);
-        return entries;
-    }
-
-    /// Every spelling, longest first, so `.gm chat on` is not taken for `.gm`.
-    static CommandSpelling[] collectSpellings(const CommandEntry[] entries)
-    {
-        CommandSpelling[] spellings;
-        foreach (i, ref entry; entries)
-        {
-            spellings ~= CommandSpelling(entry.command.name.split(" "), i);
-            foreach (name; entry.command.aliases)
-                spellings ~= CommandSpelling(name.split(" "), i);
-        }
-        spellings.sort!((a, b) => a.words.length > b.words.length);
-        return spellings;
-    }
-
-    enum CommandEntry[] chatCommands = collectCommands();
-    enum CommandSpelling[] chatCommandSpellings = collectSpellings(chatCommands);
-    static assert(chatCommands.length > 0);
-
-    /**
-     * `ChatHandler::ParseCommands`: true if `text` was taken as a command (run or refused), false
-     * if it is a message to say.
-     */
-    bool runCommand(string text)
-    {
-        if (text.length < 2 || (text[0] != '.' && text[0] != '!') || text[1] == '.' || text[1] == '!' || text[1] == ' ')
+        if (text.length == 0)
             return false;
-        string[] words;
-        foreach (word; text[1 .. $].splitter(' '))
-            if (word.length)
-                words ~= word;
-
-        // Whole words first, so `.recall port` is not taken for `.recall portplayer`; then abbreviations.
-        foreach (exact; [true, false])
-        foreach (ref spelling; chatCommandSpellings)
-        {
-            const entry = chatCommands[spelling.entry];
-            if (spelling.words.length > words.length || entry.command.level > account.level)
-                continue;
-            bool matches = true;
-            foreach (i, word; spelling.words)
-                matches = matches && (exact ? sicmp(words[i], word) == 0 : abbreviates(words[i], word));
-            if (!matches)
-                continue;
-            const args = argumentsAfter(text[1 .. $], spelling.words.length);
-            info!"%s: '%s' (%s) ran .%s %s"(remoteAddress, player.data.name, account.username, entry.command.name, args);
-            if (!call(entry.member, args))
-                sendSystemMessage(format!"Syntax: .%s %s"(entry.command.name, entry.command.syntax));
-            return true;
-        }
-
-        // A group name alone (`.modify`): its commands.
-        auto group = subCommands(words[0]);
-        if (group.length)
-        {
-            sendSystemMessage(format!"Command %s has subcommands:"(words[0].toLower));
-            sendSystemMessage(group.join(", "));
-            return true;
-        }
-        if (account.level == AccountLevel.player)
-            return false; // said aloud
-        sendSystemMessage("There is no such command");
+        if (!hasPermissions && !context.config.allowPlayerCommands)
+            return false;
+        if (text[0] != '!' && text[0] != '.')
+            return false;
+        if (text.length > 1 && text[1] == '.') // skip '..'
+            return false;
+        trace!"%s: '%s' (%s) typed %s"(remoteAddress, player.data.name, account.username, text);
+        if (!executeCommandInTable(commandTable, null, text[1 .. $]))
+            systemMessage("There is no such command, or you do not have access to it.");
         return true;
     }
 
-    /// The commands of the group `word` names that the player may use, as "group sub".
-    string[] subCommands(string word)
-    {
-        string[] names;
-        foreach (ref entry; chatCommands)
-        {
-            const parts = entry.command.name.split(" ");
-            if (parts.length == 2 && entry.command.level <= account.level && abbreviates(word, parts[0]))
-                names ~= entry.command.name;
-        }
-        names.sort();
-        return names;
-    }
-
-    /// The text after the first `count` words.
-    static string argumentsAfter(string text, size_t count)
+    /// `ChatHandler::ExecuteCommandInTable`. `path` is the names of the tables above, for overrides.
+    bool executeCommandInTable(immutable(ChatCommand)[] table, string path, string text)
     {
         size_t i;
-        foreach (_; 0 .. count)
+        while (i < text.length && text[i] != ' ')
+            ++i;
+        const cmd = text[0 .. i];
+        while (i < text.length && text[i] == ' ')
+            ++i;
+        const args = text[i .. $];
+        if (cmd.length == 0)
+            return false;
+
+        foreach (ref row; table)
         {
-            while (i < text.length && text[i] == ' ')
-                ++i;
-            while (i < text.length && text[i] != ' ')
-                ++i;
-        }
-        return text[i .. $].strip;
-    }
+            if (!hasStringAbbr(row.name, cmd))
+                continue;
+            const rowPath = path.length ? path ~ " " ~ row.name : row.name;
+            const group = commandGroup(rowPath, row);
+            if (group != '0' && !canUseCommand(group))
+                continue;
 
-    /// Calls the command method called `member`.
-    bool call(string member, string args)
-    {
-        switch (member)
-        {
-            static foreach (entry; chatCommands)
+            if (row.children.length)
             {
-        case entry.member:
-                return __traits(getMember, this, entry.member)(args);
-            }
-        default:
-            assert(0, "chatCommands only lists command methods");
-        }
-    }
-
-    // -----------------------------------------------------------------------
-    // What commands share
-    // -----------------------------------------------------------------------
-
-    /// `ExtractPlayerTarget`: the player named in `args`, or the selected player.
-    OnlinePlayer targetPlayer(string args)
-    {
-        if (args.length)
-            return context.onlinePlayer(args.split[0]);
-        return context.onlinePlayer(player.values.get!UNIT_FIELD_TARGET);
-    }
-
-    /// ArcEmu's `getSelectedChar`: the selected player, or oneself if no player is selected.
-    WorldSession selectedOrSelf()
-    {
-        if (auto selected = context.onlinePlayer(player.values.get!UNIT_FIELD_TARGET))
-            return sessionOf(selected);
-        return this;
-    }
-
-    /// `ExtractOnOff`: true for "on", false for "off", null otherwise.
-    static Nullable!bool onOff(string args)
-    {
-        if (sicmp(args, "on") == 0)
-            return Nullable!bool(true);
-        if (sicmp(args, "off") == 0)
-            return Nullable!bool(false);
-        return Nullable!bool.init;
-    }
-
-    /// A message to the player and, if `target` is someone else, one to the target.
-    void tellBoth(WorldSession target, string toSelf, string toTarget)
-    {
-        sendSystemMessage(toSelf);
-        if (target !is this && toTarget.length)
-            target.sendSystemMessage(toTarget);
-    }
-
-    // -----------------------------------------------------------------------
-    // General commands (Level0.cpp, and the gm group)
-    // -----------------------------------------------------------------------
-
-    @Command("help", AccountLevel.player, "[command]", "Shows the commands you can use, or how to use one.")
-    bool commandHelp(string args)
-    {
-        if (args.length == 0)
-            return commandCommands(args);
-        foreach (ref entry; chatCommands)
-            if (entry.command.level <= account.level
-                && (sicmp(entry.command.name, args) == 0 || entry.command.aliases.canFind!(a => sicmp(a, args) == 0)))
-            {
-                sendSystemMessage(format!"Syntax: .%s %s"(entry.command.name, entry.command.syntax));
-                sendSystemMessage(entry.command.help);
-                if (entry.command.aliases.length)
-                    sendSystemMessage("Also: ." ~ entry.command.aliases.join(", ."));
+                if (!executeCommandInTable(row.children, rowPath, args))
+                {
+                    if (row.help.length)
+                        sendMultilineMessage(row.help);
+                    else
+                    {
+                        greenSystemMessage("Available Subcommands:");
+                        foreach (ref child; row.children)
+                        {
+                            const childGroup = commandGroup(rowPath ~ " " ~ child.name, child);
+                            if (childGroup == '0' || canUseCommand(childGroup))
+                                blueSystemMessage(format!" %s - %s"(child.name,
+                                    child.help.length ? child.help : "No Help Available"));
+                        }
+                    }
+                }
                 return true;
             }
-        if (auto group = subCommands(args))
-        {
-            sendSystemMessage(format!"Command %s has subcommands:"(args.toLower));
-            sendSystemMessage(group.join(", "));
+
+            if (row.handler is null && (row.field.length || row.fieldMax.length))
+            {
+                if (args.length == 0)
+                    redSystemMessage("No values specified.");
+                const result = row.valueType == 2 ? cmdSetField!float(row.field, row.fieldMax, row.name, args)
+                    : cmdSetField!uint(row.field, row.fieldMax, row.name, args);
+                if (!result)
+                    redSystemMessage("Must be in the form of (command) <value>, or, (command) <value> <maxvalue>");
+            }
+            else if (!callHandler(row.handler, args))
+            {
+                if (row.help.length)
+                    sendMultilineMessage(row.help);
+                else
+                    redSystemMessage(format!"Incorrect syntax specified. Try .help %s for the correct syntax."(
+                        row.name));
+            }
             return true;
         }
-        sendSystemMessage("There is no such command");
-        return true;
+        return false;
     }
 
-    @Command("commands", AccountLevel.player, "", "Lists the commands you can use.")
-    bool commandCommands(string)
+    /// Runs ArcEmu's handler `handler` with the text after the command's words.
+    bool callHandler(string handler, string args)
     {
-        // A group once, by its first word.
-        auto names = chatCommands.filter!(e => e.command.level <= account.level)
-            .map!(e => e.command.name.split(" ")[0]).array;
-        names.sort();
-        sendSystemMessage("Commands available to you:");
-        sendSystemMessage(names.uniq.join(", "));
-        return true;
-    }
-
-    @Command("gps", AccountLevel.moderator, "", "Shows where you, or the selected player, are.", ["getpos"])
-    bool commandGps(string)
-    {
-        auto target = selectedOrSelf();
-        const p = target.player;
-        const map_ = context.client.maps.lookup(p.data.map);
-        const at = p.position;
-        sendSystemMessage(format!"%s: map %s (%s), zone %s (%s)"(p.data.name, p.data.map,
-            map_ is null ? "?" : map_.name[0], p.data.zone, context.client.areaName(p.data.zone)));
-        sendSystemMessage(format!"X: %f Y: %f Z: %f Orientation: %f"(at.x, at.y, at.z, at.orientation));
-        return true;
-    }
-
-    @Command("gm on", AccountLevel.moderator, "", "Game master mode: the <GM> tag, no entry requirements, no movement checks.",
-        ["gmon"])
-    bool commandGmOn(string)
-    {
-        return setGameMaster(true);
-    }
-
-    @Command("gm off", AccountLevel.moderator, "", "Leaves game master mode.", ["gmoff"])
-    bool commandGmOff(string)
-    {
-        return setGameMaster(false);
-    }
-
-    @Command("gm", AccountLevel.moderator, "[on|off]", "Shows game master mode, or turns it on or off.")
-    bool commandGm(string args)
-    {
-        if (args.length == 0)
+        switch (handler)
         {
-            sendNotification(gameMaster ? "GM mode is ON" : "GM mode is OFF");
+            static foreach (name; arcHandlers)
+            {
+                static if (__traits(hasMember, typeof(this), handlerMethod(name)))
+                {
+        case name:
+                    return invoke!(handlerMethod(name))(args);
+                }
+            }
+        default:
+            return handleNYICommand();
+        }
+    }
+
+    /**
+     * Calls the handler method `member` with `text` read into its parameters: one word each, converted
+     * with `std.conv.to`, and a `Rest` takes what is left. A missing word takes the parameter's default
+     * value; a `Nullable` parameter is optional, and null when its word is missing. False (the command's
+     * help is shown) when a required word is missing or a word does not convert; words left over are
+     * ignored, as ArcEmu ignores them.
+     */
+    bool invoke(string member)(string text)
+    {
+        import std.conv : ConvException, to;
+        import std.traits : ParameterDefaults, Parameters;
+
+        alias method = __traits(getMember, typeof(this), member);
+        Parameters!method values;
+        static foreach (i, T; Parameters!method)
+        {{
+            static if (is(T == Rest))
+            {
+                const rest = trimSpaces(text);
+                text = null;
+            }
+            else
+                const rest = nextWord(text);
+            if (rest.length == 0)
+            {
+                static if (!is(ParameterDefaults!method[i] == void))
+                    values[i] = ParameterDefaults!method[i];
+                else static if (!is(T : Nullable!U, U))
+                    return false;
+            }
+            else static if (is(T == Rest))
+                values[i] = Rest(rest);
+            else static if (is(T == string))
+                values[i] = rest;
+            else
+            {
+                static if (is(T : Nullable!U, U))
+                    alias Target = U;
+                else
+                    alias Target = T;
+                try
+                    values[i] = rest.to!Target;
+                catch (ConvException)
+                    return false;
+            }
+        }}
+        return __traits(getMember, this, member)(values);
+    }
+
+    /// `ChatHandler::HandleNYICommand`: what a command whose system does not exist yet answers.
+    bool handleNYICommand()
+    {
+        redSystemMessage("Not yet implemented.");
+        return true;
+    }
+
+    // -----------------------------------------------------------------------
+    // Messages (ChatHandler::SystemMessage and friends)
+    // -----------------------------------------------------------------------
+
+    /// `ChatHandler::SystemMessage`, cut at 1023 bytes as its buffer cuts it.
+    void systemMessage(string text)
+    {
+        send(ServerMessageChat(chatMessage(ChatType.CHAT_MSG_SYSTEM, Language.LANG_UNIVERSAL, 0,
+            text.length > 1023 ? text[0 .. 1023] : text)));
+    }
+
+    /// `ChatHandler::ColorSystemMessage`
+    void colorSystemMessage(string color, string text)
+    {
+        systemMessage(color ~ (text.length > 1023 ? text[0 .. 1023] : text) ~ "|r");
+    }
+
+    /// `ChatHandler::RedSystemMessage` (light red)
+    void redSystemMessage(string text)
+    {
+        colorSystemMessage(MSG_COLOR_LIGHTRED, text);
+    }
+
+    /// `ChatHandler::GreenSystemMessage`
+    void greenSystemMessage(string text)
+    {
+        colorSystemMessage(MSG_COLOR_GREEN, text);
+    }
+
+    /// `ChatHandler::BlueSystemMessage` (light blue)
+    void blueSystemMessage(string text)
+    {
+        colorSystemMessage(MSG_COLOR_LIGHTBLUE, text);
+    }
+
+    /// `ChatHandler::SendMultilineMessage`: one system message per line.
+    void sendMultilineMessage(string text)
+    {
+        import std.array : split;
+
+        auto lines = text.split('\n');
+        if (lines.length && lines[$ - 1].length == 0) // no message for the text after a final newline
+            lines = lines[0 .. $ - 1];
+        foreach (line; lines)
+            systemMessage(line);
+    }
+
+    /// `sGMLog.writefromsession`: a line in the GM command log, if there is one.
+    void gmLog(string text)
+    {
+        context.writeGmLog(format!"Account %s [%s], IP %s, Player %s :: %s"(account.id, account.username,
+            remoteAddress, player is null ? "" : player.data.name, text));
+    }
+
+    // -----------------------------------------------------------------------
+    // Selections (ChatHandler::getSelectedChar, getSelectedCreature)
+    // -----------------------------------------------------------------------
+
+    /// `ChatHandler::getSelectedChar`: the selected player on this map, oneself if nothing is selected.
+    WorldSession getSelectedChar(bool showError)
+    {
+        const guid = player.values.get!UNIT_FIELD_TARGET;
+        if (guid == 0)
+        {
+            if (showError)
+                greenSystemMessage("Auto-targeting self.");
+            return this;
+        }
+        auto found = cast(WorldSession) map.find(guid);
+        if (found is null && showError)
+            redSystemMessage("This command requires that you select a player.");
+        return found;
+    }
+
+    /// `ChatHandler::getSelectedCreature`
+    Creature getSelectedCreature(bool showError)
+    {
+        const guid = player.values.get!UNIT_FIELD_TARGET;
+        Creature creature;
+        if (highGuidOf(guid) == HighGuid.unit)
+            creature = cast(Creature) map.findObject(guid);
+        if (creature is null && showError)
+            redSystemMessage("This command requires that you select a creature.");
+        return creature;
+    }
+
+    // -----------------------------------------------------------------------
+    // .modify's field rows (ChatHandler::CmdSetValueField, CmdSetFloatField)
+    // -----------------------------------------------------------------------
+
+    /**
+     * `ChatHandler::CmdSetValueField` (`T` is `uint`) and `CmdSetFloatField` (`float`): the selected
+     * player's, or creature's, field set to the first word of `args`, and `fieldMax` to the second.
+     */
+    bool cmdSetField(T)(string field, string fieldMax, string fieldName, string args)
+    {
+        import std.conv : ConvException, to;
+
+        const hasMax = fieldMax.length > 0;
+        const value = nextWord(args), maximum = hasMax ? nextWord(args) : "0";
+        if (value is null || maximum is null)
+            return false;
+        T av, mv;
+        try
+        {
+            av = value.to!T;
+            mv = maximum.to!T;
+        }
+        catch (ConvException)
+            return false;
+        // ArcEmu's two versions check the value a little differently.
+        static if (is(T == float))
+            const invalidValue = av <= 0;
+        else
+            const invalidValue = av == 0 && mv > 0;
+        if (invalidValue || hasMax && (mv < av || mv <= 0))
+        {
+            redSystemMessage("Values are invalid. Value must be < max (if max exists), and both must be > 0.");
             return true;
         }
-        const value = onOff(args);
-        return !value.isNull && setGameMaster(value.get);
-    }
 
-    bool setGameMaster(bool on)
-    {
-        gameMaster = on;
-        player.setFlag(PlayerFlags.gm, on);
-        flushPlayerChanges();
-        resetMovementCheck();
-        sendNotification(on ? "GM mode is ON" : "GM mode is OFF");
-        return true;
-    }
-
-    @Command("gm chat", AccountLevel.moderator, "[on|off]", "Shows or hides the GM badge in chat.")
-    bool commandGmChat(string args)
-    {
-        if (args.length)
+        enum valueFormat = is(T == float) ? "%.1f" : "%d";
+        enum logFormat = is(T == float) ? "%f" : "%s";
+        const shown = hasMax ? format!(valueFormat ~ "/" ~ valueFormat)(av, mv) : format!valueFormat(av);
+        static uint raw(T number) @trusted
         {
-            const value = onOff(args);
-            if (value.isNull)
+            return *cast(uint*) &number; // a float's bits, or the integer itself
+        }
+
+        const slot = fieldSlot(field);
+        const maxSlot = hasMax ? fieldSlot(fieldMax) : 0;
+        static if (is(T == uint))
+            const stored = slot == UNIT_FIELD_STAT1 ? av / 2 : av; // ArcEmu halves agility
+        else
+            const stored = av;
+        if (auto plr = getSelectedChar(false))
+        {
+            const name = plr.player.data.name;
+            gmLog(format!("used modify field value: %s, " ~ logFormat ~ " on %s")(fieldName, av, name));
+            blueSystemMessage(format!"You set the %s of %s to %s."(fieldName, name, shown));
+            plr.greenSystemMessage(format!"%s set your %s to %s."(player.data.name, fieldName, shown));
+            plr.player.values.setSlot(slot, raw(stored));
+            if (hasMax)
+                plr.player.values.setSlot(maxSlot, raw(mv));
+            plr.flushPlayerChanges();
+        }
+        else if (auto cr = getSelectedCreature(false))
+        {
+            if (!(slot < UNIT_END && maxSlot < UNIT_END))
                 return false;
-            player.gmChat = value.get;
+            const name = cr.template_.name;
+            blueSystemMessage(format!"Setting %s of %s to %s."(fieldName, name, shown));
+            gmLog(format!("used modify field value: [creature]%s, " ~ logFormat ~ " on %s")(fieldName, av, name));
+            cr.values.setSlot(slot, raw(stored));
+            if (hasMax)
+                cr.values.setSlot(maxSlot, raw(mv));
+            map.flushObjectChanges(cr);
         }
-        sendNotification(player.gmChat ? "GM Chat Badge is ON" : "GM Chat Badge is OFF");
-        return true;
-    }
-
-    @Command("gm list", AccountLevel.player, "", "Shows the game masters online.")
-    bool commandGmList(string)
-    {
-        string[] names;
-        foreach (other; context.onlinePlayers)
-            if (other.security > AccountLevel.player)
-                names ~= other.character.data.name;
-        names.sort();
-        sendSystemMessage(names.length ? "Game masters online: " ~ names.join(", ") : "There are no game masters online.");
-        return true;
-    }
-
-    @Command("save", AccountLevel.player, "", "Saves your character.")
-    bool commandSave(string)
-    {
-        savePlayer();
-        sendSystemMessage("Player saved.");
-        return true;
-    }
-
-    /// `Player::SaveToDB`, as far as this server saves.
-    void savePlayer()
-    {
-        const progress = player.progress(secondsInWorld());
-        context.database.saveProgress(progress);
-        saveTimer.reset();
-    }
-
-    @Command("server info", AccountLevel.player, "", "Shows how many players are online.", ["info"])
-    bool commandServerInfo(string)
-    {
-        size_t gms;
-        foreach (other; context.onlinePlayers)
-            if (other.security > AccountLevel.player)
-                ++gms;
-        sendSystemMessage(format!"dmangos. Players online: %s (%s game masters), at most %s since start-up."(
-            context.worldPopulation, gms, context.peakSessions));
+        else
+            redSystemMessage("Invalid Selection.");
         return true;
     }
 }
@@ -496,75 +785,210 @@ private:
 
 version (unittest)
 {
+    import std.algorithm.searching : canFind;
+    import dmangos.auth.accounts : AccountLevel;
+    import dmangos.world.movement : Position;
+    import dmangos.world.opcodes;
     import dmangos.world.player : PlayerFlags;
     import dmangos.world.testclient;
 }
 
-/// Commands by level: a player's unknown command is said aloud; a game master is told.
+/// Who may use commands, how words are matched, and what a refusal or a sub-table looks like.
 unittest
 {
     auto db = newDatabase();
     auto context = newCreationContext(db);
     auto player = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f));
-    auto gm = loggedIn(context, db, 8, "Jaina", Position(-8940, -132, 83.5f), AccountLevel.gameMaster);
+    auto mod = loggedIn(context, db, 8, "Varian", Position(-8945, -132, 83.5f), AccountLevel.moderator);
+    auto gm = loggedIn(context, db, 9, "Jaina", Position(-8940, -132, 83.5f), AccountLevel.gameMaster);
     player.read();
+    mod.read();
 
-    // `.gps` is a moderator's: Anduin just says it, and Jaina hears it.
-    player.write(Opcode.CMSG_MESSAGECHAT, chatBody(ChatType.CHAT_MSG_SAY, ".gps"));
-    assert(opcodesOf(gm.read()) == [Opcode.SMSG_MESSAGECHAT]);
+    // Without permissions, a command is said aloud (Server.AllowPlayerCommands is off).
+    player.say(".gm on");
+    assert(opcodesOf(gm.read()) == [Opcode.SMSG_MESSAGECHAT] && !player.session.character.gmTagOn);
     player.read();
-    gm.write(Opcode.CMSG_MESSAGECHAT, chatBody(ChatType.CHAT_MSG_SAY, ".gps"));
-    const where = gm.read();
-    assert(where.length == 2 && where[0].body_[0] == ChatType.CHAT_MSG_SYSTEM && player.read().length == 0);
+    mod.read();
 
-    // Unknown, wrongly used, and grouped commands.
-    gm.write(Opcode.CMSG_MESSAGECHAT, chatBody(ChatType.CHAT_MSG_SAY, ".nonsense"));
-    assert((cast(const(char)[]) gm.read()[0].body_).canFind("There is no such command"));
-    gm.write(Opcode.CMSG_MESSAGECHAT, chatBody(ChatType.CHAT_MSG_SAY, ".go xyz 1"));
-    const syntax = gm.read();
-    assert(syntax.length == 1 && (cast(const(char)[]) syntax[0].body_).canFind("Syntax: .go xyz x y z [map]"));
-    gm.write(Opcode.CMSG_MESSAGECHAT, chatBody(ChatType.CHAT_MSG_SAY, ".modify"));
-    const group = gm.read();
-    assert(group.length == 2 && (cast(const(char)[]) group[1].body_).canFind("modify hp"));
+    // The moderator's letters ("bcghiltuv") have no `m`: `.modify` is not there for it.
+    mod.say(".modify hp 5");
+    assert(systemMessages(mod.read()) == ["There is no such command, or you do not have access to it."]);
 
-    // `.gmon`, Ascent's spelling, is `.gm on`; `.save`, a player's command, works for everyone.
-    gm.write(Opcode.CMSG_MESSAGECHAT, chatBody(ChatType.CHAT_MSG_SAY, ".gmon"));
-    assert(opcodesOf(gm.read()).canFind(Opcode.SMSG_NOTIFICATION) && gm.session.character.hasFlag(PlayerFlags.gm));
-    player.write(Opcode.CMSG_MESSAGECHAT, chatBody(ChatType.CHAT_MSG_SAY, ".save"));
-    assert(db.progressSaves.length == 1);
+    // A group name alone lists what the player may use in it: `.gm` for the moderator.
+    mod.say(".gm");
+    assert(systemMessages(mod.read()) == [MSG_COLOR_GREEN ~ "Available Subcommands:|r",
+        MSG_COLOR_LIGHTBLUE ~ " list - Shows active GM's|r", MSG_COLOR_LIGHTBLUE ~ " off - Sets GM tag off|r",
+        MSG_COLOR_LIGHTBLUE ~ " on - Sets GM tag on|r",
+        MSG_COLOR_LIGHTBLUE ~ " whisperblock - Blocks like .gmon except without the <GM> tag|r",
+        MSG_COLOR_LIGHTBLUE ~ " allowwhispers - Allows whispers from player <s> while in gmon mode.|r",
+        MSG_COLOR_LIGHTBLUE ~ " blockwhispers - Blocks whispers from player <s> while in gmon mode.|r"]);
 
-    // `.summon` brings Anduin over.
-    gm.write(Opcode.CMSG_MESSAGECHAT, chatBody(ChatType.CHAT_MSG_SAY, ".summon anduin"));
-    assert(opcodesOf(player.read()).canFind(Opcode.MSG_MOVE_TELEPORT_ACK));
-    assert(player.session.character.position.x == -8940);
+    // The first row in table order wins: `.k` is `.kill`, which needs combat, so it is not written yet.
+    gm.say(".k");
+    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTRED ~ "Not yet implemented.|r"]);
+
+    // A handler refusing its arguments shows the row's help.
+    gm.say(".levelup -2");
+    assert(systemMessages(gm.read()) == ["Levelup x lvls"]);
+
+    // `.help`, with abbreviations.
+    gm.say(".help gm of");
+    assert(systemMessages(gm.read()) == ["Sets GM tag off"]);
+    gm.say("!he nosuch");
+    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTRED
+        ~ "Sorry, no help was found for this command, or that command does not exist.|r"]);
+
+    // `..` is never a command.
+    gm.say("..what");
+    assert(opcodesOf(gm.read()) == [Opcode.SMSG_MESSAGECHAT] && systemMessages(gm.read()).length == 0);
 }
 
-/// Away and busy: the flag, the reply to whispers, and the chat tag.
+/// `.gm on` and `.gm off`, the GM tag in chat, and whispers to a GM with the tag on.
 unittest
 {
     auto db = newDatabase();
     auto context = newCreationContext(db);
-    auto anduin = loggedIn(context, db, 7, "Anduin", Position(0, 0, 0));
-    auto jaina = loggedIn(context, db, 8, "Jaina", Position(5, 0, 0));
-    anduin.read();
-    jaina.read();
+    auto player = loggedIn(context, db, 7, "Anduin", Position(0, 0, 0));
+    auto gm = loggedIn(context, db, 8, "Jaina", Position(5, 0, 0), AccountLevel.gameMaster);
+    player.read();
+    gm.read();
 
-    anduin.write(Opcode.CMSG_MESSAGECHAT, chatBody(ChatType.CHAT_MSG_AFK, "lunch"));
-    assert(anduin.session.character.hasFlag(PlayerFlags.afk));
-    anduin.read();
-    jaina.read();
+    gm.say(".gm on");
+    assert(systemMessages(gm.read()) == [MSG_COLOR_GREEN ~ "Setting GM Flag on yourself...|r", MSG_COLOR_LIGHTBLUE
+        ~ "GM Flag Set. It will appear above your name and in chat messages until you use !gm off.|r"]);
+    const jaina = gm.session.character;
+    assert(jaina.gmTagOn && jaina.hasFlag(PlayerFlags.gm));
+    player.read();
+    gm.say(".gm on");
+    assert(systemMessages(gm.read())[1] == MSG_COLOR_LIGHTRED
+        ~ "GM Flag is already set on. Use !gm off to disable it.|r");
 
-    jaina.write(Opcode.CMSG_MESSAGECHAT, chatBody(ChatType.CHAT_MSG_WHISPER, "hey", "Anduin"));
-    const replies = jaina.read();
-    assert(opcodesOf(replies) == [Opcode.SMSG_MESSAGECHAT, Opcode.SMSG_MESSAGECHAT]);
-    assert(replies[1].body_[0] == ChatType.CHAT_MSG_AFK && replies[1].body_[$ - 7 .. $ - 1] == "lunch\0");
-    anduin.read();
+    // Her words carry the GM tag.
+    gm.say("hello");
+    assert(player.read()[0].body_[$ - 1] == ChatTag.CHAT_TAG_GM);
+    gm.read();
 
-    // Anduin's own words carry the AFK tag; /dnd replaces /afk; /dnd again clears it.
-    anduin.write(Opcode.CMSG_MESSAGECHAT, chatBody(ChatType.CHAT_MSG_SAY, "brb"));
-    assert(jaina.read()[0].body_[$ - 1] == ChatTag.CHAT_TAG_AFK);
-    anduin.write(Opcode.CMSG_MESSAGECHAT, chatBody(ChatType.CHAT_MSG_DND, ""));
-    assert(anduin.session.character.hasFlag(PlayerFlags.dnd) && !anduin.session.character.hasFlag(PlayerFlags.afk));
-    anduin.write(Opcode.CMSG_MESSAGECHAT, chatBody(ChatType.CHAT_MSG_DND, ""));
-    assert(!anduin.session.character.hasFlag(PlayerFlags.dnd));
+    // A player's whisper gets the automatic reply, until she allows it.
+    player.write(Opcode.CMSG_MESSAGECHAT, chatBody(ChatType.CHAT_MSG_WHISPER, "help me", "Jaina"));
+    const reply = player.read();
+    assert(reply.length == 1 && (cast(const(char)[]) reply[0].body_).canFind("does not currently have an open ticket"));
+    assert(gm.read().length == 0);
+    gm.say(".gm allowwhispers anduin");
+    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTBLUE ~ "Now accepting whispers from Anduin.|r"]);
+    player.write(Opcode.CMSG_MESSAGECHAT, chatBody(ChatType.CHAT_MSG_WHISPER, "help me", "Jaina"));
+    assert(opcodesOf(gm.read()) == [Opcode.SMSG_MESSAGECHAT]);
+    player.read();
+
+    gm.say(".gm off");
+    assert(!jaina.gmTagOn && !jaina.hasFlag(PlayerFlags.gm));
+    gm.read();
+    // `.gm list`: names and permissions.
+    player.read();
+    gm.say(".gm list");
+    assert(systemMessages(gm.read()) == [MSG_COLOR_GREEN ~ "There are following active GMs on this server:|r",
+        " - Jaina [a]"]);
+}
+
+/// `.modify` field rows, overrides, the GM log, kicks and mutes.
+unittest
+{
+    auto db = newDatabase();
+    auto context = newCreationContext(db, (ref c) {
+        import dmangos.world.config : CommandOverride;
+
+        c.commandOverrides = [CommandOverride("gps", "z")];
+    });
+    auto gm = loggedIn(context, db, 7, "Anduin", Position(0, 0, 0), AccountLevel.gameMaster);
+    auto admin = loggedIn(context, db, 8, "Varian", Position(5, 0, 0), AccountLevel.administrator);
+    auto player = loggedIn(context, db, 9, "Jaina", Position(6, 0, 0));
+    gm.read();
+    admin.read();
+
+    // `.modify hp value max` sets both fields of oneself (nothing selected), and tells the player.
+    gm.say(".modify hp 400 500");
+    const me = gm.session.character;
+    assert(me.values[UNIT_FIELD_HEALTH] == 400 && me.values[UNIT_FIELD_MAXHEALTH] == 500);
+    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTBLUE ~ "You set the hp of Anduin to 400/500.|r",
+        MSG_COLOR_GREEN ~ "Anduin set your hp to 400/500.|r"]);
+    gm.say(".modify hp 600 500");
+    assert(systemMessages(gm.read())[0].canFind("Values are invalid"));
+    gm.say(".modify scale 2.5");
+    assert(me.values.get!OBJECT_FIELD_SCALE_X == 2.5f);
+    gm.read();
+    assert(context.gmLogLines[0].canFind("Player Anduin :: used modify field value: hp, 400 on Anduin"));
+
+    // command_overrides made `.gps` an administrator's command.
+    gm.say(".gps");
+    assert(systemMessages(gm.read()) == ["There is no such command, or you do not have access to it."]);
+    admin.say(".gps");
+    assert(systemMessages(admin.read())[0].canFind("Current Position"));
+
+    // A `z` account cannot be kicked by an `a` one.
+    gm.say(".kickplayer varian spamming");
+    assert(systemMessages(gm.read())[$ - 1] == MSG_COLOR_LIGHTRED
+        ~ "You cannot kick Varian, as they are a higher level gm than you.|r");
+
+    // `.account mute`: the player is told, and cannot speak.
+    gm.say(".account mute JAINA 2h");
+    gm.read();
+    assert(systemMessages(player.read())[$ - 1].canFind("Your voice has been muted until"));
+    player.say("hi");
+    assert(systemMessages(player.read()) == ["Your voice is currently muted by a moderator."]);
+    gm.say(".account unmute JAINA");
+    assert(systemMessages(gm.read()) == [MSG_COLOR_GREEN ~ "Account 'JAINA' has been unmuted.|r"]);
+    assert(systemMessages(player.read()) == ["Your voice has restored. You may speak again."]);
+    player.say("hi");
+    assert(opcodesOf(player.read()) == [Opcode.SMSG_MESSAGECHAT]);
+}
+
+/// Arguments: words converted to the handler's parameter types, defaults, `Rest`, `Nullable` and `OnOff`.
+unittest
+{
+    import std.algorithm.searching : count;
+    import dmangos.world.movement : MoveType;
+    import dmangos.world.testdata : itemJerky;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto gm = loggedIn(context, db, 7, "Anduin", Position(0, 0, 0), AccountLevel.gameMaster);
+    auto player = loggedIn(context, db, 8, "Jaina", Position(5, 0, 0));
+    gm.read();
+    player.read();
+
+    // A word that does not convert, or a missing one, shows the command's help.
+    gm.say(".modify speed fast");
+    assert(systemMessages(gm.read()) == ["Modifies the movement speed of the selected target."]);
+    gm.say(".modify speed");
+    assert(systemMessages(gm.read()) == ["Modifies the movement speed of the selected target."]);
+    gm.say(".modify speed 14");
+    assert(gm.session.character.speeds[MoveType.run] == 14);
+    gm.read();
+
+    // Optional words take their defaults: one item, no random property.
+    gm.say(".character additem 117");
+    assert(gm.session.character.itemCount(itemJerky) == 1);
+    gm.say(".character additem 117 x");
+    assert(systemMessages(gm.read())[$ - 1] == "Adds item x count y" && gm.session.character.itemCount(itemJerky) == 1);
+
+    // `Rest` takes the rest of the line; a missing `Rest` with a default takes the default.
+    gm.say(".kickplayer jaina was rude to the guards");
+    assert(systemMessages(gm.read())[0] == MSG_COLOR_LIGHTBLUE
+        ~ "Attempting to kick Jaina from the server for \"was rude to the guards\".|r");
+    auto again = loggedIn(context, db, 9, "Varian", Position(5, 0, 0));
+    gm.read();
+    gm.say(".kickplayer varian");
+    assert(systemMessages(gm.read())[0].canFind("for \"No reason\""));
+
+    // `OnOff` reads "on" and "off" only; an optional `Nullable!OnOff` toggles when it is missing.
+    gm.say(".cheat explore maybe");
+    assert(systemMessages(gm.read()) == ["Reveals the unexplored parts of the map."]);
+    enum activated = MSG_COLOR_LIGHTBLUE ~ "activated the triggerpass cheat on Anduin.|r";
+    enum deactivated = MSG_COLOR_LIGHTBLUE ~ "deactivated the triggerpass cheat on Anduin.|r";
+    gm.say(".cheat triggerpass");
+    assert(systemMessages(gm.read()).canFind(activated));
+    gm.say(".cheat triggerpass");
+    assert(systemMessages(gm.read()).canFind(deactivated));
+    gm.say(".cheat triggerpass on");
+    gm.say(".cheat triggerpass on");
+    assert(systemMessages(gm.read()).count(activated) == 2);
 }

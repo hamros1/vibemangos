@@ -5,6 +5,9 @@
  */
 module dmangos.world.characterdb;
 
+import std.algorithm.iteration : map;
+import std.algorithm.searching : find;
+import std.array : array, replicate;
 import std.datetime.systime : Clock;
 import std.typecons : Nullable, nullable;
 
@@ -139,10 +142,8 @@ final class CharacterStatements
     /// Races of the account's characters on this realm, in table order.
     ubyte[] characterRaces(uint accountId)
     {
-        ubyte[] races;
-        foreach (row; characters.query!"SELECT race FROM characters WHERE account = ?"(accountId))
-            races ~= row.get!ubyte(0);
-        return races;
+        return characters.query!"SELECT race FROM characters WHERE account = ?"(accountId)
+            .map!(row => row.get!ubyte(0)).array;
     }
 
     /// Whether `character_tutorial` has the account's row (`LoadTutorialsData`).
@@ -165,7 +166,8 @@ final class CharacterStatements
                 ~ "stored_honor_rating, stored_dishonorable_kills, stored_honorable_kills, watchedFaction, drunk, "
                 ~ "health, power1, power2, power3, power4, power5, exploredZones, equipmentCache, ammoId, actionBars, "
                 ~ "fishingSteps) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 0, 0, 0, ?, 0, 0, "
-                ~ "0, 0, 0, 0, 0, 0, 0, 0, ?, ?, 0, '', 0, 0, 0, 0, 0, 4294967295, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0)")(
+                ~ "0, 0, 0, 0, 0, 0, 0, 0, ?, ?, 0, '', 0, 0, 0, 0, 0, 4294967295, "
+                ~ "0, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0)")(
                 c.guid, c.account, c.name, c.race, c.classId, c.gender, c.level, c.money, c.playerBytes,
                 c.playerBytes2, c.playerFlags, c.map, c.x, c.y, c.z, c.orientation, c.taxiMaskText, c.cinematic, now,
                 c.atLogin, c.zone, c.health, c.power[0], c.power[1], c.power[2], c.power[3], c.power[4],
@@ -178,7 +180,8 @@ final class CharacterStatements
                 characters.execute!("REPLACE INTO item_instance (owner_guid, itemEntry, creatorGuid, giftCreatorGuid, "
                     ~ "count, duration, charges, flags, enchantments, randomPropertyId, durability, itemTextId, guid) "
                     ~ "VALUES (?, ?, 0, 0, ?, ?, ?, ?, ?, 0, ?, 0, ?)")(c.guid, item.entry, item.count,
-                    item.duration, chargesText(item.charges), item.flags, emptyEnchantments, item.durability, item.guid);
+                    item.duration, chargesText(item.charges), item.flags, emptyEnchantments, item.durability,
+                    item.guid);
             }
             foreach (ref spell; c.spells)
                 characters.execute!"INSERT INTO character_spell (guid, spell, active, disabled) VALUES (?, ?, ?, ?)"(
@@ -190,8 +193,8 @@ final class CharacterStatements
                 characters.execute!"INSERT INTO character_skills (guid, skill, value, max) VALUES (?, ?, ?, ?)"(
                     c.guid, skill.skill, skill.value, skill.max);
             if (insertTutorialData)
-                characters.execute!("INSERT INTO character_tutorial (account, tut0, tut1, tut2, tut3, tut4, tut5, tut6, "
-                    ~ "tut7) VALUES (?, 0, 0, 0, 0, 0, 0, 0, 0)")(c.account);
+                characters.execute!("INSERT INTO character_tutorial (account, tut0, tut1, tut2, tut3, tut4, tut5, "
+                    ~ "tut6, tut7) VALUES (?, 0, 0, 0, 0, 0, 0, 0, 0)")(c.account);
         });
     }
 
@@ -318,6 +321,13 @@ final class CharacterStatements
     void renameCharacter(uint guid, string newName)
     {
         characters.execute!"UPDATE characters SET name = ? WHERE guid = ?"(newName, guid);
+    }
+
+    /// See `WorldDatabase.moveOfflineCharacter`.
+    void moveOfflineCharacter(uint guid, uint map, float x, float y, float z, uint zone)
+    {
+        characters.execute!("UPDATE characters SET map = ?, position_x = ?, position_y = ?, position_z = ?, zone = ? "
+            ~ "WHERE guid = ?")(map, x, y, z, zone, guid);
     }
 
     /// `Player::_SaveSpells` for one spell.
@@ -528,9 +538,8 @@ final class CharacterStatements
         }
 
         returnMail(guid, accountId, options, nextMailId);
-        uint[] pets;
-        foreach (row; characters.query!"SELECT id FROM character_pet WHERE owner = ?"(guid))
-            pets ~= row.get!uint(0);
+        const pets = characters.query!"SELECT id FROM character_pet WHERE owner = ?"(guid)
+            .map!(row => row.get!uint(0)).array;
 
         characters.transaction({
             foreach (pet; pets)
@@ -545,7 +554,8 @@ final class CharacterStatements
                 "DELETE FROM character_action WHERE guid = ?",
                 "DELETE FROM character_aura WHERE guid = ?",
                 "DELETE FROM character_battleground_data WHERE guid = ?",
-                "DELETE FROM character_gifts WHERE guid = ? AND item_guid IN (SELECT guid FROM item_instance WHERE owner_guid = ?)",
+                "DELETE FROM character_gifts WHERE guid = ? AND item_guid IN "
+                    ~ "(SELECT guid FROM item_instance WHERE owner_guid = ?)",
                 "UPDATE character_gifts SET guid = 0 WHERE guid = ?",
                 "DELETE FROM character_homebind WHERE guid = ?",
                 "DELETE FROM character_instance WHERE guid = ?",
@@ -619,9 +629,8 @@ final class CharacterStatements
         if (rows.length == 0)
             return;
         const groupId = rows[0].get!uint(0);
-        uint[] members;
-        foreach (row; characters.query!"SELECT memberGuid FROM group_member WHERE groupId = ?"(groupId))
-            members ~= row.get!uint(0);
+        const members = characters.query!"SELECT memberGuid FROM group_member WHERE groupId = ?"(groupId)
+            .map!(row => row.get!uint(0)).array;
 
         if (members.length <= 2)
         {
@@ -638,13 +647,7 @@ final class CharacterStatements
             return;
 
         // _chooseLeader: no member is online, so the first remaining one leads.
-        uint next;
-        foreach (member; members)
-            if (member != guid)
-            {
-                next = member;
-                break;
-            }
+        const next = members.find!(member => member != guid)[0];
         characters.transaction({
             characters.execute!("DELETE FROM group_instance WHERE leaderGuid = ? AND (permanent = 1 OR instance IN "
                 ~ "(SELECT instance FROM character_instance WHERE guid = ?))")(guid, next);
@@ -756,10 +759,5 @@ final class CharacterStatements
     }
 
     /// `enchantments` of a new item: id, duration and charges for every slot, all zero.
-    private static immutable string emptyEnchantments = () {
-        string text;
-        foreach (i; 0 .. maxEnchantmentSlot * 3)
-            text ~= "0 ";
-        return text;
-    }();
+    private static immutable string emptyEnchantments = "0 ".replicate(maxEnchantmentSlot * 3);
 }

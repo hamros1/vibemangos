@@ -17,11 +17,11 @@
  */
 module dmangos.world.channel;
 
+import std.algorithm.iteration : filter;
 import std.algorithm.sorting : sort;
 import std.array : array, replace;
 import std.uni : toLower;
 
-import dmangos.auth.accounts : AccountLevel;
 import dmangos.bytes : ByteWriter;
 import dmangos.world.clientdata : ChatChannelsEntry, ClientData, Team;
 import dmangos.world.online : Directory, OnlinePlayer;
@@ -106,8 +106,6 @@ enum MemberFlags : ubyte
 struct ChannelSettings
 {
     bool crossFaction;                                   /// `AllowTwoSide.Interaction.Channel`
-    AccountLevel moderationLevel = AccountLevel.moderator; /// `GM.ChannelModerationLevel`; `player` = nobody
-    AccountLevel silentJoinLevel = AccountLevel.player;  /// `GM.ChannelSilentJoinLevel`; `player` = nobody
 }
 
 /**
@@ -211,19 +209,20 @@ final class Channel
         if (isOn(guid))
         {
             if (!isConstant)
-                player.deliver(Opcode.SMSG_CHANNEL_NOTIFY, notice(ChatNotify.playerAlreadyMember, name, guid));
+                notify(player, ChatNotify.playerAlreadyMember, guid);
             return;
         }
         if (guid in bannedGuids)
-            return player.deliver(Opcode.SMSG_CHANNEL_NOTIFY, notice(ChatNotify.banned, name));
-        if (password.length && !isModerationGm(player) && pass != password)
-            return player.deliver(Opcode.SMSG_CHANNEL_NOTIFY, notice(ChatNotify.wrongPassword, name));
+            return notify(player, ChatNotify.banned);
+        if (password.length && pass != password)
+            return notify(player, ChatNotify.wrongPassword);
 
-        if (announcements && !isSilent(player))
+        if (announcements)
             sendToAll(notice(ChatNotify.joined, name, guid));
-        players[guid] = MemberFlags.none;
+        // ArcEmu's Channel::AttemptJoin: the `c` permission moderates every channel but the built-in ones.
+        players[guid] = !isConstant && player.canUseCommand('c') ? MemberFlags.moderator : MemberFlags.none;
         owner_.joined(guid, this);
-        player.deliver(Opcode.SMSG_CHANNEL_NOTIFY, notice(ChatNotify.youJoined, name, uint(flags), uint(0)));
+        notify(player, ChatNotify.youJoined, uint(flags), uint(0));
         if (!isConstant && ownerGuid == 0)
             setOwner(guid, players.length > 1);
     }
@@ -235,15 +234,15 @@ final class Channel
         if (!isOn(guid))
         {
             if (tell)
-                player.deliver(Opcode.SMSG_CHANNEL_NOTIFY, notice(ChatNotify.notMember, name));
+                notify(player, ChatNotify.notMember);
             return;
         }
         if (tell)
-            player.deliver(Opcode.SMSG_CHANNEL_NOTIFY, notice(ChatNotify.youLeft, name));
+            notify(player, ChatNotify.youLeft);
         const wasOwner = (players[guid] & MemberFlags.owner) != 0;
         players.remove(guid);
         owner_.left(guid, this);
-        if (announcements && !isSilent(player))
+        if (announcements)
             sendToAll(notice(ChatNotify.left, name, guid));
         if (wasOwner && !isConstant)
             setOwner(selectNewOwner(), players.length > 1);
@@ -260,8 +259,8 @@ final class Channel
             return;
         const targetGuid = target.character.guid;
         const ownerLeaves = ownerGuid == targetGuid;
-        if (!isModerationGm(player) && ownerLeaves && guid != ownerGuid)
-            return player.deliver(Opcode.SMSG_CHANNEL_NOTIFY, notice(ChatNotify.notOwner, name));
+        if (ownerLeaves && guid != ownerGuid)
+            return notify(player, ChatNotify.notOwner);
         if (ban && targetGuid !in bannedGuids)
         {
             bannedGuids[targetGuid] = true;
@@ -282,10 +281,10 @@ final class Channel
             return;
         auto target = owner_.directory.find(targetName);
         if (target is null)
-            return player.deliver(Opcode.SMSG_CHANNEL_NOTIFY, notice(ChatNotify.playerNotFound, name, targetName));
+            return notify(player, ChatNotify.playerNotFound, targetName);
         const targetGuid = target.character.guid;
         if (targetGuid !in bannedGuids)
-            return player.deliver(Opcode.SMSG_CHANNEL_NOTIFY, notice(ChatNotify.playerNotBanned, name, targetName));
+            return notify(player, ChatNotify.playerNotBanned, targetName);
         bannedGuids.remove(targetGuid);
         sendToAll(notice(ChatNotify.playerUnbanned, name, targetGuid, player.character.guid));
     }
@@ -308,14 +307,14 @@ final class Channel
             return;
         auto target = owner_.directory.find(targetName);
         if (target is null)
-            return player.deliver(Opcode.SMSG_CHANNEL_NOTIFY, notice(ChatNotify.playerNotFound, name, targetName));
+            return notify(player, ChatNotify.playerNotFound, targetName);
         const targetGuid = target.character.guid;
         if (flag == MemberFlags.moderator && guid == ownerGuid && targetGuid == ownerGuid)
             return;
-        if (!isOn(targetGuid) || !mayDealWith(player, target, isModerationGm(target)))
-            return player.deliver(Opcode.SMSG_CHANNEL_NOTIFY, notice(ChatNotify.playerNotFound, name, targetName));
+        if (!isOn(targetGuid) || !owner_.sameTeam(player, target))
+            return notify(player, ChatNotify.playerNotFound, targetName);
         if (ownerGuid == targetGuid && ownerGuid != guid)
-            return player.deliver(Opcode.SMSG_CHANNEL_NOTIFY, notice(ChatNotify.notOwner, name));
+            return notify(player, ChatNotify.notOwner);
         setMemberFlag(targetGuid, flag, set);
     }
 
@@ -324,12 +323,12 @@ final class Channel
     {
         const guid = player.character.guid;
         if (!isOn(guid))
-            return player.deliver(Opcode.SMSG_CHANNEL_NOTIFY, notice(ChatNotify.notMember, name));
-        if (!isModerationGm(player) && guid != ownerGuid)
-            return player.deliver(Opcode.SMSG_CHANNEL_NOTIFY, notice(ChatNotify.notOwner, name));
+            return notify(player, ChatNotify.notMember);
+        if (guid != ownerGuid)
+            return notify(player, ChatNotify.notOwner);
         auto target = owner_.directory.find(targetName);
-        if (target is null || !isOn(target.character.guid) || !mayDealWith(player, target, false))
-            return player.deliver(Opcode.SMSG_CHANNEL_NOTIFY, notice(ChatNotify.playerNotFound, name, targetName));
+        if (target is null || !isOn(target.character.guid) || !owner_.sameTeam(player, target))
+            return notify(player, ChatNotify.playerNotFound, targetName);
         setOwner(target.character.guid, players.length > 1);
     }
 
@@ -337,7 +336,7 @@ final class Channel
     void sendOwner(OnlinePlayer player)
     {
         if (!isOn(player.character.guid))
-            return player.deliver(Opcode.SMSG_CHANNEL_NOTIFY, notice(ChatNotify.notMember, name));
+            return notify(player, ChatNotify.notMember);
         // CMaNGOS writes the asking player's guid here, so the client always names the asker; this sends
         // the owner, as the message means.
         string ownerName = "Nobody";
@@ -346,26 +345,18 @@ final class Channel
             auto found = owner_.directory.find(ownerGuid);
             ownerName = found is null ? "PLAYER_NOT_FOUND" : found.character.data.name;
         }
-        player.deliver(Opcode.SMSG_CHANNEL_NOTIFY, notice(ChatNotify.channelOwner, name, ownerName));
+        notify(player, ChatNotify.channelOwner, ownerName);
     }
 
     /// `Channel::SendChannelListResponse`: the members, each with its flags.
     void sendList(OnlinePlayer player)
     {
         if (!isOn(player.character.guid))
-            return player.deliver(Opcode.SMSG_CHANNEL_NOTIFY, notice(ChatNotify.notMember, name));
+            return notify(player, ChatNotify.notMember);
         ByteWriter w;
         w.putCString(name);
         w.put(flags);
-        ulong[] listed;
-        foreach (guid; memberGuids)
-        {
-            auto member = owner_.directory.find(guid);
-            // Players do not see game masters in the list (`GM.InWhoList`).
-            if (member is null || player.security == AccountLevel.player && member.security > AccountLevel.player)
-                continue;
-            listed ~= guid;
-        }
+        const listed = memberGuids.filter!(guid => owner_.directory.find(guid) !is null).array;
         w.put(cast(uint) listed.length);
         foreach (guid; listed)
         {
@@ -388,7 +379,8 @@ final class Channel
     /// `Channel::ToggleModeration`
     void toggleModeration(OnlinePlayer player)
     {
-        if (!checkModerator(player))
+        // ArcEmu's Channel::Moderate: moderators, and anyone with the `c` permission.
+        if (!checkModerator(player, player.canUseCommand('c')))
             return;
         moderation = !moderation;
         sendToAll(notice(moderation ? ChatNotify.moderationOn : ChatNotify.moderationOff, name,
@@ -400,14 +392,14 @@ final class Channel
     {
         const guid = player.character.guid;
         if (!isOn(guid))
-            return player.deliver(Opcode.SMSG_CHANNEL_NOTIFY, notice(ChatNotify.notMember, name));
+            return notify(player, ChatNotify.notMember);
         // LocalDefense and WorldDefense need a PvP rank of 0 and 11; there are no ranks yet, so only
         // WorldDefense is closed.
         enum uint worldDefense = 23;
         if ((players[guid] & MemberFlags.muted) || entry !is null && entry.channelId == worldDefense)
-            return player.deliver(Opcode.SMSG_CHANNEL_NOTIFY, notice(ChatNotify.muted, name));
-        if (moderation && !(players[guid] & MemberFlags.moderator) && !isModerationGm(player))
-            return player.deliver(Opcode.SMSG_CHANNEL_NOTIFY, notice(ChatNotify.notModerator, name));
+            return notify(player, ChatNotify.muted);
+        if (moderation && !(players[guid] & MemberFlags.moderator))
+            return notify(player, ChatNotify.notModerator);
         if (owner_.settings.crossFaction)
             language = Language.LANG_UNIVERSAL;
         sendToAll(chatMessage(ChatType.CHAT_MSG_CHANNEL, language, guid, text, chatTag, name), Opcode.SMSG_MESSAGECHAT);
@@ -418,22 +410,28 @@ final class Channel
     {
         const guid = player.character.guid;
         if (!isOn(guid))
-            return player.deliver(Opcode.SMSG_CHANNEL_NOTIFY, notice(ChatNotify.notMember, name));
+            return notify(player, ChatNotify.notMember);
         auto target = owner_.directory.find(targetName);
         if (target is null)
-            return player.deliver(Opcode.SMSG_CHANNEL_NOTIFY, notice(ChatNotify.playerNotFound, name, targetName));
+            return notify(player, ChatNotify.playerNotFound, targetName);
         const targetGuid = target.character.guid;
         if (isOn(targetGuid))
-            return player.deliver(Opcode.SMSG_CHANNEL_NOTIFY, notice(ChatNotify.playerAlreadyMember, name, targetGuid));
+            return notify(player, ChatNotify.playerAlreadyMember, targetGuid);
         if (targetGuid in bannedGuids)
-            return player.deliver(Opcode.SMSG_CHANNEL_NOTIFY, notice(ChatNotify.playerInviteBanned, name, targetName));
+            return notify(player, ChatNotify.playerInviteBanned, targetName);
         if (!owner_.sameTeam(player, target))
-            return player.deliver(Opcode.SMSG_CHANNEL_NOTIFY, notice(ChatNotify.inviteWrongFaction, name));
-        target.deliver(Opcode.SMSG_CHANNEL_NOTIFY, notice(ChatNotify.invite, name, guid));
-        player.deliver(Opcode.SMSG_CHANNEL_NOTIFY, notice(ChatNotify.playerInvited, name, targetName));
+            return notify(player, ChatNotify.inviteWrongFaction);
+        notify(target, ChatNotify.invite, guid);
+        notify(player, ChatNotify.playerInvited, targetName);
     }
 
 private:
+    /// Tells `player` something about this channel: an `SMSG_CHANNEL_NOTIFY` with the extra values of `notice`.
+    void notify(Args...)(OnlinePlayer player, ChatNotify type, Args extra)
+    {
+        player.deliver(Opcode.SMSG_CHANNEL_NOTIFY, notice(type, name, extra));
+    }
+
     /// The members in guid order, as CMaNGOS's `std::map` keeps them.
     ulong[] memberGuids() const
     {
@@ -442,30 +440,18 @@ private:
         return guids;
     }
 
-    bool isModerationGm(const OnlinePlayer player) const
-    {
-        const level = owner_.settings.moderationLevel;
-        return level > AccountLevel.player && player.security >= level;
-    }
-
-    bool isSilent(const OnlinePlayer player) const
-    {
-        const level = owner_.settings.silentJoinLevel;
-        return level > AccountLevel.player && player.security >= level;
-    }
-
-    /// In the channel, and a moderator (or a game master); otherwise tells the player why not.
-    bool checkModerator(OnlinePlayer player)
+    /// In the channel, and a moderator (or `anyway`); otherwise tells the player why not.
+    bool checkModerator(OnlinePlayer player, bool anyway = false)
     {
         const guid = player.character.guid;
         if (!isOn(guid))
         {
-            player.deliver(Opcode.SMSG_CHANNEL_NOTIFY, notice(ChatNotify.notMember, name));
+            notify(player, ChatNotify.notMember);
             return false;
         }
-        if (!(players[guid] & MemberFlags.moderator) && !isModerationGm(player))
+        if (!(players[guid] & MemberFlags.moderator) && !anyway)
         {
-            player.deliver(Opcode.SMSG_CHANNEL_NOTIFY, notice(ChatNotify.notModerator, name));
+            notify(player, ChatNotify.notModerator);
             return false;
         }
         return true;
@@ -477,16 +463,10 @@ private:
         auto target = owner_.directory.find(targetName);
         if (target is null || !isOn(target.character.guid))
         {
-            player.deliver(Opcode.SMSG_CHANNEL_NOTIFY, notice(ChatNotify.playerNotFound, name, targetName));
+            notify(player, ChatNotify.playerNotFound, targetName);
             return null;
         }
         return target;
-    }
-
-    /// Players of the other team are not found, unless channels are shared or both are game masters.
-    bool mayDealWith(const OnlinePlayer player, const OnlinePlayer target, bool targetIsGm) const
-    {
-        return owner_.sameTeam(player, target) || isModerationGm(player) && targetIsGm;
     }
 
     ulong selectNewOwner() const

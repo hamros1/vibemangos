@@ -69,12 +69,12 @@ struct AuthConfig
     }
 }
 
-private ushort[] supportedBuildNumbers() pure nothrow @safe
+private const(ushort)[] supportedBuildNumbers() pure nothrow @safe
 {
-    ushort[] builds;
-    foreach (known; supportedBuilds)
-        builds ~= known.build;
-    return builds;
+    import std.algorithm.iteration : map;
+    import std.array : array;
+
+    return supportedBuilds.map!(known => known.build).array;
 }
 
 /// Loads and validates the configuration at `path`.

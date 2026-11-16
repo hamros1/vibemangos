@@ -21,8 +21,9 @@ import std.format : format;
 import std.path : buildPath;
 import std.string : toUpper;
 
-import dmangos.log;
+import dmangos.dbc : dbcMagic;
 import dmangos.mpq.archive;
+import dmangos.mpq.crypt : readWord;
 
 /// Archives searched, oldest first (`CONF_mpq_list`).
 immutable string[] clientArchives = ["model.MPQ", "dbc.MPQ", "terrain.MPQ", "patch.MPQ", "patch-2.MPQ"];
@@ -40,7 +41,8 @@ struct ExtractionReport
 MpqArchive[] openClientArchives(string clientDir)
 {
     const data = buildPath(clientDir, "Data");
-    enforce(exists(data), format!"'%s' has no Data folder; point the extractor at the client's main directory"(clientDir));
+    enforce(exists(data),
+        format!"'%s' has no Data folder; point the extractor at the client's main directory"(clientDir));
     MpqArchive[] archives;
     foreach_reverse (archive; clientArchives)
     {
@@ -55,7 +57,8 @@ MpqArchive[] openClientArchives(string clientDir)
 /// Extracts every DBC file named in the archives' listfiles from `archives` (newest first) into `<outputDir>/dbc`.
 ExtractionReport extractDbcFiles(MpqArchive[] archives, string outputDir)
 {
-    import std.algorithm.searching : endsWith;
+    import std.algorithm.searching : find;
+    import std.range.primitives : empty, front;
     import std.uni : sicmp;
 
     ExtractionReport report;
@@ -76,18 +79,13 @@ ExtractionReport extractDbcFiles(MpqArchive[] archives, string outputDir)
     sorted.sort();
     foreach (name; sorted)
     {
-        MpqArchive source;
-        foreach (archive; archives)
-            if (archive.contains(name))
-            {
-                source = archive;
-                break;
-            }
-        if (source is null)
+        auto holders = archives.find!(archive => archive.contains(name));
+        if (holders.empty)
         {
             report.skipped ~= name ~ ": listed but not present";
             continue;
         }
+        auto source = holders.front;
         if (source.sizeOf(name) <= 1)
         {
             report.skipped ~= name ~ ": placeholder in " ~ source.name;
@@ -110,15 +108,9 @@ ExtractionReport extractDbcFiles(MpqArchive[] archives, string outputDir)
 /// Why `data` is not a complete DBC file, or null if it is.
 string dbcProblem(const(ubyte)[] data) pure @safe
 {
-    static uint word(const(ubyte)[] bytes, size_t index) pure @safe
-    {
-        const o = index * 4;
-        return bytes[o] | bytes[o + 1] << 8 | bytes[o + 2] << 16 | bytes[o + 3] << 24;
-    }
-
-    if (data.length < 20 || word(data, 0) != 0x43424457) // "WDBC"
+    if (data.length < 20 || readWord(data, 0) != dbcMagic)
         return "not a DBC file";
-    const expected = 20 + ulong(word(data, 1)) * word(data, 3) + word(data, 4);
+    const expected = 20 + ulong(readWord(data, 1)) * readWord(data, 3) + readWord(data, 4);
     if (expected != data.length)
         return format!"truncated or padded: %s bytes, header says %s"(data.length, expected);
     return null;

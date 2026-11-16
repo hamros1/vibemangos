@@ -37,12 +37,9 @@ private enum primeHex = "894B645E89E1535BBDAD5B8B290650530801B18EBFBF5E8FAB3C828
 
 private ubyte[N] reversed(size_t N)(ubyte[N] bytes) pure nothrow @nogc @safe
 {
-    foreach (i; 0 .. N / 2)
-    {
-        const t = bytes[i];
-        bytes[i] = bytes[N - 1 - i];
-        bytes[N - 1 - i] = t;
-    }
+    import std.algorithm.mutation : reverse;
+
+    bytes[].reverse();
     return bytes;
 }
 
@@ -139,9 +136,7 @@ ubyte[proofLength] computeClientProof(string username, in ubyte[saltLength] salt
 {
     const primeHash = sha1(primeBytes);
     const generatorHash = sha1(generatorBytes);
-    ubyte[proofLength] mixed;
-    foreach (i; 0 .. proofLength)
-        mixed[i] = cast(ubyte)(primeHash[i] ^ generatorHash[i]);
+    ubyte[proofLength] mixed = primeHash[] ^ generatorHash[];
     const userHash = sha1(username);
     return sha1(mixed, userHash, salt, clientPublicKey, serverPublicKey, sessionKey);
 }

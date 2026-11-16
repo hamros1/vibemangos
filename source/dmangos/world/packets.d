@@ -10,7 +10,7 @@
  */
 module dmangos.world.packets;
 
-import std.bitmanip : nativeToBigEndian;
+import std.bitmanip : nativeToBigEndian, nativeToLittleEndian;
 import std.exception : enforce;
 
 import dmangos.bytes;
@@ -913,6 +913,21 @@ struct ServerUpdateWorldState
     uint value;
 }
 
+/// `SMSG_SUMMON_REQUEST`: someone offers to summon the player (`Player::SendSummonRequest`).
+struct ServerSummonRequest
+{
+    mixin ServerPacket!(Opcode.SMSG_SUMMON_REQUEST);
+    ulong summoner;
+    uint zone;
+    uint timeoutMs;
+}
+
+/// `CMSG_SUMMON_RESPONSE`: the player accepts a summon (1.12 sends nothing when it declines).
+struct ClientSummonResponse
+{
+    ulong summoner;
+}
+
 /// `SMSG_PLAY_SOUND`
 struct ServerPlaySound
 {
@@ -953,8 +968,7 @@ out (bytes; bytes.length == serverHeaderLength + body_.length)
 
     ubyte[serverHeaderLength] header;
     header[0 .. 2] = nativeToBigEndian(cast(ushort)(body_.length + 2));
-    header[2] = cast(ubyte)(opcode & 0xFF);
-    header[3] = cast(ubyte)(opcode >> 8);
+    header[2 .. 4] = nativeToLittleEndian(cast(ushort) opcode);
     crypt.encryptHeader(header);
     return header ~ body_;
 }

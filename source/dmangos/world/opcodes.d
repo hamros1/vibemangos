@@ -162,6 +162,8 @@ enum Opcode : uint
     SMSG_SERVER_MESSAGE = 0x291,
     SMSG_STANDSTATE_UPDATE = 0x29D,
     SMSG_CHAT_PLAYER_NOT_FOUND = 0x2A9,
+    SMSG_SUMMON_REQUEST = 0x2AB,
+    CMSG_SUMMON_RESPONSE = 0x2AC,
     SMSG_AREA_TRIGGER_MESSAGE = 0x2B8,
     CMSG_SET_ACTIONBAR_TOGGLES = 0x2BF,
     SMSG_INIT_WORLD_STATES = 0x2C2,
@@ -253,6 +255,8 @@ enum ChatType : uint
     CHAT_MSG_EMOTE = 0x08,
     CHAT_MSG_TEXT_EMOTE = 0x09,
     CHAT_MSG_SYSTEM = 0x0A,
+    CHAT_MSG_MONSTER_SAY = 0x0B,
+    CHAT_MSG_MONSTER_YELL = 0x0C,
     CHAT_MSG_CHANNEL = 0x0E,
     CHAT_MSG_AFK = 0x14,
     CHAT_MSG_DND = 0x15,
@@ -290,8 +294,9 @@ enum Opcode[] movementOpcodes = () {
     import std.algorithm.searching : canFind, startsWith;
 
     // Not a MovementInfo, or a reply to the server rather than a move to show others.
-    enum notMovement = ["MSG_MOVE_TIME_SKIPPED", "MSG_MOVE_TELEPORT", "MSG_MOVE_TELEPORT_ACK", "MSG_MOVE_WORLDPORT_ACK",
-        "MSG_MOVE_SET_RUN_SPEED", "MSG_MOVE_SET_RUN_BACK_SPEED", "MSG_MOVE_SET_SWIM_SPEED", "MSG_MOVE_SET_SWIM_BACK_SPEED"];
+    enum notMovement = ["MSG_MOVE_TIME_SKIPPED", "MSG_MOVE_TELEPORT", "MSG_MOVE_TELEPORT_ACK",
+        "MSG_MOVE_WORLDPORT_ACK", "MSG_MOVE_SET_RUN_SPEED", "MSG_MOVE_SET_RUN_BACK_SPEED", "MSG_MOVE_SET_SWIM_SPEED",
+        "MSG_MOVE_SET_SWIM_BACK_SPEED"];
     Opcode[] opcodes;
     static foreach (name; __traits(allMembers, Opcode))
         static if (name.startsWith("MSG_MOVE_") && !notMovement.canFind(name))

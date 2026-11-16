@@ -32,7 +32,7 @@ module dmangos.world.session;
 
 import core.time : Duration, MonoTime, seconds;
 import std.algorithm.searching : canFind;
-import std.bitmanip : nativeToLittleEndian;
+import std.bitmanip : bigEndianToNative, littleEndianToNative, nativeToLittleEndian;
 
 import dmangos.auth.accounts : AccountLevel;
 import dmangos.bytes;
@@ -46,10 +46,12 @@ import dmangos.world.addons : buildAddonInfo, parseAddons;
 import dmangos.world.channelhandlers : ChannelHandlers;
 import dmangos.world.charscreen : CharacterScreenHandlers;
 import dmangos.world.commands : ChatCommands;
-import dmangos.world.gmadmin : AdminCommands;
-import dmangos.world.gmcharacter : CharacterCommands;
+import dmangos.world.gmactions : GmActions;
 import dmangos.world.gmdebug : DebugCommands;
-import dmangos.world.gmtravel : TravelCommands;
+import dmangos.world.gmlevel0 : Level0Commands;
+import dmangos.world.gmlevel1 : Level1Commands;
+import dmangos.world.gmlevel2 : Level2Commands;
+import dmangos.world.gmlevel3 : Level3Commands;
 import dmangos.world.grouphandlers : GroupHandlers;
 import dmangos.world.inworld : InWorldHandlers;
 import dmangos.world.teleport : Teleport, TeleportHandlers;
@@ -120,12 +122,10 @@ final class WorldSession : NetSession, Kickable, OnlinePlayer
         // MSG_MOVE_TELEPORT_ACK.
         Teleport teleporting;
         uint moveOrderCounter;
-        bool gameMaster;          // `.gm on`: requirements and checks do not apply
-        uint recallMap;           // where `.recall` goes: the place before the last command teleport
-        Position recallPosition;
-        bool ignoreTriggerRequirements; // `.cheat triggerpass`
-        bool acceptWhispers = true;     // `.gm whisperblock` (Player::isAcceptWhispers)
-        bool[ulong] whisperExceptions;  // `.gm allowwhispers`
+        bool triggerpassCheat;    // `.cheat triggerpass` (Player::TriggerpassCheat)
+        bool[ulong] gmTargets;    // `.gm allowwhispers`: players who may whisper while the GM tag is on
+        uint floodLines;          // flood protection (WorldSession::floodLines, floodTime)
+        long floodTime;
 
         // The update tick: the 20-second logout, regeneration, rest, saving.
         bool loggingOut;
@@ -155,8 +155,7 @@ final class WorldSession : NetSession, Kickable, OnlinePlayer
     {
         this.context = context;
         this.remoteAddress = remoteAddress;
-        const seed = secureRandom!4;
-        serverSeed = seed[0] | seed[1] << 8 | seed[2] << 16 | seed[3] << 24;
+        serverSeed = littleEndianToNative!uint(secureRandom!4);
         send(ServerAuthChallenge(serverSeed));
     }
 
@@ -207,8 +206,8 @@ final class WorldSession : NetSession, Kickable, OnlinePlayer
                 input = input[clientHeaderLength .. $];
                 crypt.decryptHeader(header);
 
-                const size = header[0] << 8 | header[1]; // big-endian, counts the 4-byte opcode
-                pendingOpcode = header[2] | header[3] << 8 | header[4] << 16 | header[5] << 24;
+                const size = bigEndianToNative!ushort(header[0 .. 2]); // counts the 4-byte opcode
+                pendingOpcode = littleEndianToNative!uint(header[2 .. 6]);
                 if (size < 4 || size > maxClientPacketSize || pendingOpcode >= numMessageTypes)
                 {
                     warning!"%s: malformed packet header (size %s, opcode 0x%X)"(remoteAddress, size, pendingOpcode);
@@ -268,6 +267,34 @@ final class WorldSession : NetSession, Kickable, OnlinePlayer
     @property AccountLevel security() const
     {
         return account.level;
+    }
+
+    /// ArcEmu's permission letters (`WorldSession::permissions`), from the account's `gmlevel`.
+    @property string permissions() const
+    {
+        return context.config.gmPermissions.forLevel(account.level);
+    }
+
+    /// `WorldSession::CanUseCommand`
+    bool canUseCommand(char group) const
+    {
+        import dmangos.world.commands : canUse = canUseCommand;
+
+        return canUse(permissions, group);
+    }
+
+    /// `WorldSession::GetPermissionCount() > 0`
+    @property bool hasPermissions() const
+    {
+        return permissions.length > 0;
+    }
+
+    /// `WorldSession::HasGMPermissions`
+    @property bool hasGMPermissions() const
+    {
+        import dmangos.world.commands : hasGM = hasGMPermissions;
+
+        return hasGM(permissions);
     }
 
     /// Between `SMSG_NEW_WORLD` and the client's `MSG_MOVE_WORLDPORT_ACK`.
@@ -530,17 +557,12 @@ private:
     mixin GroupHandlers;
     mixin ChannelHandlers;
     mixin ChatCommands;
-    mixin TravelCommands;
-    mixin CharacterCommands;
-    mixin AdminCommands;
+    mixin GmActions;
+    mixin Level0Commands;
+    mixin Level1Commands;
+    mixin Level2Commands;
+    mixin Level3Commands;
     mixin DebugCommands;
-
-    /// Whether a whisper from `sender` reaches this player (`Player::isAcceptWhispers`, ArcEmu's exceptions).
-    bool acceptsWhisperFrom(const OnlinePlayer sender) const
-    {
-        return acceptWhispers || sender.security > AccountLevel.player
-            || (sender.character.guid in whisperExceptions) !is null;
-    }
 }
 
 // ---------------------------------------------------------------------------

@@ -39,18 +39,11 @@ LogLevel logLevel() @trusted nothrow @nogc
 
 /// Upper-case, fixed-width tags for each level, built at compile time.
 private static immutable string[] levelTags = () {
-    import std.ascii : toUpper;
+    import std.string : leftJustify, toUpper;
 
     string[] tags;
     static foreach (name; __traits(allMembers, LogLevel))
-    {{
-        char[] tag;
-        foreach (c; name)
-            tag ~= toUpper(c);
-        while (tag.length < 7)
-            tag ~= ' ';
-        tags ~= tag.idup;
-    }}
+        tags ~= name.toUpper.leftJustify(7);
     return tags;
 }();
 

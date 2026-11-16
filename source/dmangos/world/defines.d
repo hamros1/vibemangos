@@ -82,6 +82,9 @@ enum InventoryType : ubyte
     rangedRight, quiver, relic,
 }
 
+/// `PLAYER_EXPLORED_ZONES_SIZE`: the explored-zone bit fields.
+enum exploredZonesSize = 64;
+
 /// `REST_STATE_*`, kept in the top byte of `playerBytes2`.
 enum RestState : ubyte
 {

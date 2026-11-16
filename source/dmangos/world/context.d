@@ -3,6 +3,7 @@ module dmangos.world.context;
 
 import core.time : Duration, MonoTime;
 
+import std.random : Random, unpredictableSeed;
 import std.typecons : Nullable;
 
 import dmangos.auth.accounts : AccountLevel;
@@ -13,8 +14,6 @@ import dmangos.world.clientdata : ClientData;
 import dmangos.world.config : WorldConfig;
 import dmangos.world.database : WorldDatabase;
 import dmangos.world.group : Groups;
-import std.random : Random, unpredictableSeed;
-
 import dmangos.world.map : Inhabitant, Map, MapObject, MapSettings;
 import dmangos.world.online : Directory, OnlinePlayer;
 import dmangos.world.playercreate : CreationSettings;
@@ -81,11 +80,30 @@ final class WorldContext : Directory
     /// When `update` last ran.
     private MonoTime lastUpdate;
 
+    /// When the server started, in Unix time and on `MonoTime`'s clock.
+    private long startUnixTime;
+    private MonoTime startClock;
+
+    /// Chooses creatures' models and levels.
+    private Random spawnRandom;
+
     /// The most sessions that were online at once, for the `uptime` table.
     size_t peakSessions;
 
+    /// Sessions authenticated since start-up (ArcEmu's `mAcceptedConnections`).
+    size_t acceptedSessions;
+
     /// The time source sessions use (ping pacing); tests replace it.
     MonoTime delegate() clock;
+
+    /// The configuration file, which `.server rehash` reads again; null when there is none (tests).
+    string configPath;
+
+    /// `command_overrides`: permission letters by full command name ("gm on").
+    char[string] commandOverrides;
+
+    /// Lines written to the GM command log (tests read them; the file gets them too).
+    string[] gmLogLines;
 
     ///
     this(WorldConfig config, WorldDatabase database, WorldData data, ClientData client,
@@ -108,17 +126,52 @@ final class WorldContext : Directory
         this.next = database.highestGuids();
         this.groups = new Groups(database, this, next.group);
         groups.load(database.loadGroups());
-        const channelSettings = ChannelSettings(config.allowTwoSideInteractionChannel,
-            levelSetting(config.gmLevelChannelModeration), levelSetting(config.gmLevelChannelSilentJoin));
+        const channelSettings = ChannelSettings(config.allowTwoSideInteractionChannel);
+        loadCommandOverrides();
         channels.alliance = new Channels(this, client, channelSettings);
         channels.horde = config.allowTwoSideInteractionChannel ? channels.alliance
             : new Channels(this, client, channelSettings);
     }
 
-    /// A `GM.*Level` setting: 0 means nobody, which `AccountLevel.player` stands for.
-    private static AccountLevel levelSetting(uint level)
+    /// `CommandTableStorage::Load`: the `command_overrides` setting.
+    void loadCommandOverrides()
     {
-        return level == 0 || level > AccountLevel.max ? AccountLevel.player : cast(AccountLevel) level;
+        import dmangos.log : info, warning;
+        import dmangos.world.commands : overrideTargets;
+
+        commandOverrides = null;
+        foreach (row; config.commandOverrides)
+        {
+            const paths = overrideTargets(row.command);
+            if (paths.length == 0)
+                warning!"command_overrides: no command '%s'"(row.command);
+            foreach (path; paths)
+            {
+                commandOverrides[path] = row.group[0];
+                info!"Changing command level of command `%s` to %s."(path, row.group[0]);
+            }
+        }
+    }
+
+    /// `sGMLog`: a line in the GM command log (`gm_command_log`), with the time in front.
+    void writeGmLog(string line)
+    {
+        import dmangos.log : warning;
+        import std.datetime.systime : SysTime;
+        import std.file : append;
+        import std.format : format;
+
+        const now = SysTime.fromUnixTime(unixTime);
+        const stamped = format!"[%04d-%02d-%02d %02d:%02d:%02d] %s"(now.year, now.month, now.day, now.hour,
+            now.minute, now.second, line);
+        gmLogLines ~= stamped;
+        if (config.gmCommandLog.length)
+        {
+            try
+                append(config.gmCommandLog, stamped ~ "\n");
+            catch (Exception e)
+                warning!"cannot write the GM command log %s: %s"(config.gmCommandLog, e.msg);
+        }
     }
 
     /// Character creation settings from the configuration.
@@ -140,8 +193,11 @@ final class WorldContext : Directory
         return startUnixTime + (clock() - startClock).total!"seconds";
     }
 
-    private long startUnixTime;
-    private MonoTime startClock;
+    /// When the server started, in Unix time (`World::m_StartTime`).
+    @property long startTime() const
+    {
+        return startUnixTime;
+    }
 
     /// Milliseconds on the server's clock, as movement and create blocks carry them.
     uint serverTime()
@@ -155,9 +211,6 @@ final class WorldContext : Directory
         return maps.require(id, new Map(id, MapSettings(config.visibilityDistance, config.visibilityRelocationLimit),
             &serverTime, &spawnCell));
     }
-
-    /// Chooses creatures' models and levels.
-    private Random spawnRandom;
 
     /**
      * The creatures and game objects of one cell (`ObjectGridLoader`): each spawn's object, with a
@@ -219,6 +272,15 @@ final class WorldContext : Directory
         online[who.character.guid] = who;
         onlineByName[toLowerName(who.character.data.name)] = who;
         map(who.character.data.map).add(who);
+    }
+
+    /// A player in the world was renamed (`.character rename`): it is found by its new name.
+    void renamed(OnlinePlayer who, string oldName)
+    {
+        import dmangos.world.worlddata : toLowerName;
+
+        onlineByName.remove(toLowerName(oldName));
+        onlineByName[toLowerName(who.character.data.name)] = who;
     }
 
     /// Takes a player out of the world.
@@ -299,11 +361,10 @@ final class WorldContext : Directory
     /// ditto
     Kickable[] sessionsFrom(string address)
     {
-        Kickable[] found;
-        foreach (session; sessions)
-            if (session.address == address)
-                found ~= session;
-        return found;
+        import std.algorithm.iteration : filter;
+        import std.array : array;
+
+        return sessions.byValue.filter!(session => session.address == address).array;
     }
 
     /**
@@ -312,7 +373,6 @@ final class WorldContext : Directory
      */
     bool update(MonoTime now)
     {
-        import std.format : format;
         import dmangos.world.packets : ServerMessageType, ServerServerMessage;
         import dmangos.world.map : packetBody;
         import dmangos.world.opcodes : Opcode;
@@ -392,6 +452,7 @@ final class WorldContext : Directory
             if (*previous !is session)
                 previous.kick("logged in again from elsewhere");
         sessions[accountId] = session;
+        ++acceptedSessions;
         if (sessions.length > peakSessions)
             peakSessions = sessions.length;
     }

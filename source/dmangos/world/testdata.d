@@ -88,7 +88,8 @@ ClientData testClientData()
         [6, skillOrcish, maskOf(raceOrc), 0x5DF, 0, 0, 0, 0],
         [7, skillFireMagic, 0xFF, maskOf(classMage), skillFlagMaximized, 0, 0, 0],
     ]), "SkillRaceClassInfo.dbc");
-    // SkillLineAbility: id, skill, spell, raceMask, classMask, 2 skipped, reqValue, forward, learnOnGetSkill, max, min, 2 skipped, trainPoints
+    // SkillLineAbility: id, skill, spell, raceMask, classMask, 2 skipped, reqValue, forward, learnOnGetSkill, max,
+    // min, 2 skipped, trainPoints
     client.skillLineAbilities = typeof(client.skillLineAbilities).parse(buildDbc(skillLineAbilityFormat, [
         abilityRecord(1, skillSwords, spellOneHandedSwords, 2),
         abilityRecord(2, skillStaves, spellStaves, 2),

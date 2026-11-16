@@ -84,6 +84,12 @@ final class GameObject : MapObject
         return guid_;
     }
 
+    /// See `MapObject.fields`.
+    ref UpdateValues fields()
+    {
+        return values;
+    }
+
     /// Where it stands.
     @property Position position() const
     {

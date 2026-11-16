@@ -150,28 +150,24 @@ Nullable!(ubyte[N]) decodeBigNumberHex(size_t N)(scope const(char)[] hex) pure @
  */
 string encodeBigNumberHex(scope const(ubyte)[] littleEndian, size_t minDigits = 0) pure @safe
 {
-    size_t length = littleEndian.length;
-    while (length > 0 && littleEndian[length - 1] == 0)
-        --length;
+    import std.algorithm.mutation : reverse, stripRight;
+    import std.string : rightJustify;
 
-    auto bigEndian = new ubyte[length];
-    foreach (i; 0 .. length)
-        bigEndian[i] = littleEndian[length - 1 - i];
-
-    string hex = toHex(bigEndian);
-    if (hex.length < minDigits)
-    {
-        auto padding = new char[minDigits - hex.length];
-        padding[] = '0';
-        hex = padding.idup ~ hex;
-    }
+    auto bigEndian = littleEndian.stripRight(ubyte(0)).dup;
+    bigEndian.reverse();
+    const hex = toHex(bigEndian).rightJustify(minDigits, '0');
     return hex.length ? hex : "0";
 }
 
 /// A random salt shaped like OpenSSL's `BN_rand(256, 0, 1)`: the top bit is set and the value is odd.
 ubyte[saltLength] generateSalt() @safe
 {
-    auto salt = secureRandom!saltLength;
+    return shapedLikeSalt(secureRandom!saltLength);
+}
+
+/// Sets the bits that `BN_rand(256, 0, 1)` always sets: the top one, and the bottom one (odd).
+private ubyte[saltLength] shapedLikeSalt(ubyte[saltLength] salt) pure nothrow @nogc @safe
+{
     salt[$ - 1] |= 0x80;
     salt[0] |= 0x01;
     return salt;
@@ -231,9 +227,7 @@ Credentials fakeCredentials(in ubyte[20] secret, string canonicalName) @safe
 
     Credentials credentials;
     credentials.verifier = expand(secret, canonicalName, "v");
-    credentials.salt = expand(secret, canonicalName, "s");
-    credentials.salt[$ - 1] |= 0x80;
-    credentials.salt[0] |= 0x01;
+    credentials.salt = shapedLikeSalt(expand(secret, canonicalName, "s"));
     return credentials;
 }
 

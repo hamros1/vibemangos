@@ -10,11 +10,10 @@ module dmangos.world.grouphandlers;
 mixin template GroupHandlers()
 {
     import std.random : uniform;
-    import dmangos.auth.accounts : AccountLevel;
     import dmangos.bytes : ByteReader, ByteWriter;
     import dmangos.world.group;
     import dmangos.world.map : packetBody;
-    import dmangos.world.names : normalizePlayerName;
+    import dmangos.world.names : normalizedName;
     import dmangos.world.online : OnlinePlayer;
     import dmangos.world.opcodes;
     import dmangos.world.packets;
@@ -24,12 +23,6 @@ private:
     void sendPartyResult(PartyOperation operation, string member, PartyResult result)
     {
         send(ServerPartyCommandResult(operation, member, result));
-    }
-
-    /// `normalizePlayerName`, or null for a name that cannot be a player's.
-    static string normalizedName(string name)
-    {
-        return normalizePlayerName(name) ? name : null;
     }
 
     /// The other session of an online player.
@@ -49,8 +42,9 @@ private:
             auto recipient = context.onlinePlayer(name);
             if (recipient is null || recipient is this)
                 return sendPartyResult(PARTY_OP_INVITE, name, ERR_BAD_PLAYER_NAME_S);
-            if (!gameMaster && !context.config.allowTwoSideInteractionGroup
-                && context.client.teamForRace(player.data.race) != context.client.teamForRace(recipient.character.data.race))
+            if (!hasPermissions && !context.config.allowTwoSideInteractionGroup
+                && context.client.teamForRace(player.data.race)
+                    != context.client.teamForRace(recipient.character.data.race))
                 return sendPartyResult(PARTY_OP_INVITE, name, ERR_PLAYER_WRONG_FACTION);
 
             const guid = player.guid, recipientGuid = recipient.character.guid;
@@ -366,7 +360,8 @@ unittest
     assert(opcodesOf(anduin.read()) == [Opcode.SMSG_PARTY_COMMAND_RESULT]);
     const invitation = jaina.read();
     reader = ByteReader(invitation[0].body_);
-    assert(invitation[0].opcode == Opcode.SMSG_GROUP_INVITE && deserialize!ServerGroupInvite(reader).inviter == "Anduin");
+    assert(invitation[0].opcode == Opcode.SMSG_GROUP_INVITE
+        && deserialize!ServerGroupInvite(reader).inviter == "Anduin");
 
     // Jaina accepts: a group with a row, two members, and Anduin leading.
     jaina.write(Opcode.CMSG_GROUP_ACCEPT, null);
@@ -392,7 +387,8 @@ unittest
 
     // Party chat reaches the group and nobody else.
     jaina.write(Opcode.CMSG_MESSAGECHAT, chatBody(ChatType.CHAT_MSG_PARTY, "inc"));
-    assert(opcodesOf(anduin.read()) == [Opcode.SMSG_MESSAGECHAT] && opcodesOf(jaina.read()) == [Opcode.SMSG_MESSAGECHAT]);
+    assert(opcodesOf(anduin.read()) == [Opcode.SMSG_MESSAGECHAT]
+        && opcodesOf(jaina.read()) == [Opcode.SMSG_MESSAGECHAT]);
     assert(varian.read().length == 0);
 
     // Varian is invited and declines; Anduin is told.
@@ -433,7 +429,8 @@ unittest
 
     // Raid chat, and a raid warning from the leader.
     jaina.write(Opcode.CMSG_MESSAGECHAT, chatBody(ChatType.CHAT_MSG_RAID, "pull?"));
-    assert(opcodesOf(anduin.read()) == [Opcode.SMSG_MESSAGECHAT] && opcodesOf(jaina.read()) == [Opcode.SMSG_MESSAGECHAT]);
+    assert(opcodesOf(anduin.read()) == [Opcode.SMSG_MESSAGECHAT]
+        && opcodesOf(jaina.read()) == [Opcode.SMSG_MESSAGECHAT]);
     jaina.write(Opcode.CMSG_MESSAGECHAT, chatBody(ChatType.CHAT_MSG_RAID_WARNING, "go"));
     assert(anduin.read().length == 0, "only the leader and assistants warn");
     anduin.write(Opcode.CMSG_MESSAGECHAT, chatBody(ChatType.CHAT_MSG_RAID_WARNING, "go"));

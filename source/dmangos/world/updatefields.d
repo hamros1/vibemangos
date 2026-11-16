@@ -528,7 +528,8 @@ static assert(ITEM_FIELD_SPELL_CHARGES.offset == UNIT_FIELD_TARGET.offset
 static assert(visibleItemStride == 12 && visibleEnchantments == 7);
 static assert(maxPlayerSkills == 128 && maxBagSize == 36);
 static assert(playerInventorySlots == 113, "INVENTORY_SLOT_BAG_0 positions 0 .. KEYRING_SLOT_END");
-static assert(PLAYER_FIELD_PACK_SLOT_1 == PLAYER_FIELD_INV_SLOT_HEAD + 2 * 23, "the backpack follows equipment and bags");
+static assert(PLAYER_FIELD_PACK_SLOT_1 == PLAYER_FIELD_INV_SLOT_HEAD + 2 * 23,
+    "the backpack follows equipment and bags");
 static assert(fieldTypes!(TypeId.player)[UNIT_FIELD_STAT0] == FieldType.int_);
 static assert(fieldTypes!(TypeId.player)[UNIT_FIELD_MINDAMAGE] == FieldType.float_);
 static assert(fieldTypes!(TypeId.item)[ITEM_FIELD_OWNER + 1] == FieldType.guid);

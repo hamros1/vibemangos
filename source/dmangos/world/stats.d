@@ -11,6 +11,7 @@ module dmangos.world.stats;
 
 import std.algorithm.comparison : max, min;
 import std.math : round;
+import std.traits : EnumMembers;
 
 public import dmangos.world.defines : Power, Stat;
 import dmangos.world.defines;
@@ -23,7 +24,6 @@ enum AttackType
     offHand,
     ranged,
 }
-
 
 /// `ItemModType` values that change stats.
 private enum : uint
@@ -147,7 +147,7 @@ out (result; result.maxHealth >= 1, "a living character has at least one health 
     // UpdateAttackPowerAndDamage
     result.attackPower = cast(int) meleeAttackPower(input.classId, input.level, result.stats);
     result.rangedAttackPower = cast(int) rangedAttackPower(input.classId, input.level, result.stats);
-    foreach (type; [AttackType.mainHand, AttackType.offHand, AttackType.ranged])
+    foreach (type; EnumMembers!AttackType)
         weaponDamage(input, type, result);
     return result;
 }
@@ -271,7 +271,8 @@ unittest
     assert(s.attackPower == 3 + 46 - 20 && s.rangedAttackPower == 1 + 20 - 10);
     assert(s.attackTime[AttackType.mainHand] == 2300 && s.attackTime[AttackType.offHand] == 2000);
     const fromAp = 29 / 14.0f * 2.3f;
-    assert(isClose(s.damage[AttackType.mainHand].min, fromAp + 2) && isClose(s.damage[AttackType.mainHand].max, fromAp + 5));
+    assert(isClose(s.damage[AttackType.mainHand].min, fromAp + 2)
+        && isClose(s.damage[AttackType.mainHand].max, fromAp + 5));
     assert(s.damage[AttackType.offHand] == DamageRange.init && s.damage[AttackType.ranged] == DamageRange.init);
 
     // A mage: mana from intellect, unarmed damage, caster attack power.

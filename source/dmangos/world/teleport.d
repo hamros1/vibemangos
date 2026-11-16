@@ -45,6 +45,7 @@ enum AreaLockStatus
 /// See the module documentation.
 mixin template TeleportHandlers()
 {
+    import std.algorithm.comparison : among;
     import std.format : format;
     import dmangos.auth.accounts : AccountLevel;
     import dmangos.bytes : ByteWriter;
@@ -134,7 +135,7 @@ private:
     {
         if (mapEntry is null)
             return AreaLockStatus.unknownError;
-        if (gameMaster || ignoreTriggerRequirements)
+        if (triggerpassCheat) // ArcEmu: only `.cheat triggerpass` passes (CheckTriggerPrerequsites)
             return AreaLockStatus.ok;
         if (player.data.level < trigger.requiredLevel && !context.config.instanceIgnoreLevel)
         {
@@ -150,7 +151,8 @@ private:
         // Either of the two items will do; the first missing one is reported.
         if (trigger.requiredItem)
         {
-            if (!player.hasItem(trigger.requiredItem) && (!trigger.requiredItem2 || !player.hasItem(trigger.requiredItem2)))
+            if (!player.hasItem(trigger.requiredItem)
+                && (!trigger.requiredItem2 || !player.hasItem(trigger.requiredItem2)))
             {
                 requirement = trigger.requiredItem;
                 return AreaLockStatus.missingItem;
@@ -175,8 +177,8 @@ private:
     /// `Player::SendTransferAbortedByLockStatus`
     void sendLockStatus(const ref AreaTriggerTeleport trigger, AreaLockStatus status, uint requirement)
     {
-        const ownText = status == AreaLockStatus.tooLowLevel || status == AreaLockStatus.questNotCompleted
-            || status == AreaLockStatus.raidLocked || status == AreaLockStatus.pvpRank;
+        const ownText = status.among(AreaLockStatus.tooLowLevel, AreaLockStatus.questNotCompleted,
+            AreaLockStatus.raidLocked, AreaLockStatus.pvpRank) != 0;
         if (ownText && trigger.failedText.length)
             return send(ServerAreaTriggerMessage(formatRequirement(trigger.failedText, requirement)));
         switch (status)
@@ -249,8 +251,6 @@ private:
         // An inn: rested XP while inside (a city's rest wins). Quest objectives and scripts are not handled yet.
         if (request.id in context.data.taverns)
         {
-            import std.datetime.systime : Clock;
-
             if (player.restType != RestType.city)
             {
                 player.setRestType(RestType.tavern, context.unixTime, request.id);
@@ -261,7 +261,7 @@ private:
         const trigger = request.id in context.data.areaTriggers;
         if (trigger is null)
             return;
-        if (trigger.conditionId && !gameMaster && !ignoreTriggerRequirements)
+        if (trigger.conditionId && !triggerpassCheat)
         {
             // The `conditions` table is not loaded yet, so a trigger behind one stays closed.
             if (trigger.failedText.length)
@@ -280,21 +280,12 @@ private:
         teleportTo(request.map, Position(request.x, request.y, request.z, request.orientation));
     }
 
-    /// `ChatHandler::HandleGoHelper`: a command's teleport, remembering where `.recall` goes back to.
+    /// ArcEmu's `Player::SafeTeleport`, which GM commands use: nothing happens while a teleport is under way.
     bool commandTeleport(uint mapId, Position destination)
     {
         if (teleporting != Teleport.none)
-        {
-            sendSystemMessage(format!"%s is already being teleported."(player.data.name));
             return false;
-        }
-        const fromMap = player.data.map;
-        const from = player.position;
-        if (!teleportTo(mapId, destination))
-            return false;
-        recallMap = fromMap;
-        recallPosition = from;
-        return true;
+        return teleportTo(mapId, destination);
     }
 }
 
@@ -328,9 +319,10 @@ unittest
     auto watcher = loggedIn(context, db, 8, "Jaina", Position(-8940, -132, 83.5f));
     gm.read();
 
-    gm.write(Opcode.CMSG_MESSAGECHAT, chatBody(ChatType.CHAT_MSG_SAY, ".go xyz -9464 62 56"));
+    gm.write(Opcode.CMSG_MESSAGECHAT, chatBody(ChatType.CHAT_MSG_SAY, ".worldport 0 -9464 62 56"));
     const order = gm.read();
-    assert(opcodesOf(order) == [Opcode.MSG_MOVE_TELEPORT_ACK, Opcode.SMSG_UPDATE_OBJECT], "the order; Jaina is out of sight");
+    assert(opcodesOf(order) == [Opcode.MSG_MOVE_TELEPORT_ACK, Opcode.SMSG_UPDATE_OBJECT],
+        "the order; Jaina is out of sight");
     auto reader = ByteReader(order[0].body_);
     assert(reader.readPackedGuid() == 7 && reader.read!uint == 0);
     assert(MovementInfo.read(reader).position == Position(-9464, 62, 56, 0));
@@ -344,12 +336,12 @@ unittest
     gm.write(Opcode.MSG_MOVE_HEARTBEAT, moveTo(Position(-9463, 62, 56)));
     assert(gm.session.character.position.x == -9463);
 
-    // `.recall` goes back.
-    gm.write(Opcode.CMSG_MESSAGECHAT, chatBody(ChatType.CHAT_MSG_SAY, ".recall"));
+    // And back.
+    gm.write(Opcode.CMSG_MESSAGECHAT, chatBody(ChatType.CHAT_MSG_SAY, ".worldport 0 -8949.95 -132.49 83.53"));
     assert(gm.read()[0].opcode == Opcode.MSG_MOVE_TELEPORT_ACK && gm.session.character.position.x == -8949.95f);
 }
 
-/// `.tele` to another map: the loading screen, the world change, and the world packets again.
+/// `.recall port` to another map: the loading screen, the world change, and the world packets again.
 unittest
 {
     auto db = newDatabase();
@@ -358,7 +350,7 @@ unittest
     auto watcher = loggedIn(context, db, 8, "Jaina", Position(-8940, -132, 83.5f));
     gm.read();
 
-    gm.write(Opcode.CMSG_MESSAGECHAT, chatBody(ChatType.CHAT_MSG_SAY, ".tele orgrim"));
+    gm.write(Opcode.CMSG_MESSAGECHAT, chatBody(ChatType.CHAT_MSG_SAY, ".recall port orgrim"));
     const transfer = gm.read();
     assert(opcodesOf(transfer) == [Opcode.SMSG_TRANSFER_PENDING, Opcode.SMSG_NEW_WORLD]);
     auto reader = ByteReader(transfer[1].body_);
@@ -378,8 +370,8 @@ unittest
             SMSG_FRIEND_LIST, SMSG_IGNORE_LIST, SMSG_INIT_WORLD_STATES]);
     assert(!gm.session.transferring && context.map(1).population == 1);
 
-    // `.recall` brings Anduin back, and Jaina sees him again.
-    gm.write(Opcode.CMSG_MESSAGECHAT, chatBody(ChatType.CHAT_MSG_SAY, ".recall"));
+    // `.worldport` brings Anduin back, and Jaina sees him again.
+    gm.write(Opcode.CMSG_MESSAGECHAT, chatBody(ChatType.CHAT_MSG_SAY, ".worldport 0 -8949.95 -132.49 83.53"));
     gm.read();
     gm.write(Opcode.MSG_MOVE_WORLDPORT_ACK, null);
     gm.read();

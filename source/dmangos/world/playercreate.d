@@ -33,6 +33,9 @@ module dmangos.world.playercreate;
 
 import std.algorithm.comparison : max, min;
 import std.algorithm.mutation : remove;
+import std.algorithm.searching : canFind;
+import std.algorithm.sorting : sort;
+import std.array : replicate;
 import std.conv : to;
 import std.math : round;
 
@@ -68,11 +71,8 @@ private enum : uint
     abilityLearnedOnGetRaceOrClassSkill = 2,
 }
 
-
 /// `TaxiMaskSize`
 enum taxiMaskSize = 8;
-/// `PLAYER_EXPLORED_ZONES_SIZE`
-enum exploredZonesSize = 64;
 /// `MAX_ENCHANTMENT_SLOT`
 enum maxEnchantmentSlot = 7;
 /// `AT_LOGIN_FIRST`
@@ -221,10 +221,7 @@ struct NewCharacter
     /// `exploredZones` of a new character: 64 zeros.
     static string exploredZonesText()
     {
-        string text;
-        foreach (i; 0 .. exploredZonesSize)
-            text ~= "0 ";
-        return text;
+        return "0 ".replicate(exploredZonesSize);
     }
 }
 
@@ -263,7 +260,10 @@ private final class ItemObject
     ItemObject[] contents; // for bags, ContainerSlots long
 
     @property uint entry() const { return proto.entry; }
-    @property bool isBag() const { return proto.itemClass == ItemClass.container || proto.itemClass == ItemClass.quiver; }
+    @property bool isBag() const
+    {
+        return proto.itemClass == ItemClass.container || proto.itemClass == ItemClass.quiver;
+    }
 }
 
 private struct ItemPosCount
@@ -376,17 +376,17 @@ final class CharacterBuilder
         // InitStatsForLevel, then UpdateMaxHealth / UpdateMaxPower(POWER_MANA) in Create.
         const stats = world.levelStats(req.race, req.classId, level);
         const classStats = world.classStats(req.classId, level);
-        result.health = cast(uint) round(max(classStats.baseHealth + healthBonusFromStamina(stats.stats[2]), 1.0f));
+        result.health = cast(uint) round(max(classStats.baseHealth + healthBonusFromStamina(stats.stats[Stat.stamina]),
+            1.0f));
         if (classStats.baseMana > 0)
-            result.power[Power.mana] = cast(uint) round(classStats.baseMana + manaBonusFromIntellect(stats.stats[3]));
+            result.power[Power.mana] = cast(uint) round(classStats.baseMana
+                + manaBonusFromIntellect(stats.stats[Stat.intellect]));
         result.power[Power.energy] = powerEnergyDefault; // every player starts with full (if unused) energy
 
         if (auto raceEntry = client.races.lookup(req.race))
             result.taxiMask[0] = raceEntry.startingTaxiMask;
 
-        freePrimaryProfessions = cast(uint) security < settings.gmIgnoreMaxPrimarySkills
-            ? settings.maxPrimaryTradeSkill : 10;
-
+        initPrimaryProfessions();
         learnDefaultSkills(*info);
         learnDefaultSpells(*info);
         result.actions = info.actions.dup;
@@ -419,8 +419,7 @@ final class CharacterBuilder
         raceMask = maskOf(race);
         classMask = maskOf(classId);
         loading = true;
-        freePrimaryProfessions = cast(uint) security < settings.gmIgnoreMaxPrimarySkills
-            ? settings.maxPrimaryTradeSkill : 10;
+        initPrimaryProfessions();
 
         // _LoadSkills: the saved value and maximum, with the step derived from SkillTiers.
         foreach (saved; savedSkills)
@@ -480,14 +479,19 @@ final class CharacterBuilder
         foreach (id, spell; spells)
             if (spell.state != SpellState.removed && spell.active && !spell.disabled)
                 result.spellbook ~= id;
-        import std.algorithm.sorting : sort;
-
         result.spellbook.sort();
         result.freePrimaryProfessions = freePrimaryProfessions;
         return true;
     }
 
 private:
+    /// `Player::InitPrimaryProfessions`: `MaxPrimaryTradeSkill`, or 10 from the `TradeSkill.GMIgnore` account level.
+    void initPrimaryProfessions()
+    {
+        freePrimaryProfessions = cast(uint) security < settings.gmIgnoreMaxPrimarySkills
+            ? settings.maxPrimaryTradeSkill : 10;
+    }
+
     // -----------------------------------------------------------------------
     // Stats (StatSystem.cpp)
     // -----------------------------------------------------------------------
@@ -806,7 +810,8 @@ private:
     }
 
     /// `Player::GetSkillInfo`: the first race/class info for a skill that `filter` accepts.
-    const(SkillRaceClassInfoEntry)* skillInfo(uint id, scope bool delegate(const ref SkillRaceClassInfoEntry) filter = null) const
+    const(SkillRaceClassInfoEntry)* skillInfo(uint id,
+        scope bool delegate(const ref SkillRaceClassInfoEntry) filter = null) const
     {
         if (!id)
             return null;
@@ -1349,7 +1354,8 @@ private:
             if (auto offhand = items[equipmentSlotOffhand])
             {
                 ItemPosCount[] offDest;
-                if (canStoreItem(nullBag, nullSlot, offDest, offhand.entry, offhand.count, offhand) != InventoryResult.ok)
+                if (canStoreItem(nullBag, nullSlot, offDest, offhand.entry, offhand.count, offhand)
+                    != InventoryResult.ok)
                     return InventoryResult.inventoryFull;
             }
         }
@@ -1456,14 +1462,6 @@ private:
         return false;
     }
 
-    static bool contains(const(ItemPosCount)[] dest, ushort pos)
-    {
-        foreach (position; dest)
-            if (position.pos == pos)
-                return true;
-        return false;
-    }
-
     /// `_CanStoreItem_InInventorySlots`
     void storeInInventorySlots(ubyte begin, ubyte end, ref ItemPosCount[] dest, const(ItemTemplate)* proto,
         ref uint count, bool merge, ItemObject source, ubyte skipBag, ubyte skipSlot)
@@ -1487,7 +1485,7 @@ private:
             if (needSpace > count)
                 needSpace = count;
             const pos = cast(ushort)(inventorySlotBag0 << 8 | j);
-            if (!contains(dest, pos))
+            if (!dest.canFind!(position => position.pos == pos))
             {
                 dest ~= ItemPosCount(pos, needSpace);
                 count -= needSpace;
@@ -1530,7 +1528,7 @@ private:
             if (needSpace > count)
                 needSpace = count;
             const pos = cast(ushort)(bag << 8 | j);
-            if (!contains(dest, pos))
+            if (!dest.canFind!(position => position.pos == pos))
             {
                 dest ~= ItemPosCount(pos, needSpace);
                 count -= needSpace;
@@ -1697,9 +1695,7 @@ private:
         {
             auto placed = clone ? createItem(item.entry, count) : item;
             placed.count = count;
-            const bonding = placed.proto.bonding;
-            if (bonding == bindWhenPickedUp || bonding == bindQuestItem
-                || (bonding == bindWhenEquipped && isBagPos(pos)))
+            if (bindsWhenStored(placed.proto, pos))
                 placed.bound = true;
             placed.slot = slot;
             if (bag == inventorySlotBag0)
@@ -1715,13 +1711,20 @@ private:
             }
             return placed;
         }
-        const bonding = existing.proto.bonding;
-        if (bonding == bindWhenPickedUp || bonding == bindQuestItem || (bonding == bindWhenEquipped && isBagPos(pos)))
+        if (bindsWhenStored(existing.proto, pos))
             existing.bound = true;
         existing.count += count;
         if (!clone)
             forget(item); // merged into the stack: never saved
         return existing;
+    }
+
+    /// Whether storing an item at `pos` binds it: always on pick-up and for quest items; when equipped, as a bag.
+    static bool bindsWhenStored(const(ItemTemplate)* proto, ushort pos)
+    {
+        const bonding = proto.bonding;
+        return bonding == bindWhenPickedUp || bonding == bindQuestItem
+            || (bonding == bindWhenEquipped && isBagPos(pos));
     }
 
     static bool isBagPos(ushort pos)
@@ -1807,8 +1810,6 @@ private:
         }
 
         auto ids = spells.keys;
-        import std.algorithm.sorting : sort;
-
         ids.sort();
         foreach (id; ids)
         {
@@ -1817,10 +1818,12 @@ private:
                 result.spells ~= NewSpell(id, spell.active, spell.disabled);
         }
     }
-
 }
 
-/// `Player::ValidateAppearance`: every chosen look must exist in `CharSections.dbc` and `CharacterFacialHairStyles.dbc`.
+/**
+ * `Player::ValidateAppearance`: every chosen look must exist in `CharSections.dbc` and
+ * `CharacterFacialHairStyles.dbc`.
+ */
 bool validateAppearance(const ClientData client, ubyte race, ubyte gender, ubyte hairStyle, ubyte hairColor,
     ubyte face, ubyte facialHair, ubyte skin)
 {
@@ -1886,7 +1889,8 @@ unittest
     assert(itemOf(c, itemHearthstone).slot == inventorySlotItemStart + 1 && itemOf(c, itemHearthstone).flags == 1);
 
     // Skills: unarmed from playercreateinfo_skills, swords and Common taught by the default spells.
-    const NewSkill[] skills = [NewSkill(skillUnarmed, 1, 5), NewSkill(skillSwords, 1, 5), NewSkill(skillCommon, 300, 300)];
+    const NewSkill[] skills = [NewSkill(skillUnarmed, 1, 5), NewSkill(skillSwords, 1, 5),
+        NewSkill(skillCommon, 300, 300)];
     assert(c.skills == skills);
     // Default spells are dependent and not saved; the one a passive spell taught when cast is.
     assert(c.spells == [NewSpell(spellLearnedByPassive, true, false)]);
@@ -1900,11 +1904,7 @@ unittest
     assert(c.health == 32 + 20);
     assert(c.power[Power.mana] == 100 + 20 + 3 * 15);
     assert(itemOf(c, itemStaff).slot == equipmentSlotMainhand);
-    bool hasFireMagic;
-    foreach (skill; c.skills)
-        if (skill.skill == skillFireMagic)
-            hasFireMagic = skill.value == 5 && skill.max == 5;
-    assert(hasFireMagic, "a maximized skill starts at the level cap");
+    assert(c.skills.canFind(NewSkill(skillFireMagic, 5, 5)), "a maximized skill starts at the level cap");
 }
 
 /// An orc hunter: the quiver goes into a bag slot, the arrows move into it, and become the ammo.
@@ -1932,7 +1932,8 @@ unittest
     settings.startGmLevel = 10;
     auto builder = new CharacterBuilder(world, client, settings, () => nextGuid++);
     NewCharacter c;
-    assert(builder.create(1, 1, AccountLevel.gameMaster, CreateRequest("Gm", raceHuman, PlayerClass.warrior), false, c));
+    assert(builder.create(1, 1, AccountLevel.gameMaster, CreateRequest("Gm", raceHuman, PlayerClass.warrior), false,
+        c));
     assert(c.level == 10);
     assert(!new CharacterBuilder(world, client, settings, () => nextGuid++).create(2, 1, AccountLevel.player,
         CreateRequest("Nope", raceOrc, classMage), false, c));
@@ -1944,8 +1945,6 @@ unittest
 /// Loading a saved character learns its default spells again, and the spells its skills teach.
 unittest
 {
-    import dmangos.world.testdata;
-
     auto client = testClientData();
     auto world = testWorldData(client);
     auto builder = new CharacterBuilder(world, client, CreationSettings.init, () => 1u);
@@ -1954,7 +1953,6 @@ unittest
     assert(builder.loadAbilities(raceHuman, PlayerClass.warrior, 1, AccountLevel.player,
         [NewSkill(skillSwords, 1, 5), NewSkill(424242, 1, 1)], [NewSpell(spellFireball, false, false)], known));
     assert(known.skills[0] == KnownSkill(skillSwords, 1, 5, 0), "saved skills keep their place");
-    import std.algorithm.searching : canFind;
 
     // The default spells, what they teach, and what the skills teach, but not the inactive spell.
     assert(known.spellbook.canFind(spellOneHandedSwords) && known.spellbook.canFind(spellLanguageCommon));

@@ -195,10 +195,10 @@ final class MySqlConnection
     /// Runs `sql` and maps every row onto `T`; see `Row.as`.
     T[] queryAs(T, string sql, Args...)(auto ref Args args)
     {
-        T[] result;
-        foreach (row; query!sql(args))
-            result ~= row.as!T;
-        return result;
+        import std.algorithm.iteration : map;
+        import std.array : array;
+
+        return query!sql(args).map!(row => row.as!T).array;
     }
 
     /// Runs a statement that returns no rows. Returns: the number of affected rows.
