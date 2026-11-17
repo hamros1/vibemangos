@@ -299,6 +299,12 @@ What works now:
     experience (`Quest::XPValue`), money, items (one of the choices) and spell, then offers the
     next of the chain. Progress is saved in `character_queststatus`. Not yet: quests from game
     objects and items, sharing, timed and escort quests, exploration, reputation.
+  * **Talents** (CMaNGOS's `LearnTalent`): a talent point a level from 10 on; a talent of the
+    player's class is learned a rank at a time, if its tree has 5 points for each row above it and
+    what it depends on is known, the new rank's spell replacing the rank before. Passive spells
+    (talents, racials) put their aura effects on the player for good, at login and when learned (as
+    far as those auras are done; those bound to a kind of weapon are not applied yet). Not yet:
+    unlearning talents at a trainer.
   * **Trading** (CMaNGOS's `TradeHandler.cpp`): two players of a faction within 11 yards trade up
     to six items and money each; any change takes back both acceptances; when both accept, it goes
     through if both can pay and carry it (the items keep their guids and change owners, their

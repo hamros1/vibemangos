@@ -56,6 +56,7 @@ import dmangos.world.aurahandlers : AuraHandlers;
 import dmangos.world.tradehandlers : TradeHandlers;
 import dmangos.world.duelhandlers : DuelHandlers;
 import dmangos.world.questhandlers : QuestHandlers;
+import dmangos.world.talenthandlers : TalentHandlers;
 import dmangos.world.creatureai : Combatant;
 import dmangos.world.auras : Aura;
 import dmangos.world.creature : Creature;
@@ -817,6 +818,7 @@ private:
     mixin TradeHandlers;
     mixin DuelHandlers;
     mixin QuestHandlers;
+    mixin TalentHandlers;
     mixin Level0Commands;
     mixin Level1Commands;
     mixin Level2Commands;

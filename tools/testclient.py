@@ -375,6 +375,7 @@ def describe(op, p):
     elif op == 0x1D4: print(f"  [level up] to level {struct.unpack_from('<I', p)[0]}")
     elif op == 0x1D0: print("  [experience] %d (kind %d)" % struct.unpack_from("<IB", p, 8))
     elif op == 0x161: print("  [loot window closed]")
+    elif op == 0x099: print(f"  [learned spell] {struct.unpack_from('<I', p, 0)[0]}")
     elif op == 0x17D:
         g, text, n = struct.unpack_from("<QII", p, 0); pos = 16
         for i in range(n):
@@ -679,6 +680,8 @@ for action in actions:
             wsend(0x18A, struct.pack("<QI", g, int(args[1]))); print(f"complete quest {args[1]}")
         else:
             wsend(0x18E, struct.pack("<QII", g, int(args[1]), int(args[2]) if len(args) > 2 else 0)); print(f"reward quest {args[1]}")
+    elif kind == "learntalent":
+        wsend(0x251, struct.pack("<II", int(args[0]), int(args[1]))); print(f"learn talent {args[0]} rank {int(args[1]) + 1}")
     elif kind == "useitem":
         # useitem:BAG:SLOT
         bag, slot = int(args[0]), int(args[1])

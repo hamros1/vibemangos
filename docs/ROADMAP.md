@@ -137,6 +137,12 @@ objectives, rewards, saving. Next: game object and item quest givers, quest shar
 (`CMSG_PUSHQUESTTOPARTY`), timed quests, area triggers' exploration objectives, `questgiver_greeting`,
 reputation (which also needs `character_reputation`).
 
+### Talents
+
+**Done** (`talenthandlers.d`; README's "Talents"): learning ranks, passive auras. Next: the talent
+wipe (`MSG_TALENT_WIPE_CONFIRM`), the spell modifiers most talents are (`SPELL_AURA_ADD_FLAT_MODIFIER`,
+`ADD_PCT_MODIFIER`), parry, dodge and crit chance auras feeding the combat chances.
+
 ### 7. Social and progression
 
 * Friends and ignore lists, guilds, mail, auction house and trade, each a handler group and

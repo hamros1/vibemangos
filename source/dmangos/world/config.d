@@ -115,8 +115,8 @@ struct WorldConfig
     /// `SkipCinematics`: 0 always show the intro, 1 skip it if the account has a character of that race, 2 never.
     @JsonName("skip_cinematics") uint skipCinematics = 0;
     /// `Motd`: shown in the chat window on entering the world; '@' starts a new line.
-    string motd = "Welcome to dmangos.@Players see each other, group up, chat, fight, cast spells, die, loot "
-        ~ "and quest; talents are still to come.";
+    string motd = "Welcome to dmangos.@Players see each other, group up, chat, fight, cast spells, die, loot, "
+        ~ "quest and learn talents; mail and auctions are still to come.";
 
     /// `Visibility.Distance.Continents`: how far players see each other, in yards.
     @JsonName("visibility_distance") float visibilityDistance = 100;

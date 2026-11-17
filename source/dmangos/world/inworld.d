@@ -286,6 +286,7 @@ private:
         state_ = WorldState.inWorld;
         context.enterWorldMigrated(this, known);
         loadAuras();
+        applyPassiveSpells();
         resetMovementCheck();
         pendingArrival = action; // done at the first tick here, once the move is complete everywhere
         info!"%s: '%s' arrived from another node (map %s at %.1f %.1f)"(remoteAddress, character.name, character.map,
