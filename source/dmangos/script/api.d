@@ -268,6 +268,10 @@ interface CreatureHost
     uint hostRandom(uint below);
     QuestProgress hostQuestStatus(EntityRef player, uint quest);
     EntityRef hostRandomTarget();
+    ActionResult hostSayBroadcast(EntityRef speaker, uint text, EntityRef target);
+    void hostEmote(uint emote);
+    EntityRef hostCreatureNearby(uint entry, float range);
+    ActionResult hostDespawnOther(EntityRef creature, uint delayMs);
     void hostSendGossip(EntityRef player, uint textId, const(MenuOption)[] options, bool withQuests);
 }
 
@@ -405,6 +409,27 @@ struct CreatureContext
 
     /// One of those it fights (its threat list), at random; nothing if it fights nobody.
     EntityRef randomTarget() { return host.hostRandomTarget(); }
+
+    /// Says (yells, emotes: as the row says) the `broadcast_text` row `text`.
+    ActionResult sayText(uint text, EntityRef target = EntityRef.init)
+    {
+        return host.hostSayBroadcast(host.hostSelf(), text, target);
+    }
+
+    /// Another creature here says `broadcast_text` row `text` (a scene with two speakers).
+    ActionResult sayAs(EntityRef speaker, uint text, EntityRef target = EntityRef.init)
+    {
+        return host.hostSayBroadcast(speaker, text, target);
+    }
+
+    /// Plays emote `emote` (`Emotes`: 1 talk, 25 point, ...).
+    void emote(uint emote) { host.hostEmote(emote); }
+
+    /// A living creature of `entry` within `range` yards of it; nothing if none.
+    EntityRef creatureNearby(uint entry, float range) { return host.hostCreatureNearby(entry, range); }
+
+    /// Another creature here goes away (to come back after its respawn time) in `delayMs`.
+    ActionResult despawn(EntityRef creature, uint delayMs = 0) { return host.hostDespawnOther(creature, delayMs); }
 
     /// A random number below `below` (from the map's generator).
     uint random(uint below) { return host.hostRandom(below); }

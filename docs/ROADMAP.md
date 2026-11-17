@@ -150,9 +150,10 @@ cannon and Mr. Smite, and the Defias Traitor's escort; spell and area trigger sc
 of a script's own and signals across nodes are done too (Life Tap, Lady Katrana Prestor, the scent
 of Lar'korwi), and spell scripts for creatures' casts and for auras (Curse of Agony, Hate to Zero).
 Shadowfang Keep is scripted (not yet: Deathstalker Vincent and Arugal's introduction, Arugal's
-teleports, which need creatures casting teleports on themselves). Next: Wailing Caverns (the
-Disciple of Naralex's event), world and command scripts, the other escorts (61 paths in
-`script_waypoint`), then dungeons one by one (the server logs 13 of 657 script names served).
+teleports, which need creatures casting teleports on themselves). Wailing Caverns is scripted
+(the Fanglords, the Disciple of Naralex's escort and ritual). Next: creatures' teleport spells,
+world and command scripts, the other escorts, then the next dungeons (Blackfathom Deeps, the
+Stockade, Gnomeregan, Razorfen Kraul; the server logs 15 of 657 script names served).
 Reputation is done (`reputation.d`, `reputationhandlers.d`; README's "Reputation"): kills, quests,
 spillover, war and peace, discounts, requirements. Not yet: `SMSG_SET_FORCED_REACTIONS` (spells force
 none yet), the PvP rank's discount, reputation from spells.

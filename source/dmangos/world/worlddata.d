@@ -616,6 +616,16 @@ final class WorldData
                 ~ "WHERE PathId = 0 ORDER BY Entry, Point")())
             escortPaths[row.get!uint(0)] ~= Waypoint(Location(row.get!float(1), row.get!float(2), row.get!float(3),
                 row.get!float(4)), row.get!uint(5));
+        // Newer escort paths (`waypoint_path`, named "... Escort path"), by the creature entry they are numbered by.
+        Waypoint[][uint] named;
+        foreach (row; world.query!("SELECT p.PathId, p.PositionX, p.PositionY, p.PositionZ, p.Orientation, p.WaitTime "
+                ~ "FROM waypoint_path p JOIN waypoint_path_name n ON n.PathId = p.PathId "
+                ~ "WHERE n.Name LIKE '%Escort%' ORDER BY p.PathId, p.Point")())
+            named[row.get!uint(0)] ~= Waypoint(Location(row.get!float(1), row.get!float(2), row.get!float(3),
+                row.get!float(4)), row.get!uint(5));
+        foreach (entry, path; named)
+            if (entry !in escortPaths)
+                escortPaths[entry] = path;
         foreach (row; world.query!"SELECT entry, content_default, type, language, emote, sound FROM script_texts"())
         {
             BroadcastText text;
@@ -674,8 +684,8 @@ final class WorldData
             groups.add(row.get!uint(0), row.get!uint(1), row.get!int(2), row.get!int(3) != 0 || row.get!int(4) != 0);
         foreach (row; world.query!"SELECT Id, Guid FROM spawn_group_spawn"())
             groups.addSpawn(row.get!uint(0), row.get!uint(1));
-        foreach (row; world.query!"SELECT Id, Entry, Chance FROM spawn_group_entry"())
-            groups.addEntry(row.get!uint(0), row.get!uint(1), row.get!uint(2));
+        foreach (row; world.query!"SELECT Id, Entry, Chance, MinCount, MaxCount FROM spawn_group_entry"())
+            groups.addEntry(row.get!uint(0), row.get!uint(1), row.get!uint(2), row.get!uint(3), row.get!uint(4));
         groups.choose(rng);
 
         // Spawns without an entry take one of `creature_spawn_entry`'s, or their group's.
@@ -1186,7 +1196,10 @@ final class SpawnGroups
         uint[] guids;
         uint[] entries;
         uint[] chances;
+        uint[] minCounts, maxCounts; // per entry: at least, at most so many members (0: no limit)
     }
+
+    private uint[uint] assigned; // spawn guid -> the entry its group gave it (`choose`)
 
     private Group[uint] groups;
     private uint[uint][2] groupOf;     // type -> spawn guid -> group
@@ -1210,12 +1223,14 @@ final class SpawnGroups
     }
 
     ///
-    void addEntry(uint id, uint entry, uint chance)
+    void addEntry(uint id, uint entry, uint chance, uint minCount = 0, uint maxCount = 0)
     {
         if (auto group = id in groups)
         {
             group.entries ~= entry;
             group.chances ~= chance;
+            group.minCounts ~= minCount;
+            group.maxCounts ~= maxCount;
         }
     }
 
@@ -1233,6 +1248,70 @@ final class SpawnGroups
             const count = group.maxCount > 0 && group.maxCount < members.length ? group.maxCount : members.length;
             foreach (guid; members[0 .. count])
                 active[group.type][guid] = true;
+            assignEntries(group, members[0 .. count], rng);
+        }
+    }
+
+    /**
+     * `SpawnGroup`'s entries for its members: each entry's `MinCount` first (one Lady Anacondra),
+     * then the rest by chance among the entries not at their `MaxCount` (three Druids of the Fang).
+     */
+    private void assignEntries(const ref Group group, const(uint)[] members, ref Random rng)
+    {
+        import std.random : uniform;
+
+        if (group.entries.length == 0)
+            return;
+        auto used = new uint[group.entries.length];
+        size_t next;
+        foreach (i, minimum; group.minCounts)
+            foreach (_; 0 .. minimum)
+                if (next < members.length)
+                {
+                    assigned[members[next++]] = group.entries[i];
+                    ++used[i];
+                }
+        foreach (guid; members[next .. $])
+        {
+            uint total;
+            size_t open, last;
+            foreach (i; 0 .. group.entries.length)
+                if (group.maxCounts[i] == 0 || used[i] < group.maxCounts[i])
+                {
+                    total += group.chances[i];
+                    ++open;
+                    last = i;
+                }
+            if (open == 0)
+                break;
+            size_t pick = last;
+            if (total == 0)
+            {
+                auto n = uniform(0, open, rng);
+                foreach (i; 0 .. group.entries.length)
+                    if (group.maxCounts[i] == 0 || used[i] < group.maxCounts[i])
+                        if (n-- == 0)
+                        {
+                            pick = i;
+                            break;
+                        }
+            }
+            else
+            {
+                auto roll = uniform(0, total, rng);
+                foreach (i; 0 .. group.entries.length)
+                    if (group.maxCounts[i] == 0 || used[i] < group.maxCounts[i])
+                    {
+                        if (roll < group.chances[i])
+                        {
+                            pick = i;
+                            break;
+                        }
+                        roll -= group.chances[i];
+                    }
+            }
+            assigned[guid] = group.entries[pick];
+            ++used[pick];
         }
     }
 
@@ -1247,6 +1326,8 @@ final class SpawnGroups
     {
         import std.random : uniform;
 
+        if (const entry = guid in assigned)
+            return *entry;
         foreach (type; 0 .. 2)
             if (const id = guid in groupOf[type])
             {
@@ -1286,5 +1367,24 @@ unittest
     assert(groups.spawns(0, 5) + groups.spawns(0, 6) + groups.spawns(0, 7) == 1, "MaxCount 1");
     assert(!groups.spawns(0, 9) && groups.spawns(0, 42) && groups.spawns(1, 5));
     const entry = groups.entryFor(5, rng);
+
+    // `MinCount` and `MaxCount`: one Lady Anacondra and three Druids of the Fang among four spots.
+    {
+        auto fang = new SpawnGroups;
+        fang.add(4300001, 0, 0, false);
+        foreach (guid; [1u, 2, 3, 4])
+            fang.addSpawn(4300001, guid);
+        fang.addEntry(4300001, 3671, 0, 1, 1);
+        fang.addEntry(4300001, 3840, 0, 3, 3);
+        foreach (seed; 0 .. 20)
+        {
+            auto r = Random(seed);
+            fang.choose(r);
+            uint ladies;
+            foreach (guid; [1u, 2, 3, 4])
+                ladies += fang.entryFor(guid, r) == 3671;
+            assert(ladies == 1, "one Anacondra");
+        }
+    }
     assert(entry == 100 || entry == 101);
 }

@@ -108,6 +108,10 @@ final class FakeCreature : CreatureHost
     void hostCloseGossip(EntityRef) {}
     uint hostRandom(uint) { return 0; }
     EntityRef hostRandomTarget() { return EntityRef.init; }
+    ActionResult hostSayBroadcast(EntityRef, uint, EntityRef) { return ActionResult.ok; }
+    void hostEmote(uint) {}
+    EntityRef hostCreatureNearby(uint, float) { return EntityRef.init; }
+    ActionResult hostDespawnOther(EntityRef, uint) { return ActionResult.ok; }
     QuestProgress hostQuestStatus(EntityRef, uint) { return QuestProgress.none; }
     void hostSendGossip(EntityRef, uint, const(MenuOption)[], bool) {}
 }

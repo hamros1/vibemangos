@@ -392,6 +392,67 @@ mixin template CreatureScripting()
         return QuestProgress.none;
     }
 
+    ActionResult hostSayBroadcast(EntityRef speaker, uint text, EntityRef target)
+    {
+        if (lore is null || world_ is null || lore.broadcastText(text) is null)
+            return ActionResult.failed;
+        if (speaker.guid == me.guid)
+        {
+            scriptText(text, target.guid);
+            return ActionResult.ok;
+        }
+        auto other = world_.creatureAt(speaker.guid);
+        if (other is null)
+            return ActionResult.notHere;
+        other.ai.sayFor(world_, text, target.guid);
+        return ActionResult.ok;
+    }
+
+    /// Another creature's script has it say `broadcast_text` `text`.
+    void sayFor(CombatWorld world, uint text, ulong target)
+    {
+        world_ = world;
+        scriptText(text, target);
+    }
+
+    void hostEmote(uint emote)
+    {
+        if (world_ !is null)
+            scriptEmote(emote);
+    }
+
+    EntityRef hostCreatureNearby(uint entry, float range)
+    {
+        if (world_ is null)
+            return EntityRef.init;
+        foreach (other; world_.creaturesNear(me.position, range))
+            if (other !is me && other.spawn.entry == entry && other.alive)
+                return EntityRef(other.guid);
+        return EntityRef.init;
+    }
+
+    ActionResult hostDespawnOther(EntityRef creature, uint delayMs)
+    {
+        if (creature.guid == me.guid)
+        {
+            scriptDespawn(delayMs);
+            return ActionResult.ok;
+        }
+        auto other = world_ is null ? null : world_.creatureAt(creature.guid);
+        if (other is null)
+            return ActionResult.notHere;
+        other.ai.despawnFor(world_, delayMs);
+        return ActionResult.ok;
+    }
+
+    /// Another creature's script has it go in `delayMs`.
+    void despawnFor(CombatWorld world, uint delayMs)
+    {
+        world_ = world;
+        scriptDespawn(delayMs);
+        world.wake(me.guid);
+    }
+
     EntityRef hostRandomTarget()
     {
         import std.random : uniform;

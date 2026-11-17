@@ -228,7 +228,8 @@ What works now:
   * **Settings:** sitting and standing, target selection, action bar buttons and toggles, and
     tutorial flags, saved as they change.
   * **Creatures and game objects:** every `creature` and `gameobject` spawn of the world database
-    (pools, spawn groups and game events decide which), created when a player first comes near
+    (pools, spawn groups and game events decide which; a spawn group's members without an entry of
+    their own get its entries by their `MinCount`, `MaxCount` and chances), created when a player first comes near
     their cell, with CMaNGOS's levels, health, models, equipment, mounts and emotes. Their names come
     from `CMSG_CREATURE_QUERY` and `CMSG_GAMEOBJECT_QUERY`. Game objects whose `spawntimesecs` is
     below 0 wait for events and scripts to spawn them, as in CMaNGOS.
@@ -306,7 +307,10 @@ What works now:
     conversation for "The True Masters", the scent of Lar'korwi's mate in Un'Goro, Life Tap
     (health into mana), Curse of Agony's growing ticks, Hate to Zero (a creature's threat wipe), and
     Shadowfang Keep (its doors with their guardians, the prisoners who lead the way to the courtyard
-    and open it, Archmage Arugal's bolts, curse and Thundershock). A creature whose `ScriptName`
+    and open it, Archmage Arugal's bolts, curse and Thundershock), and Wailing Caverns (once the
+    four Fanglords are slain, the Disciple of Naralex leads the way through two ambushes and
+    awakens Naralex while his nightmares, Mutanus last, come for him). Escort paths come from
+    `script_waypoint` or `waypoint_path`. A creature whose `ScriptName`
     no script serves yet runs its EventAI as before; the server logs how many names are served.
   * **Database scripts** (CMaNGOS's `dbscripts_on_*`): a quest's start and complete scripts, a
     gossip option's, a game object's when used (by its template and by its spawn), a waypoint's
@@ -617,7 +621,7 @@ source/dmangos/script/      the scripting framework (docs/SCRIPTING.md): api.d (
                               pools), schedule.d (timers as data), state.d (state saved by reflection),
                               escort.d (the escort component)
 source/dmangos/scripts/     the gameplay scripts, one module per dungeon or area (deadmines.d, westfall.d,
-                              stormwind.d, ungoro.d, shadowfang.d) and spells.d
+                              stormwind.d, ungoro.d, shadowfang.d, wailingcaverns.d) and spells.d
 source/dmangos/auth/        the login server (realmd)
   main.d                      entry point: run the server, administer accounts
   protocol.d                  opcodes, result codes, every packet as a struct

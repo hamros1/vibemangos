@@ -622,3 +622,113 @@ unittest
     assert(courtyard.goState == 0, "the courtyard door is open");
     assert(map.findObject(prisoner.guid) is null, "and he is gone");
 }
+
+/**
+ * The Disciple of Naralex (here in the test world's dungeon): silent until the four Fanglords are
+ * slain; then he leads the way (two ambushes), performs the ritual at Naralex (three waves, Mutanus
+ * last), and with Mutanus dead Naralex wakes and both go.
+ */
+unittest
+{
+    import dmangos.script.api : Location, Waypoint;
+    import dmangos.scripts.wailingcaverns;
+    import dmangos.world.packets : ClientGossipSelectOption, ClientNpcGuid;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    const start = Position(-40, -383, 61);
+    static struct Who { uint entry; float x; uint guid, flags; }
+    uint nextGuid = 90100;
+    foreach (w; [Who(disciple, start.x, 0, 1), Who(naralex, start.x + 36, 0, 0), Who(cobrahn, start.x - 10, 0, 0),
+            Who(pythas, start.x - 11, 0, 0), Who(anacondra, start.x - 12, 0, 0), Who(serpentis, start.x - 13, 0, 0)])
+    {
+        auto t = context.data.creatureTemplates[creatureInnkeeper];
+        t.entry = w.entry;
+        t.npcFlags = w.flags;
+        context.data.creatureTemplates[w.entry] = t;
+        context.data.creatureSpawns ~= CreatureSpawn(nextGuid++, w.entry, mapDeadmines, w.x, start.y, start.z);
+        context.data.creatureCells[mapDeadmines][cellKeyAt(w.x, start.y)] ~= context.data.creatureSpawns.length - 1;
+    }
+    foreach (entry; [ravager, viper, moccasin, ectoplasm, mutanus])
+    {
+        auto t = context.data.creatureTemplates[creatureInnkeeper];
+        t.entry = entry;
+        context.data.creatureTemplates[entry] = t;
+    }
+    context.data.creatureScriptNames[disciple] = "npc_disciple_of_naralex";
+    context.data.instanceScriptNames[mapDeadmines] = "instance_wailing_caverns";
+    Waypoint[] path;
+    foreach (i; 0 .. 72)
+        path ~= Waypoint(Location(start.x + 0.5f * (i + 1), start.y, start.z));
+    context.data.escortPaths[disciple] = path;
+
+    const outside = Position(deadminesEntrance[0], deadminesEntrance[1], deadminesEntrance[2]);
+    auto hero = loggedIn(context, db, 7, "Varian", outside, AccountLevel.administrator, raceHuman, mapEasternKingdoms, 60);
+    hero.say(".worldport 36 -38 -382 61");
+    hero.write(Opcode.MSG_MOVE_WORLDPORT_ACK, null);
+    hero.say(".cheat god");
+    hero.read();
+    auto map = context.instanceMap(hero.session.instanceId);
+    Creature find(uint entry)
+    {
+        foreach (c; map.creaturesNear(Position(start.x + 20, start.y, start.z), 80))
+            if (c.spawn.entry == entry && c.alive)
+                return c;
+        return null;
+    }
+    size_t count(uint entry)
+    {
+        size_t n;
+        foreach (c; map.creaturesNear(Position(start.x + 20, start.y, start.z), 80))
+            n += c.spawn.entry == entry && c.alive;
+        return n;
+    }
+    void run(int seconds)
+    {
+        foreach (_; 0 .. seconds * 4)
+        {
+            now += 250.msecs;
+            context.update(now);
+        }
+    }
+
+    auto guide = find(disciple);
+    assert(guide !is null && find(naralex) !is null);
+    size_t options()
+    {
+        hero.write(Opcode.CMSG_GOSSIP_HELLO, ClientNpcGuid(guide.guid));
+        foreach (p; hero.read())
+            if (p.opcode == Opcode.SMSG_GOSSIP_MESSAGE)
+                return p.body_[12];
+        return 0;
+    }
+
+    assert(options == 0, "the Fanglords live");
+    foreach (lord; [cobrahn, pythas, anacondra, serpentis])
+    {
+        auto c = find(lord);
+        c.die(map, context.unixTime);
+        context.creatureDied(c);
+    }
+    assert(options == 1, "the event may begin");
+    hero.write(Opcode.CMSG_GOSSIP_SELECT_OPTION, ClientGossipSelectOption(guide.guid, 0));
+    run(10);
+    assert(count(ravager) == 2, "the first ambush");
+    run(10);
+    assert(count(viper) == 3, "the second");
+    run(30);
+    assert(count(moccasin) == 3, "the ritual: the first nightmares");
+    run(35);
+    assert(count(ectoplasm) == 5);
+    run(35);
+    auto devourer = find(mutanus);
+    assert(devourer !is null, "Mutanus");
+    devourer.die(map, context.unixTime);
+    context.creatureDied(devourer);
+    run(25);
+    assert(find(naralex) is null && find(disciple) is null, "awake, and gone");
+    const saved = db.loadInstances().instances;
+    assert(saved.length == 1 && saved[0].data.length > 30, "the caverns remember");
+}
