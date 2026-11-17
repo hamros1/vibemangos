@@ -611,6 +611,18 @@ final class Battleground
         return go.guid;
     }
 
+    /// The battleground event a game object of the copy belongs to; null if none.
+    const(ubyte[2])* eventOf(GameObject go)
+    {
+        return go.spawn.guid in context.data.gameObjectBattleEvents;
+    }
+
+    /// A `mangos_string`'s text (empty if there is none).
+    string serverString(uint id)
+    {
+        return context.data.serverStrings.get(id, null);
+    }
+
     /// An object taken off the copy's map.
     void removeObject(ulong guid)
     {
@@ -1020,6 +1032,12 @@ final class Battlegrounds
         {
         case BattlegroundType.warsongGulch:
             return new WarsongRules;
+        case BattlegroundType.arathiBasin:
+        {
+            import dmangos.world.arathi : ArathiRules;
+
+            return new ArathiRules;
+        }
         default:
             return new BattlegroundRules;
         }
