@@ -332,6 +332,17 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
             node.sendTo(peer, DeliverTo(m.gm, cast(ushort) Opcode.SMSG_MESSAGECHAT,
                 chatMessage(ChatType.CHAT_MSG_SYSTEM, Language.LANG_UNIVERSAL, 0, text)));
         });
+        import dmangos.world.gmtargets : everywhere, GmRemoteOp;
+
+        if (m.op <= GmRemoteOp.max && everywhere(cast(GmRemoteOp) m.op))
+        {
+            // For every player here.
+            foreach (other; context.onlinePlayers)
+                if (auto here = cast(WorldSession) other)
+                    if (here.character !is null)
+                        here.gmTargeted(m, sink, (GmRemote back) {});
+            return;
+        }
         auto session = cast(WorldSession) context.onlinePlayer(m.target);
         if (session is null || session.character is null)
             return sink.red("Player is not online at the moment.");

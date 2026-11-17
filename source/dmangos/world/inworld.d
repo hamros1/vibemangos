@@ -22,6 +22,8 @@ struct ArrivalAction
     uint spell;        /// a spell to cast ...
     ulong spellTarget; /// ... at this unit
     ulong loot;        /// a corpse to loot
+    ulong useObject;   /// a game object to use
+    ulong castObject;  /// the game object `spell` is cast at (a lock to open)
 }
 
 mixin template InWorldHandlers()
@@ -159,6 +161,17 @@ private:
                     castSpell(spell, SpellTargets(TargetFlags.unit, action.spellTarget), false, 0);
         if (action.loot)
             handleLoot(ClientGuid(action.loot));
+        if (action.useObject)
+            handleGameObjectUse(ClientGuid(action.useObject));
+        if (action.spell && action.castObject)
+            if (const spell = context.data.spells.spell(action.spell))
+                if (player.knowsSpell(action.spell))
+                {
+                    SpellTargets t;
+                    t.mask = TargetFlags.gameObject;
+                    t.gameObject = action.castObject;
+                    castSpell(spell, t, false, 0);
+                }
     }
 
     /**
@@ -212,6 +225,12 @@ private:
         w.put(action.spell);
         w.put(action.spellTarget);
         w.put(action.loot);
+        w.put(action.useObject);
+        w.put(action.castObject);
+        // The client's address and build, for `.playerinfo` there.
+        w.put(cast(uint) address.length);
+        w.putBytes(cast(const(ubyte)[]) address);
+        w.put(build);
         w.put(homeNode); // last: `migrationHome` reads it there
 
         info!"%s: '%s' moves to node %s (at map %s %.1f %.1f)"(remoteAddress, player.data.name, target,
@@ -273,6 +292,10 @@ private:
         action.spell = r.read!uint;
         action.spellTarget = r.read!ulong;
         action.loot = r.read!ulong;
+        action.useObject = r.read!ulong;
+        action.castObject = r.read!ulong;
+        carriedAddress = r.readString(r.read!uint).idup;
+        build = r.read!uint;
 
         auto loaded = context.database.loadCharacter(guid);
         if (loaded.isNull || loaded.get.account != account.id)

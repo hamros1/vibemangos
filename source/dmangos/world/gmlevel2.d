@@ -34,6 +34,9 @@ private:
             sessionOf(other).savePlayer();
             ++count;
         }
+        // Every other node of a cluster saves its own (counted by presence).
+        if (gmEverywhere(GmRemoteOp.saveAll))
+            count += cast(uint) context.remotePlayers.length;
         const message = format!"Saved all %d online players in %d msec."(count,
             (MonoTime.currTime - started).total!"msecs");
         sendWorldText(message);

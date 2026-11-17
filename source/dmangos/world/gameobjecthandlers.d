@@ -68,8 +68,18 @@ mixin template GameObjectHandlers()
         if (player.deathState != DeathState.alive || transferring)
             return;
         auto go = cast(GameObject) map.findObject(request.guid);
-        if (go is null || !withinInteraction(go, 2))
-            return; // another node's object: not yet
+        if (go is null)
+        {
+            // Another node's object (its replica here): used there.
+            import dmangos.world.inworld : ArrivalAction;
+
+            ArrivalAction action;
+            action.useObject = request.guid;
+            actAtReplica(request.guid, action);
+            return;
+        }
+        if (!withinInteraction(go, 2))
+            return;
         // Never for these: generic objects are used by spells, and some may not be touched.
         if (go.type == GameObjectType.generic || (go.values.get!GAMEOBJECT_FLAGS & goFlagNoInteract))
             return;

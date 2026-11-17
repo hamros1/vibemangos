@@ -757,6 +757,9 @@ private:
             sessionOf(other).summonRequest(player.guid, player.data.zone, player.data.map, player.position);
             ++count;
         }
+        // Every other node of a cluster asks its own.
+        if (gmEverywhere(GmRemoteOp.massSummon, format!"%u"(player.data.zone)))
+            count += cast(uint) context.remotePlayers.length;
         gmLog(format!"requested a mass summon of %u players."(count));
         return true;
     }

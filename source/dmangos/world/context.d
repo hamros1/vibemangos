@@ -283,6 +283,12 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         channelService.nodeLost(node);
     }
 
+    /// The other nodes of the cluster that say who their players are (none standalone).
+    ushort[] otherNodes()
+    {
+        return remoteByNode.keys;
+    }
+
     /// Every player other nodes simulate.
     RemotePlayer[] remotePlayers()
     {

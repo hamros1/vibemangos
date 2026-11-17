@@ -72,6 +72,9 @@ private:
         // At another node's creature: cast there.
         if (targets.unit && targets.unit != player.guid && actAtReplica(targets.unit, ArrivalAction(0, id, targets.unit)))
             return;
+        // At another node's game object (a lock): opened there.
+        if (targets.gameObject && actAtReplica(targets.gameObject, ArrivalAction(0, id, 0, 0, 0, targets.gameObject)))
+            return;
         castSpell(spell, targets, false, 0);
     }
 

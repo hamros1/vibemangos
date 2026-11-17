@@ -652,8 +652,10 @@ send it their players' commands, and it sends what it has to tell a player to th
   (`appearAt`) and the GM teleports there. `.gm allowwhispers` and `.gm blockwhispers` find the
   player through presence, and `.gm list` and `.info` count the GMs and players presence reports
   (presence carries each GM's permission letters).
-* **Not yet:** `.saveall` and `.masssummon` act on this node's players only; `.playerinfo` on a player
-  simulated away from its client's node shows that node for its address, and build 0.
+* **Every node:** `.server saveall` and `.admin masssummon` go to every other node presence knows
+  (`GmRemoteOp.saveAll`, `massSummon`, run there for each of its players; the count includes theirs).
+  A player that moves carries its client's address and build, so `.playerinfo` shows them wherever
+  it is simulated.
 * **Tested:** a unit test with `.summon` and `.kickplayer` naming a player of node 2 (the command
   sent there with the GM's place), `.gm list` naming node 2's GM, and on the target's node a summons,
   an appear sending the place back, and a kick whose notice goes to every node. Live: Gamma on the
@@ -778,7 +780,15 @@ player goes there.
   region border keeps the player with the creatures it fights; once out of combat (5 seconds after
   its last swing, or when they evade) the ground decides again. A draining node still sends its
   players on.
-* **Auras travel:** they are saved before a move and loaded on arrival, as the rest of the character.
+* **Auras travel:** they are saved before a move and loaded on arrival, as the rest of the character;
+  so do quests and reputation.
+* **Game objects:** using another node's game object (its replica here), or casting at one (a lock
+  to open, an herb to pick), moves the player to that node first, as attacking does
+  (`ArrivalAction.useObject`, `castObject`), and the object is used there.
+* **Auctions** need no owner node: the `auction` table is their one place, and every change to a
+  row is guarded by what was seen of it (README's "Auctions"); the coordinator settles those over.
+* **Flights** stay on the node they start on until they land: the server follows the flight there,
+  and the first move after landing moves the player on if the ground is another node's.
 * **Not yet:** a creature does not notice (aggro on) a player another node simulates, nor does it
   answer a call for help from another node's creature; group experience and loot rights count only
   the members on the creature's node; a player's own spells at another node's player (there is no

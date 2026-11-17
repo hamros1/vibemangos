@@ -145,6 +145,7 @@ final class WorldSession : NetSession, Kickable, OnlinePlayer, Combatant, Looter
 
         WorldAccount account;
         uint build;
+        string carriedAddress;   // the client's address, for a player whose home is another node
         MonoTime lastPing;
         bool pinged;
         uint overspeedPings;
@@ -291,10 +292,10 @@ final class WorldSession : NetSession, Kickable, OnlinePlayer, Combatant, Looter
         return state_;
     }
 
-    /// The client's address.
+    /// The client's address (the one it connected from, when its simulation moved here from its home).
     @property string address() const
     {
-        return remoteAddress;
+        return carriedAddress.length ? carriedAddress : remoteAddress;
     }
 
     /// True when the connection should be closed once pending output is flushed.

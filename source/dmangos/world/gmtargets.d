@@ -21,6 +21,14 @@ enum GmRemoteOp : ubyte
     playerInfo,   /// `.playerinfo`
     kill,         /// `.killplr`; `text`: the name as the GM typed it
     revive,       /// `.reviveplr`; `text`: ditto
+    saveAll,      /// `.server saveall`: every node saves its players (no target)
+    massSummon,   /// `.masssummon`: every node asks its players to the GM's place; `text`: the GM's zone
+}
+
+/// Whether `op` is for every node's players rather than one target.
+bool everywhere(GmRemoteOp op) pure nothrow @nogc @safe
+{
+    return op == GmRemoteOp.saveAll || op == GmRemoteOp.massSummon;
 }
 
 /// Where a GM command's messages go: the GM's client, here or on its node (`ChatHandler`'s colours).
@@ -126,7 +134,42 @@ mixin template GmTargets()
             return killedByName(gm, m.gmName, m.text);
         case GmRemoteOp.revive:
             return revivedByName(gm, m.text);
+        case GmRemoteOp.saveAll:
+            return savePlayer();
+        case GmRemoteOp.massSummon:
+        {
+            import std.conv : to, ConvException;
+
+            uint zone;
+            try
+                zone = m.text.to!uint;
+            catch (ConvException) {}
+            return summonRequest(m.gm, zone, m.map, Position(m.x, m.y, m.z, m.orientation));
         }
+        }
+    }
+
+    /// `op` for every other node of a cluster (`everywhere`), with this GM's place; how many nodes it went to.
+    package size_t gmEverywhere(GmRemoteOp op, string text = null)
+    {
+        if (context.gmRemote is null)
+            return 0;
+        GmRemote m;
+        m.op = op;
+        m.gm = player.guid;
+        m.gmName = player.data.name;
+        m.gmCanKickGms = canUseCommand('z');
+        m.map = player.data.map;
+        const at = player.position;
+        m.x = at.x;
+        m.y = at.y;
+        m.z = at.z;
+        m.orientation = at.orientation;
+        m.text = text;
+        const nodes = context.otherNodes();
+        foreach (node; nodes)
+            context.gmRemote(node, m);
+        return nodes.length;
     }
 
     /// `.kill`'s part on a player: health 0 and `KillPlayer`; it is told who did it.
@@ -298,6 +341,14 @@ unittest
     gm.say(".kickplayer Faraway spamming");
     assert(sent[$ - 1].op == GmRemoteOp.kick && sent[$ - 1].text == "spamming" && sent[$ - 1].gmCanKickGms);
 
+    // `.server saveall` and `.admin masssummon` go to every other node, which run them for their players.
+    gm.read();
+    gm.say(".server saveall");
+    assert(sent[$ - 1].op == GmRemoteOp.saveAll && sentTo == 2);
+    assert(systemMessages(gm.read()).canFind!(m => m.canFind("Saved all 3 online players")), "1 here, 2 on node 2");
+    gm.say(".admin masssummon");
+    assert(sent[$ - 1].op == GmRemoteOp.massSummon && sent[$ - 1].text.length);
+
     // `.gm list` names node 2's GM, as presence says; the kick message went to every node.
     gm.read();
     gm.say(".gm list");
@@ -318,6 +369,15 @@ unittest
     target.session.gmTargeted(summon, sink, (GmRemote) {});
     assert(told == ["You are summoning Anduin."]);
     assert(systemMessages(target.read()) == ["You are being summoned by Jaina."]);
+
+    // A mass summons from another node's GM: asked to its place.
+    GmRemote mass;
+    mass.op = GmRemoteOp.massSummon;
+    mass.gm = 9;
+    mass.text = "12";
+    mass.x = -8945;
+    target.session.gmTargeted(mass, sink, (GmRemote) {});
+    assert(opcodesOf(target.read()) == [Opcode.SMSG_SUMMON_REQUEST]);
 
     // `.appear`: the target's place goes back to the GM's node.
     GmRemote appear;
