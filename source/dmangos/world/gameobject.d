@@ -39,6 +39,7 @@ enum GameObjectType : uint
     transport = 11,     /// elevators: stand in place, animated by the client
     camera = 13,
     moTransport = 15,   /// ships and zeppelins
+    fishingNode = 17,   /// the bobber
     mailbox = 19,
 }
 
@@ -111,6 +112,7 @@ final class GameObject : Replicable, Moving, PerViewer
     int restoreTimer;            /// ms until a door or button goes back, or a goober is done
     uint instanceId;             /// the dungeon instance it is in (0: none): used up there, it stays so
     long trapReadyAt;            /// a trap's cooldown: it springs again from then (Unix time)
+    ulong owner;                 /// who made it (a fishing bobber's angler); 0: a spawn
     uint trapUses;               /// a trap's springs so far, against its charges
     int despawnTimer;            /// ms until a chest opened but not emptied goes (`SetChestDespawn`); 0: none
     bool[ulong] skilledUp;       /// those it gave a skill-up (`m_SkillupList`): once until it respawns

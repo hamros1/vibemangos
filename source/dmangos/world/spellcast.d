@@ -29,6 +29,7 @@ enum SpellCastResult : ubyte
     interrupted = 0x23,
     itemNotReady = 0x28,
     lineOfSight = 0x2A,
+    notFishable = 0x34,
     moving = 0x2E,
     notInfront = 0x36,
     notKnown = 0x38,

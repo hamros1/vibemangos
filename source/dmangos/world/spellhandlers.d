@@ -28,6 +28,8 @@ mixin template SpellHandlers()
     import dmangos.world.auras : AuraInterrupt;
     import dmangos.world.inworld : ArrivalAction;
     import dmangos.world.creature : Creature;
+    import dmangos.world.gameobject : GameObject;
+    import dmangos.world.loot : LootItem;
     import dmangos.world.defines : Power, Stat;
     import dmangos.world.movement : MovementFlags, Position;
     import dmangos.world.opcodes;
@@ -51,6 +53,11 @@ private:
 
     Casting generic;                 // `CURRENT_GENERIC_SPELL`
     const(SpellInfo)* channelSpell;  // `CURRENT_CHANNELED_SPELL`: the spell being channelled, if any
+    ulong channelObject;             // an object the channel is at (a fishing bobber)
+    ulong bobber;                    // this angler's fishing bobber, while it floats
+    int bobberAge, bobberBite, bobberGone; // ms since cast; when the fish bites; when the bobber goes
+    bool bobberLooted;               // the catch is being looted: the bobber stays until then
+    bool channelFailed;              // an effect of the spell failed (not fishable): no channel
     ulong channelTarget;             // ... at whom
     int channelTimer;                // ... for so many more milliseconds
     Casting nextSwing;               // `CURRENT_MELEE_SPELL`
@@ -170,6 +177,8 @@ private:
     /// The countdown of a cast in progress (`Spell::update`): it goes when its time is up.
     void updateSpells(Duration elapsed)
     {
+        if (bobber)
+            updateBobber(cast(int) elapsed.total!"msecs");
         if (channelSpell !is null && (channelTimer -= cast(int) elapsed.total!"msecs") <= 0)
             endChannel(false);
         if (!generic.active)
@@ -207,7 +216,8 @@ private:
         if (channelSpell !is null)
             endChannel(true);
         channelSpell = spell;
-        channelTarget = target ? target : player.guid;
+        channelTarget = channelObject ? channelObject : target ? target : player.guid;
+        channelObject = 0;
         channelTimer = ms;
         ByteWriter w;
         w.put(spell.id);
@@ -249,6 +259,8 @@ private:
             map.sendToWatchers(this, Opcode.SMSG_SPELL_FAILURE,
                 spellFailurePacket(player.guid, spell.id, SpellCastResult.interrupted), true);
         }
+        if (bobber && !bobberLooted)
+            removeBobber();
         ByteWriter w;
         w.put(0u);
         deliver(Opcode.MSG_CHANNEL_UPDATE, w.data);
@@ -264,6 +276,150 @@ private:
         const id = reader.read!uint;
         if (channelSpell !is null && channelSpell.id == id)
             endChannel(true);
+    }
+
+    /**
+     * `Spell::EffectTransmitted` for a fishing bobber: between the spell's least and greatest range in
+     * front of the angler, a little to either side, on the water there (or the cast fails: not
+     * fishable). The fish bites 3, 7, 13 or 17 seconds before the channel would end, and the bobber
+     * waits 5 seconds more for the angler (`FISHING_BOBBER_READY_TIME`).
+     */
+    void castBobber(const(SpellInfo)* spell, size_t i)
+    {
+        import std.math : cos, sin;
+        import std.random : uniform, uniform01;
+        import dmangos.world.gameobject : GameObject, GameObjectSpawn, GameObjectType;
+        import dmangos.world.objects : HighGuid, makeGuid;
+        import dmangos.world.spellcast : duration, range;
+
+        const entry = cast(uint) spell.miscValue[i];
+        const t = entry in context.data.gameObjectTemplates;
+        if (t is null || t.type != GameObjectType.fishingNode)
+            return;
+        const r = range(*spell, context.client);
+        const distance = uniform01(map.random) * (r[1] - r[0]) + r[0];
+        const maxAngle = (r[1] - r[0]) / (r[1] + 0.5f);
+        const at = player.position;
+        const angle = at.orientation + maxAngle * (uniform01(map.random) - 0.5f);
+        const x = at.x + (distance + 0.5f) * cos(angle), y = at.y + (distance + 0.5f) * sin(angle);
+        float level;
+        if (!map.waterAt(x, y, at.z + 1, level))
+        {
+            deliver(Opcode.SMSG_CAST_RESULT, castResultPacket(spell.id, SpellCastResult.notFishable));
+            channelFailed = true;
+            return;
+        }
+        if (bobber)
+            removeBobber();
+        GameObjectSpawn spawn = {guid: context.nextTemporaryCounter(), entry: entry, map: map.id, x: x, y: y, z: level,
+            orientation: at.orientation, respawnSeconds: -1};
+        auto go = new GameObject(spawn, t);
+        go.owner = player.guid;
+        go.instanceId = map.instanceId;
+        go.values.set!OBJECT_FIELD_CREATED_BY(player.guid);
+        go.values.set!GAMEOBJECT_LEVEL(player.data.level);
+        map.addObject(go);
+        bobber = go.guid;
+        channelObject = go.guid;
+        bobberAge = 0;
+        bobberLooted = false;
+        static immutable int[4] lastSeconds = [3, 7, 13, 17];
+        const ms = duration(*spell, context.client, player.data.level);
+        bobberBite = ms - lastSeconds[uniform(0, 4, map.random)] * 1000;
+        bobberGone = bobberBite + 5000;
+    }
+
+    /// The bobber's time: the fish bites (the bobber splashes); later, it got away (`SMSG_FISH_NOT_HOOKED`).
+    void updateBobber(int diff)
+    {
+        import dmangos.world.gameobject : GameObject;
+
+        auto go = cast(GameObject) map.findObject(bobber);
+        if (go is null)
+            return cast(void)(bobber = 0);
+        const before = bobberAge;
+        bobberAge += diff;
+        if (before < bobberBite && bobberAge >= bobberBite)
+        {
+            go.values.set!GAMEOBJECT_STATE(0u); // GO_STATE_ACTIVE
+            map.flushGameObject(go);
+            ByteWriter w;
+            w.put(go.guid);
+            w.put(0u);
+            map.sendToObservers(go.guid, Opcode.SMSG_GAMEOBJECT_CUSTOM_ANIM, w.data);
+        }
+        if (!bobberLooted && bobberAge >= bobberGone)
+        {
+            deliver(Opcode.SMSG_FISH_NOT_HOOKED, null);
+            endChannel(false);
+        }
+    }
+
+    /// The bobber goes.
+    void removeBobber()
+    {
+        if (bobber)
+            map.removeObject(bobber);
+        bobber = 0;
+        bobberLooted = false;
+    }
+
+    /**
+     * `GameObject::Use` of the angler's own bobber: before the bite nothing is hooked; in the bite's
+     * 5 seconds the catch depends on the fishing skill against the area's (or zone's)
+     * `skill_fishing_base_level` (5% at that skill, more above it), and every try may raise the skill;
+     * a catch is looted from `fishing_loot_template`, else the fish escaped.
+     */
+    package void useBobber(GameObject go)
+    {
+        import std.random : uniform;
+
+        enum uint skillFishing = 356;
+        if (go.owner != player.guid || go.guid != bobber)
+            return;
+        if (bobberAge < bobberBite)
+        {
+            deliver(Opcode.SMSG_FISH_NOT_HOOKED, null);
+            return endChannel(false);
+        }
+        const area = player.area, zone = player.data.zone;
+        int zoneSkill = context.data.fishingBaseSkill.get(area, 0);
+        if (!zoneSkill)
+            zoneSkill = context.data.fishingBaseSkill.get(zone, 0);
+        const skill = cast(int) player.skillValue(skillFishing)[0];
+        const chance = skill - zoneSkill + 5;
+        const success = skill >= zoneSkill && chance >= uniform!"[]"(1, 100, map.random);
+        // `Player::UpdateFishingSkill`
+        const pure_ = player.skillValue(skillFishing)[0];
+        updateSkillPro(skillFishing, (pure_ < 75 ? 100 : 2500 / (pure_ - 50)) * 10, 1);
+        if (!success)
+        {
+            deliver(Opcode.SMSG_FISH_ESCAPED, null);
+            return endChannel(false);
+        }
+        auto template_ = context.data.loot.fishing is null ? null : context.data.loot.fishing[area];
+        if (template_ is null && context.data.loot.fishing !is null)
+            template_ = context.data.loot.fishing[zone];
+        auto loot = makeGameObjectLoot(go);
+        if (template_ !is null)
+        {
+            bool meets(uint condition)
+            {
+                return conditionMet(condition);
+            }
+
+            bool allowed(ulong guid, const LootItem item)
+            {
+                return item.condition == 0 || conditionMet(item.condition);
+            }
+
+            loot.fill(template_, context.data.loot, context.data.items, map.random, &meets, &allowed);
+        }
+        loot.lootedForAll = () { removeBobber(); };
+        go.loot = loot;
+        bobberLooted = true;
+        endChannel(false);
+        loot.showContentTo(this);
     }
 
     /// Moving interrupts a cast that moving interrupts (`SPELL_INTERRUPT_FLAG_MOVEMENT`).
@@ -552,8 +708,9 @@ private:
                     doEffect(spell, i, target, c);
         // A channelled spell goes on (`SPELL_ATTR_EX_IS_CHANNELED`, `_IS_SELF_CHANNELED`).
         enum uint channeled = 0x04, selfChanneled = 0x40;
-        if ((spell.attributesEx & (channeled | selfChanneled)) && !c.triggered)
+        if ((spell.attributesEx & (channeled | selfChanneled)) && !c.triggered && !channelFailed)
             startChannel(spell, results.length ? results[0].guid : c.targets.unit);
+        channelFailed = false;
         // `SpellHit` for the creatures hit (their scripts).
         foreach (r; results)
             if (r.miss == SpellMissInfo.none)
@@ -667,6 +824,9 @@ private:
             }
             break;
         }
+        case 50: // SPELL_EFFECT_TRANS_DOOR: an object the spell puts down (a fishing bobber)
+            castBobber(spell, i);
+            break;
         case 61: // SPELL_EFFECT_SEND_EVENT: the event's script, the caster its source and a game object its target
         {
             import dmangos.world.dbscripts : DbScriptType;
@@ -1176,4 +1336,107 @@ unittest
     anduin.write(Opcode.MSG_MOVE_START_FORWARD, w.data);
     const cut = opcodesOf(anduin.read());
     assert(cut.canFind(Opcode.MSG_CHANNEL_UPDATE) && keeper.auras.find(drain) is null && me.values.get!UNIT_CHANNEL_SPELL == 0);
+}
+
+/**
+ * Fishing: the bobber on the water, the channel at it; used before the bite nothing is hooked; after
+ * the bite (its splash) a skilled angler's catch is looted from the zone's `fishing_loot_template`.
+ */
+unittest
+{
+    import core.time : MonoTime, msecs;
+    import std.algorithm.searching : canFind;
+    import dmangos.bytes : ByteWriter;
+    import dmangos.dbc : buildDbc;
+    import dmangos.world.clientdata : spellCastTimesFormat, spellDurationFormat, spellRangeFormat;
+    import dmangos.world.gameobject : GameObject, GameObjectTemplate, GameObjectType;
+    import dmangos.world.loot : lootRow, LootStore;
+    import dmangos.world.movement : Position;
+    import dmangos.world.opcodes;
+    import dmangos.world.packets : ClientGuid;
+    import dmangos.world.player : Player;
+    import dmangos.world.spellcast : SpellTargets, TargetFlags;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+    import dmangos.world.updatefields;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    uint bits(float f) { return *cast(uint*) &f; }
+    context.client.spellCastTimes = typeof(context.client.spellCastTimes).parse(buildDbc(spellCastTimesFormat,
+        [[1u, 0, 0, 0]]), "SpellCastTimes.dbc");
+    context.client.spellRanges = typeof(context.client.spellRanges).parse(buildDbc(spellRangeFormat,
+        [[1u, bits(10), bits(20), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]), "SpellRange.dbc");
+    context.client.spellDurations = typeof(context.client.spellDurations).parse(buildDbc(spellDurationFormat,
+        [[1u, 20_000, 0, 20_000]]), "SpellDuration.dbc");
+    enum uint fishing = 95500, bobberEntry = 9030;
+    context.data.spells.spells[fishing] = testSpell(fishing, 50, 1, 0);
+    with (context.data.spells.spells[fishing])
+    {
+        miscValue[0] = bobberEntry;
+        casting.durationIndex = 1;
+        casting.dmgClass = 0;
+        attributesEx = 0x04; // channelled
+    }
+    GameObjectTemplate bobberTemplate = {entry: bobberEntry, type: GameObjectType.fishingNode, displayId: 668,
+        name: "Fishing Bobber"};
+    context.data.gameObjectTemplates[bobberEntry] = bobberTemplate;
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f));
+    auto me = cast(Player) anduin.session.character;
+    me.spells ~= fishing;
+    me.setSkill(356, 100, 150);
+    context.data.fishingBaseSkill[me.data.zone] = 1;
+    context.data.loot.fishing = new LootStore("fishing_loot_template");
+    context.data.loot.fishing.add(me.data.zone, lootRow(itemJerky, 100, 0, 1, 1, 0));
+    anduin.read();
+    auto map = context.map(0);
+    map.waterForTests = 80; // a lake all round
+    GameObject bobberNow()
+    {
+        foreach (o; map.objectsNear(me.position, 30))
+            if (auto go = cast(GameObject) o)
+                if (go.type == GameObjectType.fishingNode)
+                    return go;
+        return null;
+    }
+    void cast_()
+    {
+        ByteWriter w;
+        w.put(fishing);
+        SpellTargets(TargetFlags.self, 0).write(w);
+        anduin.write(Opcode.CMSG_CAST_SPELL, w.data);
+    }
+    void tick(int ms)
+    {
+        now += ms.msecs;
+        anduin.session.update(ms.msecs);
+    }
+
+    cast_();
+    auto bob = bobberNow();
+    assert(bob !is null && bob.owner == me.guid && me.values.get!UNIT_FIELD_CHANNEL_OBJECT == bob.guid, "cast out");
+    anduin.read();
+    anduin.write(Opcode.CMSG_GAMEOBJ_USE, ClientGuid(bob.guid));
+    assert(opcodesOf(anduin.read()).canFind(Opcode.SMSG_FISH_NOT_HOOKED) && bobberNow() is null, "too soon");
+
+    now += 2000.msecs;
+    cast_();
+    bob = bobberNow();
+    anduin.read();
+    bool splashed;
+    foreach (_; 0 .. 18) // the bite comes 3 to 17 seconds before the 20 end
+    {
+        tick(1000);
+        if (opcodesOf(anduin.read()).canFind(Opcode.SMSG_GAMEOBJECT_CUSTOM_ANIM))
+        {
+            splashed = true;
+            break;
+        }
+    }
+    assert(splashed, "the splash");
+    anduin.write(Opcode.CMSG_GAMEOBJ_USE, ClientGuid(bob.guid));
+    const caught = anduin.read();
+    assert(opcodesOf(caught).canFind(Opcode.SMSG_LOOT_RESPONSE), "a catch");
 }

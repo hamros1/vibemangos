@@ -56,7 +56,10 @@ mixin template GameObjectHandlers()
     bool withinInteraction(const GameObject go, float more = 0)
     {
         const a = player.position, b = go.position;
-        const reach = interactionDistance + more + go.template_.size;
+        // `GetInteractionDistance`: a fishing bobber (and a chair) from a hundred yards.
+        const base = go.type == GameObjectType.fishingNode || go.type == GameObjectType.chair ? 100.0f
+            : interactionDistance;
+        const reach = base + more + go.template_.size;
         return (a.x - b.x) ^^ 2 + (a.y - b.y) ^^ 2 + (a.z - b.z) ^^ 2 <= reach * reach;
     }
 
@@ -89,6 +92,8 @@ mixin template GameObjectHandlers()
     /// `GameObject::Use` by this player.
     package void useGameObject(GameObject go)
     {
+        if (go.type == GameObjectType.fishingNode)
+            return useBobber(go);
         import dmangos.world.dbscripts : DbScriptType;
 
         // Its scripts: the template's, and (doors, buttons, goobers) the spawn's; the user the source.

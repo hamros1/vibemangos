@@ -331,6 +331,7 @@ final class WorldData
     GraveyardLink[][uint] graveyards;               /// `game_graveyard_zone`, by `graveyardLinkKey`
     GhostEntrance[uint] ghostEntrances;             /// `instance_template`'s ghost entrances, by instance map
     uint[uint] instanceMaxPlayers;                  /// `instance_template.maxPlayers`, by instance map
+    int[uint] fishingBaseSkill;                     /// `skill_fishing_base_level`: area or zone -> skill to fish there
     uint[uint] instanceResetDays;                   /// `instance_template.reset_delay` (a raid's lockout), by map
     WaypointStore waypoints;                        /// `creature_movement` and `creature_movement_template`
     EventAiData eventAi;                            /// `creature_ai_scripts`, by creature entry
@@ -348,7 +349,8 @@ final class WorldData
         eventAi = new EventAiData;
         dbScripts = new DbScriptData;
         loot = LootStores(new LootStore("creature_loot_template"), new LootStore("reference_loot_template"),
-            new LootStore("gameobject_loot_template"), new LootStore("item_loot_template"));
+            new LootStore("gameobject_loot_template"), new LootStore("item_loot_template"),
+            new LootStore("fishing_loot_template"));
     }
 
     /**
@@ -564,10 +566,12 @@ final class WorldData
         foreach (row; world.query!"SELECT faction, quest_rate, creature_rate, spell_rate FROM reputation_reward_rate"())
             reputationRates[row.get!uint(0)] = [row.get!float(1), row.get!float(2), row.get!float(3)];
         static foreach (table; [["creature", "creature"], ["reference", "reference"], ["gameobject", "gameObject"],
-                ["item", "item"]])
+                ["item", "item"], ["fishing", "fishing"]])
             foreach (row; world.query!("SELECT " ~ lootColumns ~ " FROM " ~ table[0] ~ "_loot_template")())
                 __traits(getMember, loot, table[1]).add(row.get!uint(0), lootRow(row.get!uint(1), row.get!float(2),
                     row.get!uint(3), row.get!int(4), row.get!uint(5), row.get!uint(6)));
+        foreach (row; world.query!"SELECT entry, skill FROM skill_fishing_base_level"())
+            fishingBaseSkill[row.get!uint(0)] = row.get!int(1);
         foreach (row; world.query!"SELECT id, ghost_loc, link_kind, faction FROM game_graveyard_zone"())
             graveyards[graveyardLinkKey(row.get!uint(1), row.get!uint(2))] ~= GraveyardLink(row.get!uint(0),
                 row.get!uint(3));

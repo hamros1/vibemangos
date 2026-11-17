@@ -1207,6 +1207,12 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
     private uint summonsMade; // the summons' guid counters: above every spawn's, 65536 for each node
 
+    /// A guid counter for an object of this run only (a summon, a fishing bobber): this node's range.
+    uint nextTemporaryCounter()
+    {
+        return 0x00C0_0000 + (nodeId % 64) * 0x1_0000 + (++summonsMade & 0xFFFF);
+    }
+
     /**
      * `WorldObject::SummonCreature`: a creature of `entry` at `at` on `world` (near `summoner` when
      * `at` is all zeros), not saved and never respawned, gone as `type` says after `durationMs`.
@@ -1236,7 +1242,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             if (ground > -100_000)
                 at.z = ground;
         }
-        const counter = 0x00C0_0000 + (nodeId % 64) * 0x1_0000 + (++summonsMade & 0xFFFF);
+        const counter = nextTemporaryCounter();
         CreatureSpawn spawn = {guid: counter, entry: entry, map: map.id, x: at.x, y: at.y, z: at.z,
             orientation: at.orientation};
         auto creature = makeCreature(&spawn);

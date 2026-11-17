@@ -1110,6 +1110,31 @@ final class Map : CombatWorld, GameObjectWorld
         return terrain is null || terrain.isInLineOfSight(a.x, a.y, a.z + eyes, b.x, b.y, b.z + eyes);
     }
 
+    /// Tests: water everywhere at this level (NaN: as the terrain says).
+    float waterForTests = float.nan;
+
+    /// The water's surface at (x, y) near `z`, if there is water there (`TerrainInfo::IsInWater`);
+    /// without terrain (tests) everything is water at `z`.
+    bool waterAt(float x, float y, float z, out float level)
+    {
+        if (waterForTests != float.nan && waterForTests == waterForTests)
+        {
+            level = waterForTests;
+            return true;
+        }
+        if (terrain is null)
+        {
+            level = z;
+            return true;
+        }
+        enum ubyte allLiquids = 0x0F; // MAP_ALL_LIQUIDS
+        LiquidData liquid;
+        if (terrain.liquidStatus(x, y, z, allLiquids, liquid) == LiquidStatus.noWater)
+            return false;
+        level = liquid.level;
+        return true;
+    }
+
     /// See `CombatWorld.creaturesNear`.
     Creature[] creaturesNear(Position center, float range)
     {

@@ -125,6 +125,7 @@ struct LootStores
     LootStore reference;  /// `reference_loot_template`
     LootStore gameObject; /// `gameobject_loot_template`
     LootStore item;       /// `item_loot_template`: what an item opened holds
+    LootStore fishing;    /// `fishing_loot_template`: by area (or zone)
 }
 
 /// The columns every `*_loot_template` query selects, in `LootStoreItem` order after the id.
