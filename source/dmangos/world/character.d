@@ -614,21 +614,24 @@ private:
         UpdateData forSelf;
         if (toSelf && player.addChanges(forSelf, Viewer.self))
             sendUpdate(forSelf);
-        UpdatePacket[Viewer] built;
-        foreach (watcher; transferring ? null : map.watchers(this))
-        {
+        // Built once for each kind of viewer (a group mate, a stranger), the same bytes to each of them.
+        UpdatePacket[Viewer.max + 1] built;
+        bool[Viewer.max + 1] isBuilt;
+        if (!transferring)
+            map.forEachWatcher(this, (Inhabitant watcher) {
             const view = context.groups.sameGroup(player.guid, watcher.character.guid) ? Viewer.groupMate
                 : Viewer.stranger;
-            if (view !in built)
+            if (!isBuilt[view])
             {
                 UpdateData update;
                 built[view] = player.addChanges(update, view) ? update.build() : UpdatePacket.init;
+                isBuilt[view] = true;
             }
             const packet = built[view];
             if (packet.body_.length)
                 watcher.deliver(packet.compressed ? Opcode.SMSG_COMPRESSED_UPDATE_OBJECT : Opcode.SMSG_UPDATE_OBJECT,
                     packet.body_);
-        }
+        });
         if (!transferring)
             map.playerChanged(this); // nodes holding a replica of this player (phase 3b)
         player.clearChanges();

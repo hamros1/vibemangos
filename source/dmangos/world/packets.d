@@ -987,6 +987,73 @@ out (bytes; bytes.length == serverHeaderLength + body_.length)
  * Frames a body straight onto the end of `output`, as `encodePacket` does but without a temporary
  * array: the hot path of every packet relayed to many players.
  */
+/**
+ * Output that grows by doubling and keeps its own length (docs/DESIGN.md, step 5): appending a packet
+ * is a bounds check and a copy, where `~=` on an array asks the collector for its capacity every time.
+ */
+struct OutputBuffer
+{
+    private ubyte[] store;
+    private size_t used;
+
+    /// Appends `bytes`.
+    void put(scope const(ubyte)[] bytes) pure nothrow @safe
+    {
+        if (used + bytes.length > store.length)
+        {
+            size_t size = store.length ? store.length : 4096;
+            while (size < used + bytes.length)
+                size *= 2;
+            auto grown = new ubyte[size];
+            grown[0 .. used] = store[0 .. used];
+            store = grown;
+        }
+        store[used .. used + bytes.length] = bytes[];
+        used += bytes.length;
+    }
+
+    /// What has been written.
+    @property size_t length() const pure nothrow @nogc @safe
+    {
+        return used;
+    }
+
+    /// Hands over what was written; writing goes on into `next` (the memory of an array handed over
+    /// before, given back), or into new memory.
+    ubyte[] take(ubyte[] next = null) pure nothrow @nogc @safe
+    {
+        auto written = store[0 .. used];
+        store = next;
+        used = 0;
+        return written;
+    }
+
+    /// The memory written into, how much of it there is (to keep the larger of two).
+    @property size_t capacity() const pure nothrow @nogc @safe
+    {
+        return store.length;
+    }
+
+    /// The whole memory written into (what `take` hands over is the written part of it).
+    @property ubyte[] memory() pure nothrow @nogc @safe
+    {
+        return store;
+    }
+}
+
+/// `appendPacket` into an `OutputBuffer`.
+void appendPacket(ref OutputBuffer output, Opcode opcode, scope const(ubyte)[] body_, ref HeaderCrypt crypt)
+{
+    enforce!PacketException(body_.length + 2 <= ushort.max, "packet too large");
+
+    ubyte[serverHeaderLength] header;
+    header[0 .. 2] = nativeToBigEndian(cast(ushort)(body_.length + 2));
+    header[2 .. 4] = nativeToLittleEndian(cast(ushort) opcode);
+    crypt.encryptHeader(header);
+    output.put(header[]);
+    output.put(body_);
+}
+
 void appendPacket(ref ubyte[] output, Opcode opcode, scope const(ubyte)[] body_, ref HeaderCrypt crypt)
 {
     enforce!PacketException(body_.length + 2 <= ushort.max, "packet too large");

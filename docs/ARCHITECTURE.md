@@ -86,6 +86,16 @@ A malformed body throws `PacketException` from the deserializer, and the session
 opcode without a handler, or one that arrives in the wrong state, is ignored after authentication,
 as CMaNGOS does.
 
+**Output (docs/DESIGN.md, step 5).**
+* A session frames what it sends into an `OutputBuffer`. The buffer keeps its own length and grows
+  by doubling, so a packet costs a bounds check and a copy.
+* The server takes the written bytes (`takeOutput`) and sends them.
+* Once they are all sent, it gives the memory back (`ReusesOutput.returnOutput`). The session writes
+  its next output into it, so a busy connection allocates nothing to send.
+* One body serves every recipient of a broadcast, and only the header is encrypted per client.
+* An object's changed fields are built into one update for everyone who sees them alike.
+* Changes made during the map's tick go out once, at its end (`Map::SendObjectUpdates`).
+
 ### Session states
 
 ```

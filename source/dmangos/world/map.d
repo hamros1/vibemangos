@@ -219,6 +219,7 @@ private struct Entity
     uint tickIndex = notTicking; // its place in `Map.ticking`
     ulong lastTickAt;           // the map's clock when it last ticked (`Map.clockMs`)
     ulong noticeAt;             // a moving creature looks for players to notice again from then
+    bool changed;               // its fields changed in the tick: sent at its end
     uint sleepToken;            // asleep on the timer wheel under this token; 0: not asleep
     Idler idler;                // the object, if it can say how long it will idle
     uint[] viewers;             // the players (slots) whose clients have it
@@ -291,6 +292,8 @@ final class Map : CombatWorld, GameObjectWorld
         Random rng;
         uint[] ticking;                 // the objects in the tick (not resting), by slot
         uint[] tickCopy;                // `ticking` as a tick began
+        bool ticking_;                  // in `update`: changes wait for its end
+        uint[] changedSlots;            // the objects changed in the tick, in order
         ulong clockMs;                  // the map's own clock: milliseconds of ticks so far
         Sleeper[][wheelBuckets] wheel;  // objects asleep, by the bucket of their waking (docs/DESIGN.md, step 4)
         ulong wheelDone;                // the wheel's buckets are woken up to this one (`clockMs / wheelGrain`)
@@ -464,6 +467,42 @@ final class Map : CombatWorld, GameObjectWorld
     /// Sends what changed in an object's fields to the players whose clients have it, then forgets the changes.
     void flushObjectChanges(MapObject object)
     {
+        // In the map's tick, the change waits for the tick's end (`Map::SendObjectUpdates`): several
+        // changes of one object in a tick go out as one update.
+        if (ticking_)
+        {
+            const slot = objectSlot(object);
+            if (slot != uint.max)
+            {
+                if (!at(slot).changed)
+                {
+                    at(slot).changed = true;
+                    changedSlots ~= slot;
+                }
+                return;
+            }
+        }
+        sendObjectChanges(object);
+    }
+
+    /// The objects changed in the tick, at its end: one update each.
+    private void sendChangedObjects()
+    {
+        for (size_t i = 0; i < changedSlots.length; ++i) // a send may change another: it is sent too
+        {
+            const slot = changedSlots[i];
+            if (!entities.holds(slot) || !at(slot).changed)
+                continue;
+            at(slot).changed = false;
+            sendObjectChanges(at(slot).object);
+        }
+        changedSlots.length = 0;
+        changedSlots.assumeSafeAppend();
+    }
+
+    /// See `flushObjectChanges`: what changed goes to the viewers now.
+    private void sendObjectChanges(MapObject object)
+    {
         const slot = objectSlot(object);
         if (replicator !is null && slot != uint.max && !at(slot).replica && at(slot).replicatedTo.length)
         {
@@ -485,6 +524,9 @@ final class Map : CombatWorld, GameObjectWorld
             auto personal = cast(PerViewer) object;
             UpdateData update;
             update.addValues(object.guid, object.fields, seenByEveryone);
+            // Built (and compressed, if large) once, for every viewer who sees what everyone sees.
+            UpdatePacket common;
+            bool commonBuilt;
             foreach (v; at(slot).viewers)
             {
                 auto who = at(v).player;
@@ -505,7 +547,14 @@ final class Map : CombatWorld, GameObjectWorld
                     deliverUpdate(who, own);
                 }
                 else
-                    deliverUpdate(who, update);
+                {
+                    if (!commonBuilt)
+                    {
+                        common = update.build();
+                        commonBuilt = true;
+                    }
+                    deliverBuilt(who, common);
+                }
             }
         }
         object.fields.clearChanges();
@@ -798,6 +847,12 @@ final class Map : CombatWorld, GameObjectWorld
             unloadIdleCells(step);
         }
         clockMs += diff;
+        ticking_ = true;
+        scope (exit)
+        {
+            ticking_ = false;
+            sendChangedObjects();
+        }
         wakeSleepers();
         // What ticks is fixed when the tick starts (a copy, into memory kept from tick to tick); an
         // object gone or put to sleep during it is not ticked after.
@@ -1783,6 +1838,16 @@ final class Map : CombatWorld, GameObjectWorld
         if (slot != uint.max)
             foreach (v; at(slot).viewers)
                 at(v).player.deliver(opcode, body_);
+    }
+
+    /// Each player that sees `from`, without making a list of them.
+    void forEachWatcher(const Inhabitant from, scope void delegate(Inhabitant watcher) each)
+    {
+        const slot = slotFor(from.character.guid);
+        if (slot == uint.max)
+            return;
+        foreach (v; at(slot).viewers)
+            each(at(v).player);
     }
 
     /// The players that see `from`.
@@ -3147,4 +3212,56 @@ unittest
     auto alice = new Watcher(1, Position(0, 0, 0));
     map.add(alice);
     assert(loaded.length > 0 && map.cellLoaded(cellKeyAt(0, 0)), "a player's sight does");
+}
+
+/// Changes in the map's tick go out once, at its end (`Map::SendObjectUpdates`); outside it at once.
+unittest
+{
+    import core.time : msecs;
+    import dmangos.world.updatefields : TypeId, UNIT_FIELD_HEALTH, UNIT_FIELD_LEVEL;
+
+    static final class Fidget : Moving
+    {
+        ulong id;
+        Position at;
+        Map map;
+        UpdateValues values = UpdateValues(TypeId.unit);
+        this(ulong id) { this.id = id; }
+        ref UpdateValues fields() { return values; }
+        @property ulong guid() const { return id; }
+        @property Position position() const { return at; }
+        UpdateData appearance(uint) const
+        {
+            import dmangos.world.objects : MovementBlock, UpdateFlags, UpdateType;
+            import dmangos.world.updatefields : Visibility;
+
+            UpdateData u;
+            MovementBlock b;
+            b.flags = UpdateFlags.hasPosition;
+            u.addCreate(UpdateType.createObject, id, b, values, Visibility.public_);
+            return u;
+        }
+        void tick(MotionWorld, int)
+        {
+            // Two changes in one tick, each flushed.
+            values.set!UNIT_FIELD_HEALTH(values.get!UNIT_FIELD_HEALTH + 1);
+            map.flushObjectChanges(this);
+            values.set!UNIT_FIELD_LEVEL(values.get!UNIT_FIELD_LEVEL + 1);
+            map.flushObjectChanges(this);
+        }
+        @property bool resting() const { return false; }
+    }
+
+    auto map = new Map(0, MapSettings.init, () => 1000u);
+    auto alice = new Watcher(1, Position(0, 0, 0));
+    map.add(alice);
+    auto fidget = new Fidget(0xF130_0000_0000_0077);
+    fidget.map = map;
+    map.addObject(fidget);
+    alice.take();
+    map.update(50.msecs);
+    assert(alice.take().count(Opcode.SMSG_UPDATE_OBJECT) == 1, "two changes in the tick: one update");
+    fidget.values.set!UNIT_FIELD_HEALTH(100u);
+    map.flushObjectChanges(fidget);
+    assert(alice.take() == [Opcode.SMSG_UPDATE_OBJECT], "outside the tick: at once");
 }

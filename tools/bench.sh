@@ -31,7 +31,15 @@ if [ -f "$WORKDIR/world.pid" ]; then kill "$(cat "$WORKDIR/world.pid")" 2>/dev/n
 "$WORLDSERVER" -c "$CONFIG" > "$WORKDIR/world.log" 2>&1 &
 echo $! > "$WORKDIR/world.pid"
 for i in $(seq 120); do grep -q listening "$WORKDIR/world.log" && break; sleep 1; done
-grep -q listening "$WORKDIR/world.log" || { echo "the server did not start; see $WORKDIR/world.log"; exit 1; }
+if ! grep -q listening "$WORKDIR/world.log"; then
+    # Evidence of a stalled start: what each of its threads is doing (R running, S/D waiting, and on what).
+    pid="$(cat "$WORKDIR/world.pid")"
+    for task in /proc/"$pid"/task/*; do
+        echo "thread ${task##*/}: state $(cut -d' ' -f3 "$task/stat"), waiting in $(cat "$task/wchan" 2>/dev/null), cpu ticks $(cut -d' ' -f14-15 "$task/stat")"
+    done > "$WORKDIR/stalled-start.txt" 2>&1
+    echo "the server did not start; see $WORKDIR/world.log and $WORKDIR/stalled-start.txt"
+    exit 1
+fi
 
 /usr/bin/time -f "* load generator: %P CPU, %M KiB max memory" -a -o "$REPORT" \
     "$LOADGEN" --world "$WORLD" --login-db "$LOGIN_DB" --character-db "$CHARACTER_DB" --world-db "$WORLD_DB" \

@@ -41,7 +41,7 @@ import dmangos.crypto.hash : constantTimeEqual, sha1;
 import dmangos.crypto.random : secureRandom;
 import dmangos.log;
 import dmangos.net.dispatch : DispatchResult, HandlesFor = Handles, PacketDispatch;
-import dmangos.net.server : NetSession;
+import dmangos.net.server : NetSession, ReusesOutput;
 import dmangos.world.addons : buildAddonInfo, parseAddons;
 import dmangos.world.charscreen : CharacterScreenHandlers;
 import dmangos.world.context : Kickable, WorldContext;
@@ -73,7 +73,7 @@ private enum minimumPingInterval = 27.seconds;
 private enum maxBufferedInput = 2 * (clientHeaderLength + maxClientPacketSize);
 
 /// See the module documentation.
-final class WorldSession : NetSession, Kickable
+final class WorldSession : NetSession, ReusesOutput, Kickable
 {
     // A player simulated on another node than its client's (docs/CLUSTER.md, phase 4b).
     package ushort ownerNode;              // home: the node simulating this session's player; 0: here
@@ -97,7 +97,9 @@ final class WorldSession : NetSession, Kickable
         bool finishing;
         bool registered; // listed in the context's session table
         ubyte[] input;
-        ubyte[] output;
+        OutputBuffer output;
+        ubyte[] spareOutput;     // the memory of a sent array, given back by the server, for the next output
+        ubyte[][] lentOutput;    // the memory of the arrays handed to the server, to know a returned one's whole
         HeaderCrypt crypt;
         uint serverSeed;
 
@@ -306,12 +308,35 @@ final class WorldSession : NetSession, Kickable
             input = null;
     }
 
-    /// Takes the bytes that should be sent to the client.
+    /// Takes the bytes that should be sent to the client; the next go into a returned array, if any.
     ubyte[] takeOutput()
     {
-        auto pending = output;
-        output = null;
+        if (output.length == 0)
+            return null;
+        if (lentOutput.length >= 4)
+            lentOutput.length = 0; // never given back (a connection that cannot send): forgotten
+        lentOutput ~= output.memory;
+        auto pending = output.take(spareOutput);
+        spareOutput = null;
         return pending;
+    }
+
+    /// See `ReusesOutput`: an array the server has sent, kept for the next output (the largest of two).
+    void returnOutput(ubyte[] buffer)
+    {
+        // The whole of the memory it was written in (it was handed over as the written part).
+        foreach (i, memory; lentOutput)
+            if (memory.ptr is buffer.ptr)
+            {
+                lentOutput[i] = lentOutput[$ - 1];
+                lentOutput.length -= 1;
+                lentOutput.assumeSafeAppend();
+                if (output.length == 0 && memory.length > output.capacity)
+                    output.take(memory);
+                else if (memory.length > spareOutput.length)
+                    spareOutput = memory;
+                return;
+            }
     }
 
     /// The character being played, if any (its `Player`).

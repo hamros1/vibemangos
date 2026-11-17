@@ -17,6 +17,17 @@ import std.socket;
 import dmangos.log;
 import dmangos.metrics : TickStats;
 
+/**
+ * A session that takes back the arrays its `takeOutput` handed over, once the server has sent them
+ * (docs/DESIGN.md, step 5): it writes its next output into one, instead of growing a new array each
+ * time. The server gives an array back only when nothing of it is still waiting to be sent.
+ */
+interface ReusesOutput
+{
+    /// `buffer` (one `takeOutput` returned) is free again.
+    void returnOutput(ubyte[] buffer);
+}
+
 /// One client's protocol state, driven by the server.
 interface NetSession
 {
@@ -102,6 +113,8 @@ final class TcpServer
         Socket socket;
         NetSession session;
         ubyte[] pending; // output not yet accepted by the kernel
+        ubyte[] adopted; // the session's array `pending` was taken from, to give back once sent
+        ReusesOutput reuses; // the session, if it takes its arrays back
         MonoTime lastActivity;
         Duration idleTimeout;
         bool connecting; // an outgoing connection not yet established
@@ -109,6 +122,7 @@ final class TcpServer
 
         this(Socket socket, NetSession session, MonoTime now, Duration idleTimeout)
         {
+            reuses = cast(ReusesOutput) session;
             this.socket = socket;
             this.session = session;
             this.lastActivity = now;
@@ -290,9 +304,16 @@ private:
         if (output.length == 0)
             return;
         if (connection.pending.length == 0)
+        {
             connection.pending = output;
+            connection.adopted = output;
+        }
         else
+        {
             connection.pending ~= output;
+            if (connection.reuses !is null)
+                connection.reuses.returnOutput(output); // copied: free at once
+        }
     }
 
     void accept(ref Listener listener, MonoTime now)
@@ -418,6 +439,12 @@ private:
             connection.pending = connection.pending[cast(size_t) sent .. $];
         }
         connection.pending = null;
+        if (connection.adopted !is null)
+        {
+            if (connection.reuses !is null)
+                connection.reuses.returnOutput(connection.adopted);
+            connection.adopted = null;
+        }
     }
 
     /// Closes connections that broke, finished, or went idle.

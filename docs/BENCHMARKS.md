@@ -269,3 +269,24 @@ test against the buildings (`allowedPositionZ`). The movement maps will change t
 now look for players to notice at most once a second as they move, as CMaNGOS
 (`Visibility.AIRelocationNotifyDelay`), instead of on every tick.
 
+## Step 5 of docs/DESIGN.md: output that is reused, updates built once (2026-11-17)
+
+`crowd`, `--seed 7`, against the build of step 4:
+
+| | 500: before | 500: after | 900: before | 900: after |
+|---|---|---|---|---|
+| Allocated per tick | 2.57 MB | 0.41 MB | 7.39 MB | 0.84 MB |
+| Collections a minute | 13 | 1 | 22 | 2 |
+| CPU | 58% | 11% | 99% | 33% |
+| Event loop busy | 12.5% | 7.9% | 33.9% | 24.0% |
+| Ping p99 | 21.9 ms | 3.8 ms | 35.5 ms | 8.9 ms |
+
+Most of it came from how packets were appended. The profile showed relaying movement as the crowd's
+cost, and within it the appending of each packet to the receiving session's output (`~=`), which
+asks the collector for the array's capacity every time, and a new array grown for every loop
+iteration. Now:
+* Output goes into an `OutputBuffer` that keeps its own length and doubles.
+* The server gives a sent array back (`ReusesOutput`), and the session writes into it again.
+* An object's update is built once for everyone who sees the same fields.
+* Changes in the map's tick go out once at its end.
+

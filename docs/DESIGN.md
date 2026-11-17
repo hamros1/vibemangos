@@ -458,6 +458,16 @@ Decisions taken on 2026-11-17:
    * Change: the per-map changed list, value updates serialised once per kind of viewer, one write
      per viewer per tick.
    * Measure: allocation and loop busy time in the 500-player crowd.
+   * Done (2026-11-17):
+     * Output is an `OutputBuffer` written into memory the server gives back once sent
+       (`ReusesOutput`).
+     * An object's field update is built once for every viewer who sees the same fields.
+     * The player's own updates are built once per kind of viewer, without a list of watchers.
+     * Changes made in the map's tick are sent once at its end.
+   * Results, 500-player crowd: allocation 2.57 to 0.41 MB a tick, CPU 58% to 11%, loop busy
+     12.5% to 7.9%, ping p99 21.9 to 3.8 ms (docs/BENCHMARKS.md).
+   * Still separate: one write to each socket per loop iteration, which is already the case. The
+     per-map changed list only covers changes made in the tick.
 6. **The save writer.**
    * Change: records, the write-ahead log, coalescing, the ordering rules, lease fencing.
    * Measure: the worst loop iteration with saves under load.
