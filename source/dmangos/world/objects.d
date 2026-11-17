@@ -443,8 +443,12 @@ struct MovementBlock
         writer.put(flags);
         if (flags & UpdateFlags.living)
         {
-            // A unit that is not walking a spline has no spline to show, whatever its flags say.
-            const walking = info.has(MovementFlags.splineEnabled) && spline !is null && spline.initialized;
+            // A unit that is not walking a spline has no spline to show, whatever its flags say: a walk that
+            // has ended included (a replica's ends between its ticks). The 1.12 client does not set up a
+            // spline marked done, and then reads its missing segment table: an access violation at
+            // 0x453885 (`fld [eax+esi*4]` with eax 0).
+            const walking = info.has(MovementFlags.splineEnabled) && spline !is null && spline.initialized
+                && !spline.finalized;
             MovementInfo living = info;
             if (!walking && info.has(MovementFlags.splineEnabled))
                 living.flags &= ~(MovementFlags.splineEnabled | MovementFlags.forward);

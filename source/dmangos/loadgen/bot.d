@@ -254,7 +254,7 @@ private:
             import std.stdio : writefln;
 
             const name = () { try return (cast(Opcode) opcode).to!string; catch (Exception) return opcode.to!string; }();
-            writefln!"%s < %s (%s bytes) %(%02x %)"(account, name, body_.length, body_[0 .. body_.length < 24 ? $ : 24]);
+            writefln!"%s < %s (%s bytes) %(%02x%)"(account, name, body_.length, body_);
         }
         switch (opcode)
         {

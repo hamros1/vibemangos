@@ -87,6 +87,12 @@ MovementBlock decodeMotion(const(ubyte)[] bytes, ref MoveSpline spline)
             speed = r.read!float;
         if (r.read!bool)
             spline = MoveSpline.readExact(r);
+        // A walk that ended on the way here (or was stopped): the unit stands where it ended.
+        if (spline.initialized && spline.finalized)
+        {
+            block.info.position = spline.position;
+            block.info.flags &= ~(MovementFlags.splineEnabled | MovementFlags.forward);
+        }
     }
     else
         block.position = Position(r.read!float, r.read!float, r.read!float, r.read!float);
@@ -313,4 +319,32 @@ unittest
     owner.values.set!UNIT_FIELD_HEALTH(0u);
     replica.applySlots(encodeSlots(owner.values.changedPublicSlots));
     assert(replica.fields[UNIT_FIELD_HEALTH] == 0 && replica.fields.hasChanges);
+}
+
+// A replica whose walk ended before it arrived stands at its end, and its create block shows no walk:
+// the 1.12 client crashes on a create block's spline marked done.
+unittest
+{
+    import dmangos.bytes : ByteReader, ByteWriter;
+    import dmangos.vmap.math : Vector3;
+    import dmangos.world.spline : SplineFlags;
+    import dmangos.world.updatefields;
+
+    MovementBlock block;
+    block.flags = UpdateFlags.all | UpdateFlags.living | UpdateFlags.hasPosition;
+    block.info.flags = MovementFlags.splineEnabled | MovementFlags.forward;
+    auto walk = MoveSpline([Vector3(0, 0, 0), Vector3(1, 0, 0)], SplineFlags.none, 2.5f, 5);
+    walk.update(10_000); // over
+    block.spline = &walk;
+    MoveSpline arrived;
+    const replica = decodeMotion(encodeMotion(block), arrived);
+    assert(!(replica.info.flags & MovementFlags.splineEnabled) && replica.info.position.x == 1);
+
+    // And whatever its flags say, a finished walk is not written into a create block.
+    block.spline = &walk;
+    ByteWriter w;
+    block.write(w);
+    auto r = ByteReader(w.data);
+    r.read!ubyte;
+    assert(!(MovementInfo.read(r).flags & MovementFlags.splineEnabled), "no spline in the create block");
 }

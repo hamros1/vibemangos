@@ -315,7 +315,7 @@ const(ubyte)[] monsterStop(ulong guid, Position at, uint splineId)
 
 /// `PacketBuilder::WriteCreate`: the walk so far, after the speeds of a moving unit's create block.
 void writeSplineCreate(ref ByteWriter w, const ref MoveSpline spline)
-in (spline.initialized)
+in (spline.initialized && !spline.finalized, "a create block shows a walk under way only")
 {
     w.put(spline.flags);
     if (spline.flags & SplineFlags.finalAngle)
