@@ -8,6 +8,7 @@
  */
 module dmangos.world.worlddata;
 
+import dmangos.frozen : StaticMap;
 import std.random : Random;
 
 import dmangos.log;
@@ -306,7 +307,9 @@ struct GhostEntrance
 
 final class WorldData
 {
-    ItemTemplate[uint] items;               /// by entry
+    enum holdsStaticData = true; // `dmangos.frozen.freezeAll` goes into it
+
+    StaticMap!(uint, ItemTemplate) items;               /// by entry
     ubyte[uint] creatureFamilies;           /// `creature_template.Family`, by entry; every creature is present
     PlayerInfo[ushort] playerInfo;          /// by `raceClassKey`
     ClassLevelStats[][uint] classLevelStats; /// by class, index = level - 1
@@ -314,19 +317,19 @@ final class WorldData
     SpellData spells;
     uint[] xpForNextLevel;                  /// `player_xp_for_level`, index = level
     uint[uint] baseXp;                      /// `exploration_basexp`, by level (`ObjectMgr::GetBaseXP`)
-    ModelInfo[uint] models;                 /// `creature_model_info`, by display id
+    StaticMap!(uint, ModelInfo) models;                 /// `creature_model_info`, by display id
     AreaTriggerTeleport[uint] areaTriggers; /// `areatrigger_teleport`, by trigger id
     GameTele[] teleports;                   /// `game_tele`, in id order
     bool[uint] taverns;                     /// `areatrigger_tavern`: the inns' area triggers
 
-    CreatureTemplate[uint] creatureTemplates;       /// by entry
-    GameObjectTemplate[uint] gameObjectTemplates;   /// by entry
+    StaticMap!(uint, CreatureTemplate) creatureTemplates;       /// by entry
+    StaticMap!(uint, GameObjectTemplate) gameObjectTemplates;   /// by entry
     CreatureSpawn[] creatureSpawns;                 /// the spawns in the world now (pools chosen, events off)
     GameObjectSpawn[] gameObjectSpawns;             /// ditto
     size_t[][ulong][uint] creatureCells;            /// map -> cell key -> indexes into `creatureSpawns`
     size_t[][ulong][uint] gameObjectCells;          /// ditto, into `gameObjectSpawns`
-    CreatureAddon[uint] creatureAddons;             /// `creature_addon`, by spawn guid
-    CreatureAddon[uint] creatureTemplateAddons;     /// `creature_template_addon`, by entry
+    StaticMap!(uint, CreatureAddon) creatureAddons;             /// `creature_addon`, by spawn guid
+    StaticMap!(uint, CreatureAddon) creatureTemplateAddons;     /// `creature_template_addon`, by entry
     uint[3][uint] creatureEquipment;                /// `creature_equip_template`: item entries, by id
     CreatureClassStats[uint] creatureClassStats;    /// by `classStatsKey`
     NpcData npcs;                                   /// gossip, texts, trainers, vendors
@@ -477,7 +480,7 @@ final class WorldData
             data.items[row.entry] = item;
         }
         foreach (row; world.query!itemDetailQuery())
-            if (auto item = row.get!uint(0) in data.items)
+            if (auto item = data.items.edit(row.get!uint(0)))
                 static foreach (i, column; itemDetailColumns)
                     mixin("item.details." ~ column[1]) = row.get!(typeof(mixin("item.details." ~ column[1])))(i + 1);
         foreach (row; world.query!"SELECT lvl, xp_for_next_level FROM player_xp_for_level"())

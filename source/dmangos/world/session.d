@@ -1260,7 +1260,7 @@ unittest
     owned.factionTemplate = nodes[2].client.factionTemplates.lookup(14);
     owned.values.set!UNIT_FIELD_FACTIONTEMPLATE(14u);
     foreach (node; nodes)
-        node.data.creatureTemplates[creatureInnkeeper].detection = 20;
+        node.data.creatureTemplates.edit(creatureInnkeeper).detection = 20;
     nodes[1].map(0).removeObject(innkeeper);
     nodes[1].map(0).replicaCreated(2, cell, innkeeper, encodeState(owned, 0));
     assert(cast(Replica) nodes[1].map(0).findObject(innkeeper) !is null);

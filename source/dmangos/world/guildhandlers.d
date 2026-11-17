@@ -1065,9 +1065,9 @@ unittest
     auto db = newDatabase();
     auto context = newCreationContext(db);
     context.data.items[guildCharter] = context.data.items[itemShirt];
-    context.data.items[guildCharter].entry = guildCharter;
+    context.data.items.edit(guildCharter).entry = guildCharter;
     enum uint guildMaster = 4974;
-    auto master = context.data.creatureTemplates[creatureInnkeeper];
+    auto master = cast() context.data.creatureTemplates[creatureInnkeeper];
     master.entry = guildMaster;
     master.npcFlags = 0x200 | 0x400; // petitioner, tabard designer
     context.data.creatureTemplates[guildMaster] = master;

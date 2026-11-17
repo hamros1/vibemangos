@@ -1142,7 +1142,7 @@ private:
         creature.values.set!OBJECT_FIELD_SCALE_X(sc);
         map.flushObjectChanges(creature);
         const entry = creature.spawn.entry;
-        if (auto t = entry in context.data.creatureTemplates)
+        if (auto t = context.data.creatureTemplates.edit(entry))
             t.scale = sc;
         context.database.updateCreatureScale(entry, sc);
         return true;
@@ -1781,10 +1781,10 @@ unittest
     auto context = newCreationContext(db);
     enum uint blessing = 95900, teach = 95901, sickness = 15007;
     context.data.spells.spells[blessing] = testSpell(blessing, 6, 1, 5);
-    context.data.spells.spells[blessing].casting.applyAuraName[0] = AuraType.modStat;
+    context.data.spells.spells.edit(blessing).casting.applyAuraName[0] = AuraType.modStat;
     context.data.spells.spells[teach] = testSpell(teach, 36, 1, 0);
     context.data.spells.spells[sickness] = testSpell(sickness, 6, 1, -75);
-    context.data.spells.spells[sickness].casting.applyAuraName[0] = AuraType.modStat;
+    context.data.spells.spells.edit(sickness).casting.applyAuraName[0] = AuraType.modStat;
     auto gm = loggedIn(context, db, 7, "Varian", Position(-8949.95f, -132.49f, 83.53f), AccountLevel.administrator);
     auto anduin = loggedIn(context, db, 8, "Anduin", Position(-8948, -132, 83.53f));
     gm.read();
@@ -1849,7 +1849,7 @@ unittest
         assert(context.data.creatureTemplates[creatureInnkeeper].scale == 2.0f);
     }
 
-    anduin.session.inWorld.addAura(makeAura(&context.data.spells.spells[sickness], victim.guid, 1, 600_000, false, [-75, 0, 0]));
+    anduin.session.inWorld.addAura(makeAura((sickness in context.data.spells.spells), victim.guid, 1, 600_000, false, [-75, 0, 0]));
     assert(victim.auras.find(sickness) !is null);
     gm.write(Opcode.CMSG_SET_SELECTION, ClientGuid(victim.guid));
     gm.say(".removesickness");

@@ -495,8 +495,8 @@ unittest
     lockRow[17] = 1;
     context.client.locks = typeof(context.client.locks).parse(buildDbc(lockFormat, [lockRow]), "Lock.dbc");
     context.data.spells.spells[gather] = testSpell(gather, 33, 26, 0);
-    context.data.spells.spells[gather].miscValue[0] = 2; // opens herbalism locks
-    context.data.spells.spells[gather].casting.dmgClass = 0;
+    context.data.spells.spells.edit(gather).miscValue[0] = 2; // opens herbalism locks
+    context.data.spells.spells.edit(gather).casting.dmgClass = 0;
     context.data.loot.gameObject.add(herbLoot, lootRow(itemJerky, 100, 0, 1, 1, 0));
 
     GameObjectTemplate door = {entry: 9001, type: GameObjectType.door, displayId: 1, name: "Door"};
@@ -641,7 +641,7 @@ unittest
     auto context = newCreationContext(db);
     enum uint sting = 95300;
     context.data.spells.spells[sting] = testSpell(sting, 3, 1, 0); // a dummy, at the target
-    context.data.spells.spells[sting].casting.dmgClass = 0;
+    context.data.spells.spells.edit(sting).casting.dmgClass = 0;
     GameObjectTemplate trap = {entry: 9020, type: GameObjectType.trap, displayId: 1, name: "Trap"};
     trap.data[2] = 4;      // diameter: 2 yards around it
     trap.data[3] = sting;

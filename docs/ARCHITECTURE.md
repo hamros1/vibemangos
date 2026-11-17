@@ -169,6 +169,23 @@ Everything is loaded once at start-up, as in CMaNGOS:
 
 Both are immutable after loading and are shared through `WorldContext`.
 
+**Off the scanned heap (docs/DESIGN.md, step 7, `dmangos.frozen`).** A collection marks everything
+reachable, and the static tables were most of it.
+* The largest tables are `StaticMap!(K, V)`: the item and creature templates, game object
+  templates, models, creature addons, and spells and their chains.
+* A `StaticMap` behaves as an associative array while the data loads. `freezeAll(data)` then copies
+  each table into an arena from `malloc`, strings and arrays included, as an open-addressed table. The
+  collector never sees the arena, so only plain data may go in (`isPlainData`), copied deep. Nothing
+  in it may point into the collector's heap.
+* Nothing moves once frozen, so a pointer to a template stays good, as with an associative array.
+* A lookup gives a `const` value when the type has pointers. `edit(key)` changes one in place and
+  registers it with the collector, so what it stores is kept alive (GM commands, tests). Keys added
+  later go into a small associative array beside the table.
+* `freezeAll` goes into the classes that say `enum holdsStaticData = true`. The test data is frozen
+  too, so the tests read tables the way the server does.
+* The collector marks on one thread (`rt_options` in `main.d`). On 32 cores the default, one thread
+  per core, marked the same heap in 57 ms instead of 20.
+
 ## Databases
 
 `WorldDatabase` is an interface with two implementations:

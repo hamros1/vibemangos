@@ -1720,13 +1720,13 @@ unittest
     with (context.data.spells)
     {
         spells[bolt] = testSpell(bolt, 2, 6, 10, 2);           // 10 damage at an enemy, 1.5 s
-        spells[bolt].casting.interruptFlags = 0x01;
+        spells.edit(bolt).casting.interruptFlags = 0x01;
         spells[mend] = testSpell(mend, 10, 1, 20);              // heals oneself 20
         spells[strike] = testSpell(strike, 17, 6, 11);          // next swing: weapon + 11
-        spells[strike].attributes = 0x4;
-        spells[strike].casting.dmgClass = 2;
+        spells.edit(strike).attributes = 0x4;
+        spells.edit(strike).casting.dmgClass = 2;
         spells[home] = testSpell(home, 5, 1, 0);                // home
-        spells[home].casting.implicitTargetB[0] = 9;
+        spells.edit(home).casting.implicitTargetB[0] = 9;
     }
     auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f, 1.97f));
     anduin.read();
@@ -1793,7 +1793,7 @@ unittest
     // An item whose spell goes home.
     anduin.write(Opcode.CMSG_ATTACKSTOP, null);
     me.data.homeBind = HomeBind(0, 12, -9000, -100, 80);
-    auto stone = &context.data.items[itemHearthstone];
+    auto stone = context.data.items.edit(itemHearthstone);
     stone.details.spells[0].id = home;
     stone.details.spells[0].trigger = 0;
     import dmangos.world.defines : nullBag, nullSlot;
@@ -1848,7 +1848,7 @@ unittest
         [[1u, 3000, 0, 3000]]), "SpellDuration.dbc");
     enum uint drain = 95400;
     context.data.spells.spells[drain] = testSpell(drain, 6, 6, 2); // 2 damage a second, channelled for 3 s
-    with (context.data.spells.spells[drain])
+    with (*context.data.spells.spells.edit(drain))
     {
         casting.applyAuraName[0] = AuraType.periodicDamage;
         casting.amplitude[0] = 1000;
@@ -1935,7 +1935,7 @@ unittest
         [[1u, 20_000, 0, 20_000]]), "SpellDuration.dbc");
     enum uint fishing = 95500, bobberEntry = 9030;
     context.data.spells.spells[fishing] = testSpell(fishing, 50, 1, 0);
-    with (context.data.spells.spells[fishing])
+    with (*context.data.spells.spells.edit(fishing))
     {
         miscValue[0] = bobberEntry;
         casting.durationIndex = 1;
@@ -1977,11 +1977,11 @@ unittest
     }
 
     // No fishing pole worn: refused (`SPELL_FAILED_EQUIPPED_ITEM_CLASS`, with the class and subclasses wanted).
-    context.data.spells.spells[fishing].equippedItemClass = 2;           // a weapon
-    context.data.spells.spells[fishing].equippedItemSubClassMask = 1 << 20; // a fishing pole
+    context.data.spells.spells.edit(fishing).equippedItemClass = 2;           // a weapon
+    context.data.spells.spells.edit(fishing).equippedItemSubClassMask = 1 << 20; // a fishing pole
     cast_();
     assert(bobberNow() is null && opcodesOf(anduin.read()).canFind(Opcode.SMSG_CAST_RESULT), "no pole");
-    context.data.spells.spells[fishing].equippedItemClass = -1;
+    context.data.spells.spells.edit(fishing).equippedItemClass = -1;
 
     cast_();
     auto bob = bobberNow();
@@ -2087,14 +2087,14 @@ unittest
     }
     enum uint blast = 95600, bolt = 95601;
     context.data.spells.spells[blast] = testSpell(blast, 2, ImplicitTarget.casterSource, 20);
-    with (context.data.spells.spells[blast].casting)
+    with (context.data.spells.spells.edit(blast).casting)
     {
         implicitTargetB[0] = ImplicitTarget.enemiesAroundSource;
         radiusIndex[0] = 1;
         dmgClass = 0;
     }
     context.data.spells.spells[bolt] = testSpell(bolt, 2, ImplicitTarget.enemy, 20);
-    with (context.data.spells.spells[bolt].casting)
+    with (context.data.spells.spells.edit(bolt).casting)
     {
         chainTarget[0] = 2;
         dmgClass = 0;
@@ -2119,13 +2119,13 @@ unittest
 
         enum uint power = 95603, fire = 95604;
         context.data.spells.spells[power] = testSpell(power, 6, ImplicitTarget.caster, 35);
-        context.data.spells.spells[power].casting.applyAuraName[0] = AuraType.modDamageDone;
-        context.data.spells.spells[power].miscValue[0] = 1 << 2; // fire
+        context.data.spells.spells.edit(power).casting.applyAuraName[0] = AuraType.modDamageDone;
+        context.data.spells.spells.edit(power).miscValue[0] = 1 << 2; // fire
         context.data.spells.spells[fire] = testSpell(fire, 2, ImplicitTarget.enemy, 20);
-        context.data.spells.spells[fire].casting.school = 2;
-        context.data.spells.spells[fire].casting.dmgClass = 0;
-        context.data.spells.spells[fire].attributesEx2 |= 0x20000000; // no crit
-        auto aura = makeAura(&context.data.spells.spells[power], me.guid, 1, -1, true, [35, 0, 0]);
+        context.data.spells.spells.edit(fire).casting.school = 2;
+        context.data.spells.spells.edit(fire).casting.dmgClass = 0;
+        context.data.spells.spells.edit(fire).attributesEx2 |= 0x20000000; // no crit
+        auto aura = makeAura((power in context.data.spells.spells), me.guid, 1, -1, true, [35, 0, 0]);
         aura.passive = true;
         anduin.session.inWorld.addAura(aura);
         keeper.values.set!UNIT_FIELD_LEVEL(me.values.get!UNIT_FIELD_LEVEL); // no resist from levels
@@ -2136,10 +2136,10 @@ unittest
         // Healing power: +35 healing done on an instant heal of 20: 35 more.
         enum uint healing = 95605, mend = 95606;
         context.data.spells.spells[healing] = testSpell(healing, 6, ImplicitTarget.caster, 35);
-        context.data.spells.spells[healing].casting.applyAuraName[0] = AuraType.modHealingDone;
+        context.data.spells.spells.edit(healing).casting.applyAuraName[0] = AuraType.modHealingDone;
         context.data.spells.spells[mend] = testSpell(mend, 10, ImplicitTarget.caster, 20);
-        context.data.spells.spells[mend].attributesEx2 |= 0x20000000; // no crit
-        auto healAura = makeAura(&context.data.spells.spells[healing], me.guid, 1, -1, true, [35, 0, 0]);
+        context.data.spells.spells.edit(mend).attributesEx2 |= 0x20000000; // no crit
+        auto healAura = makeAura((healing in context.data.spells.spells), me.guid, 1, -1, true, [35, 0, 0]);
         healAura.passive = true;
         anduin.session.inWorld.addAura(healAura);
         me.values.set!UNIT_FIELD_MAXHEALTH(500u);
@@ -2153,8 +2153,8 @@ unittest
 
     enum uint missile = 95602;
     context.data.spells.spells[missile] = testSpell(missile, 2, ImplicitTarget.enemy, 20);
-    context.data.spells.spells[missile].casting.speed = 10;
-    context.data.spells.spells[missile].casting.dmgClass = 0;
+    context.data.spells.spells.edit(missile).casting.speed = 10;
+    context.data.spells.spells.edit(missile).casting.dmgClass = 0;
     const flying = keeper.values.get!UNIT_FIELD_HEALTH;
     anduin.session.inWorld.castTriggeredAt(missile, keeper.guid);
     assert(keeper.values.get!UNIT_FIELD_HEALTH == flying, "still in flight");
@@ -2169,12 +2169,12 @@ unittest
 
         enum uint smite = 95607;
         context.data.spells.spells[smite] = testSpell(smite, 2, ImplicitTarget.enemy, 25);
-        context.data.spells.spells[smite].casting.school = 1; // holy: not resisted
-        context.data.spells.spells[smite].casting.dmgClass = 0;
-        context.data.spells.spells[smite].casting.procChance = 100;
-        context.data.spells.spells[smite].attributesEx2 |= 0x20000000; // no crit
-        context.data.items[itemSword].details.spells[0].id = smite;
-        context.data.items[itemSword].details.spells[0].trigger = 2; // chance on hit
+        context.data.spells.spells.edit(smite).casting.school = 1; // holy: not resisted
+        context.data.spells.spells.edit(smite).casting.dmgClass = 0;
+        context.data.spells.spells.edit(smite).casting.procChance = 100;
+        context.data.spells.spells.edit(smite).attributesEx2 |= 0x20000000; // no crit
+        context.data.items.edit(itemSword).details.spells[0].id = smite;
+        context.data.items.edit(itemSword).details.spells[0].trigger = 2; // chance on hit
         anduin.session.inWorld.lootStore(itemSword, 1, 0, false);
         anduin.read();
         ubyte slot;
@@ -2238,8 +2238,8 @@ unittest
     keeper.values.set!UNIT_FIELD_HEALTH(500u);
     enum uint consecrate = 95700;
     context.data.spells.spells[consecrate] = testSpell(consecrate, 27, ImplicitTarget.caster, 10);
-    context.data.spells.spells[consecrate].attributesEx2 |= 0x20000000; // SPELL_ATTR_EX2_CANT_CRIT: even ticks
-    with (context.data.spells.spells[consecrate].casting)
+    context.data.spells.spells.edit(consecrate).attributesEx2 |= 0x20000000; // SPELL_ATTR_EX2_CANT_CRIT: even ticks
+    with (context.data.spells.spells.edit(consecrate).casting)
     {
         radiusIndex[0] = 1;
         durationIndex = 1;
@@ -2290,7 +2290,7 @@ unittest
     shout.implicitTargetA[0] = 1;
     shout.recoveryTime = 60_000;
     context.data.spells.spells[29100] = shout;
-    const spell = &context.data.spells.spells[29100];
+    const spell = (29100 in context.data.spells.spells);
 
     auto hero = loggedIn(context, db, 7, "Varian", Position(-8949.95f, -132.49f, 83.53f), AccountLevel.administrator);
     hero.read();
@@ -2360,13 +2360,13 @@ unittest
     mage.read();
     auto me = cast(Player) mage.session.character;
     bool isNew;
-    me.auras.apply(makeAura(&context.data.spells.spells[29103], me.guid, 10, -1, true, [-50, 0, 0]), me.values, isNew);
+    me.auras.apply(makeAura((29103 in context.data.spells.spells), me.guid, 10, -1, true, [-50, 0, 0]), me.values, isNew);
     me.values.set!UNIT_FIELD_POWER1(1000u);
-    assert(mage.session.inWorld.castSpell(&context.data.spells.spells[29101], SpellTargets(TargetFlags.self, 0), false, 0)
+    assert(mage.session.inWorld.castSpell((29101 in context.data.spells.spells), SpellTargets(TargetFlags.self, 0), false, 0)
         == SpellCastResult.ok);
     assert(me.values.get!UNIT_FIELD_POWER1 == 950, "half the cost");
     now += 2.seconds;
-    assert(mage.session.inWorld.castSpell(&context.data.spells.spells[29102], SpellTargets(TargetFlags.self, 0), false, 0)
+    assert(mage.session.inWorld.castSpell((29102 in context.data.spells.spells), SpellTargets(TargetFlags.self, 0), false, 0)
         == SpellCastResult.ok);
     assert(me.values.get!UNIT_FIELD_POWER1 == 850, "not of its mask: the whole cost");
 }

@@ -2300,8 +2300,8 @@ unittest
 
     // A bag with something in it cannot be taken off; an item limit is kept.
     assert(inventory.canUnequip(quiver.pos, false) == InventoryResult.canOnlyDoWithEmptyBags);
-    world.items[itemHearthstone].maxCount = 1;
-    world.items[itemHearthstone].stackable = 1;
+    world.items.edit(itemHearthstone).maxCount = 1;
+    world.items.edit(itemHearthstone).stackable = 1;
     assert(inventory.canTakeMoreSimilar(itemHearthstone, 1, null) == InventoryResult.ok);
     assert(inventory.canTakeMoreSimilar(itemHearthstone, 2, null) == InventoryResult.cantCarryMoreOfThis);
 }

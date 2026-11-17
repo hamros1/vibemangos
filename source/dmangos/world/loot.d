@@ -16,6 +16,7 @@
  */
 module dmangos.world.loot;
 
+import dmangos.frozen : StaticMap;
 import std.random : Random, uniform, uniform01;
 import dmangos.bytes : ByteWriter;
 import dmangos.world.opcodes : Opcode;
@@ -363,7 +364,7 @@ final class Loot
      * an owner may have an item (conditions; quest drops never), `meets` whether the owner or its
      * group meets a condition while rolling.
      */
-    void fill(const LootTemplate template_, const LootStores stores, const ItemTemplate[uint] protos,
+    void fill(const LootTemplate template_, const LootStores stores, const ref StaticMap!(uint, ItemTemplate) protos,
         ref Random random, bool delegate(uint condition) meets, bool delegate(ulong player, const LootItem) allowedFor)
     {
         process(template_, stores, protos, random, meets);
@@ -391,7 +392,7 @@ final class Loot
     }
 
     /// `LootTemplate::Process`
-    private void process(const LootTemplate template_, const LootStores stores, const ItemTemplate[uint] protos,
+    private void process(const LootTemplate template_, const LootStores stores, const ref StaticMap!(uint, ItemTemplate) protos,
         ref Random random, bool delegate(uint) meets)
     {
         foreach (ref entry; template_.entries)
@@ -464,7 +465,7 @@ final class Loot
     }
 
     /// `Loot::AddItem`: one more item, `mincount` to `maxcount` of it.
-    private void add(const ref LootStoreItem entry, const ItemTemplate[uint] protos, ref Random random)
+    private void add(const ref LootStoreItem entry, const ref StaticMap!(uint, ItemTemplate) protos, ref Random random)
     {
         if (items.length >= maxLootItems)
             return;
@@ -1116,7 +1117,7 @@ unittest
     stores.creature.add(1, lootRow(0, 100, 0, -7, 2, 0));     // reference 7, twice
     stores.reference.add(7, lootRow(200, 100, 0, 3, 3, 0));   // three of it
     stores.creature.add(1, lootRow(300, -100, 0, 1, 1, 0));   // a quest drop
-    ItemTemplate[uint] protos;
+    StaticMap!(uint, ItemTemplate) protos;
     foreach (id; [100u, 101, 102, 103, 200, 300])
     {
         ItemTemplate t;

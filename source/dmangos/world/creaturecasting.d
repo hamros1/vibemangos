@@ -951,16 +951,16 @@ unittest
     with (context.data.spells)
     {
         spells[bolt] = testSpell(bolt, 2, 6, 7, 2);         // 7 fire damage, 1.5 s
-        spells[bolt].casting.school = 2;
-        spells[bolt].casting.dmgClass = 0;                  // never resisted, for the test
-        spells[bolt].casting.manaCost = 50;
+        spells.edit(bolt).casting.school = 2;
+        spells.edit(bolt).casting.dmgClass = 0;                  // never resisted, for the test
+        spells.edit(bolt).casting.manaCost = 50;
         spells[mend] = testSpell(mend, 10, 1, 200);         // heals itself 200
         spells[rot] = testSpell(rot, 6, 6, 3);              // 3 shadow damage every second for 6 s
-        spells[rot].casting.applyAuraName[0] = AuraType.periodicDamage;
-        spells[rot].casting.amplitude[0] = 1000;
-        spells[rot].casting.durationIndex = 1;
-        spells[rot].casting.school = 5;
-        spells[rot].casting.dmgClass = 0;
+        spells.edit(rot).casting.applyAuraName[0] = AuraType.periodicDamage;
+        spells.edit(rot).casting.amplitude[0] = 1000;
+        spells.edit(rot).casting.durationIndex = 1;
+        spells.edit(rot).casting.school = 5;
+        spells.edit(rot).casting.dmgClass = 0;
     }
     context.data.npcs.broadcastTexts[yell] = BroadcastText("You will die!", "", 0, 1);
 
@@ -1050,7 +1050,7 @@ unittest
     assert(keeper.ai.castSpell(context.data.spells.spell(bolt), me.guid, 0) && keeper.ai.castingNow);
     enum uint pummel = 95011;
     context.data.spells.spells[pummel] = testSpell(pummel, 68, 6, 0);
-    context.data.spells.spells[pummel].casting.dmgClass = 0;
+    context.data.spells.spells.edit(pummel).casting.dmgClass = 0;
     (cast(Player) me).spells ~= pummel;
     ByteWriter w;
     w.put(pummel);

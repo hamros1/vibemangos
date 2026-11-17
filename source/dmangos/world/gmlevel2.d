@@ -869,7 +869,7 @@ unittest
     auto now = MonoTime.currTime;
     context.clock = () => now;
     context.data.spells.spells[5] = testSpell(5, 1, 25, 0); // Death Touch
-    context.data.spells.spells[5].casting.dmgClass = 0;
+    context.data.spells.spells.edit(5).casting.dmgClass = 0;
     auto gm = loggedIn(context, db, 7, "Varian", Position(-8949.95f, -132.49f, 83.53f), AccountLevel.gameMaster);
     auto anduin = loggedIn(context, db, 8, "Anduin", Position(-8948, -132, 83.53f));
     gm.read();

@@ -283,7 +283,7 @@ unittest
         [[1u, bits(0), bits(30), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]), "SpellRange.dbc");
     enum uint duelSpell = 7266;
     context.data.spells.spells[duelSpell] = testSpell(duelSpell, 83, 25, 0);
-    context.data.spells.spells[duelSpell].miscValue[0] = duelFlagEntry;
+    context.data.spells.spells.edit(duelSpell).miscValue[0] = duelFlagEntry;
 
     // Facing each other, two yards apart.
     auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f, 0));

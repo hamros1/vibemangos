@@ -37,6 +37,13 @@ Usage:
   worldserver [--config FILE]
 ";
 
+/*
+ * The collector marks on one thread (docs/DESIGN.md, step 7): with one thread per core (the default),
+ * marking the same heap took 57 ms on 32 cores against 20 on one; the threads mostly wait on each other.
+ * `--DRT-gcopt=parallel:N` on the command line still overrides it.
+ */
+extern (C) __gshared string[] rt_options = ["gcopt=parallel:0"];
+
 int main(string[] args)
 {
     string configPath = "worldserver.json";
@@ -94,6 +101,13 @@ private int run(WorldConfig config, string configPath)
         spawnSeed = (ulong(crc[0]) | crc[1] << 8 | crc[2] << 16 | ulong(crc[3]) << 24) | 1;
     }
     auto data = WorldData.load(world, client, spawnSeed);
+    {
+        // Out of the collector's heap (docs/DESIGN.md, step 7): it no longer marks them at every collection.
+        import dmangos.frozen : arenaPlaced, freezeAll;
+
+        freezeAll(data);
+        info!"static data: %s MiB moved out of the collector's heap"(arenaPlaced >> 20);
+    }
     // Nodes of a cluster started in one directory keep logs of their own.
     if (config.cluster.enabled && config.writeLog == WorldConfig.init.writeLog)
         config.writeLog = "writes-" ~ to!string(config.cluster.nodeId) ~ ".log";

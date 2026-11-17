@@ -38,36 +38,13 @@ import std.traits : FunctionAttribute, functionAttributes, hasUDA, isArray, isDy
     ParameterStorageClassTuple, ReturnType, Unqual;
 import std.typecons : AutoImplement;
 
+import dmangos.frozen : isPlainData;
 import dmangos.log : error, info, warning;
 import dmangos.world.database : Replaces, WorldDatabase;
 
 // ---------------------------------------------------------------------------------------------------
 // The arguments as bytes
 // ---------------------------------------------------------------------------------------------------
-
-/// Whether a value of `T` can be queued as bytes: numbers, characters, enums, strings, arrays and
-/// structs of them (no pointers, classes or delegates, whose meaning ends with the call).
-template isPlainData(T)
-{
-    alias U = Unqual!T;
-    static if (is(U == enum))
-        enum isPlainData = isPlainData!(OriginalType!U);
-    else static if (isIntegral!U || isFloatingPoint!U || isSomeChar!U || is(U == bool))
-        enum isPlainData = true;
-    else static if (isStaticArray!U || isDynamicArray!U)
-        enum isPlainData = isPlainData!(typeof(U.init[0]));
-    else static if (is(U == struct))
-    {
-        enum isPlainData = () {
-            bool all = true;
-            static foreach (F; typeof(U.tupleof))
-                all = all && isPlainData!F;
-            return all;
-        }() && !__traits(isNested, U);
-    }
-    else
-        enum isPlainData = false;
-}
 
 /// The layout of `T` in words: two builds of the server agree on a write's bytes if they agree on this.
 template layout(T)

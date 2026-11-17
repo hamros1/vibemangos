@@ -1277,9 +1277,9 @@ unittest
 
     auto client = testClientData();
     auto world = testWorldData(client);
-    world.items[itemSword].details.delay = 2300;
-    world.items[itemSword].details.damage[0].min = 2;
-    world.items[itemSword].details.damage[0].max = 5;
+    world.items.edit(itemSword).details.delay = 2300;
+    world.items.edit(itemSword).details.damage[0].min = 2;
+    world.items.edit(itemSword).details.damage[0].max = 5;
     world.xpForNextLevel = [0, 400];
 
     CharacterData c;

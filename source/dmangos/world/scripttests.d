@@ -31,7 +31,7 @@ unittest
     auto db = newDatabase();
     auto context = newCreationContext(db);
     // The test world's innkeeper plays Mr. Smite; his two weapons are items the test world has.
-    auto smiteTemplate = context.data.creatureTemplates[creatureInnkeeper];
+    auto smiteTemplate = cast() context.data.creatureTemplates[creatureInnkeeper];
     smiteTemplate.entry = mrSmite;
     context.data.creatureTemplates[mrSmite] = smiteTemplate;
     context.data.creatureScriptNames[mrSmite] = "boss_mr_smite";
@@ -115,7 +115,7 @@ unittest
         context.data.gameObjectTemplates[factoryDoor] = door;
         context.data.gameObjectSpawns ~= GameObjectSpawn(90001, factoryDoor, mapDeadmines, doorAt.x, doorAt.y, doorAt.z);
         context.data.gameObjectCells[mapDeadmines][cellKeyAt(doorAt.x, doorAt.y)] ~= context.data.gameObjectSpawns.length - 1;
-        auto guard = context.data.creatureTemplates[creatureInnkeeper];
+        auto guard = cast() context.data.creatureTemplates[creatureInnkeeper];
         guard.entry = rhahkZor;
         context.data.creatureTemplates[rhahkZor] = guard;
         context.data.creatureSpawns ~= CreatureSpawn(90002, rhahkZor, mapDeadmines, guardAt.x, guardAt.y, guardAt.z);
@@ -239,7 +239,7 @@ unittest
         context.data.gameObjectCells[mapDeadmines][cellKeyAt(at.x, at.y)] ~= context.data.gameObjectSpawns.length - 1;
     }
     context.data.gameObjectScriptNames[cannonEntry] = "go_defias_cannon";
-    auto smite = context.data.creatureTemplates[creatureInnkeeper];
+    auto smite = cast() context.data.creatureTemplates[creatureInnkeeper];
     smite.entry = mrSmite;
     context.data.creatureTemplates[mrSmite] = smite;
     context.data.creatureScriptNames[mrSmite] = "boss_mr_smite";
@@ -287,7 +287,7 @@ unittest
     context.clock = () => now;
     enum uint traitorEntry = 467, quest = 155;
     const at = Position(-8949.95f, -132.49f, 83.53f);
-    auto traitor = context.data.creatureTemplates[creatureInnkeeper];
+    auto traitor = cast() context.data.creatureTemplates[creatureInnkeeper];
     traitor.entry = traitorEntry;
     traitor.npcFlags = 2; // a quest giver
     context.data.creatureTemplates[traitorEntry] = traitor;
@@ -348,12 +348,12 @@ unittest
     auto v = &(cast(Player) warlock.session.character).values;
     v.set!UNIT_FIELD_POWER1(0u);
     const health = v.get!UNIT_FIELD_HEALTH;
-    warlock.session.inWorld.castSpell(&context.data.spells.spells[1454], SpellTargets(TargetFlags.self, 0), true, 0);
+    warlock.session.inWorld.castSpell((1454 in context.data.spells.spells), SpellTargets(TargetFlags.self, 0), true, 0);
     const paid = health - v.get!UNIT_FIELD_HEALTH;
     assert(paid >= 20 && v.get!UNIT_FIELD_POWER1 == paid, "health into as much mana");
 
     v.set!UNIT_FIELD_HEALTH(5u);
-    warlock.session.inWorld.castSpell(&context.data.spells.spells[1454], SpellTargets(TargetFlags.self, 0), true, 0);
+    warlock.session.inWorld.castSpell((1454 in context.data.spells.spells), SpellTargets(TargetFlags.self, 0), true, 0);
     assert(v.get!UNIT_FIELD_HEALTH == 5, "not to death");
 }
 
@@ -366,7 +366,7 @@ unittest
 
     auto db = newDatabase();
     auto context = newCreationContext(db);
-    auto mate = context.data.creatureTemplates[creatureInnkeeper];
+    auto mate = cast() context.data.creatureTemplates[creatureInnkeeper];
     mate.entry = ScentOfLarkorwi.larkorwiMate;
     context.data.creatureTemplates[mate.entry] = mate;
     context.data.areaTriggerScriptNames[triggerInn] = "at_scent_larkorwi";
@@ -404,7 +404,7 @@ unittest
     auto db = newDatabase();
     auto context = newCreationContext(db);
     enum uint katrana = 1749;
-    auto lady = context.data.creatureTemplates[creatureInnkeeper];
+    auto lady = cast() context.data.creatureTemplates[creatureInnkeeper];
     lady.entry = katrana;
     lady.npcFlags = 1 | 2; // gossip, quest giver
     context.data.creatureTemplates[katrana] = lady;
@@ -512,7 +512,7 @@ unittest
     victim.values.set!UNIT_FIELD_MAXHEALTH(10_000u);
     victim.values.set!UNIT_FIELD_HEALTH(10_000u);
 
-    auto aura = makeAura(&context.data.spells.spells[980], warlock.session.character.guid, 10, 24_000, false, [10, 0, 0]);
+    auto aura = makeAura((980 in context.data.spells.spells), warlock.session.character.guid, 10, 24_000, false, [10, 0, 0]);
     uint[] dealt;
     foreach (tick; 1 .. 13)
     {
@@ -547,7 +547,7 @@ unittest
     boss.ai.damageTaken(hero.session.inWorld.unit, 50);
     const guid = hero.session.character.guid;
     assert(boss.ai.threatOf(guid) > 0);
-    boss.ai.spellEffectScript(&context.data.spells.spells[9204], 0, guid, 0);
+    boss.ai.spellEffectScript((9204 in context.data.spells.spells), 0, guid, 0);
     assert(boss.ai.threatOf(guid) == 0, "its hate gone");
 }
 
@@ -577,7 +577,7 @@ unittest
     foreach (w; [Who(adamant, prisonerAt, 90071, 1), Who(rethilgore, guardAt, 90072, 0)])
     {
         const entry = w.entry, at = w.at, guid = w.guid, flags = w.flags;
-        auto t = context.data.creatureTemplates[creatureInnkeeper];
+        auto t = cast() context.data.creatureTemplates[creatureInnkeeper];
         t.entry = entry;
         t.npcFlags = flags;
         context.data.creatureTemplates[entry] = t;
@@ -644,7 +644,7 @@ unittest
     foreach (w; [Who(disciple, start.x, 0, 1), Who(naralex, start.x + 36, 0, 0), Who(cobrahn, start.x - 10, 0, 0),
             Who(pythas, start.x - 11, 0, 0), Who(anacondra, start.x - 12, 0, 0), Who(serpentis, start.x - 13, 0, 0)])
     {
-        auto t = context.data.creatureTemplates[creatureInnkeeper];
+        auto t = cast() context.data.creatureTemplates[creatureInnkeeper];
         t.entry = w.entry;
         t.npcFlags = w.flags;
         context.data.creatureTemplates[w.entry] = t;
@@ -653,7 +653,7 @@ unittest
     }
     foreach (entry; [ravager, viper, moccasin, ectoplasm, mutanus])
     {
-        auto t = context.data.creatureTemplates[creatureInnkeeper];
+        auto t = cast() context.data.creatureTemplates[creatureInnkeeper];
         t.entry = entry;
         context.data.creatureTemplates[entry] = t;
     }

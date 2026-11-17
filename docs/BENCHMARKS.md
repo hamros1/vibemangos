@@ -307,3 +307,29 @@ With the default interval (900 s) the saves are spread too thinly to show. The w
 queue was empty at every metrics line, nothing failed, and the cluster regression (250 bots on
 three nodes) passed.
 
+## Step 7 of docs/DESIGN.md: static data off the scanned heap (2026-11-17)
+
+**What a collection cost, measured first.** Timing a full collection right after start-up, before
+any player:
+* 57 ms to mark 88 MiB of static data, almost all of it marking (1,249 of 1,257 ms over 25
+  collections).
+* With marking on one thread, the same collection took 20 ms. The default of one thread per core
+  (32 here) is slower: the threads mostly wait on each other.
+* Dropping the tables one at a time showed what each cost to mark:
+  * items 4.1 ms, spells 4.0, NPC data 1.6, creature templates 1.5;
+  * quests 1.1, the spawn cells 1.0, the spawns 0.85, models 0.75.
+  * The DBC files cost 1.3 ms in all.
+
+**Then.** Marking is on one thread, and the largest tables are frozen into the arena
+(`dmangos.frozen`; 26 MiB). Against the build of step 6, `--seed 7`, 500 bots:
+
+| | Crowd: before | Crowd: after | Spread: before | Spread: after |
+|---|---|---|---|---|
+| Collection pause | 55.6 ms | 16.4 ms | 71.6 ms | 37.7 ms |
+| Longest pause since start | 100.8 ms | 27.9 ms | 103.1 ms | 37.7 ms |
+| Event loop max | 60.1 ms | 19.8 ms | 74.2 ms | 42.9 ms |
+
+The spread scenario has 28,000 creatures and game objects loaded. What it still pauses for is mostly
+them, the live world, not static data. Next would be the NPC and quest data and the spawn cells,
+then the creatures themselves.
+

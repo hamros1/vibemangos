@@ -484,6 +484,15 @@ Decisions taken on 2026-11-17:
      every character saving every 5 s (docs/BENCHMARKS.md).
 7. **Static data off the scanned heap.**
    * Measure: GC pause length.
+   * Done (2026-11-17):
+     * `dmangos.frozen`: `StaticMap` tables, frozen into a `malloc` arena after loading. They hold
+       items, creature and game object templates, models, addons, spells and spell chains.
+     * Marking runs on one thread.
+   * Results: the pause went from 55.6 to 16.4 ms in the crowd and from 71.6 to 37.7 ms in the
+     spread (docs/BENCHMARKS.md).
+   * Left:
+     * NPC data, quests and the spawn cells, about 4 ms of marking.
+     * The live world's creatures.
 
 Features resume after step 3. Mmaps fits anywhere, because it touches movement only through a few
 queries. PvP, the honor system and battlegrounds come after step 2 at the earliest, so they are

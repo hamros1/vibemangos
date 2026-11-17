@@ -2951,7 +2951,7 @@ unittest
     context.data.creatureTemplates[2046] = *vendor;
     auto spawn = CreatureSpawn(80339, 2046, 0, -9464, 88, 58, 0);
     CreatureParts parts;
-    auto actual = new Creature(spawn, &context.data.creatureTemplates[2046], 1, 10, parts, testClientData());
+    auto actual = new Creature(spawn, (2046 in context.data.creatureTemplates), 1, 10, parts, testClientData());
 
     auto replica = new Replica(actual.guid, 2, encodeState(actual, 0));
     auto npc = context.npcFor(replica);

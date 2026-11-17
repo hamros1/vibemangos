@@ -676,7 +676,7 @@ version (unittest)
         context.data.loot = LootStores(new LootStore("creature_loot_template"), new LootStore("reference_loot_template"),
             new LootStore("gameobject_loot_template"), new LootStore("item_loot_template"));
         context.data.loot.creature.add(99, lootRow(itemJerky, 100, 0, 1, 1, 0));
-        auto t = &context.data.creatureTemplates[creatureInnkeeper];
+        auto t = context.data.creatureTemplates.edit(creatureInnkeeper);
         t.lootId = 99;
         t.minLootGold = t.maxLootGold = 10;
         auto victim = cast(Creature) context.map(0).findObject(makeGuid(HighGuid.unit, creatureInnkeeper, innkeeperSpawn));

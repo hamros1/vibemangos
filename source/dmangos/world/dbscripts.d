@@ -1076,15 +1076,15 @@ unittest
         context.data.quests.quests[rite] = r;
         anduin.session.inWorld.addQuest(context.data.quests.quests[rite]);
         context.data.spells.spells[ritual] = testSpell(ritual, 3, 1, 0);
-        context.data.spells.spells[ritual].casting.dmgClass = 0;
+        context.data.spells.spells.edit(ritual).casting.dmgClass = 0;
         context.data.dbScripts.add(DbScriptType.spell, DbScriptStep(ritual, 0, 0, ScriptCommand.questExplored, rite));
         anduin.session.inWorld.castTriggeredAt(ritual, me.guid);
         context.updateScripts(0);
         assert(me.questStatus[rite].status == QuestState.complete, "the spell's script");
 
         context.data.spells.spells[call] = testSpell(call, 41, 1, 0);
-        context.data.spells.spells[call].miscValue[0] = creatureTrainer;
-        context.data.spells.spells[call].casting.dmgClass = 0;
+        context.data.spells.spells.edit(call).miscValue[0] = creatureTrainer;
+        context.data.spells.spells.edit(call).casting.dmgClass = 0;
         anduin.session.inWorld.castTriggeredAt(call, me.guid);
         bool found;
         foreach (near; map.creaturesNear(me.position, 5))

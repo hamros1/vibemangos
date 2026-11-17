@@ -496,23 +496,23 @@ unittest
     with (context.data.spells)
     {
         spells[wits] = testSpell(wits, 6, 1, 2);                    // +2 intellect, 10 s
-        spells[wits].casting.applyAuraName[0] = AuraType.modStat;
-        spells[wits].miscValue[0] = Stat.intellect;
-        spells[wits].casting.durationIndex = 1;
+        spells.edit(wits).casting.applyAuraName[0] = AuraType.modStat;
+        spells.edit(wits).miscValue[0] = Stat.intellect;
+        spells.edit(wits).casting.durationIndex = 1;
         spells[meal] = testSpell(meal, 6, 1, 16);                   // 16 health every 5 s, sitting
-        spells[meal].casting.applyAuraName[0] = AuraType.modRegen;
-        spells[meal].casting.durationIndex = 3;
-        spells[meal].casting.auraInterruptFlags = 0x00040000;
-        spells[meal].attributes = 0x08000000;                       // castable while sitting
+        spells.edit(meal).casting.applyAuraName[0] = AuraType.modRegen;
+        spells.edit(meal).casting.durationIndex = 3;
+        spells.edit(meal).casting.auraInterruptFlags = 0x00040000;
+        spells.edit(meal).attributes = 0x08000000;                       // castable while sitting
         spells[gash] = testSpell(gash, 6, 6, 5);                    // 5 damage every 3 s for 9 s
-        spells[gash].casting.applyAuraName[0] = AuraType.periodicDamage;
-        spells[gash].casting.amplitude[0] = 3000;
-        spells[gash].casting.durationIndex = 2;
-        spells[gash].casting.school = 1;
-        spells[gash].casting.dmgClass = 0; // no hit roll: the test must not depend on a 1% miss
+        spells.edit(gash).casting.applyAuraName[0] = AuraType.periodicDamage;
+        spells.edit(gash).casting.amplitude[0] = 3000;
+        spells.edit(gash).casting.durationIndex = 2;
+        spells.edit(gash).casting.school = 1;
+        spells.edit(gash).casting.dmgClass = 0; // no hit roll: the test must not depend on a 1% miss
         spells[haste] = testSpell(haste, 6, 1, 50);                 // 50% faster
-        spells[haste].casting.applyAuraName[0] = AuraType.modIncreaseSpeed;
-        spells[haste].casting.durationIndex = 1;
+        spells.edit(haste).casting.applyAuraName[0] = AuraType.modIncreaseSpeed;
+        spells.edit(haste).casting.durationIndex = 1;
     }
     auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f, 1.97f));
     anduin.read();
@@ -581,11 +581,11 @@ unittest
     {
         enum uint devotion = 91005;
         context.data.spells.spells[devotion] = testSpell(devotion, 6, 1, 30);
-        context.data.spells.spells[devotion].casting.applyAuraName[0] = AuraType.modDamageDone;
-        context.data.spells.spells[devotion].miscValue[0] = 1 << 1; // holy
+        context.data.spells.spells.edit(devotion).casting.applyAuraName[0] = AuraType.modDamageDone;
+        context.data.spells.spells.edit(devotion).miscValue[0] = 1 << 1; // holy
         import dmangos.world.auras : makeAura;
 
-        auto bonus = makeAura(&context.data.spells.spells[devotion], me.guid, 60, -1, true, [30, 0, 0]);
+        auto bonus = makeAura((devotion in context.data.spells.spells), me.guid, 60, -1, true, [30, 0, 0]);
         bonus.passive = true;
         anduin.session.inWorld.addAura(bonus);
         now += 2.seconds;
@@ -627,8 +627,8 @@ unittest
     auto context = newCreationContext(db);
     enum uint wits = 91001;
     context.data.spells.spells[wits] = testSpell(wits, 6, 1, 2);
-    context.data.spells.spells[wits].casting.applyAuraName[0] = AuraType.modStat;
-    context.data.spells.spells[wits].miscValue[0] = 3;
+    context.data.spells.spells.edit(wits).casting.applyAuraName[0] = AuraType.modStat;
+    context.data.spells.spells.edit(wits).miscValue[0] = 3;
     db.auraRows[7] = [AuraRecord(7, wits, 1, [2, 0, 0], [0, 0, 0], 60_000, 42_000, 1)];
     auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f, 1.97f));
     anduin.read();

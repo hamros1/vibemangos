@@ -8,6 +8,7 @@
  */
 module dmangos.world.spells;
 
+import dmangos.frozen : StaticMap;
 import std.algorithm.searching : canFind;
 import std.algorithm.sorting : sort;
 
@@ -241,8 +242,10 @@ struct SpellLearnSkillNode
 /// See the module documentation.
 final class SpellData
 {
-    SpellInfo[uint] spells;
-    SpellChainNode[uint] chains;
+    enum holdsStaticData = true; // `dmangos.frozen.freezeAll` goes into it
+
+    StaticMap!(uint, SpellInfo) spells;
+    StaticMap!(uint, SpellChainNode) chains;
     private uint[][uint] chainNext;                   // prev/req -> spells that follow it
     private SpellLearnSpellNode[][uint] learnSpells;  // spell -> spells learned with it
     private SpellLearnSkillNode[uint] learnSkills;    // spell -> skill it teaches
@@ -307,7 +310,7 @@ final class SpellData
             ~ "FROM spell_template")())
             data.spells[row.id] = row.toInfo();
         foreach (row; world.queryAs!(SpellCastRow, spellCastQuery)())
-            if (auto spell = row.id in data.spells)
+            if (auto spell = data.spells.edit(row.id))
                 spell.casting = row.toInfo();
 
         SpellChainRow[] chainRows = world.queryAs!(SpellChainRow,
@@ -332,9 +335,9 @@ private:
     void buildLearnSkills()
     {
         learnSkills = null;
-        foreach (id; ascending(spells.keys))
+        foreach (id; ascending(spells.keys.dup))
         {
-            const entry = &spells[id];
+            const entry = (id in spells);
             foreach (i; 0 .. 3)
             {
                 if (entry.effect[i] != SpellEffect.skill)
@@ -353,7 +356,7 @@ private:
     /// `LoadSpellChains`: talent ranks, then SkillLineAbility forward links, then `spell_chain`.
     void buildChains(const ClientData client, const(SpellChainRow)[] rows)
     {
-        chains = null;
+        chains.clear();
         chainNext = null;
 
         foreach (talentId; ascending(client.talents.ids.dup))
@@ -434,7 +437,7 @@ private:
             chains[row.spell] = node;
         }
 
-        foreach (id; ascending(chains.keys))
+        foreach (id; ascending(chains.keys.dup))
         {
             const node = chains[id];
             if (node.prev)
@@ -483,9 +486,9 @@ private:
             learnSpells[row.spell] ~= SpellLearnSpellNode(row.learned, row.active != 0, false);
         }
 
-        foreach (id; ascending(spells.keys))
+        foreach (id; ascending(spells.keys.dup))
         {
-            const entry = &spells[id];
+            const entry = (id in spells);
             foreach (i; 0 .. 3)
             {
                 if (entry.effect[i] != SpellEffect.learnSpell)
@@ -559,12 +562,12 @@ unittest
     auto data = new SpellData;
     foreach (id; [100, 101, 102, 200, 300, 301])
         data.spells[id] = SpellInfo(id);
-    data.spells[300].effect[0] = SpellEffect.learnSpell;
-    data.spells[300].triggerSpell[0] = 301;
-    data.spells[200].effect[1] = SpellEffect.skill;
-    data.spells[200].miscValue[1] = 98;
-    data.spells[200].basePoints[1] = 0;
-    data.spells[200].baseDice[1] = 1;
+    data.spells.edit(300).effect[0] = SpellEffect.learnSpell;
+    data.spells.edit(300).triggerSpell[0] = 301;
+    data.spells.edit(200).effect[1] = SpellEffect.skill;
+    data.spells.edit(200).miscValue[1] = 98;
+    data.spells.edit(200).basePoints[1] = 0;
+    data.spells.edit(200).baseDice[1] = 1;
 
     // Ranks 100 -> 101 -> 102 linked through SkillLineAbility.forward_spellid.
     auto client = new ClientData;

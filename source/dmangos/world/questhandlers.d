@@ -1384,7 +1384,7 @@ unittest
     assert(answers == [0, 2]);
 
     // An item that begins a quest (its `startquest`): its quest's details for its guid, then taken, the item gone.
-    context.data.items[itemJerky].details.startQuest = 9301;
+    context.data.items.edit(itemJerky).details.startQuest = 9301;
     Quest found = {id: 9301, method: 2, maxLevel: 60, title: "A note"};
     found.reqCreatureOrGoId[0] = 6;
     found.reqCreatureOrGoCount[0] = 1;

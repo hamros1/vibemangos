@@ -417,10 +417,10 @@ unittest
     auto context = newCreationContext(db);
     enum uint might = 95800;
     context.data.spells.spells[might] = testSpell(might, 6, 1, 5); // +5 strength
-    context.data.spells.spells[might].casting.applyAuraName[0] = AuraType.modStat;
-    context.data.spells.spells[might].miscValue[0] = Stat.strength;
-    context.data.items[itemSword].details.spells[0].id = might;
-    context.data.items[itemSword].details.spells[0].trigger = 1; // on equip
+    context.data.spells.spells.edit(might).casting.applyAuraName[0] = AuraType.modStat;
+    context.data.spells.spells.edit(might).miscValue[0] = Stat.strength;
+    context.data.items.edit(itemSword).details.spells[0].id = might;
+    context.data.items.edit(itemSword).details.spells[0].trigger = 1; // on equip
     auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f));
     auto me = cast(Player) anduin.session.character;
     anduin.session.inWorld.lootStore(itemSword, 1, 0, false);
@@ -445,10 +445,10 @@ unittest
 
     enum uint setBonus = 95801, setId = 77;
     context.data.spells.spells[setBonus] = testSpell(setBonus, 6, 1, 3);
-    context.data.spells.spells[setBonus].casting.applyAuraName[0] = AuraType.modStat;
-    context.data.spells.spells[setBonus].miscValue[0] = Stat.strength;
-    context.data.items[itemSword].details.spells[0].id = 0;
-    context.data.items[itemSword].details.itemSet = setId;
+    context.data.spells.spells.edit(setBonus).casting.applyAuraName[0] = AuraType.modStat;
+    context.data.spells.spells.edit(setBonus).miscValue[0] = Stat.strength;
+    context.data.items.edit(itemSword).details.spells[0].id = 0;
+    context.data.items.edit(itemSword).details.itemSet = setId;
     uint[45] row;
     row[0] = setId;
     row[27] = setBonus; // its first spell

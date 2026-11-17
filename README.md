@@ -699,6 +699,7 @@ source/dmangos/world/       the world server (mangosd)
   writebehind.d               writes to the database from a thread of their own, through a log
   clusterbridge.d             replication between the maps and the cluster's links
   ../metrics.d                tick, event loop and GC measurements
+  ../frozen.d                 static tables in memory the collector does not scan (StaticMap, the arena)
   ../loadgen/                 the load generator: headless clients (bot.d) and scenarios (main.d)
   map.d                       players, creatures and game objects on a map: cells, sight, broadcasting,
                               the tick that moves creatures

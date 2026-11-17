@@ -176,14 +176,14 @@ WorldData testWorldData(const ClientData client)
     world.items[itemStaff] = item(itemStaff, 2, 10, 472, 17, 1, 1, 0, 25);   // staff, two-hand
     world.items[itemBow] = item(itemBow, 2, 2, 8106, 15, 1, 1, 0, 20);       // bow, ranged
     world.items[itemQuiver] = item(itemQuiver, 11, 2, 21328, 18, 1, 1, 0, 0); // quiver, bag type
-    world.items[itemQuiver].containerSlots = 6;
+    world.items.edit(itemQuiver).containerSlots = 6;
     world.items[itemArrow] = item(itemArrow, 6, 2, 5996, 24, 200, 200, 0, 0); // arrows, ammo
-    world.items[itemArrow].bagFamily = 1;
-    world.items[itemSword].details.name = "Worn Shortsword";
-    world.items[itemJerky].details.name = "Tough Jerky";
-    world.items[itemJerky].details.buyPrice = 25;
-    world.items[itemJerky].details.sellPrice = 1;
-    world.items[itemSword].details.sellPrice = 7;
+    world.items.edit(itemArrow).bagFamily = 1;
+    world.items.edit(itemSword).details.name = "Worn Shortsword";
+    world.items.edit(itemJerky).details.name = "Tough Jerky";
+    world.items.edit(itemJerky).details.buyPrice = 25;
+    world.items.edit(itemJerky).details.sellPrice = 1;
+    world.items.edit(itemSword).details.sellPrice = 7;
 
     // The Deadmines entrance needs level 10; a place for `.tele`.
     world.areaTriggers[triggerDeadmines] = AreaTriggerTeleport(triggerDeadmines, "Deadmines - Entering", 10, 0, 0, 0,
@@ -224,18 +224,18 @@ WorldData testWorldData(const ClientData client)
         spellPassiveTrainer, spellLearnedByPassive, spellDualWield])
         spells.spells[id] = SpellInfo(id);
     // A passive spell that, cast at learning, teaches another spell (saved as non-dependent).
-    spells.spells[spellPassiveTrainer].attributes = spellAttrPassive;
-    spells.spells[spellPassiveTrainer].effect[0] = SpellEffect.learnSpell;
-    spells.spells[spellPassiveTrainer].triggerSpell[0] = spellLearnedByPassive;
-    spells.spells[spellDualWield].attributes = spellAttrPassive;
-    spells.spells[spellDualWield].effect[0] = SpellEffect.dualWield;
+    spells.spells.edit(spellPassiveTrainer).attributes = spellAttrPassive;
+    spells.spells.edit(spellPassiveTrainer).effect[0] = SpellEffect.learnSpell;
+    spells.spells.edit(spellPassiveTrainer).triggerSpell[0] = spellLearnedByPassive;
+    spells.spells.edit(spellDualWield).attributes = spellAttrPassive;
+    spells.spells.edit(spellDualWield).effect[0] = SpellEffect.dualWield;
     foreach (id; [spellHeroicStrike, spellHeroicStrike2, spellTeachHeroicStrike, spellTeachHeroicStrike2])
         spells.spells[id] = SpellInfo(id);
-    spells.spells[spellTeachHeroicStrike2].spellLevel = 8; // trainers read the level from their own spell
-    spells.spells[spellTeachHeroicStrike].effect[0] = SpellEffect.learnSpell;
-    spells.spells[spellTeachHeroicStrike].triggerSpell[0] = spellHeroicStrike;
-    spells.spells[spellTeachHeroicStrike2].effect[0] = SpellEffect.learnSpell;
-    spells.spells[spellTeachHeroicStrike2].triggerSpell[0] = spellHeroicStrike2;
+    spells.spells.edit(spellTeachHeroicStrike2).spellLevel = 8; // trainers read the level from their own spell
+    spells.spells.edit(spellTeachHeroicStrike).effect[0] = SpellEffect.learnSpell;
+    spells.spells.edit(spellTeachHeroicStrike).triggerSpell[0] = spellHeroicStrike;
+    spells.spells.edit(spellTeachHeroicStrike2).effect[0] = SpellEffect.learnSpell;
+    spells.spells.edit(spellTeachHeroicStrike2).triggerSpell[0] = spellHeroicStrike2;
     spells.build(client, null, null);
     spells.chains[spellHeroicStrike2] = SpellChainNode(spellHeroicStrike, spellHeroicStrike, 2, 0);
     world.spells = spells;
@@ -274,6 +274,11 @@ WorldData testWorldData(const ClientData client)
     world.classLevelStats[classMage] = [ClassLevelStats(32, 100)];
     world.classLevelStats[classHunter] = [ClassLevelStats(46, 65)];
     world.reservedNames[toLowerName("Thrall")] = true;
+    // Frozen as the server freezes what it loads, so the tests read the tables the way it does; a test
+    // that changes one thaws it.
+    import dmangos.frozen : freezeAll;
+
+    freezeAll(world);
     return world;
 }
 
