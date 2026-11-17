@@ -742,24 +742,34 @@ private:
             if (spell.effect[i] == 0)
                 continue;
             const a = spell.implicitTargetA[i];
-            ulong target;
-            if (a == ImplicitTarget.caster || a == ImplicitTarget.none)
-                target = player.guid;
+            ulong[] targets;
+            const area = areaTargets(spell, i, c.targets);
+            if (area.length || isAreaTarget(spell, i))
+                targets = area.dup; // `SetTargetMap` for an area, a cone, the party
+            else if (a == ImplicitTarget.caster || a == ImplicitTarget.none)
+                targets = [player.guid];
             else if (a == ImplicitTarget.enemy || a == ImplicitTarget.unit || a == ImplicitTarget.friend)
-                target = c.targets.unit ? c.targets.unit : player.guid;
+            {
+                targets = [c.targets.unit ? c.targets.unit : player.guid];
+                if (spell.casting.chainTarget[i] > 1 && a == ImplicitTarget.enemy)
+                    targets ~= chainTargets(targets[0], spell.casting.chainTarget[i] - 1);
+            }
             else if (a == ImplicitTarget.gameObject || a == ImplicitTarget.gameObjectItem)
             {
                 if (!c.targets.gameObject)
                     continue; // an item's lock: not yet
-                target = c.targets.gameObject;
+                targets = [c.targets.gameObject];
             }
             else
-                target = player.guid; // area and other targets: not yet; the caster stands in
-            effectTargets[i] ~= target;
-            if (target !in missOf)
+                targets = [player.guid]; // other targets: not yet; the caster stands in
+            foreach (target; targets)
             {
-                missOf[target] = rollHit(*spell, target);
-                results ~= TargetResult(target, missOf[target]);
+                effectTargets[i] ~= target;
+                if (target !in missOf)
+                {
+                    missOf[target] = rollHit(*spell, target);
+                    results ~= TargetResult(target, missOf[target]);
+                }
             }
         }
         if (!c.triggered)
@@ -1029,6 +1039,126 @@ private:
         if (other is null || other.player is null || other.map !is map)
             return null;
         return canAttack(relatingNow(), other.relatingNow(), context.client) ? other : null;
+    }
+
+    /// Whether effect `i` of the spell picks its targets in an area (around a point, in a cone, the party).
+    static bool isAreaTarget(const(SpellInfo)* spell, size_t i)
+    {
+        import std.algorithm.comparison : among;
+
+        with (ImplicitTarget)
+            return spell.implicitTargetA[i].among(enemiesAroundSource, enemiesAroundDest, enemiesInCone,
+                partyAroundSource, partyInRange, friendsAroundSource, friendsAroundDest, party) != 0
+                || spell.casting.implicitTargetB[i].among(enemiesAroundSource, enemiesAroundDest, enemiesInCone,
+                partyAroundSource, partyInRange, friendsAroundSource, friendsAroundDest) != 0;
+    }
+
+    /// Whether this player may hurt the creature with an area or chained spell (`CanAttackSpell`: alive,
+    /// attackable, neutral ones too).
+    bool spellEnemy(Creature creature)
+    {
+        return creature.alive && creature.ai !is null && canAttack(relatingNow(), relatingOf(creature), context.client);
+    }
+
+    /**
+     * `Spell::SetTargetMap` for the area targets: the enemies (creatures, and players it may fight)
+     * within the effect's radius of the caster, of the destination, or in a cone in front (60 degrees
+     * to either side); or the party members (and itself) within the radius. Empty for other targets.
+     */
+    ulong[] areaTargets(const(SpellInfo)* spell, size_t i, const ref SpellTargets targets)
+    {
+        import std.math : atan2, PI;
+
+        const a = spell.implicitTargetA[i], b = spell.casting.implicitTargetB[i];
+        auto kind = b != ImplicitTarget.none && isAreaTargetKind(b) ? b : a;
+        if (!isAreaTargetKind(kind))
+            return null;
+        const r = radius(*spell, i, context.client);
+        if (r <= 0)
+            return null;
+        Position center = player.position;
+        if ((kind == ImplicitTarget.enemiesAroundDest || kind == ImplicitTarget.friendsAroundDest)
+            && (targets.mask & TargetFlags.destLocation))
+            center = Position(targets.dest[0], targets.dest[1], targets.dest[2]);
+        bool within(Position p)
+        {
+            if ((p.x - center.x) ^^ 2 + (p.y - center.y) ^^ 2 + (p.z - center.z) ^^ 2 > r * r)
+                return false;
+            if (kind != ImplicitTarget.enemiesInCone)
+                return true;
+            double angle = atan2(p.y - center.y, p.x - center.x) - player.position.orientation;
+            while (angle > PI)
+                angle -= 2 * PI;
+            while (angle < -PI)
+                angle += 2 * PI;
+            return angle >= -PI / 3 && angle <= PI / 3;
+        }
+
+        ulong[] found;
+        with (ImplicitTarget) if (kind == enemiesAroundSource || kind == enemiesAroundDest || kind == enemiesInCone)
+        {
+            foreach (creature; map.creaturesNear(center, r))
+                if (spellEnemy(creature) && within(creature.position))
+                    found ~= creature.guid;
+            foreach (who; map.near(center, r))
+                if (auto other = enemyPlayer(who.character.guid))
+                    if (other.fighter.alive && within(other.player.position))
+                        found ~= other.player.guid;
+            return found;
+        }
+        // The party (or every friend, here the party too) within the radius, itself included.
+        found ~= player.guid;
+        if (auto group = context.groups.of(player.guid))
+            foreach (ref slot; group.members)
+                if (slot.guid != player.guid)
+                    if (auto member = map.find(slot.guid))
+                        if (within(member.character.position))
+                            found ~= slot.guid;
+        return found;
+    }
+
+    static bool isAreaTargetKind(uint kind)
+    {
+        import std.algorithm.comparison : among;
+
+        with (ImplicitTarget)
+            return kind.among(enemiesAroundSource, enemiesAroundDest, enemiesInCone, partyAroundSource, partyInRange,
+                friendsAroundSource, friendsAroundDest, party) != 0;
+    }
+
+    /// Chain targets (`EffectChainTarget`): from `first`, the nearest enemy within 10 yards of the last, `count` times.
+    ulong[] chainTargets(ulong first, uint count)
+    {
+        enum float jump = 10;
+        ulong[] chain;
+        bool[ulong] taken = [first: true];
+        auto last = cast(Creature) map.findObject(first);
+        if (last is null)
+            return null;
+        Position at = last.position;
+        foreach (_; 0 .. count)
+        {
+            Creature next;
+            float best = jump * jump;
+            foreach (creature; map.creaturesNear(at, jump))
+            {
+                if (creature.guid in taken || !spellEnemy(creature))
+                    continue;
+                const p = creature.position;
+                const d = (p.x - at.x) ^^ 2 + (p.y - at.y) ^^ 2 + (p.z - at.z) ^^ 2;
+                if (d <= best)
+                {
+                    best = d;
+                    next = creature;
+                }
+            }
+            if (next is null)
+                break;
+            chain ~= next.guid;
+            taken[next.guid] = true;
+            at = next.position;
+        }
+        return chain;
     }
 
     /// A school's damage to a player (`DealSpellDamage`): a crit is half again; armor for physical.
@@ -1547,4 +1677,81 @@ unittest
     anduin.write(Opcode.CMSG_GAMEOBJ_USE, ClientGuid(bob.guid));
     assert(opcodesOf(anduin.read()).canFind(Opcode.SMSG_LOOT_RESPONSE) && hole.loot !is null && hole.holeMaxCatches == 2,
         "the school's catch");
+}
+
+/**
+ * Area and chain targets: a spell around the caster (`TARGET_CASTER_COORDINATES` with
+ * `TARGET_ALL_ENEMY_IN_AREA`) hits every enemy within its radius, and a chained one jumps from its
+ * target to the next enemy within 10 yards.
+ */
+unittest
+{
+    import std.algorithm.searching : canFind;
+    import dmangos.bytes : ByteWriter;
+    import dmangos.dbc : buildDbc;
+    import dmangos.world.clientdata : factionTemplateFormat, spellCastTimesFormat, spellRadiusFormat,
+        spellRangeFormat;
+    import dmangos.world.creature : Creature;
+    import dmangos.world.movement : Position;
+    import dmangos.world.objects : HighGuid, makeGuid;
+    import dmangos.world.opcodes;
+    import dmangos.world.player : Player;
+    import dmangos.world.spellcast : ImplicitTarget, SpellTargets, TargetFlags;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+    import dmangos.world.updatefields;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    uint bits(float f) { return *cast(uint*) &f; }
+    context.client.spellCastTimes = typeof(context.client.spellCastTimes).parse(buildDbc(spellCastTimesFormat,
+        [[1u, 0, 0, 0]]), "SpellCastTimes.dbc");
+    context.client.spellRanges = typeof(context.client.spellRanges).parse(buildDbc(spellRangeFormat,
+        [[1u, bits(0), bits(30), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]), "SpellRange.dbc");
+    context.client.spellRadii = typeof(context.client.spellRadii).parse(buildDbc(spellRadiusFormat,
+        [[1u, bits(10), 0, 0]]), "SpellRadius.dbc");
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f));
+    auto me = cast(Player) anduin.session.character;
+    const humans = me.values.get!UNIT_FIELD_FACTIONTEMPLATE;
+    enum uint players = 1, monsters = 8;
+    context.client.factionTemplates = typeof(context.client.factionTemplates).parse(buildDbc(factionTemplateFormat,
+        [[humans, 1, 0, players | 2, 2, monsters, 0, 0, 0, 0, 0, 0, 0, 0], [14u, 14, 0, monsters, 0, players, 0, 0, 0,
+        0, 0, 0, 0, 0]]), "FactionTemplate.dbc");
+    auto map = context.map(0);
+    auto keeper = cast(Creature) map.findObject(makeGuid(HighGuid.unit, creatureInnkeeper, innkeeperSpawn));
+    auto trainer = cast(Creature) map.findObject(makeGuid(HighGuid.unit, creatureTrainer, trainerSpawn));
+    foreach (c; [keeper, trainer])
+    {
+        c.factionTemplate = context.client.factionTemplates.lookup(14);
+        c.values.set!UNIT_FIELD_FACTIONTEMPLATE(14u);
+        c.values.set!UNIT_FIELD_MAXHEALTH(500u);
+        c.values.set!UNIT_FIELD_HEALTH(500u);
+    }
+    enum uint blast = 95600, bolt = 95601;
+    context.data.spells.spells[blast] = testSpell(blast, 2, ImplicitTarget.casterSource, 20);
+    with (context.data.spells.spells[blast].casting)
+    {
+        implicitTargetB[0] = ImplicitTarget.enemiesAroundSource;
+        radiusIndex[0] = 1;
+        dmgClass = 0;
+    }
+    context.data.spells.spells[bolt] = testSpell(bolt, 2, ImplicitTarget.enemy, 20);
+    with (context.data.spells.spells[bolt].casting)
+    {
+        chainTarget[0] = 2;
+        dmgClass = 0;
+    }
+    me.spells ~= [blast, bolt];
+    anduin.read();
+
+    ByteWriter w;
+    w.put(blast);
+    SpellTargets(TargetFlags.self, 0).write(w);
+    anduin.write(Opcode.CMSG_CAST_SPELL, w.data);
+    assert(keeper.values.get!UNIT_FIELD_HEALTH < 500 && trainer.values.get!UNIT_FIELD_HEALTH < 500, "both within 10 yards");
+
+    const keeperBefore = keeper.values.get!UNIT_FIELD_HEALTH, trainerBefore = trainer.values.get!UNIT_FIELD_HEALTH;
+    anduin.session.castTriggeredAt(bolt, keeper.guid); // past the global cooldown
+    assert(keeper.values.get!UNIT_FIELD_HEALTH < keeperBefore && trainer.values.get!UNIT_FIELD_HEALTH < trainerBefore,
+        "the bolt jumped to the trainer");
 }

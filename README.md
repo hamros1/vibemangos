@@ -360,8 +360,11 @@ What works now:
     refused without it. A channelled spell goes on for its duration (`MSG_CHANNEL_START`, the caster's channel fields),
     ending at its time, when the player cancels it, or when it moves if the spell says so (its auras on
     the target ending with it). Creatures cast through their scripts (below), and players at each
-    other where the relations allow (duels, PvP). Not yet: area and chain targets for players,
-    projectiles' travel time, spell power and partial resists.
+    other where the relations allow (duels, PvP). Area spells take every creature they may attack
+    (and enemy players) within their radius of the caster or of the point chosen, or in a cone in
+    front; party spells the party members near; a chained spell jumps on to the nearest attackable
+    creature within 10 yards, as many times as it says. Not yet: projectiles' travel time, spell
+    power and partial resists, persistent area auras (Blizzard, Consecration).
   * **Auras** (CMaNGOS's `SpellAuraHolder` and `Aura`): buffs and debuffs fill the aura fields
     (positive slots 0..31, negative 32..47) and the buff bar's durations, refresh and stack, and end
     when their time is up, when clicked off, at death, or by their interrupt flags (standing up ends
