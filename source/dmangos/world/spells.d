@@ -65,6 +65,7 @@ struct SpellInfo
     int equippedItemClass = -1;
     int equippedItemSubClassMask;
     uint spellLevel;            /// `SpellLevel`: the level a trainer teaches it from
+    SpellCastInfo casting;      /// what casting it needs (`dmangos.world.spellcast`)
 
     /// `IsPassiveSpell`
     bool isPassive() const pure nothrow @nogc @safe
@@ -82,6 +83,132 @@ struct SpellInfo
     int simpleValue(size_t index) const pure nothrow @nogc @safe
     {
         return basePoints[index] + baseDice[index];
+    }
+}
+
+/// The `spell_template` fields casting needs, beside `SpellInfo`'s own.
+struct SpellCastInfo
+{
+    string name;
+    uint school;
+    uint dispel;
+    uint mechanic;
+    uint attributesEx3;
+    uint stancesNot;
+    uint targets;              /// `Targets`: `TARGET_FLAG_*` the client sends
+    uint targetCreatureType;
+    uint requiresSpellFocus;
+    uint targetAuraState;
+    uint castingTimeIndex;
+    uint interruptFlags;       /// `SPELL_INTERRUPT_FLAG_*`
+    uint auraInterruptFlags;   /// `AURA_INTERRUPT_FLAG_*`
+    uint channelInterruptFlags;
+    uint procFlags;
+    uint procChance;
+    uint procCharges;
+    uint maxLevel;
+    uint baseLevel;
+    uint durationIndex;
+    uint powerType;
+    uint manaCost;
+    uint manaCostPerLevel;
+    uint manaPerSecond;
+    uint manaPerSecondPerLevel;
+    uint rangeIndex;
+    float speed = 0;
+    uint stackAmount;
+    uint[8] reagentCount;
+    int[3] dieSides;
+    float[3] dicePerLevel = 0;
+    float[3] realPointsPerLevel = 0;
+    uint[3] implicitTargetB;
+    uint[3] radiusIndex;
+    uint[3] applyAuraName;
+    uint[3] amplitude;
+    float[3] multipleValue = 0;
+    uint[3] chainTarget;
+    float[3] pointsPerComboPoint = 0;
+    uint spellVisual;
+    uint manaCostPercentage;
+    uint startRecoveryCategory;
+    uint startRecoveryTime;    /// the global cooldown it starts, in milliseconds
+    uint maxTargetLevel;
+    uint spellFamilyName;
+    ulong spellFamilyFlags;
+    uint maxAffectedTargets;
+    uint dmgClass;             /// `SpellDmgClass`: none, magic, melee, ranged
+    uint preventionType;
+    float[3] dmgMultiplier = 0;
+}
+
+/// `spell_template`'s casting columns, in `SpellCastRow` order.
+enum spellCastQuery = "SELECT Id, SpellName, School, Dispel, Mechanic, AttributesEx3, StancesNot, Targets, "
+    ~ "TargetCreatureType, RequiresSpellFocus, TargetAuraState, CastingTimeIndex, InterruptFlags, AuraInterruptFlags, "
+    ~ "ChannelInterruptFlags, ProcFlags, ProcChance, ProcCharges, MaxLevel, BaseLevel, DurationIndex, PowerType, "
+    ~ "ManaCost, ManaCostPerlevel, ManaPerSecond, ManaPerSecondPerLevel, RangeIndex, Speed, StackAmount, "
+    ~ "ReagentCount1, ReagentCount2, ReagentCount3, ReagentCount4, ReagentCount5, ReagentCount6, ReagentCount7, "
+    ~ "ReagentCount8, EffectDieSides1, EffectDieSides2, EffectDieSides3, EffectDicePerLevel1, EffectDicePerLevel2, "
+    ~ "EffectDicePerLevel3, EffectRealPointsPerLevel1, EffectRealPointsPerLevel2, EffectRealPointsPerLevel3, "
+    ~ "EffectImplicitTargetB1, EffectImplicitTargetB2, EffectImplicitTargetB3, EffectRadiusIndex1, "
+    ~ "EffectRadiusIndex2, EffectRadiusIndex3, EffectApplyAuraName1, EffectApplyAuraName2, EffectApplyAuraName3, "
+    ~ "EffectAmplitude1, EffectAmplitude2, EffectAmplitude3, EffectMultipleValue1, EffectMultipleValue2, "
+    ~ "EffectMultipleValue3, EffectChainTarget1, EffectChainTarget2, EffectChainTarget3, "
+    ~ "EffectPointsPerComboPoint1, EffectPointsPerComboPoint2, EffectPointsPerComboPoint3, SpellVisual, "
+    ~ "ManaCostPercentage, StartRecoveryCategory, StartRecoveryTime, MaxTargetLevel, SpellFamilyName, "
+    ~ "SpellFamilyFlags, MaxAffectedTargets, DmgClass, PreventionType, DmgMultiplier1, DmgMultiplier2, "
+    ~ "DmgMultiplier3 FROM spell_template";
+
+/// One row of `spellCastQuery` (flat, for `Row.as`).
+struct SpellCastRow
+{
+    uint id;
+    string name;
+    uint school, dispel, mechanic, attributesEx3, stancesNot, targets, targetCreatureType, requiresSpellFocus,
+        targetAuraState, castingTimeIndex, interruptFlags, auraInterruptFlags, channelInterruptFlags, procFlags,
+        procChance, procCharges, maxLevel, baseLevel, durationIndex, powerType, manaCost, manaCostPerLevel,
+        manaPerSecond, manaPerSecondPerLevel, rangeIndex;
+    float speed;
+    uint stackAmount;
+    uint rc1, rc2, rc3, rc4, rc5, rc6, rc7, rc8;
+    int ds1, ds2, ds3;
+    float dpl1, dpl2, dpl3;
+    float rpl1, rpl2, rpl3;
+    uint tb1, tb2, tb3;
+    uint ri1, ri2, ri3;
+    uint aa1, aa2, aa3;
+    uint am1, am2, am3;
+    float mv1, mv2, mv3;
+    uint ct1, ct2, ct3;
+    float pc1, pc2, pc3;
+    uint spellVisual, manaCostPercentage, startRecoveryCategory, startRecoveryTime, maxTargetLevel, spellFamilyName;
+    ulong spellFamilyFlags;
+    uint maxAffectedTargets, dmgClass, preventionType;
+    float dm1, dm2, dm3;
+
+    SpellCastInfo toInfo() const
+    {
+        SpellCastInfo c;
+        static foreach (field; ["name", "school", "dispel", "mechanic", "attributesEx3", "stancesNot", "targets",
+                "targetCreatureType", "requiresSpellFocus", "targetAuraState", "castingTimeIndex", "interruptFlags",
+                "auraInterruptFlags", "channelInterruptFlags", "procFlags", "procChance", "procCharges", "maxLevel",
+                "baseLevel", "durationIndex", "powerType", "manaCost", "manaCostPerLevel", "manaPerSecond",
+                "manaPerSecondPerLevel", "rangeIndex", "speed", "stackAmount", "spellVisual", "manaCostPercentage",
+                "startRecoveryCategory", "startRecoveryTime", "maxTargetLevel", "spellFamilyName", "spellFamilyFlags",
+                "maxAffectedTargets", "dmgClass", "preventionType"])
+            __traits(getMember, c, field) = __traits(getMember, this, field);
+        c.reagentCount = [rc1, rc2, rc3, rc4, rc5, rc6, rc7, rc8];
+        c.dieSides = [ds1, ds2, ds3];
+        c.dicePerLevel = [dpl1, dpl2, dpl3];
+        c.realPointsPerLevel = [rpl1, rpl2, rpl3];
+        c.implicitTargetB = [tb1, tb2, tb3];
+        c.radiusIndex = [ri1, ri2, ri3];
+        c.applyAuraName = [aa1, aa2, aa3];
+        c.amplitude = [am1, am2, am3];
+        c.multipleValue = [mv1, mv2, mv3];
+        c.chainTarget = [ct1, ct2, ct3];
+        c.pointsPerComboPoint = [pc1, pc2, pc3];
+        c.dmgMultiplier = [dm1, dm2, dm3];
+        return c;
     }
 }
 
@@ -178,6 +305,9 @@ final class SpellData
             ~ "CategoryRecoveryTime, EquippedItemClass, EquippedItemSubClassMask, SpellLevel "
             ~ "FROM spell_template")())
             data.spells[row.id] = row.toInfo();
+        foreach (row; world.queryAs!(SpellCastRow, spellCastQuery)())
+            if (auto spell = row.id in data.spells)
+                spell.casting = row.toInfo();
 
         SpellChainRow[] chainRows = world.queryAs!(SpellChainRow,
             "SELECT spell_id, prev_spell, first_spell, `rank`, req_spell FROM spell_chain")();

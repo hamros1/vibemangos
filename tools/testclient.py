@@ -182,6 +182,16 @@ def track(objs):
     for slot, ig in my_slots.items():
         assert ig in item_objects, f"slot {slot} points at item {ig:#x}, which the client was not sent"
 
+def packed(guid):
+    """A guid in packed form: a mask of its non-zero bytes, then those bytes."""
+    mask, out = 0, b""
+    for i in range(8):
+        b = (guid >> (8 * i)) & 0xFF
+        if b:
+            mask |= 1 << i; out += bytes([b])
+    return bytes([mask]) + out
+
+
 def packed_guid(p, pos):
     mask = p[pos]; pos += 1; g = 0
     for i in range(8):
@@ -362,6 +372,24 @@ def describe(op, p):
     elif op == 0x1D4: print(f"  [level up] to level {struct.unpack_from('<I', p)[0]}")
     elif op == 0x1D0: print("  [experience] %d (kind %d)" % struct.unpack_from("<IB", p, 8))
     elif op == 0x161: print("  [loot window closed]")
+    elif op == 0x130:
+        spell, status = struct.unpack_from("<IB", p, 0)
+        print(f"  [cast result] {spell}: " + ("ok" if status == 0 else f"failed {p[5]:#x}"))
+    elif op == 0x131:
+        g, pos = packed_guid(p, 0); g2, pos = packed_guid(p, pos); spell, flags, time_ = struct.unpack_from("<IHI", p, pos)
+        print(f"  [spell start] {spell} by {g & 0xFFFFFF}, {time_} ms")
+    elif op == 0x132:
+        g, pos = packed_guid(p, 0); g2, pos = packed_guid(p, pos); spell, flags = struct.unpack_from("<IH", p, pos)
+        print(f"  [spell go] {spell} by {g & 0xFFFFFF}")
+    elif op == 0x133:
+        g, pos = packed_guid(p, 0); spell, reason = struct.unpack_from("<IB", p, pos); print(f"  [spell failed] {spell} reason {reason:#x}")
+    elif op == 0x250:
+        t, pos = packed_guid(p, 0); a, pos = packed_guid(p, pos); spell, dmg, school = struct.unpack_from("<IIB", p, pos)
+        print(f"  [spell damage] {spell}: {dmg} to {t & 0xFFFFFF}")
+    elif op == 0x150:
+        t, pos = packed_guid(p, 0); a, pos = packed_guid(p, pos); spell, amount = struct.unpack_from("<II", p, pos)
+        print(f"  [spell heal] {spell}: {amount}")
+    elif op == 0x24B: print(f"  [spell missed] {struct.unpack_from('<I', p, 0)[0]} ({p[-1]})")
     elif op == 0x162: print(f"  [loot removed] slot {p[0]}")
     elif op == 0x165: print("  [loot money taken]")
     elif op == 0x166:
@@ -574,6 +602,22 @@ for action in actions:
             wsend(0x108, bytes([slot]))
         listen_for(1.0)
         wsend(0x15F, struct.pack("<Q", target))
+    elif kind == "cast":
+        # cast:SPELL or cast:SPELL:ENTRY (at the nearest creature of ENTRY)
+        spell = int(args[0])
+        if len(args) > 1:
+            entry = int(args[1])
+            found = [g for g, (t, e) in seen_objects.items() if t == 3 and e == entry and g in seen_positions]
+            if not found:
+                print(f"cast {spell}: no {entry} in sight"); continue
+            target = min(found, key=lambda g: (seen_positions[g][0] - here[0]) ** 2 + (seen_positions[g][1] - here[1]) ** 2)
+            wsend(0x12E, struct.pack("<IH", spell, 2) + packed(target)); print(f"cast {spell} at {target & 0xFFFFFF}")
+        else:
+            wsend(0x12E, struct.pack("<IH", spell, 0)); print(f"cast {spell}")
+    elif kind == "useitem":
+        # useitem:BAG:SLOT
+        bag, slot = int(args[0]), int(args[1])
+        wsend(0x0AB, struct.pack("<BBBH", bag, slot, 1, 0)); print(f"use item in {bag}/{slot}")
     elif kind == "release":
         wsend(0x15A, b""); print("release spirit")
     elif kind == "corpse":

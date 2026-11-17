@@ -156,6 +156,12 @@ final class CreatureAI
         return victim;
     }
 
+    /// How the relations see it (`Relating`).
+    Relating relatingOf() const
+    {
+        return relating;
+    }
+
     /// The threat `who` has on it; 0 if it is not in its list.
     float threatOf(ulong who) const
     {

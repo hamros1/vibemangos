@@ -51,6 +51,7 @@ import dmangos.world.gmtargets : GmTargets;
 import dmangos.world.combathandlers : CombatHandlers;
 import dmangos.world.death : DeathHandlers;
 import dmangos.world.loothandlers : LootHandlers;
+import dmangos.world.spellhandlers : SpellHandlers;
 import dmangos.world.creatureai : Combatant;
 import dmangos.world.loot : Looter;
 import dmangos.world.combat : Fighter, MeleeDamage;
@@ -799,6 +800,7 @@ private:
     mixin CombatHandlers;
     mixin DeathHandlers;
     mixin LootHandlers;
+    mixin SpellHandlers;
     mixin Level0Commands;
     mixin Level1Commands;
     mixin Level2Commands;

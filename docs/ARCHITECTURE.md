@@ -117,6 +117,7 @@ final class WorldSession : NetSession, Kickable, OnlinePlayer
     mixin CombatHandlers;           // combathandlers.d: CombatHandler.cpp, the player's melee
     mixin DeathHandlers;            // death.d: dying, the ghost, the corpse, the spirit healer
     mixin LootHandlers;             // loothandlers.d: LootHandler.cpp, kill experience, tapping
+    mixin SpellHandlers;            // spellhandlers.d: SpellHandler.cpp, Spell.cpp, SpellEffects.cpp
     mixin Exploration;              // exploration.d: Player::UpdateZone, CheckAreaExploreAndOutdoor, GiveXP
     mixin ChatCommands;             // commands.d: ArcEmu's ParseCommands, ExecuteCommandInTable, messages
     mixin GmActions;                // gmactions.d: what the handlers do to players
@@ -318,6 +319,17 @@ Three modules, split by what they depend on:
   calls `moveInLineOfSight` for the creatures a player sees when it moves, and for the players who
   see a creature when it moves. A creature with something to do (a fight, the way home, health to
   regain) does not rest, so the map keeps ticking it.
+
+## Spells
+
+`spells.d` loads `spell_template` (`SpellInfo`, with what casting needs in `SpellInfo.casting`),
+`spellcast.d` holds what needs no session: cast targets (`SpellTargets`), cast times, durations,
+ranges and radii from the DBCs, `effectValue` (base points, per level, dice), `powerCost`, the
+magic hit roll, and the packets. `spellhandlers.d` is the session's side (`Spell` in CMaNGOS): the
+cast in progress (`generic`) and the one for the next swing (`nextSwing`), cooldowns by spell and
+category and the global one, `checkCast`, `go` (cooldowns, cost, hit rolls, `SMSG_SPELL_GO`), and
+the effects. Damage to creatures goes the way melee's does (`spellAttacked`: threat, tapping, the
+kill).
 
 ## Death
 

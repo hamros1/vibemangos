@@ -330,6 +330,9 @@ private:
      */
     void swing(Creature victim, AttackType type)
     {
+        // `AttackerStateUpdate`: a spell for the next swing (Heroic Strike) is cast instead of it.
+        if (type == AttackType.mainHand && swingSpell(victim))
+            return;
         auto d = calculateMeleeDamage(player.fighter, victim.fighter, type, map.random);
         map.sendToWatchers(this, Opcode.SMSG_ATTACKERSTATEUPDATE, attackerStateUpdate(d), true);
 

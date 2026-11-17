@@ -267,6 +267,17 @@ What works now:
     wins, then the higher roll); money is shared. A looted corpse goes within two minutes. Not yet:
     quest drops (no quests), random enchantments, skinning and pickpocketing (spells), reputation
     for kills.
+  * **Spells** (CMaNGOS's `Spell::SpellStart`, `CheckCast`, `cast` and `SpellEffects.cpp`): a
+    known spell is checked (alive, not busy, its cooldown and category cooldown and the global
+    cooldown over, standing, the power and reagents it costs, an enemy or friend in range and in
+    sight), shown with its cast time (`SpellCastTimes.dbc`; moving interrupts most), then goes: its
+    cooldowns start, its cost is taken, the hit rolled (magic: 4% and the level difference; melee
+    abilities: the attack table), and its effects done: school damage (crits from intellect),
+    weapon damage with a bonus or percentage (Heroic Strike waits for the next swing and replaces
+    it), heals, energize, teleports home (the hearthstone), creating items, learning and triggering
+    spells. Items cast their on-use spells (with the item's own cooldowns; food and drink are used
+    up). Not yet: auras (buffs, debuffs, food and drink's regeneration, stances), channeling, area
+    and chain targets, projectiles' travel time, spells cast at players (PvP) and by creatures.
   * **The update tick** (every 50 ms, `update_interval`): health, mana, rage and energy regenerate
     as in CMaNGOS (health and the loss of rage only out of combat, and only for the living); inns and capitals give rested XP, also while offline; characters are saved every
     15 minutes (`player_save_interval`).

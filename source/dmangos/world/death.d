@@ -153,6 +153,7 @@ private:
     void playerDied(bool byCreature)
     {
         info!"%s: '%s' died"(remoteAddress, player.data.name);
+        spellsOnLeave();
         stopAttack(false);
         if (byCreature)
         {

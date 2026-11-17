@@ -47,6 +47,7 @@ private:
     void leaveWorld(string why, bool loggingOut)
     {
         releaseLootOnLeave();
+        spellsOnLeave();
         deathOnLogout();
         const progress = player.progress(secondsInWorld());
         context.database.saveProgress(progress);
@@ -275,6 +276,7 @@ private:
         updateMelee(elapsed);
         if (player is null)
             return;
+        updateSpells(elapsed);
         updateDeath(elapsed);
         if (regenTimer.update(elapsed))
         {
@@ -349,6 +351,7 @@ private:
         if (!passesSpeedCheck(p))
             return;
         player.movement = movement;
+        spellsOnMovement(movement.flags);
 
         // HandleMovementOpcodes: moving stands the player up and ends a looping emote.
         if (movement.flags & movingOrTurning)

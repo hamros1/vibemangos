@@ -117,6 +117,7 @@ private:
         {
             player.setTarget(0);
             releaseLootOnLeave();
+            spellsOnLeave();
             flushPlayerChanges();
             send(ServerTransferPending(mapId));
             map.remove(this);

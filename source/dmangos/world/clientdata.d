@@ -229,6 +229,48 @@ struct WorldSafeLocsEntry
 
 enum worldSafeLocsFormat = "nifffxxxxxxxxx"; ///
 
+/// `SpellCastTimesEntry`: a cast time, in milliseconds.
+struct SpellCastTimesEntry
+{
+    uint id;
+    int castTime;
+    int perLevel;
+    int minimum;
+}
+
+enum spellCastTimesFormat = "niii"; ///
+
+/// `SpellDurationEntry`: how long an aura lasts, in milliseconds (-1: until cancelled).
+struct SpellDurationEntry
+{
+    uint id;
+    int duration;
+    int perLevel;
+    int maximum;
+}
+
+enum spellDurationFormat = "niii"; ///
+
+/// `SpellRangeEntry`
+struct SpellRangeEntry
+{
+    uint id;
+    float minRange;
+    float maxRange;
+    uint flags;
+}
+
+enum spellRangeFormat = "nffixxxxxxxxxxxxxxxxxx"; ///
+
+/// `SpellRadiusEntry`
+struct SpellRadiusEntry
+{
+    uint id;
+    float radius;
+}
+
+enum spellRadiusFormat = "nfxx"; ///
+
 ///
 struct SkillLineEntry
 {
@@ -508,6 +550,10 @@ final class ClientData
     DbcStore!(FactionEntry, factionFormat) factions;
     DbcStore!(FactionTemplateEntry, factionTemplateFormat) factionTemplates;
     DbcStore!(WorldSafeLocsEntry, worldSafeLocsFormat) worldSafeLocs;
+    DbcStore!(SpellCastTimesEntry, spellCastTimesFormat) spellCastTimes;
+    DbcStore!(SpellDurationEntry, spellDurationFormat) spellDurations;
+    DbcStore!(SpellRangeEntry, spellRangeFormat) spellRanges;
+    DbcStore!(SpellRadiusEntry, spellRadiusFormat) spellRadii;
 
     private
     {
@@ -537,7 +583,8 @@ final class ClientData
             "areas:AreaTable", "areaTriggers:AreaTrigger", "chatChannels:ChatChannels",
             "bankBagSlotPrices:BankBagSlotPrices", "durabilityCosts:DurabilityCosts",
             "durabilityQualities:DurabilityQuality", "liquidTypes:LiquidType", "wmoAreas:WMOAreaTable",
-            "factions:Faction", "factionTemplates:FactionTemplate", "worldSafeLocs:WorldSafeLocs"])
+            "factions:Faction", "factionTemplates:FactionTemplate", "worldSafeLocs:WorldSafeLocs", "spellCastTimes:SpellCastTimes", "spellDurations:SpellDuration",
+            "spellRanges:SpellRange", "spellRadii:SpellRadius"])
         {{
             enum parts = member.findSplit(":");
             enum field = parts[0];
