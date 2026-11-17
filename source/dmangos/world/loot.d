@@ -1,0 +1,1223 @@
+/**
+ * Loot (CMaNGOS `Loot/LootMgr.cpp`): the loot tables, what a corpse drops, who may take what, and
+ * the group's rolls.
+ *
+ * `LootStore`s hold the `*_loot_template` tables: per loot id, entries rolled each on their own
+ * chance (references among them: another table's template, processed `maxcount` times), and groups
+ * of which at most one entry drops. `Loot` is one corpse's drop: its money and items, the players who
+ * may loot it (`owners`, by the group's loot method), and for each item who may still take it.
+ * Packets go out through the `Looter`s it finds by guid, so this module knows no session or map.
+ *
+ * The rules follow CMaNGOS: free for all, round robin (the current looter first; once it releases,
+ * anyone), master loot (the master hands out what is over the threshold), group loot and need before
+ * greed (items over the threshold are rolled for, a minute to choose). Quest drops are never shown
+ * (there are no quests yet); random properties and suffixes are not generated
+ * (`item_enchantment_template` is not loaded).
+ */
+module dmangos.world.loot;
+
+import std.random : Random, uniform, uniform01;
+import dmangos.bytes : ByteWriter;
+import dmangos.world.opcodes : Opcode;
+import dmangos.world.worlddata : ItemTemplate;
+
+// ---------------------------------------------------------------------------
+// The tables
+// ---------------------------------------------------------------------------
+
+/// A `*_loot_template` row (`LootStoreItem`).
+struct LootStoreItem
+{
+    uint item;
+    float chance = 100;        /// `ChanceOrQuestChance`, made positive
+    bool needsQuest;           /// it was negative: a quest drop
+    ubyte group;               /// `groupid`: 0 rolls on its own
+    int mincountOrRef = 1;     /// negative: a reference to `reference_loot_template`
+    ubyte maxCount = 1;        /// `maxcount`; for a reference, how many times it is processed
+    uint condition;            /// `condition_id`
+
+    /// `LootStoreItem::Roll` (drop rates of 1).
+    bool roll(ref Random random) const
+    {
+        if (chance >= 100)
+            return true;
+        return uniform01(random) * 100 < chance;
+    }
+}
+
+/// One loot id's rows (`LootTemplate`): the entries rolled on their own, and the groups.
+final class LootTemplate
+{
+    LootStoreItem[] entries;
+    LootGroup[] groups;
+
+    /// `LootTemplate::AddEntry`
+    void add(const LootStoreItem item)
+    {
+        if (item.group == 0)
+        {
+            entries ~= item;
+            return;
+        }
+        if (groups.length < item.group)
+            groups.length = item.group;
+        auto group = &groups[item.group - 1];
+        if (item.chance != 0)
+            group.explicitlyChanced ~= item;
+        else
+            group.equalChanced ~= item;
+    }
+}
+
+/// `LootTemplate::LootGroup`: at most one of its entries drops.
+struct LootGroup
+{
+    LootStoreItem[] explicitlyChanced; /// tried in random order against one roll
+    LootStoreItem[] equalChanced;      /// when none of those: one of these
+}
+
+/// A loot table, by loot id (`LootStore`).
+final class LootStore
+{
+    string table;
+    LootTemplate[uint] templates;
+
+    ///
+    this(string table)
+    {
+        this.table = table;
+    }
+
+    /// The template of `id`; null if it has no rows.
+    inout(LootTemplate) opIndex(uint id) inout
+    {
+        if (auto found = id in templates)
+            return *found;
+        return null;
+    }
+
+    /// Adds a row.
+    void add(uint id, const LootStoreItem item)
+    {
+        templates.require(id, new LootTemplate).add(item);
+    }
+}
+
+/// The loot tables this server uses.
+struct LootStores
+{
+    LootStore creature;   /// `creature_loot_template`
+    LootStore reference;  /// `reference_loot_template`
+}
+
+/// The columns every `*_loot_template` query selects, in `LootStoreItem` order after the id.
+enum lootColumns = "entry, item, ChanceOrQuestChance, groupid, mincountOrRef, maxcount, condition_id";
+
+/// A row from those columns.
+LootStoreItem lootRow(uint item, float chanceOrQuestChance, uint group, int mincountOrRef, uint maxCount,
+    uint condition) pure nothrow @nogc @safe
+{
+    LootStoreItem row;
+    row.item = item;
+    row.needsQuest = chanceOrQuestChance < 0;
+    row.chance = chanceOrQuestChance < 0 ? -chanceOrQuestChance : chanceOrQuestChance;
+    row.group = cast(ubyte) group;
+    row.mincountOrRef = mincountOrRef;
+    row.maxCount = cast(ubyte)(maxCount == 0 ? 1 : maxCount);
+    row.condition = condition;
+    return row;
+}
+
+// ---------------------------------------------------------------------------
+// One drop
+// ---------------------------------------------------------------------------
+
+/// `LootMethod` as a corpse's loot applies it; `notGroup` is a single player's.
+enum LootRule : ubyte
+{
+    freeForAll = 0,
+    roundRobin = 1,
+    masterLoot = 2,
+    groupLoot = 3,
+    needBeforeGreed = 4,
+    notGroup = 5,
+}
+
+/// `LootSlotType`: what a looter may do with an item it is shown; `none`: it is not shown.
+enum LootSlotType : ubyte
+{
+    normal = 0,
+    view = 1,
+    master = 2,
+    reqs = 3,
+    none = 4,
+}
+
+/// `ClientLootType`
+enum ClientLootType : ubyte
+{
+    corpse = 1,
+    pickpocketing = 2,
+    fishing = 3,
+    disenchanting = 4,
+}
+
+/// `LootError`
+enum LootError : ubyte
+{
+    didntKill = 0,
+    tooFar = 4,
+    badFacing = 5,
+    locked = 6,
+    notStanding = 8,
+    stunned = 9,
+    playerNotFound = 10,
+    masterInvFull = 12,
+    masterUniqueItem = 13,
+    masterOther = 14,
+}
+
+/// `RollVote`
+enum RollVote : ubyte
+{
+    pass = 0,
+    need = 1,
+    greed = 2,
+    disenchant = 3,
+    notEmittedYet = 4,
+    notValid = 5,
+}
+
+/// `LOOT_ROLL_TIMEOUT`: a minute to choose.
+enum lootRollSeconds = 60;
+
+/// `MAX_NR_LOOT_ITEMS`
+enum maxLootItems = 16;
+
+/// `ITEM_FLAG_MULTI_DROP`: every looter gets one.
+enum uint itemFlagMultiDrop = 0x800;
+
+/// What a looter is to the loot: a player whose client is shown it, and who takes items and money.
+interface Looter
+{
+    /// Its guid.
+    @property ulong looterGuid() const;
+
+    /// Sends it a packet.
+    void deliver(Opcode opcode, const(ubyte)[] body_);
+
+    /**
+     * Stores `count` of `item` in its bags with the push result, or (with `sendError`) shows why not;
+     * returns the `InventoryResult`, 0 if stored.
+     */
+    uint storeLoot(uint item, uint count, int randomPropertyId, bool sendError);
+
+    /// Money it took or was given its share of.
+    void receiveMoney(uint copper);
+
+    /// Whether it could use the item (need before greed offers need only then).
+    bool canUseItem(uint item);
+
+    /// It looks into this loot now (`UNIT_FLAG_LOOTING`), or no longer.
+    void lootWindow(ulong target, bool open);
+}
+
+/// A player's guid -> the looter, or null if it is not here.
+alias FindLooter = Looter delegate(ulong guid);
+
+/// `LootItem`: an item in a drop.
+final class LootItem
+{
+    uint itemId;
+    uint count;
+    uint displayId;
+    int randomPropertyId;
+    ubyte slot;               /// `lootSlot`: its place in the window
+    uint quality;
+    uint condition;
+    bool quest;               /// `LOOTITEM_TYPE_QUEST`
+    bool freeForAll;          /// multi-drop: every looter takes one
+    bool underThreshold;
+    bool blocked;             /// being rolled for, or waiting for the master
+    bool released;            /// the current looter let it go: anyone may take it
+    bool currentLooterPass;   /// the current looter may not take it, so others may
+    bool[ulong] allowed;      /// who may still take it
+
+    /// `LootItem::GetSlotTypeForSharedLoot`
+    LootSlotType slotTypeFor(ulong player, const Loot loot) const
+    {
+        if (player !in allowed)
+            return LootSlotType.none;
+        if (freeForAll)
+            return LootSlotType.normal;
+        if (condition && !quest)
+        {
+            final switch (loot.rule)
+            {
+            case LootRule.notGroup:
+            case LootRule.freeForAll:
+                return LootSlotType.normal;
+            case LootRule.roundRobin:
+            case LootRule.groupLoot:
+            case LootRule.needBeforeGreed:
+            case LootRule.masterLoot:
+                if (!underThreshold && loot.rule == LootRule.masterLoot)
+                    break;
+                if (blocked)
+                    return LootSlotType.view;
+                return released || currentLooterPass || loot.currentLooter == player ? LootSlotType.normal
+                    : LootSlotType.none;
+            }
+        }
+        final switch (loot.rule)
+        {
+        case LootRule.freeForAll:
+        case LootRule.notGroup:
+            return LootSlotType.normal;
+        case LootRule.groupLoot:
+        case LootRule.needBeforeGreed:
+            if (blocked)
+                return LootSlotType.view;
+            return released || currentLooterPass || loot.currentLooter == player ? LootSlotType.normal
+                : LootSlotType.none;
+        case LootRule.masterLoot:
+            if (underThreshold)
+                return released || currentLooterPass || loot.currentLooter == player ? LootSlotType.normal
+                    : LootSlotType.none;
+            if (player == loot.masterLooter)
+                return LootSlotType.master;
+            return blocked ? LootSlotType.view : LootSlotType.none;
+        case LootRule.roundRobin:
+            return released || currentLooterPass || loot.currentLooter == player ? LootSlotType.normal
+                : LootSlotType.none;
+        }
+    }
+}
+
+/// `LootStatus`
+enum LootStatus : uint
+{
+    notFullyLooted = 0x01,
+    containGold = 0x02,
+    containFreeForAll = 0x04,
+    containReleasedItems = 0x08,
+}
+
+/// See the module documentation.
+final class Loot
+{
+    immutable ulong target;      /// the corpse
+    ClientLootType clientType = ClientLootType.corpse;
+    uint gold;
+    LootItem[] items;
+    LootRule rule = LootRule.notGroup;
+    ubyte threshold = 2;         /// `ITEM_QUALITY_UNCOMMON`
+    ulong currentLooter;         /// round robin's (and below the threshold) turn
+    ulong masterLooter;
+    bool[ulong] owners;          /// `m_ownerSet`: who may loot at all
+    bool[ulong] looking;         /// `m_playersLooting`: whose window is open
+    bool fake;                   /// `m_isFakeLoot`: an empty window, shown once
+    bool[ulong] opened;          /// `m_playersOpened`
+    bool haveItemOverThreshold;
+    LootRoll[ubyte] rolls;
+    private bool checked;        // `m_isChecked`: the rolls are started
+
+    /// The players by guid, for packets and items.
+    FindLooter find;
+    /// Told when what some viewer sees of the corpse (lootable or not) may have changed.
+    void delegate() changed;
+    /// Told when nobody has anything left to take.
+    void delegate() lootedForAll;
+
+    ///
+    this(ulong target, FindLooter find)
+    {
+        this.target = target;
+        this.find = find;
+    }
+
+    // -------------------------------------------------------------------
+    // Filling
+    // -------------------------------------------------------------------
+
+    /**
+     * `Loot::FillLoot`: rolls the template's entries and groups into items; `allowedFor` says whether
+     * an owner may have an item (conditions; quest drops never), `meets` whether the owner or its
+     * group meets a condition while rolling.
+     */
+    void fill(const LootTemplate template_, const LootStores stores, const ItemTemplate[uint] protos,
+        ref Random random, bool delegate(uint condition) meets, bool delegate(ulong player, const LootItem) allowedFor)
+    {
+        process(template_, stores, protos, random, meets);
+        foreach (owner, _; owners)
+            foreach (item; items)
+            {
+                if (allowedFor is null || allowedFor(owner, item))
+                    item.allowed[owner] = true;
+                else if (owner == currentLooter)
+                    item.currentLooterPass = true;
+            }
+        // Which items wait for a roll or the master.
+        foreach (item; items)
+        {
+            if (item.freeForAll || item.quest || item.quality < threshold)
+                item.underThreshold = true;
+            else if (rule == LootRule.masterLoot)
+            {
+                if (masterLooter == 0 || masterLooter !in item.allowed)
+                    item.blocked = true;
+            }
+            else if (rule == LootRule.groupLoot || rule == LootRule.needBeforeGreed)
+                item.blocked = true;
+        }
+    }
+
+    /// `LootTemplate::Process`
+    private void process(const LootTemplate template_, const LootStores stores, const ItemTemplate[uint] protos,
+        ref Random random, bool delegate(uint) meets)
+    {
+        foreach (ref entry; template_.entries)
+        {
+            if (entry.condition && meets !is null && !meets(entry.condition))
+                continue;
+            if (!entry.roll(random))
+                continue;
+            if (entry.mincountOrRef < 0)
+            {
+                if (auto referenced = stores.reference is null ? null : stores.reference[-entry.mincountOrRef])
+                    foreach (_; 0 .. entry.maxCount)
+                        process(referenced, stores, protos, random, meets);
+            }
+            else
+                add(entry, protos, random);
+        }
+        foreach (ref group; template_.groups)
+        {
+            const chosen = rollGroup(group, random, meets);
+            if (chosen is null)
+                continue;
+            if (chosen.mincountOrRef > 0)
+                add(*chosen, protos, random);
+            else if (auto referenced = stores.reference is null ? null : stores.reference[-chosen.mincountOrRef])
+                foreach (_; 0 .. chosen.maxCount)
+                    process(referenced, stores, protos, random, meets);
+        }
+    }
+
+    /// `LootGroup::Roll`: one of the group's entries, or none.
+    private const(LootStoreItem)* rollGroup(ref const LootGroup group, ref Random random, bool delegate(uint) meets)
+    {
+        import std.random : randomShuffle;
+
+        if (group.explicitlyChanced.length)
+        {
+            auto order = new const(LootStoreItem)*[group.explicitlyChanced.length];
+            foreach (i, ref entry; group.explicitlyChanced)
+                order[i] = &entry;
+            randomShuffle(order, random);
+            float chance = uniform01(random) * 100;
+            foreach (entry; order)
+            {
+                if (entry.condition && meets !is null && !meets(entry.condition))
+                    continue;
+                if (entry.chance >= 100)
+                    return entry;
+                chance -= entry.chance;
+                if (chance < 0)
+                    return entry;
+            }
+        }
+        if (group.equalChanced.length)
+        {
+            auto order = new const(LootStoreItem)*[group.equalChanced.length];
+            foreach (i, ref entry; group.equalChanced)
+                order[i] = &entry;
+            randomShuffle(order, random);
+            foreach (entry; order)
+            {
+                if (has(entry.item) && uniform(0, 2, random)) // already dropped: half a chance to pick another
+                    continue;
+                if (entry.condition && meets !is null && !meets(entry.condition))
+                    continue;
+                return entry;
+            }
+        }
+        return null;
+    }
+
+    /// `Loot::AddItem`: one more item, `mincount` to `maxcount` of it.
+    private void add(const ref LootStoreItem entry, const ItemTemplate[uint] protos, ref Random random)
+    {
+        if (items.length >= maxLootItems)
+            return;
+        auto item = new LootItem;
+        item.itemId = entry.item;
+        item.slot = cast(ubyte) items.length;
+        item.count = entry.maxCount > entry.mincountOrRef ? uniform!"[]"(entry.mincountOrRef, entry.maxCount, random)
+            : entry.mincountOrRef;
+        item.quest = entry.needsQuest;
+        item.condition = entry.condition;
+        if (const proto = entry.item in protos)
+        {
+            item.displayId = proto.displayId;
+            item.quality = proto.details.quality;
+            item.freeForAll = (proto.flags & itemFlagMultiDrop) != 0;
+            item.underThreshold = item.quality < threshold;
+        }
+        if (!item.underThreshold)
+            haveItemOverThreshold = true;
+        items ~= item;
+    }
+
+    /// `Loot::IsItemAlreadyIn`
+    bool has(uint itemId) const
+    {
+        foreach (item; items)
+            if (item.itemId == itemId)
+                return true;
+        return false;
+    }
+
+    /// `Loot::GenerateMoneyLoot`
+    void generateMoney(uint minAmount, uint maxAmount, ref Random random)
+    {
+        if (maxAmount == 0)
+            return;
+        if (maxAmount <= minAmount)
+            gold = maxAmount;
+        else if (maxAmount - minAmount < 32_700)
+            gold = uniform!"[]"(minAmount, maxAmount, random);
+        else
+            gold = uniform!"[]"(minAmount >> 8, maxAmount >> 8, random) << 8;
+    }
+
+    // -------------------------------------------------------------------
+    // Rights
+    // -------------------------------------------------------------------
+
+    /// `Loot::GetLootStatusFor`
+    uint statusFor(ulong player) const
+    {
+        uint status;
+        if (fake && opened.length == 0)
+            return LootStatus.notFullyLooted; // `LOOT_STATUS_FAKE_LOOT`: shown once, empty
+        if (gold)
+            status |= LootStatus.containGold;
+        foreach (item; items)
+        {
+            if (item.slotTypeFor(player, this) == LootSlotType.none)
+                continue;
+            status |= LootStatus.notFullyLooted;
+            if (item.freeForAll)
+                status |= LootStatus.containFreeForAll;
+            if (item.released)
+                status |= LootStatus.containReleasedItems;
+        }
+        return status;
+    }
+
+    /// `Loot::IsLootedFor`
+    bool lootedFor(ulong player) const
+    {
+        return statusFor(player) == 0;
+    }
+
+    /// `Loot::IsLootedForAll`: of the owners still here.
+    bool lootedForEveryone()
+    {
+        foreach (owner, _; owners)
+            if (find(owner) !is null && !lootedFor(owner))
+                return false;
+        return true;
+    }
+
+    /// `Loot::CanLoot`: whether `player` may open it now (the corpse sparkles for it).
+    bool canLoot(ulong player) const
+    {
+        if (player !in owners)
+            return false;
+        const status = statusFor(player);
+        if (status == 0)
+            return false;
+        if (status & (LootStatus.containGold | LootStatus.containFreeForAll))
+            return true;
+        if (rule == LootRule.notGroup || rule == LootRule.freeForAll)
+            return true;
+        if (haveItemOverThreshold)
+        {
+            if (rule == LootRule.masterLoot && player == masterLooter)
+                return true;
+            if (rule != LootRule.masterLoot && rule != LootRule.roundRobin)
+                return true;
+        }
+        return (status & LootStatus.containReleasedItems) || player == currentLooter;
+    }
+
+    /// The item in window slot `slot`; null if none.
+    LootItem itemInSlot(uint slot)
+    {
+        foreach (item; items)
+            if (item.slot == slot)
+                return item;
+        return null;
+    }
+
+    // -------------------------------------------------------------------
+    // Looting
+    // -------------------------------------------------------------------
+
+    /// `Loot::ShowContentTo`: opens the window for `looter`, or closes it if it may not loot.
+    void showContentTo(Looter looter)
+    {
+        const guid = looter.looterGuid;
+        if (items.length && !canLoot(guid))
+            return sendReleaseFor(looter);
+        opened[guid] = true;
+        if (rule != LootRule.notGroup && !checked)
+            groupCheck();
+        looking[guid] = true;
+        looter.lootWindow(target, true);
+        looter.deliver(Opcode.SMSG_LOOT_RESPONSE, contentFor(guid));
+    }
+
+    /// `SMSG_LOOT_RESPONSE`'s body for `player` (`Loot::GetLootContentFor`).
+    ubyte[] contentFor(ulong player) const
+    {
+        ByteWriter w;
+        w.put(target);
+        w.put(cast(ubyte) clientType);
+        w.put(gold);
+        ubyte shown;
+        ByteWriter list;
+        foreach (item; items)
+        {
+            const type = item.slotTypeFor(player, this);
+            if (type == LootSlotType.none)
+                continue;
+            list.put(item.slot);
+            list.put(item.itemId);
+            list.put(item.count);
+            list.put(item.displayId);
+            list.put(0u); // random suffix
+            list.put(item.randomPropertyId);
+            list.put(cast(ubyte) type);
+            ++shown;
+        }
+        w.put(shown);
+        w.putBytes(list.data);
+        return w.data.dup;
+    }
+
+    /// `Loot::SendReleaseFor`: the window closes.
+    void sendReleaseFor(Looter looter)
+    {
+        ByteWriter w;
+        w.put(target);
+        w.put(ubyte(1));
+        looter.deliver(Opcode.SMSG_LOOT_RELEASE_RESPONSE, w.data);
+        looking.remove(looter.looterGuid);
+        looter.lootWindow(target, false);
+    }
+
+    /// `Loot::SendReleaseForAll`
+    void sendReleaseForAll()
+    {
+        foreach (guid; looking.keys)
+            if (auto looter = find(guid))
+                sendReleaseFor(looter);
+            else
+                looking.remove(guid);
+    }
+
+    /// `Loot::NotifyItemRemoved`: the slot empties in the windows open on it (only `looter`'s for a free-for-all item).
+    private void notifyItemRemoved(const LootItem item, Looter looter)
+    {
+        const body_ = [item.slot];
+        if (item.freeForAll)
+            return looter.deliver(Opcode.SMSG_LOOT_REMOVED, body_);
+        foreach (guid; looking.keys)
+            if (auto other = find(guid))
+                other.deliver(Opcode.SMSG_LOOT_REMOVED, body_);
+            else
+                looking.remove(guid);
+    }
+
+    /**
+     * `Loot::SendItem`: `item` into `looter`'s bags; the windows lose it. If it does not fit, it is
+     * that looter's to take later. Returns the `InventoryResult`.
+     */
+    uint sendItem(Looter looter, LootItem item, bool sendError = true)
+    {
+        const guid = looter.looterGuid;
+        const result = looter.storeLoot(item.itemId, item.count, item.randomPropertyId, sendError);
+        if (result != 0)
+        {
+            item.blocked = false;
+            currentLooter = guid;
+            item.released = false;
+            return result;
+        }
+        notifyItemRemoved(item, looter);
+        if (item.freeForAll)
+            item.allowed.remove(guid);
+        else
+            item.allowed = null;
+        if (lootedForEveryone())
+        {
+            sendReleaseForAll();
+            if (lootedForAll !is null)
+                lootedForAll();
+        }
+        else if (lootedFor(guid))
+            sendReleaseFor(looter);
+        if (changed !is null)
+            changed();
+        return 0;
+    }
+
+    /// `Loot::SendGold`: the money, shared among the owners in a group.
+    void sendGold(Looter looter)
+    {
+        if (gold == 0)
+            return;
+        foreach (guid; looking.keys)
+            if (auto other = find(guid))
+                other.deliver(Opcode.SMSG_LOOT_CLEAR_MONEY, null);
+        if (rule != LootRule.notGroup)
+        {
+            const share = cast(uint)(gold / owners.length);
+            foreach (guid, _; owners)
+                if (auto owner = find(guid))
+                {
+                    owner.receiveMoney(share);
+                    ByteWriter w;
+                    w.put(share);
+                    owner.deliver(Opcode.SMSG_LOOT_MONEY_NOTIFY, w.data);
+                }
+        }
+        else
+            looter.receiveMoney(gold);
+        gold = 0;
+        if (lootedFor(looter.looterGuid))
+            release(looter);
+        else if (changed !is null)
+            changed();
+    }
+
+    /// `Loot::Release` for a corpse: the window closes; the current looter lets its items go to the others.
+    void release(Looter looter)
+    {
+        const guid = looter.looterGuid;
+        if (guid == currentLooter)
+            foreach (item; items)
+                if (!item.blocked && !item.released)
+                    item.released = true;
+        if (guid in looking)
+            sendReleaseFor(looter);
+        else
+            looter.lootWindow(target, false);
+        if (fake || lootedForEveryone())
+        {
+            sendReleaseForAll();
+            if (lootedForAll !is null)
+                lootedForAll();
+        }
+        if (changed !is null)
+            changed();
+    }
+
+    // -------------------------------------------------------------------
+    // Rolls and the master
+    // -------------------------------------------------------------------
+
+    /// `Loot::GroupCheck`: the rolls for the blocked items start; the master is told who may receive.
+    void groupCheck()
+    {
+        checked = true;
+        Looter master;
+        ulong[] present;
+        foreach (guid, _; owners)
+        {
+            auto owner = find(guid);
+            if (owner is null)
+                continue;
+            present ~= guid;
+            if (rule == LootRule.masterLoot && guid == masterLooter)
+                master = owner;
+            foreach (item; items)
+            {
+                if (!item.blocked || item.slot in rolls || guid !in item.allowed)
+                    continue;
+                if (rule == LootRule.masterLoot && masterLooter in owners)
+                    continue; // the master hands it out
+                auto roll = new LootRoll(this, item);
+                if (roll.tryToStart(nowSeconds()))
+                    rolls[item.slot] = roll;
+            }
+        }
+        if (master !is null)
+        {
+            ByteWriter w;
+            w.put(cast(ubyte) present.length);
+            foreach (guid; present)
+                w.put(guid);
+            master.deliver(Opcode.SMSG_LOOT_MASTER_LIST, w.data);
+        }
+    }
+
+    /// The clock rolls time out by (Unix seconds); replaceable for tests.
+    long delegate() clock;
+
+    private long nowSeconds()
+    {
+        import std.datetime.systime : Clock;
+
+        return clock !is null ? clock() : Clock.currTime.toUnixTime;
+    }
+
+    /// `Loot::Update`: rolls whose time is up, or that everyone voted on, end.
+    void update()
+    {
+        const now = nowSeconds();
+        foreach (slot; rolls.keys)
+            if (rolls[slot].update(now))
+                rolls.remove(slot);
+    }
+
+    /// `LootMgr::PlayerVote`: `player` chose for the item in `slot`.
+    void vote(Looter player, uint slot, RollVote choice)
+    {
+        auto roll = cast(ubyte) slot in rolls;
+        if (roll is null)
+            return;
+        if ((*roll).vote(player.looterGuid, choice) && (*roll).update(nowSeconds()))
+            rolls.remove(cast(ubyte) slot);
+    }
+}
+
+/// `GroupLootRoll`: the owners who may take an item over the threshold roll need, greed or pass for it.
+final class LootRoll
+{
+    private Loot loot;
+    private LootItem item;
+    private struct Vote
+    {
+        RollVote vote;
+        ubyte number;
+    }
+
+    private Vote[ulong] votes;
+    private long endTime;
+    private bool started;
+
+    ///
+    this(Loot loot, LootItem item)
+    {
+        this.loot = loot;
+        this.item = item;
+    }
+
+    /// `GroupLootRoll::TryToStart`: starts if more than one owner may take it; otherwise it is no longer held.
+    bool tryToStart(long now)
+    {
+        if (item.quest)
+            return false;
+        item.blocked = true;
+        uint players;
+        foreach (guid, _; loot.owners)
+        {
+            if (loot.find(guid) is null || guid !in item.allowed)
+            {
+                votes[guid] = Vote(RollVote.notValid);
+                continue;
+            }
+            votes[guid] = Vote(RollVote.notEmittedYet);
+            ++players;
+        }
+        if (players > 1)
+        {
+            sendStartRoll();
+            endTime = now + lootRollSeconds;
+            started = true;
+            return true;
+        }
+        item.underThreshold = true;
+        item.blocked = false;
+        return false;
+    }
+
+    private void head(ref ByteWriter w)
+    {
+        w.put(loot.target);
+        w.put(uint(item.slot));
+    }
+
+    private void itemPart(ref ByteWriter w)
+    {
+        w.put(item.itemId);
+        w.put(0u); // random suffix
+        w.put(item.randomPropertyId);
+    }
+
+    private void toVoters(Opcode opcode, const(ubyte)[] body_)
+    {
+        foreach (guid, v; votes)
+            if (v.vote != RollVote.notValid)
+                if (auto looter = loot.find(guid))
+                    looter.deliver(opcode, body_);
+    }
+
+    /// `SMSG_LOOT_START_ROLL`: need is not offered for what the player could not use (need before greed).
+    private void sendStartRoll()
+    {
+        enum ubyte maskAll = 0x0F, maskNeed = 0x02;
+        foreach (guid, v; votes)
+        {
+            if (v.vote == RollVote.notValid)
+                continue;
+            auto looter = loot.find(guid);
+            if (looter is null)
+                continue;
+            ubyte mask = maskAll;
+            if (loot.rule == LootRule.needBeforeGreed && !looter.canUseItem(item.itemId))
+                mask &= ~maskNeed;
+            ByteWriter w;
+            head(w);
+            itemPart(w);
+            w.put(uint(lootRollSeconds * 1000));
+            w.put(mask);
+            looter.deliver(Opcode.SMSG_LOOT_START_ROLL, w.data);
+        }
+    }
+
+    /// `SMSG_LOOT_ROLL`: what one player chose (and rolled).
+    private void sendRoll(ulong player, uint number, uint type)
+    {
+        ByteWriter w;
+        head(w);
+        w.put(player);
+        itemPart(w);
+        w.put(cast(ubyte) number);
+        w.put(cast(ubyte) type);
+        w.put(ubyte(0)); // auto pass
+        toVoters(Opcode.SMSG_LOOT_ROLL, w.data);
+    }
+
+    /// `GroupLootRoll::PlayerVote`
+    bool vote(ulong player, RollVote choice)
+    {
+        auto v = player in votes;
+        if (v is null || v.vote == RollVote.notValid)
+            return false;
+        v.vote = choice;
+        if (choice != RollVote.pass)
+            v.number = cast(ubyte) uniform!"[]"(1, 100);
+        switch (choice)
+        {
+        case RollVote.pass:
+            sendRoll(player, 128, 128);
+            break;
+        case RollVote.need:
+            sendRoll(player, 0, 0);
+            break;
+        case RollVote.greed:
+            sendRoll(player, 128, 2);
+            break;
+        default:
+            return false;
+        }
+        return true;
+    }
+
+    /// `GroupLootRoll::UpdateRoll`: true when it is over (everyone chose, or the time is up).
+    bool update(long now)
+    {
+        ulong winner;
+        bool any;
+        if (allVoted(winner, any) || now >= endTime)
+        {
+            finish(winner, any);
+            return true;
+        }
+        return false;
+    }
+
+    /// `GroupLootRoll::AllPlayerVoted`: need beats greed, then the higher number.
+    private bool allVoted(out ulong winner, out bool any)
+    {
+        uint notVoted;
+        bool someoneNeeds;
+        ubyte best;
+        foreach (guid, v; votes)
+            switch (v.vote)
+            {
+            case RollVote.need:
+                if (!someoneNeeds || !any || v.number > best)
+                {
+                    someoneNeeds = true;
+                    winner = guid;
+                    best = v.number;
+                    any = true;
+                }
+                break;
+            case RollVote.greed:
+            case RollVote.disenchant:
+                if (!someoneNeeds && (!any || v.number > best))
+                {
+                    winner = guid;
+                    best = v.number;
+                    any = true;
+                }
+                break;
+            case RollVote.notEmittedYet:
+                ++notVoted;
+                break;
+            default:
+                break;
+            }
+        return notVoted == 0;
+    }
+
+    /// `GroupLootRoll::Finish`: the winner gets it; if nobody wanted it, anyone may take it.
+    private void finish(ulong winner, bool any)
+    {
+        item.blocked = false;
+        if (!any)
+        {
+            ByteWriter w;
+            head(w);
+            itemPart(w);
+            toVoters(Opcode.SMSG_LOOT_ALL_PASSED, w.data);
+            item.released = true;
+        }
+        else
+        {
+            const won = votes[winner];
+            foreach (guid, v; votes)
+                switch (v.vote)
+                {
+                case RollVote.pass:
+                    break;
+                case RollVote.notEmittedYet:
+                case RollVote.notValid:
+                    sendRoll(guid, 128, 128);
+                    break;
+                case RollVote.greed:
+                    if (won.vote == RollVote.need)
+                        break;
+                    goto default;
+                default:
+                    sendRoll(guid, v.number, v.vote);
+                    break;
+                }
+            ByteWriter w;
+            head(w);
+            itemPart(w);
+            w.put(winner);
+            w.put(won.number);
+            w.put(cast(ubyte) won.vote);
+            toVoters(Opcode.SMSG_LOOT_ROLL_WON, w.data);
+            if (auto looter = loot.find(winner))
+                loot.sendItem(looter, item);
+            else
+                item.released = true;
+        }
+        started = false;
+        if (loot.changed !is null)
+            loot.changed();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+version (unittest)
+{
+    /// A looter that keeps what it is sent.
+    final class TestLooter : Looter
+    {
+        ulong guid;
+        Opcode[] got;
+        const(ubyte)[][] bodies;
+        uint[] stored;
+        uint money;
+        bool full;
+        bool windowOpen;
+
+        this(ulong guid)
+        {
+            this.guid = guid;
+        }
+
+        @property ulong looterGuid() const
+        {
+            return guid;
+        }
+
+        void deliver(Opcode opcode, const(ubyte)[] body_)
+        {
+            got ~= opcode;
+            bodies ~= body_.dup;
+        }
+
+        uint storeLoot(uint item, uint count, int randomPropertyId, bool sendError)
+        {
+            if (full)
+                return 50; // EQUIP_ERR_INVENTORY_FULL
+            stored ~= item;
+            return 0;
+        }
+
+        void receiveMoney(uint copper)
+        {
+            money += copper;
+        }
+
+        bool canUseItem(uint item)
+        {
+            return true;
+        }
+
+        void lootWindow(ulong target, bool open)
+        {
+            windowOpen = open;
+        }
+    }
+}
+
+/// Entries roll on their own chance, a group gives at most one, references are followed.
+unittest
+{
+    auto stores = LootStores(new LootStore("creature_loot_template"), new LootStore("reference_loot_template"));
+    stores.creature.add(1, lootRow(100, 100, 0, 1, 1, 0));    // always
+    stores.creature.add(1, lootRow(101, 0.0001f, 0, 1, 1, 0)); // never, in practice
+    stores.creature.add(1, lootRow(102, 50, 1, 1, 1, 0));     // group 1: one of these two
+    stores.creature.add(1, lootRow(103, 50, 1, 1, 1, 0));
+    stores.creature.add(1, lootRow(0, 100, 0, -7, 2, 0));     // reference 7, twice
+    stores.reference.add(7, lootRow(200, 100, 0, 3, 3, 0));   // three of it
+    stores.creature.add(1, lootRow(300, -100, 0, 1, 1, 0));   // a quest drop
+    ItemTemplate[uint] protos;
+    foreach (id; [100u, 101, 102, 103, 200, 300])
+    {
+        ItemTemplate t;
+        t.entry = id;
+        t.displayId = id + 1000;
+        protos[id] = t;
+    }
+    auto random = Random(42);
+    foreach (_; 0 .. 50)
+    {
+        auto loot = new Loot(1, (ulong guid) => cast(Looter) null);
+        loot.owners[7] = true;
+        loot.fill(stores.creature[1], stores, protos, random, null,
+            (ulong player, const LootItem item) => !item.quest);
+        uint[uint] count;
+        foreach (item; loot.items)
+            ++count[item.itemId];
+        assert(count.get(100, 0) == 1 && 101 !in count);
+        assert(count.get(102, 0) + count.get(103, 0) == 1, "one of the group");
+        assert(count.get(200, 0) == 2 && loot.items[0].count == 1);
+        foreach (item; loot.items)
+            if (item.itemId == 200)
+                assert(item.count == 3);
+        // The quest drop is there but nobody may see it.
+        foreach (item; loot.items)
+            if (item.itemId == 300)
+                assert(item.slotTypeFor(7, loot) == LootSlotType.none);
+    }
+}
+
+/// A single player's loot: shown, the money and items taken, and then it is looted.
+unittest
+{
+    auto looter = new TestLooter(7);
+    auto loot = new Loot(1, (ulong guid) => guid == 7 ? cast(Looter) looter : null);
+    loot.owners[7] = true;
+    loot.currentLooter = 7;
+    auto item = new LootItem;
+    item.itemId = 100;
+    item.count = 1;
+    item.allowed[7] = true;
+    loot.items ~= item;
+    loot.gold = 25;
+    bool done;
+    loot.lootedForAll = () { done = true; };
+    assert(loot.canLoot(7) && !loot.canLoot(8));
+
+    loot.showContentTo(looter);
+    assert(looter.got == [Opcode.SMSG_LOOT_RESPONSE] && looter.windowOpen);
+    const response = looter.bodies[0];
+    assert(response[8] == ClientLootType.corpse && response[9] == 25 && response[13] == 1, "25 copper, one item");
+    loot.sendGold(looter);
+    assert(looter.money == 25 && loot.gold == 0 && !done);
+    loot.sendItem(looter, item);
+    assert(looter.stored == [100] && done && !looter.windowOpen && loot.lootedFor(7));
+}
+
+/// Round robin: the current looter first; once it releases, the others.
+unittest
+{
+    auto a = new TestLooter(1), b = new TestLooter(2);
+    auto loot = new Loot(9, (ulong guid) => guid == 1 ? cast(Looter) a : guid == 2 ? b : null);
+    loot.rule = LootRule.roundRobin;
+    loot.owners[1] = true;
+    loot.owners[2] = true;
+    loot.currentLooter = 1;
+    auto item = new LootItem;
+    item.itemId = 100;
+    item.underThreshold = true;
+    item.allowed[1] = true;
+    item.allowed[2] = true;
+    loot.items ~= item;
+    assert(loot.canLoot(1) && !loot.canLoot(2));
+    loot.showContentTo(a);
+    loot.release(a);
+    assert(loot.canLoot(2) && item.slotTypeFor(2, loot) == LootSlotType.normal);
+}
+
+/// Group loot: an item over the threshold is rolled for; need beats greed.
+unittest
+{
+    auto a = new TestLooter(1), b = new TestLooter(2);
+    auto loot = new Loot(9, (ulong guid) => guid == 1 ? cast(Looter) a : guid == 2 ? b : null);
+    long now = 1000;
+    loot.clock = () => now;
+    loot.rule = LootRule.groupLoot;
+    loot.owners[1] = true;
+    loot.owners[2] = true;
+    loot.currentLooter = 1;
+    auto item = new LootItem;
+    item.itemId = 100;
+    item.quality = 2;
+    item.blocked = true;
+    item.allowed[1] = true;
+    item.allowed[2] = true;
+    loot.items ~= item;
+    loot.haveItemOverThreshold = true;
+    assert(loot.canLoot(2), "anyone may open it to see what is rolled for");
+    loot.showContentTo(b);
+    assert(a.got == [Opcode.SMSG_LOOT_START_ROLL] && item.slotTypeFor(2, loot) == LootSlotType.view);
+    loot.vote(a, 0, RollVote.greed);
+    loot.vote(b, 0, RollVote.need);
+    assert(b.stored == [100] && a.stored.length == 0, "need wins");
+    import std.algorithm.searching : canFind;
+
+    assert(a.got.canFind(Opcode.SMSG_LOOT_ROLL_WON) && loot.rolls.length == 0);
+
+    // Nobody answers: after a minute, it is anyone's.
+    auto other = new LootItem;
+    other.itemId = 101;
+    other.quality = 3;
+    other.slot = 1;
+    other.blocked = true;
+    other.allowed[1] = true;
+    other.allowed[2] = true;
+    loot.items ~= other;
+    auto roll = new LootRoll(loot, other);
+    assert(roll.tryToStart(now));
+    loot.rolls[1] = roll;
+    now += 61;
+    loot.update();
+    assert(loot.rolls.length == 0 && other.released && !other.blocked);
+}

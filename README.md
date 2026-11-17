@@ -249,7 +249,19 @@ What works now:
     at its next login. A creature killed leaves its corpse for a minute (5 for elites and rares, an
     hour for bosses, at most 90% of its respawn time) and comes back at its spawn point after
     `spawntimesecs` (to `spawntimesecsmax`), kept in `creature_respawn` across restarts. Not yet:
-    resurrection sickness, ghosts hidden from the living, skinnable corpses and loot.
+    resurrection sickness, ghosts hidden from the living, skinnable corpses.
+  * **Experience and loot** (CMaNGOS's `XP::Gain`, `RewardGroupAtKill` and `LootMgr`): the first
+    player to hurt a creature taps it (others see it grey) for itself and its group. A kill gives
+    CMaNGOS's experience (by the level difference, elites and `ExperienceMultiplier`; doubled from
+    the rested pool), shared in a group by level among the living members within 74 yards, with a
+    bonus from three members on. The corpse sparkles for those who may loot it: its money
+    (`MinLootGold`..`MaxLootGold`) and items from `creature_loot_template` and
+    `reference_loot_template` (entries, groups, references, conditions). In a group the loot method
+    applies: free for all, round robin (the turn moves on), master loot (the master hands out what is
+    over the threshold), group loot and need before greed (need, greed or pass for a minute; need
+    wins, then the higher roll); money is shared. A looted corpse goes within two minutes. Not yet:
+    quest drops (no quests), random enchantments, skinning and pickpocketing (spells), reputation
+    for kills.
   * **The update tick** (every 50 ms, `update_interval`): health, mana, rage and energy regenerate
     as in CMaNGOS (health and the loss of rage only out of combat, and only for the living); inns and capitals give rested XP, also while offline; characters are saved every
     15 minutes (`player_save_interval`).

@@ -353,6 +353,7 @@ private:
         flushPlayerChanges();
         if (d.damage == 0)
             return;
+        tap(victim);
         const killed = victim.takeDamage(d.damage);
         map.flushObjectChanges(victim);
         if (killed)
@@ -371,6 +372,7 @@ private:
         stopAttack(false);
         victim.die(map, context.unixTime);
         context.creatureDied(victim);
+        rewardKill(victim);
     }
 }
 

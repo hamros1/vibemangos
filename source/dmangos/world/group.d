@@ -260,6 +260,7 @@ final class Group
     ulong mainAssistant;
     LootMethod lootMethod = LootMethod.groupLoot;
     ulong looter;                 /// the master looter
+    ulong nextLooter;             /// `m_currentLooterGuid`: round robin's next turn
     ubyte lootThreshold = 2;      /// `ITEM_QUALITY_UNCOMMON`
     ulong[targetIconCount] targetIcons;
 

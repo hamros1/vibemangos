@@ -219,7 +219,7 @@ private:
      * `Player::GiveXP` for experience not from a kill: logged to the client, and levels gained while
      * it lasts. Nothing past the highest level. Kills and quests will give theirs through it too.
      */
-    package void giveXP(uint xp)
+    package void giveXP(uint xp, ulong victim = 0, float groupRate = 1)
     {
         if (xp < 1 || !player.alive)
             return;
@@ -227,7 +227,29 @@ private:
         uint level = player.data.level;
         if (level >= maxLevel)
             return;
-        send(ServerLogXpGain(0, xp));
+        // `GetXPRestBonus`: a kill gives as much again from the rested pool, while it lasts.
+        uint rested;
+        if (victim)
+        {
+            rested = cast(uint) player.restBonus;
+            if (rested > xp)
+                rested = xp;
+            player.setRestBonus(player.restBonus - rested, maxLevel);
+        }
+        if (victim)
+        {
+            // `SendLogXPGain` for a kill: the victim, the whole gain, the gain without the rest, the group's rate.
+            ByteWriter w;
+            w.put(victim);
+            w.put(xp + rested);
+            w.put(ubyte(0));
+            w.put(xp);
+            w.put(groupRate);
+            deliver(Opcode.SMSG_LOG_XPGAIN, w.data);
+        }
+        else
+            send(ServerLogXpGain(0, xp));
+        xp += rested;
         uint next = player.values[PLAYER_NEXT_LEVEL_XP];
         uint total = player.values[PLAYER_XP] + xp;
         while (total >= next && level < maxLevel)

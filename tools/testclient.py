@@ -19,6 +19,7 @@ in order:
     whisper:NAME:TEXT         whisper to another player
     attack:ENTRY  stopattack  walk up to the nearest creature of ENTRY and fight it; stop
     approach:ENTRY:DIST       walk to DIST yards of the nearest creature of ENTRY
+    loot                      walk to the creature last attacked, take its money and items
     release  corpse  tocorpse  reclaim  spirithealer
                               dead: release the spirit, ask where the corpse is, go there, take it
                               back; or ask the spirit healer picked with npc:ENTRY
@@ -159,6 +160,7 @@ seen_objects = {}
 seen_positions = {}   # creature guid -> where it was created
 here = [0.0, 0.0, 0.0]  # where this client last put its character
 corpse_at = [0.0, 0.0, 0.0]
+last_target = [0]
 item_objects = {}  # guid -> fields of the items the client was sent
 my_slots = {}      # the player's own slots: slot -> item guid
 player_guid = None
@@ -359,6 +361,12 @@ def describe(op, p):
         print(f"  [item received] {count} x {entry} in bag {bag} slot {slot if slot != 0xFFFFFFFF else 'stack'}")
     elif op == 0x1D4: print(f"  [level up] to level {struct.unpack_from('<I', p)[0]}")
     elif op == 0x1D0: print("  [experience] %d (kind %d)" % struct.unpack_from("<IB", p, 8))
+    elif op == 0x161: print("  [loot window closed]")
+    elif op == 0x162: print(f"  [loot removed] slot {p[0]}")
+    elif op == 0x165: print("  [loot money taken]")
+    elif op == 0x166:
+        g, rec, cre, chat, bag, slot, entry, suffix, prop, count = struct.unpack_from("<QIIIBIIIiI", p, 0)
+        print(f"  [item received] {entry} x{count}")
     elif op == 0x1F8: print("  [discovered] area %d: %d experience" % struct.unpack("<II", p))
     elif op == 0x2C2: print("  [world states] map %d zone %d" % struct.unpack_from("<II", p))
     elif op == 0x12B: print(f"  [learned spell] {struct.unpack_from('<I', p)[0]}")
@@ -527,6 +535,7 @@ for action in actions:
         o = math.atan2(cy - y, cx - x) % (2 * math.pi)
         movement(0x0B5, x, y, cz, o, flags=1); movement(0x0B7, x, y, cz, o); here[:] = [x, y, cz]
         wsend(0x141, struct.pack("<Q", target)); print(f"attack {entry}: {target & 0xFFFFFF} at {cx:.1f} {cy:.1f}")
+        last_target[:] = [target]
     elif kind == "approach":
         # Walk to DIST yards of the nearest creature of ENTRY, without attacking it.
         import math
@@ -541,6 +550,30 @@ for action in actions:
         o = math.atan2(cy - y, cx - x) % (2 * math.pi)
         movement(0x0B5, x, y, cz, o, flags=1); movement(0x0B7, x, y, cz, o); here[:] = [x, y, cz]
         print(f"approach {entry}: {dist} yards from {target & 0xFFFFFF}")
+    elif kind == "loot":
+        # Walk to the last creature attacked and open its loot; take the money and every item, then close.
+        import math
+        target = last_target[0]
+        cx, cy, cz = seen_positions[target]
+        angle = math.atan2(here[1] - cy, here[0] - cx)
+        x, y = cx + 1.5 * math.cos(angle), cy + 1.5 * math.sin(angle)
+        movement(0x0B5, x, y, cz, flags=1); movement(0x0B7, x, y, cz); here[:] = [x, y, cz]
+        wsend(0x15D, struct.pack("<Q", target)); print(f"loot {target & 0xFFFFFF}")
+        op, p = expect(0x160)
+        gold, n = struct.unpack_from("<IB", p, 9) if len(p) > 10 else (0, 0)
+        if len(p) <= 10:
+            print(f"  loot error {p[9]}"); continue
+        slots = []
+        for i in range(n):
+            slot, item, count = struct.unpack_from("<BII", p, 14 + i * 22); slots.append(slot)
+            print(f"  loot slot {slot}: item {item} x{count} (slot type {p[14 + i * 22 + 21]})")
+        print(f"  loot gold {gold}")
+        if gold:
+            wsend(0x15E, b"")
+        for slot in slots:
+            wsend(0x108, bytes([slot]))
+        listen_for(1.0)
+        wsend(0x15F, struct.pack("<Q", target))
     elif kind == "release":
         wsend(0x15A, b""); print("release spirit")
     elif kind == "corpse":

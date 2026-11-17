@@ -46,6 +46,7 @@ private:
      */
     void leaveWorld(string why, bool loggingOut)
     {
+        releaseLootOnLeave();
         deathOnLogout();
         const progress = player.progress(secondsInWorld());
         context.database.saveProgress(progress);

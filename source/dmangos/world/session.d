@@ -50,7 +50,9 @@ import dmangos.world.gmactions : GmActions;
 import dmangos.world.gmtargets : GmTargets;
 import dmangos.world.combathandlers : CombatHandlers;
 import dmangos.world.death : DeathHandlers;
+import dmangos.world.loothandlers : LootHandlers;
 import dmangos.world.creatureai : Combatant;
+import dmangos.world.loot : Looter;
 import dmangos.world.combat : Fighter, MeleeDamage;
 import dmangos.world.relations : Relating;
 import dmangos.world.gmdebug : DebugCommands;
@@ -95,7 +97,7 @@ private enum minimumPingInterval = 27.seconds;
 private enum maxBufferedInput = 2 * (clientHeaderLength + maxClientPacketSize);
 
 /// See the module documentation.
-final class WorldSession : NetSession, Kickable, OnlinePlayer, Combatant
+final class WorldSession : NetSession, Kickable, OnlinePlayer, Combatant, Looter
 {
     // A player simulated on another node than its client's (docs/CLUSTER.md, phase 4b).
     private ushort ownerNode;              // home: the node simulating this session's player; 0: here
@@ -430,6 +432,40 @@ final class WorldSession : NetSession, Kickable, OnlinePlayer, Combatant
         removeThreatener(creature);
     }
 
+    // -----------------------------------------------------------------------
+    // `Looter`: what loot sees of the player (`dmangos.world.loot`, `loothandlers.d`)
+    // -----------------------------------------------------------------------
+
+    /// See `Looter`.
+    @property ulong looterGuid() const
+    {
+        return player is null ? 0 : player.guid;
+    }
+
+    /// See `Looter`.
+    uint storeLoot(uint item, uint count, int randomPropertyId, bool sendError)
+    {
+        return lootStore(item, count, randomPropertyId, sendError);
+    }
+
+    /// See `Looter`.
+    void receiveMoney(uint copper)
+    {
+        lootMoney(copper);
+    }
+
+    /// See `Looter`.
+    bool canUseItem(uint item)
+    {
+        return lootCanUse(item);
+    }
+
+    /// See `Looter`.
+    void lootWindow(ulong target, bool open)
+    {
+        setLootWindow(target, open);
+    }
+
     /// The account's level.
     @property AccountLevel security() const
     {
@@ -762,6 +798,7 @@ private:
     mixin GmTargets;
     mixin CombatHandlers;
     mixin DeathHandlers;
+    mixin LootHandlers;
     mixin Level0Commands;
     mixin Level1Commands;
     mixin Level2Commands;

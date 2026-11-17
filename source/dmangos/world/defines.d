@@ -134,6 +134,7 @@ enum UnitFlags : uint
     notAttackable1 = 0x00000080,
     immuneToPlayer = 0x00000100,
     immuneToNpc = 0x00000200,
+    looting = 0x00000400,          /// `UNIT_FLAG_LOOTING`: its loot window is open
     pvp = 0x00001000,
     untargetable = 0x00010000,
     pacified = 0x00020000,

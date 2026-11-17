@@ -78,6 +78,37 @@ interface Inhabitant
     uint appearanceKind(const Inhabitant viewer) const;
 }
 
+/**
+ * A map object some of whose fields each viewer sees differently (a creature's tapped and lootable
+ * flags: `Object::BuildValuesUpdate`). The map sends the fields as everyone sees them, and to each
+ * viewer whose differ, its own.
+ */
+interface PerViewer
+{
+    /// Whether some viewer may see some field differently now.
+    bool personalized() const;
+
+    /// The slots that may differ.
+    const(size_t)[] personalSlots() const;
+
+    /// What `viewer` (in group `viewerGroup`, 0 for none) sees in `slot` where everyone else sees `value`.
+    uint fieldFor(ulong viewer, uint viewerGroup, size_t slot, uint value) const;
+}
+
+/// A `ValueAdjuster` for one viewer of a `PerViewer`.
+struct ViewerAdjust
+{
+    const PerViewer object;
+    ulong viewer;
+    uint viewerGroup;
+
+    ///
+    uint adjust(size_t slot, uint value) const
+    {
+        return object.fieldFor(viewer, viewerGroup, slot, value);
+    }
+}
+
 /// A creature or game object on a map, as players see it.
 interface MapObject
 {
@@ -240,13 +271,60 @@ final class Map : CombatWorld
             }
         if (object.fields.hasChangesFor(seenByEveryone))
         {
+            auto personal = cast(PerViewer) object;
             UpdateData update;
             update.addValues(object.guid, object.fields, seenByEveryone);
             foreach (guid, seen; seesObjects)
                 if (object.guid in seen)
-                    deliverUpdate(members[guid], update);
+                {
+                    if (personal !is null && personal.personalized)
+                    {
+                        auto view = ViewerAdjust(personal, guid, groupOf is null ? 0 : groupOf(guid));
+                        UpdateData own;
+                        own.addValues(object.guid, object.fields, seenByEveryone, &view.adjust);
+                        deliverUpdate(members[guid], own);
+                    }
+                    else
+                        deliverUpdate(members[guid], update);
+                }
         }
         object.fields.clearChanges();
+    }
+
+    /// The group a player is in (0: none), for what a `PerViewer` shows it; null: nobody is.
+    uint delegate(ulong player) groupOf;
+
+    /**
+     * What each viewer sees of a `PerViewer`'s personal fields is sent again: who may loot a corpse
+     * changed, without a field of it changing.
+     */
+    void refreshViewers(MapObject object)
+    {
+        auto personal = cast(PerViewer) object;
+        if (personal is null)
+            return;
+        foreach (guid, seen; seesObjects)
+            if (object.guid in seen)
+                personalize(members[guid], object, true);
+    }
+
+    /// After `object`'s create block: `who`'s own view of its personal fields, if it differs (or `always`).
+    private void personalize(Inhabitant who, MapObject object, bool always = false)
+    {
+        auto personal = cast(PerViewer) object;
+        if (personal is null || (!always && !personal.personalized))
+            return;
+        const viewer = who.character.guid;
+        auto view = ViewerAdjust(personal, viewer, groupOf is null ? 0 : groupOf(viewer));
+        bool differs = always;
+        foreach (slot; personal.personalSlots)
+            if (view.adjust(slot, object.fields[slot]) != object.fields[slot])
+                differs = true;
+        if (!differs)
+            return;
+        UpdateData own;
+        own.addSlots(object.guid, object.fields, personal.personalSlots, &view.adjust);
+        deliverUpdate(who, own);
     }
 
     /**
@@ -486,6 +564,7 @@ final class Map : CombatWorld
         // Players in sight: each pair gets what it does not have.
         bool[ulong] inSight;
         UpdateData received;
+        MapObject[] personalAfter; // shown with a view of their own, after their create blocks
         foreach (other; near(who.character.position, settings.visibilityDistance))
         {
             const o = other.character.guid;
@@ -522,10 +601,13 @@ final class Map : CombatWorld
                     received = UpdateData.init;
                 }
                 received.append(object.appearance(time));
+                personalAfter ~= object;
             }
         }
         if (!received.empty)
             deliverUpdate(who, received);
+        foreach (object; personalAfter)
+            personalize(who, object);
 
         // What the client has that is not in sight: out of range if this map holds it, lingering if not.
         ulong[] gone;
@@ -1374,6 +1456,7 @@ private:
         // Creatures and game objects: those that came into sight, in packets of a few dozen, and those that left.
         bool[ulong] objectsInSight;
         UpdateData created;
+        MapObject[] personalAfter; // shown with a view of their own, after their create blocks
         foreach (object; objectsNear(who.character.position, settings.visibilityDistance))
         {
             if (!objectVisibleTo(object, who))
@@ -1392,9 +1475,13 @@ private:
                 created = UpdateData.init;
             }
             created.append(block);
+            if (cast(PerViewer) object !is null)
+                personalAfter ~= object;
         }
         if (!created.empty)
             deliverUpdate(who, created);
+        foreach (object; personalAfter)
+            personalize(who, object);
         foreach (object, _; seesObjects[guid])
             if (object !in objectsInSight)
                 gone ~= object;
@@ -1421,6 +1508,7 @@ private:
             if (adoptLingering(who.character.guid, guid))
                 continue; // the client has it already (it came from another node with it)
             deliverUpdate(who, object.appearance(serverTime()));
+            personalize(who, object);
         }
         foreach (player, ref seen; seesObjects)
             if (guid in seen && distanceSquared(members[player].character.position, object.position)

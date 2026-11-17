@@ -18,6 +18,7 @@ import dmangos.world.creature : CreatureAddon, CreatureClassStats, CreatureSpawn
 import dmangos.world.gameobject : GameObjectSpawn, GameObjectTemplate, GameObjectType;
 import dmangos.world.grid : cellKeyAt;
 import dmangos.world.motion : MotionType, WaypointNode, WaypointStore;
+import dmangos.world.loot : lootColumns, lootRow, LootStore, LootStores;
 import dmangos.world.npcdata : NpcData;
 import dmangos.world.spells : SpellData;
 
@@ -308,6 +309,7 @@ final class WorldData
     uint[3][uint] creatureEquipment;                /// `creature_equip_template`: item entries, by id
     CreatureClassStats[uint] creatureClassStats;    /// by `classStatsKey`
     NpcData npcs;                                   /// gossip, texts, trainers, vendors
+    LootStores loot;                                /// `creature_loot_template`, `reference_loot_template`
     GraveyardLink[][uint] graveyards;               /// `game_graveyard_zone`, by `graveyardLinkKey`
     GhostEntrance[uint] ghostEntrances;             /// `instance_template`'s ghost entrances, by instance map
     WaypointStore waypoints;                        /// `creature_movement` and `creature_movement_template`
@@ -493,6 +495,11 @@ final class WorldData
                 t.data[i] = row.get!int(7 + i);
             gameObjectTemplates[t.entry] = t;
         }
+        loot = LootStores(new LootStore("creature_loot_template"), new LootStore("reference_loot_template"));
+        static foreach (table; ["creature", "reference"])
+            foreach (row; world.query!("SELECT " ~ lootColumns ~ " FROM " ~ table ~ "_loot_template")())
+                __traits(getMember, loot, table).add(row.get!uint(0), lootRow(row.get!uint(1), row.get!float(2),
+                    row.get!uint(3), row.get!int(4), row.get!uint(5), row.get!uint(6)));
         foreach (row; world.query!"SELECT id, ghost_loc, link_kind, faction FROM game_graveyard_zone"())
             graveyards[graveyardLinkKey(row.get!uint(1), row.get!uint(2))] ~= GraveyardLink(row.get!uint(0),
                 row.get!uint(3));

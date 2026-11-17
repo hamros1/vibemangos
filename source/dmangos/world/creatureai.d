@@ -492,6 +492,7 @@ private:
         threat = null;
         victim = 0;
         inCombat_ = false;
+        me.setLootRecipient(0, 0); // `TriggerEvadeEvents`: nobody's any more
         me.values.set!UNIT_FIELD_TARGET(0UL);
         me.values.set!UNIT_FIELD_FLAGS(me.values.get!UNIT_FIELD_FLAGS & ~UnitFlags.inCombat);
         world.flushCreature(me);

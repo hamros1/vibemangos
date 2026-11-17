@@ -12,6 +12,7 @@
 module dmangos.world.creature;
 
 import dmangos.world.combat : Fighter;
+import dmangos.world.loot : Loot;
 import dmangos.world.creatureai : CombatWorld, CreatureAI;
 import dmangos.world.clientdata : FactionTemplateEntry;
 import dmangos.world.defines : UnitFlags;
@@ -20,7 +21,7 @@ import std.algorithm.comparison : max, min;
 import std.random : Random, uniform;
 
 import dmangos.world.clientdata : ClientData;
-import dmangos.world.map : Moving;
+import dmangos.world.map : Moving, PerViewer;
 import dmangos.world.replication : Replica, Replicable;
 import dmangos.world.motion : followSpline, IdleMovement, MotionWorld, MovementGenerator;
 import dmangos.world.movement : baseMoveSpeed, MovementFlags, MovementInfo, MoveType, Position;
@@ -90,6 +91,13 @@ struct CreatureTemplate
     uint detection;             /// `Detection`: its aggro radius against its own level, in yards
     uint pursuit;               /// `Pursuit`: milliseconds it chases before its victim may get away
     uint leash;                 /// `Leash`: how far from where the fight began it follows; 0: no limit
+    float experienceMultiplier = 1; /// `ExperienceMultiplier`
+    uint lootId;                /// `LootId`: its `creature_loot_template` entry
+    uint minLootGold;           /// `MinLootGold`, in copper
+    uint maxLootGold;           /// `MaxLootGold`
+    uint skinningLootId;        /// `SkinningLootId`
+    uint pickpocketLootId;      /// `PickpocketLootId`
+    uint staticFlags1;          /// `StaticFlags1`: `NO_XP` 0x2, `NO_LOOT` 0x4
 
     /// The four models, `ModelId1` .. `ModelId4`.
     @property uint[4] modelIds() const pure nothrow @nogc @safe
@@ -106,7 +114,8 @@ enum creatureTemplateQuery = "SELECT Entry, Name, IFNULL(SubName, ''), MinLevel,
     ~ "RangedBaseAttackTime, PetSpellDataId, MovementType, GossipMenuId, EquipmentTemplateId, Civilian, "
     ~ "TrainerType, TrainerSpell, TrainerClass, TrainerRace, TrainerTemplateId, VendorTemplateId, "
     ~ "DamageMultiplier, DamageVariance, ArmorMultiplier, MinMeleeDmg, MaxMeleeDmg, MinRangedDmg, MaxRangedDmg, "
-    ~ "Armor, MeleeAttackPower, RangedAttackPower, DamageSchool, Detection, Pursuit, Leash "
+    ~ "Armor, MeleeAttackPower, RangedAttackPower, DamageSchool, Detection, Pursuit, Leash, ExperienceMultiplier, "
+    ~ "LootId, MinLootGold, MaxLootGold, SkinningLootId, PickpocketLootId, StaticFlags1 "
     ~ "FROM creature_template";
 
 /// A `creature` row: one spawn.
@@ -408,7 +417,7 @@ final class NpcStandIn : Npc
 }
 
 /// See the module documentation.
-final class Creature : Moving, Replicable, Npc
+final class Creature : Moving, Replicable, Npc, PerViewer
 {
     immutable ulong guid_;
     const(CreatureTemplate)* template_;
@@ -513,6 +522,75 @@ final class Creature : Moving, Replicable, Npc
     int corpseTimer;
     long respawnAt; /// ditto
 
+    /// `m_lootRecipientGuid` and `m_lootGroupRecipientId`: who tapped it (its first damage), and that one's group.
+    ulong lootRecipient;
+    uint lootGroupRecipient; /// ditto
+    /// Dead: what it dropped (`m_loot`); null when nothing (or looted).
+    Loot loot;
+
+    /// `UNIT_DYNFLAG_LOOTABLE`, `UNIT_DYNFLAG_TAPPED`
+    enum uint dynLootable = 0x01, dynTapped = 0x04;
+
+    /// `Creature::SetLootRecipient`: tapped by `player` (and its group), or (0) by nobody; everyone sees it grey.
+    void setLootRecipient(ulong player, uint group)
+    {
+        lootRecipient = player;
+        lootGroupRecipient = player ? group : 0;
+        const flags = values.get!UNIT_DYNAMIC_FLAGS & ~(dynLootable | dynTapped);
+        values.set!UNIT_DYNAMIC_FLAGS(player ? flags | dynTapped : flags);
+    }
+
+    /// `Creature::IsTappedBy`
+    bool tappedBy(ulong player, uint group) const
+    {
+        return lootRecipient && (player == lootRecipient || (lootGroupRecipient && group == lootGroupRecipient));
+    }
+
+    /// See `PerViewer.personalized`.
+    bool personalized() const
+    {
+        return lootRecipient != 0 || loot !is null;
+    }
+
+    /// See `PerViewer.personalSlots`.
+    const(size_t)[] personalSlots() const
+    {
+        static immutable size_t[1] slots = [UNIT_DYNAMIC_FLAGS];
+        return slots[];
+    }
+
+    /**
+     * See `PerViewer.fieldFor`: `Object::BuildValuesUpdate`'s dynamic flags. Who tapped it (or its
+     * group) does not see it tapped, and sees its corpse sparkle while there is something for it.
+     */
+    uint fieldFor(ulong viewer, uint viewerGroup, size_t slot, uint value) const
+    {
+        if (slot != UNIT_DYNAMIC_FLAGS)
+            return value;
+        if (tappedBy(viewer, viewerGroup))
+            value &= ~dynTapped;
+        if (!alive && loot !is null && loot.canLoot(viewer))
+            value |= dynLootable;
+        return value;
+    }
+
+    /// `Creature::InspectingLoot`: someone looks into its loot; the corpse lasts two minutes more at least.
+    void inspectingLoot()
+    {
+        enum int minimumLootingTime = 2 * 60 * 1000; // MINIMUM_LOOTING_TIME
+        if (corpseTimer < minimumLootingTime)
+            corpseTimer = minimumLootingTime;
+    }
+
+    /// `SetLootStatus(CREATURE_LOOT_STATUS_LOOTED)` and `ReduceCorpseDecayTimer`: nothing left; it goes within two minutes.
+    void lootedOut()
+    {
+        enum int minimumLootingTime = 2 * 60 * 1000;
+        loot = null;
+        if (corpseTimer > minimumLootingTime)
+            corpseTimer = minimumLootingTime;
+    }
+
     /// Its fighting mind (`dmangos.world.creatureai`).
     CreatureAI ai;
 
@@ -611,7 +689,9 @@ final class Creature : Moving, Replicable, Npc
         }
         if (!alive)
         {
-            // `Creature::Update` for a corpse: when its time is up it goes (`RemoveCorpse`).
+            // `Creature::Update` for a corpse: rolls on its loot end; when its time is up it goes (`RemoveCorpse`).
+            if (loot !is null)
+                loot.update();
             corpseTimer -= diff;
             if (corpseTimer <= 0)
                 if (auto combat = cast(CombatWorld) world)

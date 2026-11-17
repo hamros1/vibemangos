@@ -463,6 +463,10 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
             &serverTime, &spawnCell, terrain(id), owns);
         created.replicator = replicator;
         created.onCorpseRemoved = &corpseRemoved;
+        created.groupOf = (ulong player) {
+            auto group = groups.of(player);
+            return group is null ? 0 : group.id;
+        };
         return maps[id] = created;
     }
 

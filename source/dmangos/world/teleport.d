@@ -116,6 +116,7 @@ private:
         else
         {
             player.setTarget(0);
+            releaseLootOnLeave();
             flushPlayerChanges();
             send(ServerTransferPending(mapId));
             map.remove(this);

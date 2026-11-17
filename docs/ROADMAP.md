@@ -114,7 +114,10 @@ The largest area. CMaNGOS references: `Spells/`, `Entities/Unit.cpp`, `Combat/`,
    ghost's own auras (applied by hand until there are auras), ghosts hidden from the living, bones,
    battleground spirit guides, corpses of a player on another node of a cluster (a corpse is put on
    the map its player's node simulates; a node that does not own the cell keeps it anyway).
-4. Experience and loot.
+4. **Experience and loot: done** (`experience.d`, `loot.d`, `loothandlers.d`; README's "Experience
+   and loot"). Not yet: quest drops, `item_enchantment_template` random properties, skinning,
+   pickpocketing, game object and item loot (chests, bags), reputation and honor for kills, loot of
+   a creature another node of a cluster simulates.
 5. Spells, cooldowns and auras.
 6. Duels and trades.
 

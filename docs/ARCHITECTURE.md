@@ -116,6 +116,7 @@ final class WorldSession : NetSession, Kickable, OnlinePlayer
     mixin ItemHandlers;             // itemhandlers.d: ItemHandler.cpp, repairs, Player::BuyItemFromVendor
     mixin CombatHandlers;           // combathandlers.d: CombatHandler.cpp, the player's melee
     mixin DeathHandlers;            // death.d: dying, the ghost, the corpse, the spirit healer
+    mixin LootHandlers;             // loothandlers.d: LootHandler.cpp, kill experience, tapping
     mixin Exploration;              // exploration.d: Player::UpdateZone, CheckAreaExploreAndOutdoor, GiveXP
     mixin ChatCommands;             // commands.d: ArcEmu's ParseCommands, ExecuteCommandInTable, messages
     mixin GmActions;                // gmactions.d: what the handlers do to players
@@ -335,6 +336,22 @@ A dead creature keeps its place in the map's tick until its corpse timer runs ou
 the respawn times (`respawnAt`, by spawn guid, saved in `creature_respawn`): a cell loading skips
 spawns still dead, and once a second the creatures whose time has come are made anew where their
 cell is loaded.
+
+## Experience and loot
+
+`experience.d` is `MaNGOS::XP` as pure functions. `loot.d` holds the loot tables (`LootStore`,
+`LootTemplate`: entries, groups and references, loaded into `WorldData.loot`) and one drop, `Loot`:
+its money and `LootItem`s, the owners, and per item who may still take it, with CMaNGOS's slot
+types, statuses and rights (`canLoot`) by loot method, and the group's rolls (`LootRoll`). It knows
+players only as `Looter`s found by guid (the session implements the interface: packets, storing an
+item, money, the looting flag), so its tests drive it with plain objects.
+
+`loothandlers.d` is the session's side: tapping (`tap`, from a swing's damage), the kill's rewards
+(`rewardKill`: the tapper's group's experience, then the loot, `prepareBodyLoot` with
+`setLootRights` for who may loot and whose turn it is), and the loot opcodes. A creature's tapped and
+lootable dynamic flags differ by viewer: `Creature` is a `PerViewer`, whose `fieldFor` the map
+applies to each viewer's copy of its create block and value updates (`Map.personalize`,
+`flushObjectChanges`, `refreshViewers` when only the rights changed).
 
 Creature combat numbers come from `selectLevel` (`Creature::SelectLevel` and `UpdateDamagePhysical`
 of the CMaNGOS version whose `creature_template_classlevelstats` has `BaseDamageExp0`, which is the
