@@ -1337,6 +1337,61 @@ private:
         return true;
     }
 
+    bool handleGetStandingCommand(uint faction = 0)
+    {
+        auto plr = getSelectedChar(true);
+        if (plr is null)
+            return true;
+        const entry = context.client.factions.lookup(faction);
+        const rep = plr.player.reputation;
+        const standing = rep is null ? 0 : rep.standingWith(faction);
+        const base = rep is null || entry is null ? 0 : rep.baseOf(entry);
+        greenSystemMessage(format!"Reputation for faction %u:"(faction));
+        systemMessage(format!"Base Standing: %d"(base));
+        blueSystemMessage(format!"Standing: %d"(standing));
+        return true;
+    }
+
+    bool handleSetStandingCommand(uint faction, int standing)
+    {
+        auto plr = getSelectedChar(true);
+        if (plr is null)
+            return true;
+        blueSystemMessage(format!"Setting standing of %u to %d on %s."(faction, standing, plr.player.data.name));
+        if (plr.player.reputation !is null) // `Player::SetStanding`: to that value, its neighbours untouched
+            plr.modifyReputation(faction, standing - plr.player.reputation.standingWith(faction), true);
+        plr.flushPlayerChanges();
+        plr.greenSystemMessage(format!"%s set your standing of faction %u to %d."(player.data.name, faction, standing));
+        gmLog(format!"set standing of faction %u to %u for %s"(faction, standing, plr.player.data.name));
+        return true;
+    }
+
+    bool handleLookupFactionCommand(Rest search)
+    {
+        const x = search.text.toLower;
+        if (x.length < 4)
+        {
+            redSystemMessage("Your search string must be at least 5 characters long.");
+            return true;
+        }
+        greenSystemMessage(format!"Starting search of faction `%s`..."(x));
+        const started = MonoTime.currTime;
+        uint count;
+        foreach (id; 0 .. context.client.factions.idLimit)
+            if (const f = context.client.factions.lookup(id))
+                if (f.name[0].toLower.canFind(x))
+                {
+                    sendHighlightedName("Faction", f.name[0], x, f.id);
+                    if (++count == 25)
+                    {
+                        redSystemMessage("More than 25 results returned. aborting.");
+                        break;
+                    }
+                }
+        greenSystemMessage(format!"Search completed in %u ms."((MonoTime.currTime - started).total!"msecs"));
+        return true;
+    }
+
     bool handleLookupItemCommand(Rest search)
     {
         return lookupNamed(search, "item", true, (x) {
@@ -1449,4 +1504,44 @@ private:
             bytes >> 24));
         return true;
     }
+}
+
+/// `.setstanding` and `.getstanding` on the selected player, and `.resetreputation`.
+unittest
+{
+    import std.algorithm.searching : canFind;
+    import dmangos.auth.accounts : AccountLevel;
+    import dmangos.dbc : buildDbc;
+    import dmangos.world.clientdata : factionFormat;
+    import dmangos.world.commands : MSG_COLOR_GREEN, MSG_COLOR_LIGHTBLUE;
+    import dmangos.world.movement : Position;
+    import dmangos.world.opcodes;
+    import dmangos.world.packets : ClientGuid;
+    import dmangos.world.player : Player;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto row = new uint[factionFormat.length];
+    row[0] = 72;
+    row[1] = 3;
+    context.client.factions = typeof(context.client.factions).parse(buildDbc(factionFormat, [row]), "Faction.dbc");
+    auto gm = loggedIn(context, db, 7, "Varian", Position(-8949.95f, -132.49f, 83.53f), AccountLevel.administrator);
+    auto anduin = loggedIn(context, db, 8, "Anduin", Position(-8948, -132, 83.53f));
+    gm.read();
+    anduin.read();
+    gm.write(Opcode.CMSG_SET_SELECTION, ClientGuid(anduin.session.character.guid));
+    const me = cast(Player) anduin.session.character;
+
+    gm.say(".character setstanding 72 1000");
+    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTBLUE ~ "Setting standing of 72 to 1000 on Anduin.|r"]);
+    assert(me.reputation.standingWith(72) == 1000);
+    assert(systemMessages(anduin.read()).canFind(MSG_COLOR_GREEN ~ "Varian set your standing of faction 72 to 1000.|r"));
+    gm.say(".character getstanding 72");
+    assert(systemMessages(gm.read()) == [MSG_COLOR_GREEN ~ "Reputation for faction 72:|r", "Base Standing: 0",
+        MSG_COLOR_LIGHTBLUE ~ "Standing: 1000|r"]);
+    gm.say(".character resetreputation");
+    assert(systemMessages(gm.read()) == ["Done. Relog for changes to take effect."]);
+    assert(me.reputation.standingWith(72) == 0);
 }

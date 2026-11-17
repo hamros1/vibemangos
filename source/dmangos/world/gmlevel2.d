@@ -45,6 +45,24 @@ private:
         return true;
     }
 
+    bool handleResetReputationCommand()
+    {
+        auto plr = getSelectedChar(false);
+        if (plr is null)
+        {
+            systemMessage("Select a player or yourself first.");
+            return true;
+        }
+        if (plr.player.reputation !is null) // `_InitialReputation`: every standing back to its start
+        {
+            plr.player.reputation.initialize();
+            plr.saveReputation();
+        }
+        systemMessage("Done. Relog for changes to take effect.");
+        gmLog(format!"used reset reputation for %s"(plr.player.data.name));
+        return true;
+    }
+
     bool handleRepairItemsCommand()
     {
         auto plr = getSelectedChar(false);

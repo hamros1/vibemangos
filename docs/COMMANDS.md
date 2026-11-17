@@ -50,7 +50,7 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 * Arguments are read strictly: a number written wrong ("12abc", "abc") or a missing argument shows
   the command's help, where ArcEmu's C parsing read "12abc" as 12 and "abc" as 0 and went on.
 
-## Working (165)
+## Working (169)
 
 | Command | Letter | Help |
 |---|---|---|
@@ -178,11 +178,14 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 | `.character learnskill` | `m` | .learnskill <skillid> (optional) <value> <maxvalue> - Learns skill id skillid. |
 | `.character advanceskill` | `m` | advanceskill <skillid> <amount, optional, default = 1> - Advances skill line x times.. |
 | `.character removeskill` | `m` | .removeskill <skillid> - Removes skill |
+| `.character resetreputation` | `n` | .resetreputation - Resets reputation to start levels. (use on characters that were made before reputation fixes.) |
 | `.character resettalents` | `n` | .resettalents - Resets all talents of targeted player to that of their current level. DANGEROUS. |
 | `.character additem` | `m` | Adds item x count y |
 | `.character removeitem` | `m` | Removes item %u count %u. |
 | `.character additemset` | `m` | Adds item set to inv. |
 | `.character advanceallskills` | `m` | Advances all skills <x> points. |
+| `.character getstanding` | `m` | Gets standing of faction %u. |
+| `.character setstanding` | `m` | Sets stanging of faction %u. |
 | `.character showitems` | `m` | Shows items of selected Player |
 | `.character showskills` | `m` | Shows skills of selected Player |
 | `.character showinstances` | `z` | Shows persistent instances of selected Player |
@@ -194,6 +197,7 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 | `.lookup object` | `l` | Looks up gameobject string x. |
 | `.lookup spell` | `1` | Looks up spell string x. |
 | `.lookup skill` | `1` | Looks up skill string x. |
+| `.lookup faction` | `1` | Looks up faction string x. |
 | `.admin dispelall` | `z` | Dispels all negative (or positive w/ 1) auras on all players. |
 | `.admin masssummon` | `z` | .masssummon - Summons all players. |
 | `.admin playall` | `z` | Plays a sound to the entire server. |
@@ -220,7 +224,7 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 | `.gotrig` | `v` | Warps to areatrigger <id> |
 | `.logcomment` | `1` | Adds a comment to the GM log for the admins to read. |
 
-## Not yet implemented (133)
+## Not yet implemented (129)
 
 These answer "Not yet implemented.", as ArcEmu's `HandleNYICommand` does: their systems (AI agents
 and waypoint editing, quest editing, guilds, pets, honor, battlegrounds and arenas, GM
@@ -344,14 +348,10 @@ tickets, game object and creature spawning, GM invisibility, flying) do not exis
 | `.guild removeplayer` | `m` | Removes a player from a guild. |
 | `.guild disband` | `m` | Disbands the guild of your target. |
 | `.character increaseweaponskill` | `m` | .increaseweaponskill <count> - Increase eqipped weapon skill x times (defaults to 1). |
-| `.character resetreputation` | `n` | .resetreputation - Resets reputation to start levels. (use on characters that were made before reputation fixes.) |
 | `.character resetspells` | `n` | .resetspells - Resets all spells to starting spells of targeted player. DANGEROUS. |
 | `.character resetskills` | `n` | .resetskills - Resets all skills. |
-| `.character getstanding` | `m` | Gets standing of faction %u. |
-| `.character setstanding` | `m` | Sets stanging of faction %u. |
 | `.character forcerename` | `m` | Forces character x to rename his char next login |
 | `.character settitle` | `m` | Adds title to a player |
-| `.lookup faction` | `1` | Looks up faction string x. |
 | `.admin castall` | `z` | Makes all players online cast spell <x>. |
 | `.admin renameallinvalidchars` | `z` | Renames all invalid character names |
 | `.arena createteam` | `e` | Creates arena team |
