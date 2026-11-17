@@ -120,7 +120,7 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
   exist in this schema).
 * `.castspellne` shows the cast in 1.12's `SMSG_SPELL_START` and `SMSG_SPELL_GO` layout (ArcEmu's
   bytes are 2.4.3's). `.dispelall` spares passive auras (talents, racials), and reaches the players
-  of the GM's node of a cluster only. `.kill` and `.killplr` kill a player the way death by a
+  of the GM's node of a cluster only, as `.admin castall` does. `.kill` and `.killplr` kill a player the way death by a
   creature's hand does, without its durability loss.
 * Arguments are read strictly: a number written wrong ("12abc", "abc") or a missing argument shows
   the command's help, where ArcEmu's C parsing read "12abc" as 12 and "abc" as 0 and went on.

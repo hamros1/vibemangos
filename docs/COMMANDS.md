@@ -51,12 +51,12 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
   exist in this schema).
 * `.castspellne` shows the cast in 1.12's `SMSG_SPELL_START` and `SMSG_SPELL_GO` layout (ArcEmu's
   bytes are 2.4.3's). `.dispelall` spares passive auras (talents, racials), and reaches the players
-  of the GM's node of a cluster only. `.kill` and `.killplr` kill a player the way death by a
+  of the GM's node of a cluster only, as `.admin castall` does. `.kill` and `.killplr` kill a player the way death by a
   creature's hand does, without its durability loss.
 * Arguments are read strictly: a number written wrong ("12abc", "abc") or a missing argument shows
   the command's help, where ArcEmu's C parsing read "12abc" as 12 and "abc" as 0 and went on.
 
-## Working (193)
+## Working (195)
 
 | Command | Letter | Help |
 |---|---|---|
@@ -228,6 +228,7 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 | `.lookup spell` | `1` | Looks up spell string x. |
 | `.lookup skill` | `1` | Looks up skill string x. |
 | `.lookup faction` | `1` | Looks up faction string x. |
+| `.admin castall` | `z` | Makes all players online cast spell <x>. |
 | `.admin dispelall` | `z` | Dispels all negative (or positive w/ 1) auras on all players. |
 | `.admin masssummon` | `z` | .masssummon - Summons all players. |
 | `.admin playall` | `z` | Plays a sound to the entire server. |
@@ -253,8 +254,9 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 | `.unparalyze` | `b` | Unroots/Unparalyzes the target. |
 | `.gotrig` | `v` | Warps to areatrigger <id> |
 | `.logcomment` | `1` | Adds a comment to the GM log for the admins to read. |
+| `.removesickness` | `m` | Removes ressurrection sickness from the target |
 
-## Not yet implemented (105)
+## Not yet implemented (103)
 
 These answer "Not yet implemented.", as ArcEmu's `HandleNYICommand` does: their systems (AI agents
 and waypoint editing, quest editing, guilds, pets, honor, battlegrounds and arenas, GM
@@ -358,12 +360,10 @@ tickets, game object and creature spawning, GM invisibility, flying) do not exis
 | `.character resetskills` | `n` | .resetskills - Resets all skills. |
 | `.character forcerename` | `m` | Forces character x to rename his char next login |
 | `.character settitle` | `m` | Adds title to a player |
-| `.admin castall` | `z` | Makes all players online cast spell <x>. |
 | `.admin renameallinvalidchars` | `z` | Renames all invalid character names |
 | `.arena createteam` | `e` | Creates arena team |
 | `.arena setteamleader` | `e` | Sets the arena team leader |
 | `.arena resetallratings` | `z` | Resets all area teams to their default rating |
 | `.modperiod` | `m` | Changes period of current transporter. |
-| `.removesickness` | `m` | Removes ressurrection sickness from the target |
 | `.fixscale` | `m` |  |
 | `.addtrainerspell` | `m` |  |

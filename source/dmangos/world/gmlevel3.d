@@ -1010,6 +1010,60 @@ private:
         return true;
     }
 
+    bool handleRemoveRessurectionSickessAuraCommand()
+    {
+        enum uint resurrectionSickness = 15007;
+        auto plr = getSelectedChar(true);
+        if (plr is null)
+            return false;
+        blueSystemMessage("Removing ressurection sickness...");
+        if (auto aura = plr.player.auras.find(resurrectionSickness))
+            plr.removeAura(aura);
+        if (plr !is this)
+            gmLog(format!"Removed resurrection sickness from %s"(plr.player.data.name));
+        return true;
+    }
+
+    bool handleCastAllCommand(Rest args = Rest.init)
+    {
+        import std.ascii : isDigit;
+
+        if (args.length < 2)
+        {
+            redSystemMessage("No spellid specified.");
+            return true;
+        }
+        // `atol`
+        size_t n;
+        while (n < args.length && n < 9 && args[n].isDigit)
+            ++n;
+        const spellId = n ? args[0 .. n].to!uint : 0;
+        const spell = context.data.spells.spell(spellId);
+        if (spell is null)
+        {
+            redSystemMessage("Invalid spell specified.");
+            return true;
+        }
+        enum uint learnSpell = 36; // SPELL_EFFECT_LEARN_SPELL: not on everybody
+        foreach (i; 0 .. 3)
+            if (spell.effect[i] == learnSpell)
+            {
+                gmLog(format!"used wrong / learnall castall command, spellid %u"(spellId));
+                redSystemMessage("Learn spell specified.");
+                return true;
+            }
+        gmLog(format!"used castall command, spellid %u"(spellId));
+        // The players of this node in the world, each casting it on itself, triggered.
+        foreach (other; context.onlinePlayers)
+        {
+            auto who = sessionOf(other);
+            if (who.player !is null && !who.transferring)
+                who.castTriggeredAt(spellId, who.player.guid);
+        }
+        blueSystemMessage(format!"Casted spell %u on all players!"(spellId));
+        return true;
+    }
+
     bool handleCreatureRespawnCommand()
     {
         auto corpse = getSelectedCreature(false);
@@ -1567,4 +1621,51 @@ unittest
     gm.say(".character resetreputation");
     assert(systemMessages(gm.read()) == ["Done. Relog for changes to take effect."]);
     assert(me.reputation.standingWith(72) == 0);
+}
+
+/// `.admin castall` casts a spell on every player (but not a learning one); `.removesickness` takes resurrection sickness off.
+unittest
+{
+    import std.algorithm.searching : canFind;
+    import dmangos.auth.accounts : AccountLevel;
+    import dmangos.world.auras : AuraType, makeAura;
+    import dmangos.world.commands : MSG_COLOR_LIGHTBLUE, MSG_COLOR_LIGHTRED;
+    import dmangos.world.movement : Position;
+    import dmangos.world.opcodes;
+    import dmangos.world.packets : ClientGuid;
+    import dmangos.world.player : Player;
+    import dmangos.world.spellhandlers : testSpell;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    enum uint blessing = 95900, teach = 95901, sickness = 15007;
+    context.data.spells.spells[blessing] = testSpell(blessing, 6, 1, 5);
+    context.data.spells.spells[blessing].casting.applyAuraName[0] = AuraType.modStat;
+    context.data.spells.spells[teach] = testSpell(teach, 36, 1, 0);
+    context.data.spells.spells[sickness] = testSpell(sickness, 6, 1, -75);
+    context.data.spells.spells[sickness].casting.applyAuraName[0] = AuraType.modStat;
+    auto gm = loggedIn(context, db, 7, "Varian", Position(-8949.95f, -132.49f, 83.53f), AccountLevel.administrator);
+    auto anduin = loggedIn(context, db, 8, "Anduin", Position(-8948, -132, 83.53f));
+    gm.read();
+    anduin.read();
+    auto victim = cast(Player) anduin.session.character;
+
+    gm.say(".admin castall 7");
+    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTRED ~ "No spellid specified.|r"], "one figure is too short");
+    gm.say(".admin castall 95999");
+    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTRED ~ "Invalid spell specified.|r"]);
+    gm.say(".admin castall 95901");
+    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTRED ~ "Learn spell specified.|r"]);
+    gm.say(".admin castall 95900");
+    assert(systemMessages(gm.read()).canFind(MSG_COLOR_LIGHTBLUE ~ "Casted spell 95900 on all players!|r"));
+    assert(victim.auras.find(blessing) !is null && (cast(Player) gm.session.character).auras.find(blessing) !is null);
+
+    anduin.session.addAura(makeAura(&context.data.spells.spells[sickness], victim.guid, 1, 600_000, false, [-75, 0, 0]));
+    assert(victim.auras.find(sickness) !is null);
+    gm.write(Opcode.CMSG_SET_SELECTION, ClientGuid(victim.guid));
+    gm.say(".removesickness");
+    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTBLUE ~ "Removing ressurection sickness...|r"]);
+    assert(victim.auras.find(sickness) is null);
 }
