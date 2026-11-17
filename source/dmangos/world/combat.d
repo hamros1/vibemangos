@@ -738,3 +738,112 @@ unittest
     assert(attackStart(1, 2).length == 16);
     assert(attackStop(1, 0, true)[$ - 4 .. $] == [0, 0, 0, 0], "no victim: no death flag");
 }
+
+/**
+ * `SPELL_PARTIAL_RESIST_DISTRIBUTION`'s precalculated rows (CMaNGOS `Entities/Unit.cpp`): for each
+ * whole percent of effective resistance 0 .. 100, the chances (in hundredths of a percent) of 0%,
+ * 25%, 50%, 75% and 100% of a spell's damage resisted; percents between are interpolated.
+ */
+immutable uint[5][101] partialResistRows = [
+    [10000, 0, 0, 0, 0], [9700, 200, 100, 0, 0], [9400, 400, 200, 0, 0], [9000, 800, 200, 0, 0],
+    [8700, 1000, 300, 0, 0], [8400, 1200, 400, 0, 0], [8200, 1300, 400, 100, 0], [7900, 1500, 500, 100, 0],
+    [7600, 1700, 600, 100, 0], [7300, 1900, 700, 100, 0], [6900, 2300, 700, 100, 0], [6600, 2500, 800, 100, 0],
+    [6300, 2700, 900, 100, 0], [6000, 2900, 1000, 100, 0], [5800, 3000, 1000, 200, 0], [5400, 3300, 1100, 200, 0],
+    [5100, 3600, 1100, 200, 0], [4800, 3800, 1200, 200, 0], [4400, 4200, 1200, 200, 0], [4100, 4400, 1300, 200, 0],
+    [3700, 4800, 1300, 200, 0], [3400, 5000, 1400, 200, 0], [3100, 5200, 1500, 200, 0], [3000, 5200, 1500, 200, 100],
+    [2800, 5300, 1500, 300, 100], [2500, 5500, 1600, 300, 100], [2400, 5400, 1700, 400, 100], [2300, 5300, 1800, 500, 100],
+    [2200, 5100, 2100, 500, 100], [2100, 5000, 2200, 600, 100], [2000, 4900, 2400, 600, 100], [1900, 4700, 2600, 700, 100],
+    [1800, 4600, 2700, 800, 100], [1700, 4400, 3000, 800, 100], [1600, 4300, 3100, 900, 100], [1500, 4200, 3200, 1000, 100],
+    [1400, 4100, 3300, 1100, 100], [1300, 3900, 3600, 1100, 100], [1300, 3600, 3800, 1200, 100], [1200, 3500, 3900, 1300, 100],
+    [1100, 3400, 4000, 1400, 100], [1000, 3300, 4100, 1500, 100], [900, 3100, 4400, 1500, 100], [800, 3000, 4500, 1600, 100],
+    [800, 2700, 4700, 1700, 100], [700, 2600, 4800, 1800, 100], [600, 2500, 4900, 1900, 100], [600, 2300, 5000, 1900, 200],
+    [500, 2200, 5100, 2000, 200], [300, 2200, 5300, 2000, 200], [200, 2100, 5400, 2100, 200], [200, 2000, 5300, 2200, 300],
+    [200, 2000, 5100, 2200, 500], [200, 1900, 5000, 2300, 600], [100, 1900, 4900, 2500, 600], [100, 1800, 4800, 2600, 700],
+    [100, 1700, 4700, 2700, 800], [100, 1600, 4500, 3000, 800], [100, 1500, 4400, 3100, 900], [100, 1500, 4100, 3300, 1000],
+    [100, 1400, 4000, 3400, 1100], [100, 1300, 3900, 3500, 1200], [100, 1200, 3800, 3600, 1300], [100, 1100, 3600, 3900, 1300],
+    [100, 1100, 3300, 4100, 1400], [100, 1000, 3200, 4200, 1500], [100, 900, 3100, 4300, 1600], [100, 800, 3000, 4400, 1700],
+    [100, 800, 2700, 4600, 1800], [100, 700, 2600, 4700, 1900], [100, 600, 2400, 4900, 2000], [100, 600, 2200, 5000, 2100],
+    [100, 500, 2100, 5100, 2200], [100, 500, 1800, 5300, 2300], [100, 400, 1700, 5400, 2400], [100, 300, 1600, 5500, 2500],
+    [100, 300, 1500, 5300, 2800], [100, 200, 1500, 5200, 3000], [0, 200, 1500, 5200, 3100], [0, 200, 1400, 5000, 3400],
+    [0, 200, 1300, 4800, 3700], [0, 200, 1300, 4400, 4100], [0, 200, 1200, 4200, 4400], [0, 200, 1200, 3800, 4800],
+    [0, 200, 1100, 3600, 5100], [0, 200, 1100, 3300, 5400], [0, 200, 1000, 3000, 5800], [0, 100, 1000, 2900, 6000],
+    [0, 100, 900, 2700, 6300], [0, 100, 800, 2500, 6600], [0, 100, 700, 2300, 6900], [0, 100, 700, 1900, 7300],
+    [0, 100, 600, 1700, 7600], [0, 100, 500, 1500, 7900], [0, 100, 400, 1300, 8200], [0, 0, 400, 1200, 8400],
+    [0, 0, 300, 1000, 8700], [0, 0, 200, 800, 9000], [0, 0, 200, 400, 9400], [0, 0, 100, 200, 9700],
+    [0, 0, 0, 0, 10000],
+];
+
+/**
+ * `Unit::CalculateEffectiveMagicResistancePercent` of a creature hit by a player's spell of `school`
+ * (not physical, not holy): `resistance` against 5 per attacker level (100 at least), times 0.75,
+ * plus 0.4 per point of the victim's level skill above the attacker's; at most 75.
+ */
+float effectiveResistPercent(int resistance, uint attackerLevel, uint victimLevel, bool victimCreature)
+{
+    import std.algorithm.comparison : max, min;
+
+    if (resistance < 0)
+    {
+        const skill = max(victimLevel * 5.0f, 100.0f);
+        return resistance / skill * 100;
+    }
+    const skill = max(attackerLevel * 5.0f, 100.0f);
+    float percent = resistance / skill * 100 * 0.75f;
+    if (victimCreature)
+        percent += 0.4f * max(victimLevel * 5.0f - skill, 0.0f);
+    return min(percent, 75.0f);
+}
+
+/**
+ * `Unit::RollMagicResistanceMultiplierOutcomeAgainst`: the share of the damage resisted (0, 0.25, 0.5
+ * or 0.75; never all, which was the hit roll's), from `percent` and a `roll` of 1 .. 10000. Negative
+ * percents are vulnerability: a negative share. A direct hit with more than 54% never goes whole.
+ */
+float rollPartialResist(float percent, uint roll, bool direct = true)
+{
+    import std.math : round;
+
+    if (percent < 0)
+        return percent * 0.01f;
+    const index = cast(uint)(percent * 100);
+    if (index == 0)
+        return 0;
+    const row = index / 100, step = index % 100;
+    uint[5] chances;
+    foreach (c; 0 .. 5)
+    {
+        const base = partialResistRows[row][c];
+        const ahead = row + 1 < partialResistRows.length ? partialResistRows[row + 1][c] : base;
+        const value = base + round((cast(double) ahead - base) * (step / 100.0));
+        chances[c] = value < 0 ? 0 : cast(uint) value;
+    }
+    uint portion = 4;
+    uint sum;
+    foreach (ubyte c; 0 .. 5)
+    {
+        sum += chances[c];
+        if (roll <= sum)
+        {
+            portion = c;
+            break;
+        }
+    }
+    if (portion > 3)
+        portion = 3;
+    if (portion == 0 && percent > 54.0f && direct)
+        ++portion;
+    return portion / 4.0f;
+}
+
+unittest
+{
+    assert(effectiveResistPercent(0, 60, 60, true) == 0 && rollPartialResist(0, 1) == 0);
+    // 300 fire resistance against a level 60 caster: 300/300*100*0.75 = 75% (the cap).
+    assert(effectiveResistPercent(300, 60, 60, true) == 75);
+    assert(rollPartialResist(75, 10000) == 0.75f && rollPartialResist(75, 5000) == 0.75f, "at 75%: mostly three quarters");
+    assert(rollPartialResist(75, 1) == 0.25f, "never whole above 54%");
+    // A level 63 boss against level 60: 15 skill above, 6% more.
+    assert(effectiveResistPercent(0, 60, 63, true) == 6);
+    assert(rollPartialResist(10, 1) == 0 && rollPartialResist(10, 10000) > 0);
+    assert(effectiveResistPercent(-50, 60, 60, true) < 0 && rollPartialResist(-10, 1) < 0);
+}

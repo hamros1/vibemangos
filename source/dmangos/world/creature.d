@@ -100,6 +100,23 @@ struct CreatureTemplate
     uint pickpocketLootId;      /// `PickpocketLootId`
     uint staticFlags1;          /// `StaticFlags1`: `NO_XP` 0x2, `NO_LOOT` 0x4
     uint callForHelp;           /// `CallForHelp`: how far it calls for help when it starts fighting; 0: 5 yards
+    int resistanceHoly, resistanceFire, resistanceNature; /// `Resistance*`
+    int resistanceFrost, resistanceShadow, resistanceArcane;
+
+    /// Its resistance to `school` (1 holy .. 6 arcane).
+    int resistance(uint school) const pure nothrow @nogc @safe
+    {
+        switch (school)
+        {
+        case 1: return resistanceHoly;
+        case 2: return resistanceFire;
+        case 3: return resistanceNature;
+        case 4: return resistanceFrost;
+        case 5: return resistanceShadow;
+        case 6: return resistanceArcane;
+        default: return 0;
+        }
+    }
 
     /// The four models, `ModelId1` .. `ModelId4`.
     @property uint[4] modelIds() const pure nothrow @nogc @safe
@@ -117,7 +134,8 @@ enum creatureTemplateQuery = "SELECT Entry, Name, IFNULL(SubName, ''), MinLevel,
     ~ "TrainerType, TrainerSpell, TrainerClass, TrainerRace, TrainerTemplateId, VendorTemplateId, "
     ~ "DamageMultiplier, DamageVariance, ArmorMultiplier, MinMeleeDmg, MaxMeleeDmg, MinRangedDmg, MaxRangedDmg, "
     ~ "Armor, MeleeAttackPower, RangedAttackPower, DamageSchool, Detection, Pursuit, Leash, ExperienceMultiplier, "
-    ~ "LootId, MinLootGold, MaxLootGold, SkinningLootId, PickpocketLootId, StaticFlags1, CallForHelp "
+    ~ "LootId, MinLootGold, MaxLootGold, SkinningLootId, PickpocketLootId, StaticFlags1, CallForHelp, "
+    ~ "ResistanceHoly, ResistanceFire, ResistanceNature, ResistanceFrost, ResistanceShadow, ResistanceArcane "
     ~ "FROM creature_template";
 
 /// `TempSpawnType` (plus `none`: not a summon): when a summoned creature goes.
@@ -934,6 +952,8 @@ private:
         const combat = selectLevel(*t, level, parts.hasClassStats ? &parts.classStats : null);
         const health = combat.health, mana = combat.mana;
         values.set!UNIT_FIELD_RESISTANCES(0, cast(uint) combat.armor);
+        foreach (uint school; 1 .. 7)
+            values.set!UNIT_FIELD_RESISTANCES(school, cast(uint) t.resistance(school));
         values.set!UNIT_FIELD_ATTACK_POWER(cast(int) combat.meleeAttackPower);
         values.set!UNIT_FIELD_RANGED_ATTACK_POWER(cast(int) combat.rangedAttackPower);
         values.set!UNIT_FIELD_MINDAMAGE(combat.damage[0][0]);

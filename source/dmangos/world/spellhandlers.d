@@ -1369,10 +1369,28 @@ private:
         const crit = !(spell.attributesEx2 & spellAttrEx2CantCrit) && uniform01(map.random) * 100 < spellCrit();
         if (crit)
             damage = damage * 3 / 2;
+        uint resisted;
         if (school == 0)
             damage = cast(uint) armorReducedDamage(player.data.level, victim.fighter.armor, damage);
+        else if (school != 1) // holy: no resistance
+        {
+            // A partial resist (`RollMagicResistanceMultiplierOutcomeAgainst`): a share of it resisted.
+            import dmangos.world.combat : effectiveResistPercent, rollPartialResist;
+            import std.random : uniform;
+
+            const percent = effectiveResistPercent(cast(int) victim.values.get!UNIT_FIELD_RESISTANCES(school),
+                player.data.level, victim.values.get!UNIT_FIELD_LEVEL, true);
+            const share = rollPartialResist(percent, uniform!"[]"(1u, 10000u, map.random));
+            if (share > 0)
+            {
+                resisted = cast(uint)(damage * share);
+                damage -= resisted;
+            }
+            else if (share < 0)
+                damage += cast(uint)(damage * -share);
+        }
         map.sendToWatchers(this, Opcode.SMSG_SPELLNONMELEEDAMAGELOG, nonMeleeDamageLog(victim.guid, player.guid,
-            spell.id, damage, school, 0, 0, false, 0, crit), true);
+            spell.id, damage, school, 0, resisted, false, 0, crit), true);
         spellAttacked(victim, damage);
     }
 
@@ -1959,6 +1977,7 @@ unittest
         auto aura = makeAura(&context.data.spells.spells[power], me.guid, 1, -1, true, [35, 0, 0]);
         aura.passive = true;
         anduin.session.addAura(aura);
+        keeper.values.set!UNIT_FIELD_LEVEL(me.values.get!UNIT_FIELD_LEVEL); // no resist from levels
         const before = keeper.values.get!UNIT_FIELD_HEALTH;
         anduin.session.castTriggeredAt(fire, keeper.guid);
         assert(keeper.values.get!UNIT_FIELD_HEALTH == before - 35, "20 and 15 of spell power");
