@@ -1330,6 +1330,109 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         session.actAtReplica(replica.guid, action);
     }
 
+    // -----------------------------------------------------------------------
+    // Spawns made and deleted by GMs (ArcEmu's `.npc spawn`, `.gobject spawn`, the deletes)
+    // -----------------------------------------------------------------------
+
+    private uint lastCreatureSpawn, lastGameObjectSpawn; // the highest spawn guids, once looked up
+
+    /**
+     * A new `creature` row of `entry` at `at` on `map` (saved, in the world data and its cell, so that
+     * it comes back when the cell loads again), and its creature there now; null if it cannot be made.
+     */
+    Creature spawnCreatureAt(Map map, uint entry, Position at)
+    {
+        import dmangos.world.grid : cellKeyAt;
+
+        if (entry !in data.creatureTemplates)
+            return null;
+        if (lastCreatureSpawn == 0)
+            foreach (ref s; data.creatureSpawns)
+                if (s.guid > lastCreatureSpawn)
+                    lastCreatureSpawn = s.guid;
+        CreatureSpawn spawn = {guid: ++lastCreatureSpawn, entry: entry, map: map.id, x: at.x, y: at.y, z: at.z,
+            orientation: at.orientation, respawnSeconds: 120, respawnSecondsMax: 120};
+        data.creatureSpawns ~= spawn;
+        const index = data.creatureSpawns.length - 1;
+        data.creatureCells.require(map.id, null).require(cellKeyAt(at.x, at.y), null) ~= index;
+        if (spawnIndex !is null)
+            spawnIndex[spawn.guid] = index;
+        database.insertCreatureSpawn(spawn);
+        auto creature = makeCreature(&data.creatureSpawns[index]);
+        if (creature is null)
+            return null;
+        creature.instanceId = map.instanceId;
+        map.addObject(creature);
+        return creature;
+    }
+
+    /// The creature's spawn deleted: gone from the map, the world data's cell and the database.
+    void deleteCreatureSpawn(Map map, Creature creature)
+    {
+        import std.algorithm.mutation : remove;
+        import dmangos.world.grid : cellKeyAt;
+
+        const s = creature.spawn;
+        if (auto cells = s.map in data.creatureCells)
+            if (auto list = cellKeyAt(s.x, s.y) in *cells)
+                foreach (i, index; *list)
+                    if (data.creatureSpawns[index].guid == s.guid)
+                    {
+                        *list = (*list).remove(i);
+                        break;
+                    }
+        respawnAt.remove(s.guid);
+        map.removeObject(creature.guid);
+        database.deleteCreatureSpawn(s.guid);
+    }
+
+    /// A new `gameobject` row of `entry` at `at` (facing as it), and its object there now; null if unknown.
+    GameObject spawnGameObjectAt(Map map, uint entry, Position at, bool save)
+    {
+        import std.math : cos, sin;
+        import dmangos.world.grid : cellKeyAt;
+
+        if (entry !in data.gameObjectTemplates)
+            return null;
+        if (lastGameObjectSpawn == 0)
+            foreach (ref s; data.gameObjectSpawns)
+                if (s.guid > lastGameObjectSpawn)
+                    lastGameObjectSpawn = s.guid;
+        GameObjectSpawn spawn = {guid: ++lastGameObjectSpawn, entry: entry, map: map.id, x: at.x, y: at.y, z: at.z,
+            orientation: at.orientation, rotation: [0, 0, sin(at.orientation / 2), cos(at.orientation / 2)]};
+        data.gameObjectSpawns ~= spawn;
+        const index = data.gameObjectSpawns.length - 1;
+        data.gameObjectCells.require(map.id, null).require(cellKeyAt(at.x, at.y), null) ~= index;
+        if (gameObjectSpawnIndex !is null)
+            gameObjectSpawnIndex[spawn.guid] = index;
+        if (save)
+            database.insertGameObjectSpawn(spawn);
+        auto go = makeGameObject(&data.gameObjectSpawns[index]);
+        go.instanceId = map.instanceId;
+        map.addObject(go);
+        return go;
+    }
+
+    /// The game object's spawn deleted: gone from the map, the world data's cell and the database.
+    void deleteGameObjectSpawn(Map map, GameObject go)
+    {
+        import std.algorithm.mutation : remove;
+        import dmangos.world.grid : cellKeyAt;
+
+        const s = go.spawn;
+        if (auto cells = s.map in data.gameObjectCells)
+            if (auto list = cellKeyAt(s.x, s.y) in *cells)
+                foreach (i, index; *list)
+                    if (data.gameObjectSpawns[index].guid == s.guid)
+                    {
+                        *list = (*list).remove(i);
+                        break;
+                    }
+        gameObjectRespawnAt.remove(s.guid);
+        map.removeObject(go.guid);
+        database.deleteGameObjectSpawn(s.guid);
+    }
+
     /// See `CreatureLore.startRelay`.
     void startRelay(int id, CombatWorld world, ulong source, ulong target)
     {

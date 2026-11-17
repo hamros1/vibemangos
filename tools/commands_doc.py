@@ -108,6 +108,9 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
   waits the 5 seconds its help promises (ArcEmu's stops at once).
 * `.server info` names this server, not ArcEmu. Item links use 1.12's link format.
 * `.character additem` gives the whole count, in as many stacks as it takes.
+* `.npc spawn` and `.gobject spawn` write CMaNGOS's `creature` and `gameobject` rows (a respawn time of
+  120 seconds for creatures, the table's default); in a cluster only the GM's node knows the new spawn
+  until the others restart.
 * `.gobject info` shows the size as a number (ArcEmu printed a float with `%%u`).
 * `.quest giver` and `.quest finisher` name a game object by its own template (ArcEmu looks its id up
   among the items); ArcEmu's quest tables are CMaNGOS's (`creature_questrelation` and the like).

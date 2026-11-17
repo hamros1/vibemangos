@@ -16,6 +16,8 @@ import dmangos.auth.accounts : AccountLevel, canonicalAccountName, decodeBigNumb
 import dmangos.world.characterdb : CharacterOwner, CharacterStatements, DeleteOptions, GuidCounters, NameInfo;
 public import dmangos.world.characterdb : GroupMemberRecord, GroupRecord;
 import dmangos.world.movement : Position;
+import dmangos.world.creature : CreatureSpawn;
+import dmangos.world.gameobject : GameObjectSpawn;
 import dmangos.world.inventory : ItemChange, ItemRecord, ItemState;
 import dmangos.world.quests : QuestStatus;
 import dmangos.world.reputation : ReputationRecord;
@@ -322,6 +324,18 @@ interface WorldDatabase
     /// `character_instance` (`group` false, `owner` a character) or `group_instance` (`owner` a leader).
     void saveInstanceBind(bool group, uint owner, uint instance, bool permanent);
 
+    /// A spawn a GM made (`creature`, in the world database).
+    void insertCreatureSpawn(const ref CreatureSpawn spawn);
+
+    /// A spawn a GM deleted.
+    void deleteCreatureSpawn(uint guid);
+
+    /// A game object spawn a GM made (`gameobject`).
+    void insertGameObjectSpawn(const ref GameObjectSpawn spawn);
+
+    /// A game object spawn a GM deleted.
+    void deleteGameObjectSpawn(uint guid);
+
     /// A character's bind to an instance revoked (`character_instance`).
     void deleteInstanceBind(uint guid, uint instance);
 
@@ -504,6 +518,22 @@ final class MySqlWorldDatabase : WorldDatabase
         statements.saveInstanceRespawn(gameObject, spawnGuid, instance, until);
     }
     void deleteInstanceBind(uint guid, uint instance) { statements.deleteInstanceBind(guid, instance); }
+    void insertCreatureSpawn(const ref CreatureSpawn s)
+    {
+        world.execute!("INSERT INTO creature (guid, id, map, position_x, position_y, position_z, orientation, "
+            ~ "spawntimesecsmin, spawntimesecsmax, spawndist, MovementType) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")(
+            s.guid, s.entry, s.map, s.x, s.y, s.z, s.orientation, s.respawnSeconds, s.respawnSecondsMax,
+            s.wanderDistance, s.movementType);
+    }
+    void deleteCreatureSpawn(uint guid) { world.execute!"DELETE FROM creature WHERE guid = ?"(guid); }
+    void insertGameObjectSpawn(const ref GameObjectSpawn s)
+    {
+        world.execute!("INSERT INTO gameobject (guid, id, map, position_x, position_y, position_z, orientation, "
+            ~ "rotation0, rotation1, rotation2, rotation3, spawntimesecsmin, spawntimesecsmax) "
+            ~ "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")(s.guid, s.entry, s.map, s.x, s.y, s.z, s.orientation,
+            s.rotation[0], s.rotation[1], s.rotation[2], s.rotation[3], s.respawnSeconds, s.respawnSeconds);
+    }
+    void deleteGameObjectSpawn(uint guid) { world.execute!"DELETE FROM gameobject WHERE guid = ?"(guid); }
     Nullable!NameInfo nameInfo(uint guid) { return statements.nameInfo(guid); }
     GroupRecord[] loadGroups() { return statements.loadGroups(); }
     void createGroup(const ref GroupRecord group) { statements.createGroup(group); }
@@ -1017,6 +1047,12 @@ final class MemoryWorldDatabase : WorldDatabase
     {
         instanceRows.respawns ~= InstanceRespawnRecord(gameObject, spawnGuid, instance, until);
     }
+    CreatureSpawn[uint] creatureSpawnRows;     /// what `insertCreatureSpawn` wrote, by guid
+    GameObjectSpawn[uint] gameObjectSpawnRows; /// ditto, game objects
+    void insertCreatureSpawn(const ref CreatureSpawn s) { creatureSpawnRows[s.guid] = s; }
+    void deleteCreatureSpawn(uint guid) { creatureSpawnRows.remove(guid); }
+    void insertGameObjectSpawn(const ref GameObjectSpawn s) { gameObjectSpawnRows[s.guid] = s; }
+    void deleteGameObjectSpawn(uint guid) { gameObjectSpawnRows.remove(guid); }
     void deleteInstanceBind(uint guid, uint instance)
     {
         import std.algorithm.iteration : filter;

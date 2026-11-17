@@ -1337,6 +1337,29 @@ private:
         return true;
     }
 
+    bool handleCreatureSpawnCommand(uint entry = 0)
+    {
+        if (entry == 0)
+            return false;
+        const t = entry in context.data.creatureTemplates;
+        if (t is null)
+        {
+            redSystemMessage("Invalid entry id.");
+            return true;
+        }
+        const at = player.position;
+        auto creature = context.spawnCreatureAt(map, entry, at);
+        if (creature is null)
+        {
+            redSystemMessage("Invalid entry id.");
+            return true;
+        }
+        blueSystemMessage(format!"Spawned a creature `%s` with entry %u at %f %f %f on map %u"(t.name, entry, at.x, at.y,
+            at.z, player.data.map));
+        gmLog(format!"spawned a %s at %u %f %f %f"(t.name, player.data.map, at.x, at.y, at.z));
+        return true;
+    }
+
     bool handleGetStandingCommand(uint faction = 0)
     {
         auto plr = getSelectedChar(true);

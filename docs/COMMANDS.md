@@ -39,6 +39,9 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
   waits the 5 seconds its help promises (ArcEmu's stops at once).
 * `.server info` names this server, not ArcEmu. Item links use 1.12's link format.
 * `.character additem` gives the whole count, in as many stacks as it takes.
+* `.npc spawn` and `.gobject spawn` write CMaNGOS's `creature` and `gameobject` rows (a respawn time of
+  120 seconds for creatures, the table's default); in a cluster only the GM's node knows the new spawn
+  until the others restart.
 * `.gobject info` shows the size as a number (ArcEmu printed a float with `%u`).
 * `.quest giver` and `.quest finisher` name a game object by its own template (ArcEmu looks its id up
   among the items); ArcEmu's quest tables are CMaNGOS's (`creature_questrelation` and the like).
@@ -51,7 +54,7 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 * Arguments are read strictly: a number written wrong ("12abc", "abc") or a missing argument shows
   the command's help, where ArcEmu's C parsing read "12abc" as 12 and "abc" as 0 and went on.
 
-## Working (178)
+## Working (182)
 
 | Command | Letter | Help |
 |---|---|---|
@@ -135,17 +138,21 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 | `.gm allowwhispers` | `c` | Allows whispers from player <s> while in gmon mode. |
 | `.gm blockwhispers` | `c` | Blocks whispers from player <s> while in gmon mode. |
 | `.gobject select` | `o` | Selects the nearest GameObject to you |
+| `.gobject delete` | `o` | Deletes selected GameObject |
+| `.gobject spawn` | `o` | Spawns a GameObject by ID |
 | `.gobject info` | `o` | Gives you informations about selected GO |
 | `.gobject activate` | `o` | Activates/Opens the selected GO. |
 | `.battleground setworldstate` | `e` | <var> <val> - Var can be in hex. WS Value. |
 | `.battleground playsound` | `e` | <val>. Val can be in hex. |
 | `.npc flags` | `n` | Changes NPC flags |
 | `.npc emote` | `n` | .emote - Sets emote state |
+| `.npc delete` | `n` | Deletes mob from db and world. |
 | `.npc info` | `n` | Displays NPC information |
 | `.npc say` | `n` | .npc say <text> - Makes selected mob say text <text>. |
 | `.npc yell` | `n` | .npc yell <Text> - Makes selected mob yell text <text>. |
 | `.npc come` | `n` | .npc come - Makes npc move to your position |
 | `.npc return` | `n` | .npc return - Returns ncp to spawnpoint. |
+| `.npc spawn` | `n` | .npc spawn - Spawns npc of entry <id> |
 | `.npc respawn` | `n` | .respawn - Respawns a dead npc from it's corpse. |
 | `.cheat status` | `m` | Shows active cheats. |
 | `.cheat taxi` | `m` | Enables all taxi nodes. |
@@ -234,7 +241,7 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 | `.gotrig` | `v` | Warps to areatrigger <id> |
 | `.logcomment` | `1` | Adds a comment to the GM log for the admins to read. |
 
-## Not yet implemented (120)
+## Not yet implemented (116)
 
 These answer "Not yet implemented.", as ArcEmu's `HandleNYICommand` does: their systems (AI agents
 and waypoint editing, quest editing, guilds, pets, honor, battlegrounds and arenas, GM
@@ -288,8 +295,6 @@ tickets, game object and creature spawning, GM invisibility, flying) do not exis
 | `.gmTicket release` | `c` | Releases assigned GM Ticket with ID x. |
 | `.gmTicket comment` | `c` | Sets comment x to GM Ticket with ID y. |
 | `.gmTicket toggle` | `z` | Toggles the ticket system status. |
-| `.gobject delete` | `o` | Deletes selected GameObject |
-| `.gobject spawn` | `o` | Spawns a GameObject by ID |
 | `.gobject enable` | `o` | Enables the selected GO for use. |
 | `.gobject scale` | `o` | Sets scale of selected GO |
 | `.gobject animprogress` | `o` | Sets anim progress |
@@ -308,10 +313,8 @@ tickets, game object and creature spawning, GM invisibility, flying) do not exis
 | `.battleground forcestart` | `z` | Forces initialitation of all battlegrounds with active queue. |
 | `.npc vendoradditem` | `n` | Adds to vendor |
 | `.npc vendorremoveitem` | `n` | Removes from vendor. |
-| `.npc delete` | `n` | Deletes mob from db and world. |
 | `.npc addAgent` | `n` | .npc addAgent <agent> <procEvent> <procChance> <procCount> <spellId> <spellType> <spelltargetType> <spellCooldown> <floatMisc1> <Misc2> |
 | `.npc listAgent` | `n` | .npc listAgent |
-| `.npc spawn` | `n` | .npc spawn - Spawns npc of entry <id> |
 | `.npc spawnlink` | `n` | .spawnlink sqlentry |
 | `.npc possess` | `n` | .npc possess - Possess an npc (mind control) |
 | `.npc unpossess` | `n` | .npc unpossess - Unposses any currently possessed npc. |

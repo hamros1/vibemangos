@@ -169,6 +169,59 @@ private:
         return true;
     }
 
+    bool handleDeleteCommand()
+    {
+        const guid = player.values.get!UNIT_FIELD_TARGET;
+        if (guid == 0)
+        {
+            systemMessage("No selection.");
+            return true;
+        }
+        auto unit = cast(Creature) map.findObject(guid);
+        if (unit is null)
+        {
+            systemMessage("You should select a creature.");
+            return true;
+        }
+        const at = unit.position;
+        gmLog(format!"used npc delete, sqlid %u, creature %s, pos %f %f %f"(unit.spawn.guid, unit.template_.name, at.x, at.y,
+            at.z));
+        blueSystemMessage(format!"Deleted creature ID %u"(unit.spawn.guid));
+        context.deleteCreatureSpawn(map, unit);
+        return true;
+    }
+
+    bool handleGOSpawn(uint entryId = 0, int save = 0)
+    {
+        if (entryId == 0)
+            return false;
+        if (entryId !in context.data.gameObjectTemplates)
+        {
+            systemMessage(format!"GameObject Info '%s' Not Found"(entryId));
+            return true;
+        }
+        systemMessage(format!"Spawning GameObject By Entry '%s'"(entryId));
+        const at = player.position;
+        auto go = context.spawnGameObjectAt(map, entryId, at, save > 0);
+        gmLog(format!"spawned gameobject %s, entry %u at %u %f %f %f%s"(go.template_.name, entryId, player.data.map, at.x,
+            at.y, at.z, save > 0 ? ", saved in DB" : ""));
+        return true;
+    }
+
+    bool handleGODelete()
+    {
+        auto go = selectedGameObject();
+        if (go is null)
+        {
+            redSystemMessage("No selected GameObject...");
+            return true;
+        }
+        context.deleteGameObjectSpawn(map, go);
+        gmLog(format!"deleted gameobject %s, entry %u"(go.template_.name, go.spawn.entry));
+        selectedGo = 0;
+        return true;
+    }
+
     bool handleNpcComeCommand()
     {
         auto creature = getSelectedCreature(true);
@@ -714,4 +767,54 @@ unittest
     assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTBLUE ~ "Gameobject closed.|r"] && go.values.get!GAMEOBJECT_STATE == 0);
     gm.say(".gobject activate");
     assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTBLUE ~ "Gameobject opened.|r"] && go.values.get!GAMEOBJECT_STATE == 1);
+}
+
+/// `.npc spawn` and `.npc delete`, `.gobject spawn` (saved) and `.gobject delete`: in the world and the database.
+unittest
+{
+    import std.algorithm.searching : canFind, startsWith;
+    import std.format : format;
+    import dmangos.auth.accounts : AccountLevel;
+    import dmangos.world.commands : MSG_COLOR_LIGHTBLUE;
+    import dmangos.world.creature : Creature;
+    import dmangos.world.gameobject : GameObjectTemplate, GameObjectType;
+    import dmangos.world.movement : Position;
+    import dmangos.world.opcodes;
+    import dmangos.world.packets : ClientGuid;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto gm = loggedIn(context, db, 7, "Varian", Position(-8930, -120, 83.53f), AccountLevel.administrator);
+    gm.read();
+    auto map = context.map(0);
+
+    gm.say(".npc spawn 6774");
+    assert(systemMessages(gm.read())[0].startsWith(MSG_COLOR_LIGHTBLUE ~ "Spawned a creature `"));
+    assert(db.creatureSpawnRows.length == 1);
+    const row = db.creatureSpawnRows.values[0];
+    auto spawned = cast(Creature) map.findObject(makeGuidFor(row.entry, row.guid));
+    assert(spawned !is null && spawned.template_.entry == 6774);
+    gm.write(Opcode.CMSG_SET_SELECTION, ClientGuid(spawned.guid));
+    gm.say(".npc delete");
+    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTBLUE ~ "Deleted creature ID " ~ format!"%s"(row.guid) ~ "|r"]);
+    assert(map.findObject(spawned.guid) is null && db.creatureSpawnRows.length == 0);
+
+    GameObjectTemplate chair = {entry: 9010, type: GameObjectType.chair, displayId: 1, name: "Chair"};
+    context.data.gameObjectTemplates[9010] = chair;
+    gm.say(".gobject spawn 9010 1");
+    assert(systemMessages(gm.read()) == ["Spawning GameObject By Entry '9010'"]);
+    assert(db.gameObjectSpawnRows.length == 1);
+    gm.say(".gobject select");
+    assert(systemMessages(gm.read())[0].canFind("[ Chair ]"));
+    gm.say(".gobject delete");
+    assert(db.gameObjectSpawnRows.length == 0);
+}
+
+version (unittest) private ulong makeGuidFor(uint entry, uint spawn)
+{
+    import dmangos.world.objects : HighGuid, makeGuid;
+
+    return makeGuid(HighGuid.unit, entry, spawn);
 }
