@@ -16,7 +16,7 @@ import dmangos.mysql : MySqlConnection;
 import dmangos.world.inventory : ItemChange, ItemRecord, ItemState;
 import dmangos.world.player : CharacterData, CharacterProgress, HomeBind, tutorialFields;
 import dmangos.world.playercreate : NewCharacter, NewSkill, NewSpell, maxEnchantmentSlot;
-import dmangos.world.database : CorpseRecord;
+import dmangos.world.database : AuraRecord, CorpseRecord;
 import dmangos.world.worlddata : CreateAction;
 
 /// Who a character belongs to.
@@ -329,6 +329,31 @@ final class CharacterStatements
         characters.execute!("INSERT INTO corpse (guid, player, position_x, position_y, position_z, orientation, map, "
             ~ "time, corpse_type, instance) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)")(c.player, c.player, c.x, c.y, c.z,
             c.orientation, c.map, c.time, c.type);
+    }
+
+    /// See `WorldDatabase.saveAuras`.
+    void saveAuras(uint player, const(AuraRecord)[] auras)
+    {
+        characters.execute!"DELETE FROM character_aura WHERE guid = ?"(player);
+        foreach (ref a; auras)
+            characters.execute!("INSERT INTO character_aura (guid, caster_guid, item_guid, spell, stackcount, "
+                ~ "remaincharges, basepoints0, basepoints1, basepoints2, periodictime0, periodictime1, periodictime2, "
+                ~ "maxduration, remaintime, effIndexMask) VALUES (?, ?, 0, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)")(player,
+                a.caster, a.spell, a.stacks, a.amount[0], a.amount[1], a.amount[2], a.periodTimer[0], a.periodTimer[1],
+                a.periodTimer[2], a.maxDuration, a.remaining, a.effectMask);
+    }
+
+    /// See `WorldDatabase.loadAuras`.
+    AuraRecord[] loadAuras(uint player)
+    {
+        AuraRecord[] found;
+        foreach (row; characters.query!("SELECT caster_guid, spell, stackcount, basepoints0, basepoints1, basepoints2, "
+                ~ "periodictime0, periodictime1, periodictime2, maxduration, remaintime, effIndexMask "
+                ~ "FROM character_aura WHERE guid = ?")(player))
+            found ~= AuraRecord(row.get!ulong(0), row.get!uint(1), row.get!uint(2), [row.get!int(3), row.get!int(4),
+                row.get!int(5)], [row.get!int(6), row.get!int(7), row.get!int(8)], row.get!int(9), row.get!int(10),
+                row.get!uint(11));
+        return found;
     }
 
     /// See `WorldDatabase.deleteCorpse`.

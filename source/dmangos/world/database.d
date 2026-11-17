@@ -72,6 +72,19 @@ struct CorpseRecord
     ubyte type;         /// `CorpseType`
 }
 
+/// A `character_aura` row.
+struct AuraRecord
+{
+    ulong caster;
+    uint spell;
+    uint stacks = 1;
+    int[3] amount;       /// `basepointsN`: the effects' amounts
+    int[3] periodTimer;  /// `periodictimeN`: until each next tick
+    int maxDuration;
+    int remaining;       /// `remaintime`: -1 until cancelled
+    uint effectMask;     /// `effIndexMask`
+}
+
 interface WorldDatabase
 {
     /// The account named `username`, or null.
@@ -158,6 +171,12 @@ interface WorldDatabase
 
     /// `MapPersistentState::SaveCreatureRespawnTime`: a dead creature comes back at `respawnTime` (0: forget it).
     void saveCreatureRespawn(uint spawnGuid, long respawnTime);
+
+    /// `Player::_SaveAuras`: the player's auras, replacing those saved before.
+    void saveAuras(uint player, const(AuraRecord)[] auras);
+
+    /// `Player::_LoadAuras`
+    AuraRecord[] loadAuras(uint player);
 
     /// Every creature that is dead now: spawn guid -> when it comes back (Unix time).
     long[uint] loadCreatureRespawns();
@@ -296,6 +315,8 @@ final class MySqlWorldDatabase : WorldDatabase
     void deleteCorpse(uint player) { statements.deleteCorpse(player); }
     Nullable!CorpseRecord loadCorpse(uint player) { return statements.loadCorpse(player); }
     void saveCreatureRespawn(uint spawnGuid, long respawnTime) { statements.saveCreatureRespawn(spawnGuid, respawnTime); }
+    void saveAuras(uint player, const(AuraRecord)[] auras) { statements.saveAuras(player, auras); }
+    AuraRecord[] loadAuras(uint player) { return statements.loadAuras(player); }
     long[uint] loadCreatureRespawns() { return statements.loadCreatureRespawns(); }
     Nullable!NameInfo nameInfo(uint guid) { return statements.nameInfo(guid); }
     GroupRecord[] loadGroups() { return statements.loadGroups(); }
@@ -704,9 +725,12 @@ final class MemoryWorldDatabase : WorldDatabase
     }
 
     CorpseRecord[uint] corpses;      /// by player
+    AuraRecord[][uint] auraRows;     /// by player
     long[uint] creatureRespawns;     /// by spawn guid
 
     void saveCorpse(const ref CorpseRecord c) { corpses[c.player] = c; }
+    void saveAuras(uint player, const(AuraRecord)[] auras) { auraRows[player] = auras.dup; }
+    AuraRecord[] loadAuras(uint player) { return auraRows.get(player, null).dup; }
     void deleteCorpse(uint player) { corpses.remove(player); }
     Nullable!CorpseRecord loadCorpse(uint player)
     {

@@ -137,6 +137,7 @@ private:
     {
         const progress = player.progress(secondsInWorld());
         context.database.saveProgress(progress);
+        saveAuras();
         saveTimer.reset();
     }
 

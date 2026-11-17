@@ -200,6 +200,37 @@ private:
                 removeAura(aura);
     }
 
+    /// `Player::_SaveAuras`: the auras that last (not passive ones), as they are now.
+    package void saveAuras()
+    {
+        import dmangos.world.database : AuraRecord;
+
+        AuraRecord[] rows;
+        foreach (aura; player.auras.list)
+            if (!aura.passive && aura.duration != 0)
+                rows ~= AuraRecord(aura.caster, aura.spell.id, aura.stacks, aura.amount, aura.periodTimer,
+                    aura.maxDuration, aura.duration, aura.effects);
+        context.database.saveAuras(player.data.guid, rows);
+    }
+
+    /// `Player::_LoadAuras`: the auras saved at the last logout, with the time they had left.
+    package void loadAuras()
+    {
+        foreach (ref row; context.database.loadAuras(player.data.guid))
+        {
+            const spell = context.data.spells.spell(row.spell);
+            if (spell is null || row.remaining == 0)
+                continue;
+            auto aura = makeAura(spell, row.caster, player.data.level, row.maxDuration, true, row.amount);
+            aura.duration = row.remaining;
+            aura.stacks = row.stacks ? row.stacks : 1;
+            foreach (i; 0 .. 3)
+                if (aura.period[i] > 0 && row.periodTimer[i] > 0)
+                    aura.periodTimer[i] = row.periodTimer[i];
+            addAura(aura);
+        }
+    }
+
     /// `HandleCancelAuraOpcode`: a positive aura the player clicks off.
     @Handles(Opcode.CMSG_CANCEL_AURA, WorldState.inWorld)
     void handleCancelAura(ref ByteReader reader)
@@ -465,4 +496,37 @@ unittest
     cancel.put(haste);
     anduin.write(Opcode.CMSG_CANCEL_AURA, cancel.data);
     assert(me.speeds[MoveType.run] == 7.0f && me.auras.list.length == 0);
+}
+
+/// Auras last across a logout: saved with the time they had left, and back at the next login.
+unittest
+{
+    import dmangos.dbc : buildDbc;
+    import dmangos.world.auras : AuraType;
+    import dmangos.world.clientdata : spellDurationFormat;
+    import dmangos.world.database : AuraRecord;
+    import dmangos.world.movement : Position;
+    import dmangos.world.opcodes;
+    import dmangos.world.player : Player;
+    import dmangos.world.spellhandlers : testSpell;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+    import dmangos.world.updatefields;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    enum uint wits = 91001;
+    context.data.spells.spells[wits] = testSpell(wits, 6, 1, 2);
+    context.data.spells.spells[wits].casting.applyAuraName[0] = AuraType.modStat;
+    context.data.spells.spells[wits].miscValue[0] = 3;
+    db.auraRows[7] = [AuraRecord(7, wits, 1, [2, 0, 0], [0, 0, 0], 60_000, 42_000, 1)];
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f, 1.97f));
+    anduin.read();
+    auto me = cast(Player) anduin.session.character;
+    assert(me.auras.list.length == 1 && me.auras.list[0].duration == 42_000 && me.values.get!UNIT_FIELD_AURA(0) == wits);
+    anduin.write(Opcode.CMSG_LOGOUT_REQUEST, null);
+    import core.time : seconds;
+
+    anduin.session.update(25.seconds);
+    assert(db.auraRows[7].length == 1 && db.auraRows[7][0].remaining > 0, "saved again at logout");
 }

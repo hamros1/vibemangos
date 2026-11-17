@@ -49,7 +49,8 @@ private:
     {
         releaseLootOnLeave();
         spellsOnLeave();
-        removeAurasOnDeath(); // auras are not saved yet
+        if (player.deathState == DeathState.alive)
+            saveAuras();
         deathOnLogout();
         const progress = player.progress(secondsInWorld());
         context.database.saveProgress(progress);
@@ -130,6 +131,7 @@ private:
         flushPlayerChanges();
         const progress = player.progress(secondsInWorld());
         context.database.saveProgress(progress);
+        saveAuras(); // the next node loads them, as it loads the rest
 
         ByteWriter w;
         w.put(account.id);
@@ -214,6 +216,7 @@ private:
         ownerNode = 0;
         state_ = WorldState.inWorld;
         context.enterWorldMigrated(this, known);
+        loadAuras();
         resetMovementCheck();
         info!"%s: '%s' arrived from another node (map %s at %.1f %.1f)"(remoteAddress, character.name, character.map,
             character.position.x, character.position.y);

@@ -285,8 +285,9 @@ What works now:
     stats, resistances and armor, attack power, health and mana (the stats are worked out again),
     speeds and mounts, stances and forms (which spells check), roots and stuns, damage and heals
     over time (on creatures too, as the caster's spell: threat, tapping, the kill), food's health
-    every 5 seconds and drink's mana, energize, triggered spells. Not yet: saving auras across
-    logins, dispels, procs, absorbs, auras on creatures slowing or rooting them.
+    every 5 seconds and drink's mana, energize, triggered spells. Auras are saved (`character_aura`)
+    at logout and with each save, and come back with the time they had left; a cluster's hand-off
+    carries them. Not yet: dispels, procs, absorbs, auras on creatures slowing or rooting them.
   * **The update tick** (every 50 ms, `update_interval`): health, mana, rage and energy regenerate
     as in CMaNGOS (health and the loss of rage only out of combat, and only for the living); inns and capitals give rested XP, also while offline; characters are saved every
     15 minutes (`player_save_interval`).

@@ -121,7 +121,7 @@ The largest area. CMaNGOS references: `Spells/`, `Entities/Unit.cpp`, `Combat/`,
    a creature another node of a cluster simulates.
 5. Spells, cooldowns and auras. **Casting and auras: done** (`spellcast.d`, `spellhandlers.d`,
    `auras.d`, `aurahandlers.d`; README's "Spells" and "Auras"). Next: channeling, area and chain
-   targets, creatures' spells (EventAI), saving auras, talents.
+   targets, creatures' spells (EventAI), talents.
 6. Duels and trades.
 
 * Spell casting with effects, auras (feeding `stats.d`), cooldowns and the attack swing loop.
