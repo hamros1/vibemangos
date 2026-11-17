@@ -15,6 +15,7 @@
  */
 module dmangos.world.objects;
 
+import dmangos.world.spline : SplineFlags;
 import std.algorithm.searching : all, any;
 import std.zlib : compress;
 
@@ -444,14 +445,16 @@ struct MovementBlock
         if (flags & UpdateFlags.living)
         {
             // A unit that is not walking a spline has no spline to show, whatever its flags say: a walk that
-            // has ended included (a replica's ends between its ticks). The 1.12 client does not set up a
-            // spline marked done, and then reads its missing segment table: an access violation at
-            // 0x453885 (`fld [eax+esi*4]` with eax 0).
-            const walking = info.has(MovementFlags.splineEnabled) && spline !is null && spline.initialized
-                && !spline.finalized;
+            // has ended (a replica's ends between its ticks), or one too short for the client to set up
+            // (`minimumWalk`: a turn where it stands, too). It stands, facing where the walk ends.
+            const walking = info.has(MovementFlags.splineEnabled) && spline !is null && spline.showable;
             MovementInfo living = info;
             if (!walking && info.has(MovementFlags.splineEnabled))
+            {
                 living.flags &= ~(MovementFlags.splineEnabled | MovementFlags.forward);
+                if (spline !is null && spline.initialized && (spline.flags & SplineFlags.finalAngle))
+                    living.position.orientation = spline.facingAngle;
+            }
             living.write(writer);
             foreach (speed; speeds)
                 writer.put(speed);

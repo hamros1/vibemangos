@@ -43,6 +43,14 @@ enum MonsterMoveType : ubyte
     facingAngle = 4,
 }
 
+/**
+ * The shortest walk a 1.12 client is shown, in yards. Its unit spline code reads a segment table it
+ * never set up for a spline of next to no length: an access violation at 0x453885 (`fld [eax+esi*4]`,
+ * eax 0). Seen with a creature stepping 0.3 to 0.4 yards, and with one turning where it stood (both
+ * points the same), each in the create block of a client that had just come into the world.
+ */
+enum float minimumWalk = 1.0f;
+
 /// `MoveSpline` with a linear `Spline<int32>`: see the module documentation.
 struct MoveSpline
 {
@@ -99,6 +107,22 @@ struct MoveSpline
     @property uint id() const pure nothrow @nogc @safe
     {
         return id_;
+    }
+
+    /// The length of the path, in yards.
+    @property float length() const pure nothrow @nogc @safe
+    {
+        float total = 0;
+        if (points.length > 2)
+            foreach (i; 1 .. points.length - 1)
+                total += (points[i] - points[i - 1]).magnitude();
+        return total;
+    }
+
+    /// Whether a client may be shown it: under way, and not too short (`minimumWalk`).
+    @property bool showable() const pure nothrow @nogc @safe
+    {
+        return initialized && !finalized && length >= minimumWalk;
     }
 
     /// `Finalized`: arrived, stopped or never started.
@@ -315,7 +339,7 @@ const(ubyte)[] monsterStop(ulong guid, Position at, uint splineId)
 
 /// `PacketBuilder::WriteCreate`: the walk so far, after the speeds of a moving unit's create block.
 void writeSplineCreate(ref ByteWriter w, const ref MoveSpline spline)
-in (spline.initialized && !spline.finalized, "a create block shows a walk under way only")
+in (spline.showable, "a create block shows a walk under way, of some length, only")
 {
     w.put(spline.flags);
     if (spline.flags & SplineFlags.finalAngle)

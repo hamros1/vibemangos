@@ -22,6 +22,7 @@
 module dmangos.world.motion;
 
 import std.math : atan2, cos, isNaN, PI, sin;
+
 import std.random : Random, uniform, uniform01;
 
 import dmangos.bytes : ByteReader, ByteWriter;
@@ -558,14 +559,6 @@ MovementGenerator selectMovement(const Creature creature, const WaypointStore wa
     }
 }
 
-/**
- * The shortest walk shown to clients, in yards. The 1.12 client does not set up a spline whose points
- * are a fraction of a yard apart (though it does one whose points are the same, a unit turning), and
- * then reads its missing segment table: an access violation at 0x453885. Seen with wandering creatures
- * stepping 0.3 to 0.4 yards.
- */
-enum float minimumWalk = 1.0f;
-
 /// The next spline id (`splineCounter`): one counter for every unit on the server.
 private uint splineCounter = 1;
 
@@ -918,6 +911,24 @@ unittest
     const path = creature.spline.path;
     assert(path[0] == path[$ - 1], "no step of a fraction of a yard");
     assert(creature.spline.flags & SplineFlags.finalAngle, "it faces where it would have gone");
+    // Seen in the turn by a client coming into the world: standing, facing the new way, no spline.
+    {
+        import dmangos.bytes : ByteReader, ByteWriter;
+        import dmangos.world.movement : MovementInfo;
+        import dmangos.world.objects : MovementBlock, UpdateFlags;
+
+        MovementBlock block;
+        block.flags = UpdateFlags.living;
+        block.info = creature.movement;
+        block.spline = &creature.spline;
+        ByteWriter w;
+        block.write(w);
+        auto r = ByteReader(w.data);
+        r.read!ubyte;
+        const shown = MovementInfo.read(r);
+        assert(!(shown.flags & MovementFlags.splineEnabled), "a turn is not a walk to the client");
+        assert(near(shown.position.orientation, creature.spline.facingAngle));
+    }
     launch(creature, world, [Vector3(0, 0, 0), Vector3(3, 0, 0)], true);
-    assert(creature.spline.finalDestination == Vector3(3, 0, 0));
+    assert(creature.spline.finalDestination == Vector3(3, 0, 0) && creature.spline.showable);
 }
