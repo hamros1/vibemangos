@@ -218,3 +218,23 @@ rest of the increase is the fighting itself and the creatures whose scripts run 
 (their timers keep them in the tick: about 4,800 spawns in the world have such events). The last
 row adds database scripts (waypoint scripts, relays) and everything else of that night; its 8% is
 within what two identical runs differ by, and the cells did not unload in a one-minute run.
+
+## Step 1 of docs/DESIGN.md: slots in the map (2026-11-17)
+
+The load scenarios could not show this one: each run of `idle` and `spread` loads a different number
+of objects (26,000 to 65,000 in four runs of the same build, depending on where the bots land), and
+one-second spikes while cells load dominate the averages. So the map was measured alone with
+`tools/mapbench.d`: 500 players and 30,000 objects spread over 3,000 by 3,000 yards, a third of them
+walking. Each 50 ms tick, a tenth of the walkers start a walk (a packet to their viewers), and a
+tenth of the players move two yards (visibility, noticing, and their movement to their watchers).
+It is built with `-unittest` for the test data and run with `--DRT-testmode=run-main`.
+
+| Map | Per tick (three runs) | Packets delivered |
+|---|---|---|
+| Guids in associative arrays (before) | 15.88, 16.00, 15.94 ms | 737,626 |
+| Slots, viewers and known sets (after) | 1.93, 1.96, 1.93 ms | 737,626 |
+
+8.2 times faster, delivering exactly the same packets. Most of it is sending to an object's viewers
+(walking its viewer list instead of asking every player on the map whether it sees the object), and
+the rest is lookups by slot instead of by guid.
+

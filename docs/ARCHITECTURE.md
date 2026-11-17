@@ -235,6 +235,13 @@ The map knows players through the `Inhabitant` interface, which `WorldSession` i
 `appearanceFor(viewer)` (the create block a viewer gets). A body is serialized once and framed per
 recipient, because each client's header encryption is different.
 
+* **Slots.** Every player and object on a map has a slot in one `Store` (`dmangos.store`; docs/DESIGN.md,
+  step 1): its cell, where its visibility was last worked out, whether it ticks, the peers holding a
+  replica of it, and who sees it. A guid is looked up once (`slotOf`); everything after goes by slot.
+  Seeing is kept from both sides: a player's `known` (a bit per slot its client has) and an entity's
+  `viewers` (the players whose clients have it). Sending to an object's viewers walks its viewers,
+  never every player. A replica replaced by the real object (or a player arriving from another node)
+  takes over its slot, so its viewers keep it without a new create block.
 * **Cells.** Players are kept in square cells of 66.67 yards (CMaNGOS's grid cell). `near(position,
   range)` only looks at the cells in reach. A cell's spawns load when a player comes near it; a cell
   no player (here, or on a peer that wants its replicas) has been near for `grid_cleanup_delay_seconds`

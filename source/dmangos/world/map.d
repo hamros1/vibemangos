@@ -38,7 +38,10 @@
 module dmangos.world.map;
 
 import core.time : Duration, MonoTime, msecs, seconds, usecs;
+import std.algorithm.searching : canFind;
 import std.random : Random, unpredictableSeed;
+
+import dmangos.store : SlotBits, Store;
 
 import dmangos.serialization : serialize;
 import dmangos.bytes : ByteWriter;
@@ -179,6 +182,58 @@ void deliverBuilt(Inhabitant to, const UpdatePacket packet)
     to.deliver(packet.compressed ? Opcode.SMSG_COMPRESSED_UPDATE_OBJECT : Opcode.SMSG_UPDATE_OBJECT, packet.body_);
 }
 
+/// No cell (an entity not placed in one).
+private enum ulong noCell = ulong.max;
+/// Not in the tick.
+private enum uint notTicking = uint.max;
+
+/**
+ * Everything the map keeps about one player or object (docs/DESIGN.md, "Entity identity"): in one
+ * slot of `Map.entities`, found from its guid once (`Map.slotOf`), then by slot. Who sees what is kept
+ * from both sides: a player's `known` (what its client has) and an entity's `viewers` (the players
+ * whose clients have it), so sending to an object's viewers walks its viewers, not every player.
+ */
+private struct Entity
+{
+    ulong guid;
+    Inhabitant player;          // a player simulated here; null for an object
+    MapObject object;           // a creature, game object, corpse or replica; null for a player
+    Moving mover;               // the object, if it moves on its own
+    bool replica;               // another node simulates it
+    ulong cell = noCell;        // the cell it is in
+    uint cellIndex;             // its place in that cell's list
+    ulong home = noCell;        // an object's own: the cell it spawned in (none for a replica)
+    Position visibilityAt;      // where who sees it was last worked out
+    uint tickIndex = notTicking; // its place in `Map.ticking`
+    uint[] viewers;             // the players (slots) whose clients have it
+    ushort[] replicatedTo;      // the peers holding a replica of it (an own object, a player here)
+
+    // A player's own.
+    SlotBits known;             // the slots its client has: players and objects
+    ulong[] interest;           // the cells it is near (phase 3)
+    ulong[] lingering;          // guids its client has that this map does not hold yet (phase 4b)
+}
+
+/// The players and objects in one cell, by slot.
+private struct CellList
+{
+    uint[] players;
+    uint[] objects;
+}
+
+/// Removes `value` from `list` (order is not kept).
+private void dropValue(T)(ref T[] list, T value)
+{
+    foreach (i, v; list)
+        if (v == value)
+        {
+            list[i] = list[$ - 1];
+            list.length -= 1;
+            list.assumeSafeAppend();
+            return;
+        }
+}
+
 /// See the module documentation.
 final class Map : CombatWorld, GameObjectWorld
 {
@@ -188,47 +243,31 @@ final class Map : CombatWorld, GameObjectWorld
     {
         MapSettings settings;
         uint delegate() serverTime;
-        Inhabitant[ulong] members;      // by player guid
-        bool[ulong][ulong] cells;       // cell key -> guids in it
-        ulong[ulong] cellOf;            // guid -> cell key
-        bool[ulong][ulong] sees;        // guid -> guids it sees (and that see it)
-        Position[ulong] visibilityAt;   // where visibility was last computed
+        Store!Entity entities;          // players and objects, by slot
+        uint[ulong] slotOf;             // guid -> slot: the only lookup by guid
+        uint[] players;                 // the slots of the players here
+        CellList[ulong] cellLists;      // cell key -> who and what is in it
+        size_t replicaCount_;
 
         Spawner spawner;
-        MapObject[ulong] objects;       // creatures and game objects, by guid
-        bool[ulong][ulong] objectCells; // cell key -> object guids in it
         bool[ulong] loadedCells;        // cells whose spawns exist
-        bool[ulong][ulong] seesObjects; // player guid -> object guids its client has
 
         Terrain terrain;                // heights for movement; none in tests
         Random rng;
-        Moving[ulong] movers;           // the objects that can move, resting or not
-        Moving[] ticking;               // those that are not resting: the tick goes through these
-        size_t[ulong] tickingAt;        // guid -> its place in `ticking`
-        ulong[ulong] objectCellOf;      // mover guid -> its cell key
-        ulong[ulong] homeCellOf;        // object guid -> the cell it spawned in
+        uint[] ticking;                 // the objects in the tick (not resting), by slot
         bool delegate(ulong cell) owns; // whether this node owns a cell; null: every cell
 
         // Replication (phase 3).
         bool[ushort][ulong] peerCells;     // cell key -> peers that want what this node simulates there
-        bool[ushort][ulong] replicatedTo;  // own object guid -> peers holding a replica of it
-        bool[ulong] replicas;              // guids of replicas (another node simulates them)
         uint[ulong] localInterest;         // cell key -> local players near it
-        bool[ulong][ulong] interestOf;     // local player guid -> the cells near it
         bool[ulong] interestAdded, interestRemoved; // changes since `takeInterest`
 
-        // Players arriving from another node (phase 4b): guids their client has that this map does not
-        // hold yet; adopted without a create block when they come, forgotten after `lingerFor`.
-        bool[ulong][ulong] lingering;    // player guid -> guids
-        MonoTime[ulong] lingerUntil;
-        Position[ulong] objectVisibilityAt; // where a mover's visibility was last computed
+        // Players arriving from another node (phase 4b): see `Entity.lingering`; forgotten after `lingerFor`.
+        MonoTime[ulong] lingerUntil;    // player guid -> when its lingering guids go out of range
         Duration unticked;              // time not yet given to the movers (under a millisecond)
         uint[ulong] idleMs;             // loaded cell -> how long no player (here or on a peer) has been near
         int idleCheck;                  // ms until the next look for idle cells
     }
-
-    invariant (members.length == cellOf.length && members.length == sees.length
-        && members.length == seesObjects.length);
 
     /// The dungeon instance this map is (0: the map itself, a continent or a shared dungeon).
     uint instanceId;
@@ -250,63 +289,180 @@ final class Map : CombatWorld, GameObjectWorld
     /// Sends replicas of this map's own objects to other nodes; null when standalone.
     Replicator replicator;
 
-    /// Number of creatures and game objects created so far.
+    /// Number of creatures and game objects (replicas included) on the map.
     @property size_t objectCount() const
     {
-        return objects.length;
+        return entities.length - players.length;
     }
+
+    // -----------------------------------------------------------------------
+    // Slots
+    // -----------------------------------------------------------------------
+
+    /// The slot of `guid`; `uint.max` if it is not here.
+    private uint slotFor(ulong guid) const
+    {
+        return slotOf.get(guid, uint.max);
+    }
+
+    private ref Entity at(uint slot)
+    {
+        return entities.at(slot);
+    }
+
+    /// A new entity in a slot of its own.
+    private uint newEntity(Entity e)
+    {
+        const slot = entities.add(e).slot;
+        slotOf[e.guid] = slot;
+        return slot;
+    }
+
+    /// The slot of the object `object`; `uint.max` if it is not here.
+    private uint objectSlot(const MapObject object) const
+    {
+        const slot = slotFor(object.guid);
+        return slot != uint.max && entities.at(slot).object is object ? slot : uint.max;
+    }
+
+    /// `viewer`'s client has `seen` from now on; whether it did not before.
+    private bool see(uint viewer, uint seen)
+    {
+        if (!at(viewer).known.add(seen))
+            return false;
+        at(seen).viewers ~= viewer;
+        return true;
+    }
+
+    /// `viewer`'s client no longer has `seen`; whether it had.
+    private bool unsee(uint viewer, uint seen)
+    {
+        if (!at(viewer).known.remove(seen))
+            return false;
+        dropValue(at(seen).viewers, viewer);
+        return true;
+    }
+
+    /// The slots `slot`'s client has, players or objects as `wantPlayers` says (a copy: safe to change).
+    private uint[] knownOf(uint slot, bool wantPlayers)
+    {
+        uint[] found;
+        foreach (k; at(slot).known)
+            if ((at(k).player !is null) == wantPlayers)
+                found ~= k;
+        return found;
+    }
+
+    /// Puts `slot` in cell `key`'s list.
+    private void putInCell(uint slot, ulong key)
+    {
+        auto e = &at(slot);
+        auto list = &cellLists.require(key);
+        if (e.player !is null)
+        {
+            e.cellIndex = cast(uint) list.players.length;
+            list.players ~= slot;
+        }
+        else
+        {
+            e.cellIndex = cast(uint) list.objects.length;
+            list.objects ~= slot;
+        }
+        e.cell = key;
+    }
+
+    /// Takes `slot` out of its cell's list.
+    private void takeFromCell(uint slot)
+    {
+        auto e = &at(slot);
+        if (e.cell == noCell)
+            return;
+        auto list = e.cell in cellLists;
+        auto members = e.player !is null ? &list.players : &list.objects;
+        const i = e.cellIndex, last = (*members)[$ - 1];
+        (*members)[i] = last;
+        at(last).cellIndex = i;
+        (*members).length -= 1;
+        (*members).assumeSafeAppend();
+        if (list.players.length == 0 && list.objects.length == 0)
+            cellLists.remove(e.cell);
+        e.cell = noCell;
+    }
+
+    /// The entity in `slot` goes: nobody's client has it any more, and it has nothing.
+    private void dropEntity(uint slot)
+    {
+        foreach (v; at(slot).viewers.dup)
+            unsee(v, slot);
+        foreach (k; knownOf(slot, true) ~ knownOf(slot, false))
+            unsee(slot, k);
+        takeFromCell(slot);
+        stopTicking(slot);
+        if (at(slot).replica)
+            --replicaCount_;
+        if (at(slot).player !is null)
+            dropValue(players, slot);
+        slotOf.remove(at(slot).guid);
+        entities.remove(entities.refOf(slot));
+    }
+
+    // -----------------------------------------------------------------------
+    // Objects
+    // -----------------------------------------------------------------------
 
     /// The creature or game object with this guid, if its cell is loaded; null otherwise.
     MapObject findObject(ulong guid)
     {
-        return objects.get(guid, null);
+        const slot = slotFor(guid);
+        return slot == uint.max ? null : at(slot).object;
     }
 
     /// Sends what changed in an object's fields to the players whose clients have it, then forgets the changes.
     void flushObjectChanges(MapObject object)
     {
-        if (replicator !is null && object.guid !in replicas)
-            if (auto peers = object.guid in replicatedTo)
+        const slot = objectSlot(object);
+        if (replicator !is null && slot != uint.max && !at(slot).replica && at(slot).replicatedTo.length)
+        {
+            const slots = object.fields.changedPublicSlots;
+            if (slots.length)
             {
-                const slots = object.fields.changedPublicSlots;
-                if (slots.length)
-                {
-                    const bytes = encodeSlots(slots);
-                    foreach (peer, _; *peers)
-                        replicator.values(peer, id, object.guid, bytes);
-                }
+                const bytes = encodeSlots(slots);
+                foreach (peer; at(slot).replicatedTo)
+                    replicator.values(peer, id, object.guid, bytes);
             }
+        }
         // A pet's owner also sees its owner-only fields (its experience, training points).
         const creature = cast(Creature) object;
         const owner = creature is null ? 0 : creature.petOwner;
         enum ownerMask = seenByEveryone | seenByOwner;
         const forAll = object.fields.hasChangesFor(seenByEveryone);
-        if (forAll || (owner && object.fields.hasChangesFor(ownerMask)))
+        if (slot != uint.max && (forAll || (owner && object.fields.hasChangesFor(ownerMask))))
         {
             auto personal = cast(PerViewer) object;
             UpdateData update;
             update.addValues(object.guid, object.fields, seenByEveryone);
-            foreach (guid, seen; seesObjects)
-                if (object.guid in seen)
+            foreach (v; at(slot).viewers)
+            {
+                auto who = at(v).player;
+                const guid = who.character.guid;
+                if (guid == owner)
                 {
-                    if (guid == owner)
-                    {
-                        UpdateData own;
-                        own.addValues(object.guid, object.fields, ownerMask);
-                        deliverUpdate(members[guid], own);
-                    }
-                    else if (!forAll)
-                        continue;
-                    else if (personal !is null && personal.personalized)
-                    {
-                        auto view = ViewerAdjust(personal, guid, groupOf is null ? 0 : groupOf(guid));
-                        UpdateData own;
-                        own.addValues(object.guid, object.fields, seenByEveryone, &view.adjust);
-                        deliverUpdate(members[guid], own);
-                    }
-                    else
-                        deliverUpdate(members[guid], update);
+                    UpdateData own;
+                    own.addValues(object.guid, object.fields, ownerMask);
+                    deliverUpdate(who, own);
                 }
+                else if (!forAll)
+                    continue;
+                else if (personal !is null && personal.personalized)
+                {
+                    auto view = ViewerAdjust(personal, guid, groupOf is null ? 0 : groupOf(guid));
+                    UpdateData own;
+                    own.addValues(object.guid, object.fields, seenByEveryone, &view.adjust);
+                    deliverUpdate(who, own);
+                }
+                else
+                    deliverUpdate(who, update);
+            }
         }
         object.fields.clearChanges();
     }
@@ -320,12 +476,13 @@ final class Map : CombatWorld, GameObjectWorld
      */
     void refreshViewers(MapObject object)
     {
-        auto personal = cast(PerViewer) object;
-        if (personal is null)
+        if (cast(PerViewer) object is null)
             return;
-        foreach (guid, seen; seesObjects)
-            if (object.guid in seen)
-                personalize(members[guid], object, true);
+        const slot = objectSlot(object);
+        if (slot == uint.max)
+            return;
+        foreach (v; at(slot).viewers)
+            personalize(at(v).player, object, true);
     }
 
     /// After `object`'s create block: `who`'s own view of its personal fields, if it differs (or `always`).
@@ -353,41 +510,46 @@ final class Map : CombatWorld, GameObjectWorld
      */
     void playerChanged(Inhabitant who)
     {
-        if (auto holders = who.character.guid in replicatedTo)
-            if ((*holders).length)
-            {
-                const slots = who.character.changedStrangerSlots;
-                if (slots.length == 0)
-                    return;
-                const bytes = encodeSlots(slots);
-                foreach (peer, _; *holders)
-                    replicator.values(peer, id, who.character.guid, bytes);
-            }
+        const slot = slotFor(who.character.guid);
+        if (slot == uint.max || at(slot).replicatedTo.length == 0)
+            return;
+        const slots = who.character.changedStrangerSlots;
+        if (slots.length == 0)
+            return;
+        const bytes = encodeSlots(slots);
+        foreach (peer; at(slot).replicatedTo)
+            replicator.values(peer, id, who.character.guid, bytes);
     }
 
     /// Whether the player's client has the object.
     bool seesObject(ulong player, ulong object) const
     {
-        if (const seen = player in seesObjects)
-            return (object in *seen) !is null;
-        return false;
+        const p = slotFor(player), o = slotFor(object);
+        return p != uint.max && o != uint.max && entities.at(p).player !is null && entities.at(o).player is null
+            && entities.at(p).known[o];
+    }
+
+    /// The slots of the objects within `range` yards of `center`, loading their cells if needed.
+    private uint[] objectSlotsNear(Position center, float range)
+    {
+        uint[] found;
+        foreach (key; cellKeysNear(center, range))
+        {
+            loadCell(key);
+            if (const list = key in cellLists)
+                foreach (slot; list.objects)
+                    if (distanceSquared(center, entities.at(slot).object.position) <= range ^^ 2)
+                        found ~= slot;
+        }
+        return found;
     }
 
     /// The creatures and game objects within `range` yards of `center`, loading their cells if needed.
     MapObject[] objectsNear(Position center, float range)
     {
         MapObject[] found;
-        foreach (key; cellKeysNear(center, range))
-        {
-            loadCell(key);
-            if (const cell = key in objectCells)
-                foreach (guid, _; *cell)
-                {
-                    auto object = objects[guid];
-                    if (distanceSquared(center, object.position) <= range ^^ 2)
-                        found ~= object;
-                }
-        }
+        foreach (slot; objectSlotsNear(center, range))
+            found ~= at(slot).object;
         return found;
     }
 
@@ -414,7 +576,7 @@ final class Map : CombatWorld, GameObjectWorld
     size_t unloadIdleCells(uint elapsedMs)
     {
         size_t count;
-        ulong[] due;
+        bool[ulong] due;
         foreach (cell, _; loadedCells)
         {
             if (cell in localInterest || cell in peerCells)
@@ -425,38 +587,34 @@ final class Map : CombatWorld, GameObjectWorld
             auto idle = &idleMs.require(cell, 0);
             *idle += elapsedMs;
             if (*idle >= settings.unloadIdleMs)
-                due ~= cell;
+                due[cell] = true;
         }
-        foreach (cell; due)
+        if (due.length == 0)
+            return 0;
+        // The objects homed in each due cell; a cell that must keep them is struck off.
+        ulong[][ulong] homed;
+        foreach (slot, ref e; entities)
         {
-            ulong[] gone;
-            bool keep;
-            foreach (guid, home; homeCellOf)
-            {
-                if (home != cell)
-                    continue;
-                auto object = objects.get(guid, null);
-                auto creature = cast(Creature) object;
-                if (creature is null && cast(GameObject) object is null)
-                {
-                    keep = true; // a corpse
-                    break;
-                }
-                if (creature !is null)
-                {
-                    const at = objectCellOf.get(guid, cell);
-                    if ((creature.ai !is null && (creature.ai.inCombat || creature.ai.evading))
-                        || at in localInterest || at in peerCells)
-                    {
-                        keep = true;
-                        break;
-                    }
-                }
-                gone ~= guid;
-            }
-            if (keep)
+            if (e.home == noCell || e.home !in due)
                 continue;
-            forget(gone);
+            auto creature = cast(Creature) e.object;
+            if (creature is null && cast(GameObject) e.object is null)
+            {
+                due.remove(e.home); // a corpse
+                continue;
+            }
+            if (creature !is null && ((creature.ai !is null && (creature.ai.inCombat || creature.ai.evading))
+                || e.cell in localInterest || e.cell in peerCells))
+            {
+                due.remove(e.home);
+                continue;
+            }
+            homed[e.home] ~= e.guid;
+        }
+        foreach (cell, _; due)
+        {
+            if (auto gone = cell in homed)
+                forget(*gone);
             loadedCells.remove(cell);
             idleMs.remove(cell);
             ++count;
@@ -464,22 +622,48 @@ final class Map : CombatWorld, GameObjectWorld
         return count;
     }
 
-    /// Takes in an object whose home is cell `key`.
+    /**
+     * Takes in an object whose home is cell `key`. A replica of it here is replaced by it in its
+     * slot (this node owns it now, phase 3): its viewers keep seeing it.
+     */
     private void hold(MapObject object, ulong key)
     {
-        if (object.guid in replicas)
-            dropReplica(object.guid); // this node owns it now (phase 3); its viewers keep seeing it
-        objects[object.guid] = object;
-        objectCells[key][object.guid] = true;
-        homeCellOf[object.guid] = key;
-        if (auto mover = cast(Moving) object)
+        auto slot = slotFor(object.guid);
+        if (slot != uint.max && at(slot).replica)
+            becomeOwn(slot, object, key, key);
+        else
+            slot = newEntity(Entity(object.guid, null, object, cast(Moving) object, false, noCell, 0, key,
+                object.position));
+        putInCellIfOut(slot, key);
+        if (at(slot).mover !is null)
+            startTicking(slot);
+        replicate(slot, key);
+    }
+
+    /// A replica's slot holds the real object from now on, homed in `home` and in cell `cell`.
+    private void becomeOwn(uint slot, MapObject object, ulong home, ulong cell)
+    {
+        auto e = &at(slot);
+        e.object = object;
+        e.mover = cast(Moving) object;
+        e.replica = false;
+        --replicaCount_;
+        e.home = home;
+        e.visibilityAt = object.position;
+        e.replicatedTo = null;
+        if (e.cell != cell)
         {
-            movers[object.guid] = mover;
-            startTicking(mover);
-            objectCellOf[object.guid] = key;
-            objectVisibilityAt[object.guid] = object.position;
+            takeFromCell(slot);
+            putInCell(slot, cell);
         }
-        replicate(object, key);
+        if (e.mover is null)
+            stopTicking(slot);
+    }
+
+    private void putInCellIfOut(uint slot, ulong key)
+    {
+        if (at(slot).cell == noCell)
+            putInCell(slot, key);
     }
 
     /**
@@ -490,7 +674,8 @@ final class Map : CombatWorld, GameObjectWorld
     {
         const key = cellKeyAt(object.position.x, object.position.y);
         loadCell(key);
-        if (object.guid in objects)
+        const existing = slotFor(object.guid);
+        if (existing != uint.max && !at(existing).replica)
             return;
         hold(object, key);
         updateObjectVisibility(object);
@@ -505,14 +690,16 @@ final class Map : CombatWorld, GameObjectWorld
     /// What `who` sees is worked out again (it died, or came back to life: spirit healers come or go).
     void refreshVisibility(Inhabitant who)
     {
-        if (who.character.guid in members)
+        const slot = slotFor(who.character.guid);
+        if (slot != uint.max && at(slot).player !is null)
             updateVisibility(who);
     }
 
     /// Takes an object off the map (a corpse gone, a creature despawned); those who saw it are told.
     void removeObject(ulong guid)
     {
-        if (guid in objects)
+        const slot = slotFor(guid);
+        if (slot != uint.max && at(slot).object !is null)
             forget([guid]);
     }
 
@@ -543,18 +730,26 @@ final class Map : CombatWorld, GameObjectWorld
             idleCheck = idleCheckInterval;
             unloadIdleCells(step);
         }
-        Moving[] restingNow;
-        foreach (mover; ticking)
+        // What ticks is fixed when the tick starts; an object gone during it is not ticked after.
+        auto due = ticking.dup;
+        uint[] restingNow;
+        foreach (slot; due)
         {
+            if (!entities.holds(slot) || at(slot).tickIndex == notTicking)
+                continue;
+            auto mover = at(slot).mover;
             const before = mover.position;
             mover.tick(this, diff);
+            if (!entities.holds(slot) || at(slot).mover !is mover)
+                continue; // gone while it ticked
             if (mover.position != before)
                 objectRelocated(mover);
-            if (mover.resting)
-                restingNow ~= mover;
+            if (entities.holds(slot) && at(slot).mover is mover && mover.resting)
+                restingNow ~= slot;
         }
-        foreach (mover; restingNow)
-            stopTicking(mover.guid);
+        foreach (slot; restingNow)
+            if (entities.holds(slot))
+                stopTicking(slot);
         expireLingering();
     }
 
@@ -569,52 +764,44 @@ final class Map : CombatWorld, GameObjectWorld
     ulong[] knownTo(ulong guid)
     {
         ulong[] known;
-        if (auto objects = guid in seesObjects)
-            known ~= (*objects).keys;
-        if (auto players = guid in sees)
-            known ~= (*players).keys;
+        const slot = slotFor(guid);
+        if (slot == uint.max || at(slot).player is null)
+            return known;
+        foreach (k; at(slot).known)
+            known ~= at(k).guid;
         return known;
     }
 
     /**
      * A player's simulation leaves for node `next`: it goes without a destroy packet, and players here
-     * who saw it go on seeing a replica of it (the next node's replica replaces it).
+     * who saw it go on seeing a replica of it (the next node's replica replaces it), in its slot.
      */
     void removeForMigration(Inhabitant who, ushort next)
     {
         const guid = who.character.guid;
+        const slot = slotFor(guid);
         auto placeholder = new Replica(guid, next, encodePlayerState(who.character, serverTime()));
-        const watchers = sees[guid].keys;
-        foreach (other; watchers)
-        {
-            sees[other].remove(guid);
-            seesObjects[other][guid] = true;
-        }
-        if (auto cells = guid in interestOf)
-        {
-            foreach (cell, _; *cells)
-                dropInterest(cell);
-            interestOf.remove(guid);
-        }
-        replicatedTo.remove(guid); // the next node's replica replaces those elsewhere
-        cells[cellOf[guid]].remove(guid);
-        cellOf.remove(guid);
-        sees.remove(guid);
-        seesObjects.remove(guid);
-        visibilityAt.remove(guid);
-        lingering.remove(guid);
+        foreach (k; knownOf(slot, true) ~ knownOf(slot, false))
+            unsee(slot, k);
+        foreach (cell; at(slot).interest)
+            dropInterest(cell);
+        at(slot).interest = null;
+        at(slot).replicatedTo = null; // the next node's replica replaces those elsewhere
+        at(slot).lingering = null;
         lingerUntil.remove(guid);
-        members.remove(guid);
-        if (watchers.length)
-        {
-            objects[guid] = placeholder;
-            replicas[guid] = true;
-            movers[guid] = placeholder;
-            const at = cellKeyAt(placeholder.position.x, placeholder.position.y);
-            objectCells[at][guid] = true;
-            objectCellOf[guid] = at;
-            objectVisibilityAt[guid] = placeholder.position;
-        }
+        if (at(slot).viewers.length == 0)
+            return dropEntity(slot);
+        takeFromCell(slot);
+        dropValue(players, slot);
+        auto e = &at(slot);
+        e.player = null;
+        e.object = placeholder;
+        e.mover = placeholder;
+        e.replica = true;
+        ++replicaCount_;
+        e.known = SlotBits.init;
+        e.visibilityAt = placeholder.position;
+        putInCell(slot, cellKeyAt(placeholder.position.x, placeholder.position.y));
     }
 
     /**
@@ -631,56 +818,64 @@ final class Map : CombatWorld, GameObjectWorld
         foreach (k; known)
             knows[k] = true;
 
-        // Its replica here, if any: those who saw it see the real one now.
-        bool[ulong] sawReplica;
-        if (guid in replicas)
+        // Its replica here, if any, becomes the player in its slot: those who saw it see the real one now.
+        bool[uint] sawReplica;
+        auto slot = slotFor(guid);
+        if (slot != uint.max && at(slot).replica)
         {
-            foreach (player, ref seen; seesObjects)
-                if (seen.remove(guid))
-                    sawReplica[player] = true;
-            dropReplica(guid);
+            foreach (v; at(slot).viewers)
+                sawReplica[v] = true;
+            takeFromCell(slot);
+            stopTicking(slot);
+            auto e = &at(slot);
+            e.object = null;
+            e.mover = null;
+            e.replica = false;
+            --replicaCount_;
+            e.player = who;
         }
-
-        members[guid] = who;
-        sees[guid] = null;
-        seesObjects[guid] = null;
-        place(guid, who.character.position);
-        visibilityAt[guid] = who.character.position;
-        updateInterest(guid, who.character.position); // for peers, and for unloading idle cells
+        else
+            slot = newEntity(Entity(guid, who));
+        players ~= slot;
+        place(slot, who.character.position);
+        at(slot).visibilityAt = who.character.position;
+        updateInterest(slot, who.character.position); // for peers, and for unloading idle cells
         const time = serverTime();
 
         // Players in sight: each pair gets what it does not have.
-        bool[ulong] inSight;
+        bool[uint] inSight;
         UpdateData received;
         MapObject[] personalAfter; // shown with a view of their own, after their create blocks
-        foreach (other; near(who.character.position, settings.visibilityDistance))
+        foreach (o; playerSlotsNear(who.character.position, settings.visibilityDistance))
         {
-            const o = other.character.guid;
-            if (o == guid)
+            if (o == slot)
                 continue;
+            auto other = at(o).player;
             inSight[o] = true;
-            sees[guid][o] = true;
-            sees[o][guid] = true;
-            if (o !in knows)
+            see(slot, o);
+            see(o, slot);
+            if (other.character.guid !in knows)
                 received.append(other.appearanceFor(who, time));
             if (o !in sawReplica)
                 deliverUpdate(other, who.appearanceFor(other, time));
         }
-        foreach (player, _; sawReplica)
-            if (player !in inSight)
+        foreach (o, _; sawReplica)
+            if (o !in inSight)
             {
+                unsee(o, slot);
                 UpdateData forget;
                 forget.addOutOfRange([guid]);
-                deliverUpdate(members[player], forget);
+                deliverUpdate(at(o).player, forget);
             }
 
         // Objects in sight.
-        foreach (object; objectsNear(who.character.position, settings.visibilityDistance))
+        foreach (o; objectSlotsNear(who.character.position, settings.visibilityDistance))
         {
+            auto object = at(o).object;
             if (!objectVisibleTo(object, who))
                 continue;
-            inSight[object.guid] = true;
-            seesObjects[guid][object.guid] = true;
+            inSight[o] = true;
+            see(slot, o);
             if (object.guid !in knows)
             {
                 if (!received.empty && received.byteSize + object.appearance(time).byteSize > maxUpdatePacketBytes)
@@ -701,12 +896,15 @@ final class Map : CombatWorld, GameObjectWorld
         ulong[] gone;
         foreach (k; known)
         {
-            if (k in inSight || k == guid)
+            if (k == guid)
                 continue;
-            if (k in objects || k in members)
+            const s = slotFor(k);
+            if (s != uint.max && s in inSight)
+                continue;
+            if (s != uint.max)
                 gone ~= k;
             else
-                lingering[guid][k] = true;
+                at(slot).lingering ~= k;
         }
         if (gone.length)
         {
@@ -714,16 +912,21 @@ final class Map : CombatWorld, GameObjectWorld
             forget.addOutOfRange(gone);
             deliverUpdate(who, forget);
         }
-        if (auto l = guid in lingering)
+        if (at(slot).lingering.length)
             lingerUntil[guid] = MonoTime.currTime + lingerFor;
         replicatePlayer(who);
     }
 
-    /// Whether `object` lingered for `player` (its client has it): now it is simply seen.
-    private bool adoptLingering(ulong player, ulong object)
+    /// Whether `object` lingered for the player in `slot` (its client has it): now it is simply seen.
+    private bool adoptLingering(uint slot, ulong object)
     {
-        if (auto l = player in lingering)
-            return (*l).remove(object);
+        auto lingering = &at(slot).lingering;
+        foreach (g; *lingering)
+            if (g == object)
+            {
+                dropValue(*lingering, object);
+                return true;
+            }
         return false;
     }
 
@@ -738,26 +941,25 @@ final class Map : CombatWorld, GameObjectWorld
             if (now >= until)
             {
                 done ~= player;
-                if (auto l = player in lingering)
-                    if ((*l).length && player in members)
-                    {
-                        UpdateData forget;
-                        forget.addOutOfRange((*l).keys);
-                        deliverUpdate(members[player], forget);
-                    }
+                const slot = slotFor(player);
+                if (slot != uint.max && at(slot).player !is null && at(slot).lingering.length)
+                {
+                    UpdateData forget;
+                    forget.addOutOfRange(at(slot).lingering);
+                    deliverUpdate(at(slot).player, forget);
+                    at(slot).lingering = null;
+                }
             }
         foreach (player; done)
-        {
-            lingering.remove(player);
             lingerUntil.remove(player);
-        }
     }
 
     /// Puts a resting object back in the tick: something gave it something to do.
     void wake(ulong guid)
     {
-        if (auto mover = guid in movers)
-            startTicking(*mover);
+        const slot = slotFor(guid);
+        if (slot != uint.max && at(slot).mover !is null)
+            startTicking(slot);
     }
 
     /**
@@ -768,17 +970,13 @@ final class Map : CombatWorld, GameObjectWorld
     void weighCells(uint ticking, uint resting, uint player, scope void delegate(ulong cell, ulong weight) sink)
     {
         ulong[ulong] weights;
-        foreach (guid, object; objects)
+        foreach (slot, ref e; entities)
         {
-            if (guid in replicas)
+            if (e.replica || e.cell == noCell)
                 continue;
-            const cell = objectCellOf.get(guid, homeCellOf.get(guid, ulong.max));
-            if (cell == ulong.max)
-                continue;
-            weights[cell] = weights.get(cell, 0) + (guid in tickingAt ? ticking : resting);
+            const weight = e.player !is null ? player : e.tickIndex != notTicking ? ticking : resting;
+            weights[e.cell] = weights.get(e.cell, 0) + weight;
         }
-        foreach (guid, cell; cellOf)
-            weights[cell] = weights.get(cell, 0) + player;
         foreach (cell, weight; weights)
             sink(cell, weight);
     }
@@ -792,23 +990,22 @@ final class Map : CombatWorld, GameObjectWorld
     /// `Map::CreatureRelocation`: an object moved; its cell follows, and who sees it once it has gone far enough.
     void objectRelocated(MapObject object)
     {
-        const guid = object.guid;
+        const slot = objectSlot(object);
+        if (slot == uint.max)
+            return;
         const position = object.position;
         if (auto creature = cast(Creature) object)
-            creatureNoticing(creature);
+            creatureNoticing(creature, slot);
         const key = cellKeyAt(position.x, position.y);
-        if (auto old = guid in objectCellOf)
-            if (*old != key)
-            {
-                objectCells[*old].remove(guid);
-                objectCells[key][guid] = true;
-                *old = key;
-                replicate(object, key);
-            }
-        const last = objectVisibilityAt.get(guid, position);
-        if (distanceSquared(last, position) < settings.relocationLimit ^^ 2)
+        if (at(slot).mover !is null && at(slot).cell != key)
+        {
+            takeFromCell(slot);
+            putInCell(slot, key);
+            replicate(slot, key);
+        }
+        if (distanceSquared(at(slot).visibilityAt, position) < settings.relocationLimit ^^ 2)
             return;
-        objectVisibilityAt[guid] = position;
+        at(slot).visibilityAt = position;
         updateObjectVisibility(object);
     }
 
@@ -819,9 +1016,9 @@ final class Map : CombatWorld, GameObjectWorld
     void release(scope bool delegate(ulong cell) inside)
     {
         ulong[] gone;
-        foreach (guid, home; homeCellOf)
-            if (inside(home))
-                gone ~= guid;
+        foreach (slot, ref e; entities)
+            if (e.home != noCell && inside(e.home))
+                gone ~= e.guid;
         forget(gone);
         ulong[] unloaded;
         foreach (cell, _; loadedCells)
@@ -840,31 +1037,36 @@ final class Map : CombatWorld, GameObjectWorld
     const(ubyte)[] migrateOut(scope bool delegate(ulong cell) inside, ushort next,
         scope Migrant delegate(MapObject) save)
     {
+        uint[] leaving;
+        foreach (slot, ref e; entities)
+            if (e.home != noCell && inside(e.home))
+                leaving ~= slot;
         Migrant[] migrants;
-        foreach (guid, home; homeCellOf.dup)
+        foreach (slot; leaving)
         {
-            if (!inside(home))
+            if (!entities.holds(slot))
                 continue;
-            auto object = objects[guid];
+            auto object = at(slot).object;
+            const home = at(slot).home;
             auto migrant = save(object);
             if (migrant.kind == MigrantKind.none)
-                continue; // not carried (a player's corpse): it stays here
+                continue; // not carried (a player's corpse, a pet): it stays here
             if (onObjectGone !is null)
                 onObjectGone(object); // its state is in the migrant: what it held here goes
             migrant.home = home;
             migrants ~= migrant;
-            homeCellOf.remove(guid);
-            replicatedTo.remove(guid);
+            at(slot).home = noCell;
+            at(slot).replicatedTo = null;
             if (auto source = cast(Replicable) object)
             {
-                auto replica = new Replica(guid, next, encodeState(source, serverTime()));
-                objects[guid] = replica;
-                replicas[guid] = true;
-                stopTicking(guid);
-                movers[guid] = replica;
-                objectCellOf[guid] = objectCellOf.get(guid, home);
-                objectVisibilityAt[guid] = replica.position;
-                startTicking(replica);
+                auto replica = new Replica(object.guid, next, encodeState(source, serverTime()));
+                auto e = &at(slot);
+                e.object = replica;
+                e.mover = replica;
+                e.replica = true;
+                ++replicaCount_;
+                e.visibilityAt = replica.position;
+                startTicking(slot);
             }
         }
         ulong[] cells;
@@ -878,8 +1080,8 @@ final class Map : CombatWorld, GameObjectWorld
 
     /**
      * A region arrives with its objects from its last owner (phase 4): `restore` rebuilds each, which
-     * replaces any replica of it (its viewers keep seeing it), and the cells it had loaded count as
-     * loaded here.
+     * replaces any replica of it in its slot (its viewers keep seeing it), and the cells it had loaded
+     * count as loaded here.
      */
     void migrateIn(const(ubyte)[] bundle, scope MapObject delegate(const ref Migrant) restore)
     {
@@ -894,29 +1096,28 @@ final class Map : CombatWorld, GameObjectWorld
             if (object is null)
                 continue;
             const guid = object.guid;
-            if (guid in replicas)
-                dropReplica(guid);
-            else if (guid in objects)
+            const at_ = cellKeyAt(object.position.x, object.position.y);
+            auto slot = slotFor(guid);
+            if (slot != uint.max && at(slot).replica)
+                becomeOwn(slot, object, m.home, at_);
+            else
             {
-                // Spawned afresh here a moment ago (a gained cell loaded before its bundle was applied): the
-                // migrant is the newer state. Its viewers see it go and come back as it really is.
-                import dmangos.log : warning;
+                if (slot != uint.max)
+                {
+                    // Spawned afresh here a moment ago (a gained cell loaded before its bundle was applied): the
+                    // migrant is the newer state. Its viewers see it go and come back as it really is.
+                    import dmangos.log : warning;
 
-                warning!"migration: object %016X was spawned here afresh; the migrated one replaces it"(guid);
-                forget([guid]);
+                    warning!"migration: object %016X was spawned here afresh; the migrated one replaces it"(guid);
+                    forget([guid]);
+                }
+                slot = newEntity(Entity(guid, null, object, cast(Moving) object, false, noCell, 0, m.home,
+                    object.position));
+                putInCell(slot, at_);
             }
-            const at = cellKeyAt(object.position.x, object.position.y);
-            objects[guid] = object;
-            objectCells[at][guid] = true;
-            homeCellOf[guid] = m.home;
-            if (auto mover = cast(Moving) object)
-            {
-                movers[guid] = mover;
-                objectCellOf[guid] = at;
-                objectVisibilityAt[guid] = object.position;
-                startTicking(mover);
-            }
-            replicate(object, at);
+            if (at(slot).mover !is null)
+                startTicking(slot);
+            replicate(slot, at_);
             updateObjectVisibility(object);
         }
     }
@@ -924,8 +1125,9 @@ final class Map : CombatWorld, GameObjectWorld
     /// Cells were gained: every player looks around again, so those near them load, and so do cells other nodes want.
     void ownershipGained()
     {
-        foreach (who; members)
-            updateVisibility(who);
+        foreach (slot; players.dup)
+            if (entities.holds(slot) && at(slot).player !is null)
+                updateVisibility(at(slot).player);
         foreach (cell, _; peerCells)
             loadCell(cell);
     }
@@ -948,27 +1150,25 @@ final class Map : CombatWorld, GameObjectWorld
                 if ((*peers).length == 0)
                     peerCells.remove(cell);
             }
-            if (const inCell = cell in objectCells)
-                foreach (guid, _; *inCell)
-                    if (auto holders = guid in replicatedTo)
-                        if ((*holders).remove(peer))
-                            replicator.remove(peer, id, guid);
-            if (const players = cell in cells)
-                foreach (guid, _; *players)
-                    if (auto holders = guid in replicatedTo)
-                        if ((*holders).remove(peer))
-                            replicator.remove(peer, id, guid);
+            if (const list = cell in cellLists)
+                foreach (slot; list.objects ~ list.players)
+                    if (at(slot).replicatedTo.canFind(peer))
+                    {
+                        dropValue(at(slot).replicatedTo, peer);
+                        replicator.remove(peer, id, at(slot).guid);
+                    }
         }
         foreach (cell; added)
         {
             peerCells[cell][peer] = true;
             loadCell(cell); // replicates what it spawns
-            if (const inCell = cell in objectCells)
-                foreach (guid, _; *inCell)
-                    replicate(objects[guid], cell);
-            if (const players = cell in cells)
-                foreach (guid, _; *players)
-                    replicatePlayer(members[guid]);
+            if (const list = cell in cellLists)
+            {
+                foreach (slot; list.objects)
+                    replicate(slot, cell);
+                foreach (slot; list.players)
+                    replicatePlayer(at(slot).player);
+            }
         }
     }
 
@@ -981,33 +1181,44 @@ final class Map : CombatWorld, GameObjectWorld
                 emptied ~= cell;
         foreach (cell; emptied)
             peerCells.remove(cell);
-        foreach (guid, ref peers; replicatedTo)
-            peers.remove(peer);
         ulong[] gone;
-        foreach (guid, _; replicas)
-            if ((cast(Replica) objects[guid]).owner == peer)
-                gone ~= guid;
+        foreach (slot, ref e; entities)
+        {
+            dropValue(e.replicatedTo, peer);
+            if (e.replica && (cast(Replica) e.object).owner == peer)
+                gone ~= e.guid;
+        }
         forget(gone);
     }
 
     /// A replica of `guid`, simulated by node `owner`, in `cell` (`encodeState`).
     void replicaCreated(ushort owner, ulong cell, ulong guid, const(ubyte)[] state)
     {
-        if (guid in objects)
-        {
-            if (guid !in replicas)
-                return; // this node simulates it now: the message is from before the change
-            dropReplica(guid);
-        }
         auto replica = new Replica(guid, owner, state);
-        objects[guid] = replica;
-        replicas[guid] = true;
-        movers[guid] = replica;
-        startTicking(replica);
-        const at = cellKeyAt(replica.position.x, replica.position.y);
-        objectCells[at][guid] = true;
-        objectCellOf[guid] = at;
-        objectVisibilityAt[guid] = replica.position;
+        const at_ = cellKeyAt(replica.position.x, replica.position.y);
+        auto slot = slotFor(guid);
+        if (slot != uint.max)
+        {
+            if (!at(slot).replica)
+                return; // this node simulates it now: the message is from before the change
+            // A newer replica of it, in its slot: its viewers keep seeing it.
+            auto e = &at(slot);
+            e.object = replica;
+            e.mover = replica;
+            e.visibilityAt = replica.position;
+            if (e.cell != at_)
+            {
+                takeFromCell(slot);
+                putInCell(slot, at_);
+            }
+        }
+        else
+        {
+            slot = newEntity(Entity(guid, null, replica, replica, true, noCell, 0, noCell, replica.position));
+            ++replicaCount_;
+            putInCell(slot, at_);
+        }
+        startTicking(slot);
         updateObjectVisibility(replica);
     }
 
@@ -1027,7 +1238,7 @@ final class Map : CombatWorld, GameObjectWorld
         if (auto replica = replicaFrom(owner, guid))
         {
             replica.applyMotion(motion);
-            startTicking(replica);
+            startTicking(slotFor(guid));
             sendToObservers(guid, cast(Opcode) opcode, body_);
             objectRelocated(replica);
         }
@@ -1060,13 +1271,14 @@ final class Map : CombatWorld, GameObjectWorld
     /// Replicas of other nodes' objects on this map.
     @property size_t replicaCount() const
     {
-        return replicas.length;
+        return replicaCount_;
     }
 
     /// Whether `guid` is a replica here.
     bool isReplica(ulong guid) const
     {
-        return (guid in replicas) !is null;
+        const slot = slotFor(guid);
+        return slot != uint.max && entities.at(slot).replica;
     }
 
     /// The terrain with its buildings, or null (the GM commands' collision queries).
@@ -1096,30 +1308,34 @@ final class Map : CombatWorld, GameObjectWorld
         return liquid.level - groundZ > minWaterDeep ? liquid.level - minWaterDeep : groundZ;
     }
 
-    /// See `MotionWorld.sendToObservers`.
+    /// See `MotionWorld.sendToObservers`: the object's viewers, and the peers holding a replica of it.
     void sendToObservers(ulong guid, Opcode opcode, const(ubyte)[] body_)
     {
-        if (replicator !is null && guid !in replicas)
-            if (auto peers = guid in replicatedTo)
-                if (auto object = cast(Replicable) objects.get(guid, null))
-                {
-                    const motion = encodeMotion(object.motion(serverTime()));
-                    foreach (peer, _; *peers)
-                        replicator.move(peer, id, guid, cast(ushort) opcode, body_, motion);
-                }
-        foreach (player, seen; seesObjects)
-            if (guid in seen)
-                members[player].deliver(opcode, body_);
+        const slot = slotFor(guid);
+        if (slot == uint.max)
+            return;
+        if (replicator !is null && !at(slot).replica && at(slot).replicatedTo.length)
+            if (auto object = cast(Replicable) at(slot).object)
+            {
+                const motion = encodeMotion(object.motion(serverTime()));
+                foreach (peer; at(slot).replicatedTo)
+                    replicator.move(peer, id, guid, cast(ushort) opcode, body_, motion);
+            }
+        foreach (v; at(slot).viewers)
+            at(v).player.deliver(opcode, body_);
     }
 
     /// See `CombatWorld.combatant`.
     Combatant combatant(ulong guid)
     {
-        if (auto player = cast(Combatant) members.get(guid, null))
+        const slot = slotFor(guid);
+        if (slot == uint.max)
+            return null;
+        if (auto player = cast(Combatant) at(slot).player)
             return player;
         // A creature fought by a creature (a pet, or what a pet fights).
         if (makeCreatureCombatant !is null)
-            if (auto creature = creatureAt(guid))
+            if (auto creature = cast(Creature) at(slot).object)
                 if (creature.petOwner || creature.asCombatant !is null)
                     return makeCreatureCombatant(creature);
         return null;
@@ -1176,8 +1392,8 @@ final class Map : CombatWorld, GameObjectWorld
     Creature[] creaturesNear(Position center, float range)
     {
         Creature[] found;
-        foreach (object; objectsNear(center, range))
-            if (auto creature = cast(Creature) object)
+        foreach (slot; objectSlotsNear(center, range))
+            if (auto creature = cast(Creature) at(slot).object)
                 found ~= creature;
         return found;
     }
@@ -1185,23 +1401,18 @@ final class Map : CombatWorld, GameObjectWorld
     /// See `CombatWorld.creatureAt`.
     Creature creatureAt(ulong guid)
     {
-        return cast(Creature) objects.get(guid, null);
+        const slot = slotFor(guid);
+        return slot == uint.max ? null : cast(Creature) at(slot).object;
     }
 
     /// See `CombatWorld.positionOf`.
-    bool positionOf(ulong guid, out Position at)
+    bool positionOf(ulong guid, out Position at_)
     {
-        if (auto who = guid in members)
-        {
-            at = who.character.position;
-            return true;
-        }
-        if (auto object = guid in objects)
-        {
-            at = object.position;
-            return true;
-        }
-        return false;
+        const slot = slotFor(guid);
+        if (slot == uint.max)
+            return false;
+        at_ = at(slot).player !is null ? at(slot).player.character.position : at(slot).object.position;
+        return true;
     }
 
     /// See `CombatWorld.combatantsNear`.
@@ -1230,7 +1441,11 @@ final class Map : CombatWorld, GameObjectWorld
     /// Every object here, replicas included.
     void forEachObject(scope void delegate(MapObject object) each)
     {
-        foreach (object; objects)
+        MapObject[] all;
+        foreach (slot, ref e; entities)
+            if (e.object !is null)
+                all ~= e.object;
+        foreach (object; all)
             each(object);
     }
 
@@ -1272,7 +1487,7 @@ final class Map : CombatWorld, GameObjectWorld
     enum float noticeDistance = 50;
 
     /// `MoveInLineOfSight` for the creatures a player sees, when it has moved.
-    private void playerNoticed(Inhabitant who)
+    private void playerNoticed(Inhabitant who, uint slot)
     {
         import dmangos.world.defines : UnitFlags;
         import dmangos.world.objects : HighGuid, highGuidOf;
@@ -1281,34 +1496,35 @@ final class Map : CombatWorld, GameObjectWorld
         auto combatant = cast(Combatant) who;
         if (combatant is null)
             return;
-        const at = who.character.position;
-        if (auto seen = who.character.guid in seesObjects)
-            foreach (guid, _; *seen)
+        const atNow = who.character.position;
+        foreach (k; knownOf(slot, false))
+        {
+            if (!entities.holds(k) || at(k).object is null)
+                continue; // gone as an earlier one acted
+            auto object = at(k).object;
+            if (auto creature = cast(Creature) object)
             {
-                auto object = objects.get(guid, null);
-                if (auto creature = cast(Creature) object)
-                {
-                    if (creature.ai !is null && creature.ai.mayNotice
-                        && distanceSquared(creature.position, at) < noticeDistance ^^ 2)
-                        creature.ai.moveInLineOfSight(combatant, this);
-                }
-                else if (auto go = cast(GameObject) object)
-                {
-                    // A trap within whose radius the player now stands.
-                    const radius = go.trapRadius;
-                    if (radius > 0 && onTrap !is null && distanceSquared(go.position, at) <= radius * radius)
-                        onTrap(who, go);
-                }
-                else if (onReplicaNoticing !is null && highGuidOf(guid) == HighGuid.unit)
-                    if (auto replica = cast(Replica) object)
-                    {
-                        // Another node's creature, alive and not fighting: would it notice the player?
-                        const values = &replica.fields();
-                        if (values.get!UNIT_FIELD_HEALTH > 0 && !(values.get!UNIT_FIELD_FLAGS & UnitFlags.inCombat)
-                            && distanceSquared(replica.position, at) < noticeDistance ^^ 2)
-                            onReplicaNoticing(who, replica);
-                    }
+                if (creature.ai !is null && creature.ai.mayNotice
+                    && distanceSquared(creature.position, atNow) < noticeDistance ^^ 2)
+                    creature.ai.moveInLineOfSight(combatant, this);
             }
+            else if (auto go = cast(GameObject) object)
+            {
+                // A trap within whose radius the player now stands.
+                const radius = go.trapRadius;
+                if (radius > 0 && onTrap !is null && distanceSquared(go.position, atNow) <= radius * radius)
+                    onTrap(who, go);
+            }
+            else if (onReplicaNoticing !is null && highGuidOf(at(k).guid) == HighGuid.unit)
+                if (auto replica = cast(Replica) object)
+                {
+                    // Another node's creature, alive and not fighting: would it notice the player?
+                    const values = &replica.fields();
+                    if (values.get!UNIT_FIELD_HEALTH > 0 && !(values.get!UNIT_FIELD_FLAGS & UnitFlags.inCombat)
+                        && distanceSquared(replica.position, atNow) < noticeDistance ^^ 2)
+                        onReplicaNoticing(who, replica);
+                }
+        }
     }
 
     /// Told when a player steps within a trap's radius (it may spring).
@@ -1321,16 +1537,15 @@ final class Map : CombatWorld, GameObjectWorld
     void delegate(Inhabitant who, Replica replica) onReplicaNoticing;
 
     /// `MoveInLineOfSight` for the players who see a creature, when it has moved.
-    private void creatureNoticing(Creature creature)
+    private void creatureNoticing(Creature creature, uint slot)
     {
         if (creature.ai is null || creature.ai.inCombat || creature.ai.evading || !creature.ai.mayNotice)
             return;
         // The players near it (by cell), of those that see it.
-        foreach (who; near(creature.position, noticeDistance))
-            if (auto seen = who.character.guid in seesObjects)
-                if (creature.guid in *seen)
-                    if (auto combatant = cast(Combatant) who)
-                        creature.ai.moveInLineOfSight(combatant, this);
+        foreach (p; playerSlotsNear(creature.position, noticeDistance))
+            if (at(p).known[slot])
+                if (auto combatant = cast(Combatant) at(p).player)
+                    creature.ai.moveInLineOfSight(combatant, this);
     }
 
     /// See `MotionWorld.random`.
@@ -1342,102 +1557,110 @@ final class Map : CombatWorld, GameObjectWorld
     /// Number of players on the map.
     @property size_t population() const
     {
-        return members.length;
+        return players.length;
     }
 
     /// Whether the players with guids `a` and `b` see each other.
     bool seeEachOther(ulong a, ulong b) const
     {
-        if (const seen = a in sees)
-            return (b in *seen) !is null;
-        return false;
+        const sa = slotFor(a), sb = slotFor(b);
+        return sa != uint.max && sb != uint.max && entities.at(sa).player !is null && entities.at(sb).player !is null
+            && entities.at(sa).known[sb];
     }
 
     /// The player with `guid` on this map, or null.
     Inhabitant find(ulong guid)
     {
-        return members.get(guid, null);
+        const slot = slotFor(guid);
+        return slot == uint.max ? null : at(slot).player;
     }
 
     /// `Map::Add`: puts a player on the map, and introduces it to everyone in sight.
     void add(Inhabitant who)
-    in (who.character.guid !in members, "a player is on a map once")
+    in (find(who.character.guid) is null, "a player is on a map once")
     {
         const guid = who.character.guid;
-        members[guid] = who;
-        sees[guid] = null;
-        seesObjects[guid] = null;
-        place(guid, who.character.position);
+        auto slot = slotFor(guid);
+        if (slot != uint.max) // a replica of it (it was simulated elsewhere): the player takes its slot
+        {
+            takeFromCell(slot);
+            stopTicking(slot);
+            auto e = &at(slot);
+            e.object = null;
+            e.mover = null;
+            if (e.replica)
+                --replicaCount_;
+            e.replica = false;
+            e.player = who;
+        }
+        else
+            slot = newEntity(Entity(guid, who));
+        players ~= slot;
+        place(slot, who.character.position);
         updateVisibility(who);
         replicatePlayer(who);
     }
 
     /// `Map::Remove`: takes a player off the map; those who saw it are told to destroy it.
     void remove(Inhabitant who)
-    in (who.character.guid in members, "only a player on the map can leave it")
+    in (find(who.character.guid) !is null, "only a player on the map can leave it")
     {
         const guid = who.character.guid;
-        if (auto cells = guid in interestOf)
+        const slot = slotFor(guid);
+        foreach (cell; at(slot).interest)
+            dropInterest(cell);
+        at(slot).interest = null;
+        foreach (peer; at(slot).replicatedTo)
+            replicator.remove(peer, id, guid);
+        at(slot).replicatedTo = null;
+        foreach (o; knownOf(slot, true))
         {
-            foreach (cell, _; *cells)
-                dropInterest(cell);
-            interestOf.remove(guid);
+            unsee(o, slot);
+            unsee(slot, o);
+            deliverPacket(at(o).player, ServerDestroyObject(guid));
         }
-        if (auto holders = guid in replicatedTo)
-        {
-            foreach (peer, _; *holders)
-                replicator.remove(peer, id, guid);
-            replicatedTo.remove(guid);
-        }
-        foreach (other, _; sees[guid])
-        {
-            sees[other].remove(guid);
-            deliverPacket(members[other], ServerDestroyObject(guid));
-        }
-        cells[cellOf[guid]].remove(guid);
-        cellOf.remove(guid);
-        sees.remove(guid);
-        seesObjects.remove(guid);
-        visibilityAt.remove(guid);
-        members.remove(guid);
+        lingerUntil.remove(guid);
+        dropEntity(slot);
     }
 
     /// `Map::PlayerRelocation`: after a player moved. Updates its cell, and visibility if it moved far enough.
     void relocated(Inhabitant who)
-    in (who.character.guid in members)
+    in (find(who.character.guid) !is null)
     {
-        const guid = who.character.guid;
+        const slot = slotFor(who.character.guid);
         const position = who.character.position;
-        if (place(guid, position))
+        if (place(slot, position))
             replicatePlayer(who);
-        if (distanceSquared(visibilityAt[guid], position) >= settings.relocationLimit ^^ 2)
+        if (distanceSquared(at(slot).visibilityAt, position) >= settings.relocationLimit ^^ 2)
             updateVisibility(who);
-        playerNoticed(who);
+        playerNoticed(who, slot);
     }
 
     /// Delivers a packet to every player that sees `from`, and to `from` itself if `includeSelf`.
     void sendToWatchers(Inhabitant from, Opcode opcode, const(ubyte)[] body_, bool includeSelf = false)
     {
-        if (auto holders = from.character.guid in replicatedTo)
-            if ((*holders).length)
-            {
-                const motion = encodeMotion(from.character.motionForOthers(serverTime()));
-                foreach (peer, _; *holders)
-                    replicator.move(peer, id, from.character.guid, cast(ushort) opcode, body_, motion);
-            }
+        const slot = slotFor(from.character.guid);
+        if (slot != uint.max && at(slot).replicatedTo.length)
+        {
+            const motion = encodeMotion(from.character.motionForOthers(serverTime()));
+            foreach (peer; at(slot).replicatedTo)
+                replicator.move(peer, id, from.character.guid, cast(ushort) opcode, body_, motion);
+        }
         if (includeSelf)
             from.deliver(opcode, body_);
-        foreach (other, _; sees[from.character.guid])
-            members[other].deliver(opcode, body_);
+        if (slot != uint.max)
+            foreach (v; at(slot).viewers)
+                at(v).player.deliver(opcode, body_);
     }
 
     /// The players that see `from`.
     Inhabitant[] watchers(const Inhabitant from)
     {
         Inhabitant[] found;
-        if (auto seen = from.character.guid in sees)
-            foreach (other, _; *seen)
-                found ~= members[other];
+        const slot = slotFor(from.character.guid);
+        if (slot != uint.max)
+            foreach (v; at(slot).viewers)
+                found ~= at(v).player;
         return found;
     }
 
@@ -1466,53 +1689,59 @@ final class Map : CombatWorld, GameObjectWorld
             who.deliver(opcode, body_);
     }
 
+    /// The slots of the players within `range` yards of `center`.
+    private uint[] playerSlotsNear(Position center, float range)
+    {
+        uint[] found;
+        foreach (key; cellKeysNear(center, range))
+            if (const list = key in cellLists)
+                foreach (slot; list.players)
+                    if (distanceSquared(center, entities.at(slot).player.character.position) <= range ^^ 2)
+                        found ~= slot;
+        return found;
+    }
+
     /// The players within `range` yards of `center`.
     Inhabitant[] near(Position center, float range)
     {
         Inhabitant[] found;
-        foreach (key; cellKeysNear(center, range))
-            if (const cell = key in cells)
-                foreach (guid, _; *cell)
-                {
-                    auto who = members[guid];
-                    if (distanceSquared(center, who.character.position) <= range ^^ 2)
-                        found ~= who;
-                }
+        foreach (slot; playerSlotsNear(center, range))
+            found ~= at(slot).player;
         return found;
     }
 
 private:
-    void startTicking(Moving mover)
+    void startTicking(uint slot)
     {
-        if (mover.guid in tickingAt)
+        auto e = &at(slot);
+        if (e.tickIndex != notTicking || e.mover is null)
             return;
-        tickingAt[mover.guid] = ticking.length;
-        ticking ~= mover;
+        e.tickIndex = cast(uint) ticking.length;
+        ticking ~= slot;
     }
 
-    void stopTicking(ulong guid)
+    void stopTicking(uint slot)
     {
-        if (auto at = guid in tickingAt)
-        {
-            const i = *at;
-            auto last = ticking[$ - 1];
-            ticking[i] = last;
-            tickingAt[last.guid] = i;
-            ticking.length -= 1;
-            ticking.assumeSafeAppend();
-            tickingAt.remove(guid);
-        }
+        auto e = &at(slot);
+        if (e.tickIndex == notTicking)
+            return;
+        const i = e.tickIndex, last = ticking[$ - 1];
+        ticking[i] = last;
+        at(last).tickIndex = i;
+        ticking.length -= 1;
+        ticking.assumeSafeAppend();
+        e.tickIndex = notTicking;
     }
 
     /// Replicas of an own object for every peer that wants its cell and has none; removals for those that do not.
-    void replicate(MapObject object, ulong cell)
+    void replicate(uint slot, ulong cell)
     {
-        if (replicator is null || object.guid in replicas)
+        if (replicator is null || at(slot).replica)
             return;
-        auto source = cast(Replicable) object;
+        auto source = cast(Replicable) at(slot).object;
         if (source is null)
             return;
-        replicateGuid(object.guid, cell, () => encodeState(source, serverTime()));
+        replicateSlot(slot, cell, () => encodeState(source, serverTime()));
     }
 
     /// A local player, as `replicate` for objects: a replica on every node that wants its cell (phase 3b).
@@ -1520,35 +1749,30 @@ private:
     {
         if (replicator is null)
             return;
-        const guid = who.character.guid;
-        replicateGuid(guid, cellOf[guid], () => encodePlayerState(who.character, serverTime()));
+        const slot = slotFor(who.character.guid);
+        replicateSlot(slot, at(slot).cell, () => encodePlayerState(who.character, serverTime()));
     }
 
-    /// Replicas of `guid` for the peers that want `cell`, and removals for the others.
-    void replicateGuid(ulong guid, ulong cell, scope const(ubyte)[] delegate() makeState)
+    /// Replicas of what is in `slot` for the peers that want `cell`, and removals for the others.
+    void replicateSlot(uint slot, ulong cell, scope const(ubyte)[] delegate() makeState)
     {
+        const guid = at(slot).guid;
         auto wanted = cell in peerCells;
-        if (auto holders = guid in replicatedTo)
-        {
-            ushort[] leaving;
-            foreach (peer, _; *holders)
-                if (wanted is null || peer !in *wanted)
-                    leaving ~= peer;
-            foreach (peer; leaving)
+        foreach (peer; at(slot).replicatedTo.dup)
+            if (wanted is null || peer !in *wanted)
             {
-                (*holders).remove(peer);
+                dropValue(at(slot).replicatedTo, peer);
                 replicator.remove(peer, id, guid);
             }
-        }
         if (wanted is null)
             return;
         const(ubyte)[] state;
         foreach (peer, _; *wanted)
-            if (peer !in replicatedTo.require(guid, null))
+            if (!at(slot).replicatedTo.canFind(peer))
             {
                 if (state is null)
                     state = makeState();
-                replicatedTo[guid][peer] = true;
+                at(slot).replicatedTo ~= peer;
                 replicator.create(peer, id, cell, guid, state);
             }
     }
@@ -1556,84 +1780,65 @@ private:
     /// Objects go: the players who saw them are told, peers holding replicas of them too.
     void forget(const(ulong)[] gone)
     {
-        foreach (player, ref seen; seesObjects)
-        {
-            ulong[] forgotten;
-            foreach (guid; gone)
-                if (seen.remove(guid))
-                    forgotten ~= guid;
-            if (forgotten.length)
-            {
-                UpdateData forget;
-                forget.addOutOfRange(forgotten);
-                deliverUpdate(members[player], forget);
-            }
-        }
+        ulong[][uint] lost; // viewer slot -> the guids it loses
+        uint[] slots;
         foreach (guid; gone)
         {
-            if (auto holders = guid in replicatedTo)
-                foreach (peer, _; *holders)
-                    replicator.remove(peer, id, guid);
-            replicatedTo.remove(guid);
-            const cell = objectCellOf.get(guid, homeCellOf.get(guid, ulong.max));
-            if (auto inCell = cell in objectCells)
-                (*inCell).remove(guid);
-            if (onObjectGone !is null)
-                if (auto object = guid in objects)
-                    onObjectGone(*object);
-            objects.remove(guid);
-            movers.remove(guid);
-        stopTicking(guid);
-            stopTicking(guid);
-            objectCellOf.remove(guid);
-            objectVisibilityAt.remove(guid);
-            homeCellOf.remove(guid);
-            replicas.remove(guid);
+            const slot = slotFor(guid);
+            if (slot == uint.max || at(slot).object is null)
+                continue;
+            slots ~= slot;
+            foreach (v; at(slot).viewers)
+                lost[v] ~= guid;
         }
-    }
-
-    /// Takes a replica out without telling anyone (a real object with its guid replaces it).
-    void dropReplica(ulong guid)
-    {
-        if (auto at = guid in objectCellOf)
-            if (auto inCell = *at in objectCells)
-                (*inCell).remove(guid);
-        objects.remove(guid);
-        movers.remove(guid);
-        stopTicking(guid);
-        objectCellOf.remove(guid);
-        objectVisibilityAt.remove(guid);
-        replicas.remove(guid);
+        foreach (v, guids; lost)
+        {
+            UpdateData forget;
+            forget.addOutOfRange(guids);
+            deliverUpdate(at(v).player, forget);
+        }
+        foreach (slot; slots)
+        {
+            if (!entities.holds(slot))
+                continue;
+            foreach (peer; at(slot).replicatedTo)
+                replicator.remove(peer, id, at(slot).guid);
+            at(slot).replicatedTo = null;
+            if (onObjectGone !is null)
+                onObjectGone(at(slot).object);
+            if (entities.holds(slot))
+                dropEntity(slot);
+        }
     }
 
     /// The replica `guid`, if `owner` sends it.
     Replica replicaFrom(ushort owner, ulong guid)
     {
-        if (guid !in replicas)
+        const slot = slotFor(guid);
+        if (slot == uint.max || !at(slot).replica)
             return null;
-        auto replica = cast(Replica) objects[guid];
+        auto replica = cast(Replica) at(slot).object;
         return replica.owner == owner ? replica : null;
     }
 
     /// The cells a local player is near now; the map's interest follows (phase 3).
-    void updateInterest(ulong guid, Position position)
+    void updateInterest(uint slot, Position position)
     {
-        bool[ulong] near;
+        ulong[] near;
         foreach (cell; cellKeysNear(position, settings.visibilityDistance))
-            near[cell] = true;
-        auto had = guid in interestOf;
-        foreach (cell, _; near)
-            if (had is null || cell !in *had)
+            near ~= cell;
+        auto had = at(slot).interest;
+        foreach (cell; near)
+            if (!had.canFind(cell))
                 if (localInterest.require(cell, 0)++ == 0)
                 {
                     if (!interestRemoved.remove(cell))
                         interestAdded[cell] = true;
                 }
-        if (had !is null)
-            foreach (cell, _; *had)
-                if (cell !in near)
-                    dropInterest(cell);
-        interestOf[guid] = near;
+        foreach (cell; had)
+            if (!near.canFind(cell))
+                dropInterest(cell);
+        at(slot).interest = near;
     }
 
     void dropInterest(ulong cell)
@@ -1648,17 +1853,13 @@ private:
     }
 
     /// Puts a player in its cell; whether the cell changed.
-    bool place(ulong guid, Position position)
+    bool place(uint slot, Position position)
     {
         const key = cellKeyAt(position.x, position.y);
-        if (const old = guid in cellOf)
-        {
-            if (*old == key)
-                return false;
-            cells[*old].remove(guid);
-        }
-        cells[key][guid] = true;
-        cellOf[guid] = key;
+        if (at(slot).cell == key)
+            return false;
+        takeFromCell(slot);
+        putInCell(slot, key);
         return true;
     }
 
@@ -1666,25 +1867,26 @@ private:
     void updateVisibility(Inhabitant who)
     {
         const guid = who.character.guid;
-        visibilityAt[guid] = who.character.position;
-        updateInterest(guid, who.character.position); // for peers, and for unloading idle cells
+        const slot = slotFor(guid);
+        at(slot).visibilityAt = who.character.position;
+        updateInterest(slot, who.character.position); // for peers, and for unloading idle cells
 
-        bool[ulong] inSight;
-        foreach (other; near(who.character.position, settings.visibilityDistance))
-            if (other.character.guid != guid)
-                inSight[other.character.guid] = true;
+        bool[uint] inSight;
+        foreach (o; playerSlotsNear(who.character.position, settings.visibilityDistance))
+            if (o != slot)
+                inSight[o] = true;
 
         // Newly in sight: each gets the other's create block. `who` gets theirs a packet's worth at a time;
         // they get `who`'s, built and compressed once for each kind of viewer (a crowd is one kind).
         const time = serverTime();
         UpdateData received;
         UpdatePacket[uint] shown;
-        foreach (other, _; inSight)
-            if (other !in sees[guid])
+        foreach (o, _; inSight)
+            if (!at(slot).known[o])
             {
-                sees[guid][other] = true;
-                sees[other][guid] = true;
-                auto viewer = members[other];
+                see(slot, o);
+                see(o, slot);
+                auto viewer = at(o).player;
                 const block = viewer.appearanceFor(who, time);
                 if (!received.empty && received.byteSize + block.byteSize > maxUpdatePacketBytes)
                 {
@@ -1703,31 +1905,30 @@ private:
 
         // Out of sight: both forget, `who` in one block for everyone it lost.
         ulong[] gone;
-        foreach (other, _; sees[guid])
-            if (other !in inSight)
-                gone ~= other;
-        foreach (other; gone)
-        {
-            sees[guid].remove(other);
-            sees[other].remove(guid);
-            UpdateData forget;
-            forget.addOutOfRange([guid]);
-            deliverUpdate(members[other], forget);
-        }
+        foreach (o; knownOf(slot, true))
+            if (o !in inSight)
+            {
+                gone ~= at(o).guid;
+                unsee(slot, o);
+                unsee(o, slot);
+                UpdateData forget;
+                forget.addOutOfRange([guid]);
+                deliverUpdate(at(o).player, forget);
+            }
 
         // Creatures and game objects: those that came into sight, in packets of a few dozen, and those that left.
-        bool[ulong] objectsInSight;
+        bool[uint] objectsInSight;
         UpdateData created;
         MapObject[] personalAfter; // shown with a view of their own, after their create blocks
-        foreach (object; objectsNear(who.character.position, settings.visibilityDistance))
+        foreach (o; objectSlotsNear(who.character.position, settings.visibilityDistance))
         {
+            auto object = at(o).object;
             if (!objectVisibleTo(object, who))
                 continue;
-            objectsInSight[object.guid] = true;
-            if (object.guid in seesObjects[guid])
+            objectsInSight[o] = true;
+            if (!see(slot, o))
                 continue;
-            seesObjects[guid][object.guid] = true;
-            if (adoptLingering(guid, object.guid))
+            if (adoptLingering(slot, object.guid))
                 continue;
             const block = object.appearance(time);
             if (!created.empty && (created.blockCount >= maxBlocksPerPacket
@@ -1744,11 +1945,12 @@ private:
             deliverUpdate(who, created);
         foreach (object; personalAfter)
             personalize(who, object);
-        foreach (object, _; seesObjects[guid])
-            if (object !in objectsInSight)
-                gone ~= object;
-        foreach (object; gone)
-            seesObjects[guid].remove(object);
+        foreach (o; knownOf(slot, false))
+            if (o !in objectsInSight)
+            {
+                gone ~= at(o).guid;
+                unsee(slot, o);
+            }
 
         if (gone.length == 0)
             return;
@@ -1760,26 +1962,28 @@ private:
     /// An object moved: players it came near get it, those it left lose it.
     void updateObjectVisibility(MapObject object)
     {
+        const slot = objectSlot(object);
+        if (slot == uint.max)
+            return;
         const guid = object.guid;
-        foreach (who; near(object.position, settings.visibilityDistance))
+        foreach (p; playerSlotsNear(object.position, settings.visibilityDistance))
         {
-            auto seen = &seesObjects[who.character.guid];
-            if (guid in *seen || !objectVisibleTo(object, who))
+            auto who = at(p).player;
+            if (at(p).known[slot] || !objectVisibleTo(object, who))
                 continue;
-            (*seen)[guid] = true;
-            if (adoptLingering(who.character.guid, guid))
+            see(p, slot);
+            if (adoptLingering(p, guid))
                 continue; // the client has it already (it came from another node with it)
             deliverUpdate(who, object.appearance(serverTime()));
             personalize(who, object);
         }
-        foreach (player, ref seen; seesObjects)
-            if (guid in seen && distanceSquared(members[player].character.position, object.position)
-                > settings.visibilityDistance ^^ 2)
+        foreach (p; at(slot).viewers.dup)
+            if (distanceSquared(at(p).player.character.position, object.position) > settings.visibilityDistance ^^ 2)
             {
-                seen.remove(guid);
+                unsee(p, slot);
                 UpdateData forget;
                 forget.addOutOfRange([guid]);
-                deliverUpdate(members[player], forget);
+                deliverUpdate(at(p).player, forget);
             }
     }
 
