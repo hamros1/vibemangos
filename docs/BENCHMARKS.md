@@ -290,3 +290,20 @@ iteration. Now:
 * An object's update is built once for everyone who sees the same fields.
 * Changes in the map's tick go out once at its end.
 
+## Step 6 of docs/DESIGN.md: writes behind the loop (2026-11-17)
+
+`crowd`, 500 bots, `--seed 7`, with `player_save_interval` at 5 seconds so that every character
+saves 12 times a minute (about 24,000 writes a minute). Compared with the build of step 5:
+
+| | Writes in the loop | Writes behind it |
+|---|---|---|
+| Tick, average | 3.49 ms | 0.54 ms |
+| Tick, worst interval p99 | 10.31 ms | 1.02 ms |
+| Tick, max | 15.07 ms | 3.29 ms |
+| Event loop busy | 13.9% | 7.9% |
+| Ping p99 | 3.94 ms | 3.73 ms |
+
+With the default interval (900 s) the saves are spread too thinly to show. The writer kept up: its
+queue was empty at every metrics line, nothing failed, and the cluster regression (250 bots on
+three nodes) passed.
+

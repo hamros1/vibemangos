@@ -17,6 +17,7 @@ import dmangos.cluster.node : ClusterNode, CoordinatorSetup;
 import dmangos.world.clusterbridge : ClusterBridge;
 import dmangos.world.movement : Position;
 import dmangos.world.fencing : FencedDatabase;
+import dmangos.world.writebehind : replayLog, WriteBehind, Writer;
 import dmangos.log;
 import dmangos.metrics : ServerMetrics;
 import dmangos.mysql : ConnectionInfo, MySqlConnection;
@@ -93,8 +94,34 @@ private int run(WorldConfig config, string configPath)
         spawnSeed = (ulong(crc[0]) | crc[1] << 8 | crc[2] << 16 | ulong(crc[3]) << 24) | 1;
     }
     auto data = WorldData.load(world, client, spawnSeed);
-    auto context = new WorldContext(config, new MySqlWorldDatabase(login, characters, world), data, client,
-        new MySqlLoginDatabase(login));
+    // Nodes of a cluster started in one directory keep logs of their own.
+    if (config.cluster.enabled && config.writeLog == WorldConfig.init.writeLog)
+        config.writeLog = "writes-" ~ to!string(config.cluster.nodeId) ~ ".log";
+    // Writes go behind the game loop (docs/DESIGN.md, step 6): to a thread with connections of its own,
+    // logged first. What the log still holds from the last run is written before anything else.
+    auto writerLogin = connect(config.loginDatabase, config.mysqlLibrary, "login (writer)");
+    auto writerCharacters = connect(config.characterDatabase, config.mysqlLibrary, "character (writer)");
+    auto writerWorld = connect(config.worldDatabase, config.mysqlLibrary, "world (writer)");
+    scope (exit)
+    {
+        writerLogin.close();
+        writerCharacters.close();
+        writerWorld.close();
+    }
+    auto writerDatabase = new MySqlWorldDatabase(writerLogin, writerCharacters, writerWorld);
+    if (config.writeLog.length)
+        replayLog(config.writeLog, writerDatabase);
+    auto writer = new Writer(writerDatabase, config.writeLog);
+    scope (exit)
+    {
+        writer.stop(); // what the last sessions saved is written before the connections close
+        const s = writer.statistics;
+        info!"writes: %s queued, %s written, %s replaced by newer ones, %s refused (lease), %s failed"(s.queued,
+            s.written, s.replaced, s.refused, s.failed);
+    }
+    auto behind = new WriteBehind(new MySqlWorldDatabase(login, characters, world), writer, null);
+    auto context = new WorldContext(config, behind, data, client, new MySqlLoginDatabase(login));
+    context.writer = writer;
     context.configPath = configPath;
     // Every node serves clients (docs/CLUSTER.md, phase 3b); only a standalone server or a cluster's coordinator speaks
     // for the realm: its row in the realm list, and marking everyone offline at start.
@@ -184,6 +211,15 @@ private int run(WorldConfig config, string configPath)
         // A node whose lease lapsed writes nothing: by the time its accounts and regions go elsewhere it has
         // certainly stopped, and writes after that could overwrite theirs (phase 4).
         context.database = new FencedDatabase(context.database, () => cluster.regions.leaseHolds(MonoTime.currTime));
+        // And a queued write is dropped if the writer reaches it after the lease lapsed (step 6).
+        behind.writableUntil = () {
+            import std.datetime.systime : Clock;
+
+            const ends = cluster.regions.leaseEnds, at = MonoTime.currTime;
+            if (ends == MonoTime.max)
+                return long.max;
+            return Clock.currStdTime + (ends > at ? (ends - at).total!"hnsecs" : -1);
+        };
         // One login per account across the cluster (phase 3b), and members' ids from the coordinator's blocks.
         cluster.sessions = context;
         context.claimSession = (uint account, ulong serial) => cluster.claimSession(account, serial);
@@ -242,8 +278,10 @@ private int run(WorldConfig config, string configPath)
             if (metricsInterval > Duration.zero && now - lastMetrics >= metricsInterval)
             {
                 lastMetrics = now;
-                info!"%s; world: %s players, %s objects, %s ticking"(metrics.report(&server.busy),
-                    context.sessionCount, context.objectCount, context.tickingCount);
+                const writes = writer.statistics;
+                info!"%s; world: %s players, %s objects, %s ticking; writes: %s waiting, %s written, %s replaced, %s failed"(
+                    metrics.report(&server.busy), context.sessionCount, context.objectCount, context.tickingCount,
+                    writes.waiting, writes.written, writes.replaced, writes.failed);
                 if (cluster !is null)
                     foreach (line; cluster.describe())
                         info!"%s"(line);

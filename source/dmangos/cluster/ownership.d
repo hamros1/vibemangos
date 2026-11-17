@@ -588,6 +588,16 @@ final class RegionView
         confirmed = max(confirmed, sentAt);
     }
 
+    /// Until when this node's lease holds as it stands (`MonoTime.max`: always; `MonoTime.init`: it never held).
+    MonoTime leaseEnds() const
+    {
+        if (authority)
+            return MonoTime.max;
+        if (confirmed == MonoTime.init)
+            return MonoTime.init;
+        return confirmed + lease;
+    }
+
     /// Whether this node's lease holds at `now`.
     bool leaseHolds(MonoTime now) const
     {

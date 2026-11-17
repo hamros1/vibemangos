@@ -232,6 +232,15 @@ struct InstanceRespawnRecord
     long until;
 }
 
+/**
+ * A write that replaces everything an earlier call of the method with the same key wrote (the key: its
+ * first argument, or that argument's `guid`), so a queued earlier one need not be written
+ * (`dmangos.world.writebehind`).
+ */
+struct Replaces
+{
+}
+
 /// What `loadInstances` reads.
 struct InstanceRecords
 {
@@ -307,7 +316,7 @@ interface WorldDatabase
     void markAllOffline(uint realmId);
 
     /// Saves where a character is and what changed while it played.
-    void saveProgress(const ref CharacterProgress progress);
+    @Replaces void saveProgress(const ref CharacterProgress progress);
 
     /// Sets (or, with action 0, clears) an action bar button.
     void setActionButton(uint guid, ubyte button, uint action, ubyte type);
@@ -328,7 +337,7 @@ interface WorldDatabase
     void saveCreatureRespawn(uint spawnGuid, long respawnTime);
 
     /// `Player::_SaveAuras`: the player's auras, replacing those saved before.
-    void saveAuras(uint player, const(AuraRecord)[] auras);
+    @Replaces void saveAuras(uint player, const(AuraRecord)[] auras);
 
     /// Every guild, with its ranks and members (`GuildMgr::LoadGuilds`); one guild alone.
     GuildRecord[] loadGuilds();
@@ -373,7 +382,7 @@ interface WorldDatabase
     void loadTalentReset(uint player, out uint cost, out long time);
 
     /// `character_spell_cooldown`: the player's cooldowns still running, all of them (the old rows go).
-    void saveCooldowns(uint player, const(CooldownRecord)[] cooldowns);
+    @Replaces void saveCooldowns(uint player, const(CooldownRecord)[] cooldowns);
 
     /// ditto, as saved
     CooldownRecord[] loadCooldowns(uint player);

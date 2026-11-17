@@ -183,7 +183,36 @@ so a statement with the wrong number of arguments does not compile. `query!sql(a
 `transaction`, which rolls back through `scope (failure)`.
 
 Ids (characters, items, mail) are allocated from `MAX(id) + 1` at start-up, as mangosd does. The
-server is single-threaded, so no locking is needed.
+game loop is single-threaded, so no locking is needed.
+
+### Writes behind the loop
+
+`writebehind.d` (docs/DESIGN.md, step 6) wraps the world server's `WorldDatabase`, so a slow
+statement no longer stalls a tick. Like `fencing.d`, it is generated from the interface, so a new
+method is handled without anyone remembering to.
+
+* **Writes.** A method that returns nothing and takes plain data is a write:
+  * Its arguments are encoded into bytes, it is queued, and the call returns at once.
+  * A writer thread, with its own three connections, carries the queue out in order.
+  * `deleteCharacter` (a delegate argument) and `loadTalentReset` (`out` arguments) cannot be queued.
+    They run in the loop, as reads do. A test lists them, so a new one is noticed.
+* **Reads.** Every other call first waits until the queue is written (`settle`), so it sees every
+  write before it, as when writes were immediate. Reads are rare in play (log-ins, the mailbox, GM
+  commands); the writer usually has little queued.
+* **Coalescing.** `@Replaces` marks the writes that overwrite everything an earlier one with the same
+  key wrote: a character's progress, auras and cooldowns. A queued older one is skipped, wherever it
+  is in the queue: the newer one comes after it, so the end state is the same.
+* **The log.** Before the writer carries out what it took from the queue, it appends it to
+  `write_log` and flushes it to the disk. Each entry has a length, a CRC-32, the method's signature
+  (its name and the layout of its arguments, hashed), the lease time and the arguments. Once MySQL
+  has them, the file is emptied. At start-up, what it still holds is written first, up to the first
+  entry that is cut short or does not match its CRC.
+  * A crash loses only what was queued and not yet logged: what came in while the writer wrote the
+    batch before.
+  * A write is idempotent (an `UPDATE`, a `REPLACE`, or a delete and insert), so writing again what
+    MySQL already had is harmless.
+* **Ordering.** In a cluster, saves are written before an account is released and before a player
+  moves to another node (`WorldContext.settleWrites`). `.reload` waits for them too.
 
 ## Entering the world
 

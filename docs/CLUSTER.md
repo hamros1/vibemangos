@@ -449,6 +449,13 @@ associative array, and keep replicas that are not walking out of the tick.
   logged as not saved. Its accounts are given to other nodes only after that (phase 3b), so a node cut
   off from the coordinator can never overwrite a character that has since played elsewhere. Character
   creation and deletion wait for the account's grant too.
+* **Queued writes** (`dmangos.world.writebehind`, docs/DESIGN.md step 6). Writes go to MySQL from a
+  thread of their own, after the fence:
+  * Each write carries the time until which the node's lease held when it was made. The writer drops
+    a write it reaches after the newest such time, and so does the replay of the write log at start-up.
+    A node restarted after its lease lapsed so never writes over the regions' new owner.
+  * Before an account is released to the coordinator (its session ended), and before a player moves to
+    another node, the node waits until everything queued is written: the next node loads it from MySQL.
 
 ### Tested
 

@@ -575,6 +575,7 @@ time.
 | `update_interval` | the world tick, in ms (mangosd's `WORLD_SLEEP_CONST`) | `50` |
 | `compression` | `Compression`: zlib level of update packets, 1 (fastest) to 9 | `1` |
 | `metrics_interval_seconds` | n/a: seconds between log lines with tick times and GC figures; 0 for none | `60` |
+| `write_log` | n/a: where writes wait, flushed to disk, until MySQL has them; written again at start-up; empty for none | `"writes.log"` (`"writes-<node_id>.log"` in a cluster) |
 | `cluster` | n/a: this node's place in a cluster (docs/CLUSTER.md); standalone without it | none |
 | `logout_delay`, `player_save_interval` | seconds a logout takes (GMs and resting players: none), `PlayerSave.Interval` (seconds here) | `20`, `900` |
 | `gm_permissions` | ArcEmu's permission letters for `account.gmlevel` 1, 2 and 3 | `{"1": "bcghiltuv", "2": "a", "3": "az"}` |
@@ -695,6 +696,7 @@ source/dmangos/world/       the world server (mangosd)
   replication.d               replicas of other nodes' creatures, game objects and players
   migration.d                 objects moving to another node with their region (their state)
   fencing.d                   a cluster node writes nothing once its lease has lapsed
+  writebehind.d               writes to the database from a thread of their own, through a log
   clusterbridge.d             replication between the maps and the cluster's links
   ../metrics.d                tick, event loop and GC measurements
   ../loadgen/                 the load generator: headless clients (bot.d) and scenarios (main.d)

@@ -471,6 +471,17 @@ Decisions taken on 2026-11-17:
 6. **The save writer.**
    * Change: records, the write-ahead log, coalescing, the ordering rules, lease fencing.
    * Measure: the worst loop iteration with saves under load.
+   * Done (2026-11-17), as `dmangos.world.writebehind`:
+     * The records are every write of `WorldDatabase`, encoded from its arguments. The layer is
+       generated from the interface, rather than a save record per character, so item, mail and other
+       writes keep their order with the saves.
+     * Reads wait for the queue.
+     * `@Replaces` coalesces whole saves.
+     * The log is flushed before MySQL and replayed at start-up.
+     * Saves are written before an account is released or a player migrates.
+     * Each write carries the lease time it was made under.
+   * Results: the tick average went from 3.49 to 0.54 ms, and the max from 15.1 to 3.3 ms, with
+     every character saving every 5 s (docs/BENCHMARKS.md).
 7. **Static data off the scanned heap.**
    * Measure: GC pause length.
 

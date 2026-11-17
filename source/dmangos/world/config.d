@@ -142,6 +142,12 @@ struct WorldConfig
     uint compression = 1;
     /// Seconds between the tick and GC measurement lines in the log (`dmangos.metrics`); 0: none.
     @JsonName("metrics_interval_seconds") uint metricsIntervalSeconds = 60;
+    /**
+     * The log the writes to the database go into before MySQL has them (docs/DESIGN.md, step 6): what it
+     * still holds at start-up is written then. Empty: no log (a crash loses the writes not yet made).
+     * A cluster node left at the default uses `writes-<node_id>.log`.
+     */
+    @JsonName("write_log") string writeLog = "writes.log";
     /// The cluster this node belongs to (docs/CLUSTER.md); standalone without it.
     ClusterConfig cluster;
     /// Seconds a logout takes away from inns and cities (ArcEmu and CMaNGOS: 20); 0 logs out at once.

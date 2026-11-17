@@ -235,6 +235,7 @@ private:
         saveCooldowns();
         saveQuests();
         saveReputation();
+        context.settleWrites(); // in the database before the next node loads it
 
         ByteWriter w;
         w.put(account.id);

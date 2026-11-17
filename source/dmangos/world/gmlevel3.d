@@ -687,6 +687,7 @@ private:
 
     bool handleDBReloadCommand(string table)
     {
+        context.settleWrites(); // what the GM commands wrote (spawns, vendors, ...) is read back
         if (table.length < 3)
             return false;
         const started = MonoTime.currTime;

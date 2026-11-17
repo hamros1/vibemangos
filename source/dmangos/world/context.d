@@ -1,6 +1,7 @@
 /// State shared by every session on a world server.
 module dmangos.world.context;
 
+import dmangos.world.writebehind : Writer;
 import core.time : Duration, minutes, MonoTime, msecs, seconds;
 
 import std.path : buildPath;
@@ -184,6 +185,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
     WorldConfig config;
     WorldDatabase database;
+    /// The thread `database` writes through (`dmangos.world.writebehind`); null: writes are immediate.
+    Writer writer;
     WorldData data;
     ClientData client;
 
@@ -2868,9 +2871,22 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         if (auto serial = session in serials)
         {
             if (releaseSession !is null)
+            {
+                settleWrites(); // another node may load the account's characters next: they are saved first
                 releaseSession(accountId, *serial);
+            }
             serials.remove(session);
         }
+    }
+
+    /**
+     * Waits until every write queued so far is in the database (docs/DESIGN.md, step 6): before another
+     * node may load what this one saved.
+     */
+    void settleWrites()
+    {
+        if (writer !is null)
+            writer.settle();
     }
 
     /// See `SessionHandler.sessionGranted`.
