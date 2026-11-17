@@ -30,6 +30,9 @@ import core.time : Duration;
 import std.meta : AliasSeq;
 import std.traits : getUDAs, hasUDA, Parameters, ReturnType, Unqual;
 
+import core.time : MonoTime, seconds;
+
+import dmangos.cluster.protocol : ServiceCall, ServiceReply;
 import dmangos.cluster.regions : CellRect, Region;
 import dmangos.plaindata : decode, encode, isPlainData, layout;
 
@@ -88,6 +91,14 @@ Region[] serviceRegions(const(ServiceKind)[] kinds, uint firstId) pure @safe
         regions ~= r;
     }
     return regions;
+}
+
+/// How a node answered a `ServiceCall`.
+enum ServiceStatus : ubyte
+{
+    ok = 0,
+    notHere = 1,       /// the service does not run on that node (any more): ask again where it is
+    unknownCall = 2,   /// that node's build has no such call
 }
 
 /// Marks a struct as a service of `kind`.
@@ -318,11 +329,47 @@ final class ServiceHost
         return null;
     }
 
+    // -----------------------------------------------------------------------
+    // Calls: here directly, elsewhere as bytes (stage 3)
+    // -----------------------------------------------------------------------
+
+    /// This node's id (0 standalone).
+    ushort self;
+
+    /// Where the service of a kind runs now (`regions.ownerAt(serviceMap(kind), 0)`); 0 if nowhere.
+    ushort delegate(ServiceKind kind) placement;
+
+    /// Sends a call or a reply to a node; false if there is no link to it now.
+    bool delegate(ushort node, const ref ServiceCall call) sendCall;
+
+    /// ditto
+    bool delegate(ushort node, const ref ServiceReply reply) sendReply;
+
+    /// Calls still unanswered after this are given up (and logged).
+    enum giveUpAfter = 30.seconds;
+
+    private struct Pending
+    {
+        ServiceKind kind;
+        ulong call;
+        immutable(ubyte)[] request;
+        ushort sentTo;          // 0: parked, waiting for the service to be somewhere
+        MonoTime since;
+        void delegate(const(ubyte)[] reply) then;
+    }
+
+    private Pending[ulong] pending;   // by sequence
+    private ulong nextSequence = 1;
+    private ubyte[][ulong] answered;  // (origin, sequence) -> reply: a resent call is answered again, not run again
+    private ulong[] answeredOrder;    // the oldest first, to forget them
+    enum size_t answersKept = 4096;
+
     /**
-     * Calls `method` of its service with `request`; `then` gets the reply. On this node, at once and
-     * directly. Returns false if the service is nowhere to be reached now (it will be: stage 2).
+     * Calls `method` of its service with `request`; `then` gets the reply. Here, at once and directly;
+     * elsewhere, as bytes to the node that hosts it, `then` called when its reply comes. A call while
+     * the service is nowhere (moving, or its node lost) waits until it is somewhere.
      */
-    bool call(alias method, Request, Reply)(auto ref Request request, scope void delegate(Reply) then)
+    void call(alias method, Request, Reply)(auto ref Request request, void delegate(Reply) then)
         if (!is(ReturnType!method == void))
     {
         static assert(checkCall!method && is(Reply == ReturnType!method));
@@ -332,13 +379,21 @@ final class ServiceHost
             auto reply = __traits(getMember, *service, __traits(identifier, method))(request);
             if (then !is null)
                 then(reply);
-            return true;
+            return;
         }
-        return false;
+        ubyte[] bytes;
+        encode(bytes, request);
+        callRemote(kindOf!S, callId!method, cast(immutable) bytes, (const(ubyte)[] r) {
+            if (then is null)
+                return;
+            Reply reply;
+            decode(r, reply);
+            then(reply);
+        });
     }
 
     /// ditto, for a call without a reply.
-    bool call(alias method, Request)(auto ref Request request)
+    void call(alias method, Request)(auto ref Request request)
         if (is(ReturnType!method == void))
     {
         static assert(checkCall!method);
@@ -346,9 +401,128 @@ final class ServiceHost
         if (auto service = local!S())
         {
             __traits(getMember, *service, __traits(identifier, method))(request);
-            return true;
+            return;
         }
-        return false;
+        ubyte[] bytes;
+        encode(bytes, request);
+        callRemote(kindOf!S, callId!method, cast(immutable) bytes, null);
+    }
+
+    private void callRemote(ServiceKind kind, ulong id, immutable(ubyte)[] request,
+        void delegate(const(ubyte)[] reply) then)
+    {
+        const sequence = nextSequence++;
+        pending[sequence] = Pending(kind, id, request, 0, MonoTime.currTime, then);
+        send(sequence);
+    }
+
+    // Sends a pending call where its service is; leaves it parked if it is nowhere or unreachable.
+    private void send(ulong sequence)
+    {
+        auto p = sequence in pending;
+        if (p is null)
+            return;
+        const node = placement is null ? 0 : placement(p.kind);
+        if (node == 0 || node == self || sendCall is null)
+        {
+            p.sentTo = 0;
+            return;
+        }
+        auto call = ServiceCall(p.kind, p.call, self, sequence, cast(ubyte[]) p.request);
+        p.sentTo = sendCall(node, call) ? node : 0;
+    }
+
+    /// A call from another node: run here if the service is, answered from memory if it was before.
+    void receiveCall(ushort from, const ref ServiceCall call)
+    {
+        auto reply = ServiceReply(call.kind, call.sequence, ServiceStatus.ok, null);
+        const key = cast(ulong) call.origin << 48 | (call.sequence & 0xFFFF_FFFF_FFFF);
+        if (auto earlier = key in answered)
+            reply.reply = *earlier;
+        else if (!hosts(cast(ServiceKind) call.kind))
+            reply.status = ServiceStatus.notHere;
+        else
+        {
+            ubyte[] bytes;
+            if (!dispatch(cast(ServiceKind) call.kind, call.call, call.request, bytes))
+                reply.status = ServiceStatus.unknownCall;
+            else
+            {
+                answered[key] = bytes;
+                answeredOrder ~= key;
+                if (answeredOrder.length > answersKept)
+                {
+                    answered.remove(answeredOrder[0]);
+                    answeredOrder = answeredOrder[1 .. $];
+                }
+                reply.reply = bytes;
+            }
+        }
+        if (sendReply !is null)
+            sendReply(from, reply);
+    }
+
+    /// The answer to one of this node's calls.
+    void receiveReply(ushort from, const ref ServiceReply reply)
+    {
+        import dmangos.log : error;
+
+        auto p = reply.sequence in pending;
+        if (p is null)
+            return; // answered before (a resend's second answer)
+        final switch (cast(ServiceStatus) reply.status)
+        {
+        case ServiceStatus.ok:
+            auto then = p.then;
+            pending.remove(reply.sequence);
+            if (then !is null)
+                then(reply.reply);
+            break;
+        case ServiceStatus.notHere:
+            p.sentTo = 0; // moved: sent again once the table says where (`tick`)
+            break;
+        case ServiceStatus.unknownCall:
+            error!"services: node %s does not know a call of %s (another build): given up"(from, p.kind);
+            pending.remove(reply.sequence);
+            break;
+        }
+    }
+
+    /// A node was lost: what was sent to it and not answered waits for its service to be somewhere else.
+    void peerLost(ushort node)
+    {
+        foreach (ref p; pending)
+            if (p.sentTo == node)
+                p.sentTo = 0;
+    }
+
+    /// Calls in flight or waiting.
+    @property size_t pendingCalls() const
+    {
+        return pending.length;
+    }
+
+    // Parked calls go out once their service is somewhere; calls unanswered for too long are given up.
+    private void sendParked()
+    {
+        import dmangos.log : warning;
+
+        if (pending.length == 0)
+            return;
+        const now = MonoTime.currTime;
+        ulong[] expired;
+        foreach (sequence, ref p; pending)
+        {
+            if (now - p.since > giveUpAfter)
+                expired ~= sequence;
+            else if (p.sentTo == 0)
+                send(sequence);
+        }
+        foreach (sequence; expired)
+        {
+            warning!"services: a call of %s unanswered for %s: given up"(pending[sequence].kind, giveUpAfter);
+            pending.remove(sequence);
+        }
     }
 
     /// Runs the call `id` of the service of `kind` from bytes (a remote caller's); see `HostedService.dispatch`.
@@ -359,11 +533,12 @@ final class ServiceHost
         return false;
     }
 
-    /// Each hosted service's tick.
+    /// Each hosted service's tick, and the calls waiting to go out.
     void tick(Duration elapsed)
     {
         foreach (service; hosted)
             service.tick(elapsed);
+        sendParked();
     }
 
     /// Stops every service (the node stops).
@@ -427,12 +602,14 @@ unittest
     import core.time : msecs;
 
     auto host = new ServiceHost;
-    assert(!host.call!(Counter.add)(Add(1, "a"), (Total t) {}), "not hosted anywhere yet");
+    host.call!(Counter.add)(Add(1, "a"), (Total t) {});
+    assert(host.pendingCalls == 1, "nowhere hosted yet: it waits");
     host.host(Counter());
     Total seen;
-    assert(host.call!(Counter.add)(Add(5, "five"), (Total t) { seen = t; }));
-    assert(seen.total == 5 && seen.notes == ["five"]);
-    assert(host.call!(Counter.reset)(Add.init) && host.local!Counter().total == 0);
+    host.call!(Counter.add)(Add(5, "five"), (Total t) { seen = t; });
+    assert(seen.total == 5 && seen.notes == ["five"], "here: at once");
+    host.call!(Counter.reset)(Add.init);
+    assert(host.local!Counter().total == 0);
     host.tick(50.msecs);
     assert(host.local!Counter().ticks == 1);
     auto counter = host.local!Counter();
@@ -496,4 +673,58 @@ unittest
     b.call!(Tally.bump)(Add(4), (uint n) { seen = n; });
     assert(seen == 7, "moved with its state");
     assert(!b.start(ServiceKind.channels), "not provided here");
+}
+
+// Two nodes: a call goes as bytes to the node the service is on, its reply back to the continuation;
+// one sent while the service is nowhere waits; one to a node it left is sent again where it went; a
+// resent call is answered again, not run again.
+unittest
+{
+    import core.time : msecs;
+
+    auto a = new ServiceHost, b = new ServiceHost;
+    a.self = 1;
+    b.self = 2;
+    ushort placed;
+    a.placement = b.placement = (ServiceKind) => placed;
+    ServiceCall[] lastCalls;
+    a.sendCall = (ushort node, const ref ServiceCall c) {
+        lastCalls ~= ServiceCall(c.kind, c.call, c.origin, c.sequence, c.request.dup);
+        (node == 2 ? b : a).receiveCall(1, c);
+        return true;
+    };
+    b.sendReply = (ushort node, const ref ServiceReply r) { a.receiveReply(2, r); return true; };
+    b.sendCall = (ushort node, const ref ServiceCall c) { a.receiveCall(2, c); return true; };
+    a.sendReply = (ushort node, const ref ServiceReply r) { b.receiveReply(1, r); return true; };
+
+    Total seen;
+    a.call!(Counter.add)(Add(2, "early"), (Total t) { seen = t; });
+    assert(a.pendingCalls == 1 && lastCalls.length == 0, "nowhere: parked");
+
+    b.host(Counter());
+    placed = 2;
+    a.tick(50.msecs);
+    assert(seen.total == 2 && seen.notes == ["early"] && a.pendingCalls == 0, "sent once it was somewhere");
+
+    a.call!(Counter.add)(Add(3, "next"), (Total t) { seen = t; });
+    assert(seen.total == 5, "a remote call and its reply");
+
+    // A resend of the last call (its reply lost, say) is answered from memory: the counter stays at 5.
+    ServiceReply again;
+    b.sendReply = (ushort node, const ref ServiceReply r) { again = ServiceReply(r.kind, r.sequence, r.status, r.reply.dup); return true; };
+    b.receiveCall(1, lastCalls[$ - 1]);
+    assert(again.status == ServiceStatus.ok && b.local!Counter().total == 5, "not run twice");
+    b.sendReply = (ushort node, const ref ServiceReply r) { a.receiveReply(2, r); return true; };
+
+    // The service moves to a: a call still sent to b is told it is not there, and goes to a.
+    auto state = b.stop(ServiceKind.example);
+    a.host(Counter(5));
+    a.call!(Counter.add)(Add(1, "moved"), (Total t) { seen = t; });
+    assert(seen.total == 6, "here now: direct");
+    placed = 2; // b's table not yet updated
+    b.call!(Counter.add)(Add(1, "from b"), (Total t) { seen = t; });
+    assert(b.pendingCalls == 1, "b thinks it is itself: parked until the table moves");
+    placed = 1;
+    b.tick(50.msecs);
+    assert(b.pendingCalls == 0 && seen.total == 7, "sent where it went");
 }

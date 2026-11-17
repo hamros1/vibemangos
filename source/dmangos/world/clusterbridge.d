@@ -119,6 +119,7 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
 
     void peerLost(ushort peer)
     {
+        context.services.peerLost(peer); // calls sent there wait for their service to be elsewhere
         context.presenceLost(peer);
         foreach (map; context.allMaps)
             map.peerGone(peer);

@@ -181,6 +181,12 @@ final class ClusterNode : LinkOwner
     /// Phase 7: this node, the standby, has just become the coordinator; the world server takes up its part.
     void delegate() onPromoted;
 
+    /// A cluster service's call or reply from a peer (docs/SERVICES.md).
+    void delegate(ushort peer, const ref ServiceCall call) onServiceCall;
+
+    /// ditto
+    void delegate(ushort peer, const ref ServiceReply reply) onServiceReply;
+
     /**
      * Sends a message to node `peer` if it is linked; false if not (replication is resent in full when
      * a link opens, so a message that cannot go now is not needed later).
@@ -650,6 +656,24 @@ final class ClusterNode : LinkOwner
             {
                 const m = decode!DungeonEntryReply(payload);
                 replication.dungeonEntryReply(peer, m);
+            }
+            return;
+        }
+        if (type == MessageType.serviceCall || type == MessageType.serviceReply)
+        {
+            // Cluster services (docs/SERVICES.md): the world's service host answers and receives them.
+            if (type == MessageType.serviceCall)
+            {
+                if (onServiceCall !is null)
+                {
+                    const m = decode!ServiceCall(payload);
+                    onServiceCall(peer, m);
+                }
+            }
+            else if (onServiceReply !is null)
+            {
+                const m = decode!ServiceReply(payload);
+                onServiceReply(peer, m);
             }
             return;
         }

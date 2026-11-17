@@ -247,9 +247,19 @@ groups, not per tick per entity.
    * Tests: a three-node cluster in memory, where the service goes to one node, is moved off it when
      it is cut off after its lease, and is never on two nodes at once.
    * Live, the 74 world regions became 76.
-3. **Remote calls:**
-   * `ServiceCall`/`ServiceReply`, epochs, the reply cache, parked calls;
-   * protocol 28.
+3. **Remote calls: done (2026-11-17).** `ServiceCall` and `ServiceReply` (protocol 28) go over
+   the existing links.
+   * The caller routes by the region table: here directly, elsewhere as bytes.
+   * A call waits (parked) while its service is nowhere, and goes once it is somewhere.
+   * A node that no longer hosts a service answers `notHere`, and the call is sent again where the
+     table says.
+   * Calls to a lost peer go back to waiting. Calls unanswered after 30 s are given up and logged.
+   * The host keeps the last 4096 answers by (origin, sequence), so a resent call is answered again
+     and not run twice.
+   * No epoch is carried: a node hosts a service only while it holds that region's lease, and stops
+     when it loses it.
+   * Tests: two hosts with in-memory transports, covering a call and its reply, a parked call sent
+     once placed, a duplicate answered from memory, and a call following its service to a new node.
 4. **The first service: chat channels.** The existing channel service moves onto the framework,
    replacing `forwardChannel`, `ChannelCommand` and its takeover step, with the same behaviour and
    tests. This proves the framework on something that works today.

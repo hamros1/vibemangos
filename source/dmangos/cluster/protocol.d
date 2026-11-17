@@ -24,7 +24,7 @@ import dmangos.cluster.regions : Region;
 import dmangos.serialization : deserialize, LengthPrefix, serialize;
 
 /// Changes whenever a message changes; nodes speaking another version are turned away.
-enum ushort protocolVersion = 27; // 27: a channel command carries the honor rank
+enum ushort protocolVersion = 28; // 28: cluster services' calls and replies
 
 /// Size of a frame header.
 enum frameHeaderSize = 16;
@@ -80,6 +80,8 @@ enum MessageType : ushort
     guildReload = 43,
     guildBroadcast = 44,
     guildInvitation = 45,
+    serviceCall = 46,
+    serviceReply = 47,
 }
 
 /// Why a hello was refused.
@@ -754,4 +756,27 @@ unittest
     input = bad[];
     assertThrown!PacketException(takeFrame(input, header, payload));
     assertThrown!PacketException(decode!Heartbeat(new ubyte[37]));
+}
+
+/// A call of a cluster service on the node that hosts it (docs/SERVICES.md): `dmangos.cluster.services`.
+struct ServiceCall
+{
+    enum type = MessageType.serviceCall;
+
+    ushort kind;       /// `ServiceKind`
+    ulong call;        /// `callId`: the method, and its request's and reply's layout
+    ushort origin;     /// the calling node
+    ulong sequence;    /// the caller's number for it: the reply's key, and a resent duplicate's
+    @LengthPrefix!uint ubyte[] request;
+}
+
+/// The answer to a `ServiceCall`.
+struct ServiceReply
+{
+    enum type = MessageType.serviceReply;
+
+    ushort kind;
+    ulong sequence;
+    ubyte status;      /// `ServiceStatus`
+    @LengthPrefix!uint ubyte[] reply;
 }

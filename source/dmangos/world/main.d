@@ -228,6 +228,18 @@ private int run(WorldConfig config, string configPath)
         // A node whose lease lapsed writes nothing: by the time its accounts and regions go elsewhere it has
         // certainly stopped, and writes after that could overwrite theirs (phase 4).
         context.database = new FencedDatabase(context.database, () => cluster.regions.leaseHolds(MonoTime.currTime));
+        // Cluster services (docs/SERVICES.md): where each runs is in the region table; calls go over the links.
+        {
+            import dmangos.cluster.protocol : ServiceCall, ServiceReply;
+            import dmangos.cluster.services : serviceMap, ServiceKind;
+
+            context.services.self = cluster.id;
+            context.services.placement = (ServiceKind kind) => cluster.regions.ownerAt(serviceMap(kind), 0);
+            context.services.sendCall = (ushort node, const ref ServiceCall c) => cluster.sendTo(node, c);
+            context.services.sendReply = (ushort node, const ref ServiceReply r) => cluster.sendTo(node, r);
+            cluster.onServiceCall = (ushort peer, const ref ServiceCall c) { context.services.receiveCall(peer, c); };
+            cluster.onServiceReply = (ushort peer, const ref ServiceReply r) { context.services.receiveReply(peer, r); };
+        }
         // And a queued write is dropped if the writer reaches it after the lease lapsed (step 6).
         behind.writableUntil = () {
             import std.datetime.systime : Clock;
