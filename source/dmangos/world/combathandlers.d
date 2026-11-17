@@ -25,6 +25,7 @@ mixin template CombatHandlers()
     import dmangos.world.packets : ClientGuid;
     import dmangos.world.relations : canAttack, canAttackNow, Relating;
     import dmangos.world.playercreate : NewSkill;
+    import dmangos.world.inworld : ArrivalAction;
     import dmangos.world.updatefields;
 
     // -----------------------------------------------------------------------
@@ -135,7 +136,11 @@ private:
     {
         auto enemy = cast(Creature) map.findObject(request.guid);
         if (enemy is null)
-            return; // not a unit here (players cannot be attacked yet; another node's creature cannot either)
+        {
+            // Another node's creature: the fight is there (players cannot be attacked yet).
+            actAtReplica(request.guid, ArrivalAction(request.guid));
+            return;
+        }
         if (!canAttackNow(relatingNow, relatingOf(enemy), context.client))
         {
             // Stop the attack state at the client.

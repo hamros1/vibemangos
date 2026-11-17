@@ -106,8 +106,8 @@ The largest area. CMaNGOS references: `Spells/`, `Entities/Unit.cpp`, `Combat/`,
 
 1. **Melee auto-attack: done** (`combat.d`, `combathandlers.d`, `relations.d`; README's "Melee").
    Weapon and defense skills rise with use. Not yet: `NO_SKILL_GAINS` creatures (`StaticFlags2`), parry haste, PvP (no way to be
-   flagged yet), creatures another node of a cluster simulates (the player moves to their node
-   anyway, except within a border's 25 yards).
+   flagged yet). Another node's creature: attacking (casting at, looting) its replica moves the
+   player to that node, and a fight keeps it there (CLUSTER.md's phase 8).
 2. **Creatures fighting back: done** (`creatureai.d`; README's "Creatures fight"), calling for help
    included. Not yet: EventAI's spells and texts, fleeing (and fleeing for help), movement maps for
    chasing, help from another node's creatures in a cluster.

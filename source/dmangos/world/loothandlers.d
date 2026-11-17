@@ -20,6 +20,7 @@ mixin template LootHandlers()
     import dmangos.world.experience;
     import dmangos.world.inventory : EquipError, InventoryResult, ItemPosCount;
     import dmangos.world.loot;
+    import dmangos.world.inworld : ArrivalAction;
     import dmangos.world.loothandlers : ClientLootMasterGive, ClientLootRoll, ClientLootSlot;
     import dmangos.world.map : packetBody;
     import dmangos.world.opcodes;
@@ -58,7 +59,10 @@ private:
             return sendLootError(request.guid, LootError.notStanding);
         auto creature = cast(Creature) map.findObject(request.guid);
         if (creature is null)
+        {
+            actAtReplica(request.guid, ArrivalAction(0, 0, 0, request.guid)); // the corpse is another node's
             return;
+        }
         const range = max(5.0f, creature.values.get!UNIT_FIELD_COMBATREACH + 4.0f / 3
             + player.values.get!UNIT_FIELD_COMBATREACH);
         const a = player.position, b = creature.position;

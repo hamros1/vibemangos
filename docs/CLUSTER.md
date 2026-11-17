@@ -761,3 +761,28 @@ and like every member it has the latest region table.
   node 2 took all 74 regions once the old lease was over, and Gamma logged in through node 2
   afterwards, its session granted by the new coordinator.
 
+
+## Phase 8: combat across nodes (implemented, first part)
+
+Combat came after the cluster, and keeps its rule: a node changes only what it simulates. A
+creature's fight, its threat, its loot and its corpse are on the node that simulates it, so the
+player goes there.
+
+* **An action at a replica** (`actAtReplica`): attacking another node's creature, casting at it, or
+  looting its corpse moves the player's simulation to that node at once (`migrateTo`, whatever the
+  ground and however recent its last move), with what it asked for (`ArrivalAction`: the attack,
+  the spell and its target, the corpse). The state carries it just before the home node, which
+  stays last; the next node does it at the player's first tick there, once the move is complete
+  everywhere (`performArrivalAction`). The client sees nothing of the move: its swing simply begins.
+* **A fight stays put:** a player in combat does not move (`migrationTarget`), so a chase across a
+  region border keeps the player with the creatures it fights; once out of combat (5 seconds after
+  its last swing, or when they evade) the ground decides again. A draining node still sends its
+  players on.
+* **Auras travel:** they are saved before a move and loaded on arrival, as the rest of the character.
+* **Not yet:** a creature does not notice (aggro on) a player another node simulates, nor does it
+  answer a call for help from another node's creature; group experience and loot rights count only
+  the members on the creature's node; a player's own spells at another node's player (there is no
+  PvP yet).
+* **Tested:** a unit test with two nodes in memory: node 1 holds a replica of node 2's innkeeper
+  made an enemy; attacking it moves the player to node 2, where the attack begins and the creature
+  fights; on node 1's ground, the player stays on node 2 while fighting.

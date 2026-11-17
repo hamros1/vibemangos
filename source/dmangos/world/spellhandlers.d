@@ -26,6 +26,7 @@ mixin template SpellHandlers()
     import dmangos.world.combat : AttackType, armorReducedDamage, blockChance, critChance, dodgeChance, missChance,
         parryChance, weaponDamage;
     import dmangos.world.auras : AuraInterrupt;
+    import dmangos.world.inworld : ArrivalAction;
     import dmangos.world.creature : Creature;
     import dmangos.world.defines : Power, Stat;
     import dmangos.world.movement : MovementFlags, Position;
@@ -67,6 +68,9 @@ private:
         const spell = context.data.spells.spell(id);
         // Not known or passive: a cheat, ignored (as CMaNGOS does).
         if (spell is null || !player.knowsSpell(id) || spell.isPassive)
+            return;
+        // At another node's creature: cast there.
+        if (targets.unit && targets.unit != player.guid && actAtReplica(targets.unit, ArrivalAction(0, id, targets.unit)))
             return;
         castSpell(spell, targets, false, 0);
     }

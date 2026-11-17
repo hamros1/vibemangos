@@ -15,9 +15,21 @@
 module dmangos.world.inworld;
 
 /// See the module documentation.
+/// What a player moving to another node does on arrival (`performArrivalAction`).
+struct ArrivalAction
+{
+    ulong attack;      /// a creature to attack
+    uint spell;        /// a spell to cast ...
+    ulong spellTarget; /// ... at this unit
+    ulong loot;        /// a corpse to loot
+}
+
 mixin template InWorldHandlers()
 {
     import core.time : Duration;
+    import dmangos.world.inworld : ArrivalAction;
+
+    private ArrivalAction pendingArrival; // what a player moved here for does at its first tick
     import std.format : format;
     import dmangos.auth.accounts : AccountLevel;
     import dmangos.bytes : ByteWriter;
@@ -115,6 +127,9 @@ private:
         }
         if (migratedAt != MonoTime.init && context.clock() - migratedAt < 10.seconds)
             return 0;
+        // A fight stays on the node it is on: the creatures it is with are simulated here.
+        if (inCombat)
+            return 0;
         const owner = context.regionOwnerAround(player.data.map, player.position, migrationMargin);
         if (owner == 0 || owner == context.nodeId)
             return 0;
@@ -122,11 +137,50 @@ private:
     }
 
     /**
+     * What a player moved to the node simulating a creature does there at once: what it asked for
+     * against the creature's replica on the node it came from (an attack, a spell, its loot).
+     */
+    void performArrivalAction(const ArrivalAction action)
+    {
+        pendingArrival = ArrivalAction.init;
+        import dmangos.world.packets : ClientGuid;
+        import dmangos.world.spellcast : SpellTargets, TargetFlags;
+
+        if (action.attack)
+            handleAttackSwing(ClientGuid(action.attack));
+        if (action.spell)
+            if (const spell = context.data.spells.spell(action.spell))
+                if (player.knowsSpell(action.spell))
+                    castSpell(spell, SpellTargets(TargetFlags.unit, action.spellTarget), false, 0);
+        if (action.loot)
+            handleLoot(ClientGuid(action.loot));
+    }
+
+    /**
+     * An action at another node's creature (its replica here): the player moves to that node, and
+     * does it there (`performArrivalAction`). True if it moved.
+     */
+    bool actAtReplica(ulong target, ArrivalAction action)
+    {
+        import dmangos.world.replication : Replica;
+
+        auto replica = cast(Replica) map.findObject(target);
+        if (replica is null || replica.owner == context.nodeId || context.playerRelay is null || !context.canWrite())
+            return false;
+        if (teleporting != Teleport.none || loggingOut || transferring)
+            return false;
+        info!"%s: '%s' acts at %s, which node %s simulates: moving there"(remoteAddress, player.data.name,
+            target & 0xFFFF_FFFF, replica.owner);
+        migrateTo(replica.owner, action);
+        return true;
+    }
+
+    /**
      * Moves this player's simulation to node `target`: saved here, then loaded there with what its
      * client already has, so the client sees nothing of it. The client stays connected to its home,
      * whose id the state ends with (0: this node, when the player leaves home).
      */
-    void migrateTo(ushort target)
+    void migrateTo(ushort target, ArrivalAction action = ArrivalAction.init)
     {
         if (!context.canWrite())
             return;
@@ -147,7 +201,11 @@ private:
         w.put(cast(uint) known.length);
         foreach (k; known)
             w.put(k);
-        w.put(homeNode);
+        w.put(action.attack);
+        w.put(action.spell);
+        w.put(action.spellTarget);
+        w.put(action.loot);
+        w.put(homeNode); // last: `migrationHome` reads it there
 
         info!"%s: '%s' moves to node %s (at map %s %.1f %.1f)"(remoteAddress, player.data.name, target,
             player.data.map, player.position.x, player.position.y);
@@ -203,6 +261,11 @@ private:
         auto known = new ulong[r.read!uint];
         foreach (ref k; known)
             k = r.read!ulong;
+        ArrivalAction action;
+        action.attack = r.read!ulong;
+        action.spell = r.read!uint;
+        action.spellTarget = r.read!ulong;
+        action.loot = r.read!ulong;
 
         auto loaded = context.database.loadCharacter(guid);
         if (loaded.isNull || loaded.get.account != account.id)
@@ -220,6 +283,7 @@ private:
         context.enterWorldMigrated(this, known);
         loadAuras();
         resetMovementCheck();
+        pendingArrival = action; // done at the first tick here, once the move is complete everywhere
         info!"%s: '%s' arrived from another node (map %s at %.1f %.1f)"(remoteAddress, character.name, character.map,
             character.position.x, character.position.y);
         return true;
@@ -280,6 +344,8 @@ private:
             return;
         const config = context.config;
 
+        if (pendingArrival != ArrivalAction.init)
+            performArrivalAction(pendingArrival);
         updateMelee(elapsed);
         if (player is null)
             return;
