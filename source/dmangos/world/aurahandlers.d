@@ -86,6 +86,16 @@ private:
         flushPlayerChanges();
     }
 
+    /// `Unit::DispelAll`: the negative auras go, and with `positive` the positive ones too (not the passive).
+    package void dispelAll(bool positive)
+    {
+        if (player is null)
+            return;
+        foreach (aura; player.auras.list.dup)
+            if (!aura.passive && (positive || !aura.positive))
+                removeAura(aura);
+    }
+
     /// `SMSG_UPDATE_AURA_DURATION`: how long the aura in its slot lasts, for the client's buff bar.
     void sendAuraDuration(const Aura aura)
     {

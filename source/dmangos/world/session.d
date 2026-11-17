@@ -155,6 +155,10 @@ final class WorldSession : NetSession, Kickable, OnlinePlayer, Combatant, Looter
         Teleport teleporting;
         uint moveOrderCounter;
         bool triggerpassCheat;    // `.cheat triggerpass` (Player::TriggerpassCheat)
+        bool cooldownCheat;       // `.cheat cooldown`: no cooldowns (Player::CooldownCheat)
+        bool castTimeCheat;       // `.cheat casttime`: every cast instant
+        bool godModeCheat;        // `.cheat god`: no damage taken
+        bool powerCheat;          // `.cheat power`: spells cost nothing
         bool[ulong] gmTargets;    // `.gm allowwhispers`: players who may whisper while the GM tag is on
         uint floodLines;          // flood protection (WorldSession::floodLines, floodTime)
         long floodTime;
@@ -482,6 +486,12 @@ final class WorldSession : NetSession, Kickable, OnlinePlayer, Combatant, Looter
     void tell(Opcode opcode, const(ubyte)[] body_)
     {
         deliver(opcode, body_);
+    }
+
+    /// See `Combatant`.
+    @property bool untouchable()
+    {
+        return invincible;
     }
 
     // -----------------------------------------------------------------------

@@ -664,8 +664,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                         cast(ubyte) item.details.sheath);
         auto creature = new Creature(*spawn, template_, display, level, parts, client);
         creature.generator = selectMovement(creature, data.waypoints);
+        creature.ai.setLore(this);
         if (auto events = data.eventAi.eventsOf(spawn.entry, spawn.guid))
-            creature.ai.setScript(events, data.eventAi, this);
+            creature.ai.setScript(events, data.eventAi);
         return creature;
     }
 
@@ -864,6 +865,14 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             respawnAt[creature.spawn.guid] = unixTime + creature.spawn.respawnSeconds;
             database.saveCreatureRespawn(creature.spawn.guid, respawnAt[creature.spawn.guid]);
         }
+    }
+
+    /// `.respawn` (`Creature::Despawn(0, 1000)`): the corpse goes now, and the creature comes back in a second.
+    void respawnSoon(Creature corpse, Map map)
+    {
+        respawnAt[corpse.spawn.guid] = unixTime + 1;
+        database.saveCreatureRespawn(corpse.spawn.guid, respawnAt[corpse.spawn.guid]);
+        map.corpseExpired(corpse);
     }
 
     /// Whether a spawn is dead and waiting to come back.

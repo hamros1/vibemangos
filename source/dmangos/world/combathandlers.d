@@ -50,7 +50,7 @@ mixin template CombatHandlers()
     {
         if (player is null || player.values.get!UNIT_FIELD_HEALTH == 0)
             return;
-        if (d.outcome == MeleeHitOutcome.evade)
+        if (d.outcome == MeleeHitOutcome.evade || godModeCheat)
             return;
         if (player.values.getByte!UNIT_FIELD_BYTES_1(0) != 0)
         {
@@ -251,7 +251,7 @@ private:
      */
     package void takeDamageFrom(ulong attacker, uint damage)
     {
-        if (player is null || damage == 0 || player.values.get!UNIT_FIELD_HEALTH == 0)
+        if (player is null || damage == 0 || player.values.get!UNIT_FIELD_HEALTH == 0 || godModeCheat)
             return;
         interruptAuras(0x2 | 0x01000000);
         enterCombatFor(combatLinger);
@@ -275,7 +275,7 @@ private:
      */
     package void hitByCreatureSpell(ulong caster, uint damage)
     {
-        if (player is null || damage == 0 || player.values.get!UNIT_FIELD_HEALTH == 0)
+        if (player is null || damage == 0 || player.values.get!UNIT_FIELD_HEALTH == 0 || godModeCheat)
             return;
         if (player.values.getByte!UNIT_FIELD_BYTES_1(0) != 0)
         {

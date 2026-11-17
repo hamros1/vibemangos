@@ -134,7 +134,7 @@ private:
         auto c = Casting(spell, targets, 0, itemEntry, triggered, true);
         if (!triggered)
         {
-            c.timer = castTime(*spell, context.client, player.data.level);
+            c.timer = castTimeCheat ? 0 : castTime(*spell, context.client, player.data.level);
             enum uint gcdCategory = 133;
             if (spell.casting.startRecoveryCategory == gcdCategory && spell.casting.startRecoveryTime)
                 gcdReadyAt = context.clock() + spell.casting.startRecoveryTime.msecs;
@@ -229,14 +229,15 @@ private:
         {
             if (generic.active)
                 return SpellCastResult.spellInProgress;
-            if (const at = spell.id in spellReadyAt)
-                if (*at > now)
-                    return SpellCastResult.notReady;
-            if (spell.category)
+            if (!cooldownCheat)
+                if (const at = spell.id in spellReadyAt)
+                    if (*at > now)
+                        return SpellCastResult.notReady;
+            if (spell.category && !cooldownCheat)
                 if (const at = spell.category in categoryReadyAt)
                     if (*at > now)
                         return SpellCastResult.notReady;
-            if (spell.casting.startRecoveryCategory == 133 && gcdReadyAt > now)
+            if (spell.casting.startRecoveryCategory == 133 && gcdReadyAt > now && !cooldownCheat)
                 return SpellCastResult.notReady;
             if ((spell.attributes & spellAttrNotInCombat) && inCombat)
                 return SpellCastResult.affectingCombat;
@@ -251,8 +252,8 @@ private:
             if (form != 0 && spell.stances && !(spell.stances & (1u << (form - 1))))
                 return onlyShapeshift;
         }
-        // The target the effects need.
-        const result = checkTarget(spell, targets);
+        // The target the effects need (a triggered spell's at any range: `CheckRange` is not for it).
+        const result = checkTarget(spell, targets, triggered);
         if (result != SpellCastResult.ok)
             return result;
         if (!triggered && itemEntry == 0)
@@ -270,6 +271,8 @@ private:
     /// The power `spell` costs this player.
     int costOf(const ref SpellInfo spell)
     {
+        if (powerCheat)
+            return 0;
         const level = player.data.level;
         const createMana = player.stats.baseMana, createHealth = player.stats.baseHealth;
         const maxPower = spell.casting.powerType < 5
@@ -278,7 +281,7 @@ private:
     }
 
     /// Whether the effects' implicit targets have what they need: an enemy, a friend, any unit, in range and sight.
-    SpellCastResult checkTarget(const(SpellInfo)* spell, const ref SpellTargets targets)
+    SpellCastResult checkTarget(const(SpellInfo)* spell, const ref SpellTargets targets, bool triggered = false)
     {
         bool needsEnemy, needsUnit;
         foreach (i; 0 .. 3)
@@ -321,6 +324,8 @@ private:
         }
         else
             return SpellCastResult.badTargets;
+        if (triggered)
+            return SpellCastResult.ok;
         // `CheckRange`: within the spell's range, reaches included; `IsWithinLOSInMap`.
         const r = range(*spell, context.client);
         const p = player.position;
@@ -373,9 +378,9 @@ private:
                             if (proto.spellCategory[i])
                                 category = proto.spellCategory[i];
                         }
-            if (recovery > 0)
+            if (recovery > 0 && !cooldownCheat)
                 spellReadyAt[spell.id] = now + recovery.msecs;
-            if (category && categoryRecovery > 0)
+            if (category && categoryRecovery > 0 && !cooldownCheat)
                 categoryReadyAt[category] = now + categoryRecovery.msecs;
             // `TakePower`, `TakeReagents`, and an item used up (`spellcharges` -1: one use).
             if (c.castItemEntry == 0)
@@ -453,8 +458,8 @@ private:
             auto other = target == player.guid ? null : cast(typeof(this)) context.onlinePlayer(target);
             if (other is null || other.player is null || !canAttack(relatingNow(), other.relatingNow(), context.client))
                 return SpellMissInfo.none;
-            if (spell.casting.attributesEx3 & spellAttrEx3AlwaysHit)
-                return SpellMissInfo.none;
+            if ((spell.casting.attributesEx3 & spellAttrEx3AlwaysHit) || spell.casting.dmgClass == DamageClass.none)
+                return SpellMissInfo.none; // `SpellHitResult`: no damage class, no roll
             const roll = uniform01(map.random) * 100;
             if (spell.casting.dmgClass == DamageClass.melee || spell.casting.dmgClass == DamageClass.ranged)
             {
@@ -478,7 +483,7 @@ private:
             return SpellMissInfo.none;
         if (creature.ai.evading)
             return SpellMissInfo.evade;
-        if (spell.casting.attributesEx3 & spellAttrEx3AlwaysHit)
+        if ((spell.casting.attributesEx3 & spellAttrEx3AlwaysHit) || spell.casting.dmgClass == DamageClass.none)
             return SpellMissInfo.none;
         const roll = uniform01(map.random) * 100;
         if (spell.casting.dmgClass == DamageClass.melee || spell.casting.dmgClass == DamageClass.ranged)
@@ -518,6 +523,9 @@ private:
         case 83: // SPELL_EFFECT_DUEL
             startDuel(target);
             break;
+        case 1: // SPELL_EFFECT_INSTAKILL
+            instakill(spell, target);
+            break;
         case 17: // SPELL_EFFECT_WEAPON_DAMAGE_NOSCHOOL
         case 58: // SPELL_EFFECT_WEAPON_DAMAGE
         case 121: // SPELL_EFFECT_NORMALIZED_WEAPON_DMG
@@ -556,6 +564,52 @@ private:
         default:
             info!"%s: spell %s effect %s (%s) is not done yet"(remoteAddress, spell.id, i, spell.effect[i]);
             break;
+        }
+    }
+
+    /// `Spell::EffectInstaKill`: `SMSG_SPELLINSTAKILLLOG` around, and damage of all the target's health.
+    void instakill(const(SpellInfo)* spell, ulong target)
+    {
+        ByteWriter w;
+        w.put(target);
+        w.put(spell.id);
+        if (auto creature = cast(Creature) map.findObject(target))
+        {
+            if (!creature.alive)
+                return;
+            map.sendToWatchers(this, Opcode.SMSG_SPELLINSTAKILLLOG, w.data, true);
+            return spellAttacked(creature, creature.values.get!UNIT_FIELD_HEALTH);
+        }
+        auto other = target == player.guid ? this : cast(typeof(this)) context.onlinePlayer(target);
+        if (other is null || other.player is null || other.map !is map || other.player.deathState != DeathState.alive)
+            return;
+        map.sendToWatchers(this, Opcode.SMSG_SPELLINSTAKILLLOG, w.data, true);
+        other.takeDamageFrom(player.guid, other.player.values.get!UNIT_FIELD_HEALTH);
+    }
+
+    /// `Player::ClearCooldownForSpell`: `SMSG_CLEAR_COOLDOWN`, and the spell ready again.
+    package void clearCooldownFor(uint spell)
+    {
+        ByteWriter w;
+        w.put(spell);
+        w.put(player.guid);
+        deliver(Opcode.SMSG_CLEAR_COOLDOWN, w.data);
+        spellReadyAt.remove(spell);
+        if (const info = context.data.spells.spell(spell))
+            if (info.category)
+                categoryReadyAt.remove(info.category);
+    }
+
+    /// `Player::ClearCooldownsOnLine`: the cooldowns of the spells known of a skill line, but `calledFrom`.
+    package void clearCooldownsOnLine(uint skillLine, uint calledFrom)
+    {
+        foreach (spell; player.spells.dup)
+        {
+            if (spell == calledFrom)
+                continue;
+            const abilities = context.client.abilitiesForSpell(spell);
+            if (abilities.length && abilities[0].skillId == skillLine)
+                clearCooldownFor(spell);
         }
     }
 

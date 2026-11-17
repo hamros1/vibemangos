@@ -1235,7 +1235,7 @@ private:
 }
 
 /// The talent points a character of `level` has earned: one per level from 10 on.
-private uint talentPointsForLevel(uint level) pure nothrow @nogc @safe
+package uint talentPointsForLevel(uint level) pure nothrow @nogc @safe
 {
     return level < 10 ? 0 : level - 9;
 }

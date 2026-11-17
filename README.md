@@ -194,11 +194,13 @@ What works now:
     announcements and moderation. One set per faction, unless
     `allow_two_side_interaction_channel` is on.
   * **The GM system is ArcEmu's:** its command tables, permission letters, lookup and replies,
-    word for word, with CMaNGOS's `gmlevel` mapped to letters by `gm_permissions`. 135 of its 298
+    word for word, with CMaNGOS's `gmlevel` mapped to letters by `gm_permissions`. 150 of its 298
     commands work: teleports and `game_tele` recall places, `.modify` (health, stats, speed, money,
     level, looks, ...), `.levelup`, `.character learn`, skills, items, lookups, kicks, bans, mutes,
     account levels, timed shutdowns and restarts, announcements, the GM tag and whisper blocking,
-    cheats and debugging. The others need combat, spells, quests and the like, and say "Not yet
+    killing and reviving, casting, clearing cooldowns and auras, resetting talents, respawning, the
+    cheats (cooldown, cast time, god mode, power, explore, triggerpass), `.invincible`, and debugging.
+    The others (pets, guilds, battlegrounds, instances, tickets, spawning, ...) say "Not yet
     implemented." See [docs/COMMANDS.md](docs/COMMANDS.md).
   * **NPCs:** gossip menus with their texts and conditions, trainers (lists and lessons, with
     ranks and professions), innkeepers binding the hearthstone, bankers, and vendors.

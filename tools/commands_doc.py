@@ -47,7 +47,7 @@ def tables():
 def implemented():
     names = set()
     for path in glob.glob(os.path.join(WORLD, "gm*.d")) + [os.path.join(WORLD, "commands.d")]:
-        for name in re.findall(r"bool (handle[A-Z]\w*)\(string", open(path).read()):
+        for name in re.findall(r"bool (handle[A-Z]\w*)\(", open(path).read()):
             names.add(name[0].upper() + name[1:])
     return names
 
@@ -108,6 +108,10 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
   waits the 5 seconds its help promises (ArcEmu's stops at once).
 * `.server info` names this server, not ArcEmu. Item links use 1.12's link format.
 * `.character additem` gives the whole count, in as many stacks as it takes.
+* `.castspellne` shows the cast in 1.12's `SMSG_SPELL_START` and `SMSG_SPELL_GO` layout (ArcEmu's
+  bytes are 2.4.3's). `.dispelall` spares passive auras (talents, racials), and reaches the players
+  of the GM's node of a cluster only. `.kill` and `.killplr` kill a player the way death by a
+  creature's hand does, without its durability loss.
 * Arguments are read strictly: a number written wrong ("12abc", "abc") or a missing argument shows
   the command's help, where ArcEmu's C parsing read "12abc" as 12 and "abc" as 0 and went on.
 
@@ -119,9 +123,9 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 
 ## Not yet implemented (%d)
 
-These answer "Not yet implemented.", as ArcEmu's `HandleNYICommand` does: their systems (combat
-and death, spells and auras, AI and waypoints, quests, guilds, pets, honor, battlegrounds and arenas,
-instances, GM tickets, taxis, game object and creature spawning, GM invisibility) do not exist yet.
+These answer "Not yet implemented.", as ArcEmu's `HandleNYICommand` does: their systems (AI agents
+and waypoint editing, quest editing, guilds, pets, honor, battlegrounds and arenas, instances, GM
+tickets, taxis, game object and creature spawning, GM invisibility, flying) do not exist yet.
 
 | Command | Letter | Help |
 |---|---|---|

@@ -612,6 +612,14 @@ for action in actions:
         movement(0x0B5, x, y, cz, o, flags=1); movement(0x0B7, x, y, cz, o); here[:] = [x, y, cz]
         wsend(0x141, struct.pack("<Q", target)); print(f"attack {entry}: {target & 0xFFFFFF} at {cx:.1f} {cy:.1f}")
         last_target[:] = [target]
+    elif kind == "target":
+        # Select the nearest creature of ENTRY (CMSG_SET_SELECTION), for the GM commands that act on it.
+        entry = int(args[0])
+        found = [g for g, (t, e) in seen_objects.items() if t == 3 and e == entry and g in seen_positions]
+        if not found:
+            print(f"target {entry}: not in sight"); continue
+        target = min(found, key=lambda g: (seen_positions[g][0] - here[0]) ** 2 + (seen_positions[g][1] - here[1]) ** 2)
+        wsend(0x13D, struct.pack("<Q", target)); print(f"target {entry}: {target & 0xFFFFFF}")
     elif kind == "approach":
         # Walk to DIST yards of the nearest creature of ENTRY, without attacking it.
         import math

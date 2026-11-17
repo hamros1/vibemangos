@@ -67,6 +67,9 @@ interface Combatant
 
     /// A packet for it alone (a creature's whisper).
     void tell(Opcode opcode, const(ubyte)[] body_);
+
+    /// `.invincible`: creatures do not attack it (`isAttackable` is false).
+    @property bool untouchable();
 }
 
 /**
@@ -240,7 +243,7 @@ final class CreatureAI : Scripted
         if (me.values.get!UNIT_FIELD_FLAGS & (UnitFlags.spawning | UnitFlags.uninteractible)) // `CanInitiateAttack`
             return;
         const target = who.fighter;
-        if (!target.alive)
+        if (!target.alive || who.untouchable)
             return;
         // `CanAttackOnSight`: may attack it, and is its enemy.
         const self = relating, other = who.relating;
@@ -480,7 +483,8 @@ private:
         if (reactionTo(self, ally, me.client) < ReputationRank.friendly)
             return false;
         const target = enemy.relating;
-        return enemy.fighter.alive && canAttack(self, target, me.client) && isEnemy(self, target, me.client);
+        return enemy.fighter.alive && !enemy.untouchable && canAttack(self, target, me.client)
+            && isEnemy(self, target, me.client);
     }
 
     /// The help called for arrives: `HandleAssistanceCall` for each ally still free to come.
@@ -585,7 +589,7 @@ private:
         foreach (guid, _; threat)
         {
             auto who = world.combatant(guid);
-            if (who is null || !who.fighter.alive || !canAttack(relating, who.relating, me.client))
+            if (who is null || !who.fighter.alive || who.untouchable || !canAttack(relating, who.relating, me.client))
                 gone ~= guid;
         }
         foreach (guid; gone)

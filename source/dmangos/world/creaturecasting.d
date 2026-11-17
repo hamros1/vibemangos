@@ -51,11 +51,24 @@ mixin template CreatureCasting()
         int fleeTimer;                 // running in fear, for so long yet
     }
 
-    /// `CreatureEventAI`: the creature runs `events` (from `data`); `lore` has what its actions need.
-    void setScript(const(EventAiEvent)[] events, const EventAiData data, CreatureLore lore)
+    /// What its casts and texts need of the world's data (every creature made in the world has it).
+    void setLore(CreatureLore lore)
+    {
+        this.lore = lore;
+    }
+
+    /// `CreatureEventAI`: the creature runs `events` (from `data`).
+    void setScript(const(EventAiEvent)[] events, const EventAiData data)
     {
         this.script = new EventAI(events, data);
-        this.lore = lore;
+    }
+
+    /// `.castself` on a creature: it casts `spell` at itself.
+    void castFromCommand(const(SpellInfo)* spell, CombatWorld world)
+    {
+        world_ = world;
+        castSpell(spell, me.guid, 0);
+        world.wake(me.guid);
     }
 
     /// Whether it is casting a spell now.
@@ -744,7 +757,7 @@ unittest
     EventAiEvent mending = {id: 3, type: EventType.hp, chance: 100, params: [50, 0, 0, 0, 0, 0]};
     mending.actions[0] = EventAiAction(ActionType.castSpell, [mend, EventTarget.self, 0]);
     auto events = [aggro, rotting, mending];
-    keeper.ai.setScript(events, context.data.eventAi, context);
+    keeper.ai.setScript(events, context.data.eventAi);
 
     const me = anduin.session.character;
     void tick(int ms)

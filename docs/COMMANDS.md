@@ -39,64 +39,14 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
   waits the 5 seconds its help promises (ArcEmu's stops at once).
 * `.server info` names this server, not ArcEmu. Item links use 1.12's link format.
 * `.character additem` gives the whole count, in as many stacks as it takes.
+* `.castspellne` shows the cast in 1.12's `SMSG_SPELL_START` and `SMSG_SPELL_GO` layout (ArcEmu's
+  bytes are 2.4.3's). `.dispelall` spares passive auras (talents, racials), and reaches the players
+  of the GM's node of a cluster only. `.kill` and `.killplr` kill a player the way death by a
+  creature's hand does, without its durability loss.
 * Arguments are read strictly: a number written wrong ("12abc", "abc") or a missing argument shows
   the command's help, where ArcEmu's C parsing read "12abc" as 12 and "abc" as 0 and went on.
 
-## Working (45)
-
-| Command | Letter | Help |
-|---|---|---|
-| `.start` | `m` | Teleport's you to a starting location |
-| `.modify hp` | `m` | Modifies health points (HP) of selected target |
-| `.modify mana` | `m` | Modifies mana points (MP) of selected target. |
-| `.modify rage` | `m` | Modifies rage points of selected target. |
-| `.modify energy` | `m` | Modifies energy points of selected target. |
-| `.modify strength` | `m` | Modifies the strength value of the selected target. |
-| `.modify agility` | `m` | Modifies the agility value of the selected target. |
-| `.modify intelligence` | `m` | Modifies the intelligence value of the selected target. |
-| `.modify spirit` | `m` | Modifies the spirit value of the selected target. |
-| `.modify armor` | `m` | Modifies the armor of selected target. |
-| `.modify holy` | `m` | Modifies the holy resistance of selected target. |
-| `.modify fire` | `m` | Modifies the fire resistance of selected target. |
-| `.modify nature` | `m` | Modifies the nature resistance of selected target. |
-| `.modify frost` | `m` | Modifies the frost resistance of selected target. |
-| `.modify shadow` | `m` | Modifies the shadow resistance of selected target. |
-| `.modify arcane` | `m` | Modifies the arcane resistance of selected target. |
-| `.modify damage` | `m` | Modifies the damage done by the selected target. |
-| `.modify ap` | `m` | Modifies the attack power of the selected target. |
-| `.modify rangeap` | `m` | Modifies the range attack power of the selected target. |
-| `.modify scale` | `m` | Modifies the scale of the selected target. |
-| `.modify nativedisplayid` | `m` | Modifies the native display identifier of the target. |
-| `.modify displayid` | `m` | Modifies the display identifier (DisplayID) of the target. |
-| `.modify flags` | `m` | Modifies the flags of the selected target. |
-| `.modify faction` | `m` | Modifies the faction template of the selected target. |
-| `.modify dynamicflags` | `m` | Modifies the dynamic flags of the selected target. |
-| `.modify talentpoints` | `m` | Modifies the available talent points of the selected target. |
-| `.modify happiness` | `m` | Modifies the happiness value of the selected target. |
-| `.modify boundingraidius` | `m` | Modifies the bounding radius of the selected target. |
-| `.modify combatreach` | `m` | Modifies the combat reach of the selected target. |
-| `.modify npcemotestate` | `m` | Modifies the NPC emote state of the selected target. |
-| `.modify bytes` | `m` | WARNING! Modifies the bytes entry of selected target. |
-| `.account level` | `z` | Sets gm level on account. Pass it username and 0,1,2,3,az, etc. |
-| `.account mute` | `a` | Mutes account for <timeperiod>. |
-| `.account unmute` | `a` | Unmutes account <x> |
-| `.recall portplayer` | `m` | recall ports player |
-| `.server reloadtable` | `m` | Reloads some of the database tables |
-| `.character learn` | `m` | Learns spell |
-| `.character rename` | `m` | Renames character x to y. |
-| `.ban ip` | `m` | Adds an address to the IP ban table: <address> [duration] Duration must be a number optionally followed by a character representing the calendar subdivision to use (h>hours, d>days, w>weeks, m>months, y>years, default minutes) Lack of duration results in a permanent ban. |
-| `.ban character` | `b` | Bans character x with or without reason |
-| `.ban account` | `a` | Ban account. .account ban name timeperiod |
-| `.unban ip` | `m` | Deletes an address from the IP ban table: <address> |
-| `.unban character` | `b` | Unbans character x |
-| `.unban account` | `z` | Unbans account x. |
-| `.kickplayer` | `b` | Kicks player from server |
-
-## Not yet implemented (253)
-
-These answer "Not yet implemented.", as ArcEmu's `HandleNYICommand` does: their systems (combat
-and death, spells and auras, AI and waypoints, quests, guilds, pets, honor, battlegrounds and arenas,
-instances, GM tickets, taxis, game object and creature spawning, GM invisibility) do not exist yet.
+## Working (150)
 
 | Command | Letter | Help |
 |---|---|---|
@@ -115,14 +65,151 @@ instances, GM tickets, taxis, game object and creature spawning, GM invisibility
 | `.dismount` | `h` | Dismounts. |
 | `.gps` | `0` | Shows Position |
 | `.worldport` | `v` |  |
+| `.start` | `m` | Teleport's you to a starting location |
 | `.invincible` | `j` | .invincible - Toggles INVINCIBILITY (mobs won't attack you) |
-| `.invisible` | `i` | .invisible - Toggles INVINCIBILITY and INVISIBILITY (mobs won't attack you and nobody can see you, but they can see your chat messages) |
 | `.playerinfo` | `m` | .playerinfo - Displays informations about the selected character (account...) |
 | `.levelup` | `m` | Levelup x lvls |
+| `.modify hp` | `m` | Modifies health points (HP) of selected target |
 | `.modify gender` | `m` | Changes gender of selected target. Usage: 0=male, 1=female. |
+| `.modify mana` | `m` | Modifies mana points (MP) of selected target. |
+| `.modify rage` | `m` | Modifies rage points of selected target. |
+| `.modify energy` | `m` | Modifies energy points of selected target. |
 | `.modify level` | `m` | Modifies the level of selected target. |
+| `.modify strength` | `m` | Modifies the strength value of the selected target. |
+| `.modify agility` | `m` | Modifies the agility value of the selected target. |
+| `.modify intelligence` | `m` | Modifies the intelligence value of the selected target. |
+| `.modify spirit` | `m` | Modifies the spirit value of the selected target. |
+| `.modify armor` | `m` | Modifies the armor of selected target. |
+| `.modify holy` | `m` | Modifies the holy resistance of selected target. |
+| `.modify fire` | `m` | Modifies the fire resistance of selected target. |
+| `.modify nature` | `m` | Modifies the nature resistance of selected target. |
+| `.modify frost` | `m` | Modifies the frost resistance of selected target. |
+| `.modify shadow` | `m` | Modifies the shadow resistance of selected target. |
+| `.modify arcane` | `m` | Modifies the arcane resistance of selected target. |
+| `.modify damage` | `m` | Modifies the damage done by the selected target. |
+| `.modify ap` | `m` | Modifies the attack power of the selected target. |
+| `.modify rangeap` | `m` | Modifies the range attack power of the selected target. |
+| `.modify scale` | `m` | Modifies the scale of the selected target. |
 | `.modify gold` | `m` | Modifies the gold amount of the selected target. Copper value. |
 | `.modify speed` | `m` | Modifies the movement speed of the selected target. |
+| `.modify nativedisplayid` | `m` | Modifies the native display identifier of the target. |
+| `.modify displayid` | `m` | Modifies the display identifier (DisplayID) of the target. |
+| `.modify flags` | `m` | Modifies the flags of the selected target. |
+| `.modify faction` | `m` | Modifies the faction template of the selected target. |
+| `.modify dynamicflags` | `m` | Modifies the dynamic flags of the selected target. |
+| `.modify talentpoints` | `m` | Modifies the available talent points of the selected target. |
+| `.modify happiness` | `m` | Modifies the happiness value of the selected target. |
+| `.modify boundingraidius` | `m` | Modifies the bounding radius of the selected target. |
+| `.modify combatreach` | `m` | Modifies the combat reach of the selected target. |
+| `.modify npcemotestate` | `m` | Modifies the NPC emote state of the selected target. |
+| `.modify bytes` | `m` | WARNING! Modifies the bytes entry of selected target. |
+| `.debug dist` | `d` |  |
+| `.debug setbytes` | `d` |  |
+| `.debug getbytes` | `d` |  |
+| `.debug unroot` | `d` |  |
+| `.debug root` | `d` |  |
+| `.debug landwalk` | `d` |  |
+| `.debug waterwalk` | `d` |  |
+| `.debug castspell` | `d` | .castspell <spellid> - Casts spell on target. |
+| `.debug castself` | `d` | .castself <spellId> - Target casts spell <spellId>Â on itself. |
+| `.debug castspellne` | `d` | .castspellne <spellid> - Casts spell on target (only plays animations, doesnt handle effects or range/facing/etc. |
+| `.debug knockback` | `d` | .knockback <value> - Knocks you back. |
+| `.debug setbit` | `d` |  |
+| `.debug setvalue` | `d` |  |
+| `.debug sendpacket` | `d` | <opcode ID>, <data> |
+| `.debug rangecheck` | `d` | Checks the 'yard' range and internal range between the player and the target. |
+| `.debug getUint32Value` | `d` |  |
+| `.gm list` | `0` | Shows active GM's |
+| `.gm off` | `t` | Sets GM tag off |
+| `.gm on` | `t` | Sets GM tag on |
+| `.gm whisperblock` | `g` | Blocks like .gmon except without the <GM> tag |
+| `.gm allowwhispers` | `c` | Allows whispers from player <s> while in gmon mode. |
+| `.gm blockwhispers` | `c` | Blocks whispers from player <s> while in gmon mode. |
+| `.battleground setworldstate` | `e` | <var> <val> - Var can be in hex. WS Value. |
+| `.battleground playsound` | `e` | <val>. Val can be in hex. |
+| `.npc flags` | `n` | Changes NPC flags |
+| `.npc emote` | `n` | .emote - Sets emote state |
+| `.npc info` | `n` | Displays NPC information |
+| `.npc say` | `n` | .npc say <text> - Makes selected mob say text <text>. |
+| `.npc yell` | `n` | .npc yell <Text> - Makes selected mob yell text <text>. |
+| `.npc respawn` | `n` | .respawn - Respawns a dead npc from it's corpse. |
+| `.cheat status` | `m` | Shows active cheats. |
+| `.cheat cooldown` | `m` | Enables no cooldown cheat. |
+| `.cheat casttime` | `m` | Enables no cast time cheat. |
+| `.cheat power` | `m` | Disables mana consumption etc. |
+| `.cheat god` | `m` | Sets god mode, prevents you from taking damage. |
+| `.cheat explore` | `m` | Reveals the unexplored parts of the map. |
+| `.cheat triggerpass` | `m` | Ignores area trigger prerequisites. |
+| `.account level` | `z` | Sets gm level on account. Pass it username and 0,1,2,3,az, etc. |
+| `.account mute` | `a` | Mutes account for <timeperiod>. |
+| `.account unmute` | `a` | Unmutes account <x> |
+| `.quest lookup` | `2` | Looks up quest string x |
+| `.recall list` | `q` | List recall locations |
+| `.recall port` | `q` | Port to recalled location |
+| `.recall add` | `q` | Add recall location |
+| `.recall del` | `q` | Remove a recall location |
+| `.recall portplayer` | `m` | recall ports player |
+| `.server setmotd` | `m` | Sets MOTD |
+| `.server rehash` | `z` | Reloads config file. |
+| `.server reloadtable` | `m` | Reloads some of the database tables |
+| `.server shutdown` | `z` | Initiates server shutdown in <x> seconds (5 by default). |
+| `.server restart` | `z` | Initiates server restart in <x> seconds (5 by default). |
+| `.server cancelshutdown` | `z` | Cancels a Server Restart/Shutdown. |
+| `.server save` | `s` | Save's target character |
+| `.server saveall` | `s` | Save's all playing characters |
+| `.server info` | `0` | Server info |
+| `.server netstatus` | `0` | Shows network status. |
+| `.character learn` | `m` | Learns spell |
+| `.character unlearn` | `m` | Unlearns spell |
+| `.character getskillinfo` | `m` | Gets all the skills from a player |
+| `.character learnskill` | `m` | .learnskill <skillid> (optional) <value> <maxvalue> - Learns skill id skillid. |
+| `.character advanceskill` | `m` | advanceskill <skillid> <amount, optional, default = 1> - Advances skill line x times.. |
+| `.character removeskill` | `m` | .removeskill <skillid> - Removes skill |
+| `.character resettalents` | `n` | .resettalents - Resets all talents of targeted player to that of their current level. DANGEROUS. |
+| `.character additem` | `m` | Adds item x count y |
+| `.character removeitem` | `m` | Removes item %u count %u. |
+| `.character additemset` | `m` | Adds item set to inv. |
+| `.character advanceallskills` | `m` | Advances all skills <x> points. |
+| `.character showitems` | `m` | Shows items of selected Player |
+| `.character showskills` | `m` | Shows skills of selected Player |
+| `.character rename` | `m` | Renames character x to y. |
+| `.character repairitems` | `n` | .repairitems - Repair all items from selected player |
+| `.lookup item` | `l` | Looks up item string x. |
+| `.lookup quest` | `l` | Looks up quest string x. |
+| `.lookup creature` | `l` | Looks up item string x. |
+| `.lookup object` | `l` | Looks up gameobject string x. |
+| `.lookup spell` | `1` | Looks up spell string x. |
+| `.lookup skill` | `1` | Looks up skill string x. |
+| `.admin dispelall` | `z` | Dispels all negative (or positive w/ 1) auras on all players. |
+| `.admin masssummon` | `z` | .masssummon - Summons all players. |
+| `.admin playall` | `z` | Plays a sound to the entire server. |
+| `.kick byplayer` | `f` | Disconnects the player with name <s>. |
+| `.kick byaccount` | `f` | Disconnects the session with account name <s>. |
+| `.kick byip` | `f` | Disconnects the session with the ip <s>. |
+| `.ban ip` | `m` | Adds an address to the IP ban table: <address> [duration] Duration must be a number optionally followed by a character representing the calendar subdivision to use (h>hours, d>days, w>weeks, m>months, y>years, default minutes) Lack of duration results in a permanent ban. |
+| `.ban character` | `b` | Bans character x with or without reason |
+| `.ban account` | `a` | Ban account. .account ban name timeperiod |
+| `.unban ip` | `m` | Deletes an address from the IP ban table: <address> |
+| `.unban character` | `b` | Unbans character x |
+| `.unban account` | `z` | Unbans account x. |
+| `.kickplayer` | `b` | Kicks player from server |
+| `.gmannounce` | `u` | Sends Msg to all online GMs |
+| `.clearcooldowns` | `m` | Clears all cooldowns for your class. |
+| `.removeauras` | `m` | Removes all auras from target |
+| `.paralyze` | `b` | Roots/Paralyzes the target. |
+| `.unparalyze` | `b` | Unroots/Unparalyzes the target. |
+| `.gotrig` | `v` | Warps to areatrigger <id> |
+| `.logcomment` | `1` | Adds a comment to the GM log for the admins to read. |
+
+## Not yet implemented (148)
+
+These answer "Not yet implemented.", as ArcEmu's `HandleNYICommand` does: their systems (AI agents
+and waypoint editing, quest editing, guilds, pets, honor, battlegrounds and arenas, instances, GM
+tickets, taxis, game object and creature spawning, GM invisibility, flying) do not exist yet.
+
+| Command | Letter | Help |
+|---|---|---|
+| `.invisible` | `i` | .invisible - Toggles INVINCIBILITY and INVISIBILITY (mobs won't attack you and nobody can see you, but they can see your chat messages) |
 | `.waypoint add` | `w` | Add wp at current pos |
 | `.waypoint show` | `w` | Show wp's for creature |
 | `.waypoint hide` | `w` | Hide wp's for creature |
@@ -142,47 +229,25 @@ instances, GM tickets, taxis, game object and creature spawning, GM invisibility
 | `.debug infront` | `d` |  |
 | `.debug showreact` | `d` |  |
 | `.debug aimove` | `d` |  |
-| `.debug dist` | `d` |  |
 | `.debug face` | `d` |  |
 | `.debug moveinfo` | `d` |  |
-| `.debug setbytes` | `d` |  |
-| `.debug getbytes` | `d` |  |
-| `.debug unroot` | `d` |  |
-| `.debug root` | `d` |  |
-| `.debug landwalk` | `d` |  |
-| `.debug waterwalk` | `d` |  |
-| `.debug castspell` | `d` | .castspell <spellid> - Casts spell on target. |
-| `.debug castself` | `d` | .castself <spellId> - Target casts spell <spellId>Â on itself. |
-| `.debug castspellne` | `d` | .castspellne <spellid> - Casts spell on target (only plays animations, doesnt handle effects or range/facing/etc. |
 | `.debug aggrorange` | `d` | .aggrorange - Shows aggro Range of the selected Creature. |
-| `.debug knockback` | `d` | .knockback <value> - Knocks you back. |
 | `.debug fade` | `d` | .fade <value> - calls ModThreatModifyer(). |
 | `.debug threatMod` | `d` | .threatMod <value> - calls ModGeneratedThreatModifyer(). |
 | `.debug calcThreat` | `d` | .calcThreat <dmg> <spellId> - calculates threat. |
 | `.debug threatList` | `d` | .threatList  - returns all AI_Targets of the selected Creature. |
 | `.debug gettptime` | `d` | grabs transporter travel time |
 | `.debug itempushresult` | `d` | sends item push result |
-| `.debug setbit` | `d` |  |
-| `.debug setvalue` | `d` |  |
 | `.debug aispelltestbegin` | `d` |  |
 | `.debug aispelltestcontinue` | `d` |  |
 | `.debug aispelltestskip` | `d` |  |
 | `.debug dumpcoords` | `d` |  |
-| `.debug sendpacket` | `d` | <opcode ID>, <data> |
 | `.debug sqlquery` | `d` | <sql query> |
-| `.debug rangecheck` | `d` | Checks the 'yard' range and internal range between the player and the target. |
 | `.debug setallratings` | `d` | Sets rating values to incremental numbers based on their index. |
 | `.debug testlos` | `d` | tests los |
 | `.debug testindoor` | `d` | tests indoor |
 | `.debug getheight` | `d` | Gets height |
 | `.debug getpos` | `d` |  |
-| `.debug getUint32Value` | `d` |  |
-| `.gm list` | `0` | Shows active GM's |
-| `.gm off` | `t` | Sets GM tag off |
-| `.gm on` | `t` | Sets GM tag on |
-| `.gm whisperblock` | `g` | Blocks like .gmon except without the <GM> tag |
-| `.gm allowwhispers` | `c` | Allows whispers from player <s> while in gmon mode. |
-| `.gm blockwhispers` | `c` | Blocks whispers from player <s> while in gmon mode. |
 | `.gmTicket get` | `c` | Gets GM Ticket list. |
 | `.gmTicket getId` | `c` | Gets GM Ticket by player name. |
 | `.gmTicket delId` | `c` | Deletes GM Ticket by player name. |
@@ -210,27 +275,19 @@ instances, GM tickets, taxis, game object and creature spawning, GM invisibility
 | `.battleground pausebg` | `e` | Pauses current battleground match. |
 | `.battleground bginfo` | `e` | Displays information about current battleground. |
 | `.battleground battleground` | `e` | Shows BG Menu |
-| `.battleground setworldstate` | `e` | <var> <val> - Var can be in hex. WS Value. |
 | `.battleground setworldstates` | `e` | <var> <val> - Var can be in hex. WS Value. |
-| `.battleground playsound` | `e` | <val>. Val can be in hex. |
 | `.battleground setbfstatus` | `e` | .setbfstatus - NYI. |
 | `.battleground leave` | `e` | Leaves the current battleground. |
 | `.battleground getqueue` | `z` | Gets common battleground queue information. |
 | `.battleground forcestart` | `z` | Forces initialitation of all battlegrounds with active queue. |
 | `.npc vendoradditem` | `n` | Adds to vendor |
 | `.npc vendorremoveitem` | `n` | Removes from vendor. |
-| `.npc flags` | `n` | Changes NPC flags |
-| `.npc emote` | `n` | .emote - Sets emote state |
 | `.npc delete` | `n` | Deletes mob from db and world. |
-| `.npc info` | `n` | Displays NPC information |
 | `.npc addAgent` | `n` | .npc addAgent <agent> <procEvent> <procChance> <procCount> <spellId> <spellType> <spelltargetType> <spellCooldown> <floatMisc1> <Misc2> |
 | `.npc listAgent` | `n` | .npc listAgent |
-| `.npc say` | `n` | .npc say <text> - Makes selected mob say text <text>. |
-| `.npc yell` | `n` | .npc yell <Text> - Makes selected mob yell text <text>. |
 | `.npc come` | `n` | .npc come - Makes npc move to your position |
 | `.npc return` | `n` | .npc return - Returns ncp to spawnpoint. |
 | `.npc spawn` | `n` | .npc spawn - Spawns npc of entry <id> |
-| `.npc respawn` | `n` | .respawn - Respawns a dead npc from it's corpse. |
 | `.npc spawnlink` | `n` | .spawnlink sqlentry |
 | `.npc possess` | `n` | .npc possess - Possess an npc (mind control) |
 | `.npc unpossess` | `n` | .npc unpossess - Unposses any currently possessed npc. |
@@ -240,17 +297,10 @@ instances, GM tickets, taxis, game object and creature spawning, GM invisibility
 | `.npc formationlink1` | `m` | Sets formation master. |
 | `.npc formationlink2` | `m` | Sets formation slave with distance and angle |
 | `.npc formationclear` | `m` | Removes formation from creature |
-| `.cheat status` | `m` | Shows active cheats. |
 | `.cheat taxi` | `m` | Enables all taxi nodes. |
-| `.cheat cooldown` | `m` | Enables no cooldown cheat. |
-| `.cheat casttime` | `m` | Enables no cast time cheat. |
-| `.cheat power` | `m` | Disables mana consumption etc. |
-| `.cheat god` | `m` | Sets god mode, prevents you from taking damage. |
 | `.cheat fly` | `m` | Sets fly mode |
-| `.cheat explore` | `m` | Reveals the unexplored parts of the map. |
 | `.cheat flyspeed` | `m` | Modifies fly speed. |
 | `.cheat stack` | `m` | Enables aura stacking cheat. |
-| `.cheat triggerpass` | `m` | Ignores area trigger prerequisites. |
 | `.honor addpoints` | `m` | Adds x amount of honor points/currency |
 | `.honor addkills` | `m` | Adds x amount of honor kills |
 | `.honor globaldailyupdate` | `m` | Daily honor field moves |
@@ -267,7 +317,6 @@ instances, GM tickets, taxis, game object and creature spawning, GM invisibility
 | `.quest item` | `2` | Lookup itemid necessary for quest <id> |
 | `.quest list` | `2` | Lists the quests for the npc <id> |
 | `.quest load` | `2` | Loads quests from database |
-| `.quest lookup` | `2` | Looks up quest string x |
 | `.quest giver` | `2` | Lookup quest giver for quest <id> |
 | `.quest remove` | `2` | Removes the quest <id> from the targeted player |
 | `.quest reward` | `2` | Shows reward for quest <id> |
@@ -279,61 +328,23 @@ instances, GM tickets, taxis, game object and creature spawning, GM invisibility
 | `.pet addspell` | `m` | Teaches pet <spell>. |
 | `.pet removespell` | `m` | Removes pet spell <spell>. |
 | `.pet spawnbot` | `a` | .pet spawnbot <type> - spawn a helper bot for your aid |
-| `.recall list` | `q` | List recall locations |
-| `.recall port` | `q` | Port to recalled location |
-| `.recall add` | `q` | Add recall location |
-| `.recall del` | `q` | Remove a recall location |
 | `.guild create` | `m` | Creates a guild. |
 | `.guild rename` | `m` | Renames a guild. |
 | `.guild members` | `m` | Lists guildmembers and their ranks. |
 | `.guild removeplayer` | `m` | Removes a player from a guild. |
 | `.guild disband` | `m` | Disbands the guild of your target. |
-| `.server setmotd` | `m` | Sets MOTD |
-| `.server rehash` | `z` | Reloads config file. |
-| `.server shutdown` | `z` | Initiates server shutdown in <x> seconds (5 by default). |
-| `.server restart` | `z` | Initiates server restart in <x> seconds (5 by default). |
-| `.server cancelshutdown` | `z` | Cancels a Server Restart/Shutdown. |
-| `.server save` | `s` | Save's target character |
-| `.server saveall` | `s` | Save's all playing characters |
-| `.server info` | `0` | Server info |
-| `.server netstatus` | `0` | Shows network status. |
-| `.character unlearn` | `m` | Unlearns spell |
-| `.character getskillinfo` | `m` | Gets all the skills from a player |
-| `.character learnskill` | `m` | .learnskill <skillid> (optional) <value> <maxvalue> - Learns skill id skillid. |
-| `.character advanceskill` | `m` | advanceskill <skillid> <amount, optional, default = 1> - Advances skill line x times.. |
-| `.character removeskill` | `m` | .removeskill <skillid> - Removes skill |
 | `.character increaseweaponskill` | `m` | .increaseweaponskill <count> - Increase eqipped weapon skill x times (defaults to 1). |
 | `.character resetreputation` | `n` | .resetreputation - Resets reputation to start levels. (use on characters that were made before reputation fixes.) |
 | `.character resetspells` | `n` | .resetspells - Resets all spells to starting spells of targeted player. DANGEROUS. |
-| `.character resettalents` | `n` | .resettalents - Resets all talents of targeted player to that of their current level. DANGEROUS. |
 | `.character resetskills` | `n` | .resetskills - Resets all skills. |
-| `.character additem` | `m` | Adds item x count y |
-| `.character removeitem` | `m` | Removes item %u count %u. |
-| `.character additemset` | `m` | Adds item set to inv. |
-| `.character advanceallskills` | `m` | Advances all skills <x> points. |
 | `.character getstanding` | `m` | Gets standing of faction %u. |
 | `.character setstanding` | `m` | Sets stanging of faction %u. |
-| `.character showitems` | `m` | Shows items of selected Player |
-| `.character showskills` | `m` | Shows skills of selected Player |
 | `.character showinstances` | `z` | Shows persistent instances of selected Player |
 | `.character forcerename` | `m` | Forces character x to rename his char next login |
-| `.character repairitems` | `n` | .repairitems - Repair all items from selected player |
 | `.character settitle` | `m` | Adds title to a player |
-| `.lookup item` | `l` | Looks up item string x. |
-| `.lookup quest` | `l` | Looks up quest string x. |
-| `.lookup creature` | `l` | Looks up item string x. |
-| `.lookup object` | `l` | Looks up gameobject string x. |
-| `.lookup spell` | `1` | Looks up spell string x. |
-| `.lookup skill` | `1` | Looks up skill string x. |
 | `.lookup faction` | `1` | Looks up faction string x. |
 | `.admin castall` | `z` | Makes all players online cast spell <x>. |
-| `.admin dispelall` | `z` | Dispels all negative (or positive w/ 1) auras on all players. |
 | `.admin renameallinvalidchars` | `z` | Renames all invalid character names |
-| `.admin masssummon` | `z` | .masssummon - Summons all players. |
-| `.admin playall` | `z` | Plays a sound to the entire server. |
-| `.kick byplayer` | `f` | Disconnects the player with name <s>. |
-| `.kick byaccount` | `f` | Disconnects the session with account name <s>. |
-| `.kick byip` | `f` | Disconnects the session with the ip <s>. |
 | `.instance reset` | `z` | Removes instance ID x from target player. |
 | `.instance resetall` | `m` | Removes all instance IDs from target player. |
 | `.instance shutdown` | `z` | Shutdown instance with ID x (default is current instance). |
@@ -342,14 +353,7 @@ instances, GM tickets, taxis, game object and creature spawning, GM invisibility
 | `.arena createteam` | `e` | Creates arena team |
 | `.arena setteamleader` | `e` | Sets the arena team leader |
 | `.arena resetallratings` | `z` | Resets all area teams to their default rating |
-| `.gmannounce` | `u` | Sends Msg to all online GMs |
-| `.clearcooldowns` | `m` | Clears all cooldowns for your class. |
-| `.removeauras` | `m` | Removes all auras from target |
-| `.paralyze` | `b` | Roots/Paralyzes the target. |
-| `.unparalyze` | `b` | Unroots/Unparalyzes the target. |
-| `.gotrig` | `v` | Warps to areatrigger <id> |
 | `.modperiod` | `m` | Changes period of current transporter. |
-| `.logcomment` | `1` | Adds a comment to the GM log for the admins to read. |
 | `.removesickness` | `m` | Removes ressurrection sickness from the target |
 | `.fixscale` | `m` |  |
 | `.addtrainerspell` | `m` |  |

@@ -19,6 +19,8 @@ enum GmRemoteOp : ubyte
     banKick,      /// `.ban character`: the account is banned already; the player goes
     rename,       /// `.rename`: the database has the new name (`text`) already
     playerInfo,   /// `.playerinfo`
+    kill,         /// `.killplr`; `text`: the name as the GM typed it
+    revive,       /// `.reviveplr`; `text`: ditto
 }
 
 /// Where a GM command's messages go: the GM's client, here or on its node (`ChatHandler`'s colours).
@@ -120,7 +122,60 @@ mixin template GmTargets()
             return renamedBy(gm, m.gmName, m.text);
         case GmRemoteOp.playerInfo:
             return describeTo(gm);
+        case GmRemoteOp.kill:
+            return killedByName(gm, m.gmName, m.text);
+        case GmRemoteOp.revive:
+            return revivedByName(gm, m.text);
         }
+    }
+
+    /// `.kill`'s part on a player: health 0 and `KillPlayer`; it is told who did it.
+    package void killedByGm(string gmName)
+    {
+        import dmangos.world.player : DeathState;
+        import dmangos.world.updatefields : UNIT_FIELD_HEALTH;
+
+        if (player.deathState != DeathState.alive)
+            return;
+        player.values.set!UNIT_FIELD_HEALTH(0u);
+        playerDied(false);
+        blueSystemMessage(format!"%s killed you with a GM command."(gmName));
+    }
+
+    /// `.killplr`'s part on the player (`args`: its name as the GM typed it).
+    package void killedByName(GmSink gm, string gmName, string args)
+    {
+        import dmangos.world.player : DeathState;
+        import dmangos.world.updatefields : UNIT_FIELD_HEALTH;
+
+        if (player.deathState != DeathState.alive)
+            return gm.red(format!"Player %s is already dead."(args));
+        player.values.set!UNIT_FIELD_HEALTH(0u);
+        playerDied(false);
+        blueSystemMessage(format!"You were killed by %s with a GM command."(gmName));
+        gm.green(format!"Killed player %s."(args));
+    }
+
+    /// `.reviveplr`'s part on the player: `RemoteRevive` (alive with full health, its corpse gone).
+    package void revivedByName(GmSink gm, string args)
+    {
+        import dmangos.world.player : DeathState;
+
+        if (player.deathState == DeathState.alive)
+            return gm.green(format!"Player %s is not dead."(args));
+        remoteRevive();
+        gm.green(format!"Revived player %s."(args));
+    }
+
+    /// `Player::RemoteRevive`: `ResurrectPlayer`, unrooted, full health.
+    package void remoteRevive()
+    {
+        import dmangos.world.updatefields : UNIT_FIELD_HEALTH, UNIT_FIELD_MAXHEALTH;
+
+        resurrect(1);
+        spawnCorpseBones();
+        player.values.set!UNIT_FIELD_HEALTH(player.values.get!UNIT_FIELD_MAXHEALTH);
+        flushPlayerChanges();
     }
 
     /// `.kick`'s part on the player: a GM without the `z` permission cannot kick one who has it.

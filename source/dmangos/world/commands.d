@@ -823,8 +823,12 @@ unittest
         MSG_COLOR_LIGHTBLUE ~ " allowwhispers - Allows whispers from player <s> while in gmon mode.|r",
         MSG_COLOR_LIGHTBLUE ~ " blockwhispers - Blocks whispers from player <s> while in gmon mode.|r"]);
 
-    // The first row in table order wins: `.k` is `.kill`, which needs combat, so it is not written yet.
+    // The first row in table order wins: `.k` is `.kill`, which needs a selection.
     gm.say(".k");
+    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTRED ~ "A valid selection is required.|r"]);
+
+    // A command whose system does not exist yet says so.
+    gm.say(".invisible");
     assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTRED ~ "Not yet implemented.|r"]);
 
     // A handler refusing its arguments shows the row's help.

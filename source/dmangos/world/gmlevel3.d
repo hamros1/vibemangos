@@ -810,11 +810,11 @@ private:
         }
 
         greenSystemMessage("Showing cheat status for: " ~ plyr.player.data.name);
-        // The other cheats need spells, auras and flying, which do not exist yet: never on.
-        status("Cooldown", false);
-        status("CastTime", false);
-        status("GodMode", false);
-        status("Power", false);
+        // Flying and stacking auras do not exist yet: never on.
+        status("Cooldown", plyr.cooldownCheat);
+        status("CastTime", plyr.castTimeCheat);
+        status("GodMode", plyr.godModeCheat);
+        status("Power", plyr.powerCheat);
         status("Fly", false);
         status("AuraStack", false);
         status("TriggerPass", plyr.triggerpassCheat);
@@ -850,28 +850,158 @@ private:
         return true;
     }
 
-    bool handleTriggerpassCheatCommand(Nullable!OnOff state)
+    /**
+     * The shape of ArcEmu's cheat toggles: on, off, or (with nothing said) the other way; the GM and
+     * the player told, and the GM log when it goes off for another.
+     */
+    bool toggleCheat(Nullable!OnOff state, string name, string logLine, bool* delegate(WorldSession) flag,
+        void delegate(WorldSession) whenOn = null)
     {
         auto plyr = getSelectedChar(true);
         if (plyr is null)
             return true;
+        auto on = flag(plyr);
         if (state.isNull)
-            state = plyr.triggerpassCheat ? OnOff.off : OnOff.on;
+            state = *on ? OnOff.off : OnOff.on;
         if (state.get == OnOff.on)
         {
-            plyr.triggerpassCheat = true;
-            blueSystemMessage("activated the triggerpass cheat on " ~ plyr.player.data.name ~ ".");
-            plyr.greenSystemMessage("activated the triggerpass cheat on you.");
+            *on = true;
+            if (whenOn !is null)
+                whenOn(plyr);
+            blueSystemMessage(format!"activated the %s cheat on %s."(name, plyr.player.data.name));
+            plyr.greenSystemMessage(format!"activated the %s cheat on you."(name));
         }
         else
         {
-            plyr.triggerpassCheat = false;
-            blueSystemMessage("deactivated the triggerpass cheat on " ~ plyr.player.data.name ~ ".");
-            plyr.greenSystemMessage("deactivated the triggerpass cheat on you.");
+            *on = false;
+            blueSystemMessage(format!"deactivated the %s cheat on %s."(name, plyr.player.data.name));
+            plyr.greenSystemMessage(format!"deactivated the %s cheat on you."(name));
             if (plyr !is this)
-                gmLog(format!"triggerpass cheat on %s set to %s"(plyr.player.data.name, state.get));
+                gmLog(format!"%s on %s set to %s"(logLine, plyr.player.data.name, state.get));
         }
         return true;
+    }
+
+    bool handleCastTimeCheatCommand(Nullable!OnOff state)
+    {
+        return toggleCheat(state, "cast time", "god cast time", (WorldSession p) => &p.castTimeCheat);
+    }
+
+    bool handleCooldownCheatCommand(Nullable!OnOff state)
+    {
+        // On, every spell known has its cooldown cleared (`ClearCooldownForSpell`).
+        return toggleCheat(state, "cooldown", "cooldown cheat", (WorldSession p) => &p.cooldownCheat,
+            (WorldSession p) {
+                foreach (spell; p.player.spells)
+                    p.clearCooldownFor(spell);
+            });
+    }
+
+    bool handleGodModeCommand(Nullable!OnOff state)
+    {
+        return toggleCheat(state, "god mode", "god mode cheat", (WorldSession p) => &p.godModeCheat);
+    }
+
+    bool handlePowerCheatCommand(Nullable!OnOff state)
+    {
+        return toggleCheat(state, "power", "power cheat", (WorldSession p) => &p.powerCheat);
+    }
+
+    bool handleTriggerpassCheatCommand(Nullable!OnOff state)
+    {
+        return toggleCheat(state, "triggerpass", "triggerpass cheat", (WorldSession p) => &p.triggerpassCheat);
+    }
+
+    // -----------------------------------------------------------------------
+    // Cooldowns, auras, talents (`HandleClearCooldownsCommand`, `HandleRemoveAurasCommand`, ...)
+    // -----------------------------------------------------------------------
+
+    bool handleClearCooldownsCommand()
+    {
+        const guid = cast(uint) player.values.get!UNIT_FIELD_TARGET;
+        auto plr = getSelectedChar(true);
+        if (plr is null)
+        {
+            plr = this;
+            systemMessage("Auto-targeting self.");
+        }
+        if (plr !is this)
+            gmLog("Cleared all cooldowns for player " ~ plr.player.data.name);
+        // The class's three skill lines (ArcEmu's ids), and its name.
+        static immutable uint[3][12] lines = [[0, 0, 0], [26, 256, 257], [594, 267, 184], [50, 51, 163],
+            [253, 38, 39], [56, 78, 613], [0, 0, 0], [373, 374, 375], [6, 8, 237], [355, 354, 593], [0, 0, 0],
+            [573, 574, 134]];
+        static immutable string[12] names = ["", "Warrior", "Paladin", "Hunter", "Rogue", "Priest", "", "Shaman",
+            "Mage", "Warlock", "", "Druid"];
+        const classId = plr.player.data.classId;
+        if (classId >= names.length || names[classId].length == 0)
+            return true;
+        foreach (line; lines[classId])
+            plr.clearCooldownsOnLine(line, guid);
+        blueSystemMessage(format!"Cleared all %s cooldowns."(names[classId]));
+        return true;
+    }
+
+    bool handleRemoveAurasCommand()
+    {
+        auto plr = getSelectedChar(true);
+        if (plr is null)
+            return false;
+        blueSystemMessage("Removing all auras...");
+        // The removable slots: every aura but the passive ones.
+        foreach (aura; plr.player.auras.list.dup)
+            if (!aura.passive)
+                plr.removeAura(aura);
+        if (plr !is this)
+            gmLog(format!"Removed all of %s's auras."(plr.player.data.name));
+        return true;
+    }
+
+    bool handleResetTalentsCommand()
+    {
+        auto plr = getSelectedChar(true);
+        if (plr is null)
+            return true;
+        plr.resetTalents();
+        systemMessage(format!"Reset talents of %s."(plr.player.data.name));
+        plr.blueSystemMessage(format!"%s reset all your talents."(player.data.name));
+        gmLog("reset talents of " ~ plr.player.data.name);
+        return true;
+    }
+
+    bool handleDispelAllCommand(Rest args = Rest.init)
+    {
+        import std.ascii : isDigit;
+
+        // `atoi`: any number but 0 also takes the positive auras.
+        size_t n;
+        while (n < args.length && n < 9 && args[n].isDigit)
+            ++n;
+        const pos = n ? args[0 .. n].to!uint : 0;
+        gmLog(format!"used dispelall command, pos %u"(pos));
+        // The players of this node (those on another node of a cluster keep theirs).
+        foreach (other; context.onlinePlayers)
+            sessionOf(other).dispelAll(pos != 0);
+        gmLog("used mass dispel");
+        blueSystemMessage("Dispel action done.");
+        return true;
+    }
+
+    bool handleCreatureRespawnCommand()
+    {
+        auto corpse = getSelectedCreature(false);
+        if (corpse !is null && !corpse.alive && corpse.spawn.guid != 0)
+        {
+            const line = format!"Respawning a Creature: `%s` with entry: %u on map: %u sqlid: %u"(corpse.template_.name,
+                corpse.spawn.entry, map.id, corpse.spawn.guid);
+            blueSystemMessage(line);
+            gmLog("Respawned" ~ line[10 .. $]);
+            // `Despawn(0, 1000)`: the corpse goes now, the creature comes back a second later.
+            context.respawnSoon(corpse, map);
+            return true;
+        }
+        redSystemMessage("You must select a creature's corpse with a valid CreatureSpawn point.");
+        return false;
     }
 
     // -----------------------------------------------------------------------

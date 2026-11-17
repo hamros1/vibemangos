@@ -93,6 +93,27 @@ private:
             spellId);
     }
 
+    /**
+     * `Player::Reset_Talents`: every talent rank known forgotten (its passive aura gone with it), and
+     * the talent points of the level back.
+     */
+    package void resetTalents()
+    {
+        import dmangos.world.player : talentPointsForLevel;
+
+        foreach (id; 0 .. context.client.talents.idLimit)
+            if (const talent = context.client.talents.lookup(id))
+                foreach (spell; talent.rankId)
+                    if (spell && player.knowsSpell(spell))
+                    {
+                        if (auto aura = player.auras.find(spell))
+                            removeAura(aura);
+                        unlearn(spell);
+                    }
+        player.values.set!PLAYER_CHARACTER_POINTS1(talentPointsForLevel(player.data.level));
+        flushPlayerChanges();
+    }
+
     /// A passive spell's aura effects on the player for good (no slot, never ending).
     package void applyPassive(const(SpellInfo)* spell)
     {
