@@ -99,14 +99,7 @@ private:
      */
     package void postMail(MailRecord mail, uint delay)
     {
-        const now = context.unixTime;
-        mail.id = context.nextMailId();
-        mail.deliverTime = now + delay;
-        mail.expireTime = mail.deliverTime + (mail.cod ? 3 : 30) * 24 * 60 * 60;
-        context.database.sendMail(mail);
-        if (delay == 0)
-            if (auto receiver = cast(typeof(this)) context.onlinePlayer(mail.receiver))
-                receiver.deliver(Opcode.SMSG_RECEIVED_MAIL, [ubyte(0), 0, 0, 0]);
+        context.postMail(mail, delay);
     }
 
     /// `HandleSendMail`

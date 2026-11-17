@@ -92,6 +92,8 @@ struct WorldConfig
     @JsonName("allow_two_side_interaction_channel") bool allowTwoSideInteractionChannel = false;
     /// `AllowTwoSide.Interaction.Group`: allow groups with both factions.
     @JsonName("allow_two_side_interaction_group") bool allowTwoSideInteractionGroup = false;
+    /// `AllowTwoSide.Interaction.Auction`: one auction house (the Alliance's) for both factions.
+    @JsonName("allow_two_side_interaction_auction") bool allowTwoSideInteractionAuction = false;
     /// `AllowTwoSide.WhoList`: players see the other faction in /who.
     @JsonName("allow_two_side_who_list") bool allowTwoSideWhoList = false;
     /// `GM.InWhoList.Level`: the highest account level players see in /who.
@@ -116,7 +118,7 @@ struct WorldConfig
     @JsonName("skip_cinematics") uint skipCinematics = 0;
     /// `Motd`: shown in the chat window on entering the world; '@' starts a new line.
     string motd = "Welcome to dmangos.@Players see each other, group up, chat, fight, cast spells, die, loot, "
-        ~ "quest, learn talents and send mail; auctions are still to come.";
+        ~ "quest, gather, learn talents, send mail and trade at the auction house.";
 
     /// `Visibility.Distance.Continents`: how far players see each other, in yards.
     @JsonName("visibility_distance") float visibilityDistance = 100;

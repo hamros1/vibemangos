@@ -16,6 +16,8 @@ import dmangos.world.whisper : WhisperFrom;
 import dmangos.cluster.regions : Region;
 import dmangos.world.creature : Creature, CreatureSpawn, Npc, NpcStandIn;
 import dmangos.world.gameobject : GameObject, GameObjectSpawn;
+import dmangos.world.auctionhouse;
+import dmangos.world.database : MailRecord;
 import dmangos.world.movement : Position;
 import dmangos.world.migration : Migrant;
 import dmangos.world.replication : Replicator;
@@ -953,6 +955,120 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         }
     }
 
+    // -----------------------------------------------------------------------
+    // Mail and auctions settled outside a session
+    // -----------------------------------------------------------------------
+
+    /**
+     * `MailDraft::SendMailTo`: a letter into the database, delivered after `delay` seconds; the
+     * receiver, if online on any node and it is delivered now, hears of it.
+     */
+    void postMail(MailRecord mail, uint delay)
+    {
+        import dmangos.world.opcodes : Opcode;
+
+        const now = unixTime;
+        mail.id = nextMailId();
+        mail.deliverTime = now + delay;
+        mail.expireTime = mail.deliverTime + (mail.cod ? 3 : 30) * 24 * 60 * 60;
+        database.sendMail(mail);
+        if (delay == 0)
+            deliverTo(mail.receiver, Opcode.SMSG_RECEIVED_MAIL, [ubyte(0), 0, 0, 0]);
+    }
+
+    /**
+     * A mail from the auction house of `a` (`MailDraft` with an `AuctionEntry` sender): its subject
+     * says what happened; `money`, the auctioned item (handed to the receiver) and a body as given.
+     * A note with neither money nor item comes an hour later.
+     */
+    void auctionMail(uint receiver, const ref AuctionRecord a, AuctionMail what, uint money, bool withItem,
+        string body = null)
+    {
+        enum ubyte mailAuction = 2, stationeryAuction = 62;
+        enum uint checkCopied = 0x04;
+        MailRecord m;
+        m.messageType = mailAuction;
+        m.stationery = stationeryAuction;
+        m.sender = a.houseId;
+        m.receiver = receiver;
+        m.subject = auctionMailSubject(a, what);
+        m.money = money;
+        m.checked = checkCopied;
+        if (body.length)
+        {
+            m.itemTextId = nextMailId();
+            database.saveItemText(m.itemTextId, body);
+        }
+        if (withItem && a.itemGuid)
+        {
+            m.itemGuid = a.itemGuid;
+            m.itemEntry = a.itemEntry;
+            auto item = database.looseItem(a.itemGuid);
+            if (!item.isNull)
+                database.saveLooseItem(item.get, receiver); // now the receiver's
+        }
+        postMail(m, !withItem && !money ? 60 * 60 : 0);
+    }
+
+    /// The house of an auction (Stormwind's if it is not known).
+    const(AuctionHouseEntry)* auctionHouse(uint houseId)
+    {
+        auto house = client.auctionHouses.lookup(houseId);
+        return house !is null ? house : client.auctionHouses.lookup(1);
+    }
+
+    /**
+     * `AuctionBidWinning`, once the auction is out of the table: the seller gets the bid and its
+     * deposit back less the house's cut (`SendAuctionSuccessfulMail`), the buyer the item
+     * (`SendAuctionWonMail`), and both hear of it if they are online.
+     */
+    void auctionSold(const ref AuctionRecord a)
+    {
+        import std.format : format;
+        import dmangos.world.opcodes : Opcode;
+
+        const house = auctionHouse(a.houseId);
+        const cut = house is null ? 0 : a.cut(*house);
+        deliverTo(a.owner, Opcode.SMSG_AUCTION_OWNER_NOTIFICATION, ownerNotification(a, true));
+        auctionMail(a.owner, a, AuctionMail.successful, a.bid + a.deposit - cut, false,
+            format!"%16x:%s:%s:%s:%s"(a.bidder, a.bid, a.buyout, a.deposit, cut));
+        deliverTo(a.bidder, Opcode.SMSG_AUCTION_BIDDER_NOTIFICATION, bidderNotification(a, true));
+        auctionMail(a.bidder, a, AuctionMail.won, 0, true, format!"%16x:%s:%s"(a.owner, a.bid, a.buyout));
+    }
+
+    /// `SendAuctionExpiredMail`: nobody bid; the item goes back to the seller.
+    void auctionExpired(const ref AuctionRecord a)
+    {
+        import dmangos.world.opcodes : Opcode;
+
+        deliverTo(a.owner, Opcode.SMSG_AUCTION_OWNER_NOTIFICATION, ownerNotification(a, false));
+        auctionMail(a.owner, a, AuctionMail.expired, 0, true);
+    }
+
+    /// `SendAuctionOutbiddedMail`: the bid of `old` (the auction as it was) back to its bidder.
+    void auctionOutbid(const ref AuctionRecord old)
+    {
+        import dmangos.world.opcodes : Opcode;
+
+        deliverTo(old.bidder, Opcode.SMSG_AUCTION_BIDDER_NOTIFICATION, bidderNotification(old, false));
+        auctionMail(old.bidder, old, AuctionMail.outbidded, old.bid, false);
+    }
+
+    /// `AuctionHouseObject::Update`: the auctions over are settled (here only on the coordinator, or alone).
+    private void settleAuctions()
+    {
+        foreach (ref a; database.expiredAuctions(unixTime))
+        {
+            if (!database.deleteAuction(a.id, a.bid))
+                continue; // settled meanwhile (bought out)
+            if (a.bid)
+                auctionSold(a);
+            else
+                auctionExpired(a);
+        }
+    }
+    private MonoTime lastAuctionCheck;
+
     /// Whether a spawn is dead and waiting to come back.
     bool awaitingRespawn(uint spawnGuid)
     {
@@ -1148,6 +1264,12 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         foreach (map_; maps)
             map_.update(elapsed);
         respawnDue(now);
+        // `WUPDATE_AUCTIONS`: once a minute, by one node.
+        if (forwardGroup is null && now - lastAuctionCheck >= 60.seconds)
+        {
+            lastAuctionCheck = now;
+            settleAuctions();
+        }
         const mapsDone = MonoTime.currTime;
         if (mapsDone - started > 500.msecs)
             warning!"slow tick: %s ms in %s players (slowest %s ms, guid %s), %s ms in %s maps"(

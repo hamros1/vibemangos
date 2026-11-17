@@ -330,6 +330,18 @@ What works now:
     next of the chain, and its reputations. A quest may ask for a standing to be taken, or have one
     as its objective. Progress is saved in `character_queststatus`. Not yet: quests from items,
     sharing, timed and escort quests, exploration.
+  * **Auctions** (CMaNGOS's `AuctionHouseMgr` and `AuctionHouseHandler.cpp`): auctioneers open
+    their city's house (`AuctionHouse.dbc`; the goblins' for the neutral towns; one for both
+    factions with `allow_two_side_interaction_auction`). An item that may be traded is put up for 2,
+    8 or 24 hours for a deposit (the house's share of its sell price for each 2 hours); bids start
+    at the start bid and rise by 5% at least, not on one's own auctions or another character's of the
+    account; a bid at the buyout buys it. The buyer gets the item by mail, the seller the price and
+    the deposit less the house's cut, an outbid bidder the money back, each told if online; a seller
+    may take an auction back (paying the cut of a bid) and gets the item by mail. When the time is up
+    the highest bid buys it, or the item goes back. Searches filter by name, level, slot, class,
+    sub-class, quality and usability, 50 at a time; sellers and bidders list theirs. The `auction`
+    table is the one place: every node of a cluster lists from it and changes a row only as it saw
+    it (so two nodes cannot both sell one auction), and the coordinator settles those over.
   * **Reputation** (CMaNGOS's `ReputationMgr`): each character's standing with the factions of the
     reputation list, from its race's and class's base (`Faction.dbc`), saved in
     `character_reputation`. Kills give `creature_onkill_reputation`'s (shared by a group as
@@ -393,6 +405,7 @@ time.
 | `listen_range_say`, `listen_range_text_emote`, `listen_range_yell` | `ListenRange.Say`, `ListenRange.TextEmote`, `ListenRange.Yell` | `25`, `25`, `300` |
 | `allow_two_side_interaction_chat` | `AllowTwoSide.Interaction.Chat` (whispers between factions) | `false` |
 | `allow_two_side_interaction_channel`, `allow_two_side_interaction_group` | `AllowTwoSide.Interaction.Channel`, `AllowTwoSide.Interaction.Group` | `false`, `false` |
+| `allow_two_side_interaction_auction` | `AllowTwoSide.Interaction.Auction` | `false` |
 | `chat_restricted_raid_warnings` | `Chat.RestrictedRaidWarnings` | `false` |
 | `allow_two_side_who_list` | `AllowTwoSide.WhoList` (the other faction in /who) | `false` |
 | `gm_level_in_who_list` | `GM.InWhoList.Level` (the highest account level players see in /who) | `3` |
@@ -593,5 +606,5 @@ compiler. `UpdateValues.set!UNIT_FIELD_STAT0(22.5f)` does not compile, because s
 
 ## Roadmap
 
-Next: auctions, flight masters, then the cluster's remaining gaps.
+Next: flight masters, then the cluster's remaining gaps.
 See [docs/ROADMAP.md](docs/ROADMAP.md).

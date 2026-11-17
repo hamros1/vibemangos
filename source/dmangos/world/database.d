@@ -19,6 +19,7 @@ import dmangos.world.movement : Position;
 import dmangos.world.inventory : ItemChange, ItemRecord, ItemState;
 import dmangos.world.quests : QuestStatus;
 import dmangos.world.reputation : ReputationRecord;
+import dmangos.world.auctionhouse : AuctionRecord;
 import dmangos.world.player : CharacterData, CharacterProgress, HomeBind, tutorialFields;
 import dmangos.world.worlddata : AreaTriggerTeleport, areaTriggerTeleportQuery, GameTele, gameTeleQuery;
 import dmangos.world.playercreate : NewCharacter;
@@ -242,6 +243,27 @@ interface WorldDatabase
     /// Every creature that is dead now: spawn guid -> when it comes back (Unix time).
     long[uint] loadCreatureRespawns();
 
+    /// `AuctionEntry::SaveToDB`: a new auction.
+    void insertAuction(const ref AuctionRecord auction);
+
+    /// The auctions of house `houseId` (0: of every house).
+    AuctionRecord[] loadAuctions(uint houseId);
+
+    /// The auction `id`, if it is still there.
+    Nullable!AuctionRecord auctionById(uint id);
+
+    /// A bid: true if the auction still had the bid `oldBid` of `oldBidder` (it now has the new one).
+    bool bidOnAuction(uint id, uint oldBidder, uint oldBid, uint bidder, uint bid);
+
+    /// The auction gone (sold, cancelled, expired): true if it was still there with the bid `bid`.
+    bool deleteAuction(uint id, uint bid);
+
+    /// The auctions over by `now` (Unix time).
+    AuctionRecord[] expiredAuctions(long now);
+
+    /// The highest auction id in use.
+    uint maxAuctionId();
+
     /// `GameObject::SaveRespawnTime`: a used-up game object comes back then (0: it is back).
     void saveGameObjectRespawn(uint spawnGuid, long respawnTime);
 
@@ -398,6 +420,16 @@ final class MySqlWorldDatabase : WorldDatabase
     Nullable!ItemRecord looseItem(uint guid) { return statements.looseItem(guid); }
     uint[2] characterRaceAccount(uint guid) { return statements.characterRaceAccount(guid); }
     long[uint] loadCreatureRespawns() { return statements.loadCreatureRespawns(); }
+    void insertAuction(const ref AuctionRecord auction) { statements.insertAuction(auction); }
+    AuctionRecord[] loadAuctions(uint houseId) { return statements.loadAuctions(houseId); }
+    Nullable!AuctionRecord auctionById(uint id) { return statements.auctionById(id); }
+    bool bidOnAuction(uint id, uint oldBidder, uint oldBid, uint bidder, uint bid)
+    {
+        return statements.bidOnAuction(id, oldBidder, oldBid, bidder, bid);
+    }
+    bool deleteAuction(uint id, uint bid) { return statements.deleteAuction(id, bid); }
+    AuctionRecord[] expiredAuctions(long now) { return statements.expiredAuctions(now); }
+    uint maxAuctionId() { return statements.maxAuctionId(); }
     void saveGameObjectRespawn(uint spawnGuid, long respawnTime) { statements.saveGameObjectRespawn(spawnGuid, respawnTime); }
     long[uint] loadGameObjectRespawns() { return statements.loadGameObjectRespawns(); }
     Nullable!NameInfo nameInfo(uint guid) { return statements.nameInfo(guid); }
@@ -814,6 +846,7 @@ final class MemoryWorldDatabase : WorldDatabase
     ItemRecord[uint] looseItems;     /// items in the mail, by guid
     long[uint] creatureRespawns;     /// by spawn guid
     long[uint] gameObjectRespawns;   /// by spawn guid
+    AuctionRecord[uint] auctions;    /// `auction`, by id
     ReputationRecord[uint][uint] reputationRows; /// `character_reputation`: by player, then faction
 
     void saveCorpse(const ref CorpseRecord c) { corpses[c.player] = c; }
@@ -880,6 +913,57 @@ final class MemoryWorldDatabase : WorldDatabase
             creatureRespawns.remove(spawnGuid);
     }
     long[uint] loadCreatureRespawns() { return creatureRespawns.dup; }
+    void insertAuction(const ref AuctionRecord auction) { auctions[auction.id] = auction; }
+    AuctionRecord[] loadAuctions(uint houseId)
+    {
+        import std.algorithm.sorting : sort;
+
+        AuctionRecord[] found;
+        foreach (ref a; auctions)
+            if (houseId == 0 || a.houseId == houseId)
+                found ~= a;
+        found.sort!((a, b) => a.id < b.id);
+        return found;
+    }
+    Nullable!AuctionRecord auctionById(uint id)
+    {
+        if (auto a = id in auctions)
+            return Nullable!AuctionRecord(*a);
+        return Nullable!AuctionRecord.init;
+    }
+    bool bidOnAuction(uint id, uint oldBidder, uint oldBid, uint bidder, uint bid)
+    {
+        auto a = id in auctions;
+        if (a is null || a.bidder != oldBidder || a.bid != oldBid)
+            return false;
+        a.bidder = bidder;
+        a.bid = bid;
+        return true;
+    }
+    bool deleteAuction(uint id, uint bid)
+    {
+        auto a = id in auctions;
+        if (a is null || a.bid != bid)
+            return false;
+        auctions.remove(id);
+        return true;
+    }
+    AuctionRecord[] expiredAuctions(long now)
+    {
+        AuctionRecord[] found;
+        foreach (ref a; auctions)
+            if (a.expireTime <= now)
+                found ~= a;
+        return found;
+    }
+    uint maxAuctionId()
+    {
+        uint highest;
+        foreach (id, _; auctions)
+            if (id > highest)
+                highest = id;
+        return highest;
+    }
     void saveGameObjectRespawn(uint spawnGuid, long respawnTime)
     {
         if (respawnTime)

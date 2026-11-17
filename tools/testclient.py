@@ -679,6 +679,38 @@ for action in actions:
             wsend(0x12E, struct.pack("<IH", spell, 2) + packed(target)); print(f"cast {spell} at {target & 0xFFFFFF}")
         else:
             wsend(0x12E, struct.pack("<IH", spell, 0)); print(f"cast {spell}")
+    elif kind in ("ahello", "ahsell", "ahlist", "ahbid"):
+        # ahello:NPC, ahsell:NPC:ITEM:BID:BUYOUT:HOURS (the first of ITEM in the bags), ahlist:NPC[:NAME],
+        # ahbid:NPC:AUCTION:PRICE, at the nearest creature of entry NPC.
+        entry = int(args[0])
+        found = [g for g, (t, e) in seen_objects.items() if t == 3 and e == entry and g in seen_positions]
+        if not found:
+            print(f"{kind}: no {entry} in sight"); continue
+        npc = min(found, key=lambda g: (seen_positions[g][0] - here[0]) ** 2 + (seen_positions[g][1] - here[1]) ** 2)
+        if kind == "ahello":
+            wsend(0x255, struct.pack("<Q", npc)); op, p = expect(0x255)
+            print(f"auction house {struct.unpack_from('<I', p, 8)[0]}")
+        elif kind == "ahsell":
+            item_entry, bid, buyout, hours = map(int, args[1:5])
+            guids = [g for g, o in items.items() if o[3][3] == item_entry]
+            if not guids:
+                print(f"ahsell: no {item_entry} in the bags"); continue
+            wsend(0x256, struct.pack("<QQIII", npc, guids[0], bid, buyout, hours * 60))
+            op, p = expect(0x25B); aid, action, err = struct.unpack_from("<III", p, 0)
+            print(f"auction {aid}: action {action} error {err}")
+        elif kind == "ahlist":
+            name = args[1] if len(args) > 1 else ""
+            wsend(0x258, struct.pack("<QI", npc, 0) + name.encode() + b"\0" + struct.pack("<BBIIIIB", 0, 0, *([0xFFFFFFFF] * 4), 0))
+            op, p = expect(0x25C); n = struct.unpack_from("<I", p, 0)[0]
+            for i in range(n):
+                aid, item, _, _, _, count, _, owner, start, outbid, buyout, left, bidder, bid = struct.unpack_from("<IIIiIIIQIIIIQI", p, 4 + i * 64)
+                print(f"  auction {aid}: item {item} x{count} from {owner}, start {start}, bid {bid}, buyout {buyout}, {left // 60000} min left")
+            print(f"  {n} of {struct.unpack_from('<I', p, 4 + n * 64)[0]}")
+        else:
+            aid, price = int(args[1]), int(args[2])
+            wsend(0x25A, struct.pack("<QII", npc, aid, price))
+            op, p = expect(0x25B); aid, action, err = struct.unpack_from("<III", p, 0)
+            print(f"bid on {aid}: action {action} error {err}"); listen_for(1)
     elif kind in ("castgo", "usego"):
         # castgo:SPELL:ENTRY or usego:ENTRY: walk next to the nearest game object of ENTRY, then cast at it
         # (a lock opened: its loot taken) or use it (CMSG_GAMEOBJ_USE).

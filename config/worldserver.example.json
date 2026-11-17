@@ -31,7 +31,7 @@
 	"allow_two_side_interaction_channel": false,
 	"allow_two_side_interaction_group": false,
 	"skip_cinematics": 0,
-	"motd": "Welcome to dmangos.@Players see each other, group up, chat, fight, cast spells, die, loot, quest, learn talents and send mail; auctions are still to come.",
+	"motd": "Welcome to dmangos.@Players see each other, group up, chat, fight, cast spells, die, loot, quest, gather, learn talents, send mail and trade at the auction house.",
 	"visibility_distance": 100,
 	"visibility_relocation_lower_limit": 10,
 	"listen_range_say": 25,

@@ -124,6 +124,7 @@ final class WorldSession : NetSession, Kickable, OnlinePlayer
     mixin QuestHandlers;            // questhandlers.d: QuestHandler.cpp, Player's quest functions
     mixin TalentHandlers;           // talenthandlers.d: Player::LearnTalent, passive spells
     mixin MailHandlers;             // mailhandlers.d: MailHandler.cpp, MailDraft
+    mixin AuctionHandlers;          // auctionhandlers.d: AuctionHouseHandler.cpp
     mixin ReputationHandlers;       // reputationhandlers.d: ReputationMgr's packets, RewardReputation
     mixin Exploration;              // exploration.d: Player::UpdateZone, CheckAreaExploreAndOutdoor, GiveXP
     mixin ChatCommands;             // commands.d: ArcEmu's ParseCommands, ExecuteCommandInTable, messages
@@ -398,6 +399,22 @@ from `rewardAtKill`, `rewardQuestReputation` from `rewardQuest`, scaled by
 `CalculateReputationGain`), the price discount, and `SatisfyQuestReputation`. The relations read a
 player's `Reputation` through `Relating.reputation`: its rank decides how a creature's faction
 template sees it, its wars how it sees reputation factions.
+
+## Auctions
+
+`auctionhouse.d` holds what needs no session: `AuctionRecord` (an `auction` row) with its
+outbid and cut, the deposit, which house an auctioneer's faction template belongs to, the list
+line and the notification packets. The `auction` table is the authority, not memory: a search
+reads the house's rows (filtering by the item templates), and every change is a guarded statement
+(`bidOnAuction` updates only if the bid is still the one seen, `deleteAuction` removes only if it
+is), so a cluster's nodes can serve auctions at once and the first to change a row wins; the other
+tells its player the bid is higher now. The auctioned item waits in `item_instance` as a mail's
+does (`saveLooseItem`), owned by the seller, then by whoever its mail goes to. `WorldContext`
+posts the house's mails (`auctionMail`, with `postMail`, which mail also uses) and settles sold
+and expired auctions (`auctionSold`, `auctionExpired`, `auctionOutbid`); `settleAuctions` runs
+once a minute where groups run (standalone, or on the coordinator). Auction ids come from the
+mail id counter, so they are unique across nodes too. `auctionhandlers.d` is the session's side:
+the opcodes, the checks, the money.
 
 ## Death
 

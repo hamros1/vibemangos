@@ -13,6 +13,7 @@
  */
 module dmangos.world.clientdata;
 
+import dmangos.world.auctionhouse : AuctionHouseEntry, auctionHouseFormat;
 import std.algorithm.sorting : sort;
 import std.path : buildPath;
 
@@ -560,6 +561,7 @@ final class ClientData
     DbcStore!(WmoAreaTableEntry, wmoAreaTableFormat) wmoAreas;
     DbcStore!(FactionEntry, factionFormat) factions;
     DbcStore!(LockEntry, lockFormat) locks;
+    DbcStore!(AuctionHouseEntry, auctionHouseFormat) auctionHouses;
     DbcStore!(FactionTemplateEntry, factionTemplateFormat) factionTemplates;
     DbcStore!(WorldSafeLocsEntry, worldSafeLocsFormat) worldSafeLocs;
     DbcStore!(SpellCastTimesEntry, spellCastTimesFormat) spellCastTimes;
@@ -596,7 +598,7 @@ final class ClientData
             "bankBagSlotPrices:BankBagSlotPrices", "durabilityCosts:DurabilityCosts",
             "durabilityQualities:DurabilityQuality", "liquidTypes:LiquidType", "wmoAreas:WMOAreaTable",
             "factions:Faction", "factionTemplates:FactionTemplate", "worldSafeLocs:WorldSafeLocs", "spellCastTimes:SpellCastTimes", "spellDurations:SpellDuration",
-            "spellRanges:SpellRange", "spellRadii:SpellRadius", "locks:Lock"])
+            "spellRanges:SpellRange", "spellRadii:SpellRadius", "locks:Lock", "auctionHouses:AuctionHouse"])
         {{
             enum parts = member.findSplit(":");
             enum field = parts[0];

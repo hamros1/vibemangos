@@ -29,8 +29,8 @@
   parry and block chances are applied; passives bound to a kind of weapon or armour are not yet.
 * **Not loaded:** guild membership (`PLAYER_GUILDID`), cooldowns, pets.
 * **Creatures** wander, walk their waypoints, fight, die and respawn. Waypoint scripts (`ScriptId`) are not run, type 3 paths (flying) are walked as waypoints, formations
-  do not follow their leader, and creatures in water do not swim. There is no quest dialog yet. Flight masters,
-  auctioneers, stable masters, battlemasters and guild NPCs are not offered in menus yet. Conditions
+  do not follow their leader, and creatures in water do not swim. Flight masters, stable masters,
+  battlemasters and guild NPCs are not offered in menus yet. Conditions
   that need auras, world states or scripts are never met. Elevators
   are created but do not move. Ships and zeppelins are not
   spawned. Cells are never unloaded (mangosd unloads idle grids after a while).
@@ -149,13 +149,19 @@ wipe (`MSG_TALENT_WIPE_CONFIRM`), the spell modifiers most talents are (`SPELL_A
 
 ### Mail
 
-**Done** (`mailhandlers.d`; README's "Mail"). Next: expiry (returned after 30 days), the mail
-templates NPCs and quests send (`RewMailTemplateId`), auctions' mail.
+**Done** (`mailhandlers.d`; README's "Mail"), auctions' mail included. Next: expiry (returned after
+30 days), the mail templates NPCs and quests send (`RewMailTemplateId`).
+
+### Auctions
+
+**Done** (`auctionhouse.d`, `auctionhandlers.d`; README's "Auctions"): selling, searching, bidding,
+buyouts, cancelling, expiry, the mails. Not yet: `.auction` (ArcEmu has none; CMaNGOS's opens a
+house from anywhere), the auction rates (`Rate.Auction.*`), an auction bot.
 
 ### 7. Social and progression
 
-* Friends and ignore lists, guilds, mail, auction house and trade, each a handler group and
-  module of its own, like `grouphandlers.d`.
+* Friends and ignore lists, guilds: each a handler group and module of its own, like
+  `grouphandlers.d` (mail, auctions and trade are done).
 * Quests (`QuestHandler.cpp`, `ObjectMgr::LoadQuests`).
 * The rest of ArcEmu's GM commands, as their systems arrive (COMMANDS.md lists them): each is one
   method named after ArcEmu's handler.

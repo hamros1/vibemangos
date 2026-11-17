@@ -18,6 +18,7 @@ import dmangos.world.player : CharacterData, CharacterProgress, HomeBind, tutori
 import dmangos.world.playercreate : NewCharacter, NewSkill, NewSpell, maxEnchantmentSlot;
 import dmangos.world.database : AuraRecord, CorpseRecord, MailRecord;
 import dmangos.world.reputation : ReputationRecord;
+import dmangos.world.auctionhouse : AuctionRecord;
 import dmangos.world.quests : QuestState, QuestStatus;
 import dmangos.world.worlddata : CreateAction;
 
@@ -113,9 +114,9 @@ final class CharacterStatements
         GuidCounters next;
         next.character = maxPlusOne!"SELECT MAX(guid) FROM characters";
         next.item = maxPlusOne!"SELECT MAX(guid) FROM item_instance";
-        // Mail bodies (`item_text`) take their ids from the same counter.
+        // Mail bodies (`item_text`) and auctions take their ids from the same counter.
         next.mail = maxPlusOne!("SELECT GREATEST(IFNULL((SELECT MAX(id) FROM mail), 0), "
-            ~ "IFNULL((SELECT MAX(id) FROM item_text), 0))");
+            ~ "IFNULL((SELECT MAX(id) FROM item_text), 0), IFNULL((SELECT MAX(id) FROM auction), 0))");
         next.group = maxPlusOne!"SELECT MAX(groupId) FROM `groups`";
         return next;
     }
@@ -441,6 +442,72 @@ final class CharacterStatements
                 respawnTime);
         else
             characters.execute!"DELETE FROM creature_respawn WHERE guid = ? AND instance = 0"(spawnGuid);
+    }
+
+    /// The `auction` columns, in `AuctionRecord` order.
+    enum auctionColumns = "id, houseid, itemguid, item_template, item_count, item_randompropertyid, itemowner, "
+        ~ "buyoutprice, time, buyguid, lastbid, startbid, deposit";
+
+    /// See `WorldDatabase.insertAuction`.
+    void insertAuction(const ref AuctionRecord a)
+    {
+        characters.execute!("INSERT INTO auction (" ~ auctionColumns ~ ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")(
+            a.id, a.houseId, a.itemGuid, a.itemEntry, a.itemCount, a.randomPropertyId, a.owner, a.buyout,
+            a.expireTime, a.bidder, a.bid, a.startBid, a.deposit);
+    }
+
+    /// See `WorldDatabase.loadAuctions`.
+    AuctionRecord[] loadAuctions(uint houseId)
+    {
+        AuctionRecord[] found;
+        if (houseId)
+        {
+            foreach (row; characters.queryAs!(AuctionRecord, "SELECT " ~ auctionColumns
+                    ~ " FROM auction WHERE houseid = ? ORDER BY id")(houseId))
+                found ~= row;
+        }
+        else
+            foreach (row; characters.queryAs!(AuctionRecord, "SELECT " ~ auctionColumns ~ " FROM auction ORDER BY id")())
+                found ~= row;
+        return found;
+    }
+
+    /// See `WorldDatabase.auctionById`.
+    Nullable!AuctionRecord auctionById(uint id)
+    {
+        foreach (row; characters.queryAs!(AuctionRecord, "SELECT " ~ auctionColumns ~ " FROM auction WHERE id = ?")(id))
+            return Nullable!AuctionRecord(row);
+        return Nullable!AuctionRecord.init;
+    }
+
+    /// See `WorldDatabase.bidOnAuction`.
+    bool bidOnAuction(uint id, uint oldBidder, uint oldBid, uint bidder, uint bid)
+    {
+        return characters.execute!("UPDATE auction SET buyguid = ?, lastbid = ? WHERE id = ? AND buyguid = ? "
+            ~ "AND lastbid = ?")(bidder, bid, id, oldBidder, oldBid) == 1;
+    }
+
+    /// See `WorldDatabase.deleteAuction`.
+    bool deleteAuction(uint id, uint bid)
+    {
+        return characters.execute!"DELETE FROM auction WHERE id = ? AND lastbid = ?"(id, bid) == 1;
+    }
+
+    /// See `WorldDatabase.expiredAuctions`.
+    AuctionRecord[] expiredAuctions(long now)
+    {
+        AuctionRecord[] found;
+        foreach (row; characters.queryAs!(AuctionRecord, "SELECT " ~ auctionColumns ~ " FROM auction WHERE time <= ?")(now))
+            found ~= row;
+        return found;
+    }
+
+    /// See `WorldDatabase.maxAuctionId`.
+    uint maxAuctionId()
+    {
+        foreach (row; characters.query!"SELECT IFNULL(MAX(id), 0) FROM auction"())
+            return row.get!uint(0);
+        return 0;
     }
 
     /// See `WorldDatabase.saveGameObjectRespawn`.
