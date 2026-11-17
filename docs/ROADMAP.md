@@ -74,8 +74,8 @@ listed above. Transports (boats, zeppelins) need game objects and come with mile
 ### 2. An update loop and timers: done
 
 See ARCHITECTURE.md's "The update loop". Played time (total and at this level), auctions
-settled once a minute, old mail once an hour, and weather (`world/weather.d`) are done. Still to do
-here: kicking idle connections.
+settled once a minute, old mail once an hour, and weather (`world/weather.d`) are done; silent connections are dropped
+by the event loop after `idle_timeout`.
 
 ### 3. Creatures and game objects: started
 
