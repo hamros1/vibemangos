@@ -68,7 +68,7 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 * Arguments are read strictly: a number written wrong ("12abc", "abc") or a missing argument shows
   the command's help, where ArcEmu's C parsing read "12abc" as 12 and "abc" as 0 and went on.
 
-## Working (209)
+## Working (210)
 
 | Command | Letter | Help |
 |---|---|---|
@@ -281,8 +281,9 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 | `.gotrig` | `v` | Warps to areatrigger <id> |
 | `.logcomment` | `1` | Adds a comment to the GM log for the admins to read. |
 | `.removesickness` | `m` | Removes ressurrection sickness from the target |
+| `.fixscale` | `m` |  |
 
-## Not yet implemented (89)
+## Not yet implemented (88)
 
 These answer "Not yet implemented.", as ArcEmu's `HandleNYICommand` does: their systems (AI agents
 and waypoint editing, formations and possession, guilds, pets, honor, battlegrounds and arenas,
@@ -377,5 +378,4 @@ GM tickets, transports, GM invisibility, flying) do not exist yet.
 | `.arena setteamleader` | `e` | Sets the arena team leader |
 | `.arena resetallratings` | `z` | Resets all area teams to their default rating |
 | `.modperiod` | `m` | Changes period of current transporter. |
-| `.fixscale` | `m` |  |
 | `.addtrainerspell` | `m` |  |

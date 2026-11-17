@@ -335,6 +335,9 @@ interface WorldDatabase
     /// ditto
     void deleteQuestRelation(bool start, uint entry, uint quest);
 
+    /// A creature template's scale a GM fixed (`creature_template.Scale`).
+    void updateCreatureScale(uint entry, float scale);
+
     /// A vendor's ware a GM added (`npc_vendor`: unlimited, in `slot`) or removed.
     void insertVendorItem(uint entry, uint item, uint slot);
     /// ditto
@@ -549,6 +552,10 @@ final class MySqlWorldDatabase : WorldDatabase
             world.execute!"DELETE FROM creature_questrelation WHERE id = ? AND quest = ?"(entry, quest);
         else
             world.execute!"DELETE FROM creature_involvedrelation WHERE id = ? AND quest = ?"(entry, quest);
+    }
+    void updateCreatureScale(uint entry, float scale)
+    {
+        world.execute!"UPDATE creature_template SET Scale = ? WHERE Entry = ?"(scale, entry);
     }
     void insertVendorItem(uint entry, uint item, uint slot)
     {
@@ -1092,6 +1099,8 @@ final class MemoryWorldDatabase : WorldDatabase
 
         questRelationRows = questRelationRows.remove!(r => r == [uint(start), entry, quest]);
     }
+    float[uint] creatureScales; /// what `updateCreatureScale` wrote, by entry
+    void updateCreatureScale(uint entry, float scale) { creatureScales[entry] = scale; }
     uint[2][] vendorRows; /// what `insertVendorItem` wrote (entry, item), less what `deleteVendorItem` removed
     void insertVendorItem(uint entry, uint item, uint slot) { vendorRows ~= [entry, item]; }
     void deleteVendorItem(uint entry, uint item)

@@ -1113,6 +1113,25 @@ private:
         return true;
     }
 
+    /// ArcEmu's `.fixscale <scale>`: the selected creature's size, and its template's, kept.
+    bool handleFixScaleCommand(float sc = 0)
+    {
+        import dmangos.world.updatefields : OBJECT_FIELD_SCALE_X;
+
+        auto creature = getSelectedCreature(true);
+        if (creature is null)
+            return true;
+        if (sc < 0.1f)
+            return false;
+        creature.values.set!OBJECT_FIELD_SCALE_X(sc);
+        map.flushObjectChanges(creature);
+        const entry = creature.spawn.entry;
+        if (auto t = entry in context.data.creatureTemplates)
+            t.scale = sc;
+        context.database.updateCreatureScale(entry, sc);
+        return true;
+    }
+
     bool handleRemoveRessurectionSickessAuraCommand()
     {
         enum uint resurrectionSickness = 15007;
@@ -1796,6 +1815,22 @@ unittest
         gm.say(".character resetskills");
         assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTBLUE ~ "Reset skills to default.|r"]);
         assert(victim.skillValue(164)[1] == 0 && victim.skillList().length > 0);
+    }
+
+    // `.fixscale` on the innkeeper.
+    {
+        import dmangos.world.creature : Creature;
+        import dmangos.world.objects : HighGuid, makeGuid;
+        import dmangos.world.updatefields : OBJECT_FIELD_SCALE_X;
+
+        auto keeper = cast(Creature) context.map(0).findObject(makeGuid(HighGuid.unit, creatureInnkeeper, innkeeperSpawn));
+        gm.write(Opcode.CMSG_SET_SELECTION, ClientGuid(keeper.guid));
+        gm.say(".fixscale 0.05");
+        assert(systemMessages(gm.read()).length > 0, "too small: the help");
+        gm.say(".fixscale 2");
+        gm.read();
+        assert(keeper.values.get!OBJECT_FIELD_SCALE_X == 2.0f && db.creatureScales[creatureInnkeeper] == 2.0f);
+        assert(context.data.creatureTemplates[creatureInnkeeper].scale == 2.0f);
     }
 
     anduin.session.addAura(makeAura(&context.data.spells.spells[sickness], victim.guid, 1, 600_000, false, [-75, 0, 0]));
