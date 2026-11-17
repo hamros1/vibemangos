@@ -80,10 +80,11 @@ ulong costOf(const CellCosts costs, uint map, CellRect rect) pure @safe
 /**
  * Divides the maps into regions until none holds more than 1/`count` of the world's cost (or cannot
  * be split, its cost all in one cell), splitting the most expensive region first: a continent is cut
- * into many regions, a small dungeon stays one. Every map is at least one region. Regions get ids
- * from 1, are unowned, and have epoch 0.
+ * into many regions, a small dungeon stays one. Every map is at least one region; a map in `whole` (a
+ * dungeon: one node hosts all its copies) is exactly one. Regions get ids from 1, are unowned, and
+ * have epoch 0.
  */
-Region[] partition(const uint[] maps, const CellCosts costs, size_t count)
+Region[] partition(const uint[] maps, const CellCosts costs, size_t count, const bool[uint] whole = null)
 {
     static struct Leaf
     {
@@ -98,6 +99,7 @@ Region[] partition(const uint[] maps, const CellCosts costs, size_t count)
     foreach (map; maps)
     {
         leaves ~= Leaf(map, CellRect.init, costOf(costs, map, CellRect.init));
+        leaves[$ - 1].splittable = (map in whole) is null;
         total += leaves[$ - 1].cost;
     }
     const limit = count ? total / count : total;
@@ -384,6 +386,9 @@ unittest
     // Same input, same regions.
     assert(partition([0u, 1, 2], costs, 5) == regions);
     assert(partition([0u, 1, 2, 3, 4], costs, 1).length == 5, "one region per map is enough for 1");
+    assert(partition([0u, 1, 2], costs, 5, [0: true]).length < regions.length, "map 0 is kept whole");
+    foreach (r; partition([0u, 1, 2], costs, 5, [0: true]))
+        assert(r.map != 0 || r.rect == CellRect.init);
 }
 
 unittest

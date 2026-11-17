@@ -84,6 +84,7 @@ mixin template GmTargets()
         m.gmCanKickGms = canUseCommand('z');
         m.target = remote.entry.guid;
         m.map = player.data.map;
+        m.instance = instanceId_;
         const at = player.position;
         m.x = at.x;
         m.y = at.y;
@@ -105,10 +106,11 @@ mixin template GmTargets()
         case GmRemoteOp.kick:
             return kickedBy(gm, m.gmName, m.gmCanKickGms, m.text);
         case GmRemoteOp.summon:
-            return summonedBy(gm, m.gmName, m.map, Position(m.x, m.y, m.z, m.orientation));
+            return summonedBy(gm, m.gmName, m.map, Position(m.x, m.y, m.z, m.orientation), m.instance);
         case GmRemoteOp.appear:
-            return appearedToBy(gm, m.gmName, (uint map, Position at, uint) {
+            return appearedToBy(gm, m.gmName, (uint map, Position at, uint instance) {
                 GmRemote back;
+                back.instance = instance;
                 back.op = GmRemoteOp.appearAt;
                 back.gm = m.gm;
                 back.target = m.gm;
@@ -120,7 +122,7 @@ mixin template GmTargets()
                 reply(back);
             });
         case GmRemoteOp.appearAt:
-            commandTeleport(m.map, Position(m.x, m.y, m.z, m.orientation));
+            commandTeleport(m.map, Position(m.x, m.y, m.z, m.orientation), m.instance);
             return;
         case GmRemoteOp.disconnect:
             return disconnectedBy(gm, m.gmName);
@@ -160,6 +162,7 @@ mixin template GmTargets()
         m.gmName = player.data.name;
         m.gmCanKickGms = canUseCommand('z');
         m.map = player.data.map;
+        m.instance = instanceId_;
         const at = player.position;
         m.x = at.x;
         m.y = at.y;

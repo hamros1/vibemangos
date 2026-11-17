@@ -192,8 +192,9 @@ What works now:
     dungeon returns to its copy; a GM's `.appear` and `.summon` go into the other's copy, and ArcEmu's
     `.instance` commands and `.character showinstances` work on the copies; a full copy
     (`instance_template.maxPlayers`) turns others away, game masters aside. Not yet: encounter
-    state, resets at fixed weekly times, the reset warnings; a cluster keeps one shared copy of
-    each dungeon.
+    state, resets at fixed weekly times, the reset warnings. In a cluster each dungeon is one region
+    and its node hosts every copy of it; a player going in from another node moves there first
+    (docs/CLUSTER.md).
   * **Groups:** invitations, parties and raids of up to 40 in eight sub-groups, leaders and
     assistants, kicking, leaving, loot settings, raid target icons, ready checks, rolls, minimap
     pings, and member stats for members out of sight. Groups are kept in `groups` and

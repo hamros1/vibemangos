@@ -24,7 +24,7 @@ import dmangos.cluster.regions : Region;
 import dmangos.serialization : deserialize, LengthPrefix, serialize;
 
 /// Changes whenever a message changes; nodes speaking another version are turned away.
-enum ushort protocolVersion = 17;
+enum ushort protocolVersion = 18;
 
 /// Size of a frame header.
 enum frameHeaderSize = 16;
@@ -208,6 +208,7 @@ struct IdReport
     uint item;
     uint mail;
     uint group;
+    uint instance;
 }
 
 /// The cells of a map the sender's players became near (`added`) and left (`removed`) (phase 3).
@@ -505,6 +506,7 @@ struct GmRemote
     uint map;
     float x, y, z, orientation;
     @LengthPrefix!uint string text;
+    uint instance = uint.max; /// the dungeon copy at `map` (`summon`, `appearAt`); uint.max: none known
 }
 
 /**

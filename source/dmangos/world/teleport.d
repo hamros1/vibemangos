@@ -67,10 +67,14 @@ private:
      * `Player::TeleportTo`: false if the destination is not valid or the player may not enter the
      * map. `trigger` is the area trigger walked into, if any; a teleport to another map without one
      * is checked against that map's entrance. `toInstance` is the dungeon copy to go into (a GM
-     * appearing to a player there); by default the player's own (`instanceFor`).
+     * appearing to a player there); by default the player's own (`instanceFor`). `checked`: the
+     * entrance was checked on the node the player came from (it moved here to go in).
+     *
+     * In a cluster, a dungeon another node hosts is entered there: the player moves to that node
+     * first (`migrateTo`), which teleports it into its copy.
      */
     package bool teleportTo(uint mapId, Position destination, const(AreaTriggerTeleport)* trigger = null,
-        uint toInstance = uint.max)
+        uint toInstance = uint.max, bool checked = false)
     {
         const client = context.client;
         if (!client.isValidMapCoord(mapId, destination.x, destination.y, destination.z, destination.orientation))
@@ -83,7 +87,7 @@ private:
         if (mapEntry.isBattleground)
             return false; // only through a battleground queue, which does not exist yet
 
-        if (player.data.map != mapId && trigger is null)
+        if (player.data.map != mapId && trigger is null && !checked)
             trigger = context.data.mapEntranceTrigger(mapId, client);
         if (trigger !is null)
         {
@@ -94,6 +98,27 @@ private:
                 sendLockStatus(*trigger, status, requirement);
                 return false;
             }
+        }
+
+        if (context.instanceable(mapId) && !context.hostsDungeon(mapId))
+        {
+            import dmangos.world.inworld : ArrivalAction;
+
+            const host = context.dungeonHost(mapId);
+            if (host == 0 || context.playerRelay is null || !context.canWrite() || transferring)
+            {
+                enum ubyte transferAbortNotFound = 0x02; // nobody hosts it this moment (its node is changing)
+                deliver(Opcode.SMSG_TRANSFER_ABORTED, [transferAbortNotFound]);
+                return false;
+            }
+            ArrivalAction action;
+            action.teleportMap = mapId;
+            action.teleportTo = destination;
+            action.teleportInstance = toInstance;
+            info!"%s: '%s' goes into map %s, which node %s hosts: moving there"(remoteAddress, player.data.name, mapId,
+                host);
+            migrateTo(host, action);
+            return true;
         }
 
         // A raid's lockout: bound to another copy than the group's, it does not go in.
@@ -156,6 +181,8 @@ private:
                 entryPoint = player.position;
             }
             instanceId_ = instance;
+            if (toInstance != uint.max && account.level < AccountLevel.gameMaster)
+                context.bindOnEntering(player.guid, mapId, instance);
             player.data.map = mapId;
             player.movement.position = destination;
             send(ServerNewWorld(mapId, destination.x, destination.y, destination.z, destination.orientation));
@@ -589,4 +616,168 @@ unittest
     assert(again.instanceCount == 2);
     assert(again.instanceFor(7, mapMoltenCore) == his, "his lockout");
     assert(again.deadInInstance(his, 56000), "its dead stay dead");
+}
+
+/**
+ * Dungeons in a cluster (docs/CLUSTER.md, phase 8): node 2 hosts the Deadmines, node 1 the ground
+ * outside. A player on node 1 going in moves to node 2 first and gets its copy there, with an id of
+ * the cluster's; another player sent into that copy (as `.appear` and `.summon` do) joins it there;
+ * `.instance exit` brings the first out, and on node 1's ground it moves back home. A player saved
+ * in the dungeon logging in on node 1 goes to node 2, into the copy it is bound to.
+ */
+unittest
+{
+    import std.format : format;
+    import dmangos.auth.accounts : AccountLevel;
+    import dmangos.world.context : PlayerRelay, WorldContext;
+    import dmangos.world.session : WorldSession, WorldState;
+
+    auto db = newDatabase();
+    WorldContext[ushort] nodes = [1: newCreationContext(db), 2: newCreationContext(db)];
+    auto now = MonoTime.currTime;
+    foreach (id, node; nodes)
+    {
+        node.nodeId = id;
+        node.clock = () => now;
+        node.regionOwnerAround = (uint m, Position, float) => m == mapDeadmines ? ushort(2) : ushort(1);
+    }
+
+    static final class Mesh
+    {
+        WorldContext[ushort] nodes;
+        WorldSession[uint][ushort] remotes; // node -> account -> owner-side session
+        string[] log;
+    }
+    static final class Relay : PlayerRelay
+    {
+        Mesh mesh;
+        ushort self;
+        this(Mesh mesh, ushort self) { this.mesh = mesh; this.self = self; }
+        void toHome(ushort home, uint account, ushort opcode, const(ubyte)[] body_)
+        {
+            (cast(WorldSession) mesh.nodes[home].sessionOf(account)).fromOwner(opcode, body_);
+        }
+        void toOwner(ushort owner, uint account, ushort opcode, const(ubyte)[] body_)
+        {
+            if (auto s = account in mesh.remotes.require(owner, null))
+                s.fromHome(opcode, body_);
+        }
+        void disconnect(ushort owner, uint account) { mesh.remotes[owner][account].clientGone(); }
+        void migrate(ushort target, uint account, const(ubyte)[] state)
+        {
+            mesh.log ~= format!"migrate %s->%s"(self, target);
+            if (auto home = cast(WorldSession) mesh.nodes[target].sessionOf(account))
+                if (home.state == WorldState.elsewhere)
+                {
+                    assert(home.arrive(state));
+                    return;
+                }
+            const homeNode = WorldSession.migrationHome(state);
+            auto session = new WorldSession(mesh.nodes[target], WorldSession.migrationAccount(state),
+                homeNode ? homeNode : self);
+            mesh.remotes.require(target, null)[account] = session;
+            assert(session.arrive(state));
+        }
+        void left(ushort home, uint account, bool toCharacterScreen)
+        {
+            (cast(WorldSession) mesh.nodes[home].sessionOf(account)).ownerLeft(toCharacterScreen);
+        }
+        void remoteDone(uint account) { mesh.remotes[self].remove(account); }
+        void moved(ushort home, uint account, ushort next)
+        {
+            (cast(WorldSession) mesh.nodes[home].sessionOf(account)).ownerMoved(next);
+        }
+    }
+    auto mesh = new Mesh;
+    mesh.nodes = nodes;
+    foreach (id, node; nodes)
+        node.playerRelay = new Relay(mesh, id);
+    assert(nodes[2].hostsDungeon(mapDeadmines) && !nodes[1].hostsDungeon(mapDeadmines));
+    assert(nodes[1].instanceFor(7, mapDeadmines) == 0, "node 1 does not choose copies of node 2's dungeon");
+
+    const outside = Position(deadminesEntrance[0], deadminesEntrance[1], deadminesEntrance[2]);
+    auto anduin = loggedIn(nodes[1], db, 7, "Anduin", outside, AccountLevel.administrator, raceHuman,
+        mapEasternKingdoms, 60);
+    auto jaina = loggedIn(nodes[1], db, 8, "Jaina", outside, AccountLevel.player, raceHuman, mapEasternKingdoms, 60);
+    anduin.read();
+    jaina.read();
+    const anduinAccount = db.loadable[7].account, jainaAccount = db.loadable[8].account;
+
+    // In: node 1 sends Anduin to node 2, which teleports him into a copy of its own making.
+    anduin.say(".worldport 36 -16 -383 61");
+    assert(mesh.log == ["migrate 1->2"] && anduin.session.state == WorldState.elsewhere);
+    auto there = mesh.remotes[2][anduinAccount];
+    there.update(1.seconds); // the arrival: the teleport, its packets through node 1 to the client
+    assert(opcodesOf(anduin.read()).canFind(Opcode.SMSG_NEW_WORLD));
+    anduin.write(Opcode.MSG_MOVE_WORLDPORT_ACK, null);
+    const copy = there.instanceId;
+    assert(copy && nodes[2].instanceMap(copy).population == 1 && nodes[1].instanceCount == 0);
+    assert(db.loadInstances().instances.canFind!(r => r.id == copy && r.map == mapDeadmines), "saved");
+
+    // Jaina is sent into Anduin's copy: she moves to node 2 and goes into that one.
+    jaina.session.commandTeleport(mapDeadmines, Position(-16, -381, 61), copy);
+    auto hers = mesh.remotes[2][jainaAccount];
+    hers.update(1.seconds);
+    jaina.write(Opcode.MSG_MOVE_WORLDPORT_ACK, null);
+    assert(hers.instanceId == copy && nodes[2].instanceMap(copy).population == 2);
+    assert(nodes[2].seeEachOther(7, 8));
+
+    // Out: Anduin goes back where he came in from, and on node 1's ground he moves back home.
+    anduin.say(".instance exit");
+    anduin.write(Opcode.MSG_MOVE_WORLDPORT_ACK, null);
+    assert(there.instanceId == 0 && there.character.data.map == mapEasternKingdoms);
+    now += 11.seconds;
+    there.update(1.seconds);
+    assert(mesh.log[$ - 1] == "migrate 2->1" && anduin.session.state == WorldState.inWorld);
+    assert(anduin.session.instanceId == 0 && nodes[1].onlinePlayer(anduin.session.character.guid) !is null);
+
+    // Jaina logs out in the dungeon; logging in again on node 1, she goes to node 2, into her copy.
+    jaina.write(Opcode.CMSG_LOGOUT_REQUEST, null);
+    now += 30.seconds;
+    hers.update(30.seconds);
+    assert(jaina.session.state == WorldState.characterScreen);
+    db.moveOfflineCharacter(8, mapDeadmines, -16, -381, 61, 1581); // as she was saved (the memory database keeps no progress)
+    jaina.write(Opcode.CMSG_PLAYER_LOGIN, ClientPlayerLogin(8));
+    jaina.read();
+    assert(jaina.session.instanceId == 0, "node 1 has no copy for her");
+    jaina.session.update(1.seconds);
+    assert(mesh.log[$ - 1] == "migrate 1->2");
+    assert(mesh.remotes[2][jainaAccount].instanceId == copy, "the copy she is bound to");
+}
+
+/**
+ * A dungeon's region moving to another node (a rebalance, a takeover): the new host reads the copies,
+ * binds and dead the last host saved, and goes on with ids above them; the last host forgets them
+ * (from memory: the rows are the new host's now).
+ */
+unittest
+{
+    import dmangos.cluster.regions : Region;
+
+    auto db = newDatabase();
+    auto a = newCreationContext(db), b = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    ushort host = 1;
+    a.nodeId = 1;
+    b.nodeId = 2;
+    foreach (n; [a, b])
+    {
+        n.clock = () => now;
+        n.regionOwnerAround = (uint, Position, float) => host;
+    }
+    const copy = a.instanceFor(7, mapDeadmines);
+    assert(copy && b.instanceFor(7, mapDeadmines) == 0, "node 2 does not host it");
+    db.saveInstanceRespawn(false, 79999, copy, 0); // a creature killed there
+
+    host = 2;
+    ubyte[][uint] leaving;
+    const dungeon = [Region(40, mapDeadmines)];
+    a.regionsChanged(null, dungeon, null, leaving);
+    b.regionsChanged(dungeon, null, null, leaving);
+    assert(b.instanceFor(7, mapDeadmines) == copy, "the bind, as saved");
+    assert(b.deadInInstance(copy, 79999), "its dead stay dead");
+    const another = b.instanceFor(8, mapDeadmines);
+    assert(another && another > copy, "new ids above the saved ones");
+    assert(a.instanceState(copy) is null, "node 1 forgot it");
+    assert(db.loadInstances().instances.length == 2, "and deleted nothing");
 }

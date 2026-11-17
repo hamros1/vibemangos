@@ -221,7 +221,10 @@ the public fields with health in percent. `Player` names these three views `View
 dungeon's copy (`Map.instanceId`), made by `instanceFor` from the group's or the player's bind, its
 spawns loaded by `spawnCellIn` without those killed or used up in it, and dropped with its binds
 when it has been empty for `instance_unload_delay_seconds`. A session's `instanceId` says which
-copy it is on. A session joins its map in
+copy it is on. In a cluster only the node hosting a dungeon (`hostsDungeon`: the owner of its one
+region) chooses, makes, saves and resets its copies; instance ids come from the coordinator's
+blocks (`IdKind.instance`), and a node that gains or loses a dungeon's region reads or forgets its
+copies (`dungeonGained`, `dungeonLost`). A session joins its map in
 `context.enterWorld` and leaves it in `context.leaveWorld`. The context also indexes the players
 online by guid and by name, for name queries and whispers.
 

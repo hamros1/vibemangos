@@ -41,7 +41,8 @@
   knockbacks and taxis when those exist.
 * **Instances:** each group gets its own copy of a dungeon, saved with its binds and dead; raids
   reset `reset_delay` days after they were made rather than at fixed weekly times, encounters are
-  not tracked, and in a cluster every dungeon is one shared copy.
+  not tracked. In a cluster a dungeon's copies are all on the node owning its one region; when that
+  region moves, the copies' creatures start again from their spawns (minus the dead).
   Area trigger scripts (`scripted_areatrigger`) do nothing. Battlegrounds cannot be entered.
 * **Groups:** an offline leader is not replaced after a while (that needs a timer). Loot
   settings decide who loots. The ignore list does not exist, so nobody can be

@@ -334,10 +334,14 @@ private CoordinatorSetup coordinatorSetup(uint regionCount, WorldData data, Clie
             foreach (cell, spawns; byCell)
                 costs[map][cell] = costs.get(map, null).get(cell, 0) + cast(uint) spawns.length;
     uint[] maps;
-    foreach (ref entry; client.maps.rows)
-        maps ~= entry.mapId;
     CoordinatorSetup setup;
-    setup.regions = partition(maps, costs, regionCount);
+    foreach (ref entry; client.maps.rows)
+    {
+        maps ~= entry.mapId;
+        if (entry.isDungeon)
+            setup.whole[entry.mapId] = true; // one node hosts all of a dungeon's copies
+    }
+    setup.regions = partition(maps, costs, regionCount, setup.whole);
     foreach (ref r; setup.regions)
         setup.cost[r.id] = costOf(costs, r.map, r.rect);
     setup.ids = context;

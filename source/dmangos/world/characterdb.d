@@ -55,6 +55,7 @@ struct GuidCounters
     uint item = 1;
     uint mail = 1;
     uint group = 1;
+    uint instance = 1;
 }
 
 /// A `groups` row with its `group_member` rows (`Group::LoadGroupFromDB`, `LoadMemberFromDB`).
@@ -119,6 +120,7 @@ final class CharacterStatements
         next.mail = maxPlusOne!("SELECT GREATEST(IFNULL((SELECT MAX(id) FROM mail), 0), "
             ~ "IFNULL((SELECT MAX(id) FROM item_text), 0), IFNULL((SELECT MAX(id) FROM auction), 0))");
         next.group = maxPlusOne!"SELECT MAX(groupId) FROM `groups`";
+        next.instance = maxPlusOne!"SELECT MAX(id) FROM instance";
         return next;
     }
 

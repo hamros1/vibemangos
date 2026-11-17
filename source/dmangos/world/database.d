@@ -1192,7 +1192,11 @@ final class MemoryWorldDatabase : WorldDatabase
             foreach (record; list)
                 if (record.guid > highest)
                     highest = record.guid;
-        return GuidCounters(highest + 1, 1, 1, 1);
+        uint instance;
+        foreach (r; instanceRows.instances)
+            if (r.id > instance)
+                instance = r.id;
+        return GuidCounters(highest + 1, 1, 1, 1, instance + 1);
     }
 
     bool nameTaken(string name)

@@ -574,7 +574,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             config.gridCleanUpDelay * 1000),
             &serverTime, spawner, terrain(id), owns);
         created.instanceId = instance;
-        created.replicator = replicator;
+        if (instance == 0) // a dungeon's copies are all on one node: nobody else needs replicas of them
+            created.replicator = replicator;
         created.onCorpseRemoved = &corpseRemoved;
         created.onReplicaNoticing = &replicaNoticing;
         created.onTrap = (Inhabitant who, GameObject trap) { trapSprung(created, who, trap); };
@@ -622,29 +623,46 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     private InstanceState[uint] instances;     // instance id -> its state
     private uint[uint][ulong] playerBinds;     // player guid -> map id -> instance (`character_instance`)
     private uint[uint][ulong] groupBinds;      // group leader guid -> map id -> instance (`group_instance`)
-    private uint lastInstance;
 
     /**
      * Whether map `mapId` is a dungeon whose groups each get a copy of it (`Map::Instanceable`).
-     * In a cluster a dungeon stays one copy (its region's node simulates it; instances do not move
-     * between nodes yet).
+     * In a cluster a dungeon is one region (never split), and the node owning it hosts every copy.
      */
     bool instanceable(uint mapId)
     {
         const entry = client.maps.lookup(mapId);
-        return entry !is null && entry.isDungeon && replicator is null && ownsCell is null;
+        return entry !is null && entry.isDungeon;
+    }
+
+    /**
+     * The node hosting dungeon `mapId`'s copies: the owner of its one region; this node standalone;
+     * 0 while nobody owns it (a lost owner's lease not over yet).
+     */
+    ushort dungeonHost(uint mapId)
+    {
+        if (regionOwnerAround is null)
+            return nodeId;
+        return regionOwnerAround(mapId, Position(0, 0, 0), 0);
+    }
+
+    /// Whether this node hosts dungeon `mapId`'s copies: it decides which one a player goes into.
+    bool hostsDungeon(uint mapId)
+    {
+        return regionOwnerAround is null || dungeonHost(mapId) == nodeId;
     }
 
     /**
      * `Player::GetBoundInstance` and `MapManager::CreateInstance`: the instance of `mapId` the player
      * goes into: its group's, else its own, else a new one, to which it (and its group) are bound.
-     * 0 for a map that is not instanced.
+     * 0 for a map that is not instanced, or (in a cluster) a dungeon another node hosts: the player
+     * goes there (`InWorldHandlers.migrateTo`), and gets its copy there.
      */
     uint instanceFor(ulong player, uint mapId)
     {
-        import dmangos.log : info;
+        import dmangos.cluster.ownership : IdKind;
+        import dmangos.log : info, warning;
 
-        if (!instanceable(mapId))
+        if (!instanceable(mapId) || !hostsDungeon(mapId))
             return 0;
         auto group = groups.of(player);
         const raid = client.maps.lookup(mapId).isRaid;
@@ -664,9 +682,12 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                     chosen = *bound;
         if (!chosen)
         {
-            import core.time : days;
-
-            chosen = ++lastInstance;
+            // Ids are the cluster's (each node makes the copies of its own dungeons).
+            if (!takeId(IdKind.instance, chosen) || chosen == 0)
+            {
+                warning!"instance of map %s not made: no instance ids (the coordinator's next block has not come)"(mapId);
+                return 0;
+            }
             const resetAt = raid ? unixTime + data.instanceResetDays.get(mapId, 7) * 86_400 : 0;
             instances[chosen] = InstanceState(mapId, resetAt, unixTime);
             database.saveInstance(chosen, mapId, resetAt);
@@ -683,6 +704,18 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             database.saveInstanceBind(true, cast(uint) group.leader, chosen, raid);
         }
         return chosen;
+    }
+
+    /**
+     * `DungeonMap::Add`: a player who is not a game master, sent into a copy of `mapId` (summoned,
+     * appearing), is bound to it unless it is bound to a copy of that map already.
+     */
+    void bindOnEntering(ulong player, uint mapId, uint instance)
+    {
+        if (!instance || instance !in instances || mapId in playerBinds.get(player, null))
+            return;
+        playerBinds.require(player, null)[mapId] = instance;
+        database.saveInstanceBind(false, cast(uint) player, instance, instances[instance].resetAt != 0);
     }
 
     /**
@@ -704,29 +737,86 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     /// The instances saved: their rows, binds and dead (`InstanceSaveManager::LoadFromDB`).
     private void loadInstances()
     {
+        loadInstancesOf((uint) => true);
+    }
+
+    /// The saved instances of the maps `which` accepts, read anew (replacing what was known of them).
+    private void loadInstancesOf(scope bool delegate(uint mapId) which)
+    {
+        import dmangos.cluster.ownership : IdKind;
+
         const saved = database.loadInstances();
         foreach (r; saved.instances)
-        {
-            instances[r.id] = InstanceState(r.map, r.resetTime, unixTime);
-            if (r.id > lastInstance)
-                lastInstance = r.id;
-        }
+            if (which(r.map))
+            {
+                instances[r.id] = InstanceState(r.map, r.resetTime, unixTime);
+                raise(IdKind.instance, r.id + 1);
+            }
         foreach (b; saved.binds)
             if (auto state = b.instance in instances)
-            {
-                if (b.group)
-                    groupBinds.require(b.owner, null)[state.mapId] = b.instance;
-                else
-                    playerBinds.require(b.owner, null)[state.mapId] = b.instance;
-            }
+                if (which(state.mapId))
+                {
+                    if (b.group)
+                        groupBinds.require(b.owner, null)[state.mapId] = b.instance;
+                    else
+                        playerBinds.require(b.owner, null)[state.mapId] = b.instance;
+                }
         foreach (r; saved.respawns)
             if (auto state = r.instance in instances)
+                if (which(state.mapId))
+                {
+                    if (r.gameObject)
+                        state.usedUp[r.spawnGuid] = true;
+                    else
+                        state.dead[r.spawnGuid] = true;
+                }
+    }
+
+    /**
+     * A dungeon's copies are another node's now (its region moved): what this node knew of them goes
+     * from memory (not from the database, which the new host reads). A copy with players in it stays
+     * until they have moved on (`unloadEmptyInstances`).
+     */
+    private void dungeonLost(uint mapId)
+    {
+        foreach (id; instances.keys)
+            if (instances[id].mapId == mapId)
             {
-                if (r.gameObject)
-                    state.usedUp[r.spawnGuid] = true;
-                else
-                    state.dead[r.spawnGuid] = true;
+                const m = instanceMaps.get(id, null);
+                if (m is null || m.population == 0)
+                    forgetInstance(id);
             }
+    }
+
+    /// This node hosts dungeon `mapId` now: its copies, binds and dead as the last host saved them.
+    private void dungeonGained(uint mapId)
+    {
+        import dmangos.log : info;
+
+        foreach (id; instances.keys)
+            if (instances[id].mapId == mapId && instanceMaps.get(id, null) is null)
+                forgetInstance(id);
+        loadInstancesOf((uint m) => m == mapId);
+        size_t count;
+        foreach (ref state; instances)
+            count += state.mapId == mapId;
+        if (count)
+            info!"cluster: dungeon map %s is hosted here now, with %s saved instances"(mapId, count);
+    }
+
+    /// An instance gone from this node's memory only (another node hosts it).
+    private void forgetInstance(uint id)
+    {
+        instances.remove(id);
+        instanceMaps.remove(id);
+        foreach (ref binds; playerBinds)
+            foreach (mapId, instance; binds.dup)
+                if (instance == id)
+                    binds.remove(mapId);
+        foreach (ref binds; groupBinds)
+            foreach (mapId, instance; binds.dup)
+                if (instance == id)
+                    binds.remove(mapId);
     }
 
     /// Whether creature spawn `spawnGuid` is dead in instance `instance`.
@@ -780,7 +870,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         import core.time : seconds;
         import dmangos.log : info;
 
-        uint[] gone;
+        uint[] gone, elsewhere;
         const time = unixTime;
         foreach (id, ref state; instances)
         {
@@ -788,6 +878,11 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             if (m !is null && m.population > 0)
             {
                 state.emptySince = MonoTime.init;
+                continue;
+            }
+            if (!hostsDungeon(state.mapId))
+            {
+                elsewhere ~= id; // another node's (or nobody's yet): it saves and resets its copies, not this one
                 continue;
             }
             if (state.emptySince == MonoTime.init)
@@ -801,6 +896,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                     gone ~= id;
             }
         }
+        foreach (id; elsewhere)
+            forgetInstance(id);
         foreach (id; gone)
         {
             info!"instance %s of map %s reset: empty for %s seconds"(id, instances[id].mapId, config.instanceUnloadDelay);
@@ -907,6 +1004,12 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         import dmangos.log : info;
 
         foreach (ref r; lost)
+            if (instanceable(r.map))
+                dungeonLost(r.map);
+        foreach (ref r; gained)
+            if (instanceable(r.map))
+                dungeonGained(r.map);
+        foreach (ref r; lost)
             if (auto m = r.map in maps)
             {
                 if (r.next) // moving to another node: its objects go along (phase 4)
@@ -961,6 +1064,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         raise(IdKind.item, saved.item);
         raise(IdKind.mail, saved.mail);
         raise(IdKind.group, saved.group);
+        raise(IdKind.instance, saved.instance);
         if (groups.nextId < next.group)
             groups.nextId = next.group;
     }
@@ -981,6 +1085,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         case IdKind.item: return &next.item;
         case IdKind.mail: return &next.mail;
         case IdKind.group: return &groups.nextId; // the groups keep their own counter
+        case IdKind.instance: return &next.instance;
         }
     }
 

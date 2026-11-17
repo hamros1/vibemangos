@@ -817,9 +817,38 @@ player goes there.
   row is guarded by what was seen of it (README's "Auctions"); the coordinator settles those over.
 * **Flights** stay on the node they start on until they land: the server follows the flight there,
   and the first move after landing moves the player on if the ground is another node's.
-* **Dungeon instances** are a standalone server's for now: in a cluster each dungeon map stays one
-  copy, simulated by the node owning its region (moving copies between nodes, with their binds, is
-  not done).
+* **Dungeon instances:** a dungeon (a map that `Map.dbc` calls an instance or a raid) is always one
+  region: `partition` never cuts it and a hot one is not split (`RegionAuthority.wholeMaps`). The
+  node owning that region hosts every copy of the dungeon: it alone chooses which copy a player
+  goes into (`instanceFor`: the raid lockout, the group's bind, its own), makes copies, binds
+  players and groups, records the dead, and resets empty copies. Instance ids are the cluster's
+  (`IdKind.instance`, blocks from the coordinator, protocol 18), so two hosts never make the same.
+  * **Going in:** a teleport into a dungeon another node hosts (a portal, `.worldport`, a summon,
+    `.appear`) checks the entrance where the player is, then moves the player to the host with the
+    teleport as its arrival action; the host turns it away (a lockout, a full copy) or teleports it
+    into its copy, and the client sees the usual loading screen. A player turned away there goes
+    back to its ground's node at the next look. `.summon` and `.appear` across nodes carry the
+    copy, so the player lands in the GM's (or the target's) copy; a player sent into a copy that way
+    is bound to it if it was bound to none (`DungeonMap::Add`), game masters aside.
+  * **Coming out and moving:** a move between nodes carries the copy a player is in and where it
+    came in from (`.instance exit`). Leaving a dungeon is an ordinary far teleport on the host; on
+    another node's ground the player moves there at the next look. A player saved in a dungeon who
+    logs in on another node moves to the host at once, into the copy it is bound to.
+  * **The region moving** (a rebalance, a takeover): the new host reads the dungeon's copies,
+    binds and dead from the database (`dungeonGained`); the old one forgets them from memory
+    (`dungeonLost`; a copy with players in it once they have moved on) and deletes nothing. A copy's
+    creatures are not carried: on the new host they come back from their spawns, minus the dead.
+  * **GM commands:** `.instance info`, `.instance shutdown`, `.instance reset` and
+    `.character showinstances` see the copies of the dungeons the GM's node hosts (a GM inside one is
+    on its host); a dungeon of another node shows no copies.
+  * **Tested:** unit tests with two nodes in memory: a player on node 1 going into node 2's
+    Deadmines moves there and gets a copy with a cluster id; another player sent into that copy
+    joins it there; `.instance exit` brings the first out and home; a player saved in the dungeon
+    logs in on node 1 and goes into its bound copy on node 2; a dungeon's region moving to another
+    node keeps its copies, binds and dead. Live, two nodes, node 1 hosting the Deadmines: Gamma,
+    connected to node 2 and simulated there in Orgrimmar, `.worldport`ed into the Deadmines, moved to
+    node 1 and was in its copy within the second (`.instance info`: in use, one player); `.instance
+    exit` took it back to Orgrimmar, and it moved back to node 2 two seconds later.
 * **Scripts and summons** run on the node of the map cell where they started (`dbscripts.d` keeps
   them in the node's context); a summoned creature's guid comes from its node's own range, so two
   nodes never make the same one. A summon is not handed over with its cell: it is dropped there.

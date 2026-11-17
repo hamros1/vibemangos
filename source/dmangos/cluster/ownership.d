@@ -74,6 +74,9 @@ final class RegionAuthority
     /// ditto
     Balancing balancing;
 
+    /// Maps never split (dungeons: one node hosts every copy of one, so its region stays whole).
+    bool[uint] wholeMaps;
+
     /**
      * `regions` from `partition`, with what each costs; `incarnation` is the coordinator's (epochs
      * start above anything an earlier coordinator granted).
@@ -379,7 +382,7 @@ final class RegionAuthority
             return;
         Region* hottest;
         foreach (ref r; regions_)
-            if (r.owner == busiest && r.state == RegionState.granted
+            if (r.owner == busiest && r.state == RegionState.granted && r.map !in wholeMaps
                 && (r.id !in splitAt || now - splitAt[r.id] >= balancing.interval) // measured since
                 && (hottest is null || cost.get(r.id, 0) > cost.get(hottest.id, 0)))
                 hottest = &r;
@@ -702,6 +705,7 @@ enum IdKind : ubyte
     item = 1,
     mail = 2,
     group = 3,
+    instance = 4, /// dungeon copies: each is made by its dungeon's node, so the ids must not collide
 }
 
 /// The coordinator's id counters, which the world server keeps (`GuidCounters`).
@@ -895,7 +899,7 @@ unittest
     auto pool = new IdPool(10);
     uint id;
     assert(!pool.take(IdKind.item, id));
-    assert(pool.wanted() == [IdKind.character, IdKind.item, IdKind.mail, IdKind.group]);
+    assert(pool.wanted() == [IdKind.character, IdKind.item, IdKind.mail, IdKind.group, IdKind.instance]);
     assert(pool.wanted().length == 0, "asked once");
     pool.granted(IdKind.item, 100, 10);
     assert(pool.take(IdKind.item, id) && id == 100);

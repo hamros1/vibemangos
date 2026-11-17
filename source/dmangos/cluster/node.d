@@ -39,6 +39,7 @@ struct CoordinatorSetup
     Region[] regions;     /// from `partition`
     ulong[uint] cost;     /// what each region costs, by id
     IdCounters ids;
+    bool[uint] whole;     /// maps that stay one region (dungeons: one node hosts all their copies)
 }
 
 /**
@@ -313,6 +314,7 @@ final class ClusterNode : LinkOwner
             members = [self];
             viewVersion = 1;
             authority = new RegionAuthority(setup.regions, setup.cost, id, incarnation, lease, clock);
+            authority.wholeMaps = setup.whole;
             authority.balancing.interval = config.balanceIntervalSeconds.seconds;
             authority.balancing.minLoadUs = config.balanceMinLoadUs;
             authority.balancing.cooldown = config.regionCooldownSeconds.seconds;
@@ -531,7 +533,7 @@ final class ClusterNode : LinkOwner
         if (sessions !is null)
             sessions.claimAll(); // a new coordinator knows nothing of them
         link.send(IdReport(pool_.highest(IdKind.character), pool_.highest(IdKind.item),
-            pool_.highest(IdKind.mail), pool_.highest(IdKind.group)));
+            pool_.highest(IdKind.mail), pool_.highest(IdKind.group), pool_.highest(IdKind.instance)));
         pool_.reset();
     }
 
@@ -562,6 +564,7 @@ final class ClusterNode : LinkOwner
         const lease = config.leaseMs.msecs;
         authority = RegionAuthority.adopt(regions_.latestTable, regions_.latestVersion, standbySetup.cost.dup, id,
             live, old, lostCoordinatorHeard, lease, clock);
+        authority.wholeMaps = standbySetup.whole;
         authority.balancing.interval = config.balanceIntervalSeconds.seconds;
         authority.balancing.minLoadUs = config.balanceMinLoadUs;
         authority.balancing.cooldown = config.regionCooldownSeconds.seconds;
@@ -572,7 +575,7 @@ final class ClusterNode : LinkOwner
         if (onPromoted !is null)
             onPromoted();
         if (ids !is null && pool_ !is null)
-            foreach (kind; [IdKind.character, IdKind.item, IdKind.mail, IdKind.group])
+            foreach (kind; [IdKind.character, IdKind.item, IdKind.mail, IdKind.group, IdKind.instance])
                 ids.raise(kind, pool_.highest(kind));
         lastTakeoverSent = now;
         foreach (peer, _; takeoverPending)
@@ -787,6 +790,7 @@ final class ClusterNode : LinkOwner
                 ids.raise(IdKind.item, report.item);
                 ids.raise(IdKind.mail, report.mail);
                 ids.raise(IdKind.group, report.group);
+                ids.raise(IdKind.instance, report.instance);
                 return;
             default:
                 return;
@@ -1384,7 +1388,7 @@ version (unittest)
     /// The coordinator's counters, as the world server keeps them.
     private final class TestCounters : IdCounters
     {
-        uint[4] next = [10, 100, 1000, 5];
+        uint[5] next = [10, 100, 1000, 5, 1];
 
         uint take(IdKind kind, uint count)
         {

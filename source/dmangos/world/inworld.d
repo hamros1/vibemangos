@@ -26,6 +26,9 @@ struct ArrivalAction
     ulong useObject;   /// a game object to use
     ulong castObject;  /// the game object `spell` is cast at (a lock to open)
     ulong noticedBy;   /// a creature that noticed the player (it attacks, if it still would here)
+    uint teleportMap = uint.max; /// a far teleport into a dungeon this node hosts (uint.max: none) ...
+    Position teleportTo;         /// ... to here ...
+    uint teleportInstance = uint.max; /// ... into this copy (uint.max: the player's own), its checks passed
 }
 
 mixin template InWorldHandlers()
@@ -155,6 +158,15 @@ private:
         import dmangos.world.packets : ClientGuid;
         import dmangos.world.spellcast : SpellTargets, TargetFlags;
 
+        if (action.teleportMap != uint.max)
+        {
+            // Into a dungeon this node hosts: its copy is chosen here. Turned away (a lockout, a full
+            // copy), the player goes back to the node of the ground it stands on at the next look.
+            if (!teleportTo(action.teleportMap, action.teleportTo, null, action.teleportInstance, true))
+                migratedAt = MonoTime.init;
+            return;
+        }
+
         if (action.attack)
             handleAttackSwing(ClientGuid(action.attack));
         if (action.noticedBy)
@@ -234,6 +246,19 @@ private:
         w.put(action.useObject);
         w.put(action.castObject);
         w.put(action.noticedBy);
+        w.put(action.teleportMap);
+        w.put(action.teleportTo.x);
+        w.put(action.teleportTo.y);
+        w.put(action.teleportTo.z);
+        w.put(action.teleportTo.orientation);
+        w.put(action.teleportInstance);
+        // The dungeon copy it is in, and where it came into it from (`.instance exit`).
+        w.put(instanceId_);
+        w.put(entryMap);
+        w.put(entryPoint.x);
+        w.put(entryPoint.y);
+        w.put(entryPoint.z);
+        w.put(entryPoint.orientation);
         // The client's address and build, for `.playerinfo` there.
         w.put(cast(uint) address.length);
         w.putBytes(cast(const(ubyte)[]) address);
@@ -302,6 +327,12 @@ private:
         action.useObject = r.read!ulong;
         action.castObject = r.read!ulong;
         action.noticedBy = r.read!ulong;
+        action.teleportMap = r.read!uint;
+        action.teleportTo = Position(r.read!float, r.read!float, r.read!float, r.read!float);
+        action.teleportInstance = r.read!uint;
+        instanceId_ = r.read!uint;
+        entryMap = r.read!uint;
+        entryPoint = Position(r.read!float, r.read!float, r.read!float, r.read!float);
         carriedAddress = r.readString(r.read!uint).idup;
         build = r.read!uint;
 
@@ -310,6 +341,10 @@ private:
             return false;
         auto character = loaded.get;
         character.position = movement.position;
+        // In a dungeon this node hosts: its copy, if this node knows it (its last host saved it);
+        // else the one the player is bound to, or a new one (it logged in there on another node).
+        if (context.instanceable(character.map) && context.instanceState(instanceId_) is null)
+            instanceId_ = context.instanceFor(guid, character.map);
         player = makePlayer(character, false);
         player.movement = movement;
         saveTimer = IntervalTimer(context.config.playerSaveInterval.seconds);
