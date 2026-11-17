@@ -52,6 +52,16 @@ private:
         ubyte persistentDone; // effects whose persistent area is made (once a cast, not once a target)
     }
 
+    /// A missile's effect on its target, due when it arrives.
+    static struct PendingHit
+    {
+        const(SpellInfo)* spell;
+        size_t effect;
+        ulong target;
+        Casting casting;
+        int left;      // ms of flight left
+    }
+
     /// A persistent area aura's spot under way (`DynamicObject` with its aura).
     static struct PersistentArea
     {
@@ -74,6 +84,7 @@ private:
     bool bobberLooted;               // the catch is being looted: the bobber stays until then
     bool channelFailed;              // an effect of the spell failed (not fishable): no channel
     PersistentArea[] persistentAreas; // this caster's spots of persistent area auras
+    PendingHit[] pendingHits;         // missiles on their way: their effects when they arrive
     ulong channelTarget;             // ... at whom
     int channelTimer;                // ... for so many more milliseconds
     Casting nextSwing;               // `CURRENT_MELEE_SPELL`
@@ -197,6 +208,23 @@ private:
             updateBobber(cast(int) elapsed.total!"msecs");
         if (persistentAreas.length)
             updatePersistentAreas(cast(int) elapsed.total!"msecs");
+        if (pendingHits.length)
+        {
+            // The missiles that arrive now (a copy: an effect may cast another).
+            const diff = cast(int) elapsed.total!"msecs";
+            PendingHit[] due;
+            PendingHit[] still;
+            foreach (hit; pendingHits)
+            {
+                hit.left -= diff;
+                (hit.left <= 0 ? due : still) ~= hit;
+            }
+            pendingHits = still;
+            foreach (hit; due)
+                doEffect(hit.spell, hit.effect, hit.target, hit.casting);
+            if (due.length)
+                flushPlayerChanges();
+        }
         if (channelSpell !is null && (channelTimer -= cast(int) elapsed.total!"msecs") <= 0)
             endChannel(false);
         if (!generic.active)
@@ -431,6 +459,25 @@ private:
                 persistentAreas = persistentAreas[0 .. k] ~ persistentAreas[k + 1 .. $];
             }
         }
+    }
+
+    /// `Spell::m_delayMoment` for a missile: its flight to `target` at the spell's speed (yards a second); 0: at once.
+    int flightTime(const(SpellInfo)* spell, ulong target)
+    {
+        import std.math : sqrt;
+
+        if (spell.casting.speed <= 0 || target == player.guid)
+            return 0;
+        Position to;
+        if (auto creature = cast(Creature) map.findObject(target))
+            to = creature.position;
+        else if (auto who = map.find(target))
+            to = who.character.position;
+        else
+            return 0;
+        const at = player.position;
+        const distance = sqrt((to.x - at.x) ^^ 2 + (to.y - at.y) ^^ 2 + (to.z - at.z) ^^ 2);
+        return cast(int)(distance / spell.casting.speed * 1000);
     }
 
     /// The bobber goes.
@@ -869,10 +916,17 @@ private:
                 if (auto creature = cast(Creature) map.findObject(r.guid))
                     spellAttacked(creature, 0);
             }
+        // A missile (`speed`) reaches each target after its flight (`m_delayMoment`): the effects then.
         foreach (i; 0 .. 3)
             foreach (target; effectTargets[i])
                 if (missOf[target] == SpellMissInfo.none)
-                    doEffect(spell, i, target, c);
+                {
+                    const flight = flightTime(spell, target);
+                    if (flight > 0)
+                        pendingHits ~= PendingHit(spell, i, target, c, flight);
+                    else
+                        doEffect(spell, i, target, c);
+                }
         // A channelled spell goes on (`SPELL_ATTR_EX_IS_CHANNELED`, `_IS_SELF_CHANNELED`).
         enum uint channeled = 0x04, selfChanneled = 0x40;
         if ((spell.attributesEx & (channeled | selfChanneled)) && !c.triggered && !channelFailed)
@@ -1844,6 +1898,19 @@ unittest
     anduin.session.castTriggeredAt(bolt, keeper.guid); // past the global cooldown
     assert(keeper.values.get!UNIT_FIELD_HEALTH < keeperBefore && trainer.values.get!UNIT_FIELD_HEALTH < trainerBefore,
         "the bolt jumped to the trainer");
+
+    // A missile at 10 yards a second: nothing on release, its damage when it arrives (about 2.7 yards off).
+    import core.time : msecs;
+
+    enum uint missile = 95602;
+    context.data.spells.spells[missile] = testSpell(missile, 2, ImplicitTarget.enemy, 20);
+    context.data.spells.spells[missile].casting.speed = 10;
+    context.data.spells.spells[missile].casting.dmgClass = 0;
+    const flying = keeper.values.get!UNIT_FIELD_HEALTH;
+    anduin.session.castTriggeredAt(missile, keeper.guid);
+    assert(keeper.values.get!UNIT_FIELD_HEALTH == flying, "still in flight");
+    anduin.session.update(400.msecs);
+    assert(keeper.values.get!UNIT_FIELD_HEALTH < flying, "arrived");
 }
 
 /// A persistent area aura: a spot on the ground that hurts the creatures in it every tick, for its duration.
