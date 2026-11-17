@@ -1095,19 +1095,21 @@ final class Map : CombatWorld, GameObjectWorld
         if (auto seen = who.character.guid in seesObjects)
             foreach (guid, _; *seen)
                 if (auto creature = cast(Creature) objects.get(guid, null))
-                    if (distanceSquared(creature.position, at) < noticeDistance ^^ 2)
+                    if (creature.ai !is null && creature.ai.mayNotice
+                        && distanceSquared(creature.position, at) < noticeDistance ^^ 2)
                         creature.ai.moveInLineOfSight(combatant, this);
     }
 
     /// `MoveInLineOfSight` for the players who see a creature, when it has moved.
     private void creatureNoticing(Creature creature)
     {
-        if (creature.ai is null || creature.ai.inCombat || creature.ai.evading)
+        if (creature.ai is null || creature.ai.inCombat || creature.ai.evading || !creature.ai.mayNotice)
             return;
-        foreach (player, seen; seesObjects)
-            if (creature.guid in seen)
-                if (auto combatant = cast(Combatant) members.get(player, null))
-                    if (distanceSquared(creature.position, members[player].character.position) < noticeDistance ^^ 2)
+        // The players near it (by cell), of those that see it.
+        foreach (who; near(creature.position, noticeDistance))
+            if (auto seen = who.character.guid in seesObjects)
+                if (creature.guid in *seen)
+                    if (auto combatant = cast(Combatant) who)
                         creature.ai.moveInLineOfSight(combatant, this);
     }
 

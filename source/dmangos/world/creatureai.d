@@ -206,6 +206,14 @@ final class CreatureAI : Scripted
             || me.values.get!UNIT_FIELD_POWER1 < me.values.get!UNIT_FIELD_MAXPOWER1 || casting_ !is null || fleeTimer > 0 || (script !is null && script.wantsTicks);
     }
 
+    /// Whether it may attack anyone on sight at all: aggressive, alive, not neutral to all
+    /// (`moveInLineOfSight`'s first checks, for the map to skip it early).
+    @property bool mayNotice() const
+    {
+        return react == ReactState.aggressive && me.alive
+            && (me.factionTemplate is null || !isNeutralToAll(*me.factionTemplate));
+    }
+
     /// The one it attacks; 0 if none.
     @property ulong currentVictim() const
     {

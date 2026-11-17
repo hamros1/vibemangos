@@ -194,3 +194,24 @@ Costs are each node's loop busy time divided among its regions by what they hold
 (docs/CLUSTER.md, phase 6). The crowd's region cannot be divided until regions can be split; what
 balancing does is take the rest of that node's work away.
 
+
+## With combat, scripts and game objects (2026-11-17)
+
+`spread` with 500 bots after creatures fight, run their EventAI scripts and cast, and game objects
+have loot states. The bots are level 1 humans dropped at random creature spawns of both
+continents, so hostile creatures notice and kill them: 407 deaths in one run, each with its corpse,
+the creatures' chase, swings and spells, and their evading home.
+
+| Build | Tick avg | Loop busy | CPU | Allocated per tick | Objects |
+|---|---|---|---|---|---|
+| Before combat (above, fewer objects in the tick) | 2.66 ms | 6.7% | 12.7% | 0.15 MB | about 26,000 |
+| Combat, as first written | 9.86 ms | 21.5% | 21.0% | 0.14 MB | 26,720 |
+| Noticing by cell | 5.24 ms | 12.3% | 17.4% | 0.26 MB | 27,837 |
+
+A profile of the second run (tools/gdb-sample.py) put a third of the busy time in noticing: every
+time a creature moved, it went through every player on the map to find those who see it
+(`creatureNoticing`), and every move of a player through every object it sees (`playerNoticed`).
+Now a creature asks the cells within 50 yards for players, and neither goes on for a creature that
+attacks nobody on sight (passive, defensive, dead or neutral to all: `CreatureAI.mayNotice`). The
+rest of the increase is the fighting itself and the creatures whose scripts run out of combat
+(their timers keep them in the tick: about 4,800 spawns in the world have such events).
