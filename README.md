@@ -270,19 +270,19 @@ What works now:
     faction, models and mounts, stand states, NPC flags, other flags, facing someone, and stopping
     the script when a creature is (or is not) near, opening and closing doors, and moving: walking to a point (a relay script
     once there) or back to its spawn point, turning, teleporting, a movement type (standing,
-    wandering, its path), pausing and resuming its path. Not yet: paths by id, AI events.
+    wandering, its path), pausing and resuming its path, AI events. Not yet: paths by id.
   * **Creature scripts** (CMaNGOS's EventAI, `creature_ai_scripts`, for each creature entry or
     spawn): their events (timers in and out of combat, health, mana and the victim's health between
     two percentages, the victim within a range or casting, aggro, a kill, death, evading, spawning,
     reaching home, an aura of their own there or missing, a spell hitting them, a player's emote at
-    them, a friend near them hurt) run their actions by chance and phase, repeating after their
+    them, a friend near them hurt, another creature's AI event) run their actions by chance and phase, repeating after their
     repeat timers: casting a spell (healing that friend too), saying, yelling, emoting or whispering
     a `broadcast_text` (or one of a `dbscript_random_templates` group, or by a chance), emotes,
     sounds, phases, fleeing in fear for 7 seconds, calling for help, combat movement, swings on or
     off, ranged mode (keeping a distance to cast, coming in to melee when out of mana), stand states,
     unit flags, taking auras off, despawning, not dying of damage, react states, factions, random
     phases, quest events and kill credit for the players fighting it, relay scripts (the database
-    scripts below), summoning creatures (beside it or at a `creature_ai_summons` spot, attacking
+    scripts below), AI events to the friendly creatures around, summoning creatures (beside it or at a `creature_ai_summons` spot, attacking
     its target), evading, attacking. Summoned creatures are never saved and never come back: they
     go as CMaNGOS's `TempSpawnType` says (after their time, out of combat only, when they die, or
     when their corpse goes). A creature casts as

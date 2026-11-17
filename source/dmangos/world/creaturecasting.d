@@ -684,6 +684,23 @@ mixin template CreatureCasting()
         return true;
     }
 
+    /// ditto: to the creatures near that are not its enemies (itself left out).
+    void scriptThrowAiEvent(uint type, float radius, ulong invoker)
+    {
+        foreach (other; world_.creaturesNear(me.position, radius))
+            if (other !is me && other.alive && other.ai !is null && !isEnemy(relating, other.ai.relating, me.client))
+                other.ai.aiEventFrom(type, me, invoker, world_);
+    }
+
+    /// `ReceiveAIEvent`: another creature's AI event, for its script.
+    void aiEventFrom(uint type, Creature sender, ulong invoker, CombatWorld world)
+    {
+        if (script is null)
+            return;
+        world_ = world;
+        script.aiEventReceived(this, type, sender.guid, sender.template_.entry, invoker);
+    }
+
     /// ditto
     void scriptReactState(uint state)
     {

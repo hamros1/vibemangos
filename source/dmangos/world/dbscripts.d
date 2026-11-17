@@ -71,6 +71,7 @@ enum ScriptCommand : uint
     openDoor = 11,
     closeDoor = 12,
     terminateScript = 31,
+    sendAiEvent = 35,
     pauseWaypoints = 32,
     setFacing = 36,
     startRelayScript = 45,
@@ -849,6 +850,17 @@ mixin template DbScriptRunner()
                     map.wake(creature.guid);
                 }
             break;
+        case ScriptCommand.sendAiEvent:
+        {
+            // An AI event of its type from the source: to the creatures around (within datalong2), or to the target.
+            if (creature is null || creature.ai is null)
+                break;
+            if (step.datalong2)
+                creature.ai.scriptThrowAiEvent(step.datalong, step.datalong2, target.guid);
+            else if (target.creature !is null && target.creature.ai !is null)
+                target.creature.ai.aiEventFrom(step.datalong, creature, target.guid, map);
+            break;
+        }
         case ScriptCommand.standState:
             if (creature !is null && creature.ai !is null)
                 creature.ai.scriptStandState(step.datalong);
@@ -1026,6 +1038,31 @@ unittest
     assert((there.x - from.x - 4) ^^ 2 + (there.y - from.y) ^^ 2 < 0.01f);
     context.updateScripts(0);
     assert(opcodesOf(anduin.read()).canFind(Opcode.SMSG_EMOTE), "its relay script, there");
+
+    // AI events: the innkeeper, greeted, throws one; the trainer near it answers with an emote.
+    {
+        auto trainer = cast(Creature) map.findObject(makeGuid(HighGuid.unit, creatureTrainer, trainerSpawn));
+        EventAiEvent greet = {id: 3, type: EventType.receiveEmote, chance: 100, params: [wave + 2, 0, 0, 0, 0, 0]};
+        greet.actions[0] = EventAiAction(ActionType.throwAiEvent, [5, 50, EventTarget.actionInvoker]);
+        auto throwing = [greet];
+        keeper.ai.setScript(throwing, context.data.eventAi);
+        EventAiEvent heard = {id: 4, type: EventType.receiveAiEvent, chance: 100,
+            params: [5, creatureInnkeeper, 0, 0, 0, 0]};
+        heard.actions[0] = EventAiAction(ActionType.emote, [4, 0, 0]);
+        auto hearing = [heard];
+        trainer.ai.setScript(hearing, context.data.eventAi);
+        anduin.read();
+        keeper.ai.receivedEmote(me.guid, wave + 2, map);
+        bool answered;
+        foreach (packet; anduin.read())
+            if (packet.opcode == Opcode.SMSG_EMOTE && packet.body_.length >= 12)
+            {
+                auto r = ByteReader(packet.body_);
+                const emote = r.read!uint, who = r.read!ulong;
+                answered |= emote == 4 && who == trainer.guid;
+            }
+        assert(answered, "the trainer heard the innkeeper's AI event");
+    }
 
     // A player's spells: a dummy effect runs the spell's script (the place explored); a wild summon summons.
     {

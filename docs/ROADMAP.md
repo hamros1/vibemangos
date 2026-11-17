@@ -109,8 +109,8 @@ The largest area. CMaNGOS references: `Spells/`, `Entities/Unit.cpp`, `Combat/`,
 2. **Creatures fighting back: done** (`creatureai.d`; README's "Creatures fight"), calling for help
    included, and EventAI scripts with creatures' spells, texts and fleeing (`eventai.d`,
    `creaturecasting.d`; README's "Creature scripts"), and database scripts for quests, gossip and
-   game objects (`dbscripts.d`). Temporary summons (EventAI's and the scripts'). Not yet: morphs and
-   AI events, scripted movement, waypoint scripts, summons handed over between nodes, spell lists, interrupting creatures' casts, movement maps for chasing, help
+   game objects (`dbscripts.d`). Temporary summons (EventAI's and the scripts'). Not yet: EventAI's morphs,
+   paths by id, summons handed over between nodes, spell lists, interrupting creatures' casts, movement maps for chasing, help
    from another node's creatures in a cluster.
 3. **Death: done** (`death.d`, `corpse.d`; README's "Death"). Not yet: resurrection sickness and the
    ghost's own auras (applied by hand until there are auras), ghosts hidden from the living, bones,

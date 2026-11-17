@@ -43,6 +43,7 @@ enum EventType : ubyte
     friendlyHp = 14,
     reachedHome = 21,
     receiveEmote = 22,
+    receiveAiEvent = 30,
     aura = 23,
     missingAura = 27,
 }
@@ -86,6 +87,7 @@ enum ActionType : ubyte
     forceDespawn = 41,
     setDeathPrevention = 42,
     chancedText = 44,
+    throwAiEvent = 45,
     setStandState = 47,
     setReactState = 50,
     startRelayScript = 53,
@@ -115,6 +117,7 @@ enum EventTarget : int
     actionInvoker = 6,
     hostileRandomPlayer = 8,
     hostileRandomNotTopPlayer = 9,
+    eventSender = 10,
     eventSpecific = 12,
     none = 15,
 }
@@ -273,6 +276,9 @@ interface Scripted
     /// `KilledMonsterCredit` of `entry` for the player `player`.
     void scriptKillCredit(uint entry, ulong player);
 
+    /// `SendAIEventAround`: an AI event of `type` to the friendly creatures within `radius`, `invoker` its invoker.
+    void scriptThrowAiEvent(uint type, float radius, ulong invoker);
+
     /// `SummonCreature` of `entry`: near it, or at summon spot `spot` (`creature_ai_summons`); it
     /// attacks `target` (0: none). False if it could not be summoned.
     bool scriptSummon(uint entry, ulong target, uint durationMs, uint spot);
@@ -313,6 +319,7 @@ final class EventAI
     private const EventAiData data;
     private uint phase;
     private ulong eventTarget; // the event's own target, for `TARGET_T_EVENT_SPECIFIC`
+    private ulong eventSender; // the creature that sent an AI event, for `TARGET_T_EVENT_SENDER`
     private int updateIn = 500;     // `EVENT_UPDATE_TIME`: the timers are looked at twice a second
     private uint pendingDiff;
     private bool spawnPending = true;
@@ -607,6 +614,9 @@ final class EventAI
             return a.type == ActionType.spawn ? me.scriptSummon(a.params[0], target, a.params[2], 0)
                 : me.scriptSummon(a.params[0], target, 0, a.params[2]);
         }
+        case ActionType.throwAiEvent:
+            me.scriptThrowAiEvent(a.params[0], a.params[1], targetOf(a.params[2], me, invoker));
+            return true;
         case ActionType.despawnGuardians:
             return true; // creatures have no guardians here yet
         case ActionType.randomEmote:
@@ -667,6 +677,8 @@ final class EventAI
     /// `GetTargetByType` with the event's own target (`TARGET_T_EVENT_SPECIFIC`).
     private ulong targetOf(int type, Scripted me, ulong invoker)
     {
+        if (type == EventTarget.eventSender)
+            return eventSender;
         return type == EventTarget.eventSpecific ? eventTarget : me.targetFor(type, invoker);
     }
 
@@ -681,6 +693,19 @@ final class EventAI
                 if (e.params[0] ? e.params[0] != spell : !(schoolMask & cast(uint) e.params[1]))
                     continue;
                 process(h, me, caster);
+            }
+    }
+
+    /// `ReceiveAIEvent`: another creature's AI event of `type` (from `sender`, of `senderEntry`), `invoker` its cause.
+    void aiEventReceived(Scripted me, uint type, ulong sender, uint senderEntry, ulong invoker)
+    {
+        foreach (ref h; holders)
+            if (h.event.type == EventType.receiveAiEvent && h.event.params[0] == type
+                && (h.event.params[1] == 0 || h.event.params[1] == senderEntry) && check(h, me))
+            {
+                eventSender = sender;
+                process(h, me, invoker);
+                eventSender = 0;
             }
     }
 
@@ -821,6 +846,7 @@ unittest
         void scriptQuestEvent(uint quest, ulong player, bool all) {}
         void scriptKillCredit(uint entry, ulong player) {}
         bool scriptSummon(uint entry, ulong target, uint durationMs, uint spot) { return false; }
+        void scriptThrowAiEvent(uint type, float radius, ulong invoker) {}
         uint victimHealthPercent() { return 100; }
         float victimDistance() { return 2; }
         ulong targetFor(int type, ulong invoker) { return type == EventTarget.self ? 1 : 2; }
