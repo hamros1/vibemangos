@@ -100,6 +100,8 @@ final class WorldSession : NetSession, ReusesOutput, Kickable
         OutputBuffer output;
         ubyte[] spareOutput;     // the memory of a sent array, given back by the server, for the next output
         ubyte[][] lentOutput;    // the memory of the arrays handed to the server, to know a returned one's whole
+        import std.stdio : File;
+        File packetLog;          // `packet_log`: what this connection was sent
         HeaderCrypt crypt;
         uint serverSeed;
 
@@ -182,7 +184,7 @@ final class WorldSession : NetSession, ReusesOutput, Kickable
     void fromOwner(ushort opcode, const(ubyte)[] body_)
     {
         if (!wantsClose)
-            appendPacket(output, cast(Opcode) opcode, body_, crypt);
+            frame(cast(Opcode) opcode, body_);
     }
 
     /**
@@ -358,13 +360,47 @@ final class WorldSession : NetSession, ReusesOutput, Kickable
             playing.update(elapsed);
     }
 
+    /**
+     * Frames a packet for the client; with `packet_log` set, also writes it there (a file per
+     * connection, once the account is known): the time in milliseconds, the opcode and the body in hex.
+     * For finding which packet a client cannot take.
+     */
+    private void frame(Opcode opcode, scope const(ubyte)[] body_)
+    {
+        appendPacket(output, opcode, body_, crypt);
+        if (context.config.packetLog.length && account.username.length)
+            logPacket(opcode, body_);
+    }
+
+    private void logPacket(Opcode opcode, scope const(ubyte)[] body_)
+    {
+        import std.conv : to;
+        import std.datetime.systime : Clock;
+        import std.format : format;
+        import std.path : buildPath;
+        import std.stdio : File;
+
+        try
+        {
+            if (!packetLog.isOpen)
+                packetLog = File(buildPath(context.config.packetLog, format!"%s-%s.log"(account.username,
+                    Clock.currTime.toUnixTime)), "w");
+            const name = () { try return opcode.to!string; catch (Exception) return format!"0x%03X"(cast(uint) opcode); }();
+            packetLog.writefln!"%s %s %(%02x%)"(Clock.currStdTime / 10_000, name, body_);
+            packetLog.flush();
+        }
+        catch (Exception e)
+        {
+        }
+    }
+
     /// Frames a packet another player's session (or the map) sends to this client.
     void deliver(Opcode opcode, const(ubyte)[] body_)
     {
         if (homeNode)
             return context.relayToHome(homeNode, account.id, cast(ushort) opcode, body_);
         if (!wantsClose)
-            appendPacket(output, opcode, body_, crypt);
+            frame(opcode, body_);
     }
 
     /// Saves the character if one is being played, and removes the session from the context's table.
@@ -451,7 +487,7 @@ package:
         serialize(payload, packet);
         if (homeNode)
             return context.relayToHome(homeNode, account.id, cast(ushort) T.opcode, payload.data);
-        appendPacket(output, T.opcode, payload.data, crypt);
+        frame(T.opcode, payload.data);
     }
 
     void finish()

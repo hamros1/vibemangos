@@ -148,6 +148,8 @@ struct WorldConfig
      * A cluster node left at the default uses `writes-<node_id>.log`.
      */
     @JsonName("write_log") string writeLog = "writes.log";
+    /// A directory each connection's outgoing packets are written to, for debugging a client; empty: none.
+    @JsonName("packet_log") string packetLog;
     /// The cluster this node belongs to (docs/CLUSTER.md); standalone without it.
     ClusterConfig cluster;
     /// Seconds a logout takes away from inns and cities (ArcEmu and CMaNGOS: 20); 0 logs out at once.
