@@ -330,6 +330,7 @@ final class WorldData
     QuestData quests;                               /// `quest_template` and who gives and takes back each
     GraveyardLink[][uint] graveyards;               /// `game_graveyard_zone`, by `graveyardLinkKey`
     GhostEntrance[uint] ghostEntrances;             /// `instance_template`'s ghost entrances, by instance map
+    uint[uint] instanceMaxPlayers;                  /// `instance_template.maxPlayers`, by instance map
     WaypointStore waypoints;                        /// `creature_movement` and `creature_movement_template`
     EventAiData eventAi;                            /// `creature_ai_scripts`, by creature entry
     DbScriptData dbScripts;                         /// `dbscripts_on_*`
@@ -566,8 +567,12 @@ final class WorldData
         foreach (row; world.query!"SELECT id, ghost_loc, link_kind, faction FROM game_graveyard_zone"())
             graveyards[graveyardLinkKey(row.get!uint(1), row.get!uint(2))] ~= GraveyardLink(row.get!uint(0),
                 row.get!uint(3));
-        foreach (row; world.query!"SELECT map, ghostEntranceMap, ghostEntranceX, ghostEntranceY FROM instance_template"())
+        foreach (row; world.query!"SELECT map, ghostEntranceMap, ghostEntranceX, ghostEntranceY, maxPlayers FROM instance_template"())
+        {
             ghostEntrances[row.get!uint(0)] = GhostEntrance(row.get!int(1), row.get!float(2), row.get!float(3));
+            if (row.get!uint(4))
+                instanceMaxPlayers[row.get!uint(0)] = row.get!uint(4);
+        }
         foreach (row; world.query!"SELECT entry, equipentry1, equipentry2, equipentry3 FROM creature_equip_template"())
             creatureEquipment[row.get!uint(0)] = [row.get!uint(1), row.get!uint(2), row.get!uint(3)];
         foreach (row; world.query!"SELECT guid, mount, stand_state, sheath_state, emote FROM creature_addon"())

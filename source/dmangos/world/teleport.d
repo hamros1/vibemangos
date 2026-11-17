@@ -100,6 +100,16 @@ private:
         player.movement.flags = 0;
         const instance = toInstance != uint.max ? toInstance
             : player.data.map == mapId ? instanceId_ : context.instanceFor(player.guid, mapId);
+        // `InstanceMap::CanEnter`: a copy of a dungeon with its players already in (game masters aside).
+        if (instance && (player.data.map != mapId || instance != instanceId_) && account.level < AccountLevel.gameMaster)
+            if (const most = mapId in context.data.instanceMaxPlayers)
+                if (auto there = context.existingMap(mapId, instance))
+                    if (there.population >= *most)
+                    {
+                        enum ubyte transferAbortMaxPlayers = 0x01;
+                        deliver(Opcode.SMSG_TRANSFER_ABORTED, [transferAbortMaxPlayers]);
+                        return false;
+                    }
         if (player.data.map == mapId && instance == instanceId_)
         {
             teleporting = Teleport.near;
@@ -510,6 +520,13 @@ unittest
     assert(context.existingMap(mapDeadmines, groupCopy) !is null, "Jaina's group's copy is in use");
     const again = context.instanceFor(7, mapDeadmines);
     assert(again != mine && again != groupCopy, "a fresh copy next time");
+
+    // A full copy: no way in (here a limit of one, Jaina in it).
+    context.data.instanceMaxPlayers[mapDeadmines] = 1;
+    varian.read();
+    assert(!varian.session.commandTeleport(mapDeadmines, Position(-16, -381, 61), groupCopy), "full");
+    assert(opcodesOf(varian.read()) == [Opcode.SMSG_TRANSFER_ABORTED]);
+    context.data.instanceMaxPlayers[mapDeadmines] = 10;
 
     // Taken into another's copy (a GM's `.appear`): there, and they see each other.
     anduin.session.commandTeleport(mapDeadmines, Position(-16, -382, 61), groupCopy);
