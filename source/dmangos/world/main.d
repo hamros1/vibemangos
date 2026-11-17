@@ -140,6 +140,7 @@ private int run(WorldConfig config, string configPath)
     // Every node serves clients (docs/CLUSTER.md, phase 3b); only a standalone server or a cluster's coordinator speaks
     // for the realm: its row in the realm list, and marking everyone offline at start.
     bool speaksForRealm = !config.cluster.enabled || config.cluster.isCoordinator; // the standby may take it over
+    context.keepsHonorWeek = speaksForRealm; // the honor week is reckoned once, by the realm's speaker
     if (speaksForRealm)
         context.database.markAllOffline(config.realmId); // as clearOnlineAccounts: nobody is online after a restart
     if (config.cluster.enabled && config.cluster.clientAddress.length == 0)
@@ -255,6 +256,7 @@ private int run(WorldConfig config, string configPath)
             bridge.broadcastGroups();
             context.takeOverIds();
             speaksForRealm = true;
+            context.keepsHonorWeek = true;
             realm.markOnline(config.allowedBuilds, config.gameType, config.realmZone);
             info!"cluster: this node is the coordinator now: groups, channels, ids and the realm are kept here"();
         };

@@ -644,6 +644,22 @@ formulas of `MaNGOS::Honor`.
 * **Saving.** `saveHonor` writes the columns and the new rows with the character's other saves.
 * **Inspecting.** `MSG_INSPECT_HONOR_STATS` answers for a player within 28 yards who may not be
   attacked.
+* **The week** (`honorweek.d`, `ServerMaintenanceStart`, `FlushRankPoints`, `DistributeRankPoints`).
+  It runs on `honor_maintenance_day`, checked at start-up and every 10 minutes. Only the realm's
+  speaker runs it: the standalone server, or a cluster's coordinator, or the standby that takes over.
+  * Each finished week since the last run is reckoned once.
+  * In each faction, players with at least `min_honor_kills` kills that week stand in order of honour.
+    The week's breakpoints give each place rank points, and the player's rating becomes the old one
+    decayed by a fifth plus the earning (half the loss when it shrinks, at most 2,500 a week).
+  * Last week's place goes into `honor_standing`.
+  * Rows of weeks before last week are folded into the stored kill totals and deleted. Last week's
+    rows stay, for its fields.
+  * Online players then load their honour again.
+  * Where this differs from CMaNGOS:
+    * CMaNGOS stores the decayed rating plus the earning, counting it twice.
+    * It works out which weeks to reckon from the rows that are left, so a restart can reckon a week
+      twice.
+    * It saves online players over the new values.
 * **Days** are CMaNGOS's `(year - 1900) << 16 | day of the year`. Arithmetic on them goes through the
   calendar, because CMaNGOS's `date - 7` breaks across a new year.
 * **Not yet:**

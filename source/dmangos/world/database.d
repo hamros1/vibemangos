@@ -8,6 +8,7 @@
  */
 module dmangos.world.database;
 
+import dmangos.world.honorweek : HonorWeekEntry;
 import std.typecons : Nullable, nullable;
 
 import dmangos.crypto.srp6 : sessionKeyLength;
@@ -445,6 +446,29 @@ interface WorldDatabase
      */
     void saveHonor(uint player, const HonorColumns columns, const(HonorPointRecord)[] added);
 
+    // --- the honor week (`dmangos.world.honorweek`) ---
+
+    /// `saved_variables.NextMaintenanceDate`: the next maintenance day; 0 if never set.
+    uint nextHonorMaintenance();
+
+    /// ditto
+    void setNextHonorMaintenance(uint day);
+
+    /// The day of the oldest honorable `character_honor_cp` row; 0 if none.
+    uint oldestHonorDay();
+
+    /// `LoadStandingList`: each player's honorable honor and kills on days from `from` until `until`.
+    HonorWeekEntry[] honorWeek(uint from, uint until);
+
+    /// A player's rating after a week, and with `setStanding` its place in last week's standing.
+    void setHonorRating(uint player, float rating, uint standing, bool setStanding);
+
+    /// Every player's place in last week's standing back to none.
+    void clearHonorStandings();
+
+    /// The kills of rows before `day` added to the stored totals, and the rows deleted.
+    void foldHonorPoints(uint day);
+
     /// `Player::_SaveQuestStatus`: the quests that changed (a status of none, never rewarded, deletes the row).
     void saveQuestStatus(uint player, const(QuestStatus)[] quests);
 
@@ -742,6 +766,16 @@ final class MySqlWorldDatabase : WorldDatabase
     {
         statements.saveHonor(player, columns, added);
     }
+    uint nextHonorMaintenance() { return statements.nextHonorMaintenance(); }
+    void setNextHonorMaintenance(uint day) { statements.setNextHonorMaintenance(day); }
+    uint oldestHonorDay() { return statements.oldestHonorDay(); }
+    HonorWeekEntry[] honorWeek(uint from, uint until) { return statements.honorWeek(from, until); }
+    void setHonorRating(uint player, float rating, uint standing, bool setStanding)
+    {
+        statements.setHonorRating(player, rating, standing, setStanding);
+    }
+    void clearHonorStandings() { statements.clearHonorStandings(); }
+    void foldHonorPoints(uint day) { statements.foldHonorPoints(day); }
     void saveQuestStatus(uint player, const(QuestStatus)[] quests) { statements.saveQuestStatus(player, quests); }
     void sendMail(const ref MailRecord mail) { statements.sendMailRecord(mail); }
     MailRecord[] loadMail(uint receiver) { return statements.loadMail(receiver); }
@@ -1243,6 +1277,7 @@ final class MemoryWorldDatabase : WorldDatabase
     AuctionRecord[uint] auctions;    /// `auction`, by id
     ReputationRecord[uint][uint] reputationRows; /// `character_reputation`: by player, then faction
     HonorRecord[uint] honorRows;                 /// the honor columns and `character_honor_cp`, by player
+    uint nextMaintenance;                        /// `saved_variables.NextMaintenanceDate`
 
     void saveCorpse(const ref CorpseRecord c) { corpses[c.player] = c; }
     void saveAuras(uint player, const(AuraRecord)[] auras) { auraRows[player] = auras.dup; }
@@ -1434,6 +1469,83 @@ final class MemoryWorldDatabase : WorldDatabase
         auto record = &honorRows.require(player, HonorRecord.init);
         record.columns = columns;
         record.points ~= added;
+    }
+    uint nextHonorMaintenance() { return nextMaintenance; }
+    void setNextHonorMaintenance(uint day) { nextMaintenance = day; }
+    uint oldestHonorDay()
+    {
+        import dmangos.world.honor : dateOfHonorDay;
+
+        uint oldest;
+        foreach (ref r; honorRows)
+            foreach (ref p; r.points)
+                if (p.type == 1 && (oldest == 0 || dateOfHonorDay(p.date) < dateOfHonorDay(oldest)))
+                    oldest = p.date;
+        return oldest;
+    }
+    HonorWeekEntry[] honorWeek(uint from, uint until)
+    {
+        import dmangos.world.honor : dateOfHonorDay;
+
+        HonorWeekEntry[] found;
+        foreach (guid, ref r; honorRows)
+        {
+            HonorWeekEntry e;
+            e.guid = guid;
+            e.storedRating = r.columns.storedRating;
+            foreach (ref c; characterLists)
+                foreach (ref ch; c)
+                    if (ch.guid == guid)
+                        e.race = ch.race;
+            bool any;
+            foreach (ref p; r.points)
+                if (p.type == 1 && dateOfHonorDay(p.date) >= dateOfHonorDay(from) && dateOfHonorDay(p.date) < dateOfHonorDay(until))
+                {
+                    any = true;
+                    e.honor += p.honor;
+                    e.kills += p.victimType == 3 || p.victimType == 4;
+                }
+            if (any)
+                found ~= e;
+        }
+        return found;
+    }
+    void setHonorRating(uint player, float rating, uint standing, bool setStanding)
+    {
+        auto r = &honorRows.require(player, HonorRecord.init);
+        r.columns.storedRating = rating;
+        if (setStanding)
+            r.columns.standing = standing;
+    }
+    void clearHonorStandings()
+    {
+        foreach (ref r; honorRows)
+            r.columns.standing = 0;
+    }
+    void foldHonorPoints(uint day)
+    {
+        import dmangos.world.honor : dateOfHonorDay;
+
+        foreach (ref r; honorRows)
+        {
+            typeof(r.points) kept;
+            foreach (ref p; r.points)
+            {
+                if (dateOfHonorDay(p.date) >= dateOfHonorDay(day))
+                {
+                    kept ~= p;
+                    continue;
+                }
+                if (p.victimType == 3 || p.victimType == 4)
+                {
+                    if (p.type == 1)
+                        ++r.columns.storedHonorableKills;
+                    else
+                        ++r.columns.storedDishonorableKills;
+                }
+            }
+            r.points = kept;
+        }
     }
     void saveQuestStatus(uint player, const(QuestStatus)[] quests)
     {

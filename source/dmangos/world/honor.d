@@ -9,8 +9,8 @@
  *        rank points (`dishonorableKillPoints`); a racial leader gives 398 to each.)
  *   $(LI Each gain is a `character_honor_cp` row of the day. Today's, yesterday's, this week's and last
  *        week's kills and honor are counted from the rows (`updateHonor`); the weekly maintenance
- *        (`dmangos.world.honorweek`) turns a week's honor into rank points and folds old rows into the
- *        stored totals.)
+ *        (`dmangos.world.honorweek`) turns a week's honor into rank points, gives last week's standing,
+ *        and folds old rows into the stored totals.)
  *   $(LI The rank (Private/Scout 1 to Grand Marshal/High Warlord 14) comes from the rank points.)
  * )
  *
@@ -322,10 +322,10 @@ mixin template HonorHandlers()
         HonorRank honorRank_;      // `m_honor_rank`
     }
 
-    /// `Player::GetRankPoints`: the stored rating, and this week's earning if the standing has one.
+    /// `Player::GetRankPoints`: the stored rating (the weekly maintenance adds each week's earning to it).
     @property float rankPoints()
     {
-        return honorStored.storedRating + context.honorStandings.earningOf(player.data.guid);
+        return honorStored.storedRating;
     }
 
     /// `GetHonorRankInfo`
@@ -472,9 +472,6 @@ mixin template HonorHandlers()
         const weekBegin = lastMaintenanceDay(honorToday(), context.config.honorMaintenanceDay);
         const t = tallyHonor(honorPoints, today, weekBegin, cast(uint) honorStored.storedHonorableKills,
             cast(uint) honorStored.storedDishonorableKills);
-        const standing = context.honorStandings.positionOf(player.data.guid);
-        if (standing)
-            honorStored.standing = standing;
         const rp = rankPoints;
         honorRank_ = rankOf(rp);
         if (honorRank_.visualRank > 0 && honorRank_.rank > honorStored.highestRank)
@@ -530,41 +527,5 @@ mixin template HonorHandlers()
         w.put(v.get!PLAYER_FIELD_LAST_WEEK_RANK);
         w.put(cast(ubyte) rankInfo(cast(ubyte) other.honorStored.highestRank).visualRank);
         deliver(Opcode.MSG_INSPECT_HONOR_STATS, w.data);
-    }
-}
-
-/**
- * The faction standings of last week (`ObjectMgr::LoadStandingList`): each player's place and the rank
- * points the week earns it. Filled by the weekly maintenance; empty until it has run.
- */
-final class HonorStandings
-{
-    private uint[uint] positions;   // guid -> place in its faction's list, from 1
-    private float[uint] earnings;   // guid -> rank points the week earns
-
-    /// The place of the player `guid` last week; 0 if none.
-    uint positionOf(uint guid) const
-    {
-        return positions.get(guid, 0);
-    }
-
-    /// The rank points last week earns the player `guid`.
-    float earningOf(uint guid) const
-    {
-        return earnings.get(guid, 0);
-    }
-
-    /// Sets a player's place and earning.
-    void set(uint guid, uint position, float earning)
-    {
-        positions[guid] = position;
-        earnings[guid] = earning;
-    }
-
-    /// Forgets everyone's.
-    void clear()
-    {
-        positions = null;
-        earnings = null;
     }
 }

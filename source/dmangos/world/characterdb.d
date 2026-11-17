@@ -5,6 +5,7 @@
  */
 module dmangos.world.characterdb;
 
+import dmangos.world.honorweek : HonorWeekEntry;
 import std.algorithm.iteration : map;
 import std.algorithm.searching : find;
 import std.array : array, replicate;
@@ -764,6 +765,75 @@ final class CharacterStatements
             foreach (ref p; added)
                 characters.execute!("INSERT INTO character_honor_cp (guid, victim_type, victim, honor, date, type) "
                     ~ "VALUES (?, ?, ?, ?, ?, ?)")(player, p.victimType, p.victim, p.honor, p.date, p.type);
+        });
+    }
+
+    /// See `WorldDatabase.nextHonorMaintenance`.
+    uint nextHonorMaintenance()
+    {
+        const rows = characters.query!"SELECT NextMaintenanceDate FROM saved_variables"();
+        return rows.length ? rows[0].get!uint(0) : 0;
+    }
+
+    /// See `WorldDatabase.setNextHonorMaintenance`.
+    void setNextHonorMaintenance(uint day)
+    {
+        if (characters.query!"SELECT 1 FROM saved_variables"().length)
+            characters.execute!"UPDATE saved_variables SET NextMaintenanceDate = ?"(day);
+        else
+            characters.execute!"INSERT INTO saved_variables (NextMaintenanceDate) VALUES (?)"(day);
+    }
+
+    /// See `WorldDatabase.oldestHonorDay`.
+    uint oldestHonorDay()
+    {
+        const rows = characters.query!"SELECT IFNULL(MIN(date), 0) FROM character_honor_cp WHERE type = 1"();
+        return rows.length ? rows[0].get!uint(0) : 0;
+    }
+
+    /// See `WorldDatabase.honorWeek`. (Days compare as numbers: the year is in the high bits.)
+    HonorWeekEntry[] honorWeek(uint from, uint until)
+    {
+        HonorWeekEntry[] found;
+        foreach (row; characters.query!("SELECT h.guid, SUM(h.honor), SUM(h.victim_type IN (3, 4)), c.race, "
+            ~ "c.stored_honor_rating FROM character_honor_cp h JOIN characters c ON c.guid = h.guid "
+            ~ "WHERE h.type = 1 AND h.date >= ? AND h.date < ? GROUP BY h.guid, c.race, c.stored_honor_rating")(from, until))
+            found ~= HonorWeekEntry(row.get!uint(0), row.get!float(1), row.get!uint(2), cast(ubyte) row.get!uint(3),
+                row.get!float(4));
+        return found;
+    }
+
+    /// See `WorldDatabase.setHonorRating`.
+    void setHonorRating(uint player, float rating, uint standing, bool setStanding)
+    {
+        if (setStanding)
+            characters.execute!"UPDATE characters SET stored_honor_rating = ?, honor_standing = ? WHERE guid = ?"(
+                rating, standing, player);
+        else
+            characters.execute!"UPDATE characters SET stored_honor_rating = ? WHERE guid = ?"(rating, player);
+    }
+
+    /// See `WorldDatabase.clearHonorStandings`.
+    void clearHonorStandings()
+    {
+        characters.execute!"UPDATE characters SET honor_standing = 0 WHERE honor_standing <> 0"();
+    }
+
+    /// See `WorldDatabase.foldHonorPoints`.
+    void foldHonorPoints(uint day)
+    {
+        characters.transaction({
+            foreach (row; characters.query!("SELECT guid, type, COUNT(*) FROM character_honor_cp "
+                ~ "WHERE date < ? AND victim_type IN (3, 4) GROUP BY guid, type")(day))
+            {
+                if (row.get!uint(1) == 1)
+                    characters.execute!"UPDATE characters SET stored_honorable_kills = stored_honorable_kills + ? WHERE guid = ?"(
+                        row.get!uint(2), row.get!uint(0));
+                else
+                    characters.execute!"UPDATE characters SET stored_dishonorable_kills = stored_dishonorable_kills + ? WHERE guid = ?"(
+                        row.get!uint(2), row.get!uint(0));
+            }
+            characters.execute!"DELETE FROM character_honor_cp WHERE date < ?"(day);
         });
     }
 

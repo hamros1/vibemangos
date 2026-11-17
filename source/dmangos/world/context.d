@@ -1,7 +1,6 @@
 /// State shared by every session on a world server.
 module dmangos.world.context;
 
-import dmangos.world.honor : HonorStandings;
 import dmangos.world.writebehind : Writer;
 import core.time : Duration, minutes, MonoTime, msecs, seconds;
 
@@ -186,8 +185,6 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
     WorldConfig config;
     WorldDatabase database;
-    /// Last week's faction standings (`dmangos.world.honor`), from the weekly maintenance.
-    HonorStandings honorStandings;
     /// The thread `database` writes through (`dmangos.world.writebehind`); null: writes are immediate.
     Writer writer;
     WorldData data;
@@ -458,7 +455,6 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         this.database = database;
         this.data = data;
         this.client = client;
-        honorStandings = new HonorStandings;
         this.clock = () => MonoTime.currTime;
         {
             import dmangos.world.objects : updateCompression;
@@ -2770,6 +2766,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         updateScripts(cast(uint) elapsed.total!"msecs");
         updateWeathers(cast(int) elapsed.total!"msecs");
         addPendingNavigation();
+        checkHonorWeek(now);
         scriptedGameObjectsDue();
         respawnDue(now);
         // `WUPDATE_AUCTIONS`: once a minute, by one node.
@@ -2935,6 +2932,37 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     }
 
     /// Ends every session (a cluster node whose lease lapsed: its writes are fenced, docs/CLUSTER.md phase 4).
+    /// The weekly honor maintenance ran (`dmangos.world.honorweek`): online players load their honor again.
+    void honorMaintained()
+    {
+        import dmangos.world.session : WorldSession;
+
+        foreach (session; sessions.values)
+            if (auto world = cast(WorldSession) session)
+                if (auto character = world.inWorld)
+                    character.honorReckoned();
+    }
+
+    /// Whether this node keeps the honor week (a standalone server, or a cluster's coordinator).
+    bool keepsHonorWeek = true;
+    private MonoTime nextHonorCheck;
+
+    /// `World::Update`'s maintenance check, every 10 minutes.
+    private void checkHonorWeek(MonoTime now)
+    {
+        import core.time : minutes;
+        import dmangos.log : error;
+        import dmangos.world.honorweek : runHonorMaintenance;
+
+        if (!keepsHonorWeek || now < nextHonorCheck)
+            return;
+        nextHonorCheck = now + 10.minutes;
+        try
+            runHonorMaintenance(this);
+        catch (Exception e)
+            error!"honor maintenance failed: %s"(e.msg);
+    }
+
     void kickAll(string reason)
     {
         foreach (session; sessions.values)

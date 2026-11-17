@@ -428,6 +428,13 @@ final class Character : OnlinePlayer, Looter
         petDiedHere();
     }
 
+    /// The weekly honor maintenance ran: the honor columns and rows again from the database.
+    void honorReckoned()
+    {
+        if (player !is null)
+            loadHonor();
+    }
+
     /// The corpse of this player's pet went.
     void petCorpseGone(Creature pet)
     {

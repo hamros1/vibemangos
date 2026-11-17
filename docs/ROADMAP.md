@@ -132,7 +132,7 @@ The largest area. CMaNGOS references: `Spells/`, `Entities/Unit.cpp`, `Combat/`,
    "Duels"). Players fight players in melee and with spells where the relations allow (duelists,
    PvP-flagged enemies). The PvP flag (`pvp.d`): `/pvp`, enforced zones, contested players, free-for-all
    arenas, Honorless Target. Honor (`honor.d`): kills, dishonorable kills, racial leaders, ranks, the fields,
-   inspecting. Not yet: the weekly standing, rank rewards, the off hand against players.
+   inspecting, the weekly standing (`honorweek.d`). Not yet: rank rewards, the off hand against players.
 
 * Spell casting with effects, auras (feeding `stats.d`), cooldowns and the attack swing loop.
 * Creature AI, threat, death, loot (`LootHandler.cpp`), XP and level-up (`Player::GiveXP`, then
