@@ -25,7 +25,10 @@ private:
     /// `Player::GiveLevel`: the new level's stats, `SMSG_LEVELUP_INFO`, and the group told.
     void applyLevel(uint level)
     {
+        const changed = level != player.data.level;
         const info = player.changeLevel(level, context.data, context.client);
+        if (changed)
+            player.restartLevelTime(secondsInWorld()); // `m_Played_time[PLAYED_TIME_LEVEL] = 0`
         send(info);
         flushPlayerChanges();
         if (auto group = context.groups.of(player.guid))

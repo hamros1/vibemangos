@@ -495,6 +495,15 @@ final class Player : InventoryOwner
         return slot == UNIT_FIELD_MAXHEALTH ? 100 : value;
     }
 
+    uint levelSince; /// seconds in the world when the level last changed (its level time starts there)
+
+    /// A new level: its played time starts now, `secondsInWorld` into this session.
+    void restartLevelTime(uint secondsInWorld)
+    {
+        data.levelTime = 0;
+        levelSince = secondsInWorld;
+    }
+
     /// What logging out saves, with `secondsInWorld` added to the played time.
     CharacterProgress progress(uint secondsInWorld) const
     {
@@ -504,7 +513,7 @@ final class Player : InventoryOwner
         p.map = data.map;
         p.zone = data.zone;
         p.totalTime = data.totalTime + secondsInWorld;
-        p.levelTime = data.levelTime + secondsInWorld;
+        p.levelTime = data.levelTime + (secondsInWorld > levelSince ? secondsInWorld - levelSince : 0);
         p.health = values[UNIT_FIELD_HEALTH];
         foreach (i; 0 .. maxPowers)
             p.power[i] = values[UNIT_FIELD_POWER1 + i];
@@ -1385,6 +1394,9 @@ unittest
     p.movement.position = Position(1, 2, 3, 4);
     const saved = p.progress(60);
     assert(saved.position == Position(1, 2, 3, 4) && saved.totalTime == 60 && saved.health == 31);
+    // A new level 40 seconds in: its time starts there; the total goes on.
+    p.restartLevelTime(40);
+    assert(p.progress(60).levelTime == 20 && p.progress(60).totalTime == 60);
     assert(saved.equipmentCache.split.length == 2 * (equipmentSlotEnd + 1));
     assert(saved.equipmentCache.split[2 * equipmentSlotMainhand] == "25" && saved.equipmentCache.split[$ - 2] == "2101",
         "the sword, and the quiver in the first bag slot");
