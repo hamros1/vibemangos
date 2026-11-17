@@ -534,6 +534,25 @@ unittest
     tick(1500);
     assert(gos[0].goState == goStateReady && gos[0].lootState == GoLootState.ready, "closed again");
 
+    // A script opens it by its spawn for 20 seconds (`SCRIPT_COMMAND_OPEN_DOOR`); opening it again does nothing.
+    {
+        import dmangos.world.dbscripts : DbScriptStep, DbScriptType, ScriptCommand;
+
+        DbScriptStep open = {id: 600, command: ScriptCommand.openDoor, datalong: 90001, datalong2: 20};
+        DbScriptStep again = {id: 600, delay: 100, command: ScriptCommand.openDoor, datalong: 90001, datalong2: 20};
+        context.data.dbScripts.add(DbScriptType.relay, open);
+        context.data.dbScripts.add(DbScriptType.relay, again);
+        context.startScript(DbScriptType.relay, 600, map, me.guid, 0);
+        context.updateScripts(0);
+        assert(gos[0].goState == goStateActive);
+        map.update(10.msecs); // ticking from the next update on
+        context.updateScripts(100);
+        map.update(19_000.msecs);
+        assert(gos[0].goState == goStateActive, "open for its 20 seconds");
+        map.update(1500.msecs);
+        assert(gos[0].goState == goStateReady, "and closed after them");
+    }
+
     // The herb: no herbalism, no picking.
     ubyte[] gatherAt(ulong go)
     {

@@ -560,6 +560,12 @@ private:
         victim.die(map, context.unixTime);
         context.creatureDied(victim);
         rewardKill(victim);
+        // `JustDied`'s database script (`dbscripts_on_creature_death`, by entry): the creature the source, the killer the target.
+        {
+            import dmangos.world.dbscripts : DbScriptType;
+
+            context.startScript(DbScriptType.creatureDeath, victim.template_.entry, map, victim.guid, player.guid);
+        }
     }
 }
 

@@ -195,14 +195,22 @@ final class GameObject : Replicable, Moving, PerViewer
     }
 
     /// `UseDoorOrButton`: open (or closed) for its time, if it is not in use already.
-    void useDoorOrButton(GameObjectWorld world)
+    void useDoorOrButton(GameObjectWorld world, uint restoreMs = 0)
     {
         if (lootState != GoLootState.ready)
             return;
         switchDoorOrButton(true);
         lootState = GoLootState.activated;
-        restoreTimer = autoCloseMs;
+        restoreTimer = restoreMs ? restoreMs : autoCloseMs;
         world.flushGameObject(this);
+    }
+
+    /// `UseOpenableObject`: opened (or closed) for `restoreMs`, unless it is so already.
+    void useOpenable(GameObjectWorld world, bool open, uint restoreMs)
+    {
+        if (goState == (open ? goStateActive : goStateReady))
+            return;
+        useDoorOrButton(world, restoreMs);
     }
 
     /// `SwitchDoorOrButton`: the in-use flag, and the state the other way.
@@ -237,7 +245,7 @@ final class GameObject : Replicable, Moving, PerViewer
             switch (type)
             {
             case GameObjectType.door, GameObjectType.button:
-                if (autoCloseMs && (restoreTimer -= diff) <= 0)
+                if (restoreTimer > 0 && (restoreTimer -= diff) <= 0) // its time, or a script's
                 {
                     // `ResetDoorOrButton`
                     switchDoorOrButton(false);
@@ -283,7 +291,7 @@ final class GameObject : Replicable, Moving, PerViewer
     @property bool resting() const
     {
         if (lootState == GoLootState.activated)
-            return (type == GameObjectType.door || type == GameObjectType.button) && !autoCloseMs;
+            return (type == GameObjectType.door || type == GameObjectType.button) && restoreTimer <= 0;
         return lootState == GoLootState.ready || lootState == GoLootState.notReady;
     }
 

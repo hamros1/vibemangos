@@ -548,6 +548,14 @@ private:
             else if (auto other = enemyPlayer(target))
                 spellDamageToPlayer(spell, other, value > 0 ? value : 0);
             break;
+        case 61: // SPELL_EFFECT_SEND_EVENT: the event's script, the caster its source and a game object its target
+        {
+            import dmangos.world.dbscripts : DbScriptType;
+
+            context.startScript(DbScriptType.event, cast(uint) spell.miscValue[i], map, player.guid,
+                c.targets.gameObject);
+            break;
+        }
         case 83: // SPELL_EFFECT_DUEL
             startDuel(target);
             break;

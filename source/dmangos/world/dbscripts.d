@@ -8,15 +8,17 @@
  * to act as its source or, with `SCRIPT_FLAG_BUDDY_AS_TARGET`, its target; the flags may turn them
  * about or make the source its own target. Its condition must hold.
  *
- * Scripts start from quests (taken, rewarded), gossip options, game objects used, relays, and
- * waypoints reached (`dbscripts_on_creature_movement`, the creature its own source and target).
+ * Scripts start from quests (taken, rewarded), gossip options, game objects used, relays, waypoints
+ * reached (`dbscripts_on_creature_movement`, the creature its own source and target), creatures
+ * killed (`dbscripts_on_creature_death`, the killer the target) and spells' events
+ * (`SPELL_EFFECT_SEND_EVENT`: `dbscripts_on_event`). Doors open and close.
  *
  * Commands: talking (`broadcast_text`, one of several, or one of a `dbscript_random_templates`
  * group), emotes, a quest's place explored (or failed when too far), kill credit, spawning a game
  * object, summoning a creature, taking an aura off, casting a spell, despawning, a faction, models
  * and mounts, stand states, NPC flags, unit and other flags, facing someone, stopping the script
  * when a buddy is (or is not) near, and starting a relay script (or one of a group). The others
- * (doors, AI events, paths by id) are skipped; `dmangos.log` says which when it traces. Moving: walking
+ * (AI events, paths by id) are skipped; `dmangos.log` says which when it traces. Moving: walking
  * to a point (or back to the spawn point, or running), turning, teleporting, a movement type
  * (standing, wandering, its path), pausing and resuming its path.
  */
@@ -66,6 +68,8 @@ enum ScriptCommand : uint
     standState = 28,
     modifyNpcFlags = 29,
     tempSpawnCreature = 10,
+    openDoor = 11,
+    closeDoor = 12,
     terminateScript = 31,
     pauseWaypoints = 32,
     setFacing = 36,
@@ -546,6 +550,21 @@ mixin template DbScriptRunner()
         map.wake(creature.guid);
     }
 
+    /// The game object of spawn `spawnGuid` on `map`, if it is there.
+    private GameObject scriptSpawnedGameObject(Map map, uint spawnGuid)
+    {
+        import dmangos.world.objects : makeGuid, HighGuid;
+
+        if (gameObjectSpawnIndex is null)
+            foreach (i, ref spawn; data.gameObjectSpawns)
+                gameObjectSpawnIndex[spawn.guid] = i;
+        const index = spawnGuid in gameObjectSpawnIndex;
+        if (index is null)
+            return null;
+        const spawn = &data.gameObjectSpawns[*index];
+        return cast(GameObject) map.findObject(makeGuid(HighGuid.gameObject, spawn.entry, spawn.guid));
+    }
+
     private long[ulong] scriptedGameObjects; // spawned by a script: guid -> when it goes (Unix time)
 
     /**
@@ -696,6 +715,23 @@ mixin template DbScriptRunner()
             // Where the step says (all zeros: near the source), for its time out of combat, or until it dies.
             summonCreature(map, step.datalong, Position(step.x, step.y, step.z, step.o),
                 step.datalong2 ? TempSpawnType.timedOutOfCombatOrDead : TempSpawnType.dead, step.datalong2, source.guid);
+            break;
+        }
+        case ScriptCommand.openDoor, ScriptCommand.closeDoor:
+        {
+            // The door of the spawn named (or the source, or the target), for its reset time (15 s at least).
+            GameObject door = source.go !is null ? source.go : target.go;
+            if (step.datalong)
+                door = scriptSpawnedGameObject(map, step.datalong);
+            if (door is null)
+                break;
+            import dmangos.world.gameobject : GameObjectType;
+
+            if (door.type != GameObjectType.door && door.type != GameObjectType.button)
+                break;
+            const reset = step.datalong2 < 15 ? 15 : step.datalong2;
+            door.useOpenable(map, step.command == ScriptCommand.openDoor, reset * 1000);
+            map.wake(door.guid);
             break;
         }
         case ScriptCommand.removeAura:
