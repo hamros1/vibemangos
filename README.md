@@ -628,7 +628,7 @@ source/dmangos/world/       the world server (mangosd)
   auras.d, aurahandlers.d     auras: their fields, ticks, removal; applying them, cancelling them
   dynobject.d                 the spot of a persistent area aura (a dynamic object)
   death.d, corpse.d           dying, releasing, ghosts, the spirit healer, corpses and reclaiming them
-  experience.d, loot.d        kill and quest experience; loot tables, rolls and the loot window's rules
+  experience.d, loot.d        experience for kills and a group's share; loot tables, rolls, the loot window
   loothandlers.d              handlers: looting creatures, game objects and items; group loot
   gameobjecthandlers.d        handlers: using game objects (doors, chests, chairs, traps, quest objects)
   quests.d, questhandlers.d   quest_template and its givers; the quest log, objectives, rewards, sharing
