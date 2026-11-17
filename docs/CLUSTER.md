@@ -789,6 +789,9 @@ player goes there.
   row is guarded by what was seen of it (README's "Auctions"); the coordinator settles those over.
 * **Flights** stay on the node they start on until they land: the server follows the flight there,
   and the first move after landing moves the player on if the ground is another node's.
+* **Scripts and summons** run on the node of the map cell where they started (`dbscripts.d` keeps
+  them in the node's context); a summoned creature's guid comes from its node's own range, so two
+  nodes never make the same one. A summon is not handed over with its cell: it is dropped there.
 * **Not yet:** a creature does not notice (aggro on) a player another node simulates, nor does it
   answer a call for help from another node's creature; group experience and loot rights count only
   the members on the creature's node; a player's own spells at another node's player (there is no
