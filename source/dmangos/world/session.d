@@ -74,6 +74,7 @@ import dmangos.world.gmlevel0 : Level0Commands;
 import dmangos.world.gmlevel1 : Level1Commands;
 import dmangos.world.gmlevel2 : Level2Commands;
 import dmangos.world.gminstance : InstanceCommands;
+import dmangos.world.gmquest : QuestCommands;
 import dmangos.world.gmlevel3 : Level3Commands;
 import dmangos.world.grouphandlers : GroupHandlers;
 import dmangos.world.exploration : Exploration;
@@ -928,6 +929,7 @@ private:
     mixin Level1Commands;
     mixin Level2Commands;
     mixin InstanceCommands;
+    mixin QuestCommands;
     mixin Level3Commands;
     mixin DebugCommands;
 }

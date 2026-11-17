@@ -108,6 +108,10 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
   waits the 5 seconds its help promises (ArcEmu's stops at once).
 * `.server info` names this server, not ArcEmu. Item links use 1.12's link format.
 * `.character additem` gives the whole count, in as many stacks as it takes.
+* `.quest giver` and `.quest finisher` name a game object by its own template (ArcEmu looks its id up
+  among the items); ArcEmu's quest tables are CMaNGOS's (`creature_questrelation` and the like).
+  `.quest start` gives the quest's source item, as accepting it does (ArcEmu's `receive_items` do not
+  exist in this schema).
 * `.castspellne` shows the cast in 1.12's `SMSG_SPELL_START` and `SMSG_SPELL_GO` layout (ArcEmu's
   bytes are 2.4.3's). `.dispelall` spares passive auras (talents, racials), and reaches the players
   of the GM's node of a cluster only. `.kill` and `.killplr` kill a player the way death by a

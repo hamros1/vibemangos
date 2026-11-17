@@ -39,6 +39,10 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
   waits the 5 seconds its help promises (ArcEmu's stops at once).
 * `.server info` names this server, not ArcEmu. Item links use 1.12's link format.
 * `.character additem` gives the whole count, in as many stacks as it takes.
+* `.quest giver` and `.quest finisher` name a game object by its own template (ArcEmu looks its id up
+  among the items); ArcEmu's quest tables are CMaNGOS's (`creature_questrelation` and the like).
+  `.quest start` gives the quest's source item, as accepting it does (ArcEmu's `receive_items` do not
+  exist in this schema).
 * `.castspellne` shows the cast in 1.12's `SMSG_SPELL_START` and `SMSG_SPELL_GO` layout (ArcEmu's
   bytes are 2.4.3's). `.dispelall` spares passive auras (talents, racials), and reaches the players
   of the GM's node of a cluster only. `.kill` and `.killplr` kill a player the way death by a
@@ -46,7 +50,7 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 * Arguments are read strictly: a number written wrong ("12abc", "abc") or a missing argument shows
   the command's help, where ArcEmu's C parsing read "12abc" as 12 and "abc" as 0 and went on.
 
-## Working (157)
+## Working (165)
 
 | Command | Letter | Help |
 |---|---|---|
@@ -144,7 +148,15 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 | `.account level` | `z` | Sets gm level on account. Pass it username and 0,1,2,3,az, etc. |
 | `.account mute` | `a` | Mutes account for <timeperiod>. |
 | `.account unmute` | `a` | Unmutes account <x> |
+| `.quest complete` | `2` | Complete/Finish quest <id> |
+| `.quest finisher` | `2` | Lookup quest finisher for quest <id> |
 | `.quest lookup` | `2` | Looks up quest string x |
+| `.quest giver` | `2` | Lookup quest giver for quest <id> |
+| `.quest remove` | `2` | Removes the quest <id> from the targeted player |
+| `.quest reward` | `2` | Shows reward for quest <id> |
+| `.quest status` | `2` | Lists the status of quest <id> |
+| `.quest spawn` | `2` | Port to spawn location for quest <id> |
+| `.quest start` | `2` | Starts quest <id> |
 | `.recall list` | `q` | List recall locations |
 | `.recall port` | `q` | Port to recalled location |
 | `.recall add` | `q` | Add recall location |
@@ -208,7 +220,7 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 | `.gotrig` | `v` | Warps to areatrigger <id> |
 | `.logcomment` | `1` | Adds a comment to the GM log for the admins to read. |
 
-## Not yet implemented (141)
+## Not yet implemented (133)
 
 These answer "Not yet implemented.", as ArcEmu's `HandleNYICommand` does: their systems (AI agents
 and waypoint editing, quest editing, guilds, pets, honor, battlegrounds and arenas, GM
@@ -318,17 +330,9 @@ tickets, game object and creature spawning, GM invisibility, flying) do not exis
 | `.quest delboth` | `2` | Delete quest <id> from the targeted NPC as start & finish |
 | `.quest delfinish` | `2` | Delete quest <id> from the targeted NPC as finisher |
 | `.quest delstart` | `2` | Delete quest <id> from the targeted NPC as starter |
-| `.quest complete` | `2` | Complete/Finish quest <id> |
-| `.quest finisher` | `2` | Lookup quest finisher for quest <id> |
 | `.quest item` | `2` | Lookup itemid necessary for quest <id> |
 | `.quest list` | `2` | Lists the quests for the npc <id> |
 | `.quest load` | `2` | Loads quests from database |
-| `.quest giver` | `2` | Lookup quest giver for quest <id> |
-| `.quest remove` | `2` | Removes the quest <id> from the targeted player |
-| `.quest reward` | `2` | Shows reward for quest <id> |
-| `.quest status` | `2` | Lists the status of quest <id> |
-| `.quest spawn` | `2` | Port to spawn location for quest <id> |
-| `.quest start` | `2` | Starts quest <id> |
 | `.pet createpet` | `m` | Creates a pet with <entry>. |
 | `.pet renamepet` | `m` | Renames a pet to <name>. |
 | `.pet addspell` | `m` | Teaches pet <spell>. |

@@ -207,7 +207,7 @@ What works now:
     announcements and moderation. One set per faction, unless
     `allow_two_side_interaction_channel` is on.
   * **The GM system is ArcEmu's:** its command tables, permission letters, lookup and replies,
-    word for word, with CMaNGOS's `gmlevel` mapped to letters by `gm_permissions`. 157 of its 298
+    word for word, with CMaNGOS's `gmlevel` mapped to letters by `gm_permissions`. 165 of its 298
     commands work: teleports and `game_tele` recall places, `.modify` (health, stats, speed, money,
     level, looks, ...), `.levelup`, `.character learn`, skills, items, lookups, kicks, bans, mutes,
     account levels, timed shutdowns and restarts, announcements, the GM tag and whisper blocking,
@@ -578,6 +578,7 @@ source/dmangos/world/       the world server (mangosd)
   gmactions.d                 what GM commands do to players: levels, speeds, items, skills, saving
   gmlevel0.d .. gmlevel3.d    GM commands from ArcEmu's Level0.cpp .. Level3.cpp
   gminstance.d                ArcEmu's InstanceCommands.cpp
+  gmquest.d                   ArcEmu's QuestCommands.cpp (those quests support)
   gmdebug.d                   GM commands from debugcmds.cpp, RecallCommands.cpp, BattlegroundCommands.cpp
   ../cluster/                 several world servers as one (docs/CLUSTER.md): config.d, protocol.d (framing,
                               messages), link.d (a link between nodes), node.d (membership, fencing, routing),
