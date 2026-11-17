@@ -16,7 +16,8 @@ import dmangos.mysql : MySqlConnection;
 import dmangos.world.inventory : ItemChange, ItemRecord, ItemState;
 import dmangos.world.player : CharacterData, CharacterProgress, HomeBind, tutorialFields;
 import dmangos.world.playercreate : NewCharacter, NewSkill, NewSpell, maxEnchantmentSlot;
-import dmangos.world.database : AuraRecord, CooldownRecord, SocialRow, CorpseRecord, InstanceBindRecord, InstanceRecord, InstanceRecords,
+import dmangos.world.database : AuraRecord, CooldownRecord, GuildMemberRecord, GuildRankRecord, GuildRecord,
+    PetitionRecord, SocialRow, CorpseRecord, InstanceBindRecord, InstanceRecord, InstanceRecords,
     InstanceRespawnRecord, MailRecord;
 import dmangos.world.reputation : ReputationRecord;
 import dmangos.world.auctionhouse : AuctionRecord;
@@ -396,6 +397,159 @@ final class CharacterStatements
                 ~ "maxduration, remaintime, effIndexMask) VALUES (?, ?, 0, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)")(player,
                 a.caster, a.spell, a.stacks, a.amount[0], a.amount[1], a.amount[2], a.periodTimer[0], a.periodTimer[1],
                 a.periodTimer[2], a.maxDuration, a.remaining, a.effectMask);
+    }
+
+    /// See `WorldDatabase.loadGuilds`.
+    GuildRecord[] loadGuilds()
+    {
+        GuildRecord[] guilds;
+        foreach (row; characters.query!"SELECT guildid FROM guild"())
+        {
+            auto g = loadGuild(row.get!uint(0));
+            if (!g.isNull)
+                guilds ~= g.get;
+        }
+        return guilds;
+    }
+
+    /// See `WorldDatabase.loadGuild`.
+    Nullable!GuildRecord loadGuild(uint id)
+    {
+        const rows = characters.query!("SELECT guildid, name, leaderguid, EmblemStyle, EmblemColor, BorderStyle, "
+            ~ "BorderColor, BackgroundColor, IFNULL(info, ''), IFNULL(motd, ''), createdate FROM guild WHERE guildid = ?")(id);
+        if (rows.length == 0)
+            return Nullable!GuildRecord.init;
+        const r = rows[0];
+        GuildRecord g;
+        g.id = r.get!uint(0);
+        g.name = r.get!string(1);
+        g.leader = r.get!uint(2);
+        foreach (i; 0 .. 5)
+            g.emblem[i] = r.get!uint(3 + i);
+        g.info = r.get!string(8);
+        g.motd = r.get!string(9);
+        g.created = r.get!long(10);
+        foreach (row; characters.query!"SELECT rid, rname, rights FROM guild_rank WHERE guildid = ? ORDER BY rid"(id))
+            g.ranks ~= GuildRankRecord(row.get!uint(0), row.get!string(1), row.get!uint(2));
+        foreach (row; characters.query!("SELECT m.guid, m.rank, IFNULL(m.pnote, ''), IFNULL(m.offnote, ''), c.name, "
+                ~ "c.level, c.class, c.zone, c.logout_time, c.account FROM guild_member m JOIN characters c "
+                ~ "ON c.guid = m.guid WHERE m.guildid = ?")(id))
+            g.members ~= GuildMemberRecord(row.get!uint(0), row.get!uint(1), row.get!string(2), row.get!string(3),
+                row.get!string(4), cast(ubyte) row.get!uint(5), cast(ubyte) row.get!uint(6), row.get!uint(7),
+                row.get!long(8), row.get!uint(9));
+        return nullable(g);
+    }
+
+    /// See `WorldDatabase.nextGuildId`.
+    uint nextGuildId()
+    {
+        const rows = characters.query!"SELECT IFNULL(MAX(guildid), 0) + 1 FROM guild"();
+        return rows.length ? rows[0].get!uint(0) : 1;
+    }
+
+    /// See `WorldDatabase.saveGuild`.
+    void saveGuild(const ref GuildRecord g)
+    {
+        characters.execute!("REPLACE INTO guild (guildid, name, leaderguid, EmblemStyle, EmblemColor, BorderStyle, "
+            ~ "BorderColor, BackgroundColor, info, motd, createdate) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")(g.id,
+            g.name, g.leader, g.emblem[0], g.emblem[1], g.emblem[2], g.emblem[3], g.emblem[4], g.info, g.motd, g.created);
+    }
+
+    /// See `WorldDatabase.saveGuildRanks`.
+    void saveGuildRanks(uint guild, const(GuildRankRecord)[] ranks)
+    {
+        characters.transaction({
+            characters.execute!"DELETE FROM guild_rank WHERE guildid = ?"(guild);
+            foreach (ref r; ranks)
+                characters.execute!"INSERT INTO guild_rank (guildid, rid, rname, rights) VALUES (?, ?, ?, ?)"(guild,
+                    r.id, r.name, r.rights);
+        });
+    }
+
+    /// See `WorldDatabase.saveGuildMember`.
+    void saveGuildMember(uint guild, uint member, uint rank, string publicNote, string officerNote)
+    {
+        characters.execute!("REPLACE INTO guild_member (guildid, guid, `rank`, pnote, offnote) VALUES (?, ?, ?, ?, ?)")(
+            guild, member, rank, publicNote, officerNote);
+    }
+
+    /// See `WorldDatabase.deleteGuildMember`.
+    void deleteGuildMember(uint member)
+    {
+        characters.execute!"DELETE FROM guild_member WHERE guid = ?"(member);
+    }
+
+    /// See `WorldDatabase.deleteGuild`.
+    void deleteGuild(uint guild)
+    {
+        characters.transaction({
+            characters.execute!"DELETE FROM guild WHERE guildid = ?"(guild);
+            characters.execute!"DELETE FROM guild_rank WHERE guildid = ?"(guild);
+            characters.execute!"DELETE FROM guild_member WHERE guildid = ?"(guild);
+            characters.execute!"DELETE FROM guild_eventlog WHERE guildid = ?"(guild);
+        });
+    }
+
+    /// See `WorldDatabase.loadPetition`.
+    Nullable!PetitionRecord loadPetition(uint petition)
+    {
+        const rows = characters.query!"SELECT ownerguid, name FROM petition WHERE petitionguid = ?"(petition);
+        if (rows.length == 0)
+            return Nullable!PetitionRecord.init;
+        PetitionRecord p;
+        p.petition = petition;
+        p.owner = rows[0].get!uint(0);
+        p.name = rows[0].get!string(1);
+        foreach (row; characters.query!"SELECT playerguid FROM petition_sign WHERE petitionguid = ?"(petition))
+            p.signers ~= row.get!uint(0);
+        return nullable(p);
+    }
+
+    /// See `WorldDatabase.createPetition`.
+    void createPetition(uint owner, uint petition, string name)
+    {
+        characters.transaction({
+            foreach (row; characters.query!"SELECT petitionguid FROM petition WHERE ownerguid = ?"(owner))
+                characters.execute!"DELETE FROM petition_sign WHERE petitionguid = ?"(row.get!uint(0));
+            characters.execute!"DELETE FROM petition WHERE ownerguid = ? OR petitionguid = ?"(owner, petition);
+            characters.execute!"DELETE FROM petition_sign WHERE petitionguid = ?"(petition);
+            characters.execute!"INSERT INTO petition (ownerguid, petitionguid, name) VALUES (?, ?, ?)"(owner, petition,
+                name);
+        });
+    }
+
+    /// See `WorldDatabase.signPetition`.
+    void signPetition(uint owner, uint petition, uint player, uint account)
+    {
+        characters.execute!("INSERT INTO petition_sign (ownerguid, petitionguid, playerguid, player_account) "
+            ~ "VALUES (?, ?, ?, ?)")(owner, petition, player, account);
+    }
+
+    /// See `WorldDatabase.accountSignedPetition`.
+    bool accountSignedPetition(uint account, uint petition)
+    {
+        return characters.query!"SELECT 1 FROM petition_sign WHERE player_account = ? AND petitionguid = ?"(account,
+            petition).length > 0;
+    }
+
+    /// See `WorldDatabase.deletePetition`.
+    void deletePetition(uint petition)
+    {
+        characters.transaction({
+            characters.execute!"DELETE FROM petition WHERE petitionguid = ?"(petition);
+            characters.execute!"DELETE FROM petition_sign WHERE petitionguid = ?"(petition);
+        });
+    }
+
+    /// See `WorldDatabase.deletePetitionsOf`.
+    void deletePetitionsOf(uint player)
+    {
+        characters.transaction({
+            foreach (row; characters.query!"SELECT petitionguid FROM petition WHERE ownerguid = ?"(player))
+                characters.execute!"DELETE FROM petition_sign WHERE petitionguid = ?"(row.get!uint(0));
+            characters.execute!"DELETE FROM petition WHERE ownerguid = ?"(player);
+            characters.execute!"DELETE FROM petition_sign WHERE playerguid = ?"(player);
+        });
     }
 
     /// See `WorldDatabase.loadSocial`.

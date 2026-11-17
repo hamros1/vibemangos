@@ -76,6 +76,7 @@ import dmangos.world.gmlevel2 : Level2Commands;
 import dmangos.world.gminstance : InstanceCommands;
 import dmangos.world.sessionscripting : SessionScripting;
 import dmangos.world.social : FriendInfo, SocialHandlers;
+import dmangos.world.guildhandlers : GuildHandlers;
 import dmangos.script.api : MenuOption, QuestProgress;
 import dmangos.world.gmquest : QuestCommands;
 import dmangos.world.gmlevel3 : Level3Commands;
@@ -537,6 +538,26 @@ final class WorldSession : NetSession, Kickable, OnlinePlayer, Combatant, Looter
         friendChanged(guid, online, info);
     }
 
+    /// The guild fields from its guild now (`GuildHandlers.updateGuildFields`), for the context.
+    void refreshGuildFields()
+    {
+        updateGuildFields();
+    }
+
+    /// The guild its `PLAYER_GUILDID` names (what it was in, until told otherwise).
+    @property uint guildOfField()
+    {
+        import dmangos.world.updatefields : PLAYER_GUILDID;
+
+        return player is null ? 0 : player.values.get!PLAYER_GUILDID;
+    }
+
+    /// An invitation from another node (`GuildHandlers.guildInvitedBy`).
+    void guildInvite(uint guild, ulong inviter, string inviterName, string guildName)
+    {
+        guildInvitedBy(guild, inviter, inviterName, guildName);
+    }
+
     /// See `OnlinePlayer.ignores`.
     bool ignores(ulong guid) const
     {
@@ -969,6 +990,7 @@ private:
     mixin GmActions;
     mixin GmTargets;
     mixin SocialHandlers;
+    mixin GuildHandlers;
     mixin CombatHandlers;
     mixin DeathHandlers;
     mixin LootHandlers;

@@ -255,6 +255,10 @@ private:
             return vendorItems(creature).length > 0;
         case GossipOption.trainer:
             return isTrainerOf(creature, false);
+        case GossipOption.petitioner:
+            return (creature.npcValues.get!UNIT_NPC_FLAGS & NpcFlag.petitioner) != 0;
+        case GossipOption.tabardDesigner:
+            return (creature.npcValues.get!UNIT_NPC_FLAGS & NpcFlag.tabardDesigner) != 0;
         case GossipOption.unlearnTalents:
             // A class trainer of the player's own class, from the level talents begin.
             return creature.npcTemplate.trainerType == TrainerType.classes
@@ -360,6 +364,14 @@ private:
         case GossipOption.unlearnTalents:
             closeGossip();
             offerTalentWipe(creature.guid);
+            break;
+        case GossipOption.petitioner:
+            closeGossip();
+            handlePetitionShowList(ClientGuid(creature.guid));
+            break;
+        case GossipOption.tabardDesigner:
+            closeGossip();
+            handleTabardVendorActivate(ClientGuid(creature.guid));
             break;
         case GossipOption.innkeeper:
             closeGossip();

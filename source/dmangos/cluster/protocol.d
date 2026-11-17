@@ -24,7 +24,7 @@ import dmangos.cluster.regions : Region;
 import dmangos.serialization : deserialize, LengthPrefix, serialize;
 
 /// Changes whenever a message changes; nodes speaking another version are turned away.
-enum ushort protocolVersion = 23;
+enum ushort protocolVersion = 24;
 
 /// Size of a frame header.
 enum frameHeaderSize = 16;
@@ -77,6 +77,9 @@ enum MessageType : ushort
     dungeonEntryRequest = 40,
     dungeonEntryReply = 41,
     friendStatus = 42,
+    guildReload = 43,
+    guildBroadcast = 44,
+    guildInvitation = 45,
 }
 
 /// Why a hello was refused.
@@ -580,6 +583,37 @@ struct FriendStatusChange
     bool online;
     ubyte status; /// `FriendStatus`
     uint area, level, classId;
+}
+
+/// The sender changed guild `guild` (in the database): read it again.
+struct GuildReload
+{
+    enum type = MessageType.guildReload;
+
+    uint guild;
+}
+
+/// A guild's packet for its members on the receiver whose rank has `right` (0: all).
+struct GuildBroadcast
+{
+    enum type = MessageType.guildBroadcast;
+
+    uint guild;
+    uint right;
+    ushort opcode;
+    @LengthPrefix!uint ubyte[] body_;
+}
+
+/// A guild's invitation for a player the receiver simulates.
+struct GuildInvitation
+{
+    enum type = MessageType.guildInvitation;
+
+    ulong target;
+    uint guild;
+    ulong inviter;
+    @LengthPrefix!uint string inviterName;
+    @LengthPrefix!uint string guildName;
 }
 
 /// To the coordinator: the sender is shutting down; its regions should go to the others first.

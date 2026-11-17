@@ -73,6 +73,9 @@ interface ReplicationHandler
     /// A script's signal for a creature this node simulates.
     void scriptSignal(ushort peer, const ref ScriptSignal message);
 
+    /// Guild news from another node: a guild changed, a guild's packet, an invitation.
+    void guildNews(ushort peer, MessageType type, const(ubyte)[] payload);
+
     /// A player of another node logged in or out (its friends here hear of it).
     void friendStatus(ushort peer, const ref FriendStatusChange message);
 
@@ -616,6 +619,12 @@ final class ClusterNode : LinkOwner
                 const m = decode!StockRelease(payload);
                 replication.stockRelease(peer, m);
             }
+            return;
+        }
+        if (type >= MessageType.guildReload && type <= MessageType.guildInvitation)
+        {
+            if (replication !is null)
+                replication.guildNews(peer, cast(MessageType) type, payload);
             return;
         }
         if (type == MessageType.friendStatus)

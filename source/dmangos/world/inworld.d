@@ -95,6 +95,7 @@ private:
         leaveGroupsOnLogout(loggingOut);
         context.channelCommand(this, ChannelOp.leaveAll, null);
         announceToFriends(false);
+        guildLogout();
         auto group = context.groups.of(player.guid);
         context.leaveWorld(this, leaving);
         // The others see the player offline; a party it left tells them itself (in a cluster, the
@@ -366,6 +367,7 @@ private:
         loadCooldowns();
         loadTalentReset();
         loadSocial();
+        updateGuildFields();
         applyPassiveSpells();
         resetMovementCheck();
         pendingArrival = action; // done at the first tick here, once the move is complete everywhere
@@ -828,6 +830,9 @@ private:
             break;
         case ChatType.CHAT_MSG_CHANNEL:
             context.channelCommand(this, ChannelOp.say, chat.channel, chat.text, language);
+            break;
+        case ChatType.CHAT_MSG_GUILD, ChatType.CHAT_MSG_OFFICER:
+            guildChat(chat.type == ChatType.CHAT_MSG_OFFICER, language, chat.text);
             break;
         default:
             trace!"%s: chat type %s is not supported yet"(remoteAddress, chat.type);

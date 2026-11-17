@@ -418,6 +418,21 @@ def describe(op, p):
                 friends.append(f"{guid & 0xFFFFFF} offline")
         print(f"  [friend list] {n}: " + ", ".join(friends))
     elif op == 0x06B: print(f"  [ignore list] {p[0]}")
+    elif op == 0x092:
+        ev, n = p[0], p[1]; parts = p[2:].split(b"\0")[:n]
+        print(f"  [guild event] {ev}: " + ", ".join(x.decode(errors='replace') for x in parts))
+    elif op == 0x093:
+        cmd = struct.unpack_from("<I", p, 0)[0]; txt = p[4:p.index(0, 4)]; res = struct.unpack_from("<I", p, p.index(0, 4) + 1)[0]
+        print(f"  [guild result] command {cmd} '{txt.decode(errors='replace')}' result {res}")
+    elif op == 0x088:
+        name = p[:p.index(0)]; d, m, y, members, accounts = struct.unpack_from("<IIIII", p, p.index(0) + 1)
+        print(f"  [guild info] {name.decode()}: created {y}-{m:02}-{d:02}, {members} members, {accounts} accounts")
+    elif op == 0x08A:
+        count = struct.unpack_from("<I", p, 0)[0]; motd = p[4:p.index(0, 4)]
+        print(f"  [guild roster] {count} members, motd '{motd.decode(errors='replace')}'")
+    elif op == 0x055:
+        gid = struct.unpack_from("<I", p, 0)[0]; name = p[4:p.index(0, 4)]
+        print(f"  [guild query] {gid}: {name.decode(errors='replace')}")
     elif op == 0x068: print(f"  [friend status] result {p[0]} guid {struct.unpack_from('<Q', p, 1)[0] & 0xFFFFFF}")
     elif op == 0x199:
         qid, entry_, count, req = struct.unpack_from("<IIII", p, 0); print(f"  [quest kill] {qid}: {entry_} {count}/{req}")
@@ -861,6 +876,8 @@ for action in actions:
         x, y, z = map(float, args); movement(0x0B5, x, y, z, flags=1); movement(0x0EE, x, y, z, flags=1); movement(0x0B7, x, y, z)
         here[:] = [x, y, z]
         print(f"moved to {x} {y} {z}")
+    elif kind == "gchat":
+        wsend(0x095, struct.pack("<II", 3, 7) + args[0].encode() + b"\0"); print(f"guild chat '{args[0]}'"); listen_for(1)
     elif kind == "say":
         wsend(0x095, struct.pack("<II", 0, 7) + args[0].encode() + b"\0"); op, p = expect(0x096)
         n = struct.unpack_from("<I", p, 21)[0]; print(f"heard: '{p[25:25 + n - 1].decode()}'")
@@ -873,6 +890,12 @@ for action in actions:
     elif kind == "whisper":
         wsend(0x095, struct.pack("<II", 6, 7) + args[0].encode() + b"\0" + args[1].encode() + b"\0")
         op, p = wrecv(); describe(op, p)
+    elif kind in ("gcreate", "gmotd", "ginvite"):
+        wsend({"gcreate": 0x081, "gmotd": 0x091, "ginvite": 0x082}[kind], args[0].encode() + b"\0"); print(f"{kind} {args[0]}"); listen_for(1)
+    elif kind in ("ginfo", "groster", "gleave", "gdisband"):
+        wsend({"ginfo": 0x087, "groster": 0x089, "gleave": 0x08D, "gdisband": 0x08F}[kind], b""); print(kind); listen_for(1)
+    elif kind == "gquery":
+        wsend(0x054, struct.pack("<I", int(args[0]))); print(f"gquery {args[0]}"); listen_for(1)
     elif kind in ("addfriend", "addignore"):
         wsend(0x069 if kind == "addfriend" else 0x06C, args[0].encode() + b"\0"); print(f"{kind} {args[0]}"); listen_for(1)
     elif kind == "friends":

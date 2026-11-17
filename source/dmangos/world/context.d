@@ -33,6 +33,7 @@ import dmangos.script.api : ActionResult, EntityRef, GameObjectHost, Waypoint;
 import dmangos.script.registry : ScriptHandle, ScriptKind, ScriptRuntime;
 import dmangos.scripts : scriptModules;
 import dmangos.world.instancescripting : InstanceScript;
+import dmangos.world.guild : Guilds, Guild, GuildRight;
 import dmangos.world.characterdb : DeleteOptions, GuidCounters;
 import dmangos.world.clientdata : ClientData;
 import dmangos.world.config : WorldConfig;
@@ -177,6 +178,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     WorldDatabase database;
     WorldData data;
     ClientData client;
+
+    /// The guilds (`GuildMgr`), all of them, as saved (`dmangos.world.guild`).
+    Guilds guilds;
 
     /// The gameplay scripts (docs/SCRIPTING.md), found in `dmangos.scripts` at compile time.
     ScriptRuntime scripts;
@@ -459,6 +463,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         respawnAt = database.loadCreatureRespawns();
         gameObjectRespawnAt = database.loadGameObjectRespawns();
         groups.load(database.loadGroups());
+        guilds = new Guilds;
+        guilds.load(database.loadGuilds());
         scripts = ScriptRuntime.of!scriptModules();
         reportScripts();
         signalSequence = ulong(startUnixTime) << 20; // above what an earlier run of this node sent
@@ -1994,6 +2000,71 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         signalElsewhere(replica.owner, m);
         return ActionResult.ok;
     }
+
+    // -----------------------------------------------------------------------
+    // Guilds across the node (and, through these, the cluster)
+    // -----------------------------------------------------------------------
+
+    /// A guild's packet for its members online here whose rank has `right` (0: all).
+    void guildToMembersHere(uint guild, Opcode opcode, const(ubyte)[] body_, uint right)
+    {
+        import dmangos.world.session : WorldSession;
+
+        auto g = guilds.find(guild);
+        foreach (other; onlinePlayers)
+            if (auto session = cast(WorldSession) other)
+                if (session.character !is null)
+                {
+                    const low = cast(uint) session.character.guid;
+                    auto m = g is null ? null : g.member(low);
+                    if (m is null && opcode != Opcode.SMSG_GUILD_EVENT)
+                        continue;
+                    if (m is null && guilds.of(low) !is null)
+                        continue;
+                    if (m is null && session.guildOfField != guild)
+                        continue; // a disbanded guild's last word: to those who were in it
+                    if (right && m !is null && !g.hasRight(m.rank, cast(GuildRight) right))
+                        continue;
+                    session.deliver(opcode, body_);
+                }
+    }
+
+    /// The guild fields of every player here, from their guilds now.
+    void guildFieldsHere()
+    {
+        import dmangos.world.session : WorldSession;
+
+        foreach (other; onlinePlayers)
+            if (auto session = cast(WorldSession) other)
+                if (session.character !is null)
+                    session.refreshGuildFields();
+    }
+
+    /// Another node changed guild `id`: read again (gone if it is gone), its members' fields here updated.
+    void guildReloaded(uint id)
+    {
+        auto record = database.loadGuild(id);
+        guilds.replace(id, record.isNull ? null : new Guild(record.get));
+        guildFieldsHere();
+    }
+
+    /// An invitation from another node for a player here.
+    void guildInvitationArrived(ulong target, uint guild, ulong inviter, string inviterName, string guildName)
+    {
+        import dmangos.world.session : WorldSession;
+
+        if (auto session = cast(WorldSession) onlinePlayer(target))
+            if (session.character !is null)
+                session.guildInvite(guild, inviter, inviterName, guildName);
+    }
+
+    /// Guild news for the other nodes; null standalone.
+    void delegate(uint guild) guildReloadElsewhere;
+    /// ditto
+    void delegate(uint guild, uint right, ushort opcode, const(ubyte)[] body_) guildBroadcastElsewhere;
+    /// ditto
+    void delegate(ushort node, ulong target, uint guild, ulong inviter, string inviterName, string guildName)
+        guildInviteElsewhere;
 
     /// Tells the other nodes a player here logged in or out (for its friends there); null standalone.
     void delegate(ulong guid, bool online, ubyte status, uint area, uint level, uint classId) announceFriendElsewhere;

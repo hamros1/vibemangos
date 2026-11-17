@@ -199,6 +199,17 @@ What works now:
     assistants, kicking, leaving, loot settings, raid target icons, ready checks, rolls, minimap
     pings, and member stats for members out of sight. Groups are kept in `groups` and
     `group_member` and survive restarts. Logging out of a party leaves it, as in CMaNGOS.
+  * **Guilds** (CMaNGOS's `Guild`, `GuildHandler.cpp`, `PetitionsHandler.cpp`): a guild charter
+    bought from a guild master for 10 silver, signed by nine others of the faction (once an account)
+    and turned in founds the guild with CMaNGOS's five ranks; invitations (of the faction unless
+    `allow_two_side_interaction_guild`, not from someone ignored), the roster (online members, the
+    others' last zone and days away, officers' notes for those allowed), the information window,
+    promotions and demotions by rank, leaving, removing, disbanding, handing over leadership (a
+    leaving master's best-ranked member takes over), the message of the day, the guild information,
+    public and officer notes, ranks' names and rights (5 to 10 ranks), the tabard (10 gold, the
+    master's, at a tabard designer), guild and officer chat by rank rights, and members signing on
+    and off. Saved in `guild`, `guild_member`, `guild_rank`, `petition` and `petition_sign`. The
+    client's `/gcreate` (`CMSG_GUILD_CREATE`) founds a guild for game masters only.
   * **Friends and ignore lists** (CMaNGOS's `SocialMgr`): up to 50 friends and 25 ignored players,
     in `character_social`; the friend list shows who is online (zone, level, class, away or busy),
     on this node or another; friends hear of a login and a logout (across nodes too); a friend of
@@ -543,6 +554,7 @@ time.
 | `allow_two_side_interaction_channel`, `allow_two_side_interaction_group` | `AllowTwoSide.Interaction.Channel`, `AllowTwoSide.Interaction.Group` | `false`, `false` |
 | `allow_two_side_interaction_auction` | `AllowTwoSide.Interaction.Auction` | `false` |
 | `allow_two_side_add_friend` | `AllowTwoSide.AddFriend` | `false` |
+| `allow_two_side_interaction_guild` | `AllowTwoSide.Interaction.Guild` | `false` |
 | `chat_restricted_raid_warnings` | `Chat.RestrictedRaidWarnings` | `false` |
 | `allow_two_side_who_list` | `AllowTwoSide.WhoList` (the other faction in /who) | `false` |
 | `gm_level_in_who_list` | `GM.InWhoList.Level` (the highest account level players see in /who) | `3` |
@@ -687,6 +699,7 @@ source/dmangos/world/       the world server (mangosd)
   instancescripting.d         a dungeon copy's D script, saved in instance.data
   sessionscripting.d          the player's session as the host of spell and area trigger scripts
   social.d                    friends and ignore lists
+  guild.d, guildhandlers.d    guilds: ranks, members and packets; charters, invitations, roster, chat
   scripttests.d               the scripts in the world (tests only)
   dbscripts.d                 dbscripts_on_*: script steps run by the world at their delays
   combat.d, relations.d       melee formulas (the attack table, damage) and who may attack or help whom

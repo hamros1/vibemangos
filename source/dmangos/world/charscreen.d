@@ -251,6 +251,7 @@ private:
             account.username, character.name, guid, character.map, character.position.x, character.position.y,
             character.position.z);
         announceToFriends(true);
+        guildLogin();
         // Another node's ground (a dungeon it hosts, say): there at once, not after the first look.
         if (const target = migrationTarget())
             migrateTo(target);

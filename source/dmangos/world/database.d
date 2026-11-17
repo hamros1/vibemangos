@@ -107,6 +107,49 @@ struct CooldownRecord
     uint item;            /// the item it was cast from (its cooldown is the item's)
 }
 
+/// A `guild_rank` row.
+struct GuildRankRecord
+{
+    uint id;
+    string name;
+    uint rights;
+}
+
+/// A `guild_member` row, with what `characters` says of the member.
+struct GuildMemberRecord
+{
+    uint guid;
+    uint rank;
+    string publicNote, officerNote;
+    string name;
+    ubyte level, classId;
+    uint zone;
+    long logoutTime;
+    uint account;
+}
+
+/// A `guild` row with its ranks and members.
+struct GuildRecord
+{
+    uint id;
+    string name;
+    uint leader;
+    uint[5] emblem; /// style, colour, border style, border colour, background colour
+    string info, motd;
+    long created;
+    GuildRankRecord[] ranks;
+    GuildMemberRecord[] members;
+}
+
+/// A `petition` (a guild charter) and its `petition_sign`s.
+struct PetitionRecord
+{
+    uint petition; /// the charter item's guid
+    uint owner;
+    string name;
+    uint[] signers;
+}
+
 /// A `character_social` row of a player: another character, and whether it is a friend or ignored.
 struct SocialRow
 {
@@ -251,6 +294,36 @@ interface WorldDatabase
 
     /// `Player::_SaveAuras`: the player's auras, replacing those saved before.
     void saveAuras(uint player, const(AuraRecord)[] auras);
+
+    /// Every guild, with its ranks and members (`GuildMgr::LoadGuilds`); one guild alone.
+    GuildRecord[] loadGuilds();
+    /// ditto
+    Nullable!GuildRecord loadGuild(uint id);
+    /// A new guild's id: one above any there is.
+    uint nextGuildId();
+    /// A guild's own row (name, leader, emblem, texts), written whole (created if new).
+    void saveGuild(const ref GuildRecord guild);
+    /// Its ranks, all of them (the old rows go).
+    void saveGuildRanks(uint guild, const(GuildRankRecord)[] ranks);
+    /// A member's row (created if new).
+    void saveGuildMember(uint guild, uint member, uint rank, string publicNote, string officerNote);
+    /// A member gone.
+    void deleteGuildMember(uint member);
+    /// A guild gone: its rows, ranks, members and log.
+    void deleteGuild(uint guild);
+
+    /// The petition (charter) of item `petition`, with its signers; null if none.
+    Nullable!PetitionRecord loadPetition(uint petition);
+    /// A new charter of `owner`'s (its older ones go).
+    void createPetition(uint owner, uint petition, string name);
+    /// A signature; whether an account signed a petition already.
+    void signPetition(uint owner, uint petition, uint player, uint account);
+    /// ditto
+    bool accountSignedPetition(uint account, uint petition);
+    /// A charter turned in or gone.
+    void deletePetition(uint petition);
+    /// `RemovePetitionsAndSigns`: a character's own charters and its signatures go (it joined a guild).
+    void deletePetitionsOf(uint player);
 
     /// `character_social`: the player's friends and ignored players.
     SocialRow[] loadSocial(uint player);
@@ -538,6 +611,26 @@ final class MySqlWorldDatabase : WorldDatabase
     void saveCooldowns(uint player, const(CooldownRecord)[] cooldowns) { statements.saveCooldowns(player, cooldowns); }
     void saveTalentReset(uint player, uint cost, long time) { statements.saveTalentReset(player, cost, time); }
     SocialRow[] loadSocial(uint player) { return statements.loadSocial(player); }
+    GuildRecord[] loadGuilds() { return statements.loadGuilds(); }
+    Nullable!GuildRecord loadGuild(uint id) { return statements.loadGuild(id); }
+    uint nextGuildId() { return statements.nextGuildId(); }
+    void saveGuild(const ref GuildRecord guild) { statements.saveGuild(guild); }
+    void saveGuildRanks(uint guild, const(GuildRankRecord)[] ranks) { statements.saveGuildRanks(guild, ranks); }
+    void saveGuildMember(uint guild, uint member, uint rank, string publicNote, string officerNote)
+    {
+        statements.saveGuildMember(guild, member, rank, publicNote, officerNote);
+    }
+    void deleteGuildMember(uint member) { statements.deleteGuildMember(member); }
+    void deleteGuild(uint guild) { statements.deleteGuild(guild); }
+    Nullable!PetitionRecord loadPetition(uint petition) { return statements.loadPetition(petition); }
+    void createPetition(uint owner, uint petition, string name) { statements.createPetition(owner, petition, name); }
+    void signPetition(uint owner, uint petition, uint player, uint account)
+    {
+        statements.signPetition(owner, petition, player, account);
+    }
+    bool accountSignedPetition(uint account, uint petition) { return statements.accountSignedPetition(account, petition); }
+    void deletePetition(uint petition) { statements.deletePetition(petition); }
+    void deletePetitionsOf(uint player) { statements.deletePetitionsOf(player); }
     void saveSocial(uint player, uint other, ubyte flags) { statements.saveSocial(player, other, flags); }
     bool isIgnoring(uint player, uint other) { return statements.isIgnoring(player, other); }
     void loadTalentReset(uint player, out uint cost, out long time) { statements.loadTalentReset(player, cost, time); }
@@ -1050,6 +1143,113 @@ final class MemoryWorldDatabase : WorldDatabase
     void saveAuras(uint player, const(AuraRecord)[] auras) { auraRows[player] = auras.dup; }
     CooldownRecord[][uint] cooldownRows; /// by player
     long[2][uint] talentResets; /// by player: cost, time
+    GuildRecord[uint] guildRows; /// by id
+    GuildRecord[] loadGuilds() { return guildRows.values.dup; }
+    Nullable!GuildRecord loadGuild(uint id)
+    {
+        if (auto g = id in guildRows)
+        {
+            GuildRecord copy = *g;
+            copy.ranks = g.ranks.dup;
+            copy.members = g.members.dup;
+            foreach (ref m; copy.members)
+                if (auto c = m.guid in loadable)
+                {
+                    m.name = c.name;
+                    m.level = cast(ubyte) c.level;
+                    m.classId = c.classId;
+                    m.account = c.account;
+                }
+            return nullable(copy);
+        }
+        return Nullable!GuildRecord.init;
+    }
+    uint nextGuildId()
+    {
+        uint id;
+        foreach (k, _; guildRows)
+            if (k > id)
+                id = k;
+        return id + 1;
+    }
+    void saveGuild(const ref GuildRecord guild)
+    {
+        auto g = &guildRows.require(guild.id, GuildRecord.init);
+        auto ranks = g.ranks, members = g.members;
+        *g = cast(GuildRecord) guild;
+        g.ranks = ranks;
+        g.members = members;
+    }
+    void saveGuildRanks(uint guild, const(GuildRankRecord)[] ranks)
+    {
+        if (auto g = guild in guildRows)
+            g.ranks = ranks.dup;
+    }
+    void saveGuildMember(uint guild, uint member, uint rank, string publicNote, string officerNote)
+    {
+        deleteGuildMember(member);
+        if (auto g = guild in guildRows)
+            g.members ~= GuildMemberRecord(member, rank, publicNote, officerNote);
+    }
+    void deleteGuildMember(uint member)
+    {
+        import std.algorithm.iteration : filter;
+        import std.array : array;
+
+        foreach (ref g; guildRows)
+            g.members = g.members.filter!(m => m.guid != member).array;
+    }
+    void deleteGuild(uint guild) { guildRows.remove(guild); }
+    PetitionRecord[uint] petitionRows; /// by charter item
+    uint[uint][uint] petitionAccounts; /// petition -> signer -> account
+    Nullable!PetitionRecord loadPetition(uint petition)
+    {
+        if (auto p = petition in petitionRows)
+        {
+            PetitionRecord copy = *p;
+            copy.signers = p.signers.dup;
+            return nullable(copy);
+        }
+        return Nullable!PetitionRecord.init;
+    }
+    void createPetition(uint owner, uint petition, string name)
+    {
+        foreach (id, p; petitionRows.dup)
+            if (p.owner == owner)
+                deletePetition(id);
+        petitionRows[petition] = PetitionRecord(petition, owner, name);
+    }
+    void signPetition(uint owner, uint petition, uint player, uint account)
+    {
+        if (auto p = petition in petitionRows)
+        {
+            p.signers ~= player;
+            petitionAccounts.require(petition, null)[player] = account;
+        }
+    }
+    bool accountSignedPetition(uint account, uint petition)
+    {
+        foreach (_, a; petitionAccounts.get(petition, null))
+            if (a == account)
+                return true;
+        return false;
+    }
+    void deletePetition(uint petition)
+    {
+        petitionRows.remove(petition);
+        petitionAccounts.remove(petition);
+    }
+    void deletePetitionsOf(uint player)
+    {
+        import std.algorithm.iteration : filter;
+        import std.array : array;
+
+        foreach (id, p; petitionRows.dup)
+            if (p.owner == player)
+                deletePetition(id);
+        foreach (ref p; petitionRows)
+            p.signers = p.signers.filter!(s => s != player).array;
+    }
     ubyte[uint][uint] socialRows; /// by player, then the other character
     SocialRow[] loadSocial(uint player)
     {

@@ -9,7 +9,7 @@ import core.time : Duration, MonoTime, msecs;
 
 import dmangos.cluster.node : ClusterNode, PlayerHandler, ReplicationHandler;
 import dmangos.cluster.protocol : DeliverTo, InRange, InterestUpdate, PlayerMessage, PlayerMessageKind, Presence,
-    PresenceEntry, ChannelCommand, GmRemote, KillShare, ScriptSignal, DungeonEntryRequest, DungeonEntryReply, FriendStatusChange, GroupCommand, RegionLoad, ToEveryone, GroupState, MemberStatsRequest, ReplicaCreate, ReplicaMove, ReplicaRemove, ReplicaValues, StockRelease, StockReply, StockRequest,
+    PresenceEntry, ChannelCommand, GmRemote, KillShare, ScriptSignal, DungeonEntryRequest, DungeonEntryReply, FriendStatusChange, GuildBroadcast, GuildInvitation, GuildReload, MessageType, GroupCommand, RegionLoad, ToEveryone, GroupState, MemberStatsRequest, ReplicaCreate, ReplicaMove, ReplicaRemove, ReplicaValues, StockRelease, StockReply, StockRequest,
     WhisperMessage;
 import dmangos.world.creature : Creature;
 import dmangos.world.group : Group, Groups;
@@ -327,6 +327,53 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
         if (auto session = cast(WorldSession) context.onlinePlayer(m.target))
             if (session.character !is null)
                 session.killShared(m.entry, m.victim, m.level, m.xp, m.rate, m.reputationRate);
+    }
+
+    /// For the context: guild news for every other node.
+    void sendGuildReload(uint guild)
+    {
+        foreach (peer; context.otherNodes())
+            node.sendTo(peer, GuildReload(guild));
+    }
+
+    /// ditto
+    void sendGuildBroadcast(uint guild, uint right, ushort opcode, const(ubyte)[] body_)
+    {
+        foreach (peer; context.otherNodes())
+            node.sendTo(peer, GuildBroadcast(guild, right, opcode, body_.dup));
+    }
+
+    /// For the context: an invitation for a player node `target` simulates.
+    void sendGuildInvitation(ushort target, ulong player, uint guild, ulong inviter, string inviterName, string guildName)
+    {
+        node.sendTo(target, GuildInvitation(player, guild, inviter, inviterName, guildName));
+    }
+
+    /// See `ReplicationHandler.guildNews`.
+    void guildNews(ushort peer, MessageType type, const(ubyte)[] payload)
+    {
+        import dmangos.cluster.protocol : decode;
+
+        switch (type)
+        {
+        case MessageType.guildReload:
+            context.guildReloaded(decode!GuildReload(payload).guild);
+            break;
+        case MessageType.guildBroadcast:
+        {
+            const m = decode!GuildBroadcast(payload);
+            context.guildToMembersHere(m.guild, cast(Opcode) m.opcode, m.body_, m.right);
+            break;
+        }
+        case MessageType.guildInvitation:
+        {
+            const m = decode!GuildInvitation(payload);
+            context.guildInvitationArrived(m.target, m.guild, m.inviter, m.inviterName, m.guildName);
+            break;
+        }
+        default:
+            break;
+        }
     }
 
     /// For the context: a player here logged in or out; every other node hears of it, for its friends.

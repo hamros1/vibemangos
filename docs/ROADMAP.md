@@ -27,10 +27,9 @@
 
 * **Stats:** item bonuses, auras (talents' and racials' passive ones included) and the crit, dodge,
   parry and block chances are applied; passives bound to a kind of weapon or armour are not yet.
-* **Not loaded:** guild membership (`PLAYER_GUILDID`), pets.
+* **Not loaded:** pets.
 * **Creatures** wander, walk their waypoints (running their scripts), fight, die and respawn. Type 3 paths (flying) are walked as waypoints, formations
-  do not follow their leader, and creatures in water do not swim. Stable masters, battlemasters and
-  guild NPCs are not offered in menus yet. Conditions
+  do not follow their leader, and creatures in water do not swim. Stable masters and battlemasters are not offered in menus yet. Conditions
   that need auras, world states or scripts are never met. Elevators
   are created but do not move. Ships and zeppelins are not
   spawned. Idle cells unload after `grid_cleanup_delay_seconds`.
@@ -177,7 +176,8 @@ house from anywhere), the auction rates (`Rate.Auction.*`), an auction bot.
 
 ### 7. Social and progression
 
-* Friends and ignore lists: done (`social.d`). Guilds: a handler group and module of their own, like
+* Friends and ignore lists (`social.d`) and guilds (`guild.d`, `guildhandlers.d`): done. Not yet:
+  the guild event log (`guild_eventlog`), guild-named tabards in the shop list. Like
   `grouphandlers.d` (mail, auctions and trade are done).
 * Quests (`QuestHandler.cpp`, `ObjectMgr::LoadQuests`).
 * The rest of ArcEmu's GM commands, as their systems arrive (COMMANDS.md lists them): each is one

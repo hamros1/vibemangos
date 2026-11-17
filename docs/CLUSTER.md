@@ -885,6 +885,11 @@ player goes there.
 * **Friends** across nodes: a friend list shows a friend another node simulates from its presence;
   a login or logout is told to every other node (`FriendStatusChange`, protocol 23), whose players
   with that friend hear of it. A move between nodes is neither.
+* **Guilds** are held by every node: a change is written to the database and the other nodes read
+  that guild again (`GuildReload`); what a guild says to its members (events, guild and officer
+  chat) reaches its members on every node (`GuildBroadcast`), and an invitation reaches a player
+  on another node (`GuildInvitation`) (protocol 24). Two nodes changing one guild at the same moment
+  keep the last write.
 * **Weather** is each node's own: a zone whose cells two nodes simulate may rain on one side only.
 * **GM edits of world data** (`.npc vendoradditem`, `.quest addstart` and the like, `.fixscale`) are
   written to the world database and held in the GM's node's memory; the other nodes see them after
