@@ -356,8 +356,9 @@ What works now:
     as its objective. Places to find (`areatrigger_involvedrelation`) count when the player walks
     into them; items that begin a quest (`startquest`) offer it from the bags and go when it is
     taken; a sharable quest is offered to the group's members within 10 yards who may take it, and
-    the one who shared it hears who took it. Progress is saved in `character_queststatus`. Not yet:
-    timed and escort quests.
+    the one who shared it hears who took it. A timed quest shows its end in the log (one at a time)
+    and fails when its time is up. Progress is saved in `character_queststatus`. Not yet: escort
+    quests.
   * **Flight masters** (CMaNGOS's `TaxiHandler.cpp`, `Taxi.cpp`, `ActivateTaxiPathTo`): a flight
     master's node (`TaxiNodes.dbc`) is learned at the first talk and saved in `taximask`; then the
     master shows the known nodes. A flight to one, directly or over several legs (`TaxiPath.dbc`,

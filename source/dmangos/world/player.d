@@ -800,8 +800,9 @@ final class Player : InventoryOwner
         {
             if (slot >= maxQuestLogSize)
                 break;
-            if (quests.quest(q.quest) is null
-                || (q.status != QuestState.incomplete && (q.status != QuestState.complete || q.rewarded)))
+            // In the log: under way, failed (a timed quest whose time ran out keeps it), or done and not rewarded.
+            if (quests.quest(q.quest) is null || (q.status != QuestState.incomplete && q.status != QuestState.failed
+                && (q.status != QuestState.complete || q.rewarded)))
                 continue;
             const base = PLAYER_QUEST_LOG_1_1 + 3 * slot;
             values.setSlot(base, q.quest);
@@ -810,7 +811,10 @@ final class Player : InventoryOwner
                 counters |= (q.mobCount[i] & 0x3F) << (6 * i);
             if (q.status == QuestState.complete)
                 counters |= 1u << 24;
+            if (q.status == QuestState.failed)
+                counters |= 2u << 24;
             values.setSlot(base + 1, counters);
+            values.setSlot(base + 2, cast(uint) q.timer); // a timed quest's end (Unix time)
             ++slot;
         }
     }

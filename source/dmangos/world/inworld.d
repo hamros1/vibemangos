@@ -391,6 +391,7 @@ private:
         updateSpells(elapsed);
         updateAuras(elapsed);
         updateTaxi(cast(int) elapsed.total!"msecs");
+        updateTimedQuests();
         updateDuel();
         updateDeath(elapsed);
         if (regenTimer.update(elapsed))

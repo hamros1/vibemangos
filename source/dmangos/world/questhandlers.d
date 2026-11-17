@@ -167,10 +167,33 @@ private:
     }
 
     /// `CanTakeQuest`
-    bool canTakeQuest(const ref Quest quest)
+    package bool canTakeQuest(const ref Quest quest)
     {
         return satisfyStatus(quest) && satisfyExclusiveGroup(quest) && satisfyClassRaceLevel(quest, true)
-            && satisfyPrevious(quest) && satisfyQuestReputation(quest);
+            && satisfyPrevious(quest) && satisfyQuestReputation(quest) && satisfyQuestTimed(quest);
+    }
+
+    /// `SatisfyQuestTimed`: one timed quest at a time.
+    bool satisfyQuestTimed(const ref Quest quest)
+    {
+        if (!(quest.specialFlags & specialTimed))
+            return true;
+        foreach (ref q; player.questStatus)
+            if (q.status == QuestState.incomplete && q.timer)
+                return false;
+        return true;
+    }
+
+    /// `Player::Update`'s timed quests: one whose time is up fails.
+    package void updateTimedQuests()
+    {
+        const now = context.unixTime;
+        uint[] due;
+        foreach (ref q; player.questStatus)
+            if (q.timer && q.status == QuestState.incomplete && q.timer <= now)
+                due ~= q.quest;
+        foreach (id; due)
+            failQuest(id);
     }
 
     /// `CanSeeStartQuest`: everything but the level, and not far above the player.
@@ -183,7 +206,7 @@ private:
     }
 
     /// `CanCompleteQuest`: taken, and every objective met (kills, items, money).
-    bool canCompleteQuest(uint id)
+    package bool canCompleteQuest(uint id)
     {
         const quest = context.data.quests.quest(id);
         if (quest is null)
@@ -204,6 +227,8 @@ private:
                 return false;
         }
         if ((quest.specialFlags & specialExplorationOrEvent) && !q.explored)
+            return false;
+        if ((quest.specialFlags & specialTimed) && q.timer == 0)
             return false;
         if (quest.rewOrReqMoney < 0 && player.money < -quest.rewOrReqMoney)
             return false;
@@ -667,7 +692,9 @@ private:
         q.mobCount = 0;
         q.itemCount = 0;
         q.changed = true;
-        setQuestSlot(slot, quest.id);
+        // A timed quest: its end, in the log and saved (`AddTimedQuest`).
+        q.timer = (quest.specialFlags & specialTimed) ? context.unixTime + quest.limitTime : 0;
+        setQuestSlot(slot, quest.id, cast(uint) q.timer);
         if (quest.srcItemId && player.inventory.count(quest.srcItemId) == 0)
             giveItem(quest.srcItemId, quest.srcItemCount ? quest.srcItemCount : 1);
         foreach (i; 0 .. questObjectives)
@@ -733,9 +760,13 @@ private:
         const slot = questSlot(id);
         if (slot < maxQuestLogSize)
             setQuestSlotState(slot, 2, true); // QUEST_STATE_FAIL
+        const quest = context.data.quests.quest(id);
+        const timed = quest !is null && (quest.specialFlags & specialTimed);
         ByteWriter w;
         w.put(id);
-        deliver(Opcode.SMSG_QUESTUPDATE_FAILED, w.data);
+        if (timed)
+            q.timer = 0; // its time is gone
+        deliver(timed ? Opcode.SMSG_QUESTUPDATE_FAILEDTIMER : Opcode.SMSG_QUESTUPDATE_FAILED, w.data);
         flushPlayerChanges();
     }
 
@@ -1357,4 +1388,43 @@ unittest
     take.put(9301u);
     anduin.write(Opcode.CMSG_QUESTGIVER_ACCEPT_QUEST, take.data);
     assert(me.questStatus.get(9301, QuestStatus.init).status == QuestState.incomplete && me.inventory.count(itemJerky) == 0);
+}
+
+/// A timed quest: its end in the log; one at a time; failed with the timer's notice when its time is up.
+unittest
+{
+    import core.time : msecs, MonoTime, seconds;
+    import std.algorithm.searching : canFind;
+    import dmangos.world.movement : Position;
+    import dmangos.world.opcodes;
+    import dmangos.world.player : Player;
+    import dmangos.world.quests : Quest, QuestState, specialTimed;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+    import dmangos.world.updatefields;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    Quest q = {id: 9500, method: 2, maxLevel: 60, title: "Hurry", specialFlags: specialTimed | 0x02, limitTime: 60};
+    context.data.quests.quests[9500] = q;
+    Quest other = {id: 9501, method: 2, maxLevel: 60, title: "Hurry too", specialFlags: specialTimed, limitTime: 60};
+    context.data.quests.quests[9501] = other;
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f));
+    anduin.read();
+    auto me = cast(Player) anduin.session.character;
+    const start = context.unixTime;
+    anduin.session.addQuest(context.data.quests.quests[9500]);
+    assert(me.values[PLAYER_QUEST_LOG_1_1 + 2] == start + 60, "its end in the log");
+    assert(!anduin.session.canTakeQuest(context.data.quests.quests[9501]), "one timed quest at a time");
+    now += 30.seconds;
+    anduin.session.update(30_000.msecs);
+    assert(me.questStatus[9500].status == QuestState.incomplete);
+    anduin.read();
+    now += 31.seconds;
+    anduin.session.update(31_000.msecs);
+    assert(opcodesOf(anduin.read()).canFind(Opcode.SMSG_QUESTUPDATE_FAILEDTIMER));
+    assert(me.questStatus[9500].status == QuestState.failed && me.questStatus[9500].timer == 0);
+    assert(!anduin.session.canCompleteQuest(9500));
 }
