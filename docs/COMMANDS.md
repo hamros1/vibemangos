@@ -53,10 +53,13 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
   bytes are 2.4.3's). `.dispelall` spares passive auras (talents, racials), and reaches the players
   of the GM's node of a cluster only, as `.admin castall` does. `.kill` and `.killplr` kill a player the way death by a
   creature's hand does, without its durability loss.
+* `.quest item` lists the items the quest asks for (its `ReqItemId` columns): CMaNGOS has no
+  `gameobject_quest_item_binding`. `.quest list` on a player reads its quest log as the client has it
+  (ArcEmu's reads the saved `questlog` rows).
 * Arguments are read strictly: a number written wrong ("12abc", "abc") or a missing argument shows
   the command's help, where ArcEmu's C parsing read "12abc" as 12 and "abc" as 0 and went on.
 
-## Working (195)
+## Working (197)
 
 | Command | Letter | Help |
 |---|---|---|
@@ -180,6 +183,8 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 | `.account unmute` | `a` | Unmutes account <x> |
 | `.quest complete` | `2` | Complete/Finish quest <id> |
 | `.quest finisher` | `2` | Lookup quest finisher for quest <id> |
+| `.quest item` | `2` | Lookup itemid necessary for quest <id> |
+| `.quest list` | `2` | Lists the quests for the npc <id> |
 | `.quest lookup` | `2` | Looks up quest string x |
 | `.quest giver` | `2` | Lookup quest giver for quest <id> |
 | `.quest remove` | `2` | Removes the quest <id> from the targeted player |
@@ -256,7 +261,7 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 | `.logcomment` | `1` | Adds a comment to the GM log for the admins to read. |
 | `.removesickness` | `m` | Removes ressurrection sickness from the target |
 
-## Not yet implemented (103)
+## Not yet implemented (101)
 
 These answer "Not yet implemented.", as ArcEmu's `HandleNYICommand` does: their systems (AI agents
 and waypoint editing, quest editing, guilds, pets, honor, battlegrounds and arenas, GM
@@ -342,8 +347,6 @@ tickets, game object and creature spawning, GM invisibility, flying) do not exis
 | `.quest delboth` | `2` | Delete quest <id> from the targeted NPC as start & finish |
 | `.quest delfinish` | `2` | Delete quest <id> from the targeted NPC as finisher |
 | `.quest delstart` | `2` | Delete quest <id> from the targeted NPC as starter |
-| `.quest item` | `2` | Lookup itemid necessary for quest <id> |
-| `.quest list` | `2` | Lists the quests for the npc <id> |
 | `.quest load` | `2` | Loads quests from database |
 | `.pet createpet` | `m` | Creates a pet with <entry>. |
 | `.pet renamepet` | `m` | Renames a pet to <name>. |

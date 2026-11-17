@@ -122,6 +122,9 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
   bytes are 2.4.3's). `.dispelall` spares passive auras (talents, racials), and reaches the players
   of the GM's node of a cluster only, as `.admin castall` does. `.kill` and `.killplr` kill a player the way death by a
   creature's hand does, without its durability loss.
+* `.quest item` lists the items the quest asks for (its `ReqItemId` columns): CMaNGOS has no
+  `gameobject_quest_item_binding`. `.quest list` on a player reads its quest log as the client has it
+  (ArcEmu's reads the saved `questlog` rows).
 * Arguments are read strictly: a number written wrong ("12abc", "abc") or a missing argument shows
   the command's help, where ArcEmu's C parsing read "12abc" as 12 and "abc" as 0 and went on.
 

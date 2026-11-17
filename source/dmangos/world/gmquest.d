@@ -246,6 +246,104 @@ private:
             sendMultilineMessage(format!"|cff00ccffNo object quest %ss found.\n\n"(word));
     }
 
+    bool handleQuestItemCommand(uint questId)
+    {
+        // CMaNGOS keeps a quest's items in its own row (ArcEmu: `gameobject_quest_item_binding`).
+        const quest = context.data.quests.quest(questId);
+        uint count;
+        if (quest !is null)
+            foreach (i, item; quest.reqItemId)
+            {
+                if (item == 0)
+                    continue;
+                if (count == 0)
+                    sendMultilineMessage("|cff00ff00Quest item matches: itemid: count -> Name\n\n");
+                const proto = item in context.data.items;
+                sendMultilineMessage(format!"|cff00ccff%s: %s -> %s\n"(item, quest.reqItemCount[i],
+                    proto is null ? "" : proto.details.name));
+                ++count;
+                if (count == 25)
+                {
+                    redSystemMessage("More than 25 results returned. aborting.");
+                    break;
+                }
+            }
+        if (count == 0)
+            sendMultilineMessage("|cff00ccffNo matches found.\n\n");
+        return true;
+    }
+
+    bool handleQuestListCommand(uint questGiver = 0)
+    {
+        import dmangos.world.creature : Creature;
+        import dmangos.world.updatefields : PLAYER_QUEST_LOG_1_1, UNIT_FIELD_TARGET, UNIT_NPC_FLAGS;
+
+        enum uint npcFlagQuestGiver = 0x02;
+        if (questGiver == 0)
+        {
+            const guid = player.values.get!UNIT_FIELD_TARGET;
+            if (guid == 0)
+            {
+                systemMessage("You must target an npc or specify an id.");
+                return true;
+            }
+            if (auto unit = cast(Creature) map.findObject(guid))
+            {
+                if (!(unit.values.get!UNIT_NPC_FLAGS & npcFlagQuestGiver))
+                {
+                    systemMessage("Unit is not a valid quest giver.");
+                    return true;
+                }
+                const entry = unit.spawn.entry;
+                if (entry !in context.data.quests.creatureStarts && entry !in context.data.quests.creatureEnds)
+                {
+                    systemMessage("NPC does not have any quests.");
+                    return true;
+                }
+                questGiver = entry;
+            }
+        }
+        sendMultilineMessage("|cff00ff00Quest matches: id: title\n\n");
+        uint count;
+        bool line(uint id)
+        {
+            const quest = context.data.quests.quest(id);
+            if (quest is null)
+                return true;
+            sendMultilineMessage(format!"|cff00ccff%s: %s\n"(id, quest.title));
+            if (++count == 25)
+            {
+                redSystemMessage("More than 25 results returned. aborting.");
+                return false;
+            }
+            return true;
+        }
+
+        if (questGiver == 0)
+        {
+            auto plr = questTarget();
+            foreach (slot; 0 .. maxQuestLogSize)
+                if (const id = plr.player.values[PLAYER_QUEST_LOG_1_1 + 3 * slot])
+                    if (!line(id))
+                        break;
+        }
+        else
+        {
+            const starts = questGiver in context.data.quests.creatureStarts;
+            if (starts is null)
+            {
+                sendMultilineMessage("|cff00ccffNo quests found for the specified NPC id.\n\n");
+                return true;
+            }
+            foreach (id; *starts)
+                if (!line(id))
+                    break;
+        }
+        if (count == 0)
+            sendMultilineMessage("|cff00ccffNo matches found.\n\n");
+        return true;
+    }
+
     bool handleQuestGiverCommand(uint questId = 0)
     {
         if (questId == 0)
@@ -390,6 +488,7 @@ package:
 unittest
 {
     import std.algorithm.searching : canFind;
+    import std.format : format;
     import dmangos.auth.accounts : AccountLevel;
     import dmangos.world.movement : Position;
     import dmangos.world.opcodes;
@@ -424,6 +523,20 @@ unittest
     assert(me.values[PLAYER_QUEST_LOG_1_1] == 9600);
     gm.say(".quest status 9600");
     assert(systemMessages(gm.read()) == ["|cff00ff00Player is currently on that quest.", ""]);
+
+    gm.say(".quest list");
+    assert(systemMessages(gm.read()).canFind("|cff00ccff9600: Orders"), "the selected player's log");
+    gm.say(format!".quest list %s"(creatureTrainer));
+    assert(systemMessages(gm.read()).canFind("|cff00ccff9600: Orders"), "the trainer's quests");
+    gm.say(".quest list 1");
+    assert(systemMessages(gm.read()).canFind("|cff00ccffNo quests found for the specified NPC id."));
+    gm.say(".quest item 9600");
+    assert(systemMessages(gm.read()).canFind("|cff00ccffNo matches found."));
+    context.data.quests.quests[9600].reqItemId[0] = itemJerky;
+    context.data.quests.quests[9600].reqItemCount[0] = 2;
+    gm.say(".quest item 9600");
+    assert(systemMessages(gm.read()).canFind("|cff00ccff117: 2 -> Tough Jerky"));
+    context.data.quests.quests[9600].reqItemId[0] = 0;
 
     gm.say(".quest giver 9600");
     const giver = systemMessages(gm.read());
