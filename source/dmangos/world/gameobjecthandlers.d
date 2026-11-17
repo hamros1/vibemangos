@@ -94,6 +94,10 @@ mixin template GameObjectHandlers()
     {
         if (go.type == GameObjectType.fishingNode)
             return useBobber(go);
+        // A battleground's objective (a flag, a banner): its rules first.
+        if (auto copy = currentBattleground())
+            if (copy.rules.objectUsed(copy, player.guid, go))
+                return;
         // Its script first (`OnGameObjectUse`): it may handle the use itself.
         if (context.gameObjectUsed(go, map, player.guid))
             return;

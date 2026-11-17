@@ -382,6 +382,11 @@ private:
         if (!entry.contains(player.data.map, p.x, p.y, p.z, delta))
             return trace!"%s: '%s' is too far from area trigger %s"(remoteAddress, player.data.name, request.id);
 
+        // A battleground's own triggers (its flag rooms, exit portals) first (`BattleGround::HandleAreaTrigger`).
+        if (auto copy = currentBattleground())
+            if (copy.rules.areaTrigger(copy, player.guid, request.id))
+                return;
+
         // Its script first (`scripted_areatrigger`): it may handle the trigger itself.
         {
             import dmangos.script.api : Location;

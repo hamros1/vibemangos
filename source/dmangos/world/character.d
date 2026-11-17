@@ -470,6 +470,13 @@ final class Character : OnlinePlayer, Looter
             modifyReputation(faction, amount);
     }
 
+    /// Its battleground takes an aura off it (a flag it no longer carries).
+    void battlegroundRemoveAura(uint spell)
+    {
+        if (player !is null)
+            battlegroundRemoveAuraHere(spell);
+    }
+
     /// A spell its battleground casts on it (a quest's credit).
     void battlegroundCast(uint spell)
     {

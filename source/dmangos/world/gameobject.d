@@ -41,7 +41,9 @@ enum GameObjectType : uint
     moTransport = 15,   /// ships and zeppelins
     fishingNode = 17,   /// the bobber
     mailbox = 19,
+    flagStand = 24,     /// a battleground's flag at its base
     fishingHole = 25,   /// a school of fish: a catch near it comes from it
+    flagDrop = 26,      /// a battleground's flag on the ground
 }
 
 /// `LootState` of a game object.

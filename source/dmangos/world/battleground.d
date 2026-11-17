@@ -19,7 +19,9 @@ import core.time : Duration, MonoTime, minutes, msecs, seconds;
 import dmangos.bytes : ByteWriter;
 import dmangos.world.bgqueue;
 import dmangos.world.context : WorldContext;
+import dmangos.world.gameobject : GameObject;
 import dmangos.world.map : MapObject;
+import dmangos.world.online : OnlinePlayer;
 import dmangos.world.opcodes : ChatType, Language, Opcode;
 
 /// `SPELL_ID_BATTLEGROUND_DESERTER`
@@ -59,6 +61,9 @@ ubyte[] battlegroundMessage(ChatType type, string text, ulong source = 0)
 
     return chatMessage(type, Language.LANG_UNIVERSAL, source, text);
 }
+
+/// A graveyard's side for `Battleground.graveyardTeams` (`Team`), and closed (`TEAM_INVALID`).
+enum uint teamAllianceLink = 469, teamHordeLink = 67, teamInvalidLink = 1;
 
 /// `BG_EVENT_DOOR`, and no event (`BG_EVENT_NONE`).
 enum ubyte eventDoors = 254, eventNone = 255;
@@ -108,6 +113,9 @@ class BattlegroundRules
 
     /// `RemovePlayer`: `guid` leaves (or logs out while it runs): what it carried is dropped.
     void playerLeaving(Battleground copy, ulong guid) {}
+
+    /// `HandlePlayerClickedOnFlag`, `HandleEvent`: `who` used `go`; true if it was the battleground's to handle.
+    bool objectUsed(Battleground copy, ulong who, GameObject go) { return false; }
 
     /// `HandleAreaTrigger`: true if the trigger is the battleground's (handled).
     bool areaTrigger(Battleground copy, ulong who, uint trigger) { return false; }
@@ -519,6 +527,97 @@ final class Battleground
         return w.data.dup;
     }
 
+    // --- the players, for the rules ---
+
+    /// Member `guid`, if it is online here.
+    OnlinePlayer onlinePlayerOf(ulong guid)
+    {
+        if (auto m = guid in members)
+            if (m.offlineSince == MonoTime.init)
+                return context.onlinePlayer(guid);
+        return null;
+    }
+
+    /// Whether member `guid` is here and alive (`CanUseBattleGroundObject`).
+    bool memberAlive(ulong guid)
+    {
+        import dmangos.world.player : DeathState;
+
+        auto who = onlinePlayerOf(guid);
+        return who !is null && who.character.deathState == DeathState.alive;
+    }
+
+    /// `spell` cast on member `guid` (triggered).
+    void castOn(ulong guid, uint spell)
+    {
+        import dmangos.world.character : Character;
+
+        if (auto c = cast(Character) onlinePlayerOf(guid))
+            c.battlegroundCast(spell);
+    }
+
+    /// Member `guid`'s aura of `spell` taken off.
+    void removeAuraOf(ulong guid, uint spell)
+    {
+        import dmangos.world.character : Character;
+
+        if (auto c = cast(Character) context.onlinePlayer(guid))
+            c.battlegroundRemoveAura(spell);
+    }
+
+    /// `SendNotification(mangos_string id)` to member `guid`.
+    void notify(ulong guid, uint id)
+    {
+        import dmangos.world.packets : ServerNotification;
+        import dmangos.serialization : serialize;
+
+        if (const text = id in context.data.serverStrings)
+            if (auto who = onlinePlayerOf(guid))
+            {
+                ByteWriter w;
+                w.putCString(*text);
+                who.deliver(Opcode.SMSG_NOTIFICATION, w.data);
+            }
+    }
+
+    /// `LeaveBattleground()`: member `guid` out, back where it came from.
+    void sendOut(ulong guid)
+    {
+        import dmangos.world.character : Character;
+
+        if (auto c = cast(Character) onlinePlayerOf(guid))
+            c.battlegroundLeave(true);
+    }
+
+    /**
+     * A game object of `entry` put down where member `guid` stands (a dropped flag: the spell that
+     * summons it); its guid, 0 if it could not be.
+     */
+    ulong placeObjectAt(ulong guid, uint entry)
+    {
+        import dmangos.world.gameobject : GameObjectSpawn;
+
+        auto who = context.onlinePlayer(guid);
+        auto map = context.existingMap(mapId, instance);
+        const t = entry in context.data.gameObjectTemplates;
+        if (who is null || map is null || t is null)
+            return 0;
+        const at = who.character.position;
+        GameObjectSpawn spawn = {guid: context.nextTemporaryCounter(), entry: entry, map: mapId, x: at.x, y: at.y,
+            z: at.z, orientation: at.orientation, respawnSeconds: -1};
+        auto go = new GameObject(spawn, t);
+        go.instanceId = instance;
+        map.addObject(go);
+        return go.guid;
+    }
+
+    /// An object taken off the copy's map.
+    void removeObject(ulong guid)
+    {
+        if (auto map = context.existingMap(mapId, instance))
+            map.removeObject(guid);
+    }
+
     // --- events: what is spawned (`SpawnEvent`, `OpenDoorEvent`) ---
 
     /// Whether a spawn of event `event` (null: of none) belongs in the copy now.
@@ -755,8 +854,6 @@ private:
             }
     }
 
-    import dmangos.world.gameobject : GameObject;
-
     /// `BattleGround::Update`'s premature end: a team short of players for five minutes loses.
     void checkPrematureEnd(Duration elapsed)
     {
@@ -917,7 +1014,15 @@ final class Battlegrounds
     /// Each battleground's rules (`BattleGroundWS`, `BattleGroundAB`, ...); the shared ones for the others.
     BattlegroundRules rulesFor(BattlegroundType type)
     {
-        return new BattlegroundRules;
+        import dmangos.world.warsong : WarsongRules;
+
+        switch (type)
+        {
+        case BattlegroundType.warsongGulch:
+            return new WarsongRules;
+        default:
+            return new BattlegroundRules;
+        }
     }
 
     /// New objects for the spawns of event pair (`event1`, `event2`) on `mapId`, for copy `instance`.
@@ -1221,6 +1326,13 @@ mixin template BattlegroundHandlers()
         if (spell)
             if (const info = context.data.spells.spell(spell))
                 castSpell(info, SpellTargets(TargetFlags.self, player.guid), true, 0);
+    }
+
+    /// `RemoveAurasDueToSpell`
+    package void battlegroundRemoveAuraHere(uint spell)
+    {
+        if (auto aura = player.auras.find(spell))
+            removeAura(aura);
     }
 
     /// `UpdatePlayerScore(SCORE_BONUS_HONOR)`: `AddHonorCP` of honor from no kill; whether it counted.
