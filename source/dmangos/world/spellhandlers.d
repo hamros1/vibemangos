@@ -1032,10 +1032,12 @@ private:
             else if (auto other = enemyPlayer(target))
                 spellDamageToPlayer(spell, other, value > 0 ? value : 0);
             break;
-        case 3, 77: // SPELL_EFFECT_DUMMY, SPELL_EFFECT_SCRIPT_EFFECT: the spell's database script, if it has one
+        case 3, 77: // SPELL_EFFECT_DUMMY, SPELL_EFFECT_SCRIPT_EFFECT: the spell's script, then its database script
         {
             import dmangos.world.dbscripts : DbScriptType;
 
+            if (spellEffectScript(spell, i, target, value))
+                break;
             context.startScript(DbScriptType.spell, spell.id, map, player.guid, target ? target : c.targets.gameObject);
             break;
         }

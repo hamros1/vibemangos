@@ -293,14 +293,18 @@ What works now:
     holds no pointers (cast, say a `script_texts` row, equip, stand, summon, signal another script,
     open a door); its timers are data (`Schedule`), so its whole state is saved: with the creature
     when it moves to another node, and in `instance.data` for a dungeon's script. Dispatch allocates
-    nothing. Game objects (`gameobject_template.ScriptName`) have scripts too, and creature scripts
-    hear of gossip, quests taken and rewarded, and the end of their own walks; an `Escort` component
-    walks a `script_waypoint` path with a player. Written so far: the Deadmines (its doors open as
+    nothing. Game objects (`gameobject_template.ScriptName`), spells (`spell_scripts`) and area
+    triggers (`scripted_areatrigger`) have scripts too; creature scripts hear of gossip (and show
+    menus of their own), quests taken and rewarded, and the end of their own walks; an `Escort`
+    component walks a `script_waypoint` path with a player; a script's signal reaches creatures on
+    other nodes of a cluster, once. Written so far: the Deadmines (its doors open as
     their guardians fall and stay open after a restart; the Defias Cannon blows the Iron Clad Door
     open and Mr. Smite raises the alarm), Mr. Smite (a slam on a timer; at two thirds and one third
     of his health a stomp, a line, kneeling to take up two axes, then a hammer) and the Defias
     Traitor's escort to Moonbrook ("The Defias Brotherhood": his lines on the way, the quest's event
-    at the hideout, the quest failed if he is left behind or killed). A creature whose `ScriptName`
+    at the hideout, the quest failed if he is left behind or killed), Lady Katrana Prestor's
+    conversation for "The True Masters", the scent of Lar'korwi's mate in Un'Goro, and Life Tap
+    (health into mana). A creature whose `ScriptName`
     no script serves yet runs its EventAI as before; the server logs how many names are served.
   * **Database scripts** (CMaNGOS's `dbscripts_on_*`): a quest's start and complete scripts, a
     gossip option's, a game object's when used (by its template and by its spawn), a waypoint's
@@ -610,7 +614,8 @@ source/dmangos/script/      the scripting framework (docs/SCRIPTING.md): api.d (
                               host interfaces), registry.d (UDAs, compile-time discovery, generated dispatch,
                               pools), schedule.d (timers as data), state.d (state saved by reflection),
                               escort.d (the escort component)
-source/dmangos/scripts/     the gameplay scripts, one module per dungeon or area (deadmines.d, westfall.d)
+source/dmangos/scripts/     the gameplay scripts, one module per dungeon or area (deadmines.d, westfall.d,
+                              stormwind.d, ungoro.d) and spells.d
 source/dmangos/auth/        the login server (realmd)
   main.d                      entry point: run the server, administer accounts
   protocol.d                  opcodes, result codes, every packet as a struct
@@ -663,6 +668,7 @@ source/dmangos/world/       the world server (mangosd)
   eventai.d                   CMaNGOS's EventAI: creature_ai_scripts events, phases and actions
   creaturescripting.d         a creature's D script: its events, schedules, state, and the host it acts through
   instancescripting.d         a dungeon copy's D script, saved in instance.data
+  sessionscripting.d          the player's session as the host of spell and area trigger scripts
   scripttests.d               the scripts in the world (tests only)
   dbscripts.d                 dbscripts_on_*: script steps run by the world at their delays
   combat.d, relations.d       melee formulas (the attack table, damage) and who may attack or help whom

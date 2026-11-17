@@ -146,10 +146,11 @@ timed quests, `questgiver_greeting`, quest scripts (`dbscripts_on_quest_*`). Nex
 **Scripting** (docs/SCRIPTING.md): the framework in D is done for creatures, dungeons and game
 objects (typed events, schedules as data, state saved by reflection, migration, `instance.data`,
 gossip and quest events, script movement, the `Escort` component), with the Deadmines' doors, its
-cannon and Mr. Smite, and the Defias Traitor's escort. Next: area trigger and spell scripts, script
-gossip menus of their own (options a script adds), signals between scripts on different nodes, the
-other escorts (61 paths in `script_waypoint`), then dungeons one by one (398 creature names, 24
-dungeon names and about 100 game object names in the world database).
+cannon and Mr. Smite, and the Defias Traitor's escort; spell and area trigger scripts, gossip menus
+of a script's own and signals across nodes are done too (Life Tap, Lady Katrana Prestor, the scent
+of Lar'korwi). Next: spell scripts for creatures' casts and for auras, world and command scripts,
+the other escorts (61 paths in `script_waypoint`), then dungeons one by one (the server logs 7 of
+657 script names served).
 Reputation is done (`reputation.d`, `reputationhandlers.d`; README's "Reputation"): kills, quests,
 spillover, war and peace, discounts, requirements. Not yet: `SMSG_SET_FORCED_REACTIONS` (spells force
 none yet), the PvP rank's discount, reputation from spells.

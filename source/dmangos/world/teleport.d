@@ -311,6 +311,14 @@ private:
         if (!entry.contains(player.data.map, p.x, p.y, p.z, delta))
             return trace!"%s: '%s' is too far from area trigger %s"(remoteAddress, player.data.name, request.id);
 
+        // Its script first (`scripted_areatrigger`): it may handle the trigger itself.
+        {
+            import dmangos.script.api : Location;
+
+            if (areaTriggerScript(request.id, Location(entry.x, entry.y, entry.z)))
+                return;
+        }
+
         // The place a quest under way asks for (`GetQuestForAreaTrigger`).
         if (const quest = request.id in context.data.quests.triggerQuests)
             if (player.deathState == DeathState.alive && questState(*quest) == QuestState.incomplete)

@@ -27,7 +27,7 @@ import dmangos.world.npcdata : BroadcastText;
 import dmangos.world.opcodes : ChatType;
 import dmangos.world.spells : SpellInfo;
 import dmangos.world.eventai : Scripted;
-import dmangos.script.api : Waypoint, CreatureHost, Damaged, Died, EnteredCombat, EntityRef, Evaded, KilledUnit, Reset;
+import dmangos.script.api : ActionResult, MenuOption, QuestProgress, Waypoint, CreatureHost, Damaged, Died, EnteredCombat, EntityRef, Evaded, KilledUnit, Reset;
 import dmangos.world.updatefields;
 import dmangos.vmap.math : Vector3;
 
@@ -95,6 +95,12 @@ interface Combatant
 
     /// A creature's script: its gossip window closes.
     void closeGossip();
+
+    /// A creature's script: where it stands with `quest`.
+    QuestProgress questStatusOf(uint quest);
+
+    /// A creature's script: a menu the script built, from creature `npc`.
+    void showScriptGossip(ulong npc, uint textId, const(MenuOption)[] options, bool withQuests);
 }
 
 /**
@@ -138,6 +144,9 @@ interface CreatureLore
 
     /// The escort path (`script_waypoint`) of creature `entry`; empty if it has none.
     const(Waypoint)[] escortPath(uint entry);
+
+    /// A `Signal` for creature `to`: its script here, or (another node simulates it) sent there.
+    ActionResult signalCreature(CombatWorld world, EntityRef from, EntityRef to, uint id, int value);
 }
 
 /// What a creature's AI needs of its map.

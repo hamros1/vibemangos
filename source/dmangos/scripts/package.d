@@ -8,6 +8,10 @@ import std.meta : AliasSeq;
 
 static import dmangos.scripts.deadmines;
 static import dmangos.scripts.westfall;
+static import dmangos.scripts.spells;
+static import dmangos.scripts.stormwind;
+static import dmangos.scripts.ungoro;
 
 /// Every module holding scripts.
-alias scriptModules = AliasSeq!(dmangos.scripts.deadmines, dmangos.scripts.westfall);
+alias scriptModules = AliasSeq!(dmangos.scripts.deadmines, dmangos.scripts.westfall, dmangos.scripts.spells,
+    dmangos.scripts.stormwind, dmangos.scripts.ungoro);

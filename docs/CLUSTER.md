@@ -853,8 +853,9 @@ player goes there.
   come from the owner's AI, never from a replica, so none runs twice. A creature's or game object's
   script state is part of its migration state (protocols 19 and 20), so a boss handed over with its region goes on in the
   same phase with the same timers; a dungeon's script lives with its copies on the dungeon's host
-  and is read from `instance.data` when another node comes to host it. A script's signal reaches
-  creatures on its own node only for now (a signal across nodes is a message still to write). An
+  and is read from `instance.data` when another node comes to host it. A script's signal to a
+  creature another node simulates is a `ScriptSignal` to that node (protocol 21), applied once
+  (its origin and sequence number drop a resend), passed on if the creature has moved again. An
   escort reads the distance to its player from the player's replica when another node simulates
   the player, so walking along a region border does not fail it.
 * **Scripts and summons** run on the node of the map cell where they started (`dbscripts.d` keeps

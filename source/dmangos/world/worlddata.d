@@ -341,6 +341,8 @@ final class WorldData
     string[uint] creatureScriptNames;               /// `creature_template.ScriptName`, by entry (docs/SCRIPTING.md)
     string[uint] instanceScriptNames;               /// `instance_template.ScriptName`, by map
     string[uint] gameObjectScriptNames;             /// `gameobject_template.ScriptName`, by entry
+    string[uint] spellScriptNames;                  /// `spell_scripts`, by spell
+    string[uint] areaTriggerScriptNames;            /// `scripted_areatrigger`, by trigger
     Waypoint[][uint] escortPaths;                   /// `script_waypoint` (path 0), by creature entry
     BroadcastText[int] scriptTexts;                 /// `script_texts`, by (negative) entry
     uint[int] scriptTextSounds;                     /// their sounds
@@ -606,6 +608,10 @@ final class WorldData
             instanceScriptNames[row.get!uint(0)] = row.get!string(1);
         foreach (row; world.query!"SELECT entry, ScriptName FROM gameobject_template WHERE ScriptName <> ''"())
             gameObjectScriptNames[row.get!uint(0)] = row.get!string(1);
+        foreach (row; world.query!"SELECT Id, ScriptName FROM spell_scripts"())
+            spellScriptNames[row.get!uint(0)] = row.get!string(1);
+        foreach (row; world.query!"SELECT entry, ScriptName FROM scripted_areatrigger"())
+            areaTriggerScriptNames[row.get!uint(0)] = row.get!string(1);
         foreach (row; world.query!("SELECT Entry, PositionX, PositionY, PositionZ, Orientation, WaitTime FROM script_waypoint "
                 ~ "WHERE PathId = 0 ORDER BY Entry, Point")())
             escortPaths[row.get!uint(0)] ~= Waypoint(Location(row.get!float(1), row.get!float(2), row.get!float(3),

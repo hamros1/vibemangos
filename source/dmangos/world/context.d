@@ -29,8 +29,8 @@ import dmangos.world.opcodes : ChatType, Language, Opcode;
 import dmangos.world.creatureai : CombatWorld, CreatureLore;
 import dmangos.world.npcdata : BroadcastText;
 import dmangos.world.spells : SpellInfo;
-import dmangos.script.api : EntityRef, GameObjectHost, Waypoint;
-import dmangos.script.registry : ScriptKind, ScriptRuntime;
+import dmangos.script.api : ActionResult, EntityRef, GameObjectHost, Waypoint;
+import dmangos.script.registry : ScriptHandle, ScriptKind, ScriptRuntime;
 import dmangos.scripts : scriptModules;
 import dmangos.world.instancescripting : InstanceScript;
 import dmangos.world.characterdb : DeleteOptions, GuidCounters;
@@ -41,7 +41,7 @@ import dmangos.vmap.maptree : ModelCache;
 import dmangos.world.terrain : Terrain;
 import dmangos.world.group : GroupDirectory, Groups, memberStatus, MemberStatus;
 import dmangos.world.groupservice : groupCommand, GroupOp, GroupService;
-import dmangos.cluster.protocol : GmRemote, GroupCommand, KillShare;
+import dmangos.cluster.protocol : GmRemote, GroupCommand, KillShare, ScriptSignal;
 import dmangos.world.map : Inhabitant, Map, MapObject, MapSettings;
 import dmangos.world.online : OnlinePlayer;
 import dmangos.world.playercreate : CreationSettings;
@@ -461,6 +461,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         groups.load(database.loadGroups());
         scripts = ScriptRuntime.of!scriptModules();
         reportScripts();
+        signalSequence = ulong(startUnixTime) << 20; // above what an earlier run of this node sent
         loadInstances();
         loadCommandOverrides();
         channelService = new ChannelService(this, client, ChannelSettings(config.allowTwoSideInteractionChannel));
@@ -1013,18 +1014,28 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             else
                 ++unserved;
         }
-        foreach (name; data.gameObjectScriptNames)
+        foreach (kind, names; [ScriptKind.gameObject: data.gameObjectScriptNames, ScriptKind.spell: data.spellScriptNames,
+                ScriptKind.areaTrigger: data.areaTriggerScriptNames])
         {
-            used["gameObject:" ~ name] = true;
-            if (scripts.serves(ScriptKind.gameObject, name))
-                ++served;
-            else
-                ++unserved;
+            import std.conv : to;
+
+            bool[string] distinct;
+            foreach (name; names)
+                distinct[name] = true;
+            foreach (name, _; distinct)
+            {
+                used[kind.to!string ~ ":" ~ name] = true;
+                if (scripts.serves(kind, name))
+                    ++served;
+                else
+                    ++unserved;
+            }
         }
         info!"scripts: %s script names served, %s in the world database not (yet): those run as before"(served, unserved);
         import std.conv : to;
 
-        foreach (k; [ScriptKind.creature, ScriptKind.instance, ScriptKind.gameObject])
+        foreach (k; [ScriptKind.creature, ScriptKind.instance, ScriptKind.gameObject, ScriptKind.spell,
+                ScriptKind.areaTrigger])
             foreach (name; scripts.names(k))
                 if (k.to!string ~ ":" ~ name !in used)
                     warning!"scripts: no %s row names script %s"(k, name);
@@ -1818,6 +1829,90 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             return VirtualItem(item.displayId, cast(ubyte) item.itemClass, cast(ubyte) item.subClass,
                 cast(ubyte) item.details.material, item.inventoryType, cast(ubyte) item.details.sheath);
         return VirtualItem.init;
+    }
+
+    /// The script of spell `id` (`spell_scripts`); no handle if none serves it. One per spell.
+    ScriptHandle spellScript(uint id)
+    {
+        return statelessScript(ScriptKind.spell, id, data.spellScriptNames, spellScripts);
+    }
+
+    /// The script of area trigger `id` (`scripted_areatrigger`); no handle if none serves it. One per trigger.
+    ScriptHandle areaTriggerScript(uint id)
+    {
+        return statelessScript(ScriptKind.areaTrigger, id, data.areaTriggerScriptNames, areaTriggerScripts);
+    }
+
+    private ScriptHandle[uint] spellScripts, areaTriggerScripts; // made on first use (no handle: none serves it)
+
+    private ScriptHandle statelessScript(ScriptKind kind, uint id, const string[uint] names, ref ScriptHandle[uint] made)
+    {
+        if (auto found = id in made)
+            return *found;
+        const name = id in names;
+        return made[id] = name is null ? ScriptHandle.init : scripts.create(kind, *name);
+    }
+
+    /**
+     * See `CreatureLore.signalCreature`: a `Signal` for creature `to` on `world`: its script here, or
+     * (a replica here: another node simulates it) a `ScriptSignal` to that node.
+     */
+    ActionResult signalCreature(CombatWorld world, EntityRef from, EntityRef to, uint id, int value)
+    {
+        import dmangos.script.api : ActionResult;
+        import dmangos.world.replication : Replica;
+
+        auto map = cast(Map) world;
+        if (map is null)
+            return ActionResult.notHere;
+        if (auto creature = map.creatureAt(to.guid))
+        {
+            creature.ai.signalled(from, id, value, map);
+            return ActionResult.ok;
+        }
+        auto replica = cast(Replica) map.findObject(to.guid);
+        if (replica is null || signalElsewhere is null)
+            return ActionResult.notHere;
+        ScriptSignal m;
+        m.to = to.guid;
+        m.from = from.guid;
+        m.map = map.id;
+        m.instance = map.instanceId;
+        m.id = id;
+        m.value = value;
+        m.origin = nodeId;
+        m.sequence = ++signalSequence;
+        signalElsewhere(replica.owner, m);
+        return ActionResult.ok;
+    }
+
+    /// Sends a script's signal to another node; null standalone.
+    void delegate(ushort node, const ref ScriptSignal signal) signalElsewhere;
+    private ulong signalSequence; // set at start-up above anything an earlier run of this node sent
+    private ulong[ushort] signalsSeen; // node -> the highest sequence applied from it
+
+    /// A script's signal from another node (`ScriptSignal`): applied once (a resent one is dropped),
+    /// passed on if its creature has moved on again.
+    void scriptSignalArrived(const ref ScriptSignal m)
+    {
+        import dmangos.script.api : EntityRef;
+        import dmangos.world.replication : Replica;
+
+        if (m.sequence <= signalsSeen.get(m.origin, 0))
+            return;
+        signalsSeen[m.origin] = m.sequence;
+        auto map = existingMap(m.map, m.instance);
+        if (map is null)
+            return;
+        if (auto creature = map.creatureAt(m.to))
+            return creature.ai.signalled(EntityRef(m.from), m.id, m.value, map);
+        if (auto replica = cast(Replica) map.findObject(m.to))
+            if (m.hops < 3 && signalElsewhere !is null && replica.owner != nodeId)
+            {
+                ScriptSignal next = m;
+                ++next.hops;
+                signalElsewhere(replica.owner, next);
+            }
     }
 
     /// See `CreatureLore.escortPath`.

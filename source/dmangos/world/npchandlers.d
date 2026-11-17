@@ -101,6 +101,8 @@ private:
     // The menu last sent (`PlayerMenu`).
     uint gossipMenuId;
     GossipItem[] gossipItems;
+    uint[] scriptGossipActions; // the menu shown is a script's: its options' actions
+    bool scriptGossipShown;
 
     // -----------------------------------------------------------------------
     // Finding the NPC (Player::GetNPCIfCanInteractWith)
@@ -165,6 +167,7 @@ private:
         auto creature = interactableNpc(request.guid, 0);
         if (creature is null)
             return;
+        scriptGossipShown = false;
         // Its script first (`GossipHello`): it may show its own menu.
         if (auto scripted = cast(Creature) map.findObject(request.guid))
         {
@@ -194,6 +197,14 @@ private:
             {
                 import dmangos.script.api : EntityRef, GossipSelect;
 
+                // A menu the script built: the option's action is the script's to act on.
+                if (scriptGossipShown)
+                {
+                    if (request.option < scriptGossipActions.length)
+                        scripted.ai.raiseFrom(map, GossipSelect(EntityRef(player.guid), 0, request.option,
+                            scriptGossipActions[request.option]));
+                    return;
+                }
                 if (scripted.ai.raiseFrom(map, GossipSelect(EntityRef(player.guid), gossipMenuId, request.option)))
                     return;
             }
@@ -256,6 +267,38 @@ private:
         message.guid = creature.guid;
         message.textId = gossipMenuId ? gossipTextId(gossipMenuId, creature)
             : context.data.npcs.npcGossip.get(creature.spawnId, defaultGossipMessage);
+        foreach (i, ref item; gossipItems)
+            message.items ~= GossipMessageItem(cast(uint) i, cast(ubyte) item.icon, item.coded, item.message);
+        message.quests = questMenu.dup;
+        send(message);
+    }
+
+    import dmangos.script.api : MenuOption;
+
+    /// A menu a creature's script built (`SEND_GOSSIP_MENU` after `ADD_GOSSIP_ITEM`s), under `npc_text` `textId`.
+    package void sendScriptGossip(ulong npc, uint textId, const(MenuOption)[] options, bool withQuests)
+    {
+        auto creature = context.npcFor(map.findObject(npc));
+        if (creature is null)
+            return;
+        gossipMenuId = 0;
+        gossipItems = null;
+        scriptGossipActions = null;
+        foreach (ref o; options)
+        {
+            GossipItem item;
+            item.icon = o.icon;
+            item.message = o.text;
+            gossipItems ~= item;
+            scriptGossipActions ~= o.action;
+        }
+        scriptGossipShown = true;
+        questMenu = null;
+        if (withQuests && (creature.npcValues.get!UNIT_NPC_FLAGS & NpcFlag.questGiver))
+            prepareQuestMenu(giverOf(creature));
+        ServerGossipMessage message;
+        message.guid = creature.guid;
+        message.textId = textId;
         foreach (i, ref item; gossipItems)
             message.items ~= GossipMessageItem(cast(uint) i, cast(ubyte) item.icon, item.coded, item.message);
         message.quests = questMenu.dup;

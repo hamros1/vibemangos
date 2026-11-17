@@ -74,6 +74,8 @@ import dmangos.world.gmlevel0 : Level0Commands;
 import dmangos.world.gmlevel1 : Level1Commands;
 import dmangos.world.gmlevel2 : Level2Commands;
 import dmangos.world.gminstance : InstanceCommands;
+import dmangos.world.sessionscripting : SessionScripting;
+import dmangos.script.api : MenuOption, QuestProgress;
 import dmangos.world.gmquest : QuestCommands;
 import dmangos.world.gmlevel3 : Level3Commands;
 import dmangos.world.grouphandlers : GroupHandlers;
@@ -529,6 +531,19 @@ final class WorldSession : NetSession, Kickable, OnlinePlayer, Combatant, Looter
     }
 
     /// See `Combatant`.
+    QuestProgress questStatusOf(uint quest)
+    {
+        return questStatusFor(quest);
+    }
+
+    /// See `Combatant`.
+    void showScriptGossip(ulong npc, uint textId, const(MenuOption)[] options, bool withQuests)
+    {
+        if (player !is null)
+            sendScriptGossip(npc, textId, options, withQuests);
+    }
+
+    /// See `Combatant`.
     void closeGossip()
     {
         if (player !is null)
@@ -957,6 +972,7 @@ private:
     mixin Level1Commands;
     mixin Level2Commands;
     mixin InstanceCommands;
+    mixin SessionScripting;
     mixin QuestCommands;
     mixin Level3Commands;
     mixin DebugCommands;

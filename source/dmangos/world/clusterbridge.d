@@ -9,7 +9,7 @@ import core.time : Duration, MonoTime, msecs;
 
 import dmangos.cluster.node : ClusterNode, PlayerHandler, ReplicationHandler;
 import dmangos.cluster.protocol : DeliverTo, InRange, InterestUpdate, PlayerMessage, PlayerMessageKind, Presence,
-    PresenceEntry, ChannelCommand, GmRemote, KillShare, GroupCommand, RegionLoad, ToEveryone, GroupState, MemberStatsRequest, ReplicaCreate, ReplicaMove, ReplicaRemove, ReplicaValues, StockRelease, StockReply, StockRequest,
+    PresenceEntry, ChannelCommand, GmRemote, KillShare, ScriptSignal, GroupCommand, RegionLoad, ToEveryone, GroupState, MemberStatsRequest, ReplicaCreate, ReplicaMove, ReplicaRemove, ReplicaValues, StockRelease, StockReply, StockRequest,
     WhisperMessage;
 import dmangos.world.creature : Creature;
 import dmangos.world.group : Group, Groups;
@@ -327,6 +327,18 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
         if (auto session = cast(WorldSession) context.onlinePlayer(m.target))
             if (session.character !is null)
                 session.killShared(m.entry, m.victim, m.level, m.xp, m.rate, m.reputationRate);
+    }
+
+    /// For the context: a script's signal for a creature another node simulates.
+    void sendScriptSignal(ushort target, const ref ScriptSignal signal)
+    {
+        node.sendTo(target, signal);
+    }
+
+    /// See `ReplicationHandler.scriptSignal`.
+    void scriptSignal(ushort peer, const ref ScriptSignal m)
+    {
+        context.scriptSignalArrived(m);
     }
 
     /// For the context: a GM command for a player another node simulates.

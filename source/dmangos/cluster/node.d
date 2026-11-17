@@ -69,6 +69,9 @@ interface ReplicationHandler
     void toEveryone(ushort peer, const ref ToEveryone message);
     void gmRemote(ushort peer, const ref GmRemote message);
     void killShare(ushort peer, const ref KillShare message);
+
+    /// A script's signal for a creature this node simulates.
+    void scriptSignal(ushort peer, const ref ScriptSignal message);
 }
 
 /// What a node does with messages about players simulated away from their client (phase 4b).
@@ -604,6 +607,15 @@ final class ClusterNode : LinkOwner
             {
                 const m = decode!StockRelease(payload);
                 replication.stockRelease(peer, m);
+            }
+            return;
+        }
+        if (type == MessageType.scriptSignal)
+        {
+            if (replication !is null)
+            {
+                const m = decode!ScriptSignal(payload);
+                replication.scriptSignal(peer, m);
             }
             return;
         }

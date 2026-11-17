@@ -65,6 +65,55 @@ enum ActionResult : ubyte
     failed,     /// it could not be done (no such spell, no room)
 }
 
+/// Where a player stands with a quest.
+enum QuestProgress : ubyte
+{
+    none,       /// not taken (or abandoned)
+    incomplete, /// under way
+    complete,   /// its objectives done, not yet handed in
+    failed,
+    rewarded,   /// handed in
+}
+
+/// `GossipOptionIcon`
+enum GossipIcon : ubyte
+{
+    chat = 0,
+    vendor = 1,
+    taxi = 2,
+    trainer = 3,
+    interact = 4,
+}
+
+/// An option of a gossip menu a script builds.
+struct MenuOption
+{
+    GossipIcon icon;
+    string text;
+    uint action; /// what `GossipSelect.action` says when it is chosen
+}
+
+/// A gossip menu a script builds: up to 16 options, kept on the stack.
+struct GossipMenu
+{
+    private MenuOption[16] options_;
+    private ubyte count;
+
+    /// Adds an option (beyond 16: ignored).
+    ref GossipMenu add(GossipIcon icon, string text, uint action) return
+    {
+        if (count < options_.length)
+            options_[count++] = MenuOption(icon, text, action);
+        return this;
+    }
+
+    /// The options added.
+    const(MenuOption)[] options() const return
+    {
+        return options_[0 .. count];
+    }
+}
+
 /// `UnitStandStateType`, as far as scripts use it.
 enum StandState : ubyte
 {
@@ -157,8 +206,9 @@ struct GossipHello
 struct GossipSelect
 {
     EntityRef player;
-    uint menu;
-    uint option;
+    uint menu;   /// the `gossip_menu` shown; 0 for a menu the script built
+    uint option; /// the option's place in the menu
+    uint action; /// a script's menu: the option's action
 }
 
 /// A player took quest `quest` from it.
@@ -216,6 +266,8 @@ interface CreatureHost
     void hostGossipMenu(EntityRef player, uint menu);
     void hostCloseGossip(EntityRef player);
     uint hostRandom(uint below);
+    QuestProgress hostQuestStatus(EntityRef player, uint quest);
+    void hostSendGossip(EntityRef player, uint textId, const(MenuOption)[] options, bool withQuests);
 }
 
 /**
@@ -339,6 +391,16 @@ struct CreatureContext
 
     /// Closes `player`'s gossip window.
     void closeGossip(EntityRef player) { host.hostCloseGossip(player); }
+
+    /// Shows `player` a menu the script built, under `npc_text` `textId` (with its quests, by default);
+    /// the option chosen comes back as `GossipSelect` with its action.
+    void sendGossip(EntityRef player, uint textId, const ref GossipMenu menu, bool withQuests = true)
+    {
+        host.hostSendGossip(player, textId, menu.options, withQuests);
+    }
+
+    /// Where `player` stands with `quest`.
+    QuestProgress questStatus(EntityRef player, uint quest) { return host.hostQuestStatus(player, quest); }
 
     /// A random number below `below` (from the map's generator).
     uint random(uint below) { return host.hostRandom(below); }
@@ -473,4 +535,172 @@ unittest
     assert(creature.isCreature && !creature.isPlayer && creature.entry == 646);
     assert(EntityRef(7).isPlayer && EntityRef(7).entry == 0 && !EntityRef.init);
     assert(Damaged(EntityRef.init, 10, 70, 60).crossed(66) && !Damaged(EntityRef.init, 10, 66, 60).crossed(66));
+}
+
+// ---------------------------------------------------------------------------
+// Spell scripts (`@spell`, bound by `spell_scripts.ScriptName`), one per spell
+// ---------------------------------------------------------------------------
+
+/// A dummy or script effect of the spell (`effect`, its index; `value`, its amount) hit `target`.
+/// `SpellContext.consume` keeps the spell's database script from running too.
+struct EffectHit
+{
+    EntityRef caster;
+    EntityRef target;
+    ubyte effect;
+    int value;
+}
+
+/// The core's side of a spell script's context (the caster's session implements it).
+interface SpellHost
+{
+    uint hostSpellId();
+    ActionResult hostCastFrom(EntityRef caster, uint spell, EntityRef target, bool triggered);
+    ActionResult hostDamage(EntityRef target, uint amount);
+    ActionResult hostEnergize(EntityRef target, ubyte power, int amount);
+    uint hostHealth(EntityRef who);
+    void hostQuestEvent(EntityRef player, uint quest);
+    void hostKillCredit(EntityRef player, uint entry);
+    EntityRef hostSummonAt(uint entry, Location at, uint despawnMs, EntityRef attack);
+    ActionResult hostSignalCreature(EntityRef to, uint id, int value);
+    void hostLog(string text);
+}
+
+/// `Powers`, as scripts use them.
+enum Power : ubyte
+{
+    mana = 0,
+    rage = 1,
+    focus = 2,
+    energy = 3,
+}
+
+/// A spell script's handle on the cast, for the length of one handler.
+struct SpellContext
+{
+    private SpellHost host;
+    private bool consumed_;
+
+    @disable this(this);
+
+    /// The core makes one around a cast.
+    this(SpellHost host) pure nothrow @nogc @safe
+    {
+        this.host = host;
+    }
+
+    /// The spell.
+    @property uint spellId() { return host.hostSpellId(); }
+
+    /// `caster` (the spell's caster, or a creature it controls here) casts `spell` at `target`.
+    ActionResult castSpell(EntityRef caster, uint spell, EntityRef target, bool triggered = true)
+    {
+        return host.hostCastFrom(caster, spell, target, triggered);
+    }
+
+    /// Damage to `target` (`DealDamage`), shown as the spell's.
+    ActionResult damage(EntityRef target, uint amount) { return host.hostDamage(target, amount); }
+
+    /// Power for `target`, shown as the spell's (negative: taken).
+    ActionResult energize(EntityRef target, Power power, int amount) { return host.hostEnergize(target, power, amount); }
+
+    /// A unit's health; 0 if it is not here.
+    uint health(EntityRef who) { return host.hostHealth(who); }
+
+    /// `AreaExploredOrEventHappens` for `player`.
+    void questEvent(EntityRef player, uint quest) { host.hostQuestEvent(player, quest); }
+
+    /// `KilledMonsterCredit` of `entry` for `player`.
+    void killCredit(EntityRef player, uint entry) { host.hostKillCredit(player, entry); }
+
+    /// A creature of `entry` at `at` (zero: near the caster), gone after `despawnMs` (0: when it dies).
+    EntityRef summon(uint entry, Location at = Location.init, uint despawnMs = 0, EntityRef attack = EntityRef.init)
+    {
+        return host.hostSummonAt(entry, at, despawnMs, attack);
+    }
+
+    /// A `Signal` for a creature's script (on another node: sent there).
+    ActionResult signal(EntityRef to, uint id, int value = 0) { return host.hostSignalCreature(to, id, value); }
+
+    /// A line in the server's log.
+    void log(string text) { host.hostLog(text); }
+
+    /// The script did what the effect does; the spell's database script does not run.
+    void consume() { consumed_ = true; }
+
+    /// Whether a handler called `consume`.
+    @property bool consumed() const { return consumed_; }
+}
+
+// ---------------------------------------------------------------------------
+// Area trigger scripts (`@areaTrigger`, bound by `scripted_areatrigger`), one per trigger
+// ---------------------------------------------------------------------------
+
+/// A player walked into area trigger `trigger`, whose centre is `at`. `consume` keeps the trigger's
+/// usual effects (its teleport, its quest) from following.
+struct TriggerEntered
+{
+    EntityRef player;
+    uint trigger;
+    Location at;
+}
+
+/// The core's side of an area trigger script's context (the player's session implements it).
+interface AreaTriggerHost
+{
+    QuestProgress hostQuestStatusOf(EntityRef player, uint quest);
+    void hostQuestEvent(EntityRef player, uint quest);
+    EntityRef hostSummonAt(uint entry, Location at, uint despawnMs, EntityRef attack);
+    EntityRef hostCreatureNear(uint entry, Location at, float range);
+    ActionResult hostCastFrom(EntityRef caster, uint spell, EntityRef target, bool triggered);
+    void hostSignalDungeon(uint id, int value);
+    void hostLog(string text);
+}
+
+/// An area trigger script's handle, for the length of one handler.
+struct AreaTriggerContext
+{
+    private AreaTriggerHost host;
+    private bool consumed_;
+
+    @disable this(this);
+
+    /// The core makes one around the player who walked in.
+    this(AreaTriggerHost host) pure nothrow @nogc @safe
+    {
+        this.host = host;
+    }
+
+    /// Where `player` stands with `quest`.
+    QuestProgress questStatus(EntityRef player, uint quest) { return host.hostQuestStatusOf(player, quest); }
+
+    /// `AreaExploredOrEventHappens` for `player`.
+    void questEvent(EntityRef player, uint quest) { host.hostQuestEvent(player, quest); }
+
+    /// A creature of `entry` at `at`, gone after `despawnMs` out of combat (0: when it dies), attacking `attack`.
+    EntityRef summon(uint entry, Location at, uint despawnMs = 0, EntityRef attack = EntityRef.init)
+    {
+        return host.hostSummonAt(entry, at, despawnMs, attack);
+    }
+
+    /// A living creature of `entry` within `range` yards of `at`; nothing if none.
+    EntityRef creatureNear(uint entry, Location at, float range) { return host.hostCreatureNear(entry, at, range); }
+
+    /// `caster` (the player, or a creature here) casts `spell` at `target`.
+    ActionResult castSpell(EntityRef caster, uint spell, EntityRef target, bool triggered = true)
+    {
+        return host.hostCastFrom(caster, spell, target, triggered);
+    }
+
+    /// A `Signal` for the dungeon's script, if the trigger is in a dungeon copy.
+    void signalDungeon(uint id, int value = 0) { host.hostSignalDungeon(id, value); }
+
+    /// A line in the server's log.
+    void log(string text) { host.hostLog(text); }
+
+    /// The script handled the trigger; its usual effects do not follow.
+    void consume() { consumed_ = true; }
+
+    /// Whether a handler called `consume`.
+    @property bool consumed() const { return consumed_; }
 }

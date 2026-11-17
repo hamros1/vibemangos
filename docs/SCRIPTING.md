@@ -5,11 +5,10 @@ quests, special spells, scripted objects and triggers) is written for dmangos. T
 (`dmangos.script`) is its own design. This document first compares how other servers and engines
 script, then states what dmangos takes from them, what it does differently, and why.
 
-Status: the framework with creature, dungeon (instance) and game object scripts, their persistence,
-gossip and quest events, script movement and escorts is implemented and tested
-(`dmangos.script`; `dmangos.scripts.deadmines`, `dmangos.scripts.westfall`). The other kinds are
-planned in the section "Kinds of scripts". Signals between scripts on different nodes are not
-written yet: a signal reaches creatures on its own node.
+Status: the framework with creature, dungeon (instance), game object, spell and area trigger
+scripts, their persistence, gossip (menus of the database's or the script's own) and quest events,
+script movement, escorts, and signals between scripts on different nodes is implemented and tested
+(`dmangos.script`; scripts in `dmangos.scripts`). World and command scripts are planned.
 
 ## What other systems do
 
@@ -203,8 +202,8 @@ code) what is not here or not allowed. Nothing a script keeps can dangle.
 | Creature | `@creature` | `creature_template.ScriptName` | spawned, reset, entered combat, damaged, killed a unit, died, evaded, spell hit, signal, steps, movement done, gossip hello and select, quest accepted and rewarded; *summoned, emote* |
 | Dungeon | `@instance` | `instance_template.ScriptName` | creature or object loaded, creature died, signal; *player entered, encounter start/wipe* |
 | Game object | `@gameObject` | `gameobject_template.ScriptName` | used, signal; *loaded, state changed* |
-| Area trigger | `@areaTrigger` | `scripted_areatrigger` | *entered* |
-| Spell | `@spell` | `spell_scripts` / spell id | *effect hit, aura applied/removed, cast check* |
+| Area trigger | `@areaTrigger` | `scripted_areatrigger` | entered |
+| Spell | `@spell` | `spell_scripts` | a dummy or script effect hit (the caster a player); *aura applied/removed, cast check, a creature's cast* |
 | World | `@world` | always | *player login/logout, level, zone change, world events* |
 | Command | `@command` | its name | *a GM command of a script* |
 
@@ -223,9 +222,25 @@ passes it its `MovementDone`s and reacts to the points it reports (a line at Moo
 event at the end). Being data, an escort handed to another node goes on there; if the creature's
 movement did not come along, the escort sends it on again.
 
-A handler of `GossipHello`, `GossipSelect` or `ObjectUsed` may call `consume()` on its context: the
-script answered, and the server's usual menu or use does not follow (`pGossipHello` and `pGOUse`
-returning true).
+A handler of `GossipHello`, `GossipSelect`, `ObjectUsed`, `EffectHit` or `TriggerEntered` may call
+`consume()` on its context: the script answered, and the server's usual menu, use, database script
+or trigger does not follow.
+
+### Gossip menus of a script's own
+
+A creature script builds a menu on the stack (`GossipMenu`, up to 16 options, each with an icon, its
+text and an *action* number) and sends it under an `npc_text` id, with the creature's quests or
+without. The option the player picks comes back as `GossipSelect` with its action, so a
+conversation is a `switch` over actions. Spell and area trigger scripts are stateless: one instance
+per spell or trigger, made on first use, holding nothing between calls that matters.
+
+### Signals across nodes
+
+`signal` to a creature this node does not simulate (it sees its replica) becomes a `ScriptSignal`
+message to the creature's node (protocol 21). Each carries its origin node and a sequence number
+that only grows (it starts above anything an earlier run of the node sent), so a receiver drops a
+signal resent after a reconnect; a creature that moved on meanwhile gets it passed on, at most
+three times.
 
 ### Performance
 

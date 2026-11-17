@@ -13,7 +13,7 @@ mixin template CreatureScripting()
     import dmangos.script.api;
     import dmangos.script.registry : ScriptHandle, ScriptRuntime;
     import dmangos.world.eventai : castTriggered;
-    import dmangos.script.api : MovementDone, Waypoint;
+    import dmangos.script.api : MenuOption, MovementDone, QuestProgress, Waypoint;
 
     private
     {
@@ -280,13 +280,31 @@ mixin template CreatureScripting()
 
     ActionResult hostSignal(EntityRef to, uint id, int value)
     {
-        if (world_ is null)
+        if (world_ is null || lore is null)
             return ActionResult.notHere;
-        auto other = world_.creatureAt(to.guid); // this node's own only: a replica is not a creature here
-        if (other is null)
-            return ActionResult.notHere;
-        other.ai.signalled(EntityRef(me.guid), id, value, world_);
-        return ActionResult.ok;
+        return lore.signalCreature(world_, EntityRef(me.guid), to, id, value);
+    }
+
+    /// A spell script has it cast `spellId` at `target`.
+    ActionResult castFor(CombatWorld world, uint spellId, ulong target, bool triggered)
+    {
+        world_ = world;
+        return hostCast(spellId, EntityRef(target), triggered);
+    }
+
+    QuestProgress hostQuestStatus(EntityRef player, uint quest)
+    {
+        if (world_ !is null)
+            if (auto other = world_.combatant(player.guid))
+                return other.questStatusOf(quest);
+        return QuestProgress.none;
+    }
+
+    void hostSendGossip(EntityRef player, uint textId, const(MenuOption)[] options, bool withQuests)
+    {
+        if (world_ !is null)
+            if (auto other = world_.combatant(player.guid))
+                other.showScriptGossip(me.guid, textId, options, withQuests);
     }
 
     void hostSignalDungeon(uint id, int value)

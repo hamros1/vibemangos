@@ -20,6 +20,8 @@ import dmangos.world.opcodes : Opcode;
 import dmangos.world.testclient;
 import dmangos.world.testdata;
 import dmangos.world.updatefields;
+import dmangos.script.api : ActionResult;
+import dmangos.world.player : Player;
 
 /// Mr. Smite's phases, by the real AI; his state goes with him to another node; it goes when he does.
 unittest
@@ -322,4 +324,164 @@ unittest
         context.update(now);
     }
     assert(map.findObject(him.guid) is null, "gone home (to come back at his spawn)");
+}
+
+/// Life Tap (`spell_life_tap`): the warlock's health becomes as much mana; a tap that would kill does nothing.
+unittest
+{
+    import dmangos.world.spellcast : SpellTargets, TargetFlags;
+    import dmangos.world.spells : SpellInfo;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto tap = SpellInfo(1454);
+    tap.effect[0] = 3; // dummy
+    tap.basePoints[0] = 19;
+    tap.baseDice[0] = 1;
+    tap.implicitTargetA[0] = 1; // the caster
+    context.data.spells.spells[1454] = tap;
+    context.data.spellScriptNames[1454] = "spell_life_tap";
+
+    const at = Position(-8949.95f, -132.49f, 83.53f);
+    auto warlock = loggedIn(context, db, 7, "Varian", at, AccountLevel.player, raceOrc, mapEasternKingdoms, 10);
+    warlock.read();
+    auto v = &(cast(Player) warlock.session.character).values;
+    v.set!UNIT_FIELD_POWER1(0u);
+    const health = v.get!UNIT_FIELD_HEALTH;
+    warlock.session.castSpell(&context.data.spells.spells[1454], SpellTargets(TargetFlags.self, 0), true, 0);
+    const paid = health - v.get!UNIT_FIELD_HEALTH;
+    assert(paid >= 20 && v.get!UNIT_FIELD_POWER1 == paid, "health into as much mana");
+
+    v.set!UNIT_FIELD_HEALTH(5u);
+    warlock.session.castSpell(&context.data.spells.spells[1454], SpellTargets(TargetFlags.self, 0), true, 0);
+    assert(v.get!UNIT_FIELD_HEALTH == 5, "not to death");
+}
+
+/// A scent of Lar'korwi (`at_scent_larkorwi`): walked into on the quest, the mate comes out, once.
+unittest
+{
+    import dmangos.scripts.ungoro : ScentOfLarkorwi;
+    import dmangos.world.packets : ClientAreaTrigger;
+    import dmangos.world.quests : Quest;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto mate = context.data.creatureTemplates[creatureInnkeeper];
+    mate.entry = ScentOfLarkorwi.larkorwiMate;
+    context.data.creatureTemplates[mate.entry] = mate;
+    context.data.areaTriggerScriptNames[triggerInn] = "at_scent_larkorwi";
+    Quest q = {id: ScentOfLarkorwi.questScent, method: 2, maxLevel: 60, title: "The Scent of Lar'korwi"};
+    context.data.quests.quests[q.id] = q;
+
+    const inn = Position(innPosition[0], innPosition[1], innPosition[2]);
+    auto hunter = loggedIn(context, db, 7, "Varian", inn, AccountLevel.player, raceHuman, mapEasternKingdoms, 50);
+    hunter.read();
+    auto map = context.map(mapEasternKingdoms);
+    size_t mates()
+    {
+        size_t n;
+        foreach (c; map.creaturesNear(inn, 30))
+            n += c.spawn.entry == mate.entry;
+        return n;
+    }
+
+    hunter.write(Opcode.CMSG_AREATRIGGER, ClientAreaTrigger(triggerInn));
+    assert(mates == 0, "not on the quest");
+    hunter.session.addQuest(context.data.quests.quests[q.id]);
+    hunter.write(Opcode.CMSG_AREATRIGGER, ClientAreaTrigger(triggerInn));
+    assert(mates == 1, "it comes out");
+    hunter.write(Opcode.CMSG_AREATRIGGER, ClientAreaTrigger(triggerInn));
+    assert(mates == 1, "once");
+}
+
+/// Lady Katrana Prestor (`npc_lady_katrana_prestor`): a menu of the script's, three steps, the quest's event.
+unittest
+{
+    import dmangos.scripts.stormwind : LadyKatranaPrestor;
+    import dmangos.world.packets : ClientGossipSelectOption, ClientNpcGuid;
+    import dmangos.world.quests : Quest, QuestState;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    enum uint katrana = 1749;
+    auto lady = context.data.creatureTemplates[creatureInnkeeper];
+    lady.entry = katrana;
+    lady.npcFlags = 1 | 2; // gossip, quest giver
+    context.data.creatureTemplates[katrana] = lady;
+    context.data.creatureScriptNames[katrana] = "npc_lady_katrana_prestor";
+    Quest q = {id: LadyKatranaPrestor.questTrueMasters, method: 2, maxLevel: 60, title: "The True Masters"};
+    q.specialFlags = 0x2; // an event
+    context.data.quests.quests[q.id] = q;
+
+    const at = Position(-8949.95f, -132.49f, 83.53f);
+    auto hero = loggedIn(context, db, 7, "Varian", at, AccountLevel.player, raceHuman, mapEasternKingdoms, 40);
+    hero.read();
+    CreatureSpawn spawn = {guid: 90030, entry: katrana, map: mapEasternKingdoms, x: at.x + 2, y: at.y, z: at.z};
+    auto map = context.map(mapEasternKingdoms);
+    auto her = context.makeCreature(&spawn);
+    map.addObject(her);
+    hero.read();
+
+    hero.session.addQuest(context.data.quests.quests[q.id]);
+    hero.write(Opcode.CMSG_GOSSIP_HELLO, ClientNpcGuid(her.guid));
+    auto menu = hero.read();
+    assert(opcodesOf(menu) == [Opcode.SMSG_GOSSIP_MESSAGE]);
+    // Its text is the script's (2693), its one option the script's.
+    assert(menu[0].body_[8 .. 12] == [0x85, 0x0A, 0, 0] && menu[0].body_[12] == 1);
+    foreach (step; 0 .. 3)
+    {
+        hero.write(Opcode.CMSG_GOSSIP_SELECT_OPTION, ClientGossipSelectOption(her.guid, 0));
+        assert(opcodesOf(hero.read()).canFind(Opcode.SMSG_GOSSIP_MESSAGE));
+    }
+    assert(hero.session.character.questStatus[q.id].status == QuestState.complete, "her advice heard");
+    // Done: her usual menu again (here: her quest giver's).
+    hero.write(Opcode.CMSG_GOSSIP_HELLO, ClientNpcGuid(her.guid));
+    assert(hero.read().length > 0);
+}
+
+/// A script's signal to a creature another node simulates: sent there, applied once though it is resent.
+unittest
+{
+    import dmangos.cluster.protocol : ScriptSignal;
+    import dmangos.script.api : CreatureContext, EntityRef, Signal;
+    import dmangos.script.registry : describe, ScriptKind;
+    import dmangos.world.replication : encodeState, Replica;
+
+    static struct SignalCounter
+    {
+        uint count;
+
+        void on(ref CreatureContext me, const ref Signal e)
+        {
+            me.npcFlags(++count);
+        }
+    }
+
+    auto db = newDatabase();
+    auto here = newCreationContext(db), there = newCreationContext(db);
+    here.nodeId = 1;
+    there.nodeId = 2;
+    there.scripts.add(describe!(SignalCounter, ScriptKind.creature)("npc_signal_counter"));
+    there.data.creatureScriptNames[creatureInnkeeper] = "npc_signal_counter";
+    ScriptSignal[] sent;
+    ushort sentTo;
+    here.signalElsewhere = (ushort node, const ref ScriptSignal m) { sentTo = node; sent ~= m; };
+
+    const at = Position(-8949.95f, -132.49f, 83.53f);
+    CreatureSpawn spawn = {guid: 90040, entry: creatureInnkeeper, map: mapEasternKingdoms, x: at.x, y: at.y, z: at.z};
+    auto creature = there.makeCreature(&spawn);
+    auto thereMap = there.map(mapEasternKingdoms);
+    thereMap.addObject(creature);
+    auto hereMap = here.map(mapEasternKingdoms);
+    hereMap.replicaCreated(2, cellKeyAt(at.x, at.y), creature.guid, encodeState(creature, 0));
+
+    assert(here.signalCreature(hereMap, EntityRef(7), EntityRef(creature.guid), 5, 1) == ActionResult.ok);
+    assert(sentTo == 2 && sent.length == 1 && sent[0].to == creature.guid && sent[0].origin == 1);
+    there.scriptSignalArrived(sent[0]);
+    there.scriptSignalArrived(sent[0]); // resent after a reconnect
+    assert(creature.values.get!UNIT_NPC_FLAGS == 1, "applied once");
+    here.signalCreature(hereMap, EntityRef(7), EntityRef(creature.guid), 5, 1);
+    there.scriptSignalArrived(sent[1]);
+    assert(creature.values.get!UNIT_NPC_FLAGS == 2, "the next one too");
+    assert(here.signalCreature(hereMap, EntityRef(7), EntityRef(12345), 5, 1) == ActionResult.notHere);
 }

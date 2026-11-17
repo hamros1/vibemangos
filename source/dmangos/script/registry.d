@@ -61,12 +61,38 @@ struct gameObject
     }
 }
 
+/// A spell script, for the `spell_scripts` rows with these `ScriptName`s.
+struct spell
+{
+    string[] names;
+
+    ///
+    this(string[] names...) pure nothrow @safe
+    {
+        this.names = names.dup;
+    }
+}
+
+/// An area trigger script, for the `scripted_areatrigger` rows with these `ScriptName`s.
+struct areaTrigger
+{
+    string[] names;
+
+    ///
+    this(string[] names...) pure nothrow @safe
+    {
+        this.names = names.dup;
+    }
+}
+
 /// What kind of script.
 enum ScriptKind : ubyte
 {
     creature,
     instance,
     gameObject,
+    spell,
+    areaTrigger,
 }
 
 /// The context and events of each kind.
@@ -84,6 +110,18 @@ template KindInfo(ScriptKind kind)
         alias Context = GameObjectContext;
         alias Events = AliasSeq!(ObjectUsed, Signal);
         alias Attribute = .gameObject;
+    }
+    else static if (kind == ScriptKind.spell)
+    {
+        alias Context = SpellContext;
+        alias Events = AliasSeq!(EffectHit);
+        alias Attribute = .spell;
+    }
+    else static if (kind == ScriptKind.areaTrigger)
+    {
+        alias Context = AreaTriggerContext;
+        alias Events = AliasSeq!(TriggerEntered);
+        alias Attribute = .areaTrigger;
     }
     else static if (kind == ScriptKind.instance)
     {

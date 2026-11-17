@@ -355,7 +355,12 @@ in `makeGameObject`; `useGameObject` raises `ObjectUsed` through `WorldContext.g
 `saveState`. The session raises `GossipHello`/`GossipSelect` before the usual gossip, and
 `QuestAccepted`/`QuestRewarded` after the quest is taken or rewarded, through
 `CreatureAI.raiseFrom`. A script's `moveTo` is a `PointMovement` whose arrival raises
-`MovementDone`; during a fight it waits as the creature's out-of-combat movement.
+`MovementDone`; during a fight it waits as the creature's out-of-combat movement. Spell scripts run
+from `doEffect` (dummy and script effects, before the spell's database script) and area trigger
+scripts from `handleAreaTrigger` (before the trigger's quest, inn or teleport); both act through
+the session (`SessionScripting`, whose nested `ScriptHost` implements `SpellHost` and
+`AreaTriggerHost`). `WorldContext.signalCreature` delivers a signal here or sends a `ScriptSignal`
+to the node whose replica of the creature is here; `scriptSignalArrived` applies one once.
 
 ## Melee
 

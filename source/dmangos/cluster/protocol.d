@@ -24,7 +24,7 @@ import dmangos.cluster.regions : Region;
 import dmangos.serialization : deserialize, LengthPrefix, serialize;
 
 /// Changes whenever a message changes; nodes speaking another version are turned away.
-enum ushort protocolVersion = 20;
+enum ushort protocolVersion = 21;
 
 /// Size of a frame header.
 enum frameHeaderSize = 16;
@@ -73,6 +73,7 @@ enum MessageType : ushort
     takeover = 36,
     takeoverAccepted = 37,
     killShare = 38,
+    scriptSignal = 39,
 }
 
 /// Why a hello was refused.
@@ -524,6 +525,26 @@ struct KillShare
     uint xp;               /// the member's experience (0: none)
     float rate;            /// the group rate the experience came with
     float reputationRate;  /// the share of the kill's reputation (0: none)
+}
+
+/**
+ * A script's signal for a creature the receiver simulates (docs/SCRIPTING.md). `origin` and
+ * `sequence` make it apply once: a receiver drops what it has seen from `origin` (a resend after a
+ * reconnect). `hops` counts the nodes it was passed on to, after its creature.
+ */
+struct ScriptSignal
+{
+    enum type = MessageType.scriptSignal;
+
+    ulong to;        /// the creature
+    ulong from;      /// who signals (a creature, a player, or nothing)
+    uint map;
+    uint instance;
+    uint id;
+    int value;
+    ushort origin;   /// the node that sent it first
+    ulong sequence;  /// increasing per origin
+    ubyte hops;
 }
 
 /// To the coordinator: the sender is shutting down; its regions should go to the others first.
