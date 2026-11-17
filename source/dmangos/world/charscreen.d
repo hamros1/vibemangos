@@ -226,6 +226,7 @@ private:
         player = makePlayer(character, true);
         loadCooldowns(); // before the spellbook is sent: it shows them
         loadTalentReset();
+        loadSocial();
         saveTimer = IntervalTimer(context.config.playerSaveInterval.seconds);
         regenTimer.reset();
         enteredWorld = context.clock();
@@ -249,6 +250,7 @@ private:
         info!"%s: '%s' entered the world as '%s' (guid %s, map %s at %.1f %.1f %.1f)"(remoteAddress,
             account.username, character.name, guid, character.map, character.position.x, character.position.y,
             character.position.z);
+        announceToFriends(true);
         // Another node's ground (a dungeon it hosts, say): there at once, not after the first look.
         if (const target = migrationTarget())
             migrateTo(target);
@@ -339,8 +341,7 @@ private:
     void sendInitialPacketsAfterAddToMap()
     {
         setZoneOnArrival();
-        send(ServerFriendList());
-        send(ServerIgnoreList());
+        sendSocialLists();
         send(ServerInitWorldStates(player.data.map, player.data.zone));
         deliver(Opcode.SMSG_WEATHER, context.weatherFor(player.data.zone));
     }

@@ -32,6 +32,10 @@ void deliverWhisper(OnlinePlayer target, const WhisperFrom from, string text, bo
     scope void delegate(Opcode, const(ubyte)[]) toSender)
 {
     const receiver = target.character;
+    // `HasIgnore`: the sender hears that it is ignored, and the whisper goes nowhere.
+    if (!from.permissions && target.ignores(from.guid))
+        return toSender(Opcode.SMSG_MESSAGECHAT, chatMessage(ChatType.CHAT_MSG_IGNORED, Language.LANG_UNIVERSAL,
+            receiver.guid, ""));
     if (!from.permissions && receiver.gmTagOn && !allowsWhispersFrom(from.guid))
         return toSender(Opcode.SMSG_MESSAGECHAT, chatMessage(ChatType.CHAT_MSG_WHISPER, Language.LANG_UNIVERSAL,
             receiver.guid, "This Game Master does not currently have an open ticket from you and did not receive "

@@ -1995,6 +1995,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return ActionResult.ok;
     }
 
+    /// Tells the other nodes a player here logged in or out (for its friends there); null standalone.
+    void delegate(ulong guid, bool online, ubyte status, uint area, uint level, uint classId) announceFriendElsewhere;
+
     /// Sends a script's signal to another node; null standalone.
     void delegate(ushort node, const ref ScriptSignal signal) signalElsewhere;
     private ulong signalSequence; // set at start-up above anything an earlier run of this node sent

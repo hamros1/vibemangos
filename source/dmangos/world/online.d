@@ -25,6 +25,9 @@ interface OnlinePlayer : Inhabitant
     /// ArcEmu's `WorldSession::GetPermissionCount() > 0`: any GM permission at all.
     @property bool hasPermissions() const;
 
+    /// Whether the player ignores `guid` (its ignore list).
+    bool ignores(ulong guid) const;
+
     /// The dungeon instance the player is in (0: none, or its map is not instanced).
     @property uint instanceId() const;
 

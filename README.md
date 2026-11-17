@@ -199,6 +199,11 @@ What works now:
     assistants, kicking, leaving, loot settings, raid target icons, ready checks, rolls, minimap
     pings, and member stats for members out of sight. Groups are kept in `groups` and
     `group_member` and survive restarts. Logging out of a party leaves it, as in CMaNGOS.
+  * **Friends and ignore lists** (CMaNGOS's `SocialMgr`): up to 50 friends and 25 ignored players,
+    in `character_social`; the friend list shows who is online (zone, level, class, away or busy),
+    on this node or another; friends hear of a login and a logout (across nodes too); a friend of
+    the other faction only with `allow_two_side_add_friend` (or GM permissions). An ignored
+    player's whispers are refused (`CHAT_MSG_IGNORED`), and so are its group invitations.
   * **Chat:** say, yell and emotes reach those in range; whispers reach anyone online of the same
     faction; party, raid, raid leader and raid warning messages reach the group. `/afk` and `/dnd`
     set the flag, the chat tag and the reply to whispers. `/who` lists who is online, filtered as
@@ -537,6 +542,7 @@ time.
 | `allow_two_side_interaction_chat` | `AllowTwoSide.Interaction.Chat` (whispers between factions) | `false` |
 | `allow_two_side_interaction_channel`, `allow_two_side_interaction_group` | `AllowTwoSide.Interaction.Channel`, `AllowTwoSide.Interaction.Group` | `false`, `false` |
 | `allow_two_side_interaction_auction` | `AllowTwoSide.Interaction.Auction` | `false` |
+| `allow_two_side_add_friend` | `AllowTwoSide.AddFriend` | `false` |
 | `chat_restricted_raid_warnings` | `Chat.RestrictedRaidWarnings` | `false` |
 | `allow_two_side_who_list` | `AllowTwoSide.WhoList` (the other faction in /who) | `false` |
 | `gm_level_in_who_list` | `GM.InWhoList.Level` (the highest account level players see in /who) | `3` |
@@ -680,6 +686,7 @@ source/dmangos/world/       the world server (mangosd)
   creaturescripting.d         a creature's D script: its events, schedules, state, and the host it acts through
   instancescripting.d         a dungeon copy's D script, saved in instance.data
   sessionscripting.d          the player's session as the host of spell and area trigger scripts
+  social.d                    friends and ignore lists
   scripttests.d               the scripts in the world (tests only)
   dbscripts.d                 dbscripts_on_*: script steps run by the world at their delays
   combat.d, relations.d       melee formulas (the attack table, damage) and who may attack or help whom

@@ -94,6 +94,8 @@ struct WorldConfig
     @JsonName("allow_two_side_interaction_group") bool allowTwoSideInteractionGroup = false;
     /// `AllowTwoSide.Interaction.Auction`: one auction house (the Alliance's) for both factions.
     @JsonName("allow_two_side_interaction_auction") bool allowTwoSideInteractionAuction = false;
+    /// `AllowTwoSide.AddFriend`: a character of the other faction may be befriended.
+    @JsonName("allow_two_side_add_friend") bool allowTwoSideAddFriend = false;
     /// `AllowTwoSide.WhoList`: players see the other faction in /who.
     @JsonName("allow_two_side_who_list") bool allowTwoSideWhoList = false;
     /// `GM.InWhoList.Level`: the highest account level players see in /who.

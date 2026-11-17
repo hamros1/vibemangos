@@ -45,9 +45,9 @@
   with it (their creatures as they were); only after a node's crash do they start from their spawns.
   Battlegrounds cannot be entered.
 * **Groups:** an offline leader is not replaced after a while (that needs a timer). Loot
-  settings decide who loots. The ignore list does not exist, so nobody can be
-  ignored. Two-faction groups do not show the other faction as friendly.
-* **Chat:** no ignore list or `Channel.RestrictedLanguageMode`.
+  settings decide who loots. Two-faction groups do not show the other faction as friendly.
+* **Chat:** no `Channel.RestrictedLanguageMode`; the ignore list stops whispers and invitations
+  (the client hides an ignored player's other chat itself).
   LocalDefense and WorldDefense need PvP ranks, which do not exist, so WorldDefense is read-only.
   The GM tag and `.gm allowwhispers` are not kept between logins (nor are they in ArcEmu).
 * **Inventory:** prices have no honor discounts, and items that need an honor rank cannot be bought
@@ -177,7 +177,7 @@ house from anywhere), the auction rates (`Rate.Auction.*`), an auction bot.
 
 ### 7. Social and progression
 
-* Friends and ignore lists, guilds: each a handler group and module of its own, like
+* Friends and ignore lists: done (`social.d`). Guilds: a handler group and module of their own, like
   `grouphandlers.d` (mail, auctions and trade are done).
 * Quests (`QuestHandler.cpp`, `ObjectMgr::LoadQuests`).
 * The rest of ArcEmu's GM commands, as their systems arrive (COMMANDS.md lists them): each is one

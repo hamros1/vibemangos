@@ -9,7 +9,7 @@ import core.time : Duration, MonoTime, msecs;
 
 import dmangos.cluster.node : ClusterNode, PlayerHandler, ReplicationHandler;
 import dmangos.cluster.protocol : DeliverTo, InRange, InterestUpdate, PlayerMessage, PlayerMessageKind, Presence,
-    PresenceEntry, ChannelCommand, GmRemote, KillShare, ScriptSignal, DungeonEntryRequest, DungeonEntryReply, GroupCommand, RegionLoad, ToEveryone, GroupState, MemberStatsRequest, ReplicaCreate, ReplicaMove, ReplicaRemove, ReplicaValues, StockRelease, StockReply, StockRequest,
+    PresenceEntry, ChannelCommand, GmRemote, KillShare, ScriptSignal, DungeonEntryRequest, DungeonEntryReply, FriendStatusChange, GroupCommand, RegionLoad, ToEveryone, GroupState, MemberStatsRequest, ReplicaCreate, ReplicaMove, ReplicaRemove, ReplicaValues, StockRelease, StockReply, StockRequest,
     WhisperMessage;
 import dmangos.world.creature : Creature;
 import dmangos.world.group : Group, Groups;
@@ -327,6 +327,25 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
         if (auto session = cast(WorldSession) context.onlinePlayer(m.target))
             if (session.character !is null)
                 session.killShared(m.entry, m.victim, m.level, m.xp, m.rate, m.reputationRate);
+    }
+
+    /// For the context: a player here logged in or out; every other node hears of it, for its friends.
+    void announceFriend(ulong guid, bool online, ubyte status, uint area, uint level, uint classId)
+    {
+        foreach (peer; context.otherNodes())
+            node.sendTo(peer, FriendStatusChange(guid, online, status, area, level, classId));
+    }
+
+    /// See `ReplicationHandler.friendStatus`.
+    void friendStatus(ushort peer, const ref FriendStatusChange m)
+    {
+        import dmangos.world.social : FriendInfo, FriendStatus;
+
+        const info = FriendInfo(cast(FriendStatus) m.status, m.area, m.level, m.classId);
+        foreach (other; context.onlinePlayers)
+            if (auto session = cast(WorldSession) other)
+                if (session.character !is null)
+                    session.friendNews(m.guid, m.online, info);
     }
 
     private uint nextEntryRequest = 1;

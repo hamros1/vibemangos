@@ -94,6 +94,7 @@ private:
             stopAttack(false);
         leaveGroupsOnLogout(loggingOut);
         context.channelCommand(this, ChannelOp.leaveAll, null);
+        announceToFriends(false);
         auto group = context.groups.of(player.guid);
         context.leaveWorld(this, leaving);
         // The others see the player offline; a party it left tells them itself (in a cluster, the
@@ -364,6 +365,7 @@ private:
         loadAuras();
         loadCooldowns();
         loadTalentReset();
+        loadSocial();
         applyPassiveSpells();
         resetMovementCheck();
         pendingArrival = action; // done at the first tick here, once the move is complete everywhere

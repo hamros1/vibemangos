@@ -155,6 +155,7 @@ private int run(WorldConfig config, string configPath)
         context.killShareElsewhere = &bridge.sendKillShare;
         context.signalElsewhere = &bridge.sendScriptSignal;
         context.askDungeonEntry = &bridge.askDungeonEntry;
+        context.announceFriendElsewhere = &bridge.announceFriend;
         if (cluster.isCoordinator)
         {
             context.groups.changes = &bridge.groupChanged;

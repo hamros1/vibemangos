@@ -107,6 +107,13 @@ struct CooldownRecord
     uint item;            /// the item it was cast from (its cooldown is the item's)
 }
 
+/// A `character_social` row of a player: another character, and whether it is a friend or ignored.
+struct SocialRow
+{
+    uint other;
+    ubyte flags; /// `SocialFlag`s
+}
+
 /// A `character_aura` row.
 struct AuraRecord
 {
@@ -244,6 +251,13 @@ interface WorldDatabase
 
     /// `Player::_SaveAuras`: the player's auras, replacing those saved before.
     void saveAuras(uint player, const(AuraRecord)[] auras);
+
+    /// `character_social`: the player's friends and ignored players.
+    SocialRow[] loadSocial(uint player);
+    /// ditto: one row, written (flags 0: deleted)
+    void saveSocial(uint player, uint other, ubyte flags);
+    /// Whether `player` ignores `other`.
+    bool isIgnoring(uint player, uint other);
 
     /// `characters.resettalents_cost` and `resettalents_time`: what the last talent reset cost, and when.
     void saveTalentReset(uint player, uint cost, long time);
@@ -523,6 +537,9 @@ final class MySqlWorldDatabase : WorldDatabase
     void saveAuras(uint player, const(AuraRecord)[] auras) { statements.saveAuras(player, auras); }
     void saveCooldowns(uint player, const(CooldownRecord)[] cooldowns) { statements.saveCooldowns(player, cooldowns); }
     void saveTalentReset(uint player, uint cost, long time) { statements.saveTalentReset(player, cost, time); }
+    SocialRow[] loadSocial(uint player) { return statements.loadSocial(player); }
+    void saveSocial(uint player, uint other, ubyte flags) { statements.saveSocial(player, other, flags); }
+    bool isIgnoring(uint player, uint other) { return statements.isIgnoring(player, other); }
     void loadTalentReset(uint player, out uint cost, out long time) { statements.loadTalentReset(player, cost, time); }
     CooldownRecord[] loadCooldowns(uint player) { return statements.loadCooldowns(player); }
     AuraRecord[] loadAuras(uint player) { return statements.loadAuras(player); }
@@ -1033,6 +1050,25 @@ final class MemoryWorldDatabase : WorldDatabase
     void saveAuras(uint player, const(AuraRecord)[] auras) { auraRows[player] = auras.dup; }
     CooldownRecord[][uint] cooldownRows; /// by player
     long[2][uint] talentResets; /// by player: cost, time
+    ubyte[uint][uint] socialRows; /// by player, then the other character
+    SocialRow[] loadSocial(uint player)
+    {
+        SocialRow[] rows;
+        foreach (other, flags; socialRows.get(player, null))
+            rows ~= SocialRow(other, flags);
+        return rows;
+    }
+    void saveSocial(uint player, uint other, ubyte flags)
+    {
+        if (flags)
+            socialRows.require(player, null)[other] = flags;
+        else if (auto rows = player in socialRows)
+            (*rows).remove(other);
+    }
+    bool isIgnoring(uint player, uint other)
+    {
+        return (socialRows.get(player, null).get(other, 0) & 2) != 0;
+    }
     void saveTalentReset(uint player, uint cost, long time) { talentResets[player] = [cost, time]; }
     void loadTalentReset(uint player, out uint cost, out long time)
     {

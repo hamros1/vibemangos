@@ -75,6 +75,7 @@ import dmangos.world.gmlevel1 : Level1Commands;
 import dmangos.world.gmlevel2 : Level2Commands;
 import dmangos.world.gminstance : InstanceCommands;
 import dmangos.world.sessionscripting : SessionScripting;
+import dmangos.world.social : FriendInfo, SocialHandlers;
 import dmangos.script.api : MenuOption, QuestProgress;
 import dmangos.world.gmquest : QuestCommands;
 import dmangos.world.gmlevel3 : Level3Commands;
@@ -530,6 +531,18 @@ final class WorldSession : NetSession, Kickable, OnlinePlayer, Combatant, Looter
         sendPreparedGossip(creature);
     }
 
+    /// A player came online or went offline (`SocialHandlers.friendChanged`), for another node's news.
+    void friendNews(ulong guid, bool online, const FriendInfo info)
+    {
+        friendChanged(guid, online, info);
+    }
+
+    /// See `OnlinePlayer.ignores`.
+    bool ignores(ulong guid) const
+    {
+        return ignoresGuid(guid);
+    }
+
     /// See `Combatant`.
     QuestProgress questStatusOf(uint quest)
     {
@@ -955,6 +968,7 @@ private:
     mixin ChatCommands;
     mixin GmActions;
     mixin GmTargets;
+    mixin SocialHandlers;
     mixin CombatHandlers;
     mixin DeathHandlers;
     mixin LootHandlers;

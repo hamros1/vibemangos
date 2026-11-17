@@ -24,7 +24,7 @@ import dmangos.cluster.regions : Region;
 import dmangos.serialization : deserialize, LengthPrefix, serialize;
 
 /// Changes whenever a message changes; nodes speaking another version are turned away.
-enum ushort protocolVersion = 22;
+enum ushort protocolVersion = 23;
 
 /// Size of a frame header.
 enum frameHeaderSize = 16;
@@ -76,6 +76,7 @@ enum MessageType : ushort
     scriptSignal = 39,
     dungeonEntryRequest = 40,
     dungeonEntryReply = 41,
+    friendStatus = 42,
 }
 
 /// Why a hello was refused.
@@ -568,6 +569,17 @@ struct DungeonEntryReply
 
     uint request;
     ubyte abort;
+}
+
+/// A player of the sender logged in or out: its friends on the receiver hear of it.
+struct FriendStatusChange
+{
+    enum type = MessageType.friendStatus;
+
+    ulong guid;
+    bool online;
+    ubyte status; /// `FriendStatus`
+    uint area, level, classId;
 }
 
 /// To the coordinator: the sender is shutting down; its regions should go to the others first.

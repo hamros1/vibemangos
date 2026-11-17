@@ -407,6 +407,18 @@ def describe(op, p):
     elif op == 0x191:
         qid, _, xp, money = struct.unpack_from("<IIII", p, 0); print(f"  [quest complete] {qid}: {xp} xp, {money} copper")
     elif op == 0x198: print(f"  [quest objectives done] {struct.unpack_from('<I', p, 0)[0]}")
+    elif op == 0x067:
+        n = p[0]; at = 1; friends = []
+        for _ in range(n):
+            guid, status = struct.unpack_from("<QB", p, at); at += 9
+            if status:
+                area, level, cls = struct.unpack_from("<III", p, at); at += 12
+                friends.append(f"{guid & 0xFFFFFF} online (zone {area}, level {level}, class {cls})")
+            else:
+                friends.append(f"{guid & 0xFFFFFF} offline")
+        print(f"  [friend list] {n}: " + ", ".join(friends))
+    elif op == 0x06B: print(f"  [ignore list] {p[0]}")
+    elif op == 0x068: print(f"  [friend status] result {p[0]} guid {struct.unpack_from('<Q', p, 1)[0] & 0xFFFFFF}")
     elif op == 0x199:
         qid, entry_, count, req = struct.unpack_from("<IIII", p, 0); print(f"  [quest kill] {qid}: {entry_} {count}/{req}")
     elif op == 0x18F: print(f"  [quest invalid] {struct.unpack_from('<I', p, 0)[0]}")
@@ -861,6 +873,10 @@ for action in actions:
     elif kind == "whisper":
         wsend(0x095, struct.pack("<II", 6, 7) + args[0].encode() + b"\0" + args[1].encode() + b"\0")
         op, p = wrecv(); describe(op, p)
+    elif kind in ("addfriend", "addignore"):
+        wsend(0x069 if kind == "addfriend" else 0x06C, args[0].encode() + b"\0"); print(f"{kind} {args[0]}"); listen_for(1)
+    elif kind == "friends":
+        wsend(0x066, b""); print("friends"); listen_for(1)
     elif kind == "who":
         strings = [args[0]] if args and args[0] else []
         body = struct.pack("<II", 0, 100) + b"\0\0" + struct.pack("<III", 0xFFFFFFFF, 0xFFFFFFFF, 0)

@@ -208,6 +208,8 @@ private:
             }
             if (recipient == 0 || recipient == c.guid)
                 return result(c, PARTY_OP_INVITE, name, ERR_BAD_PLAYER_NAME_S);
+            if (!c.permissions && context.database.isIgnoring(cast(uint) recipient, cast(uint) c.guid))
+                return result(c, PARTY_OP_INVITE, name, ERR_IGNORING_YOU_S);
             if (!c.permissions && !context.config.allowTwoSideInteractionGroup
                 && context.client.teamForRace(c.race) != context.client.teamForRace(recipientRace))
                 return result(c, PARTY_OP_INVITE, name, ERR_PLAYER_WRONG_FACTION);

@@ -16,7 +16,7 @@ import dmangos.mysql : MySqlConnection;
 import dmangos.world.inventory : ItemChange, ItemRecord, ItemState;
 import dmangos.world.player : CharacterData, CharacterProgress, HomeBind, tutorialFields;
 import dmangos.world.playercreate : NewCharacter, NewSkill, NewSpell, maxEnchantmentSlot;
-import dmangos.world.database : AuraRecord, CooldownRecord, CorpseRecord, InstanceBindRecord, InstanceRecord, InstanceRecords,
+import dmangos.world.database : AuraRecord, CooldownRecord, SocialRow, CorpseRecord, InstanceBindRecord, InstanceRecord, InstanceRecords,
     InstanceRespawnRecord, MailRecord;
 import dmangos.world.reputation : ReputationRecord;
 import dmangos.world.auctionhouse : AuctionRecord;
@@ -396,6 +396,30 @@ final class CharacterStatements
                 ~ "maxduration, remaintime, effIndexMask) VALUES (?, ?, 0, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)")(player,
                 a.caster, a.spell, a.stacks, a.amount[0], a.amount[1], a.amount[2], a.periodTimer[0], a.periodTimer[1],
                 a.periodTimer[2], a.maxDuration, a.remaining, a.effectMask);
+    }
+
+    /// See `WorldDatabase.loadSocial`.
+    SocialRow[] loadSocial(uint player)
+    {
+        SocialRow[] rows;
+        foreach (row; characters.query!"SELECT friend, flags FROM character_social WHERE guid = ?"(player))
+            rows ~= SocialRow(row.get!uint(0), cast(ubyte) row.get!uint(1));
+        return rows;
+    }
+
+    /// See `WorldDatabase.saveSocial`. Its flags are part of the key: the row goes and comes back.
+    void saveSocial(uint player, uint other, ubyte flags)
+    {
+        characters.execute!"DELETE FROM character_social WHERE guid = ? AND friend = ?"(player, other);
+        if (flags)
+            characters.execute!"INSERT INTO character_social (guid, friend, flags) VALUES (?, ?, ?)"(player, other, flags);
+    }
+
+    /// See `WorldDatabase.isIgnoring`.
+    bool isIgnoring(uint player, uint other)
+    {
+        return characters.query!"SELECT 1 FROM character_social WHERE guid = ? AND friend = ? AND flags & 2"(player,
+            other).length > 0;
     }
 
     /// See `WorldDatabase.saveTalentReset`.
