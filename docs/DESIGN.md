@@ -445,6 +445,15 @@ Decisions taken on 2026-11-17:
 4. **Phases, the timer wheel, deferred changes and event queues.**
    * Measure: the tick with 25,000 objects and few players, which should approach the cost of the
      active units only.
+   * Done (2026-11-17):
+     * `WorldContext.update` runs fixed phases (`TickPhase`: maps, deaths, world). On each map, its
+       players then its objects.
+     * Each map has a timer wheel for objects with nothing to do (`Idler.idleFor`). Each object
+       keeps its last tick time, so a wake gives it the whole sleep.
+     * `dmangos.events.EventQueue`, first for creature deaths, read in the deaths phase.
+     * The tick works on a reused copy of what ticks, so nothing is removed from under it.
+     * Searches no longer load cells, which stopped a loading wave (docs/BENCHMARKS.md, step 4).
+   * Results: loop busy 19.8% to 7.3%, tick 10.2 to 3.5 ms, worst tick 1,073 to 80 ms.
 5. **Replication.**
    * Change: the per-map changed list, value updates serialised once per kind of viewer, one write
      per viewer per tick.

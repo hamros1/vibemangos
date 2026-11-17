@@ -61,6 +61,7 @@ private struct Options
     uint ramp = 50;         // logins started per second
     uint chatSeconds = 60;  // mean seconds between says per bot; 0: none
     uint warmup = 10;       // seconds after the last login before measuring
+    uint seed;              // placement and behaviour: the same seed, the same run (0: a new one each time)
     int serverPid;
     string serverLog;
     string report;
@@ -86,6 +87,7 @@ int main(string[] args)
             "ramp", "logins started per second", &o.ramp,
             "chat", "mean seconds between says per bot (0: none)", &o.chatSeconds,
             "warmup", "seconds between the last login and the measurement", &o.warmup,
+            "seed", "random seed, for runs that place the bots the same (0: random)", &o.seed,
             "server-pid", "world server process, for CPU and memory", &o.serverPid,
             "server-log", "world server log, for its metrics lines", &o.serverLog,
             "report", "file to append the report to", &o.report);
@@ -117,7 +119,7 @@ private int run(const Options o)
 
     enforce(["crowd", "spread", "travel", "idle"].canFind(o.scenario), "unknown scenario " ~ o.scenario);
     enforce(o.bots > 0 && o.prefix.length > 0 && o.prefix.length <= 24, "bad bot count or prefix");
-    auto rng = Random(unpredictableSeed);
+    auto rng = Random(o.seed ? o.seed : unpredictableSeed);
 
     // Accounts and session keys.
     auto loginDb = new MySqlConnection(ConnectionInfo.parse(o.loginDb), o.mysqlLibrary);
@@ -529,8 +531,9 @@ private string serverMetrics(string path, Window window)
 
     auto pattern = regex(`^(\S+) INFO +metrics: (\d+) ticks, avg ([\d.]+) ms, p99 ([\d.]+) ms, max ([\d.]+) ms; `
         ~ `gc: (\d+) collections, max pause ([\d.]+) ms \(since start\), pauses ([\d.]+) ms, (\d+) KiB allocated`);
-    auto worldPattern = regex(`; world: (\d+) players, (\d+) objects`);
-    ulong maxPlayers, maxObjects;
+    auto worldPattern = regex(`; world: (\d+) players, (\d+) objects(?:, (\d+) ticking)?`);
+    ulong maxPlayers, maxObjects, lastTicking;
+    bool sawTicking;
     auto loopPattern = regex(`; loop: (\d+) iterations, busy avg ([\d.]+) ms, p99 ([\d.]+) ms, max ([\d.]+) ms`);
     ulong ticks, collections, allocated, iterations;
     double weighted = 0, p99 = 0, worst = 0, pauses = 0, maxPause = 0;
@@ -557,6 +560,11 @@ private string serverMetrics(string path, Window window)
         {
             maxPlayers = max(maxPlayers, w[1].to!ulong);
             maxObjects = max(maxObjects, w[2].to!ulong);
+            if (w[3].length)
+            {
+                lastTicking = w[3].to!ulong;
+                sawTicking = true;
+            }
         }
         auto l = matchFirst(line, loopPattern);
         if (!l.empty)
@@ -574,8 +582,8 @@ private string serverMetrics(string path, Window window)
     const loopText = iterations == 0 ? "" : format!("* server event loop (packets, tick and sending; %s iterations): "
         ~ "busy %.1f%% of the time, avg %.3f ms, worst interval p99 %.2f ms, max %.2f ms\n")(iterations,
         busy / measured * 100, busy / iterations, loopP99, loopMax);
-    const worldText = maxObjects == 0 ? "" : format!"* server world: %s players, %s creatures and game objects loaded\n"(
-        maxPlayers, maxObjects);
+    const worldText = maxObjects == 0 ? "" : format!"* server world: %s players, %s creatures and game objects loaded%s\n"(
+        maxPlayers, maxObjects, sawTicking ? format!" (%s ticking at the end)"(lastTicking) : "");
     return worldText ~ loopText ~ format!("* server tick (%s intervals, %s ticks): avg %.3f ms, worst interval p99 %.2f ms, max %.2f ms\n"
         ~ "* server GC: %s collections, %.2f ms paused in total, longest pause since start %.2f ms, "
         ~ "%s KiB allocated (%.0f B/tick)\n")(lines, ticks, weighted / ticks, p99, worst, collections, pauses, maxPause,

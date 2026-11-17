@@ -242,8 +242,8 @@ private int run(WorldConfig config, string configPath)
             if (metricsInterval > Duration.zero && now - lastMetrics >= metricsInterval)
             {
                 lastMetrics = now;
-                info!"%s; world: %s players, %s objects"(metrics.report(&server.busy), context.sessionCount,
-                    context.objectCount);
+                info!"%s; world: %s players, %s objects, %s ticking"(metrics.report(&server.busy),
+                    context.sessionCount, context.objectCount, context.tickingCount);
                 if (cluster !is null)
                     foreach (line; cluster.describe())
                         info!"%s"(line);

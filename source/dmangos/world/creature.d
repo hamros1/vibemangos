@@ -22,7 +22,7 @@ import std.algorithm.comparison : among, max, min;
 import std.random : Random, uniform;
 
 import dmangos.world.clientdata : ClientData;
-import dmangos.world.map : Moving, PerViewer;
+import dmangos.world.map : Idler, Moving, PerViewer;
 import dmangos.world.replication : Replica, Replicable;
 import dmangos.world.motion : followSpline, IdleMovement, MotionWorld, MovementGenerator;
 import dmangos.world.movement : baseMoveSpeed, MovementFlags, MovementInfo, MoveType, Position;
@@ -498,7 +498,7 @@ final class NpcStandIn : Npc
 }
 
 /// See the module documentation.
-final class Creature : Moving, Replicable, Npc, PerViewer
+final class Creature : Moving, Idler, Replicable, Npc, PerViewer
 {
     immutable ulong guid_;
     const(CreatureTemplate)* template_;
@@ -870,6 +870,21 @@ final class Creature : Moving, Replicable, Npc, PerViewer
         const block = motion(serverTime);
         update.addCreate(UpdateType.createObject, guid_, block, values, seenByEveryone);
         return update;
+    }
+
+    /**
+     * See `Idler.idleFor`: alive, standing, without auras, timers or anything for its AI to do, it
+     * only waits for its movement generator's next step; a corpse without loot only waits to go.
+     */
+    @property int idleFor() const
+    {
+        if (!motionStarted)
+            return 0;
+        if (!alive)
+            return loot is null && corpseTimer > 0 ? corpseTimer : 0;
+        if (summon.timed || auras.list.length || !spline.finalized || (ai !is null && ai.active))
+            return 0;
+        return generator.idleFor(this);
     }
 
     /// See `Moving.resting`: idle, standing, and started (a creature needs its first tick).

@@ -91,6 +91,14 @@ interface Kickable
     @property string address() const;
 }
 
+/// The phases of a tick, in their order (docs/DESIGN.md, step 4; `WorldContext.update`).
+enum TickPhase : ubyte
+{
+    maps,   /// on each map: its players, then its creatures and game objects
+    deaths, /// the creatures that died: their dungeon's scripts, their respawn
+    world,  /// what belongs to no one map: dungeon copies, scripts, weather, respawns, auctions, mail
+}
+
 /// A shutdown or restart counting down (`World::ShutdownServ`).
 struct ShutdownTimer
 {
@@ -603,7 +611,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         };
         created.onGameObjectUsedUp = &gameObjectUsedUp;
         created.onObjectGone = &objectGone;
-        created.onCreatureDeath = (Creature c) { c.die(created, unixTime); creatureDied(c); };
+        created.onCreatureDeath = (Creature c) { c.die(created, unixTime); created.creatureDeaths.put(c); };
         if (instance)
             if (const name = id in data.instanceScriptNames)
             {
@@ -2638,54 +2646,30 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         import dmangos.world.map : packetBody;
         import dmangos.world.opcodes : Opcode;
 
-        // World::Update: every player (a copy of the list: an update may log one out).
+        // World::Update, in its phases (docs/DESIGN.md, step 4).
         const elapsed = lastUpdate == MonoTime.init || now < lastUpdate ? Duration.zero : now - lastUpdate;
         if (now > lastUpdate)
             lastUpdate = now;
-        // A slow tick says where its time went (net/server.d warns about it).
-        import dmangos.log : warning;
         const started = MonoTime.currTime;
-        Duration slowestPlayer;
-        ulong slowestGuid;
-        foreach (player; online.values) // a copy: an update may log a player out
+        Duration[TickPhase.max + 1] spent;
+        void timed(TickPhase phase, scope void delegate() run)
         {
-            const guid = player.character.guid;
             const before = MonoTime.currTime;
-            player.update(elapsed);
-            if (MonoTime.currTime - before > slowestPlayer)
-            {
-                slowestPlayer = MonoTime.currTime - before;
-                slowestGuid = guid;
-            }
+            run();
+            spent[phase] += MonoTime.currTime - before;
         }
-        const playersDone = MonoTime.currTime;
-        foreach (map_; maps)
-            map_.update(elapsed);
-        foreach (map_; instanceMaps)
-            map_.update(elapsed);
-        if (instances.length)
-            unloadEmptyInstances(now);
-        updateScripts(cast(uint) elapsed.total!"msecs");
-        updateWeathers(cast(int) elapsed.total!"msecs");
-        scriptedGameObjectsDue();
-        respawnDue(now);
-        // `WUPDATE_AUCTIONS`: once a minute, by one node.
-        if (forwardGroup is null && now - lastAuctionCheck >= 60.seconds)
+        timed(TickPhase.maps, () => mapsPhase(elapsed));
+        timed(TickPhase.deaths, () => deathsPhase());
+        timed(TickPhase.world, () => worldPhase(now, elapsed));
+        // A slow tick says where its time went (net/server.d warns about it).
+        if (MonoTime.currTime - started > 500.msecs)
         {
-            lastAuctionCheck = now;
-            settleAuctions();
+            import dmangos.log : warning;
+
+            warning!"slow tick: %s ms in maps (players and objects), %s ms in deaths, %s ms in the world's timers"(
+                spent[TickPhase.maps].total!"msecs", spent[TickPhase.deaths].total!"msecs",
+                spent[TickPhase.world].total!"msecs");
         }
-        // Old mail, once an hour, by one node.
-        if (forwardGroup is null && now - lastMailCheck >= 60.minutes)
-        {
-            lastMailCheck = now;
-            settleOldMail();
-        }
-        const mapsDone = MonoTime.currTime;
-        if (mapsDone - started > 500.msecs)
-            warning!"slow tick: %s ms in %s players (slowest %s ms, guid %s), %s ms in %s maps"(
-                (playersDone - started).total!"msecs", online.length, slowestPlayer.total!"msecs", slowestGuid & 0xFFFF_FFFF,
-                (mapsDone - playersDone).total!"msecs", maps.length);
 
         if (shutdown.isNull)
             return false;
@@ -2713,6 +2697,74 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         }
         return false;
     }
+
+    /**
+     * The tick's maps phase: on each map, its players (`Player::Update`), then its creatures and game
+     * objects (`Map::Update`). A map's own players and objects tick together, which is the unit a map's
+     * own thread will run. A player between two maps (the halves of a far teleport) ticks after.
+     */
+    private void mapsPhase(Duration elapsed)
+    {
+        updatedPlayers.clear();
+        void tickMap(Map map_)
+        {
+            foreach (who; map_.playersNow())
+                if (auto player = cast(OnlinePlayer) who)
+                    if (player.character !is null && player.character.guid !in updatedPlayers)
+                    {
+                        updatedPlayers[player.character.guid] = true;
+                        player.update(elapsed);
+                    }
+            map_.update(elapsed);
+        }
+        foreach (map_; maps.values)
+            tickMap(map_);
+        foreach (map_; instanceMaps.values)
+            tickMap(map_);
+        foreach (player; online.values) // a copy: an update may log a player out
+            if (player.character !is null && player.character.guid !in updatedPlayers)
+                player.update(elapsed);
+    }
+
+    /// The tick's deaths phase: each creature that died is told to its dungeon's script, and its respawn is set.
+    private void deathsPhase()
+    {
+        void drain(Map map_)
+        {
+            foreach (creature; map_.creatureDeaths.take())
+                creatureDied(creature);
+        }
+        foreach (map_; maps)
+            drain(map_);
+        foreach (map_; instanceMaps)
+            drain(map_);
+    }
+
+    /// The tick's world phase: what is not on one map: dungeon copies unloading, scripts, weather,
+    /// respawns, auctions and old mail.
+    private void worldPhase(MonoTime now, Duration elapsed)
+    {
+        if (instances.length)
+            unloadEmptyInstances(now);
+        updateScripts(cast(uint) elapsed.total!"msecs");
+        updateWeathers(cast(int) elapsed.total!"msecs");
+        scriptedGameObjectsDue();
+        respawnDue(now);
+        // `WUPDATE_AUCTIONS`: once a minute, by one node.
+        if (forwardGroup is null && now - lastAuctionCheck >= 60.seconds)
+        {
+            lastAuctionCheck = now;
+            settleAuctions();
+        }
+        // Old mail, once an hour, by one node.
+        if (forwardGroup is null && now - lastMailCheck >= 60.minutes)
+        {
+            lastMailCheck = now;
+            settleOldMail();
+        }
+    }
+
+    private bool[ulong] updatedPlayers; // the players the maps phase has updated this tick
 
     /// `secsToTimeString`: "1h 2m 3s", as the shutdown message shows it.
     static string durationText(long seconds) pure @safe
@@ -2769,6 +2821,15 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         size_t count;
         foreach (map_; maps)
             count += map_.objectCount;
+        return count;
+    }
+
+    /// Creatures and game objects in the tick now (not resting), on every map.
+    @property size_t tickingCount() const
+    {
+        size_t count;
+        foreach (map_; maps)
+            count += map_.tickingCount;
         return count;
     }
 

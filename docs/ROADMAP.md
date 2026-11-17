@@ -197,6 +197,11 @@ house from anywhere), the auction rates (`Rate.Auction.*`), an auction bot.
   * the process exited silently after a kill and loot.
   The pattern suggests memory corruption or something the collector freed while still in use. Live
   tests run under gdb until one leaves a backtrace.
+* **A start that stalled.** Once a benchmark's server stopped at start-up inside its third database
+  connection (the world database) and never listened. The game loop also talks to the database
+  synchronously (saves, pets, mail), so a stalled database call stalls the loop. That may explain the
+  hang above. Step 6 of docs/DESIGN.md (the save writer) takes saves off the loop; a connect timeout
+  would make a stall at start-up fail instead of hanging.
 
 ### Infrastructure, as needed
 

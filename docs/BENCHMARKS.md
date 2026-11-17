@@ -238,3 +238,34 @@ It is built with `-unittest` for the test data and run with `--DRT-testmode=run-
 (walking its viewer list instead of asking every player on the map whether it sees the object), and
 the rest is lookups by slot instead of by guid.
 
+## Step 4 of docs/DESIGN.md: phases, sleeping objects, searches that do not load (2026-11-17)
+
+Measured with `idle` and `spread` at 500 bots, the load generator's `--seed 7` (the same bots on the
+same spawns in every run: without it the objects loaded varied from 26,000 to 65,000 between runs of
+one build), against the build before the step:
+
+| | Before | After |
+|---|---|---|
+| Objects loaded (idle / spread) | 44,701 / 46,482 | 24,389 / 27,608 |
+| Ticking at the end | 26,515 / 27,582 | 7,734 / 8,829 |
+| Event loop busy | 19.8% / 21.7% | 7.3% / 8.4% |
+| Tick average | 10.2 / 10.6 ms | 3.5 / 3.3 ms |
+| Worst tick | 1,073 / 900 ms | 80 / 5.5 ms |
+| Allocated per tick | 641 / 746 KB | 111 / 210 KB |
+
+Most of it is a bug the profile (`tools/gdb-sample.py`) found: every search for nearby objects loaded
+the cells it looked at. It was used by creatures calling for help, EventAI looking for a hurt friend
+and database scripts looking for a buddy up to 1,000 yards off. So creatures loaded cells, whose
+creatures searched and loaded more, and about 20,000 of the objects loaded were near no player.
+Unloading idle cells then went through tens of thousands of cells every 10 seconds, which was the
+second-long spikes. Now only a player's sight loads cells, as in CMaNGOS (`Cell::SetNoCreate` for
+searchers). A search wider than the cells that hold anything goes through those cells instead of
+every key in its range.
+
+The timer wheel took the objects that tick from about 59% of those loaded to about 32%. That saved
+less than it looks: the ticks it removes did almost nothing, and what costs is the work an object
+does when it acts. The biggest is a wandering creature's next walk, whose ground height is a ray
+test against the buildings (`allowedPositionZ`). The movement maps will change that work. Creatures
+now look for players to notice at most once a second as they move, as CMaNGOS
+(`Visibility.AIRelocationNotifyDelay`), instead of on every tick.
+

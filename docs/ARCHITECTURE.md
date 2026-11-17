@@ -267,9 +267,31 @@ recipient, because each client's header encryption is different.
 
 `net/server.d` runs the world's tick every `update_interval` (50 ms) between socket events, as
 Ember's map runner does, and logs a tick that takes longer than half a second.
-`WorldContext.update` hands every player the time since the last tick (`OnlinePlayer.update`), then
-every map, then counts a shutdown down. A session's `updateInWorld` keeps its periods in
-`IntervalTimer`s (`dmangos.timer`, like Ember's `DeltaTimer`):
+`WorldContext.update` runs the tick in fixed phases, in order (`TickPhase`, docs/DESIGN.md step 4):
+
+1. **Maps.** On each map, its players (`OnlinePlayer.update`) and then its creatures and game objects
+   (`Map.update`). A map's own players and objects tick together: that is the unit a map's own
+   thread will run. A player between two maps (a far teleport) ticks after the maps.
+2. **Deaths.** Each creature that died since the last tick (`Map.creatureDeaths`, a typed event
+   queue, `dmangos.events`) is told to its dungeon's script, and its respawn time is set
+   (`creatureDied`). The kill's rewards are not here: they are the killer's, at once.
+3. **World.** What belongs to no one map (below).
+
+The shutdown countdown comes after. A tick over half a second logs how long each phase took.
+
+On a map, an object that has nothing to do for a while leaves the tick. It returns when it has
+something to do again:
+* **Resting** (`Moving.resting`): idle and needing no ticks at all, until something wakes it
+  (`Map.wake`).
+* **Asleep** (`Idler.idleFor`, a creature waiting between wander walks, at a waypoint, or a corpse
+  without loot waiting to go): on the map's timer wheel (`Map.sleep`: 256 buckets of 100 ms, longer
+  sleeps going round again) until its time comes, or until woken.
+
+Each object keeps the map clock's time of its last tick, so its next tick is given all the time
+that passed, whether one tick's or a whole sleep's.
+
+A character's `updateInWorld` keeps its periods in `IntervalTimer`s (`dmangos.timer`, like Ember's
+`DeltaTimer`):
 
 * the 20-second logout (`loggingOut`), which completes the logout when it runs out;
 * regeneration every 2 seconds (`Player.regenerate`, CMaNGOS's `RegenerateAll` formulas);
@@ -277,7 +299,7 @@ every map, then counts a shutdown down. A session's `updateInWorld` keeps its pe
   rested XP (`ComputeRest`); capitals rest by their `AreaTable` flag on zone updates;
 * the periodic save.
 
-After the maps, the context runs what belongs to no one map: database scripts under way
+The world phase runs what belongs to no one map: dungeon copies left empty unloading, database scripts under way
 (`dbscripts.d`), each zone's weather (`weather.d`: a change every 10 minutes, sent to the zone's
 players, forgotten once nobody is in the zone), respawns that are due, auctions once a minute and
 old mail once an hour.

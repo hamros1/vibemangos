@@ -41,6 +41,7 @@ import core.time : Duration, MonoTime, msecs, seconds, usecs;
 import std.algorithm.searching : canFind;
 import std.random : Random, unpredictableSeed;
 
+import dmangos.events : EventQueue;
 import dmangos.store : SlotBits, Store;
 
 import dmangos.serialization : serialize;
@@ -143,6 +144,16 @@ interface Moving : MapObject
     @property bool resting() const;
 }
 
+/**
+ * A moving object that can say how long it will have nothing to do (docs/DESIGN.md, step 4): the map
+ * takes it out of the tick for that long, and its next tick is given all the time that passed.
+ */
+interface Idler
+{
+    /// Milliseconds it would only count down; 0 if it must tick every time.
+    @property int idleFor() const;
+}
+
 /// Creates the spawns of one cell of a map: called once per cell, when a player first comes near.
 alias Spawner = MapObject[] delegate(uint map, ulong cell);
 
@@ -206,6 +217,10 @@ private struct Entity
     ulong home = noCell;        // an object's own: the cell it spawned in (none for a replica)
     Position visibilityAt;      // where who sees it was last worked out
     uint tickIndex = notTicking; // its place in `Map.ticking`
+    ulong lastTickAt;           // the map's clock when it last ticked (`Map.clockMs`)
+    ulong noticeAt;             // a moving creature looks for players to notice again from then
+    uint sleepToken;            // asleep on the timer wheel under this token; 0: not asleep
+    Idler idler;                // the object, if it can say how long it will idle
     uint[] viewers;             // the players (slots) whose clients have it
     ushort[] replicatedTo;      // the peers holding a replica of it (an own object, a player here)
 
@@ -221,6 +236,25 @@ private struct CellList
     uint[] players;
     uint[] objects;
 }
+
+/// An object asleep on the map's timer wheel until `wakeAt` (the map's clock).
+private struct Sleeper
+{
+    uint slot;
+    uint token;
+    ulong wakeAt;
+}
+
+/// The timer wheel: so many buckets of so many milliseconds (25.6 seconds round; a longer sleep goes round again).
+private enum size_t wheelBuckets = 256;
+/// ditto
+private enum ulong wheelGrain = 100;
+
+/// `Visibility.AIRelocationNotifyDelay`: a moving creature looks for players to notice at most this often (ms).
+private enum ulong aiRelocationNotifyDelay = 1000;
+
+/// An object idle for less than this stays in the tick (sleeping it would cost more than it saves).
+private enum int minimumSleep = 250;
 
 /// Removes `value` from `list` (order is not kept).
 private void dropValue(T)(ref T[] list, T value)
@@ -256,6 +290,12 @@ final class Map : CombatWorld, GameObjectWorld
         Terrain terrain;                // heights for movement; none in tests
         Random rng;
         uint[] ticking;                 // the objects in the tick (not resting), by slot
+        uint[] tickCopy;                // `ticking` as a tick began
+        ulong clockMs;                  // the map's own clock: milliseconds of ticks so far
+        Sleeper[][wheelBuckets] wheel;  // objects asleep, by the bucket of their waking (docs/DESIGN.md, step 4)
+        ulong wheelDone;                // the wheel's buckets are woken up to this one (`clockMs / wheelGrain`)
+        uint sleepCounter;              // the last `Entity.sleepToken` given
+        size_t sleeping;                // how many are asleep
         bool delegate(ulong cell) owns; // whether this node owns a cell; null: every cell
 
         // Replication (phase 3).
@@ -314,6 +354,7 @@ final class Map : CombatWorld, GameObjectWorld
     /// A new entity in a slot of its own.
     private uint newEntity(Entity e)
     {
+        e.idler = cast(Idler) e.object;
         const slot = entities.add(e).slot;
         slotOf[e.guid] = slot;
         return slot;
@@ -399,6 +440,8 @@ final class Map : CombatWorld, GameObjectWorld
             unsee(slot, k);
         takeFromCell(slot);
         stopTicking(slot);
+        if (at(slot).sleepToken)
+            --sleeping;
         if (at(slot).replica)
             --replicaCount_;
         if (at(slot).player !is null)
@@ -530,22 +573,44 @@ final class Map : CombatWorld, GameObjectWorld
             && entities.at(p).known[o];
     }
 
-    /// The slots of the objects within `range` yards of `center`, loading their cells if needed.
-    private uint[] objectSlotsNear(Position center, float range)
+    /**
+     * The slots of the objects within `range` yards of `center`. Only a player's sight loads cells
+     * (`load`, `ObjectGridLoader`); every other search looks at what is loaded, as CMaNGOS's searchers
+     * do (`Cell::SetNoCreate`): a creature looking for help, or a script for its buddy a thousand yards
+     * off, loads nothing. A search wider than the cells that hold anything goes through those.
+     */
+    private uint[] objectSlotsNear(Position center, float range, bool load = false)
     {
         uint[] found;
+        void look(ulong key, ref const CellList list)
+        {
+            foreach (slot; list.objects)
+                if (distanceSquared(center, entities.at(slot).object.position) <= range ^^ 2)
+                    found ~= slot;
+        }
+        const reach = cast(long)(range / cellSize) + 1;
+        if (!load && (2 * reach + 1) ^^ 2 > cellLists.length)
+        {
+            const cx = cellCoordinate(center.x), cy = cellCoordinate(center.y);
+            foreach (key, ref list; cellLists)
+            {
+                const x = cast(int)(key >> 32), y = cast(int)(key & 0xFFFF_FFFF);
+                if (x >= cx - reach && x <= cx + reach && y >= cy - reach && y <= cy + reach)
+                    look(key, list);
+            }
+            return found;
+        }
         foreach (key; cellKeysNear(center, range))
         {
-            loadCell(key);
+            if (load)
+                loadCell(key);
             if (const list = key in cellLists)
-                foreach (slot; list.objects)
-                    if (distanceSquared(center, entities.at(slot).object.position) <= range ^^ 2)
-                        found ~= slot;
+                look(key, *list);
         }
         return found;
     }
 
-    /// The creatures and game objects within `range` yards of `center`, loading their cells if needed.
+    /// The creatures and game objects within `range` yards of `center` (in loaded cells).
     MapObject[] objectsNear(Position center, float range)
     {
         MapObject[] found;
@@ -647,6 +712,7 @@ final class Map : CombatWorld, GameObjectWorld
         auto e = &at(slot);
         e.object = object;
         e.mover = cast(Moving) object;
+        e.idler = cast(Idler) object;
         e.replica = false;
         --replicaCount_;
         e.home = home;
@@ -731,26 +797,47 @@ final class Map : CombatWorld, GameObjectWorld
             idleCheck = idleCheckInterval;
             unloadIdleCells(step);
         }
-        // What ticks is fixed when the tick starts; an object gone during it is not ticked after.
-        auto due = ticking.dup;
+        clockMs += diff;
+        wakeSleepers();
+        // What ticks is fixed when the tick starts (a copy, into memory kept from tick to tick); an
+        // object gone or put to sleep during it is not ticked after.
+        tickCopy.length = ticking.length;
+        tickCopy.assumeSafeAppend();
+        tickCopy[] = ticking[];
+        auto due = tickCopy;
         uint[] restingNow;
+        Sleeper[] sleepingNow;
         foreach (slot; due)
         {
             if (!entities.holds(slot) || at(slot).tickIndex == notTicking)
                 continue;
             auto mover = at(slot).mover;
             const before = mover.position;
-            mover.tick(this, diff);
+            // All the time since its last tick: one tick's, or the whole of a sleep.
+            const elapsedMs = cast(int)(clockMs - at(slot).lastTickAt);
+            at(slot).lastTickAt = clockMs;
+            mover.tick(this, elapsedMs);
             if (!entities.holds(slot) || at(slot).mover !is mover)
                 continue; // gone while it ticked
             if (mover.position != before)
                 objectRelocated(mover);
-            if (entities.holds(slot) && at(slot).mover is mover && mover.resting)
+            if (!entities.holds(slot) || at(slot).mover !is mover)
+                continue;
+            if (mover.resting)
                 restingNow ~= slot;
+            else if (auto idler = at(slot).idler)
+            {
+                const idle = idler.idleFor;
+                if (idle >= minimumSleep)
+                    sleepingNow ~= Sleeper(slot, 0, idle == int.max ? ulong.max : clockMs + idle);
+            }
         }
         foreach (slot; restingNow)
             if (entities.holds(slot))
                 stopTicking(slot);
+        foreach (s; sleepingNow)
+            if (entities.holds(s.slot) && at(s.slot).tickIndex != notTicking)
+                sleep(s.slot, s.wakeAt);
         expireLingering();
     }
 
@@ -870,7 +957,7 @@ final class Map : CombatWorld, GameObjectWorld
             }
 
         // Objects in sight.
-        foreach (o; objectSlotsNear(who.character.position, settings.visibilityDistance))
+        foreach (o; objectSlotsNear(who.character.position, settings.visibilityDistance, true))
         {
             auto object = at(o).object;
             if (!objectVisibleTo(object, who))
@@ -982,10 +1069,16 @@ final class Map : CombatWorld, GameObjectWorld
             sink(cell, weight);
     }
 
-    /// Objects in the tick now (not resting).
+    /// Objects in the tick now (neither resting nor asleep).
     @property size_t tickingCount() const
     {
         return ticking.length;
+    }
+
+    /// Objects asleep on the timer wheel now.
+    @property size_t sleepingCount() const
+    {
+        return sleeping;
     }
 
     /// `Map::CreatureRelocation`: an object moved; its cell follows, and who sees it once it has gone far enough.
@@ -995,8 +1088,13 @@ final class Map : CombatWorld, GameObjectWorld
         if (slot == uint.max)
             return;
         const position = object.position;
+        // `Unit::OnRelocated` with `ScheduleAINotify`: at most once a second, as CMaNGOS.
         if (auto creature = cast(Creature) object)
-            creatureNoticing(creature, slot);
+            if (clockMs >= at(slot).noticeAt)
+            {
+                at(slot).noticeAt = clockMs + aiRelocationNotifyDelay;
+                creatureNoticing(creature, slot);
+            }
         const key = cellKeyAt(position.x, position.y);
         if (at(slot).mover !is null && at(slot).cell != key)
         {
@@ -1365,8 +1463,24 @@ final class Map : CombatWorld, GameObjectWorld
             creature.die(this, 0);
     }
 
-    /// Told to let a creature die (`WorldContext`: `die`, its dungeon's script, its respawn).
+    /// Told to let a creature die (`WorldContext`: `die`, and the death queued).
     void delegate(Creature creature) onCreatureDeath;
+
+    /**
+     * The creatures that died since the world last looked (docs/DESIGN.md, step 4): their dungeon's
+     * script and their respawn time hear of it in the tick's deaths phase (`WorldContext.update`).
+     */
+    EventQueue!Creature creatureDeaths;
+
+    /// Players on the map now (a copy: an update may move one away).
+    Inhabitant[] playersNow()
+    {
+        Inhabitant[] found;
+        found.reserve(players.length);
+        foreach (slot; players)
+            found ~= at(slot).player;
+        return found;
+    }
 
     /// See `CombatWorld.inLineOfSight`: at eye height, through the vmaps; anything goes without terrain.
     /// Whether nothing built stands between the two points exactly (`CollideInterface.CheckLOS`).
@@ -1729,13 +1843,64 @@ final class Map : CombatWorld, GameObjectWorld
     }
 
 private:
+    /**
+     * Puts the object in the tick. One woken from a sleep (by its time, or by something giving it
+     * something to do) keeps its last tick time, so its next tick counts the whole sleep; one that was
+     * resting (or new) starts counting from now.
+     */
     void startTicking(uint slot)
     {
         auto e = &at(slot);
         if (e.tickIndex != notTicking || e.mover is null)
             return;
+        if (e.sleepToken)
+        {
+            e.sleepToken = 0; // its wheel entry is stale now
+            --sleeping;
+        }
+        else
+            e.lastTickAt = clockMs;
         e.tickIndex = cast(uint) ticking.length;
         ticking ~= slot;
+    }
+
+    /// Takes the object out of the tick until `wakeAt` (the map's clock; `ulong.max`: until woken).
+    void sleep(uint slot, ulong wakeAt)
+    {
+        stopTicking(slot);
+        auto e = &at(slot);
+        e.sleepToken = ++sleepCounter ? sleepCounter : ++sleepCounter; // never 0
+        ++sleeping;
+        if (wakeAt != ulong.max)
+            wheel[(wakeAt / wheelGrain) % wheelBuckets] ~= Sleeper(slot, e.sleepToken, wakeAt);
+    }
+
+    /**
+     * The sleepers whose time has come go back in the tick: the wheel's buckets from the last one done
+     * to the current one, which is looked at again next time (some of it may not be due yet).
+     */
+    void wakeSleepers()
+    {
+        const now = clockMs / wheelGrain;
+        const first = wheelDone, buckets = now - wheelDone + 1 >= wheelBuckets ? wheelBuckets : now - wheelDone + 1;
+        foreach (step; 0 .. buckets)
+        {
+            const index = (first + step) % wheelBuckets;
+            if (wheel[index].length == 0)
+                continue;
+            Sleeper[] later;
+            foreach (s; wheel[index])
+            {
+                if (!entities.holds(s.slot) || at(s.slot).sleepToken != s.token)
+                    continue; // woken already, or gone
+                if (s.wakeAt > clockMs)
+                    later ~= s; // later in this bucket's time, or a later round
+                else
+                    startTicking(s.slot);
+            }
+            wheel[index] = later;
+        }
+        wheelDone = now;
     }
 
     void stopTicking(uint slot)
@@ -1938,7 +2103,7 @@ private:
         bool[uint] objectsInSight;
         UpdateData created;
         MapObject[] personalAfter; // shown with a view of their own, after their create blocks
-        foreach (o; objectSlotsNear(who.character.position, settings.visibilityDistance))
+        foreach (o; objectSlotsNear(who.character.position, settings.visibilityDistance, true))
         {
             auto object = at(o).object;
             if (!objectVisibleTo(object, who))
@@ -2894,4 +3059,92 @@ unittest
     assert(map.findObject(far.guid) is null && !map.cellLoaded(cellKeyAt(3000, 0)));
     assert(map.findObject(near.guid) !is null && map.findObject(0xF101_0000_0000_0042) !is null);
     assert(alice.take() == [], "nobody saw it go");
+}
+
+/// The timer wheel (docs/DESIGN.md, step 4): an object with nothing to do for a while leaves the tick,
+/// comes back when its time is up (or when woken), and its next tick counts all the time it slept.
+unittest
+{
+    import core.time : msecs;
+    import dmangos.world.updatefields : TypeId;
+
+    static final class Napper : Moving, Idler
+    {
+        ulong id;
+        Position at;
+        int idle;          // what it says after a tick
+        int[] ticks;       // the time each tick gave it
+        UpdateValues values = UpdateValues(TypeId.unit);
+        this(ulong id) { this.id = id; }
+        ref UpdateValues fields() { return values; }
+        @property ulong guid() const { return id; }
+        @property Position position() const { return at; }
+        UpdateData appearance(uint) const { return UpdateData.init; }
+        void tick(MotionWorld, int diff) { ticks ~= diff; }
+        @property bool resting() const { return false; }
+        @property int idleFor() const { return idle; }
+    }
+
+    auto map = new Map(0, MapSettings.init, () => 1000u);
+    auto napper = new Napper(0xF130_0000_0000_0042);
+    map.addObject(napper);
+    assert(map.tickingCount == 1);
+
+    // Busy: it ticks every time.
+    map.update(50.msecs);
+    map.update(50.msecs);
+    assert(napper.ticks == [50, 50] && map.tickingCount == 1);
+
+    // Idle for a second: out of the tick, then back with the whole second (and the tick it woke in).
+    napper.idle = 1000;
+    map.update(50.msecs);
+    assert(map.tickingCount == 0 && map.sleepingCount == 1);
+    napper.idle = 0;
+    foreach (_; 0 .. 19)
+        map.update(50.msecs); // 950 ms: not yet
+    assert(napper.ticks.length == 3, "asleep");
+    map.update(50.msecs); // 1,000 ms after it fell asleep
+    assert(napper.ticks.length == 4 && napper.ticks[3] == 1000, "woken on time, with its sleep");
+    assert(map.tickingCount == 1 && map.sleepingCount == 0);
+
+    // Woken early (something gave it something to do): its next tick has the time since it fell asleep.
+    napper.idle = 5000;
+    map.update(50.msecs);
+    napper.idle = 0;
+    foreach (_; 0 .. 6)
+        map.update(50.msecs);
+    map.wake(napper.guid);
+    map.update(50.msecs);
+    assert(napper.ticks[$ - 1] == 350 && map.sleepingCount == 0, "300 ms asleep and this tick's 50");
+    foreach (_; 0 .. 120)
+        map.update(50.msecs); // its old wheel entry comes due and is stale: no second waking
+    assert(map.tickingCount == 1);
+
+    // Gone while asleep: nothing left behind.
+    napper.idle = 2000;
+    map.update(50.msecs);
+    map.removeObject(napper.guid);
+    assert(map.sleepingCount == 0);
+    foreach (_; 0 .. 60)
+        map.update(50.msecs);
+}
+
+/// Only a player's sight loads cells: a creature's or a script's search looks at what is loaded, as
+/// CMaNGOS's searchers do (`Cell::SetNoCreate`), so searches do not spread loading across the map.
+unittest
+{
+    ulong[] loaded;
+    MapObject[] spawner(uint, ulong cell)
+    {
+        loaded ~= cell;
+        return null;
+    }
+
+    auto map = new Map(0, MapSettings.init, () => 1000u, &spawner);
+    assert(map.objectsNear(Position(0, 0, 0), 1000).length == 0 && loaded.length == 0, "a search loads nothing");
+    assert(map.creaturesNear(Position(5000, 5000, 0), 100_000).length == 0 && loaded.length == 0,
+        "nor does a huge one (it goes through the cells that hold anything)");
+    auto alice = new Watcher(1, Position(0, 0, 0));
+    map.add(alice);
+    assert(loaded.length > 0 && map.cellLoaded(cellKeyAt(0, 0)), "a player's sight does");
 }

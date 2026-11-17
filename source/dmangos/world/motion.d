@@ -145,6 +145,15 @@ abstract class MovementGenerator
     {
     }
 
+    /**
+     * For how many milliseconds `update` would do nothing but count down (docs/DESIGN.md, step 4: the
+     * map lets the creature sleep that long); 0 if it must be updated every tick.
+     */
+    int idleFor(const Creature creature) const
+    {
+        return 0;
+    }
+
     /// Writes what changes as it runs, for the creature's next owner (docs/CLUSTER.md, phase 4).
     void save(ref ByteWriter w) const
     {
@@ -162,6 +171,11 @@ final class IdleMovement : MovementGenerator
     override @property MotionType type() const
     {
         return MotionType.idle;
+    }
+
+    override int idleFor(const Creature creature) const
+    {
+        return int.max;
     }
 }
 
@@ -208,6 +222,12 @@ final class WanderMovement : MovementGenerator
     {
         nextMoveTimer = r.read!int;
         nextMoveCount = r.read!uint;
+    }
+
+    /// Standing between walks: until the next.
+    override int idleFor(const Creature creature) const
+    {
+        return creature.spline.finalized && nextMoveTimer > 0 ? nextMoveTimer : 0;
     }
 
     override void update(Creature creature, MotionWorld world, int diff)
@@ -318,6 +338,14 @@ final class WaypointMovement : MovementGenerator
     {
         if (path.length)
             sendNextPath(creature, world);
+    }
+
+    /// Waiting at a point (or paused, or without a path): until it goes on.
+    override int idleFor(const Creature creature) const
+    {
+        if (path.length == 0 || (paused && creature.spline.finalized))
+            return int.max;
+        return nextMoveTime > 0 && creature.spline.finalized ? nextMoveTime : 0;
     }
 
     override void update(Creature creature, MotionWorld world, int diff)

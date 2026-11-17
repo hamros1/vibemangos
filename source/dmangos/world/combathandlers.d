@@ -561,7 +561,7 @@ private:
             return;
         }
         victim.die(map, context.unixTime);
-        context.creatureDied(victim);
+        map.creatureDeaths.put(victim); // its dungeon's script and its respawn: the tick's deaths phase
         rewardKill(victim);
         // `JustDied`'s database script (`dbscripts_on_creature_death`, by entry): the creature the source, the killer the target.
         {
@@ -660,4 +660,34 @@ unittest
     assert(far.count(Opcode.SMSG_ATTACKSWING_NOTINRANGE) == 1 && !far.canFind(Opcode.SMSG_ATTACKERSTATEUPDATE));
     anduin.write(Opcode.CMSG_ATTACKSTOP, null);
     assert(opcodesOf(anduin.read()) == [Opcode.SMSG_ATTACKSTOP]);
+}
+
+/// A kill's respawn time is set in the tick's deaths phase (docs/DESIGN.md, step 4), not where it dies.
+unittest
+{
+    import core.time : MonoTime, msecs;
+    import dmangos.world.creature : Creature;
+    import dmangos.world.movement : Position;
+    import dmangos.world.objects : HighGuid, makeGuid;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+    import dmangos.world.unit : Blow, dealDamage;
+    import dmangos.world.updatefields : UNIT_FIELD_HEALTH;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    foreach (ref spawn; context.data.creatureSpawns)
+        if (spawn.guid == innkeeperSpawn)
+            spawn.respawnSeconds = 300; // not back within the test's tick
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f, 1.97f));
+    anduin.read();
+    auto map = context.map(0);
+    auto keeper = cast(Creature) map.findObject(makeGuid(HighGuid.unit, creatureInnkeeper, innkeeperSpawn));
+    dealDamage(anduin.session.inWorld.unit, map.unitOf(keeper), keeper.values.get!UNIT_FIELD_HEALTH, Blow.spell());
+    assert(!keeper.alive && innkeeperSpawn !in db.creatureRespawns, "dead; the world has not looked yet");
+    now += 50.msecs;
+    context.update(now);
+    assert(innkeeperSpawn in db.creatureRespawns, "its respawn time, from the deaths phase");
 }
