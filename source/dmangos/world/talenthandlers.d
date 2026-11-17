@@ -139,8 +139,61 @@ private:
     }
 
     /// `_LoadSpells`' passives: every passive spell known puts its auras on.
+    package bool[uint] equipSpells; // the item spells on equip applied now (`ITEM_SPELLTRIGGER_ON_EQUIP`)
+
+    /**
+     * `Player::ApplyItemEquipSpell` for every item worn: the on-equip spells of the unbroken items
+     * worn are on as auras (lasting while worn); those of items taken off (or broken) go.
+     */
+    package void refreshEquipSpells()
+    {
+        import dmangos.world.defines : equipmentSlotEnd;
+
+        enum uint onEquip = 1, applyAura = 6;
+        bool[uint] wanted;
+        foreach (ubyte slot; 0 .. equipmentSlotEnd)
+        {
+            const item = player.inventory.equipped(slot);
+            if (item is null || item.proto is null || (item.maxDurability && item.durability == 0))
+                continue;
+            foreach (ref s; item.proto.details.spells)
+                if (s.id && s.trigger == onEquip)
+                    wanted[s.id] = true;
+        }
+        foreach (id, _; equipSpells.dup)
+            if (id !in wanted)
+            {
+                if (auto aura = player.auras.find(id))
+                    removeAura(aura);
+                equipSpells.remove(id);
+            }
+        foreach (id, _; wanted)
+        {
+            if (id in equipSpells)
+                continue;
+            const spell = context.data.spells.spell(id);
+            if (spell is null || player.auras.find(id) !is null)
+                continue;
+            int[3] values;
+            bool any;
+            foreach (i; 0 .. 3)
+                if (spell.effect[i] == applyAura)
+                {
+                    values[i] = effectValue(*spell, i, player.data.level, 0);
+                    any = true;
+                }
+            if (!any)
+                continue;
+            auto aura = makeAura(spell, player.guid, player.data.level, -1, true, values);
+            aura.passive = true;
+            addAura(aura);
+            equipSpells[id] = true;
+        }
+    }
+
     package void applyPassiveSpells()
     {
+        refreshEquipSpells();
         foreach (id; player.spells)
             if (const spell = context.data.spells.spell(id))
                 if (spell.isPassive)
@@ -210,4 +263,45 @@ unittest
     assert(me.values.get!UNIT_FIELD_STAT0(Stat.strength) == strength + 2, "the new rank's, not both");
     garrosh.write(Opcode.CMSG_LEARN_TALENT, learnPacket(2, 0));
     assert(!me.knowsSpell(92003) && me.values.get!PLAYER_CHARACTER_POINTS1 == 1, "the second row needs 5 points");
+}
+
+/// An item's spell on equip: its aura while the item is worn, gone when it is taken off.
+unittest
+{
+    import dmangos.world.auras : AuraType;
+    import dmangos.world.defines : equipmentSlotMainhand, inventorySlotBag0, Stat;
+    import dmangos.world.movement : Position;
+    import dmangos.world.opcodes;
+    import dmangos.world.packets : ClientItemPos, ClientSwapInvItem;
+    import dmangos.world.player : Player;
+    import dmangos.world.spellhandlers : testSpell;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+    import dmangos.world.updatefields;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    enum uint might = 95800;
+    context.data.spells.spells[might] = testSpell(might, 6, 1, 5); // +5 strength
+    context.data.spells.spells[might].casting.applyAuraName[0] = AuraType.modStat;
+    context.data.spells.spells[might].miscValue[0] = Stat.strength;
+    context.data.items[itemSword].details.spells[0].id = might;
+    context.data.items[itemSword].details.spells[0].trigger = 1; // on equip
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f));
+    auto me = cast(Player) anduin.session.character;
+    anduin.session.lootStore(itemSword, 1, 0, false);
+    anduin.read();
+    ubyte slot;
+    foreach (s; ubyte(23) .. ubyte(39))
+        if (const item = me.inventory[inventorySlotBag0, s])
+            if (item.entry == itemSword)
+                slot = s;
+    const before = me.values.get!UNIT_FIELD_STAT0;
+    anduin.write(Opcode.CMSG_AUTOEQUIP_ITEM, ClientItemPos(inventorySlotBag0, slot));
+    anduin.read();
+    assert(me.inventory.equipped(equipmentSlotMainhand) !is null && me.auras.find(might) !is null, "worn: its aura");
+    assert(me.values.get!UNIT_FIELD_STAT0 == before + 5);
+    anduin.write(Opcode.CMSG_SWAP_INV_ITEM, ClientSwapInvItem(equipmentSlotMainhand, slot));
+    anduin.read();
+    assert(me.auras.find(might) is null && me.values.get!UNIT_FIELD_STAT0 == before, "taken off: gone");
 }

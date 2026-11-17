@@ -94,7 +94,10 @@ private:
     void flushInventory(bool moneyChanged = false)
     {
         if (inventory.equipmentChanged)
+        {
+            refreshEquipSpells(); // their equip spells on or off
             player.refreshEquipmentStats(context.data);
+        }
         UpdateData update;
         inventory.writeUpdates(update);
         player.addChanges(update, Viewer.self);
