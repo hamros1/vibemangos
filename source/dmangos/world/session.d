@@ -73,6 +73,7 @@ import dmangos.world.gmdebug : DebugCommands;
 import dmangos.world.gmlevel0 : Level0Commands;
 import dmangos.world.gmlevel1 : Level1Commands;
 import dmangos.world.gmlevel2 : Level2Commands;
+import dmangos.world.gminstance : InstanceCommands;
 import dmangos.world.gmlevel3 : Level3Commands;
 import dmangos.world.grouphandlers : GroupHandlers;
 import dmangos.world.exploration : Exploration;
@@ -610,6 +611,8 @@ final class WorldSession : NetSession, Kickable, OnlinePlayer, Combatant, Looter
     }
 
     package uint instanceId_; // the dungeon instance it is in (0: none)
+    package uint entryMap = uint.max; // where it was before going into an instance (uint.max: unknown)
+    package Position entryPoint;      // ditto
 
     /// See `OnlinePlayer.instanceId`.
     @property uint instanceId() const
@@ -924,6 +927,7 @@ private:
     mixin Level0Commands;
     mixin Level1Commands;
     mixin Level2Commands;
+    mixin InstanceCommands;
     mixin Level3Commands;
     mixin DebugCommands;
 }

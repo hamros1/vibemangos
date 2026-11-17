@@ -149,6 +149,12 @@ private:
             map.remove(this);
             // From here on the character is saved at its destination (a dungeon: its instance).
             teleporting = Teleport.far;
+            // ArcEmu's `m_bgEntryPoint`: where it was before going into an instance, for `.instance exit`.
+            if (instance && instanceId_ == 0)
+            {
+                entryMap = player.data.map;
+                entryPoint = player.position;
+            }
             instanceId_ = instance;
             player.data.map = mapId;
             player.movement.position = destination;

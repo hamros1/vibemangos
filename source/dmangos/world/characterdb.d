@@ -587,6 +587,12 @@ final class CharacterStatements
                 instance, permanent ? 1 : 0);
     }
 
+    /// See `WorldDatabase.deleteInstanceBind`.
+    void deleteInstanceBind(uint guid, uint instance)
+    {
+        characters.execute!"DELETE FROM character_instance WHERE guid = ? AND instance = ?"(guid, instance);
+    }
+
     /// See `WorldDatabase.saveInstanceRespawn`.
     void saveInstanceRespawn(bool gameObject, uint spawnGuid, uint instance, long until)
     {

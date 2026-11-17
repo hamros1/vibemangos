@@ -36,7 +36,7 @@ The world server's modules, by layer:
 | Layer | Modules |
 |---|---|
 | Protocol | `opcodes` (values), `packets` (fixed layouts), `queries` (variable layouts), `crypt` (header cipher), `addons` |
-| Session | `session` (framing, handshake), the handler groups `charscreen`, `inworld`, `teleport`, `grouphandlers`, `channelhandlers`, `npchandlers`, `itemhandlers`, `combathandlers`, `exploration`, and the GM system `commands`, `commandtable`, `gmactions`, `gmlevel0` .. `gmlevel3`, `gmdebug`; `context` (shared state) |
+| Session | `session` (framing, handshake), the handler groups `charscreen`, `inworld`, `teleport`, `grouphandlers`, `channelhandlers`, `npchandlers`, `itemhandlers`, `combathandlers`, `exploration`, and the GM system `commands`, `commandtable`, `gmactions`, `gmlevel0` .. `gmlevel3`, `gminstance`, `gmdebug`; `context` (shared state) |
 | Game objects | `player` (a character in the world), `objects` (update packets), `updatefields` (the field table), `movement`, `stats` |
 | World | `map` (players and objects on a map, visibility, broadcasting), `grid` (cells), `terrain` (ground, areas, liquids), `creature`, `gameobject`, `online` (what groups and channels see of players), `group` (parties and raids), `channel` (chat channels), `context` (maps, the players online, groups, channels) |
 | Game rules | `combat` (melee formulas: the attack table, damage, armor, reach), `relations` (who may attack whom), `inventory` (items and every rule for moving them), `playercreate` (`Player::Create`, and the spells relearned at login), `conditions`, `characters` (character list), `names`, `defines` |

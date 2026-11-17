@@ -322,6 +322,9 @@ interface WorldDatabase
     /// `character_instance` (`group` false, `owner` a character) or `group_instance` (`owner` a leader).
     void saveInstanceBind(bool group, uint owner, uint instance, bool permanent);
 
+    /// A character's bind to an instance revoked (`character_instance`).
+    void deleteInstanceBind(uint guid, uint instance);
+
     /// A creature (or game object) spawn dead (used up) in an instance until `until` (`creature_respawn`, `gameobject_respawn`).
     void saveInstanceRespawn(bool gameObject, uint spawnGuid, uint instance, long until);
 
@@ -500,6 +503,7 @@ final class MySqlWorldDatabase : WorldDatabase
     {
         statements.saveInstanceRespawn(gameObject, spawnGuid, instance, until);
     }
+    void deleteInstanceBind(uint guid, uint instance) { statements.deleteInstanceBind(guid, instance); }
     Nullable!NameInfo nameInfo(uint guid) { return statements.nameInfo(guid); }
     GroupRecord[] loadGroups() { return statements.loadGroups(); }
     void createGroup(const ref GroupRecord group) { statements.createGroup(group); }
@@ -1012,6 +1016,13 @@ final class MemoryWorldDatabase : WorldDatabase
     void saveInstanceRespawn(bool gameObject, uint spawnGuid, uint instance, long until)
     {
         instanceRows.respawns ~= InstanceRespawnRecord(gameObject, spawnGuid, instance, until);
+    }
+    void deleteInstanceBind(uint guid, uint instance)
+    {
+        import std.algorithm.iteration : filter;
+        import std.array : array;
+
+        instanceRows.binds = instanceRows.binds.filter!(b => b.group || b.owner != guid || b.instance != instance).array;
     }
     void insertAuction(const ref AuctionRecord auction) { auctions[auction.id] = auction; }
     AuctionRecord[] loadAuctions(uint houseId)

@@ -488,7 +488,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         if (auto found = instance in instanceMaps)
             return *found;
         if (instance !in instances)
-            instances[instance] = InstanceState(id);
+            instances[instance] = InstanceState(id, 0, unixTime);
         return instanceMaps[instance] = makeMap(id, instance);
     }
 
@@ -547,6 +547,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     {
         uint mapId;
         long resetAt;          /// a raid's reset (Unix time): its lockout lasts till then; 0 for a dungeon
+        long createdAt;        /// when it was made (or, saved, read back), Unix time
         MonoTime emptySince;   /// MonoTime.init while someone is in it
         bool[uint] dead;       /// creature spawns killed there (they do not come back while it lasts)
         bool[uint] usedUp;     /// game object spawns used up there
@@ -602,7 +603,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
             chosen = ++lastInstance;
             const resetAt = raid ? unixTime + data.instanceResetDays.get(mapId, 7) * 86_400 : 0;
-            instances[chosen] = InstanceState(mapId, resetAt);
+            instances[chosen] = InstanceState(mapId, resetAt, unixTime);
             database.saveInstance(chosen, mapId, resetAt);
             info!"instance %s of map %s made"(chosen, mapId);
         }
@@ -641,7 +642,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         const saved = database.loadInstances();
         foreach (r; saved.instances)
         {
-            instances[r.id] = InstanceState(r.map, r.resetTime);
+            instances[r.id] = InstanceState(r.map, r.resetTime, unixTime);
             if (r.id > lastInstance)
                 lastInstance = r.id;
         }
@@ -738,18 +739,63 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         foreach (id; gone)
         {
             info!"instance %s of map %s reset: empty for %s seconds"(id, instances[id].mapId, config.instanceUnloadDelay);
-            instances.remove(id);
-            instanceMaps.remove(id);
-            database.deleteInstance(id);
-            foreach (ref binds; playerBinds)
-                foreach (mapId, instance; binds.dup)
-                    if (instance == id)
-                        binds.remove(mapId);
-            foreach (ref binds; groupBinds)
-                foreach (mapId, instance; binds.dup)
-                    if (instance == id)
-                        binds.remove(mapId);
+            resetInstance(id);
         }
+    }
+
+    /// An instance gone for good: its map, state, saved rows and binds.
+    void resetInstance(uint id)
+    {
+        instances.remove(id);
+        instanceMaps.remove(id);
+        database.deleteInstance(id);
+        foreach (ref binds; playerBinds)
+            foreach (mapId, instance; binds.dup)
+                if (instance == id)
+                    binds.remove(mapId);
+        foreach (ref binds; groupBinds)
+            foreach (mapId, instance; binds.dup)
+                if (instance == id)
+                    binds.remove(mapId);
+    }
+
+    /// Instance `id`'s state, or null.
+    const(InstanceState)* instanceState(uint id) const
+    {
+        return id in instances;
+    }
+
+    /// The instance's map if it is loaded (ArcEmu's `m_mapMgr`), else null.
+    Map instanceMap(uint id)
+    {
+        return instanceMaps.get(id, null);
+    }
+
+    /// The player's binds: map id -> instance (ArcEmu's `savedInstanceIds`).
+    const(uint[uint]) bindsOf(ulong player)
+    {
+        return playerBinds.get(player, null);
+    }
+
+    /// Takes a player's bind to map `mapId` away (`SetPersistentInstanceId(map, 0)`).
+    void revokeBind(ulong player, uint mapId)
+    {
+        if (auto binds = player in playerBinds)
+            if (auto instance = mapId in *binds)
+            {
+                database.deleteInstanceBind(cast(uint) player, *instance);
+                (*binds).remove(mapId);
+            }
+    }
+
+    /// `MapMgr::InstanceShutdown`: the instance's map goes (its state stays); false if it was not loaded.
+    bool shutdownInstance(uint id)
+    {
+        auto m = instanceMaps.get(id, null);
+        if (m is null)
+            return false;
+        instanceMaps.remove(id);
+        return true;
     }
 
     /**

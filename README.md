@@ -189,7 +189,8 @@ What works now:
     for `instance_unload_delay_seconds` resets with its binds; a raid copy lasts until its reset
     (`instance_template.reset_delay` days after it was made), so its players stay locked to it, and
     one bound to another copy than its group's is turned away. A player logging back in inside a
-    dungeon returns to its copy; a GM's `.appear` and `.summon` go into the other's copy; a full copy
+    dungeon returns to its copy; a GM's `.appear` and `.summon` go into the other's copy, and ArcEmu's
+    `.instance` commands and `.character showinstances` work on the copies; a full copy
     (`instance_template.maxPlayers`) turns others away, game masters aside. Not yet: encounter
     state, resets at fixed weekly times, the reset warnings; a cluster keeps one shared copy of
     each dungeon.
@@ -206,7 +207,7 @@ What works now:
     announcements and moderation. One set per faction, unless
     `allow_two_side_interaction_channel` is on.
   * **The GM system is ArcEmu's:** its command tables, permission letters, lookup and replies,
-    word for word, with CMaNGOS's `gmlevel` mapped to letters by `gm_permissions`. 150 of its 298
+    word for word, with CMaNGOS's `gmlevel` mapped to letters by `gm_permissions`. 157 of its 298
     commands work: teleports and `game_tele` recall places, `.modify` (health, stats, speed, money,
     level, looks, ...), `.levelup`, `.character learn`, skills, items, lookups, kicks, bans, mutes,
     account levels, timed shutdowns and restarts, announcements, the GM tag and whisper blocking,
@@ -576,6 +577,7 @@ source/dmangos/world/       the world server (mangosd)
   commands.d                  ArcEmu's command lookup, permission letters, messages, .modify fields
   gmactions.d                 what GM commands do to players: levels, speeds, items, skills, saving
   gmlevel0.d .. gmlevel3.d    GM commands from ArcEmu's Level0.cpp .. Level3.cpp
+  gminstance.d                ArcEmu's InstanceCommands.cpp
   gmdebug.d                   GM commands from debugcmds.cpp, RecallCommands.cpp, BattlegroundCommands.cpp
   ../cluster/                 several world servers as one (docs/CLUSTER.md): config.d, protocol.d (framing,
                               messages), link.d (a link between nodes), node.d (membership, fencing, routing),

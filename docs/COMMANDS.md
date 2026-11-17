@@ -46,7 +46,7 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 * Arguments are read strictly: a number written wrong ("12abc", "abc") or a missing argument shows
   the command's help, where ArcEmu's C parsing read "12abc" as 12 and "abc" as 0 and went on.
 
-## Working (151)
+## Working (157)
 
 | Command | Letter | Help |
 |---|---|---|
@@ -173,6 +173,7 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 | `.character advanceallskills` | `m` | Advances all skills <x> points. |
 | `.character showitems` | `m` | Shows items of selected Player |
 | `.character showskills` | `m` | Shows skills of selected Player |
+| `.character showinstances` | `z` | Shows persistent instances of selected Player |
 | `.character rename` | `m` | Renames character x to y. |
 | `.character repairitems` | `n` | .repairitems - Repair all items from selected player |
 | `.lookup item` | `l` | Looks up item string x. |
@@ -193,6 +194,11 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 | `.unban ip` | `m` | Deletes an address from the IP ban table: <address> |
 | `.unban character` | `b` | Unbans character x |
 | `.unban account` | `z` | Unbans account x. |
+| `.instance reset` | `z` | Removes instance ID x from target player. |
+| `.instance resetall` | `m` | Removes all instance IDs from target player. |
+| `.instance shutdown` | `z` | Shutdown instance with ID x (default is current instance). |
+| `.instance info` | `m` | Gets info about instance with ID x (default is current instance). |
+| `.instance exit` | `m` | Exits current instance, return to entry point. |
 | `.kickplayer` | `b` | Kicks player from server |
 | `.gmannounce` | `u` | Sends Msg to all online GMs |
 | `.clearcooldowns` | `m` | Clears all cooldowns for your class. |
@@ -202,11 +208,11 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 | `.gotrig` | `v` | Warps to areatrigger <id> |
 | `.logcomment` | `1` | Adds a comment to the GM log for the admins to read. |
 
-## Not yet implemented (147)
+## Not yet implemented (141)
 
 These answer "Not yet implemented.", as ArcEmu's `HandleNYICommand` does: their systems (AI agents
-and waypoint editing, quest editing, guilds, pets, honor, battlegrounds and arenas, instances, GM
-tickets, taxis, game object and creature spawning, GM invisibility, flying) do not exist yet.
+and waypoint editing, quest editing, guilds, pets, honor, battlegrounds and arenas, GM
+tickets, game object and creature spawning, GM invisibility, flying) do not exist yet.
 
 | Command | Letter | Help |
 |---|---|---|
@@ -339,17 +345,11 @@ tickets, taxis, game object and creature spawning, GM invisibility, flying) do n
 | `.character resetskills` | `n` | .resetskills - Resets all skills. |
 | `.character getstanding` | `m` | Gets standing of faction %u. |
 | `.character setstanding` | `m` | Sets stanging of faction %u. |
-| `.character showinstances` | `z` | Shows persistent instances of selected Player |
 | `.character forcerename` | `m` | Forces character x to rename his char next login |
 | `.character settitle` | `m` | Adds title to a player |
 | `.lookup faction` | `1` | Looks up faction string x. |
 | `.admin castall` | `z` | Makes all players online cast spell <x>. |
 | `.admin renameallinvalidchars` | `z` | Renames all invalid character names |
-| `.instance reset` | `z` | Removes instance ID x from target player. |
-| `.instance resetall` | `m` | Removes all instance IDs from target player. |
-| `.instance shutdown` | `z` | Shutdown instance with ID x (default is current instance). |
-| `.instance info` | `m` | Gets info about instance with ID x (default is current instance). |
-| `.instance exit` | `m` | Exits current instance, return to entry point. |
 | `.arena createteam` | `e` | Creates arena team |
 | `.arena setteamleader` | `e` | Sets the arena team leader |
 | `.arena resetallratings` | `z` | Resets all area teams to their default rating |

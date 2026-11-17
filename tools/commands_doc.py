@@ -124,8 +124,8 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 ## Not yet implemented (%d)
 
 These answer "Not yet implemented.", as ArcEmu's `HandleNYICommand` does: their systems (AI agents
-and waypoint editing, quest editing, guilds, pets, honor, battlegrounds and arenas, instances, GM
-tickets, taxis, game object and creature spawning, GM invisibility, flying) do not exist yet.
+and waypoint editing, quest editing, guilds, pets, honor, battlegrounds and arenas, GM
+tickets, game object and creature spawning, GM invisibility, flying) do not exist yet.
 
 | Command | Letter | Help |
 |---|---|---|
