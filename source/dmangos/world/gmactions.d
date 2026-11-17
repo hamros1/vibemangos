@@ -141,6 +141,7 @@ private:
         const progress = player.progress(secondsInWorld());
         context.database.saveProgress(progress);
         saveAuras();
+        saveCooldowns();
         saveQuests();
         saveReputation();
         saveTimer.reset();

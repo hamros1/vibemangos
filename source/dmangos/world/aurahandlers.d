@@ -46,8 +46,12 @@ private:
         int[3] values;
         foreach (j; 0 .. 3)
             if (spell.effect[j] == applyAura)
-                values[j] = effectValue(*spell, j, player.data.level, uniform01(map.random));
-        const ms = duration(*spell, context.client, player.data.level);
+                values[j] = effectMod(spell, j, effectValue(*spell, j, player.data.level, uniform01(map.random)));
+        const ms = modDuration(spell, duration(*spell, context.client, player.data.level));
+        // Damage over time (`SPELLMOD_DOT`): what each tick deals.
+        foreach (j; 0 .. 3)
+            if (spell.effect[j] == applyAura && spell.casting.applyAuraName[j] == AuraType.periodicDamage)
+                values[j] = spellMod(SpellModOp.dot, spell, values[j]);
         // `SpellDamageBonusDone` / `SpellHealingBonusDone` over time: the bonus times the duration over
         // 15 seconds (at most whole), shared out among the ticks.
         foreach (j; 0 .. 3)

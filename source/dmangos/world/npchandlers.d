@@ -255,6 +255,10 @@ private:
             return vendorItems(creature).length > 0;
         case GossipOption.trainer:
             return isTrainerOf(creature, false);
+        case GossipOption.unlearnTalents:
+            // A class trainer of the player's own class, from the level talents begin.
+            return creature.npcTemplate.trainerType == TrainerType.classes
+                && creature.npcTemplate.trainerClass == player.data.classId && player.data.level >= 10;
         default:
             return false; // quests, flight masters, auctions, stables, ... come later
         }
@@ -352,6 +356,10 @@ private:
             break;
         case GossipOption.trainer:
             sendTrainerList(creature.guid);
+            break;
+        case GossipOption.unlearnTalents:
+            closeGossip();
+            offerTalentWipe(creature.guid);
             break;
         case GossipOption.innkeeper:
             closeGossip();

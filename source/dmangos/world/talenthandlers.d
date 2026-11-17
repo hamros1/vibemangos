@@ -114,6 +114,99 @@ private:
         flushPlayerChanges();
     }
 
+    private uint talentResetCost_; // `m_resetTalentsCost`: what the last reset cost (copper)
+    private long talentResetTime_; // `m_resetTalentsTime`: when (Unix time)
+
+    /// `_LoadFromDB`'s `resettalents_cost` and `resettalents_time`.
+    package void loadTalentReset()
+    {
+        context.database.loadTalentReset(player.data.guid, talentResetCost_, talentResetTime_);
+    }
+
+    /// `Player::resetTalentsCost`: 1 gold the first time, then 5, then 10; after that 5 more each time up
+    /// to 50, and 5 less for each month without a reset, down to 10.
+    package uint talentResetCost()
+    {
+        enum uint gold = 10_000;
+        enum long month = 30 * 24 * 3600;
+        if (talentResetCost_ < 1 * gold)
+            return 1 * gold;
+        if (talentResetCost_ < 5 * gold)
+            return 5 * gold;
+        if (talentResetCost_ < 10 * gold)
+            return 10 * gold;
+        const months = (context.unixTime - talentResetTime_) / month;
+        if (months > 0)
+        {
+            const cost = cast(long) talentResetCost_ - 5 * gold * months;
+            return cast(uint)(cost < 10 * gold ? 10 * gold : cost);
+        }
+        const cost = talentResetCost_ + 5 * gold;
+        return cost > 50 * gold ? 50 * gold : cost;
+    }
+
+    /// How many talent ranks the player knows (`m_usedTalentCount`).
+    package uint talentRanksKnown()
+    {
+        uint count;
+        foreach (id; 0 .. context.client.talents.idLimit)
+            if (const talent = context.client.talents.lookup(id))
+                foreach (rank, spell; talent.rankId)
+                    if (spell && player.knowsSpell(spell))
+                        count = count + 1;
+        return count;
+    }
+
+    /// `HandleTalentWipeConfirmOpcode`: the player agreed to the price at its class trainer: its talents
+    /// go for it (`Player::resetTalents`); without the money, or the trainer, an empty answer.
+    @Handles(Opcode.MSG_TALENT_WIPE_CONFIRM, WorldState.inWorld)
+    void handleTalentWipeConfirm(const ClientGuid request)
+    {
+        import dmangos.world.npchandlers : NpcFlag;
+
+        void refuse()
+        {
+            ByteWriter w;
+            w.put(ulong(0));
+            w.put(uint(0));
+            deliver(Opcode.MSG_TALENT_WIPE_CONFIRM, w.data);
+        }
+
+        auto trainer = interactableNpc(request.guid, NpcFlag.trainer);
+        if (trainer is null || !isTrainerOf(trainer, false))
+            return refuse();
+        if (talentRanksKnown() == 0)
+        {
+            resetTalents(); // nothing to pay for: the points of the level, as they are
+            return;
+        }
+        const cost = talentResetCost();
+        if (player.money < cost)
+            return refuse();
+        player.modifyMoney(-cast(long) cost);
+        resetTalents();
+        talentResetCost_ = cost;
+        talentResetTime_ = context.unixTime;
+        context.database.saveTalentReset(player.data.guid, cost, talentResetTime_);
+        // `CastSpell(_player, 14867)`: "Untalent Visual Effect", where the server has it.
+        if (const visual = context.data.spells.spell(14_867))
+        {
+            import dmangos.world.spellcast : SpellTargets, TargetFlags;
+
+            castSpell(visual, SpellTargets(TargetFlags.self, player.guid), true, 0);
+        }
+        flushPlayerChanges();
+    }
+
+    /// The trainer's "unlearn talents" option: the price, for the client to ask the player.
+    package void offerTalentWipe(ulong trainer)
+    {
+        ByteWriter w;
+        w.put(trainer);
+        w.put(talentResetCost());
+        deliver(Opcode.MSG_TALENT_WIPE_CONFIRM, w.data);
+    }
+
     /// A passive spell's aura effects on the player for good (no slot, never ending).
     package void applyPassive(const(SpellInfo)* spell)
     {
@@ -277,6 +370,33 @@ unittest
     assert(me.values.get!UNIT_FIELD_STAT0(Stat.strength) == strength + 2, "the new rank's, not both");
     garrosh.write(Opcode.CMSG_LEARN_TALENT, learnPacket(2, 0));
     assert(!me.knowsSpell(92003) && me.values.get!PLAYER_CHARACTER_POINTS1 == 1, "the second row needs 5 points");
+
+    // At the warrior's trainer: 1 gold to forget them (its points back), 5 the next time; too poor, nothing.
+    {
+        import dmangos.world.objects : HighGuid, makeGuid;
+
+        ByteWriter w;
+        w.put(makeGuid(HighGuid.unit, creatureTrainer, trainerSpawn));
+        const wipe = w.data.dup;
+        me.modifyMoney(60_000 - cast(long) me.money);
+        garrosh.read();
+        garrosh.write(Opcode.MSG_TALENT_WIPE_CONFIRM, wipe);
+        assert(!me.knowsSpell(92002) && me.values.get!PLAYER_CHARACTER_POINTS1 == 3, "forgotten, the points back");
+        assert(me.values.get!UNIT_FIELD_STAT0(Stat.strength) == strength, "their aura gone");
+        assert(me.money == 50_000, "one gold");
+        garrosh.write(Opcode.CMSG_LEARN_TALENT, learnPacket(1, 0));
+        garrosh.write(Opcode.MSG_TALENT_WIPE_CONFIRM, wipe);
+        assert(!me.knowsSpell(92001) && me.money == 0, "five gold the second time");
+        garrosh.write(Opcode.CMSG_LEARN_TALENT, learnPacket(1, 0));
+        garrosh.read();
+        garrosh.write(Opcode.MSG_TALENT_WIPE_CONFIRM, wipe);
+        assert(me.knowsSpell(92001), "ten gold the next: too poor");
+        assert(opcodesOf(garrosh.read()).canFind(Opcode.MSG_TALENT_WIPE_CONFIRM), "told so");
+        uint cost;
+        long when;
+        db.loadTalentReset(7, cost, when);
+        assert(cost == 50_000 && when > 0, "saved");
+    }
 }
 
 /// An item's spell on equip: its aura while the item is worn, gone when it is taken off.

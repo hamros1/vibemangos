@@ -224,6 +224,8 @@ private:
         }
 
         player = makePlayer(character, true);
+        loadCooldowns(); // before the spellbook is sent: it shows them
+        loadTalentReset();
         saveTimer = IntervalTimer(context.config.playerSaveInterval.seconds);
         regenTimer.reset();
         enteredWorld = context.clock();
@@ -326,6 +328,7 @@ private:
         send(ServerTutorialFlags(c.tutorials));
         ServerInitialSpells spells;
         spells.spells = player.spells.map!(id => InitialSpell(cast(ushort) id)).array;
+        spells.cooldowns = initialCooldowns();
         send(spells);
         send(ServerActionButtons(player.actionButtons));
         deliver(Opcode.SMSG_INITIALIZE_FACTIONS, initialReputations());

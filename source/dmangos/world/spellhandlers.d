@@ -19,6 +19,8 @@ module dmangos.world.spellhandlers;
 /// See the module documentation.
 mixin template SpellHandlers()
 {
+    import dmangos.world.spellmods : applySpellMod, effectOp, SpellModOp;
+    import std.algorithm.comparison : max;
     import core.time : Duration, msecs, MonoTime;
     import std.random : uniform, uniform01;
     import dmangos.bytes : ByteReader, ByteWriter;
@@ -90,6 +92,8 @@ private:
     Casting nextSwing;               // `CURRENT_MELEE_SPELL`
     MonoTime[uint] spellReadyAt;     // `m_cooldownMap` by spell
     MonoTime[uint] categoryReadyAt;  // ... and by category
+    uint[uint] cooldownCategory;     // spell -> the category its cooldown started (to save and show it)
+    uint[uint] cooldownItem;         // spell -> the item it was cast from
     MonoTime gcdReadyAt;             // `AddGCD`: category 133's global cooldown
 
     // -----------------------------------------------------------------------
@@ -183,7 +187,8 @@ private:
         auto c = Casting(spell, targets, 0, itemEntry, triggered, true);
         if (!triggered)
         {
-            c.timer = castTimeCheat ? 0 : castTime(*spell, context.client, player.data.level);
+            c.timer = castTimeCheat ? 0 : max(0, spellMod(SpellModOp.castingTime, spell,
+                castTime(*spell, context.client, player.data.level)));
             enum uint gcdCategory = 133;
             if (spell.casting.startRecoveryCategory == gcdCategory && spell.casting.startRecoveryTime)
                 gcdReadyAt = context.clock() + spell.casting.startRecoveryTime.msecs;
@@ -256,7 +261,7 @@ private:
     {
         import dmangos.world.spellcast : duration;
 
-        const ms = duration(*spell, context.client, player.data.level);
+        const ms = modDuration(spell, duration(*spell, context.client, player.data.level));
         if (ms <= 0)
             return;
         if (channelSpell !is null)
@@ -350,7 +355,8 @@ private:
         const t = entry in context.data.gameObjectTemplates;
         if (t is null || t.type != GameObjectType.fishingNode)
             return;
-        const r = range(*spell, context.client);
+        auto r = range(*spell, context.client);
+        r[1] = spellMod(SpellModOp.range, spell, r[1]);
         const distance = uniform01(map.random) * (r[1] - r[0]) + r[0];
         const maxAngle = (r[1] - r[0]) / (r[1] + 0.5f);
         const at = player.position;
@@ -378,7 +384,7 @@ private:
         bobberAge = 0;
         bobberLooted = false;
         static immutable int[4] lastSeconds = [3, 7, 13, 17];
-        const ms = duration(*spell, context.client, player.data.level);
+        const ms = modDuration(spell, duration(*spell, context.client, player.data.level));
         bobberBite = ms - lastSeconds[uniform(0, 4, map.random)] * 1000;
         bobberGone = bobberBite + 5000;
     }
@@ -419,7 +425,8 @@ private:
         import dmangos.world.dynobject : DynamicObject;
         import dmangos.world.spellcast : duration, radius;
 
-        const r = radius(*spell, i, context.client), ms = duration(*spell, context.client, player.data.level);
+        const r = spellMod(SpellModOp.radius, spell, radius(*spell, i, context.client)),
+            ms = modDuration(spell, duration(*spell, context.client, player.data.level));
         if (r <= 0 || ms <= 0)
             return;
         Position at = player.position;
@@ -739,7 +746,7 @@ private:
         const createMana = player.stats.baseMana, createHealth = player.stats.baseHealth;
         const maxPower = spell.casting.powerType < 5
             ? player.values.get!UNIT_FIELD_MAXPOWER1(cast(Power) spell.casting.powerType) : 0;
-        return powerCost(spell, level, createMana, createHealth, maxPower);
+        return max(0, spellMod(SpellModOp.cost, &spell, powerCost(spell, level, createMana, createHealth, maxPower)));
     }
 
     /// Whether the effects' implicit targets have what they need: an enemy, a friend, any unit, in range and sight.
@@ -789,7 +796,8 @@ private:
         if (triggered)
             return SpellCastResult.ok;
         // `CheckRange`: within the spell's range, reaches included; `IsWithinLOSInMap`.
-        const r = range(*spell, context.client);
+        auto r = range(*spell, context.client);
+        r[1] = spellMod(SpellModOp.range, spell, r[1]);
         const p = player.position;
         const distance = ((p.x - at.x) ^^ 2 + (p.y - at.y) ^^ 2 + (p.z - at.z) ^^ 2) ^^ 0.5f;
         const ownReach = player.values.get!UNIT_FIELD_COMBATREACH;
@@ -840,10 +848,17 @@ private:
                             if (proto.spellCategory[i])
                                 category = proto.spellCategory[i];
                         }
+            recovery = spellMod(SpellModOp.cooldown, spell, recovery);
+            categoryRecovery = spellMod(SpellModOp.cooldown, spell, categoryRecovery);
             if (recovery > 0 && !cooldownCheat)
                 spellReadyAt[spell.id] = now + recovery.msecs;
             if (category && categoryRecovery > 0 && !cooldownCheat)
                 categoryReadyAt[category] = now + categoryRecovery.msecs;
+            if ((recovery > 0 || (category && categoryRecovery > 0)) && !cooldownCheat)
+            {
+                cooldownCategory[spell.id] = category && categoryRecovery > 0 ? category : 0;
+                cooldownItem[spell.id] = c.castItemEntry;
+            }
             // `TakePower`, `TakeReagents`, and an item used up (`spellcharges` -1: one use).
             if (c.castItemEntry == 0)
             {
@@ -1023,15 +1038,18 @@ private:
 
     void doEffect(const(SpellInfo)* spell, size_t i, ulong target, ref Casting c)
     {
-        const value = effectValue(*spell, i, player.data.level, uniform01(map.random));
+        const value = effectMod(spell, i, effectValue(*spell, i, player.data.level, uniform01(map.random)));
         switch (spell.effect[i])
         {
         case 2: // SPELL_EFFECT_SCHOOL_DAMAGE
+        {
+            const damage = spellMod(SpellModOp.damage, spell, value);
             if (auto creature = cast(Creature) map.findObject(target))
-                spellDamage(spell, creature, value > 0 ? value : 0, spell.casting.school);
+                spellDamage(spell, creature, damage > 0 ? damage : 0, spell.casting.school);
             else if (auto other = enemyPlayer(target))
-                spellDamageToPlayer(spell, other, value > 0 ? value : 0);
+                spellDamageToPlayer(spell, other, damage > 0 ? damage : 0);
             break;
+        }
         case 3, 77: // SPELL_EFFECT_DUMMY, SPELL_EFFECT_SCRIPT_EFFECT: the spell's script, then its database script
         {
             import dmangos.world.dbscripts : DbScriptType;
@@ -1049,7 +1067,7 @@ private:
             const entry = cast(uint) spell.miscValue[i];
             if (!entry)
                 break;
-            const ms = duration(*spell, context.client, player.data.level);
+            const ms = modDuration(spell, duration(*spell, context.client, player.data.level));
             const count = value > 0 ? value : 1;
             foreach (n; 0 .. count)
             {
@@ -1102,7 +1120,7 @@ private:
                 weaponSpellDamage(spell, i, creature, value);
             break;
         case 10: // SPELL_EFFECT_HEAL
-            heal(spell, target, value);
+            heal(spell, target, spellMod(SpellModOp.damage, spell, value));
             break;
         case 30: // SPELL_EFFECT_ENERGIZE
             energize(spell, i, target, value);
@@ -1153,6 +1171,78 @@ private:
         other.takeDamageFrom(player.guid, other.player.values.get!UNIT_FIELD_HEALTH);
     }
 
+    /// `Player::_SaveSpellCooldowns`: the cooldowns still running, with when they end (Unix time).
+    package void saveCooldowns()
+    {
+        import dmangos.world.database : CooldownRecord;
+
+        const now = context.clock(), unixNow = context.unixTime;
+        CooldownRecord[] rows;
+        foreach (spellId, category; cooldownCategory)
+        {
+            CooldownRecord r;
+            r.spell = spellId;
+            r.item = cooldownItem.get(spellId, 0);
+            if (const at = spellId in spellReadyAt)
+                if (*at > now)
+                    r.spellExpires = unixNow + (*at - now).total!"seconds" + 1;
+            if (category)
+                if (const at = category in categoryReadyAt)
+                    if (*at > now)
+                    {
+                        r.category = category;
+                        r.categoryExpires = unixNow + (*at - now).total!"seconds" + 1;
+                    }
+            if (r.spellExpires || r.categoryExpires)
+                rows ~= r;
+        }
+        context.database.saveCooldowns(player.data.guid, rows);
+    }
+
+    /// `Player::_LoadSpellCooldowns`: those saved that have not ended yet.
+    package void loadCooldowns()
+    {
+        const now = context.clock(), unixNow = context.unixTime;
+        foreach (r; context.database.loadCooldowns(player.data.guid))
+        {
+            if (r.spellExpires > unixNow)
+                spellReadyAt[r.spell] = now + (r.spellExpires - unixNow).seconds;
+            if (r.category && r.categoryExpires > unixNow)
+                categoryReadyAt[r.category] = now + (r.categoryExpires - unixNow).seconds;
+            if (r.spellExpires > unixNow || (r.category && r.categoryExpires > unixNow))
+            {
+                cooldownCategory[r.spell] = r.categoryExpires > unixNow ? r.category : 0;
+                cooldownItem[r.spell] = r.item;
+            }
+        }
+    }
+
+    /// The cooldowns running, as `SMSG_INITIAL_SPELLS` lists them.
+    package InitialCooldown[] initialCooldowns()
+    {
+        const now = context.clock();
+        InitialCooldown[] list;
+        foreach (spellId, category; cooldownCategory)
+        {
+            const spellLeft = spellId in spellReadyAt ? spellReadyAt[spellId] - now : Duration.zero;
+            const categoryLeft = category && category in categoryReadyAt ? categoryReadyAt[category] - now
+                : Duration.zero;
+            if (spellLeft <= Duration.zero && categoryLeft <= Duration.zero)
+                continue;
+            InitialCooldown entry;
+            entry.spell = cast(ushort) spellId;
+            entry.item = cast(ushort) cooldownItem.get(spellId, 0);
+            entry.category = cast(ushort) category;
+            // `SendInitialSpells`: a category's cooldown in the second number, the spell's in the first.
+            if (categoryLeft > Duration.zero)
+                entry.categoryMs = cast(uint) categoryLeft.total!"msecs";
+            else
+                entry.spellMs = cast(uint) spellLeft.total!"msecs";
+            list ~= entry;
+        }
+        return list;
+    }
+
     /// `Player::ClearCooldownForSpell`: `SMSG_CLEAR_COOLDOWN`, and the spell ready again.
     package void clearCooldownFor(uint spell)
     {
@@ -1177,6 +1267,30 @@ private:
             if (abilities.length && abilities[0].skillId == skillLine)
                 clearCooldownFor(spell);
         }
+    }
+
+    /// A duration with the modifiers (an aura's that lasts until cancelled stays so).
+    int modDuration(const(SpellInfo)* spell, int ms)
+    {
+        return ms > 0 ? max(0, spellMod(SpellModOp.duration, spell, ms)) : ms;
+    }
+
+    /// `ApplySpellMod`: `value` of `spell`'s property `op`, with this player's spell modifiers (talents).
+    T spellMod(T)(SpellModOp op, const(SpellInfo)* spell, T value)
+    {
+        return applySpellMod(player.auras.list, op, *spell, value);
+    }
+
+    /// An effect's value with the modifiers of its own index and of all effects.
+    int effectMod(const(SpellInfo)* spell, size_t i, int value)
+    {
+        return spellMod(SpellModOp.allEffects, spell, spellMod(effectOp(i), spell, value));
+    }
+
+    /// The crit chance of `spell`: this player's (`spellCrit`) and the spell's modifiers.
+    float spellCritOf(const(SpellInfo)* spell)
+    {
+        return spellCrit() + spellMod(SpellModOp.critChance, spell, 0);
     }
 
     /// The crit chance of this player's spells: `GetSpellCritFromIntellect`.
@@ -1233,7 +1347,7 @@ private:
         auto kind = b != ImplicitTarget.none && isAreaTargetKind(b) ? b : a;
         if (!isAreaTargetKind(kind))
             return null;
-        const r = radius(*spell, i, context.client);
+        const r = spellMod(SpellModOp.radius, spell, radius(*spell, i, context.client));
         if (r <= 0)
             return null;
         Position center = player.position;
@@ -1324,7 +1438,7 @@ private:
     /// A school's damage to a player (`DealSpellDamage`): a crit is half again; armor for physical.
     void spellDamageToPlayer(const(SpellInfo)* spell, typeof(this) other, uint damage)
     {
-        const crit = !(spell.attributesEx2 & spellAttrEx2CantCrit) && uniform01(map.random) * 100 < spellCrit();
+        const crit = !(spell.attributesEx2 & spellAttrEx2CantCrit) && uniform01(map.random) * 100 < spellCritOf(spell);
         if (crit)
             damage = damage * 3 / 2;
         if (spell.casting.school == 0)
@@ -1382,7 +1496,7 @@ private:
     void spellDamage(const(SpellInfo)* spell, Creature victim, uint damage, uint school)
     {
         damage += spellDamageBonus(spell, school);
-        const crit = !(spell.attributesEx2 & spellAttrEx2CantCrit) && uniform01(map.random) * 100 < spellCrit();
+        const crit = !(spell.attributesEx2 & spellAttrEx2CantCrit) && uniform01(map.random) * 100 < spellCritOf(spell);
         if (crit)
             damage = damage * 3 / 2;
         uint resisted;
@@ -1426,7 +1540,7 @@ private:
         float percent = 100;
         foreach (j; i .. 3)
         {
-            const v = effectValue(*spell, j, player.data.level, uniform01(map.random));
+            const v = effectMod(spell, j, effectValue(*spell, j, player.data.level, uniform01(map.random)));
             if (spell.effect[j] == 17 || spell.effect[j] == 58 || spell.effect[j] == 121)
                 damage += v;
             else if (spell.effect[j] == 31)
@@ -1477,7 +1591,7 @@ private:
         if (who is null || who.player is null || who.map !is map)
             return;
         value += healingBonus(spell);
-        const crit = !(spell.attributesEx2 & spellAttrEx2CantCrit) && uniform01(map.random) * 100 < spellCrit();
+        const crit = !(spell.attributesEx2 & spellAttrEx2CantCrit) && uniform01(map.random) * 100 < spellCritOf(spell);
         uint amount = crit ? value * 3 / 2 : value;
         auto v = &who.player.values;
         const health = v.get!UNIT_FIELD_HEALTH, maxHealth = v.get!UNIT_FIELD_MAXHEALTH;
@@ -2129,4 +2243,109 @@ unittest
     }
     assert(keeper.values.get!UNIT_FIELD_HEALTH == 500 - 3 * 10, "three ticks of 10");
     assert(map.findObject(spot.guid) is null, "gone after its 3 seconds");
+}
+
+/// Cooldowns last through a logout: saved, read back at login, and shown in `SMSG_INITIAL_SPELLS`.
+unittest
+{
+    import core.time : MonoTime, seconds;
+    import dmangos.auth.accounts : AccountLevel;
+    import dmangos.bytes : ByteReader;
+    import dmangos.serialization : deserialize;
+    import dmangos.world.movement : Position;
+    import dmangos.world.opcodes : Opcode;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+    import dmangos.world.packets : ClientPlayerLogin, InitialCooldown, ServerInitialSpells;
+    import dmangos.world.spellcast : SpellCastResult, SpellTargets, TargetFlags;
+    import dmangos.world.spells : SpellInfo;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    auto shout = SpellInfo(29100);
+    shout.effect[0] = 3; // dummy
+    shout.implicitTargetA[0] = 1;
+    shout.recoveryTime = 60_000;
+    context.data.spells.spells[29100] = shout;
+    const spell = &context.data.spells.spells[29100];
+
+    auto hero = loggedIn(context, db, 7, "Varian", Position(-8949.95f, -132.49f, 83.53f), AccountLevel.administrator);
+    hero.read();
+    assert(hero.session.castSpell(spell, SpellTargets(TargetFlags.self, 0), false, 0) == SpellCastResult.ok);
+    now += 2.seconds; // past the global cooldown
+    assert(hero.session.castSpell(spell, SpellTargets(TargetFlags.self, 0), false, 0) == SpellCastResult.notReady);
+    hero.write(Opcode.CMSG_LOGOUT_REQUEST, null);
+    hero.read();
+    assert(db.loadCooldowns(7).length == 1, "saved");
+
+    now += 10.seconds;
+    hero.write(Opcode.CMSG_PLAYER_LOGIN, ClientPlayerLogin(7));
+    InitialCooldown[] shown;
+    foreach (p; hero.read())
+        if (p.opcode == Opcode.SMSG_INITIAL_SPELLS)
+        {
+            auto r = ByteReader(p.body_);
+            shown = deserialize!ServerInitialSpells(r).cooldowns;
+        }
+    assert(shown.length == 1 && shown[0].spell == 29100 && shown[0].spellMs > 40_000 && shown[0].spellMs <= 50_000,
+        "the client is told: about 48 s left");
+    assert(hero.session.castSpell(spell, SpellTargets(TargetFlags.self, 0), false, 0) == SpellCastResult.notReady);
+    now += 50.seconds;
+    assert(hero.session.castSpell(spell, SpellTargets(TargetFlags.self, 0), false, 0) == SpellCastResult.ok, "over");
+}
+
+/// Talents' spell modifiers in a cast: a percent off the cost of the spells of its mask, not others'.
+unittest
+{
+    import core.time : MonoTime, seconds;
+    import dmangos.auth.accounts : AccountLevel;
+    import dmangos.world.auras : makeAura;
+    import dmangos.world.movement : Position;
+    import dmangos.world.player : Player;
+    import dmangos.world.spellcast : SpellCastResult, SpellTargets, TargetFlags;
+    import dmangos.world.spellmods : auraAddPctModifier, SpellModOp;
+    import dmangos.world.spells : SpellInfo;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+    import dmangos.world.updatefields : UNIT_FIELD_POWER1;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    SpellInfo blast(uint id, ulong flags)
+    {
+        auto s = SpellInfo(id);
+        s.effect[0] = 3; // dummy
+        s.implicitTargetA[0] = 1;
+        s.casting.manaCost = 100;
+        s.casting.spellFamilyName = 3;
+        s.casting.spellFamilyFlags = flags;
+        return s;
+    }
+    context.data.spells.spells[29101] = blast(29101, 0x1);
+    context.data.spells.spells[29102] = blast(29102, 0x2);
+    auto talent = SpellInfo(29103);
+    talent.effect[0] = 6;
+    talent.casting.applyAuraName[0] = auraAddPctModifier;
+    talent.miscValue[0] = SpellModOp.cost;
+    talent.itemType[0] = 0x1;
+    talent.casting.spellFamilyName = 3;
+    context.data.spells.spells[29103] = talent;
+
+    auto mage = loggedIn(context, db, 7, "Jaina", Position(-8949.95f, -132.49f, 83.53f), AccountLevel.player, raceOrc);
+    mage.read();
+    auto me = cast(Player) mage.session.character;
+    bool isNew;
+    me.auras.apply(makeAura(&context.data.spells.spells[29103], me.guid, 10, -1, true, [-50, 0, 0]), me.values, isNew);
+    me.values.set!UNIT_FIELD_POWER1(1000u);
+    assert(mage.session.castSpell(&context.data.spells.spells[29101], SpellTargets(TargetFlags.self, 0), false, 0)
+        == SpellCastResult.ok);
+    assert(me.values.get!UNIT_FIELD_POWER1 == 950, "half the cost");
+    now += 2.seconds;
+    assert(mage.session.castSpell(&context.data.spells.spells[29102], SpellTargets(TargetFlags.self, 0), false, 0)
+        == SpellCastResult.ok);
+    assert(me.values.get!UNIT_FIELD_POWER1 == 850, "not of its mask: the whole cost");
 }

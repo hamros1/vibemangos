@@ -76,6 +76,7 @@ private:
         duelComplete(DuelEnd.fled);
         if (player.deathState == DeathState.alive)
             saveAuras();
+        saveCooldowns();
         saveQuests();
         saveReputation();
         deathOnLogout();
@@ -226,6 +227,7 @@ private:
         const progress = player.progress(secondsInWorld());
         context.database.saveProgress(progress);
         saveAuras(); // the next node loads them, as it loads the rest
+        saveCooldowns();
         saveQuests();
         saveReputation();
 
@@ -360,6 +362,8 @@ private:
         state_ = WorldState.inWorld;
         context.enterWorldMigrated(this, known);
         loadAuras();
+        loadCooldowns();
+        loadTalentReset();
         applyPassiveSpells();
         resetMovementCheck();
         pendingArrival = action; // done at the first tick here, once the move is complete everywhere

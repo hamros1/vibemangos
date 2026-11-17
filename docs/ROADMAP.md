@@ -27,7 +27,7 @@
 
 * **Stats:** item bonuses, auras (talents' and racials' passive ones included) and the crit, dodge,
   parry and block chances are applied; passives bound to a kind of weapon or armour are not yet.
-* **Not loaded:** guild membership (`PLAYER_GUILDID`), cooldowns, pets.
+* **Not loaded:** guild membership (`PLAYER_GUILDID`), pets.
 * **Creatures** wander, walk their waypoints (running their scripts), fight, die and respawn. Type 3 paths (flying) are walked as waypoints, formations
   do not follow their leader, and creatures in water do not swim. Stable masters, battlemasters and
   guild NPCs are not offered in menus yet. Conditions
@@ -43,7 +43,7 @@
   reset `reset_delay` days after they were made rather than at fixed weekly times, encounters are
   not tracked. In a cluster a dungeon's copies are all on the node owning its one region, and move
   with it (their creatures as they were); only after a node's crash do they start from their spawns.
-  Area trigger scripts (`scripted_areatrigger`) do nothing. Battlegrounds cannot be entered.
+  Battlegrounds cannot be entered.
 * **Groups:** an offline leader is not replaced after a while (that needs a timer). Loot
   settings decide who loots. The ignore list does not exist, so nobody can be
   ignored. Two-faction groups do not show the other faction as friendly.
@@ -160,9 +160,9 @@ none yet), the PvP rank's discount, reputation from spells.
 
 ### Talents
 
-**Done** (`talenthandlers.d`; README's "Talents"): learning ranks, passive auras. Next: the talent
-wipe (`MSG_TALENT_WIPE_CONFIRM`), the spell modifiers most talents are (`SPELL_AURA_ADD_FLAT_MODIFIER`,
-`ADD_PCT_MODIFIER`), parry, dodge and crit chance auras feeding the combat chances.
+**Done** (`talenthandlers.d`, `spellmods.d`; README's "Talents"): learning ranks, passive auras,
+the spell modifiers most talents are, unlearning them at a class trainer. Next: threat and charges
+modifiers, parry, dodge and crit chance auras feeding the combat chances.
 
 ### Mail
 

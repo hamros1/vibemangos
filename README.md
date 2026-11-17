@@ -380,7 +380,8 @@ What works now:
     known spell is checked (alive, not busy, its cooldown and category cooldown and the global
     cooldown over, standing, the power and reagents it costs, an enemy or friend in range and in
     sight), shown with its cast time (`SpellCastTimes.dbc`; moving interrupts most), then goes: its
-    cooldowns start, its cost is taken, the hit rolled (magic: 4% and the level difference; melee
+    cooldowns start (saved in `character_spell_cooldown` at logout, at each save and before a move to
+    another node, and shown in `SMSG_INITIAL_SPELLS` at login), its cost is taken, the hit rolled (magic: 4% and the level difference; melee
     abilities: the attack table), and its effects done: school damage (crits from intellect),
     weapon damage with a bonus or percentage (Heroic Strike waits for the next swing and replaces
     it), heals, energize, teleports home (the hearthstone), creating items, learning and triggering
@@ -477,8 +478,12 @@ What works now:
     player's class is learned a rank at a time, if its tree has 5 points for each row above it and
     what it depends on is known, the new rank's spell replacing the rank before. Passive spells
     (talents, racials) put their aura effects on the player for good, at login and when learned (as
-    far as those auras are done; those bound to a kind of weapon are not applied yet). Not yet:
-    unlearning talents at a trainer.
+    far as those auras are done; those bound to a kind of weapon are not applied yet). Talents that
+    are spell modifiers (`SPELL_AURA_ADD_FLAT_MODIFIER`, `ADD_PCT_MODIFIER`) change the spells of
+    their family and mask: damage and healing, damage over time, cost, cast time, cooldowns,
+    durations, range, radius, effect values and crit chance (`spellmods.d`). A class trainer of the
+    player's class offers to unlearn them from level 10, at CMaNGOS's price (1 gold, 5, 10, then 5
+    more each time up to 50, 5 less for each month without a reset), saved with the character.
   * **Mail** (CMaNGOS's `MailHandler.cpp`): at a mailbox, letters to a character of the faction
     (30 copper) with an item, money or cash on delivery; the inbox (50 letters), taking money and
     items (cash on delivery paid and mailed to the sender), reading bodies, copying them as Plain
@@ -717,6 +722,7 @@ source/dmangos/world/       the world server (mangosd)
   names.d                     character name rules
   clientdata.d                DBC records and CMaNGOS's derived indexes
   spells.d                    spell_template, spell chains, spell-learn links
+  spellmods.d                 spell modifiers (most talents): flat and percent changes to spells of a family
   testdata.d, testclient.d    test fixtures and a scripted client (unittest builds only)
   database.d                  login/characters database access; in-memory version for tests
   worlddata.d                 items, creatures, playercreateinfo_*, level stats from the world database

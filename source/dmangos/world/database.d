@@ -97,6 +97,16 @@ struct MailRecord
     uint itemEntry;
 }
 
+/// A `character_spell_cooldown` row: when a spell (and its category) are ready again, Unix time.
+struct CooldownRecord
+{
+    uint spell;
+    long spellExpires;    /// 0: no cooldown of its own
+    uint category;
+    long categoryExpires; /// 0: no category cooldown
+    uint item;            /// the item it was cast from (its cooldown is the item's)
+}
+
 /// A `character_aura` row.
 struct AuraRecord
 {
@@ -234,6 +244,17 @@ interface WorldDatabase
 
     /// `Player::_SaveAuras`: the player's auras, replacing those saved before.
     void saveAuras(uint player, const(AuraRecord)[] auras);
+
+    /// `characters.resettalents_cost` and `resettalents_time`: what the last talent reset cost, and when.
+    void saveTalentReset(uint player, uint cost, long time);
+    /// ditto
+    void loadTalentReset(uint player, out uint cost, out long time);
+
+    /// `character_spell_cooldown`: the player's cooldowns still running, all of them (the old rows go).
+    void saveCooldowns(uint player, const(CooldownRecord)[] cooldowns);
+
+    /// ditto, as saved
+    CooldownRecord[] loadCooldowns(uint player);
 
     /// `Player::_LoadAuras`
     AuraRecord[] loadAuras(uint player);
@@ -500,6 +521,10 @@ final class MySqlWorldDatabase : WorldDatabase
     Nullable!CorpseRecord loadCorpse(uint player) { return statements.loadCorpse(player); }
     void saveCreatureRespawn(uint spawnGuid, long respawnTime) { statements.saveCreatureRespawn(spawnGuid, respawnTime); }
     void saveAuras(uint player, const(AuraRecord)[] auras) { statements.saveAuras(player, auras); }
+    void saveCooldowns(uint player, const(CooldownRecord)[] cooldowns) { statements.saveCooldowns(player, cooldowns); }
+    void saveTalentReset(uint player, uint cost, long time) { statements.saveTalentReset(player, cost, time); }
+    void loadTalentReset(uint player, out uint cost, out long time) { statements.loadTalentReset(player, cost, time); }
+    CooldownRecord[] loadCooldowns(uint player) { return statements.loadCooldowns(player); }
     AuraRecord[] loadAuras(uint player) { return statements.loadAuras(player); }
     void saveReputation(uint player, const(ReputationRecord)[] rows) { statements.saveReputation(player, rows); }
     ReputationRecord[] loadReputation(uint player) { return statements.loadReputation(player); }
@@ -1006,6 +1031,19 @@ final class MemoryWorldDatabase : WorldDatabase
 
     void saveCorpse(const ref CorpseRecord c) { corpses[c.player] = c; }
     void saveAuras(uint player, const(AuraRecord)[] auras) { auraRows[player] = auras.dup; }
+    CooldownRecord[][uint] cooldownRows; /// by player
+    long[2][uint] talentResets; /// by player: cost, time
+    void saveTalentReset(uint player, uint cost, long time) { talentResets[player] = [cost, time]; }
+    void loadTalentReset(uint player, out uint cost, out long time)
+    {
+        if (auto r = player in talentResets)
+        {
+            cost = cast(uint)(*r)[0];
+            time = (*r)[1];
+        }
+    }
+    void saveCooldowns(uint player, const(CooldownRecord)[] cooldowns) { cooldownRows[player] = cooldowns.dup; }
+    CooldownRecord[] loadCooldowns(uint player) { return cooldownRows.get(player, null).dup; }
     AuraRecord[] loadAuras(uint player) { return auraRows.get(player, null).dup; }
     void saveReputation(uint player, const(ReputationRecord)[] rows)
     {

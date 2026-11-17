@@ -265,13 +265,23 @@ struct InitialSpell
     ushort unknown; /// "it's not slot id"
 }
 
-/// `SMSG_INITIAL_SPELLS`, without cooldowns.
+/// One cooldown of `SMSG_INITIAL_SPELLS` (`Player::SendInitialSpells`).
+struct InitialCooldown
+{
+    ushort spell;
+    ushort item;
+    ushort category;
+    uint spellMs;    /// the spell's own cooldown left (0 when its category's is given)
+    uint categoryMs; /// its category's cooldown left
+}
+
+/// `SMSG_INITIAL_SPELLS`: the spellbook and the cooldowns running.
 struct ServerInitialSpells
 {
     mixin ServerPacket!(Opcode.SMSG_INITIAL_SPELLS);
     ubyte unknown;
     @LengthPrefix!ushort InitialSpell[] spells;
-    ushort cooldownCount;
+    @LengthPrefix!ushort InitialCooldown[] cooldowns;
 }
 
 /// `SMSG_ACTION_BUTTONS`: 120 packed buttons.

@@ -16,7 +16,7 @@ import dmangos.mysql : MySqlConnection;
 import dmangos.world.inventory : ItemChange, ItemRecord, ItemState;
 import dmangos.world.player : CharacterData, CharacterProgress, HomeBind, tutorialFields;
 import dmangos.world.playercreate : NewCharacter, NewSkill, NewSpell, maxEnchantmentSlot;
-import dmangos.world.database : AuraRecord, CorpseRecord, InstanceBindRecord, InstanceRecord, InstanceRecords,
+import dmangos.world.database : AuraRecord, CooldownRecord, CorpseRecord, InstanceBindRecord, InstanceRecord, InstanceRecords,
     InstanceRespawnRecord, MailRecord;
 import dmangos.world.reputation : ReputationRecord;
 import dmangos.world.auctionhouse : AuctionRecord;
@@ -396,6 +396,44 @@ final class CharacterStatements
                 ~ "maxduration, remaintime, effIndexMask) VALUES (?, ?, 0, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)")(player,
                 a.caster, a.spell, a.stacks, a.amount[0], a.amount[1], a.amount[2], a.periodTimer[0], a.periodTimer[1],
                 a.periodTimer[2], a.maxDuration, a.remaining, a.effectMask);
+    }
+
+    /// See `WorldDatabase.saveTalentReset`.
+    void saveTalentReset(uint player, uint cost, long time)
+    {
+        characters.execute!"UPDATE characters SET resettalents_cost = ?, resettalents_time = ? WHERE guid = ?"(cost,
+            time, player);
+    }
+
+    /// See `WorldDatabase.loadTalentReset`.
+    void loadTalentReset(uint player, out uint cost, out long time)
+    {
+        const rows = characters.query!"SELECT resettalents_cost, resettalents_time FROM characters WHERE guid = ?"(player);
+        if (rows.length)
+        {
+            cost = rows[0].get!uint(0);
+            time = rows[0].get!long(1);
+        }
+    }
+
+    /// See `WorldDatabase.saveCooldowns`.
+    void saveCooldowns(uint player, const(CooldownRecord)[] cooldowns)
+    {
+        characters.execute!"DELETE FROM character_spell_cooldown WHERE guid = ?"(player);
+        foreach (ref c; cooldowns)
+            characters.execute!("INSERT INTO character_spell_cooldown (guid, SpellId, SpellExpireTime, Category, "
+                ~ "CategoryExpireTime, ItemId) VALUES (?, ?, ?, ?, ?, ?)")(player, c.spell, c.spellExpires, c.category,
+                c.categoryExpires, c.item);
+    }
+
+    /// See `WorldDatabase.loadCooldowns`.
+    CooldownRecord[] loadCooldowns(uint player)
+    {
+        CooldownRecord[] found;
+        foreach (row; characters.query!("SELECT SpellId, SpellExpireTime, Category, CategoryExpireTime, ItemId "
+                ~ "FROM character_spell_cooldown WHERE guid = ?")(player))
+            found ~= CooldownRecord(row.get!uint(0), row.get!long(1), row.get!uint(2), row.get!long(3), row.get!uint(4));
+        return found;
     }
 
     /// See `WorldDatabase.loadAuras`.
