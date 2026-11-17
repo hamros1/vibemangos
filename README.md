@@ -212,8 +212,10 @@ What works now:
     level, looks, ...), `.levelup`, `.character learn`, skills, items, lookups, kicks, bans, mutes,
     account levels, timed shutdowns and restarts, announcements, the GM tag and whisper blocking,
     killing and reviving, casting, clearing cooldowns and auras, resetting talents, respawning, the
-    cheats (cooldown, cast time, god mode, power, explore, triggerpass), `.invincible`, and debugging.
-    The others (pets, guilds, battlegrounds, instances, tickets, spawning, ...) say "Not yet
+    cheats (cooldown, cast time, god mode, power, explore, triggerpass), `.invincible`, instances,
+    quests (status, starting, completing, quest givers and their lists), reputation, spawning and
+    deleting creatures and game objects, vendors' wares, resetting spells and skills, and debugging.
+    The others (pets, guilds, battlegrounds, tickets, waypoint editing, ...) say "Not yet
     implemented." See [docs/COMMANDS.md](docs/COMMANDS.md).
   * **NPCs:** gossip menus with their texts and conditions, trainers (lists and lessons, with
     ranks and professions), innkeepers binding the hearthstone, bankers, and vendors.
