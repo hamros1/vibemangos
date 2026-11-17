@@ -1054,6 +1054,12 @@ final class Map : CombatWorld, GameObjectWorld
         return (guid in replicas) !is null;
     }
 
+    /// The terrain with its buildings, or null (the GM commands' collision queries).
+    @property Terrain collision()
+    {
+        return terrain;
+    }
+
     /// See `MotionWorld.groundHeight`.
     float groundHeight(float x, float y, float z, bool swim)
     {

@@ -514,6 +514,12 @@ final class Terrain
     }
 
     /// `TerrainInfo::IsOutdoors`: outside any building, or in an outdoor part of one.
+    /// The vmap height under `z` (`VMapManager::getHeight`), searching `maxSearchDist` down.
+    float vmapHeight(float x, float y, float z, float maxSearchDist = 10_000.0f)
+    {
+        return vmap is null ? vmapInvalidHeightValue : buildingHeight(x, y, z, maxSearchDist);
+    }
+
     bool isOutdoors(float x, float y, float z)
     {
         BuildingArea area;

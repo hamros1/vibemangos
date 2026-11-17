@@ -162,6 +162,60 @@ private:
         return true;
     }
 
+    bool handleCollisionTestIndoor()
+    {
+        auto terrain = map.collision;
+        if (terrain is null || !terrain.hasVmaps)
+        {
+            systemMessage("Collision is not enabled.");
+            return true;
+        }
+        const at = player.position;
+        const indoors = !terrain.isOutdoors(at.x, at.y, at.z + 2.0f);
+        systemMessage(format!"Result was: %s."(indoors ? "indoors" : "outside"));
+        return true;
+    }
+
+    bool handleCollisionGetHeight()
+    {
+        import std.math : cos, sin;
+
+        auto terrain = map.collision;
+        if (terrain is null || !terrain.hasVmaps)
+        {
+            systemMessage("Collision is not enabled.");
+            return true;
+        }
+        enum float radius = 5.0f;
+        const at = player.position;
+        const z = terrain.vmapHeight(at.x, at.y, at.z + 2.0f);
+        const z2 = terrain.vmapHeight(at.x, at.y, at.z + 5.0f);
+        const z3 = terrain.vmapHeight(at.x, at.y, at.z);
+        const z4 = terrain.height(at.x, at.y);
+        // `GetFirstPoint` with -1.5: whether something stands in the way 5 yards ahead.
+        const fp = !terrain.isInLineOfSight(at.x, at.y, at.z, at.x + radius * cos(at.orientation),
+            at.y + radius * sin(at.orientation), at.z);
+        systemMessage(format!"Results were: %f(offset2.0f) | %f(offset5.0f) | %f(org) | landheight:%f | target radius5 FP:%d"(
+            z, z2, z3, z4, fp ? 1 : 0));
+        return true;
+    }
+
+    bool handleGetPosCommand(string args = null)
+    {
+        import std.conv : to;
+
+        if (args.length == 0)
+            return false;
+        uint id;
+        try
+            id = args.to!uint;
+        catch (Exception)
+            id = 0;
+        if (const spell = context.data.spells.spell(id))
+            blueSystemMessage(format!"SpellIcon for %d is %d"(spell.id, spell.casting.spellIconId));
+        return true;
+    }
+
     bool handleDistanceCommand()
     {
         const guid = player.values.get!UNIT_FIELD_TARGET;
@@ -468,4 +522,10 @@ unittest
     assert(front == ["0"] || front == ["1"]);
     gm.say(".debug testlos");
     assert(systemMessages(gm.read()) == ["Result was: in LOS in LOS in LOS."], "no terrain in the test: all in sight");
+    gm.say(".debug testindoor");
+    assert(systemMessages(gm.read()) == ["Collision is not enabled."]);
+    gm.say(".debug getheight");
+    assert(systemMessages(gm.read()) == ["Collision is not enabled."]);
+    gm.say(".debug getpos 999999");
+    assert(systemMessages(gm.read()).length == 0, "no such spell: nothing");
 }

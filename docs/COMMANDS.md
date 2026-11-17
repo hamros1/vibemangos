@@ -56,7 +56,7 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 * Arguments are read strictly: a number written wrong ("12abc", "abc") or a missing argument shows
   the command's help, where ArcEmu's C parsing read "12abc" as 12 and "abc" as 0 and went on.
 
-## Working (187)
+## Working (190)
 
 | Command | Letter | Help |
 |---|---|---|
@@ -132,6 +132,9 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 | `.debug sendpacket` | `d` | <opcode ID>, <data> |
 | `.debug rangecheck` | `d` | Checks the 'yard' range and internal range between the player and the target. |
 | `.debug testlos` | `d` | tests los |
+| `.debug testindoor` | `d` | tests indoor |
+| `.debug getheight` | `d` | Gets height |
+| `.debug getpos` | `d` |  |
 | `.debug getUint32Value` | `d` |  |
 | `.gm list` | `0` | Shows active GM's |
 | `.gm off` | `t` | Sets GM tag off |
@@ -248,7 +251,7 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 | `.gotrig` | `v` | Warps to areatrigger <id> |
 | `.logcomment` | `1` | Adds a comment to the GM log for the admins to read. |
 
-## Not yet implemented (111)
+## Not yet implemented (108)
 
 These answer "Not yet implemented.", as ArcEmu's `HandleNYICommand` does: their systems (AI agents
 and waypoint editing, quest editing, guilds, pets, honor, battlegrounds and arenas, GM
@@ -288,9 +291,6 @@ tickets, game object and creature spawning, GM invisibility, flying) do not exis
 | `.debug dumpcoords` | `d` |  |
 | `.debug sqlquery` | `d` | <sql query> |
 | `.debug setallratings` | `d` | Sets rating values to incremental numbers based on their index. |
-| `.debug testindoor` | `d` | tests indoor |
-| `.debug getheight` | `d` | Gets height |
-| `.debug getpos` | `d` |  |
 | `.gmTicket get` | `c` | Gets GM Ticket list. |
 | `.gmTicket getId` | `c` | Gets GM Ticket by player name. |
 | `.gmTicket delId` | `c` | Deletes GM Ticket by player name. |

@@ -129,6 +129,7 @@ struct SpellCastInfo
     uint[3] chainTarget;
     float[3] pointsPerComboPoint = 0;
     uint spellVisual;
+    uint spellIconId;          /// `SpellIconID`
     uint manaCostPercentage;
     uint startRecoveryCategory;
     uint startRecoveryTime;    /// the global cooldown it starts, in milliseconds
@@ -153,7 +154,7 @@ enum spellCastQuery = "SELECT Id, SpellName, School, Dispel, Mechanic, Attribute
     ~ "EffectRadiusIndex2, EffectRadiusIndex3, EffectApplyAuraName1, EffectApplyAuraName2, EffectApplyAuraName3, "
     ~ "EffectAmplitude1, EffectAmplitude2, EffectAmplitude3, EffectMultipleValue1, EffectMultipleValue2, "
     ~ "EffectMultipleValue3, EffectChainTarget1, EffectChainTarget2, EffectChainTarget3, "
-    ~ "EffectPointsPerComboPoint1, EffectPointsPerComboPoint2, EffectPointsPerComboPoint3, SpellVisual, "
+    ~ "EffectPointsPerComboPoint1, EffectPointsPerComboPoint2, EffectPointsPerComboPoint3, SpellVisual, SpellIconID, "
     ~ "ManaCostPercentage, StartRecoveryCategory, StartRecoveryTime, MaxTargetLevel, SpellFamilyName, "
     ~ "SpellFamilyFlags, MaxAffectedTargets, DmgClass, PreventionType, DmgMultiplier1, DmgMultiplier2, "
     ~ "DmgMultiplier3 FROM spell_template";
@@ -180,7 +181,7 @@ struct SpellCastRow
     float mv1, mv2, mv3;
     uint ct1, ct2, ct3;
     float pc1, pc2, pc3;
-    uint spellVisual, manaCostPercentage, startRecoveryCategory, startRecoveryTime, maxTargetLevel, spellFamilyName;
+    uint spellVisual, spellIconId, manaCostPercentage, startRecoveryCategory, startRecoveryTime, maxTargetLevel, spellFamilyName;
     ulong spellFamilyFlags;
     uint maxAffectedTargets, dmgClass, preventionType;
     float dm1, dm2, dm3;
@@ -192,7 +193,7 @@ struct SpellCastRow
                 "targetCreatureType", "requiresSpellFocus", "targetAuraState", "castingTimeIndex", "interruptFlags",
                 "auraInterruptFlags", "channelInterruptFlags", "procFlags", "procChance", "procCharges", "maxLevel",
                 "baseLevel", "durationIndex", "powerType", "manaCost", "manaCostPerLevel", "manaPerSecond",
-                "manaPerSecondPerLevel", "rangeIndex", "speed", "stackAmount", "spellVisual", "manaCostPercentage",
+                "manaPerSecondPerLevel", "rangeIndex", "speed", "stackAmount", "spellVisual", "spellIconId", "manaCostPercentage",
                 "startRecoveryCategory", "startRecoveryTime", "maxTargetLevel", "spellFamilyName", "spellFamilyFlags",
                 "maxAffectedTargets", "dmgClass", "preventionType"])
             __traits(getMember, c, field) = __traits(getMember, this, field);
