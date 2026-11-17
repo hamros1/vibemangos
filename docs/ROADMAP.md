@@ -29,8 +29,8 @@
   parry and block chances are applied; passives bound to a kind of weapon or armour are not yet.
 * **Not loaded:** guild membership (`PLAYER_GUILDID`), cooldowns, pets.
 * **Creatures** wander, walk their waypoints, fight, die and respawn. Waypoint scripts (`ScriptId`) are not run, type 3 paths (flying) are walked as waypoints, formations
-  do not follow their leader, and creatures in water do not swim. Flight masters, stable masters,
-  battlemasters and guild NPCs are not offered in menus yet. Conditions
+  do not follow their leader, and creatures in water do not swim. Stable masters, battlemasters and
+  guild NPCs are not offered in menus yet. Conditions
   that need auras, world states or scripts are never met. Elevators
   are created but do not move. Ships and zeppelins are not
   spawned. Cells are never unloaded (mangosd unloads idle grids after a while).
@@ -84,8 +84,9 @@ Spawned and visible, with queries (ARCHITECTURE.md, "Creatures and game objects"
 trainers, innkeepers, bankers and vendors ("Talking to NPCs", and "Items" for trading), and
 movement: wandering and waypoints ("Creature movement"), and using game objects
 (`gameobject.d`, `gameobjecthandlers.d`; README's "Using game objects": doors, buttons, chairs,
-goobers, locks and chests with their loot, respawns, quest givers). Next: flight masters, traps,
-fishing, and unloading idle cells. CMaNGOS references:
+goobers, locks and chests with their loot, respawns, quest givers), and flight masters
+(`taxi.d`, `taxihandlers.d`; README's "Flight masters"). Next: traps, fishing, and unloading idle
+cells. CMaNGOS references:
 `MotionGenerators/`, `Entities/GossipDef.cpp`, `GossipHandler.cpp`, `NPCHandler.cpp`,
 `TaxiHandler.cpp`.
 

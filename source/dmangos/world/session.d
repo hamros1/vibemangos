@@ -61,6 +61,7 @@ import dmangos.world.mailhandlers : MailHandlers;
 import dmangos.world.reputationhandlers : ReputationHandlers;
 import dmangos.world.gameobjecthandlers : GameObjectHandlers;
 import dmangos.world.auctionhandlers : AuctionHandlers;
+import dmangos.world.taxihandlers : TaxiHandlers;
 import dmangos.world.creatureai : Combatant;
 import dmangos.world.auras : Aura, makeAura;
 import dmangos.world.spells : SpellInfo;
@@ -874,6 +875,7 @@ private:
     mixin ReputationHandlers;
     mixin GameObjectHandlers;
     mixin AuctionHandlers;
+    mixin TaxiHandlers;
     mixin Level0Commands;
     mixin Level1Commands;
     mixin Level2Commands;

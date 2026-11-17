@@ -330,6 +330,17 @@ What works now:
     next of the chain, and its reputations. A quest may ask for a standing to be taken, or have one
     as its objective. Progress is saved in `character_queststatus`. Not yet: quests from items,
     sharing, timed and escort quests, exploration.
+  * **Flight masters** (CMaNGOS's `TaxiHandler.cpp`, `Taxi.cpp`, `ActivateTaxiPathTo`): a flight
+    master's node (`TaxiNodes.dbc`) is learned at the first talk and saved in `taximask`; then the
+    master shows the known nodes. A flight to one, directly or over several legs (`TaxiPath.dbc`,
+    `TaxiPathNode.dbc`), costs the paths' prices (10% less at honored with the master's faction),
+    mounts the player on its node's flying mount and flies it along the path at 32 yards a second
+    (`SMSG_MONSTER_MOVE` for everyone), the server following so that its place on the map and its
+    sight change as it goes; at the end it lands at the destination. Busy, mounted, in a form other
+    than a stance, too far, out of money or not knowing a node, it is refused as CMaNGOS refuses it.
+    Logging out in flight saves the character at the destination. `.cheat taxi` gives or takes
+    every node. Not yet: flights across maps, a flight's pauses, resuming a flight at login,
+    flying on to another node of a cluster mid-flight.
   * **Auctions** (CMaNGOS's `AuctionHouseMgr` and `AuctionHouseHandler.cpp`): auctioneers open
     their city's house (`AuctionHouse.dbc`; the goblins' for the neutral towns; one for both
     factions with `allow_two_side_interaction_auction`). An item that may be traded is put up for 2,
@@ -606,5 +617,5 @@ compiler. `UpdateValues.set!UNIT_FIELD_STAT0(22.5f)` does not compile, because s
 
 ## Roadmap
 
-Next: flight masters, then the cluster's remaining gaps.
+Next: the cluster's remaining gaps.
 See [docs/ROADMAP.md](docs/ROADMAP.md).

@@ -95,6 +95,7 @@ struct CharacterData
     long logoutTime;             /// `logout_time`, Unix time
     bool logoutResting;          /// `is_logout_resting`: logged out in an inn or a city
     long deathExpireTime;        /// `death_expire_time`: deaths until then make the corpse wait longer
+    uint[8] taxiMask;            /// `taximask`: the flight masters' nodes it knows, a bit each
 }
 
 /// What logging out writes back (`Player::SaveToDB`, the fields that can change in the world so far).
@@ -121,6 +122,7 @@ struct CharacterProgress
     bool resting;         /// `is_logout_resting`
     uint playerFlags;     /// `playerFlags`: the ghost flag among them
     long deathExpireTime; /// `death_expire_time`
+    string taxiMask;      /// `taximask`: 8 numbers, each followed by a space
 }
 
 /// Who looks at a player: the player itself, a member of its group, or anyone else.
@@ -519,6 +521,12 @@ final class Player : InventoryOwner
         p.resting = hasFlag(PlayerFlags.resting);
         p.playerFlags = values.get!PLAYER_FLAGS;
         p.deathExpireTime = data.deathExpireTime;
+        foreach (value; data.taxiMask)
+        {
+            import std.conv : to;
+
+            p.taxiMask ~= value.to!string ~ " ";
+        }
         return p;
     }
 

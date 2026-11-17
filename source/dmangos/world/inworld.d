@@ -70,6 +70,7 @@ private:
         saveQuests();
         saveReputation();
         deathOnLogout();
+        taxiOnLeave();
         const progress = player.progress(secondsInWorld());
         context.database.saveProgress(progress);
         context.database.setOnline(player.data.guid, account.id, false, context.config.realmId);
@@ -358,6 +359,7 @@ private:
             return;
         updateSpells(elapsed);
         updateAuras(elapsed);
+        updateTaxi(cast(int) elapsed.total!"msecs");
         updateDuel();
         updateDeath(elapsed);
         if (regenTimer.update(elapsed))
@@ -416,6 +418,9 @@ private:
     @Handles(movementOpcodes, WorldState.inWorld)
     void handleMovement(const MovementInfo movement, Opcode opcode)
     {
+        // In flight the server moves the player (the client may still send heartbeats).
+        if (flying)
+            return;
         // WorldSession::VerifyMovementInfo: a position the client cannot be at.
         const p = movement.position;
         if (!context.client.isValidMapCoord(player.data.map, p.x, p.y, p.z, p.orientation))

@@ -125,6 +125,7 @@ final class WorldSession : NetSession, Kickable, OnlinePlayer
     mixin TalentHandlers;           // talenthandlers.d: Player::LearnTalent, passive spells
     mixin MailHandlers;             // mailhandlers.d: MailHandler.cpp, MailDraft
     mixin AuctionHandlers;          // auctionhandlers.d: AuctionHouseHandler.cpp
+    mixin TaxiHandlers;             // taxihandlers.d: TaxiHandler.cpp, ActivateTaxiPathTo, the flight
     mixin ReputationHandlers;       // reputationhandlers.d: ReputationMgr's packets, RewardReputation
     mixin Exploration;              // exploration.d: Player::UpdateZone, CheckAreaExploreAndOutdoor, GiveXP
     mixin ChatCommands;             // commands.d: ArcEmu's ParseCommands, ExecuteCommandInTable, messages

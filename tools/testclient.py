@@ -419,6 +419,13 @@ def describe(op, p):
         print(f"  [duel winner] {names[0].decode()} beat {names[1].decode()}" + (" (fled)" if kind_ else ""))
     elif op == 0x168: print("  [duel: out of bounds]")
     elif op == 0x123: print(f"  [faction visible] {struct.unpack_from('<I', p, 0)[0]}")
+    elif op == 0x1A9:
+        node = struct.unpack_from("<I", p, 12)[0]; mask = struct.unpack_from("<8I", p, 16)
+        known = [i * 32 + b + 1 for i in range(8) for b in range(32) if mask[i] & (1 << b)]
+        print(f"  [taxi nodes] at {node}, known {known[:20]}{'...' if len(known) > 20 else ''}")
+    elif op == 0x1AB: print(f"  [taxi node status] {p[8]}")
+    elif op == 0x1AE: print(f"  [taxi reply] {struct.unpack_from('<I', p, 0)[0]}")
+    elif op == 0x1AF: print("  [new taxi path]")
     elif op == 0x124:
         n = struct.unpack_from("<I", p, 0)[0]
         print("  [faction standing] " + ", ".join(f"{struct.unpack_from('<I', p, 4 + 8 * i)[0]}: "
@@ -711,6 +718,18 @@ for action in actions:
             wsend(0x25A, struct.pack("<QII", npc, aid, price))
             op, p = expect(0x25B); aid, action, err = struct.unpack_from("<III", p, 0)
             print(f"bid on {aid}: action {action} error {err}"); listen_for(1)
+    elif kind in ("taxi", "fly"):
+        # taxi:NPC (learn its node or show the known ones), fly:NPC:FROM:TO, at the nearest creature of NPC.
+        entry = int(args[0])
+        found = [g for g, (t, e) in seen_objects.items() if t == 3 and e == entry and g in seen_positions]
+        if not found:
+            print(f"{kind}: no {entry} in sight"); continue
+        npc = min(found, key=lambda g: (seen_positions[g][0] - here[0]) ** 2 + (seen_positions[g][1] - here[1]) ** 2)
+        if kind == "taxi":
+            wsend(0x1AC, struct.pack("<Q", npc)); print(f"taxi nodes of {entry}")
+        else:
+            wsend(0x1AD, struct.pack("<QII", npc, int(args[1]), int(args[2]))); print(f"fly {args[1]} -> {args[2]}")
+        listen_for(1.5)
     elif kind in ("castgo", "usego"):
         # castgo:SPELL:ENTRY or usego:ENTRY: walk next to the nearest game object of ENTRY, then cast at it
         # (a lock opened: its loot taken) or use it (CMSG_GAMEOBJ_USE).

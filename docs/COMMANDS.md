@@ -46,7 +46,7 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 * Arguments are read strictly: a number written wrong ("12abc", "abc") or a missing argument shows
   the command's help, where ArcEmu's C parsing read "12abc" as 12 and "abc" as 0 and went on.
 
-## Working (150)
+## Working (151)
 
 | Command | Letter | Help |
 |---|---|---|
@@ -134,6 +134,7 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 | `.npc yell` | `n` | .npc yell <Text> - Makes selected mob yell text <text>. |
 | `.npc respawn` | `n` | .respawn - Respawns a dead npc from it's corpse. |
 | `.cheat status` | `m` | Shows active cheats. |
+| `.cheat taxi` | `m` | Enables all taxi nodes. |
 | `.cheat cooldown` | `m` | Enables no cooldown cheat. |
 | `.cheat casttime` | `m` | Enables no cast time cheat. |
 | `.cheat power` | `m` | Disables mana consumption etc. |
@@ -201,7 +202,7 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 | `.gotrig` | `v` | Warps to areatrigger <id> |
 | `.logcomment` | `1` | Adds a comment to the GM log for the admins to read. |
 
-## Not yet implemented (148)
+## Not yet implemented (147)
 
 These answer "Not yet implemented.", as ArcEmu's `HandleNYICommand` does: their systems (AI agents
 and waypoint editing, quest editing, guilds, pets, honor, battlegrounds and arenas, instances, GM
@@ -297,7 +298,6 @@ tickets, taxis, game object and creature spawning, GM invisibility, flying) do n
 | `.npc formationlink1` | `m` | Sets formation master. |
 | `.npc formationlink2` | `m` | Sets formation slave with distance and angle |
 | `.npc formationclear` | `m` | Removes formation from creature |
-| `.cheat taxi` | `m` | Enables all taxi nodes. |
 | `.cheat fly` | `m` | Sets fly mode |
 | `.cheat flyspeed` | `m` | Modifies fly speed. |
 | `.cheat stack` | `m` | Enables aura stacking cheat. |

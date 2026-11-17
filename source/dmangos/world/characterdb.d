@@ -215,8 +215,8 @@ final class CharacterStatements
         const rows = characters.query!("SELECT guid, account, name, race, class, gender, level, xp, money, "
             ~ "playerBytes, playerBytes2, playerFlags, position_x, position_y, position_z, orientation, map, zone, "
             ~ "cinematic, totaltime, leveltime, at_login, watchedFaction, health, power1, power2, power3, power4, "
-            ~ "power5, exploredZones, ammoId, actionBars, rest_bonus, logout_time, is_logout_resting, death_expire_time "
-            ~ "FROM characters WHERE guid = ?")(guid);
+            ~ "power5, exploredZones, ammoId, actionBars, rest_bonus, logout_time, is_logout_resting, death_expire_time, "
+            ~ "IFNULL(taximask, '') FROM characters WHERE guid = ?")(guid);
         if (rows.length == 0)
             return Nullable!CharacterData.init;
 
@@ -255,6 +255,18 @@ final class CharacterStatements
         c.logoutTime = r.get!long(33);
         c.deathExpireTime = r.get!long(35);
         c.logoutResting = r.get!int(34) != 0;
+        {
+            import std.array : split;
+            import std.conv : to, ConvException;
+
+            foreach (i, word; r.get!string(36).split)
+                if (i < c.taxiMask.length)
+                {
+                    try
+                        c.taxiMask[i] = word.to!uint;
+                    catch (ConvException) {}
+                }
+        }
 
         // _LoadInventory orders by bag, so bags come before what is in them.
         c.items = characters.queryAs!(ItemRecord, "SELECT ci.bag, ci.slot, ci.item, ii.itemEntry, ii.creatorGuid, "
@@ -337,11 +349,11 @@ final class CharacterStatements
             ~ "map = ?, zone = ?, totaltime = ?, leveltime = ?, logout_time = ?, health = ?, power1 = ?, "
             ~ "power2 = ?, power3 = ?, power4 = ?, power5 = ?, actionBars = ?, cinematic = ?, at_login = ?, "
             ~ "level = ?, xp = ?, money = ?, exploredZones = ?, equipmentCache = ?, ammoId = ?, rest_bonus = ?, "
-            ~ "is_logout_resting = ?, playerFlags = ?, death_expire_time = ? WHERE guid = ?")(
+            ~ "is_logout_resting = ?, playerFlags = ?, death_expire_time = ?, taximask = ? WHERE guid = ?")(
             p.position.x, p.position.y, p.position.z, p.position.orientation, p.map, p.zone, p.totalTime, p.levelTime,
             now, p.health, p.power[0], p.power[1], p.power[2], p.power[3], p.power[4], p.actionBars, p.cinematic,
             p.atLogin, p.level, p.xp, p.money, p.exploredZones, p.equipmentCache, p.ammoId, p.restBonus,
-            p.resting ? 1 : 0, p.playerFlags, p.deathExpireTime, p.guid);
+            p.resting ? 1 : 0, p.playerFlags, p.deathExpireTime, p.taxiMask, p.guid);
     }
 
     /// See `WorldDatabase.saveCorpse`.

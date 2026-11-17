@@ -216,6 +216,42 @@ struct LockEntry
 
 enum lockFormat = "niiiiiiiiiiiiiiiiiiiiiiiixxxxxxxx"; ///
 
+/// `TaxiNodesEntry`: a flight master's place, and the mounts of its flights (Horde, Alliance).
+struct TaxiNodesEntry
+{
+    uint id;
+    uint mapId;
+    float x = 0, y = 0, z = 0;
+    string[8] name;
+    uint[2] mountCreature;
+}
+
+enum taxiNodesFormat = "nifffssssssssxii"; ///
+
+/// `TaxiPathEntry`: a flight from one node to another, and its price.
+struct TaxiPathEntry
+{
+    uint id;
+    uint from;
+    uint to;
+    uint price;
+}
+
+enum taxiPathFormat = "niii"; ///
+
+/// `TaxiPathNodeEntry`: a point of a flight's path.
+struct TaxiPathNodeEntry
+{
+    uint path;
+    uint index;
+    uint mapId;
+    float x = 0, y = 0, z = 0;
+    uint actionFlag;
+    uint delay;
+}
+
+enum taxiPathNodeFormat = "diiifffii"; ///
+
 /// `FactionTemplateEntry`: how a unit of a faction stands to others (`dmangos.world.relations`).
 struct FactionTemplateEntry
 {
@@ -561,6 +597,13 @@ final class ClientData
     DbcStore!(WmoAreaTableEntry, wmoAreaTableFormat) wmoAreas;
     DbcStore!(FactionEntry, factionFormat) factions;
     DbcStore!(LockEntry, lockFormat) locks;
+    DbcStore!(TaxiNodesEntry, taxiNodesFormat) taxiNodes;
+    DbcStore!(TaxiPathEntry, taxiPathFormat) taxiPaths;
+    DbcStore!(TaxiPathNodeEntry, taxiPathNodeFormat) taxiPathNodes;
+    /// The taxi network: from -> to -> path; each path's points in order; the nodes flown from or to.
+    uint[uint][uint] taxiPathBetween;
+    const(TaxiPathNodeEntry)*[][uint] taxiPathPoints;
+    bool[uint] taxiNetwork;
     DbcStore!(AuctionHouseEntry, auctionHouseFormat) auctionHouses;
     DbcStore!(FactionTemplateEntry, factionTemplateFormat) factionTemplates;
     DbcStore!(WorldSafeLocsEntry, worldSafeLocsFormat) worldSafeLocs;
@@ -598,7 +641,8 @@ final class ClientData
             "bankBagSlotPrices:BankBagSlotPrices", "durabilityCosts:DurabilityCosts",
             "durabilityQualities:DurabilityQuality", "liquidTypes:LiquidType", "wmoAreas:WMOAreaTable",
             "factions:Faction", "factionTemplates:FactionTemplate", "worldSafeLocs:WorldSafeLocs", "spellCastTimes:SpellCastTimes", "spellDurations:SpellDuration",
-            "spellRanges:SpellRange", "spellRadii:SpellRadius", "locks:Lock", "auctionHouses:AuctionHouse"])
+            "spellRanges:SpellRange", "spellRadii:SpellRadius", "locks:Lock", "auctionHouses:AuctionHouse",
+            "taxiNodes:TaxiNodes", "taxiPaths:TaxiPath", "taxiPathNodes:TaxiPathNode"])
         {{
             enum parts = member.findSplit(":");
             enum field = parts[0];
@@ -615,6 +659,23 @@ final class ClientData
     /// Builds the derived lookups. Call after filling the stores by hand (tests).
     void buildIndexes()
     {
+        import std.algorithm.sorting : sort;
+
+        // `sTaxiPathSetBySource`, `sTaxiPathNodesByPath`, `sTaxiNodesMask`.
+        taxiPathBetween = null;
+        taxiPathPoints = null;
+        taxiNetwork = null;
+        foreach (id; 0 .. taxiPaths.idLimit)
+            if (const p = taxiPaths.lookup(id))
+            {
+                taxiPathBetween[p.from][p.to] = p.id;
+                taxiNetwork[p.from] = true;
+                taxiNetwork[p.to] = true;
+            }
+        foreach (ref row; taxiPathNodes.rows)
+            taxiPathPoints[row.path] ~= &row;
+        foreach (ref points; taxiPathPoints)
+            points.sort!((a, b) => a.index < b.index);
         sectionsByKey = null;
         facialHairByKey = null;
         raceClassInfoBySkill = null;

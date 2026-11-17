@@ -822,6 +822,26 @@ private:
         return true;
     }
 
+    bool handleTaxiCheatCommand(OnOff state)
+    {
+        auto chr = getSelectedChar(true);
+        if (chr is null)
+            return true;
+        // ArcEmu sends both messages to the GM; the second is meant for the player and goes there.
+        if (state == OnOff.on)
+        {
+            greenSystemMessage(format!"%s has all taxi nodes now."(chr.player.data.name));
+            chr.systemMessage(format!"%s has given you all taxi nodes."(player.data.name));
+        }
+        else
+        {
+            greenSystemMessage(format!"%s has no more taxi nodes now."(chr.player.data.name));
+            chr.systemMessage(format!"%s has deleted all your taxi nodes."(player.data.name));
+        }
+        chr.player.data.taxiMask[] = state == OnOff.on ? uint.max : 0u;
+        return true;
+    }
+
     bool handleExploreCheatCommand(OnOff state)
     {
         auto chr = getSelectedChar(true);
