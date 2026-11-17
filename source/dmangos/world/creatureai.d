@@ -395,6 +395,18 @@ final class CreatureAI : Scripted
             regenerate(world, diff);
     }
 
+    /// Its threat list (`.debug threatList`): who it fights, and how much.
+    const(float[ulong]) threatList() const
+    {
+        return threat;
+    }
+
+    /// Its aggro radius against `who` (`.debug aggrorange`), in yards.
+    float aggroRangeFor(const Combatant who)
+    {
+        return attackDistance((cast() who).fighter);
+    }
+
     /// The world it acts in, for a script that drives it before it ticks.
     void bind(CombatWorld world)
     {

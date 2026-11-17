@@ -50,7 +50,7 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 * Arguments are read strictly: a number written wrong ("12abc", "abc") or a missing argument shows
   the command's help, where ArcEmu's C parsing read "12abc" as 12 and "abc" as 0 and went on.
 
-## Working (169)
+## Working (173)
 
 | Command | Letter | Help |
 |---|---|---|
@@ -107,6 +107,7 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 | `.modify combatreach` | `m` | Modifies the combat reach of the selected target. |
 | `.modify npcemotestate` | `m` | Modifies the NPC emote state of the selected target. |
 | `.modify bytes` | `m` | WARNING! Modifies the bytes entry of selected target. |
+| `.debug infront` | `d` |  |
 | `.debug dist` | `d` |  |
 | `.debug setbytes` | `d` |  |
 | `.debug getbytes` | `d` |  |
@@ -117,11 +118,14 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 | `.debug castspell` | `d` | .castspell <spellid> - Casts spell on target. |
 | `.debug castself` | `d` | .castself <spellId> - Target casts spell <spellId>Â on itself. |
 | `.debug castspellne` | `d` | .castspellne <spellid> - Casts spell on target (only plays animations, doesnt handle effects or range/facing/etc. |
+| `.debug aggrorange` | `d` | .aggrorange - Shows aggro Range of the selected Creature. |
 | `.debug knockback` | `d` | .knockback <value> - Knocks you back. |
+| `.debug threatList` | `d` | .threatList  - returns all AI_Targets of the selected Creature. |
 | `.debug setbit` | `d` |  |
 | `.debug setvalue` | `d` |  |
 | `.debug sendpacket` | `d` | <opcode ID>, <data> |
 | `.debug rangecheck` | `d` | Checks the 'yard' range and internal range between the player and the target. |
+| `.debug testlos` | `d` | tests los |
 | `.debug getUint32Value` | `d` |  |
 | `.gm list` | `0` | Shows active GM's |
 | `.gm off` | `t` | Sets GM tag off |
@@ -224,7 +228,7 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 | `.gotrig` | `v` | Warps to areatrigger <id> |
 | `.logcomment` | `1` | Adds a comment to the GM log for the admins to read. |
 
-## Not yet implemented (129)
+## Not yet implemented (125)
 
 These answer "Not yet implemented.", as ArcEmu's `HandleNYICommand` does: their systems (AI agents
 and waypoint editing, quest editing, guilds, pets, honor, battlegrounds and arenas, GM
@@ -249,16 +253,13 @@ tickets, game object and creature spawning, GM invisibility, flying) do not exis
 | `.waypoint save` | `w` | Save all waypoints |
 | `.waypoint deleteall` | `w` | Delete all waypoints |
 | `.waypoint addfly` | `w` | Adds a flying waypoint |
-| `.debug infront` | `d` |  |
 | `.debug showreact` | `d` |  |
 | `.debug aimove` | `d` |  |
 | `.debug face` | `d` |  |
 | `.debug moveinfo` | `d` |  |
-| `.debug aggrorange` | `d` | .aggrorange - Shows aggro Range of the selected Creature. |
 | `.debug fade` | `d` | .fade <value> - calls ModThreatModifyer(). |
 | `.debug threatMod` | `d` | .threatMod <value> - calls ModGeneratedThreatModifyer(). |
 | `.debug calcThreat` | `d` | .calcThreat <dmg> <spellId> - calculates threat. |
-| `.debug threatList` | `d` | .threatList  - returns all AI_Targets of the selected Creature. |
 | `.debug gettptime` | `d` | grabs transporter travel time |
 | `.debug itempushresult` | `d` | sends item push result |
 | `.debug aispelltestbegin` | `d` |  |
@@ -267,7 +268,6 @@ tickets, game object and creature spawning, GM invisibility, flying) do not exis
 | `.debug dumpcoords` | `d` |  |
 | `.debug sqlquery` | `d` | <sql query> |
 | `.debug setallratings` | `d` | Sets rating values to incremental numbers based on their index. |
-| `.debug testlos` | `d` | tests los |
 | `.debug testindoor` | `d` | tests indoor |
 | `.debug getheight` | `d` | Gets height |
 | `.debug getpos` | `d` |  |

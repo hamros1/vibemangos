@@ -1098,6 +1098,12 @@ final class Map : CombatWorld, GameObjectWorld
     }
 
     /// See `CombatWorld.inLineOfSight`: at eye height, through the vmaps; anything goes without terrain.
+    /// Whether nothing built stands between the two points exactly (`CollideInterface.CheckLOS`).
+    bool lineOfSightBetween(Position a, Position b)
+    {
+        return terrain is null || terrain.isInLineOfSight(a.x, a.y, a.z, b.x, b.y, b.z);
+    }
+
     bool inLineOfSight(Position a, Position b)
     {
         enum eyes = 2.0f;

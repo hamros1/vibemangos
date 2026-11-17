@@ -75,6 +75,93 @@ private:
     // debugcmds.cpp
     // -----------------------------------------------------------------------
 
+    bool handleThreatListCommand()
+    {
+        const guid = player.values.get!UNIT_FIELD_TARGET;
+        auto target = cast(Creature) map.findObject(guid);
+        if (target is null || target.ai is null)
+        {
+            systemMessage("You should select a creature.");
+            return true;
+        }
+        string text = format!"threatlist of creature: %s %s\n"(guid & 0xFFFF_FFFF, guid >> 32);
+        foreach (who, amount; target.ai.threatList)
+            if (amount && (map.find(who) !is null))
+                text ~= format!"guid: %s | threat: %s| threat after mod: %s\n"(who, amount, amount);
+        sendMultilineMessage(text);
+        return true;
+    }
+
+    bool handleAggroRangeCommand()
+    {
+        import dmangos.world.creatureai : Combatant;
+
+        const guid = player.values.get!UNIT_FIELD_TARGET;
+        auto creature = guid ? cast(Creature) map.findObject(guid) : null;
+        if (creature is null || creature.ai is null)
+        {
+            systemMessage("You should select a character or a creature.");
+            return true;
+        }
+        systemMessage(format!"Aggrorange is: %s"(creature.ai.aggroRangeFor(cast(Combatant) this)));
+        return true;
+    }
+
+    bool handleDebugInFrontCommand()
+    {
+        import std.math : atan2, PI;
+
+        const guid = player.values.get!UNIT_FIELD_TARGET;
+        Position at = player.position;
+        if (guid)
+        {
+            if (auto o = map.findObject(guid))
+                at = o.position;
+            else if (auto who = map.find(guid))
+                at = who.character.position;
+            else
+            {
+                systemMessage("You should select a character or a creature.");
+                return true;
+            }
+        }
+        // `Object::isInFront`: within the half circle it faces.
+        const me = player.position;
+        double angle = atan2(at.y - me.y, at.x - me.x);
+        angle = angle >= 0 ? angle : 2 * PI + angle;
+        angle -= me.orientation;
+        while (angle > PI)
+            angle -= 2 * PI;
+        while (angle < -PI)
+            angle += 2 * PI;
+        const left = -PI / 2, right = PI / 2;
+        systemMessage(format!"%d"(angle >= left && angle <= right ? 1 : 0));
+        return true;
+    }
+
+    bool handleCollisionTestLOS()
+    {
+        const guid = player.values.get!UNIT_FIELD_TARGET;
+        Position at;
+        if (auto creature = getSelectedCreature(false))
+            at = creature.position;
+        else if (auto who = guid ? map.find(guid) : null)
+            at = who.character.position;
+        else
+        {
+            systemMessage("Invalid target.");
+            return true;
+        }
+        const me = player.position;
+        string los(float dz)
+        {
+            return map.lineOfSightBetween(Position(me.x, me.y, me.z + dz), Position(at.x, at.y, at.z + dz))
+                ? "in LOS" : "not in LOS";
+        }
+        systemMessage(format!"Result was: %s %s %s."(los(0), los(2), los(5)));
+        return true;
+    }
+
     bool handleDistanceCommand()
     {
         const guid = player.values.get!UNIT_FIELD_TARGET;
@@ -349,4 +436,36 @@ private:
         systemMessage("You're not in a battleground!");
         return true;
     }
+}
+
+/// `.debug threatList`, `.debug aggrorange`, `.debug infront` and `.debug testlos` at a creature.
+unittest
+{
+    import std.algorithm.searching : canFind, startsWith;
+    import dmangos.auth.accounts : AccountLevel;
+    import dmangos.world.creature : Creature;
+    import dmangos.world.movement : Position;
+    import dmangos.world.objects : HighGuid, makeGuid;
+    import dmangos.world.opcodes;
+    import dmangos.world.packets : ClientGuid;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto gm = loggedIn(context, db, 7, "Varian", Position(-8949.95f, -132.49f, 83.53f, 0), AccountLevel.administrator);
+    gm.read();
+    auto keeper = cast(Creature) context.map(0).findObject(makeGuid(HighGuid.unit, creatureInnkeeper, innkeeperSpawn));
+    gm.say(".debug threatList");
+    assert(systemMessages(gm.read()) == ["You should select a creature."]);
+    gm.write(Opcode.CMSG_SET_SELECTION, ClientGuid(keeper.guid));
+    gm.say(".debug threatList");
+    assert(systemMessages(gm.read())[0].startsWith("threatlist of creature: "));
+    gm.say(".debug aggrorange");
+    assert(systemMessages(gm.read())[0].startsWith("Aggrorange is: "));
+    gm.say(".debug infront");
+    const front = systemMessages(gm.read());
+    assert(front == ["0"] || front == ["1"]);
+    gm.say(".debug testlos");
+    assert(systemMessages(gm.read()) == ["Result was: in LOS in LOS in LOS."], "no terrain in the test: all in sight");
 }
