@@ -41,7 +41,7 @@ import dmangos.crypto.hash : constantTimeEqual, sha1;
 import dmangos.crypto.random : secureRandom;
 import dmangos.log;
 import dmangos.net.dispatch : DispatchResult, HandlesFor = Handles, PacketDispatch;
-import dmangos.net.server : NetSession, ReusesOutput;
+import dmangos.net.server : BoundedOutput, NetSession, ReusesOutput;
 import dmangos.world.addons : buildAddonInfo, parseAddons;
 import dmangos.world.charscreen : CharacterScreenHandlers;
 import dmangos.world.context : Kickable, WorldContext;
@@ -73,8 +73,14 @@ private enum minimumPingInterval = 27.seconds;
 private enum maxBufferedInput = 2 * (clientHeaderLength + maxClientPacketSize);
 
 /// See the module documentation.
-final class WorldSession : NetSession, ReusesOutput, Kickable
+final class WorldSession : NetSession, ReusesOutput, BoundedOutput, Kickable
 {
+    /// See `BoundedOutput`: `max_pending_output_kb`.
+    @property size_t outputLimit() const
+    {
+        return size_t(context.config.maxPendingOutputKb) * 1024;
+    }
+
     // A player simulated on another node than its client's (docs/CLUSTER.md, phase 4b).
     package ushort ownerNode;              // home: the node simulating this session's player; 0: here
     package ushort homeNode;               // owner: the node holding this session's client; 0: here

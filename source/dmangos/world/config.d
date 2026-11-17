@@ -243,6 +243,8 @@ struct WorldConfig
 
     /// Seconds without traffic before a connection is dropped (the client pings every 30 seconds).
     @JsonName("idle_timeout") uint idleTimeoutSeconds = 120;
+    /// A client with more than this many KiB not yet sent to it (it is not reading) is disconnected; 0: no limit.
+    @JsonName("max_pending_output_kb") uint maxPendingOutputKb = 4096;
     @JsonName("max_connections") uint maxConnections = 1000;
     @JsonName("log_level") LogLevel logLevel = LogLevel.info;
 

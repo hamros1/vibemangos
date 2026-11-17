@@ -33,6 +33,12 @@ class DatabaseException : Exception
     mixin basicExceptionCtors;
 }
 
+/// The connection was lost inside a transaction: the server rolled it back, so it must be run again whole.
+class TransactionLost : DatabaseException
+{
+    mixin basicExceptionCtors;
+}
+
 /// Where and as whom to connect.
 struct ConnectionInfo
 {
@@ -166,6 +172,13 @@ final class MySqlConnection
 {
     private MYSQL* handle;
     private ConnectionInfo info;
+    private bool inTransaction; // a lost connection must not go on statement by statement
+
+    version (unittest) private this(ConnectionInfo info, bool fake) // with the library's functions faked
+    {
+        this.info = info;
+        connect();
+    }
 
     /// Loads the client library if needed (`library` overrides the search) and connects.
     this(ConnectionInfo info, string library = null)
@@ -211,12 +224,39 @@ final class MySqlConnection
     /**
      * Runs `work` inside a transaction: committed if it returns, rolled back if it throws.
      * (MyISAM tables, which CMaNGOS uses for many tables, ignore transactions.)
+     *
+     * If the connection is lost in the middle, the server has rolled back what was done; the
+     * statements are not carried on one by one on a new connection (that would commit half of
+     * them), but `work` runs again whole, once, on a new connection. `work` must therefore only
+     * issue statements (no other effects that cannot happen twice).
      */
     void transaction(scope void delegate() work)
     {
+        foreach (attempt; 0 .. 2)
+        {
+            try
+                return runTransaction(work);
+            catch (TransactionLost e)
+            {
+                if (attempt == 1)
+                    throw e;
+                warning!"lost the connection to MySQL in a transaction (%s): running it again"(e.msg);
+            }
+        }
+    }
+
+    private void runTransaction(scope void delegate() work)
+    {
         run("START TRANSACTION", false);
+        inTransaction = true;
+        scope (exit)
+            inTransaction = false;
         scope (failure)
-            run("ROLLBACK", false);
+            if (handle !is null) // lost: the server rolled it back already
+            {
+                inTransaction = false;
+                run("ROLLBACK", false);
+            }
         work();
         run("COMMIT", false);
     }
@@ -230,6 +270,8 @@ final class MySqlConnection
     /// Escapes `text` for use inside a quoted SQL string literal.
     string escape(scope const(char)[] text)
     {
+        if (handle is null) // a reconnect that failed: try again, or fail as a statement would
+            connect();
         auto buffer = new char[text.length * 2 + 1];
         const length = mysql.mysql_real_escape_string(handle, buffer.ptr, text.ptr, text.length);
         return buffer[0 .. length].idup;
@@ -304,7 +346,14 @@ private:
                 return collect(wantRows);
 
             const code = mysql.mysql_errno(handle);
-            if (attempt == 0 && (code == CR_SERVER_GONE_ERROR || code == CR_SERVER_LOST))
+            const lost = code == CR_SERVER_GONE_ERROR || code == CR_SERVER_LOST;
+            if (lost && inTransaction)
+            {
+                const why = lastError();
+                close();
+                throw new TransactionLost(format!"MySQL error %s: %s"(code, why));
+            }
+            if (attempt == 0 && lost)
             {
                 warning!"lost the connection to MySQL (%s), reconnecting"(lastError());
                 close();
@@ -386,4 +435,105 @@ unittest
     auto withNull = Row(["", "0"], [true, false]);
     assert(withNull.get!string(0) is null && withNull.isNull(0));
     assert(!withNull.get!bool(1));
+}
+
+version (unittest)
+{
+    import core.stdc.config : c_ulong;
+
+    // A fake client library: statements succeed or lose the connection as the test says.
+    private __gshared
+    {
+        string[] fakeLog;          // the statements run, and "connect"
+        int[] fakeLoseAt;          // statement numbers (counting from 0) that lose the connection
+        int fakeStatements;
+        bool fakeConnectFails;
+        uint fakeErrno;
+        ubyte[64] fakeHandle; // stands for the opaque MYSQL
+    }
+
+    extern (C) nothrow
+    {
+        MYSQL* fakeInit(MYSQL*) { return cast(MYSQL*) fakeHandle.ptr; }
+        int fakeOptions(MYSQL*, int, const(void)*) { return 0; }
+        MYSQL* fakeConnect(MYSQL* m, const(char)*, const(char)*, const(char)*, const(char)*, uint, const(char)*, c_ulong)
+        {
+            if (fakeConnectFails)
+                return null;
+            fakeLog ~= "connect";
+            return m;
+        }
+        void fakeClose(MYSQL*) {}
+        uint fakeErrnoOf(MYSQL*) { return fakeErrno; }
+        const(char)* fakeError(MYSQL*) { return "fake"; }
+        c_ulong fakeEscape(MYSQL*, char* to, const(char)* from, c_ulong length)
+        {
+            to[0 .. length] = from[0 .. length];
+            return length;
+        }
+        int fakeQuery(MYSQL*, const(char)* text, c_ulong length)
+        {
+            import std.algorithm.searching : canFind;
+
+            const n = fakeStatements++;
+            if (fakeLoseAt.canFind(n))
+            {
+                fakeErrno = CR_SERVER_LOST;
+                return 1;
+            }
+            fakeLog ~= cast(string) text[0 .. length].idup;
+            return 0;
+        }
+        MYSQL_RES* fakeStore(MYSQL*) { return null; }
+        uint fakeFieldCount(MYSQL*) { return 0; }
+        ulong fakeAffected(MYSQL*) { return 1; }
+    }
+
+    private MySqlConnection fakeConnection()
+    {
+        mysql.mysql_init = cast(typeof(mysql.mysql_init)) &fakeInit;
+        mysql.mysql_options = cast(typeof(mysql.mysql_options)) &fakeOptions;
+        mysql.mysql_real_connect = cast(typeof(mysql.mysql_real_connect)) &fakeConnect;
+        mysql.mysql_close = cast(typeof(mysql.mysql_close)) &fakeClose;
+        mysql.mysql_errno = cast(typeof(mysql.mysql_errno)) &fakeErrnoOf;
+        mysql.mysql_error = cast(typeof(mysql.mysql_error)) &fakeError;
+        mysql.mysql_real_escape_string = cast(typeof(mysql.mysql_real_escape_string)) &fakeEscape;
+        mysql.mysql_real_query = cast(typeof(mysql.mysql_real_query)) &fakeQuery;
+        mysql.mysql_store_result = cast(typeof(mysql.mysql_store_result)) &fakeStore;
+        mysql.mysql_field_count = cast(typeof(mysql.mysql_field_count)) &fakeFieldCount;
+        mysql.mysql_affected_rows = cast(typeof(mysql.mysql_affected_rows)) &fakeAffected;
+        fakeLog = null;
+        fakeLoseAt = null;
+        fakeStatements = 0;
+        fakeConnectFails = false;
+        return new MySqlConnection(ConnectionInfo.parse("127.0.0.1;3306;u;p;d"), true);
+    }
+}
+
+// A transaction whose connection is lost in the middle runs again whole, never half in autocommit.
+unittest
+{
+    auto c = fakeConnection();
+    fakeLoseAt = [2]; // START, the first row, then the second row loses the connection
+    c.transaction({
+        c.execute!"INSERT INTO t VALUES (?)"(1);
+        c.execute!"INSERT INTO t VALUES (?)"(2);
+    });
+    assert(fakeLog == ["connect", "START TRANSACTION", "INSERT INTO t VALUES (1)",
+        "connect", "START TRANSACTION", "INSERT INTO t VALUES (1)", "INSERT INTO t VALUES (2)", "COMMIT"]);
+}
+
+// A reconnect that fails leaves no null handle behind: the next statement with a string fails, it does not crash.
+unittest
+{
+    import std.exception : assertThrown;
+
+    auto c = fakeConnection();
+    fakeLoseAt = [0];
+    fakeConnectFails = true;
+    assertThrown!DatabaseException(c.execute!"UPDATE t SET a = 1"());
+    assertThrown!DatabaseException(c.execute!"UPDATE t SET name = ?"("Anduin"));
+    fakeConnectFails = false;
+    c.execute!"UPDATE t SET name = ?"("Anduin");
+    assert(fakeLog[$ - 1] == "UPDATE t SET name = 'Anduin'");
 }

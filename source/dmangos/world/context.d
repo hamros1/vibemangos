@@ -2744,7 +2744,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         void timed(TickPhase phase, scope void delegate() run)
         {
             const before = MonoTime.currTime;
-            run();
+            isolated(phase, run); // one phase's fault does not skip the others
             spent[phase] += MonoTime.currTime - before;
         }
         timed(TickPhase.maps, () => mapsPhase(elapsed));
@@ -2795,6 +2795,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     private void mapsPhase(Duration elapsed)
     {
         updatedPlayers.clear();
+        // Each player and each map apart: one that throws does not stop the others (it is logged and counted).
         void tickMap(Map map_)
         {
             foreach (who; map_.playersNow())
@@ -2802,9 +2803,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                     if (player.character !is null && player.character.guid !in updatedPlayers)
                     {
                         updatedPlayers[player.character.guid] = true;
-                        player.update(elapsed);
+                        isolated(player, () => player.update(elapsed));
                     }
-            map_.update(elapsed);
+            isolated(map_, () => map_.update(elapsed));
         }
         foreach (map_; maps.values)
             tickMap(map_);
@@ -2812,7 +2813,34 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             tickMap(map_);
         foreach (player; online.values) // a copy: an update may log a player out
             if (player.character !is null && player.character.guid !in updatedPlayers)
-                player.update(elapsed);
+                isolated(player, () => player.update(elapsed));
+    }
+
+    /// Exceptions a tick caught and went on past (a phase, a map or a player's part skipped), since the start.
+    ulong tickFaults;
+
+    /**
+     * Runs `part` of the tick; an `Exception` it throws is logged with what threw it (`where`) and counted,
+     * and the tick goes on with the rest. `Error`s still end the process.
+     */
+    private void isolated(T)(T where, scope void delegate() part)
+    {
+        import dmangos.log : error;
+
+        try
+            part();
+        catch (Exception e)
+        {
+            ++tickFaults;
+            static if (is(T : Map))
+                error!"tick: map %s (instance %s) failed and was skipped this tick: %s (%s:%s)"(where.id,
+                    where.instanceId, e.msg, e.file, e.line);
+            else static if (is(T : OnlinePlayer))
+                error!"tick: player %s's update failed and was skipped this tick: %s (%s:%s)"(
+                    where.character is null ? 0 : where.character.guid, e.msg, e.file, e.line);
+            else
+                error!"tick: the %s phase failed and was cut short: %s (%s:%s)"(where, e.msg, e.file, e.line);
+        }
     }
 
     /// The tick's deaths phase: each creature that died is told to its dungeon's script, and its respawn is set.

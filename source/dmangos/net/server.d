@@ -28,6 +28,16 @@ interface ReusesOutput
     void returnOutput(ubyte[] buffer);
 }
 
+/**
+ * A session whose unsent output is bounded: a client that does not read (or reads too slowly) is
+ * disconnected once this much waits to be sent, rather than holding ever more memory.
+ */
+interface BoundedOutput
+{
+    /// The most bytes that may wait to be sent; 0 for no bound.
+    @property size_t outputLimit() const;
+}
+
 /// One client's protocol state, driven by the server.
 interface NetSession
 {
@@ -115,6 +125,7 @@ final class TcpServer
         ubyte[] pending; // output not yet accepted by the kernel
         ubyte[] adopted; // the session's array `pending` was taken from, to give back once sent
         ReusesOutput reuses; // the session, if it takes its arrays back
+        BoundedOutput bounded; // the session, if its unsent output has a limit
         MonoTime lastActivity;
         Duration idleTimeout;
         bool connecting; // an outgoing connection not yet established
@@ -123,6 +134,7 @@ final class TcpServer
         this(Socket socket, NetSession session, MonoTime now, Duration idleTimeout)
         {
             reuses = cast(ReusesOutput) session;
+            bounded = cast(BoundedOutput) session;
             this.socket = socket;
             this.session = session;
             this.lastActivity = now;
@@ -314,6 +326,16 @@ private:
             if (connection.reuses !is null)
                 connection.reuses.returnOutput(output); // copied: free at once
         }
+        if (connection.bounded !is null)
+        {
+            const limit = connection.bounded.outputLimit;
+            if (limit && connection.pending.length > limit && !connection.broken)
+            {
+                warning!"%s: %s KiB waiting to be sent (more than %s KiB): the client is not reading; disconnected"(
+                    connection.session.address, connection.pending.length / 1024, limit / 1024);
+                connection.broken = true;
+            }
+        }
     }
 
     void accept(ref Listener listener, MonoTime now)
@@ -497,4 +519,25 @@ private:
         }
         return address;
     }
+}
+
+// A client that does not read: its unsent output grows to its session's limit, and it is cut off.
+unittest
+{
+    static final class Talkative : NetSession, BoundedOutput
+    {
+        void receive(scope const(ubyte)[]) {}
+        ubyte[] takeOutput() { return new ubyte[1000]; }
+        @property bool wantsClose() const { return false; }
+        @property string address() const { return "test"; }
+        void disconnected() {}
+        @property size_t outputLimit() const { return 2500; }
+    }
+
+    auto connection = new TcpServer.Connection(null, new Talkative, MonoTime.currTime, 60.seconds);
+    TcpServer.collectOutput(connection);
+    TcpServer.collectOutput(connection);
+    assert(!connection.broken && connection.pending.length == 2000);
+    TcpServer.collectOutput(connection);
+    assert(connection.broken, "over its limit: disconnected");
 }

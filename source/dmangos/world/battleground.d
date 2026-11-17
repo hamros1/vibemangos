@@ -1978,3 +1978,32 @@ unittest
         == BattlegroundQueue.JoinError.memberAlreadyInQueue);
     assert(q.ticketsOf(3) is null);
 }
+
+/// A battleground whose rules throw on every tick: the tick logs it, counts it and goes on.
+unittest
+{
+    import dmangos.world.testclient;
+
+    static class Broken : BattlegroundRules
+    {
+        override void tick(Battleground, Duration)
+        {
+            throw new Exception("broken rules");
+        }
+    }
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    auto copy = context.battlegrounds.open(4242, BattlegroundType.warsongGulch);
+    copy.rules = new Broken;
+    copy.testing = true;
+    copy.start();
+    foreach (i; 0 .. 3)
+    {
+        now += 100.msecs;
+        context.update(now); // throws nothing
+    }
+    assert(context.tickFaults == 3);
+}
