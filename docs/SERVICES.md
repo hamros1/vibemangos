@@ -177,9 +177,19 @@ struct BattlegroundQueue
 
 ### Placement and lifecycle
 
-* **The service table.** The coordinator keeps a table of services next to the region table:
-  `ServiceKind` to node, with an epoch. It is sent to every node and taken over by the standby with
-  the region table. Every node routes from its copy, as with regions, with no round trip.
+* **Services are regions** (as built in stage 2). Each service kind is a one-cell region of a map of
+  its own (`serviceMap`, from `0xFFFF0000`). So the existing ownership machinery places it, with no
+  second table and no second cluster manager:
+  * the coordinator deals it out by load, under a lease, with an epoch;
+  * it is released before it is granted elsewhere;
+  * it is moved off a lost node after that node's lease;
+  * the standby adopts it, and balancing may move it.
+
+  Every node's copy of the region table says where each service runs
+  (`regions.ownerAt(serviceMap(kind), 0)`), with no round trip. A node that gains a service's region
+  starts the service, from the state its last host sent along with the region (`saveState`). A node
+  that loses it stops the service and sends that state on. A one-cell region cannot be split, and
+  merges only touch regions that came from splits.
 * **Placement** is by configuration (`cluster.services`: which node may host what) and else by
   load: the least busy eligible node. A service moves:
   * when its node is lost (after that node's lease, as with regions);
@@ -224,19 +234,19 @@ groups, not per tick per entity.
 
 ## 4. Stages
 
-1. **Service foundation** (`cluster/services.d`):
+1. **Service foundation (done 2026-11-17)** (`cluster/services.d`):
    * `@Service` and `@Call`, the generated dispatcher, local calls;
    * a `ServiceHost` per node that runs `start`, `tick` and `stop`;
    * a standalone server that hosts everything.
 
    Tests: local calls, the generated ids, the fingerprints.
-2. **The service table in the cluster:**
-   * the coordinator places services and sends the table;
-   * nodes route from it and see up and down;
-   * the standby adopts it;
-   * a lost node's services move after its lease.
-
-   Tests: a three-node cluster in memory, a host lost.
+2. **Placement in the cluster: done (2026-11-17).** Services are regions of maps of their own,
+   appended to the coordinator's partition (`clusterServiceKinds`).
+   * `WorldContext.regionsChanged` starts and stops them, carrying their state.
+   * A standalone server starts every service it provides (`startAllServices`).
+   * Tests: a three-node cluster in memory, where the service goes to one node, is moved off it when
+     it is cut off after its lease, and is never on two nodes at once.
+   * Live, the 74 world regions became 76.
 3. **Remote calls:**
    * `ServiceCall`/`ServiceReply`, epochs, the reply cache, parked calls;
    * protocol 28.

@@ -168,6 +168,8 @@ private int run(WorldConfig config, string configPath)
     ClusterNode cluster;
     ClusterBridge bridge;
     bool leaseHeld;
+    if (!config.cluster.enabled)
+        context.startAllServices(); // standalone: every service here (docs/SERVICES.md)
     if (config.cluster.enabled)
     {
         const linkIdle = (2 * config.cluster.failureTimeoutMs).msecs; // the links time out first, on heartbeats
@@ -404,6 +406,19 @@ private CoordinatorSetup coordinatorSetup(uint regionCount, WorldData data, Clie
     setup.regions = partition(maps, costs, regionCount, setup.whole);
     foreach (ref r; setup.regions)
         setup.cost[r.id] = costOf(costs, r.map, r.rect);
+    // The cluster services, a region each on maps of their own (docs/SERVICES.md): placed as regions are.
+    {
+        import dmangos.cluster.services : clusterServiceKinds, serviceRegions;
+
+        uint next;
+        foreach (ref r; setup.regions)
+            next = r.id >= next ? r.id + 1 : next;
+        foreach (r; serviceRegions(clusterServiceKinds, next))
+        {
+            setup.regions ~= r;
+            setup.cost[r.id] = 1;
+        }
+    }
     setup.ids = context;
     size_t split;
     foreach (ref r; setup.regions)

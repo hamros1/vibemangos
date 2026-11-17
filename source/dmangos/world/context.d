@@ -1,6 +1,7 @@
 /// State shared by every session on a world server.
 module dmangos.world.context;
 
+import dmangos.cluster.services : ServiceHost;
 import dmangos.world.writebehind : Writer;
 import core.time : Duration, minutes, MonoTime, msecs, seconds;
 
@@ -187,6 +188,11 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     WorldDatabase database;
     /// The thread `database` writes through (`dmangos.world.writebehind`); null: writes are immediate.
     Writer writer;
+    /**
+     * The cluster services this node hosts and calls (docs/SERVICES.md). Standalone, it hosts them all
+     * (`startAllServices`); in a cluster, those whose regions it was granted (`regionsChanged`).
+     */
+    ServiceHost services;
     WorldData data;
     ClientData client;
 
@@ -455,6 +461,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         this.database = database;
         this.data = data;
         this.client = client;
+        services = new ServiceHost;
         this.clock = () => MonoTime.currTime;
         {
             import dmangos.world.objects : updateCompression;
@@ -1229,6 +1236,21 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         ref ubyte[][uint] leaving)
     {
         import dmangos.log : info;
+        import dmangos.cluster.services : isServiceMap, serviceOfMap;
+        import std.format : format;
+
+        // A service's region (docs/SERVICES.md): it stops here, its state going along with it, or starts.
+        foreach (ref r; lost)
+            if (isServiceMap(r.map))
+            {
+                auto state = services.stop(serviceOfMap(r.map));
+                if (r.next)
+                    leaving[r.id] = state;
+                info!"services: %s moves %s"(serviceOfMap(r.map), r.next ? format!"to node %s"(r.next) : "off");
+            }
+        foreach (ref r; gained)
+            if (isServiceMap(r.map) && services.start(serviceOfMap(r.map), arriving.get(r.id, null)))
+                info!"services: %s runs here"(serviceOfMap(r.map));
 
         // A dungeon's region: its copies' creatures and objects go along, copy by copy, before what was
         // known of the copies is forgotten here (the new host has read their rows by then).
@@ -2767,6 +2789,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         updateWeathers(cast(int) elapsed.total!"msecs");
         addPendingNavigation();
         checkHonorWeek(now);
+        services.tick(elapsed);
         scriptedGameObjectsDue();
         respawnDue(now);
         // `WUPDATE_AUCTIONS`: once a minute, by one node.
@@ -2932,6 +2955,14 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     }
 
     /// Ends every session (a cluster node whose lease lapsed: its writes are fenced, docs/CLUSTER.md phase 4).
+    /// A standalone server hosts every service it provides (docs/SERVICES.md).
+    void startAllServices()
+    {
+        foreach (kind; services.provided)
+            if (!services.hosts(kind))
+                services.start(kind);
+    }
+
     /// The weekly honor maintenance ran (`dmangos.world.honorweek`): online players load their honor again.
     void honorMaintained()
     {

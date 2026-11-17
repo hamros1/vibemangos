@@ -1700,3 +1700,57 @@ unittest
     assert(taken >= 100 && taken < standbyCounters.next[IdKind.item]);
 }
 
+
+// A service is a region of a map of its own (docs/SERVICES.md): dealt to one node, and moved, after the
+// lease, off a node that was lost; never on two at once.
+unittest
+{
+    import dmangos.cluster.services : isServiceMap, serviceMap, ServiceKind, serviceRegions;
+    import dmangos.world.grid : cellKey;
+
+    CellCosts costs;
+    foreach (x; -40 .. 40)
+        costs[0][cellKey(x, x % 7)] = 10;
+    auto regions = partition([0u], costs, 4);
+    ulong[uint] cost;
+    foreach (r; regions)
+        cost[r.id] = costOf(costs, r.map, r.rect);
+    uint next;
+    foreach (r; regions)
+        next = r.id >= next ? r.id + 1 : next;
+    foreach (r; serviceRegions([ServiceKind.example], next))
+    {
+        regions ~= r;
+        cost[r.id] = 1;
+    }
+
+    auto cluster = new TestCluster;
+    auto coordinator = cluster.add(1, 9000, 1, CoordinatorSetup(regions.dup, cost.dup, new TestCounters));
+    auto b = cluster.add(2, 9001), c = cluster.add(3, 9002);
+    ushort[] hosts(ClusterNode[] nodes...)
+    {
+        ushort[] found;
+        foreach (node; nodes)
+            foreach (ref r; node.regions.ownedRegions)
+                if (r.map == serviceMap(ServiceKind.example))
+                    found ~= node.id;
+        return found;
+    }
+    cluster.run(8000, coordinator, b, c);
+    const first = hosts(coordinator, b, c);
+    assert(first.length == 1, "one node hosts the service");
+    assert(coordinator.regions.ownerAt(serviceMap(ServiceKind.example), 0) == first[0], "and every node knows which");
+
+    // Its host (a member, as the dealing falls) is cut off: after its lease the service is another
+    // node's, and on no tick has it two hosts.
+    assert(first[0] != 1, "dealt to a member");
+    auto lostNode = first[0] == 2 ? b : c;
+    cluster.isolated[lostNode] = true;
+    foreach (_; 0 .. 140)
+    {
+        cluster.run(50, coordinator, b, c);
+        assert(hosts(coordinator, b, c).length <= 1, "two hosts of one service");
+    }
+    const now = hosts(coordinator, b, c);
+    assert(now.length == 1 && now[0] != first[0], "moved off the lost node");
+}

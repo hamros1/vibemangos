@@ -30,6 +30,7 @@ import core.time : Duration;
 import std.meta : AliasSeq;
 import std.traits : getUDAs, hasUDA, Parameters, ReturnType, Unqual;
 
+import dmangos.cluster.regions : CellRect, Region;
 import dmangos.plaindata : decode, encode, isPlainData, layout;
 
 /// The kinds of service there are.
@@ -39,6 +40,54 @@ enum ServiceKind : ushort
     channels = 1,           /// chat channels (`dmangos.world.channelservice`)
     battlegroundQueue = 2,  /// the battleground queues
     example = 0xFFFF,       /// for tests
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Placement: a service is a region (docs/SERVICES.md, stage 2)
+// ---------------------------------------------------------------------------------------------------
+
+/**
+ * Services are placed as regions of maps of their own, one cell each: the coordinator deals them out,
+ * grants them under leases with epochs, moves them off a lost node after its lease, and the standby
+ * adopts them, as it does every region. A node that gains a service's region hosts the service; the
+ * region table says every node where each runs. No second cluster manager.
+ */
+enum uint serviceMapBase = 0xFFFF_0000;
+
+/// The services a cluster places (not `example`, which is for tests).
+immutable ServiceKind[] clusterServiceKinds = [ServiceKind.channels, ServiceKind.battlegroundQueue];
+
+/// The map a service's region is on.
+uint serviceMap(ServiceKind kind) pure nothrow @nogc @safe
+{
+    return serviceMapBase | kind;
+}
+
+/// Whether `map` is a service's, not the world's.
+bool isServiceMap(uint map) pure nothrow @nogc @safe
+{
+    return (map & 0xFFFF_0000) == serviceMapBase;
+}
+
+/// The service a service map is for.
+ServiceKind serviceOfMap(uint map) pure nothrow @nogc @safe
+{
+    return cast(ServiceKind)(map & 0xFFFF);
+}
+
+/// A region for each of `kinds`, with ids from `firstId` on: for the coordinator's partition.
+Region[] serviceRegions(const(ServiceKind)[] kinds, uint firstId) pure @safe
+{
+    Region[] regions;
+    foreach (i, kind; kinds)
+    {
+        Region r;
+        r.id = firstId + cast(uint) i;
+        r.map = serviceMap(kind);
+        r.rect = CellRect(0, 0, 1, 1);
+        regions ~= r;
+    }
+    return regions;
 }
 
 /// Marks a struct as a service of `kind`.
@@ -121,6 +170,9 @@ interface HostedService
      * one). False if the service has no such call (another build's).
      */
     bool dispatch(ulong id, const(ubyte)[] request, ref ubyte[] reply);
+
+    /// Its state as bytes, to go along when it moves (`S.saveState`); none if it rebuilds its own.
+    ubyte[] save();
 }
 
 /// The host's box around a service of type `S`.
@@ -154,6 +206,14 @@ final class Hosted(S) : HostedService
             service.stop();
     }
 
+    ubyte[] save()
+    {
+        static if (__traits(hasMember, S, "saveState"))
+            return service.saveState();
+        else
+            return null;
+    }
+
     bool dispatch(ulong id, const(ubyte)[] request, ref ubyte[] reply)
     {
         static foreach (name; callNames!S)
@@ -184,6 +244,46 @@ final class Hosted(S) : HostedService
 final class ServiceHost
 {
     private HostedService[ServiceKind] hosted;
+    private HostedService delegate(const(ubyte)[] state)[ServiceKind] starters;
+
+    /**
+     * How to start a service of type `S` on this node: `make` builds it, from the state its last
+     * host saved (`saveState`) if it moved here, or from none.
+     */
+    void provide(S)(S delegate(const(ubyte)[] state) make)
+    {
+        starters[kindOf!S] = (const(ubyte)[] state) => cast(HostedService) new Hosted!S(make(state));
+    }
+
+    /// The kinds this node knows how to start.
+    @property ServiceKind[] provided() const
+    {
+        return starters.keys;
+    }
+
+    /// Starts the service of `kind` here (granted to this node), from `state`; false if it cannot.
+    bool start(ServiceKind kind, const(ubyte)[] state = null)
+    {
+        auto starter = kind in starters;
+        if (starter is null)
+            return false;
+        if (auto old = kind in hosted)
+            old.stop();
+        hosted[kind] = (*starter)(state);
+        return true;
+    }
+
+    /// Stops the service of `kind` here (it moves on, or the node stops): its state, to go along.
+    ubyte[] stop(ServiceKind kind)
+    {
+        auto h = kind in hosted;
+        if (h is null)
+            return null;
+        auto state = h.save();
+        h.stop();
+        hosted.remove(kind);
+        return state;
+    }
 
     /// Hosts `service` here, from now on; calls to its kind run here.
     void host(S)(S service)
@@ -355,4 +455,45 @@ unittest
     assert(t.total == 17 && t.notes == ["seven"]);
     assert(!host.dispatch(ServiceKind.example, 12345, request, reply), "an unknown call (another build's)");
     static assert(callId!(Counter.add) != callId!(Counter.reset));
+}
+
+// Services as regions: a region per kind on maps of their own, one cell each.
+unittest
+{
+    const regions = serviceRegions([ServiceKind.channels, ServiceKind.battlegroundQueue], 100);
+    assert(regions.length == 2 && regions[0].id == 100 && regions[1].id == 101);
+    assert(isServiceMap(regions[0].map) && serviceOfMap(regions[1].map) == ServiceKind.battlegroundQueue);
+    assert(!isServiceMap(0) && !isServiceMap(1) && !isServiceMap(530));
+}
+
+// Started from a provider, stopped with its state, started elsewhere from it.
+unittest
+{
+    @Service(ServiceKind.example)
+    static struct Tally
+    {
+        uint count;
+        @Call uint bump(const ref Add request) { return count += request.amount; }
+        ubyte[] saveState() { ubyte[] b; encode(b, count); return b; }
+    }
+
+    Tally make(const(ubyte)[] state)
+    {
+        Tally t;
+        if (state.length)
+            decode(state, t.count);
+        return t;
+    }
+
+    auto a = new ServiceHost, b = new ServiceHost;
+    a.provide!Tally(&make);
+    b.provide!Tally(&make);
+    assert(a.start(ServiceKind.example));
+    a.call!(Tally.bump)(Add(3), (uint n) {});
+    const state = a.stop(ServiceKind.example);
+    assert(!a.hosts(ServiceKind.example) && b.start(ServiceKind.example, state));
+    uint seen;
+    b.call!(Tally.bump)(Add(4), (uint n) { seen = n; });
+    assert(seen == 7, "moved with its state");
+    assert(!b.start(ServiceKind.channels), "not provided here");
 }
