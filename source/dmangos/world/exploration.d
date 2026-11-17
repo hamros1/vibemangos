@@ -3,7 +3,7 @@
  * and area (`Player::UpdateZone`, `UpdateArea`, the once-a-second zone check of `Player::Update`
  * and the client's `CMSG_ZONEUPDATE`), explored areas and their experience
  * (`Player::CheckAreaExploreAndOutdoor`), and experience itself (`Player::GiveXP`). Mixed into
- * `dmangos.world.session.WorldSession`.
+ * `dmangos.world.character.Character`.
  *
  * As in CMaNGOS, the server decides the zone: the client's `CMSG_ZONEUPDATE` only asks it to look
  * at the next position. Where there is no map data (none extracted, or a map without files and
@@ -343,6 +343,6 @@ unittest
 
     // Enough experience levels the player up, and the rest carries over.
     (cast(Player) me).values.set!PLAYER_XP(390u); // the test changes the player directly
-    anduin.session.giveXP(30);
+    anduin.session.inWorld.giveXP(30);
     assert(me.data.level == 2 && me.values[PLAYER_XP] == 20);
 }

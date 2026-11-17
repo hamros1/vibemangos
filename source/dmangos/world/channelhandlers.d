@@ -1,6 +1,6 @@
 /**
  * Handlers of CMaNGOS `Chat/ChannelHandler.cpp`, mixed into
- * `dmangos.world.session.WorldSession`. Each finds the channel in the
+ * `dmangos.world.character.Character`. Each finds the channel in the
  * player's command to the channels, wherever they are kept
  * (`dmangos.world.channelservice`); `dmangos.world.channel` does the rest.
  */

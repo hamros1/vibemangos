@@ -1021,7 +1021,7 @@ unittest
     // The rot after two seconds, ticking on the player.
     foreach (_; 0 .. 4)
         tick(500);
-    assert(anduin.session.hasAuraOf(rot), "the rot on the player");
+    assert(anduin.session.inWorld.hasAuraOf(rot), "the rot on the player");
     anduin.read();
     foreach (_; 0 .. 6)
         tick(500);
@@ -1064,7 +1064,7 @@ unittest
     trainer.factionTemplate = keeper.factionTemplate;
     trainer.values.set!UNIT_FIELD_MAXHEALTH(500u);
     trainer.values.set!UNIT_FIELD_HEALTH(100u);
-    trainer.ai.attackedBy(anduin.session.unit, map);
+    trainer.ai.attackedBy(anduin.session.inWorld.unit, map);
     enum uint mendOther = 95012;
     context.data.spells.spells[mendOther] = testSpell(mendOther, 10, 21, 200);
     EventAiEvent friendly = {id: 4, type: EventType.friendlyHp, chance: 100, flags: eventRepeatable,

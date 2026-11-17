@@ -1,6 +1,6 @@
 /**
  * What ArcEmu's GM commands that name a player do to that player, as methods of the player's
- * `WorldSession` (mixed in), so that they run where the player is simulated: on this node, or in a
+ * `Character` (mixed in), so that they run where the player is simulated: on this node, or in a
  * cluster on another (docs/CLUSTER.md, phase 5b), the GM's messages then going back to its node.
  * The GM's side (finding the player, logging) stays in the command handlers.
  */
@@ -335,7 +335,8 @@ unittest
     import dmangos.world.context : PresenceFlags;
     import dmangos.world.movement : Position;
     import dmangos.world.opcodes;
-    import dmangos.world.session : WorldSession, WorldState;
+    import dmangos.world.character : Character;
+    import dmangos.world.session : WorldState;
     import dmangos.world.testclient;
 
     auto db = newDatabase();
@@ -383,7 +384,7 @@ unittest
     summon.x = -8945;
     summon.y = -130;
     summon.z = 83.5f;
-    target.session.gmTargeted(summon, sink, (GmRemote) {});
+    target.session.inWorld.gmTargeted(summon, sink, (GmRemote) {});
     assert(told == ["You are summoning Anduin."]);
     assert(systemMessages(target.read()) == ["You are being summoned by Jaina."]);
 
@@ -393,7 +394,7 @@ unittest
     mass.gm = 9;
     mass.text = "12";
     mass.x = -8945;
-    target.session.gmTargeted(mass, sink, (GmRemote) {});
+    target.session.inWorld.gmTargeted(mass, sink, (GmRemote) {});
     assert(opcodesOf(target.read()) == [Opcode.SMSG_SUMMON_REQUEST]);
 
     // `.appear`: the target's place goes back to the GM's node.
@@ -402,7 +403,7 @@ unittest
     appear.gm = 9;
     appear.gmName = "Jaina";
     GmRemote back;
-    target.session.gmTargeted(appear, sink, (GmRemote m) { back = m; });
+    target.session.inWorld.gmTargeted(appear, sink, (GmRemote m) { back = m; });
     assert(back.op == GmRemoteOp.appearAt && back.target == 9 && back.map == target.session.character.data.map);
 
     // A kick: the world text goes everywhere, and the player goes.
@@ -411,6 +412,6 @@ unittest
     kick.gmName = "Jaina";
     kick.text = "testing";
     elsewhere = null;
-    target.session.gmTargeted(kick, sink, (GmRemote) {});
+    target.session.inWorld.gmTargeted(kick, sink, (GmRemote) {});
     assert(elsewhere == [Opcode.SMSG_MESSAGECHAT] && target.session.state != WorldState.inWorld);
 }

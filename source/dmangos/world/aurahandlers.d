@@ -1,6 +1,6 @@
 /**
  * Auras on players and the creatures they cast at (CMaNGOS `Spell::EffectApplyAura`, `SpellAuras.cpp`'s
- * handlers and periodic ticks, `HandleCancelAuraOpcode`), mixed into `dmangos.world.session.WorldSession`.
+ * handlers and periodic ticks, `HandleCancelAuraOpcode`), mixed into `dmangos.world.character.Character`.
  *
  * What an aura does while it lasts: stats, resistances, armor and attack power (the stats are worked
  * out again), speeds (and mounts), a stance or form, being rooted or stunned, and periodic effects:
@@ -587,13 +587,13 @@ unittest
 
         auto bonus = makeAura(&context.data.spells.spells[devotion], me.guid, 60, -1, true, [30, 0, 0]);
         bonus.passive = true;
-        anduin.session.addAura(bonus);
+        anduin.session.inWorld.addAura(bonus);
         now += 2.seconds;
         anduin.write(Opcode.CMSG_CAST_SPELL, castAt(gash, keeper.guid));
         foreach (_; 0 .. 10)
             tick(1000);
         assert(keeper.values.get!UNIT_FIELD_HEALTH == 485 - 3 * 11, "three ticks of 5 and 6");
-        anduin.session.removeAura((cast(Player) me).auras.find(devotion));
+        anduin.session.inWorld.removeAura((cast(Player) me).auras.find(devotion));
         anduin.read();
     }
 

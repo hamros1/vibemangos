@@ -481,7 +481,7 @@ unittest
     const newWorld = deserialize!ServerNewWorld(reader);
     assert(newWorld.map == mapKalimdor && newWorld.x == 1629);
     assert(opcodesOf(watcher.read()) == [Opcode.SMSG_DESTROY_OBJECT], "gone from the old map");
-    assert(gm.session.transferring && context.map(0).population == 1 && context.map(1).population == 0);
+    assert(gm.session.inWorld.transferring && context.map(0).population == 1 && context.map(1).population == 0);
 
     // Logging out now would save the destination.
     assert(gm.session.character.progress(0).map == mapKalimdor);
@@ -492,7 +492,7 @@ unittest
         assert(arrival == [SMSG_SET_REST_START, SMSG_BINDPOINTUPDATE, SMSG_TUTORIAL_FLAGS, SMSG_INITIAL_SPELLS,
             SMSG_ACTION_BUTTONS, SMSG_INITIALIZE_FACTIONS, SMSG_LOGIN_SETTIMESPEED, SMSG_COMPRESSED_UPDATE_OBJECT,
             SMSG_FRIEND_LIST, SMSG_IGNORE_LIST, SMSG_INIT_WORLD_STATES, SMSG_WEATHER]);
-    assert(!gm.session.transferring && context.map(1).population == 1);
+    assert(!gm.session.inWorld.transferring && context.map(1).population == 1);
 
     // `.worldport` brings Anduin back, and Jaina sees him again.
     gm.write(Opcode.CMSG_MESSAGECHAT, chatBody(ChatType.CHAT_MSG_SAY, ".worldport 0 -8949.95 -132.49 83.53"));
@@ -524,7 +524,7 @@ unittest
     veteran.write(Opcode.CMSG_AREATRIGGER, ClientAreaTrigger(triggerDeadmines));
     assert(opcodesOf(veteran.read()) == [Opcode.SMSG_TRANSFER_PENDING, Opcode.SMSG_NEW_WORLD]);
     veteran.write(Opcode.MSG_MOVE_WORLDPORT_ACK, null);
-    const instance = veteran.session.instanceId;
+    const instance = veteran.session.inWorld.instanceId;
     assert(instance != 0 && context.map(mapDeadmines, instance).population == 1, "in an instance of its own");
 
     assert(opcodesOf(novice.read()) == [Opcode.SMSG_DESTROY_OBJECT], "Jaina left the map");
@@ -589,9 +589,9 @@ unittest
     varian.write(Opcode.CMSG_GROUP_ACCEPT, null);
     assert(context.groups.of(9) !is null);
     // The group is bound by its first member to go in after it formed.
-    jaina.session.teleportTo(mapDeadmines, Position(-16, -383, 61));
+    jaina.session.inWorld.teleportTo(mapDeadmines, Position(-16, -383, 61));
     jaina.write(Opcode.MSG_MOVE_WORLDPORT_ACK, null);
-    const groupCopy = jaina.session.instanceId;
+    const groupCopy = jaina.session.inWorld.instanceId;
     assert(context.instanceFor(9, mapDeadmines) == groupCopy, "the group's copy");
 
     // A creature of the dungeon killed in one copy lives in the other.
@@ -622,14 +622,14 @@ unittest
     // A full copy: no way in (here a limit of one, Jaina in it).
     context.data.instanceMaxPlayers[mapDeadmines] = 1;
     varian.read();
-    assert(!varian.session.commandTeleport(mapDeadmines, Position(-16, -381, 61), groupCopy), "full");
+    assert(!varian.session.inWorld.commandTeleport(mapDeadmines, Position(-16, -381, 61), groupCopy), "full");
     assert(opcodesOf(varian.read()) == [Opcode.SMSG_TRANSFER_ABORTED]);
     context.data.instanceMaxPlayers[mapDeadmines] = 10;
 
     // Taken into another's copy (a GM's `.appear`): there, and they see each other.
-    anduin.session.commandTeleport(mapDeadmines, Position(-16, -382, 61), groupCopy);
+    anduin.session.inWorld.commandTeleport(mapDeadmines, Position(-16, -382, 61), groupCopy);
     anduin.write(Opcode.MSG_MOVE_WORLDPORT_ACK, null);
-    assert(anduin.session.instanceId == groupCopy && context.seeEachOther(7, 8));
+    assert(anduin.session.inWorld.instanceId == groupCopy && context.seeEachOther(7, 8));
     assert(!context.seeEachOther(7, 9), "Varian is still outside");
 }
 
@@ -665,7 +665,7 @@ unittest
     assert(context.lockedOutOfGroupRaid(7, mapMoltenCore) && !context.lockedOutOfGroupRaid(8, mapMoltenCore));
     context.config.instanceIgnoreRaid = true; // a party may enter, for the test
     anduin.read();
-    assert(!anduin.session.commandTeleport(mapMoltenCore, Position(1, 1, 1)), "locked out");
+    assert(!anduin.session.inWorld.commandTeleport(mapMoltenCore, Position(1, 1, 1)), "locked out");
     assert(opcodesOf(anduin.read()) == [Opcode.SMSG_TRANSFER_ABORTED]);
 
     // A restart: the copies, binds and dead are read back.
@@ -687,6 +687,7 @@ unittest
     import std.format : format;
     import dmangos.auth.accounts : AccountLevel;
     import dmangos.world.context : PlayerRelay, WorldContext;
+    import dmangos.world.character : Character;
     import dmangos.world.session : WorldSession, WorldState;
 
     auto db = newDatabase();
@@ -729,8 +730,8 @@ unittest
                     assert(home.arrive(state));
                     return;
                 }
-            const homeNode = WorldSession.migrationHome(state);
-            auto session = new WorldSession(mesh.nodes[target], WorldSession.migrationAccount(state),
+            const homeNode = Character.migrationHome(state);
+            auto session = new WorldSession(mesh.nodes[target], Character.migrationAccount(state),
                 homeNode ? homeNode : self);
             mesh.remotes.require(target, null)[account] = session;
             assert(session.arrive(state));
@@ -767,7 +768,7 @@ unittest
     there.update(1.seconds); // the arrival: the teleport, its packets through node 1 to the client
     assert(opcodesOf(anduin.read()).canFind(Opcode.SMSG_NEW_WORLD));
     anduin.write(Opcode.MSG_MOVE_WORLDPORT_ACK, null);
-    const copy = there.instanceId;
+    const copy = there.inWorld.instanceId;
     assert(copy && nodes[2].instanceMap(copy).population == 1 && nodes[1].instanceCount == 0);
     assert(db.loadInstances().instances.canFind!(r => r.id == copy && r.map == mapDeadmines), "saved");
 
@@ -776,18 +777,18 @@ unittest
         => then(nodes[host].dungeonEntryProblem(player, map, instance, gm));
     nodes[2].data.instanceMaxPlayers[mapDeadmines] = 1;
     jaina.read();
-    jaina.session.commandTeleport(mapDeadmines, Position(-16, -381, 61), copy);
+    jaina.session.inWorld.commandTeleport(mapDeadmines, Position(-16, -381, 61), copy);
     assert(mesh.log == ["migrate 1->2"] && jaina.session.state == WorldState.inWorld, "turned away where she is");
     assert(opcodesOf(jaina.read()).canFind(Opcode.SMSG_TRANSFER_ABORTED));
     nodes[2].data.instanceMaxPlayers[mapDeadmines] = 10;
     now += 6.seconds;
 
     // Jaina is sent into Anduin's copy: she moves to node 2 and goes into that one.
-    jaina.session.commandTeleport(mapDeadmines, Position(-16, -381, 61), copy);
+    jaina.session.inWorld.commandTeleport(mapDeadmines, Position(-16, -381, 61), copy);
     auto hers = mesh.remotes[2][jainaAccount];
     hers.update(1.seconds);
     jaina.write(Opcode.MSG_MOVE_WORLDPORT_ACK, null);
-    assert(hers.instanceId == copy && nodes[2].instanceMap(copy).population == 2);
+    assert(hers.inWorld.instanceId == copy && nodes[2].instanceMap(copy).population == 2);
     assert(nodes[2].seeEachOther(7, 8));
 
     // Out: Anduin goes back where he came in from, on node 1's ground: he moves home first and is
@@ -815,7 +816,7 @@ unittest
         assert(lines.length >= 5 && lines[0].canFind("Instance ID:") && lines[2].canFind("Non-Raid"), "node 2 answers");
         nodes[1].gmRemote = null;
     }
-    assert(anduin.session.instanceId == 0 && nodes[1].onlinePlayer(anduin.session.character.guid) !is null);
+    assert(anduin.session.inWorld.instanceId == 0 && nodes[1].onlinePlayer(anduin.session.character.guid) !is null);
 
     // Jaina logs out in the dungeon; logging in again on node 1, she goes to node 2, into her copy.
     jaina.write(Opcode.CMSG_LOGOUT_REQUEST, null);
@@ -825,10 +826,11 @@ unittest
     db.moveOfflineCharacter(8, mapDeadmines, -16, -381, 61, 1581); // as she was saved (the memory database keeps no progress)
     jaina.write(Opcode.CMSG_PLAYER_LOGIN, ClientPlayerLogin(8));
     jaina.read();
-    assert(jaina.session.instanceId == 0, "node 1 has no copy for her");
+    assert(jaina.session.state == WorldState.elsewhere && jaina.session.inWorld is null,
+        "node 1 has no copy for her: she is simulated on node 2");
     jaina.session.update(1.seconds);
     assert(mesh.log[$ - 1] == "migrate 1->2");
-    assert(mesh.remotes[2][jainaAccount].instanceId == copy, "the copy she is bound to");
+    assert(mesh.remotes[2][jainaAccount].inWorld.instanceId == copy, "the copy she is bound to");
 }
 
 /**

@@ -1,6 +1,6 @@
 /**
  * Auctions at an auctioneer (CMaNGOS `AuctionHouse/AuctionHouseHandler.cpp`), mixed into
- * `dmangos.world.session.WorldSession`.
+ * `dmangos.world.character.Character`.
  *
  * An item put up (not bound, conjured or temporary) for 2, 8 or 24 hours costs a deposit, and
  * waits in its house (`dmangos.world.auctionhouse`) for bids of at least the start bid and 5% more
@@ -392,8 +392,8 @@ unittest
     auto seller = cast(Player) anduin.session.character, first = cast(Player) jaina.session.character,
         second = cast(Player) varian.session.character;
     seller.modifyMoney(1000);
-    anduin.session.lootStore(itemSword, 1, 0, false);
-    jaina.session.lootStore(itemJerky, 1, 0, false);
+    anduin.session.inWorld.lootStore(itemSword, 1, 0, false);
+    jaina.session.inWorld.lootStore(itemJerky, 1, 0, false);
     first.modifyMoney(1000);
     second.modifyMoney(1000);
     foreach (c; [&anduin, &jaina, &varian])

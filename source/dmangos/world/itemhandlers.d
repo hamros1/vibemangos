@@ -3,7 +3,7 @@
  * `Player::BuyItemFromVendor`, `DurabilityRepair` and `SendEquipError`): moving, splitting,
  * equipping, destroying and banking items, setting ammo and buying bank bag slots; buying from
  * vendors, selling to them, buying back and repairing. Mixed into
- * `dmangos.world.session.WorldSession`; the rules themselves are `dmangos.world.inventory`'s.
+ * `dmangos.world.character.Character`; the rules themselves are `dmangos.world.inventory`'s.
  *
  * Each request ends with `flushInventory`: the client is sent the items and fields that changed,
  * and the changed `character_inventory` and `item_instance` rows are saved at once, with the money

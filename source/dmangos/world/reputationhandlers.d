@@ -1,7 +1,7 @@
 /**
  * A player's reputations in the world (CMaNGOS `ReputationMgr`'s packets and saving, `Player`'s
  * `RewardReputation` and `CalculateReputationGain`, and `MiscHandler.cpp`'s faction opcodes), mixed
- * into `dmangos.world.session.WorldSession`.
+ * into `dmangos.world.session.Character`.
  *
  * Kills give the reputations of `creature_onkill_reputation` (shared in a group like experience,
  * half to the team faction where it says so, up to its rank cap); quests their `RewRepFaction`
@@ -291,7 +291,7 @@ unittest
     context.data.onKillReputation[creatureInnkeeper] = OnKillReputation([guild, 0], [ReputationRank.exalted, 0],
         [true, false], [25, 0], false);
 
-    anduin.session.rewardKillReputation(keeper, 1);
+    anduin.session.inWorld.rewardKillReputation(keeper, 1);
     auto got = anduin.read();
     assert(opcodesOf(got).canFind(Opcode.SMSG_SET_FACTION_VISIBLE));
     assert(me.reputation.standingWith(guild) == 25 && me.reputation.standingWith(team) == 12, "half to the team");
@@ -308,7 +308,7 @@ unittest
 
     // A creature grey to a level 20 player: a fifth.
     me.data.level = 20;
-    anduin.session.rewardKillReputation(keeper, 1);
+    anduin.session.inWorld.rewardKillReputation(keeper, 1);
     assert(me.reputation.standingWith(guild) == 25 + 5);
 
     // War, by the client's checkbox.
@@ -320,7 +320,6 @@ unittest
 
     // Saved at logout, there at the next login.
     anduin.write(Opcode.CMSG_LOGOUT_REQUEST, null);
-    anduin.session.saveReputation();
     const rows = db.loadReputation(me.data.guid);
     assert(rows.length == 2 && rows.canFind!(r => r.faction == guild && r.standing == 30
         && (r.flags & (FactionFlag.visible | FactionFlag.atWar)) == (FactionFlag.visible | FactionFlag.atWar)));

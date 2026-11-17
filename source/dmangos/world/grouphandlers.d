@@ -1,6 +1,6 @@
 /**
  * Handlers of CMaNGOS `Groups/GroupHandler.cpp` and the loot method of
- * `LootHandler.cpp`, mixed into `dmangos.world.session.WorldSession`. What
+ * `LootHandler.cpp`, mixed into `dmangos.world.character.Character`. What
  * changes a group is a command for the groups' service, wherever it is
  * (`dmangos.world.groupservice`, which has the rules); what only reads one is
  * answered here. What a change does to a group, its rows and its members is
@@ -29,9 +29,9 @@ private:
     }
 
     /// The other session of an online player.
-    static WorldSession sessionOf(OnlinePlayer player)
+    static Character sessionOf(OnlinePlayer player)
     {
-        return cast(WorldSession) player;
+        return cast(Character) player;
     }
 
     /// Runs a group command where the groups change (`GroupService`).

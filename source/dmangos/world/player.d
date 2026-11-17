@@ -7,7 +7,7 @@
  * `_LoadSkills`, `InitDisplayIds`), with the derived numbers from
  * `dmangos.world.stats`. The client draws the character, its gear, bags,
  * skills and spellbook from these fields and from the packets of
- * `Player::SendInitialPacketsBeforeAddToMap`, which `WorldSession` sends.
+ * `Player::SendInitialPacketsBeforeAddToMap`, which `Character` sends.
  *
  * Not loaded yet: auras, quests, reputation, guild membership, pets and
  * corpses. A dead character (health 0) is loaded alive with full health.

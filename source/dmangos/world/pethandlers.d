@@ -1,6 +1,6 @@
 /**
  * A player's pet (CMaNGOS's `PetHandler.cpp`, the pet parts of `Player`, `Pet` and `SpellEffects.cpp`,
- * and the stable master's `NPCHandler.cpp` handlers), mixed into `dmangos.world.session.WorldSession`.
+ * and the stable master's `NPCHandler.cpp` handlers), mixed into `dmangos.world.character.Character`.
  *
  * A hunter tames a beast (Tame Beast: a twenty-second channel, then the beast is its pet), calls it
  * (Call Pet), dismisses it (Dismiss Pet) and revives it (Revive Pet); a warlock summons a demon, the

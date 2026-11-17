@@ -669,7 +669,7 @@ source/dmangos/auth/        the login server (realmd)
   throttle.d                  per-IP brute-force protection
 source/dmangos/world/       the world server (mangosd)
   main.d                      entry point
-  session.d                   per-client state machine: framing, handshake, ping (sans-I/O)
+  session.d                   a client's connection: framing, encryption, handshake, ping, the character screen (sans-I/O)
   charscreen.d                handlers: character list, creation, deletion, entering the world
   inworld.d                   handlers: logout, movement and its check, queries, settings, chat, emotes
   teleport.d                  handlers and TeleportTo: near and far teleports, area triggers
@@ -714,6 +714,7 @@ source/dmangos/world/       the world server (mangosd)
   guild.d, guildhandlers.d    guilds: ranks, members and packets; charters, invitations, roster, chat
   pet.d, petai.d              pets: types, action bar, stats, tables, packets; following and fighting (in CreatureAI)
   pethandlers.d               a player's pet: taming, summoning, saving, its bar's commands, stables
+  character.d                 a character in the world: the player and every gameplay handler group
   unit.d                      the rules every unit shares: UnitRef (a player or a creature), dealDamage
   pettests.d                  pets end to end (tests only)
   scripttests.d               the scripts in the world (tests only)

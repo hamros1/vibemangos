@@ -2,7 +2,7 @@
  * ArcEmu's `InstanceCommands.cpp`: `.instance reset`, `.instance resetall`, `.instance shutdown`,
  * `.instance info`, `.instance exit`, and `.character showinstances`, on this server's instances
  * (`WorldContext`'s copies and binds). Vanilla has one difficulty, ArcEmu's "normal"; a persistent
- * instance is a raid copy (it lasts until its reset). Mixed into `dmangos.world.session.WorldSession`.
+ * instance is a raid copy (it lasts until its reset). Mixed into `dmangos.world.session.Character`.
  */
 module dmangos.world.gminstance;
 
@@ -269,7 +269,7 @@ void describeInstance(WorldContext context, uint id, GmSink sink)
 void shutdownInstanceHere(WorldContext context, uint id, GmSink sink)
 {
     import std.format : format;
-    import dmangos.world.session : WorldSession;
+    import dmangos.world.character : Character;
 
     if (context.instanceState(id) is null)
         return sink.red(format!"There's no instance with id %u."(id));
@@ -279,7 +279,7 @@ void shutdownInstanceHere(WorldContext context, uint id, GmSink sink)
     sink.system(format!"Attempting to shutdown instance with id %u..."(id));
     // `MapMgr::InstanceShutdown`: everyone inside goes back out first.
     foreach (other; context.onlinePlayers)
-        if (auto inside = cast(WorldSession) other)
+        if (auto inside = cast(Character) other)
             if (inside.instanceId == id && inside.character !is null)
                 inside.exitInstance();
     context.shutdownInstance(id);
@@ -359,7 +359,7 @@ unittest
     assert(systemMessages(gm.read()).length > 0, "not in an instance: the help");
     gm.say(".worldport 36 -16 -383 61");
     gm.write(Opcode.MSG_MOVE_WORLDPORT_ACK, null);
-    const id = gm.session.instanceId;
+    const id = gm.session.inWorld.instanceId;
     assert(id);
     gm.read();
 
@@ -377,7 +377,7 @@ unittest
     gm.write(Opcode.MSG_MOVE_WORLDPORT_ACK, null);
     const exited = systemMessages(gm.read());
     assert(exited.canFind!(m => m.canFind("Removal successful.")));
-    assert(gm.session.instanceId == 0 && gm.session.character.data.map == 0 && gm.session.character.position == outside);
+    assert(gm.session.inWorld.instanceId == 0 && gm.session.character.data.map == 0 && gm.session.character.position == outside);
 
     gm.say(".instance shutdown 999");
     assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTRED ~ "There's no instance with id 999.|r"]);

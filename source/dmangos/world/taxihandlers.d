@@ -1,6 +1,6 @@
 /**
  * Flight masters (CMaNGOS `Maps/TaxiHandler.cpp`, `Player::ActivateTaxiPathTo` and the taxi
- * movement), mixed into `dmangos.world.session.WorldSession`.
+ * movement), mixed into `dmangos.world.character.Character`.
  *
  * A flight master's node becomes known the first time the player talks to it; afterwards it shows
  * the known nodes. A flight to one of them (directly, or over several legs) costs its price (10%
@@ -318,16 +318,16 @@ unittest
     }
     // Node 5 is not known yet.
     anduin.write(Opcode.CMSG_ACTIVATETAXI, flyTo(5));
-    assert(opcodesOf(anduin.read()) == [Opcode.SMSG_ACTIVATETAXIREPLY] && !anduin.session.flying);
+    assert(opcodesOf(anduin.read()) == [Opcode.SMSG_ACTIVATETAXIREPLY] && !anduin.session.inWorld.flying);
     learnNode(me.data.taxiMask, 5);
     anduin.write(Opcode.CMSG_ACTIVATETAXI, flyTo(5));
-    assert(opcodesOf(anduin.read()).canFind(Opcode.SMSG_MONSTER_MOVE) && anduin.session.flying);
+    assert(opcodesOf(anduin.read()).canFind(Opcode.SMSG_MONSTER_MOVE) && anduin.session.inWorld.flying);
     assert(me.money == 500 - 120 && me.values.get!UNIT_FIELD_MOUNTDISPLAYID != 0);
     assert(me.values.get!UNIT_FIELD_FLAGS & UnitFlags.taxiFlight);
     // 320 yards at 32 a second: about 10 s; half way it is in the air, half way along.
     anduin.session.update(5000.msecs);
     assert(me.position.x > -8820 && me.position.x < -8790 && me.position.z > 90, "the climb, then 140 yards east");
     anduin.session.update(6000.msecs);
-    assert(!anduin.session.flying && me.values.get!UNIT_FIELD_MOUNTDISPLAYID == 0, "landed");
+    assert(!anduin.session.inWorld.flying && me.values.get!UNIT_FIELD_MOUNTDISPLAYID == 0, "landed");
     assert(!(me.values.get!UNIT_FIELD_FLAGS & UnitFlags.taxiFlight));
 }

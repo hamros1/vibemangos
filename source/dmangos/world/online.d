@@ -2,7 +2,7 @@
  * What groups, channels and chat need to know about the players online, and
  * how they find each other.
  *
- * `WorldSession` is an `OnlinePlayer`; `WorldContext` finds them.
+ * `Character` is an `OnlinePlayer`; `WorldContext` finds them.
  * Groups (`dmangos.world.group`) and channels (`dmangos.world.channel`) only
  * use these interfaces, so their unit tests run on small fakes.
  */

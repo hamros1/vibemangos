@@ -4,7 +4,7 @@
  * `ItemHandler.cpp`), the character's own settings, and chat
  * (`ChatHandler.cpp`).
  *
- * `InWorldHandlers` is mixed into `dmangos.world.session.WorldSession`, like
+ * `InWorldHandlers` is mixed into `dmangos.world.character.Character`, like
  * `dmangos.world.charscreen.CharacterScreenHandlers`.
  *
  * Movement is shown to those who see the player (`dmangos.world.map`) and
@@ -106,6 +106,7 @@ private:
         player = null;
         teleporting = Teleport.none;
         state_ = WorldState.characterScreen;
+        connection.playing = null; // the connection is back at the character screen
         if (homeNode) // simulated here for another node's client: it hears, and this session ends
         {
             context.playerRelay.left(homeNode, account.id, loggingOut);
@@ -283,6 +284,7 @@ private:
             // The client's session: from now on it relays (set before the state goes, which may arrive at once).
             ownerNode = target;
             state_ = WorldState.elsewhere;
+            connection.playing = null; // the connection relays; the character is simulated there
         }
         context.playerRelay.migrate(target, account.id, w.data);
         if (homeNode)
@@ -292,6 +294,7 @@ private:
                 context.playerRelay.moved(homeNode, account.id, target);
             context.playerRelay.remoteDone(account.id);
             state_ = WorldState.closed;
+            connection.playing = null;
         }
     }
 
@@ -364,6 +367,7 @@ private:
         migratedAt = context.clock();
         ownerNode = 0;
         state_ = WorldState.inWorld;
+        connection.playing = this; // in the world from here on
         context.enterWorldMigrated(this, known);
         loadAuras();
         loadCooldowns();

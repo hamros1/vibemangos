@@ -1,6 +1,6 @@
 /**
  * Talents and passive spells (CMaNGOS `Player::LearnTalent`, `learnSpell`'s passive part and
- * `_LoadSpells`' casting of passives), mixed into `dmangos.world.session.WorldSession`.
+ * `_LoadSpells`' casting of passives), mixed into `dmangos.world.character.Character`.
  *
  * From level 10 a player gets a talent point a level (`PLAYER_CHARACTER_POINTS1` holds those not
  * spent). A talent of its class may be learned, a rank at a time, if its tree has 5 points spent for
@@ -423,7 +423,7 @@ unittest
     context.data.items[itemSword].details.spells[0].trigger = 1; // on equip
     auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f));
     auto me = cast(Player) anduin.session.character;
-    anduin.session.lootStore(itemSword, 1, 0, false);
+    anduin.session.inWorld.lootStore(itemSword, 1, 0, false);
     anduin.read();
     ubyte slot;
     foreach (s; ubyte(23) .. ubyte(39))

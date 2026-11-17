@@ -2,7 +2,7 @@
  * A player's death and return (CMaNGOS `Player::KillPlayer`, `BuildPlayerRepop`, `RepopAtGraveyard`,
  * `ResurrectPlayer`, `SpawnCorpseBones`, `DurabilityLossAll`; `MiscHandler.cpp`'s repop and reclaim,
  * `NPCHandler.cpp`'s spirit healer, `QueryHandler.cpp`'s corpse query; the graveyards of
- * `GraveyardManager`), mixed into `dmangos.world.session.WorldSession`.
+ * `GraveyardManager`), mixed into `dmangos.world.character.Character`.
  *
  * Dead, a player lies rooted where it fell; released (or after six minutes, or logging out), it is a
  * ghost at the nearest graveyard of its team, its corpse left behind. Back within 39 yards of the
@@ -530,7 +530,7 @@ unittest
     MeleeDamage blow;
     blow.damage = 10_000;
     blow.outcome = MeleeHitOutcome.normal;
-    anduin.session.unit.meleeHitBy(0xF130_0000_0000_0001, blow);
+    anduin.session.inWorld.unit.meleeHitBy(0xF130_0000_0000_0001, blow);
     auto died = opcodesOf(anduin.read());
     assert(me.deathState == DeathState.corpse && me.values.get!UNIT_FIELD_HEALTH == 0);
     assert(died.canFind(Opcode.SMSG_FORCE_MOVE_ROOT) && died.canFind(Opcode.SMSG_DURABILITY_DAMAGE_DEATH));
@@ -565,7 +565,7 @@ unittest
     anduin.read();
 
     // Again, and this time the spirit healer (the innkeeper stands in for one).
-    anduin.session.unit.meleeHitBy(0xF130_0000_0000_0001, blow);
+    anduin.session.inWorld.unit.meleeHitBy(0xF130_0000_0000_0001, blow);
     anduin.write(Opcode.CMSG_REPOP_REQUEST, null);
     anduin.write(Opcode.MSG_MOVE_TELEPORT_ACK, ClientTeleportAck(me.guid, 0, 0));
     anduin.read();

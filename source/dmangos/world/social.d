@@ -4,7 +4,7 @@
  * ignored). The friend list shows who is online (zone, level, class, away or busy), here or on
  * another node of a cluster; a player's friends hear when it comes online and goes offline; an
  * ignored player's whispers are refused (`CHAT_MSG_IGNORED`) and its group invitations too.
- * Mixed into `dmangos.world.session.WorldSession`.
+ * Mixed into `dmangos.world.session.Character`.
  */
 module dmangos.world.social;
 
@@ -147,9 +147,9 @@ mixin template SocialHandlers()
     FriendInfo friendInfo(ulong guid)
     {
         import dmangos.world.player : PlayerFlags;
-        import dmangos.world.session : WorldSession;
+        import dmangos.world.character : Character;
 
-        if (auto other = cast(WorldSession) context.onlinePlayer(guid))
+        if (auto other = cast(Character) context.onlinePlayer(guid))
             if (other.character !is null && (!other.character.gmTagOn || hasPermissions))
             {
                 const c = other.character;
@@ -251,13 +251,13 @@ mixin template SocialHandlers()
      */
     package void announceToFriends(bool online)
     {
-        import dmangos.world.session : WorldSession;
+        import dmangos.world.character : Character;
 
         if (player.gmTagOn)
             return;
         const info = online ? friendInfoOfSelf() : FriendInfo.init;
         foreach (other; context.onlinePlayers)
-            if (auto session = cast(WorldSession) other)
+            if (auto session = cast(Character) other)
                 if (session !is this && session.character !is null)
                     session.friendChanged(player.guid, online, info);
         if (context.announceFriendElsewhere !is null)

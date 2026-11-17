@@ -430,6 +430,18 @@ Decisions taken on 2026-11-17:
 3. **Character and connection.**
    * Change: the session's gameplay mixins move to `Character`, one area at a time; migration and
      saving move a character.
+   * Done (2026-11-17), all areas at once. The handler groups depend on each other too much to
+     move one at a time.
+     * `WorldSession` is the connection: framing, encryption, the account, the protocol state,
+       authentication, pings, the character screen.
+     * `Character` (`character.d`) holds the player and every gameplay mixin, and exists only while
+       in the world.
+     * The login's checks stay with the connection; the rest is `CharacterLogin`.
+     * An arrival from another node makes a `Character` on the arriving connection.
+     * The context's online players, the map and every system know the `Character`. The session
+       table, `.disconnect` and the cluster's relay know the connection.
+   * What is left of the connection in the gameplay code goes through forwarding properties of the
+     same names (`account`, `state_`, `homeNode`, `send`, ...). That is the seam to narrow next.
 4. **Phases, the timer wheel, deferred changes and event queues.**
    * Measure: the tick with 25,000 objects and few players, which should approach the cost of the
      active units only.

@@ -97,19 +97,33 @@ awaitingAuth ──CMSG_AUTH_SESSION ok──▶ characterScreen ──CMSG_PLAY
 ```
 
 The session's `invariant` enforces two rules: an authenticated session always encrypts, and a
-player exists exactly while the session is in the world.
+character exists exactly while the session is in the world.
 
-### One class, several files
+### Connection and character
 
-`WorldSession` is a single class, but its handlers live in the module that matches CMaNGOS's
-`*Handler.cpp` file:
+A client's session is two objects (docs/DESIGN.md, step 3):
+
+* **`WorldSession`** (`session.d`) is the connection: the socket's bytes, framing and header
+  encryption, the account, the protocol state above, the handshake and pings, and the character
+  screen (`CharacterScreenHandlers`: list, create, delete, and the checks of a login). In a cluster
+  it also relays: the client's own node forwards what the client sends to the node simulating its
+  character, and a node simulating a player whose client is elsewhere holds a connection without a
+  socket (`homeNode`).
+* **`Character`** (`character.d`) is the player in the world: the `Player`, and every gameplay
+  handler group as a mixin. It exists from login (or arriving from another node) to logout (or
+  leaving for another node). The connection holds it as `playing` (`inWorld` from outside); the map,
+  the context's online players, groups and every other system know the `Character`. A packet the
+  connection does not handle itself goes to its character (`Character.handlePacket`). A character
+  reaches what is the connection's (the account, the protocol state, the address, sending a packet)
+  through properties of the same names.
 
 ```d
-final class WorldSession : NetSession, Kickable, OnlinePlayer
+final class Character : OnlinePlayer, Looter
 {
-    mixin PacketDispatch!Handles;   // the generated switch
-    ...                             // framing, handshake, ping, send helpers
-    mixin CharacterScreenHandlers;  // charscreen.d: CharacterHandler.cpp
+    WorldSession connection;
+    mixin PacketDispatch!Handles;   // the generated switch, for the character's own handlers
+    ...                             // the player, its timers, the unit and looter methods
+    mixin CharacterLogin;           // charscreen.d: entering the world after the login's checks
     mixin InWorldHandlers;          // inworld.d: MiscHandler, MovementHandler, QueryHandler, ChatHandler
     mixin TeleportHandlers;         // teleport.d: Player::TeleportTo, the teleport acks, area triggers
     mixin GroupHandlers;            // grouphandlers.d: GroupHandler.cpp
@@ -121,29 +135,15 @@ final class WorldSession : NetSession, Kickable, OnlinePlayer
     mixin LootHandlers;             // loothandlers.d: LootHandler.cpp, kill experience, tapping
     mixin SpellHandlers;            // spellhandlers.d: SpellHandler.cpp, Spell.cpp, SpellEffects.cpp
     mixin AuraHandlers;             // aurahandlers.d: SpellAuras.cpp's handlers and ticks
-    mixin TradeHandlers;            // tradehandlers.d: TradeHandler.cpp
-    mixin DuelHandlers;             // duelhandlers.d: DuelHandler.cpp, EffectDuel, DuelComplete
-    mixin QuestHandlers;            // questhandlers.d: QuestHandler.cpp, Player's quest functions
-    mixin TalentHandlers;           // talenthandlers.d: Player::LearnTalent, passive spells
-    mixin MailHandlers;             // mailhandlers.d: MailHandler.cpp, MailDraft
-    mixin AuctionHandlers;          // auctionhandlers.d: AuctionHouseHandler.cpp
-    mixin TaxiHandlers;             // taxihandlers.d: TaxiHandler.cpp, ActivateTaxiPathTo, the flight
-    mixin ReputationHandlers;       // reputationhandlers.d: ReputationMgr's packets, RewardReputation
-    mixin Exploration;              // exploration.d: Player::UpdateZone, CheckAreaExploreAndOutdoor, GiveXP
-    mixin ChatCommands;             // commands.d: ArcEmu's ParseCommands, ExecuteCommandInTable, messages
-    mixin GmActions;                // gmactions.d: what the handlers do to players
-    mixin Level0Commands;           // gmlevel0.d .. gmlevel3.d, gmdebug.d: ArcEmu's handlers,
-    mixin Level1Commands;           //   by the ArcEmu file they come from
-    mixin Level2Commands;
-    mixin Level3Commands;
-    mixin DebugCommands;
+    ...                             // trade, duels, quests, talents, mail, auctions, taxis,
+                                    // reputation, exploration, social, guilds, pets, scripts,
+                                    // and the GM commands (commands.d, gmlevel*.d, gmdebug.d)
 }
 ```
 
 A mixin template's members become members of the class. They can use the class's private state,
-and the dispatcher finds their `@Handles` attributes like any others. New handler groups (combat,
-spells, groups, guilds...) should get their own module the same way, without growing
-`session.d`.
+and the dispatcher finds their `@Handles` attributes like any others. A new handler group gets its
+own module, mixed into `Character`.
 
 ## Static data
 
@@ -230,7 +230,7 @@ copies (`dungeonGained`, `dungeonLost`). A session joins its map in
 `context.enterWorld` and leaves it in `context.leaveWorld`. The context also indexes the players
 online by guid and by name, for name queries and whispers.
 
-The map knows players through the `Inhabitant` interface, which `WorldSession` implements:
+The map knows players through the `Inhabitant` interface, which `Character` implements:
 `character` (the `Player`), `deliver(opcode, body)` (frame and queue a packet) and
 `appearanceFor(viewer)` (the create block a viewer gets). A body is serialized once and framed per
 recipient, because each client's header encryption is different.
@@ -389,7 +389,7 @@ Three modules, split by what they depend on:
   a player (its session) or a creature, as a small value made where needed (`CombatWorld.unit`,
   `Map.unitOf`); its methods branch on the kind with `final switch`, so each rule handles both kinds.
   `dealDamage` is `Unit::DealDamage` and the one way damage reaches a unit, from a swing, a spell or
-  an aura's tick, whoever deals it. A player suffers it in `WorldSession.takeBlow` (standing up, rage,
+  an aura's tick, whoever deals it. A player suffers it in `Character.takeBlow` (standing up, rage,
   the combat state, a duel's last blow, death); a creature fights back and takes it as threat, is
   tapped for the player the blow is credited to (a pet's owner for a pet's), and its death is that
   player's kill, a pet's death its owner's, any other just a death (`Map.creatureDeath`).
@@ -698,7 +698,7 @@ The GM system is ArcEmu 2.4.3's, ported rather than imitated:
   runs it. `callHandler` is a `switch` generated at compile time over every handler the tables name,
   with a case for each method that exists; the rest answer like `HandleNYICommand`. So a new handler
   is one method, and the tables never change.
-* **Permissions.** `WorldSession.permissions` is ArcEmu's letter string, from `account.gmlevel`
+* **Permissions.** `Character.permissions` is ArcEmu's letter string, from `account.gmlevel`
   through the `gm_permissions` setting and `loadSecurity` (`LoadSecurity`); `canUseCommand` is
   `CanUseCommand`. Other code asks the same questions ArcEmu asks: `hasPermissions` (instant logout,
   no speed check, cross-faction invites, flood protection), `hasGMPermissions`, or a letter (`c` for

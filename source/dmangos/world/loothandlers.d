@@ -1,7 +1,7 @@
 /**
  * Killing for experience and loot (CMaNGOS `LootHandler.cpp`, `Unit::Kill`'s rewards,
  * `Player::RewardSinglePlayerAtKill`, `Group::RewardGroupAtKill`, `Creature::PrepareBodyLootState`,
- * `Loot::SetGroupLootRight`), mixed into `dmangos.world.session.WorldSession`.
+ * `Loot::SetGroupLootRight`), mixed into `dmangos.world.character.Character`.
  *
  * The first player to hurt a creature taps it: it and its group get the experience and the loot.
  * A group shares the experience by level among its members near the kill (74 yards), with a bonus
@@ -58,7 +58,7 @@ private:
     void handleOpenItem(ref ByteReader reader)
     {
         import dmangos.world.inventory : itemDynFlagUnlocked;
-        import dmangos.world.session : WorldSession;
+        import dmangos.world.character : Character;
 
         const bag = reader.read!ubyte, slot = reader.read!ubyte;
         auto item = player.inventory[bag, slot];
@@ -256,9 +256,9 @@ private:
      */
     void rewardKill(Creature victim)
     {
-        import dmangos.world.session : WorldSession;
+        import dmangos.world.character : Character;
 
-        auto tapper = cast(WorldSession) context.onlinePlayer(victim.lootRecipient);
+        auto tapper = cast(Character) context.onlinePlayer(victim.lootRecipient);
         if (tapper is null || tapper.map !is map)
             tapper = this;
         if (victim.lootRecipient == 0)
@@ -274,7 +274,7 @@ private:
     {
         import dmangos.cluster.protocol : KillShare;
         import dmangos.world.replication : Replica;
-        import dmangos.world.session : WorldSession;
+        import dmangos.world.character : Character;
 
         // `SMSG_PARTYKILLLOG` is for the killing blow of another; the tapper's own is not shown.
         const value = killValue(victim);
@@ -290,7 +290,7 @@ private:
         // The members near the kill: here, or (in a cluster) simulated by another node whose replica is here.
         static struct Near
         {
-            WorldSession here;  // null: on node `node`
+            Character here;  // null: on node `node`
             ulong guid;
             ushort node;
             uint level;
@@ -302,7 +302,7 @@ private:
         Near[] members;
         foreach (ref slot; group.members)
         {
-            if (auto member = cast(WorldSession) context.onlinePlayer(slot.guid))
+            if (auto member = cast(Character) context.onlinePlayer(slot.guid))
             {
                 if (member.atGroupRewardDistance(victim))
                     members ~= Near(member, slot.guid, 0, member.player.data.level,
@@ -431,7 +431,7 @@ private:
      */
     package void prepareBodyLoot(Creature victim)
     {
-        import dmangos.world.session : WorldSession;
+        import dmangos.world.character : Character;
 
         enum uint noLoot = 0x4; // CreatureStaticFlags::NO_LOOT
         const t = victim.template_;
@@ -439,7 +439,7 @@ private:
             return victim.lootedOut();
         auto theMap = map;
         auto loot = new Loot(victim.guid, (ulong guid) {
-            auto session = cast(WorldSession) context.onlinePlayer(guid);
+            auto session = cast(Character) context.onlinePlayer(guid);
             return session is null || session.map !is theMap ? null : cast(Looter) session;
         });
         loot.clock = () => context.unixTime;
@@ -460,12 +460,12 @@ private:
                 if (item.quest)
                 {
                     // `HasQuestForItem`: only for one whose quest still asks for it.
-                    auto owner = cast(WorldSession) context.onlinePlayer(guid);
+                    auto owner = cast(Character) context.onlinePlayer(guid);
                     return owner !is null && owner.hasQuestForItem(item.itemId);
                 }
                 if (item.condition == 0)
                     return true;
-                auto owner = cast(WorldSession) context.onlinePlayer(guid);
+                auto owner = cast(Character) context.onlinePlayer(guid);
                 return owner !is null && owner.conditionMet(item.condition);
             }
 
@@ -485,7 +485,7 @@ private:
     /// `Loot::SetGroupLootRight`: for loot at `at`; `fought` says who fought for it (a creature's threat list).
     package void setLootRights(Loot loot, Position at, scope bool delegate(ulong guid) fought)
     {
-        import dmangos.world.session : WorldSession;
+        import dmangos.world.character : Character;
 
         auto group = context.groups.of(player.guid);
         if (group is null)
@@ -513,7 +513,7 @@ private:
         foreach (step; 1 .. members.length + 1)
         {
             const guid = members[(current + step) % members.length].guid;
-            auto looter = cast(WorldSession) context.onlinePlayer(guid);
+            auto looter = cast(Character) context.onlinePlayer(guid);
             if (looter is null)
                 continue;
             if (looter.atGroupRewardDistance(map, at) || fought(guid))
@@ -815,7 +815,7 @@ unittest
     context.data.loot.item.add(itemJerky, lootRow(itemSword, 100, 0, 1, 1, 0)); // the "clam" holds a sword
     auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f));
     auto me = cast(Player) anduin.session.character;
-    anduin.session.lootStore(itemJerky, 1, 0, false);
+    anduin.session.inWorld.lootStore(itemJerky, 1, 0, false);
     anduin.read();
     Item clam;
     foreach (item; me.inventory.all())
@@ -861,7 +861,7 @@ unittest
     // Varian goes to node 2 (leaves this node's world); its replica stays near.
     auto map = context.map(0);
     const state = encodePlayerState(cast(Player) varian.session.character, 0);
-    context.leaveWorldForMigration(varian.session, 2);
+    context.leaveWorldForMigration(varian.session.inWorld, 2);
     map.replicaCreated(2, cellKeyAt(-8945, -132), 9, state);
     assert(context.onlinePlayer(9) is null && map.findObject(9) !is null);
     anduin.read();

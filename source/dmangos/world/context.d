@@ -1613,9 +1613,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     {
         if (creature.petOwner)
         {
-            import dmangos.world.session : WorldSession;
+            import dmangos.world.character : Character;
 
-            if (auto owner = cast(WorldSession) onlinePlayer(creature.petOwner))
+            if (auto owner = cast(Character) onlinePlayer(creature.petOwner))
                 if (owner.character !is null)
                     owner.petCorpseGone(creature);
             return;
@@ -1732,10 +1732,10 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         import dmangos.world.defines : UnitFlags;
         import dmangos.world.inworld : ArrivalAction;
         import dmangos.world.relations : canAttack, isEnemy, Relating;
-        import dmangos.world.session : WorldSession;
+        import dmangos.world.character : Character;
         import dmangos.world.updatefields;
 
-        auto session = cast(WorldSession) who;
+        auto session = cast(Character) who;
         if (session is null || replica.owner == nodeId)
             return;
         const values = &replica.fields();
@@ -1931,9 +1931,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     {
         import dmangos.world.gameobject : GoLootState;
         import dmangos.world.relations : isFriend, Relating;
-        import dmangos.world.session : WorldSession;
+        import dmangos.world.character : Character;
 
-        auto session = cast(WorldSession) who;
+        auto session = cast(Character) who;
         if (session is null || session.character is null || !session.fighter.alive)
             return;
         if (unixTime < trap.trapReadyAt || trap.lootState != GoLootState.ready)
@@ -2041,11 +2041,11 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     /// A guild's packet for its members online here whose rank has `right` (0: all).
     void guildToMembersHere(uint guild, Opcode opcode, const(ubyte)[] body_, uint right)
     {
-        import dmangos.world.session : WorldSession;
+        import dmangos.world.character : Character;
 
         auto g = guilds.find(guild);
         foreach (other; onlinePlayers)
-            if (auto session = cast(WorldSession) other)
+            if (auto session = cast(Character) other)
                 if (session.character !is null)
                 {
                     const low = cast(uint) session.character.guid;
@@ -2065,10 +2065,10 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     /// The guild fields of every player here, from their guilds now.
     void guildFieldsHere()
     {
-        import dmangos.world.session : WorldSession;
+        import dmangos.world.character : Character;
 
         foreach (other; onlinePlayers)
-            if (auto session = cast(WorldSession) other)
+            if (auto session = cast(Character) other)
                 if (session.character !is null)
                     session.refreshGuildFields();
     }
@@ -2084,9 +2084,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     /// An invitation from another node for a player here.
     void guildInvitationArrived(ulong target, uint guild, ulong inviter, string inviterName, string guildName)
     {
-        import dmangos.world.session : WorldSession;
+        import dmangos.world.character : Character;
 
-        if (auto session = cast(WorldSession) onlinePlayer(target))
+        if (auto session = cast(Character) onlinePlayer(target))
             if (session.character !is null)
                 session.guildInvite(guild, inviter, inviterName, guildName);
     }
@@ -2238,12 +2238,12 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     /// A game object from its spawn, with what it needs to show players their quests' objects.
     GameObject makeGameObject(const(GameObjectSpawn)* spawn)
     {
-        import dmangos.world.session : WorldSession;
+        import dmangos.world.character : Character;
 
         auto go = new GameObject(*spawn, spawn.entry in data.gameObjectTemplates);
         if (isQuestObject(go))
             go.activatesFor = (ulong viewer) {
-                auto session = cast(WorldSession) onlinePlayer(viewer);
+                auto session = cast(Character) onlinePlayer(viewer);
                 return session !is null && session.gameObjectActivatesForQuest(go);
             };
         if (const name = spawn.entry in data.gameObjectScriptNames)

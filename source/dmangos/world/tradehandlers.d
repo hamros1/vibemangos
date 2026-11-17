@@ -1,6 +1,6 @@
 /**
  * Trading between two players (CMaNGOS `Trade/TradeHandler.cpp` and `TradeData`), mixed into
- * `dmangos.world.session.WorldSession`.
+ * `dmangos.world.character.Character`.
  *
  * One player opens a trade with another of its faction within 11 yards; the other's client asks
  * it to begin, and both see the window. Each puts up to six items and some money on its side;

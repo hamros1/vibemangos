@@ -70,7 +70,7 @@ For a new area, such as spells, groups or guilds, create `world/<area>.d`:
 ```d
 module dmangos.world.groups;
 
-/// Handlers of `GroupHandler.cpp`, mixed into WorldSession.
+/// Handlers of `GroupHandler.cpp`, mixed into Character.
 mixin template GroupHandlers()
 {
     import dmangos.world.opcodes;
@@ -82,8 +82,9 @@ private:
 ```
 
 Then add `import dmangos.world.groups : GroupHandlers;` and `mixin GroupHandlers;` to
-`WorldSession` in `session.d`. The handlers can use every session member (`context`, `account`,
-`player`, `send`, ...).
+`Character` in `character.d` (a handler of the character screen goes to `WorldSession` in
+`session.d` instead). The handlers can use every character member (`context`, `player`, `send`,
+and the connection's `account`, ...).
 
 ### Read another DBC file
 
@@ -139,7 +140,7 @@ Every ArcEmu command is already in `commandtable.d`; the ones not written answer
 implemented.". To write one, find its row (say `.npc come`, handler `HandleNpcComeCommand`), read
 ArcEmu's handler, and add the method with the same name, first letter in lower case, to the mixin of
 the ArcEmu file it comes from (`gmlevel2.d` for `Level2.cpp` if it does not exist yet: a new mixin
-template mixed into `WorldSession` like the others):
+template mixed into `Character` like the others):
 
 ```d
 bool handleNpcComeCommand(uint distance = 5)     // the command's words, as typed parameters

@@ -19,6 +19,7 @@ import dmangos.world.opcodes : Opcode;
 import dmangos.log;
 import dmangos.world.context : PlayerRelay, WorldContext;
 import dmangos.world.replication : Replicator;
+import dmangos.world.character : Character;
 import dmangos.world.session : WorldSession, WorldState;
 
 /// See the module documentation. Also relays players simulated away from their client (phase 4b).
@@ -324,7 +325,7 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
     /// A share of another node's kill, for a group member here.
     void killShare(ushort peer, const ref KillShare m)
     {
-        if (auto session = cast(WorldSession) context.onlinePlayer(m.target))
+        if (auto session = cast(Character) context.onlinePlayer(m.target))
             if (session.character !is null)
                 session.killShared(m.entry, m.victim, m.level, m.xp, m.rate, m.reputationRate);
     }
@@ -390,7 +391,7 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
 
         const info = FriendInfo(cast(FriendStatus) m.status, m.area, m.level, m.classId);
         foreach (other; context.onlinePlayers)
-            if (auto session = cast(WorldSession) other)
+            if (auto session = cast(Character) other)
                 if (session.character !is null)
                     session.friendNews(m.guid, m.online, info);
     }
@@ -489,12 +490,12 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
         {
             // For every player here.
             foreach (other; context.onlinePlayers)
-                if (auto here = cast(WorldSession) other)
+                if (auto here = cast(Character) other)
                     if (here.character !is null)
                         here.gmTargeted(m, sink, (GmRemote back) {});
             return;
         }
-        auto session = cast(WorldSession) context.onlinePlayer(m.target);
+        auto session = cast(Character) context.onlinePlayer(m.target);
         if (session is null || session.character is null)
             return sink.red("Player is not online at the moment.");
         session.gmTargeted(m, sink, (GmRemote back) { node.sendTo(peer, back); });
@@ -540,7 +541,7 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
         auto target = context.onlinePlayer(m.to);
         if (target is null)
             return; // it left meanwhile
-        auto session = cast(WorldSession) target;
+        auto session = cast(Character) target;
         deliverWhisper(target, WhisperFrom(m.from, m.fromRace, m.fromPermissions, m.fromChatTag), m.text,
             context.config.allowTwoSideInteractionChat,
             (ulong sender) => session !is null && session.allowsWhispersFrom(sender),
@@ -570,7 +571,7 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
                 flags |= PresenceFlags.permissions;
             const entry = PresenceEntry(p.guid, p.data.name, p.data.account, p.data.race, p.data.classId,
                 cast(ubyte) p.data.level, p.data.gender, p.data.zone, flags, cast(ubyte) who.security, p.autoReply,
-                who.hasPermissions ? (cast(WorldSession) who).permissions : null);
+                who.hasPermissions ? (cast(Character) who).permissions : null);
             here[p.guid] = true;
             if (auto sent = p.guid in presenceSent)
                 if (*sent == entry)
@@ -665,10 +666,10 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
                     return;
                 }
             // Its client's node: the sender's, or (from one third node to another) the one the state names.
-            const homeNode = WorldSession.migrationHome(data);
+            const homeNode = Character.migrationHome(data);
             const clientAt = homeNode ? homeNode : peer;
             movedOn.remove(account);
-            auto session = new WorldSession(context, WorldSession.migrationAccount(data), clientAt);
+            auto session = new WorldSession(context, Character.migrationAccount(data), clientAt);
             remote[account] = session;
             if (!session.arrive(data))
             {

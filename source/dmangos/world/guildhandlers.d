@@ -4,7 +4,7 @@
  * invitations; the roster and information; promotions and demotions; leaving, removing,
  * disbanding and handing over leadership; the message of the day, the guild information and the
  * members' notes; the ranks and their rights; the tabard; guild and officer chat; and the members'
- * logins and logouts. Mixed into `dmangos.world.session.WorldSession`.
+ * logins and logouts. Mixed into `dmangos.world.session.Character`.
  */
 module dmangos.world.guildhandlers;
 

@@ -1,5 +1,5 @@
 /**
- * Mail (CMaNGOS `Mails/MailHandler.cpp` and `MailDraft`), mixed into `dmangos.world.session.WorldSession`.
+ * Mail (CMaNGOS `Mails/MailHandler.cpp` and `MailDraft`), mixed into `dmangos.world.character.Character`.
  *
  * At a mailbox a player sends a letter to a character of its faction (30 copper), with an item,
  * money or cash on delivery; reads its letters (`mail`, newest last, 50 at most); takes their money

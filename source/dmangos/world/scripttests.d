@@ -53,8 +53,8 @@ unittest
     void hit(uint percent)
     {
         const damage = max * percent / 100;
-        smite.ai.attackedBy(hero.session.unit, map);
-        smite.ai.damageTaken(hero.session.unit, damage);
+        smite.ai.attackedBy(hero.session.inWorld.unit, map);
+        smite.ai.damageTaken(hero.session.inWorld.unit, damage);
         smite.values.set!UNIT_FIELD_HEALTH(smite.values.get!UNIT_FIELD_HEALTH - damage);
     }
 
@@ -84,7 +84,7 @@ unittest
     // Past one third there: his last change, the hammer (from phase two, so not the axes again).
     const movedMax = moved.values.get!UNIT_FIELD_MAXHEALTH;
     moved.values.set!UNIT_FIELD_HEALTH(movedMax * 40 / 100);
-    moved.ai.damageTaken(hero.session.unit, movedMax * 10 / 100);
+    moved.ai.damageTaken(hero.session.inWorld.unit, movedMax * 10 / 100);
     assert(moved.values.getByte!UNIT_FIELD_BYTES_1(0) == 8, "the phase came along");
     moved.ai.update(there, 2600);
     assert(moved.values.get!UNIT_VIRTUAL_ITEM_SLOT_DISPLAY(0) == elsewhere.data.items[MrSmite.mightyHammer].displayId);
@@ -130,7 +130,7 @@ unittest
     hero.read();
     hero.say(".worldport 36 -16 -380 61");
     hero.write(Opcode.MSG_MOVE_WORLDPORT_ACK, null);
-    const copy = hero.session.instanceId;
+    const copy = hero.session.inWorld.instanceId;
     auto script = context.instanceScript(copy);
     assert(script !is null && script.name == "instance_deadmines");
     auto map = context.instanceMap(copy);
@@ -153,7 +153,7 @@ unittest
     db.moveOfflineCharacter(7, mapDeadmines, -16, -380, 61, 1581);
     auto back = loggedIn(again, db, 7, "Varian", Position(-16, -380, 61), AccountLevel.administrator, raceHuman,
         mapDeadmines, 60);
-    assert(back.session.instanceId == copy);
+    assert(back.session.inWorld.instanceId == copy);
     auto reloaded = cast(GameObject) again.instanceMap(copy).findObject(makeDoorGuid(factoryDoor, 90001));
     assert(reloaded !is null && reloaded.goState == 0, "open when it loads");
     assert(again.instanceMap(copy).findObject(makeCreatureGuid(rhahkZor, 90002)) is null, "he stays dead");
@@ -199,7 +199,7 @@ unittest
     auto hero = loggedIn(context, db, 7, "Varian", outside, AccountLevel.administrator, raceHuman, mapEasternKingdoms, 60);
     hero.say(".worldport 36 -16 -380 61");
     hero.write(Opcode.MSG_MOVE_WORLDPORT_ACK, null);
-    const copy = hero.session.instanceId;
+    const copy = hero.session.inWorld.instanceId;
     auto inside = context.instanceMap(copy);
     const guid = hero.session.character.guid;
     assert(inside.find(guid) !is null);
@@ -256,17 +256,17 @@ unittest
     hero.say(".worldport 36 -16 -383 61");
     hero.write(Opcode.MSG_MOVE_WORLDPORT_ACK, null);
     hero.read();
-    auto map = context.instanceMap(hero.session.instanceId);
+    auto map = context.instanceMap(hero.session.inWorld.instanceId);
     auto cannon = cast(GameObject) map.findObject(makeDoorGuid(cannonEntry, 90010));
     auto door = cast(GameObject) map.findObject(makeDoorGuid(ironCladDoor, 90011));
     assert(cannon !is null && cannon.behaviour && door.goState == 1);
-    hero.session.useGameObject(cannon);
+    hero.session.inWorld.useGameObject(cannon);
     assert(door.goState == 0, "blown open");
     const heard = hero.read();
     assert(opcodesOf(heard).canFind(Opcode.SMSG_MESSAGECHAT), "the alarm");
     // Gone with its map: the cannon's script is freed with it.
     const live = context.scripts.liveScripts;
-    hero.say(format(".instance shutdown %s", hero.session.instanceId));
+    hero.say(format(".instance shutdown %s", hero.session.inWorld.instanceId));
     assert(context.scripts.liveScripts < live);
 }
 
@@ -348,12 +348,12 @@ unittest
     auto v = &(cast(Player) warlock.session.character).values;
     v.set!UNIT_FIELD_POWER1(0u);
     const health = v.get!UNIT_FIELD_HEALTH;
-    warlock.session.castSpell(&context.data.spells.spells[1454], SpellTargets(TargetFlags.self, 0), true, 0);
+    warlock.session.inWorld.castSpell(&context.data.spells.spells[1454], SpellTargets(TargetFlags.self, 0), true, 0);
     const paid = health - v.get!UNIT_FIELD_HEALTH;
     assert(paid >= 20 && v.get!UNIT_FIELD_POWER1 == paid, "health into as much mana");
 
     v.set!UNIT_FIELD_HEALTH(5u);
-    warlock.session.castSpell(&context.data.spells.spells[1454], SpellTargets(TargetFlags.self, 0), true, 0);
+    warlock.session.inWorld.castSpell(&context.data.spells.spells[1454], SpellTargets(TargetFlags.self, 0), true, 0);
     assert(v.get!UNIT_FIELD_HEALTH == 5, "not to death");
 }
 
@@ -387,7 +387,7 @@ unittest
 
     hunter.write(Opcode.CMSG_AREATRIGGER, ClientAreaTrigger(triggerInn));
     assert(mates == 0, "not on the quest");
-    hunter.session.addQuest(context.data.quests.quests[q.id]);
+    hunter.session.inWorld.addQuest(context.data.quests.quests[q.id]);
     hunter.write(Opcode.CMSG_AREATRIGGER, ClientAreaTrigger(triggerInn));
     assert(mates == 1, "it comes out");
     hunter.write(Opcode.CMSG_AREATRIGGER, ClientAreaTrigger(triggerInn));
@@ -422,7 +422,7 @@ unittest
     map.addObject(her);
     hero.read();
 
-    hero.session.addQuest(context.data.quests.quests[q.id]);
+    hero.session.inWorld.addQuest(context.data.quests.quests[q.id]);
     hero.write(Opcode.CMSG_GOSSIP_HELLO, ClientNpcGuid(her.guid));
     auto menu = hero.read();
     assert(opcodesOf(menu) == [Opcode.SMSG_GOSSIP_MESSAGE]);
@@ -518,7 +518,7 @@ unittest
     {
         aura.duration = 24_000 - tick * 2000;
         const before = victim.values.get!UNIT_FIELD_HEALTH;
-        warlock.session.creatureAuraTick(victim, aura, 0);
+        warlock.session.inWorld.creatureAuraTick(victim, aura, 0);
         dealt ~= before - victim.values.get!UNIT_FIELD_HEALTH;
     }
     assert(dealt == [5, 5, 5, 5, 10, 10, 10, 10, 15, 15, 15, 15], "a ramp");
@@ -543,8 +543,8 @@ unittest
     auto map = context.map(mapEasternKingdoms);
     auto boss = context.makeCreature(&spawn);
     map.addObject(boss);
-    boss.ai.attackedBy(hero.session.unit, map);
-    boss.ai.damageTaken(hero.session.unit, 50);
+    boss.ai.attackedBy(hero.session.inWorld.unit, map);
+    boss.ai.damageTaken(hero.session.inWorld.unit, 50);
     const guid = hero.session.character.guid;
     assert(boss.ai.threatOf(guid) > 0);
     boss.ai.spellEffectScript(&context.data.spells.spells[9204], 0, guid, 0);
@@ -593,7 +593,7 @@ unittest
     hero.say(".worldport 36 -18 -381 61");
     hero.write(Opcode.MSG_MOVE_WORLDPORT_ACK, null);
     hero.read();
-    auto map = context.instanceMap(hero.session.instanceId);
+    auto map = context.instanceMap(hero.session.inWorld.instanceId);
     auto prisoner = cast(Creature) map.findObject(makeCreatureGuid(adamant, 90071));
     auto guard = cast(Creature) map.findObject(makeCreatureGuid(rethilgore, 90072));
     auto courtyard = cast(GameObject) map.findObject(makeDoorGuid(courtyardDoor, 90070));
@@ -670,7 +670,7 @@ unittest
     hero.write(Opcode.MSG_MOVE_WORLDPORT_ACK, null);
     hero.say(".cheat god");
     hero.read();
-    auto map = context.instanceMap(hero.session.instanceId);
+    auto map = context.instanceMap(hero.session.inWorld.instanceId);
     Creature find(uint entry)
     {
         foreach (c; map.creaturesNear(Position(start.x + 20, start.y, start.z), 80))

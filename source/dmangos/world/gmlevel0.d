@@ -2,7 +2,7 @@
  * ArcEmu's `Level0.cpp` handlers: `.help`, `.commands`, `.start`, `.server info`,
  * `.server netstatus`, `.dismount`, `.server save`, `.gm list`,
  * `.debug rangecheck` and `.logcomment`. Mixed into
- * `dmangos.world.session.WorldSession`; `dmangos.world.commands` calls them.
+ * `dmangos.world.character.Character`; `dmangos.world.commands` calls them.
  */
 module dmangos.world.gmlevel0;
 

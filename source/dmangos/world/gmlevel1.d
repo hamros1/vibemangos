@@ -2,7 +2,7 @@
  * ArcEmu's `Level1.cpp` handlers: announcements, `.gm on` and `.gm off`, `.gps`,
  * `.kickplayer`, `.character additem`, `.summon`, `.appear`, `.modify speed`
  * and `.modify gold`, the skill commands, `.npc emote`, `.gotrig` and
- * `.character unlearn`. Mixed into `dmangos.world.session.WorldSession`.
+ * `.character unlearn`. Mixed into `dmangos.world.session.Character`.
  */
 module dmangos.world.gmlevel1;
 

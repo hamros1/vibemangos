@@ -7,7 +7,7 @@
  * `.gm blockwhispers`, the character group's spell, item and skill commands,
  * the lookups, `.npc info`, and
  * `.character rename` (from `CharacterHandler.cpp`). Mixed into
- * `dmangos.world.session.WorldSession`.
+ * `dmangos.world.character.Character`.
  *
  * CMaNGOS's schema decides a few things ArcEmu's does not have:
  * $(UL
@@ -271,7 +271,7 @@ private:
 
     bool handlePlayerInfo(Rest name = Rest.init)
     {
-        WorldSession plr;
+        Character plr;
         if (name.length >= 2) // char name can be 2 letters
         {
             auto found = context.onlinePlayer(name);
@@ -314,9 +314,9 @@ private:
     }
 
     /// The selected player, on this map (`MapMgr::GetUnit` that is a player), or null after "Invalid target.".
-    WorldSession selectedPlayerUnit()
+    Character selectedPlayerUnit()
     {
-        auto plr = cast(WorldSession) map.find(player.values.get!UNIT_FIELD_TARGET);
+        auto plr = cast(Character) map.find(player.values.get!UNIT_FIELD_TARGET);
         if (plr is null)
             redSystemMessage("Invalid target.");
         return plr;
@@ -350,11 +350,21 @@ private:
     // Accounts (sLogonCommHandler.Account_*)
     // -----------------------------------------------------------------------
 
-    /// `World::FindSessionByName`: the session of the account named `name`, in any case, or null.
-    WorldSession sessionOfAccountName(string name)
+    /// `World::FindSessionByName`: the connection of the account named `name` (in the world or at the
+    /// character screen), in any case, or null.
+    WorldSession connectionOfAccountName(string name)
     {
+        import dmangos.world.session : WorldSession;
+
         const found = context.accounts.findAccount(name);
         return found.isNull ? null : cast(WorldSession) context.sessionOfAccount(found.get.id);
+    }
+
+    /// ditto: its character, if it is in the world here.
+    Character sessionOfAccountName(string name)
+    {
+        auto connection = connectionOfAccountName(name);
+        return connection is null ? null : connection.inWorld;
     }
 
     /// The `account.gmlevel` an ArcEmu permission string stands for: a level number as is, otherwise
@@ -432,9 +442,13 @@ private:
     // -----------------------------------------------------------------------
 
     /// The message `DisconnectUsersWith*` sends for each session it closes, then the close.
-    void disconnect(WorldSession session)
+    void disconnect(imported!"dmangos.world.session".WorldSession connection)
     {
-        session.disconnectedBy(gmSink, player.data.name);
+        // ArcEmu's "Disconnecting user with ...": an account at its character screen too.
+        const name = connection.character is null ? "noplayer" : connection.character.data.name;
+        gmSink.system(format!"Disconnecting user with account `%s` IP `%s` Player `%s`."(connection.account.username,
+            connection.address, name));
+        connection.kick(format!"disconnected by %s"(player.data.name));
     }
 
     /// `World::DisconnectUsersWithIP`
@@ -442,7 +456,8 @@ private:
     {
         auto sessions = context.sessionsFrom(ip);
         foreach (session; sessions)
-            disconnect(cast(WorldSession) session);
+            if (auto connection = cast(imported!"dmangos.world.session".WorldSession) session)
+                disconnect(connection);
         if (sessions.length == 0)
             systemMessage(format!"There is nobody online with ip [%s]"(ip));
     }
@@ -450,8 +465,8 @@ private:
     /// `World::DisconnectUsersWithAccount`
     void disconnectUsersWithAccount(string account)
     {
-        if (auto session = sessionOfAccountName(account))
-            disconnect(session);
+        if (auto connection = connectionOfAccountName(account))
+            disconnect(connection);
         else
             systemMessage(format!"There is nobody online with account [%s]"(account));
     }
@@ -466,7 +481,7 @@ private:
         // `World::DisconnectUsersWithPlayerName`. ArcEmu forgets to note that it found someone and
         // always adds "There is no body online"; this does not.
         if (auto found = context.onlinePlayer(name))
-            disconnect(sessionOf(found));
+            disconnect(sessionOf(found).connection);
         else if (gmElsewhere(name, GmRemoteOp.disconnect))
         {
         }
@@ -877,8 +892,8 @@ private:
      * The shape of ArcEmu's cheat toggles: on, off, or (with nothing said) the other way; the GM and
      * the player told, and the GM log when it goes off for another.
      */
-    bool toggleCheat(Nullable!OnOff state, string name, string logLine, bool* delegate(WorldSession) flag,
-        void delegate(WorldSession) whenOn = null)
+    bool toggleCheat(Nullable!OnOff state, string name, string logLine, bool* delegate(Character) flag,
+        void delegate(Character) whenOn = null)
     {
         auto plyr = getSelectedChar(true);
         if (plyr is null)
@@ -907,14 +922,14 @@ private:
 
     bool handleCastTimeCheatCommand(Nullable!OnOff state)
     {
-        return toggleCheat(state, "cast time", "god cast time", (WorldSession p) => &p.castTimeCheat);
+        return toggleCheat(state, "cast time", "god cast time", (Character p) => &p.castTimeCheat);
     }
 
     bool handleCooldownCheatCommand(Nullable!OnOff state)
     {
         // On, every spell known has its cooldown cleared (`ClearCooldownForSpell`).
-        return toggleCheat(state, "cooldown", "cooldown cheat", (WorldSession p) => &p.cooldownCheat,
-            (WorldSession p) {
+        return toggleCheat(state, "cooldown", "cooldown cheat", (Character p) => &p.cooldownCheat,
+            (Character p) {
                 foreach (spell; p.player.spells)
                     p.clearCooldownFor(spell);
             });
@@ -922,17 +937,17 @@ private:
 
     bool handleGodModeCommand(Nullable!OnOff state)
     {
-        return toggleCheat(state, "god mode", "god mode cheat", (WorldSession p) => &p.godModeCheat);
+        return toggleCheat(state, "god mode", "god mode cheat", (Character p) => &p.godModeCheat);
     }
 
     bool handlePowerCheatCommand(Nullable!OnOff state)
     {
-        return toggleCheat(state, "power", "power cheat", (WorldSession p) => &p.powerCheat);
+        return toggleCheat(state, "power", "power cheat", (Character p) => &p.powerCheat);
     }
 
     bool handleTriggerpassCheatCommand(Nullable!OnOff state)
     {
-        return toggleCheat(state, "triggerpass", "triggerpass cheat", (WorldSession p) => &p.triggerpassCheat);
+        return toggleCheat(state, "triggerpass", "triggerpass cheat", (Character p) => &p.triggerpassCheat);
     }
 
     // -----------------------------------------------------------------------
@@ -1807,7 +1822,7 @@ unittest
         assert(!victim.knowsSpell(blessing));
         {
             NewCharacter fresh;
-            assert(anduin.session.startingAbilities(anduin.session, fresh) && fresh.spells.length);
+            assert(anduin.session.inWorld.startingAbilities(anduin.session.inWorld, fresh) && fresh.spells.length);
             foreach (s; fresh.spells)
                 if (s.active && !s.disabled)
                     assert(victim.knowsSpell(s.spell), "a new character's spells");
@@ -1833,7 +1848,7 @@ unittest
         assert(context.data.creatureTemplates[creatureInnkeeper].scale == 2.0f);
     }
 
-    anduin.session.addAura(makeAura(&context.data.spells.spells[sickness], victim.guid, 1, 600_000, false, [-75, 0, 0]));
+    anduin.session.inWorld.addAura(makeAura(&context.data.spells.spells[sickness], victim.guid, 1, 600_000, false, [-75, 0, 0]));
     assert(victim.auras.find(sickness) !is null);
     gm.write(Opcode.CMSG_SET_SELECTION, ClientGuid(victim.guid));
     gm.say(".removesickness");

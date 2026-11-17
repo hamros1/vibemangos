@@ -2,7 +2,7 @@
  * The player's session as the host of spell and area trigger scripts (docs/SCRIPTING.md): a spell
  * script runs when a dummy or script effect of the player's spell hits (`EffectHit`), an area
  * trigger script when the player walks into its trigger (`TriggerEntered`); both act through the
- * session, by the rules its own actions follow. Mixed into `dmangos.world.session.WorldSession`.
+ * session, by the rules its own actions follow. Mixed into `dmangos.world.session.Character`.
  */
 module dmangos.world.sessionscripting;
 
@@ -132,13 +132,13 @@ mixin template SessionScripting()
         return scriptHost_;
     }
 
-    private WorldSession sessionHere(EntityRef who)
+    private Character sessionHere(EntityRef who)
     {
-        import dmangos.world.session : WorldSession;
+        import dmangos.world.character : Character;
 
         if (player !is null && who.guid == player.guid)
             return this;
-        auto other = cast(WorldSession) context.onlinePlayer(who.guid);
+        auto other = cast(Character) context.onlinePlayer(who.guid);
         return other !is null && other.player !is null && other.map is map ? other : null;
     }
 

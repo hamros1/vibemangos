@@ -2,7 +2,7 @@
  * What the GM command handlers do to players, shared by the handler groups
  * (`gmlevel0` .. `gmlevel3`, `gmdebug`, `gmrecall`): levels, speeds, spells,
  * skills, items, saving, teleports, and messages to everyone. Mixed into
- * `dmangos.world.session.WorldSession`; a handler calls them on the session of
+ * `dmangos.world.character.Character`; a handler calls them on the session of
  * the player it acts on.
  */
 module dmangos.world.gmactions;

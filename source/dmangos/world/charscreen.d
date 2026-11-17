@@ -2,7 +2,7 @@
  * The character screen's handlers (CMaNGOS `Entities/CharacterHandler.cpp`):
  * the character list, creation, deletion, and entering the world.
  *
- * `CharacterScreenHandlers` is mixed into `dmangos.world.session.WorldSession`.
+ * `CharacterScreenHandlers` is mixed into `dmangos.world.character.Character`.
  * Its handlers are members of the session: they use its state (`account`,
  * `context`, `player`) and helpers (`send`, `sendUpdate`) directly, and resolve
  * `Handles` and `WorldState` where they are mixed in.
@@ -223,6 +223,36 @@ private:
             character.position.z = character.homeBind.z;
         }
 
+        // The character's own simulation (docs/DESIGN.md, step 3): it is in the world from here on.
+        auto entering = new Character(this, context);
+        entering.enterWorldAtLogin(character); // it becomes `playing` as it enters the world
+    }
+
+}
+
+/**
+ * The character's side of logging in (`WorldSession::HandlePlayerLogin` after its checks), mixed
+ * into `dmangos.world.character.Character`: the player made from its saved state, the login
+ * packets, and the world entered.
+ */
+mixin template CharacterLogin()
+{
+    import core.time : seconds;
+    import std.algorithm.iteration : map;
+    import std.array : array;
+    import std.format : format;
+    import dmangos.log;
+    import dmangos.timer : IntervalTimer;
+    import dmangos.world.charscreen : gameTimeBits, motdLines;
+    import dmangos.world.opcodes;
+    import dmangos.world.packets;
+    import dmangos.world.player : CharacterData, Player;
+    import dmangos.world.playercreate : CharacterBuilder, KnownAbilities;
+
+    /// Enters the world as `character`, which the connection loaded and checked.
+    package void enterWorldAtLogin(CharacterData character)
+    {
+        const guid = character.guid;
         player = makePlayer(character, true);
         loadCooldowns(); // before the spellbook is sent: it shows them
         loadTalentReset();
@@ -231,6 +261,7 @@ private:
         regenTimer.reset();
         enteredWorld = context.clock();
         state_ = WorldState.inWorld;
+        connection.playing = this; // in the world from here on
         instanceId_ = context.instanceFor(player.guid, player.data.map); // a dungeon: its group's copy, or its own
         sendLoginPackets();
         context.enterWorld(this); // after the player's own create block: now others see it, and it sees them
@@ -376,6 +407,7 @@ version (unittest)
 {
     import dmangos.world.opcodes;
     import dmangos.world.packets;
+    import dmangos.world.character : Character;
     import dmangos.world.session : WorldSession, WorldState;
     import dmangos.world.testclient;
     import dmangos.world.testdata;

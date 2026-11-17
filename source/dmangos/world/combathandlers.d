@@ -3,7 +3,7 @@
  * `CMSG_ATTACKSTOP`, `CMSG_SETSHEATHED`) and the player's half of `Unit`'s melee: `Attack`,
  * `AttackStop`, the swing loop (`UpdateMeleeAttackingState`), and a swing's damage
  * (`AttackerStateUpdate`, `DealMeleeDamage`, `DealDamage`), mixed into
- * `dmangos.world.session.WorldSession`. The formulas are in `dmangos.world.combat`.
+ * `dmangos.world.character.Character`. The formulas are in `dmangos.world.combat`.
  *
  * Players fight creatures this node simulates, which fight back (`dmangos.world.creatureai`), and
  * each other in duels. Damage goes through `dmangos.world.unit.dealDamage`, the rules every unit
@@ -134,7 +134,7 @@ private:
     {
         playerDied(true);
     }
-    ulong attacking;               // `m_attacking`: the creature attacked
+    package ulong attacking;       // `m_attacking`: the creature attacked
     bool meleeAttacking;           // `UNIT_STAT_MELEE_ATTACKING`
     uint[2] attackTimer;           // main hand, off hand: milliseconds until the next swing may go
     SwingError lastSwingError;     // `LastSwingErrorMsg`: an error is told once until it changes
@@ -545,10 +545,10 @@ private:
     /// `Unit::Kill` of a creature, as far as there is death yet: everyone attacking it stops.
     void creatureKilled(Creature victim)
     {
-        import dmangos.world.session : WorldSession;
+        import dmangos.world.character : Character;
 
         foreach (guid, _; victim.attackers)
-            if (auto other = cast(WorldSession) context.onlinePlayer(guid))
+            if (auto other = cast(Character) context.onlinePlayer(guid))
                 if (other !is this)
                     other.stopAttack(false);
         stopAttack(false);

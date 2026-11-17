@@ -487,11 +487,11 @@ mixin template DbScriptRunner()
     /// The player among a step's source and target (`GetPlayerTargetOrSourceAndLog`); null if neither.
     private auto scriptPlayer(ScriptThing source, ScriptThing target)
     {
-        import dmangos.world.session : WorldSession;
+        import dmangos.world.character : Character;
 
         foreach (o; [target, source])
             if (o.exists && !o.creatureOrGo)
-                if (auto session = cast(WorldSession) onlinePlayer(o.guid))
+                if (auto session = cast(Character) onlinePlayer(o.guid))
                     return session;
         return null;
     }
@@ -965,7 +965,7 @@ unittest
     auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f, 1.97f));
     auto map = context.map(0);
     auto keeper = cast(Creature) map.findObject(makeGuid(HighGuid.unit, creatureInnkeeper, innkeeperSpawn));
-    anduin.session.addQuest(context.data.quests.quests[questId]);
+    anduin.session.inWorld.addQuest(context.data.quests.quests[questId]);
     anduin.read();
     const flags = keeper.values.get!UNIT_NPC_FLAGS;
 
@@ -992,7 +992,7 @@ unittest
     c.reqCreatureOrGoId[0] = 12345;
     c.reqCreatureOrGoCount[0] = 1;
     context.data.quests.quests[credit] = c;
-    anduin.session.addQuest(context.data.quests.quests[credit]);
+    anduin.session.inWorld.addQuest(context.data.quests.quests[credit]);
     context.data.dbScripts.add(DbScriptType.relay, DbScriptStep(sit, 0, 0, ScriptCommand.standState, 1));
     EventAiEvent greeted = {id: 1, type: EventType.receiveEmote, chance: 100, params: [wave, 0, 0, 0, 0, 0]};
     greeted.actions[0] = EventAiAction(ActionType.killedMonster, [12345, EventTarget.actionInvoker, 0]);
@@ -1074,18 +1074,18 @@ unittest
         enum uint ritual = 95200, call = 95201, rite = 9402;
         Quest r = {id: rite, method: 2, maxLevel: 60, title: "Rite", specialFlags: 0x02};
         context.data.quests.quests[rite] = r;
-        anduin.session.addQuest(context.data.quests.quests[rite]);
+        anduin.session.inWorld.addQuest(context.data.quests.quests[rite]);
         context.data.spells.spells[ritual] = testSpell(ritual, 3, 1, 0);
         context.data.spells.spells[ritual].casting.dmgClass = 0;
         context.data.dbScripts.add(DbScriptType.spell, DbScriptStep(ritual, 0, 0, ScriptCommand.questExplored, rite));
-        anduin.session.castTriggeredAt(ritual, me.guid);
+        anduin.session.inWorld.castTriggeredAt(ritual, me.guid);
         context.updateScripts(0);
         assert(me.questStatus[rite].status == QuestState.complete, "the spell's script");
 
         context.data.spells.spells[call] = testSpell(call, 41, 1, 0);
         context.data.spells.spells[call].miscValue[0] = creatureTrainer;
         context.data.spells.spells[call].casting.dmgClass = 0;
-        anduin.session.castTriggeredAt(call, me.guid);
+        anduin.session.inWorld.castTriggeredAt(call, me.guid);
         bool found;
         foreach (near; map.creaturesNear(me.position, 5))
             if (near.summon.summoner == me.guid && near.template_.entry == creatureTrainer)

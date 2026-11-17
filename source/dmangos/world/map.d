@@ -11,7 +11,7 @@
  * moved `relocationLimit` yards since the last time, as with CMaNGOS's
  * `Visibility.RelocationLowerLimit`.
  *
- * The map knows players through `Inhabitant`, which `WorldSession` implements:
+ * The map knows players through `Inhabitant`, which `Character` implements:
  * the character, and a way to deliver a packet. Tests implement it directly.
  *
  * Creatures and game objects (`MapObject`) are kept in the same cells. A
@@ -1329,12 +1329,12 @@ final class Map : CombatWorld, GameObjectWorld
     /// See `CombatWorld.unit`.
     UnitRef unit(ulong guid)
     {
-        import dmangos.world.session : WorldSession;
+        import dmangos.world.character : Character;
 
         const slot = slotFor(guid);
         if (slot == uint.max)
             return UnitRef.init;
-        if (auto session = cast(WorldSession) at(slot).player)
+        if (auto session = cast(Character) at(slot).player)
             return UnitRef.of(session);
         return UnitRef.of(cast(Creature) at(slot).object, this);
     }
@@ -1348,9 +1348,9 @@ final class Map : CombatWorld, GameObjectWorld
     /// A player here as a unit; none for a stand-in (tests).
     private UnitRef unitOf(Inhabitant who)
     {
-        import dmangos.world.session : WorldSession;
+        import dmangos.world.character : Character;
 
-        return UnitRef.of(cast(WorldSession) who);
+        return UnitRef.of(cast(Character) who);
     }
 
     /**

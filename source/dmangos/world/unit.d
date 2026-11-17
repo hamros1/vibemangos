@@ -20,7 +20,7 @@ import dmangos.world.creature : Creature;
 import dmangos.world.map : Map;
 import dmangos.world.opcodes : Opcode;
 import dmangos.world.relations : Relating;
-import dmangos.world.session : WorldSession;
+import dmangos.world.character : Character;
 import dmangos.world.spells : SpellInfo;
 import dmangos.script.api : MenuOption, QuestProgress;
 
@@ -69,12 +69,12 @@ struct Blow
 struct UnitRef
 {
     UnitKind kind;
-    WorldSession session; /// a player's
+    Character session; /// a player's
     Creature creature;    /// a creature's
     Map map;              /// where it is
 
     /// The player of `session`, on its map.
-    static UnitRef of(WorldSession session)
+    static UnitRef of(Character session)
     {
         if (session is null || session.character is null)
             return UnitRef.init;
@@ -305,7 +305,7 @@ struct UnitRef
 }
 
 /// The player who owns `unit`'s kills and taps: itself, or a pet's owner (if on the map); null otherwise.
-WorldSession creditedPlayer(UnitRef unit)
+Character creditedPlayer(UnitRef unit)
 {
     final switch (unit.kind)
     {
@@ -316,13 +316,13 @@ WorldSession creditedPlayer(UnitRef unit)
     case UnitKind.creature:
         if (!unit.creature.petOwner)
             return null;
-        return cast(WorldSession) unit.map.find(unit.creature.petOwner);
+        return cast(Character) unit.map.find(unit.creature.petOwner);
     }
 }
 
 /**
  * `Unit::DealDamage`: `damage` from `attacker` (none: from nowhere, a GM's kill) to `victim`, as
- * `blow` says it came. A player suffers it (`WorldSession.sufferDamage`: standing up, rage, the
+ * `blow` says it came. A player suffers it (`Character.sufferDamage`: standing up, rage, the
  * combat state, a duel's last blow, death). A creature fights back (`AttackedBy`) and takes it as
  * threat, is tapped for the player the blow is credited to, and may die: its death is that player's
  * kill (experience, loot, quests), a pet's dies for its owner, and any other just dies.
@@ -365,7 +365,7 @@ private void creatureDamaged(UnitRef attacker, UnitRef victim, uint damage, cons
     {
         // A pet: dead for its owner to revive (or to summon again).
         map.creatureDeath(creature);
-        if (auto owner = cast(WorldSession) map.find(creature.petOwner))
+        if (auto owner = cast(Character) map.find(creature.petOwner))
             owner.ownPetDied();
         return;
     }

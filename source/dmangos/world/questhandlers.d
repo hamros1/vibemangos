@@ -1,7 +1,7 @@
 /**
  * Quests for players (CMaNGOS `QuestHandler.cpp`, `GossipDef.cpp`'s quest packets, and `Player`'s
  * quest functions: `CanTakeQuest`, `AddQuest`, `CompleteQuest`, `RewardQuest`, `KilledMonster`,
- * `ItemAddedQuestCheck`), mixed into `dmangos.world.session.WorldSession`.
+ * `ItemAddedQuestCheck`), mixed into `dmangos.world.character.Character`.
  *
  * Quest givers show what they have for the player (`SMSG_QUESTGIVER_STATUS`), list their quests in
  * their gossip, and give them (details, accept). The quest log is the player's 20
@@ -632,13 +632,13 @@ private:
     @Handles(Opcode.CMSG_QUESTGIVER_ACCEPT_QUEST, WorldState.inWorld)
     void handleQuestgiverAcceptQuest(ref ByteReader reader)
     {
-        import dmangos.world.session : WorldSession;
+        import dmangos.world.character : Character;
 
         const guid = reader.read!ulong, id = reader.read!uint;
         QuestGiver giver;
         bool near = questGiverNear(guid, 0x2, giver);
         // A quest a group member shared (`CanShareQuest` on its side).
-        auto sharer = near ? null : cast(WorldSession) context.onlinePlayer(guid);
+        auto sharer = near ? null : cast(Character) context.onlinePlayer(guid);
         if (sharer !is null && sharer !is this && sharer.player !is null && sharer.canShareQuest(id))
         {
             giver = QuestGiver(guid, [id], null);
@@ -671,7 +671,7 @@ private:
 
             creature.ai.raiseFrom(map, QuestAccepted(EntityRef(player.guid), id));
         }
-        if (auto divider = cast(WorldSession) context.onlinePlayer(questDivider))
+        if (auto divider = cast(Character) context.onlinePlayer(questDivider))
             divider.pushToPartyResponse(player.guid, QuestShare.accepted);
         questDivider = 0;
         // The item that began it goes, unless the quest asks for it or gives it (`AddQuest`).
@@ -969,7 +969,7 @@ private:
     @Handles(Opcode.CMSG_PUSHQUESTTOPARTY, WorldState.inWorld)
     void handlePushQuestToParty(ref ByteReader reader)
     {
-        import dmangos.world.session : WorldSession;
+        import dmangos.world.character : Character;
 
         const id = reader.read!uint;
         if (!canShareQuest(id))
@@ -980,7 +980,7 @@ private:
             return;
         foreach (ref slot; group.members)
         {
-            auto member = cast(WorldSession) context.onlinePlayer(slot.guid);
+            auto member = cast(Character) context.onlinePlayer(slot.guid);
             if (member is null || member is this || member.player is null || member.map !is map)
                 continue;
             pushToPartyResponse(member.player.guid, QuestShare.sharing);
@@ -1024,11 +1024,11 @@ private:
     @Handles(Opcode.MSG_QUEST_PUSH_RESULT, WorldState.inWorld)
     void handleQuestPushResult(ref ByteReader reader)
     {
-        import dmangos.world.session : WorldSession;
+        import dmangos.world.character : Character;
 
         const guid = reader.read!ulong;
         const message = reader.read!ubyte;
-        if (auto sharer = cast(WorldSession) context.onlinePlayer(questDivider))
+        if (auto sharer = cast(Character) context.onlinePlayer(questDivider))
         {
             ByteWriter w;
             w.put(guid);
@@ -1390,7 +1390,7 @@ unittest
     found.reqCreatureOrGoCount[0] = 1;
     found.specialFlags = 0x20;
     context.data.quests.quests[9301] = found;
-    anduin.session.lootStore(itemJerky, 1, 0, false);
+    anduin.session.inWorld.lootStore(itemJerky, 1, 0, false);
     ulong noteGuid;
     foreach (item; me.inventory.all())
         if (item.entry == itemJerky)
@@ -1433,9 +1433,9 @@ unittest
     anduin.read();
     auto me = cast(Player) anduin.session.character;
     const start = context.unixTime;
-    anduin.session.addQuest(context.data.quests.quests[9500]);
+    anduin.session.inWorld.addQuest(context.data.quests.quests[9500]);
     assert(me.values[PLAYER_QUEST_LOG_1_1 + 2] == start + 60, "its end in the log");
-    assert(!anduin.session.canTakeQuest(context.data.quests.quests[9501]), "one timed quest at a time");
+    assert(!anduin.session.inWorld.canTakeQuest(context.data.quests.quests[9501]), "one timed quest at a time");
     now += 30.seconds;
     anduin.session.update(30_000.msecs);
     assert(me.questStatus[9500].status == QuestState.incomplete);
@@ -1444,7 +1444,7 @@ unittest
     anduin.session.update(31_000.msecs);
     assert(opcodesOf(anduin.read()).canFind(Opcode.SMSG_QUESTUPDATE_FAILEDTIMER));
     assert(me.questStatus[9500].status == QuestState.failed && me.questStatus[9500].timer == 0);
-    assert(!anduin.session.canCompleteQuest(9500));
+    assert(!anduin.session.inWorld.canCompleteQuest(9500));
 }
 
 /// `questgiver_greeting`: a giver's list of several quests is headed by its words and emote.

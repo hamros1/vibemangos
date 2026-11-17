@@ -1,7 +1,7 @@
 /**
  * Casting spells (CMaNGOS `SpellHandler.cpp`, `Spells/Spell.cpp`'s `SpellStart`, `Prepare`,
  * `update`, `cast`, `CheckCast`, `TakePower`, and `SpellEffects.cpp`'s effects), mixed into
- * `dmangos.world.session.WorldSession`.
+ * `dmangos.world.character.Character`.
  *
  * A cast is checked (known, alive, not busy, off cooldown, enough power and reagents, a fitting
  * target in range and in sight), shown (`SMSG_SPELL_START`), counts down its cast time (moving
@@ -2109,7 +2109,7 @@ unittest
     assert(keeper.values.get!UNIT_FIELD_HEALTH < 500 && trainer.values.get!UNIT_FIELD_HEALTH < 500, "both within 10 yards");
 
     const keeperBefore = keeper.values.get!UNIT_FIELD_HEALTH, trainerBefore = trainer.values.get!UNIT_FIELD_HEALTH;
-    anduin.session.castTriggeredAt(bolt, keeper.guid); // past the global cooldown
+    anduin.session.inWorld.castTriggeredAt(bolt, keeper.guid); // past the global cooldown
     assert(keeper.values.get!UNIT_FIELD_HEALTH < keeperBefore && trainer.values.get!UNIT_FIELD_HEALTH < trainerBefore,
         "the bolt jumped to the trainer");
 
@@ -2127,10 +2127,10 @@ unittest
         context.data.spells.spells[fire].attributesEx2 |= 0x20000000; // no crit
         auto aura = makeAura(&context.data.spells.spells[power], me.guid, 1, -1, true, [35, 0, 0]);
         aura.passive = true;
-        anduin.session.addAura(aura);
+        anduin.session.inWorld.addAura(aura);
         keeper.values.set!UNIT_FIELD_LEVEL(me.values.get!UNIT_FIELD_LEVEL); // no resist from levels
         const before = keeper.values.get!UNIT_FIELD_HEALTH;
-        anduin.session.castTriggeredAt(fire, keeper.guid);
+        anduin.session.inWorld.castTriggeredAt(fire, keeper.guid);
         assert(keeper.values.get!UNIT_FIELD_HEALTH == before - 35, "20 and 15 of spell power");
 
         // Healing power: +35 healing done on an instant heal of 20: 35 more.
@@ -2141,10 +2141,10 @@ unittest
         context.data.spells.spells[mend].attributesEx2 |= 0x20000000; // no crit
         auto healAura = makeAura(&context.data.spells.spells[healing], me.guid, 1, -1, true, [35, 0, 0]);
         healAura.passive = true;
-        anduin.session.addAura(healAura);
+        anduin.session.inWorld.addAura(healAura);
         me.values.set!UNIT_FIELD_MAXHEALTH(500u);
         me.values.set!UNIT_FIELD_HEALTH(100u);
-        anduin.session.castTriggeredAt(mend, me.guid);
+        anduin.session.inWorld.castTriggeredAt(mend, me.guid);
         assert(me.values.get!UNIT_FIELD_HEALTH == 100 + 20 + 15, "20 and 15 of healing power");
     }
 
@@ -2156,7 +2156,7 @@ unittest
     context.data.spells.spells[missile].casting.speed = 10;
     context.data.spells.spells[missile].casting.dmgClass = 0;
     const flying = keeper.values.get!UNIT_FIELD_HEALTH;
-    anduin.session.castTriggeredAt(missile, keeper.guid);
+    anduin.session.inWorld.castTriggeredAt(missile, keeper.guid);
     assert(keeper.values.get!UNIT_FIELD_HEALTH == flying, "still in flight");
     anduin.session.update(400.msecs);
     assert(keeper.values.get!UNIT_FIELD_HEALTH < flying, "arrived");
@@ -2175,7 +2175,7 @@ unittest
         context.data.spells.spells[smite].attributesEx2 |= 0x20000000; // no crit
         context.data.items[itemSword].details.spells[0].id = smite;
         context.data.items[itemSword].details.spells[0].trigger = 2; // chance on hit
-        anduin.session.lootStore(itemSword, 1, 0, false);
+        anduin.session.inWorld.lootStore(itemSword, 1, 0, false);
         anduin.read();
         ubyte slot;
         foreach (s; ubyte(23) .. ubyte(39))
@@ -2186,9 +2186,9 @@ unittest
         anduin.read();
         assert(me.inventory.equipped(equipmentSlotMainhand) !is null);
         const struck = keeper.values.get!UNIT_FIELD_HEALTH;
-        anduin.session.castItemCombatSpells(keeper, AttackType.mainHand);
+        anduin.session.inWorld.castItemCombatSpells(keeper, AttackType.mainHand);
         assert(keeper.values.get!UNIT_FIELD_HEALTH == struck - 25, "the proc");
-        anduin.session.castItemCombatSpells(keeper, AttackType.offHand);
+        anduin.session.inWorld.castItemCombatSpells(keeper, AttackType.offHand);
         assert(keeper.values.get!UNIT_FIELD_HEALTH == struck - 25, "not for the other hand");
     }
 }
@@ -2294,9 +2294,9 @@ unittest
 
     auto hero = loggedIn(context, db, 7, "Varian", Position(-8949.95f, -132.49f, 83.53f), AccountLevel.administrator);
     hero.read();
-    assert(hero.session.castSpell(spell, SpellTargets(TargetFlags.self, 0), false, 0) == SpellCastResult.ok);
+    assert(hero.session.inWorld.castSpell(spell, SpellTargets(TargetFlags.self, 0), false, 0) == SpellCastResult.ok);
     now += 2.seconds; // past the global cooldown
-    assert(hero.session.castSpell(spell, SpellTargets(TargetFlags.self, 0), false, 0) == SpellCastResult.notReady);
+    assert(hero.session.inWorld.castSpell(spell, SpellTargets(TargetFlags.self, 0), false, 0) == SpellCastResult.notReady);
     hero.write(Opcode.CMSG_LOGOUT_REQUEST, null);
     hero.read();
     assert(db.loadCooldowns(7).length == 1, "saved");
@@ -2312,9 +2312,9 @@ unittest
         }
     assert(shown.length == 1 && shown[0].spell == 29100 && shown[0].spellMs > 40_000 && shown[0].spellMs <= 50_000,
         "the client is told: about 48 s left");
-    assert(hero.session.castSpell(spell, SpellTargets(TargetFlags.self, 0), false, 0) == SpellCastResult.notReady);
+    assert(hero.session.inWorld.castSpell(spell, SpellTargets(TargetFlags.self, 0), false, 0) == SpellCastResult.notReady);
     now += 50.seconds;
-    assert(hero.session.castSpell(spell, SpellTargets(TargetFlags.self, 0), false, 0) == SpellCastResult.ok, "over");
+    assert(hero.session.inWorld.castSpell(spell, SpellTargets(TargetFlags.self, 0), false, 0) == SpellCastResult.ok, "over");
 }
 
 /// Talents' spell modifiers in a cast: a percent off the cost of the spells of its mask, not others'.
@@ -2362,11 +2362,11 @@ unittest
     bool isNew;
     me.auras.apply(makeAura(&context.data.spells.spells[29103], me.guid, 10, -1, true, [-50, 0, 0]), me.values, isNew);
     me.values.set!UNIT_FIELD_POWER1(1000u);
-    assert(mage.session.castSpell(&context.data.spells.spells[29101], SpellTargets(TargetFlags.self, 0), false, 0)
+    assert(mage.session.inWorld.castSpell(&context.data.spells.spells[29101], SpellTargets(TargetFlags.self, 0), false, 0)
         == SpellCastResult.ok);
     assert(me.values.get!UNIT_FIELD_POWER1 == 950, "half the cost");
     now += 2.seconds;
-    assert(mage.session.castSpell(&context.data.spells.spells[29102], SpellTargets(TargetFlags.self, 0), false, 0)
+    assert(mage.session.inWorld.castSpell(&context.data.spells.spells[29102], SpellTargets(TargetFlags.self, 0), false, 0)
         == SpellCastResult.ok);
     assert(me.values.get!UNIT_FIELD_POWER1 == 850, "not of its mask: the whole cost");
 }

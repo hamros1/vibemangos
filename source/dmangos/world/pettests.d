@@ -96,7 +96,7 @@ unittest
         raceHuman, 0, 1, (ref c) { c.classId = classMage; });
     gul.read();
     addPetData(&gul, context);
-    auto session = gul.session;
+    auto session = gul.session.inWorld;
     auto map = context.map(0);
 
     void tick(int ms)
@@ -181,7 +181,7 @@ unittest
     auto rexxar = loggedIn(context, db, 7, "Rexxar", start, AccountLevel.player, raceOrc);
     rexxar.read();
     addPetData(&rexxar, context);
-    auto session = rexxar.session;
+    auto session = rexxar.session.inWorld;
     auto map = context.map(0);
 
     void tick(int ms)
@@ -320,13 +320,13 @@ unittest
     tick(100);
     assert(db.loadPets(7)[0].slot == PetSlot.current && map.findObject(pet.guid) is null);
     rexxar = loggedIn(context, db, 7, "Rexxar", start, AccountLevel.player, raceOrc);
-    assert(rexxar.session.ownPet !is null && (cast(PetState) rexxar.session.ownPet.petData).name == "Misha");
+    assert(rexxar.session.inWorld.ownPet !is null && (cast(PetState) rexxar.session.inWorld.ownPet.petData).name == "Misha");
 
     // Abandoned: gone for good.
     {
         ByteWriter w;
-        w.put(rexxar.session.ownPet.guid);
+        w.put(rexxar.session.inWorld.ownPet.guid);
         rexxar.write(Opcode.CMSG_PET_ABANDON, w.data);
     }
-    assert(rexxar.session.ownPet is null && db.loadPets(7).length == 0);
+    assert(rexxar.session.inWorld.ownPet is null && db.loadPets(7).length == 0);
 }

@@ -17,7 +17,7 @@
  *        word abbreviates, and whose letter the account has, is taken
  *        (`ExecuteCommandInTable`). A sub-table without a matching word lists its commands.
  *        A handler returning false shows the row's help, or "Incorrect syntax specified".)
- *   $(LI $(B Handlers.) Each row names ArcEmu's handler; the `WorldSession` method of that name,
+ *   $(LI $(B Handlers.) Each row names ArcEmu's handler; the `Character` method of that name,
  *        with a lower-case first letter, runs it. Its parameters say what it takes: the command's
  *        words are converted to their types with `std.conv.to` (`invoke`); a `Rest` takes the rest
  *        of the line, `OnOff` reads "on" or "off", and a word that is missing or does not convert
@@ -674,7 +674,7 @@ private:
     // -----------------------------------------------------------------------
 
     /// `ChatHandler::getSelectedChar`: the selected player on this map, oneself if nothing is selected.
-    WorldSession getSelectedChar(bool showError)
+    Character getSelectedChar(bool showError)
     {
         const guid = player.values.get!UNIT_FIELD_TARGET;
         if (guid == 0)
@@ -683,7 +683,7 @@ private:
                 greenSystemMessage("Auto-targeting self.");
             return this;
         }
-        auto found = cast(WorldSession) map.find(guid);
+        auto found = cast(Character) map.find(guid);
         if (found is null && showError)
             redSystemMessage("This command requires that you select a player.");
         return found;

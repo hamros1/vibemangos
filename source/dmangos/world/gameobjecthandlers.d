@@ -1,7 +1,7 @@
 /**
  * Using game objects (CMaNGOS `GameObject::Use`, `HandleGameObjectUseOpcode`, `Spell::EffectOpenLock`,
  * `CanOpenLock`, `Spell::SendLoot` and `Player::UpdateGatherSkill`), mixed into
- * `dmangos.world.session.WorldSession`.
+ * `dmangos.world.character.Character`.
  *
  * A door or button opens (or closes) for its time; a chair seats the player in its nearest slot; a
  * goober is in use for its time, shows its page, counts for the quest that needs it (for the
@@ -175,14 +175,14 @@ mixin template GameObjectHandlers()
     /// `RewardPlayerAndGroupAtCast` for a game object: its quest objective, for the group near it too.
     void rewardAtCast(GameObject go)
     {
-        import dmangos.world.session : WorldSession;
+        import dmangos.world.character : Character;
 
         const target = -cast(int) go.template_.entry;
         auto group = context.groups.of(player.guid);
         if (group is null)
             return creditCreatureOrGo(target, 0, go.guid);
         foreach (ref slot; group.members)
-            if (auto member = cast(WorldSession) context.onlinePlayer(slot.guid))
+            if (auto member = cast(Character) context.onlinePlayer(slot.guid))
                 if (member is this || (member.map is map && member.withinInteraction(go, 74)))
                     member.creditCreatureOrGo(target, 0, go.guid);
     }
@@ -344,11 +344,11 @@ mixin template GameObjectHandlers()
     /// `Loot::Loot(Player*, GameObject*, LOOT_CORPSE)`: its template's items for a group's rights.
     Loot makeGameObjectLoot(GameObject go)
     {
-        import dmangos.world.session : WorldSession;
+        import dmangos.world.character : Character;
 
         auto theMap = map;
         auto loot = new Loot(go.guid, (ulong guid) {
-            auto session = cast(WorldSession) context.onlinePlayer(guid);
+            auto session = cast(Character) context.onlinePlayer(guid);
             return session is null || session.map !is theMap ? null : cast(Looter) session;
         });
         loot.clock = () => context.unixTime;
@@ -363,7 +363,7 @@ mixin template GameObjectHandlers()
 
                 bool allowed(ulong guid, const LootItem item)
                 {
-                    auto owner = cast(WorldSession) context.onlinePlayer(guid);
+                    auto owner = cast(Character) context.onlinePlayer(guid);
                     if (item.quest)
                         return owner !is null && owner.hasQuestForItem(item.itemId);
                     return item.condition == 0 || (owner !is null && owner.conditionMet(item.condition));
@@ -600,11 +600,11 @@ unittest
     context.data.quests.quests[9100] = q;
     me.questStatus[9100] = QuestStatus(9100, QuestState.incomplete);
     me.values.set!PLAYER_QUEST_LOG_1_1(9100u);
-    assert(anduin.session.gameObjectActivatesForQuest(gos[2]));
+    assert(anduin.session.inWorld.gameObjectActivatesForQuest(gos[2]));
     anduin.read();
     anduin.write(Opcode.CMSG_GAMEOBJ_USE, ClientGuid(gos[2].guid));
     assert(opcodesOf(anduin.read()).canFind(Opcode.SMSG_QUESTUPDATE_ADD_KILL));
-    assert(me.questStatus[9100].mobCount[0] == 1 && !anduin.session.gameObjectActivatesForQuest(gos[2]));
+    assert(me.questStatus[9100].mobCount[0] == 1 && !anduin.session.inWorld.gameObjectActivatesForQuest(gos[2]));
 
     // A wanted poster: it gives its quest, which is taken from it.
     GameObjectTemplate poster = {entry: 9004, type: GameObjectType.questGiver, displayId: 4, name: "Wanted!"};
@@ -654,10 +654,10 @@ unittest
     map.addObject(go);
     anduin.read();
 
-    map.relocated(anduin.session);
+    map.relocated(anduin.session.inWorld);
     assert(!opcodesOf(anduin.read()).canFind(Opcode.SMSG_SPELL_GO), "five yards off: nothing");
     (cast(Player) anduin.session.character).movement.position = Position(-8945.5f, -132, 83.53f);
-    map.relocated(anduin.session);
+    map.relocated(anduin.session.inWorld);
     assert(opcodesOf(anduin.read()).canFind(Opcode.SMSG_SPELL_GO), "sprung");
     assert(map.findObject(go.guid) is null && context.gameObjectAwaitingRespawn(90020), "its one charge used");
 }

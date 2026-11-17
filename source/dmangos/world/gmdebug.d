@@ -2,7 +2,7 @@
  * ArcEmu's `debugcmds.cpp` handlers (the `.debug` group) that need no AI,
  * spells or line of sight, `RecallCommands.cpp` (the `.recall` group) and
  * `BattlegroundCommands.cpp`'s `playsound` and `setworldstate`. Mixed into
- * `dmangos.world.session.WorldSession`.
+ * `dmangos.world.character.Character`.
  *
  * ArcEmu's recall locations are its `recall` table; CMaNGOS's is `game_tele`,
  * which `.recall` reads and writes here, in name order.
@@ -30,7 +30,7 @@ private:
     /// What `GetMapMgr()->GetUnit(selection)` finds, or oneself without a selection.
     struct SelectedUnit
     {
-        WorldSession player;
+        Character player;
         Creature creature;
 
         @property bool found() const
@@ -44,7 +44,7 @@ private:
         }
 
         /// Sends the changed fields to whoever sees them.
-        void flush(WorldSession by)
+        void flush(Character by)
         {
             if (player !is null)
                 player.flushPlayerChanges();
@@ -62,7 +62,7 @@ private:
             unit.player = this;
         else
         {
-            unit.player = cast(WorldSession) map.find(guid);
+            unit.player = cast(Character) map.find(guid);
             if (unit.player is null)
                 unit.creature = cast(Creature) map.findObject(guid);
         }
@@ -400,7 +400,7 @@ private:
     {
         const guid = player.values.get!UNIT_FIELD_TARGET;
         SelectedUnit unit;
-        unit.player = cast(WorldSession) map.find(guid);
+        unit.player = cast(Character) map.find(guid);
         if (unit.player is null)
             unit.creature = cast(Creature) map.findObject(guid);
         if (!unit.found)

@@ -1,6 +1,6 @@
 /**
  * Duels (CMaNGOS `DuelHandler.cpp`, `Spell::EffectDuel`, `Player::UpdateDuelFlag`,
- * `CheckDuelDistance` and `DuelComplete`), mixed into `dmangos.world.session.WorldSession`.
+ * `CheckDuelDistance` and `DuelComplete`), mixed into `dmangos.world.character.Character`.
  *
  * The Duel spell at another player plants a flag between them and asks the other; accepted, both
  * count down 3 seconds and are then enemies of each other (`PLAYER_DUEL_TEAM` 1 and 2 with the same

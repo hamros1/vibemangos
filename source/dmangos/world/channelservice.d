@@ -290,7 +290,7 @@ unittest
     auto service = context.channelService;
 
     // Anduin, here, joins; Jaina, on node 2, joins too: both hear of each other.
-    service.run(channelCommand(anduin.session, ChannelOp.join, "Club"), 1);
+    service.run(channelCommand(anduin.session.inWorld, ChannelOp.join, "Club"), 1);
     anduin.read();
     context.presence(2, true, [PresenceEntry(0x40, "Jaina", 9, 1, 8, 10, 1, 12, 0, 0, "")], null);
     auto jaina = ChannelCommand(0x40, "Jaina", 1, false, 0, ChannelOp.join, "club", "", 0);
@@ -306,7 +306,7 @@ unittest
     assert(sent.length == 1 && sent[0].opcode == Opcode.SMSG_MESSAGECHAT);
 
     // The owner, Anduin, makes Jaina a moderator by name: found through presence.
-    service.run(channelCommand(anduin.session, ChannelOp.moderator, "Club", "jaina"), 1);
+    service.run(channelCommand(anduin.session.inWorld, ChannelOp.moderator, "Club", "jaina"), 1);
     assert(service.channels.alliance.find("Club", null).flagsOf(0x40) & MemberFlags.moderator);
 
     // Node 2 is lost: Jaina leaves the channel, which Anduin is told.
@@ -316,6 +316,6 @@ unittest
     assert(anduin.read()[0].body_[0] == ChatNotify.left);
 
     // Anduin logs out: the channel goes, and nobody is remembered.
-    service.run(channelCommand(anduin.session, ChannelOp.leaveAll, null), 1);
+    service.run(channelCommand(anduin.session.inWorld, ChannelOp.leaveAll, null), 1);
     assert(service.channels.alliance.count == 0 && service.remembered == 0);
 }

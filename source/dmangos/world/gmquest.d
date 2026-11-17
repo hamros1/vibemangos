@@ -4,7 +4,7 @@
  * `.quest finisher`, `.quest spawn` and `.quest reward`. ArcEmu's tables are CMaNGOS's here:
  * `creature_quest_starter` is `creature_questrelation`, `creature_quest_finisher`
  * `creature_involvedrelation`, the game object ones likewise, and `creature_spawns` is `creature`.
- * Mixed into `dmangos.world.session.WorldSession`.
+ * Mixed into `dmangos.world.session.Character`.
  */
 module dmangos.world.gmquest;
 

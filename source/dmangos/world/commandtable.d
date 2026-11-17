@@ -6,7 +6,7 @@
  * abbreviates, so `.k` is `.kill`.
  *
  * `handler` is ArcEmu's handler name. `dmangos.world.commands` calls the
- * `WorldSession` method of that name with a lower-case first letter
+ * `Character` method of that name with a lower-case first letter
  * (`HandleGMOnCommand` is `handleGMOnCommand`); a row whose method does not
  * exist yet answers like ArcEmu's `HandleNYICommand`. Rows without a handler
  * either have `children` (a sub-table) or are `.modify` field rows, which

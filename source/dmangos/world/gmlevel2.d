@@ -3,7 +3,7 @@
  * `.server saveall`, `.character repairitems`, `.demorph`, `.mount`,
  * `.invincible`, `.npc flags`, `.npc say` and `.npc yell`, `.kill`, `.killplr`, `.reviveplr`,
  * `.castspell`, `.castspellne` and `.castself`. Mixed into
- * `dmangos.world.session.WorldSession`.
+ * `dmangos.world.character.Character`.
  */
 module dmangos.world.gmlevel2;
 
@@ -583,7 +583,7 @@ private:
         import dmangos.world.spellcast : SpellTargets, TargetFlags;
 
         const guid = player.values.get!UNIT_FIELD_TARGET;
-        auto plr = cast(WorldSession) map.find(guid);
+        auto plr = cast(Character) map.find(guid);
         auto creature = plr is null ? cast(Creature) map.findObject(guid) : null;
         if (plr is null && creature is null)
         {
@@ -682,7 +682,7 @@ private:
     {
         import dmangos.world.creature : Creature;
 
-        if (auto plr = cast(WorldSession) target)
+        if (auto plr = cast(Character) target)
         {
             if (!self)
                 gmLog(format!"%s %d on PLAYER %s"(what, spellId, plr.player.data.name));
@@ -745,7 +745,7 @@ private:
         if (spell is null)
             return false;
         blueSystemMessage(format!"Target is casting spell %d on himself."(id));
-        if (auto plr = cast(WorldSession) target)
+        if (auto plr = cast(Character) target)
             plr.castSpell(spell, SpellTargets(TargetFlags.unit, plr.player.guid), false, 0);
         else if (auto creature = cast(Creature) target)
             creature.ai.castFromCommand(spell, map);
@@ -758,7 +758,7 @@ private:
     {
         import dmangos.world.creature : Creature;
 
-        if (auto plr = cast(WorldSession) target)
+        if (auto plr = cast(Character) target)
             return plr.player.guid;
         return (cast(Creature) target).guid;
     }
@@ -947,7 +947,7 @@ unittest
     assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTBLUE ~ "activated the god mode cheat on Anduin.|r"]);
     assert(systemMessages(anduin.read()) == [MSG_COLOR_GREEN ~ "activated the god mode cheat on you.|r"]);
     const health = victim.values.get!UNIT_FIELD_HEALTH;
-    anduin.session.unit.spellHitBy(keeper.guid, 50);
+    anduin.session.inWorld.unit.spellHitBy(keeper.guid, 50);
     assert(victim.values.get!UNIT_FIELD_HEALTH == health);
     gm.say(".cheat casttime on");
     gm.say(".cheat status");

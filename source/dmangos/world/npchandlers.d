@@ -2,7 +2,7 @@
  * Talking to NPCs (CMaNGOS `Entities/NPCHandler.cpp`, `GossipDef.cpp`, the gossip half of
  * `Player.cpp` and `QueryHandler.cpp`'s NPC texts): gossip menus with their conditions, the texts
  * they show, trainers' lists and lessons, innkeepers' hearthstone binding, bankers, and vendors'
- * lists. Mixed into `dmangos.world.session.WorldSession`.
+ * lists. Mixed into `dmangos.world.session.Character`.
  *
  * A gossip menu is prepared from `gossip_menu_option` (`PrepareGossipMenu`), shown with its
  * `npc_text` (`SendPreparedGossip`), and its options run when selected (`OnGossipSelect`). Options
