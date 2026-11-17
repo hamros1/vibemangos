@@ -166,6 +166,14 @@ private:
         if (creature is null)
             return;
         prepareGossipMenu(creature, creature.npcTemplate.gossipMenuId);
+        // `PrepareGossipMenu`'s quests; without gossip of its own a quest giver shows them alone.
+        enum uint gossipFlag = 0x1;
+        questMenu = null;
+        const flags = creature.npcValues.get!UNIT_NPC_FLAGS;
+        if (flags & NpcFlag.questGiver)
+            prepareQuestMenu(creature);
+        if (!(flags & gossipFlag) && questMenu.length)
+            return sendPreparedQuest(creature);
         sendPreparedGossip(creature);
     }
 
@@ -233,6 +241,7 @@ private:
             : context.data.npcs.npcGossip.get(creature.spawnId, defaultGossipMessage);
         foreach (i, ref item; gossipItems)
             message.items ~= GossipMessageItem(cast(uint) i, cast(ubyte) item.icon, item.coded, item.message);
+        message.quests = questMenu.dup;
         send(message);
     }
 

@@ -101,8 +101,10 @@ private:
         inventory.writeForgotten(update);
         if (update.blockCount)
             sendUpdate(update);
-        flushPlayerChanges(false);
         const changes = inventory.takeChanges();
+        if (changes.length)
+            questItemsChanged(); // `ItemAddedQuestCheck`, `ItemRemovedQuestCheck`
+        flushPlayerChanges(false);
         if (changes.length || moneyChanged)
             context.database.saveInventory(player.data.guid, player.money, player.values[PLAYER_BYTES_2], changes);
     }

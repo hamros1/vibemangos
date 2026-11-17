@@ -17,6 +17,7 @@ import dmangos.world.characterdb : CharacterOwner, CharacterStatements, DeleteOp
 public import dmangos.world.characterdb : GroupMemberRecord, GroupRecord;
 import dmangos.world.movement : Position;
 import dmangos.world.inventory : ItemChange, ItemRecord, ItemState;
+import dmangos.world.quests : QuestStatus;
 import dmangos.world.player : CharacterData, CharacterProgress, HomeBind, tutorialFields;
 import dmangos.world.worlddata : AreaTriggerTeleport, areaTriggerTeleportQuery, GameTele, gameTeleQuery;
 import dmangos.world.playercreate : NewCharacter;
@@ -178,6 +179,9 @@ interface WorldDatabase
     /// `Player::_LoadAuras`
     AuraRecord[] loadAuras(uint player);
 
+    /// `Player::_SaveQuestStatus`: the quests that changed (a status of none, never rewarded, deletes the row).
+    void saveQuestStatus(uint player, const(QuestStatus)[] quests);
+
     /// Every creature that is dead now: spawn guid -> when it comes back (Unix time).
     long[uint] loadCreatureRespawns();
 
@@ -317,6 +321,7 @@ final class MySqlWorldDatabase : WorldDatabase
     void saveCreatureRespawn(uint spawnGuid, long respawnTime) { statements.saveCreatureRespawn(spawnGuid, respawnTime); }
     void saveAuras(uint player, const(AuraRecord)[] auras) { statements.saveAuras(player, auras); }
     AuraRecord[] loadAuras(uint player) { return statements.loadAuras(player); }
+    void saveQuestStatus(uint player, const(QuestStatus)[] quests) { statements.saveQuestStatus(player, quests); }
     long[uint] loadCreatureRespawns() { return statements.loadCreatureRespawns(); }
     Nullable!NameInfo nameInfo(uint guid) { return statements.nameInfo(guid); }
     GroupRecord[] loadGroups() { return statements.loadGroups(); }
@@ -726,11 +731,17 @@ final class MemoryWorldDatabase : WorldDatabase
 
     CorpseRecord[uint] corpses;      /// by player
     AuraRecord[][uint] auraRows;     /// by player
+    QuestStatus[uint][uint] questRows; /// by player, then quest
     long[uint] creatureRespawns;     /// by spawn guid
 
     void saveCorpse(const ref CorpseRecord c) { corpses[c.player] = c; }
     void saveAuras(uint player, const(AuraRecord)[] auras) { auraRows[player] = auras.dup; }
     AuraRecord[] loadAuras(uint player) { return auraRows.get(player, null).dup; }
+    void saveQuestStatus(uint player, const(QuestStatus)[] quests)
+    {
+        foreach (ref q; quests)
+            questRows.require(player, null)[q.quest] = q;
+    }
     void deleteCorpse(uint player) { corpses.remove(player); }
     Nullable!CorpseRecord loadCorpse(uint player)
     {

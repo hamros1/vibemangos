@@ -265,6 +265,7 @@ private:
             : context.config.rateRestOfflineInWilderness / 4;
         made.setRestBonus(character.restBonus + (offline > 0 ? made.computeRest(offline, rate) : 0),
             context.config.maxPlayerLevel);
+        made.loadQuestLog(context.data.quests);
         made.clearChanges();
         return made;
     }

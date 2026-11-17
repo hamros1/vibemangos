@@ -34,6 +34,7 @@ import dmangos.world.playercreate : KnownAbilities, KnownSkill, NewSkill, NewSpe
 import dmangos.world.spells : SpellEffect;
 import dmangos.world.stats;
 import dmangos.world.auras : AuraSet, AuraType;
+import dmangos.world.quests : QuestData, QuestStatus;
 import dmangos.world.combat : AttackType, Fighter;
 import dmangos.world.updatefields;
 import dmangos.world.worlddata : CreateAction, maxLevel, WorldData;
@@ -82,6 +83,7 @@ struct CharacterData
 
     ItemRecord[] items;
     NewSkill[] skills;
+    QuestStatus[] quests;          /// `character_queststatus`
     NewSpell[] spells;
     CreateAction[] actions;
     bool hasHomeBind;
@@ -181,6 +183,7 @@ final class Player : InventoryOwner
     PlayerStats stats;
     MeleeChances chances;                /// own melee chances (`meleeChances`), for the combat rolls
     AuraSet auras;                       /// its auras (`dmangos.world.auras`)
+    QuestStatus[uint] questStatus;       /// its progress in quests, by quest (`mQuestStatus`)
     DeathState deathState;               /// alive, a body, or a ghost (`dmangos.world.death`)
     uint[] spells;                       /// active, enabled spells: the spellbook
     uint[maxActionButtons] actionButtons; /// packed, 0 = empty
@@ -738,6 +741,36 @@ final class Player : InventoryOwner
     {
         foreach (i; 0 .. exploredZonesSize)
             values.set!PLAYER_EXPLORED_ZONES_1(i, uint.max);
+    }
+
+    /**
+     * `_LoadQuestStatus`: the saved progress, and the quest log: the quests taken and not yet
+     * rewarded, in slots, complete or with their kill counters.
+     */
+    void loadQuestLog(const QuestData quests)
+    {
+        import dmangos.world.quests : maxQuestLogSize, QuestState;
+
+        foreach (q; data.quests)
+            questStatus[q.quest] = q;
+        uint slot;
+        foreach (ref q; data.quests)
+        {
+            if (slot >= maxQuestLogSize)
+                break;
+            if (quests.quest(q.quest) is null
+                || (q.status != QuestState.incomplete && (q.status != QuestState.complete || q.rewarded)))
+                continue;
+            const base = PLAYER_QUEST_LOG_1_1 + 3 * slot;
+            values.setSlot(base, q.quest);
+            uint counters;
+            foreach (i; 0 .. 4)
+                counters |= (q.mobCount[i] & 0x3F) << (6 * i);
+            if (q.status == QuestState.complete)
+                counters |= 1u << 24;
+            values.setSlot(base + 1, counters);
+            ++slot;
+        }
     }
 
     /// The skill slot of `skill`, or -1.

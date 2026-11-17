@@ -288,6 +288,17 @@ What works now:
     every 5 seconds and drink's mana, energize, triggered spells. Auras are saved (`character_aura`)
     at logout and with each save, and come back with the time they had left; a cluster's hand-off
     carries them. Not yet: dispels, procs, absorbs, auras on creatures slowing or rooting them.
+  * **Quests** (CMaNGOS's `QuestHandler.cpp`, `GossipDef.cpp` and `Player`'s quest functions): quest
+    givers (`creature_questrelation`, `creature_involvedrelation`) show what they have for the player
+    (the exclamation and question marks), list their quests in their gossip (or open the only one),
+    and give them as `quest_template` says who may take them (class, race, level, skill, condition,
+    the quests before, exclusive groups, done unless repeatable). The quest log holds 20 quests with
+    their kill counters. Kills count for the player and its group near the kill; the items asked
+    for count as they are carried (and quest drops are looted only while a quest asks for them); a
+    quest whose objectives are met is complete, and its ender takes the items back and gives its
+    experience (`Quest::XPValue`), money, items (one of the choices) and spell, then offers the
+    next of the chain. Progress is saved in `character_queststatus`. Not yet: quests from game
+    objects and items, sharing, timed and escort quests, exploration, reputation.
   * **Trading** (CMaNGOS's `TradeHandler.cpp`): two players of a faction within 11 yards trade up
     to six items and money each; any change takes back both acceptances; when both accept, it goes
     through if both can pay and carry it (the items keep their guids and change owners, their

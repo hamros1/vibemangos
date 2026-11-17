@@ -1,0 +1,1004 @@
+/**
+ * Quests for players (CMaNGOS `QuestHandler.cpp`, `GossipDef.cpp`'s quest packets, and `Player`'s
+ * quest functions: `CanTakeQuest`, `AddQuest`, `CompleteQuest`, `RewardQuest`, `KilledMonster`,
+ * `ItemAddedQuestCheck`), mixed into `dmangos.world.session.WorldSession`.
+ *
+ * Quest givers show what they have for the player (`SMSG_QUESTGIVER_STATUS`), list their quests in
+ * their gossip, and give them (details, accept). The quest log is the player's 20
+ * `PLAYER_QUEST_LOG_*` slots: the quest, its kill counters and its state. Kills of the creatures a
+ * quest asks for count (for the group near the kill too); the items it asks for count as the
+ * player carries them; a quest whose objectives are met is complete, and its ender takes it back:
+ * the items it asked for, then its experience, money, items (one chosen) and spell. Progress is
+ * saved in `character_queststatus`.
+ *
+ * Not yet: quests from game objects and items, sharing with the group, timed quests' failing,
+ * exploration and event objectives, reputation rewards and requirements, `questgiver_greeting`.
+ */
+module dmangos.world.questhandlers;
+
+/// See the module documentation.
+mixin template QuestHandlers()
+{
+    import dmangos.bytes : ByteReader, ByteWriter;
+    import dmangos.log : info;
+    import dmangos.world.creature : Npc;
+    import dmangos.world.defines : nullBag, nullSlot;
+    import dmangos.world.inventory : InventoryResult, ItemPosCount;
+    import dmangos.world.opcodes;
+    import dmangos.world.packets : GossipQuestItem;
+    import dmangos.world.quests;
+    import dmangos.world.spellcast : SpellTargets, TargetFlags;
+    import dmangos.world.updatefields;
+
+private:
+    GossipQuestItem[] questMenu; // `QuestMenu`: what the last quest giver offered
+
+    // -----------------------------------------------------------------------
+    // The status and the log
+    // -----------------------------------------------------------------------
+
+    /// `GetQuestStatus`
+    QuestState questState(uint id)
+    {
+        if (auto q = id in player.questStatus)
+            return q.status;
+        return QuestState.none;
+    }
+
+    /// `GetQuestRewardStatus`
+    bool questRewarded(uint id)
+    {
+        if (auto q = id in player.questStatus)
+            return q.rewarded;
+        return false;
+    }
+
+    /// The quest log slot holding `id` (`FindQuestSlot`); `maxQuestLogSize` if none (0: a free slot).
+    uint questSlot(uint id)
+    {
+        foreach (slot; 0 .. maxQuestLogSize)
+            if (player.values[PLAYER_QUEST_LOG_1_1 + 3 * slot] == id)
+                return slot;
+        return maxQuestLogSize;
+    }
+
+    /// `SetQuestSlot`
+    void setQuestSlot(uint slot, uint id, uint timer = 0)
+    {
+        player.values.setSlot(PLAYER_QUEST_LOG_1_1 + 3 * slot, id);
+        player.values.setSlot(PLAYER_QUEST_LOG_1_1 + 3 * slot + 1, 0);
+        player.values.setSlot(PLAYER_QUEST_LOG_1_1 + 3 * slot + 2, timer);
+    }
+
+    /// `SetQuestSlotCounter`: an objective's count, 6 bits each.
+    void setQuestSlotCounter(uint slot, uint counter, uint count)
+    {
+        const index = PLAYER_QUEST_LOG_1_1 + 3 * slot + 1;
+        uint value = player.values[index];
+        value &= ~(0x3Fu << (counter * 6));
+        value |= (count & 0x3F) << (counter * 6);
+        player.values.setSlot(index, value);
+    }
+
+    /// `SetQuestSlotState`, `RemoveQuestSlotState`: the high byte's complete (1) and failed (2) bits.
+    void setQuestSlotState(uint slot, uint state, bool on)
+    {
+        const index = PLAYER_QUEST_LOG_1_1 + 3 * slot + 1;
+        const value = player.values[index];
+        player.values.setSlot(index, on ? value | (state << 24) : value & ~(state << 24));
+    }
+
+    /// The status of `id`, made if there is none.
+    ref QuestStatus statusOf(uint id)
+    {
+        return player.questStatus.require(id, QuestStatus(id));
+    }
+
+    /// `_SaveQuestStatus`: the quests whose progress changed.
+    package void saveQuests()
+    {
+        QuestStatus[] changed;
+        foreach (ref q; player.questStatus)
+            if (q.changed)
+            {
+                changed ~= q;
+                q.changed = false;
+            }
+        if (changed.length)
+            context.database.saveQuestStatus(player.data.guid, changed);
+    }
+
+    // -----------------------------------------------------------------------
+    // Who may take what (`Player::SatisfyQuest*`)
+    // -----------------------------------------------------------------------
+
+    bool satisfyClassRaceLevel(const ref Quest quest, bool levelToo)
+    {
+        if (quest.requiredClasses && !(quest.requiredClasses & (1u << (player.data.classId - 1))))
+            return false;
+        if (quest.requiredRaces && !(quest.requiredRaces & (1u << (player.data.race - 1))))
+            return false;
+        if (levelToo && (player.data.level < quest.minLevel || player.data.level > quest.maxLevel))
+            return false;
+        if (quest.requiredSkill && player.skillValue(quest.requiredSkill)[0] < quest.requiredSkillValue)
+            return false;
+        if (quest.requiredCondition && !conditionMet(quest.requiredCondition))
+            return false;
+        return true;
+    }
+
+    /// `SatisfyQuestPreviousQuest`: one of the quests before it done (positive) or taken (negative).
+    bool satisfyPrevious(const ref Quest quest)
+    {
+        if (quest.prevQuests.length == 0)
+            return true;
+        foreach (prev; quest.prevQuests)
+        {
+            if (prev > 0 && questRewarded(prev))
+                return true;
+            if (prev < 0 && questState(-prev) == QuestState.incomplete)
+                return true;
+        }
+        return false;
+    }
+
+    /// `SatisfyQuestExclusiveGroup`: none of its group taken or (unless repeatable) done.
+    bool satisfyExclusiveGroup(const ref Quest quest)
+    {
+        if (quest.exclusiveGroup <= 0)
+            return true;
+        foreach (other; context.data.quests.exclusiveGroups.get(quest.exclusiveGroup, null))
+        {
+            if (other == quest.id)
+                continue;
+            const otherQuest = context.data.quests.quest(other);
+            if (otherQuest is null)
+                continue;
+            if (questState(other) != QuestState.none || (!otherQuest.repeatable && questRewarded(other)))
+                return false;
+        }
+        return true;
+    }
+
+    /// `SatisfyQuestStatus`: not taken, and not done unless repeatable.
+    bool satisfyStatus(const ref Quest quest)
+    {
+        return questState(quest.id) == QuestState.none && (quest.repeatable || !questRewarded(quest.id));
+    }
+
+    /// `CanTakeQuest`
+    bool canTakeQuest(const ref Quest quest)
+    {
+        return satisfyStatus(quest) && satisfyExclusiveGroup(quest) && satisfyClassRaceLevel(quest, true)
+            && satisfyPrevious(quest);
+    }
+
+    /// `CanSeeStartQuest`: everything but the level, and not far above the player.
+    bool canSeeStartQuest(const ref Quest quest)
+    {
+        enum int highLevelHideDiff = 7; // `Quests.HighLevelHideDiff`
+        return satisfyClassRaceLevel(quest, false) && satisfyExclusiveGroup(quest) && satisfyPrevious(quest)
+            && player.data.level + highLevelHideDiff >= quest.minLevel && player.data.level <= quest.maxLevel;
+    }
+
+    /// `CanCompleteQuest`: taken, and every objective met (kills, items, money).
+    bool canCompleteQuest(uint id)
+    {
+        const quest = context.data.quests.quest(id);
+        if (quest is null)
+            return false;
+        const status = questState(id);
+        if (status == QuestState.complete)
+            return false;
+        if (quest.autoComplete && canTakeQuest(*quest))
+            return true;
+        if (status != QuestState.incomplete)
+            return false;
+        const q = id in player.questStatus;
+        foreach (i; 0 .. questObjectives)
+        {
+            if (quest.reqItemCount[i] && q.itemCount[i] < quest.reqItemCount[i])
+                return false;
+            if (quest.reqCreatureOrGoId[i] && quest.reqCreatureOrGoCount[i] && q.mobCount[i] < quest.reqCreatureOrGoCount[i])
+                return false;
+        }
+        if ((quest.specialFlags & specialExplorationOrEvent) && !q.explored)
+            return false;
+        if (quest.rewOrReqMoney < 0 && player.money < -quest.rewOrReqMoney)
+            return false;
+        return true;
+    }
+
+    /// `CanRewardQuest(pQuest, false)`: complete (or completing itself), not rewarded, the items carried.
+    bool canRewardQuest(const ref Quest quest)
+    {
+        if (!quest.autoComplete && questState(quest.id) != QuestState.complete)
+            return false;
+        if (questRewarded(quest.id) && !quest.repeatable)
+            return false;
+        foreach (i; 0 .. questObjectives)
+            if (quest.reqItemCount[i] && player.inventory.count(quest.reqItemId[i]) < quest.reqItemCount[i])
+                return false;
+        return quest.rewOrReqMoney >= 0 || player.money >= -quest.rewOrReqMoney;
+    }
+
+    // -----------------------------------------------------------------------
+    // Quest givers
+    // -----------------------------------------------------------------------
+
+    /// `WorldSession::getDialogStatus`: the mark over a quest giver for this player.
+    DialogStatus dialogStatus(Npc giver)
+    {
+        const entry = giver.npcTemplate.entry;
+        DialogStatus result = DialogStatus.none;
+        foreach (id; context.data.quests.creatureEnds.get(entry, null))
+        {
+            const quest = context.data.quests.quest(id);
+            if (quest is null)
+                continue;
+            const status = questState(id);
+            DialogStatus next = DialogStatus.none;
+            if (status == QuestState.complete && !questRewarded(id))
+                next = quest.repeatable ? DialogStatus.rewardRep : DialogStatus.reward2;
+            else if (quest.autoComplete && canTakeQuest(*quest))
+                next = quest.repeatable ? DialogStatus.rewardRep : DialogStatus.available;
+            else if (status == QuestState.incomplete)
+                next = DialogStatus.incomplete;
+            if (next > result)
+                result = next;
+        }
+        foreach (id; context.data.quests.creatureStarts.get(entry, null))
+        {
+            const quest = context.data.quests.quest(id);
+            if (quest is null || questState(id) != QuestState.none || !canSeeStartQuest(*quest))
+                continue;
+            if (!satisfyStatus(*quest))
+                continue;
+            DialogStatus next;
+            if (player.data.level >= quest.minLevel)
+            {
+                enum uint lowLevelHideDiff = 4; // `Quests.LowLevelHideDiff`
+                if (quest.autoComplete)
+                    next = DialogStatus.rewardRep;
+                else if (player.data.level <= quest.levelFor(player.data.level) + lowLevelHideDiff)
+                    next = DialogStatus.available;
+                else
+                    next = DialogStatus.chat;
+            }
+            else
+                next = DialogStatus.unavailable;
+            if (next > result)
+                result = next;
+        }
+        return result;
+    }
+
+    /// `HandleQuestgiverStatusQueryOpcode`
+    @Handles(Opcode.CMSG_QUESTGIVER_STATUS_QUERY, WorldState.inWorld)
+    void handleQuestgiverStatusQuery(const ClientGuid request)
+    {
+        auto giver = context.npcFor(map.findObject(request.guid));
+        if (giver is null)
+            return;
+        ByteWriter w;
+        w.put(request.guid);
+        w.put(cast(uint) dialogStatus(giver));
+        deliver(Opcode.SMSG_QUESTGIVER_STATUS, w.data);
+    }
+
+    /// `HandleQuestgiverHelloOpcode`: as gossip hello.
+    @Handles(Opcode.CMSG_QUESTGIVER_HELLO, WorldState.inWorld)
+    void handleQuestgiverHello(const ClientNpcGuid request)
+    {
+        handleGossipHello(request);
+    }
+
+    /// `Player::PrepareQuestMenu`: the quests the giver takes back or gives, for this player.
+    package void prepareQuestMenu(Npc giver)
+    {
+        questMenu = null;
+        const entry = giver.npcTemplate.entry;
+        foreach (id; context.data.quests.creatureEnds.get(entry, null))
+        {
+            const quest = context.data.quests.quest(id);
+            if (quest is null)
+                continue;
+            const status = questState(id);
+            if (status == QuestState.complete && !questRewarded(id))
+                questMenu ~= GossipQuestItem(id, DialogStatus.rewardRep, quest.levelFor(player.data.level), quest.title);
+            else if (status == QuestState.incomplete)
+                questMenu ~= GossipQuestItem(id, DialogStatus.incomplete, quest.levelFor(player.data.level), quest.title);
+        }
+        foreach (id; context.data.quests.creatureStarts.get(entry, null))
+        {
+            const quest = context.data.quests.quest(id);
+            if (quest is null || !canTakeQuest(*quest))
+                continue;
+            questMenu ~= GossipQuestItem(id, quest.autoComplete ? DialogStatus.rewardRep : DialogStatus.available,
+                quest.levelFor(player.data.level), quest.title);
+        }
+    }
+
+    /// `Player::SendPreparedQuest`: one quest opens at once; several are listed.
+    package void sendPreparedQuest(Npc giver)
+    {
+        if (questMenu.length == 0)
+            return;
+        if (questMenu.length == 1)
+        {
+            const item = questMenu[0];
+            const quest = context.data.quests.quest(item.quest);
+            if (item.icon == DialogStatus.rewardRep && !questRewarded(item.quest))
+                return sendRequestItems(*quest, giver.guid, canRewardQuest(*quest), true);
+            if (item.icon == DialogStatus.incomplete)
+                return sendRequestItems(*quest, giver.guid, false, true);
+            return sendQuestDetails(*quest, giver.guid, true);
+        }
+        ByteWriter w;
+        w.put(giver.guid);
+        w.putCString("");
+        w.put(0u);
+        w.put(0u);
+        w.put(cast(ubyte) questMenu.length);
+        foreach (item; questMenu)
+        {
+            w.put(item.quest);
+            w.put(item.icon);
+            w.put(cast(uint) item.level);
+            w.putCString(item.title);
+        }
+        deliver(Opcode.SMSG_QUESTGIVER_QUEST_LIST, w.data);
+    }
+
+    /// Whether `giver` gives (`starts`) or takes back the quest.
+    bool involves(Npc giver, uint id, bool starts, bool ends)
+    {
+        import std.algorithm.searching : canFind;
+
+        const entry = giver.npcTemplate.entry;
+        return (starts && context.data.quests.creatureStarts.get(entry, null).canFind(id))
+            || (ends && context.data.quests.creatureEnds.get(entry, null).canFind(id));
+    }
+
+    /// The reward items for packets: id, count, display.
+    void putRewardItems(ref ByteWriter w, const(uint)[] ids, const(uint)[] counts)
+    {
+        uint n;
+        foreach (id; ids)
+            if (id)
+                ++n;
+        w.put(n);
+        foreach (i, id; ids)
+            if (id)
+            {
+                w.put(id);
+                w.put(counts[i]);
+                const proto = id in context.data.items;
+                w.put(proto is null ? 0u : proto.displayId);
+            }
+    }
+
+    /// `SendQuestGiverQuestDetails`
+    void sendQuestDetails(const ref Quest quest, ulong giver, bool activateAccept)
+    {
+        ByteWriter w;
+        w.put(giver);
+        w.put(quest.id);
+        w.putCString(quest.title);
+        w.putCString(quest.details);
+        w.putCString(quest.objectives);
+        w.put(uint(activateAccept));
+        if (quest.questFlags & questFlagHiddenRewards)
+        {
+            w.put(0u);
+            w.put(0u);
+            w.put(0u);
+        }
+        else
+        {
+            putRewardItems(w, quest.rewChoiceItemId[], quest.rewChoiceItemCount[]);
+            putRewardItems(w, quest.rewItemId[], quest.rewItemCount[]);
+            w.put(cast(uint) quest.rewOrReqMoney);
+        }
+        w.put(quest.rewSpell);
+        uint emotes;
+        foreach (e; quest.detailsEmote)
+            if (e)
+                ++emotes;
+        w.put(emotes);
+        foreach (i; 0 .. emotes)
+        {
+            w.put(quest.detailsEmote[i]);
+            w.put(quest.detailsEmoteDelay[i]);
+        }
+        deliver(Opcode.SMSG_QUESTGIVER_QUEST_DETAILS, w.data);
+    }
+
+    /// `SendQuestGiverRequestItems` (or, with nothing to ask for, the reward at once).
+    void sendRequestItems(const ref Quest quest, ulong giver, bool completable, bool closeOnCancel)
+    {
+        if (quest.requestItemsText.length == 0 || (quest.reqItemsCount == 0 && completable))
+            return sendOfferReward(quest, giver, true);
+        ByteWriter w;
+        w.put(giver);
+        w.put(quest.id);
+        w.putCString(quest.title);
+        w.putCString(quest.requestItemsText);
+        w.put(completable ? quest.completeEmoteDelay : quest.incompleteEmoteDelay);
+        w.put(completable ? quest.completeEmote : quest.incompleteEmote);
+        w.put(uint(closeOnCancel));
+        w.put(quest.rewOrReqMoney < 0 ? cast(uint) -quest.rewOrReqMoney : 0u);
+        w.put(quest.reqItemsCount);
+        foreach (i; 0 .. questObjectives)
+            if (quest.reqItemId[i])
+            {
+                w.put(quest.reqItemId[i]);
+                w.put(quest.reqItemCount[i]);
+                const proto = quest.reqItemId[i] in context.data.items;
+                w.put(proto is null ? 0u : proto.displayId);
+            }
+        w.put(0x02u);
+        w.put(completable ? 0x03u : 0u);
+        w.put(0x04u);
+        w.put(0x08u);
+        w.put(0x10u);
+        deliver(Opcode.SMSG_QUESTGIVER_REQUEST_ITEMS, w.data);
+    }
+
+    /// `SendQuestGiverOfferReward`
+    void sendOfferReward(const ref Quest quest, ulong giver, bool enableNext)
+    {
+        ByteWriter w;
+        w.put(giver);
+        w.put(quest.id);
+        w.putCString(quest.title);
+        w.putCString(quest.offerRewardText);
+        w.put(uint(enableNext));
+        uint emotes;
+        foreach (e; quest.offerRewardEmote)
+        {
+            if (e == 0)
+                break;
+            ++emotes;
+        }
+        w.put(emotes);
+        foreach (i; 0 .. emotes)
+        {
+            w.put(quest.offerRewardEmoteDelay[i]);
+            w.put(quest.offerRewardEmote[i]);
+        }
+        putRewardItems(w, quest.rewChoiceItemId[], quest.rewChoiceItemCount[]);
+        putRewardItems(w, quest.rewItemId[], quest.rewItemCount[]);
+        w.put(cast(uint) quest.rewOrReqMoney);
+        w.put(quest.rewSpell);
+        w.put(quest.rewSpellCast);
+        deliver(Opcode.SMSG_QUESTGIVER_OFFER_REWARD, w.data);
+    }
+
+    /// `HandleQuestgiverQueryQuestOpcode`: a quest's details from a giver that has it.
+    @Handles(Opcode.CMSG_QUESTGIVER_QUERY_QUEST, WorldState.inWorld)
+    void handleQuestgiverQueryQuest(ref ByteReader reader)
+    {
+        const guid = reader.read!ulong, id = reader.read!uint;
+        auto giver = interactableNpc(guid, 0);
+        const quest = context.data.quests.quest(id);
+        if (giver is null || quest is null || !involves(giver, id, true, true))
+            return deliver(Opcode.SMSG_GOSSIP_COMPLETE, null);
+        sendQuestDetails(*quest, guid, true);
+    }
+
+    /// `HandleQuestQueryOpcode`: the quest as the log shows it.
+    @Handles(Opcode.CMSG_QUEST_QUERY, WorldState.inWorld)
+    void handleQuestQuery(ref ByteReader reader)
+    {
+        const id = reader.read!uint;
+        const quest = context.data.quests.quest(id);
+        if (quest is null)
+            return;
+        ByteWriter w;
+        w.put(quest.id);
+        w.put(quest.method);
+        w.put(cast(uint) quest.questLevel);
+        w.put(cast(uint) quest.zoneOrSort);
+        w.put(quest.type);
+        w.put(quest.repObjectiveFaction);
+        w.put(quest.repObjectiveValue);
+        w.put(0u);
+        w.put(0u);
+        w.put(quest.nextQuestInChain);
+        const hidden = (quest.questFlags & questFlagHiddenRewards) != 0;
+        w.put(hidden ? 0u : cast(uint) quest.rewOrReqMoney);
+        w.put(quest.rewMoneyMaxLevel);
+        w.put(quest.rewSpell);
+        w.put(quest.srcItemId);
+        w.put(quest.questFlags);
+        foreach (i; 0 .. questRewards)
+        {
+            w.put(hidden ? 0u : quest.rewItemId[i]);
+            w.put(hidden ? 0u : quest.rewItemCount[i]);
+        }
+        foreach (i; 0 .. questRewardChoices)
+        {
+            w.put(hidden ? 0u : quest.rewChoiceItemId[i]);
+            w.put(hidden ? 0u : quest.rewChoiceItemCount[i]);
+        }
+        w.put(quest.pointMapId);
+        w.put(quest.pointX);
+        w.put(quest.pointY);
+        w.put(quest.pointOpt);
+        w.putCString(quest.title);
+        w.putCString(quest.objectives);
+        w.putCString(quest.details);
+        w.putCString(quest.endText);
+        foreach (i; 0 .. questObjectives)
+        {
+            const target = quest.reqCreatureOrGoId[i];
+            w.put(target < 0 ? (cast(uint) -target) | 0x80000000 : cast(uint) target);
+            w.put(quest.reqCreatureOrGoCount[i]);
+            w.put(quest.reqItemId[i]);
+            w.put(quest.reqItemCount[i]);
+        }
+        foreach (i; 0 .. questObjectives)
+            w.putCString(quest.objectiveText[i]);
+        deliver(Opcode.SMSG_QUEST_QUERY_RESPONSE, w.data);
+    }
+
+    /// `HandleQuestgiverAcceptQuestOpcode`
+    @Handles(Opcode.CMSG_QUESTGIVER_ACCEPT_QUEST, WorldState.inWorld)
+    void handleQuestgiverAcceptQuest(ref ByteReader reader)
+    {
+        const guid = reader.read!ulong, id = reader.read!uint;
+        auto giver = interactableNpc(guid, 0x2);
+        const quest = context.data.quests.quest(id);
+        deliver(Opcode.SMSG_GOSSIP_COMPLETE, null);
+        if (giver is null || quest is null || !involves(giver, id, true, false))
+            return;
+        if (!canTakeQuest(*quest))
+        {
+            ByteWriter w;
+            w.put(questState(id) != QuestState.none ? invalidAlreadyOn : invalidDontHaveReq);
+            return deliver(Opcode.SMSG_QUESTGIVER_QUEST_INVALID, w.data);
+        }
+        if (questSlot(0) >= maxQuestLogSize)
+            return deliver(Opcode.SMSG_QUESTLOG_FULL, null);
+        addQuest(*quest);
+        if (canCompleteQuest(id))
+            completeQuest(id);
+        if (quest.srcSpell)
+            if (const spell = context.data.spells.spell(quest.srcSpell))
+                castSpell(spell, SpellTargets(TargetFlags.self, player.guid), true, 0);
+        flushPlayerChanges();
+    }
+
+    /// `Player::AddQuest`: in the log, its objectives at zero (items: what is carried), its starting item given.
+    void addQuest(const ref Quest quest)
+    {
+        const slot = questSlot(0);
+        auto q = &statusOf(quest.id);
+        q.status = QuestState.incomplete;
+        q.explored = false;
+        q.mobCount = 0;
+        q.itemCount = 0;
+        q.changed = true;
+        setQuestSlot(slot, quest.id);
+        if (quest.srcItemId && player.inventory.count(quest.srcItemId) == 0)
+            giveItem(quest.srcItemId, quest.srcItemCount ? quest.srcItemCount : 1);
+        foreach (i; 0 .. questObjectives)
+            if (quest.reqItemId[i])
+            {
+                const have = player.inventory.count(quest.reqItemId[i]);
+                q.itemCount[i] = have < quest.reqItemCount[i] ? have : quest.reqItemCount[i];
+            }
+        info!"%s: '%s' took quest %s (%s)"(remoteAddress, player.data.name, quest.id, quest.title);
+    }
+
+    /// `Player::CompleteQuest`: its objectives met; the log shows it complete.
+    void completeQuest(uint id)
+    {
+        auto q = &statusOf(id);
+        q.status = QuestState.complete;
+        q.changed = true;
+        const slot = questSlot(id);
+        if (slot < maxQuestLogSize)
+            setQuestSlotState(slot, 1, true);
+        ByteWriter w;
+        w.put(id);
+        deliver(Opcode.SMSG_QUESTUPDATE_COMPLETE, w.data);
+    }
+
+    /// `Player::IncompleteQuest`: an objective no longer met (an item given away).
+    void incompleteQuest(uint id)
+    {
+        auto q = &statusOf(id);
+        q.status = QuestState.incomplete;
+        q.changed = true;
+        const slot = questSlot(id);
+        if (slot < maxQuestLogSize)
+            setQuestSlotState(slot, 1, false);
+    }
+
+    /// `HandleQuestgiverCompleteQuest`: what the ender asks for.
+    @Handles(Opcode.CMSG_QUESTGIVER_COMPLETE_QUEST, WorldState.inWorld)
+    void handleQuestgiverCompleteQuest(ref ByteReader reader)
+    {
+        const guid = reader.read!ulong, id = reader.read!uint;
+        auto giver = interactableNpc(guid, 0x2);
+        const quest = context.data.quests.quest(id);
+        if (giver is null || quest is null || !involves(giver, id, false, true))
+            return;
+        sendRequestItems(*quest, guid, canRewardQuest(*quest), false);
+    }
+
+    /// `HandleQuestgiverRequestRewardOpcode`: the rewards to choose from.
+    @Handles(Opcode.CMSG_QUESTGIVER_REQUEST_REWARD, WorldState.inWorld)
+    void handleQuestgiverRequestReward(ref ByteReader reader)
+    {
+        const guid = reader.read!ulong, id = reader.read!uint;
+        auto giver = interactableNpc(guid, 0x2);
+        const quest = context.data.quests.quest(id);
+        if (giver is null || quest is null || !involves(giver, id, false, true))
+            return;
+        if (canCompleteQuest(id))
+            completeQuest(id);
+        if (questState(id) != QuestState.complete && !quest.autoComplete)
+            return;
+        sendOfferReward(*quest, guid, true);
+    }
+
+    /// `HandleQuestgiverChooseRewardOpcode`: turned in; the next quest of the chain offered.
+    @Handles(Opcode.CMSG_QUESTGIVER_CHOOSE_REWARD, WorldState.inWorld)
+    void handleQuestgiverChooseReward(ref ByteReader reader)
+    {
+        const guid = reader.read!ulong, id = reader.read!uint, reward = reader.read!uint;
+        if (reward >= questRewardChoices)
+            return;
+        auto giver = interactableNpc(guid, 0x2);
+        const quest = context.data.quests.quest(id);
+        if (giver is null || quest is null || !involves(giver, id, false, true))
+            return;
+        if (!canRewardQuest(*quest) || !roomForRewards(*quest, reward))
+            return sendOfferReward(*quest, guid, true);
+        rewardQuest(*quest, reward);
+        if (quest.nextQuestInChain)
+            if (const next = context.data.quests.quest(quest.nextQuestInChain))
+                if (involves(giver, next.id, true, false) && canTakeQuest(*next))
+                    sendQuestDetails(*next, guid, true);
+    }
+
+    /// `CanRewardQuest(quest, reward)`: room for the chosen item and the others.
+    bool roomForRewards(const ref Quest quest, uint reward)
+    {
+        ItemPosCount[] dest;
+        bool full;
+        if (quest.rewChoiceCount && quest.rewChoiceItemId[reward])
+            full |= player.inventory.canStoreNew(nullBag, nullSlot, dest, quest.rewChoiceItemId[reward],
+                quest.rewChoiceItemCount[reward]) != InventoryResult.ok;
+        foreach (i; 0 .. questRewards)
+            if (quest.rewItemId[i])
+                full |= player.inventory.canStoreNew(nullBag, nullSlot, dest, quest.rewItemId[i], quest.rewItemCount[i])
+                    != InventoryResult.ok;
+        if (full)
+            sendEquipError(InventoryResult.inventoryFull);
+        return !full;
+    }
+
+    /**
+     * `Player::RewardQuest`: the items asked for taken, the rewards given (the chosen item, the others,
+     * experience or at the top level money, money, the spell), the log slot freed, the quest done.
+     */
+    void rewardQuest(const ref Quest quest, uint reward)
+    {
+        foreach (i; 0 .. questObjectives)
+            if (quest.reqItemId[i])
+                player.inventory.destroyCount(quest.reqItemId[i], quest.reqItemCount[i]);
+        if (quest.rewChoiceCount && quest.rewChoiceItemId[reward])
+            giveItem(quest.rewChoiceItemId[reward], quest.rewChoiceItemCount[reward]);
+        foreach (i; 0 .. questRewards)
+            if (quest.rewItemId[i])
+                giveItem(quest.rewItemId[i], quest.rewItemCount[i]);
+        const slot = questSlot(quest.id);
+        if (slot < maxQuestLogSize)
+            setQuestSlot(slot, 0);
+        const xp = questXp(quest, player.data.level);
+        uint maxLevelMoney;
+        if (player.data.level < context.config.maxPlayerLevel)
+            giveXP(xp);
+        else
+            maxLevelMoney = quest.rewMoneyMaxLevel;
+        player.modifyMoney(cast(long) quest.rewOrReqMoney + maxLevelMoney);
+        auto q = &statusOf(quest.id);
+        q.status = quest.repeatable ? QuestState.none : QuestState.complete;
+        q.rewarded = true;
+        q.changed = true;
+        ByteWriter w;
+        w.put(quest.id);
+        w.put(0x03u);
+        w.put(player.data.level < context.config.maxPlayerLevel ? xp : 0u);
+        w.put(cast(uint)(quest.rewOrReqMoney + maxLevelMoney));
+        w.put(quest.rewItemsCount);
+        foreach (i; 0 .. questRewards)
+            if (quest.rewItemId[i])
+            {
+                w.put(quest.rewItemId[i]);
+                w.put(quest.rewItemCount[i]);
+            }
+        deliver(Opcode.SMSG_QUESTGIVER_QUEST_COMPLETE, w.data);
+        // `RewSpellCast` is cast on the player; else `RewSpell`.
+        const spellId = quest.rewSpellCast ? quest.rewSpellCast : quest.rewSpell;
+        if (spellId)
+            if (const spell = context.data.spells.spell(spellId))
+                castSpell(spell, SpellTargets(TargetFlags.self, player.guid), true, 0);
+        flushInventory(true);
+        saveQuests();
+        info!"%s: '%s' turned in quest %s (%s xp)"(remoteAddress, player.data.name, quest.id, xp);
+    }
+
+    /// `HandleQuestgiverCancel`
+    @Handles(Opcode.CMSG_QUESTGIVER_CANCEL, WorldState.inWorld)
+    void handleQuestgiverCancel()
+    {
+        deliver(Opcode.SMSG_GOSSIP_COMPLETE, null);
+    }
+
+    /// `HandleQuestLogSwapQuest`
+    @Handles(Opcode.CMSG_QUESTLOG_SWAP_QUEST, WorldState.inWorld)
+    void handleQuestLogSwapQuest(ref ByteReader reader)
+    {
+        const a = reader.read!ubyte, b = reader.read!ubyte;
+        if (a == b || a >= maxQuestLogSize || b >= maxQuestLogSize)
+            return;
+        foreach (i; 0 .. 3)
+        {
+            const first = player.values[PLAYER_QUEST_LOG_1_1 + 3 * a + i];
+            player.values.setSlot(PLAYER_QUEST_LOG_1_1 + 3 * a + i, player.values[PLAYER_QUEST_LOG_1_1 + 3 * b + i]);
+            player.values.setSlot(PLAYER_QUEST_LOG_1_1 + 3 * b + i, first);
+        }
+        flushPlayerChanges();
+    }
+
+    /// `HandleQuestLogRemoveQuest`: the quest abandoned.
+    @Handles(Opcode.CMSG_QUESTLOG_REMOVE_QUEST, WorldState.inWorld)
+    void handleQuestLogRemoveQuest(ref ByteReader reader)
+    {
+        const slot = reader.read!ubyte;
+        if (slot >= maxQuestLogSize)
+            return;
+        const id = player.values[PLAYER_QUEST_LOG_1_1 + 3 * slot];
+        if (id)
+        {
+            auto q = &statusOf(id);
+            q.status = QuestState.none;
+            q.mobCount = 0;
+            q.itemCount = 0;
+            q.changed = true;
+        }
+        setQuestSlot(slot, 0);
+        flushPlayerChanges();
+        saveQuests();
+    }
+
+    // -----------------------------------------------------------------------
+    // Objectives
+    // -----------------------------------------------------------------------
+
+    /// `Player::KilledMonsterCredit`: a creature of `entry` killed counts for the quests that ask for it.
+    package void killedMonster(uint entry, ulong guid)
+    {
+        foreach (slot; 0 .. maxQuestLogSize)
+        {
+            const id = player.values[PLAYER_QUEST_LOG_1_1 + 3 * slot];
+            if (id == 0)
+                continue;
+            const quest = context.data.quests.quest(id);
+            auto q = id in player.questStatus;
+            if (quest is null || q is null || q.status != QuestState.incomplete || !quest.killOrCast)
+                continue;
+            foreach (i; 0 .. questObjectives)
+            {
+                if (quest.reqCreatureOrGoId[i] != cast(int) entry || quest.reqSpellCast[i])
+                    continue;
+                if (q.mobCount[i] >= quest.reqCreatureOrGoCount[i])
+                    continue;
+                ++q.mobCount[i];
+                q.changed = true;
+                ByteWriter w;
+                w.put(id);
+                w.put(entry);
+                w.put(q.mobCount[i]);
+                w.put(quest.reqCreatureOrGoCount[i]);
+                w.put(guid);
+                deliver(Opcode.SMSG_QUESTUPDATE_ADD_KILL, w.data);
+                setQuestSlotCounter(slot, i, q.mobCount[i]);
+                if (canCompleteQuest(id))
+                    completeQuest(id);
+            }
+        }
+        flushPlayerChanges();
+    }
+
+    /**
+     * `ItemAddedQuestCheck` and `ItemRemovedQuestCheck` at once: what the player carries of each item
+     * its quests ask for, as their counts; a quest whose items are all there is complete, and one that
+     * lost some is not.
+     */
+    package void questItemsChanged()
+    {
+        if (player is null)
+            return;
+        foreach (slot; 0 .. maxQuestLogSize)
+        {
+            const id = player.values[PLAYER_QUEST_LOG_1_1 + 3 * slot];
+            if (id == 0)
+                continue;
+            const quest = context.data.quests.quest(id);
+            auto q = id in player.questStatus;
+            if (quest is null || q is null || !quest.deliver)
+                continue;
+            if (q.status != QuestState.incomplete && q.status != QuestState.complete)
+                continue;
+            foreach (i; 0 .. questObjectives)
+            {
+                if (!quest.reqItemId[i])
+                    continue;
+                const have = player.inventory.count(quest.reqItemId[i]);
+                const counted = have < quest.reqItemCount[i] ? have : quest.reqItemCount[i];
+                if (counted == q.itemCount[i])
+                    continue;
+                if (counted > q.itemCount[i])
+                {
+                    ByteWriter w;
+                    w.put(quest.reqItemId[i]);
+                    w.put(counted - q.itemCount[i]);
+                    deliver(Opcode.SMSG_QUESTUPDATE_ADD_ITEM, w.data);
+                }
+                q.itemCount[i] = counted;
+                q.changed = true;
+            }
+            if (q.status == QuestState.incomplete && canCompleteQuest(id))
+                completeQuest(id);
+            else if (q.status == QuestState.complete)
+                foreach (i; 0 .. questObjectives)
+                    if (quest.reqItemId[i] && q.itemCount[i] < quest.reqItemCount[i])
+                    {
+                        incompleteQuest(id);
+                        break;
+                    }
+        }
+    }
+
+    /// `Player::HasQuestForItem`: whether a quest taken still asks for the item (a quest drop it may loot).
+    package bool hasQuestForItem(uint item)
+    {
+        foreach (slot; 0 .. maxQuestLogSize)
+        {
+            const id = player.values[PLAYER_QUEST_LOG_1_1 + 3 * slot];
+            if (id == 0)
+                continue;
+            const quest = context.data.quests.quest(id);
+            auto q = id in player.questStatus;
+            if (quest is null || q is null || q.status != QuestState.incomplete)
+                continue;
+            foreach (i; 0 .. questObjectives)
+            {
+                if (quest.reqItemId[i] == item && q.itemCount[i] < quest.reqItemCount[i])
+                    return true;
+                if (quest.reqSourceId[i] == item && player.inventory.count(item) < quest.reqSourceCount[i])
+                    return true;
+            }
+        }
+        return false;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+/**
+ * A whole quest: the trainer offers it, Anduin takes it, kills the innkeeper and loots the jerky it
+ * asks for (both count), and turns it in for its money, experience and item.
+ */
+unittest
+{
+    import core.time : MonoTime;
+    import std.algorithm.searching : canFind;
+    import dmangos.bytes : ByteReader, ByteWriter;
+    import dmangos.world.creature : Creature;
+    import dmangos.world.loothandlers : ClientLootSlot, killIt, lootableInnkeeper;
+    import dmangos.world.movement : Position;
+    import dmangos.world.objects : HighGuid, makeGuid;
+    import dmangos.world.opcodes;
+    import dmangos.world.packets : ClientGuid, ClientNpcGuid;
+    import dmangos.world.player : Player;
+    import dmangos.world.quests;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+    import dmangos.world.updatefields;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    Quest q;
+    q.id = 5001;
+    q.method = 2;
+    q.minLevel = 1;
+    q.maxLevel = 255;
+    q.questLevel = 1;
+    q.title = "Mischief at the Inn";
+    q.requestItemsText = "Well?";
+    q.reqCreatureOrGoId[0] = creatureInnkeeper;
+    q.reqCreatureOrGoCount[0] = 1;
+    q.reqItemId[0] = itemJerky;
+    q.reqItemCount[0] = 1;
+    q.rewOrReqMoney = 35;
+    q.rewMoneyMaxLevel = 60;
+    q.rewItemId[0] = itemShirt;
+    q.rewItemCount[0] = 1;
+    context.data.quests.quests[q.id] = q;
+    context.data.quests.creatureStarts[creatureTrainer] = [q.id];
+    context.data.quests.creatureEnds[creatureTrainer] = [q.id];
+    context.data.quests.link();
+
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f, 1.97f));
+    anduin.read();
+    auto me = cast(Player) anduin.session.character;
+    me.values.set!PLAYER_NEXT_LEVEL_XP(400u); // the test data has no experience table
+    auto trainer = cast(Creature) context.map(0).findObject(makeGuid(HighGuid.unit, creatureTrainer, trainerSpawn));
+    trainer.values.set!UNIT_NPC_FLAGS(trainer.values.get!UNIT_NPC_FLAGS | 0x2);
+    trainer.movement.position = Position(-8948.5f, -132.49f, 83.53f, 0);
+    auto victim = lootableInnkeeper(context);
+
+    uint statusOfTrainer()
+    {
+        anduin.write(Opcode.CMSG_QUESTGIVER_STATUS_QUERY, ClientGuid(trainer.guid));
+        auto reply = anduin.read();
+        assert(reply.length && reply[$ - 1].opcode == Opcode.SMSG_QUESTGIVER_STATUS);
+        auto r = ByteReader(reply[$ - 1].body_);
+        r.read!ulong;
+        return r.read!uint;
+    }
+
+    assert(statusOfTrainer() == DialogStatus.available, "a quest to give: the exclamation mark");
+    anduin.write(Opcode.CMSG_GOSSIP_HELLO, ClientNpcGuid(trainer.guid));
+    assert(opcodesOf(anduin.read()).canFind(Opcode.SMSG_GOSSIP_MESSAGE));
+
+    ByteWriter accept;
+    accept.put(trainer.guid);
+    accept.put(q.id);
+    anduin.write(Opcode.CMSG_QUESTGIVER_ACCEPT_QUEST, accept.data);
+    anduin.read();
+    assert(me.values[PLAYER_QUEST_LOG_1_1] == q.id && me.questStatus[q.id].status == QuestState.incomplete);
+    assert(statusOfTrainer() == DialogStatus.incomplete);
+
+    // The kill counts; its jerky (a quest drop as well as a plain one here) counts as it is looted.
+    killIt(anduin, victim, now);
+    auto killed = opcodesOf(anduin.read());
+    assert(killed.canFind(Opcode.SMSG_QUESTUPDATE_ADD_KILL) && me.questStatus[q.id].mobCount[0] == 1);
+    anduin.write(Opcode.CMSG_LOOT, ClientGuid(victim.guid));
+    anduin.read();
+    anduin.write(Opcode.CMSG_AUTOSTORE_LOOT_ITEM, ClientLootSlot(0));
+    const looted = opcodesOf(anduin.read());
+    assert(looted.canFind(Opcode.SMSG_QUESTUPDATE_ADD_ITEM) && looted.canFind(Opcode.SMSG_QUESTUPDATE_COMPLETE));
+    assert(me.questStatus[q.id].status == QuestState.complete);
+    assert(statusOfTrainer() == DialogStatus.reward2, "the question mark");
+
+    // Turned in: the jerky taken, 35 copper and the shirt given, 100 experience.
+    const money = me.money, xp = me.values[PLAYER_XP];
+    ByteWriter request;
+    request.put(trainer.guid);
+    request.put(q.id);
+    anduin.write(Opcode.CMSG_QUESTGIVER_COMPLETE_QUEST, request.data);
+    assert(opcodesOf(anduin.read()).canFind(Opcode.SMSG_QUESTGIVER_REQUEST_ITEMS));
+    ByteWriter choose;
+    choose.put(trainer.guid);
+    choose.put(q.id);
+    choose.put(0u);
+    anduin.write(Opcode.CMSG_QUESTGIVER_CHOOSE_REWARD, choose.data);
+    assert(opcodesOf(anduin.read()).canFind(Opcode.SMSG_QUESTGIVER_QUEST_COMPLETE));
+    assert(me.inventory.count(itemJerky) == 0 && me.inventory.count(itemShirt) == 1);
+    assert(me.money == money + 35 && me.values[PLAYER_XP] == xp + questXp(q, 1)); // 60 / 0.6f
+    assert(me.questStatus[q.id].rewarded && me.values[PLAYER_QUEST_LOG_1_1] == 0);
+    assert(db.questRows[7][q.id].rewarded, "saved");
+    assert(statusOfTrainer() == DialogStatus.none, "nothing more");
+}

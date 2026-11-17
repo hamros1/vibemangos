@@ -17,6 +17,7 @@ import dmangos.world.inventory : ItemChange, ItemRecord, ItemState;
 import dmangos.world.player : CharacterData, CharacterProgress, HomeBind, tutorialFields;
 import dmangos.world.playercreate : NewCharacter, NewSkill, NewSpell, maxEnchantmentSlot;
 import dmangos.world.database : AuraRecord, CorpseRecord;
+import dmangos.world.quests : QuestState, QuestStatus;
 import dmangos.world.worlddata : CreateAction;
 
 /// Who a character belongs to.
@@ -257,6 +258,23 @@ final class CharacterStatements
             ~ "ii.randomPropertyId, ii.durability, ii.itemTextId FROM character_inventory ci "
             ~ "JOIN item_instance ii ON ii.guid = ci.item WHERE ci.guid = ? ORDER BY ci.bag, ci.slot")(guid);
         c.skills = characters.queryAs!(NewSkill, "SELECT skill, value, max FROM character_skills WHERE guid = ?")(guid);
+        foreach (row; characters.query!("SELECT quest, status, rewarded, explored, timer, mobcount1, mobcount2, "
+                ~ "mobcount3, mobcount4, itemcount1, itemcount2, itemcount3, itemcount4 FROM character_queststatus "
+                ~ "WHERE guid = ?")(guid))
+        {
+            QuestStatus q;
+            q.quest = row.get!uint(0);
+            q.status = cast(QuestState) row.get!uint(1);
+            q.rewarded = row.get!bool(2);
+            q.explored = row.get!bool(3);
+            q.timer = row.get!long(4);
+            foreach (i; 0 .. 4)
+            {
+                q.mobCount[i] = row.get!uint(5 + i);
+                q.itemCount[i] = row.get!uint(9 + i);
+            }
+            c.quests ~= q;
+        }
         foreach (row; characters.query!"SELECT spell, active, disabled FROM character_spell WHERE guid = ?"(guid))
             c.spells ~= NewSpell(row.get!uint(0), row.get!bool(1), row.get!bool(2));
         c.actions = characters.queryAs!(CreateAction,
@@ -329,6 +347,24 @@ final class CharacterStatements
         characters.execute!("INSERT INTO corpse (guid, player, position_x, position_y, position_z, orientation, map, "
             ~ "time, corpse_type, instance) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)")(c.player, c.player, c.x, c.y, c.z,
             c.orientation, c.map, c.time, c.type);
+    }
+
+    /// See `WorldDatabase.saveQuestStatus`.
+    void saveQuestStatus(uint player, const(QuestStatus)[] quests)
+    {
+        foreach (ref q; quests)
+        {
+            if (q.status == QuestState.none && !q.rewarded)
+            {
+                characters.execute!"DELETE FROM character_queststatus WHERE guid = ? AND quest = ?"(player, q.quest);
+                continue;
+            }
+            characters.execute!("REPLACE INTO character_queststatus (guid, quest, status, rewarded, explored, timer, "
+                ~ "mobcount1, mobcount2, mobcount3, mobcount4, itemcount1, itemcount2, itemcount3, itemcount4) "
+                ~ "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")(player, q.quest, cast(uint) q.status,
+                q.rewarded ? 1 : 0, q.explored ? 1 : 0, q.timer, q.mobCount[0], q.mobCount[1], q.mobCount[2],
+                q.mobCount[3], q.itemCount[0], q.itemCount[1], q.itemCount[2], q.itemCount[3]);
+        }
     }
 
     /// See `WorldDatabase.saveAuras`.

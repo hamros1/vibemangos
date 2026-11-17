@@ -121,6 +121,7 @@ final class WorldSession : NetSession, Kickable, OnlinePlayer
     mixin AuraHandlers;             // aurahandlers.d: SpellAuras.cpp's handlers and ticks
     mixin TradeHandlers;            // tradehandlers.d: TradeHandler.cpp
     mixin DuelHandlers;             // duelhandlers.d: DuelHandler.cpp, EffectDuel, DuelComplete
+    mixin QuestHandlers;            // questhandlers.d: QuestHandler.cpp, Player's quest functions
     mixin Exploration;              // exploration.d: Player::UpdateZone, CheckAreaExploreAndOutdoor, GiveXP
     mixin ChatCommands;             // commands.d: ArcEmu's ParseCommands, ExecuteCommandInTable, messages
     mixin GmActions;                // gmactions.d: what the handlers do to players
@@ -344,6 +345,16 @@ session's side: `SPELL_EFFECT_APPLY_AURA`, what each aura type does as it begins
 mounts), the player's own ticks, the interrupt flags, and `Combatant.auraTick` for the ticks of its
 auras on creatures (a creature's tick asks its caster's session, so damage over time taps and kills
 like any spell).
+
+## Quests
+
+`quests.d` is the data: `Quest` (a `quest_template` row with what `LoadQuests` derives), the
+starters and enders by creature entry, the exclusive groups, `questXp`, and a character's
+`QuestStatus`. A `Player` keeps its `questStatus` by quest; its quest log is the
+`PLAYER_QUEST_LOG_*` fields (`loadQuestLog` at login and arrival). `questhandlers.d` is the
+session's side: `CanTakeQuest` and the dialog status, the quest giver packets, accepting,
+completing, rewarding, and the objectives (`killedMonster` from the kill's rewards,
+`questItemsChanged` from every inventory save, `hasQuestForItem` for loot).
 
 ## Death
 

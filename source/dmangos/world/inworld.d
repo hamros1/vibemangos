@@ -67,6 +67,7 @@ private:
         duelComplete(DuelEnd.fled);
         if (player.deathState == DeathState.alive)
             saveAuras();
+        saveQuests();
         deathOnLogout();
         const progress = player.progress(secondsInWorld());
         context.database.saveProgress(progress);
@@ -190,6 +191,7 @@ private:
         const progress = player.progress(secondsInWorld());
         context.database.saveProgress(progress);
         saveAuras(); // the next node loads them, as it loads the rest
+        saveQuests();
 
         ByteWriter w;
         w.put(account.id);

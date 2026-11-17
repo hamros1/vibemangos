@@ -20,6 +20,7 @@ import dmangos.world.grid : cellKeyAt;
 import dmangos.world.motion : MotionType, WaypointNode, WaypointStore;
 import dmangos.world.loot : lootColumns, lootRow, LootStore, LootStores;
 import dmangos.world.npcdata : NpcData;
+import dmangos.world.quests : QuestData, questQuery, QuestRow;
 import dmangos.world.spells : SpellData;
 
 /// The `item_template` fields the character screen and character creation use.
@@ -310,6 +311,7 @@ final class WorldData
     CreatureClassStats[uint] creatureClassStats;    /// by `classStatsKey`
     NpcData npcs;                                   /// gossip, texts, trainers, vendors
     LootStores loot;                                /// `creature_loot_template`, `reference_loot_template`
+    QuestData quests;                               /// `quest_template` and who gives and takes back each
     GraveyardLink[][uint] graveyards;               /// `game_graveyard_zone`, by `graveyardLinkKey`
     GhostEntrance[uint] ghostEntrances;             /// `instance_template`'s ghost entrances, by instance map
     WaypointStore waypoints;                        /// `creature_movement` and `creature_movement_template`
@@ -319,6 +321,8 @@ final class WorldData
     {
         npcs = new NpcData;
         waypoints = new WaypointStore;
+        quests = new QuestData;
+        loot = LootStores(new LootStore("creature_loot_template"), new LootStore("reference_loot_template"));
     }
 
     /**
@@ -495,7 +499,13 @@ final class WorldData
                 t.data[i] = row.get!int(7 + i);
             gameObjectTemplates[t.entry] = t;
         }
-        loot = LootStores(new LootStore("creature_loot_template"), new LootStore("reference_loot_template"));
+        foreach (row; world.queryAs!(QuestRow, questQuery)())
+            quests.quests[row.id] = row.toQuest();
+        foreach (row; world.query!"SELECT id, quest FROM creature_questrelation"())
+            quests.creatureStarts[row.get!uint(0)] ~= row.get!uint(1);
+        foreach (row; world.query!"SELECT id, quest FROM creature_involvedrelation"())
+            quests.creatureEnds[row.get!uint(0)] ~= row.get!uint(1);
+        quests.link();
         static foreach (table; ["creature", "reference"])
             foreach (row; world.query!("SELECT " ~ lootColumns ~ " FROM " ~ table ~ "_loot_template")())
                 __traits(getMember, loot, table).add(row.get!uint(0), lootRow(row.get!uint(1), row.get!float(2),

@@ -196,7 +196,15 @@ private:
         const value = killValue(victim);
         auto group = context.groups.of(player.guid);
         if (group is null)
+        {
+            killedMonster(victim.template_.entry, victim.guid);
             return giveXP(killGain(player.data.level, value), victim.guid, 1.0f);
+        }
+        // `RewardGroupAtKill_helper`'s `KilledMonster`: every member near the kill.
+        foreach (ref slot; group.members)
+            if (auto member = cast(WorldSession) context.onlinePlayer(slot.guid))
+                if (member.atGroupRewardDistance(victim))
+                    member.killedMonster(victim.template_.entry, victim.guid);
 
         // `GetDataForXPAtKill`: the living members near the kill.
         WorldSession[] near;
@@ -295,7 +303,11 @@ private:
             bool allowed(ulong guid, const LootItem item)
             {
                 if (item.quest)
-                    return false; // `HasQuestForItem`: no quests yet
+                {
+                    // `HasQuestForItem`: only for one whose quest still asks for it.
+                    auto owner = cast(WorldSession) context.onlinePlayer(guid);
+                    return owner !is null && owner.hasQuestForItem(item.itemId);
+                }
                 if (item.condition == 0)
                     return true;
                 auto owner = cast(WorldSession) context.onlinePlayer(guid);

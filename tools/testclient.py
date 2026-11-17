@@ -375,6 +375,25 @@ def describe(op, p):
     elif op == 0x1D4: print(f"  [level up] to level {struct.unpack_from('<I', p)[0]}")
     elif op == 0x1D0: print("  [experience] %d (kind %d)" % struct.unpack_from("<IB", p, 8))
     elif op == 0x161: print("  [loot window closed]")
+    elif op == 0x17D:
+        g, text, n = struct.unpack_from("<QII", p, 0); pos = 16
+        for i in range(n):
+            pos += 6; end = p.index(b"\0", pos); pos = end + 1
+        q = struct.unpack_from("<I", p, pos)[0]; pos += 4; quests = []
+        for i in range(q):
+            qid, icon, lvl = struct.unpack_from("<IIi", p, pos); pos += 12; end = p.index(b"\0", pos)
+            quests.append((qid, icon, p[pos:end].decode())); pos = end + 1
+        print(f"  [gossip] {n} options, quests {quests}")
+    elif op == 0x188:
+        g, qid = struct.unpack_from("<QI", p, 0); title = p[12:p.index(b"\0", 12)].decode(); print(f"  [quest details] {qid}: {title}")
+    elif op == 0x18B: print(f"  [quest request items] {struct.unpack_from('<I', p, 8)[0]}")
+    elif op == 0x18D: print(f"  [quest offer reward] {struct.unpack_from('<I', p, 8)[0]}")
+    elif op == 0x191:
+        qid, _, xp, money = struct.unpack_from("<IIII", p, 0); print(f"  [quest complete] {qid}: {xp} xp, {money} copper")
+    elif op == 0x198: print(f"  [quest objectives done] {struct.unpack_from('<I', p, 0)[0]}")
+    elif op == 0x199:
+        qid, entry_, count, req = struct.unpack_from("<IIII", p, 0); print(f"  [quest kill] {qid}: {entry_} {count}/{req}")
+    elif op == 0x18F: print(f"  [quest invalid] {struct.unpack_from('<I', p, 0)[0]}")
     elif op == 0x167:
         flag, by = struct.unpack_from("<QQ", p, 0); duel_flag[0] = flag; print(f"  [duel requested] by {by & 0xFFFFFF}")
     elif op == 0x2B7: print(f"  [duel countdown] {struct.unpack_from('<I', p, 0)[0]} ms")
@@ -643,6 +662,23 @@ for action in actions:
             wsend(0x141, struct.pack("<Q", target)); print(f"attack player {target & 0xFFFFFF}")
     elif kind == "duelaccept":
         wsend(0x16C, struct.pack("<Q", duel_flag[0])); print("accept the duel")
+    elif kind in ("queststatus", "questhello", "questaccept", "questcomplete", "questreward"):
+        # questX:ENTRY[:QUEST[:CHOICE]] at the nearest creature of ENTRY (walk there first: approach)
+        entry = int(args[0])
+        found = [g for g, (t, e) in seen_objects.items() if t == 3 and e == entry]
+        if not found:
+            print(f"{kind}: no {entry} in sight"); continue
+        g = found[0]
+        if kind == "queststatus":
+            wsend(0x182, struct.pack("<Q", g)); op, p = expect(0x183); print(f"quest status of {entry}: {struct.unpack_from('<I', p, 8)[0]}")
+        elif kind == "questhello":
+            wsend(0x184, struct.pack("<Q", g)); print(f"hello {entry}")
+        elif kind == "questaccept":
+            wsend(0x189, struct.pack("<QI", g, int(args[1]))); print(f"accept quest {args[1]}")
+        elif kind == "questcomplete":
+            wsend(0x18A, struct.pack("<QI", g, int(args[1]))); print(f"complete quest {args[1]}")
+        else:
+            wsend(0x18E, struct.pack("<QII", g, int(args[1]), int(args[2]) if len(args) > 2 else 0)); print(f"reward quest {args[1]}")
     elif kind == "useitem":
         # useitem:BAG:SLOT
         bag, slot = int(args[0]), int(args[1])

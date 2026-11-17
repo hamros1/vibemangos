@@ -130,6 +130,13 @@ The largest area. CMaNGOS references: `Spells/`, `Entities/Unit.cpp`, `Combat/`,
 * Creature AI, threat, death, loot (`LootHandler.cpp`), XP and level-up (`Player::GiveXP`, then
   `InitStatsForLevel`).
 
+### Quests
+
+**Done** (`quests.d`, `questhandlers.d`; README's "Quests"): givers, the log, kill and item
+objectives, rewards, saving. Next: game object and item quest givers, quest sharing
+(`CMSG_PUSHQUESTTOPARTY`), timed quests, area triggers' exploration objectives, `questgiver_greeting`,
+reputation (which also needs `character_reputation`).
+
 ### 7. Social and progression
 
 * Friends and ignore lists, guilds, mail, auction house and trade, each a handler group and
