@@ -2023,6 +2023,37 @@ unittest
     assert(keeper.values.get!UNIT_FIELD_HEALTH == flying, "still in flight");
     anduin.session.update(400.msecs);
     assert(keeper.values.get!UNIT_FIELD_HEALTH < flying, "arrived");
+
+    // A sword's chance on hit (100%): a hit with it casts its spell at the victim.
+    {
+        import dmangos.world.combat : AttackType;
+        import dmangos.world.defines : equipmentSlotMainhand, inventorySlotBag0;
+        import dmangos.world.packets : ClientItemPos;
+
+        enum uint smite = 95607;
+        context.data.spells.spells[smite] = testSpell(smite, 2, ImplicitTarget.enemy, 25);
+        context.data.spells.spells[smite].casting.school = 1; // holy: not resisted
+        context.data.spells.spells[smite].casting.dmgClass = 0;
+        context.data.spells.spells[smite].casting.procChance = 100;
+        context.data.spells.spells[smite].attributesEx2 |= 0x20000000; // no crit
+        context.data.items[itemSword].details.spells[0].id = smite;
+        context.data.items[itemSword].details.spells[0].trigger = 2; // chance on hit
+        anduin.session.lootStore(itemSword, 1, 0, false);
+        anduin.read();
+        ubyte slot;
+        foreach (s; ubyte(23) .. ubyte(39))
+            if (const item = me.inventory[inventorySlotBag0, s])
+                if (item.entry == itemSword)
+                    slot = s;
+        anduin.write(Opcode.CMSG_AUTOEQUIP_ITEM, ClientItemPos(inventorySlotBag0, slot));
+        anduin.read();
+        assert(me.inventory.equipped(equipmentSlotMainhand) !is null);
+        const struck = keeper.values.get!UNIT_FIELD_HEALTH;
+        anduin.session.castItemCombatSpells(keeper, AttackType.mainHand);
+        assert(keeper.values.get!UNIT_FIELD_HEALTH == struck - 25, "the proc");
+        anduin.session.castItemCombatSpells(keeper, AttackType.offHand);
+        assert(keeper.values.get!UNIT_FIELD_HEALTH == struck - 25, "not for the other hand");
+    }
 }
 
 /// A persistent area aura: a spot on the ground that hurts the creatures in it every tick, for its duration.

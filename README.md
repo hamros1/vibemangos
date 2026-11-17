@@ -357,7 +357,9 @@ What works now:
     it), heals, energize, teleports home (the hearthstone), creating items, learning and triggering
     spells. Items cast their on-use spells (with the item's own cooldowns; food and drink are used
     up); an item's on-equip spells, and its item set's bonuses for as many of the set's items as are
-    worn (ItemSet.dbc), are on as auras while it is worn (and unbroken), and a spell that
+    worn (ItemSet.dbc), are on as auras while it is worn (and unbroken); a weapon's or other worn
+    item's chance-on-hit spell is cast when a swing hits (its procs a minute at the weapon's speed, or
+    the spell's chance), and a spell that
     needs an item worn (a weapon of some kind, a shield, a fishing pole) is
     refused without it. A channelled spell goes on for its duration (`MSG_CHANNEL_START`, the caster's channel fields),
     ending at its time, when the player cancels it, or when it moves if the spell says so (its auras on

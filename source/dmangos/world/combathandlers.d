@@ -507,6 +507,49 @@ private:
         map.flushObjectChanges(victim);
         if (killed)
             creatureKilled(victim);
+        else
+            castItemCombatSpells(victim, type);
+    }
+
+    /**
+     * `Player::CastItemCombatSpell` after a hit: each chance-on-hit spell of the unbroken items worn
+     * (a weapon only for its own hand's swings) is cast, by its procs a minute at the weapon's speed
+     * (`GetPPMProcChance`: speed * rate / 600 percent) or else the spell's own chance.
+     */
+    package void castItemCombatSpells(Creature victim, AttackType type)
+    {
+        import std.random : uniform01;
+        import dmangos.world.defines : equipmentSlotEnd, equipmentSlotMainhand, equipmentSlotOffhand,
+            equipmentSlotRanged;
+
+        enum uint chanceOnHit = 2;
+        uint[] procs;
+        foreach (ubyte slot; 0 .. equipmentSlotEnd)
+        {
+            const item = player.inventory.equipped(slot);
+            if (item is null || item.proto is null || (item.maxDurability && item.durability == 0))
+                continue;
+            const weaponSlot = slot == equipmentSlotMainhand || slot == equipmentSlotOffhand || slot == equipmentSlotRanged;
+            const own = type == AttackType.mainHand ? equipmentSlotMainhand
+                : type == AttackType.offHand ? equipmentSlotOffhand : equipmentSlotRanged;
+            if (weaponSlot && slot != own)
+                continue;
+            foreach (ref s; item.proto.details.spells)
+            {
+                if (s.id == 0 || s.trigger != chanceOnHit)
+                    continue;
+                const spell = context.data.spells.spell(s.id);
+                if (spell is null)
+                    continue;
+                const speed = player.values.get!UNIT_FIELD_BASEATTACKTIME(type == AttackType.offHand ? 1 : 0);
+                const chance = s.ppmRate > 0 ? speed * s.ppmRate / 600.0f : float(spell.casting.procChance);
+                if (uniform01(map.random) * 100 < chance)
+                    procs ~= s.id;
+            }
+        }
+        foreach (id; procs)
+            if (victim.alive)
+                castTriggeredAt(id, victim.guid);
     }
 
     /**

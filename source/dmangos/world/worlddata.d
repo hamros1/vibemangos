@@ -92,6 +92,7 @@ struct ItemSpell
     uint trigger;
     int cooldown = -1;         /// -1: use the spell's own
     int categoryCooldown = -1; /// -1: use the spell's own
+    float ppmRate = 0;         /// `spellppmRate`: procs a minute of a chance-on-hit spell; 0: the spell's chance
 }
 
 /// The rest of `item_template`.
@@ -151,7 +152,8 @@ private enum string[2][] itemDetailColumns = () {
         columns ~= [["spellid_" ~ to!string(i + 1), "spells[" ~ to!string(i) ~ "].id"],
             ["spelltrigger_" ~ to!string(i + 1), "spells[" ~ to!string(i) ~ "].trigger"],
             ["spellcooldown_" ~ to!string(i + 1), "spells[" ~ to!string(i) ~ "].cooldown"],
-            ["spellcategorycooldown_" ~ to!string(i + 1), "spells[" ~ to!string(i) ~ "].categoryCooldown"]];
+            ["spellcategorycooldown_" ~ to!string(i + 1), "spells[" ~ to!string(i) ~ "].categoryCooldown"],
+            ["spellppmRate_" ~ to!string(i + 1), "spells[" ~ to!string(i) ~ "].ppmRate"]];
     columns ~= [["description", "description"], ["PageText", "pageText"], ["LanguageID", "languageId"],
         ["PageMaterial", "pageMaterial"], ["startquest", "startQuest"], ["lockid", "lockId"],
         ["minMoneyLoot", "minMoneyLoot"], ["maxMoneyLoot", "maxMoneyLoot"],
@@ -168,7 +170,7 @@ private enum itemDetailQuery = () {
     return "SELECT entry, " ~ itemDetailColumns.map!(column => column[0]).join(", ") ~ " FROM item_template";
 }();
 
-static assert(itemDetailColumns.length == 6 + 20 + 15 + 7 + 3 + 20 + 14);
+static assert(itemDetailColumns.length == 6 + 20 + 15 + 7 + 3 + 25 + 14);
 
 /// `creature_model_info`: a model's size.
 struct ModelInfo

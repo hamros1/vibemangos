@@ -52,7 +52,7 @@
 * **Inventory:** prices have no honor discounts, and items that need an honor rank cannot be bought
   or used (there are no ranks). An off-hand item with no room left
   when a two-hander is put on stays worn, where CMaNGOS mails it (not yet). Item
-  enchantments, random properties, chance-on-hit item spells, readable items, wrapping and loot in
+  enchantments, random properties, readable items, wrapping and loot in
   items (lockboxes, clams: `CMSG_OPEN_ITEM` is) are not done. Dying and the spirit healer wear gear
   down; a broken worn item's stats come back when it is repaired.
 * **GM system:** ArcEmu's commands that need missing systems answer "Not yet implemented."
