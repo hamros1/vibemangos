@@ -25,6 +25,7 @@ struct ArrivalAction
     ulong loot;        /// a corpse to loot
     ulong useObject;   /// a game object to use
     ulong castObject;  /// the game object `spell` is cast at (a lock to open)
+    ulong noticedBy;   /// a creature that noticed the player (it attacks, if it still would here)
 }
 
 mixin template InWorldHandlers()
@@ -156,6 +157,10 @@ private:
 
         if (action.attack)
             handleAttackSwing(ClientGuid(action.attack));
+        if (action.noticedBy)
+            if (auto creature = cast(Creature) map.findObject(action.noticedBy))
+                if (creature.ai !is null && creature.ai.mayNotice)
+                    creature.ai.moveInLineOfSight(this, map);
         if (action.spell)
             if (const spell = context.data.spells.spell(action.spell))
                 if (player.knowsSpell(action.spell))
@@ -179,7 +184,7 @@ private:
      * An action at another node's creature (its replica here): the player moves to that node, and
      * does it there (`performArrivalAction`). True if it moved.
      */
-    bool actAtReplica(ulong target, ArrivalAction action)
+    package bool actAtReplica(ulong target, ArrivalAction action)
     {
         import dmangos.world.replication : Replica;
 
@@ -228,6 +233,7 @@ private:
         w.put(action.loot);
         w.put(action.useObject);
         w.put(action.castObject);
+        w.put(action.noticedBy);
         // The client's address and build, for `.playerinfo` there.
         w.put(cast(uint) address.length);
         w.putBytes(cast(const(ubyte)[]) address);
@@ -295,6 +301,7 @@ private:
         action.loot = r.read!ulong;
         action.useObject = r.read!ulong;
         action.castObject = r.read!ulong;
+        action.noticedBy = r.read!ulong;
         carriedAddress = r.readString(r.read!uint).idup;
         build = r.read!uint;
 

@@ -20,7 +20,7 @@ import dmangos.world.auctionhouse;
 import dmangos.world.database : MailRecord;
 import dmangos.world.movement : Position;
 import dmangos.world.migration : Migrant;
-import dmangos.world.replication : Replicator;
+import dmangos.world.replication : Replica, Replicator;
 import dmangos.world.channel : ChannelSettings;
 import dmangos.world.grid : cellKeyAt;
 import dmangos.world.channelservice : channelCommand, ChannelOp, ChannelService;
@@ -480,6 +480,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             &serverTime, &spawnCell, terrain(id), owns);
         created.replicator = replicator;
         created.onCorpseRemoved = &corpseRemoved;
+        created.onReplicaNoticing = &replicaNoticing;
         created.onWaypointScript = (Creature creature, uint scriptId) {
             import dmangos.world.dbscripts : DbScriptType;
 
@@ -952,6 +953,70 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             return true;
         }
         return false;
+    }
+
+    private MonoTime[ulong] noticedLately; // player ^ creature -> when it moved for it: not again for a while
+
+    /**
+     * `MoveInLineOfSight` for another node's creature (CLUSTER.md, phase 8): if it would attack the
+     * player on sight (an aggressive enemy, the player within its aggro radius and in sight), the
+     * player moves to the creature's node, where the creature decides for itself. A player is moved
+     * for the same creature once in 30 seconds, so one that does not attack after all is not
+     * followed back and forth.
+     */
+    private void replicaNoticing(Inhabitant who, Replica replica)
+    {
+        import dmangos.world.combat : levelFor;
+        import dmangos.world.creatureai : isNeutralToAll;
+        import dmangos.world.defines : UnitFlags;
+        import dmangos.world.inworld : ArrivalAction;
+        import dmangos.world.relations : canAttack, isEnemy, Relating;
+        import dmangos.world.session : WorldSession;
+        import dmangos.world.updatefields;
+
+        auto session = cast(WorldSession) who;
+        if (session is null || replica.owner == nodeId)
+            return;
+        const values = &replica.fields();
+        const template_ = values.get!OBJECT_FIELD_ENTRY in data.creatureTemplates;
+        if (template_ is null || template_.detection == 0)
+            return;
+        const faction = client.factionTemplates.lookup(values.get!UNIT_FIELD_FACTIONTEMPLATE);
+        if (faction is null || isNeutralToAll(*faction))
+            return;
+        const flags = values.get!UNIT_FIELD_FLAGS;
+        if (flags & (UnitFlags.spawning | UnitFlags.uninteractible))
+            return;
+        const self = Relating(flags, faction, false, 0, 0, true), other = session.relating;
+        if (!canAttack(self, other, client) || !isEnemy(self, other, client) || !session.fighter.alive
+            || session.untouchable)
+            return;
+        // `GetAttackDistance`
+        const at = session.fighter.position, from = replica.position;
+        int levelDiff = int(session.fighter.level) - int(values.get!UNIT_FIELD_LEVEL);
+        if (levelDiff < -25)
+            levelDiff = -25;
+        float radius = template_.detection - levelDiff;
+        if (radius < 5)
+            radius = 5;
+        if ((at.x - from.x) ^^ 2 + (at.y - from.y) ^^ 2 + (at.z - from.z) ^^ 2 > radius * radius)
+            return;
+        auto map_ = existingMap(session.character.data.map);
+        if (map_ is null || !map_.inLineOfSight(from, at))
+            return;
+        const key = session.character.guid ^ replica.guid;
+        const now = MonoTime.currTime;
+        if (auto last = key in noticedLately)
+            if (now - *last < 30.seconds)
+                return;
+        noticedLately[key] = now;
+        if (noticedLately.length > 4096)
+            foreach (k, when; noticedLately.dup)
+                if (now - when >= 30.seconds)
+                    noticedLately.remove(k);
+        ArrivalAction action;
+        action.noticedBy = replica.guid;
+        session.actAtReplica(replica.guid, action);
     }
 
     /// See `CreatureLore.startRelay`.

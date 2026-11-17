@@ -1515,3 +1515,122 @@ unittest
     there.update(1.seconds);
     assert(mesh.log == ["migrate 1->2"], "no move while fighting");
 }
+
+/**
+ * Noticed by another node's creature: an enemy whose replica is near the player when it moves (within
+ * its aggro radius) moves the player to the creature's node, where the creature attacks; and not
+ * again for the same creature within 30 seconds.
+ */
+unittest
+{
+    import core.time : MonoTime, msecs, seconds;
+    import std.algorithm.searching : canFind;
+    import std.format : format;
+    import dmangos.dbc : buildDbc;
+    import dmangos.world.clientdata : factionTemplateFormat;
+    import dmangos.world.context : PlayerRelay, WorldContext;
+    import dmangos.world.creature : Creature;
+    import dmangos.world.grid : cellKeyAt;
+    import dmangos.world.movement : Position;
+    import dmangos.world.objects : HighGuid, makeGuid;
+    import dmangos.world.packets : ClientGuid, ClientPlayerLogin;
+    import dmangos.world.player : CharacterData;
+    import dmangos.world.replication : encodeState, Replica;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+    import dmangos.world.updatefields;
+
+    auto db = newDatabase();
+    WorldContext[ushort] nodes;
+    foreach (ushort id; 1 .. 3)
+    {
+        nodes[id] = newCreationContext(db);
+        nodes[id].nodeId = id;
+    }
+    static final class Mesh
+    {
+        WorldContext[ushort] nodes;
+        WorldSession[uint][ushort] remotes;
+        string[] log;
+    }
+    static final class Relay : PlayerRelay
+    {
+        Mesh mesh;
+        ushort self;
+        this(Mesh mesh, ushort self) { this.mesh = mesh; this.self = self; }
+        void toHome(ushort home, uint account, ushort opcode, const(ubyte)[] body_)
+        {
+            auto session = cast(WorldSession) mesh.nodes[home].sessionOf(account);
+            session.fromOwner(opcode, body_);
+        }
+        void toOwner(ushort owner, uint account, ushort opcode, const(ubyte)[] body_)
+        {
+            if (auto s = account in mesh.remotes.require(owner, null))
+                s.fromHome(opcode, body_);
+        }
+        void disconnect(ushort owner, uint account) { mesh.remotes[owner][account].clientGone(); }
+        void migrate(ushort target, uint account, const(ubyte)[] state)
+        {
+            mesh.log ~= format!"migrate %s->%s"(self, target);
+            const homeNode = WorldSession.migrationHome(state);
+            auto session = new WorldSession(mesh.nodes[target], WorldSession.migrationAccount(state),
+                homeNode ? homeNode : self);
+            mesh.remotes.require(target, null)[account] = session;
+            assert(session.arrive(state));
+        }
+        void left(ushort home, uint account, bool toCharacterScreen) {}
+        void remoteDone(uint account) { mesh.remotes[self].remove(account); }
+        void moved(ushort home, uint account, ushort next) {}
+    }
+    auto mesh = new Mesh;
+    mesh.nodes = nodes;
+    foreach (id, node; nodes)
+    {
+        node.playerRelay = new Relay(mesh, id);
+        node.regionOwnerAround = (uint, Position, float) => ushort(1); // node 1's ground throughout
+    }
+    auto now = MonoTime.currTime;
+    foreach (node; nodes)
+        node.clock = () => now;
+
+    CharacterData c;
+    c.guid = 7;
+    c.account = db.accounts["PLAYER"].id;
+    c.name = "Wanderer";
+    c.race = 1; // a human warrior: what `newCreationContext` has
+    c.classId = 1;
+    c.level = 1;
+    c.position = Position(-8949.95f, -132.49f, 83.53f, 1.97f);
+    db.loadable[7] = c;
+    auto client = TestClient(new WorldSession(nodes[1], "127.0.0.1"), testKey);
+    authenticate(client);
+    client.write(Opcode.CMSG_PLAYER_LOGIN, ClientPlayerLogin(7));
+    client.read();
+    const monsters = 8u, humans = client.session.character.values.get!UNIT_FIELD_FACTIONTEMPLATE;
+    foreach (node; nodes)
+        node.client.factionTemplates = typeof(node.client.factionTemplates).parse(buildDbc(factionTemplateFormat,
+            [[humans, 1, 0, 1 | 2, 2, monsters, 0, 0, 0, 0, 0, 0, 0, 0], [14u, 14, 0, monsters, monsters, 1 | 2, 0, 0, 0,
+            0, 0, 0, 0, 0]]), "FactionTemplate.dbc");
+
+    // The innkeeper, an enemy, simulated by node 2; node 1 holds a replica of it.
+    const innkeeper = makeGuid(HighGuid.unit, creatureInnkeeper, innkeeperSpawn);
+    const cell = cellKeyAt(-8951, -130);
+    nodes[2].map(0).peerInterest(1, [cell], null);
+    auto owned = cast(Creature) nodes[2].map(0).findObject(innkeeper);
+    assert(owned !is null);
+    owned.factionTemplate = nodes[2].client.factionTemplates.lookup(14);
+    owned.values.set!UNIT_FIELD_FACTIONTEMPLATE(14u);
+    foreach (node; nodes)
+        node.data.creatureTemplates[creatureInnkeeper].detection = 20;
+    nodes[1].map(0).removeObject(innkeeper);
+    nodes[1].map(0).replicaCreated(2, cell, innkeeper, encodeState(owned, 0));
+    assert(cast(Replica) nodes[1].map(0).findObject(innkeeper) !is null);
+
+    // The player moves near it: node 1 judges the creature would notice it, and it moves to node 2.
+    nodes[1].map(0).refreshVisibility(client.session); // it sees the replica
+    nodes[1].map(0).relocated(client.session);
+    assert(mesh.log == ["migrate 1->2"], "moved to the creature's node");
+    auto there = mesh.remotes[2][c.account];
+    there.update(50.msecs);
+    assert(owned.ai.inCombat && owned.ai.currentVictim == 7, "noticed, and attacked, there");
+}

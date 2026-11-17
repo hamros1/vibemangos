@@ -1104,17 +1104,41 @@ final class Map : CombatWorld, GameObjectWorld
     /// `MoveInLineOfSight` for the creatures a player sees, when it has moved.
     private void playerNoticed(Inhabitant who)
     {
+        import dmangos.world.defines : UnitFlags;
+        import dmangos.world.objects : HighGuid, highGuidOf;
+        import dmangos.world.updatefields;
+
         auto combatant = cast(Combatant) who;
         if (combatant is null)
             return;
         const at = who.character.position;
         if (auto seen = who.character.guid in seesObjects)
             foreach (guid, _; *seen)
-                if (auto creature = cast(Creature) objects.get(guid, null))
+            {
+                auto object = objects.get(guid, null);
+                if (auto creature = cast(Creature) object)
+                {
                     if (creature.ai !is null && creature.ai.mayNotice
                         && distanceSquared(creature.position, at) < noticeDistance ^^ 2)
                         creature.ai.moveInLineOfSight(combatant, this);
+                }
+                else if (onReplicaNoticing !is null && highGuidOf(guid) == HighGuid.unit)
+                    if (auto replica = cast(Replica) object)
+                    {
+                        // Another node's creature, alive and not fighting: would it notice the player?
+                        const values = &replica.fields();
+                        if (values.get!UNIT_FIELD_HEALTH > 0 && !(values.get!UNIT_FIELD_FLAGS & UnitFlags.inCombat)
+                            && distanceSquared(replica.position, at) < noticeDistance ^^ 2)
+                            onReplicaNoticing(who, replica);
+                    }
+            }
     }
+
+    /**
+     * Told of another node's creature (its replica here, alive, out of combat) near a player who
+     * moved, to decide whether it notices the player (and the player must go to that node to fight).
+     */
+    void delegate(Inhabitant who, Replica replica) onReplicaNoticing;
 
     /// `MoveInLineOfSight` for the players who see a creature, when it has moved.
     private void creatureNoticing(Creature creature)

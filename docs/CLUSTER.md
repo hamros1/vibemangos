@@ -792,8 +792,14 @@ player goes there.
 * **Scripts and summons** run on the node of the map cell where they started (`dbscripts.d` keeps
   them in the node's context); a summoned creature's guid comes from its node's own range, so two
   nodes never make the same one. A summon is not handed over with its cell: it is dropped there.
-* **Not yet:** a creature does not notice (aggro on) a player another node simulates, nor does it
-  answer a call for help from another node's creature; group experience and loot rights count only
+* **Noticing across nodes:** when a player moves, its node also asks of the replicas of other
+  nodes' creatures near it what the creature would ask (`MoveInLineOfSight`): alive, out of combat,
+  an aggressive enemy that may attack it, the player within its aggro radius (its detection range
+  and the level difference) and in sight. If so, the player moves to the creature's node with
+  "noticed by" as its arrival action, and there the creature itself decides and attacks. A node
+  moves a player for the same creature once in 30 seconds, so a creature that does not attack after
+  all (a react state only its node knows) does not send the player back and forth.
+* **Not yet:** a creature does not answer a call for help from another node's creature; group experience and loot rights count only
   the members on the creature's node; a player's own spells at another node's player (there is no
   PvP yet).
 * **Tested:** a unit test with two nodes in memory: node 1 holds a replica of node 2's innkeeper
