@@ -33,6 +33,39 @@ mixin template SessionScripting()
         return c.consumed;
     }
 
+    /// An aura of this player's `spell` (its effect `i`, of `amount`) went onto `target`: the spell's script hears of it.
+    package void auraAppliedScript(const(SpellInfo)* spell, size_t i, ulong target, int amount)
+    {
+        import dmangos.script.api : AuraApplied;
+
+        auto handle = context.spellScript(spell.id);
+        if (!handle)
+            return;
+        scriptSpell = spell;
+        scope (exit)
+            scriptSpell = null;
+        auto c = SpellContext(scriptHost);
+        context.scripts.raise(handle, c, AuraApplied(EntityRef(player.guid), EntityRef(target), cast(ubyte) i, amount));
+    }
+
+    /// A periodic effect `i` of this player's aura ticks on `target`: what the tick does, as the
+    /// spell's script has it (Curse of Agony's ramp).
+    package int auraTickScript(const(SpellInfo)* spell, size_t i, ulong target, uint tick, uint ticks, int amount)
+    {
+        import dmangos.script.api : AuraTicked;
+
+        auto handle = context.spellScript(spell.id);
+        if (!handle)
+            return amount;
+        scriptSpell = spell;
+        scope (exit)
+            scriptSpell = null;
+        auto c = SpellContext(scriptHost);
+        context.scripts.raise(handle, c, AuraTicked(EntityRef(player.guid), EntityRef(target), cast(ubyte) i, tick,
+            ticks, amount));
+        return c.amountChanged ? c.amount : amount;
+    }
+
     /// The player walked into area trigger `id` (at `at`): its script hears of it; true if it consumed it.
     package bool areaTriggerScript(uint id, Location at)
     {
@@ -87,6 +120,7 @@ mixin template SessionScripting()
         EntityRef hostCreatureNear(uint entry, Location at, float range) { return this.outer.hostCreatureNear(entry, at, range); }
         void hostSignalDungeon(uint id, int value) { this.outer.hostSignalDungeon(id, value); }
         void hostLog(string text) { this.outer.hostLog(text); }
+        ActionResult hostModifyThreat(EntityRef creature, EntityRef target, int percent) { return this.outer.hostModifyThreat(creature, target, percent); }
     }
 
     private ScriptHost scriptHost_;
@@ -246,6 +280,16 @@ mixin template SessionScripting()
             if (creature.spawn.entry == entry && creature.alive)
                 return EntityRef(creature.guid);
         return EntityRef.init;
+    }
+
+    ActionResult hostModifyThreat(EntityRef creature, EntityRef target, int percent)
+    {
+        if (auto c = map.creatureAt(creature.guid))
+        {
+            c.ai.modifyThreatPercent(target.guid, percent);
+            return ActionResult.ok;
+        }
+        return ActionResult.notHere;
     }
 
     void hostSignalDungeon(uint id, int value)

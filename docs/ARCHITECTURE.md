@@ -359,7 +359,10 @@ in `makeGameObject`; `useGameObject` raises `ObjectUsed` through `WorldContext.g
 from `doEffect` (dummy and script effects, before the spell's database script) and area trigger
 scripts from `handleAreaTrigger` (before the trigger's quest, inn or teleport); both act through
 the session (`SessionScripting`, whose nested `ScriptHost` implements `SpellHost` and
-`AreaTriggerHost`). `WorldContext.signalCreature` delivers a signal here or sends a `ScriptSignal`
+`AreaTriggerHost`). A creature's dummy and script effects run its spell's script through the
+creature (`CreatureScripting.spellEffectScript`, its nested `CastHost`); a player's aura on a
+creature raises `AuraApplied` and, on each periodic tick, `AuraTicked`, whose amount the script may
+change. `WorldContext.signalCreature` delivers a signal here or sends a `ScriptSignal`
 to the node whose replica of the creature is here; `scriptSignalArrived` applies one once.
 
 ## Melee

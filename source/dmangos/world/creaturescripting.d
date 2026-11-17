@@ -13,7 +13,8 @@ mixin template CreatureScripting()
     import dmangos.script.api;
     import dmangos.script.registry : ScriptHandle, ScriptRuntime;
     import dmangos.world.eventai : castTriggered;
-    import dmangos.script.api : MenuOption, MovementDone, QuestProgress, Waypoint;
+    import dmangos.script.api : MenuOption, MovementDone, QuestProgress, SpellHost, Waypoint;
+    import dmangos.world.spells : SpellInfo;
 
     private
     {
@@ -285,6 +286,97 @@ mixin template CreatureScripting()
         return lore.signalCreature(world_, EntityRef(me.guid), to, id, value);
     }
 
+    // -----------------------------------------------------------------------
+    // Its own spells' scripts (`SpellHost`, through `castHost`)
+    // -----------------------------------------------------------------------
+
+    private const(SpellInfo)* scriptSpell; // its spell whose script is running
+
+    /// A dummy or script effect `i` of its spell hit `target`: the spell's script hears of it.
+    package void spellEffectScript(const(SpellInfo)* spell, size_t i, ulong target, int value)
+    {
+        import dmangos.script.api : EffectHit, SpellContext;
+
+        if (lore is null)
+            return;
+        auto handle = lore.spellScript(spell.id);
+        if (!handle)
+            return;
+        scriptSpell = spell;
+        scope (exit)
+            scriptSpell = null;
+        auto c = SpellContext(castHost);
+        lore.scriptRuntime.raise(handle, c, EffectHit(EntityRef(me.guid), EntityRef(target), cast(ubyte) i, value));
+    }
+
+    private final class CastHost : SpellHost
+    {
+        uint hostSpellId() { return scriptSpell is null ? 0 : scriptSpell.id; }
+        ActionResult hostCastFrom(EntityRef caster, uint spellId, EntityRef target, bool triggered)
+        {
+            if (caster.guid == me.guid)
+                return hostCast(spellId, target, triggered);
+            if (world_ !is null)
+                if (auto other = world_.creatureAt(caster.guid))
+                    return other.ai.castFor(world_, spellId, target.guid, triggered);
+            return ActionResult.notHere;
+        }
+        ActionResult hostDamage(EntityRef target, uint amount)
+        {
+            if (world_ is null || scriptSpell is null || world_.combatant(target.guid) is null)
+                return ActionResult.notHere;
+            spellDamageTo(scriptSpell, target.guid, amount, scriptSpell.casting.school);
+            return ActionResult.ok;
+        }
+        ActionResult hostEnergize(EntityRef, ubyte, int) { return ActionResult.failed; }
+        uint hostHealth(EntityRef who)
+        {
+            if (who.guid == me.guid)
+                return me.values.get!UNIT_FIELD_HEALTH;
+            if (world_ !is null)
+                if (auto other = world_.creatureAt(who.guid))
+                    return other.values.get!UNIT_FIELD_HEALTH;
+            return 0;
+        }
+        void hostQuestEvent(EntityRef player, uint quest) { this.outer.hostQuestEvent(player, quest); }
+        void hostKillCredit(EntityRef player, uint entry)
+        {
+            if (world_ !is null)
+                if (auto other = world_.combatant(player.guid))
+                    other.killCreditFrom(entry, me.guid);
+        }
+        EntityRef hostSummonAt(uint entry, Location at, uint despawnMs, EntityRef attack)
+        {
+            return hostSummon(entry, at, despawnMs, attack);
+        }
+        ActionResult hostSignalCreature(EntityRef to, uint id, int value) { return hostSignal(to, id, value); }
+        void hostLog(string text) { this.outer.hostLog(text); }
+        ActionResult hostModifyThreat(EntityRef creature, EntityRef target, int percent)
+        {
+            if (creature.guid == me.guid)
+            {
+                modifyThreatPercent(target.guid, percent);
+                return ActionResult.ok;
+            }
+            if (world_ !is null)
+                if (auto other = world_.creatureAt(creature.guid))
+                {
+                    other.ai.modifyThreatPercent(target.guid, percent);
+                    return ActionResult.ok;
+                }
+            return ActionResult.notHere;
+        }
+    }
+
+    private CastHost castHost_;
+
+    private @property CastHost castHost()
+    {
+        if (castHost_ is null)
+            castHost_ = new CastHost;
+        return castHost_;
+    }
+
     /// A spell script has it cast `spellId` at `target`.
     ActionResult castFor(CombatWorld world, uint spellId, ulong target, bool triggered)
     {
@@ -298,6 +390,16 @@ mixin template CreatureScripting()
             if (auto other = world_.combatant(player.guid))
                 return other.questStatusOf(quest);
         return QuestProgress.none;
+    }
+
+    EntityRef hostRandomTarget()
+    {
+        import std.random : uniform;
+
+        if (threat.length == 0 || world_ is null)
+            return EntityRef.init;
+        const who = threat.keys;
+        return EntityRef(who[uniform(0, who.length, world_.random)]);
     }
 
     void hostSendGossip(EntityRef player, uint textId, const(MenuOption)[] options, bool withQuests)

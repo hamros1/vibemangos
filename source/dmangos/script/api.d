@@ -267,6 +267,7 @@ interface CreatureHost
     void hostCloseGossip(EntityRef player);
     uint hostRandom(uint below);
     QuestProgress hostQuestStatus(EntityRef player, uint quest);
+    EntityRef hostRandomTarget();
     void hostSendGossip(EntityRef player, uint textId, const(MenuOption)[] options, bool withQuests);
 }
 
@@ -392,7 +393,7 @@ struct CreatureContext
     /// Closes `player`'s gossip window.
     void closeGossip(EntityRef player) { host.hostCloseGossip(player); }
 
-    /// Shows `player` a menu the script built, under `npc_text` `textId` (with its quests, by default);
+    /// Shows `player` a menu the script built, under `npc_text` `textId` (0: its usual greeting; with its quests, by default);
     /// the option chosen comes back as `GossipSelect` with its action.
     void sendGossip(EntityRef player, uint textId, const ref GossipMenu menu, bool withQuests = true)
     {
@@ -401,6 +402,9 @@ struct CreatureContext
 
     /// Where `player` stands with `quest`.
     QuestProgress questStatus(EntityRef player, uint quest) { return host.hostQuestStatus(player, quest); }
+
+    /// One of those it fights (its threat list), at random; nothing if it fights nobody.
+    EntityRef randomTarget() { return host.hostRandomTarget(); }
 
     /// A random number below `below` (from the map's generator).
     uint random(uint below) { return host.hostRandom(below); }
@@ -551,7 +555,28 @@ struct EffectHit
     int value;
 }
 
-/// The core's side of a spell script's context (the caster's session implements it).
+/// An aura of the spell (its effect `effect`, of `amount`) went onto `target`.
+struct AuraApplied
+{
+    EntityRef caster;
+    EntityRef target;
+    ubyte effect;
+    int amount;
+}
+
+/// A periodic effect of the spell's aura on `target` ticks: the `tick`th of `ticks`, of `amount`.
+/// `SpellContext.setAmount` changes what this tick does.
+struct AuraTicked
+{
+    EntityRef caster;
+    EntityRef target;
+    ubyte effect;
+    uint tick;
+    uint ticks;
+    int amount;
+}
+
+/// The core's side of a spell script's context (the caster's session, or creature, implements it).
 interface SpellHost
 {
     uint hostSpellId();
@@ -564,6 +589,7 @@ interface SpellHost
     EntityRef hostSummonAt(uint entry, Location at, uint despawnMs, EntityRef attack);
     ActionResult hostSignalCreature(EntityRef to, uint id, int value);
     void hostLog(string text);
+    ActionResult hostModifyThreat(EntityRef creature, EntityRef target, int percent);
 }
 
 /// `Powers`, as scripts use them.
@@ -580,6 +606,8 @@ struct SpellContext
 {
     private SpellHost host;
     private bool consumed_;
+    private bool amountSet;
+    private int amount_;
 
     @disable this(this);
 
@@ -624,6 +652,24 @@ struct SpellContext
 
     /// A line in the server's log.
     void log(string text) { host.hostLog(text); }
+
+    /// `ModifyThreatPercent`: `target`'s threat on `creature` changes by `percent` (-100: none left).
+    ActionResult modifyThreat(EntityRef creature, EntityRef target, int percent)
+    {
+        return host.hostModifyThreat(creature, target, percent);
+    }
+
+    /// For `AuraTicked`: what this tick does instead.
+    void setAmount(int amount)
+    {
+        amountSet = true;
+        amount_ = amount;
+    }
+
+    /// Whether a handler set the amount, and to what.
+    @property bool amountChanged() const { return amountSet; }
+    /// ditto
+    @property int amount() const { return amount_; }
 
     /// The script did what the effect does; the spell's database script does not run.
     void consume() { consumed_ = true; }

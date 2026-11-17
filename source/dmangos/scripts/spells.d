@@ -24,3 +24,35 @@ struct LifeTap
         it.energize(e.caster, Power.mana, amount);
     }
 }
+
+/// Hate to Zero (a creature's spell): the target's threat on the caster is gone; it fights on with
+/// whoever has the most now.
+@spell("spell_hate_to_zero")
+struct HateToZero
+{
+    void on(ref SpellContext it, const ref EffectHit e)
+    {
+        if (e.target)
+            it.modifyThreat(e.caster, e.target, -100);
+        it.consume();
+    }
+}
+
+/**
+ * Curse of Agony: its damage grows: of its twelve ticks, the first four deal half the average and
+ * the last four half again as much (the total stays what the spell says).
+ */
+@spell("spell_curse_of_agony")
+struct CurseOfAgony
+{
+    void on(ref SpellContext it, const ref AuraTicked e)
+    {
+        if (e.ticks < 3)
+            return;
+        const third = e.ticks / 3;
+        if (e.tick <= third)
+            it.setAmount(e.amount / 2);
+        else if (e.tick > e.ticks - third)
+            it.setAmount(e.amount + e.amount / 2);
+    }
+}

@@ -119,6 +119,13 @@ final class InstanceScript : InstanceHost
 
     ActionResult hostSignal(EntityRef to, uint signal, int value)
     {
+        foreach (object; loading) // loading with it: not on the map yet
+            if (object.guid == to.guid)
+                if (auto creature = cast(Creature) object)
+                {
+                    creature.ai.signalled(EntityRef.init, signal, value, map);
+                    return ActionResult.ok;
+                }
         auto creature = map is null ? null : cast(Creature) map.findObject(to.guid);
         if (creature is null)
             return ActionResult.notHere;

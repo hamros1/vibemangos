@@ -303,8 +303,10 @@ What works now:
     of his health a stomp, a line, kneeling to take up two axes, then a hammer) and the Defias
     Traitor's escort to Moonbrook ("The Defias Brotherhood": his lines on the way, the quest's event
     at the hideout, the quest failed if he is left behind or killed), Lady Katrana Prestor's
-    conversation for "The True Masters", the scent of Lar'korwi's mate in Un'Goro, and Life Tap
-    (health into mana). A creature whose `ScriptName`
+    conversation for "The True Masters", the scent of Lar'korwi's mate in Un'Goro, Life Tap
+    (health into mana), Curse of Agony's growing ticks, Hate to Zero (a creature's threat wipe), and
+    Shadowfang Keep (its doors with their guardians, the prisoners who lead the way to the courtyard
+    and open it, Archmage Arugal's bolts, curse and Thundershock). A creature whose `ScriptName`
     no script serves yet runs its EventAI as before; the server logs how many names are served.
   * **Database scripts** (CMaNGOS's `dbscripts_on_*`): a quest's start and complete scripts, a
     gossip option's, a game object's when used (by its template and by its spawn), a waypoint's
@@ -615,7 +617,7 @@ source/dmangos/script/      the scripting framework (docs/SCRIPTING.md): api.d (
                               pools), schedule.d (timers as data), state.d (state saved by reflection),
                               escort.d (the escort component)
 source/dmangos/scripts/     the gameplay scripts, one module per dungeon or area (deadmines.d, westfall.d,
-                              stormwind.d, ungoro.d) and spells.d
+                              stormwind.d, ungoro.d, shadowfang.d) and spells.d
 source/dmangos/auth/        the login server (realmd)
   main.d                      entry point: run the server, administer accounts
   protocol.d                  opcodes, result codes, every packet as a struct

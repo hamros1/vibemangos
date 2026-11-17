@@ -1934,6 +1934,12 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return VirtualItem.init;
     }
 
+    /// See `CreatureLore.scriptRuntime`.
+    @property ScriptRuntime scriptRuntime()
+    {
+        return scripts;
+    }
+
     /// The script of spell `id` (`spell_scripts`); no handle if none serves it. One per spell.
     ScriptHandle spellScript(uint id)
     {

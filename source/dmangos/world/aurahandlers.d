@@ -75,6 +75,9 @@ private:
             bool isNew;
             creature.auras.apply(aura, creature.values, isNew);
             map.flushObjectChanges(creature);
+            foreach (j; 0 .. 3)
+                if (spell.effect[j] == applyAura)
+                    auraAppliedScript(spell, j, target, values[j]);
             spellAttacked(creature, 0);
             return;
         }
@@ -404,7 +407,12 @@ private:
     {
         if (!target.alive || player is null)
             return;
-        const amount = aura.amount[i] > 0 ? cast(uint) aura.amount[i] : 0;
+        // Its spell's script may make this tick another (`OnPeriodicCalculateAmount`).
+        int scripted = aura.amount[i];
+        if (aura.period[i] > 0 && aura.maxDuration > 0)
+            scripted = auraTickScript(aura.spell, i, target.guid, (aura.maxDuration - aura.duration) / aura.period[i],
+                aura.maxDuration / aura.period[i], aura.amount[i]);
+        const amount = scripted > 0 ? cast(uint) scripted : 0;
         switch (aura.type(i))
         {
         case AuraType.periodicDamage, AuraType.periodicLeech:

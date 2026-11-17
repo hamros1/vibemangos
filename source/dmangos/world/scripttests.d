@@ -485,3 +485,140 @@ unittest
     assert(creature.values.get!UNIT_NPC_FLAGS == 2, "the next one too");
     assert(here.signalCreature(hereMap, EntityRef(7), EntityRef(12345), 5, 1) == ActionResult.notHere);
 }
+
+/// Curse of Agony (`spell_curse_of_agony`): its ticks on a creature ramp up, half, whole, half again.
+unittest
+{
+    import dmangos.world.auras : AuraType, makeAura;
+    import dmangos.world.spells : SpellInfo;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto agony = SpellInfo(980);
+    agony.effect[0] = 6; // an aura
+    agony.casting.applyAuraName[0] = AuraType.periodicDamage;
+    agony.casting.amplitude[0] = 2000;
+    agony.casting.school = 1; // holy here: no resistance roll in the test
+    context.data.spells.spells[980] = agony;
+    context.data.spellScriptNames[980] = "spell_curse_of_agony";
+
+    const at = Position(-8949.95f, -132.49f, 83.53f);
+    auto warlock = loggedIn(context, db, 7, "Varian", at, AccountLevel.player, raceOrc, mapEasternKingdoms, 10);
+    warlock.read();
+    CreatureSpawn spawn = {guid: 90050, entry: creatureInnkeeper, map: mapEasternKingdoms, x: at.x + 2, y: at.y, z: at.z};
+    auto map = context.map(mapEasternKingdoms);
+    auto victim = context.makeCreature(&spawn);
+    map.addObject(victim);
+    victim.values.set!UNIT_FIELD_MAXHEALTH(10_000u);
+    victim.values.set!UNIT_FIELD_HEALTH(10_000u);
+
+    auto aura = makeAura(&context.data.spells.spells[980], warlock.session.character.guid, 10, 24_000, false, [10, 0, 0]);
+    uint[] dealt;
+    foreach (tick; 1 .. 13)
+    {
+        aura.duration = 24_000 - tick * 2000;
+        const before = victim.values.get!UNIT_FIELD_HEALTH;
+        warlock.session.creatureAuraTick(victim, aura, 0);
+        dealt ~= before - victim.values.get!UNIT_FIELD_HEALTH;
+    }
+    assert(dealt == [5, 5, 5, 5, 10, 10, 10, 10, 15, 15, 15, 15], "a ramp");
+}
+
+/// Hate to Zero (`spell_hate_to_zero`), a creature's spell: its target's threat on it is gone.
+unittest
+{
+    import dmangos.world.spells : SpellInfo;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto hate = SpellInfo(9204);
+    hate.effect[0] = 3; // dummy
+    context.data.spells.spells[9204] = hate;
+    context.data.spellScriptNames[9204] = "spell_hate_to_zero";
+
+    const at = Position(-8949.95f, -132.49f, 83.53f);
+    auto hero = loggedIn(context, db, 7, "Varian", at, AccountLevel.player, raceHuman, mapEasternKingdoms, 10);
+    hero.read();
+    CreatureSpawn spawn = {guid: 90060, entry: creatureInnkeeper, map: mapEasternKingdoms, x: at.x + 2, y: at.y, z: at.z};
+    auto map = context.map(mapEasternKingdoms);
+    auto boss = context.makeCreature(&spawn);
+    map.addObject(boss);
+    boss.ai.attackedBy(hero.session, map);
+    boss.ai.damageTaken(hero.session, 50);
+    const guid = hero.session.character.guid;
+    assert(boss.ai.threatOf(guid) > 0);
+    boss.ai.spellEffectScript(&context.data.spells.spells[9204], 0, guid, 0);
+    assert(boss.ai.threatOf(guid) == 0, "its hate gone");
+}
+
+/**
+ * Shadowfang Keep's prisoners (here in the test world's dungeon): no help before Rethilgore falls;
+ * then Deathstalker Adamant offers to open the courtyard, walks there, opens its door, and leaves.
+ */
+unittest
+{
+    import dmangos.script.api : Location, Waypoint;
+    import dmangos.scripts.shadowfang : adamant, courtyardDoor, rethilgore;
+    import dmangos.world.packets : ClientGossipSelectOption, ClientNpcGuid;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    const doorAt = Position(-10, -383, 61), prisonerAt = Position(-20, -383, 61), guardAt = Position(-25, -383, 61);
+    auto door = GameObjectTemplate.init;
+    door.entry = courtyardDoor;
+    door.displayId = 411;
+    door.name = "Courtyard Door";
+    context.data.gameObjectTemplates[courtyardDoor] = door;
+    context.data.gameObjectSpawns ~= GameObjectSpawn(90070, courtyardDoor, mapDeadmines, doorAt.x, doorAt.y, doorAt.z);
+    context.data.gameObjectCells[mapDeadmines][cellKeyAt(doorAt.x, doorAt.y)] ~= context.data.gameObjectSpawns.length - 1;
+    static struct Who { uint entry; Position at; uint guid, flags; }
+    foreach (w; [Who(adamant, prisonerAt, 90071, 1), Who(rethilgore, guardAt, 90072, 0)])
+    {
+        const entry = w.entry, at = w.at, guid = w.guid, flags = w.flags;
+        auto t = context.data.creatureTemplates[creatureInnkeeper];
+        t.entry = entry;
+        t.npcFlags = flags;
+        context.data.creatureTemplates[entry] = t;
+        context.data.creatureSpawns ~= CreatureSpawn(guid, entry, mapDeadmines, at.x, at.y, at.z);
+        context.data.creatureCells[mapDeadmines][cellKeyAt(at.x, at.y)] ~= context.data.creatureSpawns.length - 1;
+    }
+    context.data.creatureScriptNames[adamant] = "npc_shadowfang_prisoner";
+    context.data.instanceScriptNames[mapDeadmines] = "instance_shadowfang_keep";
+    context.data.escortPaths[adamant] = [Waypoint(Location(-15, -383, 61)), Waypoint(Location(-11, -383, 61))];
+
+    const outside = Position(deadminesEntrance[0], deadminesEntrance[1], deadminesEntrance[2]);
+    auto hero = loggedIn(context, db, 7, "Varian", outside, AccountLevel.administrator, raceHuman, mapEasternKingdoms, 60);
+    hero.say(".worldport 36 -18 -381 61");
+    hero.write(Opcode.MSG_MOVE_WORLDPORT_ACK, null);
+    hero.read();
+    auto map = context.instanceMap(hero.session.instanceId);
+    auto prisoner = cast(Creature) map.findObject(makeCreatureGuid(adamant, 90071));
+    auto guard = cast(Creature) map.findObject(makeCreatureGuid(rethilgore, 90072));
+    auto courtyard = cast(GameObject) map.findObject(makeDoorGuid(courtyardDoor, 90070));
+    assert(prisoner !is null && guard !is null && courtyard !is null && courtyard.goState == 1);
+
+    size_t options()
+    {
+        hero.write(Opcode.CMSG_GOSSIP_HELLO, ClientNpcGuid(prisoner.guid));
+        const menu = hero.read();
+        foreach (p; menu)
+            if (p.opcode == Opcode.SMSG_GOSSIP_MESSAGE)
+                return p.body_[12];
+        return 0;
+    }
+
+    assert(options == 0, "locked in while Rethilgore lives");
+    guard.die(map, context.unixTime);
+    context.creatureDied(guard);
+    assert(options == 1, "free: he offers to open the courtyard");
+    hero.write(Opcode.CMSG_GOSSIP_SELECT_OPTION, ClientGossipSelectOption(prisoner.guid, 0));
+    foreach (_; 0 .. 80)
+    {
+        now += 250.msecs;
+        context.update(now);
+    }
+    assert(courtyard.goState == 0, "the courtyard door is open");
+    assert(map.findObject(prisoner.guid) is null, "and he is gone");
+}

@@ -395,6 +395,9 @@ mixin template CreatureCasting()
                     if (const triggered = lore.spellInfo(spell.triggerSpell[i]))
                         castSpell(triggered, guid, castTriggered);
                     break;
+                case 3, 77: // SPELL_EFFECT_DUMMY, SPELL_EFFECT_SCRIPT_EFFECT: the spell's script
+                    spellEffectScript(spell, i, guid, value);
+                    break;
                 case 68: // SPELL_EFFECT_INTERRUPT_CAST
                     if (guid != me.guid)
                         if (auto other = world_.combatant(guid))

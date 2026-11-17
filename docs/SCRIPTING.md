@@ -203,7 +203,7 @@ code) what is not here or not allowed. Nothing a script keeps can dangle.
 | Dungeon | `@instance` | `instance_template.ScriptName` | creature or object loaded, creature died, signal; *player entered, encounter start/wipe* |
 | Game object | `@gameObject` | `gameobject_template.ScriptName` | used, signal; *loaded, state changed* |
 | Area trigger | `@areaTrigger` | `scripted_areatrigger` | entered |
-| Spell | `@spell` | `spell_scripts` | a dummy or script effect hit (the caster a player); *aura applied/removed, cast check, a creature's cast* |
+| Spell | `@spell` | `spell_scripts` | a dummy or script effect hit (a player's or a creature's cast), a player's aura applied, its periodic tick on a creature (the amount changeable); *aura removed, cast check, auras on players from creatures* |
 | World | `@world` | always | *player login/logout, level, zone change, world events* |
 | Command | `@command` | its name | *a GM command of a script* |
 

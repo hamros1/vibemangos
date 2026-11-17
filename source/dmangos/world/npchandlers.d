@@ -298,7 +298,9 @@ private:
             prepareQuestMenu(giverOf(creature));
         ServerGossipMessage message;
         message.guid = creature.guid;
-        message.textId = textId;
+        message.textId = textId ? textId : creature.npcTemplate.gossipMenuId
+            ? gossipTextId(creature.npcTemplate.gossipMenuId, creature)
+            : context.data.npcs.npcGossip.get(creature.spawnId, defaultGossipMessage);
         foreach (i, ref item; gossipItems)
             message.items ~= GossipMessageItem(cast(uint) i, cast(ubyte) item.icon, item.coded, item.message);
         message.quests = questMenu.dup;

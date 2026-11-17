@@ -27,6 +27,7 @@ import dmangos.world.npcdata : BroadcastText;
 import dmangos.world.opcodes : ChatType;
 import dmangos.world.spells : SpellInfo;
 import dmangos.world.eventai : Scripted;
+import dmangos.script.registry : ScriptHandle, ScriptRuntime;
 import dmangos.script.api : ActionResult, MenuOption, QuestProgress, Waypoint, CreatureHost, Damaged, Died, EnteredCombat, EntityRef, Evaded, KilledUnit, Reset;
 import dmangos.world.updatefields;
 import dmangos.vmap.math : Vector3;
@@ -147,6 +148,11 @@ interface CreatureLore
 
     /// A `Signal` for creature `to`: its script here, or (another node simulates it) sent there.
     ActionResult signalCreature(CombatWorld world, EntityRef from, EntityRef to, uint id, int value);
+
+    /// The server's scripts, and the script of spell `id` (no handle if none serves it).
+    @property ScriptRuntime scriptRuntime();
+    /// ditto
+    ScriptHandle spellScript(uint id);
 }
 
 /// What a creature's AI needs of its map.
@@ -489,6 +495,13 @@ private:
     }
 
     /// `ThreatManager::addThreat`: a new entry tells the player it is in combat.
+    /// `ModifyThreatPercent`: `who`'s threat changes by `percent` (-100: none left; it stays in the list).
+    public void modifyThreatPercent(ulong who, int percent)
+    {
+        if (auto t = who in threat)
+            *t = *t * (percent <= -100 ? 0 : (100 + percent) / 100.0f);
+    }
+
     void addThreat(Combatant who, float amount)
     {
         const guid = who.combatGuid;
