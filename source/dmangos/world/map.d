@@ -53,7 +53,7 @@ import dmangos.world.objects : maxUpdatePacketBytes, seenByEveryone, UpdateData,
 import dmangos.world.opcodes : Opcode;
 import dmangos.world.packets : ServerDestroyObject;
 import dmangos.world.player : DeathState, Player;
-import dmangos.world.migration : decodeBundle, encodeBundle, Migrant;
+import dmangos.world.migration : decodeBundle, encodeBundle, Migrant, MigrantKind;
 import dmangos.world.replication : decodeSlots, encodeMotion, encodePlayerState, encodeSlots, encodeState, Replica,
     Replicable, Replicator;
 import dmangos.world.terrain : defaultHeightSearch, defaultWaterSearch, invalidHeightValue, LiquidData,
@@ -760,6 +760,8 @@ final class Map : CombatWorld, GameObjectWorld
                 continue;
             auto object = objects[guid];
             auto migrant = save(object);
+            if (migrant.kind == MigrantKind.none)
+                continue; // not carried (a player's corpse): it stays here
             migrant.home = home;
             migrants ~= migrant;
             homeCellOf.remove(guid);
@@ -2248,18 +2250,36 @@ unittest
     }
     assert(a.seesObject(1, stag.guid) && b.seesObject(2, stag.guid) && c.seesObject(3, stag.guid), "everyone sees it");
 
-    // The region moves from node 1 to node 2, with the stag (now hurt) in it.
+    // The region moves from node 1 to node 2, with the stag (now hurt) in it; a body that does not move
+    // (a player's corpse) stays.
+    static final class Body : MapObject
+    {
+        import dmangos.world.updatefields : TypeId;
+
+        UpdateValues values = UpdateValues(TypeId.corpse);
+        ref UpdateValues fields() { return values; }
+        @property ulong guid() const { return 0xF101_0000_0000_0099; }
+        @property Position position() const { return Position(495, 0, 0); }
+        UpdateData appearance(uint) const { return UpdateData.init; }
+    }
+    auto corpseLike = new Body;
+    a.addObject(corpseLike);
+    foreach (w; [onA, onB, onC])
+        w.take(); // its creation
     stag.values.set!UNIT_FIELD_HEALTH(13u);
     stag.values.clearChanges();
     aOwns = false;
     Stag restored;
     const bundle = a.migrateOut((ulong) => true, 2, (MapObject o) {
+        if (cast(Stag) o is null)
+            return Migrant.init;
         ByteWriter w;
         w.put((cast(Stag) o).values[UNIT_FIELD_HEALTH]);
         w.put((cast(Stag) o).at.x);
         return Migrant(MigrantKind.creature, 77, 0, w.data);
     });
     assert(a.isReplica(stag.guid), "node 1 keeps showing it, now as node 2's");
+    assert(a.findObject(corpseLike.guid) is corpseLike, "the body stays");
     b.migrateIn(bundle, (const ref Migrant m) {
         auto r = ByteReader(m.state);
         const health = r.read!uint;

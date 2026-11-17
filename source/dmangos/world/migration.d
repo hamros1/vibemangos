@@ -12,6 +12,7 @@ import dmangos.bytes : ByteReader, ByteWriter;
 /// What kind of object a migrant is.
 enum MigrantKind : ubyte
 {
+    none = 0,     /// not carried
     creature = 1,
     gameObject = 2,
 }

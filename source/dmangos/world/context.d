@@ -737,7 +737,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     // Migration (docs/CLUSTER.md, phase 4)
     // -----------------------------------------------------------------------
 
-    /// An object's state for its next owner.
+    /// An object's state for its next owner; kind 0 for one that does not move (a player's corpse stays with its player).
     Migrant saveMigrant(MapObject object)
     {
         import dmangos.bytes : ByteWriter;
@@ -751,6 +751,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             return Migrant(MigrantKind.creature, creature.spawn.guid, 0, w.data);
         }
         auto gameObject = cast(GameObject) object;
+        if (gameObject is null)
+            return Migrant.init;
         gameObject.saveState(w);
         return Migrant(MigrantKind.gameObject, gameObject.spawn.guid, 0, w.data);
     }
