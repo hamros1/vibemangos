@@ -230,6 +230,9 @@ final class Map : CombatWorld, GameObjectWorld
     invariant (members.length == cellOf.length && members.length == sees.length
         && members.length == seesObjects.length);
 
+    /// The dungeon instance this map is (0: the map itself, a continent or a shared dungeon).
+    uint instanceId;
+
     ///
     this(uint id, MapSettings settings, uint delegate() serverTime, Spawner spawner = null, Terrain terrain = null,
         bool delegate(ulong cell) owns = null)

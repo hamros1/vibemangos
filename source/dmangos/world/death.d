@@ -195,6 +195,7 @@ private:
         player.deathState = DeathState.ghost;
         setGhost(true);
         corpse = new Corpse(player, CorpseType.resurrectablePve, context.unixTime);
+        corpse.instanceId = instanceId_;
         map.addObject(corpse);
         auto record = CorpseRecord(player.data.guid, corpse.at.x, corpse.at.y, corpse.at.z, corpse.at.orientation,
             corpse.map, corpse.ghostTime, cast(ubyte) corpse.type);
@@ -279,7 +280,7 @@ private:
         const now = context.unixTime;
         if (corpse.ghostTime + corpseReclaimDelay(player.data.deathExpireTime, corpse.ghostTime) > now)
             return;
-        if (corpse.map != player.data.map)
+        if (corpse.map != player.data.map || corpse.instanceId != instanceId_)
             return;
         const d = corpse.at, p = player.position;
         if ((d.x - p.x) ^^ 2 + (d.y - p.y) ^^ 2 + (d.z - p.z) ^^ 2 > corpseReclaimRadius ^^ 2)
@@ -371,7 +372,7 @@ private:
     {
         if (corpse is null)
             return;
-        if (auto there = context.existingMap(corpse.map))
+        if (auto there = context.existingMap(corpse.map, corpse.instanceId))
             there.removeObject(corpse.guid);
         context.database.deleteCorpse(player.data.guid);
         corpse = null;
@@ -473,6 +474,7 @@ private:
         {
             // No teleport while leaving: the save puts the ghost at its graveyard.
             player.data.map = grave.map;
+            instanceId_ = 0; // graveyards are outside
             player.movement.position = Position(grave.x, grave.y, grave.z, 0);
         }
     }

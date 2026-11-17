@@ -217,7 +217,11 @@ the public fields with health in percent. `Player` names these three views `View
 
 ## Maps and visibility
 
-`context.map(id)` creates a `Map` when its first player arrives. A session joins its map in
+`context.map(id)` creates a `Map` when its first player arrives; `context.map(id, instance)` is a
+dungeon's copy (`Map.instanceId`), made by `instanceFor` from the group's or the player's bind, its
+spawns loaded by `spawnCellIn` without those killed or used up in it, and dropped with its binds
+when it has been empty for `instance_unload_delay_seconds`. A session's `instanceId` says which
+copy it is on. A session joins its map in
 `context.enterWorld` and leaves it in `context.leaveWorld`. The context also indexes the players
 online by guid and by name, for name queries and whispers.
 

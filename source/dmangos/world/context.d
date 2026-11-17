@@ -233,7 +233,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
         online[who.character.guid] = who;
         onlineByName[toLowerName(who.character.data.name)] = who;
-        map(who.character.data.map).addMigrated(who, known);
+        mapOf(who).addMigrated(who, known);
     }
 
     /// A player's simulation leaves for node `next` (phase 4b): off the map and the lists, without a word.
@@ -241,7 +241,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     {
         import dmangos.world.worlddata : toLowerName;
 
-        map(who.character.data.map).removeForMigration(who, next);
+        mapOf(who).removeForMigration(who, next);
         online.remove(who.character.guid);
         onlineByName.remove(toLowerName(who.character.data.name));
     }
@@ -476,12 +476,39 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     {
         if (auto found = id in maps)
             return *found;
+        return maps[id] = makeMap(id, 0);
+    }
+
+    /// Map `id`'s instance `instance` (0: the map itself), created when its first player arrives.
+    Map map(uint id, uint instance)
+    {
+        if (instance == 0)
+            return map(id);
+        if (auto found = instance in instanceMaps)
+            return *found;
+        if (instance !in instances)
+            instances[instance] = InstanceState(id);
+        return instanceMaps[instance] = makeMap(id, instance);
+    }
+
+    /// The map `who` is on.
+    Map mapOf(const OnlinePlayer who)
+    {
+        return map(who.character.data.map, who.instanceId);
+    }
+
+    private Map makeMap(uint id, uint instance)
+    {
         bool delegate(ulong) owns;
         if (ownsCell !is null)
             owns = (ulong cell) => ownsCell(id, cell);
+        MapObject[] delegate(uint, ulong) spawner = &spawnCell;
+        if (instance)
+            spawner = (uint m, ulong cell) => spawnCellIn(m, instance, cell);
         auto created = new Map(id, MapSettings(config.visibilityDistance, config.visibilityRelocationLimit,
             config.gridCleanUpDelay * 1000),
-            &serverTime, &spawnCell, terrain(id), owns);
+            &serverTime, spawner, terrain(id), owns);
+        created.instanceId = instance;
         created.replicator = replicator;
         created.onCorpseRemoved = &corpseRemoved;
         created.onReplicaNoticing = &replicaNoticing;
@@ -495,13 +522,155 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             auto group = groups.of(player);
             return group is null ? 0 : group.id;
         };
-        return maps[id] = created;
+        return created;
     }
 
     /// The map `id` if it exists; null otherwise.
     Map existingMap(uint id)
     {
         return maps.get(id, null);
+    }
+
+    /// Map `id`'s instance `instance` if it exists (0: the map itself); null otherwise.
+    Map existingMap(uint id, uint instance)
+    {
+        return instance ? instanceMaps.get(instance, null) : existingMap(id);
+    }
+
+    // -----------------------------------------------------------------------
+    // Dungeon instances (`InstanceSaveManager`, `MapManager::CreateInstance`)
+    // -----------------------------------------------------------------------
+
+    /// What is kept of an instance: its map, when it emptied, its dead and used-up spawns.
+    static struct InstanceState
+    {
+        uint mapId;
+        MonoTime emptySince;   /// MonoTime.init while someone is in it
+        bool[uint] dead;       /// creature spawns killed there (they do not come back while it lasts)
+        bool[uint] usedUp;     /// game object spawns used up there
+    }
+
+    private Map[uint] instanceMaps;            // instance id -> its map
+    private InstanceState[uint] instances;     // instance id -> its state
+    private uint[uint][ulong] playerBinds;     // player guid -> map id -> instance (`character_instance`)
+    private uint[uint][uint] groupBinds;       // group id -> map id -> instance (`group_instance`)
+    private uint lastInstance;
+
+    /**
+     * Whether map `mapId` is a dungeon whose groups each get a copy of it (`Map::Instanceable`).
+     * In a cluster a dungeon stays one copy (its region's node simulates it; instances do not move
+     * between nodes yet).
+     */
+    bool instanceable(uint mapId)
+    {
+        const entry = client.maps.lookup(mapId);
+        return entry !is null && entry.isDungeon && replicator is null && ownsCell is null;
+    }
+
+    /**
+     * `Player::GetBoundInstance` and `MapManager::CreateInstance`: the instance of `mapId` the player
+     * goes into: its group's, else its own, else a new one, to which it (and its group) are bound.
+     * 0 for a map that is not instanced.
+     */
+    uint instanceFor(ulong player, uint mapId)
+    {
+        import dmangos.log : info;
+
+        if (!instanceable(mapId))
+            return 0;
+        auto group = groups.of(player);
+        uint chosen;
+        if (group !is null)
+            if (auto bound = mapId in groupBinds.get(group.id, null))
+                if (*bound in instances)
+                    chosen = *bound;
+        if (!chosen)
+            if (auto bound = mapId in playerBinds.get(player, null))
+                if (*bound in instances)
+                    chosen = *bound;
+        if (!chosen)
+        {
+            chosen = ++lastInstance;
+            instances[chosen] = InstanceState(mapId);
+            info!"instance %s of map %s made"(chosen, mapId);
+        }
+        playerBinds.require(player, null)[mapId] = chosen;
+        if (group !is null && mapId !in groupBinds.get(group.id, null))
+            groupBinds.require(group.id, null)[mapId] = chosen;
+        return chosen;
+    }
+
+    /// The instances that are made.
+    @property size_t instanceCount() const
+    {
+        return instances.length;
+    }
+
+    /// `ObjectGridLoader` for an instance: the cell's spawns but those killed or used up in it.
+    private MapObject[] spawnCellIn(uint mapId, uint instance, ulong cell)
+    {
+        import dmangos.world.gameobject : GameObject;
+
+        auto state = instance in instances;
+        MapObject[] spawned;
+        if (auto cells = mapId in data.creatureCells)
+            foreach (index; (*cells).get(cell, null))
+            {
+                if (state !is null && data.creatureSpawns[index].guid in state.dead)
+                    continue;
+                if (auto creature = makeCreature(&data.creatureSpawns[index]))
+                {
+                    creature.instanceId = instance;
+                    spawned ~= creature;
+                }
+            }
+        if (auto cells = mapId in data.gameObjectCells)
+            foreach (index; (*cells).get(cell, null))
+            {
+                const spawn = &data.gameObjectSpawns[index];
+                if (spawn.respawnSeconds < 0 || (state !is null && spawn.guid in state.usedUp))
+                    continue;
+                auto go = makeGameObject(spawn);
+                go.instanceId = instance;
+                spawned ~= go;
+            }
+        return spawned;
+    }
+
+    /// `InstanceMap::UnloadAll` after `Instance.UnloadDelay`: an empty instance goes, and its binds with it.
+    private void unloadEmptyInstances(MonoTime now)
+    {
+        import core.time : seconds;
+        import dmangos.log : info;
+
+        uint[] gone;
+        foreach (id, ref state; instances)
+        {
+            const m = instanceMaps.get(id, null);
+            if (m !is null && m.population > 0)
+            {
+                state.emptySince = MonoTime.init;
+                continue;
+            }
+            if (state.emptySince == MonoTime.init)
+                state.emptySince = now;
+            else if (now - state.emptySince >= config.instanceUnloadDelay.seconds)
+                gone ~= id;
+        }
+        foreach (id; gone)
+        {
+            info!"instance %s of map %s reset: empty for %s seconds"(id, instances[id].mapId, config.instanceUnloadDelay);
+            instances.remove(id);
+            instanceMaps.remove(id);
+            foreach (ref binds; playerBinds)
+                foreach (mapId, instance; binds.dup)
+                    if (instance == id)
+                        binds.remove(mapId);
+            foreach (ref binds; groupBinds)
+                foreach (mapId, instance; binds.dup)
+                    if (instance == id)
+                        binds.remove(mapId);
+        }
     }
 
     /**
@@ -532,10 +701,10 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
     private NpcStandIn[ulong] standIns; // by guid: the vendor stock they count lives on
 
-    /// Every map that exists.
+    /// Every map that exists, instances included.
     Map[] allMaps()
     {
-        return maps.values;
+        return maps.values ~ instanceMaps.values;
     }
 
     /**
@@ -806,7 +975,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
         online[who.character.guid] = who;
         onlineByName[toLowerName(who.character.data.name)] = who;
-        map(who.character.data.map).add(who);
+        mapOf(who).add(who);
     }
 
     /// A player in the world was renamed (`.character rename`): it is found by its new name.
@@ -825,7 +994,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
         if (who.character.guid !in online)
             return;
-        auto current = map(who.character.data.map);
+        auto current = mapOf(who);
         if (current.find(who.character.guid) !is null)
             current.remove(who);
         online.remove(who.character.guid);
@@ -884,6 +1053,12 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     {
         if (creature.summon.type != TempSpawnType.none)
             return; // a summon never comes back
+        if (creature.instanceId)
+        {
+            if (auto state = creature.instanceId in instances)
+                state.dead[creature.spawn.guid] = true; // until the instance resets
+            return;
+        }
         respawnAt[creature.spawn.guid] = creature.respawnAt;
         database.saveCreatureRespawn(creature.spawn.guid, creature.respawnAt);
     }
@@ -891,7 +1066,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     /// A corpse went; one that died elsewhere (handed over dead: phase 4) comes back a respawn time from now.
     private void corpseRemoved(Creature creature)
     {
-        if (creature.summon.type != TempSpawnType.none)
+        if (creature.summon.type != TempSpawnType.none || creature.instanceId)
             return;
         if (creature.spawn.guid !in respawnAt)
         {
@@ -938,6 +1113,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         if (creature is null)
             return null;
         creature.summon = TempSpawn(type, durationMs, durationMs, summoner);
+        creature.instanceId = map.instanceId;
         map.addObject(creature);
         map.wake(creature.guid);
         return creature;
@@ -1038,6 +1214,19 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     /// `.respawn` (`Creature::Despawn(0, 1000)`): the corpse goes now, and the creature comes back in a second.
     void respawnSoon(Creature corpse, Map map)
     {
+        if (corpse.instanceId)
+        {
+            // In an instance: it comes back now, there.
+            if (auto state = corpse.instanceId in instances)
+                state.dead.remove(corpse.spawn.guid);
+            map.corpseExpired(corpse);
+            if (auto back = makeCreature(&corpse.spawn))
+            {
+                back.instanceId = corpse.instanceId;
+                map.addObject(back);
+            }
+            return;
+        }
         respawnAt[corpse.spawn.guid] = unixTime + 1;
         database.saveCreatureRespawn(corpse.spawn.guid, respawnAt[corpse.spawn.guid]);
         map.corpseExpired(corpse);
@@ -1078,6 +1267,12 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     /// `GameObject::SaveRespawnTime`: used up, it comes back after its spawn's respawn time.
     private void gameObjectUsedUp(GameObject go)
     {
+        if (go.instanceId)
+        {
+            if (auto state = go.instanceId in instances)
+                state.usedUp[go.spawn.guid] = true;
+            return;
+        }
         const at = unixTime + (go.spawn.respawnSeconds > 0 ? go.spawn.respawnSeconds : 0);
         gameObjectRespawnAt[go.spawn.guid] = at;
         database.saveGameObjectRespawn(go.spawn.guid, at);
@@ -1383,9 +1578,10 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     bool seeEachOther(ulong a, ulong b)
     {
         auto first = onlinePlayer(a), second = onlinePlayer(b);
-        if (first is null || second is null || first.character.data.map != second.character.data.map)
+        if (first is null || second is null || first.character.data.map != second.character.data.map
+            || first.instanceId != second.instanceId)
             return false;
-        if (auto onMap = first.character.data.map in maps)
+        if (auto onMap = existingMap(first.character.data.map, first.instanceId))
             return onMap.seeEachOther(a, b);
         return false;
     }
@@ -1455,6 +1651,10 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         const playersDone = MonoTime.currTime;
         foreach (map_; maps)
             map_.update(elapsed);
+        foreach (map_; instanceMaps)
+            map_.update(elapsed);
+        if (instances.length)
+            unloadEmptyInstances(now);
         updateScripts(cast(uint) elapsed.total!"msecs");
         scriptedGameObjectsDue();
         respawnDue(now);

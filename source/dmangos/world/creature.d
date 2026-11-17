@@ -584,6 +584,9 @@ final class Creature : Moving, Replicable, Npc, PerViewer
     /// A temporary summon (`TemporarySpawn`): how it goes (`TempSpawnType`), its time, who summoned it.
     TempSpawn summon;
 
+    /// The dungeon instance it lives in (0: none): it does not respawn there, and is not saved.
+    uint instanceId;
+
     /// Dead: milliseconds until its corpse goes (`m_corpseExpirationTime`); and when it comes back (Unix time).
     int corpseTimer;
     long respawnAt; /// ditto

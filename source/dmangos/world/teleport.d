@@ -68,7 +68,7 @@ private:
      * map. `trigger` is the area trigger walked into, if any; a teleport to another map without one
      * is checked against that map's entrance.
      */
-    bool teleportTo(uint mapId, Position destination, const(AreaTriggerTeleport)* trigger = null)
+    package bool teleportTo(uint mapId, Position destination, const(AreaTriggerTeleport)* trigger = null)
     {
         const client = context.client;
         if (!client.isValidMapCoord(mapId, destination.x, destination.y, destination.z, destination.orientation))
@@ -125,8 +125,9 @@ private:
             flushPlayerChanges();
             send(ServerTransferPending(mapId));
             map.remove(this);
-            // From here on the character is saved at its destination.
+            // From here on the character is saved at its destination (a dungeon: its instance).
             teleporting = Teleport.far;
+            instanceId_ = context.instanceFor(player.guid, mapId);
             player.data.map = mapId;
             player.movement.position = destination;
             send(ServerNewWorld(mapId, destination.x, destination.y, destination.z, destination.orientation));
@@ -411,7 +412,8 @@ unittest
     veteran.write(Opcode.CMSG_AREATRIGGER, ClientAreaTrigger(triggerDeadmines));
     assert(opcodesOf(veteran.read()) == [Opcode.SMSG_TRANSFER_PENDING, Opcode.SMSG_NEW_WORLD]);
     veteran.write(Opcode.MSG_MOVE_WORLDPORT_ACK, null);
-    assert(context.map(mapDeadmines).population == 1);
+    const instance = veteran.session.instanceId;
+    assert(instance != 0 && context.map(mapDeadmines, instance).population == 1, "in an instance of its own");
 
     assert(opcodesOf(novice.read()) == [Opcode.SMSG_DESTROY_OBJECT], "Jaina left the map");
 
@@ -442,4 +444,66 @@ unittest
     auto gm = loggedIn(context, db, 8, "Jaina", Position(0, 0, 0), AccountLevel.gameMaster);
     gm.write(Opcode.MSG_MOVE_HEARTBEAT, moveTo(Position(4000, 0, 0)));
     assert(gm.session.character.position.x == 4000);
+}
+
+/**
+ * Dungeon instances: two players on their own get a copy each; a group shares its leader's; a
+ * creature killed in one copy is alive in the other; an empty copy goes after its unload delay,
+ * and with it the binds to it.
+ */
+unittest
+{
+    import dmangos.world.creature : Creature;
+    import dmangos.world.creature : CreatureSpawn;
+    import dmangos.world.packets : ClientGroupName;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    context.config.instanceUnloadDelay = 60;
+    const at = Position(deadminesEntrance[0], deadminesEntrance[1], deadminesEntrance[2]);
+    auto anduin = loggedIn(context, db, 7, "Anduin", at, AccountLevel.player, raceHuman, mapEasternKingdoms, 10);
+    auto jaina = loggedIn(context, db, 8, "Jaina", at, AccountLevel.player, raceHuman, mapEasternKingdoms, 10);
+    auto varian = loggedIn(context, db, 9, "Varian", at, AccountLevel.player, raceHuman, mapEasternKingdoms, 10);
+    assert(context.instanceable(mapDeadmines) && !context.instanceable(mapEasternKingdoms));
+
+    const mine = context.instanceFor(7, mapDeadmines), hers = context.instanceFor(8, mapDeadmines);
+    assert(mine && hers && mine != hers, "alone: a copy each");
+    assert(context.instanceFor(7, mapDeadmines) == mine, "bound to it");
+
+    // A group: Varian joins Jaina's and goes where her group is bound (she was bound before the group).
+    jaina.write(Opcode.CMSG_GROUP_INVITE, ClientGroupName("varian"));
+    varian.write(Opcode.CMSG_GROUP_ACCEPT, null);
+    assert(context.groups.of(9) !is null);
+    // The group is bound by its first member to go in after it formed.
+    jaina.session.teleportTo(mapDeadmines, Position(-16, -383, 61));
+    jaina.write(Opcode.MSG_MOVE_WORLDPORT_ACK, null);
+    const groupCopy = jaina.session.instanceId;
+    assert(context.instanceFor(9, mapDeadmines) == groupCopy, "the group's copy");
+
+    // A creature of the dungeon killed in one copy lives in the other.
+    CreatureSpawn defias = {guid: 79999, entry: creatureInnkeeper, map: mapDeadmines, x: -16, y: -383, z: 61};
+    auto inCopy = context.map(mapDeadmines, groupCopy), inMine = context.map(mapDeadmines, mine);
+    auto a = context.makeCreature(&defias), b = context.makeCreature(&defias);
+    a.instanceId = groupCopy;
+    b.instanceId = mine;
+    inCopy.addObject(a);
+    inMine.addObject(b);
+    a.die(inCopy, context.unixTime);
+    context.creatureDied(a);
+    assert(b.alive && a.guid == b.guid, "the same spawn, two copies");
+
+    // Everyone out of Anduin's copy (he was never in it): it goes after a minute, and his bind with it.
+    const count = context.instanceCount;
+    now += 30.seconds;
+    context.update(now);
+    now += 31.seconds;
+    context.update(now);
+    now += 31.seconds;
+    context.update(now);
+    assert(context.instanceCount < count && context.existingMap(mapDeadmines, mine) is null, "reset");
+    assert(context.existingMap(mapDeadmines, groupCopy) !is null, "Jaina's group's copy is in use");
+    const again = context.instanceFor(7, mapDeadmines);
+    assert(again != mine && again != groupCopy, "a fresh copy next time");
 }

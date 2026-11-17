@@ -39,8 +39,9 @@
   do not block sight (CMaNGOS's dynamic tree). Without mmaps there are no paths.
 * **Movement:** the speed check assumes running speed; it must learn mounts, speed auras,
   knockbacks and taxis when those exist.
-* **Teleports:** there is one map per map id, so everyone entering a dungeon shares one copy.
-  Instance ids, binds (`character_instance`, `group_instance`) and resets are not done yet.
+* **Instances:** each group gets its own copy of a dungeon, bound in memory; binds are not saved
+  (`character_instance`, `group_instance`), raids have no lockouts or weekly resets, and in a
+  cluster every dungeon is one shared copy.
   Area trigger scripts (`scripted_areatrigger`) do nothing. Battlegrounds cannot be entered.
 * **Groups:** an offline leader is not replaced after a while (that needs a timer). Loot
   settings decide who loots. The ignore list does not exist, so nobody can be

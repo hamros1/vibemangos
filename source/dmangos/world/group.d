@@ -1041,6 +1041,7 @@ version (unittest)
     /// An online player that records what it is sent.
     final class FakePlayer : OnlinePlayer
     {
+        @property uint instanceId() const { return 0; }
         Player player;
         Opcode[] received;
         const(ubyte)[][] bodies;

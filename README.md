@@ -181,6 +181,14 @@ What works now:
     Instance portals and the other `areatrigger_teleport` triggers apply CMaNGOS's checks (level,
     raid group, items, quests handed in) with the trigger's own message. The client's `worldport`
     command works for administrators.
+  * **Dungeon instances:** each group (or player on its own) gets its own copy of a dungeon or
+    raid: its group's if the group is bound to one, else its own bind's, else a new one, to which it
+    and its group are bound (CMaNGOS's binds, kept in memory). A creature killed or an object used
+    up in a copy stays so until the copy resets; a copy nobody has been in for
+    `instance_unload_delay_seconds` resets, and its binds go with it. A player logging back in
+    inside a dungeon returns to its copy while it lasts. Not yet: saved binds, raid lockouts and
+    their weekly resets, the player limit, `.appear` into another player's copy; a cluster keeps one
+    shared copy of each dungeon.
   * **Groups:** invitations, parties and raids of up to 40 in eight sub-groups, leaders and
     assistants, kicking, leaving, loot settings, raid target icons, ready checks, rolls, minimap
     pings, and member stats for members out of sight. Groups are kept in `groups` and
@@ -445,6 +453,7 @@ time.
 | `allow_two_side_accounts`, `skip_cinematics` | `AllowTwoSide.Accounts`, `SkipCinematics` | `false`, `0` |
 | `motd` | `Motd` (`@` starts a new line) | a short welcome |
 | `visibility_distance`, `visibility_relocation_lower_limit` | `Visibility.Distance.Continents`, `Visibility.RelocationLowerLimit` | `100`, `10` |
+| `instance_unload_delay_seconds` | `Instance.UnloadDelay` (ms there): an empty dungeon copy resets after so long | `1800` |
 | `grid_cleanup_delay_seconds` | `GridCleanUpDelay` (ms there): a cell no player has been near for so long unloads its creatures and game objects; `0` never | `300` |
 | `listen_range_say`, `listen_range_text_emote`, `listen_range_yell` | `ListenRange.Say`, `ListenRange.TextEmote`, `ListenRange.Yell` | `25`, `25`, `300` |
 | `allow_two_side_interaction_chat` | `AllowTwoSide.Interaction.Chat` (whispers between factions) | `false` |

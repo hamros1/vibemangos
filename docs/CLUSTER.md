@@ -805,6 +805,9 @@ player goes there.
   row is guarded by what was seen of it (README's "Auctions"); the coordinator settles those over.
 * **Flights** stay on the node they start on until they land: the server follows the flight there,
   and the first move after landing moves the player on if the ground is another node's.
+* **Dungeon instances** are a standalone server's for now: in a cluster each dungeon map stays one
+  copy, simulated by the node owning its region (moving copies between nodes, with their binds, is
+  not done).
 * **Scripts and summons** run on the node of the map cell where they started (`dbscripts.d` keeps
   them in the node's context); a summoned creature's guid comes from its node's own range, so two
   nodes never make the same one. A summon is not handed over with its cell: it is dropped there.

@@ -404,7 +404,7 @@ private:
     /// `Player::IsAtGroupRewardDistance`: on the kill's map, and within 74 yards of it (anywhere in a dungeon).
     package bool atGroupRewardDistance(const Creature victim)
     {
-        return atGroupRewardDistance(context.existingMap(victim.spawn.map), victim.position);
+        return atGroupRewardDistance(context.existingMap(victim.spawn.map, victim.instanceId), victim.position);
     }
 
     /// ditto, for a place on a map

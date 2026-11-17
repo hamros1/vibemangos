@@ -242,6 +242,7 @@ final class ScriptRun
     size_t next;            /// the step to run next
     uint elapsed;           /// milliseconds since it began
     uint mapId;
+    uint instanceId;        /// the map's dungeon instance (0: none)
     ulong source, target;   /// the objects it began with (0: none)
 }
 
@@ -283,6 +284,7 @@ mixin template DbScriptRunner()
         run.id = id;
         run.steps = steps;
         run.mapId = map.id;
+        run.instanceId = map.instanceId;
         run.source = source;
         run.target = target;
         scriptRuns ~= run;
@@ -296,7 +298,7 @@ mixin template DbScriptRunner()
         foreach (run; scriptRuns.dup)
         {
             run.elapsed += diff;
-            auto map = existingMap(run.mapId);
+            auto map = existingMap(run.mapId, run.instanceId);
             while (map !is null && run.next < run.steps.length && run.steps[run.next].delay <= run.elapsed)
             {
                 const step = &run.steps[run.next++];
@@ -591,6 +593,7 @@ mixin template DbScriptRunner()
         if (spawn.map != map.id || map.findObject(makeGuid(HighGuid.gameObject, spawn.entry, spawn.guid)) !is null)
             return;
         auto made = makeGameObject(spawn);
+        made.instanceId = map.instanceId;
         if (made is null || made.type == GameObjectType.door)
             return;
         // A static spawn just comes back; one that is not there by default goes again after a while.

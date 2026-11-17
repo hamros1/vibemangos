@@ -228,6 +228,7 @@ private:
         regenTimer.reset();
         enteredWorld = context.clock();
         state_ = WorldState.inWorld;
+        instanceId_ = context.instanceFor(player.guid, player.data.map); // a dungeon: its group's copy, or its own
         sendLoginPackets();
         context.enterWorld(this); // after the player's own create block: now others see it, and it sees them
         context.database.setOnline(guid, account.id, true, context.config.realmId);

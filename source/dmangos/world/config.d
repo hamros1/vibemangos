@@ -106,6 +106,8 @@ struct WorldConfig
     @JsonName("instance_ignore_level") bool instanceIgnoreLevel = false;
     /// `Instance.IgnoreRaid`: enter raids without a raid group.
     @JsonName("instance_ignore_raid") bool instanceIgnoreRaid = false;
+    /// `Instance.UnloadDelay` in seconds: an empty dungeon instance goes after so long, and with it its binds.
+    @JsonName("instance_unload_delay_seconds") uint instanceUnloadDelay = 1800;
     /**
      * Not in `mangosd.conf` (CMaNGOS leaves this to its anticheat module): check that players move no
      * faster than they can run, give or take `movement_speed_tolerance` (a factor) plus

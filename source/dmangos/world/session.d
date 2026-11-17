@@ -609,6 +609,14 @@ final class WorldSession : NetSession, Kickable, OnlinePlayer, Combatant, Looter
         return teleporting == Teleport.far;
     }
 
+    package uint instanceId_; // the dungeon instance it is in (0: none)
+
+    /// See `OnlinePlayer.instanceId`.
+    @property uint instanceId() const
+    {
+        return instanceId_;
+    }
+
     /// The group changed: the leader flag, and the health the players around see and are seen with.
     void groupChanged()
     {
@@ -771,7 +779,7 @@ private:
     @property Map map()
     in (player !is null)
     {
-        return context.map(player.data.map);
+        return context.map(player.data.map, instanceId_);
     }
 
     /// Milliseconds on the server's clock, as movement packets carry them.

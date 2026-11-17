@@ -109,6 +109,7 @@ final class GameObject : Replicable, Moving, PerViewer
     GoLootState lootState = GoLootState.ready;
     Loot loot;                   /// what it holds while open (a chest)
     int restoreTimer;            /// ms until a door or button goes back, or a goober is done
+    uint instanceId;             /// the dungeon instance it is in (0: none): used up there, it stays so
     int despawnTimer;            /// ms until a chest opened but not emptied goes (`SetChestDespawn`); 0: none
     bool[ulong] skilledUp;       /// those it gave a skill-up (`m_SkillupList`): once until it respawns
     /// Whether it is usable for `viewer`'s quests (`ActivateToQuest`); null: for nobody.

@@ -34,6 +34,7 @@ final class Corpse : MapObject
     immutable ulong guid_;
     immutable uint owner;          /// the player's low guid
     immutable uint map;
+    uint instanceId;               /// the dungeon instance it lies in (0: none; not saved)
     Position at;
     CorpseType type;
     long ghostTime;                /// `m_time`: when the player released its spirit (Unix time)
