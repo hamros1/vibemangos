@@ -1,499 +1,244 @@
-# dmangos's own architecture: research and decisions
+# The design of the world server
 
-This document records what we learned from other engines, game servers and data-oriented libraries,
-what we decided for each idea, and the architecture those decisions add up to. It also records the
-order in which the server moves to it. It is written for this server's actual needs: a vanilla WoW
-1.12 world server that speaks a fixed client protocol, persists to a fixed CMaNGOS schema, and runs
-as one process or as a cluster of nodes that own spatial regions (docs/CLUSTER.md).
+Why the world server's core is built as it is: how objects are identified and stored, where a
+player's gameplay lives, how the tick is scheduled, how events reach the systems that care, how
+updates reach clients, how saves reach the database, how memory is kept away from the collector, and
+how all of it fits the cluster (docs/CLUSTER.md). For each part it states the problem, the decision,
+and how far the code has got. The last section lists the steps by which the server was moved to this
+design, with their measured results, which docs/BENCHMARKS.md refers to.
 
-Nothing here is copied from another project. For each idea the question was whether the problem it
-solves exists here, what it costs, and whether D lets us solve that problem more simply.
+## What the server needs
 
-## How the research was done
-
-The projects studied were Bevy (`bevy_ecs`), Flecs, EnTT, Unreal Engine (actors, subsystems, tick
-functions, Mass Entity, classic replication, ReplicationGraph, Iris), Open 3D Engine (components,
-EBus, Gems, the Multiplayer gem), Source and Source 2, Godot (servers and RIDs, signals, the
-multiplayer synchroniser), Nakama and SpacetimeDB. SpatialOS, Orleans and EVE Online were studied
-for distributed state.
-
-These facts were read in the projects' own sources:
-* Bevy's `Entity` is an index plus a generation (`crates/bevy_ecs/src/entity/mod.rs`).
-* EnTT's 32-bit entity is 20 bits of index and 12 of version (`entity.hpp`).
-* Source's entity handle keeps a 16-bit serial number beside the slot index (`public/const.h`,
-  `basehandle.h`).
-* O3DE's EBus has address and handler policies, and `AZ::EntityId` is a plain 64-bit id
-  (`EBus/Policies.h`, `Component/EntityId.h`).
-* Godot's RID owner keeps a validator per slot, in chunks (`core/templates/rid_owner.h`).
-* Nakama's match is one loop over a ticker and a bounded input queue that drops when full
-  (`server/match_handler.go`).
-* SpacetimeDB stores rows in 64 KiB pages with fixed parts from the front and variable parts from
-  the back (`crates/table/src/page.rs`).
-
-Unreal's source needs an Epic account, so what is said of it comes from Epic's documentation.
-Everything else comes from the projects' design documentation. None of the decisions below rests
-on a detail that was not checked.
-
-## What our server needs
-
-These requirements come from the code and from the measurements in docs/BENCHMARKS.md.
+These requirements come from the protocol, the data, and the measurements in docs/BENCHMARKS.md.
 
 1. **A fixed protocol.** The client is told about objects in create blocks and changed-field blocks
    (an update mask over a fixed field array), out-of-range lists and movement packets. It
    acknowledges nothing. A unit has 188 fields (752 bytes); a player has over 1,200.
-2. **A fixed schema.** Characters, pets, items and the rest are saved in CMaNGOS's tables, and the
-   rows cannot change.
-3. **Few kinds, many instances.** There are six kinds of object (player, creature, game object,
-   corpse, dynamic object, item). One node holds 25,000 to 30,000 objects with 500 players spread
+2. **A fixed schema.** Characters, pets, items and the rest are saved in the existing character
+   database tables (README, "Compatibility"), and their rows cannot change.
+3. **Few kinds, many instances.** There are six kinds of object: player, creature, game object,
+   corpse, dynamic object, item. One node holds 25,000 to 30,000 objects with 500 players spread
    out, and should hold 100,000.
-4. **The cost of keeping objects.** An object costs about 150 ns a tick, creature or replica, and
-   its AI is not most of that. The map finds everything through about twenty associative arrays
-   keyed by guid, sets included (`bool[ulong][ulong]`).
+4. **The cost of keeping objects.** Before the redesign an object cost about 150 ns a tick, creature
+   or replica, and its AI was not most of that: the map found everything through about twenty
+   associative arrays keyed by guid.
 5. **Crowds cost fan-out and allocation.** In a crowd the standing cost is relaying movement to
-   everyone who sees the mover, and allocation drives the collector: 2.5 MB a tick at 500 players.
-6. **Pauses come from the collector.** The worst loop iteration is a collection of 40 to 90 ms, over
+   everyone who sees the mover, and allocation drives the collector (2.5 MB a tick at 500 players
+   before the redesign).
+6. **Pauses come from the collector.** The worst loop iteration was a collection of 40 to 90 ms, over
    a heap of 360 to 640 MiB that is mostly static data.
-7. **Regions are owned by nodes.** Players and creatures move between nodes as serialised state,
-   and objects near a border are replicated to the neighbour.
-8. **The structure resists change.** Adding pets showed this in several places:
-   * A player's gameplay lives in its network session, a class of 37 mixins.
-   * Creatures see their enemies through `Combatant`, an interface of about two dozen methods that
-     only sessions implemented, so creatures fighting creatures needed an adapter
-     (`CreatureCombatant`).
-   * Per-kind state hangs off a creature as an untyped `Object`.
-   * Mixin methods cannot implement an interface or be reliably called from another module, so
-     every such crossing needs a hand-written forwarder.
+7. **Regions are owned by nodes.** Players and creatures move between nodes as serialized state, and
+   objects near a border are replicated to the neighbour.
+8. **Any unit fights any unit.** Pets, PvP, duels and battlegrounds need creatures and players to
+   fight each other through one set of rules.
 
-   PvP and battlegrounds are next. Both would build on these seams.
+## Entity identity and storage
 
-## The ideas, and what we decided
-
-### Entity identity
-
-**What others do.**
-* Every data-oriented engine studied refers to entities by a slot index and a generation (or
-  serial):
-  * Bevy uses 32+32 bits.
-  * EnTT uses 20+12 bits (or 32+32).
-  * Flecs uses 32+16 bits plus flags.
-  * Source uses an edict index with a 16-bit serial.
-  * Mass uses an index and a serial.
-  * Godot's RIDs carry a validator.
-* Lookup is an array index. A stale reference is caught by its generation instead of reaching a
-  reused slot.
-* O3DE is the exception: its 64-bit id is looked up through a map.
-
-**Our problem.** We use the WoW guid everywhere, and every lookup is a hash lookup in an
-associative array. That accounts for much of the 150 ns an object costs (requirement 4). Threat
-lists, auras, targets and summons also hold guids that must be looked up again each time.
-
-**Decision: adopt, redesigned.**
-* Inside a map, objects are referred to by a typed handle `Ref!Kind`: a 32-bit slot and a 32-bit
-  generation. With 32 bits there is no aliasing to reason about, as there is with EnTT's 12.
-* The kind is part of the type, so a `Ref!Creature` cannot be passed where a `Ref!Player` is
-  expected. Generic code takes `Ref!Unit` (below).
-* The guid stays the identity the client, the database and other nodes see. Each map keeps one
-  table from guid to slot, used only at those boundaries.
-* Memory: 8 bytes a reference, the same as a guid, and one lookup table instead of twenty.
-
-### Storage and memory layout
-
-**What others do.**
-* **Archetype ECSs** (Bevy, Flecs, Mass) store each unique set of components in its own table of
-  columns. Adding or removing a component moves the entity to another table. Every column is
-  copied, and the published weak points are fragmentation and that move cost.
-* **EnTT** keeps one sparse set per component. Adding and removing is O(1) and nothing else moves,
-  but iterating several components together reads at random.
-* **Unreal actors and O3DE entities** are heap objects with heap components, which is why Unreal
-  built Mass.
-* **Shared data** comes as Flecs's prefabs (`IsA`) and Mass's shared fragments: data held once for
-  many entities.
-
-**Our problem.** Our set of kinds is small and fixed, and every object has a large fixed field
-block the protocol defines. The state that comes and goes (in combat, stunned, casting, an aura)
-changes all the time. That is an archetype ECS's worst case: a table move on every toggle. It
-also saves nothing, because our "component sets" are known at compile time.
+**Problem.** Every lookup was a hash lookup by the 64-bit guid, and threat lists, auras, targets and
+summons hold guids that must be looked up again each time.
 
 **Decision.**
-* **Reject archetypes.**
-* **Adopt one store per kind.** A `Store!Creature` is an array of structs in slots with a free list
-  and generations. Iterating the creatures is a walk along one array. The fixed field block stays
-  next to the object it describes, because almost everything that changes a field also reads the
-  object's other state.
-* **Adopt sparse side tables for state that comes and goes.** Threat lists, a cast under way, an
-  escort, waypoint movement, loot and a pet's state go in side tables (`Side!T`: a dense array plus
-  a slot→index map, EnTT's sparse set). This replaces fields such as `petData` (an `Object`) and
-  `asCombatant`. Adding or removing one moves nothing else, and a system that cares (ticking casts)
-  walks only its own dense array.
-* **Keep the shared templates.** `CreatureTemplate` and the other templates stay immutable and
-  shared by pointer. This is Flecs's prefab idea, and CMaNGOS already has it.
-* **Split hot from cold only where measured.** A separate array for the few fields the tick reads
-  for every creature (position, next think time, flags) is worth it only if the profiler says so.
+* Inside a map, an object is referred to by its slot. `dmangos.store` provides `Store!T`, an array of
+  slots with a free list, and `Ref!T`, a 32-bit slot and a 32-bit generation. Removing a value frees
+  its slot and bumps its generation, so a reference kept from before is caught rather than
+  misdirected; with 32 bits a slot would have to be reused four billion times before an old reference
+  could alias a new value. Lookup is an array index and iteration walks one array.
+* The guid stays the identity the client, the database and other nodes see. Each map keeps one table
+  from guid to slot (`Map.slotOf`), used only at those boundaries.
+* Who sees what is kept from both sides: a player's `known` set (a `SlotBits`, one bit per slot) and
+  an entity's `viewers` (the slots of the players whose clients have it). Sending to an object's
+  viewers walks its viewer list instead of asking every player on the map.
+* State that comes and goes (threat, a cast under way, an escort, loot, a pet's state) belongs in
+  sparse side tables (`Side!T`: a dense array and a slot-to-index map), so adding or removing it moves
+  nothing else and a system walks only its own dense array.
+* Shared templates (`CreatureTemplate` and the others) are immutable and shared by pointer.
 
-### Players and creatures: one unit core
+**Status.** The map keeps every player and object in one `Store!Entity` with a single guid table
+(step 1). Creatures and game objects are still classes referred to from their slots, and `Side!T` is
+not used yet; per-kind stores of structs and side tables are the next part of this work. Splitting
+hot fields from cold ones is done only where the profiler shows it pays.
 
-**What others do.**
-* Source and Unreal share behaviour through deep class hierarchies (`CBaseEntity`, `AActor`), and
-  both are criticised for it.
-* ECSs share it through components that systems match on.
-* Godot keeps the heavy state in servers addressed by handles, and the scene objects are thin.
+**Not chosen.** An archetype entity-component system: our kinds are few and known at compile time,
+every object has the large fixed field block the protocol defines, and the state that comes and goes
+(combat, stuns, casts, auras) changes all the time, which would move an entity between tables on
+every toggle. Heap objects with per-entity components and virtual calls are not chosen either.
 
-**Our problem.**
-* Combat, auras, spells and movement are the same rules for every unit, but today they live in two
-  places:
-  * the player's in the session's mixins;
-  * the creature's in `CreatureAI`'s mixins.
-* They meet through interfaces (`Combatant`, `CombatWorld`, `CreatureLore`).
-* PvP, pets fighting players, and players and creatures in battlegrounds all need any unit to fight
-  any unit.
+## One unit core
 
-**Decision: a `Unit` core, shared by composition.**
-* Player and creature each hold the same `Unit` struct: their fields, health and power, auras,
-  combat state (attackers, threat), movement, casting.
-* The rules are functions over units: `swing(ref Unit attacker, ref Unit victim, ref MapContext)`,
-  `applyAura`, `dealDamage`. Creature against player, player against player, and pet against
-  anything are one code path.
-* Where a kind reacts differently (a creature's AI fights back, a player's client is told), the
-  function branches on the kind with a `final switch`. The compiler then checks that every kind is
-  handled. There are no virtual interfaces.
-* This removes `Combatant`, `CreatureCombatant`, and most forwarders.
+**Problem.** Combat, auras, spells and movement are the same rules for every unit, but they lived in
+two places, the player's session and the creature's AI, joined by interfaces and an adapter.
 
-### Where the player's gameplay lives
+**Decision.** The rules are functions over units. `dmangos.world.unit` defines `UnitRef`, a value
+naming a player (its `Character`) or a creature, and its map. `dealDamage` is the one path for damage
+to any unit; where a kind reacts differently (a creature's AI fights back, a player's client is told),
+the code branches on the kind with a `final switch`, which the compiler checks covers every kind.
+There are no virtual interfaces. Creature against player, player against player, and pet against
+anything take the same path.
 
-**What others do.**
-* Every engine studied separates the connection from the simulated entity:
-  * Unreal's `PlayerController` and `NetConnection` are not the pawn.
-  * Source's client is not its `CBasePlayer`.
-  * Nakama's session is not its match state.
-  * In SpatialOS and Orleans, the network endpoint and the authoritative entity live on different
-    machines entirely.
+**Status.** Damage, the death that follows, and the reactions to it are unified (step 2). Healing and
+aura application still keep a path per kind behind `UnitRef`.
 
-**Our problem.**
-* Our `WorldSession` is both the connection and the character.
-* Moving a player to another node serialises a session from the inside.
-* Every gameplay system is a session mixin.
+## Connection and character
 
-**Decision: adopt the split.**
-* A `Connection` (socket, encryption, account, which handler to call) stays at the player's home
-  node, as the cluster already does.
-* A `Character` is the map-owned simulation: the player's `Unit`, inventory, quests, talents and the
-  rest. Packet handlers become functions that turn a packet into an action on a character.
-* Migration moves a character, and saving saves a character.
-
-### Scheduling the tick
-
-**What others do.**
-* **Bevy** orders systems by declared constraints and runs them in parallel where their access sets
-  do not conflict. Its known costs are dispatch overhead per system and an order that is
-  nondeterministic unless pinned.
-* **Flecs** runs systems in named phases.
-* **Unreal** builds a tick task graph every frame, and "disable tick" is standard advice because of
-  its cost.
-* **Source** gives each entity a next-think tick.
-* **Mass** uses LOD and signals so processors run only for entities that need it.
-* **EnTT's owning groups** keep the matching entities packed at the front of their arrays.
-* **Bevy and Flecs** defer structural changes (spawning, despawning) to sync points.
-
-**Our problem.**
-* A creature with nothing to do this tick still costs its slot in the loop.
-* Spawns and despawns during iteration need care today (`dup` before iterating, for example).
-* Our parallelism has a natural unit already: the map or region, which the cluster distributes.
+**Problem.** A session that is both the network connection and the character makes moving a player to
+another node mean serializing a connection from the inside.
 
 **Decision.**
-* **Fixed phases, written down in order.** A map's tick runs: input (the packets received), timers,
-  movement, AI, spells and auras, combat, then the queued changes applied, visibility, and building
-  and sending updates. They are ordered by hand. A dependency solver is not worth it for ten
+* `WorldSession` is the **connection**: framing, encryption, the account, the protocol state,
+  authentication, pings and the character screen. It stays on the player's home node.
+* `Character` (`character.d`) is the **simulation**: the player and every gameplay handler group. It
+  exists only while the player is in the world. Packet handlers are methods of its mixins.
+* The login's checks stay with the connection; the rest is `CharacterLogin`. An arrival from another
+  node makes a `Character` on the arriving connection.
+* The context's online players, the map and every system know the `Character`. The session table,
+  `.disconnect` and the cluster's relay know the connection.
+
+Migration moves a character, and saving saves a character. What is left of the connection in the
+gameplay code goes through forwarding properties of the same names (`account`, `state_`, `homeNode`,
+`send`, ...); that is the seam to narrow next.
+
+## Scheduling the tick
+
+**Problem.** A creature with nothing to do still cost its place in the loop, and spawns and despawns
+during iteration needed care.
+
+**Decision.**
+* **Fixed phases, in order.** `WorldContext.update` runs `TickPhase.maps` (on each map, its players,
+  then its creatures and game objects), `deaths` (the creatures that died: their dungeon's scripts,
+  their respawn) and `world` (what belongs to no one map: dungeon copies, scripts, weather, respawns,
+  auctions, mail). The order is written by hand; a dependency solver is not worth it for so few
   systems.
-* **Activity by timer, not by polling.** Each unit has a next think time. A timer wheel (buckets by
-  tick) gives each phase the units due now, and active ones sit at the front of their store, as in
-  EnTT's groups.
-  * A creature standing in a cell nobody is near costs nothing until something wakes it.
-  * The map's `ticking` array is a first step in this direction.
-* **Deferred structural changes.** Spawning, despawning, cell changes and moves to another node are
-  queued during a phase and applied at one point in the tick. Nothing is removed from under an
-  iteration.
-* **Parallelism by map** (decided 2026-11-17: designed for from now on, switched on once the phases
-  of step 4 are in). A map is a single-threaded actor with an input queue (Nakama's
-  match loop, EVE's solar system, Orleans's grain). Maps share nothing they write, so they can later
-  run on their own threads.
-  * Unlike Nakama, a full queue is never silently dropped from. It slows the sender down or
-    disconnects it.
-  * Parallelism inside a map is rejected. Bevy's own measurements show it pays only for heavy
-    systems.
+* **Activity by timer, not by polling.** An object that can say how long it will idle (`Idler.idleFor`:
+  alive, standing, with nothing for its AI to do) sleeps on its map's timer wheel and is out of the
+  tick until then. Each object keeps its last tick time, so a wake gives it the whole time it slept.
+  A creature standing where nobody is near costs nothing until something wakes it.
+* **No removal from under an iteration.** The tick works on a reused copy of what ticks; spawning,
+  despawning and moves to another node take effect for the next pass.
+* **Searches do not load cells.** Only a player's sight loads cells, so a creature looking around does
+  not start a wave of loading.
+* **Parallelism by map.** Maps share nothing they write, so they can later run on threads of their
+  own, each a single-threaded actor with its input queue. They do not yet; the server runs the world
+  on one thread, with database writes on another. A full input queue will slow its sender or
+  disconnect it, never drop silently. Parallelism inside a map is not planned: it pays only for heavy
+  systems.
 
-### Events
+## Events
 
-**What others do.**
-* **O3DE's EBus:** an addressed bus with handler policies. Its own developers criticise it for
-  hidden coupling, debugging pain and compile times, and added lighter alternatives.
-* **Godot's signals:** they allocate their arguments.
-* **Flecs and Bevy observers:** run a lookup and a dynamic call on every matching change.
-* **Bevy's message queues:** double-buffered arrays read through a cursor, as cheap as an append.
-* **EnTT's delegate vectors:** allocate nothing per call.
+**Problem.** When a creature dies, loot, quests, scripts, the dungeon's script, kill credit and the
+group all need to know, and calling each directly from the place of death makes that list grow.
 
-**Our problem.**
-* When a creature dies, loot, quests, scripts, the dungeon's script, kill credit and the group all
-  need to know. Today each is called directly from the place of death, and the list grows.
-* Inside a system, direct calls are right.
+**Decision.** Typed event queues per tick (`dmangos.events.EventQueue!T`). The code where something
+happens appends a record to the queue of its type and goes on; the systems that care read the queue in
+their phase. A queue is two arrays, one filling while the other is read, whose memory is reused, so a
+queue in steady use allocates nothing. Inside a system, direct calls stay. The first queue is the
+map's creature deaths, read in the deaths phase. There is no event bus, no observer on every change,
+and no string-named signal.
 
-**Decision.**
-* **Typed event queues per tick.** A death becomes a `Died` record appended to the map's
-  `Events!Died`. Loot, quests, scripts and the group read it in their phase. A system that wants
-  deaths reads one array, and the code that kills does not know who listens.
-* Direct calls stay inside a system.
-* **Rejected:** a bus, observers on every change, and string-named signals.
-* The script framework already dispatches typed events to scripts (docs/SCRIPTING.md). It becomes
-  a reader of these queues.
+## Registration at compile time
 
-### Script registration
+Scripts (`@creature`, `@instance`, ...), packet handlers (`@Handles`), GM commands (the command
+tables) and cluster services (`@Service`, `@Call`) are found at compile time from attributes, and their
+dispatch tables are generated by the compiler. Nothing is registered or loaded at run time, and there
+is no embedded script language or plugin loader: D's templates and attributes give the concise
+declarations and generated glue those are usually used for, with static checking.
 
-**What others do.**
-* Nakama registers handlers in an `InitModule` function. Its Go plugins must be built with the
-  exact server toolchain, which is widely criticised.
-* Godot registers classes in `ClassDB`.
-* SpacetimeDB reads a module's description at publish time.
+## Updates to clients
 
-**Decision: keep what we have.** Scripts, packet handlers and GM commands are registered at
-compile time from attributes (`@creature`, `@Handles`, the ArcEmu command tables). D does at compile
-time what these projects do at start-up, and nothing is loaded at run time. Embedded script VMs and
-run-time plugins stay rejected.
-
-### Replication to clients
-
-**What others do.**
-* **Unreal's classic replication** compares each property against a copy per connection, which
-  costs objects × connections. It added push-model dirty flags for that reason.
-* **ReplicationGraph** buckets actors in a spatial grid, keeps lists per connection, and prioritises
-  by distance and age.
-* **Iris** describes replicated state once per class and serialises an object once for all
-  connections.
-* **Source** delta-encodes against the last snapshot the client acknowledged, picks entities by
-  potentially visible set, and marks changed variables dirty.
-* **SpacetimeDB** evaluates subscriptions on the rows a transaction changed.
-
-**Our problem.**
-* The protocol defines the delta: a mask over the fixed field array, sent once per change, never
-  acknowledged.
-* Relevance is a radius around the player. A known-set per player is required to send creates,
-  updates and out-of-range lists.
-* The crowd cost is fan-out (requirement 5).
+**Problem.** The protocol defines the delta (a mask over the fixed field array, sent once per change,
+never acknowledged), relevance is a radius around the player, and the crowd cost is fan-out.
 
 **Decision.**
-* **Keep:** the dirty mask per object, the cell grid, the known-set per player, and building and
-  compressing a create block once for each kind of viewer (done in docs/BENCHMARKS.md's second
-  optimisation).
-* **Adopt:**
-  * A per-map list of the objects that changed this tick, so building updates costs what changed
-    and not what exists.
-  * Serialising a value update once for each kind of viewer (stranger, group member, owner) and
-    sending the same bytes to all of them (Iris's idea).
-  * Batching each viewer's movement and updates into one write per tick.
-* **Reject:** snapshots and acknowledged deltas, lag compensation, and per-connection shadow
+* **Kept:** the dirty mask per object, the cell grid, the known set per player, and building and
+  compressing a create block once for each kind of viewer.
+* **Built once, sent to many.** An object's field update is built once for every viewer who sees the
+  same fields (stranger, group member, owner) and the same bytes go to all of them. The player's own
+  updates are built once per kind of viewer, without a list of watchers.
+* **Changes made in a map's tick are sent once at its end**, from the map's list of changed slots.
+* **Output that is reused.** A session writes into an `OutputBuffer` whose memory the server gives
+  back once sent (`ReusesOutput`), and each socket gets one write per loop iteration.
+* **Not done:** snapshots and acknowledged deltas, lag compensation, and per-connection shadow
   copies. The client acknowledges nothing, and the rules are server-side with leeway.
 
-### Persistence
+## Persistence
 
-**What others do.**
-* **SpacetimeDB** commits each transaction to an append-only log of checksummed segments, with page
-  snapshots for recovery.
-* **Nakama** writes synchronously to SQL when a script asks.
-* **Orleans** writes a grain's state with an etag for optimistic concurrency.
-* **SpatialOS** flushed an entity's state to its runtime before handing authority to another
-  worker.
+**Problem.** Writing to MySQL from the game loop lets one slow statement stall the tick.
 
-**Our problem.** We write to MySQL from the game loop, so a slow statement stalls the tick. CMaNGOS
-accepts losing the last few minutes of play on a crash, and so do we.
+**Decision** (`dmangos.world.writebehind`):
+* **Writes behind the loop.** `WriteBehind` wraps `WorldDatabase`. A write (a method that returns
+  nothing, with plain-data arguments) is encoded into bytes and queued, and the call returns at once.
+  A thread of its own, with its own connections, writes the queue in the order it was made. The layer
+  is generated from the interface, so item, mail and other writes keep their order with the saves,
+  and a method added to the interface is queued without anyone remembering to.
+* **Reads wait.** Any other call (a read, or a write that hands over a delegate or an `out` argument)
+  first waits for the queue to be written, so it sees everything written before it.
+* **Coalescing.** A write marked `@Replaces` (a character's whole progress, its auras, its cooldowns)
+  makes a queued one with the same key pointless, and the writer skips the older one.
+* **A write-ahead log.** Before the writer carries out what it took from the queue, it appends it to
+  a log file (`write_log`) and flushes the file to disk; once MySQL has it, the log is emptied. At
+  start-up, what the log still holds is written first. A crash loses only what was queued and not yet
+  logged.
+* **Ordering rules.** Before an account is released and before a player moves to another node, the
+  node waits until everything queued has been written: the next node reads the character from the
+  database.
+* **Fencing.** Each queued write carries the time until which the node's cluster lease held when it
+  was made; the writer and the replay drop a write they reach after that time (docs/CLUSTER.md). A
+  standalone server always writes.
 
-**Decision.**
-* **A writer thread, fed by value records.**
-  * The loop makes an immutable record of what to save, for example a character with its items.
-    D's `immutable` lets the record cross to the writer thread without locks or copies.
-  * The writer keeps only the newest record per character, and writes each character in one
-    transaction.
-* **Ordering rules:**
-  * Before a character moves to another node or logs out, its pending save is written and
-    acknowledged. Records carry a sequence number per character.
-  * A trade, a mail or an auction writes both sides in one transaction.
-  * Writes carry the node's lease, so a node that has lost its region cannot write over the new
-    owner.
-* **A local write-ahead log** (decided 2026-11-17): stronger than CMaNGOS, which loses what was not
-  yet saved.
-  * Each record is appended to the node's log (length-prefixed, checksummed, in segments, as
-    SpacetimeDB's commitlog does) and flushed before the writer takes it.
-  * The log is trimmed once MySQL has the record.
-  * At start-up a node replays what MySQL does not have yet.
-  * A crash then loses at most the records not yet flushed to the log, which is one flush interval.
-* **Rejected:**
-  * A database as the server (SpacetimeDB) or a distributed SQL store (Nakama on CockroachDB). The
-    schema and protocol are fixed, and one writer per database contradicts ownership by region.
+A database as the server, or a distributed SQL store, is not used: the schema is fixed, and ownership
+by region already says which node writes what.
 
-### Distribution between nodes
-
-**What others do.**
-* SpatialOS gave each entity one authoritative worker, chosen by region. A worker's interest
-  reached past its authority, and authority was handed over after the state was flushed.
-* Orleans guarantees one activation of a grain through a directory.
-* EVE has no live handoff at all; players move between solar systems through gates.
-* O3DE's Multiplayer gem has authority roles per entity.
-
-**Our problem.** Our cluster already has this shape:
-* regions owned by nodes under leases;
-* replicas past the border;
-* migration of serialised state;
-* ids handed out in blocks;
-* the client's connection kept at its home node.
-
-**Decision: keep it, and build on the rest of this design.**
-* Handoff becomes "move a character" and "move a creature store's slots" instead of serialising
-  sessions.
-* Saves gain the lease check above.
-* Traffic between nodes stays one message per object and node, never per object and client.
-
-### Memory and the collector
-
-**What others do.** Every high-performance engine studied avoids allocating per object per frame.
-They allocate in chunks or pages (Mass's chunks, SpacetimeDB's pages, Godot's RID chunks) and
-recycle slots.
-
-**Our problem.** The pauses are collections over a heap that is mostly static data (requirement 6),
-and crowds allocate per packet (requirement 5).
+## Memory and the collector
 
 **Decision.**
-* **Large arrays and recycled slots.** Stores and side tables are large arrays with recycled slots,
-  so the collector sees a few big blocks instead of hundreds of thousands of objects and
-  associative-array nodes.
-* **Static data off the scanned heap.** Static data (templates, the client's tables, terrain) moves
-  to memory the collector does not scan: blocks without pointers marked `NO_SCAN`, or immutable
-  arenas.
-* **`@nogc` hot paths.** The hot paths (movement relay, the tick's loops, building updates) are
-  marked `@nogc`. The compiler then proves they do not allocate, which no C++ engine can check.
+* **Static data off the scanned heap** (`dmangos.frozen`). Tables loaded at start-up (items, creature
+  and game object templates, models, addons, spells and spell chains) are `StaticMap`s: associative
+  arrays while loading, then frozen into an arena from `malloc` that the collector never scans, as
+  open-addressed tables. Only plain data goes in, copied deep. A value with pointers read from a
+  frozen map is `const`; `edit` gives a mutable one in place and registers it with the collector, for
+  the few a GM command or a test changes.
+* **Large arrays and recycled slots.** Stores are large arrays with recycled slots, so the collector
+  sees a few big blocks instead of many small objects and associative-array nodes.
+* **Marking on one thread** (`gcopt=parallel:0`).
+* **Planned:** NPC data, quests and the spawn cells off the scanned heap (about 4 ms of marking), and
+  `@nogc` on the hot paths (movement relay, the tick's loops, building updates), so the compiler proves
+  they do not allocate.
 
-## What stays, what changes
+## Distribution between nodes
 
-| Today | Becomes |
-|---|---|
-| Guids looked up in about twenty associative arrays per map | `Ref!Kind` handles into per-kind stores; one guid table per map |
-| `Creature` and `CreatureAI` classes, with `petData`, `asCombatant`, summon state on every creature | `Store!Creature` of structs; side tables for pets, threat, casts, escorts |
-| Combat and auras written twice, joined by `Combatant` and an adapter | One `Unit` core and rule functions over it |
-| `WorldSession` as connection and character, 37 mixins | `Connection` at home; `Character` owned by its map; handlers as functions |
-| Everything ticked by polling, removals guarded by copies | Fixed phases, a timer wheel, deferred structural changes |
-| Deaths and kills call each interested system directly | Typed event queues read in their phase |
-| Saves on the game loop | Value records to a writer thread, coalesced, fenced by lease |
-| Static data in the scanned heap | Unscanned, immutable memory |
-| Kept as it is | The update-field tables, compile-time registration of scripts, handlers and commands, the cell grid, the cluster's ownership, leases and id blocks, the script framework |
+The cluster gives each entity one authoritative node, chosen by region; replicates past borders;
+migrates serialized state; hands out ids in blocks; and keeps the client's connection at its home
+node (docs/CLUSTER.md). The rest of this design builds on it: a move is "move a character" and
+"move a creature's state", saves are fenced by the lease, and traffic between nodes is one message per
+object and node, never per object and client.
 
-## What was rejected, and why
+## The steps, and what they measured
 
-* **A general ECS with archetypes:** it solves composition we do not have, and its worst case is our
-  common case.
-* **Actors or objects with components per entity** (Unreal, O3DE): a heap object and virtual calls
-  per entity and per component, which is the cost Unreal built Mass to escape.
-* **An event bus or observers on every change:** hidden coupling and per-change dispatch on hot
-  paths.
-* **Automatic parallel scheduling of systems:** overhead per system and nondeterminism. Parallelism
-  by map is coarser and fits the cluster.
-* **Snapshot deltas and lag compensation:** the client protocol rules them out.
-* **The database as the engine, embedded script VMs, run-time plugins:** fixed schema, fixed
-  protocol, and D's compile-time registration does better.
-* **Change ticks per component** (Bevy): 8 bytes per component per object and a write on every
-  change, where one dirty mask per object (which the protocol needs anyway) does the job.
+Each step left a working server: the unit tests, the cluster's 250-bot regression and the benchmark
+scenarios ran after it, and the steps meant to make something faster show it in docs/BENCHMARKS.md.
 
-## The order of the move
+1. **Slots in the map.** The map's associative arrays became one store of entities with a single guid
+   table, and viewer lists and known sets by slot. Measured alone (`tools/mapbench.d`), a tick of 500
+   players and 30,000 objects went from 15.9 to 1.9 ms, delivering exactly the same packets.
+2. **The unit core.** `UnitRef` replaced the `Combatant` interface and its creature adapter, and
+   `dealDamage` replaced six damage paths: three to a player (`hitByCreature`, `takeDamageFrom`,
+   `hitByCreatureSpell`) and three to a creature (the player's swing, `spellAttacked`, the adapter's
+   `takeHit`). With one path, these rules now hold for every unit:
+   * a player gets rage from any damage taken, a player's spells included;
+   * a player stands up when any non-periodic damage hits it;
+   * a death costs durability unless a player dealt it;
+   * a creature's heal on a friend never misses.
+3. **Character and connection.** All handler groups moved to `Character` at once; they depend on each
+   other too much to move one at a time.
+4. **Phases, the timer wheel, no removal under iteration, event queues, searches that do not load.**
+   Loop busy time 19.8% to 7.3%, tick 10.2 to 3.5 ms, worst tick 1,073 to 80 ms.
+5. **Updates built once, output reused.** In the 500-player crowd: allocation 2.57 to 0.41 MB a tick,
+   CPU 58% to 11%, loop busy 12.5% to 7.9%, ping p99 21.9 to 3.8 ms.
+6. **Writes behind the loop**, with the log, coalescing, the ordering rules and lease fencing. With
+   every character saving every 5 s: tick average 3.49 to 0.54 ms, worst 15.1 to 3.3 ms.
+7. **Static data off the scanned heap.** Collection pause 55.6 to 16.4 ms in the crowd, 71.6 to
+   37.7 ms spread out.
 
-Each step is a working server: the unit tests, the cluster's 250-bot regression and the benchmark
-scenarios run after it, and the step that is meant to make something faster shows it in
-docs/BENCHMARKS.md's terms.
+## Background
 
-Decisions taken on 2026-11-17:
-* The connection/character split goes ahead.
-* Saves get a write-ahead log.
-* Maps are built to run on their own threads.
-
-1. **Handles and stores in the map.**
-   * Change: `Ref!Kind`, `Store!T` and `Side!T`; the map's associative arrays become stores and
-     side tables; one guid table per map.
-   * Measure: the cost per object per tick in the idle and spread scenarios, today about 150 ns.
-2. **The unit core.**
-   * Change: `Unit` in players and creatures; melee, spells, auras and death as functions over
-     units; `Combatant` and `CreatureCombatant` go.
-   * Gate: the combat, pet, duel and script tests pass unchanged. This step is what PvP needs.
-   * Done (2026-11-17) as `dmangos.world.unit`. A `UnitRef` value (a session or a creature, and its
-     map) replaces the interface and the adapter. `dealDamage` replaces six paths: three to a player
-     (`hitByCreature`, `takeDamageFrom`, `hitByCreatureSpell`) and three to a creature (the player's
-     swing, `spellAttacked`, `CreatureCombatant.takeHit`).
-   * Behaviour that changed, now as CMaNGOS has it:
-     * A player gets rage from any damage taken, a player's spells included.
-     * A player stands up when any non-periodic damage hits it.
-     * A death costs durability unless a player dealt it.
-     * A creature's heal on a friend never misses.
-   * Not unified yet: healing and aura application keep a path per kind behind `UnitRef`.
-3. **Character and connection.**
-   * Change: the session's gameplay mixins move to `Character`, one area at a time; migration and
-     saving move a character.
-   * Done (2026-11-17), all areas at once. The handler groups depend on each other too much to
-     move one at a time.
-     * `WorldSession` is the connection: framing, encryption, the account, the protocol state,
-       authentication, pings, the character screen.
-     * `Character` (`character.d`) holds the player and every gameplay mixin, and exists only while
-       in the world.
-     * The login's checks stay with the connection; the rest is `CharacterLogin`.
-     * An arrival from another node makes a `Character` on the arriving connection.
-     * The context's online players, the map and every system know the `Character`. The session
-       table, `.disconnect` and the cluster's relay know the connection.
-   * What is left of the connection in the gameplay code goes through forwarding properties of the
-     same names (`account`, `state_`, `homeNode`, `send`, ...). That is the seam to narrow next.
-4. **Phases, the timer wheel, deferred changes and event queues.**
-   * Measure: the tick with 25,000 objects and few players, which should approach the cost of the
-     active units only.
-   * Done (2026-11-17):
-     * `WorldContext.update` runs fixed phases (`TickPhase`: maps, deaths, world). On each map, its
-       players then its objects.
-     * Each map has a timer wheel for objects with nothing to do (`Idler.idleFor`). Each object
-       keeps its last tick time, so a wake gives it the whole sleep.
-     * `dmangos.events.EventQueue`, first for creature deaths, read in the deaths phase.
-     * The tick works on a reused copy of what ticks, so nothing is removed from under it.
-     * Searches no longer load cells, which stopped a loading wave (docs/BENCHMARKS.md, step 4).
-   * Results: loop busy 19.8% to 7.3%, tick 10.2 to 3.5 ms, worst tick 1,073 to 80 ms.
-5. **Replication.**
-   * Change: the per-map changed list, value updates serialised once per kind of viewer, one write
-     per viewer per tick.
-   * Measure: allocation and loop busy time in the 500-player crowd.
-   * Done (2026-11-17):
-     * Output is an `OutputBuffer` written into memory the server gives back once sent
-       (`ReusesOutput`).
-     * An object's field update is built once for every viewer who sees the same fields.
-     * The player's own updates are built once per kind of viewer, without a list of watchers.
-     * Changes made in the map's tick are sent once at its end.
-   * Results, 500-player crowd: allocation 2.57 to 0.41 MB a tick, CPU 58% to 11%, loop busy
-     12.5% to 7.9%, ping p99 21.9 to 3.8 ms (docs/BENCHMARKS.md).
-   * Still separate: one write to each socket per loop iteration, which is already the case. The
-     per-map changed list only covers changes made in the tick.
-6. **The save writer.**
-   * Change: records, the write-ahead log, coalescing, the ordering rules, lease fencing.
-   * Measure: the worst loop iteration with saves under load.
-   * Done (2026-11-17), as `dmangos.world.writebehind`:
-     * The records are every write of `WorldDatabase`, encoded from its arguments. The layer is
-       generated from the interface, rather than a save record per character, so item, mail and other
-       writes keep their order with the saves.
-     * Reads wait for the queue.
-     * `@Replaces` coalesces whole saves.
-     * The log is flushed before MySQL and replayed at start-up.
-     * Saves are written before an account is released or a player migrates.
-     * Each write carries the lease time it was made under.
-   * Results: the tick average went from 3.49 to 0.54 ms, and the max from 15.1 to 3.3 ms, with
-     every character saving every 5 s (docs/BENCHMARKS.md).
-7. **Static data off the scanned heap.**
-   * Measure: GC pause length.
-   * Done (2026-11-17):
-     * `dmangos.frozen`: `StaticMap` tables, frozen into a `malloc` arena after loading. They hold
-       items, creature and game object templates, models, addons, spells and spell chains.
-     * Marking runs on one thread.
-   * Results: the pause went from 55.6 to 16.4 ms in the crowd and from 71.6 to 37.7 ms in the
-     spread (docs/BENCHMARKS.md).
-   * Left:
-     * NPC data, quests and the spawn cells, about 4 ms of marking.
-     * The live world's creatures.
-
-Features resume after step 3. Mmaps fits anywhere, because it touches movement only through a few
-queries. PvP, the honor system and battlegrounds come after step 2 at the earliest, so they are
-built on the unit core. Steps 4 to 7 are performance work and can interleave with features.
+The survey of other engines and servers that preceded these decisions is archived in
+docs/research/DESIGN-SURVEY.md. It is not needed to understand the design.

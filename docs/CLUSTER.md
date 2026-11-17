@@ -1,182 +1,52 @@
 # Clustering
 
-How dmangos grows from one world server process into several that simulate one continuous world
-together, after Photon's "seamless MMO backend across machines": dynamic spatial regions, overlap
-between neighbours, one authoritative owner per entity, and ownership that migrates.
+How several world server processes simulate one continuous world together. Each process is a
+**node**. The world is divided into **regions**, each owned by one node under a lease. Nodes send each
+other replicas of what lies near their borders, players and creatures move between nodes with the
+ground they stand on, and the client sees one server throughout.
 
-This document records the decisions and why they were made; each phase adds to it when it lands.
-Status: **phases 0 (measurement, with the standalone baseline in docs/BENCHMARKS.md), 1 (cluster
-foundation), 2 (distributed world ownership) and 3 (replication: creatures, game objects and players
-seen across nodes, every node serving clients, one login per account) are implemented and tested,
-and so is phase 4: creatures and game objects migrate with their region, players move to the node
-that owns the ground they stand on while their client stays connected where it is, and a node whose
-lease lapsed writes nothing; and most of phase 5: speech, whispers, the who list, NPC services
-(limited vendor stock counted on the vendor's node), chat channels, groups, GM commands and world
-texts across nodes; nodes drain on a clean stop; phase 6, load balancing by measured cost;
-and phase 7, a standby coordinator that takes over.** Trades and duels (not written yet), splitting
-regions, and a quorum of coordinators are design.
+A world server without a `cluster` object in its configuration is **standalone**: none of this code
+runs, and every rule below collapses into ordinary function calls inside one process.
+
+The code is `source/dmangos/cluster/` (membership, links, the message protocol, regions, ownership,
+the session directory, services) and, on the world server's side, `world/clusterbridge.d`
+(replication and player relay), `world/replication.d`, `world/migration.d`, `world/fencing.d`, and
+the cluster wiring in `world/main.d` and `world/context.d`.
 
 ## What the client allows
 
 These constraints decide more of the design than anything else.
 
 * **One connection, one endpoint.** A 1.12 client keeps a single TCP connection to the world server
-  it was given by the realm list, with header encryption keyed by the session key. It cannot be
-  told to move to another address without logging out (there is no redirect in 1.12). So the
-  machine holding a client's socket cannot change during play, while the machine simulating that
-  client's character must be able to. Something has to sit between them.
+  it was given by the realm list, with header encryption keyed by the session key. It cannot be told
+  to move to another address without logging out. So the node holding a client's socket cannot change
+  during play, while the node simulating its character must be able to.
 * **No loading screen within a map.** Crossing between nodes must not involve `SMSG_NEW_WORLD` or
-  `SMSG_TRANSFER_PENDING`, which show one. The client must keep receiving the same kinds of update
-  packets, for the same guids, as if one server sent them.
-* **The client does not know about nodes.** Guids must stay stable across migrations; a creature
-  or player keeps its guid wherever it is simulated.
+  `SMSG_TRANSFER_PENDING`, which show one. The client must keep receiving the same update packets,
+  for the same guids, as if one server sent them.
+* **The client does not know about nodes.** Guids stay the same wherever an object is simulated.
 
-## The server today, and what a cluster changes
+## Roles
 
-| Part | Today | In the cluster |
-|---|---|---|
-| Event loop (`net/server.d`) | One thread, `select`, sessions only handle bytes | Reused as is: cluster links are more `NetSession`s on the same loop. Gains a second listener and outgoing connections |
-| Client sessions (`session.d` and its handler mixins) | Crypto, framing, auth, character screen and in-world handlers in one object | Split in phase 3: the connection half stays on the node the client connected to (its *home*), the in-world half runs on the node that owns the character |
-| Tick (`context.update`) | Players, then maps, then the shutdown timer | Per node, over what the node owns, then the cluster's own tick |
-| Maps (`map.d`) | Cells of 66.67 yards, sight and broadcast by cell | A node holds the part of a map it owns plus an overlap band of replicas; cells are already the unit regions are made of |
-| Visibility and updates (`objects.d`, `map.d`) | Create, values and out-of-range blocks per seeing player | Unchanged in form; replicas feed them, so a player near a border sees entities owned next door |
-| Creatures (`creature.d`, `motion.d`) | Ticked by their map, spline movement | Ticked only by their owner; replicas follow the owner's splines, which already describe motion for a duration (cheap to replicate) |
-| Global state (`context.d`, `online.d`, `group.d`, `channel.d`) | Online players by guid and name, groups, channels, one session per account | Cluster services on the coordinator (phase 2/5): they are not on the simulation hot path |
-| Ids (`GuidCounters`) | Highest id in the database at start-up, then counting | Ranges leased from the coordinator (phase 2): two nodes must never hand out the same item or mail id |
-| Persistence (`database.d`, `characterdb.d`) | The process saves what it has | Only the owner saves an entity, with its ownership epoch checked (phase 4) |
-| Terrain, client data, world data | Loaded once, read-only | Loaded by every node; read-only, so nothing changes |
+Every node runs the same program, the world server, and loads the same static data (client data,
+terrain, world database). Roles are a matter of configuration:
 
-Combat, spells, creature AI, loot, quests, guilds and instances are not implemented yet, so they
-cannot be broken by the cluster. They will be written against the cluster's rules from the start:
-gameplay effects as idempotent events sent to the target's owner (phase 5).
+| Role | What it does |
+|---|---|
+| **Coordinator** | A node whose `coordinator` setting is its own advertised address. Besides simulating its share of the world, it admits members and keeps the membership view; divides the world into regions, grants them under leases and balances them; hands out id blocks; keeps the session directory (one login per account); holds the groups; speaks for the realm in `realmlist`; and points new clients at a node. Control traffic goes through it; gameplay traffic goes directly between nodes and never waits on it. |
+| **Member** | Simulates the regions it is granted and serves clients. |
+| **Standby** | A member (`cluster.standby`) that also keeps what a coordinator needs, and becomes the coordinator when the coordinator is lost. |
+| **Gateway** | A member (`cluster.gateway`) that holds client connections and simulates nothing: it is granted no regions and no services. Neither the coordinator nor the standby can be one. |
 
-## Architecture
+Every node serves clients. The node a client connects to is that client's **home** for the whole
+session: it holds the socket, the header encryption, authentication and the character screen. In the
+world, the character is simulated by whichever node owns the region it stands in, its **owner**.
+When home and owner differ, the home relays the client's packets to the owner and the owner's
+packets back.
 
-### Nodes, the coordinator, and homes
+## Configuration
 
-Every node is a full world server process. One node, the **coordinator**, also keeps the cluster's
-control state: membership, and from phase 2 on, which node owns which region (with leases and
-epochs), id ranges, and the global services. Control traffic goes through it; gameplay traffic goes
-directly between neighbouring nodes and never waits on it.
-
-A single coordinator is a deliberate choice over gossip-only membership: single authoritative
-ownership needs one source of truth that hands out leases with increasing epochs (fencing tokens),
-and gossip cannot give that. The coordinator is off the hot path, so it is not a throughput
-bottleneck; its failure is handled in phase 7 (members keep simulating what they own until their
-leases run out; a standby takes over with an epoch higher than any it can have seen).
-
-The node a client connects to is its **home** for the whole session: it holds the socket, the
-header encryption, authentication and the character screen. In the world, the character is
-simulated by whichever node owns the region it stands in. When home and owner differ, the home
-forwards the client's packets to the owner and the owner's packets back. That is one extra hop on a
-local network, paid only by players whose home is not their owner, and it is what lets the
-character migrate without the client noticing. In standalone operation, home and owner are the same
-process and the forwarding is a function call.
-
-### Regions
-
-The unit of ownership is the map **cell** (66.67 yards, `grid.d`), which maps already use for sight.
-Each map is covered by a tree of rectangular regions of cells (a k-d tree: a region splits along its
-longer side at the point that halves its *cost*, not its area). Each leaf region has one owning node,
-a lease, and an epoch that increases whenever its owner changes. Regions split where load is high
-and merge back where it is low (phase 6), so a busy city can be shared by several nodes while an
-empty continent is held by one, which is the opposite of fixed zone servers.
-
-Around each region is an **overlap band** as wide as the visibility distance plus the relocation
-limit (100 + 10 yards, two cells): the neighbouring owners send replicas of everything in it. A
-player standing at a border therefore already sees what lies beyond, and when an entity crosses,
-the receiving node already holds an up-to-date replica of it.
-
-The baseline (docs/BENCHMARKS.md) adds one rule: in a crowd the expensive part is the fan-out to
-client sockets, which happens on each client's home node. A node therefore receives an entity's
-updates **once** and fans them out to its own clients; traffic between nodes is per entity and
-node, never per entity and client.
-
-### Ownership and migration
-
-Every entity has exactly one owner: `(node, region epoch, entity generation)`. Replicas are
-read-only: they are drawn, and may be targeted, but never run gameplay logic. Migration (phase 4)
-hands over at a line inside the overlap band, with hysteresis so an entity walking along a border
-does not bounce:
-
-1. The owner freezes the entity at a tick boundary, bumps its generation and sends its full state,
-   with the sequence number of the last event it applied.
-2. The receiver promotes its replica, applies the state and acknowledges.
-3. The old owner turns its copy into a replica and forwards anything addressed to the entity to the
-   new owner; messages carrying an older generation are dropped there.
-
-Messages that change an entity carry its generation and a per-sender sequence number, so retries
-after a reconnect are recognized and applied once. Delivery is not assumed to be exactly-once: links
-resend unacknowledged messages after a reconnect, and receivers deduplicate.
-
-### Communication between nodes
-
-Persistent TCP connections, one per pair of nodes, on the same event loop as the clients:
-
-* **Why TCP:** the nodes share a local network, so head-of-line blocking costs little. The ownership
-  protocol needs reliable, ordered delivery anyway. TCP fits the existing loop and needs no
-  dependencies. UDP would mean writing reliability that TCP already gives; QUIC would add a large
-  dependency for features (streams over lossy links) that a datacentre does not need. This can be
-  revisited if measurements show otherwise.
-* **Frames:** a 16-byte header (length, type, flags, sequence number) and a binary payload,
-  little-endian like the client protocol. Every message written during a tick is appended to the
-  link's buffer and sent in one write: batching comes for free.
-* **No allocations per message:** payloads are written into a buffer that each link reuses, and read
-  in place from the receive buffer.
-
-### Memory and GC
-
-The prompt's concern is right, but the evidence must come first. Phase 0 adds measurements of tick
-time (average, worst, 99th percentile) and GC behaviour (collections, pause times, bytes allocated
-per tick) to the standalone server, logged every `metrics_interval_seconds`. Memory work then goes
-where the numbers point. Cluster code is written to allocate nothing per message from the start,
-because it is new and the cost of doing it right is low.
-
-## Services
-
-docs/SERVICES.md gives the cluster logical services: chat channels, the battleground queue and the
-login gate, placed by the coordinator and called by what they are, wherever they run. It draws on
-Blizzard's patent US10086279B2 and on Ryzom Core.
-
-## Phases
-
-Each phase is testable on its own and leaves standalone operation working.
-
-0. **Measurement.** Tick, event loop and GC metrics, a load generator of headless clients
-   (`loadgen`), and the standalone baseline (docs/BENCHMARKS.md). *Done.*
-1. **Cluster foundation.** Node identity and incarnations, the cluster listener and outgoing links,
-   framing, the hello handshake, heartbeats with round-trip times, membership views held by the
-   coordinator, failure detection, rejoining, and fencing of stale incarnations. *Done.*
-2. **Distributed world ownership.** The region tree, leases and epochs on the coordinator, id ranges,
-   assigning regions to nodes, and only spawning and ticking what a node owns. *Done.*
-3. **Replication.** The session split (home and owner), overlap bands, replicas, interest management
-   between nodes, and players seeing across borders.
-4. **Migration.** State transfer of creatures, then players; generations; resending and
-   deduplication; ownership-checked saves.
-5. **Distributed gameplay.** Chat, groups and whispers through cluster services, and cross-border
-   interaction as events to the owner. Combat and spells are built on these rules when they are
-   implemented.
-6. **Load balancing.** Cost per region (measured tick time spent on it, packets, players), splits
-   and merges with hysteresis and a cool-down.
-7. **Fault tolerance.** Node and coordinator failure, lease expiry, recovery, and the benchmarks
-   against standalone that decide whether the cluster is worth running.
-
-## Phase 0: measurement
-
-`dmangos.metrics` keeps `TickStats` (count, sum, maximum and a histogram of tick durations in a
-fixed array, so recording one never allocates) and reads druntime's GC statistics
-(`GC.profileStats`, `GC.stats`, `GC.allocatedInCurrentThread`). The world server records every tick
-and, every `metrics_interval_seconds` (60 by default, 0 turns it off), logs one line:
-
-```
-metrics: 1200 ticks, avg 0.31 ms, p99 1.20 ms, max 4.10 ms; gc: 2 collections, max pause 0.84 ms,
-total pause 1.30 ms, 412 KiB allocated (343 B/tick), heap 18.4 MiB used
-```
-
-## Phase 1: the cluster foundation
-
-Configuration (`cluster` in `worldserver.json`; leaving it out keeps the server standalone and runs
-none of this code):
+The `cluster` object of `worldserver.json` (`cluster/config.d`):
 
 ```json
 "cluster": {
@@ -185,750 +55,512 @@ none of this code):
     "listen_address": "0.0.0.0",
     "listen_port": 9001,
     "advertise_address": "10.0.0.2",
+    "client_address": "10.0.0.2:8085",
     "coordinator": "10.0.0.1:9000",
     "heartbeat_ms": 500,
     "failure_timeout_ms": 3000
 }
 ```
 
-A node whose `coordinator` is its own advertised address and port is the coordinator.
+| Key | Meaning | Default |
+|---|---|---|
+| `node_id` | This node's id, unique in the cluster; 0 means standalone | `0` |
+| `name` | The cluster's name; nodes of another cluster are refused | `"dmangos"` |
+| `listen_address`, `listen_port` | Where other nodes connect to this one | `0.0.0.0`, `9000` |
+| `advertise_address` | The address other nodes reach this one at | `127.0.0.1` |
+| `client_address` | `host:port` clients reach this node's world port at; empty for 127.0.0.1 and the world port | empty |
+| `coordinator` | The coordinator's `host:port`; a node whose own advertised address this is, is the coordinator | `127.0.0.1:9000` |
+| `heartbeat_ms` | How often each link sends a heartbeat | `500` |
+| `failure_timeout_ms` | A link that hears nothing for this long is dead; at least three heartbeats | `3000` |
+| `lease_ms` | How long a node may act on its regions without hearing from the coordinator; longer than the failure timeout | `5000` |
+| `region_count` | How finely the coordinator divides the world at start-up | `32` |
+| `id_block` | How many ids of a kind a member takes from the coordinator at a time | `1000` |
+| `balance_interval_seconds` | How often the coordinator looks at the load | `30` |
+| `balance_min_load_us` | How busy (µs of loop time per second) the busiest node must be before anything moves | `20000` |
+| `region_cooldown_seconds` | How long a region that moved or was split stays put | `120` |
+| `standby` | This member is the standby coordinator | `false` |
+| `gateway` | This member is a gateway | `false` |
 
-* **Identity.** `node_id` is configured and unique in the cluster. Each start of the process gets an
-  **incarnation**, a number larger than any earlier start's (milliseconds since the epoch). The
-  coordinator admits a node id only with an incarnation at least as high as the one it knows:
-  a restarted node replaces its earlier incarnation, which is fenced out, and a stale process that
-  comes back later is refused.
-* **Links.** `cluster/link.d`: a `NetSession` that frames messages, checks the hello, numbers what it
-  sends, drops what it has already received from that incarnation, sends heartbeats and measures
-  round trips. It closes when nothing has arrived for `failure_timeout_ms`.
-* **Membership.** `cluster/membership.d`: the coordinator keeps the members and a view version that
-  increases with every change, and sends each member the new view. Members connect to each other
-  (the lower id dials the higher, so each pair has one link) and to the coordinator, and dial again
-  after a link fails, backing off up to five seconds.
-* **Until phase 2,** members do not open the client port or register the realm: two nodes serving
-  the same characters without ownership would overwrite each other's saves. The coordinator serves
-  clients as a standalone server does.
+A node in a cluster writes its write-ahead log to `writes-<node_id>.log` unless `write_log` says
+otherwise.
 
-`cluster/node.d` ties these together and runs on the world tick. All of it is tested with links
-wired back to back in memory and a fake clock (joining, views, heartbeats, timeouts, restarts and
-fencing), and live with three processes.
+## Nodes and membership
 
-### Tested live (three processes on one machine)
+* **Identity.** `node_id` is configured. Each start of the process gets an **incarnation**, the
+  milliseconds since the epoch at start, so a later start always has a higher one. The coordinator
+  admits a node id only with an incarnation at least as high as the one it knows: a restarted node
+  replaces its earlier incarnation, which is fenced out, and a stale process that comes back later is
+  refused (`staleIncarnation`).
+* **The handshake.** The dialing side sends `Hello` (protocol version, cluster name, node id,
+  incarnation, its cluster and client addresses, whether it is a gateway); the other side checks it
+  and answers with its own or with a `Reject` giving the reason: another cluster, another protocol
+  version, a stale incarnation, a duplicate node id, not the node that was dialed, or a member the
+  coordinator has not admitted.
+* **The view.** The coordinator keeps the members and a view version that increases with every
+  change, and sends every member each new view. Members connect to each other (the lower id dials the
+  higher, so each pair has one link) and to the coordinator. A link that fails is dialed again, backing
+  off from 250 ms up to five seconds.
+* **Failure detection.** A link closes when nothing has arrived on it for `failure_timeout_ms`; a
+  process that dies closes its sockets, which is noticed at once. The coordinator drops a member whose
+  link has closed, and the new view tells the others.
 
-| Case | What happened |
+`cluster/node.d` (`ClusterNode`) ties membership, links, regions, ids and sessions together and runs
+on the world tick.
+
+## Links and messages
+
+Nodes talk over persistent TCP connections, one per pair of nodes, on the same event loop as the
+clients (`net/server.d`). A link (`cluster/link.d`) is a `NetSession` like a client's: no thread and
+no lock of its own.
+
+* **Why TCP.** The nodes share a local network, so head-of-line blocking costs little, and the
+  ownership protocol needs reliable, ordered delivery anyway. TCP fits the existing loop and needs no
+  dependencies.
+* **Frames** (`cluster/protocol.d`): a 16-byte header (payload length, message type, flags, sequence
+  number) and a binary payload, little-endian like the client protocol. Payloads are plain structs
+  serialized by `dmangos.serialization`. A payload over 16 MiB is refused.
+* **Batching and allocation.** Messages are written straight into the link's output buffer, which the
+  event loop sends in one write: everything sent to a peer during a tick goes out together. Input is
+  parsed in place, so a message made only of numbers, such as a heartbeat, costs no allocation either
+  way.
+* **Order and duplicates.** Each direction of a link is a FIFO. Every frame carries a sequence number
+  per sender incarnation and receiver, kept across reconnects to the same incarnation of a peer, so a
+  frame received twice is recognized and dropped. Links do not resend what was lost when a connection
+  broke; the features that need delivery after a reconnect resend themselves (session claims, service
+  calls, script signals, takeovers), and receivers deduplicate.
+* **Heartbeats** go out on every link each `heartbeat_ms`, measure the round trip, and carry the
+  sender's load (tick time, players, objects). Those sent to the coordinator are echoed, which is what
+  renews a node's lease.
+* **Protocol version.** `protocolVersion` (29) changes whenever a message changes. Nodes speaking
+  another version are refused at the handshake, so a cluster runs one build throughout.
+
+There are 47 message types. They fall into:
+
+| Group | Messages |
 |---|---|
-| Start | All three linked to each other and agreed on view 3; round trips 0.04 to 0.18 ms |
-| `kill -9` of a member | Left the view at once: the closed socket is noticed before any timeout |
-| Restart of it | Rejoined with a new incarnation (view 5); the lower-id member dialed it again |
-| `kill -STOP` of a member | Dropped after the 3 s timeout (view 6); the others closed their links to it as the view arrived |
-| `kill -CONT` | Rejoined as the same incarnation (view 7) |
-| A second process with a member's id | Took its place (view 8); the older process was refused as stale, reports itself fenced and stops dialing |
+| Membership | `Hello`, `Reject`, `Heartbeat`, `View` |
+| Ownership | `RegionTable`, `RegionReleased`, `RegionHandover`, `RegionLoads`, `Drain`, `Takeover`, `TakeoverAccepted` |
+| Ids | `IdRequest`, `IdGrant`, `IdReport` |
+| Sessions | `SessionClaim`, `SessionGrant`, `SessionEvict`, `SessionReleased` |
+| Replication | `InterestUpdate`, `ReplicaCreate`, `ReplicaValues`, `ReplicaMove`, `ReplicaRemove`, `InRange` |
+| Players | `PlayerMessage` (to the owner, to the home, arrival, departure, a move to a third node), `Presence`, `DeliverTo`, `Whisper` |
+| Gameplay across nodes | `StockRequest`, `StockReply`, `StockRelease`, `GroupCommand`, `GroupState`, `MemberStatsRequest`, `ToEveryone`, `GmRemote`, `KillShare`, `ScriptSignal`, `DungeonEntryRequest`, `DungeonEntryReply`, `FriendStatusChange`, `GuildReload`, `GuildBroadcast`, `GuildInvitation` |
+| Services | `ServiceCall`, `ServiceReply` (docs/SERVICES.md) |
 
-Idle, a node's tick took about 10 µs and allocated 29 to 55 bytes, most of it in the event loop
-copying each link's output into a fresh pending buffer: a candidate for the memory work, once the
-baseline under load shows whether it matters. A member keeps its incarnation when it comes back
-from a hang, so from phase 2 on its region leases (with their epochs) are what stops it from
-acting on regions it lost meanwhile.
+On the world server's side, `ClusterBridge` implements the handlers `ClusterNode` calls, and
+`world/main.d` connects `WorldContext`'s cluster hooks (`whisperRemote`, `deliverRemote`,
+`gmRemote`, `killShareElsewhere`, `signalElsewhere`, `askDungeonEntry`, `reserveStock`, the guild
+and friend hooks and so on) to the bridge. Standalone, those hooks are null and the context handles
+everything locally.
 
-## Phase 2: distributed world ownership
+## Regions
 
-### Regions (`cluster/regions.d`)
+The unit of ownership is the map **cell** (66.67 yards, `grid.d`), which maps already use for sight.
 
-At start-up the coordinator divides every map of `Map.dbc` into regions: rectangles of cells, the
-leaves of a k-d tree. It splits the most expensive region at the median of its cost, across the
-longer side of the box around that cost, until no region holds more than 1/`region_count` of the
-world's cost. Cost, until phase 6 measures it, is the number of creature and game object spawns in
-a cell: the benchmarks show that spread-out load is creatures ticking. With the default of 32, the
-CMaNGOS world database gives 74 regions: 32 on the two continents of about 2,000 spawns each (from
-the whole of the south of Stranglethorn to a few cells of Stormwind), and one per dungeon.
-Partitioning is deterministic, and the coordinator logs every region with its cells and spawns.
+* **Partition** (`cluster/regions.d`). At start-up the coordinator divides every map of `Map.dbc` into
+  regions: rectangles of cells, the leaves of a k-d tree. It splits the most expensive region at the
+  median of its cost, across the longer side of the box around that cost, until no region holds more
+  than 1/`region_count` of the world's cost. The start-up cost of a cell is the number of creature and
+  game object spawns in it. With the default of 32 and the standard world database this gives 74
+  world regions: 32 on the two continents, and one for each other map. The partition is
+  deterministic, and the coordinator logs every region with its cells and spawns.
+* **Whole maps.** A dungeon or battleground map is never cut and never split: it is one region, and
+  the node owning it hosts every copy of it.
+* **Service regions.** Each cluster service is a one-cell region on a map of its own
+  (docs/SERVICES.md), appended to the partition.
+* **Dealing out.** Regions are dealt longest-processing-time first: the most expensive to the least
+  loaded node. When a node joins, as few regions as it takes move to it until the busiest and idlest
+  nodes are within 20% of the mean load. From then on the load is measured and balanced (below).
 
-Regions are dealt out longest-processing-time first (the most expensive to the least loaded node).
-When a node joins, as few regions as it takes move to it until the busiest and idlest nodes are
-within 20% of the mean load of each other (`rebalance`). Phase 6 makes both continuous and measured
-(below).
+### Ownership, epochs and leases
 
-### Ownership, epochs and leases (`cluster/ownership.d`)
+`cluster/ownership.d` (`RegionAuthority` on the coordinator, `RegionView` on every node).
 
-* **One owner at a time.** A region moves in two steps: the coordinator marks it `revoking`; the
-  owner stops simulating it and answers `RegionReleased` with the grant's epoch; only then does the
-  coordinator grant it to the new owner. A release of another epoch is ignored.
-* **Epochs** increase with every grant and are built as (coordinator incarnation << 20) + count, so
-  a restarted coordinator's grants are newer than anything its predecessor gave. Phase 4 puts them on
-  migrations and saves.
-* **Leases.** A node may act on its regions only until `lease_ms` (5 s) after the last of its own
-  heartbeats the coordinator echoed. A node cut off from the coordinator therefore stops by itself.
-  The coordinator gives a lost node's regions away only after the lease and a 500 ms margin have
-  passed since it last heard from it, so the two never overlap, with only clock rates (not clock
-  readings) assumed to agree. A new coordinator grants nothing during its first lease, so its
-  predecessor's grants have run out. A fenced node gets no more echoes, so it also stops.
-* **Tables** are sent whole when they change (they are small) and kept only if newer; a table from a
-  new coordinator incarnation replaces the old one and its lease starts afresh.
+* **One owner at a time.** A region moves in two steps. The coordinator marks it `revoking`, naming
+  its next owner; the owner stops simulating it and answers `RegionReleased` with the grant's epoch;
+  only then does the coordinator grant it to the next owner. A release of another epoch is ignored.
+* **Epochs** increase with every grant and are built as (coordinator incarnation << 20) + count, so a
+  restarted or new coordinator's grants are newer than anything its predecessor gave.
+* **Leases.** A node may act on its regions only until `lease_ms` after the last of its own heartbeats
+  the coordinator echoed. A node cut off from the coordinator therefore stops by itself. The
+  coordinator gives a lost node's regions away only once the lease and a 500 ms margin have passed
+  since it last heard from that node, so the two never overlap; only clock rates, not clock readings,
+  are assumed to agree. A new coordinator grants nothing during its first lease, so its predecessor's
+  grants have run out first. A fenced node gets no more echoes, so it also stops.
+* **Tables.** The region table is sent whole when it changes (it is small) and kept only if newer; a
+  table from a new coordinator incarnation replaces the old one, and its lease starts afresh. Every
+  node holds a copy, so every node knows who owns any cell (`regions.ownerAt`) without asking.
 
 ### In the world server
 
 * `WorldContext.ownsCell` tells maps which cells are this node's. A map creates a cell's spawns only
-  if the cell is owned. An object belongs to the cell it spawned in (its *home*) until objects can
-  migrate (phase 4): a creature whose waypoints cross into another region is still simulated by its
-  home's owner.
-* When a region is lost, `Map.release` removes the objects whose home is in it, sends players who
-  saw them an out-of-range block, and lets the cells load again if regained. When a region is gained,
-  every player on the map looks around again, so the cells near them load (`Map.ownershipGained`).
-* Because a map holds only what its node owns, the tick needs no ownership checks.
-* Standalone, `ownsCell` is null and none of this runs.
+  if the cell is owned. Because a map holds only what its node owns (and replicas), the tick needs no
+  ownership checks.
+* `WorldContext.regionsChanged` applies a new table: services stop or start, dungeon copies go or
+  come, the objects of lost regions leave the maps (`Map.release`), and players near gained regions
+  look around again so the cells near them load.
 
 ### Ids
 
-The coordinator hands out ids from its own counters (`WorldContext` implements `IdCounters`; group
-ids come from the groups' own counter). A member asks for a block (`id_block`, 1000) of each kind and
-for the next one when half is used (`IdPool`), so allocation never waits on the network. A member
-reports the highest ids it holds whenever it links to the coordinator, and the coordinator grants
-nothing during its first lease, so a restarted coordinator does not hand out a block a member still
-has. Members do not create anything yet (they serve no clients until phase 3).
+Character, item, mail, group, instance and pet ids must never be handed out twice.
+The coordinator hands out ids from its own counters (`IdKind`). A member asks for a block of
+`id_block` ids of each kind, and for the next block when half is used (`IdPool`), so allocation never
+waits on the network. A member reports the highest ids it holds whenever it links to a coordinator,
+and a coordinator grants no ids during its first lease, so a restarted coordinator never hands out a
+block a member still has. A member without a block refuses to create a character, and ends a session
+rather than reuse an item or mail id. Creatures a node summons take guids from that node's own
+range.
 
-### Settings
+## Replication
 
-`cluster.lease_ms` (5000; longer than `failure_timeout_ms`), `cluster.region_count` (32),
-`cluster.id_block` (1000), and for phase 6 `cluster.balance_interval_seconds` (30),
-`cluster.balance_min_load_us` (20000) and `cluster.region_cooldown_seconds` (120).
+A node sends its neighbours replicas of what they need to see, so a player at a border sees what lies
+beyond it.
 
-### Tested
+* **Interest.** Each map counts, per cell, its players within visibility distance of it (the 5 × 5
+  cells around each player), recomputed when a player's visibility is (every 10 yards,
+  `visibility_relocation_lower_limit`). Each tick the changes go to every linked node
+  (`InterestUpdate`), and a node that links gets the whole interest. A peer's interest also loads the
+  cell on its owner, so the owner simulates creatures that only another node's player is near.
+* **Sending** (`Map.replicate`). An object a node simulates, in a cell some peer is interested in, is
+  created on that peer (`ReplicaCreate`: the fields everyone may see, and its movement with any walk
+  written exactly). Its changed public fields follow (`ReplicaValues`), its walks (`ReplicaMove`: the
+  client packet and the exact spline), and its end (`ReplicaRemove`) when it leaves the peer's cells,
+  the peer's interest, or the node.
+* **Players** are replicated by the same interest, as a stranger sees them (health in percent): their
+  moves and emotes, their field changes, and their departure.
+* **Receiving** (`Replica`). A replica sits on the map with the node's own objects, and the node's
+  players see it through the usual sight rules. A replica follows its spline, so its position and cell
+  stay right, but runs no AI and no gameplay: replicas are drawn and may be targeted, never changed.
+  Messages about a replica are accepted only from the node that sent it. A lost node's replicas go at
+  once.
+* **Once per node.** Traffic between nodes is per entity and node, never per entity and client: a
+  node receives an entity's updates once and fans them out to its own clients. In a crowd the
+  expensive part is fan-out to sockets, and that stays with each client's home node.
+* **Crossing messages.** When a region moves, the old owner's removals and the coordinator's grant
+  come over different links. A spawned object replaces a replica with the same guid without its
+  viewers noticing, and replica messages for a guid that is now the node's own are ignored.
+* **Range packets.** Say, yell, text emotes and anything else `Map.sendInRange` sends are delivered to
+  the node's own players in range and sent (`InRange`) to every node interested in a cell within the
+  range, which delivers them to its own players in range. Each node delivers only to players it
+  simulates, so nobody hears anything twice.
 
-* **Unit tests:** partitioning (every cell in one region, costs kept, deterministic); assignment and
-  rebalancing; the authority (no grants in the first lease, revoke then release then grant, stale
-  epochs ignored, a lost node's regions held for its lease); the view (lease expiry, revocations, a new
-  coordinator); the id pool; maps (unowned cells do not spawn, release and regain). On an in-memory
-  cluster with a fake clock: regions dealt out after the first lease, handed over when a node joins,
-  and, with a node cut off from the network, **on every 50 ms tick no cell has two owners** while its
-  lease runs out and its regions move.
-* **Live, two processes:** the coordinator took the whole world after one lease. When node 2
-  joined, 18 of the 74 regions (the south of the Eastern Kingdoms and most of Kalimdor) were revoked,
-  released and granted to it within the same second; the loads were 42,859 and 37,453 spawns. A player
-  on the coordinator in Duskwood (node 2's region 4) saw no creatures. After a `kill -9` of node 2, the
-  coordinator took its regions back 5.5 s later (lease and margin), and the same player then received
-  50 creatures. When node 2 joined again, the same 18 regions moved back, and the player received an
-  out-of-range block for the Duskwood creatures.
-* **Standalone:** idle and spread-out runs of 500 players (docs/BENCHMARKS.md) show the same tick
-  and loop times as before within the measured variance (idle: tick 3.12 ms against 2.96 ms, busy
-  6.6% against 6.3%), and less allocation (53 KB a tick against 67 KB, from phase 0's buffer work).
+## Players moving between nodes
 
-### Until phase 3
+### Home and owner
 
-A player sees only what the node holding their connection owns: in a cluster, the coordinator's
-players find the regions of other nodes empty, as the live test shows. Phase 3 brings replicas of
-neighbouring regions and the home/owner split for players. Standalone servers are unaffected.
+On the owner, a player from another home has an ordinary session without a socket. What it sends goes
+home as opcode and body (`PlayerMessage`, to the home), where the home encrypts it for the client;
+what the client sends, the home passes on unread (to the owner) while its own session is in the
+`elsewhere` state. Every in-world handler runs unchanged on the owner. A gateway is a home that is
+never an owner.
 
-## Phase 3: replication (design)
+### When a player moves
 
-Players stay simulated by the node holding their connection in phase 3, wherever they walk; a
-player's simulation needs to move between nodes only once there is migration (phase 4), so the
-session splits into a home half and an owner half then. Phase 3 is in two steps:
+Once a second (the zone check) a player asks whose ground it stands on (`migrationTarget`). It moves
+when:
 
-* **3a, replicas of creatures and game objects.** Every node tells every peer which cells its
-  players can see (`InterestUpdate`: the 5 × 5 cells around each player, as additions and
-  removals). A node sends a replica of everything it simulates in a cell some peer is interested in:
-  its state when it enters the cell or the interest (`ReplicaCreate`), its changed fields
-  (`ReplicaValues`), its walks (`ReplicaMove`, the client packet and the exact spline), and its end
-  (`ReplicaRemove`). Interest from a peer also loads the cell on its owner, so a creature is
-  simulated where it is owned even when only another node's player is near it. The receiving map
-  keeps replicas with its own objects: its players see them as usual, and replicas follow their
-  splines but run no AI. Traffic is per entity and node, never per entity and client.
-* **3b, players on several nodes.** Members serve clients, one login per account across the
-  cluster (the coordinator's session directory), and players replicated by the same interest so that
-  players on different nodes see each other move.
+* the ground 25 yards around it in all four directions is one other node's, so walking along a border
+  does not bounce it;
+* it has not moved in the last 10 seconds;
+* it is not teleporting, logging out, or in combat (a fight stays with the creatures it is against).
 
-Until phase 4, a region that changes owner makes its creatures disappear and appear again (fresh
-from their spawn points); a creature replica and the real creature may briefly exist on one node
-when grants and removals cross, so a spawned object replaces a replica with its guid and messages
-for a guid that is no longer a replica are ignored.
+A player logging in on another node's ground moves there as it logs in; a player logging in through
+a gateway therefore moves at once to the owner of its ground.
 
-## Phase 3a: replicas of creatures and game objects (implemented)
+Some actions move a player immediately, whatever its ground and however recently it last moved,
+because only the node simulating a creature or object may change it:
 
-* **Interest** (`Map.updateInterest`, `takeInterest`): a map counts, per cell, its players within the
-  visibility distance of it (the 5 × 5 cells around each), recomputed when a player's visibility is
-  (every 10 yards, `visibility_relocation_lower_limit`). The changes go to every linked node each tick
-  (`InterestUpdate`), and a node that links gets the whole interest (`ClusterBridge.peerLinked`).
-  Standalone, none of this is computed.
-* **Sending** (`Map.replicate`): an own object in a cell some peer wants is created on that peer
-  (`encodeState`: the fields everyone may see, and its movement with the walk written exactly,
-  `MoveSpline.writeExact`). Its changed public fields follow from `flushObjectChanges`, its walks from
-  `sendToObservers` (the client packet, and the movement after it), and its end from leaving the
-  peer's cells, the peer's interest, or the node (a released region). A peer's interest also loads the
-  cell on its owner, so the owner simulates creatures only another node's player is near.
-* **Receiving** (`Replica`, `Map.replicaCreated` and the like): a replica sits with the map's own
-  objects, its players see it through the usual sight rules, and it follows its spline so its
-  position and cell stay right, without AI. Messages are accepted only from the node that sent the
-  replica. A replica of a node that is lost goes at once (`peerGone`).
-* **Crossing messages:** when a region moves, the old owner's removals and the coordinator's grant come
-  over different links. A spawned object replaces a replica with its guid (its viewers keep seeing it),
-  and replica messages for a guid that is now this node's own are ignored.
+* attacking another node's creature, casting at it, or looting its corpse;
+* using another node's game object, or casting at one (a lock to open, an herb to pick);
+* being noticed by another node's creature: when a player moves, its node asks the replicas of other
+  nodes' creatures near it what the creature itself would ask (alive, out of combat, aggressive, an
+  enemy that may attack, the player within its aggro radius and in sight). If so the player moves to
+  that creature's node, and there the creature decides and attacks. A node moves a player for the
+  same creature at most once in 30 seconds;
+* a teleport to another node's ground (leaving a dungeon, a hearthstone, a graveyard, a GM's port):
+  the player moves there first and is teleported there, so the client never loads a world its node
+  does not simulate;
+* going into a dungeon or battleground copy another node hosts (below).
 
-### Tested
+The action travels with the player (`ArrivalAction`: the attack, the spell and its target, the corpse,
+the object, the teleport), and the next node performs it at the player's first tick there. The client
+sees nothing of the move: its swing simply begins.
 
-* **Unit tests:** state, movement and slot encoding (a walk is followed exactly on the replica);
-  between two maps wired in memory: another node's player loads the owner's cell and sees the replica,
-  then its changed fields and its walk, its removal when it runs out of the interest and when the owner
-  is lost, and the interest shrinking when the player walks away.
-* **Live, two nodes:** a player on the coordinator in Duskwood (node 2's region) saw 50 creatures and
-  146 of their walks in 20 seconds, replicated from node 2, which had loaded 177 objects for it alone.
-  Through a `kill -9` of node 2, its restart and the handovers, the player saw: the replicas; all 146
-  of them go at once; after the 5 s lease the coordinator's own 50 creatures; 147 objects go when node
-  2 rejoined and the region moved back; and node 2's replicas again.
+### How a player moves
 
-### Cost (docs/BENCHMARKS.md)
+1. The simulating node saves the character, waiting until every queued write has reached the
+   database, and sends the account, the guid, the movement, the arrival action, and every guid the
+   client knows (`Map.knownTo`). It takes the player off its map without a destroy packet: players
+   there who saw it now see a replica owned by the next node (`Map.removeForMigration`).
+2. The next node loads the character through the login code without sending any login packets, and
+   puts it on its map knowing what its client has (`Map.addMigrated`): an object in sight and known is
+   marked seen; in sight and new, created; known but out of sight, sent out of range; known but not
+   held there yet, it *lingers*: its replica, when it comes, is adopted without a create block, and
+   whatever has not come within 5 seconds goes out of range.
+3. Players there who saw the player's replica now see the player itself.
 
-With all 500 players on the coordinator and node 2 owning about half the world's spawns, the
-coordinator's tick was 3.51 ms, as standalone (3.4 to 3.5 ms): it holds 24,447 objects, about half of
-them replicas, and every object costs it about 143 ns a tick whether it is a creature or a replica.
-Node 2 took 1.9 ms a tick for 13,600 objects. So the per-object cost is the map's bookkeeping, not
-creature AI, and a cluster divides load only when players are divided between nodes and each holds
-what its own players see (3b). Two improvements follow: iterate movers as an array rather than an
-associative array, and keep replicas that are not walking out of the tick.
+A player away from home that walks onto a third node's ground goes straight there: its state names
+its home, the new owner makes its session for that home, and the old owner tells the home
+(`PlayerMessage`, moved), which sends the client's packets there from then on. Packets the client
+sent before its home heard are passed on by the old owner for a few seconds, and a home that hears
+from a new owner before the old one's word takes it as the owner.
 
-## Phase 3b: players on several nodes (implemented)
+**What travels:** the character as saved, including auras, spell cooldowns, quests and reputation;
+its movement; what its client knows; its pet (saved as out and brought out again on the next node);
+its client's address and build; the dungeon copy it is in and where it came in from. **What does
+not:** timers that only shape timing (regeneration, rest, flood protection), `.gm allowwhispers`
+targets and `.cheat triggerpass`, which start afresh on the new node. A player in flight stays on the
+node where the flight started until it lands; its first move after landing moves it on.
 
-* **Every node serves clients.** Each advertises where clients reach it (`cluster.client_address`;
-  127.0.0.1 and its world port by default), and every 10 seconds the coordinator points the realm's
-  `realmlist.address` and `port` at the node with the fewest players (from the heartbeats' load
-  reports), so new logins spread over the nodes with the CMaNGOS schema as it is. Only the coordinator
-  speaks for the realm otherwise: it marks the realm online, updates its population and uptime, and
-  marks characters offline at start.
-* **One login per account** (`cluster/sessions.d`). A node claims every session it authenticates
-  (`SessionClaim`, with its own serial number for it). The coordinator's directory grants an account
-  to one session: a second claim evicts the holder (`SessionEvict`: it is kicked) and is granted only
-  when the holder has released the account (`SessionReleased`), which a node sends when the session
-  has ended, after its character was saved (saves are synchronous). A session may enter the world only
-  once granted (`WorldSession.admit`; a `CMSG_PLAYER_LOGIN` waits for it), so no character is ever in
-  the world on two nodes, and none is loaded before its last session's save. The accounts of a lost
-  node are freed when its lease has run out. Claims made while the coordinator is unreachable are sent
-  when it is back, and a node claims all its sessions again whenever it links to a coordinator.
-* **Ids on members** come from the coordinator's blocks: new characters, items, mails and groups
-  (`WorldContext.takeId`; a member without a block refuses to create a character, and stops a session
-  rather than reuse an item or mail id).
-* **Players replicated** by the same interest as creatures: a player in a cell another node wants is
-  created there as a stranger sees it (`encodePlayerState`: health in percent), its moves and emotes
-  (whatever its watchers get) and its field changes (`Map.playerChanged`, from `flushPlayerChanges`)
-  follow, and it is removed when it leaves the cell, the map or the game. A player is still simulated
-  by the node its client is connected to, wherever it walks: that changes with migration (phase 4).
-* **Not across nodes yet** (phase 5): say, yell and text emotes (sent by range to local players),
-  whispers and the who-is-online lists (each node's own players), groups, channels, trades and
-  duels, and talking to an NPC another node simulates. A player sees and is seen everywhere, but
-  interacts only with what its own node has.
+### Leaving the game
 
-### Tested
+A logout or disconnect on the owner is saved there and the home is told. A client that disconnects at
+home is passed on to the owner, and the home releases the account only when the owner says it has
+saved.
 
-* **Unit tests:** the session directory (grant, evict, the newest waiting claim winning, lost nodes);
-  across an in-memory cluster: a second login evicts the first and is granted only after its release,
-  and a cut-off holder's account is freed only after its lease; a player login that waits for its
-  grant, ignores another session's grant, and is kicked by an eviction and then releases; players on
-  two maps seeing each other's replicas, moves (the very packet), changes (in percent) and departure.
-* **Live, two nodes:** Alpha on node 2 and Gamma on node 1, 15 yards apart in Goldshire (the
-  coordinator's region): each client saw the other player appear, Alpha's saw every one of Gamma's
-  moves, and Alpha (on node 2) saw the 46 Goldshire creatures node 1 simulates. Alpha then logged in
-  on node 1 while in the world on node 2: node 2 kicked and saved Alpha, and node 1's login entered
-  the world after that, within the same second.
-* **Load divided** (docs/BENCHMARKS.md): 500 players spread over the continents, 250 on each node:
-  ticks of 1.55 and 1.81 ms, against 2.66 ms for all 500 on one server; each node held 18,600 and
-  20,000 objects (its own and replicas) against 26,000. Together the two used about the CPU one server
-  did: the replicas are the price of dividing the load.
+## Objects moving with their region
 
-## Phase 4a: objects migrate with their region; fenced writes (implemented)
+When a region is revoked toward a named next owner, its owner writes the state of every object
+homed in it (`Map.migrateOut`, `world/migration.d`): a creature's every field, its movement and exact
+spline, its movement generator's timers and place on its path, its vendor stock and its script's
+state (`Creature.saveState`); a game object's fields and script state. It keeps each as a replica of
+the next owner's object, so its own players notice nothing.
 
-* **Where a region goes.** A revoked region names its next owner (`Region.next`). Its owner writes
-  every object homed in it (`Map.migrateOut`, `dmangos.world.migration`): a creature's every field, its
-  movement and exact spline, its movement generator's timers and place on its path, and its vendor
-  stock (`Creature.saveState`); a game object's fields. It keeps each one as a replica of the next
-  owner's object, so its own players notice nothing, and lets its replicas elsewhere be replaced by the
-  next owner's.
-* **In order, through the coordinator.** The bundle goes with the release (`RegionReleased.objects`);
-  the coordinator, granting the region, sends it to the new owner (`RegionHandover`) on the same link
-  as, and ahead of, the table that grants it. The new owner rebuilds each object from its spawn and
-  loads the state (`Map.migrateIn`, `WorldContext.restoreMigrant`), replacing replicas silently, before
-  it lets anything load the region's cells afresh. Handovers are rare (rebalancing), so routing the
-  state through the coordinator costs little and needs no protocol of its own.
-* **The same spawns everywhere.** Pools, spawn groups and spawn entries are chosen with a seed made from
-  the cluster's name and realm (`WorldData.load`), so every node agrees on which creature a spawn is.
-* **A lost node's objects** are not migrated: its state died with it, and the new owner spawns afresh.
-* **Fenced writes** (`dmangos.world.fencing`). A cluster node's `WorldDatabase` is wrapped so that
-  while its lease has lapsed every write (every method returning nothing; generated from the interface)
-  is dropped. A node whose lease lapses also ends every session; their logout saves are dropped and
-  logged as not saved. Its accounts are given to other nodes only after that (phase 3b), so a node cut
-  off from the coordinator can never overwrite a character that has since played elsewhere. Character
-  creation and deletion wait for the account's grant too.
-* **Queued writes** (`dmangos.world.writebehind`, docs/DESIGN.md step 6). Writes go to MySQL from a
-  thread of their own, after the fence:
-  * Each write carries the time until which the node's lease held when it was made. The writer drops
-    a write it reaches after the newest such time, and so does the replay of the write log at start-up.
-    A node restarted after its lease lapsed so never writes over the regions' new owner.
-  * Before an account is released to the coordinator (its session ended), and before a player moves to
-    another node, the node waits until everything queued is written: the next node loads it from MySQL.
+The bundle goes with the release (`RegionReleased`). The coordinator, granting the region, sends it to
+the new owner (`RegionHandover`) on the same link as, and ahead of, the table that grants it. The new
+owner rebuilds each object from its spawn and loads the state (`Map.migrateIn`), replacing replicas
+silently, and only after applying every bundle lets anything load the region's cells afresh. A hurt
+creature arrives hurt; a boss arrives in the same phase with the same timers.
 
-### Tested
+* **The same spawns everywhere.** Pools, spawn groups and spawn entries are chosen with a seed made
+  from the cluster's name and the realm, so every node agrees on which creature a spawn is.
+* **A lost node's objects** are not migrated: their state died with the node, and the new owner
+  spawns afresh.
+* **Summoned creatures** are not handed over: they are dropped with their cell. A player's corpse
+  stays where it is.
 
-* **Unit tests:** a creature's state saved and loaded into one made anew walks its waypoints in step
-  with the original for 30 s, through a wait, sending the same packets; three maps, one region moving
-  from the first to the second with a hurt creature in it while players on all three watch: no client
-  gets a packet, the creature arrives hurt, and its next move reaches all three; a migrant that finds a
-  fresh spawn of itself replaces it; the fenced database drops writes and keeps reads; the bundle
-  reaches the joining node ahead of its grant in an in-memory cluster.
-* **Live, two nodes:** with Gamma on the coordinator in Darkshire, node 2 joined and took 18 regions;
-  region 4 (Duskwood) left with 176 objects in 71 KiB and arrived with 176. Gamma's client got no
-  out-of-range and no create for them; their walks went on (233 moves). Freezing the coordinator
-  (`kill -STOP`) with Alpha playing on node 2: 5 s later node 2's lease lapsed, it gave up its
-  regions, kicked Alpha and refused the save (logged as not saved); when the coordinator resumed, node 2
-  linked again and took its regions back under the same grants.
-* **A bug the live test found:** the first version applied each region's bundle and then loaded the
-  cells it gained, region by region, so loading one region's cells spawned afresh the objects of
-  another region whose bundle came next; the migrated state was dropped and creatures were in effect
-  respawned (silently, so the client test alone did not show it). All bundles are now applied first,
-  and a migrant also replaces a fresh spawn of itself.
+### Dungeons and battlegrounds
 
-### Not yet
+A dungeon or battleground is one region, and its node hosts every copy. It alone chooses which copy a
+player goes into (`instanceFor`: the raid lockout, the group's bind, the player's own), makes copies,
+binds players and groups, records the dead, and resets empty copies. Instance ids come from the
+cluster's blocks (`IdKind.instance`), so two hosts never make the same one.
 
-* **Players** still stay with the node their client is connected to. Moving a player's simulation to
-  the node that owns the region it walks into (the home and owner split) is phase 4b.
-* ~~A node shutting down cleanly is treated like one that failed~~: it drains first (phase 5b,
-  below).
+* **Going in.** A teleport into a dungeon another node hosts (a portal, `.worldport`, a summon,
+  `.appear`) checks the entrance where the player is, then asks the host (`DungeonEntryRequest`)
+  whether the player may enter. A raid lockout or a full copy is answered with the reason, and the
+  player does not move. Allowed, the player moves to the host with the teleport as its arrival
+  action, and the client sees the usual loading screen. A summon or appear across nodes carries the
+  copy, so the player lands in the other's copy.
+* **The region moving** (a rebalance, a takeover). The new host reads the dungeon's copies, binds and
+  dead from the database, and the copies' creatures and objects come along, copy by copy, as they
+  were. The old host forgets the copies and deletes nothing. After a crash nothing can come along:
+  the copies start from their spawns, less the dead.
+* **GM commands.** `.instance info`, `.instance shutdown` and `.instance reset` of a copy another node
+  hosts go to that node and its answer comes back; `.instance resetall` goes to every node.
 
-## Phase 4b: players move between nodes (implemented)
+Battleground copies run on the node hosting their map in the same way. The queues that fill them are
+a cluster service (docs/SERVICES.md).
 
-* **Home and owner.** The node a client connects to stays its *home*: it holds the socket and the
-  header encryption. The player is simulated by whichever node owns the ground it stands on, its
-  *owner*. On the owner the player has an ordinary `WorldSession` that has no socket
-  (`WorldSession(context, account, home)`): what it sends goes home as (opcode, body)
-  (`PlayerMessage.toHome`) and the home encrypts it for the client; what the client sends, the home
-  passes on unread (`toOwner`) while its own session is `WorldState.elsewhere`. Every in-world handler
-  runs unchanged on the owner.
-* **When.** Once a second (the zone check) a player checks whose ground it stands on
-  (`migrationTarget`): it moves when the ground 25 yards around it in all four directions is one other
-  node's (so walking along a border does not bounce it), not within 10 seconds of its last move, and
-  not while teleporting or logging out. Away from home it goes straight on to a third node.
-* **How** (`migrateTo`, `arrive`). The simulating node saves the character (saves are synchronous) and
-  sends the account, the guid, the movement, and every guid the client has (`Map.knownTo`). It takes
-  the player off its map without a destroy packet: players there who saw it see a replica owned by the
-  next node (`Map.removeForMigration`). The next node loads the character through the login code but
-  sends none of the login packets, and puts it on its map knowing what its client has
-  (`Map.addMigrated`): in sight and known is just marked seen, in sight and new is created, known but
-  out of sight goes out of range, and known but not held here yet *lingers*: its replica, when it
-  comes, is adopted without a create block, and whatever has not come in 5 s goes out of range.
-  Players there who saw its replica now see it as itself.
-* **Leaving.** A logout or disconnect on the owner saves there and tells the home (`left`); a client
-  that disconnects at home is passed on (`disconnect`), and the home releases the account (phase 3b)
-  only when the owner says it has saved. If the owner is lost, the home disconnects the client and
-  releases the account after the owner's lease; if the home is lost, the owner logs the player out,
-  saved (before the coordinator frees the account, at the home's lease).
-* **Gateways** (docs/SERVICES.md, stage 6): with `cluster.gateway`, a node is only a home. It holds
-  connections, owns no regions, and is where the realm list sends clients.
-* **Later: surviving the owner's loss.** The home could take its player back (from the last save,
-  after the lost owner's lease) instead of disconnecting the client. It is worth having only together
-  with a gateway that holds every client's connection apart from the simulating nodes, and with much
-  more frequent player saves. That is SpatialOS's and Orleans's shape. Alone it covers half the
-  failures and sends the player back to a save minutes old. Decided 2026-11-17: not now.
+## State shared across nodes
 
-### Tested
+### One login per account
 
-* **Unit tests:** between two maps with players on both, a handover that sends nothing to anyone (the
-  migrating client, a watcher on each node), then a lingering object adopted without a create, and
-  the player's next move reaching both watchers; two sessions joined in memory: the zone check moves a
-  logged-in player to the other node, the client's packets are handled there and its answers come back
-  encrypted for it, and a logout there returns the home session to the character screen.
-* **Live, two nodes:**
-  * Gamma, connected to node 1, teleported into Duskwood (node 2's): node 2 took it over; `.gps` was
-    answered from node 2 through node 1; teleported back, it moved home after its 10 s, and logged out
-    at home, saved.
-  * Walking from Elwynn into Duskwood in 10-yard steps, it moved to node 2 at x = -9560 (the border is
-    at -9533.3, the margin 25 yards). Over the whole session the client got 123 create blocks, none for
-    an object it already had, and 106 out-of-range, none for one it did not have.
-  * The client vanished while Gamma was on node 2: node 2 saved it, and a login straight after found
-    it where node 2 had saved it. Node 2 killed while simulating Gamma: node 1 disconnected the client
-    the same second, and a login after the lease brought Gamma back as saved at the handover.
+`cluster/sessions.d`. A node claims every session it authenticates (`SessionClaim`, with a serial
+number of its own). The coordinator's directory grants an account to one session at a time: a second
+claim evicts the holder (`SessionEvict`, which kicks it) and is granted only when the holder has
+released the account (`SessionReleased`), which a node sends once the session has ended and its
+character has been saved. A session may enter the world only once granted, so no character is ever
+in the world on two nodes, and none is loaded before its last session's save has been written.
+Character creation and deletion wait for the grant too. Claims made while the coordinator is
+unreachable are sent when it is back, and a node claims all its sessions again whenever it links to a
+coordinator. A lost node's accounts are freed when its lease has run out.
 
-### Not yet
+### Presence
 
-* ~~One owner at a time: a player away from home goes back home before going on to a third node~~:
-  it goes straight there (below).
-* **Carried over:** the character as saved, its movement and what its client has. Not carried: timers
-  that only shape timing (regeneration, rest, flood protection), `.gm allowwhispers` targets and
-  `.cheat triggerpass`, which start afresh on the new node.
-* **Across nodes** (phase 5): chat, whispers, groups, channels and GM commands that find players by
-  name see only the players their node simulates.
-* **Cost:** every packet of a player away from home crosses one more link; not yet benchmarked.
+Once a second every node tells the others what changed of the players it simulates (`Presence`:
+name, account, race, class, level, gender, zone, account level, the GM tag, away and busy with their
+message, whether it has GM permissions and its permission letters), and a node that links gets all of them. A
+lost node's players are forgotten with it. Presence answers "which node simulates this player" for
+every feature that has to reach one (`DeliverTo` carries a packet to a player on its node), and
+supplies what the who list, friend lists, group lists and GM commands show of other nodes' players.
 
-## Phase 5a: speech, whispers and NPCs across nodes (implemented)
+### What crosses nodes, feature by feature
 
-Since phase 4b, players standing together are simulated by the same node, so most interaction is
-local; what crosses nodes is what happens near a region border, and whispers.
+* **Whispers** are checked and delivered where the receiver is simulated: a whisper to another node's
+  player goes there (`Whisper`, with the sender's guid, race, permissions and chat tag), which runs the
+  same delivery as for a local one (GM whisper blocking, factions) and sends back the sender's copy,
+  the away or busy reply, or the refusal.
+* **The who list** shows the node's own players and those presence reports, through the same filters
+  (team, account level, level range, class, race, zones, name, guild and zone-name parts) and caps.
+* **Chat channels** and **battleground queues** are cluster services (docs/SERVICES.md).
+* **Groups** are changed in one place, the coordinator's `Groups`, loaded from and saved to `groups`
+  and `group_member`. What changes a group (invitations, accepting and declining, kicks, the leader,
+  leaving and disbanding, loot settings, icons, raids, sub-groups, assistants, logging out) is a
+  `GroupCommand` that `GroupService` runs there. Every other node **mirrors** the groups: the
+  coordinator sends a group's whole state (`GroupState`) after each change, its removal when it is
+  disbanded, and all of them to a node that links. What only reads a group (who sees whose health,
+  party and raid chat, member stats, ready checks, rolls, minimap pings) is decided on the player's
+  node from its mirror. A packet for a member goes to its node by presence, or for a few seconds
+  after a command to the node the command came from. Stats of a member another node simulates are
+  asked of that node (`MemberStatsRequest`).
+* **NPC services** (gossip, trainers, vendors, innkeepers, bankers, repairs) work on a replica of
+  another node's creature through an `NpcStandIn` built from the replica's fields and the shared
+  template; the player's side (money, items, spells, bind point) is on the player's node. A vendor's
+  limited stock is the creature's, counted on its node: buying a limited item from a stand-in first
+  reserves it there (`StockRequest`, `StockReply`), and stock reserved for a purchase that then fails
+  goes back (`StockRelease`).
+* **GM commands that name a player** another node simulates are sent there (`GmRemote`):
+  `.kickplayer`, `.summon`, `.appear` (the place comes back and the GM teleports there),
+  `.playerinfo`, `.kill`, `.ban character`, `.rename`. What each does to its player is the same method
+  a GM on the player's node uses, and its messages come back to the GM's node. `.server saveall` and
+  `.admin masssummon` run on every node. `.gm list`, `.gm allowwhispers` and `.info` use presence.
+* **World texts** (`.announce`, `.wannounce`, kick and ban notices) reach every node's players
+  (`ToEveryone`, with the permission filter for GM texts).
+* **Group kills.** Members near a kill whose replicas are on the killer's node count in the group's
+  share; each one's part (kill credit, experience, reputation) goes to its node (`KillShare`).
+* **Script signals** to a creature another node simulates go there (`ScriptSignal`), applied once
+  (its origin and sequence number drop a resend), and are passed on, at most three times, if the
+  creature has moved again (docs/SCRIPTING.md).
+* **Friends.** A friend list shows a friend another node simulates from presence; a login or logout
+  is told to every other node (`FriendStatusChange`). A move between nodes is neither.
+* **Guilds** are held by every node. A change is written to the database and the other nodes read that
+  guild again (`GuildReload`); guild events and guild and officer chat reach members on every node
+  (`GuildBroadcast`); an invitation reaches a player on another node (`GuildInvitation`). Two nodes
+  changing one guild at the same moment keep the last write.
+* **Auctions** need no owner node: the `auction` table is their one place, every node lists from it,
+  and every change to a row is guarded by what was seen of it, so two nodes cannot both sell one
+  auction. The coordinator settles auctions whose time is up.
+* **Mail** lives in the database and is read each time, so it is the same on every node; one node
+  returns and deletes expired mail.
+* **Weather** is each node's own: a zone two nodes share may rain on one side only.
+* **GM edits of world data** (`.npc vendoradditem` and the like) are written to the world database and
+  held in the GM's node's memory; other nodes see them after a restart.
 
-* **Range packets** (say, yell, text emotes, and anything else `Map.sendInRange` sends): delivered to
-  the node's own players in range, and sent (`InRange`) to every node interested in a cell within the
-  range, which delivers it to its own players in range (`Map.deliverInRange`). Each node delivers only
-  to the players it simulates, so nobody hears anything twice. Emotes and moves already reach other
-  nodes with the replicas (phase 3).
-* **Presence** (`ClusterBridge.sendPresence`, `WorldContext.presence`): once a second every node tells
-  the others what changed of the players it simulates (name, race, class, level, gender, zone, the GM
-  tag, away and busy with their message, whether it has GM permissions), and a node that links gets
-  them all. A lost node's players are forgotten with it.
-* **Whispers** (`dmangos.world.whisper`) are checked and delivered where the receiver is simulated:
-  a whisper to another node's player goes there (`Whisper`, with the sender's guid, race, permissions
-  and chat tag), which runs the same `deliverWhisper` as for a local one (the GM tag against its own
-  `.gm allowwhispers` list, factions) and sends the sender's copy, the away or busy reply or the
-  refusal back (`DeliverTo`).
-* **The who list** (`CMSG_WHO`, `whoList`, CMaNGOS's `HandleWhoOpcode`) lists the node's own players
-  and those presence reports, with CMaNGOS's filters: the viewer's team unless
-  `allow_two_side_who_list`, no account above `gm_level_in_who_list` for players (presence carries the
-  account level), the level range, class and race masks, zones, and name, guild and zone-name parts.
-  At most 49 are shown, the count capped by `max_who_list_returns`. Nobody is in a guild yet.
-* **NPC services** (gossip, trainers, vendors, innkeepers, bankers, repairs) take a `Npc`: a creature,
-  or for a replica of another node's creature an `NpcStandIn` with the replica's fields and position
-  and the template every node shares. All the player's side (money, items, spells, its bind point)
-  is on the player's node, where it belongs. Limited vendor stock is the creature's, counted on its
-  node: buying a limited item from a stand-in first reserves it there (`StockRequest`, answered with
-  `StockReply` and what is left), the purchase goes on when the answer comes, and stock reserved for
-  a purchase that then fails (bags full, not enough money) goes back (`StockRelease`).
+## Load balancing
 
-### Tested
+* **Measured.** Every 10 seconds each node divides its event loop's busy time (packets, tick and
+  sending) among the regions it owns, by what each holds now (`Map.weighCells`): an object in the tick
+  weighs 10, a resting one 1, a player 100. The result, µs of loop time per second per region, goes to
+  the coordinator (`RegionLoads`), which keeps each region's cost as the mean of its last value and
+  the new one. The first report replaces the start-up spawn counts.
+* **Moves.** Every `balance_interval_seconds` the coordinator moves regions from the busiest node to
+  the idlest while the gap between them is over a quarter of the mean, and only when the busiest takes
+  at least `balance_min_load_us`. It moves at most two regions per look, each only if it narrows the
+  gap (by at most half of it), and never one that moved within `region_cooldown_seconds`. A move is
+  the handover above; players move with their ground.
+* **Splits.** When most of the busiest node's load is one region too costly to move (more than half
+  the gap), the coordinator cuts it in two along its longer side (`RegionAuthority.splitHot`). The old
+  id keeps one half with its owner and epoch, so nothing changes hands; the other half is a new region
+  granted to the same node, which the next look may move. A region is split at most once per balance
+  interval, so its halves are measured first. Splits stop at 1024 regions. A crowd within one cell
+  cannot be split further: its node carries it.
+* **Merges.** Two granted regions of one node on one map that share a whole edge, together cost less
+  than 1 ms/s, have not moved or been split within the cool-down, and of which at least one came from
+  a split, become one (`RegionAuthority.mergeCold`, one per look). The lower id keeps the union. The
+  table never shrinks below the start-up partition's size: merges take back what splits added.
 
-* **Unit tests:** a say heard by a player in range on another node and not by one out of range; a
-  whisper to a player another node simulates going to that node, with the sender's copy and the away
-  reply, and "player not found" for a name nobody has and once its node is lost; a whisper from
-  another node to a GM with its tag on refused there unless the GM allowed it; a replica of a vendor
-  served through a stand-in with its template, spawn and flags, one stand-in per creature; limited
-  stock of another node's vendor reserved there, refused when sold out, and given back when the
-  purchase fails; the who list's filters and caps.
-* **Live, two nodes:** Gamma on node 1 and Alpha on node 2, 60 yards apart across the Elwynn and
-  Duskwood border: Alpha heard Gamma's yell and not Gamma's say (beyond its 25 yards), and Gamma got
-  Alpha's whisper.
+## Failure handling
 
-### Still on one node (phase 5b)
+| What fails | What happens |
+|---|---|
+| **A member** | Its links close (at once if the process died, after `failure_timeout_ms` if it hangs) and the coordinator drops it from the view. Its replicas vanish from the other nodes at once. After its lease and the margin, the coordinator deals its regions and services out again; they spawn afresh. Its accounts are freed at the same time. |
+| **A player's owner** | The home disconnects the client at once and releases the account after the owner's lease. The character comes back as last saved, at the latest at the handover to that owner. |
+| **A player's home** | The owner logs the player out, saved, before the coordinator frees the account at the home's lease. |
+| **The coordinator, with a standby** | The standby takes over (below). |
+| **The link to the coordinator** | A member keeps simulating until its lease lapses. Then it ends every session, writes nothing more (its saves are dropped and logged as not saved), and gives up its regions. When it reaches a coordinator again it re-claims its sessions, reports its ids, and is granted regions again. |
+| **A restarted process** | It joins with a new incarnation, which fences out the old one; queued writes from before its lease lapsed are dropped on replay. |
 
-Trades and duels (not implemented at all yet), and GM commands that find players by name (now
-phase 5b).
+### Fenced writes
 
-## Phase 5b: cluster services
+A node must never write over a character that has since played elsewhere.
 
-What belongs to no place and to players anywhere is kept in one place: the coordinator. Other nodes
-send it their players' commands, and it sends what it has to tell a player to the node simulating it
-(`DeliverTo`, found by presence). Standalone, the same service runs in the one server.
+* A cluster node's `WorldDatabase` is wrapped (`world/fencing.d`) so that while its lease has lapsed
+  every write is dropped. The wrapper is generated from the interface: every method that returns
+  nothing is a write.
+* Writes are queued for a writer thread (`world/writebehind.d`), and each queued write carries the
+  time until which the node's lease held when it was made. The writer drops a write it reaches after
+  that time, and so does the replay of the write-ahead log at start-up. A node restarted after its
+  lease lapsed therefore never writes over the regions' new owner.
+* Before an account is released to the coordinator and before a player moves to another node, the node
+  waits until everything queued has been written: the next node loads the character from the database.
 
-### Chat channels (implemented)
+### The standby coordinator
 
-Since docs/SERVICES.md stage 4 the channels are a cluster service placed like a region, not fixed to
-the coordinator; what follows describes their behaviour, which is unchanged.
+When the coordinator dies, everything it keeps is needed within a lease, because without lease
+renewals every member stops after `lease_ms`. The standby (`cluster.standby`) computes the
+coordinator's start-up partition and costs too and, like every member, holds the latest region table.
 
-* `ChannelService` (`dmangos.world.channelservice`) holds every channel. Each channel command a
-  player gives (joining, leaving, talking, the list, passwords, moderation, kicks, bans, invitations,
-  and logging out and changing zone, which leave or move zone channels) is a `ChannelCommand`
-  carrying what the channels need of the player: guid, name, race, chat tag and ArcEmu's `c`
-  permission. The checks that are the player's node's (names, the GM client channel) stay there.
-* Channels see players as `ChannelMember`s; a member's messages go to its node, the one presence
-  says simulates it, or failing that the one its last command came from. A target named in a command
-  is found among the coordinator's players or through presence.
-* A lost node's players leave their channels, as if they had logged out.
-* **Not yet:** a new coordinator (phase 7) starts with no channels; players rejoin when they next
-  log in or change zone. A message sent to a member in the second between its moving to another
-  node and presence saying so is lost.
-* **Tested:** a unit test with a player on the coordinator and one on another node joining one
-  channel, talking, being made moderator by name, and leaving with its lost node; live, Alpha on
-  node 2 and Gamma on the coordinator in one channel: both heard each other, the list showed both,
-  and Alpha was told when Gamma logged out.
+* **Taking over** (`ClusterNode.promote`). When the standby has had no link to the coordinator for
+  500 ms after losing it, it becomes the coordinator. It adopts the table it has
+  (`RegionAuthority.adopt`): every grant stands with its epoch, so no member loses or reloads a region;
+  regions on their way somewhere still go there; new epochs start above every epoch in the table; and
+  the old coordinator's regions are held until its lease is surely over, then dealt out (spawned
+  afresh, as after any failure). View and table versions continue from the old ones. As after any
+  start, nothing new is granted, and no ids, for a lease.
+* **Members follow** (`Takeover`, sent again each second until accepted). A member takes the standby
+  as its coordinator once it has lost the old one itself; while its own link to the old one is alive,
+  it waits. The standby's heartbeat echoes on the link they already have renew the member's lease at
+  once; the member re-claims its sessions, reports its ids, and from then on dials the new
+  coordinator's address. With heartbeats every 500 ms, a failure timeout of 3 s and a lease of 5 s,
+  about a second and a half is left to spare.
+* **The world server's part** (`onPromoted` in `world/main.d`). The groups are loaded from the
+  database (the old coordinator saved every change) and sent to every mirror; ids come from this
+  node's counters, raised to what the database holds and what members report; the node speaks for the
+  realm (its `realmlist` row, steering new clients) and keeps the honor week. Services the old
+  coordinator hosted are dealt out with its other regions.
 
-### Groups (implemented)
+**Limits.** There is one standby, and none after a takeover until one is configured again. There is
+no quorum: a coordinator that is alive but cut off from the standby while members still reach it is
+not told apart from a dead one, so run the two where that cannot happen (one machine or one switch).
+The old coordinator must come back as a member of the new one (its `coordinator` pointing there).
+Players whose client was connected to the old coordinator lose their connection and log in again;
+group invitations in flight are lost.
 
-* **One place changes groups:** the coordinator's `Groups`, loaded from and saved to `groups` and
-  `group_member` as before; no other node writes them, and none needs group ids any more. What
-  changes a group (invitations, accepting and declining, kicks, the leader, leaving and disbanding,
-  loot settings, target icons, raids, sub-groups, assistants, and logging out) is a `GroupCommand`
-  that `GroupService` (`dmangos.world.groupservice`, CMaNGOS's `GroupHandler` rules) runs there,
-  with what the rules need of the player: guid, name, race and whether it has GM permissions.
-* **Every other node mirrors the groups** (`Groups.mirror`): the coordinator sends a group's whole
-  state (`GroupState`: members, sub-groups, assistants, leader, loot, icons) after each change, its
-  removal when disbanded, and all of them to a node that links. What only reads a group is decided
-  on the player's node with its mirror: who sees whose health (group mates see more), party, raid
-  and raid-warning chat, member stats, ready checks, rolls, minimap pings, the icon list. When a
-  mirror changes, its players there see their mates anew, and a newcomer's stats go out.
-* **Telling members** (`GroupDirectory`, the context): a packet for a member goes to its node,
-  found by presence, or for a few seconds after a command by the node the command came from (a
-  player who just logged in is in no presence report yet). A member's status in the list (online,
-  away, busy) comes from presence for another node's player. `CMSG_REQUEST_PARTY_MEMBER_STATS` for
-  a member another node simulates is answered by that node (`MemberStatsRequest`).
-* **Not yet:** a new coordinator (phase 7) reloads groups from the database but loses invitations
-  in flight; nodes keep their mirrors until it sends its own.
-* **Tested:** a unit test with Anduin on the coordinator inviting Jaina of node 2, the group
-  created when she accepts, the lists going to both, node 2's mirror making them group mates there
-  and sending her stats to node 1, party chat from node 2 reaching node 1, and the mirror forgetting
-  the disbanded group; every standalone group test runs through the service. Live: node 2's mirror
-  gave Alpha its saved raid at login and the coordinator refused Alpha's invitation (not the
-  leader), as CMaNGOS does; then Alpha on node 2 invited Gamma on the coordinator, both got the
-  list, party chat crossed both ways, and Alpha's leaving disbanded the party for both.
+### A clean stop: draining
 
-### GM commands and world texts (implemented)
+A member stopped cleanly (SIGTERM, SIGINT, `.server shutdown`) does not stop at once. It sends the
+coordinator `Drain`, and the coordinator revokes each of its regions toward the member that carries
+least (`RegionAuthority.drain`) and grants it none from then on. Its regions go with their objects, as
+in balancing; the players it simulates for other nodes' clients move on at once (no margin, no
+cool-down); the players whose clients it holds stay and are logged out, saved, when it stops. It stops
+when it owns nothing and has no visitors, or after 20 seconds whatever is left. The coordinator does
+not drain.
 
-* **World texts** (`World::SendWorldText`, `SendGMWorldText`, `SendWorldWideScreenText`: `.announce`,
-  `.wannounce`, kick and ban notices, and the rest) reach every node's players (`ToEveryone`, with
-  the `u` permission filter for GM texts).
-* **Commands that name a player** another node simulates are sent there (`GmRemote`): `.kickplayer`,
-  `.summon`, `.appear`, `.playerinfo`, `.kill` by name, `.ban character` (the account is banned where
-  the GM is; the player is kicked where it is) and `.rename` (the database renamed where the GM is;
-  the player renamed where it is). What each does to its player is a method of the player's session
-  (`dmangos.world.gmtargets`), the same one a GM on the player's node uses, with a `GmSink` for the
-  GM's messages, which go back to the GM's node. `.appear` sends the player's place back
-  (`appearAt`) and the GM teleports there. `.gm allowwhispers` and `.gm blockwhispers` find the
-  player through presence, and `.gm list` and `.info` count the GMs and players presence reports
-  (presence carries each GM's permission letters).
-* **Every node:** `.server saveall` and `.admin masssummon` go to every other node presence knows
-  (`GmRemoteOp.saveAll`, `massSummon`, run there for each of its players; the count includes theirs).
-  A player that moves carries its client's address and build, so `.playerinfo` shows them wherever
-  it is simulated.
-* **Tested:** a unit test with `.summon` and `.kickplayer` naming a player of node 2 (the command
-  sent there with the GM's place), `.gm list` naming node 2's GM, and on the target's node a summons,
-  an appear sending the place back, and a kick whose notice goes to every node. Live: Gamma on the
-  coordinator ran `.playerinfo Alpha` (answered by node 2, where Alpha played in Kalimdor) and
-  `.appear Alpha`: Gamma went to Kalimdor and moved to node 2; `.summon` of a player simulated by
-  the coordinator brought it, and `.gm list` listed Gamma.
+## The realm list
 
-### A third node, and a clean shutdown (implemented)
+Only the coordinator speaks for the realm: it marks the realm online, updates its population and
+uptime, and marks characters offline at start. Every 10 seconds it points the realm's
+`realmlist.address` and `port` at the node with the fewest players (from the heartbeats' load
+reports), or at the least busy gateway while any gateway is linked. New logins so spread over the
+nodes with the `realmlist` table as it is.
 
-* **Straight to a third node.** A player simulated away from its home that walks onto a third node's
-  ground moves there directly: its state names its home (the node holding its client), the new
-  owner makes its session for that home, and the old owner tells the home (`PlayerMessage.moved`),
-  which sends the client's packets there from then on. Packets the client sent before its home heard
-  are passed on by the old owner for a few seconds; a home that hears from a new owner before the
-  old one's word takes it as the owner. One handover and one save instead of two.
-* **A drain.** A member stopped cleanly (SIGTERM, SIGINT, `.server shutdown`) does not stop at once:
-  it sends the coordinator `Drain`, which revokes each of its regions toward the member that carries
-  least (`RegionAuthority.drain`) and gives it none from then on. Its regions go with their objects,
-  as when the load is balanced; the players it simulates for other nodes' clients move on at once
-  (no margin, no cool-down), and the players whose clients it holds stay and are logged out, saved,
-  when it stops. It stops when it owns nothing and has no visitors, or after 20 seconds whatever is
-  left. The coordinator itself does not drain (phase 7).
-* **Tested:** unit tests with three nodes in memory (a player handed from node 2 straight to node 3,
-  its home following, the client's packets going to node 3 and its answers coming back, then home
-  from node 3), and the authority draining a node toward the others and never granting it again.
-  Live: Gamma, connected to node 1, played in Durotar, which node 2 simulated; node 2 got SIGTERM,
-  handed over its 32 regions (Durotar's with 102 objects), Gamma moved home, and node 2 stopped
-  1 second after the signal; Gamma's client noticed nothing (`.gps` and a say worked after).
+## Monitoring
 
-### Trades and duels (design)
+Every `metrics_interval_seconds` each node logs, besides its tick and GC figures, its cluster lines
+(`ClusterNode.describe`: the view, the regions it owns and whether its lease holds; on the
+coordinator, the cost each node carries; each link's round trip and the duplicates it dropped) and its
+services line (`ServiceHost.describe`). Every log line of the cluster code starts with `cluster:`.
 
-Neither exists yet, even on one server. When they are written: both need the two players simulated
-together (trade windows and duel combat change both players at once, and a node may only change
-what it simulates). Two players near enough to trade or duel usually are on the same node already
-(phase 4b moves a player to the owner of its ground); when they are not (within the 25-yard
-hysteresis of a border), the one who asked moves to the other's node before the trade or duel
-starts, through the same migration, and stays there until it ends.
+## Not yet
 
-## Phase 6: load balancing by measured cost (implemented, with splits)
+* Trades and duels between players on two nodes. When written, the player who asks will move to the
+  other's node first, through the same migration, and stay until it ends.
+* A creature answering a call for help from another node's creature; loot rights counting members on
+  other nodes; a player's spells at another node's player.
+* Surviving an owner's loss without disconnecting the client: the home could take its player back
+  from the last save, which is worth having only with gateways and much more frequent player saves.
+* More than one standby, and a quorum of coordinators.
 
-* **Measured.** Every 10 seconds each node divides the loop's busy time (packets, tick and sending,
-  `TcpServer.busyTotal`) among the regions it owns, by what each holds now (`Map.weighCells`): an
-  object in the tick weighs 10, a resting one 1, a player 100 (a player's packets and what it sees
-  cost far more than a creature). The result, µs of loop time a second per region, goes to the
-  coordinator (`RegionLoads`), which keeps each region's cost as the mean of its last value and the
-  new one. The first report replaces the spawn counts of phase 2 everywhere; a region nobody
-  reports costs nothing, as nothing of it is loaded.
-* **Balanced with hysteresis** (`RegionAuthority.balanceMeasured`): every `balance_interval_seconds`
-  (30) the coordinator moves regions from the busiest node to the idlest while the gap is over a
-  quarter of the mean, only when the busiest takes at least `balance_min_load_us` (20,000: 2% of a
-  core), at most two regions a look, each only if it narrows the gap (at most half the gap), and
-  never one that moved in the last `region_cooldown_seconds` (120): no region goes back and forth.
-  A move is the handover of phase 4 (revoke, release with the objects, grant); players move with
-  their ground (phase 4b).
-* **Splits.** When most of the busiest node's load is one region too costly to move (more than
-  half the gap: moving it would only move the load), the coordinator cuts that region in two along its longer side (`RegionAuthority.splitHot`). The old id keeps one
-  half with its owner and epoch, so its node goes on simulating it and nothing changes hands; the
-  other half is a new region (the next id), granted to the same node. Each half is costed at half
-  the whole until the next reports measure them; the old half is frozen against moves for the
-  cool-down, and the next look moves the new half if that narrows the gap, or splits again a half
-  still too hot (a region is split at most once a balance interval, so its halves are measured first). A
-  node's view takes a smaller rectangle under the same grant as no loss (its owned rectangle
-  follows, for its cost reports). Splits stop at `maxRegions` (1024).
-* **Merges.** After each look, two granted regions of one node on one map that share a whole edge
-  (their union a rectangle), cost less than `mergeBelowUs` (1 ms/s) together, and have neither
-  moved nor been split for the cool-down, become one (`RegionAuthority.mergeCold`, one a look): the
-  lower id takes the union with its owner and epoch, the other id leaves the table. Its node keeps
-  simulating everything: a node's view takes a region gone from the table whose cells lie inside
-  another region it still owns as no loss, and follows the larger rectangle. One of the two must
-  have come of a split, and the table never shrinks below the start-up partition's size: merges
-  take back what splits added, never the partition by spawn counts. (A standby that takes over counts
-  from the table it adopts.) Live, before that rule, cold start-up regions merged while a crowd was
-  still being split: churn that the rule removes. With it, the same run (250 bots in Goldshire for
-  three minutes, then none) split the crowd's region seven times while the bots were there and
-  merged nothing; once they had gone, the halves came back together (75 and 76, 77 and 79, 78 and
-  81 within two minutes), and all 250 bots had stayed in the world.
-* **Tested (splits):** a unit test (a region holding all of a node's load is split on its node,
-  the old id keeping its grant and epoch; measured apart, the new half moves; a node's view takes
-  the smaller rectangle as no loss). Live, two nodes, 250 bots crowding Goldshire on node 1: the
-  coordinator split Goldshire's region (55 ms/s, 16 × 275 cells) and moved the new half (3.5 ms/s)
-  to node 2 30 seconds later, with the small moves of the same looks. With splits waiting one
-  interval rather than the cool-down, it was split on every look (six in three minutes, from 16 × 275
-  cells down to 16 × 8 around the crowd), each new half moving to node 2 on the next look; all 250
-  bots stayed in the world throughout. A crowd within one cell cannot be split further: its node
-  carries it. That run also found a crash: a region handed over with a player's corpse in it (bots
-  dying in the crowd), now left where it is.
-* **Tested:** unit tests for the threshold, the cap of two moves, the cool-down and the smoothing.
-  Live, two nodes on one machine: 300 bots spread over both continents measured 19 and 24 ms/s,
-  within the tolerance, and nothing moved; with 250 more crowded in Goldshire the two measured 176
-  and 132 ms/s, and the coordinator moved one region of 21 ms/s (to 155 and 153); a minute later,
-  at 181 and 135, another of 19 ms/s. Every bot stayed in the world (ping p99 17 ms spread out, 28
-  ms in the crowd).
+## Testing
 
-## Phase 7: the standby coordinator (implemented)
+The cluster code is tested in memory: links wired back to back and a fake clock, with whole clusters
+of world contexts (joining, views, heartbeats, timeouts, restarts and fencing; handovers with no cell
+ever having two owners on any 50 ms tick; replicas, migrations, takeovers, drains, splits and merges;
+services moving). docs/DEVELOPING.md describes running a local cluster of several processes, and
+docs/BENCHMARKS.md has the cluster's measurements.
 
-When the coordinator dies, everything it keeps is needed within a lease: without lease
-confirmations every member stops writing and ends its sessions after `lease_ms`. So a member can be
-the **standby** (`cluster.standby`): it computes the coordinator's start-up partition and costs too,
-and like every member it has the latest region table.
+## Background
 
-* **Taking over** (`ClusterNode.promote`): when the standby has had no link to the coordinator for
-  half a second after losing it (`standbyGrace`; the link itself closes at once if the process
-  died, after `failure_timeout_ms` if it hangs), it becomes the coordinator. It adopts the table it
-  has (`RegionAuthority.adopt`): every grant stands with its epoch, so no member loses or reloads a
-  region, regions on their way somewhere still go there, new epochs start above every epoch in the
-  table, and the old coordinator's regions are held until its lease is surely over, then dealt out
-  (spawned afresh, as after any failure). The view and table versions go on from the old ones. As
-  after any start, nothing new is granted, and no ids, for a lease: grants and blocks the old
-  coordinator made that the standby never heard of have lapsed or been reported by then.
-* **Members follow it** (`Takeover`, sent again each second until accepted): a member takes the
-  standby as its coordinator once it has lost the old one itself (while its own link to the old one
-  is alive, it waits). The standby's heartbeats on the link they already have renew its lease at
-  once; it re-claims its sessions and reports its ids, as to any new coordinator, and from then on
-  dials the new coordinator's address. Heartbeats every 500 ms, a failure timeout of 3 s and a lease
-  of 5 s leave about a second and a half to spare.
-* **The world server's part** (`onPromoted`): the groups are loaded from the database (the old
-  coordinator saved every change) and sent to every mirror; channels are kept here from now on,
-  starting empty; ids come from this node's counters, raised to what the database holds and what
-  members report; and the node speaks for the realm (its row, and steering new clients).
-* **Not yet:** there is one standby, and none after a takeover until one is configured. Without a
-  quorum, a coordinator that is alive but cut off from the standby (while the members still reach
-  it) is not told apart from a dead one; run the two where that cannot happen (one machine, one
-  switch), or add a third voter. The old coordinator must come back as a member of the new one (its
-  `coordinator` pointing there). Players whose client was connected to the old coordinator lose
-  their connection and log in again (the realm list now sends them to a live node); channels, and
-  invitations in flight, are gone.
-* **Tested:** a unit test with three nodes in memory: the coordinator dies, the standby takes over
-  within the failure timeout, the member follows; neither node's lease lapses at any 50 ms tick,
-  neither loses a region; both have the same view; the dead coordinator's regions are dealt out
-  after its lease; the member's id blocks come from the new coordinator's counters. Live, two
-  nodes: Alpha playing on node 2 (the standby) in Durotar; `kill -9` of the coordinator; node 2 took
-  over 3 seconds later with its lease holding, Alpha stayed in the world and was heard after it,
-  node 2 took all 74 regions once the old lease was over, and Gamma logged in through node 2
-  afterwards, its session granted by the new coordinator.
-
-
-## Phase 8: combat across nodes (implemented, first part)
-
-Combat came after the cluster, and keeps its rule: a node changes only what it simulates. A
-creature's fight, its threat, its loot and its corpse are on the node that simulates it, so the
-player goes there.
-
-* **An action at a replica** (`actAtReplica`): attacking another node's creature, casting at it, or
-  looting its corpse moves the player's simulation to that node at once (`migrateTo`, whatever the
-  ground and however recent its last move), with what it asked for (`ArrivalAction`: the attack,
-  the spell and its target, the corpse). The state carries it just before the home node, which
-  stays last; the next node does it at the player's first tick there, once the move is complete
-  everywhere (`performArrivalAction`). The client sees nothing of the move: its swing simply begins.
-* **A fight stays put:** a player in combat does not move (`migrationTarget`), so a chase across a
-  region border keeps the player with the creatures it fights; once out of combat (5 seconds after
-  its last swing, or when they evade) the ground decides again. A draining node still sends its
-  players on.
-* **Auras travel:** they are saved before a move and loaded on arrival, as the rest of the character;
-  so do quests and reputation.
-* **Game objects:** using another node's game object (its replica here), or casting at one (a lock
-  to open, an herb to pick), moves the player to that node first, as attacking does
-  (`ArrivalAction.useObject`, `castObject`), and the object is used there.
-* **Auctions** need no owner node: the `auction` table is their one place, and every change to a
-  row is guarded by what was seen of it (README's "Auctions"); the coordinator settles those over.
-* **Flights** stay on the node they start on until they land: the server follows the flight there,
-  and the first move after landing moves the player on if the ground is another node's.
-* **Dungeon instances:** a dungeon (a map that `Map.dbc` calls an instance or a raid) is always one
-  region: `partition` never cuts it and a hot one is not split (`RegionAuthority.wholeMaps`). The
-  node owning that region hosts every copy of the dungeon: it alone chooses which copy a player
-  goes into (`instanceFor`: the raid lockout, the group's bind, its own), makes copies, binds
-  players and groups, records the dead, and resets empty copies. Instance ids are the cluster's
-  (`IdKind.instance`, blocks from the coordinator, protocol 18), so two hosts never make the same.
-  * **Going in:** a teleport into a dungeon another node hosts (a portal, `.worldport`, a summon,
-    `.appear`) checks the entrance where the player is, then asks the host (`DungeonEntryRequest`,
-    protocol 22) whether the player may go in: a raid lockout or a full copy is answered with the
-    reason, and the player never moves. Allowed, the player moves to the host with the teleport as
-    its arrival action, and the client sees the usual loading screen. `.summon` and `.appear`
-    across nodes carry the copy, so the player lands in the GM's (or the target's) copy; a player
-    sent into a copy that way is bound to it if it was bound to none (`DungeonMap::Add`), game
-    masters aside.
-  * **Coming out and moving:** a move between nodes carries the copy a player is in and where it
-    came in from (`.instance exit`); a copy that comes along with a map that is not a dungeon is
-    dropped. Every far teleport to another node's ground (leaving a dungeon, a hearthstone, a
-    graveyard, a GM's port) moves the player there first and teleports it there, so the client
-    never loads a world its node does not simulate. A player who logs in on another node's ground
-    (a dungeon's, say) moves there as it logs in.
-  * **The region moving** (a rebalance, a takeover): the new host reads the dungeon's copies,
-    binds and dead from the database (`dungeonGained`), and the copies' creatures and objects come
-    along, copy by copy, as they were (`dungeonCopiesOut`, `dungeonCopiesIn`); the old host forgets
-    the copies from memory (`dungeonLost`) and deletes nothing. After a crash nothing can come along:
-    the copies start from their spawns, minus the dead.
-  * **GM commands:** `.instance info`, `.instance shutdown` and `.instance reset` of a copy another
-    node hosts go to that node (the copy's dungeon is in the `instance` table) and its answer comes
-    back; `.instance resetall` goes to every node, each resetting what it hosts; `.character
-    showinstances` lists the binds as saved, a copy of another node's dungeon marked with its node.
-  * **Tested:** unit tests with two nodes in memory: a player on node 1 going into node 2's
-    Deadmines moves there and gets a copy with a cluster id; another player sent into that copy
-    joins it there; `.instance exit` brings the first out and home; a player saved in the dungeon
-    logs in on node 1 and goes into its bound copy on node 2; a dungeon's region moving to another
-    node keeps its copies, binds and dead. Live, two nodes, node 1 hosting the Deadmines: Gamma,
-    connected to node 2 and simulated there in Orgrimmar, `.worldport`ed into the Deadmines, moved to
-    node 1 and was in its copy within the second (`.instance info`: in use, one player); `.instance
-    exit` took it back to Orgrimmar, and it moved back to node 2 two seconds later. Later, with the
-    fixes above: from Orgrimmar (node 2) a `.worldport` to Elwynn (node 1) moved Gamma to node 1
-    first, which did the teleport (one loading screen); `.instance info 1` on node 2 was answered by
-    node 1; the Deadmines' host was asked before Gamma moved in; `.instance exit` moved it back to
-    node 2 before the teleport. In memory: a full copy turns a player away on its own node; a hurt
-    creature of a copy arrives on the dungeon's new host as it was.
-* **Scripts in D** (docs/SCRIPTING.md) run where their creature or dungeon is simulated: events
-  come from the owner's AI, never from a replica, so none runs twice. A creature's or game object's
-  script state is part of its migration state (protocols 19 and 20), so a boss handed over with its region goes on in the
-  same phase with the same timers; a dungeon's script lives with its copies on the dungeon's host
-  and is read from `instance.data` when another node comes to host it. A script's signal to a
-  creature another node simulates is a `ScriptSignal` to that node (protocol 21), applied once
-  (its origin and sequence number drop a resend), passed on if the creature has moved again. An
-  escort reads the distance to its player from the player's replica when another node simulates
-  the player, so walking along a region border does not fail it.
-* **Scripts and summons** run on the node of the map cell where they started (`dbscripts.d` keeps
-  them in the node's context); a summoned creature's guid comes from its node's own range, so two
-  nodes never make the same one. A summon is not handed over with its cell: it is dropped there.
-* **Noticing across nodes:** when a player moves, its node also asks of the replicas of other
-  nodes' creatures near it what the creature would ask (`MoveInLineOfSight`): alive, out of combat,
-  an aggressive enemy that may attack it, the player within its aggro radius (its detection range
-  and the level difference) and in sight. If so, the player moves to the creature's node with
-  "noticed by" as its arrival action, and there the creature itself decides and attacks. A node
-  moves a player for the same creature once in 30 seconds, so a creature that does not attack after
-  all (a react state only its node knows) does not send the player back and forth.
-* **Group kills across nodes:** the members near a kill whose replicas are on the killer's node
-  (another node simulates them) count in the group's share as those here do; each one's part (the
-  kill credit, its experience, its reputation) goes to its node in a `KillShare` (protocol 17),
-  which gives it there.
-* **Friends** across nodes: a friend list shows a friend another node simulates from its presence;
-  a login or logout is told to every other node (`FriendStatusChange`, protocol 23), whose players
-  with that friend hear of it. A move between nodes is neither.
-* **Guilds** are held by every node: a change is written to the database and the other nodes read
-  that guild again (`GuildReload`); what a guild says to its members (events, guild and officer
-  chat) reaches its members on every node (`GuildBroadcast`), and an invitation reaches a player
-  on another node (`GuildInvitation`) (protocol 24). Two nodes changing one guild at the same moment
-  keep the last write.
-* **Pets** go with their owner: before a move to another node the pet is saved as out with its
-  owner and taken off the map; the other node brings it out again from `character_pet`. Pet numbers
-  are ids of their own (`IdKind.pet`, blocks from the coordinator, protocol 25).
-* **Weather** is each node's own: a zone whose cells two nodes simulate may rain on one side only.
-* **GM edits of world data** (`.npc vendoradditem`, `.quest addstart` and the like, `.fixscale`) are
-  written to the world database and held in the GM's node's memory; the other nodes see them after
-  a restart.
-* **Not yet:** a creature does not answer a call for help from another node's creature; loot rights
-  count only the members on the creature's node; a player's own spells at another node's player (there is no
-  PvP yet).
-* **Tested:** a unit test with two nodes in memory: node 1 holds a replica of node 2's innkeeper
-  made an enemy; attacking it moves the player to node 2, where the attack begins and the creature
-  fights; on node 1's ground, the player stays on node 2 while fighting. Live, two nodes, after
-  combat, spells, auras, loot and quests were added: Gamma, connected to node 1, logged in in
-  Durotar (node 2's) and moved there within the second; it fought a boar there, its swings and the
-  boar's shown through node 1, until a Razor Hill guard joined in against the Alliance character
-  and killed it on node 2 (death, release on logout, the save); no errors on either node. At the
-  Elwynn border both sides were node 1's in this run's partition, so the attack on a replica was
-  tested in memory only.
+The cluster's development log, phase by phase with the live tests of each, is archived in
+docs/research/CLUSTER-HISTORY.md. It is not needed to understand the cluster as it is.

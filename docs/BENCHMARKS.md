@@ -1,7 +1,7 @@
 # Benchmarks
 
 Measurements of the standalone world server under load: the baseline the cluster is compared
-against (docs/CLUSTER.md, phase 0), and the guide to where performance work goes.
+against (docs/CLUSTER.md), and the guide to where performance work goes.
 
 ## Method
 
@@ -102,9 +102,8 @@ The fix, in `Map.updateVisibility`:
   (`Inhabitant.appearanceKind`), so it is built and compressed once per version and the same bytes go
   to everyone who gets that version, instead of once per viewer.
 * The blocks a newcomer receives go out together, as many as fit in 32 KB before compression
-  (CMaNGOS's `MAX_NETCLIENT_PACKET_SIZE` less its reserve), instead of one packet each.
-* Update packets are compressed at zlib level 1, as CMaNGOS does by default (`Compression = 1`), not
-  zlib's default 6. `compression` in the configuration sets it.
+  (the largest packet the client takes, less a reserve), instead of one packet each.
+* Update packets are compressed at zlib level 1, not zlib's default 6. `compression` in the configuration sets it.
 
 | Crowd of 900 | Before | After |
 |---|---|---|
@@ -125,16 +124,16 @@ players the steady-state figures were the same as before within the variance abo
    end that), and movement handling. Relaying movement is now the largest cost in a crowd.
 2. **GC pauses:** fewer collections from the above, then static data allocated outside the scanned
    heap, and the collector's options (`--DRT-gcopt`: initial heap size, mark threads), measured.
-3. **Unloading idle cells** (CMaNGOS unloads grids nobody has been near for a while).
+3. **Unloading idle cells:** cells nobody has been near for a while give back their objects.
 4. **`epoll` instead of `select`,** to go past 1000 connections.
 
-## After phase 2 (cluster ownership)
+## Regions owned by nodes (after cluster phase 2)
 
 Standalone, idle with 500 players: tick 3.12 ms (2.96 before), loop busy 6.6% (6.3%), 53 KB allocated
 a tick (67 KB): the same within the variance, and one stray allocation found on the way (a copy of the
 online players' table every tick, from the slow-tick report, now gone).
 
-## Phase 3a: replicas (two nodes, 500 players spread out, all on the coordinator)
+## Replicas of creatures (cluster phase 3a; two nodes, 500 players spread out, all on the coordinator)
 
 | | Tick | Loop busy | Objects | Allocated per tick |
 |---|---|---|---|---|
@@ -145,7 +144,7 @@ online players' table every tick, from the slow-tick report, now gone).
 Every object costs about 143 ns a tick on either node, creature or replica: the cost is keeping
 objects (iterating the movers, which are in an associative array, and checking positions), not their
 AI. With every player on one node, the cluster moves AI but not bookkeeping, and total CPU goes up.
-Load divides when players are on different nodes (phase 3b). Next here: movers in an array, and
+Load divides when players are on different nodes (below). Next here: movers in an array, and
 replicas that stand still left out of the tick.
 
 ## Fewer objects in the tick (array of movers, resting objects left out)
@@ -156,9 +155,9 @@ replicas that stand still left out of the tick.
 | spread | 3.42–3.53 → 2.66 ms | 8.2–8.6 → 6.7% |
 
 Creatures that wander or walk paths (two thirds of the spawns) still tick, about 150 ns each; per-object
-update timers (CMaNGOS's `SetNextUpdateTime`) would be the next step.
+update timers (an object that has nothing to do skips ticks until it has) would be the next step.
 
-## Phase 3b: players divided between two nodes
+## Players divided between two nodes (cluster phase 3b)
 
 500 players spread over the continents, 250 connected to each node:
 
@@ -182,7 +181,7 @@ half; a cluster's gain is in carrying more players than one machine can, not in 
 * Spread-out players are where partitioning pays most: creature ticking divides cleanly by region.
 * Every comparison of the cluster against these numbers uses the same scenarios and `tools/bench.sh`.
 
-## Phase 6: measured balancing (two nodes, one machine)
+## Balancing by measured cost (cluster phase 6; two nodes, one machine)
 
 | Load | Node 1 | Node 2 | Moves |
 |---|---|---|---|
@@ -191,7 +190,7 @@ half; a cluster's gain is in carrying more players than one machine can, not in 
 | the same, a minute later | 181 ms/s | 135 ms/s | one of 19 ms/s (the first stays: cool-down) |
 
 Costs are each node's loop busy time divided among its regions by what they hold
-(docs/CLUSTER.md, phase 6). The crowd's region cannot be divided until regions can be split; what
+(docs/CLUSTER.md, "Load balancing"). The crowd's region cannot be divided until regions can be split; what
 balancing does is take the rest of that node's work away.
 
 
@@ -258,16 +257,14 @@ the cells it looked at. It was used by creatures calling for help, EventAI looki
 and database scripts looking for a buddy up to 1,000 yards off. So creatures loaded cells, whose
 creatures searched and loaded more, and about 20,000 of the objects loaded were near no player.
 Unloading idle cells then went through tens of thousands of cells every 10 seconds, which was the
-second-long spikes. Now only a player's sight loads cells, as in CMaNGOS (`Cell::SetNoCreate` for
-searchers). A search wider than the cells that hold anything goes through those cells instead of
+second-long spikes. Now only a player's sight loads cells; searches never do. A search wider than the cells that hold anything goes through those cells instead of
 every key in its range.
 
 The timer wheel took the objects that tick from about 59% of those loaded to about 32%. That saved
 less than it looks: the ticks it removes did almost nothing, and what costs is the work an object
 does when it acts. The biggest is a wandering creature's next walk, whose ground height is a ray
 test against the buildings (`allowedPositionZ`). The movement maps will change that work. Creatures
-now look for players to notice at most once a second as they move, as CMaNGOS
-(`Visibility.AIRelocationNotifyDelay`), instead of on every tick.
+now look for players to notice at most once a second as they move, instead of on every tick.
 
 ## Step 5 of docs/DESIGN.md: output that is reused, updates built once (2026-11-17)
 
