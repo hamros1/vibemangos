@@ -21,7 +21,7 @@
  */
 module dmangos.world.motion;
 
-import std.math : cos, isNaN, PI, sin;
+import std.math : atan2, cos, isNaN, PI, sin;
 import std.random : Random, uniform, uniform01;
 
 import dmangos.bytes : ByteReader, ByteWriter;
@@ -258,8 +258,8 @@ private:
         const at = creature.position;
         const start = Vector3(at.x, at.y, at.z);
         const offset = start - end;
-        if (offset.dot(offset) < 0.01f)
-            return false;
+        if (offset.dot(offset) < minimumWalk * minimumWalk)
+            return false; // too short a step to show (see `minimumWalk`): another one later
         allowedPositionZ(creature, world, end);
         const walk = randomRun ? uniform!"[]"(0, 99, world.random) >= 15 : true;
         return launch(creature, world, [start, end], walk) != 0;
@@ -558,6 +558,14 @@ MovementGenerator selectMovement(const Creature creature, const WaypointStore wa
     }
 }
 
+/**
+ * The shortest walk shown to clients, in yards. The 1.12 client does not set up a spline whose points
+ * are a fraction of a yard apart (though it does one whose points are the same, a unit turning), and
+ * then reads its missing segment table: an access violation at 0x453885. Seen with wandering creatures
+ * stepping 0.3 to 0.4 yards.
+ */
+enum float minimumWalk = 1.0f;
+
 /// The next spline id (`splineCounter`): one counter for every unit on the server.
 private uint splineCounter = 1;
 
@@ -571,6 +579,16 @@ in (points.length > 1)
 {
     const at = creature.spline.finalized ? creature.position : creature.spline.position;
     points[0] = Vector3(at.x, at.y, at.z);
+    // A walk shorter than `minimumWalk` is shown as no walk at all: the unit turns where it stands.
+    float length = 0;
+    foreach (i; 1 .. points.length)
+        length += (points[i] - points[i - 1]).magnitude();
+    if (length > 0 && length < minimumWalk)
+    {
+        if (isNaN(facing))
+            facing = atan2(points[$ - 1].y - points[0].y, points[$ - 1].x - points[0].x);
+        points = [points[0], points[0]];
+    }
 
     uint flags = walk ? SplineFlags.none : SplineFlags.runMode;
     float angle = 0;
@@ -887,4 +905,19 @@ unittest
         assert(copy.position == original.position);
     }
     assert(worldA.sent == worldB.sent && worldA.sent.length > 0);
+}
+
+// A walk too short to show is a turn where the unit stands (see `minimumWalk`).
+unittest
+{
+    import dmangos.world.spline : SplineFlags;
+
+    auto world = new TestWorld;
+    auto creature = testCreature(CreatureSpawn(1, 100, 0, 0, 0, 0, 0));
+    launch(creature, world, [Vector3(0, 0, 0), Vector3(0.3f, 0.2f, 0)], true);
+    const path = creature.spline.path;
+    assert(path[0] == path[$ - 1], "no step of a fraction of a yard");
+    assert(creature.spline.flags & SplineFlags.finalAngle, "it faces where it would have gone");
+    launch(creature, world, [Vector3(0, 0, 0), Vector3(3, 0, 0)], true);
+    assert(creature.spline.finalDestination == Vector3(3, 0, 0));
 }
