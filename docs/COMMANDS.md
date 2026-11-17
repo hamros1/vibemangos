@@ -71,7 +71,7 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 * Arguments are read strictly: a number written wrong ("12abc", "abc") or a missing argument shows
   the command's help, where ArcEmu's C parsing read "12abc" as 12 and "abc" as 0 and went on.
 
-## Working (215)
+## Working (217)
 
 | Command | Letter | Help |
 |---|---|---|
@@ -172,6 +172,8 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 | `.gobject rotate` | `g` | <Axis> <Value> - Rotates the object. <Axis> x,y, Default o. |
 | `.battleground setworldstate` | `e` | <var> <val> - Var can be in hex. WS Value. |
 | `.battleground playsound` | `e` | <val>. Val can be in hex. |
+| `.battleground leave` | `e` | Leaves the current battleground. |
+| `.battleground forcestart` | `z` | Forces initialitation of all battlegrounds with active queue. |
 | `.npc vendoradditem` | `n` | Adds to vendor |
 | `.npc vendorremoveitem` | `n` | Removes from vendor. |
 | `.npc flags` | `n` | Changes NPC flags |
@@ -291,7 +293,7 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 | `.removesickness` | `m` | Removes ressurrection sickness from the target |
 | `.fixscale` | `m` |  |
 
-## Not yet implemented (83)
+## Not yet implemented (81)
 
 These answer "Not yet implemented.", as ArcEmu's `HandleNYICommand` does: their systems (AI agents
 and waypoint editing, formations and possession, guilds, pets, honor, battlegrounds and arenas,
@@ -347,9 +349,7 @@ GM tickets, transports, GM invisibility, flying) do not exist yet.
 | `.battleground battleground` | `e` | Shows BG Menu |
 | `.battleground setworldstates` | `e` | <var> <val> - Var can be in hex. WS Value. |
 | `.battleground setbfstatus` | `e` | .setbfstatus - NYI. |
-| `.battleground leave` | `e` | Leaves the current battleground. |
 | `.battleground getqueue` | `z` | Gets common battleground queue information. |
-| `.battleground forcestart` | `z` | Forces initialitation of all battlegrounds with active queue. |
 | `.npc addAgent` | `n` | .npc addAgent <agent> <procEvent> <procChance> <procCount> <spellId> <spellType> <spelltargetType> <spellCooldown> <floatMisc1> <Misc2> |
 | `.npc listAgent` | `n` | .npc listAgent |
 | `.npc spawnlink` | `n` | .spawnlink sqlentry |

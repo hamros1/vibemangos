@@ -43,7 +43,7 @@
   reset `reset_delay` days after they were made rather than at fixed weekly times, encounters are
   not tracked. In a cluster a dungeon's copies are all on the node owning its one region, and move
   with it (their creatures as they were); only after a node's crash do they start from their spawns.
-  Battlegrounds cannot be entered.
+  Battlegrounds: see "Battlegrounds" below.
 * **Groups:** an offline leader is not replaced after a while (that needs a timer). Loot
   settings decide who loots. Two-faction groups do not show the other faction as friendly.
 * **Chat:** no `Channel.RestrictedLanguageMode`; the ignore list stops whispers and invitations
@@ -135,6 +135,24 @@ The largest area. CMaNGOS references: `Spells/`, `Entities/Unit.cpp`, `Combat/`,
    inspecting, the weekly standing (`honorweek.d`), what ranks bring (rank items at vendors and to equip,
    price and repair discounts, the defense channels, the Halls, `CONDITION_PVP_RANK`), ArcEmu's `.honor`
    commands. Not yet: honor in battlegrounds (with them), the off hand against players.
+7. **Battlegrounds: started** (`bgqueue.d`, `battleground.d`; from CMaNGOS-classic's `BattleGround*`).
+   * Milestone A, queue and entry: **done**.
+     * The queues are a cluster service, with brackets, three slots, invitations of 80 s and their
+       reminder, and the average wait.
+     * Battlemasters' lists, by hello or gossip.
+     * Copies run on the node hosting the map, made when their first player comes in through the queue.
+     * Teams' starts, the two-minute countdown, the scoreboard.
+     * Leaving goes back to where the player was; leaving while the battle is on gives Deserter.
+     * A player who logs out keeps their place for five minutes; one who comes back to a closed copy is
+       sent back.
+     * ArcEmu's `.battleground forcestart` and `.battleground leave`.
+   * Next:
+     * B, the shared framework: doors and the spawn events, world states, kills on the scoreboard, the
+       end with marks and bonus honor, the battleground raid and its chat, spirit guides, group
+       queueing, the premature finish.
+     * C, Warsong Gulch.
+     * D, Arathi Basin.
+     * Later, Alterac Valley (mostly data).
 
 * Spell casting with effects, auras (feeding `stats.d`), cooldowns and the attack swing loop.
 * Creature AI, threat, death, loot (`LootHandler.cpp`), XP and level-up (`Player::GiveXP`, then

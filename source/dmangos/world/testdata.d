@@ -220,6 +220,21 @@ WorldData testWorldData(const ClientData client)
     world.gameObjectTemplates[32349] = mailbox;
     world.gameObjectSpawns = [GameObjectSpawn(26880, 32349, mapEasternKingdoms, -8940, -140, 83, 0.5f)];
     world.gameObjectCells[mapEasternKingdoms][cellKeyAt(-8940, -140)] = [0];
+    // Warsong Gulch (`battleground_template`, `world_safe_locs`, `mangos_string`).
+    {
+        import dmangos.world.bgqueue : BattlegroundTemplate, BattlegroundType;
+        import dmangos.world.worlddata : SafeLocation;
+
+        world.battlegroundTemplates[BattlegroundType.warsongGulch] = BattlegroundTemplate(2, 5, 10, 10, 60, [769, 770],
+            75, 0);
+        world.safeLocations[769] = SafeLocation(mapWarsongGulch, 1519.53f, 1481.87f, 352.024f, 3.14159f);
+        world.safeLocations[770] = SafeLocation(mapWarsongGulch, 933.331f, 1433.72f, 345.536f, 0);
+        world.serverStrings[600] = "The Alliance wins!";
+        world.serverStrings[601] = "The Horde wins!";
+        world.serverStrings[602] = "The battle for Warsong Gulch begins in 1 minute.";
+        world.serverStrings[603] = "The battle for Warsong Gulch begins in 30 seconds. Prepare yourselves!";
+        world.serverStrings[604] = "Let the battle for Warsong Gulch begin!";
+    }
     world.teleports = [GameTele(-9464, 62, 56, 0, mapEasternKingdoms, "Goldshire"),
         GameTele(1629, -4373, 31, 3.5f, mapKalimdor, "Orgrimmar")];
 

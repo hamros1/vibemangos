@@ -146,6 +146,7 @@ private:
         saveQuests();
         saveReputation();
         saveHonor();
+        saveBattleground();
         saveTimer.reset();
     }
 

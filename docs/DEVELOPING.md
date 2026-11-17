@@ -270,6 +270,14 @@ python3 tools/testclient.py 3724 tester PASS login:Me "cmd:.recall port goldshir
 
 The client answers teleports by itself, as the real one does.
 
+A battleground, alone (`.battleground forcestart` makes a copy for whoever waits; a GM account gets
+no Deserter for leaving): at the Orgrimmar battlemaster for Warsong Gulch,
+
+```sh
+python3 tools/testclient.py 3724 tester PASS login:Me "cmd:.worldport 1 1985 -4794 56" bgjoin:3890:489 \
+    "cmd:.battleground forcestart" bgport:489:1 pvplog listen:5 bgleave:489 logout
+```
+
 Trading and moving items, next to a vendor with repairs (Andrew Krighton in Goldshire):
 
 ```sh

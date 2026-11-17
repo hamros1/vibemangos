@@ -253,6 +253,19 @@ struct HonorColumns
     int storedHonorableKills;
 }
 
+/**
+ * `BGData`, as `character_battleground_data` keeps it: the battleground copy a player is in (0: none),
+ * its team there, and where it came from (where it goes back to).
+ */
+struct BattlegroundData
+{
+    uint instance;
+    ubyte type;     /// `BattleGroundTypeId`
+    ubyte team;     /// 0 the Alliance, 1 the Horde
+    uint joinMap;
+    float joinX = 0, joinY = 0, joinZ = 0, joinO = 0;
+}
+
 /// What `loadHonor` gives.
 struct HonorRecord
 {
@@ -439,6 +452,12 @@ interface WorldDatabase
 
     /// `Player::LoadFromDB`'s honor columns and `_LoadHonorCP`: what the player has of honor.
     HonorRecord loadHonor(uint player);
+
+    /// `Player::_LoadBGData`: the player's `character_battleground_data` row (none: all 0).
+    BattlegroundData loadBattlegroundData(uint player);
+
+    /// `Player::_SaveBGData`: the row replaced (deleted if the player is in no copy and came from nowhere).
+    void saveBattlegroundData(uint player, const BattlegroundData data);
 
     /**
      * `Player::SaveToDB`'s honor columns and `_SaveHonorCP`: the columns, and the honor gained since the
@@ -762,6 +781,8 @@ final class MySqlWorldDatabase : WorldDatabase
     void saveReputation(uint player, const(ReputationRecord)[] rows) { statements.saveReputation(player, rows); }
     ReputationRecord[] loadReputation(uint player) { return statements.loadReputation(player); }
     HonorRecord loadHonor(uint player) { return statements.loadHonor(player); }
+    BattlegroundData loadBattlegroundData(uint player) { return statements.loadBattlegroundData(player); }
+    void saveBattlegroundData(uint player, const BattlegroundData data) { statements.saveBattlegroundData(player, data); }
     void saveHonor(uint player, const HonorColumns columns, const(HonorPointRecord)[] added)
     {
         statements.saveHonor(player, columns, added);
@@ -1277,6 +1298,7 @@ final class MemoryWorldDatabase : WorldDatabase
     AuctionRecord[uint] auctions;    /// `auction`, by id
     ReputationRecord[uint][uint] reputationRows; /// `character_reputation`: by player, then faction
     HonorRecord[uint] honorRows;                 /// the honor columns and `character_honor_cp`, by player
+    BattlegroundData[uint] battlegroundRows;     /// `character_battleground_data`, by player
     uint nextMaintenance;                        /// `saved_variables.NextMaintenanceDate`
 
     void saveCorpse(const ref CorpseRecord c) { corpses[c.player] = c; }
@@ -1464,6 +1486,14 @@ final class MemoryWorldDatabase : WorldDatabase
     }
     ReputationRecord[] loadReputation(uint player) { return reputationRows.get(player, null).values; }
     HonorRecord loadHonor(uint player) { return honorRows.get(player, HonorRecord.init); }
+    BattlegroundData loadBattlegroundData(uint player) { return battlegroundRows.get(player, BattlegroundData.init); }
+    void saveBattlegroundData(uint player, const BattlegroundData data)
+    {
+        if (data == BattlegroundData.init)
+            battlegroundRows.remove(player);
+        else
+            battlegroundRows[player] = data;
+    }
     void saveHonor(uint player, const HonorColumns columns, const(HonorPointRecord)[] added)
     {
         auto record = &honorRows.require(player, HonorRecord.init);

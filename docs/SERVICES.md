@@ -275,7 +275,16 @@ groups, not per tick per entity.
      across) and hears node 2's player. The existing channel tests run unchanged.
    * Live: two scripted clients simulated on nodes 1 and 3 talked in one channel, hosted on a third
      node's choice.
-5. **The battleground queue**, placed by the table: the first new service, with battlegrounds.
+5. **The battleground queue: done (2026-11-18)**, with battlegrounds' first milestone (`bgqueue.d`).
+   * `BattlegroundQueueHost` (`@Service(ServiceKind.battlegroundQueue)`) holds every player's queue
+     slots and invitations, and the copies' numbers and room.
+   * Players' nodes call `join`, `port`, `status`, `logout` and `list`; the node running a copy calls
+     `left`, `changed` and `invited`.
+   * What the queue tells a player goes to the player's node.
+   * Live: a client on the gateway queued at an Orgrimmar battlemaster. The queue ran on one node and
+     the Warsong Gulch copy on another, where the character was simulated. The client entered the
+     copy, saw the scoreboard and left back to Orgrimmar.
+   * After a move the queues start empty: invitations are lost and running copies are not refilled.
 6. **The gateway role: done (2026-11-17).** `cluster.gateway` is a node that holds clients'
    connections and simulates nothing.
    * Its hello says so (protocol 29), so the coordinator, and a standby that takes over, never deal it

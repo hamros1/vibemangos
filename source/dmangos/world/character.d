@@ -16,6 +16,7 @@ module dmangos.world.character;
 
 import dmangos.world.honor : HonorHandlers;
 import dmangos.world.pvp : PvPHandlers;
+import dmangos.world.battleground : BattlegroundHandlers;
 import core.time : Duration, MonoTime, msecs, seconds;
 import std.algorithm.searching : canFind;
 
@@ -435,6 +436,19 @@ final class Character : OnlinePlayer, Looter
             loadHonor();
     }
 
+    /// Out of its battleground copy (`Player::LeaveBattleground`), back where it came from if `teleport`.
+    void battlegroundLeave(bool teleport)
+    {
+        if (player !is null)
+            leaveBattleground(teleport);
+    }
+
+    /// `GetHonorRankInfo().rank`, as the battleground scoreboard shows it.
+    @property uint visibleHonorRank()
+    {
+        return player is null ? 4 : honorRank.rank;
+    }
+
     /// The corpse of this player's pet went.
     void petCorpseGone(Creature pet)
     {
@@ -710,6 +724,7 @@ private:
     mixin AuctionHandlers;
     mixin TaxiHandlers;
     mixin PvPHandlers;
+    mixin BattlegroundHandlers;
     mixin HonorHandlers;
     mixin Level0Commands;
     mixin Level1Commands;

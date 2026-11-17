@@ -413,8 +413,8 @@ private CoordinatorSetup coordinatorSetup(uint regionCount, WorldData data, Clie
     foreach (ref entry; client.maps.rows)
     {
         maps ~= entry.mapId;
-        if (entry.isDungeon)
-            setup.whole[entry.mapId] = true; // one node hosts all of a dungeon's copies
+        if (entry.isDungeon || entry.isBattleground)
+            setup.whole[entry.mapId] = true; // one node hosts all of a dungeon's (or a battleground's) copies
     }
     setup.regions = partition(maps, costs, regionCount, setup.whole);
     foreach (ref r; setup.regions)

@@ -26,6 +26,8 @@ import dmangos.world.replication : Replica, Replicator;
 import dmangos.world.channel : ChannelSettings;
 import dmangos.world.grid : cellKeyAt;
 import dmangos.world.channelservice : channelCommand, ChannelCall, ChannelOp, ChannelService, ChannelsHost;
+import dmangos.world.battleground : Battlegrounds;
+import dmangos.world.bgqueue : battlegroundOfMap, BattlegroundQueue, BattlegroundQueueHost;
 import dmangos.cluster.protocol : ChannelCommand;
 import dmangos.world.opcodes : ChatType, Language, Opcode;
 import dmangos.world.creatureai : CombatWorld, CreatureLore;
@@ -487,9 +489,52 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         loadInstances();
         loadCommandOverrides();
         // The cluster services this node can run (docs/SERVICES.md); standalone it runs them all at once.
+        services.provide!BattlegroundQueueHost((const(ubyte)[]) => BattlegroundQueueHost(newBattlegroundQueue()));
+        battlegrounds = new Battlegrounds(this);
         services.provide!ChannelsHost((const(ubyte)[]) => ChannelsHost(new ChannelService(this, client,
             ChannelSettings(config.allowTwoSideInteractionChannel))));
         startAllServices();
+    }
+
+    /// The battleground copies this node runs.
+    Battlegrounds battlegrounds;
+
+    /// The battleground queues, as the service on this node runs them (docs/SERVICES.md, stage 5).
+    private BattlegroundQueue newBattlegroundQueue()
+    {
+        import dmangos.cluster.ownership : IdKind;
+
+        auto q = new BattlegroundQueue;
+        foreach (type, t; data.battlegroundTemplates)
+            q.templates[type] = t;
+        q.clock = () => clock();
+        q.newInstanceId = (out uint id) => takeId(IdKind.instance, id);
+        q.deliver = (ulong guid, ushort node, Opcode opcode, const(ubyte)[] body_) {
+            if (auto local = onlinePlayer(guid))
+                return local.deliver(opcode, body_);
+            if (deliverRemote is null)
+                return;
+            if (auto remote = remotePlayer(guid))
+                node = remote.node; // presence follows it between nodes
+            if (node && node != nodeId)
+                deliverRemote(node, guid, cast(ushort) opcode, body_);
+        };
+        return q;
+    }
+
+    /// The battleground queue service, if it runs on this node (standalone it does).
+    @property BattlegroundQueue battlegroundQueue()
+    {
+        if (auto host = services.local!BattlegroundQueueHost())
+            return host.queue;
+        return null;
+    }
+
+    /// A battleground copy closed: its map goes (its players have left it).
+    void closeBattlegroundMap(uint instance)
+    {
+        instances.remove(instance);
+        dropInstanceMap(instance);
     }
 
     /// The channels, if this node hosts them (standalone it does); null if another node does.
@@ -694,7 +739,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     bool instanceable(uint mapId)
     {
         const entry = client.maps.lookup(mapId);
-        return entry !is null && entry.isDungeon;
+        return entry !is null && (entry.isDungeon || entry.isBattleground);
     }
 
     /**
@@ -727,6 +772,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
         if (!instanceable(mapId) || !hostsDungeon(mapId))
             return 0;
+        // A battleground's copy is the one the queue sent the player to (`BattleGroundMap::CanEnter`).
+        if (battlegroundOfMap(mapId))
+            return database.loadBattlegroundData(cast(uint) player).instance;
         auto group = groups.of(player);
         const raid = client.maps.lookup(mapId).isRaid;
         uint chosen = boundInstance(player, mapId);
@@ -806,7 +854,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
      */
     void bindOnEntering(ulong player, uint mapId, uint instance)
     {
-        if (!instance || instance !in instances || mapId in playerBinds.get(player, null))
+        if (!instance || instance !in instances || mapId in playerBinds.get(player, null) || battlegroundOfMap(mapId))
             return;
         playerBinds.require(player, null)[mapId] = instance;
         database.saveInstanceBind(false, cast(uint) player, instance, instances[instance].resetAt != 0);
@@ -1050,6 +1098,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 elsewhere ~= id; // another node's (or nobody's yet): it saves and resets its copies, not this one
                 continue;
             }
+            if (battlegroundOfMap(state.mapId))
+                continue; // a battleground's copy closes when it is over and empty (`dmangos.world.battleground`)
             if (state.emptySince == MonoTime.init)
                 state.emptySince = now;
             else if (now - state.emptySince >= config.instanceUnloadDelay.seconds)
@@ -2795,6 +2845,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         addPendingNavigation();
         checkHonorWeek(now);
         services.tick(elapsed);
+        battlegrounds.tick(elapsed);
         scriptedGameObjectsDue();
         respawnDue(now);
         // `WUPDATE_AUCTIONS`: once a minute, by one node.

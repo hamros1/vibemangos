@@ -17,7 +17,7 @@ import dmangos.mysql : MySqlConnection;
 import dmangos.world.inventory : ItemChange, ItemRecord, ItemState;
 import dmangos.world.player : CharacterData, CharacterProgress, HomeBind, tutorialFields;
 import dmangos.world.playercreate : NewCharacter, NewSkill, NewSpell, maxEnchantmentSlot;
-import dmangos.world.database : AuraRecord, HonorColumns, HonorPointRecord, HonorRecord, CooldownRecord, PetRecord, PetSpellRecord, GuildMemberRecord, GuildRankRecord, GuildRecord,
+import dmangos.world.database : AuraRecord, BattlegroundData, HonorColumns, HonorPointRecord, HonorRecord, CooldownRecord, PetRecord, PetSpellRecord, GuildMemberRecord, GuildRankRecord, GuildRecord,
     PetitionRecord, SocialRow, CorpseRecord, InstanceBindRecord, InstanceRecord, InstanceRecords,
     InstanceRespawnRecord, MailRecord;
 import dmangos.world.reputation : ReputationRecord;
@@ -754,6 +754,39 @@ final class CharacterStatements
                 row.get!uint(3), cast(ubyte) row.get!uint(4));
         return found;
     }
+
+    /// See `WorldDatabase.loadBattlegroundData`.
+    BattlegroundData loadBattlegroundData(uint player)
+    {
+        BattlegroundData d;
+        foreach (row; characters.query!("SELECT instance_id, team, join_x, join_y, join_z, join_o, join_map "
+                ~ "FROM character_battleground_data WHERE guid = ?")(player))
+        {
+            d.instance = row.get!uint(0);
+            d.team = row.get!uint(1) == teamHorde ? 1 : 0;
+            d.joinX = row.get!float(2);
+            d.joinY = row.get!float(3);
+            d.joinZ = row.get!float(4);
+            d.joinO = row.get!float(5);
+            d.joinMap = row.get!uint(6);
+        }
+        return d;
+    }
+
+    /// See `WorldDatabase.saveBattlegroundData`.
+    void saveBattlegroundData(uint player, const BattlegroundData d)
+    {
+        characters.transaction({
+            characters.execute!"DELETE FROM character_battleground_data WHERE guid = ?"(player);
+            if (d != BattlegroundData.init)
+                characters.execute!("INSERT INTO character_battleground_data (guid, instance_id, team, join_x, join_y, "
+                    ~ "join_z, join_o, join_map) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")(player, d.instance,
+                    d.team ? teamHorde : teamAlliance, d.joinX, d.joinY, d.joinZ, d.joinO, d.joinMap);
+        });
+    }
+
+    /// `Team`, as the battleground row keeps it.
+    private enum uint teamAlliance = 469, teamHorde = 67;
 
     /// See `WorldDatabase.saveHonor`.
     void saveHonor(uint player, const HonorColumns c, const(HonorPointRecord)[] added)

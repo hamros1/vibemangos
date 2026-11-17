@@ -523,8 +523,32 @@ private:
     }
 
     // -----------------------------------------------------------------------
-    // BattlegroundCommands.cpp: there are no battlegrounds yet, so nobody is in one
+    // BattlegroundCommands.cpp
     // -----------------------------------------------------------------------
+
+    /// `HandleInitializeAllQueuedBattlegroundsCommand`: a copy for whoever waits, however few.
+    bool handleInitializeAllQueuedBattlegroundsCommand()
+    {
+        import dmangos.world.bgqueue : BattlegroundInstance, BattlegroundQueueHost;
+
+        systemMessage("Forcing initialitation of all battlegrounds...");
+        context.services.call!(BattlegroundQueueHost.forceStart)(BattlegroundInstance(0));
+        systemMessage("...done");
+        return true;
+    }
+
+    /// `HandleBattlegroundExitCommand`: ArcEmu closes the battleground the player is in (`CBattleground::Close`).
+    bool handleBattlegroundExitCommand()
+    {
+        auto copy = currentBattleground();
+        if (copy is null)
+        {
+            systemMessage("You're not in a battleground!");
+            return true;
+        }
+        copy.close();
+        return true;
+    }
 
     bool handleSetWorldStateCommand(uint id, uint value)
     {

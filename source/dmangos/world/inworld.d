@@ -37,6 +37,7 @@ mixin template InWorldHandlers()
     import dmangos.world.inworld : ArrivalAction;
 
     private ArrivalAction pendingArrival; // what a player moved here for does at its first tick
+    private bool battlegroundCheckDue;    // arrived on a battleground's map: is its copy still here?
     import std.format : format;
     import dmangos.auth.accounts : AccountLevel;
     import dmangos.bytes : ByteWriter;
@@ -81,6 +82,8 @@ private:
         saveQuests();
         saveReputation();
         saveHonor();
+        battlegroundLoggedOut();
+        saveBattleground();
         deathOnLogout();
         taxiOnLeave();
         const progress = player.progress(secondsInWorld());
@@ -237,6 +240,7 @@ private:
         saveQuests();
         saveReputation();
         saveHonor();
+        saveBattleground();
         context.settleWrites(); // in the database before the next node loads it
 
         ByteWriter w;
@@ -384,6 +388,7 @@ private:
         context.enterWorldMigrated(this, known);
         loadAuras();
         loadHonor();
+        loadBattleground();
         loadCooldowns();
         loadTalentReset();
         loadSocial();
@@ -392,6 +397,7 @@ private:
         resetMovementCheck();
         petsOnArrival();
         pendingArrival = action; // done at the first tick here, once the move is complete everywhere
+        battlegroundCheckDue = action.teleportMap == uint.max; // not on its way into a copy
         info!"%s: '%s' arrived from another node (map %s at %.1f %.1f)"(remoteAddress, character.name, character.map,
             character.position.x, character.position.y);
         return true;
@@ -454,6 +460,11 @@ private:
 
         if (pendingArrival != ArrivalAction.init)
             performArrivalAction(pendingArrival);
+        if (battlegroundCheckDue)
+        {
+            battlegroundCheckDue = false;
+            battlegroundOnLogin();
+        }
         updateMelee(elapsed);
         if (player is null)
             return;

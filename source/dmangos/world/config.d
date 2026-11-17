@@ -90,6 +90,8 @@ struct WorldConfig
     @JsonName("allow_two_side_interaction_chat") bool allowTwoSideInteractionChat = false;
     /// `AllowTwoSide.Interaction.Channel`: one set of chat channels for both factions.
     @JsonName("allow_two_side_interaction_channel") bool allowTwoSideInteractionChannel = false;
+    /// `Battleground.CastDeserter`: leaving a battleground before it is over gives Deserter.
+    @JsonName("battleground_cast_deserter") bool battlegroundCastDeserter = true;
     /// `AllowTwoSide.Interaction.Group`: allow groups with both factions.
     @JsonName("allow_two_side_interaction_group") bool allowTwoSideInteractionGroup = false;
     /// `AllowTwoSide.Interaction.Auction`: one auction house (the Alliance's) for both factions.

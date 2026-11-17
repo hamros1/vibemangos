@@ -36,6 +36,8 @@ in order:
     join:CHANNEL  part:CHANNEL  chan:CHANNEL:TEXT  chanlist:CHANNEL
                               chat channels
     afk:TEXT  dnd:TEXT        away and busy (an empty TEXT clears it)
+    bgjoin:NPC:MAP  bgport:MAP:1  bgleave:MAP  bgstatus  pvplog
+                              battlegrounds: queue at a battlemaster, accept, leave, the scoreboard
     objects:N                 count the creatures and game objects seen, and query N of each
     npc:ENTRY                 pick a creature in sight by entry, for the NPC actions:
     gossip  select:N  text:ID  trainer  buyspell:ID  vendor  binder  bank
@@ -405,6 +407,23 @@ def describe(op, p):
     elif op == 0x03E:
         print("  [new world] map %d at %.1f %.1f %.1f; answering" % struct.unpack("<I4f", p)[:4]); wsend(0x0DC, b"")
     elif op == 0x040: print(f"  [transfer aborted] reason {p[0]}")
+    elif op == 0x2D4:
+        slot, mapid = struct.unpack_from("<II", p, 0)
+        if mapid == 0: print(f"  [battlefield status] slot {slot}: none")
+        else:
+            instance, status = struct.unpack_from("<II", p, 9)
+            times = struct.unpack_from("<" + "I" * ((len(p) - 17) // 4), p, 17)
+            names = {1: "queued", 2: "invited", 3: "in progress"}
+            print(f"  [battlefield status] slot {slot}: map {mapid} copy {instance} {names.get(status, status)} {list(times)}")
+    elif op == 0x23D:
+        g, mapid, _, n = struct.unpack_from("<QIBI", p, 0)
+        print(f"  [battlefield list] map {mapid}: copies {list(struct.unpack_from('<' + 'I' * n, p, 17))}")
+    elif op == 0x2E8: print(f"  [group joined battleground] {struct.unpack('<i', p)[0]}")
+    elif op == 0x2EC: print(f"  [battleground player joined] {struct.unpack('<Q', p)[0] & 0xFFFFFFFF}")
+    elif op == 0x2ED: print(f"  [battleground player left] {struct.unpack('<Q', p)[0] & 0xFFFFFFFF}")
+    elif op == 0x2E0:
+        over = p[0]; pos = 2 if over else 1; n = struct.unpack_from("<I", p, pos)[0]
+        print(f"  [scoreboard] {'over, winner ' + str(p[1]) if over else 'running'}, {n} players")
     elif op == 0x2B8: print(f"  [area trigger message] '{p[4:-1].decode()}'")
     elif op == 0x291: print(f"  [server message] type {struct.unpack_from('<I', p)[0]} '{p[4:-1].decode()}'")
     elif op == 0x166:
@@ -783,6 +802,26 @@ for action in actions:
         else:
             wsend(0x1AD, struct.pack("<QII", npc, int(args[1]), int(args[2]))); print(f"fly {args[1]} -> {args[2]}")
         listen_for(1.5)
+    elif kind in ("bgjoin", "bgport", "bgleave", "bgstatus", "pvplog"):
+        # bgjoin:NPC:MAP (talk to the nearest battlemaster of entry NPC, then queue for MAP), bgport:MAP:1
+        # (accept the invitation; 0 leaves the queue), bgleave:MAP, bgstatus, pvplog (the scoreboard).
+        if kind == "bgjoin":
+            entry, mapid = int(args[0]), int(args[1])
+            found = [g for g, (t, e) in seen_objects.items() if t == 3 and e == entry and g in seen_positions]
+            if not found:
+                print(f"bgjoin: no {entry} in sight"); continue
+            npc = min(found, key=lambda g: (seen_positions[g][0] - here[0]) ** 2 + (seen_positions[g][1] - here[1]) ** 2)
+            wsend(0x2D7, struct.pack("<Q", npc)); listen_for(1)
+            wsend(0x2EE, struct.pack("<QIIB", npc, mapid, 0, 0)); print(f"queue for map {mapid}")
+        elif kind == "bgport":
+            wsend(0x2D5, struct.pack("<IB", int(args[0]), int(args[1]))); print(f"battlefield port {args[0]} {args[1]}")
+        elif kind == "bgleave":
+            wsend(0x2E1, struct.pack("<I", int(args[0]))); print(f"leave battlefield {args[0]}")
+        elif kind == "bgstatus":
+            wsend(0x2D3, b""); print("battlefield status")
+        else:
+            wsend(0x2E0, b""); print("scoreboard")
+        listen_for(2)
     elif kind in ("castgo", "usego"):
         # castgo:SPELL:ENTRY or usego:ENTRY: walk next to the nearest game object of ENTRY, then cast at it
         # (a lock opened: its loot taken) or use it (CMSG_GAMEOBJ_USE).

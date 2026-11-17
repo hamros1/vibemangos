@@ -21,6 +21,7 @@ import dmangos.world.reputation : Spillover;
 import dmangos.world.creature : CreatureAddon, CreatureClassStats, CreatureSpawn, CreatureTemplate, classStatsKey,
     creatureTemplateQuery;
 import dmangos.world.gameobject : GameObjectSpawn, GameObjectTemplate, GameObjectType;
+import dmangos.world.bgqueue : BattlegroundTemplate, BattlegroundType;
 import dmangos.world.grid : cellKeyAt;
 import dmangos.world.motion : MotionType, WaypointNode, WaypointStore;
 import dmangos.world.loot : lootColumns, lootRow, LootStore, LootStores;
@@ -305,6 +306,13 @@ struct GhostEntrance
     float x = 0, y = 0;
 }
 
+/// A row of `world_safe_locs`.
+struct SafeLocation
+{
+    uint map;
+    float x = 0, y = 0, z = 0, orientation = 0;
+}
+
 final class WorldData
 {
     enum holdsStaticData = true; // `dmangos.frozen.freezeAll` goes into it
@@ -336,6 +344,10 @@ final class WorldData
     LootStores loot;                                /// `creature_loot_template`, `reference_loot_template`
     QuestData quests;                               /// `quest_template` and who gives and takes back each
     GraveyardLink[][uint] graveyards;               /// `game_graveyard_zone`, by `graveyardLinkKey`
+    BattlegroundTemplate[ubyte] battlegroundTemplates;  /// `battleground_template`, by type
+    BattlegroundType[uint] battlemasters;           /// `battlemaster_entry`: a creature entry's battleground
+    SafeLocation[uint] safeLocations;               /// `world_safe_locs` (with the facing the DBC lacks)
+    string[uint] serverStrings;                     /// `mangos_string`'s default texts
     GhostEntrance[uint] ghostEntrances;             /// `instance_template`'s ghost entrances, by instance map
     uint[uint] instanceMaxPlayers;                  /// `instance_template.maxPlayers`, by instance map
     int[uint] fishingBaseSkill;                     /// `skill_fishing_base_level`: area or zone -> skill to fish there
@@ -608,6 +620,24 @@ final class WorldData
         foreach (row; world.query!"SELECT id, ghost_loc, link_kind, faction FROM game_graveyard_zone"())
             graveyards[graveyardLinkKey(row.get!uint(1), row.get!uint(2))] ~= GraveyardLink(row.get!uint(0),
                 row.get!uint(3));
+        foreach (row; world.query!("SELECT id, MinPlayersPerTeam, MaxPlayersPerTeam, MinLvl, MaxLvl, AllianceStartLoc, "
+                ~ "HordeStartLoc, StartMaxDist, PlayerSkinReflootId FROM battleground_template")())
+        {
+            const id = row.get!uint(0);
+            if (id == 0 || id > BattlegroundType.max)
+                continue;
+            battlegroundTemplates[cast(ubyte) id] = BattlegroundTemplate(cast(ubyte) id, row.get!uint(1), row.get!uint(2),
+                cast(ubyte) row.get!uint(3), cast(ubyte) row.get!uint(4), [row.get!uint(5), row.get!uint(6)],
+                row.get!float(7), row.get!uint(8));
+        }
+        foreach (row; world.query!"SELECT entry, bg_template FROM battlemaster_entry"())
+            if (row.get!uint(1) && row.get!uint(1) <= BattlegroundType.max) // `LoadBattleMastersEntry`
+                battlemasters[row.get!uint(0)] = cast(BattlegroundType) row.get!uint(1);
+        foreach (row; world.query!"SELECT id, map, x, y, z, o FROM world_safe_locs"())
+            safeLocations[row.get!uint(0)] = SafeLocation(row.get!uint(1), row.get!float(2), row.get!float(3),
+                row.get!float(4), row.get!float(5));
+        foreach (row; world.query!"SELECT entry, content_default FROM mangos_string"())
+            serverStrings[row.get!uint(0)] = row.get!string(1);
         foreach (row; world.query!"SELECT Entry, ScriptName FROM creature_template WHERE ScriptName <> ''"())
             creatureScriptNames[row.get!uint(0)] = row.get!string(1);
         foreach (row; world.query!"SELECT map, ScriptName FROM instance_template WHERE ScriptName <> ''"())

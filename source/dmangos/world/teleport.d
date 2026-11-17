@@ -84,8 +84,20 @@ private:
             return false;
         }
         const mapEntry = client.maps.lookup(mapId);
+        // `Player::TeleportTo`: a battleground's map only into the copy the queue sent the player to (game
+        // masters also into the copy of a player they go to).
         if (mapEntry.isBattleground)
-            return false; // only through a battleground queue, which does not exist yet
+        {
+            const mine = battleground_.instance && (toInstance == uint.max || toInstance == battleground_.instance);
+            if (!mine && !(toInstance != uint.max && account.level >= AccountLevel.gameMaster))
+                return false;
+            if (toInstance == uint.max)
+                toInstance = battleground_.instance;
+        }
+        // Leaving a battleground's map for another: out of the copy (`LeaveBattleground(false)`).
+        if (player.data.map != mapId && battleground_.instance && client.maps.lookup(player.data.map) !is null
+            && client.maps.lookup(player.data.map).isBattleground)
+            leaveBattleground(false);
 
         if (player.data.map != mapId && trigger is null && !checked)
             trigger = context.data.mapEntranceTrigger(mapId, client);
@@ -229,6 +241,12 @@ private:
                 entryPoint = player.position;
             }
             instanceId_ = instance;
+            if (mapEntry.isBattleground && instance == battleground_.instance) // `CreateNewBattleGround`
+            {
+                import dmangos.world.bgqueue : battlegroundOfMap;
+
+                context.battlegrounds.open(instance, battlegroundOfMap(mapId));
+            }
             if (toInstance != uint.max && account.level < AccountLevel.gameMaster)
                 context.bindOnEntering(player.guid, mapId, instance);
             player.data.map = mapId;
@@ -332,6 +350,7 @@ private:
         resetMovementCheck();
         petsOnArrival();
         pvpArrived();
+        battlegroundArrived();
         if (auto group = context.groups.of(player.guid))
             group.updatePlayerOutOfRange(this, GroupUpdate.full);
     }

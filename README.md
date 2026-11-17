@@ -700,6 +700,8 @@ source/dmangos/world/       the world server (mangosd)
   gminstance.d                ArcEmu's InstanceCommands.cpp
   gmquest.d                   ArcEmu's QuestCommands.cpp (those quests support)
   gmdebug.d                   GM commands from debugcmds.cpp, RecallCommands.cpp, BattlegroundCommands.cpp
+  bgqueue.d                   the battleground queues (a cluster service): brackets, slots, invitations
+  battleground.d              battleground copies and the players' battleground opcodes
   ../cluster/                 several world servers as one (docs/CLUSTER.md): config.d, protocol.d (framing,
                               messages), link.d (a link between nodes), node.d (membership, fencing, routing),
                               regions.d and ownership.d (regions, leases, ids), sessions.d (one login per account),

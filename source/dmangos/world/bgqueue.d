@@ -419,6 +419,22 @@ final class BattlegroundQueue
         return 0;
     }
 
+    /**
+     * ArcEmu's `EventQueueUpdate(true)` (`.battleground forcestart`): a copy for whoever waits, in every
+     * queue, however few.
+     */
+    void forceStart()
+    {
+        const was = testing;
+        testing = true;
+        scope (exit)
+            testing = was;
+        foreach (type; 1 .. 4)
+            foreach (bracket; 0 .. bracketCount)
+                if (waiting[type][bracket][0].length || waiting[type][bracket][1].length)
+                    update(cast(BattlegroundType) type, cast(ubyte) bracket);
+    }
+
     /// The queue's own time: invitations reminded of and run out.
     void tick()
     {
@@ -776,6 +792,12 @@ struct BattlegroundQueueHost
     @Call BattlegroundInvited invited(const ref BattlegroundInstance r)
     {
         return BattlegroundInvited(queue.invited(r.instance));
+    }
+
+    ///
+    @Call void forceStart(const ref BattlegroundInstance)
+    {
+        queue.forceStart();
     }
 
     void tick(Duration)

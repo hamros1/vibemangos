@@ -57,6 +57,7 @@ enum TrainerSpellState : ubyte
 /// See the module documentation.
 mixin template NpcHandlers()
 {
+    import dmangos.world.bgqueue : BattlegroundType;
     import dmangos.world.player : DeathState;
     import std.algorithm.comparison : max;
     import std.algorithm.searching : any, canFind;
@@ -259,6 +260,12 @@ private:
             return (creature.npcValues.get!UNIT_NPC_FLAGS & NpcFlag.petitioner) != 0;
         case GossipOption.tabardDesigner:
             return (creature.npcValues.get!UNIT_NPC_FLAGS & NpcFlag.tabardDesigner) != 0;
+        case GossipOption.battlefield:
+            // `Creature::CanInteractWithBattleMaster`, not telling.
+        {
+            const type = battlemasterType(creature);
+            return type != BattlegroundType.none && canTalkToBattlemaster(type, false);
+        }
         case GossipOption.stablePet:
             // `GOSSIP_OPTION_STABLEPET`: for hunters.
             return player.data.classId == 3;
@@ -376,6 +383,17 @@ private:
             closeGossip();
             sendStableList(creature.guid);
             break;
+        case GossipOption.battlefield:
+        {
+            const type = battlemasterType(creature);
+            if (type == BattlegroundType.none || !canTalkToBattlemaster(type, true))
+            {
+                closeGossip();
+                break;
+            }
+            sendBattlegroundList(creature.guid, type);
+            break;
+        }
         case GossipOption.tabardDesigner:
             closeGossip();
             handleTabardVendorActivate(ClientGuid(creature.guid));
