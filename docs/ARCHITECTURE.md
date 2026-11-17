@@ -123,6 +123,7 @@ final class WorldSession : NetSession, Kickable, OnlinePlayer
     mixin DuelHandlers;             // duelhandlers.d: DuelHandler.cpp, EffectDuel, DuelComplete
     mixin QuestHandlers;            // questhandlers.d: QuestHandler.cpp, Player's quest functions
     mixin TalentHandlers;           // talenthandlers.d: Player::LearnTalent, passive spells
+    mixin MailHandlers;             // mailhandlers.d: MailHandler.cpp, MailDraft
     mixin Exploration;              // exploration.d: Player::UpdateZone, CheckAreaExploreAndOutdoor, GiveXP
     mixin ChatCommands;             // commands.d: ArcEmu's ParseCommands, ExecuteCommandInTable, messages
     mixin GmActions;                // gmactions.d: what the handlers do to players

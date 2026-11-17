@@ -16,7 +16,7 @@ import dmangos.mysql : MySqlConnection;
 import dmangos.world.inventory : ItemChange, ItemRecord, ItemState;
 import dmangos.world.player : CharacterData, CharacterProgress, HomeBind, tutorialFields;
 import dmangos.world.playercreate : NewCharacter, NewSkill, NewSpell, maxEnchantmentSlot;
-import dmangos.world.database : AuraRecord, CorpseRecord;
+import dmangos.world.database : AuraRecord, CorpseRecord, MailRecord;
 import dmangos.world.quests : QuestState, QuestStatus;
 import dmangos.world.worlddata : CreateAction;
 
@@ -112,7 +112,9 @@ final class CharacterStatements
         GuidCounters next;
         next.character = maxPlusOne!"SELECT MAX(guid) FROM characters";
         next.item = maxPlusOne!"SELECT MAX(guid) FROM item_instance";
-        next.mail = maxPlusOne!"SELECT MAX(id) FROM mail";
+        // Mail bodies (`item_text`) take their ids from the same counter.
+        next.mail = maxPlusOne!("SELECT GREATEST(IFNULL((SELECT MAX(id) FROM mail), 0), "
+            ~ "IFNULL((SELECT MAX(id) FROM item_text), 0))");
         next.group = maxPlusOne!"SELECT MAX(groupId) FROM `groups`";
         return next;
     }
@@ -864,6 +866,121 @@ final class CharacterStatements
             sendMail(nextMailId(), mailNormal, mailStationeryDefault, mail.get!uint(2), guid, sender,
                 mail.get!string(4), mail.get!uint(5), items, mail.get!uint(6), mailCheckReturned, delay);
         }
+    }
+
+    /// See `WorldDatabase.sendMail`.
+    void sendMailRecord(const ref MailRecord m)
+    {
+        characters.transaction({
+            characters.execute!("INSERT INTO mail (id, messageType, stationery, mailTemplateId, sender, receiver, "
+                ~ "subject, itemTextId, has_items, expire_time, deliver_time, money, cod, checked) "
+                ~ "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")(m.id, m.messageType, m.stationery, m.templateId,
+                m.sender, m.receiver, m.subject, m.itemTextId, m.itemGuid ? 1 : 0, m.expireTime, m.deliverTime, m.money,
+                m.cod, m.checked);
+            if (m.itemGuid)
+                characters.execute!("INSERT INTO mail_items (mail_id, item_guid, item_template, receiver) "
+                    ~ "VALUES (?, ?, ?, ?)")(m.id, m.itemGuid, m.itemEntry, m.receiver);
+        });
+    }
+
+    private enum mailColumns = "SELECT m.id, m.messageType, m.stationery, m.mailTemplateId, m.sender, m.receiver, "
+        ~ "IFNULL(m.subject, ''), m.itemTextId, m.expire_time, m.deliver_time, m.money, m.cod, m.checked, "
+        ~ "IFNULL(mi.item_guid, 0), IFNULL(mi.item_template, 0) FROM mail m LEFT JOIN mail_items mi ON mi.mail_id = m.id ";
+
+    private static MailRecord mailOf(R)(R row)
+    {
+        return MailRecord(row.get!uint(0), cast(ubyte) row.get!uint(1), cast(ubyte) row.get!int(2), row.get!uint(3),
+            row.get!uint(4), row.get!uint(5), row.get!string(6), row.get!uint(7), row.get!long(8), row.get!long(9),
+            row.get!uint(10), row.get!uint(11), row.get!uint(12), row.get!uint(13), row.get!uint(14));
+    }
+
+    /// See `WorldDatabase.loadMail`.
+    MailRecord[] loadMail(uint receiver)
+    {
+        MailRecord[] found;
+        foreach (row; characters.query!(mailColumns ~ "WHERE m.receiver = ? ORDER BY m.id")(receiver))
+            found ~= mailOf(row);
+        return found;
+    }
+
+    /// See `WorldDatabase.mailById`.
+    Nullable!MailRecord mailById(uint id)
+    {
+        const rows = characters.query!(mailColumns ~ "WHERE m.id = ?")(id);
+        return rows.length ? Nullable!MailRecord(mailOf(rows[0])) : Nullable!MailRecord.init;
+    }
+
+    /// See `WorldDatabase.updateMail`.
+    void updateMail(const ref MailRecord m)
+    {
+        characters.transaction({
+            characters.execute!("UPDATE mail SET money = ?, cod = ?, checked = ?, has_items = ? WHERE id = ?")(m.money,
+                m.cod, m.checked, m.itemGuid ? 1 : 0, m.id);
+            if (!m.itemGuid)
+                characters.execute!"DELETE FROM mail_items WHERE mail_id = ?"(m.id);
+        });
+    }
+
+    /// See `WorldDatabase.deleteMail`.
+    void deleteMail(uint id)
+    {
+        characters.transaction({
+            characters.execute!"DELETE FROM mail WHERE id = ?"(id);
+            characters.execute!"DELETE FROM mail_items WHERE mail_id = ?"(id);
+        });
+    }
+
+    /// See `WorldDatabase.saveItemText`.
+    void saveItemText(uint id, string text)
+    {
+        characters.execute!"REPLACE INTO item_text (id, text) VALUES (?, ?)"(id, text);
+    }
+
+    /// See `WorldDatabase.itemText`.
+    string itemText(uint id)
+    {
+        const rows = characters.query!"SELECT IFNULL(text, '') FROM item_text WHERE id = ?"(id);
+        return rows.length ? rows[0].get!string(0) : null;
+    }
+
+    /// See `WorldDatabase.saveLooseItem`.
+    void saveLooseItem(const ref ItemRecord i, uint owner)
+    {
+        characters.execute!("REPLACE INTO item_instance (owner_guid, itemEntry, creatorGuid, giftCreatorGuid, count, "
+            ~ "duration, charges, flags, enchantments, randomPropertyId, durability, itemTextId, guid) "
+            ~ "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")(owner, i.entry, i.creator, i.giftCreator, i.count,
+            i.duration, i.charges, i.flags, i.enchantments, i.randomPropertyId, i.durability, i.textId, i.guid);
+    }
+
+    /// See `WorldDatabase.looseItem`.
+    Nullable!ItemRecord looseItem(uint guid)
+    {
+        const rows = characters.query!("SELECT itemEntry, creatorGuid, giftCreatorGuid, count, duration, charges, "
+            ~ "flags, enchantments, randomPropertyId, durability, itemTextId FROM item_instance WHERE guid = ?")(guid);
+        if (rows.length == 0)
+            return Nullable!ItemRecord.init;
+        auto r = rows[0];
+        ItemRecord i;
+        i.guid = guid;
+        i.entry = r.get!uint(0);
+        i.creator = r.get!uint(1);
+        i.giftCreator = r.get!uint(2);
+        i.count = r.get!uint(3);
+        i.duration = r.get!uint(4);
+        i.charges = r.get!string(5);
+        i.flags = r.get!uint(6);
+        i.enchantments = r.get!string(7);
+        i.randomPropertyId = r.get!int(8);
+        i.durability = r.get!uint(9);
+        i.textId = r.get!uint(10);
+        return Nullable!ItemRecord(i);
+    }
+
+    /// See `WorldDatabase.characterRaceAccount`.
+    uint[2] characterRaceAccount(uint guid)
+    {
+        const rows = characters.query!"SELECT race, account FROM characters WHERE guid = ?"(guid);
+        return rows.length ? [rows[0].get!uint(0), rows[0].get!uint(1)] : [0u, 0u];
     }
 
     /// `MailDraft::SendMailTo`

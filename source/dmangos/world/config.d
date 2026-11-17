@@ -116,7 +116,7 @@ struct WorldConfig
     @JsonName("skip_cinematics") uint skipCinematics = 0;
     /// `Motd`: shown in the chat window on entering the world; '@' starts a new line.
     string motd = "Welcome to dmangos.@Players see each other, group up, chat, fight, cast spells, die, loot, "
-        ~ "quest and learn talents; mail and auctions are still to come.";
+        ~ "quest, learn talents and send mail; auctions are still to come.";
 
     /// `Visibility.Distance.Continents`: how far players see each other, in yards.
     @JsonName("visibility_distance") float visibilityDistance = 100;

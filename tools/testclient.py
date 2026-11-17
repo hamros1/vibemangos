@@ -680,6 +680,27 @@ for action in actions:
             wsend(0x18A, struct.pack("<QI", g, int(args[1]))); print(f"complete quest {args[1]}")
         else:
             wsend(0x18E, struct.pack("<QII", g, int(args[1]), int(args[2]) if len(args) > 2 else 0)); print(f"reward quest {args[1]}")
+    elif kind in ("sendmail", "maillist"):
+        # sendmail:NAME:SUBJECT:BODY:COPPER or maillist, at the nearest mailbox (game object 142075)
+        boxes = [g for g, (t, e) in seen_objects.items() if t == 5 and e == 142075]
+        if not boxes:
+            print(f"{kind}: no mailbox in sight"); continue
+        box = boxes[0]
+        if kind == "sendmail":
+            name, subject, body, copper = args[0], args[1], args[2], int(args[3])
+            wsend(0x238, struct.pack("<Q", box) + name.encode() + b"\0" + subject.encode() + b"\0" + body.encode() + b"\0"
+                  + struct.pack("<IIQIIQB", 41, 0, 0, copper, 0, 0, 0))
+            op, p = expect(0x239); print(f"mail sent: result {struct.unpack_from('<III', p, 0)}")
+        else:
+            wsend(0x23A, struct.pack("<Q", box)); op, p = expect(0x23B)
+            n = p[0]; pos = 1; mails = []
+            for i in range(n):
+                mid, mtype = struct.unpack_from("<IB", p, pos); pos += 5 + 8
+                end = p.index(b"\0", pos); subject = p[pos:end].decode(); pos = end + 1
+                textid = struct.unpack_from("<I", p, pos)[0]; pos += 12 + 16 + 1 + 12
+                money = struct.unpack_from("<I", p, pos)[0]; pos += 12 + 4 + 4
+                mails.append((mid, subject, textid, money))
+            print(f"mail list: {mails}")
     elif kind == "learntalent":
         wsend(0x251, struct.pack("<II", int(args[0]), int(args[1]))); print(f"learn talent {args[0]} rank {int(args[1]) + 1}")
     elif kind == "useitem":

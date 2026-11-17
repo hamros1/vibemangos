@@ -305,6 +305,13 @@ What works now:
     (talents, racials) put their aura effects on the player for good, at login and when learned (as
     far as those auras are done; those bound to a kind of weapon are not applied yet). Not yet:
     unlearning talents at a trainer.
+  * **Mail** (CMaNGOS's `MailHandler.cpp`): at a mailbox, letters to a character of the faction
+    (30 copper) with an item, money or cash on delivery; the inbox (50 letters), taking money and
+    items (cash on delivery paid and mailed to the sender), reading bodies, copying them as Plain
+    Letters, returning and deleting. Items and money to another account arrive after
+    `mail_delivery_delay` (an hour), the rest at once with "you have new mail". It all lives in
+    the database (`mail`, `mail_items`, `item_text`), read each time, so a player's mail is the same
+    on any node of a cluster. Not yet: expiry, mail from NPCs and auctions.
   * **Trading** (CMaNGOS's `TradeHandler.cpp`): two players of a faction within 11 yards trade up
     to six items and money each; any change takes back both acceptances; when both accept, it goes
     through if both can pay and carry it (the items keep their guids and change owners, their

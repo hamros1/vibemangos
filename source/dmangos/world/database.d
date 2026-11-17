@@ -73,6 +73,26 @@ struct CorpseRecord
     ubyte type;         /// `CorpseType`
 }
 
+/// A `mail` row and its one item (`mail_items`; 1.12 sends at most one).
+struct MailRecord
+{
+    uint id;
+    ubyte messageType;     /// `MailMessageType`: 0 a player's
+    ubyte stationery = 41;
+    uint templateId;
+    uint sender;
+    uint receiver;
+    string subject;
+    uint itemTextId;       /// the body, in `item_text`
+    long expireTime;
+    long deliverTime;
+    uint money;
+    uint cod;
+    uint checked;          /// `MailCheckMask`
+    uint itemGuid;         /// 0: none
+    uint itemEntry;
+}
+
 /// A `character_aura` row.
 struct AuraRecord
 {
@@ -181,6 +201,36 @@ interface WorldDatabase
 
     /// `Player::_SaveQuestStatus`: the quests that changed (a status of none, never rewarded, deletes the row).
     void saveQuestStatus(uint player, const(QuestStatus)[] quests);
+
+    /// `MailDraft::SendMailTo`: the mail and its item row.
+    void sendMail(const ref MailRecord mail);
+
+    /// The player's mail, delivered or not, oldest first (`_LoadMail`).
+    MailRecord[] loadMail(uint receiver);
+
+    /// One mail by id, if it exists.
+    Nullable!MailRecord mailById(uint id);
+
+    /// A mail's money, cash on delivery, flags and item (`_SaveMail`'s update).
+    void updateMail(const ref MailRecord mail);
+
+    /// The mail and its item row are gone.
+    void deleteMail(uint id);
+
+    /// `item_text`: a body.
+    void saveItemText(uint id, string text);
+
+    /// ditto; empty if there is none.
+    string itemText(uint id);
+
+    /// An item kept outside any inventory (in the mail), as `item_instance` with its owner to be.
+    void saveLooseItem(const ref ItemRecord item, uint owner);
+
+    /// ditto, to take it back out; null if there is none.
+    Nullable!ItemRecord looseItem(uint guid);
+
+    /// A character's race and account; [0, 0] if it does not exist.
+    uint[2] characterRaceAccount(uint guid);
 
     /// Every creature that is dead now: spawn guid -> when it comes back (Unix time).
     long[uint] loadCreatureRespawns();
@@ -322,6 +372,16 @@ final class MySqlWorldDatabase : WorldDatabase
     void saveAuras(uint player, const(AuraRecord)[] auras) { statements.saveAuras(player, auras); }
     AuraRecord[] loadAuras(uint player) { return statements.loadAuras(player); }
     void saveQuestStatus(uint player, const(QuestStatus)[] quests) { statements.saveQuestStatus(player, quests); }
+    void sendMail(const ref MailRecord mail) { statements.sendMailRecord(mail); }
+    MailRecord[] loadMail(uint receiver) { return statements.loadMail(receiver); }
+    Nullable!MailRecord mailById(uint id) { return statements.mailById(id); }
+    void updateMail(const ref MailRecord mail) { statements.updateMail(mail); }
+    void deleteMail(uint id) { statements.deleteMail(id); }
+    void saveItemText(uint id, string text) { statements.saveItemText(id, text); }
+    string itemText(uint id) { return statements.itemText(id); }
+    void saveLooseItem(const ref ItemRecord item, uint owner) { statements.saveLooseItem(item, owner); }
+    Nullable!ItemRecord looseItem(uint guid) { return statements.looseItem(guid); }
+    uint[2] characterRaceAccount(uint guid) { return statements.characterRaceAccount(guid); }
     long[uint] loadCreatureRespawns() { return statements.loadCreatureRespawns(); }
     Nullable!NameInfo nameInfo(uint guid) { return statements.nameInfo(guid); }
     GroupRecord[] loadGroups() { return statements.loadGroups(); }
@@ -732,6 +792,9 @@ final class MemoryWorldDatabase : WorldDatabase
     CorpseRecord[uint] corpses;      /// by player
     AuraRecord[][uint] auraRows;     /// by player
     QuestStatus[uint][uint] questRows; /// by player, then quest
+    MailRecord[uint] mails;          /// by id
+    string[uint] itemTexts;          /// `item_text`
+    ItemRecord[uint] looseItems;     /// items in the mail, by guid
     long[uint] creatureRespawns;     /// by spawn guid
 
     void saveCorpse(const ref CorpseRecord c) { corpses[c.player] = c; }
@@ -741,6 +804,41 @@ final class MemoryWorldDatabase : WorldDatabase
     {
         foreach (ref q; quests)
             questRows.require(player, null)[q.quest] = q;
+    }
+    void sendMail(const ref MailRecord mail) { mails[mail.id] = mail; }
+    MailRecord[] loadMail(uint receiver)
+    {
+        import std.algorithm.sorting : sort;
+
+        MailRecord[] found;
+        foreach (ref m; mails)
+            if (m.receiver == receiver)
+                found ~= m;
+        found.sort!((a, b) => a.id < b.id);
+        return found;
+    }
+    Nullable!MailRecord mailById(uint id)
+    {
+        if (auto m = id in mails)
+            return Nullable!MailRecord(*m);
+        return Nullable!MailRecord.init;
+    }
+    void updateMail(const ref MailRecord mail) { mails[mail.id] = mail; }
+    void deleteMail(uint id) { mails.remove(id); }
+    void saveItemText(uint id, string text) { itemTexts[id] = text; }
+    string itemText(uint id) { return itemTexts.get(id, null); }
+    void saveLooseItem(const ref ItemRecord item, uint owner) { looseItems[item.guid] = item; itemRows[item.guid] = item; }
+    Nullable!ItemRecord looseItem(uint guid)
+    {
+        if (auto item = guid in looseItems)
+            return Nullable!ItemRecord(*item);
+        return Nullable!ItemRecord.init;
+    }
+    uint[2] characterRaceAccount(uint guid)
+    {
+        if (auto c = guid in loadable)
+            return [c.race, c.account];
+        return [0, 0];
     }
     void deleteCorpse(uint player) { corpses.remove(player); }
     Nullable!CorpseRecord loadCorpse(uint player)
