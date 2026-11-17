@@ -226,8 +226,9 @@ What works now:
     loot rights and quest items for those whose quests need them; a consumable one is gone once
     emptied (or 5 minutes after opening) and comes back after its respawn time, kept in
     `gameobject_respawn` across restarts. Quest objects sparkle for the players whose quests need
-    them. Not yet: quest givers among game objects, traps, fishing, mining veins' extra uses,
-    linked traps, another node's objects in a cluster.
+    them, and game objects give and take back quests (`gameobject_questrelation`,
+    `gameobject_involvedrelation`) as creatures do. Not yet: their own gossip, traps, fishing,
+    mining veins' extra uses, linked traps, another node's objects in a cluster.
   * **Creature movement:** creatures move as their spawn's `MovementType` says, as in CMaNGOS:
     wandering within `spawndist` of their spawn point (type 1), or walking their `creature_movement`
     or `creature_movement_template` path (type 2 round and round, type 4 back and forth), waiting
@@ -327,8 +328,8 @@ What works now:
     quest whose objectives are met is complete, and its ender takes the items back and gives its
     experience (`Quest::XPValue`), money, items (one of the choices) and spell, then offers the
     next of the chain, and its reputations. A quest may ask for a standing to be taken, or have one
-    as its objective. Progress is saved in `character_queststatus`. Not yet: quests from game
-    objects and items, sharing, timed and escort quests, exploration.
+    as its objective. Progress is saved in `character_queststatus`. Not yet: quests from items,
+    sharing, timed and escort quests, exploration.
   * **Reputation** (CMaNGOS's `ReputationMgr`): each character's standing with the factions of the
     reputation list, from its race's and class's base (`Faction.dbc`), saved in
     `character_reputation`. Kills give `creature_onkill_reputation`'s (shared by a group as
@@ -592,5 +593,5 @@ compiler. `UpdateValues.set!UNIT_FIELD_STAT0(22.5f)` does not compile, because s
 
 ## Roadmap
 
-Next: auctions, flight masters, game object quest givers, then the cluster's remaining gaps.
+Next: auctions, flight masters, then the cluster's remaining gaps.
 See [docs/ROADMAP.md](docs/ROADMAP.md).

@@ -84,8 +84,8 @@ Spawned and visible, with queries (ARCHITECTURE.md, "Creatures and game objects"
 trainers, innkeepers, bankers and vendors ("Talking to NPCs", and "Items" for trading), and
 movement: wandering and waypoints ("Creature movement"), and using game objects
 (`gameobject.d`, `gameobjecthandlers.d`; README's "Using game objects": doors, buttons, chairs,
-goobers, locks and chests with their loot, respawns). Next: flight masters, game object quest
-givers, traps, fishing, and unloading idle cells. CMaNGOS references:
+goobers, locks and chests with their loot, respawns, quest givers). Next: flight masters, traps,
+fishing, and unloading idle cells. CMaNGOS references:
 `MotionGenerators/`, `Entities/GossipDef.cpp`, `GossipHandler.cpp`, `NPCHandler.cpp`,
 `TaxiHandler.cpp`.
 
@@ -135,7 +135,7 @@ The largest area. CMaNGOS references: `Spells/`, `Entities/Unit.cpp`, `Combat/`,
 ### Quests
 
 **Done** (`quests.d`, `questhandlers.d`; README's "Quests"): givers, the log, kill and item
-objectives, rewards, saving. Next: game object and item quest givers, quest sharing
+objectives, rewards, saving, game objects as givers and enders. Next: item quest givers, quest sharing
 (`CMSG_PUSHQUESTTOPARTY`), timed quests, area triggers' exploration objectives, `questgiver_greeting`.
 Reputation is done (`reputation.d`, `reputationhandlers.d`; README's "Reputation"): kills, quests,
 spillover, war and peace, discounts, requirements. Not yet: `SMSG_SET_FORCED_REACTIONS` (spells force

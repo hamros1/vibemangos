@@ -171,9 +171,9 @@ private:
         questMenu = null;
         const flags = creature.npcValues.get!UNIT_NPC_FLAGS;
         if (flags & NpcFlag.questGiver)
-            prepareQuestMenu(creature);
+            prepareQuestMenu(giverOf(creature));
         if (!(flags & gossipFlag) && questMenu.length)
-            return sendPreparedQuest(creature);
+            return sendPreparedQuest(giverOf(creature));
         sendPreparedGossip(creature);
     }
 

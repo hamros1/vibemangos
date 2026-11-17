@@ -524,6 +524,10 @@ final class WorldData
             quests.creatureStarts[row.get!uint(0)] ~= row.get!uint(1);
         foreach (row; world.query!"SELECT id, quest FROM creature_involvedrelation"())
             quests.creatureEnds[row.get!uint(0)] ~= row.get!uint(1);
+        foreach (row; world.query!"SELECT id, quest FROM gameobject_questrelation"())
+            quests.gameObjectStarts[row.get!uint(0)] ~= row.get!uint(1);
+        foreach (row; world.query!"SELECT id, quest FROM gameobject_involvedrelation"())
+            quests.gameObjectEnds[row.get!uint(0)] ~= row.get!uint(1);
         quests.link();
         foreach (row; world.query!("SELECT creature_id, RewOnKillRepFaction1, RewOnKillRepFaction2, MaxStanding1, "
             ~ "IsTeamAward1, RewOnKillRepValue1, MaxStanding2, IsTeamAward2, RewOnKillRepValue2, TeamDependent "

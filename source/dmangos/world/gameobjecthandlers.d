@@ -100,6 +100,17 @@ mixin template GameObjectHandlers()
             return;
         case GameObjectType.chair:
             return sitOnChair(go);
+        case GameObjectType.questGiver:
+        {
+            // `PrepareGossipMenu` with its quests (its own gossip comes later).
+            QuestGiver giver;
+            if (questGiverNear(go.guid, 0, giver))
+            {
+                prepareQuestMenu(giver);
+                sendPreparedQuest(giver);
+            }
+            return;
+        }
         case GameObjectType.goober:
         {
             const t = go.template_;
@@ -551,4 +562,22 @@ unittest
     anduin.write(Opcode.CMSG_GAMEOBJ_USE, ClientGuid(gos[2].guid));
     assert(opcodesOf(anduin.read()).canFind(Opcode.SMSG_QUESTUPDATE_ADD_KILL));
     assert(me.questStatus[9100].mobCount[0] == 1 && !anduin.session.gameObjectActivatesForQuest(gos[2]));
+
+    // A wanted poster: it gives its quest, which is taken from it.
+    GameObjectTemplate poster = {entry: 9004, type: GameObjectType.questGiver, displayId: 4, name: "Wanted!"};
+    context.data.gameObjectTemplates[9004] = poster;
+    context.data.gameObjectSpawns ~= GameObjectSpawn(90004, 9004, 0, -8950, -131, 83.53f);
+    auto board = context.makeGameObject(&context.data.gameObjectSpawns[$ - 1]);
+    map.addObject(board);
+    Quest bounty = {id: 9200, method: 2, maxLevel: 60, title: "Bounty"};
+    context.data.quests.quests[9200] = bounty;
+    context.data.quests.gameObjectStarts[9004] = [9200];
+    anduin.read();
+    anduin.write(Opcode.CMSG_GAMEOBJ_USE, ClientGuid(board.guid));
+    assert(opcodesOf(anduin.read()).canFind(Opcode.SMSG_QUESTGIVER_QUEST_DETAILS), "its quest offered");
+    ByteWriter accept;
+    accept.put(board.guid);
+    accept.put(9200u);
+    anduin.write(Opcode.CMSG_QUESTGIVER_ACCEPT_QUEST, accept.data);
+    assert(9200 in me.questStatus && me.questStatus[9200].status != QuestState.none, "taken (and done: it asks nothing)");
 }

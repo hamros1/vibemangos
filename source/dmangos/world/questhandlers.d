@@ -230,12 +230,48 @@ private:
     // Quest givers
     // -----------------------------------------------------------------------
 
-    /// `WorldSession::getDialogStatus`: the mark over a quest giver for this player.
-    DialogStatus dialogStatus(Npc giver)
+    /// A quest giver as the dialogs need it: a creature's or a game object's guid and quests.
+    struct QuestGiver
     {
-        const entry = giver.npcTemplate.entry;
+        ulong guid;
+        const(uint)[] starts, ends;
+    }
+
+    /// A creature as a quest giver.
+    package QuestGiver giverOf(Npc npc)
+    {
+        const entry = npc.npcTemplate.entry;
+        return QuestGiver(npc.guid, context.data.quests.creatureStarts.get(entry, null),
+            context.data.quests.creatureEnds.get(entry, null));
+    }
+
+    /**
+     * The quest giver `guid` this player may talk to: a creature (`GetNPCIfCanInteractWith` with
+     * `npcFlags`) or a game object within reach (`GetGameObjectIfCanInteractWith`); false if none.
+     */
+    package bool questGiverNear(ulong guid, uint npcFlags, out QuestGiver giver)
+    {
+        import dmangos.world.gameobject : GameObject;
+
+        if (auto npc = interactableNpc(guid, npcFlags))
+        {
+            giver = giverOf(npc);
+            return true;
+        }
+        auto go = cast(GameObject) map.findObject(guid);
+        if (go is null || transferring || player.deathState != DeathState.alive || !withinInteraction(go, 2))
+            return false;
+        const entry = go.template_.entry;
+        giver = QuestGiver(go.guid, context.data.quests.gameObjectStarts.get(entry, null),
+            context.data.quests.gameObjectEnds.get(entry, null));
+        return true;
+    }
+
+    /// `WorldSession::getDialogStatus`: the mark over a quest giver for this player.
+    DialogStatus dialogStatus(const QuestGiver giver)
+    {
         DialogStatus result = DialogStatus.none;
-        foreach (id; context.data.quests.creatureEnds.get(entry, null))
+        foreach (id; giver.ends)
         {
             const quest = context.data.quests.quest(id);
             if (quest is null)
@@ -251,7 +287,7 @@ private:
             if (next > result)
                 result = next;
         }
-        foreach (id; context.data.quests.creatureStarts.get(entry, null))
+        foreach (id; giver.starts)
         {
             const quest = context.data.quests.quest(id);
             if (quest is null || questState(id) != QuestState.none || !canSeeStartQuest(*quest))
@@ -281,8 +317,15 @@ private:
     @Handles(Opcode.CMSG_QUESTGIVER_STATUS_QUERY, WorldState.inWorld)
     void handleQuestgiverStatusQuery(const ClientGuid request)
     {
-        auto giver = context.npcFor(map.findObject(request.guid));
-        if (giver is null)
+        import dmangos.world.gameobject : GameObject;
+
+        QuestGiver giver;
+        if (auto npc = context.npcFor(map.findObject(request.guid)))
+            giver = giverOf(npc);
+        else if (auto go = cast(GameObject) map.findObject(request.guid))
+            giver = QuestGiver(go.guid, context.data.quests.gameObjectStarts.get(go.template_.entry, null),
+                context.data.quests.gameObjectEnds.get(go.template_.entry, null));
+        else
             return;
         ByteWriter w;
         w.put(request.guid);
@@ -298,11 +341,10 @@ private:
     }
 
     /// `Player::PrepareQuestMenu`: the quests the giver takes back or gives, for this player.
-    package void prepareQuestMenu(Npc giver)
+    package void prepareQuestMenu(const QuestGiver giver)
     {
         questMenu = null;
-        const entry = giver.npcTemplate.entry;
-        foreach (id; context.data.quests.creatureEnds.get(entry, null))
+        foreach (id; giver.ends)
         {
             const quest = context.data.quests.quest(id);
             if (quest is null)
@@ -313,7 +355,7 @@ private:
             else if (status == QuestState.incomplete)
                 questMenu ~= GossipQuestItem(id, DialogStatus.incomplete, quest.levelFor(player.data.level), quest.title);
         }
-        foreach (id; context.data.quests.creatureStarts.get(entry, null))
+        foreach (id; giver.starts)
         {
             const quest = context.data.quests.quest(id);
             if (quest is null || !canTakeQuest(*quest))
@@ -324,7 +366,7 @@ private:
     }
 
     /// `Player::SendPreparedQuest`: one quest opens at once; several are listed.
-    package void sendPreparedQuest(Npc giver)
+    package void sendPreparedQuest(const QuestGiver giver)
     {
         if (questMenu.length == 0)
             return;
@@ -355,13 +397,11 @@ private:
     }
 
     /// Whether `giver` gives (`starts`) or takes back the quest.
-    bool involves(Npc giver, uint id, bool starts, bool ends)
+    bool involves(const QuestGiver giver, uint id, bool starts, bool ends)
     {
         import std.algorithm.searching : canFind;
 
-        const entry = giver.npcTemplate.entry;
-        return (starts && context.data.quests.creatureStarts.get(entry, null).canFind(id))
-            || (ends && context.data.quests.creatureEnds.get(entry, null).canFind(id));
+        return (starts && giver.starts.canFind(id)) || (ends && giver.ends.canFind(id));
     }
 
     /// The reward items for packets: id, count, display.
@@ -484,9 +524,10 @@ private:
     void handleQuestgiverQueryQuest(ref ByteReader reader)
     {
         const guid = reader.read!ulong, id = reader.read!uint;
-        auto giver = interactableNpc(guid, 0);
+        QuestGiver giver;
+        const near = questGiverNear(guid, 0, giver);
         const quest = context.data.quests.quest(id);
-        if (giver is null || quest is null || !involves(giver, id, true, true))
+        if (!near || quest is null || !involves(giver, id, true, true))
             return deliver(Opcode.SMSG_GOSSIP_COMPLETE, null);
         sendQuestDetails(*quest, guid, true);
     }
@@ -552,10 +593,11 @@ private:
     void handleQuestgiverAcceptQuest(ref ByteReader reader)
     {
         const guid = reader.read!ulong, id = reader.read!uint;
-        auto giver = interactableNpc(guid, 0x2);
+        QuestGiver giver;
+        const near = questGiverNear(guid, 0x2, giver);
         const quest = context.data.quests.quest(id);
         deliver(Opcode.SMSG_GOSSIP_COMPLETE, null);
-        if (giver is null || quest is null || !involves(giver, id, true, false))
+        if (!near || quest is null || !involves(giver, id, true, false))
             return;
         if (!canTakeQuest(*quest))
         {
@@ -626,9 +668,10 @@ private:
     void handleQuestgiverCompleteQuest(ref ByteReader reader)
     {
         const guid = reader.read!ulong, id = reader.read!uint;
-        auto giver = interactableNpc(guid, 0x2);
+        QuestGiver giver;
+        const near = questGiverNear(guid, 0x2, giver);
         const quest = context.data.quests.quest(id);
-        if (giver is null || quest is null || !involves(giver, id, false, true))
+        if (!near || quest is null || !involves(giver, id, false, true))
             return;
         sendRequestItems(*quest, guid, canRewardQuest(*quest), false);
     }
@@ -638,9 +681,10 @@ private:
     void handleQuestgiverRequestReward(ref ByteReader reader)
     {
         const guid = reader.read!ulong, id = reader.read!uint;
-        auto giver = interactableNpc(guid, 0x2);
+        QuestGiver giver;
+        const near = questGiverNear(guid, 0x2, giver);
         const quest = context.data.quests.quest(id);
-        if (giver is null || quest is null || !involves(giver, id, false, true))
+        if (!near || quest is null || !involves(giver, id, false, true))
             return;
         if (canCompleteQuest(id))
             completeQuest(id);
@@ -656,9 +700,10 @@ private:
         const guid = reader.read!ulong, id = reader.read!uint, reward = reader.read!uint;
         if (reward >= questRewardChoices)
             return;
-        auto giver = interactableNpc(guid, 0x2);
+        QuestGiver giver;
+        const near = questGiverNear(guid, 0x2, giver);
         const quest = context.data.quests.quest(id);
-        if (giver is null || quest is null || !involves(giver, id, false, true))
+        if (!near || quest is null || !involves(giver, id, false, true))
             return;
         if (!canRewardQuest(*quest) || !roomForRewards(*quest, reward))
             return sendOfferReward(*quest, guid, true);

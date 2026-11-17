@@ -226,6 +226,8 @@ final class QuestData
 {
     Quest[uint] quests;
     uint[][uint] creatureStarts;   /// creature entry -> quests it gives (`creature_questrelation`)
+    uint[][uint] gameObjectStarts; /// game object entry -> quests it gives (`gameobject_questrelation`)
+    uint[][uint] gameObjectEnds;   /// ... and takes back (`gameobject_involvedrelation`)
     uint[][uint] creatureEnds;     /// creature entry -> quests it takes back (`creature_involvedrelation`)
     uint[][int] exclusiveGroups;   /// `ExclusiveGroup` -> its quests
 
