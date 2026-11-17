@@ -835,6 +835,9 @@ player goes there.
   kill credit, its experience, its reputation) goes to its node in a `KillShare` (protocol 17),
   which gives it there.
 * **Weather** is each node's own: a zone whose cells two nodes simulate may rain on one side only.
+* **GM edits of world data** (`.npc vendoradditem`, `.quest addstart` and the like, `.fixscale`) are
+  written to the world database and held in the GM's node's memory; the other nodes see them after
+  a restart.
 * **Not yet:** a creature does not answer a call for help from another node's creature; loot rights
   count only the members on the creature's node; a player's own spells at another node's player (there is no
   PvP yet).
