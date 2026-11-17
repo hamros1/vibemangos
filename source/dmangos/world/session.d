@@ -500,6 +500,20 @@ final class WorldSession : NetSession, Kickable, OnlinePlayer, Combatant, Looter
     }
 
     /// See `Combatant`.
+    void questEventHappened(uint quest)
+    {
+        if (player !is null)
+            areaExploredOrEventHappens(quest);
+    }
+
+    /// See `Combatant`.
+    void killCreditFrom(uint entry, ulong creature)
+    {
+        if (player !is null)
+            scriptKillCredit(entry, creature);
+    }
+
+    /// See `Combatant`.
     @property bool castingSpell()
     {
         return generic.active;

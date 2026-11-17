@@ -71,6 +71,12 @@ interface Combatant
     /// Whether it is casting a spell.
     @property bool castingSpell();
 
+    /// A creature's script: the event of quest `quest` happened for it (`AreaExploredOrEventHappens`).
+    void questEventHappened(uint quest);
+
+    /// A creature's script: kill credit of `entry` (`KilledMonsterCredit`), from `creature`.
+    void killCreditFrom(uint entry, ulong creature);
+
     /// A creature's script took an aura of `spell` off it.
     void auraRemovedBy(uint spell);
 
@@ -98,6 +104,9 @@ interface CreatureLore
 
     /// `ListenRange.Say`, `.Yell`, `.TextEmote` in yards.
     float listenRange(ChatType type);
+
+    /// `ScriptsStart(SCRIPT_TYPE_RELAY)` on `world` (negative `id`: one of the relay group -`id`).
+    void startRelay(int id, CombatWorld world, ulong source, ulong target);
 }
 
 /// What a creature's AI needs of its map.

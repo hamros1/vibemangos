@@ -277,7 +277,9 @@ What works now:
     a `broadcast_text` (or one of a `dbscript_random_templates` group, or by a chance), emotes,
     sounds, phases, fleeing in fear for 7 seconds, calling for help, combat movement, swings on or
     off, ranged mode (keeping a distance to cast, coming in to melee when out of mana), stand states,
-    unit flags, taking auras off, despawning, not dying of damage, react states, evading, attacking. A creature casts as
+    unit flags, taking auras off, despawning, not dying of damage, react states, factions, random
+    phases, quest events and kill credit for the players fighting it, relay scripts (the database
+    scripts below), evading, attacking. A creature casts as
     CMaNGOS's `DoCastSpellIfCan` allows (not while casting another, in range, with the mana): cast
     times stand it still facing its target (`SMSG_SPELL_START`, then `SMSG_SPELL_GO`); a spell on the
     next swing waits for the swing. Its spells do school damage (a magic one resisted by the level

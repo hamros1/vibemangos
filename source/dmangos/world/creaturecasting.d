@@ -621,6 +621,44 @@ mixin template CreatureCasting()
     }
 
     /// ditto
+    void scriptRelay(int id, ulong target)
+    {
+        if (lore !is null && id != 0)
+            lore.startRelay(id, world_, me.guid, target);
+    }
+
+    /// ditto: back to its template's faction with 0.
+    void scriptFaction(uint faction)
+    {
+        const id = faction ? faction : me.template_.faction;
+        me.factionTemplate = lore is null ? null : lore.clientData.factionTemplates.lookup(id);
+        me.values.set!UNIT_FIELD_FACTIONTEMPLATE(id);
+        world_.flushCreature(me);
+    }
+
+    /// ditto: for every player fighting it (`all`, `GroupEventHappens` on its threat list), or one.
+    void scriptQuestEvent(uint quest, ulong player, bool all)
+    {
+        if (!all)
+        {
+            if (auto other = world_.combatant(player))
+                other.questEventHappened(quest);
+            return;
+        }
+        foreach (guid, _; threat)
+            if (auto other = world_.combatant(guid))
+                if (other.fighter.alive)
+                    other.questEventHappened(quest);
+    }
+
+    /// ditto
+    void scriptKillCredit(uint entry, ulong player)
+    {
+        if (auto other = world_.combatant(player))
+            other.killCreditFrom(entry, me.guid);
+    }
+
+    /// ditto
     void scriptReactState(uint state)
     {
         if (state <= ReactState.max)

@@ -785,4 +785,26 @@ unittest
     context.updateScripts(2000);
     assert(context.runningScripts == 0, "stopped: no buddy near");
     assert(keeper.values.get!UNIT_NPC_FLAGS == flags, "its last step never ran");
+
+    // EventAI: a player's emote at it gives kill credit and starts a relay script (a stand state).
+    import dmangos.world.eventai;
+
+    enum uint wave = 101, credit = 9401, sit = 501;
+    Quest c = {id: credit, method: 2, maxLevel: 60, title: "Greet", specialFlags: 0x20};
+    c.reqCreatureOrGoId[0] = 12345;
+    c.reqCreatureOrGoCount[0] = 1;
+    context.data.quests.quests[credit] = c;
+    anduin.session.addQuest(context.data.quests.quests[credit]);
+    context.data.dbScripts.add(DbScriptType.relay, DbScriptStep(sit, 0, 0, ScriptCommand.standState, 1));
+    EventAiEvent greeted = {id: 1, type: EventType.receiveEmote, chance: 100, params: [wave, 0, 0, 0, 0, 0]};
+    greeted.actions[0] = EventAiAction(ActionType.killedMonster, [12345, EventTarget.actionInvoker, 0]);
+    greeted.actions[1] = EventAiAction(ActionType.startRelayScript, [sit, EventTarget.actionInvoker, 0]);
+    auto events = [greeted];
+    keeper.ai.setScript(events, context.data.eventAi);
+    anduin.read();
+    keeper.ai.receivedEmote(me.guid, wave, map);
+    assert(opcodesOf(anduin.read()).canFind(Opcode.SMSG_QUESTUPDATE_ADD_KILL), "the credit");
+    assert(me.questStatus[credit].status == QuestState.complete);
+    context.updateScripts(0);
+    assert(keeper.values.getByte!UNIT_FIELD_BYTES_1(0) == 1, "sitting, by the relay script");
 }

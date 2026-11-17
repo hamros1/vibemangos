@@ -11,8 +11,9 @@
  * or one of a `dbscript_random_templates` group, or by a chance), an emote, a sound, setting or
  * stepping its phase, fleeing, calling for help, turning combat movement or its swings on or off,
  * keeping its distance to cast (ranged mode), standing up or down, unit flags, taking an aura off,
- * despawning, not dying of damage, its react state, evading, attacking. Repeating events go again
- * after their repeat timers.
+ * despawning, not dying of damage, its react state, its faction, a random phase, quest events and
+ * kill credit, relay scripts, evading, attacking. Repeating events go again after their repeat
+ * timers.
  *
  * Not yet: the other events and actions (summons, morphs, faction changes, quest events, AI events
  * between creatures, relay scripts), spell lists (`creature_template_spells`), immunities.
@@ -51,10 +52,12 @@ enum ActionType : ubyte
 {
     none = 0,
     text = 1,
+    setFaction = 2,
     sound = 4,
     emote = 5,
     randomEmote = 10,
     castSpell = 11,
+    questEvent = 15,
     setUnitFlag = 18,
     removeUnitFlag = 19,
     autoAttack = 20,
@@ -63,15 +66,21 @@ enum ActionType : ubyte
     incPhase = 23,
     evade = 24,
     fleeForAssist = 25,
+    questEventAll = 26,
     removeAurasFromSpell = 28,
+    randomPhase = 30,
+    randomPhaseRange = 31,
+    killedMonster = 33,
     callForHelp = 39,
     forceDespawn = 41,
     setDeathPrevention = 42,
     chancedText = 44,
     setStandState = 47,
     setReactState = 50,
+    startRelayScript = 53,
     textNew = 54,
     attackStart = 55,
+    despawnGuardians = 56,
     setRangedMode = 57,
 }
 
@@ -236,6 +245,18 @@ interface Scripted
 
     /// `SetReactState`: 0 passive, 1 defensive, 2 aggressive.
     void scriptReactState(uint state);
+
+    /// `ScriptsStart(SCRIPT_TYPE_RELAY)`: relay script `id` (negative: one of group -`id`), at `target`.
+    void scriptRelay(int id, ulong target);
+
+    /// `SetFactionTemporary`; 0 puts its own back.
+    void scriptFaction(uint faction);
+
+    /// `AreaExploredOrEventHappens` for the player `player`, or (`all`) every player fighting it.
+    void scriptQuestEvent(uint quest, ulong player, bool all);
+
+    /// `KilledMonsterCredit` of `entry` for the player `player`.
+    void scriptKillCredit(uint entry, ulong player);
 
     /// The victim's health in percent and distance in yards; uint.max if it has none.
     uint victimHealthPercent();
@@ -521,6 +542,47 @@ final class EventAI
         case ActionType.setReactState:
             me.scriptReactState(a.params[0]);
             return true;
+        case ActionType.setFaction:
+            me.scriptFaction(a.params[0] > 0 ? a.params[0] : 0);
+            return true;
+        case ActionType.startRelayScript:
+            me.scriptRelay(a.params[0], targetOf(a.params[1], me, invoker));
+            return a.params[0] != 0;
+        case ActionType.questEvent:
+        {
+            const target = targetOf(a.params[1], me, invoker);
+            if (target)
+                me.scriptQuestEvent(a.params[0], target, false);
+            return target != 0;
+        }
+        case ActionType.questEventAll:
+            me.scriptQuestEvent(a.params[0], invoker, true);
+            return true;
+        case ActionType.killedMonster:
+        {
+            const target = targetOf(a.params[1], me, invoker);
+            if (target)
+                me.scriptKillCredit(a.params[0], target);
+            return target != 0;
+        }
+        case ActionType.randomPhase:
+        {
+            // One of three phases (-1: none).
+            int[] phases;
+            foreach (p; a.params)
+                if (p >= 0 && p <= 31)
+                    phases ~= p;
+            if (phases.length)
+                phase = phases[uniform(0, phases.length)];
+            return phases.length > 0;
+        }
+        case ActionType.randomPhaseRange:
+            if (a.params[1] < a.params[0] || a.params[1] > 31 || a.params[0] < 0)
+                return false;
+            phase = uniform!"[]"(a.params[0], a.params[1]);
+            return true;
+        case ActionType.despawnGuardians:
+            return true; // creatures have no guardians here yet
         case ActionType.randomEmote:
         {
             int[] emotes;
@@ -728,6 +790,10 @@ unittest
         void scriptDespawn(uint delay) {}
         void scriptDeathPrevention(bool on) {}
         void scriptReactState(uint state) {}
+        void scriptRelay(int id, ulong target) {}
+        void scriptFaction(uint faction) {}
+        void scriptQuestEvent(uint quest, ulong player, bool all) {}
+        void scriptKillCredit(uint entry, ulong player) {}
         uint victimHealthPercent() { return 100; }
         float victimDistance() { return 2; }
         ulong targetFor(int type, ulong invoker) { return type == EventTarget.self ? 1 : 2; }

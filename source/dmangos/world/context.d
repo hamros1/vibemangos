@@ -26,7 +26,7 @@ import dmangos.world.grid : cellKeyAt;
 import dmangos.world.channelservice : channelCommand, ChannelOp, ChannelService;
 import dmangos.cluster.protocol : ChannelCommand;
 import dmangos.world.opcodes : ChatType, Language, Opcode;
-import dmangos.world.creatureai : CreatureLore;
+import dmangos.world.creatureai : CombatWorld, CreatureLore;
 import dmangos.world.npcdata : BroadcastText;
 import dmangos.world.spells : SpellInfo;
 import dmangos.world.characterdb : DeleteOptions, GuidCounters;
@@ -882,6 +882,16 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             respawnAt[creature.spawn.guid] = unixTime + creature.spawn.respawnSeconds;
             database.saveCreatureRespawn(creature.spawn.guid, respawnAt[creature.spawn.guid]);
         }
+    }
+
+    /// See `CreatureLore.startRelay`.
+    void startRelay(int id, CombatWorld world, ulong source, ulong target)
+    {
+        import dmangos.world.dbscripts : DbScriptType;
+
+        const relay = id < 0 ? data.dbScripts.randomRelay(-id) : id;
+        if (relay)
+            startScript(DbScriptType.relay, relay, cast(Map) world, source, target);
     }
 
     /// `.respawn` (`Creature::Despawn(0, 1000)`): the corpse goes now, and the creature comes back in a second.
