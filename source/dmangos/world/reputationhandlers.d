@@ -200,6 +200,40 @@ mixin template ReputationHandlers()
         return player.reputation.rankWith(t.faction) >= ReputationRank.honored ? 0.9f : 1;
     }
 
+    /**
+     * `Player::GetReputationPriceDiscount` for buying: 10% off at Honored with the vendor's faction, and
+     * 10% more for a rank of 3 (a visual rank: Sergeant) at a vendor friendly to the player's side.
+     */
+    package float buyPriceDiscount(uint factionTemplate)
+    {
+        import dmangos.world.relations : isFriend, Relating;
+
+        float discount = reputationPriceDiscount(factionTemplate);
+        if (honorRank.visualRank >= 3)
+            if (const t = context.client.factionTemplates.lookup(factionTemplate))
+                if (isFriend(Relating(0, t, false, 0, 0, true), relatingNow(), context.client))
+                    discount -= 0.1f;
+        return discount;
+    }
+
+    /**
+     * The repair discount: the reputation's, and at a PvP-flagged vendor 5% from rank byte 6 (Corporal,
+     * Grunt) and 5% more from 8 (Master Sergeant, Senior Sergeant).
+     */
+    package float repairDiscount(uint factionTemplate, bool vendorFlagged)
+    {
+        float discount = reputationPriceDiscount(factionTemplate);
+        if (vendorFlagged)
+        {
+            const rank = player.values.getByte!PLAYER_BYTES_3(3);
+            if (rank >= 6)
+                discount -= 0.05f;
+            if (rank >= 8)
+                discount -= 0.05f;
+        }
+        return discount;
+    }
+
     /// `SatisfyQuestReputation`: within the standings the quest asks for.
     package bool satisfyQuestReputation(const ref Quest quest)
     {

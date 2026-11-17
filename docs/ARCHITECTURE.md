@@ -660,6 +660,20 @@ formulas of `MaNGOS::Honor`.
     * It works out which weeks to reckon from the rows that are left, so a restart can reckon a week
       twice.
     * It saves online players over the new values.
+* **What ranks bring.**
+  * Items with a `RequiredHonorRank` cannot be equipped, used or bought below it. The highest rank
+    reached counts, and buying also needs the item's level.
+  * 10% more off at vendors friendly to the player's side, from visual rank 3.
+  * 5% off repairs at PvP-flagged vendors from rank byte 6, and 10% from 8.
+  * LocalDefense needs no negative rank, WorldDefense a visual rank of 11. The rank travels with
+    channel commands across a cluster (protocol 27).
+  * The Hall of Champions and the Hall of Legends need a visual rank of 6.
+  * `CONDITION_PVP_RANK` is checked against the internal rank.
+* **GM commands** are ArcEmu's (`HonorHandler.cpp`):
+  * `.honor addpoints` adds honour with no victim;
+  * `.honor addkills` only prints its messages, as ArcEmu's does with no victim;
+  * `.honor pvpcredit` sends the packet;
+  * the two daily updates return false, as in ArcEmu.
 * **Days** are CMaNGOS's `(year - 1900) << 16 | day of the year`. Arithmetic on them goes through the
   calendar, because CMaNGOS's `date - 7` breaks across a new year.
 * **Not yet:**

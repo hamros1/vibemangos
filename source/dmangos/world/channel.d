@@ -114,6 +114,9 @@ interface ChannelMember
     /// ArcEmu's `c` permission: it moderates every channel but the built-in ones.
     @property bool moderatesAll() const;
 
+    /// The visual honor rank (-4 to 14): the defense channels need one (`SPEAK_IN_*DEFENSE_RANK`).
+    @property byte pvpRank() const;
+
     void deliver(Opcode opcode, const(ubyte)[] body_);
 }
 
@@ -415,10 +418,11 @@ final class Channel
         const guid = player.guid;
         if (!isOn(guid))
             return notify(player, ChatNotify.notMember);
-        // LocalDefense and WorldDefense need a PvP rank of 0 and 11; there are no ranks yet, so only
-        // WorldDefense is closed.
-        enum uint worldDefense = 23;
-        if ((players[guid] & MemberFlags.muted) || entry !is null && entry.channelId == worldDefense)
+        // `SPEAK_IN_LOCALDEFENSE_RANK` and `SPEAK_IN_WORLDDEFENSE_RANK`: LocalDefense needs a rank of 0 (none of
+        // the dishonored ranks), WorldDefense 11 (Knight-Captain, Legionnaire).
+        enum uint localDefense = 22, worldDefense = 23;
+        if ((players[guid] & MemberFlags.muted) || (entry !is null && ((entry.channelId == worldDefense
+            && player.pvpRank < 11) || (entry.channelId == localDefense && player.pvpRank < 0))))
             return notify(player, ChatNotify.muted);
         if (moderation && !(players[guid] & MemberFlags.moderator))
             return notify(player, ChatNotify.notModerator);
@@ -712,6 +716,8 @@ version (unittest)
         @property string name() const { return name_; }
         @property ubyte race() const { return 1; }
         @property bool moderatesAll() const { return false; }
+        byte rank;
+        @property byte pvpRank() const { return rank; }
         void deliver(Opcode opcode, const(ubyte)[] body_) { received ~= opcode; bodies ~= body_.dup; }
 
         Opcode[] take()

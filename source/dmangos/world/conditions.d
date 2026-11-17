@@ -194,6 +194,14 @@ private:
         case raceClass:
             return (!c.value1 || (1u << (player.data.race - 1)) & c.value1)
                 && (!c.value2 || (1u << (player.data.classId - 1)) & c.value2);
+        case pvpRank:
+        {
+            // `CONDITION_PVP_RANK`: the honor rank (internal, 0 to 18) within value1 and value2.
+            import dmangos.world.updatefields : PLAYER_BYTES_3;
+
+            const rank = player.values.getByte!PLAYER_BYTES_3(3);
+            return rank >= c.value1 && rank <= c.value2;
+        }
         case level:
             switch (c.value2)
             {

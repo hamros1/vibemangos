@@ -520,6 +520,12 @@ final class CharacterBuilder : InventoryOwner
         return level;
     }
 
+    /// A new character has no honor rank.
+    @property ubyte highestHonorRank() const
+    {
+        return 0;
+    }
+
     @property ubyte ownerClass() const
     {
         return request.classId;

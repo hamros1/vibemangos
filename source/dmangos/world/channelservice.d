@@ -45,9 +45,12 @@ enum ChannelOp : ubyte
 ChannelCommand channelCommand(const OnlinePlayer who, ChannelOp op, string channel, string arg = null,
     Language language = Language.LANG_UNIVERSAL)
 {
+    import dmangos.world.honor : rankInfo;
+    import dmangos.world.updatefields : PLAYER_BYTES_3;
+
     const p = who.character;
     return ChannelCommand(p.guid, p.data.name, p.data.race, who.canUseCommand('c'), p.chatTag, op, channel, arg,
-        cast(uint) language);
+        cast(uint) language, rankInfo(p.values.getByte!PLAYER_BYTES_3(3)).visualRank);
 }
 
 /// See the module documentation.
@@ -227,6 +230,7 @@ private final class Member : ChannelMember
         string name_;
         ubyte race_;
         bool moderatesAll_;
+        byte pvpRank_;
         ushort node;              // where its last command came from
     }
 
@@ -240,11 +244,17 @@ private final class Member : ChannelMember
         this.node = node;
     }
 
+    @property byte pvpRank() const
+    {
+        return pvpRank_;
+    }
+
     void update(const ref ChannelCommand c, ushort via)
     {
         name_ = c.name;
         race_ = c.race;
         moderatesAll_ = c.moderateAll;
+        pvpRank_ = c.pvpRank;
         node = via;
     }
 

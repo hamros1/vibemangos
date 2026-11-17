@@ -858,3 +858,52 @@ unittest
     assert(orc.player.values.get!PLAYER_FIELD_LIFETIME_HONORBALE_KILLS == 2);
     assert(orc.player.values.get!PLAYER_FIELD_THIS_WEEK_CONTRIBUTION == 104);
 }
+
+// What ranks bring (`dmangos.world.honor`): the rank from rank points, the highest kept, a vendor's
+// discount, the halls.
+unittest
+{
+    import dmangos.world.teleport : AreaLockStatus;
+    import dmangos.world.worlddata : AreaTriggerTeleport;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(0, 0, 0));
+    auto me = anduin.session.inWorld;
+    me.honorStored.storedRating = 5000; // rank 7: Sergeant, visual rank 3
+    me.updateHonor();
+    assert(me.honorRank.rank == 7 && me.honorRank.visualRank == 3);
+    assert(me.player.values.getByte!PLAYER_BYTES_3(3) == 7 && me.player.highestHonorRank == 7);
+    me.honorStored.storedRating = 1000; // down to Private: the highest stays
+    me.updateHonor();
+    assert(me.honorRank.rank == 5 && me.player.highestHonorRank == 7);
+
+    // Sergeant (visual 3): 10% off at a vendor friendly to the Alliance (template 11, Stormwind).
+    {
+        import dmangos.dbc : buildDbc;
+        import dmangos.world.clientdata : factionTemplateFormat;
+
+        enum uint players = 1, alliance = 2, monsters = 8;
+        const humans = me.player.values.get!UNIT_FIELD_FACTIONTEMPLATE;
+        context.client.factionTemplates = typeof(context.client.factionTemplates).parse(buildDbc(factionTemplateFormat,
+            [[humans, 1, 0, players | alliance, alliance, monsters, 0, 0, 0, 0, 0, 0, 0, 0],
+            [11u, 11, 0, alliance, alliance, monsters, 0, 0, 0, 0, 0, 0, 0, 0]]), "FactionTemplate.dbc");
+    }
+    me.honorStored.storedRating = 5000;
+    me.updateHonor();
+    assert(me.buyPriceDiscount(11) < 0.95f);
+    me.honorStored.storedRating = 1000; // Private: no rank discount
+    me.updateHonor();
+    assert(me.buyPriceDiscount(11) > 0.95f);
+
+    // The Hall of Champions takes a visual rank of 6.
+    AreaTriggerTeleport hall;
+    hall.id = 2532;
+    hall.targetMap = 0;
+    uint requirement;
+    const mapEntry = context.client.maps.lookup(0);
+    assert(me.lockStatus(hall, mapEntry, requirement) == AreaLockStatus.pvpRank);
+    me.honorStored.storedRating = 25_000; // rank 11: visual 7
+    me.updateHonor();
+    assert(me.lockStatus(hall, mapEntry, requirement) == AreaLockStatus.ok);
+}

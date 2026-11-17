@@ -630,6 +630,8 @@ interface InventoryOwner
     @property ubyte ownerRace() const;
     /// A skill's value; 0 if the character does not have it.
     ushort skillRank(uint skill) const;
+    /// The highest honor rank it reached (internal, 0 to 18), which items' `RequiredHonorRank` counts.
+    @property ubyte highestHonorRank() const;
     /// `Player::HasSpell`
     bool hasSpell(uint spell) const;
     /// `Player::CanDualWield`
@@ -900,7 +902,7 @@ final class Inventory
         }
         if (proto.requiredSpell != 0 && !owner.hasSpell(proto.requiredSpell))
             return InventoryResult.noRequiredProficiency;
-        if (directAction && proto.requiredHonorRank > 0) // no honor ranks yet: the highest is 0
+        if (directAction && owner.highestHonorRank < proto.requiredHonorRank)
             return InventoryResult.cantEquipRank;
         if (owner.ownerLevel < proto.requiredLevel)
             return InventoryResult.cantEquipLevel;
@@ -2232,6 +2234,7 @@ version (unittest)
 
         @property ulong ownerGuid() const { return makeGuid(HighGuid.player, 7); }
         @property uint ownerLevel() const { return 10; }
+        @property ubyte highestHonorRank() const { return 0; }
         @property ubyte ownerClass() const { return classWarrior; }
         @property ubyte ownerRace() const { return raceHuman; }
         ushort skillRank(uint skill) const

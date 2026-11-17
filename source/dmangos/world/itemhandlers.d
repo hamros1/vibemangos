@@ -10,7 +10,7 @@
  * that paid for them. CMaNGOS saves them with the character, every few minutes and at logout;
  * saving each change keeps a crash from undoing a purchase or bringing a sold item back.
  *
- * Prices have the reputation's discount (honor ranks, with theirs, do not exist yet).
+ * Prices have the reputation's discount and the honor rank's.
  */
 module dmangos.world.itemhandlers;
 
@@ -533,15 +533,16 @@ private:
         if (ware.maxCount != 0 && !reserved.held
             && vendor.vendorItemCount(entry, ware.maxCount, ware.incrTime, proto.buyCount, now) < totalCount)
             return sendBuyError(BuyResult.itemAlreadySold, vendor, vendorSlot);
-        // The reputation it needs (no honor ranks yet: the highest is 0).
+        // The reputation it needs, and the honor rank (`RANK_REQUIRE`: the highest reached, and the level too).
         if (proto.requiredReputationFaction && player.reputation !is null
             && player.reputation.rankWith(proto.requiredReputationFaction) < proto.requiredReputationRank)
             return sendBuyError(BuyResult.reputationRequired, vendor, vendorSlot);
-        if (proto.requiredHonorRank)
+        if (proto.requiredHonorRank && (player.highestHonorRank < proto.requiredHonorRank
+            || player.data.level < proto.requiredLevel))
             return sendBuyError(BuyResult.rankRequired, vendor, vendorSlot);
         import std.math : floor;
 
-        const price = cast(uint) floor(proto.details.buyPrice * count * reputationPriceDiscount(vendor.npcValues.get!UNIT_FIELD_FACTIONTEMPLATE));
+        const price = cast(uint) floor(proto.details.buyPrice * count * buyPriceDiscount(vendor.npcValues.get!UNIT_FIELD_FACTIONTEMPLATE));
         if (player.money < price)
             return sendBuyError(BuyResult.notEnoughMoney, vendor, vendorSlot);
 
@@ -590,7 +591,8 @@ private:
         auto npc = interactableNpc(request.npc, NpcFlag.repair);
         if (npc is null)
             return;
-        const discount = reputationPriceDiscount(npc.npcValues.get!UNIT_FIELD_FACTIONTEMPLATE); // the reputation's; no honor ranks yet
+        const discount = repairDiscount(npc.npcValues.get!UNIT_FIELD_FACTIONTEMPLATE,
+            (npc.npcValues.get!UNIT_FIELD_FLAGS & UnitFlags.pvp) != 0);
         if (request.item)
         {
             if (auto item = inventory.byGuid(request.item))

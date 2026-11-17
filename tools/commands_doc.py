@@ -46,7 +46,8 @@ def tables():
 
 def implemented():
     names = set()
-    for path in glob.glob(os.path.join(WORLD, "gm*.d")) + [os.path.join(WORLD, "commands.d")]:
+    # Most handlers live in gm*.d; a few with the system they command (honor.d's `.honor`).
+    for path in glob.glob(os.path.join(WORLD, "gm*.d")) + [os.path.join(WORLD, n) for n in ("commands.d", "honor.d")]:
         for name in re.findall(r"bool (handle[A-Z]\w*)\(", open(path).read()):
             names.add(name[0].upper() + name[1:])
     return names

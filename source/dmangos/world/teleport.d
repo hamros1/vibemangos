@@ -278,8 +278,9 @@ private:
             requirement = trigger.requiredQuest;
             return AreaLockStatus.questNotCompleted;
         }
-        enum uint championsHall = 2532, hallOfLegends = 2527; // need PvP rank 6; there are no ranks yet
-        if (trigger.id == championsHall || trigger.id == hallOfLegends)
+        // `ENTER_HALL_RANK`: the Hall of Champions and the Hall of Legends take a visual rank of 6.
+        enum uint championsHall = 2532, hallOfLegends = 2527;
+        if ((trigger.id == championsHall || trigger.id == hallOfLegends) && honorRank.visualRank < 6)
             return AreaLockStatus.pvpRank;
         return AreaLockStatus.ok;
     }

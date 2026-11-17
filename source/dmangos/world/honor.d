@@ -245,6 +245,26 @@ struct HonorPoint
     }
 }
 
+/// C's `atol`: an optional sign and the digits after any spaces; 0 if none.
+long arcEmuAtol(string text) pure nothrow @safe
+{
+    size_t i;
+    while (i < text.length && (text[i] == ' ' || text[i] == '\t'))
+        ++i;
+    bool negative;
+    if (i < text.length && (text[i] == '-' || text[i] == '+'))
+        negative = text[i++] == '-';
+    long value;
+    while (i < text.length && text[i] >= '0' && text[i] <= '9')
+        value = value * 10 + (text[i++] - '0');
+    return negative ? -value : value;
+}
+
+unittest
+{
+    assert(arcEmuAtol("") == 0 && arcEmuAtol(" 42 more") == 42 && arcEmuAtol("-5") == -5 && arcEmuAtol("x1") == 0);
+}
+
 /// What `HonorHandlers.updateHonor` counts from the rows.
 struct HonorTally
 {
@@ -313,6 +333,7 @@ mixin template HonorHandlers()
     import dmangos.world.defines : UnitFlags;
     import dmangos.world.player : DeathState;
     import dmangos.world.creature : Creature;
+    import dmangos.world.commands : nextWord, Rest;
     import dmangos.world.updatefields;
 
     private
@@ -491,6 +512,86 @@ mixin template HonorHandlers()
         v.set!PLAYER_FIELD_LAST_WEEK_CONTRIBUTION(cast(uint)(t.lastWeekHonor > 0 ? t.lastWeekHonor : 0));
         v.set!PLAYER_FIELD_LAST_WEEK_RANK(honorStored.standing);
         flushPlayerChanges();
+    }
+
+    // -----------------------------------------------------------------------
+    // ArcEmu's `.honor` commands (HonorHandler.cpp)
+    // -----------------------------------------------------------------------
+
+    /// `HandleAddHonorCommand`: honor added to the selected player (here this week's, with no victim).
+    bool handleAddHonorCommand(Rest args = Rest(""))
+    {
+        import std.format : format;
+
+        const amount = cast(uint) arcEmuAtol(args);
+        auto plr = getSelectedChar(true);
+        if (plr is null)
+            return true;
+        blueSystemMessage(format!"Adding %u honor to player %s."(amount, plr.player.data.name));
+        plr.greenSystemMessage(format!"You have had %u honor points added to your character."(amount));
+        plr.addHonorPoints(amount, HonorType.honorable);
+        return true;
+    }
+
+    /// `HandleAddKillCommand`: the messages; ArcEmu's `OnPlayerKilledUnit(plr, 0)` then does nothing.
+    bool handleAddKillCommand(Rest args = Rest(""))
+    {
+        import std.format : format;
+
+        const amount = cast(uint) arcEmuAtol(args);
+        auto plr = getSelectedChar(true);
+        if (plr is null)
+            return true;
+        blueSystemMessage(format!"Adding %u kills to player %s."(amount, plr.player.data.name));
+        plr.greenSystemMessage(format!"You have had %u honor kills added to your character."(amount));
+        return true;
+    }
+
+    /// `HandlePVPCreditCommand`: `SMSG_PVP_CREDIT` to oneself, for the selection, the points times ten.
+    bool handlePVPCreditCommand(Rest args = Rest(""))
+    {
+        import std.conv : to;
+        import std.format : format;
+
+        string rest = args;
+        const rankWord = nextWord(rest), pointsWord = nextWord(rest);
+        uint rank, points;
+        try
+        {
+            rank = rankWord.to!uint;
+            points = pointsWord.to!uint;
+        }
+        catch (Exception)
+        {
+            redSystemMessage("Command must be in format <rank> <points>.");
+            return true;
+        }
+        points *= 10;
+        const guid = player.values.get!UNIT_FIELD_TARGET;
+        if (guid == 0)
+        {
+            redSystemMessage("A selection of a unit or player is required.");
+            return true;
+        }
+        blueSystemMessage(format!"Building packet with Rank %u, Points %u, GUID %016X."(rank, points, guid));
+        ByteWriter w;
+        w.put(points);
+        w.put(guid);
+        w.put(rank);
+        deliver(Opcode.SMSG_PVP_CREDIT, w.data);
+        return true;
+    }
+
+    /// `HandleGlobalHonorDailyMaintenanceCommand`: not done in ArcEmu either.
+    bool handleGlobalHonorDailyMaintenanceCommand()
+    {
+        return false;
+    }
+
+    /// `HandleNextDayCommand`: ditto.
+    bool handleNextDayCommand()
+    {
+        return false;
     }
 
     /**

@@ -71,7 +71,7 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 * Arguments are read strictly: a number written wrong ("12abc", "abc") or a missing argument shows
   the command's help, where ArcEmu's C parsing read "12abc" as 12 and "abc" as 0 and went on.
 
-## Working (210)
+## Working (215)
 
 | Command | Letter | Help |
 |---|---|---|
@@ -196,6 +196,11 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 | `.account level` | `z` | Sets gm level on account. Pass it username and 0,1,2,3,az, etc. |
 | `.account mute` | `a` | Mutes account for <timeperiod>. |
 | `.account unmute` | `a` | Unmutes account <x> |
+| `.honor addpoints` | `m` | Adds x amount of honor points/currency |
+| `.honor addkills` | `m` | Adds x amount of honor kills |
+| `.honor globaldailyupdate` | `m` | Daily honor field moves |
+| `.honor singledailyupdate` | `m` | Daily honor field moves for selected player only |
+| `.honor pvpcredit` | `m` | Sends PVP credit packet, with specified rank and points |
 | `.quest addboth` | `2` | Add quest <id> to the targeted NPC as start & finish |
 | `.quest addfinish` | `2` | Add quest <id> to the targeted NPC as finisher |
 | `.quest addstart` | `2` | Add quest <id> to the targeted NPC as starter |
@@ -286,7 +291,7 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 | `.removesickness` | `m` | Removes ressurrection sickness from the target |
 | `.fixscale` | `m` |  |
 
-## Not yet implemented (88)
+## Not yet implemented (83)
 
 These answer "Not yet implemented.", as ArcEmu's `HandleNYICommand` does: their systems (AI agents
 and waypoint editing, formations and possession, guilds, pets, honor, battlegrounds and arenas,
@@ -358,11 +363,6 @@ GM tickets, transports, GM invisibility, flying) do not exist yet.
 | `.cheat fly` | `m` | Sets fly mode |
 | `.cheat flyspeed` | `m` | Modifies fly speed. |
 | `.cheat stack` | `m` | Enables aura stacking cheat. |
-| `.honor addpoints` | `m` | Adds x amount of honor points/currency |
-| `.honor addkills` | `m` | Adds x amount of honor kills |
-| `.honor globaldailyupdate` | `m` | Daily honor field moves |
-| `.honor singledailyupdate` | `m` | Daily honor field moves for selected player only |
-| `.honor pvpcredit` | `m` | Sends PVP credit packet, with specified rank and points |
 | `.quest load` | `2` | Loads quests from database |
 | `.pet createpet` | `m` | Creates a pet with <entry>. |
 | `.pet renamepet` | `m` | Renames a pet to <name>. |

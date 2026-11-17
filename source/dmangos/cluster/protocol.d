@@ -24,7 +24,7 @@ import dmangos.cluster.regions : Region;
 import dmangos.serialization : deserialize, LengthPrefix, serialize;
 
 /// Changes whenever a message changes; nodes speaking another version are turned away.
-enum ushort protocolVersion = 26; // 26: a moving player's movement order counter and speeds
+enum ushort protocolVersion = 27; // 27: a channel command carries the honor rank
 
 /// Size of a frame header.
 enum frameHeaderSize = 16;
@@ -433,6 +433,7 @@ struct ChannelCommand
     @LengthPrefix!uint string channel;
     @LengthPrefix!uint string arg;
     uint language;
+    byte pvpRank;          /// the visual honor rank (-4 to 14), for the defense channels
 }
 
 /// A player's group command (invitations, kicks, the leader, loot, raids), for the coordinator (phase 5b).

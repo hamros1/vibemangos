@@ -252,6 +252,11 @@ final class Player : InventoryOwner
         return data.level;
     }
 
+    @property ubyte highestHonorRank() const
+    {
+        return values.getByte!PLAYER_FIELD_BYTES(3);
+    }
+
     @property ubyte ownerClass() const
     {
         return data.classId;
