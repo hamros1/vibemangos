@@ -427,7 +427,10 @@ through a small C interface, `thirdparty/dmnav/dmnav.cpp`.
     neighbouring tiles so the edges meet;
   * the buildings and doodads the tile's vmap file lists.
   Ground under deeper water than a creature stands in is water, which walkers may cross.
-* **Loading.** `Terrain` loads a tile's mesh with its heights.
+* **Loading.** `Terrain` queues a tile's mesh when it loads its heights. Each tick adds queued ones
+  for up to 3 ms (`Terrain.addPendingNavigation`): Detour linking a tile to its neighbours takes
+  about 3 ms, while reading it takes about 0.1. An area coming into use loads many tiles at once,
+  which made ticks of 44 ms. Until a tile's mesh is added, units there walk straight.
 * **Using it.** `launch(..., generatePath)` is `MoveSplineInit::MoveTo(dest, generatePath)`: a walk
   from one point to another follows the corners `Map.pathBetween` finds. Chasing, returning home,
   fleeing, wandering, point moves and pets use it. Waypoint routes stay as the database draws them,

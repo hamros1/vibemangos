@@ -333,3 +333,19 @@ The spread scenario has 28,000 creatures and game objects loaded. What it still 
 them, the live world, not static data. Next would be the NPC and quest data and the spawn cells,
 then the creatures themselves.
 
+## Movement maps (2026-11-17)
+
+`spread`, 500 bots, `--seed 7`, about 27,500 creatures and game objects loaded:
+
+| | No movement maps | Tiles added when loaded | Tiles added 3 ms a tick |
+|---|---|---|---|
+| Tick, average | 3.8 ms | 4.9 ms | 4.4 ms |
+| Tick, max | 7.2 ms | 43.8 ms | 14.1 ms |
+| Memory | 815 MiB | 1288 MiB | 1348 MiB |
+
+Timing each tile's load showed where the 44 ms came from:
+* Reading 600 tiles took 59 ms in all.
+* Adding about 450 to the mesh took 1.4 s, about 3 ms each, the time Detour spends linking each
+  tile to its neighbours.
+* Ticks in which many areas came into use added a dozen at once.
+

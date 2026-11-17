@@ -2745,12 +2745,27 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
     /// The tick's world phase: what is not on one map: dungeon copies unloading, scripts, weather,
     /// respawns, auctions and old mail.
+    /// Movement map tiles of areas that came into use, a few milliseconds' worth a tick (`Terrain.addPendingNavigation`).
+    private void addPendingNavigation()
+    {
+        enum budget = 3.msecs;
+        const until = MonoTime.currTime + budget;
+        foreach (terrain; terrains)
+        {
+            const now = MonoTime.currTime;
+            if (now >= until)
+                break;
+            terrain.addPendingNavigation(until - now);
+        }
+    }
+
     private void worldPhase(MonoTime now, Duration elapsed)
     {
         if (instances.length)
             unloadEmptyInstances(now);
         updateScripts(cast(uint) elapsed.total!"msecs");
         updateWeathers(cast(int) elapsed.total!"msecs");
+        addPendingNavigation();
         scriptedGameObjectsDue();
         respawnDue(now);
         // `WUPDATE_AUCTIONS`: once a minute, by one node.

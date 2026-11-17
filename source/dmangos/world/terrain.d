@@ -15,6 +15,7 @@
  */
 module dmangos.world.terrain;
 
+import core.time : Duration, MonoTime;
 import dmangos.navigation : NavMesh;
 import dmangos.vmap.math : Vector3;
 import std.bitmanip : littleEndianToNative;
@@ -432,6 +433,7 @@ final class Terrain
         StaticMapTree vmap;             // null without vmaps
         NavMesh navigation;             // the movement maps, null without them
         string navDirectory;            // <data_dir>/mmaps
+        int[2][] navPending;            // grid tiles whose movement map waits to be added (`addPendingNavigation`)
     }
 
     /**
@@ -492,9 +494,33 @@ final class Terrain
             if (vmap !is null)
                 vmap.loadTile(coords[0], coords[1]);
             if (navigation !is null)
-                loadNavigationTile(coords[0], coords[1]);
+                navPending ~= coords;
         }
         return tiles[index];
+    }
+
+    /**
+     * Adds the movement maps of the tiles loaded since, until `budget` is spent: adding one to the mesh
+     * (Detour linking its polygons to its neighbours') takes about 3 ms, and an area coming into use
+     * loads many at once. Until a tile's is added, units there walk straight. Returns how many wait.
+     */
+    size_t addPendingNavigation(Duration budget)
+    {
+        if (navPending.length == 0)
+            return 0;
+        const until = MonoTime.currTime + budget;
+        size_t done;
+        while (done < navPending.length)
+        {
+            loadNavigationTile(navPending[done][0], navPending[done][1]);
+            ++done;
+            if (MonoTime.currTime >= until)
+                break;
+        }
+        navPending = navPending[done .. $];
+        if (navPending.length == 0)
+            navPending = null;
+        return navPending.length;
     }
 
     /// `MMapManager::loadMap`: grid tile [gx, gy]'s movement map (`MMMXXYY.mmtile`), if there is one.
@@ -974,4 +1000,45 @@ unittest
     assert(terrain.areaFlag(p[0], p[1], 52) == exploreGoldshire);
     auto outside = world(15990, 16105);
     assert(terrain.isOutdoors(outside[0], outside[1], 52));
+}
+
+// Movement map tiles wait until added a few at a time; until then the map has no way there.
+unittest
+{
+    import core.time : Duration;
+    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
+    import std.path : buildPath;
+    import std.process : thisProcessID;
+    import std.conv : to;
+    import dmangos.extractor.maps : buildTestAdt, convertAdt, TestTerrain;
+    import dmangos.extractor.mmaps : buildGridTile;
+    import dmangos.world.testdata : testClientData;
+    import dmangos.bytes : ByteWriter;
+
+    const dir = buildPath(tempDir, "dmangos-navload-" ~ thisProcessID.to!string);
+    mkdirRecurse(buildPath(dir, "maps"));
+    mkdirRecurse(buildPath(dir, "mmaps"));
+    scope (exit)
+        rmdirRecurse(dir);
+    TestTerrain flat;
+    flat.height = (float, float) => 42.0f;
+    flat.areaId = (int, int) => 0;
+    string problem;
+    const ushort[uint] noFlags;
+    write(buildPath(dir, "maps", "0013030.map"), convertAdt(buildTestAdt(flat), noFlags, problem));
+    const data = buildGridTile(buildPath(dir, "maps"), buildPath(dir, "vmaps"), 1, 30, 30);
+    ByteWriter tile;
+    foreach (uint word; [0x4D4D4150, 7, 1, cast(uint) data.length, 1])
+        tile.put(word);
+    tile.putBytes(data);
+    write(buildPath(dir, "mmaps", "0013030.mmtile"), tile.data);
+    write(buildPath(dir, "mmaps", "001.mmap"), new ubyte[28]);
+
+    auto terrain = new Terrain(1, dir, testClientData());
+    assert(terrain.hasMovementMaps);
+    const from = Vector3(1000, 1000, 42), dest = Vector3(600, 1000, 42);
+    assert(terrain.tile(800, 800) !is null);
+    assert(terrain.pathBetween(from, dest).length == 0, "not added yet: walk straight");
+    assert(terrain.addPendingNavigation(Duration.zero) == 0, "at least one is added, whatever the budget");
+    assert(terrain.pathBetween(from, dest).length == 2, "added: the way across");
 }
