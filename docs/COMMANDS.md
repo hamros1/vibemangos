@@ -59,7 +59,7 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 * Arguments are read strictly: a number written wrong ("12abc", "abc") or a missing argument shows
   the command's help, where ArcEmu's C parsing read "12abc" as 12 and "abc" as 0 and went on.
 
-## Working (198)
+## Working (199)
 
 | Command | Letter | Help |
 |---|---|---|
@@ -170,6 +170,7 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 | `.npc return` | `n` | .npc return - Returns ncp to spawnpoint. |
 | `.npc spawn` | `n` | .npc spawn - Spawns npc of entry <id> |
 | `.npc respawn` | `n` | .respawn - Respawns a dead npc from it's corpse. |
+| `.npc select` | `n` | .npc select - selects npc closest |
 | `.cheat status` | `m` | Shows active cheats. |
 | `.cheat taxi` | `m` | Enables all taxi nodes. |
 | `.cheat cooldown` | `m` | Enables no cooldown cheat. |
@@ -262,7 +263,7 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 | `.logcomment` | `1` | Adds a comment to the GM log for the admins to read. |
 | `.removesickness` | `m` | Removes ressurrection sickness from the target |
 
-## Not yet implemented (100)
+## Not yet implemented (99)
 
 These answer "Not yet implemented.", as ArcEmu's `HandleNYICommand` does: their systems (AI agents
 and waypoint editing, quest editing, guilds, pets, honor, battlegrounds and arenas, GM
@@ -328,7 +329,6 @@ tickets, game object and creature spawning, GM invisibility, flying) do not exis
 | `.npc spawnlink` | `n` | .spawnlink sqlentry |
 | `.npc possess` | `n` | .npc possess - Possess an npc (mind control) |
 | `.npc unpossess` | `n` | .npc unpossess - Unposses any currently possessed npc. |
-| `.npc select` | `n` | .npc select - selects npc closest |
 | `.npc npcfollow` | `m` | Sets npc to follow you |
 | `.npc nullfollow` | `m` | Sets npc to not follow anything |
 | `.npc formationlink1` | `m` | Sets formation master. |

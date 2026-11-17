@@ -51,6 +51,38 @@ private:
         return selectedGo ? cast(GameObject) map.findObject(selectedGo) : null;
     }
 
+    /// ArcEmu's `.npc select`: the creature nearest on the ground among those in sight becomes the selection.
+    bool handleNpcSelectCommand()
+    {
+        import dmangos.world.creature : Creature;
+        import dmangos.world.updatefields : UNIT_FIELD_TARGET;
+
+        const me = player.position;
+        Creature un;
+        float dist = 999999.0f;
+        foreach (o; map.objectsNear(me, context.config.visibilityDistance))
+            if (auto c = cast(Creature) o)
+                if (map.seesObject(player.guid, c.guid))
+                {
+                    const p = c.position;
+                    const dist2 = (p.x - me.x) ^^ 2 + (p.y - me.y) ^^ 2;
+                    if (dist2 < dist)
+                    {
+                        un = c;
+                        dist = dist2;
+                    }
+                }
+        if (un is null)
+        {
+            systemMessage("No inrange creatures found.");
+            return true;
+        }
+        player.values.set!UNIT_FIELD_TARGET(un.guid);
+        flushPlayerChanges();
+        systemMessage(format!"Set selection to %s (%s)"(un.guid, un.template_ is null ? "Unknown" : un.template_.name));
+        return true;
+    }
+
     bool handleGOSelect(string arg = null)
     {
         import std.math : sqrt;
@@ -761,6 +793,15 @@ unittest
     // Nothing selected.
     gm.say(".kill");
     assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTRED ~ "A valid selection is required.|r"]);
+
+    // `.npc select`: the nearest creature.
+    gm.say(".npc select");
+    {
+        const said = systemMessages(gm.read());
+        const chosen = (cast(Player) gm.session.character).values.get!UNIT_FIELD_TARGET;
+        assert(chosen != 0 && cast(Creature) map.findObject(chosen) !is null);
+        assert(said.length == 1 && said[0].canFind("Set selection to "));
+    }
 
     // A creature: Death Touch.
     gm.write(Opcode.CMSG_SET_SELECTION, ClientGuid(keeper.guid));
