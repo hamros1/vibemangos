@@ -60,6 +60,12 @@ struct ClusterConfig
      * over when it has lost the coordinator (docs/CLUSTER.md).
      */
     @JsonName("standby") bool standby;
+    /**
+     * A gateway (docs/SERVICES.md, stage 6): it holds clients' connections and simulates nothing. The
+     * coordinator gives it no regions and no services; its players are simulated where they are, and
+     * new clients are sent to the gateways when there are any. Not the coordinator, not the standby.
+     */
+    @JsonName("gateway") bool gateway;
 
     /// Whether the server is part of a cluster.
     @property bool enabled() const pure nothrow @nogc @safe

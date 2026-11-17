@@ -24,7 +24,7 @@ import dmangos.cluster.regions : Region;
 import dmangos.serialization : deserialize, LengthPrefix, serialize;
 
 /// Changes whenever a message changes; nodes speaking another version are turned away.
-enum ushort protocolVersion = 28; // 28: cluster services' calls and replies
+enum ushort protocolVersion = 29; // 29: a hello says whether the node is a gateway
 
 /// Size of a frame header.
 enum frameHeaderSize = 16;
@@ -118,6 +118,7 @@ struct Hello
     @LengthPrefix!ubyte string clientAddress; /// "host:port" clients connect to (phase 3b)
     bool coordinator;       /// whether the sender is the coordinator
     ushort expected;        /// the node the dialer meant to reach; 0 for the coordinator
+    bool gateway;           /// a gateway (docs/SERVICES.md): clients' connections, no regions or services
 }
 
 /// The reply to a hello that is refused; the link closes after it.

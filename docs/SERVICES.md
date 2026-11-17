@@ -276,7 +276,17 @@ groups, not per tick per entity.
    * Live: two scripted clients simulated on nodes 1 and 3 talked in one channel, hosted on a third
      node's choice.
 5. **The battleground queue**, placed by the table: the first new service, with battlegrounds.
-6. **The gateway role:** a node with clients and no regions.
+6. **The gateway role: done (2026-11-17).** `cluster.gateway` is a node that holds clients'
+   connections and simulates nothing.
+   * Its hello says so (protocol 29), so the coordinator, and a standby that takes over, never deal it
+     a region or a service.
+   * A player logging in through it moves at once to the owner of its region, which the home node's
+     relay already does.
+   * The realm list sends new clients to the least busy gateway whenever there are any.
+   * The coordinator and the standby cannot be gateways.
+   * Tests: in the in-memory cluster, the gateway owns nothing and clients are steered to it.
+   * Live (`GATEWAY=1 cluster-start.sh`, node 4 on port 8088): a scripted client logged in through
+     the realm list, landed on the gateway, was simulated by node 1, and talked in a channel.
 7. **Monitoring:**
    * services and their placement in the metrics line and in `cluster.describe`;
    * calls a second, local and remote;

@@ -517,6 +517,8 @@ associative array, and keep replicas that are not walking out of the tick.
   only when the owner says it has saved. If the owner is lost, the home disconnects the client and
   releases the account after the owner's lease; if the home is lost, the owner logs the player out,
   saved (before the coordinator frees the account, at the home's lease).
+* **Gateways** (docs/SERVICES.md, stage 6): with `cluster.gateway`, a node is only a home. It holds
+  connections, owns no regions, and is where the realm list sends clients.
 * **Later: surviving the owner's loss.** The home could take its player back (from the last save,
   after the lost owner's lease) instead of disconnecting the client. It is worth having only together
   with a gateway that holds every client's connection apart from the simulating nodes, and with much

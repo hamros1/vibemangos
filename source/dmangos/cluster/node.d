@@ -24,6 +24,7 @@ import core.time : Duration, MonoTime, msecs, seconds;
 import dmangos.cluster.config : ClusterConfig, splitAddress;
 import dmangos.cluster.link;
 import dmangos.cluster.ownership;
+import std.exception : enforce;
 import dmangos.cluster.protocol;
 import dmangos.cluster.regions;
 import dmangos.cluster.sessions;
@@ -280,10 +281,19 @@ final class ClusterNode : LinkOwner
      */
     string leastBusyClientAddress()
     {
-        string best = config.clientAddress;
-        uint fewest = load is null ? 0 : load().players;
+        // Where there are gateways (docs/SERVICES.md), clients go to one of them, the least busy.
+        bool anyGateway = config.gateway;
         foreach (link; links)
-            if (link.peer.clientAddress.length && link.peerLoad.players < fewest)
+            anyGateway = anyGateway || link.peer.gateway;
+        string best;
+        uint fewest = uint.max;
+        if (!anyGateway || config.gateway)
+        {
+            best = config.clientAddress;
+            fewest = load is null ? 0 : load().players;
+        }
+        foreach (link; links)
+            if (link.peer.clientAddress.length && (!anyGateway || link.peer.gateway) && link.peerLoad.players < fewest)
             {
                 fewest = link.peerLoad.players;
                 best = link.peer.clientAddress;
@@ -322,7 +332,9 @@ final class ClusterNode : LinkOwner
         this.load = load;
         coordinatorNow = config.isCoordinator;
         own = Hello(protocolVersion, config.name, id, incarnation, config.advertised, config.clientAddress,
-            config.isCoordinator, 0);
+            config.isCoordinator, 0, config.gateway);
+        enforce(!config.gateway || (!config.isCoordinator && !config.standby),
+            "cluster: a gateway can be neither the coordinator nor the standby");
         const lease = config.leaseMs.msecs;
         regions_ = new RegionView(id, isCoordinator, lease);
         if (config.standby && !isCoordinator)
@@ -536,7 +548,8 @@ final class ClusterNode : LinkOwner
             highestIncarnation[peer] = link.peer.incarnation;
             setMember(ViewMember(peer, link.peer.incarnation, link.peer.address, false));
             link.send(RegionTable(incarnation, authority.version_, authority.regions.dup));
-            authority.joined(peer);
+            if (!link.peer.gateway) // a gateway simulates nothing: no regions, no services
+                authority.joined(peer);
         }
     }
 
@@ -578,7 +591,8 @@ final class ClusterNode : LinkOwner
         {
             highestIncarnation[peer] = link.peer.incarnation;
             setMember(ViewMember(peer, link.peer.incarnation, link.peer.address, false));
-            live ~= peer;
+            if (!link.peer.gateway)
+                live ~= peer;
             takeoverPending[peer] = true;
         }
         const lease = config.leaseMs.msecs;
@@ -1231,7 +1245,7 @@ version (unittest)
         Wire[] wires;
 
         ClusterNode add(ushort id, ushort port, ulong incarnation = 1, CoordinatorSetup setup = CoordinatorSetup.init,
-            bool standby = false)
+            bool standby = false, bool gateway = false)
         {
             import std.format : format;
 
@@ -1240,6 +1254,8 @@ version (unittest)
             c.listenPort = port;
             c.coordinator = "127.0.0.1:9000";
             c.standby = standby;
+            c.gateway = gateway;
+            c.clientAddress = format!"127.0.0.1:%s"(8000 + id);
             ClusterNode node;
             node = new ClusterNode(c, incarnation, () => now, (h, p, s) => dial(node, h, p, s), null, setup);
             listening[c.advertised] = node;
@@ -1767,4 +1783,26 @@ unittest
     }
     const now = hosts(coordinator, b, c);
     assert(now.length == 1 && now[0] != first[0], "moved off the lost node");
+}
+
+// A gateway (docs/SERVICES.md, stage 6): no regions are dealt to it, and clients are sent to it.
+unittest
+{
+    import dmangos.world.grid : cellKey;
+
+    CellCosts costs;
+    foreach (x; -40 .. 40)
+        costs[0][cellKey(x, x % 7)] = 10;
+    auto regions = partition([0u], costs, 4);
+    ulong[uint] cost;
+    foreach (r; regions)
+        cost[r.id] = costOf(costs, r.map, r.rect);
+    auto cluster = new TestCluster;
+    auto coordinator = cluster.add(1, 9000, 1, CoordinatorSetup(regions.dup, cost.dup, new TestCounters));
+    auto member = cluster.add(2, 9001);
+    auto gateway = cluster.add(3, 9002, 1, CoordinatorSetup.init, false, true);
+    cluster.run(8000, coordinator, member, gateway);
+    assert(gateway.regions.ownedRegions.length == 0, "a gateway simulates nothing");
+    assert(coordinator.regions.ownedRegions.length + member.regions.ownedRegions.length == 4);
+    assert(coordinator.leastBusyClientAddress() == "127.0.0.1:8003", "clients go to the gateway");
 }
