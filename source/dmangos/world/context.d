@@ -14,7 +14,7 @@ import dmangos.cluster.ownership : IdCounters, IdKind, IdPool;
 import dmangos.cluster.protocol : PresenceEntry;
 import dmangos.world.whisper : WhisperFrom;
 import dmangos.cluster.regions : Region;
-import dmangos.world.creature : Creature, CreatureSpawn, Npc, NpcStandIn;
+import dmangos.world.creature : Creature, CreatureSpawn, Npc, NpcStandIn, TempSpawn, TempSpawnType;
 import dmangos.world.gameobject : GameObject, GameObjectSpawn;
 import dmangos.world.auctionhouse;
 import dmangos.world.database : MailRecord;
@@ -870,6 +870,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     /// `Creature::SaveRespawnTime` (`SaveRespawnTimeImmediately`): a creature died; it comes back when it says.
     void creatureDied(Creature creature)
     {
+        if (creature.summon.type != TempSpawnType.none)
+            return; // a summon never comes back
         respawnAt[creature.spawn.guid] = creature.respawnAt;
         database.saveCreatureRespawn(creature.spawn.guid, creature.respawnAt);
     }
@@ -877,11 +879,74 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     /// A corpse went; one that died elsewhere (handed over dead: phase 4) comes back a respawn time from now.
     private void corpseRemoved(Creature creature)
     {
+        if (creature.summon.type != TempSpawnType.none)
+            return;
         if (creature.spawn.guid !in respawnAt)
         {
             respawnAt[creature.spawn.guid] = unixTime + creature.spawn.respawnSeconds;
             database.saveCreatureRespawn(creature.spawn.guid, respawnAt[creature.spawn.guid]);
         }
+    }
+
+    private uint summonsMade; // the summons' guid counters: above every spawn's, 65536 for each node
+
+    /**
+     * `WorldObject::SummonCreature`: a creature of `entry` at `at` on `world` (near `summoner` when
+     * `at` is all zeros), not saved and never respawned, gone as `type` says after `durationMs`.
+     */
+    Creature summonCreature(CombatWorld world, uint entry, Position at, TempSpawnType type, uint durationMs,
+        ulong summoner)
+    {
+        import std.math : cos, sin, PI;
+        import std.random : uniform01;
+
+        auto map = cast(Map) world;
+        if (map is null || entry !in data.creatureTemplates)
+            return null;
+        if (at.x == 0 && at.y == 0 && at.z == 0)
+        {
+            // `GetClosePoint`: a couple of yards from the summoner, on the ground.
+            Position from;
+            if (auto who = map.find(summoner))
+                from = who.character.position;
+            else if (auto o = map.findObject(summoner))
+                from = o.position;
+            else
+                return null;
+            const angle = uniform01(spawnRandom) * 2 * PI;
+            at = Position(from.x + 2 * cos(angle), from.y + 2 * sin(angle), from.z, from.orientation);
+            const ground = map.groundHeight(at.x, at.y, from.z + 2, false);
+            if (ground > -100_000)
+                at.z = ground;
+        }
+        const counter = 0x00C0_0000 + (nodeId % 64) * 0x1_0000 + (++summonsMade & 0xFFFF);
+        CreatureSpawn spawn = {guid: counter, entry: entry, map: map.id, x: at.x, y: at.y, z: at.z,
+            orientation: at.orientation};
+        auto creature = makeCreature(&spawn);
+        if (creature is null)
+            return null;
+        creature.summon = TempSpawn(type, durationMs, durationMs, summoner);
+        map.addObject(creature);
+        map.wake(creature.guid);
+        return creature;
+    }
+
+    /// See `CreatureLore.summon`.
+    Creature summon(CombatWorld world, uint entry, Position at, uint type, uint durationMs, ulong summoner)
+    {
+        return summonCreature(world, entry, at, cast(TempSpawnType) type, durationMs, summoner);
+    }
+
+    /// See `CreatureLore.summonSpot`.
+    bool summonSpot(uint id, out Position at, out uint seconds)
+    {
+        if (const spot = id in data.eventAi.summons)
+        {
+            at = spot.position;
+            seconds = spot.seconds;
+            return true;
+        }
+        return false;
     }
 
     /// See `CreatureLore.startRelay`.

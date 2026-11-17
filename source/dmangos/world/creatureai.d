@@ -105,6 +105,13 @@ interface CreatureLore
     /// `ListenRange.Say`, `.Yell`, `.TextEmote` in yards.
     float listenRange(ChatType type);
 
+    /// `SummonCreature`: a creature of `entry` at `at` (all zeros: near `summoner`), going as `type`
+    /// (`TempSpawnType`) says after `durationMs`; null if it could not be made.
+    Creature summon(CombatWorld world, uint entry, Position at, uint type, uint durationMs, ulong summoner);
+
+    /// A `creature_ai_summons` row: where, and for how long; false if there is none.
+    bool summonSpot(uint id, out Position at, out uint seconds);
+
     /// `ScriptsStart(SCRIPT_TYPE_RELAY)` on `world` (negative `id`: one of the relay group -`id`).
     void startRelay(int id, CombatWorld world, ulong source, ulong target);
 }

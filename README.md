@@ -264,9 +264,9 @@ What works now:
     player as source and target, or a buddy found near (by entry or spawn), turned about by the
     step's flags, behind its condition: talking (a `broadcast_text`, one of several, or one of a
     group), emotes, a quest's place explored (or failed when too far), kill credit, spawning a game
-    object for a while, taking an aura off, casting a spell, despawning, a faction, stand states,
+    object for a while, summoning a creature, taking an aura off, casting a spell, despawning, a faction, stand states,
     NPC flags, other flags, facing someone, and stopping the script when a creature is (or is not)
-    near. Not yet: moving, summoning, doors, waypoint scripts (`dbscripts_on_creature_movement`),
+    near. Not yet: moving, doors, waypoint scripts (`dbscripts_on_creature_movement`),
     death, event and spell scripts.
   * **Creature scripts** (CMaNGOS's EventAI, `creature_ai_scripts`, for each creature entry or
     spawn): their events (timers in and out of combat, health, mana and the victim's health between
@@ -279,7 +279,10 @@ What works now:
     off, ranged mode (keeping a distance to cast, coming in to melee when out of mana), stand states,
     unit flags, taking auras off, despawning, not dying of damage, react states, factions, random
     phases, quest events and kill credit for the players fighting it, relay scripts (the database
-    scripts below), evading, attacking. A creature casts as
+    scripts below), summoning creatures (beside it or at a `creature_ai_summons` spot, attacking
+    its target), evading, attacking. Summoned creatures are never saved and never come back: they
+    go as CMaNGOS's `TempSpawnType` says (after their time, out of combat only, when they die, or
+    when their corpse goes). A creature casts as
     CMaNGOS's `DoCastSpellIfCan` allows (not while casting another, in range, with the mana): cast
     times stand it still facing its target (`SMSG_SPELL_START`, then `SMSG_SPELL_GO`); a spell on the
     next swing waits for the swing. Its spells do school damage (a magic one resisted by the level

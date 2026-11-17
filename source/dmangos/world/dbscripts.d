@@ -56,6 +56,7 @@ enum ScriptCommand : uint
     setFaction = 22,
     standState = 28,
     modifyNpcFlags = 29,
+    tempSpawnCreature = 10,
     terminateScript = 31,
     setFacing = 36,
     startRelayScript = 45,
@@ -619,6 +620,17 @@ mixin template DbScriptRunner()
         case ScriptCommand.respawnGameObject:
             scriptSpawnGameObject(map, step.datalong, source.go, step.datalong2);
             break;
+        case ScriptCommand.tempSpawnCreature:
+        {
+            import dmangos.world.creature : TempSpawnType;
+
+            if (!source.exists)
+                break;
+            // Where the step says (all zeros: near the source), for its time out of combat, or until it dies.
+            summonCreature(map, step.datalong, Position(step.x, step.y, step.z, step.o),
+                step.datalong2 ? TempSpawnType.timedOutOfCombatOrDead : TempSpawnType.dead, step.datalong2, source.guid);
+            break;
+        }
         case ScriptCommand.removeAura:
             if (creature !is null && creature.ai !is null)
                 creature.ai.scriptRemoveAura(creature.guid, step.datalong);
@@ -807,4 +819,26 @@ unittest
     assert(me.questStatus[credit].status == QuestState.complete);
     context.updateScripts(0);
     assert(keeper.values.getByte!UNIT_FIELD_BYTES_1(0) == 1, "sitting, by the relay script");
+
+    // A summon (ACTION_T_SPAWN for 3 seconds): beside it, and gone after its time out of combat, for good.
+    import core.time : msecs;
+    import dmangos.world.creature : TempSpawnType;
+
+    EventAiEvent called = {id: 2, type: EventType.receiveEmote, chance: 100, params: [wave + 1, 0, 0, 0, 0, 0]};
+    called.actions[0] = EventAiAction(ActionType.spawn, [creatureTrainer, EventTarget.self, 3000]);
+    auto summoning = [called];
+    keeper.ai.setScript(summoning, context.data.eventAi);
+    const before = map.creaturesNear(keeper.position, 10).length;
+    keeper.ai.receivedEmote(me.guid, wave + 1, map);
+    Creature summoned;
+    foreach (near; map.creaturesNear(keeper.position, 10))
+        if (near.summon.type != TempSpawnType.none)
+            summoned = near;
+    assert(summoned !is null && summoned.template_.entry == creatureTrainer && summoned.summon.summoner == keeper.guid);
+    const guid = summoned.guid;
+    map.update(2000.msecs);
+    assert(map.findObject(guid) !is null);
+    map.update(1100.msecs);
+    assert(map.findObject(guid) is null, "gone after its time");
+    assert(map.creaturesNear(keeper.position, 10).length == before);
 }

@@ -18,7 +18,7 @@ import dmangos.world.creatureai : CombatWorld, CreatureAI;
 import dmangos.world.clientdata : FactionTemplateEntry;
 import dmangos.world.defines : UnitFlags;
 
-import std.algorithm.comparison : max, min;
+import std.algorithm.comparison : among, max, min;
 import std.random : Random, uniform;
 
 import dmangos.world.clientdata : ClientData;
@@ -119,6 +119,67 @@ enum creatureTemplateQuery = "SELECT Entry, Name, IFNULL(SubName, ''), MinLevel,
     ~ "Armor, MeleeAttackPower, RangedAttackPower, DamageSchool, Detection, Pursuit, Leash, ExperienceMultiplier, "
     ~ "LootId, MinLootGold, MaxLootGold, SkinningLootId, PickpocketLootId, StaticFlags1, CallForHelp "
     ~ "FROM creature_template";
+
+/// `TempSpawnType` (plus `none`: not a summon): when a summoned creature goes.
+enum TempSpawnType : ubyte
+{
+    manual = 0,              /// when unsummoned
+    dead = 1,                /// when its corpse goes
+    corpse = 2,              /// as soon as it dies
+    corpseTimed = 3,         /// its time after it dies
+    timed = 4,               /// after its time
+    timedOutOfCombat = 5,    /// after its time out of combat
+    timedOrDead = 6,         /// after its time, or when its corpse goes
+    timedOrCorpse = 7,       /// after its time, or as soon as it dies
+    timedOutOfCombatOrDead = 8,
+    timedOutOfCombatOrCorpse = 9,
+    none = 255,
+}
+
+/// A summoned creature's state (`TemporarySpawn`).
+struct TempSpawn
+{
+    TempSpawnType type = TempSpawnType.none;
+    int timer;          /// milliseconds left
+    uint duration;      /// the whole time, for the timers that start again in combat
+    ulong summoner;
+
+    /// Whether a timer runs while it is alive (it must keep ticking).
+    @property bool timed() const pure nothrow @nogc @safe
+    {
+        with (TempSpawnType) return type.among(timed, timedOutOfCombat, timedOrDead, timedOrCorpse,
+            timedOutOfCombatOrDead, timedOutOfCombatOrCorpse) != 0;
+    }
+
+    /// `TemporarySpawn::Update`: `diff` milliseconds on; whether it goes now.
+    bool update(Creature creature, int diff)
+    {
+        with (TempSpawnType) final switch (type)
+        {
+        case none, manual, dead:
+            return false; // a dead one goes with its corpse
+        case corpse:
+            return !creature.alive;
+        case corpseTimed:
+            return !creature.alive && (timer -= diff) <= 0;
+        case timed:
+            return (timer -= diff) <= 0;
+        case timedOrDead:
+            return creature.alive && (timer -= diff) <= 0;
+        case timedOrCorpse:
+            return !creature.alive || (timer -= diff) <= 0;
+        case timedOutOfCombat, timedOutOfCombatOrDead, timedOutOfCombatOrCorpse:
+            if (!creature.alive)
+                return type == timedOutOfCombatOrCorpse;
+            if (creature.ai !is null && creature.ai.inCombat)
+            {
+                timer = duration; // the time counts out of combat only
+                return false;
+            }
+            return (timer -= diff) <= 0;
+        }
+    }
+}
 
 /// A `creature` row: one spawn.
 struct CreatureSpawn
@@ -520,6 +581,9 @@ final class Creature : Moving, Replicable, Npc, PerViewer
     /// The players attacking it (`Unit::m_attackers`), by guid.
     bool[ulong] attackers;
 
+    /// A temporary summon (`TemporarySpawn`): how it goes (`TempSpawnType`), its time, who summoned it.
+    TempSpawn summon;
+
     /// Dead: milliseconds until its corpse goes (`m_corpseExpirationTime`); and when it comes back (Unix time).
     int corpseTimer;
     long respawnAt; /// ditto
@@ -719,6 +783,12 @@ final class Creature : Moving, Replicable, Npc, PerViewer
             motionStarted = true;
             generator.initialize(this, world);
         }
+        if (summon.type != TempSpawnType.none && summon.update(this, diff))
+        {
+            if (auto combat = cast(CombatWorld) world)
+                combat.corpseExpired(this); // `UnSummon`
+            return;
+        }
         if (!alive)
         {
             // `Creature::Update` for a corpse: rolls on its loot end; when its time is up it goes (`RemoveCorpse`).
@@ -757,7 +827,7 @@ final class Creature : Moving, Replicable, Npc, PerViewer
         import dmangos.world.motion : IdleMovement;
 
         return motionStarted && spline.finalized && cast(const IdleMovement) generator !is null
-            && (ai is null || !ai.active) && alive && auras.list.length == 0;
+            && (ai is null || !ai.active) && alive && auras.list.length == 0 && !summon.timed;
     }
 
     /// See `Replicable.motion`: living, with its speeds and the walk under way.

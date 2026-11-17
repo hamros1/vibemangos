@@ -47,6 +47,15 @@ enum EventType : ubyte
     missingAura = 27,
 }
 
+/// A `creature_ai_summons` row: where a summon stands, and for how long (seconds; 0: until out of combat).
+struct SummonSpot
+{
+    import dmangos.world.movement : Position;
+
+    Position position;
+    uint seconds;
+}
+
 /// `EventAI_ActionType`, the ones handled.
 enum ActionType : ubyte
 {
@@ -57,6 +66,7 @@ enum ActionType : ubyte
     emote = 5,
     randomEmote = 10,
     castSpell = 11,
+    spawn = 12,
     questEvent = 15,
     setUnitFlag = 18,
     removeUnitFlag = 19,
@@ -70,6 +80,7 @@ enum ActionType : ubyte
     removeAurasFromSpell = 28,
     randomPhase = 30,
     randomPhaseRange = 31,
+    summonId = 32,
     killedMonster = 33,
     callForHelp = 39,
     forceDespawn = 41,
@@ -134,6 +145,7 @@ final class EventAiData
     EventAiEvent[][uint] byCreature;    /// by creature entry
     EventAiEvent[][uint] bySpawn;       /// by spawn guid (a negative `creature_id`)
     uint[][uint] textGroups;          /// `dbscript_random_templates` of type 0: id -> broadcast text ids
+    SummonSpot[uint] summons;         /// `creature_ai_summons`
 
     /// Reads `creature_ai_scripts` and the text groups of `dbscript_random_templates`.
     static EventAiData load(MySqlConnection world)
@@ -168,6 +180,9 @@ final class EventAiData
                 data.bySpawn[cast(uint) -key] ~= e;
             ++count;
         }
+        foreach (row; world.query!"SELECT id, position_x, position_y, position_z, orientation, spawntimesecs FROM creature_ai_summons"())
+            data.summons[row.get!uint(0)] = SummonSpot(SummonSpot.Position(row.get!float(1), row.get!float(2), row.get!float(3),
+                row.get!float(4)), row.get!uint(5));
         foreach (row; world.query!"SELECT id, target_id FROM dbscript_random_templates WHERE type = 0"())
             data.textGroups[row.get!uint(0)] ~= cast(uint) row.get!int(1);
         info!"loaded %s creature scripts for %s creatures and %s spawns, %s random text groups"(count,
@@ -257,6 +272,10 @@ interface Scripted
 
     /// `KilledMonsterCredit` of `entry` for the player `player`.
     void scriptKillCredit(uint entry, ulong player);
+
+    /// `SummonCreature` of `entry`: near it, or at summon spot `spot` (`creature_ai_summons`); it
+    /// attacks `target` (0: none). False if it could not be summoned.
+    bool scriptSummon(uint entry, ulong target, uint durationMs, uint spot);
 
     /// The victim's health in percent and distance in yards; uint.max if it has none.
     uint victimHealthPercent();
@@ -581,6 +600,13 @@ final class EventAI
                 return false;
             phase = uniform!"[]"(a.params[0], a.params[1]);
             return true;
+        case ActionType.spawn, ActionType.summonId:
+        {
+            // ACTION_T_SPAWN (CreatureId, Target, Duration) or ACTION_T_SUMMON_ID (CreatureId, Target, SpawnId).
+            const target = a.params[1] == EventTarget.self ? 0 : targetOf(a.params[1], me, invoker);
+            return a.type == ActionType.spawn ? me.scriptSummon(a.params[0], target, a.params[2], 0)
+                : me.scriptSummon(a.params[0], target, 0, a.params[2]);
+        }
         case ActionType.despawnGuardians:
             return true; // creatures have no guardians here yet
         case ActionType.randomEmote:
@@ -794,6 +820,7 @@ unittest
         void scriptFaction(uint faction) {}
         void scriptQuestEvent(uint quest, ulong player, bool all) {}
         void scriptKillCredit(uint entry, ulong player) {}
+        bool scriptSummon(uint entry, ulong target, uint durationMs, uint spot) { return false; }
         uint victimHealthPercent() { return 100; }
         float victimDistance() { return 2; }
         ulong targetFor(int type, ulong invoker) { return type == EventTarget.self ? 1 : 2; }

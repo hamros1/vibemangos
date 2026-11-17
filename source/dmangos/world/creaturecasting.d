@@ -658,6 +658,32 @@ mixin template CreatureCasting()
             other.killCreditFrom(entry, me.guid);
     }
 
+    /// ditto: summoned for a while out of combat (`TEMPSPAWN_TIMED_OOC_OR_DEAD_DESPAWN`), or until
+    /// out of combat at all (`TEMPSPAWN_TIMED_OOC_DESPAWN` with no time).
+    bool scriptSummon(uint entry, ulong target, uint durationMs, uint spot)
+    {
+        import dmangos.world.creature : TempSpawnType;
+
+        if (lore is null)
+            return false;
+        Position at;
+        if (spot)
+        {
+            uint seconds;
+            if (!lore.summonSpot(spot, at, seconds))
+                return false;
+            durationMs = seconds * 1000;
+        }
+        auto summoned = lore.summon(world_, entry, at,
+            durationMs ? TempSpawnType.timedOutOfCombatOrDead : TempSpawnType.timedOutOfCombat, durationMs, me.guid);
+        if (summoned is null)
+            return false;
+        if (target)
+            if (auto victim = world_.combatant(target))
+                summoned.ai.attackStart(victim, world_);
+        return true;
+    }
+
     /// ditto
     void scriptReactState(uint state)
     {
