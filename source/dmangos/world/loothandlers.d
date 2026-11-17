@@ -550,8 +550,12 @@ unittest
     auto me = anduin.session.character;
     const money = me.money;
 
+    (cast() me).setSkill(162, 1, 5); // unarmed, as a new character has it
+    const unarmedBefore = me.skillValue(162)[0];
     killIt(anduin, victim, now);
     auto after = anduin.read();
+    // The swings taught it (`UpdateCombatSkills`): far below its maximum, a skill rises nearly every time.
+    assert(me.skillValue(162)[0] > unarmedBefore && 162 in db.skillRows.get(7, null), "unarmed skill gained and saved");
     assert(opcodesOf(after).canFind(Opcode.SMSG_LOG_XPGAIN));
     assert(me.values[PLAYER_XP] == 50, "a level 1 creature is worth 50 to level 1");
     assert(victim.loot !is null && victim.lootRecipient == me.guid);

@@ -228,7 +228,9 @@ What works now:
     none dies. Creatures have CMaNGOS's damage, attack power and armor (`creature_template` and
     `creature_template_classlevelstats`), players their crit (agility), dodge, parry and block
     chances and shield block. Players are in combat while a creature fights them and for 5 seconds
-    after a swing (no health regeneration or rage decay meanwhile).
+    after a swing (no health regeneration or rage decay meanwhile). Swings at creatures (critters
+    aside) raise the weapon skill, and theirs at the player its defense, as CMaNGOS's
+    `UpdateCombatSkills` rolls it (likelier the farther below the maximum; intellect helps weapons).
   * **Creatures fight** (CMaNGOS's base creature AI): attacked, they fight back; aggressive ones
     (not `CREATURE_EXTRA_FLAG_NO_AGGRO_ON_SIGHT`) attack a hostile player that comes within their
     aggro radius (`Detection`, a yard more for each level the player is below them) and in sight.

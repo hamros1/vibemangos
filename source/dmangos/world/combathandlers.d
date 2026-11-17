@@ -24,6 +24,7 @@ mixin template CombatHandlers()
     import dmangos.world.opcodes;
     import dmangos.world.packets : ClientGuid;
     import dmangos.world.relations : canAttack, canAttackNow, Relating;
+    import dmangos.world.playercreate : NewSkill;
     import dmangos.world.updatefields;
 
     // -----------------------------------------------------------------------
@@ -66,6 +67,8 @@ mixin template CombatHandlers()
             map.sendToWatchers(this, Opcode.SMSG_EMOTE, emote.data, true);
         }
         enterCombatFor(combatLinger);
+        if (auto creature = cast(Creature) map.findObject(attacker))
+            updateCombatSkills(creature, AttackType.mainHand, true);
         bool died;
         if (d.damage)
         {
@@ -335,6 +338,7 @@ private:
 
         if (d.targetState == VictimState.evades)
             return flushPlayerChanges();
+        updateCombatSkills(victim, type, false);
         // `DealMeleeDamage`: the creature fights back (`AttackedBy`), and what it took is threat.
         victim.ai.attackedBy(this, map);
         victim.ai.damageTaken(this, d.damage);
@@ -358,6 +362,44 @@ private:
         map.flushObjectChanges(victim);
         if (killed)
             creatureKilled(victim);
+    }
+
+    /**
+     * `ProcSkillsAndReactives` and `Player::UpdateCombatSkills`: a swing at a creature (not a critter),
+     * or one of its at the player, may raise the weapon skill or defense, more likely the farther it
+     * is below its maximum (intellect helps weapon skills); then `UpdateSkill`'s own roll.
+     */
+    void updateCombatSkills(Creature target, AttackType type, bool defence)
+    {
+        import std.algorithm.comparison : min;
+        import std.random : uniform, uniform01;
+        import dmangos.world.defines : Stat;
+
+        enum uint critter = 8, skillDefense = 95;
+        if (target.template_.creatureType == critter)
+            return;
+        const skillId = defence ? skillDefense : player.weaponSkillFor(type);
+        if (skillId == 0)
+            return;
+        const pair = player.skillValue(skillId);
+        const skill = pair[0], cap = pair[1];
+        const room = int(cap) - int(skill);
+        if (room <= 0 || skill == 0)
+            return;
+        float chance = float(room / 5 > 1 ? room / 5 : 1) / (cap / 5.0f) * 100;
+        if (!defence)
+            chance += chance * 0.02f * player.values.get!UNIT_FIELD_STAT0(Stat.intellect);
+        if (uniform01(map.random) * 100 >= chance)
+            return;
+        // `UpdateSkill`: the nearer the maximum, the less likely.
+        if (skill * 512 >= cap * uniform!"[]"(0, 512, map.random))
+            return;
+        const raised = cast(ushort) min(skill + 1, cap);
+        player.setSkill(skillId, raised, cap);
+        player.recordSkillRow(NewSkill(skillId, raised, cap));
+        context.database.saveSkill(player.data.guid, skillId, raised, cap);
+        player.refreshChances(context.data);
+        flushPlayerChanges();
     }
 
     /// `Unit::Kill` of a creature, as far as there is death yet: everyone attacking it stops.

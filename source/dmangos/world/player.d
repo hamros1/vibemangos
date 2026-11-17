@@ -952,6 +952,23 @@ private:
     }
 
     /// `GetWeaponForAttack`: the weapon (item class 2) in `slot`, if it is not broken; null otherwise.
+    /// `GetWeaponSkillIdForAttack`: the skill a swing of `type` uses (unarmed for an empty main hand); 0 if none.
+    public uint weaponSkillFor(AttackType type) const
+    {
+        import dmangos.world.inventory : itemSkill;
+
+        enum uint skillUnarmed = 162;
+        static immutable ubyte[3] slots = [equipmentSlotMainhand, equipmentSlotOffhand, equipmentSlotRanged];
+        const item = weaponFor(slots[type]);
+        return item !is null ? itemSkill(item.proto) : type == AttackType.mainHand ? skillUnarmed : 0;
+    }
+
+    /// The melee chances again, after a weapon or defense skill changed (`UpdateAllCritPercentages`, `UpdateDefenseBonusesMod`).
+    public void refreshChances(const WorldData world)
+    {
+        chances = meleeChances(chanceInputs(world));
+    }
+
     private const(Item) weaponFor(ubyte slot) const
     {
         enum uint itemClassWeapon = 2;

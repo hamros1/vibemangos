@@ -105,7 +105,7 @@ hearthstones, opening bags of loot) comes with milestone 6's spells and loot.
 The largest area. CMaNGOS references: `Spells/`, `Entities/Unit.cpp`, `Combat/`, `AI/`. In order:
 
 1. **Melee auto-attack: done** (`combat.d`, `combathandlers.d`, `relations.d`; README's "Melee").
-   Not yet: weapon and defense skill gains (`UpdateCombatSkills`), parry haste, PvP (no way to be
+   Weapon and defense skills rise with use. Not yet: `NO_SKILL_GAINS` creatures (`StaticFlags2`), parry haste, PvP (no way to be
    flagged yet), creatures another node of a cluster simulates (the player moves to their node
    anyway, except within a border's 25 yards).
 2. **Creatures fighting back: done** (`creatureai.d`; README's "Creatures fight"). Not yet: calling
