@@ -1027,6 +1027,16 @@ final class Map : CombatWorld
         return terrain is null || terrain.isInLineOfSight(a.x, a.y, a.z + eyes, b.x, b.y, b.z + eyes);
     }
 
+    /// See `CombatWorld.creaturesNear`.
+    Creature[] creaturesNear(Position center, float range)
+    {
+        Creature[] found;
+        foreach (object; objectsNear(center, range))
+            if (auto creature = cast(Creature) object)
+                found ~= creature;
+        return found;
+    }
+
     /// Told when a creature's corpse goes (`RemoveCorpse`), to bring it back later; null: never comes back.
     void delegate(Creature creature) onCorpseRemoved;
 

@@ -239,7 +239,10 @@ What works now:
     blows included), and give warriors rage. They give up (evade) when nobody is left to fight, or
     when their victim is 30 yards beyond where their `Pursuit` time last started; they run back to
     where the fight began, evading attacks, and get a third of their health back every 5 seconds out
-    of combat. Not yet: calling for help, EventAI's scripted spells and texts, fleeing.
+    of combat. Starting a fight, a creature calls for help (CMaNGOS's `CallAssistance`): allies
+    within 5 yards (or its `CallForHelp`) that would attack the enemy on sight join in a moment and a
+    half later; and a fighting creature that passes within 5 yards of an idle ally pulls it in.
+    Not yet: EventAI's scripted spells and texts, fleeing.
   * **Death** (CMaNGOS's `KillPlayer`, repop, reclaim and spirit healer): a player killed loses a tenth
     of its gear's durability and lies rooted until it releases its spirit (or six minutes pass, or it
     logs out). Released, it is a ghost at the nearest graveyard of its team (`game_graveyard_zone`:

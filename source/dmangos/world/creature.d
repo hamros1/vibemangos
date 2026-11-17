@@ -98,6 +98,7 @@ struct CreatureTemplate
     uint skinningLootId;        /// `SkinningLootId`
     uint pickpocketLootId;      /// `PickpocketLootId`
     uint staticFlags1;          /// `StaticFlags1`: `NO_XP` 0x2, `NO_LOOT` 0x4
+    uint callForHelp;           /// `CallForHelp`: how far it calls for help when it starts fighting; 0: 5 yards
 
     /// The four models, `ModelId1` .. `ModelId4`.
     @property uint[4] modelIds() const pure nothrow @nogc @safe
@@ -115,7 +116,7 @@ enum creatureTemplateQuery = "SELECT Entry, Name, IFNULL(SubName, ''), MinLevel,
     ~ "TrainerType, TrainerSpell, TrainerClass, TrainerRace, TrainerTemplateId, VendorTemplateId, "
     ~ "DamageMultiplier, DamageVariance, ArmorMultiplier, MinMeleeDmg, MaxMeleeDmg, MinRangedDmg, MaxRangedDmg, "
     ~ "Armor, MeleeAttackPower, RangedAttackPower, DamageSchool, Detection, Pursuit, Leash, ExperienceMultiplier, "
-    ~ "LootId, MinLootGold, MaxLootGold, SkinningLootId, PickpocketLootId, StaticFlags1 "
+    ~ "LootId, MinLootGold, MaxLootGold, SkinningLootId, PickpocketLootId, StaticFlags1, CallForHelp "
     ~ "FROM creature_template";
 
 /// A `creature` row: one spawn.

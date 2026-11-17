@@ -63,7 +63,18 @@ interface CombatWorld : MotionWorld
 
     /// A dead creature's corpse has lasted its time: it goes, and comes back when its respawn time is up.
     void corpseExpired(Creature creature);
+
+    /// The creatures within `range` yards of `center` here.
+    Creature[] creaturesNear(Position center, float range);
 }
+
+/// `CreatureFamilyAssistanceRadius`, `CreatureFamilyAssistanceDelay`, `CreatureCheckForHelpRadius` (mangosd.conf).
+enum float assistanceRadius = 5;
+enum int assistanceDelay = 1500; /// ditto
+enum float checkForHelpRadius = 5; /// ditto
+
+/// `CREATURE_EXTRA_FLAG_NO_CALL_ASSIST`: it does not call for help when it starts fighting.
+enum uint extraFlagNoCallAssist = 0x800;
 
 /// `ReactStates`
 enum ReactState : ubyte
@@ -92,6 +103,11 @@ final class CreatureAI
     {
         Creature me;
         float[ulong] threat;       // `ThreatManager`: who it fights, and how much each has done to it
+        bool calledAssistance;     // `m_AlreadyCallAssistance`: once a fight
+        Creature[] assistanceReceivers; // the allies called, until the call arrives
+        ulong assistanceEnemy;     // whom they are called against
+        int assistanceTimer;       // until then, in milliseconds
+        int helpCheckTimer;        // until it next pulls in allies it passes
         ulong victim;              // `m_attacking`: whom it attacks
         bool meleeAttacking;       // `UNIT_STAT_MELEE_ATTACKING`
         bool inCombat_;
@@ -237,6 +253,18 @@ final class CreatureAI
             updateCombatManager(world, diff);
             if (inCombat_)
                 updateAI(world);
+            if (inCombat_ && assistanceReceivers.length)
+            {
+                assistanceTimer -= diff;
+                if (assistanceTimer <= 0)
+                    deliverAssistance(world);
+            }
+            helpCheckTimer -= diff;
+            if (inCombat_ && helpCheckTimer <= 0)
+            {
+                helpCheckTimer = 1000;
+                checkForHelp(world);
+            }
         }
         if (!inCombat_)
             regenerate(world, diff);
@@ -311,9 +339,98 @@ private:
         world.sendToObservers(me.guid, Opcode.SMSG_AI_REACTION, reaction.data);
         addThreat(who, 0);
         if (!inCombat_)
+        {
             enterCombat(world);
+            helpCheckTimer = 2000; // `CreatureCheckForHelpAggroDelay`
+            callAssistance(who, world);
+        }
         world.flushCreature(me);
         world.wake(me.guid);
+    }
+
+    // -----------------------------------------------------------------------
+    // Help (`Creature::CallAssistance`, `UnitAI::CheckForHelp`)
+    // -----------------------------------------------------------------------
+
+    /**
+     * `Creature::CallAssistance` and `SendAIEventAround(AI_EVENT_CALL_ASSISTANCE)`: once a fight,
+     * the allies near it (`CallForHelp` yards, or 5) that may join are told, and join in after a
+     * moment and a half.
+     */
+    void callAssistance(Combatant enemy, CombatWorld world)
+    {
+        if (calledAssistance || !canCallForAssistance)
+            return;
+        calledAssistance = true;
+        const radius = me.template_.callForHelp ? float(me.template_.callForHelp) : assistanceRadius;
+        Creature[] receivers;
+        foreach (other; world.creaturesNear(me.position, radius))
+            if (other !is me && other.ai !is null && other.ai.canAssistAgainst(me, enemy)
+                && world.inLineOfSight(me.position, other.position))
+                receivers ~= other;
+        if (receivers.length == 0)
+            return;
+        assistanceReceivers = receivers;
+        assistanceEnemy = enemy.combatGuid;
+        assistanceTimer = assistanceDelay;
+    }
+
+    /// Whether it calls for help at all (`CanCallForAssistance`).
+    @property bool canCallForAssistance() const
+    {
+        return !(me.template_.extraFlags & extraFlagNoCallAssist);
+    }
+
+    /**
+     * `CanAssistInCombatAgainst` (outside dungeons): not fighting already, an ally of `who`
+     * (`CanAssist`: friendly to it), and one that would attack `enemy` on sight.
+     */
+    bool canAssistAgainst(const Creature who, Combatant enemy)
+    {
+        if (!me.alive || inCombat_ || evadingHome || react != ReactState.aggressive)
+            return false;
+        if (me.values.get!UNIT_FIELD_FLAGS & (UnitFlags.spawning | UnitFlags.uninteractible | UnitFlags.immuneToNpc))
+            return false;
+        if (who.values.get!UNIT_FIELD_FLAGS & UnitFlags.uninteractible)
+            return false;
+        const self = relating, ally = who.ai.relating;
+        if (reactionTo(self, ally, me.client) < ReputationRank.friendly)
+            return false;
+        const target = enemy.relating;
+        return enemy.fighter.alive && canAttack(self, target, me.client) && isEnemy(self, target, me.client);
+    }
+
+    /// The help called for arrives: `HandleAssistanceCall` for each ally still free to come.
+    void deliverAssistance(CombatWorld world)
+    {
+        auto enemy = world.combatant(assistanceEnemy);
+        auto receivers = assistanceReceivers;
+        assistanceReceivers = null;
+        if (enemy is null)
+            return;
+        foreach (other; receivers)
+            if (other.ai !is null && other.ai.canAssistAgainst(me, enemy))
+            {
+                other.ai.calledAssistance = true; // `SetNoCallAssistance`: it does not call others in turn
+                other.ai.attackStart(enemy, world);
+            }
+    }
+
+    /**
+     * `UnitAI::CheckForHelp` from the other side: a fighting creature that comes within 5 yards of an
+     * ally free to help (and seen by it) pulls it into the fight against its victim.
+     */
+    void checkForHelp(CombatWorld world)
+    {
+        if (!victim || !canCallForAssistance)
+            return;
+        auto enemy = world.combatant(victim);
+        if (enemy is null)
+            return;
+        foreach (other; world.creaturesNear(me.position, checkForHelpRadius))
+            if (other !is me && other.ai !is null && other.ai.canCallForAssistance
+                && other.ai.canAssistAgainst(me, enemy) && world.inLineOfSight(other.position, me.position))
+                other.ai.attackStart(enemy, world);
     }
 
     /// `SetInCombatWith`: combat starts where it stands; its way of moving waits until it is home.
@@ -493,6 +610,8 @@ private:
         victim = 0;
         inCombat_ = false;
         me.setLootRecipient(0, 0); // `TriggerEvadeEvents`: nobody's any more
+        calledAssistance = false;  // the next fight calls again
+        assistanceReceivers = null;
         me.values.set!UNIT_FIELD_TARGET(0UL);
         me.values.set!UNIT_FIELD_FLAGS(me.values.get!UNIT_FIELD_FLAGS & ~UnitFlags.inCombat);
         world.flushCreature(me);
@@ -647,4 +766,58 @@ unittest
     (cast(CreatureTemplate*) keeper.template_).detection = 20;
     jaina.write(Opcode.MSG_MOVE_HEARTBEAT, moveTo(Position(-8949.5f, -132, 83.53f, 1.97f)));
     assert(keeper.ai.inCombat && keeper.ai.currentVictim == jaina.session.character.guid, "attacked on sight");
+}
+
+/// Attacked, a creature calls its allies near it for help; they come a moment and a half later.
+unittest
+{
+    import core.time : MonoTime, msecs;
+    import dmangos.dbc : buildDbc;
+    import dmangos.world.clientdata : factionTemplateFormat;
+    import dmangos.world.creature : CreatureTemplate;
+    import dmangos.world.movement : Position;
+    import dmangos.world.objects : HighGuid, makeGuid;
+    import dmangos.world.packets : ClientGuid;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f, 1.97f));
+    anduin.read();
+    auto map = context.map(0);
+    auto keeper = cast(Creature) map.findObject(makeGuid(HighGuid.unit, creatureInnkeeper, innkeeperSpawn));
+    auto trainer = cast(Creature) map.findObject(makeGuid(HighGuid.unit, creatureTrainer, trainerSpawn));
+    assert(keeper !is null && trainer !is null);
+
+    // Both monsters of one faction, three yards apart; the trainer would not notice the player itself.
+    enum uint players = 1, monsters = 8;
+    const humans = anduin.session.character.values.get!UNIT_FIELD_FACTIONTEMPLATE;
+    context.client.factionTemplates = typeof(context.client.factionTemplates).parse(buildDbc(factionTemplateFormat,
+        [[humans, 1, 0, players | 2, 2, monsters, 0, 0, 0, 0, 0, 0, 0, 0], [14u, 14, 0, monsters, monsters, players, 0, 0,
+        0, 0, 0, 0, 0, 0]]), "FactionTemplate.dbc");
+    foreach (c; [keeper, trainer])
+    {
+        c.factionTemplate = context.client.factionTemplates.lookup(14);
+        c.values.set!UNIT_FIELD_MAXHEALTH(500u);
+        c.values.set!UNIT_FIELD_HEALTH(500u);
+    }
+    (cast(CreatureTemplate*) trainer.template_).detection = 0;
+    trainer.movement.position = Position(-8951, -127, 83.5f, 0);
+
+    void tick(int ms)
+    {
+        now += ms.msecs;
+        anduin.session.update(ms.msecs);
+        map.update(ms.msecs);
+    }
+
+    anduin.write(Opcode.CMSG_ATTACKSWING, ClientGuid(keeper.guid));
+    tick(50);
+    assert(keeper.ai.inCombat && !trainer.ai.inCombat, "the call takes a moment");
+    foreach (_; 0 .. 4)
+        tick(500);
+    assert(trainer.ai.inCombat && trainer.ai.currentVictim == anduin.session.character.guid, "the ally came");
 }

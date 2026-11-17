@@ -108,8 +108,9 @@ The largest area. CMaNGOS references: `Spells/`, `Entities/Unit.cpp`, `Combat/`,
    Weapon and defense skills rise with use. Not yet: `NO_SKILL_GAINS` creatures (`StaticFlags2`), parry haste, PvP (no way to be
    flagged yet), creatures another node of a cluster simulates (the player moves to their node
    anyway, except within a border's 25 yards).
-2. **Creatures fighting back: done** (`creatureai.d`; README's "Creatures fight"). Not yet: calling
-   for help and assisting, EventAI's spells and texts, fleeing, movement maps for chasing.
+2. **Creatures fighting back: done** (`creatureai.d`; README's "Creatures fight"), calling for help
+   included. Not yet: EventAI's spells and texts, fleeing (and fleeing for help), movement maps for
+   chasing, help from another node's creatures in a cluster.
 3. **Death: done** (`death.d`, `corpse.d`; README's "Death"). Not yet: resurrection sickness and the
    ghost's own auras (applied by hand until there are auras), ghosts hidden from the living, bones,
    battleground spirit guides, corpses of a player on another node of a cluster (a corpse is put on
