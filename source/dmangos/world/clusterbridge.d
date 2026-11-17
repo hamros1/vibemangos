@@ -9,7 +9,7 @@ import core.time : Duration, MonoTime, msecs;
 
 import dmangos.cluster.node : ClusterNode, PlayerHandler, ReplicationHandler;
 import dmangos.cluster.protocol : DeliverTo, InRange, InterestUpdate, PlayerMessage, PlayerMessageKind, Presence,
-    PresenceEntry, ChannelCommand, GmRemote, GroupCommand, RegionLoad, ToEveryone, GroupState, MemberStatsRequest, ReplicaCreate, ReplicaMove, ReplicaRemove, ReplicaValues, StockRelease, StockReply, StockRequest,
+    PresenceEntry, ChannelCommand, GmRemote, KillShare, GroupCommand, RegionLoad, ToEveryone, GroupState, MemberStatsRequest, ReplicaCreate, ReplicaMove, ReplicaRemove, ReplicaValues, StockRelease, StockReply, StockRequest,
     WhisperMessage;
 import dmangos.world.creature : Creature;
 import dmangos.world.group : Group, Groups;
@@ -313,6 +313,20 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
     void toEveryone(ushort peer, const ref ToEveryone m)
     {
         context.deliverToOwn(cast(Opcode) m.opcode, m.body_, cast(char) m.permission);
+    }
+
+    /// For the context: a group member's share of a kill here, for the node that simulates it.
+    void sendKillShare(ushort target, const ref KillShare share)
+    {
+        node.sendTo(target, share);
+    }
+
+    /// A share of another node's kill, for a group member here.
+    void killShare(ushort peer, const ref KillShare m)
+    {
+        if (auto session = cast(WorldSession) context.onlinePlayer(m.target))
+            if (session.character !is null)
+                session.killShared(m.entry, m.victim, m.level, m.xp, m.rate, m.reputationRate);
     }
 
     /// For the context: a GM command for a player another node simulates.

@@ -152,6 +152,7 @@ private int run(WorldConfig config, string configPath)
         context.requestMemberStats = &bridge.requestMemberStats;
         context.toEveryoneElsewhere = &bridge.toEveryoneElsewhere;
         context.gmRemote = &bridge.sendGmRemote;
+        context.killShareElsewhere = &bridge.sendKillShare;
         if (cluster.isCoordinator)
         {
             context.groups.changes = &bridge.groupChanged;

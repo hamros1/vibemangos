@@ -272,6 +272,8 @@ private:
     /// `Group::RewardGroupAtKill` or `Player::RewardSinglePlayerAtKill`: the experience.
     package void rewardAtKill(Creature victim)
     {
+        import dmangos.cluster.protocol : KillShare;
+        import dmangos.world.replication : Replica;
         import dmangos.world.session : WorldSession;
 
         // `SMSG_PARTYKILLLOG` is for the killing blow of another; the tapper's own is not shown.
@@ -283,49 +285,104 @@ private:
             killedMonster(victim.template_.entry, victim.guid);
             return giveXP(killGain(player.data.level, value), victim.guid, 1.0f);
         }
-        // `RewardGroupAtKill_helper`'s `KilledMonster`: every member near the kill.
-        foreach (ref slot; group.members)
-            if (auto member = cast(WorldSession) context.onlinePlayer(slot.guid))
-                if (member.atGroupRewardDistance(victim))
-                    member.killedMonster(victim.template_.entry, victim.guid);
-
-        // `GetDataForXPAtKill`: the living members near the kill.
-        WorldSession[] near;
-        uint sumLevel;
-        WorldSession highest, highestNotGray;
+        // The members near the kill: here, or (in a cluster) simulated by another node whose replica is here.
+        static struct Near
+        {
+            WorldSession here;  // null: on node `node`
+            ulong guid;
+            ushort node;
+            uint level;
+            bool alive;
+            float reputationRate = 0;
+            uint xp;
+            float rate = 1;
+        }
+        Near[] members;
         foreach (ref slot; group.members)
         {
-            auto member = cast(WorldSession) context.onlinePlayer(slot.guid);
-            if (member is null || !member.atGroupRewardDistance(victim) || member.player.deathState != DeathState.alive)
+            if (auto member = cast(WorldSession) context.onlinePlayer(slot.guid))
+            {
+                if (member.atGroupRewardDistance(victim))
+                    members ~= Near(member, slot.guid, 0, member.player.data.level,
+                        member.player.deathState == DeathState.alive);
+            }
+            else if (context.killShareElsewhere !is null)
+                if (auto replica = cast(Replica) map.findObject(slot.guid))
+                {
+                    const p = replica.position, v = victim.position;
+                    const dungeon_ = context.client.maps.lookup(map.id) !is null && context.client.maps.lookup(map.id).isDungeon;
+                    if (dungeon_ || (p.x - v.x) ^^ 2 + (p.y - v.y) ^^ 2 + (p.z - v.z) ^^ 2 <= groupXpDistance ^^ 2)
+                        members ~= Near(null, slot.guid, replica.owner, replica.fields().get!UNIT_FIELD_LEVEL,
+                            replica.fields().get!UNIT_FIELD_HEALTH > 0);
+                }
+        }
+        // `GetDataForXPAtKill`: the living members near the kill.
+        uint sumLevel, nearCount;
+        Near* highest, highestNotGray;
+        foreach (ref m; members)
+        {
+            if (!m.alive)
                 continue;
-            near ~= member;
-            const level = member.player.data.level;
-            sumLevel += level;
-            if (highest is null || highest.player.data.level < level)
-                highest = member;
-            if (!isTrivialLevelDifference(level, victim.values.get!UNIT_FIELD_LEVEL)
-                && (highestNotGray is null || highestNotGray.player.data.level < level))
-                highestNotGray = member;
+            ++nearCount;
+            sumLevel += m.level;
+            if (highest is null || highest.level < m.level)
+                highest = &m;
+            if (!isTrivialLevelDifference(m.level, victim.values.get!UNIT_FIELD_LEVEL)
+                && (highestNotGray is null || highestNotGray.level < m.level))
+                highestNotGray = &m;
         }
         // `RewardGroupAtKill_helper`'s reputation: a share each (all of it in a dungeon).
         const dungeon = context.client.maps.lookup(map.id) !is null && context.client.maps.lookup(map.id).isDungeon;
-        foreach (member; near)
-            member.rewardKillReputation(victim, dungeon ? 1.0f : 1.0f / near.length);
-        if (highest is null || highestNotGray is null)
-            return;
-        const xp = killGain(highestNotGray.player.data.level, value);
-        const rate = groupRate(cast(uint) near.length);
-        // `RewardGroupAtKill_helper`: each a share by its level; members above the highest not grey get none.
-        foreach (member; near)
+        foreach (ref m; members)
+            if (m.alive)
+                m.reputationRate = dungeon ? 1.0f : 1.0f / nearCount;
+        if (highest !is null && highestNotGray !is null)
         {
-            if (member.player.data.level > highestNotGray.player.data.level)
-                continue;
-            const share = rate * member.player.data.level / sumLevel;
-            const memberXp = highest is highestNotGray ? xp * share : xp * share * 0.5f + 1.0f;
             import std.math : round;
 
-            member.giveXP(cast(uint) round(memberXp), victim.guid, rate);
+            const xp = killGain(highestNotGray.level, value);
+            const rate = groupRate(nearCount);
+            // `RewardGroupAtKill_helper`: each a share by its level; members above the highest not grey get none.
+            foreach (ref m; members)
+            {
+                if (!m.alive || m.level > highestNotGray.level)
+                    continue;
+                const share = rate * m.level / sumLevel;
+                const memberXp = highest is highestNotGray ? xp * share : xp * share * 0.5f + 1.0f;
+                m.xp = cast(uint) round(memberXp);
+                m.rate = rate;
+            }
         }
+        const entry = victim.template_.entry, level = victim.values.get!UNIT_FIELD_LEVEL;
+        // `RewardGroupAtKill_helper`: `KilledMonster` for every member near the kill, its reputation, its experience.
+        foreach (ref m; members)
+        {
+            if (m.here !is null)
+            {
+                m.here.killedMonster(entry, victim.guid);
+                if (m.reputationRate > 0)
+                    m.here.rewardKillReputation(victim, m.reputationRate);
+                if (m.xp)
+                    m.here.giveXP(m.xp, victim.guid, m.rate);
+            }
+            else
+            {
+                KillShare share = {target: m.guid, victim: victim.guid, entry: entry, level: level, xp: m.xp,
+                    rate: m.rate, reputationRate: m.reputationRate};
+                context.killShareElsewhere(m.node, share);
+            }
+        }
+    }
+
+    /// Another node's kill, shared with this player in its group (`KillShare`).
+    package void killShared(uint entry, ulong victim, uint level, uint xp, float rate, float reputationRate)
+    {
+        killedMonster(entry, victim);
+        if (reputationRate > 0)
+            rewardKillReputation(entry, level, reputationRate);
+        if (xp)
+            giveXP(xp, victim, rate);
+        flushPlayerChanges();
     }
 
     /// What `XP::Gain` needs of `victim`.
@@ -769,4 +826,47 @@ unittest
     take.put(ubyte(0));
     anduin.write(Opcode.CMSG_AUTOSTORE_LOOT_ITEM, take.data);
     assert(me.inventory.count(itemSword) == 1 && me.inventory.count(itemJerky) == 0, "the sword, and no clam");
+}
+
+/**
+ * A group member another node simulates (its replica here, near the kill) gets its share: the kill
+ * is shared by the two, and that member's half goes to its node as a `KillShare`.
+ */
+unittest
+{
+    import std.algorithm.searching : canFind;
+    import dmangos.cluster.protocol : KillShare;
+    import dmangos.world.grid : cellKeyAt;
+    import dmangos.world.packets : ClientGroupName;
+    import dmangos.world.player : Player;
+    import dmangos.world.replication : encodePlayerState;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    ushort sentTo;
+    KillShare[] shares;
+    context.killShareElsewhere = (ushort node, const ref KillShare share) { sentTo = node; shares ~= share; };
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f, 1.97f));
+    auto varian = loggedIn(context, db, 9, "Varian", Position(-8945, -132, 83.5f));
+    anduin.write(Opcode.CMSG_GROUP_INVITE, ClientGroupName("varian"));
+    varian.write(Opcode.CMSG_GROUP_ACCEPT, null);
+    assert(context.groups.of(9) !is null);
+    // Varian goes to node 2 (leaves this node's world); its replica stays near.
+    auto map = context.map(0);
+    const state = encodePlayerState(cast(Player) varian.session.character, 0);
+    context.leaveWorldForMigration(varian.session, 2);
+    map.replicaCreated(2, cellKeyAt(-8945, -132), 9, state);
+    assert(context.onlinePlayer(9) is null && map.findObject(9) !is null);
+    anduin.read();
+
+    auto victim = lootableInnkeeper(context);
+    killIt(anduin, victim, now);
+    const me = anduin.session.character;
+    assert(shares.length == 1 && sentTo == 2, "Varian's share, to its node");
+    const share = shares[0];
+    assert(share.target == 9 && share.victim == victim.guid && share.entry == creatureInnkeeper);
+    assert(share.xp > 0 && share.xp == me.values[PLAYER_XP], "halves of a level 1 creature, alike");
+    assert(share.reputationRate == 0.5f);
 }

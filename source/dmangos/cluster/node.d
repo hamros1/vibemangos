@@ -67,6 +67,7 @@ interface ReplicationHandler
     void memberStatsRequest(ushort peer, const ref MemberStatsRequest message);
     void toEveryone(ushort peer, const ref ToEveryone message);
     void gmRemote(ushort peer, const ref GmRemote message);
+    void killShare(ushort peer, const ref KillShare message);
 }
 
 /// What a node does with messages about players simulated away from their client (phase 4b).
@@ -600,6 +601,15 @@ final class ClusterNode : LinkOwner
             {
                 const m = decode!StockRelease(payload);
                 replication.stockRelease(peer, m);
+            }
+            return;
+        }
+        if (type == MessageType.killShare)
+        {
+            if (replication !is null)
+            {
+                const m = decode!KillShare(payload);
+                replication.killShare(peer, m);
             }
             return;
         }

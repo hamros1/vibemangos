@@ -37,7 +37,7 @@ import dmangos.vmap.maptree : ModelCache;
 import dmangos.world.terrain : Terrain;
 import dmangos.world.group : GroupDirectory, Groups, memberStatus, MemberStatus;
 import dmangos.world.groupservice : groupCommand, GroupOp, GroupService;
-import dmangos.cluster.protocol : GmRemote, GroupCommand;
+import dmangos.cluster.protocol : GmRemote, GroupCommand, KillShare;
 import dmangos.world.map : Inhabitant, Map, MapObject, MapSettings;
 import dmangos.world.online : OnlinePlayer;
 import dmangos.world.playercreate : CreationSettings;
@@ -145,6 +145,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
     /// Sends a GM command to the node simulating its target; null standalone.
     void delegate(ushort node, const ref GmRemote command) gmRemote;
+
+    /// Sends a group member's share of a kill here to the node that simulates it; null when standalone.
+    void delegate(ushort node, const ref KillShare share) killShareElsewhere;
 
     /// Asks node `node` for its player `member`'s full stats, for `requester` here; null standalone.
     void delegate(ushort node, ulong requester, ulong member) requestMemberStats;

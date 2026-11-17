@@ -799,8 +799,12 @@ player goes there.
   "noticed by" as its arrival action, and there the creature itself decides and attacks. A node
   moves a player for the same creature once in 30 seconds, so a creature that does not attack after
   all (a react state only its node knows) does not send the player back and forth.
-* **Not yet:** a creature does not answer a call for help from another node's creature; group experience and loot rights count only
-  the members on the creature's node; a player's own spells at another node's player (there is no
+* **Group kills across nodes:** the members near a kill whose replicas are on the killer's node
+  (another node simulates them) count in the group's share as those here do; each one's part (the
+  kill credit, its experience, its reputation) goes to its node in a `KillShare` (protocol 17),
+  which gives it there.
+* **Not yet:** a creature does not answer a call for help from another node's creature; loot rights
+  count only the members on the creature's node; a player's own spells at another node's player (there is no
   PvP yet).
 * **Tested:** a unit test with two nodes in memory: node 1 holds a replica of node 2's innkeeper
   made an enemy; attacking it moves the player to node 2, where the attack begins and the creature

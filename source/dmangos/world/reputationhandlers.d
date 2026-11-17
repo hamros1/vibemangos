@@ -150,13 +150,18 @@ mixin template ReputationHandlers()
     /// `Player::RewardReputation(Creature*, float)`: what the kill does to the factions it concerns.
     package void rewardKillReputation(Creature victim, float rate)
     {
+        rewardKillReputation(victim.template_.entry, victim.values.get!UNIT_FIELD_LEVEL, rate);
+    }
+
+    /// ditto, by the creature's entry and level (a kill on another node)
+    package void rewardKillReputation(uint creatureEntry, uint level, float rate)
+    {
         import dmangos.world.clientdata : Team;
 
-        const onKill = victim.template_.entry in context.data.onKillReputation;
+        const onKill = creatureEntry in context.data.onKillReputation;
         if (onKill is null || player.reputation is null)
             return;
         const team = context.client.teamForRace(player.data.race);
-        const level = victim.values.get!UNIT_FIELD_LEVEL;
         foreach (i; 0 .. 2)
         {
             if (!onKill.faction[i] || (onKill.teamDependent && team != (i == 0 ? Team.alliance : Team.horde)))

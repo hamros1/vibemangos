@@ -24,7 +24,7 @@ import dmangos.cluster.regions : Region;
 import dmangos.serialization : deserialize, LengthPrefix, serialize;
 
 /// Changes whenever a message changes; nodes speaking another version are turned away.
-enum ushort protocolVersion = 16;
+enum ushort protocolVersion = 17;
 
 /// Size of a frame header.
 enum frameHeaderSize = 16;
@@ -72,6 +72,7 @@ enum MessageType : ushort
     regionLoads = 35,
     takeover = 36,
     takeoverAccepted = 37,
+    killShare = 38,
 }
 
 /// Why a hello was refused.
@@ -504,6 +505,23 @@ struct GmRemote
     uint map;
     float x, y, z, orientation;
     @LengthPrefix!uint string text;
+}
+
+/**
+ * A group member's share of a kill on the sender, for the receiver, which simulates that member
+ * (`Group::RewardGroupAtKill` across nodes): the kill credit, the experience and the reputation.
+ */
+struct KillShare
+{
+    enum type = MessageType.killShare;
+
+    ulong target;          /// the member
+    ulong victim;          /// the creature killed
+    uint entry;            /// its entry
+    uint level;            /// its level
+    uint xp;               /// the member's experience (0: none)
+    float rate;            /// the group rate the experience came with
+    float reputationRate;  /// the share of the kill's reputation (0: none)
 }
 
 /// To the coordinator: the sender is shutting down; its regions should go to the others first.
