@@ -45,6 +45,51 @@ private:
         return true;
     }
 
+    bool handleNpcComeCommand()
+    {
+        auto creature = getSelectedCreature(true);
+        if (creature is null)
+            return true;
+        npcWalkTo(creature, player.position);
+        gmLog(format!"used npc come command on %s, sqlid %u"(creature.template_.name, creature.spawn.guid));
+        return true;
+    }
+
+    bool handleNpcReturnCommand()
+    {
+        auto creature = getSelectedCreature(false);
+        if (creature is null)
+            return true;
+        // Its fight forgotten (`WipeHateList`), back to its spawn point.
+        if (creature.ai !is null && creature.ai.inCombat)
+        {
+            creature.ai.bind(map);
+            creature.ai.scriptEvade();
+        }
+        else
+        {
+            const s = creature.spawn;
+            npcWalkTo(creature, Position(s.x, s.y, s.z, s.orientation));
+        }
+        gmLog(format!"returned NPC %s, sqlid %u"(creature.template_.name, creature.spawn.guid));
+        return true;
+    }
+
+    /// `AIInterface::MoveTo`: a walk to `at`, then what it did before.
+    void npcWalkTo(Creature creature, Position at)
+    {
+        import dmangos.vmap.math : Vector3;
+        import dmangos.world.motion : PointMovement;
+
+        auto previous = creature.generator;
+        if (auto point = cast(PointMovement) previous)
+            previous = point.after;
+        auto move = new PointMovement(Vector3(at.x, at.y, at.z), at.orientation, true, previous);
+        creature.generator = move;
+        move.initialize(creature, map);
+        map.wake(creature.guid);
+    }
+
     bool handleResetReputationCommand()
     {
         auto plr = getSelectedChar(false);
@@ -481,4 +526,30 @@ unittest
     assert(status.canFind(MSG_COLOR_LIGHTBLUE ~ "GodMode: " ~ MSG_COLOR_LIGHTRED ~ "Active"));
     assert(status.canFind(MSG_COLOR_LIGHTBLUE ~ "CastTime: " ~ MSG_COLOR_LIGHTRED ~ "Active"));
     assert(status[$ - 1] == "2 cheats active, 5 inactive.");
+}
+
+/// `.npc come` walks the selected creature to the GM; `.npc return` walks it back to its spawn point.
+unittest
+{
+    import dmangos.auth.accounts : AccountLevel;
+    import dmangos.world.creature : Creature;
+    import dmangos.world.motion : PointMovement;
+    import dmangos.world.movement : Position;
+    import dmangos.world.objects : HighGuid, makeGuid;
+    import dmangos.world.opcodes;
+    import dmangos.world.packets : ClientGuid;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto gm = loggedIn(context, db, 7, "Varian", Position(-8940, -132, 83.53f), AccountLevel.administrator);
+    gm.read();
+    auto keeper = cast(Creature) context.map(0).findObject(makeGuid(HighGuid.unit, creatureInnkeeper, innkeeperSpawn));
+    gm.write(Opcode.CMSG_SET_SELECTION, ClientGuid(keeper.guid));
+    gm.say(".npc come");
+    auto walk = cast(PointMovement) keeper.generator;
+    assert(walk !is null && !keeper.spline.finalized, "walking to the GM");
+    gm.say(".npc return");
+    assert(cast(PointMovement) keeper.generator !is null, "and back");
 }

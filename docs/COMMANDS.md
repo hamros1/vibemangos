@@ -50,7 +50,7 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 * Arguments are read strictly: a number written wrong ("12abc", "abc") or a missing argument shows
   the command's help, where ArcEmu's C parsing read "12abc" as 12 and "abc" as 0 and went on.
 
-## Working (173)
+## Working (175)
 
 | Command | Letter | Help |
 |---|---|---|
@@ -140,6 +140,8 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 | `.npc info` | `n` | Displays NPC information |
 | `.npc say` | `n` | .npc say <text> - Makes selected mob say text <text>. |
 | `.npc yell` | `n` | .npc yell <Text> - Makes selected mob yell text <text>. |
+| `.npc come` | `n` | .npc come - Makes npc move to your position |
+| `.npc return` | `n` | .npc return - Returns ncp to spawnpoint. |
 | `.npc respawn` | `n` | .respawn - Respawns a dead npc from it's corpse. |
 | `.cheat status` | `m` | Shows active cheats. |
 | `.cheat taxi` | `m` | Enables all taxi nodes. |
@@ -228,7 +230,7 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 | `.gotrig` | `v` | Warps to areatrigger <id> |
 | `.logcomment` | `1` | Adds a comment to the GM log for the admins to read. |
 
-## Not yet implemented (125)
+## Not yet implemented (123)
 
 These answer "Not yet implemented.", as ArcEmu's `HandleNYICommand` does: their systems (AI agents
 and waypoint editing, quest editing, guilds, pets, honor, battlegrounds and arenas, GM
@@ -308,8 +310,6 @@ tickets, game object and creature spawning, GM invisibility, flying) do not exis
 | `.npc delete` | `n` | Deletes mob from db and world. |
 | `.npc addAgent` | `n` | .npc addAgent <agent> <procEvent> <procChance> <procCount> <spellId> <spellType> <spelltargetType> <spellCooldown> <floatMisc1> <Misc2> |
 | `.npc listAgent` | `n` | .npc listAgent |
-| `.npc come` | `n` | .npc come - Makes npc move to your position |
-| `.npc return` | `n` | .npc return - Returns ncp to spawnpoint. |
 | `.npc spawn` | `n` | .npc spawn - Spawns npc of entry <id> |
 | `.npc spawnlink` | `n` | .spawnlink sqlentry |
 | `.npc possess` | `n` | .npc possess - Possess an npc (mind control) |
