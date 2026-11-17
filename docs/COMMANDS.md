@@ -59,13 +59,16 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 * `.quest addstart`, `addfinish`, `addboth` and their `del` forms write CMaNGOS's
   `creature_questrelation` and `creature_involvedrelation`; ArcEmu's also wrote the creature's
   entry into the game object tables, making an unrelated game object a quest giver: not copied.
+* `.character resetspells` and `resetskills` reset to what a new character of the race and class
+  gets from CMaNGOS's creation (`playercreateinfo_*`, with skill caps for the level); the player, not
+  the GM, reads "... reset all your spells to starting values." (ArcEmu sent it to the GM).
 * `.quest item` lists the items the quest asks for (its `ReqItemId` columns): CMaNGOS has no
   `gameobject_quest_item_binding`. `.quest list` on a player reads its quest log as the client has it
   (ArcEmu's reads the saved `questlog` rows).
 * Arguments are read strictly: a number written wrong ("12abc", "abc") or a missing argument shows
   the command's help, where ArcEmu's C parsing read "12abc" as 12 and "abc" as 0 and went on.
 
-## Working (207)
+## Working (209)
 
 | Command | Letter | Help |
 |---|---|---|
@@ -230,7 +233,9 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 | `.character removeskill` | `m` | .removeskill <skillid> - Removes skill |
 | `.character increaseweaponskill` | `m` | .increaseweaponskill <count> - Increase eqipped weapon skill x times (defaults to 1). |
 | `.character resetreputation` | `n` | .resetreputation - Resets reputation to start levels. (use on characters that were made before reputation fixes.) |
+| `.character resetspells` | `n` | .resetspells - Resets all spells to starting spells of targeted player. DANGEROUS. |
 | `.character resettalents` | `n` | .resettalents - Resets all talents of targeted player to that of their current level. DANGEROUS. |
+| `.character resetskills` | `n` | .resetskills - Resets all skills. |
 | `.character additem` | `m` | Adds item x count y |
 | `.character removeitem` | `m` | Removes item %u count %u. |
 | `.character additemset` | `m` | Adds item set to inv. |
@@ -277,7 +282,7 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 | `.logcomment` | `1` | Adds a comment to the GM log for the admins to read. |
 | `.removesickness` | `m` | Removes ressurrection sickness from the target |
 
-## Not yet implemented (91)
+## Not yet implemented (89)
 
 These answer "Not yet implemented.", as ArcEmu's `HandleNYICommand` does: their systems (AI agents
 and waypoint editing, quest editing, guilds, pets, honor, battlegrounds and arenas, GM
@@ -365,8 +370,6 @@ tickets, game object and creature spawning, GM invisibility, flying) do not exis
 | `.guild members` | `m` | Lists guildmembers and their ranks. |
 | `.guild removeplayer` | `m` | Removes a player from a guild. |
 | `.guild disband` | `m` | Disbands the guild of your target. |
-| `.character resetspells` | `n` | .resetspells - Resets all spells to starting spells of targeted player. DANGEROUS. |
-| `.character resetskills` | `n` | .resetskills - Resets all skills. |
 | `.character forcerename` | `m` | Forces character x to rename his char next login |
 | `.character settitle` | `m` | Adds title to a player |
 | `.admin renameallinvalidchars` | `z` | Renames all invalid character names |

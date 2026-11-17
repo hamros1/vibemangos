@@ -128,6 +128,9 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 * `.quest addstart`, `addfinish`, `addboth` and their `del` forms write CMaNGOS's
   `creature_questrelation` and `creature_involvedrelation`; ArcEmu's also wrote the creature's
   entry into the game object tables, making an unrelated game object a quest giver: not copied.
+* `.character resetspells` and `resetskills` reset to what a new character of the race and class
+  gets from CMaNGOS's creation (`playercreateinfo_*`, with skill caps for the level); the player, not
+  the GM, reads "... reset all your spells to starting values." (ArcEmu sent it to the GM).
 * `.quest item` lists the items the quest asks for (its `ReqItemId` columns): CMaNGOS has no
   `gameobject_quest_item_binding`. `.quest list` on a player reads its quest log as the client has it
   (ArcEmu's reads the saved `questlog` rows).

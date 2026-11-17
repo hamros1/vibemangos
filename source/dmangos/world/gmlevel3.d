@@ -1010,6 +1010,8 @@ private:
         return true;
     }
 
+    import dmangos.world.playercreate : NewCharacter;
+
     bool handleIncreaseWeaponSkill(uint cnt = 1)
     {
         import std.algorithm.comparison : min;
@@ -1047,6 +1049,67 @@ private:
         }
         else // `_AdvanceSkillLine`: up to the maximum
             pr.applySkill(skill, cast(ushort) min(now[0] + cnt, now[1]), now[1]);
+        return true;
+    }
+
+    /// What a new character of `plr`'s race, class and gender starts with (`PlayerCreateInfo`).
+    package static bool startingAbilities(typeof(this) plr, out NewCharacter fresh)
+    {
+        import dmangos.auth.accounts : AccountLevel;
+        import dmangos.world.playercreate : CharacterBuilder, CreateRequest;
+
+        auto builder = new CharacterBuilder(plr.context.data, plr.context.client, plr.context.creationSettings,
+            () => 0u);
+        CreateRequest request = {name: plr.player.data.name, race: plr.player.data.race,
+            classId: plr.player.data.classId, gender: plr.player.data.gender};
+        return builder.create(0, 0, AccountLevel.player, request, true, fresh);
+    }
+
+    bool handleResetSpellsCommand()
+    {
+        import std.algorithm.searching : canFind;
+
+        auto plr = getSelectedChar(true);
+        if (plr is null)
+            return true;
+        // `Player::Reset_Spells`: back to the spells a new character of its race and class has.
+        NewCharacter fresh;
+        if (startingAbilities(plr, fresh))
+        {
+            foreach (spell; plr.player.spells.dup)
+                if (!fresh.spells.canFind!(s => s.spell == spell))
+                    plr.unlearn(spell);
+            foreach (s; fresh.spells)
+                if (s.active && !s.disabled)
+                    plr.learn(s.spell);
+        }
+        systemMessage(format!"Reset spells of %s to level 1."(plr.player.data.name));
+        plr.blueSystemMessage(format!"%s reset all your spells to starting values."(player.data.name));
+        gmLog(format!"reset spells of %s"(plr.player.data.name));
+        return true;
+    }
+
+    bool handleResetSkillsCommand()
+    {
+        import std.algorithm.searching : canFind;
+
+        auto plr = getSelectedChar(true);
+        if (plr is null)
+            return true;
+        NewCharacter fresh;
+        if (!startingAbilities(plr, fresh))
+            return true;
+        // `_RemoveAllSkills`, then the create info's skills and the languages, the level's caps.
+        foreach (skill; plr.player.skillList())
+            if (!fresh.skills.canFind!(s => s.skill == skill[0]))
+                plr.applySkill(skill[0], 0, 0);
+        foreach (s; fresh.skills)
+            plr.applySkill(s.skill, cast(ushort) s.value, cast(ushort) s.max);
+        plr.player.updateSkillsForLevel(context.client);
+        foreach (skill; plr.player.skillList())
+            plr.applySkill(skill[0], cast(ushort) skill[1], cast(ushort) skill[2]); // saved with the new caps
+        blueSystemMessage("Reset skills to default.");
+        gmLog(format!"reset skills of %s to default"(plr.player.data.name));
         return true;
     }
 
@@ -1674,6 +1737,7 @@ unittest
     import dmangos.world.opcodes;
     import dmangos.world.packets : ClientGuid;
     import dmangos.world.player : Player;
+    import dmangos.world.playercreate : NewCharacter;
     import dmangos.world.spellhandlers : testSpell;
     import dmangos.world.testclient;
     import dmangos.world.testdata;
@@ -1709,6 +1773,30 @@ unittest
     assert(systemMessages(gm.read())[0] == MSG_COLOR_LIGHTBLUE ~ "Modifying skill line 162. Advancing 2 times.|r");
     assert(unarmed[1] == 0 ? victim.skillValue(162)[0] == 1
         : victim.skillValue(162)[0] == (unarmed[0] + 2 < unarmed[1] ? unarmed[0] + 2 : unarmed[1]));
+
+    // `.character resetspells` and `resetskills`: what was learned since creation goes.
+    {
+        gm.write(Opcode.CMSG_SET_SELECTION, ClientGuid(victim.guid));
+        gm.say(".character learn 95900");
+        gm.say(".character learnskill 164 1 75"); // blacksmithing
+        gm.read();
+        anduin.read();
+        assert(victim.knowsSpell(blessing) && victim.skillValue(164)[1] == 75);
+        gm.say(".character resetspells");
+        assert(systemMessages(gm.read()) == ["Reset spells of Anduin to level 1."]);
+        assert(systemMessages(anduin.read()).canFind(MSG_COLOR_LIGHTBLUE ~ "Varian reset all your spells to starting values.|r"));
+        assert(!victim.knowsSpell(blessing));
+        {
+            NewCharacter fresh;
+            assert(anduin.session.startingAbilities(anduin.session, fresh) && fresh.spells.length);
+            foreach (s; fresh.spells)
+                if (s.active && !s.disabled)
+                    assert(victim.knowsSpell(s.spell), "a new character's spells");
+        }
+        gm.say(".character resetskills");
+        assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTBLUE ~ "Reset skills to default.|r"]);
+        assert(victim.skillValue(164)[1] == 0 && victim.skillList().length > 0);
+    }
 
     anduin.session.addAura(makeAura(&context.data.spells.spells[sickness], victim.guid, 1, 600_000, false, [-75, 0, 0]));
     assert(victim.auras.find(sickness) !is null);
