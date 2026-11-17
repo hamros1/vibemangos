@@ -37,6 +37,7 @@
  */
 module dmangos.world.map;
 
+import dmangos.vmap.math : Vector3;
 import core.time : Duration, MonoTime, msecs, seconds, usecs;
 import std.algorithm.searching : canFind;
 import std.random : Random, unpredictableSeed;
@@ -1447,6 +1448,14 @@ final class Map : CombatWorld, GameObjectWorld
         if (terrain is null)
             return invalidHeightValue;
         return terrain.heightStatic(x, y, z, true, swim ? defaultWaterSearch : defaultHeightSearch);
+    }
+
+    /// See `MotionWorld.pathBetween`.
+    Vector3[] pathBetween(Vector3 from, Vector3 to)
+    {
+        if (terrain is null)
+            return null;
+        return terrain.pathBetween(from, to);
     }
 
     /// See `MotionWorld.waterOrGroundLevel`.

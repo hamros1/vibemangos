@@ -8,6 +8,18 @@ dub test                               # every module's unittests
 dub build -c authserver                # or worldserver, extractor; add -b release for release builds
 ```
 
+Building also needs `g++` and `make`: dub first runs `thirdparty/Makefile`, which compiles Recast and
+Detour (recastnavigation 1.6.0, vendored there) and the C interface to them
+(`thirdparty/dmnav/dmnav.cpp`) into `thirdparty/build/libdmnav.a`. A plain `dmd` build of the tests
+links it with `thirdparty/build/libdmnav.a -L-lstdc++`.
+
+To check movement maps by hand, `tools/navpath.d` loads a map's tiles and prints the way between two
+points (how to build it is in its header):
+
+```sh
+navpath /path/to/data 1 1007.8 -4446.2 11.2 1629.4 -4373.4 31.3   # Durotar into Orgrimmar, by the gate
+```
+
 For the CMaNGOS reference, keep checkouts of
 [mangos-classic](https://github.com/cmangos/mangos-classic) (the code) and
 [classic-db](https://github.com/cmangos/classic-db) (the world database) at hand. Every ported

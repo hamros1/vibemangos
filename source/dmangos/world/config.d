@@ -148,6 +148,8 @@ struct WorldConfig
      * A cluster node left at the default uses `writes-<node_id>.log`.
      */
     @JsonName("write_log") string writeLog = "writes.log";
+    /// `mmap.enabled`: creatures find their way over the movement maps in `<data_dir>/mmaps`, where there are any.
+    @JsonName("mmaps") bool mmaps = true;
     /// A directory each connection's outgoing packets are written to, for debugging a client; empty: none.
     @JsonName("packet_log") string packetLog;
     /// The cluster this node belongs to (docs/CLUSTER.md); standalone without it.

@@ -517,7 +517,7 @@ mixin template CreatureCasting()
         if (!(z > -100_000))
             z = me.position.z;
         Vector3[] points = [Vector3(0, 0, 0), Vector3(x, y, z)];
-        launch(me, world_, points, false);
+        launch(me, world_, points, false, float.nan, true);
     }
 
     // -----------------------------------------------------------------------

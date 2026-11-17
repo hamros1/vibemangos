@@ -15,6 +15,8 @@
  */
 module dmangos.world.terrain;
 
+import dmangos.navigation : NavMesh;
+import dmangos.vmap.math : Vector3;
 import std.bitmanip : littleEndianToNative;
 import std.math : abs, isNaN;
 import std.file : exists, read;
@@ -293,8 +295,45 @@ private:
         yInt &= mapResolution - 1;
     }
 
+    /**
+     * The height at corner (row, col) of the tile's 128 x 128 squares (`V9`, 0 to 128) and at the
+     * centre of square (row, col) (`V8`, 0 to 127): for building movement maps.
+     */
+    public float cornerHeight(int row, int col) const
+    in (row >= 0 && row <= 128 && col >= 0 && col <= 128)
+    {
+        final switch (heightFormat)
+        {
+        case HeightFormat.flat:
+            return gridHeight;
+        case HeightFormat.floats:
+            return v9[row * 129 + col];
+        case HeightFormat.shorts:
+            return v9Short[row * 129 + col] * heightMultiplier + gridHeight;
+        case HeightFormat.bytes:
+            return v9Byte[row * 129 + col] * heightMultiplier + gridHeight;
+        }
+    }
+
+    /// ditto
+    public float centreHeight(int row, int col) const
+    in (row >= 0 && row < 128 && col >= 0 && col < 128)
+    {
+        final switch (heightFormat)
+        {
+        case HeightFormat.flat:
+            return gridHeight;
+        case HeightFormat.floats:
+            return v8[row * 128 + col];
+        case HeightFormat.shorts:
+            return v8Short[row * 128 + col] * heightMultiplier + gridHeight;
+        case HeightFormat.bytes:
+            return v8Byte[row * 128 + col] * heightMultiplier + gridHeight;
+        }
+    }
+
     /// `GridMap::isHole`
-    bool isHole(int row, int col) const
+    public bool isHole(int row, int col) const
     {
         const cellRow = row / 8, cellCol = col / 8;
         const holeRow = row % 8 / 2, holeCol = (col - cellCol * 8) / 2;
@@ -391,17 +430,28 @@ final class Terrain
         GridMap[maxNumberOfGrids * maxNumberOfGrids] tiles;
         bool[maxNumberOfGrids * maxNumberOfGrids] attempted;
         StaticMapTree vmap;             // null without vmaps
+        NavMesh navigation;             // the movement maps, null without them
+        string navDirectory;            // <data_dir>/mmaps
     }
 
     /**
      * The tiles are read from `<dataDir>/maps`, and the buildings, if `models` is given and the map
      * has them, from `<dataDir>/vmaps`.
      */
-    this(uint mapId, string dataDir, const ClientData client, ModelCache models = null)
+    this(uint mapId, string dataDir, const ClientData client, ModelCache models = null, bool movementMaps = true)
     {
         this.mapId = mapId;
         this.client = client;
         directory = buildPath(dataDir, "maps");
+        // `MMapManager::loadMapData`: the map's movement maps, if it has them; their tiles come with the grids'.
+        navDirectory = buildPath(dataDir, "mmaps");
+        if (movementMaps && exists(buildPath(navDirectory, format!"%03d.mmap"(mapId))))
+        {
+            try
+                navigation = new NavMesh;
+            catch (Exception e)
+                error!"movement maps of map %s not loaded: %s"(mapId, e.msg);
+        }
         const vmapDirectory = buildPath(dataDir, "vmaps");
         if (models !is null && StaticMapTree.exists(mapId, vmapDirectory))
         {
@@ -441,8 +491,58 @@ final class Terrain
             }
             if (vmap !is null)
                 vmap.loadTile(coords[0], coords[1]);
+            if (navigation !is null)
+                loadNavigationTile(coords[0], coords[1]);
         }
         return tiles[index];
+    }
+
+    /// `MMapManager::loadMap`: grid tile [gx, gy]'s movement map (`MMMXXYY.mmtile`), if there is one.
+    private void loadNavigationTile(int gx, int gy)
+    {
+        import dmangos.bytes : ByteReader;
+        import dmangos.navigation : meshTileOf;
+
+        const path = buildPath(navDirectory, format!"%03d%02d%02d.mmtile"(mapId, gx, gy));
+        if (!exists(path))
+            return;
+        try
+        {
+            const bytes = cast(const(ubyte)[]) read(path);
+            auto r = ByteReader(bytes);
+            enum uint magic = 0x4D4D4150, detourVersion = 7, formatVersion = 1;
+            if (r.read!uint != magic || r.read!uint != detourVersion || r.read!uint != formatVersion)
+                return error!"movement map %s is of another version: run the extractor with -e 8 again"(path);
+            const size = r.read!uint;
+            r.read!uint;
+            if (20 + size > bytes.length)
+                return error!"movement map %s is cut short"(path);
+            const t = meshTileOf(gx, gy);
+            if (!navigation.addTile(t[0], t[1], bytes[20 .. 20 + size]))
+                error!"movement map %s was refused by Detour"(path);
+        }
+        catch (Exception e)
+            error!"movement map %s: %s"(path, e.msg);
+    }
+
+    /**
+     * `PathFinder::calculate`: the way from `from` to `to` over the movement maps, its corners from
+     * `from` on; empty if the map has none there, or either end is off them (the caller walks straight,
+     * as `BuildShortcut` does). An unreachable end gives the way to the nearest place to it.
+     */
+    Vector3[] pathBetween(Vector3 from, Vector3 to)
+    {
+        if (navigation is null)
+            return null;
+        tile(from.x, from.y); // the tiles under both ends, loaded
+        tile(to.x, to.y);
+        return navigation.findPath(from, to).points;
+    }
+
+    /// Whether the map has movement maps.
+    @property bool hasMovementMaps() const
+    {
+        return navigation !is null;
     }
 
     /// Whether anything is known about the point: a tile, buildings, or an area of the map's own.

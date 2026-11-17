@@ -511,6 +511,11 @@ associative array, and keep replicas that are not walking out of the tick.
   only when the owner says it has saved. If the owner is lost, the home disconnects the client and
   releases the account after the owner's lease; if the home is lost, the owner logs the player out,
   saved (before the coordinator frees the account, at the home's lease).
+* **Later: surviving the owner's loss.** The home could take its player back (from the last save,
+  after the lost owner's lease) instead of disconnecting the client. It is worth having only together
+  with a gateway that holds every client's connection apart from the simulating nodes, and with much
+  more frequent player saves. That is SpatialOS's and Orleans's shape. Alone it covers half the
+  failures and sends the player back to a save minutes old. Decided 2026-11-17: not now.
 
 ### Tested
 

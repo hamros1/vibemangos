@@ -575,6 +575,7 @@ time.
 | `update_interval` | the world tick, in ms (mangosd's `WORLD_SLEEP_CONST`) | `50` |
 | `compression` | `Compression`: zlib level of update packets, 1 (fastest) to 9 | `1` |
 | `metrics_interval_seconds` | n/a: seconds between log lines with tick times and GC figures; 0 for none | `60` |
+| `mmaps` | `mmap.enabled`: creatures find their way over `data_dir/mmaps`, where there are movement maps | `true` |
 | `write_log` | n/a: where writes wait, flushed to disk, until MySQL has them; written again at start-up; empty for none | `"writes.log"` (`"writes-<node_id>.log"` in a cluster) |
 | `packet_log` | n/a: a directory where every packet sent to each client is written (time, opcode, body in hex), for finding what a client cannot take; empty for none | `""` |
 | `cluster` | n/a: this node's place in a cluster (docs/CLUSTER.md); standalone without it | none |
@@ -605,6 +606,7 @@ time.
 ./bin/extractor -i "/path/to/WoW 1.12.1" -o /path/to/data   # writes data/dbc/*.dbc and data/maps/*.map
 ./bin/extractor -i "/path/to/WoW 1.12.1" -o /path/to/data -e 1   # maps only (-e 2: DBC files only)
 ./bin/extractor -i "/path/to/WoW 1.12.1" -o /path/to/data -e 4   # vmaps: buildings and doodads
+./bin/extractor -o /path/to/data -e 8   # movement maps, from maps/ and vmaps/ (--map ID for one map)
 ```
 
 The extractor follows CMaNGOS's `ad` extractor:
@@ -626,11 +628,17 @@ The extractor follows CMaNGOS's `ad` extractor:
   map's models, a file per tile, and each model with trees over its groups and triangles
   (version "VMAP_7.0"). `Buildings/` is kept: CMaNGOS's mmap generator reads it.
 
+* With `-e 8` it builds movement maps as CMaNGOS's `MoveMapGen` does, into `mmaps/`: a navigation
+  mesh per map tile from the terrain and the buildings, with Recast and CMaNGOS's settings. It needs
+  `maps/` and `vmaps/`, not the client. Maps that are one building (most dungeons) get the tiles their
+  models cover. Creatures find their way over them.
+
 A 1.12.1 client yields 158 DBC files in well under a second, 2429 map tiles of 44 maps (150 MB)
 in about 13 seconds, and vmaps of 815 buildings and 3138 doodads, placed 505,837 times
 (276 MB, with 152 MB of `Buildings/`), in about 30 seconds. The MPQ reader (`source/dmangos/mpq/`)
 handles plain, encrypted, sector and single-unit files, compressed with zlib or PKWare DCL, which
-are the encodings 1.12 data files use. Mmaps (paths) are not generated or read yet.
+are the encodings 1.12 data files use. Movement maps for all 2,604 tiles of the 43 maps (956 MB)
+take under three minutes on 32 cores.
 
 ## Layout
 
@@ -701,6 +709,7 @@ source/dmangos/world/       the world server (mangosd)
   clusterbridge.d             replication between the maps and the cluster's links
   ../metrics.d                tick, event loop and GC measurements
   ../frozen.d                 static tables in memory the collector does not scan (StaticMap, the arena)
+  ../navigation.d             movement maps: Recast and Detour (thirdparty/) through a small C interface
   ../loadgen/                 the load generator: headless clients (bot.d) and scenarios (main.d)
   map.d                       players, creatures and game objects on a map: cells, sight, broadcasting,
                               the tick that moves creatures
@@ -770,7 +779,7 @@ source/dmangos/world/       the world server (mangosd)
   realm.d                     realmlist/uptime registration, as mangosd does
   config.d, context.d         configuration; state shared by sessions
 source/dmangos/extractor/   the client data extractor: main.d, dbc.d (DBC files), maps.d (terrain to .map files),
-                              vmaps.d and assembler.d (buildings and doodads to vmaps)
+                              vmaps.d and assembler.d (buildings and doodads to vmaps), mmaps.d (movement maps)
 source/dmangos/vmap/        the vmap format and queries: math.d (G3D's), bih.d (the tree), model.d, maptree.d
 ```
 

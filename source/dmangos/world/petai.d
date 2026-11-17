@@ -258,7 +258,7 @@ mixin template PetBehaviour()
         if (moved(me.position, pet.stayAt) < 1 || !me.spline.finalized)
             return;
         Vector3[] points = [Vector3(0, 0, 0), Vector3(pet.stayAt.x, pet.stayAt.y, pet.stayAt.z)];
-        launch(me, world, points, false);
+        launch(me, world, points, false, float.nan, true);
     }
 
     /// `FollowMovementGenerator`: to its place beside its owner, setting off again when it moved on.
@@ -283,7 +283,7 @@ mixin template PetBehaviour()
         followedTo = owner;
         Vector3[] points = [Vector3(0, 0, 0), Vector3(x, y, z)];
         // As fast as its owner runs, to keep up (`UpdateSpeed` from the owner's).
-        launch(me, world, points, false, owner.orientation);
+        launch(me, world, points, false, owner.orientation, true);
     }
 
     private static float abs(float v)

@@ -128,6 +128,12 @@ interface MotionWorld
 
     /// `ScriptsStart(SCRIPT_TYPE_CREATURE_MOVEMENT)`: a waypoint's script, the creature its source and target.
     void waypointScript(Creature creature, uint scriptId);
+
+    /**
+     * `PathFinder`: the way from `from` to `to` over the map's movement maps, `from` first; empty
+     * where there are none (or an end is off them): then the unit walks straight.
+     */
+    Vector3[] pathBetween(Vector3 from, Vector3 to);
 }
 
 /// `MovementGenerator`: see the module documentation.
@@ -250,7 +256,7 @@ final class WanderMovement : MovementGenerator
     }
 
 private:
-    /// `_setLocation` with `PathFinder::ComputePathToRandomPoint`, without movement maps: a straight walk.
+    /// `_setLocation` with `PathFinder`: a walk to a random point, round what is in the way.
     bool setLocation(Creature creature, MotionWorld world)
     {
         const angle = uniform01!float(world.random) * 2 * cast(float) PI;
@@ -263,7 +269,7 @@ private:
             return false;
         allowedPositionZ(creature, world, end);
         const walk = randomRun ? uniform!"[]"(0, 99, world.random) >= 15 : true;
-        return launch(creature, world, [start, end], walk) != 0;
+        return launch(creature, world, [start, end], walk, float.nan, true) != 0;
     }
 }
 
@@ -518,7 +524,7 @@ final class PointMovement : MovementGenerator
     override void initialize(Creature creature, MotionWorld world)
     {
         const at = creature.spline.finalized ? creature.position : creature.spline.position;
-        launch(creature, world, [Vector3(at.x, at.y, at.z), destination], walk, facing);
+        launch(creature, world, [Vector3(at.x, at.y, at.z), destination], walk, facing, true);
         launched = true;
     }
 
@@ -565,13 +571,25 @@ private uint splineCounter = 1;
 /**
  * `MoveSplineInit::Launch`: starts a walk (or run) along `points` from where the creature is, tells
  * the clients, and returns its duration in milliseconds. `facing` (radians, unless NaN) is where it
- * looks at the end.
+ * looks at the end. With `generatePath`, a walk from one point to another goes round what is in the
+ * way (`MotionWorld.pathBetween`).
  */
-int launch(Creature creature, MotionWorld world, Vector3[] points, bool walk, float facing = float.nan)
+int launch(Creature creature, MotionWorld world, Vector3[] points, bool walk, float facing = float.nan,
+    bool generatePath = false)
 in (points.length > 1)
 {
     const at = creature.spline.finalized ? creature.position : creature.spline.position;
     points[0] = Vector3(at.x, at.y, at.z);
+    // `MoveSplineInit::MoveTo(dest, generatePath)`: round what stands in the way, over the movement maps.
+    if (generatePath && points.length == 2)
+    {
+        auto way = world.pathBetween(points[0], points[1]);
+        if (way.length >= 2)
+        {
+            way[0] = points[0];
+            points = way;
+        }
+    }
 
     uint flags = walk ? SplineFlags.none : SplineFlags.runMode;
     float angle = 0;
@@ -697,6 +715,8 @@ version (unittest)
         ref Random random() { return rng; }
         uint[] scripts;
         void waypointScript(Creature, uint scriptId) { scripts ~= scriptId; }
+        Vector3[] delegate(Vector3, Vector3) paths; // movement maps, if a test has them
+        Vector3[] pathBetween(Vector3 from, Vector3 to) { return paths is null ? null : paths(from, to); }
     }
 
     private Creature testCreature(CreatureSpawn spawn, uint extraFlags = 0)
@@ -888,4 +908,23 @@ unittest
         assert(copy.position == original.position);
     }
     assert(worldA.sent == worldB.sent && worldA.sent.length > 0);
+}
+
+// With movement maps, a walk somewhere follows the way round what is in it: its corners, in order.
+unittest
+{
+    auto world = new TestWorld;
+    auto creature = testCreature(CreatureSpawn(1, 100, 0, 0, 0, 0, 0));
+    Vector3 corner = Vector3(5, 8, 0);
+    world.paths = (Vector3 from, Vector3 to) => [from, corner, to];
+    launch(creature, world, [Vector3(0, 0, 0), Vector3(10, 0, 0)], true, float.nan, true);
+    assert(creature.spline.path[0 .. 3] == [Vector3(0, 0, 0), corner, Vector3(10, 0, 0)], "round the corner");
+
+    // Without a way (no movement maps there, or an end off them), straight; and only when asked.
+    world.paths = (Vector3 from, Vector3 to) => cast(Vector3[]) null;
+    launch(creature, world, [Vector3(0, 0, 0), Vector3(10, 0, 0)], true, float.nan, true);
+    assert(creature.spline.path.length == 3, "straight: the end, repeated");
+    world.paths = (Vector3 from, Vector3 to) => [from, corner, to];
+    launch(creature, world, [Vector3(0, 0, 0), Vector3(10, 0, 0)], true);
+    assert(creature.spline.path.length == 3, "a waypoint's walk is as drawn");
 }

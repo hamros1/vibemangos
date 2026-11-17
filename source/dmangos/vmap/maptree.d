@@ -175,6 +175,7 @@ final class StaticMapTree
         BIH tree;
         ModelInstance[] values;   // by tree object index
         uint[uint] loadedSpawns;  // tree index -> tiles referring to it
+        uint[][uint] tileSpawns;  // packed tile -> the tree indexes its file lists
         bool[uint] loadedTiles;   // packed tile -> whether it had a file
     }
 
@@ -241,11 +242,40 @@ final class StaticMapTree
         {
             auto r = ByteReader(cast(const(ubyte)[]) std.file.read(path));
             expectChunk(r, vmapMagic);
+            uint[] listed;
             foreach (_; 0 .. r.read!uint)
-                place(ModelSpawn.read(r), r.read!uint);
+            {
+                const spawn = ModelSpawn.read(r);
+                const index = r.read!uint;
+                place(spawn, index);
+                listed ~= index;
+            }
+            tileSpawns[key] = listed;
         }
         catch (Exception e)
             error!"vmaps: tile %s of map %s: %s"(path, mapId, e.msg);
+    }
+
+    /**
+     * The models grid tile [x, y] has (those its file lists, which reach into it), loaded; every
+     * model of the map if it has no tiles. For building movement maps.
+     */
+    const(ModelInstance)[] tileInstances(uint tileX, uint tileY)
+    {
+        loadTile(tileX, tileY);
+        if (!tiled)
+        {
+            const(ModelInstance)[] all;
+            foreach (ref v; values)
+                if (v.model !is null)
+                    all ~= v;
+            return all;
+        }
+        const(ModelInstance)[] listed;
+        foreach (index; tileSpawns.get(packTileId(tileX, tileY), null))
+            if (index < values.length && values[index].model !is null)
+                listed ~= values[index];
+        return listed;
     }
 
     /// `StaticMapTree::IsTileLoaded`

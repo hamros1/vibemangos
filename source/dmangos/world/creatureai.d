@@ -750,7 +750,7 @@ private:
             z = other.position.z;
         chasedTo = other.position;
         Vector3[] points = [Vector3(0, 0, 0), Vector3(x, y, z)];
-        launch(me, world, points, false);
+        launch(me, world, points, false, float.nan, true);
     }
 
     /// `UpdateMeleeAttackingState` for a creature: a swing whenever it is ready and can.
@@ -818,7 +818,7 @@ private:
         if (dx * dx + dy * dy < 0.01f)
             return reachedHome(world);
         Vector3[] points = [Vector3(0, 0, 0), Vector3(home.x, home.y, home.z)];
-        launch(me, world, points, false, home.orientation);
+        launch(me, world, points, false, home.orientation, true);
     }
 
     /// `HomeMovementGenerator::Finalize`: home; it moves as before the fight.

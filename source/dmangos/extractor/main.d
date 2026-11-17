@@ -21,13 +21,14 @@ import dmangos.extractor.assembler;
 import dmangos.extractor.dbc;
 import dmangos.extractor.maps;
 import dmangos.extractor.vmaps;
+import dmangos.extractor.mmaps : buildMovementMaps;
 import dmangos.log;
 
 private enum usage = "dmangos client data extractor
 
 Extracts the DBC files and the terrain of a 1.12 client into OUTPUT/dbc and OUTPUT/maps,
-and with -e 4 its buildings into OUTPUT/vmaps (by way of OUTPUT/Buildings), for the world
-server's data_dir.
+with -e 4 its buildings into OUTPUT/vmaps (by way of OUTPUT/Buildings), and with -e 8 movement
+maps into OUTPUT/mmaps (from OUTPUT/maps and OUTPUT/vmaps), for the world server's data_dir.
 
 Usage:
   extractor [-i CLIENT] [-o OUTPUT] [-e MASK]
@@ -39,17 +40,21 @@ enum Extract : uint
     maps = 1,
     dbc = 2,
     vmaps = 4,
+    mmaps = 8,
 }
 
 int main(string[] args)
 {
     string input = ".", output = ".";
     uint extract = Extract.maps | Extract.dbc;
+    uint[] mapIds;
     GetoptResult options;
     try
         options = getopt(args, "input|i", "Client directory, the one containing Data/ (default: .)", &input,
             "output|o", "Output directory; dbc/ and maps/ are created in it (default: .)", &output,
-            "extract|e", "What to extract, added up: 1 maps, 2 DBC files, 4 vmaps (default: 3)", &extract);
+            "extract|e", "What to extract, added up: 1 maps, 2 DBC files, 4 vmaps, 8 movement maps (default: 3)",
+                &extract,
+            "map", "With -e 8: build only this map's movement maps (repeat for more)", &mapIds);
     catch (GetOptException e)
     {
         stderr.writeln(e.msg);
@@ -63,6 +68,8 @@ int main(string[] args)
 
     try
     {
+        if (extract == Extract.mmaps) // from what the other steps wrote: no archives needed
+            return buildMmaps(output, mapIds);
         auto archives = openClientArchives(input);
         scope (exit)
             foreach (archive; archives)
@@ -105,6 +112,8 @@ int main(string[] args)
             writefln("Assembled %s maps, %s tiles and %s models to %s/vmaps", built.maps, built.tiles, built.models,
                 output);
         }
+        if (extract & Extract.mmaps)
+            return buildMmaps(output, mapIds);
         return 0;
     }
     catch (Exception e)
@@ -112,4 +121,18 @@ int main(string[] args)
         error!"%s"(e.msg);
         return 1;
     }
+}
+
+/// Movement maps from OUTPUT/maps and OUTPUT/vmaps into OUTPUT/mmaps.
+private int buildMmaps(string output, const(uint)[] mapIds)
+{
+    import core.time : MonoTime;
+
+    const started = MonoTime.currTime;
+    const report = buildMovementMaps(output, mapIds, (string line) { writefln("  %s", line); });
+    foreach (problem; report.problems)
+        warning!"%s"(problem);
+    writefln("Built movement maps for %s tiles of %s maps to %s/mmaps (%s tiles with nothing walkable) in %s",
+        report.tiles, report.maps, output, report.empty, MonoTime.currTime - started);
+    return report.problems.length ? 1 : 0;
 }

@@ -417,9 +417,30 @@ CMaNGOS's split, without its class hierarchy of units:
   map is the generators' `MotionWorld`: heights (`Map::GetHeight`, `GetWaterOrGroundLevel`) from its
   `Terrain`, packets, and random numbers.
 
-Without movement maps, `PathFinder` comes down to a straight line; CMaNGOS then leaves a wander's
-end at the spawn point's height unless `PathFinder.NormalizeZ` is on, which would leave creatures
-walking through hills, so here it is always put on the ground (`allowedPositionZ`).
+**Movement maps (`navigation.d`).** They are built by the extractor (`-e 8`, `extractor/mmaps.d`) with
+Recast and read by the server with Detour. That is recastnavigation 1.6.0, the library CMaNGOS uses,
+vendored in `thirdparty/` and compiled by its Makefile, which dub runs before building. It is reached
+through a small C interface, `thirdparty/dmnav/dmnav.cpp`.
+* **The data.** Each 533-yard map tile is one mesh tile, built in 25 pieces of 80 cells with
+  `MapBuilder::buildMoveMapTile`'s settings. The triangles come from:
+  * the terrain: four per square, around its centre, with holes left out and a strip of the
+    neighbouring tiles so the edges meet;
+  * the buildings and doodads the tile's vmap file lists.
+  Ground under deeper water than a creature stands in is water, which walkers may cross.
+* **Loading.** `Terrain` loads a tile's mesh with its heights.
+* **Using it.** `launch(..., generatePath)` is `MoveSplineInit::MoveTo(dest, generatePath)`: a walk
+  from one point to another follows the corners `Map.pathBetween` finds. Chasing, returning home,
+  fleeing, wandering, point moves and pets use it. Waypoint routes stay as the database draws them,
+  as in CMaNGOS. Detour returns at most 74 corners (`MAX_POINT_PATH_LENGTH`). An end that cannot be
+  reached gives the way to the nearest place to it.
+* **Fallback.** Where there is no mesh, or an end is off it, the walk is straight, as before.
+  CMaNGOS then leaves a wander's end at the spawn point's height unless `PathFinder.NormalizeZ` is
+  on, which would leave creatures walking through hills, so here the end is always put on the
+  ground (`allowedPositionZ`).
+* **Not yet:**
+  * liquid surfaces as meshes (swimmers path over the ground beneath);
+  * game objects' models (doors);
+  * a query per map thread, once maps have threads.
 
 ## Scripts
 

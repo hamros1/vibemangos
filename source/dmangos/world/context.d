@@ -562,7 +562,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     {
         if (vmapModels is null)
             vmapModels = new ModelCache(buildPath(config.dataDir, "vmaps"));
-        return terrains.require(mapId, new Terrain(mapId, config.dataDir, client, vmapModels));
+        return terrains.require(mapId, new Terrain(mapId, config.dataDir, client, vmapModels, config.mmaps));
     }
 
     Map map(uint id)

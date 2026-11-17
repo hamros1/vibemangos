@@ -5,7 +5,7 @@
 | Area | State | Where |
 |---|---|---|
 | Login server | Complete: SRP6, reconnect, realm list, bans, throttling, account CLI | `auth/` |
-| Client data extraction | DBC files, terrain as CMaNGOS's `.map` files, buildings and doodads as its vmaps; mmaps not started | `extractor/`, `mpq/`, `mapfile.d`, `vmap/` |
+| Client data extraction | DBC files, terrain as CMaNGOS's `.map` files, buildings and doodads as its vmaps, movement maps (Recast) | `extractor/`, `mpq/`, `mapfile.d`, `vmap/` |
 | Terrain | Ground heights, areas and liquids from the `.map` files and the vmaps (floors, bridges, roofs, the areas of buildings, indoors, line of sight); the server decides zones and areas, explored areas give experience | `world/terrain.d`, `vmap/`, `world/exploration.d` |
 | World handshake | Complete: session key proof, header encryption, addons, ping | `world/session.d` |
 | Character list, creation, deletion | Full parity with CMaNGOS, incl. guild, group, auction and mail cleanup on delete | `world/charscreen.d`, `playercreate.d`, `characterdb.d` |
@@ -35,7 +35,8 @@
   spawned. Idle cells unload after `grid_cleanup_delay_seconds`.
 * **Terrain:** heights put wandering creatures on the ground; line of sight decides aggro and
   spells. Game objects' models (doors, elevators) are extracted but
-  do not block sight (CMaNGOS's dynamic tree). Without mmaps there are no paths.
+  do not block sight (CMaNGOS's dynamic tree). Movement maps give creatures paths round buildings
+  and hills; doors are not in them, and swimmers path over the ground under the water.
 * **Movement:** the speed check assumes running speed; it must learn mounts, speed auras,
   knockbacks and taxis when those exist.
 * **Instances:** each group gets its own copy of a dungeon, saved with its binds and dead; raids
@@ -92,7 +93,7 @@ cells. CMaNGOS references:
 ### 4. Map data: started
 
 Done: `.map` files and vmaps, extracted and read; zones and areas, explored areas. See
-ARCHITECTURE.md's "Terrain". Next: mmaps (`contrib/mmap`, recast and detour) for paths, and game
+ARCHITECTURE.md's "Terrain". Movement maps (Recast and Detour) for paths: done. Next: game
 objects' models in line of sight (`vmap/DynamicTree.cpp`, `GameObjectModel.cpp`).
 
 ### 5. Inventory: done

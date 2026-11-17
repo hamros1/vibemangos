@@ -7,3 +7,4 @@ dub.selections.json
 accounts.json
 accounts.json.tmp
 __pycache__/
+thirdparty/build/

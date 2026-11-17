@@ -2,6 +2,15 @@
 	"name": "dmangos",
 	"description": "A World of Warcraft 1.12 (vanilla) server written in D, modelled on CMaNGOS and Ember.",
 	"targetPath": "bin",
+	"preBuildCommands": [
+		"make -s -C $PACKAGE_DIR/thirdparty"
+	],
+	"sourceFiles": [
+		"thirdparty/build/libdmnav.a"
+	],
+	"libs": [
+		"stdc++"
+	],
 	"configurations": [
 		{
 			"name": "authserver",
