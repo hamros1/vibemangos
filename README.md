@@ -293,6 +293,12 @@ What works now:
     through if both can pay and carry it (the items keep their guids and change owners, their
     giver's rows deleted and their taker's inserted). Not yet: the seventh slot's enchanting spell,
     trading across a cluster's nodes.
+  * **Duels** (CMaNGOS's `DuelHandler.cpp`, `EffectDuel`, `DuelComplete`): the Duel spell plants a
+    flag between two players and asks the other; accepted, both count down 3 seconds and are then
+    enemies of each other, in melee and with spells (players can attack players: duelists, and
+    enemies flagged for PvP). A blow that would kill leaves 1 health and loses the duel (the loser
+    begs); 50 yards from the flag for 10 seconds flees it; declining, logging out or teleporting
+    ends it; everyone around hears who won, and the debuffs each put on the other go.
   * **The update tick** (every 50 ms, `update_interval`): health, mana, rage and energy regenerate
     as in CMaNGOS (health and the loss of rage only out of combat, and only for the living); inns and capitals give rested XP, also while offline; characters are saved every
     15 minutes (`player_save_interval`).

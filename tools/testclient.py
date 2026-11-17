@@ -161,6 +161,8 @@ seen_positions = {}   # creature guid -> where it was created
 here = [0.0, 0.0, 0.0]  # where this client last put its character
 corpse_at = [0.0, 0.0, 0.0]
 last_target = [0]
+duel_flag = [0]
+my_guid = [0]
 item_objects = {}  # guid -> fields of the items the client was sent
 my_slots = {}      # the player's own slots: slot -> item guid
 player_guid = None
@@ -283,6 +285,7 @@ def describe(op, p):
             elif kind == 0 and g == player_guid: print(f"  [player changed] {len(v)} fields")
             elif kind == 4: print(f"  [out of range] {', '.join(str(x & 0xFFFFFFFF) for x in g)}")
             elif kind in (2, 3) and t == 4:
+                seen_objects[g] = (t, 0)
                 b0 = v[OBJECT_END + 0x1E]
                 print(f"  [appears] player {g}: race {b0 & 0xFF} class {(b0 >> 8) & 0xFF} level {v[OBJECT_END + 0x1C]}, "
                       f"health {v.get(OBJECT_END + 0x10)}/{v.get(OBJECT_END + 0x16)} (percent), {len(v)} fields, "
@@ -372,6 +375,14 @@ def describe(op, p):
     elif op == 0x1D4: print(f"  [level up] to level {struct.unpack_from('<I', p)[0]}")
     elif op == 0x1D0: print("  [experience] %d (kind %d)" % struct.unpack_from("<IB", p, 8))
     elif op == 0x161: print("  [loot window closed]")
+    elif op == 0x167:
+        flag, by = struct.unpack_from("<QQ", p, 0); duel_flag[0] = flag; print(f"  [duel requested] by {by & 0xFFFFFF}")
+    elif op == 0x2B7: print(f"  [duel countdown] {struct.unpack_from('<I', p, 0)[0]} ms")
+    elif op == 0x16A: print(f"  [duel complete] {p[0]}")
+    elif op == 0x16B:
+        kind_ = p[0]; names = p[1:].split(b"\0")
+        print(f"  [duel winner] {names[0].decode()} beat {names[1].decode()}" + (" (fled)" if kind_ else ""))
+    elif op == 0x168: print("  [duel: out of bounds]")
     elif op == 0x130:
         spell, status = struct.unpack_from("<IB", p, 0)
         print(f"  [cast result] {spell}: " + ("ok" if status == 0 else f"failed {p[5]:#x}"))
@@ -525,6 +536,7 @@ for action in actions:
                 objs = parse_update(op, p)
                 for kind_, g, t, v, move in objs:
                     if t == 4:
+                        my_guid[0] = g
                         b0 = v[UNIT_END - 0xB6 + 0x1E + 0]  # UNIT_FIELD_BYTES_0
                         print(f"  player guid {g}: {len(v)} fields; level {v[OBJECT_END + 0x1C]}, health {v[OBJECT_END + 0x10]}/{v[OBJECT_END + 0x16]}, "
                               f"race {b0 & 0xFF} class {(b0 >> 8) & 0xFF} power type {b0 >> 24}, display {v[OBJECT_END + 0x7D]}, "
@@ -619,6 +631,18 @@ for action in actions:
             wsend(0x12E, struct.pack("<IH", spell, 2) + packed(target)); print(f"cast {spell} at {target & 0xFFFFFF}")
         else:
             wsend(0x12E, struct.pack("<IH", spell, 0)); print(f"cast {spell}")
+    elif kind in ("castplayer", "attackplayer"):
+        # castplayer:SPELL or attackplayer: at the nearest other player in sight
+        players = [g for g, (t, e) in seen_objects.items() if t == 4 and g != my_guid[0]]
+        if not players:
+            print(f"{kind}: no player in sight"); continue
+        target = players[0]
+        if kind == "castplayer":
+            wsend(0x12E, struct.pack("<IH", int(args[0]), 2) + packed(target)); print(f"cast {args[0]} at player {target & 0xFFFFFF}")
+        else:
+            wsend(0x141, struct.pack("<Q", target)); print(f"attack player {target & 0xFFFFFF}")
+    elif kind == "duelaccept":
+        wsend(0x16C, struct.pack("<Q", duel_flag[0])); print("accept the duel")
     elif kind == "useitem":
         # useitem:BAG:SLOT
         bag, slot = int(args[0]), int(args[1])

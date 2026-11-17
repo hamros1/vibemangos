@@ -312,8 +312,8 @@ private:
         {
             if (other.map !is map || other.player is null)
                 return SpellCastResult.badTargets;
-            if (needsEnemy)
-                return SpellCastResult.targetFriendly; // no PvP yet
+            if (needsEnemy && !canAttack(relatingNow(), other.relatingNow(), context.client))
+                return SpellCastResult.targetFriendly;
             if (other.player.deathState != DeathState.alive)
                 return SpellCastResult.targetsDead;
             at = other.player.position;
@@ -447,7 +447,32 @@ private:
     SpellMissInfo rollHit(const ref SpellInfo spell, ulong target)
     {
         auto creature = cast(Creature) map.findObject(target);
-        if (creature is null || !creature.alive)
+        if (creature is null)
+        {
+            // A player: an enemy (a duel's opponent) can be missed; a friend never is.
+            auto other = target == player.guid ? null : cast(typeof(this)) context.onlinePlayer(target);
+            if (other is null || other.player is null || !canAttack(relatingNow(), other.relatingNow(), context.client))
+                return SpellMissInfo.none;
+            if (spell.casting.attributesEx3 & spellAttrEx3AlwaysHit)
+                return SpellMissInfo.none;
+            const roll = uniform01(map.random) * 100;
+            if (spell.casting.dmgClass == DamageClass.melee || spell.casting.dmgClass == DamageClass.ranged)
+            {
+                const me = player.fighter, it = other.player.fighter;
+                const type = spell.casting.dmgClass == DamageClass.ranged ? AttackType.ranged : AttackType.mainHand;
+                float edge = missChance(me, it, type);
+                if (roll < edge)
+                    return SpellMissInfo.miss;
+                edge += dodgeChance(it, me, type);
+                if (roll < edge)
+                    return SpellMissInfo.dodge;
+                edge += parryChance(it, me, type);
+                return roll < edge ? SpellMissInfo.parry : SpellMissInfo.none;
+            }
+            return roll < spellMissChance(player.data.level, other.player.data.level, true) ? SpellMissInfo.resist
+                : SpellMissInfo.none;
+        }
+        if (!creature.alive)
             return SpellMissInfo.none;
         if (!canAttack(relatingNow(), creature.ai.relatingOf(), context.client))
             return SpellMissInfo.none;
@@ -487,6 +512,11 @@ private:
         case 2: // SPELL_EFFECT_SCHOOL_DAMAGE
             if (auto creature = cast(Creature) map.findObject(target))
                 spellDamage(spell, creature, value > 0 ? value : 0, spell.casting.school);
+            else if (auto other = enemyPlayer(target))
+                spellDamageToPlayer(spell, other, value > 0 ? value : 0);
+            break;
+        case 83: // SPELL_EFFECT_DUEL
+            startDuel(target);
             break;
         case 17: // SPELL_EFFECT_WEAPON_DAMAGE_NOSCHOOL
         case 58: // SPELL_EFFECT_WEAPON_DAMAGE
@@ -538,6 +568,31 @@ private:
         const row = table[player.data.classId < table.length ? player.data.classId : 0];
         const intellect = player.values.get!UNIT_FIELD_STAT0(Stat.intellect);
         return row[0] + intellect / (row[1] + row[2] * player.data.level);
+    }
+
+    /// The player `target`, if this player may attack it (a duel's opponent); null otherwise.
+    typeof(this) enemyPlayer(ulong target)
+    {
+        if (target == player.guid)
+            return null;
+        auto other = cast(typeof(this)) context.onlinePlayer(target);
+        if (other is null || other.player is null || other.map !is map)
+            return null;
+        return canAttack(relatingNow(), other.relatingNow(), context.client) ? other : null;
+    }
+
+    /// A school's damage to a player (`DealSpellDamage`): a crit is half again; armor for physical.
+    void spellDamageToPlayer(const(SpellInfo)* spell, typeof(this) other, uint damage)
+    {
+        const crit = !(spell.attributesEx2 & spellAttrEx2CantCrit) && uniform01(map.random) * 100 < spellCrit();
+        if (crit)
+            damage = damage * 3 / 2;
+        if (spell.casting.school == 0)
+            damage = cast(uint) armorReducedDamage(player.data.level, other.player.fighter.armor, damage);
+        map.sendToWatchers(this, Opcode.SMSG_SPELLNONMELEEDAMAGELOG, nonMeleeDamageLog(other.player.guid, player.guid,
+            spell.id, damage, spell.casting.school, 0, 0, false, 0, crit), true);
+        enterCombatFor(combatLinger);
+        other.takeDamageFrom(player.guid, damage);
     }
 
     /// `Unit::CalculateSpellDamage` and `DealSpellDamage` for a school's damage: a crit is half again; armor for physical.

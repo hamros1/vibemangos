@@ -37,7 +37,8 @@ mixin template CombatHandlers()
     {
         const v = &player.values;
         return Relating(v.get!UNIT_FIELD_FLAGS, context.client.factionTemplates.lookup(v.get!UNIT_FIELD_FACTIONTEMPLATE),
-            true, 1u << (player.data.race - 1), 1u << (player.data.classId - 1), v.get!UNIT_FIELD_HEALTH > 0);
+            true, 1u << (player.data.race - 1), 1u << (player.data.classId - 1), v.get!UNIT_FIELD_HEALTH > 0,
+            v.get!PLAYER_DUEL_ARBITER, v.get!PLAYER_DUEL_TEAM);
     }
 
     /**
@@ -137,7 +138,18 @@ private:
         auto enemy = cast(Creature) map.findObject(request.guid);
         if (enemy is null)
         {
-            // Another node's creature: the fight is there (players cannot be attacked yet).
+            // A player here (a duel's opponent, an enemy flagged for PvP)?
+            auto other = cast(typeof(this)) context.onlinePlayer(request.guid);
+            if (other !is null && other !is this && other.player !is null && other.map is map)
+            {
+                if (!canAttackNow(relatingNow, other.relatingNow, context.client))
+                    return map.sendToWatchers(this, Opcode.SMSG_ATTACKSTOP, attackStop(player.guid, other.player.guid,
+                        false), true);
+                attackPlayer(other);
+                lastSwingError = SwingError.none;
+                return;
+            }
+            // Another node's creature: the fight is there.
             actAtReplica(request.guid, ArrivalAction(request.guid));
             return;
         }
@@ -207,11 +219,68 @@ private:
     /// `MeleeAttackStart`
     void meleeAttackStart(Creature victim)
     {
+        meleeAttackStartAt(victim.guid);
+    }
+
+    /// ditto, by guid (a creature or a player)
+    void meleeAttackStartAt(ulong victim)
+    {
         if (meleeAttacking)
             return;
         interruptAuras(0x00001000); // AURA_INTERRUPT_FLAG_ATTACKING
         meleeAttacking = true;
-        map.sendToWatchers(this, Opcode.SMSG_ATTACKSTART, attackStart(player.guid, victim.guid), true);
+        map.sendToWatchers(this, Opcode.SMSG_ATTACKSTART, attackStart(player.guid, victim), true);
+    }
+
+    /// `Unit::Attack` of a player (a duel's opponent).
+    void attackPlayer(typeof(this) other)
+    {
+        if (!player.fighter.alive)
+            return;
+        if (attacking && attacking != other.player.guid)
+            stopAttack(false, true);
+        attacking = other.player.guid;
+        if (player.fighter.dualWield)
+            attackTimer[AttackType.offHand] = player.stats.attackTime[AttackType.offHand] / 2;
+        meleeAttackStartAt(other.player.guid);
+    }
+
+    /**
+     * Damage to this player from another player (melee or a spell): `Unit::DealDamage` with its duel
+     * part. A blow from the duel's opponent that would kill leaves 1 health and ends the duel.
+     */
+    package void takeDamageFrom(ulong attacker, uint damage)
+    {
+        if (player is null || damage == 0 || player.values.get!UNIT_FIELD_HEALTH == 0)
+            return;
+        interruptAuras(0x2 | 0x01000000);
+        enterCombatFor(combatLinger);
+        const health = player.values.get!UNIT_FIELD_HEALTH;
+        if (damage >= health && duelingWith(attacker))
+        {
+            flushPlayerChanges();
+            return duelLost();
+        }
+        player.values.set!UNIT_FIELD_HEALTH(damage >= health ? 0 : health - damage);
+        flushPlayerChanges();
+        if (auto group = context.groups.of(player.guid))
+            group.updatePlayerOutOfRange(this, GroupUpdate.currentHealth);
+        if (damage >= health)
+            playerDied(false);
+    }
+
+    /// A melee swing at a player (`AttackerStateUpdate` against a player victim).
+    void swingAtPlayer(typeof(this) other, AttackType type)
+    {
+        auto d = calculateMeleeDamage(player.fighter, other.player.fighter, type, map.random);
+        map.sendToWatchers(this, Opcode.SMSG_ATTACKERSTATEUPDATE, attackerStateUpdate(d), true);
+        enterCombatFor(combatLinger);
+        if (player.powerType == Power.rage && type != AttackType.ranged)
+            player.modifyPower(Power.rage, rageReward(player.data.level, d.damage, true));
+        flushPlayerChanges();
+        if (other.player.powerType == Power.rage && d.cleanDamage)
+            other.player.modifyPower(Power.rage, rageReward(other.player.data.level, d.cleanDamage, false));
+        other.takeDamageFrom(player.guid, d.damage);
     }
 
     /**
@@ -263,12 +332,51 @@ private:
         return player !is null && (player.values.get!UNIT_FIELD_FLAGS & UnitFlags.inCombat) != 0;
     }
 
+    /// `updateMeleeAttackingState` against a player: the same checks, the main hand only.
+    void updateMeleeAgainstPlayer(typeof(this) other)
+    {
+        if (attackTimer[AttackType.mainHand])
+            return;
+        const self = player.fighter, target = other.player.fighter;
+        SwingError error;
+        if (!canReachWithMelee(self, target))
+            error = SwingError.notInRange;
+        else if (!hasInArc(self.position, target.position, 2 * PI / 3))
+            error = SwingError.badFacing;
+        else if (!target.alive)
+            error = SwingError.targetNotAlive;
+        else if (!canAttack(relatingNow, other.relatingNow, context.client))
+            return stopAttack(false); // the duel is over
+        else
+        {
+            swingAtPlayer(other, AttackType.mainHand);
+            attackTimer[AttackType.mainHand] = player.stats.attackTime[AttackType.mainHand];
+        }
+        if (error != SwingError.none)
+            attackTimer[AttackType.mainHand] = 100;
+        if (error != lastSwingError)
+        {
+            if (error == SwingError.notInRange)
+                deliver(Opcode.SMSG_ATTACKSWING_NOTINRANGE, null);
+            else if (error == SwingError.badFacing)
+                deliver(Opcode.SMSG_ATTACKSWING_BADFACING, null);
+            else if (error == SwingError.targetNotAlive)
+                deliver(Opcode.SMSG_ATTACKSWING_DEADTARGET, null);
+            lastSwingError = error;
+        }
+    }
+
     /// See `updateMelee`.
     void updateMeleeAttackingState()
     {
         auto victim = cast(Creature) map.findObject(attacking);
         if (victim is null)
-            return stopAttack(false);
+        {
+            auto other = cast(typeof(this)) context.onlinePlayer(attacking);
+            if (other is null || other.player is null || other.map !is map)
+                return stopAttack(false);
+            return updateMeleeAgainstPlayer(other);
+        }
         const self = player.fighter;
         const dualWield = self.dualWield;
         if (attackTimer[AttackType.mainHand] && !(dualWield && attackTimer[AttackType.offHand] == 0))

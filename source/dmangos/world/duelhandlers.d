@@ -1,0 +1,332 @@
+/**
+ * Duels (CMaNGOS `DuelHandler.cpp`, `Spell::EffectDuel`, `Player::UpdateDuelFlag`,
+ * `CheckDuelDistance` and `DuelComplete`), mixed into `dmangos.world.session.WorldSession`.
+ *
+ * The Duel spell at another player plants a flag between them and asks the other; accepted, both
+ * count down 3 seconds and are then enemies of each other (`PLAYER_DUEL_TEAM` 1 and 2 with the same
+ * `PLAYER_DUEL_ARBITER`), in melee and with spells. Whoever would fall to the other's blow is left
+ * with 1 health and loses (and begs); one who stays more than 50 yards from the flag for 10 seconds
+ * flees and loses; declining, logging out or teleporting ends it. Everyone around hears who won.
+ */
+module dmangos.world.duelhandlers;
+
+/// `DuelCompleteType`
+enum DuelEnd : ubyte
+{
+    interrupted = 0,
+    won = 1,
+    fled = 2,
+}
+
+/// The duel flag (`gameobject_template` 21680), the Duel spell's `EffectMiscValue`.
+enum uint duelFlagEntry = 21680;
+
+/// One side of a duel (`DuelInfo`).
+final class DuelState
+{
+    ulong initiator;
+    ulong opponent;
+    ulong arbiter;     /// the flag's guid
+    float[3] flagAt;   /// where the flag stands
+    long startTimer;   /// when it was accepted (Unix time); 0 before or once it has begun
+    long startTime;    /// when it began; 0 before
+    long outOfBound;   /// since when this side is too far from the flag; 0 if it is not
+}
+
+/// See the module documentation.
+mixin template DuelHandlers()
+{
+    import dmangos.bytes : ByteReader, ByteWriter;
+    import dmangos.log : info;
+    import dmangos.world.duelhandlers;
+    import dmangos.world.gameobject : GameObject, GameObjectSpawn;
+    import dmangos.world.objects : HighGuid, makeGuid;
+    import dmangos.world.opcodes;
+    import dmangos.world.updatefields;
+
+private:
+    DuelState duel; // `Player::duel`
+
+    /// The other duelist's session, while a duel is asked or on.
+    typeof(this) duelOpponent()
+    {
+        if (duel is null)
+            return null;
+        auto other = cast(typeof(this)) context.onlinePlayer(duel.opponent);
+        return other is null || other.duel is null || other.player is null ? null : other;
+    }
+
+    /// Whether this player is in a duel that has begun with `guid`.
+    package bool duelingWith(ulong guid)
+    {
+        return duel !is null && duel.startTime != 0 && duel.opponent == guid;
+    }
+
+    /**
+     * `Spell::EffectDuel`: a flag midway between the two, the request to both, and each one's side
+     * of the duel.
+     */
+    void startDuel(ulong target)
+    {
+        auto other = cast(typeof(this)) context.onlinePlayer(target);
+        if (other is null || other is this || other.player is null || other.map !is map)
+            return;
+        if (duel !is null || other.duel !is null)
+            return;
+        const a = player.position, b = other.player.position;
+        const at = [(a.x + b.x) / 2, (a.y + b.y) / 2, a.z];
+        static uint flags;
+        const spawnGuid = (uint(context.nodeId) << 20) | (0x80000 + (++flags & 0x7FFFF));
+        ulong arbiter = makeGuid(HighGuid.gameObject, duelFlagEntry, spawnGuid);
+        if (auto template_ = duelFlagEntry in context.data.gameObjectTemplates)
+        {
+            auto spawn = GameObjectSpawn(spawnGuid, duelFlagEntry, player.data.map, at[0], at[1], at[2],
+                a.orientation);
+            auto flag = new GameObject(spawn, template_);
+            flag.values.set!GAMEOBJECT_FACTION(player.values.get!UNIT_FIELD_FACTIONTEMPLATE);
+            flag.values.set!GAMEOBJECT_LEVEL(player.data.level + 1);
+            flag.values.clearChanges();
+            arbiter = flag.guid;
+            map.addObject(flag);
+        }
+        ByteWriter w;
+        w.put(arbiter);
+        w.put(player.guid);
+        deliver(Opcode.SMSG_DUEL_REQUESTED, w.data);
+        other.deliver(Opcode.SMSG_DUEL_REQUESTED, w.data);
+        foreach (pair; [[this, other], [other, this]])
+        {
+            auto side = pair[0], against = pair[1];
+            auto state = new DuelState;
+            state.initiator = player.guid;
+            state.opponent = against.player.guid;
+            state.arbiter = arbiter;
+            state.flagAt = at;
+            side.duel = state;
+            side.player.values.set!PLAYER_DUEL_ARBITER(arbiter);
+            side.flushPlayerChanges();
+        }
+    }
+
+    /// `HandleDuelAcceptedOpcode`: the one asked accepts; both count down 3 seconds.
+    @Handles(Opcode.CMSG_DUEL_ACCEPTED, WorldState.inWorld)
+    void handleDuelAccepted(ref ByteReader reader)
+    {
+        auto other = duelOpponent();
+        if (other is null || duel.initiator == player.guid)
+            return;
+        if (duel.startTimer || duel.startTime || other.duel.startTimer || other.duel.startTime)
+            return;
+        const now = context.unixTime;
+        duel.startTimer = other.duel.startTimer = now;
+        ByteWriter w;
+        w.put(3000u);
+        deliver(Opcode.SMSG_DUEL_COUNTDOWN, w.data);
+        other.deliver(Opcode.SMSG_DUEL_COUNTDOWN, w.data);
+    }
+
+    /// `HandleDuelCancelledOpcode`: declined (or, once begun, given up: lost).
+    @Handles(Opcode.CMSG_DUEL_CANCELLED, WorldState.inWorld)
+    void handleDuelCancelled(ref ByteReader reader)
+    {
+        auto other = duelOpponent();
+        if (other is null)
+            return;
+        if (duel.startTime)
+        {
+            stopAttack(false);
+            other.stopAttack(false);
+            beg();
+            return duelComplete(DuelEnd.won);
+        }
+        duelComplete(DuelEnd.interrupted);
+    }
+
+    /// `Player::Update`'s duel part: it begins 3 seconds after it was accepted; the flag's distance is watched.
+    void updateDuel()
+    {
+        if (duel is null)
+            return;
+        const now = context.unixTime;
+        // `UpdateDuelFlag`, by the initiator's side: the teams are set, and the duel is on.
+        if (duel.startTimer && now >= duel.startTimer + 3 && duel.initiator == player.guid)
+            if (auto other = duelOpponent())
+            {
+                player.values.set!PLAYER_DUEL_TEAM(1u);
+                other.player.values.set!PLAYER_DUEL_TEAM(2u);
+                duel.startTimer = other.duel.startTimer = 0;
+                duel.startTime = other.duel.startTime = now;
+                flushPlayerChanges();
+                other.flushPlayerChanges();
+            }
+        if (duel is null || duel.startTime == 0)
+            return;
+        // `CheckDuelDistance`: 50 yards out, 10 seconds to come within 40 again.
+        const p = player.position;
+        const d2 = (p.x - duel.flagAt[0]) ^^ 2 + (p.y - duel.flagAt[1]) ^^ 2 + (p.z - duel.flagAt[2]) ^^ 2;
+        if (duel.outOfBound == 0)
+        {
+            if (d2 > 50 ^^ 2)
+            {
+                duel.outOfBound = now;
+                deliver(Opcode.SMSG_DUEL_OUTOFBOUNDS, null);
+            }
+        }
+        else if (d2 <= 40 ^^ 2)
+        {
+            duel.outOfBound = 0;
+            deliver(Opcode.SMSG_DUEL_INBOUNDS, null);
+        }
+        else if (now >= duel.outOfBound + 10)
+            duelComplete(DuelEnd.fled);
+    }
+
+    /// `EMOTE_ONESHOT_BEG` (spell 7267's): the loser begs.
+    void beg()
+    {
+        enum uint emoteBeg = 20;
+        ByteWriter w;
+        w.put(emoteBeg);
+        w.put(player.guid);
+        map.sendToWatchers(this, Opcode.SMSG_EMOTE, w.data, true);
+    }
+
+    /**
+     * The opponent's blow would have killed this player in the duel: it keeps 1 health, both stop
+     * fighting, it begs and loses (`Unit::DealDamage` with `duel_hasEnded`).
+     */
+    package void duelLost()
+    {
+        auto other = duelOpponent();
+        player.values.set!UNIT_FIELD_HEALTH(1u);
+        stopAttack(false);
+        if (other !is null)
+            other.stopAttack(false);
+        beg();
+        duelComplete(DuelEnd.won);
+    }
+
+    /**
+     * `Player::DuelComplete`, called on the losing (or leaving) side: both are told it is over, the
+     * players around who won, the flag goes, the debuffs each put on the other in it go, and the
+     * duel fields are cleared.
+     */
+    package void duelComplete(DuelEnd how)
+    {
+        if (duel is null)
+            return;
+        auto other = duelOpponent();
+        ByteWriter complete;
+        complete.put(ubyte(how != DuelEnd.interrupted));
+        deliver(Opcode.SMSG_DUEL_COMPLETE, complete.data);
+        if (other !is null)
+            other.deliver(Opcode.SMSG_DUEL_COMPLETE, complete.data);
+        if (how != DuelEnd.interrupted && other !is null)
+        {
+            ByteWriter w;
+            w.put(ubyte(how == DuelEnd.won ? 0 : 1));
+            w.putCString(other.player.data.name);
+            w.putCString(player.data.name);
+            map.sendToWatchers(this, Opcode.SMSG_DUEL_WINNER, w.data, true);
+            info!"%s: '%s' %s a duel with '%s'"(remoteAddress, player.data.name, how == DuelEnd.won ? "lost" : "fled",
+                other.player.data.name);
+        }
+        if (map.findObject(duel.arbiter) !is null)
+            map.removeObject(duel.arbiter);
+        foreach (side; other is null ? [this] : [this, other])
+        {
+            const enemy = side is this ? (other is null ? 0 : other.player.guid) : player.guid;
+            foreach (aura; side.player.auras.list.dup)
+                if (!aura.positive && aura.caster == enemy)
+                    side.removeAura(aura);
+            side.player.values.set!PLAYER_DUEL_ARBITER(0UL);
+            side.player.values.set!PLAYER_DUEL_TEAM(0u);
+            side.duel = null;
+            side.flushPlayerChanges();
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+/**
+ * Anduin challenges Jaina; she accepts; after the countdown they are enemies, and his blow that
+ * would kill her leaves her at 1 health and ends the duel, which everyone around hears.
+ */
+unittest
+{
+    import core.time : MonoTime, msecs, seconds;
+    import std.algorithm.searching : canFind;
+    import dmangos.bytes : ByteWriter;
+    import dmangos.dbc : buildDbc;
+    import dmangos.world.clientdata : spellCastTimesFormat, spellRangeFormat;
+    import dmangos.world.movement : Position;
+    import dmangos.world.opcodes;
+    import dmangos.world.packets : ClientGuid;
+    import dmangos.world.player : DeathState, Player;
+    import dmangos.world.spellcast : SpellTargets, TargetFlags;
+    import dmangos.world.spellhandlers : testSpell;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+    import dmangos.world.updatefields;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    uint bits(float f) { return *cast(uint*) &f; }
+    context.client.spellCastTimes = typeof(context.client.spellCastTimes).parse(buildDbc(spellCastTimesFormat,
+        [[1u, 0, 0, 0]]), "SpellCastTimes.dbc");
+    context.client.spellRanges = typeof(context.client.spellRanges).parse(buildDbc(spellRangeFormat,
+        [[1u, bits(0), bits(30), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]), "SpellRange.dbc");
+    enum uint duelSpell = 7266;
+    context.data.spells.spells[duelSpell] = testSpell(duelSpell, 83, 25, 0);
+    context.data.spells.spells[duelSpell].miscValue[0] = duelFlagEntry;
+
+    // Facing each other, two yards apart.
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f, 0));
+    auto jaina = loggedIn(context, db, 8, "Jaina", Position(-8948.0f, -132.49f, 83.53f, 3.14159f));
+    anduin.read();
+    jaina.read();
+    auto a = cast(Player) anduin.session.character, j = cast(Player) jaina.session.character;
+    a.spells ~= duelSpell;
+
+    ByteWriter cast_;
+    cast_.put(duelSpell);
+    SpellTargets(TargetFlags.unit, j.guid).write(cast_);
+    anduin.write(Opcode.CMSG_CAST_SPELL, cast_.data);
+    assert(opcodesOf(jaina.read()).canFind(Opcode.SMSG_DUEL_REQUESTED), "Jaina is challenged");
+    const flag = a.values.get!PLAYER_DUEL_ARBITER;
+    assert(flag != 0 && j.values.get!PLAYER_DUEL_ARBITER == flag);
+
+    // Not enemies before it begins.
+    anduin.write(Opcode.CMSG_ATTACKSWING, ClientGuid(j.guid));
+    assert(opcodesOf(anduin.read()).canFind(Opcode.SMSG_ATTACKSTOP));
+
+    ByteWriter accept;
+    accept.put(flag);
+    jaina.write(Opcode.CMSG_DUEL_ACCEPTED, accept.data);
+    assert(opcodesOf(anduin.read()).canFind(Opcode.SMSG_DUEL_COUNTDOWN));
+    now += 3.seconds;
+    anduin.session.update(50.msecs);
+    assert(a.values.get!PLAYER_DUEL_TEAM == 1 && j.values.get!PLAYER_DUEL_TEAM == 2, "it has begun");
+
+    // Now he may attack her; at 3 health her fall ends the duel instead.
+    j.values.set!UNIT_FIELD_HEALTH(3u);
+    anduin.write(Opcode.CMSG_ATTACKSWING, ClientGuid(j.guid));
+    anduin.read();
+    foreach (_; 0 .. 40)
+    {
+        now += 2.seconds;
+        anduin.session.update(2000.msecs);
+        jaina.session.update(50.msecs);
+        if (a.values.get!PLAYER_DUEL_TEAM == 0)
+            break;
+    }
+    assert(a.values.get!PLAYER_DUEL_TEAM == 0 && j.values.get!PLAYER_DUEL_ARBITER == 0, "over");
+    assert(j.values.get!UNIT_FIELD_HEALTH == 1 && j.deathState == DeathState.alive, "she lost, and lives");
+    const heard = opcodesOf(jaina.read());
+    assert(heard.canFind(Opcode.SMSG_DUEL_WINNER) && heard.canFind(Opcode.SMSG_DUEL_COMPLETE));
+}

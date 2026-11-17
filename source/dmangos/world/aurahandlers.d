@@ -23,6 +23,7 @@ mixin template AuraHandlers()
     import dmangos.world.movement : baseMoveSpeed, MoveType;
     import dmangos.world.opcodes;
     import dmangos.world.player : DeathState;
+    import dmangos.world.relations : canAttack;
     import dmangos.world.spellcast : duration, effectValue, SpellTargets, TargetFlags;
     import dmangos.world.combat : armorReducedDamage;
     import dmangos.world.packets : ServerStandStateUpdate;
@@ -61,7 +62,9 @@ private:
         auto who = target == player.guid ? this : cast(typeof(this)) context.onlinePlayer(target);
         if (who is null || who.player is null || who.map !is map)
             return;
-        who.addAura(makeAura(spell, player.guid, player.data.level, ms, true, values));
+        // On an enemy (a duel's opponent) it is a debuff.
+        const hostile = who !is this && canAttack(relatingNow(), who.relatingNow(), context.client);
+        who.addAura(makeAura(spell, player.guid, player.data.level, ms, !hostile, values));
     }
 
     /// The aura on this player: its effects begin (if new), its duration shown.

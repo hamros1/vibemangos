@@ -119,6 +119,7 @@ private:
             releaseLootOnLeave();
             spellsOnLeave();
             cancelTrade(true);
+            duelComplete(dmangos.world.duelhandlers.DuelEnd.fled);
             flushPlayerChanges();
             send(ServerTransferPending(mapId));
             map.remove(this);

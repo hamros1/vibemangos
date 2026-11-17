@@ -34,6 +34,8 @@ struct Relating
     bool player;                            /// a player (the only player-controlled units yet)
     uint raceMask, classMask;               /// a player's, for its base reputations
     bool alive = true;
+    ulong duelArbiter;                      /// `PLAYER_DUEL_ARBITER`: the duel's flag
+    uint duelTeam;                          /// `PLAYER_DUEL_TEAM`: 1 or 2 while the duel is on, else 0
 
     bool hasFlag(uint flag) const pure nothrow @nogc @safe
     {
@@ -129,6 +131,9 @@ ReputationRank reactionTo(const Relating self, const Relating unit, const Client
         {
             if (!self.player || !unit.player)
                 return ReputationRank.neutral;
+            // Duelists: enemies of each other while their duel lasts.
+            if (self.duelTeam && unit.duelTeam && self.duelArbiter == unit.duelArbiter)
+                return self.duelTeam != unit.duelTeam ? ReputationRank.hostile : ReputationRank.friendly;
             if (sameGroup)
                 return ReputationRank.friendly;
         }
@@ -159,7 +164,7 @@ bool isFriend(const Relating self, const Relating unit, const ClientData client,
     return reactionTo(self, unit, client, sameGroup) > ReputationRank.neutral;
 }
 
-/// `Unit::CanAttack`: whether `self` may attack `unit` at all (no duels or free-for-all yet).
+/// `Unit::CanAttack`: whether `self` may attack `unit` at all (duelists each other; no free-for-all yet).
 bool canAttack(const Relating self, const Relating unit, const ClientData client, bool sameGroup = false)
 {
     enum uint mask = UnitFlags.spawning | UnitFlags.notAttackable1 | UnitFlags.untargetable | UnitFlags.taxiFlight
@@ -175,6 +180,8 @@ bool canAttack(const Relating self, const Relating unit, const ClientData client
     {
         if (self.playerControlled && unit.playerControlled)
         {
+            if (self.duelTeam && unit.duelTeam && self.duelArbiter == unit.duelArbiter)
+                return self.duelTeam != unit.duelTeam;
             if (isFriend(self, unit, client, sameGroup))
                 return false;
             if (!self.player || !unit.player)
