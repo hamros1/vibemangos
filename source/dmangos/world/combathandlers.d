@@ -113,10 +113,7 @@ private:
      */
     void playerKilled()
     {
-        import dmangos.log : info;
-
-        info!"%s: '%s' died"(remoteAddress, player.data.name);
-        stopAttack(false);
+        playerDied(true);
     }
     ulong attacking;               // `m_attacking`: the creature attacked
     bool meleeAttacking;           // `UNIT_STAT_MELEE_ATTACKING`
@@ -372,7 +369,8 @@ private:
                 if (other !is this)
                     other.stopAttack(false);
         stopAttack(false);
-        victim.die(map);
+        victim.die(map, context.unixTime);
+        context.creatureDied(victim);
     }
 }
 

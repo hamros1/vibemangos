@@ -19,6 +19,7 @@ import dmangos.world.movement : Position;
 import dmangos.world.migration : Migrant;
 import dmangos.world.replication : Replicator;
 import dmangos.world.channel : ChannelSettings;
+import dmangos.world.grid : cellKeyAt;
 import dmangos.world.channelservice : channelCommand, ChannelOp, ChannelService;
 import dmangos.cluster.protocol : ChannelCommand;
 import dmangos.world.opcodes : Language, Opcode;
@@ -364,6 +365,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         this.next = database.highestGuids();
         this.groups = new Groups(database, this, next.group);
         groupService = new GroupService(this);
+        respawnAt = database.loadCreatureRespawns();
         groups.load(database.loadGroups());
         loadCommandOverrides();
         channelService = new ChannelService(this, client, ChannelSettings(config.allowTwoSideInteractionChannel));
@@ -460,6 +462,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         auto created = new Map(id, MapSettings(config.visibilityDistance, config.visibilityRelocationLimit),
             &serverTime, &spawnCell, terrain(id), owns);
         created.replicator = replicator;
+        created.onCorpseRemoved = &corpseRemoved;
         return maps[id] = created;
     }
 
@@ -601,8 +604,12 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         MapObject[] spawned;
         if (auto cells = mapId in data.creatureCells)
             foreach (index; (*cells).get(cell, null))
+            {
+                if (awaitingRespawn(data.creatureSpawns[index].guid))
+                    continue; // dead: it comes back when its time is up
                 if (auto creature = makeCreature(&data.creatureSpawns[index]))
                     spawned ~= creature;
+            }
         if (auto cells = mapId in data.gameObjectCells)
             foreach (index; (*cells).get(cell, null))
             {
@@ -789,6 +796,77 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
                 other.deliver(opcode, body_);
     }
 
+    // -----------------------------------------------------------------------
+    // Dead creatures and their respawning
+    // -----------------------------------------------------------------------
+
+    /// Creatures that are dead now: spawn guid -> when they come back (Unix time), as `creature_respawn` has it.
+    private long[uint] respawnAt;
+    private MonoTime lastRespawnCheck;
+
+    /// `Creature::SaveRespawnTime` (`SaveRespawnTimeImmediately`): a creature died; it comes back when it says.
+    void creatureDied(Creature creature)
+    {
+        respawnAt[creature.spawn.guid] = creature.respawnAt;
+        database.saveCreatureRespawn(creature.spawn.guid, creature.respawnAt);
+    }
+
+    /// A corpse went; one that died elsewhere (handed over dead: phase 4) comes back a respawn time from now.
+    private void corpseRemoved(Creature creature)
+    {
+        if (creature.spawn.guid !in respawnAt)
+        {
+            respawnAt[creature.spawn.guid] = unixTime + creature.spawn.respawnSeconds;
+            database.saveCreatureRespawn(creature.spawn.guid, respawnAt[creature.spawn.guid]);
+        }
+    }
+
+    /// Whether a spawn is dead and waiting to come back.
+    bool awaitingRespawn(uint spawnGuid)
+    {
+        if (auto at = spawnGuid in respawnAt)
+            return *at > unixTime;
+        return false;
+    }
+
+    /**
+     * `Creature::Update` for the dead (`DEAD`): once a second, the creatures whose time has come are
+     * made anew at their spawn point, on maps whose cell they spawn in is loaded (elsewhere they come
+     * when it loads).
+     */
+    void respawnDue(MonoTime now)
+    {
+        import core.time : seconds;
+
+        if (now - lastRespawnCheck < 1.seconds)
+            return;
+        lastRespawnCheck = now;
+        const time = unixTime;
+        uint[] due;
+        foreach (guid, at; respawnAt)
+            if (at <= time)
+                due ~= guid;
+        if (due.length == 0)
+            return;
+        if (spawnIndex is null)
+            foreach (i, ref spawn; data.creatureSpawns)
+                spawnIndex[spawn.guid] = i;
+        foreach (guid; due)
+        {
+            respawnAt.remove(guid);
+            database.saveCreatureRespawn(guid, 0);
+            const index = guid in spawnIndex;
+            if (index is null)
+                continue;
+            const spawn = &data.creatureSpawns[*index];
+            auto there = existingMap(spawn.map);
+            if (there is null || !there.cellLoaded(cellKeyAt(spawn.x, spawn.y)))
+                continue;
+            if (auto creature = makeCreature(spawn))
+                there.addObject(creature);
+        }
+    }
+
     /// `GroupDirectory.local`
     OnlinePlayer local(ulong guid)
     {
@@ -936,6 +1014,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
         const playersDone = MonoTime.currTime;
         foreach (map_; maps)
             map_.update(elapsed);
+        respawnDue(now);
         const mapsDone = MonoTime.currTime;
         if (mapsDone - started > 500.msecs)
             warning!"slow tick: %s ms in %s players (slowest %s ms, guid %s), %s ms in %s maps"(

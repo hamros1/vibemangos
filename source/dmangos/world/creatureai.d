@@ -60,6 +60,9 @@ interface CombatWorld : MotionWorld
 
     /// Puts a resting creature back in the tick.
     void wake(ulong guid);
+
+    /// A dead creature's corpse has lasted its time: it goes, and comes back when its respawn time is up.
+    void corpseExpired(Creature creature);
 }
 
 /// `ReactStates`

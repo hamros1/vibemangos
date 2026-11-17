@@ -122,6 +122,7 @@ struct CreatureSpawn
     uint respawnSeconds;
     float wanderDistance = 0;
     uint movementType;
+    uint respawnSecondsMax;     /// `spawntimesecsmax`: the respawn time is between the two
 }
 
 /// `creature_addon` or `creature_template_addon`: how a creature stands, sits, rides or loops an emote.
@@ -508,6 +509,10 @@ final class Creature : Moving, Replicable, Npc
     /// The players attacking it (`Unit::m_attackers`), by guid.
     bool[ulong] attackers;
 
+    /// Dead: milliseconds until its corpse goes (`m_corpseExpirationTime`); and when it comes back (Unix time).
+    int corpseTimer;
+    long respawnAt; /// ditto
+
     /// Its fighting mind (`dmangos.world.creatureai`).
     CreatureAI ai;
 
@@ -568,10 +573,22 @@ final class Creature : Moving, Replicable, Npc
      * `Creature::SetDeathState(JUST_DIED)`, as far as there is death yet: it stops where it is and
      * moves no more; its corpse stays (despawning, respawning and loot come with death proper).
      */
-    void die(MotionWorld world)
+    void die(MotionWorld world, long now)
     {
+        import std.random : uniform;
         import dmangos.world.motion : IdleMovement, stopMoving;
 
+        // `SetDeathState(JUST_DIED)`: its corpse lasts by its rank (`Corpse.Decay.*`), at most 90% of its
+        // respawn time (`GetRandomRespawnTime`), which counts from now; it no longer offers its services.
+        static immutable uint[5] decayByRank = [60, 300, 300, 3600, 300]; // normal, elite, rare elite, boss, rare
+        const respawnDelay = spawn.respawnSecondsMax > spawn.respawnSeconds
+            ? uniform!"[]"(spawn.respawnSeconds, spawn.respawnSecondsMax) : spawn.respawnSeconds;
+        uint decay = decayByRank[template_.rank < decayByRank.length ? template_.rank : 0];
+        if (decay > respawnDelay * 9 / 10)
+            decay = respawnDelay * 9 / 10;
+        corpseTimer = decay * 1000;
+        respawnAt = now + respawnDelay;
+        values.set!UNIT_NPC_FLAGS(0u);
         stopMoving(this, world);
         generator = new IdleMovement;
         attackers = null;
@@ -591,6 +608,15 @@ final class Creature : Moving, Replicable, Npc
         {
             motionStarted = true;
             generator.initialize(this, world);
+        }
+        if (!alive)
+        {
+            // `Creature::Update` for a corpse: when its time is up it goes (`RemoveCorpse`).
+            corpseTimer -= diff;
+            if (corpseTimer <= 0)
+                if (auto combat = cast(CombatWorld) world)
+                    combat.corpseExpired(this);
+            return;
         }
         if (ai !is null)
             if (auto combat = cast(CombatWorld) world)
@@ -614,7 +640,7 @@ final class Creature : Moving, Replicable, Npc
         import dmangos.world.motion : IdleMovement;
 
         return motionStarted && spline.finalized && cast(const IdleMovement) generator !is null
-            && (ai is null || !ai.active);
+            && (ai is null || !ai.active) && alive;
     }
 
     /// See `Replicable.motion`: living, with its speeds and the walk under way.
@@ -689,6 +715,8 @@ final class Creature : Moving, Replicable, Npc
             const item = r.read!uint;
             vendorStock.items[item] = VendorStocks.Stock(r.read!uint, r.read!long);
         }
+        // A corpse handed over: its time is not carried; it goes at the next tick, and respawns from then.
+        corpseTimer = 0;
     }
 
 private:

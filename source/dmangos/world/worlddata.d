@@ -262,6 +262,26 @@ enum areaTriggerTeleportQuery = "SELECT id, IFNULL(name, ''), required_level, re
 enum gameTeleQuery = "SELECT position_x, position_y, position_z, orientation, map, name FROM game_tele ORDER BY id";
 
 /// See the module documentation.
+/// `GraveYardData`: a graveyard (`WorldSafeLocs.dbc`) for an area, zone or map, and for which team.
+struct GraveyardLink
+{
+    uint safeLoc;
+    uint team;   /// 0: both, otherwise ALLIANCE (469) or HORDE (67)
+}
+
+/// `GraveyardManager::GraveyardLinkKey`: an area or zone id (`GRAVEYARD_AREALINK`, 0) or a map id (`GRAVEYARD_MAPLINK`, 1).
+uint graveyardLinkKey(uint location, uint linkKind) pure nothrow @nogc @safe
+{
+    return location | linkKind << 31;
+}
+
+/// `InstanceTemplate`'s ghost entrance: where on which map a ghost of an instance comes back out.
+struct GhostEntrance
+{
+    int map = -1;
+    float x = 0, y = 0;
+}
+
 final class WorldData
 {
     ItemTemplate[uint] items;               /// by entry
@@ -288,6 +308,8 @@ final class WorldData
     uint[3][uint] creatureEquipment;                /// `creature_equip_template`: item entries, by id
     CreatureClassStats[uint] creatureClassStats;    /// by `classStatsKey`
     NpcData npcs;                                   /// gossip, texts, trainers, vendors
+    GraveyardLink[][uint] graveyards;               /// `game_graveyard_zone`, by `graveyardLinkKey`
+    GhostEntrance[uint] ghostEntrances;             /// `instance_template`'s ghost entrances, by instance map
     WaypointStore waypoints;                        /// `creature_movement` and `creature_movement_template`
 
     ///
@@ -471,6 +493,11 @@ final class WorldData
                 t.data[i] = row.get!int(7 + i);
             gameObjectTemplates[t.entry] = t;
         }
+        foreach (row; world.query!"SELECT id, ghost_loc, link_kind, faction FROM game_graveyard_zone"())
+            graveyards[graveyardLinkKey(row.get!uint(1), row.get!uint(2))] ~= GraveyardLink(row.get!uint(0),
+                row.get!uint(3));
+        foreach (row; world.query!"SELECT map, ghostEntranceMap, ghostEntranceX, ghostEntranceY FROM instance_template"())
+            ghostEntrances[row.get!uint(0)] = GhostEntrance(row.get!int(1), row.get!float(2), row.get!float(3));
         foreach (row; world.query!"SELECT entry, equipentry1, equipentry2, equipentry3 FROM creature_equip_template"())
             creatureEquipment[row.get!uint(0)] = [row.get!uint(1), row.get!uint(2), row.get!uint(3)];
         foreach (row; world.query!"SELECT guid, mount, stand_state, sheath_state, emote FROM creature_addon"())
@@ -520,7 +547,7 @@ final class WorldData
             spawnEntries[row.get!uint(0)] ~= row.get!uint(1);
         size_t skipped;
         foreach (row; world.queryAs!(CreatureSpawn, "SELECT guid, id, map, position_x, position_y, position_z, "
-            ~ "orientation, spawntimesecsmin, spawndist, MovementType FROM creature")())
+            ~ "orientation, spawntimesecsmin, spawndist, MovementType, spawntimesecsmax FROM creature")())
         {
             import std.random : uniform;
 

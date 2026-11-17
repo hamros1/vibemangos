@@ -19,6 +19,9 @@ in order:
     whisper:NAME:TEXT         whisper to another player
     attack:ENTRY  stopattack  walk up to the nearest creature of ENTRY and fight it; stop
     approach:ENTRY:DIST       walk to DIST yards of the nearest creature of ENTRY
+    release  corpse  tocorpse  reclaim  spirithealer
+                              dead: release the spirit, ask where the corpse is, go there, take it
+                              back; or ask the spirit healer picked with npc:ENTRY
     who[:TEXT]                /who, everyone or those matching TEXT, and print the list
     emote:ID                  a text emote (101 = /wave, 34 = /dance)
     wait:SECONDS              do nothing for a while (packets queue up)
@@ -151,10 +154,11 @@ def enum():
 
 OBJECT_END, ITEM_END, CONTAINER_END, UNIT_END, PLAYER_END = 6, 48, 122, 188, 1282
 GAMEOBJECT_END = OBJECT_END + 0x1A
-COUNTS = {1: ITEM_END, 2: CONTAINER_END, 3: UNIT_END, 4: PLAYER_END, 5: GAMEOBJECT_END}
+COUNTS = {1: ITEM_END, 2: CONTAINER_END, 3: UNIT_END, 4: PLAYER_END, 5: GAMEOBJECT_END, 7: 0x26}  # 7: CORPSE_END
 seen_objects = {}
 seen_positions = {}   # creature guid -> where it was created
 here = [0.0, 0.0, 0.0]  # where this client last put its character
+corpse_at = [0.0, 0.0, 0.0]
 item_objects = {}  # guid -> fields of the items the client was sent
 my_slots = {}      # the player's own slots: slot -> item guid
 player_guid = None
@@ -271,6 +275,9 @@ def describe(op, p):
                 print(f"  [appears] player {g}: race {b0 & 0xFF} class {(b0 >> 8) & 0xFF} level {v[OBJECT_END + 0x1C]}, "
                       f"health {v.get(OBJECT_END + 0x10)}/{v.get(OBJECT_END + 0x16)} (percent), {len(v)} fields, "
                       f"at {move[0]:.1f} {move[1]:.1f} {move[2]:.1f}")
+            elif kind in (2, 3) and t == 7:
+                print(f"  [corpse appears] {g & 0xFFFFFF} at {move[0]:.1f} {move[1]:.1f} {move[2]:.1f}" if move else
+                      f"  [corpse appears] {g & 0xFFFFFF}")
             elif kind in (2, 3) and t in (3, 5):
                 entry = v.get(3, 0); seen_objects[g] = (t, entry)
                 if move: seen_positions[g] = move[:3]
@@ -292,6 +299,12 @@ def describe(op, p):
                                     0x148: "dead target", 0x149: "can't attack"}[op])
     elif op == 0x14E:
         print("  [cancel combat]")
+    elif op == 0x269:
+        print(f"  [corpse reclaim delay] {struct.unpack_from('<I', p, 0)[0] / 1000:.0f} s")
+    elif op == 0x2BD:
+        print("  [durability lost on death]")
+    elif op in (0x0E8, 0x0EA, 0x0DE, 0x0DF):
+        print("  [" + {0x0E8: "rooted", 0x0EA: "unrooted", 0x0DE: "water walk", 0x0DF: "land walk"}[op] + "]")
     elif op == 0x14A:
         info, = struct.unpack_from("<I", p, 0); a, pos = packed_guid(p, 4); v, pos = packed_guid(p, pos)
         total, lines = struct.unpack_from("<IB", p, pos); pos += 5 + lines * 20
@@ -331,6 +344,7 @@ def describe(op, p):
         g, pos = packed_guid(p, 0); counter = struct.unpack_from("<I", p, pos)[0]
         x, y, z = struct.unpack_from("<3f", p, pos + 12)
         print(f"  [teleport] to {x:.1f} {y:.1f} {z:.1f}; answering")
+        here[:] = [x, y, z]
         wsend(0x0C7, struct.pack("<QII", g, counter, 0))
     elif op == 0x0C5:
         g, pos = packed_guid(p, 0); x, y, z = struct.unpack_from("<3f", p, pos + 8); print(f"  [teleports] {g} to {x:.1f} {y:.1f} {z:.1f}")
@@ -527,6 +541,31 @@ for action in actions:
         o = math.atan2(cy - y, cx - x) % (2 * math.pi)
         movement(0x0B5, x, y, cz, o, flags=1); movement(0x0B7, x, y, cz, o); here[:] = [x, y, cz]
         print(f"approach {entry}: {dist} yards from {target & 0xFFFFFF}")
+    elif kind == "release":
+        wsend(0x15A, b""); print("release spirit")
+    elif kind == "corpse":
+        wsend(0x216, b""); op, p = expect(0x216)
+        if p[0]:
+            m, x, y, z, cm = struct.unpack_from("<i3fI", p, 1); print(f"corpse: map {m} at {x:.1f} {y:.1f} {z:.1f}")
+            corpse_at[:] = [x, y, z]
+        else:
+            print("corpse: none")
+    elif kind == "tocorpse":
+        # Run there at a ghost's speed (8.75 yards a second): a heartbeat a second, then stop.
+        import math
+        x, y, z = corpse_at; sx, sy, sz = here
+        steps = max(1, math.ceil(math.dist((sx, sy), (x, y)) / 8.0))
+        movement(0x0B5, sx, sy, sz, flags=1)
+        for i in range(1, steps + 1):
+            time.sleep(1.0)
+            f = i / steps
+            movement(0x0EE, sx + (x - sx) * f, sy + (y - sy) * f, sz + (z - sz) * f, flags=1)
+        movement(0x0B7, x, y, z); here[:] = [x, y, z]
+        print(f"to the corpse at {x:.1f} {y:.1f} in {steps} s")
+    elif kind == "reclaim":
+        wsend(0x1D2, struct.pack("<Q", 0)); print("reclaim corpse")
+    elif kind == "spirithealer":
+        wsend(0x21C, struct.pack("<Q", npc)); print("spirit healer")
     elif kind == "stopattack":
         wsend(0x142, b""); print("stop attacking")
     elif kind == "move":

@@ -219,6 +219,16 @@ struct FactionTemplateEntry
 
 enum factionTemplateFormat = "niiiiiiiiiiiii"; ///
 
+/// `WorldSafeLocsEntry`: a graveyard (or other safe place) where ghosts appear.
+struct WorldSafeLocsEntry
+{
+    uint id;
+    uint map;
+    float x = 0, y = 0, z = 0;
+}
+
+enum worldSafeLocsFormat = "nifffxxxxxxxxx"; ///
+
 ///
 struct SkillLineEntry
 {
@@ -497,6 +507,7 @@ final class ClientData
     DbcStore!(WmoAreaTableEntry, wmoAreaTableFormat) wmoAreas;
     DbcStore!(FactionEntry, factionFormat) factions;
     DbcStore!(FactionTemplateEntry, factionTemplateFormat) factionTemplates;
+    DbcStore!(WorldSafeLocsEntry, worldSafeLocsFormat) worldSafeLocs;
 
     private
     {
@@ -526,7 +537,7 @@ final class ClientData
             "areas:AreaTable", "areaTriggers:AreaTrigger", "chatChannels:ChatChannels",
             "bankBagSlotPrices:BankBagSlotPrices", "durabilityCosts:DurabilityCosts",
             "durabilityQualities:DurabilityQuality", "liquidTypes:LiquidType", "wmoAreas:WMOAreaTable",
-            "factions:Faction", "factionTemplates:FactionTemplate"])
+            "factions:Faction", "factionTemplates:FactionTemplate", "worldSafeLocs:WorldSafeLocs"])
         {{
             enum parts = member.findSplit(":");
             enum field = parts[0];

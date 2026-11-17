@@ -28,10 +28,9 @@
 * **Stats:** auras, talents' effects and racial passives are not applied. Crit, dodge, parry and
   block chances are 0. Item stat bonuses, armor, attack power and weapon damage are applied.
 * **Not loaded:** reputation (needs `Faction.dbc` and `character_reputation`), guild membership
-  (`PLAYER_GUILDID`), quests, auras, cooldowns, pets, corpses and death. A dead character loads
-  alive.
-* **Creatures** wander and walk their waypoints, but never fight or die, so they never respawn.
-  Waypoint scripts (`ScriptId`) are not run, type 3 paths (flying) are walked as waypoints, formations
+  (`PLAYER_GUILDID`), quests, auras, cooldowns, pets. A character saved dead but not released
+  (a crash) loads alive.
+* **Creatures** wander, walk their waypoints, fight, die and respawn. Waypoint scripts (`ScriptId`) are not run, type 3 paths (flying) are walked as waypoints, formations
   do not follow their leader, and creatures in water do not swim. There is no quest dialog yet. Flight masters,
   auctioneers, stable masters, battlemasters and guild NPCs are not offered in menus yet. Conditions
   that need auras, reputation, quests in the log, world states or scripts are never met. Elevators
@@ -111,7 +110,10 @@ The largest area. CMaNGOS references: `Spells/`, `Entities/Unit.cpp`, `Combat/`,
    anyway, except within a border's 25 yards).
 2. **Creatures fighting back: done** (`creatureai.d`; README's "Creatures fight"). Not yet: calling
    for help and assisting, EventAI's spells and texts, fleeing, movement maps for chasing.
-3. Death: corpses, releasing, the spirit healer, respawning.
+3. **Death: done** (`death.d`, `corpse.d`; README's "Death"). Not yet: resurrection sickness and the
+   ghost's own auras (applied by hand until there are auras), ghosts hidden from the living, bones,
+   battleground spirit guides, corpses of a player on another node of a cluster (a corpse is put on
+   the map its player's node simulates; a node that does not own the cell keeps it anyway).
 4. Experience and loot.
 5. Spells, cooldowns and auras.
 6. Duels and trades.

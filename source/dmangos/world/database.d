@@ -62,6 +62,16 @@ struct CharacterRecord
 }
 
 /// See the module documentation.
+/// A `corpse` row.
+struct CorpseRecord
+{
+    uint player;
+    float x = 0, y = 0, z = 0, orientation = 0;
+    uint map;
+    long time;          /// when the spirit was released
+    ubyte type;         /// `CorpseType`
+}
+
 interface WorldDatabase
 {
     /// The account named `username`, or null.
@@ -136,6 +146,21 @@ interface WorldDatabase
 
     /// Saves the account's tutorial flags.
     void saveTutorials(uint accountId, const uint[tutorialFields] tutorials);
+
+    /// `Corpse::SaveToDB`: a player's corpse (its row replaces any earlier one).
+    void saveCorpse(const ref CorpseRecord corpse);
+
+    /// `Corpse::DeleteFromDB`: the player's corpse is gone.
+    void deleteCorpse(uint player);
+
+    /// The player's corpse, if it has one.
+    Nullable!CorpseRecord loadCorpse(uint player);
+
+    /// `MapPersistentState::SaveCreatureRespawnTime`: a dead creature comes back at `respawnTime` (0: forget it).
+    void saveCreatureRespawn(uint spawnGuid, long respawnTime);
+
+    /// Every creature that is dead now: spawn guid -> when it comes back (Unix time).
+    long[uint] loadCreatureRespawns();
 
     /// Name, race, gender and class of a character, or null.
     Nullable!NameInfo nameInfo(uint guid);
@@ -267,6 +292,11 @@ final class MySqlWorldDatabase : WorldDatabase
     {
         statements.saveTutorials(accountId, tutorials);
     }
+    void saveCorpse(const ref CorpseRecord c) { statements.saveCorpse(c); }
+    void deleteCorpse(uint player) { statements.deleteCorpse(player); }
+    Nullable!CorpseRecord loadCorpse(uint player) { return statements.loadCorpse(player); }
+    void saveCreatureRespawn(uint spawnGuid, long respawnTime) { statements.saveCreatureRespawn(spawnGuid, respawnTime); }
+    long[uint] loadCreatureRespawns() { return statements.loadCreatureRespawns(); }
     Nullable!NameInfo nameInfo(uint guid) { return statements.nameInfo(guid); }
     GroupRecord[] loadGroups() { return statements.loadGroups(); }
     void createGroup(const ref GroupRecord group) { statements.createGroup(group); }
@@ -672,6 +702,26 @@ final class MemoryWorldDatabase : WorldDatabase
     {
         tutorialSaves[accountId] = tutorials;
     }
+
+    CorpseRecord[uint] corpses;      /// by player
+    long[uint] creatureRespawns;     /// by spawn guid
+
+    void saveCorpse(const ref CorpseRecord c) { corpses[c.player] = c; }
+    void deleteCorpse(uint player) { corpses.remove(player); }
+    Nullable!CorpseRecord loadCorpse(uint player)
+    {
+        if (auto c = player in corpses)
+            return Nullable!CorpseRecord(*c);
+        return Nullable!CorpseRecord.init;
+    }
+    void saveCreatureRespawn(uint spawnGuid, long respawnTime)
+    {
+        if (respawnTime)
+            creatureRespawns[spawnGuid] = respawnTime;
+        else
+            creatureRespawns.remove(spawnGuid);
+    }
+    long[uint] loadCreatureRespawns() { return creatureRespawns.dup; }
 
     Nullable!NameInfo nameInfo(uint guid)
     {

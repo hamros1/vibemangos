@@ -115,6 +115,7 @@ final class WorldSession : NetSession, Kickable, OnlinePlayer
     mixin NpcHandlers;              // npchandlers.d: NPCHandler.cpp, the gossip half of Player.cpp
     mixin ItemHandlers;             // itemhandlers.d: ItemHandler.cpp, repairs, Player::BuyItemFromVendor
     mixin CombatHandlers;           // combathandlers.d: CombatHandler.cpp, the player's melee
+    mixin DeathHandlers;            // death.d: dying, the ghost, the corpse, the spirit healer
     mixin Exploration;              // exploration.d: Player::UpdateZone, CheckAreaExploreAndOutdoor, GiveXP
     mixin ChatCommands;             // commands.d: ArcEmu's ParseCommands, ExecuteCommandInTable, messages
     mixin GmActions;                // gmactions.d: what the handlers do to players
@@ -316,6 +317,24 @@ Three modules, split by what they depend on:
   calls `moveInLineOfSight` for the creatures a player sees when it moves, and for the players who
   see a creature when it moves. A creature with something to do (a fight, the way home, health to
   regain) does not rest, so the map keeps ticking it.
+
+## Death
+
+`death.d` holds the graveyard choice (`closestGraveyard`, over `WorldData.graveyards` keyed by
+area, zone or map and `WorldSafeLocs.dbc`) and the reclaim delay as pure functions, and the
+`DeathHandlers` session mixin: dying (`playerDied`, from a creature's swing), releasing
+(`buildPlayerRepop`, `repopAtGraveyard`), the ghost's look and speeds (`setGhost`, by hand until
+there are auras), reclaiming, the spirit healer, the corpse query, the six-minute release timer, and
+death at login and logout. A `Player.deathState` (alive, corpse, ghost) is the server's own; the
+client learns it from health 0 and `PLAYER_FLAGS_GHOST`, which is saved. `corpse.d`'s `Corpse` is
+a plain `MapObject` the map shows like any other (`Map.addObject`, `removeObject`); `Map.objectVisibleTo`
+hides spirit healers and guides from the living.
+
+A dead creature keeps its place in the map's tick until its corpse timer runs out
+(`Creature.corpseTimer`); then `CombatWorld.corpseExpired` takes it off the map. The context keeps
+the respawn times (`respawnAt`, by spawn guid, saved in `creature_respawn`): a cell loading skips
+spawns still dead, and once a second the creatures whose time has come are made anew where their
+cell is loaded.
 
 Creature combat numbers come from `selectLevel` (`Creature::SelectLevel` and `UpdateDamagePhysical`
 of the CMaNGOS version whose `creature_template_classlevelstats` has `BaseDamageExp0`, which is the

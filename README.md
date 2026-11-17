@@ -228,8 +228,7 @@ What works now:
     none dies. Creatures have CMaNGOS's damage, attack power and armor (`creature_template` and
     `creature_template_classlevelstats`), players their crit (agility), dodge, parry and block
     chances and shield block. Players are in combat while a creature fights them and for 5 seconds
-    after a swing (no health regeneration or rage decay meanwhile). A dead creature stays dead and a
-    dead player comes back at its next login, until death proper (milestone 6, step 3).
+    after a swing (no health regeneration or rage decay meanwhile).
   * **Creatures fight** (CMaNGOS's base creature AI): attacked, they fight back; aggressive ones
     (not `CREATURE_EXTRA_FLAG_NO_AGGRO_ON_SIGHT`) attack a hostile player that comes within their
     aggro radius (`Detection`, a yard more for each level the player is below them) and in sight.
@@ -239,8 +238,20 @@ What works now:
     when their victim is 30 yards beyond where their `Pursuit` time last started; they run back to
     where the fight began, evading attacks, and get a third of their health back every 5 seconds out
     of combat. Not yet: calling for help, EventAI's scripted spells and texts, fleeing.
+  * **Death** (CMaNGOS's `KillPlayer`, repop, reclaim and spirit healer): a player killed loses a tenth
+    of its gear's durability and lies rooted until it releases its spirit (or six minutes pass, or it
+    logs out). Released, it is a ghost at the nearest graveyard of its team (`game_graveyard_zone`:
+    the area's, else the zone's, else the map's; an instance's from its entrance), 25% faster (night
+    elves a wisp, 50%), walking on water, and its corpse lies where it fell, saved in `corpse`. Within
+    39 yards of the corpse, after 30 seconds (60 and 120 for deaths less than five minutes apart), it
+    takes its body back with half its health and mana; or a spirit healer, whom only the dead see,
+    brings it back at once for a quarter of its gear's durability. A ghost that logs out is one again
+    at its next login. A creature killed leaves its corpse for a minute (5 for elites and rares, an
+    hour for bosses, at most 90% of its respawn time) and comes back at its spawn point after
+    `spawntimesecs` (to `spawntimesecsmax`), kept in `creature_respawn` across restarts. Not yet:
+    resurrection sickness, ghosts hidden from the living, skinnable corpses and loot.
   * **The update tick** (every 50 ms, `update_interval`): health, mana, rage and energy regenerate
-    as in CMaNGOS (health and the loss of rage only out of combat); inns and capitals give rested XP, also while offline; characters are saved every
+    as in CMaNGOS (health and the loss of rage only out of combat, and only for the living); inns and capitals give rested XP, also while offline; characters are saved every
     15 minutes (`player_save_interval`).
   * **Logout** takes 20 seconds, sitting and rooted, unless the player rests or its account level
     reaches `instant_logout`; it can be cancelled. It saves the position, zone, level, money, health

@@ -49,6 +49,7 @@ import dmangos.world.commands : ChatCommands;
 import dmangos.world.gmactions : GmActions;
 import dmangos.world.gmtargets : GmTargets;
 import dmangos.world.combathandlers : CombatHandlers;
+import dmangos.world.death : DeathHandlers;
 import dmangos.world.creatureai : Combatant;
 import dmangos.world.combat : Fighter, MeleeDamage;
 import dmangos.world.relations : Relating;
@@ -760,6 +761,7 @@ private:
     mixin GmActions;
     mixin GmTargets;
     mixin CombatHandlers;
+    mixin DeathHandlers;
     mixin Level0Commands;
     mixin Level1Commands;
     mixin Level2Commands;

@@ -57,6 +57,7 @@ enum TrainerSpellState : ubyte
 /// See the module documentation.
 mixin template NpcHandlers()
 {
+    import dmangos.world.player : DeathState;
     import std.algorithm.comparison : max;
     import std.algorithm.searching : any, canFind;
     import std.math : floor, sqrt;
@@ -114,6 +115,10 @@ private:
         if (creature is null)
             return null;
         if (npcFlags && !(creature.npcValues.get!UNIT_NPC_FLAGS & npcFlags))
+            return null;
+        // `GetNPCIfCanInteractWith`: the dead talk only to spirit healers and guides.
+        enum uint spiritServices = 0x20 | 0x40; // UNIT_NPC_FLAG_SPIRITHEALER, _SPIRITGUIDE
+        if (player.deathState != DeathState.alive && !(creature.npcValues.get!UNIT_NPC_FLAGS & spiritServices))
             return null;
         // WorldObject::IsWithinDistInMap: the distance plus both combat reaches.
         const a = player.position, b = creature.position;

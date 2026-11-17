@@ -90,6 +90,7 @@ struct CharacterData
     float restBonus = 0;         /// `rest_bonus`: rested XP
     long logoutTime;             /// `logout_time`, Unix time
     bool logoutResting;          /// `is_logout_resting`: logged out in an inn or a city
+    long deathExpireTime;        /// `death_expire_time`: deaths until then make the corpse wait longer
 }
 
 /// What logging out writes back (`Player::SaveToDB`, the fields that can change in the world so far).
@@ -114,6 +115,8 @@ struct CharacterProgress
     uint ammoId;
     float restBonus = 0;
     bool resting;         /// `is_logout_resting`
+    uint playerFlags;     /// `playerFlags`: the ghost flag among them
+    long deathExpireTime; /// `death_expire_time`
 }
 
 /// Who looks at a player: the player itself, a member of its group, or anyone else.
@@ -137,7 +140,16 @@ enum PlayerFlags : uint
     afk = 0x02,
     dnd = 0x04,
     gm = 0x08,
+    ghost = 0x10,
     resting = 0x20,
+}
+
+/// `DeathState`, for a player: alive, dead where it fell (`CORPSE`), or released (`DEAD`, a ghost).
+enum DeathState : ubyte
+{
+    alive,
+    corpse,
+    ghost,
 }
 
 /// `RestType`: why a player is resting.
@@ -167,6 +179,7 @@ final class Player : InventoryOwner
     MovementInfo movement;
     PlayerStats stats;
     MeleeChances chances;                /// own melee chances (`meleeChances`), for the combat rolls
+    DeathState deathState;               /// alive, a body, or a ghost (`dmangos.world.death`)
     uint[] spells;                       /// active, enabled spells: the spellbook
     uint[maxActionButtons] actionButtons; /// packed, 0 = empty
     uint[2] proficiency;                 /// item sub-class masks for weapons and armor (`SMSG_SET_PROFICIENCY`)
@@ -497,6 +510,8 @@ final class Player : InventoryOwner
         p.ammoId = values[PLAYER_AMMO_ID];
         p.restBonus = restBonus;
         p.resting = hasFlag(PlayerFlags.resting);
+        p.playerFlags = values.get!PLAYER_FLAGS;
+        p.deathExpireTime = data.deathExpireTime;
         return p;
     }
 
@@ -899,7 +914,7 @@ private:
         enum uint running = MovementFlags.forward | MovementFlags.backward | MovementFlags.strafeLeft
             | MovementFlags.strafeRight;
         f.runningAround = (movement.flags & running) && !(movement.flags & MovementFlags.walkMode);
-        f.alive = values.get!UNIT_FIELD_HEALTH > 0;
+        f.alive = deathState == DeathState.alive && values.get!UNIT_FIELD_HEALTH > 0;
         f.standing = values.getByte!UNIT_FIELD_BYTES_1(0) == 0;
         enum uint skillUnarmed = 162, skillDefense = 95;
         static immutable ubyte[3] slots = [equipmentSlotMainhand, equipmentSlotOffhand, equipmentSlotRanged];

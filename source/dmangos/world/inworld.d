@@ -29,7 +29,7 @@ mixin template InWorldHandlers()
     import dmangos.world.objects : lowGuid;
     import dmangos.world.opcodes;
     import dmangos.world.packets;
-    import dmangos.world.player : PlayerFlags, RestType;
+    import dmangos.world.player : DeathState, PlayerFlags, RestType;
     import dmangos.world.channelservice : ChannelOp;
     import dmangos.world.queries : chatMessage, ClientChat, ClientWho, whoList, WhoEntry, creatureQueryResponse, gameObjectQueryResponse,
         itemQueryResponse;
@@ -46,6 +46,7 @@ private:
      */
     void leaveWorld(string why, bool loggingOut)
     {
+        deathOnLogout();
         const progress = player.progress(secondsInWorld());
         context.database.saveProgress(progress);
         context.database.setOnline(player.data.guid, account.id, false, context.config.realmId);
@@ -273,10 +274,12 @@ private:
         updateMelee(elapsed);
         if (player is null)
             return;
+        updateDeath(elapsed);
         if (regenTimer.update(elapsed))
         {
             const ms = cast(uint) regenTimer.takeAll().total!"msecs";
-            if (player.regenerate(ms, config.rateHealth, config.rateMana, config.rateRageLoss, config.rateEnergy,
+            // `Player::RegenerateAll`: only the living.
+            if (player.deathState == DeathState.alive && player.regenerate(ms, config.rateHealth, config.rateMana, config.rateRageLoss, config.rateEnergy,
                     inCombat))
             {
                 flushPlayerChanges();

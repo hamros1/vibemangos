@@ -16,6 +16,7 @@ import dmangos.mysql : MySqlConnection;
 import dmangos.world.inventory : ItemChange, ItemRecord, ItemState;
 import dmangos.world.player : CharacterData, CharacterProgress, HomeBind, tutorialFields;
 import dmangos.world.playercreate : NewCharacter, NewSkill, NewSpell, maxEnchantmentSlot;
+import dmangos.world.database : CorpseRecord;
 import dmangos.world.worlddata : CreateAction;
 
 /// Who a character belongs to.
@@ -209,7 +210,7 @@ final class CharacterStatements
         const rows = characters.query!("SELECT guid, account, name, race, class, gender, level, xp, money, "
             ~ "playerBytes, playerBytes2, playerFlags, position_x, position_y, position_z, orientation, map, zone, "
             ~ "cinematic, totaltime, leveltime, at_login, watchedFaction, health, power1, power2, power3, power4, "
-            ~ "power5, exploredZones, ammoId, actionBars, rest_bonus, logout_time, is_logout_resting "
+            ~ "power5, exploredZones, ammoId, actionBars, rest_bonus, logout_time, is_logout_resting, death_expire_time "
             ~ "FROM characters WHERE guid = ?")(guid);
         if (rows.length == 0)
             return Nullable!CharacterData.init;
@@ -247,6 +248,7 @@ final class CharacterStatements
         c.actionBars = r.get!ubyte(31);
         c.restBonus = r.get!float(32);
         c.logoutTime = r.get!long(33);
+        c.deathExpireTime = r.get!long(35);
         c.logoutResting = r.get!int(34) != 0;
 
         // _LoadInventory orders by bag, so bags come before what is in them.
@@ -313,11 +315,57 @@ final class CharacterStatements
             ~ "map = ?, zone = ?, totaltime = ?, leveltime = ?, logout_time = ?, health = ?, power1 = ?, "
             ~ "power2 = ?, power3 = ?, power4 = ?, power5 = ?, actionBars = ?, cinematic = ?, at_login = ?, "
             ~ "level = ?, xp = ?, money = ?, exploredZones = ?, equipmentCache = ?, ammoId = ?, rest_bonus = ?, "
-            ~ "is_logout_resting = ? WHERE guid = ?")(
+            ~ "is_logout_resting = ?, playerFlags = ?, death_expire_time = ? WHERE guid = ?")(
             p.position.x, p.position.y, p.position.z, p.position.orientation, p.map, p.zone, p.totalTime, p.levelTime,
             now, p.health, p.power[0], p.power[1], p.power[2], p.power[3], p.power[4], p.actionBars, p.cinematic,
             p.atLogin, p.level, p.xp, p.money, p.exploredZones, p.equipmentCache, p.ammoId, p.restBonus,
-            p.resting ? 1 : 0, p.guid);
+            p.resting ? 1 : 0, p.playerFlags, p.deathExpireTime, p.guid);
+    }
+
+    /// See `WorldDatabase.saveCorpse`.
+    void saveCorpse(const ref CorpseRecord c)
+    {
+        characters.execute!"DELETE FROM corpse WHERE player = ?"(c.player);
+        characters.execute!("INSERT INTO corpse (guid, player, position_x, position_y, position_z, orientation, map, "
+            ~ "time, corpse_type, instance) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)")(c.player, c.player, c.x, c.y, c.z,
+            c.orientation, c.map, c.time, c.type);
+    }
+
+    /// See `WorldDatabase.deleteCorpse`.
+    void deleteCorpse(uint player)
+    {
+        characters.execute!"DELETE FROM corpse WHERE player = ?"(player);
+    }
+
+    /// See `WorldDatabase.loadCorpse`.
+    Nullable!CorpseRecord loadCorpse(uint player)
+    {
+        const rows = characters.query!("SELECT player, position_x, position_y, position_z, orientation, map, time, "
+            ~ "corpse_type FROM corpse WHERE player = ? AND corpse_type > 0")(player);
+        if (rows.length == 0)
+            return Nullable!CorpseRecord.init;
+        const r = rows[0];
+        return Nullable!CorpseRecord(CorpseRecord(r.get!uint(0), r.get!float(1), r.get!float(2), r.get!float(3),
+            r.get!float(4), r.get!uint(5), r.get!long(6), r.get!ubyte(7)));
+    }
+
+    /// See `WorldDatabase.saveCreatureRespawn`.
+    void saveCreatureRespawn(uint spawnGuid, long respawnTime)
+    {
+        if (respawnTime)
+            characters.execute!"REPLACE INTO creature_respawn (guid, respawntime, instance) VALUES (?, ?, 0)"(spawnGuid,
+                respawnTime);
+        else
+            characters.execute!"DELETE FROM creature_respawn WHERE guid = ? AND instance = 0"(spawnGuid);
+    }
+
+    /// See `WorldDatabase.loadCreatureRespawns`.
+    long[uint] loadCreatureRespawns()
+    {
+        long[uint] all;
+        foreach (row; characters.query!"SELECT guid, respawntime FROM creature_respawn WHERE instance = 0"())
+            all[row.get!uint(0)] = row.get!long(1);
+        return all;
     }
 
     /// `ObjectMgr::GetPlayerGuidByName`: the guid of the character called `name`, or 0.

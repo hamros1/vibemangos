@@ -51,7 +51,7 @@ import dmangos.world.movement : Position;
 import dmangos.world.objects : maxUpdatePacketBytes, seenByEveryone, UpdateData, UpdatePacket, UpdateValues;
 import dmangos.world.opcodes : Opcode;
 import dmangos.world.packets : ServerDestroyObject;
-import dmangos.world.player : Player;
+import dmangos.world.player : DeathState, Player;
 import dmangos.world.migration : decodeBundle, encodeBundle, Migrant;
 import dmangos.world.replication : decodeSlots, encodeMotion, encodePlayerState, encodeSlots, encodeState, Replica,
     Replicable, Replicator;
@@ -300,21 +300,72 @@ final class Map : CombatWorld
             return;
         loadedCells[key] = true;
         foreach (object; spawner(id, key))
+            hold(object, key);
+    }
+
+    /// Takes in an object whose home is cell `key`.
+    private void hold(MapObject object, ulong key)
+    {
+        if (object.guid in replicas)
+            dropReplica(object.guid); // this node owns it now (phase 3); its viewers keep seeing it
+        objects[object.guid] = object;
+        objectCells[key][object.guid] = true;
+        homeCellOf[object.guid] = key;
+        if (auto mover = cast(Moving) object)
         {
-            if (object.guid in replicas)
-                dropReplica(object.guid); // this node owns it now (phase 3); its viewers keep seeing it
-            objects[object.guid] = object;
-            objectCells[key][object.guid] = true;
-            homeCellOf[object.guid] = key;
-            if (auto mover = cast(Moving) object)
-            {
-                movers[object.guid] = mover;
-                startTicking(mover);
-                objectCellOf[object.guid] = key;
-                objectVisibilityAt[object.guid] = object.position;
-            }
-            replicate(object, key);
+            movers[object.guid] = mover;
+            startTicking(mover);
+            objectCellOf[object.guid] = key;
+            objectVisibilityAt[object.guid] = object.position;
         }
+        replicate(object, key);
+    }
+
+    /**
+     * Puts an object on the map that no cell spawned (a corpse, a creature respawned), and shows it to
+     * the players who see where it is.
+     */
+    void addObject(MapObject object)
+    {
+        const key = cellKeyAt(object.position.x, object.position.y);
+        loadCell(key);
+        if (object.guid in objects)
+            return;
+        hold(object, key);
+        updateObjectVisibility(object);
+    }
+
+    /// Whether the cell's spawns are here (loaded, and owned).
+    bool cellLoaded(ulong key) const
+    {
+        return (key in loadedCells) !is null;
+    }
+
+    /// What `who` sees is worked out again (it died, or came back to life: spirit healers come or go).
+    void refreshVisibility(Inhabitant who)
+    {
+        if (who.character.guid in members)
+            updateVisibility(who);
+    }
+
+    /// Takes an object off the map (a corpse gone, a creature despawned); those who saw it are told.
+    void removeObject(ulong guid)
+    {
+        if (guid in objects)
+            forget([guid]);
+    }
+
+    /**
+     * Whether `who` can see `object` at all, wherever they are: a spirit healer only shows itself to the
+     * dead (CMaNGOS gives it the ghost aura).
+     */
+    bool objectVisibleTo(const MapObject object, const Inhabitant who) const
+    {
+        enum uint spiritHealer = 0x20, spiritGuide = 0x40; // UNIT_NPC_FLAG_SPIRITHEALER, _SPIRITGUIDE
+        if (auto creature = cast(const Creature) object)
+            if (creature.template_.npcFlags & (spiritHealer | spiritGuide))
+                return who.character.deathState != DeathState.alive;
+        return true;
     }
 
     /// One tick of the world update (`Map::Update`): every object that moves on its own, then where it got to.
@@ -459,6 +510,8 @@ final class Map : CombatWorld
         // Objects in sight.
         foreach (object; objectsNear(who.character.position, settings.visibilityDistance))
         {
+            if (!objectVisibleTo(object, who))
+                continue;
             inSight[object.guid] = true;
             seesObjects[guid][object.guid] = true;
             if (object.guid !in knows)
@@ -892,6 +945,17 @@ final class Map : CombatWorld
         return terrain is null || terrain.isInLineOfSight(a.x, a.y, a.z + eyes, b.x, b.y, b.z + eyes);
     }
 
+    /// Told when a creature's corpse goes (`RemoveCorpse`), to bring it back later; null: never comes back.
+    void delegate(Creature creature) onCorpseRemoved;
+
+    /// See `CombatWorld.corpseExpired`.
+    void corpseExpired(Creature creature)
+    {
+        removeObject(creature.guid);
+        if (onCorpseRemoved !is null)
+            onCorpseRemoved(creature);
+    }
+
     /// See `CombatWorld.flushCreature`.
     void flushCreature(Creature creature)
     {
@@ -1312,6 +1376,8 @@ private:
         UpdateData created;
         foreach (object; objectsNear(who.character.position, settings.visibilityDistance))
         {
+            if (!objectVisibleTo(object, who))
+                continue;
             objectsInSight[object.guid] = true;
             if (object.guid in seesObjects[guid])
                 continue;
@@ -1349,7 +1415,7 @@ private:
         foreach (who; near(object.position, settings.visibilityDistance))
         {
             auto seen = &seesObjects[who.character.guid];
-            if (guid in *seen)
+            if (guid in *seen || !objectVisibleTo(object, who))
                 continue;
             (*seen)[guid] = true;
             if (adoptLingering(who.character.guid, guid))
