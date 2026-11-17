@@ -123,15 +123,26 @@ no lock of its own.
   event loop sends in one write: everything sent to a peer during a tick goes out together. Input is
   parsed in place, so a message made only of numbers, such as a heartbeat, costs no allocation either
   way.
-* **Order and duplicates.** Each direction of a link is a FIFO. Every frame carries a sequence number
-  per sender incarnation and receiver, kept across reconnects to the same incarnation of a peer, so a
-  frame received twice is recognized and dropped. Links do not resend what was lost when a connection
-  broke; the features that need delivery after a reconnect resend themselves (session claims, service
-  calls, script signals, takeovers), and receivers deduplicate.
-* **Heartbeats** go out on every link each `heartbeat_ms`, measure the round trip, and carry the
-  sender's load (tick time, players, objects). Those sent to the coordinator are echoed, which is what
-  renews a node's lease.
-* **Protocol version.** `protocolVersion` (29) changes whenever a message changes. Nodes speaking
+* **Order, duplicates and delivery.** Each direction of a link is a FIFO.
+  * **Numbering.** Every message carries a sequence number per sender incarnation and receiver. The
+    numbers are kept across reconnects to the same incarnation of a peer, so a message received twice
+    is recognized and dropped.
+  * **Retention.** The sender keeps each message (`PeerSequences`) until the peer acknowledges it.
+  * **After a reconnect:** both sides send a heartbeat at once. New messages wait until the peer's
+    acknowledgement arrives, then everything after it is sent again, in order, before them.
+  * **A peer that restarted** (a new incarnation) starts afresh.
+  * **Limits and losses.** Past 64 MiB unacknowledged, the oldest messages are given up and the loss is
+    logged. A receiver that sees a sequence number skip logs it and counts it as a gap.
+  * **Features' own resends** (session claims, service calls, script signals, takeovers) remain, and
+    receivers deduplicate them.
+* **Heartbeats** go out on every link each `heartbeat_ms`. They carry no sequence number and are never
+  resent. Each one:
+  * measures the round trip;
+  * carries the sender's load (tick time, players, objects);
+  * acknowledges the highest sequence number the sender has received.
+
+  Those sent to the coordinator are echoed, which is what renews a node's lease.
+* **Protocol version.** `protocolVersion` (30) changes whenever a message changes. Nodes speaking
   another version are refused at the handshake, so a cluster runs one build throughout.
 
 There are 47 message types. They fall into:
