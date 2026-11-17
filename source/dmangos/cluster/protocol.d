@@ -24,7 +24,7 @@ import dmangos.cluster.regions : Region;
 import dmangos.serialization : deserialize, LengthPrefix, serialize;
 
 /// Changes whenever a message changes; nodes speaking another version are turned away.
-enum ushort protocolVersion = 29; // 29: a hello says whether the node is a gateway
+enum ushort protocolVersion = 30; // 30: heartbeats acknowledge, links resend what was lost
 
 /// Size of a frame header.
 enum frameHeaderSize = 16;
@@ -140,6 +140,7 @@ struct Heartbeat
     uint tickAverageUs;    /// the sender's mean tick over its last measurement interval
     uint players;          /// players in the world on the sender
     uint objects;          /// creatures and game objects on the sender
+    ulong received;        /// the highest sequence number the sender has received from the peer (all below too)
 }
 
 /// A member, as a view lists it.
@@ -728,7 +729,7 @@ unittest
     assert(takeFrame(input, header, payload) && header.type == MessageType.hello && header.sequence == 0);
     assert(decode!Hello(payload) == hello);
     assert(takeFrame(input, header, payload) && header.type == MessageType.heartbeat && header.sequence == 7);
-    assert(decode!Heartbeat(payload) == Heartbeat(100, 50, 3, 400, 2, 900) && payload.length == 32);
+    assert(decode!Heartbeat(payload) == Heartbeat(100, 50, 3, 400, 2, 900) && payload.length == 40);
     assert(input.length == 0 && !takeFrame(input, header, payload));
 
     const view = View(9, 3, [ViewMember(1, 5, "a:1", true), ViewMember(2, 6, "b:2", false)]);

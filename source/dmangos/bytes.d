@@ -70,6 +70,14 @@ struct ByteWriter
         buffer.assumeSafeAppend();
     }
 
+    /// Forgets what was written from `length` on (keeping the memory).
+    void truncate(size_t length) pure nothrow @trusted
+    in (length <= buffer.length)
+    {
+        buffer.length = length;
+        buffer.assumeSafeAppend();
+    }
+
     /// Overwrites a scalar written earlier at `offset` (a length known only at the end).
     void patch(T)(size_t offset, const T value) if (isWireScalar!T)
     in (offset + T.sizeof <= buffer.length)
