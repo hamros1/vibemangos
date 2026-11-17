@@ -56,7 +56,7 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 * Arguments are read strictly: a number written wrong ("12abc", "abc") or a missing argument shows
   the command's help, where ArcEmu's C parsing read "12abc" as 12 and "abc" as 0 and went on.
 
-## Working (190)
+## Working (192)
 
 | Command | Letter | Help |
 |---|---|---|
@@ -114,7 +114,9 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 | `.modify npcemotestate` | `m` | Modifies the NPC emote state of the selected target. |
 | `.modify bytes` | `m` | WARNING! Modifies the bytes entry of selected target. |
 | `.debug infront` | `d` |  |
+| `.debug showreact` | `d` |  |
 | `.debug dist` | `d` |  |
+| `.debug face` | `d` |  |
 | `.debug setbytes` | `d` |  |
 | `.debug getbytes` | `d` |  |
 | `.debug unroot` | `d` |  |
@@ -251,7 +253,7 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 | `.gotrig` | `v` | Warps to areatrigger <id> |
 | `.logcomment` | `1` | Adds a comment to the GM log for the admins to read. |
 
-## Not yet implemented (108)
+## Not yet implemented (106)
 
 These answer "Not yet implemented.", as ArcEmu's `HandleNYICommand` does: their systems (AI agents
 and waypoint editing, quest editing, guilds, pets, honor, battlegrounds and arenas, GM
@@ -276,9 +278,7 @@ tickets, game object and creature spawning, GM invisibility, flying) do not exis
 | `.waypoint save` | `w` | Save all waypoints |
 | `.waypoint deleteall` | `w` | Delete all waypoints |
 | `.waypoint addfly` | `w` | Adds a flying waypoint |
-| `.debug showreact` | `d` |  |
 | `.debug aimove` | `d` |  |
-| `.debug face` | `d` |  |
 | `.debug moveinfo` | `d` |  |
 | `.debug fade` | `d` | .fade <value> - calls ModThreatModifyer(). |
 | `.debug threatMod` | `d` | .threatMod <value> - calls ModGeneratedThreatModifyer(). |

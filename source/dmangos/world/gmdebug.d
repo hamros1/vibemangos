@@ -162,6 +162,60 @@ private:
         return true;
     }
 
+    bool handleShowReactionCommand(string args = null)
+    {
+        import std.algorithm.iteration : splitter;
+        import std.conv : to;
+        import dmangos.bytes : ByteWriter;
+        import dmangos.world.opcodes : Opcode;
+
+        auto creature = getSelectedCreature(false);
+        if (creature is null)
+        {
+            systemMessage("You should select a creature.");
+            return true;
+        }
+        auto words = args.splitter(' ');
+        if (words.empty || words.front.length == 0)
+            return false;
+        uint reaction;
+        try
+            reaction = words.front.to!uint;
+        catch (Exception)
+            reaction = 0; // atoi
+        ByteWriter w;
+        w.put(creature.guid);
+        w.put(reaction);
+        deliver(Opcode.SMSG_AI_REACTION, w.data);
+        systemMessage(format!"Sent Reaction of %s to %s"(reaction, cast(uint) creature.guid));
+        return true;
+    }
+
+    /// ArcEmu's `.debug face`: the creature's facing, in degrees, changed here only (the clients are not told).
+    bool handleFaceCommand(string args = null)
+    {
+        import std.algorithm.iteration : splitter;
+        import std.conv : to;
+
+        auto creature = getSelectedCreature(false);
+        if (creature is null)
+        {
+            systemMessage("You should select a creature.");
+            return true;
+        }
+        uint degrees;
+        auto words = args.splitter(' ');
+        if (!words.empty && words.front.length)
+        {
+            try
+                degrees = words.front.to!uint;
+            catch (Exception)
+                degrees = 0;
+        }
+        creature.movement.position.orientation = degrees / (360 / 6.28f);
+        return true;
+    }
+
     bool handleCollisionTestIndoor()
     {
         auto terrain = map.collision;
@@ -495,6 +549,8 @@ private:
 /// `.debug threatList`, `.debug aggrorange`, `.debug infront` and `.debug testlos` at a creature.
 unittest
 {
+    import std.format : format;
+    import std.math : abs;
     import std.algorithm.searching : canFind, startsWith;
     import dmangos.auth.accounts : AccountLevel;
     import dmangos.world.creature : Creature;
@@ -526,6 +582,15 @@ unittest
     assert(systemMessages(gm.read()) == ["Collision is not enabled."]);
     gm.say(".debug getheight");
     assert(systemMessages(gm.read()) == ["Collision is not enabled."]);
+    gm.say(".debug showreact 2");
+    {
+        const sent = gm.read();
+        assert(opcodesOf(sent).canFind(Opcode.SMSG_AI_REACTION));
+        assert(systemMessages(sent) == [format!"Sent Reaction of 2 to %s"(cast(uint) keeper.guid)]);
+    }
+    gm.say(".debug face 90");
+    gm.read();
+    assert(abs(keeper.position.orientation - 90 / (360 / 6.28f)) < 0.001f);
     gm.say(".debug getpos 999999");
     assert(systemMessages(gm.read()).length == 0, "no such spell: nothing");
 }
