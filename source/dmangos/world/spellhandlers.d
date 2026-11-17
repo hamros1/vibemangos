@@ -1345,6 +1345,24 @@ private:
         return cast(uint)(done * time / 3500.0f);
     }
 
+    /// `Unit::SpellHealingBonusDone`: the caster's `SPELL_AURA_MOD_HEALING_DONE` times the same coefficient.
+    uint healingBonus(const(SpellInfo)* spell)
+    {
+        import dmangos.world.auras : AuraType;
+        import dmangos.world.spellcast : castTime;
+
+        int done;
+        foreach (aura; player.auras.list)
+            foreach (i; 0 .. 3)
+                if ((aura.effects & (1 << i)) && aura.type(i) == AuraType.modHealingDone)
+                    done += aura.amount[i];
+        if (done <= 0)
+            return 0;
+        int time = castTime(*spell, context.client, player.data.level);
+        time = time < 1500 ? 1500 : time > 3500 ? 3500 : time;
+        return cast(uint)(done * time / 3500.0f);
+    }
+
     void spellDamage(const(SpellInfo)* spell, Creature victim, uint damage, uint school)
     {
         damage += spellDamageBonus(spell, school);
@@ -1424,7 +1442,8 @@ private:
         auto who = target == player.guid ? this : cast(typeof(this)) context.onlinePlayer(target);
         if (who is null || who.player is null || who.map !is map)
             return;
-        const crit = uniform01(map.random) * 100 < spellCrit();
+        value += healingBonus(spell);
+        const crit = !(spell.attributesEx2 & spellAttrEx2CantCrit) && uniform01(map.random) * 100 < spellCrit();
         uint amount = crit ? value * 3 / 2 : value;
         auto v = &who.player.values;
         const health = v.get!UNIT_FIELD_HEALTH, maxHealth = v.get!UNIT_FIELD_MAXHEALTH;
@@ -1943,6 +1962,20 @@ unittest
         const before = keeper.values.get!UNIT_FIELD_HEALTH;
         anduin.session.castTriggeredAt(fire, keeper.guid);
         assert(keeper.values.get!UNIT_FIELD_HEALTH == before - 35, "20 and 15 of spell power");
+
+        // Healing power: +35 healing done on an instant heal of 20: 35 more.
+        enum uint healing = 95605, mend = 95606;
+        context.data.spells.spells[healing] = testSpell(healing, 6, ImplicitTarget.caster, 35);
+        context.data.spells.spells[healing].casting.applyAuraName[0] = AuraType.modHealingDone;
+        context.data.spells.spells[mend] = testSpell(mend, 10, ImplicitTarget.caster, 20);
+        context.data.spells.spells[mend].attributesEx2 |= 0x20000000; // no crit
+        auto healAura = makeAura(&context.data.spells.spells[healing], me.guid, 1, -1, true, [35, 0, 0]);
+        healAura.passive = true;
+        anduin.session.addAura(healAura);
+        me.values.set!UNIT_FIELD_MAXHEALTH(500u);
+        me.values.set!UNIT_FIELD_HEALTH(100u);
+        anduin.session.castTriggeredAt(mend, me.guid);
+        assert(me.values.get!UNIT_FIELD_HEALTH == 100 + 20 + 15, "20 and 15 of healing power");
     }
 
     // A missile at 10 yards a second: nothing on release, its damage when it arrives (about 2.7 yards off).

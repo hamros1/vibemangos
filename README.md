@@ -370,8 +370,8 @@ What works now:
     spell's duration (or until its channel is cut short). A missile (a spell with a speed: Frostbolt,
     Shoot) does its effects when it reaches each target, after its flight. Spell power: the caster's
     "damage done by spells" of the spell's school (items' and talents' auras) adds to a direct spell's
-    damage, times its cast time over 3.5 seconds (1.5 at least). Not yet: healing power, spell power
-    for damage over time, partial resists, the area auras' other effects (slows) and their hitting players.
+    damage, times its cast time over 3.5 seconds (1.5 at least), and its "healing done" to a heal
+    alike. Not yet: spell power for damage and healing over time, partial resists, the area auras' other effects (slows) and their hitting players.
   * **Auras** (CMaNGOS's `SpellAuraHolder` and `Aura`): buffs and debuffs fill the aura fields
     (positive slots 0..31, negative 32..47) and the buff bar's durations, refresh and stack, and end
     when their time is up, when clicked off, at death, or by their interrupt flags (standing up ends

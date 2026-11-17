@@ -88,6 +88,7 @@ enum AuraType : uint
     modAttackPower = 99,
     modResistancePct = 101,
     modRangedAttackPower = 124,
+    modHealingDone = 135,
 }
 
 /// `MAX_AURAS`, `MAX_POSITIVE_AURAS`
