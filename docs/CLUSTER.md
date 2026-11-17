@@ -728,7 +728,10 @@ starts, through the same migration, and stays there until it ends.
   have come of a split, and the table never shrinks below the start-up partition's size: merges
   take back what splits added, never the partition by spawn counts. (A standby that takes over counts
   from the table it adopts.) Live, before that rule, cold start-up regions merged while a crowd was
-  still being split: churn that the rule removes.
+  still being split: churn that the rule removes. With it, the same run (250 bots in Goldshire for
+  three minutes, then none) split the crowd's region seven times while the bots were there and
+  merged nothing; once they had gone, the halves came back together (75 and 76, 77 and 79, 78 and
+  81 within two minutes), and all 250 bots had stayed in the world.
 * **Tested (splits):** a unit test (a region holding all of a node's load is split on its node,
   the old id keeping its grant and epoch; measured apart, the new half moves; a node's view takes
   the smaller rectangle as no loss). Live, two nodes, 250 bots crowding Goldshire on node 1: the
