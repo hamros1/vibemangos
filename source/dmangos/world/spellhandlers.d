@@ -548,6 +548,33 @@ private:
             else if (auto other = enemyPlayer(target))
                 spellDamageToPlayer(spell, other, value > 0 ? value : 0);
             break;
+        case 3, 77: // SPELL_EFFECT_DUMMY, SPELL_EFFECT_SCRIPT_EFFECT: the spell's database script, if it has one
+        {
+            import dmangos.world.dbscripts : DbScriptType;
+
+            context.startScript(DbScriptType.spell, spell.id, map, player.guid, target ? target : c.targets.gameObject);
+            break;
+        }
+        case 41: // SPELL_EFFECT_SUMMON_WILD: creatures of its entry, at the destination or near the caster
+        {
+            import dmangos.world.creature : TempSpawnType;
+            import dmangos.world.spellcast : duration, TargetFlags;
+
+            const entry = cast(uint) spell.miscValue[i];
+            if (!entry)
+                break;
+            const ms = duration(*spell, context.client, player.data.level);
+            const count = value > 0 ? value : 1;
+            foreach (n; 0 .. count)
+            {
+                Position at; // all zeros: near the caster
+                if ((c.targets.mask & TargetFlags.destLocation) && n == 0)
+                    at = Position(c.targets.dest[0], c.targets.dest[1], c.targets.dest[2], player.position.orientation);
+                context.summonCreature(map, entry, at, ms > 0 ? TempSpawnType.timedOrDead : TempSpawnType.dead,
+                    ms > 0 ? ms : 0, player.guid);
+            }
+            break;
+        }
         case 61: // SPELL_EFFECT_SEND_EVENT: the event's script, the caster its source and a game object its target
         {
             import dmangos.world.dbscripts : DbScriptType;
@@ -602,8 +629,6 @@ private:
         case 6: // SPELL_EFFECT_APPLY_AURA
             applyAuraEffect(spell, i, target);
             break;
-        case 3: // SPELL_EFFECT_DUMMY: scripts
-        case 77: // SPELL_EFFECT_SCRIPT_EFFECT
         case 78: // SPELL_EFFECT_ATTACK
             break;
         default:

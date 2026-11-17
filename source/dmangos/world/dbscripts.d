@@ -1027,6 +1027,32 @@ unittest
     context.updateScripts(0);
     assert(opcodesOf(anduin.read()).canFind(Opcode.SMSG_EMOTE), "its relay script, there");
 
+    // A player's spells: a dummy effect runs the spell's script (the place explored); a wild summon summons.
+    {
+        import dmangos.world.spellhandlers : testSpell;
+
+        enum uint ritual = 95200, call = 95201, rite = 9402;
+        Quest r = {id: rite, method: 2, maxLevel: 60, title: "Rite", specialFlags: 0x02};
+        context.data.quests.quests[rite] = r;
+        anduin.session.addQuest(context.data.quests.quests[rite]);
+        context.data.spells.spells[ritual] = testSpell(ritual, 3, 1, 0);
+        context.data.spells.spells[ritual].casting.dmgClass = 0;
+        context.data.dbScripts.add(DbScriptType.spell, DbScriptStep(ritual, 0, 0, ScriptCommand.questExplored, rite));
+        anduin.session.castTriggeredAt(ritual, me.guid);
+        context.updateScripts(0);
+        assert(me.questStatus[rite].status == QuestState.complete, "the spell's script");
+
+        context.data.spells.spells[call] = testSpell(call, 41, 1, 0);
+        context.data.spells.spells[call].miscValue[0] = creatureTrainer;
+        context.data.spells.spells[call].casting.dmgClass = 0;
+        anduin.session.castTriggeredAt(call, me.guid);
+        bool found;
+        foreach (near; map.creaturesNear(me.position, 5))
+            if (near.summon.summoner == me.guid && near.template_.entry == creatureTrainer)
+                found = true;
+        assert(found, "summoned beside the caster");
+    }
+
     // A summon (ACTION_T_SPAWN for 3 seconds): beside it, and gone after its time out of combat, for good.
     import dmangos.world.creature : TempSpawnType;
 

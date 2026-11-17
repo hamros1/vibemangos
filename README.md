@@ -261,7 +261,8 @@ What works now:
   * **Database scripts** (CMaNGOS's `dbscripts_on_*`): a quest's start and complete scripts, a
     gossip option's, a game object's when used (by its template and by its spawn), a waypoint's
     when a walking creature gets there (Northshire's peasants chop wood), a creature's when it is
-    killed, a spell's event (`SPELL_EFFECT_SEND_EVENT`), and relay scripts started from them, run their steps on the map at their delays, with the quest giver, NPC or
+    killed, a spell's event (`SPELL_EFFECT_SEND_EVENT`), a spell's own (`dbscripts_on_spell`, for its
+    dummy and script effects), and relay scripts started from them, run their steps on the map at their delays, with the quest giver, NPC or
     player as source and target, or a buddy found near (by entry or spawn), turned about by the
     step's flags, behind its condition: talking (a `broadcast_text`, one of several, or one of a
     group), emotes, a quest's place explored (or failed when too far), kill credit, spawning a game
@@ -269,8 +270,7 @@ What works now:
     faction, models and mounts, stand states, NPC flags, other flags, facing someone, and stopping
     the script when a creature is (or is not) near, opening and closing doors, and moving: walking to a point (a relay script
     once there) or back to its spawn point, turning, teleporting, a movement type (standing,
-    wandering, its path), pausing and resuming its path. Not yet: paths by id, spell scripts
-    (`dbscripts_on_spell`), AI events.
+    wandering, its path), pausing and resuming its path. Not yet: paths by id, AI events.
   * **Creature scripts** (CMaNGOS's EventAI, `creature_ai_scripts`, for each creature entry or
     spawn): their events (timers in and out of combat, health, mana and the victim's health between
     two percentages, the victim within a range or casting, aggro, a kill, death, evading, spawning,
