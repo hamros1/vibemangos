@@ -240,8 +240,11 @@ What works now:
     emptied (or 5 minutes after opening) and comes back after its respawn time, kept in
     `gameobject_respawn` across restarts. Quest objects sparkle for the players whose quests need
     them, and game objects give and take back quests (`gameobject_questrelation`,
-    `gameobject_involvedrelation`) as creatures do. Not yet: their own gossip, traps, fishing,
-    mining veins' extra uses, linked traps, another node's objects in a cluster.
+    `gameobject_involvedrelation`) as creatures do. A trap springs on a player who steps within its
+    radius (half its diameter) and is not its faction's friend: its spell at the player, then its
+    cooldown; one with charges is used up after them. Not yet: their own gossip, fishing, mining
+    veins' extra uses, linked traps, stealthed traps' visibility, creatures springing traps,
+    another node's objects in a cluster.
   * **Creature movement:** creatures move as their spawn's `MovementType` says, as in CMaNGOS:
     wandering within `spawndist` of their spawn point (type 1), or walking their `creature_movement`
     or `creature_movement_template` path (type 2 round and round, type 4 back and forth), waiting

@@ -110,6 +110,8 @@ final class GameObject : Replicable, Moving, PerViewer
     Loot loot;                   /// what it holds while open (a chest)
     int restoreTimer;            /// ms until a door or button goes back, or a goober is done
     uint instanceId;             /// the dungeon instance it is in (0: none): used up there, it stays so
+    long trapReadyAt;            /// a trap's cooldown: it springs again from then (Unix time)
+    uint trapUses;               /// a trap's springs so far, against its charges
     int despawnTimer;            /// ms until a chest opened but not emptied goes (`SetChestDespawn`); 0: none
     bool[ulong] skilledUp;       /// those it gave a skill-up (`m_SkillupList`): once until it respawns
     /// Whether it is usable for `viewer`'s quests (`ActivateToQuest`); null: for nobody.
@@ -286,6 +288,14 @@ final class GameObject : Replicable, Moving, PerViewer
         world.flushGameObject(this);
         if (consumable || type == GameObjectType.generic)
             world.gameObjectUsedUp(this);
+    }
+
+    /// A trap's activation radius (`trap.diameter` / 2; the hunters' traps, lock 12, use it whole); 0: none.
+    @property float trapRadius() const
+    {
+        if (type != GameObjectType.trap)
+            return 0;
+        return template_.data[0] == 12 ? template_.data[2] : template_.data[2] / 2.0f;
     }
 
     /// See `Moving.resting`: nothing pending (a door that stays open waits for nothing either).

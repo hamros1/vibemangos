@@ -616,3 +616,40 @@ unittest
     anduin.write(Opcode.CMSG_QUESTGIVER_ACCEPT_QUEST, accept.data);
     assert(9200 in me.questStatus && me.questStatus[9200].status != QuestState.none, "taken (and done: it asks nothing)");
 }
+
+/// A trap: a player stepping within its radius springs it (its spell, at the player); with one charge it is used up.
+unittest
+{
+    import std.algorithm.searching : canFind;
+    import dmangos.world.gameobject : GameObject, GameObjectSpawn, GameObjectTemplate, GameObjectType;
+    import dmangos.world.movement : Position;
+    import dmangos.world.opcodes;
+    import dmangos.world.player : Player;
+    import dmangos.world.spellhandlers : testSpell;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    enum uint sting = 95300;
+    context.data.spells.spells[sting] = testSpell(sting, 3, 1, 0); // a dummy, at the target
+    context.data.spells.spells[sting].casting.dmgClass = 0;
+    GameObjectTemplate trap = {entry: 9020, type: GameObjectType.trap, displayId: 1, name: "Trap"};
+    trap.data[2] = 4;      // diameter: 2 yards around it
+    trap.data[3] = sting;
+    trap.data[4] = 1;      // one charge
+    context.data.gameObjectTemplates[9020] = trap;
+    context.data.gameObjectSpawns ~= GameObjectSpawn(90020, 9020, 0, -8945, -132, 83.53f, 0, [0, 0, 0, 0], 60);
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f));
+    auto map = context.map(0);
+    auto go = context.makeGameObject(&context.data.gameObjectSpawns[$ - 1]);
+    map.addObject(go);
+    anduin.read();
+
+    map.relocated(anduin.session);
+    assert(!opcodesOf(anduin.read()).canFind(Opcode.SMSG_SPELL_GO), "five yards off: nothing");
+    (cast(Player) anduin.session.character).movement.position = Position(-8945.5f, -132, 83.53f);
+    map.relocated(anduin.session);
+    assert(opcodesOf(anduin.read()).canFind(Opcode.SMSG_SPELL_GO), "sprung");
+    assert(map.findObject(go.guid) is null && context.gameObjectAwaitingRespawn(90020), "its one charge used");
+}

@@ -513,6 +513,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         created.replicator = replicator;
         created.onCorpseRemoved = &corpseRemoved;
         created.onReplicaNoticing = &replicaNoticing;
+        created.onTrap = (Inhabitant who, GameObject trap) { trapSprung(created, who, trap); };
         created.onWaypointScript = (Creature creature, uint scriptId) {
             import dmangos.world.dbscripts : DbScriptType;
 
@@ -1470,6 +1471,36 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         gameObjectRespawnAt.remove(s.guid);
         map.removeObject(go.guid);
         database.deleteGameObjectSpawn(s.guid);
+    }
+
+    /**
+     * `GameObject::Update` for a trap (`GAMEOBJECT_TYPE_TRAP`) a player stepped near: one not friendly
+     * to the player casts its spell at the player, then waits its cooldown; one with charges is used
+     * up after them (and comes back with its spawn's respawn time).
+     */
+    private void trapSprung(Map map, Inhabitant who, GameObject trap)
+    {
+        import dmangos.world.gameobject : GoLootState;
+        import dmangos.world.relations : isFriend, Relating;
+        import dmangos.world.session : WorldSession;
+
+        auto session = cast(WorldSession) who;
+        if (session is null || session.character is null || !session.fighter.alive)
+            return;
+        if (unixTime < trap.trapReadyAt || trap.lootState != GoLootState.ready)
+            return;
+        const spell = cast(uint) trap.template_.data[3];
+        if (spell == 0)
+            return;
+        // Unfriendly units only (`AnyUnfriendlyUnitInObjectRangeCheck`): not one the trap's faction likes.
+        const faction = client.factionTemplates.lookup(trap.template_.faction);
+        if (faction !is null && isFriend(Relating(0, faction, false, 0, 0, true), session.relating, client))
+            return;
+        trap.trapReadyAt = unixTime + (trap.template_.data[5] > 0 ? trap.template_.data[5] : 1);
+        session.castTriggeredAt(spell, session.character.guid);
+        const charges = trap.template_.data[4];
+        if (charges > 0 && ++trap.trapUses >= charges)
+            map.gameObjectUsedUp(trap);
     }
 
     /// See `CreatureLore.startRelay`.

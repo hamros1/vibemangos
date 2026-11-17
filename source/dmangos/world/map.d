@@ -1204,6 +1204,13 @@ final class Map : CombatWorld, GameObjectWorld
                         && distanceSquared(creature.position, at) < noticeDistance ^^ 2)
                         creature.ai.moveInLineOfSight(combatant, this);
                 }
+                else if (auto go = cast(GameObject) object)
+                {
+                    // A trap within whose radius the player now stands.
+                    const radius = go.trapRadius;
+                    if (radius > 0 && onTrap !is null && distanceSquared(go.position, at) <= radius * radius)
+                        onTrap(who, go);
+                }
                 else if (onReplicaNoticing !is null && highGuidOf(guid) == HighGuid.unit)
                     if (auto replica = cast(Replica) object)
                     {
@@ -1215,6 +1222,9 @@ final class Map : CombatWorld, GameObjectWorld
                     }
             }
     }
+
+    /// Told when a player steps within a trap's radius (it may spring).
+    void delegate(Inhabitant who, GameObject trap) onTrap;
 
     /**
      * Told of another node's creature (its replica here, alive, out of combat) near a player who
