@@ -208,7 +208,7 @@ private:
     /// `Unit::Attack(victim, true)`: attacks `victim` in melee; false if it cannot.
     bool attack(Creature victim)
     {
-        if (!player.fighter.alive || !victim.alive || victim.ai.evading)
+        if (!player.fighter.alive || !victim.alive || victim.ai.runningHome)
             return false;
         if (attacking)
         {

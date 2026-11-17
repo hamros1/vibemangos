@@ -436,6 +436,14 @@ through a small C interface, `thirdparty/dmnav/dmnav.cpp`.
   fleeing, wandering, point moves and pets use it. Waypoint routes stay as the database draws them,
   as in CMaNGOS. Detour returns at most 74 corners (`MAX_POINT_PATH_LENGTH`). An end that cannot be
   reached gives the way to the nearest place to it.
+* **Unreachable targets.** When a chase's way ends out of melee reach of the victim (on a rock, a
+  ledge, across water), the creature evades every attack. If that lasts 10 s, it gives up: it goes
+  home if the victim was its only enemy, otherwise it leaves that one be and turns to another. This
+  is CMaNGOS's `StartEvadeTimer`, `EvadeTimerExpired` and `SetTargetSuppressed`
+  (`CreatureAI.updateReachability`). It stops players from killing creatures from where they
+  cannot answer.
+  * `evading` covers both the timer and running home.
+  * `runningHome` is running home only: a creature that is running home cannot be attacked.
 * **Fallback.** Where there is no mesh, or an end is off it, the walk is straight, as before.
   CMaNGOS then leaves a wander's end at the spawn point's height unless `PathFinder.NormalizeZ` is
   on, which would leave creatures walking through hills, so here the end is always put on the

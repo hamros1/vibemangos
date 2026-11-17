@@ -1450,9 +1450,18 @@ final class Map : CombatWorld, GameObjectWorld
         return terrain.heightStatic(x, y, z, true, swim ? defaultWaterSearch : defaultHeightSearch);
     }
 
+    version (unittest)
+    {
+        /// Movement maps for a test: the way between two points.
+        Vector3[] delegate(Vector3 from, Vector3 to) testPaths;
+    }
+
     /// See `MotionWorld.pathBetween`.
     Vector3[] pathBetween(Vector3 from, Vector3 to)
     {
+        version (unittest)
+            if (testPaths !is null)
+                return testPaths(from, to);
         if (terrain is null)
             return null;
         return terrain.pathBetween(from, to);

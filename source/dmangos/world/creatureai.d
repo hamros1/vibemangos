@@ -175,6 +175,9 @@ final class CreatureAI : Scripted, CreatureHost
         bool meleeAttacking;       // `UNIT_STAT_MELEE_ATTACKING`
         bool inCombat_;
         bool evadingHome;          // `EVADE_HOME`: running back, ignoring everything
+        int unreachableTimer;      // `CombatManager::m_evadeTimer`: ms left before it gives up on its victim
+        bool victimReachable = true; // its last way to the victim ended within reach (`IsReachable`)
+        bool[ulong] suppressed;    // `STATE_SUPPRESSED`: given up on, while it has others to fight
         int attackTimer;           // until the next swing
         int combatTimer;           // `CombatManager::m_combatTimer`: the pursuit time left
         int combatTick;            // until the next leash check
@@ -201,8 +204,17 @@ final class CreatureAI : Scripted, CreatureHost
         return inCombat_;
     }
 
-    /// `CombatManager::IsInEvadeMode`: running home; attacks on it are evaded.
+    /**
+     * `CombatManager::IsInEvadeMode`: running home, or unable to reach its victim (for up to 10 s):
+     * attacks on it are evaded, so nobody fights it from where it cannot answer.
+     */
     @property bool evading() const
+    {
+        return evadingHome || unreachableTimer > 0;
+    }
+
+    /// `CombatManager::IsEvadingHome`: running home; it cannot be attacked.
+    @property bool runningHome() const
     {
         return evadingHome;
     }
@@ -378,6 +390,8 @@ final class CreatureAI : Scripted, CreatureHost
                 updateFleeing(diff);
             else if (inCombat_ && !me.auras.has(AuraType.modStun)) // `UNIT_STAT_STUNNED`: it does nothing
                 updateAI(world);
+            if (inCombat_)
+                updateReachability(world, diff);
             if (inCombat_ && assistanceReceivers.length)
             {
                 assistanceTimer -= diff;
@@ -653,6 +667,37 @@ private:
         }
     }
 
+    /// How long it tries to reach a victim it cannot (`CombatManager::StartEvadeTimer`).
+    enum int unreachableEvadeMs = 10_000;
+
+    /**
+     * `Unit::SelectHostileTarget`'s reachability and `Unit::EvadeTimerExpired`: while its victim cannot
+     * be reached (its way ends out of reach: on a rock, a ledge, across water it cannot path over), it
+     * evades every attack; after 10 s it goes home if the victim was its only enemy, and otherwise
+     * leaves that one be and turns to another. Reachable again, it fights on.
+     */
+    void updateReachability(CombatWorld world, int diff)
+    {
+        if (!combatMovement_ || !victim || victimReachable)
+        {
+            unreachableTimer = 0;
+            return;
+        }
+        if (unreachableTimer == 0)
+        {
+            unreachableTimer = unreachableEvadeMs;
+            return;
+        }
+        unreachableTimer -= diff;
+        if (unreachableTimer > 0)
+            return;
+        unreachableTimer = 0;
+        if (threat.length <= 1)
+            return enterEvadeMode(world);
+        suppressed[victim] = true;
+        victimReachable = true; // the next victim's way is looked at afresh
+    }
+
     /**
      * `UnitAI::UpdateAI`: `SelectHostileTarget` (the threat list without those gone, dead or no longer
      * to be attacked; evading if nobody is left), then chasing and `DoMeleeAttackIfReady`.
@@ -696,6 +741,15 @@ private:
 
         auto order = threat.keys;
         order.sort!((a, b) => threat[a] > threat[b] || (threat[a] == threat[b] && a < b));
+        // Those given up on come last, while there are others (`STATE_SUPPRESSED`).
+        if (suppressed.length)
+        {
+            import std.algorithm.mutation : SwapStrategy;
+
+            order.sort!((a, b) => (a in suppressed) is null && (b in suppressed) !is null, SwapStrategy.stable);
+            if ((order[0] in suppressed) is null && (victim in suppressed) !is null)
+                return order[0];
+        }
         const current = victim in threat;
         if (current is null)
             return order[0];
@@ -735,6 +789,7 @@ private:
         }
         if (canReachWithMelee(self, other))
         {
+            victimReachable = true;
             if (!me.spline.finalized && moved(chasedTo, other.position) > 0.5f)
                 stopMoving(me, world);
             return;
@@ -751,6 +806,11 @@ private:
         chasedTo = other.position;
         Vector3[] points = [Vector3(0, 0, 0), Vector3(x, y, z)];
         launch(me, world, points, false, float.nan, true);
+        // `IsReachablePositionToTarget`: does the way end within reach of it?
+        const end = me.spline.finalDestination;
+        const ex = end.x - other.position.x, ey = end.y - other.position.y;
+        const within = meleeReach(self, other);
+        victimReachable = ex * ex + ey * ey <= within * within;
     }
 
     /// `UpdateMeleeAttackingState` for a creature: a swing whenever it is ready and can.
@@ -802,6 +862,9 @@ private:
         threat = null;
         victim = 0;
         inCombat_ = false;
+        unreachableTimer = 0;
+        victimReachable = true;
+        suppressed = null;
         me.setLootRecipient(0, 0); // `TriggerEvadeEvents`: nobody's any more
         calledAssistance = false;  // the next fight calls again
         assistanceReceivers = null;
@@ -1023,4 +1086,76 @@ unittest
     foreach (_; 0 .. 4)
         tick(500);
     assert(trainer.ai.inCombat && trainer.ai.currentVictim == anduin.session.character.guid, "the ally came");
+}
+
+/**
+ * A victim it cannot reach (its way ends out of reach): it evades every attack meanwhile, and after
+ * 10 s goes home, its only enemy left be. Reachable, it fights as before.
+ */
+unittest
+{
+    import core.time : MonoTime, msecs;
+    import dmangos.vmap.math : Vector3;
+    import dmangos.world.movement : Position;
+    import dmangos.world.objects : HighGuid, makeGuid;
+    import dmangos.world.packets : ClientGuid;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    // A few yards from the innkeeper: out of its melee reach, so it sets off towards the player.
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f, 1.97f));
+    anduin.read();
+    const innkeeper = makeGuid(HighGuid.unit, creatureInnkeeper, innkeeperSpawn);
+    auto map = context.map(0);
+    auto keeper = cast(Creature) map.findObject(innkeeper);
+    keeper.values.set!UNIT_FIELD_LEVEL(1u);
+    keeper.values.set!UNIT_FIELD_MAXHEALTH(500u);
+    keeper.values.set!UNIT_FIELD_HEALTH(500u);
+    auto me = anduin.session.inWorld;
+
+    void tick(int ms)
+    {
+        now += ms.msecs;
+        anduin.session.update(ms.msecs);
+        map.update(ms.msecs);
+    }
+
+    // The fight starts in reach; then the player stands 8 yards off, where no way leads.
+    anduin.write(Opcode.CMSG_ATTACKSWING, ClientGuid(innkeeper));
+    anduin.read();
+    tick(50);
+    assert(keeper.ai.inCombat);
+    const at = keeper.position;
+    me.player.movement.position = Position(at.x + 8, at.y, at.z, 0);
+    map.relocated(me);
+    // (A cliff in between: the way leads along it, never nearer.)
+    map.testPaths = (Vector3 from, Vector3 to) => [from, Vector3(from.x, from.y + 2, from.z)];
+    tick(100);
+    tick(100);
+    assert(keeper.ai.inCombat && keeper.ai.evading, "out of reach: it evades");
+    assert(!keeper.ai.runningHome, "but fights on for now");
+    foreach (_; 0 .. 95)
+        tick(100);
+    assert(keeper.ai.inCombat, "still trying after 9.5 s");
+    foreach (_; 0 .. 10)
+        tick(100);
+    assert(!keeper.ai.inCombat && keeper.ai.threatList.length == 0, "after 10 s: it gave up, for home");
+
+    // A way that reaches: it fights, and does not evade.
+    foreach (_; 0 .. 300)
+        tick(100);
+    assert(!keeper.ai.evading, "home again");
+    map.testPaths = null;
+    const there = keeper.position;
+    me.player.movement.position = Position(there.x + 1, there.y, there.z, 3.14159f); // facing it
+    map.relocated(me);
+    anduin.write(Opcode.CMSG_ATTACKSWING, ClientGuid(innkeeper));
+    anduin.read();
+    tick(100);
+    tick(100);
+    assert(keeper.ai.inCombat && !keeper.ai.evading, "in reach: a fight as ever");
 }
