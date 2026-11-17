@@ -1000,7 +1000,21 @@ private:
             return SpellMissInfo.none;
         }
         const level = creature.values.get!UNIT_FIELD_LEVEL;
-        return roll < spellMissChance(player.data.level, level, false) ? SpellMissInfo.resist : SpellMissInfo.none;
+        float chance = spellMissChance(player.data.level, level, false);
+        // `CalculateSpellResistChance`: a magic spell is also fully resisted by resistance: a binary spell
+        // by its whole percent, another by the distribution's chance of all of it.
+        const school = spell.casting.school;
+        if (spell.casting.dmgClass == DamageClass.magic && school > 1)
+        {
+            import dmangos.world.combat : effectiveResistPercent, partialResistRows;
+
+            const binary = isBinarySpell(spell);
+            const percent = effectiveResistPercent(cast(int) creature.values.get!UNIT_FIELD_RESISTANCES(school),
+                player.data.level, level, !binary);
+            if (percent > 0)
+                chance += binary ? percent : partialResistRows[cast(uint) percent][4] * 0.01f;
+        }
+        return roll < chance ? SpellMissInfo.resist : SpellMissInfo.none;
     }
 
     // -----------------------------------------------------------------------
@@ -1372,7 +1386,7 @@ private:
         uint resisted;
         if (school == 0)
             damage = cast(uint) armorReducedDamage(player.data.level, victim.fighter.armor, damage);
-        else if (school != 1) // holy: no resistance
+        else if (school != 1 && !isBinarySpell(*spell)) // holy: no resistance; a binary spell: all or nothing
         {
             // A partial resist (`RollMagicResistanceMultiplierOutcomeAgainst`): a share of it resisted.
             import dmangos.world.combat : effectiveResistPercent, rollPartialResist;

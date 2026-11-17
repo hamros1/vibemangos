@@ -373,8 +373,10 @@ What works now:
     damage, times its cast time over 3.5 seconds (1.5 at least), and its "healing done" to a heal
     alike; over time, the bonus times the duration over 15 seconds is shared among the ticks. A spell's
     damage to a creature is partly resisted (none, a quarter, a half, three quarters) by CMaNGOS's
-    distribution, from the creature's resistance of the school and its level above the caster's. Not
-    yet: resists against players, the area auras' other effects (slows) and their hitting players.
+    distribution, from the creature's resistance of the school and its level above the caster's; a
+    binary spell (one with a non-damage effect on its target, such as Frostbolt's slow, or only
+    auras) is resisted whole or not at all, its resistance added to its chance to miss; damage over
+    time ticks are partly resisted too. Not yet: resists against players, the area auras' other effects (slows) and their hitting players.
   * **Auras** (CMaNGOS's `SpellAuraHolder` and `Aura`): buffs and debuffs fill the aura fields
     (positive slots 0..31, negative 32..47) and the buff bar's durations, refresh and stack, and end
     when their time is up, when clicked off, at death, or by their interrupt flags (standing up ends

@@ -125,7 +125,7 @@ The largest area. CMaNGOS references: `Spells/`, `Entities/Unit.cpp`, `Combat/`,
    `auras.d`, `aurahandlers.d`; README's "Spells" and "Auras"); creatures' spells come with their
    scripts (above), talents with milestone 7. Channelled spells, area, cone, party and chain targets, persistent area auras, missiles' flight, items'
    equip spells, spell and healing power (direct and over time), creatures' partial resists: done.
-   Next: binary spells, resists of periodic damage and against players.
+   Binary spells and resisted ticks: done. Next: resists against players (with PvP).
 6. **Duels and trades: done** (`tradehandlers.d`, `duelhandlers.d`; README's "Trading" and
    "Duels"). Players fight players in melee and with spells where the relations allow (duelists,
    PvP-flagged enemies). Not yet: toggling PvP, honor, free-for-all areas, the off hand against players.

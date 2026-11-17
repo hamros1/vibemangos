@@ -496,3 +496,68 @@ ubyte[] spellMissLog(uint spell, ulong caster, ulong target, SpellMissInfo miss)
     w.put(cast(ubyte) miss);
     return w.data.dup;
 }
+
+/**
+ * `IsBinarySpell` (pre-WotLK): a spell resisted whole or not at all, whose resistance adds to its
+ * chance to miss instead of taking a share of its damage: all its effects are not damage, or all are
+ * auras, or all its damage is over time, or a non-damage effect hits the targets of a direct damage
+ * one (Frostbolt's slow). Dummy (3) and trigger spell (64) effects do not count.
+ */
+bool isBinarySpell(const ref SpellInfo spell) pure nothrow @nogc @safe
+{
+    enum uint schoolDamage = 2, environmental = 7, healthLeech = 9, weaponNoSchool = 17, weaponPercent = 31,
+        weaponDamage = 58, normalizedWeapon = 121, dummy = 3, triggerSpell = 64;
+    enum uint periodicDamage = 3, periodicLeech = 53, periodicManaLeech = 64, periodicDamagePercent = 89;
+    ubyte valid, nonDamage, aura;
+    foreach (i; 0 .. 3)
+    {
+        const effect = spell.effect[i];
+        if (effect == 0 || effect == dummy || effect == triggerSpell)
+            continue;
+        const ubyte bit = cast(ubyte)(1 << i);
+        valid |= bit;
+        const auraName = spell.casting.applyAuraName[i];
+        bool damage;
+        if (auraName)
+        {
+            aura |= bit;
+            damage = auraName == periodicDamage || auraName == periodicLeech || auraName == periodicManaLeech
+                || auraName == periodicDamagePercent;
+        }
+        else
+            damage = effect == schoolDamage || effect == environmental || effect == healthLeech
+                || effect == weaponNoSchool || effect == weaponPercent || effect == weaponDamage
+                || effect == normalizedWeapon;
+        if (!damage)
+            nonDamage |= bit;
+    }
+    if (!valid)
+        return false;
+    if (nonDamage == valid || aura == valid)
+        return true;
+    const ubyte damageMask = valid & ~nonDamage, dots = damageMask & aura;
+    if (damageMask == dots)
+        return true;
+    const ubyte direct = damageMask & ~dots;
+    foreach (i; 0 .. 3)
+        if (direct & (1 << i))
+            foreach (j; 0 .. 3)
+                if ((nonDamage & (1 << j)) && spell.implicitTargetA[i] == spell.implicitTargetA[j]
+                    && spell.casting.implicitTargetB[i] == spell.casting.implicitTargetB[j])
+                    return true;
+    return false;
+}
+
+unittest
+{
+    SpellInfo bolt;
+    bolt.effect[0] = 2; // school damage
+    assert(!isBinarySpell(bolt), "Fireball's direct part");
+    bolt.effect[1] = 6; // a slow on the same target
+    bolt.casting.applyAuraName[1] = 33;
+    assert(isBinarySpell(bolt), "Frostbolt");
+    SpellInfo dot;
+    dot.effect[0] = 6;
+    dot.casting.applyAuraName[0] = 3;
+    assert(isBinarySpell(dot), "a pure damage over time");
+}
