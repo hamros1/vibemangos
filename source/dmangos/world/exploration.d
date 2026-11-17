@@ -135,6 +135,7 @@ private:
         }
         zoneTimer.reset();
         updateArea(area);
+        pvpZoneChanged(zone);
 
         // A capital rests; leaving it (not an inn: its trigger ends that) does not.
         const now = context.unixTime;
@@ -153,6 +154,8 @@ private:
     {
         const changed = area != player.area;
         player.area = area;
+        if (changed)
+            pvpAreaChanged(area);
         if (changed)
             if (auto group = context.groups.of(player.guid))
                 group.updatePlayerOutOfRange(this, GroupUpdate.zone);

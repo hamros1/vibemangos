@@ -31,6 +31,7 @@ enum uint triggerDeadmines = 78; /// ditto
 enum uint triggerInn = 562;       /// an inn's area trigger (the Lion's Pride Inn), at `innPosition`
 enum float[3] innPosition = [-9459.6f, 42.1f, 57.5f]; /// ditto
 enum uint zoneElwynn = 12, zoneStormwind = 1519;      /// `AreaTable.dbc`: a zone, and a capital
+enum uint zoneStranglethorn = 33, areaGurubashiArena = 2177; /// a contested zone, and its free-for-all arena
 enum uint areaGoldshire = 87;                          /// an area of Elwynn, level 5
 enum uint exploreElwynn = 40, exploreStormwind = 41, exploreGoldshire = 42; /// their explore flags
 enum uint creatureWillem = 823;                        /// Deputy Willem, spawned near Northshire Abbey
@@ -124,8 +125,8 @@ ClientData testClientData()
         floatBits(deadminesEntrance[2]), floatBits(5), 0, 0, 0, 0], [triggerInn, mapEasternKingdoms,
         floatBits(innPosition[0]), floatBits(innPosition[1]), floatBits(innPosition[2]), floatBits(10), 0, 0, 0, 0]]),
         "AreaTrigger.dbc");
-    // AreaTable: id, map, zone, explore flag, flags (0x100 for a capital), ..., area level (10)
-    uint[] areaRecord(uint id, uint flags, uint explore, uint zone = 0, uint level = 0)
+    // AreaTable: id, map, zone, explore flag, flags (0x100 for a capital), ..., area level (10), ..., team (20)
+    uint[] areaRecord(uint id, uint flags, uint explore, uint zone = 0, uint level = 0, uint team = 0)
     {
         auto record = new uint[areaTableFormat.length];
         record[0] = id;
@@ -133,10 +134,13 @@ ClientData testClientData()
         record[3] = explore;
         record[4] = flags;
         record[10] = level;
+        record[20] = team;
         return record;
     }
-    client.areas = typeof(client.areas).parse(buildDbc(areaTableFormat, [areaRecord(zoneElwynn, 0, exploreElwynn),
-        areaRecord(zoneStormwind, 0x100, exploreStormwind), areaRecord(areaGoldshire, 0, exploreGoldshire, zoneElwynn, 5)]),
+    // Elwynn and Stormwind are the Alliance's (team 2); the Gurubashi Arena (area 2177) is free-for-all.
+    client.areas = typeof(client.areas).parse(buildDbc(areaTableFormat, [areaRecord(zoneElwynn, 0, exploreElwynn, 0, 0, 2),
+        areaRecord(zoneStormwind, 0x100, exploreStormwind, 0, 0, 2), areaRecord(areaGoldshire, 0, exploreGoldshire, zoneElwynn, 5, 2),
+        areaRecord(zoneStranglethorn, 0, 0), areaRecord(areaGurubashiArena, 0x80, 0, zoneStranglethorn)]),
         "AreaTable.dbc");
     // WMOAreaTable: the test house's group (root 500, name set 3, group 600) is in Goldshire.
     auto wmoArea = new uint[wmoAreaTableFormat.length];

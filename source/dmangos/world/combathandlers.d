@@ -38,7 +38,7 @@ mixin template CombatHandlers()
         const v = &player.values;
         return Relating(v.get!UNIT_FIELD_FLAGS, context.client.factionTemplates.lookup(v.get!UNIT_FIELD_FACTIONTEMPLATE),
             true, 1u << (player.data.race - 1), 1u << (player.data.classId - 1), v.get!UNIT_FIELD_HEALTH > 0,
-            v.get!PLAYER_DUEL_ARBITER, v.get!PLAYER_DUEL_TEAM, player.reputation);
+            v.get!PLAYER_DUEL_ARBITER, v.get!PLAYER_DUEL_TEAM, player.reputation, v.get!PLAYER_FLAGS);
     }
 
     /**
@@ -56,6 +56,12 @@ mixin template CombatHandlers()
         const swing = blow.kind == BlowKind.melee;
         if (swing && blow.melee.outcome == MeleeHitOutcome.evade)
             return;
+        // Between players (a pet for its owner): the PvP flags (`dmangos.world.pvp`).
+        if (attacker.kind == UnitKind.player)
+            pvpHitBy(attacker.session, attacker.session.isPvP);
+        else if (attacker.kind == UnitKind.creature && attacker.creature.petOwner)
+            pvpHitBy(cast(typeof(this)) context.onlinePlayer(attacker.creature.petOwner),
+                (attacker.creature.values.get!UNIT_FIELD_FLAGS & UnitFlags.pvp) != 0);
         if (blow.kind != BlowKind.periodic && player.values.getByte!UNIT_FIELD_BYTES_1(0) != 0)
         {
             player.values.setByte!UNIT_FIELD_BYTES_1(0, 0);
@@ -309,6 +315,7 @@ private:
             && context.clock() >= combatUntil)
         {
             player.values.set!UNIT_FIELD_FLAGS(player.values.get!UNIT_FIELD_FLAGS & ~UnitFlags.inCombat);
+            pvpLeftCombat();
             flushPlayerChanges();
         }
     }

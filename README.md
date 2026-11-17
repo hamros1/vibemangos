@@ -550,7 +550,7 @@ time.
 | `realm_id` | `RealmID` | `1` |
 | `login_database`, `world_database`, `character_database` | `LoginDatabaseInfo`, `WorldDatabaseInfo`, `CharacterDatabaseInfo` | `…classicrealmd`, `…classicmangos`, `…classiccharacters` |
 | `bind_address`, `port` | `BindIP`, `WorldServerPort` | `0.0.0.0`, `8085` |
-| `game_type`, `realm_zone` | `GameType`, `RealmZone` | `1`, `1` |
+| `game_type`, `realm_zone` | `GameType`, `RealmZone`; a PvP realm (1, 8, 16) flags players in enemy and contested land | `1`, `1` |
 | `player_limit` | `PlayerLimit` (used for the population shown) | `100` |
 | `max_overspeed_pings` | `MaxOverspeedPings` | `2` |
 | `uptime_update_interval` | `UpdateUptimeInterval` (minutes) | `10` |

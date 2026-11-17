@@ -454,6 +454,11 @@ enum Opcode : uint
     CMSG_GUILD_SET_PUBLIC_NOTE = 0x234,
     CMSG_GUILD_SET_OFFICER_NOTE = 0x235,
     CMSG_GUILD_INFO_TEXT = 0x2FC,
+
+    // PvP and honor
+    CMSG_TOGGLE_PVP = 0x253,
+    SMSG_PVP_CREDIT = 0x28C,
+    MSG_INSPECT_HONOR_STATS = 0x2D6,
 }
 
 /// One past the highest opcode a 1.12 client uses (`NUM_MSG_TYPES`).

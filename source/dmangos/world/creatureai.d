@@ -437,7 +437,10 @@ private:
     /// How the relations see it.
     @property Relating relating() const
     {
-        return Relating(me.values.get!UNIT_FIELD_FLAGS, me.factionTemplate, false, 0, 0, me.alive);
+        Relating r = Relating(me.values.get!UNIT_FIELD_FLAGS, me.factionTemplate, false, 0, 0, me.alive);
+        r.playerOwned = me.petOwner != 0;
+        r.playerFlags = me.controllerPlayerFlags;
+        return r;
     }
 
     /// `Unit::GetAttackDistance`: its detection range, a yard more for each level its target is below it.

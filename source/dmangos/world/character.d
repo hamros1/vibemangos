@@ -14,6 +14,7 @@
  */
 module dmangos.world.character;
 
+import dmangos.world.pvp : PvPHandlers;
 import core.time : Duration, MonoTime, msecs, seconds;
 import std.algorithm.searching : canFind;
 
@@ -700,6 +701,7 @@ private:
     mixin GameObjectHandlers;
     mixin AuctionHandlers;
     mixin TaxiHandlers;
+    mixin PvPHandlers;
     mixin Level0Commands;
     mixin Level1Commands;
     mixin Level2Commands;
@@ -708,4 +710,89 @@ private:
     mixin QuestCommands;
     mixin Level3Commands;
     mixin DebugCommands;
+}
+
+version (unittest)
+{
+    import core.time : MonoTime, msecs;
+    import dmangos.world.movement : Position;
+    import dmangos.world.opcodes : Opcode;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+    import dmangos.world.defines : UnitFlags;
+    import dmangos.world.relations : PlayerFlagsPvP;
+    import dmangos.world.updatefields;
+
+    private bool pvpFlagged(TestClient c)
+    {
+        return (c.session.inWorld.player.values.get!UNIT_FIELD_FLAGS & UnitFlags.pvp) != 0;
+    }
+}
+
+// The PvP flag (`dmangos.world.pvp`). `/pvp`: on at once; off five minutes after it is turned off, not before.
+unittest
+{
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(0, 0, 0));
+    auto me = anduin.session.inWorld;
+    anduin.write(Opcode.CMSG_TOGGLE_PVP, null);
+    assert(pvpFlagged(anduin) && me.hasPlayerFlag(PlayerFlagsPvP.desired));
+    anduin.write(Opcode.CMSG_TOGGLE_PVP, [ubyte(0)]);
+    assert(!me.hasPlayerFlag(PlayerFlagsPvP.desired) && pvpFlagged(anduin), "still flagged, for now");
+    me.updatePvPTimers(299_000);
+    assert(pvpFlagged(anduin));
+    me.updatePvPTimers(1000);
+    assert(!pvpFlagged(anduin), "five minutes on: off");
+    // While wanted, the timer stands still.
+    anduin.write(Opcode.CMSG_TOGGLE_PVP, [ubyte(1)]);
+    me.updatePvPTimers(600_000);
+    assert(pvpFlagged(anduin));
+}
+
+// An enemy capital flags a visitor on any realm; his own never does. The free-for-all arena.
+unittest
+{
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    context.config.gameType = 0; // a normal realm
+    auto thrall = loggedIn(context, db, 9, "Thrall", Position(0, 0, 0), AccountLevel.player, raceOrc);
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(10, 0, 0));
+    thrall.session.inWorld.updateZone(zoneStormwind, zoneStormwind);
+    assert(pvpFlagged(thrall), "an orc in Stormwind");
+    anduin.session.inWorld.updateZone(zoneStormwind, zoneStormwind);
+    assert(!pvpFlagged(anduin), "a human at home");
+    thrall.session.inWorld.updateZone(zoneElwynn, zoneElwynn);
+    thrall.session.inWorld.updatePvPTimers(300_000);
+    assert(!pvpFlagged(thrall), "Alliance land on a normal realm: off after five minutes");
+
+    auto me = anduin.session.inWorld;
+    me.updateZone(zoneStranglethorn, areaGurubashiArena);
+    assert(me.isFreeForAll);
+    me.updateArea(zoneStranglethorn);
+    assert(!me.isFreeForAll, "out of the arena");
+}
+
+// A hit between players: the attacker of a flagged player is flagged and contested; an unflagged one
+// cannot be attacked at all.
+unittest
+{
+    import dmangos.world.relations : canAttack;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto thrall = loggedIn(context, db, 9, "Thrall", Position(0, 0, 0), AccountLevel.player, raceOrc);
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(2, 0, 0));
+    auto orc = thrall.session.inWorld, human = anduin.session.inWorld;
+    assert(!canAttack(orc.relatingNow(), human.relatingNow(), context.client), "not flagged: not a target");
+    anduin.write(Opcode.CMSG_TOGGLE_PVP, null);
+    assert(canAttack(orc.relatingNow(), human.relatingNow(), context.client), "flagged: a target");
+    assert(!pvpFlagged(thrall));
+    human.pvpHitBy(orc, orc.isPvP);
+    assert(pvpFlagged(thrall) && orc.isPvPContested, "the attacker: flagged and contested");
+    orc.updatePvPTimers(29_000);
+    assert(orc.isPvPContested, "while in PvP combat it stays");
+    orc.pvpLeftCombat();
+    orc.updatePvPTimers(30_000);
+    assert(!orc.isPvPContested && pvpFlagged(thrall), "30 s out of combat: not contested; flagged 5 minutes");
 }

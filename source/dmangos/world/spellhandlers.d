@@ -1611,6 +1611,7 @@ private:
         auto who = target == player.guid ? this : cast(typeof(this)) context.onlinePlayer(target);
         if (who is null || who.player is null || who.map !is map)
             return;
+        pvpAssisted(who);
         value += healingBonus(spell);
         const crit = !(spell.attributesEx2 & spellAttrEx2CantCrit) && uniform01(map.random) * 100 < spellCritOf(spell);
         uint amount = crit ? value * 3 / 2 : value;

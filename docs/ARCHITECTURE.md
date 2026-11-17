@@ -591,6 +591,35 @@ session's side: `CanTakeQuest` and the dialog status, the quest giver packets, a
 completing, rewarding, and the objectives (`killedMonster` from the kill's rewards,
 `questItemsChanged` from every inventory save, `hasQuestForItem` for loot).
 
+## PvP
+
+`pvp.d` is CMaNGOS-classic's PvP flag: `Player::UpdatePvP`, `UpdatePvPContested`, `UpdateZone`'s
+enforced areas, and `Unit::SetInCombatWith*`. Who may then attack whom is `relations.canAttack`: an
+enemy player only if they are flagged (the target's flag decides), or both are in a free-for-all area.
+
+* **The flag** (`UNIT_FLAG_PVP`). These set it, and each restarts a 5-minute timer:
+  * `/pvp` (`CMSG_TOGGLE_PVP`, `PLAYER_FLAGS_PVP_DESIRED`);
+  * an enforced zone: an enemy capital on any realm, and enemy and contested land on a PvP realm
+    (`game_type` 1, 8 or 16);
+  * hits between players outside duels: the attacker of a flagged player, and the victim of a
+    flagged attacker;
+  * healing a flagged player who is in combat.
+
+  The timer only runs while none of these holds, and the flag goes when it runs out. The wish and
+  the free-for-all flag do not outlast a logout.
+* **Contested** (`PLAYER_FLAGS_CONTESTED_PVP`, 30 s out of combat). Attacking a flagged player makes
+  you contested. A contested zone's guards (faction templates with flag `0x1000`) are then your
+  enemies.
+* **Free-for-all** (`PLAYER_FLAGS_FFA_PVP`): in areas flagged as arenas (the Gurubashi Arena), and
+  everywhere on a free-for-all realm.
+* **Pets.** A pet carries its owner's PvP flag. Its `Relating` carries the owner's player flags
+  (`Creature.controllerPlayerFlags`), so the owner's flag decides whether it may attack a player.
+  Creatures of factions that assist players (template flag `0x800`) are flagged from their spawn.
+* **Honorless Target.** Arriving in an enforced zone by teleport or flight casts Honorless Target
+  (2479) on the player: a kill of them gives no honour.
+* **Not yet:** harmful spells that deal no damage (debuffs) do not flag yet; only damage and healing
+  do.
+
 ## Reputation
 
 `reputation.d` is `ReputationMgr` without the session: a `Reputation` per player (`Player.reputation`,

@@ -221,6 +221,7 @@ mixin template TaxiHandlers()
         player.values.set!UNIT_FIELD_MOUNTDISPLAYID(0u);
         player.values.set!UNIT_FIELD_FLAGS(player.values.get!UNIT_FIELD_FLAGS & ~UnitFlags.taxiFlight);
         flushPlayerChanges();
+        pvpArrived();
         if (destination !is null)
             teleportTo(map.id, Position(destination.x, destination.y, destination.z, player.position.orientation));
     }

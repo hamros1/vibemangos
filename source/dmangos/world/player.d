@@ -1152,7 +1152,8 @@ private:
         setStatFields(data.health == 0 ? uint.max : data.health, data.power);
 
         // Player
-        v.set!PLAYER_FLAGS(data.playerFlags & ~(PlayerFlags.afk | PlayerFlags.dnd | PlayerFlags.gm));
+        // `InitStatsForLevel`: AFK, DND, GM, and the PvP wish and free-for-all do not outlast a logout.
+        v.set!PLAYER_FLAGS(data.playerFlags & ~(PlayerFlags.afk | PlayerFlags.dnd | PlayerFlags.gm | 0x200u | 0x80u));
         v.set!PLAYER_BYTES(data.playerBytes);
         v.set!PLAYER_BYTES_2(data.playerBytes2);
         v.setByte!PLAYER_BYTES_2(3, RestState.normal);

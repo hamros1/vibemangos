@@ -38,6 +38,26 @@ struct Relating
     ulong duelArbiter;                      /// `PLAYER_DUEL_ARBITER`: the duel's flag
     uint duelTeam;                          /// `PLAYER_DUEL_TEAM`: 1 or 2 while the duel is on, else 0
     const(Reputation) reputation;           /// a player's standings; null: its race's and class's base ones
+    uint playerFlags;                       /// `PLAYER_FLAGS` of the player it is or that controls it (FFA, contested)
+    bool playerOwned;                       /// a player's pet, totem or guardian: it has a controlling player
+
+    /// `GetControllingPlayer() != nullptr`: a player, or a unit one controls.
+    @property bool hasControllingPlayer() const pure nothrow @nogc @safe
+    {
+        return player || playerOwned;
+    }
+
+    /// `IsPvPFreeForAll`: in a free-for-all area (`PLAYER_FLAGS_FFA_PVP` of its controlling player).
+    @property bool freeForAll() const pure nothrow @nogc @safe
+    {
+        return hasControllingPlayer && (playerFlags & PlayerFlagsPvP.freeForAll) != 0;
+    }
+
+    /// `IsPvPContested`: attacked a flagged player of late (`PLAYER_FLAGS_CONTESTED_PVP`).
+    @property bool contested() const pure nothrow @nogc @safe
+    {
+        return hasControllingPlayer && (playerFlags & PlayerFlagsPvP.contested) != 0;
+    }
 
     bool hasFlag(uint flag) const pure nothrow @nogc @safe
     {
@@ -49,6 +69,20 @@ struct Relating
         return hasFlag(UnitFlags.playerControlled);
     }
 }
+
+/// The `PLAYER_FLAGS` the relations read.
+enum PlayerFlagsPvP : uint
+{
+    freeForAll = 0x80,   /// `PLAYER_FLAGS_FFA_PVP`
+    contested = 0x100,   /// `PLAYER_FLAGS_CONTESTED_PVP`: contested guards attack it
+    desired = 0x200,     /// `PLAYER_FLAGS_PVP_DESIRED`: the player turned PvP on
+}
+
+/// `FACTION_TEMPLATE_FLAG_ATTACK_PVP_ACTIVE_PLAYERS`: a contested zone's guards, who attack contested players.
+enum uint factionTemplateContestedGuard = 0x1000;
+
+/// `FACTION_TEMPLATE_FLAG_ASSIST_PLAYERS`: a faction whose creatures carry the PvP flag.
+enum uint factionTemplateAssistPlayers = 0x800;
 
 /// `FACTION_FLAG_AT_WAR` of `Faction.dbc`'s reputation flags.
 private enum uint factionFlagAtWar = 0x02;
@@ -108,6 +142,8 @@ ReputationRank factionReaction(const(FactionTemplateEntry)* self, const Relating
 {
     if (self is null || unit.template_ is null)
         return ReputationRank.neutral;
+    if (unit.contested && (self.flags & factionTemplateContestedGuard))
+        return ReputationRank.hostile;
     if (unit.playerControlled && unit.player)
     {
         const faction = client.factions.lookup(self.faction);
@@ -140,9 +176,14 @@ ReputationRank reactionTo(const Relating self, const Relating unit, const Client
                 return self.duelTeam != unit.duelTeam ? ReputationRank.hostile : ReputationRank.friendly;
             if (sameGroup)
                 return ReputationRank.friendly;
+            if (self.freeForAll && unit.freeForAll)
+                return ReputationRank.hostile;
         }
         if (self.player && unit.template_ !is null)
         {
+            // A contested player and a contested zone's guards: enemies (`IsContestedGuardFaction`).
+            if (self.contested && (unit.template_.flags & factionTemplateContestedGuard))
+                return ReputationRank.hostile;
             const faction = client.factions.lookup(unit.template_.faction);
             // A faction with a reputation: at war or not decides.
             if (faction !is null && faction.hasReputation)
@@ -190,9 +231,10 @@ bool canAttack(const Relating self, const Relating unit, const ClientData client
                 return self.duelTeam != unit.duelTeam;
             if (isFriend(self, unit, client, sameGroup))
                 return false;
-            if (!self.player || !unit.player)
+            if (!self.hasControllingPlayer || !unit.hasControllingPlayer)
                 return true;
-            return unit.hasFlag(UnitFlags.pvp); // `Player::IsPvP`
+            // The target's flag decides (`Player::IsPvP`; a pet carries its owner's), or both in a free-for-all.
+            return unit.hasFlag(UnitFlags.pvp) || (self.freeForAll && unit.freeForAll);
         }
         // A creature may attack a player at war with its faction, friend or not.
         if (!self.playerControlled && unit.player && unit.reputation !is null && self.template_ !is null)

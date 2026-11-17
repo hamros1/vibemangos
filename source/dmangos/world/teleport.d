@@ -330,6 +330,7 @@ private:
         sendInitialPacketsAfterAddToMap();
         resetMovementCheck();
         petsOnArrival();
+        pvpArrived();
         if (auto group = context.groups.of(player.guid))
             group.updatePlayerOutOfRange(this, GroupUpdate.full);
     }
@@ -342,6 +343,7 @@ private:
             return;
         teleporting = Teleport.none;
         resetMovementCheck();
+        pvpArrived();
         if (auto group = context.groups.of(player.guid))
             group.updatePlayerOutOfRange(this, GroupUpdate.position);
     }

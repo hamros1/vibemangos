@@ -534,6 +534,9 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
         this.client = client;
         setFields(display, level, parts, client);
         factionTemplate = client.factionTemplates.lookup(template_.faction);
+        // `FACTION_TEMPLATE_FLAG_ASSIST_PLAYERS`: such creatures fight players' fights, flagged as they are.
+        if (factionTemplate !is null && (factionTemplate.flags & 0x800))
+            values.set!UNIT_FIELD_FLAGS(values.get!UNIT_FIELD_FLAGS | UnitFlags.pvp);
         templateEquipment = parts.equipment;
         ai = new CreatureAI(this);
         // Unit::GetCollisionHeight: the model's, scaled; DEFAULT_COLLISION_HEIGHT if it has none.
@@ -629,6 +632,8 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
 
     /// A pet's owner (a player's guid); 0 for any other creature.
     ulong petOwner;
+    /// A pet's owner's `PLAYER_FLAGS` (free-for-all, contested), for the relations (`dmangos.world.pvp`).
+    uint controllerPlayerFlags;
     /// The pet's own state (`dmangos.world.pet`); null for any other creature.
     Object petData;
 

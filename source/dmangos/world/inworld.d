@@ -459,6 +459,7 @@ private:
         updateTaxi(cast(int) elapsed.total!"msecs");
         updateTimedQuests();
         updateDuel();
+        updatePvPTimers(cast(int) elapsed.total!"msecs");
         updateDeath(elapsed);
         if (regenTimer.update(elapsed))
         {
