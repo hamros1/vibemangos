@@ -349,8 +349,9 @@ What works now:
     spells. Items cast their on-use spells (with the item's own cooldowns; food and drink are used
     up). A channelled spell goes on for its duration (`MSG_CHANNEL_START`, the caster's channel fields),
     ending at its time, when the player cancels it, or when it moves if the spell says so (its auras on
-    the target ending with it). Not yet: area and chain targets, projectiles' travel time, spells cast at
-    players (PvP) and by creatures, spell power and partial resists.
+    the target ending with it). Creatures cast through their scripts (below), and players at each
+    other where the relations allow (duels, PvP). Not yet: area and chain targets for players,
+    projectiles' travel time, spell power and partial resists.
   * **Auras** (CMaNGOS's `SpellAuraHolder` and `Aura`): buffs and debuffs fill the aura fields
     (positive slots 0..31, negative 32..47) and the buff bar's durations, refresh and stack, and end
     when their time is up, when clicked off, at death, or by their interrupt flags (standing up ends
