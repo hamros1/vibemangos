@@ -662,6 +662,12 @@ final class Creature : Moving, Replicable, Npc, PerViewer
     bool takeDamage(uint damage)
     {
         const health = values.get!UNIT_FIELD_HEALTH;
+        // `SetDeathPrevention`: its script keeps it at 1 health.
+        if (health <= damage && ai !is null && ai.deathPrevention)
+        {
+            values.set!UNIT_FIELD_HEALTH(1u);
+            return false;
+        }
         if (health <= damage)
         {
             values.set!UNIT_FIELD_HEALTH(0u);

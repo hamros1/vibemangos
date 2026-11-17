@@ -68,6 +68,12 @@ interface Combatant
     /// A packet for it alone (a creature's whisper).
     void tell(Opcode opcode, const(ubyte)[] body_);
 
+    /// Whether it is casting a spell.
+    @property bool castingSpell();
+
+    /// A creature's script took an aura of `spell` off it.
+    void auraRemovedBy(uint spell);
+
     /// `.invincible`: creatures do not attack it (`isAttackable` is false).
     @property bool untouchable();
 
@@ -117,6 +123,9 @@ interface CombatWorld : MotionWorld
 
     /// The players within `range` yards of `center` here who can fight.
     Combatant[] combatantsNear(Position center, float range);
+
+    /// The creature with this guid here; null if none.
+    Creature creatureAt(ulong guid);
 
     /// A packet for the players within `range` yards of `center`.
     void sendInRange(Position center, float range, Opcode opcode, const(ubyte)[] body_);
@@ -205,7 +214,7 @@ final class CreatureAI : Scripted
     /// Whether it has anything to do in the tick: a fight, the way home, or health to get back.
     @property bool active() const
     {
-        return inCombat_ || evadingHome || me.values.get!UNIT_FIELD_HEALTH < me.values.get!UNIT_FIELD_MAXHEALTH
+        return inCombat_ || evadingHome || despawnTimer > 0 || me.values.get!UNIT_FIELD_HEALTH < me.values.get!UNIT_FIELD_MAXHEALTH
             || me.values.get!UNIT_FIELD_POWER1 < me.values.get!UNIT_FIELD_MAXPOWER1 || casting_ !is null || fleeTimer > 0 || (script !is null && script.wantsTicks);
     }
 
@@ -325,6 +334,12 @@ final class CreatureAI : Scripted
         if (!me.alive)
             return;
         world_ = world;
+        // `ForcedDespawn`: gone, to come back after its respawn time.
+        if (despawnTimer > 0 && (despawnTimer -= diff) <= 0)
+        {
+            despawnTimer = 0;
+            return world.corpseExpired(me);
+        }
         attackTimer = attackTimer > diff ? attackTimer - diff : 0;
         updateCasting(diff);
         if (!me.alive)
@@ -695,7 +710,7 @@ private:
     {
         import std.math : PI;
 
-        if (!meleeAttacking || attackTimer)
+        if (!meleeAttacking || attackTimer || !meleeEnabled)
             return;
         const self = me.fighter, other = target.fighter;
         if (!canReachWithMelee(self, other) || !hasInArc(self.position, other.position, 2 * PI / 3) || !other.alive)

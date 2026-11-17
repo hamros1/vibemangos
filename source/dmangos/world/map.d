@@ -1038,6 +1038,12 @@ final class Map : CombatWorld, GameObjectWorld
         return found;
     }
 
+    /// See `CombatWorld.creatureAt`.
+    Creature creatureAt(ulong guid)
+    {
+        return cast(Creature) objects.get(guid, null);
+    }
+
     /// See `CombatWorld.combatantsNear`.
     Combatant[] combatantsNear(Position center, float range)
     {

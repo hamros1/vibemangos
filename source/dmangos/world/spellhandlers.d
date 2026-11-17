@@ -453,6 +453,12 @@ private:
             foreach (target; effectTargets[i])
                 if (missOf[target] == SpellMissInfo.none)
                     doEffect(spell, i, target, c);
+        // `SpellHit` for the creatures hit (their scripts).
+        foreach (r; results)
+            if (r.miss == SpellMissInfo.none)
+                if (auto creature = cast(Creature) map.findObject(r.guid))
+                    if (creature.alive && creature.ai !is null)
+                        creature.ai.spellHitBy(player.guid, spell.id, 1u << spell.casting.school, map);
         flushPlayerChanges();
         return SpellCastResult.ok;
     }

@@ -49,7 +49,11 @@ mixin template CreatureCasting()
         bool rangedMode_;              // `m_currentRangedMode`: and it does now (not out of mana)
         float chaseDistance_ = 0;      // `m_chaseDistance`
         int fleeTimer;                 // running in fear, for so long yet
+        int despawnTimer;              // `ForcedDespawn`: gone in so long (0: not)
+        bool meleeEnabled = true;      // `SetMeleeEnabled`
     }
+
+    bool deathPrevention;              /// `SetDeathPrevention`: damage leaves it at 1 health
 
     /// What its casts and texts need of the world's data (every creature made in the world has it).
     void setLore(CreatureLore lore)
@@ -61,6 +65,24 @@ mixin template CreatureCasting()
     void setScript(const(EventAiEvent)[] events, const EventAiData data)
     {
         this.script = new EventAI(events, data);
+    }
+
+    /// `SpellHit`: a player's spell hit it (its script hears of it).
+    void spellHitBy(ulong caster, uint spell, uint schoolMask, CombatWorld world)
+    {
+        if (script is null)
+            return;
+        world_ = world;
+        script.spellHit(this, caster, spell, schoolMask);
+    }
+
+    /// `ReceiveEmote`: a player's text emote at it.
+    void receivedEmote(ulong player, uint textEmote, CombatWorld world)
+    {
+        if (script is null)
+            return;
+        world_ = world;
+        script.receivedEmote(this, player, textEmote);
     }
 
     /// `.castself` on a creature: it casts `spell` at itself.
@@ -107,10 +129,18 @@ mixin template CreatureCasting()
             target = victim ? victim : me.guid;
         if (target != me.guid)
         {
-            auto other = world_.combatant(target);
-            if (other is null || !other.fighter.alive)
-                return false;
-            if ((flags & castAuraNotPresent) && other.hasAuraOf(spell.id))
+            if (auto other = world_.combatant(target))
+            {
+                if (!other.fighter.alive || ((flags & castAuraNotPresent) && other.hasAuraOf(spell.id)))
+                    return false;
+            }
+            else if (auto friend = world_.creatureAt(target))
+            {
+                // A friend (to heal, to buff).
+                if (!friend.alive || ((flags & castAuraNotPresent) && friend.auras.find(spell.id) !is null))
+                    return false;
+            }
+            else
                 return false;
         }
         else if ((flags & castAuraNotPresent) && me.auras.find(spell.id) !is null)
@@ -158,7 +188,8 @@ mixin template CreatureCasting()
         if (castTarget != me.guid)
         {
             auto other = world_.combatant(castTarget);
-            if (other is null || !other.fighter.alive)
+            auto friend = other is null ? world_.creatureAt(castTarget) : null;
+            if ((other is null || !other.fighter.alive) && (friend is null || !friend.alive))
                 return interruptCast();
         }
         castTimer -= diff;
@@ -205,10 +236,13 @@ mixin template CreatureCasting()
     {
         if (target == me.guid)
             return 0;
-        auto other = world_.combatant(target);
-        if (other is null)
+        Position p;
+        if (auto other = world_.combatant(target))
+            p = other.fighter.position;
+        else if (auto friend = world_.creatureAt(target))
+            p = friend.position;
+        else
             return float.infinity;
-        const p = other.fighter.position;
         const dx = p.x - me.position.x, dy = p.y - me.position.y, dz = p.z - me.position.z;
         return sqrt(dx * dx + dy * dy + dz * dz);
     }
@@ -352,8 +386,7 @@ mixin template CreatureCasting()
                         auraOn(spell, guid);
                     break;
                 case heal:
-                    if (guid == me.guid)
-                        healSelf(spell, value);
+                    healCreature(spell, guid == me.guid ? me : world_.creatureAt(guid), value);
                     break;
                 case triggerSpell:
                     if (const triggered = lore.spellInfo(spell.triggerSpell[i]))
@@ -401,26 +434,31 @@ mixin template CreatureCasting()
             if (spell.effect[j] == applyAura)
                 values[j] = effectValue(*spell, j, level, uniform01(world_.random));
         const ms = duration(*spell, lore.clientData, level);
-        if (guid == me.guid)
+        if (auto creature = guid == me.guid ? me : world_.creatureAt(guid))
         {
             bool isNew;
-            me.auras.apply(makeAura(spell, me.guid, level, ms, true, values), me.values, isNew);
+            creature.auras.apply(makeAura(spell, me.guid, level, ms, true, values), creature.values, isNew);
+            if (creature !is me)
+                world_.flushCreature(creature);
+            world_.wake(creature.guid);
             return;
         }
         if (auto other = world_.combatant(guid))
             other.auraFrom(me.guid, spell, level, ms, values);
     }
 
-    /// `SPELL_EFFECT_HEAL` on itself.
-    private void healSelf(const(SpellInfo)* spell, int value)
+    /// `SPELL_EFFECT_HEAL` on itself or a friend.
+    private void healCreature(const(SpellInfo)* spell, Creature who, int value)
     {
-        if (value <= 0)
+        if (value <= 0 || who is null || !who.alive)
             return;
-        const health = me.values.get!UNIT_FIELD_HEALTH, maximum = me.values.get!UNIT_FIELD_MAXHEALTH;
+        const health = who.values.get!UNIT_FIELD_HEALTH, maximum = who.values.get!UNIT_FIELD_MAXHEALTH;
         const healed = health + value > maximum ? maximum - health : value;
-        me.values.set!UNIT_FIELD_HEALTH(health + healed);
-        world_.sendToObservers(me.guid, Opcode.SMSG_SPELLHEALLOG,
-            healLog(me.guid, me.guid, spell.id, healed, false));
+        who.values.set!UNIT_FIELD_HEALTH(health + healed);
+        world_.sendToObservers(who.guid, Opcode.SMSG_SPELLHEALLOG,
+            healLog(who.guid, me.guid, spell.id, healed, false));
+        if (who !is me)
+            world_.flushCreature(who);
     }
 
     /// The spell on its next swing, instead of the swing (`true`): its weapon damage.
@@ -496,6 +534,97 @@ mixin template CreatureCasting()
     bool hasOwnAura(uint spell)
     {
         return me.auras.find(spell) !is null;
+    }
+
+    /// ditto
+    bool victimCasting()
+    {
+        auto other = victim ? world_.combatant(victim) : null;
+        return other !is null && other.castingSpell;
+    }
+
+    /// ditto: `MostHPMissingInRangeCheck` over itself and those near it in combat that are not its enemies.
+    ulong lowestHpFriendly(float radius, uint deficit, bool percent)
+    {
+        ulong best;
+        uint mostMissing;
+        foreach (other; world_.creaturesNear(me.position, radius))
+        {
+            if (!other.alive || other.ai is null || !other.ai.inCombat)
+                continue;
+            if (other !is me && isEnemy(relating, other.ai.relating, me.client)) // `!IsHostileTo`
+                continue;
+            const maximum = other.values.get!UNIT_FIELD_MAXHEALTH, health = other.values.get!UNIT_FIELD_HEALTH;
+            const missing = maximum - health;
+            const measure = percent ? (maximum ? cast(uint)(ulong(missing) * 100 / maximum) : 0) : missing;
+            if (measure > deficit && measure > mostMissing)
+            {
+                mostMissing = measure;
+                best = other.guid;
+            }
+        }
+        return best;
+    }
+
+    /// ditto
+    void scriptSound(uint sound)
+    {
+        ByteWriter w;
+        w.put(sound);
+        world_.sendToObservers(me.guid, Opcode.SMSG_PLAY_SOUND, w.data);
+    }
+
+    /// ditto: on itself or another creature here.
+    void scriptUnitFlags(ulong target, uint flags, bool set)
+    {
+        auto who = target == me.guid ? me : world_.creatureAt(target);
+        if (who is null)
+            return;
+        const now = who.values.get!UNIT_FIELD_FLAGS;
+        who.values.set!UNIT_FIELD_FLAGS(set ? now | flags : now & ~flags);
+        world_.flushCreature(who);
+    }
+
+    /// ditto
+    void scriptMelee(bool on)
+    {
+        meleeEnabled = on;
+        if (!on)
+            meleeStop(world_);
+    }
+
+    /// ditto
+    void scriptRemoveAura(ulong target, uint spell)
+    {
+        if (auto creature = target == me.guid ? me : world_.creatureAt(target))
+        {
+            if (auto aura = creature.auras.find(spell))
+            {
+                creature.auras.remove(aura, creature.values);
+                world_.flushCreature(creature);
+            }
+        }
+        else if (auto other = world_.combatant(target))
+            other.auraRemovedBy(spell);
+    }
+
+    /// ditto
+    void scriptDespawn(uint delay)
+    {
+        despawnTimer = delay ? delay : 1;
+    }
+
+    /// ditto
+    void scriptDeathPrevention(bool on)
+    {
+        deathPrevention = on;
+    }
+
+    /// ditto
+    void scriptReactState(uint state)
+    {
+        if (state <= ReactState.max)
+            react = cast(ReactState) state;
     }
 
     /// ditto
@@ -828,4 +957,22 @@ unittest
     anduin.read();
     anduin.write(Opcode.CMSG_CAST_SPELL, w.data);
     assert(!keeper.ai.castingNow && opcodesOf(anduin.read()).canFind(Opcode.SMSG_SPELL_FAILURE), "interrupted");
+
+    // A friend in the fight, badly hurt: healed (`EVENT_T_FRIENDLY_HP`, cast at the event's own target).
+    auto trainer = cast(Creature) map.findObject(makeGuid(HighGuid.unit, creatureTrainer, trainerSpawn));
+    trainer.factionTemplate = keeper.factionTemplate;
+    trainer.values.set!UNIT_FIELD_MAXHEALTH(500u);
+    trainer.values.set!UNIT_FIELD_HEALTH(100u);
+    trainer.ai.attackedBy(anduin.session, map);
+    enum uint mendOther = 95012;
+    context.data.spells.spells[mendOther] = testSpell(mendOther, 10, 21, 200);
+    EventAiEvent friendly = {id: 4, type: EventType.friendlyHp, chance: 100, flags: eventRepeatable,
+        params: [100, 30, 3000, 3000, 0, 0]};
+    friendly.actions[0] = EventAiAction(ActionType.castSpell, [mendOther, EventTarget.eventSpecific, 0]);
+    auto healing = [friendly];
+    keeper.ai.setScript(healing, context.data.eventAi);
+    keeper.values.set!UNIT_FIELD_HEALTH(keeper.values.get!UNIT_FIELD_MAXHEALTH); // only the friend hurt
+    assert(keeper.ai.inCombat && trainer.ai.inCombat);
+    tick(600);
+    assert(trainer.values.get!UNIT_FIELD_HEALTH == 300, "the friend healed");
 }

@@ -500,6 +500,20 @@ final class WorldSession : NetSession, Kickable, OnlinePlayer, Combatant, Looter
     }
 
     /// See `Combatant`.
+    @property bool castingSpell()
+    {
+        return generic.active;
+    }
+
+    /// See `Combatant`.
+    void auraRemovedBy(uint spell)
+    {
+        if (player !is null)
+            if (auto aura = player.auras.find(spell))
+                removeAura(aura);
+    }
+
+    /// See `Combatant`.
     void castInterruptedBy(ulong creature)
     {
         import dmangos.world.spellcast : SpellCastResult;

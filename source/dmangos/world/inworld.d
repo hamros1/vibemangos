@@ -14,7 +14,8 @@
  */
 module dmangos.world.inworld;
 
-/// See the module documentation.
+    import dmangos.world.movement : baseMoveSpeed, MovementFlags, MovementInfo, MoveType, movingOrTurning, Position;
+    import dmangos.world.creature : Creature;
 /// What a player moving to another node does on arrival (`performArrivalAction`).
 struct ArrivalAction
 {
@@ -898,6 +899,13 @@ private:
         string targetName;
         if (const target = context.onlinePlayer(request.target))
             targetName = target.character.data.name;
+        else if (auto creature = cast(Creature) map.findObject(request.target))
+        {
+            targetName = creature.template_.name;
+            // `ReceiveEmote`: its script hears it.
+            if (creature.ai !is null && creature.alive)
+                creature.ai.receivedEmote(player.guid, request.textEmote, map);
+        }
         map.sendInRange(player.position, context.config.listenRangeTextEmote, Opcode.SMSG_TEXT_EMOTE,
             packetBody(ServerTextEmote(player.guid, request.textEmote, request.emoteNum,
             cast(uint) targetName.length + 1, targetName)));

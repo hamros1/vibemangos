@@ -260,20 +260,22 @@ What works now:
     half later; and a fighting creature that passes within 5 yards of an idle ally pulls it in.
   * **Creature scripts** (CMaNGOS's EventAI, `creature_ai_scripts`, for each creature entry or
     spawn): their events (timers in and out of combat, health, mana and the victim's health between
-    two percentages, the victim within a range, aggro, a kill, death, evading, spawning, reaching
-    home, an aura of their own there or missing) run their actions by chance and phase, repeating
-    after their repeat timers: casting a spell, saying, yelling, emoting or whispering a
-    `broadcast_text` (or one of a `dbscript_random_templates` group), emotes, phases, fleeing in
-    fear for 7 seconds, calling for help, combat movement, ranged mode (keeping a distance to cast,
-    coming in to melee when out of mana), stand states, evading, attacking. A creature casts as
+    two percentages, the victim within a range or casting, aggro, a kill, death, evading, spawning,
+    reaching home, an aura of their own there or missing, a spell hitting them, a player's emote at
+    them, a friend near them hurt) run their actions by chance and phase, repeating after their
+    repeat timers: casting a spell (healing that friend too), saying, yelling, emoting or whispering
+    a `broadcast_text` (or one of a `dbscript_random_templates` group, or by a chance), emotes,
+    sounds, phases, fleeing in fear for 7 seconds, calling for help, combat movement, swings on or
+    off, ranged mode (keeping a distance to cast, coming in to melee when out of mana), stand states,
+    unit flags, taking auras off, despawning, not dying of damage, react states, evading, attacking. A creature casts as
     CMaNGOS's `DoCastSpellIfCan` allows (not while casting another, in range, with the mana): cast
     times stand it still facing its target (`SMSG_SPELL_START`, then `SMSG_SPELL_GO`); a spell on the
     next swing waits for the swing. Its spells do school damage (a magic one resisted by the level
     difference), weapon damage, auras (debuffs on players, damage over time included; buffs on
     itself), heal it, and trigger other spells, at its target, itself, or the enemies in their area
     or cone. Creatures get their mana back with their health out of combat. Not yet: the other
-    events and actions (summons, morphs, AI events between creatures, quest events), spell lists
-    (`creature_template_spells`), friendly targets (healing allies), spell school lockouts. Their
+    events and actions (summons, morphs, AI events between creatures, quest events, relay scripts),
+    spell lists (`creature_template_spells`), spell school lockouts. Their
     casts are interrupted by interrupting spells (Pummel's `SPELL_EFFECT_INTERRUPT_CAST`), and
     theirs interrupt a player's.
   * **Death** (CMaNGOS's `KillPlayer`, repop, reclaim and spirit healer): a player killed loses a tenth

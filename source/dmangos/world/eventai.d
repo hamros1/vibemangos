@@ -3,16 +3,19 @@
  * actions for the creatures whose `AIName` is `EventAI`.
  *
  * Each event waits for its moment: timers in and out of combat, health and mana between two
- * percentages, the victim in a range, the fight starting, a kill, death, evading, spawning,
- * reaching home, an aura of its own there or missing. Then (by its chance, in the phases its mask
- * allows) its actions run: casting a spell (at itself, its victim, another on its threat list, the
- * one who caused the event), saying, yelling or emoting a text (`broadcast_text`, or one of a
- * `dbscript_random_templates` group), an emote, setting or stepping its phase, fleeing, calling
- * for help, turning combat movement on or off, keeping its distance to cast (ranged mode),
- * standing up or down, evading, attacking. Repeating events go again after their repeat timers.
+ * percentages, the victim in a range or casting, the fight starting, a kill, death, evading,
+ * spawning, reaching home, an aura of its own there or missing, a spell hitting it, a player's
+ * emote at it, a friend near it hurt. Then (by its chance, in the phases its mask allows) its
+ * actions run: casting a spell (at itself, its victim, another on its threat list, the one who
+ * caused the event, the friend the event found), saying, yelling or emoting a text (`broadcast_text`,
+ * or one of a `dbscript_random_templates` group, or by a chance), an emote, a sound, setting or
+ * stepping its phase, fleeing, calling for help, turning combat movement or its swings on or off,
+ * keeping its distance to cast (ranged mode), standing up or down, unit flags, taking an aura off,
+ * despawning, not dying of damage, its react state, evading, attacking. Repeating events go again
+ * after their repeat timers.
  *
  * Not yet: the other events and actions (summons, morphs, faction changes, quest events, AI events
- * between creatures, sounds), spell lists (`creature_template_spells`), immunities.
+ * between creatures, relay scripts), spell lists (`creature_template_spells`), immunities.
  */
 module dmangos.world.eventai;
 
@@ -31,10 +34,14 @@ enum EventType : ubyte
     kill = 5,
     death = 6,
     evade = 7,
+    spellHit = 8,
     range = 9,
     spawned = 11,
     targetHp = 12,
+    targetCasting = 13,
+    friendlyHp = 14,
     reachedHome = 21,
+    receiveEmote = 22,
     aura = 23,
     missingAura = 27,
 }
@@ -44,16 +51,25 @@ enum ActionType : ubyte
 {
     none = 0,
     text = 1,
+    sound = 4,
     emote = 5,
     randomEmote = 10,
     castSpell = 11,
+    setUnitFlag = 18,
+    removeUnitFlag = 19,
+    autoAttack = 20,
     combatMovement = 21,
     setPhase = 22,
     incPhase = 23,
     evade = 24,
     fleeForAssist = 25,
+    removeAurasFromSpell = 28,
     callForHelp = 39,
+    forceDespawn = 41,
+    setDeathPrevention = 42,
+    chancedText = 44,
     setStandState = 47,
+    setReactState = 50,
     textNew = 54,
     attackStart = 55,
     setRangedMode = 57,
@@ -79,6 +95,7 @@ enum EventTarget : int
     actionInvoker = 6,
     hostileRandomPlayer = 8,
     hostileRandomNotTopPlayer = 9,
+    eventSpecific = 12,
     none = 15,
 }
 
@@ -175,6 +192,7 @@ struct EventHolder
     const(EventAiEvent)* event;
     uint timer;
     bool enabled = true;
+    ulong eventTarget;   /// what the event found (a friend to heal)
 }
 
 /**
@@ -190,6 +208,34 @@ interface Scripted
 
     /// Whether it has an aura of `spell` on itself.
     bool hasOwnAura(uint spell);
+
+    /// Whether its victim is casting.
+    bool victimCasting();
+
+    /// `DoSelectLowestHpFriendly`: the friend within `radius` most hurt, by at least `deficit`
+    /// (health, or percent); 0 if none.
+    ulong lowestHpFriendly(float radius, uint deficit, bool percent);
+
+    /// `PlayDirectSound` around it.
+    void scriptSound(uint sound);
+
+    /// Unit flags set on or cleared from a target.
+    void scriptUnitFlags(ulong target, uint flags, bool set);
+
+    /// `SetMeleeEnabled`
+    void scriptMelee(bool on);
+
+    /// `RemoveAurasDueToSpell` on a target.
+    void scriptRemoveAura(ulong target, uint spell);
+
+    /// `ForcedDespawn` after `delay` milliseconds.
+    void scriptDespawn(uint delay);
+
+    /// `SetDeathPrevention`: it does not die of damage (left at 1 health).
+    void scriptDeathPrevention(bool on);
+
+    /// `SetReactState`: 0 passive, 1 defensive, 2 aggressive.
+    void scriptReactState(uint state);
 
     /// The victim's health in percent and distance in yards; uint.max if it has none.
     uint victimHealthPercent();
@@ -226,6 +272,7 @@ final class EventAI
     private EventHolder[] holders;
     private const EventAiData data;
     private uint phase;
+    private ulong eventTarget; // the event's own target, for `TARGET_T_EVENT_SPECIFIC`
     private int updateIn = 500;     // `EVENT_UPDATE_TIME`: the timers are looked at twice a second
     private uint pendingDiff;
     private bool spawnPending = true;
@@ -276,7 +323,7 @@ final class EventAI
     /// `IsTimerBasedEvent`'s repeat timers (`GetRepeatTimers`): most events' third and fourth parameters.
     private static void repeatTimers(const ref EventAiEvent e, out int min, out int max)
     {
-        if (e.type == EventType.kill)
+        if (e.type == EventType.kill || e.type == EventType.targetCasting)
         {
             min = e.params[0];
             max = e.params[1];
@@ -332,6 +379,16 @@ final class EventAI
             const d = me.victimDistance;
             return d >= e.params[0] && d <= e.params[1];
         }
+        case EventType.targetCasting:
+            return me.fighting && me.victimCasting;
+        case EventType.friendlyHp:
+        {
+            if (!me.fighting)
+                return false;
+            const friend = me.lowestHpFriendly(e.params[1], e.params[0], e.params[4] != 0);
+            h.eventTarget = friend;
+            return friend != 0;
+        }
         case EventType.aura:
             return me.hasOwnAura(e.params[0]);
         case EventType.missingAura:
@@ -344,6 +401,7 @@ final class EventAI
     /// `ProcessEvent`: by its chance, its actions (one at random with `EFLAG_RANDOM_ACTION`), then its reset.
     private void process(ref EventHolder h, Scripted me, ulong invoker)
     {
+        eventTarget = h.eventTarget;
         const e = h.event;
         if (uniform(0, 100) >= e.chance)
             return reset(h);
@@ -385,7 +443,8 @@ final class EventAI
         switch (e.type)
         {
         case EventType.timerInCombat, EventType.timerOutOfCombat, EventType.hp, EventType.mana, EventType.kill,
-                EventType.range, EventType.targetHp, EventType.aura, EventType.missingAura:
+                EventType.range, EventType.targetHp, EventType.aura, EventType.missingAura, EventType.spellHit,
+                EventType.targetCasting, EventType.friendlyHp:
             setTimer(h, min, max);
             break;
         default:
@@ -424,6 +483,44 @@ final class EventAI
         case ActionType.emote:
             me.scriptEmote(a.params[0]);
             return true;
+        case ActionType.chancedText:
+        {
+            // By its chance, one of up to two texts.
+            if (uniform(0, 100) >= a.params[0] || a.params[1] <= 0)
+                return false;
+            const text = a.params[2] > 0 && uniform(0, 2) ? a.params[2] : a.params[1];
+            me.scriptText(text, invoker ? invoker : me.targetFor(EventTarget.hostile, invoker));
+            return true;
+        }
+        case ActionType.sound:
+            me.scriptSound(a.params[0]);
+            return true;
+        case ActionType.setUnitFlag, ActionType.removeUnitFlag:
+        {
+            const target = targetOf(a.params[1], me, invoker);
+            if (target)
+                me.scriptUnitFlags(target, a.params[0], a.type == ActionType.setUnitFlag);
+            return target != 0;
+        }
+        case ActionType.autoAttack:
+            me.scriptMelee(a.params[0] != 0);
+            return true;
+        case ActionType.removeAurasFromSpell:
+        {
+            const target = targetOf(a.params[0], me, invoker);
+            if (target)
+                me.scriptRemoveAura(target, a.params[1]);
+            return target != 0;
+        }
+        case ActionType.forceDespawn:
+            me.scriptDespawn(a.params[0] > 0 ? a.params[0] : 0);
+            return true;
+        case ActionType.setDeathPrevention:
+            me.scriptDeathPrevention(a.params[0] != 0);
+            return true;
+        case ActionType.setReactState:
+            me.scriptReactState(a.params[0]);
+            return true;
         case ActionType.randomEmote:
         {
             int[] emotes;
@@ -436,7 +533,7 @@ final class EventAI
         }
         case ActionType.castSpell:
         {
-            const target = me.targetFor(a.params[1], invoker);
+            const target = targetOf(a.params[1], me, invoker);
             if (target == 0 && a.params[1] != EventTarget.none)
                 return false;
             return me.scriptCast(a.params[0], target, cast(uint) a.params[2]);
@@ -477,6 +574,34 @@ final class EventAI
         default: // none, and those not done yet
             return false;
         }
+    }
+
+    /// `GetTargetByType` with the event's own target (`TARGET_T_EVENT_SPECIFIC`).
+    private ulong targetOf(int type, Scripted me, ulong invoker)
+    {
+        return type == EventTarget.eventSpecific ? eventTarget : me.targetFor(type, invoker);
+    }
+
+    /// `SpellHit`: a spell (`spell` of `schoolMask`) hit it.
+    void spellHit(Scripted me, ulong caster, uint spell, uint schoolMask)
+    {
+        foreach (ref h; holders)
+            if (h.event.type == EventType.spellHit && check(h, me))
+            {
+                const e = h.event;
+                // A spell named, or any of the schools in the mask (-1: any).
+                if (e.params[0] ? e.params[0] != spell : !(schoolMask & cast(uint) e.params[1]))
+                    continue;
+                process(h, me, caster);
+            }
+    }
+
+    /// `ReceiveEmote`: a player's text emote at it.
+    void receivedEmote(Scripted me, ulong player, uint emote)
+    {
+        foreach (ref h; holders)
+            if (h.event.type == EventType.receiveEmote && h.event.params[0] == emote && check(h, me))
+                process(h, me, player);
     }
 
     /// Runs the events of `type` now (`CheckAndReadyEventForExecution` then `ProcessEvents`).
@@ -568,7 +693,8 @@ final class EventAI
             switch (h.event.type)
             {
             case EventType.timerInCombat, EventType.timerOutOfCombat, EventType.hp, EventType.mana,
-                    EventType.targetHp, EventType.range, EventType.aura, EventType.missingAura:
+                    EventType.targetHp, EventType.range, EventType.aura, EventType.missingAura,
+                    EventType.targetCasting, EventType.friendlyHp:
                 if (check(h, me))
                     process(h, me, 0);
                 break;
@@ -593,6 +719,15 @@ unittest
         uint manaPercent() { return 100; }
         @property bool fighting() { return inFight; }
         bool hasOwnAura(uint spell) { return false; }
+        bool victimCasting() { return false; }
+        ulong lowestHpFriendly(float radius, uint deficit, bool percent) { return 0; }
+        void scriptSound(uint sound) {}
+        void scriptUnitFlags(ulong target, uint flags, bool set) {}
+        void scriptMelee(bool on) {}
+        void scriptRemoveAura(ulong target, uint spell) {}
+        void scriptDespawn(uint delay) {}
+        void scriptDeathPrevention(bool on) {}
+        void scriptReactState(uint state) {}
         uint victimHealthPercent() { return 100; }
         float victimDistance() { return 2; }
         ulong targetFor(int type, ulong invoker) { return type == EventTarget.self ? 1 : 2; }
