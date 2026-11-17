@@ -223,6 +223,14 @@ struct QuestStatus
     bool changed;             /// to be saved
 }
 
+/// A `questgiver_greeting` row: what heads a quest giver's list of quests, and its emote.
+struct QuestGreeting
+{
+    string text;
+    uint emote;
+    uint emoteDelay;
+}
+
 /// The quests and their givers.
 final class QuestData
 {
@@ -231,6 +239,13 @@ final class QuestData
     uint[][uint] gameObjectStarts; /// game object entry -> quests it gives (`gameobject_questrelation`)
     uint[][uint] gameObjectEnds;   /// ... and takes back (`gameobject_involvedrelation`)
     uint[uint] triggerQuests;      /// area trigger -> the quest whose place it is (`areatrigger_involvedrelation`)
+    QuestGreeting[ulong] greetings; /// `questgiver_greeting`: (type << 32 | entry) -> the quest list's text
+
+    /// A quest giver's greeting, for a creature (`gameObject` false) or game object of `entry`; null if none.
+    const(QuestGreeting)* greetingOf(uint entry, bool gameObject) const
+    {
+        return ((ulong(gameObject ? 1 : 0) << 32) | entry) in greetings;
+    }
     uint[][uint] creatureEnds;     /// creature entry -> quests it takes back (`creature_involvedrelation`)
     uint[][int] exclusiveGroups;   /// `ExclusiveGroup` -> its quests
 

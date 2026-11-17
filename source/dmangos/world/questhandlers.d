@@ -403,8 +403,13 @@ private:
     /// `Player::SendPreparedQuest`: one quest opens at once; several are listed.
     package void sendPreparedQuest(const QuestGiver giver)
     {
+        import dmangos.world.objects : HighGuid, highGuidOf;
+
         if (questMenu.length == 0)
             return;
+        // `questgiver_greeting`: a list of several quests is headed by the giver's own words.
+        const greeting = context.data.quests.greetingOf(cast(uint)((giver.guid >> 24) & 0xFF_FFFF),
+            highGuidOf(giver.guid) == HighGuid.gameObject);
         if (questMenu.length == 1)
         {
             const item = questMenu[0];
@@ -417,9 +422,9 @@ private:
         }
         ByteWriter w;
         w.put(giver.guid);
-        w.putCString("");
-        w.put(0u);
-        w.put(0u);
+        w.putCString(greeting is null ? "" : greeting.text);
+        w.put(greeting is null ? 0u : greeting.emoteDelay);
+        w.put(greeting is null ? 0u : greeting.emote);
         w.put(cast(ubyte) questMenu.length);
         foreach (item; questMenu)
         {
@@ -1427,4 +1432,50 @@ unittest
     assert(opcodesOf(anduin.read()).canFind(Opcode.SMSG_QUESTUPDATE_FAILEDTIMER));
     assert(me.questStatus[9500].status == QuestState.failed && me.questStatus[9500].timer == 0);
     assert(!anduin.session.canCompleteQuest(9500));
+}
+
+/// `questgiver_greeting`: a giver's list of several quests is headed by its words and emote.
+unittest
+{
+    import dmangos.bytes : ByteReader, ByteWriter;
+    import dmangos.world.movement : Position;
+    import dmangos.world.objects : HighGuid, makeGuid;
+    import dmangos.world.opcodes;
+    import dmangos.world.quests : Quest, QuestGreeting;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    foreach (uint id; [9700, 9701])
+    {
+        Quest q = {id: id, method: 2, maxLevel: 60, title: "Errand"};
+        q.reqCreatureOrGoId[0] = 6;
+        q.reqCreatureOrGoCount[0] = 1;
+        q.specialFlags = 0x20;
+        context.data.quests.quests[id] = q;
+        context.data.quests.creatureStarts[creatureTrainer] ~= id;
+    }
+    context.data.quests.greetings[creatureTrainer] = QuestGreeting("Hail, citizen.", 2, 0);
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f));
+    anduin.read();
+    const trainer = makeGuid(HighGuid.unit, creatureTrainer, trainerSpawn);
+    import dmangos.world.creature : Creature;
+    import dmangos.world.updatefields : UNIT_NPC_FLAGS;
+
+    (cast(Creature) context.map(0).findObject(trainer)).values.set!UNIT_NPC_FLAGS(2u); // a quest giver only: no gossip
+    ByteWriter hello;
+    hello.put(trainer);
+    anduin.write(Opcode.CMSG_QUESTGIVER_HELLO, hello.data);
+    bool seen;
+    foreach (packet; anduin.read())
+        if (packet.opcode == Opcode.SMSG_QUESTGIVER_QUEST_LIST)
+        {
+            auto r = ByteReader(packet.body_);
+            assert(r.read!ulong == trainer && r.readCString == "Hail, citizen.");
+            r.read!uint;
+            assert(r.read!uint == 2, "its emote");
+            seen = true;
+        }
+    assert(seen);
 }

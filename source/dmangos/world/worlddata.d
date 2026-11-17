@@ -23,7 +23,7 @@ import dmangos.world.grid : cellKeyAt;
 import dmangos.world.motion : MotionType, WaypointNode, WaypointStore;
 import dmangos.world.loot : lootColumns, lootRow, LootStore, LootStores;
 import dmangos.world.npcdata : NpcData;
-import dmangos.world.quests : QuestData, questQuery, QuestRow;
+import dmangos.world.quests : QuestData, QuestGreeting, questQuery, QuestRow;
 import dmangos.world.spells : SpellData;
 
 /// The `item_template` fields the character screen and character creation use.
@@ -537,6 +537,9 @@ final class WorldData
             quests.gameObjectStarts[row.get!uint(0)] ~= row.get!uint(1);
         foreach (row; world.query!"SELECT id, quest FROM gameobject_involvedrelation"())
             quests.gameObjectEnds[row.get!uint(0)] ~= row.get!uint(1);
+        foreach (row; world.query!"SELECT Entry, Type, IFNULL(Text, ''), EmoteId, EmoteDelay FROM questgiver_greeting"())
+            quests.greetings[(ulong(row.get!uint(1)) << 32) | row.get!uint(0)] = QuestGreeting(row.get!string(2).idup,
+                row.get!uint(3), row.get!uint(4));
         foreach (row; world.query!"SELECT id, quest FROM areatrigger_involvedrelation"())
             quests.triggerQuests[row.get!uint(0)] = row.get!uint(1);
         quests.link();
