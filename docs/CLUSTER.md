@@ -785,4 +785,10 @@ player goes there.
   PvP yet).
 * **Tested:** a unit test with two nodes in memory: node 1 holds a replica of node 2's innkeeper
   made an enemy; attacking it moves the player to node 2, where the attack begins and the creature
-  fights; on node 1's ground, the player stays on node 2 while fighting.
+  fights; on node 1's ground, the player stays on node 2 while fighting. Live, two nodes, after
+  combat, spells, auras, loot and quests were added: Gamma, connected to node 1, logged in in
+  Durotar (node 2's) and moved there within the second; it fought a boar there, its swings and the
+  boar's shown through node 1, until a Razor Hill guard joined in against the Alliance character
+  and killed it on node 2 (death, release on logout, the save); no errors on either node. At the
+  Elwynn border both sides were node 1's in this run's partition, so the attack on a replica was
+  tested in memory only.
