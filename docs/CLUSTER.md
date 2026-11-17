@@ -719,7 +719,14 @@ starts, through the same migration, and stays there until it ends.
   still too hot (a region is split at most once a balance interval, so its halves are measured first). A
   node's view takes a smaller rectangle under the same grant as no loss (its owned rectangle
   follows, for its cost reports). Splits stop at `maxRegions` (1024).
-* **Not yet: merges.** Cold neighbours are not joined again: the table only grows.
+* **Merges.** After each look, two granted regions of one node on one map that share a whole edge
+  (their union a rectangle), cost less than `mergeBelowUs` (1 ms/s) together, and have neither
+  moved nor been split for the cool-down, become one (`RegionAuthority.mergeCold`, one a look): the
+  lower id takes the union with its owner and epoch, the other id leaves the table. Its node keeps
+  simulating everything: a node's view takes a region gone from the table whose cells lie inside
+  another region it still owns as no loss, and follows the larger rectangle. Merges never take the
+  table below the start-up partition's size, so they take back what splits added rather than
+  undoing the partition by spawn counts. (A standby that takes over counts from the table it adopts.)
 * **Tested (splits):** a unit test (a region holding all of a node's load is split on its node,
   the old id keeping its grant and epoch; measured apart, the new half moves; a node's view takes
   the smaller rectangle as no loss). Live, two nodes, 250 bots crowding Goldshire on node 1: the

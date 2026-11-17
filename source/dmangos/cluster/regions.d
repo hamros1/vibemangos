@@ -196,6 +196,28 @@ bool halve(const CellRect rect, out CellRect a, out CellRect b) pure nothrow @no
     return true;
 }
 
+/// Whether `outer` holds every cell of `inner`.
+bool contains(const CellRect outer, const CellRect inner) pure nothrow @nogc @safe
+{
+    return inner.x0 >= outer.x0 && inner.x1 <= outer.x1 && inner.y0 >= outer.y0 && inner.y1 <= outer.y1;
+}
+
+/// The union of two rectangles that share a whole edge (it is then a rectangle); false otherwise.
+bool unionOf(const CellRect a, const CellRect b, out CellRect union_) pure nothrow @nogc @safe
+{
+    if (a.y0 == b.y0 && a.y1 == b.y1 && (a.x1 == b.x0 || b.x1 == a.x0))
+    {
+        union_ = CellRect(a.x0 < b.x0 ? a.x0 : b.x0, a.y0, a.x1 > b.x1 ? a.x1 : b.x1, a.y1);
+        return true;
+    }
+    if (a.x0 == b.x0 && a.x1 == b.x1 && (a.y1 == b.y0 || b.y1 == a.y0))
+    {
+        union_ = CellRect(a.x0, a.y0 < b.y0 ? a.y0 : b.y0, a.x1, a.y1 > b.y1 ? a.y1 : b.y1);
+        return true;
+    }
+    return false;
+}
+
 /// The region of `regions` holding cell (x, y) of `map`, or null.
 inout(Region)* regionAt(return scope inout(Region)[] regions, uint map, int x, int y) pure nothrow @nogc @trusted
 {

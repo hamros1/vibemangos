@@ -55,6 +55,7 @@ final class RegionAuthority
         MonoTime lastBalance;
         MonoTime[uint] movedAt;        // region id -> when it last moved for the load
         MonoTime[uint] splitAt;        // region id -> when it was last split (its halves need a measurement)
+        size_t partitionSize;          // regions at start-up: merges never go below it
     }
 
     /// How load balancing by measured cost behaves (phase 6; `ClusterConfig`).
@@ -66,6 +67,7 @@ final class RegionAuthority
         double tolerance = 0.25;      /// the gap between busiest and idlest that is tolerated, of the mean
         size_t maxMoves = 2;          /// regions moved at most per look
         size_t maxRegions = 1024;     /// splits stop at so many regions
+        ulong mergeBelowUs = 1_000;   /// two neighbours that together cost less than this merge
     }
 
     /// ditto
@@ -79,6 +81,7 @@ final class RegionAuthority
         MonoTime delegate() clock)
     {
         regions_ = regions;
+        partitionSize = regions.length;
         this.cost = cost;
         this.self = self;
         epochBase = incarnation << 20;
@@ -298,6 +301,7 @@ final class RegionAuthority
         {
             lastBalance = now;
             balanceMeasured(now);
+            mergeCold(now);
         }
     }
 
@@ -399,6 +403,58 @@ final class RegionAuthority
         regions_ ~= other;
         grant(regions_[$ - 1], busiest);
         touch();
+    }
+
+    /**
+     * A merge: two granted regions of one node on one map, side by side along a whole edge (their
+     * union a rectangle), cheap together (under `mergeBelowUs`) and neither moved, split or merged
+     * lately, become one. The lower id takes the union with its owner and epoch, so its node goes
+     * on simulating everything without a handover; the other id leaves the table. One merge a look,
+     * and never below the start-up partition's count: merges take back what splits added.
+     */
+    private void mergeCold(MonoTime now)
+    {
+        import dmangos.log : info;
+
+        if (regions_.length <= partitionSize)
+            return; // splits are undone; the start-up partition stays
+
+        bool recent(uint id)
+        {
+            return (id in movedAt && now - movedAt[id] < balancing.cooldown)
+                || (id in splitAt && now - splitAt[id] < balancing.cooldown);
+        }
+
+        foreach (i, ref a; regions_)
+        {
+            if (a.state != RegionState.granted || recent(a.id))
+                continue;
+            foreach (j, ref b; regions_)
+            {
+                if (j == i || b.state != RegionState.granted || b.owner != a.owner || b.map != a.map || recent(b.id))
+                    continue;
+                if (cost.get(a.id, 0) + cost.get(b.id, 0) >= balancing.mergeBelowUs)
+                    continue;
+                CellRect union_;
+                if (!unionOf(a.rect, b.rect, union_))
+                    continue;
+                auto keep = a.id < b.id ? &a : &b;
+                const drop = a.id < b.id ? b.id : a.id;
+                info!"cluster: balancing: regions %s and %s of node %s (%s µs/s together) merged into %s"(a.id, b.id,
+                    a.owner, cost.get(a.id, 0) + cost.get(b.id, 0), keep.id);
+                keep.rect = union_;
+                cost[keep.id] = cost.get(a.id, 0) + cost.get(b.id, 0);
+                splitAt[keep.id] = now; // not split again at once
+                cost.remove(drop);
+                movedAt.remove(drop);
+                splitAt.remove(drop);
+                import std.algorithm.mutation : remove;
+
+                regions_ = regions_.remove(regions_[i].id == drop ? i : j);
+                touch();
+                return;
+            }
+        }
     }
 
     /// What each member's regions cost, for the log.
@@ -559,6 +615,24 @@ final class RegionView
         foreach (id, r; owned)
             if (id !in nowOwned)
             {
+                // Merged into another region this node still owns (the id gone from the table, its
+                // cells inside the other's rectangle): nothing is lost.
+                bool merged = holds;
+                foreach (ref t; table)
+                    if (t.id == id)
+                        merged = false;
+                if (merged)
+                {
+                    bool covered;
+                    foreach (ref t; table)
+                        if (t.id in nowOwned && t.map == r.map && contains(t.rect, r.rect))
+                            covered = true;
+                    if (covered)
+                    {
+                        gone ~= id;
+                        continue;
+                    }
+                }
                 auto current = r;
                 foreach (ref t; table)    // as the table has it now: revoking says where it goes
                     if (t.id == id && t.epoch == r.epoch)
@@ -1027,4 +1101,39 @@ unittest
     foreach (ref r; view.ownedRegions)
         if (r.id == hot)
             assert(r.rect == halfA.rect);
+}
+
+/// Merges: two cold neighbours of one node become one, with no handover; the node's view loses nothing.
+unittest
+{
+    auto now = MonoTime.currTime;
+    Region[] regions = [Region(1, 0, CellRect(0, 0, 32, 16)), Region(2, 0, CellRect(32, 0, 64, 16)),
+        Region(3, 0, CellRect(64, 0, 128, 16))];
+    ulong[uint] cost = [1: 100, 2: 100, 3: 100];
+    auto authority = new RegionAuthority(regions, cost, 1, 7, 5.seconds, () => now);
+    authority.partitionSize = 2; // as if one of them came from a split
+    now += 6.seconds;
+    authority.tick();
+    foreach (ref r; authority.regions)
+        assert(r.owner == 1 && r.state == RegionState.granted);
+    const epoch1 = authority.regions[0].epoch;
+    authority.measuredLoads(1, [1: 100, 2: 100, 3: 5_000]); // 3 is busy; 1 and 2 cheap
+    now += 31.seconds;
+    authority.tick();
+    assert(authority.regions.length == 2, "one merge a look");
+    const merged = authority.regions[0];
+    assert(merged.id == 1 && merged.rect == CellRect(0, 0, 64, 16) && merged.epoch == epoch1 && merged.owner == 1,
+        "the lower id takes both, with its grant");
+
+    // The node's view: region 2's going is no loss, and region 1's rectangle grows.
+    auto view = new RegionView(1, true, 5.seconds);
+    view.take(7, 1, [Region(1, 0, CellRect(0, 0, 32, 16), 1, epoch1, RegionState.granted),
+        Region(2, 0, CellRect(32, 0, 64, 16), 1, 9, RegionState.granted)]);
+    Region[] gained, lost;
+    view.refresh(now, gained, lost);
+    assert(gained.length == 2);
+    view.take(7, 2, [merged]);
+    view.refresh(now, gained, lost);
+    assert(gained.length == 0 && lost.length == 0, "merged: nothing changes hands");
+    assert(view.ownedRegions.length == 1 && view.ownedRegions[0].rect == CellRect(0, 0, 64, 16));
 }

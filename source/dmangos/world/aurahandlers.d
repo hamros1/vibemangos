@@ -446,6 +446,7 @@ unittest
         spells[gash].casting.amplitude[0] = 3000;
         spells[gash].casting.durationIndex = 2;
         spells[gash].casting.school = 1;
+        spells[gash].casting.dmgClass = 0; // no hit roll: the test must not depend on a 1% miss
         spells[haste] = testSpell(haste, 6, 1, 50);                 // 50% faster
         spells[haste].casting.applyAuraName[0] = AuraType.modIncreaseSpeed;
         spells[haste].casting.durationIndex = 1;
