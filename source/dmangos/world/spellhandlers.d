@@ -1320,8 +1320,34 @@ private:
     }
 
     /// `Unit::CalculateSpellDamage` and `DealSpellDamage` for a school's damage: a crit is half again; armor for physical.
+    /**
+     * `Unit::SpellDamageBonusDone` for a direct spell: the caster's `SPELL_AURA_MOD_DAMAGE_DONE` for
+     * the spell's school (its items' and talents' "damage done by spells"), times the spell's
+     * coefficient, its cast time over 3.5 seconds (from 1.5 to 3.5 seconds: instant spells count as
+     * 1.5). Physical spells get none.
+     */
+    uint spellDamageBonus(const(SpellInfo)* spell, uint school)
+    {
+        import dmangos.world.auras : AuraType;
+        import dmangos.world.spellcast : castTime;
+
+        if (school == 0)
+            return 0;
+        int done;
+        foreach (aura; player.auras.list)
+            foreach (i; 0 .. 3)
+                if ((aura.effects & (1 << i)) && aura.type(i) == AuraType.modDamageDone && (aura.misc(i) & (1 << school)))
+                    done += aura.amount[i];
+        if (done <= 0)
+            return 0;
+        int time = castTime(*spell, context.client, player.data.level);
+        time = time < 1500 ? 1500 : time > 3500 ? 3500 : time;
+        return cast(uint)(done * time / 3500.0f);
+    }
+
     void spellDamage(const(SpellInfo)* spell, Creature victim, uint damage, uint school)
     {
+        damage += spellDamageBonus(spell, school);
         const crit = !(spell.attributesEx2 & spellAttrEx2CantCrit) && uniform01(map.random) * 100 < spellCrit();
         if (crit)
             damage = damage * 3 / 2;
@@ -1899,6 +1925,26 @@ unittest
     assert(keeper.values.get!UNIT_FIELD_HEALTH < keeperBefore && trainer.values.get!UNIT_FIELD_HEALTH < trainerBefore,
         "the bolt jumped to the trainer");
 
+    // Spell power: +35 fire damage done (an aura), on an instant fire spell: 35 * 1.5 / 3.5 = 15 more.
+    {
+        import dmangos.world.auras : AuraType, makeAura;
+
+        enum uint power = 95603, fire = 95604;
+        context.data.spells.spells[power] = testSpell(power, 6, ImplicitTarget.caster, 35);
+        context.data.spells.spells[power].casting.applyAuraName[0] = AuraType.modDamageDone;
+        context.data.spells.spells[power].miscValue[0] = 1 << 2; // fire
+        context.data.spells.spells[fire] = testSpell(fire, 2, ImplicitTarget.enemy, 20);
+        context.data.spells.spells[fire].casting.school = 2;
+        context.data.spells.spells[fire].casting.dmgClass = 0;
+        context.data.spells.spells[fire].attributesEx2 |= 0x20000000; // no crit
+        auto aura = makeAura(&context.data.spells.spells[power], me.guid, 1, -1, true, [35, 0, 0]);
+        aura.passive = true;
+        anduin.session.addAura(aura);
+        const before = keeper.values.get!UNIT_FIELD_HEALTH;
+        anduin.session.castTriggeredAt(fire, keeper.guid);
+        assert(keeper.values.get!UNIT_FIELD_HEALTH == before - 35, "20 and 15 of spell power");
+    }
+
     // A missile at 10 yards a second: nothing on release, its damage when it arrives (about 2.7 yards off).
     import core.time : msecs;
 
@@ -1958,6 +2004,7 @@ unittest
     keeper.values.set!UNIT_FIELD_HEALTH(500u);
     enum uint consecrate = 95700;
     context.data.spells.spells[consecrate] = testSpell(consecrate, 27, ImplicitTarget.caster, 10);
+    context.data.spells.spells[consecrate].attributesEx2 |= 0x20000000; // SPELL_ATTR_EX2_CANT_CRIT: even ticks
     with (context.data.spells.spells[consecrate].casting)
     {
         radiusIndex[0] = 1;
