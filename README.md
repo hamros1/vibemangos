@@ -533,6 +533,21 @@ What works now:
     enemies flagged for PvP). A blow that would kill leaves 1 health and loses the duel (the loser
     begs); 50 yards from the flag for 10 seconds flees it; declining, logging out or teleporting
     ends it; everyone around hears who won, and the debuffs each put on the other go.
+  * **Battlegrounds** (`bgqueue.d`, `battleground.d`, `warsong.d`, `arathi.d`): Warsong Gulch and Arathi
+    Basin.
+    * **Queueing:** at a battlemaster, alone or as a group, in brackets of ten levels; up to three
+      queues at once; invitations last 80 seconds. The queues are a cluster service.
+    * **A copy of the battleground** is made when enough of both sides wait, and runs on the node
+      hosting its map. It counts down two minutes; then its doors open and its objectives spawn.
+    * **During the battle:** kills, deaths and objectives count on the scoreboard; spirit guides
+      resurrect every 30 seconds.
+    * **The end:** a winner, marks of honor, bonus honor and reputation; everyone is sent back two
+      minutes later.
+    * **Leaving early** gives Deserter (15 minutes without queueing). A side short of players for five
+      minutes loses.
+    * **Warsong Gulch:** three flag captures win. **Arathi Basin:** five bases and their resources;
+      2000 resources win.
+    * Not yet: Alterac Valley, and the battleground raid group (raid frames).
   * **The update tick** (every 50 ms, `update_interval`): health, mana, rage and energy regenerate
     as in CMaNGOS (health and the loss of rage only out of combat, and only for the living); inns and capitals give rested XP, also while offline; characters are saved every
     15 minutes (`player_save_interval`).

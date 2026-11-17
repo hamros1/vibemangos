@@ -146,13 +146,25 @@ The largest area. CMaNGOS references: `Spells/`, `Entities/Unit.cpp`, `Combat/`,
      * A player who logs out keeps their place for five minutes; one who comes back to a closed copy is
        sent back.
      * ArcEmu's `.battleground forcestart` and `.battleground leave`.
-   * Next:
-     * B, the shared framework: doors and the spawn events, world states, kills on the scoreboard, the
-       end with marks and bonus honor, the battleground raid and its chat, spirit guides, group
-       queueing, the premature finish.
-     * C, Warsong Gulch.
-     * D, Arathi Basin.
-     * Later, Alterac Valley (mostly data).
+   * Milestone B, the shared framework: **done** (`battleground.d`). Each battleground's rules plug into
+     `BattlegroundRules`.
+     * The spawn events and doors; world states; kills and deaths on the scoreboard.
+     * The end: marks of honor, bonus honor and reputation to a team, two minutes before everyone leaves.
+     * The premature end; battleground chat; spirit guides every 30 s; the copy's own graveyards.
+     * Queueing as a group, across nodes.
+   * Milestone C, Warsong Gulch: **done** (`warsong.d`): flags taken, dropped, returned, captured, three to
+     win, the exit portals.
+   * Milestone D, Arathi Basin: **done** (`arathi.d`): five bases, claims, assaults, defences, resources,
+     2000 to win.
+   * Not yet:
+     * The battleground raid group: chat works without it, but the raid frames do not show.
+     * Removing stealth and the like on objectives (`AURA_INTERRUPT_FLAG_PVP_ACTIVE_CANCELS`).
+     * A flag dropped when its carrier becomes immune.
+     * Insignia loot from the dead.
+     * Call to Arms weekends.
+     * pvpstats.
+     * Alterac Valley (mostly data: about 1000 event spawns, captains, mines, towers).
+     * A queue service that moves to another node starts empty.
 
 * Spell casting with effects, auras (feeding `stats.d`), cooldowns and the attack swing loop.
 * Creature AI, threat, death, loot (`LootHandler.cpp`), XP and level-up (`Player::GiveXP`, then
