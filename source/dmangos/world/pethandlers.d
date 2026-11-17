@@ -83,7 +83,8 @@ mixin template PetHandlers()
     import dmangos.bytes : ByteReader, ByteWriter;
     import dmangos.cluster.ownership : IdKind;
     import dmangos.world.creature : classStatsKey, Creature;
-    import dmangos.world.creatureai : Combatant, ReactState;
+    import dmangos.world.creatureai : ReactState;
+    import dmangos.world.unit : UnitRef;
     import dmangos.world.database : PetRecord, PetSpellRecord;
     import dmangos.world.defines : UnitFlags;
     import dmangos.world.movement : baseMoveSpeed, MoveType, Position;
@@ -669,10 +670,10 @@ mixin template PetHandlers()
     {
         if (pet_ is null || !pet_.alive || petState().command == CommandState.stay)
             return;
-        if (auto other = map.combatant(enemy))
+        if (auto other = map.unit(enemy))
             pet_.ai.petAssist(other, map);
         else if (auto creature = map.creatureAt(enemy))
-            pet_.ai.petAssist(map.combatantOf(creature), map);
+            pet_.ai.petAssist(map.unitOf(creature), map);
     }
 
     /**
@@ -782,15 +783,15 @@ mixin template PetHandlers()
                 break;
             case CommandState.attack:
             {
-                Combatant target;
+                UnitRef target;
                 if (targetGuid)
                 {
-                    target = map.combatant(targetGuid);
-                    if (target is null)
+                    target = map.unit(targetGuid);
+                    if (!target)
                         if (auto creature = map.creatureAt(targetGuid))
-                            target = map.combatantOf(creature);
+                            target = map.unitOf(creature);
                 }
-                if (target is null)
+                if (!target)
                     return sendPetFeedback(PetFeedback.nothingToAttack);
                 if (target.combatGuid == pet.guid || !target.fighter.alive
                     || !canAttack(pet.ai.relatingOf, target.relating, context.client))

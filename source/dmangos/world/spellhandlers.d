@@ -305,7 +305,7 @@ private:
                 if (auto aura = player.auras.find(spell.id))
                     removeAura(aura);
             }
-            else if (auto other = map.combatant(channelTarget))
+            else if (auto other = map.unit(channelTarget))
                 other.auraRemovedBy(spell.id);
             map.sendToWatchers(this, Opcode.SMSG_SPELL_FAILURE,
                 spellFailurePacket(player.guid, spell.id, SpellCastResult.interrupted), true);
@@ -1189,7 +1189,11 @@ private:
         if (other is null || other.player is null || other.map !is map || other.player.deathState != DeathState.alive)
             return;
         map.sendToWatchers(this, Opcode.SMSG_SPELLINSTAKILLLOG, w.data, true);
-        other.takeDamageFrom(player.guid, other.player.values.get!UNIT_FIELD_HEALTH);
+        {
+            import dmangos.world.unit : Blow, dealDamage;
+
+            dealDamage(unit, other.unit, other.player.values.get!UNIT_FIELD_HEALTH, Blow.spell());
+        }
     }
 
     /// `Player::_SaveSpellCooldowns`: the cooldowns still running, with when they end (Unix time).
@@ -1467,7 +1471,9 @@ private:
         map.sendToWatchers(this, Opcode.SMSG_SPELLNONMELEEDAMAGELOG, nonMeleeDamageLog(other.player.guid, player.guid,
             spell.id, damage, spell.casting.school, 0, 0, false, 0, crit), true);
         enterCombatFor(combatLinger);
-        other.takeDamageFrom(player.guid, damage);
+        import dmangos.world.unit : Blow, dealDamage;
+
+        dealDamage(unit, other.unit, damage, Blow.spell());
     }
 
     /// `Unit::CalculateSpellDamage` and `DealSpellDamage` for a school's damage: a crit is half again; armor for physical.
@@ -1585,22 +1591,16 @@ private:
         spellAttacked(victim, total);
     }
 
-    /// A creature hit (or missed) by this player's spell: it fights back, takes the damage, and may die.
-    void spellAttacked(Creature victim, uint damage)
+    /// A creature hit (or missed) by this player's spell, or its aura's tick: it fights back, takes the
+    /// damage, and may die (`dmangos.world.unit.dealDamage`).
+    void spellAttacked(Creature victim, uint damage, bool tick = false)
     {
+        import dmangos.world.unit : Blow, dealDamage;
+
         if (!victim.alive)
             return;
         enterCombatFor(combatLinger);
-        victim.ai.attackedBy(this, map);
-        victim.ai.damageTaken(this, damage);
-        map.wake(victim.guid);
-        if (damage == 0)
-            return;
-        tap(victim);
-        const killed = victim.takeDamage(damage);
-        map.flushObjectChanges(victim);
-        if (killed)
-            creatureKilled(victim);
+        dealDamage(unit, map.unitOf(victim), damage, tick ? Blow.periodic() : Blow.spell());
     }
 
     /// `Spell::EffectHeal`: health back, a crit half again (`DealHeal`, `SendHealSpellLog`).

@@ -417,6 +417,16 @@ Decisions taken on 2026-11-17:
    * Change: `Unit` in players and creatures; melee, spells, auras and death as functions over
      units; `Combatant` and `CreatureCombatant` go.
    * Gate: the combat, pet, duel and script tests pass unchanged. This step is what PvP needs.
+   * Done (2026-11-17) as `dmangos.world.unit`. A `UnitRef` value (a session or a creature, and its
+     map) replaces the interface and the adapter. `dealDamage` replaces six paths: three to a player
+     (`hitByCreature`, `takeDamageFrom`, `hitByCreatureSpell`) and three to a creature (the player's
+     swing, `spellAttacked`, `CreatureCombatant.takeHit`).
+   * Behaviour that changed, now as CMaNGOS has it:
+     * A player gets rage from any damage taken, a player's spells included.
+     * A player stands up when any non-periodic damage hits it.
+     * A death costs durability unless a player dealt it.
+     * A creature's heal on a friend never misses.
+   * Not unified yet: healing and aura application keep a path per kind behind `UnitRef`.
 3. **Character and connection.**
    * Change: the session's gameplay mixins move to `Character`, one area at a time; migration and
      saving move a character.

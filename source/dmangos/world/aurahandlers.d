@@ -358,7 +358,9 @@ private:
             if (aura.spell.casting.school == 0)
                 damage = cast(uint) armorReducedDamage(aura.casterLevel, player.fighter.armor, damage);
             periodicLog(player.guid, aura, i, damage, 0);
-            return hitByCreatureSpell(aura.caster, damage);
+            import dmangos.world.unit : Blow, dealDamage;
+
+            return dealDamage(map.unit(aura.caster), unit, damage, Blow.periodic());
         }
         default:
             return;
@@ -404,7 +406,7 @@ private:
     }
 
     /**
-     * See `Combatant.auraTick`: a periodic effect of this player's aura on a creature ticked: damage
+     * See `UnitRef.auraTick`: a periodic effect of this player's aura on a creature ticked: damage
      * over time hurts it as a spell would (tapping, threat, the kill); a leech heals this player.
      */
     package void creatureAuraTick(Creature target, Aura aura, size_t i)
@@ -440,7 +442,7 @@ private:
                 damage = share >= 0 ? damage - cast(uint)(damage * share) : damage + cast(uint)(damage * -share);
             }
             periodicLog(target.guid, aura, i, damage, aura.spell.casting.school);
-            spellAttacked(target, damage);
+            spellAttacked(target, damage, true);
             break;
         default:
             break;

@@ -947,7 +947,7 @@ unittest
     assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTBLUE ~ "activated the god mode cheat on Anduin.|r"]);
     assert(systemMessages(anduin.read()) == [MSG_COLOR_GREEN ~ "activated the god mode cheat on you.|r"]);
     const health = victim.values.get!UNIT_FIELD_HEALTH;
-    anduin.session.takeDamageFrom(keeper.guid, 50);
+    anduin.session.unit.spellHitBy(keeper.guid, 50);
     assert(victim.values.get!UNIT_FIELD_HEALTH == health);
     gm.say(".cheat casttime on");
     gm.say(".cheat status");

@@ -178,7 +178,7 @@ private:
         if (action.noticedBy)
             if (auto creature = cast(Creature) map.findObject(action.noticedBy))
                 if (creature.ai !is null && creature.ai.mayNotice)
-                    creature.ai.moveInLineOfSight(this, map);
+                    creature.ai.moveInLineOfSight(unit, map);
         if (action.spell)
             if (const spell = context.data.spells.spell(action.spell))
                 if (player.knowsSpell(action.spell))

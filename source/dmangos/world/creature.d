@@ -631,8 +631,6 @@ final class Creature : Moving, Replicable, Npc, PerViewer
     ulong petOwner;
     /// The pet's own state (`dmangos.world.pet`); null for any other creature.
     Object petData;
-    /// The creature as other creatures fight it (`CreatureCombatant`), made when first needed.
-    Object asCombatant;
 
     /// The dungeon instance it lives in (0: none): it does not respawn there, and is not saved.
     uint instanceId;
@@ -706,7 +704,7 @@ final class Creature : Moving, Replicable, Npc, PerViewer
         {
             if (!alive)
                 break;
-            if (auto caster = world.combatant(tick.aura.caster))
+            if (auto caster = world.unit(tick.aura.caster))
                 caster.auraTick(this, tick.aura, tick.effect);
         }
         foreach (aura; expired)

@@ -53,8 +53,8 @@ unittest
     void hit(uint percent)
     {
         const damage = max * percent / 100;
-        smite.ai.attackedBy(hero.session, map);
-        smite.ai.damageTaken(hero.session, damage);
+        smite.ai.attackedBy(hero.session.unit, map);
+        smite.ai.damageTaken(hero.session.unit, damage);
         smite.values.set!UNIT_FIELD_HEALTH(smite.values.get!UNIT_FIELD_HEALTH - damage);
     }
 
@@ -84,7 +84,7 @@ unittest
     // Past one third there: his last change, the hammer (from phase two, so not the axes again).
     const movedMax = moved.values.get!UNIT_FIELD_MAXHEALTH;
     moved.values.set!UNIT_FIELD_HEALTH(movedMax * 40 / 100);
-    moved.ai.damageTaken(hero.session, movedMax * 10 / 100);
+    moved.ai.damageTaken(hero.session.unit, movedMax * 10 / 100);
     assert(moved.values.getByte!UNIT_FIELD_BYTES_1(0) == 8, "the phase came along");
     moved.ai.update(there, 2600);
     assert(moved.values.get!UNIT_VIRTUAL_ITEM_SLOT_DISPLAY(0) == elsewhere.data.items[MrSmite.mightyHammer].displayId);
@@ -543,8 +543,8 @@ unittest
     auto map = context.map(mapEasternKingdoms);
     auto boss = context.makeCreature(&spawn);
     map.addObject(boss);
-    boss.ai.attackedBy(hero.session, map);
-    boss.ai.damageTaken(hero.session, 50);
+    boss.ai.attackedBy(hero.session.unit, map);
+    boss.ai.damageTaken(hero.session.unit, 50);
     const guid = hero.session.character.guid;
     assert(boss.ai.threatOf(guid) > 0);
     boss.ai.spellEffectScript(&context.data.spells.spells[9204], 0, guid, 0);

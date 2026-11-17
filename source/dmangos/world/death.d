@@ -530,7 +530,7 @@ unittest
     MeleeDamage blow;
     blow.damage = 10_000;
     blow.outcome = MeleeHitOutcome.normal;
-    anduin.session.meleeHitBy(0xF130_0000_0000_0001, blow);
+    anduin.session.unit.meleeHitBy(0xF130_0000_0000_0001, blow);
     auto died = opcodesOf(anduin.read());
     assert(me.deathState == DeathState.corpse && me.values.get!UNIT_FIELD_HEALTH == 0);
     assert(died.canFind(Opcode.SMSG_FORCE_MOVE_ROOT) && died.canFind(Opcode.SMSG_DURABILITY_DAMAGE_DEATH));
@@ -565,7 +565,7 @@ unittest
     anduin.read();
 
     // Again, and this time the spirit healer (the innkeeper stands in for one).
-    anduin.session.meleeHitBy(0xF130_0000_0000_0001, blow);
+    anduin.session.unit.meleeHitBy(0xF130_0000_0000_0001, blow);
     anduin.write(Opcode.CMSG_REPOP_REQUEST, null);
     anduin.write(Opcode.MSG_MOVE_TELEPORT_ACK, ClientTeleportAck(me.guid, 0, 0));
     anduin.read();

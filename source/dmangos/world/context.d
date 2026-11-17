@@ -26,7 +26,7 @@ import dmangos.world.grid : cellKeyAt;
 import dmangos.world.channelservice : channelCommand, ChannelOp, ChannelService;
 import dmangos.cluster.protocol : ChannelCommand;
 import dmangos.world.opcodes : ChatType, Language, Opcode;
-import dmangos.world.creatureai : Combatant, CombatWorld, CreatureLore;
+import dmangos.world.creatureai : CombatWorld, CreatureLore;
 import dmangos.world.npcdata : BroadcastText;
 import dmangos.world.spells : SpellInfo;
 import dmangos.script.api : ActionResult, EntityRef, GameObjectHost, Waypoint;
@@ -34,7 +34,6 @@ import dmangos.script.registry : ScriptHandle, ScriptKind, ScriptRuntime;
 import dmangos.scripts : scriptModules;
 import dmangos.world.instancescripting : InstanceScript;
 import dmangos.world.guild : Guilds, Guild, GuildRight;
-import dmangos.world.creaturecombat : CreatureCombatant, CreatureCombatWorld;
 import dmangos.world.characterdb : DeleteOptions, GuidCounters;
 import dmangos.world.clientdata : ClientData;
 import dmangos.world.config : WorldConfig;
@@ -105,7 +104,7 @@ struct ShutdownTimer
  *
  * The server runs a single-threaded event loop, so none of this needs locking.
  */
-final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureLore, CreatureCombatWorld
+final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureLore
 {
     import dmangos.world.dbscripts : DbScriptRunner;
 
@@ -604,7 +603,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         };
         created.onGameObjectUsedUp = &gameObjectUsedUp;
         created.onObjectGone = &objectGone;
-        created.makeCreatureCombatant = (Creature c) => combatantOf(c, created);
+        created.onCreatureDeath = (Creature c) { c.die(created, unixTime); creatureDied(c); };
         if (instance)
             if (const name = id in data.instanceScriptNames)
             {
@@ -1071,44 +1070,6 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             script.release();
             instanceScripts.remove(id);
         }
-    }
-
-    // -----------------------------------------------------------------------
-    // Creatures fighting creatures (`CreatureCombatWorld`): pets
-    // -----------------------------------------------------------------------
-
-    /// See `CreatureCombatWorld.combatantOf`.
-    Combatant combatantOf(Creature creature, Map map)
-    {
-        if (auto made = cast(CreatureCombatant) creature.asCombatant)
-            return made;
-        auto made = new CreatureCombatant(creature, map, this);
-        creature.asCombatant = made;
-        return made;
-    }
-
-    /// See `CreatureCombatWorld.creatureKilledBy`.
-    void creatureKilledBy(Creature victim, Creature killer, Map map)
-    {
-        import dmangos.world.session : WorldSession;
-
-        if (killer !is null && killer.petOwner)
-            if (auto owner = cast(WorldSession) onlinePlayer(killer.petOwner))
-                if (owner.character !is null)
-                    return owner.killedByPet(victim);
-        victim.die(map, unixTime);
-        creatureDied(victim);
-    }
-
-    /// See `CreatureCombatWorld.petDied`.
-    void petDied(Creature pet, Map map)
-    {
-        import dmangos.world.session : WorldSession;
-
-        pet.die(map, unixTime);
-        if (auto owner = cast(WorldSession) onlinePlayer(pet.petOwner))
-            if (owner.character !is null)
-                owner.ownPetDied();
     }
 
     /// An object left its map for good (`Map.onObjectGone`): its script's state goes.

@@ -385,14 +385,22 @@ Three modules, split by what they depend on:
   hand-made fighters and fixed rolls.
 * `relations.d` is CMaNGOS's Relations API (tier 1, the client's own logic): faction template
   reactions, a player's base reputations, `CanAttack`.
+* `unit.d` is the rules every unit shares (docs/DESIGN.md, step 2). A `UnitRef` is a unit on a map,
+  a player (its session) or a creature, as a small value made where needed (`CombatWorld.unit`,
+  `Map.unitOf`); its methods branch on the kind with `final switch`, so each rule handles both kinds.
+  `dealDamage` is `Unit::DealDamage` and the one way damage reaches a unit, from a swing, a spell or
+  an aura's tick, whoever deals it. A player suffers it in `WorldSession.takeBlow` (standing up, rage,
+  the combat state, a duel's last blow, death); a creature fights back and takes it as threat, is
+  tapped for the player the blow is credited to (a pet's owner for a pet's), and its death is that
+  player's kill, a pet's death its owner's, any other just a death (`Map.creatureDeath`).
 * `combathandlers.d` is the session's side: the attack opcodes, `Attack` and `AttackStop`, the swing
-  loop each tick (`updateMelee`, with the attack timers and swing errors), and what a swing does to
-  the creature (health, death) and the player (rage, the combat flag).
+  loop each tick (`updateMelee`, with the attack timers and swing errors), the swing itself (its roll,
+  the attacker's rage and skills), and `takeBlow`.
 
 * `creatureai.d` is the creature's side: CMaNGOS's base `CreatureAI` with its threat list, combat
-  timers and leash, chasing and going home. It sees players as `Combatant`s (the session implements
-  the interface: its fighter, its relations, taking a hit, being threatened) and its map as a
-  `CombatWorld` (players by guid, line of sight, field updates, waking a resting creature). The map
+  timers and leash, chasing and going home. It sees whatever it fights as a `UnitRef` (a player or
+  another creature: a pet) and its map as a `CombatWorld` (units by guid, line of sight, field
+  updates, waking a resting creature). The map
   calls `moveInLineOfSight` for the creatures a player sees when it moves, and for the players who
   see a creature when it moves. A creature with something to do (a fight, the way home, health or
   mana to regain, a cast, a script that runs out of combat) does not rest, so the map keeps ticking it.
@@ -412,14 +420,14 @@ Three modules, split by what they depend on:
   `CreatureAI`: a creature's casts (`castSpell`: checks, cast time, `go` with the targets and
   effects), fleeing, and the actions' texts, emotes and target choice. What it needs of the world's
   data (spells, the client's tables, broadcast texts, listen ranges) comes through `CreatureLore`,
-  which `WorldContext` implements and hands to a scripted creature as it makes it; players take its
-  spells through `Combatant` (`spellHitBy`, `auraFrom`), the area ones are found with
-  `CombatWorld.combatantsNear`, texts go out with `CombatWorld.sendInRange`.
+  which `WorldContext` implements and hands to a scripted creature as it makes it; units take its
+  spells through `UnitRef` (`spellHitBy`, `auraFrom`); a friend (a heal) never rolls to be missed. The
+  area ones are found with `CombatWorld.playersNear`, texts go out with `CombatWorld.sendInRange`.
 
 ## Pets
 
 A pet is a creature with an owner (`Creature.petOwner`) and a `PetState` (`Creature.petData`,
-`pet.d`): its number, type, command, action bar and spells. Four modules:
+`pet.d`): its number, type, command, action bar and spells. Three modules:
 
 * `pet.d` is what every pet shares and touches nothing live: the action bar's ten packed buttons and
   their `abdata` form, `petStats` (CMaNGOS's `InitStatsForLevel` with `UpdateAllStats`, a pure
@@ -429,12 +437,9 @@ A pet is a creature with an owner (`Creature.petOwner`) and a `PetState` (`Creat
   runs `petUpdate` instead of the threat-list fight. It has a victim but no threat list and never
   evades; it follows its owner, holds where it was told to stay, attacks on command, assists its
   owner unless passive, and autocasts. It reuses the creature's chase and swing.
-* `creaturecombat.d` lets creatures fight creatures. Creature AI sees its enemies as `Combatant`s,
-  which only sessions implemented; `CreatureCombatant` is a creature behind the same interface, made
-  once per creature (`Creature.asCombatant`) through `CombatWorld.combatantOf`. So a creature's swing
-  at a pet, and a pet's at a creature, go through the code that handles players. A blow from a pet
-  taps its victim for the owner; a kill goes to the owner's session (`killedByPet`, the player's own
-  kill path), a dead pet to its owner (`ownPetDied`).
+* A pet fights through `dmangos.world.unit` like any unit: a creature's swing at a pet and a pet's at
+  a creature are `dealDamage`. A blow from a pet taps its victim for the owner, its kill is the
+  owner's (`killedCreature`), and a dead pet is its owner's (`ownPetDied`).
 * `pethandlers.d` is the owner's side, mixed into the session: the spell effects (tame, summon,
   dismiss, revive) and their cast checks, `bringPet` (CMaNGOS's `LoadPetFromDB` and creation: the
   creature from `WorldContext.makePetCreature`, with a `HIGHGUID_PET` guid made at construction),
@@ -462,7 +467,7 @@ countdown of durations and periodic timers (`update` returns the ticks and the e
 sums stats and speeds are made of. Players and creatures each have one. `aurahandlers.d` is the
 session's side: `SPELL_EFFECT_APPLY_AURA`, what each aura type does as it begins and ends
 (`auraEffects`: stats through `StatInputs.auras` and `refreshEquipmentStats`, speeds, roots, forms,
-mounts), the player's own ticks, the interrupt flags, and `Combatant.auraTick` for the ticks of its
+mounts), the player's own ticks, the interrupt flags, and `UnitRef.auraTick` for the ticks of its
 auras on creatures (a creature's tick asks its caster's session, so damage over time taps and kills
 like any spell).
 

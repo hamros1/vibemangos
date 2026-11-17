@@ -5,10 +5,9 @@
  * (`AttackerStateUpdate`, `DealMeleeDamage`, `DealDamage`), mixed into
  * `dmangos.world.session.WorldSession`. The formulas are in `dmangos.world.combat`.
  *
- * Players fight creatures this node simulates, which fight back (`dmangos.world.creatureai`); the
- * session is the `Combatant` the creatures see. Players do not fight each other yet (nobody can be
- * flagged for PvP), and death is only what it takes: a creature killed stays dead, a player killed
- * comes back at its next login.
+ * Players fight creatures this node simulates, which fight back (`dmangos.world.creatureai`), and
+ * each other in duels. Damage goes through `dmangos.world.unit.dealDamage`, the rules every unit
+ * shares; `takeBlow` is the player's side of it.
  */
 module dmangos.world.combathandlers;
 
@@ -27,9 +26,10 @@ mixin template CombatHandlers()
     import dmangos.world.playercreate : NewSkill;
     import dmangos.world.inworld : ArrivalAction;
     import dmangos.world.updatefields;
+    import dmangos.world.unit : Blow, BlowKind, dealDamage, UnitKind, UnitRef;
 
     // -----------------------------------------------------------------------
-    // `Combatant`: what creatures see of the player (`dmangos.world.creatureai`)
+    // The player as creatures and the rules of units see it (`dmangos.world.unit`)
     // -----------------------------------------------------------------------
 
     /// How the relations see this player.
@@ -42,25 +42,35 @@ mixin template CombatHandlers()
     }
 
     /**
-     * `Combatant.meleeHitBy`: `Unit::DealDamage` to the player. A sitting player stands up; a
-     * warrior gets rage from what hit it (dodges and parries aside); a critical hit shows a wound;
-     * at no health left it dies.
+     * `Unit::DealDamage` to the player (`dmangos.world.unit.dealDamage`), from a creature, a player or
+     * nothing, by a swing, a spell or an aura's tick. Unless it was a tick, a sitting player stands
+     * up. A warrior gets rage from what hit it (a swing's damage before blocks; dodges, parries and
+     * misses give none). A critical swing shows a wound. The player is in combat, its auras that
+     * damage breaks end, and a creature's swing trains its defense. A duel's opponent never kills: a
+     * blow that would leaves 1 health and ends the duel. At no health left it dies.
      */
-    package void hitByCreature(ulong attacker, const ref MeleeDamage d)
+    package void takeBlow(UnitRef attacker, uint damage, const Blow blow)
     {
-        if (player is null || player.values.get!UNIT_FIELD_HEALTH == 0)
+        if (player is null || player.values.get!UNIT_FIELD_HEALTH == 0 || godModeCheat)
             return;
-        if (d.outcome == MeleeHitOutcome.evade || godModeCheat)
+        const swing = blow.kind == BlowKind.melee;
+        if (swing && blow.melee.outcome == MeleeHitOutcome.evade)
             return;
-        if (player.values.getByte!UNIT_FIELD_BYTES_1(0) != 0)
+        if (blow.kind != BlowKind.periodic && player.values.getByte!UNIT_FIELD_BYTES_1(0) != 0)
         {
             player.values.setByte!UNIT_FIELD_BYTES_1(0, 0);
             deliver(Opcode.SMSG_STANDSTATE_UPDATE, [ubyte(0)]);
         }
-        if (player.powerType == Power.rage && d.cleanDamage && d.outcome != MeleeHitOutcome.dodge
-            && d.outcome != MeleeHitOutcome.parry && d.outcome != MeleeHitOutcome.miss)
-            player.modifyPower(Power.rage, rageReward(player.data.level, d.cleanDamage, false));
-        if (d.hitInfo & HitInfo.criticalHit)
+        if (player.powerType == Power.rage)
+        {
+            const d = &blow.melee;
+            if (!swing && damage)
+                player.modifyPower(Power.rage, rageReward(player.data.level, damage, false));
+            else if (swing && d.cleanDamage && d.outcome != MeleeHitOutcome.dodge
+                && d.outcome != MeleeHitOutcome.parry && d.outcome != MeleeHitOutcome.miss)
+                player.modifyPower(Power.rage, rageReward(player.data.level, d.cleanDamage, false));
+        }
+        if (swing && (blow.melee.hitInfo & HitInfo.criticalHit))
         {
             enum uint emoteWoundCritical = 34; // EMOTE_ONESHOT_WOUNDCRITICAL
             ByteWriter emote;
@@ -69,25 +79,27 @@ mixin template CombatHandlers()
             map.sendToWatchers(this, Opcode.SMSG_EMOTE, emote.data, true);
         }
         enterCombatFor(combatLinger);
-        if (auto creature = cast(Creature) map.findObject(attacker))
-            updateCombatSkills(creature, AttackType.mainHand, true);
-        if (d.damage)
+        if (swing && attacker.kind == UnitKind.creature)
+            updateCombatSkills(attacker.creature, AttackType.mainHand, true);
+        if (damage)
             interruptAuras(0x2 | 0x01000000); // AURA_INTERRUPT_FLAG_DAMAGE, _NON_PERIODIC_DAMAGE
-        bool died;
-        if (d.damage)
+        const health = player.values.get!UNIT_FIELD_HEALTH;
+        if (damage >= health && attacker.kind == UnitKind.player && duelingWith(attacker.combatGuid))
         {
-            const health = player.values.get!UNIT_FIELD_HEALTH;
-            died = health <= d.damage;
-            player.values.set!UNIT_FIELD_HEALTH(died ? 0 : health - d.damage);
+            flushPlayerChanges();
+            return duelLost();
         }
+        const died = damage && damage >= health;
+        if (damage)
+            player.values.set!UNIT_FIELD_HEALTH(died ? 0 : health - damage);
         flushPlayerChanges();
         if (auto group = context.groups.of(player.guid))
             group.updatePlayerOutOfRange(this, GroupUpdate.currentHealth | GroupUpdate.currentPower);
         if (died)
-            playerKilled();
+            playerDied(attacker.kind != UnitKind.player); // only a player's kill costs no durability
     }
 
-    /// See `Combatant.threatAdded`: a creature fights this player; it is in combat while any does.
+    /// See `UnitRef.threatAdded`: a creature fights this player; it is in combat while any does.
     package void addThreatener(ulong creature)
     {
         threatenedBy[creature] = true;
@@ -246,56 +258,6 @@ private:
         meleeAttackStartAt(other.player.guid);
     }
 
-    /**
-     * Damage to this player from another player (melee or a spell): `Unit::DealDamage` with its duel
-     * part. A blow from the duel's opponent that would kill leaves 1 health and ends the duel.
-     */
-    package void takeDamageFrom(ulong attacker, uint damage)
-    {
-        if (player is null || damage == 0 || player.values.get!UNIT_FIELD_HEALTH == 0 || godModeCheat)
-            return;
-        interruptAuras(0x2 | 0x01000000);
-        enterCombatFor(combatLinger);
-        const health = player.values.get!UNIT_FIELD_HEALTH;
-        if (damage >= health && duelingWith(attacker))
-        {
-            flushPlayerChanges();
-            return duelLost();
-        }
-        player.values.set!UNIT_FIELD_HEALTH(damage >= health ? 0 : health - damage);
-        flushPlayerChanges();
-        if (auto group = context.groups.of(player.guid))
-            group.updatePlayerOutOfRange(this, GroupUpdate.currentHealth);
-        if (damage >= health)
-            playerDied(false);
-    }
-
-    /**
-     * Damage to this player from a creature's spell or its aura (`DealDamage`): it stands up,
-     * its damage-breakable auras end, it is in combat, and it may die of it.
-     */
-    package void hitByCreatureSpell(ulong caster, uint damage)
-    {
-        if (player is null || damage == 0 || player.values.get!UNIT_FIELD_HEALTH == 0 || godModeCheat)
-            return;
-        if (player.values.getByte!UNIT_FIELD_BYTES_1(0) != 0)
-        {
-            player.values.setByte!UNIT_FIELD_BYTES_1(0, 0);
-            deliver(Opcode.SMSG_STANDSTATE_UPDATE, [ubyte(0)]);
-        }
-        interruptAuras(0x2 | 0x01000000);
-        enterCombatFor(combatLinger);
-        if (player.powerType == Power.rage)
-            player.modifyPower(Power.rage, rageReward(player.data.level, damage, false));
-        const health = player.values.get!UNIT_FIELD_HEALTH;
-        player.values.set!UNIT_FIELD_HEALTH(damage >= health ? 0 : health - damage);
-        flushPlayerChanges();
-        if (auto group = context.groups.of(player.guid))
-            group.updatePlayerOutOfRange(this, GroupUpdate.currentHealth);
-        if (damage >= health)
-            playerKilled();
-    }
-
     /// A melee swing at a player (`AttackerStateUpdate` against a player victim).
     void swingAtPlayer(typeof(this) other, AttackType type)
     {
@@ -305,9 +267,7 @@ private:
         if (player.powerType == Power.rage && type != AttackType.ranged)
             player.modifyPower(Power.rage, rageReward(player.data.level, d.damage, true));
         flushPlayerChanges();
-        if (other.player.powerType == Power.rage && d.cleanDamage)
-            other.player.modifyPower(Power.rage, rageReward(other.player.data.level, d.cleanDamage, false));
-        other.takeDamageFrom(player.guid, d.damage);
+        dealDamage(unit, other.unit, d.damage, Blow.swing(d));
     }
 
     /**
@@ -485,10 +445,6 @@ private:
         if (d.targetState == VictimState.evades)
             return flushPlayerChanges();
         updateCombatSkills(victim, type, false);
-        // `DealMeleeDamage`: the creature fights back (`AttackedBy`), and what it took is threat.
-        victim.ai.attackedBy(this, map);
-        victim.ai.damageTaken(this, d.damage);
-        map.wake(victim.guid);
         if (d.hitInfo & HitInfo.criticalHit)
         {
             enum uint emoteWoundCritical = 34; // EMOTE_ONESHOT_WOUNDCRITICAL
@@ -501,14 +457,9 @@ private:
         if (player.powerType == Power.rage && type != AttackType.ranged)
             player.modifyPower(Power.rage, rageReward(player.data.level, d.damage, true));
         flushPlayerChanges();
-        if (d.damage == 0)
-            return;
-        tap(victim);
-        const killed = victim.takeDamage(d.damage);
-        map.flushObjectChanges(victim);
-        if (killed)
-            creatureKilled(victim);
-        else
+        // `DealMeleeDamage`: the creature fights back, takes it as threat, and may die of it.
+        dealDamage(unit, map.unitOf(victim), d.damage, Blow.swing(d));
+        if (d.damage && victim.alive)
             castItemCombatSpells(victim, type);
     }
 
@@ -602,7 +553,13 @@ private:
                     other.stopAttack(false);
         stopAttack(false);
         if (victim.petOwner)
-            return context.petDied(victim, map); // another's pet: no reward
+        {
+            // Another's pet (a kill by a spell or a GM): dead for its owner, no reward.
+            map.creatureDeath(victim);
+            if (auto owner = cast(typeof(this)) map.find(victim.petOwner))
+                owner.ownPetDied();
+            return;
+        }
         victim.die(map, context.unixTime);
         context.creatureDied(victim);
         rewardKill(victim);

@@ -62,7 +62,7 @@ import dmangos.world.reputationhandlers : ReputationHandlers;
 import dmangos.world.gameobjecthandlers : GameObjectHandlers;
 import dmangos.world.auctionhandlers : AuctionHandlers;
 import dmangos.world.taxihandlers : TaxiHandlers;
-import dmangos.world.creatureai : Combatant;
+import dmangos.world.unit : Blow, UnitRef;
 import dmangos.world.auras : Aura, makeAura;
 import dmangos.world.spells : SpellInfo;
 import dmangos.world.creature : Creature;
@@ -118,7 +118,7 @@ private enum minimumPingInterval = 27.seconds;
 private enum maxBufferedInput = 2 * (clientHeaderLength + maxClientPacketSize);
 
 /// See the module documentation.
-final class WorldSession : NetSession, Kickable, OnlinePlayer, Combatant, Looter
+final class WorldSession : NetSession, Kickable, OnlinePlayer, Looter
 {
     // A player simulated on another node than its client's (docs/CLUSTER.md, phase 4b).
     private ushort ownerNode;              // home: the node simulating this session's player; 0: here
@@ -413,16 +413,16 @@ final class WorldSession : NetSession, Kickable, OnlinePlayer, Combatant, Looter
     }
 
     // -----------------------------------------------------------------------
-    // `Combatant`: what creatures see of the player (`dmangos.world.creatureai`, `combathandlers.d`)
+    // The player as a unit (`dmangos.world.unit`): what creatures and the rules of units see of it
     // -----------------------------------------------------------------------
 
-    /// See `Combatant`.
+    /// See `UnitRef`.
     @property ulong combatGuid() const
     {
         return player is null ? 0 : player.guid;
     }
 
-    /// See `Combatant`: nobody to fight once it has left the world.
+    /// See `UnitRef`: nobody to fight once it has left the world.
     Fighter fighter() const
     {
         if (player is null)
@@ -434,19 +434,43 @@ final class WorldSession : NetSession, Kickable, OnlinePlayer, Combatant, Looter
         return player.fighter;
     }
 
-    /// See `Combatant`.
+    /// See `UnitRef`.
     Relating relating()
     {
         return relatingNow();
     }
 
-    /// See `Combatant`.
-    void meleeHitBy(ulong attacker, const ref MeleeDamage damage)
+    /// The map the player is on (null when not in the world).
+    @property Map currentMap()
     {
-        hitByCreature(attacker, damage);
+        return player is null ? null : map;
     }
 
-    /// See `Combatant`. The player's pet joins in (`OwnerAttackedBy`).
+    /// The player as a unit on its map.
+    @property UnitRef unit()
+    {
+        return UnitRef.of(this);
+    }
+
+    /// See `dmangos.world.unit.dealDamage`: damage the player suffers.
+    void sufferDamage(UnitRef attacker, uint damage, const Blow blow)
+    {
+        takeBlow(attacker, damage, blow);
+    }
+
+    /// See `dealDamage`: a creature this player (or its pet) damaged is tapped for it.
+    void tapCreature(Creature creature)
+    {
+        tap(creature);
+    }
+
+    /// See `dealDamage`: a creature this player (or its pet) killed: its rewards.
+    void killedCreature(Creature creature)
+    {
+        creatureKilled(creature);
+    }
+
+    /// See `UnitRef`. The player's pet joins in (`OwnerAttackedBy`).
     void threatAdded(ulong creature)
     {
         addThreatener(creature);
@@ -459,13 +483,13 @@ final class WorldSession : NetSession, Kickable, OnlinePlayer, Combatant, Looter
         removeThreatener(creature);
     }
 
-    /// See `Combatant`.
+    /// See `UnitRef`.
     void auraTick(Creature target, Aura aura, size_t effect)
     {
         creatureAuraTick(target, aura, effect);
     }
 
-    /// See `Combatant`.
+    /// See `UnitRef`.
     uint healthPercent()
     {
         import dmangos.world.updatefields : UNIT_FIELD_HEALTH, UNIT_FIELD_MAXHEALTH;
@@ -475,13 +499,7 @@ final class WorldSession : NetSession, Kickable, OnlinePlayer, Combatant, Looter
         return cast(uint)(ulong(player.values.get!UNIT_FIELD_HEALTH) * 100 / player.values.get!UNIT_FIELD_MAXHEALTH);
     }
 
-    /// See `Combatant`.
-    void spellHitBy(ulong caster, uint damage)
-    {
-        hitByCreatureSpell(caster, damage);
-    }
-
-    /// See `Combatant`.
+    /// See `UnitRef`.
     void auraFrom(ulong caster, const(SpellInfo)* spell, uint casterLevel, int durationMs, const int[3] values)
     {
         if (player is null || player.deathState != DeathState.alive)
@@ -489,39 +507,39 @@ final class WorldSession : NetSession, Kickable, OnlinePlayer, Combatant, Looter
         addAura(makeAura(spell, caster, casterLevel, durationMs, false, values));
     }
 
-    /// See `Combatant`.
+    /// See `UnitRef`.
     bool hasAuraOf(uint spell)
     {
         return player !is null && player.auras.find(spell) !is null;
     }
 
-    /// See `Combatant`.
+    /// See `UnitRef`.
     void tell(Opcode opcode, const(ubyte)[] body_)
     {
         deliver(opcode, body_);
     }
 
-    /// See `Combatant`.
+    /// See `UnitRef`.
     @property bool untouchable()
     {
         return invincible;
     }
 
-    /// See `Combatant`.
+    /// See `UnitRef`.
     void questEventHappened(uint quest)
     {
         if (player !is null)
             areaExploredOrEventHappens(quest);
     }
 
-    /// See `Combatant`.
+    /// See `UnitRef`.
     void questFailedBy(uint quest)
     {
         if (player !is null)
             failQuest(quest);
     }
 
-    /// See `Combatant`.
+    /// See `UnitRef`.
     void showGossip(ulong npc, uint menu)
     {
         if (player is null)
@@ -566,12 +584,6 @@ final class WorldSession : NetSession, Kickable, OnlinePlayer, Combatant, Looter
         return ignoresGuid(guid);
     }
 
-    /// A creature this player's pet killed: the player's kill (`dmangos.world.creaturecombat`).
-    void killedByPet(Creature victim)
-    {
-        creatureKilled(victim);
-    }
-
     /// This player's pet died.
     void ownPetDied()
     {
@@ -584,40 +596,40 @@ final class WorldSession : NetSession, Kickable, OnlinePlayer, Combatant, Looter
         petCorpseGoneHere(pet);
     }
 
-    /// See `Combatant`.
+    /// See `UnitRef`.
     QuestProgress questStatusOf(uint quest)
     {
         return questStatusFor(quest);
     }
 
-    /// See `Combatant`.
+    /// See `UnitRef`.
     void showScriptGossip(ulong npc, uint textId, const(MenuOption)[] options, bool withQuests)
     {
         if (player !is null)
             sendScriptGossip(npc, textId, options, withQuests);
     }
 
-    /// See `Combatant`.
+    /// See `UnitRef`.
     void closeGossip()
     {
         if (player !is null)
             deliver(Opcode.SMSG_GOSSIP_COMPLETE, null);
     }
 
-    /// See `Combatant`.
+    /// See `UnitRef`.
     void killCreditFrom(uint entry, ulong creature)
     {
         if (player !is null)
             scriptKillCredit(entry, creature);
     }
 
-    /// See `Combatant`.
+    /// See `UnitRef`.
     @property bool castingSpell()
     {
         return generic.active;
     }
 
-    /// See `Combatant`.
+    /// See `UnitRef`.
     void auraRemovedBy(uint spell)
     {
         if (player !is null)
@@ -625,7 +637,7 @@ final class WorldSession : NetSession, Kickable, OnlinePlayer, Combatant, Looter
                 removeAura(aura);
     }
 
-    /// See `Combatant`.
+    /// See `UnitRef`.
     void castInterruptedBy(ulong creature)
     {
         import dmangos.world.spellcast : SpellCastResult;

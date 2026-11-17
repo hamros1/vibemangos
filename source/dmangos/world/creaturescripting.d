@@ -187,7 +187,7 @@ mixin template CreatureScripting()
             return healthPercent();
         if (auto other = world_.creatureAt(who.guid))
             return other.ai.healthPercent();
-        if (auto player = world_.combatant(who.guid))
+        if (auto player = world_.unit(who.guid))
             return player.healthPercent();
         return uint.max;
     }
@@ -199,7 +199,7 @@ mixin template CreatureScripting()
         const spell = lore.spellInfo(spellId);
         if (spell is null)
             return ActionResult.failed;
-        if (target.guid != me.guid && world_.creatureAt(target.guid) is null && world_.combatant(target.guid) is null)
+        if (target.guid != me.guid && world_.creatureAt(target.guid) is null && !world_.unit(target.guid))
             return ActionResult.notHere;
         return castSpell(spell, target.guid, triggered ? castTriggered : 0) ? ActionResult.ok : ActionResult.notAllowed;
     }
@@ -269,7 +269,7 @@ mixin template CreatureScripting()
         if (summoned is null)
             return EntityRef.init;
         if (attack)
-            if (auto victim = world_.combatant(attack.guid))
+            if (auto victim = world_.unit(attack.guid))
                 summoned.ai.attackStart(victim, world_);
         return EntityRef(summoned.guid);
     }
@@ -323,7 +323,7 @@ mixin template CreatureScripting()
         }
         ActionResult hostDamage(EntityRef target, uint amount)
         {
-            if (world_ is null || scriptSpell is null || world_.combatant(target.guid) is null)
+            if (world_ is null || scriptSpell is null || !world_.unit(target.guid))
                 return ActionResult.notHere;
             spellDamageTo(scriptSpell, target.guid, amount, scriptSpell.casting.school);
             return ActionResult.ok;
@@ -342,7 +342,7 @@ mixin template CreatureScripting()
         void hostKillCredit(EntityRef player, uint entry)
         {
             if (world_ !is null)
-                if (auto other = world_.combatant(player.guid))
+                if (auto other = world_.unit(player.guid))
                     other.killCreditFrom(entry, me.guid);
         }
         EntityRef hostSummonAt(uint entry, Location at, uint despawnMs, EntityRef attack)
@@ -387,7 +387,7 @@ mixin template CreatureScripting()
     QuestProgress hostQuestStatus(EntityRef player, uint quest)
     {
         if (world_ !is null)
-            if (auto other = world_.combatant(player.guid))
+            if (auto other = world_.unit(player.guid))
                 return other.questStatusOf(quest);
         return QuestProgress.none;
     }
@@ -466,7 +466,7 @@ mixin template CreatureScripting()
     void hostSendGossip(EntityRef player, uint textId, const(MenuOption)[] options, bool withQuests)
     {
         if (world_ !is null)
-            if (auto other = world_.combatant(player.guid))
+            if (auto other = world_.unit(player.guid))
                 other.showScriptGossip(me.guid, textId, options, withQuests);
     }
 
@@ -540,7 +540,7 @@ mixin template CreatureScripting()
             return true;
         if (auto creature = world_.creatureAt(who.guid))
             return creature.alive;
-        if (auto player = world_.combatant(who.guid))
+        if (auto player = world_.unit(who.guid))
             return player.fighter.alive;
         return true;
     }
@@ -548,14 +548,14 @@ mixin template CreatureScripting()
     void hostQuestEvent(EntityRef player, uint quest)
     {
         if (world_ !is null)
-            if (auto other = world_.combatant(player.guid))
+            if (auto other = world_.unit(player.guid))
                 other.questEventHappened(quest);
     }
 
     void hostFailQuest(EntityRef player, uint quest)
     {
         if (world_ !is null)
-            if (auto other = world_.combatant(player.guid))
+            if (auto other = world_.unit(player.guid))
                 other.questFailedBy(quest);
     }
 
@@ -574,14 +574,14 @@ mixin template CreatureScripting()
     void hostGossipMenu(EntityRef player, uint menu)
     {
         if (world_ !is null)
-            if (auto other = world_.combatant(player.guid))
+            if (auto other = world_.unit(player.guid))
                 other.showGossip(me.guid, menu);
     }
 
     void hostCloseGossip(EntityRef player)
     {
         if (world_ !is null)
-            if (auto other = world_.combatant(player.guid))
+            if (auto other = world_.unit(player.guid))
                 other.closeGossip();
     }
 

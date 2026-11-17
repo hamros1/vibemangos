@@ -293,8 +293,11 @@ unittest
     import dmangos.world.spellcast : SpellCastResult, SpellTargets;
 
     pet.ai.petStopAttack(map);
-    auto killer = context.combatantOf(pet, map);
-    (cast(imported!"dmangos.world.creaturecombat".CreatureCombatant) killer).takeHit(0, 10_000);
+    {
+        import dmangos.world.unit : Blow, dealDamage, UnitRef;
+
+        dealDamage(UnitRef.init, map.unitOf(pet), 10_000, Blow.spell());
+    }
     assert(!pet.alive && session.ownPet is pet);
     foreach (_; 0 .. 70)
         tick(1000);

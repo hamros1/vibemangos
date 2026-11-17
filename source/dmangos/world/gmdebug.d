@@ -94,7 +94,6 @@ private:
 
     bool handleAggroRangeCommand()
     {
-        import dmangos.world.creatureai : Combatant;
 
         const guid = player.values.get!UNIT_FIELD_TARGET;
         auto creature = guid ? cast(Creature) map.findObject(guid) : null;
@@ -103,7 +102,7 @@ private:
             systemMessage("You should select a character or a creature.");
             return true;
         }
-        systemMessage(format!"Aggrorange is: %s"(creature.ai.aggroRangeFor(cast(Combatant) this)));
+        systemMessage(format!"Aggrorange is: %s"(creature.ai.aggroRangeFor(unit)));
         return true;
     }
 

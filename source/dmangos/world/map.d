@@ -47,7 +47,8 @@ import dmangos.serialization : serialize;
 import dmangos.bytes : ByteWriter;
 public import dmangos.world.grid : cellSize;
 import dmangos.world.grid : cellCoordinate, cellKey, cellKeyAt;
-import dmangos.world.creatureai : Combatant, CombatWorld;
+import dmangos.world.creatureai : CombatWorld;
+import dmangos.world.unit : UnitRef;
 import dmangos.world.creature : Creature;
 import dmangos.world.gameobject : GameObject, GameObjectWorld;
 import dmangos.world.motion : MotionWorld;
@@ -1325,30 +1326,47 @@ final class Map : CombatWorld, GameObjectWorld
             at(v).player.deliver(opcode, body_);
     }
 
-    /// See `CombatWorld.combatant`.
-    Combatant combatant(ulong guid)
+    /// See `CombatWorld.unit`.
+    UnitRef unit(ulong guid)
     {
+        import dmangos.world.session : WorldSession;
+
         const slot = slotFor(guid);
         if (slot == uint.max)
-            return null;
-        if (auto player = cast(Combatant) at(slot).player)
-            return player;
-        // A creature fought by a creature (a pet, or what a pet fights).
-        if (makeCreatureCombatant !is null)
-            if (auto creature = cast(Creature) at(slot).object)
-                if (creature.petOwner || creature.asCombatant !is null)
-                    return makeCreatureCombatant(creature);
-        return null;
+            return UnitRef.init;
+        if (auto session = cast(WorldSession) at(slot).player)
+            return UnitRef.of(session);
+        return UnitRef.of(cast(Creature) at(slot).object, this);
     }
 
-    /// See `CombatWorld.combatantOf`.
-    Combatant combatantOf(Creature creature)
+    /// See `CombatWorld.unitOf`.
+    UnitRef unitOf(Creature creature)
     {
-        return makeCreatureCombatant is null || creature is null ? null : makeCreatureCombatant(creature);
+        return UnitRef.of(creature, this);
     }
 
-    /// A creature as other creatures fight it (`dmangos.world.creaturecombat`); null: players only.
-    Combatant delegate(Creature creature) makeCreatureCombatant;
+    /// A player here as a unit; none for a stand-in (tests).
+    private UnitRef unitOf(Inhabitant who)
+    {
+        import dmangos.world.session : WorldSession;
+
+        return UnitRef.of(cast(WorldSession) who);
+    }
+
+    /**
+     * A creature died of something no player is credited with (a creature's blow, a pet of its own):
+     * `Creature.die`, and what the world does about a death (`onCreatureDeath`).
+     */
+    void creatureDeath(Creature creature)
+    {
+        if (onCreatureDeath !is null)
+            onCreatureDeath(creature);
+        else
+            creature.die(this, 0);
+    }
+
+    /// Told to let a creature die (`WorldContext`: `die`, its dungeon's script, its respawn).
+    void delegate(Creature creature) onCreatureDeath;
 
     /// See `CombatWorld.inLineOfSight`: at eye height, through the vmaps; anything goes without terrain.
     /// Whether nothing built stands between the two points exactly (`CollideInterface.CheckLOS`).
@@ -1415,13 +1433,13 @@ final class Map : CombatWorld, GameObjectWorld
         return true;
     }
 
-    /// See `CombatWorld.combatantsNear`.
-    Combatant[] combatantsNear(Position center, float range)
+    /// See `CombatWorld.playersNear`.
+    UnitRef[] playersNear(Position center, float range)
     {
-        Combatant[] found;
+        UnitRef[] found;
         foreach (inhabitant; near(center, range))
-            if (auto c = cast(Combatant) inhabitant)
-                found ~= c;
+            if (auto u = unitOf(inhabitant))
+                found ~= u;
         return found;
     }
 
@@ -1493,8 +1511,8 @@ final class Map : CombatWorld, GameObjectWorld
         import dmangos.world.objects : HighGuid, highGuidOf;
         import dmangos.world.updatefields;
 
-        auto combatant = cast(Combatant) who;
-        if (combatant is null)
+        auto combatant = unitOf(who);
+        if (!combatant)
             return;
         const atNow = who.character.position;
         foreach (k; knownOf(slot, false))
@@ -1544,7 +1562,7 @@ final class Map : CombatWorld, GameObjectWorld
         // The players near it (by cell), of those that see it.
         foreach (p; playerSlotsNear(creature.position, noticeDistance))
             if (at(p).known[slot])
-                if (auto combatant = cast(Combatant) at(p).player)
+                if (auto combatant = unitOf(at(p).player))
                     creature.ai.moveInLineOfSight(combatant, this);
     }
 

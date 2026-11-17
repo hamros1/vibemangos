@@ -64,10 +64,10 @@ mixin template PetBehaviour()
     }
 
     /// `PetAI::AttackStart`: attacks `who`, chasing it (or casting from afar, the imp).
-    void petAttack(Combatant who, CombatWorld world)
+    void petAttack(UnitRef who, CombatWorld world)
     {
         world_ = world;
-        if (!me.alive || who is null || who.combatGuid == me.guid)
+        if (!me.alive || !who || who.combatGuid == me.guid)
             return;
         if (victim == who.combatGuid)
             return;
@@ -106,9 +106,9 @@ mixin template PetBehaviour()
 
     /// `OwnerAttackedBy`, `OwnerAttacked`, and its own `AttackedBy`: unless passive, staying out of
     /// it, or already fighting, it attacks.
-    void petAssist(Combatant enemy, CombatWorld world)
+    void petAssist(UnitRef enemy, CombatWorld world)
     {
-        if (react == ReactState.passive || victim || !me.alive || enemy is null)
+        if (react == ReactState.passive || victim || !me.alive || !enemy)
             return;
         if (!enemy.fighter.alive || !canAttack(relating, enemy.relating, me.client))
             return;
@@ -128,8 +128,8 @@ mixin template PetBehaviour()
             return;
         if (victim)
         {
-            auto target = world.combatant(victim);
-            if (target is null || !target.fighter.alive || target.untouchable
+            auto target = world.unit(victim);
+            if (!target || !target.fighter.alive || target.untouchable
                 || !canAttack(relating, target.relating, me.client))
                 petStopAttack(world);
             else
@@ -189,7 +189,7 @@ mixin template PetBehaviour()
         }
         if (best is null)
             return false;
-        petAttack(world.combatantOf(best), world);
+        petAttack(world.unitOf(best), world);
         return victim != 0;
     }
 
@@ -202,23 +202,23 @@ mixin template PetBehaviour()
         world_ = world;
         if (info is null || info.id in petCooldowns || !me.alive)
             return false;
-        Combatant enemy;
+        UnitRef enemy;
         if (target && target != me.guid)
         {
-            enemy = world.combatant(target);
-            if (enemy is null)
+            enemy = world.unit(target);
+            if (!enemy)
                 if (auto creature = world.creatureAt(target))
                     if (creature.petOwner != me.petOwner)
-                        enemy = world.combatantOf(creature);
-            if (enemy !is null && !canAttack(relating, enemy.relating, me.client))
-                enemy = null;
+                        enemy = world.unitOf(creature);
+            if (cast(bool) enemy && !canAttack(relating, enemy.relating, me.client))
+                enemy = UnitRef.init;
         }
         if (!castSpell(info, target, 0))
             return false;
         const cooldown = info.recoveryTime > info.categoryRecoveryTime ? info.recoveryTime : info.categoryRecoveryTime;
         if (cooldown)
             petCooldowns[info.id] = cooldown;
-        if (enemy !is null && victim != enemy.combatGuid && react != ReactState.passive)
+        if (cast(bool) enemy && victim != enemy.combatGuid && react != ReactState.passive)
             petAttack(enemy, world);
         return true;
     }

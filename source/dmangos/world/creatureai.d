@@ -31,78 +31,8 @@ import dmangos.script.registry : ScriptHandle, ScriptRuntime;
 import dmangos.script.api : ActionResult, MenuOption, QuestProgress, Waypoint, CreatureHost, Damaged, Died, EnteredCombat, EntityRef, Evaded, KilledUnit, Reset;
 import dmangos.world.updatefields;
 import dmangos.vmap.math : Vector3;
+import dmangos.world.unit : UnitRef;
 
-/// A player a creature can fight, as the creature sees it (`WorldSession` implements it).
-interface Combatant
-{
-    /// Its guid.
-    @property ulong combatGuid() const;
-
-    /// What the melee formulas need of it now.
-    Fighter fighter() const;
-
-    /// How the relations see it.
-    Relating relating();
-
-    /// A creature's swing landed (or not): `Unit::DealDamage` and what follows, on its side.
-    void meleeHitBy(ulong attacker, const ref MeleeDamage damage);
-
-    /// A creature has it in its threat list now, or no longer (`HostileRefManager`): it is in combat while any does.
-    void threatAdded(ulong creature);
-    /// ditto
-    void threatRemoved(ulong creature);
-
-    /// A periodic effect of its aura on `target` ticked (damage over time).
-    void auraTick(Creature target, Aura aura, size_t effect);
-
-    /// Its health in percent.
-    uint healthPercent();
-
-    /// A creature's spell hurt it (`DealDamage` from a spell): the log is already sent.
-    void spellHitBy(ulong caster, uint damage);
-
-    /// A creature's spell put an aura on it (a debuff).
-    void auraFrom(ulong caster, const(SpellInfo)* spell, uint casterLevel, int durationMs, const int[3] values);
-
-    /// Whether it has an aura of `spell`.
-    bool hasAuraOf(uint spell);
-
-    /// A packet for it alone (a creature's whisper).
-    void tell(Opcode opcode, const(ubyte)[] body_);
-
-    /// Whether it is casting a spell.
-    @property bool castingSpell();
-
-    /// A creature's script: the event of quest `quest` happened for it (`AreaExploredOrEventHappens`).
-    void questEventHappened(uint quest);
-
-    /// A creature's script: kill credit of `entry` (`KilledMonsterCredit`), from `creature`.
-    void killCreditFrom(uint entry, ulong creature);
-
-    /// A creature's script took an aura of `spell` off it.
-    void auraRemovedBy(uint spell);
-
-    /// `.invincible`: creatures do not attack it (`isAttackable` is false).
-    @property bool untouchable();
-
-    /// A creature's spell interrupted its cast (`SPELL_EFFECT_INTERRUPT_CAST`).
-    void castInterruptedBy(ulong creature);
-
-    /// A creature's script: its quest `quest` under way failed (`FailQuest`).
-    void questFailedBy(uint quest);
-
-    /// A creature's script: `gossip_menu` `menu` of creature `npc` shown to it.
-    void showGossip(ulong npc, uint menu);
-
-    /// A creature's script: its gossip window closes.
-    void closeGossip();
-
-    /// A creature's script: where it stands with `quest`.
-    QuestProgress questStatusOf(uint quest);
-
-    /// A creature's script: a menu the script built, from creature `npc`.
-    void showScriptGossip(ulong npc, uint textId, const(MenuOption)[] options, bool withQuests);
-}
 
 /**
  * What a creature's script and spells need of the world's data (`WorldContext` implements it): the
@@ -158,11 +88,11 @@ interface CreatureLore
 /// What a creature's AI needs of its map.
 interface CombatWorld : MotionWorld
 {
-    /// The player with this guid on the map, if it can fight; null otherwise.
-    Combatant combatant(ulong guid);
+    /// The unit with this guid on the map: a player simulated here, or a creature; none if neither.
+    UnitRef unit(ulong guid);
 
-    /// A creature as a combatant, for a creature (a pet) to fight it; null if creatures fight only players.
-    Combatant combatantOf(Creature creature);
+    /// `creature` as a unit on this map.
+    UnitRef unitOf(Creature creature);
 
     /// `IsWithinLOSInMap`: whether nothing built stands between two points (at eye height).
     bool inLineOfSight(Position a, Position b);
@@ -179,8 +109,8 @@ interface CombatWorld : MotionWorld
     /// The creatures within `range` yards of `center` here.
     Creature[] creaturesNear(Position center, float range);
 
-    /// The players within `range` yards of `center` here who can fight.
-    Combatant[] combatantsNear(Position center, float range);
+    /// The players within `range` yards of `center` here, as units.
+    UnitRef[] playersNear(Position center, float range);
 
     /// The creature with this guid here; null if none.
     Creature creatureAt(ulong guid);
@@ -319,7 +249,7 @@ final class CreatureAI : Scripted, CreatureHost
      * aggressive creature that may attack it on sight attacks it if it is within its aggro radius
      * and line of sight.
      */
-    void moveInLineOfSight(Combatant who, CombatWorld world)
+    void moveInLineOfSight(UnitRef who, CombatWorld world)
     {
         world_ = world;
         if (react != ReactState.aggressive || victim || evadingHome || !me.alive || me.petOwner)
@@ -348,7 +278,7 @@ final class CreatureAI : Scripted, CreatureHost
     }
 
     /// `UnitAI::AttackedBy`: hit (or swung at) by `attacker`; it fights back if it is not fighting yet.
-    void attackedBy(Combatant attacker, CombatWorld world)
+    void attackedBy(UnitRef attacker, CombatWorld world)
     {
         world_ = world;
         if (me.petOwner)
@@ -362,7 +292,7 @@ final class CreatureAI : Scripted, CreatureHost
     }
 
     /// `HandleDamageDealt`'s threat: what `attacker` did to it; direct damage restarts its combat timer.
-    void damageTaken(Combatant attacker, uint damage)
+    void damageTaken(UnitRef attacker, uint damage)
     {
         if (!me.alive || evadingHome || me.petOwner)
             return;
@@ -478,7 +408,7 @@ final class CreatureAI : Scripted, CreatureHost
     }
 
     /// Its aggro radius against `who` (`.debug aggrorange`), in yards.
-    float aggroRangeFor(const Combatant who)
+    float aggroRangeFor(UnitRef who)
     {
         return attackDistance((cast() who).fighter);
     }
@@ -518,7 +448,7 @@ private:
             *t = *t * (percent <= -100 ? 0 : (100 + percent) / 100.0f);
     }
 
-    void addThreat(Combatant who, float amount)
+    void addThreat(UnitRef who, float amount)
     {
         const guid = who.combatGuid;
         if (auto t = guid in threat)
@@ -533,7 +463,7 @@ private:
     void notifyRemoved(ulong guid, CombatWorld world)
     {
         if (world !is null)
-            if (auto who = world.combatant(guid))
+            if (auto who = world.unit(guid))
                 who.threatRemoved(me.guid);
     }
 
@@ -541,7 +471,7 @@ private:
      * `UnitAI::AttackStart`: attacks `who` (`Unit::Attack`), enters combat with it
      * (`EngageInCombatWith`), and chases it.
      */
-    void attackStart(Combatant who, CombatWorld world)
+    void attackStart(UnitRef who, CombatWorld world)
     {
         if (react == ReactState.passive || !me.alive)
             return;
@@ -587,7 +517,7 @@ private:
      * the allies near it (`CallForHelp` yards, or 5) that may join are told, and join in after a
      * moment and a half.
      */
-    void callAssistance(Combatant enemy, CombatWorld world)
+    void callAssistance(UnitRef enemy, CombatWorld world)
     {
         if (calledAssistance || !canCallForAssistance)
             return;
@@ -615,7 +545,7 @@ private:
      * `CanAssistInCombatAgainst` (outside dungeons): not fighting already, an ally of `who`
      * (`CanAssist`: friendly to it), and one that would attack `enemy` on sight.
      */
-    bool canAssistAgainst(const Creature who, Combatant enemy)
+    bool canAssistAgainst(const Creature who, UnitRef enemy)
     {
         if (!me.alive || inCombat_ || evadingHome || react != ReactState.aggressive)
             return false;
@@ -634,10 +564,10 @@ private:
     /// The help called for arrives: `HandleAssistanceCall` for each ally still free to come.
     void deliverAssistance(CombatWorld world)
     {
-        auto enemy = world.combatant(assistanceEnemy);
+        auto enemy = world.unit(assistanceEnemy);
         auto receivers = assistanceReceivers;
         assistanceReceivers = null;
-        if (enemy is null)
+        if (!enemy)
             return;
         foreach (other; receivers)
             if (other.ai !is null && other.ai.canAssistAgainst(me, enemy))
@@ -655,8 +585,8 @@ private:
     {
         if (!victim || !canCallForAssistance)
             return;
-        auto enemy = world.combatant(victim);
-        if (enemy is null)
+        auto enemy = world.unit(victim);
+        if (!enemy)
             return;
         foreach (other; world.creaturesNear(me.position, checkForHelpRadius))
             if (other !is me && other.ai !is null && other.ai.canCallForAssistance
@@ -708,7 +638,7 @@ private:
             return;
         combatTick -= combatManagerTick;
         if (combatTimer == 0 && victim)
-            if (auto target = world.combatant(victim))
+            if (auto target = world.unit(victim))
             {
                 const at = target.fighter.position;
                 const dx = at.x - lastRefresh.x, dy = at.y - lastRefresh.y;
@@ -732,8 +662,8 @@ private:
         ulong[] gone;
         foreach (guid, _; threat)
         {
-            auto who = world.combatant(guid);
-            if (who is null || !who.fighter.alive || who.untouchable || !canAttack(relating, who.relating, me.client))
+            auto who = world.unit(guid);
+            if (!who || !who.fighter.alive || who.untouchable || !canAttack(relating, who.relating, me.client))
                 gone ~= guid;
         }
         foreach (guid; gone)
@@ -743,7 +673,7 @@ private:
         }
         if (threat.length == 0)
             return enterEvadeMode(world);
-        auto target = world.combatant(selectNextVictim(world));
+        auto target = world.unit(selectNextVictim(world));
         if (target.combatGuid != victim)
             attackStart(target, world);
         if (casting_ !is null)
@@ -777,8 +707,8 @@ private:
             const t = threat[guid];
             if (t <= 1.1f * *current)
                 return victim;
-            auto who = world.combatant(guid);
-            const inMelee = who !is null && canReachWithMelee(self, who.fighter);
+            auto who = world.unit(guid);
+            const inMelee = cast(bool) who && canReachWithMelee(self, who.fighter);
             if (t > 1.3f * *current || (t > 1.1f * *current && inMelee))
                 return guid;
         }
@@ -789,7 +719,7 @@ private:
      * `ChaseMovementGenerator`: runs to its target until it can reach it, setting off again when the
      * target has moved on, and faces it (`SetInFront`).
      */
-    void chase(Combatant target, CombatWorld world)
+    void chase(UnitRef target, CombatWorld world)
     {
         const self = me.fighter, other = target.fighter;
         me.movement.position.orientation = angleTo(me.position, other.position);
@@ -824,7 +754,7 @@ private:
     }
 
     /// `UpdateMeleeAttackingState` for a creature: a swing whenever it is ready and can.
-    void meleeAttackIfReady(Combatant target, CombatWorld world)
+    void meleeAttackIfReady(UnitRef target, CombatWorld world)
     {
         import std.math : PI;
 

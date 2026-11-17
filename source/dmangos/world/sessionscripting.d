@@ -77,7 +77,7 @@ mixin template SessionScripting()
         return c.consumed;
     }
 
-    /// Where this player stands with `quest` (`Combatant.questStatusOf`).
+    /// Where this player stands with `quest` (`UnitRef.questStatusOf`).
     package QuestProgress questStatusFor(uint quest)
     {
         import dmangos.world.quests : QuestState;
@@ -193,7 +193,11 @@ mixin template SessionScripting()
         }
         if (auto other = sessionHere(target))
         {
-            other.takeDamageFrom(player.guid, amount);
+            {
+                import dmangos.world.unit : Blow, dealDamage;
+
+                dealDamage(unit, other.unit, amount, Blow.spell());
+            }
             return ActionResult.ok;
         }
         if (auto creature = map.creatureAt(target.guid))
@@ -256,7 +260,7 @@ mixin template SessionScripting()
             return EntityRef.init;
         if (attack)
             if (auto victim = sessionHere(attack))
-                summoned.ai.attackedBy(victim, map);
+                summoned.ai.attackedBy(victim.unit, map);
         return EntityRef(summoned.guid);
     }
 

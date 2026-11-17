@@ -714,7 +714,7 @@ source/dmangos/world/       the world server (mangosd)
   guild.d, guildhandlers.d    guilds: ranks, members and packets; charters, invitations, roster, chat
   pet.d, petai.d              pets: types, action bar, stats, tables, packets; following and fighting (in CreatureAI)
   pethandlers.d               a player's pet: taming, summoning, saving, its bar's commands, stables
-  creaturecombat.d            a creature fought by a creature (a pet and its enemy), as players are
+  unit.d                      the rules every unit shares: UnitRef (a player or a creature), dealDamage
   pettests.d                  pets end to end (tests only)
   scripttests.d               the scripts in the world (tests only)
   dbscripts.d                 dbscripts_on_*: script steps run by the world at their delays

@@ -132,7 +132,7 @@ mixin template CreatureCasting()
             target = victim ? victim : me.guid;
         if (target != me.guid)
         {
-            if (auto other = world_.combatant(target))
+            if (auto other = world_.unit(target))
             {
                 if (!other.fighter.alive || ((flags & castAuraNotPresent) && other.hasAuraOf(spell.id)))
                     return false;
@@ -190,9 +190,9 @@ mixin template CreatureCasting()
             return;
         if (castTarget != me.guid)
         {
-            auto other = world_.combatant(castTarget);
-            auto friend = other is null ? world_.creatureAt(castTarget) : null;
-            if ((other is null || !other.fighter.alive) && (friend is null || !friend.alive))
+            auto other = world_.unit(castTarget);
+            auto friend = !other ? world_.creatureAt(castTarget) : null;
+            if ((!other || !other.fighter.alive) && (friend is null || !friend.alive))
                 return interruptCast();
         }
         castTimer -= diff;
@@ -240,7 +240,7 @@ mixin template CreatureCasting()
         if (target == me.guid)
             return 0;
         Position p;
-        if (auto other = world_.combatant(target))
+        if (auto other = world_.unit(target))
             p = other.fighter.position;
         else if (auto friend = world_.creatureAt(target))
             p = friend.position;
@@ -271,11 +271,11 @@ mixin template CreatureCasting()
         {
             auto center = me.position;
             if (area && a != casterCoordinates && a != self && target != me.guid)
-                if (auto other = world_.combatant(target))
+                if (auto other = world_.unit(target))
                     center = other.fighter.position;
             const r = radius(*spell, i, lore.clientData);
             ulong[] found;
-            foreach (other; world_.combatantsNear(center, r))
+            foreach (other; world_.playersNear(center, r))
             {
                 const f = other.fighter;
                 if (!f.alive || !canAttack(relating, other.relating, me.client))
@@ -325,8 +325,14 @@ mixin template CreatureCasting()
         {
             auto miss = SpellMissInfo.none;
             if (guid != me.guid)
-                if (auto other = world_.combatant(guid))
+                if (auto other = world_.unit(guid))
                 {
+                    // Only what it may attack rolls (`IsFriendlyTo`: a heal on a friend never misses).
+                    if (!canAttack(relating, other.relating, me.client))
+                    {
+                        results ~= TargetResult(guid, miss);
+                        continue;
+                    }
                     const f = other.fighter;
                     if (weapon)
                     {
@@ -380,7 +386,7 @@ mixin template CreatureCasting()
                             damage = cast(uint)(damage * (value > 0 ? value : 0) / 100.0f);
                         else if (value > 0)
                             damage += cast(uint) armorReducedDamage(level,
-                                world_.combatant(guid) ? world_.combatant(guid).fighter.armor : 0, value);
+                                world_.unit(guid) ? world_.unit(guid).fighter.armor : 0, value);
                         spellDamageTo(spell, guid, damage, -1);
                     }
                     break;
@@ -400,7 +406,7 @@ mixin template CreatureCasting()
                     break;
                 case 68: // SPELL_EFFECT_INTERRUPT_CAST
                     if (guid != me.guid)
-                        if (auto other = world_.combatant(guid))
+                        if (auto other = world_.unit(guid))
                             other.castInterruptedBy(me.guid);
                     break;
                 default:
@@ -416,8 +422,8 @@ mixin template CreatureCasting()
     /// A school's damage to a player (`DealSpellDamage`), armor taking some of physical; -1: already through armor.
     private void spellDamageTo(const(SpellInfo)* spell, ulong guid, uint damage, int school)
     {
-        auto other = world_.combatant(guid);
-        if (other is null)
+        auto other = world_.unit(guid);
+        if (!other)
             return;
         if (school == 0)
             damage = cast(uint) armorReducedDamage(me.values.get!UNIT_FIELD_LEVEL, other.fighter.armor, damage);
@@ -451,7 +457,7 @@ mixin template CreatureCasting()
             world_.wake(creature.guid);
             return;
         }
-        if (auto other = world_.combatant(guid))
+        if (auto other = world_.unit(guid))
             other.auraFrom(me.guid, spell, level, ms, values);
     }
 
@@ -470,7 +476,7 @@ mixin template CreatureCasting()
     }
 
     /// The spell on its next swing, instead of the swing (`true`): its weapon damage.
-    private bool swingSpell(Combatant target)
+    private bool swingSpell(UnitRef target)
     {
         if (nextSwing is null)
             return false;
@@ -500,7 +506,7 @@ mixin template CreatureCasting()
         if (!me.spline.finalized)
             return;
         auto from = me.position;
-        if (auto enemy = world_.combatant(victim))
+        if (auto enemy = world_.unit(victim))
             from = enemy.fighter.position;
         // Away from the enemy, a little to one side or the other.
         const angle = angleTo(from, me.position) + uniform(-0.6f, 0.6f, world_.random);
@@ -547,8 +553,8 @@ mixin template CreatureCasting()
     /// ditto
     bool victimCasting()
     {
-        auto other = victim ? world_.combatant(victim) : null;
-        return other !is null && other.castingSpell;
+        auto other = victim ? world_.unit(victim) : UnitRef.init;
+        return other && other.castingSpell;
     }
 
     /// ditto: `MostHPMissingInRangeCheck` over itself and those near it in combat that are not its enemies.
@@ -612,7 +618,7 @@ mixin template CreatureCasting()
                 world_.flushCreature(creature);
             }
         }
-        else if (auto other = world_.combatant(target))
+        else if (auto other = world_.unit(target))
             other.auraRemovedBy(spell);
     }
 
@@ -649,12 +655,12 @@ mixin template CreatureCasting()
     {
         if (!all)
         {
-            if (auto other = world_.combatant(player))
+            if (auto other = world_.unit(player))
                 other.questEventHappened(quest);
             return;
         }
         foreach (guid, _; threat)
-            if (auto other = world_.combatant(guid))
+            if (auto other = world_.unit(guid))
                 if (other.fighter.alive)
                     other.questEventHappened(quest);
     }
@@ -662,7 +668,7 @@ mixin template CreatureCasting()
     /// ditto
     void scriptKillCredit(uint entry, ulong player)
     {
-        if (auto other = world_.combatant(player))
+        if (auto other = world_.unit(player))
             other.killCreditFrom(entry, me.guid);
     }
 
@@ -687,7 +693,7 @@ mixin template CreatureCasting()
         if (summoned is null)
             return false;
         if (target)
-            if (auto victim = world_.combatant(target))
+            if (auto victim = world_.unit(target))
                 summoned.ai.attackStart(victim, world_);
         return true;
     }
@@ -719,8 +725,8 @@ mixin template CreatureCasting()
     /// ditto
     uint victimHealthPercent()
     {
-        auto other = victim ? world_.combatant(victim) : null;
-        return other is null ? uint.max : other.healthPercent;
+        auto other = victim ? world_.unit(victim) : UnitRef.init;
+        return !other ? uint.max : other.healthPercent;
     }
 
     /// ditto
@@ -814,7 +820,7 @@ mixin template CreatureCasting()
         const body_ = monsterChatMessage(type, me.guid, me.template_.name, text.text(false), language, target);
         if (type == ChatType.CHAT_MSG_MONSTER_WHISPER || type == ChatType.CHAT_MSG_RAID_BOSS_WHISPER)
         {
-            if (auto other = world_.combatant(target))
+            if (auto other = world_.unit(target))
                 other.tell(Opcode.SMSG_MESSAGECHAT, body_);
         }
         else
@@ -857,8 +863,8 @@ mixin template CreatureCasting()
     /// ditto: `CallForHelp` — the allies within `radius` yards that may help join in now.
     void scriptCallForHelp(float radius)
     {
-        auto enemy = victim ? world_.combatant(victim) : null;
-        if (enemy is null)
+        auto enemy = victim ? world_.unit(victim) : UnitRef.init;
+        if (!enemy)
             return;
         foreach (other; world_.creaturesNear(me.position, radius))
             if (other !is me && other.ai !is null && other.ai.canAssistAgainst(me, enemy))
@@ -875,7 +881,7 @@ mixin template CreatureCasting()
     /// ditto
     void scriptAttack(ulong target)
     {
-        if (auto other = world_.combatant(target))
+        if (auto other = world_.unit(target))
             attackStart(other, world_);
     }
 
@@ -1058,7 +1064,7 @@ unittest
     trainer.factionTemplate = keeper.factionTemplate;
     trainer.values.set!UNIT_FIELD_MAXHEALTH(500u);
     trainer.values.set!UNIT_FIELD_HEALTH(100u);
-    trainer.ai.attackedBy(anduin.session, map);
+    trainer.ai.attackedBy(anduin.session.unit, map);
     enum uint mendOther = 95012;
     context.data.spells.spells[mendOther] = testSpell(mendOther, 10, 21, 200);
     EventAiEvent friendly = {id: 4, type: EventType.friendlyHp, chance: 100, flags: eventRepeatable,
