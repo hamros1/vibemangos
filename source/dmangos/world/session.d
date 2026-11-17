@@ -613,6 +613,7 @@ final class WorldSession : NetSession, Kickable, OnlinePlayer, Combatant, Looter
 
     package uint instanceId_; // the dungeon instance it is in (0: none)
     package uint entryMap = uint.max; // where it was before going into an instance (uint.max: unknown)
+    package ulong selectedGo;         // ArcEmu's `m_GM_SelectedGO`: the game object `.gobject select` chose
     package Position entryPoint;      // ditto
 
     /// See `OnlinePlayer.instanceId`.

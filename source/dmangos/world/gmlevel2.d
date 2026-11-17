@@ -45,6 +45,130 @@ private:
         return true;
     }
 
+    /// ArcEmu's `GetSelectedGo`: the game object selected, if it is still on the map.
+    GameObject selectedGameObject()
+    {
+        return selectedGo ? cast(GameObject) map.findObject(selectedGo) : null;
+    }
+
+    bool handleGOSelect(string arg = null)
+    {
+        import std.math : sqrt;
+
+        const me = player.position;
+        float distanceTo(GameObject go)
+        {
+            const p = go.position;
+            return sqrt((p.x - me.x) ^^ 2 + (p.y - me.y) ^^ 2 + (p.z - me.z) ^^ 2);
+        }
+
+        GameObject[] seen; // ArcEmu's in-range set: the objects this player sees
+        foreach (o; map.objectsNear(me, context.config.visibilityDistance))
+            if (auto go = cast(GameObject) o)
+                if (map.seesObject(player.guid, go.guid))
+                    seen ~= go;
+        GameObject chosen;
+        if (arg.length && arg[0] == '1')
+        {
+            // The one after the selected (or the first): `.gobject select 1` steps through them.
+            auto current = selectedGameObject();
+            bool next = current is null;
+            foreach (go; seen ~ seen)
+            {
+                if (next)
+                {
+                    chosen = go;
+                    break;
+                }
+                if (go is current)
+                    next = true;
+            }
+        }
+        if (chosen is null)
+        {
+            float closest = 9999.0f;
+            foreach (go; seen)
+                if (distanceTo(go) < closest)
+                {
+                    closest = distanceTo(go);
+                    chosen = go;
+                }
+        }
+        if (chosen is null)
+        {
+            redSystemMessage("No inrange GameObject found.");
+            return true;
+        }
+        selectedGo = chosen.guid;
+        greenSystemMessage(format!"Selected GameObject [ %s ] which is %.3f meters away from you."(chosen.template_.name,
+            distanceTo(chosen)));
+        return true;
+    }
+
+    bool handleGOInfo()
+    {
+        import std.math : sqrt;
+        import dmangos.world.gameobject : GameObjectType;
+
+        auto go = selectedGameObject();
+        if (go is null)
+        {
+            redSystemMessage("No selected GameObject...");
+            return true;
+        }
+        const v = &go.values;
+        systemMessage(format!"%s Informations:"(MSG_COLOR_SUBWHITE));
+        systemMessage(format!"%s Entry:%s%u"(MSG_COLOR_GREEN, MSG_COLOR_LIGHTBLUE, go.spawn.entry));
+        systemMessage(format!"%s Model:%s%u"(MSG_COLOR_GREEN, MSG_COLOR_LIGHTBLUE, v.get!GAMEOBJECT_DISPLAYID));
+        systemMessage(format!"%s State:%s%u"(MSG_COLOR_GREEN, MSG_COLOR_LIGHTBLUE, v.get!GAMEOBJECT_STATE));
+        systemMessage(format!"%s flags:%s%u"(MSG_COLOR_GREEN, MSG_COLOR_LIGHTBLUE, v.get!GAMEOBJECT_FLAGS));
+        systemMessage(format!"%s dynflags:%s%u"(MSG_COLOR_GREEN, MSG_COLOR_LIGHTBLUE, v.get!GAMEOBJECT_DYN_FLAGS));
+        systemMessage(format!"%s faction:%s%u"(MSG_COLOR_GREEN, MSG_COLOR_LIGHTBLUE, v.get!GAMEOBJECT_FACTION));
+        static immutable string[] typeNames = ["Door", "Button", "Quest Giver", "Chest", "Binder", "Generic", "Trap",
+            "Chair", "Spell Focus", "Text", "Goober", "Transport", "Area Damage", "Camera", "Map Object",
+            "Mo Transport", "Duel Arbiter", "Fishing Node", "Ritual", "Mailbox", "Auction House", "Guard Post",
+            "Spell Caster", "Meeting Stone", "Flag Stand", "Fishing Hole", "Flag Drop"];
+        const type = v.get!GAMEOBJECT_TYPE_ID;
+        systemMessage(format!"%s Type:%s%u -- %s"(MSG_COLOR_GREEN, MSG_COLOR_LIGHTBLUE, type,
+            type < typeNames.length ? typeNames[type] : "Unknown."));
+        const p = go.position, me = player.position;
+        systemMessage(format!"%s Distance:%s%f"(MSG_COLOR_GREEN, MSG_COLOR_LIGHTBLUE,
+            sqrt((p.x - me.x) ^^ 2 + (p.y - me.y) ^^ 2 + (p.z - me.z) ^^ 2)));
+        systemMessage(format!"%s Name:%s%s"(MSG_COLOR_GREEN, MSG_COLOR_LIGHTBLUE, go.template_.name));
+        systemMessage(format!"%s Size:%s%s"(MSG_COLOR_GREEN, MSG_COLOR_LIGHTBLUE, v.get!OBJECT_FIELD_SCALE_X));
+        systemMessage(format!"%s Rotation X:%s%f"(MSG_COLOR_GREEN, MSG_COLOR_LIGHTBLUE, v.get!GAMEOBJECT_ROTATION(0)));
+        systemMessage(format!"%s Rotation Y:%s%f"(MSG_COLOR_GREEN, MSG_COLOR_LIGHTBLUE, v.get!GAMEOBJECT_ROTATION(1)));
+        systemMessage(format!"%s Rotation O1:%s%f"(MSG_COLOR_GREEN, MSG_COLOR_LIGHTBLUE, v.get!GAMEOBJECT_ROTATION(2)));
+        systemMessage(format!"%s Rotation O2:%s%f"(MSG_COLOR_GREEN, MSG_COLOR_LIGHTBLUE, v.get!GAMEOBJECT_ROTATION(3)));
+        return true;
+    }
+
+    bool handleGOActivate()
+    {
+        auto go = selectedGameObject();
+        if (go is null)
+        {
+            redSystemMessage("No selected GameObject...");
+            return true;
+        }
+        auto v = &go.values;
+        if (v.get!GAMEOBJECT_STATE == 1)
+        {
+            v.set!GAMEOBJECT_STATE(0u);
+            v.set!GAMEOBJECT_FLAGS(v.get!GAMEOBJECT_FLAGS - 1);
+            blueSystemMessage("Gameobject closed.");
+        }
+        else
+        {
+            v.set!GAMEOBJECT_STATE(1u);
+            v.set!GAMEOBJECT_FLAGS(v.get!GAMEOBJECT_FLAGS + 1);
+            blueSystemMessage("Gameobject opened.");
+        }
+        map.flushGameObject(go);
+        gmLog(format!"opened/closed gameobject %s, entry %u"(go.template_.name, go.spawn.entry));
+        return true;
+    }
+
     bool handleNpcComeCommand()
     {
         auto creature = getSelectedCreature(true);
@@ -552,4 +676,42 @@ unittest
     assert(walk !is null && !keeper.spline.finalized, "walking to the GM");
     gm.say(".npc return");
     assert(cast(PointMovement) keeper.generator !is null, "and back");
+}
+
+/// `.gobject select` the nearest game object, `.gobject info` on it, `.gobject activate` it.
+unittest
+{
+    import std.algorithm.searching : canFind, startsWith;
+    import dmangos.auth.accounts : AccountLevel;
+    import dmangos.world.commands : MSG_COLOR_GREEN, MSG_COLOR_LIGHTBLUE, MSG_COLOR_LIGHTRED;
+    import dmangos.world.gameobject : GameObject, GameObjectSpawn, GameObjectTemplate, GameObjectType;
+    import dmangos.world.movement : Position;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+    import dmangos.world.updatefields;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto gm = loggedIn(context, db, 7, "Varian", Position(-8949.95f, -132.49f, 83.53f), AccountLevel.administrator);
+    gm.read();
+    gm.say(".gobject info");
+    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTRED ~ "No selected GameObject...|r"]);
+
+    GameObjectTemplate door = {entry: 9001, type: GameObjectType.door, displayId: 1, name: "Door"};
+    context.data.gameObjectTemplates[9001] = door;
+    context.data.gameObjectSpawns ~= GameObjectSpawn(90001, 9001, 0, -8949, -131, 83.53f);
+    auto go = context.makeGameObject(&context.data.gameObjectSpawns[$ - 1]);
+    context.map(0).addObject(go);
+    gm.read();
+
+    gm.say(".gobject select");
+    assert(systemMessages(gm.read())[0].startsWith(MSG_COLOR_GREEN ~ "Selected GameObject [ Door ] which is 1."));
+    gm.say(".gobject info");
+    const info = systemMessages(gm.read());
+    assert(info.canFind(MSG_COLOR_GREEN ~ " Entry:" ~ MSG_COLOR_LIGHTBLUE ~ "9001"));
+    assert(info.canFind(MSG_COLOR_GREEN ~ " Type:" ~ MSG_COLOR_LIGHTBLUE ~ "0 -- Door"));
+    gm.say(".gobject activate");
+    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTBLUE ~ "Gameobject closed.|r"] && go.values.get!GAMEOBJECT_STATE == 0);
+    gm.say(".gobject activate");
+    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTBLUE ~ "Gameobject opened.|r"] && go.values.get!GAMEOBJECT_STATE == 1);
 }
