@@ -9,7 +9,9 @@
  *   three walks in a row, then waits 3 to 10 seconds.
  * - `WaypointMovement` (type 2): walks its `creature_movement` path (or its entry's
  *   `creature_movement_template` path) round and round, waiting where a point says; type 4 walks it
- *   back and forth. Paths are sent a few points at a time, at least six seconds' worth.
+ *   back and forth. Paths are sent a few points at a time, at least six seconds' worth. A script
+ *   can pause it.
+ * - `PointMovement`: a walk to one point a script asked for, then back to the movement before.
  *
  * A point's script (`ScriptId`) runs when the creature gets there. What is not here yet: AI being
  * told of arrivals, scripts pausing the path or changing it, formations,
@@ -37,6 +39,7 @@ enum MotionType : uint
     waypoint = 2,
     path = 3,
     linearWaypoint = 4,
+    point = 8,
 }
 
 /// `WaypointNode`: a point of a path.
@@ -264,6 +267,8 @@ final class WaypointMovement : MovementGenerator
         size_t[] nodeIndexes; // spline points that are path points, to arrive at on the way
     }
 
+    bool paused; /// `SCRIPT_COMMAND_PAUSE_WAYPOINTS`: stands where it is until resumed
+
     /// `LoadPath`: a lone point without a wait waits five seconds.
     this(const(WaypointNode)[] path, bool linear)
     {
@@ -319,6 +324,15 @@ final class WaypointMovement : MovementGenerator
     {
         if (path.length == 0)
             return;
+        if (paused)
+        {
+            if (!creature.spline.finalized)
+            {
+                interruptMoving(creature, world);
+                nextMoveTime = 1; // goes on to its point when resumed
+            }
+            return;
+        }
         if (nextMoveTime > 0)
         {
             if (!creature.spline.finalized)
@@ -442,6 +456,54 @@ private:
             pathDuration -= preSendTime;
         if (path.length == 1)
             lastReached = 0;
+    }
+}
+
+/**
+ * `PointMovementGenerator` (`MotionMaster::MovePoint`): a walk (or run) to one point, facing there as
+ * told; then the movement it had before goes on, and `onArrived` is told.
+ */
+final class PointMovement : MovementGenerator
+{
+    private Vector3 destination;
+    private float facing;
+    private bool walk;
+    package MovementGenerator after; // what it goes back to
+    private bool launched;
+    void delegate(Creature creature) onArrived; /// told once there
+
+    ///
+    this(Vector3 destination, float facing, bool walk, MovementGenerator after)
+    {
+        this.destination = destination;
+        this.facing = facing;
+        this.walk = walk;
+        this.after = after;
+    }
+
+    override @property MotionType type() const
+    {
+        return MotionType.point;
+    }
+
+    override void initialize(Creature creature, MotionWorld world)
+    {
+        const at = creature.spline.finalized ? creature.position : creature.spline.position;
+        launch(creature, world, [Vector3(at.x, at.y, at.z), destination], walk, facing);
+        launched = true;
+    }
+
+    override void update(Creature creature, MotionWorld world, int diff)
+    {
+        if (!launched)
+            return initialize(creature, world);
+        if (!creature.spline.finalized)
+            return;
+        // There: back to what it did before (from where it stands now).
+        creature.generator = after is null ? new IdleMovement : after;
+        creature.generator.initialize(creature, world);
+        if (onArrived !is null)
+            onArrived(creature);
     }
 }
 

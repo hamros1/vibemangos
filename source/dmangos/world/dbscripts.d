@@ -16,7 +16,9 @@
  * object, summoning a creature, taking an aura off, casting a spell, despawning, a faction, models
  * and mounts, stand states, NPC flags, unit and other flags, facing someone, stopping the script
  * when a buddy is (or is not) near, and starting a relay script (or one of a group). The others
- * (moving, doors, pausing waypoints, AI events) are skipped; `dmangos.log` says which when it traces.
+ * (doors, AI events, paths by id) are skipped; `dmangos.log` says which when it traces. Moving: walking
+ * to a point (or back to the spawn point, or running), turning, teleporting, a movement type
+ * (standing, wandering, its path), pausing and resuming its path.
  */
 module dmangos.world.dbscripts;
 
@@ -60,10 +62,12 @@ enum ScriptCommand : uint
     setFaction = 22,
     morphToEntryOrModel = 23,
     mountToEntryOrModel = 24,
+    movement = 20,
     standState = 28,
     modifyNpcFlags = 29,
     tempSpawnCreature = 10,
     terminateScript = 31,
+    pauseWaypoints = 32,
     setFacing = 36,
     startRelayScript = 45,
 }
@@ -485,6 +489,63 @@ mixin template DbScriptRunner()
         return null;
     }
 
+    /**
+     * `SCRIPT_COMMAND_MOVE_TO`: walks to the step's point (its relay script once there), or back to
+     * its spawn point; turns where it stands when the point is none; with the additional flag, is
+     * there at once.
+     */
+    private void scriptMoveTo(const ref DbScriptStep step, Map map, Creature creature, ScriptThing target)
+    {
+        import dmangos.vmap.math : Vector3;
+        import dmangos.world.motion : launch, PointMovement, stopMoving;
+        import dmangos.world.spline : MoveSpline, monsterStop;
+        import dmangos.world.opcodes : Opcode;
+
+        const here = creature.spline.finalized ? creature.position : creature.spline.position;
+        Vector3 to = Vector3(step.x, step.y, step.z);
+        float facing = step.o;
+        if (step.dataint[0] == 1 || step.dataint[0] == 2)
+        {
+            const s = creature.spawn;
+            to = Vector3(s.x, s.y, s.z);
+            facing = s.orientation;
+        }
+        else if ((to.x == 0 && to.y == 0 && to.z == 0)
+            || distanceSq(here, Position(to.x, to.y, to.z)) < 0.01f * 0.01f)
+        {
+            // Just turn round.
+            if (creature.spline.finalized)
+                launch(creature, map, [Vector3(here.x, here.y, here.z), Vector3(here.x, here.y, here.z)], true, step.o);
+            return;
+        }
+        if (step.dataFlags & ScriptFlag.commandAdditional)
+        {
+            // `NearTeleportTo`
+            stopMoving(creature, map);
+            creature.movement.position = Position(to.x, to.y, to.z, step.o != 0 ? step.o : here.orientation);
+            map.objectRelocated(creature);
+            map.sendToObservers(creature.guid, Opcode.SMSG_MONSTER_MOVE,
+                monsterStop(creature.guid, creature.position, creature.spline.id));
+            return;
+        }
+        // Walking, unless told to run (`FORCED_MOVEMENT_RUN`, or a travel speed: a charge).
+        const walk = step.datalong3 != 2 && step.datalong2 == 0;
+        auto previous = creature.generator;
+        if (auto point = cast(PointMovement) previous)
+            previous = point.after;
+        auto move = new PointMovement(to, facing == 0 ? float.nan : facing, walk, previous);
+        if (step.datalong)
+        {
+            const relay = step.datalong, targetGuid = target.guid;
+            move.onArrived = (Creature c) {
+                startScript(DbScriptType.relay, relay, map, c.guid, targetGuid);
+            };
+        }
+        creature.generator = move;
+        move.initialize(creature, map);
+        map.wake(creature.guid);
+    }
+
     private long[ulong] scriptedGameObjects; // spawned by a script: guid -> when it goes (Unix time)
 
     /**
@@ -707,6 +768,51 @@ mixin template DbScriptRunner()
             map.flushCreature(creature);
             break;
         }
+        case ScriptCommand.moveTo:
+            if (creature !is null)
+                scriptMoveTo(step, map, creature, target);
+            break;
+        case ScriptCommand.movement:
+        {
+            // `MovementType`: 0 standing, 1 wandering (so far, or as its spawn says), 2 its path.
+            import dmangos.world.motion : IdleMovement, MotionType, WanderMovement, WaypointMovement;
+            import dmangos.vmap.math : Vector3;
+
+            if (creature is null)
+                break;
+            const s = creature.spawn;
+            switch (step.datalong)
+            {
+            case MotionType.idle:
+                creature.generator = new IdleMovement;
+                break;
+            case MotionType.random:
+                creature.generator = new WanderMovement(Vector3(s.x, s.y, s.z),
+                    step.datalong2 ? float(step.datalong2) : s.wanderDistance, false);
+                break;
+            case MotionType.waypoint:
+                const path = data.waypoints.defaultPath(s.entry, s.guid);
+                if (path.length == 0)
+                    return false;
+                creature.generator = new WaypointMovement(path, false);
+                break;
+            default:
+                return false;
+            }
+            creature.generator.initialize(creature, map);
+            map.wake(creature.guid);
+            break;
+        }
+        case ScriptCommand.pauseWaypoints:
+            import dmangos.world.motion : WaypointMovement;
+
+            if (creature !is null)
+                if (auto path = cast(WaypointMovement) creature.generator)
+                {
+                    path.paused = step.datalong != 0;
+                    map.wake(creature.guid);
+                }
+            break;
         case ScriptCommand.standState:
             if (creature !is null && creature.ai !is null)
                 creature.ai.scriptStandState(step.datalong);
@@ -863,8 +969,29 @@ unittest
     context.updateScripts(1000);
     assert(keeper.values.get!UNIT_FIELD_DISPLAYID == own);
 
-    // A summon (ACTION_T_SPAWN for 3 seconds): beside it, and gone after its time out of combat, for good.
+    // A walk to a point 4 yards off, then a relay script there (an emote), and back to standing.
     import core.time : msecs;
+    import dmangos.world.motion : PointMovement;
+
+    enum uint walk = 503, arrive = 504;
+    const from = keeper.position;
+    DbScriptStep go = {id: walk, command: ScriptCommand.moveTo, datalong: arrive, x: from.x + 4, y: from.y, z: from.z};
+    context.data.dbScripts.add(DbScriptType.relay, go);
+    context.data.dbScripts.add(DbScriptType.relay, DbScriptStep(arrive, 0, 0, ScriptCommand.emote, 3));
+    const was = keeper.generator;
+    context.startScript(DbScriptType.relay, walk, map, keeper.guid, 0);
+    context.updateScripts(0);
+    assert(cast(PointMovement) keeper.generator !is null && !keeper.spline.finalized, "walking");
+    anduin.read();
+    foreach (_; 0 .. 20)
+        map.update(250.msecs);
+    assert(keeper.generator is was, "back to what it did");
+    const there = keeper.position;
+    assert((there.x - from.x - 4) ^^ 2 + (there.y - from.y) ^^ 2 < 0.01f);
+    context.updateScripts(0);
+    assert(opcodesOf(anduin.read()).canFind(Opcode.SMSG_EMOTE), "its relay script, there");
+
+    // A summon (ACTION_T_SPAWN for 3 seconds): beside it, and gone after its time out of combat, for good.
     import dmangos.world.creature : TempSpawnType;
 
     EventAiEvent called = {id: 2, type: EventType.receiveEmote, chance: 100, params: [wave + 1, 0, 0, 0, 0, 0]};

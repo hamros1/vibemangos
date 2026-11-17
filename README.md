@@ -267,8 +267,10 @@ What works now:
     group), emotes, a quest's place explored (or failed when too far), kill credit, spawning a game
     object for a while, summoning a creature, taking an aura off, casting a spell, despawning, a
     faction, models and mounts, stand states, NPC flags, other flags, facing someone, and stopping
-    the script when a creature is (or is not) near. Not yet: moving, doors, pausing waypoints,
-    death, event and spell scripts.
+    the script when a creature is (or is not) near, and moving: walking to a point (a relay script
+    once there) or back to its spawn point, turning, teleporting, a movement type (standing,
+    wandering, its path), pausing and resuming its path. Not yet: doors, paths by id, death, event
+    and spell scripts.
   * **Creature scripts** (CMaNGOS's EventAI, `creature_ai_scripts`, for each creature entry or
     spawn): their events (timers in and out of combat, health, mana and the victim's health between
     two percentages, the victim within a range or casting, aggro, a kill, death, evading, spawning,
