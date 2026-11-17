@@ -29,7 +29,7 @@ import dmangos.world.opcodes : ChatType, Language, Opcode;
 import dmangos.world.creatureai : CombatWorld, CreatureLore;
 import dmangos.world.npcdata : BroadcastText;
 import dmangos.world.spells : SpellInfo;
-import dmangos.script.api : EntityRef;
+import dmangos.script.api : EntityRef, GameObjectHost, Waypoint;
 import dmangos.script.registry : ScriptKind, ScriptRuntime;
 import dmangos.scripts : scriptModules;
 import dmangos.world.instancescripting : InstanceScript;
@@ -980,6 +980,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     {
         if (auto creature = cast(Creature) object)
             creature.ai.releaseBehaviour();
+        else if (auto go = cast(GameObject) object)
+            scripts.destroy(go.behaviour);
     }
 
     /// The script of dungeon copy `id`; null if it has none here.
@@ -1011,10 +1013,20 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             else
                 ++unserved;
         }
+        foreach (name; data.gameObjectScriptNames)
+        {
+            used["gameObject:" ~ name] = true;
+            if (scripts.serves(ScriptKind.gameObject, name))
+                ++served;
+            else
+                ++unserved;
+        }
         info!"scripts: %s script names served, %s in the world database not (yet): those run as before"(served, unserved);
-        foreach (k; [ScriptKind.creature, ScriptKind.instance])
+        import std.conv : to;
+
+        foreach (k; [ScriptKind.creature, ScriptKind.instance, ScriptKind.gameObject])
             foreach (name; scripts.names(k))
-                if ((k == ScriptKind.creature ? "creature:" : "instance:") ~ name !in used)
+                if (k.to!string ~ ":" ~ name !in used)
                     warning!"scripts: no %s row names script %s"(k, name);
     }
 
@@ -1808,6 +1820,67 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return VirtualItem.init;
     }
 
+    /// See `CreatureLore.escortPath`.
+    const(Waypoint)[] escortPath(uint entry)
+    {
+        return data.escortPaths.get(entry, null);
+    }
+
+    /// `GameObject::Use`'s script part (`sScriptDevAIMgr.OnGameObjectUse`): the object's script hears
+    /// of `player` using it; true if it handled the use (the usual use does not follow).
+    bool gameObjectUsed(GameObject go, Map map, ulong player)
+    {
+        import dmangos.script.api : GameObjectContext, ObjectUsed;
+
+        if (!go.behaviour)
+            return false;
+        goHost.go = go;
+        goHost.map = map;
+        auto context = GameObjectContext(goHost);
+        scripts.raise(go.behaviour, context, ObjectUsed(EntityRef(player)));
+        goHost.go = null;
+        goHost.map = null;
+        return context.consumed;
+    }
+
+    private final class GoHost : GameObjectHost
+    {
+        GameObject go;
+        Map map;
+
+        EntityRef hostSelf()
+        {
+            return EntityRef(go.guid);
+        }
+
+        void hostDoor(bool open)
+        {
+            go.setDoorOpen(open);
+            map.flushGameObject(go);
+        }
+
+        void hostSignalDungeon(uint id, int value)
+        {
+            if (go.instanceId)
+                signalDungeon(go.instanceId, EntityRef(go.guid), id, value);
+        }
+
+        void hostLog(string text)
+        {
+            import dmangos.log : info;
+
+            info!"script %s (%s %s): %s"(scripts.nameOf(go.behaviour), go.template_.name, go.spawn.guid, text);
+        }
+    }
+
+    private GoHost goHost_;
+    private @property GoHost goHost()
+    {
+        if (goHost_ is null)
+            goHost_ = new GoHost;
+        return goHost_;
+    }
+
     /// See `CreatureLore.signalDungeon`.
     void signalDungeon(uint instance, EntityRef from, uint id, int value)
     {
@@ -1862,6 +1935,12 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 auto session = cast(WorldSession) onlinePlayer(viewer);
                 return session !is null && session.gameObjectActivatesForQuest(go);
             };
+        if (const name = spawn.entry in data.gameObjectScriptNames)
+            if (scripts !is null && scripts.serves(ScriptKind.gameObject, *name))
+            {
+                go.scripts = scripts;
+                go.behaviour = scripts.create(ScriptKind.gameObject, *name);
+            }
         return go;
     }
 

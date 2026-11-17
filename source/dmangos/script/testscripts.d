@@ -74,7 +74,8 @@ final class FakeCreature : CreatureHost
     EntityRef hostSelf() { return EntityRef(0xF130_0000_0100_0001); }
     EntityRef hostVictim() { return EntityRef(7); }
     uint hostHealthPercent() { return 100; }
-    bool hostInCombat() { return true; }
+    bool fighting;
+    bool hostInCombat() { return fighting; }
     Location hostLocation() { return Location.init; }
     uint hostHealthPercentOf(EntityRef) { return uint.max; }
     ActionResult hostCast(uint spell, EntityRef, bool) { casts ~= spell; return ActionResult.ok; }
@@ -89,6 +90,23 @@ final class FakeCreature : CreatureHost
     ActionResult hostSignal(EntityRef, uint, int) { return ActionResult.notHere; }
     void hostSignalDungeon(uint, int) {}
     void hostLog(string) {}
+    Location[] moves;
+    bool walking;
+    float distance = 5;
+    string[] quests;
+    void hostMoveTo(Location at, uint, bool) { moves ~= at; walking = true; }
+    bool hostMoving() { return walking; }
+    bool hostWaypoint(size_t i, out Waypoint w) { if (i >= 3) return false; w = Waypoint(Location(i, 0, 0), i == 1 ? 2000 : 0); return true; }
+    size_t hostWaypointCount() { return 3; }
+    float hostDistanceTo(EntityRef) { return distance; }
+    bool hostAlive(EntityRef) { return true; }
+    void hostQuestEvent(EntityRef, uint quest) { quests ~= "event"; }
+    void hostFailQuest(EntityRef, uint quest) { quests ~= "failed"; }
+    void hostNpcFlags(uint) {}
+    void hostRestoreNpcFlags() {}
+    void hostGossipMenu(EntityRef, uint) {}
+    void hostCloseGossip(EntityRef) {}
+    uint hostRandom(uint) { return 0; }
 }
 
 unittest
@@ -173,4 +191,76 @@ unittest
         cast(void) runtime.busy(h);
     }
     assert(GC.allocatedInCurrentThread == before, "dispatch allocated");
+}
+
+/// An escorted creature: walks its path with its player, waits where the path says, fails if left.
+@creature("npc_escorted")
+struct Escorted
+{
+    Escort escort;
+    uint[] reachedPoints;
+
+    void on(ref CreatureContext me, const ref QuestAccepted e)
+    {
+        escort.start(me, e.player, e.quest);
+    }
+
+    void on(ref CreatureContext me, const ref MovementDone e)
+    {
+        const point = escort.reached(me, e);
+        if (point != uint.max)
+            reachedPoints ~= point;
+        if (point == 2)
+            me.questEvent(escort.player, escort.quest);
+    }
+}
+
+unittest
+{
+    import dmangos.bytes : ByteReader, ByteWriter;
+    import dmangos.script.state : loadScript;
+
+    alias self = dmangos.script.testscripts;
+    auto runtime = ScriptRuntime.of!self();
+    auto host = new FakeCreature;
+    auto me = CreatureContext(host);
+    auto h = runtime.create(ScriptKind.creature, "npc_escorted");
+    Escorted state()
+    {
+        ByteWriter w;
+        runtime.save(h, w);
+        Escorted e;
+        auto r = ByteReader(w.data);
+        assert(loadScript(e, r));
+        return e;
+    }
+
+    runtime.raise(h, me, QuestAccepted(EntityRef(7), 155));
+    assert(host.moves.length == 1 && runtime.busy(h), "off to point 0");
+    host.walking = false;
+    runtime.raise(h, me, MovementDone(0));
+    runtime.tick(h, me, 100); // no wait at 0: on to 1
+    assert(host.moves.length == 2 && host.moves[1].x == 1);
+    host.walking = false;
+    runtime.raise(h, me, MovementDone(1));
+    runtime.tick(h, me, 1500);
+    assert(host.moves.length == 2, "waits two seconds at 1");
+    runtime.tick(h, me, 600);
+    assert(host.moves.length == 3);
+    // Moved to another node without its movement: it is sent on again.
+    host.walking = false;
+    runtime.tick(h, me, 100);
+    assert(host.moves.length == 4 && host.moves[3].x == 2);
+    host.walking = false;
+    runtime.raise(h, me, MovementDone(2));
+    runtime.tick(h, me, 100);
+    assert(state().reachedPoints == [0, 1, 2] && state().escort.finished && host.quests == ["event"]);
+    assert(!runtime.busy(h), "done");
+
+    // Another escort, left behind: it fails.
+    auto h2 = runtime.create(ScriptKind.creature, "npc_escorted");
+    runtime.raise(h2, me, QuestAccepted(EntityRef(7), 155));
+    host.distance = 80;
+    runtime.tick(h2, me, 100);
+    assert(host.quests == ["event", "failed"] && !runtime.busy(h2));
 }

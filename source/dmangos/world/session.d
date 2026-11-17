@@ -509,6 +509,33 @@ final class WorldSession : NetSession, Kickable, OnlinePlayer, Combatant, Looter
     }
 
     /// See `Combatant`.
+    void questFailedBy(uint quest)
+    {
+        if (player !is null)
+            failQuest(quest);
+    }
+
+    /// See `Combatant`.
+    void showGossip(ulong npc, uint menu)
+    {
+        if (player is null)
+            return;
+        auto creature = context.npcFor(map.findObject(npc));
+        if (creature is null)
+            return;
+        prepareGossipMenu(creature, menu);
+        questMenu = null;
+        sendPreparedGossip(creature);
+    }
+
+    /// See `Combatant`.
+    void closeGossip()
+    {
+        if (player !is null)
+            deliver(Opcode.SMSG_GOSSIP_COMPLETE, null);
+    }
+
+    /// See `Combatant`.
     void killCreditFrom(uint entry, ulong creature)
     {
         if (player !is null)

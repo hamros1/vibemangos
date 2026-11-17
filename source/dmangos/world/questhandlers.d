@@ -664,6 +664,13 @@ private:
 
             context.startScript(DbScriptType.questStart, quest.startScript, map, giver.guid, player.guid);
         }
+        // The giver's script (`QuestAccept`): an escort sets off, say.
+        if (auto creature = cast(Creature) map.findObject(giver.guid))
+        {
+            import dmangos.script.api : EntityRef, QuestAccepted;
+
+            creature.ai.raiseFrom(map, QuestAccepted(EntityRef(player.guid), id));
+        }
         if (auto divider = cast(WorldSession) context.onlinePlayer(questDivider))
             divider.pushToPartyResponse(player.guid, QuestShare.accepted);
         questDivider = 0;
@@ -837,6 +844,12 @@ private:
             import dmangos.world.dbscripts : DbScriptType;
 
             context.startScript(DbScriptType.questEnd, quest.completeScript, map, guid, player.guid);
+        }
+        if (auto creature = cast(Creature) map.findObject(guid))
+        {
+            import dmangos.script.api : EntityRef, QuestRewarded;
+
+            creature.ai.raiseFrom(map, QuestRewarded(EntityRef(player.guid), id));
         }
         if (quest.nextQuestInChain)
             if (const next = context.data.quests.quest(quest.nextQuestInChain))

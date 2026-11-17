@@ -1,6 +1,7 @@
 /**
  * The Deadmines (map 36): its doors, opened as the bosses guarding them fall and kept open for the
- * copy's life, and Mr. Smite, who changes weapons twice as the fight goes on.
+ * copy's life; the Defias Cannon, which blows the Iron Clad Door open and raises the alarm; and
+ * Mr. Smite, who sounds that alarm and changes weapons twice as his fight goes on.
  */
 module dmangos.scripts.deadmines;
 
@@ -29,6 +30,7 @@ struct Deadmines
     bool[3] guardianDead;              /// Rhahk'Zor, Sneed, Gilnid
     bool ironCladOpen;
     @transient EntityRef[4] doors;     /// as they load (their guids are their spawns')
+    @transient EntityRef smite;        /// Mr. Smite, once loaded
 
     private static immutable uint[3] guardians = [rhahkZor, sneed, gilnid];
     private static immutable uint[4] doorEntries = [factoryDoor, mastRoomDoor, foundryDoor, ironCladDoor];
@@ -42,6 +44,12 @@ struct Deadmines
                 if (open(i))
                     copy.door(e.object, true);
             }
+    }
+
+    void on(ref InstanceContext copy, const ref CreatureLoaded e)
+    {
+        if (e.creature.entry == mrSmite)
+            smite = e.creature;
     }
 
     void on(ref InstanceContext copy, const ref CreatureDied e)
@@ -61,8 +69,11 @@ struct Deadmines
         if (e.id == Signals.cannonFired && !ironCladOpen)
         {
             ironCladOpen = true;
+            copy.log("the cannon blew the Iron Clad Door open");
             if (doors[3])
                 copy.door(doors[3], true);
+            if (smite)
+                copy.signal(smite, MrSmite.Signals.alarm);
         }
     }
 
@@ -79,7 +90,8 @@ struct Deadmines
 @creature("boss_mr_smite")
 struct MrSmite
 {
-    enum : int { sayPhaseTwo = -1036002, sayPhaseThree = -1036003 }
+    enum Signals : uint { alarm = 1 }
+    enum : int { sayAlarm = -1036001, sayPhaseTwo = -1036002, sayPhaseThree = -1036003 }
     enum : uint { smiteStomp = 6432, smiteSlam = 6435 }
     enum : uint { reaver = 5196, mightyHammer = 7230 }
 
@@ -140,5 +152,26 @@ struct MrSmite
     void on(ref CreatureContext me, const ref Died e)
     {
         steps.clear();
+    }
+
+    void on(ref CreatureContext me, const ref Signal e)
+    {
+        if (e.id == Signals.alarm)
+            me.say(sayAlarm); // the whole ship hears it
+    }
+}
+
+/// The Defias Cannon: fired, it blows the Iron Clad Door open (its dungeon script opens it).
+@gameObject("go_defias_cannon")
+struct DefiasCannon
+{
+    bool fired;
+
+    void on(ref GameObjectContext cannon, const ref ObjectUsed e)
+    {
+        if (fired)
+            return;
+        fired = true;
+        cannon.signalDungeon(Deadmines.Signals.cannonFired);
     }
 }

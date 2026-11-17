@@ -165,6 +165,14 @@ private:
         auto creature = interactableNpc(request.guid, 0);
         if (creature is null)
             return;
+        // Its script first (`GossipHello`): it may show its own menu.
+        if (auto scripted = cast(Creature) map.findObject(request.guid))
+        {
+            import dmangos.script.api : EntityRef, GossipHello;
+
+            if (scripted.ai.raiseFrom(map, GossipHello(EntityRef(player.guid))))
+                return;
+        }
         prepareGossipMenu(creature, creature.npcTemplate.gossipMenuId);
         // `PrepareGossipMenu`'s quests; without gossip of its own a quest giver shows them alone.
         enum uint gossipFlag = 0x1;
@@ -181,7 +189,16 @@ private:
     void handleGossipSelectOption(const ClientGossipSelectOption request)
     {
         if (auto creature = interactableNpc(request.guid, 0))
+        {
+            if (auto scripted = cast(Creature) map.findObject(request.guid))
+            {
+                import dmangos.script.api : EntityRef, GossipSelect;
+
+                if (scripted.ai.raiseFrom(map, GossipSelect(EntityRef(player.guid), gossipMenuId, request.option)))
+                    return;
+            }
             onGossipSelect(creature, request.option);
+        }
     }
 
     /// `Player::PrepareGossipMenu`

@@ -293,10 +293,15 @@ What works now:
     holds no pointers (cast, say a `script_texts` row, equip, stand, summon, signal another script,
     open a door); its timers are data (`Schedule`), so its whole state is saved: with the creature
     when it moves to another node, and in `instance.data` for a dungeon's script. Dispatch allocates
-    nothing. Written so far: the Deadmines (its doors open as their guardians fall, and stay open
-    after a restart) and Mr. Smite (a slam on a timer; at two thirds and one third of his health a
-    stomp, a line, kneeling to take up two axes, then a hammer). A creature whose `ScriptName` no
-    script serves yet runs its EventAI as before; the server logs how many names are served.
+    nothing. Game objects (`gameobject_template.ScriptName`) have scripts too, and creature scripts
+    hear of gossip, quests taken and rewarded, and the end of their own walks; an `Escort` component
+    walks a `script_waypoint` path with a player. Written so far: the Deadmines (its doors open as
+    their guardians fall and stay open after a restart; the Defias Cannon blows the Iron Clad Door
+    open and Mr. Smite raises the alarm), Mr. Smite (a slam on a timer; at two thirds and one third
+    of his health a stomp, a line, kneeling to take up two axes, then a hammer) and the Defias
+    Traitor's escort to Moonbrook ("The Defias Brotherhood": his lines on the way, the quest's event
+    at the hideout, the quest failed if he is left behind or killed). A creature whose `ScriptName`
+    no script serves yet runs its EventAI as before; the server logs how many names are served.
   * **Database scripts** (CMaNGOS's `dbscripts_on_*`): a quest's start and complete scripts, a
     gossip option's, a game object's when used (by its template and by its spawn), a waypoint's
     when a walking creature gets there (Northshire's peasants chop wood), a creature's when it is
@@ -603,8 +608,9 @@ source/dmangos/             code shared by every server
   net/                        select() event loop (server.d); compile-time packet dispatch (dispatch.d)
 source/dmangos/script/      the scripting framework (docs/SCRIPTING.md): api.d (handles, events, contexts,
                               host interfaces), registry.d (UDAs, compile-time discovery, generated dispatch,
-                              pools), schedule.d (timers as data), state.d (state saved by reflection)
-source/dmangos/scripts/     the gameplay scripts, one module per dungeon or area (deadmines.d)
+                              pools), schedule.d (timers as data), state.d (state saved by reflection),
+                              escort.d (the escort component)
+source/dmangos/scripts/     the gameplay scripts, one module per dungeon or area (deadmines.d, westfall.d)
 source/dmangos/auth/        the login server (realmd)
   main.d                      entry point: run the server, administer accounts
   protocol.d                  opcodes, result codes, every packet as a struct

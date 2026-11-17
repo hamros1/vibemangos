@@ -23,6 +23,7 @@ import dmangos.world.grid : cellKeyAt;
 import dmangos.world.motion : MotionType, WaypointNode, WaypointStore;
 import dmangos.world.loot : lootColumns, lootRow, LootStore, LootStores;
 import dmangos.world.npcdata : BroadcastText, NpcData;
+import dmangos.script.api : Location, Waypoint;
 import dmangos.world.quests : QuestData, QuestGreeting, questQuery, QuestRow;
 import dmangos.world.spells : SpellData;
 
@@ -339,6 +340,8 @@ final class WorldData
     EventAiData eventAi;                            /// `creature_ai_scripts`, by creature entry
     string[uint] creatureScriptNames;               /// `creature_template.ScriptName`, by entry (docs/SCRIPTING.md)
     string[uint] instanceScriptNames;               /// `instance_template.ScriptName`, by map
+    string[uint] gameObjectScriptNames;             /// `gameobject_template.ScriptName`, by entry
+    Waypoint[][uint] escortPaths;                   /// `script_waypoint` (path 0), by creature entry
     BroadcastText[int] scriptTexts;                 /// `script_texts`, by (negative) entry
     uint[int] scriptTextSounds;                     /// their sounds
     DbScriptData dbScripts;
@@ -601,6 +604,12 @@ final class WorldData
             creatureScriptNames[row.get!uint(0)] = row.get!string(1);
         foreach (row; world.query!"SELECT map, ScriptName FROM instance_template WHERE ScriptName <> ''"())
             instanceScriptNames[row.get!uint(0)] = row.get!string(1);
+        foreach (row; world.query!"SELECT entry, ScriptName FROM gameobject_template WHERE ScriptName <> ''"())
+            gameObjectScriptNames[row.get!uint(0)] = row.get!string(1);
+        foreach (row; world.query!("SELECT Entry, PositionX, PositionY, PositionZ, Orientation, WaitTime FROM script_waypoint "
+                ~ "WHERE PathId = 0 ORDER BY Entry, Point")())
+            escortPaths[row.get!uint(0)] ~= Waypoint(Location(row.get!float(1), row.get!float(2), row.get!float(3),
+                row.get!float(4)), row.get!uint(5));
         foreach (row; world.query!"SELECT entry, content_default, type, language, emote, sound FROM script_texts"())
         {
             BroadcastText text;

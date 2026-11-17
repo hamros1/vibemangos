@@ -141,6 +141,47 @@ struct Signal
     int value;
 }
 
+/// It arrived at the point of its `moveTo` numbered `point`.
+struct MovementDone
+{
+    uint point;
+}
+
+/// A player spoke to it (`GossipHello`). `CreatureContext.consume` keeps its usual menu from showing.
+struct GossipHello
+{
+    EntityRef player;
+}
+
+/// A player chose option `option` of gossip menu `menu` (`GossipSelect`); `consume` keeps the usual action.
+struct GossipSelect
+{
+    EntityRef player;
+    uint menu;
+    uint option;
+}
+
+/// A player took quest `quest` from it.
+struct QuestAccepted
+{
+    EntityRef player;
+    uint quest;
+}
+
+/// A player was rewarded for quest `quest` by it.
+struct QuestRewarded
+{
+    EntityRef player;
+    uint quest;
+}
+
+/// A point of a creature's escort path (`script_waypoint`).
+struct Waypoint
+{
+    Location at;
+    uint waitMs; /// how long it stays there
+}
+
 /// The core's side of a creature script's context (`CreatureAI` implements it).
 interface CreatureHost
 {
@@ -162,6 +203,19 @@ interface CreatureHost
     ActionResult hostSignal(EntityRef to, uint id, int value);
     void hostSignalDungeon(uint id, int value);
     void hostLog(string text);
+    void hostMoveTo(Location at, uint point, bool run);
+    bool hostMoving();
+    bool hostWaypoint(size_t index, out Waypoint point);
+    size_t hostWaypointCount();
+    float hostDistanceTo(EntityRef who);
+    bool hostAlive(EntityRef who);
+    void hostQuestEvent(EntityRef player, uint quest);
+    void hostFailQuest(EntityRef player, uint quest);
+    void hostNpcFlags(uint flags);
+    void hostRestoreNpcFlags();
+    void hostGossipMenu(EntityRef player, uint menu);
+    void hostCloseGossip(EntityRef player);
+    uint hostRandom(uint below);
 }
 
 /**
@@ -171,6 +225,7 @@ interface CreatureHost
 struct CreatureContext
 {
     private CreatureHost host;
+    private bool consumed_;
 
     @disable this(this);
 
@@ -247,6 +302,104 @@ struct CreatureContext
 
     /// A line in the server's log, naming the creature.
     void log(string text) { host.hostLog(text); }
+
+    /// Walks (runs) to `at` in a straight line; `MovementDone(point)` follows on arrival. A fight
+    /// interrupts it; once home from the fight it goes on there.
+    void moveTo(Location at, uint point, bool run = false) { host.hostMoveTo(at, point, run); }
+
+    /// Whether it is on its way somewhere (a `moveTo`, or a path of its own).
+    @property bool moving() { return host.hostMoving(); }
+
+    /// Point `index` of its escort path (`script_waypoint`); false past the end.
+    bool waypoint(size_t index, out Waypoint point) { return host.hostWaypoint(index, point); }
+
+    /// How many points its escort path has.
+    @property size_t waypointCount() { return host.hostWaypointCount(); }
+
+    /// Yards to another entity on its map (seen here, if another node simulates it); infinity if not.
+    float distanceTo(EntityRef who) { return host.hostDistanceTo(who); }
+
+    /// Whether a unit is alive (one not here counts as alive: nothing is known of it).
+    bool alive(EntityRef who) { return host.hostAlive(who); }
+
+    /// `AreaExploredOrEventHappens`: the event quest `quest` waits for happened for `player`.
+    void questEvent(EntityRef player, uint quest) { host.hostQuestEvent(player, quest); }
+
+    /// `FailQuest`: `player`'s quest under way fails.
+    void failQuest(EntityRef player, uint quest) { host.hostFailQuest(player, quest); }
+
+    /// Its NPC flags (gossip, quest giver, ...), until `restoreNpcFlags`.
+    void npcFlags(uint flags) { host.hostNpcFlags(flags); }
+
+    /// Its template's NPC flags again.
+    void restoreNpcFlags() { host.hostRestoreNpcFlags(); }
+
+    /// Shows `player` the `gossip_menu` `menu` from it.
+    void gossipMenu(EntityRef player, uint menu) { host.hostGossipMenu(player, menu); }
+
+    /// Closes `player`'s gossip window.
+    void closeGossip(EntityRef player) { host.hostCloseGossip(player); }
+
+    /// A random number below `below` (from the map's generator).
+    uint random(uint below) { return host.hostRandom(below); }
+
+    /// For `GossipHello` and `GossipSelect`: the script answered; the usual menu or action does not follow.
+    void consume() { consumed_ = true; }
+
+    /// Whether a handler called `consume`.
+    @property bool consumed() const { return consumed_; }
+}
+
+// ---------------------------------------------------------------------------
+// Game object scripts (`@gameObject`, bound by `gameobject_template.ScriptName`)
+// ---------------------------------------------------------------------------
+
+/// A player used it (`GOUse`). `GameObjectContext.consume` keeps the usual use from following.
+struct ObjectUsed
+{
+    EntityRef player;
+}
+
+/// The core's side of a game object script's context.
+interface GameObjectHost
+{
+    EntityRef hostSelf();
+    void hostDoor(bool open);
+    void hostSignalDungeon(uint id, int value);
+    void hostLog(string text);
+}
+
+/// A game object script's handle on its object, for the length of one handler.
+struct GameObjectContext
+{
+    private GameObjectHost host;
+    private bool consumed_;
+
+    @disable this(this);
+
+    /// The core makes one around its object.
+    this(GameObjectHost host) pure nothrow @nogc @safe
+    {
+        this.host = host;
+    }
+
+    /// The object itself.
+    @property EntityRef self() { return host.hostSelf(); }
+
+    /// Opens or closes it (a door, a goober), for good.
+    void open(bool open) { host.hostDoor(open); }
+
+    /// A `Signal` for its dungeon's script (nothing outside a dungeon).
+    void signalDungeon(uint id, int value = 0) { host.hostSignalDungeon(id, value); }
+
+    /// A line in the server's log, naming the object.
+    void log(string text) { host.hostLog(text); }
+
+    /// The script handled the use; the usual use does not follow.
+    void consume() { consumed_ = true; }
+
+    /// Whether a handler called `consume`.
+    @property bool consumed() const { return consumed_; }
 }
 
 // ---------------------------------------------------------------------------

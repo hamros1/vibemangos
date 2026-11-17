@@ -7,7 +7,8 @@ module dmangos.world.scripttests;
 
 version (unittest):
 
-import core.time : MonoTime, seconds;
+import core.time : MonoTime, msecs, seconds;
+import std.algorithm.searching : canFind;
 
 import dmangos.auth.accounts : AccountLevel;
 import dmangos.bytes : ByteReader, ByteWriter;
@@ -210,4 +211,115 @@ unittest
     hero.write(Opcode.CMSG_LOGOUT_REQUEST, null);
     assert(inside.find(guid) is null && inside.population == 0, "off the copy");
     context.update(MonoTime.currTime); // and its tick goes on
+}
+
+/// The Defias Cannon fired: the Iron Clad Door opens, and Mr. Smite raises the alarm.
+unittest
+{
+    import dmangos.scripts.deadmines : ironCladDoor, mrSmite;
+    import dmangos.world.npcdata : BroadcastText;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    enum uint cannonEntry = 16398;
+    const cannonAt = Position(-16, -385, 61), doorAt = Position(-10, -390, 61), smiteAt = Position(-20, -390, 61);
+    static struct Placed { uint entry, type; Position at; uint guid; }
+    foreach (p; [Placed(cannonEntry, 10, cannonAt, 90010), Placed(ironCladDoor, 0, doorAt, 90011)])
+    {
+        const entry = p.entry, type = p.type, at = p.at, guid = p.guid;
+        auto t = GameObjectTemplate.init;
+        t.entry = entry;
+        t.type = type;
+        t.displayId = 411;
+        t.name = entry == cannonEntry ? "Defias Cannon" : "Iron Clad Door";
+        context.data.gameObjectTemplates[entry] = t;
+        context.data.gameObjectSpawns ~= GameObjectSpawn(guid, entry, mapDeadmines, at.x, at.y, at.z);
+        context.data.gameObjectCells[mapDeadmines][cellKeyAt(at.x, at.y)] ~= context.data.gameObjectSpawns.length - 1;
+    }
+    context.data.gameObjectScriptNames[cannonEntry] = "go_defias_cannon";
+    auto smite = context.data.creatureTemplates[creatureInnkeeper];
+    smite.entry = mrSmite;
+    context.data.creatureTemplates[mrSmite] = smite;
+    context.data.creatureScriptNames[mrSmite] = "boss_mr_smite";
+    context.data.creatureSpawns ~= CreatureSpawn(90012, mrSmite, mapDeadmines, smiteAt.x, smiteAt.y, smiteAt.z);
+    context.data.creatureCells[mapDeadmines][cellKeyAt(smiteAt.x, smiteAt.y)] ~= context.data.creatureSpawns.length - 1;
+    context.data.instanceScriptNames[mapDeadmines] = "instance_deadmines";
+    BroadcastText alarm;
+    alarm.maleText = "We're under attack!";
+    alarm.chatType = 1;
+    context.data.scriptTexts[-1036001] = alarm;
+
+    const outside = Position(deadminesEntrance[0], deadminesEntrance[1], deadminesEntrance[2]);
+    auto hero = loggedIn(context, db, 7, "Varian", outside, AccountLevel.administrator, raceHuman, mapEasternKingdoms, 60);
+    hero.say(".worldport 36 -16 -383 61");
+    hero.write(Opcode.MSG_MOVE_WORLDPORT_ACK, null);
+    hero.read();
+    auto map = context.instanceMap(hero.session.instanceId);
+    auto cannon = cast(GameObject) map.findObject(makeDoorGuid(cannonEntry, 90010));
+    auto door = cast(GameObject) map.findObject(makeDoorGuid(ironCladDoor, 90011));
+    assert(cannon !is null && cannon.behaviour && door.goState == 1);
+    hero.session.useGameObject(cannon);
+    assert(door.goState == 0, "blown open");
+    const heard = hero.read();
+    assert(opcodesOf(heard).canFind(Opcode.SMSG_MESSAGECHAT), "the alarm");
+    // Gone with its map: the cannon's script is freed with it.
+    const live = context.scripts.liveScripts;
+    hero.say(format(".instance shutdown %s", hero.session.instanceId));
+    assert(context.scripts.liveScripts < live);
+}
+
+/**
+ * An escort: the Defias Traitor, his quest taken, walks his path with the player, waits at its end,
+ * gives the quest's event, and goes back home.
+ */
+unittest
+{
+    import dmangos.bytes : ByteWriter;
+    import dmangos.script.api : Location, Waypoint;
+    import dmangos.world.quests : Quest;
+    import dmangos.world.quests : QuestState;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    enum uint traitorEntry = 467, quest = 155;
+    const at = Position(-8949.95f, -132.49f, 83.53f);
+    auto traitor = context.data.creatureTemplates[creatureInnkeeper];
+    traitor.entry = traitorEntry;
+    traitor.npcFlags = 2; // a quest giver
+    context.data.creatureTemplates[traitorEntry] = traitor;
+    context.data.creatureScriptNames[traitorEntry] = "npc_defias_traitor";
+    context.data.escortPaths[traitorEntry] = [Waypoint(Location(at.x + 6, at.y, at.z)),
+        Waypoint(Location(at.x + 6, at.y + 6, at.z)), Waypoint(Location(at.x + 3, at.y + 6, at.z), 2000)];
+    Quest q = {id: quest, method: 2, maxLevel: 60, title: "The Defias Brotherhood"};
+    q.specialFlags = 0x2; // an event
+    context.data.quests.quests[quest] = q;
+    context.data.quests.creatureStarts[traitorEntry] = [quest];
+
+    auto hero = loggedIn(context, db, 7, "Varian", at, AccountLevel.player, raceHuman, mapEasternKingdoms, 20);
+    hero.read();
+    CreatureSpawn spawn = {guid: 90020, entry: traitorEntry, map: mapEasternKingdoms, x: at.x + 2, y: at.y, z: at.z};
+    auto map = context.map(mapEasternKingdoms);
+    auto him = context.makeCreature(&spawn);
+    map.addObject(him);
+
+    ByteWriter accept;
+    accept.put(him.guid);
+    accept.put(quest);
+    hero.write(Opcode.CMSG_QUESTGIVER_ACCEPT_QUEST, accept.data);
+    assert(hero.session.character.questStatus[quest].status == QuestState.incomplete);
+    assert(him.values.get!UNIT_NPC_FLAGS == 0, "nobody else takes him on his way");
+    foreach (_; 0 .. 60)
+    {
+        now += 250.msecs;
+        context.update(now);
+    }
+    assert(hero.session.character.questStatus[quest].status == QuestState.complete, "the hideout reached");
+    foreach (_; 0 .. 40)
+    {
+        now += 250.msecs;
+        context.update(now);
+    }
+    assert(map.findObject(him.guid) is null, "gone home (to come back at his spawn)");
 }

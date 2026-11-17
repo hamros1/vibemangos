@@ -27,7 +27,7 @@ import dmangos.world.npcdata : BroadcastText;
 import dmangos.world.opcodes : ChatType;
 import dmangos.world.spells : SpellInfo;
 import dmangos.world.eventai : Scripted;
-import dmangos.script.api : CreatureHost, Damaged, Died, EnteredCombat, EntityRef, Evaded, KilledUnit, Reset;
+import dmangos.script.api : Waypoint, CreatureHost, Damaged, Died, EnteredCombat, EntityRef, Evaded, KilledUnit, Reset;
 import dmangos.world.updatefields;
 import dmangos.vmap.math : Vector3;
 
@@ -86,6 +86,15 @@ interface Combatant
 
     /// A creature's spell interrupted its cast (`SPELL_EFFECT_INTERRUPT_CAST`).
     void castInterruptedBy(ulong creature);
+
+    /// A creature's script: its quest `quest` under way failed (`FailQuest`).
+    void questFailedBy(uint quest);
+
+    /// A creature's script: `gossip_menu` `menu` of creature `npc` shown to it.
+    void showGossip(ulong npc, uint menu);
+
+    /// A creature's script: its gossip window closes.
+    void closeGossip();
 }
 
 /**
@@ -126,6 +135,9 @@ interface CreatureLore
 
     /// A `Signal` for the script of dungeon copy `instance` (nothing if it has none).
     void signalDungeon(uint instance, EntityRef from, uint id, int value);
+
+    /// The escort path (`script_waypoint`) of creature `entry`; empty if it has none.
+    const(Waypoint)[] escortPath(uint entry);
 }
 
 /// What a creature's AI needs of its map.
@@ -154,6 +166,9 @@ interface CombatWorld : MotionWorld
 
     /// The creature with this guid here; null if none.
     Creature creatureAt(ulong guid);
+
+    /// Where the object (a replica too) with this guid is on the map; false if it is not here.
+    bool positionOf(ulong guid, out Position at);
 
     /// A packet for the players within `range` yards of `center`.
     void sendInRange(Position center, float range, Opcode opcode, const(ubyte)[] body_);

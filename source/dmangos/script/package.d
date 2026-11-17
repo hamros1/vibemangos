@@ -26,6 +26,7 @@ module dmangos.script;
 
 public import core.time : msecs, seconds;
 public import dmangos.script.api;
-public import dmangos.script.registry : creature, instance;
+public import dmangos.script.escort : Escort;
+public import dmangos.script.registry : creature, gameObject, instance;
 public import dmangos.script.schedule : Schedule;
 public import dmangos.script.state : transient;

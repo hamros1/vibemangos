@@ -143,12 +143,13 @@ objectives, rewards, saving, game objects and items as givers, sharing, explorat
 timed quests, `questgiver_greeting`, quest scripts (`dbscripts_on_quest_*`). Next: escort quests
 (with the D scripts' waypoint and gossip events), quest POIs.
 
-**Scripting** (docs/SCRIPTING.md): the framework in D is done for creatures and dungeons (typed
-events, schedules as data, state saved by reflection, migration, `instance.data`), with the
-Deadmines' doors and Mr. Smite. Next: game object, area trigger, gossip and quest events; the rest
-of the Deadmines (the cannon, Sneed's shredder, Cookie, Captain Greenskin, VanCleef); an escort
-quest; signals between scripts on different nodes; spell scripts; then dungeons one by one
-(398 creature names and 24 dungeon names in the world database).
+**Scripting** (docs/SCRIPTING.md): the framework in D is done for creatures, dungeons and game
+objects (typed events, schedules as data, state saved by reflection, migration, `instance.data`,
+gossip and quest events, script movement, the `Escort` component), with the Deadmines' doors, its
+cannon and Mr. Smite, and the Defias Traitor's escort. Next: area trigger and spell scripts, script
+gossip menus of their own (options a script adds), signals between scripts on different nodes, the
+other escorts (61 paths in `script_waypoint`), then dungeons one by one (398 creature names, 24
+dungeon names and about 100 game object names in the world database).
 Reputation is done (`reputation.d`, `reputationhandlers.d`; README's "Reputation"): kills, quests,
 spillover, war and peace, discounts, requirements. Not yet: `SMSG_SET_FORCED_REACTIONS` (spells force
 none yet), the PvP rank's discount, reputation from spells.

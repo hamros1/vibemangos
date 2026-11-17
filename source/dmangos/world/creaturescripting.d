@@ -13,6 +13,7 @@ mixin template CreatureScripting()
     import dmangos.script.api;
     import dmangos.script.registry : ScriptHandle, ScriptRuntime;
     import dmangos.world.eventai : castTriggered;
+    import dmangos.script.api : MovementDone, Waypoint;
 
     private
     {
@@ -109,6 +110,32 @@ mixin template CreatureScripting()
     private @property bool behaviourBusy() const
     {
         return behaviour && (cast() scripts_).busy(behaviour); // reads only
+    }
+
+    /// Raises `event` from outside its own moments (a player's gossip, a quest): its world as given.
+    /// Whether the script consumed it (`CreatureContext.consume`).
+    bool raiseFrom(E)(CombatWorld world, const E event)
+    {
+        if (!behaviour)
+            return false;
+        if (world !is null)
+            world_ = world;
+        auto context = CreatureContext(this);
+        if (!spawnRaised)
+        {
+            spawnRaised = true;
+            scripts_.raise(behaviour, context, Spawned());
+        }
+        scripts_.raise(behaviour, context, event);
+        if (world_ !is null)
+            world_.wake(me.guid);
+        return context.consumed;
+    }
+
+    /// Its `moveTo` arrived.
+    private void movementArrived(uint point)
+    {
+        raiseScript(MovementDone(point));
     }
 
     /// A `Signal` from another script.
@@ -273,5 +300,116 @@ mixin template CreatureScripting()
         import dmangos.log : info;
 
         info!"script %s (%s %s): %s"(behaviourName, me.template_.name, me.spawn.guid, text);
+    }
+
+    void hostMoveTo(Location at, uint point, bool run)
+    {
+        import dmangos.vmap.math : Vector3;
+        import dmangos.world.motion : PointMovement;
+
+        auto move = new PointMovement(Vector3(at.x, at.y, at.z), at.orientation, !run, null);
+        move.onArrived = (Creature c) { c.ai.movementArrived(point); };
+        if (inCombat_ || evadingHome)
+        {
+            outOfCombat = move; // where it goes once home from the fight
+            return;
+        }
+        me.generator = move;
+        if (world_ !is null)
+        {
+            move.initialize(me, world_);
+            world_.wake(me.guid);
+        }
+    }
+
+    bool hostMoving()
+    {
+        import dmangos.world.motion : PointMovement;
+
+        return !me.spline.finalized || cast(PointMovement) me.generator !is null
+            || cast(PointMovement) outOfCombat !is null;
+    }
+
+    bool hostWaypoint(size_t index, out Waypoint point)
+    {
+        const path = lore is null ? null : lore.escortPath(me.spawn.entry);
+        if (index >= path.length)
+            return false;
+        point = path[index];
+        return true;
+    }
+
+    size_t hostWaypointCount()
+    {
+        return lore is null ? 0 : lore.escortPath(me.spawn.entry).length;
+    }
+
+    float hostDistanceTo(EntityRef who)
+    {
+        Position there;
+        if (world_ is null || !world_.positionOf(who.guid, there))
+            return float.infinity;
+        const here = me.position;
+        return sqrt((here.x - there.x) ^^ 2 + (here.y - there.y) ^^ 2 + (here.z - there.z) ^^ 2);
+    }
+
+    bool hostAlive(EntityRef who)
+    {
+        if (world_ is null)
+            return true;
+        if (auto creature = world_.creatureAt(who.guid))
+            return creature.alive;
+        if (auto player = world_.combatant(who.guid))
+            return player.fighter.alive;
+        return true;
+    }
+
+    void hostQuestEvent(EntityRef player, uint quest)
+    {
+        if (world_ !is null)
+            if (auto other = world_.combatant(player.guid))
+                other.questEventHappened(quest);
+    }
+
+    void hostFailQuest(EntityRef player, uint quest)
+    {
+        if (world_ !is null)
+            if (auto other = world_.combatant(player.guid))
+                other.questFailedBy(quest);
+    }
+
+    void hostNpcFlags(uint flags)
+    {
+        me.values.set!UNIT_NPC_FLAGS(flags);
+        if (world_ !is null)
+            world_.flushCreature(me);
+    }
+
+    void hostRestoreNpcFlags()
+    {
+        hostNpcFlags(me.template_.npcFlags);
+    }
+
+    void hostGossipMenu(EntityRef player, uint menu)
+    {
+        if (world_ !is null)
+            if (auto other = world_.combatant(player.guid))
+                other.showGossip(me.guid, menu);
+    }
+
+    void hostCloseGossip(EntityRef player)
+    {
+        if (world_ !is null)
+            if (auto other = world_.combatant(player.guid))
+                other.closeGossip();
+    }
+
+    uint hostRandom(uint below)
+    {
+        import std.random : uniform;
+
+        if (below == 0)
+            return 0;
+        return world_ is null ? 0 : uniform(0, below, world_.random);
     }
 }

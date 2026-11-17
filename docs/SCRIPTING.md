@@ -5,8 +5,9 @@ quests, special spells, scripted objects and triggers) is written for dmangos. T
 (`dmangos.script`) is its own design. This document first compares how other servers and engines
 script, then states what dmangos takes from them, what it does differently, and why.
 
-Status: the framework, creature scripts, dungeon (instance) scripts and their persistence are
-implemented and tested (`dmangos.script`, `dmangos.scripts.deadmines`); the other script kinds are
+Status: the framework with creature, dungeon (instance) and game object scripts, their persistence,
+gossip and quest events, script movement and escorts is implemented and tested
+(`dmangos.script`; `dmangos.scripts.deadmines`, `dmangos.scripts.westfall`). The other kinds are
 planned in the section "Kinds of scripts". Signals between scripts on different nodes are not
 written yet: a signal reaches creatures on its own node.
 
@@ -199,9 +200,9 @@ code) what is not here or not allowed. Nothing a script keeps can dangle.
 
 | Kind | UDA | Bound by | Events (implemented / planned) |
 |---|---|---|---|
-| Creature | `@creature` | `creature_template.ScriptName` | spawned, reset, entered combat, damaged, killed a unit, died, evaded, spell hit, signal, steps; *gossip, quest accept/reward, waypoint reached, summoned* |
-| Dungeon | `@instance` | `instance_template.ScriptName` | creature or object loaded, creature died, player entered, signal; *encounter start/wipe* |
-| Game object | `@gameObject` | `gameobject_template.ScriptName` | *used, loaded, state changed* |
+| Creature | `@creature` | `creature_template.ScriptName` | spawned, reset, entered combat, damaged, killed a unit, died, evaded, spell hit, signal, steps, movement done, gossip hello and select, quest accepted and rewarded; *summoned, emote* |
+| Dungeon | `@instance` | `instance_template.ScriptName` | creature or object loaded, creature died, signal; *player entered, encounter start/wipe* |
+| Game object | `@gameObject` | `gameobject_template.ScriptName` | used, signal; *loaded, state changed* |
 | Area trigger | `@areaTrigger` | `scripted_areatrigger` | *entered* |
 | Spell | `@spell` | `spell_scripts` / spell id | *effect hit, aura applied/removed, cast check* |
 | World | `@world` | always | *player login/logout, level, zone change, world events* |
@@ -209,6 +210,22 @@ code) what is not here or not allowed. Nothing a script keeps can dangle.
 
 Each kind adds a context type, an event list and a host interface; the registry, pools, schedules
 and persistence are shared, so a new kind is a few dozen lines in the framework.
+
+### Components: the escort
+
+Behaviour shared by many scripts is a *component*: a struct among the script's fields, not a base
+class. The registry ticks any field with `tick(ref Context, int ms)` and `busy` along with the
+script, so a component needs no wiring. `Escort` (`dmangos.script.escort`) is the first: started
+with a player and a quest, it walks the creature's `script_waypoint` path (`moveTo` point by point,
+waiting where the path says), takes its NPC flags away on the way, fails the quest when the player
+dies or falls more than 50 yards behind, and may send the creature home when it is over. The script
+passes it its `MovementDone`s and reacts to the points it reports (a line at Moonbrook, the quest's
+event at the end). Being data, an escort handed to another node goes on there; if the creature's
+movement did not come along, the escort sends it on again.
+
+A handler of `GossipHello`, `GossipSelect` or `ObjectUsed` may call `consume()` on its context: the
+script answered, and the server's usual menu or use does not follow (`pGossipHello` and `pGOUse`
+returning true).
 
 ### Performance
 

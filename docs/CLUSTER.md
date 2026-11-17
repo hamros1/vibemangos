@@ -850,11 +850,13 @@ player goes there.
     node 1 and was in its copy within the second (`.instance info`: in use, one player); `.instance
     exit` took it back to Orgrimmar, and it moved back to node 2 two seconds later.
 * **Scripts in D** (docs/SCRIPTING.md) run where their creature or dungeon is simulated: events
-  come from the owner's AI, never from a replica, so none runs twice. A creature's script state is
-  part of its migration state (protocol 19), so a boss handed over with its region goes on in the
+  come from the owner's AI, never from a replica, so none runs twice. A creature's or game object's
+  script state is part of its migration state (protocols 19 and 20), so a boss handed over with its region goes on in the
   same phase with the same timers; a dungeon's script lives with its copies on the dungeon's host
   and is read from `instance.data` when another node comes to host it. A script's signal reaches
-  creatures on its own node only for now (a signal across nodes is a message still to write).
+  creatures on its own node only for now (a signal across nodes is a message still to write). An
+  escort reads the distance to its player from the player's replica when another node simulates
+  the player, so walking along a region border does not fail it.
 * **Scripts and summons** run on the node of the map cell where they started (`dbscripts.d` keeps
   them in the node's context); a summoned creature's guid comes from its node's own range, so two
   nodes never make the same one. A summon is not handed over with its cell: it is dropped there.

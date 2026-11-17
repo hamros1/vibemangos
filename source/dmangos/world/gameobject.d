@@ -102,6 +102,8 @@ enum : uint
 }
 
 /// See the module documentation.
+import dmangos.script.registry : ScriptHandle, ScriptRuntime;
+
 final class GameObject : Replicable, Moving, PerViewer
 {
     immutable ulong guid_;
@@ -359,7 +361,18 @@ final class GameObject : Replicable, Moving, PerViewer
         w.put(cast(ushort) values.length);
         foreach (slot; 0 .. values.length)
             w.put(values[slot]);
+        // Its script's state (docs/SCRIPTING.md).
+        ByteWriter state;
+        if (scripts !is null)
+            (cast() scripts).save(behaviour, state);
+        w.put(cast(uint) state.length);
+        w.putBytes(state.data);
     }
+
+    /// The server's scripts, and its own script's state; no handle if it has none.
+    ScriptRuntime scripts;
+    /// ditto
+    ScriptHandle behaviour;
 
     /// Reads what `saveState` wrote into one made anew from the same spawn.
     void loadState(ref ByteReader r)
@@ -372,6 +385,9 @@ final class GameObject : Replicable, Moving, PerViewer
                 values.setSlot(slot, value);
         }
         values.clearChanges();
+        auto state = ByteReader(r.readBytes(r.read!uint));
+        if (scripts !is null && state.remaining)
+            scripts.load(behaviour, state);
     }
 
     /// See `Replicable.motion`: a position, and an elevator's path time.

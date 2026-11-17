@@ -1159,6 +1159,22 @@ final class Map : CombatWorld, GameObjectWorld
         return cast(Creature) objects.get(guid, null);
     }
 
+    /// See `CombatWorld.positionOf`.
+    bool positionOf(ulong guid, out Position at)
+    {
+        if (auto who = guid in members)
+        {
+            at = who.character.position;
+            return true;
+        }
+        if (auto object = guid in objects)
+        {
+            at = object.position;
+            return true;
+        }
+        return false;
+    }
+
     /// See `CombatWorld.combatantsNear`.
     Combatant[] combatantsNear(Position center, float range)
     {

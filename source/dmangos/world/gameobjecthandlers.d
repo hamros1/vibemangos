@@ -94,6 +94,9 @@ mixin template GameObjectHandlers()
     {
         if (go.type == GameObjectType.fishingNode)
             return useBobber(go);
+        // Its script first (`OnGameObjectUse`): it may handle the use itself.
+        if (context.gameObjectUsed(go, map, player.guid))
+            return;
         import dmangos.world.dbscripts : DbScriptType;
 
         // Its scripts: the template's, and (doors, buttons, goobers) the spawn's; the user the source.

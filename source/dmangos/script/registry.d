@@ -49,11 +49,24 @@ struct instance
     }
 }
 
+/// A game object script, for the `gameobject_template` rows with these `ScriptName`s.
+struct gameObject
+{
+    string[] names;
+
+    ///
+    this(string[] names...) pure nothrow @safe
+    {
+        this.names = names.dup;
+    }
+}
+
 /// What kind of script.
 enum ScriptKind : ubyte
 {
     creature,
     instance,
+    gameObject,
 }
 
 /// The context and events of each kind.
@@ -62,8 +75,15 @@ template KindInfo(ScriptKind kind)
     static if (kind == ScriptKind.creature)
     {
         alias Context = CreatureContext;
-        alias Events = AliasSeq!(Spawned, Reset, EnteredCombat, Damaged, KilledUnit, Died, Evaded, SpellHit, Signal);
+        alias Events = AliasSeq!(Spawned, Reset, EnteredCombat, Damaged, KilledUnit, Died, Evaded, SpellHit, Signal,
+            MovementDone, GossipHello, GossipSelect, QuestAccepted, QuestRewarded);
         alias Attribute = .creature;
+    }
+    else static if (kind == ScriptKind.gameObject)
+    {
+        alias Context = GameObjectContext;
+        alias Events = AliasSeq!(ObjectUsed, Signal);
+        alias Attribute = .gameObject;
     }
     else static if (kind == ScriptKind.instance)
     {
@@ -203,6 +223,20 @@ private template scheduleFields(S)
     }();
 }
 
+/// The fields of `S` that tick with the script and are not schedules: components with
+/// `tick(ref Context, int ms)` and `busy` (an `Escort`).
+private template tickerFields(S, Ctx)
+{
+    enum tickerFields = () {
+        size_t[] found;
+        static foreach (i, T; typeof(S.tupleof))
+            static if (!isInstanceOf!(Schedule, T) && is(T == struct)
+                && __traits(compiles, (ref T t, ref Ctx c) { t.tick(c, 0); bool b = t.busy; }))
+                found ~= i;
+        return found;
+    }();
+}
+
 /// The step enum of schedule type `T`.
 private template StepOf(T)
 {
@@ -252,12 +286,15 @@ ScriptType describe(S, ScriptKind kind)(string name)
     static foreach (i, E; Info.Events)
         static if (__traits(compiles, (ref S s, ref Ctx c, const ref E e) => s.on(c, e)))
             t.handlers[i] = cast(void*) &dispatchEvent!(S, Ctx, E);
-    static if (scheduleFields!S.length)
+    static if (scheduleFields!S.length || tickerFields!(S, Ctx).length)
     {
         t.tick = &tickSchedules!(S, Ctx);
         t.busy = (const(void)* p) {
             const s = cast(const(S)*) p;
             static foreach (i; scheduleFields!S)
+                if (s.tupleof[i].busy)
+                    return true;
+            static foreach (i; tickerFields!(S, Ctx))
                 if (s.tupleof[i].busy)
                     return true;
             return false;
@@ -279,6 +316,8 @@ private void tickSchedules(S, Ctx)(void* state, void* context, int ms)
     auto c = cast(Ctx*) context;
     static foreach (i; scheduleFields!S)
         s.tupleof[i].advance(ms, (StepOf!(typeof(S.tupleof[i])) step) { s.on(*c, step); });
+    static foreach (i; tickerFields!(S, Ctx))
+        s.tupleof[i].tick(*c, ms);
 }
 
 // ---------------------------------------------------------------------------
