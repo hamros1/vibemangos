@@ -70,6 +70,9 @@ interface Combatant
 
     /// `.invincible`: creatures do not attack it (`isAttackable` is false).
     @property bool untouchable();
+
+    /// A creature's spell interrupted its cast (`SPELL_EFFECT_INTERRUPT_CAST`).
+    void castInterruptedBy(ulong creature);
 }
 
 /**

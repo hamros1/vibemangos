@@ -359,6 +359,11 @@ mixin template CreatureCasting()
                     if (const triggered = lore.spellInfo(spell.triggerSpell[i]))
                         castSpell(triggered, guid, castTriggered);
                     break;
+                case 68: // SPELL_EFFECT_INTERRUPT_CAST
+                    if (guid != me.guid)
+                        if (auto other = world_.combatant(guid))
+                            other.castInterruptedBy(me.guid);
+                    break;
                 default:
                     break;
                 }
@@ -805,4 +810,22 @@ unittest
     // Out of mana, no bolt: 70 left, 50 a bolt.
     keeper.values.set!UNIT_FIELD_POWER1(10u);
     assert(!keeper.ai.castSpell(context.data.spells.spell(bolt), me.guid, 0), "out of mana");
+
+    // A bolt begun, and the player's interrupt (Pummel's effect): it stops.
+    import dmangos.bytes : ByteWriter;
+    import dmangos.world.player : Player;
+    import dmangos.world.spellcast : SpellTargets, TargetFlags;
+
+    keeper.values.set!UNIT_FIELD_POWER1(120u);
+    assert(keeper.ai.castSpell(context.data.spells.spell(bolt), me.guid, 0) && keeper.ai.castingNow);
+    enum uint pummel = 95011;
+    context.data.spells.spells[pummel] = testSpell(pummel, 68, 6, 0);
+    context.data.spells.spells[pummel].casting.dmgClass = 0;
+    (cast(Player) me).spells ~= pummel;
+    ByteWriter w;
+    w.put(pummel);
+    SpellTargets(TargetFlags.unit, keeper.guid).write(w);
+    anduin.read();
+    anduin.write(Opcode.CMSG_CAST_SPELL, w.data);
+    assert(!keeper.ai.castingNow && opcodesOf(anduin.read()).canFind(Opcode.SMSG_SPELL_FAILURE), "interrupted");
 }

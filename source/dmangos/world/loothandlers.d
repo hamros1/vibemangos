@@ -42,7 +42,83 @@ private:
             return creature.loot;
         if (auto go = cast(GameObject) map.findObject(guid))
             return go.loot;
+        if (auto loot = guid in itemLoots)
+            return *loot;
         return null;
+    }
+
+    /// The loot of the items this player opened and has not emptied, by item guid (`Item::m_loot`).
+    Loot[ulong] itemLoots;
+
+    /**
+     * `HandleOpenItemOpcode`: a lootable item in the bags opened (not locked, or unlocked, and the
+     * player's level enough), its loot (`item_loot_template`, its money) shown; emptied, it is gone.
+     */
+    @Handles(Opcode.CMSG_OPEN_ITEM, WorldState.inWorld)
+    void handleOpenItem(ref ByteReader reader)
+    {
+        import dmangos.world.inventory : itemDynFlagUnlocked;
+        import dmangos.world.session : WorldSession;
+
+        const bag = reader.read!ubyte, slot = reader.read!ubyte;
+        auto item = player.inventory[bag, slot];
+        if (item is null)
+            return sendEquipError(InventoryResult.itemNotFound);
+        const proto = item.entry in context.data.items;
+        if (proto is null)
+            return sendEquipError(InventoryResult.itemNotFound);
+        if (proto.requiredLevel > player.data.level)
+            return sendEquipError(EquipError(InventoryResult.lootCantLootThatNow, item));
+        // A lock that needs picking stays shut (`LockEntry::Skill`).
+        if (proto.details.lockId && !(item.values[ITEM_FIELD_FLAGS] & itemDynFlagUnlocked))
+        {
+            const lock = context.client.locks.lookup(proto.details.lockId);
+            if (lock is null || lock.skill[0] || lock.skill[1])
+                return sendEquipError(EquipError(InventoryResult.itemLocked, item));
+        }
+        const guid = item.fullGuid;
+        auto loot = itemLoots.get(guid, null);
+        if (loot is null)
+        {
+            auto self = this;
+            loot = new Loot(guid, (ulong who) => who == self.player.guid ? cast(Looter) self : null);
+            loot.clock = () => context.unixTime;
+            loot.clientType = ClientLootType.pickpocketing;
+            loot.owners[player.guid] = true;
+            loot.currentLooter = player.guid;
+            loot.rule = LootRule.notGroup;
+            if (const template_ = context.data.loot.item[item.entry])
+            {
+                bool meets(uint condition)
+                {
+                    return conditionMet(condition);
+                }
+
+                bool allowed(ulong, const LootItem it)
+                {
+                    if (it.quest)
+                        return hasQuestForItem(it.itemId);
+                    return it.condition == 0 || conditionMet(it.condition);
+                }
+
+                loot.fill(template_, context.data.loot, context.data.items, map.random, &meets, &allowed);
+            }
+            loot.generateMoney(proto.details.minMoneyLoot, proto.details.maxMoneyLoot, map.random);
+            // `Loot::Release` of an item: emptied, it is destroyed.
+            loot.lootedForAll = () {
+                itemLoots.remove(guid);
+                if (auto still = itemByGuid(guid))
+                {
+                    player.inventory.destroy(still.bagSlot, still.slot);
+                    flushInventory(true);
+                }
+            };
+            itemLoots[guid] = loot;
+        }
+        if (lootTarget && lootTarget != guid)
+            if (auto other = lootOf(lootTarget))
+                other.release(this);
+        loot.showContentTo(this);
     }
 
     /// `Player::SendLootError`
@@ -536,7 +612,7 @@ version (unittest)
         import dmangos.world.loot : lootRow, LootStore, LootStores;
 
         context.data.loot = LootStores(new LootStore("creature_loot_template"), new LootStore("reference_loot_template"),
-            new LootStore("gameobject_loot_template"));
+            new LootStore("gameobject_loot_template"), new LootStore("item_loot_template"));
         context.data.loot.creature.add(99, lootRow(itemJerky, 100, 0, 1, 1, 0));
         auto t = &context.data.creatureTemplates[creatureInnkeeper];
         t.lootId = 99;
@@ -658,4 +734,39 @@ unittest
     assert(loot.items[0].slotTypeFor(other, loot) == LootSlotType.none, "not its turn");
     assert(loot.canLoot(other), "the money is everyone's");
     assert(group.nextLooter == other);
+}
+
+/// An item with loot (a clam) opened: its loot shown as a pickpocket's; emptied, the item is gone.
+unittest
+{
+    import dmangos.bytes : ByteWriter;
+    import dmangos.world.inventory : Item;
+    import dmangos.world.loot : lootRow;
+    import dmangos.world.movement : Position;
+    import dmangos.world.opcodes;
+    import dmangos.world.player : Player;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    context.data.loot.item.add(itemJerky, lootRow(itemSword, 100, 0, 1, 1, 0)); // the "clam" holds a sword
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f));
+    auto me = cast(Player) anduin.session.character;
+    anduin.session.lootStore(itemJerky, 1, 0, false);
+    anduin.read();
+    Item clam;
+    foreach (item; me.inventory.all())
+        if (item.entry == itemJerky)
+            clam = item;
+    ByteWriter open;
+    open.put(clam.bagSlot);
+    open.put(clam.slot);
+    anduin.write(Opcode.CMSG_OPEN_ITEM, open.data);
+    auto got = anduin.read();
+    assert(got.length && got[$ - 1].opcode == Opcode.SMSG_LOOT_RESPONSE && got[$ - 1].body_[8] == 2, "a pickpocket's window");
+    ByteWriter take;
+    take.put(ubyte(0));
+    anduin.write(Opcode.CMSG_AUTOSTORE_LOOT_ITEM, take.data);
+    assert(me.inventory.count(itemSword) == 1 && me.inventory.count(itemJerky) == 0, "the sword, and no clam");
 }

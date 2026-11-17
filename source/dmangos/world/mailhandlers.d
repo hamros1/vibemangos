@@ -513,3 +513,48 @@ unittest
     jaina.read();
     assert(ids[0] !in db.mails);
 }
+
+/**
+ * `ReturnOrDeleteOldMails`: a player's letter with an item, its time up, goes back to its sender
+ * (once); one without an item, or already returned, is deleted with its item.
+ */
+unittest
+{
+    import core.time : MonoTime;
+    import std.algorithm.searching : canFind;
+    import dmangos.world.database : MailRecord;
+    import dmangos.world.inventory : ItemRecord;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    const past = context.unixTime - 10;
+    ItemRecord sword;
+    sword.guid = 5001;
+    sword.entry = itemSword;
+    sword.count = 1;
+    db.saveLooseItem(sword, 8);
+    auto withSword = MailRecord(901, 0, 41, 0, 7, 8, "a sword", 0, past, past, 0, 0, 0, 5001, itemSword);
+    auto note = MailRecord(902, 0, 41, 0, 7, 8, "hello", 0, past, past, 0, 0, 0, 0, 0);
+    db.sendMail(withSword);
+    db.sendMail(note);
+    context.update(now);
+    auto mine = db.loadMail(7);
+    assert(db.mailById(901).isNull && db.mailById(902).isNull, "both gone from the receiver");
+    assert(mine.length == 1 && mine[0].itemGuid == 5001 && mine[0].checked == mailReturned, "the sword back to its sender");
+    assert(!db.looseItem(5001).isNull);
+
+    // Returned once already: next time it is deleted, with the sword.
+    auto back = mine[0];
+    db.deleteMail(back.id);
+    back.expireTime = past;
+    db.sendMail(back);
+    import core.time : hours;
+
+    now += 2.hours;
+    context.update(now);
+    assert(db.loadMail(7).length == 0 && db.loadMail(8).length == 0 && db.looseItem(5001).isNull, "deleted");
+}

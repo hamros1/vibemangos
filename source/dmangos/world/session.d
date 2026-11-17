@@ -499,6 +499,14 @@ final class WorldSession : NetSession, Kickable, OnlinePlayer, Combatant, Looter
         return invincible;
     }
 
+    /// See `Combatant`.
+    void castInterruptedBy(ulong creature)
+    {
+        import dmangos.world.spellcast : SpellCastResult;
+
+        interruptCast(SpellCastResult.interrupted);
+    }
+
     // -----------------------------------------------------------------------
     // `Looter`: what loot sees of the player (`dmangos.world.loot`, `loothandlers.d`)
     // -----------------------------------------------------------------------

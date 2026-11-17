@@ -120,7 +120,7 @@ The largest area. CMaNGOS references: `Spells/`, `Entities/Unit.cpp`, `Combat/`,
    the map its player's node simulates; a node that does not own the cell keeps it anyway).
 4. **Experience and loot: done** (`experience.d`, `loot.d`, `loothandlers.d`; README's "Experience
    and loot"). Not yet: quest drops, `item_enchantment_template` random properties, skinning,
-   pickpocketing, item loot (bags, clams), honor for kills, loot of
+   pickpocketing, honor for kills, loot of
    a creature another node of a cluster simulates.
 5. Spells, cooldowns and auras. **Casting and auras: done** (`spellcast.d`, `spellhandlers.d`,
    `auras.d`, `aurahandlers.d`; README's "Spells" and "Auras"); creatures' spells come with their
@@ -150,8 +150,8 @@ wipe (`MSG_TALENT_WIPE_CONFIRM`), the spell modifiers most talents are (`SPELL_A
 
 ### Mail
 
-**Done** (`mailhandlers.d`; README's "Mail"), auctions' mail included. Next: expiry (returned after
-30 days), the mail templates NPCs and quests send (`RewMailTemplateId`).
+**Done** (`mailhandlers.d`; README's "Mail"), auctions' mail and expiry included. Next: the mail
+templates NPCs and quests send (`RewMailTemplateId`).
 
 ### Auctions
 

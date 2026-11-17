@@ -542,6 +542,12 @@ private:
         case 33: // SPELL_EFFECT_OPEN_LOCK
             openLock(spell, i, target, c.castItemEntry);
             break;
+        case 68: // SPELL_EFFECT_INTERRUPT_CAST: the target's cast ends (its school's lockout: not yet)
+            if (auto creature = cast(Creature) map.findObject(target))
+                creature.ai.interruptCast();
+            else if (auto other = enemyPlayer(target))
+                other.interruptCast(SpellCastResult.interrupted);
+            break;
         case 17: // SPELL_EFFECT_WEAPON_DAMAGE_NOSCHOOL
         case 58: // SPELL_EFFECT_WEAPON_DAMAGE
         case 121: // SPELL_EFFECT_NORMALIZED_WEAPON_DMG

@@ -225,6 +225,12 @@ interface WorldDatabase
     /// The mail and its item row are gone.
     void deleteMail(uint id);
 
+    /// The mail whose time is up by `now` (Unix time), oldest first.
+    MailRecord[] expiredMail(long now);
+
+    /// An item gone with its mail (`item_instance`).
+    void deleteLooseItem(uint guid);
+
     /// `item_text`: a body.
     void saveItemText(uint id, string text);
 
@@ -414,6 +420,8 @@ final class MySqlWorldDatabase : WorldDatabase
     Nullable!MailRecord mailById(uint id) { return statements.mailById(id); }
     void updateMail(const ref MailRecord mail) { statements.updateMail(mail); }
     void deleteMail(uint id) { statements.deleteMail(id); }
+    MailRecord[] expiredMail(long now) { return statements.expiredMail(now); }
+    void deleteLooseItem(uint guid) { statements.deleteLooseItem(guid); }
     void saveItemText(uint id, string text) { statements.saveItemText(id, text); }
     string itemText(uint id) { return statements.itemText(id); }
     void saveLooseItem(const ref ItemRecord item, uint owner) { statements.saveLooseItem(item, owner); }
@@ -883,6 +891,18 @@ final class MemoryWorldDatabase : WorldDatabase
     }
     void updateMail(const ref MailRecord mail) { mails[mail.id] = mail; }
     void deleteMail(uint id) { mails.remove(id); }
+    MailRecord[] expiredMail(long now)
+    {
+        import std.algorithm.sorting : sort;
+
+        MailRecord[] found;
+        foreach (ref m; mails)
+            if (m.expireTime < now)
+                found ~= m;
+        found.sort!((a, b) => a.expireTime < b.expireTime);
+        return found;
+    }
+    void deleteLooseItem(uint guid) { looseItems.remove(guid); itemRows.remove(guid); }
     void saveItemText(uint id, string text) { itemTexts[id] = text; }
     string itemText(uint id) { return itemTexts.get(id, null); }
     void saveLooseItem(const ref ItemRecord item, uint owner) { looseItems[item.guid] = item; itemRows[item.guid] = item; }

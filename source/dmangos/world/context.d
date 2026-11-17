@@ -1,7 +1,7 @@
 /// State shared by every session on a world server.
 module dmangos.world.context;
 
-import core.time : Duration, MonoTime, msecs, seconds;
+import core.time : Duration, minutes, MonoTime, msecs, seconds;
 
 import std.path : buildPath;
 import std.random : Random, unpredictableSeed;
@@ -1073,7 +1073,38 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 auctionExpired(a);
         }
     }
-    private MonoTime lastAuctionCheck;
+    private MonoTime lastAuctionCheck, lastMailCheck;
+
+    /**
+     * `ObjectMgr::ReturnOrDeleteOldMails`: a player's letter with an item, not returned or paid for
+     * before, goes back to its sender for 30 days more; every other one whose time is up is deleted,
+     * with its item and its body.
+     */
+    private void settleOldMail()
+    {
+        enum uint checkReturned = 0x02, checkCodPayment = 0x08;
+        foreach (ref m; database.expiredMail(unixTime))
+        {
+            database.deleteMail(m.id);
+            if (m.itemGuid && m.messageType == 0 && m.sender && !(m.checked & (checkReturned | checkCodPayment)))
+            {
+                MailRecord back;
+                back.sender = m.receiver;
+                back.receiver = m.sender;
+                back.subject = m.subject;
+                back.itemTextId = m.itemTextId;
+                back.itemGuid = m.itemGuid;
+                back.itemEntry = m.itemEntry;
+                back.checked = checkReturned;
+                if (auto item = database.looseItem(back.itemGuid))
+                    database.saveLooseItem(item.get, back.receiver);
+                postMail(back, 0);
+                continue;
+            }
+            if (m.itemGuid)
+                database.deleteLooseItem(m.itemGuid);
+        }
+    }
 
     /// Whether a spawn is dead and waiting to come back.
     bool awaitingRespawn(uint spawnGuid)
@@ -1275,6 +1306,12 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         {
             lastAuctionCheck = now;
             settleAuctions();
+        }
+        // Old mail, once an hour, by one node.
+        if (forwardGroup is null && now - lastMailCheck >= 60.minutes)
+        {
+            lastMailCheck = now;
+            settleOldMail();
         }
         const mapsDone = MonoTime.currTime;
         if (mapsDone - started > 500.msecs)

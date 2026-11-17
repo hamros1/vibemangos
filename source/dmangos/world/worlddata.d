@@ -116,6 +116,8 @@ struct ItemDetails
     uint pageMaterial;
     uint startQuest;
     uint lockId;
+    uint minMoneyLoot;      /// what opening it gives in money, from ...
+    uint maxMoneyLoot;      /// ... to
     int material;
     uint sheath;
     uint block;
@@ -151,6 +153,7 @@ private enum string[2][] itemDetailColumns = () {
             ["spellcategorycooldown_" ~ to!string(i + 1), "spells[" ~ to!string(i) ~ "].categoryCooldown"]];
     columns ~= [["description", "description"], ["PageText", "pageText"], ["LanguageID", "languageId"],
         ["PageMaterial", "pageMaterial"], ["startquest", "startQuest"], ["lockid", "lockId"],
+        ["minMoneyLoot", "minMoneyLoot"], ["maxMoneyLoot", "maxMoneyLoot"],
         ["Material", "material"], ["sheath", "sheath"], ["block", "block"], ["itemset", "itemSet"],
         ["area", "area"], ["Map", "map"]];
     return columns;
@@ -164,7 +167,7 @@ private enum itemDetailQuery = () {
     return "SELECT entry, " ~ itemDetailColumns.map!(column => column[0]).join(", ") ~ " FROM item_template";
 }();
 
-static assert(itemDetailColumns.length == 6 + 20 + 15 + 7 + 3 + 20 + 12);
+static assert(itemDetailColumns.length == 6 + 20 + 15 + 7 + 3 + 20 + 14);
 
 /// `creature_model_info`: a model's size.
 struct ModelInfo
@@ -340,7 +343,7 @@ final class WorldData
         quests = new QuestData;
         eventAi = new EventAiData;
         loot = LootStores(new LootStore("creature_loot_template"), new LootStore("reference_loot_template"),
-            new LootStore("gameobject_loot_template"));
+            new LootStore("gameobject_loot_template"), new LootStore("item_loot_template"));
     }
 
     /**
@@ -549,7 +552,8 @@ final class WorldData
         }
         foreach (row; world.query!"SELECT faction, quest_rate, creature_rate, spell_rate FROM reputation_reward_rate"())
             reputationRates[row.get!uint(0)] = [row.get!float(1), row.get!float(2), row.get!float(3)];
-        static foreach (table; [["creature", "creature"], ["reference", "reference"], ["gameobject", "gameObject"]])
+        static foreach (table; [["creature", "creature"], ["reference", "reference"], ["gameobject", "gameObject"],
+                ["item", "item"]])
             foreach (row; world.query!("SELECT " ~ lootColumns ~ " FROM " ~ table[0] ~ "_loot_template")())
                 __traits(getMember, loot, table[1]).add(row.get!uint(0), lootRow(row.get!uint(1), row.get!float(2),
                     row.get!uint(3), row.get!int(4), row.get!uint(5), row.get!uint(6)));

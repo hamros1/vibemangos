@@ -124,6 +124,7 @@ struct LootStores
     LootStore creature;   /// `creature_loot_template`
     LootStore reference;  /// `reference_loot_template`
     LootStore gameObject; /// `gameobject_loot_template`
+    LootStore item;       /// `item_loot_template`: what an item opened holds
 }
 
 /// The columns every `*_loot_template` query selects, in `LootStoreItem` order after the id.
@@ -1106,7 +1107,7 @@ version (unittest)
 unittest
 {
     auto stores = LootStores(new LootStore("creature_loot_template"), new LootStore("reference_loot_template"),
-            new LootStore("gameobject_loot_template"));
+            new LootStore("gameobject_loot_template"), new LootStore("item_loot_template"));
     stores.creature.add(1, lootRow(100, 100, 0, 1, 1, 0));    // always
     stores.creature.add(1, lootRow(101, 0.0001f, 0, 1, 1, 0)); // never, in practice
     stores.creature.add(1, lootRow(102, 50, 1, 1, 1, 0));     // group 1: one of these two

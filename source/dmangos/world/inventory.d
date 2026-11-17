@@ -54,6 +54,7 @@ enum : uint
     itemFlagNoUserDestroy = 0x00000020,
     itemFlagUniqueEquippable = 0x00080000,
     itemDynFlagBound = 0x1,    /// `ITEM_DYNFLAG_BINDED`
+    itemDynFlagUnlocked = 0x4, /// `ITEM_DYNFLAG_UNLOCKED`: a lockbox picked
     itemDynFlagWrapped = 0x8,  /// `ITEM_DYNFLAG_WRAPPED`
     skillFistWeapons = 473,
 }

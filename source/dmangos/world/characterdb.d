@@ -1049,6 +1049,21 @@ final class CharacterStatements
         });
     }
 
+    /// See `WorldDatabase.expiredMail`.
+    MailRecord[] expiredMail(long now)
+    {
+        MailRecord[] found;
+        foreach (row; characters.query!(mailColumns ~ "WHERE m.expire_time < ? ORDER BY m.expire_time")(now))
+            found ~= mailOf(row);
+        return found;
+    }
+
+    /// See `WorldDatabase.deleteLooseItem`.
+    void deleteLooseItem(uint guid)
+    {
+        characters.execute!"DELETE FROM item_instance WHERE guid = ?"(guid);
+    }
+
     /// See `WorldDatabase.saveItemText`.
     void saveItemText(uint id, string text)
     {

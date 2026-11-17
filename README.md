@@ -273,7 +273,9 @@ What works now:
     itself), heal it, and trigger other spells, at its target, itself, or the enemies in their area
     or cone. Creatures get their mana back with their health out of combat. Not yet: the other
     events and actions (summons, morphs, AI events between creatures, quest events), spell lists
-    (`creature_template_spells`), friendly targets (healing allies), interrupting their casts.
+    (`creature_template_spells`), friendly targets (healing allies), spell school lockouts. Their
+    casts are interrupted by interrupting spells (Pummel's `SPELL_EFFECT_INTERRUPT_CAST`), and
+    theirs interrupt a player's.
   * **Death** (CMaNGOS's `KillPlayer`, repop, reclaim and spirit healer): a player killed loses a tenth
     of its gear's durability and lies rooted until it releases its spirit (or six minutes pass, or it
     logs out). Released, it is a ghost at the nearest graveyard of its team (`game_graveyard_zone`:
@@ -296,7 +298,10 @@ What works now:
     applies: free for all, round robin (the turn moves on), master loot (the master hands out what is
     over the threshold), group loot and need before greed (need, greed or pass for a minute; need
     wins, then the higher roll); money is shared. A looted corpse goes within two minutes. Not yet:
-    random enchantments, skinning and pickpocketing.
+    random enchantments, skinning and pickpocketing. Items with loot (clams, sacks, boxes of
+    supplies) open in the bags (`CMSG_OPEN_ITEM`, unless a lock needs picking) to their
+    `item_loot_template` loot and money; emptied, they are gone (an item left half looted keeps its
+    loot until logout, not across it as CMaNGOS's `item_loot` does).
   * **Spells** (CMaNGOS's `Spell::SpellStart`, `CheckCast`, `cast` and `SpellEffects.cpp`): a
     known spell is checked (alive, not busy, its cooldown and category cooldown and the global
     cooldown over, standing, the power and reagents it costs, an enemy or friend in range and in
@@ -375,7 +380,10 @@ What works now:
     Letters, returning and deleting. Items and money to another account arrive after
     `mail_delivery_delay` (an hour), the rest at once with "you have new mail". It all lives in
     the database (`mail`, `mail_items`, `item_text`), read each time, so a player's mail is the same
-    on any node of a cluster. Not yet: expiry, mail from NPCs and auctions.
+    on any node of a cluster. Once an hour (on one node of a cluster) letters whose time is up are
+    settled as CMaNGOS's `ReturnOrDeleteOldMails` does: a player's letter with an item goes back to
+    its sender once, every other one is deleted with its item. Auction houses send mail too. Not
+    yet: mail from NPCs and quests (`mail_template`).
   * **Trading** (CMaNGOS's `TradeHandler.cpp`): two players of a faction within 11 yards trade up
     to six items and money each; any change takes back both acceptances; when both accept, it goes
     through if both can pay and carry it (the items keep their guids and change owners, their
