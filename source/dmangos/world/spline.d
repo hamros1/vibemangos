@@ -43,14 +43,6 @@ enum MonsterMoveType : ubyte
     facingAngle = 4,
 }
 
-/**
- * The shortest walk a 1.12 client is shown, in yards. Its unit spline code reads a segment table it
- * never set up for a spline of next to no length: an access violation at 0x453885 (`fld [eax+esi*4]`,
- * eax 0). Seen with a creature stepping 0.3 to 0.4 yards, and with one turning where it stood (both
- * points the same), each in the create block of a client that had just come into the world.
- */
-enum float minimumWalk = 1.0f;
-
 /// `MoveSpline` with a linear `Spline<int32>`: see the module documentation.
 struct MoveSpline
 {
@@ -109,20 +101,10 @@ struct MoveSpline
         return id_;
     }
 
-    /// The length of the path, in yards.
-    @property float length() const pure nothrow @nogc @safe
-    {
-        float total = 0;
-        if (points.length > 2)
-            foreach (i; 1 .. points.length - 1)
-                total += (points[i] - points[i - 1]).magnitude();
-        return total;
-    }
-
-    /// Whether a client may be shown it: under way, and not too short (`minimumWalk`).
+    /// Whether a client may be shown it in a create block: under way.
     @property bool showable() const pure nothrow @nogc @safe
     {
-        return initialized && !finalized && length >= minimumWalk;
+        return initialized && !finalized;
     }
 
     /// `Finalized`: arrived, stopped or never started.
@@ -338,8 +320,17 @@ const(ubyte)[] monsterStop(ulong guid, Position at, uint splineId)
 }
 
 /// `PacketBuilder::WriteCreate`: the walk so far, after the speeds of a moving unit's create block.
+/**
+ * `PacketBuilder::WriteCreate`, with the path as the 1.12 client's unit spline needs it: that is a
+ * Catmull-Rom spline over `count - 3` segments, with a control point before the first point and one
+ * after the last. The path here has the one after (`SplineBase::InitLinear`); the one before is the
+ * first point again. Without it a straight walk (two points, three with the end repeated) has no
+ * segment: the client builds no segment table, and reads it on the next frame (an access violation at
+ * 0x453885, `fld [eax+esi*4]` with eax 0), unless it moved the unit before and has a table left.
+ * CMaNGOS writes the path without it, but its paths from movement maps mostly have more points.
+ */
 void writeSplineCreate(ref ByteWriter w, const ref MoveSpline spline)
-in (spline.showable, "a create block shows a walk under way, of some length, only")
+in (spline.showable, "a create block shows a walk under way only")
 {
     w.put(spline.flags);
     if (spline.flags & SplineFlags.finalAngle)
@@ -347,7 +338,8 @@ in (spline.showable, "a create block shows a walk under way, of some length, onl
     w.put(spline.timePassed);
     w.put(spline.duration);
     w.put(spline.id);
-    w.put(cast(uint) spline.path.length);
+    w.put(cast(uint) spline.path.length + 1);
+    putVector(w, spline.path[0]);
     foreach (point; spline.path)
         putVector(w, point);
     putVector(w, spline.finalDestination);
@@ -430,8 +422,8 @@ unittest
     writeSplineCreate(w, spline);
     r = ByteReader(w.data);
     assert(r.read!uint == SplineFlags.none && r.read!uint == 1000 && r.read!uint == spline.duration);
-    assert(r.read!uint == 3 && r.read!uint == 5, "the path with its last point twice");
-    r.readBytes(5 * 12);
+    assert(r.read!uint == 3 && r.read!uint == 6, "the first point twice and the path with its last point twice");
+    r.readBytes(6 * 12);
     assert(r.read!float == 20 && r.read!float == 0 && r.read!float == 0 && r.empty);
 }
 
@@ -457,3 +449,24 @@ unittest
     assert(none.finalized && !none.initialized && none.id == 7);
 }
 
+
+// The create block's path: the first point twice, then the path with its end repeated (a Catmull-Rom
+// spline of one segment per step, as the client keeps it), then the destination.
+unittest
+{
+    import dmangos.bytes : ByteReader, ByteWriter;
+
+    auto walk = MoveSpline([Vector3(1, 2, 3), Vector3(5, 2, 3)], SplineFlags.none, 2.5f, 9);
+    walk.update(100);
+    ByteWriter w;
+    writeSplineCreate(w, walk);
+    auto r = ByteReader(w.data);
+    assert(r.read!uint == SplineFlags.none && r.read!int == 100 && r.read!uint == walk.duration && r.read!uint == 9);
+    const count = r.read!uint;
+    assert(count == 4, "two control points around one segment");
+    Vector3[] points;
+    foreach (_; 0 .. count + 1)
+        points ~= Vector3(r.read!float, r.read!float, r.read!float);
+    assert(points == [Vector3(1, 2, 3), Vector3(1, 2, 3), Vector3(5, 2, 3), Vector3(5, 2, 3), Vector3(5, 2, 3)]);
+    assert(r.empty);
+}

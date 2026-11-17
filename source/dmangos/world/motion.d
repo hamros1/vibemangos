@@ -21,7 +21,7 @@
  */
 module dmangos.world.motion;
 
-import std.math : atan2, cos, isNaN, PI, sin;
+import std.math : cos, isNaN, PI, sin;
 
 import std.random : Random, uniform, uniform01;
 
@@ -259,8 +259,8 @@ private:
         const at = creature.position;
         const start = Vector3(at.x, at.y, at.z);
         const offset = start - end;
-        if (offset.dot(offset) < minimumWalk * minimumWalk)
-            return false; // too short a step to show (see `minimumWalk`): another one later
+        if (offset.dot(offset) < 0.01f)
+            return false;
         allowedPositionZ(creature, world, end);
         const walk = randomRun ? uniform!"[]"(0, 99, world.random) >= 15 : true;
         return launch(creature, world, [start, end], walk) != 0;
@@ -572,16 +572,6 @@ in (points.length > 1)
 {
     const at = creature.spline.finalized ? creature.position : creature.spline.position;
     points[0] = Vector3(at.x, at.y, at.z);
-    // A walk shorter than `minimumWalk` is shown as no walk at all: the unit turns where it stands.
-    float length = 0;
-    foreach (i; 1 .. points.length)
-        length += (points[i] - points[i - 1]).magnitude();
-    if (length > 0 && length < minimumWalk)
-    {
-        if (isNaN(facing))
-            facing = atan2(points[$ - 1].y - points[0].y, points[$ - 1].x - points[0].x);
-        points = [points[0], points[0]];
-    }
 
     uint flags = walk ? SplineFlags.none : SplineFlags.runMode;
     float angle = 0;
@@ -898,37 +888,4 @@ unittest
         assert(copy.position == original.position);
     }
     assert(worldA.sent == worldB.sent && worldA.sent.length > 0);
-}
-
-// A walk too short to show is a turn where the unit stands (see `minimumWalk`).
-unittest
-{
-    import dmangos.world.spline : SplineFlags;
-
-    auto world = new TestWorld;
-    auto creature = testCreature(CreatureSpawn(1, 100, 0, 0, 0, 0, 0));
-    launch(creature, world, [Vector3(0, 0, 0), Vector3(0.3f, 0.2f, 0)], true);
-    const path = creature.spline.path;
-    assert(path[0] == path[$ - 1], "no step of a fraction of a yard");
-    assert(creature.spline.flags & SplineFlags.finalAngle, "it faces where it would have gone");
-    // Seen in the turn by a client coming into the world: standing, facing the new way, no spline.
-    {
-        import dmangos.bytes : ByteReader, ByteWriter;
-        import dmangos.world.movement : MovementInfo;
-        import dmangos.world.objects : MovementBlock, UpdateFlags;
-
-        MovementBlock block;
-        block.flags = UpdateFlags.living;
-        block.info = creature.movement;
-        block.spline = &creature.spline;
-        ByteWriter w;
-        block.write(w);
-        auto r = ByteReader(w.data);
-        r.read!ubyte;
-        const shown = MovementInfo.read(r);
-        assert(!(shown.flags & MovementFlags.splineEnabled), "a turn is not a walk to the client");
-        assert(near(shown.position.orientation, creature.spline.facingAngle));
-    }
-    launch(creature, world, [Vector3(0, 0, 0), Vector3(3, 0, 0)], true);
-    assert(creature.spline.finalDestination == Vector3(3, 0, 0) && creature.spline.showable);
 }

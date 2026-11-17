@@ -445,8 +445,7 @@ struct MovementBlock
         if (flags & UpdateFlags.living)
         {
             // A unit that is not walking a spline has no spline to show, whatever its flags say: a walk that
-            // has ended (a replica's ends between its ticks), or one too short for the client to set up
-            // (`minimumWalk`: a turn where it stands, too). It stands, facing where the walk ends.
+            // has ended (a replica's ends between its ticks) included. It stands, facing where it ended.
             const walking = info.has(MovementFlags.splineEnabled) && spline !is null && spline.showable;
             MovementInfo living = info;
             if (!walking && info.has(MovementFlags.splineEnabled))

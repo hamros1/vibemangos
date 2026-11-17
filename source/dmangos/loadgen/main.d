@@ -236,14 +236,15 @@ private Place[] placements(const Options o, ref Random rng)
 {
     import std.math : cos, sin, sqrt;
 
-    if (o.scenario == "crowd")
+    if (o.scenario == "crowd" || o.commands.length) // a probe (`--commands`) starts at `--center` too
     {
         const parts = o.center.splitter(':').map!(to!float).array;
         Place[] places;
         foreach (_; 0 .. o.bots)
         {
             const angle = uniform01(rng) * 2 * 3.14159265f, r = sqrt(uniform01(rng)) * o.radius;
-            places ~= Place(cast(uint) parts[0], parts[1] + r * cos(angle), parts[2] + r * sin(angle), parts[3]);
+            places ~= o.scenario == "crowd" ? Place(cast(uint) parts[0], parts[1] + r * cos(angle), parts[2] + r * sin(angle),
+                parts[3]) : Place(cast(uint) parts[0], parts[1], parts[2], parts[3]);
         }
         return places;
     }
