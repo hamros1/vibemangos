@@ -714,8 +714,9 @@ starts, through the same migration, and stays there until it ends.
   half the gap: moving it would only move the load), the coordinator cuts that region in two along its longer side (`RegionAuthority.splitHot`). The old id keeps one
   half with its owner and epoch, so its node goes on simulating it and nothing changes hands; the
   other half is a new region (the next id), granted to the same node. Each half is costed at half
-  the whole until the next reports measure them; the old half is frozen for the cool-down, and the
-  next look moves the new half if that narrows the gap, or splits again a half still too hot. A
+  the whole until the next reports measure them; the old half is frozen against moves for the
+  cool-down, and the next look moves the new half if that narrows the gap, or splits again a half
+  still too hot (a region is split at most once a balance interval, so its halves are measured first). A
   node's view takes a smaller rectangle under the same grant as no loss (its owned rectangle
   follows, for its cost reports). Splits stop at `maxRegions` (1024).
 * **Not yet: merges.** Cold neighbours are not joined again: the table only grows.

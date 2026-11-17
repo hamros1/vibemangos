@@ -54,6 +54,7 @@ final class RegionAuthority
         bool measured_;
         MonoTime lastBalance;
         MonoTime[uint] movedAt;        // region id -> when it last moved for the load
+        MonoTime[uint] splitAt;        // region id -> when it was last split (its halves need a measurement)
     }
 
     /// How load balancing by measured cost behaves (phase 6; `ClusterConfig`).
@@ -322,7 +323,7 @@ final class RegionAuthority
             if (now - at < balancing.cooldown)
                 frozen[id] = true;
         const moves = rebalance(regions_, cost, nodes, balancing.tolerance, frozen, balancing.maxMoves);
-        splitHot(load, frozen, now);
+        splitHot(load, now);
         foreach (move; moves)
             foreach (ref r; regions_)
                 if (r.id == move.region && r.state == RegionState.granted)
@@ -341,13 +342,14 @@ final class RegionAuthority
 
     /**
      * A split: when most of the busiest node's load is one region too costly to move (more than half
-     * the gap: moving it would only move the load), that region is cut in two along its longer side. The old id
+     * the gap: moving it would only move the load), that region is cut in two along its longer side
+     * (each region at most once a balance interval, so that its halves are measured first). The old id
      * keeps one half, a new id the other, both still granted to the same node, so nothing moves now
      * and no object changes hands: the next reports measure the halves, and the next look can move
-     * one (a half still too hot is split again). The half that kept the id is frozen for the
-     * cool-down; each half is costed at half the whole until it is measured.
+     * one (a half still too hot is split again). The half that kept the id is frozen against moves
+     * for the cool-down; each half is costed at half the whole until it is measured.
      */
-    private void splitHot(const ulong[ushort] load, const bool[uint] frozen, MonoTime now)
+    private void splitHot(const ulong[ushort] load, MonoTime now)
     {
         import dmangos.log : info;
 
@@ -369,7 +371,8 @@ final class RegionAuthority
             return;
         Region* hottest;
         foreach (ref r; regions_)
-            if (r.owner == busiest && r.state == RegionState.granted && r.id !in frozen
+            if (r.owner == busiest && r.state == RegionState.granted
+                && (r.id !in splitAt || now - splitAt[r.id] >= balancing.interval) // measured since
                 && (hottest is null || cost.get(r.id, 0) > cost.get(hottest.id, 0)))
                 hottest = &r;
         // Only a region too costly to move (over half the gap) that is most of its node's load.
@@ -388,9 +391,11 @@ final class RegionAuthority
             whole, hottest.rect.x0, hottest.rect.x1, hottest.rect.y0, hottest.rect.y1, busiest, next);
         hottest.rect = a; // same id, owner and epoch: its node keeps simulating it
         cost[id] = whole / 2;
-        movedAt[id] = now;
+        movedAt[id] = now; // not moved on an estimate
+        splitAt[id] = now;
         Region other = Region(next, map, b);
         cost[next] = whole - whole / 2;
+        splitAt[next] = now;
         regions_ ~= other;
         grant(regions_[$ - 1], busiest);
         touch();
