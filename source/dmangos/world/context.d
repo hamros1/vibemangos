@@ -479,7 +479,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         bool delegate(ulong) owns;
         if (ownsCell !is null)
             owns = (ulong cell) => ownsCell(id, cell);
-        auto created = new Map(id, MapSettings(config.visibilityDistance, config.visibilityRelocationLimit),
+        auto created = new Map(id, MapSettings(config.visibilityDistance, config.visibilityRelocationLimit,
+            config.gridCleanUpDelay * 1000),
             &serverTime, &spawnCell, terrain(id), owns);
         created.replicator = replicator;
         created.onCorpseRemoved = &corpseRemoved;

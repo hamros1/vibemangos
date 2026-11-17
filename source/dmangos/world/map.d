@@ -150,6 +150,7 @@ struct MapSettings
 {
     float visibilityDistance = 100; /// `Visibility.Distance.Continents`
     float relocationLimit = 10;     /// `Visibility.RelocationLowerLimit`
+    uint unloadIdleMs;              /// `GridCleanUpDelay`: a cell idle for so long unloads (0: never)
 }
 
 /// Sends `packet` to `to`, serialized and framed for that client.
@@ -222,6 +223,8 @@ final class Map : CombatWorld, GameObjectWorld
         MonoTime[ulong] lingerUntil;
         Position[ulong] objectVisibilityAt; // where a mover's visibility was last computed
         Duration unticked;              // time not yet given to the movers (under a millisecond)
+        uint[ulong] idleMs;             // loaded cell -> how long no player (here or on a peer) has been near
+        int idleCheck;                  // ms until the next look for idle cells
     }
 
     invariant (members.length == cellOf.length && members.length == sees.length
@@ -382,6 +385,69 @@ final class Map : CombatWorld, GameObjectWorld
             hold(object, key);
     }
 
+    /// How often `update` looks for idle cells.
+    enum int idleCheckInterval = 10_000;
+
+    /**
+     * `GridMap` unloading (`GridCleanUpDelay`): a loaded cell no player is near, here or on a peer that
+     * wants replicas of it, for `unloadIdleMs` unloads after `elapsedMs` more: its creatures and game
+     * objects go (the dead keep their saved respawn time; the living come back fresh when it loads
+     * again). A cell keeps its objects while one of them is fighting or away in a busy cell, or while
+     * it holds something that cannot simply go (a player's corpse). Returns the cells unloaded.
+     */
+    size_t unloadIdleCells(uint elapsedMs)
+    {
+        size_t count;
+        ulong[] due;
+        foreach (cell, _; loadedCells)
+        {
+            if (cell in localInterest || cell in peerCells)
+            {
+                idleMs.remove(cell);
+                continue;
+            }
+            auto idle = &idleMs.require(cell, 0);
+            *idle += elapsedMs;
+            if (*idle >= settings.unloadIdleMs)
+                due ~= cell;
+        }
+        foreach (cell; due)
+        {
+            ulong[] gone;
+            bool keep;
+            foreach (guid, home; homeCellOf)
+            {
+                if (home != cell)
+                    continue;
+                auto object = objects.get(guid, null);
+                auto creature = cast(Creature) object;
+                if (creature is null && cast(GameObject) object is null)
+                {
+                    keep = true; // a corpse
+                    break;
+                }
+                if (creature !is null)
+                {
+                    const at = objectCellOf.get(guid, cell);
+                    if ((creature.ai !is null && (creature.ai.inCombat || creature.ai.evading))
+                        || at in localInterest || at in peerCells)
+                    {
+                        keep = true;
+                        break;
+                    }
+                }
+                gone ~= guid;
+            }
+            if (keep)
+                continue;
+            forget(gone);
+            loadedCells.remove(cell);
+            idleMs.remove(cell);
+            ++count;
+        }
+        return count;
+    }
+
     /// Takes in an object whose home is cell `key`.
     private void hold(MapObject object, ulong key)
     {
@@ -455,6 +521,12 @@ final class Map : CombatWorld, GameObjectWorld
         if (diff <= 0)
             return;
         unticked -= diff.msecs;
+        if (settings.unloadIdleMs && (idleCheck -= diff) <= 0)
+        {
+            const step = idleCheckInterval - idleCheck;
+            idleCheck = idleCheckInterval;
+            unloadIdleCells(step);
+        }
         Moving[] restingNow;
         foreach (mover; ticking)
         {
@@ -558,8 +630,7 @@ final class Map : CombatWorld, GameObjectWorld
         seesObjects[guid] = null;
         place(guid, who.character.position);
         visibilityAt[guid] = who.character.position;
-        if (replicator !is null)
-            updateInterest(guid, who.character.position);
+        updateInterest(guid, who.character.position); // for peers, and for unloading idle cells
         const time = serverTime();
 
         // Players in sight: each pair gets what it does not have.
@@ -1486,8 +1557,7 @@ private:
     {
         const guid = who.character.guid;
         visibilityAt[guid] = who.character.position;
-        if (replicator !is null) // only other nodes need to know where this map's players are
-            updateInterest(guid, who.character.position);
+        updateInterest(guid, who.character.position); // for peers, and for unloading idle cells
 
         bool[ulong] inSight;
         foreach (other; near(who.character.position, settings.visibilityDistance))
@@ -2454,4 +2524,42 @@ unittest
     one.sendInRange(alice.player.position, 25, Opcode.SMSG_MESSAGECHAT, say);
     assert(alice.take() == [Opcode.SMSG_MESSAGECHAT] && near.take() == [Opcode.SMSG_MESSAGECHAT]);
     assert(far.take() == [], "40 yards beyond a say's range");
+}
+
+/**
+ * `GridCleanUpDelay`: a cell no player has been near for the delay unloads with its objects; the
+ * cells near a player stay, and so does a cell holding what cannot simply go (a corpse).
+ */
+unittest
+{
+    import dmangos.world.gameobject : GameObject, GameObjectSpawn, GameObjectTemplate;
+    import dmangos.world.updatefields : TypeId;
+
+    static final class Body : MapObject
+    {
+        UpdateValues values = UpdateValues(TypeId.corpse);
+        ref UpdateValues fields() { return values; }
+        @property ulong guid() const { return 0xF101_0000_0000_0042; }
+        @property Position position() const { return Position(-3000, 0, 0); }
+        UpdateData appearance(uint) const { return UpdateData.init; }
+    }
+
+    GameObjectTemplate rock = {entry: 7, type: 5, displayId: 1, name: "Rock"};
+    MapObject[] spawner(uint, ulong) { return null; }
+    auto map = new Map(0, MapSettings(100, 10, 30_000), () => 1000u, &spawner);
+    auto alice = new Watcher(1, Position(0, 0, 0));
+    map.add(alice);
+    const nearSpawn = GameObjectSpawn(1, 7, 0, 10, 0, 0), farSpawn = GameObjectSpawn(2, 7, 0, 3000, 0, 0);
+    auto near = new GameObject(nearSpawn, &rock);
+    auto far = new GameObject(farSpawn, &rock);
+    map.addObject(near);
+    map.addObject(far);
+    map.addObject(new Body);
+    alice.take();
+
+    assert(map.unloadIdleCells(20_000) == 0, "not idle long enough");
+    assert(map.unloadIdleCells(10_000) == 1, "the far cell; the corpse's stays");
+    assert(map.findObject(far.guid) is null && !map.cellLoaded(cellKeyAt(3000, 0)));
+    assert(map.findObject(near.guid) !is null && map.findObject(0xF101_0000_0000_0042) !is null);
+    assert(alice.take() == [], "nobody saw it go");
 }

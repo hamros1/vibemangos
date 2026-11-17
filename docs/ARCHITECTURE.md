@@ -227,7 +227,10 @@ The map knows players through the `Inhabitant` interface, which `WorldSession` i
 recipient, because each client's header encryption is different.
 
 * **Cells.** Players are kept in square cells of 66.67 yards (CMaNGOS's grid cell). `near(position,
-  range)` only looks at the cells in reach.
+  range)` only looks at the cells in reach. A cell's spawns load when a player comes near it; a cell
+  no player (here, or on a peer that wants its replicas) has been near for `grid_cleanup_delay_seconds`
+  unloads (`unloadIdleCells`, every 10 seconds), unless one of its creatures is fighting or away in
+  a busy cell, or it holds a player's corpse. The dead keep their saved respawn times.
 * **Seeing is symmetric.** Within `visibility_distance` (100 yards), two players see each other.
   When that starts, each gets the other's create block, built by `Player.createForOthers`: public
   fields only, and health in percent (`Visibility.FogOfWar.Health` 0). When it ends, each gets an

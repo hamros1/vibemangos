@@ -445,6 +445,7 @@ time.
 | `allow_two_side_accounts`, `skip_cinematics` | `AllowTwoSide.Accounts`, `SkipCinematics` | `false`, `0` |
 | `motd` | `Motd` (`@` starts a new line) | a short welcome |
 | `visibility_distance`, `visibility_relocation_lower_limit` | `Visibility.Distance.Continents`, `Visibility.RelocationLowerLimit` | `100`, `10` |
+| `grid_cleanup_delay_seconds` | `GridCleanUpDelay` (ms there): a cell no player has been near for so long unloads its creatures and game objects; `0` never | `300` |
 | `listen_range_say`, `listen_range_text_emote`, `listen_range_yell` | `ListenRange.Say`, `ListenRange.TextEmote`, `ListenRange.Yell` | `25`, `25`, `300` |
 | `allow_two_side_interaction_chat` | `AllowTwoSide.Interaction.Chat` (whispers between factions) | `false` |
 | `allow_two_side_interaction_channel`, `allow_two_side_interaction_group` | `AllowTwoSide.Interaction.Channel`, `AllowTwoSide.Interaction.Group` | `false`, `false` |

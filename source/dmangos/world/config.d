@@ -124,6 +124,8 @@ struct WorldConfig
     @JsonName("visibility_distance") float visibilityDistance = 100;
     /// `Visibility.RelocationLowerLimit`: yards a player moves before visibility is recomputed.
     @JsonName("visibility_relocation_lower_limit") float visibilityRelocationLimit = 10;
+    /// `GridCleanUpDelay` in seconds: a cell no player has been near for so long unloads (0: never).
+    @JsonName("grid_cleanup_delay_seconds") uint gridCleanUpDelay = 300;
     /// `ListenRange.Say`, `ListenRange.TextEmote`, `ListenRange.Yell`, in yards.
     @JsonName("listen_range_say") float listenRangeSay = 25;
     @JsonName("listen_range_text_emote") float listenRangeTextEmote = 25; /// ditto
