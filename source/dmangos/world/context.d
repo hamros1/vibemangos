@@ -480,6 +480,11 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             &serverTime, &spawnCell, terrain(id), owns);
         created.replicator = replicator;
         created.onCorpseRemoved = &corpseRemoved;
+        created.onWaypointScript = (Creature creature, uint scriptId) {
+            import dmangos.world.dbscripts : DbScriptType;
+
+            startScript(DbScriptType.creatureMovement, scriptId, created, creature.guid, creature.guid);
+        };
         created.onGameObjectUsedUp = &gameObjectUsedUp;
         created.groupOf = (ulong player) {
             auto group = groups.of(player);

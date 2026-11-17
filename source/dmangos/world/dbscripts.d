@@ -8,12 +8,15 @@
  * to act as its source or, with `SCRIPT_FLAG_BUDDY_AS_TARGET`, its target; the flags may turn them
  * about or make the source its own target. Its condition must hold.
  *
+ * Scripts start from quests (taken, rewarded), gossip options, game objects used, relays, and
+ * waypoints reached (`dbscripts_on_creature_movement`, the creature its own source and target).
+ *
  * Commands: talking (`broadcast_text`, one of several, or one of a `dbscript_random_templates`
  * group), emotes, a quest's place explored (or failed when too far), kill credit, spawning a game
- * object, taking an aura off, casting a spell, despawning, a temporary faction, stand states, NPC
- * flags, unit and other flags, facing someone, stopping the script when a buddy is (or is not)
- * near, and starting a relay script (or one of a group). The others (moving, summoning, doors,
- * waypoints, AI events) are skipped; `dmangos.log` says which when it traces.
+ * object, summoning a creature, taking an aura off, casting a spell, despawning, a faction, models
+ * and mounts, stand states, NPC flags, unit and other flags, facing someone, stopping the script
+ * when a buddy is (or is not) near, and starting a relay script (or one of a group). The others
+ * (moving, doors, pausing waypoints, AI events) are skipped; `dmangos.log` says which when it traces.
  */
 module dmangos.world.dbscripts;
 
@@ -31,12 +34,13 @@ enum DbScriptType : ubyte
     goTemplateUse,
     event,
     spell,
+    creatureMovement,
 }
 
 /// The tables, by `DbScriptType`.
 immutable string[] dbScriptTables = ["dbscripts_on_quest_start", "dbscripts_on_quest_end", "dbscripts_on_gossip",
     "dbscripts_on_relay", "dbscripts_on_creature_death", "dbscripts_on_go_use", "dbscripts_on_go_template_use",
-    "dbscripts_on_event", "dbscripts_on_spell"];
+    "dbscripts_on_event", "dbscripts_on_spell", "dbscripts_on_creature_movement"];
 
 /// `ScriptCommand`: the commands this server runs.
 enum ScriptCommand : uint
@@ -54,6 +58,8 @@ enum ScriptCommand : uint
     castSpell = 15,
     despawnSelf = 18,
     setFaction = 22,
+    morphToEntryOrModel = 23,
+    mountToEntryOrModel = 24,
     standState = 28,
     modifyNpcFlags = 29,
     tempSpawnCreature = 10,
@@ -678,6 +684,29 @@ mixin template DbScriptRunner()
             creature.values.set!UNIT_FIELD_FACTIONTEMPLATE(faction);
             map.flushCreature(creature);
             break;
+        case ScriptCommand.morphToEntryOrModel, ScriptCommand.mountToEntryOrModel:
+        {
+            // A model (with the additional flag), or the model of a creature entry; 0 puts its own back (or dismounts).
+            if (creature is null)
+                break;
+            import dmangos.world.creature : chooseDisplay;
+
+            uint display = step.datalong;
+            if (display && !(step.dataFlags & ScriptFlag.commandAdditional))
+            {
+                const t = step.datalong in data.creatureTemplates;
+                display = t is null ? 0 : chooseDisplay(*t, spawnRandom);
+                if (display == 0)
+                    break;
+            }
+            if (step.command == ScriptCommand.mountToEntryOrModel)
+                creature.values.set!UNIT_FIELD_MOUNTDISPLAYID(display);
+            else
+                creature.values.set!UNIT_FIELD_DISPLAYID(display ? display
+                    : creature.values.get!UNIT_FIELD_NATIVEDISPLAYID);
+            map.flushCreature(creature);
+            break;
+        }
         case ScriptCommand.standState:
             if (creature !is null && creature.ai !is null)
                 creature.ai.scriptStandState(step.datalong);
@@ -819,6 +848,20 @@ unittest
     assert(me.questStatus[credit].status == QuestState.complete);
     context.updateScripts(0);
     assert(keeper.values.getByte!UNIT_FIELD_BYTES_1(0) == 1, "sitting, by the relay script");
+
+    // A model (the additional flag), then its own again.
+    enum uint morph = 502;
+    DbScriptStep toModel = {id: morph, command: ScriptCommand.morphToEntryOrModel, datalong: 308,
+        dataFlags: ScriptFlag.commandAdditional};
+    DbScriptStep back = {id: morph, delay: 1000, command: ScriptCommand.morphToEntryOrModel};
+    context.data.dbScripts.add(DbScriptType.relay, toModel);
+    context.data.dbScripts.add(DbScriptType.relay, back);
+    const own = keeper.values.get!UNIT_FIELD_DISPLAYID;
+    context.startScript(DbScriptType.relay, morph, map, keeper.guid, 0);
+    context.updateScripts(0);
+    assert(keeper.values.get!UNIT_FIELD_DISPLAYID == 308);
+    context.updateScripts(1000);
+    assert(keeper.values.get!UNIT_FIELD_DISPLAYID == own);
 
     // A summon (ACTION_T_SPAWN for 3 seconds): beside it, and gone after its time out of combat, for good.
     import core.time : msecs;

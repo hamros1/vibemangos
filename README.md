@@ -259,14 +259,15 @@ What works now:
     within 5 yards (or its `CallForHelp`) that would attack the enemy on sight join in a moment and a
     half later; and a fighting creature that passes within 5 yards of an idle ally pulls it in.
   * **Database scripts** (CMaNGOS's `dbscripts_on_*`): a quest's start and complete scripts, a
-    gossip option's, a game object's when used (by its template and by its spawn), and relay scripts
+    gossip option's, a game object's when used (by its template and by its spawn), a waypoint's
+    when a walking creature gets there (Northshire's peasants chop wood), and relay scripts
     started from them, run their steps on the map at their delays, with the quest giver, NPC or
     player as source and target, or a buddy found near (by entry or spawn), turned about by the
     step's flags, behind its condition: talking (a `broadcast_text`, one of several, or one of a
     group), emotes, a quest's place explored (or failed when too far), kill credit, spawning a game
-    object for a while, summoning a creature, taking an aura off, casting a spell, despawning, a faction, stand states,
-    NPC flags, other flags, facing someone, and stopping the script when a creature is (or is not)
-    near. Not yet: moving, doors, waypoint scripts (`dbscripts_on_creature_movement`),
+    object for a while, summoning a creature, taking an aura off, casting a spell, despawning, a
+    faction, models and mounts, stand states, NPC flags, other flags, facing someone, and stopping
+    the script when a creature is (or is not) near. Not yet: moving, doors, pausing waypoints,
     death, event and spell scripts.
   * **Creature scripts** (CMaNGOS's EventAI, `creature_ai_scripts`, for each creature entry or
     spawn): their events (timers in and out of combat, health, mana and the victim's health between

@@ -11,7 +11,8 @@
  *   `creature_movement_template` path) round and round, waiting where a point says; type 4 walks it
  *   back and forth. Paths are sent a few points at a time, at least six seconds' worth.
  *
- * What is not here yet: scripts at waypoints (`ScriptId`), AI being told of arrivals, formations,
+ * A point's script (`ScriptId`) runs when the creature gets there. What is not here yet: AI being
+ * told of arrivals, scripts pausing the path or changing it, formations,
  * and type 3 (a flying path, which here walks as type 2 does). Without movement maps, paths are
  * straight lines; a random point's height is taken from the terrain (`Unit::UpdateAllowedPositionZ`,
  * which CMaNGOS applies only with `PathFinder.NormalizeZ` and otherwise takes from its movement maps).
@@ -47,7 +48,7 @@ struct WaypointNode
     float z = 0;
     float orientation = float.nan; /// where to face when waiting there; NaN: no facing (100 in the table)
     uint delay;         /// milliseconds to wait there
-    uint scriptId;      /// `dbscripts_on_creature_movement`, not run yet
+    uint scriptId;      /// `dbscripts_on_creature_movement`, run when it gets there
 }
 
 /// `WaypointManager`: the paths of `creature_movement` (by spawn) and `creature_movement_template`.
@@ -120,6 +121,9 @@ interface MotionWorld
 
     /// The map's random numbers.
     ref Random random();
+
+    /// `ScriptsStart(SCRIPT_TYPE_CREATURE_MOVEMENT)`: a waypoint's script, the creature its source and target.
+    void waypointScript(Creature creature, uint scriptId);
 }
 
 /// `MovementGenerator`: see the module documentation.
@@ -353,6 +357,8 @@ private:
             return;
         lastReached = path[current].point;
         const wait = path[current].delay;
+        if (path[current].scriptId)
+            world.waypointScript(creature, path[current].scriptId);
         switchToNextNode();
         if (wait > 0)
             nextMoveTime = wait;
@@ -598,6 +604,8 @@ version (unittest)
         float waterOrGroundLevel(float, float, float, float groundZ, float) { return groundZ; }
         void sendToObservers(ulong, Opcode opcode, const(ubyte)[] body_) { sent ~= opcode; bodies ~= body_; }
         ref Random random() { return rng; }
+        uint[] scripts;
+        void waypointScript(Creature, uint scriptId) { scripts ~= scriptId; }
     }
 
     private Creature testCreature(CreatureSpawn spawn, uint extraFlags = 0)
@@ -675,7 +683,7 @@ unittest
     auto store = new WaypointStore;
     store.addSpawnNode(2, WaypointNode(3, 0, 10, 0));
     store.addSpawnNode(2, WaypointNode(1, 10, 0, 0));
-    store.addSpawnNode(2, WaypointNode(2, 10, 10, 0, 1.0f, 2000));
+    store.addSpawnNode(2, WaypointNode(2, 10, 10, 0, 1.0f, 2000, 77));
     store.addEntryNode(102, 0, WaypointNode(0, 1, 1, 1));
     store.finish();
     assert(store.length == 1, "a path with a point 0 is dropped");
@@ -691,6 +699,7 @@ unittest
 
     run(creature, world, creature.spline.duration);
     assert(creature.spline.finalized && creature.position == Position(10, 10, 0, 1.0f), "there, facing");
+    assert(world.scripts == [77], "point 2's script, once there");
     world.sent = null;
     run(creature, world, 1000);
     assert(world.sent.length == 0, "waiting two seconds");

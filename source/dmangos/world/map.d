@@ -1054,6 +1054,16 @@ final class Map : CombatWorld, GameObjectWorld
         return found;
     }
 
+    /// Told when a creature reaches a waypoint with a script.
+    void delegate(Creature creature, uint scriptId) onWaypointScript;
+
+    /// See `MotionWorld.waypointScript`.
+    void waypointScript(Creature creature, uint scriptId)
+    {
+        if (onWaypointScript !is null)
+            onWaypointScript(creature, scriptId);
+    }
+
     /// Told when a creature's corpse goes (`RemoveCorpse`), to bring it back later; null: never comes back.
     void delegate(Creature creature) onCorpseRemoved;
 
