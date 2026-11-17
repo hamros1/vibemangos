@@ -48,6 +48,25 @@ private:
             if (spell.effect[j] == applyAura)
                 values[j] = effectValue(*spell, j, player.data.level, uniform01(map.random));
         const ms = duration(*spell, context.client, player.data.level);
+        // `SpellDamageBonusDone` / `SpellHealingBonusDone` over time: the bonus times the duration over
+        // 15 seconds (at most whole), shared out among the ticks.
+        foreach (j; 0 .. 3)
+            if (spell.effect[j] == applyAura && spell.casting.amplitude[j] > 0 && ms > 0)
+            {
+                const type = cast(AuraType) spell.casting.applyAuraName[j];
+                int done;
+                if (type == AuraType.periodicDamage)
+                    done = auraBonus(AuraType.modDamageDone, spell.casting.school);
+                else if (type == AuraType.periodicHeal)
+                    done = auraBonus(AuraType.modHealingDone, uint.max);
+                if (done > 0)
+                {
+                    const ticks = ms / spell.casting.amplitude[j];
+                    const coefficient = ms >= 15_000 ? 1.0f : ms / 15_000.0f;
+                    if (ticks > 0)
+                        values[j] += cast(int)(done * coefficient / ticks);
+                }
+            }
         if (auto creature = cast(Creature) map.findObject(target))
         {
             if (!creature.alive)
@@ -65,6 +84,20 @@ private:
         // On an enemy (a duel's opponent) it is a debuff.
         const hostile = who !is this && canAttack(relatingNow(), who.relatingNow(), context.client);
         who.addAura(makeAura(spell, player.guid, player.data.level, ms, !hostile, values));
+    }
+
+    /// The caster's auras of `type` (for spells of `school`; `uint.max`: any): their amounts summed.
+    int auraBonus(AuraType type, uint school)
+    {
+        if (school == 0)
+            return 0; // physical: none
+        int done;
+        foreach (aura; player.auras.list)
+            foreach (k; 0 .. 3)
+                if ((aura.effects & (1 << k)) && aura.type(k) == type
+                    && (school == uint.max || (aura.misc(k) & (1 << school))))
+                    done += aura.amount[k];
+        return done;
     }
 
     /// The aura on this player: its effects begin (if new), its duration shown.
@@ -513,6 +546,26 @@ unittest
     assert(keeper.values.get!UNIT_FIELD_HEALTH == 485, "three ticks");
     assert(keeper.auras.list.length == 0 && keeper.values.get!UNIT_FIELD_AURA(32) == 0, "and it ended");
     assert(opcodesOf(anduin.read()).count(Opcode.SMSG_PERIODICAURALOG) == 3);
+
+    // With +30 holy damage done: 30 times 9 s over 15 s, over 3 ticks: 6 more a tick.
+    {
+        enum uint devotion = 91005;
+        context.data.spells.spells[devotion] = testSpell(devotion, 6, 1, 30);
+        context.data.spells.spells[devotion].casting.applyAuraName[0] = AuraType.modDamageDone;
+        context.data.spells.spells[devotion].miscValue[0] = 1 << 1; // holy
+        import dmangos.world.auras : makeAura;
+
+        auto bonus = makeAura(&context.data.spells.spells[devotion], me.guid, 60, -1, true, [30, 0, 0]);
+        bonus.passive = true;
+        anduin.session.addAura(bonus);
+        now += 2.seconds;
+        anduin.write(Opcode.CMSG_CAST_SPELL, castAt(gash, keeper.guid));
+        foreach (_; 0 .. 10)
+            tick(1000);
+        assert(keeper.values.get!UNIT_FIELD_HEALTH == 485 - 3 * 11, "three ticks of 5 and 6");
+        anduin.session.removeAura((cast(Player) me).auras.find(devotion));
+        anduin.read();
+    }
 
     // Faster; then the buff is clicked off.
     now += 2.seconds;
