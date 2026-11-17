@@ -1413,6 +1413,45 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return go;
     }
 
+    /**
+     * The game object's spawn changed (moved, turned): its row and the world data rewritten, and the
+     * object made anew from it, so that the clients see it there. Returns the new object.
+     */
+    GameObject respawnGameObjectAs(Map map, GameObject go, GameObjectSpawn changed)
+    {
+        import std.algorithm.mutation : remove;
+        import dmangos.world.grid : cellKeyAt;
+
+        if (gameObjectSpawnIndex is null)
+            foreach (i, ref s; data.gameObjectSpawns)
+                gameObjectSpawnIndex[s.guid] = i;
+        const at = go.spawn.guid in gameObjectSpawnIndex;
+        if (at is null)
+            return go;
+        const old = data.gameObjectSpawns[*at];
+        const oldCell = cellKeyAt(old.x, old.y), newCell = cellKeyAt(changed.x, changed.y);
+        if (oldCell != newCell)
+        {
+            if (auto cells = old.map in data.gameObjectCells)
+                if (auto list = oldCell in *cells)
+                    foreach (i, index; *list)
+                        if (index == *at)
+                        {
+                            *list = (*list).remove(i);
+                            break;
+                        }
+            data.gameObjectCells.require(changed.map, null).require(newCell, null) ~= *at;
+        }
+        data.gameObjectSpawns[*at] = changed;
+        database.deleteGameObjectSpawn(changed.guid);
+        database.insertGameObjectSpawn(changed);
+        map.removeObject(go.guid);
+        auto made = makeGameObject(&data.gameObjectSpawns[*at]);
+        made.instanceId = map.instanceId;
+        map.addObject(made);
+        return made;
+    }
+
     /// The game object's spawn deleted: gone from the map, the world data's cell and the database.
     void deleteGameObjectSpawn(Map map, GameObject go)
     {

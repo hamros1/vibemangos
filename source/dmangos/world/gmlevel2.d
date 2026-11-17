@@ -222,6 +222,115 @@ private:
         return true;
     }
 
+    bool handleGOEnable()
+    {
+        auto go = selectedGameObject();
+        if (go is null)
+        {
+            redSystemMessage("No selected GameObject...");
+            return true;
+        }
+        if (go.values.get!GAMEOBJECT_DYN_FLAGS == 1)
+        {
+            go.values.set!GAMEOBJECT_DYN_FLAGS(0u);
+            blueSystemMessage("Gameobject deactivated.");
+        }
+        else
+        {
+            go.values.set!GAMEOBJECT_DYN_FLAGS(1u);
+            blueSystemMessage("Gameobject activated.");
+        }
+        map.flushGameObject(go);
+        gmLog(format!"activated/deactivated gameobject %s, entry %u"(go.template_.name, go.spawn.entry));
+        return true;
+    }
+
+    bool handleGOScale(float scale = 0)
+    {
+        auto go = selectedGameObject();
+        if (go is null)
+        {
+            redSystemMessage("No selected GameObject...");
+            return true;
+        }
+        if (!scale)
+            scale = 1;
+        go.values.set!OBJECT_FIELD_SCALE_X(scale);
+        blueSystemMessage(format!"Set scale to %.3f"(scale));
+        gmLog(format!"set scale on gameobject %s to %.3f, entry %u"(go.template_.name, scale, go.spawn.entry));
+        // Made anew for the clients to see (CMaNGOS's `gameobject` has no size: it is not saved).
+        map.removeObject(go.guid);
+        map.addObject(go);
+        return true;
+    }
+
+    bool handleGOAnimProgress(uint progress = 0)
+    {
+        auto go = selectedGameObject();
+        if (go is null)
+            return false;
+        go.values.set!GAMEOBJECT_ANIMPROGRESS(progress);
+        map.flushGameObject(go);
+        blueSystemMessage(format!"Set ANIMPROGRESS to %u"(progress));
+        return true;
+    }
+
+    bool handleGOMove()
+    {
+        import dmangos.world.gameobject : GameObjectSpawn;
+
+        auto go = selectedGameObject();
+        if (go is null)
+        {
+            redSystemMessage("No selected GameObject...");
+            return true;
+        }
+        GameObjectSpawn changed = go.spawn;
+        const at = player.position;
+        changed.x = at.x;
+        changed.y = at.y;
+        changed.z = at.z;
+        changed.orientation = at.orientation;
+        selectedGo = context.respawnGameObjectAs(map, go, changed).guid;
+        return true;
+    }
+
+    bool handleGORotate(string axis = null, float degrees = 0)
+    {
+        import std.math : cos, sin, PI;
+        import dmangos.world.gameobject : GameObjectSpawn;
+
+        if (axis.length == 0)
+            return false;
+        auto go = selectedGameObject();
+        if (go is null)
+        {
+            redSystemMessage("No selected GameObject...");
+            return true;
+        }
+        const rad = degrees * (cast(float) PI / 180.0f);
+        GameObjectSpawn changed = go.spawn;
+        switch (axis[0] | 0x20) // tolower
+        {
+        case 'x':
+            changed.rotation[0] += rad;
+            break;
+        case 'y':
+            changed.rotation[1] += rad;
+            break;
+        case 'o':
+            const o = player.position.orientation;
+            changed.rotation[2] = sin(o / 2);
+            changed.rotation[3] = cos(o / 2);
+            break;
+        default:
+            redSystemMessage("Invalid Axis, Please use x, y, or o.");
+            return true;
+        }
+        selectedGo = context.respawnGameObjectAs(map, go, changed).guid;
+        return true;
+    }
+
     bool handleNpcComeCommand()
     {
         auto creature = getSelectedCreature(true);
@@ -775,7 +884,7 @@ unittest
     import std.algorithm.searching : canFind, startsWith;
     import std.format : format;
     import dmangos.auth.accounts : AccountLevel;
-    import dmangos.world.commands : MSG_COLOR_LIGHTBLUE;
+    import dmangos.world.commands : MSG_COLOR_LIGHTBLUE, MSG_COLOR_LIGHTRED;
     import dmangos.world.creature : Creature;
     import dmangos.world.gameobject : GameObjectTemplate, GameObjectType;
     import dmangos.world.movement : Position;
@@ -808,6 +917,18 @@ unittest
     assert(db.gameObjectSpawnRows.length == 1);
     gm.say(".gobject select");
     assert(systemMessages(gm.read())[0].canFind("[ Chair ]"));
+    gm.say(".gobject scale 2");
+    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTBLUE ~ "Set scale to 2.000|r"]);
+    gm.say(".gobject enable");
+    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTBLUE ~ "Gameobject activated.|r"]);
+    gm.say(".gobject animprogress 5");
+    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTBLUE ~ "Set ANIMPROGRESS to 5|r"]);
+    gm.say(".gobject rotate x 90");
+    assert(db.gameObjectSpawnRows.values[0].rotation[0] > 1.5f, "turned and saved");
+    gm.say(".gobject rotate q 90");
+    assert(systemMessages(gm.read()).canFind(MSG_COLOR_LIGHTRED ~ "Invalid Axis, Please use x, y, or o.|r"));
+    gm.say(".gobject move");
+    assert(db.gameObjectSpawnRows.length == 1);
     gm.say(".gobject delete");
     assert(db.gameObjectSpawnRows.length == 0);
 }

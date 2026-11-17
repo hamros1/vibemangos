@@ -111,6 +111,8 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 * `.npc spawn` and `.gobject spawn` write CMaNGOS's `creature` and `gameobject` rows (a respawn time of
   120 seconds for creatures, the table's default); in a cluster only the GM's node knows the new spawn
   until the others restart.
+* `.gobject scale` is not saved: CMaNGOS's `gameobject` has no size. `.gobject move` and `.gobject rotate`
+  rewrite the spawn's row and keep its guid (ArcEmu gave the object a new one).
 * `.gobject info` shows the size as a number (ArcEmu printed a float with `%%u`).
 * `.quest giver` and `.quest finisher` name a game object by its own template (ArcEmu looks its id up
   among the items); ArcEmu's quest tables are CMaNGOS's (`creature_questrelation` and the like).

@@ -42,6 +42,8 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 * `.npc spawn` and `.gobject spawn` write CMaNGOS's `creature` and `gameobject` rows (a respawn time of
   120 seconds for creatures, the table's default); in a cluster only the GM's node knows the new spawn
   until the others restart.
+* `.gobject scale` is not saved: CMaNGOS's `gameobject` has no size. `.gobject move` and `.gobject rotate`
+  rewrite the spawn's row and keep its guid (ArcEmu gave the object a new one).
 * `.gobject info` shows the size as a number (ArcEmu printed a float with `%u`).
 * `.quest giver` and `.quest finisher` name a game object by its own template (ArcEmu looks its id up
   among the items); ArcEmu's quest tables are CMaNGOS's (`creature_questrelation` and the like).
@@ -54,7 +56,7 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 * Arguments are read strictly: a number written wrong ("12abc", "abc") or a missing argument shows
   the command's help, where ArcEmu's C parsing read "12abc" as 12 and "abc" as 0 and went on.
 
-## Working (182)
+## Working (187)
 
 | Command | Letter | Help |
 |---|---|---|
@@ -142,6 +144,11 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 | `.gobject spawn` | `o` | Spawns a GameObject by ID |
 | `.gobject info` | `o` | Gives you informations about selected GO |
 | `.gobject activate` | `o` | Activates/Opens the selected GO. |
+| `.gobject enable` | `o` | Enables the selected GO for use. |
+| `.gobject scale` | `o` | Sets scale of selected GO |
+| `.gobject animprogress` | `o` | Sets anim progress |
+| `.gobject move` | `g` | Moves gameobject to player xyz |
+| `.gobject rotate` | `g` | <Axis> <Value> - Rotates the object. <Axis> x,y, Default o. |
 | `.battleground setworldstate` | `e` | <var> <val> - Var can be in hex. WS Value. |
 | `.battleground playsound` | `e` | <val>. Val can be in hex. |
 | `.npc flags` | `n` | Changes NPC flags |
@@ -241,7 +248,7 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 | `.gotrig` | `v` | Warps to areatrigger <id> |
 | `.logcomment` | `1` | Adds a comment to the GM log for the admins to read. |
 
-## Not yet implemented (116)
+## Not yet implemented (111)
 
 These answer "Not yet implemented.", as ArcEmu's `HandleNYICommand` does: their systems (AI agents
 and waypoint editing, quest editing, guilds, pets, honor, battlegrounds and arenas, GM
@@ -295,12 +302,7 @@ tickets, game object and creature spawning, GM invisibility, flying) do not exis
 | `.gmTicket release` | `c` | Releases assigned GM Ticket with ID x. |
 | `.gmTicket comment` | `c` | Sets comment x to GM Ticket with ID y. |
 | `.gmTicket toggle` | `z` | Toggles the ticket system status. |
-| `.gobject enable` | `o` | Enables the selected GO for use. |
-| `.gobject scale` | `o` | Sets scale of selected GO |
-| `.gobject animprogress` | `o` | Sets anim progress |
 | `.gobject export` | `o` | Exports the current GO selected |
-| `.gobject move` | `g` | Moves gameobject to player xyz |
-| `.gobject rotate` | `g` | <Axis> <Value> - Rotates the object. <Axis> x,y, Default o. |
 | `.battleground setbgscore` | `e` | <Teamid> <Score> - Sets battleground score. 2 Arguments. |
 | `.battleground startbg` | `e` | Starts current battleground match. |
 | `.battleground pausebg` | `e` | Pauses current battleground match. |
