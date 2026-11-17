@@ -347,7 +347,9 @@ What works now:
     weapon damage with a bonus or percentage (Heroic Strike waits for the next swing and replaces
     it), heals, energize, teleports home (the hearthstone), creating items, learning and triggering
     spells. Items cast their on-use spells (with the item's own cooldowns; food and drink are used
-    up). Not yet: channeling, area and chain targets, projectiles' travel time, spells cast at
+    up). A channelled spell goes on for its duration (`MSG_CHANNEL_START`, the caster's channel fields),
+    ending at its time, when the player cancels it, or when it moves if the spell says so (its auras on
+    the target ending with it). Not yet: area and chain targets, projectiles' travel time, spells cast at
     players (PvP) and by creatures, spell power and partial resists.
   * **Auras** (CMaNGOS's `SpellAuraHolder` and `Aura`): buffs and debuffs fill the aura fields
     (positive slots 0..31, negative 32..47) and the buff bar's durations, refresh and stack, and end

@@ -50,6 +50,9 @@ private:
     }
 
     Casting generic;                 // `CURRENT_GENERIC_SPELL`
+    const(SpellInfo)* channelSpell;  // `CURRENT_CHANNELED_SPELL`: the spell being channelled, if any
+    ulong channelTarget;             // ... at whom
+    int channelTimer;                // ... for so many more milliseconds
     Casting nextSwing;               // `CURRENT_MELEE_SPELL`
     MonoTime[uint] spellReadyAt;     // `m_cooldownMap` by spell
     MonoTime[uint] categoryReadyAt;  // ... and by category
@@ -167,6 +170,8 @@ private:
     /// The countdown of a cast in progress (`Spell::update`): it goes when its time is up.
     void updateSpells(Duration elapsed)
     {
+        if (channelSpell !is null && (channelTimer -= cast(int) elapsed.total!"msecs") <= 0)
+            endChannel(false);
         if (!generic.active)
             return;
         generic.timer -= cast(int) elapsed.total!"msecs";
@@ -188,11 +193,93 @@ private:
         deliver(Opcode.SMSG_CAST_RESULT, castResultPacket(id, reason));
     }
 
+    /**
+     * `Spell::SendChannelStart`: a channelled spell (`SPELL_ATTR_EX_IS_CHANNELED`, `_IS_SELF_CHANNELED`)
+     * goes on for its duration: `MSG_CHANNEL_START`, and the caster's channel fields for everyone.
+     */
+    void startChannel(const(SpellInfo)* spell, ulong target)
+    {
+        import dmangos.world.spellcast : duration;
+
+        const ms = duration(*spell, context.client, player.data.level);
+        if (ms <= 0)
+            return;
+        if (channelSpell !is null)
+            endChannel(true);
+        channelSpell = spell;
+        channelTarget = target ? target : player.guid;
+        channelTimer = ms;
+        ByteWriter w;
+        w.put(spell.id);
+        w.put(cast(uint) ms);
+        deliver(Opcode.MSG_CHANNEL_START, w.data);
+        player.values.set!UNIT_CHANNEL_SPELL(spell.id);
+        player.values.set!UNIT_FIELD_CHANNEL_OBJECT(channelTarget);
+        flushPlayerChanges();
+    }
+
+    /**
+     * `Spell::SendChannelUpdate(0)`: the channel ends, at its time or cut short (`cancelled`: moving,
+     * `CMSG_CANCEL_CHANNELLING`, another cast), when its auras on the target go with it.
+     */
+    void endChannel(bool cancelled)
+    {
+        if (channelSpell is null)
+            return;
+        const spell = channelSpell;
+        channelSpell = null;
+        if (cancelled)
+        {
+            if (auto creature = cast(Creature) map.findObject(channelTarget))
+            {
+                if (auto aura = creature.auras.find(spell.id))
+                    if (aura.caster == player.guid)
+                    {
+                        creature.auras.remove(aura, creature.values);
+                        map.flushCreature(creature);
+                    }
+            }
+            else if (channelTarget == player.guid)
+            {
+                if (auto aura = player.auras.find(spell.id))
+                    removeAura(aura);
+            }
+            else if (auto other = map.combatant(channelTarget))
+                other.auraRemovedBy(spell.id);
+            map.sendToWatchers(this, Opcode.SMSG_SPELL_FAILURE,
+                spellFailurePacket(player.guid, spell.id, SpellCastResult.interrupted), true);
+        }
+        ByteWriter w;
+        w.put(0u);
+        deliver(Opcode.MSG_CHANNEL_UPDATE, w.data);
+        player.values.set!UNIT_CHANNEL_SPELL(0u);
+        player.values.set!UNIT_FIELD_CHANNEL_OBJECT(0UL);
+        flushPlayerChanges();
+    }
+
+    /// `HandleCancelChanneling`: the player stops channelling.
+    @Handles(Opcode.CMSG_CANCEL_CHANNELLING, WorldState.inWorld)
+    void handleCancelChanneling(ref ByteReader reader)
+    {
+        const id = reader.read!uint;
+        if (channelSpell !is null && channelSpell.id == id)
+            endChannel(true);
+    }
+
     /// Moving interrupts a cast that moving interrupts (`SPELL_INTERRUPT_FLAG_MOVEMENT`).
     void spellsOnMovement(uint movementFlags)
     {
         enum uint moving = MovementFlags.forward | MovementFlags.backward | MovementFlags.strafeLeft
             | MovementFlags.strafeRight | MovementFlags.jumping | MovementFlags.fallingFar;
+        // A channel ends when the player moves (or turns), if its `ChannelInterruptFlags` say so.
+        enum uint channelMove = 0x08, channelTurn = 0x10; // AURA_INTERRUPT_FLAG_MOVE, _TURNING
+        if (channelSpell !is null)
+        {
+            const flags = channelSpell.casting.channelInterruptFlags;
+            if (((movementFlags & moving) && (flags & channelMove))
+                || ((movementFlags & (MovementFlags.turnLeft | MovementFlags.turnRight)) && (flags & channelTurn)))
+                endChannel(true);
+        }
         if (generic.active && (movementFlags & moving) && (generic.spell.casting.interruptFlags & interruptMovement))
             interruptCast(SpellCastResult.interrupted);
         enum uint turning = MovementFlags.turnLeft | MovementFlags.turnRight;
@@ -207,6 +294,7 @@ private:
     {
         if (generic.active)
             interruptCast(SpellCastResult.interrupted);
+        endChannel(true);
         nextSwing.active = false;
     }
 
@@ -462,6 +550,10 @@ private:
             foreach (target; effectTargets[i])
                 if (missOf[target] == SpellMissInfo.none)
                     doEffect(spell, i, target, c);
+        // A channelled spell goes on (`SPELL_ATTR_EX_IS_CHANNELED`, `_IS_SELF_CHANNELED`).
+        enum uint channeled = 0x04, selfChanneled = 0x40;
+        if ((spell.attributesEx & (channeled | selfChanneled)) && !c.triggered)
+            startChannel(spell, results.length ? results[0].guid : c.targets.unit);
         // `SpellHit` for the creatures hit (their scripts).
         foreach (r; results)
             if (r.miss == SpellMissInfo.none)
@@ -997,4 +1089,91 @@ unittest
     now += 2.seconds; // the global cooldown is over
     anduin.write(Opcode.CMSG_USE_ITEM, use.data);
     assert(opcodesOf(anduin.read()).canFind(Opcode.MSG_MOVE_TELEPORT_ACK), "home");
+}
+
+/**
+ * A channelled spell: `MSG_CHANNEL_START` and the caster's channel fields, `MSG_CHANNEL_UPDATE` when
+ * its time is up; moving cuts it short, and its aura on the target goes with it.
+ */
+unittest
+{
+    import core.time : MonoTime, msecs, seconds;
+    import std.algorithm.searching : canFind;
+    import dmangos.bytes : ByteWriter;
+    import dmangos.dbc : buildDbc;
+    import dmangos.world.auras : AuraType;
+    import dmangos.world.clientdata : spellCastTimesFormat, spellDurationFormat, spellRangeFormat;
+    import dmangos.world.creature : Creature;
+    import dmangos.world.movement : MovementInfo, Position;
+    import dmangos.world.objects : HighGuid, makeGuid;
+    import dmangos.world.opcodes;
+    import dmangos.world.player : Player;
+    import dmangos.world.spellcast : SpellTargets, TargetFlags;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+    import dmangos.world.updatefields;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    uint bits(float f) { return *cast(uint*) &f; }
+    context.client.spellCastTimes = typeof(context.client.spellCastTimes).parse(buildDbc(spellCastTimesFormat,
+        [[1u, 0, 0, 0]]), "SpellCastTimes.dbc");
+    context.client.spellRanges = typeof(context.client.spellRanges).parse(buildDbc(spellRangeFormat,
+        [[1u, bits(0), bits(30), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]), "SpellRange.dbc");
+    context.client.spellDurations = typeof(context.client.spellDurations).parse(buildDbc(spellDurationFormat,
+        [[1u, 3000, 0, 3000]]), "SpellDuration.dbc");
+    enum uint drain = 95400;
+    context.data.spells.spells[drain] = testSpell(drain, 6, 6, 2); // 2 damage a second, channelled for 3 s
+    with (context.data.spells.spells[drain])
+    {
+        casting.applyAuraName[0] = AuraType.periodicDamage;
+        casting.amplitude[0] = 1000;
+        casting.durationIndex = 1;
+        casting.dmgClass = 0;
+        casting.channelInterruptFlags = 0x08; // moving ends it
+        attributesEx = 0x04;
+    }
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f));
+    auto me = cast(Player) anduin.session.character;
+    me.spells ~= drain;
+    anduin.read();
+    auto keeper = cast(Creature) context.map(0).findObject(makeGuid(HighGuid.unit, creatureInnkeeper, innkeeperSpawn));
+    keeper.values.set!UNIT_FIELD_MAXHEALTH(500u);
+    keeper.values.set!UNIT_FIELD_HEALTH(500u);
+    void cast_()
+    {
+        ByteWriter w;
+        w.put(drain);
+        SpellTargets(TargetFlags.unit, keeper.guid).write(w);
+        anduin.write(Opcode.CMSG_CAST_SPELL, w.data);
+    }
+    void tick(int ms)
+    {
+        now += ms.msecs;
+        anduin.session.update(ms.msecs);
+        context.map(0).update(ms.msecs);
+    }
+
+    cast_();
+    assert(opcodesOf(anduin.read()).canFind(Opcode.MSG_CHANNEL_START));
+    assert(me.values.get!UNIT_CHANNEL_SPELL == drain && me.values.get!UNIT_FIELD_CHANNEL_OBJECT == keeper.guid);
+    tick(1500);
+    tick(1600);
+    assert(opcodesOf(anduin.read()).canFind(Opcode.MSG_CHANNEL_UPDATE), "its time is up");
+    assert(me.values.get!UNIT_CHANNEL_SPELL == 0);
+
+    // Again, and the player walks away: cut short, its aura gone from the innkeeper.
+    now += 3.seconds;
+    cast_();
+    assert(keeper.auras.find(drain) !is null);
+    anduin.read();
+    MovementInfo step = me.movement;
+    step.flags = 0x1; // forward
+    ByteWriter w;
+    step.write(w);
+    anduin.write(Opcode.MSG_MOVE_START_FORWARD, w.data);
+    const cut = opcodesOf(anduin.read());
+    assert(cut.canFind(Opcode.MSG_CHANNEL_UPDATE) && keeper.auras.find(drain) is null && me.values.get!UNIT_CHANNEL_SPELL == 0);
 }

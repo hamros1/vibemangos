@@ -123,7 +123,7 @@ The largest area. CMaNGOS references: `Spells/`, `Entities/Unit.cpp`, `Combat/`,
    a creature another node of a cluster simulates.
 5. Spells, cooldowns and auras. **Casting and auras: done** (`spellcast.d`, `spellhandlers.d`,
    `auras.d`, `aurahandlers.d`; README's "Spells" and "Auras"); creatures' spells come with their
-   scripts (above), talents with milestone 7. Next: channeling, area and chain targets for players.
+   scripts (above), talents with milestone 7. Channelled spells: done. Next: area and chain targets for players.
 6. **Duels and trades: done** (`tradehandlers.d`, `duelhandlers.d`; README's "Trading" and
    "Duels"). Players fight players in melee and with spells where the relations allow (duelists,
    PvP-flagged enemies). Not yet: toggling PvP, honor, free-for-all areas, the off hand against players.
