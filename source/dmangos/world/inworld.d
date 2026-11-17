@@ -80,6 +80,7 @@ private:
         saveCooldowns();
         saveQuests();
         saveReputation();
+        saveHonor();
         deathOnLogout();
         taxiOnLeave();
         const progress = player.progress(secondsInWorld());
@@ -235,6 +236,7 @@ private:
         saveCooldowns();
         saveQuests();
         saveReputation();
+        saveHonor();
         context.settleWrites(); // in the database before the next node loads it
 
         ByteWriter w;
@@ -381,6 +383,7 @@ private:
         connection.playing = this; // in the world from here on
         context.enterWorldMigrated(this, known);
         loadAuras();
+        loadHonor();
         loadCooldowns();
         loadTalentReset();
         loadSocial();

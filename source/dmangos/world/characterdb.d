@@ -16,7 +16,7 @@ import dmangos.mysql : MySqlConnection;
 import dmangos.world.inventory : ItemChange, ItemRecord, ItemState;
 import dmangos.world.player : CharacterData, CharacterProgress, HomeBind, tutorialFields;
 import dmangos.world.playercreate : NewCharacter, NewSkill, NewSpell, maxEnchantmentSlot;
-import dmangos.world.database : AuraRecord, CooldownRecord, PetRecord, PetSpellRecord, GuildMemberRecord, GuildRankRecord, GuildRecord,
+import dmangos.world.database : AuraRecord, HonorColumns, HonorPointRecord, HonorRecord, CooldownRecord, PetRecord, PetSpellRecord, GuildMemberRecord, GuildRankRecord, GuildRecord,
     PetitionRecord, SocialRow, CorpseRecord, InstanceBindRecord, InstanceRecord, InstanceRecords,
     InstanceRespawnRecord, MailRecord;
 import dmangos.world.reputation : ReputationRecord;
@@ -735,6 +735,36 @@ final class CharacterStatements
         foreach (row; characters.query!"SELECT faction, standing, flags FROM character_reputation WHERE guid = ?"(player))
             found ~= ReputationRecord(row.get!uint(0), row.get!int(1), row.get!uint(2));
         return found;
+    }
+
+    /// See `WorldDatabase.loadHonor`.
+    HonorRecord loadHonor(uint player)
+    {
+        HonorRecord found;
+        const columns = characters.query!("SELECT honor_highest_rank, honor_standing, stored_honor_rating, "
+            ~ "stored_dishonorable_kills, stored_honorable_kills FROM characters WHERE guid = ?")(player);
+        if (columns.length)
+        {
+            const r = columns[0];
+            found.columns = HonorColumns(r.get!uint(0), r.get!uint(1), r.get!float(2), r.get!int(3), r.get!int(4));
+        }
+        foreach (row; characters.query!"SELECT victim_type, victim, honor, date, type FROM character_honor_cp WHERE guid = ?"(player))
+            found.points ~= HonorPointRecord(cast(ubyte) row.get!uint(0), row.get!uint(1), row.get!float(2),
+                row.get!uint(3), cast(ubyte) row.get!uint(4));
+        return found;
+    }
+
+    /// See `WorldDatabase.saveHonor`.
+    void saveHonor(uint player, const HonorColumns c, const(HonorPointRecord)[] added)
+    {
+        characters.transaction({
+            characters.execute!("UPDATE characters SET honor_highest_rank = ?, honor_standing = ?, stored_honor_rating = ?, "
+                ~ "stored_dishonorable_kills = ?, stored_honorable_kills = ? WHERE guid = ?")(c.highestRank, c.standing,
+                c.storedRating, c.storedDishonorableKills, c.storedHonorableKills, player);
+            foreach (ref p; added)
+                characters.execute!("INSERT INTO character_honor_cp (guid, victim_type, victim, honor, date, type) "
+                    ~ "VALUES (?, ?, ?, ?, ?, ?)")(player, p.victimType, p.victim, p.honor, p.date, p.type);
+        });
     }
 
     /// See `WorldDatabase.deleteCorpse`.

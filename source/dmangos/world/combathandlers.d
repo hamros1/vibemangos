@@ -102,7 +102,17 @@ mixin template CombatHandlers()
         if (auto group = context.groups.of(player.guid))
             group.updatePlayerOutOfRange(this, GroupUpdate.currentHealth | GroupUpdate.currentPower);
         if (died)
+        {
+            // `Unit::Kill`: honor to the player who killed (or whose pet did), and its group.
+            typeof(this) killer;
+            if (attacker.kind == UnitKind.player)
+                killer = attacker.session;
+            else if (attacker.kind == UnitKind.creature && attacker.creature.petOwner)
+                killer = cast(typeof(this)) context.onlinePlayer(attacker.creature.petOwner);
+            if (killer !is null && killer !is this)
+                killer.playerKilledByMe(this);
             playerDied(attacker.kind != UnitKind.player); // only a player's kill costs no durability
+        }
     }
 
     /// See `UnitRef.threatAdded`: a creature fights this player; it is in combat while any does.

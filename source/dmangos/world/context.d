@@ -1,6 +1,7 @@
 /// State shared by every session on a world server.
 module dmangos.world.context;
 
+import dmangos.world.honor : HonorStandings;
 import dmangos.world.writebehind : Writer;
 import core.time : Duration, minutes, MonoTime, msecs, seconds;
 
@@ -185,6 +186,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
     WorldConfig config;
     WorldDatabase database;
+    /// Last week's faction standings (`dmangos.world.honor`), from the weekly maintenance.
+    HonorStandings honorStandings;
     /// The thread `database` writes through (`dmangos.world.writebehind`); null: writes are immediate.
     Writer writer;
     WorldData data;
@@ -455,6 +458,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         this.database = database;
         this.data = data;
         this.client = client;
+        honorStandings = new HonorStandings;
         this.clock = () => MonoTime.currTime;
         {
             import dmangos.world.objects : updateCompression;

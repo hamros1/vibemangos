@@ -14,6 +14,7 @@
  */
 module dmangos.world.character;
 
+import dmangos.world.honor : HonorHandlers;
 import dmangos.world.pvp : PvPHandlers;
 import core.time : Duration, MonoTime, msecs, seconds;
 import std.algorithm.searching : canFind;
@@ -702,6 +703,7 @@ private:
     mixin AuctionHandlers;
     mixin TaxiHandlers;
     mixin PvPHandlers;
+    mixin HonorHandlers;
     mixin Level0Commands;
     mixin Level1Commands;
     mixin Level2Commands;
@@ -795,4 +797,57 @@ unittest
     orc.pvpLeftCombat();
     orc.updatePvPTimers(30_000);
     assert(!orc.isPvPContested && pvpFlagged(thrall), "30 s out of combat: not contested; flagged 5 minutes");
+}
+
+// Honor (`dmangos.world.honor`): a kill of an enemy player, its credit and the fields; kept over a save.
+unittest
+{
+    import std.algorithm.iteration : filter;
+    import std.array : array;
+    import dmangos.bytes : ByteReader;
+    import dmangos.world.honor : HonorType;
+    import dmangos.world.pvp : spellHonorlessTarget;
+    import dmangos.world.spellcast : SpellTargets, TargetFlags;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto thrall = loggedIn(context, db, 9, "Thrall", Position(0, 0, 0), AccountLevel.player, raceOrc, 0, 20);
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(2, 0, 0), AccountLevel.player, raceHuman, 0, 20);
+    auto orc = thrall.session.inWorld, human = anduin.session.inWorld;
+    thrall.read();
+
+    // Level 20 on level 20, no ranks: (10 * 0.25) * (20 + 1) * 1.05 = 55.
+    orc.playerKilledByMe(human);
+    auto credit = thrall.read().filter!(p => p.opcode == Opcode.SMSG_PVP_CREDIT).array;
+    assert(credit.length == 1);
+    auto r = ByteReader(credit[0].body_);
+    assert(r.read!uint == 55 && r.read!ulong == human.player.guid);
+    const v = &orc.player.values;
+    assert((v.get!PLAYER_FIELD_SESSION_KILLS & 0xFFFF) == 1 && v.get!PLAYER_FIELD_LIFETIME_HONORBALE_KILLS == 1);
+    assert(v.get!PLAYER_FIELD_THIS_WEEK_CONTRIBUTION == 55 && v.get!PLAYER_FIELD_THIS_WEEK_KILLS == 1);
+
+    // The second kill of the same victim the same day is worth a little less.
+    orc.playerKilledByMe(human);
+    r = ByteReader(thrall.read().filter!(p => p.opcode == Opcode.SMSG_PVP_CREDIT).array[0].body_);
+    assert(r.read!uint == 49, "(9 * 0.25) * 21 * 1.05 = 49.6");
+
+    // None for an Honorless Target, one of one's own side, or one grey to the killer.
+    if (const spell = context.data.spells.spell(spellHonorlessTarget))
+    {
+        human.castSpell(spell, SpellTargets(TargetFlags.self, 0), true, 0);
+        orc.playerKilledByMe(human);
+        assert(!thrall.read().canFind!(p => p.opcode == Opcode.SMSG_PVP_CREDIT), "honorless");
+    }
+    auto jaina = loggedIn(context, db, 8, "Jaina", Position(4, 0, 0), AccountLevel.player, raceHuman, 0, 20);
+    anduin.read();
+    human.playerKilledByMe(jaina.session.inWorld);
+    assert(!anduin.read().canFind!(p => p.opcode == Opcode.SMSG_PVP_CREDIT), "one's own side");
+
+    // Saved and loaded again: the same.
+    orc.saveHonor();
+    context.settleWrites();
+    assert(db.honorRows[9].points.length == 2 && db.honorRows[9].points[0].type == HonorType.honorable);
+    orc.loadHonor();
+    assert(orc.player.values.get!PLAYER_FIELD_LIFETIME_HONORBALE_KILLS == 2);
+    assert(orc.player.values.get!PLAYER_FIELD_THIS_WEEK_CONTRIBUTION == 104);
 }

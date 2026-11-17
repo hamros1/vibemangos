@@ -145,6 +145,7 @@ private:
         saveCooldowns();
         saveQuests();
         saveReputation();
+        saveHonor();
         saveTimer.reset();
     }
 

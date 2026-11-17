@@ -277,6 +277,7 @@ mixin template CharacterLogin()
         updateLeaderFlag(); // as saved, or not
         deathOnLogin();
         loadAuras();
+        loadHonor();
         applyPassiveSpells();
         petsOnArrival(); // `Player::LoadPet`
         info!"%s: '%s' entered the world as '%s' (guid %s, map %s at %.1f %.1f %.1f)"(remoteAddress,

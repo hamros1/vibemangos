@@ -620,6 +620,36 @@ enemy player only if they are flagged (the target's flag decides), or both are i
 * **Not yet:** harmful spells that deal no damage (debuffs) do not flag yet; only damage and healing
   do.
 
+## Honor
+
+`honor.d` is CMaNGOS-classic's `Player::RewardHonor`, `AddHonorCP` and `UpdateHonor`, and the
+formulas of `MaNGOS::Honor`.
+
+* **Kills.** A kill of an enemy player gives honour (`honorableKillPoints`) unless the victim is grey
+  to the killer or an Honorless Target. The amount:
+  * grows with the killer's level and the victim's rank;
+  * falls by a tenth for each kill of the same victim that day, nothing from the tenth;
+  * is capped at 400 and divided among the killer's living group members within 74 yards.
+
+  A grey civilian creature of the other side that is flagged for PvP costs rank points at once
+  (`dishonorableKillPoints`). A racial leader gives 398 to each member near the kill. Each gain sends
+  `SMSG_PVP_CREDIT`.
+* **Rows.** Each gain is a `character_honor_cp` row of the day. Kills and honour for today,
+  yesterday, this week and last week, and lifetime kills, are counted from the rows and the stored
+  columns. They are shown in the `PLAYER_FIELD_*_KILLS` and `_CONTRIBUTION` fields; the rank goes in
+  `PLAYER_BYTES_3`, the highest rank in `PLAYER_FIELD_BYTES` and the rank bar in
+  `PLAYER_FIELD_BYTES2`.
+* **Ranks.** Rank points give the rank: Private or Scout below 2,000, then one rank per 5,000, up to
+  Grand Marshal or High Warlord from 60,000, and four negative ranks below 0.
+* **Saving.** `saveHonor` writes the columns and the new rows with the character's other saves.
+* **Inspecting.** `MSG_INSPECT_HONOR_STATS` answers for a player within 28 yards who may not be
+  attacked.
+* **Days** are CMaNGOS's `(year - 1900) << 16 | day of the year`. Arithmetic on them goes through the
+  calendar, because CMaNGOS's `date - 7` breaks across a new year.
+* **Not yet:**
+  * honour for group members simulated on another cluster node (kill shares carry experience only);
+  * Honorless Target's own effects beyond its presence.
+
 ## Reputation
 
 `reputation.d` is `ReputationMgr` without the session: a `Reputation` per player (`Player.reputation`,

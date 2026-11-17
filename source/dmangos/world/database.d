@@ -232,6 +232,33 @@ struct InstanceRespawnRecord
     long until;
 }
 
+/// A `character_honor_cp` row: honor from a kill or another source, on a day.
+struct HonorPointRecord
+{
+    ubyte victimType;  /// the victim's `TypeID` (3 a creature, 4 a player; 0 no victim)
+    uint victim;       /// a player's guid, a creature's entry
+    float honor = 0;
+    uint date;         /// `(year - 1900) << 16 | day of the year`, as CMaNGOS counts days
+    ubyte type;        /// 1 honorable, 2 dishonorable
+}
+
+/// The honor columns of `characters`.
+struct HonorColumns
+{
+    uint highestRank;       /// `honor_highest_rank`
+    uint standing;          /// `honor_standing`: last week's place
+    float storedRating = 0; /// `stored_honor_rating`: the rank points
+    int storedDishonorableKills;
+    int storedHonorableKills;
+}
+
+/// What `loadHonor` gives.
+struct HonorRecord
+{
+    HonorColumns columns;
+    HonorPointRecord[] points;
+}
+
 /**
  * A write that replaces everything an earlier call of the method with the same key wrote (the key: its
  * first argument, or that argument's `guid`), so a queued earlier one need not be written
@@ -408,6 +435,15 @@ interface WorldDatabase
 
     /// The player's `character_reputation` rows.
     ReputationRecord[] loadReputation(uint player);
+
+    /// `Player::LoadFromDB`'s honor columns and `_LoadHonorCP`: what the player has of honor.
+    HonorRecord loadHonor(uint player);
+
+    /**
+     * `Player::SaveToDB`'s honor columns and `_SaveHonorCP`: the columns, and the honor gained since the
+     * last save (`character_honor_cp` rows added).
+     */
+    void saveHonor(uint player, const HonorColumns columns, const(HonorPointRecord)[] added);
 
     /// `Player::_SaveQuestStatus`: the quests that changed (a status of none, never rewarded, deletes the row).
     void saveQuestStatus(uint player, const(QuestStatus)[] quests);
@@ -701,6 +737,11 @@ final class MySqlWorldDatabase : WorldDatabase
     AuraRecord[] loadAuras(uint player) { return statements.loadAuras(player); }
     void saveReputation(uint player, const(ReputationRecord)[] rows) { statements.saveReputation(player, rows); }
     ReputationRecord[] loadReputation(uint player) { return statements.loadReputation(player); }
+    HonorRecord loadHonor(uint player) { return statements.loadHonor(player); }
+    void saveHonor(uint player, const HonorColumns columns, const(HonorPointRecord)[] added)
+    {
+        statements.saveHonor(player, columns, added);
+    }
     void saveQuestStatus(uint player, const(QuestStatus)[] quests) { statements.saveQuestStatus(player, quests); }
     void sendMail(const ref MailRecord mail) { statements.sendMailRecord(mail); }
     MailRecord[] loadMail(uint receiver) { return statements.loadMail(receiver); }
@@ -1201,6 +1242,7 @@ final class MemoryWorldDatabase : WorldDatabase
     long[uint] gameObjectRespawns;   /// by spawn guid
     AuctionRecord[uint] auctions;    /// `auction`, by id
     ReputationRecord[uint][uint] reputationRows; /// `character_reputation`: by player, then faction
+    HonorRecord[uint] honorRows;                 /// the honor columns and `character_honor_cp`, by player
 
     void saveCorpse(const ref CorpseRecord c) { corpses[c.player] = c; }
     void saveAuras(uint player, const(AuraRecord)[] auras) { auraRows[player] = auras.dup; }
@@ -1386,6 +1428,13 @@ final class MemoryWorldDatabase : WorldDatabase
             reputationRows.require(player, null)[r.faction] = r;
     }
     ReputationRecord[] loadReputation(uint player) { return reputationRows.get(player, null).values; }
+    HonorRecord loadHonor(uint player) { return honorRows.get(player, HonorRecord.init); }
+    void saveHonor(uint player, const HonorColumns columns, const(HonorPointRecord)[] added)
+    {
+        auto record = &honorRows.require(player, HonorRecord.init);
+        record.columns = columns;
+        record.points ~= added;
+    }
     void saveQuestStatus(uint player, const(QuestStatus)[] quests)
     {
         foreach (ref q; quests)

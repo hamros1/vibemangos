@@ -282,6 +282,7 @@ private:
         if (group is null)
         {
             rewardKillReputation(victim, 1);
+            rewardHonorForCreature(victim);
             killedMonster(victim.template_.entry, victim.guid);
             const xp = killGain(player.data.level, value);
             petGainsXp(xp); // `GivePetXP`, before its owner perhaps passes its level
@@ -362,6 +363,8 @@ private:
             if (m.here !is null)
             {
                 m.here.killedMonster(entry, victim.guid);
+                if (m.alive)
+                    m.here.rewardHonorForCreature(victim);
                 if (m.reputationRate > 0)
                     m.here.rewardKillReputation(victim, m.reputationRate);
                 if (m.xp)

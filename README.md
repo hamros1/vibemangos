@@ -575,6 +575,7 @@ time.
 | `update_interval` | the world tick, in ms (mangosd's `WORLD_SLEEP_CONST`) | `50` |
 | `compression` | `Compression`: zlib level of update packets, 1 (fastest) to 9 | `1` |
 | `metrics_interval_seconds` | n/a: seconds between log lines with tick times and GC figures; 0 for none | `60` |
+| `honor_maintenance_day`, `min_honor_kills` | `MaintenanceDay` (0 Sunday: when the honor week turns), `MinHonorKills` (for a place in the standing) | `3`, `15` |
 | `mmaps` | `mmap.enabled`: creatures find their way over `data_dir/mmaps`, where there are movement maps | `true` |
 | `write_log` | n/a: where writes wait, flushed to disk, until MySQL has them; written again at start-up; empty for none | `"writes.log"` (`"writes-<node_id>.log"` in a cluster) |
 | `packet_log` | n/a: a directory where every packet sent to each client is written (time, opcode, body in hex), for finding what a client cannot take; empty for none | `""` |

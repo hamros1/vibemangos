@@ -150,6 +150,10 @@ struct WorldConfig
     @JsonName("write_log") string writeLog = "writes.log";
     /// `mmap.enabled`: creatures find their way over the movement maps in `<data_dir>/mmaps`, where there are any.
     @JsonName("mmaps") bool mmaps = true;
+    /// `MaintenanceDay`: the day of the week (0 Sunday) the honor week turns, and rank points are reckoned.
+    @JsonName("honor_maintenance_day") uint honorMaintenanceDay = 3;
+    /// `MinHonorKills`: the honorable kills a week needs for a place in the standing.
+    @JsonName("min_honor_kills") uint minHonorKills = 15;
     /// A directory each connection's outgoing packets are written to, for debugging a client; empty: none.
     @JsonName("packet_log") string packetLog;
     /// The cluster this node belongs to (docs/CLUSTER.md); standalone without it.
