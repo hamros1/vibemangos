@@ -56,7 +56,7 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 * Arguments are read strictly: a number written wrong ("12abc", "abc") or a missing argument shows
   the command's help, where ArcEmu's C parsing read "12abc" as 12 and "abc" as 0 and went on.
 
-## Working (192)
+## Working (193)
 
 | Command | Letter | Help |
 |---|---|---|
@@ -129,6 +129,7 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 | `.debug aggrorange` | `d` | .aggrorange - Shows aggro Range of the selected Creature. |
 | `.debug knockback` | `d` | .knockback <value> - Knocks you back. |
 | `.debug threatList` | `d` | .threatList  - returns all AI_Targets of the selected Creature. |
+| `.debug itempushresult` | `d` | sends item push result |
 | `.debug setbit` | `d` |  |
 | `.debug setvalue` | `d` |  |
 | `.debug sendpacket` | `d` | <opcode ID>, <data> |
@@ -253,7 +254,7 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 | `.gotrig` | `v` | Warps to areatrigger <id> |
 | `.logcomment` | `1` | Adds a comment to the GM log for the admins to read. |
 
-## Not yet implemented (106)
+## Not yet implemented (105)
 
 These answer "Not yet implemented.", as ArcEmu's `HandleNYICommand` does: their systems (AI agents
 and waypoint editing, quest editing, guilds, pets, honor, battlegrounds and arenas, GM
@@ -284,7 +285,6 @@ tickets, game object and creature spawning, GM invisibility, flying) do not exis
 | `.debug threatMod` | `d` | .threatMod <value> - calls ModGeneratedThreatModifyer(). |
 | `.debug calcThreat` | `d` | .calcThreat <dmg> <spellId> - calculates threat. |
 | `.debug gettptime` | `d` | grabs transporter travel time |
-| `.debug itempushresult` | `d` | sends item push result |
 | `.debug aispelltestbegin` | `d` |  |
 | `.debug aispelltestcontinue` | `d` |  |
 | `.debug aispelltestskip` | `d` |  |

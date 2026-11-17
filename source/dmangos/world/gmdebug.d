@@ -162,10 +162,8 @@ private:
         return true;
     }
 
-    bool handleShowReactionCommand(string args = null)
+    bool handleShowReactionCommand(uint reaction)
     {
-        import std.algorithm.iteration : splitter;
-        import std.conv : to;
         import dmangos.bytes : ByteWriter;
         import dmangos.world.opcodes : Opcode;
 
@@ -175,14 +173,6 @@ private:
             systemMessage("You should select a creature.");
             return true;
         }
-        auto words = args.splitter(' ');
-        if (words.empty || words.front.length == 0)
-            return false;
-        uint reaction;
-        try
-            reaction = words.front.to!uint;
-        catch (Exception)
-            reaction = 0; // atoi
         ByteWriter w;
         w.put(creature.guid);
         w.put(reaction);
@@ -191,26 +181,38 @@ private:
         return true;
     }
 
-    /// ArcEmu's `.debug face`: the creature's facing, in degrees, changed here only (the clients are not told).
-    bool handleFaceCommand(string args = null)
+    /// ArcEmu's `.debug itempushresult`: an `SMSG_ITEM_PUSH_RESULT` laid out as ArcEmu's (2.4.3's) is.
+    bool handleSendItemPushResult(uint itemId, uint count = 0, uint type = 0, uint unk1 = 0, uint unk2 = 0,
+        uint unk3 = 0, uint unk4 = 0)
     {
-        import std.algorithm.iteration : splitter;
-        import std.conv : to;
+        import dmangos.bytes : ByteWriter;
+        import dmangos.world.opcodes : Opcode;
 
+        if (itemId == 0)
+            return false;
+        ByteWriter w;
+        w.put(player.guid);
+        w.put(type);
+        w.put(uint(1));
+        w.put(count);
+        w.put(ubyte(0xFF));
+        w.put(unk1);
+        w.put(itemId);
+        w.put(unk2);
+        w.put(unk3);
+        w.put(unk4);
+        deliver(Opcode.SMSG_ITEM_PUSH_RESULT, w.data);
+        return true;
+    }
+
+    /// ArcEmu's `.debug face`: the creature's facing, in degrees, changed here only (the clients are not told).
+    bool handleFaceCommand(uint degrees = 0)
+    {
         auto creature = getSelectedCreature(false);
         if (creature is null)
         {
             systemMessage("You should select a creature.");
             return true;
-        }
-        uint degrees;
-        auto words = args.splitter(' ');
-        if (!words.empty && words.front.length)
-        {
-            try
-                degrees = words.front.to!uint;
-            catch (Exception)
-                degrees = 0;
         }
         creature.movement.position.orientation = degrees / (360 / 6.28f);
         return true;
@@ -254,17 +256,8 @@ private:
         return true;
     }
 
-    bool handleGetPosCommand(string args = null)
+    bool handleGetPosCommand(uint id)
     {
-        import std.conv : to;
-
-        if (args.length == 0)
-            return false;
-        uint id;
-        try
-            id = args.to!uint;
-        catch (Exception)
-            id = 0;
         if (const spell = context.data.spells.spell(id))
             blueSystemMessage(format!"SpellIcon for %d is %d"(spell.id, spell.casting.spellIconId));
         return true;
@@ -591,6 +584,8 @@ unittest
     gm.say(".debug face 90");
     gm.read();
     assert(abs(keeper.position.orientation - 90 / (360 / 6.28f)) < 0.001f);
+    gm.say(".debug itempushresult 25 1");
+    assert(opcodesOf(gm.read()).canFind(Opcode.SMSG_ITEM_PUSH_RESULT));
     gm.say(".debug getpos 999999");
     assert(systemMessages(gm.read()).length == 0, "no such spell: nothing");
 }
