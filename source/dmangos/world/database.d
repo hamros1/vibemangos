@@ -330,6 +330,11 @@ interface WorldDatabase
     /// A spawn a GM deleted.
     void deleteCreatureSpawn(uint guid);
 
+    /// A vendor's ware a GM added (`npc_vendor`: unlimited, in `slot`) or removed.
+    void insertVendorItem(uint entry, uint item, uint slot);
+    /// ditto
+    void deleteVendorItem(uint entry, uint item);
+
     /// A game object spawn a GM made (`gameobject`).
     void insertGameObjectSpawn(const ref GameObjectSpawn spawn);
 
@@ -526,6 +531,15 @@ final class MySqlWorldDatabase : WorldDatabase
             s.wanderDistance, s.movementType);
     }
     void deleteCreatureSpawn(uint guid) { world.execute!"DELETE FROM creature WHERE guid = ?"(guid); }
+    void insertVendorItem(uint entry, uint item, uint slot)
+    {
+        world.execute!("INSERT INTO npc_vendor (entry, item, maxcount, incrtime, slot, condition_id) "
+            ~ "VALUES (?, ?, 0, 0, ?, 0)")(entry, item, slot);
+    }
+    void deleteVendorItem(uint entry, uint item)
+    {
+        world.execute!"DELETE FROM npc_vendor WHERE entry = ? AND item = ?"(entry, item);
+    }
     void insertGameObjectSpawn(const ref GameObjectSpawn s)
     {
         world.execute!("INSERT INTO gameobject (guid, id, map, position_x, position_y, position_z, orientation, "
@@ -1051,6 +1065,14 @@ final class MemoryWorldDatabase : WorldDatabase
     GameObjectSpawn[uint] gameObjectSpawnRows; /// ditto, game objects
     void insertCreatureSpawn(const ref CreatureSpawn s) { creatureSpawnRows[s.guid] = s; }
     void deleteCreatureSpawn(uint guid) { creatureSpawnRows.remove(guid); }
+    uint[2][] vendorRows; /// what `insertVendorItem` wrote (entry, item), less what `deleteVendorItem` removed
+    void insertVendorItem(uint entry, uint item, uint slot) { vendorRows ~= [entry, item]; }
+    void deleteVendorItem(uint entry, uint item)
+    {
+        import std.algorithm.mutation : remove;
+
+        vendorRows = vendorRows.remove!(r => r == [entry, item]);
+    }
     void insertGameObjectSpawn(const ref GameObjectSpawn s) { gameObjectSpawnRows[s.guid] = s; }
     void deleteGameObjectSpawn(uint guid) { gameObjectSpawnRows.remove(guid); }
     void deleteInstanceBind(uint guid, uint instance)

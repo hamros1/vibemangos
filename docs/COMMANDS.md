@@ -53,13 +53,16 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
   bytes are 2.4.3's). `.dispelall` spares passive auras (talents, racials), and reaches the players
   of the GM's node of a cluster only, as `.admin castall` does. `.kill` and `.killplr` kill a player the way death by a
   creature's hand does, without its durability loss.
+* `.npc vendoradditem` writes an unlimited `npc_vendor` row: CMaNGOS sells an item in its own
+  `BuyCount`, so the amount is checked but not kept, and 1.12 has no extended costs (any is
+  "invalid"). In a cluster the other nodes see the new ware after a restart.
 * `.quest item` lists the items the quest asks for (its `ReqItemId` columns): CMaNGOS has no
   `gameobject_quest_item_binding`. `.quest list` on a player reads its quest log as the client has it
   (ArcEmu's reads the saved `questlog` rows).
 * Arguments are read strictly: a number written wrong ("12abc", "abc") or a missing argument shows
   the command's help, where ArcEmu's C parsing read "12abc" as 12 and "abc" as 0 and went on.
 
-## Working (199)
+## Working (201)
 
 | Command | Letter | Help |
 |---|---|---|
@@ -160,6 +163,8 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 | `.gobject rotate` | `g` | <Axis> <Value> - Rotates the object. <Axis> x,y, Default o. |
 | `.battleground setworldstate` | `e` | <var> <val> - Var can be in hex. WS Value. |
 | `.battleground playsound` | `e` | <val>. Val can be in hex. |
+| `.npc vendoradditem` | `n` | Adds to vendor |
+| `.npc vendorremoveitem` | `n` | Removes from vendor. |
 | `.npc flags` | `n` | Changes NPC flags |
 | `.npc emote` | `n` | .emote - Sets emote state |
 | `.npc delete` | `n` | Deletes mob from db and world. |
@@ -263,7 +268,7 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 | `.logcomment` | `1` | Adds a comment to the GM log for the admins to read. |
 | `.removesickness` | `m` | Removes ressurrection sickness from the target |
 
-## Not yet implemented (99)
+## Not yet implemented (97)
 
 These answer "Not yet implemented.", as ArcEmu's `HandleNYICommand` does: their systems (AI agents
 and waypoint editing, quest editing, guilds, pets, honor, battlegrounds and arenas, GM
@@ -322,8 +327,6 @@ tickets, game object and creature spawning, GM invisibility, flying) do not exis
 | `.battleground leave` | `e` | Leaves the current battleground. |
 | `.battleground getqueue` | `z` | Gets common battleground queue information. |
 | `.battleground forcestart` | `z` | Forces initialitation of all battlegrounds with active queue. |
-| `.npc vendoradditem` | `n` | Adds to vendor |
-| `.npc vendorremoveitem` | `n` | Removes from vendor. |
 | `.npc addAgent` | `n` | .npc addAgent <agent> <procEvent> <procChance> <procCount> <spellId> <spellType> <spelltargetType> <spellCooldown> <floatMisc1> <Misc2> |
 | `.npc listAgent` | `n` | .npc listAgent |
 | `.npc spawnlink` | `n` | .spawnlink sqlentry |

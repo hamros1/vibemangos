@@ -51,6 +51,93 @@ private:
         return selectedGo ? cast(GameObject) map.findObject(selectedGo) : null;
     }
 
+    /// ArcEmu's `.npc vendoradditem <item> <amount> [extended cost]`: a ware for the selected vendor.
+    bool handleItemCommand(uint item, int amount = -1, uint costId = 0)
+    {
+        import dmangos.world.creature : Creature;
+        import dmangos.world.npcdata : VendorItem;
+        import dmangos.world.updatefields : UNIT_FIELD_TARGET;
+
+        const guid = player.values.get!UNIT_FIELD_TARGET;
+        if (guid == 0)
+        {
+            systemMessage("No selection.");
+            return true;
+        }
+        auto creature = cast(Creature) map.findObject(guid);
+        if (creature is null)
+        {
+            systemMessage("You should select a creature.");
+            return true;
+        }
+        if (amount == -1)
+        {
+            systemMessage("You need to specify an amount.");
+            return true;
+        }
+        if (costId > 0) // 1.12 has no ItemExtendedCost.dbc
+        {
+            systemMessage("You've entered invalid extended cost id.");
+            return true;
+        }
+        const entry = creature.spawn.entry;
+        string text;
+        if (const proto = item in context.data.items)
+        {
+            // CMaNGOS sells an item by its own BuyCount; the amount is ArcEmu's and not kept.
+            auto list = &context.data.npcs.vendors.require(entry, null);
+            const slot = cast(uint) list.length;
+            *list ~= VendorItem(item, 0, 0, slot, 0);
+            context.database.insertVendorItem(entry, item, slot);
+            text = format!"Item '%s' '%s' Added to list"(item, proto.details.name);
+        }
+        else
+            text = format!"Item '%s' Not Found in Database."(item);
+        gmLog(format!"added item %u to vendor %u"(item, entry));
+        systemMessage(text);
+        return true;
+    }
+
+    /// ArcEmu's `.npc vendorremoveitem <item>`.
+    bool handleItemRemoveCommand(uint item)
+    {
+        import std.algorithm.mutation : remove;
+        import std.algorithm.searching : countUntil;
+        import dmangos.world.creature : Creature;
+        import dmangos.world.updatefields : UNIT_FIELD_TARGET;
+
+        const guid = player.values.get!UNIT_FIELD_TARGET;
+        if (guid == 0)
+        {
+            systemMessage("No selection.");
+            return true;
+        }
+        auto creature = cast(Creature) map.findObject(guid);
+        if (creature is null)
+        {
+            systemMessage("You should select a creature.");
+            return true;
+        }
+        const entry = creature.spawn.entry;
+        auto list = entry in context.data.npcs.vendors;
+        const at = list is null ? -1 : (*list).countUntil!(v => v.item == item);
+        string text;
+        if (at >= 0)
+        {
+            *list = (*list).remove(at);
+            context.database.deleteVendorItem(entry, item);
+            if (const proto = item in context.data.items)
+                text = format!"Item '%s' '%s' Deleted from list"(item, proto.details.name);
+            else
+                text = format!"Item '%s' Deleted from list"(item);
+            gmLog(format!"removed item %u from vendor %u"(item, entry));
+        }
+        else
+            text = format!"Item '%s' Not Found in List."(item);
+        systemMessage(text);
+        return true;
+    }
+
     /// ArcEmu's `.npc select`: the creature nearest on the ground among those in sight becomes the selection.
     bool handleNpcSelectCommand()
     {
@@ -763,6 +850,7 @@ unittest
 {
     import core.time : MonoTime, msecs, seconds;
     import std.algorithm.searching : canFind;
+    import std.format : format;
     import dmangos.auth.accounts : AccountLevel;
     import dmangos.world.commands : MSG_COLOR_GREEN, MSG_COLOR_LIGHTBLUE, MSG_COLOR_LIGHTRED;
     import dmangos.world.creature : Creature;
@@ -802,6 +890,20 @@ unittest
         assert(chosen != 0 && cast(Creature) map.findObject(chosen) !is null);
         assert(said.length == 1 && said[0].canFind("Set selection to "));
     }
+
+    // `.npc vendoradditem` and `.npc vendorremoveitem` on the innkeeper.
+    gm.write(Opcode.CMSG_SET_SELECTION, ClientGuid(keeper.guid));
+    gm.say(format!".npc vendoradditem %s"(itemShirt));
+    assert(systemMessages(gm.read()) == ["You need to specify an amount."]);
+    gm.say(format!".npc vendoradditem %s 1 5"(itemShirt));
+    assert(systemMessages(gm.read()) == ["You've entered invalid extended cost id."]);
+    gm.say(format!".npc vendoradditem %s 1"(itemShirt));
+    assert(systemMessages(gm.read()).length == 1 && db.vendorRows.canFind([creatureInnkeeper, itemShirt]));
+    assert(context.data.npcs.vendors[creatureInnkeeper].canFind!(v => v.item == itemShirt));
+    gm.say(format!".npc vendorremoveitem %s"(itemShirt));
+    assert(systemMessages(gm.read())[0].canFind("Deleted from list") && !db.vendorRows.canFind([creatureInnkeeper, itemShirt]));
+    gm.say(format!".npc vendorremoveitem %s"(itemShirt));
+    assert(systemMessages(gm.read()) == [format!"Item '%s' Not Found in List."(itemShirt)]);
 
     // A creature: Death Touch.
     gm.write(Opcode.CMSG_SET_SELECTION, ClientGuid(keeper.guid));

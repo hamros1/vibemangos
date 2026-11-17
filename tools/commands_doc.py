@@ -122,6 +122,9 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
   bytes are 2.4.3's). `.dispelall` spares passive auras (talents, racials), and reaches the players
   of the GM's node of a cluster only, as `.admin castall` does. `.kill` and `.killplr` kill a player the way death by a
   creature's hand does, without its durability loss.
+* `.npc vendoradditem` writes an unlimited `npc_vendor` row: CMaNGOS sells an item in its own
+  `BuyCount`, so the amount is checked but not kept, and 1.12 has no extended costs (any is
+  "invalid"). In a cluster the other nodes see the new ware after a restart.
 * `.quest item` lists the items the quest asks for (its `ReqItemId` columns): CMaNGOS has no
   `gameobject_quest_item_binding`. `.quest list` on a player reads its quest log as the client has it
   (ArcEmu's reads the saved `questlog` rows).
