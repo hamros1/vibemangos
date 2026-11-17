@@ -136,8 +136,8 @@ The largest area. CMaNGOS references: `Spells/`, `Entities/Unit.cpp`, `Combat/`,
 ### Quests
 
 **Done** (`quests.d`, `questhandlers.d`; README's "Quests"): givers, the log, kill and item
-objectives, rewards, saving, game objects as givers and enders. Next: item quest givers, quest sharing
-(`CMSG_PUSHQUESTTOPARTY`), timed quests, area triggers' exploration objectives, `questgiver_greeting`.
+objectives, rewards, saving, game objects and items as givers, sharing, exploration objectives.
+Next: timed quests, `questgiver_greeting`, quest scripts.
 Reputation is done (`reputation.d`, `reputationhandlers.d`; README's "Reputation"): kills, quests,
 spillover, war and peace, discounts, requirements. Not yet: `SMSG_SET_FORCED_REACTIONS` (spells force
 none yet), the PvP rank's discount, reputation from spells.

@@ -54,6 +54,8 @@ mixin template TeleportHandlers()
     import dmangos.world.group : GroupUpdate;
     import dmangos.world.map : packetBody;
     import dmangos.world.movement : MovementFlags, MovementInfo, Position;
+    import dmangos.world.player : DeathState;
+    import dmangos.world.quests : QuestState;
     import dmangos.world.opcodes;
     import dmangos.world.packets;
     import dmangos.world.player : RestType;
@@ -253,7 +255,12 @@ private:
         if (!entry.contains(player.data.map, p.x, p.y, p.z, delta))
             return trace!"%s: '%s' is too far from area trigger %s"(remoteAddress, player.data.name, request.id);
 
-        // An inn: rested XP while inside (a city's rest wins). Quest objectives and scripts are not handled yet.
+        // The place a quest under way asks for (`GetQuestForAreaTrigger`).
+        if (const quest = request.id in context.data.quests.triggerQuests)
+            if (player.deathState == DeathState.alive && questState(*quest) == QuestState.incomplete)
+                areaExploredOrEventHappens(*quest);
+
+        // An inn: rested XP while inside (a city's rest wins). Area trigger scripts are not handled yet.
         if (request.id in context.data.taverns)
         {
             if (player.restType != RestType.city)
@@ -266,9 +273,8 @@ private:
         const trigger = request.id in context.data.areaTriggers;
         if (trigger is null)
             return;
-        if (trigger.conditionId && !triggerpassCheat)
+        if (trigger.conditionId && !triggerpassCheat && !conditionMet(trigger.conditionId))
         {
-            // The `conditions` table is not loaded yet, so a trigger behind one stays closed.
             if (trigger.failedText.length)
                 send(ServerAreaTriggerMessage(trigger.failedText));
             return;

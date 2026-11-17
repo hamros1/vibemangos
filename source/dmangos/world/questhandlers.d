@@ -235,6 +235,7 @@ private:
     {
         ulong guid;
         const(uint)[] starts, ends;
+        uint itemEntry;          /// an item in the bags that begins a quest (`startquest`); 0 otherwise
     }
 
     /// A creature as a quest giver.
@@ -256,6 +257,15 @@ private:
         if (auto npc = interactableNpc(guid, npcFlags))
         {
             giver = giverOf(npc);
+            return true;
+        }
+        // An item in the bags that begins a quest.
+        if (auto item = itemByGuid(guid))
+        {
+            const proto = item.entry in context.data.items;
+            if (proto is null || !proto.details.startQuest)
+                return false;
+            giver = QuestGiver(guid, [proto.details.startQuest], null, item.entry);
             return true;
         }
         auto go = cast(GameObject) map.findObject(guid);
@@ -592,9 +602,18 @@ private:
     @Handles(Opcode.CMSG_QUESTGIVER_ACCEPT_QUEST, WorldState.inWorld)
     void handleQuestgiverAcceptQuest(ref ByteReader reader)
     {
+        import dmangos.world.session : WorldSession;
+
         const guid = reader.read!ulong, id = reader.read!uint;
         QuestGiver giver;
-        const near = questGiverNear(guid, 0x2, giver);
+        bool near = questGiverNear(guid, 0x2, giver);
+        // A quest a group member shared (`CanShareQuest` on its side).
+        auto sharer = near ? null : cast(WorldSession) context.onlinePlayer(guid);
+        if (sharer !is null && sharer !is this && sharer.player !is null && sharer.canShareQuest(id))
+        {
+            giver = QuestGiver(guid, [id], null);
+            near = true;
+        }
         const quest = context.data.quests.quest(id);
         deliver(Opcode.SMSG_GOSSIP_COMPLETE, null);
         if (!near || quest is null || !involves(giver, id, true, false))
@@ -608,6 +627,21 @@ private:
         if (questSlot(0) >= maxQuestLogSize)
             return deliver(Opcode.SMSG_QUESTLOG_FULL, null);
         addQuest(*quest);
+        if (auto divider = cast(WorldSession) context.onlinePlayer(questDivider))
+            divider.pushToPartyResponse(player.guid, QuestShare.accepted);
+        questDivider = 0;
+        // The item that began it goes, unless the quest asks for it or gives it (`AddQuest`).
+        if (giver.itemEntry && quest.srcItemId != giver.itemEntry)
+        {
+            import std.algorithm.searching : canFind;
+
+            if (!quest.reqItemId[].canFind(giver.itemEntry))
+                if (auto item = itemByGuid(guid))
+                {
+                    player.inventory.destroy(item.bagSlot, item.slot);
+                    flushInventory(true);
+                }
+        }
         if (canCompleteQuest(id))
             completeQuest(id);
         if (quest.srcSpell)
@@ -650,6 +684,28 @@ private:
         ByteWriter w;
         w.put(id);
         deliver(Opcode.SMSG_QUESTUPDATE_COMPLETE, w.data);
+    }
+
+    /// `Player::AreaExploredOrEventHappens`: the quest's place found (or its event happened); complete if that was all.
+    package void areaExploredOrEventHappens(uint id)
+    {
+        const slot = questSlot(id);
+        if (slot < maxQuestLogSize)
+        {
+            auto q = &statusOf(id);
+            if (!q.explored)
+            {
+                setQuestSlotState(slot, 1, true);
+                ByteWriter w;
+                w.put(id);
+                deliver(Opcode.SMSG_QUESTUPDATE_COMPLETE, w.data);
+                q.explored = true;
+                q.changed = true;
+            }
+        }
+        if (canCompleteQuest(id))
+            completeQuest(id);
+        flushPlayerChanges();
     }
 
     /// `Player::IncompleteQuest`: an objective no longer met (an item given away).
@@ -781,6 +837,119 @@ private:
         flushInventory(true);
         saveQuests();
         info!"%s: '%s' turned in quest %s (%s xp)"(remoteAddress, player.data.name, quest.id, xp);
+    }
+
+    // -----------------------------------------------------------------------
+    // Sharing (`HandlePushQuestToParty`)
+    // -----------------------------------------------------------------------
+
+    package ulong questDivider; // `m_dividerGuid`: who shared the quest this player is offered
+
+    /// `QuestShareMessages`
+    enum QuestShare : ubyte
+    {
+        sharing = 0,
+        cantTake = 1,
+        accepted = 2,
+        declined = 3,
+        tooFar = 4,
+        busy = 5,
+        logFull = 6,
+        haveQuest = 7,
+        finished = 8,
+    }
+
+    /// `Player::CanShareQuest`: a sharable quest under way.
+    package bool canShareQuest(uint id)
+    {
+        const quest = context.data.quests.quest(id);
+        if (quest is null || !(quest.questFlags & questFlagSharable))
+            return false;
+        const q = id in player.questStatus;
+        return q !is null && (q.status == QuestState.incomplete || (q.status == QuestState.complete && !q.rewarded));
+    }
+
+    /// `SendPushToPartyResponse`: what became of the sharing with `member`.
+    package void pushToPartyResponse(ulong member, QuestShare message)
+    {
+        ByteWriter w;
+        w.put(member);
+        w.put(cast(ubyte) message);
+        deliver(Opcode.MSG_QUEST_PUSH_RESULT, w.data);
+    }
+
+    /// `HandlePushQuestToParty`: the quest offered to the group's members near (10 yards) who may take it.
+    @Handles(Opcode.CMSG_PUSHQUESTTOPARTY, WorldState.inWorld)
+    void handlePushQuestToParty(ref ByteReader reader)
+    {
+        import dmangos.world.session : WorldSession;
+
+        const id = reader.read!uint;
+        if (!canShareQuest(id))
+            return;
+        const quest = context.data.quests.quest(id);
+        auto group = context.groups.of(player.guid);
+        if (group is null)
+            return;
+        foreach (ref slot; group.members)
+        {
+            auto member = cast(WorldSession) context.onlinePlayer(slot.guid);
+            if (member is null || member is this || member.player is null || member.map !is map)
+                continue;
+            pushToPartyResponse(member.player.guid, QuestShare.sharing);
+            const a = player.position, b = member.player.position;
+            if ((a.x - b.x) ^^ 2 + (a.y - b.y) ^^ 2 + (a.z - b.z) ^^ 2 > 10 * 10)
+            {
+                pushToPartyResponse(member.player.guid, QuestShare.tooFar);
+                continue;
+            }
+            if (!member.satisfyStatus(*quest))
+            {
+                pushToPartyResponse(member.player.guid, QuestShare.haveQuest);
+                continue;
+            }
+            if (member.questState(id) == QuestState.complete)
+            {
+                pushToPartyResponse(member.player.guid, QuestShare.finished);
+                continue;
+            }
+            if (!member.canTakeQuest(*quest))
+            {
+                pushToPartyResponse(member.player.guid, QuestShare.cantTake);
+                continue;
+            }
+            if (member.questSlot(0) >= maxQuestLogSize)
+            {
+                pushToPartyResponse(member.player.guid, QuestShare.logFull);
+                continue;
+            }
+            if (member.questDivider)
+            {
+                pushToPartyResponse(member.player.guid, QuestShare.busy);
+                continue;
+            }
+            member.sendQuestDetails(*quest, player.guid, true);
+            member.questDivider = player.guid;
+        }
+    }
+
+    /// `HandleQuestPushResult`: the member's answer, for the one who shared.
+    @Handles(Opcode.MSG_QUEST_PUSH_RESULT, WorldState.inWorld)
+    void handleQuestPushResult(ref ByteReader reader)
+    {
+        import dmangos.world.session : WorldSession;
+
+        const guid = reader.read!ulong;
+        const message = reader.read!ubyte;
+        if (auto sharer = cast(WorldSession) context.onlinePlayer(questDivider))
+        {
+            ByteWriter w;
+            w.put(guid);
+            w.put(uint(message));
+            w.put(ubyte(0));
+            sharer.deliver(Opcode.MSG_QUEST_PUSH_RESULT, w.data);
+        }
+        questDivider = 0;
     }
 
     /// `HandleQuestgiverCancel`
@@ -1076,4 +1245,78 @@ unittest
     assert(me.questStatus[q.id].rewarded && me.values[PLAYER_QUEST_LOG_1_1] == 0);
     assert(db.questRows[7][q.id].rewarded, "saved");
     assert(statusOfTrainer() == DialogStatus.none, "nothing more");
+}
+
+/**
+ * A sharable quest shared with the group: the member near is offered it, takes it from the one who
+ * shared it, and that one hears it was accepted. An item that begins a quest gives it, and goes.
+ */
+unittest
+{
+    import std.algorithm.searching : canFind;
+    import dmangos.bytes : ByteReader, ByteWriter;
+    import dmangos.world.movement : Position;
+    import dmangos.world.opcodes;
+    import dmangos.world.packets : ClientGroupName;
+    import dmangos.world.player : Player;
+    import dmangos.world.quests : Quest, QuestState, QuestStatus, questFlagSharable;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+    import dmangos.world.updatefields;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    Quest q = {id: 9300, method: 2, maxLevel: 60, questFlags: questFlagSharable, title: "Shared"};
+    q.reqCreatureOrGoId[0] = 6;
+    q.reqCreatureOrGoCount[0] = 3;
+    q.specialFlags = 0x20;
+    context.data.quests.quests[9300] = q;
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f));
+    auto jaina = loggedIn(context, db, 8, "Jaina", Position(-8945, -132, 83.5f));
+    anduin.write(Opcode.CMSG_GROUP_INVITE, ClientGroupName("jaina"));
+    jaina.write(Opcode.CMSG_GROUP_ACCEPT, null);
+    auto me = cast(Player) anduin.session.character, her = cast(Player) jaina.session.character;
+    me.questStatus[9300] = QuestStatus(9300, QuestState.incomplete);
+    anduin.read();
+    jaina.read();
+
+    ByteWriter push;
+    push.put(9300u);
+    anduin.write(Opcode.CMSG_PUSHQUESTTOPARTY, push.data);
+    assert(opcodesOf(jaina.read()).canFind(Opcode.SMSG_QUESTGIVER_QUEST_DETAILS), "offered");
+    ByteWriter accept;
+    accept.put(me.guid);
+    accept.put(9300u);
+    jaina.write(Opcode.CMSG_QUESTGIVER_ACCEPT_QUEST, accept.data);
+    assert(her.questStatus.get(9300, QuestStatus.init).status == QuestState.incomplete, "taken");
+    // Anduin hears: sharing, then accepted.
+    ubyte[] answers;
+    foreach (packet; anduin.read())
+        if (packet.opcode == Opcode.MSG_QUEST_PUSH_RESULT)
+            answers ~= packet.body_[8];
+    assert(answers == [0, 2]);
+
+    // An item that begins a quest (its `startquest`): its quest's details for its guid, then taken, the item gone.
+    context.data.items[itemJerky].details.startQuest = 9301;
+    Quest found = {id: 9301, method: 2, maxLevel: 60, title: "A note"};
+    found.reqCreatureOrGoId[0] = 6;
+    found.reqCreatureOrGoCount[0] = 1;
+    found.specialFlags = 0x20;
+    context.data.quests.quests[9301] = found;
+    anduin.session.lootStore(itemJerky, 1, 0, false);
+    ulong noteGuid;
+    foreach (item; me.inventory.all())
+        if (item.entry == itemJerky)
+            noteGuid = item.fullGuid;
+    ByteWriter query;
+    query.put(noteGuid);
+    query.put(9301u);
+    anduin.read();
+    anduin.write(Opcode.CMSG_QUESTGIVER_QUERY_QUEST, query.data);
+    assert(opcodesOf(anduin.read()).canFind(Opcode.SMSG_QUESTGIVER_QUEST_DETAILS));
+    ByteWriter take;
+    take.put(noteGuid);
+    take.put(9301u);
+    anduin.write(Opcode.CMSG_QUESTGIVER_ACCEPT_QUEST, take.data);
+    assert(me.questStatus.get(9301, QuestStatus.init).status == QuestState.incomplete && me.inventory.count(itemJerky) == 0);
 }

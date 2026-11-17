@@ -335,8 +335,11 @@ What works now:
     quest whose objectives are met is complete, and its ender takes the items back and gives its
     experience (`Quest::XPValue`), money, items (one of the choices) and spell, then offers the
     next of the chain, and its reputations. A quest may ask for a standing to be taken, or have one
-    as its objective. Progress is saved in `character_queststatus`. Not yet: quests from items,
-    sharing, timed and escort quests, exploration.
+    as its objective. Places to find (`areatrigger_involvedrelation`) count when the player walks
+    into them; items that begin a quest (`startquest`) offer it from the bags and go when it is
+    taken; a sharable quest is offered to the group's members within 10 yards who may take it, and
+    the one who shared it hears who took it. Progress is saved in `character_queststatus`. Not yet:
+    timed and escort quests, quest scripts (`dbscripts_on_quest_*`).
   * **Flight masters** (CMaNGOS's `TaxiHandler.cpp`, `Taxi.cpp`, `ActivateTaxiPathTo`): a flight
     master's node (`TaxiNodes.dbc`) is learned at the first talk and saved in `taximask`; then the
     master shows the known nodes. A flight to one, directly or over several legs (`TaxiPath.dbc`,
