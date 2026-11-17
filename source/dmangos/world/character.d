@@ -443,6 +443,13 @@ final class Character : OnlinePlayer, Looter
             leaveBattleground(teleport);
     }
 
+    /// Its battleground's spirit guides' pulse brought it back.
+    void battlegroundSpiritHealed()
+    {
+        if (player !is null)
+            spiritHealedHere();
+    }
+
     /// Its battleground ended: alive again, its marks (`markSpell`). See `Battleground.end`.
     void battlegroundEnded(uint markSpell)
     {

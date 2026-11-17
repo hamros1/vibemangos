@@ -32,13 +32,16 @@ enum uint autoReleaseMs = 6 * 60 * 1000;
 /// The team ids `game_graveyard_zone.faction` uses.
 enum uint teamAlliance = 469, teamHorde = 67;
 
+/// `TEAM_INVALID`: a graveyard a battleground has closed.
+enum uint teamInvalid = 1;
+
 /**
  * `GraveyardManager::GetClosestGraveYard`: the nearest graveyard for `team` linked to the area, else
  * the zone, else the map; on another map than the death (an instance), the one nearest to its ghost
  * entrance; null if none.
  */
 const(WorldSafeLocsEntry)* closestGraveyard(const WorldData data, const ClientData client, uint map, Position at,
-    uint team, uint zone, uint area)
+    uint team, uint zone, uint area, const(uint[uint]) linkTeams = null)
 {
     const(WorldSafeLocsEntry)* fromLinks(uint key)
     {
@@ -49,7 +52,11 @@ const(WorldSafeLocsEntry)* closestGraveyard(const WorldData data, const ClientDa
         foreach (link; links)
         {
             const entry = client.worldSafeLocs.lookup(link.safeLoc);
-            if (entry is null || (link.team != 0 && link.team != team))
+            // A battleground's own say first (`SetGraveYardLinkTeam`): whose it is, or nobody's.
+            uint linkTeam = link.team;
+            if (auto own = link.safeLoc in linkTeams)
+                linkTeam = *own;
+            if (entry is null || linkTeam == teamInvalid || (linkTeam != 0 && linkTeam != team))
                 continue;
             if (entry.map != map)
             {
@@ -227,7 +234,7 @@ private:
         uint[2] zoneAndArea = [player.data.zone, player.area];
         serverZoneAndArea(zoneAndArea);
         const grave = closestGraveyard(context.data, context.client, player.data.map, at, teamId,
-            zoneAndArea[0], zoneAndArea[1]);
+            zoneAndArea[0], zoneAndArea[1], battlegroundGraveyards());
         deathTimer = 0;
         if (grave !is null)
             commandTeleport(grave.map, Position(grave.x, grave.y, grave.z, 0));
@@ -305,7 +312,8 @@ private:
         if (corpse !is null)
         {
             corpseGrave = closestGraveyard(context.data, context.client, corpse.map, corpse.at, teamId, 0, 0);
-            ghostGrave = closestGraveyard(context.data, context.client, player.data.map, player.position, teamId, 0, 0);
+            ghostGrave = closestGraveyard(context.data, context.client, player.data.map, player.position, teamId, 0, 0,
+                battlegroundGraveyards());
         }
         spawnCorpseBones();
         if (corpseGrave !is null && corpseGrave !is ghostGrave)
@@ -470,7 +478,7 @@ private:
         uint[2] zoneAndArea = [player.data.zone, player.area];
         serverZoneAndArea(zoneAndArea);
         if (const grave = closestGraveyard(context.data, context.client, player.data.map, at, teamId,
-                zoneAndArea[0], zoneAndArea[1]))
+                zoneAndArea[0], zoneAndArea[1], battlegroundGraveyards()))
         {
             // No teleport while leaving: the save puts the ghost at its graveyard.
             player.data.map = grave.map;

@@ -25,6 +25,9 @@ import dmangos.world.opcodes : ChatType, Language, Opcode;
 /// `SPELL_ID_BATTLEGROUND_DESERTER`
 enum uint spellDeserter = 26013;
 
+/// `Waiting to Resurrect`: a ghost queued at a spirit guide.
+enum uint spellWaitingToResurrect = 2584;
+
 /// `BattleGroundStartTimeIntervals`, `TIME_TO_AUTOREMOVE`, `MAX_OFFLINE_TIME`
 enum Duration startDelay = 2.minutes, endDelay = 2.minutes, offlineLimit = 300.seconds;
 
@@ -142,6 +145,12 @@ final class Battleground
     uint[uint] worldStates;
     /// `BattleGroundMgr::ToggleTesting`: too few players do not end it.
     bool testing;
+    /// `SetGraveYardLinkTeam`: the graveyards it gives a team (469, 67) or closes (`teamInvalid`), by `world_safe_locs` id.
+    uint[uint] graveyardTeams;
+    /// Players waiting at a spirit guide (`Waiting to Resurrect`), and the guide.
+    ulong[ulong] awaitingResurrection;
+    /// The spirit guides' pulse: every 30 s from the copy's making (`Spirit Heal Channel`).
+    enum Duration spiritHealInterval = 30.seconds;
 
     /// A player of the copy (`BattleGroundPlayer`) and its score (`BattleGroundScore`).
     static struct Member
@@ -274,10 +283,18 @@ final class Battleground
         return status == BattlegroundStatus.waitJoin || status == BattlegroundStatus.inProgress;
     }
 
+    /// The time to the spirit guides' next pulse (`SMSG_AREA_SPIRIT_HEALER_TIME`).
+    @property Duration untilSpiritHeal() const
+    {
+        const since = (context.clock() - made).total!"msecs" % spiritHealInterval.total!"msecs";
+        return (spiritHealInterval.total!"msecs" - since).msecs;
+    }
+
     /// `BattleGround::Update`
     void tick(Duration elapsed)
     {
         const now = context.clock();
+        spiritHealPulse(elapsed);
         // Those offline too long go (`m_offlineQueue`).
         ulong[] gone;
         foreach (guid, ref m; members)
@@ -652,6 +669,25 @@ private:
     @property const(ulong)[] joinOrder() const
     {
         return joinOrder_;
+    }
+
+    long pulses; // the spirit guides' pulses so far
+
+    /// `Spirit Heal` (22012): every 30 s, those waiting at a spirit guide come back to life, whole.
+    void spiritHealPulse(Duration elapsed)
+    {
+        import dmangos.world.character : Character;
+
+        const now = (context.clock() - made).total!"msecs" / spiritHealInterval.total!"msecs";
+        if (now == pulses)
+            return; // no pulse since the last tick
+        pulses = now;
+        if (awaitingResurrection.length == 0)
+            return;
+        foreach (guid; awaitingResurrection.keys)
+            if (auto c = cast(Character) context.onlinePlayer(guid))
+                c.battlegroundSpiritHealed();
+        awaitingResurrection = null;
     }
 
     void sayCountdown(ubyte which)
@@ -1198,6 +1234,51 @@ mixin template BattlegroundHandlers()
         return true;
     }
 
+    /// The graveyards the player's copy gives or closes (`closestGraveyard`'s `linkTeams`).
+    package const(uint[uint]) battlegroundGraveyards()
+    {
+        if (auto copy = currentBattleground())
+            return copy.graveyardTeams;
+        return null;
+    }
+
+    /// `SMSG_AREA_SPIRIT_HEALER_TIME`: when spirit guide `guide`'s next pulse is.
+    package void sendSpiritHealerTime(ulong guide)
+    {
+        if (auto copy = currentBattleground())
+        {
+            ByteWriter w;
+            w.put(guide);
+            w.put(cast(uint) copy.untilSpiritHeal.total!"msecs");
+            deliver(Opcode.SMSG_AREA_SPIRIT_HEALER_TIME, w.data);
+        }
+    }
+
+    /**
+     * Queueing at spirit guide `guide` (its gossip, `CMSG_AREA_SPIRIT_HEALER_QUEUE`): the dead wait for its
+     * next pulse (`Waiting to Resurrect`, 2584).
+     */
+    package void queueAtSpiritGuide(ulong guide)
+    {
+        auto copy = currentBattleground();
+        if (copy is null || player.deathState == DeathState.alive)
+            return;
+        copy.awaitingResurrection[player.guid] = guide;
+        battlegroundCastHere(spellWaitingToResurrect);
+        sendSpiritHealerTime(guide);
+    }
+
+    /// The spirit guides' pulse came: alive again, whole (`EffectSpiritHeal`).
+    package void spiritHealedHere()
+    {
+        if (player.deathState == DeathState.alive)
+            return;
+        resurrect(1.0f);
+        spawnCorpseBones();
+        if (auto waiting = player.auras.find(spellWaitingToResurrect))
+            removeAura(waiting);
+    }
+
     /// `SMSG_INIT_WORLD_STATES` for `zone`: on a battleground's map, its copy's states.
     package void sendInitWorldStates(uint zone)
     {
@@ -1221,6 +1302,74 @@ mixin template BattlegroundHandlers()
             w.put(copy.worldStates[id]);
         }
         deliver(Opcode.SMSG_INIT_WORLD_STATES, w.data);
+    }
+
+    /**
+     * `Group::CanJoinBattleGroundQueue` and the group's queueing: every member online (here or on another
+     * node), of the player's side and bracket, none a Deserter (of those here: another node's refuse at the
+     * invitation), no more than a team. The queue checks their slots.
+     */
+    package void joinBattlegroundAsGroup(BattlegroundType type, uint desired)
+    {
+        import dmangos.world.clientdata : Team;
+
+        auto group = context.groups.of(player.guid);
+        if (group is null)
+            return;
+        const t = type in context.data.battlegroundTemplates;
+        enum : uint { tooLarge = 720, offlineMember = 727, mixedFaction = 728, mixedLevels = 729, memberDeserter = 731 }
+        void refuse(uint stringId)
+        {
+            if (const text = stringId in context.data.serverStrings)
+                deliver(Opcode.SMSG_MESSAGECHAT, battlegroundMessage(ChatType.CHAT_MSG_BG_SYSTEM_NEUTRAL, *text));
+        }
+        if (group.members.length > t.maxPerTeam)
+            return refuse(tooLarge);
+        const myTeam = context.client.teamForRace(player.data.race);
+        const myBracket = bracketOf(*t, player.data.level);
+        ulong[] guids;
+        ushort[] nodes;
+        foreach (ref slot; group.members)
+        {
+            ubyte race, level;
+            ushort node;
+            bool deserter;
+            if (auto local = cast(typeof(this)) context.onlinePlayer(slot.guid))
+            {
+                if (local.player is null)
+                    return refuse(offlineMember);
+                race = local.player.data.race;
+                level = cast(ubyte) local.player.data.level;
+                deserter = !local.mayJoinBattleground();
+                node = context.nodeId;
+            }
+            else if (auto remote = context.remotePlayer(slot.guid))
+            {
+                race = remote.entry.race;
+                level = remote.entry.level;
+                node = remote.node;
+            }
+            else
+                return refuse(offlineMember);
+            if (context.client.teamForRace(race) != myTeam)
+                return refuse(mixedFaction);
+            if (bracketOf(*t, level) != myBracket)
+                return refuse(mixedLevels);
+            if (deserter)
+                return refuse(memberDeserter);
+            guids ~= slot.guid;
+            nodes ~= node;
+        }
+        context.services.call!(BattlegroundQueueHost.joinGroup)(BattlegroundGroupJoin(guids, nodes, battlegroundTeam(),
+            cast(ubyte) player.data.level, type, desired), (BattlegroundJoinResult r) {
+                enum ubyte alreadyQueued = 6, noSlot = 8;
+                if (player is null)
+                    return;
+                if (r.error == alreadyQueued)
+                    refuse(730);
+                else if (r.error == noSlot)
+                    refuse(732);
+            });
     }
 
     /// Logging out: the queues left, a copy it is in keeps it a while (`WorldSession::LogoutPlayer`).
@@ -1260,6 +1409,7 @@ private:
     void handleBattlemasterJoin(ref ByteReader reader)
     {
         const guid = reader.read!ulong, mapId = reader.read!uint, desired = reader.read!uint;
+        const asGroup = reader.remaining >= 1 && reader.read!ubyte != 0;
         const type = battlegroundOfMap(mapId);
         if (type == BattlegroundType.none || type !in context.data.battlegroundTemplates)
             return;
@@ -1267,6 +1417,8 @@ private:
             return; // `InBattleGround()`
         if (interactableNpc(guid, NpcFlag.battlemaster) is null)
             return;
+        if (asGroup)
+            return joinBattlegroundAsGroup(type, desired);
         if (!mayJoinBattleground())
             return sendGroupJoinedBattleground(joinedDeserter);
         context.services.call!(BattlegroundQueueHost.join)(BattlegroundJoin(player.guid, context.nodeId,
@@ -1314,6 +1466,24 @@ private:
         if (player.inCombat && (copy is null || copy.status != BattlegroundStatus.waitLeave))
             return;
         leaveBattleground(true);
+    }
+
+    /// `HandleAreaSpiritHealerQueryOpcode`
+    @Handles(Opcode.CMSG_AREA_SPIRIT_HEALER_QUERY, WorldState.inWorld)
+    void handleAreaSpiritHealerQuery(ref ByteReader reader)
+    {
+        const guid = reader.read!ulong;
+        if (interactableNpc(guid, NpcFlag.spiritGuide) !is null)
+            sendSpiritHealerTime(guid);
+    }
+
+    /// `HandleAreaSpiritHealerQueueOpcode`
+    @Handles(Opcode.CMSG_AREA_SPIRIT_HEALER_QUEUE, WorldState.inWorld)
+    void handleAreaSpiritHealerQueue(ref ByteReader reader)
+    {
+        const guid = reader.read!ulong;
+        if (interactableNpc(guid, NpcFlag.spiritGuide) !is null)
+            queueAtSpiritGuide(guid);
     }
 
     /// `HandlePVPLogDataOpcode`: the scoreboard.
@@ -1610,4 +1780,89 @@ unittest
     assert(copy.status == BattlegroundStatus.inProgress);
     copy.tick(240.seconds);
     assert(copy.status == BattlegroundStatus.waitLeave && copy.winner == winnerAlliance, "the side with players wins");
+}
+
+/// The dead queue at a spirit guide and come back at its next pulse; a battleground's graveyards are its own.
+unittest
+{
+    import dmangos.world.combat : MeleeDamage, MeleeHitOutcome;
+    import dmangos.world.creature : CreatureSpawn;
+    import dmangos.world.grid : cellKeyAt;
+    import dmangos.world.movement : Position;
+    import dmangos.world.objects : HighGuid, makeGuid;
+    import dmangos.world.player : DeathState;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata : creatureInnkeeper, mapWarsongGulch;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    // An Alliance spirit guide at the Alliance's start.
+    auto guide = cast() context.data.creatureTemplates[creatureInnkeeper];
+    guide.entry = 13116;
+    guide.npcFlags = 0x40; // UNIT_NPC_FLAG_SPIRITGUIDE
+    context.data.creatureTemplates[13116] = guide;
+    const at = Position(1517, 1481, 352);
+    context.data.creatureSpawns ~= CreatureSpawn(150000, 13116, mapWarsongGulch, at.x, at.y, at.z);
+    context.data.creatureCells[mapWarsongGulch][cellKeyAt(at.x, at.y)] ~= context.data.creatureSpawns.length - 1;
+
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f));
+    anduin.read();
+    auto copy = enterWarsong(context, [&anduin], [7], [0]);
+    copy.start();
+    auto me = anduin.session.character;
+    MeleeDamage blow;
+    blow.damage = 10_000;
+    blow.outcome = MeleeHitOutcome.normal;
+    anduin.session.inWorld.unit.meleeHitBy(0xF130_0000_0000_0001, blow);
+    anduin.read();
+    assert(me.deathState != DeathState.alive);
+    assert(copy.members[7].deaths == 1, "a death on the scoreboard, though no player killed it");
+
+    ByteWriter w;
+    w.put(makeGuid(HighGuid.unit, 13116, 150000));
+    anduin.write(Opcode.CMSG_AREA_SPIRIT_HEALER_QUEUE, w.data);
+    bool timeSent;
+    foreach (p; anduin.read())
+        timeSent = timeSent || p.opcode == Opcode.SMSG_AREA_SPIRIT_HEALER_TIME;
+    assert(timeSent && 7 in copy.awaitingResurrection, "queued, and told when");
+    now += copy.untilSpiritHeal + 1.msecs;
+    copy.tick(1.seconds);
+    assert(me.deathState == DeathState.alive && copy.awaitingResurrection.length == 0, "the pulse brought it back");
+
+    // A graveyard the battleground closes is not chosen; one it gives a team is.
+    import dmangos.world.death : closestGraveyard, teamAlliance, teamInvalid;
+    import dmangos.world.worlddata : GraveyardLink, graveyardLinkKey;
+    import dmangos.dbc : buildDbc;
+    import dmangos.world.clientdata : worldSafeLocsFormat;
+
+    uint bits(float f) { return *cast(uint*) &f; }
+    context.client.worldSafeLocs = typeof(context.client.worldSafeLocs).parse(buildDbc(worldSafeLocsFormat,
+        [[769u, mapWarsongGulch, bits(1400), bits(1500), bits(350), 0, 0, 0, 0, 0, 0, 0, 0, 0],
+         [771u, mapWarsongGulch, bits(1000), bits(1500), bits(350), 0, 0, 0, 0, 0, 0, 0, 0, 0]]), "WorldSafeLocs.dbc");
+    context.data.graveyards[graveyardLinkKey(3277, 0)] = [GraveyardLink(769, 0), GraveyardLink(771, teamAlliance)];
+    const near = Position(1450, 1500, 350);
+    assert(closestGraveyard(context.data, context.client, mapWarsongGulch, near, teamAlliance, 3277, 0).id == 769);
+    const uint[uint] closed = [769: teamInvalid];
+    assert(closestGraveyard(context.data, context.client, mapWarsongGulch, near, teamAlliance, 3277, 0, closed).id == 771);
+}
+
+/// A group queues as one: every member gets the slot; one already queued keeps the group out.
+unittest
+{
+    auto now = MonoTime.currTime;
+    BattlegroundQueue q = new BattlegroundQueue;
+    q.templates[BattlegroundType.warsongGulch] = BattlegroundTemplate(2, 2, 3, 10, 60, [769, 770], 75, 0);
+    q.clock = () => now;
+    Opcode[] sent;
+    q.deliver = (ulong, ushort, Opcode op, const(ubyte)[]) { sent ~= op; };
+    assert(q.joinGroup([1, 2], [1, 1], 0, 15, BattlegroundType.warsongGulch, 0) == BattlegroundQueue.JoinError.ok);
+    assert(q.ticketsOf(1).length && q.ticketsOf(2).length && q.queuedPlayers == 2);
+    import std.algorithm.searching : count;
+
+    assert(sent.count(Opcode.SMSG_GROUP_JOINED_BATTLEGROUND) == 2);
+    assert(q.joinGroup([3, 2], [1, 1], 0, 15, BattlegroundType.warsongGulch, 0)
+        == BattlegroundQueue.JoinError.memberAlreadyInQueue);
+    assert(q.ticketsOf(3) is null);
 }

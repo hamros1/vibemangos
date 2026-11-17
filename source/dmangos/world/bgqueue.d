@@ -255,6 +255,64 @@ final class BattlegroundQueue
         update(type, g.bracket);
     }
 
+    /// `GroupJoinBattlegroundResult`s the queue decides (the others are the group's node's).
+    enum JoinError : ubyte
+    {
+        ok = 0,
+        memberAlreadyInQueue = 6,
+        allQueuesUsed = 8,
+    }
+
+    /**
+     * `HandleBattlemasterJoinOpcode` for a group (its node has checked size, faction, levels and Deserter):
+     * its members queue as one, in the bracket of `level`, unless one already waits for `type` or has
+     * no free slot. Each is told its slot and `SMSG_GROUP_JOINED_BATTLEGROUND`.
+     */
+    JoinError joinGroup(const(ulong)[] players, const(ushort)[] playerNodes, ubyte team, uint level,
+        BattlegroundType type, uint desired)
+    {
+        const t = type in templates;
+        if (t is null || team > 1 || players.length == 0)
+            return JoinError.ok;
+        foreach (p; players)
+        {
+            if (slotOf(p, type) >= 0)
+                return JoinError.memberAlreadyInQueue;
+            if (auto mine = p in tickets)
+            {
+                bool free;
+                foreach (ref s; *mine)
+                    free = free || s.type == BattlegroundType.none;
+                if (!free)
+                    return JoinError.allQueuesUsed;
+            }
+        }
+        auto g = new Waiting;
+        g.players = players.dup;
+        g.team = team;
+        g.type = type;
+        g.bracket = bracketOf(*t, level);
+        g.desired = desired;
+        g.joined = clock();
+        waiting[type][g.bracket][team] ~= g;
+        foreach (i, p; players)
+        {
+            nodes[p] = i < playerNodes.length ? playerNodes[i] : 0;
+            tickets.require(p, (Ticket[queueSlots]).init);
+            int slot = -1;
+            foreach (j, ref s; tickets[p])
+                if (s.type == BattlegroundType.none && slot < 0)
+                    slot = cast(int) j;
+            tickets[p][slot] = Ticket(type, Stage.queued, 0, g);
+            send(p, battlefieldStatus(slot, type, 0, BattlegroundStatus.waitQueue, averageWait(type, team, g.bracket), 0));
+            ByteWriter joined;
+            joined.put(cast(int) battlegroundMaps[type]);
+            send(p, joined.data, Opcode.SMSG_GROUP_JOINED_BATTLEGROUND);
+        }
+        update(type, g.bracket);
+        return JoinError.ok;
+    }
+
     /// What `port` answers: where the player goes, if it goes.
     struct Entry
     {
@@ -677,6 +735,23 @@ struct BattlegroundJoin
     uint desired;
 }
 
+/// A group's request to queue: its members and their nodes.
+struct BattlegroundGroupJoin
+{
+    ulong[] players;
+    ushort[] nodes;
+    ubyte team;
+    ubyte level;
+    ubyte type;
+    uint desired;
+}
+
+/// What `BattlegroundQueueHost.joinGroup` answers: 0, or a `GroupJoinBattlegroundResult`.
+struct BattlegroundJoinResult
+{
+    ubyte error;
+}
+
 /// ditto
 struct BattlegroundPort
 {
@@ -749,6 +824,13 @@ struct BattlegroundQueueHost
     @Call void join(const ref BattlegroundJoin r)
     {
         queue.join(r.guid, r.node, r.team, r.level, cast(BattlegroundType) r.type, r.desired);
+    }
+
+    ///
+    @Call BattlegroundJoinResult joinGroup(const ref BattlegroundGroupJoin r)
+    {
+        return BattlegroundJoinResult(queue.joinGroup(r.players, r.nodes, r.team, r.level, cast(BattlegroundType) r.type,
+            r.desired));
     }
 
     ///

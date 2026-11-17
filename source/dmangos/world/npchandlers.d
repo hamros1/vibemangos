@@ -168,6 +168,9 @@ private:
         auto creature = interactableNpc(request.guid, 0);
         if (creature is null)
             return;
+        // A battleground's spirit guide (`npc_spirit_guide`): the dead queue at it, and see its time.
+        if ((creature.npcValues.get!UNIT_NPC_FLAGS & NpcFlag.spiritGuide) && currentBattleground() !is null)
+            return queueAtSpiritGuide(request.guid);
         scriptGossipShown = false;
         // Its script first (`GossipHello`): it may show its own menu.
         if (auto scripted = cast(Creature) map.findObject(request.guid))
