@@ -217,7 +217,7 @@ private:
         const p = player.position;
         gmLog(format!"summoned %s on map %u, %f %f %f"(name, player.data.map, p.x, p.y, p.z));
         if (auto found = context.onlinePlayer(name))
-            sessionOf(found).summonedBy(gmSink, player.data.name, player.data.map, p);
+            sessionOf(found).summonedBy(gmSink, player.data.name, player.data.map, p, instanceId_);
         else if (gmElsewhere(name, GmRemoteOp.summon))
         {
         }
@@ -245,7 +245,8 @@ private:
                 systemMessage(format!"Player (%s) does not exist or is not logged in."(name));
             return true;
         }
-        sessionOf(found).appearedToBy(gmSink, player.data.name, (uint map, Position at) { commandTeleport(map, at); });
+        sessionOf(found).appearedToBy(gmSink, player.data.name,
+            (uint map, Position at, uint instance) { commandTeleport(map, at, instance); });
         return true;
     }
 

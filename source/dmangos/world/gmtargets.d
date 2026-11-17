@@ -107,7 +107,7 @@ mixin template GmTargets()
         case GmRemoteOp.summon:
             return summonedBy(gm, m.gmName, m.map, Position(m.x, m.y, m.z, m.orientation));
         case GmRemoteOp.appear:
-            return appearedToBy(gm, m.gmName, (uint map, Position at) {
+            return appearedToBy(gm, m.gmName, (uint map, Position at, uint) {
                 GmRemote back;
                 back.op = GmRemoteOp.appearAt;
                 back.gm = m.gm;
@@ -236,23 +236,24 @@ mixin template GmTargets()
     }
 
     /// `.summon`'s part on the player.
-    package void summonedBy(GmSink gm, string gmName, uint map, Position at)
+    package void summonedBy(GmSink gm, string gmName, uint map, Position at, uint instance = uint.max)
     {
         if (transferring)
             return gm.system(format!"%s is already being teleported."(player.data.name));
         gm.system(format!"You are summoning %s."(player.data.name));
         systemMessage(format!"You are being summoned by %s."(gmName));
-        commandTeleport(map, at);
+        commandTeleport(map, at, instance);
     }
 
     /// `.appear`'s part on the player: where it is, for `goThere` to take the GM.
-    package void appearedToBy(GmSink gm, string gmName, scope void delegate(uint map, Position at) goThere)
+    package void appearedToBy(GmSink gm, string gmName,
+        scope void delegate(uint map, Position at, uint instance) goThere)
     {
         if (transferring)
             return gm.system(format!"%s is already being teleported."(player.data.name));
         gm.system(format!"Appearing at %s's location."(player.data.name));
         systemMessage(format!"%s is appearing to your location."(gmName));
-        goThere(player.data.map, player.position);
+        goThere(player.data.map, player.position, instanceId_);
     }
 
     /// `World::DisconnectUsersWithPlayerName`'s part on the session.

@@ -186,8 +186,9 @@ What works now:
     and its group are bound (CMaNGOS's binds, kept in memory). A creature killed or an object used
     up in a copy stays so until the copy resets; a copy nobody has been in for
     `instance_unload_delay_seconds` resets, and its binds go with it. A player logging back in
-    inside a dungeon returns to its copy while it lasts. Not yet: saved binds, raid lockouts and
-    their weekly resets, the player limit, `.appear` into another player's copy; a cluster keeps one
+    inside a dungeon returns to its copy while it lasts; a GM's `.appear` and `.summon` go into the
+    other's copy. Not yet: saved binds, raid lockouts and
+    their weekly resets, the player limit; a cluster keeps one
     shared copy of each dungeon.
   * **Groups:** invitations, parties and raids of up to 40 in eight sub-groups, leaders and
     assistants, kicking, leaving, loot settings, raid target icons, ready checks, rolls, minimap

@@ -66,9 +66,11 @@ private:
     /**
      * `Player::TeleportTo`: false if the destination is not valid or the player may not enter the
      * map. `trigger` is the area trigger walked into, if any; a teleport to another map without one
-     * is checked against that map's entrance.
+     * is checked against that map's entrance. `toInstance` is the dungeon copy to go into (a GM
+     * appearing to a player there); by default the player's own (`instanceFor`).
      */
-    package bool teleportTo(uint mapId, Position destination, const(AreaTriggerTeleport)* trigger = null)
+    package bool teleportTo(uint mapId, Position destination, const(AreaTriggerTeleport)* trigger = null,
+        uint toInstance = uint.max)
     {
         const client = context.client;
         if (!client.isValidMapCoord(mapId, destination.x, destination.y, destination.z, destination.orientation))
@@ -94,9 +96,11 @@ private:
             }
         }
 
-        // The client goes on with no movement flags.
+        // The client goes on with no movement flags. Another copy of the same dungeon is another map.
         player.movement.flags = 0;
-        if (player.data.map == mapId)
+        const instance = toInstance != uint.max ? toInstance
+            : player.data.map == mapId ? instanceId_ : context.instanceFor(player.guid, mapId);
+        if (player.data.map == mapId && instance == instanceId_)
         {
             teleporting = Teleport.near;
             player.movement.position = destination;
@@ -127,7 +131,7 @@ private:
             map.remove(this);
             // From here on the character is saved at its destination (a dungeon: its instance).
             teleporting = Teleport.far;
-            instanceId_ = context.instanceFor(player.guid, mapId);
+            instanceId_ = instance;
             player.data.map = mapId;
             player.movement.position = destination;
             send(ServerNewWorld(mapId, destination.x, destination.y, destination.z, destination.orientation));
@@ -293,11 +297,11 @@ private:
     }
 
     /// ArcEmu's `Player::SafeTeleport`, which GM commands use: nothing happens while a teleport is under way.
-    bool commandTeleport(uint mapId, Position destination)
+    package bool commandTeleport(uint mapId, Position destination, uint toInstance = uint.max)
     {
         if (teleporting != Teleport.none)
             return false;
-        return teleportTo(mapId, destination);
+        return teleportTo(mapId, destination, null, toInstance);
     }
 }
 
@@ -506,4 +510,10 @@ unittest
     assert(context.existingMap(mapDeadmines, groupCopy) !is null, "Jaina's group's copy is in use");
     const again = context.instanceFor(7, mapDeadmines);
     assert(again != mine && again != groupCopy, "a fresh copy next time");
+
+    // Taken into another's copy (a GM's `.appear`): there, and they see each other.
+    anduin.session.commandTeleport(mapDeadmines, Position(-16, -382, 61), groupCopy);
+    anduin.write(Opcode.MSG_MOVE_WORLDPORT_ACK, null);
+    assert(anduin.session.instanceId == groupCopy && context.seeEachOther(7, 8));
+    assert(!context.seeEachOther(7, 9), "Varian is still outside");
 }
