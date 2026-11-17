@@ -24,7 +24,7 @@ import dmangos.cluster.regions : Region;
 import dmangos.serialization : deserialize, LengthPrefix, serialize;
 
 /// Changes whenever a message changes; nodes speaking another version are turned away.
-enum ushort protocolVersion = 25;
+enum ushort protocolVersion = 26; // 26: a moving player's movement order counter and speeds
 
 /// Size of a frame header.
 enum frameHeaderSize = 16;

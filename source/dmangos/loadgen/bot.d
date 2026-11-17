@@ -40,6 +40,9 @@ struct BotPlan
     float radius = 30;
     float speed = 6.5f;       /// yards a second: under running speed, so the speed check passes
     Duration chatEvery;       /// mean time between says; zero for none
+    string[] commands;        /// said one after another (GM commands), `commandEvery` apart
+    Duration commandEvery = 3.seconds; /// ditto
+    bool trace;               /// print every packet received
 }
 
 /// What a bot measured.
@@ -92,6 +95,8 @@ final class Bot
         uint pingSequence;
         MonoTime pingSentAt;
         bool travellingOut = true;
+        size_t commandsSaid;
+        MonoTime nextCommand;
     }
 
     ///
@@ -206,6 +211,20 @@ final class Bot
             nextHeartbeat = now + 500.msecs;
         }
 
+        if (commandsSaid < plan.commands.length && now >= nextCommand)
+        {
+            import std.stdio : writefln;
+
+            const text = plan.commands[commandsSaid++];
+            if (plan.trace)
+                writefln!"%s > %s"(account, text);
+            ByteWriter say;
+            say.put(uint(0)); // CHAT_MSG_SAY
+            say.put(uint(7)); // LANG_COMMON
+            say.putCString(text);
+            send(Opcode.CMSG_MESSAGECHAT, say.data);
+            nextCommand = now + plan.commandEvery;
+        }
         if (plan.chatEvery > Duration.zero && now >= nextChat)
         {
             ByteWriter say;
@@ -229,6 +248,14 @@ final class Bot
 private:
     void handle(ushort opcode, const(ubyte)[] body_, MonoTime now)
     {
+        if (plan.trace && state_ == State.inWorld)
+        {
+            import std.conv : to;
+            import std.stdio : writefln;
+
+            const name = () { try return (cast(Opcode) opcode).to!string; catch (Exception) return opcode.to!string; }();
+            writefln!"%s < %s (%s bytes) %(%02x %)"(account, name, body_.length, body_[0 .. body_.length < 24 ? $ : 24]);
+        }
         switch (opcode)
         {
         case Opcode.SMSG_AUTH_CHALLENGE:
@@ -287,6 +314,14 @@ private:
             nextMove = now + uniform(0, 2000, rng).msecs;
             nextChat = now + (plan.chatEvery > Duration.zero ? randomInterval(plan.chatEvery) : Duration.zero);
             nextPing = now + uniform(0, 30_000, rng).msecs;
+            break;
+        case Opcode.SMSG_NEW_WORLD:
+            // A teleport to another map: acknowledged as the client does once it has loaded it.
+            auto r = ByteReader(body_);
+            map = r.read!uint;
+            at = Position(r.read!float, r.read!float, r.read!float, r.read!float);
+            moving = false;
+            send(Opcode.MSG_MOVE_WORLDPORT_ACK, null);
             break;
         case Opcode.SMSG_PONG:
             if (pingSentAt != MonoTime.init)

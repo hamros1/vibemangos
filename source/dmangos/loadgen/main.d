@@ -32,6 +32,7 @@ import std.algorithm : count, filter, map, max, maxElement, sort, sum;
 import std.array : array;
 import std.conv : to;
 import std.format : format;
+import std.string : strip;
 import std.getopt : defaultGetoptPrinter, getopt, GetOptException;
 import std.random : Random, uniform, uniform01, unpredictableSeed;
 import std.socket;
@@ -65,6 +66,9 @@ private struct Options
     int serverPid;
     string serverLog;
     string report;
+    string commands;        // said by every bot, one after another, ';' between (their accounts are made GMs)
+    uint commandSeconds = 3;
+    bool trace;             // print every packet the bots receive
 }
 
 int main(string[] args)
@@ -81,6 +85,10 @@ int main(string[] args)
             "bots", "number of clients", &o.bots,
             "prefix", "account name prefix", &o.prefix,
             "scenario", "crowd, spread, travel or idle", &o.scenario,
+            "commands", "chat commands each bot says in turn, separated by ';' (the accounts become administrators)",
+                &o.commands,
+            "command-seconds", "seconds between those commands", &o.commandSeconds,
+            "trace", "print every packet the bots receive (with --bots 1, to see what a client is sent)", &o.trace,
             "center", "crowd: map:x:y:z", &o.center,
             "radius", "crowd: spread around the centre; wander: distance; travel: length", &o.radius,
             "duration", "seconds measured", &o.duration,
@@ -137,6 +145,8 @@ private int run(const Options o)
         ubyte[sessionKeyLength] key;
         foreach (ref b; key)
             b = uniform!ubyte(rng);
+        if (o.commands.length)
+            accounts.setLevel(name, AccountLevel.administrator);
         accounts.recordLogin(id, key, "127.0.0.1", ClientDetails("enUS", "Win", "x86"));
         accountIds ~= id;
         bots ~= new Bot(i - 1, name, characterName(o.prefix, i), key, BotPlan.init, uniform!uint(rng));
@@ -179,6 +189,9 @@ private int run(const Options o)
     plan.behaviour = o.scenario == "travel" ? Behaviour.travel : o.scenario == "idle" ? Behaviour.idle : Behaviour.wander;
     plan.radius = o.scenario == "crowd" ? 15 : o.radius;
     plan.chatEvery = o.chatSeconds.seconds;
+    plan.commands = o.commands.length ? o.commands.splitter(';').map!(c => c.strip.idup).array : null;
+    plan.commandEvery = o.commandSeconds.seconds;
+    plan.trace = o.trace;
     foreach (ref bot; bots)
         bot = new Bot(bot.index, bot.account, bot.characterName, bot.key, plan, uniform!uint(rng));
 

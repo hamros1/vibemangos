@@ -326,6 +326,20 @@ CONFIG=bench.json WORLD=127.0.0.1:8085 LOGIN_DB=... CHARACTER_DB=... WORLD_DB=..
     tools/bench.sh crowd 250 --duration 60 --warmup 10
 ```
 
+To see exactly what a client is sent, one bot can say chat commands and print every packet it
+receives:
+* `--commands` takes commands separated by `;`, said `--command-seconds` apart. The bots' accounts
+  become administrators.
+* `--trace` prints each packet with its opcode, its length and its first bytes.
+
+For example, retracing a player's way across the nodes of a cluster:
+
+```sh
+bin/loadgen --world 127.0.0.1:8085 --login-db ... --character-db ... --world-db ... --bots 1 \
+    --prefix PROBE --scenario idle --chat 0 --warmup 1 --duration 40 --trace \
+    --commands ".recall port orgrimmar;.recall port gmisland;.recall port orgrimmar;.mod speed 5"
+```
+
 Without `perf`, `tools/gdb-sample.py` profiles by sampling: gdb runs the server (built with `-g`)
 and records the main thread's stack whenever the server is interrupted, and
 `tools/gdb-summary.py` counts the functions. While a load test runs:

@@ -273,6 +273,11 @@ private:
         w.put(cast(uint) address.length);
         w.putBytes(cast(const(ubyte)[]) address);
         w.put(build);
+        // The client numbers the movement orders it is sent (teleports, speed changes) and acknowledges
+        // them by number: the next one goes on from there. And its speeds (`.modify speed` included).
+        w.put(moveOrderCounter);
+        foreach (speed; player.speeds)
+            w.put(speed);
         w.put(homeNode); // last: `migrationHome` reads it there
 
         info!"%s: '%s' moves to node %s (at map %s %.1f %.1f)"(remoteAddress, player.data.name, target,
@@ -348,6 +353,10 @@ private:
         entryPoint = Position(r.read!float, r.read!float, r.read!float, r.read!float);
         carriedAddress = r.readString(r.read!uint).idup;
         build = r.read!uint;
+        moveOrderCounter = r.read!uint;
+        typeof(Player.speeds) speeds;
+        foreach (ref speed; speeds)
+            speed = r.read!float;
 
         auto loaded = context.database.loadCharacter(guid);
         if (loaded.isNull || loaded.get.account != account.id)
@@ -362,6 +371,7 @@ private:
             instanceId_ = context.instanceFor(guid, character.map);
         player = makePlayer(character, false);
         player.movement = movement;
+        player.speeds = speeds; // as the client has them; auras loaded below change them as they did there
         saveTimer = IntervalTimer(context.config.playerSaveInterval.seconds);
         regenTimer.reset();
         enteredWorld = context.clock();
