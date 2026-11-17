@@ -440,6 +440,10 @@ What works now:
     to neutral peace, and the client sets war (where allowed), inactive and the watched faction.
     Creatures react to a player by its standing and its wars; honored and above get 10% off at
     vendors, trainers and repairs; items, conditions and quests that ask for a rank check it.
+  * **Weather** (CMaNGOS's `Weather.cpp`): a zone with a `game_weather` row has rain, snow or
+    storms by the season's chances, changing every 10 minutes (better, worse, or anew) while players
+    are in it; they see it (`SMSG_WEATHER`) on entering the zone and when it changes, and fine
+    weather in zones without a row.
   * **Talents** (CMaNGOS's `LearnTalent`): a talent point a level from 10 on; a talent of the
     player's class is learned a rank at a time, if its tree has 5 points for each row above it and
     what it depends on is known, the new rank's spell replacing the rank before. Passive spells
@@ -652,6 +656,7 @@ source/dmangos/world/       the world server (mangosd)
   taxi.d, taxihandlers.d      flight paths: the network, known nodes, flying
   whisper.d, channelservice.d, groupservice.d  whispers, channels and groups across a cluster
   gmtargets.d                 what GM commands that name a player do to it, wherever it is simulated
+  weather.d                   zones' weather from game_weather: its changes by season, SMSG_WEATHER
   online.d                    OnlinePlayer and Directory: what groups and channels see of players
   group.d                     groups: members, leaders, raids, the group list, member stats
   channel.d                   chat channels: members, owners, moderation, notices

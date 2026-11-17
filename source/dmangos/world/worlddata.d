@@ -337,7 +337,9 @@ final class WorldData
     uint[uint] instanceResetDays;                   /// `instance_template.reset_delay` (a raid's lockout), by map
     WaypointStore waypoints;                        /// `creature_movement` and `creature_movement_template`
     EventAiData eventAi;                            /// `creature_ai_scripts`, by creature entry
-    DbScriptData dbScripts;                         /// `dbscripts_on_*`
+    DbScriptData dbScripts;
+    import dmangos.world.weather : ZoneChances;
+    ZoneChances[uint] weatherChances;               /// `game_weather`, by zone                         /// `dbscripts_on_*`
     OnKillReputation[uint] onKillReputation;        /// `creature_onkill_reputation`, by creature entry
     Spillover[uint] spillovers;                     /// `reputation_spillover_template`, by faction
     float[3][uint] reputationRates;                 /// `reputation_reward_rate`: quest, kill, spell rates by faction
@@ -492,6 +494,20 @@ final class WorldData
         data.loadPlayerInfo(world, client);
         data.eventAi = EventAiData.load(world);
         data.dbScripts = DbScriptData.load(world);
+        {
+            import dmangos.world.weather : SeasonChances, ZoneChances;
+
+            foreach (row; world.query!("SELECT zone, spring_rain_chance, spring_snow_chance, spring_storm_chance, "
+                ~ "summer_rain_chance, summer_snow_chance, summer_storm_chance, fall_rain_chance, fall_snow_chance, "
+                ~ "fall_storm_chance, winter_rain_chance, winter_snow_chance, winter_storm_chance FROM game_weather")())
+            {
+                ZoneChances chances;
+                foreach (season; 0 .. 4)
+                    chances[season] = SeasonChances(row.get!ubyte(1 + season * 3), row.get!ubyte(2 + season * 3),
+                        row.get!ubyte(3 + season * 3));
+                data.weatherChances[row.get!uint(0)] = chances;
+            }
+        }
         info!"loaded %s item templates, %s creature templates, %s race/class combinations, %s reserved names"(
             data.items.length, data.creatureFamilies.length, data.playerInfo.length, data.reservedNames.length);
         if (data.playerInfo.length == 0)

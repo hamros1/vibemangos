@@ -74,7 +74,7 @@ listed above. Transports (boats, zeppelins) need game objects and come with mile
 ### 2. An update loop and timers: done
 
 See ARCHITECTURE.md's "The update loop". Still to do here: AFK kicks, the online-time
-`played` update while in the world, mail and auction timers, weather.
+`played` update while in the world, mail and auction timers. Weather: done (`world/weather.d`).
 
 ### 3. Creatures and game objects: started
 

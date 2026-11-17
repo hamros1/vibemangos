@@ -407,7 +407,7 @@ unittest
     with (Opcode)
         assert(arrival == [SMSG_SET_REST_START, SMSG_BINDPOINTUPDATE, SMSG_TUTORIAL_FLAGS, SMSG_INITIAL_SPELLS,
             SMSG_ACTION_BUTTONS, SMSG_INITIALIZE_FACTIONS, SMSG_LOGIN_SETTIMESPEED, SMSG_COMPRESSED_UPDATE_OBJECT,
-            SMSG_FRIEND_LIST, SMSG_IGNORE_LIST, SMSG_INIT_WORLD_STATES]);
+            SMSG_FRIEND_LIST, SMSG_IGNORE_LIST, SMSG_INIT_WORLD_STATES, SMSG_WEATHER]);
     assert(!gm.session.transferring && context.map(1).population == 1);
 
     // `.worldport` brings Anduin back, and Jaina sees him again.

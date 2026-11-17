@@ -105,6 +105,70 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
     mixin DbScriptRunner; // `dbscripts_on_*` under way
 
+    import dmangos.world.weather : Weather;
+
+    private Weather[uint] weathers; // by zone, while players are in it (`WeatherSystem`)
+
+    /**
+     * `WeatherSystem::FindOrCreateWeather` for a player entering `zone`: its weather's `SMSG_WEATHER`
+     * body (made and generated the first time), or fine weather where it has no `game_weather` row.
+     */
+    ubyte[] weatherFor(uint zone)
+    {
+        import dmangos.world.weather : fineWeatherPacket, seasonOf;
+
+        if (auto w = zone in weathers)
+            return w.packet();
+        const chances = zone in data.weatherChances;
+        if (chances is null)
+            return fineWeatherPacket();
+        Weather w;
+        w.chances = *chances;
+        w.regenerate(spawnRandom, seasonOf(unixTime));
+        weathers[zone] = w;
+        return weathers[zone].packet();
+    }
+
+    /// `WeatherSystem::UpdateWeathers`: each zone's change when due, shown to the players in it; a zone
+    /// nobody is in any more forgets its weather.
+    private void updateWeathers(int diff)
+    {
+        import dmangos.world.opcodes : Opcode;
+        import dmangos.world.weather : seasonOf;
+
+        if (weathers.length == 0)
+            return;
+        foreach (zone; weathers.keys)
+        {
+            auto w = zone in weathers;
+            w.timer -= diff;
+            if (w.timer > 0)
+                continue;
+            w.timer = typeof(*w).init.timer;
+            bool anyone;
+            foreach (player; online.values)
+                if (player.character !is null && player.character.data.zone == zone)
+                    anyone = true;
+            if (!anyone)
+            {
+                weathers.remove(zone);
+                continue;
+            }
+            if (!w.regenerate(spawnRandom, seasonOf(unixTime)))
+                continue;
+            const body_ = w.packet();
+            foreach (player; online.values)
+                if (player.character !is null && player.character.data.zone == zone)
+                    player.deliver(Opcode.SMSG_WEATHER, body_);
+        }
+    }
+
+    /// The weather of `zone` now, if it has some (tests).
+    package Weather* weatherOf(uint zone)
+    {
+        return zone in weathers;
+    }
+
     WorldConfig config;
     WorldDatabase database;
     WorldData data;
@@ -1968,6 +2032,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         if (instances.length)
             unloadEmptyInstances(now);
         updateScripts(cast(uint) elapsed.total!"msecs");
+        updateWeathers(cast(int) elapsed.total!"msecs");
         scriptedGameObjectsDue();
         respawnDue(now);
         // `WUPDATE_AUCTIONS`: once a minute, by one node.

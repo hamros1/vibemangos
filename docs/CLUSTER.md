@@ -834,6 +834,7 @@ player goes there.
   (another node simulates them) count in the group's share as those here do; each one's part (the
   kill credit, its experience, its reputation) goes to its node in a `KillShare` (protocol 17),
   which gives it there.
+* **Weather** is each node's own: a zone whose cells two nodes simulate may rain on one side only.
 * **Not yet:** a creature does not answer a call for help from another node's creature; loot rights
   count only the members on the creature's node; a player's own spells at another node's player (there is no
   PvP yet).

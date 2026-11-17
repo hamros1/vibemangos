@@ -336,6 +336,7 @@ private:
         send(ServerFriendList());
         send(ServerIgnoreList());
         send(ServerInitWorldStates(player.data.map, player.data.zone));
+        deliver(Opcode.SMSG_WEATHER, context.weatherFor(player.data.zone));
     }
 }
 
