@@ -18,6 +18,7 @@ public import dmangos.world.characterdb : GroupMemberRecord, GroupRecord;
 import dmangos.world.movement : Position;
 import dmangos.world.inventory : ItemChange, ItemRecord, ItemState;
 import dmangos.world.quests : QuestStatus;
+import dmangos.world.reputation : ReputationRecord;
 import dmangos.world.player : CharacterData, CharacterProgress, HomeBind, tutorialFields;
 import dmangos.world.worlddata : AreaTriggerTeleport, areaTriggerTeleportQuery, GameTele, gameTeleQuery;
 import dmangos.world.playercreate : NewCharacter;
@@ -199,6 +200,12 @@ interface WorldDatabase
     /// `Player::_LoadAuras`
     AuraRecord[] loadAuras(uint player);
 
+    /// `ReputationMgr::SaveToDB`: these factions' rows replaced.
+    void saveReputation(uint player, const(ReputationRecord)[] rows);
+
+    /// The player's `character_reputation` rows.
+    ReputationRecord[] loadReputation(uint player);
+
     /// `Player::_SaveQuestStatus`: the quests that changed (a status of none, never rewarded, deletes the row).
     void saveQuestStatus(uint player, const(QuestStatus)[] quests);
 
@@ -371,6 +378,8 @@ final class MySqlWorldDatabase : WorldDatabase
     void saveCreatureRespawn(uint spawnGuid, long respawnTime) { statements.saveCreatureRespawn(spawnGuid, respawnTime); }
     void saveAuras(uint player, const(AuraRecord)[] auras) { statements.saveAuras(player, auras); }
     AuraRecord[] loadAuras(uint player) { return statements.loadAuras(player); }
+    void saveReputation(uint player, const(ReputationRecord)[] rows) { statements.saveReputation(player, rows); }
+    ReputationRecord[] loadReputation(uint player) { return statements.loadReputation(player); }
     void saveQuestStatus(uint player, const(QuestStatus)[] quests) { statements.saveQuestStatus(player, quests); }
     void sendMail(const ref MailRecord mail) { statements.sendMailRecord(mail); }
     MailRecord[] loadMail(uint receiver) { return statements.loadMail(receiver); }
@@ -796,10 +805,17 @@ final class MemoryWorldDatabase : WorldDatabase
     string[uint] itemTexts;          /// `item_text`
     ItemRecord[uint] looseItems;     /// items in the mail, by guid
     long[uint] creatureRespawns;     /// by spawn guid
+    ReputationRecord[uint][uint] reputationRows; /// `character_reputation`: by player, then faction
 
     void saveCorpse(const ref CorpseRecord c) { corpses[c.player] = c; }
     void saveAuras(uint player, const(AuraRecord)[] auras) { auraRows[player] = auras.dup; }
     AuraRecord[] loadAuras(uint player) { return auraRows.get(player, null).dup; }
+    void saveReputation(uint player, const(ReputationRecord)[] rows)
+    {
+        foreach (ref r; rows)
+            reputationRows.require(player, null)[r.faction] = r;
+    }
+    ReputationRecord[] loadReputation(uint player) { return reputationRows.get(player, null).values; }
     void saveQuestStatus(uint player, const(QuestStatus)[] quests)
     {
         foreach (ref q; quests)

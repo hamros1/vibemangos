@@ -139,6 +139,7 @@ private:
         context.database.saveProgress(progress);
         saveAuras();
         saveQuests();
+        saveReputation();
         saveTimer.reset();
     }
 

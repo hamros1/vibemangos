@@ -25,15 +25,13 @@
 
 ### Known gaps in what exists
 
-* **Stats:** auras, talents' effects and racial passives are not applied. Crit, dodge, parry and
-  block chances are 0. Item stat bonuses, armor, attack power and weapon damage are applied.
-* **Not loaded:** reputation (needs `Faction.dbc` and `character_reputation`), guild membership
-  (`PLAYER_GUILDID`), quests, auras, cooldowns, pets. A character saved dead but not released
-  (a crash) loads alive.
+* **Stats:** item bonuses, auras (talents' and racials' passive ones included) and the crit, dodge,
+  parry and block chances are applied; passives bound to a kind of weapon or armour are not yet.
+* **Not loaded:** guild membership (`PLAYER_GUILDID`), cooldowns, pets.
 * **Creatures** wander, walk their waypoints, fight, die and respawn. Waypoint scripts (`ScriptId`) are not run, type 3 paths (flying) are walked as waypoints, formations
   do not follow their leader, and creatures in water do not swim. There is no quest dialog yet. Flight masters,
   auctioneers, stable masters, battlemasters and guild NPCs are not offered in menus yet. Conditions
-  that need auras, reputation, quests in the log, world states or scripts are never met. Elevators
+  that need auras, world states or scripts are never met. Elevators
   are created but do not move. Ships and zeppelins are not
   spawned. Cells are never unloaded (mangosd unloads idle grids after a while).
 * **Rested XP** is earned but not spent: only kills spend it, and there are none yet. Exploration
@@ -53,8 +51,8 @@
 * **Chat:** no ignore list or `Channel.RestrictedLanguageMode`.
   LocalDefense and WorldDefense need PvP ranks, which do not exist, so WorldDefense is read-only.
   The GM tag and `.gm allowwhispers` are not kept between logins (nor are they in ArcEmu).
-* **Inventory:** prices have no reputation or honor discounts, and items that need a reputation or
-  an honor rank cannot be bought or used (there are neither). An off-hand item with no room left
+* **Inventory:** prices have no honor discounts, and items that need an honor rank cannot be bought
+  or used (there are no ranks). An off-hand item with no room left
   when a two-hander is put on stays worn, where CMaNGOS mails it: there is no mail. Item
   enchantments, random properties, item sets, item spells, readable items, wrapping and loot in
   items (lockboxes, clams) are not done. A broken worn item's stats come back when it is repaired,
@@ -119,7 +117,7 @@ The largest area. CMaNGOS references: `Spells/`, `Entities/Unit.cpp`, `Combat/`,
    the map its player's node simulates; a node that does not own the cell keeps it anyway).
 4. **Experience and loot: done** (`experience.d`, `loot.d`, `loothandlers.d`; README's "Experience
    and loot"). Not yet: quest drops, `item_enchantment_template` random properties, skinning,
-   pickpocketing, game object and item loot (chests, bags), reputation and honor for kills, loot of
+   pickpocketing, game object and item loot (chests, bags), honor for kills, loot of
    a creature another node of a cluster simulates.
 5. Spells, cooldowns and auras. **Casting and auras: done** (`spellcast.d`, `spellhandlers.d`,
    `auras.d`, `aurahandlers.d`; README's "Spells" and "Auras"); creatures' spells come with their
@@ -136,8 +134,10 @@ The largest area. CMaNGOS references: `Spells/`, `Entities/Unit.cpp`, `Combat/`,
 
 **Done** (`quests.d`, `questhandlers.d`; README's "Quests"): givers, the log, kill and item
 objectives, rewards, saving. Next: game object and item quest givers, quest sharing
-(`CMSG_PUSHQUESTTOPARTY`), timed quests, area triggers' exploration objectives, `questgiver_greeting`,
-reputation (which also needs `character_reputation`).
+(`CMSG_PUSHQUESTTOPARTY`), timed quests, area triggers' exploration objectives, `questgiver_greeting`.
+Reputation is done (`reputation.d`, `reputationhandlers.d`; README's "Reputation"): kills, quests,
+spillover, war and peace, discounts, requirements. Not yet: `SMSG_SET_FORCED_REACTIONS` (spells force
+none yet), the PvP rank's discount, reputation from spells.
 
 ### Talents
 

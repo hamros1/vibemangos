@@ -149,6 +149,11 @@ struct WorldConfig
     @JsonName("rate_rest_offline_in_wilderness") float rateRestOfflineInWilderness = 1;       /// ditto
     /// `Rate.XP.Explore`: experience for discovering an area.
     @JsonName("rate_xp_explore") float rateXpExplore = 1;
+    /// `Rate.Reputation.Gain`, `Rate.Reputation.LowLevel.Kill`, `Rate.Reputation.LowLevel.Quest`: reputation
+    /// gains, and the least share left of one for a kill or quest far below the player.
+    @JsonName("rate_reputation_gain") float rateReputationGain = 1;
+    @JsonName("rate_reputation_lowlevel_kill") float rateReputationLowLevelKill = 0.2f;   /// ditto
+    @JsonName("rate_reputation_lowlevel_quest") float rateReputationLowLevelQuest = 0.2f; /// ditto
     /// `MaxPlayerLevel`
     @JsonName("max_player_level") uint maxPlayerLevel = 60;
     /// `StartPlayerLevel`

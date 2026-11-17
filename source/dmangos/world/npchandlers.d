@@ -538,6 +538,7 @@ private:
             return;
         ServerTrainerList list;
         list.trainer = guid;
+        const discount = reputationPriceDiscount(trainer.npcValues.get!UNIT_FIELD_FACTIONTEMPLATE);
         const spells = context.data.spells;
         foreach (ref trainerSpell; trainerSpells(trainer))
         {
@@ -554,7 +555,7 @@ private:
             TrainerListSpell sent;
             sent.spell = trainerSpell.spell;
             sent.state = state == TrainerSpellState.greenDisabled ? TrainerSpellState.green : state;
-            sent.cost = trainerSpell.cost; // no reputation discount yet
+            sent.cost = cast(uint) floor(trainerSpell.cost * discount); // the reputation's discount
             sent.primaryProfessionFirstRank = isPrimaryProfessionFirstRank(triggerSpell) ? 1 : 0;
             sent.requiredLevel = cast(ubyte) requiredLevel;
             sent.requiredSkill = trainerSpell.reqSkill;
@@ -593,9 +594,10 @@ private:
         if (trainerSpellState(*found, trainerRequiredLevel(*found, fitLevel)) != TrainerSpellState.green)
             return;
         const money = player.values.get!PLAYER_FIELD_COINAGE;
-        if (money < found.cost)
+        const cost = cast(uint) floor(found.cost * reputationPriceDiscount(trainer.npcValues.get!UNIT_FIELD_FACTIONTEMPLATE));
+        if (money < cost)
             return;
-        player.values.set!PLAYER_FIELD_COINAGE(money - found.cost);
+        player.values.set!PLAYER_FIELD_COINAGE(money - cost);
         send(ServerPlaySpellVisual(trainer.guid, 0xB3));      // on the trainer
         send(ServerPlaySpellImpact(player.guid, 0x016A));     // on the player
         send(ServerTrainerBuySucceeded(trainer.guid, request.spell));
@@ -696,6 +698,7 @@ private:
             return;
         ServerListInventory list;
         list.vendor = guid;
+        const discount = reputationPriceDiscount(vendor.npcValues.get!UNIT_FIELD_FACTIONTEMPLATE);
         foreach (i, ref vendorItem; vendorItems(vendor))
         {
             const proto = vendorItem.item in context.data.items;
@@ -704,7 +707,7 @@ private:
             const available = vendorItem.maxCount == 0 ? uint.max : vendor.vendorItemCount(vendorItem.item,
                 vendorItem.maxCount, vendorItem.incrTime, proto.buyCount, context.unixTime);
             list.items ~= VendorListItem(cast(uint) i + 1, vendorItem.item, proto.displayId, available,
-                proto.details.buyPrice, proto.maxDurability, proto.buyCount);
+                cast(uint) floor(proto.details.buyPrice * discount), proto.maxDurability, proto.buyCount);
             if (list.items.length >= maxVendorItems)
                 break;
         }

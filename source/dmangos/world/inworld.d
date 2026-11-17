@@ -68,6 +68,7 @@ private:
         if (player.deathState == DeathState.alive)
             saveAuras();
         saveQuests();
+        saveReputation();
         deathOnLogout();
         const progress = player.progress(secondsInWorld());
         context.database.saveProgress(progress);
@@ -192,6 +193,7 @@ private:
         context.database.saveProgress(progress);
         saveAuras(); // the next node loads them, as it loads the rest
         saveQuests();
+        saveReputation();
 
         ByteWriter w;
         w.put(account.id);

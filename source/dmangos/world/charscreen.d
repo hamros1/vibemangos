@@ -267,6 +267,7 @@ private:
         made.setRestBonus(character.restBonus + (offline > 0 ? made.computeRest(offline, rate) : 0),
             context.config.maxPlayerLevel);
         made.loadQuestLog(context.data.quests);
+        made.reputation = loadedReputation(character.guid, character.race, character.classId);
         made.clearChanges();
         return made;
     }
@@ -323,7 +324,7 @@ private:
         spells.spells = player.spells.map!(id => InitialSpell(cast(ushort) id)).array;
         send(spells);
         send(ServerActionButtons(player.actionButtons));
-        send(ServerInitializeFactions());
+        deliver(Opcode.SMSG_INITIALIZE_FACTIONS, initialReputations());
         send(ServerLoginSetTimeSpeed(gameTimeBits()));
     }
 

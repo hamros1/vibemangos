@@ -35,6 +35,7 @@ import dmangos.world.spells : SpellEffect;
 import dmangos.world.stats;
 import dmangos.world.auras : AuraSet, AuraType;
 import dmangos.world.quests : QuestData, QuestStatus;
+import dmangos.world.reputation : Reputation;
 import dmangos.world.combat : AttackType, Fighter;
 import dmangos.world.updatefields;
 import dmangos.world.worlddata : CreateAction, maxLevel, WorldData;
@@ -183,6 +184,7 @@ final class Player : InventoryOwner
     PlayerStats stats;
     MeleeChances chances;                /// own melee chances (`meleeChances`), for the combat rolls
     AuraSet auras;                       /// its auras (`dmangos.world.auras`)
+    Reputation reputation;               /// its standing with factions (`dmangos.world.reputation`); null until loaded
     QuestStatus[uint] questStatus;       /// its progress in quests, by quest (`mQuestStatus`)
     DeathState deathState;               /// alive, a body, or a ghost (`dmangos.world.death`)
     uint[] spells;                       /// active, enabled spells: the spellbook

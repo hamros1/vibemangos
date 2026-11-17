@@ -170,7 +170,7 @@ private:
     bool canTakeQuest(const ref Quest quest)
     {
         return satisfyStatus(quest) && satisfyExclusiveGroup(quest) && satisfyClassRaceLevel(quest, true)
-            && satisfyPrevious(quest);
+            && satisfyPrevious(quest) && satisfyQuestReputation(quest);
     }
 
     /// `CanSeeStartQuest`: everything but the level, and not far above the player.
@@ -178,7 +178,8 @@ private:
     {
         enum int highLevelHideDiff = 7; // `Quests.HighLevelHideDiff`
         return satisfyClassRaceLevel(quest, false) && satisfyExclusiveGroup(quest) && satisfyPrevious(quest)
-            && player.data.level + highLevelHideDiff >= quest.minLevel && player.data.level <= quest.maxLevel;
+            && satisfyQuestReputation(quest) && player.data.level + highLevelHideDiff >= quest.minLevel
+            && player.data.level <= quest.maxLevel;
     }
 
     /// `CanCompleteQuest`: taken, and every objective met (kills, items, money).
@@ -205,6 +206,9 @@ private:
         if ((quest.specialFlags & specialExplorationOrEvent) && !q.explored)
             return false;
         if (quest.rewOrReqMoney < 0 && player.money < -quest.rewOrReqMoney)
+            return false;
+        if (quest.repObjectiveFaction && player.reputation !is null
+            && player.reputation.standingWith(quest.repObjectiveFaction) < quest.repObjectiveValue)
             return false;
         return true;
     }
@@ -706,6 +710,7 @@ private:
         else
             maxLevelMoney = quest.rewMoneyMaxLevel;
         player.modifyMoney(cast(long) quest.rewOrReqMoney + maxLevelMoney);
+        rewardQuestReputation(quest);
         auto q = &statusOf(quest.id);
         q.status = quest.repeatable ? QuestState.none : QuestState.complete;
         q.rewarded = true;

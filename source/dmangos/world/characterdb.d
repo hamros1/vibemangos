@@ -17,6 +17,7 @@ import dmangos.world.inventory : ItemChange, ItemRecord, ItemState;
 import dmangos.world.player : CharacterData, CharacterProgress, HomeBind, tutorialFields;
 import dmangos.world.playercreate : NewCharacter, NewSkill, NewSpell, maxEnchantmentSlot;
 import dmangos.world.database : AuraRecord, CorpseRecord, MailRecord;
+import dmangos.world.reputation : ReputationRecord;
 import dmangos.world.quests : QuestState, QuestStatus;
 import dmangos.world.worlddata : CreateAction;
 
@@ -391,6 +392,26 @@ final class CharacterStatements
             found ~= AuraRecord(row.get!ulong(0), row.get!uint(1), row.get!uint(2), [row.get!int(3), row.get!int(4),
                 row.get!int(5)], [row.get!int(6), row.get!int(7), row.get!int(8)], row.get!int(9), row.get!int(10),
                 row.get!uint(11));
+        return found;
+    }
+
+    /// See `WorldDatabase.saveReputation`.
+    void saveReputation(uint player, const(ReputationRecord)[] rows)
+    {
+        foreach (ref r; rows)
+        {
+            characters.execute!"DELETE FROM character_reputation WHERE guid = ? AND faction = ?"(player, r.faction);
+            characters.execute!("INSERT INTO character_reputation (guid, faction, standing, flags) "
+                ~ "VALUES (?, ?, ?, ?)")(player, r.faction, r.standing, r.flags);
+        }
+    }
+
+    /// See `WorldDatabase.loadReputation`.
+    ReputationRecord[] loadReputation(uint player)
+    {
+        ReputationRecord[] found;
+        foreach (row; characters.query!"SELECT faction, standing, flags FROM character_reputation WHERE guid = ?"(player))
+            found ~= ReputationRecord(row.get!uint(0), row.get!int(1), row.get!uint(2));
         return found;
     }
 

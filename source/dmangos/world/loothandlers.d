@@ -197,6 +197,7 @@ private:
         auto group = context.groups.of(player.guid);
         if (group is null)
         {
+            rewardKillReputation(victim, 1);
             killedMonster(victim.template_.entry, victim.guid);
             return giveXP(killGain(player.data.level, value), victim.guid, 1.0f);
         }
@@ -224,6 +225,10 @@ private:
                 && (highestNotGray is null || highestNotGray.player.data.level < level))
                 highestNotGray = member;
         }
+        // `RewardGroupAtKill_helper`'s reputation: a share each (all of it in a dungeon).
+        const dungeon = context.client.maps.lookup(map.id) !is null && context.client.maps.lookup(map.id).isDungeon;
+        foreach (member; near)
+            member.rewardKillReputation(victim, dungeon ? 1.0f : 1.0f / near.length);
         if (highest is null || highestNotGray is null)
             return;
         const xp = killGain(highestNotGray.player.data.level, value);

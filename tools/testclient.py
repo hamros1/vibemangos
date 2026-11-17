@@ -414,6 +414,11 @@ def describe(op, p):
         kind_ = p[0]; names = p[1:].split(b"\0")
         print(f"  [duel winner] {names[0].decode()} beat {names[1].decode()}" + (" (fled)" if kind_ else ""))
     elif op == 0x168: print("  [duel: out of bounds]")
+    elif op == 0x123: print(f"  [faction visible] {struct.unpack_from('<I', p, 0)[0]}")
+    elif op == 0x124:
+        n = struct.unpack_from("<I", p, 0)[0]
+        print("  [faction standing] " + ", ".join(f"{struct.unpack_from('<I', p, 4 + 8 * i)[0]}: "
+              f"{struct.unpack_from('<i', p, 8 + 8 * i)[0]}" for i in range(n)))
     elif op == 0x130:
         spell, status = struct.unpack_from("<IB", p, 0)
         print(f"  [cast result] {spell}: " + ("ok" if status == 0 else f"failed {p[5]:#x}"))

@@ -12,7 +12,7 @@ module dmangos.world.quests;
 /// `MAX_QUEST_LOG_SIZE`
 enum uint maxQuestLogSize = 20;
 /// `QUEST_OBJECTIVES_COUNT`, `QUEST_REWARD_CHOICES_COUNT`, `QUEST_REWARDS_COUNT`
-enum uint questObjectives = 4, questRewardChoices = 6, questRewards = 4;
+enum uint questObjectives = 4, questRewardChoices = 6, questRewards = 4, questReputations = 5;
 
 /// `QuestStatus`
 enum QuestState : ubyte
@@ -107,6 +107,12 @@ struct Quest
     uint incompleteEmoteDelay;
     uint completeEmote;
     uint completeEmoteDelay;
+    uint[questReputations] rewRepFaction;   /// reputation for completing it, with these factions
+    int[questReputations] rewRepValue;      /// ditto, so much
+    uint requiredMinRepFaction;             /// taken only at this standing or above with this faction
+    int requiredMinRepValue;                /// ditto
+    uint requiredMaxRepFaction;             /// ... and below this one with this faction
+    int requiredMaxRepValue;                /// ditto
     uint[4] offerRewardEmote;
     uint[4] offerRewardEmoteDelay;
 
@@ -276,7 +282,9 @@ enum questQuery = "SELECT entry, Method, ZoneOrSort, MinLevel, MaxLevel, QuestLe
     ~ "DetailsEmoteDelay1, DetailsEmoteDelay2, DetailsEmoteDelay3, DetailsEmoteDelay4, IncompleteEmote, "
     ~ "IncompleteEmoteDelay, CompleteEmote, CompleteEmoteDelay, OfferRewardEmote1, OfferRewardEmote2, "
     ~ "OfferRewardEmote3, OfferRewardEmote4, OfferRewardEmoteDelay1, OfferRewardEmoteDelay2, OfferRewardEmoteDelay3, "
-    ~ "OfferRewardEmoteDelay4 FROM quest_template";
+    ~ "OfferRewardEmoteDelay4, RewRepFaction1, RewRepFaction2, RewRepFaction3, RewRepFaction4, RewRepFaction5, "
+    ~ "RewRepValue1, RewRepValue2, RewRepValue3, RewRepValue4, RewRepValue5, RequiredMinRepFaction, "
+    ~ "RequiredMinRepValue, RequiredMaxRepFaction, RequiredMaxRepValue FROM quest_template";
 
 /// One row of `questQuery`.
 struct QuestRow
@@ -302,6 +310,12 @@ struct QuestRow
     uint pointOpt;
     uint de1, de2, de3, de4, ded1, ded2, ded3, ded4, incompleteEmote, incompleteEmoteDelay, completeEmote,
         completeEmoteDelay, oe1, oe2, oe3, oe4, oed1, oed2, oed3, oed4;
+    uint rrf1, rrf2, rrf3, rrf4, rrf5;
+    int rrv1, rrv2, rrv3, rrv4, rrv5;
+    uint requiredMinRepFaction;
+    int requiredMinRepValue;
+    uint requiredMaxRepFaction;
+    int requiredMaxRepValue;
 
     Quest toQuest() const
     {
@@ -312,7 +326,8 @@ struct QuestRow
                 "nextQuestId", "exclusiveGroup", "nextQuestInChain", "srcItemId", "srcItemCount", "srcSpell", "title",
                 "details", "objectives", "offerRewardText", "requestItemsText", "endText", "rewOrReqMoney",
                 "rewMoneyMaxLevel", "rewSpell", "rewSpellCast", "pointMapId", "pointX", "pointY", "pointOpt",
-                "incompleteEmote", "incompleteEmoteDelay", "completeEmote", "completeEmoteDelay"])
+                "incompleteEmote", "incompleteEmoteDelay", "completeEmote", "completeEmoteDelay",
+                "requiredMinRepFaction", "requiredMinRepValue", "requiredMaxRepFaction", "requiredMaxRepValue"])
             __traits(getMember, q, f) = __traits(getMember, this, f);
         q.objectiveText = [ot1, ot2, ot3, ot4];
         q.reqItemId = [ri1, ri2, ri3, ri4];
@@ -326,6 +341,8 @@ struct QuestRow
         q.rewChoiceItemCount = [chc1, chc2, chc3, chc4, chc5, chc6];
         q.rewItemId = [rw1, rw2, rw3, rw4];
         q.rewItemCount = [rwc1, rwc2, rwc3, rwc4];
+        q.rewRepFaction = [rrf1, rrf2, rrf3, rrf4, rrf5];
+        q.rewRepValue = [rrv1, rrv2, rrv3, rrv4, rrv5];
         q.detailsEmote = [de1, de2, de3, de4];
         q.detailsEmoteDelay = [ded1, ded2, ded3, ded4];
         q.offerRewardEmote = [oe1, oe2, oe3, oe4];

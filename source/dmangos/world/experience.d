@@ -27,6 +27,13 @@ uint grayLevel(uint level) pure nothrow @nogc @safe
     return level - 9;
 }
 
+/// `XP::GetQuestGreenRange`: how far below the player a level still counts as green.
+uint questGreenRange(uint level) pure nothrow @nogc @safe
+{
+    static immutable uint[12] byFive = [4, 4, 5, 5, 6, 6, 7, 7, 8, 9, 10, 11];
+    return level / 5 < byFive.length ? byFive[level / 5] : 12;
+}
+
 /// `XP::GetZeroDifference`
 uint zeroDifference(uint level) pure nothrow @nogc @safe
 {

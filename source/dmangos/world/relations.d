@@ -12,6 +12,7 @@ module dmangos.world.relations;
 
 import dmangos.world.clientdata : ClientData, FactionEntry, FactionTemplateEntry;
 import dmangos.world.defines : UnitFlags;
+import dmangos.world.reputation : Reputation;
 
 /// `ReputationRank`
 enum ReputationRank : ubyte
@@ -36,6 +37,7 @@ struct Relating
     bool alive = true;
     ulong duelArbiter;                      /// `PLAYER_DUEL_ARBITER`: the duel's flag
     uint duelTeam;                          /// `PLAYER_DUEL_TEAM`: 1 or 2 while the duel is on, else 0
+    const(Reputation) reputation;           /// a player's standings; null: its race's and class's base ones
 
     bool hasFlag(uint flag) const pure nothrow @nogc @safe
     {
@@ -111,6 +113,8 @@ ReputationRank factionReaction(const(FactionTemplateEntry)* self, const Relating
         const faction = client.factions.lookup(self.faction);
         if (faction !is null && faction.hasReputation)
         {
+            if (unit.reputation !is null)
+                return unit.reputation.rankWith(faction);
             bool atWar;
             return reputationToRank(baseReputation(unit, faction, atWar));
         }
@@ -143,6 +147,8 @@ ReputationRank reactionTo(const Relating self, const Relating unit, const Client
             // A faction with a reputation: at war or not decides.
             if (faction !is null && faction.hasReputation)
             {
+                if (self.reputation !is null)
+                    return self.reputation.atWarWith(faction) ? ReputationRank.hostile : ReputationRank.friendly;
                 bool atWar;
                 baseReputation(self, faction, atWar);
                 return atWar ? ReputationRank.hostile : ReputationRank.friendly;
@@ -188,6 +194,11 @@ bool canAttack(const Relating self, const Relating unit, const ClientData client
                 return true;
             return unit.hasFlag(UnitFlags.pvp); // `Player::IsPvP`
         }
+        // A creature may attack a player at war with its faction, friend or not.
+        if (!self.playerControlled && unit.player && unit.reputation !is null && self.template_ !is null)
+            if (const faction = client.factions.lookup(self.template_.faction))
+                if (faction.hasReputation && unit.reputation.atWarWith(faction))
+                    return true;
         return !isFriend(self, unit, client, sameGroup);
     }
     return isEnemy(self, unit, client) || isEnemy(unit, self, client);

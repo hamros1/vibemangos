@@ -124,6 +124,7 @@ final class WorldSession : NetSession, Kickable, OnlinePlayer
     mixin QuestHandlers;            // questhandlers.d: QuestHandler.cpp, Player's quest functions
     mixin TalentHandlers;           // talenthandlers.d: Player::LearnTalent, passive spells
     mixin MailHandlers;             // mailhandlers.d: MailHandler.cpp, MailDraft
+    mixin ReputationHandlers;       // reputationhandlers.d: ReputationMgr's packets, RewardReputation
     mixin Exploration;              // exploration.d: Player::UpdateZone, CheckAreaExploreAndOutdoor, GiveXP
     mixin ChatCommands;             // commands.d: ArcEmu's ParseCommands, ExecuteCommandInTable, messages
     mixin GmActions;                // gmactions.d: what the handlers do to players
@@ -368,6 +369,20 @@ starters and enders by creature entry, the exclusive groups, `questXp`, and a ch
 session's side: `CanTakeQuest` and the dialog status, the quest giver packets, accepting,
 completing, rewarding, and the objectives (`killedMonster` from the kill's rewards,
 `questItemsChanged` from every inventory save, `hasQuestForItem` for loot).
+
+## Reputation
+
+`reputation.d` is `ReputationMgr` without the session: a `Reputation` per player (`Player.reputation`,
+made by `makePlayer` from `character_reputation`) holds each reputation-list faction's
+`FactionState` (standing above the race's and class's base, flags), and does the changes:
+`change` with spillover, war and peace on rank changes, visibility, the client's war and inactive
+settings, loading and the rows to save (`takeChanged`). What changed is noted (`needSend`, `made`)
+for `reputationhandlers.d` to send (`SMSG_SET_FACTION_VISIBLE`, `SMSG_SET_FACTION_STANDING`, and
+`SMSG_INITIALIZE_FACTIONS` at login). The handlers also give the rewards (`rewardKillReputation`
+from `rewardAtKill`, `rewardQuestReputation` from `rewardQuest`, scaled by
+`CalculateReputationGain`), the price discount, and `SatisfyQuestReputation`. The relations read a
+player's `Reputation` through `Relating.reputation`: its rank decides how a creature's faction
+template sees it, its wars how it sees reputation factions.
 
 ## Death
 

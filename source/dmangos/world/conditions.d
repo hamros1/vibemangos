@@ -2,10 +2,11 @@
  * The `conditions` table: requirements that gossip menus, gossip options, trainer spells and vendor
  * items name by id (CMaNGOS `Globals/Conditions.cpp`, `ConditionEntry::Meets` and `Evaluate`).
  *
- * A condition checks a player (its items, skills, spells, quests, race, class, level, zone), or
+ * A condition checks a player (its items, skills, spells, quests, reputation, race, class, level,
+ * zone, death, combat), or
  * combines other conditions with AND, OR and NOT. The ones that need systems this server does not
- * have yet (auras, reputation, PvP ranks, world states, instance and world scripts, encounters,
- * waypoints, game events) are never met: a menu option that needs one stays hidden, which errs
+ * have yet (auras, PvP ranks, world states, instance and world scripts, encounters, waypoints,
+ * game events) are never met: a menu option that needs one stays hidden, which errs
  * towards showing less. Each such type is logged once.
  */
 module dmangos.world.conditions;
@@ -170,7 +171,21 @@ private:
         case questRewarded:
             return (c.value1 in player.data.rewardedQuests) !is null;
         case questTaken:
-            return false; // the quest log does not exist yet
+            // `IsCurrentQuest`: 1 incomplete, 2 complete and not rewarded, else either.
+            import dmangos.world.quests : QuestState;
+
+            const q = c.value1 in player.questStatus;
+            if (q is null)
+                return false;
+            const incomplete = q.status == QuestState.incomplete,
+                complete = q.status == QuestState.complete && !q.rewarded;
+            return c.value2 == 1 ? incomplete : c.value2 == 2 ? complete : incomplete || complete;
+        case reputationRankMin, reputationRankMax:
+            const faction = client.factions.lookup(c.value1);
+            if (faction is null || player.reputation is null)
+                return false;
+            const rank = player.reputation.rankWith(faction);
+            return c.type == reputationRankMin ? rank >= c.value2 : rank <= c.value2;
         case questNone:
             return (c.value1 in player.data.rewardedQuests) is null;
         case areaFlag:
@@ -194,10 +209,15 @@ private:
         case gender:
             return player.data.gender == c.value1;
         case deadOrAway:
-            // Players do not die yet, and their distance from the source is not part of the subject.
-            return false;
+            // The player dead (its distance from the source is not part of the subject; groups not yet).
+            import dmangos.world.player : DeathState;
+
+            return c.value1 == 0 && player.deathState != DeathState.alive;
         case isInCombat:
-            return c.value1 != 0; // nobody fights yet: "out of combat" holds
+            import dmangos.world.defines : UnitFlags;
+            import dmangos.world.updatefields : UNIT_FIELD_FLAGS;
+
+            return ((player.values.get!UNIT_FIELD_FLAGS & UnitFlags.inCombat) != 0) != (c.value1 != 0);
         case creatureInRange:
             return subject.creatureInRange !is null && subject.creatureInRange(c.value1, c.value2);
         case activeGameEvent, activeHoliday:

@@ -14,6 +14,7 @@ import dmangos.log;
 import dmangos.mysql : MySqlConnection;
 import dmangos.world.clientdata : ClientData, maskOf, maxSkillStep, playableClassMask, playableRaceMask;
 import dmangos.world.eventai : EventAiData;
+import dmangos.world.reputation : Spillover;
 import dmangos.world.creature : CreatureAddon, CreatureClassStats, CreatureSpawn, CreatureTemplate, classStatsKey,
     creatureTemplateQuery;
 import dmangos.world.gameobject : GameObjectSpawn, GameObjectTemplate, GameObjectType;
@@ -278,6 +279,16 @@ uint graveyardLinkKey(uint location, uint linkKind) pure nothrow @nogc @safe
     return location | linkKind << 31;
 }
 
+/// `ReputationOnKillEntry`: what killing a creature does to two factions' reputations.
+struct OnKillReputation
+{
+    uint[2] faction;
+    int[2] maxStanding;    /// the rank it gives reputation up to
+    bool[2] teamAward;     /// the faction's team gets half as much
+    int[2] value;
+    bool teamDependent;    /// the first for the Alliance only, the second for the Horde
+}
+
 /// `InstanceTemplate`'s ghost entrance: where on which map a ghost of an instance comes back out.
 struct GhostEntrance
 {
@@ -317,6 +328,9 @@ final class WorldData
     GhostEntrance[uint] ghostEntrances;             /// `instance_template`'s ghost entrances, by instance map
     WaypointStore waypoints;                        /// `creature_movement` and `creature_movement_template`
     EventAiData eventAi;                            /// `creature_ai_scripts`, by creature entry
+    OnKillReputation[uint] onKillReputation;        /// `creature_onkill_reputation`, by creature entry
+    Spillover[uint] spillovers;                     /// `reputation_spillover_template`, by faction
+    float[3][uint] reputationRates;                 /// `reputation_reward_rate`: quest, kill, spell rates by faction
 
     ///
     this()
@@ -510,6 +524,26 @@ final class WorldData
         foreach (row; world.query!"SELECT id, quest FROM creature_involvedrelation"())
             quests.creatureEnds[row.get!uint(0)] ~= row.get!uint(1);
         quests.link();
+        foreach (row; world.query!("SELECT creature_id, RewOnKillRepFaction1, RewOnKillRepFaction2, MaxStanding1, "
+            ~ "IsTeamAward1, RewOnKillRepValue1, MaxStanding2, IsTeamAward2, RewOnKillRepValue2, TeamDependent "
+            ~ "FROM creature_onkill_reputation")())
+            onKillReputation[row.get!uint(0)] = OnKillReputation([row.get!uint(1), row.get!uint(2)],
+                [row.get!int(3), row.get!int(6)], [row.get!int(4) != 0, row.get!int(7) != 0],
+                [row.get!int(5), row.get!int(8)], row.get!uint(9) != 0);
+        foreach (row; world.query!("SELECT faction, faction1, rate_1, rank_1, faction2, rate_2, rank_2, faction3, "
+            ~ "rate_3, rank_3, faction4, rate_4, rank_4 FROM reputation_spillover_template")())
+        {
+            Spillover s;
+            foreach (i; 0 .. 4)
+            {
+                s.faction[i] = row.get!uint(1 + 3 * i);
+                s.rate[i] = row.get!float(2 + 3 * i);
+                s.rank[i] = row.get!uint(3 + 3 * i);
+            }
+            spillovers[row.get!uint(0)] = s;
+        }
+        foreach (row; world.query!"SELECT faction, quest_rate, creature_rate, spell_rate FROM reputation_reward_rate"())
+            reputationRates[row.get!uint(0)] = [row.get!float(1), row.get!float(2), row.get!float(3)];
         static foreach (table; ["creature", "reference"])
             foreach (row; world.query!("SELECT " ~ lootColumns ~ " FROM " ~ table ~ "_loot_template")())
                 __traits(getMember, loot, table).add(row.get!uint(0), lootRow(row.get!uint(1), row.get!float(2),

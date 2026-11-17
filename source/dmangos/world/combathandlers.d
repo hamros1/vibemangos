@@ -38,7 +38,7 @@ mixin template CombatHandlers()
         const v = &player.values;
         return Relating(v.get!UNIT_FIELD_FLAGS, context.client.factionTemplates.lookup(v.get!UNIT_FIELD_FACTIONTEMPLATE),
             true, 1u << (player.data.race - 1), 1u << (player.data.classId - 1), v.get!UNIT_FIELD_HEALTH > 0,
-            v.get!PLAYER_DUEL_ARBITER, v.get!PLAYER_DUEL_TEAM);
+            v.get!PLAYER_DUEL_ARBITER, v.get!PLAYER_DUEL_TEAM, player.reputation);
     }
 
     /**

@@ -165,8 +165,8 @@ What works now:
     state lists.
   * **The player object:** all update fields CMaNGOS fills on login: looks, display id and model
     scale, faction, level, health and powers, stats with item bonuses, armor and resistances,
-    attack power, weapon damage and speed, skills, explored zones, money and XP. Auras, talents'
-    effects, crit/dodge/parry chances, reputation and guild membership are not applied yet.
+    attack power, weapon damage and speed, skills, explored zones, money and XP, with its auras,
+    talents and crit, dodge, parry and block chances. Guild membership is not applied yet.
   * **Update packets:** `SMSG_UPDATE_OBJECT` blocks built from a field mask, compressed over 100
     bytes, as CMaNGOS's `UpdateData` does.
 * In the world:
@@ -282,8 +282,7 @@ What works now:
     applies: free for all, round robin (the turn moves on), master loot (the master hands out what is
     over the threshold), group loot and need before greed (need, greed or pass for a minute; need
     wins, then the higher roll); money is shared. A looted corpse goes within two minutes. Not yet:
-    quest drops (no quests), random enchantments, skinning and pickpocketing (spells), reputation
-    for kills.
+    random enchantments, skinning and pickpocketing.
   * **Spells** (CMaNGOS's `Spell::SpellStart`, `CheckCast`, `cast` and `SpellEffects.cpp`): a
     known spell is checked (alive, not busy, its cooldown and category cooldown and the global
     cooldown over, standing, the power and reagents it costs, an enemy or friend in range and in
@@ -314,8 +313,19 @@ What works now:
     for count as they are carried (and quest drops are looted only while a quest asks for them); a
     quest whose objectives are met is complete, and its ender takes the items back and gives its
     experience (`Quest::XPValue`), money, items (one of the choices) and spell, then offers the
-    next of the chain. Progress is saved in `character_queststatus`. Not yet: quests from game
-    objects and items, sharing, timed and escort quests, exploration, reputation.
+    next of the chain, and its reputations. A quest may ask for a standing to be taken, or have one
+    as its objective. Progress is saved in `character_queststatus`. Not yet: quests from game
+    objects and items, sharing, timed and escort quests, exploration.
+  * **Reputation** (CMaNGOS's `ReputationMgr`): each character's standing with the factions of the
+    reputation list, from its race's and class's base (`Faction.dbc`), saved in
+    `character_reputation`. Kills give `creature_onkill_reputation`'s (shared by a group as
+    experience is, half to the faction's team where it says so, up to its rank cap), quests their
+    `RewRepFaction` ones; a fifth at least for kills grey to the player and quests far below it;
+    `reputation_spillover_template` passes shares on to related factions, `reputation_reward_rate`
+    scales them. A faction gained with shows in the client's list; falling to hostile is war, rising
+    to neutral peace, and the client sets war (where allowed), inactive and the watched faction.
+    Creatures react to a player by its standing and its wars; honored and above get 10% off at
+    vendors, trainers and repairs; items, conditions and quests that ask for a rank check it.
   * **Talents** (CMaNGOS's `LearnTalent`): a talent point a level from 10 on; a talent of the
     player's class is learned a rank at a time, if its tree has 5 points for each row above it and
     what it depends on is known, the new rank's spell replacing the rank before. Passive spells
@@ -390,6 +400,7 @@ time.
 | `rate_health`, `rate_mana`, `rate_rage_loss`, `rate_energy` | `Rate.Health`, `Rate.Mana`, `Rate.Rage.Loss`, `Rate.Energy` | `1` |
 | `rate_rest_ingame`, `rate_rest_offline_in_tavern_or_city`, `rate_rest_offline_in_wilderness` | `Rate.Rest.*` | `1` |
 | `rate_xp_explore` | `Rate.XP.Explore` | `1` |
+| `rate_reputation_gain`, `rate_reputation_lowlevel_kill`, `rate_reputation_lowlevel_quest` | `Rate.Reputation.Gain`, `.LowLevel.Kill`, `.LowLevel.Quest` | `1`, `0.2`, `0.2` |
 | `max_player_level` | `MaxPlayerLevel` | `60` |
 | `movement_speed_check`, `movement_speed_tolerance`, `movement_speed_slack` | n/a (CMaNGOS leaves it to its anticheat module): allow this factor over running speed, plus these yards | `true`, `1.5`, `15` |
 | `start_player_level`, `start_gm_level`, `start_player_money` | `StartPlayerLevel`, `GM.StartLevel`, `StartPlayerMoney` | `1`, `1`, `0` |
