@@ -724,8 +724,11 @@ starts, through the same migration, and stays there until it ends.
   the old id keeping its grant and epoch; measured apart, the new half moves; a node's view takes
   the smaller rectangle as no loss). Live, two nodes, 250 bots crowding Goldshire on node 1: the
   coordinator split Goldshire's region (55 ms/s, 16 × 275 cells) and moved the new half (3.5 ms/s)
-  to node 2 30 seconds later, with the small moves of the same looks; the crowd's half waited out its
-  cool-down. That run also found a crash: a region handed over with a player's corpse in it (bots
+  to node 2 30 seconds later, with the small moves of the same looks. With splits waiting one
+  interval rather than the cool-down, it was split on every look (six in three minutes, from 16 × 275
+  cells down to 16 × 8 around the crowd), each new half moving to node 2 on the next look; all 250
+  bots stayed in the world throughout. A crowd within one cell cannot be split further: its node
+  carries it. That run also found a crash: a region handed over with a player's corpse in it (bots
   dying in the crowd), now left where it is.
 * **Tested:** unit tests for the threshold, the cap of two moves, the cool-down and the smoothing.
   Live, two nodes on one machine: 300 bots spread over both continents measured 19 and 24 ms/s,
