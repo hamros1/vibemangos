@@ -154,6 +154,7 @@ private:
     {
         info!"%s: '%s' died"(remoteAddress, player.data.name);
         spellsOnLeave();
+        removeAurasOnDeath();
         stopAttack(false);
         if (byCreature)
         {

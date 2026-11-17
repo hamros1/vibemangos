@@ -276,8 +276,17 @@ What works now:
     weapon damage with a bonus or percentage (Heroic Strike waits for the next swing and replaces
     it), heals, energize, teleports home (the hearthstone), creating items, learning and triggering
     spells. Items cast their on-use spells (with the item's own cooldowns; food and drink are used
-    up). Not yet: auras (buffs, debuffs, food and drink's regeneration, stances), channeling, area
-    and chain targets, projectiles' travel time, spells cast at players (PvP) and by creatures.
+    up). Not yet: channeling, area and chain targets, projectiles' travel time, spells cast at
+    players (PvP) and by creatures, spell power and partial resists.
+  * **Auras** (CMaNGOS's `SpellAuraHolder` and `Aura`): buffs and debuffs fill the aura fields
+    (positive slots 0..31, negative 32..47) and the buff bar's durations, refresh and stack, and end
+    when their time is up, when clicked off, at death, or by their interrupt flags (standing up ends
+    food and drink, moving, damage, casting, attacking). What they do: stats, percentages of
+    stats, resistances and armor, attack power, health and mana (the stats are worked out again),
+    speeds and mounts, stances and forms (which spells check), roots and stuns, damage and heals
+    over time (on creatures too, as the caster's spell: threat, tapping, the kill), food's health
+    every 5 seconds and drink's mana, energize, triggered spells. Not yet: saving auras across
+    logins, dispels, procs, absorbs, auras on creatures slowing or rooting them.
   * **The update tick** (every 50 ms, `update_interval`): health, mana, rage and energy regenerate
     as in CMaNGOS (health and the loss of rage only out of combat, and only for the living); inns and capitals give rested XP, also while offline; characters are saved every
     15 minutes (`player_save_interval`).

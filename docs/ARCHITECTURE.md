@@ -118,6 +118,7 @@ final class WorldSession : NetSession, Kickable, OnlinePlayer
     mixin DeathHandlers;            // death.d: dying, the ghost, the corpse, the spirit healer
     mixin LootHandlers;             // loothandlers.d: LootHandler.cpp, kill experience, tapping
     mixin SpellHandlers;            // spellhandlers.d: SpellHandler.cpp, Spell.cpp, SpellEffects.cpp
+    mixin AuraHandlers;             // aurahandlers.d: SpellAuras.cpp's handlers and ticks
     mixin Exploration;              // exploration.d: Player::UpdateZone, CheckAreaExploreAndOutdoor, GiveXP
     mixin ChatCommands;             // commands.d: ArcEmu's ParseCommands, ExecuteCommandInTable, messages
     mixin GmActions;                // gmactions.d: what the handlers do to players
@@ -330,6 +331,17 @@ cast in progress (`generic`) and the one for the next swing (`nextSwing`), coold
 category and the global one, `checkCast`, `go` (cooldowns, cost, hit rolls, `SMSG_SPELL_GO`), and
 the effects. Damage to creatures goes the way melee's does (`spellAttacked`: threat, tapping, the
 kill).
+
+## Auras
+
+`auras.d` is a unit's `AuraSet`: applying (slot, refresh, stacks), removing, the aura fields, the
+countdown of durations and periodic timers (`update` returns the ticks and the expired), and the
+sums stats and speeds are made of. Players and creatures each have one. `aurahandlers.d` is the
+session's side: `SPELL_EFFECT_APPLY_AURA`, what each aura type does as it begins and ends
+(`auraEffects`: stats through `StatInputs.auras` and `refreshEquipmentStats`, speeds, roots, forms,
+mounts), the player's own ticks, the interrupt flags, and `Combatant.auraTick` for the ticks of its
+auras on creatures (a creature's tick asks its caster's session, so damage over time taps and kills
+like any spell).
 
 ## Death
 

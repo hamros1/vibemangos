@@ -22,6 +22,7 @@ import dmangos.world.motion : IdleMovement, launch, MotionWorld, MovementGenerat
 import dmangos.world.movement : MovementFlags, Position;
 import dmangos.world.opcodes : Opcode;
 import dmangos.world.relations;
+import dmangos.world.auras : Aura, AuraType;
 import dmangos.world.updatefields;
 import dmangos.vmap.math : Vector3;
 
@@ -44,6 +45,9 @@ interface Combatant
     void threatAdded(ulong creature);
     /// ditto
     void threatRemoved(ulong creature);
+
+    /// A periodic effect of its aura on `target` ticked (damage over time).
+    void auraTick(Creature target, Aura aura, size_t effect);
 }
 
 /// What a creature's AI needs of its map.
@@ -257,7 +261,7 @@ final class CreatureAI
         else if (inCombat_)
         {
             updateCombatManager(world, diff);
-            if (inCombat_)
+            if (inCombat_ && !me.auras.has(AuraType.modStun)) // `UNIT_STAT_STUNNED`: it does nothing
                 updateAI(world);
             if (inCombat_ && assistanceReceivers.length)
             {

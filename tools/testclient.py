@@ -390,6 +390,11 @@ def describe(op, p):
         t, pos = packed_guid(p, 0); a, pos = packed_guid(p, pos); spell, amount = struct.unpack_from("<II", p, pos)
         print(f"  [spell heal] {spell}: {amount}")
     elif op == 0x24B: print(f"  [spell missed] {struct.unpack_from('<I', p, 0)[0]} ({p[-1]})")
+    elif op == 0x137: print(f"  [aura duration] slot {p[0]}: {struct.unpack_from('<i', p, 1)[0]} ms")
+    elif op == 0x24E:
+        t, pos = packed_guid(p, 0); c, pos = packed_guid(p, pos); spell, n, aura = struct.unpack_from("<III", p, pos)
+        print(f"  [periodic] {spell} aura {aura}: {struct.unpack_from('<I', p, pos + 12)[0]}")
+    elif op == 0x29: print(f"  [stand state] {p[0]}")
     elif op == 0x162: print(f"  [loot removed] slot {p[0]}")
     elif op == 0x165: print("  [loot money taken]")
     elif op == 0x166:

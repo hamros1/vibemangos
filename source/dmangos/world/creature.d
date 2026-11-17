@@ -12,6 +12,7 @@
 module dmangos.world.creature;
 
 import dmangos.world.combat : Fighter;
+import dmangos.world.auras : AuraSet, AuraTick, Aura;
 import dmangos.world.loot : Loot;
 import dmangos.world.creatureai : CombatWorld, CreatureAI;
 import dmangos.world.clientdata : FactionTemplateEntry;
@@ -529,6 +530,9 @@ final class Creature : Moving, Replicable, Npc, PerViewer
     /// Dead: what it dropped (`m_loot`); null when nothing (or looted).
     Loot loot;
 
+    /// Its auras (`dmangos.world.auras`): what players' spells left on it.
+    AuraSet auras;
+
     /// `UNIT_DYNFLAG_LOOTABLE`, `UNIT_DYNFLAG_TAPPED`
     enum uint dynLootable = 0x01, dynTapped = 0x04;
 
@@ -573,6 +577,25 @@ final class Creature : Moving, Replicable, Npc, PerViewer
         if (!alive && loot !is null && loot.canLoot(viewer))
             value |= dynLootable;
         return value;
+    }
+
+    /// Its auras' time passes: their casters do what their ticks do; those that ended go.
+    void updateAuras(CombatWorld world, int diff)
+    {
+        AuraTick[] ticks;
+        Aura[] expired;
+        auras.update(diff, ticks, expired);
+        foreach (tick; ticks)
+        {
+            if (!alive)
+                break;
+            if (auto caster = world.combatant(tick.aura.caster))
+                caster.auraTick(this, tick.aura, tick.effect);
+        }
+        foreach (aura; expired)
+            auras.remove(aura, values);
+        if (expired.length)
+            world.flushCreature(this);
     }
 
     /// `Creature::InspectingLoot`: someone looks into its loot; the corpse lasts two minutes more at least.
@@ -667,6 +690,8 @@ final class Creature : Moving, Replicable, Npc, PerViewer
             decay = respawnDelay * 9 / 10;
         corpseTimer = decay * 1000;
         respawnAt = now + respawnDelay;
+        foreach (aura; auras.list.dup) // `RemoveAllAurasOnDeath`
+            auras.remove(aura, values);
         values.set!UNIT_NPC_FLAGS(0u);
         stopMoving(this, world);
         generator = new IdleMovement;
@@ -699,6 +724,11 @@ final class Creature : Moving, Replicable, Npc, PerViewer
                     combat.corpseExpired(this);
             return;
         }
+        if (auras.list.length)
+            if (auto combat = cast(CombatWorld) world)
+                updateAuras(combat, diff);
+        if (!alive)
+            return;
         if (ai !is null)
             if (auto combat = cast(CombatWorld) world)
                 ai.update(combat, diff);
@@ -721,7 +751,7 @@ final class Creature : Moving, Replicable, Npc, PerViewer
         import dmangos.world.motion : IdleMovement;
 
         return motionStarted && spline.finalized && cast(const IdleMovement) generator !is null
-            && (ai is null || !ai.active) && alive;
+            && (ai is null || !ai.active) && alive && auras.list.length == 0;
     }
 
     /// See `Replicable.motion`: living, with its speeds and the walk under way.

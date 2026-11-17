@@ -29,6 +29,7 @@ mixin template InWorldHandlers()
     import dmangos.world.objects : lowGuid;
     import dmangos.world.opcodes;
     import dmangos.world.packets;
+    import dmangos.world.auras : AuraInterrupt;
     import dmangos.world.player : DeathState, PlayerFlags, RestType;
     import dmangos.world.channelservice : ChannelOp;
     import dmangos.world.queries : chatMessage, ClientChat, ClientWho, whoList, WhoEntry, creatureQueryResponse, gameObjectQueryResponse,
@@ -48,6 +49,7 @@ private:
     {
         releaseLootOnLeave();
         spellsOnLeave();
+        removeAurasOnDeath(); // auras are not saved yet
         deathOnLogout();
         const progress = player.progress(secondsInWorld());
         context.database.saveProgress(progress);
@@ -277,6 +279,7 @@ private:
         if (player is null)
             return;
         updateSpells(elapsed);
+        updateAuras(elapsed);
         updateDeath(elapsed);
         if (regenTimer.update(elapsed))
         {
@@ -494,6 +497,8 @@ private:
         if (request.state != stand && request.state != sit && request.state != sleep && request.state != kneel)
             return;
         player.setStandState(cast(ubyte) request.state);
+        if (request.state == stand)
+            interruptAuras(AuraInterrupt.standingCancels); // food and drink end
         flushPlayerChanges();
         send(ServerStandStateUpdate(cast(ubyte) request.state));
     }

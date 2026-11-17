@@ -25,6 +25,7 @@ mixin template SpellHandlers()
     import dmangos.log : info, warning;
     import dmangos.world.combat : AttackType, armorReducedDamage, blockChance, critChance, dodgeChance, missChance,
         parryChance, weaponDamage;
+    import dmangos.world.auras : AuraInterrupt;
     import dmangos.world.creature : Creature;
     import dmangos.world.defines : Power, Stat;
     import dmangos.world.movement : MovementFlags, Position;
@@ -178,6 +179,11 @@ private:
             | MovementFlags.strafeRight | MovementFlags.jumping | MovementFlags.fallingFar;
         if (generic.active && (movementFlags & moving) && (generic.spell.casting.interruptFlags & interruptMovement))
             interruptCast(SpellCastResult.interrupted);
+        enum uint turning = MovementFlags.turnLeft | MovementFlags.turnRight;
+        if (movementFlags & moving)
+            interruptAuras(AuraInterrupt.moving);
+        else if (movementFlags & turning)
+            interruptAuras(AuraInterrupt.turning);
     }
 
     /// Death, logging out, a far teleport: casts end.
@@ -232,6 +238,14 @@ private:
                 return SpellCastResult.affectingCombat;
             if (player.values.getByte!UNIT_FIELD_BYTES_1(0) != 0 && !(spell.attributes & castableWhileSitting))
                 return SpellCastResult.notStanding;
+            // `GetErrorAtShapeshiftedCast`: a spell for some stances (or forms) only in one of them.
+            enum uint allowWhileNotShapeshifted = 0x00080000; // SPELL_ATTR_EX2_ALLOW_WHILE_NOT_SHAPESHIFTED
+            enum SpellCastResult onlyShapeshift = cast(SpellCastResult) 0x56;
+            const form = player.values.getByte!UNIT_FIELD_BYTES_1(2);
+            if (form == 0 && spell.stances && !(spell.attributesEx2 & allowWhileNotShapeshifted))
+                return onlyShapeshift;
+            if (form != 0 && spell.stances && !(spell.stances & (1u << (form - 1))))
+                return onlyShapeshift;
         }
         // The target the effects need.
         const result = checkTarget(spell, targets);
@@ -400,7 +414,10 @@ private:
             }
         }
         if (!c.triggered)
+        {
+            interruptAuras(AuraInterrupt.action); // `RemoveAurasOnCast`
             deliver(Opcode.SMSG_CAST_RESULT, castResultPacket(spell.id, SpellCastResult.ok));
+        }
         map.sendToWatchers(this, Opcode.SMSG_SPELL_GO, spellGoPacket(player.guid, spell.id, results, c.targets), true);
         foreach (r; results)
             if (r.miss != SpellMissInfo.none)
@@ -494,6 +511,9 @@ private:
         case 64: // SPELL_EFFECT_TRIGGER_SPELL
             if (const triggered = context.data.spells.spell(spell.triggerSpell[i]))
                 castSpell(triggered, c.targets, true, 0);
+            break;
+        case 6: // SPELL_EFFECT_APPLY_AURA
+            applyAuraEffect(spell, i, target);
             break;
         case 3: // SPELL_EFFECT_DUMMY: scripts
         case 77: // SPELL_EFFECT_SCRIPT_EFFECT

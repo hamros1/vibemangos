@@ -33,6 +33,7 @@ import dmangos.world.inventory : Inventory, InventoryOwner, Item;
 import dmangos.world.playercreate : KnownAbilities, KnownSkill, NewSkill, NewSpell;
 import dmangos.world.spells : SpellEffect;
 import dmangos.world.stats;
+import dmangos.world.auras : AuraSet, AuraType;
 import dmangos.world.combat : AttackType, Fighter;
 import dmangos.world.updatefields;
 import dmangos.world.worlddata : CreateAction, maxLevel, WorldData;
@@ -179,6 +180,7 @@ final class Player : InventoryOwner
     MovementInfo movement;
     PlayerStats stats;
     MeleeChances chances;                /// own melee chances (`meleeChances`), for the combat rolls
+    AuraSet auras;                       /// its auras (`dmangos.world.auras`)
     DeathState deathState;               /// alive, a body, or a ghost (`dmangos.world.death`)
     uint[] spells;                       /// active, enabled spells: the spellbook
     uint[maxActionButtons] actionButtons; /// packed, 0 = empty
@@ -892,6 +894,19 @@ private:
             if (const item = inventory.equipped(slot))
                 if (item.durability != 0 || item.maxDurability == 0) // a broken item gives nothing
                     input.equipment[slot] = item.proto;
+        // What auras add (`Aura::HandleAuraModStat`, `HandleAuraModResistance`, ...).
+        foreach (i; 0 .. 5)
+        {
+            input.auras.stats[i] = auras.totalByMisc(AuraType.modStat, i) + auras.totalByMisc(AuraType.modStat, -1);
+            input.auras.statPercent[i] = auras.totalByMisc(AuraType.modPercentStat, i)
+                + auras.totalByMisc(AuraType.modPercentStat, -1);
+        }
+        foreach (school; 0 .. 7)
+            input.auras.resistances[school] = auras.totalByMiscMask(AuraType.modResistance, 1 << school);
+        input.auras.attackPower = auras.total(AuraType.modAttackPower);
+        input.auras.rangedAttackPower = auras.total(AuraType.modRangedAttackPower);
+        input.auras.health = auras.total(AuraType.modIncreaseHealth);
+        input.auras.mana = auras.totalByMisc(AuraType.modIncreaseEnergy, 0);
         stats = computeStats(input);
         chances = meleeChances(chanceInputs(world));
     }

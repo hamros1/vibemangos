@@ -52,7 +52,10 @@ import dmangos.world.combathandlers : CombatHandlers;
 import dmangos.world.death : DeathHandlers;
 import dmangos.world.loothandlers : LootHandlers;
 import dmangos.world.spellhandlers : SpellHandlers;
+import dmangos.world.aurahandlers : AuraHandlers;
 import dmangos.world.creatureai : Combatant;
+import dmangos.world.auras : Aura;
+import dmangos.world.creature : Creature;
 import dmangos.world.loot : Looter;
 import dmangos.world.combat : Fighter, MeleeDamage;
 import dmangos.world.relations : Relating;
@@ -433,6 +436,12 @@ final class WorldSession : NetSession, Kickable, OnlinePlayer, Combatant, Looter
         removeThreatener(creature);
     }
 
+    /// See `Combatant`.
+    void auraTick(Creature target, Aura aura, size_t effect)
+    {
+        creatureAuraTick(target, aura, effect);
+    }
+
     // -----------------------------------------------------------------------
     // `Looter`: what loot sees of the player (`dmangos.world.loot`, `loothandlers.d`)
     // -----------------------------------------------------------------------
@@ -801,6 +810,7 @@ private:
     mixin DeathHandlers;
     mixin LootHandlers;
     mixin SpellHandlers;
+    mixin AuraHandlers;
     mixin Level0Commands;
     mixin Level1Commands;
     mixin Level2Commands;

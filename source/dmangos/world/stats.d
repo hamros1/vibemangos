@@ -74,6 +74,19 @@ struct StatInputs
     LevelStats levelStats;
     ClassLevelStats classStats;
     const(ItemTemplate)*[equipmentSlotEnd] equipment; /// null where nothing is equipped
+    AuraMods auras;      /// what auras add (`dmangos.world.auras`)
+}
+
+/// What a player's auras add to its stats (`SPELL_AURA_MOD_STAT`, `MOD_RESISTANCE`, `MOD_ATTACK_POWER`, ...).
+struct AuraMods
+{
+    float[5] stats = 0;          /// `MOD_STAT`
+    float[5] statPercent = 0;    /// `MOD_PERCENT_STAT`: percent more of each
+    float[7] resistances = 0;    /// `MOD_RESISTANCE`: armor, then holy .. arcane
+    float attackPower = 0;       /// `MOD_ATTACK_POWER`
+    float rangedAttackPower = 0; /// `MOD_RANGED_ATTACK_POWER`
+    float health = 0;            /// `MOD_INCREASE_HEALTH`
+    float mana = 0;              /// `MOD_INCREASE_ENERGY` of mana
 }
 
 /// `Player::InitStatsForLevel`, `_ApplyAllItemMods` and the `Update*` functions of `StatSystem.cpp`.
@@ -130,6 +143,20 @@ out (result; result.maxHealth >= 1, "a living character has at least one health 
             resistance[i] += value;
     }
 
+    // Auras: flat stats, then percentages of the totals.
+    foreach (i; 0 .. 5)
+    {
+        if (input.auras.stats[i] != 0)
+            addStatBonus(result, cast(Stat) i, input.auras.stats[i]);
+        if (input.auras.statPercent[i] != 0)
+            addStatBonus(result, cast(Stat) i, result.stats[i] * input.auras.statPercent[i] / 100);
+    }
+    healthMod += input.auras.health;
+    manaMod += input.auras.mana;
+    armor += input.auras.resistances[0];
+    foreach (i; 0 .. 6)
+        resistance[i] += input.auras.resistances[i + 1];
+
     // UpdateMaxHealth, UpdateMaxPower
     result.maxHealth = cast(uint) max(round(healthMod + result.baseHealth
         + healthBonusFromStamina(result.stats[Stat.stamina])), 1);
@@ -145,8 +172,9 @@ out (result; result.maxHealth >= 1, "a living character has at least one health 
         result.resistances[i + 1] = cast(int) resistance[i];
 
     // UpdateAttackPowerAndDamage
-    result.attackPower = cast(int) meleeAttackPower(input.classId, input.level, result.stats);
-    result.rangedAttackPower = cast(int) rangedAttackPower(input.classId, input.level, result.stats);
+    result.attackPower = cast(int)(meleeAttackPower(input.classId, input.level, result.stats) + input.auras.attackPower);
+    result.rangedAttackPower = cast(int)(rangedAttackPower(input.classId, input.level, result.stats)
+        + input.auras.rangedAttackPower);
     foreach (type; EnumMembers!AttackType)
         weaponDamage(input, type, result);
     return result;

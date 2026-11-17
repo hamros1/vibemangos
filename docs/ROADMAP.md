@@ -119,9 +119,9 @@ The largest area. CMaNGOS references: `Spells/`, `Entities/Unit.cpp`, `Combat/`,
    and loot"). Not yet: quest drops, `item_enchantment_template` random properties, skinning,
    pickpocketing, game object and item loot (chests, bags), reputation and honor for kills, loot of
    a creature another node of a cluster simulates.
-5. Spells, cooldowns and auras. **Casting: done** (`spellcast.d`, `spellhandlers.d`; README's "Spells").
-   Next: auras (`SpellAuras.cpp`: the aura fields, durations, periodic effects, stat and speed
-   modifiers, food and drink), then channeling, area targets, creatures' spells.
+5. Spells, cooldowns and auras. **Casting and auras: done** (`spellcast.d`, `spellhandlers.d`,
+   `auras.d`, `aurahandlers.d`; README's "Spells" and "Auras"). Next: channeling, area and chain
+   targets, creatures' spells (EventAI), saving auras, talents.
 6. Duels and trades.
 
 * Spell casting with effects, auras (feeding `stats.d`), cooldowns and the attack swing loop.

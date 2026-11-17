@@ -69,6 +69,8 @@ mixin template CombatHandlers()
         enterCombatFor(combatLinger);
         if (auto creature = cast(Creature) map.findObject(attacker))
             updateCombatSkills(creature, AttackType.mainHand, true);
+        if (d.damage)
+            interruptAuras(0x2 | 0x01000000); // AURA_INTERRUPT_FLAG_DAMAGE, _NON_PERIODIC_DAMAGE
         bool died;
         if (d.damage)
         {
@@ -202,6 +204,7 @@ private:
     {
         if (meleeAttacking)
             return;
+        interruptAuras(0x00001000); // AURA_INTERRUPT_FLAG_ATTACKING
         meleeAttacking = true;
         map.sendToWatchers(this, Opcode.SMSG_ATTACKSTART, attackStart(player.guid, victim.guid), true);
     }
