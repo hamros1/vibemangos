@@ -108,6 +108,40 @@ struct AuraRecord
     uint effectMask;     /// `effIndexMask`
 }
 
+/// An `instance` row.
+struct InstanceRecord
+{
+    uint id;
+    uint map;
+    long resetTime; /// Unix time; 0 for a dungeon that resets when it has been empty a while
+}
+
+/// A `character_instance` or `group_instance` row.
+struct InstanceBindRecord
+{
+    bool group;     /// `group_instance` (`owner` the group's leader); else `character_instance`
+    uint owner;
+    uint instance;
+    bool permanent;
+}
+
+/// A `creature_respawn` or `gameobject_respawn` row of an instance.
+struct InstanceRespawnRecord
+{
+    bool gameObject;
+    uint spawnGuid;
+    uint instance;
+    long until;
+}
+
+/// What `loadInstances` reads.
+struct InstanceRecords
+{
+    InstanceRecord[] instances;
+    InstanceBindRecord[] binds;
+    InstanceRespawnRecord[] respawns;
+}
+
 interface WorldDatabase
 {
     /// The account named `username`, or null.
@@ -276,6 +310,21 @@ interface WorldDatabase
     /// Every game object used up now: spawn guid -> when it comes back (Unix time).
     long[uint] loadGameObjectRespawns();
 
+    /// The dungeon instances that exist (`instance`), their binds and what is dead or used up in them.
+    InstanceRecords loadInstances();
+
+    /// An instance made (`instance`): its map, and (a raid's) when it resets (Unix time; 0: when empty).
+    void saveInstance(uint id, uint map, long resetTime);
+
+    /// An instance reset: its row, binds and respawn rows go.
+    void deleteInstance(uint id);
+
+    /// `character_instance` (`group` false, `owner` a character) or `group_instance` (`owner` a leader).
+    void saveInstanceBind(bool group, uint owner, uint instance, bool permanent);
+
+    /// A creature (or game object) spawn dead (used up) in an instance until `until` (`creature_respawn`, `gameobject_respawn`).
+    void saveInstanceRespawn(bool gameObject, uint spawnGuid, uint instance, long until);
+
     /// Name, race, gender and class of a character, or null.
     Nullable!NameInfo nameInfo(uint guid);
 
@@ -440,6 +489,17 @@ final class MySqlWorldDatabase : WorldDatabase
     uint maxAuctionId() { return statements.maxAuctionId(); }
     void saveGameObjectRespawn(uint spawnGuid, long respawnTime) { statements.saveGameObjectRespawn(spawnGuid, respawnTime); }
     long[uint] loadGameObjectRespawns() { return statements.loadGameObjectRespawns(); }
+    InstanceRecords loadInstances() { return statements.loadInstances(); }
+    void saveInstance(uint id, uint map, long resetTime) { statements.saveInstance(id, map, resetTime); }
+    void deleteInstance(uint id) { statements.deleteInstance(id); }
+    void saveInstanceBind(bool group, uint owner, uint instance, bool permanent)
+    {
+        statements.saveInstanceBind(group, owner, instance, permanent);
+    }
+    void saveInstanceRespawn(bool gameObject, uint spawnGuid, uint instance, long until)
+    {
+        statements.saveInstanceRespawn(gameObject, spawnGuid, instance, until);
+    }
     Nullable!NameInfo nameInfo(uint guid) { return statements.nameInfo(guid); }
     GroupRecord[] loadGroups() { return statements.loadGroups(); }
     void createGroup(const ref GroupRecord group) { statements.createGroup(group); }
@@ -933,6 +993,26 @@ final class MemoryWorldDatabase : WorldDatabase
             creatureRespawns.remove(spawnGuid);
     }
     long[uint] loadCreatureRespawns() { return creatureRespawns.dup; }
+    InstanceRecords instanceRows;    /// what the instance methods keep
+    InstanceRecords loadInstances() { return instanceRows; }
+    void saveInstance(uint id, uint map, long resetTime) { instanceRows.instances ~= InstanceRecord(id, map, resetTime); }
+    void deleteInstance(uint id)
+    {
+        import std.algorithm.iteration : filter;
+        import std.array : array;
+
+        instanceRows.instances = instanceRows.instances.filter!(r => r.id != id).array;
+        instanceRows.binds = instanceRows.binds.filter!(b => b.instance != id).array;
+        instanceRows.respawns = instanceRows.respawns.filter!(r => r.instance != id).array;
+    }
+    void saveInstanceBind(bool group, uint owner, uint instance, bool permanent)
+    {
+        instanceRows.binds ~= InstanceBindRecord(group, owner, instance, permanent);
+    }
+    void saveInstanceRespawn(bool gameObject, uint spawnGuid, uint instance, long until)
+    {
+        instanceRows.respawns ~= InstanceRespawnRecord(gameObject, spawnGuid, instance, until);
+    }
     void insertAuction(const ref AuctionRecord auction) { auctions[auction.id] = auction; }
     AuctionRecord[] loadAuctions(uint houseId)
     {

@@ -182,15 +182,17 @@ What works now:
     raid group, items, quests handed in) with the trigger's own message. The client's `worldport`
     command works for administrators.
   * **Dungeon instances:** each group (or player on its own) gets its own copy of a dungeon or
-    raid: its group's if the group is bound to one, else its own bind's, else a new one, to which it
-    and its group are bound (CMaNGOS's binds, kept in memory). A creature killed or an object used
-    up in a copy stays so until the copy resets; a copy nobody has been in for
-    `instance_unload_delay_seconds` resets, and its binds go with it. A player logging back in
-    inside a dungeon returns to its copy while it lasts; a GM's `.appear` and `.summon` go into the
-    other's copy. A full copy (`instance_template.maxPlayers`) turns others away, game masters aside.
-    Not yet: saved binds, raid lockouts and
-    their weekly resets; a cluster keeps one
-    shared copy of each dungeon.
+    raid: a raid's bound copy first (its lockout), else its group's, else its own bind's, else a new
+    one, to which it and its group are bound. Copies, binds and what was killed or used up in them
+    are saved (`instance`, `character_instance`, `group_instance`, and `creature_respawn` and
+    `gameobject_respawn` by instance) and read back at start-up. A dungeon copy nobody has been in
+    for `instance_unload_delay_seconds` resets with its binds; a raid copy lasts until its reset
+    (`instance_template.reset_delay` days after it was made), so its players stay locked to it, and
+    one bound to another copy than its group's is turned away. A player logging back in inside a
+    dungeon returns to its copy; a GM's `.appear` and `.summon` go into the other's copy; a full copy
+    (`instance_template.maxPlayers`) turns others away, game masters aside. Not yet: encounter
+    state, resets at fixed weekly times, the reset warnings; a cluster keeps one shared copy of
+    each dungeon.
   * **Groups:** invitations, parties and raids of up to 40 in eight sub-groups, leaders and
     assistants, kicking, leaving, loot settings, raid target icons, ready checks, rolls, minimap
     pings, and member stats for members out of sight. Groups are kept in `groups` and

@@ -387,6 +387,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         respawnAt = database.loadCreatureRespawns();
         gameObjectRespawnAt = database.loadGameObjectRespawns();
         groups.load(database.loadGroups());
+        loadInstances();
         loadCommandOverrides();
         channelService = new ChannelService(this, client, ChannelSettings(config.allowTwoSideInteractionChannel));
     }
@@ -545,6 +546,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     static struct InstanceState
     {
         uint mapId;
+        long resetAt;          /// a raid's reset (Unix time): its lockout lasts till then; 0 for a dungeon
         MonoTime emptySince;   /// MonoTime.init while someone is in it
         bool[uint] dead;       /// creature spawns killed there (they do not come back while it lasts)
         bool[uint] usedUp;     /// game object spawns used up there
@@ -553,7 +555,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     private Map[uint] instanceMaps;            // instance id -> its map
     private InstanceState[uint] instances;     // instance id -> its state
     private uint[uint][ulong] playerBinds;     // player guid -> map id -> instance (`character_instance`)
-    private uint[uint][uint] groupBinds;       // group id -> map id -> instance (`group_instance`)
+    private uint[uint][ulong] groupBinds;      // group leader guid -> map id -> instance (`group_instance`)
     private uint lastInstance;
 
     /**
@@ -579,9 +581,15 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         if (!instanceable(mapId))
             return 0;
         auto group = groups.of(player);
+        const raid = client.maps.lookup(mapId).isRaid;
         uint chosen;
-        if (group !is null)
-            if (auto bound = mapId in groupBinds.get(group.id, null))
+        // A raid's lockout first: a player bound to a copy goes back to it.
+        if (raid)
+            if (auto bound = mapId in playerBinds.get(player, null))
+                if (*bound in instances)
+                    chosen = *bound;
+        if (!chosen && group !is null)
+            if (auto bound = mapId in groupBinds.get(group.leader, null))
                 if (*bound in instances)
                     chosen = *bound;
         if (!chosen)
@@ -590,14 +598,77 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                     chosen = *bound;
         if (!chosen)
         {
+            import core.time : days;
+
             chosen = ++lastInstance;
-            instances[chosen] = InstanceState(mapId);
+            const resetAt = raid ? unixTime + data.instanceResetDays.get(mapId, 7) * 86_400 : 0;
+            instances[chosen] = InstanceState(mapId, resetAt);
+            database.saveInstance(chosen, mapId, resetAt);
             info!"instance %s of map %s made"(chosen, mapId);
         }
-        playerBinds.require(player, null)[mapId] = chosen;
-        if (group !is null && mapId !in groupBinds.get(group.id, null))
-            groupBinds.require(group.id, null)[mapId] = chosen;
+        if (playerBinds.get(player, null).get(mapId, 0) != chosen)
+        {
+            playerBinds.require(player, null)[mapId] = chosen;
+            database.saveInstanceBind(false, cast(uint) player, chosen, raid);
+        }
+        if (group !is null && groupBinds.get(group.leader, null).get(mapId, 0) !in instances)
+        {
+            groupBinds.require(group.leader, null)[mapId] = chosen;
+            database.saveInstanceBind(true, cast(uint) group.leader, chosen, raid);
+        }
         return chosen;
+    }
+
+    /**
+     * A raid's lockout: whether the player is bound to another copy of raid `mapId` than its group's
+     * (`MapManager::CanPlayerEnter` turns it away).
+     */
+    bool lockedOutOfGroupRaid(ulong player, uint mapId)
+    {
+        const entry = client.maps.lookup(mapId);
+        if (entry is null || !entry.isRaid || !instanceable(mapId))
+            return false;
+        auto group = groups.of(player);
+        if (group is null)
+            return false;
+        const mine = playerBinds.get(player, null).get(mapId, 0), theirs = groupBinds.get(group.leader, null).get(mapId, 0);
+        return mine && theirs && mine != theirs && mine in instances && theirs in instances;
+    }
+
+    /// The instances saved: their rows, binds and dead (`InstanceSaveManager::LoadFromDB`).
+    private void loadInstances()
+    {
+        const saved = database.loadInstances();
+        foreach (r; saved.instances)
+        {
+            instances[r.id] = InstanceState(r.map, r.resetTime);
+            if (r.id > lastInstance)
+                lastInstance = r.id;
+        }
+        foreach (b; saved.binds)
+            if (auto state = b.instance in instances)
+            {
+                if (b.group)
+                    groupBinds.require(b.owner, null)[state.mapId] = b.instance;
+                else
+                    playerBinds.require(b.owner, null)[state.mapId] = b.instance;
+            }
+        foreach (r; saved.respawns)
+            if (auto state = r.instance in instances)
+            {
+                if (r.gameObject)
+                    state.usedUp[r.spawnGuid] = true;
+                else
+                    state.dead[r.spawnGuid] = true;
+            }
+    }
+
+    /// Whether creature spawn `spawnGuid` is dead in instance `instance`.
+    bool deadInInstance(uint instance, uint spawnGuid)
+    {
+        if (auto state = instance in instances)
+            return (spawnGuid in state.dead) !is null;
+        return false;
     }
 
     /// The instances that are made.
@@ -644,6 +715,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         import dmangos.log : info;
 
         uint[] gone;
+        const time = unixTime;
         foreach (id, ref state; instances)
         {
             const m = instanceMaps.get(id, null);
@@ -655,13 +727,20 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             if (state.emptySince == MonoTime.init)
                 state.emptySince = now;
             else if (now - state.emptySince >= config.instanceUnloadDelay.seconds)
-                gone ~= id;
+            {
+                // A raid copy outlives its emptiness until its reset (only its map goes); a dungeon's resets.
+                if (state.resetAt && time < state.resetAt)
+                    instanceMaps.remove(id);
+                else
+                    gone ~= id;
+            }
         }
         foreach (id; gone)
         {
             info!"instance %s of map %s reset: empty for %s seconds"(id, instances[id].mapId, config.instanceUnloadDelay);
             instances.remove(id);
             instanceMaps.remove(id);
+            database.deleteInstance(id);
             foreach (ref binds; playerBinds)
                 foreach (mapId, instance; binds.dup)
                     if (instance == id)
@@ -1056,7 +1135,11 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         if (creature.instanceId)
         {
             if (auto state = creature.instanceId in instances)
+            {
                 state.dead[creature.spawn.guid] = true; // until the instance resets
+                database.saveInstanceRespawn(false, creature.spawn.guid, creature.instanceId,
+                    state.resetAt ? state.resetAt : unixTime + 86_400);
+            }
             return;
         }
         respawnAt[creature.spawn.guid] = creature.respawnAt;
@@ -1270,7 +1353,11 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         if (go.instanceId)
         {
             if (auto state = go.instanceId in instances)
+            {
                 state.usedUp[go.spawn.guid] = true;
+                database.saveInstanceRespawn(true, go.spawn.guid, go.instanceId,
+                    state.resetAt ? state.resetAt : unixTime + 86_400);
+            }
             return;
         }
         const at = unixTime + (go.spawn.respawnSeconds > 0 ? go.spawn.respawnSeconds : 0);

@@ -16,7 +16,8 @@ import dmangos.mysql : MySqlConnection;
 import dmangos.world.inventory : ItemChange, ItemRecord, ItemState;
 import dmangos.world.player : CharacterData, CharacterProgress, HomeBind, tutorialFields;
 import dmangos.world.playercreate : NewCharacter, NewSkill, NewSpell, maxEnchantmentSlot;
-import dmangos.world.database : AuraRecord, CorpseRecord, MailRecord;
+import dmangos.world.database : AuraRecord, CorpseRecord, InstanceBindRecord, InstanceRecord, InstanceRecords,
+    InstanceRespawnRecord, MailRecord;
 import dmangos.world.reputation : ReputationRecord;
 import dmangos.world.auctionhouse : AuctionRecord;
 import dmangos.world.quests : QuestState, QuestStatus;
@@ -539,6 +540,62 @@ final class CharacterStatements
         foreach (row; characters.query!"SELECT guid, respawntime FROM gameobject_respawn WHERE instance = 0"())
             all[row.get!uint(0)] = row.get!long(1);
         return all;
+    }
+
+    /// See `WorldDatabase.loadInstances`.
+    InstanceRecords loadInstances()
+    {
+        InstanceRecords all;
+        foreach (row; characters.query!"SELECT id, map, resettime FROM instance"())
+            all.instances ~= InstanceRecord(row.get!uint(0), row.get!uint(1), row.get!long(2));
+        foreach (row; characters.query!"SELECT guid, instance, permanent FROM character_instance"())
+            all.binds ~= InstanceBindRecord(false, row.get!uint(0), row.get!uint(1), row.get!uint(2) != 0);
+        foreach (row; characters.query!"SELECT leaderGuid, instance, permanent FROM group_instance"())
+            all.binds ~= InstanceBindRecord(true, row.get!uint(0), row.get!uint(1), row.get!uint(2) != 0);
+        foreach (row; characters.query!"SELECT guid, instance, respawntime FROM creature_respawn WHERE instance <> 0"())
+            all.respawns ~= InstanceRespawnRecord(false, row.get!uint(0), row.get!uint(1), row.get!long(2));
+        foreach (row; characters.query!"SELECT guid, instance, respawntime FROM gameobject_respawn WHERE instance <> 0"())
+            all.respawns ~= InstanceRespawnRecord(true, row.get!uint(0), row.get!uint(1), row.get!long(2));
+        return all;
+    }
+
+    /// See `WorldDatabase.saveInstance`.
+    void saveInstance(uint id, uint map, long resetTime)
+    {
+        characters.execute!"REPLACE INTO instance (id, map, resettime, encountersMask, data) VALUES (?, ?, ?, 0, '')"(
+            id, map, resetTime);
+    }
+
+    /// See `WorldDatabase.deleteInstance`.
+    void deleteInstance(uint id)
+    {
+        characters.execute!"DELETE FROM instance WHERE id = ?"(id);
+        characters.execute!"DELETE FROM character_instance WHERE instance = ?"(id);
+        characters.execute!"DELETE FROM group_instance WHERE instance = ?"(id);
+        characters.execute!"DELETE FROM creature_respawn WHERE instance = ?"(id);
+        characters.execute!"DELETE FROM gameobject_respawn WHERE instance = ?"(id);
+    }
+
+    /// See `WorldDatabase.saveInstanceBind`.
+    void saveInstanceBind(bool group, uint owner, uint instance, bool permanent)
+    {
+        if (group)
+            characters.execute!"REPLACE INTO group_instance (leaderGuid, instance, permanent) VALUES (?, ?, ?)"(owner,
+                instance, permanent ? 1 : 0);
+        else
+            characters.execute!"REPLACE INTO character_instance (guid, instance, permanent) VALUES (?, ?, ?)"(owner,
+                instance, permanent ? 1 : 0);
+    }
+
+    /// See `WorldDatabase.saveInstanceRespawn`.
+    void saveInstanceRespawn(bool gameObject, uint spawnGuid, uint instance, long until)
+    {
+        if (gameObject)
+            characters.execute!"REPLACE INTO gameobject_respawn (guid, respawntime, instance) VALUES (?, ?, ?)"(spawnGuid,
+                until, instance);
+        else
+            characters.execute!"REPLACE INTO creature_respawn (guid, respawntime, instance) VALUES (?, ?, ?)"(spawnGuid,
+                until, instance);
     }
 
     /// See `WorldDatabase.loadCreatureRespawns`.

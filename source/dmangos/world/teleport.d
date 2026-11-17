@@ -96,6 +96,14 @@ private:
             }
         }
 
+        // A raid's lockout: bound to another copy than the group's, it does not go in.
+        if (player.data.map != mapId && toInstance == uint.max && context.lockedOutOfGroupRaid(player.guid, mapId))
+        {
+            enum ubyte transferAbortNotFound = 0x02;
+            deliver(Opcode.SMSG_TRANSFER_ABORTED, [transferAbortNotFound]);
+            return false;
+        }
+
         // The client goes on with no movement flags. Another copy of the same dungeon is another map.
         player.movement.flags = 0;
         const instance = toInstance != uint.max ? toInstance
@@ -533,4 +541,46 @@ unittest
     anduin.write(Opcode.MSG_MOVE_WORLDPORT_ACK, null);
     assert(anduin.session.instanceId == groupCopy && context.seeEachOther(7, 8));
     assert(!context.seeEachOther(7, 9), "Varian is still outside");
+}
+
+/**
+ * Instances saved: a raid copy, its binds and its dead come back after a restart, its lockout with
+ * them; a player bound to one raid copy cannot follow a group bound to another.
+ */
+unittest
+{
+    import dmangos.world.creature : Creature, CreatureSpawn;
+    import dmangos.world.packets : ClientGroupName;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    const at = Position(-8949.95f, -132.49f, 83.53f);
+    auto anduin = loggedIn(context, db, 7, "Anduin", at, AccountLevel.player, raceHuman, mapEasternKingdoms, 60);
+    auto jaina = loggedIn(context, db, 8, "Jaina", at, AccountLevel.player, raceHuman, mapEasternKingdoms, 60);
+
+    const his = context.instanceFor(7, mapMoltenCore), hers = context.instanceFor(8, mapMoltenCore);
+    assert(his && hers && his != hers);
+    CreatureSpawn rager = {guid: 56000, entry: creatureInnkeeper, map: mapMoltenCore, x: 1, y: 1, z: 1};
+    auto creature = context.makeCreature(&rager);
+    creature.instanceId = his;
+    context.map(mapMoltenCore, his).addObject(creature);
+    creature.die(context.map(mapMoltenCore, his), context.unixTime);
+    context.creatureDied(creature);
+    assert(context.deadInInstance(his, 56000));
+
+    // Grouped under Jaina, whose copy the group is bound to: Anduin is locked to his own.
+    jaina.write(Opcode.CMSG_GROUP_INVITE, ClientGroupName("anduin"));
+    anduin.write(Opcode.CMSG_GROUP_ACCEPT, null);
+    assert(context.instanceFor(8, mapMoltenCore) == hers);
+    assert(context.lockedOutOfGroupRaid(7, mapMoltenCore) && !context.lockedOutOfGroupRaid(8, mapMoltenCore));
+    context.config.instanceIgnoreRaid = true; // a party may enter, for the test
+    anduin.read();
+    assert(!anduin.session.commandTeleport(mapMoltenCore, Position(1, 1, 1)), "locked out");
+    assert(opcodesOf(anduin.read()) == [Opcode.SMSG_TRANSFER_ABORTED]);
+
+    // A restart: the copies, binds and dead are read back.
+    auto again = newCreationContext(db);
+    assert(again.instanceCount == 2);
+    assert(again.instanceFor(7, mapMoltenCore) == his, "his lockout");
+    assert(again.deadInInstance(his, 56000), "its dead stay dead");
 }
