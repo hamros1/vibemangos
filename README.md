@@ -288,6 +288,11 @@ What works now:
     every 5 seconds and drink's mana, energize, triggered spells. Auras are saved (`character_aura`)
     at logout and with each save, and come back with the time they had left; a cluster's hand-off
     carries them. Not yet: dispels, procs, absorbs, auras on creatures slowing or rooting them.
+  * **Trading** (CMaNGOS's `TradeHandler.cpp`): two players of a faction within 11 yards trade up
+    to six items and money each; any change takes back both acceptances; when both accept, it goes
+    through if both can pay and carry it (the items keep their guids and change owners, their
+    giver's rows deleted and their taker's inserted). Not yet: the seventh slot's enchanting spell,
+    trading across a cluster's nodes.
   * **The update tick** (every 50 ms, `update_interval`): health, mana, rage and energy regenerate
     as in CMaNGOS (health and the loss of rage only out of combat, and only for the living); inns and capitals give rested XP, also while offline; characters are saved every
     15 minutes (`player_save_interval`).

@@ -53,6 +53,7 @@ import dmangos.world.death : DeathHandlers;
 import dmangos.world.loothandlers : LootHandlers;
 import dmangos.world.spellhandlers : SpellHandlers;
 import dmangos.world.aurahandlers : AuraHandlers;
+import dmangos.world.tradehandlers : TradeHandlers;
 import dmangos.world.creatureai : Combatant;
 import dmangos.world.auras : Aura;
 import dmangos.world.creature : Creature;
@@ -811,6 +812,7 @@ private:
     mixin LootHandlers;
     mixin SpellHandlers;
     mixin AuraHandlers;
+    mixin TradeHandlers;
     mixin Level0Commands;
     mixin Level1Commands;
     mixin Level2Commands;

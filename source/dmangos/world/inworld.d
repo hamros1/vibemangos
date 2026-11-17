@@ -30,6 +30,7 @@ mixin template InWorldHandlers()
     import dmangos.world.opcodes;
     import dmangos.world.packets;
     import dmangos.world.auras : AuraInterrupt;
+    import dmangos.world.tradehandlers : TradeStatus;
     import dmangos.world.player : DeathState, PlayerFlags, RestType;
     import dmangos.world.channelservice : ChannelOp;
     import dmangos.world.queries : chatMessage, ClientChat, ClientWho, whoList, WhoEntry, creatureQueryResponse, gameObjectQueryResponse,
@@ -49,6 +50,7 @@ private:
     {
         releaseLootOnLeave();
         spellsOnLeave();
+        cancelTrade(false, TradeStatus.targetLogout);
         if (player.deathState == DeathState.alive)
             saveAuras();
         deathOnLogout();

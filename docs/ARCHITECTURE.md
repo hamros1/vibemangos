@@ -119,6 +119,7 @@ final class WorldSession : NetSession, Kickable, OnlinePlayer
     mixin LootHandlers;             // loothandlers.d: LootHandler.cpp, kill experience, tapping
     mixin SpellHandlers;            // spellhandlers.d: SpellHandler.cpp, Spell.cpp, SpellEffects.cpp
     mixin AuraHandlers;             // aurahandlers.d: SpellAuras.cpp's handlers and ticks
+    mixin TradeHandlers;            // tradehandlers.d: TradeHandler.cpp
     mixin Exploration;              // exploration.d: Player::UpdateZone, CheckAreaExploreAndOutdoor, GiveXP
     mixin ChatCommands;             // commands.d: ArcEmu's ParseCommands, ExecuteCommandInTable, messages
     mixin GmActions;                // gmactions.d: what the handlers do to players

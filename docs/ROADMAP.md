@@ -122,7 +122,8 @@ The largest area. CMaNGOS references: `Spells/`, `Entities/Unit.cpp`, `Combat/`,
 5. Spells, cooldowns and auras. **Casting and auras: done** (`spellcast.d`, `spellhandlers.d`,
    `auras.d`, `aurahandlers.d`; README's "Spells" and "Auras"). Next: channeling, area and chain
    targets, creatures' spells (EventAI), talents.
-6. Duels and trades.
+6. Duels and trades. **Trades: done** (`tradehandlers.d`; README's "Trading"). Duels need players
+   fighting players (melee and spells against a player) first.
 
 * Spell casting with effects, auras (feeding `stats.d`), cooldowns and the attack swing loop.
 * Creature AI, threat, death, loot (`LootHandler.cpp`), XP and level-up (`Player::GiveXP`, then
