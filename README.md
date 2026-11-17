@@ -251,7 +251,7 @@ What works now:
     (the bobber splashes) and waits 5 seconds. Used in time, the catch depends on the fishing skill
     against `skill_fishing_base_level` of the area (or zone), every try may raise the skill, and a
     catch is looted from `fishing_loot_template`; too early nothing is hooked, too late the fish got
-    away. Not yet: fishing pools, junk on a failed catch, the pole required.
+    away; it takes a fishing pole worn. Not yet: fishing pools, junk on a failed catch.
   * **Creature movement:** creatures move as their spawn's `MovementType` says, as in CMaNGOS:
     wandering within `spawndist` of their spawn point (type 1), or walking their `creature_movement`
     or `creature_movement_template` path (type 2 round and round, type 4 back and forth), waiting
@@ -354,7 +354,8 @@ What works now:
     weapon damage with a bonus or percentage (Heroic Strike waits for the next swing and replaces
     it), heals, energize, teleports home (the hearthstone), creating items, learning and triggering
     spells. Items cast their on-use spells (with the item's own cooldowns; food and drink are used
-    up). A channelled spell goes on for its duration (`MSG_CHANNEL_START`, the caster's channel fields),
+    up), and a spell that needs an item worn (a weapon of some kind, a shield, a fishing pole) is
+    refused without it. A channelled spell goes on for its duration (`MSG_CHANNEL_START`, the caster's channel fields),
     ending at its time, when the player cancels it, or when it moves if the spell says so (its auras on
     the target ending with it). Creatures cast through their scripts (below), and players at each
     other where the relations allow (duels, PvP). Not yet: area and chain targets for players,

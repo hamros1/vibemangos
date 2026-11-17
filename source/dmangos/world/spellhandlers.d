@@ -474,6 +474,41 @@ private:
      * `Spell::CheckCast`: whether the cast may go, and if not, why. `start`: also what only matters
      * when it starts (cooldowns, a cast in progress, standing, moving).
      */
+    /**
+     * `Player::HasItemFitToSpellReqirements`: a worn item of the spell's class and subclass, not broken:
+     * a weapon in the hands or the ranged slot; armour anywhere worn (a shield in the off hand).
+     */
+    bool hasItemFitToSpell(const(SpellInfo)* spell)
+    {
+        import dmangos.world.defines : equipmentSlotHead, equipmentSlotMainhand, equipmentSlotOffhand,
+            equipmentSlotRanged, equipmentSlotTabard, ItemClass;
+
+        bool fits(ubyte slot)
+        {
+            const item = player.inventory.equipped(slot);
+            if (item is null || item.proto is null || (item.maxDurability && item.durability == 0))
+                return false;
+            return item.proto.itemClass == spell.equippedItemClass
+                && (spell.equippedItemSubClassMask == 0 || (spell.equippedItemSubClassMask & (1 << item.proto.subClass)));
+        }
+
+        if (spell.equippedItemClass == ItemClass.weapon)
+        {
+            foreach (slot; [equipmentSlotMainhand, equipmentSlotOffhand, equipmentSlotRanged])
+                if (fits(cast(ubyte) slot))
+                    return true;
+            return false;
+        }
+        if (spell.equippedItemClass == ItemClass.armor)
+        {
+            foreach (slot; equipmentSlotHead .. equipmentSlotTabard)
+                if (fits(cast(ubyte) slot))
+                    return true;
+            return false;
+        }
+        return true;
+    }
+
     SpellCastResult checkCast(const(SpellInfo)* spell, const ref SpellTargets targets, bool triggered, uint itemEntry,
         bool start)
     {
@@ -499,6 +534,9 @@ private:
                 return SpellCastResult.affectingCombat;
             if (player.values.getByte!UNIT_FIELD_BYTES_1(0) != 0 && !(spell.attributes & castableWhileSitting))
                 return SpellCastResult.notStanding;
+            // `Spell::CheckItems`: the item the spell needs worn (a fishing pole, a ranged weapon to shoot).
+            if (spell.equippedItemClass >= 0 && !hasItemFitToSpell(spell))
+                return SpellCastResult.equippedItemClass;
             // `GetErrorAtShapeshiftedCast`: a spell for some stances (or forms) only in one of them.
             enum uint allowWhileNotShapeshifted = 0x00080000; // SPELL_ATTR_EX2_ALLOW_WHILE_NOT_SHAPESHIFTED
             enum SpellCastResult onlyShapeshift = cast(SpellCastResult) 0x56;
@@ -1413,6 +1451,13 @@ unittest
         now += ms.msecs;
         anduin.session.update(ms.msecs);
     }
+
+    // No fishing pole worn: refused (`SPELL_FAILED_EQUIPPED_ITEM_CLASS`, with the class and subclasses wanted).
+    context.data.spells.spells[fishing].equippedItemClass = 2;           // a weapon
+    context.data.spells.spells[fishing].equippedItemSubClassMask = 1 << 20; // a fishing pole
+    cast_();
+    assert(bobberNow() is null && opcodesOf(anduin.read()).canFind(Opcode.SMSG_CAST_RESULT), "no pole");
+    context.data.spells.spells[fishing].equippedItemClass = -1;
 
     cast_();
     auto bob = bobberNow();
