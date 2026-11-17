@@ -272,6 +272,12 @@ private:
         context.leaveWorldForMigration(this, target);
         player = null;
         migratedAt = context.clock();
+        if (homeNode == 0)
+        {
+            // The client's session: from now on it relays (set before the state goes, which may arrive at once).
+            ownerNode = target;
+            state_ = WorldState.elsewhere;
+        }
         context.playerRelay.migrate(target, account.id, w.data);
         if (homeNode)
         {
@@ -280,11 +286,6 @@ private:
                 context.playerRelay.moved(homeNode, account.id, target);
             context.playerRelay.remoteDone(account.id);
             state_ = WorldState.closed;
-        }
-        else
-        {
-            ownerNode = target;
-            state_ = WorldState.elsewhere;
         }
     }
 
@@ -345,7 +346,9 @@ private:
         character.position = movement.position;
         // In a dungeon this node hosts: its copy, if this node knows it (its last host saved it);
         // else the one the player is bound to, or a new one (it logged in there on another node).
-        if (context.instanceable(character.map) && context.instanceState(instanceId_) is null)
+        if (!context.instanceable(character.map))
+            instanceId_ = 0; // not a dungeon: no copy, whatever came along
+        else if (context.instanceState(instanceId_) is null)
             instanceId_ = context.instanceFor(guid, character.map);
         player = makePlayer(character, false);
         player.movement = movement;

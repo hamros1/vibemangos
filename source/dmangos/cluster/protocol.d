@@ -24,7 +24,7 @@ import dmangos.cluster.regions : Region;
 import dmangos.serialization : deserialize, LengthPrefix, serialize;
 
 /// Changes whenever a message changes; nodes speaking another version are turned away.
-enum ushort protocolVersion = 21;
+enum ushort protocolVersion = 22;
 
 /// Size of a frame header.
 enum frameHeaderSize = 16;
@@ -74,6 +74,8 @@ enum MessageType : ushort
     takeoverAccepted = 37,
     killShare = 38,
     scriptSignal = 39,
+    dungeonEntryRequest = 40,
+    dungeonEntryReply = 41,
 }
 
 /// Why a hello was refused.
@@ -545,6 +547,27 @@ struct ScriptSignal
     ushort origin;   /// the node that sent it first
     ulong sequence;  /// increasing per origin
     ubyte hops;
+}
+
+/// To the node hosting a dungeon: may this player go in (into `instance`, uint.max: its own)?
+struct DungeonEntryRequest
+{
+    enum type = MessageType.dungeonEntryRequest;
+
+    uint request;
+    ulong player;
+    uint map;
+    uint instance;
+    bool gameMaster;
+}
+
+/// The host's answer: 0 to go in, else `SMSG_TRANSFER_ABORTED`'s reason.
+struct DungeonEntryReply
+{
+    enum type = MessageType.dungeonEntryReply;
+
+    uint request;
+    ubyte abort;
 }
 
 /// To the coordinator: the sender is shutting down; its regions should go to the others first.

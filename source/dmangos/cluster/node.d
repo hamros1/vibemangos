@@ -72,6 +72,11 @@ interface ReplicationHandler
 
     /// A script's signal for a creature this node simulates.
     void scriptSignal(ushort peer, const ref ScriptSignal message);
+
+    /// Whether a player may go into a dungeon this node hosts; and the answer to such a question.
+    void dungeonEntryRequest(ushort peer, const ref DungeonEntryRequest message);
+    /// ditto
+    void dungeonEntryReply(ushort peer, const ref DungeonEntryReply message);
 }
 
 /// What a node does with messages about players simulated away from their client (phase 4b).
@@ -607,6 +612,22 @@ final class ClusterNode : LinkOwner
             {
                 const m = decode!StockRelease(payload);
                 replication.stockRelease(peer, m);
+            }
+            return;
+        }
+        if (type == MessageType.dungeonEntryRequest || type == MessageType.dungeonEntryReply)
+        {
+            if (replication is null)
+                return;
+            if (type == MessageType.dungeonEntryRequest)
+            {
+                const m = decode!DungeonEntryRequest(payload);
+                replication.dungeonEntryRequest(peer, m);
+            }
+            else
+            {
+                const m = decode!DungeonEntryReply(payload);
+                replication.dungeonEntryReply(peer, m);
             }
             return;
         }

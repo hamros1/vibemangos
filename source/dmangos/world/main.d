@@ -154,6 +154,7 @@ private int run(WorldConfig config, string configPath)
         context.gmRemote = &bridge.sendGmRemote;
         context.killShareElsewhere = &bridge.sendKillShare;
         context.signalElsewhere = &bridge.sendScriptSignal;
+        context.askDungeonEntry = &bridge.askDungeonEntry;
         if (cluster.isCoordinator)
         {
             context.groups.changes = &bridge.groupChanged;

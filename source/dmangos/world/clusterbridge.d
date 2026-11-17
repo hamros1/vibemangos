@@ -9,7 +9,7 @@ import core.time : Duration, MonoTime, msecs;
 
 import dmangos.cluster.node : ClusterNode, PlayerHandler, ReplicationHandler;
 import dmangos.cluster.protocol : DeliverTo, InRange, InterestUpdate, PlayerMessage, PlayerMessageKind, Presence,
-    PresenceEntry, ChannelCommand, GmRemote, KillShare, ScriptSignal, GroupCommand, RegionLoad, ToEveryone, GroupState, MemberStatsRequest, ReplicaCreate, ReplicaMove, ReplicaRemove, ReplicaValues, StockRelease, StockReply, StockRequest,
+    PresenceEntry, ChannelCommand, GmRemote, KillShare, ScriptSignal, DungeonEntryRequest, DungeonEntryReply, GroupCommand, RegionLoad, ToEveryone, GroupState, MemberStatsRequest, ReplicaCreate, ReplicaMove, ReplicaRemove, ReplicaValues, StockRelease, StockReply, StockRequest,
     WhisperMessage;
 import dmangos.world.creature : Creature;
 import dmangos.world.group : Group, Groups;
@@ -329,6 +329,37 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
                 session.killShared(m.entry, m.victim, m.level, m.xp, m.rate, m.reputationRate);
     }
 
+    private uint nextEntryRequest = 1;
+    private void delegate(ubyte)[uint] entryWaiting;
+
+    /// For the context: asks the node hosting dungeon `map` whether `player` may go in.
+    void askDungeonEntry(ushort host, ulong player, uint map, uint instance, bool gameMaster,
+        void delegate(ubyte abort) then)
+    {
+        const request = nextEntryRequest++;
+        if (!node.sendTo(host, DungeonEntryRequest(request, player, map, instance, gameMaster)))
+            return then(0x02);
+        entryWaiting[request] = then;
+    }
+
+    /// See `ReplicationHandler.dungeonEntryRequest`.
+    void dungeonEntryRequest(ushort peer, const ref DungeonEntryRequest m)
+    {
+        node.sendTo(peer, DungeonEntryReply(m.request, context.dungeonEntryProblem(m.player, m.map, m.instance,
+            m.gameMaster)));
+    }
+
+    /// See `ReplicationHandler.dungeonEntryReply`.
+    void dungeonEntryReply(ushort peer, const ref DungeonEntryReply m)
+    {
+        if (auto then = m.request in entryWaiting)
+        {
+            auto callback = *then;
+            entryWaiting.remove(m.request);
+            callback(m.abort);
+        }
+    }
+
     /// For the context: a script's signal for a creature another node simulates.
     void sendScriptSignal(ushort target, const ref ScriptSignal signal)
     {
@@ -358,7 +389,35 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
             node.sendTo(peer, DeliverTo(m.gm, cast(ushort) Opcode.SMSG_MESSAGECHAT,
                 chatMessage(ChatType.CHAT_MSG_SYSTEM, Language.LANG_UNIVERSAL, 0, text)));
         });
-        import dmangos.world.gmtargets : everywhere, GmRemoteOp;
+        import dmangos.world.gmtargets : aboutInstances, everywhere, GmRemoteOp;
+
+        if (m.op <= GmRemoteOp.max && aboutInstances(cast(GmRemoteOp) m.op))
+        {
+            import dmangos.world.gminstance : describeInstance, resetAllHere, resetInstanceHere, shutdownInstanceHere;
+
+            final switch (cast(GmRemoteOp) m.op)
+            {
+            case GmRemoteOp.instanceInfo:
+                return describeInstance(context, m.instance, sink);
+            case GmRemoteOp.instanceShutdown:
+                return shutdownInstanceHere(context, m.instance, sink);
+            case GmRemoteOp.instanceReset:
+            {
+                string name = "?";
+                if (auto here = context.onlinePlayer(m.target))
+                    name = here.character.data.name;
+                else if (auto remote = context.remotePlayer(m.target))
+                    name = remote.entry.name;
+                return resetInstanceHere(context, m.instance, m.target, name, m.gmCanKickGms, sink);
+            }
+            case GmRemoteOp.instanceResetAll:
+                return resetAllHere(context, m.target);
+            case GmRemoteOp.kick, GmRemoteOp.summon, GmRemoteOp.appear, GmRemoteOp.appearAt, GmRemoteOp.disconnect,
+                GmRemoteOp.banKick, GmRemoteOp.rename, GmRemoteOp.playerInfo, GmRemoteOp.kill, GmRemoteOp.revive,
+                GmRemoteOp.saveAll, GmRemoteOp.massSummon:
+                return;
+            }
+        }
 
         if (m.op <= GmRemoteOp.max && everywhere(cast(GmRemoteOp) m.op))
         {

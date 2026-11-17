@@ -325,6 +325,12 @@ interface WorldDatabase
     /// `instance.data`: its dungeon script's state.
     void saveInstanceData(uint id, string data);
 
+    /// The map of instance `id`; uint.max if there is no such instance.
+    uint instanceMapOf(uint id);
+
+    /// A character's binds as saved (`character_instance`): map -> instance.
+    uint[uint] instanceBindsOf(uint player);
+
     /// `character_instance` (`group` false, `owner` a character) or `group_instance` (`owner` a leader).
     void saveInstanceBind(bool group, uint owner, uint instance, bool permanent);
 
@@ -527,6 +533,8 @@ final class MySqlWorldDatabase : WorldDatabase
     void saveInstance(uint id, uint map, long resetTime) { statements.saveInstance(id, map, resetTime); }
     void deleteInstance(uint id) { statements.deleteInstance(id); }
     void saveInstanceData(uint id, string data) { statements.saveInstanceData(id, data); }
+    uint instanceMapOf(uint id) { return statements.instanceMapOf(id); }
+    uint[uint] instanceBindsOf(uint player) { return statements.instanceBindsOf(player); }
     void saveInstanceBind(bool group, uint owner, uint instance, bool permanent)
     {
         statements.saveInstanceBind(group, owner, instance, permanent);
@@ -1080,6 +1088,27 @@ final class MemoryWorldDatabase : WorldDatabase
         foreach (ref r; instanceRows.instances)
             if (r.id == id)
                 r.data = data;
+    }
+
+    uint instanceMapOf(uint id)
+    {
+        foreach (ref r; instanceRows.instances)
+            if (r.id == id)
+                return r.map;
+        return uint.max;
+    }
+
+    uint[uint] instanceBindsOf(uint player)
+    {
+        uint[uint] binds;
+        foreach (ref b; instanceRows.binds)
+            if (!b.group && b.owner == player)
+            {
+                const m = instanceMapOf(b.instance);
+                if (m != uint.max)
+                    binds[m] = b.instance;
+            }
+        return binds;
     }
     void deleteInstance(uint id)
     {

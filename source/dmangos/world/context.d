@@ -695,20 +695,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             return 0;
         auto group = groups.of(player);
         const raid = client.maps.lookup(mapId).isRaid;
-        uint chosen;
-        // A raid's lockout first: a player bound to a copy goes back to it.
-        if (raid)
-            if (auto bound = mapId in playerBinds.get(player, null))
-                if (*bound in instances)
-                    chosen = *bound;
-        if (!chosen && group !is null)
-            if (auto bound = mapId in groupBinds.get(group.leader, null))
-                if (*bound in instances)
-                    chosen = *bound;
-        if (!chosen)
-            if (auto bound = mapId in playerBinds.get(player, null))
-                if (*bound in instances)
-                    chosen = *bound;
+        uint chosen = boundInstance(player, mapId);
         if (!chosen)
         {
             // Ids are the cluster's (each node makes the copies of its own dungeons).
@@ -734,6 +721,50 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         }
         return chosen;
     }
+
+    /// The copy of `mapId` the player would go into, of those that exist: a raid's lockout, its
+    /// group's, its own; 0 if a new one would be made.
+    uint boundInstance(ulong player, uint mapId)
+    {
+        const raid = client.maps.lookup(mapId).isRaid;
+        auto group = groups.of(player);
+        if (raid)
+            if (auto bound = mapId in playerBinds.get(player, null))
+                if (*bound in instances)
+                    return *bound;
+        if (group !is null)
+            if (auto bound = mapId in groupBinds.get(group.leader, null))
+                if (*bound in instances)
+                    return *bound;
+        if (auto bound = mapId in playerBinds.get(player, null))
+            if (*bound in instances)
+                return *bound;
+        return 0;
+    }
+
+    /**
+     * On the node hosting dungeon `mapId`: whether `player` may go in (into `toInstance`, uint.max:
+     * the copy it would get); 0 if so, else `SMSG_TRANSFER_ABORTED`'s reason (a lockout, a full copy).
+     */
+    ubyte dungeonEntryProblem(ulong player, uint mapId, uint toInstance, bool gameMaster)
+    {
+        enum ubyte abortMaxPlayers = 0x01, abortNotFound = 0x02;
+        if (!instanceable(mapId) || !hostsDungeon(mapId))
+            return abortNotFound;
+        if (toInstance == uint.max && lockedOutOfGroupRaid(player, mapId))
+            return abortNotFound;
+        const instance = toInstance != uint.max ? toInstance : boundInstance(player, mapId);
+        if (instance && !gameMaster)
+            if (const most = mapId in data.instanceMaxPlayers)
+                if (auto there = existingMap(mapId, instance))
+                    if (there.population >= *most)
+                        return abortMaxPlayers;
+        return 0;
+    }
+
+    /// Asks the node hosting a dungeon whether a player may go in (`dungeonEntryProblem` there); null standalone.
+    void delegate(ushort host, ulong player, uint map, uint instance, bool gameMaster,
+        void delegate(ubyte abort) then) askDungeonEntry;
 
     /**
      * `DungeonMap::Add`: a player who is not a game master, sent into a copy of `mapId` (summoned,
@@ -832,6 +863,64 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             count += state.mapId == mapId;
         if (count)
             info!"cluster: dungeon map %s is hosted here now, with %s saved instances"(mapId, count);
+    }
+
+    /// The copies of dungeon `mapId` loaded here, their objects saved for node `next`: (copy, bundle) pairs.
+    private const(ubyte)[] dungeonCopiesOut(uint mapId, ushort next)
+    {
+        import dmangos.bytes : ByteWriter;
+        import dmangos.log : info;
+
+        ByteWriter w;
+        uint[] ids;
+        foreach (id, m; instanceMaps)
+            if (instances.get(id, InstanceState.init).mapId == mapId && m.instanceId == id)
+                ids ~= id;
+        w.put(cast(uint) ids.length);
+        foreach (id; ids)
+        {
+            auto m = instanceMaps[id];
+            const before = m.objectCount - m.replicaCount;
+            const bundle = m.migrateOut((ulong) => true, next, &saveMigrant);
+            w.put(id);
+            w.put(cast(uint) bundle.length);
+            w.putBytes(bundle);
+            info!"migration: instance %s of map %s leaves for node %s with %s objects"(id, mapId, next,
+                before - (m.objectCount - m.replicaCount));
+        }
+        return w.data;
+    }
+
+    /// What `dungeonCopiesOut` sent: each copy made here and its objects as they were.
+    private void dungeonCopiesIn(uint mapId, const(ubyte)[] copies)
+    {
+        import dmangos.bytes : ByteReader;
+        import dmangos.log : info;
+        import dmangos.world.gameobject : GameObject;
+        import dmangos.world.migration : Migrant;
+
+        if (copies.length < 4)
+            return;
+        auto r = ByteReader(copies);
+        foreach (_; 0 .. r.read!uint)
+        {
+            const id = r.read!uint;
+            const bundle = r.readBytes(r.read!uint);
+            if (id !in instances)
+                continue; // reset meanwhile
+            auto m = map(mapId, id);
+            const before = m.objectCount - m.replicaCount;
+            m.migrateIn(bundle, (const ref Migrant migrant) {
+                auto object = restoreMigrant(migrant);
+                if (auto creature = cast(Creature) object)
+                    creature.instanceId = id;
+                else if (auto go = cast(GameObject) object)
+                    go.instanceId = id;
+                return object;
+            });
+            info!"migration: instance %s of map %s arrived with %s objects"(id, mapId,
+                m.objectCount - m.replicaCount - before);
+        }
     }
 
     /// An instance gone from this node's memory only (another node hosts it).
@@ -1123,15 +1212,27 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     {
         import dmangos.log : info;
 
+        // A dungeon's region: its copies' creatures and objects go along, copy by copy, before what was
+        // known of the copies is forgotten here (the new host has read their rows by then).
         foreach (ref r; lost)
             if (instanceable(r.map))
+            {
+                if (r.next)
+                    leaving[r.id] = cast(ubyte[]) dungeonCopiesOut(r.map, r.next);
                 dungeonLost(r.map);
+            }
         foreach (ref r; gained)
             if (instanceable(r.map))
+            {
                 dungeonGained(r.map);
+                if (auto copies = r.id in arriving)
+                    dungeonCopiesIn(r.map, *copies);
+            }
         foreach (ref r; lost)
             if (auto m = r.map in maps)
             {
+                if (instanceable(r.map))
+                    continue; // a dungeon's copies went above (its map itself is never simulated)
                 if (r.next) // moving to another node: its objects go along (phase 4)
                 {
                     const before = m.objectCount - m.replicaCount;
@@ -1148,6 +1249,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         foreach (ref r; gained)
             if (auto objects = r.id in arriving)
             {
+                if (instanceable(r.map))
+                    continue; // its copies' bundles, read above
                 auto m = map(r.map);
                 const before = m.objectCount - m.replicaCount;
                 m.migrateIn(*objects, &restoreMigrant);

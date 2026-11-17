@@ -568,6 +568,23 @@ final class CharacterStatements
             id, map, resetTime);
     }
 
+    /// See `WorldDatabase.instanceMapOf`.
+    uint instanceMapOf(uint id)
+    {
+        const rows = characters.query!"SELECT map FROM instance WHERE id = ?"(id);
+        return rows.length ? rows[0].get!uint(0) : uint.max;
+    }
+
+    /// See `WorldDatabase.instanceBindsOf`.
+    uint[uint] instanceBindsOf(uint player)
+    {
+        uint[uint] binds;
+        foreach (row; characters.query!("SELECT i.map, c.instance FROM character_instance c JOIN instance i "
+                ~ "ON i.id = c.instance WHERE c.guid = ?")(player))
+            binds[row.get!uint(0)] = row.get!uint(1);
+        return binds;
+    }
+
     /// See `WorldDatabase.saveInstanceData`.
     void saveInstanceData(uint id, string data)
     {

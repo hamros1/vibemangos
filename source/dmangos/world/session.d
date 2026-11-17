@@ -655,6 +655,7 @@ final class WorldSession : NetSession, Kickable, OnlinePlayer, Combatant, Looter
 
     package uint instanceId_; // the dungeon instance it is in (0: none)
     package uint entryMap = uint.max; // where it was before going into an instance (uint.max: unknown)
+    package MonoTime dungeonEntryAsked; // a dungeon's host was asked whether it may go in, then
     package ulong selectedGo;         // ArcEmu's `m_GM_SelectedGO`: the game object `.gobject select` chose
     package Position entryPoint;      // ditto
 
@@ -1240,9 +1241,8 @@ unittest
     authenticate(client);
     client.write(Opcode.CMSG_PLAYER_LOGIN, ClientPlayerLogin(7));
     client.read();
-    assert(client.session.state == WorldState.inWorld);
 
-    // The zone check sees whose ground it stands on: the player moves to node 2.
+    // Its ground is node 2's: it moves there as it logs in.
     client.session.update(1.seconds);
     assert(pipe.log == ["migrate"] && client.session.state == WorldState.elsewhere && client.session.owner == 2);
     assert(pipe.remote.state == WorldState.inWorld && owner.onlinePlayer(makeGuid(HighGuid.player, 7)) !is null);

@@ -23,6 +23,16 @@ enum GmRemoteOp : ubyte
     revive,       /// `.reviveplr`; `text`: ditto
     saveAll,      /// `.server saveall`: every node saves its players (no target)
     massSummon,   /// `.masssummon`: every node asks its players to the GM's place; `text`: the GM's zone
+    instanceInfo,     /// `.instance info` of copy `instance`, on its dungeon's host (no target)
+    instanceShutdown, /// `.instance shutdown` of copy `instance`, ditto
+    instanceReset,    /// `.instance reset` of copy `instance` for the player `target`, ditto
+    instanceResetAll, /// `.instance resetall`: the player `target`'s copies each node hosts
+}
+
+/// Whether `op` is about a dungeon copy (or a player's), done on the node hosting it.
+bool aboutInstances(GmRemoteOp op) pure nothrow @nogc @safe
+{
+    return op >= GmRemoteOp.instanceInfo && op <= GmRemoteOp.instanceResetAll;
 }
 
 /// Whether `op` is for every node's players rather than one target.
@@ -138,6 +148,9 @@ mixin template GmTargets()
             return revivedByName(gm, m.text);
         case GmRemoteOp.saveAll:
             return savePlayer();
+        case GmRemoteOp.instanceInfo, GmRemoteOp.instanceShutdown, GmRemoteOp.instanceReset,
+            GmRemoteOp.instanceResetAll:
+            return; // the node's, not a player's (`ClusterBridge.gmRemote`)
         case GmRemoteOp.massSummon:
         {
             import std.conv : to, ConvException;

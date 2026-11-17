@@ -11,29 +11,37 @@ mixin template InstanceCommands()
 {
     import std.format : format;
     import dmangos.world.commands;
+    import dmangos.world.gminstance : describeInstance, instanceHere, resetAllHere, resetInstanceHere,
+        shutdownInstanceHere;
+    import dmangos.world.gmtargets : GmRemoteOp;
 
 private:
 
-    /// ArcEmu's `GetMapTypeString` for a map of this server.
-    string mapTypeString(uint mapId)
+    /**
+     * In a cluster, the copy `id` is another node's (its dungeon's host): the command goes there and
+     * its answer comes back. False if this node hosts it, or it is nobody's (no such instance).
+     */
+    bool instanceElsewhere(uint id, GmRemoteOp op, ulong target = 0)
     {
-        const entry = context.client.maps.lookup(mapId);
-        if (entry is null)
-            return "Unknown";
-        if (entry.isRaid)
-            return "Raid";
-        if (entry.isDungeon)
-            return "Non-Raid";
-        if (entry.isBattleground)
-            return "PvP";
-        return "Continent";
-    }
+        import dmangos.cluster.protocol : GmRemote;
 
-    /// The map's name, as ArcEmu's `MapInfo.name`.
-    string mapName(uint mapId)
-    {
-        const entry = context.client.maps.lookup(mapId);
-        return entry is null ? format!"%s"(mapId) : entry.name[0];
+        if (context.gmRemote is null || instanceHere(context, id))
+            return false;
+        const mapId = context.database.instanceMapOf(id);
+        if (mapId == uint.max)
+            return false;
+        const host = context.dungeonHost(mapId);
+        if (host == 0 || host == context.nodeId)
+            return false;
+        GmRemote m;
+        m.op = op;
+        m.gm = player.guid;
+        m.gmName = player.data.name;
+        m.gmCanKickGms = canUseCommand('z');
+        m.target = target;
+        m.instance = id;
+        context.gmRemote(host, m);
+        return true;
     }
 
     bool handleResetAllInstancesCommand()
@@ -42,16 +50,19 @@ private:
         if (plr is null)
             return true;
         systemMessage(format!"Trying to reset all instances of player %s..."(plr.player.data.name));
-        // `InstanceMgr::ResetSavedInstances`: its copies that are not persistent and have nobody in them.
-        foreach (mapId, id; context.bindsOf(plr.player.guid).dup)
+        resetAllHere(context, plr.player.guid);
+        // In a cluster each dungeon's host resets its own copies.
+        if (context.gmRemote !is null)
         {
-            const state = context.instanceState(id);
-            if (state is null || state.resetAt)
-                continue;
-            auto m = context.instanceMap(id);
-            if (m !is null && m.population)
-                continue;
-            context.resetInstance(id);
+            import dmangos.cluster.protocol : GmRemote;
+
+            GmRemote m;
+            m.op = GmRemoteOp.instanceResetAll;
+            m.gm = player.guid;
+            m.gmName = player.data.name;
+            m.target = plr.player.guid;
+            foreach (node; context.otherNodes())
+                context.gmRemote(node, m);
         }
         systemMessage("...done");
         gmLog(format!"used reset all instances command on %s,"(plr.player.data.name));
@@ -65,76 +76,18 @@ private:
         auto plr = getSelectedChar(true);
         if (plr is null)
             return true;
-        const state = context.instanceState(instanceId);
-        if (state is null)
-        {
-            redSystemMessage(format!"There's no instance with id %u."(instanceId));
-            return true;
-        }
-        if (state.resetAt) // persistent
-        {
-            if (canUseCommand('z'))
-            {
-                const binds = context.bindsOf(plr.player.guid);
-                if (const bound = state.mapId in binds)
-                    if (*bound == instanceId)
-                    {
-                        context.revokeBind(plr.player.guid, state.mapId);
-                        systemMessage(format!"Instance with id %u (%s) is persistent and will only be revoked from player."(
-                            instanceId, "normal"));
-                        return true;
-                    }
-                redSystemMessage(format!"Player is not assigned to persistent instance with id %u."(instanceId));
-                return true;
-            }
-            redSystemMessage(format!"Instance with id %u is persistent and can only be removed from player by admins."(
-                instanceId));
-            return true;
-        }
-        auto m = context.instanceMap(instanceId);
-        if (m !is null && m.population)
-        {
-            redSystemMessage(format!"Failed to reset non-persistent instance with id %u, due to player still inside."(
-                instanceId));
-            return true;
-        }
-        const binds = context.bindsOf(plr.player.guid);
-        const bound = state.mapId in binds;
-        if (bound is null || *bound != instanceId)
-        {
-            redSystemMessage(format!"Player %s is not assigned to instance with id %u."(plr.player.data.name, instanceId));
-            return true;
-        }
-        redSystemMessage("Resetting single non-persistent instances is not available yet."); // as ArcEmu says
+        if (!instanceElsewhere(instanceId, GmRemoteOp.instanceReset, plr.player.guid))
+            resetInstanceHere(context, instanceId, plr.player.guid, plr.player.data.name, canUseCommand('z'), gmSink);
         gmLog(format!"used reset instance command on %s, instance %u,"(plr.player.data.name, instanceId));
         return true;
     }
 
     bool handleShutdownInstanceCommand(uint instanceId = 0)
     {
-        import dmangos.world.session : WorldSession;
-
         if (instanceId == 0)
             return false;
-        if (context.instanceState(instanceId) is null)
-        {
-            redSystemMessage(format!"There's no instance with id %u."(instanceId));
-            return true;
-        }
-        auto m = context.instanceMap(instanceId);
-        if (m is null)
-        {
-            redSystemMessage(format!"Instance with id %u already shut down."(instanceId));
-            return true;
-        }
-        systemMessage(format!"Attempting to shutdown instance with id %u..."(instanceId));
-        // `MapMgr::InstanceShutdown`: everyone inside goes back out first.
-        foreach (other; context.onlinePlayers)
-            if (auto inside = cast(WorldSession) other)
-                if (inside.instanceId == instanceId && inside.player !is null)
-                    inside.exitInstance();
-        context.shutdownInstance(instanceId);
-        systemMessage("...done");
+        if (!instanceElsewhere(instanceId, GmRemoteOp.instanceShutdown))
+            shutdownInstanceHere(context, instanceId, gmSink);
         gmLog(format!"used shutdown instance command on instance %u,"(instanceId));
         return true;
     }
@@ -151,8 +104,9 @@ private:
             if (instanceId == 0)
                 return false;
         }
-        const state = context.instanceState(instanceId);
-        if (state is null)
+        if (userInput && instanceElsewhere(instanceId, GmRemoteOp.instanceInfo))
+            return true;
+        if (context.instanceState(instanceId) is null)
         {
             if (userInput)
             {
@@ -161,32 +115,7 @@ private:
             }
             return false;
         }
-        string ss = "Instance ID: " ~ MSG_COLOR_CYAN ~ format!"%s"(instanceId) ~ "|r (" ~ MSG_COLOR_CYAN
-            ~ mapName(state.mapId) ~ "|r)\n";
-        ss ~= "Persistent: " ~ MSG_COLOR_CYAN ~ (state.resetAt ? "Yes" : "No") ~ "|r\n";
-        ss ~= "Type: " ~ MSG_COLOR_CYAN ~ mapTypeString(state.mapId) ~ "|r\n";
-        ss ~= "Created: " ~ MSG_COLOR_CYAN ~ convertTimeStampToDataTime(state.createdAt) ~ "|r\n";
-        ss ~= "Expires: " ~ MSG_COLOR_CYAN ~ convertTimeStampToDataTime(state.resetAt) ~ "|r\n";
-        auto m = context.instanceMap(instanceId);
-        if (m is null)
-            ss ~= "Status: " ~ MSG_COLOR_LIGHTRED ~ "Shut Down|r\n";
-        else if (m.population == 0)
-        {
-            import core.time : seconds;
-
-            ss ~= "Status: " ~ MSG_COLOR_LIGHTRED ~ "Idle|r";
-            if (state.emptySince != state.emptySince.init)
-            {
-                const left = state.emptySince + context.config.instanceUnloadDelay.seconds - context.clock();
-                ss ~= " (" ~ MSG_COLOR_CYAN ~ "Shutdown in " ~ MSG_COLOR_LIGHTRED ~ format!"%s"(left.total!"minutes")
-                    ~ MSG_COLOR_CYAN ~ " minutes|r)";
-            }
-            ss ~= "\n";
-        }
-        else
-            ss ~= "Status: " ~ MSG_COLOR_GREEN ~ "In use|r (" ~ MSG_COLOR_GREEN ~ format!"%s"(m.population)
-                ~ MSG_COLOR_CYAN ~ " players inside|r)\n";
-        sendMultilineMessage(ss);
+        describeInstance(context, instanceId, gmSink);
         return true;
     }
 
@@ -204,21 +133,32 @@ private:
 
     bool handleShowInstancesCommand()
     {
+        import dmangos.world.gminstance : mapName, mapTypeString;
+
         auto plr = getSelectedChar(true);
         if (plr is null)
             return true;
         uint count;
         string ss = "Show persistent instances of " ~ MSG_COLOR_CYAN ~ plr.player.data.name ~ "|r\n";
-        foreach (mapId, id; context.bindsOf(plr.player.guid))
+        // The binds this node knows, and (in a cluster) those of dungeons other nodes host, as saved.
+        uint[uint] binds = cast(uint[uint]) context.bindsOf(plr.player.guid).dup;
+        if (context.gmRemote !is null)
+            foreach (mapId, id; context.database.instanceBindsOf(cast(uint) plr.player.guid))
+                if (mapId !in binds)
+                    binds[mapId] = id;
+        foreach (mapId, id; binds)
         {
             ++count;
             ss ~= " - " ~ MSG_COLOR_CYAN ~ format!"%s"(id) ~ "|r";
-            ss ~= " (" ~ MSG_COLOR_CYAN ~ mapName(mapId) ~ "|r)";
-            if (context.instanceState(id) is null)
+            ss ~= " (" ~ MSG_COLOR_CYAN ~ mapName(context, mapId) ~ "|r)";
+            const host = context.dungeonHost(mapId);
+            if (context.gmRemote !is null && host != context.nodeId)
+                ss ~= " [" ~ mapTypeString(context, mapId) ~ "] - " ~ MSG_COLOR_CYAN ~ format!"node %s"(host) ~ "|r";
+            else if (context.instanceState(id) is null)
                 ss ~= " - " ~ MSG_COLOR_RED ~ "Expired!|r";
             else
             {
-                ss ~= " [" ~ mapTypeString(mapId) ~ "] - ";
+                ss ~= " [" ~ mapTypeString(context, mapId) ~ "] - ";
                 auto m = context.instanceMap(id);
                 if (m is null)
                     ss ~= MSG_COLOR_LIGHTRED ~ "Shut Down|r";
@@ -239,13 +179,156 @@ private:
     }
 
 package:
-    /// ArcEmu's `Player::ExitInstance`: back to where it was before going in; false if that is not known.
+    /// ArcEmu's `Player::ExitInstance`: back to where it was before going into an instance; false if that is not known.
     bool exitInstance()
     {
         if (entryMap == uint.max)
             return false;
         commandTeleport(entryMap, entryPoint, 0);
         return true;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The commands' work on the node hosting the copy (the GM's, or in a cluster its dungeon's host)
+// ---------------------------------------------------------------------------
+
+import dmangos.world.context : WorldContext;
+import dmangos.world.gmtargets : GmSink;
+
+/// Whether this node knows copy `id` (it hosts its dungeon).
+bool instanceHere(WorldContext context, uint id)
+{
+    return context.instanceState(id) !is null;
+}
+
+/// ArcEmu's `GetMapTypeString` for a map of this server.
+string mapTypeString(WorldContext context, uint mapId)
+{
+    const entry = context.client.maps.lookup(mapId);
+    if (entry is null)
+        return "Unknown";
+    if (entry.isRaid)
+        return "Raid";
+    if (entry.isDungeon)
+        return "Non-Raid";
+    if (entry.isBattleground)
+        return "PvP";
+    return "Continent";
+}
+
+/// The map's name, as ArcEmu's `MapInfo.name`.
+string mapName(WorldContext context, uint mapId)
+{
+    import std.format : format;
+
+    const entry = context.client.maps.lookup(mapId);
+    return entry is null ? format!"%s"(mapId) : entry.name[0];
+}
+
+/// `.instance info`'s lines about copy `id` (known here).
+void describeInstance(WorldContext context, uint id, GmSink sink)
+{
+    import std.array : split;
+    import std.format : format;
+    import core.time : seconds;
+    import dmangos.world.commands;
+
+    const state = context.instanceState(id);
+    if (state is null)
+        return sink.red(format!"Instance with id %u not found."(id));
+    string ss = "Instance ID: " ~ MSG_COLOR_CYAN ~ format!"%s"(id) ~ "|r (" ~ MSG_COLOR_CYAN
+        ~ mapName(context, state.mapId) ~ "|r)\n";
+    ss ~= "Persistent: " ~ MSG_COLOR_CYAN ~ (state.resetAt ? "Yes" : "No") ~ "|r\n";
+    ss ~= "Type: " ~ MSG_COLOR_CYAN ~ mapTypeString(context, state.mapId) ~ "|r\n";
+    ss ~= "Created: " ~ MSG_COLOR_CYAN ~ convertTimeStampToDataTime(state.createdAt) ~ "|r\n";
+    ss ~= "Expires: " ~ MSG_COLOR_CYAN ~ convertTimeStampToDataTime(state.resetAt) ~ "|r\n";
+    auto m = context.instanceMap(id);
+    if (m is null)
+        ss ~= "Status: " ~ MSG_COLOR_LIGHTRED ~ "Shut Down|r\n";
+    else if (m.population == 0)
+    {
+        ss ~= "Status: " ~ MSG_COLOR_LIGHTRED ~ "Idle|r";
+        if (state.emptySince != state.emptySince.init)
+        {
+            const left = state.emptySince + context.config.instanceUnloadDelay.seconds - context.clock();
+            ss ~= " (" ~ MSG_COLOR_CYAN ~ "Shutdown in " ~ MSG_COLOR_LIGHTRED ~ format!"%s"(left.total!"minutes")
+                ~ MSG_COLOR_CYAN ~ " minutes|r)";
+        }
+        ss ~= "\n";
+    }
+    else
+        ss ~= "Status: " ~ MSG_COLOR_GREEN ~ "In use|r (" ~ MSG_COLOR_GREEN ~ format!"%s"(m.population)
+            ~ MSG_COLOR_CYAN ~ " players inside|r)\n";
+    foreach (line; ss.split('\n'))
+        if (line.length)
+            sink.system(line);
+}
+
+/// `.instance shutdown`'s work on copy `id`: everyone inside goes back out, and the copy unloads.
+void shutdownInstanceHere(WorldContext context, uint id, GmSink sink)
+{
+    import std.format : format;
+    import dmangos.world.session : WorldSession;
+
+    if (context.instanceState(id) is null)
+        return sink.red(format!"There's no instance with id %u."(id));
+    auto m = context.instanceMap(id);
+    if (m is null)
+        return sink.red(format!"Instance with id %u already shut down."(id));
+    sink.system(format!"Attempting to shutdown instance with id %u..."(id));
+    // `MapMgr::InstanceShutdown`: everyone inside goes back out first.
+    foreach (other; context.onlinePlayers)
+        if (auto inside = cast(WorldSession) other)
+            if (inside.instanceId == id && inside.character !is null)
+                inside.exitInstance();
+    context.shutdownInstance(id);
+    sink.system("...done");
+}
+
+/// `.instance reset`'s work on copy `id` for player `who` (`canRevoke`: the GM has the `z` permission).
+void resetInstanceHere(WorldContext context, uint id, ulong who, string name, bool canRevoke, GmSink sink)
+{
+    import std.format : format;
+
+    const state = context.instanceState(id);
+    if (state is null)
+        return sink.red(format!"There's no instance with id %u."(id));
+    const binds = context.bindsOf(who);
+    const bound = state.mapId in binds;
+    if (state.resetAt) // persistent
+    {
+        if (!canRevoke)
+            return sink.red(format!"Instance with id %u is persistent and can only be removed from player by admins."(id));
+        if (bound !is null && *bound == id)
+        {
+            context.revokeBind(who, state.mapId);
+            return sink.system(format!"Instance with id %u (%s) is persistent and will only be revoked from player."(id,
+                "normal"));
+        }
+        return sink.red(format!"Player is not assigned to persistent instance with id %u."(id));
+    }
+    auto m = context.instanceMap(id);
+    if (m !is null && m.population)
+        return sink.red(format!"Failed to reset non-persistent instance with id %u, due to player still inside."(id));
+    if (bound is null || *bound != id)
+        return sink.red(format!"Player %s is not assigned to instance with id %u."(name, id));
+    sink.red("Resetting single non-persistent instances is not available yet."); // as ArcEmu says
+}
+
+/// `.instance resetall`'s work here: the player's copies this node hosts that are not persistent and empty.
+void resetAllHere(WorldContext context, ulong who)
+{
+    // `InstanceMgr::ResetSavedInstances`
+    foreach (mapId, id; context.bindsOf(who).dup)
+    {
+        const state = context.instanceState(id);
+        if (state is null || state.resetAt)
+            continue;
+        auto m = context.instanceMap(id);
+        if (m !is null && m.population)
+            continue;
+        context.resetInstance(id);
     }
 }
 
