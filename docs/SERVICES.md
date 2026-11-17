@@ -1,311 +1,201 @@
 # Cluster services
 
-How the cluster (docs/CLUSTER.md) gets **logical services**:
-* responsibilities with an identity of their own, such as chat channels, groups, the battleground
-  queue and the login gate;
-* placed on nodes by the coordinator and addressed by what they are, not by where they run;
-* called directly when they are local, and over the cluster's links when they are not.
+A **cluster service** is a responsibility with an identity of its own that belongs to no place in
+the world: the chat channels, the battleground queues. The cluster (docs/CLUSTER.md) places each
+service on one node, and every node calls it by what it is, not by where it runs. A call to a
+service on the caller's own node is a direct function call; a call to one on another node goes over
+the cluster's links and its reply comes back the same way. Callers do not know which it was.
 
-The design draws on two references:
-* Blizzard's patent US10086279B2, *Cross-realm zones for interactive gameplay*;
-* Ryzom Core's service architecture, read from its source.
+The code is `cluster/services.d`. The services are `ChannelsHost` (`world/channelservice.d`) and
+`BattlegroundQueueHost` (`world/bgqueue.d`).
 
-It keeps the cluster as the foundation. There is still one process type, the world node, still regions
-under leases, and still one cluster manager.
+## Why services
 
-Decided with the user on 2026-11-17: do this before battlegrounds, which are its first real
-customer.
+Much of what a cluster coordinates is tied to a place: a creature, a dungeon copy, a player standing
+somewhere. That is handled by regions, which move with the load. A few things are tied to no place
+and to players anywhere: a chat channel's members can be on every node, and a battleground queue
+gathers players from every node into one copy. Each needs exactly one authoritative instance, a way
+for every node to find it, and a way to survive its node's loss. Services give that once, for any
+such responsibility, instead of a message pair, a routing rule and a takeover step written by hand
+for each.
 
-## 1. What the references show
+The service layer is not on the simulation's hot path. It is called for channel commands and queue
+changes, not per tick per entity.
 
-### Blizzard's patent (US 10,086,279 B2; parent US 9,220,982 B2)
+## Declaring a service
 
-The patent describes realms, whose world servers are made of "virtual servers", each responsible
-for zones. A message router hides the server-side components from the client. Cross-realm zones
-are instances of a zone shared by a subset of realms.
-
-What the claims actually require is narrow:
-* **'279 claim 1** is the border handshake into a zone that runs as several concurrent instances on
-  different servers, each instance with its own objects. A character within a threshold distance
-  is sent to the chosen instance's server with its location, is made visible there, and the client
-  is sent the instance's objects to preload before crossing.
-* **'982** claims a table mapping groups of realms to zone instances. The table is changed when an
-  instance's population passes a threshold, and an instance whose group is empty is stopped.
-
-Everything else is an embodiment ("may", "in one embodiment"), not a statement about WoW's
-production servers:
-* owner lookup by a deterministic function or a stored, replicated decision;
-* a realm-group tree, split going down and merged going up;
-* players already inside left in place, or moved, when a mapping changes;
-* per-instance corpses;
-* parties placed by their leader's realm;
-* dungeons and battlegrounds on separate instance servers.
-
-What our cluster already has of it:
-
-| Patent | Here |
-|---|---|
-| Virtual servers for zones | regions owned by nodes under leases (`cluster/ownership.d`) |
-| Buffer region, preload, visible before entry | the overlap band: replicas of everything near a border (phase 3) |
-| Transfer of management on entry | player and creature migration (phase 4) |
-| Split and merge by population | load balancing by measured cost, region splits and merges (phase 6) |
-| Owner lookup without a round trip | the region table, replicated to every node |
-| Message router hiding the topology | the home node: the client's connection, with the character simulated anywhere (phase 3b) |
-| Instance servers for dungeons | dungeon copies hosted whole by one node (`IdKind.instance`) |
-
-**Caution.** '279 claim 1 needs a *destination zone run as several concurrent instances with
-different objects*. Our open world has one owner per region, so it does not meet that element. We
-should not run several concurrent copies of an open-world zone with a border handshake into them
-without a legal check first (the patent is estimated to expire in 2032). Battleground and dungeon
-copies are private instances entered by portal, which the patent treats separately.
-
-### Ryzom Core
-
-A Ryzom shard splits **by function**:
-* the frontends (FS), several, which hold client connections;
-* one Entities Game Service (EGS) with every player and rule;
-* AI services (AIS), one per continent, assigned by command line;
-* one Global Position Manager (GPMS) for vision;
-* one Tick Service (TS) that holds every service to a global TICK/TOCK barrier;
-* one Mirror Service (MS) per machine, sharing entity properties through shared memory and deltas;
-* one Input/Output Service (IOS) for chat and strings;
-* a Backup Service (BS) master/slave pair for files.
-
-Around the shard sit a Naming Service (a directory), a Welcome Service (the login placement), the
-Shard Unifier (domain-wide services) and an Admin Executor per machine (supervision).
-
-What its source shows about how this works:
-* **It runs in lockstep.** The shard runs at its slowest service's speed. A stall in the EGS stalls
-  everything.
-* **The EGS, TS and GPMS are single points of failure.** The shard does not survive losing them.
-  Losing a machine's mirror takes the whole machine down.
-* **Routing is hard-coded by service name** (`send("EGS", …)`), which assumes singletons.
-* **Messages are unversioned**, except its "transport classes", which exchange their field lists
-  when a link comes up.
-* **What is good:**
-  * the Naming Service's up/down callbacks;
-  * its keep-links-while-the-directory-is-down rule;
-  * `sendMessageViaMirror`: a message delivered after the state changes of the same tick;
-  * the Welcome Service's placement by load;
-  * the Admin Executor's restarts with backoff and its chain-crash detection.
-
-### What we take, and what we do not
-
-* **Take:**
-  * a directory of services with up/down events, in the coordinator, which every node mirrors;
-  * placement by load;
-  * messages for a service ordered behind the state they depend on: per-peer FIFO links already
-    give this, and it must stay so;
-  * a gateway role, the patent's router and Ryzom's frontend, as a node that holds connections;
-  * supervision outside the server (documented, not built).
-* **Do not take:**
-  * splitting by function (EGS/GPMS/AIS): one process type, split by region, is the better axis;
-  * a global tick barrier;
-  * a shared mirror of all properties;
-  * name broadcast without ownership;
-  * static assignment by configuration.
-
-## 2. The cluster today (what services must build on)
-
-* **Nodes and the coordinator.**
-  * One process type.
-  * A coordinator admits members and keeps the view.
-  * It grants regions under leases with epochs, hands out id blocks, and balances by measured cost.
-  * A standby takes over within the failure timeout.
-* **Ownership** is per region, with epochs and fencing (`cluster/ownership.d`, `world/fencing.d`).
-  Queued writes carry the lease time (`world/writebehind.d`).
-* **Links** are TCP, one per pair of nodes. They carry framed, versioned binary messages
-  (`cluster/protocol.d`, protocol 27; the whole cluster speaks one version). A link is a FIFO in
-  each direction.
-* **Cross-node features** are reached through about 20 hooks on `WorldContext`, wired by hand in
-  `world/main.d` to `world/clusterbridge.d`:
-  * `forwardChannel`, `forwardGroup`;
-  * `whisperRemote`, `deliverRemote`;
-  * `reserveStock`, `killShareElsewhere`;
-  * `guildBroadcastElsewhere`, `signalElsewhere`;
-  * and more.
-
-  Each is its own pair of message types (45 types). Receiving them is one large `ReplicationHandler`
-  interface and a `switch`.
-* **Services that exist in all but name, all fixed to the coordinator:**
-  * chat channels (`world/channelservice.d`);
-  * groups;
-  * one login per account (`cluster/sessions.d`);
-  * id blocks;
-  * realm steering.
-
-  The standby's takeover has a hand-written step for each one (`onPromoted` in `world/main.d`).
-* **Idempotency** is per feature. Script signals carry an origin node and a sequence number; kill
-  shares and stock have their own rules.
-
-What this costs. A new cross-node feature, such as the battleground queue, would need:
-* a message pair and a protocol bump;
-* bridge code, a hook and wiring in `main.d`;
-* a takeover step;
-* a dedupe rule.
-
-There is no common notion of where a service runs, whether it is up, or how to reach it. Nothing
-but the coordinator can host one.
-
-## 3. Design
-
-### Services
-
-A **service** is a D struct marked `@Service(ServiceKind.x)`. Its methods marked `@Call` are what it
-can be asked. Each takes one plain-data request struct and returns a plain-data reply (or nothing).
+A service is a D struct marked `@Service(ServiceKind.x)`. Its methods marked `@Call` are what it
+can be asked. Each takes one plain-data request struct (`dmangos.plaindata`: numbers, strings,
+arrays and structs of them) and returns a plain-data reply, or nothing.
 
 ```d
-@Service(ServiceKind.battlegroundQueue)
-struct BattlegroundQueue
+@Service(ServiceKind.channels)
+struct ChannelsHost
 {
-    @Call JoinResult join(const ref JoinQueue request);   // a player asks for a battleground
-    @Call void leave(const ref LeaveQueue request);
-    void tick(ServiceContext ctx, Duration elapsed);      // optional: driven by its host's loop
-    void recover(ServiceContext ctx);                     // optional: rebuilt after it moved
+    ChannelService channels;
+
+    /// A player's channel command.
+    @Call void run(const ref ChannelCall call)
+    {
+        channels.run(call.command, call.via);
+    }
 }
 ```
 
-* **The dispatcher is generated at compile time** (`static foreach` over the `@Call` methods),
-  together with each call's id and a layout fingerprint, as `writebehind.d` does. There is no
-  virtual dispatch and no registry filled at run time.
-* **Serialization** is `dmangos.serialization`, which already serves packets and cluster messages.
-* **A call to a local instance** is a direct function call with the request struct: nothing is
-  serialized, and nothing is allocated beyond what the method itself does.
-* **A call to a remote instance** is one generic cluster message, `ServiceCall` (service, call id,
-  placement epoch, origin node, sequence number, bytes), and `ServiceReply` back. Both go over the
-  existing links.
+A service may also have:
 
-### Placement and lifecycle
+* `start()`, run when its host starts it;
+* `tick(Duration)`, run every world tick of its host;
+* `stop()`, run when it is released;
+* `saveState()`, returning bytes that go along with the service when it moves, from which the next
+  host's factory rebuilds it. Neither existing service has one: both start empty after a move.
 
-* **Services are regions** (as built in stage 2). Each service kind is a one-cell region of a map of
-  its own (`serviceMap`, from `0xFFFF0000`). So the existing ownership machinery places it, with no
-  second table and no second cluster manager:
-  * the coordinator deals it out by load, under a lease, with an epoch;
-  * it is released before it is granted elsewhere;
-  * it is moved off a lost node after that node's lease;
-  * the standby adopts it, and balancing may move it.
+Everything about the calls is worked out at compile time, by `static foreach` over the `@Call`
+methods:
 
-  Every node's copy of the region table says where each service runs
-  (`regions.ownerAt(serviceMap(kind), 0)`), with no round trip. A node that gains a service's region
-  starts the service, from the state its last host sent along with the region (`saveState`). A node
-  that loses it stops the service and sends that state on. A one-cell region cannot be split, and
-  merges only touch regions that came from splits.
-* **Placement** is by configuration (`cluster.services`: which node may host what) and else by
-  load: the least busy eligible node. A service moves:
-  * when its node is lost (after that node's lease, as with regions);
-  * when the coordinator rebalances;
-  * on a GM's request.
-* **Lifecycle on a node:**
-  * `start` when it is granted;
-  * `recover` after a move (state rebuilt from the database, or from what the other nodes announce
-    again, as channels and session claims are today);
-  * `tick` each world tick of its host;
-  * `stop` when released.
-* **Up and down events** go to every node when a service's placement changes. Callers park calls
-  while a service is down, and resend them under the new epoch.
-* **Authority** is one instance per kind, by default. A kind may be **partitioned** by a key, such as
-  battleground instances by id, as regions are by cell. The table then maps key ranges to nodes.
-* **Consistency.** Calls carry the placement epoch, so a call to a stale placement is refused and
-  resent. Each call carries `(origin node, sequence)`, so a duplicate after a resend is answered from
-  a small reply cache, not done twice. Nothing assumes exactly-once delivery.
-* **Ordering.** A service's calls from one node arrive in order, because the links are FIFO, so a
-  call never overtakes the replication it depends on. That is Ryzom's `sendMessageViaMirror`, which
-  we get for free.
+* **Checks.** A call that takes more than one argument, or a request or reply that is not plain data,
+  fails to compile.
+* **Call ids.** Each call's id is an FNV-1a hash of its service kind, its name, and the layouts of its
+  request and reply (`callId`). Two builds that disagree on any of them disagree on the id, so a call
+  between them is refused (`unknownCall`) rather than misread.
+* **The dispatcher** (`Hosted!S.dispatch`) runs a call from its request's bytes and writes its
+  reply's. There is no virtual dispatch per call and no registry filled at run time.
 
-### Deployment
+The kinds of service are an enum, `ServiceKind`: `channels`, `battlegroundQueue`, and `example` for
+tests. `clusterServiceKinds` lists those a cluster places.
 
-* **One executable.** A standalone server hosts every service locally, and every call is a direct
-  call. This is what tests and single-machine setups run.
-* **Several nodes.** Services spread by the table.
-* **A gateway node** (`cluster.role = "gateway"`) owns no regions and hosts no simulation. It holds
-  client connections and relays, the patent's message router and Ryzom's frontend. The home-node
-  relay already does this; a gateway is a home node that is never also an owner. It is the
-  prerequisite for surviving the loss of a simulation node without a disconnect (CLUSTER.md, "Later").
-* **Several processes on one machine**, as now: one per node.
+## Hosting
 
-### What stays as it is
+Each node has a `ServiceHost` (`WorldContext.services`):
 
-* The world simulation, its tick and its maps.
-* Regions, their replication and migration.
-* The write-behind database layer.
+* `provide!S(make)` tells it how to build a service of type `S`, from the state its last host saved
+  or from nothing. Every world server provides both services.
+* `start(kind, state)` and `stop(kind)` host a service here, or release it (returning its state).
+* `hosts(kind)` and `local!S()` say whether it runs here.
+* `tick` runs every hosted service's `tick` and resends parked calls (below).
 
-The service layer is not on the simulation's hot path: services are called for queues, chat and
-groups, not per tick per entity.
+A standalone server starts every service it provides (`startAllServices`), and every call is a
+direct call. A cluster node first stops them all and then runs only the services whose regions it
+is granted.
 
-## 4. Stages
+## Placement: a service is a region
 
-1. **Service foundation (done 2026-11-17)** (`cluster/services.d`):
-   * `@Service` and `@Call`, the generated dispatcher, local calls;
-   * a `ServiceHost` per node that runs `start`, `tick` and `stop`;
-   * a standalone server that hosts everything.
+Each service kind is a one-cell region on a map of its own: map `0xFFFF0000 | kind`
+(`serviceMap`). The coordinator appends these regions to its partition of the world at start-up
+(`serviceRegions`), so the cluster's ownership machinery places services exactly as it places parts
+of the world:
 
-   Tests: local calls, the generated ids, the fingerprints.
-2. **Placement in the cluster: done (2026-11-17).** Services are regions of maps of their own,
-   appended to the coordinator's partition (`clusterServiceKinds`).
-   * `WorldContext.regionsChanged` starts and stops them, carrying their state.
-   * A standalone server starts every service it provides (`startAllServices`).
-   * Tests: a three-node cluster in memory, where the service goes to one node, is moved off it when
-     it is cut off after its lease, and is never on two nodes at once.
-   * Live, the 74 world regions became 76.
-3. **Remote calls: done (2026-11-17).** `ServiceCall` and `ServiceReply` (protocol 28) go over
-   the existing links.
-   * The caller routes by the region table: here directly, elsewhere as bytes.
-   * A call waits (parked) while its service is nowhere, and goes once it is somewhere.
-   * A node that no longer hosts a service answers `notHere`, and the call is sent again where the
-     table says.
-   * Calls to a lost peer go back to waiting. Calls unanswered after 30 s are given up and logged.
-   * The host keeps the last 4096 answers by (origin, sequence), so a resent call is answered again
-     and not run twice.
-   * No epoch is carried: a node hosts a service only while it holds that region's lease, and stops
-     when it loses it.
-   * Tests: two hosts with in-memory transports, covering a call and its reply, a parked call sent
-     once placed, a duplicate answered from memory, and a call following its service to a new node.
-4. **The first service, chat channels: done (2026-11-17).** `ChannelsHost`
-   (`@Service(ServiceKind.channels)`) wraps the existing `ChannelService` with one call, `run`, which
-   takes a `ChannelCommand` and the node it came from. `WorldContext.channelCommand` is now a service
-   call, so these went:
-   * the `forwardChannel` hook;
-   * the coordinator-only routing, and its message's handling in `ClusterNode` and the bridge;
-   * the standby's channel takeover step.
+* the coordinator deals each one out to a node under a lease, with an epoch;
+* it is released by one node before it is granted to another;
+* it is moved off a lost node once that node's lease has run out;
+* a standby that takes over adopts the table with the services in it;
+* load balancing may move it, though it has little reason to: a service region starts with a cost of
+  1 and measures as nothing, since no map cells belong to it. It cannot be split (it is one cell),
+  and merges only join regions that came from splits.
 
-   Every context starts its services, as standalone; a cluster node stops them and runs only those
-   whose regions it is granted. After a move the channels start empty, as after a coordinator
-   takeover before.
-   * Tests: two world contexts with the channels on node 2, where node 1's player joins (answered
-     across) and hears node 2's player. The existing channel tests run unchanged.
-   * Live: two scripted clients simulated on nodes 1 and 3 talked in one channel, hosted on a third
-     node's choice.
-5. **The battleground queue: done (2026-11-18)**, with battlegrounds' first milestone (`bgqueue.d`).
-   * `BattlegroundQueueHost` (`@Service(ServiceKind.battlegroundQueue)`) holds every player's queue
-     slots and invitations, and the copies' numbers and room.
-   * Players' nodes call `join`, `port`, `status`, `logout` and `list`; the node running a copy calls
-     `left`, `changed` and `invited`.
-   * What the queue tells a player goes to the player's node.
-   * Live: a client on the gateway queued at an Orgrimmar battlemaster. The queue ran on one node and
-     the Warsong Gulch copy on another, where the character was simulated. The client entered the
-     copy, saw the scoreboard and left back to Orgrimmar.
-   * After a move the queues start empty: invitations are lost and running copies are not refilled.
-6. **The gateway role: done (2026-11-17).** `cluster.gateway` is a node that holds clients'
-   connections and simulates nothing.
-   * Its hello says so (protocol 29), so the coordinator, and a standby that takes over, never deal it
-     a region or a service.
-   * A player logging in through it moves at once to the owner of its region, which the home node's
-     relay already does.
-   * The realm list sends new clients to the least busy gateway whenever there are any.
-   * The coordinator and the standby cannot be gateways.
-   * Tests: in the in-memory cluster, the gateway owns nothing and clients are steered to it.
-   * Live (`GATEWAY=1 cluster-start.sh`, node 4 on port 8088): a scripted client logged in through
-     the realm list, landed on the gateway, was simulated by node 1, and talked in a channel.
-7. **Monitoring: done (2026-11-17).**
-   * Each node's metrics lines include the services it hosts and its calls: local, sent, served,
-     repeated (answered from memory), given up and waiting (`ServiceHost.describe`).
-   * `tools/servicebench.d`, with a request the size of a channel command:
-     * a call answered on its own node costs **23 ns**, a direct method call;
-     * a call through the remote path, with an in-memory link, costs **1.7 µs**: encoding, dispatching
-       from bytes, the reply cache, and decoding.
+A gateway node (docs/CLUSTER.md) is never granted a service.
 
-     Both are far below what chat or a queue asks for; the network's round trip dominates a remote
-     call.
+Every node holds a copy of the region table, so every node knows where each service runs with no
+round trip: `regions.ownerAt(serviceMap(kind), 0)`. When a node's regions change
+(`WorldContext.regionsChanged`), a service region it lost is stopped, its `saveState` bytes going
+along with the region to the next owner; a service region it gained is started from the bytes that
+arrived with it. Both are logged (`services: channels runs here`, `services: channels moves to node
+2`).
 
-Later stages may move groups, session claims, id blocks and guild broadcasts onto services, where
-it removes code. Each move is judged on its own.
+## Calling a service
+
+```d
+context.services.call!(BattlegroundQueueHost.port)(BattlegroundPort(guid, context.nodeId, type, enter),
+    (BattlegroundEntry entry) { ... });
+context.services.call!(ChannelsHost.run)(ChannelCall(command, nodeId));   // no reply
+```
+
+* **Here.** If the service runs on this node, the method is called with the request struct and the
+  continuation gets the reply at once. Nothing is encoded or allocated beyond what the method itself
+  does.
+* **Elsewhere.** The request is encoded and sent as a `ServiceCall` message (service kind, call id,
+  origin node, sequence number, request bytes) to the node the region table names. That node answers
+  with a `ServiceReply` (kind, sequence, status, reply bytes), and the continuation runs when it
+  arrives.
+* **Nowhere.** While the service is placed on no node (it is moving, or its node was lost and its
+  lease has not run out), or there is no link to its node, the call is **parked**. Every tick parked
+  calls are sent again to wherever the table now says.
+* **Moved.** A node that no longer hosts the service answers `notHere`; the caller parks the call and
+  sends it again where the table says.
+* **Lost.** When a peer is lost, every call sent to it and not yet answered goes back to parked.
+* **Given up.** A call unanswered after 30 seconds is dropped and logged.
+
+Because a call may be sent twice (after `notHere`, or after its node was lost while the reply was
+on its way), the host remembers its last 4096 answers by (origin node, sequence number). A call it
+has answered before is answered again from memory and not run twice. No epoch travels with a call:
+a node hosts a service only while it holds the service region's lease, and stops it when it loses
+it, so a call reaching a node that is no longer the host gets `notHere`.
+
+Links between nodes deliver each direction in order (docs/CLUSTER.md), so the calls one node makes
+to a service arrive in the order they were made, behind every other message that node sent first.
+
+## The services
+
+### Chat channels
+
+`ChannelsHost` wraps `ChannelService`, which holds every channel of both teams. Its one call,
+`run`, takes a `ChannelCommand` and the node it came from. A player's channel command (joining,
+leaving, talking, the list, passwords, moderation, kicks, bans, invitations; and logging out or
+changing zone, which leave or move zone channels) becomes a call through
+`WorldContext.channelCommand`. The command carries what the channels need of the player: guid,
+name, race, chat tag, honor rank (for the defense channels) and whether it may moderate every
+channel (a GM permission). Checks that belong to the player's
+node (names, the GM client channel) are made there before the call.
+
+What a channel says to a member goes to the member's node: the one presence says simulates it
+(docs/CLUSTER.md), or failing that the node its last command came from. A lost node's players leave
+their channels as if they had logged out. After the service moves, channels start empty; players
+join again when they next log in or change zone.
+
+### Battleground queues
+
+`BattlegroundQueueHost` holds every player's queue slots (up to three each), the invitations, and
+the running copies of each battleground with their room. Players' nodes call `join`, `joinGroup`,
+`port` (accept or decline an invitation), `status`, `logout` and `list`. The node running a copy
+calls `left`, `changed` and `invited`, and `forceStart` serves `.battleground forcestart`. A copy is
+made, or room in a running one filled, as players join; the service's `tick` reminds players of
+invitations and expires them after 80 seconds. What the queue tells a player goes to the player's node.
+
+A battleground map, like a dungeon, is one region, so one node runs every copy of it. A player
+accepting an invitation moves to that node, as for a dungeon. After the service moves, the queues
+start empty: invitations are lost and running copies are not refilled.
+
+## Gateways
+
+A gateway (`cluster.gateway`) is a node that holds client connections and simulates nothing: it is
+granted no regions and no services. Its players are simulated wherever they stand, through the
+home-node relay (docs/CLUSTER.md), and while any gateway is linked the coordinator points the realm
+list at the least busy gateway. The coordinator and the standby cannot be gateways.
+
+## Monitoring
+
+Each node's metrics line includes a services line (`ServiceHost.describe`): the services it hosts,
+and its calls so far, counted as local, sent, served, repeated (answered from memory), given up, and
+waiting.
+
+`tools/servicebench.d` measures a call with a request the size of a channel command:
+
+* answered on the caller's own node: **23 ns**, a direct method call;
+* through the remote path over an in-memory link: **1.7 µs**, for encoding, dispatching from bytes,
+  the reply cache and decoding.
+
+On a real network the round trip dominates a remote call.
+
+## Adding a service
+
+1. Add a kind to `ServiceKind`, and to `clusterServiceKinds` if a cluster should place it.
+2. Write the struct with `@Service(kind)`, its `@Call` methods over plain-data requests and replies,
+   and `tick`, `stop` or `saveState` if it needs them.
+3. `provide!` it in `WorldContext`'s constructor.
+4. Call it through `context.services.call!(S.method)`, which works the same standalone and in a
+   cluster.
+
+## Background
+
+The design research behind this layer is archived in docs/research/SERVICES-RESEARCH.md. It is not
+needed to understand or change the services.

@@ -20,17 +20,17 @@ points (how to build it is in its header):
 navpath /path/to/data 1 1007.8 -4446.2 11.2 1629.4 -4373.4 31.3   # Durotar into Orgrimmar, by the gate
 ```
 
-For the CMaNGOS reference, keep checkouts of
-[mangos-classic](https://github.com/cmangos/mangos-classic) (the code) and
-[classic-db](https://github.com/cmangos/classic-db) (the world database) at hand. Every ported
-function names its original in its documentation comment.
+The databases use the CMaNGOS Classic schema, so existing realm, character and world data works
+unchanged; where to get the schema's SQL and a world database is under "Live tests against real
+data" below.
 
 ## Recipes
 
 ### Handle a new client packet
 
-1. **Opcode.** Add it to `world/opcodes.d`, in value order, with CMaNGOS's name and value from
-   `Server/Opcodes.h`.
+1. **Opcode.** Add it to `world/opcodes.d`, in value order, with the
+   opcode's conventional upper-case name (`CMSG_...`, `SMSG_...`, `MSG_...`) and its value in the
+   1.12 client's protocol.
 2. **Layout.** Add the packet struct to `world/packets.d`. A client packet is a plain struct:
 
    ```d
@@ -43,8 +43,8 @@ function names its original in its documentation comment.
 
    If the layout depends on the contents (like movement or chat), give the struct a
    `static T read(ref ByteReader)`, and the dispatcher will use it.
-3. **Handler.** Write it in the handler group that matches CMaNGOS's file, e.g. `inworld.d` for
-   `MiscHandler.cpp`:
+3. **Handler.** Write it in the handler group of its area, e.g. `inworld.d` for the
+   miscellaneous in-world packets (queries, settings, chat):
 
    ```d
    @Handles(Opcode.CMSG_SET_SELECTION, WorldState.inWorld)
@@ -71,7 +71,7 @@ struct ServerStandStateUpdate
 send(ServerStandStateUpdate(1));
 ```
 
-* **Fixed size:** add `static assert(wireSize!ServerX == n);` with the size from CMaNGOS.
+* **Fixed size:** add `static assert(wireSize!ServerX == n);` with the packet's size on the wire.
 * **Variable layout:** declare a `@Remainder ubyte[] body_` and build the body in a function, as
   `queries.d` does for item queries and chat.
 
@@ -82,7 +82,7 @@ For a new area, such as spells, groups or guilds, create `world/<area>.d`:
 ```d
 module dmangos.world.groups;
 
-/// Handlers of `GroupHandler.cpp`, mixed into Character.
+/// Group handlers, mixed into Character.
 mixin template GroupHandlers()
 {
     import dmangos.world.opcodes;
@@ -103,15 +103,16 @@ and the connection's `account`, ...).
 In `world/clientdata.d`:
 
 1. Declare the record struct, with fields in file order.
-2. Copy its format string from CMaNGOS's `Server/DBCfmt.h`. The store checks at compile time that
+2. Write its format string, one letter per field of the file. The store checks at compile time that
    the struct matches the format, and at load time that the file matches both.
 3. Add a `DbcStore!(Entry, format)` member, and add its `"member:FileName"` to the list in
    `ClientData.load`.
 4. Make sure the extractor writes the file. It copies every DBC, so it normally does.
 
-Don't trust CMaNGOS's format strings blindly. `CharStartOutfit`'s claims one 4-byte field where the
-file has four 1-byte fields, and CMaNGOS only gets away with it because its loader doesn't check
-record sizes. dmangos's loader does check.
+Take the layout from the file itself, not from a published format string: those are not always
+right. `CharStartOutfit` is often described with one 4-byte field where the file has four 1-byte
+fields, and only a loader that does not check record sizes gets away with it. Ours checks, so a
+wrong format fails at load time.
 
 ### Read another world table
 
@@ -123,14 +124,15 @@ foreach (row; world.queryAs!(Row, "SELECT a, b, c FROM table")())   // Row: a st
 ```
 
 For wide tables, follow `itemDetailColumns` in `worlddata.d`: a CTFE table of
-column → field pairs that the loader is generated from. Apply the same validation as the
-`ObjectMgr::Load*` function in CMaNGOS.
+column → field pairs that the loader is generated from. Validate the rows as they load: skip
+(and log) a row that names a template, item or spell that does not exist, rather than failing later.
 
 ### Read or write the characters database
 
 1. Declare the method in the `WorldDatabase` interface (`world/database.d`).
-2. Write the SQL in `CharacterStatements` (`world/characterdb.d`), using CMaNGOS's statement from
-   the function you port, and forward to it from `MySqlWorldDatabase`.
+2. Write the SQL in `CharacterStatements` (`world/characterdb.d`), against the schema's columns
+   exactly (the rows must stay readable by any server on the same schema), and forward to it from
+   `MySqlWorldDatabase`.
 3. Implement it in `MemoryWorldDatabase`, so tests can see what was written.
 
 ### Change an object's fields
@@ -148,20 +150,24 @@ have the same type, and a contract checks that. To show an object to *another* p
 
 ### Write a GM command
 
-Every ArcEmu command is already in `commandtable.d`; the ones not written answer "Not yet
+GM commands are a compatibility contract: they behave exactly as ArcEmu 2.4.3's, with its command
+tables, permission letters, checks and messages, word for word. ArcEmu's handlers are therefore the
+specification for each command.
+
+Every command is already in `commandtable.d`; the ones not written answer "Not yet
 implemented.". To write one, find its row (say `.npc come`, handler `HandleNpcComeCommand`), read
-ArcEmu's handler, and add the method with the same name, first letter in lower case, to the mixin of
-the ArcEmu file it comes from (`gmlevel2.d` for `Level2.cpp` if it does not exist yet: a new mixin
-template mixed into `Character` like the others):
+the specification's handler, and add the method with the same name, first letter in lower case, to
+the mixin of the matching command file (`gmlevel2.d` for `Level2.cpp` if it does not exist yet: a
+new mixin template mixed into `Character` like the others):
 
 ```d
 bool handleNpcComeCommand(uint distance = 5)     // the command's words, as typed parameters
 {
-    auto creature = getSelectedCreature(true);   // ChatHandler::getSelectedCreature
+    auto creature = getSelectedCreature(true);   // the selected creature, or an error
     if (creature is null)
         return true;
     ...
-    blueSystemMessage("...");                    // ArcEmu's message, word for word
+    blueSystemMessage("...");                    // the specified message, word for word
     return true;                                 // false shows the row's help
 }
 ```
@@ -170,9 +176,9 @@ That is all: the compile-time `switch` finds the method. Its parameters are the 
 converted with `std.conv.to`: a parameter with a default is optional, a `Nullable` one is null when
 missing, a `Rest` takes the rest of the line (a name, a reason), and `OnOff` reads "on" or "off". A
 word that is missing or does not convert shows the row's help, so the handler never sees bad input.
-Keep ArcEmu's checks and messages; use
+Keep the specified checks and messages; use
 `getSelectedChar(showError)` for its "selected player" and call that session's methods to change it.
-Where CMaNGOS's schema forces a difference, say so in the module comment. Then run
+Where the database schema forces a difference, say so in the module comment. Then run
 `python3 tools/commands_doc.py` to update `docs/COMMANDS.md`.
 
 ### Write a script
@@ -237,8 +243,8 @@ channel the player may talk in.
 
 ### Add a configuration key
 
-1. Add a field to `WorldConfig` (`world/config.d`), with `@JsonName("snake_case")`, the default
-   from `mangosd.conf`, and a comment naming the `mangosd.conf` key.
+1. Add a field to `WorldConfig` (`world/config.d`), with `@JsonName("snake_case")`, its default,
+   and a documentation comment saying what it does and in what unit.
 2. Add it to `config/worldserver.example.json` and to the table in the README.
 
 ## Testing
@@ -319,15 +325,16 @@ python3 tools/testclient.py 3724 tester PASSWORD create:Probe:1:1 login:Probe qu
 It checks the update packet structure on its own: the mask sizes against the client's field
 counts, that every slot points at an object the client was sent, and that no byte is left over.
 
-You need running servers with CMaNGOS databases and extracted DBCs. `~/dmangos-server` (outside the
+You need running servers with the databases and extracted DBCs. `~/dmangos-server` (outside the
 repo) has that set up: a portable MariaDB, `start.sh`/`stop.sh`, and a test account. To build such
 a setup from scratch without root:
 
 * Use `apt-get download` with `dpkg -x` to unpack `libmariadb3`, `mariadb-server-core` and
   `mariadb-client-core`, then run `mariadbd --no-defaults` with a private data directory and
   socket.
-* Import CMaNGOS's `sql/base/realmd.sql` and `characters.sql`, and classic-db's
-  `Full_DB/*.sql.gz` (about 5 s).
+* Import the schema, `sql/base/realmd.sql` and `characters.sql` of
+  [mangos-classic](https://github.com/cmangos/mangos-classic), and the world database,
+  [classic-db](https://github.com/cmangos/classic-db)'s `Full_DB/*.sql.gz` (about 5 s).
 * Extract the DBCs with `bin/extractor -i CLIENT -o DATA` and point `data_dir` at `DATA`.
 * Create accounts with `bin/authserver --config ... account create NAME PASSWORD`.
 
@@ -382,7 +389,7 @@ with its own `node_id` (1, 2, 3) and `listen_port` (9000, 9001, 9002), all with
 `"coordinator": "127.0.0.1:9000"`, and `metrics_interval_seconds` at 10 to see the links in the log.
 Node 1 is the coordinator. Give one other node `"standby": true` and it takes over when the
 coordinator dies (`kill -9` the coordinator to see it); `kill` (SIGTERM) a member to see it drain
-its regions to the others first (docs/CLUSTER.md, phases 5b and 7).
+its regions to the others first (docs/CLUSTER.md).
 
 ```sh
 for n in 1 2 3; do bin/worldserver -c node$n.json > node$n.log 2>&1 & done
@@ -396,7 +403,7 @@ environment connects it to a given node instead.
 
 `kill -9` a member to see it leave the view at once, `kill -STOP` one to see it dropped after
 `failure_timeout_ms`, and start a second process with a node's id (on another port) to see the
-older one fenced. docs/CLUSTER.md lists what each phase was tested with.
+older one fenced. docs/research/CLUSTER-HISTORY.md records what each stage of the cluster was tested with.
 
 ### The real client
 
@@ -406,15 +413,15 @@ the same character: its parser points at the broken block.
 
 ## Pitfalls found so far
 
-These are facts about CMaNGOS and the 1.12 client that the code relies on, and that cost time to
-find.
+These are facts about the database, its data and the 1.12 client that the code relies on, and
+that cost time to find.
 
-* **CMaNGOS never saves default spells**, or spells taught by skills. It relearns them at every
-  login. Load only `character_spell`, and the spellbook comes up nearly empty.
+* **`character_spell` does not hold default spells**, or spells taught by skills. They are learned
+  again at every login. Load only `character_spell`, and the spellbook comes up nearly empty.
 * **Update field types matter on the wire.** The five stats, their bonus fields and resistances
-  are integers. CMaNGOS keeps some of them as floats internally and converts them to integers when
-  sending. Attack times are integers too. `PLAYER_FIELD_MOD_DAMAGE_DONE_PCT` is sent as a float,
-  though CMaNGOS's table says integer. `updatefields.d` encodes all of this.
+  are integers on the wire, even where the server computes them as floats. Attack times are
+  integers too. `PLAYER_FIELD_MOD_DAMAGE_DONE_PCT` is sent as a float, though field tables often
+  list it as an integer. `updatefields.d` encodes all of this.
 * **Visibility:** health is `DYNAMIC` (strangers see a percentage), money and inventory are
   `PRIVATE`, and item durability and stack size are `OWNER_ONLY`.
 * **Update packets** over 100 bytes are zlib-compressed (`SMSG_COMPRESSED_UPDATE_OBJECT`, prefixed
@@ -443,10 +450,10 @@ find.
   server sends most of the login packets again, and the player's create block with its items.
 * **Area trigger positions come from `AreaTrigger.dbc`**, and a trigger counts within its radius
   plus 5 yards. Test positions should be taken from the file: a made-up one 13 yards off is
-  ignored, as CMaNGOS ignores it.
+  ignored.
 * **Group health views:** health is `DYNAMIC`, so joining or leaving a group changes what members
-  in sight see without any field changing. `groupChanged` sends those values on purpose
-  (CMaNGOS's `ForceValuesUpdateAtIndex`).
+  in sight see without any field changing. `groupChanged` sends those values on purpose,
+  as a forced update of the health fields.
 * **The client sends `MSG_MOVE_TELEPORT_ACK` with a full 8-byte guid**, not a packed one; the
   server's `MSG_MOVE_TELEPORT_ACK` has a packed one.
 * **Packets for another player are sent by the server loop.** A session that delivers to another
@@ -456,7 +463,7 @@ find.
   sending hide that kind of bug, so live tests should include a client that only listens.
 * **`.modify` field types:** the typed setters reject a float for an integer field at compile
   time, so a `modifiableFields` row with the wrong field does not compile.
-* **Update field offsets are absolute.** CMaNGOS's table, and `updatefields.d`, give every field its
+* **Update field offsets are absolute.** `updatefields.d` gives every field its
   slot from the start of the object (`UNIT_NPC_FLAGS` is slot 0x93); some tools and posts give them
   relative to the type's start. The Python client's debug prints once added `OBJECT_END` twice.
 * **Creature health comes from `creature_template_classlevelstats`**, times the template's
@@ -466,7 +473,7 @@ find.
   of rare creatures and thousands of extra herbs and veins.
 * **Logging out takes 20 seconds** for player accounts. Session tests log out at once because
   `newCreationContext` sets `instant_logout` to 0; the tick test sets it back.
-* **Ids** come from `MAX(id) + 1` at start-up. Never run dmangos and mangosd on the same characters
+* **Ids** come from `MAX(id) + 1` at start-up. Never run two servers on the same characters
   database at once.
 * **Client builds:** 5875, 6005 and 6141 share the world protocol. The login protocol differs
   slightly (see the README's protocol notes).

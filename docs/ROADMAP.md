@@ -5,22 +5,22 @@
 | Area | State | Where |
 |---|---|---|
 | Login server | Complete: SRP6, reconnect, realm list, bans, throttling, account CLI | `auth/` |
-| Client data extraction | DBC files, terrain as CMaNGOS's `.map` files, buildings and doodads as its vmaps, movement maps (Recast) | `extractor/`, `mpq/`, `mapfile.d`, `vmap/` |
+| Client data extraction | DBC files, terrain as `.map` files, buildings and doodads as vmaps, movement maps (Recast) | `extractor/`, `mpq/`, `mapfile.d`, `vmap/` |
 | Terrain | Ground heights, areas and liquids from the `.map` files and the vmaps (floors, bridges, roofs, the areas of buildings, indoors, line of sight); the server decides zones and areas, explored areas give experience | `world/terrain.d`, `vmap/`, `world/exploration.d` |
 | World handshake | Complete: session key proof, header encryption, addons, ping | `world/session.d` |
-| Character list, creation, deletion | Full parity with CMaNGOS, incl. guild, group, auction and mail cleanup on delete | `world/charscreen.d`, `playercreate.d`, `characterdb.d` |
-| Entering the world | Character, inventory, skills, spellbook, action bars, stats with gear; same packet sequence as mangosd | `world/charscreen.d`, `player.d`, `stats.d` |
+| Character list, creation, deletion | Complete, incl. the creation checks, starting items and spells, and guild, group, auction and mail cleanup on delete | `world/charscreen.d`, `playercreate.d`, `characterdb.d` |
+| Entering the world | Character, inventory, skills, spellbook, action bars, stats with gear; the full login packet sequence | `world/charscreen.d`, `player.d`, `stats.d` |
 | In the world | Movement saved, name, item, time and played-time queries, stand state, target selection, action buttons, tutorials, logout | `world/inworld.d` |
 | Other players | A shared map per map id: players see each other within 100 yards (created, out of range, destroyed), movement and field changes are relayed, say/yell/emote/text emotes reach those in range, whispers reach anyone online, names of online players | `world/map.d`, `world/inworld.d`, `world/context.d` |
-| Teleports | Near and far teleports with the client's acknowledgements, area trigger teleports with CMaNGOS's entry checks, `worldport` | `world/teleport.d` |
+| Teleports | Near and far teleports with the client's acknowledgements, area trigger teleports with their entry checks (level, raid, items, quests), `worldport` | `world/teleport.d` |
 | Groups | Parties and raids, saved and reloaded; invitations, leaders, assistants, sub-groups, kicks, loot settings, icons, ready checks, rolls, pings, member stats, group chat, real health for members | `world/group.d`, `world/grouphandlers.d` |
 | Chat | Channels (built-in ones following the zone, custom ones with moderation), AFK/DND with replies and chat tags, raid warnings | `world/channel.d`, `world/channelhandlers.d`, `world/inworld.d` |
-| GM system | ArcEmu's: its command tables, permission letters (from `gmlevel` via `gm_permissions`), lookup, messages, GM tag, whisper blocking, GM log. 215 of its 298 commands work: teleports, `.modify`, levels, items, spells, skills, lookups, accounts, bans, kicks, mutes, shutdowns, announcements, cheats, debugging (docs/COMMANDS.md) | `world/commandtable.d`, `world/commands.d`, `world/gm*.d` |
+| GM system | Behaves exactly as ArcEmu 2.4.3's GM system (the compatibility contract): its command tables, permission letters (from `gmlevel` via `gm_permissions`), lookup, messages, GM tag, whisper blocking, GM log. 217 of its 298 commands work: teleports, `.modify`, levels, items, spells, skills, lookups, accounts, bans, kicks, mutes, shutdowns, announcements, cheats, debugging (docs/COMMANDS.md) | `world/commandtable.d`, `world/commands.d`, `world/gm*.d` |
 | Update loop | A 50 ms tick: 20-second logout, regeneration, rested XP in inns and capitals (and offline), periodic saves, timed shutdowns | `net/server.d`, `context.d`, `inworld.d`, `timer.d` |
 | Creatures and game objects | Every spawn (with pools, spawn groups and game events), loaded per grid cell when players come near, with levels, health, models, equipment, mounts and emotes; creature and game object queries; `.npc info` | `creature.d`, `gameobject.d`, `map.d`, `worlddata.d` |
 | Creature movement | Wandering (`spawndist`) and waypoint paths (`creature_movement`, `creature_movement_template`; round, or back and forth) with waits and facings; `SMSG_MONSTER_MOVE`; walks in create blocks; moving creatures change cell and come into and out of sight | `spline.d`, `motion.d`, `map.d` |
 | NPC services | Gossip menus with their texts, conditions and map flags; trainers (lists with each spell's state, lessons that teach spells, ranks and profession skills); innkeepers (binding the hearthstone); bankers (opening the bank); vendors' lists | `npchandlers.d`, `npcdata.d`, `conditions.d` |
-| Inventory and trade | CMaNGOS's inventory rules, shared by creation and the world: moving, swapping, splitting, equipping (two-handers, dual wield, quivers, unique items), bags, the bank and its bag slots, the keyring, destroying, ammo; buying (with vendors' limited stock), selling, buyback and repairs; every change saved at once with the money | `inventory.d`, `itemhandlers.d` |
+| Inventory and trade | The inventory rules, shared by creation and the world: moving, swapping, splitting, equipping (two-handers, dual wield, quivers, unique items), bags, the bank and its bag slots, the keyring, destroying, ammo; buying (with vendors' limited stock), selling, buyback and repairs; every change saved at once with the money | `inventory.d`, `itemhandlers.d` |
 | Movement checks | Speed checked against running speed; offenders put back. Positions outside the map disconnect | `world/inworld.d` |
 
 ### Known gaps in what exists
@@ -35,7 +35,7 @@
   spawned. Idle cells unload after `grid_cleanup_delay_seconds`.
 * **Terrain:** heights put wandering creatures on the ground; line of sight decides aggro and
   spells. Game objects' models (doors, elevators) are extracted but
-  do not block sight (CMaNGOS's dynamic tree). Movement maps give creatures paths round buildings
+  do not block sight (that needs a dynamic tree of game object models). Movement maps give creatures paths round buildings
   and hills; doors are not in them, and swimmers path over the ground under the water.
 * **Movement:** the speed check assumes running speed; it must learn mounts, speed auras,
   knockbacks and taxis when those exist.
@@ -46,19 +46,19 @@
   Battlegrounds: see "Battlegrounds" below.
 * **Groups:** an offline leader is not replaced after a while (that needs a timer). Loot
   settings decide who loots. Two-faction groups do not show the other faction as friendly.
-* **Chat:** no `Channel.RestrictedLanguageMode`; the ignore list stops whispers and invitations
+* **Chat:** channels have no restricted language mode (one language per faction); the ignore list stops whispers and invitations
   (the client hides an ignored player's other chat itself).
   LocalDefense and WorldDefense need PvP ranks, which do not exist, so WorldDefense is read-only.
-  The GM tag and `.gm allowwhispers` are not kept between logins (nor are they in ArcEmu).
+  The GM tag and `.gm allowwhispers` are not kept between logins (as the GM contract specifies).
 * **Inventory:** prices have no honor discounts, and items that need an honor rank cannot be bought
   or used (there are no ranks). An off-hand item with no room left
-  when a two-hander is put on stays worn, where CMaNGOS mails it (not yet). Item
+  when a two-hander is put on stays worn; it should be mailed to the player (not yet). Item
   enchantments, random properties, readable items, wrapping and loot in
   items (lockboxes, clams: `CMSG_OPEN_ITEM` is) are not done. Dying and the spirit healer wear gear
   down; a broken worn item's stats come back when it is repaired.
-* **GM system:** ArcEmu's commands that need missing systems answer "Not yet implemented."
+* **GM system:** commands that need missing systems answer "Not yet implemented."
   (COMMANDS.md lists them); GM invisibility (`.invisible`) needs sight to be one-sided first. The
-  `c` letter makes speech universal but does not teach the language skills ArcEmu adds.
+  `c` letter makes speech universal but does not also teach the language skills, as the GM contract does.
 
 ## Next milestones
 
@@ -86,15 +86,13 @@ movement: wandering and waypoints ("Creature movement"), and using game objects
 (`gameobject.d`, `gameobjecthandlers.d`; README's "Using game objects": doors, buttons, chairs,
 goobers, locks and chests with their loot, respawns, quest givers), and flight masters
 (`taxi.d`, `taxihandlers.d`; README's "Flight masters"). Next: traps, fishing, and unloading idle
-cells. CMaNGOS references:
-`MotionGenerators/`, `Entities/GossipDef.cpp`, `GossipHandler.cpp`, `NPCHandler.cpp`,
-`TaxiHandler.cpp`.
+cells.
 
 ### 4. Map data: started
 
 Done: `.map` files and vmaps, extracted and read; zones and areas, explored areas. See
 ARCHITECTURE.md's "Terrain". Movement maps (Recast and Detour) for paths: done. Next: game
-objects' models in line of sight (`vmap/DynamicTree.cpp`, `GameObjectModel.cpp`).
+objects' models in line of sight (a dynamic tree of their models).
 
 ### 5. Inventory: done
 
@@ -103,12 +101,12 @@ hearthstones, opening bags of loot) comes with milestone 6's spells and loot.
 
 ### 6. Spells, auras and combat
 
-The largest area. CMaNGOS references: `Spells/`, `Entities/Unit.cpp`, `Combat/`, `AI/`. In order:
+The largest area. In order:
 
 1. **Melee auto-attack: done** (`combat.d`, `combathandlers.d`, `relations.d`; README's "Melee").
    Weapon and defense skills rise with use. Not yet: `NO_SKILL_GAINS` creatures (`StaticFlags2`), parry haste, PvP (no way to be
    flagged yet). Another node's creature: attacking (casting at, looting) its replica moves the
-   player to that node, and a fight keeps it there (CLUSTER.md's phase 8).
+   player to that node, and a fight keeps it there (docs/CLUSTER.md).
 2. **Creatures fighting back: done** (`creatureai.d`; README's "Creatures fight"), calling for help
    included, and EventAI scripts with creatures' spells, texts and fleeing (`eventai.d`,
    `creaturecasting.d`; README's "Creature scripts"), and database scripts for quests, gossip and
@@ -133,9 +131,9 @@ The largest area. CMaNGOS references: `Spells/`, `Entities/Unit.cpp`, `Combat/`,
    PvP-flagged enemies). The PvP flag (`pvp.d`): `/pvp`, enforced zones, contested players, free-for-all
    arenas, Honorless Target. Honor (`honor.d`): kills, dishonorable kills, racial leaders, ranks, the fields,
    inspecting, the weekly standing (`honorweek.d`), what ranks bring (rank items at vendors and to equip,
-   price and repair discounts, the defense channels, the Halls, `CONDITION_PVP_RANK`), ArcEmu's `.honor`
+   price and repair discounts, the defense channels, the Halls, `CONDITION_PVP_RANK`), the `.honor`
    commands. Not yet: honor in battlegrounds (with them), the off hand against players.
-7. **Battlegrounds: started** (`bgqueue.d`, `battleground.d`; from CMaNGOS-classic's `BattleGround*`).
+7. **Battlegrounds: started** (`bgqueue.d`, `battleground.d`).
    * Milestone A, queue and entry: **done**.
      * The queues are a cluster service, with brackets, three slots, invitations of 80 s and their
        reminder, and the average wait.
@@ -145,7 +143,7 @@ The largest area. CMaNGOS references: `Spells/`, `Entities/Unit.cpp`, `Combat/`,
      * Leaving goes back to where the player was; leaving while the battle is on gives Deserter.
      * A player who logs out keeps their place for five minutes; one who comes back to a closed copy is
        sent back.
-     * ArcEmu's `.battleground forcestart` and `.battleground leave`.
+     * `.battleground forcestart` and `.battleground leave`.
    * Milestone B, the shared framework: **done** (`battleground.d`). Each battleground's rules plug into
      `BattlegroundRules`.
      * The spawn events and doors; world states; kills and deaths on the scoreboard.
@@ -167,8 +165,7 @@ The largest area. CMaNGOS references: `Spells/`, `Entities/Unit.cpp`, `Combat/`,
      * A queue service that moves to another node starts empty.
 
 * Spell casting with effects, auras (feeding `stats.d`), cooldowns and the attack swing loop.
-* Creature AI, threat, death, loot (`LootHandler.cpp`), XP and level-up (`Player::GiveXP`, then
-  `InitStatsForLevel`).
+* Creature AI, threat, death, loot, XP and level-up (stats recomputed for the new level).
 
 ### Quests
 
@@ -206,8 +203,8 @@ templates NPCs and quests send (`RewMailTemplateId`).
 ### Auctions
 
 **Done** (`auctionhouse.d`, `auctionhandlers.d`; README's "Auctions"): selling, searching, bidding,
-buyouts, cancelling, expiry, the mails. Not yet: `.auction` (ArcEmu has none; CMaNGOS's opens a
-house from anywhere), the auction rates (`Rate.Auction.*`), an auction bot.
+buyouts, cancelling, expiry, the mails. Not yet: auction rates, an auction bot. There is no `.auction` command (the
+GM command set has none).
 
 ### 7. Social and progression
 
@@ -220,9 +217,9 @@ house from anywhere), the auction rates (`Rate.Auction.*`), an auction bot.
   `.pet` GM commands, `pet_aura` and `pet_spell_cooldown`, a pet's spells beyond its autocast and
   ordered casts (opener spells), creatures noticing pets on sight, the owner's death sending the pet
   away.
-* Quests (`QuestHandler.cpp`, `ObjectMgr::LoadQuests`).
-* The rest of ArcEmu's GM commands, as their systems arrive (COMMANDS.md lists them): each is one
-  method named after ArcEmu's handler.
+* Quests: done (above).
+* The rest of the GM commands, as their systems arrive (COMMANDS.md lists them): each is one
+  method of the handler group it belongs to.
 
 ### Known issues
 

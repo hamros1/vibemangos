@@ -1,24 +1,31 @@
 # dmangos
 
-A World of Warcraft **1.12.x (vanilla)** server written in **D**, modelled on
-[CMaNGOS Classic](https://github.com/cmangos/mangos-classic) and
-[Ember](https://github.com/EmberEmu/Ember). It has two programs:
+A World of Warcraft **1.12.x (vanilla)** server written in **D**, for the 1.12.1 client (build
+5875; 1.12.2 and 1.12.3 are accepted too). It has two programs:
 
-* **authserver**, the login server (CMaNGOS's `realmd`): SRP6 authentication, reconnects and
-  the realm list. It is complete.
-* **worldserver** (CMaNGOS's `mangosd`), in progress. Clients can connect, authenticate with the
-  session key from the login server, list, create and delete characters, and enter the world
+* **authserver**, the login server: SRP6 authentication, reconnects and the realm list. It is
+  complete.
+* **worldserver**, in progress. Clients can connect, authenticate with the session key
+  from the login server, list, create and delete characters, and enter the world
   with them: the character has its gear, bags, skills, spellbook and action bars, and is saved on
   logout. Players on the same map see each other move, sit and emote, hear each other's say, yell
   and emotes, and can whisper. Creatures and game objects are spawned; creatures wander and walk
   their waypoints, and vendors, trainers, innkeepers and bankers serve.
 * **extractor** copies the DBC files out of a 1.12 client's MPQ archives into a `dbc/` folder, and
-  converts its terrain into CMaNGOS's `.map` files in a `maps/` folder.
-  That folder is the client data the world server reads.
+  converts its terrain into `.map` files in a `maps/` folder (and, on request, buildings into
+  `vmaps/` and movement maps into `mmaps/`). That folder is the client data the world server reads.
 
-Both run on **unmodified CMaNGOS MySQL/MariaDB databases** (`classicrealmd`,
-`classiccharacters`, `classicmangos`), so they can take over from CMaNGOS, or run beside it,
-against the same data.
+The servers can also run a cluster of world server nodes that simulate one world together
+([docs/CLUSTER.md](docs/CLUSTER.md)).
+
+### Compatibility
+
+* **Databases.** dmangos uses the CMaNGOS classic MySQL/MariaDB schema as it is (`classicrealmd`,
+  `classiccharacters`, `classicmangos`), so existing databases and world data (classic-db) work
+  unchanged.
+* **Client data.** The extracted files (`dbc/`, `maps/`, `vmaps/`, `mmaps/`) are in the same formats
+  as those of the CMaNGOS extraction tools, so data extracted by either works with the other.
+* **GM commands** follow a fixed compatibility contract (see "The GM system" below).
 
 ## Building
 
@@ -41,8 +48,9 @@ dub test                       # every unit test
 
 ## Database
 
-The server needs a MySQL or MariaDB database with the CMaNGOS realmd schema. An
-existing CMaNGOS `classicrealmd` database works as is. For a new one:
+The login server needs a MySQL or MariaDB database with the realm schema; an existing
+`classicrealmd` database works as is. For a new one, import the schema file from the
+mangos-classic repository:
 
 ```sh
 mysql -u root -p -e "CREATE DATABASE classicrealmd"
@@ -67,11 +75,11 @@ cp config/authserver.example.json authserver.json   # then edit login_database
 
 Point the client's `realmlist.wtf` at the machine with `set realmlist 127.0.0.1`.
 
-As in CMaNGOS, a realm is shown **offline** unless its `realmlist.realmbuilds` column lists
-the client's build. The world server fills that column in when it starts. Changes to
+A realm is shown **offline** unless its `realmlist.realmbuilds` column lists the client's
+build. The world server fills that column in when it starts. Changes to
 `realmlist` are picked up every `realms_state_update_delay` seconds.
 
-Administration (writes the same rows as CMaNGOS's own account commands):
+Administration (writes the `account` and ban rows directly):
 
 ```
 authserver account create NAME PASSWORD [player|moderator|gameMaster|administrator]
@@ -86,17 +94,17 @@ authserver ip unban ADDRESS
 
 ### Configuration
 
-| Key | realmd.conf equivalent | Default |
+| Key | Meaning | Default |
 |---|---|---|
-| `login_database` | `LoginDatabaseInfo` (same `host;port;user;password;db` format, `.;socket;…` for a Unix socket) | `127.0.0.1;3306;mangos;mangos;classicrealmd` |
-| `bind_address`, `port` | `BindIP`, `RealmServerPort` | `0.0.0.0`, `3724` |
-| `realms_state_update_delay` | `RealmsStateUpdateDelay` | `20` |
-| `wrong_pass_max_count` | `WrongPass.MaxCount` (0 = off) | `0` |
-| `wrong_pass_ban_time` | `WrongPass.BanTime` (seconds) | `600` |
-| `wrong_pass_ban_type` | `WrongPass.BanType` (`"ip"` = 0, `"account"` = 1) | `"ip"` |
-| `allowed_builds` | n/a | `[5875, 6005, 6141]` |
-| `max_failed_logins`, `failed_login_block` | n/a: an extra in-memory per-IP throttle (0 = off) | `5`, `900` |
-| `mysql_library`, `idle_timeout`, `max_connections`, `log_level` | n/a | |
+| `login_database` | `host;port;user;password;db` (`.;socket;…` for a Unix socket) | `127.0.0.1;3306;mangos;mangos;classicrealmd` |
+| `bind_address`, `port` | where it listens | `0.0.0.0`, `3724` |
+| `realms_state_update_delay` | seconds between re-reads of `realmlist` | `20` |
+| `wrong_pass_max_count` | wrong passwords before an automatic ban (0 = off) | `0` |
+| `wrong_pass_ban_time` | that ban's length, in seconds | `600` |
+| `wrong_pass_ban_type` | what it bans: `"ip"` or `"account"` | `"ip"` |
+| `allowed_builds` | client builds accepted | `[5875, 6005, 6141]` |
+| `max_failed_logins`, `failed_login_block` | an in-memory per-IP throttle: failures, then seconds blocked (0 = off) | `5`, `900` |
+| `mysql_library`, `idle_timeout`, `max_connections`, `log_level` | the client library file, idle seconds, connection cap, logging | |
 
 Passwords given on the command line end up in shell history, so treat
 `account create` as a development convenience.
@@ -109,8 +117,7 @@ cp config/worldserver.example.json worldserver.json # then edit the *_database e
 ```
 
 `data_dir` must point at a directory containing a `dbc/` folder extracted from your client, and
-preferably a `maps/` folder too. Use dmangos's own extractor (below), or point it at mangosd's
-`DataDir`, which works as is. Without `maps/` the server takes the client's word for which zone it
+preferably a `maps/` folder too, made by the extractor (below). Without `maps/` the server takes the client's word for which zone it
 is in, and nothing is explored. With `vmaps/` too, buildings count: heights on floors, bridges and
 roofs, the areas inside buildings, indoors and outdoors, and what blocks a line of sight. Character creation reads
 `ChrClasses`, `ChrRaces`, `CharStartOutfit`, `CharSections`, `CharacterFacialHairStyles`,
@@ -118,57 +125,56 @@ roofs, the areas inside buildings, indoors and outdoors, and what blocks a line 
 from it. Entering the world also reads `CreatureDisplayInfo`, `CreatureModelData`, `Emotes`,
 `EmotesText`, `Map`, `AreaTable`, `AreaTrigger` and `ChatChannels`.
 
-As mangosd does, at start-up it marks its realm (`realm_id`) online in `realmlist`, writes
+At start-up it marks its realm (`realm_id`) online in `realmlist`, writes
 `realmbuilds`, the realm type and the zone, and opens an `uptime` row. While running it
 updates `population` and `uptime`, and at shutdown it marks the realm offline again. The
 `realmlist` row's `address` and `port` must point at this server.
 
 What works now:
 
-* `SMSG_AUTH_CHALLENGE` / `CMSG_AUTH_SESSION`, checked against `account.sessionkey`, with the same
-  checks and replies as CMaNGOS: unknown account, IP lock, missing key, bans, wrong proof,
-  unsupported build. Connections are logged in `account_logons` with `loginSource` 1.
-* Header encryption with the session key, the addon reply, `CMSG_PING`/`SMSG_PONG` with
-  CMaNGOS's over-speed kick (`max_overspeed_pings`), and one session per account (a new
-  login kicks the old one).
-* The character list (`SMSG_CHAR_ENUM`), built as CMaNGOS's `Player::BuildEnumData` does: from
-  `characters`, `character_pet` and `guild_member`, with equipment from `equipmentCache` and
+* `SMSG_AUTH_CHALLENGE` / `CMSG_AUTH_SESSION`, checked against `account.sessionkey`, with a reply
+  for each failure: unknown account, IP lock, missing key, bans, wrong proof, unsupported build.
+  Connections are logged in `account_logons` with `loginSource` 1.
+* Header encryption with the session key, the addon reply, `CMSG_PING`/`SMSG_PONG` (a player
+  account that pings too often more than `max_overspeed_pings` times in a row is kicked), and one
+  session per account (a new login kicks the old one).
+* The character list (`SMSG_CHAR_ENUM`), built from `characters`,
+  `character_pet` and `guild_member`, with equipment from `equipmentCache` and
   `item_template`, and pets from `creature_template`.
-* Character creation (`CMSG_CHAR_CREATE`), a port of `HandleCharCreateOpcode` and
-  `Player::Create`:
-  * **Checks:** the same as CMaNGOS: creation-disabled mask, race and class, appearance against
-    `CharSections`, name normalization and `StrictPlayerNames`/`MinPlayerName`, reserved names,
+* Character creation (`CMSG_CHAR_CREATE`):
+  * **Checks:** creation-disabled mask, race and class, appearance against
+    `CharSections`, name normalization and `strict_player_names`/`min_player_name`, reserved names,
     name in use, per-account and per-realm limits, and faction rules on PvP realms.
   * **Character:** start position, level and stats, health and mana, the race's taxi nodes, and
     the default skills and spells, including every skill and spell they teach in turn.
   * **Items and bars:** the action bars, and the `CharStartOutfit` and `playercreateinfo_item`
-    items, equipped or stored exactly where mangosd would put them. A hunter's arrows end up in
+    items, equipped or stored in the slots the client expects. A hunter's arrows end up in
     the quiver.
-  * **Rows written:** the same as `SaveToDB`, plus `realmcharacters` and the account's first
-    `character_tutorial` row.
-* Character deletion (`CMSG_CHAR_DELETE`), a port of `Player::DeleteFromDB`:
+  * **Rows written:** every table a character save writes, plus `realmcharacters` and the
+    account's first `character_tutorial` row.
+* Character deletion (`CMSG_CHAR_DELETE`):
   * **Who:** only the account's own characters, and never a guild leader.
   * **What it does:** leaves or disbands the guild and the group, passing on the group lead if
     needed. Removes petitions. Cancels the character's auctions and refunds bidders by mail.
-    Returns unpaid COD mail with items to its senders. Deletes pets and every table CMaNGOS
-    deletes from.
-  * `CharDelete.Method` 1 (unlink) and `CharDelete.MinLevel` are supported.
-* Entering the world (`CMSG_PLAYER_LOGIN`), a port of `HandlePlayerLogin` and `Player::LoadFromDB`:
+    Returns unpaid COD mail with items to its senders. Deletes pets and every row of the
+    character in the characters database.
+  * `char_delete_method` 1 (unlink) and `char_delete_min_level` are supported.
+* Entering the world (`CMSG_PLAYER_LOGIN`):
   * **Loading:** the character, its inventory (`character_inventory` and `item_instance`), skills,
-    spells, action bars, home and the account's tutorial flags. As in CMaNGOS, default spells and
-    the spells skills teach are not saved but learned again at every login. A character without a
+    spells, action bars, home and the account's tutorial flags. Default spells and the spells
+    skills teach are not saved but learned again at every login. A character without a
     home is bound where its race starts.
-  * **Packets:** the same sequence as mangosd: `SMSG_LOGIN_VERIFY_WORLD`, account data times, the
+  * **Packets:** in the order the client expects: `SMSG_LOGIN_VERIFY_WORLD`, account data times, the
     message of the day (`motd`), rest state, bind point, tutorials, spellbook, action buttons,
     factions, game time, weapon and armor proficiencies, the race's intro on the first login, then
     one update packet creating every item, bag and the player, and the friend, ignore and world
     state lists.
-  * **The player object:** all update fields CMaNGOS fills on login: looks, display id and model
+  * **The player object:** every update field a login fills: looks, display id and model
     scale, faction, level, health and powers, stats with item bonuses, armor and resistances,
     attack power, weapon damage and speed, skills, explored zones, money and XP, with its auras,
     talents and crit, dodge, parry and block chances. Guild membership is not applied yet.
   * **Update packets:** `SMSG_UPDATE_OBJECT` blocks built from a field mask, compressed over 100
-    bytes, as CMaNGOS's `UpdateData` does.
+    bytes.
 * In the world:
   * **Other players:** players on the same map see each other within 100 yards: they appear,
     move, sit and emote for each other, and disappear when out of sight or logged out. Strangers
@@ -178,8 +184,8 @@ What works now:
     run is put back.
   * **Teleports:** near and far teleports with the client's acknowledgements
     (`MSG_MOVE_TELEPORT_ACK`, `SMSG_TRANSFER_PENDING`, `SMSG_NEW_WORLD`, `MSG_MOVE_WORLDPORT_ACK`).
-    Instance portals and the other `areatrigger_teleport` triggers apply CMaNGOS's checks (level,
-    raid group, items, quests handed in) with the trigger's own message. The client's `worldport`
+    Instance portals and the other `areatrigger_teleport` triggers check level, raid group, items and
+    quests handed in, with the trigger's own message. The client's `worldport`
     command works for administrators.
   * **Dungeon instances:** each group (or player on its own) gets its own copy of a dungeon or
     raid: a raid's bound copy first (its lockout), else its group's, else its own bind's, else a new
@@ -189,7 +195,7 @@ What works now:
     for `instance_unload_delay_seconds` resets with its binds; a raid copy lasts until its reset
     (`instance_template.reset_delay` days after it was made), so its players stay locked to it, and
     one bound to another copy than its group's is turned away. A player logging back in inside a
-    dungeon returns to its copy; a GM's `.appear` and `.summon` go into the other's copy, and ArcEmu's
+    dungeon returns to its copy; a GM's `.appear` and `.summon` go into the other's copy, and the
     `.instance` commands and `.character showinstances` work on the copies; a full copy
     (`instance_template.maxPlayers`) turns others away, game masters aside. Not yet: encounter
     state, resets at fixed weekly times, the reset warnings. In a cluster each dungeon is one region
@@ -198,10 +204,10 @@ What works now:
   * **Groups:** invitations, parties and raids of up to 40 in eight sub-groups, leaders and
     assistants, kicking, leaving, loot settings, raid target icons, ready checks, rolls, minimap
     pings, and member stats for members out of sight. Groups are kept in `groups` and
-    `group_member` and survive restarts. Logging out of a party leaves it, as in CMaNGOS.
-  * **Guilds** (CMaNGOS's `Guild`, `GuildHandler.cpp`, `PetitionsHandler.cpp`): a guild charter
+    `group_member` and survive restarts. Logging out of a party leaves it.
+  * **Guilds:** a guild charter
     bought from a guild master for 10 silver, signed by nine others of the faction (once an account)
-    and turned in founds the guild with CMaNGOS's five ranks; invitations (of the faction unless
+    and turned in founds the guild with five ranks; invitations (of the faction unless
     `allow_two_side_interaction_guild`, not from someone ignored), the roster (online members, the
     others' last zone and days away, officers' notes for those allowed), the information window,
     promotions and demotions by rank, leaving, removing, disbanding, handing over leadership (a
@@ -210,33 +216,34 @@ What works now:
     master's, at a tabard designer), guild and officer chat by rank rights, and members signing on
     and off. Saved in `guild`, `guild_member`, `guild_rank`, `petition` and `petition_sign`. The
     client's `/gcreate` (`CMSG_GUILD_CREATE`) founds a guild for game masters only.
-  * **Pets** (CMaNGOS's `Pet`, `PetAI`, `PetHandler.cpp`): a hunter tames a beast of its level or
+  * **Pets:** a hunter tames a beast of its level or
     lower (Tame Beast's twenty-second channel), dismisses it, calls it back and revives it; a warlock
     summons a demon (a new one named from `pet_name_generation`, or the one it had before, at full
     health). A pet follows its owner, fights what it is told to (its bar: attack, follow, stay,
     dismiss; aggressive, defensive, passive) and what attacks it or its owner, casts its spells by
     itself where they are set to (the imp from 25 yards), and its kills are its owner's. Its stats
-    are CMaNGOS's (`pet_levelstats`, the family's size); a hunter pet gains experience with its owner
+    come from `pet_levelstats` and the family's size; a hunter pet gains experience with its owner
     up to its owner's level, takes a name once, and can be abandoned. A hunter stables up to two
     pets (slots bought at `StableSlotPrices.dbc`'s prices). Pets are saved in `character_pet` and
     `pet_spell`, go with their owner at logout, on teleports and moves between nodes, and come back
     after. Not yet: loyalty and happiness changing (feeding), training pet spells, pet auras and
     cooldowns saved, pets attacking on sight from creatures' side.
-  * **Friends and ignore lists** (CMaNGOS's `SocialMgr`): up to 50 friends and 25 ignored players,
+  * **Friends and ignore lists:** up to 50 friends and 25 ignored players,
     in `character_social`; the friend list shows who is online (zone, level, class, away or busy),
     on this node or another; friends hear of a login and a logout (across nodes too); a friend of
     the other faction only with `allow_two_side_add_friend` (or GM permissions). An ignored
     player's whispers are refused (`CHAT_MSG_IGNORED`), and so are its group invitations.
   * **Chat:** say, yell and emotes reach those in range; whispers reach anyone online of the same
     faction; party, raid, raid leader and raid warning messages reach the group. `/afk` and `/dnd`
-    set the flag, the chat tag and the reply to whispers. `/who` lists who is online, filtered as
-    in CMaNGOS.
+    set the flag, the chat tag and the reply to whispers. `/who` lists who is online, filtered by
+    faction, level range, class, race, zone, and parts of names, guilds and zone names.
   * **Channels:** the built-in ones (General, Trade, LocalDefense, ...), which follow the zone,
     and custom ones with owners, moderators, passwords, muting, kicks, bans, invitations,
     announcements and moderation. One set per faction, unless
     `allow_two_side_interaction_channel` is on.
-  * **The GM system is ArcEmu's:** its command tables, permission letters, lookup and replies,
-    word for word, with CMaNGOS's `gmlevel` mapped to letters by `gm_permissions`. 210 of its 298
+  * **The GM system:** GM commands behave exactly as ArcEmu 2.4.3's: the same command tables,
+    permission letters, lookup and replies, word for word. This is a compatibility contract. An
+    account's `gmlevel` is mapped to letters by `gm_permissions`. 217 of the 298
     commands work: teleports and `game_tele` recall places, `.modify` (health, stats, speed, money,
     level, looks, ...), `.levelup`, `.character learn`, skills, items, lookups, kicks, bans, mutes,
     account levels, timed shutdowns and restarts, announcements, the GM tag and whisper blocking,
@@ -248,7 +255,7 @@ What works now:
     implemented." See [docs/COMMANDS.md](docs/COMMANDS.md).
   * **NPCs:** gossip menus with their texts and conditions, trainers (lists and lessons, with
     ranks and professions), innkeepers binding the hearthstone, bankers, and vendors.
-  * **Items:** CMaNGOS's inventory rules: moving, stacking, splitting, equipping, bags, the bank and
+  * **Items:** moving, stacking, splitting, equipping, bags, the bank and
     its bag slots, the keyring, destroying, ammo; buying (with limited stock), selling, buyback and
     repairs. Every change is saved to `character_inventory` and `item_instance` as it happens.
   * **Queries:** name, item (`SMSG_ITEM_QUERY_SINGLE_RESPONSE`, from every `item_template`
@@ -258,15 +265,15 @@ What works now:
   * **Creatures and game objects:** every `creature` and `gameobject` spawn of the world database
     (pools, spawn groups and game events decide which; a spawn group's members without an entry of
     their own get its entries by their `MinCount`, `MaxCount` and chances), created when a player first comes near
-    their cell, with CMaNGOS's levels, health, models, equipment, mounts and emotes. Their names come
+    their cell, with their levels, health, models, equipment, mounts and emotes. Their names come
     from `CMSG_CREATURE_QUERY` and `CMSG_GAMEOBJECT_QUERY`. Game objects whose `spawntimesecs` is
-    below 0 wait for events and scripts to spawn them, as in CMaNGOS.
-  * **Using game objects** (CMaNGOS's `GameObject::Use`, `EffectOpenLock`): doors and buttons open
+    below 0 wait for events and scripts to spawn them.
+  * **Using game objects:** doors and buttons open
     for their time and close again; chairs seat the player at the nearest slot; goobers are in use
     for their time, show their page, count for the quests that need them (for the group near them
     too) and cast their spell on the user; cameras play their cinematic. Locks (`Lock.dbc`) open to
     their key item or to a spell of their lock type with the skill they need (lockpicking,
-    herbalism, mining), which may rise by CMaNGOS's gathering chances the first time each object is
+    herbalism, mining), which may rise the first time each object is
     opened. A chest (herbs and veins too) shows its `gameobject_loot_template` loot with a group's
     loot rights and quest items for those whose quests need them; a consumable one is gone once
     emptied (or 5 minutes after opening) and comes back after its respawn time, kept in
@@ -277,7 +284,7 @@ What works now:
     cooldown; one with charges is used up after them. Not yet: their own gossip, mining
     veins' extra uses, linked traps, stealthed traps' visibility, creatures springing traps,
     another node's objects in a cluster.
-  * **Fishing** (CMaNGOS's `EffectTransmitted` and `GameObject::Use` of a bobber): the fishing spell
+  * **Fishing:** the fishing spell
     channels at a bobber cast between its least and greatest range in front of the angler, on the
     water (or "not fishable"); the fish bites 3, 7, 13 or 17 seconds before the channel would end
     (the bobber splashes) and waits 5 seconds. Used in time, the catch depends on the fishing skill
@@ -286,33 +293,31 @@ What works now:
     away; it takes a fishing pole worn. A school of fish (`GAMEOBJECT_TYPE_FISHINGHOLE`) within 20
     yards of the bobber gives the catch from its own loot, and is fished out after a few catches.
     Not yet: junk on a failed catch.
-  * **Creature movement:** creatures move as their spawn's `MovementType` says, as in CMaNGOS:
+  * **Creature movement:** creatures move as their spawn's `MovementType` says:
     wandering within `spawndist` of their spawn point (type 1), or walking their `creature_movement`
     or `creature_movement_template` path (type 2 round and round, type 4 back and forth), waiting
     and facing where the path says. Clients get `SMSG_MONSTER_MOVE`, and a creature that comes into
     sight mid-walk arrives with its walk in its create block. Paths are straight lines; a wander's
     end is put on the ground from the maps and vmaps. AI and waypoint scripts come next.
-  * **Melee** (CMaNGOS's `CombatHandler.cpp` and `Unit`'s melee): players auto-attack creatures they
-    may attack (CMaNGOS's relations API over `FactionTemplate.dbc` and `Faction.dbc`'s base
-    reputations: not friendly), with the swing loop, swing errors (out of reach, facing, dead target)
-    and the dual-wield off hand. Each swing rolls CMaNGOS's attack table (miss, dodge, parry, block,
+  * **Melee:** players auto-attack creatures they may attack (by `FactionTemplate.dbc` and
+    `Faction.dbc`'s base reputations: not friendly), with the swing loop, swing errors (out of reach, facing, dead target)
+    and the dual-wield off hand. Each swing rolls the attack table (miss, dodge, parry, block,
     glancing, crit) from weapon and defense skills and levels, takes off armor, shows the client
     `SMSG_ATTACKERSTATEUPDATE`, gives warriors rage, and takes the creature's health; a creature at
-    none dies. Creatures have CMaNGOS's damage, attack power and armor (`creature_template` and
-    `creature_template_classlevelstats`), players their crit (agility), dodge, parry and block
+    none dies. Creatures have the damage, attack power and armor of `creature_template` and
+    `creature_template_classlevelstats`, players their crit (agility), dodge, parry and block
     chances and shield block. Players are in combat while a creature fights them and for 5 seconds
     after a swing (no health regeneration or rage decay meanwhile). Swings at creatures (critters
-    aside) raise the weapon skill, and theirs at the player its defense, as CMaNGOS's
-    `UpdateCombatSkills` rolls it (likelier the farther below the maximum; intellect helps weapons).
-  * **Creatures fight** (CMaNGOS's base creature AI): attacked, they fight back; aggressive ones
+    aside) raise the weapon skill, and theirs at the player its defense, by a roll (likelier the farther below the maximum; intellect helps weapons).
+  * **Creatures fight:** attacked, they fight back; aggressive ones
     (not `CREATURE_EXTRA_FLAG_NO_AGGRO_ON_SIGHT`) attack a hostile player that comes within their
     aggro radius (`Detection`, a yard more for each level the player is below them) and in sight.
     They keep a threat list (damage is threat; a new victim needs 110% of the current one's in melee
-    reach, 130% elsewhere), chase in straight lines, swing with CMaNGOS's attack table (crushing
+    reach, 130% elsewhere), chase in straight lines, swing with the attack table (crushing
     blows included), and give warriors rage. They give up (evade) when nobody is left to fight, or
     when their victim is 30 yards beyond where their `Pursuit` time last started; they run back to
     where the fight began, evading attacks, and get a third of their health back every 5 seconds out
-    of combat. Starting a fight, a creature calls for help (CMaNGOS's `CallAssistance`): allies
+    of combat. Starting a fight, a creature calls for help: allies
     within 5 yards (or its `CallForHelp`) that would attack the enemy on sight join in a moment and a
     half later; and a fighting creature that passes within 5 yards of an idle ally pulls it in.
   * **Scripts in D** (docs/SCRIPTING.md): gameplay the database cannot describe is written as D
@@ -340,7 +345,7 @@ What works now:
     awakens Naralex while his nightmares, Mutanus last, come for him). Escort paths come from
     `script_waypoint` or `waypoint_path`. A creature whose `ScriptName`
     no script serves yet runs its EventAI as before; the server logs how many names are served.
-  * **Database scripts** (CMaNGOS's `dbscripts_on_*`): a quest's start and complete scripts, a
+  * **Database scripts** (`dbscripts_on_*`): a quest's start and complete scripts, a
     gossip option's, a game object's when used (by its template and by its spawn), a waypoint's
     when a walking creature gets there (Northshire's peasants chop wood), a creature's when it is
     killed, a spell's event (`SPELL_EFFECT_SEND_EVENT`), a spell's own (`dbscripts_on_spell`, for its
@@ -353,7 +358,7 @@ What works now:
     the script when a creature is (or is not) near, opening and closing doors, and moving: walking to a point (a relay script
     once there) or back to its spawn point, turning, teleporting, a movement type (standing,
     wandering, its path), pausing and resuming its path, AI events. Not yet: paths by id.
-  * **Creature scripts** (CMaNGOS's EventAI, `creature_ai_scripts`, for each creature entry or
+  * **Creature scripts** (EventAI, `creature_ai_scripts`, for each creature entry or
     spawn): their events (timers in and out of combat, health, mana and the victim's health between
     two percentages, the victim within a range or casting, aggro, a kill, death, evading, spawning,
     reaching home, an aura of their own there or missing, a spell hitting them, a player's emote at
@@ -366,9 +371,9 @@ What works now:
     phases, quest events and kill credit for the players fighting it, relay scripts (the database
     scripts below), AI events to the friendly creatures around, summoning creatures (beside it or at a `creature_ai_summons` spot, attacking
     its target), evading, attacking. Summoned creatures are never saved and never come back: they
-    go as CMaNGOS's `TempSpawnType` says (after their time, out of combat only, when they die, or
-    when their corpse goes). A creature casts as
-    CMaNGOS's `DoCastSpellIfCan` allows (not while casting another, in range, with the mana): cast
+    go as their summon type says (after their time, out of combat only, when they die, or
+    when their corpse goes). A creature casts only
+    when it can (not while casting another, in range, with the mana): cast
     times stand it still facing its target (`SMSG_SPELL_START`, then `SMSG_SPELL_GO`); a spell on the
     next swing waits for the swing. Its spells do school damage (a magic one resisted by the level
     difference), weapon damage, auras (debuffs on players, damage over time included; buffs on
@@ -378,7 +383,7 @@ What works now:
     spell lists (`creature_template_spells`), spell school lockouts. Their
     casts are interrupted by interrupting spells (Pummel's `SPELL_EFFECT_INTERRUPT_CAST`), and
     theirs interrupt a player's.
-  * **Death** (CMaNGOS's `KillPlayer`, repop, reclaim and spirit healer): a player killed loses a tenth
+  * **Death:** a player killed loses a tenth
     of its gear's durability and lies rooted until it releases its spirit (or six minutes pass, or it
     logs out). Released, it is a ghost at the nearest graveyard of its team (`game_graveyard_zone`:
     the area's, else the zone's, else the map's; an instance's from its entrance), 25% faster (night
@@ -390,9 +395,9 @@ What works now:
     hour for bosses, at most 90% of its respawn time) and comes back at its spawn point after
     `spawntimesecs` (to `spawntimesecsmax`), kept in `creature_respawn` across restarts. Not yet:
     resurrection sickness, ghosts hidden from the living, skinnable corpses.
-  * **Experience and loot** (CMaNGOS's `XP::Gain`, `RewardGroupAtKill` and `LootMgr`): the first
+  * **Experience and loot:** the first
     player to hurt a creature taps it (others see it grey) for itself and its group. A kill gives
-    CMaNGOS's experience (by the level difference, elites and `ExperienceMultiplier`; doubled from
+    experience (by the level difference, elites and `ExperienceMultiplier`; doubled from
     the rested pool), shared in a group by level among the living members within 74 yards, with a
     bonus from three members on. The corpse sparkles for those who may loot it: its money
     (`MinLootGold`..`MaxLootGold`) and items from `creature_loot_template` and
@@ -403,9 +408,8 @@ What works now:
     random enchantments, skinning and pickpocketing. Items with loot (clams, sacks, boxes of
     supplies) open in the bags (`CMSG_OPEN_ITEM`, unless a lock needs picking) to their
     `item_loot_template` loot and money; emptied, they are gone (an item left half looted keeps its
-    loot until logout, not across it as CMaNGOS's `item_loot` does).
-  * **Spells** (CMaNGOS's `Spell::SpellStart`, `CheckCast`, `cast` and `SpellEffects.cpp`): a
-    known spell is checked (alive, not busy, its cooldown and category cooldown and the global
+    loot until logout, not across it: `item_loot` is not used).
+  * **Spells:** a known spell is checked (alive, not busy, its cooldown and category cooldown and the global
     cooldown over, standing, the power and reagents it costs, an enemy or friend in range and in
     sight), shown with its cast time (`SpellCastTimes.dbc`; moving interrupts most), then goes: its
     cooldowns start (saved in `character_spell_cooldown` at logout, at each save and before a move to
@@ -433,12 +437,12 @@ What works now:
     "damage done by spells" of the spell's school (items' and talents' auras) adds to a direct spell's
     damage, times its cast time over 3.5 seconds (1.5 at least), and its "healing done" to a heal
     alike; over time, the bonus times the duration over 15 seconds is shared among the ticks. A spell's
-    damage to a creature is partly resisted (none, a quarter, a half, three quarters) by CMaNGOS's
-    distribution, from the creature's resistance of the school and its level above the caster's; a
+    damage to a creature is partly resisted (none, a quarter, a half, three quarters) by a
+    distribution drawn from the creature's resistance of the school and its level above the caster's; a
     binary spell (one with a non-damage effect on its target, such as Frostbolt's slow, or only
     auras) is resisted whole or not at all, its resistance added to its chance to miss; damage over
     time ticks are partly resisted too. Not yet: resists against players, the area auras' other effects (slows) and their hitting players.
-  * **Auras** (CMaNGOS's `SpellAuraHolder` and `Aura`): buffs and debuffs fill the aura fields
+  * **Auras:** buffs and debuffs fill the aura fields
     (positive slots 0..31, negative 32..47) and the buff bar's durations, refresh and stack, and end
     when their time is up, when clicked off, at death, or by their interrupt flags (standing up ends
     food and drink, moving, damage, casting, attacking). What they do: stats, percentages of
@@ -448,8 +452,7 @@ What works now:
     every 5 seconds and drink's mana, energize, triggered spells. Auras are saved (`character_aura`)
     at logout and with each save, and come back with the time they had left; a cluster's hand-off
     carries them. Not yet: dispels, procs, absorbs, auras on creatures slowing or rooting them.
-  * **Quests** (CMaNGOS's `QuestHandler.cpp`, `GossipDef.cpp` and `Player`'s quest functions): quest
-    givers (`creature_questrelation`, `creature_involvedrelation`) show what they have for the player
+  * **Quests:** quest givers (`creature_questrelation`, `creature_involvedrelation`) show what they have for the player
     (the exclamation and question marks), list their quests in their gossip (or open the only one),
     and give them as `quest_template` says who may take them (class, race, level, skill, condition,
     the quests before, exclusive groups, done unless repeatable). The quest log holds 20 quests with
@@ -465,18 +468,17 @@ What works now:
     and fails when its time is up. A list of several quests is headed by the giver's
     `questgiver_greeting` and its emote. Progress is saved in `character_queststatus`. Not yet: escort
     quests.
-  * **Flight masters** (CMaNGOS's `TaxiHandler.cpp`, `Taxi.cpp`, `ActivateTaxiPathTo`): a flight
-    master's node (`TaxiNodes.dbc`) is learned at the first talk and saved in `taximask`; then the
+  * **Flight masters:** a flight master's node (`TaxiNodes.dbc`) is learned at the first talk and saved in `taximask`; then the
     master shows the known nodes. A flight to one, directly or over several legs (`TaxiPath.dbc`,
     `TaxiPathNode.dbc`), costs the paths' prices (10% less at honored with the master's faction),
     mounts the player on its node's flying mount and flies it along the path at 32 yards a second
     (`SMSG_MONSTER_MOVE` for everyone), the server following so that its place on the map and its
     sight change as it goes; at the end it lands at the destination. Busy, mounted, in a form other
-    than a stance, too far, out of money or not knowing a node, it is refused as CMaNGOS refuses it.
+    than a stance, too far, out of money or not knowing a node, it is refused.
     Logging out in flight saves the character at the destination. `.cheat taxi` gives or takes
     every node. Not yet: flights across maps, a flight's pauses, resuming a flight at login,
     flying on to another node of a cluster mid-flight.
-  * **Auctions** (CMaNGOS's `AuctionHouseMgr` and `AuctionHouseHandler.cpp`): auctioneers open
+  * **Auctions:** auctioneers open
     their city's house (`AuctionHouse.dbc`; the goblins' for the neutral towns; one for both
     factions with `allow_two_side_interaction_auction`). An item that may be traded is put up for 2,
     8 or 24 hours for a deposit (the house's share of its sell price for each 2 hours); bids start
@@ -488,7 +490,7 @@ What works now:
     sub-class, quality and usability, 50 at a time; sellers and bidders list theirs. The `auction`
     table is the one place: every node of a cluster lists from it and changes a row only as it saw
     it (so two nodes cannot both sell one auction), and the coordinator settles those over.
-  * **Reputation** (CMaNGOS's `ReputationMgr`): each character's standing with the factions of the
+  * **Reputation:** each character's standing with the factions of the
     reputation list, from its race's and class's base (`Faction.dbc`), saved in
     `character_reputation`. Kills give `creature_onkill_reputation`'s (shared by a group as
     experience is, half to the faction's team where it says so, up to its rank cap), quests their
@@ -498,11 +500,11 @@ What works now:
     to neutral peace, and the client sets war (where allowed), inactive and the watched faction.
     Creatures react to a player by its standing and its wars; honored and above get 10% off at
     vendors, trainers and repairs; items, conditions and quests that ask for a rank check it.
-  * **Weather** (CMaNGOS's `Weather.cpp`): a zone with a `game_weather` row has rain, snow or
+  * **Weather:** a zone with a `game_weather` row has rain, snow or
     storms by the season's chances, changing every 10 minutes (better, worse, or anew) while players
     are in it; they see it (`SMSG_WEATHER`) on entering the zone and when it changes, and fine
     weather in zones without a row.
-  * **Talents** (CMaNGOS's `LearnTalent`): a talent point a level from 10 on; a talent of the
+  * **Talents:** a talent point a level from 10 on; a talent of the
     player's class is learned a rank at a time, if its tree has 5 points for each row above it and
     what it depends on is known, the new rank's spell replacing the rank before. Passive spells
     (talents, racials) put their aura effects on the player for good, at login and when learned (as
@@ -510,24 +512,24 @@ What works now:
     are spell modifiers (`SPELL_AURA_ADD_FLAT_MODIFIER`, `ADD_PCT_MODIFIER`) change the spells of
     their family and mask: damage and healing, damage over time, cost, cast time, cooldowns,
     durations, range, radius, effect values and crit chance (`spellmods.d`). A class trainer of the
-    player's class offers to unlearn them from level 10, at CMaNGOS's price (1 gold, 5, 10, then 5
-    more each time up to 50, 5 less for each month without a reset), saved with the character.
-  * **Mail** (CMaNGOS's `MailHandler.cpp`): at a mailbox, letters to a character of the faction
+    player's class offers to unlearn them from level 10, for 1 gold, 5, 10, then 5
+    more each time up to 50, 5 less for each month without a reset, saved with the character.
+  * **Mail:** at a mailbox, letters to a character of the faction
     (30 copper) with an item, money or cash on delivery; the inbox (50 letters), taking money and
     items (cash on delivery paid and mailed to the sender), reading bodies, copying them as Plain
     Letters, returning and deleting. Items and money to another account arrive after
     `mail_delivery_delay` (an hour), the rest at once with "you have new mail". It all lives in
     the database (`mail`, `mail_items`, `item_text`), read each time, so a player's mail is the same
     on any node of a cluster. Once an hour (on one node of a cluster) letters whose time is up are
-    settled as CMaNGOS's `ReturnOrDeleteOldMails` does: a player's letter with an item goes back to
+    settled: a player's letter with an item goes back to
     its sender once, every other one is deleted with its item. Auction houses send mail too. Not
     yet: mail from NPCs and quests (`mail_template`).
-  * **Trading** (CMaNGOS's `TradeHandler.cpp`): two players of a faction within 11 yards trade up
+  * **Trading:** two players of a faction within 11 yards trade up
     to six items and money each; any change takes back both acceptances; when both accept, it goes
     through if both can pay and carry it (the items keep their guids and change owners, their
     giver's rows deleted and their taker's inserted). Not yet: the seventh slot's enchanting spell,
     trading across a cluster's nodes.
-  * **Duels** (CMaNGOS's `DuelHandler.cpp`, `EffectDuel`, `DuelComplete`): the Duel spell plants a
+  * **Duels:** the Duel spell plants a
     flag between two players and asks the other; accepted, both count down 3 seconds and are then
     enemies of each other, in melee and with spells (players can attack players: duelists, and
     enemies flagged for PvP). A blow that would kill leaves 1 health and loses the duel (the loser
@@ -549,74 +551,98 @@ What works now:
       2000 resources win.
     * Not yet: Alterac Valley, and the battleground raid group (raid frames).
   * **The update tick** (every 50 ms, `update_interval`): health, mana, rage and energy regenerate
-    as in CMaNGOS (health and the loss of rage only out of combat, and only for the living); inns and capitals give rested XP, also while offline; characters are saved every
+    (health and the loss of rage only out of combat, and only for the living); inns and capitals give rested XP, also while offline; characters are saved every
     15 minutes (`player_save_interval`).
   * **Logout** takes 20 seconds, sitting and rooted, unless the player rests or its account level
     reaches `instant_logout`; it can be cancelled. It saves the position, zone, level, money, health
     and powers, rest, played time and settings. A connection that drops is saved the same way.
-  * At start-up, every character and account of the realm is marked offline, as mangosd does.
+  * At start-up, every character and account of the realm is marked offline.
 
-Character, item, mail and group ids are allocated from `MAX(id) + 1` at start-up, as mangosd does. Never
-run two world servers, or a world server and mangosd, on the same characters database at the same
-time.
+Standalone, character, item, mail and group ids are allocated from `MAX(id) + 1` at start-up. Never
+run two standalone world servers, or a world server and another server, on the same characters
+database at the same time; a cluster's nodes take their ids in blocks from its coordinator
+([docs/CLUSTER.md](docs/CLUSTER.md)).
 
-| Key | mangosd.conf equivalent | Default |
+| Key | Meaning | Default |
 |---|---|---|
-| `realm_id` | `RealmID` | `1` |
-| `login_database`, `world_database`, `character_database` | `LoginDatabaseInfo`, `WorldDatabaseInfo`, `CharacterDatabaseInfo` | `…classicrealmd`, `…classicmangos`, `…classiccharacters` |
-| `bind_address`, `port` | `BindIP`, `WorldServerPort` | `0.0.0.0`, `8085` |
-| `game_type`, `realm_zone` | `GameType`, `RealmZone`; a PvP realm (1, 8, 16) flags players in enemy and contested land | `1`, `1` |
-| `player_limit` | `PlayerLimit` (used for the population shown) | `100` |
-| `max_overspeed_pings` | `MaxOverspeedPings` | `2` |
-| `uptime_update_interval` | `UpdateUptimeInterval` (minutes) | `10` |
-| `data_dir` | `DataDir` | `.` |
-| `characters_creating_disabled`, `characters_per_account`, `characters_per_realm` | `CharactersCreatingDisabled`, `CharactersPerAccount`, `CharactersPerRealm` | `0`, `50`, `10` |
-| `allow_two_side_accounts`, `skip_cinematics` | `AllowTwoSide.Accounts`, `SkipCinematics` | `false`, `0` |
-| `motd` | `Motd` (`@` starts a new line) | a short welcome |
-| `visibility_distance`, `visibility_relocation_lower_limit` | `Visibility.Distance.Continents`, `Visibility.RelocationLowerLimit` | `100`, `10` |
-| `instance_unload_delay_seconds` | `Instance.UnloadDelay` (ms there): an empty dungeon copy resets after so long | `1800` |
-| `grid_cleanup_delay_seconds` | `GridCleanUpDelay` (ms there): a cell no player has been near for so long unloads its creatures and game objects; `0` never | `300` |
-| `listen_range_say`, `listen_range_text_emote`, `listen_range_yell` | `ListenRange.Say`, `ListenRange.TextEmote`, `ListenRange.Yell` | `25`, `25`, `300` |
-| `allow_two_side_interaction_chat` | `AllowTwoSide.Interaction.Chat` (whispers between factions) | `false` |
-| `allow_two_side_interaction_channel`, `allow_two_side_interaction_group` | `AllowTwoSide.Interaction.Channel`, `AllowTwoSide.Interaction.Group` | `false`, `false` |
-| `allow_two_side_interaction_auction` | `AllowTwoSide.Interaction.Auction` | `false` |
-| `allow_two_side_add_friend` | `AllowTwoSide.AddFriend` | `false` |
-| `allow_two_side_interaction_guild` | `AllowTwoSide.Interaction.Guild` | `false` |
-| `chat_restricted_raid_warnings` | `Chat.RestrictedRaidWarnings` | `false` |
-| `allow_two_side_who_list` | `AllowTwoSide.WhoList` (the other faction in /who) | `false` |
-| `gm_level_in_who_list` | `GM.InWhoList.Level` (the highest account level players see in /who) | `3` |
-| `max_who_list_returns` | `MaxWhoListReturns` (the most matches /who counts; it lists at most 49) | `49` |
-| `instance_ignore_level`, `instance_ignore_raid` | `Instance.IgnoreLevel`, `Instance.IgnoreRaid` | `false`, `false` |
-| `update_interval` | the world tick, in ms (mangosd's `WORLD_SLEEP_CONST`) | `50` |
-| `compression` | `Compression`: zlib level of update packets, 1 (fastest) to 9 | `1` |
-| `metrics_interval_seconds` | n/a: seconds between log lines with tick times and GC figures; 0 for none | `60` |
-| `honor_maintenance_day`, `min_honor_kills` | `MaintenanceDay` (0 Sunday: when the honor week turns), `MinHonorKills` (for a place in the standing) | `3`, `15` |
-| `battleground_cast_deserter`, `battleground_premature_finish` | `Battleground.CastDeserter`, `BattleGround.PrematureFinishTimer` (seconds here; 0 never) | `true`, `300` |
-| `max_pending_output_kb` | n/a: a client with more than this not yet sent to it (it is not reading) is disconnected; 0 no limit | `4096` |
-| `mmaps` | `mmap.enabled`: creatures find their way over `data_dir/mmaps`, where there are movement maps | `true` |
-| `write_log` | n/a: where writes wait, flushed to disk, until MySQL has them; written again at start-up; empty for none | `"writes.log"` (`"writes-<node_id>.log"` in a cluster) |
-| `packet_log` | n/a: a directory where every packet sent to each client is written (time, opcode, body in hex), for finding what a client cannot take; empty for none | `""` |
-| `cluster` | n/a: this node's place in a cluster (docs/CLUSTER.md); standalone without it | none |
-| `logout_delay`, `player_save_interval` | seconds a logout takes (GMs and resting players: none), `PlayerSave.Interval` (seconds here) | `20`, `900` |
-| `gm_permissions` | ArcEmu's permission letters for `account.gmlevel` 1, 2 and 3 | `{"1": "bcghiltuv", "2": "a", "3": "az"}` |
-| `command_overrides` | ArcEmu's `command_overrides` table: `[{"command": "gm on", "group": "m"}]` | none |
-| `allow_player_commands`, `gm_command_log` | ArcEmu's `Server.AllowPlayerCommands`, `Log.GMCommands` (a file name here) | `false`, none |
-| `gamemaster_list_only_active_gms`, `gamemaster_hide_permissions` | ArcEmu's `GameMaster.ListOnlyActiveGMs`, `.HidePermissions` | `false`, `false` |
-| `send_stats_on_join`, `gm_client_channel` | ArcEmu's `Server.SendStatsOnJoin`, `GMClient.GmClientChannel` | `true`, none |
-| `flood_lines`, `flood_seconds`, `flood_message` | ArcEmu's `FloodProtection.*` (0 = off) | `0`, `0`, `false` |
-| `announce_tag`, `announce_gm_admin_tag`, `announce_name_in_announce`, `announce_name_in_wannounce` | ArcEmu's `Announce.*` | `Staff`, `false`, `true`, `true` |
-| `announce_tag_color`, `announce_gm_tag_color`, `announce_name_color`, `announce_message_color` | ArcEmu's `Color.Ann*Color` (1-10) | `2`, `1`, `4`, `10` |
-| `rate_health`, `rate_mana`, `rate_rage_loss`, `rate_energy` | `Rate.Health`, `Rate.Mana`, `Rate.Rage.Loss`, `Rate.Energy` | `1` |
-| `rate_rest_ingame`, `rate_rest_offline_in_tavern_or_city`, `rate_rest_offline_in_wilderness` | `Rate.Rest.*` | `1` |
-| `rate_xp_explore` | `Rate.XP.Explore` | `1` |
-| `rate_reputation_gain`, `rate_reputation_lowlevel_kill`, `rate_reputation_lowlevel_quest` | `Rate.Reputation.Gain`, `.LowLevel.Kill`, `.LowLevel.Quest` | `1`, `0.2`, `0.2` |
-| `max_player_level` | `MaxPlayerLevel` | `60` |
-| `movement_speed_check`, `movement_speed_tolerance`, `movement_speed_slack` | n/a (CMaNGOS leaves it to its anticheat module): allow this factor over running speed, plus these yards | `true`, `1.5`, `15` |
-| `start_player_level`, `start_gm_level`, `start_player_money` | `StartPlayerLevel`, `GM.StartLevel`, `StartPlayerMoney` | `1`, `1`, `0` |
-| `max_primary_trade_skill`, `trade_skill_gm_ignore_max_primary` | `MaxPrimaryTradeSkill`, `TradeSkill.GMIgnore.MaxPrimarySkillsCount` | `2`, `4` |
-| `strict_player_names`, `min_player_name` | `StrictPlayerNames`, `MinPlayerName` | `0`, `2` |
-| `char_delete_method`, `char_delete_min_level`, `mail_delivery_delay` | `CharDelete.Method`, `CharDelete.MinLevel`, `MailDeliveryDelay` | `0`, `0`, `3600` |
-| `allowed_builds`, `mysql_library`, `idle_timeout`, `max_connections`, `log_level` | n/a | |
+| `realm_id` | the `realmlist` row this server is | `1` |
+| `login_database`, `world_database`, `character_database` | `host;port;user;password;db` of each database | `…classicrealmd`, `…classicmangos`, `…classiccharacters` |
+| `bind_address`, `port` | where it listens | `0.0.0.0`, `8085` |
+| `game_type`, `realm_zone` | the realm's type and zone; a PvP realm (1, 8, 16) flags players in enemy and contested land | `1`, `1` |
+| `player_limit` | used for the population shown | `100` |
+| `max_overspeed_pings` | pings too close together, in a row, before a player is kicked (0 = off) | `2` |
+| `uptime_update_interval` | minutes between `uptime` updates | `10` |
+| `data_dir` | the folder holding `dbc/`, `maps/`, `vmaps/` and `mmaps/` | `.` |
+| `characters_creating_disabled`, `characters_per_account`, `characters_per_realm` | bit 0 blocks creating Alliance characters, bit 1 Horde (player accounts); character limits | `0`, `50`, `10` |
+| `allow_two_side_accounts`, `skip_cinematics` | both factions on one account on PvP realms; the race intro: 0 always shown, 1 skipped if the account has a character of that race, 2 never shown | `false`, `0` |
+| `motd` | the message of the day (`@` starts a new line) | a short welcome |
+| `visibility_distance`, `visibility_relocation_lower_limit` | how far players see (yards); how far one moves before what it sees is worked out again | `100`, `10` |
+| `instance_unload_delay_seconds` | an empty dungeon copy resets after so long | `1800` |
+| `grid_cleanup_delay_seconds` | a cell no player has been near for so long unloads its creatures and game objects; `0` never | `300` |
+| `listen_range_say`, `listen_range_text_emote`, `listen_range_yell` | how far each is heard (yards) | `25`, `25`, `300` |
+| `allow_two_side_interaction_chat` | whispers between factions | `false` |
+| `allow_two_side_interaction_channel`, `allow_two_side_interaction_group` | one set of channels for both factions; groups across factions | `false`, `false` |
+| `allow_two_side_interaction_auction` | one auction house for both factions | `false` |
+| `allow_two_side_add_friend` | friends of the other faction | `false` |
+| `allow_two_side_interaction_guild` | guilds of both factions | `false` |
+| `chat_restricted_raid_warnings` | raid warnings only in raids | `false` |
+| `allow_two_side_who_list` | the other faction in /who | `false` |
+| `gm_level_in_who_list` | the highest account level players see in /who | `3` |
+| `max_who_list_returns` | the most matches /who counts (it lists at most 49) | `49` |
+| `instance_ignore_level`, `instance_ignore_raid` | skip the level and raid-group checks of instance entrances | `false`, `false` |
+| `update_interval` | the world tick, in ms | `50` |
+| `compression` | zlib level of update packets, 1 (fastest) to 9 | `1` |
+| `metrics_interval_seconds` | seconds between log lines with tick times and GC figures; 0 for none | `60` |
+| `honor_maintenance_day`, `min_honor_kills` | the day the honor week turns (0 Sunday); honorable kills needed for a place in the standing | `3`, `15` |
+| `battleground_cast_deserter`, `battleground_premature_finish` | Deserter for leaving a battleground early; seconds a side may be short of players before it loses (0 never) | `true`, `300` |
+| `max_pending_output_kb` | a client with more than this not yet sent to it (it is not reading) is disconnected; 0 no limit | `4096` |
+| `mmaps` | creatures find their way over `data_dir/mmaps`, where there are movement maps | `true` |
+| `write_log` | where writes wait, flushed to disk, until MySQL has them; written again at start-up; empty for none | `"writes.log"` (`"writes-<node_id>.log"` in a cluster) |
+| `packet_log` | a directory where every packet sent to each client is written (time, opcode, body in hex), for finding what a client cannot take; empty for none | `""` |
+| `cluster` | this node's place in a cluster (docs/CLUSTER.md); standalone without it | none |
+| `logout_delay`, `player_save_interval` | seconds a logout takes (GMs and resting players: none); seconds between saves of each character | `20`, `900` |
+| `gm_permissions` | the permission letters of `account.gmlevel` 1, 2 and 3 | `{"1": "bcghiltuv", "2": "a", "3": "az"}` |
+| `command_overrides` | other permission letters for commands: `[{"command": "gm on", "group": "m"}]` | none |
+| `allow_player_commands`, `gm_command_log` | accounts without permissions may use the `0` commands; the file GM commands are logged to | `false`, none |
+| `gamemaster_list_only_active_gms`, `gamemaster_hide_permissions` | `.gm list` shows players only GMs with the tag on; it hides GMs' permissions from players | `false`, `false` |
+| `send_stats_on_join`, `gm_client_channel` | everyone, not only GMs, is told the population on entering the world; a channel only accounts with permissions may join | `true`, none |
+| `flood_lines`, `flood_seconds`, `flood_message` | lines a player without permissions may say per period, and whether it is told (0 = off) | `0`, `0`, `false` |
+| `announce_tag`, `announce_gm_admin_tag`, `announce_name_in_announce`, `announce_name_in_wannounce` | how `.announce` and `.wannounce` look | `Staff`, `false`, `true`, `true` |
+| `announce_tag_color`, `announce_gm_tag_color`, `announce_name_color`, `announce_message_color` | their colours: 1 light red, 2 light blue, 3 blue, 4 green, 5 red, 6 gold, 7 grey, 8 white, 9 magenta, 10 yellow | `2`, `1`, `4`, `10` |
+| `rate_health`, `rate_mana`, `rate_rage_loss`, `rate_energy` | regeneration rates | `1` |
+| `rate_rest_ingame`, `rate_rest_offline_in_tavern_or_city`, `rate_rest_offline_in_wilderness` | rested experience rates | `1` |
+| `rate_xp_explore` | exploration experience rate | `1` |
+| `rate_reputation_gain`, `rate_reputation_lowlevel_kill`, `rate_reputation_lowlevel_quest` | reputation rates; the least share for grey kills and low quests | `1`, `0.2`, `0.2` |
+| `max_player_level` | the level cap | `60` |
+| `movement_speed_check`, `movement_speed_tolerance`, `movement_speed_slack` | the movement check: allow this factor over running speed, plus these yards | `true`, `1.5`, `15` |
+| `start_player_level`, `start_gm_level`, `start_player_money` | new characters' level; their level on moderator accounts and up; their money in copper | `1`, `1`, `0` |
+| `max_primary_trade_skill`, `trade_skill_gm_ignore_max_primary` | primary professions a character may learn; the account level from which the limit is ignored | `2`, `4` |
+| `strict_player_names`, `min_player_name` | the character name rules (0 any one script, bit 0 basic Latin, bit 1 the realm zone's script); the shortest name | `0`, `2` |
+| `char_delete_method`, `char_delete_min_level`, `mail_delivery_delay` | delete (0) or unlink (1) characters, from which level; seconds before items and money reach another account | `0`, `0`, `3600` |
+| `allowed_builds`, `mysql_library`, `idle_timeout`, `max_connections`, `log_level` | client builds accepted; the client library file; idle seconds; connection cap; logging | |
+
+#### Coming from mangosd.conf or realmd.conf
+
+For operators moving a configuration over, the options of those files that have an equivalent here.
+Times the old files give in milliseconds are seconds here.
+
+| mangosd.conf / realmd.conf | Here |
+|---|---|
+| `RealmID`, `BindIP`, `WorldServerPort` / `RealmServerPort` | `realm_id`, `bind_address`, `port` |
+| `LoginDatabaseInfo`, `WorldDatabaseInfo`, `CharacterDatabaseInfo` (same format) | `login_database`, `world_database`, `character_database` |
+| `RealmsStateUpdateDelay`, `WrongPass.MaxCount`, `.BanTime`, `.BanType` (0 = ip, 1 = account) | `realms_state_update_delay`, `wrong_pass_max_count`, `wrong_pass_ban_time`, `wrong_pass_ban_type` |
+| `GameType`, `RealmZone`, `PlayerLimit`, `MaxOverspeedPings`, `UpdateUptimeInterval`, `DataDir`, `Motd` | `game_type`, `realm_zone`, `player_limit`, `max_overspeed_pings`, `uptime_update_interval`, `data_dir`, `motd` |
+| `CharactersCreatingDisabled`, `CharactersPerAccount`, `CharactersPerRealm`, `SkipCinematics` | `characters_creating_disabled`, `characters_per_account`, `characters_per_realm`, `skip_cinematics` |
+| `AllowTwoSide.Accounts`, `.Interaction.Chat`, `.Interaction.Channel`, `.Interaction.Group`, `.Interaction.Auction`, `.Interaction.Guild`, `.AddFriend`, `.WhoList` | `allow_two_side_accounts`, `allow_two_side_interaction_chat`, `…_channel`, `…_group`, `…_auction`, `…_guild`, `allow_two_side_add_friend`, `allow_two_side_who_list` |
+| `Visibility.Distance.Continents`, `Visibility.RelocationLowerLimit` | `visibility_distance`, `visibility_relocation_lower_limit` |
+| `Instance.UnloadDelay` (ms), `GridCleanUpDelay` (ms), `Instance.IgnoreLevel`, `Instance.IgnoreRaid` | `instance_unload_delay_seconds`, `grid_cleanup_delay_seconds`, `instance_ignore_level`, `instance_ignore_raid` |
+| `ListenRange.Say`, `.TextEmote`, `.Yell`, `Chat.RestrictedRaidWarnings` | `listen_range_say`, `listen_range_text_emote`, `listen_range_yell`, `chat_restricted_raid_warnings` |
+| `GM.InWhoList.Level`, `MaxWhoListReturns`, `GM.StartLevel` | `gm_level_in_who_list`, `max_who_list_returns`, `start_gm_level` |
+| `Compression`, `mmap.enabled`, `PlayerSave.Interval` (ms) | `compression`, `mmaps`, `player_save_interval` |
+| `MaintenanceDay`, `MinHonorKills`, `Battleground.CastDeserter`, `BattleGround.PrematureFinishTimer` (ms) | `honor_maintenance_day`, `min_honor_kills`, `battleground_cast_deserter`, `battleground_premature_finish` |
+| `Rate.Health`, `.Mana`, `.Rage.Loss`, `.Energy`, `Rate.Rest.*`, `Rate.XP.Explore`, `Rate.Reputation.Gain`, `.LowLevel.Kill`, `.LowLevel.Quest` | `rate_health`, `rate_mana`, `rate_rage_loss`, `rate_energy`, `rate_rest_*`, `rate_xp_explore`, `rate_reputation_gain`, `rate_reputation_lowlevel_kill`, `rate_reputation_lowlevel_quest` |
+| `MaxPlayerLevel`, `StartPlayerLevel`, `StartPlayerMoney`, `MaxPrimaryTradeSkill`, `TradeSkill.GMIgnore.MaxPrimarySkillsCount` | `max_player_level`, `start_player_level`, `start_player_money`, `max_primary_trade_skill`, `trade_skill_gm_ignore_max_primary` |
+| `StrictPlayerNames`, `MinPlayerName`, `CharDelete.Method`, `CharDelete.MinLevel`, `MailDeliveryDelay` | `strict_player_names`, `min_player_name`, `char_delete_method`, `char_delete_min_level`, `mail_delivery_delay` |
 
 ## Extracting client data
 
@@ -627,27 +653,24 @@ time.
 ./bin/extractor -o /path/to/data -e 8   # movement maps, from maps/ and vmaps/ (--map ID for one map)
 ```
 
-The extractor follows CMaNGOS's `ad` extractor:
+What it does:
 
 * It opens `model`, `dbc`, `terrain`, `patch` and `patch-2.MPQ` from the client's `Data` folder,
   and looks files up newest archive first, so patches win.
-* It copies every `.dbc` named in the archives' listfiles unchanged. The output works for
-  mangosd too.
+* It copies every `.dbc` named in the archives' listfiles unchanged.
 * It checks that each file is a complete DBC, and skips one-byte placeholders that patches use
   for removed files.
 
 * It converts every map's terrain tiles (`World\Maps\NAME\NAME_X_Y.adt`, as each map's WDT lists
-  them) into `maps/MMMYYXX.map`: area flags, ground heights packed as CMaNGOS packs them, liquids
-  and holes. The files are CMaNGOS's version "z1.4", so either extractor's output serves either
-  server.
+  them) into `maps/MMMYYXX.map`: area flags, ground heights (packed to bytes or shorts where the terrain
+  is flat enough), liquids and holes, in map file version "z1.4".
 
-* With `-e 4` it extracts the buildings and doodads as CMaNGOS's `vmap_extractor` does, into
-  `Buildings/`, and assembles them as its `vmap_assembler` does, into `vmaps/`: a tree over each
-  map's models, a file per tile, and each model with trees over its groups and triangles
-  (version "VMAP_7.0"). `Buildings/` is kept: CMaNGOS's mmap generator reads it.
+* With `-e 4` it extracts the buildings and doodads into `Buildings/`, then assembles them into
+  `vmaps/`: a tree over each map's models, a file per tile, and each model with trees over its
+  groups and triangles (version "VMAP_7.0"). `Buildings/` is kept as the raw extraction.
 
-* With `-e 8` it builds movement maps as CMaNGOS's `MoveMapGen` does, into `mmaps/`: a navigation
-  mesh per map tile from the terrain and the buildings, with Recast and CMaNGOS's settings. It needs
+* With `-e 8` it builds movement maps into `mmaps/`: a navigation mesh per map tile from the
+  terrain and the buildings, with Recast. It needs
   `maps/` and `vmaps/`, not the client. Maps that are one building (most dungeons) get the tiles their
   models cover. Creatures find their way over them.
 
@@ -669,7 +692,7 @@ docs/                       architecture, design, developer guide, roadmap
 tools/testclient.py         scripted 1.12.1 client for live tests
 source/dmangos/             code shared by every server
   bytes.d                     ByteReader / ByteWriter (little-endian, slicing, no copies)
-  dbc.d                       DBC reader generated at compile time from CMaNGOS format strings
+  dbc.d                       DBC reader generated at compile time from per-file format strings
   mpq/                        MPQ archive reader: crypt.d (tables, hashing), explode.d (PKWare DCL), archive.d
   serialization.d             UDA-driven packet (de)serializer and wireSize, generated at compile time
   json.d                      struct <-> JSON mapping by introspection (configuration)
@@ -685,17 +708,17 @@ source/dmangos/script/      the scripting framework (docs/SCRIPTING.md): api.d (
                               escort.d (the escort component)
 source/dmangos/scripts/     the gameplay scripts, one module per dungeon or area (deadmines.d, westfall.d,
                               stormwind.d, ungoro.d, shadowfang.d, wailingcaverns.d) and spells.d
-source/dmangos/auth/        the login server (realmd)
+source/dmangos/auth/        the login server
   main.d                      entry point: run the server, administer accounts
   protocol.d                  opcodes, result codes, every packet as a struct
   session.d                   per-client protocol state machine (sans-I/O)
-  accounts.d                  accounts; CMaNGOS s/v/sessionkey encoding; decoy credentials
+  accounts.d                  accounts; the s/v/sessionkey encoding of the account table; decoy credentials
   database.d                  LoginDatabase interface and an in-memory implementation for tests
-  mysqldb.d                   LoginDatabase on the CMaNGOS realmd schema
+  mysqldb.d                   LoginDatabase on the realm database
   config.d                    configuration and validation
   realms.d                    realmlist rules: build checks, security levels, categories, refresh
   throttle.d                  per-IP brute-force protection
-source/dmangos/world/       the world server (mangosd)
+source/dmangos/world/       the world server
   main.d                      entry point
   session.d                   a client's connection: framing, encryption, handshake, ping, the character screen (sans-I/O)
   charscreen.d                handlers: character list, creation, deletion, entering the world
@@ -708,15 +731,15 @@ source/dmangos/world/       the world server (mangosd)
   itemhandlers.d              handlers: moving, equipping, banking and destroying items; buying, selling, repairs
   terrain.d                   the .map files: ground heights, areas, liquids per tile, and zones from them
   exploration.d               zones and areas from the map, explored areas, experience
-  inventory.d                 items and bags, and CMaNGOS's rules for storing, equipping, swapping, saving them
+  inventory.d                 items and bags, and the rules for storing, equipping, swapping, saving them
   conditions.d                the conditions table: requirements of menus, lessons and wares
-  commandtable.d              ArcEmu's GM command tables, row for row
-  commands.d                  ArcEmu's command lookup, permission letters, messages, .modify fields
+  commandtable.d              the GM command tables
+  commands.d                  command lookup, permission letters, messages, .modify fields
   gmactions.d                 what GM commands do to players: levels, speeds, items, skills, saving
-  gmlevel0.d .. gmlevel3.d    GM commands from ArcEmu's Level0.cpp .. Level3.cpp
-  gminstance.d                ArcEmu's InstanceCommands.cpp
-  gmquest.d                   ArcEmu's QuestCommands.cpp (those quests support)
-  gmdebug.d                   GM commands from debugcmds.cpp, RecallCommands.cpp, BattlegroundCommands.cpp
+  gmlevel0.d .. gmlevel3.d    GM commands, grouped by permission level
+  gminstance.d                GM commands: .instance
+  gmquest.d                   GM commands: .quest (those quests support)
+  gmdebug.d                   GM commands: debugging, .recall, .battleground
   bgqueue.d                   the battleground queues (a cluster service): brackets, slots, invitations
   battleground.d              battleground copies and the players' battleground opcodes
   ../cluster/                 several world servers as one (docs/CLUSTER.md): config.d, protocol.d (framing,
@@ -741,7 +764,7 @@ source/dmangos/world/       the world server (mangosd)
   creature.d, gameobject.d    creature_template/creature and gameobject_template/gameobject: the objects
   creatureai.d                creatures fighting: threat, chasing, evading, calling for help (CreatureAI)
   creaturecasting.d           creatures casting, fleeing, and what their scripts do (mixed into CreatureAI)
-  eventai.d                   CMaNGOS's EventAI: creature_ai_scripts events, phases and actions
+  eventai.d                   EventAI: creature_ai_scripts events, phases and actions
   creaturescripting.d         a creature's D script: its events, schedules, state, and the host it acts through
   instancescripting.d         a dungeon copy's D script, saved in instance.data
   sessionscripting.d          the player's session as the host of spell and area trigger scripts
@@ -764,7 +787,7 @@ source/dmangos/world/       the world server (mangosd)
   loothandlers.d              handlers: looting creatures, game objects and items; group loot
   gameobjecthandlers.d        handlers: using game objects (doors, chests, chairs, traps, quest objects)
   quests.d, questhandlers.d   quest_template and its givers; the quest log, objectives, rewards, sharing
-  reputation.d                factions' standings (ReputationMgr); reputationhandlers.d: changes, rewards
+  reputation.d                factions' standings; reputationhandlers.d: changes, rewards
   talenthandlers.d            talents learned and reset
   tradehandlers.d, duelhandlers.d  trading between players; duels
   mailhandlers.d              mail: sending, the mailbox, items and money, returns
@@ -776,13 +799,13 @@ source/dmangos/world/       the world server (mangosd)
   online.d                    OnlinePlayer and Directory: what groups and channels see of players
   group.d                     groups: members, leaders, raids, the group list, member stats
   channel.d                   chat channels: members, owners, moderation, notices
-  defines.d                   shared game constants (SharedDefines.h): classes, powers, item classes, slots
+  defines.d                   shared game constants: classes, powers, item classes, slots
   packets.d                   world packet layouts and framing
-  opcodes.d                   opcode and result code values (CMaNGOS names)
+  opcodes.d                   opcode and result code values
   crypt.d                     header encryption with the session key
   addons.d                    addon list parsing and SMSG_ADDON_INFO
-  characters.d                character list entries (Player::BuildEnumData)
-  playercreate.d              character creation (Player::Create): skills, spells, starting items;
+  characters.d                character list entries
+  playercreate.d              character creation: skills, spells, starting items;
                               also the skills and spells re-learned at login
   player.d                    a character in the world: loading, item and player objects, saving
   stats.d                     derived stats: item bonuses, health, mana, armor, attack power, damage
@@ -790,36 +813,42 @@ source/dmangos/world/       the world server (mangosd)
   objects.d                   guids, update field values, SMSG_UPDATE_OBJECT blocks
   movement.d                  movement info and speeds
   queries.d                   item query and chat message bodies
-  characterdb.d               SaveToDB / DeleteFromDB statements, incl. guild, group, auction, mail
+  characterdb.d               character save and delete statements, incl. guild, group, auction, mail
   names.d                     character name rules
-  clientdata.d                DBC records and CMaNGOS's derived indexes
+  clientdata.d                DBC records and the indexes derived from them
   spells.d                    spell_template, spell chains, spell-learn links
   spellmods.d                 spell modifiers (most talents): flat and percent changes to spells of a family
   testdata.d, testclient.d    test fixtures and a scripted client (unittest builds only)
   database.d                  login/characters database access; in-memory version for tests
   worlddata.d                 items, creatures, playercreateinfo_*, level stats from the world database
-  realm.d                     realmlist/uptime registration, as mangosd does
+  realm.d                     realmlist/uptime registration
   config.d, context.d         configuration; state shared by sessions
 source/dmangos/extractor/   the client data extractor: main.d, dbc.d (DBC files), maps.d (terrain to .map files),
                               vmaps.d and assembler.d (buildings and doodads to vmaps), mmaps.d (movement maps)
-source/dmangos/vmap/        the vmap format and queries: math.d (G3D's), bih.d (the tree), model.d, maptree.d
+source/dmangos/vmap/        the vmap format and queries: math.d (vectors, boxes, rays), bih.d (the tree), model.d, maptree.d
 ```
 
-Each program is a dub configuration with its own `main.d`, which the other configuration
-excludes. This is how DCD builds `dcd-server` and `dcd-client` from one package.
+Each program is a dub configuration with its own `main.d`, which the other configurations
+exclude.
 
 ## Documentation
 
 * [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): how the programs and modules fit together, the
   life of a packet, session states, static data, databases, entering the world, update fields.
-* [docs/DESIGN.md](docs/DESIGN.md): which D features are used for what, and why. CMaNGOS's
-  behaviour, D's structure.
+* [docs/DESIGN.md](docs/DESIGN.md): the design of the world server: why its parts are as they are.
+* [docs/CLUSTER.md](docs/CLUSTER.md): several world server nodes simulating one world: regions,
+  leases, replication, migration, failure handling.
+* [docs/SERVICES.md](docs/SERVICES.md): cluster services (chat channels, the battleground queue):
+  how they are declared, placed and called.
+* [docs/SCRIPTING.md](docs/SCRIPTING.md): gameplay scripts in D.
+* [docs/BENCHMARKS.md](docs/BENCHMARKS.md): the load generator, measurements and what they led to.
 * [docs/DEVELOPING.md](docs/DEVELOPING.md): recipes (new packet, handler group, DBC, table,
   config key), testing (unit and live), and pitfalls found so far.
-* [docs/COMMANDS.md](docs/COMMANDS.md): the GM system, every ArcEmu command with its permission
-  letter, which work yet, and where this server differs from ArcEmu.
-* [docs/ROADMAP.md](docs/ROADMAP.md): what works, known gaps, and the next milestones with their
-  CMaNGOS references.
+* [docs/COMMANDS.md](docs/COMMANDS.md): the GM system, every command with its permission letter,
+  which work yet, and where this server differs from the command set it follows.
+* [docs/ROADMAP.md](docs/ROADMAP.md): what works, known gaps, and the next milestones.
+* [docs/research/](docs/research/): design-research archives kept for reference; they do not
+  describe the implementation.
 
 In short, protocol tables (update fields, packet layouts, DBC formats, SQL statements, opcode
 routes) are compile-time data, and the code that uses them is generated and checked by the
@@ -827,23 +856,30 @@ compiler. `UpdateValues.set!UNIT_FIELD_STAT0(22.5f)` does not compile, because s
 
 ## Protocol notes
 
-* Supported builds: 5875 (1.12.1), 6005 (1.12.2), 6141 (1.12.3). The packet layouts
-  follow CMaNGOS's `BUILD_6005` variants. A failed logon proof is 2 bytes for 5875/6005
-  and 4 bytes for 6141.
-* SRP6 follows CMaNGOS `SRP6.cpp`. The session key interleave strips leading zero bytes
+* Supported builds: 5875 (1.12.1), 6005 (1.12.2), 6141 (1.12.3). A failed logon proof is
+  2 bytes for 5875/6005 and 4 bytes for 6141.
+* SRP6 is the variant the client uses. The session key interleave strips leading zero bytes
   of the little-endian `S`, plus one more byte when that leaves an odd count.
-* Login decisions follow CMaNGOS `AuthSocket.cpp`. A banned IP gets "no access"; an account
+* Login decisions: a banned IP gets "no access"; an account
   locked to another IP, or temporarily banned, gets "suspended"; broken `s`/`v` values get
   "no access"; a permanent ban gets "banned". An unknown account gets a decoy challenge that
   is stable per name, so names cannot be enumerated. A wrong password is answered with
-  "unknown account" and counts toward the `WrongPass` autoban.
-* Database queries are synchronous, as CMaNGOS's are on this path. A lost database
-  connection is re-established automatically.
+  "unknown account" and counts toward the automatic ban (`wrong_pass_max_count`).
+* The login server's database queries are synchronous. A lost database connection is
+  re-established automatically.
 * Not implemented yet: client file integrity (`crcHash`), PIN/TOTP (`account.token`), patch
-  transfer (`XFER_*`), the `antispam_*`, `uptime` and `system_fingerprint_usage` tables
-  (they belong to mangosd).
+  transfer (`XFER_*`). The login server does not use the `antispam_*`, `uptime` and
+  `system_fingerprint_usage` tables.
 
 ## Roadmap
 
 Next: the cluster's remaining gaps.
 See [docs/ROADMAP.md](docs/ROADMAP.md).
+
+## Licence and attribution
+
+Parts of dmangos are derived from other projects, whose copyright and licences apply to those
+parts; bundled third-party code (Recast & Detour) keeps its own licence. [NOTICE.md](NOTICE.md)
+records these, the trademark notice, and the state of dmangos's own licence.
+[PROVENANCE.md](PROVENANCE.md) lists, module by module, where each module's behaviour was taken
+from.

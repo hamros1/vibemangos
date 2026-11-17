@@ -2,19 +2,18 @@
 
 dmangos is one dub package that builds three programs:
 
-| Program | CMaNGOS equivalent | Entry point |
+| Program | What it does | Entry point |
 |---|---|---|
-| `authserver` | `realmd` | `source/dmangos/auth/main.d` |
-| `worldserver` | `mangosd` | `source/dmangos/world/main.d` |
-| `extractor` | `ad` (`contrib/extractor`: DBC files and `.map` terrain) | `source/dmangos/extractor/main.d` |
+| `authserver` | the login server: SRP6 authentication, reconnects, the realm list | `source/dmangos/auth/main.d` |
+| `worldserver` | the world server: characters and the simulation, standalone or as one node of a cluster | `source/dmangos/world/main.d` |
+| `extractor` | client data from a 1.12 client: DBC files, terrain, vmaps, movement maps | `source/dmangos/extractor/main.d` |
 
 They share the code directly under `source/dmangos/`. Each program is a dub configuration, and
-each configuration excludes the other programs' `main.d` files. This is how DCD builds its client
-and server from one package.
+each configuration excludes the other programs' `main.d` files.
 
-All three use CMaNGOS's databases (`realmd`, `characters`, `mangos`) and its extracted client data
-(`dbc/`) unchanged. You can switch between dmangos and mangosd on the same data, though never with
-both running at once.
+The databases (`realmd`, `characters`, `mangos`) use the CMaNGOS schema unchanged, so existing data
+works as it is. Never run two world servers on one characters database at once: ids are allocated
+from the database's maxima at start-up.
 
 ## Source layout
 
@@ -25,7 +24,7 @@ source/dmangos/
   mysql/                                                   the MySQL C API loaded at run time; checked queries
   net/                                                     the TCP server loop; compile-time packet dispatch
   mpq/                                                     MPQ archives: tables, hashing, PKWare explode
-  vmap/                                                    buildings and doodads: G3D's math, the BIH tree, models, map trees
+  vmap/                                                    buildings and doodads: vector math, the BIH tree, models, map trees
   script/                                                  the scripting framework (docs/SCRIPTING.md)
   scripts/                                                 the gameplay scripts written with it
   auth/                                                    the login server
@@ -38,12 +37,13 @@ The world server's modules, by layer:
 | Layer | Modules |
 |---|---|
 | Protocol | `opcodes` (values), `packets` (fixed layouts), `queries` (variable layouts), `crypt` (header cipher), `addons` |
-| Session | `session` (framing, handshake), the handler groups `charscreen`, `inworld`, `teleport`, `grouphandlers`, `channelhandlers`, `npchandlers`, `itemhandlers`, `combathandlers`, `exploration`, and the GM system `commands`, `commandtable`, `gmactions`, `gmlevel0` .. `gmlevel3`, `gminstance`, `gmquest`, `gmdebug`; `context` (shared state) |
+| Session | `session` (framing, handshake), `character` (the player in the world), the handler groups `charscreen`, `inworld`, `teleport`, `grouphandlers`, `channelhandlers`, `npchandlers`, `itemhandlers`, `combathandlers`, `exploration`, and the GM system `commands`, `commandtable`, `gmactions`, `gmlevel0` .. `gmlevel3`, `gminstance`, `gmquest`, `gmdebug`; `context` (shared state) |
 | Game objects | `player` (a character in the world), `objects` (update packets), `updatefields` (the field table), `movement`, `stats` |
 | World | `map` (players and objects on a map, visibility, broadcasting), `grid` (cells), `terrain` (ground, areas, liquids), `creature`, `gameobject`, `online` (what groups and channels see of players), `group` (parties and raids), `channel` (chat channels), `context` (maps, the players online, groups, channels) |
-| Game rules | `combat` (melee formulas: the attack table, damage, armor, reach), `relations` (who may attack whom), `inventory` (items and every rule for moving them), `playercreate` (`Player::Create`, and the spells relearned at login), `conditions`, `characters` (character list), `names`, `defines` |
-| Static data | `clientdata` (DBC files), `worlddata` (world database), `spells` |
-| Persistence | `database` (the interface, plus an in-memory version for tests), `characterdb` (the SQL) |
+| Game rules | `combat` (melee formulas: the attack table, damage, armor, reach), `relations` (who may attack whom), `inventory` (items and every rule for moving them), `playercreate` (new characters, and the spells relearned at login), `conditions`, `characters` (character list), `names`, `defines` |
+| Static data | `clientdata` (DBC files), `worlddata` (world database), `spells`; `dmangos.frozen` (tables outside the scanned heap) |
+| Persistence | `database` (the interface, plus an in-memory version for tests), `characterdb` (the SQL), `writebehind` (writes from a thread of their own, through a log), `fencing` (no writes once a cluster lease has lapsed) |
+| Cluster | `clusterbridge`, `replication`, `migration`, `channelservice`, `groupservice`, `whisper`, `gmtargets`, `bgqueue`; the cluster itself is `dmangos.cluster` (docs/CLUSTER.md) |
 | Process | `main`, `config`, `realm` (the `realmlist` row) |
 | Tests only | `testdata` (fixtures), `testclient` (a scripted client) |
 
@@ -61,7 +61,7 @@ socket ──bytes──▶ WorldSession.receive
                     │ switch over every @Handles opcode; check the session state
                     │ deserialize the body into the handler's parameter type
                     ▼
-                  handleXxx(const ClientXxx request)          in session.d, charscreen.d or inworld.d
+                  handleXxx(const ClientXxx request)          in session.d, or a handler group of Character
                     │ game logic; database calls through WorldDatabase
                     ▼
                   send(ServerXxx(...))                        serialize, frame, encrypt the header
@@ -82,11 +82,10 @@ void handleMovement(const MovementInfo movement) { ... }             // a type t
 void handleQueryTime() { ... }                                       // no body needed
 ```
 
-A malformed body throws `PacketException` from the deserializer, and the session disconnects. An
-opcode without a handler, or one that arrives in the wrong state, is ignored after authentication,
-as CMaNGOS does.
+A malformed body throws `PacketException` from the deserializer, and the session disconnects. After
+authentication, an opcode without a handler, or one that arrives in the wrong state, is ignored.
 
-**Output (docs/DESIGN.md, step 5).**
+**Output.**
 * A session frames what it sends into an `OutputBuffer`. The buffer keeps its own length and grows
   by doubling, so a packet costs a bounds check and a copy.
 * The server takes the written bytes (`takeOutput`) and sends them.
@@ -94,7 +93,8 @@ as CMaNGOS does.
   its next output into it, so a busy connection allocates nothing to send.
 * One body serves every recipient of a broadcast, and only the header is encrypted per client.
 * An object's changed fields are built into one update for everyone who sees them alike.
-* Changes made during the map's tick go out once, at its end (`Map::SendObjectUpdates`).
+* Changes made during the map's tick go out once, at its end.
+* A client that stops reading is disconnected once more than `max_pending_output_kb` waits for it.
 
 ### Session states
 
@@ -111,7 +111,7 @@ character exists exactly while the session is in the world.
 
 ### Connection and character
 
-A client's session is two objects (docs/DESIGN.md, step 3):
+A client's session is two objects:
 
 * **`WorldSession`** (`session.d`) is the connection: the socket's bytes, framing and header
   encryption, the account, the protocol state above, the handshake and pings, and the character
@@ -134,17 +134,17 @@ final class Character : OnlinePlayer, Looter
     mixin PacketDispatch!Handles;   // the generated switch, for the character's own handlers
     ...                             // the player, its timers, the unit and looter methods
     mixin CharacterLogin;           // charscreen.d: entering the world after the login's checks
-    mixin InWorldHandlers;          // inworld.d: MiscHandler, MovementHandler, QueryHandler, ChatHandler
-    mixin TeleportHandlers;         // teleport.d: Player::TeleportTo, the teleport acks, area triggers
-    mixin GroupHandlers;            // grouphandlers.d: GroupHandler.cpp
-    mixin ChannelHandlers;          // channelhandlers.d: ChannelHandler.cpp
-    mixin NpcHandlers;              // npchandlers.d: NPCHandler.cpp, the gossip half of Player.cpp
-    mixin ItemHandlers;             // itemhandlers.d: ItemHandler.cpp, repairs, Player::BuyItemFromVendor
-    mixin CombatHandlers;           // combathandlers.d: CombatHandler.cpp, the player's melee
+    mixin InWorldHandlers;          // inworld.d: logout, movement, queries, chat, emotes, settings
+    mixin TeleportHandlers;         // teleport.d: teleportTo, the teleport acks, area triggers
+    mixin GroupHandlers;            // grouphandlers.d: invitations, raids, loot settings, icons, rolls
+    mixin ChannelHandlers;          // channelhandlers.d: chat channels
+    mixin NpcHandlers;              // npchandlers.d: gossip, trainers, innkeepers, bankers, vendors
+    mixin ItemHandlers;             // itemhandlers.d: moving, equipping, banking; buying, selling, repairs
+    mixin CombatHandlers;           // combathandlers.d: the player's melee
     mixin DeathHandlers;            // death.d: dying, the ghost, the corpse, the spirit healer
-    mixin LootHandlers;             // loothandlers.d: LootHandler.cpp, kill experience, tapping
-    mixin SpellHandlers;            // spellhandlers.d: SpellHandler.cpp, Spell.cpp, SpellEffects.cpp
-    mixin AuraHandlers;             // aurahandlers.d: SpellAuras.cpp's handlers and ticks
+    mixin LootHandlers;             // loothandlers.d: looting, kill experience, tapping
+    mixin SpellHandlers;            // spellhandlers.d: casting, channels, spell effects
+    mixin AuraHandlers;             // aurahandlers.d: what each aura does, and its ticks
     ...                             // trade, duels, quests, talents, mail, auctions, taxis,
                                     // reputation, exploration, social, guilds, pets, scripts,
                                     // and the GM commands (commands.d, gmlevel*.d, gmdebug.d)
@@ -157,19 +157,19 @@ own module, mixed into `Character`.
 
 ## Static data
 
-Everything is loaded once at start-up, as in CMaNGOS:
+Everything is loaded once at start-up:
 
 * **`ClientData`** reads DBC files with `DbcStore!(Entry, format)`. The store's reader is generated
-  at compile time from CMaNGOS's format strings (`"nxixiix..."`), and the struct layout is checked
-  against them at compile time. Indexes CMaNGOS builds on load (sections by race and gender, skill
-  abilities by spell, talent positions...) are built in `buildIndexes`.
+  at compile time from a format string per file (`"nxixiix..."`: one letter per column), and the
+  struct layout is checked against it at compile time. The indexes the server needs (sections by
+  race and gender, skill abilities by spell, talent positions...) are built in `buildIndexes`.
 * **`WorldData`** reads the world database: item templates, `playercreateinfo_*`, level stats, XP
-  per level, model sizes, and spells (`SpellData`). Every `playercreateinfo_*` row goes through
-  the same filters as `ObjectMgr::LoadPlayerInfo`.
+  per level, model sizes, and spells (`SpellData`). `playercreateinfo_*` rows for a race and class
+  that cannot be played are skipped.
 
 Both are immutable after loading and are shared through `WorldContext`.
 
-**Off the scanned heap (docs/DESIGN.md, step 7, `dmangos.frozen`).** A collection marks everything
+**Off the scanned heap (`dmangos.frozen`).** A collection marks everything
 reachable, and the static tables were most of it.
 * The largest tables are `StaticMap!(K, V)`: the item and creature templates, game object
   templates, models, creature addons, and spells and their chains.
@@ -190,8 +190,8 @@ reachable, and the static tables were most of it.
 
 `WorldDatabase` is an interface with two implementations:
 
-* `MySqlWorldDatabase` uses the same SQL as CMaNGOS, on the login and characters databases. The
-  SQL itself lives in `characterdb.d`.
+* `MySqlWorldDatabase` works on the login and characters databases. The SQL itself lives in
+  `characterdb.d`.
 * `MemoryWorldDatabase` is a set of associative arrays that the tests inspect.
 
 Queries are compile-time strings. `connection.d` splits them at `?` placeholders at compile time,
@@ -199,12 +199,13 @@ so a statement with the wrong number of arguments does not compile. `query!sql(a
 `queryAs!(T, sql)` maps each row onto a struct, field by field. Multi-statement writes run in
 `transaction`, which rolls back through `scope (failure)`.
 
-Ids (characters, items, mail) are allocated from `MAX(id) + 1` at start-up, as mangosd does. The
-game loop is single-threaded, so no locking is needed.
+Ids (characters, items, mail) are allocated from `MAX(id) + 1` at start-up. The game loop is
+single-threaded, so no locking is needed. In a cluster, members take ids in blocks from the
+coordinator instead (docs/CLUSTER.md).
 
 ### Writes behind the loop
 
-`writebehind.d` (docs/DESIGN.md, step 6) wraps the world server's `WorldDatabase`, so a slow
+`writebehind.d` wraps the world server's `WorldDatabase`, so a slow
 statement no longer stalls a tick. Like `fencing.d`, it is generated from the interface, so a new
 method is handled without anyone remembering to.
 
@@ -229,20 +230,25 @@ method is handled without anyone remembering to.
   * A write is idempotent (an `UPDATE`, a `REPLACE`, or a delete and insert), so writing again what
     MySQL already had is harmless.
 * **Ordering.** In a cluster, saves are written before an account is released and before a player
-  moves to another node (`WorldContext.settleWrites`). `.reload` waits for them too.
+  moves to another node (`WorldContext.settleWrites`), because the next node loads the character from
+  MySQL. `.reload` waits for them too.
+* **Leases.** In a cluster each write carries the time until which the node's lease held when it was
+  made. The writer drops a write it reaches after the newest such time, and so does the replay of the
+  log at start-up, so a node that lost its regions never writes over their new owner. `fencing.d`
+  wraps the database the same way and drops every write while the lease has lapsed.
 
 ## Entering the world
 
-`charscreen.d: handlePlayerLogin` does what `WorldSession::HandlePlayerLogin` and
-`Player::LoadFromDB` do:
+`charscreen.d: handlePlayerLogin` brings a character into the world:
 
 1. **Load** the character and its rows (`characterdb.loadCharacter`). Bind a home if it has none.
 2. **Relearn** the default spells and the spells its skills teach
-   (`CharacterBuilder.loadAbilities`). CMaNGOS never saves these; it learns them again at every
-   login. That is why creation and login share the spell-learning code in `playercreate.d`.
+   (`CharacterBuilder.loadAbilities`). The characters database does not hold these; they are learned
+   again at every login. That is why creation and login share the spell-learning code in
+   `playercreate.d`.
 3. **Build** the `Player` (`player.d`): its `Inventory` with the item and bag objects (see
    "Items"), the derived stats (`stats.d`), and every update field.
-4. **Send** the same packet sequence as mangosd. The update packet that creates the items and the
+4. **Send** the login packets (the README lists the sequence). The update packet that creates the items and the
    player ends the client's loading screen.
 5. **Mark** the character online. Logging out or disconnecting saves its progress and marks it
    offline.
@@ -250,8 +256,8 @@ method is handled without anyone remembering to.
 ### Update fields and objects
 
 The client knows objects only through their *update fields*: 1282 32-bit slots for a player, 48
-for an item. `updatefields.d` holds CMaNGOS's table of every field (offset, size, type, who may see
-it), and everything else is derived from it at compile time:
+for an item. `updatefields.d` holds the table of the 1.12.1 client's fields (offset, size, type,
+who may see it), and everything else is derived from it at compile time:
 
 * the `UNIT_FIELD_HEALTH`-style constants (a string mixin over the table);
 * each object type's slot count (`fieldCount!(TypeId.player)`);
@@ -268,7 +274,7 @@ values.set!UNIT_FIELD_STAT0(22.5f);              // compile error: stats are int
 ```
 
 `writeCreate` and `writeChanges` send only the fields the viewer may see (`seenBySelf`,
-`seenByGroup`, `seenByEveryone`, `seenByOwner`), using CMaNGOS's visibility rules. A player looking
+`seenByGroup`, `seenByEveryone`, `seenByOwner`). A player looking
 at itself sees its private fields, a group mate the group-only fields and real health, anyone else
 the public fields with health in percent. `Player` names these three views `Viewer.self`,
 `groupMate` and `stranger`.
@@ -291,26 +297,26 @@ The map knows players through the `Inhabitant` interface, which `Character` impl
 `appearanceFor(viewer)` (the create block a viewer gets). A body is serialized once and framed per
 recipient, because each client's header encryption is different.
 
-* **Slots.** Every player and object on a map has a slot in one `Store` (`dmangos.store`; docs/DESIGN.md,
-  step 1): its cell, where its visibility was last worked out, whether it ticks, the peers holding a
+* **Slots.** Every player and object on a map has a slot in one `Store` (`dmangos.store`: slots with
+  32-bit generations, so a stale reference finds nothing rather than a reused slot): its cell, where its visibility was last worked out, whether it ticks, the peers holding a
   replica of it, and who sees it. A guid is looked up once (`slotOf`); everything after goes by slot.
   Seeing is kept from both sides: a player's `known` (a bit per slot its client has) and an entity's
   `viewers` (the players whose clients have it). Sending to an object's viewers walks its viewers,
   never every player. A replica replaced by the real object (or a player arriving from another node)
   takes over its slot, so its viewers keep it without a new create block.
-* **Cells.** Players are kept in square cells of 66.67 yards (CMaNGOS's grid cell). `near(position,
+* **Cells.** Players are kept in square cells of 66.67 yards (`grid.d`). `near(position,
   range)` only looks at the cells in reach. A cell's spawns load when a player comes near it; a cell
   no player (here, or on a peer that wants its replicas) has been near for `grid_cleanup_delay_seconds`
   unloads (`unloadIdleCells`, every 10 seconds), unless one of its creatures is fighting or away in
   a busy cell, or it holds a player's corpse. The dead keep their saved respawn times.
 * **Seeing is symmetric.** Within `visibility_distance` (100 yards), two players see each other.
   When that starts, each gets the other's create block, built by `Player.createForOthers`: public
-  fields only, and health in percent (`Visibility.FogOfWar.Health` 0). When it ends, each gets an
+  fields only, and health in percent. When it ends, each gets an
   out-of-range block. When one leaves the world, the others get `SMSG_DESTROY_OBJECT`.
 * **Arriving.** A player's create block exists in two versions, a stranger's view and a group
   member's (`Inhabitant.appearanceKind`); each is built and compressed once per visibility update and
   the same bytes go to everyone who gets it. The blocks a newcomer receives go out batched, up to
-  32 KB per packet before compression, at zlib level 1 (`compression`), as CMaNGOS sends them.
+  32 KB per packet before compression, at zlib level 1 (`compression`).
 * **Relocation.** Visibility is recomputed after a player has moved
   `visibility_relocation_lower_limit` (10) yards since the last time. Cells update on every move.
 * **Broadcasts.** `sendToWatchers` reaches everyone who sees a player: its movement (the same
@@ -321,9 +327,9 @@ recipient, because each client's header encryption is different.
 
 ## The update loop
 
-`net/server.d` runs the world's tick every `update_interval` (50 ms) between socket events, as
-Ember's map runner does, and logs a tick that takes longer than half a second.
-`WorldContext.update` runs the tick in fixed phases, in order (`TickPhase`, docs/DESIGN.md step 4):
+`net/server.d` runs the world's tick every `update_interval` (50 ms) between socket events, on the
+same thread, and logs a tick that takes longer than half a second.
+`WorldContext.update` runs the tick in fixed phases, in order (`TickPhase`):
 
 1. **Maps.** On each map, its players (`OnlinePlayer.update`) and then its creatures and game objects
    (`Map.update`). A map's own players and objects tick together: that is the unit a map's own
@@ -346,13 +352,12 @@ something to do again:
 Each object keeps the map clock's time of its last tick, so its next tick is given all the time
 that passed, whether one tick's or a whole sleep's.
 
-A character's `updateInWorld` keeps its periods in `IntervalTimer`s (`dmangos.timer`, like Ember's
-`DeltaTimer`):
+A character's `updateInWorld` keeps its periods in `IntervalTimer`s (`dmangos.timer`):
 
 * the 20-second logout (`loggingOut`), which completes the logout when it runs out;
-* regeneration every 2 seconds (`Player.regenerate`, CMaNGOS's `RegenerateAll` formulas);
+* regeneration every 2 seconds (`Player.regenerate`);
 * rest every second: leaving the inn's area trigger ends it, and every 10 seconds of resting adds
-  rested XP (`ComputeRest`); capitals rest by their `AreaTable` flag on zone updates;
+  rested XP; capitals rest by their `AreaTable` flag on zone updates;
 * the periodic save.
 
 The world phase runs what belongs to no one map: dungeon copies left empty unloading, database scripts under way
@@ -366,7 +371,7 @@ by replacing the clock and calling `context.update`.
 ## Creatures and game objects
 
 `WorldData.loadSpawns` reads `creature_template`, `gameobject_template` and their companion tables,
-and decides which spawns exist: pool members are chosen (`PoolChooser`, `PoolManager`'s rules),
+and decides which spawns exist: pool members are chosen (`PoolChooser`),
 spawn groups choose members and entries (`SpawnGroups`), and spawns that belong to game events are
 left out. The spawns are indexed by map and grid cell (`grid.d`).
 
@@ -378,7 +383,7 @@ distance, a few dozen create blocks per packet, and they go out of range like pl
 
 ### Using game objects
 
-A `GameObject` keeps CMaNGOS's loot state (`GoLootState`): ready, activated (a door open, a goober
+A `GameObject` keeps a loot state (`GoLootState`): ready, activated (a door open, a goober
 in use, a chest's loot open), just deactivated. It is a `Moving` for the map's tick only while
 something is pending (a door's closing time, a goober's, a chest's despawn and loot rolls), and its
 map is a `GameObjectWorld` that flushes its fields and, when a consumable one is used up
@@ -386,43 +391,42 @@ map is a `GameObjectWorld` that flushes its fields and, when a consumable one is
 `gameobject_respawn` and makes it anew when that time comes (`gameObjectsDue`). It is a `PerViewer`
 for `GAMEOBJECT_DYN_FLAGS`: a quest object (`WorldContext.isQuestObject`) sparkles for those whose
 quests need it (`activatesFor`, asking the viewer's session). `gameobjecthandlers.d` is the
-session's side: `CMSG_GAMEOBJ_USE` and `useGameObject` (CMaNGOS's `Use` by type), the open-lock
+session's side: `CMSG_GAMEOBJ_USE` and `useGameObject` (what using means for each type), the open-lock
 spell effect (`canOpenLock` in `checkGameObjectTarget` at the cast's checks, `openLock` at its
 effect, with `updateGatherSkill`), and a chest's loot (`makeGameObjectLoot`: the same `Loot` as a
 corpse's, with `setLootRights` from the object's place).
 
 ### Creature movement
 
-CMaNGOS's split, without its class hierarchy of units:
+Three parts, with no class hierarchy of units:
 
-* **The spline** (`spline.d`, `Movement/MoveSpline.cpp`): `MoveSpline` is a walk along points at a
-  speed, with the time of each point (CMaNGOS's rounding kept, so durations match to the
-  millisecond), followed by `update(ms)` and asked `position`. `monsterMove` and `monsterStop`
-  build `SMSG_MONSTER_MOVE` (the destination, then the points before it as packed offsets), and
-  `writeSplineCreate` the walk so far for a create block (`PacketBuilder::WriteCreate`). Only linear
-  paths: catmull-rom, cyclic and falling splines come with flying and knockbacks.
-* **Launching** (`motion.d`: `launch`, `stopMoving`, `interruptMoving`, `followSpline`): as
-  `MoveSplineInit::Launch`, the walk starts where the creature is (or where its current walk has got
-  to), sets the walk mode, spline and forward flags, and goes to `sendToObservers`. The creature's
-  position follows the walk every 400 ms and at the end (`Unit::UpdateSplineMovement`).
+* **The spline** (`spline.d`): `MoveSpline` is a walk along points at a speed, with the time of each
+  point to the millisecond, followed by `update(ms)` and asked `position`. `monsterMove` and
+  `monsterStop` build `SMSG_MONSTER_MOVE` (the destination, then the points before it as packed
+  offsets), and `writeSplineCreate` the walk so far for a create block. Only linear paths:
+  catmull-rom, cyclic and falling splines come with flying and knockbacks.
+* **Launching** (`motion.d`: `launch`, `stopMoving`, `interruptMoving`, `followSpline`): the walk
+  starts where the creature is (or where its current walk has got to), sets the walk mode, spline
+  and forward flags, and goes to `sendToObservers`. The creature's position follows the walk every
+  400 ms and at the end.
 * **Generators** (`MovementGenerator`): chosen per spawn when the cell loads (`selectMovement`, from
-  `creature.MovementType` as `ObjectMgr::LoadCreatures` corrects it), started on the creature's first
-  tick. `WanderMovement` and `WaypointMovement` are ports of `WanderMovementGenerator` and
-  `WaypointMovementGenerator` (with `LinearWPMovementGenerator`'s turns), timers and all: a waypoint
-  walk takes in the points after the next until it lasts six seconds, and is sent again 1.5 s before
-  its end. `WaypointStore` holds the paths (`WaypointManager`).
+  `creature.MovementType`; a waypoint creature without a path stands), started on the creature's
+  first tick. `WanderMovement` wanders within the spawn's distance; `WaypointMovement` walks a path
+  round and round, or back and forth, waiting and turning where the path says: a waypoint walk takes
+  in the points after the next until it lasts six seconds, and is sent again 1.5 s before its end.
+  `WaypointStore` holds the paths.
 * **The map** ticks every `Moving` object (`Map.update`, with the time in whole milliseconds). One
   that moved changes cell, and after `visibility_relocation_lower_limit` yards the players it came
   near get its create block and those it left an out-of-range block (`updateObjectVisibility`). The
-  map is the generators' `MotionWorld`: heights (`Map::GetHeight`, `GetWaterOrGroundLevel`) from its
+  map is the generators' `MotionWorld`: heights (the ground, or the water's surface) from its
   `Terrain`, packets, and random numbers.
 
 **Movement maps (`navigation.d`).** They are built by the extractor (`-e 8`, `extractor/mmaps.d`) with
-Recast and read by the server with Detour. That is recastnavigation 1.6.0, the library CMaNGOS uses,
+Recast and read by the server with Detour: recastnavigation 1.6.0 (zlib licence, see NOTICE.md),
 vendored in `thirdparty/` and compiled by its Makefile, which dub runs before building. It is reached
 through a small C interface, `thirdparty/dmnav/dmnav.cpp`.
-* **The data.** Each 533-yard map tile is one mesh tile, built in 25 pieces of 80 cells with
-  `MapBuilder::buildMoveMapTile`'s settings. The triangles come from:
+* **The data.** Each 533-yard map tile is one mesh tile, built in 25 pieces of 80 cells. The
+  triangles come from:
   * the terrain: four per square, around its centre, with holes left out and a strip of the
     neighbouring tiles so the edges meet;
   * the buildings and doodads the tile's vmap file lists.
@@ -431,23 +435,19 @@ through a small C interface, `thirdparty/dmnav/dmnav.cpp`.
   for up to 3 ms (`Terrain.addPendingNavigation`): Detour linking a tile to its neighbours takes
   about 3 ms, while reading it takes about 0.1. An area coming into use loads many tiles at once,
   which made ticks of 44 ms. Until a tile's mesh is added, units there walk straight.
-* **Using it.** `launch(..., generatePath)` is `MoveSplineInit::MoveTo(dest, generatePath)`: a walk
-  from one point to another follows the corners `Map.pathBetween` finds. Chasing, returning home,
-  fleeing, wandering, point moves and pets use it. Waypoint routes stay as the database draws them,
-  as in CMaNGOS. Detour returns at most 74 corners (`MAX_POINT_PATH_LENGTH`). An end that cannot be
+* **Using it.** With `launch(..., generatePath)`, a walk from one point to another follows the
+  corners `Map.pathBetween` finds. Chasing, returning home, fleeing, wandering, point moves and pets
+  use it. Waypoint routes stay as the database draws them. A path has at most 74 corners. An end that cannot be
   reached gives the way to the nearest place to it.
 * **Unreachable targets.** When a chase's way ends out of melee reach of the victim (on a rock, a
   ledge, across water), the creature evades every attack. If that lasts 10 s, it gives up: it goes
-  home if the victim was its only enemy, otherwise it leaves that one be and turns to another. This
-  is CMaNGOS's `StartEvadeTimer`, `EvadeTimerExpired` and `SetTargetSuppressed`
+  home if the victim was its only enemy, otherwise it leaves that one be and turns to another
   (`CreatureAI.updateReachability`). It stops players from killing creatures from where they
   cannot answer.
   * `evading` covers both the timer and running home.
   * `runningHome` is running home only: a creature that is running home cannot be attacked.
-* **Fallback.** Where there is no mesh, or an end is off it, the walk is straight, as before.
-  CMaNGOS then leaves a wander's end at the spawn point's height unless `PathFinder.NormalizeZ` is
-  on, which would leave creatures walking through hills, so here the end is always put on the
-  ground (`allowedPositionZ`).
+* **Fallback.** Where there is no mesh, or an end is off it, the walk is straight. A wander's end is
+  always put on the ground (`allowedPositionZ`), so creatures do not walk through hills.
 * **Not yet:**
   * liquid surfaces as meshes (swimmers path over the ground beneath);
   * game objects' models (doors);
@@ -460,7 +460,7 @@ declares `CreatureHost` and `InstanceHost`, which `CreatureAI` (through the `Cre
 mixin) and `InstanceScript` implement. `WorldContext` builds the `ScriptRuntime` from
 `dmangos.scripts.scriptModules` at start-up, gives each creature made the script its `ScriptName`
 names (instead of its EventAI), and makes an `InstanceScript` with each dungeon copy whose map has
-one. `CreatureAI` raises the events at the moments EventAI hears of (combat, damage, kills, death,
+one. `CreatureAI` raises the events at the moments its EventAI would hear of (combat, damage, kills, death,
 evading, home, spells hitting it) and ticks the schedules in its update; a creature with steps
 pending keeps ticking out of combat. A creature's script state is written at the end of
 `Creature.saveState` and read in `loadState`, so a region handover carries it. `Map.onObjectGone`
@@ -486,19 +486,19 @@ to the node whose replica of the creature is here; `scriptSignalArrived` applies
 
 Three modules, split by what they depend on:
 
-* `combat.d` holds CMaNGOS's melee formulas as pure functions of two `Fighter`s: the attack table
+* `combat.d` holds the melee formulas as pure functions of two `Fighter`s: the attack table
   (`rollMeleeOutcome`, one roll through miss, dodge, parry, block, glance, crit and crush, each chance
-  from skills and levels as `CalculateEffective*Chance` computes it), the damage (`calculateMeleeDamage`:
+  from weapon and defense skills and levels), the damage (`calculateMeleeDamage`:
   weapon damage, armor, the outcome's effect), reach and facing, rage, and the packets. A `Fighter` is
   a snapshot of a player (`Player.fighter`) or a creature (`Creature.fighter`): level, skills, damage,
   chances, armor, position. The formulas never see a session or a map, so the tests drive them with
   hand-made fighters and fixed rolls.
-* `relations.d` is CMaNGOS's Relations API (tier 1, the client's own logic): faction template
-  reactions, a player's base reputations, `CanAttack`.
-* `unit.d` is the rules every unit shares (docs/DESIGN.md, step 2). A `UnitRef` is a unit on a map,
+* `relations.d` decides who may attack or help whom, by the rules the client itself applies:
+  faction template reactions, a player's base reputations, `canAttack`.
+* `unit.d` is the rules every unit shares (docs/DESIGN.md). A `UnitRef` is a unit on a map,
   a player (its session) or a creature, as a small value made where needed (`CombatWorld.unit`,
   `Map.unitOf`); its methods branch on the kind with `final switch`, so each rule handles both kinds.
-  `dealDamage` is `Unit::DealDamage` and the one way damage reaches a unit, from a swing, a spell or
+  `dealDamage` is the one way damage reaches a unit, from a swing, a spell or
   an aura's tick, whoever deals it. A player suffers it in `Character.takeBlow` (standing up, rage,
   the combat state, a duel's last blow, death); a creature fights back and takes it as threat, is
   tapped for the player the blow is credited to (a pet's owner for a pet's), and its death is that
@@ -507,8 +507,8 @@ Three modules, split by what they depend on:
   loop each tick (`updateMelee`, with the attack timers and swing errors), the swing itself (its roll,
   the attacker's rage and skills), and `takeBlow`.
 
-* `creatureai.d` is the creature's side: CMaNGOS's base `CreatureAI` with its threat list, combat
-  timers and leash, chasing and going home. It sees whatever it fights as a `UnitRef` (a player or
+* `creatureai.d` is the creature's side: `CreatureAI` with its threat list, combat timers and
+  leash, chasing and going home. It sees whatever it fights as a `UnitRef` (a player or
   another creature: a pet) and its map as a `CombatWorld` (units by guid, line of sight, field
   updates, waking a resting creature). The map
   calls `moveInLineOfSight` for the creatures a player sees when it moves, and for the players who
@@ -516,13 +516,13 @@ Three modules, split by what they depend on:
   mana to regain, a cast, a script that runs out of combat) does not rest, so the map keeps ticking it.
 * `dynobject.d` is a dynamic object: the spot of a persistent area aura as the clients see it; the
   caster's session (`spellhandlers.d`) ticks the aura's damage in it and removes it.
-* `dbscripts.d` is CMaNGOS's `ScriptMgr` and `Map::ScriptsProcess`: the `dbscripts_on_*` steps
+* `dbscripts.d` runs database scripts: the `dbscripts_on_*` steps
   (`DbScriptData`, by table and script id, in delay and priority order) and `DbScriptRunner`, a mixin
   of `WorldContext` that keeps the scripts under way (`startScript`; quest, gossip and game object
   handlers start them), runs each step when its delay is reached in the world's tick, resolves its
   sources, targets and buddies on the map, and carries out its command through the creature's AI
   (texts, emotes, casts), the player's session (quest credit, casts) or the map (flags, game objects).
-* `eventai.d` is CMaNGOS's `CreatureEventAI` without the creature: the `creature_ai_scripts` rows
+* `eventai.d` is a creature's EventAI, without the creature: the `creature_ai_scripts` rows
   (`EventAiData`, by entry and by spawn), and `EventAI`, one per scripted creature, with each event's
   timer, its phase, and the checks, chances and repeats. It acts through the `Scripted` interface,
   which `CreatureAI` implements; the AI calls it at its moments (combat starting, a kill, death,
@@ -540,8 +540,8 @@ A pet is a creature with an owner (`Creature.petOwner`) and a `PetState` (`Creat
 `pet.d`): its number, type, command, action bar and spells. Three modules:
 
 * `pet.d` is what every pet shares and touches nothing live: the action bar's ten packed buttons and
-  their `abdata` form, `petStats` (CMaNGOS's `InitStatsForLevel` with `UpdateAllStats`, a pure
-  function of the template, level and `pet_levelstats` row), the world tables (`PetData`) and the
+  their `abdata` form, `petStats` (a pet's stats at a level: a pure function of the template, level
+  and `pet_levelstats` row), the world tables (`PetData`) and the
   packets.
 * `petai.d` is `PetAI`, a mixin of `CreatureAI` beside `CreatureCasting`: a creature with an owner
   runs `petUpdate` instead of the threat-list fight. It has a victim but no threat list and never
@@ -551,9 +551,9 @@ A pet is a creature with an owner (`Creature.petOwner`) and a `PetState` (`Creat
   a creature are `dealDamage`. A blow from a pet taps its victim for the owner, its kill is the
   owner's (`killedCreature`), and a dead pet is its owner's (`ownPetDied`).
 * `pethandlers.d` is the owner's side, mixed into the session: the spell effects (tame, summon,
-  dismiss, revive) and their cast checks, `bringPet` (CMaNGOS's `LoadPetFromDB` and creation: the
-  creature from `WorldContext.makePetCreature`, with a `HIGHGUID_PET` guid made at construction),
-  saving by slot (`SavePetToDB`'s rules), the bar's opcodes, the stables, and the moments the pet
+  dismiss, revive) and their cast checks, `bringPet` (a pet loaded from `character_pet` or made new:
+  the creature from `WorldContext.makePetCreature`, with a `HIGHGUID_PET` guid made at
+  construction), saving by slot, the bar's opcodes, the stables, and the moments the pet
   leaves and returns (logout, teleports, a move to another node, login).
 
 The map shows a pet's owner-only fields (its experience, training points) to its owner in
@@ -564,7 +564,7 @@ The map shows a pet's owner-only fields (its experience, training points) to its
 `spells.d` loads `spell_template` (`SpellInfo`, with what casting needs in `SpellInfo.casting`),
 `spellcast.d` holds what needs no session: cast targets (`SpellTargets`), cast times, durations,
 ranges and radii from the DBCs, `effectValue` (base points, per level, dice), `powerCost`, the
-magic hit roll, and the packets. `spellhandlers.d` is the session's side (`Spell` in CMaNGOS): the
+magic hit roll, and the packets. `spellhandlers.d` is the character's side: the
 cast in progress (`generic`) and the one for the next swing (`nextSwing`), cooldowns by spell and
 category and the global one, `checkCast`, `go` (cooldowns, cost, hit rolls, `SMSG_SPELL_GO`), and
 the effects. Damage to creatures goes the way melee's does (`spellAttacked`: threat, tapping, the
@@ -583,18 +583,18 @@ like any spell).
 
 ## Quests
 
-`quests.d` is the data: `Quest` (a `quest_template` row with what `LoadQuests` derives), the
+`quests.d` is the data: `Quest` (a `quest_template` row with what is derived from it on load), the
 starters and enders by creature entry, the exclusive groups, `questXp`, and a character's
 `QuestStatus`. A `Player` keeps its `questStatus` by quest; its quest log is the
 `PLAYER_QUEST_LOG_*` fields (`loadQuestLog` at login and arrival). `questhandlers.d` is the
-session's side: `CanTakeQuest` and the dialog status, the quest giver packets, accepting,
+session's side: who may take a quest and the dialog status, the quest giver packets, accepting,
 completing, rewarding, and the objectives (`killedMonster` from the kill's rewards,
 `questItemsChanged` from every inventory save, `hasQuestForItem` for loot).
 
 ## PvP
 
-`pvp.d` is CMaNGOS-classic's PvP flag: `Player::UpdatePvP`, `UpdatePvPContested`, `UpdateZone`'s
-enforced areas, and `Unit::SetInCombatWith*`. Who may then attack whom is `relations.canAttack`: an
+`pvp.d` keeps the PvP flags: what sets them, their timers, a zone's enforced areas, and combat
+between players. Who may then attack whom is `relations.canAttack`: an
 enemy player only if they are flagged (the target's flag decides), or both are in a free-for-all area.
 
 * **The flag** (`UNIT_FLAG_PVP`). These set it, and each restarts a 5-minute timer:
@@ -622,8 +622,8 @@ enemy player only if they are flagged (the target's flag decides), or both are i
 
 ## Honor
 
-`honor.d` is CMaNGOS-classic's `Player::RewardHonor`, `AddHonorCP` and `UpdateHonor`, and the
-formulas of `MaNGOS::Honor`.
+`honor.d` gives honour for kills, keeps a character's honour rows and totals, and holds the formulas
+for points and ranks.
 
 * **Kills.** A kill of an enemy player gives honour (`honorableKillPoints`) unless the victim is grey
   to the killer or an Honorless Target. The amount:
@@ -644,8 +644,7 @@ formulas of `MaNGOS::Honor`.
 * **Saving.** `saveHonor` writes the columns and the new rows with the character's other saves.
 * **Inspecting.** `MSG_INSPECT_HONOR_STATS` answers for a player within 28 yards who may not be
   attacked.
-* **The week** (`honorweek.d`, `ServerMaintenanceStart`, `FlushRankPoints`, `DistributeRankPoints`).
-  It runs on `honor_maintenance_day`, checked at start-up and every 10 minutes. Only the realm's
+* **The week** (`honorweek.d`). It runs on `honor_maintenance_day`, checked at start-up and every 10 minutes. Only the realm's
   speaker runs it: the standalone server, or a cluster's coordinator, or the standby that takes over.
   * Each finished week since the last run is reckoned once.
   * In each faction, players with at least `min_honor_kills` kills that week stand in order of honour.
@@ -654,43 +653,40 @@ formulas of `MaNGOS::Honor`.
   * Last week's place goes into `honor_standing`.
   * Rows of weeks before last week are folded into the stored kill totals and deleted. Last week's
     rows stay, for its fields.
-  * Online players then load their honour again.
-  * Where this differs from CMaNGOS:
-    * CMaNGOS stores the decayed rating plus the earning, counting it twice.
-    * It works out which weeks to reckon from the rows that are left, so a restart can reckon a week
-      twice.
-    * It saves online players over the new values.
+  * Online players then load their honour again, so no save of theirs overwrites the new values.
+  * A week's earning is counted once, and the weeks reckoned are those since the last maintenance
+    (not worked out from the rows left), so a restart never reckons a week twice.
 * **What ranks bring.**
   * Items with a `RequiredHonorRank` cannot be equipped, used or bought below it. The highest rank
     reached counts, and buying also needs the item's level.
   * 10% more off at vendors friendly to the player's side, from visual rank 3.
   * 5% off repairs at PvP-flagged vendors from rank byte 6, and 10% from 8.
   * LocalDefense needs no negative rank, WorldDefense a visual rank of 11. The rank travels with
-    channel commands across a cluster (protocol 27).
+    channel commands across a cluster.
   * The Hall of Champions and the Hall of Legends need a visual rank of 6.
   * `CONDITION_PVP_RANK` is checked against the internal rank.
-* **GM commands** are ArcEmu's (`HonorHandler.cpp`):
+* **GM commands** (see "Chat commands"):
   * `.honor addpoints` adds honour with no victim;
-  * `.honor addkills` only prints its messages, as ArcEmu's does with no victim;
+  * `.honor addkills` only prints its messages, having no victim;
   * `.honor pvpcredit` sends the packet;
-  * the two daily updates return false, as in ArcEmu.
-* **Days** are CMaNGOS's `(year - 1900) << 16 | day of the year`. Arithmetic on them goes through the
-  calendar, because CMaNGOS's `date - 7` breaks across a new year.
+  * the two daily updates return false.
+* **Days** are stored as `(year - 1900) << 16 | day of the year`, the schema's format. Arithmetic on
+  them goes through the calendar, because subtracting 7 from such a number breaks across a new year.
 * **Not yet:**
   * honour for group members simulated on another cluster node (kill shares carry experience only);
   * Honorless Target's own effects beyond its presence.
 
 ## Reputation
 
-`reputation.d` is `ReputationMgr` without the session: a `Reputation` per player (`Player.reputation`,
+`reputation.d` is reputation without the session: a `Reputation` per player (`Player.reputation`,
 made by `makePlayer` from `character_reputation`) holds each reputation-list faction's
 `FactionState` (standing above the race's and class's base, flags), and does the changes:
 `change` with spillover, war and peace on rank changes, visibility, the client's war and inactive
 settings, loading and the rows to save (`takeChanged`). What changed is noted (`needSend`, `made`)
 for `reputationhandlers.d` to send (`SMSG_SET_FACTION_VISIBLE`, `SMSG_SET_FACTION_STANDING`, and
 `SMSG_INITIALIZE_FACTIONS` at login). The handlers also give the rewards (`rewardKillReputation`
-from `rewardAtKill`, `rewardQuestReputation` from `rewardQuest`, scaled by
-`CalculateReputationGain`), the price discount, and `SatisfyQuestReputation`. The relations read a
+from `rewardAtKill`, `rewardQuestReputation` from `rewardQuest`, scaled by `reputationGain`: less for
+grey kills and low quests, and the rates), the price discount, and the standing a quest asks for. The relations read a
 player's `Reputation` through `Relating.reputation`: its rank decides how a creature's faction
 template sees it, its wars how it sees reputation factions.
 
@@ -730,10 +726,11 @@ cell is loaded.
 
 ## Experience and loot
 
-`experience.d` is `MaNGOS::XP` as pure functions. `loot.d` holds the loot tables (`LootStore`,
+`experience.d` is experience for kills (what a creature is worth to a player of a level, and how a
+group shares it) as pure functions. `loot.d` holds the loot tables (`LootStore`,
 `LootTemplate`: entries, groups and references, loaded into `WorldData.loot`) and one drop, `Loot`:
-its money and `LootItem`s, the owners, and per item who may still take it, with CMaNGOS's slot
-types, statuses and rights (`canLoot`) by loot method, and the group's rolls (`LootRoll`). It knows
+its money and `LootItem`s, the owners, and per item who may still take it, with slot types,
+statuses and rights (`canLoot`) by loot method, and the group's rolls (`LootRoll`). It knows
 players only as `Looter`s found by guid (the session implements the interface: packets, storing an
 item, money, the looting flag), so its tests drive it with plain objects.
 
@@ -744,9 +741,9 @@ lootable dynamic flags differ by viewer: `Creature` is a `PerViewer`, whose `fie
 applies to each viewer's copy of its create block and value updates (`Map.personalize`,
 `flushObjectChanges`, `refreshViewers` when only the rights changed).
 
-Creature combat numbers come from `selectLevel` (`Creature::SelectLevel` and `UpdateDamagePhysical`
-of the CMaNGOS version whose `creature_template_classlevelstats` has `BaseDamageExp0`, which is the
-schema dmangos reads); players' chances from `stats.meleeChances`.
+Creature combat numbers come from `selectLevel` (health, mana, armor, attack power and damage at the
+creature's level, from `creature_template_classlevelstats`, `BaseDamageExp0` included, or else the
+template's own); players' chances from `stats.meleeChances`.
 
 ## Talking to NPCs
 
@@ -756,65 +753,64 @@ schema dmangos reads); players' chances from `stats.meleeChances`.
 `WorldData.npcs`, and `conditions.d` evaluates the `conditions` those rows name (`ConditionEntry`,
 for the types this server has the data for; the others are never met).
 
-`npchandlers.d` (`NpcHandlers`, mixed into the session) follows `Player::PrepareGossipMenu`,
-`SendPreparedGossip` and `OnGossipSelect`: the menu is built from the NPC's options whose condition
+`npchandlers.d` (`NpcHandlers`, mixed into the session) builds, sends and answers gossip menus: the
+menu is built from the NPC's options whose condition
 and NPC flag fit, shown with the `npc_text` whose condition is the highest one met, and its
 options open submenus, map flags, the trainer or vendor list, the bank, or the hearthstone binding.
-Options for services that do not exist yet are left out. `interactableNpc` is
-`GetNPCIfCanInteractWith`: the NPC must be on the map, have the flag asked for, and stand within
+Options for services that do not exist yet are left out. `interactableNpc` finds the NPC a player
+may use: it must be on the map, have the flag asked for, and stand within
 5 yards plus both combat reaches.
 
-A trainer's lesson runs `Player::learnSpell` through the same `CharacterBuilder` that creates
+A trainer's lesson learns the spell through the same `CharacterBuilder` that creates
 characters: `loadAbilities` loads what the character knows (its saved spell rows, kept current in
 `CharacterData.spells`, and its skills), then `learnInWorld` learns the spell and returns the new
-abilities, the packets CMaNGOS sends (`SMSG_LEARNED_SPELL`, or `SMSG_SUPERCEDED_SPELL` when a rank
+abilities, the packets to send (`SMSG_LEARNED_SPELL`, or `SMSG_SUPERCEDED_SPELL` when a rank
 replaces another) and the rows to save.
 
 ## Terrain
 
-The extractor (`extractor/maps.d`) turns each map's ADT tiles into CMaNGOS's `.map` files, whose
-layout `mapfile.d` holds for both sides. `world/terrain.d` reads them: `GridMap` is one 533-yard
-tile, and `Terrain` (CMaNGOS's `TerrainInfo`) a map's tiles, read the first time anything asks
+The extractor (`extractor/maps.d`) turns each map's ADT tiles into `.map` files (version "z1.4"),
+whose layout `mapfile.d` holds for both sides. `world/terrain.d` reads them: `GridMap` is one
+533-yard tile, and `Terrain` a map's tiles, read the first time anything asks
 about them. `WorldContext.terrain(map)` keeps one per map.
 
-Buildings and doodads come from the vmaps (`vmap/`, CMaNGOS's `src/game/vmap/`): the extractor
+Buildings and doodads come from the vmaps (`vmap/`): the extractor
 writes each model's collision triangles and every placement (`extractor/vmaps.d`), the assembler
 builds bounding interval hierarchies over a map's placements, each model's groups and each group's
 triangles (`extractor/assembler.d`, `vmap/bih.d`), and `vmap/maptree.d` loads a map's tree and its
-tiles' placements as the terrain's tiles load. `Terrain.heightStatic` is `GetHeightStatic`: the
-building surface or the terrain the point stands on. `buildingArea` finds the building group a point
+tiles' placements as the terrain's tiles load. `Terrain.heightStatic` is the building surface or
+the terrain the point stands on. `buildingArea` finds the building group a point
 is in, which gives indoors and outdoors and, through `WMOAreaTable.dbc`, the areas inside buildings;
-`isInLineOfSight` casts a ray through the placed models. The math is G3D's, in `float`
-(`vmap/math.d`), computed as CMaNGOS computes it; the files have CMaNGOS's layout.
+`isInLineOfSight` casts a ray through the placed models. The math is in `float` (`vmap/math.d`);
+the files are version "VMAP_7.0".
 
 A tile has 128 x 128 squares, each with four corner heights and a centre height; a height lookup
-finds the triangle of the square the point is in and solves its plane, as `GridMap::getHeight`
-does. Each of the tile's 16 x 16 cells holds an `AreaTable.dbc` explore flag, which
+finds the triangle of the square the point is in and solves its plane. Each of the tile's 16 x 16 cells holds an `AreaTable.dbc` explore flag, which
 `ClientData.areaByFlag` turns into the area, and the area into its zone. Liquids give a level and
 whether a point is above, in or under them.
 
-`exploration.d` uses them as `Player` does: the zone is the server's, checked once a second and
+`exploration.d` uses them: the zone is the server's, checked once a second and
 after the client's `CMSG_ZONEUPDATE`; every 100 ms of movement, an area entered for the first time
 sets its `PLAYER_EXPLORED_ZONES` bit and gives experience by the area's level
-(`exploration_basexp`, `rate_xp_explore`). `giveXP` is `Player::GiveXP`, with level-ups.
+(`exploration_basexp`, `rate_xp_explore`). `giveXP` gives experience, with level-ups.
 
 ## Items
 
-`inventory.d` is CMaNGOS's item code: `Item` and `Bag` as one `Item` class (a bag has `contents`),
-and `Inventory`, which is `Player::m_items` with the functions that check and change it, ported one
-for one. A position is CMaNGOS's `ushort`: the bag in the high byte (`inventorySlotBag0` for the
+`inventory.d` is the item code: `Item` and `Bag` as one `Item` class (a bag has `contents`), and
+`Inventory`, a character's items with the functions that check and change them. A position is a
+`ushort`, as the client's packets give it: the bag in the high byte (`inventorySlotBag0` for the
 character's own slots, else the slot of a worn or banked bag), the slot in the low byte.
 
 ```d
 ItemPosCount[] dest;
-if (inventory.canStoreNew(nullBag, nullSlot, dest, itemJerky, 10) == InventoryResult.ok)  // CanStoreNewItem
-    inventory.storeNew(dest, itemJerky);                                                   // StoreNewItem
-const error = inventory.swap(src, dst);                                                    // SwapItem
+if (inventory.canStoreNew(nullBag, nullSlot, dest, itemJerky, 10) == InventoryResult.ok)  // where would 10 go?
+    inventory.storeNew(dest, itemJerky);                                                   // put them there
+const error = inventory.swap(src, dst);                                                    // or why not
 ```
 
 The checks (`canStore`, `canBank`, `canEquip`, `canUnequip`, `canUse`) only read; the changes
 (`store`, `equip`, `remove`, `destroy`, `split`, `swap`, the buyback slots) are applied by the
-caller once a check passes, as in CMaNGOS. What the rules ask about the owner (level, class, race,
+caller once a check passes. What the rules ask about the owner (level, class, race,
 skills, spells, dual wield) comes through the `InventoryOwner` interface, which `CharacterBuilder`
 and `Player` both implement: character creation equips and stores its starting items with the same
 rules a player in the world is held to.
@@ -823,33 +819,30 @@ The inventory keeps two lists of what changed:
 
 * **For the client:** items to create, items whose fields changed, items to forget. The owner's
   own fields (slot guids, what others see worn, buyback prices) are written into the player's
-  `UpdateValues` directly. `itemhandlers.d: flushInventory` sends them all in one update, as
-  CMaNGOS does: new and changed items first, then the player's fields that point at them, then the
+  `UpdateValues` directly. `itemhandlers.d: flushInventory` sends them all in one update: new and
+  changed items first, then the player's fields that point at them, then the
   items gone.
-* **For the database:** `Item::SetState` and `Player::_SaveInventory`'s update queue. Each item
-  is new, changed or removed since the last save; `takeChanges` turns the queue into
-  `character_inventory` and `item_instance` rows, which `saveInventory` writes in one transaction
-  with the money. CMaNGOS saves them with the character every few minutes; here every request is
-  saved as it happens, so a crash can neither undo a purchase nor return a sold item. Sold items
-  wait in the buyback slots without rows, as in CMaNGOS, and are written again if bought back.
+* **For the database:** each item is new, changed or removed since the last save; `takeChanges`
+  turns that queue into `character_inventory` and `item_instance` rows, which `saveInventory` writes
+  in one transaction with the money. Every request is saved as it happens, not only with the
+  periodic save, so a crash can neither undo a purchase nor return a sold item. Sold items wait in the
+  buyback slots without rows, and are written again if bought back.
 
-`itemhandlers.d` (`ItemHandlers`) is `ItemHandler.cpp`: moving, splitting, equipping, destroying
-and banking items, ammo, bank bag slots, and the vendor's side, `Player::BuyItemFromVendor`
-(limited stock is kept per creature, `Creature::GetVendorItemCurrentCount`), selling, buyback and
-repairs (`DurabilityCosts.dbc` and `DurabilityQuality.dbc`). After a change to what is worn, the
-player's stats are worked out again (`Player.refreshEquipmentStats`, standing in for
-`_ApplyItemMods`).
+`itemhandlers.d` (`ItemHandlers`) is the character's side: moving, splitting, equipping, destroying
+and banking items, ammo, bank bag slots, and the vendor's side: buying (limited stock is kept per
+creature), selling, buyback and repairs (`DurabilityCosts.dbc` and `DurabilityQuality.dbc`). After a
+change to what is worn, the player's stats are worked out again (`Player.refreshEquipmentStats`).
 
 ## Teleports
 
-`teleport.d: teleportTo` is `Player::TeleportTo`. On the same map it is a near teleport: the
+`teleport.d: teleportTo` moves a player. On the same map it is a near teleport: the
 player is at the destination at once, the client gets `MSG_MOVE_TELEPORT_ACK` and those around
 `MSG_MOVE_TELEPORT`. To another map it is a far teleport:
 
 ```
 server: SMSG_TRANSFER_PENDING, takes the player off its map, SMSG_NEW_WORLD
 client: loads the map, MSG_MOVE_WORLDPORT_ACK
-server: SendInitialPacketsBeforeAddToMap, the player's create block, Map::Add, AfterAddToMap
+server: the world's login packets, the player's create block, the player added to the map
 ```
 
 The session's `teleporting` field is the semaphore: until the client's answer, movement packets
@@ -858,63 +851,65 @@ logout halfway saves the destination. `transferring` (between the two halves of 
 shows group members as "zone out" and keeps chat from reaching the old map.
 
 Area triggers, GM commands, the movement check (which puts a cheater back) and `worldport` all
-end in `teleportTo`. A map entrance is checked with `lockStatus` (`GetAreaTriggerLockStatus`):
-level, raid group, items, quests handed in (`character_queststatus.rewarded`).
+end in `teleportTo`. A map entrance is checked with `lockStatus`: level, raid group, items, quests handed in (`character_queststatus.rewarded`).
 
 ## Groups
 
-`group.d` has `Groups`, the registry (CMaNGOS keeps it in `ObjectMgr` and on `Player`), and
-`Group`. Groups are loaded at start-up with their offline members, so a member who logs in is
-put back in its group. `Group` methods are CMaNGOS's (`AddMember`, `RemoveMember`,
-`ChangeLeader`, `Disband`, `ConvertToRaid`, `SendUpdate`, ...); each writes its rows and tells the
-members online. The handlers in `grouphandlers.d` make the same checks as `GroupHandler.cpp`.
+`group.d` has `Groups`, the registry, and `Group`. Groups are loaded at start-up with their offline
+members, so a member who logs in is put back in its group. `Group`'s methods (adding and removing
+members, changing the leader, disbanding, converting to a raid, sending the list, ...) each write
+their rows and tell the members online. `GroupService` (`groupservice.d`) runs every group command
+with its checks; in a cluster one node runs it and the others mirror the groups (docs/CLUSTER.md).
 
 Groups and channels reach players through `online.d`: an `OnlinePlayer` is an `Inhabitant` with
 its account level, whether it is transferring, and `groupChanged()`. The `Directory` (the
 context) finds players by guid or name, and says whether two see each other. When a player joins
 or leaves a group, `groupChanged` updates its leader flag and sends both ways the health views that
-changed (`Group::_updateMembersOnRosterChanged`). Members that do not see each other get
+changed. Members that do not see each other get
 `SMSG_PARTY_MEMBER_STATS`: everything on joining and logging in, then the position every
 `visibility_relocation_lower_limit` yards, the zone on zone changes, and the status on `/afk`.
 
 ## Channels
 
-`channel.d` has `Channel` and `Channels` (`ChannelMgr`): one set per faction, or one shared set.
+`channel.d` has `Channel` and `Channels`: one set per faction, or one shared set.
 A channel exists while somebody is in it. Built-in channels are recognized by the patterns of
 `ChatChannels.dbc` ("General - %s"). They have no owner, announce nobody, and follow the zone: on
 `CMSG_ZONEUPDATE` a player in "General - Elwynn Forest" is moved to "General - Westfall". Every reply
-is an `SMSG_CHANNEL_NOTIFY`, built by `notice(type, channel, extra...)`.
+is an `SMSG_CHANNEL_NOTIFY`, built by `notice(type, channel, extra...)`. `ChannelService`
+(`channelservice.d`) runs every channel command; in a cluster it is a cluster service
+(docs/CLUSTER.md).
 
 ## Chat commands
 
-The GM system is ArcEmu 2.4.3's, ported rather than imitated:
+GM commands behave exactly as ArcEmu 2.4.3's: the same commands, permission letters, checks and
+messages, word for word. That is a compatibility contract; the implementation is this server's own:
 
-* **Tables.** `commandtable.d` holds ArcEmu's `ChatCommand` tables (`CommandTableStorage::Init`), row
-  for row: name, permission letter, handler name, help text, sub-table, and for `.modify`'s field
-  rows the update field. Row order matters, because the first row a word abbreviates wins.
-* **Dispatch.** `commands.d` ports `ParseCommands` and `ExecuteCommandInTable`. A row's handler name
-  is ArcEmu's (`HandleGMOnCommand`); the session method of that name with a lower-case first letter
-  runs it. `callHandler` is a `switch` generated at compile time over every handler the tables name,
-  with a case for each method that exists; the rest answer like `HandleNYICommand`. So a new handler
-  is one method, and the tables never change.
-* **Permissions.** `Character.permissions` is ArcEmu's letter string, from `account.gmlevel`
-  through the `gm_permissions` setting and `loadSecurity` (`LoadSecurity`); `canUseCommand` is
-  `CanUseCommand`. Other code asks the same questions ArcEmu asks: `hasPermissions` (instant logout,
-  no speed check, cross-faction invites, flood protection), `hasGMPermissions`, or a letter (`c` for
-  languages and channel moderation, `u` for `.gmannounce`). The `OnlinePlayer` interface carries
-  `canUseCommand` and `hasPermissions` to groups and channels.
-* **Handlers** live in `gmlevel0.d` .. `gmlevel3.d` and `gmdebug.d` (also recall and
-  battleground), by the ArcEmu file they come from, and keep ArcEmu's messages and checks; their
-  module comments note where CMaNGOS's schema differs. `gmactions.d` holds what they do to a
+* **Tables.** `commandtable.d` holds the command tables, row for row: name, permission letter,
+  handler name, help text, sub-table, and for `.modify`'s field rows the update field. Row order
+  matters, because the first row a word abbreviates wins.
+* **Dispatch.** `commands.d` parses a command line and walks the tables. A row names its handler
+  (`HandleGMOnCommand`); the session method of that name with a lower-case first letter runs it.
+  `callHandler` is a `switch` generated at compile time over every handler the tables name, with a
+  case for each method that exists; the rest answer "Not yet implemented." So a new handler is one
+  method, and the tables never change.
+* **Permissions.** `Character.permissions` is a string of permission letters, from `account.gmlevel`
+  through the `gm_permissions` setting (`loadSecurity`); `canUseCommand` checks a command's letter.
+  Other code asks `hasPermissions` (instant logout, no speed check, cross-faction invites, flood
+  protection), `hasGMPermissions`, or a letter (`c` for languages and channel moderation, `u` for
+  `.gmannounce`). The `OnlinePlayer` interface carries `canUseCommand` and `hasPermissions` to
+  groups and channels.
+* **Handlers** live in `gmlevel0.d` .. `gmlevel3.d`, `gminstance.d`, `gmquest.d` and `gmdebug.d`
+  (also recall and battleground); their module comments note where the database schema forces a
+  difference. `gmactions.d` holds what they do to a
   player (levels, speeds, items, skills, saving, world-wide messages); a handler acting on another
   player calls that player's session. A handler's parameters are its arguments: `invoke` reads the
   command's words into them with `std.conv.to`, using each parameter's type (`Rest` for the rest of
   the line, `OnOff`, `Nullable` for optional words) and default value, and shows the command's help
-  when a word is missing or does not convert. ArcEmu's `strtok`/`atoi` reading took "12abc" as 12
-  and "abc" as 0; here both are mistakes.
-* **Messages** are ArcEmu's: `systemMessage`, `redSystemMessage`, `greenSystemMessage`,
-  `blueSystemMessage`, `sendMultilineMessage`; `gmLog` is `sGMLog.writefromsession`, written to
-  `gm_command_log`.
+  when a word is missing or does not convert: "12abc" and "abc" are mistakes, not 12 and 0.
+* **Messages** go out through `systemMessage`, `redSystemMessage`, `greenSystemMessage`,
+  `blueSystemMessage` and `sendMultilineMessage`; `gmLog` writes to `gm_command_log`.
+* **Across a cluster,** a command that names a player another node simulates runs on that node
+  (`gmtargets.d`), and its messages come back to the GM (docs/CLUSTER.md).
 
 Account and ban commands use the login server's `LoginDatabase` (`context.accounts`). A timed
 shutdown is a `ShutdownTimer` that `WorldContext.update` counts down. COMMANDS.md, generated by
@@ -925,7 +920,7 @@ shutdown is a `ShutdownTimer` that `WorldContext.update` counts down. COMMANDS.m
 * **Unit tests** are in every module (`dub test`). Session tests run complete conversations with
   `testclient.d`'s scripted client, which holds its own half of the header cipher. Fixtures in
   `testdata.d` follow the real 1.12 ids, so the game logic runs its real code paths.
-* **Live tests** use `tools/testclient.py` against running servers on real CMaNGOS databases and
-  real client data. Its update packet parser is written independently of the D code.
+* **Live tests** use `tools/testclient.py` against running servers on real databases and real
+  client data. Its update packet parser is written independently of the D code.
 
 See [DEVELOPING.md](DEVELOPING.md) for how to run both.
