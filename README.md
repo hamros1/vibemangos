@@ -618,6 +618,28 @@ source/dmangos/world/       the world server (mangosd)
   spline.d                    walks along a path in time, SMSG_MONSTER_MOVE and its create block part
   grid.d                      grid cells shared by maps and the spawn index
   creature.d, gameobject.d    creature_template/creature and gameobject_template/gameobject: the objects
+  creatureai.d                creatures fighting: threat, chasing, evading, calling for help (CreatureAI)
+  creaturecasting.d           creatures casting, fleeing, and what their scripts do (mixed into CreatureAI)
+  eventai.d                   CMaNGOS's EventAI: creature_ai_scripts events, phases and actions
+  dbscripts.d                 dbscripts_on_*: script steps run by the world at their delays
+  combat.d, relations.d       melee formulas (the attack table, damage) and who may attack or help whom
+  combathandlers.d            handlers: attack swings, melee against creatures and players, kills
+  spellcast.d, spellhandlers.d  spell checks, targets and packets; casting, channels, effects, fishing
+  auras.d, aurahandlers.d     auras: their fields, ticks, removal; applying them, cancelling them
+  dynobject.d                 the spot of a persistent area aura (a dynamic object)
+  death.d, corpse.d           dying, releasing, ghosts, the spirit healer, corpses and reclaiming them
+  experience.d, loot.d        kill and quest experience; loot tables, rolls and the loot window's rules
+  loothandlers.d              handlers: looting creatures, game objects and items; group loot
+  gameobjecthandlers.d        handlers: using game objects (doors, chests, chairs, traps, quest objects)
+  quests.d, questhandlers.d   quest_template and its givers; the quest log, objectives, rewards, sharing
+  reputation.d                factions' standings (ReputationMgr); reputationhandlers.d: changes, rewards
+  talenthandlers.d            talents learned and reset
+  tradehandlers.d, duelhandlers.d  trading between players; duels
+  mailhandlers.d              mail: sending, the mailbox, items and money, returns
+  auctionhouse.d, auctionhandlers.d  auctions in the `auction` table; the auctioneer's handlers
+  taxi.d, taxihandlers.d      flight paths: the network, known nodes, flying
+  whisper.d, channelservice.d, groupservice.d  whispers, channels and groups across a cluster
+  gmtargets.d                 what GM commands that name a player do to it, wherever it is simulated
   online.d                    OnlinePlayer and Directory: what groups and channels see of players
   group.d                     groups: members, leaders, raids, the group list, member stats
   channel.d                   chat channels: members, owners, moderation, notices
