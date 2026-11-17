@@ -265,6 +265,11 @@ every map, then counts a shutdown down. A session's `updateInWorld` keeps its pe
   rested XP (`ComputeRest`); capitals rest by their `AreaTable` flag on zone updates;
 * the periodic save.
 
+After the maps, the context runs what belongs to no one map: database scripts under way
+(`dbscripts.d`), each zone's weather (`weather.d`: a change every 10 minutes, sent to the zone's
+players, forgotten once nobody is in the zone), respawns that are due, auctions once a minute and
+old mail once an hour.
+
 Game time comes from `context.clock` (and `context.unixTime`, derived from it), so tests move time
 by replacing the clock and calling `context.update`.
 
