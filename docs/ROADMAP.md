@@ -28,35 +28,32 @@
 * **Stats:** item bonuses, auras (talents' and racials' passive ones included) and the crit, dodge,
   parry and block chances are applied; passives bound to a kind of weapon or armour are not yet.
 * **Not loaded:** guild membership (`PLAYER_GUILDID`), cooldowns, pets.
-* **Creatures** wander, walk their waypoints, fight, die and respawn. Waypoint scripts (`ScriptId`) are not run, type 3 paths (flying) are walked as waypoints, formations
+* **Creatures** wander, walk their waypoints (running their scripts), fight, die and respawn. Type 3 paths (flying) are walked as waypoints, formations
   do not follow their leader, and creatures in water do not swim. Stable masters, battlemasters and
   guild NPCs are not offered in menus yet. Conditions
   that need auras, world states or scripts are never met. Elevators
   are created but do not move. Ships and zeppelins are not
-  spawned. Cells are never unloaded (mangosd unloads idle grids after a while).
-* **Rested XP** is earned but not spent: only kills spend it, and there are none yet. Exploration
-  is the only experience so far.
-* **Terrain:** heights put wandering creatures on the ground; line of sight is there to use, but
-  nothing uses it yet, as spells are not cast. Game objects' models (doors, elevators) are extracted but
+  spawned. Idle cells unload after `grid_cleanup_delay_seconds`.
+* **Terrain:** heights put wandering creatures on the ground; line of sight decides aggro and
+  spells. Game objects' models (doors, elevators) are extracted but
   do not block sight (CMaNGOS's dynamic tree). Without mmaps there are no paths.
 * **Movement:** the speed check assumes running speed; it must learn mounts, speed auras,
   knockbacks and taxis when those exist.
 * **Teleports:** there is one map per map id, so everyone entering a dungeon shares one copy.
-  Instance ids, binds (`character_instance`, `group_instance`) and resets come with milestone 3's
-  map updates. Area triggers with a `condition_id` stay closed until conditions are loaded;
-  taverns (rest) and quest triggers do nothing yet. Battlegrounds cannot be entered.
+  Instance ids, binds (`character_instance`, `group_instance`) and resets are not done yet.
+  Area trigger scripts (`scripted_areatrigger`) do nothing. Battlegrounds cannot be entered.
 * **Groups:** an offline leader is not replaced after a while (that needs a timer). Loot
-  settings are stored but nothing drops yet. The ignore list does not exist, so nobody can be
+  settings decide who loots. The ignore list does not exist, so nobody can be
   ignored. Two-faction groups do not show the other faction as friendly.
 * **Chat:** no ignore list or `Channel.RestrictedLanguageMode`.
   LocalDefense and WorldDefense need PvP ranks, which do not exist, so WorldDefense is read-only.
   The GM tag and `.gm allowwhispers` are not kept between logins (nor are they in ArcEmu).
 * **Inventory:** prices have no honor discounts, and items that need an honor rank cannot be bought
   or used (there are no ranks). An off-hand item with no room left
-  when a two-hander is put on stays worn, where CMaNGOS mails it: there is no mail. Item
+  when a two-hander is put on stays worn, where CMaNGOS mails it (not yet). Item
   enchantments, random properties, item sets, item spells, readable items, wrapping and loot in
-  items (lockboxes, clams) are not done. A broken worn item's stats come back when it is repaired,
-  but nothing breaks it yet.
+  items (lockboxes, clams: `CMSG_OPEN_ITEM` is) are not done. Dying and the spirit healer wear gear
+  down; a broken worn item's stats come back when it is repaired.
 * **GM system:** ArcEmu's commands that need missing systems answer "Not yet implemented."
   (COMMANDS.md lists them); GM invisibility (`.invisible`) needs sight to be one-sided first. The
   `c` letter makes speech universal but does not teach the language skills ArcEmu adds.
