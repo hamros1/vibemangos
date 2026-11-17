@@ -356,7 +356,8 @@ What works now:
     weapon damage with a bonus or percentage (Heroic Strike waits for the next swing and replaces
     it), heals, energize, teleports home (the hearthstone), creating items, learning and triggering
     spells. Items cast their on-use spells (with the item's own cooldowns; food and drink are used
-    up); an item's on-equip spells are on as auras while it is worn (and unbroken), and a spell that
+    up); an item's on-equip spells, and its item set's bonuses for as many of the set's items as are
+    worn (ItemSet.dbc), are on as auras while it is worn (and unbroken), and a spell that
     needs an item worn (a weapon of some kind, a shield, a fishing pole) is
     refused without it. A channelled spell goes on for its duration (`MSG_CHANNEL_START`, the caster's channel fields),
     ending at its time, when the player cancels it, or when it moves if the spell says so (its auras on

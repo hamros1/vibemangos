@@ -143,7 +143,8 @@ private:
 
     /**
      * `Player::ApplyItemEquipSpell` for every item worn: the on-equip spells of the unbroken items
-     * worn are on as auras (lasting while worn); those of items taken off (or broken) go.
+     * worn are on as auras (lasting while worn), and the bonuses of the item sets they make up;
+     * those of items taken off (or broken) go.
      */
     package void refreshEquipSpells()
     {
@@ -151,6 +152,7 @@ private:
 
         enum uint onEquip = 1, applyAura = 6;
         bool[uint] wanted;
+        uint[uint] worn; // item set -> items of it worn
         foreach (ubyte slot; 0 .. equipmentSlotEnd)
         {
             const item = player.inventory.equipped(slot);
@@ -159,7 +161,19 @@ private:
             foreach (ref s; item.proto.details.spells)
                 if (s.id && s.trigger == onEquip)
                     wanted[s.id] = true;
+            if (const set = item.proto.details.itemSet)
+                worn[set]++;
         }
+        // `Player::AddItemsSetItem`: a set's bonuses for as many of its items as are worn (and its skill).
+        foreach (set, count; worn)
+            if (const entry = context.client.itemSets.lookup(set))
+            {
+                if (entry.requiredSkill && player.skillValue(entry.requiredSkill)[0] < entry.requiredSkillValue)
+                    continue;
+                foreach (k; 0 .. 8)
+                    if (entry.spells[k] && entry.thresholds[k] && count >= entry.thresholds[k])
+                        wanted[entry.spells[k]] = true;
+            }
         foreach (id, _; equipSpells.dup)
             if (id !in wanted)
             {
@@ -304,4 +318,26 @@ unittest
     anduin.write(Opcode.CMSG_SWAP_INV_ITEM, ClientSwapInvItem(equipmentSlotMainhand, slot));
     anduin.read();
     assert(me.auras.find(might) is null && me.values.get!UNIT_FIELD_STAT0 == before, "taken off: gone");
+
+    // A set of one item (the sword) whose bonus needs one worn: on with it, off without it.
+    import dmangos.dbc : buildDbc;
+    import dmangos.world.clientdata : itemSetFormat;
+
+    enum uint setBonus = 95801, setId = 77;
+    context.data.spells.spells[setBonus] = testSpell(setBonus, 6, 1, 3);
+    context.data.spells.spells[setBonus].casting.applyAuraName[0] = AuraType.modStat;
+    context.data.spells.spells[setBonus].miscValue[0] = Stat.strength;
+    context.data.items[itemSword].details.spells[0].id = 0;
+    context.data.items[itemSword].details.itemSet = setId;
+    uint[45] row;
+    row[0] = setId;
+    row[27] = setBonus; // its first spell
+    row[35] = 1;        // for one item
+    context.client.itemSets = typeof(context.client.itemSets).parse(buildDbc(itemSetFormat, [row[]]), "ItemSet.dbc");
+    anduin.write(Opcode.CMSG_AUTOEQUIP_ITEM, ClientItemPos(inventorySlotBag0, slot));
+    anduin.read();
+    assert(me.auras.find(setBonus) !is null && me.values.get!UNIT_FIELD_STAT0 == before + 3, "the set's bonus");
+    anduin.write(Opcode.CMSG_SWAP_INV_ITEM, ClientSwapInvItem(equipmentSlotMainhand, slot));
+    anduin.read();
+    assert(me.auras.find(setBonus) is null, "gone with the item");
 }

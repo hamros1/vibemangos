@@ -389,6 +389,18 @@ struct TalentEntry
 
 enum talentFormat = "niiiiiiiixxxxixxixxxi"; ///
 
+/// An item set (`ItemSetEntry`): its bonus spells and how many of its items each needs.
+struct ItemSetEntry
+{
+    uint id;
+    uint[8] spells;            /// `m_setSpellID`
+    uint[8] thresholds;        /// `m_setThreshold`: items worn for each spell
+    uint requiredSkill;        /// `m_requiredSkill`
+    uint requiredSkillValue;   /// `m_requiredSkillRank`
+}
+
+enum itemSetFormat = "nxxxxxxxxxxxxxxxxxxxxxxxxxxiiiiiiiiiiiiiiiiii"; ///
+
 ///
 struct TalentTabEntry
 {
@@ -581,6 +593,7 @@ final class ClientData
     DbcStore!(SkillRaceClassInfoEntry, skillRaceClassInfoFormat) skillRaceClassInfos;
     DbcStore!(SkillTiersEntry, skillTiersFormat) skillTiers;
     DbcStore!(TalentEntry, talentFormat) talents;
+    DbcStore!(ItemSetEntry, itemSetFormat) itemSets;
     DbcStore!(TalentTabEntry, talentTabFormat) talentTabs;
     DbcStore!(CreatureDisplayInfoEntry, creatureDisplayInfoFormat) creatureDisplays;
     DbcStore!(CreatureModelDataEntry, creatureModelDataFormat) creatureModels;
@@ -642,7 +655,7 @@ final class ClientData
             "durabilityQualities:DurabilityQuality", "liquidTypes:LiquidType", "wmoAreas:WMOAreaTable",
             "factions:Faction", "factionTemplates:FactionTemplate", "worldSafeLocs:WorldSafeLocs", "spellCastTimes:SpellCastTimes", "spellDurations:SpellDuration",
             "spellRanges:SpellRange", "spellRadii:SpellRadius", "locks:Lock", "auctionHouses:AuctionHouse",
-            "taxiNodes:TaxiNodes", "taxiPaths:TaxiPath", "taxiPathNodes:TaxiPathNode"])
+            "taxiNodes:TaxiNodes", "taxiPaths:TaxiPath", "taxiPathNodes:TaxiPathNode", "itemSets:ItemSet"])
         {{
             enum parts = member.findSplit(":");
             enum field = parts[0];
