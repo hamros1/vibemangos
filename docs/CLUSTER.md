@@ -132,6 +132,12 @@ per tick) to the standalone server, logged every `metrics_interval_seconds`. Mem
 where the numbers point. Cluster code is written to allocate nothing per message from the start,
 because it is new and the cost of doing it right is low.
 
+## Services
+
+docs/SERVICES.md gives the cluster logical services: chat channels, the battleground queue and the
+login gate, placed by the coordinator and called by what they are, wherever they run. It draws on
+Blizzard's patent US10086279B2 and on Ryzom Core.
+
 ## Phases
 
 Each phase is testable on its own and leaves standalone operation working.

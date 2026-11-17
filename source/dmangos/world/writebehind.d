@@ -38,118 +38,13 @@ import std.traits : FunctionAttribute, functionAttributes, hasUDA, isArray, isDy
     ParameterStorageClassTuple, ReturnType, Unqual;
 import std.typecons : AutoImplement;
 
-import dmangos.frozen : isPlainData;
+import dmangos.plaindata : decode, encode, isPlainData, layout;
 import dmangos.log : error, info, warning;
 import dmangos.world.database : Replaces, WorldDatabase;
 
 // ---------------------------------------------------------------------------------------------------
 // The arguments as bytes
 // ---------------------------------------------------------------------------------------------------
-
-/// The layout of `T` in words: two builds of the server agree on a write's bytes if they agree on this.
-template layout(T)
-{
-    alias U = Unqual!T;
-    static if (is(U == enum))
-        enum layout = layout!(OriginalType!U);
-    else static if (isStaticArray!U)
-        enum layout = layout!(typeof(U.init[0])) ~ "[" ~ () { import std.conv : to; return U.length.to!string; }() ~ "]";
-    else static if (isDynamicArray!U)
-        enum layout = layout!(typeof(U.init[0])) ~ "[]";
-    else static if (is(U == struct))
-    {
-        enum layout = () {
-            string s = "{";
-            static foreach (i, F; typeof(U.tupleof))
-                s ~= __traits(identifier, U.tupleof[i]) ~ ":" ~ layout!F ~ ";";
-            return s ~ "}";
-        }();
-    }
-    else
-        enum layout = U.stringof;
-}
-
-/// Appends `value` to `bytes`: numbers in the machine's order, arrays after their length.
-void encode(T)(ref ubyte[] bytes, const ref T value) @trusted
-{
-    alias U = Unqual!T;
-    static if (is(U == enum))
-        encode(bytes, *cast(const(OriginalType!U)*) &value);
-    else static if (isIntegral!U || isFloatingPoint!U || isSomeChar!U || is(U == bool))
-        bytes ~= (cast(const(ubyte)*) &value)[0 .. U.sizeof];
-    else static if (isStaticArray!U)
-    {
-        foreach (ref element; value)
-            encode(bytes, element);
-    }
-    else static if (isDynamicArray!U)
-    {
-        const uint count = cast(uint) value.length;
-        encode(bytes, count);
-        foreach (ref element; value)
-            encode(bytes, element);
-    }
-    else static if (is(U == struct))
-    {
-        static foreach (i; 0 .. U.tupleof.length)
-            encode(bytes, value.tupleof[i]);
-    }
-    else
-        static assert(false, "cannot queue a " ~ T.stringof);
-}
-
-/// Reads back what `encode` wrote, from the front of `bytes`.
-void decode(T)(ref const(ubyte)[] bytes, ref T value) @trusted
-{
-    import std.exception : enforce;
-
-    alias U = Unqual!T;
-    auto target = cast(U*) &value;
-    static if (is(U == enum))
-        decode(bytes, *cast(OriginalType!U*) target);
-    else static if (isIntegral!U || isFloatingPoint!U || isSomeChar!U || is(U == bool))
-    {
-        enforce(bytes.length >= U.sizeof, "a queued write ends early");
-        (cast(ubyte*) target)[0 .. U.sizeof] = bytes[0 .. U.sizeof];
-        bytes = bytes[U.sizeof .. $];
-    }
-    else static if (isStaticArray!U)
-    {
-        foreach (ref element; *target)
-            decode(bytes, element);
-    }
-    else static if (isDynamicArray!U)
-    {
-        uint count;
-        decode(bytes, count);
-        enforce(count <= bytes.length, "a queued write ends early");
-        alias E = Unqual!(typeof(U.init[0]));
-        auto elements = new E[count];
-        foreach (ref element; elements)
-            decode(bytes, element);
-        *target = cast(U) elements;
-    }
-    else static if (is(U == struct))
-    {
-        static foreach (i; 0 .. U.tupleof.length)
-            decode(bytes, target.tupleof[i]);
-    }
-}
-
-unittest
-{
-    static struct Inner { ubyte[3] tag; string note; }
-    static struct Outer { uint id; float x; bool on; Inner[] inner; char[] raw; }
-    static assert(isPlainData!Outer && !isPlainData!(void delegate()) && !isPlainData!Object);
-
-    ubyte[] bytes;
-    const before = Outer(7, 1.5f, true, [Inner([1, 2, 3], "a"), Inner([4, 5, 6], "")], "xy".dup);
-    encode(bytes, before);
-    const(ubyte)[] rest = bytes;
-    Outer after;
-    decode(rest, after);
-    assert(after == before && rest.length == 0);
-}
 
 // ---------------------------------------------------------------------------------------------------
 // Which methods are queued

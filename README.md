@@ -702,7 +702,8 @@ source/dmangos/world/       the world server (mangosd)
   gmdebug.d                   GM commands from debugcmds.cpp, RecallCommands.cpp, BattlegroundCommands.cpp
   ../cluster/                 several world servers as one (docs/CLUSTER.md): config.d, protocol.d (framing,
                               messages), link.d (a link between nodes), node.d (membership, fencing, routing),
-                              regions.d and ownership.d (regions, leases, ids), sessions.d (one login per account)
+                              regions.d and ownership.d (regions, leases, ids), sessions.d (one login per account),
+                              services.d (cluster services: docs/SERVICES.md)
   replication.d               replicas of other nodes' creatures, game objects and players
   migration.d                 objects moving to another node with their region (their state)
   fencing.d                   a cluster node writes nothing once its lease has lapsed
@@ -710,6 +711,7 @@ source/dmangos/world/       the world server (mangosd)
   clusterbridge.d             replication between the maps and the cluster's links
   ../metrics.d                tick, event loop and GC measurements
   ../frozen.d                 static tables in memory the collector does not scan (StaticMap, the arena)
+  ../plaindata.d              plain data: encoded as bytes, its layout described (writes, services)
   ../navigation.d             movement maps: Recast and Detour (thirdparty/) through a small C interface
   ../loadgen/                 the load generator: headless clients (bot.d) and scenarios (main.d)
   map.d                       players, creatures and game objects on a map: cells, sight, broadcasting,
