@@ -59,7 +59,7 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 * Arguments are read strictly: a number written wrong ("12abc", "abc") or a missing argument shows
   the command's help, where ArcEmu's C parsing read "12abc" as 12 and "abc" as 0 and went on.
 
-## Working (197)
+## Working (198)
 
 | Command | Letter | Help |
 |---|---|---|
@@ -213,6 +213,7 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 | `.character learnskill` | `m` | .learnskill <skillid> (optional) <value> <maxvalue> - Learns skill id skillid. |
 | `.character advanceskill` | `m` | advanceskill <skillid> <amount, optional, default = 1> - Advances skill line x times.. |
 | `.character removeskill` | `m` | .removeskill <skillid> - Removes skill |
+| `.character increaseweaponskill` | `m` | .increaseweaponskill <count> - Increase eqipped weapon skill x times (defaults to 1). |
 | `.character resetreputation` | `n` | .resetreputation - Resets reputation to start levels. (use on characters that were made before reputation fixes.) |
 | `.character resettalents` | `n` | .resettalents - Resets all talents of targeted player to that of their current level. DANGEROUS. |
 | `.character additem` | `m` | Adds item x count y |
@@ -261,7 +262,7 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 | `.logcomment` | `1` | Adds a comment to the GM log for the admins to read. |
 | `.removesickness` | `m` | Removes ressurrection sickness from the target |
 
-## Not yet implemented (101)
+## Not yet implemented (100)
 
 These answer "Not yet implemented.", as ArcEmu's `HandleNYICommand` does: their systems (AI agents
 and waypoint editing, quest editing, guilds, pets, honor, battlegrounds and arenas, GM
@@ -358,7 +359,6 @@ tickets, game object and creature spawning, GM invisibility, flying) do not exis
 | `.guild members` | `m` | Lists guildmembers and their ranks. |
 | `.guild removeplayer` | `m` | Removes a player from a guild. |
 | `.guild disband` | `m` | Disbands the guild of your target. |
-| `.character increaseweaponskill` | `m` | .increaseweaponskill <count> - Increase eqipped weapon skill x times (defaults to 1). |
 | `.character resetspells` | `n` | .resetspells - Resets all spells to starting spells of targeted player. DANGEROUS. |
 | `.character resetskills` | `n` | .resetskills - Resets all skills. |
 | `.character forcerename` | `m` | Forces character x to rename his char next login |

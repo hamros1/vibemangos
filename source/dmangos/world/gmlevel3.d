@@ -1010,6 +1010,46 @@ private:
         return true;
     }
 
+    bool handleIncreaseWeaponSkill(uint cnt = 1)
+    {
+        import std.algorithm.comparison : min;
+        import dmangos.world.defines : equipmentSlotMainhand, equipmentSlotRanged;
+
+        auto pr = getSelectedChar(true);
+        if (pr is null)
+            pr = this;
+        auto it = pr.player.inventory.equipped(equipmentSlotMainhand);
+        if (it is null)
+            it = pr.player.inventory.equipped(equipmentSlotRanged);
+        uint skill;
+        if (it !is null && it.proto !is null)
+        {
+            // ArcEmu's weapon subclasses to skill lines (its own oddities kept: exotic ones are staves).
+            static immutable uint[21] bySubClass = [44, 172, 45, 46, 54, 160, 229, 43, 55, 136, 136, 0, 473, 0, 0,
+                173, 176, 227, 226, 228, 356];
+            if (it.proto.subClass < bySubClass.length)
+                skill = bySubClass[it.proto.subClass];
+        }
+        else
+            skill = 162; // unarmed
+        if (skill == 0)
+        {
+            redSystemMessage("Can't find skill ID :-/");
+            return false;
+        }
+        blueSystemMessage(format!"Modifying skill line %d. Advancing %d times."(skill, cnt));
+        gmLog(format!"increased weapon skill (%u) of %s by %u"(skill, pr.player.data.name, cnt));
+        const now = pr.player.skillValue(skill);
+        if (now[1] == 0)
+        {
+            systemMessage("Does not have skill line, adding.");
+            pr.applySkill(skill, 1, 300);
+        }
+        else // `_AdvanceSkillLine`: up to the maximum
+            pr.applySkill(skill, cast(ushort) min(now[0] + cnt, now[1]), now[1]);
+        return true;
+    }
+
     bool handleRemoveRessurectionSickessAuraCommand()
     {
         enum uint resurrectionSickness = 15007;
@@ -1661,6 +1701,14 @@ unittest
     gm.say(".admin castall 95900");
     assert(systemMessages(gm.read()).canFind(MSG_COLOR_LIGHTBLUE ~ "Casted spell 95900 on all players!|r"));
     assert(victim.auras.find(blessing) !is null && (cast(Player) gm.session.character).auras.find(blessing) !is null);
+
+    // No weapon: unarmed (162), from 1 a step.
+    gm.write(Opcode.CMSG_SET_SELECTION, ClientGuid(victim.guid));
+    const unarmed = victim.skillValue(162);
+    gm.say(".character increaseweaponskill 2");
+    assert(systemMessages(gm.read())[0] == MSG_COLOR_LIGHTBLUE ~ "Modifying skill line 162. Advancing 2 times.|r");
+    assert(unarmed[1] == 0 ? victim.skillValue(162)[0] == 1
+        : victim.skillValue(162)[0] == (unarmed[0] + 2 < unarmed[1] ? unarmed[0] + 2 : unarmed[1]));
 
     anduin.session.addAura(makeAura(&context.data.spells.spells[sickness], victim.guid, 1, 600_000, false, [-75, 0, 0]));
     assert(victim.auras.find(sickness) !is null);
