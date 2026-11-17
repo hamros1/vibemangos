@@ -1040,11 +1040,15 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         import dmangos.world.gameobject : GameObject;
 
         auto state = instance in instances;
+        // A battleground's copy: only the spawns of its events now (`OnObjectDBLoad`).
+        auto copy = battlegroundOfMap(mapId) ? battlegrounds.find(instance) : null;
         MapObject[] spawned;
         if (auto cells = mapId in data.creatureCells)
             foreach (index; (*cells).get(cell, null))
             {
                 if (state !is null && data.creatureSpawns[index].guid in state.dead)
+                    continue;
+                if (copy !is null && !copy.spawnAllowed(data.creatureSpawns[index].guid in data.creatureBattleEvents))
                     continue;
                 if (auto creature = makeCreature(&data.creatureSpawns[index]))
                 {
@@ -1058,8 +1062,13 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 const spawn = &data.gameObjectSpawns[index];
                 if (spawn.respawnSeconds < 0 || (state !is null && spawn.guid in state.usedUp))
                     continue;
+                const event = spawn.guid in data.gameObjectBattleEvents;
+                if (copy !is null && !copy.spawnAllowed(event))
+                    continue;
                 auto go = makeGameObject(spawn);
                 go.instanceId = instance;
+                if (copy !is null && event !is null && (*event)[0] == 254 && copy.doorsOpen)
+                    go.setDoorOpen(true); // a door loading after the start (`OnObjectDBLoad`)
                 spawned ~= go;
             }
         if (auto script = instance in instanceScripts)

@@ -128,7 +128,7 @@ private:
         if (zone != player.data.zone)
         {
             player.data.zone = zone;
-            send(ServerInitWorldStates(player.data.map, zone));
+            sendInitWorldStates(zone);
             deliver(Opcode.SMSG_WEATHER, context.weatherFor(zone)); // `Player::UpdateZone`
             if (const zoneName = context.client.areaName(zone))
                 context.channelCommand(this, ChannelOp.zoneChanged, null, zoneName);

@@ -864,6 +864,12 @@ private:
         case ChatType.CHAT_MSG_CHANNEL:
             context.channelCommand(this, ChannelOp.say, chat.channel, chat.text, language);
             break;
+        case ChatType.CHAT_MSG_BATTLEGROUND, ChatType.CHAT_MSG_BATTLEGROUND_LEADER:
+            if (parseCommands(chat.text))
+                return;
+            if (auto copy = currentBattleground())
+                copy.teamChat(player.guid, chat.type, language, chat.text, player.chatTag);
+            break;
         case ChatType.CHAT_MSG_GUILD, ChatType.CHAT_MSG_OFFICER:
             guildChat(chat.type == ChatType.CHAT_MSG_OFFICER, language, chat.text);
             break;

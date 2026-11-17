@@ -443,6 +443,33 @@ final class Character : OnlinePlayer, Looter
             leaveBattleground(teleport);
     }
 
+    /// Its battleground ended: alive again, its marks (`markSpell`). See `Battleground.end`.
+    void battlegroundEnded(uint markSpell)
+    {
+        if (player !is null)
+            battlegroundEndedHere(markSpell);
+    }
+
+    /// Bonus honor from its battleground; whether it counted.
+    bool battlegroundBonusHonor(uint honor)
+    {
+        return player !is null && battlegroundBonusHonorHere(honor);
+    }
+
+    /// Reputation from its battleground (`ModifyReputation`).
+    void battlegroundReputation(uint faction, int amount)
+    {
+        if (player !is null)
+            modifyReputation(faction, amount);
+    }
+
+    /// A spell its battleground casts on it (a quest's credit).
+    void battlegroundCast(uint spell)
+    {
+        if (player !is null)
+            battlegroundCastHere(spell);
+    }
+
     /// `GetHonorRankInfo().rank`, as the battleground scoreboard shows it.
     @property uint visibleHonorRank()
     {

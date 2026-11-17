@@ -378,7 +378,7 @@ mixin template CharacterLogin()
     {
         setZoneOnArrival();
         sendSocialLists();
-        send(ServerInitWorldStates(player.data.map, player.data.zone));
+        sendInitWorldStates(player.data.zone);
         deliver(Opcode.SMSG_WEATHER, context.weatherFor(player.data.zone));
     }
 }

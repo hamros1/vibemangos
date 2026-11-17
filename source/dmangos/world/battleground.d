@@ -19,6 +19,7 @@ import core.time : Duration, MonoTime, minutes, msecs, seconds;
 import dmangos.bytes : ByteWriter;
 import dmangos.world.bgqueue;
 import dmangos.world.context : WorldContext;
+import dmangos.world.map : MapObject;
 import dmangos.world.opcodes : ChatType, Language, Opcode;
 
 /// `SPELL_ID_BATTLEGROUND_DESERTER`
@@ -56,6 +57,74 @@ ubyte[] battlegroundMessage(ChatType type, string text, ulong source = 0)
     return chatMessage(type, Language.LANG_UNIVERSAL, source, text);
 }
 
+/// `BG_EVENT_DOOR`, and no event (`BG_EVENT_NONE`).
+enum ubyte eventDoors = 254, eventNone = 255;
+
+/// `mangos_string` 750, 751: the premature end's warnings (minutes, seconds).
+enum uint stringClosingMinutes = 750, stringClosingSeconds = 751;
+
+/// `BattleGround.PrematureFinishTimer`'s default.
+enum Duration prematureFinish = 5.minutes;
+
+/// The mark of honor spells (`RewardMark`) of each battleground: a win's three marks, a loss's one.
+immutable uint[2][4] markSpells = [[0, 0], [24955, 24954], [24951, 24950], [24953, 24952]];
+
+/**
+ * `MaNGOS::Honor::GetHonorGain` with the battleground's top level (`BG_MaxLvl`, 60 for all three):
+ * the bonus honor worth `kills` honorable kills.
+ */
+uint bonusHonor(uint kills) pure nothrow @nogc @safe
+{
+    import std.math : ceil, exp;
+
+    return cast(uint) ceil(kills * (-0.53177 + 0.59357 * exp((60 + 23.54042) / 26.07859)));
+}
+
+unittest
+{
+    assert(bonusHonor(1) == 15 && bonusHonor(2) == 29 && bonusHonor(3) == 43 && bonusHonor(4) == 57);
+}
+
+/**
+ * What one battleground adds to the copy every battleground shares: its events and world states, what
+ * its objectives do. The default does nothing: a battleground without rules of its own has only doors.
+ */
+class BattlegroundRules
+{
+    /// Before the first player comes (`Reset`): events and world states as they start.
+    void reset(Battleground copy) {}
+
+    /// The countdown is over (`StartingEventOpenDoors`), after the doors opened.
+    void started(Battleground copy) {}
+
+    /// Each tick while the battle is on.
+    void tick(Battleground copy, Duration elapsed) {}
+
+    /// `HandleKillPlayer`: `victim` died, killed by `killer` (0: no player), after the scores counted it.
+    void playerKilled(Battleground copy, ulong victim, ulong killer) {}
+
+    /// `RemovePlayer`: `guid` leaves (or logs out while it runs): what it carried is dropped.
+    void playerLeaving(Battleground copy, ulong guid) {}
+
+    /// `HandleAreaTrigger`: true if the trigger is the battleground's (handled).
+    bool areaTrigger(Battleground copy, ulong who, uint trigger) { return false; }
+
+    /// `GetPrematureWinner`: who wins if it ends early; `winnerNone` leaves it to the player counts.
+    ubyte prematureWinner(Battleground copy) { return winnerNone; }
+
+    /// `EndBattleGround`'s battleground part, before the shared rewards.
+    void ending(Battleground copy, ubyte winner) {}
+
+    /// `MSG_BATTLEGROUND_PLAYER_POSITIONS`' body for a player of `team`.
+    const(ubyte)[] playerPositions(Battleground copy, ubyte team)
+    {
+        ByteWriter w;
+        w.put(uint(0));
+        w.put(ubyte(0));
+        return w.data.dup;
+    }
+}
+
 /// A copy of a battleground on this node. See the module documentation.
 final class Battleground
 {
@@ -65,6 +134,14 @@ final class Battleground
     MonoTime made;
     /// The winner (`winnerNone` until it is over).
     ubyte winner = winnerNone;
+    /// Its rules.
+    BattlegroundRules rules;
+    /// `m_activeEvents`: each event's spawned state (`event1` -> `event2`); absent, none.
+    ubyte[ubyte] activeEvents;
+    /// Its world states (`WorldStateVariableManager`), sent to players coming in.
+    uint[uint] worldStates;
+    /// `BattleGroundMgr::ToggleTesting`: too few players do not end it.
+    bool testing;
 
     /// A player of the copy (`BattleGroundPlayer`) and its score (`BattleGroundScore`).
     static struct Member
@@ -86,15 +163,21 @@ final class Battleground
         Duration endLeft;
         MonoTime emptySince;
         bool asking;           // whether the queue was asked if anyone may still come
+        Duration prematureLeft;
+        bool prematureCounting;
+        uint lastWarning;      // the premature end's last warning, in seconds left
     }
 
     ///
-    this(WorldContext context, uint instance, BattlegroundType type)
+    this(WorldContext context, uint instance, BattlegroundType type, BattlegroundRules rules = null)
     {
         this.context = context;
         this.instance = instance;
         this.type = type;
+        this.rules = rules is null ? new BattlegroundRules : rules;
         made = context.clock();
+        activeEvents[eventDoors] = 0; // the doors are there, closed
+        this.rules.reset(this);
     }
 
     /// Players of `team` in the copy.
@@ -118,6 +201,12 @@ final class Battleground
         return battlegroundMaps[type];
     }
 
+    /// The template it was made from.
+    @property const(BattlegroundTemplate)* template_() const
+    {
+        return cast(ubyte) type in context.data.battlegroundTemplates;
+    }
+
     /**
      * `BattleGround::AddPlayer`: player `guid` of `team` came in (or came back after logging out). The
      * other players of its team are told; over already, it is shown the scoreboard.
@@ -132,6 +221,7 @@ final class Battleground
             return;
         }
         members[guid] = Member(team);
+        joinOrder_ ~= guid;
         ByteWriter w;
         w.put(guid);
         toTeam(team, Opcode.SMSG_BATTLEGROUND_PLAYER_JOINED, w.data, guid);
@@ -150,19 +240,32 @@ final class Battleground
         auto m = guid in members;
         if (m is null)
             return;
+        rules.playerLeaving(this, guid);
         const team = m.team;
         members.remove(guid);
+        {
+            import std.algorithm.mutation : remove;
+            import std.algorithm.searching : countUntil;
+
+            const i = joinOrder_.countUntil(guid);
+            if (i >= 0)
+                joinOrder_ = joinOrder_.remove(i);
+        }
         ByteWriter w;
         w.put(guid);
         toTeam(team, Opcode.SMSG_BATTLEGROUND_PLAYER_LEFT, w.data, guid);
         context.services.call!(BattlegroundQueueHost.left)(BattlegroundLeft(instance, guid, team));
     }
 
-    /// `BattleGround::EventPlayerLoggedOut`: it keeps its place for five minutes.
+    /// `BattleGround::EventPlayerLoggedOut`: it keeps its place for five minutes (what it carried drops).
     void loggedOut(ulong guid)
     {
         if (auto m = guid in members)
+        {
             m.offlineSince = context.clock();
+            if (status == BattlegroundStatus.inProgress)
+                rules.playerLeaving(this, guid);
+        }
     }
 
     /// Whether players leaving now desert (`LeaveBattleground`'s deserter rule).
@@ -197,6 +300,9 @@ final class Battleground
                 start();
             break;
         case BattlegroundStatus.inProgress:
+            checkPrematureEnd(elapsed);
+            if (status == BattlegroundStatus.inProgress)
+                rules.tick(this, elapsed);
             break;
         case BattlegroundStatus.waitLeave:
             endLeft -= elapsed;
@@ -218,6 +324,8 @@ final class Battleground
             return;
         said = 3;
         startLeft = Duration.zero;
+        openDoors();
+        rules.started(this);
         message(countdownStrings[type][2], ChatType.CHAT_MSG_BG_SYSTEM_NEUTRAL);
         playSound(soundStart);
         setStatus(BattlegroundStatus.inProgress);
@@ -226,38 +334,56 @@ final class Battleground
 
     /**
      * `BattleGround::EndBattleGround`: `winner` (`winnerAlliance`, `winnerHorde`, `winnerNone`) is
-     * told, everyone shown the scoreboard, and sent out two minutes later.
+     * told; the winners get three marks of honor, the others one; everyone is shown the scoreboard,
+     * and sent out two minutes later.
      */
     void end(ubyte winner)
     {
         import dmangos.log : info;
+        import dmangos.world.character : Character;
 
         if (status == BattlegroundStatus.waitLeave)
             return;
+        rules.ending(this, winner);
         this.winner = winner;
         setStatus(BattlegroundStatus.waitLeave);
         endLeft = endDelay;
         if (winner == winnerAlliance)
-        {
             playSound(soundAllianceWins, 0);
-            message(stringAllianceWins, ChatType.CHAT_MSG_BG_SYSTEM_NEUTRAL);
-        }
         else if (winner == winnerHorde)
-        {
             playSound(soundHordeWins, 1);
+        foreach (guid, ref m; members)
+            if (auto c = cast(Character) context.onlinePlayer(guid))
+            {
+                const won = winner != winnerNone && teamWins(m.team, winner);
+                c.battlegroundEnded(markSpells[type][won ? 0 : 1]);
+            }
+        if (winner == winnerAlliance)
+            message(stringAllianceWins, ChatType.CHAT_MSG_BG_SYSTEM_NEUTRAL);
+        else if (winner == winnerHorde)
             message(stringHordeWins, ChatType.CHAT_MSG_BG_SYSTEM_NEUTRAL);
-        }
         const board = scoreboard();
         foreach (guid, ref m; members)
             if (auto who = context.onlinePlayer(guid))
             {
                 who.deliver(Opcode.MSG_PVP_LOG_DATA, board);
-                const slot = 0; // the client finds the slot by the map
-                who.deliver(Opcode.SMSG_BATTLEFIELD_STATUS, battlefieldStatus(slot, type, 0,
+                who.deliver(Opcode.SMSG_BATTLEFIELD_STATUS, battlefieldStatus(0, type, 0,
                     BattlegroundStatus.inProgress, cast(uint) endDelay.total!"msecs", sinceMs));
             }
         info!"battleground: %s (copy %s) is over, won by %s"(type, instance,
             winner == winnerAlliance ? "the Alliance" : winner == winnerHorde ? "the Horde" : "nobody");
+    }
+
+    /// Whether `team` (0 the Alliance) is `winner`.
+    static bool teamWins(ubyte team, ubyte winner) pure nothrow @nogc @safe
+    {
+        return (team == 0 && winner == winnerAlliance) || (team == 1 && winner == winnerHorde);
+    }
+
+    /// `winnerAlliance` or `winnerHorde` for team 0 or 1.
+    static ubyte winnerOf(ubyte team) pure nothrow @nogc @safe
+    {
+        return team == 0 ? winnerAlliance : winnerHorde;
     }
 
     /// ArcEmu's `CBattleground::Close` (`.battleground leave`): everyone out now, the copy closed.
@@ -266,6 +392,82 @@ final class Battleground
         if (status != BattlegroundStatus.waitLeave)
             setStatus(BattlegroundStatus.waitLeave);
         sendEveryoneOut();
+    }
+
+    /**
+     * `BattleGround::HandleKillPlayer`: the victim's death, the killer's killing blow and honorable
+     * kill, and an honorable kill to each of the killer's team near the victim (`IsAtGroupRewardDistance`).
+     */
+    void playerKilled(ulong victim, ulong killer)
+    {
+        import dmangos.world.experience : groupXpDistance;
+
+        if (status != BattlegroundStatus.inProgress)
+            return;
+        if (auto v = victim in members)
+            ++v.deaths;
+        if (auto k = killer in members)
+        {
+            ++k.killingBlows;
+            ++k.honorableKills;
+            const team = k.team;
+            auto dead = context.onlinePlayer(victim);
+            foreach (guid, ref m; members)
+            {
+                if (guid == killer || m.team != team || dead is null)
+                    continue;
+                if (auto mate = context.onlinePlayer(guid))
+                {
+                    const a = mate.character.position, b = dead.character.position;
+                    if ((a.x - b.x) ^^ 2 + (a.y - b.y) ^^ 2 + (a.z - b.z) ^^ 2 <= groupXpDistance ^^ 2)
+                        ++m.honorableKills;
+                }
+            }
+        }
+        rules.playerKilled(this, victim, killer);
+    }
+
+    /// `RewardHonorToTeam`: bonus honor worth `kills` kills to everyone of `team` here, on their scores.
+    void rewardHonorToTeam(uint kills, ubyte team)
+    {
+        import dmangos.world.character : Character;
+
+        const honor = bonusHonor(kills);
+        foreach (guid, ref m; members)
+            if (m.team == team && m.offlineSince == MonoTime.init)
+                if (auto c = cast(Character) context.onlinePlayer(guid))
+                    if (c.battlegroundBonusHonor(honor))
+                        m.bonusHonor += honor;
+    }
+
+    /// `RewardReputationToTeam`: `amount` with `faction` to everyone of `team` here.
+    void rewardReputationToTeam(uint faction, int amount, ubyte team)
+    {
+        import dmangos.world.character : Character;
+
+        foreach (guid, ref m; members)
+            if (m.team == team && m.offlineSince == MonoTime.init)
+                if (auto c = cast(Character) context.onlinePlayer(guid))
+                    c.battlegroundReputation(faction, amount);
+    }
+
+    /// `CastSpellOnTeam`: `spell` on everyone of `team` here (a quest's credit).
+    void castOnTeam(uint spell, ubyte team)
+    {
+        import dmangos.world.character : Character;
+
+        foreach (guid, ref m; members)
+            if (m.team == team && m.offlineSince == MonoTime.init)
+                if (auto c = cast(Character) context.onlinePlayer(guid))
+                    c.battlegroundCast(spell);
+    }
+
+    /// `UpdatePlayerScore`'s battleground columns: `extra[column]` of `guid` up by `by`.
+    void addScore(ulong guid, size_t column, uint by = 1)
+    {
+        if (auto m = guid in members)
+            if (column < m.extra.length)
+                m.extra[column] += by;
     }
 
     /// `BattleGroundMgr::BuildPvpLogDataPacket`: `MSG_PVP_LOG_DATA`'s body.
@@ -300,11 +502,93 @@ final class Battleground
         return w.data.dup;
     }
 
-    /// `BattleGround::SendMessageToAll`: `mangos_string` `id` to everyone in it.
-    void message(uint id, ChatType chatType, ulong source = 0)
+    // --- events: what is spawned (`SpawnEvent`, `OpenDoorEvent`) ---
+
+    /// Whether a spawn of event `event` (null: of none) belongs in the copy now.
+    bool spawnAllowed(const(ubyte[2])* event) const
     {
-        if (const text = id in context.data.serverStrings)
-            toAll(Opcode.SMSG_MESSAGECHAT, battlegroundMessage(chatType, *text, source));
+        return event is null || activeEvents.get((*event)[0], eventNone) == (*event)[1];
+    }
+
+    /// Whether the doors are open (the battle began).
+    @property bool doorsOpen() const
+    {
+        return status >= BattlegroundStatus.inProgress;
+    }
+
+    /**
+     * `SpawnEvent(event1, event2, spawn)`: the spawns of the pair come (an event shows one `event2` at a
+     * time: the one before goes) or go.
+     */
+    void spawnEvent(ubyte event1, ubyte event2, bool spawn)
+    {
+        if (spawn)
+        {
+            const before = activeEvents.get(event1, eventNone);
+            if (before == event2)
+                return;
+            if (before != eventNone)
+                despawnPair(event1, before);
+            activeEvents[event1] = event2;
+            spawnPair(event1, event2);
+        }
+        else
+        {
+            if (activeEvents.get(event1, eventNone) != event2)
+                return;
+            activeEvents.remove(event1);
+            despawnPair(event1, event2);
+        }
+    }
+
+    /// `OpenDoorEvent(BG_EVENT_DOOR)`: the doors open for good.
+    void openDoors()
+    {
+        import dmangos.world.gameobject : GameObject;
+
+        auto map = context.existingMap(mapId, instance);
+        if (map is null)
+            return;
+        GameObject[] doors;
+        map.forEachObject((MapObject o) {
+            if (auto go = cast(GameObject) o)
+                if (const e = go.spawn.guid in context.data.gameObjectBattleEvents)
+                    if ((*e)[0] == eventDoors)
+                        doors ~= go;
+        });
+        foreach (door; doors)
+        {
+            door.setDoorOpen(true);
+            map.flushGameObject(door);
+        }
+    }
+
+    // --- world states ---
+
+    /// `SetVariable`: a world state, sent to everyone in the copy if it changed.
+    void setWorldState(uint id, uint value)
+    {
+        if (auto known = id in worldStates)
+            if (*known == value)
+                return;
+        worldStates[id] = value;
+        if (status == BattlegroundStatus.none)
+            return;
+        ByteWriter w;
+        w.put(id);
+        w.put(value);
+        toAll(Opcode.SMSG_UPDATE_WORLD_STATE, w.data);
+    }
+
+    // --- messages ---
+
+    /// `BattleGround::SendMessageToAll`: `mangos_string` `id` (with `args` for its `%s`s) to everyone in it.
+    void message(uint id, ChatType chatType, ulong source = 0, string[] args = null)
+    {
+        const text = id in context.data.serverStrings;
+        if (text is null)
+            return;
+        toAll(Opcode.SMSG_MESSAGECHAT, battlegroundMessage(chatType, formatServerString(*text, args), source));
     }
 
     /// `PlaySoundToAll`, `PlaySoundToTeam` (`team` 0, 1; -1 all).
@@ -336,7 +620,40 @@ final class Battleground
                     who.deliver(opcode, body_);
     }
 
+    /**
+     * `CHAT_MSG_BATTLEGROUND` and `_LEADER`: what `sender` says to its team. Its leader is the first of
+     * the team who came in (and is still here).
+     */
+    void teamChat(ulong sender, ChatType chatType, Language language, string text, ubyte chatTag)
+    {
+        import dmangos.world.queries : chatMessage;
+
+        auto m = sender in members;
+        if (m is null)
+            return;
+        if (chatType == ChatType.CHAT_MSG_BATTLEGROUND_LEADER && leaderOf(m.team) != sender)
+            chatType = ChatType.CHAT_MSG_BATTLEGROUND;
+        toTeam(m.team, Opcode.SMSG_MESSAGECHAT, chatMessage(chatType, language, sender, text, chatTag));
+    }
+
+    /// The team's leader: the one there longest.
+    ulong leaderOf(ubyte team) const
+    {
+        foreach (guid; joinOrder)
+            if (auto m = guid in members)
+                if (m.team == team)
+                    return guid;
+        return 0;
+    }
+
 private:
+    ulong[] joinOrder_;
+
+    @property const(ulong)[] joinOrder() const
+    {
+        return joinOrder_;
+    }
+
     void sayCountdown(ubyte which)
     {
         said = cast(ubyte)(which + 1);
@@ -347,6 +664,112 @@ private:
     {
         status = to;
         context.services.call!(BattlegroundQueueHost.changed)(BattlegroundChanged(instance, to));
+    }
+
+    /// The objects of event pair (`event1`, `event2`) loaded in the copy's map.
+    MapObject[] objectsOf(ubyte event1, ubyte event2)
+    {
+        import dmangos.world.creature : Creature;
+        import dmangos.world.gameobject : GameObject;
+
+        auto map = context.existingMap(mapId, instance);
+        if (map is null)
+            return null;
+        MapObject[] found;
+        const ubyte[2] pair = [event1, event2];
+        map.forEachObject((MapObject o) {
+            const(ubyte[2])* e;
+            if (auto c = cast(Creature) o)
+                e = c.spawnId in context.data.creatureBattleEvents;
+            else if (auto go = cast(GameObject) o)
+                e = go.spawn.guid in context.data.gameObjectBattleEvents;
+            if (e !is null && *e == pair)
+                found ~= o;
+        });
+        return found;
+    }
+
+    void despawnPair(ubyte event1, ubyte event2)
+    {
+        auto map = context.existingMap(mapId, instance);
+        if (map is null)
+            return;
+        foreach (o; objectsOf(event1, event2))
+            map.removeObject(o.guid);
+    }
+
+    /// The pair's spawns whose cells are loaded come now; the others when their cells load.
+    void spawnPair(ubyte event1, ubyte event2)
+    {
+        import dmangos.world.grid : cellKeyAt;
+
+        auto map = context.existingMap(mapId, instance);
+        if (map is null)
+            return;
+        bool[ulong] present;
+        foreach (o; objectsOf(event1, event2))
+            present[o.guid] = true;
+        foreach (o; context.battlegrounds.eventSpawns(mapId, event1, event2, instance))
+            if (o.guid !in present && map.cellLoaded(cellKeyAt(o.position.x, o.position.y)))
+            {
+                if (doorsOpen && event1 == eventDoors)
+                    if (auto go = cast(GameObject) o)
+                        go.setDoorOpen(true);
+                map.addObject(o);
+            }
+    }
+
+    import dmangos.world.gameobject : GameObject;
+
+    /// `BattleGround::Update`'s premature end: a team short of players for five minutes loses.
+    void checkPrematureEnd(Duration elapsed)
+    {
+        import std.conv : to;
+
+        const t = template_;
+        if (t is null || testing || !context.config.battlegroundPrematureFinish)
+            return;
+        const short_ = count(0) < t.minPerTeam || count(1) < t.minPerTeam;
+        if (!short_)
+        {
+            prematureCounting = false;
+            return;
+        }
+        if (!prematureCounting)
+        {
+            prematureCounting = true;
+            prematureLeft = context.config.battlegroundPrematureFinish.seconds;
+            lastWarning = uint.max;
+        }
+        prematureLeft -= elapsed;
+        if (prematureLeft <= Duration.zero)
+        {
+            prematureCounting = false;
+            ubyte w = rules.prematureWinner(this);
+            if (w == winnerNone)
+                w = count(0) > count(1) ? winnerAlliance : count(1) > count(0) ? winnerHorde : winnerNone;
+            return end(w);
+        }
+        // Every whole minute while more than one is left, then every 15 seconds.
+        const left = cast(uint) prematureLeft.total!"seconds";
+        if (left > 60)
+        {
+            const minutes = (left + 59) / 60;
+            if (minutes * 60 != lastWarning)
+            {
+                lastWarning = minutes * 60;
+                message(stringClosingMinutes, ChatType.CHAT_MSG_SYSTEM, 0, [minutes.to!string]);
+            }
+        }
+        else
+        {
+            const quarter = ((left + 14) / 15) * 15;
+            if (quarter != lastWarning)
+            {
+                lastWarning = quarter;
+                message(stringClosingSeconds, ChatType.CHAT_MSG_SYSTEM, 0, [quarter.to!string]);
+            }
+        }
     }
 
     /// Its players back where they came from (`RemovePlayerAtLeave` with teleport), not deserters.
@@ -390,6 +813,33 @@ private:
     }
 }
 
+/// A `mangos_string` with its `%s`, `%u` and `%d` filled in order with `args`.
+string formatServerString(string text, const(string)[] args)
+{
+    import std.array : appender;
+
+    auto out_ = appender!string;
+    size_t next;
+    for (size_t i = 0; i < text.length; ++i)
+    {
+        if (text[i] == '%' && i + 1 < text.length && (text[i + 1] == 's' || text[i + 1] == 'u' || text[i + 1] == 'd'))
+        {
+            out_ ~= next < args.length ? args[next] : "";
+            ++next;
+            ++i;
+        }
+        else
+            out_ ~= text[i];
+    }
+    return out_.data;
+}
+
+unittest
+{
+    assert(formatServerString("The battleground will close in %u mins.", ["4"]) == "The battleground will close in 4 mins.");
+    assert(formatServerString("%s claims the %s!", ["The Alliance", "farm"]) == "The Alliance claims the farm!");
+}
+
 /// The battleground copies this node runs (`BattleGroundMgr`'s copies).
 final class Battlegrounds
 {
@@ -425,7 +875,59 @@ final class Battlegrounds
         if (auto known = instance in copies)
             return *known;
         info!"battleground: copy %s of %s made"(instance, type);
-        return copies[instance] = new Battleground(context, instance, type);
+        return copies[instance] = new Battleground(context, instance, type, rulesFor(type));
+    }
+
+    /// Each battleground's rules (`BattleGroundWS`, `BattleGroundAB`, ...); the shared ones for the others.
+    BattlegroundRules rulesFor(BattlegroundType type)
+    {
+        return new BattlegroundRules;
+    }
+
+    /// New objects for the spawns of event pair (`event1`, `event2`) on `mapId`, for copy `instance`.
+    MapObject[] eventSpawns(uint mapId, ubyte event1, ubyte event2, uint instance)
+    {
+        indexEvents();
+        const ubyte[2] pair = [event1, event2];
+        MapObject[] made;
+        foreach (index; eventCreatures.get(eventKey(mapId, pair), null))
+            if (auto c = context.makeCreature(&context.data.creatureSpawns[index]))
+            {
+                c.instanceId = instance;
+                made ~= c;
+            }
+        foreach (index; eventObjects.get(eventKey(mapId, pair), null))
+        {
+            auto go = context.makeGameObject(&context.data.gameObjectSpawns[index]);
+            go.instanceId = instance;
+            made ~= go;
+        }
+        return made;
+    }
+
+    private
+    {
+        size_t[][uint] eventCreatures, eventObjects; // by `eventKey`: indexes into the spawns
+        bool indexed;
+
+        static uint eventKey(uint mapId, const ubyte[2] pair) pure nothrow @nogc @safe
+        {
+            return mapId << 16 | pair[0] << 8 | pair[1];
+        }
+    }
+
+    /// The spawns of each event pair (`LoadBattleEventIndexes`'s spawn lists), found once.
+    void indexEvents()
+    {
+        if (indexed)
+            return;
+        indexed = true;
+        foreach (i, ref spawn; context.data.creatureSpawns)
+            if (const e = spawn.guid in context.data.creatureBattleEvents)
+                eventCreatures[eventKey(spawn.map, *e)] ~= i;
+        foreach (i, ref spawn; context.data.gameObjectSpawns)
+            if (const e = spawn.guid in context.data.gameObjectBattleEvents)
+                eventObjects[eventKey(spawn.map, *e)] ~= i;
     }
 
     /// Each copy's tick.
@@ -640,7 +1142,7 @@ mixin template BattlegroundHandlers()
         if (battlegroundOfMap(player.data.map) == BattlegroundType.none || battleground_.instance != instanceId_)
             return;
         if (auto copy = context.battlegrounds.find(battleground_.instance))
-            copy.arrived(player.guid, battleground_.team);
+            copy.arrived(player.guid, battleground_.team); // its world states went with the map's packets
     }
 
     /**
@@ -662,6 +1164,63 @@ mixin template BattlegroundHandlers()
         battleground_ = BattlegroundData.init;
         saveBattleground();
         returnFromBattleground(back);
+    }
+
+    /**
+     * `EndBattleGround` for this player: alive again if dead (else out of combat), its marks of honor
+     * (`RewardMark`, a spell that makes them).
+     */
+    package void battlegroundEndedHere(uint markSpell)
+    {
+        if (player.deathState != DeathState.alive)
+            resurrect(1.0f);
+        battlegroundCastHere(markSpell);
+    }
+
+    /// `CastSpell(player, spell, TRIGGERED_OLD_TRIGGERED)` on itself, if the spell exists.
+    package void battlegroundCastHere(uint spell)
+    {
+        import dmangos.world.spellcast : SpellTargets, TargetFlags;
+
+        if (spell)
+            if (const info = context.data.spells.spell(spell))
+                castSpell(info, SpellTargets(TargetFlags.self, player.guid), true, 0);
+    }
+
+    /// `UpdatePlayerScore(SCORE_BONUS_HONOR)`: `AddHonorCP` of honor from no kill; whether it counted.
+    package bool battlegroundBonusHonorHere(uint honor)
+    {
+        import dmangos.world.honor : HonorType;
+
+        if (honor == 0)
+            return false;
+        addHonorPoints(honor, HonorType.honorable);
+        return true;
+    }
+
+    /// `SMSG_INIT_WORLD_STATES` for `zone`: on a battleground's map, its copy's states.
+    package void sendInitWorldStates(uint zone)
+    {
+        ByteWriter w;
+        w.put(player.data.map);
+        w.put(zone);
+        auto copy = currentBattleground();
+        if (copy is null)
+        {
+            w.put(ushort(0));
+            return deliver(Opcode.SMSG_INIT_WORLD_STATES, w.data);
+        }
+        import std.algorithm.sorting : sort;
+
+        auto ids = copy.worldStates.keys;
+        ids.sort();
+        w.put(cast(ushort) ids.length);
+        foreach (id; ids)
+        {
+            w.put(id);
+            w.put(copy.worldStates[id]);
+        }
+        deliver(Opcode.SMSG_INIT_WORLD_STATES, w.data);
     }
 
     /// Logging out: the queues left, a copy it is in keeps it a while (`WorldSession::LogoutPlayer`).
@@ -769,12 +1328,8 @@ private:
     @Handles(Opcode.MSG_BATTLEGROUND_PLAYER_POSITIONS, WorldState.inWorld)
     void handleBattlegroundPlayerPositions()
     {
-        if (currentBattleground() is null)
-            return;
-        ByteWriter w;
-        w.put(uint(0));
-        w.put(ubyte(0));
-        deliver(Opcode.MSG_BATTLEGROUND_PLAYER_POSITIONS, w.data);
+        if (auto copy = currentBattleground())
+            deliver(Opcode.MSG_BATTLEGROUND_PLAYER_POSITIONS, copy.rules.playerPositions(copy, battleground_.team));
     }
 }
 
@@ -904,4 +1459,155 @@ unittest
     varian.read();
     assert(varian.session.character.data.map == mapEasternKingdoms, "its copy is gone: back where it came from");
     assert(7 !in db.battlegroundRows);
+}
+
+version (unittest)
+{
+    import dmangos.world.testclient : TestClient;
+
+    /// Two players of each side in a Warsong Gulch copy (testing: none needed), past the world port.
+    private Battleground enterWarsong(WorldContext context, TestClient*[] players, const(uint)[] guids,
+        const(ubyte)[] teams)
+    {
+        auto queue = context.battlegroundQueue;
+        queue.testing = true;
+        foreach (i, guid; guids)
+            queue.join(guid, context.nodeId, teams[i], 10, BattlegroundType.warsongGulch, 0);
+        foreach (p; players)
+        {
+            ByteWriter port;
+            port.put(battlegroundMaps[BattlegroundType.warsongGulch]);
+            port.put(ubyte(1));
+            p.write(Opcode.CMSG_BATTLEFIELD_PORT, port.data);
+            p.read();
+            p.write(Opcode.MSG_MOVE_WORLDPORT_ACK, null);
+            p.read();
+        }
+        return context.battlegrounds.all[0];
+    }
+}
+
+/// The shared framework: event spawns and doors, world states, kills on the scoreboard, team chat, bonus honor, the end.
+unittest
+{
+    import dmangos.world.gameobject : GameObject, GameObjectSpawn, GameObjectTemplate, goStateActive, goStateReady;
+    import dmangos.world.grid : cellKeyAt;
+    import dmangos.world.movement : Position;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata : mapWarsongGulch, raceOrc;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    // A door (event 254) and a flag (event 0) by the Alliance's start.
+    foreach (i, entry; [179918u, 179830u])
+    {
+        auto t = GameObjectTemplate.init;
+        t.entry = entry;
+        t.type = 0;
+        t.displayId = 411;
+        t.name = entry == 179918 ? "Doodad_PortcullisActive01" : "Silverwing Flag";
+        context.data.gameObjectTemplates[entry] = t;
+        const at = Position(1515 - i * 3, 1480, 352);
+        context.data.gameObjectSpawns ~= GameObjectSpawn(90008 - cast(uint) i * 8, entry, mapWarsongGulch, at.x, at.y, at.z);
+        context.data.gameObjectCells[mapWarsongGulch][cellKeyAt(at.x, at.y)] ~= context.data.gameObjectSpawns.length - 1;
+    }
+    context.data.gameObjectBattleEvents[90008] = [eventDoors, 0];
+    context.data.gameObjectBattleEvents[90000] = [0, 0];
+
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f));
+    auto varian = loggedIn(context, db, 9, "Varian", Position(-8949.95f, -132.49f, 83.53f));
+    auto thrall = loggedIn(context, db, 8, "Thrall", Position(1629, -4373, 31), AccountLevel.player, raceOrc, 1);
+    anduin.read();
+    varian.read();
+    thrall.read();
+    auto copy = enterWarsong(context, [&anduin, &varian, &thrall], [7, 9, 8], [0, 0, 1]);
+    auto map = context.existingMap(mapWarsongGulch, copy.instance);
+    GameObject find(uint spawn)
+    {
+        GameObject found;
+        map.forEachObject((MapObject o) {
+            if (auto go = cast(GameObject) o)
+                if (go.spawn.guid == spawn)
+                    found = go;
+        });
+        return found;
+    }
+
+    assert(find(90008) !is null && find(90008).goState == goStateReady, "the door is there, closed");
+    assert(find(90000) is null, "the flag is not spawned before its event");
+    copy.spawnEvent(0, 0, true);
+    assert(find(90000) !is null, "spawned with its event");
+    copy.spawnEvent(0, 0, false);
+    assert(find(90000) is null, "and gone with it");
+    copy.start();
+    assert(find(90008).goState == goStateActive, "the doors open at the start");
+
+    // World states go to everyone in it, and come with the map to whoever arrives.
+    copy.setWorldState(1581, 2);
+    bool stateSeen(ref TestClient c)
+    {
+        foreach (p; c.read())
+            if (p.opcode == Opcode.SMSG_UPDATE_WORLD_STATE)
+                return true;
+        return false;
+    }
+    assert(stateSeen(anduin) && stateSeen(thrall));
+
+    // Thrall killed by Anduin: a killing blow and a kill to Anduin, a death to Thrall; none to Varian, at
+    // the Alliance's start, far from Thrall at the Horde's.
+    copy.playerKilled(8, 7);
+    assert(copy.members[7].killingBlows == 1 && copy.members[7].honorableKills == 1);
+    assert(copy.members[9].honorableKills == 0 && copy.members[9].killingBlows == 0);
+    assert(copy.members[8].deaths == 1);
+
+    // Battleground chat is the team's.
+    anduin.write(Opcode.CMSG_MESSAGECHAT, chatBody(ChatType.CHAT_MSG_BATTLEGROUND, "for the Alliance"));
+    bool heard(ref TestClient c)
+    {
+        foreach (p; c.read())
+            if (p.opcode == Opcode.SMSG_MESSAGECHAT && p.body_[0] == ChatType.CHAT_MSG_BATTLEGROUND)
+                return true;
+        return false;
+    }
+    assert(heard(varian) && !heard(thrall));
+
+    copy.rewardHonorToTeam(1, 0);
+    assert(copy.members[7].bonusHonor == 15 && copy.members[9].bonusHonor == 15 && copy.members[8].bonusHonor == 0);
+
+    thrall.read();
+    copy.end(winnerAlliance);
+    assert(copy.status == BattlegroundStatus.waitLeave);
+    bool board;
+    foreach (p; thrall.read())
+        if (p.opcode == Opcode.MSG_PVP_LOG_DATA)
+            board = p.body_[0] == 1 && p.body_[1] == winnerAlliance;
+    assert(board, "the scoreboard, over, the Alliance the winner");
+    // Two minutes on, everyone is sent back.
+    copy.tick(endDelay);
+    assert(copy.members.length == 0);
+}
+
+/// A team short of players for five minutes: warned each minute, then it ends.
+unittest
+{
+    import dmangos.world.movement : Position;
+    import dmangos.world.testclient;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f));
+    anduin.read();
+    auto copy = enterWarsong(context, [&anduin], [7], [0]);
+    copy.start();
+    anduin.read();
+    copy.tick(1.seconds);
+    string[] warnings;
+    foreach (p; anduin.read())
+        if (p.opcode == Opcode.SMSG_MESSAGECHAT)
+            warnings ~= cast(string) p.body_;
+    assert(warnings.length == 1, "warned at once");
+    copy.tick(60.seconds);
+    assert(copy.status == BattlegroundStatus.inProgress);
+    copy.tick(240.seconds);
+    assert(copy.status == BattlegroundStatus.waitLeave && copy.winner == winnerAlliance, "the side with players wins");
 }

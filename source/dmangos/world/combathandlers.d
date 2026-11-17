@@ -111,6 +111,8 @@ mixin template CombatHandlers()
                 killer = cast(typeof(this)) context.onlinePlayer(attacker.creature.petOwner);
             if (killer !is null && killer !is this)
                 killer.playerKilledByMe(this);
+            if (auto copy = currentBattleground()) // `BattleGround::HandleKillPlayer`
+                copy.playerKilled(player.guid, killer !is null && killer !is this ? killer.player.guid : 0);
             playerDied(attacker.kind != UnitKind.player); // only a player's kill costs no durability
         }
     }

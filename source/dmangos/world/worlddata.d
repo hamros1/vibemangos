@@ -347,6 +347,8 @@ final class WorldData
     BattlegroundTemplate[ubyte] battlegroundTemplates;  /// `battleground_template`, by type
     BattlegroundType[uint] battlemasters;           /// `battlemaster_entry`: a creature entry's battleground
     SafeLocation[uint] safeLocations;               /// `world_safe_locs` (with the facing the DBC lacks)
+    ubyte[2][uint] creatureBattleEvents;            /// `creature_battleground`: a spawn's battleground event
+    ubyte[2][uint] gameObjectBattleEvents;          /// `gameobject_battleground`: ditto
     string[uint] serverStrings;                     /// `mangos_string`'s default texts
     GhostEntrance[uint] ghostEntrances;             /// `instance_template`'s ghost entrances, by instance map
     uint[uint] instanceMaxPlayers;                  /// `instance_template.maxPlayers`, by instance map
@@ -633,6 +635,13 @@ final class WorldData
         foreach (row; world.query!"SELECT entry, bg_template FROM battlemaster_entry"())
             if (row.get!uint(1) && row.get!uint(1) <= BattlegroundType.max) // `LoadBattleMastersEntry`
                 battlemasters[row.get!uint(0)] = cast(BattlegroundType) row.get!uint(1);
+        // `LoadBattleEventIndexes`: 255 is no event.
+        foreach (row; world.query!"SELECT guid, event1, event2 FROM creature_battleground"())
+            if (row.get!uint(1) != 255)
+                creatureBattleEvents[row.get!uint(0)] = [cast(ubyte) row.get!uint(1), cast(ubyte) row.get!uint(2)];
+        foreach (row; world.query!"SELECT guid, event1, event2 FROM gameobject_battleground"())
+            if (row.get!uint(1) != 255)
+                gameObjectBattleEvents[row.get!uint(0)] = [cast(ubyte) row.get!uint(1), cast(ubyte) row.get!uint(2)];
         foreach (row; world.query!"SELECT id, map, x, y, z, o FROM world_safe_locs"())
             safeLocations[row.get!uint(0)] = SafeLocation(row.get!uint(1), row.get!float(2), row.get!float(3),
                 row.get!float(4), row.get!float(5));

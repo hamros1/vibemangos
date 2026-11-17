@@ -234,6 +234,8 @@ WorldData testWorldData(const ClientData client)
         world.serverStrings[602] = "The battle for Warsong Gulch begins in 1 minute.";
         world.serverStrings[603] = "The battle for Warsong Gulch begins in 30 seconds. Prepare yourselves!";
         world.serverStrings[604] = "Let the battle for Warsong Gulch begin!";
+        world.serverStrings[750] = "Not enough players. This game will close in %u mins.";
+        world.serverStrings[751] = "Not enough players. This game will close in %u seconds.";
     }
     world.teleports = [GameTele(-9464, 62, 56, 0, mapEasternKingdoms, "Goldshire"),
         GameTele(1629, -4373, 31, 3.5f, mapKalimdor, "Orgrimmar")];
