@@ -534,6 +534,9 @@ def describe(op, p):
     elif op == 0x1A1: print("  [sell failed] at %d item %d: %d" % struct.unpack("<QQB", p))
     elif op == 0x1BA: print(f"  [bank slot] result {struct.unpack('<I', p)[0]}")
     elif op == 0x113: print(f"  [bag opened] {struct.unpack('<Q', p)[0] & 0xFFFFFFFF}")
+    elif op == 0x2F4:
+        wtype, grade, sound = struct.unpack_from("<IfI", p)
+        print(f"  [weather] {['fine', 'rain', 'snow', 'storm'][wtype] if wtype < 4 else wtype} grade {grade:.2f} sound {sound}")
     else: print(f"  [other] {OPS.get(op, hex(op))}")
 
 def expect(wanted):
