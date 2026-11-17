@@ -108,7 +108,7 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
   waits the 5 seconds its help promises (ArcEmu's stops at once).
 * `.server info` names this server, not ArcEmu. Item links use 1.12's link format.
 * `.character additem` gives the whole count, in as many stacks as it takes.
-* `.gobject info` shows the size as a number (ArcEmu printed a float with `%u`).
+* `.gobject info` shows the size as a number (ArcEmu printed a float with `%%u`).
 * `.quest giver` and `.quest finisher` name a game object by its own template (ArcEmu looks its id up
   among the items); ArcEmu's quest tables are CMaNGOS's (`creature_questrelation` and the like).
   `.quest start` gives the quest's source item, as accepting it does (ArcEmu's `receive_items` do not
