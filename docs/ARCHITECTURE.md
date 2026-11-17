@@ -36,10 +36,10 @@ The world server's modules, by layer:
 | Layer | Modules |
 |---|---|
 | Protocol | `opcodes` (values), `packets` (fixed layouts), `queries` (variable layouts), `crypt` (header cipher), `addons` |
-| Session | `session` (framing, handshake), the handler groups `charscreen`, `inworld`, `teleport`, `grouphandlers`, `channelhandlers`, `npchandlers`, `itemhandlers`, `exploration`, and the GM system `commands`, `commandtable`, `gmactions`, `gmlevel0` .. `gmlevel3`, `gmdebug`; `context` (shared state) |
+| Session | `session` (framing, handshake), the handler groups `charscreen`, `inworld`, `teleport`, `grouphandlers`, `channelhandlers`, `npchandlers`, `itemhandlers`, `combathandlers`, `exploration`, and the GM system `commands`, `commandtable`, `gmactions`, `gmlevel0` .. `gmlevel3`, `gmdebug`; `context` (shared state) |
 | Game objects | `player` (a character in the world), `objects` (update packets), `updatefields` (the field table), `movement`, `stats` |
 | World | `map` (players and objects on a map, visibility, broadcasting), `grid` (cells), `terrain` (ground, areas, liquids), `creature`, `gameobject`, `online` (what groups and channels see of players), `group` (parties and raids), `channel` (chat channels), `context` (maps, the players online, groups, channels) |
-| Game rules | `inventory` (items and every rule for moving them), `playercreate` (`Player::Create`, and the spells relearned at login), `conditions`, `characters` (character list), `names`, `defines` |
+| Game rules | `combat` (melee formulas: the attack table, damage, armor, reach), `relations` (who may attack whom), `inventory` (items and every rule for moving them), `playercreate` (`Player::Create`, and the spells relearned at login), `conditions`, `characters` (character list), `names`, `defines` |
 | Static data | `clientdata` (DBC files), `worlddata` (world database), `spells` |
 | Persistence | `database` (the interface, plus an in-memory version for tests), `characterdb` (the SQL) |
 | Process | `main`, `config`, `realm` (the `realmlist` row) |
@@ -114,6 +114,7 @@ final class WorldSession : NetSession, Kickable, OnlinePlayer
     mixin ChannelHandlers;          // channelhandlers.d: ChannelHandler.cpp
     mixin NpcHandlers;              // npchandlers.d: NPCHandler.cpp, the gossip half of Player.cpp
     mixin ItemHandlers;             // itemhandlers.d: ItemHandler.cpp, repairs, Player::BuyItemFromVendor
+    mixin CombatHandlers;           // combathandlers.d: CombatHandler.cpp, the player's melee
     mixin Exploration;              // exploration.d: Player::UpdateZone, CheckAreaExploreAndOutdoor, GiveXP
     mixin ChatCommands;             // commands.d: ArcEmu's ParseCommands, ExecuteCommandInTable, messages
     mixin GmActions;                // gmactions.d: what the handlers do to players
@@ -290,6 +291,35 @@ CMaNGOS's split, without its class hierarchy of units:
 Without movement maps, `PathFinder` comes down to a straight line; CMaNGOS then leaves a wander's
 end at the spawn point's height unless `PathFinder.NormalizeZ` is on, which would leave creatures
 walking through hills, so here it is always put on the ground (`allowedPositionZ`).
+
+## Melee
+
+Three modules, split by what they depend on:
+
+* `combat.d` holds CMaNGOS's melee formulas as pure functions of two `Fighter`s: the attack table
+  (`rollMeleeOutcome`, one roll through miss, dodge, parry, block, glance, crit and crush, each chance
+  from skills and levels as `CalculateEffective*Chance` computes it), the damage (`calculateMeleeDamage`:
+  weapon damage, armor, the outcome's effect), reach and facing, rage, and the packets. A `Fighter` is
+  a snapshot of a player (`Player.fighter`) or a creature (`Creature.fighter`): level, skills, damage,
+  chances, armor, position. The formulas never see a session or a map, so the tests drive them with
+  hand-made fighters and fixed rolls.
+* `relations.d` is CMaNGOS's Relations API (tier 1, the client's own logic): faction template
+  reactions, a player's base reputations, `CanAttack`.
+* `combathandlers.d` is the session's side: the attack opcodes, `Attack` and `AttackStop`, the swing
+  loop each tick (`updateMelee`, with the attack timers and swing errors), and what a swing does to
+  the creature (health, death) and the player (rage, the combat flag).
+
+* `creatureai.d` is the creature's side: CMaNGOS's base `CreatureAI` with its threat list, combat
+  timers and leash, chasing and going home. It sees players as `Combatant`s (the session implements
+  the interface: its fighter, its relations, taking a hit, being threatened) and its map as a
+  `CombatWorld` (players by guid, line of sight, field updates, waking a resting creature). The map
+  calls `moveInLineOfSight` for the creatures a player sees when it moves, and for the players who
+  see a creature when it moves. A creature with something to do (a fight, the way home, health to
+  regain) does not rest, so the map keeps ticking it.
+
+Creature combat numbers come from `selectLevel` (`Creature::SelectLevel` and `UpdateDamagePhysical`
+of the CMaNGOS version whose `creature_template_classlevelstats` has `BaseDamageExp0`, which is the
+schema dmangos reads); players' chances from `stats.meleeChances`.
 
 ## Talking to NPCs
 

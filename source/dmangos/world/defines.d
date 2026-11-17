@@ -125,3 +125,22 @@ enum ActionButtonType : ubyte
     macro_ = 0x40,
     item = 0x80,
 }
+
+/// `UnitFlags` (`UNIT_FIELD_FLAGS`).
+enum UnitFlags : uint
+{
+    spawning = 0x00000002,         /// not attackable
+    playerControlled = 0x00000008, /// players and what they control
+    notAttackable1 = 0x00000080,
+    immuneToPlayer = 0x00000100,
+    immuneToNpc = 0x00000200,
+    pvp = 0x00001000,
+    untargetable = 0x00010000,
+    pacified = 0x00020000,
+    stunned = 0x00040000,
+    inCombat = 0x00080000,
+    taxiFlight = 0x00100000,
+    disarmed = 0x00200000,
+    uninteractible = 0x02000000,
+}
+

@@ -48,6 +48,10 @@ import dmangos.world.charscreen : CharacterScreenHandlers;
 import dmangos.world.commands : ChatCommands;
 import dmangos.world.gmactions : GmActions;
 import dmangos.world.gmtargets : GmTargets;
+import dmangos.world.combathandlers : CombatHandlers;
+import dmangos.world.creatureai : Combatant;
+import dmangos.world.combat : Fighter, MeleeDamage;
+import dmangos.world.relations : Relating;
 import dmangos.world.gmdebug : DebugCommands;
 import dmangos.world.gmlevel0 : Level0Commands;
 import dmangos.world.gmlevel1 : Level1Commands;
@@ -90,7 +94,7 @@ private enum minimumPingInterval = 27.seconds;
 private enum maxBufferedInput = 2 * (clientHeaderLength + maxClientPacketSize);
 
 /// See the module documentation.
-final class WorldSession : NetSession, Kickable, OnlinePlayer
+final class WorldSession : NetSession, Kickable, OnlinePlayer, Combatant
 {
     // A player simulated on another node than its client's (docs/CLUSTER.md, phase 4b).
     private ushort ownerNode;              // home: the node simulating this session's player; 0: here
@@ -377,6 +381,52 @@ final class WorldSession : NetSession, Kickable, OnlinePlayer
     {
         if (player !is null)
             updateInWorld(elapsed);
+    }
+
+    // -----------------------------------------------------------------------
+    // `Combatant`: what creatures see of the player (`dmangos.world.creatureai`, `combathandlers.d`)
+    // -----------------------------------------------------------------------
+
+    /// See `Combatant`.
+    @property ulong combatGuid() const
+    {
+        return player is null ? 0 : player.guid;
+    }
+
+    /// See `Combatant`: nobody to fight once it has left the world.
+    Fighter fighter() const
+    {
+        if (player is null)
+        {
+            Fighter gone;
+            gone.alive = false;
+            return gone;
+        }
+        return player.fighter;
+    }
+
+    /// See `Combatant`.
+    Relating relating()
+    {
+        return relatingNow();
+    }
+
+    /// See `Combatant`.
+    void meleeHitBy(ulong attacker, const ref MeleeDamage damage)
+    {
+        hitByCreature(attacker, damage);
+    }
+
+    /// See `Combatant`.
+    void threatAdded(ulong creature)
+    {
+        addThreatener(creature);
+    }
+
+    /// ditto
+    void threatRemoved(ulong creature)
+    {
+        removeThreatener(creature);
     }
 
     /// The account's level.
@@ -709,6 +759,7 @@ private:
     mixin ChatCommands;
     mixin GmActions;
     mixin GmTargets;
+    mixin CombatHandlers;
     mixin Level0Commands;
     mixin Level1Commands;
     mixin Level2Commands;

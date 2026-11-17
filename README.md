@@ -218,9 +218,29 @@ What works now:
     or `creature_movement_template` path (type 2 round and round, type 4 back and forth), waiting
     and facing where the path says. Clients get `SMSG_MONSTER_MOVE`, and a creature that comes into
     sight mid-walk arrives with its walk in its create block. Paths are straight lines; a wander's
-    end is put on the ground from the maps and vmaps. AI, combat and waypoint scripts come next.
+    end is put on the ground from the maps and vmaps. AI and waypoint scripts come next.
+  * **Melee** (CMaNGOS's `CombatHandler.cpp` and `Unit`'s melee): players auto-attack creatures they
+    may attack (CMaNGOS's relations API over `FactionTemplate.dbc` and `Faction.dbc`'s base
+    reputations: not friendly), with the swing loop, swing errors (out of reach, facing, dead target)
+    and the dual-wield off hand. Each swing rolls CMaNGOS's attack table (miss, dodge, parry, block,
+    glancing, crit) from weapon and defense skills and levels, takes off armor, shows the client
+    `SMSG_ATTACKERSTATEUPDATE`, gives warriors rage, and takes the creature's health; a creature at
+    none dies. Creatures have CMaNGOS's damage, attack power and armor (`creature_template` and
+    `creature_template_classlevelstats`), players their crit (agility), dodge, parry and block
+    chances and shield block. Players are in combat while a creature fights them and for 5 seconds
+    after a swing (no health regeneration or rage decay meanwhile). A dead creature stays dead and a
+    dead player comes back at its next login, until death proper (milestone 6, step 3).
+  * **Creatures fight** (CMaNGOS's base creature AI): attacked, they fight back; aggressive ones
+    (not `CREATURE_EXTRA_FLAG_NO_AGGRO_ON_SIGHT`) attack a hostile player that comes within their
+    aggro radius (`Detection`, a yard more for each level the player is below them) and in sight.
+    They keep a threat list (damage is threat; a new victim needs 110% of the current one's in melee
+    reach, 130% elsewhere), chase in straight lines, swing with CMaNGOS's attack table (crushing
+    blows included), and give warriors rage. They give up (evade) when nobody is left to fight, or
+    when their victim is 30 yards beyond where their `Pursuit` time last started; they run back to
+    where the fight began, evading attacks, and get a third of their health back every 5 seconds out
+    of combat. Not yet: calling for help, EventAI's scripted spells and texts, fleeing.
   * **The update tick** (every 50 ms, `update_interval`): health, mana, rage and energy regenerate
-    as in CMaNGOS; inns and capitals give rested XP, also while offline; characters are saved every
+    as in CMaNGOS (health and the loss of rage only out of combat); inns and capitals give rested XP, also while offline; characters are saved every
     15 minutes (`player_save_interval`).
   * **Logout** takes 20 seconds, sitting and rooted, unless the player rests or its account level
     reaches `instant_logout`; it can be cancelled. It saves the position, zone, level, money, health

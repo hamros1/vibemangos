@@ -4,8 +4,8 @@
  * (CMaNGOS `Entities/StatSystem.cpp`, `Player::_ApplyItemBonuses`).
  *
  * Auras and talents are not applied yet, so this is what a character has
- * with its gear and nothing else. Crit, dodge, parry and block chances are
- * left at zero.
+ * with its gear and nothing else. Crit, dodge, parry and block chances come
+ * from `meleeChances`.
  */
 module dmangos.world.stats;
 
@@ -285,3 +285,97 @@ unittest
     assert(m.maxPower[Power.mana] == 100 + 20 + 3 * 15 && m.maxHealth == 32 + 20);
     assert(m.attackPower == 10 && isClose(m.damage[AttackType.mainHand].min, 10 / 14.0f * 2 + 1));
 }
+
+/**
+ * A player's own melee chances (`Player::UpdateCritPercentage`, `UpdateDodgePercentage`,
+ * `UpdateParryPercentage`, `UpdateBlockPercentage`, `GetShieldBlockValue`): what the combat rolls
+ * use (`Unit::m_modCritChance` and the others), and what the character sheet shows, which adds
+ * the weapon or defense skill against a target of the same level.
+ */
+struct MeleeChances
+{
+    float crit = 0, rangedCrit = 0, dodge = 0, parry = 0, block = 0; /// what the rolls use
+    float critShown = 0, rangedCritShown = 0, dodgeShown = 0, parryShown = 0, blockShown = 0; /// the fields
+    uint shieldBlock;            /// `GetShieldBlockValue`
+    bool canParry, canBlock;     /// the Parry and Block spells are known
+}
+
+/// What `meleeChances` needs.
+struct ChanceInputs
+{
+    ubyte classId;
+    uint level;
+    float agility = 0, strength = 0;
+    uint mainHandSkill, rangedSkill, defenseSkill; /// current values
+    bool canParry, canBlock;
+    uint shieldBlock;            /// the worn shield's block value; 0 without one
+}
+
+/// `Player::GetMeleeCritFromAgility` and `GetDodgeFromAgility`: agility per percent, by class and level.
+private float agilityPerPercent(ubyte classId, uint level, bool dodge) pure nothrow @nogc @safe
+{
+    float low, high; // at levels 1 and 60
+    switch (classId)
+    {
+    case 2: case 7: case 11: low = 4.6f; high = 20.0f; break; // paladin, shaman, druid
+    case 8: low = 12.9f; high = 20.0f; break;                  // mage
+    case 4: low = dodge ? 1.1f : 2.2f; high = dodge ? 14.5f : 29.0f; break; // rogue
+    case 3: low = dodge ? 1.8f : 3.5f; high = dodge ? 26.5f : 53.0f; break; // hunter
+    case 5: low = 11.0f; high = 20.0f; break;                  // priest
+    case 9: low = 8.4f; high = 20.0f; break;                   // warlock
+    case 1: low = 3.9f; high = 20.0f; break;                   // warrior
+    default: return 0;
+    }
+    return low * float(60.0f - level) / 59.0f + high * float(level - 1.0f) / 59.0f;
+}
+
+/// See `MeleeChances`.
+MeleeChances meleeChances(const ChanceInputs input) pure nothrow @nogc @safe
+{
+    static immutable float[12] baseDodge = [0, 0, 0.75f, 0.64f, 0, 3.00f, 0, 1.75f, 3.25f, 2.00f, 0, 0.75f];
+    float clampPct(float v) { return v < 0 ? 0 : v > 100 ? 100 : v; }
+    MeleeChances r;
+    const cap = input.level * 5; // `GetSkillMaxForLevel`
+    const critRate = agilityPerPercent(input.classId, input.level, false);
+    const agilityCrit = critRate > 0 ? input.agility / critRate : 0;
+    r.crit = r.rangedCrit = agilityCrit;
+    r.critShown = clampPct(r.crit + (int(input.mainHandSkill) - int(cap)) * 0.04f);
+    r.rangedCritShown = clampPct(r.rangedCrit + (int(input.rangedSkill) - int(cap)) * 0.04f);
+    const defense = (int(input.defenseSkill) - int(cap)) * 0.04f;
+    const dodgeRate = agilityPerPercent(input.classId, input.level, true);
+    r.dodge = (input.classId < baseDodge.length ? baseDodge[input.classId] : 0)
+        + (dodgeRate > 0 ? input.agility / dodgeRate : 0);
+    r.dodgeShown = clampPct(r.dodge + defense);
+    r.canParry = input.canParry;
+    if (input.canParry)
+    {
+        r.parry = 5;
+        r.parryShown = clampPct(r.parry + defense);
+    }
+    r.canBlock = input.canBlock;
+    if (input.canBlock)
+    {
+        r.block = 5;
+        r.blockShown = clampPct(r.block + defense);
+    }
+    const shield = input.shieldBlock + input.strength / 20 - 1;
+    r.shieldBlock = shield < 0 ? 0 : cast(uint) shield;
+    return r;
+}
+
+unittest
+{
+    // A level 1 human warrior: 23 agility over 3.9 for crit and 23 over 3.9 for dodge, no class base dodge;
+    // Parry and Block known, a shield with 5 block, 23 strength.
+    auto input = ChanceInputs(1, 1, 23, 23, 5, 0, 5, true, true, 5);
+    const c = meleeChances(input);
+    assert(c.crit > 5.89f && c.crit < 5.90f && c.critShown > 5.89f && c.critShown < 5.90f);
+    assert(c.rangedCritShown < c.crit, "no ranged weapon skill: below the base");
+    assert(c.dodge > 5.89f && c.dodge < 5.90f && c.parry == 5 && c.block == 5);
+    assert(c.shieldBlock == 5, "5 + 23 / 20 - 1");
+    // A mage: no parry or block, and a class base dodge.
+    input = ChanceInputs(8, 1, 20, 20, 5, 0, 5, false, false, 0);
+    const m = meleeChances(input);
+    assert(m.parry == 0 && m.block == 0 && m.parryShown == 0 && m.dodge > 3.25f + 1.5f && m.shieldBlock == 0);
+}
+

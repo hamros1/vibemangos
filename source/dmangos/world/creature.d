@@ -11,6 +11,11 @@
  */
 module dmangos.world.creature;
 
+import dmangos.world.combat : Fighter;
+import dmangos.world.creatureai : CombatWorld, CreatureAI;
+import dmangos.world.clientdata : FactionTemplateEntry;
+import dmangos.world.defines : UnitFlags;
+
 import std.algorithm.comparison : max, min;
 import std.random : Random, uniform;
 
@@ -70,6 +75,21 @@ struct CreatureTemplate
     uint trainerRace;           /// `TrainerRace`
     uint trainerTemplateId;     /// `TrainerTemplateId`: its `npc_trainer_template` list
     uint vendorTemplateId;      /// `VendorTemplateId`: its `npc_vendor_template` list
+    // Combat (`Creature::SelectLevel`).
+    float damageMultiplier = 1; /// `DamageMultiplier`; negative: the template's own damage
+    float damageVariance = 1;   /// `DamageVariance`
+    float armorMultiplier = 1;  /// `ArmorMultiplier`; negative: the template's own armor
+    float minMeleeDmg = 0;
+    float maxMeleeDmg = 0;
+    float minRangedDmg = 0;
+    float maxRangedDmg = 0;
+    uint armor;
+    uint meleeAttackPower;
+    uint rangedAttackPower;
+    uint damageSchool;          /// `DamageSchool`: the school of its melee attacks
+    uint detection;             /// `Detection`: its aggro radius against its own level, in yards
+    uint pursuit;               /// `Pursuit`: milliseconds it chases before its victim may get away
+    uint leash;                 /// `Leash`: how far from where the fight began it follows; 0: no limit
 
     /// The four models, `ModelId1` .. `ModelId4`.
     @property uint[4] modelIds() const pure nothrow @nogc @safe
@@ -84,7 +104,9 @@ enum creatureTemplateQuery = "SELECT Entry, Name, IFNULL(SubName, ''), MinLevel,
     ~ "DynamicFlags, ExtraFlags, CreatureTypeFlags, SpeedWalk, SpeedRun, UnitClass, `Rank`, HealthMultiplier, "
     ~ "PowerMultiplier, MinLevelHealth, MaxLevelHealth, MinLevelMana, MaxLevelMana, MeleeBaseAttackTime, "
     ~ "RangedBaseAttackTime, PetSpellDataId, MovementType, GossipMenuId, EquipmentTemplateId, Civilian, "
-    ~ "TrainerType, TrainerSpell, TrainerClass, TrainerRace, TrainerTemplateId, VendorTemplateId "
+    ~ "TrainerType, TrainerSpell, TrainerClass, TrainerRace, TrainerTemplateId, VendorTemplateId, "
+    ~ "DamageMultiplier, DamageVariance, ArmorMultiplier, MinMeleeDmg, MaxMeleeDmg, MinRangedDmg, MaxRangedDmg, "
+    ~ "Armor, MeleeAttackPower, RangedAttackPower, DamageSchool, Detection, Pursuit, Leash "
     ~ "FROM creature_template";
 
 /// A `creature` row: one spawn.
@@ -114,8 +136,104 @@ struct CreatureAddon
 /// `creature_template_classlevelstats` for one level and class.
 struct CreatureClassStats
 {
-    uint baseHealth;
+    uint baseHealth;            /// `BaseHealthExp0`
     uint baseMana;
+    float baseDamage = 0;       /// `BaseDamageExp0`
+    float baseMeleeAttackPower = 0;
+    float baseRangedAttackPower = 0;
+    float baseArmor = 0;
+}
+
+/**
+ * `Creature::SelectLevel` and `UpdateAllStats` for combat: health, mana, armor, attack power and
+ * weapon damage, from the class stats of its level, or (without them, or when the template's
+ * multipliers say so) the template's own numbers. The rate settings of `mangosd.conf`
+ * (`Rate.Creature.*`) are all 1.
+ */
+struct CreatureCombatStats
+{
+    uint health = 1, mana;
+    float armor = 0;
+    float meleeAttackPower = 0, rangedAttackPower = 0;
+    float[2][3] damage = 0;       /// by attack type (main hand, off hand, ranged): minimum, maximum
+}
+
+/// ditto
+CreatureCombatStats selectLevel(const ref CreatureTemplate t, uint level, const(CreatureClassStats)* stats)
+    pure nothrow @nogc @safe
+{
+    import std.math : round;
+
+    CreatureCombatStats r;
+    uint health = uint.max, mana = uint.max;
+    float armor = -1;
+    float[2][3] weapon = 0;
+    float meleePower = 0, rangedPower = 0;
+    bool usedDamageMulti;
+    const damageMulti = t.damageMultiplier; // * _GetDamageMod(rank), 1
+    if (stats !is null)
+    {
+        if (t.healthMultiplier >= 0)
+            health = cast(uint) round(stats.baseHealth * t.healthMultiplier);
+        if (t.powerMultiplier >= 0)
+            mana = cast(uint) round(stats.baseMana * t.powerMultiplier);
+        if (t.armorMultiplier >= 0)
+            armor = round(stats.baseArmor * t.armorMultiplier);
+        if (t.damageMultiplier >= 0 && t.armorMultiplier >= 0)
+        {
+            usedDamageMulti = true;
+            const melee = t.meleeBaseAttackTime / 1000.0f, ranged = t.rangedBaseAttackTime / 1000.0f;
+            weapon[0][0] = ((stats.baseDamage * t.damageVariance) + stats.baseMeleeAttackPower / 14.0f) * melee
+                * damageMulti;
+            weapon[0][1] = ((stats.baseDamage * t.damageVariance * 1.5f) + stats.baseMeleeAttackPower / 14.0f) * melee
+                * damageMulti;
+            weapon[1] = weapon[0]; // the off hand's modifier halves it
+            weapon[2][0] = ((stats.baseDamage * t.damageVariance) + stats.baseRangedAttackPower / 14.0f) * ranged
+                * damageMulti;
+            weapon[2][1] = ((stats.baseDamage * t.damageVariance * 1.5f) + stats.baseRangedAttackPower / 14.0f)
+                * ranged * damageMulti;
+            meleePower = stats.baseMeleeAttackPower;
+            rangedPower = stats.baseRangedAttackPower;
+        }
+    }
+    if (!usedDamageMulti || armor == -1)
+    {
+        const span = t.maxLevel == t.minLevel ? 0 : float(level - t.minLevel) / (t.maxLevel - t.minLevel);
+        if (armor == -1)
+        {
+            const lowHealth = t.minLevelHealth < t.maxLevelHealth ? t.minLevelHealth : t.maxLevelHealth;
+            const highHealth = t.minLevelHealth < t.maxLevelHealth ? t.maxLevelHealth : t.minLevelHealth;
+            health = lowHealth + cast(uint)(span * (highHealth - lowHealth));
+            const lowMana = t.minLevelMana < t.maxLevelMana ? t.minLevelMana : t.maxLevelMana;
+            const highMana = t.minLevelMana < t.maxLevelMana ? t.maxLevelMana : t.minLevelMana;
+            mana = lowMana + cast(uint)(span * (highMana - lowMana));
+            armor = t.armor;
+        }
+        if (!usedDamageMulti)
+        {
+            weapon[0] = [t.minMeleeDmg * damageMulti, t.maxMeleeDmg * damageMulti];
+            weapon[1] = [t.minMeleeDmg * damageMulti / 2, t.maxMeleeDmg * damageMulti / 2];
+            weapon[2] = [t.minRangedDmg * damageMulti, t.maxRangedDmg * damageMulti];
+            meleePower = t.meleeAttackPower;
+            rangedPower = t.rangedAttackPower;
+        }
+    }
+    r.health = health < 1 ? 1 : health;
+    r.mana = mana == uint.max ? 0 : mana;
+    r.armor = armor;
+    r.meleeAttackPower = meleePower;
+    r.rangedAttackPower = rangedPower;
+    // `Creature::UpdateDamagePhysical`: the weapon's damage and the attack power over its swing time;
+    // the off hand's damage modifier is 50% (`UNIT_MOD_DAMAGE_OFFHAND`).
+    const uint[3] times = [t.meleeBaseAttackTime, t.meleeBaseAttackTime, t.rangedBaseAttackTime];
+    foreach (type; 0 .. 3)
+    {
+        const power = type == 2 ? rangedPower : meleePower;
+        const base = power * (times[type] / 1000.0f) / 14.0f;
+        const totalPct = type == 1 ? 0.5f : 1.0f;
+        r.damage[type] = [(base + weapon[type][0]) * totalPct, (base + weapon[type][1]) * totalPct];
+    }
+    return r;
 }
 
 /// The key of `CreatureClassStats` by level and class.
@@ -321,7 +439,10 @@ final class Creature : Moving, Replicable, Npc
         speeds[MoveType.walk] = baseMoveSpeed[MoveType.walk] * template_.speedWalk;
         speeds[MoveType.run] = baseMoveSpeed[MoveType.run] * template_.speedRun;
         values = UpdateValues(TypeId.unit);
+        this.client = client;
         setFields(display, level, parts, client);
+        factionTemplate = client.factionTemplates.lookup(template_.faction);
+        ai = new CreatureAI(this);
         // Unit::GetCollisionHeight: the model's, scaled; DEFAULT_COLLISION_HEIGHT if it has none.
         const height = parts.collisionHeight * values.get!OBJECT_FIELD_SCALE_X;
         collisionHeight = height == 0 ? defaultCollisionHeight : height;
@@ -384,6 +505,82 @@ final class Creature : Moving, Replicable, Npc
         return movement.position;
     }
 
+    /// The players attacking it (`Unit::m_attackers`), by guid.
+    bool[ulong] attackers;
+
+    /// Its fighting mind (`dmangos.world.creatureai`).
+    CreatureAI ai;
+
+    /// The client data (factions, for its relations), and its faction template (null if unknown).
+    const ClientData client;
+    const(FactionTemplateEntry)* factionTemplate;
+
+    /// `IsAlive`: it has health left.
+    @property bool alive() const
+    {
+        return values.get!UNIT_FIELD_HEALTH > 0;
+    }
+
+    /// What the melee formulas (`dmangos.world.combat`) need of it now.
+    Fighter fighter() const
+    {
+        enum uint noParry = 0x04, noBlock = 0x10; // CREATURE_EXTRA_FLAG_NO_PARRY, _NO_BLOCK
+        enum uint rankWorldBoss = 3;              // CREATURE_ELITE_WORLDBOSS
+        Fighter f;
+        f.guid = guid_;
+        f.worldBoss = template_.rank == rankWorldBoss;
+        f.level = values.get!UNIT_FIELD_LEVEL;
+        f.position = movement.position;
+        f.combatReach = values.get!UNIT_FIELD_COMBATREACH;
+        f.runningAround = !spline.finalized && !(movement.flags & MovementFlags.walkMode);
+        f.alive = alive;
+        f.standing = values.getByte!UNIT_FIELD_BYTES_1(0) == 0;
+        f.damage = [[values.get!UNIT_FIELD_MINDAMAGE, values.get!UNIT_FIELD_MAXDAMAGE],
+            [values.get!UNIT_FIELD_MINOFFHANDDAMAGE, values.get!UNIT_FIELD_MAXOFFHANDDAMAGE],
+            [values.get!UNIT_FIELD_MINRANGEDDAMAGE, values.get!UNIT_FIELD_MAXRANGEDDAMAGE]];
+        f.damageSchool[] = template_.damageSchool;
+        // `GetCritChance`, `GetDodgeChance`, `GetParryChance`, `GetBlockChance`: 5% each for creatures.
+        f.crit = f.dodge = f.parry = f.block = 5;
+        f.canParry = !(template_.extraFlags & noParry);
+        f.canBlock = !(template_.extraFlags & noBlock);
+        f.armor = values.get!UNIT_FIELD_RESISTANCES(0);
+        f.evading = ai !is null && ai.evading;
+        return f;
+    }
+
+    /**
+     * `Unit::DealDamage` to it: takes `damage` from its health. Returns whether that killed it
+     * (`Unit::Kill`); the caller then lets it die (`die`).
+     */
+    bool takeDamage(uint damage)
+    {
+        const health = values.get!UNIT_FIELD_HEALTH;
+        if (health <= damage)
+        {
+            values.set!UNIT_FIELD_HEALTH(0u);
+            return true;
+        }
+        values.set!UNIT_FIELD_HEALTH(health - damage);
+        return false;
+    }
+
+    /**
+     * `Creature::SetDeathState(JUST_DIED)`, as far as there is death yet: it stops where it is and
+     * moves no more; its corpse stays (despawning, respawning and loot come with death proper).
+     */
+    void die(MotionWorld world)
+    {
+        import dmangos.world.motion : IdleMovement, stopMoving;
+
+        stopMoving(this, world);
+        generator = new IdleMovement;
+        attackers = null;
+        values.set!UNIT_FIELD_TARGET(0UL);
+        values.set!UNIT_FIELD_FLAGS(values.get!UNIT_FIELD_FLAGS & ~UnitFlags.inCombat);
+        if (ai !is null)
+            ai.died(cast(CombatWorld) world);
+    }
+
     /**
      * `Creature::Update` for movement: follows the walk under way, then lets the movement generator
      * decide, starting it on the first tick.
@@ -395,6 +592,9 @@ final class Creature : Moving, Replicable, Npc
             motionStarted = true;
             generator.initialize(this, world);
         }
+        if (ai !is null)
+            if (auto combat = cast(CombatWorld) world)
+                ai.update(combat, diff);
         followSpline(this, diff);
         generator.update(this, world, diff);
     }
@@ -413,7 +613,8 @@ final class Creature : Moving, Replicable, Npc
     {
         import dmangos.world.motion : IdleMovement;
 
-        return motionStarted && spline.finalized && cast(const IdleMovement) generator !is null;
+        return motionStarted && spline.finalized && cast(const IdleMovement) generator !is null
+            && (ai is null || !ai.active);
     }
 
     /// See `Replicable.motion`: living, with its speeds and the walk under way.
@@ -510,24 +711,19 @@ private:
         values.set!UNIT_FIELD_COMBATREACH(parts.combatReach * scale);
         values.set!UNIT_MOD_CAST_SPEED(1.0f);
 
-        // SelectLevel: health and mana from the class stats, or the template's range.
+        // SelectLevel: health, mana, armor, attack power and damage from the class stats, or the template's.
         values.set!UNIT_FIELD_LEVEL(level);
-        uint health, mana;
-        if (parts.hasClassStats)
-        {
-            health = cast(uint)(parts.classStats.baseHealth * (t.healthMultiplier > 0 ? t.healthMultiplier : 1));
-            mana = cast(uint)(parts.classStats.baseMana * (t.powerMultiplier > 0 ? t.powerMultiplier : 1));
-        }
-        else
-        {
-            const span = t.maxLevel > t.minLevel ? float(level - t.minLevel) / (t.maxLevel - t.minLevel) : 0;
-            const lowHealth = min(t.minLevelHealth, t.maxLevelHealth);
-            const highHealth = max(t.minLevelHealth, t.maxLevelHealth);
-            const lowMana = min(t.minLevelMana, t.maxLevelMana), highMana = max(t.minLevelMana, t.maxLevelMana);
-            health = lowHealth + cast(uint)(span * (highHealth - lowHealth));
-            mana = lowMana + cast(uint)(span * (highMana - lowMana));
-        }
-        health = max(health, 1);
+        const combat = selectLevel(*t, level, parts.hasClassStats ? &parts.classStats : null);
+        const health = combat.health, mana = combat.mana;
+        values.set!UNIT_FIELD_RESISTANCES(0, cast(uint) combat.armor);
+        values.set!UNIT_FIELD_ATTACK_POWER(cast(int) combat.meleeAttackPower);
+        values.set!UNIT_FIELD_RANGED_ATTACK_POWER(cast(int) combat.rangedAttackPower);
+        values.set!UNIT_FIELD_MINDAMAGE(combat.damage[0][0]);
+        values.set!UNIT_FIELD_MAXDAMAGE(combat.damage[0][1]);
+        values.set!UNIT_FIELD_MINOFFHANDDAMAGE(combat.damage[1][0]);
+        values.set!UNIT_FIELD_MAXOFFHANDDAMAGE(combat.damage[1][1]);
+        values.set!UNIT_FIELD_MINRANGEDDAMAGE(combat.damage[2][0]);
+        values.set!UNIT_FIELD_MAXRANGEDDAMAGE(combat.damage[2][1]);
         values.set!UNIT_FIELD_HEALTH(health);
         values.set!UNIT_FIELD_MAXHEALTH(health);
         values.set!UNIT_FIELD_POWER1(0, mana);
@@ -606,12 +802,18 @@ unittest
     assert(chooseDisplay(hogger, rng) == 384 && chooseLevel(hogger, rng) == 11);
 
     CreatureParts parts;
-    parts.classStats = CreatureClassStats(222, 0);
+    parts.classStats = CreatureClassStats(74, 0, 10.5f, 30, 4, 400);
     parts.hasClassStats = true;
     const spawn = CreatureSpawn(89, 448, 0, -9726, 1019, 45, 1.5f);
     auto creature = new Creature(spawn, &hogger, 384, 11, parts, testClientData());
     assert(highGuidOf(creature.guid) == HighGuid.unit && counterOf(creature.guid) == 89);
-    assert(creature.values[OBJECT_FIELD_ENTRY] == 448 && creature.values[UNIT_FIELD_MAXHEALTH] == 666);
+    assert(creature.values[OBJECT_FIELD_ENTRY] == 448 && creature.values[UNIT_FIELD_MAXHEALTH] == 222);
+    // SelectLevel's combat numbers: armor 400, attack power 30; damage over its 2 s swing:
+    // ((10.5 + 30 / 14) * 2) plus the attack power's 30 * 2 / 14 again (UpdateDamagePhysical), up to 1.5 times the base.
+    assert(creature.values[UNIT_FIELD_RESISTANCES] == 400 && creature.values.get!UNIT_FIELD_ATTACK_POWER == 30);
+    const minDamage = creature.values.get!UNIT_FIELD_MINDAMAGE, maxDamage = creature.values.get!UNIT_FIELD_MAXDAMAGE;
+    assert(minDamage > 29.56f && minDamage < 29.58f && maxDamage > 40.06f && maxDamage < 40.08f);
+    assert(creature.values.get!UNIT_FIELD_MINOFFHANDDAMAGE > 14.78f, "the off hand: half");
     assert(creature.values[UNIT_NPC_FLAGS] == 2);
     assert(creature.values.getByte!UNIT_FIELD_BYTES_0(3) == 1, "a warrior uses rage");
     assert(creature.speeds[MoveType.run] > 7.9f && creature.appearance(0).blockCount == 1);

@@ -204,6 +204,21 @@ struct FactionEntry
 
 enum factionFormat = "niiiiiiiiiiiiiiiiiissssssssxxxxxxxxxx"; ///
 
+/// `FactionTemplateEntry`: how a unit of a faction stands to others (`dmangos.world.relations`).
+struct FactionTemplateEntry
+{
+    uint id;
+    uint faction;
+    uint flags;
+    uint groupMask;          /// `FactionGroupMask` of the groups this one is in
+    uint friendGroupMask;    /// groups it is friendly to
+    uint enemyGroupMask;     /// groups it is hostile to
+    uint[4] enemyFactions;
+    uint[4] friendFactions;
+}
+
+enum factionTemplateFormat = "niiiiiiiiiiiii"; ///
+
 ///
 struct SkillLineEntry
 {
@@ -453,10 +468,7 @@ struct TalentSpellPos
 // The loaded data and its indexes
 // ---------------------------------------------------------------------------
 
-/**
- * See the module documentation. `Faction.dbc` is not loaded: CMaNGOS writes no reputation rows when a
- * character is created; they are initialized from it at the first login.
- */
+/// See the module documentation.
 final class ClientData
 {
     DbcStore!(CharSectionsEntry, charSectionsFormat) charSections;
@@ -483,6 +495,8 @@ final class ClientData
     DbcStore!(DurabilityQualityEntry, durabilityQualityFormat) durabilityQualities;
     DbcStore!(LiquidTypeEntry, liquidTypeFormat) liquidTypes;
     DbcStore!(WmoAreaTableEntry, wmoAreaTableFormat) wmoAreas;
+    DbcStore!(FactionEntry, factionFormat) factions;
+    DbcStore!(FactionTemplateEntry, factionTemplateFormat) factionTemplates;
 
     private
     {
@@ -511,7 +525,8 @@ final class ClientData
             "creatureModels:CreatureModelData", "emotesText:EmotesText", "emotes:Emotes", "maps:Map",
             "areas:AreaTable", "areaTriggers:AreaTrigger", "chatChannels:ChatChannels",
             "bankBagSlotPrices:BankBagSlotPrices", "durabilityCosts:DurabilityCosts",
-            "durabilityQualities:DurabilityQuality", "liquidTypes:LiquidType", "wmoAreas:WMOAreaTable"])
+            "durabilityQualities:DurabilityQuality", "liquidTypes:LiquidType", "wmoAreas:WMOAreaTable",
+            "factions:Faction", "factionTemplates:FactionTemplate"])
         {{
             enum parts = member.findSplit(":");
             enum field = parts[0];

@@ -1,0 +1,467 @@
+/**
+ * Melee from the player's side: CMaNGOS's `Combat/CombatHandler.cpp` (`CMSG_ATTACKSWING`,
+ * `CMSG_ATTACKSTOP`, `CMSG_SETSHEATHED`) and the player's half of `Unit`'s melee: `Attack`,
+ * `AttackStop`, the swing loop (`UpdateMeleeAttackingState`), and a swing's damage
+ * (`AttackerStateUpdate`, `DealMeleeDamage`, `DealDamage`), mixed into
+ * `dmangos.world.session.WorldSession`. The formulas are in `dmangos.world.combat`.
+ *
+ * Players fight creatures this node simulates, which fight back (`dmangos.world.creatureai`); the
+ * session is the `Combatant` the creatures see. Players do not fight each other yet (nobody can be
+ * flagged for PvP), and death is only what it takes: a creature killed stays dead, a player killed
+ * comes back at its next login.
+ */
+module dmangos.world.combathandlers;
+
+/// See the module documentation.
+mixin template CombatHandlers()
+{
+    import core.time : MonoTime, msecs, seconds;
+    import std.math : PI;
+    import dmangos.bytes : ByteReader, ByteWriter;
+    import dmangos.world.combat;
+    import dmangos.world.creature : Creature;
+    import dmangos.world.defines : Power, UnitFlags;
+    import dmangos.world.opcodes;
+    import dmangos.world.packets : ClientGuid;
+    import dmangos.world.relations : canAttack, canAttackNow, Relating;
+    import dmangos.world.updatefields;
+
+    // -----------------------------------------------------------------------
+    // `Combatant`: what creatures see of the player (`dmangos.world.creatureai`)
+    // -----------------------------------------------------------------------
+
+    /// How the relations see this player.
+    package Relating relatingNow()
+    {
+        const v = &player.values;
+        return Relating(v.get!UNIT_FIELD_FLAGS, context.client.factionTemplates.lookup(v.get!UNIT_FIELD_FACTIONTEMPLATE),
+            true, 1u << (player.data.race - 1), 1u << (player.data.classId - 1), v.get!UNIT_FIELD_HEALTH > 0);
+    }
+
+    /**
+     * `Combatant.meleeHitBy`: `Unit::DealDamage` to the player. A sitting player stands up; a
+     * warrior gets rage from what hit it (dodges and parries aside); a critical hit shows a wound;
+     * at no health left it dies.
+     */
+    package void hitByCreature(ulong attacker, const ref MeleeDamage d)
+    {
+        if (player is null || player.values.get!UNIT_FIELD_HEALTH == 0)
+            return;
+        if (d.outcome == MeleeHitOutcome.evade)
+            return;
+        if (player.values.getByte!UNIT_FIELD_BYTES_1(0) != 0)
+        {
+            player.values.setByte!UNIT_FIELD_BYTES_1(0, 0);
+            deliver(Opcode.SMSG_STANDSTATE_UPDATE, [ubyte(0)]);
+        }
+        if (player.powerType == Power.rage && d.cleanDamage && d.outcome != MeleeHitOutcome.dodge
+            && d.outcome != MeleeHitOutcome.parry && d.outcome != MeleeHitOutcome.miss)
+            player.modifyPower(Power.rage, rageReward(player.data.level, d.cleanDamage, false));
+        if (d.hitInfo & HitInfo.criticalHit)
+        {
+            enum uint emoteWoundCritical = 34; // EMOTE_ONESHOT_WOUNDCRITICAL
+            ByteWriter emote;
+            emote.put(emoteWoundCritical);
+            emote.put(player.guid);
+            map.sendToWatchers(this, Opcode.SMSG_EMOTE, emote.data, true);
+        }
+        enterCombatFor(combatLinger);
+        bool died;
+        if (d.damage)
+        {
+            const health = player.values.get!UNIT_FIELD_HEALTH;
+            died = health <= d.damage;
+            player.values.set!UNIT_FIELD_HEALTH(died ? 0 : health - d.damage);
+        }
+        flushPlayerChanges();
+        if (auto group = context.groups.of(player.guid))
+            group.updatePlayerOutOfRange(this, GroupUpdate.currentHealth | GroupUpdate.currentPower);
+        if (died)
+            playerKilled();
+    }
+
+    /// See `Combatant.threatAdded`: a creature fights this player; it is in combat while any does.
+    package void addThreatener(ulong creature)
+    {
+        threatenedBy[creature] = true;
+        enterCombatFor(combatLinger);
+    }
+
+    /// ditto
+    package void removeThreatener(ulong creature)
+    {
+        threatenedBy.remove(creature);
+    }
+
+private:
+    bool[ulong] threatenedBy;      // `HostileRefManager`: the creatures that have this player in their threat list
+
+    /// In combat (`UNIT_FLAG_IN_COMBAT`) at least for `linger` more.
+    void enterCombatFor(Duration linger)
+    {
+        const until = context.clock() + linger;
+        if (until > combatUntil)
+            combatUntil = until;
+        if (!(player.values.get!UNIT_FIELD_FLAGS & UnitFlags.inCombat))
+            player.values.set!UNIT_FIELD_FLAGS(player.values.get!UNIT_FIELD_FLAGS | UnitFlags.inCombat);
+    }
+
+    /**
+     * `Unit::Kill` of the player, as far as there is death yet: it stops attacking, and the creatures
+     * fighting it let it be. Releasing the spirit and coming back to life come with death proper; a
+     * login brings it back with full health.
+     */
+    void playerKilled()
+    {
+        import dmangos.log : info;
+
+        info!"%s: '%s' died"(remoteAddress, player.data.name);
+        stopAttack(false);
+    }
+    ulong attacking;               // `m_attacking`: the creature attacked
+    bool meleeAttacking;           // `UNIT_STAT_MELEE_ATTACKING`
+    uint[2] attackTimer;           // main hand, off hand: milliseconds until the next swing may go
+    SwingError lastSwingError;     // `LastSwingErrorMsg`: an error is told once until it changes
+    MonoTime combatUntil;          // in combat (`UNIT_FLAG_IN_COMBAT`) until then
+
+    /// How long a player stays in combat after its last swing.
+    enum combatLinger = 5.seconds;
+
+    /// `HandleAttackSwingOpcode`
+    @Handles(Opcode.CMSG_ATTACKSWING, WorldState.inWorld)
+    void handleAttackSwing(const ClientGuid request)
+    {
+        auto enemy = cast(Creature) map.findObject(request.guid);
+        if (enemy is null)
+            return; // not a unit here (players cannot be attacked yet; another node's creature cannot either)
+        if (!canAttackNow(relatingNow, relatingOf(enemy), context.client))
+        {
+            // Stop the attack state at the client.
+            map.sendToWatchers(this, Opcode.SMSG_ATTACKSTOP, attackStop(player.guid, enemy.guid, false), true);
+            return;
+        }
+        attack(enemy);
+        lastSwingError = SwingError.none; // each new attack shows its swing error again
+    }
+
+    /// `HandleAttackStopOpcode`: the client keeps swinging until an `SMSG_ATTACKSTOP` names it.
+    @Handles(Opcode.CMSG_ATTACKSTOP, WorldState.inWorld)
+    void handleAttackStop()
+    {
+        const meleeOn = meleeAttacking && attacking != 0;
+        stopAttack(true);
+        if (!meleeOn)
+            map.sendToWatchers(this, Opcode.SMSG_ATTACKSTOP, attackStop(player.guid, 0, false), true);
+    }
+
+    /// `HandleSetSheathedOpcode`
+    @Handles(Opcode.CMSG_SETSHEATHED, WorldState.inWorld)
+    void handleSetSheathed(ref ByteReader reader)
+    {
+        enum maxSheathState = 3;
+        const sheathed = reader.read!uint;
+        if (sheathed >= maxSheathState)
+            return;
+        player.values.setByte!UNIT_FIELD_BYTES_2(0, cast(ubyte) sheathed);
+        flushPlayerChanges();
+    }
+
+    /// How the relations see a creature.
+    Relating relatingOf(const Creature creature)
+    {
+        return Relating(creature.values.get!UNIT_FIELD_FLAGS,
+            context.client.factionTemplates.lookup(creature.values.get!UNIT_FIELD_FACTIONTEMPLATE), false, 0, 0,
+            creature.alive);
+    }
+
+    /// `Unit::Attack(victim, true)`: attacks `victim` in melee; false if it cannot.
+    bool attack(Creature victim)
+    {
+        if (!player.fighter.alive || !victim.alive || victim.ai.evading)
+            return false;
+        if (attacking)
+        {
+            if (attacking == victim.guid)
+            {
+                meleeAttackStart(victim);
+                return true;
+            }
+            stopAttack(false, true);
+        }
+        attacking = victim.guid;
+        victim.attackers[player.guid] = true;
+        // The off hand starts half a swing late.
+        if (player.fighter.dualWield)
+            attackTimer[AttackType.offHand] = player.stats.attackTime[AttackType.offHand] / 2;
+        meleeAttackStart(victim);
+        return true;
+    }
+
+    /// `MeleeAttackStart`
+    void meleeAttackStart(Creature victim)
+    {
+        if (meleeAttacking)
+            return;
+        meleeAttacking = true;
+        map.sendToWatchers(this, Opcode.SMSG_ATTACKSTART, attackStart(player.guid, victim.guid), true);
+    }
+
+    /**
+     * `Unit::AttackStop`: stops attacking. Unless the client asked, it is told to stop swinging
+     * (`SMSG_CANCEL_COMBAT`); `targetSwitch` is set when another target follows at once.
+     */
+    package void stopAttack(bool clientInitiated, bool targetSwitch = false)
+    {
+        if (player is null)
+            return;
+        if (!clientInitiated)
+            deliver(Opcode.SMSG_CANCEL_COMBAT, null); // `SendAttackSwingCancelAttack`
+        if (meleeAttacking)
+        {
+            meleeAttacking = false;
+            map.sendToWatchers(this, Opcode.SMSG_ATTACKSTOP, attackStop(player.guid, attacking, false), true);
+        }
+        if (attacking)
+        {
+            if (auto victim = cast(Creature) map.findObject(attacking))
+                victim.attackers.remove(player.guid);
+            attacking = 0;
+        }
+    }
+
+    /**
+     * `Unit::Update`'s attack timers and `Player::Update`'s `UpdateMeleeAttackingState`: swings when a
+     * weapon is ready, or tells the client why it cannot (once, until the reason changes); and the
+     * combat state, which lasts `combatLinger` after the last swing.
+     */
+    void updateMelee(Duration elapsed)
+    {
+        const ms = cast(uint) elapsed.total!"msecs";
+        foreach (ref timer; attackTimer)
+            timer = ms >= timer ? 0 : timer - ms;
+        if (meleeAttacking)
+            updateMeleeAttackingState();
+        if (player.values.get!UNIT_FIELD_FLAGS & UnitFlags.inCombat && threatenedBy.length == 0
+            && context.clock() >= combatUntil)
+        {
+            player.values.set!UNIT_FIELD_FLAGS(player.values.get!UNIT_FIELD_FLAGS & ~UnitFlags.inCombat);
+            flushPlayerChanges();
+        }
+    }
+
+    /// Whether the player is in combat (`IsInCombat`).
+    @property bool inCombat() const
+    {
+        return player !is null && (player.values.get!UNIT_FIELD_FLAGS & UnitFlags.inCombat) != 0;
+    }
+
+    /// See `updateMelee`.
+    void updateMeleeAttackingState()
+    {
+        auto victim = cast(Creature) map.findObject(attacking);
+        if (victim is null)
+            return stopAttack(false);
+        const self = player.fighter;
+        const dualWield = self.dualWield;
+        if (attackTimer[AttackType.mainHand] && !(dualWield && attackTimer[AttackType.offHand] == 0))
+            return;
+        const target = victim.fighter;
+        SwingError error;
+        if (!canReachWithMelee(self, target))
+            error = SwingError.notInRange;
+        else if (!hasInArc(self.position, target.position, 2 * PI / 3))
+            error = SwingError.badFacing;
+        else if (!victim.alive)
+            error = SwingError.targetNotAlive;
+        else if (!canAttack(relatingNow, relatingOf(victim), context.client))
+            error = SwingError.cantAttack;
+        else
+        {
+            if (attackTimer[AttackType.mainHand] == 0)
+            {
+                // A main hand and an off hand swing are at least 0.2 s apart.
+                if (dualWield && attackTimer[AttackType.offHand] < attackDisplayDelay)
+                    attackTimer[AttackType.offHand] = attackDisplayDelay;
+                swing(victim, AttackType.mainHand);
+                attackTimer[AttackType.mainHand] = player.stats.attackTime[AttackType.mainHand];
+            }
+            if (dualWield && attackTimer[AttackType.offHand] == 0 && victim.alive)
+            {
+                if (attackTimer[AttackType.mainHand] < attackDisplayDelay)
+                    attackTimer[AttackType.mainHand] = attackDisplayDelay;
+                swing(victim, AttackType.offHand);
+                attackTimer[AttackType.offHand] = player.stats.attackTime[AttackType.offHand];
+            }
+        }
+        if (error != SwingError.none)
+        {
+            // Delaying a weapon that is not ready would make it ready sooner.
+            if (attackTimer[AttackType.mainHand] == 0)
+                attackTimer[AttackType.mainHand] = 100;
+            if (dualWield && attackTimer[AttackType.offHand] == 0)
+                attackTimer[AttackType.offHand] = 100;
+        }
+        if (error != lastSwingError)
+        {
+            final switch (error)
+            {
+            case SwingError.none:
+                break;
+            case SwingError.notInRange:
+                deliver(Opcode.SMSG_ATTACKSWING_NOTINRANGE, null);
+                break;
+            case SwingError.badFacing:
+                deliver(Opcode.SMSG_ATTACKSWING_BADFACING, null);
+                break;
+            case SwingError.targetNotAlive:
+                deliver(Opcode.SMSG_ATTACKSWING_DEADTARGET, null);
+                break;
+            case SwingError.cantAttack:
+                deliver(Opcode.SMSG_ATTACKSWING_CANT_ATTACK, null);
+                break;
+            }
+            lastSwingError = error;
+        }
+    }
+
+    /**
+     * `AttackerStateUpdate` and `DealMeleeDamage`: one swing at `victim`, shown to everyone who sees
+     * the player; then its damage, the rage it earns, and the victim's death if it kills.
+     */
+    void swing(Creature victim, AttackType type)
+    {
+        auto d = calculateMeleeDamage(player.fighter, victim.fighter, type, map.random);
+        map.sendToWatchers(this, Opcode.SMSG_ATTACKERSTATEUPDATE, attackerStateUpdate(d), true);
+
+        // In combat from the first swing, until a while after the last.
+        enterCombatFor(combatLinger);
+
+        if (d.targetState == VictimState.evades)
+            return flushPlayerChanges();
+        // `DealMeleeDamage`: the creature fights back (`AttackedBy`), and what it took is threat.
+        victim.ai.attackedBy(this, map);
+        victim.ai.damageTaken(this, d.damage);
+        map.wake(victim.guid);
+        if (d.hitInfo & HitInfo.criticalHit)
+        {
+            enum uint emoteWoundCritical = 34; // EMOTE_ONESHOT_WOUNDCRITICAL
+            ByteWriter emote;
+            emote.put(emoteWoundCritical);
+            emote.put(victim.guid);
+            map.sendToObservers(victim.guid, Opcode.SMSG_EMOTE, emote.data);
+        }
+        // `DealDamage`: rage from weapon damage dealt, then the damage.
+        if (player.powerType == Power.rage && type != AttackType.ranged)
+            player.modifyPower(Power.rage, rageReward(player.data.level, d.damage, true));
+        flushPlayerChanges();
+        if (d.damage == 0)
+            return;
+        const killed = victim.takeDamage(d.damage);
+        map.flushObjectChanges(victim);
+        if (killed)
+            creatureKilled(victim);
+    }
+
+    /// `Unit::Kill` of a creature, as far as there is death yet: everyone attacking it stops.
+    void creatureKilled(Creature victim)
+    {
+        import dmangos.world.session : WorldSession;
+
+        foreach (guid, _; victim.attackers)
+            if (auto other = cast(WorldSession) context.onlinePlayer(guid))
+                if (other !is this)
+                    other.stopAttack(false);
+        stopAttack(false);
+        victim.die(map);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+/**
+ * Melee against a creature: the attack starts, swings come at the weapon's speed, each shown to the
+ * player, the creature's health falls until it dies; out of reach the client is told once; the
+ * player is in combat until five seconds after its last swing.
+ */
+unittest
+{
+    import core.time : MonoTime, msecs, seconds;
+    import std.algorithm.searching : canFind, count;
+    import dmangos.world.creature : Creature;
+    import dmangos.world.defines : UnitFlags;
+    import dmangos.world.movement : Position;
+    import dmangos.world.objects : HighGuid, makeGuid;
+    import dmangos.world.opcodes;
+    import dmangos.world.packets : ClientGuid;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+    import dmangos.world.updatefields;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    // Facing the innkeeper, three yards away.
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f, 1.97f));
+    anduin.read();
+    const innkeeper = makeGuid(HighGuid.unit, creatureInnkeeper, innkeeperSpawn);
+    auto victim = cast(Creature) context.map(0).findObject(innkeeper);
+    assert(victim !is null && victim.alive);
+
+    anduin.write(Opcode.CMSG_ATTACKSWING, ClientGuid(innkeeper));
+    assert(opcodesOf(anduin.read()) == [Opcode.SMSG_ATTACKSTART]);
+
+    // The first swing goes at once; then one every swing time (unarmed: 2 s).
+    anduin.session.update(50.msecs);
+    auto swings = opcodesOf(anduin.read());
+    assert(swings.canFind(Opcode.SMSG_ATTACKERSTATEUPDATE));
+    assert(anduin.session.character.values.get!UNIT_FIELD_FLAGS & UnitFlags.inCombat, "in combat");
+    anduin.session.update(1000.msecs);
+    assert(!opcodesOf(anduin.read()).canFind(Opcode.SMSG_ATTACKERSTATEUPDATE), "not before the weapon is ready");
+
+    // Swing until the innkeeper dies (it fights back, but it has 30 health to go). At its own
+    // level 30 a level 1 player misses or glances for nothing nearly every time, so it is brought down to 1.
+    victim.values.set!UNIT_FIELD_LEVEL(1u);
+    victim.values.set!UNIT_FIELD_HEALTH(30u);
+    ushort[] seen;
+    foreach (_; 0 .. 200)
+    {
+        now += 2.seconds;
+        anduin.session.update(2000.msecs);
+        seen ~= opcodesOf(anduin.read());
+        if (!victim.alive)
+            break;
+    }
+    assert(!victim.alive && victim.values.get!UNIT_FIELD_HEALTH == 0);
+    assert(seen.canFind(Opcode.SMSG_CANCEL_COMBAT) && seen.canFind(Opcode.SMSG_ATTACKSTOP), "the attack ends with it");
+    const before = seen.count(Opcode.SMSG_ATTACKERSTATEUPDATE);
+    anduin.session.update(2000.msecs);
+    assert(!opcodesOf(anduin.read()).canFind(Opcode.SMSG_ATTACKERSTATEUPDATE) && before > 0);
+
+    // Five seconds after the last swing, out of combat.
+    now += 6.seconds;
+    anduin.session.update(50.msecs);
+    assert(!(anduin.session.character.values.get!UNIT_FIELD_FLAGS & UnitFlags.inCombat));
+
+    // A dead creature cannot be attacked: the client is told to stop.
+    anduin.read();
+    anduin.write(Opcode.CMSG_ATTACKSWING, ClientGuid(innkeeper));
+    assert(opcodesOf(anduin.read()) == [Opcode.SMSG_ATTACKSTOP]);
+
+    // Out of reach: told once, however long it lasts; stopping is answered.
+    victim.values.set!UNIT_FIELD_HEALTH(100u);
+    victim.movement.position = Position(-8951, -121, 83.5f, 0); // nine yards on
+    anduin.write(Opcode.CMSG_ATTACKSWING, ClientGuid(innkeeper));
+    anduin.read();
+    ushort[] far;
+    foreach (_; 0 .. 5)
+    {
+        anduin.session.update(500.msecs);
+        far ~= opcodesOf(anduin.read());
+    }
+    assert(far.count(Opcode.SMSG_ATTACKSWING_NOTINRANGE) == 1 && !far.canFind(Opcode.SMSG_ATTACKERSTATEUPDATE));
+    anduin.write(Opcode.CMSG_ATTACKSTOP, null);
+    assert(opcodesOf(anduin.read()) == [Opcode.SMSG_ATTACKSTOP]);
+}

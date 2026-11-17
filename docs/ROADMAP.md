@@ -103,7 +103,18 @@ hearthstones, opening bags of loot) comes with milestone 6's spells and loot.
 
 ### 6. Spells, auras and combat
 
-The largest area. CMaNGOS references: `Spells/`, `Entities/Unit.cpp`, `Combat/`, `AI/`.
+The largest area. CMaNGOS references: `Spells/`, `Entities/Unit.cpp`, `Combat/`, `AI/`. In order:
+
+1. **Melee auto-attack: done** (`combat.d`, `combathandlers.d`, `relations.d`; README's "Melee").
+   Not yet: weapon and defense skill gains (`UpdateCombatSkills`), parry haste, PvP (no way to be
+   flagged yet), creatures another node of a cluster simulates (the player moves to their node
+   anyway, except within a border's 25 yards).
+2. **Creatures fighting back: done** (`creatureai.d`; README's "Creatures fight"). Not yet: calling
+   for help and assisting, EventAI's spells and texts, fleeing, movement maps for chasing.
+3. Death: corpses, releasing, the spirit healer, respawning.
+4. Experience and loot.
+5. Spells, cooldowns and auras.
+6. Duels and trades.
 
 * Spell casting with effects, auras (feeding `stats.d`), cooldowns and the attack swing loop.
 * Creature AI, threat, death, loot (`LootHandler.cpp`), XP and level-up (`Player::GiveXP`, then

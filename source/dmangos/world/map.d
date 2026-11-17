@@ -44,6 +44,8 @@ import dmangos.serialization : serialize;
 import dmangos.bytes : ByteWriter;
 public import dmangos.world.grid : cellSize;
 import dmangos.world.grid : cellCoordinate, cellKey, cellKeyAt;
+import dmangos.world.creatureai : Combatant, CombatWorld;
+import dmangos.world.creature : Creature;
 import dmangos.world.motion : MotionWorld;
 import dmangos.world.movement : Position;
 import dmangos.world.objects : maxUpdatePacketBytes, seenByEveryone, UpdateData, UpdatePacket, UpdateValues;
@@ -145,7 +147,7 @@ void deliverBuilt(Inhabitant to, const UpdatePacket packet)
 }
 
 /// See the module documentation.
-final class Map : MotionWorld
+final class Map : CombatWorld
 {
     immutable uint id;
 
@@ -569,6 +571,8 @@ final class Map : MotionWorld
     {
         const guid = object.guid;
         const position = object.position;
+        if (auto creature = cast(Creature) object)
+            creatureNoticing(creature);
         const key = cellKeyAt(position.x, position.y);
         if (auto old = guid in objectCellOf)
             if (*old != key)
@@ -875,6 +879,54 @@ final class Map : MotionWorld
                 members[player].deliver(opcode, body_);
     }
 
+    /// See `CombatWorld.combatant`.
+    Combatant combatant(ulong guid)
+    {
+        return cast(Combatant) members.get(guid, null);
+    }
+
+    /// See `CombatWorld.inLineOfSight`: at eye height, through the vmaps; anything goes without terrain.
+    bool inLineOfSight(Position a, Position b)
+    {
+        enum eyes = 2.0f;
+        return terrain is null || terrain.isInLineOfSight(a.x, a.y, a.z + eyes, b.x, b.y, b.z + eyes);
+    }
+
+    /// See `CombatWorld.flushCreature`.
+    void flushCreature(Creature creature)
+    {
+        flushObjectChanges(creature);
+    }
+
+    /// How far away a creature can notice a player at all: the widest aggro radius (`Detection` and 25 levels).
+    enum float noticeDistance = 50;
+
+    /// `MoveInLineOfSight` for the creatures a player sees, when it has moved.
+    private void playerNoticed(Inhabitant who)
+    {
+        auto combatant = cast(Combatant) who;
+        if (combatant is null)
+            return;
+        const at = who.character.position;
+        if (auto seen = who.character.guid in seesObjects)
+            foreach (guid, _; *seen)
+                if (auto creature = cast(Creature) objects.get(guid, null))
+                    if (distanceSquared(creature.position, at) < noticeDistance ^^ 2)
+                        creature.ai.moveInLineOfSight(combatant, this);
+    }
+
+    /// `MoveInLineOfSight` for the players who see a creature, when it has moved.
+    private void creatureNoticing(Creature creature)
+    {
+        if (creature.ai is null || creature.ai.inCombat || creature.ai.evading)
+            return;
+        foreach (player, seen; seesObjects)
+            if (creature.guid in seen)
+                if (auto combatant = cast(Combatant) members.get(player, null))
+                    if (distanceSquared(creature.position, members[player].character.position) < noticeDistance ^^ 2)
+                        creature.ai.moveInLineOfSight(combatant, this);
+    }
+
     /// See `MotionWorld.random`.
     ref Random random()
     {
@@ -954,6 +1006,7 @@ final class Map : MotionWorld
             replicatePlayer(who);
         if (distanceSquared(visibilityAt[guid], position) >= settings.relocationLimit ^^ 2)
             updateVisibility(who);
+        playerNoticed(who);
     }
 
     /// Delivers a packet to every player that sees `from`, and to `from` itself if `includeSelf`.

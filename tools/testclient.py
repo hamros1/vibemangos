@@ -17,6 +17,8 @@ in order:
     yell:TEXT                 yell something (heard 300 yards around)
     sit                       sit down and print the changed fields
     whisper:NAME:TEXT         whisper to another player
+    attack:ENTRY  stopattack  walk up to the nearest creature of ENTRY and fight it; stop
+    approach:ENTRY:DIST       walk to DIST yards of the nearest creature of ENTRY
     who[:TEXT]                /who, everyone or those matching TEXT, and print the list
     emote:ID                  a text emote (101 = /wave, 34 = /dance)
     wait:SECONDS              do nothing for a while (packets queue up)
@@ -151,6 +153,8 @@ OBJECT_END, ITEM_END, CONTAINER_END, UNIT_END, PLAYER_END = 6, 48, 122, 188, 128
 GAMEOBJECT_END = OBJECT_END + 0x1A
 COUNTS = {1: ITEM_END, 2: CONTAINER_END, 3: UNIT_END, 4: PLAYER_END, 5: GAMEOBJECT_END}
 seen_objects = {}
+seen_positions = {}   # creature guid -> where it was created
+here = [0.0, 0.0, 0.0]  # where this client last put its character
 item_objects = {}  # guid -> fields of the items the client was sent
 my_slots = {}      # the player's own slots: slot -> item guid
 player_guid = None
@@ -269,6 +273,7 @@ def describe(op, p):
                       f"at {move[0]:.1f} {move[1]:.1f} {move[2]:.1f}")
             elif kind in (2, 3) and t in (3, 5):
                 entry = v.get(3, 0); seen_objects[g] = (t, entry)
+                if move: seen_positions[g] = move[:3]
                 if t == 3:
                     print(f"  [creature] {entry} guid {g & 0xFFFFFF}: level {v.get(OBJECT_END + 0x1C)}, health {v.get(OBJECT_END + 0x10)}, "
                           f"display {v.get(OBJECT_END + 0x7D)}, faction {v.get(OBJECT_END + 0x1D)}, npc flags {v.get(0x93, 0)}, "
@@ -278,11 +283,30 @@ def describe(op, p):
             elif kind == 0:
                 health = f", health {v[OBJECT_END + 0x10]}/{v.get(OBJECT_END + 0x16, '?')}" if OBJECT_END + 0x10 in v else ""
                 print(f"  [changes] {g}: fields {sorted(v)}{health}")
+    elif op == 0x143:
+        a, v = struct.unpack("<QQ", p); print(f"  [attack start] {a & 0xFFFFFF} -> {v & 0xFFFFFF}")
+    elif op == 0x144:
+        a, pos = packed_guid(p, 0); v, pos = packed_guid(p, pos); print(f"  [attack stop] {a & 0xFFFFFF} -> {v & 0xFFFFFF}")
+    elif op in (0x145, 0x146, 0x147, 0x148, 0x149):
+        print("  [swing error] " + {0x145: "not in range", 0x146: "bad facing", 0x147: "not standing",
+                                    0x148: "dead target", 0x149: "can't attack"}[op])
+    elif op == 0x14E:
+        print("  [cancel combat]")
+    elif op == 0x14A:
+        info, = struct.unpack_from("<I", p, 0); a, pos = packed_guid(p, 4); v, pos = packed_guid(p, pos)
+        total, lines = struct.unpack_from("<IB", p, pos); pos += 5 + lines * 20
+        state, _, _, blocked = struct.unpack_from("<IIII", p, pos)
+        outcome = ("miss" if info & 0x10 else "crit" if info & 0x80 else "glance" if info & 0x4000
+                   else "crush" if info & 0x8000 else {2: "dodge", 3: "parry", 5: "block", 6: "evade"}.get(state, "hit"))
+        print(f"  [swing] {a & 0xFFFFFF} -> {v & 0xFFFFFF}: {outcome} for {total}" + (f" ({blocked} blocked)" if blocked else ""))
+    elif op == 0x103:
+        e, g = struct.unpack("<IQ", p); print(f"  [emote] {g & 0xFFFFFF}: {e}")
     elif op == 0x0DD:
         g, pos = packed_guid(p, 0)
         x, y, z, sid, kind = struct.unpack_from("<3fIB", p, pos); pos += 17
         if kind == 1:
             print(f"  [monster stops] {g & 0xFFFFFF} at {x:.1f} {y:.1f} {z:.1f}")
+            if g in seen_positions: seen_positions[g] = (x, y, z)
             return
         facing = ""
         if kind == 4: facing = f", facing {struct.unpack_from('<f', p, pos)[0]:.2f}"; pos += 4
@@ -290,6 +314,7 @@ def describe(op, p):
         elif kind == 3: pos += 8
         flags, duration, count, dx, dy, dz = struct.unpack_from("<III3f", p, pos)
         entry = seen_objects.get(g, (0, 0))[1]
+        if g in seen_positions: seen_positions[g] = (dx, dy, dz)
         print(f"  [monster moves] {entry} guid {g & 0xFFFFFF}: from {x:.1f} {y:.1f} {z:.1f} to {dx:.1f} {dy:.1f} {dz:.1f}, "
               f"{count} points, {duration} ms, flags {flags:#x}{facing}")
     elif op in MOVES:
@@ -431,7 +456,9 @@ for action in actions:
         print("login packets:", " ".join(OPS.get(op, hex(op)) for op, _ in got))
         for op, p in got:
             if op == 0x041: print("  login failed, reason", p[0]); sys.exit(1)
-            if op == 0x236: print("  verify world: map %d at %.2f %.2f %.2f o %.2f" % struct.unpack("<I4f", p))
+            if op == 0x236:
+                print("  verify world: map %d at %.2f %.2f %.2f o %.2f" % struct.unpack("<I4f", p))
+                here[:] = list(struct.unpack_from("<3f", p, 4))
             if op == 0x096:
                 n = struct.unpack_from("<I", p, 13)[0]; print("  system message:", p[17:17 + n - 1].decode())
             if op == 0x12A:
@@ -472,8 +499,39 @@ for action in actions:
             entry = o[3][3]; wsend(0x056, struct.pack("<IQ", entry, 0)); op, p = expect(0x058)
             iname = p[12:p.index(b"\0", 12)].decode(); print(f"item query {entry}: '{iname}', {len(p)} bytes")
         wsend(0x1CE, b""); op, p = expect(0x1CF); print("query time:", struct.unpack("<I", p)[0])
+    elif kind == "attack":
+        # Walk up to the nearest creature of ENTRY, face it, and start attacking.
+        import math
+        entry = int(args[0])
+        found = [g for g, (t, e) in seen_objects.items() if t == 3 and e == entry and g in seen_positions]
+        if not found:
+            print(f"attack {entry}: not in sight"); continue
+        target = min(found, key=lambda g: (seen_positions[g][0] - here[0]) ** 2 + (seen_positions[g][1] - here[1]) ** 2)
+        cx, cy, cz = seen_positions[target]
+        angle = math.atan2(here[1] - cy, here[0] - cx)
+        x, y = cx + 1.5 * math.cos(angle), cy + 1.5 * math.sin(angle)
+        o = math.atan2(cy - y, cx - x) % (2 * math.pi)
+        movement(0x0B5, x, y, cz, o, flags=1); movement(0x0B7, x, y, cz, o); here[:] = [x, y, cz]
+        wsend(0x141, struct.pack("<Q", target)); print(f"attack {entry}: {target & 0xFFFFFF} at {cx:.1f} {cy:.1f}")
+    elif kind == "approach":
+        # Walk to DIST yards of the nearest creature of ENTRY, without attacking it.
+        import math
+        entry, dist = int(args[0]), float(args[1])
+        found = [g for g, (t, e) in seen_objects.items() if t == 3 and e == entry and g in seen_positions]
+        if not found:
+            print(f"approach {entry}: not in sight"); continue
+        target = min(found, key=lambda g: (seen_positions[g][0] - here[0]) ** 2 + (seen_positions[g][1] - here[1]) ** 2)
+        cx, cy, cz = seen_positions[target]
+        angle = math.atan2(here[1] - cy, here[0] - cx)
+        x, y = cx + dist * math.cos(angle), cy + dist * math.sin(angle)
+        o = math.atan2(cy - y, cx - x) % (2 * math.pi)
+        movement(0x0B5, x, y, cz, o, flags=1); movement(0x0B7, x, y, cz, o); here[:] = [x, y, cz]
+        print(f"approach {entry}: {dist} yards from {target & 0xFFFFFF}")
+    elif kind == "stopattack":
+        wsend(0x142, b""); print("stop attacking")
     elif kind == "move":
         x, y, z = map(float, args); movement(0x0B5, x, y, z, flags=1); movement(0x0EE, x, y, z, flags=1); movement(0x0B7, x, y, z)
+        here[:] = [x, y, z]
         print(f"moved to {x} {y} {z}")
     elif kind == "say":
         wsend(0x095, struct.pack("<II", 0, 7) + args[0].encode() + b"\0"); op, p = expect(0x096)

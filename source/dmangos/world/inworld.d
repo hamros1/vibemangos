@@ -55,6 +55,8 @@ private:
         else
             warning!"%s: '%s' left the world (%s); '%s' NOT saved: this node may no longer write (cluster lease lapsed)"(
                 remoteAddress, account.username, why, player.data.name);
+        if (attacking)
+            stopAttack(false);
         leaveGroupsOnLogout(loggingOut);
         context.channelCommand(this, ChannelOp.leaveAll, null);
         auto group = context.groups.of(player.guid);
@@ -268,10 +270,14 @@ private:
             return;
         const config = context.config;
 
+        updateMelee(elapsed);
+        if (player is null)
+            return;
         if (regenTimer.update(elapsed))
         {
             const ms = cast(uint) regenTimer.takeAll().total!"msecs";
-            if (player.regenerate(ms, config.rateHealth, config.rateMana, config.rateRageLoss, config.rateEnergy))
+            if (player.regenerate(ms, config.rateHealth, config.rateMana, config.rateRageLoss, config.rateEnergy,
+                    inCombat))
             {
                 flushPlayerChanges();
                 if (auto group = context.groups.of(player.guid))

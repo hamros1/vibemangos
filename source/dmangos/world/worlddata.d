@@ -480,10 +480,10 @@ final class WorldData
             ~ "FROM creature_template_addon")())
             creatureTemplateAddons[row.get!uint(0)] = CreatureAddon(row.get!uint(1), row.get!uint(2), row.get!uint(3),
                 row.get!uint(4));
-        foreach (row; world.query!("SELECT Level, Class, BaseHealthExp0, BaseMana "
-            ~ "FROM creature_template_classlevelstats")())
+        foreach (row; world.query!("SELECT Level, Class, BaseHealthExp0, BaseMana, BaseDamageExp0, "
+            ~ "BaseMeleeAttackPower, BaseRangedAttackPower, BaseArmor FROM creature_template_classlevelstats")())
             creatureClassStats[classStatsKey(row.get!uint(0), row.get!uint(1))] = CreatureClassStats(row.get!uint(2),
-                row.get!uint(3));
+                row.get!uint(3), row.get!float(4), row.get!float(5), row.get!float(6), row.get!float(7));
 
         // Which spawns are out: those of events, and the pool members not chosen this time.
         bool[uint] eventCreatures, eventObjects;

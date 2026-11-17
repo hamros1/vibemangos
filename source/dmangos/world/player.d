@@ -33,6 +33,7 @@ import dmangos.world.inventory : Inventory, InventoryOwner, Item;
 import dmangos.world.playercreate : KnownAbilities, KnownSkill, NewSkill, NewSpell;
 import dmangos.world.spells : SpellEffect;
 import dmangos.world.stats;
+import dmangos.world.combat : AttackType, Fighter;
 import dmangos.world.updatefields;
 import dmangos.world.worlddata : CreateAction, maxLevel, WorldData;
 
@@ -165,6 +166,7 @@ final class Player : InventoryOwner
     Inventory inventory;
     MovementInfo movement;
     PlayerStats stats;
+    MeleeChances chances;                /// own melee chances (`meleeChances`), for the combat rolls
     uint[] spells;                       /// active, enabled spells: the spellbook
     uint[maxActionButtons] actionButtons; /// packed, 0 = empty
     uint[2] proficiency;                 /// item sub-class masks for weapons and armor (`SMSG_SET_PROFICIENCY`)
@@ -586,11 +588,13 @@ final class Player : InventoryOwner
      * `Player::RegenerateAll` for `milliseconds` out of combat: health (half again as fast sitting),
      * mana, energy, and rage decaying. Returns whether anything changed.
      */
-    bool regenerate(uint milliseconds, float healthRate, float manaRate, float rageLoss, float energyRate)
+    bool regenerate(uint milliseconds, float healthRate, float manaRate, float rageLoss, float energyRate,
+        bool inCombat = false)
     {
         bool changed;
         const health = values.get!UNIT_FIELD_HEALTH, maxHealth = values.get!UNIT_FIELD_MAXHEALTH;
-        if (health < maxHealth && health > 0)
+        // `Player::RegenerateAll`: health, and the loss of rage, only out of combat.
+        if (!inCombat && health < maxHealth && health > 0)
         {
             float add = max(0, healthRegenPerSecond() * healthRate);
             if (values.getByte!UNIT_FIELD_BYTES_1(0) != 0)
@@ -604,7 +608,8 @@ final class Player : InventoryOwner
         }
         changed |= addPower(Power.mana, cast(int)(manaRegenPerSecond() * manaRate * (milliseconds / 1000)));
         changed |= addPower(Power.energy, cast(int)((milliseconds / 100) * energyRate));
-        changed |= addPower(Power.rage, -cast(int)((milliseconds / 200) * 2.5f * rageLoss));
+        if (!inCombat)
+            changed |= addPower(Power.rage, -cast(int)((milliseconds / 200) * 2.5f * rageLoss));
         return changed;
     }
 
@@ -873,6 +878,111 @@ private:
                 if (item.durability != 0 || item.maxDurability == 0) // a broken item gives nothing
                     input.equipment[slot] = item.proto;
         stats = computeStats(input);
+        chances = meleeChances(chanceInputs(world));
+    }
+
+    /**
+     * What the melee formulas (`dmangos.world.combat`) need of this player now: its weapons and their
+     * skills and damage, its own chances, its defense and armor.
+     */
+    public Fighter fighter() const
+    {
+        import dmangos.world.inventory : itemSkill;
+
+        Fighter f;
+        f.guid = guid;
+        f.player = f.playerControlled = true;
+        f.level = data.level;
+        f.classId = data.classId;
+        f.position = movement.position;
+        f.combatReach = values.get!UNIT_FIELD_COMBATREACH;
+        enum uint running = MovementFlags.forward | MovementFlags.backward | MovementFlags.strafeLeft
+            | MovementFlags.strafeRight;
+        f.runningAround = (movement.flags & running) && !(movement.flags & MovementFlags.walkMode);
+        f.alive = values.get!UNIT_FIELD_HEALTH > 0;
+        f.standing = values.getByte!UNIT_FIELD_BYTES_1(0) == 0;
+        enum uint skillUnarmed = 162, skillDefense = 95;
+        static immutable ubyte[3] slots = [equipmentSlotMainhand, equipmentSlotOffhand, equipmentSlotRanged];
+        foreach (type, slot; slots)
+        {
+            const item = weaponFor(slot);
+            const skill = item !is null ? itemSkill(item.proto) : type == AttackType.mainHand ? skillUnarmed : 0;
+            if (skill)
+            {
+                const value = skillValue(skill);
+                f.weaponSkill[type] = value[0];
+                f.weaponSkillMax[type] = value[1];
+            }
+            f.damage[type] = [stats.damage[type].min, stats.damage[type].max];
+            if (item !is null)
+                f.damageSchool[type] = item.proto.details.damage[0].school;
+        }
+        f.crit = chances.crit;
+        f.dualWield = dualWield && weaponFor(equipmentSlotOffhand) !is null; // `hasOffhandWeaponForAttack`
+        const defense = skillValue(skillDefense);
+        f.defenseSkill = defense[0];
+        f.defenseSkillMax = defense[1];
+        f.dodge = chances.dodge;
+        f.parry = chances.parry;
+        f.block = chances.block;
+        // A parry needs a weapon in hand; a block a shield.
+        f.canParry = chances.canParry
+            && (weaponFor(equipmentSlotMainhand) !is null || weaponFor(equipmentSlotOffhand) !is null);
+        const shield = inventory.equipped(equipmentSlotOffhand);
+        f.canBlock = chances.canBlock && shield !is null && shield.proto.details.block
+            && (shield.durability != 0 || shield.maxDurability == 0);
+        f.shieldBlock = chances.shieldBlock;
+        f.armor = stats.resistances[0] > 0 ? stats.resistances[0] : 0;
+        return f;
+    }
+
+    /// `GetWeaponForAttack`: the weapon (item class 2) in `slot`, if it is not broken; null otherwise.
+    private const(Item) weaponFor(ubyte slot) const
+    {
+        enum uint itemClassWeapon = 2;
+        const item = inventory.equipped(slot);
+        if (item is null || item.proto.itemClass != itemClassWeapon)
+            return null;
+        return item.durability != 0 || item.maxDurability == 0 ? item : null;
+    }
+
+    /// Adds (or takes) power of `type`, within 0 and the maximum (`ModifyPower`). Returns whether it changed.
+    public bool modifyPower(Power type, int amount)
+    {
+        return addPower(type, amount);
+    }
+
+    /// What `meleeChances` needs of this player: its weapons' and defense skills, its Parry and Block.
+    private ChanceInputs chanceInputs(const WorldData world) const
+    {
+        import dmangos.world.inventory : itemSkill;
+        import dmangos.world.spells : SpellEffect;
+
+        ChanceInputs c;
+        c.classId = data.classId;
+        c.level = data.level;
+        c.agility = stats.stats[Stat.agility];
+        c.strength = stats.stats[Stat.strength];
+        uint skillFor(ubyte slot, uint unarmed)
+        {
+            const item = inventory.equipped(slot);
+            const skill = item is null ? unarmed : itemSkill(item.proto);
+            return skill ? skillValue(skill)[0] : 0;
+        }
+        enum uint skillUnarmed = 162, skillDefense = 95;
+        c.mainHandSkill = skillFor(equipmentSlotMainhand, skillUnarmed);
+        c.rangedSkill = skillFor(equipmentSlotRanged, 0);
+        c.defenseSkill = skillValue(skillDefense)[0];
+        foreach (id; spells)
+            if (const info = world.spells.spell(id))
+            {
+                c.canParry |= info.hasEffect(SpellEffect.parry);
+                c.canBlock |= info.hasEffect(SpellEffect.block);
+            }
+        if (const shield = inventory.equipped(equipmentSlotOffhand))
+            if (shield.durability != 0 || shield.maxDurability == 0)
+                c.shieldBlock = shield.proto.details.block;
+        return c;
     }
 
     void setPlayerFields(const WorldData world, const ClientData client)
@@ -960,6 +1070,11 @@ private:
         v.set!UNIT_FIELD_MAXOFFHANDDAMAGE(stats.damage[AttackType.offHand].max);
         v.set!UNIT_FIELD_MINRANGEDDAMAGE(stats.damage[AttackType.ranged].min);
         v.set!UNIT_FIELD_MAXRANGEDDAMAGE(stats.damage[AttackType.ranged].max);
+        v.set!PLAYER_CRIT_PERCENTAGE(chances.critShown);
+        v.set!PLAYER_RANGED_CRIT_PERCENTAGE(chances.rangedCritShown);
+        v.set!PLAYER_DODGE_PERCENTAGE(chances.dodgeShown);
+        v.set!PLAYER_PARRY_PERCENTAGE(chances.parryShown);
+        v.set!PLAYER_BLOCK_PERCENTAGE(chances.blockShown);
     }
 
     /// The skill fields: id and step, value and maximum, bonus.

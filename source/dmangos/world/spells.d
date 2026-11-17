@@ -25,6 +25,8 @@ enum SpellEffect : uint
     learnSpell = 36,
     dualWield = 40,
     skillStep = 44,
+    parry = 22,
+    block = 23,
     proficiency = 60,
     skill = 118,
 }
