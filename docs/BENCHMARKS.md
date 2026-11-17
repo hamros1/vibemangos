@@ -207,6 +207,7 @@ the creatures' chase, swings and spells, and their evading home.
 | Before combat (above, fewer objects in the tick) | 2.66 ms | 6.7% | 12.7% | 0.15 MB | about 26,000 |
 | Combat, as first written | 9.86 ms | 21.5% | 21.0% | 0.14 MB | 26,720 |
 | Noticing by cell | 5.24 ms | 12.3% | 17.4% | 0.26 MB | 27,837 |
+| With database scripts, summons, instances, idle cell unloading (later that night) | 5.65 ms | 13.3% | 18.8% | 0.28 MB | 29,080 |
 
 A profile of the second run (tools/gdb-sample.py) put a third of the busy time in noticing: every
 time a creature moved, it went through every player on the map to find those who see it
@@ -214,4 +215,6 @@ time a creature moved, it went through every player on the map to find those who
 Now a creature asks the cells within 50 yards for players, and neither goes on for a creature that
 attacks nobody on sight (passive, defensive, dead or neutral to all: `CreatureAI.mayNotice`). The
 rest of the increase is the fighting itself and the creatures whose scripts run out of combat
-(their timers keep them in the tick: about 4,800 spawns in the world have such events).
+(their timers keep them in the tick: about 4,800 spawns in the world have such events). The last
+row adds database scripts (waypoint scripts, relays) and everything else of that night; its 8% is
+within what two identical runs differ by, and the cells did not unload in a one-minute run.
