@@ -344,6 +344,85 @@ private:
         return true;
     }
 
+    /**
+     * ArcEmu's `.quest addstart` .. `.quest delfinish`: the selected quest giver's quests, in memory
+     * and in `creature_questrelation` / `creature_involvedrelation`. Returns what ArcEmu's do.
+     */
+    bool questRelationCommand(uint questId, bool start, bool add)
+    {
+        import std.algorithm.mutation : remove;
+        import std.algorithm.searching : canFind, countUntil;
+        import dmangos.world.creature : Creature;
+        import dmangos.world.updatefields : UNIT_FIELD_TARGET, UNIT_NPC_FLAGS;
+
+        enum uint npcFlagQuestGiver = 0x02;
+        const guid = player.values.get!UNIT_FIELD_TARGET;
+        auto unit = guid ? cast(Creature) map.findObject(guid) : null;
+        if (unit is null)
+        {
+            systemMessage("You must target an npc.");
+            return false;
+        }
+        if (!(unit.values.get!UNIT_NPC_FLAGS & npcFlagQuestGiver))
+        {
+            systemMessage("Unit is not a valid quest giver.");
+            return false;
+        }
+        const quest = context.data.quests.quest(questId);
+        if (quest is null)
+        {
+            systemMessage(add ? "Invalid quest selected, unable to add quest to the specified NPC." : "Invalid Quest selected.");
+            return false;
+        }
+        const entry = unit.spawn.entry;
+        auto relations = start ? &context.data.quests.creatureStarts : &context.data.quests.creatureEnds;
+        auto list = &(*relations).require(entry, null);
+        const known = (*list).canFind(questId);
+        const which = start ? "starter" : "finisher";
+        if (add)
+        {
+            if (known)
+                systemMessage("Quest was already found for the specified NPC.");
+            else
+            {
+                *list ~= questId;
+                context.database.insertQuestRelation(start, entry, questId);
+            }
+            sendMultilineMessage(format!"|cff00ff00Added Quest to NPC as %s: |cff00ccff%s\n\n"(which, quest.title));
+            gmLog(format!"added %s of quest %u [%s] to NPC %u [%s]"(which, quest.id, quest.title, entry, unit.template_.name));
+            return true;
+        }
+        if (!known)
+        {
+            systemMessage("Quest was NOT found for the specified NPC.");
+            return !start; // `.quest delstart` shows its help too
+        }
+        *list = (*list).remove((*list).countUntil(questId));
+        context.database.deleteQuestRelation(start, entry, questId);
+        sendMultilineMessage(format!"|cff00ff00Deleted Quest from NPC: |cff00ccff%s\n\n"(quest.title));
+        gmLog(format!"deleted %s of quest %u [%s] to NPC %u [%s]"(which, quest.id, quest.title, entry, unit.template_.name));
+        return true;
+    }
+
+    bool handleQuestAddStartCommand(uint questId) { return questRelationCommand(questId, true, true); }
+    bool handleQuestAddFinishCommand(uint questId) { return questRelationCommand(questId, false, true); }
+    bool handleQuestDelStartCommand(uint questId) { return questRelationCommand(questId, true, false); }
+    bool handleQuestDelFinishCommand(uint questId) { return questRelationCommand(questId, false, false); }
+
+    bool handleQuestAddBothCommand(uint questId)
+    {
+        if (questRelationCommand(questId, true, true))
+            questRelationCommand(questId, false, true);
+        return true;
+    }
+
+    bool handleQuestDelBothCommand(uint questId)
+    {
+        if (questRelationCommand(questId, true, false))
+            questRelationCommand(questId, false, false);
+        return true;
+    }
+
     bool handleQuestGiverCommand(uint questId = 0)
     {
         if (questId == 0)
@@ -487,7 +566,7 @@ package:
  */
 unittest
 {
-    import std.algorithm.searching : canFind;
+    import std.algorithm.searching : canFind, count;
     import std.format : format;
     import dmangos.auth.accounts : AccountLevel;
     import dmangos.world.movement : Position;
@@ -532,6 +611,29 @@ unittest
     assert(systemMessages(gm.read()).canFind("|cff00ccffNo quests found for the specified NPC id."));
     gm.say(".quest item 9600");
     assert(systemMessages(gm.read()).canFind("|cff00ccffNo matches found."));
+
+    // The trainer (a quest giver) takes the quest back too, then gives it no more.
+    {
+        import dmangos.world.creature : Creature;
+        import dmangos.world.objects : HighGuid, makeGuid;
+
+        auto trainer = cast(Creature) context.map(0).findObject(makeGuid(HighGuid.unit, creatureTrainer, trainerSpawn));
+        trainer.values.set!UNIT_NPC_FLAGS(trainer.values.get!UNIT_NPC_FLAGS | 0x02);
+        gm.write(Opcode.CMSG_SET_SELECTION, ClientGuid(trainer.guid));
+        gm.say(".quest addfinish 9600");
+        assert(systemMessages(gm.read()).canFind("|cff00ff00Added Quest to NPC as finisher: |cff00ccffOrders"));
+        assert(context.data.quests.creatureEnds[creatureTrainer].canFind(9600) && db.questRelationRows == [[0u, creatureTrainer, 9600]]);
+        gm.say(".quest addstart 9600");
+        assert(systemMessages(gm.read()).canFind("Quest was already found for the specified NPC."));
+        gm.say(".quest delboth 9600");
+        const gone = systemMessages(gm.read());
+        assert(gone.count!(m => m.canFind("Deleted Quest from NPC")) == 2);
+        assert(!context.data.quests.creatureStarts[creatureTrainer].canFind(9600) && db.questRelationRows.length == 0);
+        gm.say(".quest delstart 9600");
+        assert(systemMessages(gm.read())[0] == "Quest was NOT found for the specified NPC.");
+        context.data.quests.creatureStarts[creatureTrainer] ~= 9600;
+        gm.write(Opcode.CMSG_SET_SELECTION, ClientGuid(anduin.session.character.guid));
+    }
     context.data.quests.quests[9600].reqItemId[0] = itemJerky;
     context.data.quests.quests[9600].reqItemCount[0] = 2;
     gm.say(".quest item 9600");

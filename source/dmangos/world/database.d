@@ -330,6 +330,11 @@ interface WorldDatabase
     /// A spawn a GM deleted.
     void deleteCreatureSpawn(uint guid);
 
+    /// A creature's quest a GM added or removed: `creature_questrelation` (`start`) or `creature_involvedrelation`.
+    void insertQuestRelation(bool start, uint entry, uint quest);
+    /// ditto
+    void deleteQuestRelation(bool start, uint entry, uint quest);
+
     /// A vendor's ware a GM added (`npc_vendor`: unlimited, in `slot`) or removed.
     void insertVendorItem(uint entry, uint item, uint slot);
     /// ditto
@@ -531,6 +536,20 @@ final class MySqlWorldDatabase : WorldDatabase
             s.wanderDistance, s.movementType);
     }
     void deleteCreatureSpawn(uint guid) { world.execute!"DELETE FROM creature WHERE guid = ?"(guid); }
+    void insertQuestRelation(bool start, uint entry, uint quest)
+    {
+        if (start)
+            world.execute!"INSERT INTO creature_questrelation (id, quest) VALUES (?, ?)"(entry, quest);
+        else
+            world.execute!"INSERT INTO creature_involvedrelation (id, quest) VALUES (?, ?)"(entry, quest);
+    }
+    void deleteQuestRelation(bool start, uint entry, uint quest)
+    {
+        if (start)
+            world.execute!"DELETE FROM creature_questrelation WHERE id = ? AND quest = ?"(entry, quest);
+        else
+            world.execute!"DELETE FROM creature_involvedrelation WHERE id = ? AND quest = ?"(entry, quest);
+    }
     void insertVendorItem(uint entry, uint item, uint slot)
     {
         world.execute!("INSERT INTO npc_vendor (entry, item, maxcount, incrtime, slot, condition_id) "
@@ -1065,6 +1084,14 @@ final class MemoryWorldDatabase : WorldDatabase
     GameObjectSpawn[uint] gameObjectSpawnRows; /// ditto, game objects
     void insertCreatureSpawn(const ref CreatureSpawn s) { creatureSpawnRows[s.guid] = s; }
     void deleteCreatureSpawn(uint guid) { creatureSpawnRows.remove(guid); }
+    uint[3][] questRelationRows; /// (start, entry, quest) that `insertQuestRelation` wrote and are not deleted
+    void insertQuestRelation(bool start, uint entry, uint quest) { questRelationRows ~= [start, entry, quest]; }
+    void deleteQuestRelation(bool start, uint entry, uint quest)
+    {
+        import std.algorithm.mutation : remove;
+
+        questRelationRows = questRelationRows.remove!(r => r == [uint(start), entry, quest]);
+    }
     uint[2][] vendorRows; /// what `insertVendorItem` wrote (entry, item), less what `deleteVendorItem` removed
     void insertVendorItem(uint entry, uint item, uint slot) { vendorRows ~= [entry, item]; }
     void deleteVendorItem(uint entry, uint item)

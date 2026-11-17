@@ -125,6 +125,9 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 * `.npc vendoradditem` writes an unlimited `npc_vendor` row: CMaNGOS sells an item in its own
   `BuyCount`, so the amount is checked but not kept, and 1.12 has no extended costs (any is
   "invalid"). In a cluster the other nodes see the new ware after a restart.
+* `.quest addstart`, `addfinish`, `addboth` and their `del` forms write CMaNGOS's
+  `creature_questrelation` and `creature_involvedrelation`; ArcEmu's also wrote the creature's
+  entry into the game object tables, making an unrelated game object a quest giver: not copied.
 * `.quest item` lists the items the quest asks for (its `ReqItemId` columns): CMaNGOS has no
   `gameobject_quest_item_binding`. `.quest list` on a player reads its quest log as the client has it
   (ArcEmu's reads the saved `questlog` rows).

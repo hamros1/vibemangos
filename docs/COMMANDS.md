@@ -56,13 +56,16 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 * `.npc vendoradditem` writes an unlimited `npc_vendor` row: CMaNGOS sells an item in its own
   `BuyCount`, so the amount is checked but not kept, and 1.12 has no extended costs (any is
   "invalid"). In a cluster the other nodes see the new ware after a restart.
+* `.quest addstart`, `addfinish`, `addboth` and their `del` forms write CMaNGOS's
+  `creature_questrelation` and `creature_involvedrelation`; ArcEmu's also wrote the creature's
+  entry into the game object tables, making an unrelated game object a quest giver: not copied.
 * `.quest item` lists the items the quest asks for (its `ReqItemId` columns): CMaNGOS has no
   `gameobject_quest_item_binding`. `.quest list` on a player reads its quest log as the client has it
   (ArcEmu's reads the saved `questlog` rows).
 * Arguments are read strictly: a number written wrong ("12abc", "abc") or a missing argument shows
   the command's help, where ArcEmu's C parsing read "12abc" as 12 and "abc" as 0 and went on.
 
-## Working (201)
+## Working (207)
 
 | Command | Letter | Help |
 |---|---|---|
@@ -187,6 +190,12 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 | `.account level` | `z` | Sets gm level on account. Pass it username and 0,1,2,3,az, etc. |
 | `.account mute` | `a` | Mutes account for <timeperiod>. |
 | `.account unmute` | `a` | Unmutes account <x> |
+| `.quest addboth` | `2` | Add quest <id> to the targeted NPC as start & finish |
+| `.quest addfinish` | `2` | Add quest <id> to the targeted NPC as finisher |
+| `.quest addstart` | `2` | Add quest <id> to the targeted NPC as starter |
+| `.quest delboth` | `2` | Delete quest <id> from the targeted NPC as start & finish |
+| `.quest delfinish` | `2` | Delete quest <id> from the targeted NPC as finisher |
+| `.quest delstart` | `2` | Delete quest <id> from the targeted NPC as starter |
 | `.quest complete` | `2` | Complete/Finish quest <id> |
 | `.quest finisher` | `2` | Lookup quest finisher for quest <id> |
 | `.quest item` | `2` | Lookup itemid necessary for quest <id> |
@@ -268,7 +277,7 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 | `.logcomment` | `1` | Adds a comment to the GM log for the admins to read. |
 | `.removesickness` | `m` | Removes ressurrection sickness from the target |
 
-## Not yet implemented (97)
+## Not yet implemented (91)
 
 These answer "Not yet implemented.", as ArcEmu's `HandleNYICommand` does: their systems (AI agents
 and waypoint editing, quest editing, guilds, pets, honor, battlegrounds and arenas, GM
@@ -345,12 +354,6 @@ tickets, game object and creature spawning, GM invisibility, flying) do not exis
 | `.honor globaldailyupdate` | `m` | Daily honor field moves |
 | `.honor singledailyupdate` | `m` | Daily honor field moves for selected player only |
 | `.honor pvpcredit` | `m` | Sends PVP credit packet, with specified rank and points |
-| `.quest addboth` | `2` | Add quest <id> to the targeted NPC as start & finish |
-| `.quest addfinish` | `2` | Add quest <id> to the targeted NPC as finisher |
-| `.quest addstart` | `2` | Add quest <id> to the targeted NPC as starter |
-| `.quest delboth` | `2` | Delete quest <id> from the targeted NPC as start & finish |
-| `.quest delfinish` | `2` | Delete quest <id> from the targeted NPC as finisher |
-| `.quest delstart` | `2` | Delete quest <id> from the targeted NPC as starter |
 | `.quest load` | `2` | Loads quests from database |
 | `.pet createpet` | `m` | Creates a pet with <entry>. |
 | `.pet renamepet` | `m` | Renames a pet to <name>. |
