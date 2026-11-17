@@ -56,6 +56,7 @@ final class RegionAuthority
         MonoTime[uint] movedAt;        // region id -> when it last moved for the load
         MonoTime[uint] splitAt;        // region id -> when it was last split (its halves need a measurement)
         size_t partitionSize;          // regions at start-up: merges never go below it
+        uint partitionLastId;          // the start-up partition's highest id: regions above it came of splits
     }
 
     /// How load balancing by measured cost behaves (phase 6; `ClusterConfig`).
@@ -82,6 +83,9 @@ final class RegionAuthority
     {
         regions_ = regions;
         partitionSize = regions.length;
+        foreach (ref r; regions)
+            if (r.id > partitionLastId)
+                partitionLastId = r.id;
         this.cost = cost;
         this.self = self;
         epochBase = incarnation << 20;
@@ -410,7 +414,8 @@ final class RegionAuthority
      * union a rectangle), cheap together (under `mergeBelowUs`) and neither moved, split or merged
      * lately, become one. The lower id takes the union with its owner and epoch, so its node goes
      * on simulating everything without a handover; the other id leaves the table. One merge a look,
-     * and never below the start-up partition's count: merges take back what splits added.
+     * and only where one of the two came of a split: merges take back what splits added, never
+     * the start-up partition.
      */
     private void mergeCold(MonoTime now)
     {
@@ -435,6 +440,8 @@ final class RegionAuthority
                     continue;
                 if (cost.get(a.id, 0) + cost.get(b.id, 0) >= balancing.mergeBelowUs)
                     continue;
+                if (a.id <= partitionLastId && b.id <= partitionLastId)
+                    continue; // two regions of the start-up partition: not what a merge is for
                 CellRect union_;
                 if (!unionOf(a.rect, b.rect, union_))
                     continue;
@@ -1111,7 +1118,8 @@ unittest
         Region(3, 0, CellRect(64, 0, 128, 16))];
     ulong[uint] cost = [1: 100, 2: 100, 3: 100];
     auto authority = new RegionAuthority(regions, cost, 1, 7, 5.seconds, () => now);
-    authority.partitionSize = 2; // as if one of them came from a split
+    authority.partitionSize = 2; // as if region 2 came from a split
+    authority.partitionLastId = 1;
     now += 6.seconds;
     authority.tick();
     foreach (ref r; authority.regions)

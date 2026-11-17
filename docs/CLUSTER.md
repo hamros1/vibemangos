@@ -724,9 +724,11 @@ starts, through the same migration, and stays there until it ends.
   moved nor been split for the cool-down, become one (`RegionAuthority.mergeCold`, one a look): the
   lower id takes the union with its owner and epoch, the other id leaves the table. Its node keeps
   simulating everything: a node's view takes a region gone from the table whose cells lie inside
-  another region it still owns as no loss, and follows the larger rectangle. Merges never take the
-  table below the start-up partition's size, so they take back what splits added rather than
-  undoing the partition by spawn counts. (A standby that takes over counts from the table it adopts.)
+  another region it still owns as no loss, and follows the larger rectangle. One of the two must
+  have come of a split, and the table never shrinks below the start-up partition's size: merges
+  take back what splits added, never the partition by spawn counts. (A standby that takes over counts
+  from the table it adopts.) Live, before that rule, cold start-up regions merged while a crowd was
+  still being split: churn that the rule removes.
 * **Tested (splits):** a unit test (a region holding all of a node's load is split on its node,
   the old id keeping its grant and epoch; measured apart, the new half moves; a node's view takes
   the smaller rectangle as no loss). Live, two nodes, 250 bots crowding Goldshire on node 1: the
