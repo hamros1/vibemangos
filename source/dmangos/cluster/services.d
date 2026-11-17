@@ -31,6 +31,7 @@ import std.meta : AliasSeq;
 import std.traits : getUDAs, hasUDA, Parameters, ReturnType, Unqual;
 
 import core.time : MonoTime, seconds;
+import std.array : join;
 
 import dmangos.cluster.protocol : ServiceCall, ServiceReply;
 import dmangos.cluster.regions : CellRect, Region;
@@ -358,6 +359,19 @@ final class ServiceHost
         void delegate(const(ubyte)[] reply) then;
     }
 
+    /// What this node's services and callers did (the metrics line).
+    struct Counts
+    {
+        ulong local;      /// calls answered here directly
+        ulong sent;       /// calls sent to another node (resends included)
+        ulong served;     /// other nodes' calls run here
+        ulong repeated;   /// resent calls answered from memory
+        ulong givenUp;    /// calls unanswered for `giveUpAfter`
+    }
+
+    /// ditto
+    Counts counts;
+
     private Pending[ulong] pending;   // by sequence
     private ulong nextSequence = 1;
     private ubyte[][ulong] answered;  // (origin, sequence) -> reply: a resent call is answered again, not run again
@@ -376,6 +390,7 @@ final class ServiceHost
         alias S = __traits(parent, method);
         if (auto service = local!S())
         {
+            ++counts.local;
             auto reply = __traits(getMember, *service, __traits(identifier, method))(request);
             if (then !is null)
                 then(reply);
@@ -400,6 +415,7 @@ final class ServiceHost
         alias S = __traits(parent, method);
         if (auto service = local!S())
         {
+            ++counts.local;
             __traits(getMember, *service, __traits(identifier, method))(request);
             return;
         }
@@ -430,6 +446,8 @@ final class ServiceHost
         }
         auto call = ServiceCall(p.kind, p.call, self, sequence, cast(ubyte[]) p.request);
         p.sentTo = sendCall(node, call) ? node : 0;
+        if (p.sentTo)
+            ++counts.sent;
     }
 
     /// A call from another node: run here if the service is, answered from memory if it was before.
@@ -438,7 +456,10 @@ final class ServiceHost
         auto reply = ServiceReply(call.kind, call.sequence, ServiceStatus.ok, null);
         const key = cast(ulong) call.origin << 48 | (call.sequence & 0xFFFF_FFFF_FFFF);
         if (auto earlier = key in answered)
+        {
             reply.reply = *earlier;
+            ++counts.repeated;
+        }
         else if (!hosts(cast(ServiceKind) call.kind))
             reply.status = ServiceStatus.notHere;
         else
@@ -448,6 +469,7 @@ final class ServiceHost
                 reply.status = ServiceStatus.unknownCall;
             else
             {
+                ++counts.served;
                 answered[key] = bytes;
                 answeredOrder ~= key;
                 if (answeredOrder.length > answersKept)
@@ -496,6 +518,22 @@ final class ServiceHost
                 p.sentTo = 0;
     }
 
+    /// The metrics line's part: the services here, and the calls so far.
+    string describe() const
+    {
+        import std.algorithm.sorting : sort;
+        import std.conv : to;
+        import std.format : format;
+
+        string[] here;
+        foreach (kind, _; hosted)
+            here ~= kind.to!string;
+        here.sort();
+        return format!"services: %s here; calls %s local, %s sent, %s served, %s repeated, %s given up, %s waiting"(
+            here.length ? here.join(", ") : "none", counts.local, counts.sent, counts.served, counts.repeated,
+            counts.givenUp, pending.length);
+    }
+
     /// Calls in flight or waiting.
     @property size_t pendingCalls() const
     {
@@ -521,6 +559,7 @@ final class ServiceHost
         foreach (sequence; expired)
         {
             warning!"services: a call of %s unanswered for %s: given up"(pending[sequence].kind, giveUpAfter);
+            ++counts.givenUp;
             pending.remove(sequence);
         }
     }

@@ -349,3 +349,16 @@ Timing each tile's load showed where the 44 ms came from:
   tile to its neighbours.
 * Ticks in which many areas came into use added a dozen at once.
 
+## Cluster service calls (2026-11-17)
+
+`tools/servicebench.d`, with a request the size of a channel command (a guid, a name, a channel and a
+line of chat):
+
+| Call | Cost |
+|---|---|
+| Answered on its own node (a direct method call) | 23 ns |
+| Through the remote path, in-memory link | 1.7 µs |
+
+The remote path covers encoding the request, dispatching it from bytes, the reply cache and decoding
+the reply. The network adds its round trip on top.
+

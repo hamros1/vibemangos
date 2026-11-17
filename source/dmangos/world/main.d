@@ -311,8 +311,11 @@ private int run(WorldConfig config, string configPath)
                     metrics.report(&server.busy), context.sessionCount, context.objectCount, context.tickingCount,
                     writes.waiting, writes.written, writes.replaced, writes.failed);
                 if (cluster !is null)
+                {
                     foreach (line; cluster.describe())
                         info!"%s"(line);
+                    info!"%s"(context.services.describe());
+                }
             }
             // What this node's regions cost it, for the coordinator's balancing (phase 6).
             if (cluster !is null && now - lastLoadReport >= 10.seconds)

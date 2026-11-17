@@ -287,10 +287,16 @@ groups, not per tick per entity.
    * Tests: in the in-memory cluster, the gateway owns nothing and clients are steered to it.
    * Live (`GATEWAY=1 cluster-start.sh`, node 4 on port 8088): a scripted client logged in through
      the realm list, landed on the gateway, was simulated by node 1, and talked in a channel.
-7. **Monitoring:**
-   * services and their placement in the metrics line and in `cluster.describe`;
-   * calls a second, local and remote;
-   * a two-node benchmark of chat calls.
+7. **Monitoring: done (2026-11-17).**
+   * Each node's metrics lines include the services it hosts and its calls: local, sent, served,
+     repeated (answered from memory), given up and waiting (`ServiceHost.describe`).
+   * `tools/servicebench.d`, with a request the size of a channel command:
+     * a call answered on its own node costs **23 ns**, a direct method call;
+     * a call through the remote path, with an in-memory link, costs **1.7 µs**: encoding, dispatching
+       from bytes, the reply cache, and decoding.
+
+     Both are far below what chat or a queue asks for; the network's round trip dominates a remote
+     call.
 
 Later stages may move groups, session claims, id blocks and guild broadcasts onto services, where
 it removes code. Each move is judged on its own.
