@@ -363,8 +363,11 @@ What works now:
     other where the relations allow (duels, PvP). Area spells take every creature they may attack
     (and enemy players) within their radius of the caster or of the point chosen, or in a cone in
     front; party spells the party members near; a chained spell jumps on to the nearest attackable
-    creature within 10 yards, as many times as it says. Not yet: projectiles' travel time, spell
-    power and partial resists, persistent area auras (Blizzard, Consecration).
+    creature within 10 yards, as many times as it says. A persistent area aura (Blizzard,
+    Consecration, Rain of Fire) puts a dynamic object on the ground at the spot chosen (or under the
+    caster) that hurts every creature the caster may attack within its radius each tick, for the
+    spell's duration (or until its channel is cut short). Not yet: projectiles' travel time, spell
+    power and partial resists, the area auras' other effects (slows) and their hitting players.
   * **Auras** (CMaNGOS's `SpellAuraHolder` and `Aura`): buffs and debuffs fill the aura fields
     (positive slots 0..31, negative 32..47) and the buff bar's durations, refresh and stack, and end
     when their time is up, when clicked off, at death, or by their interrupt flags (standing up ends

@@ -49,6 +49,21 @@ private:
         uint castItemEntry;   // the item it is cast from: no power, the item's cooldown
         bool triggered;
         bool active;
+        ubyte persistentDone; // effects whose persistent area is made (once a cast, not once a target)
+    }
+
+    /// A persistent area aura's spot under way (`DynamicObject` with its aura).
+    static struct PersistentArea
+    {
+        import dmangos.world.dynobject : DynamicObject;
+
+        DynamicObject spot;
+        const(SpellInfo)* spell;
+        size_t effect;
+        int value;      // each tick's damage
+        int amplitude;  // ms between ticks
+        int timer;      // ms to the next tick
+        int left;       // ms it lasts yet
     }
 
     Casting generic;                 // `CURRENT_GENERIC_SPELL`
@@ -58,6 +73,7 @@ private:
     int bobberAge, bobberBite, bobberGone; // ms since cast; when the fish bites; when the bobber goes
     bool bobberLooted;               // the catch is being looted: the bobber stays until then
     bool channelFailed;              // an effect of the spell failed (not fishable): no channel
+    PersistentArea[] persistentAreas; // this caster's spots of persistent area auras
     ulong channelTarget;             // ... at whom
     int channelTimer;                // ... for so many more milliseconds
     Casting nextSwing;               // `CURRENT_MELEE_SPELL`
@@ -179,6 +195,8 @@ private:
     {
         if (bobber)
             updateBobber(cast(int) elapsed.total!"msecs");
+        if (persistentAreas.length)
+            updatePersistentAreas(cast(int) elapsed.total!"msecs");
         if (channelSpell !is null && (channelTimer -= cast(int) elapsed.total!"msecs") <= 0)
             endChannel(false);
         if (!generic.active)
@@ -261,6 +279,14 @@ private:
         }
         if (bobber && !bobberLooted)
             removeBobber();
+        // `Spell::cancel` of a channel: its spots go with it.
+        if (cancelled)
+            foreach_reverse (k, ref area; persistentAreas)
+                if (area.spell is spell)
+                {
+                    map.removeObject(area.spot.guid);
+                    persistentAreas = persistentAreas[0 .. k] ~ persistentAreas[k + 1 .. $];
+                }
         ByteWriter w;
         w.put(0u);
         deliver(Opcode.MSG_CHANNEL_UPDATE, w.data);
@@ -352,6 +378,58 @@ private:
         {
             deliver(Opcode.SMSG_FISH_NOT_HOOKED, null);
             endChannel(false);
+        }
+    }
+
+    /**
+     * `Spell::EffectPersistentAA`: a dynamic object at the destination (or the caster) of the effect's
+     * radius, lasting the spell's duration; every amplitude it hurts the creatures the caster may
+     * attack within it (`SPELL_AURA_PERIODIC_DAMAGE`'s ticks).
+     */
+    void makePersistentArea(const(SpellInfo)* spell, size_t i, const ref SpellTargets targets, int value)
+    {
+        import dmangos.world.dynobject : DynamicObject;
+        import dmangos.world.spellcast : duration, radius;
+
+        const r = radius(*spell, i, context.client), ms = duration(*spell, context.client, player.data.level);
+        if (r <= 0 || ms <= 0)
+            return;
+        Position at = player.position;
+        if (targets.mask & TargetFlags.destLocation)
+            at = Position(targets.dest[0], targets.dest[1], targets.dest[2], at.orientation);
+        auto spot = new DynamicObject(context.nextTemporaryCounter(), player.guid, spell.id, i, r, at);
+        map.addObject(spot);
+        const amplitude = spell.casting.amplitude[i] > 0 ? spell.casting.amplitude[i] : 1000;
+        persistentAreas ~= PersistentArea(spot, spell, i, value > 0 ? value : 0, amplitude, amplitude, ms);
+    }
+
+    /// The spots' ticks and ends.
+    void updatePersistentAreas(int diff)
+    {
+        import dmangos.world.spellcast : radius;
+
+        foreach_reverse (k, ref area; persistentAreas)
+        {
+            area.left -= diff;
+            area.timer -= diff;
+            while (area.timer <= 0 && area.left > -area.amplitude)
+            {
+                area.timer += area.amplitude;
+                const r = radius(*area.spell, area.effect, context.client);
+                const at = area.spot.position;
+                foreach (creature; map.creaturesNear(at, r))
+                {
+                    const p = creature.position;
+                    if ((p.x - at.x) ^^ 2 + (p.y - at.y) ^^ 2 + (p.z - at.z) ^^ 2 > r * r || !spellEnemy(creature))
+                        continue;
+                    spellDamage(area.spell, creature, area.value, area.spell.casting.school);
+                }
+            }
+            if (area.left <= 0)
+            {
+                map.removeObject(area.spot.guid);
+                persistentAreas = persistentAreas[0 .. k] ~ persistentAreas[k + 1 .. $];
+            }
         }
     }
 
@@ -487,6 +565,9 @@ private:
         if (generic.active)
             interruptCast(SpellCastResult.interrupted);
         endChannel(true);
+        foreach (ref area; persistentAreas)
+            map.removeObject(area.spot.guid);
+        persistentAreas = null;
         nextSwing.active = false;
     }
 
@@ -743,8 +824,10 @@ private:
                 continue;
             const a = spell.implicitTargetA[i];
             ulong[] targets;
-            const area = areaTargets(spell, i, c.targets);
-            if (area.length || isAreaTarget(spell, i))
+            const area = spell.effect[i] == 27 ? null : areaTargets(spell, i, c.targets);
+            if (spell.effect[i] == 27) // SPELL_EFFECT_PERSISTENT_AREA_AURA: once, whoever stands there
+                targets = [player.guid];
+            else if (area.length || isAreaTarget(spell, i))
                 targets = area.dup; // `SetTargetMap` for an area, a cone, the party
             else if (a == ImplicitTarget.caster || a == ImplicitTarget.none)
                 targets = [player.guid];
@@ -908,6 +991,13 @@ private:
             }
             break;
         }
+        case 27: // SPELL_EFFECT_PERSISTENT_AREA_AURA: a spot that hurts who stands in it, made once a cast
+            if (!(c.persistentDone & (1 << i)))
+            {
+                c.persistentDone |= cast(ubyte)(1 << i);
+                makePersistentArea(spell, i, c.targets, value);
+            }
+            break;
         case 50: // SPELL_EFFECT_TRANS_DOOR: an object the spell puts down (a fishing bobber)
             castBobber(spell, i);
             break;
@@ -1754,4 +1844,76 @@ unittest
     anduin.session.castTriggeredAt(bolt, keeper.guid); // past the global cooldown
     assert(keeper.values.get!UNIT_FIELD_HEALTH < keeperBefore && trainer.values.get!UNIT_FIELD_HEALTH < trainerBefore,
         "the bolt jumped to the trainer");
+}
+
+/// A persistent area aura: a spot on the ground that hurts the creatures in it every tick, for its duration.
+unittest
+{
+    import core.time : MonoTime, msecs;
+    import dmangos.bytes : ByteWriter;
+    import dmangos.dbc : buildDbc;
+    import dmangos.world.clientdata : factionTemplateFormat, spellCastTimesFormat, spellDurationFormat,
+        spellRadiusFormat, spellRangeFormat;
+    import dmangos.world.creature : Creature;
+    import dmangos.world.dynobject : DynamicObject;
+    import dmangos.world.movement : Position;
+    import dmangos.world.objects : HighGuid, makeGuid;
+    import dmangos.world.opcodes;
+    import dmangos.world.player : Player;
+    import dmangos.world.spellcast : ImplicitTarget, SpellTargets, TargetFlags;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+    import dmangos.world.updatefields;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    uint bits(float f) { return *cast(uint*) &f; }
+    context.client.spellCastTimes = typeof(context.client.spellCastTimes).parse(buildDbc(spellCastTimesFormat,
+        [[1u, 0, 0, 0]]), "SpellCastTimes.dbc");
+    context.client.spellRanges = typeof(context.client.spellRanges).parse(buildDbc(spellRangeFormat,
+        [[1u, bits(0), bits(30), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]), "SpellRange.dbc");
+    context.client.spellRadii = typeof(context.client.spellRadii).parse(buildDbc(spellRadiusFormat,
+        [[1u, bits(8), 0, 0]]), "SpellRadius.dbc");
+    context.client.spellDurations = typeof(context.client.spellDurations).parse(buildDbc(spellDurationFormat,
+        [[1u, 3000, 0, 3000]]), "SpellDuration.dbc");
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f));
+    auto me = cast(Player) anduin.session.character;
+    const humans = me.values.get!UNIT_FIELD_FACTIONTEMPLATE;
+    context.client.factionTemplates = typeof(context.client.factionTemplates).parse(buildDbc(factionTemplateFormat,
+        [[humans, 1, 0, 1 | 2, 2, 8, 0, 0, 0, 0, 0, 0, 0, 0], [14u, 14, 0, 8, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0]]),
+        "FactionTemplate.dbc");
+    auto map = context.map(0);
+    auto keeper = cast(Creature) map.findObject(makeGuid(HighGuid.unit, creatureInnkeeper, innkeeperSpawn));
+    keeper.factionTemplate = context.client.factionTemplates.lookup(14);
+    keeper.values.set!UNIT_FIELD_MAXHEALTH(500u);
+    keeper.values.set!UNIT_FIELD_HEALTH(500u);
+    enum uint consecrate = 95700;
+    context.data.spells.spells[consecrate] = testSpell(consecrate, 27, ImplicitTarget.caster, 10);
+    with (context.data.spells.spells[consecrate].casting)
+    {
+        radiusIndex[0] = 1;
+        durationIndex = 1;
+        amplitude[0] = 1000;
+        dmgClass = 0;
+    }
+    me.spells ~= consecrate;
+    anduin.read();
+    ByteWriter w;
+    w.put(consecrate);
+    SpellTargets(TargetFlags.self, 0).write(w);
+    anduin.write(Opcode.CMSG_CAST_SPELL, w.data);
+    DynamicObject spot;
+    foreach (o; map.objectsNear(me.position, 5))
+        if (auto d = cast(DynamicObject) o)
+            spot = d;
+    assert(spot !is null, "the spot on the ground");
+    foreach (_; 0 .. 4)
+    {
+        now += 1000.msecs;
+        anduin.session.update(1000.msecs);
+    }
+    assert(keeper.values.get!UNIT_FIELD_HEALTH == 500 - 3 * 10, "three ticks of 10");
+    assert(map.findObject(spot.guid) is null, "gone after its 3 seconds");
 }
