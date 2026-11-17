@@ -312,6 +312,9 @@ private:
         }
         if (bobber && !bobberLooted)
             removeBobber();
+        // Tame Beast's twenty seconds are up: the beast is tamed (`spell_tame_beast_dummy`).
+        if (!cancelled && spell.id == imported!"dmangos.world.pethandlers".spellTameBeast)
+            tameBeastChannelDone(channelTarget);
         // `Spell::cancel` of a channel: its spots go with it.
         if (cancelled)
             foreach_reverse (k, ref area; persistentAreas)
@@ -717,6 +720,12 @@ private:
             if (form != 0 && spell.stances && !(spell.stances & (1u << (form - 1))))
                 return onlyShapeshift;
         }
+        if (start && !triggered)
+        {
+            const petResult = petCastCheck(spell, targets);
+            if (petResult != SpellCastResult.ok)
+                return petResult;
+        }
         // The target the effects need (a triggered spell's at any range: `CheckRange` is not for it).
         const result = checkTarget(spell, targets, triggered);
         if (result != SpellCastResult.ok)
@@ -1099,6 +1108,18 @@ private:
         }
         case 83: // SPELL_EFFECT_DUEL
             startDuel(target);
+            break;
+        case 55: // SPELL_EFFECT_TAMECREATURE
+            tameCreature(spell, target ? target : c.targets.unit);
+            break;
+        case 56: // SPELL_EFFECT_SUMMON_PET
+            summonPetEffect(spell, i);
+            break;
+        case 102: // SPELL_EFFECT_DISMISS_PET
+            dismissPetEffect();
+            break;
+        case 109: // SPELL_EFFECT_SUMMON_DEAD_PET
+            reviveDeadPet(value);
             break;
         case 1: // SPELL_EFFECT_INSTAKILL
             instakill(spell, target);

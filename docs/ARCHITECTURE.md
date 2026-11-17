@@ -409,6 +409,34 @@ Three modules, split by what they depend on:
   spells through `Combatant` (`spellHitBy`, `auraFrom`), the area ones are found with
   `CombatWorld.combatantsNear`, texts go out with `CombatWorld.sendInRange`.
 
+## Pets
+
+A pet is a creature with an owner (`Creature.petOwner`) and a `PetState` (`Creature.petData`,
+`pet.d`): its number, type, command, action bar and spells. Four modules:
+
+* `pet.d` is what every pet shares and touches nothing live: the action bar's ten packed buttons and
+  their `abdata` form, `petStats` (CMaNGOS's `InitStatsForLevel` with `UpdateAllStats`, a pure
+  function of the template, level and `pet_levelstats` row), the world tables (`PetData`) and the
+  packets.
+* `petai.d` is `PetAI`, a mixin of `CreatureAI` beside `CreatureCasting`: a creature with an owner
+  runs `petUpdate` instead of the threat-list fight. It has a victim but no threat list and never
+  evades; it follows its owner, holds where it was told to stay, attacks on command, assists its
+  owner unless passive, and autocasts. It reuses the creature's chase and swing.
+* `creaturecombat.d` lets creatures fight creatures. Creature AI sees its enemies as `Combatant`s,
+  which only sessions implemented; `CreatureCombatant` is a creature behind the same interface, made
+  once per creature (`Creature.asCombatant`) through `CombatWorld.combatantOf`. So a creature's swing
+  at a pet, and a pet's at a creature, go through the code that handles players. A blow from a pet
+  taps its victim for the owner; a kill goes to the owner's session (`killedByPet`, the player's own
+  kill path), a dead pet to its owner (`ownPetDied`).
+* `pethandlers.d` is the owner's side, mixed into the session: the spell effects (tame, summon,
+  dismiss, revive) and their cast checks, `bringPet` (CMaNGOS's `LoadPetFromDB` and creation: the
+  creature from `WorldContext.makePetCreature`, with a `HIGHGUID_PET` guid made at construction),
+  saving by slot (`SavePetToDB`'s rules), the bar's opcodes, the stables, and the moments the pet
+  leaves and returns (logout, teleports, a move to another node, login).
+
+The map shows a pet's owner-only fields (its experience, training points) to its owner in
+`flushObjectChanges`.
+
 ## Spells
 
 `spells.d` loads `spell_template` (`SpellInfo`, with what casting needs in `SpellInfo.casting`),

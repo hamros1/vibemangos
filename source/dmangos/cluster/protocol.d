@@ -24,7 +24,7 @@ import dmangos.cluster.regions : Region;
 import dmangos.serialization : deserialize, LengthPrefix, serialize;
 
 /// Changes whenever a message changes; nodes speaking another version are turned away.
-enum ushort protocolVersion = 24;
+enum ushort protocolVersion = 25;
 
 /// Size of a frame header.
 enum frameHeaderSize = 16;
@@ -216,6 +216,7 @@ struct IdReport
     uint mail;
     uint group;
     uint instance;
+    uint pet;
 }
 
 /// The cells of a map the sender's players became near (`added`) and left (`removed`) (phase 3).

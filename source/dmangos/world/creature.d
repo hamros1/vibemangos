@@ -518,12 +518,13 @@ final class Creature : Moving, Replicable, Npc, PerViewer
      * and the fields that follow. `display` is the chosen model; `level` the chosen level.
      */
     this(const ref CreatureSpawn spawn, const(CreatureTemplate)* template_, uint display, uint level,
-        const ref CreatureParts parts, const ClientData client)
+        const ref CreatureParts parts, const ClientData client, uint petNumber = 0)
     in (template_ !is null && template_.entry == spawn.entry)
     {
         this.spawn = spawn;
         this.template_ = template_;
-        guid_ = makeGuid(HighGuid.unit, spawn.entry, spawn.guid);
+        // A pet's guid is `HIGHGUID_PET`'s, with its number where a creature has its entry.
+        guid_ = petNumber ? makePetGuid(petNumber, spawn.guid) : makeGuid(HighGuid.unit, spawn.entry, spawn.guid);
         movement.position = Position(spawn.x, spawn.y, spawn.z, spawn.orientation);
         movement.flags = MovementFlags.walkMode; // SetWalk(true, true)
         generator = new IdleMovement;
@@ -551,6 +552,17 @@ final class Creature : Moving, Replicable, Npc, PerViewer
         values.set!UNIT_VIRTUAL_ITEM_INFO(2 * slot, item.display ? item.itemClass | uint(item.subClass) << 8
             | uint(item.material) << 16 | uint(item.inventoryType) << 24 : 0);
         values.set!UNIT_VIRTUAL_ITEM_INFO(2 * slot + 1, item.display ? uint(item.sheath) : 0);
+    }
+
+    /**
+     * Made a pet (`Pet::Create`), before it is added to a map: it belongs to `owner`. Its guid is
+     * already `HIGHGUID_PET`'s, with its pet number where a creature has its entry.
+     */
+    void becomePet(ulong owner, Object state)
+    in (highGuidOf(guid_) == HighGuid.pet, "made with its pet number (`WorldContext.makePetCreature`)")
+    {
+        petOwner = owner;
+        petData = state;
     }
 
     /// The guid: high part, entry and spawn guid.
@@ -614,6 +626,13 @@ final class Creature : Moving, Replicable, Npc, PerViewer
 
     /// A temporary summon (`TemporarySpawn`): how it goes (`TempSpawnType`), its time, who summoned it.
     TempSpawn summon;
+
+    /// A pet's owner (a player's guid); 0 for any other creature.
+    ulong petOwner;
+    /// The pet's own state (`dmangos.world.pet`); null for any other creature.
+    Object petData;
+    /// The creature as other creatures fight it (`CreatureCombatant`), made when first needed.
+    Object asCombatant;
 
     /// The dungeon instance it lives in (0: none): it does not respawn there, and is not saved.
     uint instanceId;

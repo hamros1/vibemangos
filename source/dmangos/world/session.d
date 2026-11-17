@@ -77,6 +77,7 @@ import dmangos.world.gminstance : InstanceCommands;
 import dmangos.world.sessionscripting : SessionScripting;
 import dmangos.world.social : FriendInfo, SocialHandlers;
 import dmangos.world.guildhandlers : GuildHandlers;
+import dmangos.world.pethandlers : PetHandlers;
 import dmangos.script.api : MenuOption, QuestProgress;
 import dmangos.world.gmquest : QuestCommands;
 import dmangos.world.gmlevel3 : Level3Commands;
@@ -445,10 +446,11 @@ final class WorldSession : NetSession, Kickable, OnlinePlayer, Combatant, Looter
         hitByCreature(attacker, damage);
     }
 
-    /// See `Combatant`.
+    /// See `Combatant`. The player's pet joins in (`OwnerAttackedBy`).
     void threatAdded(ulong creature)
     {
         addThreatener(creature);
+        petAssistAgainst(creature);
     }
 
     /// ditto
@@ -562,6 +564,24 @@ final class WorldSession : NetSession, Kickable, OnlinePlayer, Combatant, Looter
     bool ignores(ulong guid) const
     {
         return ignoresGuid(guid);
+    }
+
+    /// A creature this player's pet killed: the player's kill (`dmangos.world.creaturecombat`).
+    void killedByPet(Creature victim)
+    {
+        creatureKilled(victim);
+    }
+
+    /// This player's pet died.
+    void ownPetDied()
+    {
+        petDiedHere();
+    }
+
+    /// The corpse of this player's pet went.
+    void petCorpseGone(Creature pet)
+    {
+        petCorpseGoneHere(pet);
     }
 
     /// See `Combatant`.
@@ -991,6 +1011,7 @@ private:
     mixin GmTargets;
     mixin SocialHandlers;
     mixin GuildHandlers;
+    mixin PetHandlers;
     mixin CombatHandlers;
     mixin DeathHandlers;
     mixin LootHandlers;

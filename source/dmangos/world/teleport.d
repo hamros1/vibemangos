@@ -202,6 +202,12 @@ private:
             order.write(seen);
             map.sendToWatchers(this, Opcode.MSG_MOVE_TELEPORT, seen.data);
             map.relocated(this);
+            // The pet comes along.
+            if (ownPet !is null && ownPet.alive)
+            {
+                petsOnLeave();
+                petsOnArrival();
+            }
         }
         else
         {
@@ -210,6 +216,7 @@ private:
             spellsOnLeave();
             cancelTrade(true);
             duelComplete(dmangos.world.duelhandlers.DuelEnd.fled);
+            petsOnLeave(); // it comes out again on the other side
             flushPlayerChanges();
             send(ServerTransferPending(mapId));
             map.remove(this);
@@ -322,6 +329,7 @@ private:
         map.add(this);
         sendInitialPacketsAfterAddToMap();
         resetMovementCheck();
+        petsOnArrival();
         if (auto group = context.groups.of(player.guid))
             group.updatePlayerOutOfRange(this, GroupUpdate.full);
     }

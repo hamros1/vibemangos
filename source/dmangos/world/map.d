@@ -49,7 +49,7 @@ import dmangos.world.creature : Creature;
 import dmangos.world.gameobject : GameObject, GameObjectWorld;
 import dmangos.world.motion : MotionWorld;
 import dmangos.world.movement : Position;
-import dmangos.world.objects : maxUpdatePacketBytes, seenByEveryone, UpdateData, UpdatePacket, UpdateValues;
+import dmangos.world.objects : maxUpdatePacketBytes, seenByEveryone, seenByOwner, UpdateData, UpdatePacket, UpdateValues;
 import dmangos.world.opcodes : Opcode;
 import dmangos.world.packets : ServerDestroyObject;
 import dmangos.world.player : DeathState, Player;
@@ -276,7 +276,12 @@ final class Map : CombatWorld, GameObjectWorld
                         replicator.values(peer, id, object.guid, bytes);
                 }
             }
-        if (object.fields.hasChangesFor(seenByEveryone))
+        // A pet's owner also sees its owner-only fields (its experience, training points).
+        const creature = cast(Creature) object;
+        const owner = creature is null ? 0 : creature.petOwner;
+        enum ownerMask = seenByEveryone | seenByOwner;
+        const forAll = object.fields.hasChangesFor(seenByEveryone);
+        if (forAll || (owner && object.fields.hasChangesFor(ownerMask)))
         {
             auto personal = cast(PerViewer) object;
             UpdateData update;
@@ -284,7 +289,15 @@ final class Map : CombatWorld, GameObjectWorld
             foreach (guid, seen; seesObjects)
                 if (object.guid in seen)
                 {
-                    if (personal !is null && personal.personalized)
+                    if (guid == owner)
+                    {
+                        UpdateData own;
+                        own.addValues(object.guid, object.fields, ownerMask);
+                        deliverUpdate(members[guid], own);
+                    }
+                    else if (!forAll)
+                        continue;
+                    else if (personal !is null && personal.personalized)
                     {
                         auto view = ViewerAdjust(personal, guid, groupOf is null ? 0 : groupOf(guid));
                         UpdateData own;
@@ -1102,8 +1115,24 @@ final class Map : CombatWorld, GameObjectWorld
     /// See `CombatWorld.combatant`.
     Combatant combatant(ulong guid)
     {
-        return cast(Combatant) members.get(guid, null);
+        if (auto player = cast(Combatant) members.get(guid, null))
+            return player;
+        // A creature fought by a creature (a pet, or what a pet fights).
+        if (makeCreatureCombatant !is null)
+            if (auto creature = creatureAt(guid))
+                if (creature.petOwner || creature.asCombatant !is null)
+                    return makeCreatureCombatant(creature);
+        return null;
     }
+
+    /// See `CombatWorld.combatantOf`.
+    Combatant combatantOf(Creature creature)
+    {
+        return makeCreatureCombatant is null || creature is null ? null : makeCreatureCombatant(creature);
+    }
+
+    /// A creature as other creatures fight it (`dmangos.world.creaturecombat`); null: players only.
+    Combatant delegate(Creature creature) makeCreatureCombatant;
 
     /// See `CombatWorld.inLineOfSight`: at eye height, through the vmaps; anything goes without terrain.
     /// Whether nothing built stands between the two points exactly (`CollideInterface.CheckLOS`).

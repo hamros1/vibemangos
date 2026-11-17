@@ -213,6 +213,7 @@ private:
         if (player.fighter.dualWield)
             attackTimer[AttackType.offHand] = player.stats.attackTime[AttackType.offHand] / 2;
         meleeAttackStart(victim);
+        petAssistAgainst(victim.guid); // `OwnerAttacked`
         return true;
     }
 
@@ -600,6 +601,8 @@ private:
                 if (other !is this)
                     other.stopAttack(false);
         stopAttack(false);
+        if (victim.petOwner)
+            return context.petDied(victim, map); // another's pet: no reward
         victim.die(map, context.unixTime);
         context.creatureDied(victim);
         rewardKill(victim);

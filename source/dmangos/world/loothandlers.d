@@ -283,7 +283,9 @@ private:
         {
             rewardKillReputation(victim, 1);
             killedMonster(victim.template_.entry, victim.guid);
-            return giveXP(killGain(player.data.level, value), victim.guid, 1.0f);
+            const xp = killGain(player.data.level, value);
+            petGainsXp(xp); // `GivePetXP`, before its owner perhaps passes its level
+            return giveXP(xp, victim.guid, 1.0f);
         }
         // The members near the kill: here, or (in a cluster) simulated by another node whose replica is here.
         static struct Near
@@ -363,7 +365,10 @@ private:
                 if (m.reputationRate > 0)
                     m.here.rewardKillReputation(victim, m.reputationRate);
                 if (m.xp)
+                {
+                    m.here.petGainsXp(m.xp / 2); // `RewardGroupAtKill_helper`: half for its pet
                     m.here.giveXP(m.xp, victim.guid, m.rate);
+                }
             }
             else
             {

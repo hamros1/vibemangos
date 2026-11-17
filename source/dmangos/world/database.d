@@ -157,6 +157,41 @@ struct SocialRow
     ubyte flags; /// `SocialFlag`s
 }
 
+/// A `character_pet` row with its `pet_spell` rows (`Pet::LoadPetFromDB`, `SavePetToDB`).
+struct PetRecord
+{
+    uint id;                  /// the pet number
+    uint entry;
+    uint owner;
+    uint modelId;
+    uint createdBySpell;
+    ubyte type;               /// `PetType`
+    uint level = 1;
+    uint exp;
+    ubyte reactState;
+    int loyaltyPoints;
+    uint loyalty;
+    uint xpForNextLoyalty;
+    int trainingPoints;
+    string name = "Pet";
+    bool renamed;
+    uint slot;                /// `PetSaveMode`: 0 out with its owner, 1 and 2 stabled, 100 not in a slot
+    uint health;
+    uint mana;
+    uint happiness;
+    long saveTime;
+    string actionBar;         /// `abdata`: type and action of each of the ten buttons
+    string teachSpells;       /// `teachspelldata`
+    PetSpellRecord[] spells;
+}
+
+/// A `pet_spell` row: a spell the pet knows, and its autocast state (`ActiveStates`).
+struct PetSpellRecord
+{
+    uint spell;
+    ubyte active;
+}
+
 /// A `character_aura` row.
 struct AuraRecord
 {
@@ -342,6 +377,19 @@ interface WorldDatabase
 
     /// ditto, as saved
     CooldownRecord[] loadCooldowns(uint player);
+
+    /// `character_pet` and `pet_spell`: every pet of `owner`, in id order.
+    PetRecord[] loadPets(uint owner);
+    /// A pet's row and spells, written whole (`SavePetToDB`).
+    void savePet(const ref PetRecord pet);
+    /// A pet moved to another slot (`ChangePetSlot`).
+    void setPetSlot(uint owner, uint pet, uint slot);
+    /// A pet gone for good (abandoned): its row, spells, auras and cooldowns.
+    void deletePet(uint owner, uint pet);
+    /// `characters.stable_slots`: how many stable slots the player bought.
+    uint loadStableSlots(uint player);
+    /// ditto
+    void saveStableSlots(uint player, uint slots);
 
     /// `Player::_LoadAuras`
     AuraRecord[] loadAuras(uint player);
@@ -635,6 +683,12 @@ final class MySqlWorldDatabase : WorldDatabase
     bool isIgnoring(uint player, uint other) { return statements.isIgnoring(player, other); }
     void loadTalentReset(uint player, out uint cost, out long time) { statements.loadTalentReset(player, cost, time); }
     CooldownRecord[] loadCooldowns(uint player) { return statements.loadCooldowns(player); }
+    PetRecord[] loadPets(uint owner) { return statements.loadPets(owner); }
+    void savePet(const ref PetRecord pet) { statements.savePet(pet); }
+    void setPetSlot(uint owner, uint pet, uint slot) { statements.setPetSlot(owner, pet, slot); }
+    void deletePet(uint owner, uint pet) { statements.deletePet(owner, pet); }
+    uint loadStableSlots(uint player) { return statements.loadStableSlots(player); }
+    void saveStableSlots(uint player, uint slots) { statements.saveStableSlots(player, slots); }
     AuraRecord[] loadAuras(uint player) { return statements.loadAuras(player); }
     void saveReputation(uint player, const(ReputationRecord)[] rows) { statements.saveReputation(player, rows); }
     ReputationRecord[] loadReputation(uint player) { return statements.loadReputation(player); }
@@ -1280,6 +1334,42 @@ final class MemoryWorldDatabase : WorldDatabase
     }
     void saveCooldowns(uint player, const(CooldownRecord)[] cooldowns) { cooldownRows[player] = cooldowns.dup; }
     CooldownRecord[] loadCooldowns(uint player) { return cooldownRows.get(player, null).dup; }
+    PetRecord[uint] petRows;    /// by pet number
+    uint[uint] stableSlotRows;  /// by player
+    PetRecord[] loadPets(uint owner)
+    {
+        import std.algorithm.sorting : sort;
+
+        PetRecord[] found;
+        foreach (ref p; petRows)
+            if (p.owner == owner)
+            {
+                found ~= p;
+                found[$ - 1].spells = p.spells.dup;
+            }
+        found.sort!((a, b) => a.id < b.id);
+        return found;
+    }
+    void savePet(const ref PetRecord pet)
+    {
+        auto copy = cast(PetRecord) pet;
+        copy.spells = pet.spells.dup;
+        petRows[pet.id] = copy;
+    }
+    void setPetSlot(uint owner, uint pet, uint slot)
+    {
+        if (auto p = pet in petRows)
+            if (p.owner == owner)
+                p.slot = slot;
+    }
+    void deletePet(uint owner, uint pet)
+    {
+        if (auto p = pet in petRows)
+            if (p.owner == owner)
+                petRows.remove(pet);
+    }
+    uint loadStableSlots(uint player) { return stableSlotRows.get(player, 0); }
+    void saveStableSlots(uint player, uint slots) { stableSlotRows[player] = slots; }
     AuraRecord[] loadAuras(uint player) { return auraRows.get(player, null).dup; }
     void saveReputation(uint player, const(ReputationRecord)[] rows)
     {
@@ -1510,7 +1600,11 @@ final class MemoryWorldDatabase : WorldDatabase
         foreach (r; instanceRows.instances)
             if (r.id > instance)
                 instance = r.id;
-        return GuidCounters(highest + 1, 1, 1, 1, instance + 1);
+        uint pet;
+        foreach (id, _; petRows)
+            if (id > pet)
+                pet = id;
+        return GuidCounters(highest + 1, 1, 1, 1, instance + 1, pet + 1);
     }
 
     bool nameTaken(string name)

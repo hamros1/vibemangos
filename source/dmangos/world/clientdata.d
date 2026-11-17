@@ -526,6 +526,29 @@ struct BankBagSlotPricesEntry
 
 enum bankBagSlotPricesFormat = "ni"; ///
 
+/// `StableSlotPricesEntry`: what the stable slot of each number costs.
+struct StableSlotPricesEntry
+{
+    uint id;
+    uint price;
+}
+
+enum stableSlotPricesFormat = "ni"; ///
+
+/// `CreatureFamilyEntry`: a beast family's size by level, and what its pets eat.
+struct CreatureFamilyEntry
+{
+    uint id;
+    float minScale = 0;
+    uint minScaleLevel;
+    float maxScale = 0;
+    uint maxScaleLevel;
+    uint petFoodMask;
+    string name;
+}
+
+enum creatureFamilyFormat = "nfifixxisxxxxxxxxx"; ///
+
 ///
 struct DurabilityCostsEntry
 {
@@ -604,6 +627,8 @@ final class ClientData
     DbcStore!(AreaTriggerEntry, areaTriggerFormat) areaTriggers;
     DbcStore!(ChatChannelsEntry, chatChannelsFormat) chatChannels;
     DbcStore!(BankBagSlotPricesEntry, bankBagSlotPricesFormat) bankBagSlotPrices;
+    DbcStore!(StableSlotPricesEntry, stableSlotPricesFormat) stableSlotPrices;
+    DbcStore!(CreatureFamilyEntry, creatureFamilyFormat) creatureFamilies;
     DbcStore!(DurabilityCostsEntry, durabilityCostsFormat) durabilityCosts;
     DbcStore!(DurabilityQualityEntry, durabilityQualityFormat) durabilityQualities;
     DbcStore!(LiquidTypeEntry, liquidTypeFormat) liquidTypes;
@@ -651,7 +676,8 @@ final class ClientData
             "talents:Talent", "talentTabs:TalentTab", "creatureDisplays:CreatureDisplayInfo",
             "creatureModels:CreatureModelData", "emotesText:EmotesText", "emotes:Emotes", "maps:Map",
             "areas:AreaTable", "areaTriggers:AreaTrigger", "chatChannels:ChatChannels",
-            "bankBagSlotPrices:BankBagSlotPrices", "durabilityCosts:DurabilityCosts",
+            "bankBagSlotPrices:BankBagSlotPrices", "stableSlotPrices:StableSlotPrices",
+            "creatureFamilies:CreatureFamily", "durabilityCosts:DurabilityCosts",
             "durabilityQualities:DurabilityQuality", "liquidTypes:LiquidType", "wmoAreas:WMOAreaTable",
             "factions:Faction", "factionTemplates:FactionTemplate", "worldSafeLocs:WorldSafeLocs", "spellCastTimes:SpellCastTimes", "spellDurations:SpellDuration",
             "spellRanges:SpellRange", "spellRadii:SpellRadius", "locks:Lock", "auctionHouses:AuctionHouse",

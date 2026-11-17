@@ -26,7 +26,7 @@ import dmangos.world.grid : cellKeyAt;
 import dmangos.world.channelservice : channelCommand, ChannelOp, ChannelService;
 import dmangos.cluster.protocol : ChannelCommand;
 import dmangos.world.opcodes : ChatType, Language, Opcode;
-import dmangos.world.creatureai : CombatWorld, CreatureLore;
+import dmangos.world.creatureai : Combatant, CombatWorld, CreatureLore;
 import dmangos.world.npcdata : BroadcastText;
 import dmangos.world.spells : SpellInfo;
 import dmangos.script.api : ActionResult, EntityRef, GameObjectHost, Waypoint;
@@ -34,6 +34,7 @@ import dmangos.script.registry : ScriptHandle, ScriptKind, ScriptRuntime;
 import dmangos.scripts : scriptModules;
 import dmangos.world.instancescripting : InstanceScript;
 import dmangos.world.guild : Guilds, Guild, GuildRight;
+import dmangos.world.creaturecombat : CreatureCombatant, CreatureCombatWorld;
 import dmangos.world.characterdb : DeleteOptions, GuidCounters;
 import dmangos.world.clientdata : ClientData;
 import dmangos.world.config : WorldConfig;
@@ -104,7 +105,7 @@ struct ShutdownTimer
  *
  * The server runs a single-threaded event loop, so none of this needs locking.
  */
-final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureLore
+final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureLore, CreatureCombatWorld
 {
     import dmangos.world.dbscripts : DbScriptRunner;
 
@@ -603,6 +604,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         };
         created.onGameObjectUsedUp = &gameObjectUsedUp;
         created.onObjectGone = &objectGone;
+        created.makeCreatureCombatant = (Creature c) => combatantOf(c, created);
         if (instance)
             if (const name = id in data.instanceScriptNames)
             {
@@ -1071,6 +1073,44 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         }
     }
 
+    // -----------------------------------------------------------------------
+    // Creatures fighting creatures (`CreatureCombatWorld`): pets
+    // -----------------------------------------------------------------------
+
+    /// See `CreatureCombatWorld.combatantOf`.
+    Combatant combatantOf(Creature creature, Map map)
+    {
+        if (auto made = cast(CreatureCombatant) creature.asCombatant)
+            return made;
+        auto made = new CreatureCombatant(creature, map, this);
+        creature.asCombatant = made;
+        return made;
+    }
+
+    /// See `CreatureCombatWorld.creatureKilledBy`.
+    void creatureKilledBy(Creature victim, Creature killer, Map map)
+    {
+        import dmangos.world.session : WorldSession;
+
+        if (killer !is null && killer.petOwner)
+            if (auto owner = cast(WorldSession) onlinePlayer(killer.petOwner))
+                if (owner.character !is null)
+                    return owner.killedByPet(victim);
+        victim.die(map, unixTime);
+        creatureDied(victim);
+    }
+
+    /// See `CreatureCombatWorld.petDied`.
+    void petDied(Creature pet, Map map)
+    {
+        import dmangos.world.session : WorldSession;
+
+        pet.die(map, unixTime);
+        if (auto owner = cast(WorldSession) onlinePlayer(pet.petOwner))
+            if (owner.character !is null)
+                owner.ownPetDied();
+    }
+
     /// An object left its map for good (`Map.onObjectGone`): its script's state goes.
     private void objectGone(MapObject object)
     {
@@ -1294,6 +1334,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         raise(IdKind.mail, saved.mail);
         raise(IdKind.group, saved.group);
         raise(IdKind.instance, saved.instance);
+        raise(IdKind.pet, saved.pet);
         if (groups.nextId < next.group)
             groups.nextId = next.group;
     }
@@ -1315,6 +1356,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         case IdKind.mail: return &next.mail;
         case IdKind.group: return &groups.nextId; // the groups keep their own counter
         case IdKind.instance: return &next.instance;
+        case IdKind.pet: return &next.pet;
         }
     }
 
@@ -1351,7 +1393,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
      * A creature from its spawn (`Creature::Create`): a level and model chosen, its addon, equipment
      * and model data looked up, and its movement generator; null if its template has no model.
      */
-    Creature makeCreature(const(CreatureSpawn)* spawn)
+    Creature makeCreature(const(CreatureSpawn)* spawn, uint petNumber = 0)
     {
         import dmangos.world.creature : chooseDisplay, chooseLevel, classStatsKey, CreatureParts, VirtualItem;
         import dmangos.world.motion : selectMovement;
@@ -1383,7 +1425,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                     parts.equipment[slot] = VirtualItem(item.displayId, cast(ubyte) item.itemClass,
                         cast(ubyte) item.subClass, cast(ubyte) item.details.material, item.inventoryType,
                         cast(ubyte) item.details.sheath);
-        auto creature = new Creature(*spawn, template_, display, level, parts, client);
+        auto creature = new Creature(*spawn, template_, display, level, parts, client, petNumber);
         creature.generator = selectMovement(creature, data.waypoints);
         creature.ai.setLore(this);
         // A script (`ScriptName`) runs it if one serves its name; else its EventAI, if it has one.
@@ -1445,6 +1487,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         ByteWriter w;
         if (auto creature = cast(Creature) object)
         {
+            if (creature.petOwner)
+                return Migrant.init; // a pet stays with its owner, and moves with it (`petsOnLeave`)
             creature.saveState(w);
             return Migrant(MigrantKind.creature, creature.spawn.guid, 0, w.data);
         }
@@ -1606,6 +1650,15 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     /// A corpse went; one that died elsewhere (handed over dead: phase 4) comes back a respawn time from now.
     private void corpseRemoved(Creature creature)
     {
+        if (creature.petOwner)
+        {
+            import dmangos.world.session : WorldSession;
+
+            if (auto owner = cast(WorldSession) onlinePlayer(creature.petOwner))
+                if (owner.character !is null)
+                    owner.petCorpseGone(creature);
+            return;
+        }
         if (creature.summon.type != TempSpawnType.none || creature.instanceId)
             return;
         if (creature.spawn.guid !in respawnAt)
@@ -1662,6 +1715,25 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         creature.instanceId = map.instanceId;
         map.addObject(creature);
         map.wake(creature.guid);
+        return creature;
+    }
+
+    /**
+     * A pet's creature (`Pet::Create`): of `entry`, at `at` on `map`, not yet on the map (the owner's
+     * session makes it its pet and adds it). Null if there is no such creature or model.
+     */
+    Creature makePetCreature(Map map, uint entry, uint number, Position at)
+    {
+        if (map is null || entry !in data.creatureTemplates)
+            return null;
+        const counter = nextTemporaryCounter();
+        CreatureSpawn spawn = {guid: counter, entry: entry, map: map.id, x: at.x, y: at.y, z: at.z,
+            orientation: at.orientation};
+        auto creature = makeCreature(&spawn, number);
+        if (creature is null)
+            return null;
+        creature.summon = TempSpawn(TempSpawnType.manual, 0, 0, 0);
+        creature.instanceId = map.instanceId;
         return creature;
     }
 

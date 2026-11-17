@@ -547,7 +547,8 @@ final class ClusterNode : LinkOwner
         if (sessions !is null)
             sessions.claimAll(); // a new coordinator knows nothing of them
         link.send(IdReport(pool_.highest(IdKind.character), pool_.highest(IdKind.item),
-            pool_.highest(IdKind.mail), pool_.highest(IdKind.group), pool_.highest(IdKind.instance)));
+            pool_.highest(IdKind.mail), pool_.highest(IdKind.group), pool_.highest(IdKind.instance),
+            pool_.highest(IdKind.pet)));
         pool_.reset();
     }
 
@@ -589,7 +590,7 @@ final class ClusterNode : LinkOwner
         if (onPromoted !is null)
             onPromoted();
         if (ids !is null && pool_ !is null)
-            foreach (kind; [IdKind.character, IdKind.item, IdKind.mail, IdKind.group, IdKind.instance])
+            foreach (kind; [IdKind.character, IdKind.item, IdKind.mail, IdKind.group, IdKind.instance, IdKind.pet])
                 ids.raise(kind, pool_.highest(kind));
         lastTakeoverSent = now;
         foreach (peer, _; takeoverPending)
@@ -845,6 +846,7 @@ final class ClusterNode : LinkOwner
                 ids.raise(IdKind.mail, report.mail);
                 ids.raise(IdKind.group, report.group);
                 ids.raise(IdKind.instance, report.instance);
+                ids.raise(IdKind.pet, report.pet);
                 return;
             default:
                 return;
@@ -1442,7 +1444,7 @@ version (unittest)
     /// The coordinator's counters, as the world server keeps them.
     private final class TestCounters : IdCounters
     {
-        uint[5] next = [10, 100, 1000, 5, 1];
+        uint[IdKind.max + 1] next = [10, 100, 1000, 5, 1, 1];
 
         uint take(IdKind kind, uint count)
         {

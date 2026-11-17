@@ -706,6 +706,7 @@ enum IdKind : ubyte
     mail = 2,
     group = 3,
     instance = 4, /// dungeon copies: each is made by its dungeon's node, so the ids must not collide
+    pet = 5,      /// pet numbers (`character_pet.id`)
 }
 
 /// The coordinator's id counters, which the world server keeps (`GuidCounters`).
@@ -899,7 +900,7 @@ unittest
     auto pool = new IdPool(10);
     uint id;
     assert(!pool.take(IdKind.item, id));
-    assert(pool.wanted() == [IdKind.character, IdKind.item, IdKind.mail, IdKind.group, IdKind.instance]);
+    assert(pool.wanted() == [IdKind.character, IdKind.item, IdKind.mail, IdKind.group, IdKind.instance, IdKind.pet]);
     assert(pool.wanted().length == 0, "asked once");
     pool.granted(IdKind.item, 100, 10);
     assert(pool.take(IdKind.item, id) && id == 100);

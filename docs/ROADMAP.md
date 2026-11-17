@@ -179,6 +179,12 @@ house from anywhere), the auction rates (`Rate.Auction.*`), an auction bot.
 * Friends and ignore lists (`social.d`) and guilds (`guild.d`, `guildhandlers.d`): done. Not yet:
   the guild event log (`guild_eventlog`), guild-named tabards in the shop list. Like
   `grouphandlers.d` (mail, auctions and trade are done).
+* Pets (`pet.d`, `petai.d`, `pethandlers.d`, `creaturecombat.d`): taming, summoning, calling,
+  dismissing, reviving, the bar and its commands, following and fighting, experience, renaming,
+  abandoning, stables, saving. Not yet: loyalty and happiness over time (Feed Pet), pet training and
+  `.pet` GM commands, `pet_aura` and `pet_spell_cooldown`, a pet's spells beyond its autocast and
+  ordered casts (opener spells), creatures noticing pets on sight, the owner's death sending the pet
+  away.
 * Quests (`QuestHandler.cpp`, `ObjectMgr::LoadQuests`).
 * The rest of ArcEmu's GM commands, as their systems arrive (COMMANDS.md lists them): each is one
   method named after ArcEmu's handler.

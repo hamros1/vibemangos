@@ -14,6 +14,7 @@ import dmangos.log;
 import dmangos.mysql : MySqlConnection;
 import dmangos.world.clientdata : ClientData, maskOf, maxSkillStep, playableClassMask, playableRaceMask;
 import dmangos.world.eventai : EventAiData;
+import dmangos.world.pet : PetData;
 import dmangos.world.dbscripts : DbScriptData;
 import dmangos.world.reputation : Spillover;
 import dmangos.world.creature : CreatureAddon, CreatureClassStats, CreatureSpawn, CreatureTemplate, classStatsKey,
@@ -338,6 +339,7 @@ final class WorldData
     uint[uint] instanceResetDays;                   /// `instance_template.reset_delay` (a raid's lockout), by map
     WaypointStore waypoints;                        /// `creature_movement` and `creature_movement_template`
     EventAiData eventAi;                            /// `creature_ai_scripts`, by creature entry
+    PetData pets;                                   /// `pet_levelstats`, `petcreateinfo_spell`, `pet_name_generation`
     string[uint] creatureScriptNames;               /// `creature_template.ScriptName`, by entry (docs/SCRIPTING.md)
     string[uint] instanceScriptNames;               /// `instance_template.ScriptName`, by map
     string[uint] gameObjectScriptNames;             /// `gameobject_template.ScriptName`, by entry
@@ -502,6 +504,7 @@ final class WorldData
         data.loadWaypoints(world);
         data.loadPlayerInfo(world, client);
         data.eventAi = EventAiData.load(world);
+        data.pets = PetData.load(world);
         data.dbScripts = DbScriptData.load(world);
         {
             import dmangos.world.weather : SeasonChances, ZoneChances;

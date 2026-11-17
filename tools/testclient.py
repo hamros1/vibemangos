@@ -163,6 +163,7 @@ corpse_at = [0.0, 0.0, 0.0]
 last_target = [0]
 duel_flag = [0]
 my_guid = [0]
+pet_info = {}
 item_objects = {}  # guid -> fields of the items the client was sent
 my_slots = {}      # the player's own slots: slot -> item guid
 player_guid = None
@@ -309,6 +310,28 @@ def describe(op, p):
             elif kind == 0:
                 health = f", health {v[OBJECT_END + 0x10]}/{v.get(OBJECT_END + 0x16, '?')}" if OBJECT_END + 0x10 in v else ""
                 print(f"  [changes] {g}: fields {sorted(v)}{health}")
+    elif op == 0x179:
+        if len(p) <= 8:
+            print("  [pet spells] none (no pet)"); return
+        guid, _, react, command = struct.unpack_from("<QIBB", p); pet_info["guid"] = guid
+        bar = struct.unpack_from("<10I", p, 16)
+        count = p[56]; spells = struct.unpack_from(f"<{count}I", p, 57)
+        print(f"  [pet spells] pet {guid:#x}: react {react}, command {command}, bar "
+              f"{[(b & 0xFFFFFF, b >> 24) for b in bar]}, spells {[(x & 0xFFFFFF, x >> 24) for x in spells]}")
+    elif op == 0x053:
+        number = struct.unpack_from("<I", p)[0]; name = p[4:p.index(0, 4)].decode()
+        print(f"  [pet name] {number}: '{name}'")
+    elif op == 0x173: print(f"  [pet tame failure] reason {p[0]}")
+    elif op == 0x2C6: print(f"  [pet action feedback] {p[0]}")
+    elif op == 0x273: print(f"  [stable result] {p[0]:#x}")
+    elif op == 0x26F:
+        n = p[8]; slots = p[9]; pos = 10; pets = []
+        for _ in range(n):
+            number, entry, level = struct.unpack_from("<III", p, pos); pos += 12
+            end = p.index(0, pos); name = p[pos:end].decode(); pos = end + 1
+            loyalty, slot = struct.unpack_from("<IB", p, pos); pos += 5
+            pets.append((number, entry, level, name, slot))
+        print(f"  [stabled pets] {slots} slots bought: {pets}")
     elif op == 0x143:
         a, v = struct.unpack("<QQ", p); print(f"  [attack start] {a & 0xFFFFFF} -> {v & 0xFFFFFF}")
     elif op == 0x144:
@@ -665,7 +688,7 @@ for action in actions:
         if not found:
             print(f"target {entry}: not in sight"); continue
         target = min(found, key=lambda g: (seen_positions[g][0] - here[0]) ** 2 + (seen_positions[g][1] - here[1]) ** 2)
-        wsend(0x13D, struct.pack("<Q", target)); print(f"target {entry}: {target & 0xFFFFFF}")
+        wsend(0x13D, struct.pack("<Q", target)); print(f"target {entry}: {target & 0xFFFFFF}"); pet_info["target"] = target
     elif kind == "approach":
         # Walk to DIST yards of the nearest creature of ENTRY, without attacking it.
         import math
@@ -952,6 +975,29 @@ for action in actions:
         for g, e in creatures: wsend(0x060, struct.pack("<IQ", e, g))
         for g, e in objects: wsend(0x05E, struct.pack("<IQ", e, g))
         listen_for(1.5)
+    elif kind == "pet":
+        # pet:attack|follow|stay|dismiss|passive|defensive|aggressive (attack: the selected target)
+        commands = {"stay": (0, 7), "follow": (1, 7), "attack": (2, 7), "dismiss": (3, 7), "passive": (0, 6),
+                    "defensive": (1, 6), "aggressive": (2, 6)}
+        action, kind_ = commands[args[0]]
+        target = pet_info.get("target", 0) if args[0] == "attack" else 0
+        wsend(0x175, struct.pack("<QIQ", pet_info.get("guid", 0), action | kind_ << 24, target)); print(f"pet {args[0]}")
+        listen_for(1)
+    elif kind == "petabandon":
+        wsend(0x176, struct.pack("<Q", pet_info.get("guid", 0))); print("petabandon"); listen_for(1)
+    elif kind == "petname":
+        wsend(0x052, struct.pack("<IQ", int(args[0]), pet_info.get("guid", 0))); print("petname"); listen_for(1)
+    elif kind == "petrename":
+        wsend(0x177, struct.pack("<Q", pet_info.get("guid", 0)) + args[0].encode() + b"\0"); print(f"petrename {args[0]}")
+        listen_for(1)
+    elif kind in ("stablelist", "stablepet", "buystableslot", "unstable"):
+        entry = int(args[0])
+        npc = next((g for g, (t, e) in seen_objects.items() if t == 3 and e == entry), None)
+        if npc is None:
+            print(f"{kind}: no {entry} in sight"); continue
+        op = {"stablelist": 0x26F, "stablepet": 0x270, "buystableslot": 0x272, "unstable": 0x271}[kind]
+        body = struct.pack("<Q", npc) + (struct.pack("<I", int(args[1])) if kind == "unstable" else b"")
+        wsend(op, body); print(kind); listen_for(1)
     elif kind == "npc":
         entry = int(args[0])
         npc = next((g for g, (t, e) in seen_objects.items() if t == 3 and e == entry), None)

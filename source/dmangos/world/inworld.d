@@ -72,6 +72,7 @@ private:
         auto leaving = map;
         releaseLootOnLeave();
         spellsOnLeave();
+        petsOnLeave();
         cancelTrade(false, TradeStatus.targetLogout);
         duelComplete(DuelEnd.fled);
         if (player.deathState == DeathState.alive)
@@ -225,6 +226,7 @@ private:
     {
         if (!context.canWrite())
             return;
+        petsOnLeave(); // saved, to come out again there
         flushPlayerChanges();
         const progress = player.progress(secondsInWorld());
         context.database.saveProgress(progress);
@@ -370,6 +372,7 @@ private:
         updateGuildFields();
         applyPassiveSpells();
         resetMovementCheck();
+        petsOnArrival();
         pendingArrival = action; // done at the first tick here, once the move is complete everywhere
         info!"%s: '%s' arrived from another node (map %s at %.1f %.1f)"(remoteAddress, character.name, character.map,
             character.position.x, character.position.y);

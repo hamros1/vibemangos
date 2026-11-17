@@ -276,6 +276,17 @@ loaded and their creatures under way.
 python3 tools/testclient.py 3724 tester PASS login:Me listen:25 logout
 ```
 
+Pets: a hunter (with Tame Beast, Dismiss Pet and Call Pet learned) tames the nearest Mottled Boar in
+the Valley of Trials, sends it at a Scorpid Worker, dismisses it and calls it back. `[pet spells]`
+prints the bar as each `SMSG_PET_SPELLS` gives it; `pet:` presses a button of it (`attack` at the
+creature last `target`ed), `petname:N` asks for pet number N's name, `petrename:`, `petabandon`, and
+`stablelist:`, `buystableslot:`, `stablepet:`, `unstable:` take a stable master's entry.
+
+```sh
+python3 tools/testclient.py 3724 tester PASS login:Hunter listen:2 approach:3098:8 cast:1515:3098 listen:22 \
+    target:3124 pet:attack listen:10 cast:2641 listen:6 cast:883 listen:3 logout
+```
+
 
 `tools/testclient.py` is a scripted 1.12.1 client written in Python, independent of the D code
 (see its header for the actions):

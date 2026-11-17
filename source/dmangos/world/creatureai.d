@@ -161,6 +161,9 @@ interface CombatWorld : MotionWorld
     /// The player with this guid on the map, if it can fight; null otherwise.
     Combatant combatant(ulong guid);
 
+    /// A creature as a combatant, for a creature (a pet) to fight it; null if creatures fight only players.
+    Combatant combatantOf(Creature creature);
+
     /// `IsWithinLOSInMap`: whether nothing built stands between two points (at eye height).
     bool inLineOfSight(Position a, Position b);
 
@@ -225,6 +228,9 @@ final class CreatureAI : Scripted, CreatureHost
 
     mixin CreatureCasting;
     mixin CreatureScripting;
+    import dmangos.world.petai : PetBehaviour;
+
+    mixin PetBehaviour;
 
     private
     {
@@ -275,14 +281,14 @@ final class CreatureAI : Scripted, CreatureHost
     @property bool active() const
     {
         return inCombat_ || evadingHome || despawnTimer > 0 || me.values.get!UNIT_FIELD_HEALTH < me.values.get!UNIT_FIELD_MAXHEALTH
-            || me.values.get!UNIT_FIELD_POWER1 < me.values.get!UNIT_FIELD_MAXPOWER1 || casting_ !is null || fleeTimer > 0 || (script !is null && script.wantsTicks) || behaviourBusy;
+            || me.values.get!UNIT_FIELD_POWER1 < me.values.get!UNIT_FIELD_MAXPOWER1 || casting_ !is null || fleeTimer > 0 || (script !is null && script.wantsTicks) || behaviourBusy || me.petOwner != 0;
     }
 
     /// Whether it may attack anyone on sight at all: aggressive, alive, not neutral to all
     /// (`moveInLineOfSight`'s first checks, for the map to skip it early).
     @property bool mayNotice() const
     {
-        return react == ReactState.aggressive && me.alive
+        return react == ReactState.aggressive && me.alive && !me.petOwner
             && (me.factionTemplate is null || !isNeutralToAll(*me.factionTemplate));
     }
 
@@ -316,7 +322,7 @@ final class CreatureAI : Scripted, CreatureHost
     void moveInLineOfSight(Combatant who, CombatWorld world)
     {
         world_ = world;
-        if (react != ReactState.aggressive || victim || evadingHome || !me.alive)
+        if (react != ReactState.aggressive || victim || evadingHome || !me.alive || me.petOwner)
             return;
         if (me.factionTemplate !is null && isNeutralToAll(*me.factionTemplate))
             return;
@@ -345,6 +351,8 @@ final class CreatureAI : Scripted, CreatureHost
     void attackedBy(Combatant attacker, CombatWorld world)
     {
         world_ = world;
+        if (me.petOwner)
+            return petAssist(attacker, world);
         if (!me.alive || evadingHome)
             return;
         if (!inCombat_ && !victim)
@@ -356,7 +364,7 @@ final class CreatureAI : Scripted, CreatureHost
     /// `HandleDamageDealt`'s threat: what `attacker` did to it; direct damage restarts its combat timer.
     void damageTaken(Combatant attacker, uint damage)
     {
-        if (!me.alive || evadingHome)
+        if (!me.alive || evadingHome || me.petOwner)
             return;
         addThreat(attacker, damage);
         if (damage)
@@ -410,6 +418,8 @@ final class CreatureAI : Scripted, CreatureHost
             despawnTimer = 0;
             return world.corpseExpired(me);
         }
+        if (me.petOwner)
+            return petUpdate(world, diff);
         attackTimer = attackTimer > diff ? attackTimer - diff : 0;
         updateCasting(diff);
         if (!me.alive)
@@ -459,6 +469,12 @@ final class CreatureAI : Scripted, CreatureHost
     const(float[ulong]) threatList() const
     {
         return threat;
+    }
+
+    /// `GetAttackDistance` against `target`, in yards.
+    float attackDistanceTo(const Fighter target) const
+    {
+        return attackDistance(target);
     }
 
     /// Its aggro radius against `who` (`.debug aggrorange`), in yards.

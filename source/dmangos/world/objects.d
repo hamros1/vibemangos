@@ -30,6 +30,7 @@ enum HighGuid : ushort
     item = 0x4000, /// items and containers alike
     gameObject = 0xF110,
     unit = 0xF130,
+    pet = 0xF140,
 }
 
 /// The full guid of an object with low guid `low`.
@@ -43,6 +44,12 @@ ulong makeGuid(HighGuid high, uint entry, uint counter) pure nothrow @nogc @safe
 in (counter < 1 << 24, "a creature or game object counter has 24 bits")
 {
     return ulong(high) << 48 | ulong(entry) << 24 | counter;
+}
+
+/// A pet's guid: `HIGHGUID_PET`, its pet number and a counter (`ObjectGuid(HIGHGUID_PET, petNumber, low)`).
+ulong makePetGuid(uint number, uint counter) pure nothrow @nogc @safe
+{
+    return ulong(HighGuid.pet) << 48 | ulong(number & 0xFF_FFFF) << 24 | (counter & 0xFF_FFFF);
 }
 
 /// The kind of object a guid names.

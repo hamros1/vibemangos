@@ -16,7 +16,7 @@ import dmangos.mysql : MySqlConnection;
 import dmangos.world.inventory : ItemChange, ItemRecord, ItemState;
 import dmangos.world.player : CharacterData, CharacterProgress, HomeBind, tutorialFields;
 import dmangos.world.playercreate : NewCharacter, NewSkill, NewSpell, maxEnchantmentSlot;
-import dmangos.world.database : AuraRecord, CooldownRecord, GuildMemberRecord, GuildRankRecord, GuildRecord,
+import dmangos.world.database : AuraRecord, CooldownRecord, PetRecord, PetSpellRecord, GuildMemberRecord, GuildRankRecord, GuildRecord,
     PetitionRecord, SocialRow, CorpseRecord, InstanceBindRecord, InstanceRecord, InstanceRecords,
     InstanceRespawnRecord, MailRecord;
 import dmangos.world.reputation : ReputationRecord;
@@ -57,6 +57,7 @@ struct GuidCounters
     uint mail = 1;
     uint group = 1;
     uint instance = 1;
+    uint pet = 1;
 }
 
 /// A `groups` row with its `group_member` rows (`Group::LoadGroupFromDB`, `LoadMemberFromDB`).
@@ -122,6 +123,7 @@ final class CharacterStatements
             ~ "IFNULL((SELECT MAX(id) FROM item_text), 0), IFNULL((SELECT MAX(id) FROM auction), 0))");
         next.group = maxPlusOne!"SELECT MAX(groupId) FROM `groups`";
         next.instance = maxPlusOne!"SELECT MAX(id) FROM instance";
+        next.pet = maxPlusOne!"SELECT MAX(id) FROM character_pet";
         return next;
     }
 
@@ -612,6 +614,94 @@ final class CharacterStatements
                 ~ "FROM character_spell_cooldown WHERE guid = ?")(player))
             found ~= CooldownRecord(row.get!uint(0), row.get!long(1), row.get!uint(2), row.get!long(3), row.get!uint(4));
         return found;
+    }
+
+    /// See `WorldDatabase.loadPets`.
+    PetRecord[] loadPets(uint owner)
+    {
+        PetRecord[] found;
+        foreach (row; characters.query!("SELECT id, entry, owner, IFNULL(modelid, 0), CreatedBySpell, PetType, level, "
+                ~ "exp, Reactstate, loyaltypoints, loyalty, xpForNextLoyalty, trainpoint, IFNULL(name, ''), renamed, slot, "
+                ~ "curhealth, curmana, curhappiness, savetime, IFNULL(abdata, ''), IFNULL(teachspelldata, '') "
+                ~ "FROM character_pet WHERE owner = ? ORDER BY id")(owner))
+        {
+            PetRecord p;
+            p.id = row.get!uint(0);
+            p.entry = row.get!uint(1);
+            p.owner = row.get!uint(2);
+            p.modelId = row.get!uint(3);
+            p.createdBySpell = row.get!uint(4);
+            p.type = cast(ubyte) row.get!uint(5);
+            p.level = row.get!uint(6);
+            p.exp = row.get!uint(7);
+            p.reactState = cast(ubyte) row.get!uint(8);
+            p.loyaltyPoints = row.get!int(9);
+            p.loyalty = row.get!uint(10);
+            p.xpForNextLoyalty = row.get!uint(11);
+            p.trainingPoints = row.get!int(12);
+            p.name = row.get!string(13);
+            p.renamed = row.get!uint(14) != 0;
+            p.slot = row.get!uint(15);
+            p.health = row.get!uint(16);
+            p.mana = row.get!uint(17);
+            p.happiness = row.get!uint(18);
+            p.saveTime = row.get!long(19);
+            p.actionBar = row.get!string(20);
+            p.teachSpells = row.get!string(21);
+            foreach (s; characters.query!"SELECT spell, active FROM pet_spell WHERE guid = ? ORDER BY spell"(p.id))
+                p.spells ~= PetSpellRecord(s.get!uint(0), cast(ubyte) s.get!uint(1));
+            found ~= p;
+        }
+        return found;
+    }
+
+    /// See `WorldDatabase.savePet`.
+    void savePet(const ref PetRecord p)
+    {
+        characters.transaction({
+            characters.execute!"DELETE FROM character_pet WHERE owner = ? AND id = ?"(p.owner, p.id);
+            characters.execute!("INSERT INTO character_pet (id, entry, owner, modelid, level, exp, Reactstate, "
+                ~ "loyaltypoints, loyalty, trainpoint, slot, name, renamed, curhealth, curmana, curhappiness, abdata, "
+                ~ "teachspelldata, savetime, resettalents_cost, resettalents_time, CreatedBySpell, PetType, "
+                ~ "xpForNextLoyalty) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?)")(
+                p.id, p.entry, p.owner, p.modelId, p.level, p.exp, uint(p.reactState), p.loyaltyPoints, p.loyalty,
+                p.trainingPoints, p.slot, p.name, uint(p.renamed), p.health, p.mana, p.happiness, p.actionBar,
+                p.teachSpells, p.saveTime, p.createdBySpell, uint(p.type), p.xpForNextLoyalty);
+            characters.execute!"DELETE FROM pet_spell WHERE guid = ?"(p.id);
+            foreach (s; p.spells)
+                characters.execute!"INSERT INTO pet_spell (guid, spell, active) VALUES (?, ?, ?)"(p.id, s.spell,
+                    uint(s.active));
+        });
+    }
+
+    /// See `WorldDatabase.setPetSlot`.
+    void setPetSlot(uint owner, uint pet, uint slot)
+    {
+        characters.execute!"UPDATE character_pet SET slot = ? WHERE owner = ? AND id = ?"(slot, owner, pet);
+    }
+
+    /// See `WorldDatabase.deletePet` (`Pet::DeleteFromDB`).
+    void deletePet(uint owner, uint pet)
+    {
+        characters.transaction({
+            characters.execute!"DELETE FROM character_pet WHERE owner = ? AND id = ?"(owner, pet);
+            characters.execute!"DELETE FROM pet_spell WHERE guid = ?"(pet);
+            characters.execute!"DELETE FROM pet_aura WHERE guid = ?"(pet);
+            characters.execute!"DELETE FROM pet_spell_cooldown WHERE guid = ?"(pet);
+        });
+    }
+
+    /// See `WorldDatabase.loadStableSlots`.
+    uint loadStableSlots(uint player)
+    {
+        const rows = characters.query!"SELECT stable_slots FROM characters WHERE guid = ?"(player);
+        return rows.length ? rows[0].get!uint(0) : 0;
+    }
+
+    /// See `WorldDatabase.saveStableSlots`.
+    void saveStableSlots(uint player, uint slots)
+    {
+        characters.execute!"UPDATE characters SET stable_slots = ? WHERE guid = ?"(slots, player);
     }
 
     /// See `WorldDatabase.loadAuras`.

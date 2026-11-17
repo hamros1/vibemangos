@@ -247,6 +247,7 @@ private:
         deathOnLogin();
         loadAuras();
         applyPassiveSpells();
+        petsOnArrival(); // `Player::LoadPet`
         info!"%s: '%s' entered the world as '%s' (guid %s, map %s at %.1f %.1f %.1f)"(remoteAddress,
             account.username, character.name, guid, character.map, character.position.x, character.position.y,
             character.position.z);

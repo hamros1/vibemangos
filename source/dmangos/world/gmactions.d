@@ -31,6 +31,7 @@ private:
             player.restartLevelTime(secondsInWorld()); // `m_Played_time[PLAYED_TIME_LEVEL] = 0`
         send(info);
         flushPlayerChanges();
+        petOwnerLevelChanged();
         if (auto group = context.groups.of(player.guid))
             group.updatePlayerOutOfRange(this, GroupUpdate.level | GroupUpdate.currentHealth | GroupUpdate.maxHealth
                 | GroupUpdate.powerType);

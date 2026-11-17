@@ -259,6 +259,9 @@ private:
             return (creature.npcValues.get!UNIT_NPC_FLAGS & NpcFlag.petitioner) != 0;
         case GossipOption.tabardDesigner:
             return (creature.npcValues.get!UNIT_NPC_FLAGS & NpcFlag.tabardDesigner) != 0;
+        case GossipOption.stablePet:
+            // `GOSSIP_OPTION_STABLEPET`: for hunters.
+            return player.data.classId == 3;
         case GossipOption.unlearnTalents:
             // A class trainer of the player's own class, from the level talents begin.
             return creature.npcTemplate.trainerType == TrainerType.classes
@@ -368,6 +371,10 @@ private:
         case GossipOption.petitioner:
             closeGossip();
             handlePetitionShowList(ClientGuid(creature.guid));
+            break;
+        case GossipOption.stablePet:
+            closeGossip();
+            sendStableList(creature.guid);
             break;
         case GossipOption.tabardDesigner:
             closeGossip();

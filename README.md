@@ -210,6 +210,18 @@ What works now:
     master's, at a tabard designer), guild and officer chat by rank rights, and members signing on
     and off. Saved in `guild`, `guild_member`, `guild_rank`, `petition` and `petition_sign`. The
     client's `/gcreate` (`CMSG_GUILD_CREATE`) founds a guild for game masters only.
+  * **Pets** (CMaNGOS's `Pet`, `PetAI`, `PetHandler.cpp`): a hunter tames a beast of its level or
+    lower (Tame Beast's twenty-second channel), dismisses it, calls it back and revives it; a warlock
+    summons a demon (a new one named from `pet_name_generation`, or the one it had before, at full
+    health). A pet follows its owner, fights what it is told to (its bar: attack, follow, stay,
+    dismiss; aggressive, defensive, passive) and what attacks it or its owner, casts its spells by
+    itself where they are set to (the imp from 25 yards), and its kills are its owner's. Its stats
+    are CMaNGOS's (`pet_levelstats`, the family's size); a hunter pet gains experience with its owner
+    up to its owner's level, takes a name once, and can be abandoned. A hunter stables up to two
+    pets (slots bought at `StableSlotPrices.dbc`'s prices). Pets are saved in `character_pet` and
+    `pet_spell`, go with their owner at logout, on teleports and moves between nodes, and come back
+    after. Not yet: loyalty and happiness changing (feeding), training pet spells, pet auras and
+    cooldowns saved, pets attacking on sight from creatures' side.
   * **Friends and ignore lists** (CMaNGOS's `SocialMgr`): up to 50 friends and 25 ignored players,
     in `character_social`; the friend list shows who is online (zone, level, class, away or busy),
     on this node or another; friends hear of a login and a logout (across nodes too); a friend of
@@ -700,6 +712,10 @@ source/dmangos/world/       the world server (mangosd)
   sessionscripting.d          the player's session as the host of spell and area trigger scripts
   social.d                    friends and ignore lists
   guild.d, guildhandlers.d    guilds: ranks, members and packets; charters, invitations, roster, chat
+  pet.d, petai.d              pets: types, action bar, stats, tables, packets; following and fighting (in CreatureAI)
+  pethandlers.d               a player's pet: taming, summoning, saving, its bar's commands, stables
+  creaturecombat.d            a creature fought by a creature (a pet and its enemy), as players are
+  pettests.d                  pets end to end (tests only)
   scripttests.d               the scripts in the world (tests only)
   dbscripts.d                 dbscripts_on_*: script steps run by the world at their delays
   combat.d, relations.d       melee formulas (the attack table, damage) and who may attack or help whom
