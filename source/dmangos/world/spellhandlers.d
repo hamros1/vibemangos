@@ -397,6 +397,42 @@ private:
             deliver(Opcode.SMSG_FISH_ESCAPED, null);
             return endChannel(false);
         }
+        // `LookupFishingHoleAround`: a school of fish within 20 yards of the bobber gives the catch, from
+        // its own loot; it is fished out after a few catches (its least to greatest, chosen once).
+        GameObject hole;
+        float nearest = 20.0f * 20.0f;
+        foreach (o; map.objectsNear(go.position, 20))
+            if (auto h = cast(GameObject) o)
+                if (h.type == GameObjectType.fishingHole)
+                {
+                    const p = h.position, b = go.position;
+                    const d = (p.x - b.x) ^^ 2 + (p.y - b.y) ^^ 2 + (p.z - b.z) ^^ 2;
+                    if (d <= nearest)
+                    {
+                        nearest = d;
+                        hole = h;
+                    }
+                }
+        if (hole !is null)
+        {
+            if (hole.holeMaxCatches == 0)
+            {
+                const least = hole.template_.data[2], most = hole.template_.data[3];
+                hole.holeMaxCatches = most > least ? uniform!"[]"(least, most, map.random) : (least > 0 ? least : 1);
+            }
+            auto fromHole = makeGameObjectLoot(hole);
+            fromHole.lootedForAll = () {
+                hole.loot = null;
+                if (++hole.holeCatches >= hole.holeMaxCatches)
+                    map.gameObjectUsedUp(hole);
+                removeBobber();
+            };
+            hole.loot = fromHole;
+            bobberLooted = true;
+            endChannel(false);
+            fromHole.showContentTo(this);
+            return;
+        }
         auto template_ = context.data.loot.fishing is null ? null : context.data.loot.fishing[area];
         if (template_ is null && context.data.loot.fishing !is null)
             template_ = context.data.loot.fishing[zone];
@@ -1484,4 +1520,31 @@ unittest
     anduin.write(Opcode.CMSG_GAMEOBJ_USE, ClientGuid(bob.guid));
     const caught = anduin.read();
     assert(opcodesOf(caught).canFind(Opcode.SMSG_LOOT_RESPONSE), "a catch");
+
+    // A school of fish where the bobber lands: the catch is its own, and it is counted.
+    import dmangos.world.gameobject : GameObjectSpawn;
+
+    GameObjectTemplate school = {entry: 9031, type: GameObjectType.fishingHole, displayId: 1, name: "School"};
+    school.data[1] = 777; // its loot
+    school.data[2] = 2;
+    school.data[3] = 2;   // two catches
+    context.data.gameObjectTemplates[9031] = school;
+    context.data.loot.gameObject.add(777, lootRow(itemSword, 100, 0, 1, 1, 0));
+    const at = me.position;
+    context.data.gameObjectSpawns ~= GameObjectSpawn(90031, 9031, 0, at.x + 15, at.y, 80, 0, [0, 0, 0, 0], 60);
+    auto hole = context.makeGameObject(&context.data.gameObjectSpawns[$ - 1]);
+    map.addObject(hole);
+    now += 2000.msecs;
+    cast_();
+    bob = bobberNow();
+    anduin.read();
+    foreach (_; 0 .. 18)
+    {
+        tick(1000);
+        if (opcodesOf(anduin.read()).canFind(Opcode.SMSG_GAMEOBJECT_CUSTOM_ANIM))
+            break;
+    }
+    anduin.write(Opcode.CMSG_GAMEOBJ_USE, ClientGuid(bob.guid));
+    assert(opcodesOf(anduin.read()).canFind(Opcode.SMSG_LOOT_RESPONSE) && hole.loot !is null && hole.holeMaxCatches == 2,
+        "the school's catch");
 }

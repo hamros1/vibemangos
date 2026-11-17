@@ -41,6 +41,7 @@ enum GameObjectType : uint
     moTransport = 15,   /// ships and zeppelins
     fishingNode = 17,   /// the bobber
     mailbox = 19,
+    fishingHole = 25,   /// a school of fish: a catch near it comes from it
 }
 
 /// `LootState` of a game object.
@@ -113,6 +114,8 @@ final class GameObject : Replicable, Moving, PerViewer
     uint instanceId;             /// the dungeon instance it is in (0: none): used up there, it stays so
     long trapReadyAt;            /// a trap's cooldown: it springs again from then (Unix time)
     ulong owner;                 /// who made it (a fishing bobber's angler); 0: a spawn
+    uint holeCatches;            /// a fishing hole's catches so far, against `holeMaxCatches`
+    uint holeMaxCatches;         /// ... chosen between its least and greatest when first fished
     uint trapUses;               /// a trap's springs so far, against its charges
     int despawnTimer;            /// ms until a chest opened but not emptied goes (`SetChestDespawn`); 0: none
     bool[ulong] skilledUp;       /// those it gave a skill-up (`m_SkillupList`): once until it respawns
@@ -172,7 +175,7 @@ final class GameObject : Replicable, Moving, PerViewer
     /// `GetLootId`: its `gameobject_loot_template` id (a chest's).
     @property uint lootId() const
     {
-        return type == GameObjectType.chest ? template_.data[1] : 0;
+        return type == GameObjectType.chest || type == GameObjectType.fishingHole ? template_.data[1] : 0;
     }
 
     /// `GetAutoCloseTime`, in milliseconds (the template's value is seconds times 0x10000).

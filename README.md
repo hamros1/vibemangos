@@ -242,7 +242,7 @@ What works now:
     them, and game objects give and take back quests (`gameobject_questrelation`,
     `gameobject_involvedrelation`) as creatures do. A trap springs on a player who steps within its
     radius (half its diameter) and is not its faction's friend: its spell at the player, then its
-    cooldown; one with charges is used up after them. Not yet: their own gossip, fishing pools, mining
+    cooldown; one with charges is used up after them. Not yet: their own gossip, mining
     veins' extra uses, linked traps, stealthed traps' visibility, creatures springing traps,
     another node's objects in a cluster.
   * **Fishing** (CMaNGOS's `EffectTransmitted` and `GameObject::Use` of a bobber): the fishing spell
@@ -251,7 +251,9 @@ What works now:
     (the bobber splashes) and waits 5 seconds. Used in time, the catch depends on the fishing skill
     against `skill_fishing_base_level` of the area (or zone), every try may raise the skill, and a
     catch is looted from `fishing_loot_template`; too early nothing is hooked, too late the fish got
-    away; it takes a fishing pole worn. Not yet: fishing pools, junk on a failed catch.
+    away; it takes a fishing pole worn. A school of fish (`GAMEOBJECT_TYPE_FISHINGHOLE`) within 20
+    yards of the bobber gives the catch from its own loot, and is fished out after a few catches.
+    Not yet: junk on a failed catch.
   * **Creature movement:** creatures move as their spawn's `MovementType` says, as in CMaNGOS:
     wandering within `spawndist` of their spawn point (type 1), or walking their `creature_movement`
     or `creature_movement_template` path (type 2 round and round, type 4 back and forth), waiting
