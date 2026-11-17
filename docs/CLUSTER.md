@@ -694,7 +694,7 @@ what it simulates). Two players near enough to trade or duel usually are on the 
 hysteresis of a border), the one who asked moves to the other's node before the trade or duel
 starts, through the same migration, and stays there until it ends.
 
-## Phase 6: load balancing by measured cost (implemented, without splits)
+## Phase 6: load balancing by measured cost (implemented, with splits)
 
 * **Measured.** Every 10 seconds each node divides the loop's busy time (packets, tick and sending,
   `TcpServer.busyTotal`) among the regions it owns, by what each holds now (`Map.weighCells`): an
@@ -710,10 +710,22 @@ starts, through the same migration, and stays there until it ends.
   never one that moved in the last `region_cooldown_seconds` (120): no region goes back and forth.
   A move is the handover of phase 4 (revoke, release with the objects, grant); players move with
   their ground (phase 4b).
-* **Not yet: splits and merges.** The regions are still the leaves of the start-up partition. A
-  crowd in one region is that region's node's to carry; balancing moves the node's other regions
-  away, which is what lets it. Splitting a hot region (a new cut through its k-d leaf, two new
-  region ids, both handed over like any move) and merging cold neighbours are the next step.
+* **Splits.** When most of the busiest node's load is one region too costly to move (more than
+  half the gap: moving it would only move the load), the coordinator cuts that region in two along its longer side (`RegionAuthority.splitHot`). The old id keeps one
+  half with its owner and epoch, so its node goes on simulating it and nothing changes hands; the
+  other half is a new region (the next id), granted to the same node. Each half is costed at half
+  the whole until the next reports measure them; the old half is frozen for the cool-down, and the
+  next look moves the new half if that narrows the gap, or splits again a half still too hot. A
+  node's view takes a smaller rectangle under the same grant as no loss (its owned rectangle
+  follows, for its cost reports). Splits stop at `maxRegions` (1024).
+* **Not yet: merges.** Cold neighbours are not joined again: the table only grows.
+* **Tested (splits):** a unit test (a region holding all of a node's load is split on its node,
+  the old id keeping its grant and epoch; measured apart, the new half moves; a node's view takes
+  the smaller rectangle as no loss). Live, two nodes, 250 bots crowding Goldshire on node 1: the
+  coordinator split Goldshire's region (55 ms/s, 16 × 275 cells) and moved the new half (3.5 ms/s)
+  to node 2 30 seconds later, with the small moves of the same looks; the crowd's half waited out its
+  cool-down. That run also found a crash: a region handed over with a player's corpse in it (bots
+  dying in the crowd), now left where it is.
 * **Tested:** unit tests for the threshold, the cap of two moves, the cool-down and the smoothing.
   Live, two nodes on one machine: 300 bots spread over both continents measured 19 and 24 ms/s,
   within the tolerance, and nothing moved; with 250 more crowded in Goldshire the two measured 176

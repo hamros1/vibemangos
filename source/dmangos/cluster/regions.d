@@ -181,6 +181,21 @@ bool split(CellRect rect, const uint[ulong] cells, out CellRect a, out CellRect 
     return true;
 }
 
+/// Cuts `rect` in two halves along its longer side; false if it is a single cell.
+bool halve(const CellRect rect, out CellRect a, out CellRect b) pure nothrow @nogc @safe
+{
+    const width = rect.x1 - rect.x0, height = rect.y1 - rect.y0;
+    if (width < 2 && height < 2)
+        return false;
+    a = rect;
+    b = rect;
+    if (width >= height)
+        a.x1 = b.x0 = rect.x0 + width / 2;
+    else
+        a.y1 = b.y0 = rect.y0 + height / 2;
+    return true;
+}
+
 /// The region of `regions` holding cell (x, y) of `map`, or null.
 inout(Region)* regionAt(return scope inout(Region)[] regions, uint map, int x, int y) pure nothrow @nogc @trusted
 {

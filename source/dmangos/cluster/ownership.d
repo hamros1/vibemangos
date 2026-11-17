@@ -64,6 +64,7 @@ final class RegionAuthority
         Duration cooldown = 120.seconds;
         double tolerance = 0.25;      /// the gap between busiest and idlest that is tolerated, of the mean
         size_t maxMoves = 2;          /// regions moved at most per look
+        size_t maxRegions = 1024;     /// splits stop at so many regions
     }
 
     /// ditto
@@ -320,7 +321,9 @@ final class RegionAuthority
         foreach (id, at; movedAt)
             if (now - at < balancing.cooldown)
                 frozen[id] = true;
-        foreach (move; rebalance(regions_, cost, nodes, balancing.tolerance, frozen, balancing.maxMoves))
+        const moves = rebalance(regions_, cost, nodes, balancing.tolerance, frozen, balancing.maxMoves);
+        splitHot(load, frozen, now);
+        foreach (move; moves)
             foreach (ref r; regions_)
                 if (r.id == move.region && r.state == RegionState.granted)
                 {
@@ -334,6 +337,63 @@ final class RegionAuthority
                     movedAt[r.id] = now;
                     touch();
                 }
+    }
+
+    /**
+     * A split: when most of the busiest node's load is one region too costly to move (more than half
+     * the gap: moving it would only move the load), that region is cut in two along its longer side. The old id
+     * keeps one half, a new id the other, both still granted to the same node, so nothing moves now
+     * and no object changes hands: the next reports measure the halves, and the next look can move
+     * one (a half still too hot is split again). The half that kept the id is frozen for the
+     * cool-down; each half is costed at half the whole until it is measured.
+     */
+    private void splitHot(const ulong[ushort] load, const bool[uint] frozen, MonoTime now)
+    {
+        import dmangos.log : info;
+
+        if (regions_.length >= balancing.maxRegions)
+            return;
+        ushort busiest, idlest;
+        foreach (node, l; load)
+        {
+            if (busiest == 0 || l > load[busiest])
+                busiest = node;
+            if (idlest == 0 || l < load[idlest])
+                idlest = node;
+        }
+        ulong total;
+        foreach (l; load)
+            total += l;
+        const gap = load[busiest] - load[idlest];
+        if (gap <= balancing.tolerance * total / load.length)
+            return;
+        Region* hottest;
+        foreach (ref r; regions_)
+            if (r.owner == busiest && r.state == RegionState.granted && r.id !in frozen
+                && (hottest is null || cost.get(r.id, 0) > cost.get(hottest.id, 0)))
+                hottest = &r;
+        // Only a region too costly to move (over half the gap) that is most of its node's load.
+        if (hottest is null || 2 * cost.get(hottest.id, 0) <= gap || 2 * cost.get(hottest.id, 0) <= load[busiest])
+            return;
+        CellRect a, b;
+        if (!halve(hottest.rect, a, b))
+            return;
+        uint next;
+        foreach (ref r; regions_)
+            if (r.id > next)
+                next = r.id;
+        ++next;
+        const whole = cost.get(hottest.id, 0), id = hottest.id, map = hottest.map;
+        info!"cluster: balancing: region %s (%s µs/s, cells %s..%s × %s..%s) of node %s split, its half %s new"(id,
+            whole, hottest.rect.x0, hottest.rect.x1, hottest.rect.y0, hottest.rect.y1, busiest, next);
+        hottest.rect = a; // same id, owner and epoch: its node keeps simulating it
+        cost[id] = whole / 2;
+        movedAt[id] = now;
+        Region other = Region(next, map, b);
+        cost[next] = whole - whole / 2;
+        regions_ ~= other;
+        grant(regions_[$ - 1], busiest);
+        touch();
     }
 
     /// What each member's regions cost, for the log.
@@ -484,6 +544,8 @@ final class RegionView
                         gained ~= r;
                         *had = r;
                     }
+                    else
+                        had.rect = r.rect; // split: the same grant, a smaller rectangle (the rest a new region)
                 }
                 else
                     gained ~= r;
@@ -887,4 +949,77 @@ unittest
 
             assert(!moving.canFind(r.id), "a region that just moved does not move back within the cool-down");
         }
+}
+
+/**
+ * Phase 6's splits: one region holding all of a node's load cannot move (it would only move the
+ * load), so it is cut in two on the same node; measured apart, one half then moves.
+ */
+unittest
+{
+    auto now = MonoTime.currTime;
+    Region[] regions = [Region(1, 0, CellRect(0, 0, 64, 16)), Region(2, 0, CellRect(64, 0, 128, 16))];
+    ulong[uint] cost = [1: 100, 2: 100];
+    auto authority = new RegionAuthority(regions, cost, 1, 7, 5.seconds, () => now);
+    now += 6.seconds;
+    authority.tick();
+    authority.joined(2);
+    foreach (ref r; authority.regions)
+        if (r.state == RegionState.revoking)
+            authority.released(r.owner, r.id, r.epoch);
+    ushort ownerOf(uint id)
+    {
+        foreach (ref r; authority.regions)
+            if (r.id == id)
+                return r.owner;
+        return 0;
+    }
+    const hot = authority.regions[0].owner == 1 ? 1u : 2u;
+    const hotNode = ownerOf(hot), coldNode = hotNode == 1 ? 2 : 1;
+    const cold = hot == 1 ? 2u : 1u;
+    assert(hotNode != ownerOf(cold), "one region each");
+
+    // A crowd in one region: 80 ms/s there, nothing elsewhere. Moving it would only move the load.
+    foreach (_; 0 .. 6)
+    {
+        authority.measuredLoads(hotNode, [hot: 80_000]);
+        authority.measuredLoads(cast(ushort) coldNode, [cold: 0]);
+    }
+    const epoch = authority.regions[hot - 1].epoch;
+    now += 31.seconds;
+    authority.tick();
+    assert(authority.regions.length == 3, "split");
+    const halfA = authority.regions[hot - 1], halfB = authority.regions[2];
+    assert(halfA.id == hot && halfA.owner == hotNode && halfA.epoch == epoch && halfA.state == RegionState.granted,
+        "the old id keeps its grant: nothing moves");
+    assert(halfB.id == 3 && halfB.owner == hotNode && halfB.state == RegionState.granted);
+    assert(halfA.rect.x1 - halfA.rect.x0 == 32 && halfB.rect.x0 == halfA.rect.x1, "halved along the longer side");
+
+    // Measured apart (the new half lighter): the new half moves to the idle node; the old one is frozen anyway.
+    // (A half still more than half the gap would be split again instead.)
+    foreach (_; 0 .. 6)
+        authority.measuredLoads(hotNode, [hot: 50_000, 3: 30_000]);
+    now += 31.seconds;
+    authority.tick();
+    bool moved;
+    foreach (ref r; authority.regions)
+        if (r.state == RegionState.revoking)
+        {
+            assert(r.id == 3 && r.next == coldNode);
+            moved = true;
+        }
+    assert(moved, "the new half moves");
+
+    // A node's view: the same grant with a smaller rectangle is no loss, and its owned rectangle follows.
+    auto view = new RegionView(hotNode, true, 5.seconds);
+    view.take(7, 1, [Region(hot, 0, CellRect(0, 0, 64, 16), hotNode, epoch, RegionState.granted)]);
+    Region[] gained, lost;
+    view.refresh(now, gained, lost);
+    assert(gained.length == 1);
+    view.take(7, 2, [halfA, Region(3, 0, halfB.rect, hotNode, halfB.epoch, RegionState.granted)]);
+    view.refresh(now, gained, lost);
+    assert(lost.length == 0 && gained.length == 1 && gained[0].id == 3);
+    foreach (ref r; view.ownedRegions)
+        if (r.id == hot)
+            assert(r.rect == halfA.rect);
 }
