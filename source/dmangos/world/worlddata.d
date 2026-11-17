@@ -13,6 +13,7 @@ import std.random : Random;
 import dmangos.log;
 import dmangos.mysql : MySqlConnection;
 import dmangos.world.clientdata : ClientData, maskOf, maxSkillStep, playableClassMask, playableRaceMask;
+import dmangos.world.eventai : EventAiData;
 import dmangos.world.creature : CreatureAddon, CreatureClassStats, CreatureSpawn, CreatureTemplate, classStatsKey,
     creatureTemplateQuery;
 import dmangos.world.gameobject : GameObjectSpawn, GameObjectTemplate, GameObjectType;
@@ -315,6 +316,7 @@ final class WorldData
     GraveyardLink[][uint] graveyards;               /// `game_graveyard_zone`, by `graveyardLinkKey`
     GhostEntrance[uint] ghostEntrances;             /// `instance_template`'s ghost entrances, by instance map
     WaypointStore waypoints;                        /// `creature_movement` and `creature_movement_template`
+    EventAiData eventAi;                            /// `creature_ai_scripts`, by creature entry
 
     ///
     this()
@@ -322,6 +324,7 @@ final class WorldData
         npcs = new NpcData;
         waypoints = new WaypointStore;
         quests = new QuestData;
+        eventAi = new EventAiData;
         loot = LootStores(new LootStore("creature_loot_template"), new LootStore("reference_loot_template"));
     }
 
@@ -460,6 +463,7 @@ final class WorldData
         data.loadSpawns(world, client, spawnSeed);
         data.loadWaypoints(world);
         data.loadPlayerInfo(world, client);
+        data.eventAi = EventAiData.load(world);
         info!"loaded %s item templates, %s creature templates, %s race/class combinations, %s reserved names"(
             data.items.length, data.creatureFamilies.length, data.playerInfo.length, data.reservedNames.length);
         if (data.playerInfo.length == 0)

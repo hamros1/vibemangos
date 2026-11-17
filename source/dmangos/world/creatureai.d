@@ -4,11 +4,10 @@
  * chasing (`ChaseMovementGenerator`) and going home (`HomeMovementGenerator`), and a creature's
  * half of melee (`Unit::Attack`, `UpdateMeleeAttackingState`).
  *
- * Every creature gets this AI: CMaNGOS's EventAI (`creature_ai_scripts`) and the guards' scripts
- * build on it, and their spells and texts come with spells. A creature with
+ * Every creature gets this AI; one with a script (`creature_ai_scripts`, `dmangos.world.eventai`)
+ * runs it from here, and casts its spells with `dmangos.world.creaturecasting`. A creature with
  * `CREATURE_EXTRA_FLAG_NO_AGGRO_ON_SIGHT` is defensive: it fights back but attacks nobody on sight.
- * Creatures do not call for help or assist each other yet, and chase in straight lines (no
- * movement maps).
+ * Creatures call allies near them for help, and chase in straight lines (no movement maps).
  */
 module dmangos.world.creatureai;
 
@@ -23,6 +22,11 @@ import dmangos.world.movement : MovementFlags, Position;
 import dmangos.world.opcodes : Opcode;
 import dmangos.world.relations;
 import dmangos.world.auras : Aura, AuraType;
+import dmangos.world.clientdata : ClientData;
+import dmangos.world.npcdata : BroadcastText;
+import dmangos.world.opcodes : ChatType;
+import dmangos.world.spells : SpellInfo;
+import dmangos.world.eventai : Scripted;
 import dmangos.world.updatefields;
 import dmangos.vmap.math : Vector3;
 
@@ -48,6 +52,40 @@ interface Combatant
 
     /// A periodic effect of its aura on `target` ticked (damage over time).
     void auraTick(Creature target, Aura aura, size_t effect);
+
+    /// Its health in percent.
+    uint healthPercent();
+
+    /// A creature's spell hurt it (`DealDamage` from a spell): the log is already sent.
+    void spellHitBy(ulong caster, uint damage);
+
+    /// A creature's spell put an aura on it (a debuff).
+    void auraFrom(ulong caster, const(SpellInfo)* spell, uint casterLevel, int durationMs, const int[3] values);
+
+    /// Whether it has an aura of `spell`.
+    bool hasAuraOf(uint spell);
+
+    /// A packet for it alone (a creature's whisper).
+    void tell(Opcode opcode, const(ubyte)[] body_);
+}
+
+/**
+ * What a creature's script and spells need of the world's data (`WorldContext` implements it): the
+ * spells, the client's tables, the texts, and how far a creature is heard.
+ */
+interface CreatureLore
+{
+    /// The spell; null if there is none.
+    const(SpellInfo)* spellInfo(uint id);
+
+    /// The client's tables.
+    @property const(ClientData) clientData();
+
+    /// A `broadcast_text`; null if there is none.
+    const(BroadcastText)* broadcastText(uint id);
+
+    /// `ListenRange.Say`, `.Yell`, `.TextEmote` in yards.
+    float listenRange(ChatType type);
 }
 
 /// What a creature's AI needs of its map.
@@ -70,6 +108,12 @@ interface CombatWorld : MotionWorld
 
     /// The creatures within `range` yards of `center` here.
     Creature[] creaturesNear(Position center, float range);
+
+    /// The players within `range` yards of `center` here who can fight.
+    Combatant[] combatantsNear(Position center, float range);
+
+    /// A packet for the players within `range` yards of `center`.
+    void sendInRange(Position center, float range, Opcode opcode, const(ubyte)[] body_);
 }
 
 /// `CreatureFamilyAssistanceRadius`, `CreatureFamilyAssistanceDelay`, `CreatureCheckForHelpRadius` (mangosd.conf).
@@ -101,8 +145,12 @@ enum int combatManagerTick = 1200;
 enum uint aiReactionHostile = 2;
 
 /// See the module documentation.
-final class CreatureAI
+final class CreatureAI : Scripted
 {
+    import dmangos.world.creaturecasting : CreatureCasting;
+
+    mixin CreatureCasting;
+
     private
     {
         Creature me;
@@ -151,7 +199,8 @@ final class CreatureAI
     /// Whether it has anything to do in the tick: a fight, the way home, or health to get back.
     @property bool active() const
     {
-        return inCombat_ || evadingHome || me.values.get!UNIT_FIELD_HEALTH < me.values.get!UNIT_FIELD_MAXHEALTH;
+        return inCombat_ || evadingHome || me.values.get!UNIT_FIELD_HEALTH < me.values.get!UNIT_FIELD_MAXHEALTH
+            || me.values.get!UNIT_FIELD_POWER1 < me.values.get!UNIT_FIELD_MAXPOWER1 || casting_ !is null || fleeTimer > 0 || (script !is null && script.wantsTicks);
     }
 
     /// The one it attacks; 0 if none.
@@ -183,6 +232,7 @@ final class CreatureAI
      */
     void moveInLineOfSight(Combatant who, CombatWorld world)
     {
+        world_ = world;
         if (react != ReactState.aggressive || victim || evadingHome || !me.alive)
             return;
         if (me.factionTemplate !is null && isNeutralToAll(*me.factionTemplate))
@@ -211,6 +261,7 @@ final class CreatureAI
     /// `UnitAI::AttackedBy`: hit (or swung at) by `attacker`; it fights back if it is not fighting yet.
     void attackedBy(Combatant attacker, CombatWorld world)
     {
+        world_ = world;
         if (!me.alive || evadingHome)
             return;
         if (!inCombat_ && !victim)
@@ -232,6 +283,13 @@ final class CreatureAI
     /// It died: it fights nobody any more.
     void died(CombatWorld world)
     {
+        world_ = world;
+        if (world !is null)
+            interruptCast();
+        casting_ = nextSwing = null;
+        fleeTimer = 0;
+        if (script !is null && world !is null)
+            script.died(this, victim);
         foreach (guid, _; threat)
             notifyRemoved(guid, world);
         threat = null;
@@ -252,7 +310,17 @@ final class CreatureAI
     {
         if (!me.alive)
             return;
+        world_ = world;
         attackTimer = attackTimer > diff ? attackTimer - diff : 0;
+        updateCasting(diff);
+        if (!me.alive)
+            return;
+        if (script !is null && !evadingHome)
+        {
+            script.update(this, diff);
+            if (!me.alive)
+                return;
+        }
         if (evadingHome)
         {
             if (me.spline.finalized)
@@ -261,7 +329,9 @@ final class CreatureAI
         else if (inCombat_)
         {
             updateCombatManager(world, diff);
-            if (inCombat_ && !me.auras.has(AuraType.modStun)) // `UNIT_STAT_STUNNED`: it does nothing
+            if (inCombat_ && fleeTimer > 0)
+                updateFleeing(diff);
+            else if (inCombat_ && !me.auras.has(AuraType.modStun)) // `UNIT_STAT_STUNNED`: it does nothing
                 updateAI(world);
             if (inCombat_ && assistanceReceivers.length)
             {
@@ -353,6 +423,9 @@ private:
             enterCombat(world);
             helpCheckTimer = 2000; // `CreatureCheckForHelpAggroDelay`
             callAssistance(who, world);
+            world_ = world;
+            if (script !is null)
+                script.combatStarted(this, guid);
         }
         world.flushCreature(me);
         world.wake(me.guid);
@@ -525,6 +598,12 @@ private:
         auto target = world.combatant(selectNextVictim(world));
         if (target.combatGuid != victim)
             attackStart(target, world);
+        if (casting_ !is null)
+        {
+            // Casting: it stands, facing its target (`SetInFront`).
+            me.movement.position.orientation = angleTo(me.position, target.fighter.position);
+            return;
+        }
         chase(target, world);
         meleeAttackIfReady(target, world);
     }
@@ -566,6 +645,16 @@ private:
     {
         const self = me.fighter, other = target.fighter;
         me.movement.position.orientation = angleTo(me.position, other.position);
+        if (!combatMovement_)
+            return;
+        if (rangedMode_ && moved(me.position, other.position) <= chaseDistance_
+            && world.inLineOfSight(me.position, other.position))
+        {
+            // Ranged mode: near enough to cast; it stays (`m_attackDistance`).
+            if (!me.spline.finalized)
+                stopMoving(me, world);
+            return;
+        }
         if (canReachWithMelee(self, other))
         {
             if (!me.spline.finalized && moved(chasedTo, other.position) > 0.5f)
@@ -574,8 +663,8 @@ private:
         }
         if (!me.spline.finalized && moved(chasedTo, other.position) < 1)
             return;
-        // To a point just within reach, on the line between the two.
-        const reach = meleeReach(self, other) - 1;
+        // To a point just within reach (or its casting distance), on the line between the two.
+        const reach = rangedMode_ ? chaseDistance_ - 1 : meleeReach(self, other) - 1;
         const angle = angleTo(other.position, me.position);
         const x = other.position.x + reach * cos(angle), y = other.position.y + reach * sin(angle);
         auto z = world.groundHeight(x, y, other.position.z + 2, false);
@@ -599,12 +688,16 @@ private:
             attackTimer = 100; // delaying a weapon that is not ready would make it ready sooner
             return;
         }
+        attackTimer = me.values.get!UNIT_FIELD_BASEATTACKTIME;
+        if (swingSpell(target))
+            return;
         auto d = calculateMeleeDamage(self, other, AttackType.mainHand, world.random);
         world.sendToObservers(me.guid, Opcode.SMSG_ATTACKERSTATEUPDATE, attackerStateUpdate(d));
-        attackTimer = me.values.get!UNIT_FIELD_BASEATTACKTIME;
         if (d.damage)
             triggerCombatTimer(); // direct damage either way
         target.meleeHitBy(me.guid, d);
+        if (!target.fighter.alive && script !is null)
+            script.killed(this, target.combatGuid); // `KilledUnit`
     }
 
     /**
@@ -613,6 +706,16 @@ private:
      */
     void enterEvadeMode(CombatWorld world)
     {
+        world_ = world;
+        interruptCast();
+        nextSwing = null;
+        if (fleeTimer > 0)
+        {
+            fleeTimer = 0;
+            me.values.set!UNIT_FIELD_FLAGS(me.values.get!UNIT_FIELD_FLAGS & ~UnitFlags.fleeing);
+        }
+        combatMovement_ = true;
+        rangedMode_ = rangedModeSet;
         meleeStop(world);
         foreach (guid, _; threat)
             notifyRemoved(guid, world);
@@ -624,6 +727,8 @@ private:
         assistanceReceivers = null;
         me.values.set!UNIT_FIELD_TARGET(0UL);
         me.values.set!UNIT_FIELD_FLAGS(me.values.get!UNIT_FIELD_FLAGS & ~UnitFlags.inCombat);
+        if (script !is null)
+            script.evaded(this);
         world.flushCreature(me);
         evadingHome = true;
         regenTimer = 0;
@@ -639,6 +744,9 @@ private:
     void reachedHome(CombatWorld world)
     {
         evadingHome = false;
+        world_ = world;
+        if (script !is null)
+            script.reachedHome(this);
         if (outOfCombat !is null)
         {
             me.generator = outOfCombat;
@@ -651,7 +759,8 @@ private:
     void regenerate(CombatWorld world, int diff)
     {
         const health = me.values.get!UNIT_FIELD_HEALTH, maximum = me.values.get!UNIT_FIELD_MAXHEALTH;
-        if (health >= maximum)
+        const mana = me.values.get!UNIT_FIELD_POWER1, maxMana = me.values.get!UNIT_FIELD_MAXPOWER1;
+        if (health >= maximum && mana >= maxMana)
             return;
         regenTimer += diff;
         if (regenTimer < regenInterval)
@@ -659,6 +768,8 @@ private:
         regenTimer -= regenInterval;
         const added = health + maximum / 3;
         me.values.set!UNIT_FIELD_HEALTH(added > maximum ? maximum : added);
+        const addedMana = mana + maxMana / 3; // `RegenerateMana` out of combat: a third too
+        me.values.set!UNIT_FIELD_POWER1(addedMana > maxMana ? maxMana : addedMana);
         world.flushCreature(me);
     }
 

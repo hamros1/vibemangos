@@ -1037,6 +1037,16 @@ final class Map : CombatWorld
         return found;
     }
 
+    /// See `CombatWorld.combatantsNear`.
+    Combatant[] combatantsNear(Position center, float range)
+    {
+        Combatant[] found;
+        foreach (inhabitant; near(center, range))
+            if (auto c = cast(Combatant) inhabitant)
+                found ~= c;
+        return found;
+    }
+
     /// Told when a creature's corpse goes (`RemoveCorpse`), to bring it back later; null: never comes back.
     void delegate(Creature creature) onCorpseRemoved;
 

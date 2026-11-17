@@ -713,6 +713,7 @@ final class Player : InventoryOwner
         data.exploredZones = exploredZonesText();
         computeDerived(world);
         setPlayerFields(world, client);
+        updateSkillsForLevel(client);
         const earned = talentPointsForLevel(level);
         values.set!PLAYER_CHARACTER_POINTS1(earned > spentTalents ? earned - spentTalents : 0);
 
@@ -725,6 +726,37 @@ final class Player : InventoryOwner
         foreach (i; 0 .. 5)
             info.stats[i] = afterStats.stats[i] - beforeStats.stats[i];
         return info;
+    }
+
+    /**
+     * `Player::UpdateSkillsForLevel`: a skill that goes with the level (weapons, defense) may now
+     * rise to 5 a level; one the race and class have maximized (`SKILL_FLAG_MAXIMIZED`) is full.
+     */
+    void updateSkillsForLevel(const ClientData client)
+    {
+        import dmangos.world.playercreate : skillRangeType, SkillRange;
+
+        const maxNew = cast(ushort) min(data.level * 5, ushort.max);
+        const raceMask = 1u << (data.race - 1), classMask = 1u << (data.classId - 1);
+        foreach (skill; skillList())
+        {
+            const entry = client.skillLines.lookup(skill[0]);
+            if (entry is null || skill[2] == 1)
+                continue;
+            const range = skillRangeType(entry, false);
+            if (range != SkillRange.level && range != SkillRange.mono)
+                continue;
+            bool maximized;
+            foreach (info; client.raceClassInfo(skill[0]))
+                if ((info.raceMask & raceMask) && (info.classMask & classMask))
+                {
+                    maximized = (info.flags & skillFlagMaximized) != 0;
+                    break;
+                }
+            const value = maximized ? maxNew : cast(ushort) min(skill[1], maxNew);
+            if (value != skill[1] || maxNew != skill[2])
+                setSkill(skill[0], value, maxNew);
+        }
     }
 
     /// Movement speeds, in yards per second (`Unit::m_speed_rate` times the base speeds).

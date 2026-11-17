@@ -252,6 +252,38 @@ struct LearnResult
     NewSkill[] savedSkills;      /// `character_skills` rows to write; a `max` of 0 deletes the row
 }
 
+/// `SkillRangeType`
+enum SkillRange { none, language, level, mono, rank }
+
+/// `GetSkillRangeType`
+SkillRange skillRangeType(const(SkillLineEntry)* skill, bool racial)
+{
+    switch (skill.categoryId)
+    {
+    case SkillCategory.languages:
+        return SkillRange.language;
+    case SkillCategory.weapon:
+        return skill.id != skillFistWeapons ? SkillRange.level : SkillRange.mono;
+    case SkillCategory.armor:
+    case SkillCategory.classSkill:
+        return skill.id != skillPoisons && skill.id != skillLockpicking ? SkillRange.mono : SkillRange.level;
+    case SkillCategory.secondary:
+    case SkillCategory.profession:
+        if (isProfessionOrRiding(skill))
+            return SkillRange.rank;
+        return racial ? SkillRange.none : SkillRange.mono;
+    default:
+        return SkillRange.none;
+    }
+}
+
+/// `IsProfessionOrRidingSkill`
+bool isProfessionOrRiding(const(SkillLineEntry)* skill)
+{
+    return skill.categoryId == SkillCategory.profession || skill.id == skillFishing || skill.id == skillCooking
+        || skill.id == skillFirstAid || skill.id == skillRiding;
+}
+
 /// Creates one character, or loads one's abilities; see the module documentation. Use once per character.
 final class CharacterBuilder : InventoryOwner
 {
@@ -886,36 +918,6 @@ private:
                 return entry;
         }
         return null;
-    }
-
-    enum SkillRange { none, language, level, mono, rank }
-
-    /// `GetSkillRangeType`
-    static SkillRange skillRangeType(const(SkillLineEntry)* skill, bool racial)
-    {
-        switch (skill.categoryId)
-        {
-        case SkillCategory.languages:
-            return SkillRange.language;
-        case SkillCategory.weapon:
-            return skill.id != skillFistWeapons ? SkillRange.level : SkillRange.mono;
-        case SkillCategory.armor:
-        case SkillCategory.classSkill:
-            return skill.id != skillPoisons && skill.id != skillLockpicking ? SkillRange.mono : SkillRange.level;
-        case SkillCategory.secondary:
-        case SkillCategory.profession:
-            if (isProfessionOrRiding(skill))
-                return SkillRange.rank;
-            return racial ? SkillRange.none : SkillRange.mono;
-        default:
-            return SkillRange.none;
-        }
-    }
-
-    static bool isProfessionOrRiding(const(SkillLineEntry)* skill)
-    {
-        return skill.categoryId == SkillCategory.profession || skill.id == skillFishing || skill.id == skillCooking
-            || skill.id == skillFirstAid || skill.id == skillRiding;
     }
 
     void learnDefaultSkills(const ref PlayerInfo info)

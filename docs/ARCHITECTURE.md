@@ -323,8 +323,19 @@ Three modules, split by what they depend on:
   the interface: its fighter, its relations, taking a hit, being threatened) and its map as a
   `CombatWorld` (players by guid, line of sight, field updates, waking a resting creature). The map
   calls `moveInLineOfSight` for the creatures a player sees when it moves, and for the players who
-  see a creature when it moves. A creature with something to do (a fight, the way home, health to
-  regain) does not rest, so the map keeps ticking it.
+  see a creature when it moves. A creature with something to do (a fight, the way home, health or
+  mana to regain, a cast, a script that runs out of combat) does not rest, so the map keeps ticking it.
+* `eventai.d` is CMaNGOS's `CreatureEventAI` without the creature: the `creature_ai_scripts` rows
+  (`EventAiData`, by entry and by spawn), and `EventAI`, one per scripted creature, with each event's
+  timer, its phase, and the checks, chances and repeats. It acts through the `Scripted` interface,
+  which `CreatureAI` implements; the AI calls it at its moments (combat starting, a kill, death,
+  evading, home) and in its update. `creaturecasting.d` is that implementation, mixed into
+  `CreatureAI`: a creature's casts (`castSpell`: checks, cast time, `go` with the targets and
+  effects), fleeing, and the actions' texts, emotes and target choice. What it needs of the world's
+  data (spells, the client's tables, broadcast texts, listen ranges) comes through `CreatureLore`,
+  which `WorldContext` implements and hands to a scripted creature as it makes it; players take its
+  spells through `Combatant` (`spellHitBy`, `auraFrom`), the area ones are found with
+  `CombatWorld.combatantsNear`, texts go out with `CombatWorld.sendInRange`.
 
 ## Spells
 

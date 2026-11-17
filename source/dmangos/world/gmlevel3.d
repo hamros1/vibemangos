@@ -184,6 +184,7 @@ mixin template Level3Commands()
     import dmangos.world.gmtargets : GmRemoteOp;
     import dmangos.world.map : packetBody;
     import dmangos.world.movement : Position;
+    import dmangos.world.player : DeathState;
     import dmangos.world.names : normalizedName;
     import dmangos.world.opcodes;
     import dmangos.world.packets;
@@ -295,8 +296,13 @@ private:
         auto plr = getSelectedChar(true);
         if (plr is null)
             return true;
-        // There is no death yet, so reviving is the unroot and the full health and mana.
         plr.sendMovementOrder!(Opcode.SMSG_FORCE_MOVE_UNROOT)();
+        // `ResurrectPlayer`: alive, its corpse gone to bones.
+        if (plr.player.deathState != DeathState.alive)
+        {
+            plr.resurrect(1);
+            plr.spawnCorpseBones();
+        }
         auto values = &plr.player.values;
         values.set!UNIT_FIELD_HEALTH(values.get!UNIT_FIELD_MAXHEALTH);
         values.set!UNIT_FIELD_POWER1(values.get!UNIT_FIELD_MAXPOWER1);

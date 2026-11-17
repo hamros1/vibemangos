@@ -94,6 +94,7 @@ struct BroadcastText
     string maleText;
     string femaleText;
     uint language;
+    uint chatType;   /// `ChatType` of `DoDisplayText`: 0 say, 1 yell, 2 emote, 3 boss emote, 4 whisper, 5 boss whisper, 6 zone yell
     TextEmote[3] emotes;
 
     /// `BroadcastText::GetText`: the gender's text, or the other one if it has none.
@@ -178,12 +179,13 @@ final class NpcData
             data.options[row.menuId] ~= row;
 
         foreach (row; world.query!("SELECT Id, IFNULL(Text, ''), IFNULL(Text1, ''), LanguageID, EmoteID1, EmoteID2, "
-            ~ "EmoteID3, EmoteDelay1, EmoteDelay2, EmoteDelay3 FROM broadcast_text")())
+            ~ "EmoteID3, EmoteDelay1, EmoteDelay2, EmoteDelay3, ChatTypeID FROM broadcast_text")())
         {
             BroadcastText text;
             text.maleText = row.get!string(1);
             text.femaleText = row.get!string(2);
             text.language = row.get!uint(3);
+            text.chatType = row.get!uint(10);
             foreach (i; 0 .. 3)
                 text.emotes[i] = TextEmote(row.get!uint(7 + i), row.get!uint(4 + i));
             data.broadcastTexts[row.get!uint(0)] = text;

@@ -22,7 +22,10 @@ import dmangos.world.channel : ChannelSettings;
 import dmangos.world.grid : cellKeyAt;
 import dmangos.world.channelservice : channelCommand, ChannelOp, ChannelService;
 import dmangos.cluster.protocol : ChannelCommand;
-import dmangos.world.opcodes : Language, Opcode;
+import dmangos.world.opcodes : ChatType, Language, Opcode;
+import dmangos.world.creatureai : CreatureLore;
+import dmangos.world.npcdata : BroadcastText;
+import dmangos.world.spells : SpellInfo;
 import dmangos.world.characterdb : DeleteOptions, GuidCounters;
 import dmangos.world.clientdata : ClientData;
 import dmangos.world.config : WorldConfig;
@@ -93,7 +96,7 @@ struct ShutdownTimer
  *
  * The server runs a single-threaded event loop, so none of this needs locking.
  */
-final class WorldContext : GroupDirectory, IdCounters, SessionHandler
+final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureLore
 {
     WorldConfig config;
     WorldDatabase database;
@@ -661,7 +664,45 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler
                         cast(ubyte) item.details.sheath);
         auto creature = new Creature(*spawn, template_, display, level, parts, client);
         creature.generator = selectMovement(creature, data.waypoints);
+        if (auto events = data.eventAi.eventsOf(spawn.entry, spawn.guid))
+            creature.ai.setScript(events, data.eventAi, this);
         return creature;
+    }
+
+    // -----------------------------------------------------------------------
+    // What creatures' scripts need (`CreatureLore`)
+    // -----------------------------------------------------------------------
+
+    /// See `CreatureLore`.
+    const(SpellInfo)* spellInfo(uint id)
+    {
+        return data.spells.spell(id);
+    }
+
+    /// ditto
+    @property const(ClientData) clientData()
+    {
+        return client;
+    }
+
+    /// ditto
+    const(BroadcastText)* broadcastText(uint id)
+    {
+        return id in data.npcs.broadcastTexts;
+    }
+
+    /// ditto
+    float listenRange(ChatType type)
+    {
+        switch (type)
+        {
+        case ChatType.CHAT_MSG_MONSTER_YELL:
+            return config.listenRangeYell;
+        case ChatType.CHAT_MSG_MONSTER_EMOTE:
+            return config.listenRangeTextEmote;
+        default:
+            return config.listenRangeSay;
+        }
     }
 
     // -----------------------------------------------------------------------

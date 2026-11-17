@@ -831,6 +831,17 @@ unittest
     gm.say(".levelup -2");
     assert(systemMessages(gm.read()) == ["Levelup x lvls"]);
 
+    // Levels raise the caps of the skills that go with the level (`UpdateSkillsForLevel`), not their values.
+    {
+        import dmangos.world.player : Player;
+
+        auto me = cast(Player) gm.session.character;
+        const swordsBefore = me.skillValue(skillSwords);
+        gm.say(".levelup 4");
+        gm.read();
+        assert(me.skillValue(skillSwords) == [swordsBefore[0], 25], "5 a level at level 5");
+    }
+
     // `.help`, with abbreviations.
     gm.say(".help gm of");
     assert(systemMessages(gm.read()) == ["Sets GM tag off"]);

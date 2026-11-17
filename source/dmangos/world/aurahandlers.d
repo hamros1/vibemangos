@@ -299,6 +299,17 @@ private:
             if (const spell = context.data.spells.spell(aura.spell.triggerSpell[i]))
                 castSpell(spell, SpellTargets(TargetFlags.self, player.guid), true, 0);
             return;
+        case AuraType.periodicDamage:
+        {
+            // A creature's damage over time (armor takes off physical).
+            if (aura.caster == player.guid || amount == 0)
+                return;
+            uint damage = amount;
+            if (aura.spell.casting.school == 0)
+                damage = cast(uint) armorReducedDamage(aura.casterLevel, player.fighter.armor, damage);
+            periodicLog(player.guid, aura, i, damage, 0);
+            return hitByCreatureSpell(aura.caster, damage);
+        }
         default:
             return;
         }
@@ -335,8 +346,10 @@ private:
             w.put(amount);
             break;
         }
+        if (target == player.guid)
+            return map.sendToWatchers(this, Opcode.SMSG_PERIODICAURALOG, w.data, true);
         map.sendToObservers(target, Opcode.SMSG_PERIODICAURALOG, w.data);
-        if (target != player.guid && !map.seesObject(player.guid, target))
+        if (!map.seesObject(player.guid, target))
             deliver(Opcode.SMSG_PERIODICAURALOG, w.data);
     }
 

@@ -109,8 +109,10 @@ The largest area. CMaNGOS references: `Spells/`, `Entities/Unit.cpp`, `Combat/`,
    flagged yet). Another node's creature: attacking (casting at, looting) its replica moves the
    player to that node, and a fight keeps it there (CLUSTER.md's phase 8).
 2. **Creatures fighting back: done** (`creatureai.d`; README's "Creatures fight"), calling for help
-   included. Not yet: EventAI's spells and texts, fleeing (and fleeing for help), movement maps for
-   chasing, help from another node's creatures in a cluster.
+   included, and EventAI scripts with creatures' spells, texts and fleeing (`eventai.d`,
+   `creaturecasting.d`; README's "Creature scripts"). Not yet: EventAI's summons, morphs, AI events
+   and friendly targets, spell lists, interrupting creatures' casts, movement maps for chasing, help
+   from another node's creatures in a cluster.
 3. **Death: done** (`death.d`, `corpse.d`; README's "Death"). Not yet: resurrection sickness and the
    ghost's own auras (applied by hand until there are auras), ghosts hidden from the living, bones,
    battleground spirit guides, corpses of a player on another node of a cluster (a corpse is put on
@@ -120,8 +122,8 @@ The largest area. CMaNGOS references: `Spells/`, `Entities/Unit.cpp`, `Combat/`,
    pickpocketing, game object and item loot (chests, bags), reputation and honor for kills, loot of
    a creature another node of a cluster simulates.
 5. Spells, cooldowns and auras. **Casting and auras: done** (`spellcast.d`, `spellhandlers.d`,
-   `auras.d`, `aurahandlers.d`; README's "Spells" and "Auras"). Next: channeling, area and chain
-   targets, creatures' spells (EventAI), talents.
+   `auras.d`, `aurahandlers.d`; README's "Spells" and "Auras"); creatures' spells come with their
+   scripts (above), talents with milestone 7. Next: channeling, area and chain targets for players.
 6. **Duels and trades: done** (`tradehandlers.d`, `duelhandlers.d`; README's "Trading" and
    "Duels"). Players fight players in melee and with spells where the relations allow (duelists,
    PvP-flagged enemies). Not yet: toggling PvP, honor, free-for-all areas, the off hand against players.

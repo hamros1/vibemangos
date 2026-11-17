@@ -199,17 +199,19 @@ ubyte[] chatMessage(ChatType type, Language language, ulong sender, string text,
     return w.data.dup;
 }
 
-/// `ChatHandler::BuildChatPacket` for a creature's say or yell: its guid and name, and no listener.
-ubyte[] monsterChatMessage(ChatType type, ulong sender, string name, string text) pure @safe
-in (type == ChatType.CHAT_MSG_MONSTER_SAY || type == ChatType.CHAT_MSG_MONSTER_YELL)
+/// `ChatHandler::BuildChatPacket` for a creature's say, yell, emote or whisper: its name, and whom it addresses.
+ubyte[] monsterChatMessage(ChatType type, ulong sender, string name, string text,
+    Language language = Language.LANG_UNIVERSAL, ulong target = 0) pure @safe
 {
     ByteWriter w;
     w.put(cast(ubyte) type);
-    w.put(cast(uint) Language.LANG_UNIVERSAL);
-    w.put(sender);
+    w.put(cast(uint) language);
+    // Says and yells name their speaker's guid first; emotes and whispers do not.
+    if (type == ChatType.CHAT_MSG_MONSTER_SAY || type == ChatType.CHAT_MSG_MONSTER_YELL)
+        w.put(sender);
     w.put(cast(uint)(name.length + 1));
     w.putCString(name);
-    w.put(ulong(0)); // the listener
+    w.put(target); // the listener
     w.put(cast(uint)(text.length + 1));
     w.putCString(text);
     w.put(ubyte(0));

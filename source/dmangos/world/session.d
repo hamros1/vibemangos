@@ -59,7 +59,8 @@ import dmangos.world.questhandlers : QuestHandlers;
 import dmangos.world.talenthandlers : TalentHandlers;
 import dmangos.world.mailhandlers : MailHandlers;
 import dmangos.world.creatureai : Combatant;
-import dmangos.world.auras : Aura;
+import dmangos.world.auras : Aura, makeAura;
+import dmangos.world.spells : SpellInfo;
 import dmangos.world.creature : Creature;
 import dmangos.world.loot : Looter;
 import dmangos.world.combat : Fighter, MeleeDamage;
@@ -82,7 +83,7 @@ import dmangos.world.objects : UpdateData, UpdatePacket;
 import dmangos.world.map : deliverUpdate, Inhabitant, Map;
 import dmangos.world.movement : Position;
 import dmangos.world.online : OnlinePlayer;
-import dmangos.world.player : Player, PlayerFlags, Viewer;
+import dmangos.world.player : DeathState, Player, PlayerFlags, Viewer;
 import dmangos.world.queries : chatMessage;
 import dmangos.world.opcodes;
 import dmangos.world.packets;
@@ -445,6 +446,42 @@ final class WorldSession : NetSession, Kickable, OnlinePlayer, Combatant, Looter
     void auraTick(Creature target, Aura aura, size_t effect)
     {
         creatureAuraTick(target, aura, effect);
+    }
+
+    /// See `Combatant`.
+    uint healthPercent()
+    {
+        import dmangos.world.updatefields : UNIT_FIELD_HEALTH, UNIT_FIELD_MAXHEALTH;
+
+        if (player is null || player.values.get!UNIT_FIELD_MAXHEALTH == 0)
+            return 0;
+        return cast(uint)(ulong(player.values.get!UNIT_FIELD_HEALTH) * 100 / player.values.get!UNIT_FIELD_MAXHEALTH);
+    }
+
+    /// See `Combatant`.
+    void spellHitBy(ulong caster, uint damage)
+    {
+        hitByCreatureSpell(caster, damage);
+    }
+
+    /// See `Combatant`.
+    void auraFrom(ulong caster, const(SpellInfo)* spell, uint casterLevel, int durationMs, const int[3] values)
+    {
+        if (player is null || player.deathState != DeathState.alive)
+            return;
+        addAura(makeAura(spell, caster, casterLevel, durationMs, false, values));
+    }
+
+    /// See `Combatant`.
+    bool hasAuraOf(uint spell)
+    {
+        return player !is null && player.auras.find(spell) !is null;
+    }
+
+    /// See `Combatant`.
+    void tell(Opcode opcode, const(ubyte)[] body_)
+    {
+        deliver(opcode, body_);
     }
 
     // -----------------------------------------------------------------------

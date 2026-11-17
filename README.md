@@ -242,7 +242,22 @@ What works now:
     of combat. Starting a fight, a creature calls for help (CMaNGOS's `CallAssistance`): allies
     within 5 yards (or its `CallForHelp`) that would attack the enemy on sight join in a moment and a
     half later; and a fighting creature that passes within 5 yards of an idle ally pulls it in.
-    Not yet: EventAI's scripted spells and texts, fleeing.
+  * **Creature scripts** (CMaNGOS's EventAI, `creature_ai_scripts`, for each creature entry or
+    spawn): their events (timers in and out of combat, health, mana and the victim's health between
+    two percentages, the victim within a range, aggro, a kill, death, evading, spawning, reaching
+    home, an aura of their own there or missing) run their actions by chance and phase, repeating
+    after their repeat timers: casting a spell, saying, yelling, emoting or whispering a
+    `broadcast_text` (or one of a `dbscript_random_templates` group), emotes, phases, fleeing in
+    fear for 7 seconds, calling for help, combat movement, ranged mode (keeping a distance to cast,
+    coming in to melee when out of mana), stand states, evading, attacking. A creature casts as
+    CMaNGOS's `DoCastSpellIfCan` allows (not while casting another, in range, with the mana): cast
+    times stand it still facing its target (`SMSG_SPELL_START`, then `SMSG_SPELL_GO`); a spell on the
+    next swing waits for the swing. Its spells do school damage (a magic one resisted by the level
+    difference), weapon damage, auras (debuffs on players, damage over time included; buffs on
+    itself), heal it, and trigger other spells, at its target, itself, or the enemies in their area
+    or cone. Creatures get their mana back with their health out of combat. Not yet: the other
+    events and actions (summons, morphs, AI events between creatures, quest events), spell lists
+    (`creature_template_spells`), friendly targets (healing allies), interrupting their casts.
   * **Death** (CMaNGOS's `KillPlayer`, repop, reclaim and spirit healer): a player killed loses a tenth
     of its gear's durability and lies rooted until it releases its spirit (or six minutes pass, or it
     logs out). Released, it is a ghost at the nearest graveyard of its team (`game_graveyard_zone`:

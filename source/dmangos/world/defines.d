@@ -142,6 +142,7 @@ enum UnitFlags : uint
     inCombat = 0x00080000,
     taxiFlight = 0x00100000,
     disarmed = 0x00200000,
+    fleeing = 0x00800000,          /// `UNIT_FLAG_FLEEING`: running in fear
     uninteractible = 0x02000000,
 }
 

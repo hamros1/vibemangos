@@ -352,9 +352,20 @@ def describe(op, p):
         kind, lang = struct.unpack_from("<BI", p); pos = 5; channel = ""
         if kind == 0x0E:
             end = p.index(b"\0", pos); channel = " in " + p[pos:end].decode(); pos = end + 1 + 4
-        sender = struct.unpack_from("<Q", p, pos)[0]; pos += 16 if kind in (0, 1, 5) else 8
-        n = struct.unpack_from("<I", p, pos)[0]; tag = p[pos + 4 + n]
-        print(f"  [chat type {kind}{channel}] from {sender}: '{p[pos + 4:pos + 4 + n - 1].decode()}'" + (f" (tag {tag})" if tag else ""))
+        if kind in (0x0B, 0x0C, 0x0D, 0x1A, 0x59, 0x5A):
+            # A creature's: (its guid,) its name, whom it addresses, the text.
+            sender = 0
+            if kind in (0x0B, 0x0C):
+                sender = struct.unpack_from("<Q", p, pos)[0]; pos += 8
+            n = struct.unpack_from("<I", p, pos)[0]; name = p[pos + 4:pos + 4 + n - 1].decode(); pos += 4 + n
+            listener = struct.unpack_from("<Q", p, pos)[0]; pos += 8
+            n = struct.unpack_from("<I", p, pos)[0]
+            print(f"  [monster chat type {kind:#x}, language {lang}] {name} ({sender & 0xFFFFFF}) to {listener}: "
+                  f"'{p[pos + 4:pos + 4 + n - 1].decode()}'")
+        else:
+            sender = struct.unpack_from("<Q", p, pos)[0]; pos += 16 if kind in (0, 1, 5) else 8
+            n = struct.unpack_from("<I", p, pos)[0]; tag = p[pos + 4 + n]
+            print(f"  [chat type {kind}{channel}] from {sender}: '{p[pos + 4:pos + 4 + n - 1].decode()}'" + (f" (tag {tag})" if tag else ""))
     elif op == 0x0C7:
         g, pos = packed_guid(p, 0); counter = struct.unpack_from("<I", p, pos)[0]
         x, y, z = struct.unpack_from("<3f", p, pos + 12)

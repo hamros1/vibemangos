@@ -269,6 +269,32 @@ private:
             playerDied(false);
     }
 
+    /**
+     * Damage to this player from a creature's spell or its aura (`DealDamage`): it stands up,
+     * its damage-breakable auras end, it is in combat, and it may die of it.
+     */
+    package void hitByCreatureSpell(ulong caster, uint damage)
+    {
+        if (player is null || damage == 0 || player.values.get!UNIT_FIELD_HEALTH == 0)
+            return;
+        if (player.values.getByte!UNIT_FIELD_BYTES_1(0) != 0)
+        {
+            player.values.setByte!UNIT_FIELD_BYTES_1(0, 0);
+            deliver(Opcode.SMSG_STANDSTATE_UPDATE, [ubyte(0)]);
+        }
+        interruptAuras(0x2 | 0x01000000);
+        enterCombatFor(combatLinger);
+        if (player.powerType == Power.rage)
+            player.modifyPower(Power.rage, rageReward(player.data.level, damage, false));
+        const health = player.values.get!UNIT_FIELD_HEALTH;
+        player.values.set!UNIT_FIELD_HEALTH(damage >= health ? 0 : health - damage);
+        flushPlayerChanges();
+        if (auto group = context.groups.of(player.guid))
+            group.updatePlayerOutOfRange(this, GroupUpdate.currentHealth);
+        if (damage >= health)
+            playerKilled();
+    }
+
     /// A melee swing at a player (`AttackerStateUpdate` against a player victim).
     void swingAtPlayer(typeof(this) other, AttackType type)
     {

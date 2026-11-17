@@ -416,11 +416,15 @@ enum ChatType : uint
     CHAT_MSG_SYSTEM = 0x0A,
     CHAT_MSG_MONSTER_SAY = 0x0B,
     CHAT_MSG_MONSTER_YELL = 0x0C,
+    CHAT_MSG_MONSTER_EMOTE = 0x0D,
     CHAT_MSG_CHANNEL = 0x0E,
     CHAT_MSG_AFK = 0x14,
     CHAT_MSG_DND = 0x15,
+    CHAT_MSG_MONSTER_WHISPER = 0x1A,
     CHAT_MSG_RAID_LEADER = 0x57,
     CHAT_MSG_RAID_WARNING = 0x58,
+    CHAT_MSG_RAID_BOSS_WHISPER = 0x59,
+    CHAT_MSG_RAID_BOSS_EMOTE = 0x5A,
 }
 
 /// `ChatTagFlags`: the badge shown next to a speaker's name.
