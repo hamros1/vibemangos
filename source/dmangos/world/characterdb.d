@@ -548,8 +548,8 @@ final class CharacterStatements
     InstanceRecords loadInstances()
     {
         InstanceRecords all;
-        foreach (row; characters.query!"SELECT id, map, resettime FROM instance"())
-            all.instances ~= InstanceRecord(row.get!uint(0), row.get!uint(1), row.get!long(2));
+        foreach (row; characters.query!"SELECT id, map, resettime, IFNULL(data, '') FROM instance"())
+            all.instances ~= InstanceRecord(row.get!uint(0), row.get!uint(1), row.get!long(2), row.get!string(3));
         foreach (row; characters.query!"SELECT guid, instance, permanent FROM character_instance"())
             all.binds ~= InstanceBindRecord(false, row.get!uint(0), row.get!uint(1), row.get!uint(2) != 0);
         foreach (row; characters.query!"SELECT leaderGuid, instance, permanent FROM group_instance"())
@@ -566,6 +566,12 @@ final class CharacterStatements
     {
         characters.execute!"REPLACE INTO instance (id, map, resettime, encountersMask, data) VALUES (?, ?, ?, 0, '')"(
             id, map, resetTime);
+    }
+
+    /// See `WorldDatabase.saveInstanceData`.
+    void saveInstanceData(uint id, string data)
+    {
+        characters.execute!"UPDATE instance SET data = ? WHERE id = ?"(data, id);
     }
 
     /// See `WorldDatabase.deleteInstance`.

@@ -34,6 +34,8 @@ mixin template CreatureCasting()
         TargetFlags, TargetResult;
     import dmangos.world.spells : SpellInfo;
     import dmangos.world.updatefields;
+    import dmangos.world.npcdata : BroadcastText;
+    import dmangos.script.api : EntityRef, KilledUnit, SpellHit;
 
     private
     {
@@ -70,9 +72,10 @@ mixin template CreatureCasting()
     /// `SpellHit`: a player's spell hit it (its script hears of it).
     void spellHitBy(ulong caster, uint spell, uint schoolMask, CombatWorld world)
     {
+        world_ = world;
+        raiseScript(SpellHit(EntityRef(caster), spell));
         if (script is null)
             return;
-        world_ = world;
         script.spellHit(this, caster, spell, schoolMask);
     }
 
@@ -422,6 +425,8 @@ mixin template CreatureCasting()
         other.spellHitBy(me.guid, damage);
         if (!other.fighter.alive && script !is null)
             script.killed(this, guid);
+        if (!other.fighter.alive)
+            raiseScript(KilledUnit(EntityRef(guid)));
     }
 
     /// `SPELL_EFFECT_APPLY_AURA`: a debuff on a player, or a buff on itself.
@@ -774,6 +779,12 @@ mixin template CreatureCasting()
         const text = lore is null ? null : lore.broadcastText(id);
         if (text is null)
             return;
+        speak(text, target);
+    }
+
+    /// `DoDisplayText`: `text` said, yelled or emoted as its type says (whispered to `target`).
+    void speak(const(BroadcastText)* text, ulong target)
+    {
         ChatType type;
         auto language = Language.LANG_UNIVERSAL;
         switch (text.chatType)

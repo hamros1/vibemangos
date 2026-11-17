@@ -14,7 +14,7 @@ import dmangos.cluster.ownership : IdCounters, IdKind, IdPool;
 import dmangos.cluster.protocol : PresenceEntry;
 import dmangos.world.whisper : WhisperFrom;
 import dmangos.cluster.regions : Region;
-import dmangos.world.creature : Creature, CreatureSpawn, Npc, NpcStandIn, TempSpawn, TempSpawnType;
+import dmangos.world.creature : Creature, CreatureSpawn, Npc, NpcStandIn, TempSpawn, TempSpawnType, VirtualItem;
 import dmangos.world.gameobject : GameObject, GameObjectSpawn;
 import dmangos.world.auctionhouse;
 import dmangos.world.database : MailRecord;
@@ -29,6 +29,10 @@ import dmangos.world.opcodes : ChatType, Language, Opcode;
 import dmangos.world.creatureai : CombatWorld, CreatureLore;
 import dmangos.world.npcdata : BroadcastText;
 import dmangos.world.spells : SpellInfo;
+import dmangos.script.api : EntityRef;
+import dmangos.script.registry : ScriptKind, ScriptRuntime;
+import dmangos.scripts : scriptModules;
+import dmangos.world.instancescripting : InstanceScript;
 import dmangos.world.characterdb : DeleteOptions, GuidCounters;
 import dmangos.world.clientdata : ClientData;
 import dmangos.world.config : WorldConfig;
@@ -173,6 +177,10 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     WorldDatabase database;
     WorldData data;
     ClientData client;
+
+    /// The gameplay scripts (docs/SCRIPTING.md), found in `dmangos.scripts` at compile time.
+    ScriptRuntime scripts;
+    private InstanceScript[uint] instanceScripts; // by instance id: the scripts of the copies loaded here
 
     /// Next free character, item and mail ids.
     GuidCounters next;
@@ -451,6 +459,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         respawnAt = database.loadCreatureRespawns();
         gameObjectRespawnAt = database.loadGameObjectRespawns();
         groups.load(database.loadGroups());
+        scripts = ScriptRuntime.of!scriptModules();
+        reportScripts();
         loadInstances();
         loadCommandOverrides();
         channelService = new ChannelService(this, client, ChannelSettings(config.allowTwoSideInteractionChannel));
@@ -585,6 +595,23 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             startScript(DbScriptType.creatureMovement, scriptId, created, creature.guid, creature.guid);
         };
         created.onGameObjectUsedUp = &gameObjectUsedUp;
+        created.onObjectGone = &objectGone;
+        if (instance)
+            if (const name = id in data.instanceScriptNames)
+            {
+                auto state = instance in instances;
+                auto script = InstanceScript.make(scripts, *name, instance, id, state is null ? null : state.data,
+                    (string saved) {
+                        if (auto st = instance in instances)
+                            st.data = saved;
+                        database.saveInstanceData(instance, saved);
+                    });
+                if (script !is null)
+                {
+                    script.map = created;
+                    instanceScripts[instance] = script;
+                }
+            }
         created.groupOf = (ulong player) {
             auto group = groups.of(player);
             return group is null ? 0 : group.id;
@@ -617,6 +644,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         MonoTime emptySince;   /// MonoTime.init while someone is in it
         bool[uint] dead;       /// creature spawns killed there (they do not come back while it lasts)
         bool[uint] usedUp;     /// game object spawns used up there
+        string data;           /// its dungeon script's state (`instance.data`)
     }
 
     private Map[uint] instanceMaps;            // instance id -> its map
@@ -750,6 +778,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             if (which(r.map))
             {
                 instances[r.id] = InstanceState(r.map, r.resetTime, unixTime);
+                instances[r.id].data = r.data;
                 raise(IdKind.instance, r.id + 1);
             }
         foreach (b; saved.binds)
@@ -808,7 +837,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     private void forgetInstance(uint id)
     {
         instances.remove(id);
-        instanceMaps.remove(id);
+        dropInstanceMap(id);
         foreach (ref binds; playerBinds)
             foreach (mapId, instance; binds.dup)
                 if (instance == id)
@@ -861,6 +890,18 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 go.instanceId = instance;
                 spawned ~= go;
             }
+        if (auto script = instance in instanceScripts)
+        {
+            import dmangos.script.api : CreatureLoaded, EntityRef, ObjectLoaded;
+
+            script.loading = spawned;
+            foreach (object; spawned)
+                if (cast(Creature) object)
+                    script.raise(CreatureLoaded(EntityRef(object.guid)));
+                else
+                    script.raise(ObjectLoaded(EntityRef(object.guid)));
+            script.loading = null;
+        }
         return spawned;
     }
 
@@ -891,7 +932,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             {
                 // A raid copy outlives its emptiness until its reset (only its map goes); a dungeon's resets.
                 if (state.resetAt && time < state.resetAt)
-                    instanceMaps.remove(id);
+                    dropInstanceMap(id);
                 else
                     gone ~= id;
             }
@@ -909,7 +950,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     void resetInstance(uint id)
     {
         instances.remove(id);
-        instanceMaps.remove(id);
+        dropInstanceMap(id);
         database.deleteInstance(id);
         foreach (ref binds; playerBinds)
             foreach (mapId, instance; binds.dup)
@@ -919,6 +960,62 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             foreach (mapId, instance; binds.dup)
                 if (instance == id)
                     binds.remove(mapId);
+    }
+
+    /// A copy's map goes from memory (unloaded, reset, shut down, another node's now): its scripts too.
+    private void dropInstanceMap(uint id)
+    {
+        if (auto m = instanceMaps.get(id, null))
+            m.forEachObject((MapObject o) { objectGone(o); });
+        instanceMaps.remove(id);
+        if (auto script = id in instanceScripts)
+        {
+            script.release();
+            instanceScripts.remove(id);
+        }
+    }
+
+    /// An object left its map for good (`Map.onObjectGone`): its script's state goes.
+    private void objectGone(MapObject object)
+    {
+        if (auto creature = cast(Creature) object)
+            creature.ai.releaseBehaviour();
+    }
+
+    /// The script of dungeon copy `id`; null if it has none here.
+    InstanceScript instanceScript(uint id)
+    {
+        return instanceScripts.get(id, null);
+    }
+
+    /// At start-up: which `ScriptName`s of the world database scripts serve, and which they do not.
+    private void reportScripts()
+    {
+        import dmangos.log : info, warning;
+
+        size_t served, unserved;
+        bool[string] used;
+        foreach (name; data.creatureScriptNames)
+        {
+            used["creature:" ~ name] = true;
+            if (scripts.serves(ScriptKind.creature, name))
+                ++served;
+            else
+                ++unserved;
+        }
+        foreach (name; data.instanceScriptNames)
+        {
+            used["instance:" ~ name] = true;
+            if (scripts.serves(ScriptKind.instance, name))
+                ++served;
+            else
+                ++unserved;
+        }
+        info!"scripts: %s script names served, %s in the world database not (yet): those run as before"(served, unserved);
+        foreach (k; [ScriptKind.creature, ScriptKind.instance])
+            foreach (name; scripts.names(k))
+                if ((k == ScriptKind.creature ? "creature:" : "instance:") ~ name !in used)
+                    warning!"scripts: no %s row names script %s"(k, name);
     }
 
     /// Instance `id`'s state, or null.
@@ -956,7 +1053,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         auto m = instanceMaps.get(id, null);
         if (m is null)
             return false;
-        instanceMaps.remove(id);
+        dropInstanceMap(id);
         return true;
     }
 
@@ -1157,8 +1254,12 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         auto creature = new Creature(*spawn, template_, display, level, parts, client);
         creature.generator = selectMovement(creature, data.waypoints);
         creature.ai.setLore(this);
-        if (auto events = data.eventAi.eventsOf(spawn.entry, spawn.guid))
-            creature.ai.setScript(events, data.eventAi);
+        // A script (`ScriptName`) runs it if one serves its name; else its EventAI, if it has one.
+        if (const name = spawn.entry in data.creatureScriptNames)
+            creature.ai.setBehaviour(scripts, *name);
+        if (!creature.ai.scripted)
+            if (auto events = data.eventAi.eventsOf(spawn.entry, spawn.guid))
+                creature.ai.setScript(events, data.eventAi);
         return creature;
     }
 
@@ -1283,13 +1384,14 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     }
 
     /// Takes a player out of the world.
-    void leaveWorld(OnlinePlayer who)
+    void leaveWorld(OnlinePlayer who, Map from = null)
     {
         import dmangos.world.worlddata : toLowerName;
 
         if (who.character.guid !in online)
             return;
-        auto current = mapOf(who);
+        // `from`: the map it was on, when its saved place is elsewhere already (a ghost saved at its graveyard).
+        auto current = from !is null ? from : mapOf(who);
         if (current.find(who.character.guid) !is null)
             current.remove(who);
         online.remove(who.character.guid);
@@ -1346,6 +1448,13 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     /// `Creature::SaveRespawnTime` (`SaveRespawnTimeImmediately`): a creature died; it comes back when it says.
     void creatureDied(Creature creature)
     {
+        if (creature.instanceId)
+            if (auto script = creature.instanceId in instanceScripts)
+            {
+                import dmangos.script.api : CreatureDied, EntityRef;
+
+                script.raise(CreatureDied(EntityRef(creature.guid), EntityRef(creature.lootRecipient)));
+            }
         if (creature.summon.type != TempSpawnType.none)
             return; // a summon never comes back
         if (creature.instanceId)
@@ -1676,6 +1785,36 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         const charges = trap.template_.data[4];
         if (charges > 0 && ++trap.trapUses >= charges)
             map.gameObjectUsedUp(trap);
+    }
+
+    /// See `CreatureLore.scriptText`.
+    const(BroadcastText)* scriptText(int entry)
+    {
+        return entry in data.scriptTexts;
+    }
+
+    /// ditto
+    uint scriptTextSound(int entry)
+    {
+        return data.scriptTextSounds.get(entry, 0);
+    }
+
+    /// See `CreatureLore.virtualItem`.
+    VirtualItem virtualItem(uint entry)
+    {
+        if (const item = entry in data.items)
+            return VirtualItem(item.displayId, cast(ubyte) item.itemClass, cast(ubyte) item.subClass,
+                cast(ubyte) item.details.material, item.inventoryType, cast(ubyte) item.details.sheath);
+        return VirtualItem.init;
+    }
+
+    /// See `CreatureLore.signalDungeon`.
+    void signalDungeon(uint instance, EntityRef from, uint id, int value)
+    {
+        import dmangos.script.api : Signal;
+
+        if (auto script = instance in instanceScripts)
+            script.raise(Signal(from, id, value));
     }
 
     /// See `CreatureLore.startRelay`.

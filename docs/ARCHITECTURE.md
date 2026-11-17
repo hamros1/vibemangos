@@ -26,6 +26,8 @@ source/dmangos/
   net/                                                     the TCP server loop; compile-time packet dispatch
   mpq/                                                     MPQ archives: tables, hashing, PKWare explode
   vmap/                                                    buildings and doodads: G3D's math, the BIH tree, models, map trees
+  script/                                                  the scripting framework (docs/SCRIPTING.md)
+  scripts/                                                 the gameplay scripts written with it
   auth/                                                    the login server
   world/                                                   the world server
   extractor/                                               the client data extractor
@@ -333,6 +335,21 @@ CMaNGOS's split, without its class hierarchy of units:
 Without movement maps, `PathFinder` comes down to a straight line; CMaNGOS then leaves a wander's
 end at the spawn point's height unless `PathFinder.NormalizeZ` is on, which would leave creatures
 walking through hills, so here it is always put on the ground (`allowedPositionZ`).
+
+## Scripts
+
+docs/SCRIPTING.md is the design. In the code: `dmangos.script` does not import the world; it
+declares `CreatureHost` and `InstanceHost`, which `CreatureAI` (through the `CreatureScripting`
+mixin) and `InstanceScript` implement. `WorldContext` builds the `ScriptRuntime` from
+`dmangos.scripts.scriptModules` at start-up, gives each creature made the script its `ScriptName`
+names (instead of its EventAI), and makes an `InstanceScript` with each dungeon copy whose map has
+one. `CreatureAI` raises the events at the moments EventAI hears of (combat, damage, kills, death,
+evading, home, spells hitting it) and ticks the schedules in its update; a creature with steps
+pending keeps ticking out of combat. A creature's script state is written at the end of
+`Creature.saveState` and read in `loadState`, so a region handover carries it. `Map.onObjectGone`
+frees a creature's script state when it leaves the map for good, and dropping a dungeon copy
+frees its scripts. `InstanceScript.raise` saves the dungeon script's state (hex, after
+`dmangos-script:`) in `instance.data` whenever an event changed it.
 
 ## Melee
 

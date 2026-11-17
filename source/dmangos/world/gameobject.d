@@ -213,6 +213,12 @@ final class GameObject : Replicable, Moving, PerViewer
         world.flushGameObject(this);
     }
 
+    /// A door a script opens or closes for good (`DoUseDoorOrButton` with no reset): no timer brings it back.
+    void setDoorOpen(bool open)
+    {
+        values.set!GAMEOBJECT_STATE(open ? goStateActive : goStateReady);
+    }
+
     /// `UseOpenableObject`: opened (or closed) for `restoreMs`, unless it is so already.
     void useOpenable(GameObjectWorld world, bool open, uint restoreMs)
     {

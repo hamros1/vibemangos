@@ -836,6 +836,8 @@ final class Map : CombatWorld, GameObjectWorld
             auto migrant = save(object);
             if (migrant.kind == MigrantKind.none)
                 continue; // not carried (a player's corpse): it stays here
+            if (onObjectGone !is null)
+                onObjectGone(object); // its state is in the migrant: what it held here goes
             migrant.home = home;
             migrants ~= migrant;
             homeCellOf.remove(guid);
@@ -1175,6 +1177,16 @@ final class Map : CombatWorld, GameObjectWorld
     {
         if (onWaypointScript !is null)
             onWaypointScript(creature, scriptId);
+    }
+
+    /// Told when an object leaves this map for good (gone, or handed to another node) after its state was saved.
+    void delegate(MapObject object) onObjectGone;
+
+    /// Every object here, replicas included.
+    void forEachObject(scope void delegate(MapObject object) each)
+    {
+        foreach (object; objects)
+            each(object);
     }
 
     /// Told when a creature's corpse goes (`RemoveCorpse`), to bring it back later; null: never comes back.
@@ -1521,6 +1533,9 @@ private:
             const cell = objectCellOf.get(guid, homeCellOf.get(guid, ulong.max));
             if (auto inCell = cell in objectCells)
                 (*inCell).remove(guid);
+            if (onObjectGone !is null)
+                if (auto object = guid in objects)
+                    onObjectGone(*object);
             objects.remove(guid);
             movers.remove(guid);
         stopTicking(guid);

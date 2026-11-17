@@ -141,7 +141,14 @@ The largest area. CMaNGOS references: `Spells/`, `Entities/Unit.cpp`, `Combat/`,
 **Done** (`quests.d`, `questhandlers.d`; README's "Quests"): givers, the log, kill and item
 objectives, rewards, saving, game objects and items as givers, sharing, exploration objectives,
 timed quests, `questgiver_greeting`, quest scripts (`dbscripts_on_quest_*`). Next: escort quests
-(they need ScriptDev2-like creature scripts), quest POIs.
+(with the D scripts' waypoint and gossip events), quest POIs.
+
+**Scripting** (docs/SCRIPTING.md): the framework in D is done for creatures and dungeons (typed
+events, schedules as data, state saved by reflection, migration, `instance.data`), with the
+Deadmines' doors and Mr. Smite. Next: game object, area trigger, gossip and quest events; the rest
+of the Deadmines (the cannon, Sneed's shredder, Cookie, Captain Greenskin, VanCleef); an escort
+quest; signals between scripts on different nodes; spell scripts; then dungeons one by one
+(398 creature names and 24 dungeon names in the world database).
 Reputation is done (`reputation.d`, `reputationhandlers.d`; README's "Reputation"): kills, quests,
 spillover, war and peace, discounts, requirements. Not yet: `SMSG_SET_FORCED_REACTIONS` (spells force
 none yet), the PvP rank's discount, reputation from spells.

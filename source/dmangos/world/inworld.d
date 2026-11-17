@@ -68,6 +68,8 @@ private:
      */
     void leaveWorld(string why, bool loggingOut)
     {
+        // The map it is on: `deathOnLogout` may put its saved place at a graveyard of another map.
+        auto leaving = map;
         releaseLootOnLeave();
         spellsOnLeave();
         cancelTrade(false, TradeStatus.targetLogout);
@@ -92,7 +94,7 @@ private:
         leaveGroupsOnLogout(loggingOut);
         context.channelCommand(this, ChannelOp.leaveAll, null);
         auto group = context.groups.of(player.guid);
-        context.leaveWorld(this);
+        context.leaveWorld(this, leaving);
         // The others see the player offline; a party it left tells them itself (in a cluster, the
         // group here is a mirror that has not heard yet).
         if (group !is null && (group.isRaid || !loggingOut))

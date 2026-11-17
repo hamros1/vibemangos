@@ -533,11 +533,24 @@ final class Creature : Moving, Replicable, Npc, PerViewer
         this.client = client;
         setFields(display, level, parts, client);
         factionTemplate = client.factionTemplates.lookup(template_.faction);
+        templateEquipment = parts.equipment;
         ai = new CreatureAI(this);
         // Unit::GetCollisionHeight: the model's, scaled; DEFAULT_COLLISION_HEIGHT if it has none.
         const height = parts.collisionHeight * values.get!OBJECT_FIELD_SCALE_X;
         collisionHeight = height == 0 ? defaultCollisionHeight : height;
         values.clearChanges();
+    }
+
+    /// What its template gives it to hold (main hand, off hand, ranged).
+    VirtualItem[3] templateEquipment;
+
+    /// `SetVirtualItem`: what it holds in `slot` (0 main hand, 1 off hand, 2 ranged); no display: nothing.
+    void setVirtualItem(size_t slot, const VirtualItem item)
+    {
+        values.set!UNIT_VIRTUAL_ITEM_SLOT_DISPLAY(slot, item.display);
+        values.set!UNIT_VIRTUAL_ITEM_INFO(2 * slot, item.display ? item.itemClass | uint(item.subClass) << 8
+            | uint(item.material) << 16 | uint(item.inventoryType) << 24 : 0);
+        values.set!UNIT_VIRTUAL_ITEM_INFO(2 * slot + 1, item.display ? uint(item.sheath) : 0);
     }
 
     /// The guid: high part, entry and spawn guid.
@@ -891,6 +904,7 @@ final class Creature : Moving, Replicable, Npc, PerViewer
             w.put(stock.count);
             w.put(stock.lastIncrement);
         }
+        (cast() ai).saveBehaviour(w); // its script's state (docs/SCRIPTING.md)
     }
 
     /**
@@ -923,6 +937,7 @@ final class Creature : Moving, Replicable, Npc, PerViewer
             const item = r.read!uint;
             vendorStock.items[item] = VendorStocks.Stock(r.read!uint, r.read!long);
         }
+        ai.loadBehaviour(r);
         // A corpse handed over: its time is not carried; it goes at the next tick, and respawns from then.
         corpseTimer = 0;
     }
@@ -983,14 +998,8 @@ private:
 
         // LoadEquipment: what it holds.
         foreach (slot, ref item; parts.equipment)
-        {
-            if (item.display == 0)
-                continue;
-            values.set!UNIT_VIRTUAL_ITEM_SLOT_DISPLAY(slot, item.display);
-            values.set!UNIT_VIRTUAL_ITEM_INFO(2 * slot, item.itemClass | uint(item.subClass) << 8
-                | uint(item.material) << 16 | uint(item.inventoryType) << 24);
-            values.set!UNIT_VIRTUAL_ITEM_INFO(2 * slot + 1, uint(item.sheath));
-        }
+            if (item.display)
+                setVirtualItem(slot, item);
 
         // The addon: mount, stand and sheath state, looping emote.
         if (const addon = parts.addon)

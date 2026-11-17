@@ -116,6 +116,7 @@ struct InstanceRecord
     uint id;
     uint map;
     long resetTime; /// Unix time; 0 for a dungeon that resets when it has been empty a while
+    string data;    /// its dungeon script's state (docs/SCRIPTING.md); empty if none
 }
 
 /// A `character_instance` or `group_instance` row.
@@ -321,6 +322,9 @@ interface WorldDatabase
     /// An instance reset: its row, binds and respawn rows go.
     void deleteInstance(uint id);
 
+    /// `instance.data`: its dungeon script's state.
+    void saveInstanceData(uint id, string data);
+
     /// `character_instance` (`group` false, `owner` a character) or `group_instance` (`owner` a leader).
     void saveInstanceBind(bool group, uint owner, uint instance, bool permanent);
 
@@ -522,6 +526,7 @@ final class MySqlWorldDatabase : WorldDatabase
     InstanceRecords loadInstances() { return statements.loadInstances(); }
     void saveInstance(uint id, uint map, long resetTime) { statements.saveInstance(id, map, resetTime); }
     void deleteInstance(uint id) { statements.deleteInstance(id); }
+    void saveInstanceData(uint id, string data) { statements.saveInstanceData(id, data); }
     void saveInstanceBind(bool group, uint owner, uint instance, bool permanent)
     {
         statements.saveInstanceBind(group, owner, instance, permanent);
@@ -1070,6 +1075,12 @@ final class MemoryWorldDatabase : WorldDatabase
     InstanceRecords instanceRows;    /// what the instance methods keep
     InstanceRecords loadInstances() { return instanceRows; }
     void saveInstance(uint id, uint map, long resetTime) { instanceRows.instances ~= InstanceRecord(id, map, resetTime); }
+    void saveInstanceData(uint id, string data)
+    {
+        foreach (ref r; instanceRows.instances)
+            if (r.id == id)
+                r.data = data;
+    }
     void deleteInstance(uint id)
     {
         import std.algorithm.iteration : filter;

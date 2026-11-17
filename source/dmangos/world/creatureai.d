@@ -15,7 +15,7 @@ import std.math : atan2, cos, sin, sqrt;
 
 import dmangos.world.combat;
 alias attackStartPacket = dmangos.world.combat.attackStart;
-import dmangos.world.creature : Creature;
+import dmangos.world.creature : Creature, VirtualItem;
 import dmangos.world.defines : UnitFlags;
 import dmangos.world.motion : IdleMovement, launch, MotionWorld, MovementGenerator, stopMoving;
 import dmangos.world.movement : MovementFlags, Position;
@@ -27,6 +27,7 @@ import dmangos.world.npcdata : BroadcastText;
 import dmangos.world.opcodes : ChatType;
 import dmangos.world.spells : SpellInfo;
 import dmangos.world.eventai : Scripted;
+import dmangos.script.api : CreatureHost, Damaged, Died, EnteredCombat, EntityRef, Evaded, KilledUnit, Reset;
 import dmangos.world.updatefields;
 import dmangos.vmap.math : Vector3;
 
@@ -114,6 +115,17 @@ interface CreatureLore
 
     /// `ScriptsStart(SCRIPT_TYPE_RELAY)` on `world` (negative `id`: one of the relay group -`id`).
     void startRelay(int id, CombatWorld world, ulong source, ulong target);
+
+    /// A `script_texts` row; null if there is none. Its sound (0: none).
+    const(BroadcastText)* scriptText(int entry);
+    /// ditto
+    uint scriptTextSound(int entry);
+
+    /// What a creature holding item `entry` shows (nothing for 0 or an unknown item).
+    VirtualItem virtualItem(uint entry);
+
+    /// A `Signal` for the script of dungeon copy `instance` (nothing if it has none).
+    void signalDungeon(uint instance, EntityRef from, uint id, int value);
 }
 
 /// What a creature's AI needs of its map.
@@ -176,11 +188,13 @@ enum int combatManagerTick = 1200;
 enum uint aiReactionHostile = 2;
 
 /// See the module documentation.
-final class CreatureAI : Scripted
+final class CreatureAI : Scripted, CreatureHost
 {
     import dmangos.world.creaturecasting : CreatureCasting;
+    import dmangos.world.creaturescripting : CreatureScripting;
 
     mixin CreatureCasting;
+    mixin CreatureScripting;
 
     private
     {
@@ -231,7 +245,7 @@ final class CreatureAI : Scripted
     @property bool active() const
     {
         return inCombat_ || evadingHome || despawnTimer > 0 || me.values.get!UNIT_FIELD_HEALTH < me.values.get!UNIT_FIELD_MAXHEALTH
-            || me.values.get!UNIT_FIELD_POWER1 < me.values.get!UNIT_FIELD_MAXPOWER1 || casting_ !is null || fleeTimer > 0 || (script !is null && script.wantsTicks);
+            || me.values.get!UNIT_FIELD_POWER1 < me.values.get!UNIT_FIELD_MAXPOWER1 || casting_ !is null || fleeTimer > 0 || (script !is null && script.wantsTicks) || behaviourBusy;
     }
 
     /// Whether it may attack anyone on sight at all: aggressive, alive, not neutral to all
@@ -317,6 +331,14 @@ final class CreatureAI : Scripted
         addThreat(attacker, damage);
         if (damage)
             triggerCombatTimer();
+        if (behaviour)
+        {
+            // Told before the damage is taken: its health from now to after it.
+            const maximum = me.values.get!UNIT_FIELD_MAXHEALTH, health = me.values.get!UNIT_FIELD_HEALTH;
+            const after = health > damage ? health - damage : 0;
+            const percent = (uint h) => cast(ubyte)(maximum ? (ulong(h) * 100 + maximum - 1) / maximum : 0);
+            raiseScript(Damaged(EntityRef(attacker.combatGuid), damage, percent(health), percent(after)));
+        }
     }
 
     /// It died: it fights nobody any more.
@@ -329,6 +351,8 @@ final class CreatureAI : Scripted
         fleeTimer = 0;
         if (script !is null && world !is null)
             script.died(this, victim);
+        if (world !is null)
+            raiseScript(Died(EntityRef(victim)));
         foreach (guid, _; threat)
             notifyRemoved(guid, world);
         threat = null;
@@ -363,6 +387,12 @@ final class CreatureAI : Scripted
         if (script !is null && !evadingHome)
         {
             script.update(this, diff);
+            if (!me.alive)
+                return;
+        }
+        if (behaviour && !evadingHome)
+        {
+            tickBehaviour(diff);
             if (!me.alive)
                 return;
         }
@@ -489,6 +519,7 @@ private:
             world_ = world;
             if (script !is null)
                 script.combatStarted(this, guid);
+            raiseScript(EnteredCombat(EntityRef(guid)));
         }
         world.flushCreature(me);
         world.wake(me.guid);
@@ -762,6 +793,8 @@ private:
         target.meleeHitBy(me.guid, d);
         if (!target.fighter.alive && script !is null)
             script.killed(this, target.combatGuid); // `KilledUnit`
+        if (!target.fighter.alive)
+            raiseScript(KilledUnit(EntityRef(target.combatGuid)));
     }
 
     /**
@@ -793,6 +826,7 @@ private:
         me.values.set!UNIT_FIELD_FLAGS(me.values.get!UNIT_FIELD_FLAGS & ~UnitFlags.inCombat);
         if (script !is null)
             script.evaded(this);
+        raiseScript(Evaded());
         world.flushCreature(me);
         evadingHome = true;
         regenTimer = 0;
@@ -811,6 +845,7 @@ private:
         world_ = world;
         if (script !is null)
             script.reachedHome(this);
+        raiseScript(Reset());
         if (outOfCombat !is null)
         {
             me.generator = outOfCombat;

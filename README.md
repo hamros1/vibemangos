@@ -286,6 +286,17 @@ What works now:
     of combat. Starting a fight, a creature calls for help (CMaNGOS's `CallAssistance`): allies
     within 5 yards (or its `CallForHelp`) that would attack the enemy on sight join in a moment and a
     half later; and a fighting creature that passes within 5 yards of an idle ally pulls it in.
+  * **Scripts in D** (docs/SCRIPTING.md): gameplay the database cannot describe is written as D
+    structs in `source/dmangos/scripts/`, bound by the world database's `ScriptName` columns
+    (`creature_template`, `instance_template`) and found at compile time. A script handles typed
+    events (`EnteredCombat`, `Damaged`, `Died`, `CreatureDied`, ...) and acts through a context that
+    holds no pointers (cast, say a `script_texts` row, equip, stand, summon, signal another script,
+    open a door); its timers are data (`Schedule`), so its whole state is saved: with the creature
+    when it moves to another node, and in `instance.data` for a dungeon's script. Dispatch allocates
+    nothing. Written so far: the Deadmines (its doors open as their guardians fall, and stay open
+    after a restart) and Mr. Smite (a slam on a timer; at two thirds and one third of his health a
+    stomp, a line, kneeling to take up two axes, then a hammer). A creature whose `ScriptName` no
+    script serves yet runs its EventAI as before; the server logs how many names are served.
   * **Database scripts** (CMaNGOS's `dbscripts_on_*`): a quest's start and complete scripts, a
     gossip option's, a game object's when used (by its template and by its spawn), a waypoint's
     when a walking creature gets there (Northshire's peasants chop wood), a creature's when it is
@@ -590,6 +601,10 @@ source/dmangos/             code shared by every server
   crypto/                     SRP6, SHA-1 helpers, BigInt <-> little-endian, OS randomness
   mysql/                      run-time loaded MySQL C API binding; connection with compile-time checked queries
   net/                        select() event loop (server.d); compile-time packet dispatch (dispatch.d)
+source/dmangos/script/      the scripting framework (docs/SCRIPTING.md): api.d (handles, events, contexts,
+                              host interfaces), registry.d (UDAs, compile-time discovery, generated dispatch,
+                              pools), schedule.d (timers as data), state.d (state saved by reflection)
+source/dmangos/scripts/     the gameplay scripts, one module per dungeon or area (deadmines.d)
 source/dmangos/auth/        the login server (realmd)
   main.d                      entry point: run the server, administer accounts
   protocol.d                  opcodes, result codes, every packet as a struct
@@ -640,6 +655,9 @@ source/dmangos/world/       the world server (mangosd)
   creatureai.d                creatures fighting: threat, chasing, evading, calling for help (CreatureAI)
   creaturecasting.d           creatures casting, fleeing, and what their scripts do (mixed into CreatureAI)
   eventai.d                   CMaNGOS's EventAI: creature_ai_scripts events, phases and actions
+  creaturescripting.d         a creature's D script: its events, schedules, state, and the host it acts through
+  instancescripting.d         a dungeon copy's D script, saved in instance.data
+  scripttests.d               the scripts in the world (tests only)
   dbscripts.d                 dbscripts_on_*: script steps run by the world at their delays
   combat.d, relations.d       melee formulas (the attack table, damage) and who may attack or help whom
   combathandlers.d            handlers: attack swings, melee against creatures and players, kills

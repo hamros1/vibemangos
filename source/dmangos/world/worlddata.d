@@ -22,7 +22,7 @@ import dmangos.world.gameobject : GameObjectSpawn, GameObjectTemplate, GameObjec
 import dmangos.world.grid : cellKeyAt;
 import dmangos.world.motion : MotionType, WaypointNode, WaypointStore;
 import dmangos.world.loot : lootColumns, lootRow, LootStore, LootStores;
-import dmangos.world.npcdata : NpcData;
+import dmangos.world.npcdata : BroadcastText, NpcData;
 import dmangos.world.quests : QuestData, QuestGreeting, questQuery, QuestRow;
 import dmangos.world.spells : SpellData;
 
@@ -337,6 +337,10 @@ final class WorldData
     uint[uint] instanceResetDays;                   /// `instance_template.reset_delay` (a raid's lockout), by map
     WaypointStore waypoints;                        /// `creature_movement` and `creature_movement_template`
     EventAiData eventAi;                            /// `creature_ai_scripts`, by creature entry
+    string[uint] creatureScriptNames;               /// `creature_template.ScriptName`, by entry (docs/SCRIPTING.md)
+    string[uint] instanceScriptNames;               /// `instance_template.ScriptName`, by map
+    BroadcastText[int] scriptTexts;                 /// `script_texts`, by (negative) entry
+    uint[int] scriptTextSounds;                     /// their sounds
     DbScriptData dbScripts;
     import dmangos.world.weather : ZoneChances;
     ZoneChances[uint] weatherChances;               /// `game_weather`, by zone                         /// `dbscripts_on_*`
@@ -593,6 +597,21 @@ final class WorldData
         foreach (row; world.query!"SELECT id, ghost_loc, link_kind, faction FROM game_graveyard_zone"())
             graveyards[graveyardLinkKey(row.get!uint(1), row.get!uint(2))] ~= GraveyardLink(row.get!uint(0),
                 row.get!uint(3));
+        foreach (row; world.query!"SELECT Entry, ScriptName FROM creature_template WHERE ScriptName <> ''"())
+            creatureScriptNames[row.get!uint(0)] = row.get!string(1);
+        foreach (row; world.query!"SELECT map, ScriptName FROM instance_template WHERE ScriptName <> ''"())
+            instanceScriptNames[row.get!uint(0)] = row.get!string(1);
+        foreach (row; world.query!"SELECT entry, content_default, type, language, emote, sound FROM script_texts"())
+        {
+            BroadcastText text;
+            text.maleText = row.get!string(1);
+            text.chatType = row.get!uint(2);
+            text.language = row.get!uint(3);
+            text.emotes[0].emote = row.get!uint(4);
+            scriptTexts[row.get!int(0)] = text;
+            if (row.get!uint(5))
+                scriptTextSounds[row.get!int(0)] = row.get!uint(5);
+        }
         foreach (row; world.query!"SELECT map, ghostEntranceMap, ghostEntranceX, ghostEntranceY, maxPlayers, reset_delay FROM instance_template"())
         {
             if (row.get!uint(5))

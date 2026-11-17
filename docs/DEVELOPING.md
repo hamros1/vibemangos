@@ -162,6 +162,53 @@ Keep ArcEmu's checks and messages; use
 Where CMaNGOS's schema forces a difference, say so in the module comment. Then run
 `python3 tools/commands_doc.py` to update `docs/COMMANDS.md`.
 
+### Write a script
+
+Scripts are D structs in `source/dmangos/scripts/` (one module per dungeon or area; a new module is
+added to `scriptModules` in `scripts/package.d`). docs/SCRIPTING.md has the design.
+
+```d
+import dmangos.script;
+
+@creature("boss_example")                        // creature_template.ScriptName
+struct Example
+{
+    enum Step : ubyte { bolt }                   // its own steps
+    Schedule!Step steps;                         // timers are data: saved with the rest
+    ubyte phase;
+
+    void on(ref CreatureContext me, const ref EnteredCombat e)
+    {
+        steps.every(Step.bolt, 8.seconds);
+    }
+
+    void on(ref CreatureContext me, const ref Damaged e)
+    {
+        if (phase == 0 && e.crossed(50))
+        {
+            phase = 1;
+            me.say(-1000123);                    // a script_texts row
+        }
+    }
+
+    void on(ref CreatureContext me, Step step)   // a step is due
+    {
+        me.castSpell(12345);                     // at its victim, by the usual rules
+    }
+
+    void on(ref CreatureContext me, const ref Reset e)
+    {
+        this = Example.init;                     // home after a fight it gave up
+    }
+}
+```
+
+Rules the build enforces: every `on` takes the context of its kind and one of its events (or a
+step of one of its schedules), every schedule's steps have an `on`, no name is served twice, and the
+state holds only values (numbers, enums, strings, arrays, structs, `EntityRef`s; mark caches
+`@transient`). Keep entities as `EntityRef`, never as anything else: the context resolves them when
+used. Test a script with the world in memory (`scripttests.d` has a boss and a dungeon).
+
 ### Teleport a player
 
 Call `teleportTo(map, Position(x, y, z, o))` (`world/teleport.d`). It checks the destination and,
