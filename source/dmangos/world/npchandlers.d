@@ -265,6 +265,13 @@ private:
         if (index >= gossipItems.length)
             return;
         const item = gossipItems[index];
+        // `OnGossipSelect`: the option's script, the NPC the source and the player the target.
+        if (item.actionScript)
+        {
+            import dmangos.world.dbscripts : DbScriptType;
+
+            context.startScript(DbScriptType.gossip, item.actionScript, map, creature.guid, player.guid);
+        }
         switch (item.optionId)
         {
         case GossipOption.gossip:

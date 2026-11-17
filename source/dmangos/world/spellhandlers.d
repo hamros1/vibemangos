@@ -123,6 +123,15 @@ private:
      * `Spell::SpellStart` and `Prepare`: checked, shown, and either cast now (instant), kept for the
      * next swing, or counted down.
      */
+    /// A spell a script casts for the player (`TRIGGERED_OLD_TRIGGERED`): at `target` (a unit), or itself.
+    package void castTriggeredAt(uint spellId, ulong target)
+    {
+        const spell = context.data.spells.spell(spellId);
+        if (spell is null || player is null)
+            return;
+        castSpell(spell, SpellTargets(TargetFlags.unit, target ? target : player.guid), true, 0);
+    }
+
     package SpellCastResult castSpell(const(SpellInfo)* spell, SpellTargets targets, bool triggered, uint itemEntry)
     {
         if (targets.mask == TargetFlags.self)

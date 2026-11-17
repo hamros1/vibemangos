@@ -89,6 +89,12 @@ mixin template GameObjectHandlers()
     /// `GameObject::Use` by this player.
     package void useGameObject(GameObject go)
     {
+        import dmangos.world.dbscripts : DbScriptType;
+
+        // Its scripts: the template's, and (doors, buttons, goobers) the spawn's; the user the source.
+        context.startScript(DbScriptType.goTemplateUse, go.spawn.entry, map, player.guid, go.guid);
+        if (go.type == GameObjectType.door || go.type == GameObjectType.button || go.type == GameObjectType.goober)
+            context.startScript(DbScriptType.goUse, go.spawn.guid, map, player.guid, go.guid);
         uint spellId;
         switch (go.type)
         {

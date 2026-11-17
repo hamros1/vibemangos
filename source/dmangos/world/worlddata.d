@@ -14,6 +14,7 @@ import dmangos.log;
 import dmangos.mysql : MySqlConnection;
 import dmangos.world.clientdata : ClientData, maskOf, maxSkillStep, playableClassMask, playableRaceMask;
 import dmangos.world.eventai : EventAiData;
+import dmangos.world.dbscripts : DbScriptData;
 import dmangos.world.reputation : Spillover;
 import dmangos.world.creature : CreatureAddon, CreatureClassStats, CreatureSpawn, CreatureTemplate, classStatsKey,
     creatureTemplateQuery;
@@ -331,6 +332,7 @@ final class WorldData
     GhostEntrance[uint] ghostEntrances;             /// `instance_template`'s ghost entrances, by instance map
     WaypointStore waypoints;                        /// `creature_movement` and `creature_movement_template`
     EventAiData eventAi;                            /// `creature_ai_scripts`, by creature entry
+    DbScriptData dbScripts;                         /// `dbscripts_on_*`
     OnKillReputation[uint] onKillReputation;        /// `creature_onkill_reputation`, by creature entry
     Spillover[uint] spillovers;                     /// `reputation_spillover_template`, by faction
     float[3][uint] reputationRates;                 /// `reputation_reward_rate`: quest, kill, spell rates by faction
@@ -342,6 +344,7 @@ final class WorldData
         waypoints = new WaypointStore;
         quests = new QuestData;
         eventAi = new EventAiData;
+        dbScripts = new DbScriptData;
         loot = LootStores(new LootStore("creature_loot_template"), new LootStore("reference_loot_template"),
             new LootStore("gameobject_loot_template"), new LootStore("item_loot_template"));
     }
@@ -482,6 +485,7 @@ final class WorldData
         data.loadWaypoints(world);
         data.loadPlayerInfo(world, client);
         data.eventAi = EventAiData.load(world);
+        data.dbScripts = DbScriptData.load(world);
         info!"loaded %s item templates, %s creature templates, %s race/class combinations, %s reserved names"(
             data.items.length, data.creatureFamilies.length, data.playerInfo.length, data.reservedNames.length);
         if (data.playerInfo.length == 0)

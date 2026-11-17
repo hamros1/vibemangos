@@ -627,6 +627,13 @@ private:
         if (questSlot(0) >= maxQuestLogSize)
             return deliver(Opcode.SMSG_QUESTLOG_FULL, null);
         addQuest(*quest);
+        // `AddQuest`: the quest's start script, the giver the source and the player the target.
+        if (quest.startScript)
+        {
+            import dmangos.world.dbscripts : DbScriptType;
+
+            context.startScript(DbScriptType.questStart, quest.startScript, map, giver.guid, player.guid);
+        }
         if (auto divider = cast(WorldSession) context.onlinePlayer(questDivider))
             divider.pushToPartyResponse(player.guid, QuestShare.accepted);
         questDivider = 0;
@@ -651,7 +658,7 @@ private:
     }
 
     /// `Player::AddQuest`: in the log, its objectives at zero (items: what is carried), its starting item given.
-    void addQuest(const ref Quest quest)
+    package void addQuest(const ref Quest quest)
     {
         const slot = questSlot(0);
         auto q = &statusOf(quest.id);
@@ -705,6 +712,30 @@ private:
         }
         if (canCompleteQuest(id))
             completeQuest(id);
+        flushPlayerChanges();
+    }
+
+    /// A script's kill credit (`KilledMonsterCredit`), sent.
+    package void scriptKillCredit(uint entry, ulong guid)
+    {
+        killedMonster(entry, guid);
+        flushPlayerChanges();
+    }
+
+    /// `Player::FailQuest`: a quest under way failed (a script found the player too far, or its creature dead).
+    package void failQuest(uint id)
+    {
+        auto q = id in player.questStatus;
+        if (q is null || q.status != QuestState.incomplete)
+            return;
+        q.status = QuestState.failed;
+        q.changed = true;
+        const slot = questSlot(id);
+        if (slot < maxQuestLogSize)
+            setQuestSlotState(slot, 2, true); // QUEST_STATE_FAIL
+        ByteWriter w;
+        w.put(id);
+        deliver(Opcode.SMSG_QUESTUPDATE_FAILED, w.data);
         flushPlayerChanges();
     }
 
@@ -764,6 +795,13 @@ private:
         if (!canRewardQuest(*quest) || !roomForRewards(*quest, reward))
             return sendOfferReward(*quest, guid, true);
         rewardQuest(*quest, reward);
+        // `RewardQuest`: its complete script, the ender the source and the player the target.
+        if (quest.completeScript)
+        {
+            import dmangos.world.dbscripts : DbScriptType;
+
+            context.startScript(DbScriptType.questEnd, quest.completeScript, map, guid, player.guid);
+        }
         if (quest.nextQuestInChain)
             if (const next = context.data.quests.quest(quest.nextQuestInChain))
                 if (involves(giver, next.id, true, false) && canTakeQuest(*next))

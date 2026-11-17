@@ -258,6 +258,16 @@ What works now:
     of combat. Starting a fight, a creature calls for help (CMaNGOS's `CallAssistance`): allies
     within 5 yards (or its `CallForHelp`) that would attack the enemy on sight join in a moment and a
     half later; and a fighting creature that passes within 5 yards of an idle ally pulls it in.
+  * **Database scripts** (CMaNGOS's `dbscripts_on_*`): a quest's start and complete scripts, a
+    gossip option's, a game object's when used (by its template and by its spawn), and relay scripts
+    started from them, run their steps on the map at their delays, with the quest giver, NPC or
+    player as source and target, or a buddy found near (by entry or spawn), turned about by the
+    step's flags, behind its condition: talking (a `broadcast_text`, one of several, or one of a
+    group), emotes, a quest's place explored (or failed when too far), kill credit, spawning a game
+    object for a while, taking an aura off, casting a spell, despawning, a faction, stand states,
+    NPC flags, other flags, facing someone, and stopping the script when a creature is (or is not)
+    near. Not yet: moving, summoning, doors, waypoint scripts (`dbscripts_on_creature_movement`),
+    death, event and spell scripts.
   * **Creature scripts** (CMaNGOS's EventAI, `creature_ai_scripts`, for each creature entry or
     spawn): their events (timers in and out of combat, health, mana and the victim's health between
     two percentages, the victim within a range or casting, aggro, a kill, death, evading, spawning,
@@ -339,7 +349,7 @@ What works now:
     into them; items that begin a quest (`startquest`) offer it from the bags and go when it is
     taken; a sharable quest is offered to the group's members within 10 yards who may take it, and
     the one who shared it hears who took it. Progress is saved in `character_queststatus`. Not yet:
-    timed and escort quests, quest scripts (`dbscripts_on_quest_*`).
+    timed and escort quests.
   * **Flight masters** (CMaNGOS's `TaxiHandler.cpp`, `Taxi.cpp`, `ActivateTaxiPathTo`): a flight
     master's node (`TaxiNodes.dbc`) is learned at the first talk and saved in `taximask`; then the
     master shows the known nodes. A flight to one, directly or over several legs (`TaxiPath.dbc`,

@@ -343,6 +343,12 @@ Three modules, split by what they depend on:
   calls `moveInLineOfSight` for the creatures a player sees when it moves, and for the players who
   see a creature when it moves. A creature with something to do (a fight, the way home, health or
   mana to regain, a cast, a script that runs out of combat) does not rest, so the map keeps ticking it.
+* `dbscripts.d` is CMaNGOS's `ScriptMgr` and `Map::ScriptsProcess`: the `dbscripts_on_*` steps
+  (`DbScriptData`, by table and script id, in delay and priority order) and `DbScriptRunner`, a mixin
+  of `WorldContext` that keeps the scripts under way (`startScript`; quest, gossip and game object
+  handlers start them), runs each step when its delay is reached in the world's tick, resolves its
+  sources, targets and buddies on the map, and carries out its command through the creature's AI
+  (texts, emotes, casts), the player's session (quest credit, casts) or the map (flags, game objects).
 * `eventai.d` is CMaNGOS's `CreatureEventAI` without the creature: the `creature_ai_scripts` rows
   (`EventAiData`, by entry and by spawn), and `EventAI`, one per scripted creature, with each event's
   timer, its phase, and the checks, chances and repeats. It acts through the `Scripted` interface,

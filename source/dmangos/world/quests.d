@@ -115,6 +115,8 @@ struct Quest
     int requiredMaxRepValue;                /// ditto
     uint[4] offerRewardEmote;
     uint[4] offerRewardEmoteDelay;
+    uint startScript;         /// `dbscripts_on_quest_start` when it is taken
+    uint completeScript;      /// `dbscripts_on_quest_end` when it is rewarded
 
     // What `LoadQuests` works out.
     int[] prevQuests;         /// quests that must be done first (negative: be on), from `PrevQuestId` and others' `NextQuestId`
@@ -297,7 +299,7 @@ enum questQuery = "SELECT entry, Method, ZoneOrSort, MinLevel, MaxLevel, QuestLe
     ~ "OfferRewardEmote3, OfferRewardEmote4, OfferRewardEmoteDelay1, OfferRewardEmoteDelay2, OfferRewardEmoteDelay3, "
     ~ "OfferRewardEmoteDelay4, RewRepFaction1, RewRepFaction2, RewRepFaction3, RewRepFaction4, RewRepFaction5, "
     ~ "RewRepValue1, RewRepValue2, RewRepValue3, RewRepValue4, RewRepValue5, RequiredMinRepFaction, "
-    ~ "RequiredMinRepValue, RequiredMaxRepFaction, RequiredMaxRepValue FROM quest_template";
+    ~ "RequiredMinRepValue, RequiredMaxRepFaction, RequiredMaxRepValue, StartScript, CompleteScript FROM quest_template";
 
 /// One row of `questQuery`.
 struct QuestRow
@@ -329,6 +331,7 @@ struct QuestRow
     int requiredMinRepValue;
     uint requiredMaxRepFaction;
     int requiredMaxRepValue;
+    uint startScript, completeScript;
 
     Quest toQuest() const
     {
@@ -340,7 +343,8 @@ struct QuestRow
                 "details", "objectives", "offerRewardText", "requestItemsText", "endText", "rewOrReqMoney",
                 "rewMoneyMaxLevel", "rewSpell", "rewSpellCast", "pointMapId", "pointX", "pointY", "pointOpt",
                 "incompleteEmote", "incompleteEmoteDelay", "completeEmote", "completeEmoteDelay",
-                "requiredMinRepFaction", "requiredMinRepValue", "requiredMaxRepFaction", "requiredMaxRepValue"])
+                "requiredMinRepFaction", "requiredMinRepValue", "requiredMaxRepFaction", "requiredMaxRepValue",
+                "startScript", "completeScript"])
             __traits(getMember, q, f) = __traits(getMember, this, f);
         q.objectiveText = [ot1, ot2, ot3, ot4];
         q.reqItemId = [ri1, ri2, ri3, ri4];

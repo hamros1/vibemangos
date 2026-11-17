@@ -379,6 +379,12 @@ final class CreatureAI : Scripted
             regenerate(world, diff);
     }
 
+    /// The world it acts in, for a script that drives it before it ticks.
+    void bind(CombatWorld world)
+    {
+        world_ = world;
+    }
+
 private:
     /// How the relations see it.
     @property Relating relating() const

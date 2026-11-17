@@ -101,6 +101,10 @@ struct ShutdownTimer
  */
 final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureLore
 {
+    import dmangos.world.dbscripts : DbScriptRunner;
+
+    mixin DbScriptRunner; // `dbscripts_on_*` under way
+
     WorldConfig config;
     WorldDatabase database;
     WorldData data;
@@ -1300,6 +1304,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         const playersDone = MonoTime.currTime;
         foreach (map_; maps)
             map_.update(elapsed);
+        updateScripts(cast(uint) elapsed.total!"msecs");
+        scriptedGameObjectsDue();
         respawnDue(now);
         // `WUPDATE_AUCTIONS`: once a minute, by one node.
         if (forwardGroup is null && now - lastAuctionCheck >= 60.seconds)
