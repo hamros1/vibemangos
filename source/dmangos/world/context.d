@@ -25,7 +25,7 @@ import dmangos.world.migration : Migrant;
 import dmangos.world.replication : Replica, Replicator;
 import dmangos.world.channel : ChannelSettings;
 import dmangos.world.grid : cellKeyAt;
-import dmangos.world.channelservice : channelCommand, ChannelOp, ChannelService;
+import dmangos.world.channelservice : channelCommand, ChannelCall, ChannelOp, ChannelService, ChannelsHost;
 import dmangos.cluster.protocol : ChannelCommand;
 import dmangos.world.opcodes : ChatType, Language, Opcode;
 import dmangos.world.creatureai : CombatWorld, CreatureLore;
@@ -222,7 +222,6 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     Groups groups;
 
     /// The chat channels (on the coordinator; other nodes send it their players' commands).
-    ChannelService channelService;
 
     /// This node is shutting down cleanly (a drain): players visiting it move on at once (phase 4b).
     bool draining;
@@ -253,8 +252,6 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     private Heard[ulong] lastHeard;   // players of other nodes by the node their last command came from
     private enum presenceGrace = 3.seconds; // presence says where a player is within a second or two
 
-    /// Sends a channel command to the coordinator; null standalone and on the coordinator.
-    void delegate(const ref ChannelCommand command) forwardChannel;
 
     /// Sends a packet to a player another node simulates; null standalone.
     void delegate(ushort node, ulong guid, ushort opcode, const(ubyte)[] body_) deliverRemote;
@@ -380,7 +377,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 stale ~= guid;
         foreach (guid; stale)
             lastHeard.remove(guid);
-        channelService.nodeLost(node);
+        if (auto channels = channelService)
+            channels.nodeLost(node);
     }
 
     /// The other nodes of the cluster that say who their players are (none standalone).
@@ -488,7 +486,18 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         signalSequence = ulong(startUnixTime) << 20; // above what an earlier run of this node sent
         loadInstances();
         loadCommandOverrides();
-        channelService = new ChannelService(this, client, ChannelSettings(config.allowTwoSideInteractionChannel));
+        // The cluster services this node can run (docs/SERVICES.md); standalone it runs them all at once.
+        services.provide!ChannelsHost((const(ubyte)[]) => ChannelsHost(new ChannelService(this, client,
+            ChannelSettings(config.allowTwoSideInteractionChannel))));
+        startAllServices();
+    }
+
+    /// The channels, if this node hosts them (standalone it does); null if another node does.
+    @property ChannelService channelService()
+    {
+        if (auto host = services.local!ChannelsHost())
+            return host.channels;
+        return null;
     }
 
     /// `CommandTableStorage::Load`: the `command_overrides` setting.
@@ -2629,15 +2638,11 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return false;
     }
 
-    /// A channel command of `who`'s, run by the coordinator's channels (here, standalone or on it).
+    /// A channel command of `who`'s, for the channels service wherever it runs (docs/SERVICES.md).
     void channelCommand(const OnlinePlayer who, ChannelOp op, string channel, string arg = null,
         Language language = Language.LANG_UNIVERSAL)
     {
-        const command = .channelCommand(who, op, channel, arg, language);
-        if (forwardChannel !is null)
-            forwardChannel(command);
-        else
-            channelService.run(command, nodeId);
+        services.call!(ChannelsHost.run)(ChannelCall(.channelCommand(who, op, channel, arg, language), nodeId));
     }
 
     /// Number of players in the world.

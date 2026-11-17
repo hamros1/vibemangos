@@ -62,7 +62,6 @@ interface ReplicationHandler
     void stockRequest(ushort peer, const ref StockRequest message);
     void stockReply(ushort peer, const ref StockReply message);
     void stockRelease(ushort peer, const ref StockRelease message);
-    void channelCommand(ushort peer, const ref ChannelCommand message);
     void groupCommand(ushort peer, const ref GroupCommand message);
     void groupState(ushort peer, const ref GroupState message);
     void memberStatsRequest(ushort peer, const ref MemberStatsRequest message);
@@ -733,15 +732,6 @@ final class ClusterNode : LinkOwner
             {
                 const m = decode!MemberStatsRequest(payload);
                 replication.memberStatsRequest(peer, m);
-            }
-            return;
-        }
-        if (type == MessageType.channelCommand)
-        {
-            if (replication !is null && isCoordinator)
-            {
-                const m = decode!ChannelCommand(payload);
-                replication.channelCommand(peer, m);
             }
             return;
         }

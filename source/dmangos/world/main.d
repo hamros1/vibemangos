@@ -168,8 +168,8 @@ private int run(WorldConfig config, string configPath)
     ClusterNode cluster;
     ClusterBridge bridge;
     bool leaseHeld;
-    if (!config.cluster.enabled)
-        context.startAllServices(); // standalone: every service here (docs/SERVICES.md)
+    if (config.cluster.enabled)
+        context.services.stopAll(); // in a cluster, only those whose regions it is granted (docs/SERVICES.md)
     if (config.cluster.enabled)
     {
         const linkIdle = (2 * config.cluster.failureTimeoutMs).msecs; // the links time out first, on heartbeats
@@ -210,7 +210,6 @@ private int run(WorldConfig config, string configPath)
         }
         else
         {
-            context.forwardChannel = &bridge.forwardChannel;
             context.forwardGroup = &bridge.forwardGroup;
         }
         context.reserveStock = &bridge.reserveStock;
@@ -261,7 +260,6 @@ private int run(WorldConfig config, string configPath)
         }
         // Phase 7: the standby, become the coordinator, takes up the coordinator's part of the world server.
         cluster.onPromoted = () {
-            context.forwardChannel = null; // the channels are kept here now (and start empty)
             context.forwardGroup = null;
             context.groups.clear();        // the groups too, from the database the old coordinator kept them in
             context.groups.load(context.database.loadGroups());

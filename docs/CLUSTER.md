@@ -610,6 +610,9 @@ send it their players' commands, and it sends what it has to tell a player to th
 
 ### Chat channels (implemented)
 
+Since docs/SERVICES.md stage 4 the channels are a cluster service placed like a region, not fixed to
+the coordinator; what follows describes their behaviour, which is unchanged.
+
 * `ChannelService` (`dmangos.world.channelservice`) holds every channel. Each channel command a
   player gives (joining, leaving, talking, the list, passwords, moderation, kicks, bans, invitations,
   and logging out and changing zone, which leave or move zone channels) is a `ChannelCommand`

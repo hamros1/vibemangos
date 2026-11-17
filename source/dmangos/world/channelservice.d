@@ -1,16 +1,19 @@
 /**
- * Chat channels as a cluster service (docs/CLUSTER.md, phase 5b).
+ * Chat channels as a cluster service (docs/SERVICES.md, stage 4; first docs/CLUSTER.md, phase 5b).
  *
- * A channel's members may be simulated by any node, so its state lives in one place: the
- * `ChannelService` of the coordinator (standalone, of the one server). Every channel command a
- * player gives (joining, leaving, talking, moderating, logging out, changing zone) becomes a
- * `ChannelCommand` with what the channels need of the player; another node sends it to the
- * coordinator, which runs it as for its own players. What a channel tells a member goes to the
- * node simulating it (`DeliverTo`), found by presence, or the node its last command came from.
+ * A channel's members may be simulated by any node, so the channels' state lives in one place: the
+ * `ChannelService` hosted by the node the cluster placed the channels service on (`ChannelsHost`;
+ * standalone, the one server). Every channel command a player gives (joining, leaving, talking,
+ * moderating, logging out, changing zone) becomes a `ChannelCommand` with what the channels need of
+ * the player, and a call of the service's `run`: on its node a direct call, from another the command
+ * as bytes (`dmangos.cluster.services`). What a channel tells a member goes to the node simulating it
+ * (`DeliverTo`), found by presence, or the node its last command came from. The service moves like a
+ * region; after a move the channels start empty.
  */
 module dmangos.world.channelservice;
 
 import dmangos.cluster.protocol : ChannelCommand;
+import dmangos.cluster.services : Call, Service, ServiceKind;
 import dmangos.world.channel;
 import dmangos.world.clientdata : ClientData;
 import dmangos.world.context : WorldContext;
@@ -51,6 +54,26 @@ ChannelCommand channelCommand(const OnlinePlayer who, ChannelOp op, string chann
     const p = who.character;
     return ChannelCommand(p.guid, p.data.name, p.data.race, who.canUseCommand('c'), p.chatTag, op, channel, arg,
         cast(uint) language, rankInfo(p.values.getByte!PLAYER_BYTES_3(3)).visualRank);
+}
+
+/// A channel command for the channels service, and the node it came from.
+struct ChannelCall
+{
+    ChannelCommand command;
+    ushort via;
+}
+
+/// The channels as a cluster service: the node it is placed on runs every channel command.
+@Service(ServiceKind.channels)
+struct ChannelsHost
+{
+    ChannelService channels;
+
+    /// A player's channel command.
+    @Call void run(const ref ChannelCall call)
+    {
+        channels.run(call.command, call.via);
+    }
 }
 
 /// See the module documentation.
@@ -328,4 +351,53 @@ unittest
     // Anduin logs out: the channel goes, and nobody is remembered.
     service.run(channelCommand(anduin.session.inWorld, ChannelOp.leaveAll, null), 1);
     assert(service.channels.alliance.count == 0 && service.remembered == 0);
+}
+
+/// The channels service on another node (docs/SERVICES.md): node 1's player joins and hears node 2's.
+unittest
+{
+    import dmangos.cluster.protocol : ServiceCall, ServiceReply;
+    import dmangos.cluster.services : ServiceKind;
+    import dmangos.world.movement : Position;
+    import dmangos.world.packets : ClientChannelPassword;
+    import dmangos.world.testclient;
+
+    // Two nodes, each its own world; the channels run on node 2.
+    auto dbA = newDatabase(), dbB = newDatabase();
+    auto a = newCreationContext(dbA), b = newCreationContext(dbB);
+    a.nodeId = 1;
+    b.nodeId = 2;
+    a.services.stopAll();
+    a.services.self = 1;
+    b.services.self = 2;
+    a.services.placement = b.services.placement = (ServiceKind) => cast(ushort) 2;
+    a.services.sendCall = (ushort node, const ref ServiceCall c) { b.services.receiveCall(1, c); return true; };
+    b.services.sendReply = (ushort node, const ref ServiceReply r) { a.services.receiveReply(2, r); return true; };
+    // What node 2's channels tell node 1's players goes there (`DeliverTo`).
+    b.deliverRemote = (ushort node, ulong guid, ushort opcode, const(ubyte)[] body_) {
+        if (auto who = a.onlinePlayer(guid))
+            who.deliver(cast(Opcode) opcode, body_);
+    };
+
+    auto anduin = loggedIn(a, dbA, 7, "Anduin", Position(0, 0, 0));
+    auto jaina = loggedIn(b, dbB, 8, "Jaina", Position(0, 0, 0));
+    anduin.read();
+    jaina.read();
+    assert(a.channelService is null && b.channelService !is null, "only node 2 hosts the channels");
+
+    anduin.write(Opcode.CMSG_JOIN_CHANNEL, ClientChannelPassword("Club", ""));
+    const joined = anduin.read();
+    assert(joined.length && joined[0].opcode == Opcode.SMSG_CHANNEL_NOTIFY && joined[0].body_[0] == ChatNotify.youJoined,
+        "the join ran on node 2 and its answer came back to node 1's player");
+    jaina.write(Opcode.CMSG_JOIN_CHANNEL, ClientChannelPassword("Club", ""));
+    jaina.read();
+    anduin.read();
+    // Node 2's player speaks: node 1's hears it.
+    import dmangos.world.opcodes : ChatType;
+
+    jaina.write(Opcode.CMSG_MESSAGECHAT, chatBody(ChatType.CHAT_MSG_CHANNEL, "hello across", "Club"));
+    bool heard;
+    foreach (p; anduin.read())
+        heard = heard || p.opcode == Opcode.SMSG_MESSAGECHAT;
+    assert(heard, "said on node 2, heard on node 1");
 }

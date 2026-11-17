@@ -260,9 +260,21 @@ groups, not per tick per entity.
      when it loses it.
    * Tests: two hosts with in-memory transports, covering a call and its reply, a parked call sent
      once placed, a duplicate answered from memory, and a call following its service to a new node.
-4. **The first service: chat channels.** The existing channel service moves onto the framework,
-   replacing `forwardChannel`, `ChannelCommand` and its takeover step, with the same behaviour and
-   tests. This proves the framework on something that works today.
+4. **The first service, chat channels: done (2026-11-17).** `ChannelsHost`
+   (`@Service(ServiceKind.channels)`) wraps the existing `ChannelService` with one call, `run`, which
+   takes a `ChannelCommand` and the node it came from. `WorldContext.channelCommand` is now a service
+   call, so these went:
+   * the `forwardChannel` hook;
+   * the coordinator-only routing, and its message's handling in `ClusterNode` and the bridge;
+   * the standby's channel takeover step.
+
+   Every context starts its services, as standalone; a cluster node stops them and runs only those
+   whose regions it is granted. After a move the channels start empty, as after a coordinator
+   takeover before.
+   * Tests: two world contexts with the channels on node 2, where node 1's player joins (answered
+     across) and hears node 2's player. The existing channel tests run unchanged.
+   * Live: two scripted clients simulated on nodes 1 and 3 talked in one channel, hosted on a third
+     node's choice.
 5. **The battleground queue**, placed by the table: the first new service, with battlegrounds.
 6. **The gateway role:** a node with clients and no regions.
 7. **Monitoring:**

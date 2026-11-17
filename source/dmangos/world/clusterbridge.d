@@ -227,12 +227,6 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
         node.sendTo(target, DeliverTo(guid, opcode, cast(ubyte[]) body_));
     }
 
-    /// For the context (not on the coordinator): a channel command, for the coordinator's channels.
-    void forwardChannel(const ref ChannelCommand command)
-    {
-        node.sendToCoordinator(command);
-    }
-
     /// For the context (not on the coordinator): a group command, for the coordinator's groups.
     void forwardGroup(const ref GroupCommand command)
     {
@@ -522,12 +516,6 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
         gone.id = id;
         gone.removed = true;
         node.broadcast(gone);
-    }
-
-    /// On the coordinator: another node's player's channel command.
-    void channelCommand(ushort peer, const ref ChannelCommand m)
-    {
-        context.channelService.run(m, peer);
     }
 
     /// For the context: a whisper for a player another node simulates.
