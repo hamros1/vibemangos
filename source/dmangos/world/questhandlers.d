@@ -789,6 +789,15 @@ private:
     /// `Player::KilledMonsterCredit`: a creature of `entry` killed counts for the quests that ask for it.
     package void killedMonster(uint entry, ulong guid)
     {
+        creditCreatureOrGo(cast(int) entry, 0, guid);
+    }
+
+    /**
+     * `KilledMonsterCredit` and `CastedCreatureOrGO`: `target` (a creature's entry, or minus a game
+     * object's) counts for the objectives that ask for it with `spell` (0: killed, or used).
+     */
+    package void creditCreatureOrGo(int target, uint spell, ulong guid)
+    {
         foreach (slot; 0 .. maxQuestLogSize)
         {
             const id = player.values[PLAYER_QUEST_LOG_1_1 + 3 * slot];
@@ -800,7 +809,7 @@ private:
                 continue;
             foreach (i; 0 .. questObjectives)
             {
-                if (quest.reqCreatureOrGoId[i] != cast(int) entry || quest.reqSpellCast[i])
+                if (quest.reqCreatureOrGoId[i] != target || quest.reqSpellCast[i] != spell)
                     continue;
                 if (q.mobCount[i] >= quest.reqCreatureOrGoCount[i])
                     continue;
@@ -808,7 +817,8 @@ private:
                 q.changed = true;
                 ByteWriter w;
                 w.put(id);
-                w.put(entry);
+                // A game object's entry as the client expects it: with the high bit.
+                w.put(target < 0 ? cast(uint)(-target) | 0x8000_0000 : cast(uint) target);
                 w.put(q.mobCount[i]);
                 w.put(quest.reqCreatureOrGoCount[i]);
                 w.put(guid);
@@ -819,6 +829,21 @@ private:
             }
         }
         flushPlayerChanges();
+    }
+
+    /// Whether a quest under way still needs `target` (as `creditCreatureOrGo` counts it).
+    package bool needsCreatureOrGo(int target)
+    {
+        foreach (id, ref q; player.questStatus)
+        {
+            if (q.status != QuestState.incomplete)
+                continue;
+            if (const quest = context.data.quests.quest(id))
+                foreach (i; 0 .. questObjectives)
+                    if (quest.reqCreatureOrGoId[i] == target && q.mobCount[i] < quest.reqCreatureOrGoCount[i])
+                        return true;
+        }
+        return false;
     }
 
     /**

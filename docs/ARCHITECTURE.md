@@ -272,6 +272,21 @@ are `MapObject`s: `Creature` (`creature.d`) and `GameObject` (`gameobject.d`), e
 update fields and create block. A player's client is told about the objects within the visibility
 distance, a few dozen create blocks per packet, and they go out of range like players.
 
+### Using game objects
+
+A `GameObject` keeps CMaNGOS's loot state (`GoLootState`): ready, activated (a door open, a goober
+in use, a chest's loot open), just deactivated. It is a `Moving` for the map's tick only while
+something is pending (a door's closing time, a goober's, a chest's despawn and loot rolls), and its
+map is a `GameObjectWorld` that flushes its fields and, when a consumable one is used up
+(`gameObjectUsedUp`), removes it and tells the context, which saves its respawn time in
+`gameobject_respawn` and makes it anew when that time comes (`gameObjectsDue`). It is a `PerViewer`
+for `GAMEOBJECT_DYN_FLAGS`: a quest object (`WorldContext.isQuestObject`) sparkles for those whose
+quests need it (`activatesFor`, asking the viewer's session). `gameobjecthandlers.d` is the
+session's side: `CMSG_GAMEOBJ_USE` and `useGameObject` (CMaNGOS's `Use` by type), the open-lock
+spell effect (`canOpenLock` in `checkGameObjectTarget` at the cast's checks, `openLock` at its
+effect, with `updateGatherSkill`), and a chest's loot (`makeGameObjectLoot`: the same `Loot` as a
+corpse's, with `setLootRights` from the object's place).
+
 ### Creature movement
 
 CMaNGOS's split, without its class hierarchy of units:

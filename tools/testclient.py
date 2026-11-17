@@ -301,7 +301,11 @@ def describe(op, p):
                           f"display {v.get(OBJECT_END + 0x7D)}, faction {v.get(OBJECT_END + 0x1D)}, npc flags {v.get(0x93, 0)}, "
                           f"at {move[0]:.1f} {move[1]:.1f} {move[2]:.1f}")
                 else:
-                    print(f"  [game object] {entry} guid {g & 0xFFFFFF}: type {v.get(OBJECT_END + 0x15)}, display {v.get(OBJECT_END + 0x8)}")
+                    # GAMEOBJECT_POS_X .. _Z (0xF .. 0x11) where the movement block has no position.
+                    if not move and 0xF in v:
+                        seen_positions[g] = tuple(struct.unpack("<f", struct.pack("<I", v[i]))[0] for i in (0xF, 0x10, 0x11))
+                    print(f"  [game object] {entry} guid {g & 0xFFFFFF}: type {v.get(0x15)}, display {v.get(0x8)}, "
+                          f"state {v.get(0xE)}")
             elif kind == 0:
                 health = f", health {v[OBJECT_END + 0x10]}/{v.get(OBJECT_END + 0x16, '?')}" if OBJECT_END + 0x10 in v else ""
                 print(f"  [changes] {g}: fields {sorted(v)}{health}")
@@ -675,6 +679,35 @@ for action in actions:
             wsend(0x12E, struct.pack("<IH", spell, 2) + packed(target)); print(f"cast {spell} at {target & 0xFFFFFF}")
         else:
             wsend(0x12E, struct.pack("<IH", spell, 0)); print(f"cast {spell}")
+    elif kind in ("castgo", "usego"):
+        # castgo:SPELL:ENTRY or usego:ENTRY: walk next to the nearest game object of ENTRY, then cast at it
+        # (a lock opened: its loot taken) or use it (CMSG_GAMEOBJ_USE).
+        import math
+        entry = int(args[-1])
+        found = [g for g, (t, e) in seen_objects.items() if t == 5 and e == entry and g in seen_positions]
+        if not found:
+            print(f"{kind}: no {entry} in sight"); continue
+        target = min(found, key=lambda g: (seen_positions[g][0] - here[0]) ** 2 + (seen_positions[g][1] - here[1]) ** 2)
+        cx, cy, cz = seen_positions[target]
+        angle = math.atan2(here[1] - cy, here[0] - cx)
+        x, y = cx + 1.5 * math.cos(angle), cy + 1.5 * math.sin(angle)
+        movement(0x0B5, x, y, cz, flags=1); movement(0x0B7, x, y, cz); here[:] = [x, y, cz]
+        if kind == "usego":
+            wsend(0x0B1, struct.pack("<Q", target)); print(f"use {entry} ({target & 0xFFFFFF})"); listen_for(1.5)
+            continue
+        wsend(0x12E, struct.pack("<IH", int(args[0]), 0x800) + packed(target)); print(f"cast {args[0]} at {entry} ({target & 0xFFFFFF})")
+        op, p = expect(0x160)
+        if len(p) <= 10:
+            print(f"  loot error {p[9]}"); continue
+        gold, n = struct.unpack_from("<IB", p, 9)
+        slots = []
+        for i in range(n):
+            slot, item, count = struct.unpack_from("<BII", p, 14 + i * 22); slots.append(slot)
+            print(f"  loot slot {slot}: item {item} x{count}")
+        for slot in slots:
+            wsend(0x108, bytes([slot]))
+        listen_for(1.0)
+        wsend(0x15F, struct.pack("<Q", target)); print("  released"); listen_for(1.5)
     elif kind in ("castplayer", "attackplayer"):
         # castplayer:SPELL or attackplayer: at the nearest other player in sight
         players = [g for g, (t, e) in seen_objects.items() if t == 4 and g != my_guid[0]]

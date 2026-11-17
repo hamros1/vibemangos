@@ -443,6 +443,25 @@ final class CharacterStatements
             characters.execute!"DELETE FROM creature_respawn WHERE guid = ? AND instance = 0"(spawnGuid);
     }
 
+    /// See `WorldDatabase.saveGameObjectRespawn`.
+    void saveGameObjectRespawn(uint spawnGuid, long respawnTime)
+    {
+        if (respawnTime)
+            characters.execute!"REPLACE INTO gameobject_respawn (guid, respawntime, instance) VALUES (?, ?, 0)"(
+                spawnGuid, respawnTime);
+        else
+            characters.execute!"DELETE FROM gameobject_respawn WHERE guid = ? AND instance = 0"(spawnGuid);
+    }
+
+    /// See `WorldDatabase.loadGameObjectRespawns`.
+    long[uint] loadGameObjectRespawns()
+    {
+        long[uint] all;
+        foreach (row; characters.query!"SELECT guid, respawntime FROM gameobject_respawn WHERE instance = 0"())
+            all[row.get!uint(0)] = row.get!long(1);
+        return all;
+    }
+
     /// See `WorldDatabase.loadCreatureRespawns`.
     long[uint] loadCreatureRespawns()
     {

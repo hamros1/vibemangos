@@ -15,6 +15,7 @@ import dmangos.cluster.protocol : PresenceEntry;
 import dmangos.world.whisper : WhisperFrom;
 import dmangos.cluster.regions : Region;
 import dmangos.world.creature : Creature, CreatureSpawn, Npc, NpcStandIn;
+import dmangos.world.gameobject : GameObject, GameObjectSpawn;
 import dmangos.world.movement : Position;
 import dmangos.world.migration : Migrant;
 import dmangos.world.replication : Replicator;
@@ -369,6 +370,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         this.groups = new Groups(database, this, next.group);
         groupService = new GroupService(this);
         respawnAt = database.loadCreatureRespawns();
+        gameObjectRespawnAt = database.loadGameObjectRespawns();
         groups.load(database.loadGroups());
         loadCommandOverrides();
         channelService = new ChannelService(this, client, ChannelSettings(config.allowTwoSideInteractionChannel));
@@ -466,6 +468,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             &serverTime, &spawnCell, terrain(id), owns);
         created.replicator = replicator;
         created.onCorpseRemoved = &corpseRemoved;
+        created.onGameObjectUsedUp = &gameObjectUsedUp;
         created.groupOf = (ulong player) {
             auto group = groups.of(player);
             return group is null ? 0 : group.id;
@@ -621,7 +624,10 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             foreach (index; (*cells).get(cell, null))
             {
                 const spawn = &data.gameObjectSpawns[index];
-                spawned ~= new GameObject(*spawn, spawn.entry in data.gameObjectTemplates);
+                // Not spawned by default (`spawntimesecs` < 0: events and scripts spawn it), or used up.
+                if (spawn.respawnSeconds < 0 || gameObjectAwaitingRespawn(spawn.guid))
+                    continue;
+                spawned ~= makeGameObject(spawn);
             }
         return spawned;
     }
@@ -761,8 +767,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             warning!"migration: game object spawn %s is not known here"(m.spawn);
             return null;
         }
-        const spawn = &data.gameObjectSpawns[*at];
-        auto gameObject = new GameObject(*spawn, spawn.entry in data.gameObjectTemplates);
+        auto gameObject = makeGameObject(&data.gameObjectSpawns[*at]);
         gameObject.loadState(r);
         return gameObject;
     }
@@ -875,6 +880,79 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         map.corpseExpired(corpse);
     }
 
+    /// Game objects used up: spawn guid -> when they come back (Unix time), as `gameobject_respawn` has it.
+    private long[uint] gameObjectRespawnAt;
+
+    /// A game object from its spawn, with what it needs to show players their quests' objects.
+    GameObject makeGameObject(const(GameObjectSpawn)* spawn)
+    {
+        import dmangos.world.session : WorldSession;
+
+        auto go = new GameObject(*spawn, spawn.entry in data.gameObjectTemplates);
+        if (isQuestObject(go))
+            go.activatesFor = (ulong viewer) {
+                auto session = cast(WorldSession) onlinePlayer(viewer);
+                return session !is null && session.gameObjectActivatesForQuest(go);
+            };
+        return go;
+    }
+
+    /// Whether a quest may need the object: a goober with a quest, or one an objective names; a chest with quest loot.
+    bool isQuestObject(const GameObject go)
+    {
+        import dmangos.world.gameobject : GameObjectType;
+        import dmangos.world.loot : questItems;
+
+        const t = go.template_;
+        if (go.type == GameObjectType.goober)
+            return t.data[1] > 0 || data.quests.namesGameObject(t.entry);
+        if (go.type == GameObjectType.chest && go.lootId)
+            if (const template_ = data.loot.gameObject[go.lootId])
+                return questItems(template_).length > 0;
+        return false;
+    }
+
+    /// `GameObject::SaveRespawnTime`: used up, it comes back after its spawn's respawn time.
+    private void gameObjectUsedUp(GameObject go)
+    {
+        const at = unixTime + (go.spawn.respawnSeconds > 0 ? go.spawn.respawnSeconds : 0);
+        gameObjectRespawnAt[go.spawn.guid] = at;
+        database.saveGameObjectRespawn(go.spawn.guid, at);
+    }
+
+    /// Whether a game object spawn is used up and waiting to come back.
+    bool gameObjectAwaitingRespawn(uint spawnGuid)
+    {
+        if (auto at = spawnGuid in gameObjectRespawnAt)
+            return *at > unixTime;
+        return false;
+    }
+
+    /// The game objects whose time has come, made anew where their cell is loaded.
+    private void gameObjectsDue()
+    {
+        const time = unixTime;
+        uint[] due;
+        foreach (guid, at; gameObjectRespawnAt)
+            if (at <= time)
+                due ~= guid;
+        if (due.length && gameObjectSpawnIndex is null)
+            foreach (i, ref spawn; data.gameObjectSpawns)
+                gameObjectSpawnIndex[spawn.guid] = i;
+        foreach (guid; due)
+        {
+            gameObjectRespawnAt.remove(guid);
+            database.saveGameObjectRespawn(guid, 0);
+            const index = guid in gameObjectSpawnIndex;
+            if (index is null)
+                continue;
+            const spawn = &data.gameObjectSpawns[*index];
+            auto there = existingMap(spawn.map);
+            if (there !is null && there.cellLoaded(cellKeyAt(spawn.x, spawn.y)))
+                there.addObject(makeGameObject(spawn));
+        }
+    }
+
     /// Whether a spawn is dead and waiting to come back.
     bool awaitingRespawn(uint spawnGuid)
     {
@@ -895,6 +973,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         if (now - lastRespawnCheck < 1.seconds)
             return;
         lastRespawnCheck = now;
+        gameObjectsDue();
         const time = unixTime;
         uint[] due;
         foreach (guid, at; respawnAt)

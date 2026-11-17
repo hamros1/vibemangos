@@ -235,6 +235,16 @@ final class QuestData
         return id in quests;
     }
 
+    /// Whether an objective of some quest is the game object `entry`.
+    bool namesGameObject(uint entry) const
+    {
+        foreach (ref q; quests)
+            foreach (target; q.reqCreatureOrGoId)
+                if (target == -cast(int) entry)
+                    return true;
+        return false;
+    }
+
     /// `LoadQuests`'s second pass: the special flags, the previous quests, the exclusive groups.
     void link()
     {

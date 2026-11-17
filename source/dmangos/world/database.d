@@ -242,6 +242,12 @@ interface WorldDatabase
     /// Every creature that is dead now: spawn guid -> when it comes back (Unix time).
     long[uint] loadCreatureRespawns();
 
+    /// `GameObject::SaveRespawnTime`: a used-up game object comes back then (0: it is back).
+    void saveGameObjectRespawn(uint spawnGuid, long respawnTime);
+
+    /// Every game object used up now: spawn guid -> when it comes back (Unix time).
+    long[uint] loadGameObjectRespawns();
+
     /// Name, race, gender and class of a character, or null.
     Nullable!NameInfo nameInfo(uint guid);
 
@@ -392,6 +398,8 @@ final class MySqlWorldDatabase : WorldDatabase
     Nullable!ItemRecord looseItem(uint guid) { return statements.looseItem(guid); }
     uint[2] characterRaceAccount(uint guid) { return statements.characterRaceAccount(guid); }
     long[uint] loadCreatureRespawns() { return statements.loadCreatureRespawns(); }
+    void saveGameObjectRespawn(uint spawnGuid, long respawnTime) { statements.saveGameObjectRespawn(spawnGuid, respawnTime); }
+    long[uint] loadGameObjectRespawns() { return statements.loadGameObjectRespawns(); }
     Nullable!NameInfo nameInfo(uint guid) { return statements.nameInfo(guid); }
     GroupRecord[] loadGroups() { return statements.loadGroups(); }
     void createGroup(const ref GroupRecord group) { statements.createGroup(group); }
@@ -805,6 +813,7 @@ final class MemoryWorldDatabase : WorldDatabase
     string[uint] itemTexts;          /// `item_text`
     ItemRecord[uint] looseItems;     /// items in the mail, by guid
     long[uint] creatureRespawns;     /// by spawn guid
+    long[uint] gameObjectRespawns;   /// by spawn guid
     ReputationRecord[uint][uint] reputationRows; /// `character_reputation`: by player, then faction
 
     void saveCorpse(const ref CorpseRecord c) { corpses[c.player] = c; }
@@ -871,6 +880,14 @@ final class MemoryWorldDatabase : WorldDatabase
             creatureRespawns.remove(spawnGuid);
     }
     long[uint] loadCreatureRespawns() { return creatureRespawns.dup; }
+    void saveGameObjectRespawn(uint spawnGuid, long respawnTime)
+    {
+        if (respawnTime)
+            gameObjectRespawns[spawnGuid] = respawnTime;
+        else
+            gameObjectRespawns.remove(spawnGuid);
+    }
+    long[uint] loadGameObjectRespawns() { return gameObjectRespawns.dup; }
 
     Nullable!NameInfo nameInfo(uint guid)
     {

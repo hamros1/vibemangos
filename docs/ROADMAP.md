@@ -82,8 +82,10 @@ See ARCHITECTURE.md's "The update loop". Still to do here: AFK kicks, the online
 
 Spawned and visible, with queries (ARCHITECTURE.md, "Creatures and game objects"), and gossip,
 trainers, innkeepers, bankers and vendors ("Talking to NPCs", and "Items" for trading), and
-movement: wandering and waypoints ("Creature movement"). Next: flight masters, using game objects
-(doors, chests, mailboxes), respawn timers, and unloading idle cells. CMaNGOS references:
+movement: wandering and waypoints ("Creature movement"), and using game objects
+(`gameobject.d`, `gameobjecthandlers.d`; README's "Using game objects": doors, buttons, chairs,
+goobers, locks and chests with their loot, respawns). Next: flight masters, game object quest
+givers, traps, fishing, and unloading idle cells. CMaNGOS references:
 `MotionGenerators/`, `Entities/GossipDef.cpp`, `GossipHandler.cpp`, `NPCHandler.cpp`,
 `TaxiHandler.cpp`.
 
@@ -117,7 +119,7 @@ The largest area. CMaNGOS references: `Spells/`, `Entities/Unit.cpp`, `Combat/`,
    the map its player's node simulates; a node that does not own the cell keeps it anyway).
 4. **Experience and loot: done** (`experience.d`, `loot.d`, `loothandlers.d`; README's "Experience
    and loot"). Not yet: quest drops, `item_enchantment_template` random properties, skinning,
-   pickpocketing, game object and item loot (chests, bags), honor for kills, loot of
+   pickpocketing, item loot (bags, clams), honor for kills, loot of
    a creature another node of a cluster simulates.
 5. Spells, cooldowns and auras. **Casting and auras: done** (`spellcast.d`, `spellhandlers.d`,
    `auras.d`, `aurahandlers.d`; README's "Spells" and "Auras"); creatures' spells come with their

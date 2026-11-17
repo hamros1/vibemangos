@@ -214,7 +214,20 @@ What works now:
   * **Creatures and game objects:** every `creature` and `gameobject` spawn of the world database
     (pools, spawn groups and game events decide which), created when a player first comes near
     their cell, with CMaNGOS's levels, health, models, equipment, mounts and emotes. Their names come
-    from `CMSG_CREATURE_QUERY` and `CMSG_GAMEOBJECT_QUERY`.
+    from `CMSG_CREATURE_QUERY` and `CMSG_GAMEOBJECT_QUERY`. Game objects whose `spawntimesecs` is
+    below 0 wait for events and scripts to spawn them, as in CMaNGOS.
+  * **Using game objects** (CMaNGOS's `GameObject::Use`, `EffectOpenLock`): doors and buttons open
+    for their time and close again; chairs seat the player at the nearest slot; goobers are in use
+    for their time, show their page, count for the quests that need them (for the group near them
+    too) and cast their spell on the user; cameras play their cinematic. Locks (`Lock.dbc`) open to
+    their key item or to a spell of their lock type with the skill they need (lockpicking,
+    herbalism, mining), which may rise by CMaNGOS's gathering chances the first time each object is
+    opened. A chest (herbs and veins too) shows its `gameobject_loot_template` loot with a group's
+    loot rights and quest items for those whose quests need them; a consumable one is gone once
+    emptied (or 5 minutes after opening) and comes back after its respawn time, kept in
+    `gameobject_respawn` across restarts. Quest objects sparkle for the players whose quests need
+    them. Not yet: quest givers among game objects, traps, fishing, mining veins' extra uses,
+    linked traps, another node's objects in a cluster.
   * **Creature movement:** creatures move as their spawn's `MovementType` says, as in CMaNGOS:
     wandering within `spawndist` of their spawn point (type 1), or walking their `creature_movement`
     or `creature_movement_template` path (type 2 round and round, type 4 back and forth), waiting
@@ -579,5 +592,5 @@ compiler. `UpdateValues.set!UNIT_FIELD_STAT0(22.5f)` does not compile, because s
 
 ## Roadmap
 
-Next: flight masters, game objects that can be used, respawns, then creature AI and combat.
+Next: auctions, flight masters, game object quest givers, then the cluster's remaining gaps.
 See [docs/ROADMAP.md](docs/ROADMAP.md).

@@ -204,6 +204,17 @@ struct FactionEntry
 
 enum factionFormat = "niiiiiiiiiiiiiiiiiissssssssxxxxxxxxxx"; ///
 
+/// `LockEntry`: what opens a lock, case by case (a key item, or a lock type and its skill).
+struct LockEntry
+{
+    uint id;
+    uint[8] type;   /// `LockKeyType`: 1 an item, 2 a skill
+    uint[8] index;  /// the item, or the `LockType`
+    uint[8] skill;  /// the skill needed
+}
+
+enum lockFormat = "niiiiiiiiiiiiiiiiiiiiiiiixxxxxxxx"; ///
+
 /// `FactionTemplateEntry`: how a unit of a faction stands to others (`dmangos.world.relations`).
 struct FactionTemplateEntry
 {
@@ -548,6 +559,7 @@ final class ClientData
     DbcStore!(LiquidTypeEntry, liquidTypeFormat) liquidTypes;
     DbcStore!(WmoAreaTableEntry, wmoAreaTableFormat) wmoAreas;
     DbcStore!(FactionEntry, factionFormat) factions;
+    DbcStore!(LockEntry, lockFormat) locks;
     DbcStore!(FactionTemplateEntry, factionTemplateFormat) factionTemplates;
     DbcStore!(WorldSafeLocsEntry, worldSafeLocsFormat) worldSafeLocs;
     DbcStore!(SpellCastTimesEntry, spellCastTimesFormat) spellCastTimes;
@@ -584,7 +596,7 @@ final class ClientData
             "bankBagSlotPrices:BankBagSlotPrices", "durabilityCosts:DurabilityCosts",
             "durabilityQualities:DurabilityQuality", "liquidTypes:LiquidType", "wmoAreas:WMOAreaTable",
             "factions:Faction", "factionTemplates:FactionTemplate", "worldSafeLocs:WorldSafeLocs", "spellCastTimes:SpellCastTimes", "spellDurations:SpellDuration",
-            "spellRanges:SpellRange", "spellRadii:SpellRadius"])
+            "spellRanges:SpellRange", "spellRadii:SpellRadius", "locks:Lock"])
         {{
             enum parts = member.findSplit(":");
             enum field = parts[0];

@@ -59,6 +59,7 @@ import dmangos.world.questhandlers : QuestHandlers;
 import dmangos.world.talenthandlers : TalentHandlers;
 import dmangos.world.mailhandlers : MailHandlers;
 import dmangos.world.reputationhandlers : ReputationHandlers;
+import dmangos.world.gameobjecthandlers : GameObjectHandlers;
 import dmangos.world.creatureai : Combatant;
 import dmangos.world.auras : Aura, makeAura;
 import dmangos.world.spells : SpellInfo;
@@ -870,6 +871,7 @@ private:
     mixin TalentHandlers;
     mixin MailHandlers;
     mixin ReputationHandlers;
+    mixin GameObjectHandlers;
     mixin Level0Commands;
     mixin Level1Commands;
     mixin Level2Commands;

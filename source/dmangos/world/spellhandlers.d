@@ -256,6 +256,10 @@ private:
         const result = checkTarget(spell, targets, triggered);
         if (result != SpellCastResult.ok)
             return result;
+        // A game object: near, free, its lock opened (`CanOpenLock`).
+        const goResult = checkGameObjectTarget(spell, targets, itemEntry);
+        if (goResult != SpellCastResult.ok)
+            return goResult;
         if (!triggered && itemEntry == 0)
         {
             const cost = costOf(*spell);
@@ -413,6 +417,12 @@ private:
                 target = player.guid;
             else if (a == ImplicitTarget.enemy || a == ImplicitTarget.unit || a == ImplicitTarget.friend)
                 target = c.targets.unit ? c.targets.unit : player.guid;
+            else if (a == ImplicitTarget.gameObject || a == ImplicitTarget.gameObjectItem)
+            {
+                if (!c.targets.gameObject)
+                    continue; // an item's lock: not yet
+                target = c.targets.gameObject;
+            }
             else
                 target = player.guid; // area and other targets: not yet; the caster stands in
             effectTargets[i] ~= target;
@@ -525,6 +535,9 @@ private:
             break;
         case 1: // SPELL_EFFECT_INSTAKILL
             instakill(spell, target);
+            break;
+        case 33: // SPELL_EFFECT_OPEN_LOCK
+            openLock(spell, i, target, c.castItemEntry);
             break;
         case 17: // SPELL_EFFECT_WEAPON_DAMAGE_NOSCHOOL
         case 58: // SPELL_EFFECT_WEAPON_DAMAGE

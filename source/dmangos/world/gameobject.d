@@ -1,8 +1,12 @@
 /**
  * Game objects (CMaNGOS `Entities/GameObject.cpp`): `gameobject_template`
  * entries, `gameobject` spawns, and the `GameObject` built from them as
- * `GameObject::Create` builds it. Doors, chests, mailboxes, herbs and veins
- * stand in the world; using them, and loot, come later. Boats and zeppelins
+ * `GameObject::Create` builds it, with its loot state (`GameObject::Update`):
+ * a door or button used opens and closes again after its time; a goober is in
+ * use for its time; a chest opened holds its loot until emptied (or 5 minutes);
+ * a consumable chest or goober, and a generic object used, goes once done and
+ * comes back after its spawn's respawn time. What using them does is
+ * `dmangos.world.gameobjecthandlers`. Boats and zeppelins
  * (`GAMEOBJECT_TYPE_MO_TRANSPORT`) move along paths and are not spawned yet.
  */
 module dmangos.world.gameobject;
@@ -10,7 +14,9 @@ module dmangos.world.gameobject;
 import std.math : cos, sin;
 
 import dmangos.bytes : ByteReader, ByteWriter;
-import dmangos.world.map : MapObject;
+import dmangos.world.loot : Loot;
+import dmangos.world.map : MapObject, Moving, PerViewer;
+import dmangos.world.motion : MotionWorld;
 import dmangos.world.replication : Replicable;
 import dmangos.world.movement : Position;
 import dmangos.world.objects;
@@ -21,8 +27,38 @@ enum GameObjectType : uint
 {
     door = 0,
     button = 1,
+    questGiver = 2,
+    chest = 3,          /// herbs and veins too
+    binder = 4,
+    generic = 5,
+    trap = 6,
+    chair = 7,
+    spellFocus = 8,
+    text = 9,
+    goober = 10,
     transport = 11,     /// elevators: stand in place, animated by the client
+    camera = 13,
     moTransport = 15,   /// ships and zeppelins
+    mailbox = 19,
+}
+
+/// `LootState` of a game object.
+enum GoLootState : ubyte
+{
+    notReady,
+    ready,              /// as spawned
+    activated,          /// in use: open, looted from
+    justDeactivated,    /// done: back to ready, or gone
+}
+
+/// What a game object needs of its map while it acts (the map implements it).
+interface GameObjectWorld
+{
+    /// Sends what changed in its fields to those who see it.
+    void flushGameObject(GameObject go);
+
+    /// It is used up: it goes, and comes back when its spawn's respawn time is up.
+    void gameObjectUsedUp(GameObject go);
 }
 
 /// A `gameobject_template` row.
@@ -52,21 +88,31 @@ struct GameObjectSpawn
     int respawnSeconds;
 }
 
-private enum : uint
+/// `GOState`, `GameObjectFlags`, `GameObjectDynamicLowFlags`
+enum : uint
 {
     goStateActive = 0,  // GO_STATE_ACTIVE: open
     goStateReady = 1,   // GO_STATE_READY: closed
+    goFlagInUse = 0x01,
+    goDynFlagActivate = 0x01, // GO_DYNFLAG_LO_ACTIVATE: usable (for a quest), and it sparkles
     goFlagTransport = 0x08,
     goFlagNoDespawn = 0x20,
 }
 
 /// See the module documentation.
-final class GameObject : Replicable
+final class GameObject : Replicable, Moving, PerViewer
 {
     immutable ulong guid_;
     const(GameObjectTemplate)* template_;
     const GameObjectSpawn spawn;
     UpdateValues values;
+    GoLootState lootState = GoLootState.ready;
+    Loot loot;                   /// what it holds while open (a chest)
+    int restoreTimer;            /// ms until a door or button goes back, or a goober is done
+    int despawnTimer;            /// ms until a chest opened but not emptied goes (`SetChestDespawn`); 0: none
+    bool[ulong] skilledUp;       /// those it gave a skill-up (`m_SkillupList`): once until it respawns
+    /// Whether it is usable for `viewer`'s quests (`ActivateToQuest`); null: for nobody.
+    bool delegate(ulong viewer) activatesFor;
 
     ///
     this(const ref GameObjectSpawn spawn, const(GameObjectTemplate)* template_)
@@ -90,6 +136,176 @@ final class GameObject : Replicable
     ref UpdateValues fields()
     {
         return values;
+    }
+
+    /// `GetGoType`
+    @property GameObjectType type() const
+    {
+        return cast(GameObjectType) template_.type;
+    }
+
+    /// `GetGoState`
+    @property uint goState() const
+    {
+        return values.get!GAMEOBJECT_STATE;
+    }
+
+    /// `GameObjectInfo::GetLockId`: the `Lock.dbc` entry opening it needs; 0 for none.
+    @property uint lockId() const
+    {
+        switch (type)
+        {
+        case GameObjectType.door, GameObjectType.button:
+            return template_.data[1];
+        case GameObjectType.questGiver, GameObjectType.chest, GameObjectType.trap, GameObjectType.goober:
+            return template_.data[0];
+        default:
+            return 0;
+        }
+    }
+
+    /// `GetLootId`: its `gameobject_loot_template` id (a chest's).
+    @property uint lootId() const
+    {
+        return type == GameObjectType.chest ? template_.data[1] : 0;
+    }
+
+    /// `GetAutoCloseTime`, in milliseconds (the template's value is seconds times 0x10000).
+    @property int autoCloseMs() const
+    {
+        int raw;
+        switch (type)
+        {
+        case GameObjectType.door, GameObjectType.button:
+            raw = template_.data[2];
+            break;
+        case GameObjectType.goober:
+            raw = template_.data[3];
+            break;
+        default:
+            return 0;
+        }
+        return cast(int)(cast(long) cast(uint) raw * 1000 / 0x10000);
+    }
+
+    /// `IsDespawnAtAction`: a consumable chest or goober goes once used.
+    @property bool consumable() const
+    {
+        return (type == GameObjectType.chest && template_.data[3]) || (type == GameObjectType.goober && template_.data[5]);
+    }
+
+    /// `UseDoorOrButton`: open (or closed) for its time, if it is not in use already.
+    void useDoorOrButton(GameObjectWorld world)
+    {
+        if (lootState != GoLootState.ready)
+            return;
+        switchDoorOrButton(true);
+        lootState = GoLootState.activated;
+        restoreTimer = autoCloseMs;
+        world.flushGameObject(this);
+    }
+
+    /// `SwitchDoorOrButton`: the in-use flag, and the state the other way.
+    private void switchDoorOrButton(bool activate)
+    {
+        const flags = values.get!GAMEOBJECT_FLAGS;
+        values.set!GAMEOBJECT_FLAGS(activate ? flags | goFlagInUse : flags & ~goFlagInUse);
+        values.set!GAMEOBJECT_STATE(goState == goStateReady ? goStateActive : goStateReady);
+    }
+
+    /// The goober used (`GAMEOBJECT_TYPE_GOOBER` in `Use`): in use and open for its time.
+    void activateGoober(GameObjectWorld world)
+    {
+        values.set!GAMEOBJECT_FLAGS(values.get!GAMEOBJECT_FLAGS | goFlagInUse);
+        lootState = GoLootState.activated;
+        values.set!GAMEOBJECT_STATE(goStateActive);
+        restoreTimer = autoCloseMs;
+        world.flushGameObject(this);
+    }
+
+    /// See `Moving.tick`: `GameObject::Update`'s loot states.
+    void tick(MotionWorld w, int diff)
+    {
+        auto world = cast(GameObjectWorld) w;
+        if (world is null)
+            return;
+        final switch (lootState)
+        {
+        case GoLootState.notReady, GoLootState.ready:
+            return;
+        case GoLootState.activated:
+            switch (type)
+            {
+            case GameObjectType.door, GameObjectType.button:
+                if (autoCloseMs && (restoreTimer -= diff) <= 0)
+                {
+                    // `ResetDoorOrButton`
+                    switchDoorOrButton(false);
+                    lootState = GoLootState.justDeactivated;
+                }
+                break;
+            case GameObjectType.goober:
+                if ((restoreTimer -= diff) <= 0)
+                {
+                    values.set!GAMEOBJECT_FLAGS(values.get!GAMEOBJECT_FLAGS & ~goFlagInUse);
+                    lootState = GoLootState.justDeactivated;
+                }
+                break;
+            case GameObjectType.chest:
+                if (loot !is null)
+                {
+                    loot.update();
+                    if (despawnTimer && (despawnTimer -= diff) <= 0)
+                        lootState = GoLootState.justDeactivated;
+                }
+                break;
+            default:
+                break;
+            }
+            if (lootState == GoLootState.activated)
+                return;
+            break;
+        case GoLootState.justDeactivated:
+            break;
+        }
+        // `GO_JUST_DEACTIVATED`: ready again; the consumable (and the generic used) go for their respawn time.
+        if (type == GameObjectType.goober)
+            values.set!GAMEOBJECT_STATE(goStateReady);
+        loot = null;
+        despawnTimer = 0;
+        lootState = GoLootState.ready;
+        world.flushGameObject(this);
+        if (consumable || type == GameObjectType.generic)
+            world.gameObjectUsedUp(this);
+    }
+
+    /// See `Moving.resting`: nothing pending (a door that stays open waits for nothing either).
+    @property bool resting() const
+    {
+        if (lootState == GoLootState.activated)
+            return (type == GameObjectType.door || type == GameObjectType.button) && !autoCloseMs;
+        return lootState == GoLootState.ready || lootState == GoLootState.notReady;
+    }
+
+    /// See `PerViewer`: whether some viewer may see a quest's sparkle on it.
+    bool personalized() const
+    {
+        return activatesFor !is null;
+    }
+
+    /// ditto
+    const(size_t)[] personalSlots() const
+    {
+        static immutable size_t[1] slots = [GAMEOBJECT_DYN_FLAGS];
+        return slots[];
+    }
+
+    /// ditto: `GAMEOBJECT_DYN_FLAGS` with `GO_DYNFLAG_LO_ACTIVATE` for one whose quest needs it.
+    uint fieldFor(ulong viewer, uint viewerGroup, size_t slot, uint value) const
+    {
+        if (slot == GAMEOBJECT_DYN_FLAGS && activatesFor !is null && activatesFor(viewer))
+            return value | goDynFlagActivate;
+        return value;
     }
 
     /// Where it stands.

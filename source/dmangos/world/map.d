@@ -46,6 +46,7 @@ public import dmangos.world.grid : cellSize;
 import dmangos.world.grid : cellCoordinate, cellKey, cellKeyAt;
 import dmangos.world.creatureai : Combatant, CombatWorld;
 import dmangos.world.creature : Creature;
+import dmangos.world.gameobject : GameObject, GameObjectWorld;
 import dmangos.world.motion : MotionWorld;
 import dmangos.world.movement : Position;
 import dmangos.world.objects : maxUpdatePacketBytes, seenByEveryone, UpdateData, UpdatePacket, UpdateValues;
@@ -178,7 +179,7 @@ void deliverBuilt(Inhabitant to, const UpdatePacket packet)
 }
 
 /// See the module documentation.
-final class Map : CombatWorld
+final class Map : CombatWorld, GameObjectWorld
 {
     immutable uint id;
 
@@ -1056,6 +1057,23 @@ final class Map : CombatWorld
         removeObject(creature.guid);
         if (onCorpseRemoved !is null)
             onCorpseRemoved(creature);
+    }
+
+    /// Told when a game object is used up, to bring it back later.
+    void delegate(GameObject go) onGameObjectUsedUp;
+
+    /// See `GameObjectWorld.flushGameObject`.
+    void flushGameObject(GameObject go)
+    {
+        flushObjectChanges(go);
+    }
+
+    /// See `GameObjectWorld.gameObjectUsedUp`.
+    void gameObjectUsedUp(GameObject go)
+    {
+        removeObject(go.guid);
+        if (onGameObjectUsedUp !is null)
+            onGameObjectUsedUp(go);
     }
 
     /// See `CombatWorld.flushCreature`.

@@ -339,7 +339,8 @@ final class WorldData
         waypoints = new WaypointStore;
         quests = new QuestData;
         eventAi = new EventAiData;
-        loot = LootStores(new LootStore("creature_loot_template"), new LootStore("reference_loot_template"));
+        loot = LootStores(new LootStore("creature_loot_template"), new LootStore("reference_loot_template"),
+            new LootStore("gameobject_loot_template"));
     }
 
     /**
@@ -544,9 +545,9 @@ final class WorldData
         }
         foreach (row; world.query!"SELECT faction, quest_rate, creature_rate, spell_rate FROM reputation_reward_rate"())
             reputationRates[row.get!uint(0)] = [row.get!float(1), row.get!float(2), row.get!float(3)];
-        static foreach (table; ["creature", "reference"])
-            foreach (row; world.query!("SELECT " ~ lootColumns ~ " FROM " ~ table ~ "_loot_template")())
-                __traits(getMember, loot, table).add(row.get!uint(0), lootRow(row.get!uint(1), row.get!float(2),
+        static foreach (table; [["creature", "creature"], ["reference", "reference"], ["gameobject", "gameObject"]])
+            foreach (row; world.query!("SELECT " ~ lootColumns ~ " FROM " ~ table[0] ~ "_loot_template")())
+                __traits(getMember, loot, table[1]).add(row.get!uint(0), lootRow(row.get!uint(1), row.get!float(2),
                     row.get!uint(3), row.get!int(4), row.get!uint(5), row.get!uint(6)));
         foreach (row; world.query!"SELECT id, ghost_loc, link_kind, faction FROM game_graveyard_zone"())
             graveyards[graveyardLinkKey(row.get!uint(1), row.get!uint(2))] ~= GraveyardLink(row.get!uint(0),

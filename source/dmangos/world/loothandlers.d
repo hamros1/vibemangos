@@ -22,20 +22,26 @@ mixin template LootHandlers()
     import dmangos.world.loot;
     import dmangos.world.inworld : ArrivalAction;
     import dmangos.world.loothandlers : ClientLootMasterGive, ClientLootRoll, ClientLootSlot;
-    import dmangos.world.map : packetBody;
+    import dmangos.world.map : Map, packetBody;
+    import dmangos.world.movement : Position;
     import dmangos.world.opcodes;
     import dmangos.world.packets : ClientGuid, ServerItemPushResult;
     import dmangos.world.player : DeathState;
     import dmangos.world.updatefields;
 
-private:
-    ulong lootTarget; // `m_lootGuid`: the loot whose window is open
+    package ulong lootTarget; // `m_lootGuid`: the loot whose window is open
 
-    /// The loot `guid` holds on this map (a creature's corpse); null if none.
-    Loot lootOf(ulong guid)
+private:
+
+    /// The loot `guid` holds on this map (a creature's corpse, an open chest); null if none.
+    package Loot lootOf(ulong guid)
     {
+        import dmangos.world.gameobject : GameObject;
+
         if (auto creature = cast(Creature) map.findObject(guid))
             return creature.loot;
+        if (auto go = cast(GameObject) map.findObject(guid))
+            return go.loot;
         return null;
     }
 
@@ -265,12 +271,18 @@ private:
     /// `Player::IsAtGroupRewardDistance`: on the kill's map, and within 74 yards of it (anywhere in a dungeon).
     package bool atGroupRewardDistance(const Creature victim)
     {
-        if (map !is context.existingMap(victim.spawn.map) || transferring)
+        return atGroupRewardDistance(context.existingMap(victim.spawn.map), victim.position);
+    }
+
+    /// ditto, for a place on a map
+    package bool atGroupRewardDistance(const Map there, Position b)
+    {
+        if (map !is there || transferring)
             return false;
         if (const entry = context.client.maps.lookup(map.id))
             if (entry.isDungeon)
                 return true;
-        const a = player.position, b = victim.position;
+        const a = player.position;
         return (a.x - b.x) ^^ 2 + (a.y - b.y) ^^ 2 + (a.z - b.z) ^^ 2 <= groupXpDistance ^^ 2;
     }
 
@@ -293,7 +305,7 @@ private:
             return session is null || session.map !is theMap ? null : cast(Looter) session;
         });
         loot.clock = () => context.unixTime;
-        setLootRights(loot, victim);
+        setLootRights(loot, victim.position, (ulong guid) => victim.ai.threatOf(guid) > 0);
 
         const(LootTemplate) template_ = t.lootId ? context.data.loot.creature[t.lootId] : null;
         if (template_ is null && t.maxLootGold == 0)
@@ -332,8 +344,8 @@ private:
         };
     }
 
-    /// `Loot::SetGroupLootRight`
-    void setLootRights(Loot loot, Creature victim)
+    /// `Loot::SetGroupLootRight`: for loot at `at`; `fought` says who fought for it (a creature's threat list).
+    package void setLootRights(Loot loot, Position at, scope bool delegate(ulong guid) fought)
     {
         import dmangos.world.session : WorldSession;
 
@@ -366,7 +378,7 @@ private:
             auto looter = cast(WorldSession) context.onlinePlayer(guid);
             if (looter is null)
                 continue;
-            if (looter.atGroupRewardDistance(victim) || victim.ai.threatOf(guid) > 0)
+            if (looter.atGroupRewardDistance(map, at) || fought(guid))
             {
                 loot.owners[guid] = true;
                 ordered ~= guid;
@@ -523,7 +535,8 @@ version (unittest)
     {
         import dmangos.world.loot : lootRow, LootStore, LootStores;
 
-        context.data.loot = LootStores(new LootStore("creature_loot_template"), new LootStore("reference_loot_template"));
+        context.data.loot = LootStores(new LootStore("creature_loot_template"), new LootStore("reference_loot_template"),
+            new LootStore("gameobject_loot_template"));
         context.data.loot.creature.add(99, lootRow(itemJerky, 100, 0, 1, 1, 0));
         auto t = &context.data.creatureTemplates[creatureInnkeeper];
         t.lootId = 99;
