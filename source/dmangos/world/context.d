@@ -2055,6 +2055,26 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                         cast(ubyte) item.subClass, cast(ubyte) item.details.material, item.inventoryType,
                         cast(ubyte) item.details.sheath);
         auto creature = new Creature(*spawn, template_, display, level, parts, client, petNumber);
+        // A creature of the water spawned where it can swim swims (unless made to walk in water: crabs).
+        enum uint inhabitWater = 2, walkInWater = 0x8000;
+        if ((template_.inhabitType & inhabitWater) && !(template_.extraFlags & walkInWater) && !petNumber)
+            if (auto ground = terrain(spawn.map))
+            {
+                import dmangos.world.defines : UnitFlags;
+                import dmangos.world.movement : MovementFlags;
+                import dmangos.world.terrain : LiquidData, LiquidStatus;
+                import dmangos.world.updatefields : UNIT_FIELD_FLAGS;
+
+                LiquidData liquid;
+                enum ubyte allLiquids = 0x0F;
+                if (ground.liquidStatus(spawn.x, spawn.y, spawn.z, allLiquids, liquid) != LiquidStatus.noWater
+                        && liquid.level - liquid.depthLevel > parts.collisionHeight)
+                {
+                    creature.movement.flags |= MovementFlags.swimming;
+                    creature.values.set!UNIT_FIELD_FLAGS(creature.values.get!UNIT_FIELD_FLAGS | UnitFlags.swimming);
+                    creature.values.clearChanges();
+                }
+            }
         creature.generator = selectMovement(creature, data.waypoints);
         creature.ai.setLore(this);
         // A script (`ScriptName`) runs it if one serves its name; else its EventAI, if it has one.

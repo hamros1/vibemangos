@@ -30,7 +30,7 @@
 * **Not loaded:** pets.
 * **Creatures** wander, walk their waypoints (running their scripts), fight, die and respawn. Type 3 paths (flying) are walked as waypoints; linked creatures
   (`creature_linking`) aggro together and follow their master, and formations (`spawn_group_formation`) walk their
-  path with their members in place, and creatures in water do not swim. Conditions
+  path with their members in place, and water creatures spawned in deep enough water swim. Conditions
   that need world states or scripts are never met. Elevators
   are created but do not move. Ships and zeppelins sail and carry their passengers across
   (`transports.d`); elevators and ships give the client one transport clock (the wall clock). Idle cells unload after `grid_cleanup_delay_seconds`.

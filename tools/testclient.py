@@ -302,6 +302,7 @@ def describe(op, p):
                 if t == 3:
                     print(f"  [creature] {entry} guid {g & 0xFFFFFF}: level {v.get(OBJECT_END + 0x1C)}, health {v.get(OBJECT_END + 0x10)}, "
                           f"display {v.get(OBJECT_END + 0x7D)}, faction {v.get(OBJECT_END + 0x1D)}, npc flags {v.get(0x93, 0)}, "
+                          f"unit flags {v.get(OBJECT_END + 0x28, 0):#x}, "
                           f"at {move[0]:.1f} {move[1]:.1f} {move[2]:.1f}")
                 else:
                     # GAMEOBJECT_POS_X .. _Z (0xF .. 0x11) where the movement block has no position.

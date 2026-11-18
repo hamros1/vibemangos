@@ -137,6 +137,7 @@ enum UnitFlags : uint
     immuneToNpc = 0x00000200,
     looting = 0x00000400,          /// its loot window is open
     pvp = 0x00001000,
+    swimming = 0x00008000,         /// swims (a creature of the water, in it)
     untargetable = 0x00010000,
     pacified = 0x00020000,
     stunned = 0x00040000,
