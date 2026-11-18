@@ -281,8 +281,8 @@ What works now:
   * **Linked creatures** (`creature_linking`, `creature_linking_template`):
     * A pack's members join the fight when their master is attacked, and the other way round.
     * They follow their master out of combat, as their spawns stood.
-    * They evade with it, and die or go when it dies.
-    * In a dungeon they stay away once their boss is dead.
+    * They evade with it, die or go when it dies, and go when it is made to go (despawned).
+    * In a dungeon they stay away once their boss is dead, or (for some) until it is.
   * **Formations** (`spawn_group_formation`): a spawn group's leader (slot 0) walks the formation's path
     (`waypoint_path`). The others keep their places around it, in slot order: single file, side by
     side, like geese, fanned out behind or in front, or around the leader, `FormationSpread` yards

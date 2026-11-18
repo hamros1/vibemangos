@@ -889,12 +889,15 @@ final class Map : CombatWorld, GameObjectWorld
                     sleepingNow ~= Sleeper(slot, 0, idle == int.max ? ulong.max : clockMs + idle);
             }
         }
+        // Asked again: one woken later in the tick (by another's update) keeps ticking.
         foreach (slot; restingNow)
-            if (entities.holds(slot))
+            if (entities.holds(slot) && at(slot).mover !is null && at(slot).mover.resting)
                 stopTicking(slot);
         foreach (s; sleepingNow)
             if (entities.holds(s.slot) && at(s.slot).tickIndex != notTicking)
-                sleep(s.slot, s.wakeAt);
+                if (auto idler = at(s.slot).idler)
+                    if (idler.idleFor >= minimumSleep)
+                        sleep(s.slot, s.wakeAt);
         expireLingering();
     }
 

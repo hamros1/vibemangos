@@ -612,6 +612,10 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 if (links[i].flags & LinkFlag.aggroOnAggro)
                     joinFight(m, slave, enemy);
                 break;
+            case LinkEvent.despawn:
+                if (links[i].flags & LinkFlag.despawnOnDespawn)
+                    slave.ai.despawnFor(m, 0);
+                break;
             case LinkEvent.evade:
                 if (links[i].flags & LinkFlag.despawnOnEvade)
                     slave.ai.despawnFor(m, 0);
@@ -728,13 +732,20 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         linkSpawnedOn ~= instance ? map(mapId, instance) : map(mapId);
     }
 
-    /// `cantSpawnIfBossDead`: in a dungeon copy whose master (by spawn) of it is dead.
+    /**
+     * In a dungeon copy, a slave (by spawn) that waits on its master: `cantSpawnIfBossDead` while its master
+     * is dead, `cantSpawnIfBossAlive` while it lives.
+     */
     private bool cantSpawnWhileBossDead(const ref CreatureSpawn spawn, const(InstanceState)* state)
     {
         if (state is null)
             return false;
         if (const l = spawn.guid in data.creatureLinks.bySlaveGuid)
-            return (l.flags & LinkFlag.cantSpawnIfBossDead) && (l.masterGuid in state.dead) !is null;
+        {
+            const bossDead = (l.masterGuid in state.dead) !is null;
+            return ((l.flags & LinkFlag.cantSpawnIfBossDead) && bossDead)
+                || ((l.flags & LinkFlag.cantSpawnIfBossAlive) && !bossDead);
+        }
         return false;
     }
 
@@ -4071,4 +4082,33 @@ unittest
     context.updateGameEvents(context.clock(), true);
     auto plain = cast(Creature) m.findObject(guid);
     assert(plain !is dressed && plain.eventShape == 0 && plain.values.get!UNIT_FIELD_DISPLAYID != 4242, "as it was");
+}
+
+// A pack member linked to go with its master goes when its master is made to go.
+unittest
+{
+    import core.time : msecs, MonoTime;
+    import dmangos.world.creaturelinking : LinkFlag;
+    import dmangos.world.movement : Position;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    context.data.creatureLinks.addGuid(bankerSpawn, innkeeperSpawn, LinkFlag.despawnOnDespawn);
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f));
+    anduin.read();
+    now += 100.msecs;
+    context.update(now);
+    auto m = context.map(0);
+    const keeperGuid = makeGuid(HighGuid.unit, creatureInnkeeper, innkeeperSpawn);
+    const bankerGuid = makeGuid(HighGuid.unit, creatureBanker, bankerSpawn);
+    (cast(Creature) m.findObject(keeperGuid)).ai.despawnFor(m, 0);
+    now += 100.msecs;
+    m.update(100.msecs);
+    m.update(100.msecs);
+    assert(m.findObject(keeperGuid) is null, "the master gone");
+    assert(m.findObject(bankerGuid) is null, "its slave with it");
 }

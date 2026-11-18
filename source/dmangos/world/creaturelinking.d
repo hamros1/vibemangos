@@ -15,11 +15,13 @@
  *        (`despawnOnRespawn`);)
  *   $(LI out of combat the slave follows its master, keeping their spawns' distance and angle
  *        (`follow`);)
- *   $(LI in a dungeon copy, the slave does not come back once its master is dead (`cantSpawnIfBossDead`).)
+ *   $(LI the master is made to go (despawned): the slave goes with it (`despawnOnDespawn`);)
+ *   $(LI in a dungeon copy, the slave does not come back once its master is dead (`cantSpawnIfBossDead`), or
+ *        does not come while its master lives (`cantSpawnIfBossAlive`).)
  * )
  * A dead creature brought back has its respawn made due at once (its corpse goes); in a dungeon copy
  * nothing is brought back. Links between creatures simulated on different nodes of a cluster do
- * nothing (the two are rarely far apart). `despawnOnDespawn` and `cantSpawnIfBossAlive` are not done.
+ * nothing (the two are rarely far apart).
  */
 module dmangos.world.creaturelinking;
 

@@ -10,7 +10,7 @@
 module dmangos.world.creatureai;
 
 /// What a creature's linked creatures react to (`CombatWorld.linked`).
-enum LinkEvent : ubyte { aggro, evade }
+enum LinkEvent : ubyte { aggro, evade, despawn }
 
 import std.math : atan2, cos, sin, sqrt;
 
@@ -376,6 +376,7 @@ final class CreatureAI : Scripted, CreatureHost
         if (despawnTimer > 0 && (despawnTimer -= diff) <= 0)
         {
             despawnTimer = 0;
+            world.linked(me, LinkEvent.despawn, 0); // its pack's that go with it go too
             return world.corpseExpired(me);
         }
         if (me.petOwner)
