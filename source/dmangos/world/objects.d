@@ -76,8 +76,9 @@ uint lowGuid(ulong guid) pure nothrow @nogc @safe
 
 /// Which fields a viewer sees: everyone.
 enum Visibility seenByEveryone = Visibility.public_ | Visibility.dynamic;
-/// ditto: a player looking at itself.
-enum Visibility seenBySelf = seenByEveryone | Visibility.private_;
+/// ditto: a player looking at itself; it is in its own group, so it sees the group's fields too (its quest
+/// log's quest ids are group fields: without them the client's quest log is empty).
+enum Visibility seenBySelf = seenByEveryone | Visibility.private_ | Visibility.groupOnly;
 /// ditto: a member of the player's group.
 enum Visibility seenByGroup = seenByEveryone | Visibility.groupOnly;
 /// ditto: the owner of an item, pet or other object, on top of what it otherwise sees.
@@ -709,6 +710,12 @@ unittest
     values.clearChanges();
     values.set!PLAYER_FIELD_COINAGE(6);
     assert(values.hasChangesFor(seenBySelf) && !values.hasChangesFor(seenByEveryone));
+
+    // The quest log's ids are group fields, and the player sees them in its own log; strangers do not.
+    values.clearChanges();
+    values.set!PLAYER_QUEST_LOG_1_1(33);
+    assert(values.hasChangesFor(seenBySelf) && values.hasChangesFor(seenByGroup)
+        && !values.hasChangesFor(seenByEveryone));
 
     // An out-of-range block: type 4, the count, packed guids.
     UpdateData data;
