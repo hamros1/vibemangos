@@ -22,13 +22,13 @@ mixin template GmActions()
     import dmangos.world.updatefields;
 
 private:
-    /// `Player::GiveLevel`: the new level's stats, `SMSG_LEVELUP_INFO`, and the group told.
+    /// The player at `level`: the new level's stats, `SMSG_LEVELUP_INFO`, and the group told.
     void applyLevel(uint level)
     {
         const changed = level != player.data.level;
         const info = player.changeLevel(level, context.data, context.client);
         if (changed)
-            player.restartLevelTime(secondsInWorld()); // `m_Played_time[PLAYED_TIME_LEVEL] = 0`
+            player.restartLevelTime(secondsInWorld()); // the time played at this level starts again
         send(info);
         flushPlayerChanges();
         petOwnerLevelChanged();
@@ -37,7 +37,7 @@ private:
                 | GroupUpdate.powerType);
     }
 
-    /// ArcEmu's `.modify speed` (`Player::SetPlayerSpeed` for RUN, SWIM and RUNBACK): the player is told with
+    /// `.modify speed`: the run, swim and run-back speeds; the player is told with
     /// forced changes, those around it with moves. Swimming backwards keeps its speed.
     void applySpeed(float speed)
     {
@@ -68,7 +68,7 @@ private:
         send(ServerMovementOrder!opcode(player.guid, moveOrderCounter++));
     }
 
-    /// `Player::learnSpell` for a GM: the spellbook, `SMSG_LEARNED_SPELL`, and `character_spell`.
+    /// A spell learned by a GM's command: the spellbook, `SMSG_LEARNED_SPELL`, and `character_spell`.
     bool learn(uint spell)
     {
         if (player.knowsSpell(spell) || context.data.spells.spell(spell) is null)
@@ -80,7 +80,7 @@ private:
         return true;
     }
 
-    /// `Player::removeSpell`. A spell taught by default comes back at the next login, as in CMaNGOS.
+    /// A spell forgotten. A spell taught by default comes back at the next login.
     bool unlearn(uint spell)
     {
         import std.algorithm.mutation : remove;
@@ -94,7 +94,7 @@ private:
         return true;
     }
 
-    /// `Player::SetSkill` and its row; a maximum of 0 removes the skill.
+    /// A skill's value and maximum set, and its row saved; a maximum of 0 removes the skill.
     bool applySkill(uint skill, ushort value, ushort maximum)
     {
         if (!player.setSkill(skill, value, maximum))
@@ -106,7 +106,7 @@ private:
     }
 
     /**
-     * CMaNGOS's `.additem`: `count` of `entry` carried, onto stacks first, then into free slots; as
+     * An item given by a GM: `count` of `entry` carried, onto stacks first, then into free slots; as
      * many as the item's limit and the room allow. Returns how many were given.
      */
     uint giveItem(uint entry, uint count)
@@ -128,7 +128,7 @@ private:
         return count;
     }
 
-    /// `Player::DestroyItemCount`: takes up to `count` of `entry` away, the backpack first. Returns how many.
+    /// Takes up to `count` of `entry` away, the backpack first. Returns how many.
     uint takeItem(uint entry, uint count)
     {
         const left = player.inventory.destroyCount(entry, count);
@@ -136,7 +136,7 @@ private:
         return count - left;
     }
 
-    /// `Player::SaveToDB`, as far as this server saves.
+    /// The player saved, as far as this server saves.
     void savePlayer()
     {
         const progress = player.progress(secondsInWorld());
@@ -150,20 +150,20 @@ private:
         saveTimer.reset();
     }
 
-    /// `World::SendWorldText`: a system message to everyone in the world.
+    /// A system message to everyone in the world.
     void sendWorldText(string text)
     {
         toEveryone(Opcode.SMSG_MESSAGECHAT, chatMessage(ChatType.CHAT_MSG_SYSTEM, Language.LANG_UNIVERSAL, 0, text));
     }
 
-    /// `World::SendGMWorldText`: a system message to everyone with the `u` permission.
+    /// A system message to everyone with the `u` permission.
     void sendGMWorldText(string text)
     {
         context.toEveryone(Opcode.SMSG_MESSAGECHAT, chatMessage(ChatType.CHAT_MSG_SYSTEM, Language.LANG_UNIVERSAL, 0,
             text), 'u');
     }
 
-    /// `World::SendWorldWideScreenText`: `SMSG_AREA_TRIGGER_MESSAGE` to everyone, in the middle of the screen.
+    /// `SMSG_AREA_TRIGGER_MESSAGE` to everyone, in the middle of the screen.
     void sendWorldWideScreenText(string text)
     {
         toEveryone(Opcode.SMSG_AREA_TRIGGER_MESSAGE, packetBody(ServerAreaTriggerMessage(text)));

@@ -74,7 +74,7 @@ int main(string[] args)
     }
 }
 
-/// `mangosd`'s exit code for a restart (`RESTART_EXIT_CODE`), for a script that starts it again.
+/// The exit code for a restart (2, as CMaNGOS restart scripts expect), for a script that starts it again.
 private enum restartExitCode = 2;
 
 private int run(WorldConfig config, string configPath)
@@ -142,7 +142,7 @@ private int run(WorldConfig config, string configPath)
     bool speaksForRealm = !config.cluster.enabled || config.cluster.isCoordinator; // the standby may take it over
     context.keepsHonorWeek = speaksForRealm; // the honor week is reckoned once, by the realm's speaker
     if (speaksForRealm)
-        context.database.markAllOffline(config.realmId); // as clearOnlineAccounts: nobody is online after a restart
+        context.database.markAllOffline(config.realmId); // nobody is online after a restart
     if (config.cluster.enabled && config.cluster.clientAddress.length == 0)
         config.cluster.clientAddress = "127.0.0.1:" ~ to!string(config.port);
     info!"next ids: character %s, item %s, mail %s"(context.next.character, context.next.item, context.next.mail);

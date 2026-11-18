@@ -1,12 +1,13 @@
 /**
- * Accounts as the login server sees them, plus the conventions CMaNGOS uses
- * to store their credentials.
+ * Accounts as the login server sees them, plus the way their credentials are
+ * stored.
  *
- * In the CMaNGOS `account` table, the salt `s`, verifier `v` and session key
+ * In the `account` table, the salt `s`, verifier `v` and session key
  * `sessionkey` are OpenSSL `BN_bn2hex` strings. Each is the big-endian hex
  * of the number whose little-endian bytes go over the wire.
- * `decodeBigNumberHex` and `encodeBigNumberHex` convert between the two, so
- * accounts created by CMaNGOS and by dmangos work interchangeably.
+ * `decodeBigNumberHex` and `encodeBigNumberHex` convert between the two. This
+ * is the CMaNGOS `realmd` format, so accounts created by CMaNGOS and by
+ * dmangos work interchangeably.
  */
 module dmangos.auth.accounts;
 
@@ -17,7 +18,7 @@ import dmangos.crypto.random : secureRandom;
 import dmangos.crypto.srp6 : computeVerifier, keyLength, normalizeCredential, saltLength, sessionKeyLength;
 import dmangos.hex : parseHex, toHex;
 
-/// Longest account name, in characters (`MAX_ACCOUNT_STR`).
+/// Longest account name, in characters.
 enum maxAccountNameLength = 16;
 
 /// Longest password, in characters.
@@ -26,13 +27,13 @@ enum maxPasswordLength = 16;
 /// Security level, stored in `account.gmlevel`.
 enum AccountLevel : ubyte
 {
-    player,        /// SEC_PLAYER
-    moderator,     /// SEC_MODERATOR
-    gameMaster,    /// SEC_GAMEMASTER
-    administrator, /// SEC_ADMINISTRATOR
+    player,        /// 0
+    moderator,     /// 1
+    gameMaster,    /// 2
+    administrator, /// 3
 }
 
-/// Converts a stored `gmlevel`, capping it at administrator as CMaNGOS does.
+/// Converts a stored `gmlevel`, capping it at administrator.
 AccountLevel toAccountLevel(uint gmlevel) pure nothrow @nogc @safe
 {
     return gmlevel >= AccountLevel.administrator ? AccountLevel.administrator : cast(AccountLevel) gmlevel;
@@ -76,7 +77,7 @@ struct ClientDetails
     string platform; /// e.g. "x86"
 }
 
-/// CMaNGOS stores names upper-cased (Latin letters only); see `normalizeCredential`.
+/// Account names are stored upper-cased (Latin letters only); see `normalizeCredential`.
 alias canonicalAccountName = normalizeCredential;
 
 /// Whether `name` is acceptable as an account name: 1-16 characters, valid UTF-8, no control characters.
@@ -113,7 +114,7 @@ bool isValidPassword(scope const(char)[] password) pure @safe
  * Decodes a `BN_bn2hex` string into `N` little-endian bytes.
  *
  * Returns: null if the text is empty, not hex, too large for `N` bytes, or
- * zero. CMaNGOS treats all of these as broken credentials.
+ * zero. All of these are broken credentials.
  */
 Nullable!(ubyte[N]) decodeBigNumberHex(size_t N)(scope const(char)[] hex) pure @safe
 {
@@ -146,7 +147,7 @@ Nullable!(ubyte[N]) decodeBigNumberHex(size_t N)(scope const(char)[] hex) pure @
 /**
  * Encodes little-endian bytes as `BN_bn2hex` does: big-endian, upper-case,
  * without leading zero bytes. The result is left-padded with '0' to at least
- * `minDigits` characters; CMaNGOS pads the session key to 80.
+ * `minDigits` characters; the session key is padded to 80.
  */
 string encodeBigNumberHex(scope const(ubyte)[] littleEndian, size_t minDigits = 0) pure @safe
 {
@@ -206,9 +207,8 @@ Credentials makeCredentials(string username, string password) @safe
  * given name and never match any password.
  *
  * Answering such a challenge normally instead of with "unknown account"
- * keeps account names from being enumerated. This is CMaNGOS's
- * `ExpandFakeSecret`: tagged SHA-1 blocks of (secret, name), with the salt
- * shaped like a real one.
+ * keeps account names from being enumerated. They are tagged SHA-1 blocks of
+ * (secret, name), with the salt shaped like a real one.
  */
 Credentials fakeCredentials(in ubyte[20] secret, string canonicalName) @safe
 {
@@ -231,7 +231,7 @@ Credentials fakeCredentials(in ubyte[20] secret, string canonicalName) @safe
     return credentials;
 }
 
-/// The sample accounts that ship in CMaNGOS's `realmd.sql` (password = name) must verify.
+/// The sample accounts that ship in the schema's `realmd.sql` (password = name) must verify.
 @safe unittest
 {
     static immutable string[3][] rows = [

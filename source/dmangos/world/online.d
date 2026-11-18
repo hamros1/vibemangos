@@ -16,13 +16,13 @@ import dmangos.world.map : Inhabitant;
 /// A player in the world, as other players' actions reach it.
 interface OnlinePlayer : Inhabitant
 {
-    /// The account's security level (`WorldSession::GetSecurity`).
+    /// The account's security level.
     @property AccountLevel security() const;
 
-    /// ArcEmu's `WorldSession::CanUseCommand`: whether the account has the permission letter `group`.
+    /// Whether the account has the permission letter `group`.
     bool canUseCommand(char group) const;
 
-    /// ArcEmu's `WorldSession::GetPermissionCount() > 0`: any GM permission at all.
+    /// Whether the account has any GM permission at all.
     @property bool hasPermissions() const;
 
     /// Whether the player ignores `guid` (its ignore list).
@@ -31,7 +31,7 @@ interface OnlinePlayer : Inhabitant
     /// The dungeon instance the player is in (0: none, or its map is not instanced).
     @property uint instanceId() const;
 
-    /// Whether the player is between the two halves of a far teleport (`Player::IsBeingTeleportedFar`).
+    /// Whether the player is between the two halves of a far teleport.
     @property bool transferring() const;
 
     /**
@@ -40,6 +40,6 @@ interface OnlinePlayer : Inhabitant
      */
     void groupChanged();
 
-    /// One tick of the world update (`Player::Update`, `WorldSession::Update`): `elapsed` since the last.
+    /// One tick of the world update for the player and its session: `elapsed` since the last.
     void update(Duration elapsed);
 }

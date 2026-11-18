@@ -1,20 +1,19 @@
 /**
- * Extracts the terrain of every map into CMaNGOS's `.map` files, as its `ad` extractor does
- * (`contrib/extractor/System.cpp`, `ExtractMapsFromMpq` and `ConvertADT`, with the ADT and WDT
- * readers of `loadlib/`).
+ * Extracts the terrain of every map from the client's MPQ archives into `.map` files, reading the
+ * ADT and WDT files.
  *
  * For each map in `Map.dbc` whose `World\Maps\NAME\NAME.wdt` exists, every ADT tile the WDT lists
  * becomes `<output>/maps/MMMYYXX.map`: the tile's area flags (`AreaTable.dbc`'s explore flag per
  * cell), its ground heights (a 129 x 129 grid of corners and a 128 x 128 grid of centres, packed
  * to bytes or shorts when the terrain is flat enough), its liquids (from the vanilla `MCLQ`
- * chunks) and its holes. The files are byte for byte those CMaNGOS writes (version "z1.4"), so
- * either extractor's output serves either server.
+ * chunks) and its holes. The files are in the CMaNGOS `.map` format (version "z1.4"), byte for
+ * byte what that project's extractor writes, so either extractor's files serve either server.
  *
  * The ADT and WDT chunks are read at the offsets the client's own headers give, and each chunk's
- * name is checked (the C++ readers compare the names the wrong way round, so they check nothing).
- * One difference in the output, which no server reads: the liquid heights' last row and column
- * (index 128, past the tile's 128 squares) hold what this tile's liquid has there, where CMaNGOS's
- * static buffer still holds the previous tile's.
+ * name is checked.
+ * One difference from that extractor's output, which no server reads: the liquid heights'
+ * last row and column (index 128, past the tile's 128 squares) hold what this tile's liquid has
+ * there, not what the previous tile's had.
  */
 module dmangos.extractor.maps;
 
@@ -30,18 +29,18 @@ import dmangos.mapfile;
 import dmangos.log;
 import dmangos.mpq.archive;
 
-/// Cells per tile side, and height points per cell side (`ADT_CELLS_PER_GRID`, `ADT_CELL_SIZE`).
+/// Cells per tile side, and height points per cell side.
 enum cellsPerTile = 16, cellSize = 8, gridSize = cellsPerTile * cellSize;
 
-/// Tiles per map side (`WDT_MAP_SIZE`).
+/// Tiles per map side.
 enum wdtMapSize = 64;
 
-// The extractor's options, CMaNGOS's defaults (`CONF_*`).
-private enum float useMinHeight = -500.0f;      // CONF_use_minHeight: deep ocean is cut off here
-private enum float floatToInt8Limit = 2.0f;     // CONF_float_to_int8_limit
-private enum float floatToInt16Limit = 2048.0f; // CONF_float_to_int16_limit
-private enum float flatHeightDeltaLimit = 0.005f; // CONF_flat_height_delta_limit
-private enum float flatLiquidDeltaLimit = 0.001f; // CONF_flat_liquid_delta_limit
+// The extractor's options, fixed: they decide the packing of the files.
+private enum float useMinHeight = -500.0f;      // deep ocean is cut off here
+private enum float floatToInt8Limit = 2.0f;     // heights within this range pack to bytes
+private enum float floatToInt16Limit = 2048.0f; // ... and within this range to shorts
+private enum float flatHeightDeltaLimit = 0.005f; // terrain within this height is flat
+private enum float flatLiquidDeltaLimit = 0.001f; // liquid within this height is flat
 
 // ---------------------------------------------------------------------------
 // DBC files the extractor reads
@@ -59,7 +58,7 @@ private struct AreaFlag
     uint exploreFlag;
 }
 
-// Map.dbc and AreaTable.dbc with only the columns read (ReadMapDBC, ReadAreaTableDBC).
+// Map.dbc and AreaTable.dbc with only the columns read.
 private enum mapNameFormat = "nsxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
 private enum areaFlagFormat = "nxxixxxxxxxxxxxxxxxxxxxxx";
 
@@ -75,7 +74,7 @@ struct MapReport
     string[] problems;
 }
 
-/// `ExtractMapsFromMpq`: every map's tiles from `archives` (newest first) into `<outputDir>/maps`.
+/// Every map's tiles from `archives` (newest first) into `<outputDir>/maps`.
 MapReport extractMaps(MpqArchive[] archives, string outputDir, void delegate(string) progress = null)
 {
     MapReport report;
@@ -130,12 +129,12 @@ MapReport extractMaps(MpqArchive[] archives, string outputDir, void delegate(str
 }
 
 /**
- * The tiles a WDT says exist (`wdt_MAIN::adt_list`), as [y, x] pairs in file order. False if it
+ * The tiles a WDT says exist (its MAIN chunk), as [y, x] pairs in file order. False if it
  * is not a WDT. A map made only of buildings (a WMO) has a WDT with no tiles.
  */
 bool wdtTiles(const(ubyte)[] wdt, out uint[2][] tiles)
 {
-    // MVER, then MPHD, then MAIN (WDT_file::prepareLoadedData).
+    // MVER, then MPHD, then MAIN.
     if (!hasVersion(wdt))
         return false;
     const mphd = 12;
@@ -152,7 +151,7 @@ bool wdtTiles(const(ubyte)[] wdt, out uint[2][] tiles)
 }
 
 /**
- * `ConvertADT`: one tile's `.map` file, or null (with `problem` set) if the ADT cannot be read.
+ * One tile's `.map` file, or null (with `problem` set) if the ADT cannot be read.
  * `problem` is also set, with a file returned, for an area id `AreaTable.dbc` does not know.
  */
 ubyte[] convertAdt(const(ubyte)[] adt, const ushort[uint] areaFlagsById, out string problem)
@@ -325,7 +324,7 @@ ubyte[] convertAdt(const(ubyte)[] adt, const ushort[uint] areaFlagsById, out str
                     minLiquid = min(minLiquid, useMinHeight);
                 }
             }
-    // The C++ stores these sizes in bytes; with no square shown they wrap, as there.
+    // The format stores these sizes in bytes; with no square shown they wrap.
     const ubyte liquidWidth = cast(ubyte)(maxX - minX + 2), liquidRows = cast(ubyte)(maxY - minY + 2);
     uint liquidHeaderFlags;
     if (maxLiquid == minLiquid || maxLiquid - minLiquid < flatLiquidDeltaLimit)
@@ -398,7 +397,7 @@ ubyte[] convertAdt(const(ubyte)[] adt, const ushort[uint] areaFlagsById, out str
             foreach (y; 0 .. liquidRows)
                 foreach (x; 0 .. liquidWidth)
                 {
-                    // Past the grid only when no square shows (see above), where C++ reads past its array.
+                    // Past the grid only when no square shows (see above): the minimum height there.
                     const row = y + minY, column = x + minX;
                     liquid.put(row <= gridSize && column <= gridSize ? liquidHeight[row][column] : useMinHeight);
                 }
@@ -421,17 +420,17 @@ ubyte[] convertAdt(const(ubyte)[] adt, const ushort[uint] areaFlagsById, out str
 }
 
 // ---------------------------------------------------------------------------
-// Reading ADT files (loadlib/adt.h)
+// Reading ADT files
 // ---------------------------------------------------------------------------
 
-/// What `ConvertADT` reads from one `MCNK` cell.
+/// What `convertAdt` reads from one `MCNK` cell.
 private struct Cell
 {
     size_t offset;       // where the chunk is; 0 for none
     uint flags;
     uint areaId;
     ushort holes;
-    float baseHeight;    // `ypos`: the cell's base height
+    float baseHeight;    // the cell's base height
     const(float)[] heights; // 145 from MCVT, or null
     const(Liquid)* liquid; // MCLQ, or null
 }
@@ -450,7 +449,7 @@ private Cell[cellsPerTile][] readCells(const(ubyte)[] adt, out string problem)
         problem = "no MVER chunk of version 18";
         return null;
     }
-    // MHDR follows MVER; its offsets count from its data (the field CMaNGOS calls `pad`).
+    // MHDR follows MVER; its offsets count from its data.
     enum mhdr = 12, mhdrData = mhdr + 8;
     if (!isChunk(adt, mhdr, "MHDR") || word(adt, mhdr + 4) != 64)
     {
@@ -473,7 +472,7 @@ private Cell[cellsPerTile][] readCells(const(ubyte)[] adt, out string problem)
             const entry = word(adt, mcin + 8 + (i * cellsPerTile + j) * 16);
             if (entry == 0)
                 continue;
-            // adt_MCIN::getMCNK: the offset counts from the file's start, with MCIN at 84.
+            // An MCIN entry's offset counts from the file's start, with MCIN at 84.
             const m = mcin + entry - 84;
             if (!isChunk(adt, m, "MCNK") || m + 136 > adt.length)
             {
@@ -518,7 +517,7 @@ private Cell[cellsPerTile][] readCells(const(ubyte)[] adt, out string problem)
     return cells;
 }
 
-/// `FileLoader::prepareLoadedData`: an MVER chunk of `FILE_FORMAT_VERSION` 18 first.
+/// Whether the file starts with an MVER chunk of version 18.
 private bool hasVersion(const(ubyte)[] data)
 {
     return isChunk(data, 0, "MVER") && data.length >= 12 && word(data, 8) == 18;
@@ -690,7 +689,7 @@ version (unittest)
     }
 }
 
-/// A WDT lists its tiles; an ADT becomes a .map file with CMaNGOS's packing.
+/// A WDT lists its tiles; an ADT becomes a .map file, packed.
 unittest
 {
     // WDT: MVER, MPHD, MAIN with tiles [y 1, x 2] and [y 63, x 0].

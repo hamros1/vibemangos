@@ -1,8 +1,7 @@
 /**
  * SRP6, the password-authenticated key exchange used by the 1.x login protocol.
  *
- * This follows the client's variant of SRP6, as implemented by CMaNGOS
- * (`src/shared/Auth/SRP6.cpp`) and Ember (`libs/srp6`):
+ * This follows the client's variant of SRP6:
  *
  * $(UL
  *   $(LI every number travels as a little-endian byte string;)
@@ -63,8 +62,8 @@ private BigInt prime() @safe
 }
 
 /**
- * Case-folds an account name or password the way the client and CMaNGOS
- * (`AccountMgr::normalizeString`) do: Latin letters are upper-cased, and
+ * Case-folds an account name or password the way the client does, and the
+ * stored verifiers expect: Latin letters are upper-cased, and
  * every other character is left alone.
  */
 string normalizeCredential(string text) pure @safe

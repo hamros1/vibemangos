@@ -1,6 +1,5 @@
 /**
- * Turning `characters` rows into character screen entries, as CMaNGOS's
- * `Player::BuildEnumData` does.
+ * Turning `characters` rows into character screen entries (`SMSG_CHAR_ENUM`).
  */
 module dmangos.world.characters;
 
@@ -37,7 +36,7 @@ enum CharacterFlags : uint
 /// Classes that keep a pet next to them on the character screen.
 private enum ubyte classHunter = 3, classWarlock = 9;
 
-/// The high part of a player's 64-bit guid (`HIGHGUID_PLAYER`); players use the low 32 bits.
+/// The high part of a player's 64-bit guid is 0; players use the low 32 bits.
 enum ulong playerGuidHigh = 0x0000;
 
 /// The character screen entry for `record`, or null if its race/class pair does not exist.
@@ -101,8 +100,7 @@ Nullable!CharacterEntry buildCharacterEntry(const ref CharacterRecord record, co
 
 /**
  * Item entries per equipment slot, from `characters.equipmentCache`: a space-separated list
- * of "entry enchantment" pairs, one per slot. Missing or malformed values are 0, as with
- * CMaNGOS's `GetUInt32ValueFromArray`.
+ * of "entry enchantment" pairs, one per slot. Missing or malformed values are 0.
  */
 uint[characterListEquipmentSlots] equippedItems(string equipmentCache) pure @safe
 {

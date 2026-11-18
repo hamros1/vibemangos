@@ -1,5 +1,5 @@
 /**
- * ArcEmu's `Level0.cpp` handlers: `.help`, `.commands`, `.start`, `.server info`,
+ * The level 0 command handlers: `.help`, `.commands`, `.start`, `.server info`,
  * `.server netstatus`, `.dismount`, `.server save`, `.gm list`,
  * `.debug rangecheck` and `.logcomment`. Mixed into
  * `dmangos.world.character.Character`; `dmangos.world.commands` calls them.
@@ -22,8 +22,8 @@ mixin template Level0Commands()
     import dmangos.world.updatefields;
 
 private:
-    /// `ChatHandler::ShowHelpForCommand`. ArcEmu skips the commands the player *can* use here, which
-    /// makes `.help` find nothing; this skips those it cannot, as `ExecuteCommandInTable` does.
+    /// The help of the command named by `cmd` and `words`. It skips the rows the player cannot use, as
+    /// `executeCommandInTable` does (ArcEmu skips those it *can* use, which makes `.help` find nothing).
     bool showHelpForCommand(immutable(ChatCommand)[] table, string path, ref string words, string cmd)
     {
         foreach (ref row; table)
@@ -77,7 +77,7 @@ private:
                 output ~= MSG_COLOR_LIGHTRED ~ row.name ~ "|r, ";
                 break;
             case 'm':
-                output ~= MSG_COLOR_CYAN ~ row.name ~ ", "; // ArcEmu leaves this colour open
+                output ~= MSG_COLOR_CYAN ~ row.name ~ ", "; // this colour is left open, without `|r`
                 break;
             case 'c':
                 output ~= MSG_COLOR_GREEN ~ row.name ~ "|r, ";
@@ -171,7 +171,7 @@ private:
         return true;
     }
 
-    /// `World::GetUptimeString`
+    /// How long the server has been up, in days, hours, minutes and seconds.
     string uptimeString()
     {
         const up = context.unixTime - context.startTime;
@@ -179,7 +179,7 @@ private:
             up % 60);
     }
 
-    /// `SocketMgr::ShowStatus` writes to the server's console only.
+    /// The network status, written to the server's console only.
     bool handleNetworkStatusCommand()
     {
         info!"Network status: %s sessions (at most %s since start-up), %s accepted"(context.sessionCount,
@@ -216,8 +216,8 @@ private:
         auto target = getSelectedChar(false);
         if (target is null)
             return false;
-        // `m_nextSave < 300000`: at least 5 minutes since the last save, of the 10-minute (here
-        // `player_save_interval`) period.
+        // Only when the next periodic save (every `player_save_interval`) is less than 5 minutes
+        // away.
         if (target.saveTimer.interval - target.saveTimer.elapsed < 300.seconds)
         {
             target.savePlayer();

@@ -99,28 +99,28 @@ final class Character : OnlinePlayer, Looter
         Player player;           // while in the world
         MonoTime enteredWorld;
 
-        // Teleports (`Player::m_teleport_dest`, the teleport semaphores) and the order counter of
+        // Teleports (the destination and the teleport's state) and the order counter of
         // MSG_MOVE_TELEPORT_ACK.
         Teleport teleporting;
         uint moveOrderCounter;
-        bool triggerpassCheat;    // `.cheat triggerpass` (Player::TriggerpassCheat)
-        bool cooldownCheat;       // `.cheat cooldown`: no cooldowns (Player::CooldownCheat)
+        bool triggerpassCheat;    // `.cheat triggerpass`: area triggers pass
+        bool cooldownCheat;       // `.cheat cooldown`: no cooldowns
         bool castTimeCheat;       // `.cheat casttime`: every cast instant
         bool godModeCheat;        // `.cheat god`: no damage taken
         bool powerCheat;          // `.cheat power`: spells cost nothing
         bool[ulong] gmTargets;    // `.gm allowwhispers`: players who may whisper while the GM tag is on
-        uint floodLines;          // flood protection (WorldSession::floodLines, floodTime)
+        uint floodLines;          // flood protection: chat lines counted until `floodTime`
         long floodTime;
 
         // The update tick: the 20-second logout, regeneration, rest, saving.
         bool loggingOut;
         MonoTime logoutRequestedAt;
-        IntervalTimer regenTimer = IntervalTimer(2.seconds);  // REGEN_TIME_FULL
+        IntervalTimer regenTimer = IntervalTimer(2.seconds);  // a full regeneration tick
         IntervalTimer restTimer = IntervalTimer(1.seconds);
         IntervalTimer saveTimer;
 
-        // Zones: the once-a-second check (Player::m_zoneUpdateTimer), a zone the client announced
-        // (SetDelayedZoneUpdate), and the 100 ms position checks (m_positionStatusUpdateTimer).
+        // Zones: the once-a-second check, a zone the client announced (checked after its next move),
+        // and the 100 ms position checks.
         IntervalTimer zoneTimer = IntervalTimer(1.seconds);
         bool zoneUpdatePending;
         uint pendingZone;
@@ -146,7 +146,7 @@ final class Character : OnlinePlayer, Looter
         return dispatchPacket(opcode, state, reader);
     }
 
-    /// The player leaves the world (`WorldSession::LogoutPlayer`), the connection still open or not.
+    /// The player leaves the world, the connection still open or not.
     void leave(string why, bool loggingOut)
     {
         leaveWorld(why, loggingOut);
@@ -309,7 +309,7 @@ final class Character : OnlinePlayer, Looter
         creatureKilled(creature);
     }
 
-    /// See `UnitRef`. The player's pet joins in (`OwnerAttackedBy`).
+    /// See `UnitRef`. The player's pet joins in.
     void threatAdded(ulong creature)
     {
         addThreatener(creature);
@@ -436,7 +436,7 @@ final class Character : OnlinePlayer, Looter
             loadHonor();
     }
 
-    /// Out of its battleground copy (`Player::LeaveBattleground`), back where it came from if `teleport`.
+    /// Out of its battleground copy, back where it came from if `teleport`.
     void battlegroundLeave(bool teleport)
     {
         if (player !is null)
@@ -463,7 +463,7 @@ final class Character : OnlinePlayer, Looter
         return player !is null && battlegroundBonusHonorHere(honor);
     }
 
-    /// Reputation from its battleground (`ModifyReputation`).
+    /// Reputation from its battleground.
     void battlegroundReputation(uint faction, int amount)
     {
         if (player !is null)
@@ -484,7 +484,7 @@ final class Character : OnlinePlayer, Looter
             battlegroundCastHere(spell);
     }
 
-    /// `GetHonorRankInfo().rank`, as the battleground scoreboard shows it.
+    /// The player's honor rank, as the battleground scoreboard shows it.
     @property uint visibleHonorRank()
     {
         return player is null ? 4 : honorRank.rank;
@@ -585,13 +585,13 @@ final class Character : OnlinePlayer, Looter
         return account.level;
     }
 
-    /// ArcEmu's permission letters (`WorldSession::permissions`), from the account's `gmlevel`.
+    /// The account's GM command permission letters, from its `gmlevel`.
     @property string permissions() const
     {
         return context.config.gmPermissions.forLevel(account.level);
     }
 
-    /// `WorldSession::CanUseCommand`
+    /// Whether the account may use a command of the letter `group`.
     bool canUseCommand(char group) const
     {
         import dmangos.world.commands : canUse = canUseCommand;
@@ -599,13 +599,13 @@ final class Character : OnlinePlayer, Looter
         return canUse(permissions, group);
     }
 
-    /// `WorldSession::GetPermissionCount() > 0`
+    /// Whether the account has any command permission.
     @property bool hasPermissions() const
     {
         return permissions.length > 0;
     }
 
-    /// `WorldSession::HasGMPermissions`
+    /// Whether the account is a game master (has `a`).
     @property bool hasGMPermissions() const
     {
         import dmangos.world.commands : hasGM = hasGMPermissions;
@@ -622,7 +622,7 @@ final class Character : OnlinePlayer, Looter
     package uint instanceId_; // the dungeon instance it is in (0: none)
     package uint entryMap = uint.max; // where it was before going into an instance (uint.max: unknown)
     package MonoTime dungeonEntryAsked; // a dungeon's host was asked whether it may go in, then
-    package ulong selectedGo;         // ArcEmu's `m_GM_SelectedGO`: the game object `.gobject select` chose
+    package ulong selectedGo;         // the game object `.gobject select` chose
     package Position entryPoint;      // ditto
 
     /// See `OnlinePlayer.instanceId`.
@@ -660,7 +660,7 @@ private:
             send(ServerUpdateObject(cast(ubyte[]) packet.body_));
     }
 
-    /// `Player::UpdateGroupLeaderFlag`
+    /// The group leader flag, set if the player leads its group.
     void updateLeaderFlag()
     {
         auto group = context.groups.of(player.guid);
@@ -725,7 +725,7 @@ private:
         send(ServerMessageChat(chatMessage(ChatType.CHAT_MSG_SYSTEM, Language.LANG_UNIVERSAL, 0, text)));
     }
 
-    /// `WorldSession::SendNotification`: a message in the middle of the screen.
+    /// A message in the middle of the screen.
     void sendNotification(string text)
     {
         send(ServerNotification(text));

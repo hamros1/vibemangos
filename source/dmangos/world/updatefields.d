@@ -2,12 +2,11 @@
  * The 1.12.1 client's update fields: the 32-bit slots that describe every
  * object it knows about.
  *
- * Everything here comes from one table, `updateFields`, which carries
- * CMaNGOS's `g_updateFieldsData` (`Entities/UpdateFields.cpp`, generated from
- * build 5875): each field's object type, name, first slot, size in slots,
+ * Everything here comes from one table, `updateFields`, the field list of
+ * client build 5875: each field's object type, name, first slot, size in slots,
  * value type and visibility. At compile time it is turned into
  * $(UL
- *   $(LI a `ushort` constant per field, under CMaNGOS's name (`UNIT_FIELD_HEALTH`), so
+ *   $(LI a `ushort` constant per field, under its usual name (`UNIT_FIELD_HEALTH`), so
  *        fields can be looked up in any 1.12 reference;)
  *   $(LI `fieldCount!type`, the number of slots of each object type;)
  *   $(LI `fieldTypes!type` and `fieldVisibility!type`, a per-slot array of each.)
@@ -16,9 +15,8 @@
  * that a float is never written into an integer field, and to send other
  * players only the fields they may see.
  *
- * One correction to the generated data: CMaNGOS's table calls
- * `PLAYER_FIELD_MOD_DAMAGE_DONE_PCT` an integer, but CMaNGOS stores and sends
- * it as a float (1.0 = 100%), and so does this table.
+ * `PLAYER_FIELD_MOD_DAMAGE_DONE_PCT` is a float (1.0 = 100%), though the
+ * generated field list calls it an integer: it is stored and sent as a float.
  */
 module dmangos.world.updatefields;
 
@@ -35,7 +33,7 @@ enum TypeMask : uint
     corpse = 0x0080,
 }
 
-/// `TypeID`, sent in a create block.
+/// The object type, sent in a create block.
 enum TypeId : ubyte
 {
     object = 0,
@@ -48,7 +46,7 @@ enum TypeId : ubyte
     corpse = 7,
 }
 
-/// `UpdateFieldValueTypes`
+/// The type of a field's value.
 enum FieldType : ubyte
 {
     none,
@@ -59,7 +57,7 @@ enum FieldType : ubyte
     twoShort, /// two 16-bit halves
 }
 
-/// `UpdateFieldFlags`: who may see a field.
+/// Who may see a field.
 enum Visibility : uint
 {
     none = 0x000,
@@ -506,19 +504,19 @@ UpdateField fieldAt(TypeId type, ushort offset) pure nothrow @safe
 /// Slots per equipment entry in the `PLAYER_VISIBLE_ITEM_*` block.
 enum ushort visibleItemStride = PLAYER_VISIBLE_ITEM_2_CREATOR - PLAYER_VISIBLE_ITEM_1_CREATOR;
 
-/// Enchantments shown on a visible item (`MAX_INSPECTED_ENCHANTMENT_SLOT`).
+/// Enchantments shown on a visible item.
 enum visibleEnchantments = PLAYER_VISIBLE_ITEM_1_PROPERTIES - PLAYER_VISIBLE_ITEM_1_0 - 1;
 
-/// Skills the client has slots for (`PLAYER_MAX_SKILLS`).
+/// Skills the client has slots for.
 enum maxPlayerSkills = fieldAt(TypeId.player, PLAYER_SKILL_INFO_1_1).size / 3;
 
 /// Inventory positions of bag 0 the player's fields have a guid for: equipment to keyring.
 enum playerInventorySlots = (PLAYER_FARSIGHT - PLAYER_FIELD_INV_SLOT_HEAD) / 2;
 
-/// Slots a bag can have (`MAX_BAG_SIZE`).
+/// Slots a bag can have.
 enum maxBagSize = fieldAt(TypeId.container, CONTAINER_FIELD_SLOT_1).size / 2;
 
-// The layout, cross-checked against CMaNGOS's header.
+// The layout, cross-checked against the client's known field counts and offsets.
 static assert(updateFields.length == 324, "CMaNGOS's g_updateFieldsData has 324 entries");
 static assert(fieldCount!(TypeId.player) == PLAYER_END && fieldCount!(TypeId.unit) == UNIT_END);
 static assert(fieldCount!(TypeId.item) == ITEM_END && fieldCount!(TypeId.container) == CONTAINER_END);
