@@ -138,6 +138,12 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 * `.quest item` lists the items the quest asks for (its `ReqItemId` columns): CMaNGOS has no
   `gameobject_quest_item_binding`. `.quest list` on a player reads its quest log as the client has it
   (ArcEmu's reads the saved `questlog` rows).
+* `.gmTicket`: the rows ArcEmu builds with `GM_TICKET_MY_MASTER_COMPATIBLE` (`get`, `getId`, `delId`) are left
+  out, as ArcEmu leaves them out by default. The answers go to `gm_client_channel` as ArcEmu's do; the
+  commands work whenever it is set (ArcEmu's also need the channel to exist on the server). A
+  ticket's assigned GM and comment are kept in memory only (CMaNGOS's `gm_tickets` has no columns
+  for them); a removed ticket is kept as `state` 1 until deleted permanently. The client's ticket
+  packets and result codes are 1.12's.
 * Arguments are read strictly: a number written wrong ("12abc", "abc") or a missing argument shows
   the command's help, where ArcEmu's C parsing read "12abc" as 12 and "abc" as 0 and went on.
 
@@ -149,9 +155,8 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 
 ## Not yet implemented (%d)
 
-These answer "Not yet implemented.", as ArcEmu's `HandleNYICommand` does: their systems (AI agents
-and waypoint editing, formations and possession, guilds, pets, honor, battlegrounds and arenas,
-GM tickets, transports, GM invisibility, flying) do not exist yet.
+These answer "Not yet implemented.", as ArcEmu's `HandleNYICommand` does: what they work on is not
+done yet (among them AI agents and waypoint editing, possession, arenas, GM invisibility, flying).
 
 | Command | Letter | Help |
 |---|---|---|

@@ -230,7 +230,8 @@ struct WorldConfig
     @JsonName("gamemaster_hide_permissions") bool gamemasterHidePermissions = false;
     /// `Server.SendStatsOnJoin`: everyone (not only GMs) is told the population on entering the world.
     @JsonName("send_stats_on_join") bool sendStatsOnJoin = true;
-    /// `GMClient.GmClientChannel`: a channel only accounts with permissions may join; empty for none.
+    /// `GMClient.GmClientChannel`: a channel only accounts with permissions may join, where the GM ticket notices
+    /// and the `.gmTicket` answers are said; empty for none (the `.gmTicket` commands then do not work).
     @JsonName("gm_client_channel") string gmClientChannel;
     /// `FloodProtection.Lines`, `.Seconds`, `.SendMessage`: lines a player without permissions may say per period.
     @JsonName("flood_lines") uint floodLines = 0;

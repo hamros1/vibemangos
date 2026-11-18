@@ -68,10 +68,16 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 * `.quest item` lists the items the quest asks for (its `ReqItemId` columns): CMaNGOS has no
   `gameobject_quest_item_binding`. `.quest list` on a player reads its quest log as the client has it
   (ArcEmu's reads the saved `questlog` rows).
+* `.gmTicket`: the rows ArcEmu builds with `GM_TICKET_MY_MASTER_COMPATIBLE` (`get`, `getId`, `delId`) are left
+  out, as ArcEmu leaves them out by default. The answers go to `gm_client_channel` as ArcEmu's do; the
+  commands work whenever it is set (ArcEmu's also need the channel to exist on the server). A
+  ticket's assigned GM and comment are kept in memory only (CMaNGOS's `gm_tickets` has no columns
+  for them); a removed ticket is kept as `state` 1 until deleted permanently. The client's ticket
+  packets and result codes are 1.12's.
 * Arguments are read strictly: a number written wrong ("12abc", "abc") or a missing argument shows
   the command's help, where ArcEmu's C parsing read "12abc" as 12 and "abc" as 0 and went on.
 
-## Working (221)
+## Working (229)
 
 | Command | Letter | Help |
 |---|---|---|
@@ -160,6 +166,14 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 | `.gm whisperblock` | `g` | Blocks like .gmon except without the <GM> tag |
 | `.gm allowwhispers` | `c` | Allows whispers from player <s> while in gmon mode. |
 | `.gm blockwhispers` | `c` | Blocks whispers from player <s> while in gmon mode. |
+| `.gmTicket list` | `c` | Lists all active GM Tickets. |
+| `.gmTicket get` | `c` | Gets GM Ticket with ID x. |
+| `.gmTicket remove` | `c` | Removes GM Ticket with ID x. |
+| `.gmTicket deletepermanent` | `z` | Deletes GM Ticket with ID x permanently. |
+| `.gmTicket assign` | `c` | Assignes GM Ticket with id x to GM y (if empty to your self). |
+| `.gmTicket release` | `c` | Releases assigned GM Ticket with ID x. |
+| `.gmTicket comment` | `c` | Sets comment x to GM Ticket with ID y. |
+| `.gmTicket toggle` | `z` | Toggles the ticket system status. |
 | `.gobject select` | `o` | Selects the nearest GameObject to you |
 | `.gobject delete` | `o` | Deletes selected GameObject |
 | `.gobject spawn` | `o` | Spawns a GameObject by ID |
@@ -297,11 +311,10 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 | `.removesickness` | `m` | Removes ressurrection sickness from the target |
 | `.fixscale` | `m` |  |
 
-## Not yet implemented (77)
+## Not yet implemented (66)
 
-These answer "Not yet implemented.", as ArcEmu's `HandleNYICommand` does: their systems (AI agents
-and waypoint editing, formations and possession, guilds, pets, honor, battlegrounds and arenas,
-GM tickets, transports, GM invisibility, flying) do not exist yet.
+These answer "Not yet implemented.", as ArcEmu's `HandleNYICommand` does: what they work on is not
+done yet (among them AI agents and waypoint editing, possession, arenas, GM invisibility, flying).
 
 | Command | Letter | Help |
 |---|---|---|
@@ -334,17 +347,6 @@ GM tickets, transports, GM invisibility, flying) do not exist yet.
 | `.debug dumpcoords` | `d` |  |
 | `.debug sqlquery` | `d` | <sql query> |
 | `.debug setallratings` | `d` | Sets rating values to incremental numbers based on their index. |
-| `.gmTicket get` | `c` | Gets GM Ticket list. |
-| `.gmTicket getId` | `c` | Gets GM Ticket by player name. |
-| `.gmTicket delId` | `c` | Deletes GM Ticket by player name. |
-| `.gmTicket list` | `c` | Lists all active GM Tickets. |
-| `.gmTicket get` | `c` | Gets GM Ticket with ID x. |
-| `.gmTicket remove` | `c` | Removes GM Ticket with ID x. |
-| `.gmTicket deletepermanent` | `z` | Deletes GM Ticket with ID x permanently. |
-| `.gmTicket assign` | `c` | Assignes GM Ticket with id x to GM y (if empty to your self). |
-| `.gmTicket release` | `c` | Releases assigned GM Ticket with ID x. |
-| `.gmTicket comment` | `c` | Sets comment x to GM Ticket with ID y. |
-| `.gmTicket toggle` | `z` | Toggles the ticket system status. |
 | `.gobject export` | `o` | Exports the current GO selected |
 | `.battleground setbgscore` | `e` | <Teamid> <Score> - Sets battleground score. 2 Arguments. |
 | `.battleground startbg` | `e` | Starts current battleground match. |

@@ -1160,6 +1160,16 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         }
     }
 
+    // -----------------------------------------------------------------------
+    // GM tickets (`gm_tickets`)
+    // -----------------------------------------------------------------------
+
+    /// Whether the ticket system takes tickets (`.gmTicket toggle`; the client's help asks).
+    bool gmTicketsOn = true;
+    /// The GM a ticket is assigned to, and a GM's comment on it: kept here only (the table has no columns for them).
+    ulong[uint] ticketAssignedTo;
+    string[uint] ticketComments; /// ditto
+
     /// Unix time, moving with `clock` (so tests that replace the clock move it too).
     long unixTime()
     {

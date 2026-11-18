@@ -41,6 +41,7 @@ mixin template InWorldHandlers()
     import dmangos.bytes : ByteWriter;
     import dmangos.log;
     import dmangos.world.defines : maxActionButtons;
+    import dmangos.world.database : TicketRecord;
     import dmangos.world.group : GroupUpdate;
     import dmangos.world.map : packetBody;
     import dmangos.world.movement : baseMoveSpeed, MovementFlags, MovementInfo, MoveType, movingOrTurning, Position;
@@ -761,6 +762,134 @@ private:
             w.put(mapId);
             deliver(Opcode.SMSG_INSTANCE_RESET_FAILED, w.data);
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // GM tickets: the player's side
+    // -----------------------------------------------------------------------
+
+    /// Says `text` in the GM channel (`gm_client_channel`): to everyone in it, or (`toAll` false) to this player only.
+    package void ticketChannelSay(string text, bool toAll)
+    {
+        import dmangos.world.channelservice : ChannelOp;
+        import dmangos.world.queries : chatMessage;
+
+        const channel = context.config.gmClientChannel;
+        if (channel.length == 0)
+            return;
+        if (toAll)
+            context.channelCommand(this, ChannelOp.forcedSay, channel, text);
+        else
+            deliver(Opcode.SMSG_MESSAGECHAT, chatMessage(ChatType.CHAT_MSG_CHANNEL, Language.LANG_UNIVERSAL, player.guid,
+                text, 0, channel));
+    }
+
+    /// The player's open ticket, if any.
+    package bool openTicket(uint playerLow, out TicketRecord ticket)
+    {
+        foreach (t; context.database.tickets(false))
+            if (t.player == playerLow)
+            {
+                ticket = t;
+                return true;
+            }
+        return false;
+    }
+
+    private void ticketResult(Opcode opcode, uint result)
+    {
+        ByteWriter w;
+        w.put(result);
+        deliver(opcode, w.data);
+    }
+
+    /**
+     * The player asks for help: its pending ticket goes (closed), and a new one is made with its words and
+     * where it stands; the GM channel hears of it ("GmTicket:1:id:level:name").
+     */
+    @Handles(Opcode.CMSG_GMTICKET_CREATE, WorldState.inWorld)
+    void handleTicketCreate(ref ByteReader reader)
+    {
+        import std.format : format;
+
+        enum uint createSuccess = 2;
+        reader.read!ubyte; // its category
+        TicketRecord t;
+        t.map = reader.read!uint;
+        t.x = reader.read!float;
+        t.y = reader.read!float;
+        t.z = reader.read!float;
+        t.text = reader.readCString();
+        TicketRecord pending;
+        if (openTicket(cast(uint) player.guid, pending))
+            context.database.closeTicket(pending.id);
+        t.player = cast(uint) player.guid;
+        t.name = player.data.name;
+        t.level = player.data.level;
+        t.created = context.unixTime;
+        t.id = context.database.addTicket(t);
+        ticketResult(Opcode.SMSG_GMTICKET_CREATE, createSuccess);
+        ticketChannelSay(format!"GmTicket:1:%s:%s:%s"(t.id, t.level, t.name), true);
+    }
+
+    /// The player changes its ticket's words; the GM channel hears of it ("GmTicket:7:id").
+    @Handles(Opcode.CMSG_GMTICKET_UPDATETEXT, WorldState.inWorld)
+    void handleTicketUpdate(ref ByteReader reader)
+    {
+        import std.format : format;
+
+        enum uint updateSuccess = 4, updateError = 5;
+        const text = reader.readCString();
+        TicketRecord t;
+        if (!openTicket(cast(uint) player.guid, t))
+            return ticketResult(Opcode.SMSG_GMTICKET_UPDATETEXT, updateError);
+        context.database.updateTicketText(t.id, text, context.unixTime);
+        ticketResult(Opcode.SMSG_GMTICKET_UPDATETEXT, updateSuccess);
+        ticketChannelSay(format!"GmTicket:7:%s"(t.id), true);
+    }
+
+    /// The player takes its ticket back; the GM channel hears of it ("GmTicket:6:id").
+    @Handles(Opcode.CMSG_GMTICKET_DELETETICKET, WorldState.inWorld)
+    void handleTicketDelete()
+    {
+        import std.format : format;
+
+        enum uint ticketDeleted = 9;
+        TicketRecord t;
+        const had = openTicket(cast(uint) player.guid, t);
+        if (had)
+            context.database.closeTicket(t.id);
+        ticketResult(Opcode.SMSG_GMTICKET_DELETETICKET, ticketDeleted);
+        if (had)
+            ticketChannelSay(format!"GmTicket:6:%s"(t.id), true);
+    }
+
+    /// The client asks for the player's ticket: its words, and how long it has waited.
+    @Handles(Opcode.CMSG_GMTICKET_GETTICKET, WorldState.inWorld)
+    void handleTicketGet()
+    {
+        enum uint hasText = 6, noTicket = 10;
+        TicketRecord t;
+        if (!openTicket(cast(uint) player.guid, t))
+            return ticketResult(Opcode.SMSG_GMTICKET_GETTICKET, noTicket);
+        const days = (context.unixTime - t.created) / 86_400.0f;
+        ByteWriter w;
+        w.put(hasText);
+        w.putCString(t.text);
+        w.put(ubyte(0));   // its category
+        w.put(days);       // days in the queue
+        w.put(days);       // the oldest ticket's
+        w.put(0.0f);       // since the oldest was last updated
+        w.put(ubyte(0));   // not escalated
+        w.put(ubyte(0));   // not read by a GM
+        deliver(Opcode.SMSG_GMTICKET_GETTICKET, w.data);
+    }
+
+    /// The client asks whether tickets are taken (`.gmTicket toggle`).
+    @Handles(Opcode.CMSG_GMTICKET_SYSTEMSTATUS, WorldState.inWorld)
+    void handleTicketSystemStatus()
+    {
+        ticketResult(Opcode.SMSG_GMTICKET_SYSTEMSTATUS, context.gmTicketsOn ? 1 : 0);
     }
 
     /// The client hides or shows the player's helm, or its cloak.

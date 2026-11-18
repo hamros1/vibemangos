@@ -1023,3 +1023,68 @@ unittest
     gm.say(".pet createpet 299");
     assert(systemMessages(gm.read()).length == 0);
 }
+
+/// GM tickets: a player asks for help; the GM channel's `.gmTicket` commands list and remove tickets, as ArcEmu's.
+unittest
+{
+    import std.algorithm.searching : canFind;
+    import dmangos.bytes : ByteWriter;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f));
+    auto gm = loggedIn(context, db, 9, "Jaina", Position(-8940, -132, 83.5f), AccountLevel.gameMaster);
+    anduin.read();
+    gm.read();
+
+    // Without a GM channel the commands show their help.
+    gm.say(".gmTicket list");
+    const help = systemMessages(gm.read());
+    assert(help.length && !help.canFind(MSG_COLOR_LIGHTRED ~ "Not yet implemented.|r"));
+
+    // A ticket: made, then read back.
+    ByteWriter w;
+    w.put(ubyte(1));
+    w.put(0u);
+    w.put(-8949.95f);
+    w.put(-132.49f);
+    w.put(83.53f);
+    w.putCString("I am stuck");
+    w.putCString("");
+    anduin.write(Opcode.CMSG_GMTICKET_CREATE, w.data);
+    auto made = anduin.read();
+    assert(made.length == 1 && made[0].opcode == Opcode.SMSG_GMTICKET_CREATE && made[0].body_[0] == 2);
+    anduin.write(Opcode.CMSG_GMTICKET_GETTICKET, null);
+    auto got = anduin.read();
+    assert(got[0].opcode == Opcode.SMSG_GMTICKET_GETTICKET && got[0].body_[0] == 6
+        && got[0].body_.canFind(cast(const(ubyte)[]) "I am stuck"));
+
+    // With the GM channel: the list, then the ticket removed and its author told.
+    context.config.gmClientChannel = "gmsync";
+    gm.say(".gmTicket list");
+    auto listed = gm.read();
+    bool says(const(ServerPacketRead)[] packets, string text)
+    {
+        foreach (p; packets)
+            if (p.opcode == Opcode.SMSG_MESSAGECHAT && p.body_.canFind(cast(const(ubyte)[]) text))
+                return true;
+        return false;
+    }
+    assert(says(listed, "GmTicket:2") && says(listed, "GmTicket:3:1:1:1::Anduin:"), "the list");
+    gm.say(".gmTicket get 1");
+    assert(says(gm.read(), "GmTicket:4:1:I am stuck"));
+    gm.say(".gmTicket remove 1");
+    gm.read();
+    assert(opcodesOf(anduin.read()).canFind(Opcode.SMSG_GMTICKET_DELETETICKET), "its author told");
+    gm.say(".gmTicket get 1");
+    assert(says(gm.read(), "GmTicket:0:Ticket not found."));
+    // Toggling needs `z` (an administrator): the client then hears the system is off.
+    auto admin = loggedIn(context, db, 10, "Varian", Position(-8940, -130, 83.5f), AccountLevel.administrator);
+    admin.read();
+    admin.say(".gmTicket toggle");
+    assert(systemMessages(admin.read()) == [MSG_COLOR_GREEN ~ "TicketSystem disabled.|r"]);
+    anduin.read();
+    anduin.write(Opcode.CMSG_GMTICKET_SYSTEMSTATUS, null);
+    auto status = anduin.read();
+    assert(status.length == 1 && status[0].opcode == Opcode.SMSG_GMTICKET_SYSTEMSTATUS && status[0].body_[0] == 0);
+}

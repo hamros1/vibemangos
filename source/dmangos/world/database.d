@@ -281,6 +281,20 @@ struct Replaces
 {
 }
 
+/// A `gm_tickets` row: a player's request for help.
+struct TicketRecord
+{
+    uint id;
+    uint player;      /// `author_guid`
+    string name;      /// `author_name`
+    uint level;
+    uint map;
+    float x = 0, y = 0, z = 0;
+    string text;
+    long created;     /// Unix time
+    bool closed;      /// removed by a GM or the player (`state` 1); kept until deleted permanently
+}
+
 /// What `loadInstances` reads.
 struct InstanceRecords
 {
@@ -646,6 +660,16 @@ interface WorldDatabase
     /// Moves a character that is not online (`.summon` of an offline player).
     void moveOfflineCharacter(uint guid, uint map, float x, float y, float z, uint zone);
 
+    /// GM tickets (`gm_tickets`): every ticket, the open ones only (`closed` too with `all`).
+    TicketRecord[] tickets(bool all);
+    /// A new ticket; returns its id.
+    uint addTicket(TicketRecord ticket);
+    /// A ticket's text changed, at `now`.
+    void updateTicketText(uint id, string text, long now);
+    /// A ticket removed (closed, kept); or deleted for good.
+    void closeTicket(uint id);
+    void deleteTicket(uint id); /// ditto
+
     /// One spell learned, or changed (a higher rank made it inactive).
     void saveSpell(uint guid, uint spell, bool active, bool disabled);
 
@@ -894,6 +918,11 @@ final class MySqlWorldDatabase : WorldDatabase
     {
         statements.moveOfflineCharacter(guid, map, x, y, z, zone);
     }
+    TicketRecord[] tickets(bool all) { return statements.tickets(all); }
+    uint addTicket(TicketRecord ticket) { return statements.addTicket(ticket); }
+    void updateTicketText(uint id, string text, long now) { statements.updateTicketText(id, text, now); }
+    void closeTicket(uint id) { statements.closeTicket(id); }
+    void deleteTicket(uint id) { statements.deleteTicket(id); }
     void saveSpell(uint guid, uint spell, bool active, bool disabled)
     {
         statements.saveSpell(guid, spell, active, disabled);
@@ -1099,6 +1128,44 @@ final class MemoryWorldDatabase : WorldDatabase
             if (c.name == name)
                 return guid;
         return 0;
+    }
+
+    TicketRecord[] ticketRows;
+    TicketRecord[] tickets(bool all)
+    {
+        import std.algorithm.iteration : filter;
+        import std.array : array;
+
+        return ticketRows.filter!(t => all || !t.closed).array;
+    }
+    uint addTicket(TicketRecord ticket)
+    {
+        ticket.id = cast(uint) ticketRows.length + 1;
+        ticketRows ~= ticket;
+        return ticket.id;
+    }
+    void updateTicketText(uint id, string text, long now)
+    {
+        foreach (ref t; ticketRows)
+            if (t.id == id)
+                t.text = text;
+    }
+    void closeTicket(uint id)
+    {
+        foreach (ref t; ticketRows)
+            if (t.id == id)
+                t.closed = true;
+    }
+    void deleteTicket(uint id)
+    {
+        import std.algorithm.mutation : remove;
+
+        foreach (i, t; ticketRows)
+            if (t.id == id)
+            {
+                ticketRows = ticketRows.remove(i);
+                return;
+            }
     }
 
     void moveOfflineCharacter(uint guid, uint map, float x, float y, float z, uint zone)

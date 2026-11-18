@@ -42,6 +42,7 @@ enum ChannelOp : ubyte
     say,            /// `arg`: the text, in `language`
     leaveAll,       /// logging out
     zoneChanged,    /// `arg`: the new zone's name
+    forcedSay,      /// `arg`: the text, to every member of an existing channel, its sayer a member or not
 }
 
 /// `op` on `channel`, by `who`.
@@ -167,6 +168,10 @@ final class ChannelService : MemberDirectory
         case ChannelOp.say:
             if (auto channel = named())
                 channel.say(who, c.arg, cast(Language) c.language, c.chatTag);
+            return;
+        case ChannelOp.forcedSay:
+            if (auto channel = set.find(c.channel, null))
+                channel.forcedSay(c.guid, c.arg, c.chatTag);
             return;
         case ChannelOp.leaveAll:
             set.leaveAll(who);

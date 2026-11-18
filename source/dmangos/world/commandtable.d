@@ -129,9 +129,6 @@ immutable ChatCommand[] waypointCommandTable = [
 
 /// The `.gmTicket` commands.
 immutable ChatCommand[] gMTicketCommandTable = [
-    ChatCommand("get", 'c', "HandleGMTicketListCommand", "Gets GM Ticket list.", null, null, null, 0),
-    ChatCommand("getId", 'c', "HandleGMTicketGetByIdCommand", "Gets GM Ticket by player name.", null, null, null, 0),
-    ChatCommand("delId", 'c', "HandleGMTicketRemoveByIdCommand", "Deletes GM Ticket by player name.", null, null, null, 0),
     ChatCommand("list", 'c', "HandleGMTicketListCommand", "Lists all active GM Tickets.", null, null, null, 0),
     ChatCommand("get", 'c', "HandleGMTicketGetByIdCommand", "Gets GM Ticket with ID x.", null, null, null, 0),
     ChatCommand("remove", 'c', "HandleGMTicketRemoveByIdCommand", "Removes GM Ticket with ID x.", null, null, null, 0),

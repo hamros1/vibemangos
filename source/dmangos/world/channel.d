@@ -430,6 +430,13 @@ final class Channel
         sendToAll(chatMessage(ChatType.CHAT_MSG_CHANNEL, language, guid, text, chatTag, name), Opcode.SMSG_MESSAGECHAT);
     }
 
+    /// `guid` says `text` to everyone in the channel, a member or not, muted or not (the GM ticket notices).
+    void forcedSay(ulong guid, string text, ubyte chatTag)
+    {
+        sendToAll(chatMessage(ChatType.CHAT_MSG_CHANNEL, Language.LANG_UNIVERSAL, guid, text, chatTag, name),
+            Opcode.SMSG_MESSAGECHAT);
+    }
+
     /// `player` invites the player named to the channel.
     void invite(ChannelMember player, string targetName)
     {

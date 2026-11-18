@@ -249,7 +249,7 @@ What works now:
     `allow_two_side_interaction_channel` is on.
   * **The GM system:** GM commands behave exactly as ArcEmu 2.4.3's: the same command tables,
     permission letters, lookup and replies, word for word. This is a compatibility contract. An
-    account's `gmlevel` is mapped to letters by `gm_permissions`. 217 of the 298
+    account's `gmlevel` is mapped to letters by `gm_permissions`. 229 of the 295
     commands work: teleports and `game_tele` recall places, `.modify` (health, stats, speed, money,
     level, looks, ...), `.levelup`, `.character learn`, skills, items, lookups, kicks, bans, mutes,
     account levels, timed shutdowns and restarts, announcements, the GM tag and whisper blocking,
@@ -257,8 +257,9 @@ What works now:
     cheats (cooldown, cast time, god mode, power, explore, triggerpass), `.invincible`, instances,
     quests (status, starting, completing, quest givers and their lists), reputation, spawning and
     deleting creatures and game objects, vendors' wares, resetting spells and skills, and debugging.
-    The others (pets, guilds, battlegrounds, tickets, waypoint editing, ...) say "Not yet
-    implemented." See [docs/COMMANDS.md](docs/COMMANDS.md).
+    GM tickets work too: a player's help request is a ticket (`gm_tickets`), and the `.gmTicket`
+    commands answer in the GM channel (`gm_client_channel`) as ArcEmu's do. The others (waypoint
+    editing, possession, arenas, ...) say "Not yet implemented." See [docs/COMMANDS.md](docs/COMMANDS.md).
   * **NPCs:** gossip menus with their texts and conditions, trainers (lists and lessons, with
     ranks and professions), innkeepers binding the hearthstone, bankers, and vendors.
   * **Items:** moving, stacking, splitting, equipping, bags, the bank and

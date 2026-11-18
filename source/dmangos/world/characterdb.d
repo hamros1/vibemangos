@@ -18,7 +18,7 @@ import dmangos.mysql : MySqlConnection;
 import dmangos.world.inventory : ItemChange, ItemRecord, ItemState;
 import dmangos.world.player : CharacterData, CharacterProgress, HomeBind, tutorialFields;
 import dmangos.world.playercreate : NewCharacter, NewSkill, NewSpell, maxEnchantmentSlot;
-import dmangos.world.database : AuraRecord, BattlegroundData, HonorColumns, HonorPointRecord, HonorRecord, CooldownRecord, PetRecord, PetSpellRecord, GuildMemberRecord, GuildRankRecord, GuildRecord,
+import dmangos.world.database : AuraRecord, TicketRecord, BattlegroundData, HonorColumns, HonorPointRecord, HonorRecord, CooldownRecord, PetRecord, PetSpellRecord, GuildMemberRecord, GuildRankRecord, GuildRecord,
     PetitionRecord, SocialRow, CorpseRecord, InstanceBindRecord, InstanceRecord, InstanceRecords,
     InstanceRespawnRecord, MailRecord;
 import dmangos.world.reputation : ReputationRecord;
@@ -1090,6 +1090,60 @@ final class CharacterStatements
     {
         // A rename asked for at login (`at_login` 1) is done with it.
         characters.execute!"UPDATE characters SET name = ?, at_login = at_login & ~1 WHERE guid = ?"(newName, guid);
+    }
+
+    /// See `WorldDatabase.tickets`.
+    TicketRecord[] tickets(bool all)
+    {
+        TicketRecord[] found;
+        foreach (row; characters.query!("SELECT id, author_guid, author_name, level, mapid, x, y, z, text, created, "
+            ~ "state FROM gm_tickets ORDER BY id")())
+        {
+            TicketRecord t;
+            t.id = row.get!uint(0);
+            t.player = row.get!uint(1);
+            t.name = row.get!string(2);
+            t.level = row.get!uint(3);
+            t.map = row.get!uint(4);
+            t.x = row.get!float(5);
+            t.y = row.get!float(6);
+            t.z = row.get!float(7);
+            t.text = row.get!string(8);
+            t.created = row.get!long(9);
+            t.closed = row.get!uint(10) != 0;
+            if (all || !t.closed)
+                found ~= t;
+        }
+        return found;
+    }
+
+    /// See `WorldDatabase.addTicket`.
+    uint addTicket(TicketRecord t)
+    {
+        characters.execute!("INSERT INTO gm_tickets (category, state, status, level, author_guid, author_name, mapid, "
+            ~ "x, y, z, o, text, created, updated, seen) VALUES (0, 0, 0, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, 0)")(
+            t.level, t.player, t.name, t.map, t.x, t.y, t.z, t.text, t.created, t.created);
+        foreach (row; characters.query!"SELECT LAST_INSERT_ID()"())
+            return row.get!uint(0);
+        return 0;
+    }
+
+    /// See `WorldDatabase.updateTicketText`.
+    void updateTicketText(uint id, string text, long now)
+    {
+        characters.execute!"UPDATE gm_tickets SET text = ?, updated = ? WHERE id = ?"(text, now, id);
+    }
+
+    /// See `WorldDatabase.closeTicket`.
+    void closeTicket(uint id)
+    {
+        characters.execute!"UPDATE gm_tickets SET state = 1 WHERE id = ?"(id);
+    }
+
+    /// See `WorldDatabase.deleteTicket`.
+    void deleteTicket(uint id)
+    {
+        characters.execute!"DELETE FROM gm_tickets WHERE id = ?"(id);
     }
 
     /// See `WorldDatabase.moveOfflineCharacter`.
