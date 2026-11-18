@@ -40,6 +40,7 @@ struct Relating
     const(Reputation) reputation;           /// a player's standings; null: its race's and class's base ones
     uint playerFlags;                       /// `PLAYER_FLAGS` of the player it is or that controls it (FFA, contested)
     bool playerOwned;                       /// a player's pet, totem or guardian: it has a controlling player
+    ulong controller;                       /// the player in control: the player itself, or a pet's owner; 0: none
 
     /// Whether a player is in control: a player, or a unit one controls.
     @property bool hasControllingPlayer() const pure nothrow @nogc @safe
@@ -165,6 +166,9 @@ ReputationRank factionReaction(const(FactionTemplateEntry)* self, const Relating
 ReputationRank reactionTo(const Relating self, const Relating unit, const ClientData client,
     bool sameGroup = false)
 {
+    // A player and what it controls (its pet, its totems), or two things one player controls: friends.
+    if (self.controller && self.controller == unit.controller)
+        return ReputationRank.friendly;
     if (self.playerControlled)
     {
         if (unit.playerControlled)
@@ -222,6 +226,9 @@ bool canAttack(const Relating self, const Relating unit, const ClientData client
     if (self.playerControlled ? unit.hasFlag(UnitFlags.immuneToPlayer) : unit.hasFlag(UnitFlags.immuneToNpc))
         return false;
     if (unit.playerControlled ? self.hasFlag(UnitFlags.immuneToPlayer) : self.hasFlag(UnitFlags.immuneToNpc))
+        return false;
+    // Never what the same player controls: a hunter's own pet, flagged for PvP or not.
+    if (self.controller && self.controller == unit.controller)
         return false;
     if (self.playerControlled || unit.playerControlled)
     {
@@ -285,4 +292,28 @@ unittest
     assert(reputationToRank(0) == ReputationRank.neutral && reputationToRank(-1) == ReputationRank.unfriendly);
     assert(reputationToRank(3000) == ReputationRank.friendly && reputationToRank(-42_000) == ReputationRank.hated);
     assert(reputationToRank(42_000) == ReputationRank.exalted);
+}
+
+// A player and its own pet: friends, and never to be attacked by each other, flagged for PvP or not (the
+// pet carries its owner's flag). Another player's flagged pet can be, by a flagged player.
+unittest
+{
+    import dmangos.world.testdata : testClientData;
+
+    auto client = testClientData();
+    const alliance = client.factionTemplates.lookup(1);
+    Relating hunter = Relating(UnitFlags.playerControlled | UnitFlags.pvp, alliance, true, 1, 4);
+    hunter.controller = 7;
+    Relating pet = Relating(UnitFlags.playerControlled | UnitFlags.pvp, alliance, false);
+    pet.playerOwned = true;
+    pet.controller = 7;
+    assert(!canAttack(hunter, pet, client) && !canAttack(pet, hunter, client), "its own pet, flagged or not");
+    assert(reactionTo(hunter, pet, client) == ReputationRank.friendly);
+
+    Relating stranger = hunter;
+    stranger.controller = 8;
+    assert(canAttack(stranger, pet, client), "another flagged player may attack a flagged pet");
+    pet.unitFlags &= ~UnitFlags.pvp;
+    stranger.unitFlags &= ~UnitFlags.pvp;
+    assert(!canAttack(stranger, pet, client), "not flagged: no");
 }

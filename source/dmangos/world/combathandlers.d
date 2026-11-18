@@ -35,9 +35,12 @@ mixin template CombatHandlers()
     package Relating relatingNow()
     {
         const v = &player.values;
-        return Relating(v.get!UNIT_FIELD_FLAGS, context.client.factionTemplates.lookup(v.get!UNIT_FIELD_FACTIONTEMPLATE),
-            true, 1u << (player.data.race - 1), 1u << (player.data.classId - 1), v.get!UNIT_FIELD_HEALTH > 0,
-            v.get!PLAYER_DUEL_ARBITER, v.get!PLAYER_DUEL_TEAM, player.reputation, v.get!PLAYER_FLAGS);
+        Relating r = Relating(v.get!UNIT_FIELD_FLAGS,
+            context.client.factionTemplates.lookup(v.get!UNIT_FIELD_FACTIONTEMPLATE), true, 1u << (player.data.race - 1),
+            1u << (player.data.classId - 1), v.get!UNIT_FIELD_HEALTH > 0, v.get!PLAYER_DUEL_ARBITER,
+            v.get!PLAYER_DUEL_TEAM, player.reputation, v.get!PLAYER_FLAGS);
+        r.controller = player.guid;
+        return r;
     }
 
     /**
@@ -217,9 +220,15 @@ private:
     /// How the relations see a creature.
     Relating relatingOf(const Creature creature)
     {
-        return Relating(creature.values.get!UNIT_FIELD_FLAGS,
+        // As the creature's AI sees itself (its controlling player, if a pet), so that both sides agree.
+        if (creature.ai !is null)
+            return creature.ai.relatingOf();
+        Relating r = Relating(creature.values.get!UNIT_FIELD_FLAGS,
             context.client.factionTemplates.lookup(creature.values.get!UNIT_FIELD_FACTIONTEMPLATE), false, 0, 0,
             creature.alive);
+        r.playerOwned = creature.petOwner != 0;
+        r.controller = creature.petOwner;
+        return r;
     }
 
     /// Attacks `victim` in melee; false if it cannot.

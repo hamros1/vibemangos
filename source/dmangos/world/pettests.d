@@ -213,6 +213,17 @@ unittest
     tick(6000);
     assert(!session.inCombat, "out of combat once the tamed beast is gone");
     rexxar.read();
+    // Its owner cannot attack it: the swing is refused (found in a real-client test: it was allowed).
+    {
+        import std.algorithm.searching : canFind;
+        import dmangos.world.packets : ClientGuid;
+
+        rexxar.write(Opcode.CMSG_ATTACKSWING, ClientGuid(pet.guid));
+        assert(opcodesOf(rexxar.read()).canFind(Opcode.SMSG_ATTACKSTOP), "its owner may not attack it");
+        tick(3000);
+        assert(pet.values.get!UNIT_FIELD_HEALTH == pet.values.get!UNIT_FIELD_MAXHEALTH
+            || pet.values.get!UNIT_FIELD_HEALTH >= 30, "and it was not hit");
+    }
 
     // Another beast cannot be tamed while it is out.
     auto second = context.summonCreature(map, boar, Position(-8947, -130, 83.53f, 0), TempSpawnType.dead, 0, 0);

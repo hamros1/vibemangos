@@ -476,6 +476,7 @@ private:
     {
         Relating r = Relating(me.values.get!UNIT_FIELD_FLAGS, me.factionTemplate, false, 0, 0, me.alive);
         r.playerOwned = me.petOwner != 0;
+        r.controller = me.petOwner;
         r.playerFlags = me.controllerPlayerFlags;
         return r;
     }
