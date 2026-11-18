@@ -150,8 +150,9 @@ private:
         }
         if (migratedAt != MonoTime.init && context.clock() - migratedAt < 10.seconds)
             return 0;
-        // A fight stays on the node it is on: the creatures it is with are simulated here.
-        if (inCombat)
+        // A fight stays on the node it is on: the creatures it is with are simulated here. A flight too: the node
+        // that flies it lands it (its state is not carried), and the player moves on from the ground.
+        if (inCombat || flying)
             return 0;
         const owner = context.regionOwnerAround(player.data.map, player.position, migrationMargin);
         if (owner == 0 || owner == context.nodeId)

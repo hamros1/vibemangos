@@ -774,14 +774,14 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 
 * Projects: CMaNGOS
 * Files: `Taxi.cpp`
-* Functions: `ObjectMgr::GetNearestTaxiNode`, `Tracker::AddRoutes`
+* Functions: `ObjectMgr::GetNearestTaxiNode`, `Tracker::AddRoutes`, `Tracker::Save`, `Tracker::Load`, `Tracker::Prepare`
 * Constants: `PLAYER_FLIGHT_SPEED`
 
 ## world/taxihandlers.d
 
 * Projects: CMaNGOS
-* Files: `TaxiHandler.cpp`
-* Functions: `Player::ActivateTaxiPathTo`
+* Files: `TaxiHandler.cpp`, `Player.cpp`
+* Functions: `Player::ActivateTaxiPathTo`, `Player::LoadFromDB` (the saved flight), `Player::TaxiFlightResume`
 * Constants: `SMSG_MONSTER_MOVE`
 
 ## world/teleport.d

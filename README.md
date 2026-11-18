@@ -587,9 +587,11 @@ What works now:
     (`SMSG_MONSTER_MOVE` for everyone), the server following so that its place on the map and its
     sight change as it goes; at the end it lands at the destination. Busy, mounted, in a form other
     than a stance, too far, out of money or not knowing a node, it is refused.
-    Logging out in flight saves the character at the destination. `.cheat taxi` gives or takes
-    every node. Not yet: flights across maps, a flight's pauses, resuming a flight at login,
-    flying on to another node of a cluster mid-flight.
+    A flight is saved as it goes (`taxi_path`, CMaNGOS's format `resumenode#pathid`): logged out in
+    flight, or after a crash, the character comes back at the path point ahead and flies on, unpaid,
+    to the end of the leg it was on (as CMaNGOS does by default; a flight of several legs ends
+    there). In a cluster the node a flight starts on flies it to the end, the player moving on once
+    landed. `.cheat taxi` gives or takes every node. Not yet: flights across maps, a flight's pauses.
   * **Auctions:** auctioneers open
     their city's house (`AuctionHouse.dbc`; the goblins' for the neutral towns; one for both
     factions with `allow_two_side_interaction_auction`). An item that may be traded is put up for 2,

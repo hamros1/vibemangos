@@ -86,6 +86,110 @@ struct TaxiFlight
     uint cost;
     uint from, to;
     uint mapId;
+    /// For each of `points`: the path (`TaxiPath.dbc`) it is on and its index there, for a save in flight.
+    PathPoint[] pathPoints;
+}
+
+/// A point of a flight path: the path and the point's index on it.
+struct PathPoint
+{
+    uint path;
+    uint index;
+}
+
+/**
+ * A flight saved in `characters.taxi_path`, in CMaNGOS's format: `resumenode#pathid` (the path flown, and
+ * the point on it the flight resumes from). Only the leg under way is saved, as CMaNGOS does by default: a
+ * flight over several legs, resumed, ends at the end of that leg.
+ */
+string taxiPathText(PathPoint at) pure @safe
+{
+    import std.format : format;
+
+    return at.path ? format!"%s#%s"(at.index, at.path) : "";
+}
+
+/// What a `taxi_path` read gave.
+enum SavedFlight
+{
+    none,     /// not in flight
+    flight,   /// a flight to resume (`at`)
+    node,     /// a single node (an older format's destination): the character goes there
+    invalid,  /// unreadable: the character goes home
+}
+
+/// Reads a `taxi_path`: see `taxiPathText`.
+SavedFlight readTaxiPath(string text, out PathPoint at, out uint node) pure @safe
+{
+    import std.algorithm.iteration : splitter;
+    import std.array : array;
+    import std.conv : ConvException, to;
+    import std.string : strip;
+
+    text = text.strip;
+    if (text.length == 0)
+        return SavedFlight.none;
+    uint[] numbers;
+    try
+        foreach (part; text.splitter('#'))
+            numbers ~= part.strip.to!uint;
+    catch (ConvException)
+        return SavedFlight.invalid;
+    if (numbers.length == 1)
+    {
+        node = numbers[0];
+        return SavedFlight.node;
+    }
+    at = PathPoint(numbers[1], numbers[0]); // more paths after the first: not saved by us, and not flown
+    return SavedFlight.flight;
+}
+
+/// The point to save for a flight at its `points[next]` (the point ahead): never a path's first or last point.
+PathPoint resumePoint(const ClientData client, const ref TaxiFlight flight, size_t next)
+{
+    if (flight.pathPoints.length == 0)
+        return PathPoint.init;
+    if (next >= flight.pathPoints.length)
+        next = flight.pathPoints.length - 1;
+    PathPoint at = flight.pathPoints[next];
+    const points = client.taxiPathPoints.get(at.path, null);
+    if (points.length < 3)
+        return PathPoint(at.path, points.length ? points[0].index : 0);
+    const first = points[0].index + 1, last = points[$ - 1].index - 1;
+    at.index = at.index < first ? first : at.index > last ? last : at.index;
+    return at;
+}
+
+/**
+ * The rest of a saved flight: path `at.path` from its point `at.index` to its end, on the point's map; its
+ * nodes the path's. Nothing is paid again.
+ */
+bool resumeFlight(const ClientData client, PathPoint at, out TaxiFlight flight)
+{
+    const entry = client.taxiPaths.lookup(at.path);
+    const points = client.taxiPathPoints.get(at.path, null);
+    if (entry is null || points.length < 2)
+        return false;
+    size_t start = points.length;
+    foreach (i, point; points)
+        if (point.index == at.index)
+        {
+            start = i;
+            break;
+        }
+    if (start + 1 >= points.length)
+        return false;
+    flight.from = entry.from;
+    flight.to = entry.to;
+    flight.mapId = points[start].mapId;
+    foreach (point; points[start .. $])
+    {
+        if (point.mapId != flight.mapId)
+            return false; // a flight that changes maps: not yet
+        flight.points ~= Vector3(point.x, point.y, point.z);
+        flight.pathPoints ~= PathPoint(at.path, point.index);
+    }
+    return true;
 }
 
 /**
@@ -119,7 +223,10 @@ bool planFlight(const ClientData client, const(uint)[] nodes, float priceRate, o
                 return false; // a flight that changes maps: not yet
             const p = Vector3(point.x, point.y, point.z);
             if (flight.points.length == 0 || flight.points[$ - 1] != p)
+            {
                 flight.points ~= p;
+                flight.pathPoints ~= PathPoint(*path, point.index);
+            }
         }
     }
     return flight.points.length > 1;
@@ -166,4 +273,26 @@ unittest
     assert(f.points == [Vector3(0, 0, 0), Vector3(50, 0, 0), Vector3(100, 0, 0), Vector3(300, 0, 0)],
         "the legs joined, in order");
     assert(!planFlight(client, [2u, 7], 1, f), "no direct path");
+
+    // Saved in flight: the path point ahead, never a path's first or last; a path of two points from its first.
+    assert(planFlight(client, [2u, 5, 7], 1, f)); // again: the failed plan above emptied it
+    assert(f.pathPoints == [PathPoint(10, 0), PathPoint(10, 1), PathPoint(10, 2), PathPoint(11, 1)]);
+    assert(resumePoint(client, f, 1) == PathPoint(10, 1) && resumePoint(client, f, 0) == PathPoint(10, 1));
+    assert(resumePoint(client, f, 2) == PathPoint(10, 1), "not the last point either");
+    assert(resumePoint(client, f, 3) == PathPoint(11, 0));
+    assert(taxiPathText(PathPoint(10, 1)) == "1#10" && taxiPathText(PathPoint.init) == "");
+
+    PathPoint at;
+    uint saved;
+    assert(readTaxiPath("1#10", at, saved) == SavedFlight.flight && at == PathPoint(10, 1));
+    assert(readTaxiPath("1#10#11", at, saved) == SavedFlight.flight && at == PathPoint(10, 1), "the first leg only");
+    assert(readTaxiPath("5", at, saved) == SavedFlight.node && saved == 5, "an older format's destination");
+    assert(readTaxiPath("", at, saved) == SavedFlight.none && readTaxiPath("a#b", at, saved) == SavedFlight.invalid);
+
+    // Resumed: the rest of the leg from the point, to the leg's end node.
+    TaxiFlight rest;
+    assert(resumeFlight(client, PathPoint(10, 1), rest));
+    assert(rest.points == [Vector3(50, 0, 0), Vector3(100, 0, 0)] && rest.from == 2 && rest.to == 5 && rest.cost == 0);
+    assert(!resumeFlight(client, PathPoint(10, 2), rest), "nothing left after the last point");
+    assert(!resumeFlight(client, PathPoint(12, 0), rest), "no such path");
 }

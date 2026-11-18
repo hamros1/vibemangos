@@ -6,8 +6,11 @@
  * the known nodes. A flight to one of them (directly, or over several legs) costs its price (10%
  * less at honored with the master's faction): the player mounts its node's flying mount and flies
  * the path at 32 yards a second, as `SMSG_MONSTER_MOVE` shows everyone, while the server follows
- * it to keep its place on the map; at the end it lands at the destination node. Logging out in
- * flight puts the character at the destination.
+ * it to keep its place on the map; at the end it lands at the destination node.
+ *
+ * A flight is saved as it goes (`characters.taxi_path`, CMaNGOS's format: the path point ahead and the path):
+ * logged out in flight, or after a crash, the character comes back at that point of the path and flies the
+ * rest of the leg it was on, unpaid, landing at that leg's end (`resumeSavedFlight`).
  */
 module dmangos.world.taxihandlers;
 
@@ -18,7 +21,7 @@ mixin template TaxiHandlers()
 {
     import dmangos.world.money : Copper;
     import dmangos.bytes : ByteReader, ByteWriter;
-    import dmangos.log : info;
+    import dmangos.log : info, warning;
     import dmangos.vmap.math : Vector3;
     import dmangos.world.creature : chooseDisplay, Npc;
     import dmangos.world.defines : UnitFlags;
@@ -30,9 +33,11 @@ mixin template TaxiHandlers()
     import dmangos.world.taxi;
     import dmangos.world.updatefields;
 
-    MoveSpline taxiSpline;       // the flight under way
+    package MoveSpline taxiSpline; // the flight under way
+    TaxiFlight taxiFlight;       // what it flies: its points come after the spline's first (where it began)
     uint taxiDestination;        // its last node; 0: not flying
     int taxiRelocate;            // until the map hears of the position again
+    int taxiSavedPoint = -1;     // the spline point `player.data.taxiPath` was last written for
 
     /// Whether the player is on a flight.
     package @property bool flying() const
@@ -184,17 +189,95 @@ mixin template TaxiHandlers()
         cancelTrade(true);
         player.pay(Copper(flight.cost));
         sendTaxiReply(TaxiReply.ok);
-        // Mounted, flagged, along the path from where the player stands.
+        takeOff(flight, display);
+        info!"%s: '%s' flies from node %s to %s (%s copper, %s ms)"(remoteAddress, player.data.name, flight.from,
+            flight.to, flight.cost, taxiSpline.duration);
+    }
+
+    /// Mounted on `display`, flagged, along `flight` from where the player is.
+    private void takeOff(ref TaxiFlight flight, uint display)
+    {
+        const at = player.position;
         player.values.set!UNIT_FIELD_MOUNTDISPLAYID(display);
         player.values.set!UNIT_FIELD_FLAGS(player.values.get!UNIT_FIELD_FLAGS | UnitFlags.taxiFlight);
         flushPlayerChanges();
         Vector3[] path = [Vector3(at.x, at.y, at.z)] ~ flight.points;
         taxiSpline = MoveSpline(path, SplineFlags.flying, flightSpeed, ++taxiSplineId);
+        taxiFlight = flight;
         taxiDestination = flight.to;
         taxiRelocate = 0;
+        taxiSavedPoint = -1;
+        noteFlightPoint();
         map.sendToWatchers(this, Opcode.SMSG_MONSTER_MOVE, monsterMove(player.guid, taxiSpline), true);
-        info!"%s: '%s' flies from node %s to %s (%s copper, %s ms)"(remoteAddress, player.data.name, flight.from,
-            flight.to, flight.cost, taxiSpline.duration);
+    }
+
+    // `player.data.taxiPath`, what a save writes, follows the flight: the path point ahead of the player.
+    private void noteFlightPoint()
+    {
+        const segment = taxiSpline.currentPathIndex; // spline point `segment` is `taxiFlight.points[segment - 1]`
+        if (segment == taxiSavedPoint)
+            return;
+        taxiSavedPoint = segment;
+        player.data.taxiPath = taxiPathText(resumePoint(context.client, taxiFlight, segment));
+    }
+
+    /**
+     * At login: a flight saved under way (`characters.taxi_path`) goes on from where it was saved, along the
+     * rest of its leg, mounted as from the leg's first node. The character was put at that point when it was
+     * saved; an older format's single node puts it there instead, and anything unreadable home.
+     */
+    void resumeSavedFlight()
+    {
+        PathPoint at;
+        uint node;
+        const text = player.data.taxiPath;
+        const saved = readTaxiPath(text, at, node);
+        player.data.taxiPath = null;
+        final switch (saved)
+        {
+        case SavedFlight.none:
+            return;
+        case SavedFlight.node:
+            if (const n = context.client.taxiNodes.lookup(node))
+            {
+                teleportTo(n.mapId, Position(n.x, n.y, n.z, player.position.orientation));
+                return;
+            }
+            goto case SavedFlight.invalid;
+        case SavedFlight.invalid:
+            warning!"'%s': flight '%s' not understood; sent home"(player.data.name, text);
+            return teleportHome();
+        case SavedFlight.flight:
+            TaxiFlight flight;
+            const path = context.client.taxiPaths.lookup(at.path);
+            if (!resumeFlight(context.client, at, flight) || flight.mapId != map.id)
+            {
+                warning!"'%s': flight on path %s from point %s cannot go on; sent home"(player.data.name, at.path,
+                    at.index);
+                return teleportHome();
+            }
+            const mountCreature = taxiMountCreature(context.client.taxiNodes.lookup(path.from),
+                context.client.teamForRace(player.data.race));
+            const mountTemplate = mountCreature in context.data.creatureTemplates;
+            const display = mountTemplate is null ? 0 : chooseDisplay(*mountTemplate, map.random);
+            if (!display)
+                return teleportHome();
+            // From the saved point itself (where the character is), not from a step before it.
+            const start = flight.points[0];
+            player.movement.position = Position(start.x, start.y, start.z, player.position.orientation);
+            flight.points = flight.points[1 .. $];
+            flight.pathPoints = flight.pathPoints[1 .. $];
+            takeOff(flight, display);
+            info!"%s: '%s' flies on along path %s from point %s to node %s (%s ms)"(remoteAddress, player.data.name,
+                at.path, at.index, flight.to, taxiSpline.duration);
+        }
+    }
+
+    // Home: the hearthstone's place.
+    private void teleportHome()
+    {
+        const home = player.data.homeBind;
+        teleportTo(home.map, Position(home.x, home.y, home.z, player.position.orientation));
     }
 
     private uint taxiSplineId;
@@ -206,6 +289,7 @@ mixin template TaxiHandlers()
             return;
         taxiSpline.update(ms);
         player.movement.position = taxiSpline.position();
+        noteFlightPoint();
         taxiRelocate -= ms;
         if (taxiRelocate <= 0)
         {
@@ -221,6 +305,7 @@ mixin template TaxiHandlers()
     {
         const destination = context.client.taxiNodes.lookup(taxiDestination);
         taxiDestination = 0;
+        player.data.taxiPath = null;
         player.values.set!UNIT_FIELD_MOUNTDISPLAYID(0u);
         player.values.set!UNIT_FIELD_FLAGS(player.values.get!UNIT_FIELD_FLAGS & ~UnitFlags.taxiFlight);
         flushPlayerChanges();
@@ -229,14 +314,20 @@ mixin template TaxiHandlers()
             teleportTo(map.id, Position(destination.x, destination.y, destination.z, player.position.orientation));
     }
 
-    /// Leaving the world in flight: the character is saved at the destination, on the ground.
+    /**
+     * Leaving the world in flight: saved at the path point ahead with `taxi_path` (CMaNGOS puts the character
+     * there when it loads it), unmounted; the next login flies on (`resumeSavedFlight`).
+     */
     package void taxiOnLeave()
     {
         if (!flying)
             return;
-        if (const destination = context.client.taxiNodes.lookup(taxiDestination))
-            player.movement.position = Position(destination.x, destination.y, destination.z,
-                player.position.orientation);
+        PathPoint at;
+        uint node;
+        if (readTaxiPath(player.data.taxiPath, at, node) == SavedFlight.flight)
+            foreach (point; context.client.taxiPathPoints.get(at.path, null))
+                if (point.index == at.index)
+                    player.movement.position = Position(point.x, point.y, point.z, player.position.orientation);
         taxiDestination = 0;
         player.values.set!UNIT_FIELD_MOUNTDISPLAYID(0u);
         player.values.set!UNIT_FIELD_FLAGS(player.values.get!UNIT_FIELD_FLAGS & ~UnitFlags.taxiFlight);
@@ -334,4 +425,91 @@ unittest
     anduin.session.update(6000.msecs);
     assert(!anduin.session.inWorld.flying && me.values.get!UNIT_FIELD_MOUNTDISPLAYID == 0, "landed");
     assert(!(me.values.get!UNIT_FIELD_FLAGS & UnitFlags.taxiFlight));
+}
+
+/**
+ * Logged out in flight: saved at the path point ahead with `taxi_path`; logged in again, the character flies on
+ * from there along the rest of the leg, without paying, and lands at its end.
+ */
+unittest
+{
+    import core.time : MonoTime, msecs;
+    import std.algorithm.searching : canFind;
+    import dmangos.bytes : ByteWriter;
+    import dmangos.dbc : buildDbc;
+    import dmangos.world.clientdata : taxiNodesFormat, taxiPathFormat, taxiPathNodeFormat;
+    import dmangos.world.creature : Creature;
+    import dmangos.world.defines : UnitFlags;
+    import dmangos.world.movement : Position;
+    import dmangos.world.npchandlers : NpcFlag;
+    import dmangos.world.objects : HighGuid, makeGuid;
+    import dmangos.world.opcodes;
+    import dmangos.world.player : CharacterData, Player;
+    import dmangos.world.taxi : learnNode;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+    import dmangos.world.updatefields;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    uint bits(float f) { return *cast(uint*) &f; }
+    uint[] node(uint id, float x, float y, float z)
+    {
+        auto row = new uint[taxiNodesFormat.length];
+        row[0] = id;
+        row[2] = bits(x);
+        row[3] = bits(y);
+        row[4] = bits(z);
+        row[14] = creatureInnkeeper;
+        row[15] = creatureInnkeeper;
+        return row;
+    }
+    // Node 2 by the trainer, node 5 320 yards east; the path has a point half way.
+    context.client.taxiNodes = typeof(context.client.taxiNodes).parse(buildDbc(taxiNodesFormat,
+        [node(2, -8949, -132, 83.5f), node(5, -8629, -132, 83.5f)]), "TaxiNodes.dbc");
+    context.client.taxiPaths = typeof(context.client.taxiPaths).parse(buildDbc(taxiPathFormat, [[10u, 2, 5, 120]]),
+        "TaxiPath.dbc");
+    context.client.taxiPathNodes = typeof(context.client.taxiPathNodes).parse(buildDbc(taxiPathNodeFormat,
+        [[1u, 10, 0, 0, bits(-8949), bits(-132), bits(100), 0, 0],
+         [2u, 10, 1, 0, bits(-8789), bits(-132), bits(100), 0, 0],
+         [3u, 10, 2, 0, bits(-8629), bits(-132), bits(100), 0, 0]]), "TaxiPathNode.dbc");
+    context.client.buildIndexes();
+
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f), AccountLevel.gameMaster);
+    auto me = cast(Player) anduin.session.character;
+    me.receive(Copper(500));
+    learnNode(me.data.taxiMask, 2);
+    learnNode(me.data.taxiMask, 5);
+    auto master = cast(Creature) context.map(0).findObject(makeGuid(HighGuid.unit, creatureTrainer, trainerSpawn));
+    master.values.set!UNIT_NPC_FLAGS(master.values.get!UNIT_NPC_FLAGS | NpcFlag.flightMaster);
+    anduin.read();
+    ByteWriter w;
+    w.put(master.guid);
+    w.put(2u);
+    w.put(5u);
+    anduin.write(Opcode.CMSG_ACTIVATETAXI, w.data);
+    anduin.read();
+    assert(anduin.session.inWorld.flying && me.money == Copper(380));
+    anduin.session.update(3000.msecs); // short of the middle point
+    assert(me.data.taxiPath == "1#10", me.data.taxiPath);
+
+    // Out, in flight: saved at the point ahead, unmounted, the flight kept.
+    anduin.write(Opcode.CMSG_LOGOUT_REQUEST, null);
+    const saved = db.progressSaves[$ - 1];
+    assert(saved.taxiPath == "1#10");
+    assert(saved.position.x == -8789 && saved.position.z == 100, "at the point it flies on from");
+
+    // In again: flying on from there, mounted, for nothing.
+    auto again = loggedIn(context, db, 7, "Anduin", saved.position, AccountLevel.gameMaster, raceHuman, 0, 1,
+        (ref CharacterData c) { c.taxiPath = saved.taxiPath; c.money = 380; });
+    auto back = cast(Player) again.session.character;
+    assert(again.session.inWorld.flying && back.money == Copper(380));
+    assert(back.values.get!UNIT_FIELD_MOUNTDISPLAYID != 0 && (back.values.get!UNIT_FIELD_FLAGS & UnitFlags.taxiFlight));
+    const spline = again.session.inWorld.taxiSpline; // sent as login ends (the login packets were read)
+    assert(spline.path[0].x == -8789 && spline.duration > 4500 && spline.duration < 5500, "the second half");
+    again.session.update(6000.msecs); // 160 yards: 5 s
+    assert(!again.session.inWorld.flying && back.position.x > -8640, "landed at node 5");
+    assert(back.data.taxiPath is null);
 }
