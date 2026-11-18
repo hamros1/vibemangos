@@ -414,7 +414,15 @@ What works now:
     An item with random properties drops with one of them (`item_enchantment_template`, shown in
     the loot window) or gets one when it is made. Worn, its enchantments count: stats, resistances,
     weapon damage and equip spells (most "of the Bear" stats are these), as many times as items give
-    them. Items with loot (clams, sacks, boxes of
+    them.
+  * **Enchanting:**
+    * A permanent enchantment (the enchanting profession) goes into an item's permanent slot.
+    * A temporary one (sharpening stones, weightstones, oils, poisons) lasts the spell's time, an hour
+      if it gives none. It runs down, is saved with its item, and comes off when the time is up; the
+      client shows the time left.
+    * Poisons' effects are procs, not done yet.
+  * **Crafting** (an item made, an enchantment) may raise the profession: always while the recipe is
+    orange, three times in four yellow, one in four green, never grey. Items with loot (clams, sacks, boxes of
     supplies) open in the bags (`CMSG_OPEN_ITEM`, unless a lock needs picking) to their
     `item_loot_template` loot and money; emptied, they are gone (an item left half looted keeps its
     loot until logout, not across it: `item_loot` is not used).

@@ -80,6 +80,7 @@ private:
         saveQuests();
         saveReputation();
         saveHonor();
+        saveEnchantmentTimes();
         battlegroundLoggedOut();
         saveBattleground();
         deathOnLogout();
@@ -239,6 +240,7 @@ private:
         saveReputation();
         saveHonor();
         saveBattleground();
+        saveEnchantmentTimes();
         context.settleWrites(); // in the database before the next node loads it
 
         ByteWriter w;
@@ -387,6 +389,7 @@ private:
         loadAuras();
         loadHonor();
         loadBattleground();
+        loadEnchantmentTimers();
         loadCooldowns();
         loadTalentReset();
         loadSocial();
@@ -468,6 +471,7 @@ private:
             return;
         updateSpells(elapsed);
         updateAuras(elapsed);
+        updateEnchantments(elapsed);
         updateTaxi(cast(int) elapsed.total!"msecs");
         updateTimedQuests();
         updateDuel();

@@ -1290,7 +1290,15 @@ private:
             break;
         case SpellEffect.createItem:
             if (spell.itemType[i])
-                giveItem(spell.itemType[i], value > 0 ? value : 1);
+                if (giveItem(spell.itemType[i], value > 0 ? value : 1))
+                    updateCraftSkill(spell.id); // made: a chance to learn from it
+            break;
+        case 53: // SPELL_EFFECT_ENCHANT_ITEM
+            enchantItem(c.targets.item, cast(uint) spell.miscValue[i], false, 0);
+            updateCraftSkill(spell.id);
+            break;
+        case 54: // SPELL_EFFECT_ENCHANT_ITEM_TEMPORARY
+            enchantItem(c.targets.item, cast(uint) spell.miscValue[i], true, value);
             break;
         case SpellEffect.learnSpell:
             if (spell.triggerSpell[i])

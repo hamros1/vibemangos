@@ -279,6 +279,7 @@ mixin template CharacterLogin()
         loadAuras();
         loadHonor();
         loadBattleground();
+        loadEnchantmentTimers();
         applyPassiveSpells();
         petsOnArrival(); // the saved current pet comes back
         battlegroundOnLogin();

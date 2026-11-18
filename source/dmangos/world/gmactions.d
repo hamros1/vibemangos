@@ -147,6 +147,7 @@ private:
         saveReputation();
         saveHonor();
         saveBattleground();
+        saveEnchantmentTimes();
         saveTimer.reset();
     }
 

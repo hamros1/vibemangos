@@ -17,6 +17,7 @@ module dmangos.world.character;
 import dmangos.world.honor : HonorHandlers;
 import dmangos.world.pvp : PvPHandlers;
 import dmangos.world.battleground : BattlegroundHandlers;
+import dmangos.world.enchanting : EnchantingHandlers;
 import core.time : Duration, MonoTime, msecs, seconds;
 import std.algorithm.searching : canFind;
 
@@ -766,6 +767,7 @@ private:
     mixin TaxiHandlers;
     mixin PvPHandlers;
     mixin BattlegroundHandlers;
+    mixin EnchantingHandlers;
     mixin HonorHandlers;
     mixin Level0Commands;
     mixin Level1Commands;
@@ -1077,4 +1079,45 @@ unittest
     me.inventory.equip(4, shirt); // the shirt slot (taking the place of what was there)
     me.refreshEquipmentStats(context.data);
     assert(me.stats.stats[Stat.stamina] >= before + 5 - 0.01f, "its enchantment's stamina counts");
+}
+
+// Enchanting: a permanent enchantment stays; a temporary one counts while it lasts, then goes.
+unittest
+{
+    import core.time : minutes, seconds;
+    import dmangos.world.enchantments : EnchantmentEffect, EnchantmentType;
+    import dmangos.world.movement : Position;
+    import dmangos.world.opcodes : Opcode;
+    import dmangos.world.stats : Stat;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+    import dmangos.world.updatefields;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    context.data.enchantmentEffects[900] = [EnchantmentEffect(EnchantmentType.stat, 3, 4), EnchantmentEffect.init,
+        EnchantmentEffect.init]; // +3 strength
+    context.data.enchantmentEffects[901] = [EnchantmentEffect(EnchantmentType.stat, 2, 7), EnchantmentEffect.init,
+        EnchantmentEffect.init]; // +2 stamina
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f));
+    anduin.read();
+    auto me = anduin.session.inWorld;
+    auto shirt = me.player.inventory.create(itemShirt, 1);
+    me.player.inventory.equip(4, shirt);
+    me.flushInventory();
+    const strength = me.player.stats.stats[Stat.strength], stamina = me.player.stats.stats[Stat.stamina];
+
+    me.enchantItem(shirt.fullGuid, 900, false, 0);
+    assert(shirt.enchantment(0) == 900 && me.player.stats.stats[Stat.strength] == strength + 3, "permanent, counted");
+    me.enchantItem(shirt.fullGuid, 901, true, 600);
+    assert(shirt.enchantment(1) == 901 && me.player.stats.stats[Stat.stamina] == stamina + 2, "temporary, counted");
+    bool timeSent;
+    foreach (p; anduin.read())
+        timeSent = timeSent || p.opcode == Opcode.SMSG_ITEM_ENCHANT_TIME_UPDATE;
+    assert(timeSent, "the client is told how long it lasts");
+    me.updateEnchantments(9.minutes);
+    assert(shirt.enchantment(1) == 901 && shirt.values.get!ITEM_FIELD_ENCHANTMENT(4) < 600_000, "running down, saved");
+    me.updateEnchantments(61.seconds);
+    assert(shirt.enchantment(1) == 0 && me.player.stats.stats[Stat.stamina] == stamina, "gone when its time is up");
+    assert(shirt.enchantment(0) == 900, "the permanent one stays");
 }

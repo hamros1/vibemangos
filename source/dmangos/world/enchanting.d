@@ -1,0 +1,175 @@
+/**
+ * Enchanting a player's items, and crafting's skill gains.
+ *
+ * A permanent enchantment (the enchanting profession's: spell effect 53) goes into an item's
+ * permanent slot; a temporary one (sharpening stones, weightstones, oils, poisons: effect 54) into its
+ * temporary slot for the spell's duration in seconds (an hour if it gives none). Either replaces what
+ * was in that slot. A worn item's stats change at once (`dmangos.world.enchantments` says what counts).
+ *
+ * Temporary enchantments run down while their item is carried, worn or in a bag, and are taken off when
+ * their time is up; the client is told the time left (`SMSG_ITEM_ENCHANT_TIME_UPDATE`). The time left is
+ * written into the item's duration field every half minute and when the character is saved, so it
+ * survives a logout.
+ *
+ * Crafting (an item made by a spell, an enchantment) may raise the spell's profession by one, by how
+ * the player's skill compares with the recipe's levels in `SkillLineAbility.dbc`: orange always, yellow
+ * three times in four, green one in four, grey never.
+ */
+module dmangos.world.enchanting;
+
+/// The chance in a thousand that crafting a recipe raises its skill: by the skill against the recipe's
+/// grey (`maxValue`) and yellow (`minValue`) levels, green halfway between.
+int craftSkillChance(uint skill, uint grey, uint yellow) pure nothrow @nogc @safe
+{
+    const green = (grey + yellow) / 2;
+    if (skill >= grey)
+        return 0;
+    if (skill >= green)
+        return 250;
+    if (skill >= yellow)
+        return 750;
+    return 1000;
+}
+
+unittest
+{
+    assert(craftSkillChance(1, 40, 1) == 750 && craftSkillChance(0, 40, 1) == 1000);
+    assert(craftSkillChance(25, 40, 10) == 250 && craftSkillChance(40, 40, 10) == 0);
+}
+
+/// See the module documentation.
+mixin template EnchantingHandlers()
+{
+    import core.time : Duration, msecs, seconds;
+    import dmangos.bytes : ByteWriter;
+    import dmangos.world.enchantments : EnchantmentSlot, enchantmentSlots, fieldsPerSlot;
+    import dmangos.world.enchanting : craftSkillChance;
+    import dmangos.world.inventory : Item, ItemState;
+    import dmangos.world.opcodes : Opcode;
+    import dmangos.world.updatefields;
+
+    /// Temporary enchantments' time left, by item guid (items carried with one).
+    package Duration[ulong] enchantmentsLeft;
+    private Duration sinceEnchantWrite;
+
+    /**
+     * Spell effect 53 or 54 on item `itemGuid` (one of the player's own): enchantment `enchantment`
+     * in its permanent slot, or (`temporary`) in its temporary slot for `durationSeconds`.
+     */
+    package void enchantItem(ulong itemGuid, uint enchantment, bool temporary, int durationSeconds)
+    {
+        auto item = player.inventory.byGuid(itemGuid);
+        if (item is null || enchantment == 0 || enchantment !in context.data.enchantmentEffects)
+            return;
+        const slot = temporary ? EnchantmentSlot.temporary : EnchantmentSlot.permanent;
+        const ms = temporary ? (durationSeconds > 0 ? durationSeconds : 3600) * 1000 : 0;
+        setEnchantment(item, slot, enchantment, ms);
+        if (temporary)
+        {
+            enchantmentsLeft[item.fullGuid] = ms.msecs;
+            sendEnchantTime(item, slot, ms / 1000);
+        }
+    }
+
+    /// An enchantment in an item's slot (0 clears it), its fields set, saved, and a worn item's bonuses redone.
+    package void setEnchantment(Item item, size_t slot, uint enchantment, uint durationMs)
+    {
+        item.values.set!ITEM_FIELD_ENCHANTMENT(slot * fieldsPerSlot, enchantment);
+        item.values.set!ITEM_FIELD_ENCHANTMENT(slot * fieldsPerSlot + 1, durationMs);
+        item.values.set!ITEM_FIELD_ENCHANTMENT(slot * fieldsPerSlot + 2, 0u);
+        player.inventory.setState(item, ItemState.changed);
+        if (item.isEquipped)
+            player.inventory.equipmentChanged = true;
+        flushInventory();
+    }
+
+    /// `SMSG_ITEM_ENCHANT_TIME_UPDATE`: the time a temporary enchantment has left, in seconds.
+    void sendEnchantTime(const Item item, size_t slot, uint secondsLeft)
+    {
+        ByteWriter w;
+        w.put(item.fullGuid);
+        w.put(cast(uint) slot);
+        w.put(secondsLeft);
+        w.put(player.guid);
+        deliver(Opcode.SMSG_ITEM_ENCHANT_TIME_UPDATE, w.data);
+    }
+
+    /// At login: the temporary enchantments the items came with, from their saved durations.
+    package void loadEnchantmentTimers()
+    {
+        enchantmentsLeft = null;
+        foreach (item; player.inventory.all())
+        {
+            if (item.enchantment(EnchantmentSlot.temporary) == 0)
+                continue;
+            const ms = item.values.get!ITEM_FIELD_ENCHANTMENT(EnchantmentSlot.temporary * fieldsPerSlot + 1);
+            if (ms == 0)
+                continue;
+            enchantmentsLeft[item.fullGuid] = ms.msecs;
+            sendEnchantTime(item, EnchantmentSlot.temporary, ms / 1000);
+        }
+    }
+
+    /// Each tick: temporary enchantments run down, and go when their time is up.
+    package void updateEnchantments(Duration elapsed)
+    {
+        if (enchantmentsLeft.length == 0)
+            return;
+        sinceEnchantWrite += elapsed;
+        const write = sinceEnchantWrite >= 30.seconds;
+        if (write)
+            sinceEnchantWrite = Duration.zero;
+        foreach (guid; enchantmentsLeft.keys)
+        {
+            auto item = player.inventory.byGuid(guid);
+            if (item is null || item.enchantment(EnchantmentSlot.temporary) == 0)
+            {
+                enchantmentsLeft.remove(guid);
+                continue;
+            }
+            auto left = &enchantmentsLeft[guid];
+            *left -= elapsed;
+            if (*left <= Duration.zero)
+            {
+                enchantmentsLeft.remove(guid);
+                setEnchantment(item, EnchantmentSlot.temporary, 0, 0);
+                sendEnchantTime(item, EnchantmentSlot.temporary, 0);
+            }
+            else if (write)
+                writeEnchantmentTime(item, *left);
+        }
+        if (write)
+            flushInventory();
+    }
+
+    /// Before a save: every temporary enchantment's time left into its item's duration field.
+    package void saveEnchantmentTimes()
+    {
+        foreach (guid, left; enchantmentsLeft)
+            if (auto item = player.inventory.byGuid(guid))
+                writeEnchantmentTime(item, left);
+        if (enchantmentsLeft.length)
+            flushInventory();
+    }
+
+    private void writeEnchantmentTime(Item item, Duration left)
+    {
+        item.values.set!ITEM_FIELD_ENCHANTMENT(EnchantmentSlot.temporary * fieldsPerSlot + 1,
+            cast(uint) left.total!"msecs");
+        player.inventory.setState(item, ItemState.changed);
+    }
+
+    /// Crafting with `spell` may raise its profession (see the module documentation).
+    package void updateCraftSkill(uint spell)
+    {
+        foreach (ability; context.client.abilitiesForSpell(spell))
+            if (ability.skillId)
+            {
+                const skill = player.skillValue(ability.skillId);
+                if (skill[1] == 0)
+                    return; // not known
+                updateSkillPro(ability.skillId, craftSkillChance(skill[0], ability.maxValue, ability.minValue), 1);
+                return;
+            }
+    }
+}

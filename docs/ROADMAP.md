@@ -54,8 +54,10 @@
   be mailed to the player (not yet).
   * Random properties are done, and so are enchantments' stats, resistances, weapon damage and equip
     spells.
-  * Enchanting by the enchanting profession is not done, nor are temporary enchantments (poisons,
-    oils), enchantments' procs, readable items and wrapping. Loot in items is done (`CMSG_OPEN_ITEM`). Dying and the spirit healer wear gear
+  * Enchanting is done: permanent enchantments, and temporary ones (stones, oils, poisons) that
+    run down and expire. Crafting raises professions.
+  * Not yet: enchantments' procs (poisons' effects), enchanting another player's item through
+    trade, readable items and wrapping. Loot in items is done (`CMSG_OPEN_ITEM`). Dying and the spirit healer wear gear
   down; a broken worn item's stats come back when it is repaired.
 * **GM system:** commands that need missing systems answer "Not yet implemented."
   (COMMANDS.md lists them); GM invisibility (`.invisible`) needs sight to be one-sided first. The
