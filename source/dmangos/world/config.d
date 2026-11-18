@@ -93,6 +93,8 @@ struct WorldConfig
     @JsonName("allow_two_side_interaction_channel") bool allowTwoSideInteractionChannel = false;
     /// `Battleground.CastDeserter`: leaving a battleground before it is over gives Deserter.
     @JsonName("battleground_cast_deserter") bool battlegroundCastDeserter = true;
+    /// Seconds before a creature whose pockets were emptied has something in them again.
+    @JsonName("creature_pickpocket_restock_delay") uint creaturePickpocketRestockDelay = 600;
     /// `BattleGround.PrematureFinishTimer`, in seconds: a battle a team is short of players for this long ends (0: never).
     @JsonName("battleground_premature_finish") uint battlegroundPrematureFinish = 300;
     /// `AllowTwoSide.Interaction.Group`: allow groups with both factions.

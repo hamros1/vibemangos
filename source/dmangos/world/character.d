@@ -1008,3 +1008,45 @@ unittest
         shown = shown || p.opcode == Opcode.SMSG_LOOT_RESPONSE;
     assert(shown, "the skin, shown as loot");
 }
+
+// Pickpocketing: a living creature's pockets, once; emptied, nothing until they fill again.
+unittest
+{
+    import core.time : MonoTime;
+    import dmangos.world.creature : Creature;
+    import dmangos.world.loot : lootRow, LootStore, LootStores;
+    import dmangos.world.movement : Position;
+    import dmangos.world.objects : HighGuid, makeGuid;
+    import dmangos.world.opcodes : Opcode;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+    import dmangos.world.updatefields;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    context.data.loot = LootStores(new LootStore("creature_loot_template"), new LootStore("reference_loot_template"),
+        new LootStore("gameobject_loot_template"), new LootStore("item_loot_template"), new LootStore("fishing"),
+        new LootStore("skinning_loot_template"), new LootStore("pickpocketing_loot_template"));
+    context.data.loot.pickpocketing.add(300, lootRow(itemJerky, 100, 0, 1, 1, 0));
+    context.data.creatureTemplates.edit(creatureInnkeeper).pickpocketLootId = 300;
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f, 1.97f));
+    anduin.read();
+    auto victim = cast(Creature) context.map(0).findObject(makeGuid(HighGuid.unit, creatureInnkeeper, innkeeperSpawn));
+    auto me = anduin.session.inWorld;
+    me.pickPocket(victim.guid);
+    assert(victim.loot !is null && victim.loot.items.length == 1);
+    bool response(ubyte expectedError)
+    {
+        foreach (p; anduin.read())
+            if (p.opcode == Opcode.SMSG_LOOT_RESPONSE)
+                return expectedError == 0 ? p.body_.length > 10 : p.body_[9] == expectedError;
+        return false;
+    }
+    assert(response(0), "its pockets, shown");
+    victim.loot.lootedForAll(); // all taken
+    me.pickPocket(victim.guid);
+    assert(response(15), "already picked");
+    victim.pocketsRestockAt = context.unixTime - 1;
+    me.pickPocket(victim.guid);
+    assert(response(0) && !victim.pocketsEmptied, "full again after the restock delay");
+}

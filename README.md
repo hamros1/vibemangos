@@ -404,8 +404,14 @@ What works now:
     `reference_loot_template` (entries, groups, references, conditions). In a group the loot method
     applies: free for all, round robin (the turn moves on), master loot (the master hands out what is
     over the threshold), group loot and need before greed (need, greed or pass for a minute; need
-    wins, then the higher roll); money is shared. A looted corpse goes within two minutes. Not yet:
-    random enchantments, skinning and pickpocketing. Items with loot (clams, sacks, boxes of
+    wins, then the higher roll); money is shared. A looted corpse goes within two minutes, unless it has
+    a skin to take.
+    * **Skinning:** a looted beast with a skin is skinnable; the skin is its skinner's loot, raising the
+      skill (herbalism or mining for the creatures that need them).
+    * **Pickpocketing:** a living creature's pockets are a rogue's loot, with some money; emptied, they
+      are empty for `creature_pickpocket_restock_delay` seconds.
+
+    Not yet: random enchantments. Items with loot (clams, sacks, boxes of
     supplies) open in the bags (`CMSG_OPEN_ITEM`, unless a lock needs picking) to their
     `item_loot_template` loot and money; emptied, they are gone (an item left half looted keeps its
     loot until logout, not across it: `item_loot` is not used).
@@ -594,6 +600,7 @@ database at the same time; a cluster's nodes take their ids in blocks from its c
 | `compression` | zlib level of update packets, 1 (fastest) to 9 | `1` |
 | `metrics_interval_seconds` | seconds between log lines with tick times and GC figures; 0 for none | `60` |
 | `honor_maintenance_day`, `min_honor_kills` | the day the honor week turns (0 Sunday); honorable kills needed for a place in the standing | `3`, `15` |
+| `creature_pickpocket_restock_delay` | seconds before an emptied creature's pockets hold something again | `600` |
 | `battleground_cast_deserter`, `battleground_premature_finish` | Deserter for leaving a battleground early; seconds a side may be short of players before it loses (0 never) | `true`, `300` |
 | `max_pending_output_kb` | a client with more than this not yet sent to it (it is not reading) is disconnected; 0 no limit | `4096` |
 | `mmaps` | creatures find their way over `data_dir/mmaps`, where there are movement maps | `true` |

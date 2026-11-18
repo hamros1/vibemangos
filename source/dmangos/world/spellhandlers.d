@@ -729,6 +729,10 @@ private:
         const result = checkTarget(spell, targets, triggered);
         if (result != SpellCastResult.ok)
             return result;
+        if (spell.hasEffect(SpellEffect.pickpocket))
+            if (auto victim = cast(Creature) map.findObject(targets.unit))
+                if (!victim.template_.pickpocketLootId)
+                    return SpellCastResult.targetNoPockets;
         if (spell.hasEffect(SpellEffect.skinning))
         {
             const skinResult = checkSkinning(targets.unit);
@@ -781,7 +785,7 @@ private:
      */
     void skinCreature(ulong target)
     {
-        import dmangos.world.loot : Loot, LootRule;
+        import dmangos.world.loot : ClientLootType, Loot, LootRule;
 
         auto creature = cast(Creature) map.findObject(target);
         if (creature is null || !creature.skinnable)
@@ -789,6 +793,7 @@ private:
         const t = creature.template_;
         auto loot = new Loot(creature.guid, (ulong guid) => guid == player.guid ? cast(Looter) this : null);
         loot.clock = () => context.unixTime;
+        loot.clientType = ClientLootType.pickpocketing; // the window a skin's loot opens in
         loot.owners[player.guid] = true;
         loot.currentLooter = player.guid;
         loot.rule = LootRule.notGroup;
@@ -817,6 +822,61 @@ private:
             if (auto other = lootOf(lootTarget))
                 other.release(this);
         loot.showContentTo(this);
+    }
+
+    /**
+     * The pickpocketing effect: a living creature's pockets (`pickpocketing_loot_template`, and some
+     * money by both levels) as loot for this player alone. Pockets not yet emptied open again as they
+     * were; emptied, they are empty until `creature_pickpocket_restock_delay` has passed.
+     */
+    void pickPocket(ulong target)
+    {
+        import std.random : uniform;
+        import dmangos.world.loot : ClientLootType, Loot, LootRule;
+
+        auto creature = cast(Creature) map.findObject(target);
+        if (creature is null || !creature.alive || !creature.template_.pickpocketLootId)
+            return;
+        enum ubyte lootErrorAlreadyPickpocketed = 15;
+        if (creature.loot !is null && creature.pocketsEmptied)
+        {
+            if (context.unixTime < creature.pocketsRestockAt)
+            {
+                ByteWriter w;
+                w.put(creature.guid);
+                w.put(ubyte(0));
+                w.put(lootErrorAlreadyPickpocketed);
+                return deliver(Opcode.SMSG_LOOT_RESPONSE, w.data);
+            }
+            creature.loot = null;
+            creature.pocketsEmptied = false;
+        }
+        if (creature.loot is null)
+        {
+            auto loot = new Loot(creature.guid, (ulong guid) => guid == player.guid ? cast(Looter) this : null);
+            loot.clock = () => context.unixTime;
+            loot.clientType = ClientLootType.pickpocketing;
+            loot.owners[player.guid] = true;
+            loot.currentLooter = player.guid;
+            loot.rule = LootRule.notGroup;
+            if (const template_ = context.data.loot.pickpocketing[creature.template_.pickpocketLootId])
+                loot.fill(template_, context.data.loot, context.data.items, map.random,
+                    (uint condition) => conditionMet(condition),
+                    (ulong, const LootItem item) => item.condition == 0 || conditionMet(item.condition));
+            const a = uniform!"[]"(0, creature.values.get!UNIT_FIELD_LEVEL / 2, map.random);
+            const b = uniform!"[]"(0, player.data.level / 2, map.random);
+            loot.gold = 10 * (a + b);
+            creature.loot = loot;
+            auto pocketed = creature;
+            loot.lootedForAll = () {
+                pocketed.pocketsEmptied = true;
+                pocketed.pocketsRestockAt = context.unixTime + context.config.creaturePickpocketRestockDelay;
+            };
+        }
+        if (lootTarget && lootTarget != creature.guid)
+            if (auto other = lootOf(lootTarget))
+                other.release(this);
+        creature.loot.showContentTo(this);
     }
 
     /// The power `spell` costs this player.
@@ -1196,6 +1256,9 @@ private:
             break;
         case 1: // SPELL_EFFECT_INSTAKILL
             instakill(spell, target);
+            break;
+        case 71: // SPELL_EFFECT_PICKPOCKET
+            pickPocket(target);
             break;
         case 95: // SPELL_EFFECT_SKINNING
             skinCreature(target);

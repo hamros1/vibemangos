@@ -746,6 +746,10 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
     /// Its skin was taken (cast at): the corpse goes once that loot is gone.
     bool skinned;
 
+    /// Its pockets were emptied; they fill again at `pocketsRestockAt` (Unix time).
+    bool pocketsEmptied;
+    long pocketsRestockAt; /// ditto
+
     /// Whether it may be skinned now: dead, looted, with its skin still on.
     @property bool skinnable() const
     {
