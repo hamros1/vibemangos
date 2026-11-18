@@ -302,7 +302,18 @@ final class Character : OnlinePlayer, Looter
     /// See `dealDamage`.
     void sufferDamage(UnitRef attacker, uint damage, const Blow blow)
     {
+        import dmangos.world.aurahandlers : ProcFlag;
+        import dmangos.world.combat : MeleeHitOutcome;
+
         takeBlow(attacker, damage, blow);
+        // A swing that landed: its damage shields strike back, and its auras may proc.
+        if (blow.kind == BlowKind.melee && attacker && player !is null && player.fighter.alive
+                && blow.melee.outcome != MeleeHitOutcome.miss && blow.melee.outcome != MeleeHitOutcome.dodge
+                && blow.melee.outcome != MeleeHitOutcome.parry && blow.melee.outcome != MeleeHitOutcome.evade)
+        {
+            damageShields(attacker);
+            procAuras(ProcFlag.takeMeleeSwing, attacker);
+        }
     }
 
     /// See `dealDamage`: a creature this player (or its pet) damaged is tapped for it.

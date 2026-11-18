@@ -2548,3 +2548,81 @@ unittest
         == SpellCastResult.ok);
     assert(me.values.get!UNIT_FIELD_POWER1 == 850, "not of its mask: the whole cost");
 }
+
+/// Struck in melee: a damage shield hurts the attacker; an aura that procs on being struck casts its spell, until out of charges.
+unittest
+{
+    import core.time : MonoTime;
+    import dmangos.dbc : buildDbc;
+    import dmangos.world.auras : AuraType, makeAura;
+    import dmangos.world.clientdata : spellCastTimesFormat, spellRangeFormat;
+    import dmangos.world.combat : MeleeDamage, MeleeHitOutcome;
+    import dmangos.world.creature : Creature;
+    import dmangos.world.spellcast : ImplicitTarget;
+    import dmangos.world.movement : Position;
+    import dmangos.world.objects : HighGuid, makeGuid;
+    import dmangos.world.player : Player;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+    import dmangos.world.unit : Blow;
+    import dmangos.world.updatefields;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    uint bits(float f) { return *cast(uint*) &f; }
+    context.client.spellCastTimes = typeof(context.client.spellCastTimes).parse(buildDbc(spellCastTimesFormat,
+        [[1u, 0, 0, 0]]), "SpellCastTimes.dbc");
+    context.client.spellRanges = typeof(context.client.spellRanges).parse(buildDbc(spellRangeFormat,
+        [[1u, bits(0), bits(30), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]), "SpellRange.dbc");
+    enum uint thorns = 95700, shield = 95701, bolt = 95702;
+    with (context.data.spells)
+    {
+        spells[thorns] = testSpell(thorns, 6, ImplicitTarget.caster, 3);
+        spells.edit(thorns).casting.applyAuraName[0] = AuraType.damageShield;
+        spells.edit(thorns).casting.school = 3; // nature
+        spells[bolt] = testSpell(bolt, 2, ImplicitTarget.enemy, 10);
+        spells.edit(bolt).casting.school = 1; // holy: not resisted
+        spells.edit(bolt).casting.dmgClass = 0;
+        spells.edit(bolt).attributesEx2 |= 0x20000000; // no crit
+        spells[shield] = testSpell(shield, 6, ImplicitTarget.caster, 0);
+        spells.edit(shield).casting.applyAuraName[0] = AuraType.procTriggerSpell;
+        spells.edit(shield).triggerSpell[0] = bolt;
+        spells.edit(shield).casting.procFlags = 0x8; // struck in melee
+        spells.edit(shield).casting.procChance = 100;
+        spells.edit(shield).casting.procCharges = 2;
+    }
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f));
+    auto me = cast(Player) anduin.session.character;
+    anduin.read();
+    auto session = anduin.session.inWorld;
+    auto keeper = cast(Creature) context.map(0).findObject(makeGuid(HighGuid.unit, creatureInnkeeper, innkeeperSpawn));
+    keeper.values.set!UNIT_FIELD_MAXHEALTH(500u);
+    keeper.values.set!UNIT_FIELD_HEALTH(500u);
+    me.values.set!UNIT_FIELD_MAXHEALTH(1000u);
+    me.values.set!UNIT_FIELD_HEALTH(1000u);
+    auto attacker = context.map(0).unitOf(keeper);
+    MeleeDamage d;
+    d.attacker = keeper.guid;
+    d.target = me.guid;
+    d.damage = 5;
+    d.outcome = MeleeHitOutcome.normal;
+
+    session.addAura(makeAura(thorns in context.data.spells.spells, me.guid, 1, -1, true, [3, 0, 0]));
+    session.sufferDamage(attacker, 5, Blow.swing(d));
+    assert(keeper.values.get!UNIT_FIELD_HEALTH == 497, "thorns");
+    d.outcome = MeleeHitOutcome.miss;
+    session.sufferDamage(attacker, 0, Blow.swing(d));
+    assert(keeper.values.get!UNIT_FIELD_HEALTH == 497, "a miss: nothing");
+
+    session.addAura(makeAura(shield in context.data.spells.spells, me.guid, 1, -1, true, [0, 0, 0]));
+    d.outcome = MeleeHitOutcome.normal;
+    session.sufferDamage(attacker, 5, Blow.swing(d));
+    assert(keeper.values.get!UNIT_FIELD_HEALTH == 497 - 3 - 10, "thorns and the shield's bolt");
+    session.sufferDamage(attacker, 5, Blow.swing(d));
+    assert(keeper.values.get!UNIT_FIELD_HEALTH == 497 - 26, "its second charge");
+    assert(!me.auras.has(AuraType.procTriggerSpell), "out of charges: gone");
+    session.sufferDamage(attacker, 5, Blow.swing(d));
+    assert(keeper.values.get!UNIT_FIELD_HEALTH == 497 - 29, "thorns alone");
+}

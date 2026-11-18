@@ -132,6 +132,7 @@ final class Aura
     bool positive;
     bool passive;
     uint stacks = 1;
+    uint charges;             /// procs left before it goes (0: unlimited)
     ubyte effects;            /// which of the spell's effects are auras here
     int[3] amount;            /// `m_modifier.m_amount` of each
     int[3] period;            /// `periodictime`: milliseconds between ticks; 0 not periodic
@@ -385,6 +386,7 @@ Aura makeAura(const(SpellInfo)* spell, ulong caster, uint casterLevel, int durat
     aura.duration = aura.maxDuration = durationMs;
     aura.positive = positive;
     aura.passive = spell.isPassive;
+    aura.charges = spell.casting.procCharges;
     foreach (i; 0 .. 3)
     {
         enum uint applyAura = 6, areaAuraParty = 35;

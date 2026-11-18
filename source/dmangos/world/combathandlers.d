@@ -287,6 +287,12 @@ private:
             player.modifyPower(Power.rage, rageReward(player.data.level, d.damage, true));
         flushPlayerChanges();
         dealDamage(unit, other.unit, d.damage, Blow.swing(d));
+        if (d.damage && other.player !is null && other.player.fighter.alive)
+        {
+            import dmangos.world.aurahandlers : ProcFlag;
+
+            procAuras(ProcFlag.dealMeleeSwing, other.unit);
+        }
     }
 
     /**
@@ -480,7 +486,13 @@ private:
         // The creature fights back, takes it as threat, and may die of it.
         dealDamage(unit, map.unitOf(victim), d.damage, Blow.swing(d));
         if (d.damage && victim.alive)
+        {
+            import dmangos.world.aurahandlers : ProcFlag;
+
             castItemCombatSpells(victim, type);
+            if (victim.alive)
+                procAuras(ProcFlag.dealMeleeSwing, map.unitOf(victim));
+        }
     }
 
     /**

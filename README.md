@@ -495,8 +495,11 @@ What works now:
     every 5 seconds and drink's mana, energize, triggered spells. Auras are saved (`character_aura`)
     at logout and with each save, and come back with the time they had left; a cluster's hand-off
     carries them. A player's shields (Power Word: Shield, Ice Barrier, Mana Shield at its mana per
-    point) take damage of their schools until used up; the log shows what they absorbed. Not yet:
-    dispels, aura procs, auras on creatures slowing or rooting them.
+    point) take damage of their schools until used up; the log shows what they absorbed. Damage
+    shields (Thorns) hurt whoever hits the player in melee, and auras that trigger a spell on a melee
+    hit dealt or taken (Lightning Shield, Seal of Righteousness) do so by their chance, using their
+    charges. Not yet: dispels, procs on spells and other events, auras on creatures slowing or
+    rooting them.
   * **Quests:** quest givers (`creature_questrelation`, `creature_involvedrelation`) show what they have for the player
     (the exclamation and question marks), list their quests in their gossip (or open the only one),
     and give them as `quest_template` says who may take them (class, race, level, skill, condition,
