@@ -1280,6 +1280,19 @@ private:
         case 1: // SPELL_EFFECT_INSTAKILL
             instakill(spell, target);
             break;
+        case 36: // SPELL_EFFECT_LEARN_SPELL: the pet (a teaching spell aimed at it), or the target player, learns
+        {
+            enum uint targetPet = 5;
+            const learned = spell.triggerSpell[i];
+            if (spell.implicitTargetA[i] == targetPet)
+                teachPet(learned);
+            else if (learned)
+                learn(learned);
+            break;
+        }
+        case 57: // SPELL_EFFECT_LEARN_PET_SPELL
+            teachPet(spell.triggerSpell[i]);
+            break;
         case 38: // SPELL_EFFECT_DISPEL
             dispelEffect(spell, i, target, value);
             break;
@@ -1328,10 +1341,6 @@ private:
             break;
         case 54: // SPELL_EFFECT_ENCHANT_ITEM_TEMPORARY
             enchantItem(c.targets.item, cast(uint) spell.miscValue[i], true, value);
-            break;
-        case SpellEffect.learnSpell:
-            if (spell.triggerSpell[i])
-                learn(spell.triggerSpell[i]);
             break;
         case 64: // SPELL_EFFECT_TRIGGER_SPELL
             if (const triggered = context.data.spells.spell(spell.triggerSpell[i]))

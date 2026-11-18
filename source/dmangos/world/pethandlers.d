@@ -353,7 +353,7 @@ mixin template PetHandlers()
         }
         else
             v.set!UNIT_FIELD_PETNEXTLEVELEXP(1000u);
-        v.set!UNIT_TRAINING_POINTS(cast(uint)(state.trainingPoints > 0 ? state.trainingPoints : 0));
+        v.set!UNIT_TRAINING_POINTS(shownTrainingPoints(state));
         map.flushObjectChanges(creature);
         player.values.set!UNIT_FIELD_SUMMON(creature.guid);
         flushPlayerChanges();
@@ -506,14 +506,19 @@ mixin template PetHandlers()
         writePet(PetSlot.current);
     }
 
-    /// What `petcreateinfo_spell` gives a new pet of `entry` (a spell that
-    /// teaches a pet spell gives that spell).
+    /**
+     * What `petcreateinfo_spell` gives a new pet of `entry` (a spell that teaches a pet spell gives that
+     * spell). A hunter's beast starts owing the training points of what it knows; and its owner learns
+     * the teaching spells of its passive abilities at once, and those of its others (noted with the pet)
+     * a little at a time, as the pet uses them (`petUsedSpell`).
+     */
     private void learnCreateSpells(PetState state, uint entry)
     {
         enum uint learnSpell = 36, learnPetSpell = 57;
         const spells = entry in context.data.pets.createSpells;
         if (spells is null)
             return;
+        int used;
         foreach (id; *spells)
         {
             if (!id)
@@ -522,13 +527,162 @@ mixin template PetHandlers()
             if (info is null)
                 continue;
             uint learned = id;
-            if (info.effect[0] == learnSpell || info.effect[0] == learnPetSpell)
+            const teaches = info.effect[0] == learnSpell || info.effect[0] == learnPetSpell;
+            if (teaches)
                 learned = info.triggerSpell[0];
             const taught = context.data.spells.spell(learned);
             if (taught is null)
                 continue;
+            if (teaches && state.type == PetType.hunter && !player.knowsSpell(id))
+            {
+                if (taught.isPassive)
+                    learn(id);
+                else
+                    setTeachSpell(state, learned, id);
+            }
             state.learn(learned, taught.isPassive, isAutocastable(*taught));
+            used += abilityTrainingPoints(learned);
         }
+        if (state.type == PetType.hunter)
+            state.trainingPoints = -used;
+    }
+
+    /// The training points `SkillLineAbility.dbc` asks for `spell` (0 if none).
+    private int abilityTrainingPoints(uint spell)
+    {
+        foreach (a; context.client.abilitiesForSpell(spell))
+            return cast(int) a.reqTrainPoints;
+        return 0;
+    }
+
+    /// The first rank of `spell`'s chain (itself if it has none).
+    private uint firstRankOf(uint spell)
+    {
+        uint s = spell;
+        foreach (_; 0 .. 16)
+        {
+            const prev = context.data.spells.prevInChain(s);
+            if (!prev)
+                break;
+            s = prev;
+        }
+        return s;
+    }
+
+    /// What teaching the pet `spell` costs: its training points, less the most a rank of it the pet knows cost.
+    private int trainingCost(const PetState state, uint spell)
+    {
+        const base = abilityTrainingPoints(spell);
+        if (base == 0)
+            return 0;
+        const first = firstRankOf(spell);
+        int spent;
+        foreach (s; state.spells)
+            if (firstRankOf(s.spell) == first)
+            {
+                const cost = abilityTrainingPoints(s.spell);
+                if (cost > spent)
+                    spent = cost;
+            }
+        return base - spent;
+    }
+
+    /**
+     * The training points field: a hunter's pet's points, as the client reads them (two shorts: a debt as
+     * it is, points to spend as their complement less one); no points for other pets.
+     */
+    private static uint shownTrainingPoints(const PetState state)
+    {
+        if (state.type != PetType.hunter)
+            return 0;
+        const tp = state.trainingPoints;
+        return tp < 0 ? cast(uint)(-tp) : cast(uint)(-(tp + 1));
+    }
+
+    /// The teaching spells noted with a pet: pairs of the pet's spell and the spell that teaches it.
+    private static uint[2][] teachPairs(const PetState state)
+    {
+        import std.algorithm.iteration : splitter;
+        import std.conv : to;
+
+        uint[] numbers;
+        foreach (word; state.teachSpells.splitter(' '))
+            if (word.length)
+                numbers ~= word.to!uint;
+        uint[2][] pairs;
+        for (size_t i = 0; i + 1 < numbers.length; i += 2)
+            if (numbers[i])
+                pairs ~= [numbers[i], numbers[i + 1]];
+        return pairs;
+    }
+
+    /// Notes (or, with teacher 0, forgets) the teaching spell of the pet's `spell`: four at most, as saved.
+    private static void setTeachSpell(PetState state, uint spell, uint teacher)
+    {
+        import std.format : format;
+
+        uint[2][] pairs;
+        foreach (p; teachPairs(state))
+            if (p[0] != spell)
+                pairs ~= p;
+        if (teacher && pairs.length < 4)
+            pairs ~= [spell, teacher];
+        string text;
+        foreach (i; 0 .. 4)
+            text ~= i < pairs.length ? format!"%s %s "(pairs[i][0], pairs[i][1]) : "0 0 ";
+        state.teachSpells = text;
+    }
+
+    /// The pet used `spell`: one time in ten its owner learns the spell that teaches it (if it was noted).
+    package void petUsedSpell(uint spell)
+    {
+        import std.random : uniform;
+
+        auto state = petState();
+        if (state is null || state.type != PetType.hunter)
+            return;
+        foreach (p; teachPairs(state))
+            if (p[0] == spell)
+            {
+                if (uniform(0, 100, map.random) >= 10)
+                    return;
+                learn(p[1]);
+                setTeachSpell(state, spell, 0);
+                writePet(PetSlot.current);
+                return;
+            }
+    }
+
+    /// The pet is taught `spell` (a teaching spell cast at it): it costs its training points.
+    package void teachPet(uint spell)
+    {
+        auto state = petState();
+        const info = context.data.spells.spell(spell);
+        if (state is null || info is null || pet_ is null || !pet_.alive || state.knows(spell))
+            return;
+        state.trainingPoints -= trainingCost(state, spell);
+        state.learn(spell, info.isPassive, isAutocastable(*info));
+        pet_.values.set!UNIT_TRAINING_POINTS(shownTrainingPoints(state));
+        map.flushObjectChanges(pet_);
+        sendPetSpells();
+        writePet(PetSlot.current);
+    }
+
+    /// Whether the pet out can be taught `spell` now: there is a pet, it is of its level, it has the points.
+    package SpellCastResult canTeachPet(uint spell)
+    {
+        auto state = petState();
+        const info = context.data.spells.spell(spell);
+        if (state is null || pet_ is null || !pet_.alive)
+            return SpellCastResult.noPet;
+        if (info is null)
+            return SpellCastResult.notKnown;
+        if (info.spellLevel > pet_.values.get!UNIT_FIELD_LEVEL)
+            return SpellCastResult.lowLevel;
+        const cost = trainingCost(state, spell);
+        if (cost < 0 || (cost != 0 && state.trainingPoints - cost < 0))
+            return SpellCastResult.trainingPoints;
+        return SpellCastResult.ok;
     }
 
     // -----------------------------------------------------------------------
@@ -538,6 +692,16 @@ mixin template PetHandlers()
     /// The cast checks of the pet spells: summoning, calling, reviving, taming.
     package SpellCastResult petCastCheck(const(SpellInfo)* spell, const ref SpellTargets targets)
     {
+        // A teaching spell: the pet must be there, of the spell's level, with the training points.
+        enum uint learnSpellEffect = 36, learnPetSpellEffect = 57, targetPet = 5;
+        foreach (i; 0 .. 3)
+            if (spell.effect[i] == learnPetSpellEffect
+                    || (spell.effect[i] == learnSpellEffect && spell.implicitTargetA[i] == targetPet))
+            {
+                const result = canTeachPet(spell.triggerSpell[i]);
+                if (result != SpellCastResult.ok)
+                    return result;
+            }
         enum uint summonPetEffect = 56, summonDeadPetEffect = 109;
         if (spell.id == spellTameBeast)
         {
@@ -780,6 +944,10 @@ mixin template PetHandlers()
             current -= next;
             ++level;
             setPetLevel(pet_, level, true);
+            // Each level brings training points: its loyalty level less one.
+            auto st = petState();
+            st.trainingPoints += cast(int)(st.loyalty > 0 ? st.loyalty - 1 : 0);
+            v.set!UNIT_TRAINING_POINTS(shownTrainingPoints(st));
             next = petXpForLevel(level);
             v.set!UNIT_FIELD_PETNEXTLEVELEXP(level >= context.config.maxPlayerLevel ? 1000 : next);
         }
@@ -881,7 +1049,7 @@ mixin template PetHandlers()
         }
         else
             return;
-        pet_.values.set!UNIT_TRAINING_POINTS(cast(uint)(state.trainingPoints > 0 ? state.trainingPoints : 0));
+        pet_.values.set!UNIT_TRAINING_POINTS(shownTrainingPoints(state));
         map.flushObjectChanges(pet_);
         writePet(PetSlot.current);
     }
@@ -1060,6 +1228,7 @@ mixin template PetHandlers()
             return;
         if (pet.ai.petCastByCommand(info, target, map))
         {
+            petUsedSpell(spell);
             ByteWriter w;
             w.put(pet.guid);
             w.put(2u);

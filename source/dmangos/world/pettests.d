@@ -403,3 +403,61 @@ unittest
     session.bringBack(1.0f);
     assert(session.ownPet !is null && session.ownPet.template_.entry == wolf, "back with its owner");
 }
+
+/**
+ * Pet training: a teaching spell cast at the pet teaches it (and costs it its training points); the hunter learns a
+ * noted teaching spell as the pet uses its ability, one time in ten; the training points field as the client reads it.
+ */
+unittest
+{
+    import dmangos.world.player : Player;
+    import dmangos.world.spellcast : SpellCastResult;
+    import dmangos.world.spellhandlers : testSpell;
+    import dmangos.world.updatefields : UNIT_TRAINING_POINTS;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    auto rexxar = loggedIn(context, db, 7, "Rexxar", Position(-8949.95f, -132.49f, 83.53f, 0), AccountLevel.player,
+        raceOrc);
+    rexxar.read();
+    addPetData(&rexxar, context);
+    auto session = rexxar.session.inWorld;
+    auto map = context.map(0);
+    auto beast = context.summonCreature(map, wolf, Position(-8947, -132.49f, 83.53f, 0), TempSpawnType.dead, 0, 0);
+    auto tame = effectSpell(spellTameBeastDone, 55);
+    session.tameCreature(&tame, beast.guid);
+    auto pet = session.ownPet;
+    auto state = cast(PetState) pet.petData;
+    rexxar.read();
+
+    // Taught a spell (no training points asked for it here): it knows it.
+    enum uint bite = 97001, teachBite = 97002;
+    context.data.spells.spells[bite] = testSpell(bite, 2, 6, 10);
+    assert(session.canTeachPet(bite) == SpellCastResult.ok);
+    session.teachPet(bite);
+    assert(state.knows(bite));
+
+    // Noted as taught by `teachBite`: the hunter learns it as the pet bites, sooner or later.
+    context.data.spells.spells[teachBite] = testSpell(teachBite, 36, 5, 0);
+    state.teachSpells = "97001 97002 0 0 0 0 0 0 ";
+    auto me = cast(Player) rexxar.session.character;
+    foreach (_; 0 .. 300)
+    {
+        session.petUsedSpell(bite);
+        if (me.knowsSpell(teachBite))
+            break;
+    }
+    assert(me.knowsSpell(teachBite) && state.teachSpells == "0 0 0 0 0 0 0 0 ", "learned, and no longer noted");
+
+    // The field: points to spend as their complement less one, a debt as it is.
+    context.data.spells.spells[97003] = testSpell(97003, 2, 6, 10);
+    context.data.spells.spells[97004] = testSpell(97004, 2, 6, 10);
+    state.trainingPoints = 5;
+    session.teachPet(97003);
+    assert(pet.values.get!UNIT_TRAINING_POINTS == cast(uint)-6);
+    state.trainingPoints = -10;
+    session.teachPet(97004);
+    assert(pet.values.get!UNIT_TRAINING_POINTS == 10);
+}

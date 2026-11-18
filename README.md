@@ -226,8 +226,13 @@ What works now:
     up to its owner's level, takes a name once, and can be abandoned. A hunter stables up to two
     pets (slots bought at `StableSlotPrices.dbc`'s prices). Pets are saved in `character_pet` and
     `pet_spell`, go with their owner at logout, on teleports and moves between nodes, and come back
-    after. Not yet: loyalty and happiness changing (feeding), training pet spells, pet auras and
-    cooldowns saved, pets attacking on sight from creatures' side.
+    after. A hunter pet's happiness falls with time (Feed Pet raises it), its mood sets how hard it
+    hits, and its loyalty rises with content days and kills (a rebellious pet that falls further runs
+    away). It is taught spells by the Beast Training window's teaching spells for its training points
+    (from its level and loyalty); its owner learns the teaching spells of a tamed beast's passive
+    abilities at once, and of its others one time in ten as the pet uses them. The owner's death
+    sends the pet away until the owner lives again. Not yet: pet auras and cooldowns saved, pets
+    attacking on sight from creatures' side.
   * **Friends and ignore lists:** up to 50 friends and 25 ignored players,
     in `character_social`; the friend list shows who is online (zone, level, class, away or busy),
     on this node or another; friends hear of a login and a logout (across nodes too); a friend of

@@ -216,7 +216,8 @@ GM command set has none).
   `grouphandlers.d` (mail, auctions and trade are done).
 * Pets (`pet.d`, `petai.d`, `pethandlers.d`): taming, summoning, calling,
   dismissing, reviving, the bar and its commands, following and fighting, experience, renaming,
-  abandoning, stables, saving. Loyalty and happiness over time and Feed Pet: done. The `.pet` GM commands: done. Not yet: pet training, `pet_aura` and `pet_spell_cooldown`, a pet's spells beyond its autocast and
+  abandoning, stables, saving. Loyalty and happiness over time and Feed Pet: done. The `.pet` GM commands and pet training (teaching spells, training points, the hunter
+  learning a beast's abilities as it uses them): done. Not yet: `pet_aura` and `pet_spell_cooldown`, a pet's spells beyond its autocast and
   ordered casts (opener spells), creatures noticing pets on sight. The owner's death sends the pet
   away until the owner lives again: done.
 * Quests: done (above).

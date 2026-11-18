@@ -44,6 +44,8 @@ enum SpellCastResult : ubyte
     notStanding = 0x3E,
     notWhileGhost = 0x42,
     noPet = 0x4C,
+    lowLevel = 0x2B,
+    trainingPoints = 0x79,
     noPower = 0x4D,
     outOfRange = 0x59,
     reagents = 0x5C,

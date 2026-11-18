@@ -299,6 +299,12 @@ final class Character : OnlinePlayer, Looter
         resurrect(restore);
     }
 
+    /// Its pet used `spell` (see `PetHandlers.petUsedSpell`).
+    void petCastSpell(uint spell)
+    {
+        petUsedSpell(spell);
+    }
+
     /// See `TeleportHandlers.crossOnShip`.
     void rideShipAcross(uint mapId, Position shipAt, ulong shipGuid, uint shipEntry)
     {

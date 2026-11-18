@@ -237,6 +237,10 @@ mixin template PetBehaviour()
                 continue;
             if (castSpell(info, victim, 0))
             {
+                // Its owner may learn from it (a hunter's teaching spells).
+                if (auto owner = world.unit(me.petOwner))
+                    if (owner.session !is null)
+                        owner.session.petCastSpell(s.spell);
                 const cooldown = info.recoveryTime > info.categoryRecoveryTime ? info.recoveryTime
                     : info.categoryRecoveryTime;
                 if (cooldown)
