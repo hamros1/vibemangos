@@ -347,9 +347,19 @@ mixin template CreatureCasting()
                         default: break;
                         }
                     }
-                    else if (spell.casting.dmgClass == 1 && uniform01(world_.random) * 100 < spellMissChance(level,
-                            f.level, true))
-                        miss = SpellMissInfo.resist;
+                    else if (spell.casting.dmgClass == 1)
+                    {
+                        // Missed, or resisted whole by the player's resistance to its school.
+                        import dmangos.world.combat : fullResistChance;
+                        import dmangos.world.spellcast : isBinarySpell;
+
+                        float chance = spellMissChance(level, f.level, true);
+                        if (spell.casting.school > 1)
+                            chance += fullResistChance(world_.unit(guid).resistance(spell.casting.school), level, f.level,
+                                isBinarySpell(*spell), false);
+                        if (uniform01(world_.random) * 100 < chance)
+                            miss = SpellMissInfo.resist;
+                    }
                 }
             results ~= TargetResult(guid, miss);
         }
@@ -425,11 +435,33 @@ mixin template CreatureCasting()
         auto other = world_.unit(guid);
         if (!other)
             return;
+        uint resisted;
         if (school == 0)
             damage = cast(uint) armorReducedDamage(me.values.get!UNIT_FIELD_LEVEL, other.fighter.armor, damage);
+        else if (school > 1)
+        {
+            // Partly resisted by its resistance (a binary spell was resisted whole or not at all).
+            import std.random : uniform;
+            import dmangos.world.combat : effectiveResistPercent, rollPartialResist;
+            import dmangos.world.spellcast : isBinarySpell;
+
+            if (!isBinarySpell(*spell))
+            {
+                const percent = effectiveResistPercent(other.resistance(school), me.values.get!UNIT_FIELD_LEVEL,
+                    other.fighter.level, false);
+                const share = rollPartialResist(percent, uniform!"[]"(1u, 10000u, world_.random));
+                if (share > 0)
+                {
+                    resisted = cast(uint)(damage * share);
+                    damage -= resisted;
+                }
+                else if (share < 0)
+                    damage += cast(uint)(damage * -share);
+            }
+        }
         const absorbed = other.absorb(school < 0 ? 0 : school, damage);
         world_.sendToObservers(me.guid, Opcode.SMSG_SPELLNONMELEEDAMAGELOG, nonMeleeDamageLog(guid, me.guid,
-            spell.id, damage, school < 0 ? 0 : school, absorbed, 0, false, 0, false));
+            spell.id, damage, school < 0 ? 0 : school, absorbed, resisted, false, 0, false));
         if (damage)
             triggerCombatTimer();
         other.spellHitBy(me.guid, damage);

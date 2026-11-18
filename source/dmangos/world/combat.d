@@ -797,6 +797,28 @@ float effectiveResistPercent(int resistance, uint attackerLevel, uint victimLeve
 }
 
 /**
+ * The chance (percent) a magic spell is resisted whole by a victim with `resistance` of its school: a
+ * binary spell by the whole effective resistance, another only as often as the partial-resist table
+ * resists all of it.
+ */
+float fullResistChance(int resistance, uint attackerLevel, uint victimLevel, bool binary, bool victimCreature)
+{
+    const percent = effectiveResistPercent(resistance, attackerLevel, victimLevel, victimCreature);
+    if (!(percent > 0))
+        return 0;
+    return binary ? percent : partialResistRows[cast(uint) percent][4] * 0.01f;
+}
+
+unittest
+{
+    // 150 fire resistance against a level 60 caster: 37.5%; a binary spell is resisted that often, another
+    // whole only as the table's last column says.
+    assert(fullResistChance(150, 60, 60, true, false) == 37.5f);
+    assert(fullResistChance(150, 60, 60, false, false) == partialResistRows[37][4] * 0.01f);
+    assert(fullResistChance(0, 60, 60, true, false) == 0);
+}
+
+/**
  * A partial resist roll: the share of the damage resisted (0, 0.25, 0.5
  * or 0.75; never all, which was the hit roll's), from `percent` and a `roll` of 1 .. 10000. Negative
  * percents are vulnerability: a negative share. A direct hit with more than 54% never goes whole.

@@ -489,7 +489,9 @@ What works now:
     distribution drawn from the creature's resistance of the school and its level above the caster's; a
     binary spell (one with a non-damage effect on its target, such as Frostbolt's slow, or only
     auras) is resisted whole or not at all, its resistance added to its chance to miss; damage over
-    time ticks are partly resisted too. Not yet: resists against players, the area auras' other effects (slows) and their hitting players.
+    time ticks are partly resisted too. A player's resistances work the same against spells, players' and
+    creatures' (without the creature's level bonus). Not yet: the area auras' other effects (slows) and
+    their hitting players.
   * **Auras:** buffs and debuffs fill the aura fields
     (positive slots 0..31, negative 32..47) and the buff bar's durations, refresh and stack, and end
     when their time is up, when clicked off, at death, or by their interrupt flags (standing up ends

@@ -246,6 +246,19 @@ struct UnitRef
         return kind == UnitKind.player ? session.absorbIncoming(school, damage) : 0;
     }
 
+    /// Its resistance to school `school` (an index; 0 is armor).
+    int resistance(uint school) const
+    {
+        import dmangos.world.updatefields : UNIT_FIELD_RESISTANCES;
+
+        final switch (kind)
+        {
+        case UnitKind.none: return 0;
+        case UnitKind.player: return cast(int) session.character.values.get!UNIT_FIELD_RESISTANCES(school);
+        case UnitKind.creature: return cast(int) creature.values.get!UNIT_FIELD_RESISTANCES(school);
+        }
+    }
+
     /// A spell from `caster` hit it for `damage`: `dealDamage`.
     void spellHitBy(ulong caster, uint damage)
     {

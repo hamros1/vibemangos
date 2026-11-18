@@ -1129,8 +1129,16 @@ private:
                 edge += parryChance(it, me, type);
                 return roll < edge ? SpellMissInfo.parry : SpellMissInfo.none;
             }
-            return roll < spellMissChance(player.data.level, other.player.data.level, true) - spellHitBonus
-                ? SpellMissInfo.resist : SpellMissInfo.none;
+            // Missed, or (a magic spell) resisted whole by the target's resistance.
+            float chance = spellMissChance(player.data.level, other.player.data.level, true) - spellHitBonus;
+            if (spell.casting.dmgClass == DamageClass.magic && spell.casting.school > 1)
+            {
+                import dmangos.world.combat : fullResistChance;
+
+                chance += fullResistChance(cast(int) other.player.values.get!UNIT_FIELD_RESISTANCES(spell.casting.school),
+                    player.data.level, other.player.data.level, isBinarySpell(spell), false);
+            }
+            return roll < chance ? SpellMissInfo.resist : SpellMissInfo.none;
         }
         if (!creature.alive)
             return SpellMissInfo.none;
@@ -1536,6 +1544,28 @@ private:
             map.flushObjectChanges(creature);
     }
 
+    /**
+     * A partial resist by a player of `level` with `resistance` (no level bonus, as a creature has): a share
+     * of `damage` resisted (taken off it, and returned); a negative resistance adds to it instead.
+     */
+    package uint partialResist(ref uint damage, int resistance, uint level)
+    {
+        import std.random : uniform;
+        import dmangos.world.combat : effectiveResistPercent, rollPartialResist;
+
+        const percent = effectiveResistPercent(resistance, player.data.level, level, false);
+        const share = rollPartialResist(percent, uniform!"[]"(1u, 10000u, map.random));
+        if (share > 0)
+        {
+            const resisted = cast(uint)(damage * share);
+            damage -= resisted;
+            return resisted;
+        }
+        if (share < 0)
+            damage += cast(uint)(damage * -share);
+        return 0;
+    }
+
     /// Percent less often its spells miss (`MOD_SPELL_HIT_CHANCE` auras).
     @property float spellHitBonus()
     {
@@ -1702,11 +1732,16 @@ private:
         const crit = !(spell.attributesEx2 & spellAttrEx2CantCrit) && uniform01(map.random) * 100 < spellCritOf(spell);
         if (crit)
             damage = damage * 3 / 2;
-        if (spell.casting.school == 0)
+        const school = spell.casting.school;
+        uint resisted;
+        if (school == 0)
             damage = cast(uint) armorReducedDamage(player.data.level, other.player.fighter.armor, damage);
-        const absorbed = other.absorbDamage(spell.casting.school, damage);
+        else if (school != 1 && !isBinarySpell(*spell))
+            resisted = partialResist(damage, cast(int) other.player.values.get!UNIT_FIELD_RESISTANCES(school),
+                other.player.data.level);
+        const absorbed = other.absorbDamage(school, damage);
         map.sendToWatchers(this, Opcode.SMSG_SPELLNONMELEEDAMAGELOG, nonMeleeDamageLog(other.player.guid, player.guid,
-            spell.id, damage, spell.casting.school, absorbed, 0, false, 0, crit), true);
+            spell.id, damage, school, absorbed, resisted, false, 0, crit), true);
         enterCombatFor(combatLinger);
         import dmangos.world.unit : Blow, dealDamage;
 
@@ -2781,4 +2816,28 @@ unittest
     keeper.auras.list ~= makeAura(s(blessing), keeper.guid, 1, -1, true, [1, 0, 0]);
     session.dispelEffect(s(dispelMagic), 0, keeper.guid, 2);
     assert(keeper.auras.find(hex) !is null && keeper.auras.find(blessing) is null);
+}
+
+/// A player's resistance takes its share of a spell's damage, as a creature's does (with no level bonus).
+unittest
+{
+    import dmangos.world.movement : Position;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f));
+    anduin.read();
+    auto session = anduin.session.inWorld;
+    ulong taken, resisted;
+    foreach (_; 0 .. 1000)
+    {
+        uint damage = 1000;
+        resisted += session.partialResist(damage, 300, 60);
+        taken += damage;
+    }
+    assert(taken + resisted == 1_000_000 && resisted > 300_000, "most of it resisted at the most");
+    uint none = 1000;
+    assert(session.partialResist(none, 0, 60) == 0 && none == 1000, "no resistance: nothing resisted");
 }
