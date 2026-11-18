@@ -1113,4 +1113,21 @@ unittest
     map.update(1100.msecs);
     assert(map.findObject(guid) is null, "gone after its time");
     assert(map.creaturesNear(keeper.position, 10).length == before);
+
+    // Its look by its script: another model, a mount, its weapons out; then it dies of its own accord.
+    EventAiEvent changed = {id: 3, type: EventType.receiveEmote, chance: 100, params: [wave + 2, 0, 0, 0, 0, 0]};
+    changed.actions[0] = EventAiAction(ActionType.morph, [0, 1234, 0]);
+    changed.actions[1] = EventAiAction(ActionType.mount, [0, 555, 0]);
+    changed.actions[2] = EventAiAction(ActionType.setSheath, [1, 0, 0]);
+    auto looks = [changed];
+    keeper.ai.setScript(looks, context.data.eventAi);
+    keeper.ai.receivedEmote(me.guid, wave + 2, map);
+    assert(keeper.values.get!UNIT_FIELD_DISPLAYID == 1234 && keeper.values.get!UNIT_FIELD_MOUNTDISPLAYID == 555
+        && keeper.values.getByte!UNIT_FIELD_BYTES_2(0) == 1, "its new look");
+    EventAiEvent ended = {id: 4, type: EventType.receiveEmote, chance: 100, params: [wave + 3, 0, 0, 0, 0, 0]};
+    ended.actions[0] = EventAiAction(ActionType.die, [0, 0, 0]);
+    auto ending = [ended];
+    keeper.ai.setScript(ending, context.data.eventAi);
+    keeper.ai.receivedEmote(me.guid, wave + 3, map);
+    assert(!keeper.alive, "it died");
 }

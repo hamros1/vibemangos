@@ -74,6 +74,9 @@ interface CreatureLore
     /// A `Signal` for the script of dungeon copy `instance` (nothing if it has none).
     void signalDungeon(uint instance, EntityRef from, uint id, int value);
 
+    /// A model of creature `entry` (its template's first); 0 if none.
+    uint displayOf(uint entry);
+
     /// The escort path (`script_waypoint`) of creature `entry`; empty if it has none.
     const(Waypoint)[] escortPath(uint entry);
 

@@ -15,8 +15,12 @@
  * kill credit, relay scripts, evading, attacking. Repeating events go again after their repeat
  * timers.
  *
- * Not yet: the other events and actions (summons, morphs, faction changes, quest events, AI events
- * between creatures, relay scripts), spell lists (`creature_template_spells`), immunities.
+ * Also: summons, faction changes, morphs and mounts, the sheath, dying, a dungeon's players all
+ * joining the fight (zone combat pulse), and setting instance data (a signal to the dungeon copy's
+ * script, the field its id and the data its value).
+ *
+ * Not yet: the other actions (updating the template, threat percentages, rooting, following, facing),
+ * spell lists (`creature_template_spells`), immunities.
  */
 module dmangos.world.eventai;
 
@@ -92,6 +96,12 @@ enum ActionType : ubyte
     setReactState = 50,
     startRelayScript = 53,
     textNew = 54,
+    morph = 3,
+    setInstanceData = 34,
+    die = 37,
+    zoneCombatPulse = 38,
+    setSheath = 40,
+    mount = 43,
     attackStart = 55,
     despawnGuardians = 56,
     setRangedMode = 57,
@@ -269,6 +279,16 @@ interface Scripted
 
     /// A temporary faction; 0 puts its own back.
     void scriptFaction(uint faction);
+
+    /// Its look: model `model`, or (0) its own again; mounted on `model` (0: off its mount); sheath state.
+    void scriptMorph(uint entry, uint model);
+    void scriptMount(uint entry, uint model); /// ditto
+    void scriptSheath(uint state); /// ditto
+
+    /// It dies; a dungeon's players all join its fight; its dungeon copy's script is signalled.
+    void scriptDie();
+    void scriptZoneCombatPulse(); /// ditto
+    void scriptInstanceData(uint field, int value); /// ditto
 
     /// A quest's event happens for the player `player`, or (`all`) every player fighting it.
     void scriptQuestEvent(uint quest, ulong player, bool all);
@@ -571,6 +591,24 @@ final class EventAI
         case ActionType.setFaction:
             me.scriptFaction(a.params[0] > 0 ? a.params[0] : 0);
             return true;
+        case ActionType.morph: // an entry's model or a model; neither: its own again
+            me.scriptMorph(a.params[0] > 0 ? a.params[0] : 0, a.params[1] > 0 ? a.params[1] : 0);
+            return true;
+        case ActionType.mount: // an entry's model or a model; neither: off its mount
+            me.scriptMount(a.params[0] > 0 ? a.params[0] : 0, a.params[1] > 0 ? a.params[1] : 0);
+            return true;
+        case ActionType.setSheath:
+            me.scriptSheath(a.params[0] > 0 ? a.params[0] : 0);
+            return true;
+        case ActionType.die:
+            me.scriptDie();
+            return true;
+        case ActionType.zoneCombatPulse:
+            me.scriptZoneCombatPulse();
+            return true;
+        case ActionType.setInstanceData:
+            me.scriptInstanceData(a.params[0] > 0 ? a.params[0] : 0, a.params[1]);
+            return true;
         case ActionType.startRelayScript:
             me.scriptRelay(a.params[0], targetOf(a.params[1], me, invoker));
             return a.params[0] != 0;
@@ -843,6 +881,12 @@ unittest
         void scriptReactState(uint state) {}
         void scriptRelay(int id, ulong target) {}
         void scriptFaction(uint faction) {}
+        void scriptMorph(uint entry, uint model) {}
+        void scriptMount(uint entry, uint model) {}
+        void scriptSheath(uint state) {}
+        void scriptDie() {}
+        void scriptZoneCombatPulse() {}
+        void scriptInstanceData(uint field, int value) {}
         void scriptQuestEvent(uint quest, ulong player, bool all) {}
         void scriptKillCredit(uint entry, ulong player) {}
         bool scriptSummon(uint entry, ulong target, uint durationMs, uint spot) { return false; }

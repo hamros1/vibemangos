@@ -2965,6 +2965,17 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     }
 
     /// See `CreatureLore.signalDungeon`.
+    /// See `CreatureLore.displayOf`.
+    uint displayOf(uint entry)
+    {
+        if (const t = entry in data.creatureTemplates)
+            foreach (model; t.modelIds)
+                if (model)
+                    return model;
+        return 0;
+    }
+
+    /// See `CreatureLore.signalDungeon`.
     void signalDungeon(uint instance, EntityRef from, uint id, int value)
     {
         import dmangos.script.api : Signal;

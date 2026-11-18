@@ -674,6 +674,54 @@ mixin template CreatureCasting()
             lore.startRelay(id, world_, me.guid, target);
     }
 
+    /// ditto: an entry's model (its first) or a model; neither: back to its own.
+    void scriptMorph(uint entry, uint model)
+    {
+        const display = entry && lore !is null ? lore.displayOf(entry) : model;
+        me.values.set!UNIT_FIELD_DISPLAYID(display ? display : me.values.get!UNIT_FIELD_NATIVEDISPLAYID);
+        world_.flushCreature(me);
+    }
+
+    /// ditto: mounted on an entry's model (its first) or a model; neither: off its mount.
+    void scriptMount(uint entry, uint model)
+    {
+        me.values.set!UNIT_FIELD_MOUNTDISPLAYID(entry && lore !is null ? lore.displayOf(entry) : model);
+        world_.flushCreature(me);
+    }
+
+    /// ditto
+    void scriptSheath(uint state)
+    {
+        me.values.setByte!UNIT_FIELD_BYTES_2(0, cast(ubyte) state);
+        world_.flushCreature(me);
+    }
+
+    /// ditto: it dies as if killed by nobody (no one's kill).
+    void scriptDie()
+    {
+        if (!me.alive)
+            return;
+        if (auto self = world_.unitOf(me))
+            self.spellHitBy(0, me.values.get!UNIT_FIELD_HEALTH);
+    }
+
+    /// ditto: in a dungeon copy, every living player in it joins its fight.
+    void scriptZoneCombatPulse()
+    {
+        if (!me.instanceId || !me.alive)
+            return;
+        foreach (p; world_.playersNear(me.position, 10_000))
+            if (p.fighter.alive)
+                attackedBy(p, world_);
+    }
+
+    /// ditto: its dungeon copy's script gets a signal of id `field` with `value` (the instance data).
+    void scriptInstanceData(uint field, int value)
+    {
+        if (lore !is null && me.instanceId)
+            lore.signalDungeon(me.instanceId, EntityRef(me.guid), field, value);
+    }
+
     /// ditto: back to its template's faction with 0.
     void scriptFaction(uint faction)
     {
