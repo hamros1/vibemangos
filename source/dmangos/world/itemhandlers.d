@@ -100,6 +100,10 @@ private:
             refreshEquipSpells(); // their equip spells on or off
             player.refreshEquipmentStats(context.data);
         }
+        // Quest objectives that count items, first: a quest they complete changes the log's fields, which go
+        // out in the same update as the items.
+        if (inventory.hasChanges)
+            questItemsChanged();
         UpdateData update;
         inventory.writeUpdates(update);
         player.addChanges(update, Viewer.self);
@@ -107,8 +111,6 @@ private:
         if (update.blockCount)
             sendUpdate(update);
         const changes = inventory.takeChanges();
-        if (changes.length)
-            questItemsChanged(); // quest objectives that count items
         flushPlayerChanges(false);
         if (changes.length || moneyChanged)
             context.database.saveInventory(player.data.guid, player.money.amount, player.values[PLAYER_BYTES_2], changes);

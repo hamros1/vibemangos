@@ -1986,6 +1986,12 @@ final class Inventory
         }
     }
 
+    /// Whether items changed since the last `takeChanges`.
+    @property bool hasChanges() const pure nothrow @nogc @safe
+    {
+        return queue.length != 0;
+    }
+
     /**
      * The rows to write, in order, and every item marked saved. Items in the
      * buyback slots are not kept: their rows are deleted, to be written again if they are bought back.

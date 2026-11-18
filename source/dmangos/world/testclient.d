@@ -39,6 +39,127 @@ struct ServerPacketRead
     ubyte[] body_;
 }
 
+/**
+ * What a client knows of objects' fields: the values the update packets it was sent gave them. The decoding is
+ * written from the client's format, not from `dmangos.world.objects`, so a field the server forgets to send
+ * shows up as a difference (`assertSeesItself`).
+ */
+struct ClientView
+{
+    uint[size_t][ulong] fields; /// guid -> field -> value
+
+    /// Applies an `SMSG_UPDATE_OBJECT` or `SMSG_COMPRESSED_UPDATE_OBJECT`.
+    void apply(ushort opcode, const(ubyte)[] body_)
+    {
+        import std.zlib : uncompress;
+
+        if (opcode == Opcode.SMSG_COMPRESSED_UPDATE_OBJECT)
+        {
+            auto sized = ByteReader(body_);
+            const size = sized.read!uint;
+            body_ = cast(const(ubyte)[]) uncompress(body_[4 .. $], size);
+            assert(body_.length == size);
+        }
+        auto r = ByteReader(body_);
+        const count = r.read!uint;
+        r.read!ubyte; // has a transport
+        foreach (_; 0 .. count)
+        {
+            const kind = r.read!ubyte;
+            if (kind == 4 || kind == 5) // out of range, near objects: a list of guids
+            {
+                foreach (__; 0 .. r.read!uint)
+                {
+                    const gone = packedGuid(r);
+                    if (kind == 4)
+                        fields.remove(gone);
+                }
+                continue;
+            }
+            const guid = packedGuid(r);
+            if (kind == 2 || kind == 3)
+            {
+                r.read!ubyte; // the type id
+                skipMovement(r);
+                fields.remove(guid); // created anew: what was known is replaced
+            }
+            assert(kind <= 3, "an update block of an unknown kind");
+            const blocks = r.read!ubyte;
+            uint[] masks;
+            foreach (__; 0 .. blocks)
+                masks ~= r.read!uint;
+            auto known = guid in fields;
+            if (known is null)
+            {
+                fields[guid] = null;
+                known = guid in fields;
+            }
+            foreach (i; 0 .. blocks * 32)
+                if (masks[i / 32] & (1u << (i % 32)))
+                    (*known)[i] = r.read!uint;
+        }
+        assert(r.remaining == 0, "bytes left over after the update blocks");
+    }
+
+    /// Field `slot` of `guid` as the client has it (0 if never sent).
+    uint opIndex(ulong guid, size_t slot) const
+    {
+        if (auto known = guid in fields)
+            return (*known).get(slot, 0);
+        return 0;
+    }
+
+private:
+    static ulong packedGuid(ref ByteReader r)
+    {
+        const mask = r.read!ubyte;
+        ulong guid;
+        foreach (i; 0 .. 8)
+            if (mask & (1 << i))
+                guid |= ulong(r.read!ubyte) << (8 * i);
+        return guid;
+    }
+
+    // A create block's movement part, as the 1.12 client reads it.
+    static void skipMovement(ref ByteReader r)
+    {
+        const flags = r.read!ubyte;
+        if (flags & 0x20) // living
+        {
+            const moveFlags = r.read!uint;
+            r.skip(4 + 16);         // time; x, y, z, o
+            if (moveFlags & 0x0200_0000)
+                r.skip(8 + 16);     // on a transport: its guid, the place on it
+            if (moveFlags & 0x0020_0000)
+                r.skip(4);          // swimming: pitch
+            r.skip(4);              // fall time
+            if (moveFlags & 0x0000_2000)
+                r.skip(16);         // jumping
+            if (moveFlags & 0x0400_0000)
+                r.skip(4);          // spline elevation
+            r.skip(6 * 4);          // speeds
+            if (moveFlags & 0x0040_0000) // walking a spline
+            {
+                const splineFlags = r.read!uint;
+                r.skip(splineFlags & 0x1_0000 ? 12 : splineFlags & 0x2_0000 ? 8 : splineFlags & 0x4_0000 ? 4 : 0);
+                r.skip(4 + 4 + 4);  // passed, duration, id
+                const nodes = r.read!uint;
+                r.skip(12 * nodes + 12);
+            }
+        }
+        else if (flags & 0x40) // has a position
+            r.skip(16);
+        if (flags & 0x08)
+            r.skip(4);
+        if (flags & 0x10)
+            r.skip(4);
+        if (flags & 0x04)
+            packedGuid(r);
+        if (flags & 0x02)
+            r.skip(4);
+    }
+}
+
 /// The client's side of the conversation.
 struct TestClient
 {
@@ -47,6 +168,7 @@ struct TestClient
     CipherState sending, receiving;
     bool encrypted;
     ubyte[] inbox;
+    ClientView view; /// what the packets read so far told of objects' fields
 
     /// Every complete packet the server has sent since the last call.
     ServerPacketRead[] read()
@@ -61,6 +183,9 @@ struct TestClient
             const size = bigEndianToNative!ushort(header[0 .. 2]);
             packets ~= ServerPacketRead(littleEndianToNative!ushort(header[2 .. 4]), inbox[4 .. 2 + size].dup);
             inbox = inbox[2 + size .. $];
+            const p = packets[$ - 1];
+            if (p.opcode == Opcode.SMSG_UPDATE_OBJECT || p.opcode == Opcode.SMSG_COMPRESSED_UPDATE_OBJECT)
+                view.apply(p.opcode, p.body_);
         }
         return packets;
     }
@@ -219,7 +344,36 @@ TestClient loggedIn(WorldContext context, MemoryWorldDatabase db, uint guid, str
     authenticate(client, account.username);
     client.write(Opcode.CMSG_PLAYER_LOGIN, ClientPlayerLogin(guid));
     client.read();
+    assertSeesItself(client);
     return client;
+}
+
+/**
+ * The client sees every field of its own player as the server holds it (as it must: its quest log, money and
+ * the rest are read from them). Read the client's packets first.
+ */
+void assertSeesItself(ref TestClient client, string file = __FILE__, size_t line = __LINE__)
+{
+    import std.format : format;
+    import dmangos.world.player : Player;
+    import dmangos.world.updatefields : PLAYER_END, TypeId, typeMaskOf, updateFields;
+
+    string nameOf(size_t slot)
+    {
+        foreach (field; updateFields)
+            if ((field.owner & typeMaskOf(TypeId.player)) && slot >= field.offset && slot < field.offset + field.size)
+                return slot == field.offset ? field.name : format!"%s+%s"(field.name, slot - field.offset);
+        return format!"slot %s"(slot);
+    }
+
+    auto me = cast(Player) client.session.character;
+    foreach (slot; 0 .. size_t(PLAYER_END))
+    {
+        const server = me.values[slot], seen = client.view[me.guid, slot];
+        if (server != seen)
+            throw new Exception(format!"the client sees %s as %s, the server has %s"(nameOf(slot), seen, server),
+                file, line);
+    }
 }
 
 /// A `CMSG_MESSAGECHAT` body; `target` is the whisper's receiver or the channel.

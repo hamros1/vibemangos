@@ -407,3 +407,22 @@ the cell searches and the known-object lists fill lists lent from a small pool (
 **Tried and dropped.** Update masks from compile-time words (no per-slot pass, no arrays): a
 micro-benchmark showed the helpers 1 µs and 176 B cheaper per player, but the crowd allocated 443 KB a
 tick against 430: they were not where the bytes went. Reverted.
+
+## A tick-end net for unsent player changes: tried and dropped (2026-11-19)
+
+The idea: at the end of each tick, any player whose fields changed but were not sent (a handler that
+forgot `flushPlayerChanges`) gets them sent. `crowd`, 500 bots, `--seed 7`, 60 s, runs alternated with
+the build before it:
+
+| | before (4 runs) | with the net (4 runs) |
+|---|---|---|
+| Tick, average | 0.630, 0.658, 0.676, 0.675 ms | 0.688, 0.701, 0.732, 0.727 ms |
+| Event loop busy | 7.7–7.9% | 7.8–7.9% |
+
+* About 0.05–0.07 ms a tick at 500 players (some 9% of the tick), from the walk itself: an interface
+  call and a scan of each player's change bits, each a cache miss. A counting build showed the net
+  sent almost nothing (fewer than 5,000 times in about 594,000 checks).
+* It would not have caught the bugs that prompted it: the quest log's ids were never meant for the player
+  by the visibility rules, and the looted item that completed a quest had its change cleared after it
+  went to others only. Those are found by the tests now (`assertSeesItself`, docs/DEVELOPING.md) and
+  fixed where they were.

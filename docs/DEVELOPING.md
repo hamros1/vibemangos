@@ -251,12 +251,19 @@ channel the player may talk in.
 
 ### Unit tests
 
-`dub test` runs every module's tests: 56 modules, in a few seconds. Session tests use
+`dub test` runs every module's tests: 156 modules. Session tests use
 `world/testclient.d`. Importing it gives you a scripted client (`TestClient`), a pre-filled
 in-memory database (`newDatabase`), contexts (`newContext`, `newCreationContext`),
 `authenticate`, and for tests in the world `loggedIn` (an account and a character, logged in),
 `chatBody`, `opcodesOf` and `bodyOf`. To let time pass, replace `context.clock`, as the movement
 check's test does.
+
+The client keeps what its update packets told it of objects' fields (`TestClient.view`, decoded from
+the client's format, not with `objects.d`). `assertSeesItself` checks that the client sees every field
+of its own player as the server holds it. `loggedIn` checks it after login. Call it after anything
+that changes the player (the quest test does, after each step): a test of the server's values alone
+missed that the quest log never reached the client. From the live server, `testclient.py`'s
+`questlog[:ID]` shows the log as the client has it.
 
 ### The test harness
 

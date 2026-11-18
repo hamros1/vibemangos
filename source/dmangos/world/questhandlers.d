@@ -1033,7 +1033,11 @@ private:
             return;
         questDivider = 0;
         if (canTakeQuest(*quest))
+        {
             addQuest(*quest);
+            flushInventory(true); // its source item
+            flushPlayerChanges();
+        }
     }
 
     /// What became of a quest shared with a group member (`MSG_QUEST_PUSH_RESULT`).
@@ -1406,6 +1410,7 @@ unittest
     anduin.write(Opcode.CMSG_QUESTGIVER_ACCEPT_QUEST, accept.data);
     anduin.read();
     assert(me.values[PLAYER_QUEST_LOG_1_1] == q.id && me.questStatus[q.id].status == QuestState.incomplete);
+    assertSeesItself(anduin); // the quest is in the client's log too
     assert(statusOfTrainer() == DialogStatus.incomplete);
 
     // The kill counts; its jerky (a quest drop as well as a plain one here) counts as it is looted.
@@ -1418,6 +1423,7 @@ unittest
     const looted = opcodesOf(anduin.read());
     assert(looted.canFind(Opcode.SMSG_QUESTUPDATE_ADD_ITEM) && looted.canFind(Opcode.SMSG_QUESTUPDATE_COMPLETE));
     assert(me.questStatus[q.id].status == QuestState.complete);
+    assertSeesItself(anduin); // its counts and its state
     assert(statusOfTrainer() == DialogStatus.reward2, "the question mark");
 
     // Turned in: the jerky taken, 35 copper and the shirt given, 100 experience.
@@ -1438,6 +1444,7 @@ unittest
     }
     anduin.write(Opcode.CMSG_QUESTGIVER_CHOOSE_REWARD, choose.data);
     assert(opcodesOf(anduin.read()).canFind(Opcode.SMSG_QUESTGIVER_QUEST_COMPLETE));
+    assertSeesItself(anduin); // out of the log; the money, the experience, the shirt
     assert(me.inventory.count(itemJerky) == 0 && me.inventory.count(itemShirt) == 1);
     assert(me.money == money + Copper(35) && me.values[PLAYER_XP] == xp + questXp(q, 1)); // 60 / 0.6f
     assert(me.questStatus[q.id].rewarded && me.values[PLAYER_QUEST_LOG_1_1] == 0);

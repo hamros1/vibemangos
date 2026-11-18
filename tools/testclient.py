@@ -12,6 +12,7 @@ in order:
     login:NAME                enter the world; prints the login packets and the
                               decoded player and item objects
     query                     name, item and time queries (after login)
+    questlog[:ID]             the quest log as the client has it (from the player's fields); with ID, check it is there
     move:X:Y:Z                walk to a position (after login)
     say:TEXT                  say something and print what comes back
     yell:TEXT                 yell something (heard 300 yards around)
@@ -168,6 +169,7 @@ my_guid = [0]
 pet_info = {}
 item_objects = {}  # guid -> fields of the items the client was sent
 my_slots = {}      # the player's own slots: slot -> item guid
+my_fields = {}     # the player's own fields as the client has them: slot -> value
 player_guid = None
 SLOT_FIELD = UNIT_END + 0x12A  # PLAYER_FIELD_INV_SLOT_HEAD
 
@@ -178,7 +180,9 @@ def track(objs):
             for gone in g: item_objects.pop(gone, None)
         elif kind in (2, 3) and t in (1, 2): item_objects[g] = dict(v)
         elif kind == 0 and g in item_objects: item_objects[g].update(v)
+        if g == player_guid and kind in (2, 3): my_fields.clear()
         if g == player_guid and kind in (0, 2, 3):
+            my_fields.update(v)
             for i in range(113):
                 if SLOT_FIELD + 2 * i in v or SLOT_FIELD + 2 * i + 1 in v:
                     ig = v.get(SLOT_FIELD + 2 * i, 0) | v.get(SLOT_FIELD + 2 * i + 1, 0) << 32
@@ -684,6 +688,12 @@ for action in actions:
                     if pv.get(UNIT_END + 0x12A + 2 * i):
                         ig = pv[UNIT_END + 0x12A + 2 * i] | pv.get(UNIT_END + 0x12B + 2 * i, 0) << 32
                         assert ig in items, f"slot {i} points at an object the client was not sent"
+    elif kind == "questlog":
+        # The quest log as the client shows it: from the player's own fields (PLAYER_QUEST_LOG_n_1..3).
+        listen_for(1)
+        log = [(i + 1, my_fields.get(0xC6 + 3 * i, 0)) for i in range(20)]
+        print("quest log:", [f"{n}: {q}" for n, q in log if q] or "empty")
+        if args: assert int(args[0]) in [q for _, q in log], f"quest {args[0]} is not in the client's log"
     elif kind == "query":
         wsend(0x050, struct.pack("<Q", player_guid)); op, p = expect(0x051)
         name = p[8:p.index(b"\0", 8)].decode(); print(f"name query: '{name}'")
