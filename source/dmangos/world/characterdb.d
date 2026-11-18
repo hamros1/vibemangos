@@ -14,7 +14,7 @@ import std.datetime.systime : Clock;
 import std.typecons : Nullable, nullable;
 
 import dmangos.log;
-import dmangos.mysql : MySqlConnection;
+import dmangos.mysql : Column, MySqlConnection;
 import dmangos.world.inventory : ItemChange, ItemRecord, ItemState;
 import dmangos.world.player : CharacterData, CharacterProgress, HomeBind, tutorialFields;
 import dmangos.world.playercreate : NewCharacter, NewSkill, NewSpell, maxEnchantmentSlot;
@@ -102,6 +102,88 @@ private enum : uint
 }
 
 /// The character-related statements, on the characters and login connections.
+/// A `characters` row as `loadCharacter` reads it (`MySqlConnection.select` makes the column list).
+private struct CharacterRow
+{
+    uint guid, account;
+    string name;
+    ubyte race;
+    @Column("class") ubyte classId;
+    ubyte gender;
+    uint level, xp, money, playerBytes, playerBytes2, playerFlags;
+    @Column("position_x") float x;
+    @Column("position_y") float y;
+    @Column("position_z") float z;
+    float orientation;
+    uint map, zone, cinematic;
+    @Column("totaltime") uint totalTime;
+    @Column("leveltime") uint levelTime;
+    @Column("at_login") uint atLogin;
+    uint watchedFaction, health, power1, power2, power3, power4, power5;
+    string exploredZones;
+    uint ammoId;
+    ubyte actionBars;
+    @Column("rest_bonus") float restBonus;
+    @Column("logout_time") long logoutTime;
+    @Column("is_logout_resting") int logoutResting;
+    @Column("death_expire_time") long deathExpireTime;
+    @Column("IFNULL(taximask, '')") string taxiMask;
+
+    CharacterData toData() const
+    {
+        import std.array : split;
+        import std.conv : to, ConvException;
+        import dmangos.world.movement : Position;
+
+        CharacterData c;
+        static foreach (field; ["guid", "account", "name", "race", "classId", "gender", "level", "xp", "money",
+            "playerBytes", "playerBytes2", "playerFlags", "map", "zone", "cinematic", "totalTime", "levelTime",
+            "atLogin", "watchedFaction", "health", "exploredZones", "ammoId", "actionBars", "restBonus",
+            "logoutTime", "deathExpireTime"])
+            __traits(getMember, c, field) = __traits(getMember, this, field);
+        c.position = Position(x, y, z, orientation);
+        c.power = [power1, power2, power3, power4, power5];
+        c.logoutResting = logoutResting != 0;
+        foreach (i, word; taxiMask.split)
+            if (i < c.taxiMask.length)
+            {
+                try
+                    c.taxiMask[i] = word.to!uint;
+                catch (ConvException) {}
+            }
+        return c;
+    }
+}
+
+/// A `character_queststatus` row.
+private struct QuestStatusRow
+{
+    uint quest, status;
+    bool rewarded, explored;
+    long timer;
+    @Column("mobcount1") uint mob1;
+    @Column("mobcount2") uint mob2;
+    @Column("mobcount3") uint mob3;
+    @Column("mobcount4") uint mob4;
+    @Column("itemcount1") uint item1;
+    @Column("itemcount2") uint item2;
+    @Column("itemcount3") uint item3;
+    @Column("itemcount4") uint item4;
+
+    QuestStatus toStatus() const
+    {
+        QuestStatus q;
+        q.quest = quest;
+        q.status = cast(QuestState) status;
+        q.rewarded = rewarded;
+        q.explored = explored;
+        q.timer = timer;
+        q.mobCount = [mob1, mob2, mob3, mob4];
+        q.itemCount = [item1, item2, item3, item4];
+        return q;
+    }
+}
+
 final class CharacterStatements
 {
     private MySqlConnection characters;
@@ -220,61 +302,10 @@ final class CharacterStatements
     /// A character with everything it logs in with. Null if there is no such character.
     Nullable!CharacterData loadCharacter(uint guid)
     {
-        const rows = characters.query!("SELECT guid, account, name, race, class, gender, level, xp, money, "
-            ~ "playerBytes, playerBytes2, playerFlags, position_x, position_y, position_z, orientation, map, zone, "
-            ~ "cinematic, totaltime, leveltime, at_login, watchedFaction, health, power1, power2, power3, power4, "
-            ~ "power5, exploredZones, ammoId, actionBars, rest_bonus, logout_time, is_logout_resting, death_expire_time, "
-            ~ "IFNULL(taximask, '') FROM characters WHERE guid = ?")(guid);
+        const rows = characters.select!(CharacterRow, "FROM characters WHERE guid = ?")(guid);
         if (rows.length == 0)
             return Nullable!CharacterData.init;
-
-        const r = rows[0];
-        CharacterData c;
-        c.guid = r.get!uint(0);
-        c.account = r.get!uint(1);
-        c.name = r.get!string(2);
-        c.race = r.get!ubyte(3);
-        c.classId = r.get!ubyte(4);
-        c.gender = r.get!ubyte(5);
-        c.level = r.get!uint(6);
-        c.xp = r.get!uint(7);
-        c.money = r.get!uint(8);
-        c.playerBytes = r.get!uint(9);
-        c.playerBytes2 = r.get!uint(10);
-        c.playerFlags = r.get!uint(11);
-        c.position.x = r.get!float(12);
-        c.position.y = r.get!float(13);
-        c.position.z = r.get!float(14);
-        c.position.orientation = r.get!float(15);
-        c.map = r.get!uint(16);
-        c.zone = r.get!uint(17);
-        c.cinematic = r.get!uint(18);
-        c.totalTime = r.get!uint(19);
-        c.levelTime = r.get!uint(20);
-        c.atLogin = r.get!uint(21);
-        c.watchedFaction = r.get!uint(22);
-        c.health = r.get!uint(23);
-        foreach (i; 0 .. 5)
-            c.power[i] = r.get!uint(24 + i);
-        c.exploredZones = r.get!string(29);
-        c.ammoId = r.get!uint(30);
-        c.actionBars = r.get!ubyte(31);
-        c.restBonus = r.get!float(32);
-        c.logoutTime = r.get!long(33);
-        c.deathExpireTime = r.get!long(35);
-        c.logoutResting = r.get!int(34) != 0;
-        {
-            import std.array : split;
-            import std.conv : to, ConvException;
-
-            foreach (i, word; r.get!string(36).split)
-                if (i < c.taxiMask.length)
-                {
-                    try
-                        c.taxiMask[i] = word.to!uint;
-                    catch (ConvException) {}
-                }
-        }
+        CharacterData c = rows[0].toData();
 
         // Ordered by bag, so bags come before what is in them.
         c.items = characters.queryAs!(ItemRecord, "SELECT ci.bag, ci.slot, ci.item, ii.itemEntry, ii.creatorGuid, "
@@ -282,22 +313,9 @@ final class CharacterStatements
             ~ "ii.randomPropertyId, ii.durability, ii.itemTextId FROM character_inventory ci "
             ~ "JOIN item_instance ii ON ii.guid = ci.item WHERE ci.guid = ? ORDER BY ci.bag, ci.slot")(guid);
         c.skills = characters.queryAs!(NewSkill, "SELECT skill, value, max FROM character_skills WHERE guid = ?")(guid);
-        foreach (row; characters.query!("SELECT quest, status, rewarded, explored, timer, mobcount1, mobcount2, "
-                ~ "mobcount3, mobcount4, itemcount1, itemcount2, itemcount3, itemcount4 FROM character_queststatus "
-                ~ "WHERE guid = ?")(guid))
+        foreach (row; characters.select!(QuestStatusRow, "FROM character_queststatus WHERE guid = ?")(guid))
         {
-            QuestStatus q;
-            q.quest = row.get!uint(0);
-            q.status = cast(QuestState) row.get!uint(1);
-            q.rewarded = row.get!bool(2);
-            q.explored = row.get!bool(3);
-            q.timer = row.get!long(4);
-            foreach (i; 0 .. 4)
-            {
-                q.mobCount[i] = row.get!uint(5 + i);
-                q.itemCount[i] = row.get!uint(9 + i);
-            }
-            c.quests ~= q;
+            c.quests ~= row.toStatus();
         }
         foreach (row; characters.query!"SELECT spell, active, disabled FROM character_spell WHERE guid = ?"(guid))
             c.spells ~= NewSpell(row.get!uint(0), row.get!bool(1), row.get!bool(2));

@@ -66,6 +66,41 @@ class TransactionLost : DatabaseException
     mixin basicExceptionCtors;
 }
 
+/// On a field of a struct read by `MySqlConnection.select`: the column it is read from, or an SQL expression.
+struct Column
+{
+    string expression;
+}
+
+/// The SELECT list of `T`'s fields, in order (see `MySqlConnection.select`).
+enum string selectList(T) = () {
+    import std.traits : getUDAs;
+
+    string list;
+    static foreach (i; 0 .. T.tupleof.length)
+    {{
+        static if (getUDAs!(T.tupleof[i], Column).length)
+            enum column = getUDAs!(T.tupleof[i], Column)[0].expression;
+        else
+            enum column = __traits(identifier, T.tupleof[i]);
+        list ~= (i ? ", " : "") ~ column;
+    }}
+    return list;
+}();
+
+///
+unittest
+{
+    static struct Row
+    {
+        uint guid;
+        @Column("class") ubyte classId;
+        @Column("IFNULL(taximask, '')") string taxi;
+    }
+
+    static assert(selectList!Row == "guid, class, IFNULL(taximask, '')");
+}
+
 /// Where and as whom to connect.
 struct ConnectionInfo
 {
@@ -239,6 +274,20 @@ final class MySqlConnection
         import std.array : array;
 
         return query!sql(args).map!(row => row.as!T).array;
+    }
+
+    /**
+     * Runs `SELECT <the columns of T> <rest>` and maps every row onto `T`. The column list is made from
+     * `T`'s fields, in order: a field's `Column` names its column (or an SQL expression), otherwise its
+     * own name is the column's. The list and the struct so cannot disagree.
+     * ---
+     * struct Row { uint guid; @Column("class") ubyte classId; @Column("IFNULL(taximask, '')") string taxi; }
+     * auto rows = db.select!(Row, "FROM characters WHERE guid = ?")(guid);
+     * ---
+     */
+    T[] select(T, string rest, Args...)(auto ref Args args) if (is(T == struct))
+    {
+        return queryAs!(T, "SELECT " ~ selectList!T ~ " " ~ rest)(args);
     }
 
     /// Runs a statement that returns no rows. Returns: the number of affected rows.
