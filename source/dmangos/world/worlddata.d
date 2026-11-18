@@ -902,7 +902,13 @@ final class WorldData
             const id = row.get!uint(0);
             if (id == 0 || id > ushort.max)
                 continue;
-            byId[cast(ushort) id] = GameEvent(cast(ushort) id, cast(ScheduleType) row.get!uint(1), 0, 0, row.get!uint(2),
+            // A schedule type this server does not know never starts by itself.
+            const type = row.get!uint(1);
+            ScheduleType schedule = ScheduleType.serverSide;
+            static foreach (known; __traits(allMembers, ScheduleType))
+                if (type == __traits(getMember, ScheduleType, known))
+                    schedule = cast(ScheduleType) type;
+            byId[cast(ushort) id] = GameEvent(cast(ushort) id, schedule, 0, 0, row.get!uint(2),
                 row.get!uint(3), row.get!uint(4), row.get!string(5), cast(ushort) row.get!uint(6));
         }
         foreach (row; world.query!"SELECT entry, UNIX_TIMESTAMP(start_time), UNIX_TIMESTAMP(end_time) FROM game_event_time"())

@@ -8,11 +8,15 @@
  * $(UL
  *   $(LI 0: never by itself (a script or a GM would start it);)
  *   $(LI 1: the dates in `game_event_time`, as they are;)
+ *   $(LI 2 and 3: a Darkmoon Faire week, Monday to Monday, the first whole week of every third month (2:
+ *        January, April, July, October; 3: February, May, August, November);)
+ *   $(LI 5 and 6, 8 and 9: the Faire being built: one day starting two (5, 6) or one (8, 9) days before
+ *        the week of 2 or 3;)
  *   $(LI 11: those dates moved to this year (a holiday on the same days every year);)
+ *   $(LI 12: Lunar New Year: three weeks from the day (in China, UTC+8) of the second new moon after
+ *        21 December;)
  *   $(LI 13: Easter week this year (Noblegarden).)
  * )
- * Lunar New Year (12) and the computed Darkmoon Faire weeks (2 to 9) are not scheduled yet: those
- * events stay inactive.
  *
  * An event linked to another (`linkedTo`: the Wickerman's embers to Hallow's End) is active only
  * while that one is too.
@@ -30,6 +34,12 @@ enum ScheduleType : uint
 {
     serverSide = 0,
     date = 1,
+    faire1 = 2,
+    faire2 = 3,
+    faireBuilding1First = 5,
+    faireBuilding1Second = 6,
+    faireBuilding2First = 8,
+    faireBuilding2Second = 9,
     yearly = 11,
     lunarNewYear = 12,
     easter = 13,
@@ -81,6 +91,67 @@ unittest
     assert(easterSunday(2026) == Date(2026, 4, 5) && easterSunday(2024) == Date(2024, 3, 31));
 }
 
+/// The time (Unix, UTC) of the `k`-th new moon from that of 6 January 2000: the mean lunation and its largest
+/// periodic terms, to within minutes.
+double newMoon(long k) pure nothrow @nogc @safe
+{
+    import std.math : PI, sin;
+
+    const t = k / 1236.85;
+    enum rad = PI / 180;
+    const m = (2.5534 + 29.10535670 * k) * rad, mm = (201.5643 + 385.81693528 * k) * rad,
+        f = (160.7108 + 390.67050284 * k) * rad, e = 1 - 0.002516 * t;
+    double jd = 2_451_550.09766 + 29.530588861 * k + 0.00015437 * t * t;
+    jd += -0.40720 * sin(mm) + 0.17241 * e * sin(m) + 0.01608 * sin(2 * mm) + 0.01039 * sin(2 * f)
+        + 0.00739 * e * sin(mm - m) - 0.00514 * e * sin(mm + m) + 0.00208 * e * e * sin(2 * m)
+        - 0.00111 * sin(mm - 2 * f) - 0.00057 * sin(mm + 2 * f) + 0.00056 * e * sin(2 * mm + m)
+        - 0.00042 * sin(3 * mm);
+    return (jd - 2_440_587.5) * 86_400;
+}
+
+/// The day of Lunar New Year in `year`: in China (UTC+8), the second new moon after 21 December before it.
+Date lunarNewYear(int year) @safe
+{
+    const solstice = SysTime(DateTime(year - 1, 12, 21), UTC()).toUnixTime;
+    long k = cast(long)((year - 1 - 2000) * 12.3685) - 2;
+    while (newMoon(k) <= solstice)
+        ++k;
+    const china = cast(long) newMoon(k + 1) + 8 * 3600;
+    return cast(Date) SysTime.fromUnixTime(china, UTC());
+}
+
+unittest
+{
+    assert(lunarNewYear(2024) == Date(2024, 2, 10) && lunarNewYear(2025) == Date(2025, 1, 29));
+    assert(lunarNewYear(2026) == Date(2026, 2, 17) && lunarNewYear(2027) == Date(2027, 2, 6));
+    assert(lunarNewYear(2023) == Date(2023, 1, 22));
+}
+
+/// The Monday of the first whole week of the Faire month for `schedule` from `today`'s month.
+private Date faireMonday(ScheduleType schedule, Date today) pure @safe
+{
+    import core.time : days;
+    import std.datetime : DayOfWeek, Month;
+
+    const r = (today.month - 1) % 3;
+    const ahead = schedule == ScheduleType.faire1 || schedule == ScheduleType.faireBuilding1First
+        || schedule == ScheduleType.faireBuilding2First ? (3 - r) % 3 : (4 - r) % 3;
+    auto first = Date(today.year, today.month, 1);
+    first.add!"months"(ahead);
+    while (first.dayOfWeek != DayOfWeek.mon)
+        first += 1.days;
+    return first;
+}
+
+unittest
+{
+    // November 2026: the second Faire's month; its first Monday is the 2nd. In December, the first Faire's
+    // month is January 2027 (Monday the 4th).
+    assert(faireMonday(ScheduleType.faire2, Date(2026, 11, 18)) == Date(2026, 11, 2));
+    assert(faireMonday(ScheduleType.faire1, Date(2026, 12, 1)) == Date(2027, 1, 4));
+    assert(faireMonday(ScheduleType.faire1, Date(2026, 11, 18)) == Date(2027, 1, 4));
+}
+
 /**
  * The window of event `e` for the year `today` is in: a yearly event's dates moved to this year, Easter
  * week's this year's; others as they are.
@@ -106,7 +177,26 @@ void scheduleFor(ref GameEvent e, long today)
         e.end = (SysTime(DateTime(sunday), LocalTime()) + dur!"days"(7)).toUnixTime;
         break;
     }
-    case ScheduleType.serverSide, ScheduleType.lunarNewYear:
+    case ScheduleType.lunarNewYear:
+    {
+        const day = lunarNewYear(now.year);
+        e.start = SysTime(DateTime(day), LocalTime()).toUnixTime;
+        e.end = (SysTime(DateTime(day), LocalTime()) + dur!"days"(21)).toUnixTime;
+        break;
+    }
+    case ScheduleType.faire1, ScheduleType.faire2, ScheduleType.faireBuilding1First,
+            ScheduleType.faireBuilding1Second, ScheduleType.faireBuilding2First, ScheduleType.faireBuilding2Second:
+    {
+        const building = e.schedule != ScheduleType.faire1 && e.schedule != ScheduleType.faire2;
+        auto monday = faireMonday(e.schedule, cast(Date) now);
+        int before = e.schedule == ScheduleType.faireBuilding1First || e.schedule == ScheduleType.faireBuilding1Second
+            ? 2 : building ? 1 : 0;
+        const from = SysTime(DateTime(monday), LocalTime()) - dur!"days"(before);
+        e.start = from.toUnixTime;
+        e.end = (from + dur!"days"(building ? 1 : 7)).toUnixTime;
+        break;
+    }
+    case ScheduleType.serverSide:
         e.start = e.end = 0; // never by schedule
         break;
     case ScheduleType.date:

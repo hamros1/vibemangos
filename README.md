@@ -279,7 +279,9 @@ What works now:
     apart.
   * **Game events** (`game_event`):
     * The holidays, the Darkmoon Faire, fishing contests, Call to Arms weekends, day and night.
-    * Each runs in its repeating windows: fixed dates, the same days every year, or Easter week.
+    * Each runs in its repeating windows: fixed dates, the same days every year, Easter week, Lunar
+      New Year's three weeks (from the second new moon after 21 December, in China time), or a
+      Darkmoon Faire week (the first whole week of every third month) and its building days.
     * An event linked to another runs only inside it.
     * While an event is on, its creatures and objects (`game_event_creature`, `game_event_gameobject`)
       are in the world, and those listed against it are away. They come and go as it starts and ends.
@@ -288,7 +290,7 @@ What works now:
     * A battleground made during its Call to Arms weekend gives more: Warsong Gulch 45 reputation a
       capture and three kills' honor for a win; Arathi Basin honor every 160 resources and reputation
       every 120.
-    * Not yet: Lunar New Year's and the computed Darkmoon Faire weeks; event models and mail.
+    * Not yet: event models and mail.
   * **Using game objects:** doors and buttons open
     for their time and close again; chairs seat the player at the nearest slot; goobers are in use
     for their time, show their page, count for the quests that need them (for the group near them
