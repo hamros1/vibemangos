@@ -269,8 +269,10 @@ struct WorldConfig
         enforce(allowedBuilds.length > 0, "allowed_builds must list at least one build");
         foreach (build; allowedBuilds)
             enforce(versionName(build) !is null, format!"build %s is not supported"(build));
-        // select(2) cannot watch descriptors past FD_SETSIZE (1024 on Linux).
-        enforce(maxConnections > 0 && maxConnections <= 1000, "max_connections must be between 1 and 1000");
+        import dmangos.net.server : connectionLimit;
+
+        enforce(maxConnections > 0 && maxConnections <= connectionLimit,
+            format!"max_connections must be between 1 and %s"(connectionLimit));
         enforce(idleTimeoutSeconds > 30, "idle_timeout must be longer than the client's 30 second ping interval");
         enforce(uptimeUpdateMinutes > 0, "uptime_update_interval must be positive");
         enforce(charactersPerRealm >= 1 && charactersPerRealm <= 10, "characters_per_realm must be between 1 and 10");

@@ -1,12 +1,11 @@
 /**
- * A single-threaded TCP server built on `select`, shared by the login and
- * world servers.
+ * A single-threaded TCP server, shared by the login and world servers. It waits on epoll on Linux
+ * (the cost of a wait follows the sockets that are ready, not all of them) and on `select`
+ * elsewhere (`Poller`).
  *
  * The server only moves bytes. Protocol logic lives in `NetSession`
  * implementations, which never touch a socket and so can be tested without
- * a network. One thread serves every client and nothing needs a lock. If
- * load ever requires it, the loop can switch to epoll/kqueue without
- * touching the sessions.
+ * a network. One thread serves every client and nothing needs a lock.
  */
 module dmangos.net.server;
 
@@ -71,6 +70,41 @@ struct ServerOptions
     Duration tickInterval = 1.seconds;
 }
 
+/**
+ * The most connections one server may be configured for: epoll has no limit of its own (the process's
+ * open files are raised to their hard limit at start, `raiseFileLimit`); `select` cannot watch
+ * descriptors past FD_SETSIZE (1024).
+ */
+version (linux)
+    enum uint connectionLimit = 60_000;
+else
+    enum uint connectionLimit = 1000;
+
+/**
+ * Raises the process's limit of open files to its hard limit (a service is often started with a soft
+ * limit of 1024), and warns if that is still under `wanted`.
+ */
+void raiseFileLimit(size_t wanted)
+{
+    version (Posix)
+    {
+        import core.sys.posix.sys.resource : getrlimit, rlimit, RLIMIT_NOFILE, setrlimit;
+
+        rlimit limit;
+        if (getrlimit(RLIMIT_NOFILE, &limit) != 0)
+            return;
+        if (limit.rlim_cur < limit.rlim_max)
+        {
+            limit.rlim_cur = limit.rlim_max;
+            setrlimit(RLIMIT_NOFILE, &limit);
+            getrlimit(RLIMIT_NOFILE, &limit);
+        }
+        if (limit.rlim_cur < wanted)
+            warning!"the process may open only %s files, fewer than max_connections (%s) and its other files need"(
+                limit.rlim_cur, wanted);
+    }
+}
+
 /// A tick slower than this is logged, as a sign of a stalled update loop.
 private enum slowTick = 500.msecs;
 
@@ -130,6 +164,7 @@ final class TcpServer
         Duration idleTimeout;
         bool connecting; // an outgoing connection not yet established
         bool broken;
+        bool writeWatched; // the poller reports it writable
 
         this(Socket socket, NetSession session, MonoTime now, Duration idleTimeout)
         {
@@ -176,6 +211,14 @@ final class TcpServer
     private Listener[] listeners;
     private Dial[] dials;
     private Connection[] connections;
+    private Poller poller;
+
+    // A poller key: a connection's address, or a listener's index with the top bit set (no user-space
+    // address has it).
+    private enum ulong listenerFlag = 1UL << 63;
+    private static ulong listenerKey(size_t i) { return listenerFlag | i; }
+    private static bool isListenerKey(ulong key) { return (key & listenerFlag) != 0; }
+    private static ulong keyOf(Connection c) { return cast(ulong) cast(void*) c; }
 
     ///
     this(ServerOptions options, SessionFactory createSession, Maintenance maintenance = null)
@@ -217,6 +260,7 @@ final class TcpServer
     /// Serves clients until `requestShutdown` is called.
     void run()
     {
+        raiseFileLimit(options.maxConnections + 64); // and the listeners, the database, the map files
         foreach (ref listener; listeners)
         {
             auto address = getAddress(listener.bindAddress, listener.port)[0];
@@ -234,47 +278,38 @@ final class TcpServer
         scope (exit)
             closeAll();
 
-        auto readable = new SocketSet;
-        auto writable = new SocketSet;
+        poller = Poller(listeners.length);
+        foreach (i, ref listener; listeners)
+            poller.add(listener.socket.handle, listenerKey(i), false);
         auto lastMaintenance = MonoTime.currTime;
 
         while (!atomicLoad(shutdownRequested) || (mayStop !is null && !mayStop()))
         {
             startDials(MonoTime.currTime);
-            readable.reset();
-            writable.reset();
-            foreach (ref listener; listeners)
-                readable.add(listener.socket);
-            foreach (connection; connections)
-            {
-                readable.add(connection.socket);
-                if (connection.pending.length > 0 || connection.connecting)
-                    writable.add(connection.socket);
-            }
 
-            // Returns -1 when a signal interrupts the wait; the loop condition then sees the shutdown flag.
+            // Returns nothing when a signal interrupts the wait; the loop condition then sees the shutdown flag.
             immutable wait = options.tickInterval - (MonoTime.currTime - lastMaintenance);
-            immutable ready = Socket.select(readable, writable, null, wait > Duration.zero ? wait : Duration.zero);
+            auto ready = poller.wait(wait > Duration.zero ? wait : Duration.zero);
             immutable now = MonoTime.currTime;
-            if (ready > 0)
+            foreach (event; ready)
             {
-                foreach (connection; connections)
+                if (isListenerKey(event.key))
                 {
-                    if (connection.connecting)
-                    {
-                        if (writable.isSet(connection.socket) || readable.isSet(connection.socket))
-                            established(connection, now);
-                        continue;
-                    }
-                    if (readable.isSet(connection.socket))
-                        receiveFrom(connection, now);
-                    if (!connection.broken && writable.isSet(connection.socket))
-                        flush(connection);
+                    accept(listeners[cast(size_t)(event.key & ~listenerFlag)], now);
+                    continue;
                 }
-                // Accept last, so new sockets are never tested against sets they were not added to.
-                foreach (ref listener; listeners)
-                    if (readable.isSet(listener.socket))
-                        accept(listener, now);
+                auto connection = cast(Connection) cast(void*) event.key;
+                if (connection.broken)
+                    continue;
+                if (connection.connecting)
+                {
+                    established(connection, now);
+                    continue;
+                }
+                if (event.readable)
+                    receiveFrom(connection, now);
+                if (!connection.broken && event.writable)
+                    flush(connection);
             }
 
             immutable received = MonoTime.currTime;
@@ -295,6 +330,13 @@ final class TcpServer
                     collectOutput(connection);
                     if (connection.pending.length && !connection.connecting)
                         flush(connection);
+                    // Told when it can take more, while output waits (or a connection is being made).
+                    const want = connection.pending.length > 0 || connection.connecting;
+                    if (want != connection.writeWatched)
+                    {
+                        connection.writeWatched = want;
+                        poller.watchWrite(connection.socket.handle, keyOf(connection), want);
+                    }
                 }
             reap(now);
             immutable finished = MonoTime.currTime;
@@ -362,6 +404,7 @@ private:
         verbose!"%s: connected"(remote);
         auto connection = new Connection(client, listener.createSession(remote), now, listener.idleTimeout);
         connections ~= connection;
+        poller.add(client.handle, keyOf(connection), false);
         // Some protocols speak first (the world server's SMSG_AUTH_CHALLENGE).
         collectOutput(connection);
         flush(connection);
@@ -394,8 +437,10 @@ private:
             }
             auto connection = new Connection(socket, dial.session, now, dial.idleTimeout);
             connection.connecting = true;
+            connection.writeWatched = true; // writable once connected
             collectOutput(connection);
             connections ~= connection;
+            poller.add(socket.handle, keyOf(connection), true);
         }
         dials.length = 0;
         dials.assumeSafeAppend();
@@ -485,6 +530,7 @@ private:
             }
 
             verbose!"%s: disconnected%s"(connection.session.address, idle ? " (idle)" : "");
+            poller.remove(connection.socket.handle);
             close(connection);
             connections[i] = connections[$ - 1];
             connections.length -= 1;
@@ -495,7 +541,10 @@ private:
     void closeAll()
     {
         foreach (connection; connections)
+        {
+            poller.remove(connection.socket.handle);
             close(connection);
+        }
         connections = null;
     }
 
@@ -519,6 +568,183 @@ private:
         }
         return address;
     }
+}
+
+/// A socket the poller reports, by the key it was added with.
+struct Ready
+{
+    ulong key;
+    bool readable; /// data, a connection to accept, the peer gone, or an error
+    bool writable;
+}
+
+version (linux)
+{
+    /**
+     * Waits for sockets with epoll (level-triggered): readiness for reading always, for writing while
+     * asked (`watchWrite`). A closed socket leaves epoll by itself; `remove` takes it out first anyway.
+     */
+    struct Poller
+    {
+        import core.sys.linux.epoll : EPOLL_CLOEXEC, EPOLL_CTL_ADD, EPOLL_CTL_DEL, EPOLL_CTL_MOD, epoll_create1,
+            epoll_ctl, epoll_event, epoll_wait, EPOLLERR, EPOLLHUP, EPOLLIN, EPOLLOUT;
+        import core.sys.posix.unistd : closeFd = close;
+
+        private int fd = -1;
+        private epoll_event[] events;
+        private Ready[] ready;
+
+        this(size_t)
+        {
+            fd = epoll_create1(EPOLL_CLOEXEC);
+            if (fd < 0)
+                throw new SocketOSException("epoll_create1 failed");
+            events = new epoll_event[256];
+        }
+
+        @disable this(this);
+
+        ~this()
+        {
+            if (fd >= 0)
+                closeFd(fd);
+        }
+
+        void add(socket_t socket, ulong key, bool write)
+        {
+            control(EPOLL_CTL_ADD, socket, key, write);
+        }
+
+        void watchWrite(socket_t socket, ulong key, bool write)
+        {
+            control(EPOLL_CTL_MOD, socket, key, write);
+        }
+
+        void remove(socket_t socket)
+        {
+            epoll_event none;
+            epoll_ctl(fd, EPOLL_CTL_DEL, socket, &none); // already gone if closed: no matter
+        }
+
+        /// The sockets ready within `timeout` (none if a signal came first). Valid until the next call.
+        Ready[] wait(Duration timeout)
+        {
+            // Rounded up to whole milliseconds, so a wait shorter than one does not spin.
+            const ms = cast(int)((timeout.total!"usecs" + 999) / 1000);
+            const n = epoll_wait(fd, events.ptr, cast(int) events.length, ms);
+            ready.length = 0;
+            ready.assumeSafeAppend();
+            if (n <= 0)
+                return ready;
+            foreach (ref e; events[0 .. n])
+                ready ~= Ready(e.data.u64, (e.events & (EPOLLIN | EPOLLERR | EPOLLHUP)) != 0,
+                    (e.events & (EPOLLOUT | EPOLLERR | EPOLLHUP)) != 0);
+            if (n == events.length)
+                events.length *= 2; // more were ready than fit: room for them next time
+            return ready;
+        }
+
+        private void control(int op, socket_t socket, ulong key, bool write)
+        {
+            epoll_event e;
+            e.events = EPOLLIN | (write ? EPOLLOUT : 0);
+            e.data.u64 = key;
+            if (epoll_ctl(fd, op, socket, &e) != 0)
+                throw new SocketOSException("epoll_ctl failed");
+        }
+    }
+}
+else
+{
+    /// Waits for sockets with `select`, where epoll is not there.
+    struct Poller
+    {
+        private static struct Watched
+        {
+            socket_t socket;
+            ulong key;
+            bool write;
+        }
+
+        private Watched[] watched;
+        private SocketSet readable, writable;
+        private Ready[] ready;
+
+        this(size_t)
+        {
+            readable = new SocketSet;
+            writable = new SocketSet;
+        }
+
+        void add(socket_t socket, ulong key, bool write)
+        {
+            watched ~= Watched(socket, key, write);
+        }
+
+        void watchWrite(socket_t socket, ulong key, bool write)
+        {
+            foreach (ref w; watched)
+                if (w.socket == socket)
+                    w.write = write;
+        }
+
+        void remove(socket_t socket)
+        {
+            foreach (i, ref w; watched)
+                if (w.socket == socket)
+                {
+                    watched[i] = watched[$ - 1];
+                    watched.length -= 1;
+                    return;
+                }
+        }
+
+        Ready[] wait(Duration timeout)
+        {
+            readable.reset();
+            writable.reset();
+            foreach (ref w; watched)
+            {
+                readable.add(w.socket);
+                if (w.write)
+                    writable.add(w.socket);
+            }
+            ready.length = 0;
+            ready.assumeSafeAppend();
+            if (Socket.select(readable, writable, null, timeout) <= 0)
+                return ready;
+            foreach (ref w; watched)
+            {
+                const r = readable.isSet(w.socket) != 0, wr = w.write && writable.isSet(w.socket) != 0;
+                if (r || wr)
+                    ready ~= Ready(w.key, r, wr);
+            }
+            return ready;
+        }
+    }
+}
+
+// The poller reports a socket with data, and one that can be written to only while asked.
+unittest
+{
+    auto pair = socketPair();
+    scope (exit)
+    {
+        pair[0].close();
+        pair[1].close();
+    }
+    auto poller = Poller(1);
+    poller.add(pair[0].handle, 7, false);
+    assert(poller.wait(Duration.zero).length == 0, "nothing to read, writability not asked");
+    poller.watchWrite(pair[0].handle, 7, true);
+    auto ready = poller.wait(Duration.zero);
+    assert(ready.length == 1 && ready[0].key == 7 && ready[0].writable && !ready[0].readable);
+    poller.watchWrite(pair[0].handle, 7, false);
+    pair[1].send(cast(const(ubyte)[]) "x");
+    ready = poller.wait(10.msecs);
+    assert(ready.length == 1 && ready[0].readable && !ready[0].writable);
+    poller.remove(pair[0].handle);
+    assert(poller.wait(Duration.zero).length == 0);
 }
 
 // A client that does not read: its unsent output grows to its session's limit, and it is cut off.

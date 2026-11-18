@@ -68,7 +68,7 @@ The idle run had 23,116 creatures and game objects loaded; memory was 360 MiB wi
    once per player who sees it, and sends the newcomer one compressed packet per player already
    there: about 1,800 zlib compressions per login in a crowd of 900. (Confirmed below.)
 5. **The event loop is capped at 1000 connections** (`max_connections`), because it uses `select`,
-   which also scans every socket on every iteration.
+   which also scans every socket on every iteration. (Lifted since: see "epoll instead of select".)
 6. **The speed check misfires under overload:** queued movement packets arrive together, so a
    player seems to have covered 16 yards in no time and is put back.
 
@@ -359,3 +359,24 @@ line of chat):
 The remote path covers encoding the request, dispatching it from bytes, the reply cache and decoding
 the reply. The network adds its round trip on top.
 
+
+## epoll instead of select (2026-11-18)
+
+`crowd`, `--seed 7`, 60 s, against the build before it:
+
+| | select, 900 | epoll, 900 | epoll, 1,500 |
+|---|---|---|---|
+| Bots in the world | 900, none failed | 900, none failed | 1,500, none failed |
+| Event loop busy | 25.3% | 25.4% | 99.1% |
+| Loop iteration, average | 1.97 ms | 1.99 ms | 3.12 ms |
+| Ping, median / p99 | 2.9 / 9.0 ms | 3.2 / 11.2 ms | 3.2 / 35.4 ms |
+| Sent | 36 MB/s | 36 MB/s | 96 MB/s |
+
+* At 900 the two cost the same: waiting was never the expensive part; relaying every movement to everyone
+  near is. The tail latencies differ within the noise described under "Method" (one collection against
+  two).
+* What epoll changes is the ceiling. `select` cannot watch descriptors past 1024, so a server could not
+  be configured for more than 1,000 connections; with epoll the limit is 60,000 (`connectionLimit`), and
+  the server raises its open-file limit to the hard limit at start.
+* 1,500 players in one crowd fill one core (the fan-out grows with the square of the crowd); spread out,
+  or divided between nodes, they cost far less.

@@ -64,8 +64,10 @@ struct AuthConfig
             enforce(versionName(build) !is null,
                 format!"build %s is not supported; supported builds are %(%s, %)"(build, supportedBuildNumbers));
 
-        // select(2) cannot watch descriptors past FD_SETSIZE (1024 on Linux).
-        enforce(maxConnections > 0 && maxConnections <= 1000, "max_connections must be between 1 and 1000");
+        import dmangos.net.server : connectionLimit;
+
+        enforce(maxConnections > 0 && maxConnections <= connectionLimit,
+            format!"max_connections must be between 1 and %s"(connectionLimit));
         enforce(idleTimeoutSeconds > 0, "idle_timeout must be positive");
     }
 }

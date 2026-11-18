@@ -728,7 +728,7 @@ database at the same time; a cluster's nodes take their ids in blocks from its c
 | `max_primary_trade_skill`, `trade_skill_gm_ignore_max_primary` | primary professions a character may learn; the account level from which the limit is ignored | `2`, `4` |
 | `strict_player_names`, `min_player_name` | the character name rules (0 any one script, bit 0 basic Latin, bit 1 the realm zone's script); the shortest name | `0`, `2` |
 | `char_delete_method`, `char_delete_min_level`, `mail_delivery_delay` | delete (0) or unlink (1) characters, from which level; seconds before items and money reach another account | `0`, `0`, `3600` |
-| `allowed_builds`, `mysql_library`, `idle_timeout`, `max_connections`, `log_level` | client builds accepted; the client library file; idle seconds; connection cap; logging | |
+| `allowed_builds`, `mysql_library`, `idle_timeout`, `max_connections`, `log_level` | client builds accepted; the client library file; idle seconds; connection cap (up to 60,000 on Linux, 1,000 elsewhere); logging | |
 
 #### Coming from mangosd.conf or realmd.conf
 
@@ -810,7 +810,7 @@ source/dmangos/             code shared by every server
   timer.d                     IntervalTimer: periods of the update tick
   crypto/                     SRP6, SHA-1 helpers, BigInt <-> little-endian, OS randomness
   mysql/                      run-time loaded MySQL C API binding; connection with compile-time checked queries
-  net/                        select() event loop (server.d); compile-time packet dispatch (dispatch.d)
+  net/                        epoll event loop, select elsewhere (server.d); compile-time packet dispatch (dispatch.d)
 source/dmangos/script/      the scripting framework (docs/SCRIPTING.md): api.d (handles, events, contexts,
                               host interfaces), registry.d (UDAs, compile-time discovery, generated dispatch,
                               pools), schedule.d (timers as data), state.d (state saved by reflection),
