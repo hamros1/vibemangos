@@ -497,6 +497,11 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             startUnixMillis = wall.toUnixTime!long * 1000 + wall.fracSecs.total!"msecs";
             startClock = MonoTime.currTime;
         }
+        {
+            import dmangos.world.gameobject : transportClockSource;
+
+            transportClockSource = &transportNow;
+        }
         this.next = database.highestGuids();
         this.groups = new Groups(database, this, next.group);
         groupService = new GroupService(this);

@@ -10,6 +10,12 @@
  */
 module dmangos.world.gameobject;
 
+/**
+ * The clock transports' create blocks carry (`WorldContext.transportNow`): one for elevators and ships, so
+ * the client keeps one transport time. Unset (tests), an elevator gives the server time.
+ */
+uint delegate() transportClockSource;
+
 import std.math : cos, sin;
 
 import dmangos.bytes : ByteReader, ByteWriter;
@@ -391,7 +397,7 @@ final class GameObject : Replicable, Moving, PerViewer
             scripts.load(behaviour, state);
     }
 
-    /// See `Replicable.motion`: a position, and an elevator's path time.
+    /// See `Replicable.motion`: a position, and an elevator's path time (the transport clock, as ships have it).
     MovementBlock motion(uint serverTime) const
     {
         MovementBlock block;
@@ -399,7 +405,7 @@ final class GameObject : Replicable, Moving, PerViewer
         if (template_.type == GameObjectType.transport)
             block.flags |= UpdateFlags.transport;
         block.position = position;
-        block.transportTime = serverTime;
+        block.transportTime = transportClockSource !is null ? transportClockSource() : serverTime;
         return block;
     }
 

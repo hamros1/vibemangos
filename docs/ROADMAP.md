@@ -33,7 +33,7 @@
   path with their members in place, and creatures in water do not swim. Conditions
   that need world states or scripts are never met. Elevators
   are created but do not move. Ships and zeppelins sail and carry their passengers across
-  (`transports.d`); elevators use another clock than ships, which a real client may need to agree on. Idle cells unload after `grid_cleanup_delay_seconds`.
+  (`transports.d`); elevators and ships give the client one transport clock (the wall clock). Idle cells unload after `grid_cleanup_delay_seconds`.
 * **Terrain:** heights put wandering creatures on the ground; line of sight decides aggro and
   spells. Game objects' models (doors, elevators) are extracted but
   do not block sight (that needs a dynamic tree of game object models). Movement maps give creatures paths round buildings
