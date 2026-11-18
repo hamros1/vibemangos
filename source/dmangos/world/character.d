@@ -1121,3 +1121,34 @@ unittest
     assert(shirt.enchantment(1) == 0 && me.player.stats.stats[Stat.stamina] == stamina, "gone when its time is up");
     assert(shirt.enchantment(0) == 900, "the permanent one stays");
 }
+
+// Resurrection sickness: none below level 11; a minute a level from 11, the spell's full time from 20.
+unittest
+{
+    import core.time : minutes;
+    import dmangos.world.movement : Position;
+    import dmangos.world.spells : SpellEffect, SpellInfo;
+    import dmangos.world.testclient;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    context.data.spells.spells[15007] = SpellInfo(15007);
+    with (context.data.spells.spells.edit(15007))
+    {
+        effect[0] = SpellEffect.applyAura;
+        casting.applyAuraName[0] = 4; // a dummy aura
+        implicitTargetA[0] = 1; // the caster
+    }
+    uint minutesOf(uint level)
+    {
+        auto c = loggedIn(context, db, 7 + level, "Sick", Position(-8949.95f, -132.49f, 83.53f),
+            AccountLevel.player, 1, 0, level);
+        c.read();
+        auto me = c.session.inWorld;
+        me.applyResurrectionSickness();
+        auto aura = me.player.auras.find(15007);
+        return aura is null ? 0 : cast(uint)(aura.maxDuration / 60_000);
+    }
+    assert(minutesOf(10) == 0, "too low to be sick");
+    assert(minutesOf(11) == 1 && minutesOf(15) == 5, "a minute a level from 11");
+}

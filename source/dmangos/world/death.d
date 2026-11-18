@@ -11,7 +11,7 @@
  *
  * The ghost aura (spell 8326) and the night elf's wisp (20584) are applied by hand until there are
  * auras: the ghost flag, 25% more speed (50% and the wisp's look for night elves), and walking on
- * water. Not yet: resurrection sickness (an aura), ghosts hidden from the living (players see each
+ * water. The spirit healer leaves resurrection sickness. Not yet: ghosts hidden from the living (players see each
  * other both ways or not at all).
  */
 module dmangos.world.death;
@@ -306,6 +306,7 @@ private:
             return;
         resurrect(0.5f);
         durabilityLossAll(0.25, true);
+        applyResurrectionSickness();
         // To the graveyard nearest the corpse, if that is another than the one nearest the ghost.
         const(WorldSafeLocsEntry)* corpseGrave, ghostGrave;
         if (corpse !is null)
@@ -317,6 +318,32 @@ private:
         spawnCorpseBones();
         if (corpseGrave !is null && corpseGrave !is ghostGrave)
             commandTeleport(corpseGrave.map, Position(corpseGrave.x, corpseGrave.y, corpseGrave.z, 0));
+    }
+
+    /**
+     * Resurrection sickness (spell 15007) after the spirit healer: none below `death_sickness_level`;
+     * a minute for each level from it, up to the full ten minutes nine levels on.
+     */
+    void applyResurrectionSickness()
+    {
+        import core.time : minutes;
+        import dmangos.world.spellcast : SpellTargets, TargetFlags;
+
+        enum uint resurrectionSickness = 15007;
+        const start = cast(int) context.config.deathSicknessLevel;
+        const level = cast(int) player.data.level;
+        if (level < start)
+            return;
+        const spell = context.data.spells.spell(resurrectionSickness);
+        if (spell is null)
+            return;
+        castSpell(spell, SpellTargets(TargetFlags.self, player.guid), true, 0);
+        if (level < start + 9)
+            if (auto aura = player.auras.find(resurrectionSickness))
+            {
+                aura.duration = aura.maxDuration = cast(int)((level - start + 1).minutes.total!"msecs");
+                sendAuraDuration(aura);
+            }
     }
 
     /// The client asks where the corpse is, for the map (its instance's entrance on another map).

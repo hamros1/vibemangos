@@ -390,7 +390,9 @@ What works now:
     elves a wisp, 50%), walking on water, and its corpse lies where it fell, saved in `corpse`. Within
     39 yards of the corpse, after 30 seconds (60 and 120 for deaths less than five minutes apart), it
     takes its body back with half its health and mana; or a spirit healer, whom only the dead see,
-    brings it back at once for a quarter of its gear's durability. A ghost that logs out is one again
+    brings it back at once for a quarter of its gear's durability and, from level 11
+    (`death_sickness_level`), resurrection sickness: a minute for each level from 11, ten minutes from
+    level 20. A ghost that logs out is one again
     at its next login. A creature killed leaves its corpse for a minute (5 for elites and rares, an
     hour for bosses, at most 90% of its respawn time) and comes back at its spawn point after
     `spawntimesecs` (to `spawntimesecsmax`), kept in `creature_respawn` across restarts. Not yet:
