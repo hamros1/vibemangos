@@ -1,9 +1,9 @@
 /**
  * The hashing and encryption MPQ archives use for their tables and files.
  *
- * Everything derives from one 1280-entry table that is generated, as in
- * Blizzard's code, from a linear congruential sequence. Here it is computed
- * entirely at compile time.
+ * Everything derives from one 1280-entry table that is generated from a
+ * linear congruential sequence. Here it is computed entirely at compile
+ * time.
  */
 module dmangos.mpq.crypt;
 

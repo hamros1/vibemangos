@@ -5,7 +5,7 @@
  * that arrive and produces the bytes to send, so the unit tests below play
  * a whole client conversation without sockets.
  *
- * The handshake follows CMaNGOS `Server/WorldSocket.cpp`:
+ * The handshake:
  * $(OL
  *   $(LI the server sends `SMSG_AUTH_CHALLENGE` with a random seed;)
  *   $(LI the client answers `CMSG_AUTH_SESSION` with SHA1(account, 0, its seed, the server seed, K),
@@ -14,13 +14,13 @@
  *   $(LI the server replies `SMSG_ADDON_INFO` and `SMSG_AUTH_RESPONSE` (AUTH_OK).)
  * )
  * The client is then on the character screen, where characters can be listed,
- * created (`dmangos.world.playercreate`) and deleted, with CMaNGOS's checks from
- * `Entities/CharacterHandler.cpp`.
+ * created (`dmangos.world.playercreate`) and deleted, each request checked
+ * first.
  *
- * `CMSG_PLAYER_LOGIN` enters the world (`WorldSession::HandlePlayerLogin`).
+ * `CMSG_PLAYER_LOGIN` enters the world.
  *
- * The handlers are grouped as CMaNGOS groups them in its `*Handler.cpp` files,
- * one module per group, each a mixin template that `WorldSession` mixes in:
+ * The handlers are grouped by subject, one module per group, each a mixin
+ * template that `WorldSession` mixes in:
  * $(UL
  *   $(LI `dmangos.world.charscreen`: the character list, creation, deletion and logging in;)
  *   $(LI `dmangos.world.inworld`: logging out, movement, queries, chat and settings.)
@@ -66,7 +66,7 @@ enum WorldState
 
 private alias Handles = HandlesFor!(Opcode, WorldState);
 
-/// Pings closer together than this count as over-speed (CMaNGOS: 27 seconds).
+/// Pings closer together than this count as over-speed.
 private enum minimumPingInterval = 27.seconds;
 
 /// The most unprocessed input buffered: two maximum-size packets.
@@ -475,7 +475,7 @@ package:
         case DispatchResult.unhandled:
             if (state_ == WorldState.awaitingAuth)
             {
-                // As CMaNGOS: nothing but CMSG_AUTH_SESSION is accepted before authentication.
+                // Nothing but CMSG_AUTH_SESSION is accepted before authentication.
                 warning!"%s: opcode 0x%03X before authentication, disconnecting"(remoteAddress, cast(uint) opcode);
                 disconnect();
             }
@@ -508,7 +508,7 @@ package:
         state_ = WorldState.closed;
     }
 
-    /// Replies with an error and closes, as CMaNGOS does for every failed check.
+    /// Replies with an error and closes; every failed check of the handshake ends so.
     void refuse(AuthResponse response, string reason)
     {
         info!"%s: world login refused (%s): %s"(remoteAddress, response, reason);
@@ -544,7 +544,7 @@ package:
         if (!constantTimeEqual(expected[], request.digest[]))
             return refuse(AuthResponse.AUTH_FAILED, "session proof does not match the stored session key");
 
-        // CMaNGOS closes without a reply for operating systems and platforms it does not know.
+        // A client of an operating system or platform not known is closed without a reply.
         if (candidate.os != "Win" && candidate.os != "OSX")
         {
             warning!"%s: unrecognized client OS '%s' for '%s'"(remoteAddress, candidate.os, candidate.username);
@@ -555,7 +555,7 @@ package:
             warning!"%s: unrecognized platform '%s' for '%s'"(remoteAddress, candidate.platform, candidate.username);
             return disconnect();
         }
-        const addons = parseAddons(request.addonData); // a malformed list disconnects, as in CMaNGOS
+        const addons = parseAddons(request.addonData); // a malformed list disconnects
 
         context.database.recordLogon(candidate.id, remoteAddress);
         account = candidate;

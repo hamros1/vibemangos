@@ -6,11 +6,10 @@
  * ---
  *
  * Reads the 1.12 client's MPQ archives from `CLIENT/Data` and writes the
- * DBC files to `OUTPUT/dbc` and the terrain to `OUTPUT/maps`, as CMaNGOS's
- * `ad` does, and on request the buildings to `OUTPUT/vmaps`, as its
- * `vmap_extractor` and `vmap_assembler` do (the raw extraction stays in
- * `OUTPUT/Buildings`). Point the world server's `data_dir` (or mangosd's
- * `DataDir`) at `OUTPUT`.
+ * DBC files to `OUTPUT/dbc` and the terrain to `OUTPUT/maps`, and on
+ * request the buildings to `OUTPUT/vmaps` (the raw extraction stays in
+ * `OUTPUT/Buildings`) and movement maps to `OUTPUT/mmaps`. Point the world
+ * server's `data_dir` at `OUTPUT`.
  */
 module dmangos.extractor.main;
 
@@ -34,7 +33,7 @@ Usage:
   extractor [-i CLIENT] [-o OUTPUT] [-e MASK]
 ";
 
-/// What to extract, CMaNGOS's `-e` mask (`Extract`).
+/// What to extract: the bits of the `-e` mask.
 enum Extract : uint
 {
     maps = 1,

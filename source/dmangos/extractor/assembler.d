@@ -1,6 +1,5 @@
 /**
- * Builds the vmaps from the raw extraction, as CMaNGOS's `vmap_assembler` does
- * (`vmap/TileAssembler.cpp`): from `<output>/Buildings` into `<output>/vmaps`.
+ * Builds the vmaps from the raw extraction: from `<output>/Buildings` into `<output>/vmaps`.
  *
  * For each map in `dir_bin`: every placed model's bound (a doodad's from its vertices, turned and
  * scaled as placed), a tree over them, `MMM.vmtree` (the tree, and the models a map without terrain
@@ -33,7 +32,7 @@ struct AssemblyReport
     string[] problems;
 }
 
-/// `TileAssembler::convertWorld2`: `<outputDir>/Buildings` to `<outputDir>/vmaps`.
+/// Assembles every map's vmaps: `<outputDir>/Buildings` to `<outputDir>/vmaps`.
 AssemblyReport assembleVmaps(string outputDir, void delegate(string) progress = null)
 {
     const source = buildPath(outputDir, "Buildings"), destination = buildPath(outputDir, "vmaps");
@@ -71,10 +70,10 @@ AssemblyReport assembleVmaps(string outputDir, void delegate(string) progress = 
             auto spawn = &map.unique[id];
             if (spawn.flags & modM2)
             {
-                // calculateTransformedBound: a doodad's bound is that of its vertices, as placed.
+                // A doodad's bound is that of its vertices, as placed.
                 auto model = raw(spawn.name);
                 if (model is null)
-                    break; // as CMaNGOS, the map's remaining models are left out
+                    break; // a missing model leaves out the map's remaining models too
                 if (model.groups.length != 1)
                     warning!"'%s' does not seem to be an M2 model"(spawn.name);
                 enum float pi = 3.1415926535897932f;
@@ -181,7 +180,7 @@ struct MapSpawns
     uint[][uint] tiles;       // packed tile -> ids, in file order
 }
 
-/// `TileAssembler::readMapSpawns`
+/// Reads `dir_bin`: each map's placed models and the tiles they are in, by map id.
 MapSpawns*[uint] readMapSpawns(string path)
 {
     MapSpawns*[uint] maps;
@@ -197,7 +196,7 @@ MapSpawns*[uint] readMapSpawns(string path)
     return maps;
 }
 
-/// `GroupModel_Raw`
+/// One group of a raw model: its flags, bound, triangles, vertices and liquid.
 struct RawGroup
 {
     uint mogpFlags, groupWmoId;
@@ -207,7 +206,7 @@ struct RawGroup
     WmoLiquid liquid;
 }
 
-/// `WorldModel_Raw`: a raw model file of the extraction.
+/// A raw model file of the extraction.
 struct RawModel
 {
     uint rootWmoId;
@@ -262,7 +261,7 @@ struct RawModel
     }
 }
 
-/// `TileAssembler::exportGameobjectModels`: the game object models, with their bounds as they are.
+/// The game object models, with their bounds as they are.
 void exportGameObjectModels(string source, string destination, ref bool[string] modelFiles,
     scope RawModel* delegate(string) raw)
 {

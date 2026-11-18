@@ -1,16 +1,16 @@
 /**
- * Builds movement maps (CMaNGOS's `MoveMapGen`): a navigation mesh per grid tile, from the terrain
+ * Builds movement maps: a navigation mesh per grid tile, from the terrain
  * of `OUTPUT/maps` and the buildings and doodads of `OUTPUT/vmaps`, written to `OUTPUT/mmaps`.
  *
- * For each tile (`TerrainBuilder::loadMap` and `loadVMap`):
+ * For each tile, the geometry:
  * $(UL
  *   $(LI The terrain: each of the 128 x 128 squares is four triangles from its corners to its centre,
  *        holes left out, with a strip of the neighbouring tiles so that the tiles' edges meet. Ground
  *        deeper under water than a creature stands is water, which creatures swim across.)
  *   $(LI The buildings and doodads the tile's vmap file lists, placed as on the map.)
  * )
- * `dmangos.navigation.buildTile` then has Recast build it, with `MapBuilder::buildMoveMapTile`'s
- * settings. Tiles are built in parallel; each worker thread reads the files it needs itself.
+ * `dmangos.navigation.buildTile` then has Recast build it, with fixed build settings. Tiles are
+ * built in parallel; each worker thread reads the files it needs itself.
  *
  * Files: `MMM.mmap` (the mesh's origin, tile size and limits) and `MMMXXYY.mmtile` per tile with
  * anything walkable (a header and Detour's tile data), XX and YY as in the `.map` files.
@@ -30,7 +30,7 @@ import dmangos.vmap.math : Vector3;
 import dmangos.vmap.maptree : ModelCache, ModelInstance, StaticMapTree, toInternal;
 import dmangos.world.terrain : GridMap;
 
-/// `MMAP_MAGIC`, and the versions a tile file records (Detour's, and this format's).
+/// The magic of a tile file ("MMAP"), and the versions it records (Detour's, and this format's).
 enum uint mmapMagic = 0x4D4D4150, detourVersion = 7, mmapVersion = 1;
 
 /// What was built.
@@ -69,7 +69,7 @@ MmapReport buildMovementMaps(string output, const(uint)[] only, void delegate(st
         tilesOf[mapId] ~= tile;
     }
     // Maps that are one building (most dungeons) have no terrain: the tiles their models cover
-    // (`MapBuilder::getGridBounds`).
+    // (from each model's bounds).
     if (exists(vmapsDir))
         foreach (entry; dirEntries(vmapsDir, "*.vmtree", SpanMode.shallow))
         {
@@ -166,7 +166,7 @@ private void writeMapFile(string dir, uint mapId)
     write(buildPath(dir, format!"%03d.mmap"(mapId)), w.data);
 }
 
-/// `MMMXXYY.mmtile`: `MmapTileHeader` (magic, Detour version, format version, size, liquids) and the data.
+/// `MMMXXYY.mmtile`: a header (magic, Detour version, format version, size, liquids) and the data.
 private void writeTileFile(string dir, uint mapId, int gx, int gy, const(ubyte)[] data)
 {
     ByteWriter w;
@@ -205,7 +205,7 @@ ubyte[] buildGridTile(string mapsDir, string vmapsDir, uint mapId, int gx, int g
 
 /**
  * The terrain of tile [gx, gy], and `border` squares of its neighbours: each square four triangles
- * from its corners to its centre (`TerrainBuilder::getHeightTriangle`).
+ * from its corners to its centre.
  */
 private void addTerrain(string mapsDir, uint mapId, int gx, int gy, ref Vector3[] vertices, ref int[] triangles,
     ref NavArea[] areas)

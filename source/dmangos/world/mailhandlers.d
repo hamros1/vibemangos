@@ -1,5 +1,5 @@
 /**
- * Mail (CMaNGOS `Mails/MailHandler.cpp` and `MailDraft`), mixed into `dmangos.world.character.Character`.
+ * Mail: the mailbox opcodes and posting letters, mixed into `dmangos.world.character.Character`.
  *
  * At a mailbox a player sends a letter to a character of its faction (30 copper), with an item,
  * money or cash on delivery; reads its letters (`mail`, newest last, 50 at most); takes their money
@@ -14,7 +14,7 @@
  */
 module dmangos.world.mailhandlers;
 
-/// `MailResponseType`
+/// What a mail result answers (`SMSG_SEND_MAIL_RESULT`).
 enum MailAction : uint
 {
     send = 0,
@@ -25,7 +25,7 @@ enum MailAction : uint
     madePermanent = 5,
 }
 
-/// `MailResponseResult`
+/// How a mail action went (`SMSG_SEND_MAIL_RESULT`).
 enum MailError : uint
 {
     ok = 0,
@@ -39,13 +39,13 @@ enum MailError : uint
     attachmentInvalid = 19,
 }
 
-/// `MailCheckMask`
+/// Bits of a letter's `checked` column.
 enum uint mailRead = 0x01, mailReturned = 0x02, mailCopied = 0x04, mailCodPayment = 0x08, mailHasBody = 0x10;
 
-/// `MAIL_BODY_ITEM_TEMPLATE`: the Plain Letter a body is copied to.
+/// The item template of the Plain Letter a body is copied to.
 enum uint mailBodyItem = 8383;
 
-/// The postage of a letter (`HandleSendMail`'s 30 copper).
+/// The postage of a letter: 30 copper.
 enum uint postage = 30;
 
 /// See the module documentation.
@@ -64,7 +64,7 @@ mixin template MailHandlers()
     import dmangos.world.updatefields;
 
 private:
-    /// `CheckMailBox`: a mailbox (game object type 19) within reach.
+    /// Whether `guid` is a mailbox (game object type 19) within reach.
     bool nearMailbox(ulong guid)
     {
         enum uint typeMailbox = 19;
@@ -75,7 +75,7 @@ private:
         return (a.x - b.x) ^^ 2 + (a.y - b.y) ^^ 2 + (a.z - b.z) ^^ 2 <= 10.0f ^^ 2;
     }
 
-    /// `Player::SendMailResult`
+    /// Tells the client how a mail action went.
     void sendMailResult(uint mailId, MailAction action, MailError error, uint equipError = 0, uint itemGuid = 0,
         uint itemCount = 0)
     {
@@ -94,7 +94,7 @@ private:
     }
 
     /**
-     * `MailDraft::SendMailTo`: a letter into the database, delivered after `delay` seconds; the
+     * Posts a letter: into the database, delivered after `delay` seconds; the
      * receiver, if online here and it is delivered now, hears of it.
      */
     package void postMail(MailRecord mail, uint delay)
@@ -102,7 +102,7 @@ private:
         context.postMail(mail, delay);
     }
 
-    /// `HandleSendMail`
+    /// The player sends a letter: checked, paid for, and posted.
     @Handles(Opcode.CMSG_SEND_MAIL, WorldState.inWorld)
     void handleSendMail(ref ByteReader reader)
     {
@@ -179,7 +179,7 @@ private:
         return mail;
     }
 
-    /// `HandleGetMailList`: the delivered letters, 50 at most.
+    /// The player opens its mailbox: the delivered letters, 50 at most.
     @Handles(Opcode.CMSG_GET_MAIL_LIST, WorldState.inWorld)
     void handleGetMailList(ref ByteReader reader)
     {
@@ -228,7 +228,7 @@ private:
         deliver(Opcode.SMSG_MAIL_LIST_RESULT, w.data);
     }
 
-    /// `HandleMailTakeMoney`
+    /// The player takes a letter's money.
     @Handles(Opcode.CMSG_MAIL_TAKE_MONEY, WorldState.inWorld)
     void handleMailTakeMoney(ref ByteReader reader)
     {
@@ -245,7 +245,7 @@ private:
         flushInventory(true);
     }
 
-    /// `HandleMailTakeItem`: into the bags; cash on delivery paid, and mailed to the sender.
+    /// The player takes a letter's item: into the bags; cash on delivery paid, and mailed to the sender.
     @Handles(Opcode.CMSG_MAIL_TAKE_ITEM, WorldState.inWorld)
     void handleMailTakeItem(ref ByteReader reader)
     {
@@ -288,7 +288,7 @@ private:
         sendMailResult(id, MailAction.itemTaken, MailError.ok, 0, entry, count);
     }
 
-    /// `HandleMailMarkAsRead`
+    /// The player read a letter.
     @Handles(Opcode.CMSG_MAIL_MARK_AS_READ, WorldState.inWorld)
     void handleMailMarkAsRead(ref ByteReader reader)
     {
@@ -302,7 +302,7 @@ private:
         }
     }
 
-    /// `HandleMailDelete`: not one with cash on delivery.
+    /// The player deletes a letter: not one with cash on delivery.
     @Handles(Opcode.CMSG_MAIL_DELETE, WorldState.inWorld)
     void handleMailDelete(ref ByteReader reader)
     {
@@ -318,7 +318,7 @@ private:
         sendMailResult(id, MailAction.deleted, MailError.ok);
     }
 
-    /// `HandleMailReturnToSender`: back to its sender with what is still in it.
+    /// The player returns a letter: back to its sender with what is still in it.
     @Handles(Opcode.CMSG_MAIL_RETURN_TO_SENDER, WorldState.inWorld)
     void handleMailReturnToSender(ref ByteReader reader)
     {
@@ -350,7 +350,7 @@ private:
         sendMailResult(id, MailAction.returnedToSender, MailError.ok);
     }
 
-    /// `HandleMailCreateTextItem`: the body copied as a Plain Letter.
+    /// The player makes a letter's body an item: the body copied as a Plain Letter.
     @Handles(Opcode.CMSG_MAIL_CREATE_TEXT_ITEM, WorldState.inWorld)
     void handleMailCreateTextItem(ref ByteReader reader)
     {
@@ -375,7 +375,7 @@ private:
         sendMailResult(id, MailAction.madePermanent, MailError.ok);
     }
 
-    /// `HandleItemTextQuery`: a body (of a letter, or of a Plain Letter).
+    /// The client asks for an item text: a body (of a letter, or of a Plain Letter).
     @Handles(Opcode.CMSG_ITEM_TEXT_QUERY, WorldState.inWorld)
     void handleItemTextQuery(ref ByteReader reader)
     {
@@ -386,7 +386,7 @@ private:
         deliver(Opcode.SMSG_ITEM_TEXT_QUERY_RESPONSE, w.data);
     }
 
-    /// `HandleQueryNextMailTime`: 0 if there is unread mail, else a day ago.
+    /// The client asks when mail comes next: 0 if there is unread mail, else a day ago.
     @Handles(Opcode.MSG_QUERY_NEXT_MAIL_TIME, WorldState.inWorld)
     void handleQueryNextMailTime()
     {
@@ -515,7 +515,7 @@ unittest
 }
 
 /**
- * `ReturnOrDeleteOldMails`: a player's letter with an item, its time up, goes back to its sender
+ * Old mail: a player's letter with an item, its time up, goes back to its sender
  * (once); one without an item, or already returned, is deleted with its item.
  */
 unittest

@@ -1,7 +1,6 @@
 /**
- * Using game objects (CMaNGOS `GameObject::Use`, `HandleGameObjectUseOpcode`, `Spell::EffectOpenLock`,
- * `CanOpenLock`, `Spell::SendLoot` and `Player::UpdateGatherSkill`), mixed into
- * `dmangos.world.character.Character`.
+ * Using game objects: what each type does when used, opening locks with spells, a chest's loot,
+ * and gathering skill-ups. Mixed into `dmangos.world.character.Character`.
  *
  * A door or button opens (or closes) for its time; a chair seats the player in its nearest slot; a
  * goober is in use for its time, shows its page, counts for the quest that needs it (for the
@@ -31,15 +30,15 @@ mixin template GameObjectHandlers()
     import dmangos.world.spells : SpellInfo;
     import dmangos.world.updatefields;
 
-    /// `INTERACTION_DISTANCE`
+    /// How near (yards) a player must be to use most things.
     enum float interactionDistance = 5;
 
-    /// `LockKeyType`, `LockType`, and the skills of the lock types.
+    /// A lock's key kinds, the lock types (`Lock.dbc`), and the skills of the lock types.
     enum uint lockKeyItem = 1, lockKeySkill = 2;
     enum uint lockPicklock = 1, lockHerbalism = 2, lockMining = 3, lockFishing = 19;
     enum uint skillLockpicking = 633, skillHerbalism = 182, skillMining = 186, skillFishing = 356;
 
-    /// `SkillByLockType`
+    /// The skill that opens a lock type; 0 for none.
     static uint skillByLockType(uint lockType) pure nothrow @nogc @safe
     {
         switch (lockType)
@@ -52,18 +51,18 @@ mixin template GameObjectHandlers()
         }
     }
 
-    /// Within `IsWithinDistInMap(player, INTERACTION_DISTANCE)` of the object (a little more for its size).
+    /// Within `interactionDistance` of the object (a little more for its size).
     bool withinInteraction(const GameObject go, float more = 0)
     {
         const a = player.position, b = go.position;
-        // `GetInteractionDistance`: a fishing bobber (and a chair) from a hundred yards.
+        // A fishing bobber (and a chair) may be used from a hundred yards.
         const base = go.type == GameObjectType.fishingNode || go.type == GameObjectType.chair ? 100.0f
             : interactionDistance;
         const reach = base + more + go.template_.size;
         return (a.x - b.x) ^^ 2 + (a.y - b.y) ^^ 2 + (a.z - b.z) ^^ 2 <= reach * reach;
     }
 
-    /// `HandleGameObjectUseOpcode`
+    /// The client uses a game object: checked (near, usable), then used.
     @Handles(Opcode.CMSG_GAMEOBJ_USE, WorldState.inWorld)
     void handleGameObjectUse(const ClientGuid request)
     {
@@ -89,7 +88,7 @@ mixin template GameObjectHandlers()
         useGameObject(go);
     }
 
-    /// `GameObject::Use` by this player.
+    /// This player uses a game object: what happens depends on its type.
     package void useGameObject(GameObject go)
     {
         if (go.type == GameObjectType.fishingNode)
@@ -98,7 +97,7 @@ mixin template GameObjectHandlers()
         if (auto copy = currentBattleground())
             if (copy.rules.objectUsed(copy, player.guid, go))
                 return;
-        // Its script first (`OnGameObjectUse`): it may handle the use itself.
+        // Its script first: it may handle the use itself.
         if (context.gameObjectUsed(go, map, player.guid))
             return;
         import dmangos.world.dbscripts : DbScriptType;
@@ -115,7 +114,7 @@ mixin template GameObjectHandlers()
             map.wake(go.guid);
             return;
         case GameObjectType.chest:
-            // Its loot comes with the spell that opens it (`SendLoot`); one without a lock is just done.
+            // Its loot comes with the spell that opens it (`sendGameObjectLoot`); one without a lock is just done.
             if (!go.lockId && go.lootState == GoLootState.ready)
             {
                 go.lootState = GoLootState.justDeactivated;
@@ -130,7 +129,7 @@ mixin template GameObjectHandlers()
             return sitOnChair(go);
         case GameObjectType.questGiver:
         {
-            // `PrepareGossipMenu` with its quests (its own gossip comes later).
+            // A gossip menu with its quests (its own gossip comes later).
             QuestGiver giver;
             if (questGiverNear(go.guid, 0, giver))
             {
@@ -176,7 +175,7 @@ mixin template GameObjectHandlers()
                 castSpell(spell, SpellTargets(TargetFlags.unit, player.guid), true, 0);
     }
 
-    /// `RewardPlayerAndGroupAtCast` for a game object: its quest objective, for the group near it too.
+    /// A game object used counts for its quest objective, for the group near it too.
     void rewardAtCast(GameObject go)
     {
         import dmangos.world.character : Character;
@@ -191,7 +190,7 @@ mixin template GameObjectHandlers()
                     member.creditCreatureOrGo(target, 0, go.guid);
     }
 
-    /// `GAMEOBJECT_TYPE_CHAIR`: to the nearest of its slots, sitting at its height.
+    /// A chair (`GAMEOBJECT_TYPE_CHAIR`): to the nearest of its slots, sitting at its height.
     void sitOnChair(GameObject go)
     {
         import std.math : cos, sin, PI;
@@ -199,7 +198,7 @@ mixin template GameObjectHandlers()
         enum ubyte standStateSitLowChair = 4;
         const t = go.template_;
         const slots = t.data[0] > 0 ? t.data[0] : 1;
-        // `GetClosestChairSlotPosition`: the slots side by side across its width (its size).
+        // The nearest slot: the slots side by side across its width (its size).
         const at = go.position;
         const width = t.size;
         float bestX = at.x, bestY = at.y, best = float.max;
@@ -217,7 +216,7 @@ mixin template GameObjectHandlers()
         }
         import dmangos.world.movement : Position;
 
-        teleportTo(player.data.map, Position(bestX, bestY, at.z, at.orientation)); // `NearTeleportTo`
+        teleportTo(player.data.map, Position(bestX, bestY, at.z, at.orientation)); // a teleport on the same map
         const state = cast(ubyte)(standStateSitLowChair + t.data[1]);
         player.values.setByte!UNIT_FIELD_BYTES_1(0, state);
         deliver(Opcode.SMSG_STANDSTATE_UPDATE, [state]);
@@ -225,11 +224,11 @@ mixin template GameObjectHandlers()
     }
 
     // -----------------------------------------------------------------------
-    // Locks (`CanOpenLock`, `EffectOpenLock`)
+    // Locks: whether a spell opens one, and opening it
     // -----------------------------------------------------------------------
 
     /**
-     * `Spell::CanOpenLock` for effect `i` of `spell` on lock `lockId`: the key item it was cast with,
+     * Whether effect `i` of `spell` opens lock `lockId`: the key item it was cast with,
      * or the lock type the effect opens and enough of its skill (the effect's points added). Gives the
      * skill and the values the skill-up needs.
      */
@@ -272,7 +271,7 @@ mixin template GameObjectHandlers()
         return needsKey ? SpellCastResult.badTargets : SpellCastResult.ok;
     }
 
-    /// `CheckCast` for a spell at a game object: there, near, not in use, and its lock opened.
+    /// Whether a spell may be cast at a game object: there, near, not in use, and its lock opened.
     package SpellCastResult checkGameObjectTarget(const(SpellInfo)* spell, const ref SpellTargets targets,
         uint castItem)
     {
@@ -298,7 +297,7 @@ mixin template GameObjectHandlers()
         return SpellCastResult.ok;
     }
 
-    /// `Spell::EffectOpenLock` on a game object: a skill-up the first time, then `SendLoot`.
+    /// A spell opens a game object's lock: a skill-up the first time, then `sendGameObjectLoot`.
     package void openLock(const(SpellInfo)* spell, size_t i, ulong target, uint castItem)
     {
         auto go = cast(GameObject) map.findObject(target);
@@ -317,7 +316,7 @@ mixin template GameObjectHandlers()
         sendGameObjectLoot(go);
     }
 
-    /// `Spell::SendLoot` for a game object: doors, buttons and goobers are used; a chest's loot opens.
+    /// After its lock opened: doors, buttons and goobers are used; a chest's loot opens.
     void sendGameObjectLoot(GameObject go)
     {
         switch (go.type)
@@ -345,7 +344,7 @@ mixin template GameObjectHandlers()
         go.loot.showContentTo(this);
     }
 
-    /// `Loot::Loot(Player*, GameObject*, LOOT_CORPSE)`: its template's items for a group's rights.
+    /// A chest's loot: its template's items, with the loot rights of a group as a corpse has them.
     Loot makeGameObjectLoot(GameObject go)
     {
         import dmangos.world.character : Character;
@@ -377,17 +376,17 @@ mixin template GameObjectHandlers()
             }
         loot.changed = () => map.flushGameObject(go);
         loot.lootedForAll = () {
-            // `Loot::Release` of a chest: done (and gone, if consumable).
+            // A chest's loot released: done (and gone, if consumable).
             go.lootState = GoLootState.justDeactivated;
             map.wake(go.guid);
         };
-        go.despawnTimer = 5 * 60 * 1000; // `SetChestDespawn`: gone 5 minutes after opening even if not emptied
+        go.despawnTimer = 5 * 60 * 1000; // gone 5 minutes after opening even if not emptied
         return loot;
     }
 
     /**
-     * `Player::UpdateGatherSkill`: herbalism, lockpicking and mining may rise by one, likelier the
-     * nearer the skill is to the lock's (`SkillGainChance` with the grey, green and yellow levels
+     * Herbalism, lockpicking and mining may rise by one, likelier the
+     * nearer the skill is to the lock's (with the grey, green and yellow levels
      * 100, 50 and 25 above it).
      */
     void updateGatherSkill(uint skill, uint value, int redLevel)
@@ -396,7 +395,7 @@ mixin template GameObjectHandlers()
             return;
         if (redLevel == 1)
             redLevel = 5; // what starts at 1 stops at 105, not 101
-        // `SkillGainChance` with `SkillChance.Grey/Green/Yellow/Orange` 0, 25, 75, 100.
+        // The chance in percent: grey 0, green 25, yellow 75, orange 100.
         int chance;
         if (value >= redLevel + 100)
             chance = 0;
@@ -409,7 +408,7 @@ mixin template GameObjectHandlers()
         updateSkillPro(skill, chance, 1);
     }
 
-    /// `Player::UpdateSkillPro`: by `chance` in a thousand, `step` more up to its maximum (and saved).
+    /// A skill-up: by `chance` in a thousand, `step` more up to its maximum (and saved).
     package bool updateSkillPro(uint skill, int chance, uint step)
     {
         if (chance <= 0)
@@ -429,7 +428,7 @@ mixin template GameObjectHandlers()
     // -----------------------------------------------------------------------
 
     /**
-     * `GameObject::ActivateToQuest`: a chest with loot one of this player's quests asks for, or a
+     * Whether a game object is active for this player's quests: a chest with loot one of them asks for, or a
      * goober whose quest is under way (or one that counts for a quest's objective).
      */
     package bool gameObjectActivatesForQuest(const GameObject go)
@@ -546,7 +545,7 @@ unittest
     tick(1500);
     assert(gos[0].goState == goStateReady && gos[0].lootState == GoLootState.ready, "closed again");
 
-    // A script opens it by its spawn for 20 seconds (`SCRIPT_COMMAND_OPEN_DOOR`); opening it again does nothing.
+    // A script opens it by its spawn for 20 seconds (`ScriptCommand.openDoor`); opening it again does nothing.
     {
         import dmangos.world.dbscripts : DbScriptStep, DbScriptType, ScriptCommand;
 
