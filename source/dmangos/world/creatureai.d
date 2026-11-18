@@ -9,6 +9,9 @@
  */
 module dmangos.world.creatureai;
 
+/// What a creature's linked creatures react to (`CombatWorld.linked`).
+enum LinkEvent : ubyte { aggro, evade }
+
 import std.math : atan2, cos, sin, sqrt;
 
 import dmangos.world.combat;
@@ -115,6 +118,10 @@ interface CombatWorld : MotionWorld
 
     /// Where the object (a replica too) with this guid is on the map; false if it is not here.
     bool positionOf(ulong guid, out Position at);
+
+    /// Something happened to `source` that linked creatures follow (`dmangos.world.creaturelinking`): it was
+    /// attacked by `enemy` (`LinkEvent.aggro`) or evades.
+    void linked(Creature source, LinkEvent event, ulong enemy);
 
     /// A packet for the players within `range` yards of `center`.
     void sendInRange(Position center, float range, Opcode opcode, const(ubyte)[] body_);
@@ -432,6 +439,22 @@ final class CreatureAI : Scripted, CreatureHost
         world_ = world;
     }
 
+    /// A linked creature brings it into a fight with `who`: it attacks, or (fighting already) counts it as a threat.
+    void joinLinkedFight(UnitRef who, CombatWorld world)
+    {
+        if (inCombat_)
+            addThreat(who, 0);
+        else
+            attackStart(who, world);
+    }
+
+    /// A linked creature evades: it does too, if it fights.
+    void evadeWithLinked(CombatWorld world)
+    {
+        if (inCombat_)
+            enterEvadeMode(world);
+    }
+
 private:
     /// How the relations see it.
     @property Relating relating() const
@@ -518,6 +541,7 @@ private:
             if (script !is null)
                 script.combatStarted(this, guid);
             raiseScript(EnteredCombat(EntityRef(guid)));
+            world.linked(me, LinkEvent.aggro, guid); // its pack joins in
         }
         world.flushCreature(me);
         world.wake(me.guid);
@@ -847,7 +871,11 @@ private:
      */
     void enterEvadeMode(CombatWorld world)
     {
+        const wasFighting = inCombat_;
         world_ = world;
+        scope (exit)
+            if (wasFighting)
+                world.linked(me, LinkEvent.evade, 0);
         interruptCast();
         nextSwing = null;
         if (fleeTimer > 0)

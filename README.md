@@ -268,6 +268,11 @@ What works now:
     their cell, with their levels, health, models, equipment, mounts and emotes. Their names come
     from `CMSG_CREATURE_QUERY` and `CMSG_GAMEOBJECT_QUERY`. Game objects whose `spawntimesecs` is
     below 0 wait for events and scripts to spawn them.
+  * **Linked creatures** (`creature_linking`, `creature_linking_template`):
+    * A pack's members join the fight when their master is attacked, and the other way round.
+    * They follow their master out of combat, as their spawns stood.
+    * They evade with it, and die or go when it dies.
+    * In a dungeon they stay away once their boss is dead.
   * **Game events** (`game_event`):
     * The holidays, the Darkmoon Faire, fishing contests, Call to Arms weekends, day and night.
     * Each runs in its repeating windows: fixed dates, the same days every year, or Easter week.

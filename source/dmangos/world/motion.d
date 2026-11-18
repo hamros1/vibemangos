@@ -40,6 +40,7 @@ enum MotionType : uint
     path = 3,
     linearWaypoint = 4,
     point = 8,
+    follow = 14,  /// after a linked leader (`dmangos.world.creaturelinking`)
 }
 
 /// A point of a path.
@@ -133,6 +134,9 @@ interface MotionWorld
      * where there are none (or an end is off them): then the unit walks straight.
      */
     Vector3[] pathBetween(Vector3 from, Vector3 to);
+
+    /// Where unit `guid` is on the map; false if it is not here.
+    bool positionOf(ulong guid, out Position at);
 }
 
 /// How a creature moves on its own: see the module documentation.
@@ -542,6 +546,71 @@ final class PointMovement : MovementGenerator
 }
 
 /**
+ * Following a leader (a linked creature): it keeps `distance` yards from it at `angle` from the
+ * leader's facing, as their spawns stood, walking after it when it moves (running to catch up when
+ * far behind). If the leader is gone it stands.
+ */
+final class FollowMovement : MovementGenerator
+{
+    ulong leader;
+    float distance = 0, angle = 0;
+    private Position followedTo;
+    private bool following;
+
+    ///
+    this(ulong leader, float distance, float angle)
+    {
+        this.leader = leader;
+        this.distance = distance;
+        this.angle = angle;
+    }
+
+    override @property MotionType type() const
+    {
+        return MotionType.follow;
+    }
+
+    override void update(Creature creature, MotionWorld world, int diff)
+    {
+        import std.math : cos, sin, sqrt;
+
+        Position at;
+        if (!world.positionOf(leader, at))
+            return;
+        const a = at.orientation + angle;
+        const x = at.x + distance * cos(a), y = at.y + distance * sin(a);
+        const here = creature.spline.finalized ? creature.position : creature.spline.position;
+        const off = sqrt((here.x - x) ^^ 2 + (here.y - y) ^^ 2);
+        if (off < 1)
+            return;
+        // Set off again only when the leader moved on since the last setting off.
+        if (following && !creature.spline.finalized
+            && (at.x - followedTo.x) ^^ 2 + (at.y - followedTo.y) ^^ 2 < 1)
+            return;
+        auto z = world.groundHeight(x, y, at.z + 2, false);
+        if (!(z > -100_000))
+            z = at.z;
+        followedTo = at;
+        following = true;
+        launch(creature, world, [Vector3(here.x, here.y, here.z), Vector3(x, y, z)], off < 15, at.orientation, true);
+    }
+
+    override void save(ref ByteWriter w) const
+    {
+        w.put(leader);
+        w.put(distance);
+        w.put(angle);
+    }
+
+    override void load(ref ByteReader r)
+    {
+        leader = r.read!ulong;
+        distance = r.read!float;
+        angle = r.read!float;
+    }
+}
+
+/**
  * The generator for the
  * spawn's movement type. A waypoint creature without a path stands.
  */
@@ -716,6 +785,7 @@ version (unittest)
         void waypointScript(Creature, uint scriptId) { scripts ~= scriptId; }
         Vector3[] delegate(Vector3, Vector3) paths; // movement maps, if a test has them
         Vector3[] pathBetween(Vector3 from, Vector3 to) { return paths is null ? null : paths(from, to); }
+        bool positionOf(ulong guid, out Position at) { return false; }
     }
 
     private Creature testCreature(CreatureSpawn spawn, uint extraFlags = 0)

@@ -49,6 +49,7 @@ import dmangos.serialization : serialize;
 import dmangos.bytes : ByteWriter;
 public import dmangos.world.grid : cellSize;
 import dmangos.world.grid : cellCoordinate, cellKey, cellKeyAt;
+import dmangos.world.creatureai : LinkEvent;
 import dmangos.world.creatureai : CombatWorld;
 import dmangos.world.unit : UnitRef;
 import dmangos.world.creature : Creature;
@@ -1538,6 +1539,16 @@ final class Map : CombatWorld, GameObjectWorld
 
     /// Told to let a creature die (`WorldContext`: `die`, and the death queued).
     void delegate(Creature creature) onCreatureDeath;
+
+    /// Told what linked creatures follow (`WorldContext`: `dmangos.world.creaturelinking`).
+    void delegate(Map map, Creature source, LinkEvent event, ulong enemy) onLinked;
+
+    /// See `CombatWorld.linked`.
+    void linked(Creature source, LinkEvent event, ulong enemy)
+    {
+        if (onLinked !is null)
+            onLinked(this, source, event, enemy);
+    }
 
     /**
      * The creatures that died since the world last looked (docs/DESIGN.md, step 4): their dungeon's

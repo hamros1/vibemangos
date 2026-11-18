@@ -25,6 +25,7 @@ import dmangos.world.gameobject : GameObjectSpawn, GameObjectTemplate, GameObjec
 import dmangos.world.bgqueue : BattlegroundTemplate, BattlegroundType;
 import dmangos.world.enchantments : EnchantmentEffect, EnchantmentType, RandomEnchantment;
 import dmangos.world.gameevents : GameEvent, ScheduleType;
+import dmangos.world.creaturelinking : CreatureLinks;
 import dmangos.world.grid : cellKeyAt;
 import dmangos.world.motion : MotionType, WaypointNode, WaypointStore;
 import dmangos.world.loot : lootColumns, lootRow, LootStore, LootStores;
@@ -356,6 +357,7 @@ final class WorldData
     short[uint] gameObjectGameEvents;               /// `game_event_gameobject`: ditto
     GameEvent[] gameEvents;                         /// `game_event` and `game_event_time`
     ushort[][uint] questGameEvents;                 /// `game_event_quest`: the events a quest is given during
+    CreatureLinks creatureLinks;                    /// `creature_linking` and `creature_linking_template`
     uint[3][uint] propertyEnchantments;             /// a random property's enchantments (`ItemRandomProperties.dbc`)
     EnchantmentEffect[3][uint] enchantmentEffects;  /// an enchantment's effects (`SpellItemEnchantment.dbc`)
     ubyte[2][uint] gameObjectBattleEvents;          /// `gameobject_battleground`: ditto
@@ -391,6 +393,7 @@ final class WorldData
         eventAi = new EventAiData;
         dbScripts = new DbScriptData;
         loot = LootStores.create();
+        creatureLinks = new CreatureLinks;
     }
 
     /**
@@ -527,6 +530,11 @@ final class WorldData
         data.loadTeleports(world, client);
         data.loadEnchantments(world, client);
         data.loadGameEvents(world);
+        foreach (row; world.query!"SELECT guid, master_guid, flag FROM creature_linking"())
+            data.creatureLinks.addGuid(row.get!uint(0), row.get!uint(1), row.get!uint(2));
+        foreach (row; world.query!"SELECT entry, map, master_entry, flag, search_range FROM creature_linking_template"())
+            data.creatureLinks.addTemplate(row.get!uint(0), row.get!uint(1), row.get!uint(2), row.get!uint(3),
+                row.get!uint(4));
         data.loadSpawns(world, client, spawnSeed);
         data.loadWaypoints(world);
         data.loadPlayerInfo(world, client);

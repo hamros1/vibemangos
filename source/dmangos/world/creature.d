@@ -23,7 +23,7 @@ import std.random : Random, uniform;
 import dmangos.world.clientdata : ClientData;
 import dmangos.world.map : Idler, Moving, PerViewer;
 import dmangos.world.replication : Replica, Replicable;
-import dmangos.world.motion : followSpline, IdleMovement, MotionWorld, MovementGenerator;
+import dmangos.world.motion : followSpline, IdleMovement, MotionType, MotionWorld, MovementGenerator;
 import dmangos.world.movement : baseMoveSpeed, MovementFlags, MovementInfo, MoveType, Position;
 import dmangos.bytes : ByteReader, ByteWriter;
 import dmangos.world.spline : MoveSpline;
@@ -998,6 +998,14 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
         auto state = ByteReader(r.readBytes(r.read!ushort));
         if (type == generator.type)
             generator.load(state);
+        else if (type == MotionType.follow) // a linked creature following its master
+        {
+            import dmangos.world.motion : FollowMovement;
+
+            auto follower = new FollowMovement(0, 0, 0);
+            follower.load(state);
+            generator = follower;
+        }
         vendorStock.items = null;
         foreach (_; 0 .. r.read!ushort)
         {

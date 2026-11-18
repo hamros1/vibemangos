@@ -28,9 +28,10 @@
 * **Stats:** item bonuses, auras (talents' and racials' passive ones included) and the crit, dodge,
   parry and block chances are applied; passives bound to a kind of weapon or armour are not yet.
 * **Not loaded:** pets.
-* **Creatures** wander, walk their waypoints (running their scripts), fight, die and respawn. Type 3 paths (flying) are walked as waypoints, formations
-  do not follow their leader, and creatures in water do not swim. Conditions
-  that need auras, world states or scripts are never met. Elevators
+* **Creatures** wander, walk their waypoints (running their scripts), fight, die and respawn. Type 3 paths (flying) are walked as waypoints; linked creatures
+  (`creature_linking`) aggro together and follow their master, but formations (`spawn_group_formation`)
+  do not move together yet, and creatures in water do not swim. Conditions
+  that need world states or scripts are never met. Elevators
   are created but do not move. Ships and zeppelins are not
   spawned. Idle cells unload after `grid_cleanup_delay_seconds`.
 * **Terrain:** heights put wandering creatures on the ground; line of sight decides aggro and
