@@ -698,6 +698,65 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
         return value;
     }
 
+    private float auraSpeedFactor = 1; /// what its slows and speed-ups multiply its speeds by now
+    private bool auraHeld;              /// rooted or stunned, as last told
+
+    /// Rooted or stunned: it does not move.
+    @property bool immobilized() const
+    {
+        import dmangos.world.auras : AuraType;
+
+        return auras.has(AuraType.modRoot) || auras.has(AuraType.modStun);
+    }
+
+    /**
+     * After its auras may have changed: its walk and run speeds by its strongest speed-up and slow, and held
+     * where it is while rooted or stunned (a walk under way stops; stunned shows on its flags). The clients
+     * are told what changed.
+     */
+    void refreshAuraMovement(MotionWorld world)
+    {
+        import dmangos.bytes : ByteWriter;
+        import dmangos.world.auras : AuraType;
+        import dmangos.world.motion : stopMoving;
+        import dmangos.world.opcodes : Opcode;
+
+        const factor = (1 + auras.strongest(AuraType.modIncreaseSpeed, true) / 100.0f)
+            * (1 + auras.strongest(AuraType.modDecreaseSpeed, false) / 100.0f);
+        if (factor != auraSpeedFactor && factor > 0)
+        {
+            foreach (type; [MoveType.walk, MoveType.run])
+                speeds[type] = speeds[type] / auraSpeedFactor * factor;
+            auraSpeedFactor = factor;
+            foreach (pair; [[Opcode.SMSG_SPLINE_SET_WALK_SPEED, MoveType.walk],
+                    [Opcode.SMSG_SPLINE_SET_RUN_SPEED, MoveType.run]])
+            {
+                ByteWriter w;
+                w.putPackedGuid(guid);
+                w.put(speeds[pair[1]]);
+                world.sendToObservers(guid, cast(Opcode) pair[0], w.data);
+            }
+        }
+        const held = immobilized;
+        const stunned = auras.has(AuraType.modStun);
+        const flags = values.get!UNIT_FIELD_FLAGS;
+        const flagged = stunned ? flags | UnitFlags.stunned : flags & ~UnitFlags.stunned;
+        if (flagged != flags)
+        {
+            values.set!UNIT_FIELD_FLAGS(flagged);
+            if (auto combat = cast(CombatWorld) world)
+                combat.flushCreature(this);
+        }
+        if (held == auraHeld)
+            return;
+        auraHeld = held;
+        if (held)
+            stopMoving(this, world);
+        ByteWriter w;
+        w.putPackedGuid(guid);
+        world.sendToObservers(guid, held ? Opcode.SMSG_SPLINE_MOVE_ROOT : Opcode.SMSG_SPLINE_MOVE_UNROOT, w.data);
+    }
+
     /// Its auras' time passes: their casters do what their ticks do; those that ended go.
     void updateAuras(CombatWorld world, int diff)
     {
@@ -904,6 +963,8 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
                 updateAuras(combat, diff);
         if (!alive)
             return;
+        if (auras.list.length || auraHeld || auraSpeedFactor != 1)
+            refreshAuraMovement(world);
         if (ai !is null)
             if (auto combat = cast(CombatWorld) world)
                 ai.update(combat, diff);

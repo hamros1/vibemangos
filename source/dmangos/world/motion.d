@@ -687,8 +687,8 @@ in (points.length > 1)
     move.flags |= MovementFlags.splineEnabled | MovementFlags.forward;
 
     const velocity = creature.speeds[walk ? MoveType.walk : MoveType.run];
-    if (!(velocity > 0))
-        return 0;
+    if (!(velocity > 0) || creature.immobilized)
+        return 0; // it cannot move (rooted or stunned)
     creature.spline = MoveSpline(points, flags, velocity, splineCounter++, angle);
     creature.positionTimer = 0;
     world.sendToObservers(creature.guid, Opcode.SMSG_MONSTER_MOVE, monsterMove(creature.guid, creature.spline));
@@ -1009,4 +1009,44 @@ unittest
     world.paths = (Vector3 from, Vector3 to) => [from, corner, to];
     launch(creature, world, [Vector3(0, 0, 0), Vector3(10, 0, 0)], true);
     assert(creature.spline.path.length == 3, "a waypoint's walk is as drawn");
+}
+
+/// A slowed creature walks slower; rooted, it stops and cannot set off; freed, it walks again at its speed.
+unittest
+{
+    import std.algorithm.searching : canFind;
+    import dmangos.world.auras : AuraType, makeAura;
+    import dmangos.world.spells : SpellInfo;
+
+    auto world = new TestWorld;
+    auto creature = testCreature(CreatureSpawn(1, 100, 0, 50, 50, 0, 0));
+    creature.tick(world, 0);
+    const walk = creature.speeds[MoveType.walk];
+    static SpellInfo slow, root;
+    slow.id = 1;
+    slow.effect[0] = 6;
+    slow.casting.applyAuraName[0] = AuraType.modDecreaseSpeed;
+    root.id = 2;
+    root.effect[0] = 6;
+    root.casting.applyAuraName[0] = AuraType.modRoot;
+    bool isNew;
+    auto slowAura = creature.auras.apply(makeAura(&slow, 1, 1, -1, false, [-50, 0, 0]), creature.values, isNew);
+    world.sent = null;
+    creature.tick(world, 1);
+    assert(near(creature.speeds[MoveType.walk], walk / 2) && world.sent.canFind(Opcode.SMSG_SPLINE_SET_WALK_SPEED));
+
+    launch(creature, world, [Vector3(0, 0, 0), Vector3(60, 50, 0)], true);
+    assert(!creature.spline.finalized);
+    auto rootAura = creature.auras.apply(makeAura(&root, 1, 1, -1, false, [0, 0, 0]), creature.values, isNew);
+    world.sent = null;
+    creature.tick(world, 1);
+    assert(creature.spline.finalized && world.sent.canFind(Opcode.SMSG_SPLINE_MOVE_ROOT), "stopped where it was");
+    assert(launch(creature, world, [Vector3(0, 0, 0), Vector3(60, 50, 0)], true) == 0 && creature.spline.finalized);
+
+    creature.auras.remove(rootAura, creature.values);
+    creature.auras.remove(slowAura, creature.values);
+    world.sent = null;
+    creature.tick(world, 1);
+    assert(world.sent.canFind(Opcode.SMSG_SPLINE_MOVE_UNROOT) && near(creature.speeds[MoveType.walk], walk));
+    assert(launch(creature, world, [Vector3(0, 0, 0), Vector3(60, 50, 0)], true) > 0, "free again");
 }

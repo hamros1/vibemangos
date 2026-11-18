@@ -499,8 +499,8 @@ What works now:
     shields (Thorns) hurt whoever hits the player in melee, and auras that trigger a spell on a melee
     hit dealt or taken (Lightning Shield, Seal of Righteousness) do so by their chance, using their
     charges. Dispels (Dispel Magic, Cleanse, Remove Curse, Purge) take random auras of their type:
-    harmful magic off friends, helpful magic off enemies. Not yet: procs on spells and other events,
-    auras on creatures slowing or rooting them.
+    harmful magic off friends, helpful magic off enemies. Creatures are slowed and sped up by their
+    auras, and stand still while rooted or stunned. Not yet: procs on spells and other events.
   * **Quests:** quest givers (`creature_questrelation`, `creature_involvedrelation`) show what they have for the player
     (the exclamation and question marks), list their quests in their gossip (or open the only one),
     and give them as `quest_template` says who may take them (class, race, level, skill, condition,
