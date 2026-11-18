@@ -1088,7 +1088,8 @@ final class CharacterStatements
     /// `.character rename` for an offline character.
     void renameCharacter(uint guid, string newName)
     {
-        characters.execute!"UPDATE characters SET name = ? WHERE guid = ?"(newName, guid);
+        // A rename asked for at login (`at_login` 1) is done with it.
+        characters.execute!"UPDATE characters SET name = ?, at_login = at_login & ~1 WHERE guid = ?"(newName, guid);
     }
 
     /// See `WorldDatabase.moveOfflineCharacter`.

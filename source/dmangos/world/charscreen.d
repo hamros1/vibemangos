@@ -157,6 +157,50 @@ private:
         return R.CHAR_CREATE_SUCCESS;
     }
 
+    /**
+     * The client renames a character it was asked to rename at login (its `at_login` rename flag): a
+     * valid, free name is taken (`SMSG_CHAR_RENAME`: the result, then the guid and the name); else the
+     * reason it is not.
+     */
+    @Handles(Opcode.CMSG_CHAR_RENAME, WorldState.characterScreen)
+    void handleCharRename(ref ByteReader reader)
+    {
+        import dmangos.bytes : ByteWriter;
+        import dmangos.world.characters : AtLoginFlags;
+
+        const fullGuid = reader.read!ulong;
+        string name = reader.readCString();
+        void answer(ubyte result)
+        {
+            ByteWriter w;
+            w.put(result);
+            if (result == CharNameResult.CHAR_NAME_SUCCESS)
+            {
+                w.put(fullGuid);
+                w.putCString(name);
+            }
+            deliver(Opcode.SMSG_CHAR_RENAME, w.data);
+        }
+        const guid = lowGuid(fullGuid);
+        const owner = context.database.characterOwner(guid);
+        if (!admitted || owner.isNull || owner.get.account != account.id)
+            return answer(CharNameResult.CHAR_NAME_FAILURE);
+        const config = context.config;
+        if (!normalizePlayerName(name))
+            return answer(CharNameResult.CHAR_NAME_NO_NAME);
+        const nameResult = checkPlayerName(name, config.minPlayerName, config.strictPlayerNames, config.realmZone);
+        if (nameResult != CharNameResult.CHAR_NAME_SUCCESS)
+            return answer(nameResult);
+        if (account.level == AccountLevel.player && (toLowerName(name) in context.data.reservedNames) !is null)
+            return answer(CharNameResult.CHAR_NAME_RESERVED);
+        if (context.database.nameTaken(name))
+            return answer(cast(ubyte) CharacterResponse.CHAR_CREATE_NAME_IN_USE);
+        info!"%s: account %s renamed character '%s' (guid %s) to '%s'"(remoteAddress, account.id, owner.get.name, guid,
+            name);
+        context.database.renameCharacter(guid, name);
+        answer(CharNameResult.CHAR_NAME_SUCCESS);
+    }
+
     @Handles(Opcode.CMSG_CHAR_DELETE, WorldState.characterScreen)
     void handleCharDelete(const ClientCharDelete request)
     {
@@ -501,3 +545,35 @@ unittest
     assert(db.deleted == [1] && db.characterLists[4].length == 0 && db.realmCounts[4] == 0);
 }
 
+
+/// Renaming a character at the character screen: a free name is taken; one in use is refused.
+unittest
+{
+    auto db = newDatabase();
+    db.characterLists.remove(4);
+    auto context = newCreationContext(db);
+    auto client = TestClient(new WorldSession(context, "127.0.0.1"), testKey);
+    authenticate(client);
+    assert(createCharacter(client, "Anduin", raceHuman, classWarrior) == CharacterResponse.CHAR_CREATE_SUCCESS);
+    assert(createCharacter(client, "Jaina", raceHuman, classMage) == CharacterResponse.CHAR_CREATE_SUCCESS);
+    ulong anduin;
+    foreach (guid, c; db.saved)
+        if (c.name == "Anduin")
+            anduin = guid;
+
+    void rename(string name)
+    {
+        import dmangos.bytes : ByteWriter;
+
+        ByteWriter w;
+        w.put(anduin);
+        w.putCString(name);
+        client.write(Opcode.CMSG_CHAR_RENAME, w.data);
+    }
+    rename("jaina");
+    assert(client.read()[0].body_[0] == CharacterResponse.CHAR_CREATE_NAME_IN_USE, "taken");
+    rename("varian");
+    const answer = client.read()[0];
+    assert(answer.opcode == Opcode.SMSG_CHAR_RENAME && answer.body_[0] == CharNameResult.CHAR_NAME_SUCCESS);
+    assert(context.database.nameTaken("Varian") && !context.database.nameTaken("Anduin"), "renamed");
+}

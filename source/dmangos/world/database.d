@@ -1116,7 +1116,10 @@ final class MemoryWorldDatabase : WorldDatabase
         foreach (ref list; characterLists)
             foreach (ref record; list)
                 if (record.guid == guid)
+                {
                     record.name = newName;
+                    record.atLogin &= ~1u;
+                }
         if (auto c = guid in loadable)
             c.name = newName;
     }
