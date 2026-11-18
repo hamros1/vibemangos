@@ -772,6 +772,14 @@ struct ServiceCall
     @LengthPrefix!uint ubyte[] request;
 }
 
+/// How a `ServiceCall` went (one byte on the wire; a value not listed here is refused when the reply is read).
+enum ServiceStatus : ubyte
+{
+    ok = 0,
+    notHere = 1,       /// the service does not run on that node (any more): ask again where it is
+    unknownCall = 2,   /// that node's build has no such call
+}
+
 /// The answer to a `ServiceCall`.
 struct ServiceReply
 {
@@ -779,6 +787,23 @@ struct ServiceReply
 
     ushort kind;
     ulong sequence;
-    ubyte status;      /// `ServiceStatus`
+    ServiceStatus status;
     @LengthPrefix!uint ubyte[] reply;
+}
+
+// A reply's status is checked as it is read: a peer cannot put an unknown one in front of a final switch.
+unittest
+{
+    import std.exception : assertThrown;
+    import dmangos.bytes : ByteReader, ByteWriter, PacketException;
+    import dmangos.serialization : deserialize, serialize;
+
+    ByteWriter w;
+    serialize(w, ServiceReply(1, 2, ServiceStatus.notHere, null));
+    auto bytes = w.data.dup;
+    auto good = ByteReader(bytes);
+    assert(deserialize!ServiceReply(good).status == ServiceStatus.notHere);
+    bytes[ushort.sizeof + ulong.sizeof] = 7; // the status byte
+    auto bad = ByteReader(bytes);
+    assertThrown!PacketException(deserialize!ServiceReply(bad));
 }

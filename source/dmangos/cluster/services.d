@@ -33,7 +33,7 @@ import std.traits : getUDAs, hasUDA, Parameters, ReturnType, Unqual;
 import core.time : MonoTime, seconds;
 import std.array : join;
 
-import dmangos.cluster.protocol : ServiceCall, ServiceReply;
+import dmangos.cluster.protocol : ServiceCall, ServiceReply, ServiceStatus;
 import dmangos.cluster.regions : CellRect, Region;
 import dmangos.plaindata : decode, encode, isPlainData, layout;
 
@@ -92,14 +92,6 @@ Region[] serviceRegions(const(ServiceKind)[] kinds, uint firstId) pure @safe
         regions ~= r;
     }
     return regions;
-}
-
-/// How a node answered a `ServiceCall`.
-enum ServiceStatus : ubyte
-{
-    ok = 0,
-    notHere = 1,       /// the service does not run on that node (any more): ask again where it is
-    unknownCall = 2,   /// that node's build has no such call
 }
 
 /// Marks a struct as a service of `kind`.
@@ -492,7 +484,7 @@ final class ServiceHost
         auto p = reply.sequence in pending;
         if (p is null)
             return; // answered before (a resend's second answer)
-        final switch (cast(ServiceStatus) reply.status)
+        final switch (reply.status) // an unknown value never gets here: the deserializer refuses it
         {
         case ServiceStatus.ok:
             auto then = p.then;
