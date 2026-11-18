@@ -72,6 +72,44 @@ JSONValue toJson(T)(auto ref const T value)
         static assert(false, "cannot convert " ~ T.stringof ~ " to JSON");
 }
 
+/**
+ * The keys of `json` (an object read as a `T`) that no field of `T` takes, nested objects' as "outer.inner":
+ * a misspelt setting, which `fromJson` leaves at its default without a word.
+ */
+string[] unknownKeys(T)(const JSONValue json, string prefix = "") if (is(T == struct))
+{
+    import std.algorithm.searching : canFind;
+
+    if (json.type != JSONType.object)
+        return null;
+    string[] known, unknown;
+    static foreach (i; 0 .. T.tupleof.length)
+    {{
+        enum key = jsonKey!(T.tupleof[i]);
+        known ~= key;
+        static if (is(typeof(T.tupleof[i]) == struct))
+            if (auto inner = key in json.object)
+                unknown ~= unknownKeys!(typeof(T.tupleof[i]))(*inner, prefix ~ key ~ ".");
+    }}
+    foreach (key, _; json.object)
+        if (!known.canFind(key))
+            unknown ~= prefix ~ key;
+    return unknown;
+}
+
+///
+unittest
+{
+    import std.json : parseJSON;
+
+    static struct Inner { int a; }
+    static struct Outer { @JsonName("real_name") int realName; Inner inner; }
+    import std.algorithm.sorting : sort;
+
+    auto found = unknownKeys!Outer(parseJSON(`{"real_name": 1, "reaml_name": 2, "inner": {"a": 1, "b": 2}}`));
+    assert(found.sort.release == ["inner.b", "reaml_name"]);
+}
+
 /// Builds a `T` from JSON, throwing `JsonMappingException` on a structural mismatch.
 T fromJson(T)(const JSONValue json)
 {

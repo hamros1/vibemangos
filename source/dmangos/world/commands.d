@@ -443,6 +443,9 @@ private:
     /// Every handler the command tables name.
     enum string[] arcHandlers = collectHandlers(commandTable);
 
+    /// `handle...Command` methods that no row names on purpose (the "Not yet implemented." answer itself).
+    enum string[] unlistedHandlers = ["handleNYICommand"];
+
     // -----------------------------------------------------------------------
     // Permissions
     // -----------------------------------------------------------------------
@@ -545,6 +548,14 @@ private:
     /// Runs the handler `handler` with the text after the command's words.
     bool callHandler(string handler, string args)
     {
+        // Every `handle...Command` method is named by a row of the tables: one misspelled would never run,
+        // and its command would answer "Not yet implemented." instead.
+        static foreach (member; __traits(allMembers, typeof(this)))
+            static if (member.length > "handleCommand".length && member[0 .. 6] == "handle"
+                && member[$ - 7 .. $] == "Command" && !unlistedHandlers.canFind(member))
+                static assert(arcHandlers.canFind!((name, m) => handlerMethod(name) == m)(member),
+                    member ~ " is not named by any row of the command tables (dmangos.world.commandtable)");
+
         switch (handler)
         {
             static foreach (name; arcHandlers)

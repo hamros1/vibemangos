@@ -42,8 +42,8 @@ enum DbScriptType : ubyte
     creatureMovement,
 }
 
-/// The tables, by `DbScriptType`.
-immutable string[] dbScriptTables = ["dbscripts_on_quest_start", "dbscripts_on_quest_end", "dbscripts_on_gossip",
+/// The tables, by `DbScriptType` (one per member: the array's length is the enum's).
+immutable string[DbScriptType.max + 1] dbScriptTables = ["dbscripts_on_quest_start", "dbscripts_on_quest_end", "dbscripts_on_gossip",
     "dbscripts_on_relay", "dbscripts_on_creature_death", "dbscripts_on_go_use", "dbscripts_on_go_template_use",
     "dbscripts_on_event", "dbscripts_on_spell", "dbscripts_on_creature_movement"];
 

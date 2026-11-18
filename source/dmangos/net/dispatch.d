@@ -91,6 +91,19 @@ mixin template PacketDispatch(Attribute)
         import dmangos.serialization : deserialize;
 
         alias Self = typeof(this);
+        // A route on a method not named handle*, or on one of several overloads, would never be taken (the
+        // overloads' attributes are not all seen): both refuse to compile.
+        static foreach (member; __traits(allMembers, Self))
+            static if (__traits(compiles, __traits(getOverloads, Self, member)))
+                static foreach (overload; __traits(getOverloads, Self, member))
+                    static foreach (route; __traits(getAttributes, overload))
+                        static if (is(typeof(route) == Attribute))
+                        {
+                            static assert(member.length > 6 && member[0 .. 6] == "handle",
+                                member ~ " has a route, so it must be named handle...");
+                            static assert(__traits(getOverloads, Self, member).length == 1,
+                                member ~ " has a route and is overloaded: give the overloads different names");
+                        }
         switch (opcode)
         {
             static foreach (member; __traits(allMembers, Self))

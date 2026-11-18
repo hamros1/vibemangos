@@ -87,7 +87,10 @@ AuthConfig loadConfig(string path)
     import std.json : parseJSON;
 
     enforce(path.exists, format!"configuration file '%s' not found (copy config/authserver.example.json)"(path));
-    auto config = fromJson!AuthConfig(parseJSON(readText(path)));
+    const json = parseJSON(readText(path));
+    auto config = fromJson!AuthConfig(json);
+    foreach (key; unknownKeys!AuthConfig(json))
+        imported!"dmangos.log".warning!"%s: '%s' is not a setting (misspelt?): ignored"(path, key);
     config.validate();
     return config;
 }

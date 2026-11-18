@@ -295,7 +295,10 @@ WorldConfig loadWorldConfig(string path)
     import std.json : parseJSON;
 
     enforce(path.exists, format!"configuration file '%s' not found (copy config/worldserver.example.json)"(path));
-    auto config = fromJson!WorldConfig(parseJSON(readText(path)));
+    const json = parseJSON(readText(path));
+    auto config = fromJson!WorldConfig(json);
+    foreach (key; unknownKeys!WorldConfig(json))
+        imported!"dmangos.log".warning!"%s: '%s' is not a setting (misspelt?): ignored"(path, key);
     config.validate();
     return config;
 }

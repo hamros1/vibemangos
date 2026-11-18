@@ -622,54 +622,62 @@ struct TalentSpellPos
 // The loaded data and its indexes
 // ---------------------------------------------------------------------------
 
+/// On a `DbcStore` field of `ClientData`: the file (`name`.dbc) it is read from.
+struct DbcFile
+{
+    string name;
+}
+
+private enum isDbcStore(T) = is(T == DbcStore!(E, format), E, string format);
+
 /// See the module documentation.
 final class ClientData
 {
-    DbcStore!(CharSectionsEntry, charSectionsFormat) charSections;
-    DbcStore!(CharacterFacialHairStylesEntry, characterFacialHairStylesFormat) facialHairStyles;
-    DbcStore!(ChrClassesEntry, chrClassesFormat) classes;
-    DbcStore!(ChrRacesEntry, chrRacesFormat) races;
-    DbcStore!(CharStartOutfitEntry, charStartOutfitFormat) startOutfits;
-    DbcStore!(SkillLineEntry, skillLineFormat) skillLines;
-    DbcStore!(SkillLineAbilityEntry, skillLineAbilityFormat) skillLineAbilities;
-    DbcStore!(SkillRaceClassInfoEntry, skillRaceClassInfoFormat) skillRaceClassInfos;
-    DbcStore!(SkillTiersEntry, skillTiersFormat) skillTiers;
-    DbcStore!(TalentEntry, talentFormat) talents;
-    DbcStore!(ItemSetEntry, itemSetFormat) itemSets;
-    DbcStore!(TalentTabEntry, talentTabFormat) talentTabs;
-    DbcStore!(CreatureDisplayInfoEntry, creatureDisplayInfoFormat) creatureDisplays;
-    DbcStore!(CreatureModelDataEntry, creatureModelDataFormat) creatureModels;
-    DbcStore!(EmotesTextEntry, emotesTextFormat) emotesText;
-    DbcStore!(EmotesEntry, emotesFormat) emotes;
-    DbcStore!(MapEntry, mapFormat) maps;
-    DbcStore!(AreaTableEntry, areaTableFormat) areas;
-    DbcStore!(AreaTriggerEntry, areaTriggerFormat) areaTriggers;
-    DbcStore!(ChatChannelsEntry, chatChannelsFormat) chatChannels;
-    DbcStore!(BankBagSlotPricesEntry, bankBagSlotPricesFormat) bankBagSlotPrices;
-    DbcStore!(StableSlotPricesEntry, stableSlotPricesFormat) stableSlotPrices;
-    DbcStore!(CreatureFamilyEntry, creatureFamilyFormat) creatureFamilies;
-    DbcStore!(DurabilityCostsEntry, durabilityCostsFormat) durabilityCosts;
-    DbcStore!(DurabilityQualityEntry, durabilityQualityFormat) durabilityQualities;
-    DbcStore!(LiquidTypeEntry, liquidTypeFormat) liquidTypes;
-    DbcStore!(WmoAreaTableEntry, wmoAreaTableFormat) wmoAreas;
-    DbcStore!(FactionEntry, factionFormat) factions;
-    DbcStore!(LockEntry, lockFormat) locks;
-    DbcStore!(TaxiNodesEntry, taxiNodesFormat) taxiNodes;
-    DbcStore!(TaxiPathEntry, taxiPathFormat) taxiPaths;
-    DbcStore!(TaxiPathNodeEntry, taxiPathNodeFormat) taxiPathNodes;
+    @DbcFile("CharSections") DbcStore!(CharSectionsEntry, charSectionsFormat) charSections;
+    @DbcFile("CharacterFacialHairStyles") DbcStore!(CharacterFacialHairStylesEntry, characterFacialHairStylesFormat) facialHairStyles;
+    @DbcFile("ChrClasses") DbcStore!(ChrClassesEntry, chrClassesFormat) classes;
+    @DbcFile("ChrRaces") DbcStore!(ChrRacesEntry, chrRacesFormat) races;
+    @DbcFile("CharStartOutfit") DbcStore!(CharStartOutfitEntry, charStartOutfitFormat) startOutfits;
+    @DbcFile("SkillLine") DbcStore!(SkillLineEntry, skillLineFormat) skillLines;
+    @DbcFile("SkillLineAbility") DbcStore!(SkillLineAbilityEntry, skillLineAbilityFormat) skillLineAbilities;
+    @DbcFile("SkillRaceClassInfo") DbcStore!(SkillRaceClassInfoEntry, skillRaceClassInfoFormat) skillRaceClassInfos;
+    @DbcFile("SkillTiers") DbcStore!(SkillTiersEntry, skillTiersFormat) skillTiers;
+    @DbcFile("Talent") DbcStore!(TalentEntry, talentFormat) talents;
+    @DbcFile("ItemSet") DbcStore!(ItemSetEntry, itemSetFormat) itemSets;
+    @DbcFile("TalentTab") DbcStore!(TalentTabEntry, talentTabFormat) talentTabs;
+    @DbcFile("CreatureDisplayInfo") DbcStore!(CreatureDisplayInfoEntry, creatureDisplayInfoFormat) creatureDisplays;
+    @DbcFile("CreatureModelData") DbcStore!(CreatureModelDataEntry, creatureModelDataFormat) creatureModels;
+    @DbcFile("EmotesText") DbcStore!(EmotesTextEntry, emotesTextFormat) emotesText;
+    @DbcFile("Emotes") DbcStore!(EmotesEntry, emotesFormat) emotes;
+    @DbcFile("Map") DbcStore!(MapEntry, mapFormat) maps;
+    @DbcFile("AreaTable") DbcStore!(AreaTableEntry, areaTableFormat) areas;
+    @DbcFile("AreaTrigger") DbcStore!(AreaTriggerEntry, areaTriggerFormat) areaTriggers;
+    @DbcFile("ChatChannels") DbcStore!(ChatChannelsEntry, chatChannelsFormat) chatChannels;
+    @DbcFile("BankBagSlotPrices") DbcStore!(BankBagSlotPricesEntry, bankBagSlotPricesFormat) bankBagSlotPrices;
+    @DbcFile("StableSlotPrices") DbcStore!(StableSlotPricesEntry, stableSlotPricesFormat) stableSlotPrices;
+    @DbcFile("CreatureFamily") DbcStore!(CreatureFamilyEntry, creatureFamilyFormat) creatureFamilies;
+    @DbcFile("DurabilityCosts") DbcStore!(DurabilityCostsEntry, durabilityCostsFormat) durabilityCosts;
+    @DbcFile("DurabilityQuality") DbcStore!(DurabilityQualityEntry, durabilityQualityFormat) durabilityQualities;
+    @DbcFile("LiquidType") DbcStore!(LiquidTypeEntry, liquidTypeFormat) liquidTypes;
+    @DbcFile("WMOAreaTable") DbcStore!(WmoAreaTableEntry, wmoAreaTableFormat) wmoAreas;
+    @DbcFile("Faction") DbcStore!(FactionEntry, factionFormat) factions;
+    @DbcFile("Lock") DbcStore!(LockEntry, lockFormat) locks;
+    @DbcFile("TaxiNodes") DbcStore!(TaxiNodesEntry, taxiNodesFormat) taxiNodes;
+    @DbcFile("TaxiPath") DbcStore!(TaxiPathEntry, taxiPathFormat) taxiPaths;
+    @DbcFile("TaxiPathNode") DbcStore!(TaxiPathNodeEntry, taxiPathNodeFormat) taxiPathNodes;
     /// The taxi network: from -> to -> path; each path's points in order; the nodes flown from or to.
     uint[uint][uint] taxiPathBetween;
     const(TaxiPathNodeEntry)*[][uint] taxiPathPoints;
     bool[uint] taxiNetwork;
-    DbcStore!(AuctionHouseEntry, auctionHouseFormat) auctionHouses;
-    DbcStore!(FactionTemplateEntry, factionTemplateFormat) factionTemplates;
-    DbcStore!(WorldSafeLocsEntry, worldSafeLocsFormat) worldSafeLocs;
-    DbcStore!(ItemRandomPropertiesEntry, itemRandomPropertiesFormat) itemRandomProperties;
-    DbcStore!(SpellItemEnchantmentEntry, spellItemEnchantmentFormat) spellItemEnchantments;
-    DbcStore!(SpellCastTimesEntry, spellCastTimesFormat) spellCastTimes;
-    DbcStore!(SpellDurationEntry, spellDurationFormat) spellDurations;
-    DbcStore!(SpellRangeEntry, spellRangeFormat) spellRanges;
-    DbcStore!(SpellRadiusEntry, spellRadiusFormat) spellRadii;
+    @DbcFile("AuctionHouse") DbcStore!(AuctionHouseEntry, auctionHouseFormat) auctionHouses;
+    @DbcFile("FactionTemplate") DbcStore!(FactionTemplateEntry, factionTemplateFormat) factionTemplates;
+    @DbcFile("WorldSafeLocs") DbcStore!(WorldSafeLocsEntry, worldSafeLocsFormat) worldSafeLocs;
+    @DbcFile("ItemRandomProperties") DbcStore!(ItemRandomPropertiesEntry, itemRandomPropertiesFormat) itemRandomProperties;
+    @DbcFile("SpellItemEnchantment") DbcStore!(SpellItemEnchantmentEntry, spellItemEnchantmentFormat) spellItemEnchantments;
+    @DbcFile("SpellCastTimes") DbcStore!(SpellCastTimesEntry, spellCastTimesFormat) spellCastTimes;
+    @DbcFile("SpellDuration") DbcStore!(SpellDurationEntry, spellDurationFormat) spellDurations;
+    @DbcFile("SpellRange") DbcStore!(SpellRangeEntry, spellRangeFormat) spellRanges;
+    @DbcFile("SpellRadius") DbcStore!(SpellRadiusEntry, spellRadiusFormat) spellRadii;
 
     private
     {
@@ -687,29 +695,18 @@ final class ClientData
     /// Reads the DBC files from `<dataDir>/dbc/`.
     static ClientData load(string dataDir)
     {
-        import std.algorithm.searching : findSplit;
+        import std.traits : getUDAs;
 
         auto data = new ClientData;
         const dir = buildPath(dataDir, "dbc");
-        static foreach (member; ["charSections:CharSections", "facialHairStyles:CharacterFacialHairStyles",
-            "classes:ChrClasses", "races:ChrRaces", "startOutfits:CharStartOutfit", "skillLines:SkillLine",
-            "skillLineAbilities:SkillLineAbility", "skillRaceClassInfos:SkillRaceClassInfo", "skillTiers:SkillTiers",
-            "talents:Talent", "talentTabs:TalentTab", "creatureDisplays:CreatureDisplayInfo",
-            "creatureModels:CreatureModelData", "emotesText:EmotesText", "emotes:Emotes", "maps:Map",
-            "areas:AreaTable", "areaTriggers:AreaTrigger", "chatChannels:ChatChannels",
-            "bankBagSlotPrices:BankBagSlotPrices", "stableSlotPrices:StableSlotPrices",
-            "creatureFamilies:CreatureFamily", "durabilityCosts:DurabilityCosts",
-            "durabilityQualities:DurabilityQuality", "liquidTypes:LiquidType", "wmoAreas:WMOAreaTable",
-            "factions:Faction", "factionTemplates:FactionTemplate", "worldSafeLocs:WorldSafeLocs", "spellCastTimes:SpellCastTimes", "spellDurations:SpellDuration",
-            "spellRanges:SpellRange", "spellRadii:SpellRadius", "locks:Lock", "auctionHouses:AuctionHouse",
-            "taxiNodes:TaxiNodes", "taxiPaths:TaxiPath", "taxiPathNodes:TaxiPathNode", "itemSets:ItemSet",
-            "itemRandomProperties:ItemRandomProperties", "spellItemEnchantments:SpellItemEnchantment"])
-        {{
-            enum parts = member.findSplit(":");
-            enum field = parts[0];
-            enum file = parts[2] ~ ".dbc";
-            __traits(getMember, data, field) = typeof(__traits(getMember, data, field)).load(buildPath(dir, file));
-        }}
+        // Each store, from the file its `DbcFile` names.
+        static foreach (i, field; data.tupleof)
+            static if (isDbcStore!(typeof(field)))
+            {
+                static assert(getUDAs!(data.tupleof[i], DbcFile).length == 1,
+                    __traits(identifier, data.tupleof[i]) ~ " needs a @DbcFile naming the file it is read from");
+                data.tupleof[i] = typeof(field).load(buildPath(dir, getUDAs!(data.tupleof[i], DbcFile)[0].name ~ ".dbc"));
+            }
         data.buildIndexes();
         info!"loaded client data from %s (%s races, %s classes, %s skill lines, %s skill abilities)"(dir,
             data.races.rows.length, data.classes.rows.length, data.skillLines.rows.length,
@@ -989,4 +986,13 @@ unittest
     assert(data.charSection(1, CharSectionType.hair, 0, 5, 1) is null, "unavailable sections do not count");
     assert(data.charSection(1, CharSectionType.skin, 1, 0, 2) is null, "wrong gender");
     assert(maskOf(1) == 1 && maskOf(8) == 0x80 && maskOf(0) == 0);
+}
+
+// The load finds the stores by their type, and each names its file.
+unittest
+{
+    import std.traits : getUDAs;
+
+    static assert(isDbcStore!(typeof(ClientData.races)) && !isDbcStore!(typeof(ClientData.taxiNetwork)));
+    static assert(getUDAs!(ClientData.races, DbcFile)[0].name == "ChrRaces");
 }
