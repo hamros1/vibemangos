@@ -129,14 +129,14 @@ The largest area. In order:
    `auras.d`, `aurahandlers.d`; README's "Spells" and "Auras"); creatures' spells come with their
    scripts (above), talents with milestone 7. Channelled spells, area, cone, party and chain targets, persistent area auras, missiles' flight, items'
    equip spells, spell and healing power (direct and over time), creatures' partial resists: done.
-   Binary spells and resisted ticks: done. Next: resists against players (with PvP).
+   Binary spells and resisted ticks, and resists against players: done.
 6. **Duels and trades: done** (`tradehandlers.d`, `duelhandlers.d`; README's "Trading" and
    "Duels"). Players fight players in melee and with spells where the relations allow (duelists,
    PvP-flagged enemies). The PvP flag (`pvp.d`): `/pvp`, enforced zones, contested players, free-for-all
    arenas, Honorless Target. Honor (`honor.d`): kills, dishonorable kills, racial leaders, ranks, the fields,
    inspecting, the weekly standing (`honorweek.d`), what ranks bring (rank items at vendors and to equip,
    price and repair discounts, the defense channels, the Halls, `CONDITION_PVP_RANK`), the `.honor`
-   commands. Not yet: honor in battlegrounds (with them), the off hand against players.
+   commands. Honor in battlegrounds and the off hand against players: done.
 7. **Battlegrounds: started** (`bgqueue.d`, `battleground.d`).
    * Milestone A, queue and entry: **done**.
      * The queues are a cluster service, with brackets, three slots, invitations of 80 s and their

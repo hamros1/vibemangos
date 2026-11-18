@@ -345,12 +345,13 @@ private:
         return player !is null && (player.values.get!UNIT_FIELD_FLAGS & UnitFlags.inCombat) != 0;
     }
 
-    /// The swing loop against a player: the same checks, the main hand only.
+    /// The swing loop against a player: the same checks, both hands as against a creature.
     void updateMeleeAgainstPlayer(typeof(this) other)
     {
-        if (attackTimer[AttackType.mainHand])
-            return;
         const self = player.fighter, target = other.player.fighter;
+        const dualWield = self.dualWield;
+        if (attackTimer[AttackType.mainHand] && !(dualWield && attackTimer[AttackType.offHand] == 0))
+            return;
         SwingError error;
         if (!canReachWithMelee(self, target))
             error = SwingError.notInRange;
@@ -362,11 +363,29 @@ private:
             return stopAttack(false); // the duel is over
         else
         {
-            swingAtPlayer(other, AttackType.mainHand);
-            attackTimer[AttackType.mainHand] = player.stats.attackTime[AttackType.mainHand];
+            if (attackTimer[AttackType.mainHand] == 0)
+            {
+                // A main hand and an off hand swing are at least 0.2 s apart.
+                if (dualWield && attackTimer[AttackType.offHand] < attackDisplayDelay)
+                    attackTimer[AttackType.offHand] = attackDisplayDelay;
+                swingAtPlayer(other, AttackType.mainHand);
+                attackTimer[AttackType.mainHand] = player.stats.attackTime[AttackType.mainHand];
+            }
+            if (dualWield && attackTimer[AttackType.offHand] == 0 && other.player.fighter.alive)
+            {
+                if (attackTimer[AttackType.mainHand] < attackDisplayDelay)
+                    attackTimer[AttackType.mainHand] = attackDisplayDelay;
+                swingAtPlayer(other, AttackType.offHand);
+                attackTimer[AttackType.offHand] = player.stats.attackTime[AttackType.offHand];
+            }
         }
         if (error != SwingError.none)
-            attackTimer[AttackType.mainHand] = 100;
+        {
+            if (attackTimer[AttackType.mainHand] == 0)
+                attackTimer[AttackType.mainHand] = 100;
+            if (dualWield && attackTimer[AttackType.offHand] == 0)
+                attackTimer[AttackType.offHand] = 100;
+        }
         if (error != lastSwingError)
         {
             if (error == SwingError.notInRange)
