@@ -707,6 +707,7 @@ database at the same time; a cluster's nodes take their ids in blocks from its c
 | `max_pending_output_kb` | a client with more than this not yet sent to it (it is not reading) is disconnected; 0 no limit | `4096` |
 | `mmaps` | creatures find their way over `data_dir/mmaps`, where there are movement maps | `true` |
 | `write_log` | where writes wait, flushed to disk, until MySQL has them; written again at start-up (skipping what `dmangos_write_applied` says MySQL has); refused writes go to `<write_log>.failed`; empty for none | `"writes.log"` (`"writes-<node_id>.log"` in a cluster) |
+| `disabled_transports` | ships and zeppelins (`transports.entry`) that do not sail, e.g. one a client cannot show | `[]` |
 | `packet_log` | a directory where every packet sent to each client is written (time, opcode, body in hex), for finding what a client cannot take; empty for none | `""` |
 | `cluster` | this node's place in a cluster (docs/CLUSTER.md); standalone without it | none |
 | `logout_delay`, `player_save_interval` | seconds a logout takes (GMs and resting players: none); seconds between saves of each character | `20`, `900` |
