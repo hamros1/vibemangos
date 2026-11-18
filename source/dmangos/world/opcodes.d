@@ -586,7 +586,9 @@ enum CharacterResponse : ubyte
     CHAR_CREATE_PVP_TEAMS_VIOLATION = 0x33,
     CHAR_CREATE_SERVER_LIMIT = 0x34,
     CHAR_CREATE_ACCOUNT_LIMIT = 0x35,
-    CHAR_CREATE_DISABLED = 0x3A,
+    /// In the client's order between NAME_IN_USE and PVP_TEAMS_VIOLATION (as vmangos numbers them). CMaNGOS has
+    /// 0x3A, marked unsure, which the client shows as "character deletion failed".
+    CHAR_CREATE_DISABLED = 0x32,
     CHAR_DELETE_IN_PROGRESS = 0x38,
     CHAR_DELETE_SUCCESS = 0x39,
     CHAR_DELETE_FAILED = 0x3A,
@@ -667,3 +669,34 @@ enum Opcode[] movementOpcodes = () {
 }();
 
 static assert(movementOpcodes.length == 21);
+
+/**
+ * Whether no two members of `E` share a value, except the members named in `aliases` (each meant to repeat
+ * another's value). Checked at compile time below, for the enums whose values come from the client.
+ */
+bool uniqueValues(E, aliases...)()
+{
+    import std.algorithm.searching : canFind;
+    import std.traits : EnumMembers;
+
+    enum string[] allowed = [aliases];
+    string[] names;
+    static foreach (m; __traits(allMembers, E))
+        names ~= m;
+    foreach (i, a; [EnumMembers!E])
+        foreach (j, b; [EnumMembers!E])
+            if (i < j && a == b && !allowed.canFind(names[i]) && !allowed.canFind(names[j]))
+                return false;
+    return true;
+}
+
+static assert(uniqueValues!(Opcode)(), "two opcodes share a value");
+static assert(uniqueValues!(CharacterResponse, "CHAR_DELETE_FAILED_GUILD_LEADER")(),
+    "two character responses share a value");
+
+unittest
+{
+    enum Probe { a = 1, b = 2, c = 1 }
+    static assert(!uniqueValues!Probe());
+    static assert(uniqueValues!(Probe, "c")());
+}
