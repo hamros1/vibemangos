@@ -31,6 +31,14 @@ by module, which functions of these projects each one reproduces.
   `world/gm*.d`): its command tables, permissions, messages and behaviour, which dmangos reproduces
   exactly.
 
+### vmangos
+
+* <https://github.com/vmangos/core>
+* Copyright: the vmangos and CMaNGOS projects and the MaNGOS authors.
+* Licence: GNU General Public License, version 2 or (at your option) any later version.
+* Derived here: the meeting stones' queue (`world/meetingstone.d` and its part of
+  `world/groupservice.d`): its roles, priorities, matching and timers, and its packets.
+
 ## Included third-party code
 
 ### Recast & Detour (recastnavigation 1.6.0)

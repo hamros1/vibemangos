@@ -91,6 +91,36 @@ mixin template GameObjectHandlers()
         useGameObject(go);
     }
 
+    /// At a meeting stone: this player, or its party, waits for the stone's dungeon (`dmangos.world.meetingstone`).
+    @Handles(Opcode.CMSG_MEETINGSTONE_JOIN, WorldState.inWorld)
+    void handleMeetingStoneJoin(const ClientGuid request)
+    {
+        import dmangos.world.groupservice : GroupOp;
+
+        auto go = cast(GameObject) map.findObject(request.guid);
+        if (go is null || go.type != GameObjectType.meetingStone || !withinInteraction(go, 2))
+            return;
+        groupCommand(GroupOp.meetingStoneJoin, 0, null, null, go.template_.data[2], player.data.classId);
+    }
+
+    /// Out of the meeting stone's queue.
+    @Handles(Opcode.CMSG_MEETINGSTONE_LEAVE, WorldState.inWorld)
+    void handleMeetingStoneLeave()
+    {
+        import dmangos.world.groupservice : GroupOp;
+
+        groupCommand(GroupOp.meetingStoneLeave);
+    }
+
+    /// The stone's window asks how this player stands in the queue.
+    @Handles(Opcode.CMSG_MEETINGSTONE_INFO, WorldState.inWorld)
+    void handleMeetingStoneInfo()
+    {
+        import dmangos.world.groupservice : GroupOp;
+
+        groupCommand(GroupOp.meetingStoneInfo);
+    }
+
     /// This player uses a game object: what happens depends on its type.
     package void useGameObject(GameObject go)
     {

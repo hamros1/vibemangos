@@ -211,6 +211,15 @@ What works now:
     assistants, kicking, leaving, loot settings, raid target icons, ready checks, rolls, minimap
     pings, and member stats for members out of sight. Groups are kept in `groups` and
     `group_member` and survive restarts. Logging out of a party leaves it.
+  * **Meeting stones** (looking for group, `world/meetingstone.d`): at a dungeon's stone a player
+    alone, or a party's leader, queues for the stone's dungeon. Once a second the queue fills waiting
+    parties with the tank, healer and up to three damage dealers they lack (the class best suited
+    first, then who waited longest; after 30 minutes anyone who has waited goes first), and five
+    waiting alone for one dungeon make a party of the first two, which then fills like any other. A
+    party of five is complete and leaves the queue; one still waiting is told so every five minutes; a
+    new leader, a raid or a disband takes it out. The rules are vmangos's. In a cluster the queue is
+    the coordinator's, beside the groups. Not yet: talent-based roles, and players who log out are not
+    kept in the queue for their return.
   * **Guilds:** a guild charter
     bought from a guild master for 10 silver, signed by nine others of the faction (once an account)
     and turned in founds the guild with five ranks; invitations (of the faction unless
@@ -835,6 +844,7 @@ source/dmangos/world/       the world server
   inworld.d                   handlers: logout, movement and its check, queries, settings, chat, emotes
   teleport.d                  handlers and TeleportTo: near and far teleports, area triggers
   grouphandlers.d             handlers: invitations, raids, loot settings, icons, ready checks, rolls
+  meetingstone.d              the meeting stones' queue (looking for group): roles, matching, packets
   channelhandlers.d           handlers: chat channels
   npchandlers.d               handlers: gossip, NPC texts, trainers, innkeepers, bankers, vendors
   npcdata.d                   gossip menus, texts, trainer and vendor lists from the world database

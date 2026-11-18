@@ -484,9 +484,15 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 
 ## world/groupservice.d
 
-* Projects: CMaNGOS
-* Files: `GroupHandler.cpp`
+* Projects: CMaNGOS, vmangos
+* Files: `GroupHandler.cpp`; vmangos `LFGHandler.cpp`, `LFGQueue.cpp`, `Group.cpp`
 * Functions: `Player::CanUninviteFromGroup`, `WorldSession::HandleGroupInviteOpcode`, `WorldSession::LogoutPlayer`, `WorldSession::SendPartyResult`
+
+## world/meetingstone.d
+
+* Projects: vmangos
+* Files: `LFG/LFGDefines.h`, `LFG/LFGMgr.cpp`, `LFG/LFGQueue.cpp`, `Group/Group.cpp`, `Server/Packets/Misc.cpp`
+* Functions: `LFGMgr::CalculateRoles`, `LFGMgr::GetPriority`, `LFGQueue::Update`, `LFGQueue::FindRoleToGroup`, `Group::CalculateLFGRoles`, `Group::FillPremadeLFG`
 
 ## world/guild.d
 

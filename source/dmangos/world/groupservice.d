@@ -17,6 +17,8 @@ import dmangos.cluster.protocol : GroupCommand;
 import dmangos.world.context : WorldContext;
 import dmangos.world.group;
 import dmangos.world.map : packetBody;
+import dmangos.world.meetingstone;
+import core.time : Duration;
 import dmangos.world.online : OnlinePlayer;
 import dmangos.world.opcodes : Opcode;
 import dmangos.world.packets;
@@ -35,6 +37,9 @@ GroupCommand groupCommand(const OnlinePlayer who, GroupOp op, ulong target = 0, 
 final class GroupService
 {
     private WorldContext context;
+    /// Who waits at the meeting stones (`dmangos.world.meetingstone`).
+    MeetingStoneQueue meetingStones;
+    private long sinceMeetingStones; // milliseconds since the queue last moved
 
     ///
     this(WorldContext context)
@@ -172,9 +177,16 @@ final class GroupService
                 group.convertToRaid();
             return;
         }
+        case GroupOp.meetingStoneJoin:
+            return meetingStoneJoin(c);
+        case GroupOp.meetingStoneLeave:
+            return meetingStoneLeave(c);
+        case GroupOp.meetingStoneInfo:
+            return meetingStoneInfo(c);
         case GroupOp.logout:
             // Logging out: invitations lapse; a party (not a raid) is left
-            // when logging out normally.
+            // when logging out normally; the meeting stone's queue is left.
+            meetingStones.removePlayer(c.guid);
             groups.uninvite(c.guid);
             auto group = groups.of(c.guid);
             if (group !is null && !group.isRaid && c.number)
@@ -183,7 +195,184 @@ final class GroupService
         }
     }
 
+    /**
+     * The meeting stones' queue moves once a second: parties checked against their groups (disbanded, a new
+     * leader, made a raid, filled by invitation), players who found a party taken out, then the queue's
+     * own rules (`MeetingStoneQueue.update`), carried out.
+     */
+    void meetingStonesTick(Duration elapsed)
+    {
+        import std.sumtype : match;
+
+        sinceMeetingStones += elapsed.total!"msecs";
+        if (sinceMeetingStones < 1000)
+            return;
+        const ms = sinceMeetingStones;
+        sinceMeetingStones = 0;
+        if (meetingStones.parties.length == 0 && meetingStones.players.length == 0)
+            return;
+        auto groups = context.groups;
+        foreach (q; meetingStones.parties.dup)
+        {
+            auto group = groups.byId.get(q.group, null);
+            if (group is null)
+            {
+                meetingStones.removeParty(q.group);
+                continue;
+            }
+            if (group.leader != q.leader || group.isRaid)
+            {
+                meetingStones.removeParty(q.group);
+                broadcast(group, ServerMeetingStoneSetQueue(0, QueueStatus.leftQueue));
+                continue;
+            }
+            if (group.members.length != q.members)
+            {
+                auto party = meetingStones.party(q.group);
+                MeetingStoneQueue.fillRoles(*party, classesOf(group));
+                if (party.members >= partySize)
+                {
+                    meetingStones.removeParty(q.group);
+                    completed(group);
+                }
+            }
+        }
+        foreach (p; meetingStones.players.dup)
+            if (!online(p.guid)) // its node went away without its logout
+                meetingStones.removePlayer(p.guid);
+            else if (groups.of(p.guid) !is null)
+            {
+                meetingStones.removePlayer(p.guid);
+                send(p.guid, ServerMeetingStoneSetQueue(0, QueueStatus.none));
+            }
+        foreach (event; meetingStones.update(ms))
+            event.match!(
+                (Joins j) {
+                    auto group = groups.byId.get(j.group, null);
+                    if (group is null || group.isFull || groups.of(j.player) !is null)
+                        return;
+                    broadcast(group, ServerMeetingStoneMemberAdded(j.player));
+                    group.addMember(j.player, j.name);
+                },
+                (Forms f) {
+                    if (groups.of(f.leader) !is null || groups.of(f.member) !is null)
+                        return;
+                    send(f.leader, ServerMeetingStoneMemberAdded(f.member));
+                    auto group = groups.newGroup();
+                    if (!group.addLeaderInvite(f.leader, f.leaderName))
+                        return;
+                    group.create();
+                    group.addMember(f.member, f.memberName);
+                    queueParty(group, f.area, f.team);
+                },
+                (Completes c) {
+                    if (auto group = groups.byId.get(c.group, null))
+                        completed(group);
+                },
+                (StillLooking s) {
+                    if (auto group = groups.byId.get(s.group, null))
+                        foreach (ref m; group.members)
+                            context.deliverTo(m.guid, Opcode.SMSG_MEETINGSTONE_IN_PROGRESS, null);
+                });
+    }
+
 private:
+    // At a stone: a party's leader queues its party; a player alone queues itself.
+    void meetingStoneJoin(const ref GroupCommand c)
+    {
+        auto groups = context.groups;
+        const team = cast(uint) context.client.teamForRace(c.race);
+        if (auto group = groups.of(c.guid))
+        {
+            if (!group.isLeader(c.guid))
+                return send(c.guid, ServerMeetingStoneJoinFailed(JoinFailure.notPartyLeader));
+            if (group.isRaid)
+                return send(c.guid, ServerMeetingStoneJoinFailed(JoinFailure.raid));
+            if (group.isFull)
+                return send(c.guid, ServerMeetingStoneJoinFailed(JoinFailure.partyFull));
+            return queueParty(group, c.number, team);
+        }
+        meetingStones.removePlayer(c.guid);
+        meetingStones.players ~= QueuedPlayer(c.guid, c.name, cast(ubyte) c.number2, team, c.number);
+        send(c.guid, ServerMeetingStoneSetQueue(c.number, QueueStatus.joinedQueue));
+    }
+
+    void meetingStoneLeave(const ref GroupCommand c)
+    {
+        if (auto group = context.groups.of(c.guid))
+        {
+            if (group.isLeader(c.guid) && meetingStones.removeParty(group.id))
+                return broadcast(group, ServerMeetingStoneSetQueue(0, QueueStatus.leftQueue));
+            return send(c.guid, ServerMeetingStoneSetQueue(0, QueueStatus.none));
+        }
+        send(c.guid, ServerMeetingStoneSetQueue(0,
+            meetingStones.removePlayer(c.guid) ? QueueStatus.leftQueue : QueueStatus.none));
+    }
+
+    void meetingStoneInfo(const ref GroupCommand c)
+    {
+        if (auto group = context.groups.of(c.guid))
+        {
+            if (const party = meetingStones.party(group.id))
+                return send(c.guid, ServerMeetingStoneSetQueue(party.area, QueueStatus.joinedQueue));
+            return send(c.guid, ServerMeetingStoneSetQueue(0, QueueStatus.none));
+        }
+        if (const p = meetingStones.player(c.guid))
+            return send(c.guid, ServerMeetingStoneSetQueue(p.area, QueueStatus.joinedQueue));
+        send(c.guid, ServerMeetingStoneSetQueue(0, QueueStatus.none));
+    }
+
+    // `group` waits for members for `area`, its open roles from its members' classes.
+    void queueParty(Group group, uint area, uint team)
+    {
+        meetingStones.removeParty(group.id);
+        auto party = QueuedParty(group.id, group.leader, team, area);
+        MeetingStoneQueue.fillRoles(party, classesOf(group));
+        meetingStones.parties ~= party;
+        broadcast(group, ServerMeetingStoneSetQueue(area, QueueStatus.joinedQueue));
+    }
+
+    // A party is complete: told so, and its stone windows emptied.
+    void completed(Group group)
+    {
+        foreach (ref m; group.members)
+            context.deliverTo(m.guid, Opcode.SMSG_MEETINGSTONE_COMPLETE, null);
+        broadcast(group, ServerMeetingStoneSetQueue(0, QueueStatus.none));
+    }
+
+    // The members' classes, as this node knows them (its own players, the others' presence); 0 for one offline.
+    ubyte[] classesOf(const Group group)
+    {
+        ubyte[] classes;
+        foreach (ref m; group.members)
+        {
+            ubyte c;
+            if (auto local = context.onlinePlayer(m.guid))
+                c = local.character.data.classId;
+            else if (auto remote = context.remotePlayer(m.guid))
+                c = remote.entry.classId;
+            classes ~= c;
+        }
+        return classes;
+    }
+
+    bool online(ulong guid)
+    {
+        return context.onlinePlayer(guid) !is null || context.remotePlayer(guid) !is null;
+    }
+
+    void send(T)(ulong guid, const T packet)
+    {
+        context.deliverTo(guid, T.opcode, packetBody(packet));
+    }
+
+    void broadcast(T)(const Group group, const T packet)
+    {
+        const body_ = packetBody(packet);
+        foreach (ref m; group.members)
+            context.deliverTo(m.guid, T.opcode, body_);
+    }
+
     /// `SMSG_PARTY_COMMAND_RESULT` to the player who gave the command.
     void result(const ref GroupCommand c, PartyOperation operation, string member, PartyResult code)
     {
@@ -350,4 +539,55 @@ unittest
     gone.removed = true;
     node2.groups.mirror(gone);
     assert(node2.groups.of(jainaGuid) is null && node2.groups.count == 0);
+}
+
+/**
+ * The meeting stones on the coordinator: five players of node 2 queue alone for one dungeon; the queue makes a
+ * party of the first two, which then takes the tank, the healer and the damage it lacks and is complete.
+ */
+unittest
+{
+    import core.time : seconds;
+    import std.algorithm.searching : canFind;
+    import dmangos.cluster.protocol : PresenceEntry;
+    import dmangos.world.testclient;
+
+    auto db = newDatabase();
+    auto coordinator = newCreationContext(db);
+    coordinator.nodeId = 1;
+    struct Sent { ulong guid; ushort opcode; }
+    Sent[] sent;
+    coordinator.deliverRemote = (ushort node, ulong guid, ushort opcode, const(ubyte)[]) {
+        sent ~= Sent(guid, opcode);
+    };
+    enum uint deadmines = 1581;
+    // A mage, a rogue, a warrior, a priest, a hunter: all human.
+    immutable ubyte[5] classes = [8, 4, 1, 5, 3];
+    PresenceEntry[] entries;
+    foreach (i, c; classes)
+        entries ~= PresenceEntry(100 + i, "P" ~ cast(char)('a' + i), 9, 1, c, 20, 0, 1581, 0, 0, "");
+    coordinator.presence(2, true, entries, null);
+    auto service = coordinator.groupService;
+    foreach (i, c; classes)
+        service.run(GroupCommand(100 + i, entries[i].name, 1, false, GroupOp.meetingStoneJoin, 0, null, null,
+            deadmines, c), 2);
+    assert(service.meetingStones.players.length == 5);
+    assert(sent.canFind(Sent(100, Opcode.SMSG_MEETINGSTONE_SETQUEUE)));
+
+    service.meetingStonesTick(1.seconds);
+    auto group = coordinator.groups.of(100);
+    assert(group !is null && group.isLeader(100) && group.members.length == 2, "the first two are a party");
+    assert(service.meetingStones.party(group.id) !is null && service.meetingStones.players.length == 3);
+
+    sent = null;
+    service.meetingStonesTick(1.seconds);
+    assert(group.members.length == 5, "the warrior, the priest and the hunter joined");
+    assert(service.meetingStones.parties.length == 0 && service.meetingStones.players.length == 0);
+    assert(sent.canFind(Sent(100, Opcode.SMSG_MEETINGSTONE_MEMBER_ADDED)));
+    assert(sent.canFind(Sent(104, Opcode.SMSG_MEETINGSTONE_COMPLETE)));
+
+    // Leaving: a player alone is told it left; one who never queued, that it is not queued.
+    service.run(GroupCommand(200, "Q", 1, false, GroupOp.meetingStoneJoin, 0, null, null, deadmines, 8), 2);
+    service.run(GroupCommand(200, "Q", 1, false, GroupOp.meetingStoneLeave), 2);
+    assert(service.meetingStones.players.length == 0);
 }

@@ -3777,7 +3777,10 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         battlegrounds.tick(elapsed);
         updateGameEvents(now);
         if (forwardGroup is null) // the coordinator, or alone (not while starting: who coordinates is not known yet)
+        {
             eventMails();
+            groupService.meetingStonesTick(elapsed); // the meeting stones' queue is the groups' keeper's
+        }
         updateShips();
         linkFollowers();
         scriptedGameObjectsDue();

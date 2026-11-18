@@ -26,7 +26,7 @@ import dmangos.serialization : deserialize, LengthPrefix, serialize;
 @safe: // the compiler checks every function here
 
 /// Changes whenever a message changes; nodes speaking another version are turned away.
-enum ushort protocolVersion = 32; // 32: the battleground raid (a group operation); 31: the channels' forced say
+enum ushort protocolVersion = 33; // 33: the meeting stones (group operations); 32: the battleground raid (a group operation); 31: the channels' forced say
 
 /// Size of a frame header.
 enum frameHeaderSize = 16;
@@ -468,6 +468,9 @@ enum GroupOp : ubyte
     assistant,       /// `target`, `number`: set (1) or not (0)
     logout,          /// `number`: 1 when logging out normally, 0 for a lost connection
     battlegroundAdd, /// `target` (named `text`) joins its team's battleground raid, whose leader gives the command
+    meetingStoneJoin,  /// at a meeting stone: `number` its area, `number2` the player's class (alone, or its party)
+    meetingStoneLeave, /// out of the meeting stone's queue
+    meetingStoneInfo,  /// the stone's window asks how the player stands
 }
 
 /// What a `GmRemote` does to its target.
@@ -941,7 +944,7 @@ private enum ulong protocolFingerprint = () {
 }();
 
 /// The protocol version whose messages `protocolFingerprint` was recorded for, and the fingerprint.
-private enum recordedVersion = 32, recordedFingerprint = 0xca20162115d9d052UL;
+private enum recordedVersion = 33, recordedFingerprint = 0x631bcac4c4b1c417UL;
 
 static assert(protocolVersion == recordedVersion && protocolFingerprint == recordedFingerprint,
     "the cluster messages (or protocolVersion) changed: if the messages changed, raise protocolVersion; then record "
