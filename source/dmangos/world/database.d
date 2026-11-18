@@ -182,6 +182,8 @@ struct PetRecord
     long saveTime;
     string actionBar;         /// `abdata`: type and action of each of the ten buttons
     string teachSpells;       /// `teachspelldata`
+    uint resetCost;           /// `resettalents_cost`: what its last untraining cost
+    long resetTime;           /// `resettalents_time`: when (Unix time)
     PetSpellRecord[] spells;
 }
 

@@ -546,3 +546,42 @@ unittest
     session.sufferDamage(UnitRef.init, 1_000_000, Blow.spell());
     assert(context.map(0).findObject(second) is null, "gone with its owner");
 }
+
+/// Untraining a pet: its taught spells go for 10 silver; done again the same day, 50.
+unittest
+{
+    import dmangos.bytes : ByteWriter;
+    import dmangos.world.player : Player;
+    import dmangos.world.spellhandlers : testSpell;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto rexxar = loggedIn(context, db, 7, "Rexxar", Position(-8949.95f, -132.49f, 83.53f, 0), AccountLevel.player,
+        raceOrc);
+    rexxar.read();
+    addPetData(&rexxar, context);
+    auto session = rexxar.session.inWorld;
+    auto map = context.map(0);
+    auto beast = context.summonCreature(map, wolf, Position(-8947, -132.49f, 83.53f, 0), TempSpawnType.dead, 0, 0);
+    auto tame = effectSpell(spellTameBeastDone, 55);
+    session.tameCreature(&tame, beast.guid);
+    auto pet = session.ownPet;
+    auto state = cast(PetState) pet.petData;
+    foreach (uint id; [97501, 97502])
+    {
+        context.data.spells.spells[id] = testSpell(id, 2, 6, 10);
+        session.teachPet(id);
+    }
+    auto me = cast(Player) rexxar.session.character;
+    me.modifyMoney(10_000);
+    const money = me.money;
+    rexxar.read();
+    ByteWriter w;
+    w.put(pet.guid);
+    rexxar.write(Opcode.CMSG_PET_UNLEARN, w.data);
+    assert(!state.knows(97501) && !state.knows(97502) && me.money == money - 1000, "for 10 silver");
+    foreach (uint id; [97501, 97502])
+        session.teachPet(id);
+    rexxar.write(Opcode.CMSG_PET_UNLEARN, w.data);
+    assert(me.money == money - 1000 - 5000, "then 50");
+}

@@ -275,6 +275,11 @@ private:
         case GossipOption.stablePet:
             // The stable master's option: for hunters.
             return player.data.classId == 3;
+        case GossipOption.unlearnPetSkills:
+            // A hunters' pet trainer, for a hunter whose pet knows more than one spell.
+            enum uint trainerTypePets = 3, hunter = 3;
+            return creature.npcTemplate.trainerType == trainerTypePets && creature.npcTemplate.trainerClass == hunter
+                && petMayUntrain();
         case GossipOption.unlearnTalents:
             // A class trainer of the player's own class, from the level talents begin.
             return creature.npcTemplate.trainerType == TrainerType.classes
@@ -380,6 +385,10 @@ private:
         case GossipOption.unlearnTalents:
             closeGossip();
             offerTalentWipe(creature.guid);
+            break;
+        case GossipOption.unlearnPetSkills:
+            closeGossip();
+            offerPetUntrain();
             break;
         case GossipOption.petitioner:
             closeGossip();

@@ -231,7 +231,8 @@ What works now:
     hits, and its loyalty rises with content days and kills (a rebellious pet that falls further runs
     away). It is taught spells by the Beast Training window's teaching spells for its training points
     (from its level and loyalty); its owner learns the teaching spells of a tamed beast's passive
-    abilities at once, and of its others one time in ten as the pet uses them. The owner's death
+    abilities at once, and of its others one time in ten as the pet uses them. A hunters' pet trainer
+    untrains the pet (10 silver, then 50, then a gold more each time the same day, at most 10 gold). The owner's death
     sends the pet away until the owner lives again. Hostile creatures notice a pet that comes within
     their aggro radius and attack it. Not yet: pet auras and cooldowns saved.
   * **Friends and ignore lists:** up to 50 friends and 25 ignored players,

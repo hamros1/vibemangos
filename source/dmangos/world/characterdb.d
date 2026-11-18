@@ -624,8 +624,8 @@ final class CharacterStatements
         PetRecord[] found;
         foreach (row; characters.query!("SELECT id, entry, owner, IFNULL(modelid, 0), CreatedBySpell, PetType, level, "
                 ~ "exp, Reactstate, loyaltypoints, loyalty, xpForNextLoyalty, trainpoint, IFNULL(name, ''), renamed, slot, "
-                ~ "curhealth, curmana, curhappiness, savetime, IFNULL(abdata, ''), IFNULL(teachspelldata, '') "
-                ~ "FROM character_pet WHERE owner = ? ORDER BY id")(owner))
+                ~ "curhealth, curmana, curhappiness, savetime, IFNULL(abdata, ''), IFNULL(teachspelldata, ''), "
+                ~ "resettalents_cost, resettalents_time FROM character_pet WHERE owner = ? ORDER BY id")(owner))
         {
             PetRecord p;
             p.id = row.get!uint(0);
@@ -650,6 +650,8 @@ final class CharacterStatements
             p.saveTime = row.get!long(19);
             p.actionBar = row.get!string(20);
             p.teachSpells = row.get!string(21);
+            p.resetCost = row.get!uint(22);
+            p.resetTime = row.get!long(23);
             foreach (s; characters.query!"SELECT spell, active FROM pet_spell WHERE guid = ? ORDER BY spell"(p.id))
                 p.spells ~= PetSpellRecord(s.get!uint(0), cast(ubyte) s.get!uint(1));
             found ~= p;
@@ -665,10 +667,10 @@ final class CharacterStatements
             characters.execute!("INSERT INTO character_pet (id, entry, owner, modelid, level, exp, Reactstate, "
                 ~ "loyaltypoints, loyalty, trainpoint, slot, name, renamed, curhealth, curmana, curhappiness, abdata, "
                 ~ "teachspelldata, savetime, resettalents_cost, resettalents_time, CreatedBySpell, PetType, "
-                ~ "xpForNextLoyalty) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?)")(
+                ~ "xpForNextLoyalty) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")(
                 p.id, p.entry, p.owner, p.modelId, p.level, p.exp, uint(p.reactState), p.loyaltyPoints, p.loyalty,
                 p.trainingPoints, p.slot, p.name, uint(p.renamed), p.health, p.mana, p.happiness, p.actionBar,
-                p.teachSpells, p.saveTime, p.createdBySpell, uint(p.type), p.xpForNextLoyalty);
+                p.teachSpells, p.saveTime, p.resetCost, p.resetTime, p.createdBySpell, uint(p.type), p.xpForNextLoyalty);
             characters.execute!"DELETE FROM pet_spell WHERE guid = ?"(p.id);
             foreach (s; p.spells)
                 characters.execute!"INSERT INTO pet_spell (guid, spell, active) VALUES (?, ?, ?)"(p.id, s.spell,

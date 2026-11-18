@@ -227,6 +227,8 @@ final class PetState
     int trainingPoints;
     uint happiness;
     string teachSpells;
+    uint resetCost;   /// what its last untraining cost, and when (Unix time)
+    long resetTime;   /// ditto
 
     /// Whether it knows `spell`.
     bool knows(uint spell) const
@@ -289,6 +291,8 @@ final class PetState
         r.saveTime = now;
         r.actionBar = bar.toString();
         r.teachSpells = teachSpells.length ? teachSpells : "0 0 0 0 0 0 0 0 ";
+        r.resetCost = resetCost;
+        r.resetTime = resetTime;
         r.spells = spells.dup;
         return r;
     }
@@ -311,6 +315,8 @@ final class PetState
         p.trainingPoints = r.trainingPoints;
         p.happiness = r.happiness;
         p.teachSpells = r.teachSpells;
+        p.resetCost = r.resetCost;
+        p.resetTime = r.resetTime;
         return p;
     }
 }

@@ -1510,6 +1510,75 @@ mixin template PetHandlers()
 
     package ulong[4] totems; /// the totem in each slot (fire, earth, water, air); 0 if none
 
+    /**
+     * What untraining the pet costs: 10 silver the first time (or a day after the last), then 50 silver, then
+     * a gold, then a gold more each time, at most 10 gold.
+     */
+    package uint petUntrainCost()
+    {
+        auto state = petState();
+        if (state is null)
+            return 0;
+        enum uint silver = 100, gold = 10_000;
+        const days = (context.unixTime - state.resetTime) / 86_400;
+        if (state.resetCost < 10 * silver || days > 0)
+            return 10 * silver;
+        if (state.resetCost < 50 * silver)
+            return 50 * silver;
+        if (state.resetCost < gold)
+            return gold;
+        return state.resetCost + gold > 10 * gold ? 10 * gold : state.resetCost + gold;
+    }
+
+    /// Whether a pet trainer would untrain the pet: a hunter's, knowing more than one spell.
+    package bool petMayUntrain()
+    {
+        auto state = petState();
+        return state !is null && state.type == PetType.hunter && state.spells.length > 1;
+    }
+
+    /// The pet trainer offers to untrain the pet: `SMSG_PET_UNLEARN_CONFIRM` with its cost.
+    package void offerPetUntrain()
+    {
+        if (!petMayUntrain())
+            return;
+        ByteWriter w;
+        w.put(pet_.guid);
+        w.put(petUntrainCost());
+        deliver(Opcode.SMSG_PET_UNLEARN_CONFIRM, w.data);
+    }
+
+    /**
+     * The player has the pet untrained: for its cost, the pet forgets the spells it was taught (its passive
+     * ones stay), and its training points are its level times its loyalty level less one.
+     */
+    @Handles(Opcode.CMSG_PET_UNLEARN, WorldState.inWorld)
+    void handlePetUnlearn(ref ByteReader reader)
+    {
+        import dmangos.world.inventory : BuyResult;
+
+        auto pet = ownPetNamed(reader.read!ulong);
+        if (pet is null || !petMayUntrain())
+            return;
+        const cost = petUntrainCost();
+        if (player.money < cost)
+            return sendBuyError(BuyResult.notEnoughMoney, null, 0);
+        auto state = petState();
+        foreach (s; state.spells.dup)
+            if (const info = context.data.spells.spell(s.spell))
+                if (!info.isPassive)
+                    state.unlearn(s.spell);
+        state.trainingPoints = cast(int)(pet.values.get!UNIT_FIELD_LEVEL * (state.loyalty > 0 ? state.loyalty - 1 : 0));
+        pet.values.set!UNIT_TRAINING_POINTS(shownTrainingPoints(state));
+        map.flushObjectChanges(pet);
+        state.resetCost = cost;
+        state.resetTime = context.unixTime;
+        player.modifyMoney(-cast(long) cost);
+        flushPlayerChanges();
+        sendPetSpells();
+        writePet(PetSlot.current);
+    }
+
     /// The client tells the pet to stop attacking.
     @Handles(Opcode.CMSG_PET_STOP_ATTACK, WorldState.inWorld)
     void handlePetStopAttack(ref ByteReader reader)
