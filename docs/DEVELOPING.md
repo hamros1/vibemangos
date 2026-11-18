@@ -258,6 +258,26 @@ in-memory database (`newDatabase`), contexts (`newContext`, `newCreationContext`
 `chatBody`, `opcodesOf` and `bodyOf`. To let time pass, replace `context.clock`, as the movement
 check's test does.
 
+### The test harness
+
+`tools/harness/` holds what every change goes through, against a private MariaDB with its own copy of
+the databases (so load tests never touch a dev server's characters):
+
+```sh
+tools/harness/setup.sh SOURCE_DATADIR   # once: copies a stopped MariaDB data directory, writes configs
+tools/harness/check.sh                  # unit tests, release builds, then the cluster regression
+tools/harness/check.sh --quick          # without the regression
+tools/harness/regression.sh             # two nodes, 250 bots in a crowd while regions split and merge
+tools/harness/bench.sh LABEL crowd 500  # one benchmark run (docs/BENCHMARKS.md), report in LABEL.md
+tools/harness/db.sh start|stop|status
+```
+
+The harness lives in `~/.cache/dmangos-harness` (`DMANGOS_HARNESS`). It needs an unpacked MariaDB
+(`MARIADB_ROOT`, by default the dev server's in `~/dmangos-server/mariadb`) and extracted client data
+(`CLIENT_DATA`, used read-only). Its MariaDB listens on a private socket only and runs without grant
+tables. The regression passes when all bots are in the world at the end, none failed, both nodes
+lived, and no crash was logged; it also reports how many regions split and merged.
+
 ### Live tests against real data
 
 For two players, run two clients at once: one listening, one acting.
