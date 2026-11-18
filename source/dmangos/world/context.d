@@ -651,7 +651,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     /// A spawned creature of a pack waits to be linked (once its cell holds it).
     private void queueLinked(uint mapId, uint instance, Creature c)
     {
-        if (!data.creatureLinks.involves(c.spawnId, c.template_.entry))
+        if (!data.creatureLinks.involves(c.spawnId, c.template_.entry) && c.spawnId !in data.formationSlots)
             return;
         linkSpawned ~= c;
         linkSpawnedOn ~= instance ? map(mapId, instance) : map(mapId);
@@ -684,6 +684,11 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             auto m = maps_[i];
             if (!c.alive || m.findObject(c.guid) !is c)
                 continue;
+            if (const slot = c.spawnId in data.formationSlots)
+            {
+                arrangeFormation(m, (*slot)[0]);
+                continue;
+            }
             const(CreatureLink)* link;
             if (auto master = masterOf(m, c, link))
                 if (link.flags & LinkFlag.follow)
@@ -692,6 +697,70 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             foreach (j, slave; slavesOf(m, c, links))
                 if (links[j].flags & LinkFlag.follow)
                     follow(m, slave, c);
+        }
+    }
+
+    private uint[][uint] formationMembers; // group -> member spawns, by slot
+
+    /**
+     * Formation `group`'s members on `m`: its leader (slot 0) walks the formation's path; the others take
+     * their places around it in slot order (`formationPlace`), and follow it.
+     */
+    private void arrangeFormation(Map m, uint group)
+    {
+        import std.algorithm.sorting : sort;
+        import dmangos.world.creaturelinking : formationPlace;
+        import dmangos.world.motion : FollowMovement, WaypointMovement;
+
+        if (formationMembers is null)
+        {
+            uint[2][][uint] bySlot;
+            foreach (guid, gs; data.formationSlots)
+                bySlot[gs[0]] ~= [gs[1], guid];
+            foreach (g, list; bySlot)
+            {
+                list.sort!((a, b) => a[0] < b[0]);
+                foreach (e; list)
+                    formationMembers[g] ~= e[1];
+            }
+        }
+        const f = group in data.formations;
+        if (f is null)
+            return;
+        Creature find(uint guid)
+        {
+            if (const spawn = creatureSpawnOf(guid))
+                return cast(Creature) m.findObject(makeGuid(HighGuid.unit, spawn.entry, guid));
+            return null;
+        }
+        const members = formationMembers.get(group, null);
+        if (members.length == 0)
+            return;
+        auto leader = find(members[0]);
+        if (leader is null || !leader.alive)
+            return;
+        if (f.pathId && cast(WaypointMovement) leader.generator is null && (leader.ai is null || !leader.ai.inCombat))
+            if (const path = data.waypoints.path(f.pathId))
+            {
+                leader.generator = new WaypointMovement(path, f.movementType == 4);
+                m.wake(leader.guid);
+            }
+        uint index;
+        foreach (guid; members[1 .. $])
+        {
+            auto c = find(guid);
+            if (c is null || !c.alive)
+                continue;
+            ++index;
+            if (c.ai !is null && c.ai.inCombat)
+                continue;
+            float distance, angle;
+            formationPlace(*f, index, cast(uint) members.length, distance, angle);
+            if (auto following = cast(FollowMovement) c.generator)
+                if (following.leader == leader.guid && following.distance == distance && following.angle == angle)
+                    continue;
+            c.generator = new FollowMovement(leader.guid, distance, angle);
+            m.wake(c.guid);
         }
     }
 
@@ -3542,4 +3611,38 @@ unittest
             break;
     }
     assert(innkeeper.ai.inCombat && banker.ai.inCombat, "attacking the master brings in its pack");
+}
+
+// A formation: its leader walks the formation's path, the others take their places behind it.
+unittest
+{
+    import core.time : msecs, MonoTime;
+    import std.math : isClose, PI;
+    import dmangos.world.creaturelinking : Formation;
+    import dmangos.world.motion : FollowMovement, WaypointMovement, WaypointNode;
+    import dmangos.world.movement : Position;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    context.data.formations[1] = Formation(1, 3, 77, 2); // single file, 3 yards apart, path 77
+    context.data.formationSlots[innkeeperSpawn] = [1, 0];
+    context.data.formationSlots[bankerSpawn] = [1, 1];
+    context.data.waypoints.addPathNode(77, WaypointNode(1, -8951, -130, 83.5f));
+    context.data.waypoints.addPathNode(77, WaypointNode(2, -8960, -130, 83.5f));
+    context.data.waypoints.finish();
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f));
+    anduin.read();
+    now += 100.msecs;
+    context.update(now);
+    auto m = context.map(0);
+    auto leader = cast(Creature) m.findObject(makeGuid(HighGuid.unit, creatureInnkeeper, innkeeperSpawn));
+    auto member = cast(Creature) m.findObject(makeGuid(HighGuid.unit, creatureBanker, bankerSpawn));
+    assert(cast(WaypointMovement) leader.generator !is null, "the leader walks the path");
+    auto place = cast(FollowMovement) member.generator;
+    assert(place !is null && place.leader == leader.guid && isClose(place.distance, 3) && isClose(place.angle, PI),
+        "the member follows three yards behind");
 }

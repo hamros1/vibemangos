@@ -62,6 +62,19 @@ final class WaypointStore
     {
         WaypointNode[][uint] bySpawn;    // spawn guid -> path, by point
         WaypointNode[][uint] byEntry;    // entry << 8 | path id -> path
+        WaypointNode[][uint] byPath;     // `waypoint_path`: path id -> path
+    }
+
+    /// Adds a `waypoint_path` point.
+    void addPathNode(uint pathId, WaypointNode node)
+    {
+        byPath[pathId] ~= node;
+    }
+
+    /// The `waypoint_path` path `pathId`; null if none.
+    const(WaypointNode)[] path(uint pathId) const
+    {
+        return byPath.get(pathId, null);
     }
 
     /// Adds a `creature_movement` point; `finish` sorts them.
@@ -82,7 +95,7 @@ final class WaypointStore
         import std.algorithm.searching : canFind;
         import std.algorithm.sorting : sort;
 
-        foreach (paths; [&bySpawn, &byEntry])
+        foreach (paths; [&bySpawn, &byEntry, &byPath])
         {
             uint[] broken;
             foreach (key, ref path; *paths)

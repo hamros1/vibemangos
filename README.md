@@ -273,6 +273,10 @@ What works now:
     * They follow their master out of combat, as their spawns stood.
     * They evade with it, and die or go when it dies.
     * In a dungeon they stay away once their boss is dead.
+  * **Formations** (`spawn_group_formation`): a spawn group's leader (slot 0) walks the formation's path
+    (`waypoint_path`). The others keep their places around it, in slot order: single file, side by
+    side, like geese, fanned out behind or in front, or around the leader, `FormationSpread` yards
+    apart.
   * **Game events** (`game_event`):
     * The holidays, the Darkmoon Faire, fishing contests, Call to Arms weekends, day and night.
     * Each runs in its repeating windows: fixed dates, the same days every year, or Easter week.

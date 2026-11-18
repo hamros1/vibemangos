@@ -104,3 +104,74 @@ unittest
     assert(links.involves(1, 0) && links.involves(0, 600) && !links.involves(2, 2));
     assert(inLinkRange(0, 0, 10, 10, 30) && !inLinkRange(0, 0, 40, 0, 30) && inLinkRange(0, 0, 1000, 0, 0));
 }
+
+/**
+ * A formation (`spawn_group_formation`): a spawn group whose slot 0 leads, walking its path, and whose
+ * other members keep their places around it. `type`: 1 single file, 2 side by side, 3 like geese, 4 fanned
+ * out behind, 5 fanned out in front, 6 around the leader (0, random, is laid out side by side here).
+ */
+struct Formation
+{
+    uint type;
+    float spread = 0;  /// yards between places
+    uint pathId;       /// the leader's `waypoint_path`
+    uint movementType; /// 2 round its path, 4 there and back
+}
+
+/**
+ * Where the `index`-th member after the leader (from 1) of `total` members stands: its distance from the
+ * leader, and the angle from the leader's facing (pi: behind).
+ */
+void formationPlace(const ref Formation f, uint index, uint total, out float distance, out float angle)
+    pure nothrow @nogc @safe
+{
+    import std.math : PI;
+
+    const d = f.spread > 0 ? f.spread : 2;
+    const n = total > 1 ? total - 1 : 1; // the leader's followers
+    switch (f.type)
+    {
+    case 1: // single file
+        angle = PI;
+        distance = d * index;
+        break;
+    case 3: // like geese
+        angle = (index & 1) == 0 ? PI + PI / 4 : PI - PI / 4;
+        distance = d * ((index - 1) / 2 + 1);
+        break;
+    case 4: // fanned out behind
+        angle = PI / 2 + (PI / n) * (index - 1);
+        distance = d;
+        break;
+    case 5: // fanned out in front
+        angle = PI + PI / 2 + (PI / n) * (index - 1);
+        if (angle > 2 * PI)
+            angle -= 2 * PI;
+        distance = d;
+        break;
+    case 6: // around the leader
+        angle = (2 * PI / n) * (index - 1);
+        distance = d;
+        break;
+    default: // side by side (and random)
+        angle = (index & 1) == 0 ? PI / 2 + PI : PI / 2;
+        distance = d * ((index - 1) / 2 + 1);
+        break;
+    }
+}
+
+unittest
+{
+    import std.math : isClose, PI;
+
+    auto file = Formation(1, 3);
+    float d, a;
+    formationPlace(file, 2, 4, d, a);
+    assert(isClose(a, PI) && isClose(d, 6), "single file: two places behind");
+    auto side = Formation(2, 2);
+    formationPlace(side, 1, 3, d, a);
+    assert(isClose(a, PI / 2) && isClose(d, 2));
+    formationPlace(side, 2, 3, d, a);
+    assert(isClose(a, PI * 1.5) && isClose(d, 2), "the other side");
+}
+

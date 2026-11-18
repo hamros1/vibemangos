@@ -25,7 +25,7 @@ import dmangos.world.gameobject : GameObjectSpawn, GameObjectTemplate, GameObjec
 import dmangos.world.bgqueue : BattlegroundTemplate, BattlegroundType;
 import dmangos.world.enchantments : EnchantmentEffect, EnchantmentType, RandomEnchantment;
 import dmangos.world.gameevents : GameEvent, ScheduleType;
-import dmangos.world.creaturelinking : CreatureLinks;
+import dmangos.world.creaturelinking : CreatureLinks, Formation;
 import dmangos.world.grid : cellKeyAt;
 import dmangos.world.motion : MotionType, WaypointNode, WaypointStore;
 import dmangos.world.loot : lootColumns, lootRow, LootStore, LootStores;
@@ -358,6 +358,8 @@ final class WorldData
     GameEvent[] gameEvents;                         /// `game_event` and `game_event_time`
     ushort[][uint] questGameEvents;                 /// `game_event_quest`: the events a quest is given during
     CreatureLinks creatureLinks;                    /// `creature_linking` and `creature_linking_template`
+    Formation[uint] formations;                     /// `spawn_group_formation`, by spawn group
+    uint[2][uint] formationSlots;                   /// a formation member's spawn -> (its group, its slot)
     uint[3][uint] propertyEnchantments;             /// a random property's enchantments (`ItemRandomProperties.dbc`)
     EnchantmentEffect[3][uint] enchantmentEffects;  /// an enchantment's effects (`SpellItemEnchantment.dbc`)
     ubyte[2][uint] gameObjectBattleEvents;          /// `gameobject_battleground`: ditto
@@ -530,6 +532,11 @@ final class WorldData
         data.loadTeleports(world, client);
         data.loadEnchantments(world, client);
         data.loadGameEvents(world);
+        foreach (row; world.query!"SELECT Id, FormationType, FormationSpread, PathId, MovementType FROM spawn_group_formation"())
+            data.formations[row.get!uint(0)] = Formation(row.get!uint(1), row.get!float(2), row.get!uint(3), row.get!uint(4));
+        foreach (row; world.query!"SELECT Id, Guid, SlotId FROM spawn_group_spawn"())
+            if (row.get!uint(0) in data.formations && row.get!int(2) >= 0)
+                data.formationSlots[row.get!uint(1)] = [row.get!uint(0), cast(uint) row.get!int(2)];
         foreach (row; world.query!"SELECT guid, master_guid, flag FROM creature_linking"())
             data.creatureLinks.addGuid(row.get!uint(0), row.get!uint(1), row.get!uint(2));
         foreach (row; world.query!"SELECT entry, map, master_entry, flag, search_range FROM creature_linking_template"())
@@ -871,6 +878,13 @@ final class WorldData
                 ++skipped;
             else
                 waypoints.addEntryNode(row.get!uint(0), row.get!uint(1), n);
+        }
+        foreach (row; world.query!("SELECT PathId, Point, PositionX, PositionY, PositionZ, Orientation, WaitTime, "
+            ~ "ScriptId FROM waypoint_path")())
+        {
+            const n = node(row, 1);
+            if (valid(n))
+                waypoints.addPathNode(row.get!uint(0), n);
         }
         waypoints.finish();
         info!"loaded %s creature waypoint paths (%s points skipped)"(waypoints.length, skipped);
