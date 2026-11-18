@@ -1103,6 +1103,7 @@ mixin template PetHandlers()
     /// with its owner (or set aside if dead), to come back with it.
     package void petsOnLeave()
     {
+        unsummonTotems(); // totems do not follow their owner
         if (pet_ !is null)
             unsummonPet(PetSlot.current);
     }
@@ -1364,11 +1365,142 @@ mixin template PetHandlers()
         writePet(PetSlot.current);
     }
 
-    /// The player's totems out (none until totems are summoned).
+    /**
+     * A totem summoned (spell effect 74, or 87 to 90 for the fire, earth, water and air slots): the one in
+     * its slot goes, and the totem stands beside the player (each slot its own side), the player's
+     * faction and level, with the effect's value as health, for the spell's duration. A passive totem
+     * holds its spell's aura (given to the party, `updateAreaAuras`); an active one casts its spell at the
+     * nearest enemy in its range (`updateTotems`). Its kills are its owner's.
+     */
+    package void summonTotem(const(SpellInfo)* spell, size_t i, int value)
+    {
+        import std.math : cos, PI, sin;
+        import dmangos.world.auras : makeAura;
+        import dmangos.world.creature : TempSpawnType;
+        import dmangos.world.creatureai : ReactState;
+        import dmangos.world.spellcast : castTime, duration, effectValue;
+
+        enum uint summonTotemAny = 74, slotFirst = 87;
+        const effect = spell.effect[i];
+        const slot = effect >= slotFirst && effect < slotFirst + 4 ? effect - slotFirst : uint.max;
+        if (slot != uint.max)
+            unsummonTotem(slot);
+        const entry = cast(uint) spell.miscValue[i];
+        if (entry !in context.data.creatureTemplates)
+            return;
+        const angle = slot != uint.max ? PI / 4 - slot * PI / 2 : 0;
+        const o = player.position.orientation + angle;
+        auto at = Position(player.position.x + 2 * cos(o), player.position.y + 2 * sin(o), player.position.z,
+            player.position.orientation);
+        const ground = map.groundHeight(at.x, at.y, at.z + 2, false);
+        if (ground > -100_000 && (ground - at.z) ^^ 2 < 25)
+            at.z = ground;
+        const ms = duration(*spell, context.client, player.data.level);
+        auto totem = context.summonCreature(map, entry, at, ms > 0 ? TempSpawnType.timedOrDead : TempSpawnType.dead,
+            ms > 0 ? ms : 0, player.guid);
+        if (totem is null)
+            return;
+        auto v = &totem.values;
+        const faction = player.values.get!UNIT_FIELD_FACTIONTEMPLATE;
+        v.set!UNIT_FIELD_FACTIONTEMPLATE(faction);
+        totem.factionTemplate = context.client.factionTemplates.lookup(faction);
+        v.set!UNIT_FIELD_LEVEL(player.data.level);
+        if (value > 0)
+        {
+            v.set!UNIT_FIELD_MAXHEALTH(cast(uint) value);
+            v.set!UNIT_FIELD_HEALTH(cast(uint) value);
+        }
+        v.set!UNIT_CREATED_BY_SPELL(spell.id);
+        v.set!UNIT_FIELD_SUMMONEDBY(player.guid);
+        v.set!UNIT_FIELD_CREATEDBY(player.guid);
+        v.set!UNIT_FIELD_FLAGS(v.get!UNIT_FIELD_FLAGS | UnitFlags.playerControlled);
+        totem.totemOwner = player.guid;
+        totem.ai.react = ReactState.passive; // it stands and casts; it does not fight
+        totem.ai.scriptMelee(false);
+        totem.ai.scriptCombatMovement(false);
+        if (const s = entry in context.data.creatureFirstSpell)
+            if (const info = context.data.spells.spell(*s))
+            {
+                totem.totemSpell = *s;
+                totem.totemActive = castTime(*info, context.client, player.data.level) > 0;
+                if (!totem.totemActive)
+                {
+                    // Its aura on itself, whence it reaches the party.
+                    int[3] amounts;
+                    foreach (j; 0 .. 3)
+                        amounts[j] = effectValue(*info, j, player.data.level, 0);
+                    bool isNew;
+                    totem.auras.apply(makeAura(info, totem.guid, player.data.level, -1, true, amounts), totem.values,
+                        isNew);
+                }
+            }
+        map.flushObjectChanges(totem);
+        if (slot != uint.max)
+            totems[slot] = totem.guid;
+        else
+            loneTotem = totem.guid;
+    }
+
+    /// The totem in `slot` goes.
+    package void unsummonTotem(uint slot)
+    {
+        if (slot >= totems.length || !totems[slot])
+            return;
+        map.removeObject(totems[slot]);
+        totems[slot] = 0;
+    }
+
+    /// Every totem goes (the owner dies, leaves the map, logs out).
+    package void unsummonTotems()
+    {
+        foreach (slot; 0 .. totems.length)
+            unsummonTotem(cast(uint) slot);
+        if (loneTotem)
+            map.removeObject(loneTotem);
+        loneTotem = 0;
+    }
+
+    private ulong loneTotem; /// a totem of no slot
+
+    /// Each tick: an active totem casts its spell at the nearest enemy of its owner within its range, when it can.
+    package void updateTotems()
+    {
+        import dmangos.world.relations : canAttack;
+        import dmangos.world.spellcast : range;
+
+        foreach (totem; ownTotems())
+        {
+            if (!totem.totemActive || totem.ai is null || totem.ai.castingNow)
+                continue;
+            const info = context.data.spells.spell(totem.totemSpell);
+            if (info is null)
+                continue;
+            const reach = range(*info, context.client)[1];
+            Creature nearest;
+            float best = reach * reach;
+            foreach (c; map.creaturesNear(totem.position, reach))
+            {
+                if (!c.alive || c is totem || c.totemOwner || c.petOwner == player.guid || c.ai is null)
+                    continue;
+                if (!canAttack(relatingNow(), c.ai.relatingOf(), context.client))
+                    continue;
+                const d = (c.position.x - totem.position.x) ^^ 2 + (c.position.y - totem.position.y) ^^ 2;
+                if (d <= best)
+                {
+                    best = d;
+                    nearest = c;
+                }
+            }
+            if (nearest !is null)
+                totem.ai.castSpell(info, nearest.guid, 0);
+        }
+    }
+
+    /// The player's totems out.
     package Creature[] ownTotems()
     {
         Creature[] found;
-        foreach (guid; totems)
+        foreach (guid; totems[] ~ loneTotem)
             if (guid)
                 if (auto c = cast(Creature) map.findObject(guid))
                     if (c.alive)

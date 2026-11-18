@@ -474,6 +474,7 @@ private:
         updateEnchantments(elapsed);
         updateAutoRepeat(elapsed);
         updateAreaAuras(elapsed);
+        updateTotems();
         updatePetMood(elapsed);
         updateTaxi(cast(int) elapsed.total!"msecs");
         updateTimedQuests();

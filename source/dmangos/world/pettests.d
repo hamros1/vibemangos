@@ -487,3 +487,62 @@ unittest
     map.objectRelocated(pet);
     assert(boar.ai.currentVictim == pet.guid, "the boar goes for the pet");
 }
+
+/**
+ * Totems: one summoned stands beside its owner with the owner's level and its health; a passive one's aura reaches
+ * its owner; a second of the same element replaces the first; they go when their owner dies.
+ */
+unittest
+{
+    import core.time : msecs;
+    import dmangos.dbc : buildDbc;
+    import dmangos.world.auras : AuraType;
+    import dmangos.world.clientdata : spellDurationFormat, spellRadiusFormat;
+    import dmangos.world.creature : Creature;
+    import dmangos.world.player : Player;
+    import dmangos.world.spellcast : ImplicitTarget;
+    import dmangos.world.spellhandlers : testSpell;
+    import dmangos.world.unit : Blow, UnitRef;
+    import dmangos.world.updatefields;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    uint bits(float f) { return *cast(uint*) &f; }
+    context.client.spellRadii = typeof(context.client.spellRadii).parse(buildDbc(spellRadiusFormat,
+        [[1u, bits(30), 0, 0]]), "SpellRadius.dbc");
+    context.client.spellDurations = typeof(context.client.spellDurations).parse(buildDbc(spellDurationFormat,
+        [[1u, 120_000, 0, 120_000]]), "SpellDuration.dbc");
+    auto thrall = loggedIn(context, db, 7, "Thrall", Position(-8949.95f, -132.49f, 83.53f, 0), AccountLevel.player,
+        raceOrc);
+    thrall.read();
+    addPetData(&thrall, context);
+    auto session = thrall.session.inWorld;
+    auto me = cast(Player) thrall.session.character;
+    enum uint totemEntry = 5873, totemAura = 97400, summon = 97401;
+    auto t = petTemplate(totemEntry, "Stoneskin Totem", false);
+    context.data.creatureTemplates[totemEntry] = t;
+    context.data.creatureFirstSpell[totemEntry] = totemAura;
+    context.data.spells.spells[totemAura] = testSpell(totemAura, 35, ImplicitTarget.caster, 10);
+    context.data.spells.spells.edit(totemAura).casting.applyAuraName[0] = AuraType.modResistance;
+    context.data.spells.spells.edit(totemAura).casting.radiusIndex[0] = 1;
+    context.data.spells.spells[summon] = testSpell(summon, 88, ImplicitTarget.caster, 5); // the earth slot
+    context.data.spells.spells.edit(summon).miscValue[0] = totemEntry;
+    context.data.spells.spells.edit(summon).casting.durationIndex = 1;
+
+    session.castTriggeredAt(summon, 0);
+    auto totem = cast(Creature) context.map(0).findObject(session.totems[1]);
+    assert(totem !is null && totem.totemOwner == me.guid && totem.values.get!UNIT_FIELD_HEALTH == 5);
+    assert(totem.values.get!UNIT_FIELD_LEVEL == me.data.level && totem.auras.find(totemAura) !is null);
+    session.updateAreaAuras(1000.msecs);
+    auto given = me.auras.find(totemAura);
+    assert(given !is null && given.caster == totem.guid, "its aura on its owner");
+
+    session.castTriggeredAt(summon, 0);
+    assert(context.map(0).findObject(totem.guid) is null && session.totems[1] != totem.guid, "replaced");
+    session.updateAreaAuras(1000.msecs);
+    const second = session.totems[1];
+    assert(me.auras.find(totemAura) !is null && me.auras.find(totemAura).caster == second, "the new one's");
+
+    session.sufferDamage(UnitRef.init, 1_000_000, Blow.spell());
+    assert(context.map(0).findObject(second) is null, "gone with its owner");
+}

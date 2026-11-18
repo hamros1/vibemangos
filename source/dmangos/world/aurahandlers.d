@@ -185,12 +185,21 @@ private:
                     if (auto s = cast(typeof(this)) context.onlinePlayer(m.guid))
                         if (s.player !is null && s.map is map)
                             members ~= s;
+        // Sources that lost an aura (or are gone) take it back first, so a replacing source's is given now.
         bool[string] current;
+        foreach (ref src; sources)
+            foreach (aura; src.auras)
+                current[format!"%s:%s"(src.guid, aura.spell.id)] = true;
+        foreach (key, given; areaAuraGiven.dup)
+            if (key !in current)
+            {
+                areaAuraGiven.remove(key);
+                takeAreaAuraKey(key, given);
+            }
         foreach (ref src; sources)
             foreach (aura; src.auras)
             {
                 const key = format!"%s:%s"(src.guid, aura.spell.id);
-                current[key] = true;
                 const r = areaAuraRadius(aura.spell);
                 ulong[] given;
                 foreach (m; members)
@@ -208,12 +217,6 @@ private:
                     if (!given.canFind(g))
                         takeAreaAura(g, aura.spell.id, src.guid);
                 areaAuraGiven[key] = given;
-            }
-        foreach (key, given; areaAuraGiven.dup)
-            if (key !in current)
-            {
-                areaAuraGiven.remove(key);
-                takeAreaAuraKey(key, given);
             }
     }
 

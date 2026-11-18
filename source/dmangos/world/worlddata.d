@@ -393,7 +393,8 @@ final class WorldData
     EnchantmentEffect[3][uint] enchantmentEffects;  /// an enchantment's effects (`SpellItemEnchantment.dbc`)
     float[uint] enchantProcRates;
     Ship[] ships;                                   /// `transports`: the ships and zeppelins, with their schedules
-    PageText[uint] pageTexts;                       /// `page_text`: books', letters' and plaques' pages, by id                   /// `spell_proc_item_enchant`: an enchantment proc's procs a minute, by spell
+    PageText[uint] pageTexts;                       /// `page_text`: books', letters' and plaques' pages, by id
+    uint[uint] creatureFirstSpell;                  /// `creature_template_spells` (set 0): a creature's first spell (a totem's)                   /// `spell_proc_item_enchant`: an enchantment proc's procs a minute, by spell
     ubyte[2][uint] gameObjectBattleEvents;          /// `gameobject_battleground`: ditto
     string[uint] serverStrings;                     /// `mangos_string`'s default texts
     GhostEntrance[uint] ghostEntrances;             /// `instance_template`'s ghost entrances, by instance map
@@ -576,6 +577,9 @@ final class WorldData
                 row.get!uint(4));
         data.loadSpawns(world, client, spawnSeed);
         data.loadTransports(world, client); // after the game object templates
+        foreach (row; world.query!"SELECT entry, spell1 FROM creature_template_spells WHERE setId = 0"())
+            if (row.get!uint(1))
+                data.creatureFirstSpell[row.get!uint(0)] = row.get!uint(1);
         foreach (row; world.query!"SELECT entry, text, next_page FROM page_text"())
             data.pageTexts[row.get!uint(0)] = PageText(row.get!string(1), row.get!uint(2));
         data.loadWaypoints(world);

@@ -1483,6 +1483,9 @@ private:
         case 57: // SPELL_EFFECT_LEARN_PET_SPELL
             teachPet(spell.triggerSpell[i]);
             break;
+        case 74, 87, 88, 89, 90: // SPELL_EFFECT_SUMMON_TOTEM, _SLOT1 .. _SLOT4 (fire, earth, water, air)
+            summonTotem(spell, i, value);
+            break;
         case 94: // SPELL_EFFECT_SELF_RESURRECT
             selfResurrect(spell, i, value);
             break;

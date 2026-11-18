@@ -333,9 +333,10 @@ Character creditedPlayer(UnitRef unit)
     case UnitKind.player:
         return unit.session;
     case UnitKind.creature:
-        if (!unit.creature.petOwner)
+        const owner = unit.creature.petOwner ? unit.creature.petOwner : unit.creature.totemOwner;
+        if (!owner)
             return null;
-        return cast(Character) unit.map.find(unit.creature.petOwner);
+        return cast(Character) unit.map.find(owner);
     }
 }
 

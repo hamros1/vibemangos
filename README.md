@@ -524,7 +524,12 @@ What works now:
     shields (Thorns) hurt whoever hits the player in melee, and auras that trigger a spell on a melee
     hit or damaging spell, dealt or taken, or on a kill worth experience (Lightning Shield, Seal of
     Righteousness) do so by their chance, using their charges; what a proc casts sets off no procs. A party area aura (a paladin's Devotion
-    Aura) is on its caster and, refreshed each second, on its group's members within its radius. Dispels (Dispel Magic, Cleanse, Remove Curse, Purge) take random auras of their type:
+    Aura) is on its caster and, refreshed each second, on its group's members within its radius. A
+    shaman's totems stand beside it, one of each element (a new one replaces the old), with its level,
+    their health and the spell's duration, and go when it dies or leaves: a passive one holds its
+    spell's aura (`creature_template_spells`), given to its owner and party within its radius; an
+    active one (Searing Totem) casts its spell at the nearest enemy in range. Their kills are their
+    owner's. Dispels (Dispel Magic, Cleanse, Remove Curse, Purge) take random auras of their type:
     harmful magic off friends, helpful magic off enemies. Creatures are slowed and sped up by their
     auras, and stand still while rooted or stunned. Not yet: procs on ranged attacks, heals and other
     events.
