@@ -330,8 +330,10 @@ What works now:
     them, and game objects give and take back quests (`gameobject_questrelation`,
     `gameobject_involvedrelation`) as creatures do. A trap springs on a player who steps within its
     radius (half its diameter) and is not its faction's friend: its spell at the player, then its
-    cooldown; one with charges is used up after them. Not yet: their own gossip, mining
-    veins' extra uses, linked traps, stealthed traps' visibility, creatures springing traps,
+    cooldown; one with charges is used up after them. A vein or herb with least and most
+    opens (`minSuccessOpens`, `maxSuccessOpens`) fills again after it is emptied: always before its
+    least, never at its most, and in between by a chance that falls with its uses and rises with the
+    gatherer's mining skill. Not yet: their own gossip, linked traps, stealthed traps' visibility, creatures springing traps,
     another node's objects in a cluster.
   * **Fishing:** the fishing spell
     channels at a bobber cast between its least and greatest range in front of the angler, on the

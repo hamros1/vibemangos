@@ -126,6 +126,7 @@ final class GameObject : Replicable, Moving, PerViewer
     uint holeCatches;            /// a fishing hole's catches so far, against `holeMaxCatches`
     uint holeMaxCatches;         /// ... chosen between its least and greatest when first fished
     uint trapUses;               /// a trap's springs so far, against its charges
+    uint gatherUses;             /// a vein's (or herb's) times emptied so far, against its least and most opens
     int despawnTimer;            /// ms until a chest opened but not emptied goes; 0: none
     bool[ulong] skilledUp;       /// those it gave a skill-up: once until it respawns
     /// Whether it is usable for `viewer`'s quests; null: for nobody.

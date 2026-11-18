@@ -375,13 +375,48 @@ mixin template GameObjectHandlers()
                 loot.fill(template_, context.data.loot, context.data.items, map.random, &meets, &allowed);
             }
         loot.changed = () => map.flushGameObject(go);
+        auto self = this;
         loot.lootedForAll = () {
-            // A chest's loot released: done (and gone, if consumable).
+            // A vein that fills again (its least and most opens): ready with new loot; else done (and gone).
+            if (self.gatherAgain(go))
+            {
+                go.loot = null;
+                go.lootState = GoLootState.ready;
+                go.despawnTimer = 0;
+                return;
+            }
             go.lootState = GoLootState.justDeactivated;
             map.wake(go.guid);
         };
         go.despawnTimer = 5 * 60 * 1000; // gone 5 minutes after opening even if not emptied
         return loot;
+    }
+
+    /**
+     * A vein (a chest with `minSuccessOpens` and `maxSuccessOpens`, data 4 and 5) emptied: another use counted;
+     * it fills again every time before its least, never at its most, and between the two by a chance falling
+     * with its uses and rising with the gatherer's mining skill against the lock's.
+     */
+    bool gatherAgain(GameObject go)
+    {
+        import std.math : pow;
+
+        if (go.type != GameObjectType.chest)
+            return false;
+        const least = go.template_.data[4], most = go.template_.data[5];
+        if (least == 0 || most <= least)
+            return false;
+        const uses = ++go.gatherUses;
+        if (uses >= most)
+            return false;
+        if (uses < least)
+            return true;
+        int required = 175;
+        if (const lock = context.client.locks.lookup(go.template_.data[0]))
+            required = lock.skill[0];
+        const skill = player is null ? 0.0f : float(player.skillValue(skillMining)[0]) / (required + 25);
+        const chance = pow(0.8, 4.0 * uses / most);
+        return uniform(0.0f, 100.0f, map.random) < 100 * chance + skill;
     }
 
     /**
@@ -596,6 +631,29 @@ unittest
     now += 61.seconds;
     tick(1000);
     assert(map.findObject(gos[1].guid) !is null, "back after its minute");
+
+    // A herb that may be gathered two or three times (its least and most opens): full again after the first.
+    {
+        auto again = cast(GameObject) map.findObject(gos[1].guid);
+        GameObjectTemplate t = cast() *again.template_;
+        t.data[4] = 2;
+        t.data[5] = 3;
+        context.data.gameObjectTemplates[9002] = t;
+        again.template_ = 9002 in context.data.gameObjectTemplates;
+        uint picks;
+        while (map.findObject(gos[1].guid) !is null && picks < 5)
+        {
+            anduin.write(Opcode.CMSG_CAST_SPELL, gatherAt(gos[1].guid));
+            assert(opcodesOf(anduin.read()).canFind(Opcode.SMSG_LOOT_RESPONSE), "full");
+            anduin.write(Opcode.CMSG_AUTOSTORE_LOOT_ITEM, slot.data);
+            anduin.write(Opcode.CMSG_LOOT_RELEASE, ClientGuid(gos[1].guid));
+            tick(100);
+            ++picks;
+            if (picks == 1)
+                assert(map.findObject(gos[1].guid) !is null && again.lootState == GoLootState.ready, "filled again");
+        }
+        assert(picks >= 2 && picks <= 3, "two or three times");
+    }
 
     // The idol: a quest asks for it to be used; its use counts, and it sparkles while it does.
     Quest q = {id: 9100, method: 2, specialFlags: specialKillOrCast};
