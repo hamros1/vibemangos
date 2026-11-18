@@ -390,10 +390,7 @@ final class WorldData
         quests = new QuestData;
         eventAi = new EventAiData;
         dbScripts = new DbScriptData;
-        loot = LootStores(new LootStore("creature_loot_template"), new LootStore("reference_loot_template"),
-            new LootStore("gameobject_loot_template"), new LootStore("item_loot_template"),
-            new LootStore("fishing_loot_template"), new LootStore("skinning_loot_template"),
-            new LootStore("pickpocketing_loot_template"));
+        loot = LootStores.create();
     }
 
     /**
@@ -626,7 +623,7 @@ final class WorldData
         foreach (row; world.query!"SELECT faction, quest_rate, creature_rate, spell_rate FROM reputation_reward_rate"())
             reputationRates[row.get!uint(0)] = [row.get!float(1), row.get!float(2), row.get!float(3)];
         static foreach (table; [["creature", "creature"], ["reference", "reference"], ["gameobject", "gameObject"],
-                ["item", "item"], ["fishing", "fishing"], ["skinning", "skinning"], ["pickpocketing", "pickpocketing"]])
+                ["item", "item"], ["fishing", "fishing"], ["skinning", "skinning"], ["pickpocketing", "pickpocketing"], ["mail", "mail"]])
             foreach (row; world.query!("SELECT " ~ lootColumns ~ " FROM " ~ table[0] ~ "_loot_template")())
                 __traits(getMember, loot, table[1]).add(row.get!uint(0), lootRow(row.get!uint(1), row.get!float(2),
                     row.get!uint(3), row.get!int(4), row.get!uint(5), row.get!uint(6)));

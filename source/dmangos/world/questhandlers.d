@@ -850,6 +850,8 @@ private:
         if (!canRewardQuest(*quest) || !roomForRewards(*quest, reward))
             return sendOfferReward(*quest, guid, true);
         rewardQuest(*quest, reward);
+        if (quest.rewMailTemplateId)
+            sendQuestMail(*quest, guid);
         // The quest's complete script, the ender the source and the player the target.
         if (quest.completeScript)
         {
@@ -890,6 +892,41 @@ private:
      * Turns the quest in: the items asked for taken, the rewards given (the chosen item, the others,
      * experience or at the top level money, money, the spell), the log slot freed, the quest done.
      */
+    /**
+     * The letter a quest sends once rewarded: from its ender (a creature), with its template's text and
+     * the first item its template's loot gives, after the quest's delay.
+     */
+    void sendQuestMail(const ref Quest quest, ulong ender)
+    {
+        import dmangos.world.database : MailRecord;
+        import dmangos.world.loot : Loot;
+        import dmangos.world.objects : HighGuid, highGuidOf;
+
+        enum ubyte mailCreature = 3, mailGameObject = 4;
+        MailRecord m;
+        m.messageType = highGuidOf(ender) == HighGuid.gameObject ? mailGameObject : mailCreature;
+        m.sender = cast(uint)((ender >> 24) & 0xFF_FFFF); // the ender's entry
+        m.receiver = player.data.guid;
+        m.templateId = quest.rewMailTemplateId;
+        if (const template_ = context.data.loot.mail[quest.rewMailTemplateId])
+        {
+            auto loot = new Loot(0, null);
+            loot.owners[player.guid] = true;
+            loot.fill(template_, context.data.loot, context.data.items, map.random, (uint c) => conditionMet(c), null);
+            foreach (lootItem; loot.items)
+                if (auto item = player.inventory.create(lootItem.itemId, lootItem.count, lootItem.randomPropertyId > 0
+                        ? lootItem.randomPropertyId : 0))
+                {
+                    const record = item.record;
+                    context.database.saveLooseItem(record, player.data.guid);
+                    m.itemGuid = record.guid;
+                    m.itemEntry = record.entry;
+                    break; // a letter holds one item
+                }
+        }
+        context.postMail(m, quest.rewMailDelaySecs);
+    }
+
     void rewardQuest(const ref Quest quest, uint reward)
     {
         foreach (i; 0 .. questObjectives)
@@ -1276,6 +1313,8 @@ unittest
     q.reqItemCount[0] = 1;
     q.rewOrReqMoney = 35;
     q.rewMoneyMaxLevel = 60;
+    q.rewMailTemplateId = 103; // a letter a day later, with jerky
+    q.rewMailDelaySecs = 86_400;
     q.rewItemId[0] = itemShirt;
     q.rewItemCount[0] = 1;
     context.data.quests.quests[q.id] = q;
@@ -1337,6 +1376,11 @@ unittest
     choose.put(trainer.guid);
     choose.put(q.id);
     choose.put(0u);
+    {
+        import dmangos.world.loot : lootRow;
+
+        context.data.loot.mail.add(103, lootRow(itemJerky, 100, 0, 1, 1, 0)); // the letter's jerky (after the kill's loot)
+    }
     anduin.write(Opcode.CMSG_QUESTGIVER_CHOOSE_REWARD, choose.data);
     assert(opcodesOf(anduin.read()).canFind(Opcode.SMSG_QUESTGIVER_QUEST_COMPLETE));
     assert(me.inventory.count(itemJerky) == 0 && me.inventory.count(itemShirt) == 1);
@@ -1344,6 +1388,13 @@ unittest
     assert(me.questStatus[q.id].rewarded && me.values[PLAYER_QUEST_LOG_1_1] == 0);
     assert(db.questRows[7][q.id].rewarded, "saved");
     assert(statusOfTrainer() == DialogStatus.none, "nothing more");
+    // The quest's letter: from the trainer, its template's, the jerky in it, a day from now.
+    bool letter;
+    foreach (ref m; db.mails)
+        if (m.receiver == 7 && m.templateId == 103)
+            letter = m.messageType == 3 && m.sender == creatureTrainer && m.itemEntry == itemJerky
+                && m.deliverTime >= context.unixTime + 86_400 - 5;
+    assert(letter, "the quest's letter is on its way");
 }
 
 /**

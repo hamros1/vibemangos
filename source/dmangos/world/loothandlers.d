@@ -683,8 +683,7 @@ version (unittest)
     {
         import dmangos.world.loot : lootRow, LootStore, LootStores;
 
-        context.data.loot = LootStores(new LootStore("creature_loot_template"), new LootStore("reference_loot_template"),
-            new LootStore("gameobject_loot_template"), new LootStore("item_loot_template"));
+        context.data.loot = LootStores.create();
         context.data.loot.creature.add(99, lootRow(itemJerky, 100, 0, 1, 1, 0));
         auto t = context.data.creatureTemplates.edit(creatureInnkeeper);
         t.lootId = 99;

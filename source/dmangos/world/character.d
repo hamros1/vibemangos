@@ -984,9 +984,7 @@ unittest
     auto context = newCreationContext(db);
     auto now = MonoTime.currTime;
     context.clock = () => now;
-    context.data.loot = LootStores(new LootStore("creature_loot_template"), new LootStore("reference_loot_template"),
-        new LootStore("gameobject_loot_template"), new LootStore("item_loot_template"), new LootStore("fishing"),
-        new LootStore("skinning_loot_template"), new LootStore("pickpocketing_loot_template"));
+    context.data.loot = LootStores.create();
     context.data.loot.skinning.add(200, lootRow(itemJerky, 100, 0, 1, 1, 0));
     auto t = context.data.creatureTemplates.edit(creatureInnkeeper);
     t.lootId = 0;
@@ -1026,9 +1024,7 @@ unittest
 
     auto db = newDatabase();
     auto context = newCreationContext(db);
-    context.data.loot = LootStores(new LootStore("creature_loot_template"), new LootStore("reference_loot_template"),
-        new LootStore("gameobject_loot_template"), new LootStore("item_loot_template"), new LootStore("fishing"),
-        new LootStore("skinning_loot_template"), new LootStore("pickpocketing_loot_template"));
+    context.data.loot = LootStores.create();
     context.data.loot.pickpocketing.add(300, lootRow(itemJerky, 100, 0, 1, 1, 0));
     context.data.creatureTemplates.edit(creatureInnkeeper).pickpocketLootId = 300;
     auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f, 1.97f));

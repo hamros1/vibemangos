@@ -130,6 +130,24 @@ struct LootStores
     LootStore fishing;    /// `fishing_loot_template`: by area (or zone)
     LootStore skinning;   /// `skinning_loot_template`: a creature's skin (by `SkinningLootId`)
     LootStore pickpocketing; /// `pickpocketing_loot_template`: a creature's pockets (by `PickpocketLootId`)
+    LootStore mail;       /// `mail_loot_template`: what a templated letter holds (by its template)
+
+    /// Every store, empty (each named after its table: `creature_loot_template`, ...).
+    static LootStores create()
+    {
+        LootStores stores;
+        static foreach (member; __traits(allMembers, LootStores))
+            static if (is(typeof(__traits(getMember, stores, member)) == LootStore))
+                __traits(getMember, stores, member) = new LootStore(tableOf(member));
+        return stores;
+    }
+
+    private static string tableOf(string member)
+    {
+        import std.uni : toLower;
+
+        return toLower(member) ~ "_loot_template"; // `gameObject`: `gameobject_loot_template`
+    }
     /// `item_enchantment_template`: the random properties an item of a `RandomProperty` may drop with.
     const(RandomEnchantment[])[uint] randomProperties;
 }
@@ -1119,8 +1137,7 @@ version (unittest)
 /// Entries roll on their own chance, a group gives at most one, references are followed.
 unittest
 {
-    auto stores = LootStores(new LootStore("creature_loot_template"), new LootStore("reference_loot_template"),
-            new LootStore("gameobject_loot_template"), new LootStore("item_loot_template"));
+    auto stores = LootStores.create();
     stores.creature.add(1, lootRow(100, 100, 0, 1, 1, 0));    // always
     stores.creature.add(1, lootRow(101, 0.0001f, 0, 1, 1, 0)); // never, in practice
     stores.creature.add(1, lootRow(102, 50, 1, 1, 1, 0));     // group 1: one of these two

@@ -116,6 +116,8 @@ struct Quest
     uint[4] offerRewardEmoteDelay;
     uint startScript;         /// `dbscripts_on_quest_start` when it is taken
     uint completeScript;      /// `dbscripts_on_quest_end` when it is rewarded
+    uint rewMailTemplateId;   /// a letter (`MailTemplate.dbc`, items from `mail_loot_template`) after it is rewarded ...
+    uint rewMailDelaySecs;    /// ... this many seconds after
 
     // What loading works out (`QuestData.link`).
     int[] prevQuests;         /// quests that must be done first (negative: be on), from `PrevQuestId` and others' `NextQuestId`
@@ -313,7 +315,7 @@ enum questQuery = "SELECT entry, Method, ZoneOrSort, MinLevel, MaxLevel, QuestLe
     ~ "OfferRewardEmote3, OfferRewardEmote4, OfferRewardEmoteDelay1, OfferRewardEmoteDelay2, OfferRewardEmoteDelay3, "
     ~ "OfferRewardEmoteDelay4, RewRepFaction1, RewRepFaction2, RewRepFaction3, RewRepFaction4, RewRepFaction5, "
     ~ "RewRepValue1, RewRepValue2, RewRepValue3, RewRepValue4, RewRepValue5, RequiredMinRepFaction, "
-    ~ "RequiredMinRepValue, RequiredMaxRepFaction, RequiredMaxRepValue, StartScript, CompleteScript FROM quest_template";
+    ~ "RequiredMinRepValue, RequiredMaxRepFaction, RequiredMaxRepValue, StartScript, CompleteScript, RewMailTemplateId, RewMailDelaySecs FROM quest_template";
 
 /// One row of `questQuery`.
 struct QuestRow
@@ -346,6 +348,7 @@ struct QuestRow
     uint requiredMaxRepFaction;
     int requiredMaxRepValue;
     uint startScript, completeScript;
+    uint rewMailTemplateId, rewMailDelaySecs;
 
     Quest toQuest() const
     {
@@ -358,7 +361,7 @@ struct QuestRow
                 "rewMoneyMaxLevel", "rewSpell", "rewSpellCast", "pointMapId", "pointX", "pointY", "pointOpt",
                 "incompleteEmote", "incompleteEmoteDelay", "completeEmote", "completeEmoteDelay",
                 "requiredMinRepFaction", "requiredMinRepValue", "requiredMaxRepFaction", "requiredMaxRepValue",
-                "startScript", "completeScript"])
+                "startScript", "completeScript", "rewMailTemplateId", "rewMailDelaySecs"])
             __traits(getMember, q, f) = __traits(getMember, this, f);
         q.objectiveText = [ot1, ot2, ot3, ot4];
         q.reqItemId = [ri1, ri2, ri3, ri4];
