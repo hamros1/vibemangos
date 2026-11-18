@@ -655,6 +655,48 @@ private:
                 found.get.classId));
     }
 
+    /// The client asks for a page (a book's, a letter's, a plaque's): it and each page after it, in turn.
+    @Handles(Opcode.CMSG_PAGE_TEXT_QUERY, WorldState.inWorld)
+    void handlePageTextQuery(ref ByteReader reader)
+    {
+        uint page = reader.read!uint;
+        foreach (_; 0 .. 64) // a chain of pages, not a loop
+        {
+            if (page == 0)
+                break;
+            ByteWriter w;
+            w.put(page);
+            if (const p = page in context.data.pageTexts)
+            {
+                w.putCString(p.text);
+                w.put(p.next);
+                page = p.next;
+            }
+            else
+            {
+                w.putCString("Item page missing.");
+                w.put(0u);
+                page = 0;
+            }
+            deliver(Opcode.SMSG_PAGE_TEXT_QUERY_RESPONSE, w.data);
+        }
+    }
+
+    /// The client reads a carried item (one with pages): `SMSG_READ_ITEM_OK` and its guid; none there, not found.
+    @Handles(Opcode.CMSG_READ_ITEM, WorldState.inWorld)
+    void handleReadItem(ref ByteReader reader)
+    {
+        import dmangos.world.inventory : InventoryResult;
+
+        const bag = reader.read!ubyte, slot = reader.read!ubyte;
+        auto item = player.inventory[bag, slot];
+        if (item is null || item.proto is null || item.proto.details.pageText == 0)
+            return sendEquipError(InventoryResult.itemNotFound);
+        ByteWriter w;
+        w.put(item.fullGuid);
+        deliver(Opcode.SMSG_READ_ITEM_OK, w.data);
+    }
+
     @Handles(Opcode.CMSG_ITEM_QUERY_SINGLE, WorldState.inWorld)
     void handleItemQuery(const ClientItemQuerySingle request)
     {
@@ -1392,4 +1434,29 @@ unittest
     assert(anduin.read()[0].opcode == Opcode.SMSG_GAMEOBJECT_QUERY_RESPONSE);
     anduin.write(Opcode.CMSG_CREATURE_QUERY, ClientObjectQuery(424242, 0));
     assert(anduin.read()[0].body_ == [0x32, 0x79, 0x06, 0x80]);
+}
+
+/// Pages: a query gets the page and each after it; reading a slot without a readable item is refused.
+unittest
+{
+    import std.algorithm.searching : count;
+    import dmangos.bytes : ByteWriter;
+    import dmangos.world.movement : Position;
+    import dmangos.world.opcodes : Opcode;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+    import dmangos.world.worlddata : PageText;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    context.data.pageTexts[1] = PageText("Dear sir,", 2);
+    context.data.pageTexts[2] = PageText("Yours.", 0);
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f));
+    anduin.read();
+    ByteWriter w;
+    w.put(1u);
+    anduin.write(Opcode.CMSG_PAGE_TEXT_QUERY, w.data);
+    assert(opcodesOf(anduin.read()).count(Opcode.SMSG_PAGE_TEXT_QUERY_RESPONSE) == 2, "both pages");
+    anduin.write(Opcode.CMSG_READ_ITEM, [ubyte(255), ubyte(23)]);
+    assert(opcodesOf(anduin.read()) == [Opcode.SMSG_INVENTORY_CHANGE_FAILURE], "nothing to read there");
 }

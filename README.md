@@ -306,7 +306,8 @@ What works now:
     ship, and they arrive on its deck). Ships whose path is in a dungeon (Naxxramas) do not sail.
   * **Using game objects:** doors and buttons open
     for their time and close again; chairs seat the player at the nearest slot; goobers are in use
-    for their time, show their page, count for the quests that need them (for the group near them
+    for their time, show their page (the client asks for its text, `page_text`, page after page; a
+    carried letter or book is read the same way), count for the quests that need them (for the group near them
     too) and cast their spell on the user; cameras play their cinematic. Locks (`Lock.dbc`) open to
     their key item or to a spell of their lock type with the skill they need (lockpicking,
     herbalism, mining), which may rise the first time each object is

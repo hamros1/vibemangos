@@ -310,6 +310,13 @@ struct GhostEntrance
     float x = 0, y = 0;
 }
 
+/// A `page_text` row: a page's text, and the page after it (0: the last).
+struct PageText
+{
+    string text;
+    uint next;
+}
+
 /// A `game_event_creature_data` row: while `event` is on, its spawn is of another entry, model or equipment, and has a spell's auras.
 struct EventCreature
 {
@@ -385,7 +392,8 @@ final class WorldData
     uint[3][uint] propertyEnchantments;             /// a random property's enchantments (`ItemRandomProperties.dbc`)
     EnchantmentEffect[3][uint] enchantmentEffects;  /// an enchantment's effects (`SpellItemEnchantment.dbc`)
     float[uint] enchantProcRates;
-    Ship[] ships;                                   /// `transports`: the ships and zeppelins, with their schedules                   /// `spell_proc_item_enchant`: an enchantment proc's procs a minute, by spell
+    Ship[] ships;                                   /// `transports`: the ships and zeppelins, with their schedules
+    PageText[uint] pageTexts;                       /// `page_text`: books', letters' and plaques' pages, by id                   /// `spell_proc_item_enchant`: an enchantment proc's procs a minute, by spell
     ubyte[2][uint] gameObjectBattleEvents;          /// `gameobject_battleground`: ditto
     string[uint] serverStrings;                     /// `mangos_string`'s default texts
     GhostEntrance[uint] ghostEntrances;             /// `instance_template`'s ghost entrances, by instance map
@@ -568,6 +576,8 @@ final class WorldData
                 row.get!uint(4));
         data.loadSpawns(world, client, spawnSeed);
         data.loadTransports(world, client); // after the game object templates
+        foreach (row; world.query!"SELECT entry, text, next_page FROM page_text"())
+            data.pageTexts[row.get!uint(0)] = PageText(row.get!string(1), row.get!uint(2));
         data.loadWaypoints(world);
         data.loadPlayerInfo(world, client);
         data.eventAi = EventAiData.load(world);

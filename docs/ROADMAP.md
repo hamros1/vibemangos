@@ -59,7 +59,7 @@
     run down and expire. Crafting raises professions.
   * Weapon enchantments' procs (poisons, Crusader) are done.
   * Not yet: enchanting another player's item through
-    trade, readable items and wrapping. Loot in items is done (`CMSG_OPEN_ITEM`). Dying and the spirit healer wear gear
+    trade, and wrapping. Readable items and pages (`page_text`): done. Loot in items is done (`CMSG_OPEN_ITEM`). Dying and the spirit healer wear gear
   down; a broken worn item's stats come back when it is repaired.
 * **GM system:** commands that need missing systems answer "Not yet implemented."
   (COMMANDS.md lists them); GM invisibility (`.invisible`) needs sight to be one-sided first. The
