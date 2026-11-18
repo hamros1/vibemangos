@@ -293,7 +293,7 @@ enum AuraType : uint
     modHealingDone = 135,
     modHealingDonePercent = 136, // SPELL_AURA_MOD_HEALING_DONE_PERCENT
     modTotalStatPercentage = 137, // SPELL_AURA_MOD_TOTAL_STAT_PERCENTAGE
-    modMeleeHaste = 61 + 1000, // placeholder, not a vanilla id
+    modMeleeHaste = 138, // SPELL_AURA_MOD_MELEE_HASTE
     forceReaction = 139, // SPELL_AURA_FORCE_REACTION
     modRangedHaste = 140, // SPELL_AURA_MOD_RANGED_HASTE
     modRangedAmmoHaste = 141, // SPELL_AURA_MOD_RANGED_AMMO_HASTE
@@ -428,4 +428,40 @@ enum DamageClass : uint
     magic = 1,
     melee = 2,
     ranged = 3,
+}
+
+/**
+ * `value` as an `E`, or `E.init` (each of these enums' "none") if no member has it, counted in `unknown`.
+ * The members of each are 0 to `E.max` without a gap (checked below), so one comparison decides.
+ */
+E knownOr(E)(uint value, ref uint unknown) pure nothrow @nogc @safe
+if (is(E == enum))
+{
+    if (value <= E.max)
+        return cast(E) value;
+    ++unknown;
+    return E.init;
+}
+
+private bool contiguous(E)()
+{
+    import std.traits : EnumMembers;
+
+    bool[E.max + 1] seen;
+    foreach (m; EnumMembers!E)
+        seen[m] = true;
+    foreach (s; seen)
+        if (!s)
+            return false;
+    return E.init == 0;
+}
+
+static assert(contiguous!SpellEffect && contiguous!AuraType && contiguous!ImplicitTarget && contiguous!DamageClass,
+    "knownOr assumes each id enum runs from 0 to its last member without a gap");
+
+pure nothrow @nogc @safe unittest
+{
+    uint unknown;
+    assert(knownOr!SpellEffect(6, unknown) == SpellEffect.applyAura && unknown == 0);
+    assert(knownOr!SpellEffect(900, unknown) == SpellEffect.none && unknown == 1);
 }

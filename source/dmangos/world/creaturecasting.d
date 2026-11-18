@@ -382,7 +382,7 @@ mixin template CreatureCasting()
         foreach (i; 0 .. 3)
         {
             const effect = spell.effect[i];
-            if (effect == 0)
+            if (effect == SpellEffect.none)
                 continue;
             const value = effectValue(*spell, i, level, uniform01(world_.random));
             foreach (guid; reached[i])
@@ -391,7 +391,7 @@ mixin template CreatureCasting()
                     continue;
                 if (!me.alive)
                     return;
-                switch (effect)
+                final switch (effect) // every effect decided: done, or listed as not done below
                 {
                 case SpellEffect.schoolDamage:
                     if (guid != me.guid)
@@ -433,7 +433,52 @@ mixin template CreatureCasting()
                                 me.values.get!UNIT_FIELD_LEVEL));
                         }
                     break;
-                default:
+                case SpellEffect.none:
+                    break;
+                // Not done by a creature's cast:
+                case SpellEffect.instantKill, SpellEffect.portalTeleport, SpellEffect.teleportUnits,
+                    SpellEffect.environmentalDamage, SpellEffect.powerDrain, SpellEffect.healthLeech,
+                    SpellEffect.bind, SpellEffect.portal, SpellEffect.ritualBase, SpellEffect.ritualSpecialize,
+                    SpellEffect.ritualActivatePortal, SpellEffect.questComplete, SpellEffect.resurrect,
+                    SpellEffect.addExtraAttacks, SpellEffect.dodge, SpellEffect.evade, SpellEffect.parry,
+                    SpellEffect.block, SpellEffect.createItem, SpellEffect.weapon, SpellEffect.defense,
+                    SpellEffect.persistentAreaAura, SpellEffect.summon, SpellEffect.leap, SpellEffect.energize,
+                    SpellEffect.triggerMissile, SpellEffect.openLock, SpellEffect.summonChangeItem,
+                    SpellEffect.applyAreaAuraParty, SpellEffect.learnSpell, SpellEffect.spellDefense,
+                    SpellEffect.dispel, SpellEffect.language, SpellEffect.dualWield, SpellEffect.summonWild,
+                    SpellEffect.summonGuardian, SpellEffect.teleportUnitsFaceCaster, SpellEffect.skillStep,
+                    SpellEffect.addHonor, SpellEffect.spawn, SpellEffect.tradeSkill, SpellEffect.stealth,
+                    SpellEffect.detect, SpellEffect.transDoor, SpellEffect.forceCriticalHit,
+                    SpellEffect.guaranteeHit, SpellEffect.enchantItem, SpellEffect.enchantItemTemporary,
+                    SpellEffect.tamecreature, SpellEffect.summonPet, SpellEffect.learnPetSpell,
+                    SpellEffect.openLockItem, SpellEffect.proficiency, SpellEffect.sendEvent,
+                    SpellEffect.powerBurn, SpellEffect.threat, SpellEffect.healthFunnel, SpellEffect.powerFunnel,
+                    SpellEffect.healMaxHealth, SpellEffect.distract, SpellEffect.pull, SpellEffect.pickpocket,
+                    SpellEffect.addFarsight, SpellEffect.summonPossessed, SpellEffect.summonTotem,
+                    SpellEffect.healMechanical, SpellEffect.summonObjectWild, SpellEffect.attack,
+                    SpellEffect.sanctuary, SpellEffect.addComboPoints, SpellEffect.createHouse,
+                    SpellEffect.bindSight, SpellEffect.duel, SpellEffect.stuck, SpellEffect.summonPlayer,
+                    SpellEffect.activateObject, SpellEffect.summonTotemSlot1, SpellEffect.summonTotemSlot2,
+                    SpellEffect.summonTotemSlot3, SpellEffect.summonTotemSlot4, SpellEffect.threatAll,
+                    SpellEffect.enchantHeldItem, SpellEffect.summonPhantasm, SpellEffect.selfResurrect,
+                    SpellEffect.skinning, SpellEffect.charge, SpellEffect.summonCritter, SpellEffect.knockBack,
+                    SpellEffect.disenchant, SpellEffect.inebriate, SpellEffect.feedPet, SpellEffect.dismissPet,
+                    SpellEffect.reputation, SpellEffect.summonObjectSlot1, SpellEffect.summonObjectSlot2,
+                    SpellEffect.summonObjectSlot3, SpellEffect.summonObjectSlot4, SpellEffect.dispelMechanic,
+                    SpellEffect.summonDeadPet, SpellEffect.destroyAllTotems, SpellEffect.durabilityDamage,
+                    SpellEffect.summonDemon, SpellEffect.resurrectNew, SpellEffect.attackMe,
+                    SpellEffect.durabilityDamagePct, SpellEffect.skinPlayerCorpse, SpellEffect.spiritHeal,
+                    SpellEffect.skill, SpellEffect.applyAreaAuraPet, SpellEffect.teleportGraveyard,
+                    SpellEffect.n122, SpellEffect.sendTaxi, SpellEffect.pullTowards,
+                    SpellEffect.modifyThreatPercent, SpellEffect.n126, SpellEffect.n127,
+                    SpellEffect.applyAreaAuraFriend, SpellEffect.applyAreaAuraEnemy:
+                    static bool[SpellEffect] told; // once per effect
+                    if (effect !in told)
+                    {
+                        told[effect] = true;
+                        imported!"dmangos.log".info!"spell effect %s (%s, of spell %s) is not done by a creature's cast yet"(effect,
+                            cast(uint) effect, spell.id);
+                    }
                     break;
                 }
             }

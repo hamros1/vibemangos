@@ -299,6 +299,10 @@ final class SpellData
         foreach (row; world.queryAs!(SpellCastRow, spellCastQuery)())
             if (auto spell = data.spells.edit(row.id))
                 spell.casting = row.toInfo();
+        const unknown = data.forgetUnknownIds();
+        if (unknown)
+            warning!"%s effect, aura, target or damage class ids in spell_template name nothing 1.12 has: taken as none"(
+                unknown);
 
         SpellChainRow[] chainRows = world.queryAs!(SpellChainRow,
             "SELECT spell_id, prev_spell, first_spell, `rank`, req_spell FROM spell_chain")();
@@ -307,6 +311,33 @@ final class SpellData
         info!"loaded %s spells, %s spell chain nodes, %s spell-learn links, %s spell-learn skills"(
             data.spells.length, data.chains.length, data.learnSpells.length, data.learnSkills.length);
         return data;
+    }
+
+    /**
+     * Replaces every effect, aura type, target and damage class id that names no member with "none", so
+     * that a `final switch` over one never meets a value it does not list. Returns how many there were.
+     */
+    uint forgetUnknownIds()
+    {
+        import dmangos.world.spellids : knownOr;
+
+        uint[] ids;
+        foreach (id, ref const spell; spells)
+            ids ~= id;
+        uint unknown;
+        foreach (id; ids)
+        {
+            auto s = spells.edit(id);
+            foreach (i; 0 .. 3)
+            {
+                s.effect[i] = knownOr!SpellEffect(s.effect[i], unknown);
+                s.implicitTargetA[i] = knownOr!ImplicitTarget(s.implicitTargetA[i], unknown);
+                s.casting.implicitTargetB[i] = knownOr!ImplicitTarget(s.casting.implicitTargetB[i], unknown);
+                s.casting.applyAuraName[i] = knownOr!AuraType(s.casting.applyAuraName[i], unknown);
+            }
+            s.casting.dmgClass = knownOr!DamageClass(s.casting.dmgClass, unknown);
+        }
+        return unknown;
     }
 
     /// Builds the derived maps from loaded spells and table rows. Tests call this directly.

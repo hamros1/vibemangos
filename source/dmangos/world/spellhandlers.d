@@ -1475,7 +1475,7 @@ private:
     void doEffect(const(SpellInfo)* spell, size_t i, ulong target, ref Casting c)
     {
         const value = effectMod(spell, i, effectValue(*spell, i, player.data.level, uniform01(map.random)));
-        switch (spell.effect[i])
+        final switch (spell.effect[i]) // every effect decided: done, or listed as not done below
         {
         case SpellEffect.schoolDamage: // SPELL_EFFECT_SCHOOL_DAMAGE
         {
@@ -1643,8 +1643,40 @@ private:
             break;
         case SpellEffect.attack: // SPELL_EFFECT_ATTACK
             break;
-        default:
-            info!"%s: spell %s effect %s (%s) is not done yet"(remoteAddress, spell.id, i, spell.effect[i]);
+        case SpellEffect.none:
+            break;
+        // Not done by a player's cast (some, such as skills and proficiencies, are done when a spell is learned):
+        case SpellEffect.portalTeleport, SpellEffect.environmentalDamage, SpellEffect.powerDrain,
+            SpellEffect.healthLeech, SpellEffect.bind, SpellEffect.portal, SpellEffect.ritualBase,
+            SpellEffect.ritualSpecialize, SpellEffect.ritualActivatePortal, SpellEffect.questComplete,
+            SpellEffect.addExtraAttacks, SpellEffect.dodge, SpellEffect.evade, SpellEffect.parry,
+            SpellEffect.block, SpellEffect.weapon, SpellEffect.defense, SpellEffect.summon, SpellEffect.leap,
+            SpellEffect.triggerMissile, SpellEffect.summonChangeItem, SpellEffect.spellDefense,
+            SpellEffect.language, SpellEffect.dualWield, SpellEffect.summonGuardian,
+            SpellEffect.teleportUnitsFaceCaster, SpellEffect.skillStep, SpellEffect.addHonor, SpellEffect.spawn,
+            SpellEffect.tradeSkill, SpellEffect.stealth, SpellEffect.detect, SpellEffect.forceCriticalHit,
+            SpellEffect.guaranteeHit, SpellEffect.openLockItem, SpellEffect.proficiency, SpellEffect.powerBurn,
+            SpellEffect.threat, SpellEffect.healthFunnel, SpellEffect.powerFunnel, SpellEffect.healMaxHealth,
+            SpellEffect.distract, SpellEffect.pull, SpellEffect.addFarsight, SpellEffect.summonPossessed,
+            SpellEffect.healMechanical, SpellEffect.summonObjectWild, SpellEffect.sanctuary,
+            SpellEffect.addComboPoints, SpellEffect.createHouse, SpellEffect.bindSight, SpellEffect.stuck,
+            SpellEffect.summonPlayer, SpellEffect.activateObject, SpellEffect.threatAll,
+            SpellEffect.enchantHeldItem, SpellEffect.summonPhantasm, SpellEffect.charge, SpellEffect.summonCritter,
+            SpellEffect.knockBack, SpellEffect.disenchant, SpellEffect.inebriate, SpellEffect.reputation,
+            SpellEffect.summonObjectSlot1, SpellEffect.summonObjectSlot2, SpellEffect.summonObjectSlot3,
+            SpellEffect.summonObjectSlot4, SpellEffect.dispelMechanic, SpellEffect.destroyAllTotems,
+            SpellEffect.durabilityDamage, SpellEffect.summonDemon, SpellEffect.attackMe,
+            SpellEffect.durabilityDamagePct, SpellEffect.skinPlayerCorpse, SpellEffect.spiritHeal,
+            SpellEffect.skill, SpellEffect.applyAreaAuraPet, SpellEffect.teleportGraveyard, SpellEffect.n122,
+            SpellEffect.sendTaxi, SpellEffect.pullTowards, SpellEffect.modifyThreatPercent, SpellEffect.n126,
+            SpellEffect.n127, SpellEffect.applyAreaAuraFriend, SpellEffect.applyAreaAuraEnemy:
+            static bool[SpellEffect] told; // once per effect, not at every cast
+            if (spell.effect[i] !in told)
+            {
+                told[spell.effect[i]] = true;
+                info!"spell effect %s (%s, of spell %s) is not done by a player's cast yet"(spell.effect[i],
+                    cast(uint) spell.effect[i], spell.id);
+            }
             break;
         }
     }
