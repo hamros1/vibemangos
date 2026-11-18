@@ -740,6 +740,7 @@ private:
     void handleToggleHelm()
     {
         import dmangos.world.player : PlayerFlags;
+        import dmangos.world.updatefields : PLAYER_FLAGS;
 
         player.values.set!PLAYER_FLAGS(player.values.get!PLAYER_FLAGS ^ PlayerFlags.hideHelm);
         flushPlayerChanges();
@@ -750,6 +751,7 @@ private:
     void handleToggleCloak()
     {
         import dmangos.world.player : PlayerFlags;
+        import dmangos.world.updatefields : PLAYER_FLAGS;
 
         player.values.set!PLAYER_FLAGS(player.values.get!PLAYER_FLAGS ^ PlayerFlags.hideCloak);
         flushPlayerChanges();
