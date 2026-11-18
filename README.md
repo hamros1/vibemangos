@@ -523,7 +523,8 @@ What works now:
     point) take damage of their schools until used up; the log shows what they absorbed. Damage
     shields (Thorns) hurt whoever hits the player in melee, and auras that trigger a spell on a melee
     hit or damaging spell, dealt or taken, or on a kill worth experience (Lightning Shield, Seal of
-    Righteousness) do so by their chance, using their charges; what a proc casts sets off no procs. Dispels (Dispel Magic, Cleanse, Remove Curse, Purge) take random auras of their type:
+    Righteousness) do so by their chance, using their charges; what a proc casts sets off no procs. A party area aura (a paladin's Devotion
+    Aura) is on its caster and, refreshed each second, on its group's members within its radius. Dispels (Dispel Magic, Cleanse, Remove Curse, Purge) take random auras of their type:
     harmful magic off friends, helpful magic off enemies. Creatures are slowed and sped up by their
     auras, and stand still while rooted or stunned. Not yet: procs on ranged attacks, heals and other
     events.
