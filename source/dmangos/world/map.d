@@ -1752,9 +1752,20 @@ final class Map : CombatWorld, GameObjectWorld
      */
     void delegate(Inhabitant who, Replica replica) onReplicaNoticing;
 
-    /// The players who see a creature are noticed by it, when it has moved.
+    /// The players who see a creature are noticed by it, when it has moved; a pet that moved is noticed by the creatures near it.
     private void creatureNoticing(Creature creature, uint slot)
     {
+        if (creature.petOwner)
+        {
+            if (!creature.alive)
+                return;
+            auto pet = unitOf(creature);
+            foreach (other; creaturesNear(creature.position, noticeDistance))
+                if (other !is creature && !other.petOwner && other.ai !is null && other.ai.mayNotice
+                        && !other.ai.inCombat && !other.ai.evading)
+                    other.ai.moveInLineOfSight(pet, this);
+            return;
+        }
         if (creature.ai is null || creature.ai.inCombat || creature.ai.evading || !creature.ai.mayNotice)
             return;
         // The players near it (by cell), of those that see it.

@@ -231,8 +231,8 @@ What works now:
     away). It is taught spells by the Beast Training window's teaching spells for its training points
     (from its level and loyalty); its owner learns the teaching spells of a tamed beast's passive
     abilities at once, and of its others one time in ten as the pet uses them. The owner's death
-    sends the pet away until the owner lives again. Not yet: pet auras and cooldowns saved, pets
-    attacking on sight from creatures' side.
+    sends the pet away until the owner lives again. Hostile creatures notice a pet that comes within
+    their aggro radius and attack it. Not yet: pet auras and cooldowns saved.
   * **Friends and ignore lists:** up to 50 friends and 25 ignored players,
     in `character_social`; the friend list shows who is online (zone, level, class, away or busy),
     on this node or another; friends hear of a login and a logout (across nodes too); a friend of

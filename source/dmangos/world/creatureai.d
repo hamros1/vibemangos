@@ -271,7 +271,7 @@ final class CreatureAI : Scripted, CreatureHost
     // -----------------------------------------------------------------------
 
     /**
-     * A player came into sight, or it came into a player's. An
+     * A player (or a pet) came into sight, or it came into a player's. An
      * aggressive creature that may attack it on sight attacks it if it is within its aggro radius
      * and line of sight.
      */

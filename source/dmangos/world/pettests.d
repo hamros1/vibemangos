@@ -461,3 +461,29 @@ unittest
     session.teachPet(97004);
     assert(pet.values.get!UNIT_TRAINING_POINTS == 10);
 }
+
+/// A hostile creature notices a pet that comes within its aggro radius, and attacks it.
+unittest
+{
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    auto rexxar = loggedIn(context, db, 7, "Rexxar", Position(-8949.95f, -132.49f, 83.53f, 0), AccountLevel.player,
+        raceOrc);
+    rexxar.read();
+    addPetData(&rexxar, context);
+    auto session = rexxar.session.inWorld;
+    auto map = context.map(0);
+    auto beast = context.summonCreature(map, wolf, Position(-8947, -132.49f, 83.53f, 0), TempSpawnType.dead, 0, 0);
+    auto tame = effectSpell(spellTameBeastDone, 55);
+    session.tameCreature(&tame, beast.guid);
+    auto pet = session.ownPet;
+    rexxar.read();
+
+    context.data.creatureTemplates.edit(boar).detection = 20; // its aggro radius
+    auto boar = context.summonCreature(map, boar, Position(-8940, -132.49f, 83.53f, 0), TempSpawnType.dead, 0, 0);
+    assert(boar.ai.currentVictim == 0);
+    map.objectRelocated(pet);
+    assert(boar.ai.currentVictim == pet.guid, "the boar goes for the pet");
+}

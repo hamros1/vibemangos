@@ -218,7 +218,7 @@ GM command set has none).
   dismissing, reviving, the bar and its commands, following and fighting, experience, renaming,
   abandoning, stables, saving. Loyalty and happiness over time and Feed Pet: done. The `.pet` GM commands and pet training (teaching spells, training points, the hunter
   learning a beast's abilities as it uses them): done. Not yet: `pet_aura` and `pet_spell_cooldown`, a pet's spells beyond its autocast and
-  ordered casts (opener spells), creatures noticing pets on sight. The owner's death sends the pet
+  ordered casts (opener spells). Creatures noticing pets on sight: done. The owner's death sends the pet
   away until the owner lives again: done.
 * Quests: done (above).
 * The rest of the GM commands, as their systems arrive (COMMANDS.md lists them): each is one
