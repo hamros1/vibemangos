@@ -796,6 +796,7 @@ private:
     /// Death, logging out, a far teleport: casts end.
     void spellsOnLeave()
     {
+        areaAurasOnLeave();
         if (generic.active)
             interruptCast(SpellCastResult.interrupted);
         endChannel(true);
@@ -1543,6 +1544,9 @@ private:
             break;
         case 6: // SPELL_EFFECT_APPLY_AURA
             applyAuraEffect(spell, i, target);
+            break;
+        case 35: // SPELL_EFFECT_APPLY_AREA_AURA_PARTY: on the caster, and from it on its party (`updateAreaAuras`)
+            applyAuraEffect(spell, i, player.guid);
             break;
         case 78: // SPELL_EFFECT_ATTACK
             break;

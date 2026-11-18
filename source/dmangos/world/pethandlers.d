@@ -1364,6 +1364,20 @@ mixin template PetHandlers()
         writePet(PetSlot.current);
     }
 
+    /// The player's totems out (none until totems are summoned).
+    package Creature[] ownTotems()
+    {
+        Creature[] found;
+        foreach (guid; totems)
+            if (guid)
+                if (auto c = cast(Creature) map.findObject(guid))
+                    if (c.alive)
+                        found ~= c;
+        return found;
+    }
+
+    package ulong[4] totems; /// the totem in each slot (fire, earth, water, air); 0 if none
+
     /// The client tells the pet to stop attacking.
     @Handles(Opcode.CMSG_PET_STOP_ATTACK, WorldState.inWorld)
     void handlePetStopAttack(ref ByteReader reader)

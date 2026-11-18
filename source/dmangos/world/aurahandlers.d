@@ -10,7 +10,8 @@
  * Auras are saved with the character and loaded at login and arrival. A player's shields (school absorbs, mana shields) take damage before it lands; damage shields
  * strike back at melee attackers; auras that trigger a spell proc on melee swings and damaging spells,
  * dealt and taken, and on kills.
- * Not yet: procs on other events, area auras on others, saved charges (an aura loaded at login has its full charges).
+ * A party area aura (a paladin's) is given each second to the caster's group members on its map within
+ * its radius. Not yet: procs on other events, saved charges (an aura loaded at login has its full charges).
  */
 module dmangos.world.aurahandlers;
 
@@ -52,23 +53,24 @@ private:
      */
     void applyAuraEffect(const(SpellInfo)* spell, size_t i, ulong target)
     {
-        enum uint applyAura = 6;
+        enum uint applyAura = 6, areaAuraParty = 35;
+        static bool auraEffect(uint effect) { return effect == applyAura || effect == areaAuraParty; }
         foreach (j; 0 .. i)
-            if (spell.effect[j] == applyAura)
+            if (auraEffect(spell.effect[j]))
                 return;
         int[3] values;
         foreach (j; 0 .. 3)
-            if (spell.effect[j] == applyAura)
+            if (auraEffect(spell.effect[j]))
                 values[j] = effectMod(spell, j, effectValue(*spell, j, player.data.level, uniform01(map.random)));
         const ms = modDuration(spell, duration(*spell, context.client, player.data.level));
         // Damage over time (`SPELLMOD_DOT`): what each tick deals.
         foreach (j; 0 .. 3)
-            if (spell.effect[j] == applyAura && spell.casting.applyAuraName[j] == AuraType.periodicDamage)
+            if (auraEffect(spell.effect[j]) && spell.casting.applyAuraName[j] == AuraType.periodicDamage)
                 values[j] = spellMod(SpellModOp.dot, spell, values[j]);
         // The caster's spell damage or healing bonus over time: the bonus times the duration over
         // 15 seconds (at most whole), shared out among the ticks.
         foreach (j; 0 .. 3)
-            if (spell.effect[j] == applyAura && spell.casting.amplitude[j] > 0 && ms > 0)
+            if (auraEffect(spell.effect[j]) && spell.casting.amplitude[j] > 0 && ms > 0)
             {
                 const type = cast(AuraType) spell.casting.applyAuraName[j];
                 int done;
@@ -93,7 +95,7 @@ private:
             creature.auras.apply(aura, creature.values, isNew);
             map.flushObjectChanges(creature);
             foreach (j; 0 .. 3)
-                if (spell.effect[j] == applyAura)
+                if (auraEffect(spell.effect[j]))
                     auraAppliedScript(spell, j, target, values[j]);
             spellAttacked(creature, 0);
             return;
@@ -104,6 +106,145 @@ private:
         // On an enemy (a duel's opponent) it is a debuff.
         const hostile = who !is this && canAttack(relatingNow(), who.relatingNow(), context.client);
         who.addAura(makeAura(spell, player.guid, player.data.level, ms, !hostile, values));
+    }
+
+    // -----------------------------------------------------------------------
+    // Area auras (`SPELL_EFFECT_APPLY_AREA_AURA_PARTY`)
+    // -----------------------------------------------------------------------
+
+    private Duration sinceAreaAuras;
+    private ulong[][string] areaAuraGiven; /// "source:spell" -> the players given it
+
+    /// Whether `spell` has an area aura for the party.
+    private static bool partyAreaAura(const(SpellInfo)* spell)
+    {
+        enum uint areaAuraParty = 35;
+        foreach (i; 0 .. 3)
+            if (spell.effect[i] == areaAuraParty)
+                return true;
+        return false;
+    }
+
+    /// The radius of `spell`'s party area aura.
+    private float areaAuraRadius(const(SpellInfo)* spell)
+    {
+        import dmangos.world.spellcast : radius;
+
+        enum uint areaAuraParty = 35;
+        foreach (i; 0 .. 3)
+            if (spell.effect[i] == areaAuraParty)
+                return radius(*spell, i, context.client);
+        return 0;
+    }
+
+    /**
+     * Once a second: each party area aura this player cast on itself (a paladin's aura), and each of its
+     * totems', is given to the members of its group on this map within its radius (and, a totem's, to the
+     * player too), as the source's aura (its caster the source); those who left the radius or the group, or
+     * whose source lost it, lose it.
+     */
+    package void updateAreaAuras(Duration elapsed)
+    {
+        import core.time : seconds;
+        import std.algorithm.searching : canFind;
+        import std.format : format;
+        import dmangos.world.player : DeathState;
+
+        sinceAreaAuras += elapsed;
+        if (sinceAreaAuras < 1.seconds || player is null)
+            return;
+        sinceAreaAuras = Duration.zero;
+        struct Source
+        {
+            ulong guid;
+            Position at;
+            Aura[] auras;
+            bool toOwner; /// the player itself gets it too (a totem's)
+        }
+        Source[] sources;
+        {
+            Aura[] own;
+            if (player.deathState == DeathState.alive)
+                foreach (aura; player.auras.list)
+                    if (aura.caster == player.guid && partyAreaAura(aura.spell))
+                        own ~= aura;
+            sources ~= Source(player.guid, player.position, own, false);
+        }
+        foreach (totem; ownTotems())
+        {
+            Aura[] given;
+            foreach (aura; totem.auras.list)
+                if (partyAreaAura(aura.spell))
+                    given ~= aura;
+            sources ~= Source(totem.guid, totem.position, given, true);
+        }
+        typeof(this)[] members = [this];
+        if (auto group = context.groups.of(player.guid))
+            foreach (ref m; group.members)
+                if (m.guid != player.guid)
+                    if (auto s = cast(typeof(this)) context.onlinePlayer(m.guid))
+                        if (s.player !is null && s.map is map)
+                            members ~= s;
+        bool[string] current;
+        foreach (ref src; sources)
+            foreach (aura; src.auras)
+            {
+                const key = format!"%s:%s"(src.guid, aura.spell.id);
+                current[key] = true;
+                const r = areaAuraRadius(aura.spell);
+                ulong[] given;
+                foreach (m; members)
+                {
+                    if ((m is this && !src.toOwner) || m.player.deathState != DeathState.alive)
+                        continue;
+                    const p = m.player.position;
+                    if ((p.x - src.at.x) ^^ 2 + (p.y - src.at.y) ^^ 2 + (p.z - src.at.z) ^^ 2 > r * r)
+                        continue;
+                    given ~= m.player.guid;
+                    if (m.player.auras.find(aura.spell.id) is null)
+                        m.addAura(makeAura(aura.spell, src.guid, aura.casterLevel, -1, true, aura.amount));
+                }
+                foreach (g; areaAuraGiven.get(key, null))
+                    if (!given.canFind(g))
+                        takeAreaAura(g, aura.spell.id, src.guid);
+                areaAuraGiven[key] = given;
+            }
+        foreach (key, given; areaAuraGiven.dup)
+            if (key !in current)
+            {
+                areaAuraGiven.remove(key);
+                takeAreaAuraKey(key, given);
+            }
+    }
+
+    /// The area auras this player gives go from everyone it gave them to (it leaves, dies, logs out).
+    package void areaAurasOnLeave()
+    {
+        foreach (key, given; areaAuraGiven)
+            takeAreaAuraKey(key, given);
+        areaAuraGiven = null;
+    }
+
+    private void takeAreaAuraKey(string key, const(ulong)[] given)
+    {
+        import std.conv : to;
+        import std.string : indexOf;
+
+        const at = key.indexOf(':');
+        const source = key[0 .. at].to!ulong, spell = key[at + 1 .. $].to!uint;
+        foreach (g; given)
+            takeAreaAura(g, spell, source);
+    }
+
+    /// Player `member` loses the aura of `spell` that `source` gave it.
+    private void takeAreaAura(ulong member, uint spell, ulong source)
+    {
+        auto s = member == player.guid ? this : cast(typeof(this)) context.onlinePlayer(member);
+        if (s is null || s.player is null)
+            return;
+        foreach (aura; s.player.auras.list.dup)
+            if (aura.spell.id == spell && aura.caster == source)
+                s.removeAura(aura);
     }
 
     /// The caster's auras of `type` (for spells of `school`; `uint.max`: any): their amounts summed.
@@ -811,4 +952,54 @@ unittest
     assert(session.absorbDamage(0, damage) == 15 && damage == 25 && me.values.get!UNIT_FIELD_POWER1(0) == 0);
     damage = 10;
     assert(session.absorbDamage(4, damage) == 0, "fire is not its school");
+}
+
+/// A party area aura: its caster's group members near get it, those who move away lose it, and all do when it ends.
+unittest
+{
+    import core.time : msecs;
+    import dmangos.dbc : buildDbc;
+    import dmangos.world.auras : AuraType;
+    import dmangos.world.clientdata : spellRadiusFormat;
+    import dmangos.world.movement : Position;
+    import dmangos.world.opcodes : Opcode;
+    import dmangos.world.packets : ClientGroupName;
+    import dmangos.world.player : Player;
+    import dmangos.world.spellcast : ImplicitTarget;
+    import dmangos.world.spellhandlers : testSpell;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    uint bits(float f) { return *cast(uint*) &f; }
+    context.client.spellRadii = typeof(context.client.spellRadii).parse(buildDbc(spellRadiusFormat,
+        [[1u, bits(30), 0, 0]]), "SpellRadius.dbc");
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f));
+    auto jaina = loggedIn(context, db, 8, "Jaina", Position(-8945, -132.49f, 83.53f));
+    anduin.write(Opcode.CMSG_GROUP_INVITE, ClientGroupName("jaina"));
+    jaina.write(Opcode.CMSG_GROUP_ACCEPT, null);
+    assert(context.groups.of(8) !is null);
+    enum uint devotion = 97300;
+    context.data.spells.spells[devotion] = testSpell(devotion, 35, ImplicitTarget.caster, 25);
+    context.data.spells.spells.edit(devotion).casting.applyAuraName[0] = AuraType.modResistance;
+    context.data.spells.spells.edit(devotion).casting.radiusIndex[0] = 1;
+    auto session = anduin.session.inWorld;
+    auto her = cast(Player) jaina.session.character;
+    auto him = cast(Player) anduin.session.character;
+    session.castTriggeredAt(devotion, 0);
+    assert(him.auras.find(devotion) !is null, "on the paladin");
+    session.updateAreaAuras(1000.msecs);
+    assert(her.auras.find(devotion) !is null, "and on the member near");
+
+    her.movement.position = Position(-8800, -132.49f, 83.53f, 0); // far off
+    session.updateAreaAuras(1000.msecs);
+    assert(her.auras.find(devotion) is null, "gone as she left");
+    her.movement.position = Position(-8945, -132.49f, 83.53f, 0);
+    session.updateAreaAuras(1000.msecs);
+    assert(her.auras.find(devotion) !is null, "back");
+
+    session.removeAura(him.auras.find(devotion));
+    session.updateAreaAuras(1000.msecs);
+    assert(her.auras.find(devotion) is null, "gone with the paladin's");
 }
