@@ -29,6 +29,7 @@ mixin template SpellHandlers()
     import dmangos.world.auras : AuraInterrupt;
     import dmangos.world.inworld : ArrivalAction;
     import dmangos.world.creature : Creature;
+    import dmangos.world.unit : UnitKind, UnitRef;
     import dmangos.world.gameobject : GameObject;
     import dmangos.world.loot : LootItem;
     import dmangos.world.defines : Power, Stat;
@@ -883,14 +884,14 @@ private:
 
     /// A spell waiting for the next main-hand swing is cast
     /// instead of it. False if there was none (or it cannot be cast now): the swing goes as usual.
-    bool swingSpell(Creature victim)
+    bool swingSpell(ulong victim)
     {
         if (!nextSwing.active)
             return false;
         auto c = nextSwing;
         nextSwing.active = false;
         if (c.targets.unit == 0 || c.targets.unit == player.guid)
-            c.targets.unit = victim.guid;
+            c.targets.unit = victim;
         if (checkCast(c.spell, c.targets, true, 0, false) != SpellCastResult.ok)
             return false;
         go(c);
@@ -1602,8 +1603,8 @@ private:
         case 58: // SPELL_EFFECT_WEAPON_DAMAGE
         case 121: // SPELL_EFFECT_NORMALIZED_WEAPON_DMG
         case 31: // SPELL_EFFECT_WEAPON_PERCENT_DAMAGE
-            if (auto creature = cast(Creature) map.findObject(target))
-                weaponSpellDamage(spell, i, creature, value);
+            if (auto victim = map.unit(target)) // a creature or a player (a duel, world PvP)
+                weaponSpellDamage(spell, i, victim, value);
             break;
         case 10: // SPELL_EFFECT_HEAL
             heal(spell, target, spellMod(SpellModOp.damage, spell, value));
@@ -2076,8 +2077,9 @@ private:
     }
 
     /// A school's damage to a player: a crit is half again; armor for physical.
-    void spellDamageToPlayer(const(SpellInfo)* spell, typeof(this) other, uint damage)
+    package void spellDamageToPlayer(const(SpellInfo)* spell, typeof(this) other, uint damage)
     {
+        damage += spellDamageBonus(spell, spell.casting.school); // spell power, as against a creature
         const crit = !(spell.attributesEx2 & spellAttrEx2CantCrit) && uniform01(map.random) * 100 < spellCritOf(spell);
         if (crit)
             damage = damage * 3 / 2;
@@ -2188,7 +2190,7 @@ private:
      * Weapon damage: the weapon's damage, plus the effect's bonus (or times its percentage),
      * less armor; a crit is double (the melee crit chance); a block takes off what the shield stops.
      */
-    void weaponSpellDamage(const(SpellInfo)* spell, size_t i, Creature victim, int value)
+    package void weaponSpellDamage(const(SpellInfo)* spell, size_t i, UnitRef victim, int value)
     {
         // Only the first weapon damage effect deals the damage; the others add to it.
         foreach (j; 0 .. i)
@@ -2220,10 +2222,23 @@ private:
         if (uniform01(map.random) * 100 < blockChance(it, me, type))
             blocked = 0; // creatures carry no shield values yet
         const total = damage > 0 ? cast(uint) damage : 0;
-        map.sendToWatchers(this, Opcode.SMSG_SPELLNONMELEEDAMAGELOG, nonMeleeDamageLog(victim.guid, player.guid,
+        map.sendToWatchers(this, Opcode.SMSG_SPELLNONMELEEDAMAGELOG, nonMeleeDamageLog(victim.combatGuid, player.guid,
             spell.id, total, 0, 0, 0, false, blocked, crit), true);
         enterCombatFor(combatLinger);
-        spellAttacked(victim, total);
+        final switch (victim.kind)
+        {
+        case UnitKind.none:
+            break;
+        case UnitKind.creature:
+            spellAttacked(victim.creature, total);
+            break;
+        case UnitKind.player:
+            import dmangos.world.unit : Blow, dealDamage;
+
+            if (victim.fighter.alive)
+                dealDamage(unit, victim, total, Blow.spell());
+            break;
+        }
     }
 
     /// A creature hit (or missed) by this player's spell, or its aura's tick: it fights back, takes the
@@ -3440,4 +3455,75 @@ unittest
     assert(castReason(frost) != SpellCastResult.notReady, "frost not");
     now += 4001.msecs;
     assert(castReason(fire) != SpellCastResult.notReady, "the lockout over");
+}
+
+// Spell power counts against players too: +35 fire damage done on an instant 20-damage fire spell, 35 in all.
+unittest
+{
+    import core.time : MonoTime;
+    import dmangos.world.auras : AuraType, makeAura;
+    import dmangos.world.movement : Position;
+    import dmangos.world.player : Player;
+    import dmangos.world.spellcast : ImplicitTarget;
+    import dmangos.world.testclient;
+    import dmangos.world.updatefields;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f, 0));
+    auto jaina = loggedIn(context, db, 8, "Jaina", Position(-8948.0f, -132.49f, 83.53f, 3.14159f));
+    anduin.read();
+    jaina.read();
+    auto j = cast(Player) jaina.session.character;
+    enum uint power = 95701, fire = 95702;
+    with (context.data.spells)
+    {
+        spells[power] = testSpell(power, 6, ImplicitTarget.caster, 35);
+        spells.edit(power).casting.applyAuraName[0] = AuraType.modDamageDone;
+        spells.edit(power).miscValue[0] = 1 << 2; // fire
+        spells[fire] = testSpell(fire, 2, ImplicitTarget.enemy, 20);
+        spells.edit(fire).casting.school = 2;
+        spells.edit(fire).casting.dmgClass = 0;
+        spells.edit(fire).attributesEx2 |= 0x20000000; // no crit
+    }
+    auto aura = makeAura((power in context.data.spells.spells), anduin.session.character.guid, 1, -1, true, [35, 0, 0]);
+    aura.passive = true;
+    anduin.session.inWorld.addAura(aura);
+    j.values.set!UNIT_FIELD_MAXHEALTH(500u);
+    j.values.set!UNIT_FIELD_HEALTH(500u);
+    anduin.session.inWorld.spellDamageToPlayer(fire in context.data.spells.spells, jaina.session.inWorld, 20);
+    assert(j.values.get!UNIT_FIELD_HEALTH == 500 - 35, "20 and 15 of spell power");
+}
+
+// A weapon strike (Sinister Strike, Mortal Strike: effect 58) hurts a player as it hurts a creature.
+unittest
+{
+    import core.time : MonoTime;
+    import dmangos.world.movement : Position;
+    import dmangos.world.player : Player;
+    import dmangos.world.spellcast : ImplicitTarget;
+    import dmangos.world.testclient;
+    import dmangos.world.updatefields;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f, 0));
+    auto jaina = loggedIn(context, db, 8, "Jaina", Position(-8948.0f, -132.49f, 83.53f, 3.14159f));
+    anduin.read();
+    jaina.read();
+    auto a = cast(Player) anduin.session.character, j = cast(Player) jaina.session.character;
+    enum uint strike = 95703;
+    context.data.spells.spells[strike] = testSpell(strike, 58, ImplicitTarget.enemy, 10);
+    a.values.set!UNIT_FIELD_MINDAMAGE(20.0f);
+    a.values.set!UNIT_FIELD_MAXDAMAGE(20.0f);
+    j.values.set!UNIT_FIELD_MAXHEALTH(500u);
+    j.values.set!UNIT_FIELD_HEALTH(500u);
+    auto victim = context.map(0).unit(j.guid);
+    assert(victim, "she is a unit on his map");
+    anduin.session.inWorld.weaponSpellDamage(strike in context.data.spells.spells, 0, victim, 10);
+    assert(j.values.get!UNIT_FIELD_HEALTH < 500, "the strike landed on a player");
 }

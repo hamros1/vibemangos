@@ -278,6 +278,9 @@ private:
     /// A melee swing at a player.
     void swingAtPlayer(typeof(this) other, AttackType type)
     {
+        // A spell for the next swing (Heroic Strike) is cast instead of it, at a player as at a creature.
+        if (type == AttackType.mainHand && swingSpell(other.combatGuid))
+            return;
         auto d = calculateMeleeDamage(player.fighter, other.player.fighter, type, map.random);
         if ((d.absorbed = other.absorbDamage(d.school, d.damage)) != 0)
             d.hitInfo |= HitInfo.absorb;
@@ -479,7 +482,7 @@ private:
     void swing(Creature victim, AttackType type)
     {
         // A spell for the next swing (Heroic Strike) is cast instead of it.
-        if (type == AttackType.mainHand && swingSpell(victim))
+        if (type == AttackType.mainHand && swingSpell(victim.guid))
             return;
         auto d = calculateMeleeDamage(player.fighter, victim.fighter, type, map.random);
         map.sendToWatchers(this, Opcode.SMSG_ATTACKERSTATEUPDATE, attackerStateUpdate(d), true);
