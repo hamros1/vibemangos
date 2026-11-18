@@ -1,7 +1,7 @@
 /**
  * An escort: a creature walking its `script_waypoint` path with a player who must keep it alive and
- * stay near (CMaNGOS's `npc_escortAI` is the idea; this is a component, not a base class). A script
- * holds an `Escort` among its fields, starts it, and passes it its `MovementDone`s; the framework
+ * stay near. It is a component, not a base class: a script holds an `Escort` among its fields,
+ * starts it, and passes it its `MovementDone`s; the framework
  * ticks it with the script. It is plain data, so a creature handed to another node goes on walking
  * there (if its movement did not come along, the escort sends it on again).
  */
@@ -20,7 +20,7 @@ struct Escort
     bool waiting;
     bool run;
     bool finished;          /// it reached its last point and waited there
-    float maxDistance = 50; /// the player farther than this: the escort fails (`DEFAULT_MAX_PLAYER_DISTANCE`)
+    float maxDistance = 50; /// the player farther than this: the escort fails
     uint despawnAfterMs;    /// over (done or failed), it goes this long after, to come back home; 0: it stays
 
     /// Sets off with `player` on `quest`, walking (running) from the first point; its NPC flags go

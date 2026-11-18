@@ -1,7 +1,6 @@
 /**
- * Quests for players (CMaNGOS `QuestHandler.cpp`, `GossipDef.cpp`'s quest packets, and `Player`'s
- * quest functions: `CanTakeQuest`, `AddQuest`, `CompleteQuest`, `RewardQuest`, `KilledMonster`,
- * `ItemAddedQuestCheck`), mixed into `dmangos.world.character.Character`.
+ * Quests for players: the quest packets, who may take and turn in what, the quest log, kill and
+ * item credit and rewards, mixed into `dmangos.world.character.Character`.
  *
  * Quest givers show what they have for the player (`SMSG_QUESTGIVER_STATUS`), list their quests in
  * their gossip, and give them (details, accept). The quest log is the player's 20
@@ -31,13 +30,13 @@ mixin template QuestHandlers()
     import dmangos.world.updatefields;
 
 private:
-    GossipQuestItem[] questMenu; // `QuestMenu`: what the last quest giver offered
+    GossipQuestItem[] questMenu; // what the last quest giver offered
 
     // -----------------------------------------------------------------------
     // The status and the log
     // -----------------------------------------------------------------------
 
-    /// `GetQuestStatus`
+    /// The state of quest `id` for this player; `none` if it never took it.
     QuestState questState(uint id)
     {
         if (auto q = id in player.questStatus)
@@ -45,7 +44,7 @@ private:
         return QuestState.none;
     }
 
-    /// `GetQuestRewardStatus`
+    /// Whether this player has turned quest `id` in.
     bool questRewarded(uint id)
     {
         if (auto q = id in player.questStatus)
@@ -53,7 +52,7 @@ private:
         return false;
     }
 
-    /// The quest log slot holding `id` (`FindQuestSlot`); `maxQuestLogSize` if none (0: a free slot).
+    /// The quest log slot holding `id`; `maxQuestLogSize` if none (0: a free slot).
     uint questSlot(uint id)
     {
         foreach (slot; 0 .. maxQuestLogSize)
@@ -62,7 +61,7 @@ private:
         return maxQuestLogSize;
     }
 
-    /// `SetQuestSlot`
+    /// Puts quest `id` in log slot `slot`, its counters and state cleared, with its timer.
     void setQuestSlot(uint slot, uint id, uint timer = 0)
     {
         player.values.setSlot(PLAYER_QUEST_LOG_1_1 + 3 * slot, id);
@@ -70,7 +69,7 @@ private:
         player.values.setSlot(PLAYER_QUEST_LOG_1_1 + 3 * slot + 2, timer);
     }
 
-    /// `SetQuestSlotCounter`: an objective's count, 6 bits each.
+    /// Sets an objective's count in a log slot, 6 bits each.
     void setQuestSlotCounter(uint slot, uint counter, uint count)
     {
         const index = PLAYER_QUEST_LOG_1_1 + 3 * slot + 1;
@@ -80,7 +79,7 @@ private:
         player.values.setSlot(index, value);
     }
 
-    /// `SetQuestSlotState`, `RemoveQuestSlotState`: the high byte's complete (1) and failed (2) bits.
+    /// A log slot's state: the high byte's complete (1) and failed (2) bits.
     void setQuestSlotState(uint slot, uint state, bool on)
     {
         const index = PLAYER_QUEST_LOG_1_1 + 3 * slot + 1;
@@ -109,7 +108,7 @@ private:
     }
 
     // -----------------------------------------------------------------------
-    // Who may take what (`Player::SatisfyQuest*`)
+    // Who may take what
     // -----------------------------------------------------------------------
 
     bool satisfyClassRaceLevel(const ref Quest quest, bool levelToo)
@@ -127,7 +126,7 @@ private:
         return true;
     }
 
-    /// `SatisfyQuestPreviousQuest`: one of the quests before it done (positive) or taken (negative).
+    /// One of the quests before it done (positive) or taken (negative).
     bool satisfyPrevious(const ref Quest quest)
     {
         if (quest.prevQuests.length == 0)
@@ -142,7 +141,7 @@ private:
         return false;
     }
 
-    /// `SatisfyQuestExclusiveGroup`: none of its group taken or (unless repeatable) done.
+    /// None of its exclusive group taken or (unless repeatable) done.
     bool satisfyExclusiveGroup(const ref Quest quest)
     {
         if (quest.exclusiveGroup <= 0)
@@ -160,20 +159,20 @@ private:
         return true;
     }
 
-    /// `SatisfyQuestStatus`: not taken, and not done unless repeatable.
+    /// Not taken, and not done unless repeatable.
     bool satisfyStatus(const ref Quest quest)
     {
         return questState(quest.id) == QuestState.none && (quest.repeatable || !questRewarded(quest.id));
     }
 
-    /// `CanTakeQuest`
+    /// Whether this player may take `quest` now: every requirement met.
     package bool canTakeQuest(const ref Quest quest)
     {
         return satisfyStatus(quest) && satisfyExclusiveGroup(quest) && satisfyClassRaceLevel(quest, true)
             && satisfyPrevious(quest) && satisfyQuestReputation(quest) && satisfyQuestTimed(quest);
     }
 
-    /// `SatisfyQuestTimed`: one timed quest at a time.
+    /// One timed quest at a time.
     bool satisfyQuestTimed(const ref Quest quest)
     {
         if (!(quest.specialFlags & specialTimed))
@@ -184,7 +183,7 @@ private:
         return true;
     }
 
-    /// `Player::Update`'s timed quests: one whose time is up fails.
+    /// Timed quests: one whose time is up fails.
     package void updateTimedQuests()
     {
         const now = context.unixTime;
@@ -196,16 +195,16 @@ private:
             failQuest(id);
     }
 
-    /// `CanSeeStartQuest`: everything but the level, and not far above the player.
+    /// Whether a giver shows `quest` as available: everything but the level, and not far above the player.
     bool canSeeStartQuest(const ref Quest quest)
     {
-        enum int highLevelHideDiff = 7; // `Quests.HighLevelHideDiff`
+        enum int highLevelHideDiff = 7; // levels above the player a quest is still shown
         return satisfyClassRaceLevel(quest, false) && satisfyExclusiveGroup(quest) && satisfyPrevious(quest)
             && satisfyQuestReputation(quest) && player.data.level + highLevelHideDiff >= quest.minLevel
             && player.data.level <= quest.maxLevel;
     }
 
-    /// `CanCompleteQuest`: taken, and every objective met (kills, items, money).
+    /// Whether `quest` is complete: taken, and every objective met (kills, items, money).
     package bool canCompleteQuest(uint id)
     {
         const quest = context.data.quests.quest(id);
@@ -238,7 +237,7 @@ private:
         return true;
     }
 
-    /// `CanRewardQuest(pQuest, false)`: complete (or completing itself), not rewarded, the items carried.
+    /// Whether `quest` may be turned in: complete (or completing itself), not rewarded, the items carried.
     bool canRewardQuest(const ref Quest quest)
     {
         if (!quest.autoComplete && questState(quest.id) != QuestState.complete)
@@ -272,8 +271,8 @@ private:
     }
 
     /**
-     * The quest giver `guid` this player may talk to: a creature (`GetNPCIfCanInteractWith` with
-     * `npcFlags`) or a game object within reach (`GetGameObjectIfCanInteractWith`); false if none.
+     * The quest giver `guid` this player may talk to: a creature it can interact with that has
+     * `npcFlags`, or a game object within reach; false if none.
      */
     package bool questGiverNear(ulong guid, uint npcFlags, out QuestGiver giver)
     {
@@ -302,7 +301,7 @@ private:
         return true;
     }
 
-    /// `WorldSession::getDialogStatus`: the mark over a quest giver for this player.
+    /// The mark over a quest giver for this player.
     DialogStatus dialogStatus(const QuestGiver giver)
     {
         DialogStatus result = DialogStatus.none;
@@ -332,7 +331,7 @@ private:
             DialogStatus next;
             if (player.data.level >= quest.minLevel)
             {
-                enum uint lowLevelHideDiff = 4; // `Quests.LowLevelHideDiff`
+                enum uint lowLevelHideDiff = 4; // levels below the player a quest still shows as available
                 if (quest.autoComplete)
                     next = DialogStatus.rewardRep;
                 else if (player.data.level <= quest.levelFor(player.data.level) + lowLevelHideDiff)
@@ -348,7 +347,7 @@ private:
         return result;
     }
 
-    /// `HandleQuestgiverStatusQueryOpcode`
+    /// The client asks for the mark over a quest giver.
     @Handles(Opcode.CMSG_QUESTGIVER_STATUS_QUERY, WorldState.inWorld)
     void handleQuestgiverStatusQuery(const ClientGuid request)
     {
@@ -368,14 +367,14 @@ private:
         deliver(Opcode.SMSG_QUESTGIVER_STATUS, w.data);
     }
 
-    /// `HandleQuestgiverHelloOpcode`: as gossip hello.
+    /// The player talks to a quest giver: as gossip hello.
     @Handles(Opcode.CMSG_QUESTGIVER_HELLO, WorldState.inWorld)
     void handleQuestgiverHello(const ClientNpcGuid request)
     {
         handleGossipHello(request);
     }
 
-    /// `Player::PrepareQuestMenu`: the quests the giver takes back or gives, for this player.
+    /// The quests the giver takes back or gives, for this player.
     package void prepareQuestMenu(const QuestGiver giver)
     {
         questMenu = null;
@@ -400,7 +399,7 @@ private:
         }
     }
 
-    /// `Player::SendPreparedQuest`: one quest opens at once; several are listed.
+    /// Shows the quest menu: one quest opens at once; several are listed.
     package void sendPreparedQuest(const QuestGiver giver)
     {
         import dmangos.world.objects : HighGuid, highGuidOf;
@@ -462,7 +461,7 @@ private:
             }
     }
 
-    /// `SendQuestGiverQuestDetails`
+    /// A quest's details, with the accept button if `activateAccept`.
     void sendQuestDetails(const ref Quest quest, ulong giver, bool activateAccept)
     {
         ByteWriter w;
@@ -498,7 +497,7 @@ private:
         deliver(Opcode.SMSG_QUESTGIVER_QUEST_DETAILS, w.data);
     }
 
-    /// `SendQuestGiverRequestItems` (or, with nothing to ask for, the reward at once).
+    /// What the ender asks for (or, with nothing to ask for, the reward at once).
     void sendRequestItems(const ref Quest quest, ulong giver, bool completable, bool closeOnCancel)
     {
         if (quest.requestItemsText.length == 0 || (quest.reqItemsCount == 0 && completable))
@@ -529,7 +528,7 @@ private:
         deliver(Opcode.SMSG_QUESTGIVER_REQUEST_ITEMS, w.data);
     }
 
-    /// `SendQuestGiverOfferReward`
+    /// The reward the ender offers.
     void sendOfferReward(const ref Quest quest, ulong giver, bool enableNext)
     {
         ByteWriter w;
@@ -559,7 +558,7 @@ private:
         deliver(Opcode.SMSG_QUESTGIVER_OFFER_REWARD, w.data);
     }
 
-    /// `HandleQuestgiverQueryQuestOpcode`: a quest's details from a giver that has it.
+    /// The client asks for a quest's details from a giver that has it.
     @Handles(Opcode.CMSG_QUESTGIVER_QUERY_QUEST, WorldState.inWorld)
     void handleQuestgiverQueryQuest(ref ByteReader reader)
     {
@@ -572,7 +571,7 @@ private:
         sendQuestDetails(*quest, guid, true);
     }
 
-    /// `HandleQuestQueryOpcode`: the quest as the log shows it.
+    /// The client asks for the quest as the log shows it.
     @Handles(Opcode.CMSG_QUEST_QUERY, WorldState.inWorld)
     void handleQuestQuery(ref ByteReader reader)
     {
@@ -628,7 +627,7 @@ private:
         deliver(Opcode.SMSG_QUEST_QUERY_RESPONSE, w.data);
     }
 
-    /// `HandleQuestgiverAcceptQuestOpcode`
+    /// The player accepts a quest from a giver, an item or a group member who shared it.
     @Handles(Opcode.CMSG_QUESTGIVER_ACCEPT_QUEST, WorldState.inWorld)
     void handleQuestgiverAcceptQuest(ref ByteReader reader)
     {
@@ -637,7 +636,7 @@ private:
         const guid = reader.read!ulong, id = reader.read!uint;
         QuestGiver giver;
         bool near = questGiverNear(guid, 0x2, giver);
-        // A quest a group member shared (`CanShareQuest` on its side).
+        // A quest a group member shared (checked as sharable on its side).
         auto sharer = near ? null : cast(Character) context.onlinePlayer(guid);
         if (sharer !is null && sharer !is this && sharer.player !is null && sharer.canShareQuest(id))
         {
@@ -657,14 +656,14 @@ private:
         if (questSlot(0) >= maxQuestLogSize)
             return deliver(Opcode.SMSG_QUESTLOG_FULL, null);
         addQuest(*quest);
-        // `AddQuest`: the quest's start script, the giver the source and the player the target.
+        // The quest's start script, the giver the source and the player the target.
         if (quest.startScript)
         {
             import dmangos.world.dbscripts : DbScriptType;
 
             context.startScript(DbScriptType.questStart, quest.startScript, map, giver.guid, player.guid);
         }
-        // The giver's script (`QuestAccept`): an escort sets off, say.
+        // The giver's script hears of it: an escort sets off, say.
         if (auto creature = cast(Creature) map.findObject(giver.guid))
         {
             import dmangos.script.api : EntityRef, QuestAccepted;
@@ -674,7 +673,7 @@ private:
         if (auto divider = cast(Character) context.onlinePlayer(questDivider))
             divider.pushToPartyResponse(player.guid, QuestShare.accepted);
         questDivider = 0;
-        // The item that began it goes, unless the quest asks for it or gives it (`AddQuest`).
+        // The item that began it goes, unless the quest asks for it or gives it.
         if (giver.itemEntry && quest.srcItemId != giver.itemEntry)
         {
             import std.algorithm.searching : canFind;
@@ -694,7 +693,7 @@ private:
         flushPlayerChanges();
     }
 
-    /// `Player::AddQuest`: in the log, its objectives at zero (items: what is carried), its starting item given.
+    /// Adds the quest to the log, its objectives at zero (items: what is carried), its starting item given.
     package void addQuest(const ref Quest quest)
     {
         const slot = questSlot(0);
@@ -704,7 +703,7 @@ private:
         q.mobCount = 0;
         q.itemCount = 0;
         q.changed = true;
-        // A timed quest: its end, in the log and saved (`AddTimedQuest`).
+        // A timed quest: its end, in the log and saved.
         q.timer = (quest.specialFlags & specialTimed) ? context.unixTime + quest.limitTime : 0;
         setQuestSlot(slot, quest.id, cast(uint) q.timer);
         if (quest.srcItemId && player.inventory.count(quest.srcItemId) == 0)
@@ -718,7 +717,7 @@ private:
         info!"%s: '%s' took quest %s (%s)"(remoteAddress, player.data.name, quest.id, quest.title);
     }
 
-    /// `Player::CompleteQuest`: its objectives met; the log shows it complete.
+    /// The quest's objectives met; the log shows it complete.
     void completeQuest(uint id)
     {
         auto q = &statusOf(id);
@@ -732,7 +731,7 @@ private:
         deliver(Opcode.SMSG_QUESTUPDATE_COMPLETE, w.data);
     }
 
-    /// `Player::AreaExploredOrEventHappens`: the quest's place found (or its event happened); complete if that was all.
+    /// The quest's place found (or its event happened); complete if that was all.
     package void areaExploredOrEventHappens(uint id)
     {
         const slot = questSlot(id);
@@ -754,14 +753,14 @@ private:
         flushPlayerChanges();
     }
 
-    /// A script's kill credit (`KilledMonsterCredit`), sent.
+    /// A script's kill credit, sent.
     package void scriptKillCredit(uint entry, ulong guid)
     {
         killedMonster(entry, guid);
         flushPlayerChanges();
     }
 
-    /// `Player::FailQuest`: a quest under way failed (a script found the player too far, or its creature dead).
+    /// A quest under way failed (a script found the player too far, or its creature dead).
     package void failQuest(uint id)
     {
         auto q = id in player.questStatus;
@@ -771,7 +770,7 @@ private:
         q.changed = true;
         const slot = questSlot(id);
         if (slot < maxQuestLogSize)
-            setQuestSlotState(slot, 2, true); // QUEST_STATE_FAIL
+            setQuestSlotState(slot, 2, true); // failed
         const quest = context.data.quests.quest(id);
         const timed = quest !is null && (quest.specialFlags & specialTimed);
         ByteWriter w;
@@ -782,7 +781,7 @@ private:
         flushPlayerChanges();
     }
 
-    /// `Player::IncompleteQuest`: an objective no longer met (an item given away).
+    /// An objective no longer met (an item given away).
     void incompleteQuest(uint id)
     {
         auto q = &statusOf(id);
@@ -793,7 +792,7 @@ private:
             setQuestSlotState(slot, 1, false);
     }
 
-    /// `HandleQuestgiverCompleteQuest`: what the ender asks for.
+    /// The player turns to a quest's ender: what it asks for.
     @Handles(Opcode.CMSG_QUESTGIVER_COMPLETE_QUEST, WorldState.inWorld)
     void handleQuestgiverCompleteQuest(ref ByteReader reader)
     {
@@ -806,7 +805,7 @@ private:
         sendRequestItems(*quest, guid, canRewardQuest(*quest), false);
     }
 
-    /// `HandleQuestgiverRequestRewardOpcode`: the rewards to choose from.
+    /// The client asks for the rewards to choose from.
     @Handles(Opcode.CMSG_QUESTGIVER_REQUEST_REWARD, WorldState.inWorld)
     void handleQuestgiverRequestReward(ref ByteReader reader)
     {
@@ -823,7 +822,7 @@ private:
         sendOfferReward(*quest, guid, true);
     }
 
-    /// `HandleQuestgiverChooseRewardOpcode`: turned in; the next quest of the chain offered.
+    /// The player chose a reward: the quest turned in; the next quest of the chain offered.
     @Handles(Opcode.CMSG_QUESTGIVER_CHOOSE_REWARD, WorldState.inWorld)
     void handleQuestgiverChooseReward(ref ByteReader reader)
     {
@@ -838,7 +837,7 @@ private:
         if (!canRewardQuest(*quest) || !roomForRewards(*quest, reward))
             return sendOfferReward(*quest, guid, true);
         rewardQuest(*quest, reward);
-        // `RewardQuest`: its complete script, the ender the source and the player the target.
+        // The quest's complete script, the ender the source and the player the target.
         if (quest.completeScript)
         {
             import dmangos.world.dbscripts : DbScriptType;
@@ -857,7 +856,7 @@ private:
                     sendQuestDetails(*next, guid, true);
     }
 
-    /// `CanRewardQuest(quest, reward)`: room for the chosen item and the others.
+    /// Whether there is room for the chosen item and the others.
     bool roomForRewards(const ref Quest quest, uint reward)
     {
         ItemPosCount[] dest;
@@ -875,7 +874,7 @@ private:
     }
 
     /**
-     * `Player::RewardQuest`: the items asked for taken, the rewards given (the chosen item, the others,
+     * Turns the quest in: the items asked for taken, the rewards given (the chosen item, the others,
      * experience or at the top level money, money, the spell), the log slot freed, the quest done.
      */
     void rewardQuest(const ref Quest quest, uint reward)
@@ -927,12 +926,12 @@ private:
     }
 
     // -----------------------------------------------------------------------
-    // Sharing (`HandlePushQuestToParty`)
+    // Sharing
     // -----------------------------------------------------------------------
 
-    package ulong questDivider; // `m_dividerGuid`: who shared the quest this player is offered
+    package ulong questDivider; // who shared the quest this player is offered
 
-    /// `QuestShareMessages`
+    /// What became of a quest shared with a group member (`MSG_QUEST_PUSH_RESULT`).
     enum QuestShare : ubyte
     {
         sharing = 0,
@@ -946,7 +945,7 @@ private:
         finished = 8,
     }
 
-    /// `Player::CanShareQuest`: a sharable quest under way.
+    /// Whether the player may share quest `id`: a sharable quest under way.
     package bool canShareQuest(uint id)
     {
         const quest = context.data.quests.quest(id);
@@ -956,7 +955,7 @@ private:
         return q !is null && (q.status == QuestState.incomplete || (q.status == QuestState.complete && !q.rewarded));
     }
 
-    /// `SendPushToPartyResponse`: what became of the sharing with `member`.
+    /// Tells this player what became of the sharing with `member`.
     package void pushToPartyResponse(ulong member, QuestShare message)
     {
         ByteWriter w;
@@ -965,7 +964,7 @@ private:
         deliver(Opcode.MSG_QUEST_PUSH_RESULT, w.data);
     }
 
-    /// `HandlePushQuestToParty`: the quest offered to the group's members near (10 yards) who may take it.
+    /// The quest offered to the group's members near (10 yards) who may take it.
     @Handles(Opcode.CMSG_PUSHQUESTTOPARTY, WorldState.inWorld)
     void handlePushQuestToParty(ref ByteReader reader)
     {
@@ -1020,7 +1019,7 @@ private:
         }
     }
 
-    /// `HandleQuestPushResult`: the member's answer, for the one who shared.
+    /// The member's answer, for the one who shared.
     @Handles(Opcode.MSG_QUEST_PUSH_RESULT, WorldState.inWorld)
     void handleQuestPushResult(ref ByteReader reader)
     {
@@ -1039,14 +1038,14 @@ private:
         questDivider = 0;
     }
 
-    /// `HandleQuestgiverCancel`
+    /// The player closed the quest giver's window.
     @Handles(Opcode.CMSG_QUESTGIVER_CANCEL, WorldState.inWorld)
     void handleQuestgiverCancel()
     {
         deliver(Opcode.SMSG_GOSSIP_COMPLETE, null);
     }
 
-    /// `HandleQuestLogSwapQuest`
+    /// The player swapped two quest log slots.
     @Handles(Opcode.CMSG_QUESTLOG_SWAP_QUEST, WorldState.inWorld)
     void handleQuestLogSwapQuest(ref ByteReader reader)
     {
@@ -1062,7 +1061,7 @@ private:
         flushPlayerChanges();
     }
 
-    /// `HandleQuestLogRemoveQuest`: the quest abandoned.
+    /// The player abandoned a quest.
     @Handles(Opcode.CMSG_QUESTLOG_REMOVE_QUEST, WorldState.inWorld)
     void handleQuestLogRemoveQuest(ref ByteReader reader)
     {
@@ -1087,14 +1086,14 @@ private:
     // Objectives
     // -----------------------------------------------------------------------
 
-    /// `Player::KilledMonsterCredit`: a creature of `entry` killed counts for the quests that ask for it.
+    /// A creature of `entry` killed counts for the quests that ask for it.
     package void killedMonster(uint entry, ulong guid)
     {
         creditCreatureOrGo(cast(int) entry, 0, guid);
     }
 
     /**
-     * `KilledMonsterCredit` and `CastedCreatureOrGO`: `target` (a creature's entry, or minus a game
+     * Credit for a kill, or a spell cast on a creature or game object: `target` (a creature's entry, or minus a game
      * object's) counts for the objectives that ask for it with `spell` (0: killed, or used).
      */
     package void creditCreatureOrGo(int target, uint spell, ulong guid)
@@ -1148,7 +1147,7 @@ private:
     }
 
     /**
-     * `ItemAddedQuestCheck` and `ItemRemovedQuestCheck` at once: what the player carries of each item
+     * After items were added or removed: what the player carries of each item
      * its quests ask for, as their counts; a quest whose items are all there is complete, and one that
      * lost some is not.
      */
@@ -1197,7 +1196,7 @@ private:
         }
     }
 
-    /// `Player::HasQuestForItem`: whether a quest taken still asks for the item (a quest drop it may loot).
+    /// Whether a quest taken still asks for the item (a quest drop it may loot).
     package bool hasQuestForItem(uint item)
     {
         foreach (slot; 0 .. maxQuestLogSize)

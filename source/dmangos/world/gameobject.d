@@ -1,7 +1,6 @@
 /**
- * Game objects (CMaNGOS `Entities/GameObject.cpp`): `gameobject_template`
- * entries, `gameobject` spawns, and the `GameObject` built from them as
- * `GameObject::Create` builds it, with its loot state (`GameObject::Update`):
+ * Game objects: `gameobject_template` entries, `gameobject` spawns, and the
+ * `GameObject` built from them, with its loot state:
  * a door or button used opens and closes again after its time; a goober is in
  * use for its time; a chest opened holds its loot until emptied (or 5 minutes);
  * a consumable chest or goober, and a generic object used, goes once done and
@@ -22,7 +21,7 @@ import dmangos.world.movement : Position;
 import dmangos.world.objects;
 import dmangos.world.updatefields;
 
-/// `GameobjectTypes` the server treats specially.
+/// Game object types the server treats specially.
 enum GameObjectType : uint
 {
     door = 0,
@@ -46,7 +45,7 @@ enum GameObjectType : uint
     flagDrop = 26,      /// a battleground's flag on the ground
 }
 
-/// `LootState` of a game object.
+/// The loot state of a game object: where it is in being used and coming back.
 enum GoLootState : ubyte
 {
     notReady,
@@ -92,13 +91,13 @@ struct GameObjectSpawn
     int respawnSeconds;
 }
 
-/// `GOState`, `GameObjectFlags`, `GameObjectDynamicLowFlags`
+/// Game object states, flags and dynamic flags.
 enum : uint
 {
-    goStateActive = 0,  // GO_STATE_ACTIVE: open
-    goStateReady = 1,   // GO_STATE_READY: closed
+    goStateActive = 0,  // open
+    goStateReady = 1,   // closed
     goFlagInUse = 0x01,
-    goDynFlagActivate = 0x01, // GO_DYNFLAG_LO_ACTIVATE: usable (for a quest), and it sparkles
+    goDynFlagActivate = 0x01, // usable (for a quest), and it sparkles
     goFlagTransport = 0x08,
     goFlagNoDespawn = 0x20,
 }
@@ -121,9 +120,9 @@ final class GameObject : Replicable, Moving, PerViewer
     uint holeCatches;            /// a fishing hole's catches so far, against `holeMaxCatches`
     uint holeMaxCatches;         /// ... chosen between its least and greatest when first fished
     uint trapUses;               /// a trap's springs so far, against its charges
-    int despawnTimer;            /// ms until a chest opened but not emptied goes (`SetChestDespawn`); 0: none
-    bool[ulong] skilledUp;       /// those it gave a skill-up (`m_SkillupList`): once until it respawns
-    /// Whether it is usable for `viewer`'s quests (`ActivateToQuest`); null: for nobody.
+    int despawnTimer;            /// ms until a chest opened but not emptied goes; 0: none
+    bool[ulong] skilledUp;       /// those it gave a skill-up: once until it respawns
+    /// Whether it is usable for `viewer`'s quests; null: for nobody.
     bool delegate(ulong viewer) activatesFor;
 
     ///
@@ -150,19 +149,19 @@ final class GameObject : Replicable, Moving, PerViewer
         return values;
     }
 
-    /// `GetGoType`
+    /// Its type, from the template.
     @property GameObjectType type() const
     {
         return cast(GameObjectType) template_.type;
     }
 
-    /// `GetGoState`
+    /// Its state: `goStateActive` (open) or `goStateReady` (closed).
     @property uint goState() const
     {
         return values.get!GAMEOBJECT_STATE;
     }
 
-    /// `GameObjectInfo::GetLockId`: the `Lock.dbc` entry opening it needs; 0 for none.
+    /// The `Lock.dbc` entry opening it needs; 0 for none.
     @property uint lockId() const
     {
         switch (type)
@@ -176,13 +175,13 @@ final class GameObject : Replicable, Moving, PerViewer
         }
     }
 
-    /// `GetLootId`: its `gameobject_loot_template` id (a chest's).
+    /// Its `gameobject_loot_template` id (a chest's).
     @property uint lootId() const
     {
         return type == GameObjectType.chest || type == GameObjectType.fishingHole ? template_.data[1] : 0;
     }
 
-    /// `GetAutoCloseTime`, in milliseconds (the template's value is seconds times 0x10000).
+    /// How long it stays open or in use, in milliseconds (the template's value is seconds times 0x10000).
     @property int autoCloseMs() const
     {
         int raw;
@@ -200,13 +199,13 @@ final class GameObject : Replicable, Moving, PerViewer
         return cast(int)(cast(long) cast(uint) raw * 1000 / 0x10000);
     }
 
-    /// `IsDespawnAtAction`: a consumable chest or goober goes once used.
+    /// Whether it goes once used: a consumable chest or goober goes once used.
     @property bool consumable() const
     {
         return (type == GameObjectType.chest && template_.data[3]) || (type == GameObjectType.goober && template_.data[5]);
     }
 
-    /// `UseDoorOrButton`: open (or closed) for its time, if it is not in use already.
+    /// Open (or closed) for its time, if it is not in use already.
     void useDoorOrButton(GameObjectWorld world, uint restoreMs = 0)
     {
         if (lootState != GoLootState.ready)
@@ -217,13 +216,13 @@ final class GameObject : Replicable, Moving, PerViewer
         world.flushGameObject(this);
     }
 
-    /// A door a script opens or closes for good (`DoUseDoorOrButton` with no reset): no timer brings it back.
+    /// A door a script opens or closes for good: no timer brings it back.
     void setDoorOpen(bool open)
     {
         values.set!GAMEOBJECT_STATE(open ? goStateActive : goStateReady);
     }
 
-    /// `UseOpenableObject`: opened (or closed) for `restoreMs`, unless it is so already.
+    /// Opened (or closed) for `restoreMs`, unless it is so already.
     void useOpenable(GameObjectWorld world, bool open, uint restoreMs)
     {
         if (goState == (open ? goStateActive : goStateReady))
@@ -231,7 +230,7 @@ final class GameObject : Replicable, Moving, PerViewer
         useDoorOrButton(world, restoreMs);
     }
 
-    /// `SwitchDoorOrButton`: the in-use flag, and the state the other way.
+    /// Sets or clears the in-use flag, and the state the other way.
     private void switchDoorOrButton(bool activate)
     {
         const flags = values.get!GAMEOBJECT_FLAGS;
@@ -249,7 +248,7 @@ final class GameObject : Replicable, Moving, PerViewer
         world.flushGameObject(this);
     }
 
-    /// See `Moving.tick`: `GameObject::Update`'s loot states.
+    /// See `Moving.tick`: the loot states move on.
     void tick(MotionWorld w, int diff)
     {
         auto world = cast(GameObjectWorld) w;
@@ -265,7 +264,7 @@ final class GameObject : Replicable, Moving, PerViewer
             case GameObjectType.door, GameObjectType.button:
                 if (restoreTimer > 0 && (restoreTimer -= diff) <= 0) // its time, or a script's
                 {
-                    // `ResetDoorOrButton`
+                    // back as it was
                     switchDoorOrButton(false);
                     lootState = GoLootState.justDeactivated;
                 }
@@ -294,7 +293,7 @@ final class GameObject : Replicable, Moving, PerViewer
         case GoLootState.justDeactivated:
             break;
         }
-        // `GO_JUST_DEACTIVATED`: ready again; the consumable (and the generic used) go for their respawn time.
+        // Just deactivated: ready again; the consumable (and the generic used) go for their respawn time.
         if (type == GameObjectType.goober)
             values.set!GAMEOBJECT_STATE(goStateReady);
         loot = null;
@@ -334,7 +333,7 @@ final class GameObject : Replicable, Moving, PerViewer
         return slots[];
     }
 
-    /// ditto: `GAMEOBJECT_DYN_FLAGS` with `GO_DYNFLAG_LO_ACTIVATE` for one whose quest needs it.
+    /// ditto: `GAMEOBJECT_DYN_FLAGS` with `goDynFlagActivate` for one whose quest needs it.
     uint fieldFor(ulong viewer, uint viewerGroup, size_t slot, uint value) const
     {
         if (slot == GAMEOBJECT_DYN_FLAGS && activatesFor !is null && activatesFor(viewer))
@@ -348,7 +347,7 @@ final class GameObject : Replicable, Moving, PerViewer
         return Position(spawn.x, spawn.y, spawn.z, spawn.orientation);
     }
 
-    /// `Object::BuildCreateUpdateBlockForPlayer` for a game object: a position, no movement.
+    /// The create block for a game object: a position, no movement.
     UpdateData appearance(uint serverTime) const
     {
         UpdateData update;
@@ -416,7 +415,7 @@ private:
         values.set!GAMEOBJECT_POS_Y(spawn.y);
         values.set!GAMEOBJECT_POS_Z(spawn.z);
         values.set!GAMEOBJECT_FACING(spawn.orientation);
-        // UpdateRotationFields: the last two parts from the facing when the spawn has none.
+        // Rotation: the last two parts from the facing when the spawn has none.
         float[4] rotation = spawn.rotation;
         if (rotation[2] == 0 && rotation[3] == 0)
         {

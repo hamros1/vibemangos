@@ -1,7 +1,6 @@
 /**
- * Extracts the client's buildings (WMOs) and doodads (M2s) as CMaNGOS's `vmap_extractor` does
- * (`contrib/vmap_extractor/vmapextract`: `vmapexport.cpp`, `wmo.cpp`, `model.cpp`, `adtfile.cpp`,
- * `wdtfile.cpp`, `gameobject_extract.cpp`), into `<output>/Buildings`:
+ * Extracts the client's buildings (WMOs) and doodads (M2s), in the vmap extractor's raw format,
+ * into `<output>/Buildings`:
  *
  * $(UL
  *   $(LI one raw model file per building and doodad ("VMAPs05"): its collision triangles and
@@ -11,13 +10,11 @@
  *   $(LI `temp_gameobject_models`: the models of `GameObjectDisplayInfo.dbc`.)
  * )
  *
- * `dmangos.extractor.assembler` then builds the vmaps from them, as `vmap_assembler` does.
+ * `dmangos.extractor.assembler` then builds the vmaps from them.
  *
- * One difference: CMaNGOS writes the doodads a building lists under their names as listed, but
- * looks them up under the names it normalizes (`fixnamen`, `fixname2`); on a case-sensitive file
- * system it loses every doodad that no terrain tile also places. Here both use the normalized name,
- * which is what CMaNGOS does on Windows. A building's doodads are placed in index order, where
- * CMaNGOS's order is that of a hash set; only the numbering of the placements differs.
+ * The doodads a building lists are both written and looked up under their normalized names
+ * (`fixNameCase`, `fixNameSpaces`), so none is lost on a case-sensitive file system. A building's
+ * doodads are placed in index order, which decides the numbering of the placements.
  */
 module dmangos.extractor.vmaps;
 
@@ -61,10 +58,10 @@ VmapReport extractVmapData(MpqArchive[] archives, string outputDir, void delegat
 }
 
 // ---------------------------------------------------------------------------
-// Names (adtfile.cpp)
+// Names
 // ---------------------------------------------------------------------------
 
-/// `GetPlainName`: the part after the last backslash.
+/// The part after the last backslash.
 string plainName(string path) pure nothrow @safe
 {
     foreach_reverse (i, c; path)
@@ -73,7 +70,7 @@ string plainName(string path) pure nothrow @safe
     return path;
 }
 
-/// `fixnamen`: each word capitalized, the rest lower case; the extension lower case.
+/// Each word capitalized, the rest lower case; the extension lower case.
 string fixNameCase(string name) pure @safe
 {
     if (name.length < 3)
@@ -91,7 +88,7 @@ string fixNameCase(string name) pure @safe
     return s.idup;
 }
 
-/// `fixname2`: spaces become underscores, the extension left alone.
+/// Spaces become underscores, the extension left alone.
 string fixNameSpaces(string name) pure @safe
 {
     if (name.length < 3)
@@ -118,13 +115,13 @@ string modelFileName(string path) pure @safe
 
 private:
 
-/// `WMO::MODS`
+/// A doodad set of a building's root file (`MODS`).
 struct DoodadSet
 {
     uint startIndex, count;
 }
 
-/// `WMO::MODD`
+/// A doodad a building's root file lists (`MODD`).
 struct DoodadSpawn
 {
     uint nameIndex;
@@ -142,7 +139,7 @@ struct WmoDoodads
     bool[ushort] references;
 }
 
-/// `ADT::MODF`: a placed building.
+/// A placed building (`MODF`).
 struct WmoPlacement
 {
     uint uniqueId;
@@ -200,7 +197,7 @@ final class RawExtractor
     string directory;
     WmoDoodads[string] doodads;    // by building file name
     uint[ulong] uniqueIds;         // (client id, doodad id) -> id
-    uint[string] written;          // raw files written -> their first count (CMaNGOS reads it back from the file)
+    uint[string] written;          // raw files written -> their first count (kept here, not read back from the file)
     ByteWriter dirBin;
     VmapReport report;
     bool[string] missing;
@@ -217,7 +214,7 @@ final class RawExtractor
             rmdirRecurse(directory);
         mkdirRecurse(directory);
 
-        // ExtractWmo: every building any archive lists.
+        // Every building any archive lists.
         bool[string] listed;
         foreach (archive; archives)
             foreach (name; archive.listfile())
@@ -229,7 +226,7 @@ final class RawExtractor
         if (progress)
             progress(format!"%s buildings, %s doodads"(report.wmos, report.models));
 
-        // ParsMapFiles: what the maps place.
+        // What the maps place.
         const maps = DbcStore!(MapName, "nsxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx").parse(
             readFile("DBFilesClient\\Map.dbc"), "Map.dbc");
         foreach (ref map; maps.rows)
@@ -285,10 +282,10 @@ final class RawExtractor
     }
 
     // -----------------------------------------------------------------------
-    // Doodads (model.cpp, gameobject_extract.cpp)
+    // Doodads
     // -----------------------------------------------------------------------
 
-    /// `ExtractSingleModel`: an M2's collision mesh. False if it has none or is not found.
+    /// Extracts an M2's collision mesh. False if it has none or is not found.
     bool extractModel(string path, out string fileName)
     {
         if (path.length < 4)
@@ -303,7 +300,7 @@ final class RawExtractor
             missing[source] = true;
             return false;
         }
-        // ModelHeader: the bounding triangles and vertices follow the magic and version, 43 words
+        // The M2 header: the bounding triangles and vertices follow the magic and version, 43 words
         // (the name, the type and 20 count and offset pairs) and 14 floats (the bounding boxes and radii).
         enum boundsAt = 8 + 43 * 4 + 14 * 4;
         static assert(boundsAt == 236);
@@ -326,7 +323,7 @@ final class RawExtractor
         putTag(w, "INDX");
         w.put(cast(uint)(4 + 2 * nIndices));
         w.put(nIndices);
-        // Each triangle's last two indexes swap (Model::ConvertToVMAPModel).
+        // Each triangle's last two indexes swap.
         foreach (i; 0 .. nIndices)
         {
             const j = i % 3 == 1 ? i + 1 : i % 3 == 2 ? i - 1 : i;
@@ -344,7 +341,7 @@ final class RawExtractor
         return true;
     }
 
-    /// `ModelInstance::ModelInstance`: a doodad placed by a terrain tile (MDDF).
+    /// A doodad placed by a terrain tile (MDDF).
     void placeModel(const(ubyte)[] entry, string name, uint mapId, uint tileX, uint tileY)
     {
         const clientId = peek!uint(entry, 0);
@@ -357,7 +354,7 @@ final class RawExtractor
         writeSpawn(mapId, tileX, tileY, flags, 0, uniqueId(clientId, 0), pos, rot, scale, null, name);
     }
 
-    /// `Doodad::ExtractSet`: the doodads of a placed building's doodad set.
+    /// Places the doodads of a placed building's doodad set.
     void placeDoodads(string wmoName, const ref WmoPlacement wmo, uint mapId, uint tileX, uint tileY)
     {
         auto data = wmoName in doodads;
@@ -391,10 +388,10 @@ final class RawExtractor
     }
 
     // -----------------------------------------------------------------------
-    // Buildings (wmo.cpp)
+    // Buildings
     // -----------------------------------------------------------------------
 
-    /// `ExtractSingleWmo`: a building's root and groups, as one raw file.
+    /// Extracts a building's root and groups, as one raw file.
     void extractWmo(string path)
     {
         const name = fixNameSpaces(fixNameCase(plainName(path)));
@@ -474,7 +471,7 @@ final class RawExtractor
             if (groupFile is null)
             {
                 warning!"could not open every group file of %s"(name);
-                return; // CMaNGOS deletes the incomplete file
+                return; // an incomplete building is not written
             }
             auto group = WmoGroup.read(groupFile);
             if (group.shouldSkip(groupNames))
@@ -494,7 +491,7 @@ final class RawExtractor
         ++report.wmos;
     }
 
-    /// `WMOInstance::WMOInstance`: a placed building (MODF), then its doodads.
+    /// A placed building (MODF), then its doodads.
     void placeWmo(const(ubyte)[] entry, string name, uint mapId, uint tileX, uint tileY)
     {
         WmoPlacement wmo;
@@ -505,8 +502,8 @@ final class RawExtractor
         wmo.flags = peek!ushort(entry, 52);
         wmo.doodadSet = peek!ushort(entry, 54);
         wmo.nameSet = peek!ushort(entry, 56);
-        // A destructible building (flag 1), or one without collision, is not placed; CMaNGOS still
-        // places its doodads, from the unconverted position.
+        // A destructible building (flag 1), or one without collision, is not placed; its doodads
+        // still are, from the unconverted position.
         if ((wmo.flags & 1) == 0 && rawCount(name) != 0)
         {
             if (wmo.position.x == 0 && wmo.position.z == 0)
@@ -521,10 +518,10 @@ final class RawExtractor
     }
 
     // -----------------------------------------------------------------------
-    // Maps (wdtfile.cpp, adtfile.cpp)
+    // Maps
     // -----------------------------------------------------------------------
 
-    /// `WDTFile::init`: the buildings a map without terrain places (tile 65, 65).
+    /// The buildings a map without terrain places (tile 65, 65).
     void parseWdt(const(ubyte)[] wdt, uint mapId)
     {
         string[] names;
@@ -541,7 +538,7 @@ final class RawExtractor
                 }
     }
 
-    /// `ADTFile::init`: the doodads and buildings a terrain tile places.
+    /// The doodads and buildings a terrain tile places.
     void parseAdt(const(ubyte)[] adt, uint mapId, uint tileX, uint tileY)
     {
         string[] modelNames, wmoNames;
@@ -581,7 +578,7 @@ final class RawExtractor
             }
     }
 
-    /// `ExtractGameobjectModels`: the models game objects show, and the list of them.
+    /// Extracts the models game objects show, and the list of them.
     void extractGameObjectModels()
     {
         const displays = DbcStore!(MapName, "nsxxxxxxxxxx").parse(readFile("DBFilesClient\\GameObjectDisplayInfo.dbc"),
@@ -692,7 +689,7 @@ struct WmoGroup
         WmoGroup g;
         foreach (chunk, body_, _; ChunkFile(file))
         {
-            // WMOGroup::open forgets a liquid when another chunk follows it.
+            // A liquid counts only in the last chunk: any chunk after it clears it again.
             g.hasLiquid = false;
             switch (chunk)
             {
@@ -738,7 +735,7 @@ struct WmoGroup
         return g;
     }
 
-    /// `WMOGroup::ShouldSkip`: unreachable groups and antiportals.
+    /// Whether the group is left out: unreachable groups and antiportals.
     bool shouldSkip(const(char)[] groupNames) const
     {
         if (mogpFlags & 0x80 || mogpFlags & 0x4000000)
@@ -753,7 +750,7 @@ struct WmoGroup
         return false;
     }
 
-    /// `WMOGroup::ConvertToVMAPGroupWmo` (small data): the collision triangles. Returns their count.
+    /// Writes the group (small data): the collision triangles. Returns their count.
     uint convert(ref ByteWriter w, uint rootFlags, string path) const
     {
         w.put(cast(uint) mogpFlags);
@@ -830,7 +827,7 @@ struct WmoGroup
                 default: break;
                 }
             putTag(w, "LIQU");
-            // As CMaNGOS: the size counts each vertex's eight bytes, though four are written.
+            // Deliberately, as in the standard vmap files: the size counts each vertex's eight bytes, though four are written.
             w.put(cast(uint)(32 + liquidHeights.length * 8 + liquidTiles.length));
             foreach (k; 0 .. 4)
                 w.put(liquidSize[k]);

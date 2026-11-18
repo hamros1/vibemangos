@@ -1,7 +1,7 @@
 /**
- * A player's reputations in the world (CMaNGOS `ReputationMgr`'s packets and saving, `Player`'s
- * `RewardReputation` and `CalculateReputationGain`, and `MiscHandler.cpp`'s faction opcodes), mixed
- * into `dmangos.world.session.Character`.
+ * A player's reputations in the world: loading and saving them, their packets, the reputation
+ * kills and quests give, and the client's faction opcodes, mixed into
+ * `dmangos.world.session.Character`.
  *
  * Kills give the reputations of `creature_onkill_reputation` (shared in a group like experience,
  * half to the team faction where it says so, up to its rank cap); quests their `RewRepFaction`
@@ -27,7 +27,7 @@ mixin template ReputationHandlers()
     /// `ReputationSource`
     enum ReputationSource { kill, quest, spell }
 
-    /// `ReputationMgr::LoadFromDB`, for a player made from its saved character.
+    /// The reputations loaded from the database, for a player made from its saved character.
     package Reputation loadedReputation(uint guid, ubyte race, ubyte classId)
     {
         auto reputation = new Reputation(context.client, 1u << (race - 1), 1u << (classId - 1));
@@ -35,7 +35,7 @@ mixin template ReputationHandlers()
         return reputation;
     }
 
-    /// `ReputationMgr::SaveToDB`: the factions that changed.
+    /// Saves the factions that changed.
     package void saveReputation()
     {
         if (player is null || player.reputation is null)
@@ -45,7 +45,7 @@ mixin template ReputationHandlers()
             context.database.saveReputation(player.data.guid, rows);
     }
 
-    /// `SendInitialReputations`: the whole list, as `SMSG_INITIALIZE_FACTIONS`.
+    /// The whole list, as `SMSG_INITIALIZE_FACTIONS`.
     package ubyte[] initialReputations()
     {
         ByteWriter w;
@@ -61,7 +61,7 @@ mixin template ReputationHandlers()
     }
 
     /**
-     * `SendVisible` and `SendState`: the factions newly in the list, then the standings changed,
+     * The factions newly in the list, then the standings changed,
      * `first` (the one changed on purpose) leading.
      */
     void sendReputationChanges(int first)
@@ -97,8 +97,7 @@ mixin template ReputationHandlers()
     }
 
     /**
-     * `ReputationMgr::ModifyReputation`: `amount` more with `faction` (its related factions sharing
-     * unless `noSpillover`); the client told; quests waiting on the standing looked at.
+     * `amount` more with `faction` (its related factions sharing unless `noSpillover`); the client told; quests waiting on the standing looked at.
      */
     package void modifyReputation(uint faction, int amount, bool noSpillover = false)
     {
@@ -110,7 +109,7 @@ mixin template ReputationHandlers()
         reputationChanged(faction);
     }
 
-    /// `Player::ReputationChanged`: a quest whose objective is this standing completes when it is reached.
+    /// A standing changed: a quest whose objective is this standing completes when it is reached.
     void reputationChanged(uint faction)
     {
         foreach (id, ref q; player.questStatus)
@@ -120,7 +119,7 @@ mixin template ReputationHandlers()
                         completeQuest(id);
     }
 
-    /// `Player::CalculateReputationGain`
+    /// The reputation `rep` from `source` is worth to this player: less for low levels, scaled by the rates.
     int reputationGain(ReputationSource source, int rep, uint faction, uint level)
     {
         import std.algorithm.comparison : max;
@@ -147,7 +146,7 @@ mixin template ReputationHandlers()
         return cast(int)(context.config.rateReputationGain * rep * percent / 100.0f);
     }
 
-    /// `Player::RewardReputation(Creature*, float)`: what the kill does to the factions it concerns.
+    /// What a kill does to the factions it concerns.
     package void rewardKillReputation(Creature victim, float rate)
     {
         rewardKillReputation(victim.template_.entry, victim.values.get!UNIT_FIELD_LEVEL, rate);
@@ -178,7 +177,7 @@ mixin template ReputationHandlers()
         }
     }
 
-    /// `Player::RewardReputation(Quest const*)`
+    /// The reputation a quest turned in gives.
     package void rewardQuestReputation(const ref Quest quest)
     {
         const level = quest.questLevel > 0 ? cast(uint) quest.questLevel : player.data.level;
@@ -189,7 +188,7 @@ mixin template ReputationHandlers()
     }
 
     /**
-     * `Player::GetReputationPriceDiscount`: 10% off at honored and above with the faction of the
+     * The price discount: 10% off at honored and above with the faction of the
      * NPC's template (`faction`); the PvP rank's 10% needs ranks, which do not exist yet.
      */
     package float reputationPriceDiscount(uint factionTemplate)
@@ -201,7 +200,7 @@ mixin template ReputationHandlers()
     }
 
     /**
-     * `Player::GetReputationPriceDiscount` for buying: 10% off at Honored with the vendor's faction, and
+     * The price discount for buying: 10% off at Honored with the vendor's faction, and
      * 10% more for a rank of 3 (a visual rank: Sergeant) at a vendor friendly to the player's side.
      */
     package float buyPriceDiscount(uint factionTemplate)
@@ -234,7 +233,7 @@ mixin template ReputationHandlers()
         return discount;
     }
 
-    /// `SatisfyQuestReputation`: within the standings the quest asks for.
+    /// Whether the player is within the standings the quest asks for.
     package bool satisfyQuestReputation(const ref Quest quest)
     {
         if (player.reputation is null)
@@ -249,7 +248,7 @@ mixin template ReputationHandlers()
     }
 
 private:
-    /// `HandleSetFactionAtWarOpcode`
+    /// The player sets or clears war with a faction.
     @Handles(Opcode.CMSG_SET_FACTION_ATWAR, WorldState.inWorld)
     void handleSetFactionAtWar(ref ByteReader reader)
     {
@@ -257,7 +256,7 @@ private:
         player.reputation.setAtWarById(id, flag != 0);
     }
 
-    /// `HandleSetFactionInactiveOpcode`
+    /// The player moves a faction to or from the inactive list.
     @Handles(Opcode.CMSG_SET_FACTION_INACTIVE, WorldState.inWorld)
     void handleSetFactionInactive(ref ByteReader reader)
     {
@@ -265,7 +264,7 @@ private:
         player.reputation.setInactive(id, flag != 0);
     }
 
-    /// `HandleSetWatchedFactionOpcode`: the faction shown on the experience bar.
+    /// The player picks the faction shown on the experience bar.
     @Handles(Opcode.CMSG_SET_WATCHED_FACTION, WorldState.inWorld)
     void handleSetWatchedFaction(ref ByteReader reader)
     {

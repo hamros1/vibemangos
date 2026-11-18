@@ -1,5 +1,5 @@
 /**
- * Friends and ignore lists (CMaNGOS's `SocialMgr`, `MiscHandler.cpp`'s friend handlers): up to 50
+ * Friends and ignore lists: up to 50
  * friends and 25 ignored players a character, kept in `character_social` (flag 1 a friend, 2
  * ignored). The friend list shows who is online (zone, level, class, away or busy), here or on
  * another node of a cluster; a player's friends hear when it comes online and goes offline; an
@@ -17,7 +17,7 @@ enum SocialFlag : ubyte
     ignored = 0x02,
 }
 
-/// `SOCIALMGR_FRIEND_LIMIT`, `SOCIALMGR_IGNORE_LIMIT`
+/// The most friends and ignored players a character may have.
 enum uint friendLimit = 50, ignoreLimit = 25;
 
 /// `FriendsResult`
@@ -85,7 +85,7 @@ mixin template SocialHandlers()
 
     private ubyte[ulong] social; // guid -> `SocialFlag`s
 
-    /// `PlayerSocial::LoadFromDB`.
+    /// Loads the player's friends and ignored players.
     package void loadSocial()
     {
         import dmangos.world.objects : HighGuid, makeGuid;
@@ -95,7 +95,7 @@ mixin template SocialHandlers()
             social[makeGuid(HighGuid.player, row.other)] |= row.flags; // rows of older servers may split them
     }
 
-    /// Whether this player ignores `guid` (`PlayerSocial::HasIgnore`; `OnlinePlayer.ignores`).
+    /// Whether this player ignores `guid` (see also `OnlinePlayer.ignores`).
     bool ignoresGuid(ulong guid) const
     {
         return (social.get(guid, 0) & SocialFlag.ignored) != 0;
@@ -107,7 +107,7 @@ mixin template SocialHandlers()
         return (social.get(guid, 0) & SocialFlag.friend) != 0;
     }
 
-    /// `PlayerSocial::SendFriendList` and `SendIgnoreList`.
+    /// Sends the friend list and the ignore list.
     package void sendSocialLists()
     {
         ByteWriter friends, ignored;
@@ -142,7 +142,7 @@ mixin template SocialHandlers()
         deliver(Opcode.SMSG_IGNORE_LIST, ignored.data);
     }
 
-    /// `sSocialMgr.GetFriendInfo`: a friend's state, here or on another node; offline if it is not online
+    /// A friend's state, here or on another node; offline if it is not online
     /// (or a game master hiding from this player).
     FriendInfo friendInfo(ulong guid)
     {
@@ -177,7 +177,7 @@ mixin template SocialHandlers()
         sendSocialLists();
     }
 
-    /// `HandleAddFriendOpcode`: by name, of the player's faction (unless allowed), not itself, not twice.
+    /// The player adds a friend: by name, of the player's faction (unless allowed), not itself, not twice.
     @Handles(Opcode.CMSG_ADD_FRIEND, WorldState.inWorld)
     void handleAddFriend(ref ByteReader reader)
     {
@@ -214,7 +214,7 @@ mixin template SocialHandlers()
         deliver(Opcode.SMSG_FRIEND_STATUS, friendStatusPacket(FriendsResult.removed, request.guid));
     }
 
-    /// `HandleAddIgnoreOpcode`: by name, not itself, not twice.
+    /// The player ignores someone: by name, not itself, not twice.
     @Handles(Opcode.CMSG_ADD_IGNORE, WorldState.inWorld)
     void handleAddIgnore(ref ByteReader reader)
     {
@@ -246,7 +246,7 @@ mixin template SocialHandlers()
     }
 
     /**
-     * `sSocialMgr.SendFriendStatus` on a login or logout: the players who have this one as a friend
+     * On a login or logout: the players who have this one as a friend
      * (here, and in a cluster on the other nodes) hear of it. A game master hiding is not announced.
      */
     package void announceToFriends(bool online)

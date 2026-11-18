@@ -11,7 +11,7 @@
  * `dmangos.net.dispatch`. An unknown opcode, or one sent in the wrong state,
  * disconnects the client.
  *
- * The decisions follow CMaNGOS `realmd/AuthSocket.cpp`:
+ * The decisions:
  * $(UL
  *   $(LI banned IP: "no access"; account locked to another IP: "suspended";)
  *   $(LI unreadable `s`/`v`: "no access"; permanent ban: "banned"; temporary ban: "suspended";)
@@ -405,14 +405,14 @@ private:
 
     void sendLogonProofFailure(AuthResult result)
     {
-        // 1.12.3 (6141) expects two trailing bytes; 1.12.1 and 1.12.2 do not (CMaNGOS AuthSocket.cpp).
+        // 1.12.3 (6141) expects two trailing bytes; 1.12.1 and 1.12.2 do not.
         if (build > 6005)
             send(ServerLogonProofFailurePadded(result));
         else
             send(ServerLogonProofFailure(result));
     }
 
-    /// CMaNGOS `RegisterFailedLogin`: count the failure, and ban once `WrongPass.MaxCount` is reached.
+    /// A failed login: count the failure, and ban once `WrongPass.MaxCount` is reached.
     void registerFailedLogin()
     {
         const limit = context.config.wrongPassMaxCount;

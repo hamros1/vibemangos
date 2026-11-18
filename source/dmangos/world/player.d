@@ -1,13 +1,13 @@
 /**
- * A character in the world: what `Player::LoadFromDB` reads, the player
- * and item objects built from it, and what logging out saves.
+ * A character in the world: what is loaded for it from the database, the
+ * player and item objects built from it, and what logging out saves.
  *
- * `Player` fills the update fields as CMaNGOS does on login
- * (`Player::LoadFromDB`, `InitStatsForLevel`, `_LoadInventory`,
- * `_LoadSkills`, `InitDisplayIds`), with the derived numbers from
- * `dmangos.world.stats`. The client draws the character, its gear, bags,
- * skills and spellbook from these fields and from the packets of
- * `Player::SendInitialPacketsBeforeAddToMap`, which `Character` sends.
+ * On login `Player` fills the update fields from the character row, its
+ * inventory and skills, its level's base stats and its display ids, with
+ * the derived numbers from `dmangos.world.stats`. The client draws the
+ * character, its gear, bags, skills and spellbook from these fields and
+ * from the packets sent before the player enters the map, which
+ * `Character` sends.
  *
  * Not loaded yet: auras, quests, reputation, guild membership, pets and
  * corpses. A dead character (health 0) is loaded alive with full health.
@@ -98,7 +98,7 @@ struct CharacterData
     uint[8] taxiMask;            /// `taximask`: the flight masters' nodes it knows, a bit each
 }
 
-/// What logging out writes back (`Player::SaveToDB`, the fields that can change in the world so far).
+/// What logging out writes back (the fields that can change in the world so far).
 struct CharacterProgress
 {
     uint guid;
@@ -192,12 +192,12 @@ final class Player : InventoryOwner
     uint[] spells;                       /// active, enabled spells: the spellbook
     uint[maxActionButtons] actionButtons; /// packed, 0 = empty
     uint[2] proficiency;                 /// item sub-class masks for weapons and armor (`SMSG_SET_PROFICIENCY`)
-    string autoReply;                    /// the AFK or DND message (`Player::autoReplyMsg`)
-    /// ArcEmu's `Player::bGMTagOn`: the GM tag in chat (`.gm on`, `.gm whisperblock`)
+    string autoReply;                    /// the AFK or DND message
+    /// The GM tag in chat (`.gm on`, `.gm whisperblock`).
     bool gmTagOn;
-    /// `Player::CanDualWield`: a spell with `SPELL_EFFECT_DUAL_WIELD` is known.
+    /// Whether the player can dual wield: a spell with `SPELL_EFFECT_DUAL_WIELD` is known.
     bool dualWield;
-    /// `Player::m_areaUpdateId`: the area within `data.zone`; the zone itself where there is no map data.
+    /// The area within `data.zone`; the zone itself where there is no map data.
     uint area;
 
     /**
@@ -290,7 +290,7 @@ final class Player : InventoryOwner
     }
 
     /**
-     * `Player::BuildCreateUpdateBlockForPlayer` for the player itself: its items, then the player.
+     * The create block for the player itself: its items, then the player.
      * Once it is sent, call `inventory.markAllSent`.
      */
     UpdateData createForSelf(uint serverTime) const
@@ -313,7 +313,7 @@ final class Player : InventoryOwner
 
     /**
      * The player as another player first sees it: no items and no private fields. A stranger sees
-     * health in percent (`Visibility.FogOfWar.Health` 0); a group mate sees the real values and the
+     * health in percent; a group mate sees the real values and the
      * group-only fields.
      */
     UpdateData createForOthers(uint serverTime, bool groupMate) const
@@ -365,7 +365,7 @@ final class Player : InventoryOwner
     }
 
     /**
-     * `Group::_updateMembersOnRosterChanged`: health, maximum health and the group-only fields as
+     * Health, maximum health and the group-only fields as
      * `viewer` should now see them, for a player who joined or left the viewer's group.
      */
     UpdateData groupView(Viewer viewer) const
@@ -405,31 +405,31 @@ final class Player : InventoryOwner
         return movement.position;
     }
 
-    /// `Unit::SetStandState`
+    /// Sits, stands, kneels or lies down (`UNIT_FIELD_BYTES_1`, byte 0).
     void setStandState(ubyte state)
     {
         values.setByte!UNIT_FIELD_BYTES_1(0, state);
     }
 
-    /// `Unit::SetTargetGuid`: whom the player has selected; 0 for nobody.
+    /// Whom the player has selected; 0 for nobody.
     void setTarget(ulong target)
     {
         values.set!UNIT_FIELD_TARGET(target);
     }
 
-    /// `Unit::HandleEmoteState`: a looping emote (dancing, ...) or 0.
+    /// A looping emote (dancing, ...) or 0.
     void setEmoteState(uint emote)
     {
         values.set!UNIT_NPC_EMOTESTATE(emote);
     }
 
-    /// The power the class uses (`Unit::GetPowerType`).
+    /// The power the class uses.
     @property Power powerType() const
     {
         return cast(Power) values.getByte!UNIT_FIELD_BYTES_0(3);
     }
 
-    /// `Player::HasItemCount`: carried or equipped, not in the bank.
+    /// Whether the player has `count` of `entry`, carried or equipped, not in the bank.
     bool hasItem(uint entry, uint count = 1) const
     {
         return inventory.count(entry) >= count;
@@ -441,7 +441,7 @@ final class Player : InventoryOwner
         return values[PLAYER_FIELD_COINAGE];
     }
 
-    /// `Player::ModifyMoney`: adds `amount` (or takes it, if negative), within 0 and `MAX_MONEY_AMOUNT`.
+    /// Adds `amount` (or takes it, if negative), within 0 and the most money a player may have.
     void modifyMoney(long amount)
     {
         enum long maxMoney = int.max;
@@ -449,7 +449,7 @@ final class Player : InventoryOwner
     }
 
     /**
-     * `Player::_ApplyItemMods` for every worn item at once: the stats, armor, damage and the rest
+     * The item bonuses of every worn item at once: the stats, armor, damage and the rest
      * worked out again from what is worn now. Health and mana keep their values, within the new maximums.
      */
     void refreshEquipmentStats(const WorldData world)
@@ -475,7 +475,7 @@ final class Player : InventoryOwner
         values.set!PLAYER_FLAGS(on ? flags | flag : flags & ~flag);
     }
 
-    /// `Player::GetChatTag`
+    /// The tag shown with the player's chat: GM, then AFK, then DND, else none.
     @property ChatTag chatTag() const
     {
         if (gmTagOn)
@@ -487,7 +487,7 @@ final class Player : InventoryOwner
         return ChatTag.CHAT_TAG_NONE;
     }
 
-    /// `Object::BuildValuesUpdate` for a viewer outside the group: health in percent of 100.
+    /// A field's value as a viewer outside the group sees it: health in percent of 100.
     uint strangerValue(size_t slot, uint value) const
     {
         import std.math : ceil;
@@ -545,7 +545,7 @@ final class Player : InventoryOwner
     }
 
     /**
-     * `characters.equipmentCache` as `Player::SaveToDB` writes it: per equipment slot the visible
+     * `characters.equipmentCache` as logging out writes it: per equipment slot the visible
      * entry and its permanent and temporary enchantments as one number, then the first bag.
      */
     string equipmentCacheText() const
@@ -577,7 +577,7 @@ final class Player : InventoryOwner
     }
 
     // -----------------------------------------------------------------------
-    // Regeneration and rest (Player::RegenerateAll, SetRestBonus, ComputeRest)
+    // Regeneration and rest
     // -----------------------------------------------------------------------
 
     /// Rested XP: the bonus left, why the player rests, and since when it has been counted.
@@ -586,7 +586,7 @@ final class Player : InventoryOwner
     uint innTrigger;   /// the inn's area trigger, while resting in it
     long restCountedAt; /// Unix time
 
-    /// `Unit::OCTRegenHPPerSpirit`: health per second out of combat, from spirit and class.
+    /// Health per second out of combat, from spirit and class.
     float healthRegenPerSecond() const
     {
         const spirit = float(values.get!UNIT_FIELD_STAT0(Stat.spirit));
@@ -605,7 +605,7 @@ final class Player : InventoryOwner
         }
     }
 
-    /// `Unit::OCTRegenMPPerSpirit`: mana per second, from spirit and class.
+    /// Mana per second, from spirit and class.
     float manaRegenPerSecond() const
     {
         const spirit = float(values.get!UNIT_FIELD_STAT0(Stat.spirit));
@@ -629,7 +629,7 @@ final class Player : InventoryOwner
     }
 
     /**
-     * `Player::RegenerateAll` for `milliseconds` out of combat: health (half again as fast sitting),
+     * Regeneration over `milliseconds` out of combat: health (half again as fast sitting),
      * mana, energy, and rage decaying. Returns whether anything changed.
      */
     bool regenerate(uint milliseconds, float healthRate, float manaRate, float rageLoss, float energyRate,
@@ -637,7 +637,7 @@ final class Player : InventoryOwner
     {
         bool changed;
         const health = values.get!UNIT_FIELD_HEALTH, maxHealth = values.get!UNIT_FIELD_MAXHEALTH;
-        // `Player::RegenerateAll`: health, and the loss of rage, only out of combat.
+        // Health, and the loss of rage, only out of combat.
         if (!inCombat && health < maxHealth && health > 0)
         {
             float add = max(0, healthRegenPerSecond() * healthRate);
@@ -668,7 +668,7 @@ final class Player : InventoryOwner
         return true;
     }
 
-    /// `Player::SetRestBonus`: at most one and a half levels, shown as "rested" over 10.
+    /// Sets the rested XP: at most one and a half levels, shown as "rested" over 10.
     void setRestBonus(float bonus, uint maxPlayerLevel)
     {
         if (data.level >= maxPlayerLevel || bonus < 0)
@@ -682,13 +682,13 @@ final class Player : InventoryOwner
         values.set!PLAYER_REST_STATE_EXPERIENCE(cast(uint) restBonus);
     }
 
-    /// `Player::ComputeRest`: the rested XP of `seconds`; a full level takes 1152000 s (13.3 days) at rate 1.
+    /// The rested XP earned in `seconds`; a full level takes 1152000 s (13.3 days) at rate 1.
     float computeRest(long seconds, float rate) const
     {
         return seconds * (values.get!PLAYER_NEXT_LEVEL_XP / 1_152_000.0f) * rate;
     }
 
-    /// `Player::SetRestType`
+    /// Starts or stops resting (the resting flag); `trigger` is the inn's area trigger, if any.
     void setRestType(RestType type, long now, uint trigger = 0)
     {
         restType = type;
@@ -700,7 +700,7 @@ final class Player : InventoryOwner
         }
     }
 
-    /// `Unit::SetStunned` for logging out: the stunned flag, and sitting down if standing.
+    /// Stuns the player for logging out: the stunned flag, and sitting down if standing.
     void setLogoutStun(bool on)
     {
         enum uint unitFlagStunned = 0x00040000; // UNIT_FLAG_STUNNED
@@ -717,7 +717,7 @@ final class Player : InventoryOwner
     // -----------------------------------------------------------------------
 
     /**
-     * `Player::GiveLevel` and `InitStatsForLevel`: the stats of `level`, with full health and mana
+     * Sets the level: the stats of `level`, with full health and mana
      * and no XP. Returns what the level added (`SMSG_LEVELUP_INFO`).
      */
     ServerLevelUpInfo changeLevel(uint level, const WorldData world, const ClientData client)
@@ -753,7 +753,7 @@ final class Player : InventoryOwner
     }
 
     /**
-     * `Player::UpdateSkillsForLevel`: a skill that goes with the level (weapons, defense) may now
+     * After a level change, a skill that goes with the level (weapons, defense) may now
      * rise to 5 a level; one the race and class have maximized (`SKILL_FLAG_MAXIMIZED`) is full.
      */
     void updateSkillsForLevel(const ClientData client)
@@ -783,7 +783,7 @@ final class Player : InventoryOwner
         }
     }
 
-    /// Movement speeds, in yards per second (`Unit::m_speed_rate` times the base speeds).
+    /// Movement speeds, in yards per second (the speed rates times the base speeds).
     float[MoveType.max + 1] speeds = baseMoveSpeed;
 
     /// The fastest the player can move on the ground or in water.
@@ -792,7 +792,7 @@ final class Player : InventoryOwner
         return max(speeds[MoveType.run], speeds[MoveType.swim], speeds[MoveType.runBack], speeds[MoveType.walk]);
     }
 
-    /// `Player::ExploreArea` for everything: every bit of `PLAYER_EXPLORED_ZONES_1`.
+    /// Explores everything: every bit of `PLAYER_EXPLORED_ZONES_1`.
     void exploreAll()
     {
         foreach (i; 0 .. exploredZonesSize)
@@ -865,7 +865,7 @@ final class Player : InventoryOwner
         return list;
     }
 
-    /// `Player::SetSkill`: adds the skill or changes it; a maximum of 0 removes it. False if no slot is free.
+    /// Adds the skill or changes it; a maximum of 0 removes it. False if no slot is free.
     bool setSkill(uint skill, ushort value, ushort maxValue)
     in (skill > 0 && skill <= ushort.max)
     {
@@ -897,7 +897,7 @@ final class Player : InventoryOwner
         return spells.canFind(spell);
     }
 
-    /// `Player::HasSpell`: in the spellbook, or a saved lower rank it replaced; not disabled.
+    /// Whether the player knows `spell`: in the spellbook, or a saved lower rank it replaced; not disabled.
     bool hasSpell(uint spell) const
     {
         return knowsSpell(spell) || data.spells.canFind!(row => row.spell == spell && !row.disabled);
@@ -954,7 +954,7 @@ final class Player : InventoryOwner
 
 private:
     // -----------------------------------------------------------------------
-    // Items (Player::_LoadInventory)
+    // Items
     // -----------------------------------------------------------------------
 
     void loadItems()
@@ -972,7 +972,7 @@ private:
     }
 
     // -----------------------------------------------------------------------
-    // Fields (LoadFromDB, InitStatsForLevel, InitDisplayIds, the stat system)
+    // Fields (the character row, its level's stats, display ids, the stat system)
     // -----------------------------------------------------------------------
 
     void computeDerived(const WorldData world)
@@ -987,7 +987,7 @@ private:
             if (const item = inventory.equipped(slot))
                 if (item.durability != 0 || item.maxDurability == 0) // a broken item gives nothing
                     input.equipment[slot] = item.proto;
-        // What auras add (`Aura::HandleAuraModStat`, `HandleAuraModResistance`, ...).
+        // What auras add (stat and resistance modifiers, ...).
         foreach (i; 0 .. 5)
         {
             input.auras.stats[i] = auras.totalByMisc(AuraType.modStat, i) + auras.totalByMisc(AuraType.modStat, -1);
@@ -1059,8 +1059,8 @@ private:
         return f;
     }
 
-    /// `GetWeaponForAttack`: the weapon (item class 2) in `slot`, if it is not broken; null otherwise.
-    /// `GetWeaponSkillIdForAttack`: the skill a swing of `type` uses (unarmed for an empty main hand); 0 if none.
+    /// The skill a swing of `type` uses: that of the weapon (item class 2, not broken) in its slot; unarmed for
+    /// an empty main hand; 0 if none.
     public uint weaponSkillFor(AttackType type) const
     {
         import dmangos.world.inventory : itemSkill;
@@ -1071,7 +1071,7 @@ private:
         return item !is null ? itemSkill(item.proto) : type == AttackType.mainHand ? skillUnarmed : 0;
     }
 
-    /// The melee chances again, after a weapon or defense skill changed (`UpdateAllCritPercentages`, `UpdateDefenseBonusesMod`).
+    /// The melee chances again, after a weapon or defense skill changed.
     public void refreshChances(const WorldData world)
     {
         chances = meleeChances(chanceInputs(world));
@@ -1086,7 +1086,7 @@ private:
         return item.durability != 0 || item.maxDurability == 0 ? item : null;
     }
 
-    /// Adds (or takes) power of `type`, within 0 and the maximum (`ModifyPower`). Returns whether it changed.
+    /// Adds (or takes) power of `type`, within 0 and the maximum. Returns whether it changed.
     public bool modifyPower(Power type, int amount)
     {
         return addPower(type, amount);
@@ -1135,7 +1135,7 @@ private:
         v.set!OBJECT_FIELD_GUID(guid);
         v.set!OBJECT_FIELD_TYPE(TypeMask.object | TypeMask.unit | TypeMask.player);
 
-        // InitDisplayIds
+        // Display ids, by race and gender
         const displayId = race is null ? 0 : (data.gender == 0 ? race.maleDisplayId : race.femaleDisplayId);
         v.set!OBJECT_FIELD_SCALE_X(client.displayScale(displayId));
         v.set!UNIT_FIELD_DISPLAYID(displayId);
@@ -1157,7 +1157,7 @@ private:
         setStatFields(data.health == 0 ? uint.max : data.health, data.power);
 
         // Player
-        // `InitStatsForLevel`: AFK, DND, GM, and the PvP wish and free-for-all do not outlast a logout.
+        // AFK, DND, GM, and the PvP wish and free-for-all do not outlast a logout.
         v.set!PLAYER_FLAGS(data.playerFlags & ~(PlayerFlags.afk | PlayerFlags.dnd | PlayerFlags.gm | 0x200u | 0x80u));
         v.set!PLAYER_BYTES(data.playerBytes);
         v.set!PLAYER_BYTES_2(data.playerBytes2);
@@ -1186,8 +1186,8 @@ private:
         }
         v.set!UNIT_FIELD_BASE_HEALTH(stats.baseHealth);
         v.set!UNIT_FIELD_BASE_MANA(stats.baseMana);
-        // Stats are whole numbers on the wire: UNIT_FIELD_STAT* are integer fields, and CMaNGOS converts
-        // the float bonus fields to integers when it sends them (Object::BuildValuesUpdate).
+        // Stats are whole numbers on the wire: UNIT_FIELD_STAT* are integer fields, and the float bonus
+        // fields are sent converted to integers too.
         foreach (i; 0 .. 5)
         {
             v.set!UNIT_FIELD_STAT0(i, cast(int) stats.stats[i]);
@@ -1201,7 +1201,7 @@ private:
         }
         v.set!UNIT_FIELD_ATTACK_POWER(stats.attackPower);
         v.set!UNIT_FIELD_RANGED_ATTACK_POWER(stats.rangedAttackPower);
-        // CMaNGOS sends attack times as whole numbers, not floats (Object::BuildValuesUpdate).
+        // Attack times are sent as whole numbers, not floats.
         v.set!UNIT_FIELD_BASEATTACKTIME(stats.attackTime[AttackType.mainHand]);
         v.set!UNIT_FIELD_BASEATTACKTIME(1, stats.attackTime[AttackType.offHand]); // the off hand
         v.set!UNIT_FIELD_RANGEDATTACKTIME(stats.attackTime[AttackType.ranged]);
@@ -1243,7 +1243,7 @@ private:
             if (const position = client.talentSpellPos(id))
                 if (position.rank + 1 > talentRanks.get(position.talentId, 0))
                     talentRanks[position.talentId] = position.rank + 1;
-            // Spell::EffectProficiency, which runs when the passive spell is cast at login
+            // The proficiency effect, which applies when the passive spell is cast at login
             if (info.hasEffect(SpellEffect.proficiency))
             {
                 if (info.equippedItemClass == ItemClass.weapon)
@@ -1251,11 +1251,11 @@ private:
                 else if (info.equippedItemClass == ItemClass.armor)
                     proficiency[1] |= info.equippedItemSubClassMask;
             }
-            if (info.hasEffect(SpellEffect.dualWield)) // Spell::EffectDualWield
+            if (info.hasEffect(SpellEffect.dualWield)) // the dual wield effect
                 dualWield = true;
         }
 
-        // Player::UpdateFreeTalentPoints
+        // Free talent points: those the level earned less those spent.
         const spent = talentRanks.byValue.sum;
         const earned = talentPointsForLevel(data.level);
         values.set!PLAYER_CHARACTER_POINTS1(earned > spent ? earned - spent : 0);

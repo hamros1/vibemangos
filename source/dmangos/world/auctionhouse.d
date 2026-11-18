@@ -1,5 +1,5 @@
 /**
- * Auction houses (CMaNGOS `AuctionHouse/AuctionHouseMgr.cpp`): what an auction is, the house an
+ * Auction houses: what an auction is, the house an
  * auctioneer belongs to, deposits, cuts and bid increments, and the auction's line in the lists.
  *
  * The `auction` table is the auctions' one place (with their items in `item_instance`, as mail
@@ -12,10 +12,10 @@ module dmangos.world.auctionhouse;
 
 import dmangos.bytes : ByteWriter;
 
-/// `MIN_AUCTION_TIME`: 2 hours; an auction lasts 1, 4 or 12 times as long.
+/// The shortest auction: 2 hours; an auction lasts 1, 4 or 12 times as long.
 enum uint minAuctionTime = 2 * 60 * 60;
 
-/// `MAX_AUCTION_ITEMS_CLIENT_UI_PAGE`
+/// Auctions on one page of the client's list.
 enum uint auctionPageSize = 50;
 
 /// `AuctionError`
@@ -39,7 +39,7 @@ enum AuctionAction : uint
     bidPlaced = 2,
 }
 
-/// `MailAuctionAnswers`: what an auction mail's subject says happened.
+/// What an auction mail's subject says happened.
 enum AuctionMail : uint
 {
     outbidded = 0,
@@ -61,7 +61,7 @@ struct AuctionHouseEntry
 
 enum auctionHouseFormat = "niiixxxxxxxxx"; ///
 
-/// An `auction` row (`AuctionEntry`).
+/// An `auction` row.
 struct AuctionRecord
 {
     uint id;
@@ -78,21 +78,21 @@ struct AuctionRecord
     uint startBid;
     uint deposit;
 
-    /// `GetAuctionOutBid`: the least a new bid adds, 5% of the bid (1 copper at least).
+    /// The least a new bid adds, 5% of the bid (1 copper at least).
     uint outBid() const pure nothrow @nogc @safe
     {
         const outbid = (bid / 100) * 5;
         return outbid ? outbid : 1;
     }
 
-    /// `GetAuctionCut`: the house's share of the bid.
+    /// The house's share of the bid.
     uint cut(const ref AuctionHouseEntry house) const pure nothrow @nogc @safe
     {
         return cast(uint)(house.cutPercent * cast(ulong) bid / 100.0f);
     }
 
     /**
-     * `BuildAuctionInfo`: the auction's line in `SMSG_AUCTION_*_LIST_RESULT`, with the time left in
+     * The auction's line in `SMSG_AUCTION_*_LIST_RESULT`, with the time left in
      * milliseconds from `now`.
      */
     void write(ref ByteWriter w, long now) const
@@ -114,7 +114,7 @@ struct AuctionRecord
     }
 }
 
-/// `GetAuctionDeposit`: the sell price of the stack for each 2 hours, the house's percentage of it.
+/// The deposit: the sell price of the stack for each 2 hours, the house's percentage of it.
 uint auctionDeposit(const ref AuctionHouseEntry house, uint seconds, uint sellPrice, uint count) pure nothrow @nogc @safe
 {
     const deposit = float(sellPrice) * count * (seconds / minAuctionTime) * house.depositPercent / 100.0f;
@@ -122,13 +122,13 @@ uint auctionDeposit(const ref AuctionHouseEntry house, uint seconds, uint sellPr
 }
 
 /**
- * `AuctionHouseMgr::GetAuctionHouseEntry` for an auctioneer of faction template `factionTemplate`:
+ * The auction house of an auctioneer of faction template `factionTemplate`:
  * the city's house (Stormwind's, Ironforge's, Darnassus', Undercity's, Thunder Bluff's,
  * Orgrimmar's) or the goblins' neutral one; by the template's faction groups for others.
  */
 uint auctionHouseFor(uint factionTemplate, uint factionGroupMask) pure nothrow @nogc @safe
 {
-    enum uint groupAlliance = 2, groupHorde = 4; // FACTION_GROUP_MASK_ALLIANCE, _HORDE
+    enum uint groupAlliance = 2, groupHorde = 4; // faction group masks
     switch (factionTemplate)
     {
     case 12: return 1;   // human

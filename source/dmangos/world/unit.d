@@ -8,7 +8,7 @@
  * both kinds and the compiler says so when a kind is added. A creature fights a player, a player a
  * creature, a player a player and a pet a creature through the same code.
  *
- * `dealDamage` is CMaNGOS's `Unit::DealDamage`: the one way damage reaches a unit, from a swing, a
+ * `dealDamage` is the one way damage reaches a unit, from a swing, a
  * spell or an aura's tick, with what follows from it on each side (fighting back, threat, tapping,
  * rage, the combat state, death and who it is credited to).
  */
@@ -32,12 +32,12 @@ enum UnitKind : ubyte
     creature, /// a creature here (a pet is one)
 }
 
-/// How damage came (`DamageEffectType`).
+/// How damage came.
 enum BlowKind : ubyte
 {
-    melee,    /// a swing (`DIRECT_DAMAGE` from `DealMeleeDamage`)
-    spell,    /// a spell's direct damage (`SPELL_DIRECT_DAMAGE`)
-    periodic, /// an aura's tick (`DOT`)
+    melee,    /// a swing
+    spell,    /// a spell's direct damage
+    periodic, /// an aura's tick (damage over time)
 }
 
 /// The circumstances of damage: its kind, and for a swing its roll.
@@ -255,7 +255,7 @@ struct UnitRef
             session.tell(opcode, body_);
     }
 
-    /// A quest's event happened for it (`AreaExploredOrEventHappens`).
+    /// A quest's event happened for it (or its place was explored).
     void questEventHappened(uint quest)
     {
         if (kind == UnitKind.player)
@@ -321,9 +321,9 @@ Character creditedPlayer(UnitRef unit)
 }
 
 /**
- * `Unit::DealDamage`: `damage` from `attacker` (none: from nowhere, a GM's kill) to `victim`, as
+ * Deals `damage` from `attacker` (none: from nowhere, a GM's kill) to `victim`, as
  * `blow` says it came. A player suffers it (`Character.sufferDamage`: standing up, rage, the
- * combat state, a duel's last blow, death). A creature fights back (`AttackedBy`) and takes it as
+ * combat state, a duel's last blow, death). A creature fights back and takes it as
  * threat, is tapped for the player the blow is credited to, and may die: its death is that player's
  * kill (experience, loot, quests), a pet's dies for its owner, and any other just dies.
  */

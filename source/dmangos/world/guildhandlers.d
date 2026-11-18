@@ -1,5 +1,5 @@
 /**
- * What players do with guilds (CMaNGOS's `GuildHandler.cpp` and `PetitionsHandler.cpp`): guild
+ * What players do with guilds: guild
  * charters bought from a guild master, signed by nine others and turned in to found a guild;
  * invitations; the roster and information; promotions and demotions; leaving, removing,
  * disbanding and handing over leadership; the message of the day, the guild information and the
@@ -8,13 +8,13 @@
  */
 module dmangos.world.guildhandlers;
 
-/// `GUILD_CHARTER`, `GUILD_CHARTER_COST` (copper), `CHARTER_DISPLAY_ID`, `CONFIG_UINT32_MIN_PETITION_SIGNS`
+/// The guild charter item, its cost (copper), the display id of its petition, and the signatures it needs.
 enum uint guildCharter = 5863, guildCharterCost = 1000, charterDisplayId = 16161, petitionSignsNeeded = 9;
 
 /// The tabard's price (10 gold).
 enum uint tabardCost = 100_000;
 
-/// `PetitionSigns`, `PetitionTurns`
+/// The results of signing a charter and of turning one in.
 enum : uint
 {
     petitionSignOk = 0,
@@ -36,7 +36,7 @@ mixin template GuildHandlers()
     import dmangos.world.packets : ClientGuid;
     import dmangos.world.updatefields : ITEM_FIELD_ENCHANTMENT, PLAYER_GUILDID, PLAYER_GUILDRANK;
 
-    private uint guildInvited;     // `m_GuildIdInvited`: the guild that invited this player
+    private uint guildInvited;     // the guild that invited this player
     private ulong guildInviter;    // ... and who
 
     // -----------------------------------------------------------------------
@@ -49,7 +49,7 @@ mixin template GuildHandlers()
         return player is null ? null : context.guilds.of(player.data.guid);
     }
 
-    /// This player's rank in its guild (`GetRank`).
+    /// This player's rank in its guild.
     private uint ownRank()
     {
         if (auto g = ownGuild())
@@ -63,7 +63,7 @@ mixin template GuildHandlers()
         deliver(Opcode.SMSG_GUILD_COMMAND_RESULT, guildCommandResult(command, text, error));
     }
 
-    /// `SetInGuild`, `SetRank`: the fields others see, from the guild this player is in now.
+    /// The guild and rank fields others see, from the guild this player is in now.
     package void updateGuildFields()
     {
         if (player is null)
@@ -75,7 +75,7 @@ mixin template GuildHandlers()
     }
 
     /**
-     * `Guild::BroadcastPacket` (and `BroadcastPacketToRank` with `right`): to the members online here
+     * A packet to the guild: to the members online here
      * whose rank has `right` (0: everyone), and in a cluster to those on the other nodes.
      */
     package void guildBroadcast(Guild g, Opcode opcode, const(ubyte)[] body_, uint right = 0)
@@ -159,7 +159,7 @@ mixin template GuildHandlers()
             deliver(Opcode.SMSG_GUILD_ROSTER, rosterOf(g));
     }
 
-    /// `Guild::Roster` as this player sees it (officers' notes only with the right).
+    /// The guild roster as this player sees it (officers' notes only with the right).
     package const(ubyte)[] rosterOf(Guild g)
     {
         import dmangos.world.objects : HighGuid, makeGuid;
@@ -211,7 +211,7 @@ mixin template GuildHandlers()
     // Founding: `CMSG_GUILD_CREATE` (game masters only here) and charters
     // -----------------------------------------------------------------------
 
-    /// `Guild::Create`: a guild of `name` with this player its master; null if the name is taken.
+    /// Founds a guild of `name` with this player its master; null if the name is taken.
     package Guild foundGuild(string name)
     {
         if (context.guilds.named(name) !is null)
@@ -232,7 +232,7 @@ mixin template GuildHandlers()
         return g;
     }
 
-    /// `Guild::AddMember`: this player or another (online here or not) joins at `rank`.
+    /// This player or another (online here or not) joins at `rank`.
     package void addGuildMember(Guild g, uint member, uint rank)
     {
         GuildMemberRecord m;
@@ -263,7 +263,7 @@ mixin template GuildHandlers()
         guildChanged(g);
     }
 
-    /// `HandleGuildCreateOpcode`: the client's `/gcreate`, a game master's only (CMaNGOS lets anyone).
+    /// The client's `/gcreate`: a game master's only.
     @Handles(Opcode.CMSG_GUILD_CREATE, WorldState.inWorld)
     void handleGuildCreate(ref ByteReader reader)
     {
@@ -274,7 +274,7 @@ mixin template GuildHandlers()
             guildResult(GuildCommand.create, name, GuildError.nameExistsS);
     }
 
-    /// `SendPetitionShowList`: a guild master's charter, its price, the signatures it needs.
+    /// A guild master's charter, its price, the signatures it needs.
     @Handles(Opcode.CMSG_PETITION_SHOWLIST, WorldState.inWorld)
     void handlePetitionShowList(const ClientGuid request)
     {
@@ -294,7 +294,7 @@ mixin template GuildHandlers()
         deliver(Opcode.SMSG_PETITION_SHOWLIST, w.data);
     }
 
-    /// `HandlePetitionBuyOpcode`: a charter for a guild of a name not taken, for 10 silver.
+    /// The player buys a charter for a guild of a name not taken, for 10 silver.
     @Handles(Opcode.CMSG_PETITION_BUY, WorldState.inWorld)
     void handlePetitionBuy(ref ByteReader reader)
     {
@@ -331,7 +331,7 @@ mixin template GuildHandlers()
         flushPlayerChanges();
     }
 
-    /// The signatures of a charter (`SendPetitionSigns`), to this player or (an offer) to another.
+    /// The signatures of a charter, to this player or (an offer) to another.
     private const(ubyte)[] signaturesPacket(ulong charter, ulong owner, const(uint)[] signers)
     {
         import dmangos.world.objects : HighGuid, lowGuid, makeGuid;
@@ -361,7 +361,7 @@ mixin template GuildHandlers()
             makeGuid(HighGuid.player, p.get.owner), p.get.signers));
     }
 
-    /// `SendPetitionQueryOpcode`: what a charter says.
+    /// What a charter says.
     @Handles(Opcode.CMSG_PETITION_QUERY, WorldState.inWorld)
     void handlePetitionQuery(ref ByteReader reader)
     {
@@ -388,7 +388,7 @@ mixin template GuildHandlers()
         deliver(Opcode.SMSG_PETITION_QUERY_RESPONSE, w.data);
     }
 
-    /// `HandlePetitionSignOpcode`: of the owner's faction, in no guild, once an account, nine at most.
+    /// The player signs a charter: of the owner's faction, in no guild, once an account, nine at most.
     @Handles(Opcode.CMSG_PETITION_SIGN, WorldState.inWorld)
     void handlePetitionSign(ref ByteReader reader)
     {
@@ -423,7 +423,7 @@ mixin template GuildHandlers()
             ownerSession.deliver(Opcode.SMSG_PETITION_SIGN_RESULTS, w.data);
     }
 
-    /// `HandlePetitionDeclineOpcode`: the owner hears of it.
+    /// The player declines to sign a charter: the owner hears of it.
     @Handles(Opcode.MSG_PETITION_DECLINE, WorldState.inWorld)
     void handlePetitionDecline(const ClientGuid request)
     {
@@ -438,7 +438,7 @@ mixin template GuildHandlers()
             owner.deliver(Opcode.MSG_PETITION_DECLINE, w.data);
     }
 
-    /// `HandleOfferPetitionOpcode`: the charter shown to another player, to sign.
+    /// The charter shown to another player, to sign.
     @Handles(Opcode.CMSG_OFFER_PETITION, WorldState.inWorld)
     void handleOfferPetition(ref ByteReader reader)
     {
@@ -459,7 +459,7 @@ mixin template GuildHandlers()
         other.deliver(Opcode.SMSG_PETITION_SHOW_SIGNATURES, signaturesPacket(charter, player.guid, p.get.signers));
     }
 
-    /// `HandleTurnInPetitionOpcode`: with its nine signatures, the charter becomes the guild.
+    /// The charter turned in: with its nine signatures, the charter becomes the guild.
     @Handles(Opcode.CMSG_TURN_IN_PETITION, WorldState.inWorld)
     void handleTurnInPetition(const ClientGuid request)
     {
@@ -502,7 +502,7 @@ mixin template GuildHandlers()
     // Invitations, joining, leaving
     // -----------------------------------------------------------------------
 
-    /// `HandleGuildInviteOpcode`
+    /// The player invites someone online into its guild.
     @Handles(Opcode.CMSG_GUILD_INVITE, WorldState.inWorld)
     void handleGuildInvite(ref ByteReader reader)
     {
@@ -552,7 +552,7 @@ mixin template GuildHandlers()
         deliver(Opcode.SMSG_GUILD_INVITE, w.data);
     }
 
-    /// `HandleGuildAcceptOpcode`: in at the lowest rank; everyone hears of it.
+    /// The invited player accepts: in at the lowest rank; everyone hears of it.
     @Handles(Opcode.CMSG_GUILD_ACCEPT, WorldState.inWorld)
     void handleGuildAccept()
     {
@@ -566,7 +566,7 @@ mixin template GuildHandlers()
         guildEvent(g, GuildEvent.joined, [player.data.name], player.guid);
     }
 
-    /// `HandleGuildDeclineOpcode`: the inviter hears of it.
+    /// The invited player declines: the inviter hears of it.
     @Handles(Opcode.CMSG_GUILD_DECLINE, WorldState.inWorld)
     void handleGuildDecline()
     {
@@ -583,7 +583,7 @@ mixin template GuildHandlers()
         guildInvited = 0;
     }
 
-    /// `Guild::DelMember`: the member gone (the guild's master: the highest rank left takes over).
+    /// A member gone (the guild's master: the highest rank left takes over).
     private void removeGuildMember(Guild g, uint member)
     {
         import std.algorithm.iteration : filter;
@@ -614,7 +614,7 @@ mixin template GuildHandlers()
         guildChanged(g);
     }
 
-    /// `Guild::Disband`: everyone out, its rows gone.
+    /// Disbands the guild: everyone out, its rows gone.
     private void disbandGuild(Guild g)
     {
         guildEvent(g, GuildEvent.disbanded, null);
@@ -738,7 +738,7 @@ mixin template GuildHandlers()
         guildChanged(g);
     }
 
-    /// `HandleGuildRankOpcode`: a rank's name and rights, by the master (the master's own keep every right).
+    /// A rank's name and rights changed, by the master (the master's own keep every right).
     @Handles(Opcode.CMSG_GUILD_RANK, WorldState.inWorld)
     void handleGuildRank(ref ByteReader reader)
     {
@@ -771,7 +771,7 @@ mixin template GuildHandlers()
         rankListChanged(g);
     }
 
-    /// `HandleGuildDelRankOpcode`: the lowest rank goes, if nobody holds it and five are left.
+    /// The lowest rank goes, if nobody holds it and five are left.
     @Handles(Opcode.CMSG_GUILD_DEL_RANK, WorldState.inWorld)
     void handleGuildDelRank()
     {
@@ -784,7 +784,7 @@ mixin template GuildHandlers()
             return;
         foreach (ref m; g.members)
             if (m.rank == g.lowestRank)
-                return; // `ERR_GUILD_RANK_IN_USE`: not in 1.12's strings; CMaNGOS answers nothing either
+                return; // `ERR_GUILD_RANK_IN_USE` is not in 1.12's strings, so nothing is answered
         g.ranks = g.ranks[0 .. $ - 1];
         rankListChanged(g);
     }
@@ -875,7 +875,7 @@ mixin template GuildHandlers()
         deliver(Opcode.MSG_TABARDVENDOR_ACTIVATE, w.data);
     }
 
-    /// `HandleSaveGuildEmblemOpcode`: the guild master's, at a tabard designer, for 10 gold.
+    /// A new guild emblem: the guild master's, at a tabard designer, for 10 gold.
     @Handles(Opcode.MSG_SAVE_GUILD_EMBLEM, WorldState.inWorld)
     void handleSaveGuildEmblem(ref ByteReader reader)
     {

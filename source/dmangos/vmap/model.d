@@ -1,10 +1,9 @@
 /**
- * Models in the vmap files (CMaNGOS `vmap/WorldModel.h`, `WorldModel.cpp`, `ModelInstance.h`,
- * `ModelInstance.cpp`, `VMapDefinitions.h`): a `WorldModel` is one building (a WMO, in groups)
+ * Models in the vmap files: a `WorldModel` is one building (a WMO, in groups)
  * or one doodad (an M2, one group) in its own coordinates, with a tree over its groups and each
  * group a tree over its triangles. A `ModelSpawn` places a model on a map.
  *
- * The `.vmo` layout, written and read here as CMaNGOS does: the magic, "WMOD" with the root WMO
+ * The `.vmo` layout, written and read here: the magic, "WMOD" with the root WMO
  * id, then "GMOD" with the groups (bound, flags, WMO group id, "VERT", "TRIM", "MBIH" and "LIQU"
  * for each) and "GBIH" with the group tree.
  */
@@ -19,16 +18,16 @@ import dmangos.bytes : ByteReader, ByteWriter;
 import dmangos.vmap.bih;
 import dmangos.vmap.math;
 
-/// `VMAP_MAGIC`: the final vmap files.
+/// The magic of the final vmap files.
 enum string vmapMagic = "VMAP_7.0";
-/// `RAW_VMAP_MAGIC`: the extractor's raw model files, null-terminated to 8 bytes.
+/// The magic of the extractor's raw model files, null-terminated to 8 bytes.
 enum string rawVmapMagic = "VMAPs05\0";
-/// `GAMEOBJECT_MODELS`: the list of game object models.
+/// The file listing the game object models.
 enum string gameObjectModels = "temp_gameobject_models";
-/// `LIQUID_TILE_SIZE`
+/// The side of a liquid tile, in yards.
 enum float liquidTileSize = 533.333f / 128.0f;
 
-/// `ModelFlags`
+/// The flags of a model and its spawns.
 enum : uint
 {
     modM2 = 1,              /// a doodad, not a building
@@ -62,7 +61,7 @@ final class WmoLiquid
         flags = new ubyte[tilesX * tilesY];
     }
 
-    /// `WmoLiquid::GetLiquidHeight`: the level at `pos` (model coordinates), on one of each tile's two triangles.
+    /// The liquid's level at `pos` (model coordinates), on one of each tile's two triangles.
     bool liquidHeight(const Vector3 pos, out float height) const
     {
         const txF = (pos.x - corner.x) / liquidTileSize;
@@ -92,13 +91,13 @@ final class WmoLiquid
         return true;
     }
 
-    /// `WmoLiquid::GetFileSize`
+    /// The size `write` writes, in bytes.
     @property uint fileSize() const
     {
         return cast(uint)(2 * 4 + 12 + heights.length * 4 + flags.length);
     }
 
-    /// `WmoLiquid::writeToFile`
+    /// Writes the liquid: tile counts, corner, type, heights and tile flags.
     void write(ref ByteWriter w) const
     {
         w.put(tilesX);
@@ -110,7 +109,7 @@ final class WmoLiquid
         w.putBytes(flags);
     }
 
-    /// `WmoLiquid::readFromFile`
+    /// Reads what `write` wrote.
     static WmoLiquid read(ref ByteReader r)
     {
         const tx = r.read!uint, ty = r.read!uint;
@@ -123,7 +122,7 @@ final class WmoLiquid
     }
 }
 
-/// `IntersectTriangle`: Möller–Trumbore; shortens `distance` to a nearer hit.
+/// Whether `ray` hits the triangle (Möller–Trumbore); shortens `distance` to a nearer hit.
 bool intersectTriangle(const MeshTriangle tri, const Vector3[] points, const Ray ray, ref float distance)
 {
     enum float eps = 1e-5f;
@@ -170,7 +169,7 @@ final class GroupModel
         this.bound = bound;
     }
 
-    /// `GroupModel::setMeshData`: the triangles and the tree over them.
+    /// Sets the triangles and the tree over them.
     void setMeshData(Vector3[] vertices, MeshTriangle[] triangles)
     {
         this.vertices = vertices;
@@ -184,7 +183,7 @@ final class GroupModel
         });
     }
 
-    /// `GroupModel::IntersectRay`
+    /// Whether `ray` hits one of the group's triangles within `distance`, which it shortens to the hit.
     bool intersectRay(const Ray ray, ref float distance, bool stopAtFirstHit) const
     {
         if (triangles.length == 0)
@@ -198,7 +197,7 @@ final class GroupModel
         return hit;
     }
 
-    /// `GroupModel::IsInsideObject`: the distance down to the group's floor below `pos`, if it is inside the bound.
+    /// The distance down to the group's floor below `pos`, if it is inside the bound.
     bool isInsideObject(const Vector3 pos, const Vector3 down, out float zDist) const
     {
         if (triangles.length == 0 || !bound.contains(pos))
@@ -210,19 +209,19 @@ final class GroupModel
         return true;
     }
 
-    /// `GroupModel::GetLiquidLevel`
+    /// The level of the group's liquid at `pos`, if it has one.
     bool liquidLevel(const Vector3 pos, out float height) const
     {
         return liquid !is null && liquid.liquidHeight(pos, height);
     }
 
-    /// `GroupModel::GetLiquidType`
+    /// The type of the group's liquid; 0 for none.
     @property uint liquidType() const
     {
         return liquid is null ? 0 : liquid.type;
     }
 
-    /// `GroupModel::writeToFile`
+    /// Writes the group: bound, flags, WMO group id, then "VERT", "TRIM", "MBIH" and "LIQU".
     void write(ref ByteWriter w) const
     {
         putBox(w, bound);
@@ -252,7 +251,7 @@ final class GroupModel
             liquid.write(w);
     }
 
-    /// `GroupModel::readFromFile`
+    /// Reads what `write` wrote.
     static GroupModel read(ref ByteReader r)
     {
         const b = readBox(r);
@@ -279,7 +278,7 @@ final class GroupModel
     }
 }
 
-/// What a point query found in a model (`AreaInfo`'s model part, `GroupLocationInfo`).
+/// What a point query found in a model: the group, its root WMO id and the distance down to its floor.
 struct GroupHit
 {
     Rebindable!(const GroupModel) group;
@@ -293,16 +292,16 @@ final class WorldModel
     uint rootWmoId;
     GroupModel[] groups;
     BIH groupTree;
-    uint modelFlags; /// `MOD_M2` for a doodad; set by the spawns that use it, as in CMaNGOS
+    uint modelFlags; /// `modM2` for a doodad; set by the spawns that use it
 
-    /// `WorldModel::setGroupModels`
+    /// Sets the groups and builds the tree over them.
     void setGroups(GroupModel[] groups)
     {
         this.groups = groups;
         groupTree.build(groups.length, (size_t i) => this.groups[i].bound, 1);
     }
 
-    /// `WorldModel::IntersectRay`; doodads are left out when `ignoreM2`.
+    /// Whether `ray` hits the model within `distance`, which it shortens to the hit; doodads are left out when `ignoreM2`.
     bool intersectRay(const Ray ray, ref float distance, bool stopAtFirstHit, bool ignoreM2 = false) const
     {
         if (ignoreM2 && (modelFlags & modM2))
@@ -319,7 +318,7 @@ final class WorldModel
     }
 
     /**
-     * `WorldModel::IntersectPoint` and `GetLocationInfo`: the group whose floor is nearest below
+     * The group whose floor is nearest below
      * `p`, of those whose bound holds it.
      */
     bool intersectPoint(const Vector3 p, const Vector3 down, out GroupHit found) const
@@ -342,7 +341,7 @@ final class WorldModel
         return true;
     }
 
-    /// `WorldModel::writeFile`. As CMaNGOS, "WMOD" says 8 bytes and holds 4.
+    /// Writes the `.vmo` file. "WMOD" says 8 bytes and holds 4, as the format has it.
     void write(string path) const
     {
         ByteWriter w;
@@ -362,7 +361,7 @@ final class WorldModel
         std.file.write(path, w.data);
     }
 
-    /// `WorldModel::readFile`
+    /// Reads a `.vmo` file.
     static WorldModel read(string path)
     {
         auto data = cast(const(ubyte)[]) std.file.read(path);
@@ -397,7 +396,7 @@ struct ModelSpawn
     AABox bound;
     string name;
 
-    /// `ModelSpawn::writeToFile`
+    /// Writes the spawn: flags, adt id, id, position, rotation, scale, the bound if it has one, and the name.
     void write(ref ByteWriter w) const
     {
         w.put(flags);
@@ -412,7 +411,7 @@ struct ModelSpawn
         w.putBytes(cast(const(ubyte)[]) name);
     }
 
-    /// `ModelSpawn::readFromFile`
+    /// Reads what `write` wrote.
     static ModelSpawn read(ref ByteReader r)
     {
         ModelSpawn s;

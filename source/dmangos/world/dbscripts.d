@@ -1,11 +1,10 @@
 /**
- * Database scripts (CMaNGOS `DBScripts/ScriptMgr.cpp`, `Map::ScriptsStart` and `ScriptsProcess`):
- * the steps of `dbscripts_on_*`, each with its delay from the script's start, run by the map the
+ * Database scripts: the steps of `dbscripts_on_*`, each with its delay from the script's start, run by the map the
  * script began on with a source and a target (the quest giver and the player, the creature and the
  * one who chose its gossip option, the player and the game object used).
  *
  * A step may name a buddy instead (`buddy_entry` within `search_radius`, or a spawn by its guid),
- * to act as its source or, with `SCRIPT_FLAG_BUDDY_AS_TARGET`, its target; the flags may turn them
+ * to act as its source or, with `ScriptFlag.buddyAsTarget`, its target; the flags may turn them
  * about or make the source its own target. Its condition must hold.
  *
  * Scripts start from quests (taken, rewarded), gossip options, game objects used, relays, waypoints
@@ -26,7 +25,7 @@ module dmangos.world.dbscripts;
 
 import dmangos.mysql : MySqlConnection;
 
-/// `ScriptMapType`: which table a script comes from.
+/// Which table a script comes from.
 enum DbScriptType : ubyte
 {
     questStart,
@@ -77,7 +76,7 @@ enum ScriptCommand : uint
     startRelayScript = 45,
 }
 
-/// `ScriptInfoDataFlags`
+/// A step's `data_flags`.
 enum ScriptFlag : uint
 {
     buddyAsTarget = 0x001,
@@ -94,7 +93,7 @@ enum ScriptFlag : uint
     buddyByStringId = 0x800,
 }
 
-/// A `dbscripts_on_*` row (`ScriptInfo`).
+/// A `dbscripts_on_*` row.
 struct DbScriptStep
 {
     uint id;
@@ -103,13 +102,13 @@ struct DbScriptStep
     uint command;
     uint datalong, datalong2, datalong3;
     uint buddyEntry;
-    uint searchRadius;   /// or the buddy's spawn guid (`SCRIPT_FLAG_BUDDY_BY_GUID`)
+    uint searchRadius;   /// or the buddy's spawn guid (`ScriptFlag.buddyByGuid`)
     uint dataFlags;
     int[4] dataint;      /// `textId`: texts, emotes or spells to choose from
     float x, y, z, o;
     uint conditionId;
 
-    /// `IsCreatureBuddy`: its buddy is a creature (else a game object).
+    /// Whether its buddy is a creature (else a game object).
     @property bool creatureBuddy() const pure nothrow @nogc @safe
     {
         switch (command)
@@ -142,7 +141,7 @@ final class DbScriptData
         return scripts[type].get(id, null);
     }
 
-    /// One of the relay scripts of group `templateId` (`GetRandomRelayDbscriptFromTemplate`); 0 if none.
+    /// One of the relay scripts of group `templateId`, chosen at random; 0 if none.
     uint randomRelay(uint templateId) const
     {
         import std.random : uniform;
@@ -226,14 +225,14 @@ struct ScriptThing
         return guid != 0;
     }
 
-    /// Whether it is a creature or a game object (`TYPEMASK_CREATURE_OR_GAMEOBJECT`).
+    /// Whether it is a creature or a game object .
     @property bool creatureOrGo() const pure nothrow @nogc @safe
     {
         return creature !is null || go !is null;
     }
 }
 
-/// A script under way on a map (`ScriptAction`s of one `ScriptsStart`).
+/// A script under way on a map: its steps, from one start.
 final class ScriptRun
 {
     DbScriptType type;
@@ -269,7 +268,7 @@ mixin template DbScriptRunner()
     }
 
     /**
-     * `Map::ScriptsStart`: script `id` of `type` begins on `map` with `source` and `target` (either
+     * Script `id` of `type` begins on `map` with `source` and `target` (either
      * may be 0); false if there is no such script.
      */
     bool startScript(DbScriptType type, uint id, Map map, ulong source, ulong target)
@@ -291,7 +290,7 @@ mixin template DbScriptRunner()
         return true;
     }
 
-    /// `Map::ScriptsProcess`: the steps whose time has come, `diff` milliseconds on.
+    /// Runs the steps whose time has come, `diff` milliseconds on.
     package void updateScripts(uint diff)
     {
         // A copy: a step may start a relay script.
@@ -338,7 +337,7 @@ mixin template DbScriptRunner()
         return ScriptThing(go.guid, go.position, null, go);
     }
 
-    /// `GetScriptProcessTargets`: the buddies a step asks for; false if one was asked for but is not there.
+    /// The buddies a step asks for; false if one was asked for but is not there.
     private bool scriptBuddies(const ref DbScriptStep step, Map map, ScriptThing source, ScriptThing target,
         out ScriptThing[] buddies)
     {
@@ -416,7 +415,7 @@ mixin template DbScriptRunner()
         return (a.x - b.x) ^^ 2 + (a.y - b.y) ^^ 2 + (a.z - b.z) ^^ 2;
     }
 
-    /// `HandleScriptStep`: the step for each source and target it comes to; true if the script stops here.
+    /// Runs the step for each source and target it comes to; true if the script stops here.
     private bool runScriptStep(const ref DbScriptStep step, Map map, ulong sourceGuid, ulong targetGuid)
     {
         auto source = scriptObject(map, sourceGuid), target = scriptObject(map, targetGuid);
@@ -484,7 +483,7 @@ mixin template DbScriptRunner()
         return (step.dataFlags & ScriptFlag.commandAdditional) ? found : !found;
     }
 
-    /// The player among a step's source and target (`GetPlayerTargetOrSourceAndLog`); null if neither.
+    /// The player among a step's source and target; null if neither.
     private auto scriptPlayer(ScriptThing source, ScriptThing target)
     {
         import dmangos.world.character : Character;
@@ -527,7 +526,7 @@ mixin template DbScriptRunner()
         }
         if (step.dataFlags & ScriptFlag.commandAdditional)
         {
-            // `NearTeleportTo`
+            // Teleported there, on the same map
             stopMoving(creature, map);
             creature.movement.position = Position(to.x, to.y, to.z, step.o != 0 ? step.o : here.orientation);
             map.objectRelocated(creature);
@@ -620,7 +619,7 @@ mixin template DbScriptRunner()
         }
     }
 
-    /// `ExecuteDbscriptCommand`; true if the script should stop.
+    /// Carries out a step's command; true if the script should stop.
     private bool executeScriptCommand(const ref DbScriptStep step, Map map, ScriptThing source, ScriptThing target)
     {
         import dmangos.world.updatefields;
@@ -1093,7 +1092,7 @@ unittest
         assert(found, "summoned beside the caster");
     }
 
-    // A summon (ACTION_T_SPAWN for 3 seconds): beside it, and gone after its time out of combat, for good.
+    // A summon (for 3 seconds): beside it, and gone after its time out of combat, for good.
     import dmangos.world.creature : TempSpawnType;
 
     EventAiEvent called = {id: 2, type: EventType.receiveEmote, chance: 100, params: [wave + 1, 0, 0, 0, 0, 0]};
