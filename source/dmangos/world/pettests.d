@@ -112,7 +112,7 @@ unittest
     session.summonPetEffect(&summonImp, 0);
     auto pet = session.ownPet;
     assert(pet !is null && pet.petOwner == session.character.guid && highGuidOf(pet.guid) == HighGuid.pet);
-    auto state = cast(PetState) pet.petData;
+    auto state = pet.petData;
     assert(state.type == PetType.summon && state.name == "Abazim", "a name from pet_name_generation");
     assert(pet.values.get!UNIT_FIELD_MAXHEALTH == 140 && pet.values.get!UNIT_FIELD_MAXPOWER1 == 48);
     assert(pet.values.get!UNIT_FIELD_SUMMONEDBY == session.character.guid);
@@ -157,7 +157,7 @@ unittest
 
     // Summoned again: the same imp, at full health.
     session.summonPetEffect(&summonImp, 0);
-    assert(session.ownPet !is null && (cast(PetState) session.ownPet.petData).number == state.number);
+    assert(session.ownPet !is null && session.ownPet.petData.number == state.number);
     assert(session.ownPet.values.get!UNIT_FIELD_HEALTH == 140);
     assert(db.loadPets(7).length == 1);
 
@@ -201,7 +201,7 @@ unittest
     assert(map.findObject(beast.guid) is null, "the beast went");
     auto pet = session.ownPet;
     assert(pet !is null && pet.template_.entry == wolf);
-    auto state = cast(PetState) pet.petData;
+    auto state = pet.petData;
     assert(state.type == PetType.hunter && state.name == "Young Wolf" && pet.ai.react == ReactState.defensive);
     assert(pet.values.get!UNIT_FIELD_MAXHEALTH == 60 && pet.values.get!UNIT_FIELD_HEALTH == 30);
     assert(pet.values.get!UNIT_FIELD_FLAGS & unitFlagPetRename, "it may be named");
@@ -286,11 +286,11 @@ unittest
         out_.put(state.number);
         rexxar.write(Opcode.CMSG_UNSTABLE_PET, out_.data);
         assert(bodyOf(rexxar.read(), Opcode.SMSG_STABLE_RESULT) == [ubyte(StableResult.unstabled)]);
-        assert(session.ownPet !is null && (cast(PetState) session.ownPet.petData).name == "Misha");
+        assert(session.ownPet !is null && session.ownPet.petData.name == "Misha");
         assert(db.loadPets(7)[0].slot == PetSlot.current);
     }
     pet = session.ownPet;
-    state = cast(PetState) pet.petData;
+    state = pet.petData;
 
     // Killed: a corpse a while, then set aside dead; Call Pet cannot bring it, Revive Pet does.
     import dmangos.world.spellcast : SpellCastResult, SpellTargets;
@@ -330,7 +330,7 @@ unittest
             pet.values, isNew);
         pet.ai.petCooldowns[bite] = 30_000;
     }
-    const petId = (cast(PetState) pet.petData).number;
+    const petId = pet.petData.number;
     rexxar.write(Opcode.CMSG_LOGOUT_REQUEST, null);
     rexxar.read();
     tick(100);
@@ -338,7 +338,7 @@ unittest
     assert(db.loadPetAuras(petId).length == 1 && db.loadPetAuras(petId)[0].remaining > 290_000, "its aura saved");
     assert(db.loadPetCooldowns(petId).length == 1 && db.loadPetCooldowns(petId)[0][0] == 97302, "its cooldown saved");
     rexxar = loggedIn(context, db, 7, "Rexxar", start, AccountLevel.player, raceOrc);
-    assert(rexxar.session.inWorld.ownPet !is null && (cast(PetState) rexxar.session.inWorld.ownPet.petData).name == "Misha");
+    assert(rexxar.session.inWorld.ownPet !is null && rexxar.session.inWorld.ownPet.petData.name == "Misha");
     assert(rexxar.session.inWorld.ownPet.auras.find(97301) !is null, "its aura back");
     assert(97302 in rexxar.session.inWorld.ownPet.ai.petCooldowns, "its cooldown back");
 
@@ -373,7 +373,7 @@ unittest
     auto tame = effectSpell(spellTameBeastDone, 55);
     session.tameCreature(&tame, beast.guid);
     auto pet = session.ownPet;
-    auto state = cast(PetState) pet.petData;
+    auto state = pet.petData;
     rexxar.read();
 
     // Content: every 7.5 s a pet of loyalty level 1 loses (140 >> 1) x 125 = 8750 happiness.
@@ -448,7 +448,7 @@ unittest
     auto tame = effectSpell(spellTameBeastDone, 55);
     session.tameCreature(&tame, beast.guid);
     auto pet = session.ownPet;
-    auto state = cast(PetState) pet.petData;
+    auto state = pet.petData;
     rexxar.read();
 
     // Taught a spell (no training points asked for it here): it knows it.
@@ -585,7 +585,7 @@ unittest
     auto tame = effectSpell(spellTameBeastDone, 55);
     session.tameCreature(&tame, beast.guid);
     auto pet = session.ownPet;
-    auto state = cast(PetState) pet.petData;
+    auto state = pet.petData;
     foreach (uint id; [97501, 97502])
     {
         context.data.spells.spells[id] = testSpell(id, 2, 6, 10);

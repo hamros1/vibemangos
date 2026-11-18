@@ -122,6 +122,10 @@ struct UpdateValues
     private uint[] slots;
     private uint[] changed; // one bit per slot
 
+    // Not copied: a copy would share both arrays, so a change through it would reach the slots but not be
+    // told to the clients through the original's change bits (or the other way round).
+    @disable this(this);
+
     invariant (changed.length == (slots.length + 31) / 32);
 
     /// The fields of an object of `type`, all zero.

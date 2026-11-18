@@ -169,7 +169,7 @@ mixin template PetHandlers()
     /// Its state.
     private PetState petState()
     {
-        return pet_ is null ? null : cast(PetState) pet_.petData;
+        return pet_ is null ? null : pet_.petData;
     }
 
     /// The stable slots bought, read when first needed.
@@ -227,7 +227,7 @@ mixin template PetHandlers()
      */
     private void setPetLevel(Creature creature, uint level, bool full)
     {
-        auto state = cast(PetState) creature.petData;
+        auto state = creature.petData;
         const t = creature.template_;
         const statsEntry = state.type == PetType.hunter ? 1 : t.entry;
         const classStats = classStatsKey(level, t.unitClass) in context.data.creatureClassStats;
@@ -1394,7 +1394,7 @@ mixin template PetHandlers()
         const number = reader.read!uint;
         const guid = reader.read!ulong;
         auto creature = map.creatureAt(guid);
-        auto state = creature is null ? null : cast(PetState) creature.petData;
+        auto state = creature is null ? null : creature.petData;
         if (state is null || state.number != number)
             return deliver(Opcode.SMSG_PET_NAME_QUERY_RESPONSE, petNameQueryResponse(number, null, 0));
         deliver(Opcode.SMSG_PET_NAME_QUERY_RESPONSE, petNameQueryResponse(number, state.name,

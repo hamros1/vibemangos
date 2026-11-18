@@ -10,6 +10,8 @@
  */
 module dmangos.world.creature;
 
+import dmangos.world.pet : PetState;
+
 import dmangos.world.combat : Fighter;
 import dmangos.world.auras : AuraSet, AuraTick, Aura;
 import dmangos.world.loot : Loot;
@@ -561,7 +563,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
      * Made a pet, before it is added to a map: it belongs to `owner`. Its guid is
      * already `HIGHGUID_PET`'s, with its pet number where a creature has its entry.
      */
-    void becomePet(ulong owner, Object state)
+    void becomePet(ulong owner, PetState state)
     in (highGuidOf(guid_) == HighGuid.pet, "made with its pet number (`WorldContext.makePetCreature`)")
     {
         petOwner = owner;
@@ -639,7 +641,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
     /// A pet's owner's `PLAYER_FLAGS` (free-for-all, contested), for the relations (`dmangos.world.pvp`).
     uint controllerPlayerFlags;
     /// The pet's own state (`dmangos.world.pet`); null for any other creature.
-    Object petData;
+    PetState petData;
 
     /// The dungeon instance it lives in (0: none): it does not respawn there, and is not saved.
     uint instanceId;
@@ -887,7 +889,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
             import dmangos.world.pet : PetState, PetType;
             import dmangos.world.pethandlers : moodDamageFactor;
 
-            if (auto pet = cast(const PetState) petData)
+            if (const pet = petData)
                 if (pet.type == PetType.hunter)
                 {
                     const factor = moodDamageFactor(values.get!UNIT_FIELD_POWER1(4));

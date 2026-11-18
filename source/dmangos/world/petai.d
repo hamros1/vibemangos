@@ -56,7 +56,7 @@ mixin template PetBehaviour()
     /// Its pet state (`Creature.petData`).
     @property PetState pet()
     {
-        return cast(PetState) me.petData;
+        return me.petData;
     }
 
     /// What its owner told it to do: stay, follow, attack or dismiss.
