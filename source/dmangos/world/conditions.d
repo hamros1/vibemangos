@@ -94,6 +94,9 @@ final class Conditions
     private Condition[uint] entries;
     private bool[int] reported; // unsupported types already logged
 
+    /// Whether a game event is active, and whether one of a holiday is (`dmangos.world.gameevents`); null: none is.
+    bool delegate(uint id) eventActive, holidayActive;
+
     ///
     this(const(Condition)[] rows)
     {
@@ -241,8 +244,10 @@ private:
             return ((player.values.get!UNIT_FIELD_FLAGS & UnitFlags.inCombat) != 0) != (c.value1 != 0);
         case creatureInRange:
             return subject.creatureInRange !is null && subject.creatureInRange(c.value1, c.value2);
-        case activeGameEvent, activeHoliday:
-            return false; // no game event is running
+        case activeGameEvent:
+            return eventActive !is null && eventActive(c.value1);
+        case activeHoliday:
+            return holidayActive !is null && holidayActive(c.value1);
         default:
             return unsupported(c.type, null);
         }

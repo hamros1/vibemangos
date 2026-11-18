@@ -40,6 +40,7 @@ import dmangos.world.channel : ChannelSettings;
 import dmangos.world.grid : cellKeyAt;
 import dmangos.world.channelservice : channelCommand, ChannelCall, ChannelOp, ChannelService, ChannelsHost;
 import dmangos.world.battleground : Battlegrounds;
+import dmangos.world.gameevents : GameEvents, scheduleFor;
 import dmangos.world.bgqueue : battlegroundOfMap, BattlegroundQueue, BattlegroundQueueHost;
 import dmangos.cluster.protocol : ChannelCommand;
 import dmangos.world.opcodes : ChatType, Language, Opcode;
@@ -504,6 +505,10 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         // The cluster services this node can run (docs/SERVICES.md); standalone it runs them all at once.
         services.provide!BattlegroundQueueHost((const(ubyte)[]) => BattlegroundQueueHost(newBattlegroundQueue()));
         battlegrounds = new Battlegrounds(this);
+        gameEvents = new GameEvents;
+        data.npcs.conditions.eventActive = (uint id) => gameEvents.isActive(id);
+        data.npcs.conditions.holidayActive = (uint holiday) => gameEvents.holidayActive(holiday);
+        updateGameEvents(clock(), true); // before any cell loads, so its spawns follow the events now
         services.provide!ChannelsHost((const(ubyte)[]) => ChannelsHost(new ChannelService(this, client,
             ChannelSettings(config.allowTwoSideInteractionChannel))));
         startAllServices();
@@ -511,6 +516,119 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
     /// The battleground copies this node runs.
     Battlegrounds battlegrounds;
+
+    /// The game events, and which are active (`dmangos.world.gameevents`).
+    GameEvents gameEvents;
+    private MonoTime gameEventsChecked;
+    private long scheduledDay; // the day the events' dates were last worked out for
+
+    /// Whether creature spawn `guid` is in the world as its game event (if any) stands.
+    bool creatureInEvents(uint guid)
+    {
+        if (const e = guid in data.creatureGameEvents)
+            return gameEvents.spawnIn(*e);
+        return true;
+    }
+
+    /// Whether game object spawn `guid` is in the world as its game event (if any) stands.
+    bool gameObjectInEvents(uint guid)
+    {
+        if (const e = guid in data.gameObjectGameEvents)
+            return gameEvents.spawnIn(*e);
+        return true;
+    }
+
+    /// The events made active and inactive by the clock; their spawns come and go in the loaded cells.
+    private void updateGameEvents(MonoTime now, bool force = false)
+    {
+        import core.time : seconds;
+        import dmangos.log : info;
+
+        if (!force && gameEventsChecked != MonoTime.init && now - gameEventsChecked < 10.seconds)
+            return;
+        gameEventsChecked = now;
+        // Yearly and Easter dates move to the new year once it comes.
+        const day = unixTime / 86_400;
+        if (day != scheduledDay)
+        {
+            scheduledDay = day;
+            foreach (e; data.gameEvents)
+            {
+                scheduleFor(e, unixTime);
+                gameEvents.events[e.id] = e;
+            }
+        }
+        ushort[] started, stopped;
+        gameEvents.update(unixTime, started, stopped);
+        foreach (id; started)
+            info!"game event %s (%s) starts"(id, gameEvents.events[id].description);
+        foreach (id; stopped)
+            info!"game event %s (%s) ends"(id, gameEvents.events[id].description);
+        if (started.length || stopped.length)
+            gameEventSpawnsChanged();
+    }
+
+    /// After events changed: in every loaded map, spawns now away go, and spawns now in come (where their cells are loaded).
+    private void gameEventSpawnsChanged()
+    {
+        import dmangos.world.grid : cellKeyAt;
+
+        void refresh(Map m)
+        {
+            // Those to go.
+            ulong[] gone;
+            m.forEachObject((MapObject o) {
+                if (auto c = cast(Creature) o)
+                {
+                    if (!creatureInEvents(c.spawnId))
+                        gone ~= c.guid;
+                }
+                else if (auto go = cast(GameObject) o)
+                    if (go.spawn.guid in data.gameObjectGameEvents && !gameObjectInEvents(go.spawn.guid))
+                        gone ~= go.guid;
+            });
+            foreach (guid; gone)
+                m.removeObject(guid);
+            // Those to come, in loaded cells.
+            bool[ulong] present;
+            m.forEachObject((MapObject o) { present[o.guid] = true; });
+            if (auto cells = m.id in data.creatureCells)
+                foreach (key, indexes; *cells)
+                    if (m.cellLoaded(key))
+                        foreach (index; indexes)
+                        {
+                            const spawn = &data.creatureSpawns[index];
+                            if (spawn.guid !in data.creatureGameEvents || !creatureInEvents(spawn.guid))
+                                continue;
+                            if (awaitingRespawn(spawn.guid))
+                                continue;
+                            auto c = makeCreature(spawn);
+                            if (c is null || c.guid in present)
+                                continue;
+                            c.instanceId = m.instanceId;
+                            m.addObject(c);
+                        }
+            if (auto cells = m.id in data.gameObjectCells)
+                foreach (key, indexes; *cells)
+                    if (m.cellLoaded(key))
+                        foreach (index; indexes)
+                        {
+                            const spawn = &data.gameObjectSpawns[index];
+                            if (spawn.guid !in data.gameObjectGameEvents || !gameObjectInEvents(spawn.guid)
+                                || spawn.respawnSeconds < 0)
+                                continue;
+                            auto go = makeGameObject(spawn);
+                            if (go.guid in present)
+                                continue;
+                            go.instanceId = m.instanceId;
+                            m.addObject(go);
+                        }
+        }
+        foreach (m; maps.values)
+            refresh(m);
+        foreach (m; instanceMaps.values)
+            refresh(m);
+    }
 
     /// The battleground queues, as the service on this node runs them (docs/SERVICES.md).
     private BattlegroundQueue newBattlegroundQueue()
@@ -1061,6 +1179,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             {
                 if (state !is null && data.creatureSpawns[index].guid in state.dead)
                     continue;
+                if (!creatureInEvents(data.creatureSpawns[index].guid))
+                    continue;
                 if (copy !is null && !copy.spawnAllowed(data.creatureSpawns[index].guid in data.creatureBattleEvents))
                     continue;
                 if (auto creature = makeCreature(&data.creatureSpawns[index]))
@@ -1073,7 +1193,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             foreach (index; (*cells).get(cell, null))
             {
                 const spawn = &data.gameObjectSpawns[index];
-                if (spawn.respawnSeconds < 0 || (state !is null && spawn.guid in state.usedUp))
+                if (spawn.respawnSeconds < 0 || (state !is null && spawn.guid in state.usedUp)
+                    || !gameObjectInEvents(spawn.guid))
                     continue;
                 const event = spawn.guid in data.gameObjectBattleEvents;
                 if (copy !is null && !copy.spawnAllowed(event))
@@ -1449,6 +1570,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             {
                 if (awaitingRespawn(data.creatureSpawns[index].guid))
                     continue; // dead: it comes back when its time is up
+                if (!creatureInEvents(data.creatureSpawns[index].guid))
+                    continue; // its game event says it is away
                 if (auto creature = makeCreature(&data.creatureSpawns[index]))
                     spawned ~= creature;
             }
@@ -1457,7 +1580,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             {
                 const spawn = &data.gameObjectSpawns[index];
                 // Not spawned by default (`spawntimesecs` < 0: events and scripts spawn it), or used up.
-                if (spawn.respawnSeconds < 0 || gameObjectAwaitingRespawn(spawn.guid))
+                if (spawn.respawnSeconds < 0 || gameObjectAwaitingRespawn(spawn.guid) || !gameObjectInEvents(spawn.guid))
                     continue;
                 spawned ~= makeGameObject(spawn);
             }
@@ -2896,6 +3019,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         checkHonorWeek(now);
         services.tick(elapsed);
         battlegrounds.tick(elapsed);
+        updateGameEvents(now);
         scriptedGameObjectsDue();
         respawnDue(now);
         // Auctions over are settled once a minute, by one node.
@@ -3143,4 +3267,33 @@ unittest
     assert(npc.npcValues.get!UNIT_NPC_FLAGS == (4 | 4096) && npc.position == actual.position);
     assert(context.npcFor(replica) is npc, "one stand-in per creature: its vendor stock lasts");
     assert(context.npcFor(actual) is actual && context.npcFor(null) is null);
+}
+
+// Game events: a creature of an event is away while it is off, comes when it starts, and goes when it ends.
+unittest
+{
+    import dmangos.world.gameevents : GameEvent, ScheduleType;
+    import dmangos.world.movement : Position;
+    import dmangos.world.objects : HighGuid, makeGuid;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    context.data.creatureGameEvents[innkeeperSpawn] = 5;
+    const now = context.unixTime;
+    context.gameEvents.events[5] = GameEvent(5, ScheduleType.date, now + 3600, now + 7200, 1440, 60, 0, "test");
+    context.updateGameEvents(context.clock(), true);
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f));
+    anduin.read();
+    const guid = makeGuid(HighGuid.unit, creatureInnkeeper, innkeeperSpawn);
+    assert(context.map(0).findObject(guid) is null, "its event has not started");
+
+    context.gameEvents.events[5].start = now - 60; // it is on now
+    context.updateGameEvents(context.clock(), true);
+    assert(context.gameEvents.isActive(5) && context.map(0).findObject(guid) !is null, "it came with its event");
+
+    context.gameEvents.events[5].end = now - 1; // and over
+    context.updateGameEvents(context.clock(), true);
+    assert(context.map(0).findObject(guid) is null, "it went when the event ended");
 }

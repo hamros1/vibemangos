@@ -24,6 +24,7 @@ import dmangos.world.creature : CreatureAddon, CreatureClassStats, CreatureSpawn
 import dmangos.world.gameobject : GameObjectSpawn, GameObjectTemplate, GameObjectType;
 import dmangos.world.bgqueue : BattlegroundTemplate, BattlegroundType;
 import dmangos.world.enchantments : EnchantmentEffect, EnchantmentType, RandomEnchantment;
+import dmangos.world.gameevents : GameEvent, ScheduleType;
 import dmangos.world.grid : cellKeyAt;
 import dmangos.world.motion : MotionType, WaypointNode, WaypointStore;
 import dmangos.world.loot : lootColumns, lootRow, LootStore, LootStores;
@@ -351,6 +352,9 @@ final class WorldData
     SafeLocation[uint] safeLocations;               /// `world_safe_locs` (with the facing the DBC lacks)
     ubyte[2][uint] creatureBattleEvents;            /// `creature_battleground`: a spawn's battleground event
     RandomEnchantment[][uint] randomProperties;     /// `item_enchantment_template`, by an item's `RandomProperty`
+    short[uint] creatureGameEvents;                 /// `game_event_creature`: a spawn's game event (negative: away while it is on)
+    short[uint] gameObjectGameEvents;               /// `game_event_gameobject`: ditto
+    GameEvent[] gameEvents;                         /// `game_event` and `game_event_time`
     uint[3][uint] propertyEnchantments;             /// a random property's enchantments (`ItemRandomProperties.dbc`)
     EnchantmentEffect[3][uint] enchantmentEffects;  /// an enchantment's effects (`SpellItemEnchantment.dbc`)
     ubyte[2][uint] gameObjectBattleEvents;          /// `gameobject_battleground`: ditto
@@ -524,6 +528,7 @@ final class WorldData
         data.npcs = NpcData.load(world, data.spells);
         data.loadTeleports(world, client);
         data.loadEnchantments(world, client);
+        data.loadGameEvents(world);
         data.loadSpawns(world, client, spawnSeed);
         data.loadWaypoints(world);
         data.loadPlayerInfo(world, client);
@@ -711,12 +716,12 @@ final class WorldData
             creatureClassStats[classStatsKey(row.get!uint(0), row.get!uint(1))] = CreatureClassStats(row.get!uint(2),
                 row.get!uint(3), row.get!float(4), row.get!float(5), row.get!float(6), row.get!float(7));
 
-        // Which spawns are out: those of events, and the pool members not chosen this time.
-        bool[uint] eventCreatures, eventObjects;
-        foreach (row; world.query!"SELECT guid FROM game_event_creature WHERE event > 0"())
-            eventCreatures[row.get!uint(0)] = true;
-        foreach (row; world.query!"SELECT guid FROM game_event_gameobject WHERE event > 0"())
-            eventObjects[row.get!uint(0)] = true;
+        // The game events' spawns (`dmangos.world.gameevents`): in the world or not as their events are.
+        foreach (row; world.query!"SELECT guid, event FROM game_event_creature"())
+            creatureGameEvents[row.get!uint(0)] = cast(short) row.get!int(1);
+        foreach (row; world.query!"SELECT guid, event FROM game_event_gameobject"())
+            gameObjectGameEvents[row.get!uint(0)] = cast(short) row.get!int(1);
+        // Which spawns are out: the pool members not chosen this time.
         auto pools = new PoolChooser;
         foreach (row; world.query!"SELECT entry, max_limit FROM pool_template"())
             pools.limits[row.get!uint(0)] = row.get!uint(1);
@@ -750,7 +755,7 @@ final class WorldData
         {
             import std.random : uniform;
 
-            if (row.guid in eventCreatures || !pools.spawns(PoolMember.Kind.creature, row.guid) || row.guid >= 1 << 24
+            if (!pools.spawns(PoolMember.Kind.creature, row.guid) || row.guid >= 1 << 24
                 || !groups.spawns(0, row.guid))
                 continue;
             if (row.entry == 0)
@@ -791,7 +796,7 @@ final class WorldData
             foreach (i; 0 .. 4)
                 s.rotation[i] = row.get!float(7 + i);
             s.respawnSeconds = row.get!int(11);
-            if (s.guid in eventObjects || !pools.spawns(PoolMember.Kind.gameObject, s.guid) || s.guid >= 1 << 24
+            if (!pools.spawns(PoolMember.Kind.gameObject, s.guid) || s.guid >= 1 << 24
                 || !groups.spawns(1, s.guid))
                 continue;
             if (s.entry == 0)
@@ -866,6 +871,30 @@ final class WorldData
     }
 
     /// Area trigger teleports and `.recall` places, checked against the client data.
+    /// The game events and their dates (`game_event`, `game_event_time`).
+    void loadGameEvents(MySqlConnection world)
+    {
+        import std.datetime : DateTime, LocalTime, SysTime;
+
+        GameEvent[ushort] byId;
+        foreach (row; world.query!"SELECT entry, schedule_type, occurence, length, holiday, description, linkedTo FROM game_event"())
+        {
+            const id = row.get!uint(0);
+            if (id == 0 || id > ushort.max)
+                continue;
+            byId[cast(ushort) id] = GameEvent(cast(ushort) id, cast(ScheduleType) row.get!uint(1), 0, 0, row.get!uint(2),
+                row.get!uint(3), row.get!uint(4), row.get!string(5), cast(ushort) row.get!uint(6));
+        }
+        foreach (row; world.query!"SELECT entry, UNIX_TIMESTAMP(start_time), UNIX_TIMESTAMP(end_time) FROM game_event_time"())
+            if (auto e = cast(ushort) row.get!uint(0) in byId)
+            {
+                e.start = row.get!long(1);
+                e.end = row.get!long(2);
+            }
+        gameEvents = byId.values;
+        info!"loaded %s game events"(gameEvents.length);
+    }
+
     /// Random properties (`item_enchantment_template`) and what properties and enchantments are (the DBCs).
     void loadEnchantments(MySqlConnection world, const ClientData client)
     {

@@ -268,6 +268,17 @@ What works now:
     their cell, with their levels, health, models, equipment, mounts and emotes. Their names come
     from `CMSG_CREATURE_QUERY` and `CMSG_GAMEOBJECT_QUERY`. Game objects whose `spawntimesecs` is
     below 0 wait for events and scripts to spawn them.
+  * **Game events** (`game_event`):
+    * The holidays, the Darkmoon Faire, fishing contests, Call to Arms weekends, day and night.
+    * Each runs in its repeating windows: fixed dates, the same days every year, or Easter week.
+    * An event linked to another runs only inside it.
+    * While an event is on, its creatures and objects (`game_event_creature`, `game_event_gameobject`)
+      are in the world, and those listed against it are away. They come and go as it starts and ends.
+    * Conditions on events and holidays follow them.
+    * Not yet:
+      * Lunar New Year's and the computed Darkmoon Faire weeks;
+      * event quests, models and mail;
+      * Call to Arms' battleground bonuses.
   * **Using game objects:** doors and buttons open
     for their time and close again; chairs seat the player at the nearest slot; goobers are in use
     for their time, show their page, count for the quests that need them (for the group near them
