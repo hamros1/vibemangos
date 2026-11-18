@@ -275,10 +275,11 @@ What works now:
     * While an event is on, its creatures and objects (`game_event_creature`, `game_event_gameobject`)
       are in the world, and those listed against it are away. They come and go as it starts and ends.
     * Conditions on events and holidays follow them.
-    * Not yet:
-      * Lunar New Year's and the computed Darkmoon Faire weeks;
-      * event quests, models and mail;
-      * Call to Arms' battleground bonuses.
+    * An event's quests (`game_event_quest`) are given only while it is on.
+    * A battleground made during its Call to Arms weekend gives more: Warsong Gulch 45 reputation a
+      capture and three kills' honor for a win; Arathi Basin honor every 160 resources and reputation
+      every 120.
+    * Not yet: Lunar New Year's and the computed Darkmoon Faire weeks; event models and mail.
   * **Using game objects:** doors and buttons open
     for their time and close again; chairs seat the player at the nearest slot; goobers are in use
     for their time, show their page, count for the quests that need them (for the group near them

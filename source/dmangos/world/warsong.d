@@ -31,6 +31,10 @@ enum Duration flagRespawnTime = 23.seconds, flagDropTime = 10.seconds;
 enum int captureReputation = 35;
 /// ditto
 enum uint winKills = 1, captureKills = 2;
+/// The same on a Call to Arms weekend.
+enum int weekendCaptureReputation = 45;
+/// ditto
+enum uint weekendWinKills = 3;
 
 /// The sides' reputation factions: Silverwing Sentinels, Warsong Outriders.
 immutable uint[2] reputationFactions = [890, 889];
@@ -218,10 +222,11 @@ final class WarsongRules : BattlegroundRules
 
     override void ending(Battleground copy, ubyte winner)
     {
+        const kills = copy.weekend ? weekendWinKills : winKills;
         if (winner == winnerAlliance)
-            copy.rewardHonorToTeam(winKills, 0);
+            copy.rewardHonorToTeam(kills, 0);
         else if (winner == winnerHorde)
-            copy.rewardHonorToTeam(winKills, 1);
+            copy.rewardHonorToTeam(kills, 1);
     }
 
     /// The side's players, and the carrier of its own flag (the enemy who holds it).
@@ -342,7 +347,8 @@ private:
         respawning[other] = true;
         copy.removeAuraOf(who, carriedFlagSpells[other]);
         copy.playSound(soundCaptured[team]);
-        copy.rewardReputationToTeam(reputationFactions[team], captureReputation, team);
+        copy.rewardReputationToTeam(reputationFactions[team], copy.weekend ? weekendCaptureReputation : captureReputation,
+            team);
         copy.rewardHonorToTeam(captureKills, team);
         const captures = copy.worldStates.get(captureStates[team], 0) + 1;
         copy.setWorldState(captureStates[team], captures);

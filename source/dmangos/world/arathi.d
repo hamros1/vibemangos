@@ -38,6 +38,8 @@ enum uint maxResources = 2000, nearVictory = 1800;
 
 /// Resources each `honorInterval` bring one kill's bonus honor; each `reputationInterval`, `reputationGain`.
 enum uint honorInterval = 260, reputationInterval = 160;
+/// The same on a Call to Arms weekend.
+enum uint weekendHonorInterval = 160, weekendReputationInterval = 120;
 /// ditto
 enum int reputationGain = 10;
 
@@ -178,15 +180,17 @@ final class ArathiRules : BattlegroundRules
                 value = maxResources;
             towardsHonor[side] += points;
             towardsReputation[side] += points;
-            if (towardsReputation[side] >= reputationInterval)
+            const repEvery = copy.weekend ? weekendReputationInterval : reputationInterval;
+            const honorEvery = copy.weekend ? weekendHonorInterval : honorInterval;
+            if (towardsReputation[side] >= repEvery)
             {
                 copy.rewardReputationToTeam(factions[side], reputationGain, side);
-                towardsReputation[side] -= reputationInterval;
+                towardsReputation[side] -= repEvery;
             }
-            if (towardsHonor[side] >= honorInterval)
+            if (towardsHonor[side] >= honorEvery)
             {
                 copy.rewardHonorToTeam(1, side);
-                towardsHonor[side] -= honorInterval;
+                towardsHonor[side] -= honorEvery;
             }
             if (!warned && value > nearVictory)
             {

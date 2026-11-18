@@ -151,6 +151,8 @@ final class Battleground
     /// Its world states, sent to players coming in.
     uint[uint] worldStates;
     /// Testing: too few players do not end it.
+    /// Made during its Call to Arms weekend (holidays 283 to 285): more honor and reputation.
+    bool weekend;
     bool testing;
     /// The graveyards it gives a team (469, 67) or closes (`teamInvalidLink`), by `world_safe_locs` id.
     uint[uint] graveyardTeams;
@@ -192,6 +194,8 @@ final class Battleground
         this.type = type;
         this.rules = rules is null ? new BattlegroundRules : rules;
         made = context.clock();
+        static immutable uint[4] callToArms = [0, 283, 284, 285];
+        weekend = context.gameEvents !is null && context.gameEvents.holidayActive(callToArms[type]);
         activeEvents[eventDoors] = 0; // the doors are there, closed
         this.rules.reset(this);
     }

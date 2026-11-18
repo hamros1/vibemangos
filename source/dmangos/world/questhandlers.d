@@ -169,7 +169,20 @@ private:
     package bool canTakeQuest(const ref Quest quest)
     {
         return satisfyStatus(quest) && satisfyExclusiveGroup(quest) && satisfyClassRaceLevel(quest, true)
-            && satisfyPrevious(quest) && satisfyQuestReputation(quest) && satisfyQuestTimed(quest);
+            && satisfyPrevious(quest) && satisfyQuestReputation(quest) && satisfyQuestTimed(quest)
+            && questInSeason(quest);
+    }
+
+    /// A quest of game events (`game_event_quest`) is given only while one of them is on.
+    bool questInSeason(const ref Quest quest)
+    {
+        const events = quest.id in context.data.questGameEvents;
+        if (events is null)
+            return true;
+        foreach (e; *events)
+            if (context.gameEvents.isActive(e))
+                return true;
+        return false;
     }
 
     /// One timed quest at a time.
@@ -201,7 +214,7 @@ private:
         enum int highLevelHideDiff = 7; // levels above the player a quest is still shown
         return satisfyClassRaceLevel(quest, false) && satisfyExclusiveGroup(quest) && satisfyPrevious(quest)
             && satisfyQuestReputation(quest) && player.data.level + highLevelHideDiff >= quest.minLevel
-            && player.data.level <= quest.maxLevel;
+            && player.data.level <= quest.maxLevel && questInSeason(quest);
     }
 
     /// Whether `quest` is complete: taken, and every objective met (kills, items, money).

@@ -355,6 +355,7 @@ final class WorldData
     short[uint] creatureGameEvents;                 /// `game_event_creature`: a spawn's game event (negative: away while it is on)
     short[uint] gameObjectGameEvents;               /// `game_event_gameobject`: ditto
     GameEvent[] gameEvents;                         /// `game_event` and `game_event_time`
+    ushort[][uint] questGameEvents;                 /// `game_event_quest`: the events a quest is given during
     uint[3][uint] propertyEnchantments;             /// a random property's enchantments (`ItemRandomProperties.dbc`)
     EnchantmentEffect[3][uint] enchantmentEffects;  /// an enchantment's effects (`SpellItemEnchantment.dbc`)
     ubyte[2][uint] gameObjectBattleEvents;          /// `gameobject_battleground`: ditto
@@ -892,6 +893,8 @@ final class WorldData
                 e.end = row.get!long(2);
             }
         gameEvents = byId.values;
+        foreach (row; world.query!"SELECT quest, event FROM game_event_quest"())
+            questGameEvents[row.get!uint(0)] ~= cast(ushort) row.get!uint(1);
         info!"loaded %s game events"(gameEvents.length);
     }
 

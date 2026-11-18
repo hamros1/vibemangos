@@ -1152,3 +1152,32 @@ unittest
     assert(minutesOf(10) == 0, "too low to be sick");
     assert(minutesOf(11) == 1 && minutesOf(15) == 5, "a minute a level from 11");
 }
+
+// A quest of a game event is given only while the event is on.
+unittest
+{
+    import dmangos.world.gameevents : GameEvent, ScheduleType;
+    import dmangos.world.movement : Position;
+    import dmangos.world.quests : Quest;
+    import dmangos.world.testclient;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    Quest q;
+    q.id = 7000;
+    context.data.questGameEvents[7000] = [9];
+    const now = context.unixTime;
+    context.gameEvents.events[9] = GameEvent(9, ScheduleType.date, now + 3600, now + 7200, 1440, 60);
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f));
+    anduin.read();
+    auto me = anduin.session.inWorld;
+    ushort[] started, stopped;
+    context.gameEvents.update(now, started, stopped);
+    assert(!me.questInSeason(q), "out of season");
+    context.gameEvents.events[9].start = now - 60;
+    context.gameEvents.update(now, started, stopped);
+    assert(me.questInSeason(q), "in season");
+    Quest other;
+    other.id = 7001;
+    assert(me.questInSeason(other), "a quest of no event is always given");
+}
