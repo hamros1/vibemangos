@@ -130,9 +130,12 @@ mixin template GameObjectHandlers()
             return sitOnChair(go);
         case GameObjectType.questGiver:
         {
-            // A gossip menu with its quests (its own gossip comes later).
+            // Its own gossip menu (`gossipID`, data 3) with its quests; without one, its quests alone.
             QuestGiver giver;
-            if (questGiverNear(go.guid, 0, giver))
+            const hasQuests = questGiverNear(go.guid, 0, giver);
+            if (const menu = go.template_.data[3])
+                return sendGameObjectGossip(go, menu, hasQuests ? &giver : null);
+            if (hasQuests)
             {
                 prepareQuestMenu(giver);
                 sendPreparedQuest(giver);
@@ -343,6 +346,78 @@ mixin template GameObjectHandlers()
             if (auto other = lootOf(lootTarget))
                 other.release(this);
         go.loot.showContentTo(this);
+    }
+
+    /**
+     * A game object's gossip menu `menuId` (a quest giver's `gossipID`): its text (by its conditions), the
+     * options whose conditions are met (only talk and quest options serve a game object), and its quests.
+     */
+    package void sendGameObjectGossip(GameObject go, uint menuId, const(QuestGiver)* giver)
+    {
+        import dmangos.world.npcdata : GossipOption;
+        import dmangos.world.packets : GossipMessageItem, ServerGossipMessage;
+
+        const npcs = context.data.npcs;
+        gossipMenuId = menuId;
+        gossipItems = null;
+        scriptGossipShown = false;
+        foreach (ref option; npcs.options.get(menuId, null))
+        {
+            if (option.optionId != GossipOption.gossip && option.optionId != GossipOption.questGiver)
+                continue;
+            if (option.conditionId && !conditionMet(option.conditionId, null))
+                continue;
+            string text = option.text, box = option.boxText;
+            if (const broadcast = option.broadcastText in npcs.broadcastTexts)
+                text = broadcast.text(false);
+            if (const broadcast = option.boxBroadcastText in npcs.broadcastTexts)
+                box = broadcast.text(false);
+            gossipItems ~= GossipItem(option.icon, text, option.optionId, box, option.boxCoded, option.actionMenuId,
+                option.actionPoiId, option.actionScriptId);
+        }
+        questMenu = null;
+        if (giver !is null)
+            prepareQuestMenu(*giver);
+        ServerGossipMessage message;
+        message.guid = go.guid;
+        message.textId = gossipTextId(menuId, null);
+        foreach (i, ref item; gossipItems)
+            message.items ~= GossipMessageItem(cast(uint) i, cast(ubyte) item.icon, item.coded, item.message);
+        message.quests = questMenu.dup;
+        send(message);
+    }
+
+    /// The player picked option `index` of a game object's menu: its script, its next menu or point of interest.
+    package void onGameObjectGossipSelect(GameObject go, uint index)
+    {
+        import dmangos.world.dbscripts : DbScriptType;
+        import dmangos.world.npcdata : GossipOption;
+
+        if (index >= gossipItems.length)
+            return;
+        const item = gossipItems[index];
+        if (item.actionScript)
+            context.startScript(DbScriptType.gossip, item.actionScript, map, go.guid, player.guid);
+        if (item.optionId == GossipOption.questGiver)
+        {
+            QuestGiver giver;
+            if (questGiverNear(go.guid, 0, giver))
+            {
+                prepareQuestMenu(giver);
+                sendPreparedQuest(giver);
+            }
+            return;
+        }
+        if (item.actionPoi)
+            sendPointOfInterest(item.actionPoi);
+        if (item.actionMenu > 0)
+        {
+            QuestGiver giver;
+            const hasQuests = go.type == GameObjectType.questGiver && questGiverNear(go.guid, 0, giver);
+            sendGameObjectGossip(go, item.actionMenu, hasQuests ? &giver : null);
+        }
+        else if (item.actionMenu < 0)
+            closeGossip();
     }
 
     /**
@@ -725,6 +800,39 @@ unittest
     accept.put(9200u);
     anduin.write(Opcode.CMSG_QUESTGIVER_ACCEPT_QUEST, accept.data);
     assert(9200 in me.questStatus && me.questStatus[9200].status != QuestState.none, "taken (and done: it asks nothing)");
+
+    // A plaque with its own gossip: its text, an option to read on (another menu), and a vendor option it cannot serve.
+    {
+        import dmangos.world.npcdata : GossipMenuOption, GossipMenuText, GossipOption;
+        import dmangos.world.packets : ClientGossipSelectOption, ServerGossipMessage;
+
+        GossipMenuOption readOn = {menuId: 9300, id: 0, text: "Read on.", optionId: GossipOption.gossip, actionMenuId: 9301};
+        GossipMenuOption sell = {menuId: 9300, id: 1, text: "Sell.", optionId: GossipOption.vendor};
+        context.data.npcs.options[9300] = [readOn, sell];
+        context.data.npcs.menus[9300] = [GossipMenuText(9300, 77001, 0, 0)];
+        context.data.npcs.menus[9301] = [GossipMenuText(9301, 77002, 0, 0)];
+        GameObjectTemplate plaque = {entry: 9005, type: GameObjectType.questGiver, displayId: 4, name: "Plaque"};
+        plaque.data[3] = 9300;
+        context.data.gameObjectTemplates[9005] = plaque;
+        context.data.gameObjectSpawns ~= GameObjectSpawn(90005, 9005, 0, -8949, -133, 83.53f);
+        auto stone = context.makeGameObject(&context.data.gameObjectSpawns[$ - 1]);
+        map.addObject(stone);
+        anduin.read();
+        anduin.write(Opcode.CMSG_GAMEOBJ_USE, ClientGuid(stone.guid));
+        ServerGossipMessage gossipOf(const(ServerPacketRead)[] got)
+        {
+            import dmangos.serialization : deserialize;
+
+            auto r = ByteReader(bodyOf(got, Opcode.SMSG_GOSSIP_MESSAGE));
+            return deserialize!ServerGossipMessage(r);
+        }
+
+        auto shown = gossipOf(anduin.read());
+        assert(shown.guid == stone.guid && shown.textId == 77001 && shown.items.length == 1, "its text and one option");
+        anduin.write(Opcode.CMSG_GOSSIP_SELECT_OPTION, ClientGossipSelectOption(stone.guid, 0));
+        shown = gossipOf(anduin.read());
+        assert(shown.textId == 77002 && shown.items.length == 0, "the next page");
+    }
 }
 
 /// A trap: a player stepping within its radius springs it (its spell, at the player); with one charge it is used up.

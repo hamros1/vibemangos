@@ -194,6 +194,18 @@ private:
     @Handles(Opcode.CMSG_GOSSIP_SELECT_OPTION, WorldState.inWorld)
     void handleGossipSelectOption(const ClientGossipSelectOption request)
     {
+        // A game object's menu (one within reach).
+        {
+            import dmangos.world.gameobject : GameObject;
+
+            if (auto go = cast(GameObject) map.findObject(request.guid))
+            {
+                const p = go.position, me = player.position;
+                if ((p.x - me.x) ^^ 2 + (p.y - me.y) ^^ 2 + (p.z - me.z) ^^ 2 <= 10.0f * 10.0f)
+                    onGameObjectGossipSelect(go, request.option);
+                return;
+            }
+        }
         if (auto creature = interactableNpc(request.guid, 0))
         {
             if (auto scripted = cast(Creature) map.findObject(request.guid))

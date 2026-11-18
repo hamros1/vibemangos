@@ -334,8 +334,9 @@ What works now:
     opens (`minSuccessOpens`, `maxSuccessOpens`) fills again after it is emptied: always before its
     least, never at its most, and in between by a chance that falls with its uses and rises with the
     gatherer's mining skill. A button, chest, spell focus or goober with a linked
-    trap springs it on its user when used (the trap standing at it, else the trap's spell). Not yet:
-    their own gossip, stealthed traps' visibility, creatures springing traps,
+    trap springs it on its user when used (the trap standing at it, else the trap's spell). A quest
+    giver object with a gossip menu (`gossipID`) shows it, with its quests; its options open further
+    menus, points of interest and scripts. Not yet: a goober's gossip, stealthed traps' visibility, creatures springing traps,
     another node's objects in a cluster.
   * **Fishing:** the fishing spell
     channels at a bobber cast between its least and greatest range in front of the angler, on the
