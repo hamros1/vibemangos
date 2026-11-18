@@ -1134,6 +1134,16 @@ unittest
     keeper.ai.receivedEmote(me.guid, wave + 4, map);
     assert(keeper.immobilized && keeper.values.get!UNIT_NPC_EMOTESTATE == 69, "held, and its emote state set");
 
+    // It becomes another creature: the banker's entry, keeping its guid.
+    const keeperGuid = keeper.guid;
+    EventAiEvent becomes = {id: 6, type: EventType.receiveEmote, chance: 100, params: [wave + 5, 0, 0, 0, 0, 0]};
+    becomes.actions[0] = EventAiAction(ActionType.updateTemplate, [creatureBanker, 0, 0]);
+    auto becoming = [becomes];
+    keeper.ai.setScript(becoming, context.data.eventAi);
+    keeper.ai.receivedEmote(me.guid, wave + 5, map);
+    assert(keeper.template_.entry == creatureBanker && keeper.values.get!OBJECT_FIELD_ENTRY == creatureBanker
+        && keeper.guid == keeperGuid && keeper.alive, "a banker now");
+
     EventAiEvent ended = {id: 4, type: EventType.receiveEmote, chance: 100, params: [wave + 3, 0, 0, 0, 0, 0]};
     ended.actions[0] = EventAiAction(ActionType.die, [0, 0, 0]);
     auto ending = [ended];

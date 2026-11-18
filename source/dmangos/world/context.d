@@ -29,7 +29,7 @@ import dmangos.cluster.ownership : IdCounters, IdKind, IdPool;
 import dmangos.cluster.protocol : PresenceEntry;
 import dmangos.world.whisper : WhisperFrom;
 import dmangos.cluster.regions : Region;
-import dmangos.world.creature : Creature, CreatureSpawn, Npc, NpcStandIn, TempSpawn, TempSpawnType, VirtualItem;
+import dmangos.world.creature : Creature, CreatureParts, CreatureSpawn, CreatureTemplate, Npc, NpcStandIn, TempSpawn, TempSpawnType, VirtualItem;
 import dmangos.world.gameobject : GameObject, GameObjectSpawn;
 import dmangos.world.auctionhouse;
 import dmangos.world.database : MailRecord;
@@ -2038,7 +2038,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
      */
     Creature makeCreature(const(CreatureSpawn)* spawn, uint petNumber = 0)
     {
-        import dmangos.world.creature : chooseDisplay, chooseLevel, classStatsKey, CreatureParts, VirtualItem;
+        import dmangos.world.creature : chooseDisplay, chooseLevel;
         import dmangos.world.motion : selectMovement;
 
         // An event on now may make it another entry, model or equipment (`game_event_creature_data`).
@@ -2062,30 +2062,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         const display = chooseDisplay(*template_, spawnRandom);
         if (display == 0)
             return null;
-        CreatureParts parts;
         const level = chooseLevel(*template_, spawnRandom);
-        if (const stats = classStatsKey(level, template_.unitClass) in data.creatureClassStats)
-        {
-            parts.classStats = *stats;
-            parts.hasClassStats = true;
-        }
-        parts.addon = spawn.guid in data.creatureAddons;
-        if (parts.addon is null)
-            parts.addon = spawn.entry in data.creatureTemplateAddons;
-        if (const model = display in data.models)
-        {
-            parts.boundingRadius = model.boundingRadius;
-            parts.combatReach = model.combatReach;
-            parts.gender = model.gender;
-        }
-        parts.collisionHeight = client.collisionHeight(display);
-        const equipmentId = shape !is null && shape.equipment ? shape.equipment : template_.equipmentTemplateId;
-        if (const equipment = equipmentId in data.creatureEquipment)
-            foreach (slot, entry; *equipment)
-                if (const item = entry in data.items)
-                    parts.equipment[slot] = VirtualItem(item.displayId, cast(ubyte) item.itemClass,
-                        cast(ubyte) item.subClass, cast(ubyte) item.details.material, item.inventoryType,
-                        cast(ubyte) item.details.sheath);
+        auto parts = creatureParts(*template_, spawn.guid, display, level,
+            shape !is null && shape.equipment ? shape.equipment : template_.equipmentTemplateId);
         auto creature = new Creature(*spawn, template_, display, level, parts, client, petNumber);
         if (shape !is null)
             applyEventShape(creature, *shape);
@@ -2118,6 +2097,54 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             if (auto events = data.eventAi.eventsOf(spawn.entry, spawn.guid))
                 creature.ai.setScript(events, data.eventAi);
         return creature;
+    }
+
+    /// What making a creature of template `t` (spawn `spawnGuid`, model `display`, at `level`) needs besides.
+    private CreatureParts creatureParts(const ref CreatureTemplate t, uint spawnGuid, uint display, uint level,
+        uint equipmentId)
+    {
+        import dmangos.world.creature : classStatsKey, VirtualItem;
+
+        CreatureParts parts;
+        if (const stats = classStatsKey(level, t.unitClass) in data.creatureClassStats)
+        {
+            parts.classStats = *stats;
+            parts.hasClassStats = true;
+        }
+        parts.addon = spawnGuid in data.creatureAddons;
+        if (parts.addon is null)
+            parts.addon = t.entry in data.creatureTemplateAddons;
+        if (const model = display in data.models)
+        {
+            parts.boundingRadius = model.boundingRadius;
+            parts.combatReach = model.combatReach;
+            parts.gender = model.gender;
+        }
+        parts.collisionHeight = client.collisionHeight(display);
+        if (const equipment = equipmentId in data.creatureEquipment)
+            foreach (slot, entry; *equipment)
+                if (const item = entry in data.items)
+                    parts.equipment[slot] = VirtualItem(item.displayId, cast(ubyte) item.itemClass,
+                        cast(ubyte) item.subClass, cast(ubyte) item.details.material, item.inventoryType,
+                        cast(ubyte) item.details.sheath);
+        return parts;
+    }
+
+    /// See `CreatureLore.changeEntry`.
+    bool changeEntry(Creature creature, uint entry)
+    {
+        import dmangos.world.creature : chooseDisplay;
+
+        const t = entry in data.creatureTemplates;
+        if (t is null || creature.template_.entry == entry)
+            return false;
+        const display = chooseDisplay(*t, spawnRandom);
+        if (display == 0)
+            return false;
+        const level = creature.values.get!(dmangos.world.updatefields.UNIT_FIELD_LEVEL);
+        auto parts = creatureParts(*t, creature.spawn.guid, display, level, t.equipmentTemplateId);
+        creature.changeEntry(t, display, parts, client);
+        return true;
     }
 
     /**

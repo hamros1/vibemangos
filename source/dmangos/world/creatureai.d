@@ -77,6 +77,9 @@ interface CreatureLore
     /// A model of creature `entry` (its template's first); 0 if none.
     uint displayOf(uint entry);
 
+    /// `creature` becomes a creature of `entry` (`Creature.changeEntry`); false if there is no such entry.
+    bool changeEntry(Creature creature, uint entry);
+
     /// The escort path (`script_waypoint`) of creature `entry`; empty if it has none.
     const(Waypoint)[] escortPath(uint entry);
 

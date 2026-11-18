@@ -797,6 +797,15 @@ mixin template CreatureCasting()
             stopMoving(me, world_);
     }
 
+    /// ditto
+    bool scriptUpdateTemplate(uint entry)
+    {
+        if (lore is null || !lore.changeEntry(me, entry))
+            return false;
+        world_.flushCreature(me);
+        return true;
+    }
+
     /// ditto: back to its template's faction with 0.
     void scriptFaction(uint faction)
     {

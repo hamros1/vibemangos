@@ -21,7 +21,9 @@
  *
  * Also threat percentages, setting a unit field, walking or running, facing, and being held in place.
  *
- * Not yet: the other actions (updating the template, following),
+ * And becoming another entry (updating the template).
+ *
+ * Not yet: the other actions (following),
  * spell lists (`creature_template_spells`), immunities.
  */
 module dmangos.world.eventai;
@@ -105,6 +107,7 @@ enum ActionType : ubyte
     setWalk = 58,
     setFacing = 59,
     setImmobilized = 61,
+    updateTemplate = 36,
     setInstanceData = 34,
     die = 37,
     zoneCombatPulse = 38,
@@ -308,6 +311,8 @@ interface Scripted
     void scriptFace(ulong target, bool reset);
     /// Held where it stands (`on`), until it leaves the fight if `combatOnly`.
     void scriptImmobilized(bool on, bool combatOnly);
+    /// It becomes a creature of `entry` (its look, faction, flags and stats); false if it cannot.
+    bool scriptUpdateTemplate(uint entry);
 
     /// A quest's event happens for the player `player`, or (`all`) every player fighting it.
     void scriptQuestEvent(uint quest, ulong player, bool all);
@@ -657,6 +662,8 @@ final class EventAI
         case ActionType.setImmobilized:
             me.scriptImmobilized(a.params[0] != 0, a.params[1] != 0);
             return true;
+        case ActionType.updateTemplate:
+            return a.params[0] > 0 && me.scriptUpdateTemplate(a.params[0]);
         case ActionType.startRelayScript:
             me.scriptRelay(a.params[0], targetOf(a.params[1], me, invoker));
             return a.params[0] != 0;
@@ -940,6 +947,7 @@ unittest
         void scriptWalk(uint type) {}
         void scriptFace(ulong target, bool reset) {}
         void scriptImmobilized(bool on, bool combatOnly) {}
+        bool scriptUpdateTemplate(uint entry) { return false; }
         void scriptQuestEvent(uint quest, ulong player, bool all) {}
         void scriptKillCredit(uint entry, ulong player) {}
         bool scriptSummon(uint entry, ulong target, uint durationMs, uint spot) { return false; }

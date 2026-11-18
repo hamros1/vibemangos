@@ -760,6 +760,27 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
         world.sendToObservers(guid, held ? Opcode.SMSG_SPLINE_MOVE_ROOT : Opcode.SMSG_SPLINE_MOVE_UNROOT, w.data);
     }
 
+    /**
+     * It becomes a creature of template `t` (a script's doing): its look, faction, flags, speeds and its
+     * stats at its level are the new entry's; it keeps its guid, place, fight and its health's share.
+     */
+    void changeEntry(const(CreatureTemplate)* t, uint display, const ref CreatureParts parts, const ClientData client)
+    {
+        const maxHealth = values.get!UNIT_FIELD_MAXHEALTH;
+        const share = maxHealth ? float(values.get!UNIT_FIELD_HEALTH) / maxHealth : 1.0f;
+        enum uint kept = UnitFlags.inCombat | UnitFlags.pvp | UnitFlags.stunned | UnitFlags.swimming;
+        const flags = values.get!UNIT_FIELD_FLAGS & kept;
+        const level = values.get!UNIT_FIELD_LEVEL;
+        template_ = t;
+        setFields(display, level, parts, client);
+        values.set!UNIT_FIELD_FLAGS(values.get!UNIT_FIELD_FLAGS | flags);
+        const health = cast(uint)(values.get!UNIT_FIELD_MAXHEALTH * share);
+        values.set!UNIT_FIELD_HEALTH(health ? health : 1);
+        factionTemplate = client.factionTemplates.lookup(t.faction);
+        speeds[MoveType.walk] = baseMoveSpeed[MoveType.walk] * t.speedWalk * auraSpeedFactor;
+        speeds[MoveType.run] = baseMoveSpeed[MoveType.run] * t.speedRun * auraSpeedFactor;
+    }
+
     /// Its auras' time passes: their casters do what their ticks do; those that ended go.
     void updateAuras(CombatWorld world, int diff)
     {
