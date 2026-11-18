@@ -123,15 +123,17 @@ private int run(WorldConfig config, string configPath)
         writerWorld.close();
     }
     auto writerDatabase = new MySqlWorldDatabase(writerLogin, writerCharacters, writerWorld);
+    // The stream of writes this server's ledger row counts (`WriteLedger`): one per realm and node.
+    const uint writeStream = config.realmId << 16 | (config.cluster.enabled ? config.cluster.nodeId : 0);
     if (config.writeLog.length)
-        replayLog(config.writeLog, writerDatabase);
-    auto writer = new Writer(writerDatabase, config.writeLog);
+        replayLog(config.writeLog, writerDatabase, writeStream);
+    auto writer = new Writer(writerDatabase, config.writeLog, true, writeStream);
     scope (exit)
     {
         writer.stop(); // what the last sessions saved is written before the connections close
         const s = writer.statistics;
-        info!"writes: %s queued, %s written, %s replaced by newer ones, %s refused (lease), %s failed"(s.queued,
-            s.written, s.replaced, s.refused, s.failed);
+        info!"writes: %s queued, %s written, %s replaced by newer ones, %s refused (lease), %s failed, %s retried"(
+            s.queued, s.written, s.replaced, s.refused, s.failed, s.retried);
     }
     auto behind = new WriteBehind(new MySqlWorldDatabase(login, characters, world), writer, null);
     auto context = new WorldContext(config, behind, data, client, new MySqlLoginDatabase(login));
@@ -296,8 +298,11 @@ private int run(WorldConfig config, string configPath)
                 if (leaseHeld && !holds)
                 {
                     error!"cluster: this node's lease lapsed: every session ends, and nothing more is written"();
+                    writer.leaseLapsed(imported!"std.datetime.systime".Clock.currStdTime); // what was queued before is never written
                     context.kickAll("this server lost contact with the rest of the realm");
                 }
+                else if (holds)
+                    writer.renewLease(behind.writableUntil()); // a write waiting for the database stays writable
                 leaseHeld = holds;
             }
             const took = MonoTime.currTime - now;
@@ -307,9 +312,10 @@ private int run(WorldConfig config, string configPath)
             {
                 lastMetrics = now;
                 const writes = writer.statistics;
-                info!"%s; world: %s players, %s objects, %s ticking; writes: %s waiting, %s written, %s replaced, %s failed"(
+                info!"%s; world: %s players, %s objects, %s ticking; writes: %s waiting, %s written, %s replaced, %s failed, %s retried%s"(
                     metrics.report(&server.busy), context.sessionCount, context.objectCount, context.tickingCount,
-                    writes.waiting, writes.written, writes.replaced, writes.failed);
+                    writes.waiting, writes.written, writes.replaced, writes.failed, writes.retried,
+                    writes.stalled ? " (the database is unavailable)" : "");
                 if (cluster !is null)
                 {
                     foreach (line; cluster.describe())
@@ -342,15 +348,17 @@ private int run(WorldConfig config, string configPath)
                     realmAddress = target;
                 }
             }
+            // Timed before the call: while the login database is unavailable, tried again at the interval,
+            // not at every tick.
             if (speaksForRealm && now - lastPopulation >= 1.minutes)
             {
-                realm.updatePopulation(context.sessionCount, config.playerLimit);
                 lastPopulation = now;
+                realm.updatePopulation(context.sessionCount, config.playerLimit);
             }
             if (speaksForRealm && now - lastUptime >= uptimeInterval)
             {
-                realm.updateUptime(cast(uint) context.peakSessions);
                 lastUptime = now;
+                realm.updateUptime(cast(uint) context.peakSessions);
             }
         });
     if (cluster !is null && !cluster.isCoordinator)

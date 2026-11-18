@@ -222,13 +222,31 @@ method is handled without anyone remembering to.
   is in the queue: the newer one comes after it, so the end state is the same.
 * **The log.** Before the writer carries out what it took from the queue, it appends it to
   `write_log` and flushes it to the disk. Each entry has a length, a CRC-32, the method's signature
-  (its name and the layout of its arguments, hashed), the lease time and the arguments. Once MySQL
-  has them, the file is emptied. At start-up, what it still holds is written first, up to the first
-  entry that is cut short or does not match its CRC.
+  (its name and the layout of its arguments, hashed), the lease time, the write's number and the
+  arguments. Once MySQL has them, the file is emptied. At start-up, what it still holds is written
+  first, up to the first entry that is cut short or does not match its CRC.
   * A crash loses only what was queued and not yet logged: what came in while the writer wrote the
     batch before.
-  * A write is idempotent (an `UPDATE`, a `REPLACE`, or a delete and insert), so writing again what
-    MySQL already had is harmless.
+* **Exactly once.** Each write is numbered in its stream (one per realm and node). The writer carries
+  it out in a transaction on the characters database that also sets the stream's row in
+  `dmangos_write_applied` (a table dmangos adds, made at start-up if missing) to its number; the
+  replay skips what that row says MySQL has. A write that inserts rows (honour kills) is so never
+  written twice. Statements a write makes on the login or world database are outside that
+  transaction; they are `UPDATE`s and the like, harmless if made twice. Without the table (no right
+  to create it), the server writes as before and says so at start-up.
+* **When the database is away.** A write that fails because MySQL is unavailable (the connection
+  lost or refused, a lock wait timeout, a deadlock) is tried again, the same one so that the order
+  holds, after 0.25 s, then twice as long each time up to 5 s; the batch stays in the log meanwhile.
+  The metrics line shows the retries and that the database is unavailable. Writes queue meanwhile; past
+  200,000 waiting, the game waits for room. `settle` (reads, handovers) waits at most a second for a
+  writer that cannot reach the database, so the game loop goes on and keeps the node's cluster lease;
+  the loop also renews the writer's lease time every tick, so a write waiting for the database stays
+  writable while the lease holds, and one made before a lapse is never written. Stopping the server
+  while the database is away gives it 30 s, then leaves the unwritten writes in the log for the next
+  start; a start-up replay waits up to two minutes for the database, then stops with the log kept.
+* **Refused writes.** A write MySQL refuses outright (a bad value, a duplicate key) would be refused
+  again: it is logged and kept in `<write_log>.failed` (the log's format), counted as dealt with, and
+  the writer goes on. `settle` reports it to its callers.
 * **Ordering.** In a cluster, saves are written before an account is released and before a player
   moves to another node (`WorldContext.settleWrites`), because the next node loads the character from
   MySQL. `.reload` waits for them too.

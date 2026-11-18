@@ -3914,12 +3914,17 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
     /**
      * Waits until every write queued so far is in the database (docs/DESIGN.md, step 6): before another
-     * node may load what this one saved.
+     * node may load what this one saved. False if the database refused one of them (it is kept in the
+     * file of failed writes, `dmangos.world.writebehind.failedPath`).
      */
-    void settleWrites()
+    bool settleWrites()
     {
-        if (writer !is null)
-            writer.settle();
+        if (writer !is null && !writer.settle())
+        {
+            imported!"dmangos.log".error!"the database refused a write while waiting for the writes (kept in the file of failed writes)"();
+            return false;
+        }
+        return true;
     }
 
     /// See `SessionHandler.sessionGranted`.

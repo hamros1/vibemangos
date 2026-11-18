@@ -176,7 +176,10 @@ never acknowledged), relevance is a radius around the player, and the crowd cost
 * **A write-ahead log.** Before the writer carries out what it took from the queue, it appends it to
   a log file (`write_log`) and flushes the file to disk; once MySQL has it, the log is emptied. At
   start-up, what the log still holds is written first. A crash loses only what was queued and not yet
-  logged.
+  logged. Each write is numbered, and its number is recorded in `dmangos_write_applied` in the write's
+  own transaction, so the replay skips what MySQL already has (exactly once). While MySQL is
+  unavailable, the writer tries the same write again with a growing delay; a write MySQL refuses goes
+  to a file of failed writes.
 * **Ordering rules.** Before an account is released and before a player moves to another node, the
   node waits until everything queued has been written: the next node reads the character from the
   database.

@@ -283,6 +283,28 @@ struct Replaces
 {
 }
 
+/**
+ * Where the writer behind the game loop (`dmangos.world.writebehind`) records which of its writes the
+ * database has, so that writing its log again after a crash skips them: the table `dmangos_write_applied`
+ * in the characters database, one row per stream of writes (a server, or a node of a cluster), holding the
+ * number of the newest write carried out. The row is updated in the transaction of the write itself, so
+ * the two are committed together or not at all.
+ *
+ * Statements a write makes on the login or world database are not in that transaction: they may be made
+ * twice after a crash, and are written so that this does no harm.
+ */
+interface WriteLedger
+{
+    /// Makes the ledger's table if it is missing. Throws if it cannot.
+    void prepareLedger();
+
+    /// The number of the newest write of `stream` carried out (0: none).
+    ulong appliedUpTo(uint stream);
+
+    /// Runs `work` (one write) and records write `seq` of `stream` as carried out, in one transaction.
+    void applying(uint stream, ulong seq, scope void delegate() work);
+}
+
 /// A `gm_tickets` row: a player's request for help.
 struct TicketRecord
 {
@@ -760,7 +782,7 @@ struct LookupResult
 enum uint loginSourceMangosd = 1;
 
 /// `WorldDatabase` on the MySQL login and characters databases.
-final class MySqlWorldDatabase : WorldDatabase
+final class MySqlWorldDatabase : WorldDatabase, WriteLedger
 {
     private MySqlConnection login;
     private MySqlConnection characterDb;
@@ -775,6 +797,28 @@ final class MySqlWorldDatabase : WorldDatabase
         this.characterDb = characterDb;
         this.world = world;
         this.statements = new CharacterStatements(characterDb, login);
+    }
+
+    void prepareLedger()
+    {
+        characterDb.execute!("CREATE TABLE IF NOT EXISTS `dmangos_write_applied` ("
+            ~ "`stream` INT UNSIGNED NOT NULL, `seq` BIGINT UNSIGNED NOT NULL, PRIMARY KEY (`stream`)"
+            ~ ") ENGINE=InnoDB DEFAULT CHARSET=utf8 COMMENT='dmangos: the newest write of each stream carried out'")();
+    }
+
+    ulong appliedUpTo(uint stream)
+    {
+        auto rows = characterDb.query!"SELECT seq FROM dmangos_write_applied WHERE stream = ?"(stream);
+        return rows.length ? rows[0].get!ulong(0) : 0;
+    }
+
+    void applying(uint stream, ulong seq, scope void delegate() work)
+    {
+        characterDb.transaction({
+            work();
+            characterDb.execute!("INSERT INTO dmangos_write_applied (stream, seq) VALUES (?, ?) "
+                ~ "ON DUPLICATE KEY UPDATE seq = VALUES(seq)")(stream, seq);
+        });
     }
 
     GuidCounters highestGuids() { return statements.highestGuids(); }
@@ -1141,8 +1185,19 @@ final class MySqlWorldDatabase : WorldDatabase
 }
 
 /// A `WorldDatabase` for tests.
-final class MemoryWorldDatabase : WorldDatabase
+final class MemoryWorldDatabase : WorldDatabase, WriteLedger
 {
+    ulong[uint] appliedWrites; /// `WriteLedger`: by stream
+
+    void prepareLedger() {}
+    ulong appliedUpTo(uint stream) { return appliedWrites.get(stream, 0); }
+
+    void applying(uint stream, ulong seq, scope void delegate() work)
+    {
+        work(); // a write that throws records nothing
+        appliedWrites[stream] = seq;
+    }
+
     WorldAccount[string] accounts;        /// by canonical name
     CharacterRecord[][uint] characterLists; /// by account id
     bool[uint] bannedAccounts;

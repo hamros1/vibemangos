@@ -31,6 +31,33 @@ import dmangos.mysql.binding;
 class DatabaseException : Exception
 {
     mixin basicExceptionCtors;
+
+    /// The MySQL error number (`mysql_errno`), or 0 if the failure was not the server's or the client library's.
+    uint code;
+
+    /// A failure with MySQL's error number.
+    static DatabaseException withCode(string msg, uint code, string file = __FILE__, size_t line = __LINE__)
+    {
+        auto e = new DatabaseException(msg, file, line);
+        e.code = code;
+        return e;
+    }
+
+    /**
+     * Whether the failure is the database being unavailable for now (the connection lost or refused,
+     * the server shutting down, a lock wait timed out, a deadlock), so that the same statement may succeed
+     * later; otherwise the statement itself is refused, and will be again.
+     */
+    @property bool transient() const pure nothrow @nogc @safe
+    {
+        return (code >= 2000 && code < 3000) // the client library's errors: connecting, the connection lost
+            || code == 1040  // too many connections
+            || code == 1053  // the server is shutting down
+            || code == 1205  // lock wait timeout
+            || code == 1213  // deadlock
+            || code == 1317  // the query was interrupted
+            || code == 1927; // the connection was killed
+    }
 }
 
 /// The connection was lost inside a transaction: the server rolled it back, so it must be run again whole.
@@ -223,7 +250,8 @@ final class MySqlConnection
 
     /**
      * Runs `work` inside a transaction: committed if it returns, rolled back if it throws.
-     * (MyISAM tables, which the schema uses for many tables, ignore transactions.)
+     * (MyISAM tables, which the schema uses for some tables, ignore transactions.) Inside another
+     * transaction on this connection, `work` joins it: committed or rolled back with it.
      *
      * If the connection is lost in the middle, the server has rolled back what was done; the
      * statements are not carried on one by one on a new connection (that would commit half of
@@ -232,6 +260,8 @@ final class MySqlConnection
      */
     void transaction(scope void delegate() work)
     {
+        if (inTransaction)
+            return work();
         foreach (attempt; 0 .. 2)
         {
             try
@@ -329,9 +359,10 @@ private:
         if (connected is null)
         {
             const message = lastError();
+            const code = mysql.mysql_errno(handle);
             mysql.mysql_close(handle);
             handle = null;
-            throw new DatabaseException("cannot connect to " ~ info.toString ~ ": " ~ message);
+            throw DatabaseException.withCode("cannot connect to " ~ info.toString ~ ": " ~ message, code);
         }
         verbose!"connected to MySQL %s"(info.toString);
     }
@@ -351,7 +382,9 @@ private:
             {
                 const why = lastError();
                 close();
-                throw new TransactionLost(format!"MySQL error %s: %s"(code, why));
+                auto lostIt = new TransactionLost(format!"MySQL error %s: %s"(code, why));
+                lostIt.code = code;
+                throw lostIt;
             }
             if (attempt == 0 && lost)
             {
@@ -359,7 +392,7 @@ private:
                 close();
                 continue;
             }
-            throw new DatabaseException(format!"MySQL error %s: %s"(code, lastError()));
+            throw DatabaseException.withCode(format!"MySQL error %s: %s"(code, lastError()), code);
         }
         assert(false, "unreachable");
     }
@@ -536,4 +569,33 @@ unittest
     fakeConnectFails = false;
     c.execute!"UPDATE t SET name = ?"("Anduin");
     assert(fakeLog[$ - 1] == "UPDATE t SET name = 'Anduin'");
+}
+
+// A transaction inside another joins it: one START, one COMMIT, both rolled back together.
+unittest
+{
+    auto c = fakeConnection();
+    c.transaction({
+        c.execute!"INSERT INTO t VALUES (?)"(1);
+        c.transaction({ c.execute!"INSERT INTO t VALUES (?)"(2); });
+        c.execute!"UPDATE ledger SET seq = ?"(7);
+    });
+    assert(fakeLog == ["connect", "START TRANSACTION", "INSERT INTO t VALUES (1)", "INSERT INTO t VALUES (2)",
+        "UPDATE ledger SET seq = 7", "COMMIT"]);
+}
+
+// Which failures are the database being away for now.
+unittest
+{
+    import std.exception : collectException;
+
+    auto c = fakeConnection();
+    fakeLoseAt = [0];
+    fakeConnectFails = true;
+    auto e = collectException!DatabaseException(c.execute!"UPDATE t SET a = 1"());
+    assert(e !is null && e.transient, "a connection that cannot be made again is the database being away");
+    fakeConnectFails = false;
+    assert(DatabaseException.withCode("deadlock", 1213).transient);
+    assert(!DatabaseException.withCode("duplicate key", 1062).transient);
+    assert(!new DatabaseException("no result").transient);
 }

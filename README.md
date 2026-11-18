@@ -22,7 +22,9 @@ The servers can also run a cluster of world server nodes that simulate one world
 
 * **Databases.** dmangos uses the CMaNGOS classic MySQL/MariaDB schema as it is (`classicrealmd`,
   `classiccharacters`, `classicmangos`), so existing databases and world data (classic-db) work
-  unchanged.
+  unchanged. The world server adds one table of its own to the characters database,
+  `dmangos_write_applied` (which writes MySQL has, so none is written twice after a crash), and makes
+  it at start-up if it is missing; no CMaNGOS table is changed.
 * **Client data.** The extracted files (`dbc/`, `maps/`, `vmaps/`, `mmaps/`) are in the same formats
   as those of the CMaNGOS extraction tools, so data extracted by either works with the other.
 * **GM commands** follow a fixed compatibility contract (see "The GM system" below).
@@ -704,7 +706,7 @@ database at the same time; a cluster's nodes take their ids in blocks from its c
 | `battleground_cast_deserter`, `battleground_premature_finish` | Deserter for leaving a battleground early; seconds a side may be short of players before it loses (0 never) | `true`, `300` |
 | `max_pending_output_kb` | a client with more than this not yet sent to it (it is not reading) is disconnected; 0 no limit | `4096` |
 | `mmaps` | creatures find their way over `data_dir/mmaps`, where there are movement maps | `true` |
-| `write_log` | where writes wait, flushed to disk, until MySQL has them; written again at start-up; empty for none | `"writes.log"` (`"writes-<node_id>.log"` in a cluster) |
+| `write_log` | where writes wait, flushed to disk, until MySQL has them; written again at start-up (skipping what `dmangos_write_applied` says MySQL has); refused writes go to `<write_log>.failed`; empty for none | `"writes.log"` (`"writes-<node_id>.log"` in a cluster) |
 | `packet_log` | a directory where every packet sent to each client is written (time, opcode, body in hex), for finding what a client cannot take; empty for none | `""` |
 | `cluster` | this node's place in a cluster (docs/CLUSTER.md); standalone without it | none |
 | `logout_delay`, `player_save_interval` | seconds a logout takes (GMs and resting players: none); seconds between saves of each character | `20`, `900` |
