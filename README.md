@@ -635,7 +635,8 @@ What works now:
       minutes loses.
     * **Warsong Gulch:** three flag captures win. **Arathi Basin:** five bases and their resources;
       2000 resources win.
-    * Not yet: Alterac Valley, and the battleground raid group (raid frames).
+    * The players of a team who came alone are in one raid in the copy (its raid frames), made as the
+    second arrives and left as they leave; those who came with a group stay in it. Not yet: Alterac Valley.
   * **The update tick** (every 50 ms, `update_interval`): health, mana, rage and energy regenerate
     (health and the loss of rage only out of combat, and only for the living); inns and capitals give rested XP, also while offline; characters are saved every
     15 minutes (`player_save_interval`).

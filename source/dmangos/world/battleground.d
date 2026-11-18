@@ -173,6 +173,10 @@ final class Battleground
     /// Its players, by guid.
     Member[ulong] members;
 
+    /// Each team's battleground raid: who leads it (by team), and who is in it (players who came alone).
+    ulong[ubyte] raidLeaderOf;
+    bool[ulong] inTeamRaid; /// ditto
+
     private
     {
         WorldContext context;
@@ -1213,6 +1217,7 @@ mixin template BattlegroundHandlers()
         if (auto copy = context.battlegrounds.find(battleground_.instance))
         {
             deserted = copy.deserting && account.level < AccountLevel.gameMaster && context.config.battlegroundCastDeserter;
+            leaveTeamRaid(copy, battleground_.team);
             copy.removed(player.guid);
         }
         else // its copy runs elsewhere, or is gone: the queue frees the slot all the same
@@ -1304,7 +1309,58 @@ mixin template BattlegroundHandlers()
         if (battlegroundOfMap(player.data.map) == BattlegroundType.none || battleground_.instance != instanceId_)
             return;
         if (auto copy = context.battlegrounds.find(battleground_.instance))
+        {
             copy.arrived(player.guid, battleground_.team); // its world states went with the map's packets
+            joinTeamRaid(copy);
+        }
+    }
+
+    /**
+     * A player who came alone joins its team's raid in the copy: the first of the team leads it (the group
+     * is made when the second comes). One who came with a group stays in it.
+     */
+    private void joinTeamRaid(Battleground copy)
+    {
+        import dmangos.world.groupservice : GroupOp;
+
+        if (context.groups.of(player.guid) !is null || player.guid in copy.inTeamRaid)
+            return;
+        const team = battleground_.team;
+        const leaderGuid = copy.raidLeaderOf.get(team, 0);
+        auto leader = leaderGuid && leaderGuid != player.guid && leaderGuid in copy.members
+            ? cast(typeof(this)) context.onlinePlayer(leaderGuid) : null;
+        if (leader is null || leader.player is null)
+        {
+            copy.raidLeaderOf[team] = player.guid;
+            copy.inTeamRaid[player.guid] = true;
+            return;
+        }
+        copy.inTeamRaid[player.guid] = true;
+        leader.groupCommand(GroupOp.battlegroundAdd, player.guid, player.data.name);
+    }
+
+    /// Leaving the copy: out of its team raid; a leader's place passes to whoever leads the raid now.
+    private void leaveTeamRaid(Battleground copy, ubyte team)
+    {
+        import dmangos.world.groupservice : GroupOp;
+
+        if (player.guid !in copy.inTeamRaid)
+            return;
+        copy.inTeamRaid.remove(player.guid);
+        auto group = context.groups.of(player.guid);
+        if (copy.raidLeaderOf.get(team, 0) == player.guid)
+        {
+            copy.raidLeaderOf.remove(team);
+            if (group !is null)
+                foreach (ref m; group.members)
+                    if (m.guid != player.guid && m.guid in copy.inTeamRaid)
+                    {
+                        copy.raidLeaderOf[team] = m.guid;
+                        break;
+                    }
+        }
+        if (group !is null)
+            groupCommand(GroupOp.disband);
     }
 
     /**
@@ -1322,7 +1378,10 @@ mixin template BattlegroundHandlers()
         info!"%s: '%s' is on a battleground's map, out of its copy: sent back"(remoteAddress, player.data.name);
         const back = battleground_;
         if (copy !is null)
+        {
+            leaveTeamRaid(copy, battleground_.team);
             copy.removed(player.guid);
+        }
         battleground_ = BattlegroundData.init;
         saveBattleground();
         returnFromBattleground(back);
@@ -2027,4 +2086,28 @@ unittest
         context.update(now); // throws nothing
     }
     assert(context.tickFaults == 3);
+}
+
+/// A team's raid: the players of a team who came alone are in one raid in the copy, and leave it as they leave.
+unittest
+{
+    import dmangos.world.movement : Position;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata : raceOrc;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f));
+    auto varian = loggedIn(context, db, 9, "Varian", Position(-8949.95f, -132.49f, 83.53f));
+    auto thrall = loggedIn(context, db, 8, "Thrall", Position(1629, -4373, 31), AccountLevel.player, raceOrc, 1);
+    anduin.read();
+    varian.read();
+    thrall.read();
+    auto copy = enterWarsong(context, [&anduin, &varian, &thrall], [7, 9, 8], [0, 0, 1]);
+    auto raid = context.groups.of(7);
+    assert(raid !is null && context.groups.of(9) is raid && raid.isRaid, "the Alliance's raid");
+    assert(context.groups.of(8) is null, "alone on his side: no raid yet");
+
+    varian.session.inWorld.leaveBattleground(false);
+    assert(context.groups.of(9) is null, "out of the raid as he leaves");
 }

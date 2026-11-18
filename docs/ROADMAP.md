@@ -159,7 +159,6 @@ The largest area. In order:
    * Milestone D, Arathi Basin: **done** (`arathi.d`): five bases, claims, assaults, defences, resources,
      2000 to win.
    * Not yet:
-     * The battleground raid group: chat works without it, but the raid frames do not show.
      * Removing stealth and the like on objectives (`AURA_INTERRUPT_FLAG_PVP_ACTIVE_CANCELS`).
      * A flag dropped when its carrier becomes immune.
      * Insignia loot from the dead.

@@ -24,7 +24,7 @@ import dmangos.cluster.regions : Region;
 import dmangos.serialization : deserialize, LengthPrefix, serialize;
 
 /// Changes whenever a message changes; nodes speaking another version are turned away.
-enum ushort protocolVersion = 31; // 31: the channels' forced say (GM tickets); 30: heartbeats acknowledge
+enum ushort protocolVersion = 32; // 32: the battleground raid (a group operation); 31: the channels' forced say
 
 /// Size of a frame header.
 enum frameHeaderSize = 16;

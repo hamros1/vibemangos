@@ -36,6 +36,7 @@ enum GroupOp : ubyte
     swapSubGroup,    /// `text`, `text2`: the two members' names
     assistant,       /// `target`, `number`: set (1) or not (0)
     logout,          /// `number`: 1 when logging out normally, 0 for a lost connection
+    battlegroundAdd, /// `target` (named `text`) joins its team's battleground raid, whose leader gives the command
 }
 
 /// `op` by `who`.
@@ -166,6 +167,30 @@ final class GroupService
             if (group !is null && group.isLeader(c.guid))
                 group.setAssistant(c.target, c.number != 0);
             return;
+        case GroupOp.battlegroundAdd:
+        {
+            // A battleground's team raid: no invitation is shown; the leader's group is made if need be, and a raid.
+            if (groups.of(c.target) !is null || groups.invitationOf(c.target) !is null)
+                return;
+            auto group = groups.of(c.guid);
+            if (group is null)
+            {
+                if (groups.invitationOf(c.guid) !is null)
+                    return;
+                group = groups.newGroup();
+                if (!group.addLeaderInvite(c.guid, c.name))
+                    return;
+                group.create();
+            }
+            else if (!group.isLeader(c.guid))
+                return;
+            if (group.isFull)
+                return;
+            group.addMember(c.target, c.text);
+            if (!group.isRaid)
+                group.convertToRaid();
+            return;
+        }
         case GroupOp.logout:
             // Logging out: invitations lapse; a party (not a raid) is left
             // when logging out normally.
