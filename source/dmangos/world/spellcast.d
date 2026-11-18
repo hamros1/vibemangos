@@ -13,6 +13,7 @@ public import dmangos.world.spellids : ImplicitTarget, DamageClass;
 import dmangos.bytes : ByteReader, ByteWriter;
 import dmangos.world.clientdata : ClientData;
 import dmangos.world.spells : SpellInfo;
+import dmangos.world.combat : Fighter;
 
 /// `SpellCastResult` (1.12's values); `ok` is never sent as a failure.
 enum SpellCastResult : ubyte
@@ -540,4 +541,90 @@ unittest
     dot.effect[0] = SpellEffect.applyAura;
     dot.casting.applyAuraName[0] = AuraType.periodicDamage;
     assert(isBinarySpell(dot), "a pure damage over time");
+}
+
+/**
+ * The chance (percent) a magic spell misses `victim`, or is resisted whole by its `resistance` to the
+ * spell's school, for every caster kind and victim kind alike: `spellMissChance` less the caster's
+ * `hitBonus`, and for a magic spell of a school other than physical and holy, `fullResistChance` (the
+ * level bonus counting for a creature victim of a spell that is not binary).
+ */
+float magicMissChance(const Fighter caster, const Fighter victim, const ref SpellInfo spell, int resistance,
+    float hitBonus) pure nothrow @nogc @safe
+{
+    import dmangos.world.combat : fullResistChance;
+
+    float chance = spellMissChance(caster.level, victim.level, victim.player) - hitBonus;
+    if (spell.casting.dmgClass == DamageClass.magic && spell.casting.school > 1)
+    {
+        const binary = isBinarySpell(spell);
+        chance += fullResistChance(resistance, caster.level, victim.level, binary, !victim.player && !binary);
+    }
+    return chance;
+}
+
+/**
+ * How `spell` fares against one target it may attack, for every caster kind and victim kind alike: an
+ * evading creature evades; a spell that always hits, or has no damage class, hits; a melee or ranged one
+ * may be missed, dodged or parried as a blow is; a magic one missed or resisted whole (`magicMissChance`).
+ * One number is drawn from `rng`, and only when there is something to roll.
+ */
+SpellMissInfo rollSpellHit(Rng)(const Fighter caster, const Fighter victim, const ref SpellInfo spell,
+    int resistance, float hitBonus, ref Rng rng)
+{
+    import std.random : uniform01;
+    import dmangos.world.combat : AttackType, dodgeChance, missChance, parryChance;
+
+    if (victim.evading)
+        return SpellMissInfo.evade;
+    if ((spell.casting.attributesEx3 & spellAttrEx3AlwaysHit) || spell.casting.dmgClass == DamageClass.none)
+        return SpellMissInfo.none;
+    const roll = uniform01(rng) * 100;
+    if (spell.casting.dmgClass == DamageClass.melee || spell.casting.dmgClass == DamageClass.ranged)
+    {
+        const type = spell.casting.dmgClass == DamageClass.ranged ? AttackType.ranged : AttackType.mainHand;
+        float edge = missChance(caster, victim, type);
+        if (roll < edge)
+            return SpellMissInfo.miss;
+        edge += dodgeChance(victim, caster, type);
+        if (roll < edge)
+            return SpellMissInfo.dodge;
+        edge += parryChance(victim, caster, type);
+        return roll < edge ? SpellMissInfo.parry : SpellMissInfo.none;
+    }
+    return roll < magicMissChance(caster, victim, spell, resistance, hitBonus) ? SpellMissInfo.resist
+        : SpellMissInfo.none;
+}
+
+unittest
+{
+    import dmangos.world.combat : Fighter;
+
+    // A generator that gives the numbers it is told to, as uniform01 reads them.
+    static struct Fixed
+    {
+        enum bool isUniformRandom = true;
+        enum ulong min = 0, max = 1_000_000;
+        ulong value;
+        @property ulong front() const { return value; }
+        void popFront() {}
+        enum bool empty = false;
+    }
+
+    static float hits(float percent) { return percent / 100 * Fixed.max; }
+    Fighter mage, wolf;
+    mage.level = wolf.level = 10;
+    mage.player = true;
+    SpellInfo bolt;
+    bolt.casting.dmgClass = DamageClass.magic;
+    bolt.casting.school = 4; // frost
+    auto low = Fixed(cast(ulong) hits(3.9f)), high = Fixed(cast(ulong) hits(4.1f));
+    assert(rollSpellHit(mage, wolf, bolt, 0, 0, low) == SpellMissInfo.resist, "4% base miss at an even level");
+    assert(rollSpellHit(mage, wolf, bolt, 0, 0, high) == SpellMissInfo.none);
+    assert(rollSpellHit(mage, wolf, bolt, 0, 2, low) == SpellMissInfo.none, "hit bonus off the miss chance");
+    wolf.evading = true;
+    assert(rollSpellHit(mage, wolf, bolt, 0, 0, low) == SpellMissInfo.evade);
+    wolf.evading = false;
+    bolt.casting.dmgClass = DamageClass.none;
+    assert(rollSpellHit(mage, wolf, bolt, 0, 0, low) == SpellMissInfo.none, "no damage class: no roll");
 }

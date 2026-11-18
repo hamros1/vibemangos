@@ -1392,80 +1392,22 @@ private:
      */
     SpellMissInfo rollHit(const ref SpellInfo spell, ulong target)
     {
-        auto creature = cast(Creature) map.findObject(target);
-        if (creature is null)
-        {
-            // A player: an enemy (a duel's opponent) can be missed; a friend never is.
-            auto other = target == player.guid ? null : cast(typeof(this)) context.onlinePlayer(target);
-            if (other is null || other.player is null || !canAttack(relatingNow(), other.relatingNow(), context.client))
-                return SpellMissInfo.none;
-            if ((spell.casting.attributesEx3 & spellAttrEx3AlwaysHit) || spell.casting.dmgClass == DamageClass.none)
-                return SpellMissInfo.none; // no damage class, no roll
-            const roll = uniform01(map.random) * 100;
-            if (spell.casting.dmgClass == DamageClass.melee || spell.casting.dmgClass == DamageClass.ranged)
-            {
-                const me = player.fighter, it = other.player.fighter;
-                const type = spell.casting.dmgClass == DamageClass.ranged ? AttackType.ranged : AttackType.mainHand;
-                float edge = missChance(me, it, type);
-                if (roll < edge)
-                    return SpellMissInfo.miss;
-                edge += dodgeChance(it, me, type);
-                if (roll < edge)
-                    return SpellMissInfo.dodge;
-                edge += parryChance(it, me, type);
-                return roll < edge ? SpellMissInfo.parry : SpellMissInfo.none;
-            }
-            // Missed, or (a magic spell) resisted whole by the target's resistance.
-            float chance = spellMissChance(player.data.level, other.player.data.level, true) - spellHitBonus;
-            if (spell.casting.dmgClass == DamageClass.magic && spell.casting.school > 1)
-            {
-                import dmangos.world.combat : fullResistChance;
+        import dmangos.world.spellcast : rollSpellHit;
 
-                chance += fullResistChance(cast(int) other.player.values.get!UNIT_FIELD_RESISTANCES(spell.casting.school),
-                    player.data.level, other.player.data.level, isBinarySpell(spell), false);
-            }
-            return roll < chance ? SpellMissInfo.resist : SpellMissInfo.none;
-        }
-        if (!creature.alive)
-            return SpellMissInfo.none;
-        if (!canAttack(relatingNow(), creature.ai.relatingOf(), context.client))
-            return SpellMissInfo.none;
-        if (creature.ai.evading)
-            return SpellMissInfo.evade;
-        if ((spell.casting.attributesEx3 & spellAttrEx3AlwaysHit) || spell.casting.dmgClass == DamageClass.none)
-            return SpellMissInfo.none;
-        const roll = uniform01(map.random) * 100;
-        if (spell.casting.dmgClass == DamageClass.melee || spell.casting.dmgClass == DamageClass.ranged)
-        {
-            const me = player.fighter, it = creature.fighter;
-            const type = spell.casting.dmgClass == DamageClass.ranged ? AttackType.ranged : AttackType.mainHand;
-            float edge = missChance(me, it, type);
-            if (roll < edge)
-                return SpellMissInfo.miss;
-            edge += dodgeChance(it, me, type);
-            if (roll < edge)
-                return SpellMissInfo.dodge;
-            edge += parryChance(it, me, type);
-            if (roll < edge)
-                return SpellMissInfo.parry;
-            return SpellMissInfo.none;
-        }
-        const level = creature.values.get!UNIT_FIELD_LEVEL;
-        float chance = spellMissChance(player.data.level, level, false) - spellHitBonus;
-        // A magic spell is also fully resisted by resistance: a binary spell
-        // by its whole percent, another by the distribution's chance of all of it.
+        // Only an enemy is rolled against: a friend (a heal, a buff) is never missed.
         const school = spell.casting.school;
-        if (spell.casting.dmgClass == DamageClass.magic && school > 1)
+        if (auto creature = cast(Creature) map.findObject(target))
         {
-            import dmangos.world.combat : effectiveResistPercent, partialResistRows;
-
-            const binary = isBinarySpell(spell);
-            const percent = effectiveResistPercent(cast(int) creature.values.get!UNIT_FIELD_RESISTANCES(school),
-                player.data.level, level, !binary);
-            if (percent > 0)
-                chance += binary ? percent : partialResistRows[cast(uint) percent][4] * 0.01f;
+            if (!creature.alive || !canAttack(relatingNow(), creature.ai.relatingOf(), context.client))
+                return SpellMissInfo.none;
+            return rollSpellHit(player.fighter, creature.fighter, spell,
+                cast(int) creature.values.get!UNIT_FIELD_RESISTANCES(school), spellHitBonus, map.random);
         }
-        return roll < chance ? SpellMissInfo.resist : SpellMissInfo.none;
+        auto other = target == player.guid ? null : cast(typeof(this)) context.onlinePlayer(target);
+        if (other is null || other.player is null || !canAttack(relatingNow(), other.relatingNow(), context.client))
+            return SpellMissInfo.none;
+        return rollSpellHit(player.fighter, other.player.fighter, spell,
+            cast(int) other.player.values.get!UNIT_FIELD_RESISTANCES(school), spellHitBonus, map.random);
     }
 
     // -----------------------------------------------------------------------
@@ -1899,19 +1841,15 @@ private:
     package uint partialResist(ref uint damage, int resistance, uint level)
     {
         import std.random : uniform;
-        import dmangos.world.combat : effectiveResistPercent, rollPartialResist;
+        import dmangos.world.combat : Fighter, partiallyResisted;
 
-        const percent = effectiveResistPercent(resistance, player.data.level, level, false);
-        const share = rollPartialResist(percent, uniform!"[]"(1u, 10000u, map.random));
-        if (share > 0)
-        {
-            const resisted = cast(uint)(damage * share);
-            damage -= resisted;
-            return resisted;
-        }
-        if (share < 0)
-            damage += cast(uint)(damage * -share);
-        return 0;
+        Fighter victim;
+        victim.player = true;
+        victim.level = level;
+        const r = partiallyResisted(damage, resistance, player.data.level, victim, false, true,
+            uniform!"[]"(1u, 10000u, map.random));
+        damage = r.damage;
+        return r.resisted;
     }
 
     /**
@@ -2194,19 +2132,13 @@ private:
         else if (school != 1 && !isBinarySpell(*spell)) // holy: no resistance; a binary spell: all or nothing
         {
             // A partial resist: a share of it resisted.
-            import dmangos.world.combat : effectiveResistPercent, rollPartialResist;
+            import dmangos.world.combat : partiallyResisted;
             import std.random : uniform;
 
-            const percent = effectiveResistPercent(cast(int) victim.values.get!UNIT_FIELD_RESISTANCES(school),
-                player.data.level, victim.values.get!UNIT_FIELD_LEVEL, true);
-            const share = rollPartialResist(percent, uniform!"[]"(1u, 10000u, map.random));
-            if (share > 0)
-            {
-                resisted = cast(uint)(damage * share);
-                damage -= resisted;
-            }
-            else if (share < 0)
-                damage += cast(uint)(damage * -share);
+            const r = partiallyResisted(damage, cast(int) victim.values.get!UNIT_FIELD_RESISTANCES(school),
+                player.data.level, victim.fighter, false, true, uniform!"[]"(1u, 10000u, map.random));
+            damage = r.damage;
+            resisted = r.resisted;
         }
         map.sendToWatchers(this, Opcode.SMSG_SPELLNONMELEEDAMAGELOG, nonMeleeDamageLog(target: victim.guid, attacker: player.guid,
             spell.id, damage, school, 0, resisted, false, 0, crit), true);

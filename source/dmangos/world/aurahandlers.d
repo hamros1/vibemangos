@@ -704,17 +704,13 @@ private:
             else if (school != 1)
             {
                 // A tick partly resisted; a binary spell's at a tenth of the resistance.
-                import dmangos.world.combat : effectiveResistPercent, rollPartialResist;
+                import dmangos.world.combat : partiallyResisted;
                 import dmangos.world.spellcast : isBinarySpell;
                 import std.random : uniform;
 
-                const binary = isBinarySpell(*aura.spell);
-                float percent = effectiveResistPercent(cast(int) target.values.get!UNIT_FIELD_RESISTANCES(school),
-                    player.data.level, target.values.get!UNIT_FIELD_LEVEL, !binary);
-                if (percent > 0 && binary)
-                    percent *= 0.1f;
-                const share = rollPartialResist(percent, uniform!"[]"(1u, 10000u, map.random), false);
-                damage = share >= 0 ? damage - cast(uint)(damage * share) : damage + cast(uint)(damage * -share);
+                damage = partiallyResisted(damage, cast(int) target.values.get!UNIT_FIELD_RESISTANCES(school),
+                    player.data.level, target.fighter, isBinarySpell(*aura.spell), false,
+                    uniform!"[]"(1u, 10000u, map.random)).damage;
             }
             periodicLog(target.guid, aura, i, damage, aura.spell.casting.school);
             spellAttacked(target, damage, true);

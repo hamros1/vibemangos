@@ -32,8 +32,8 @@ mixin template CreatureCasting()
     import dmangos.world.opcodes : ChatType, Language, Opcode;
     import dmangos.world.queries : monsterChatMessage;
     import dmangos.world.relations : canAttack;
-    import dmangos.world.spellcast : castTime, duration, effectValue, healLog, isNextMeleeSwingSpell, nonMeleeDamageLog,
-        powerCost, radius, range, spellGoPacket, spellMissChance, spellStartPacket, SpellMissInfo, SpellTargets,
+    import dmangos.world.spellcast : castTime, duration, effectValue, healLog, spellMissLog, isNextMeleeSwingSpell, nonMeleeDamageLog,
+        powerCost, radius, range, spellGoPacket, spellStartPacket, SpellMissInfo, SpellTargets,
         TargetFlags, TargetResult;
     import dmangos.world.spells : SpellInfo;
     import dmangos.world.updatefields;
@@ -317,12 +317,17 @@ mixin template CreatureCasting()
         // Who each effect reaches; a hostile target rolls once to be hit.
         ulong[][3] reached;
         bool[ulong] all;
+        ulong[] inOrder; // each target once, in the order the effects found them (as the packet lists them)
         foreach (i; 0 .. 3)
             if (spell.effect[i])
             {
                 reached[i] = targetsFor(spell, i, target);
                 foreach (guid; reached[i])
-                    all[guid] = true;
+                    if (guid !in all)
+                    {
+                        all[guid] = true;
+                        inOrder ~= guid;
+                    }
             }
         TargetResult[] results;
         MeleeDamage[ulong] weaponRolls;
@@ -330,7 +335,7 @@ mixin template CreatureCasting()
         foreach (i; 0 .. 3)
             weapon |= spell.effect[i] == SpellEffect.weaponDamageNoschool || spell.effect[i] == SpellEffect.weaponPercentDamage
                 || spell.effect[i] == SpellEffect.weaponDamage || spell.effect[i] == SpellEffect.normalizedWeaponDmg;
-        foreach (guid, _; all)
+        foreach (guid; inOrder)
         {
             auto miss = SpellMissInfo.none;
             if (guid != me.guid)
@@ -356,24 +361,22 @@ mixin template CreatureCasting()
                         default: break;
                         }
                     }
-                    else if (spell.casting.dmgClass == DamageClass.magic)
+                    else
                     {
-                        // Missed, or resisted whole by the player's resistance to its school.
-                        import dmangos.world.combat : fullResistChance;
-                        import dmangos.world.spellcast : isBinarySpell;
+                        // As a player's spell is rolled (dmangos.world.spellcast.rollSpellHit), whoever the target.
+                        import dmangos.world.spellcast : rollSpellHit;
 
-                        float chance = spellMissChance(level, f.level, true);
-                        if (spell.casting.school > 1)
-                            chance += fullResistChance(world_.unit(guid).resistance(spell.casting.school), level, f.level,
-                                isBinarySpell(*spell), false);
-                        if (uniform01(world_.random) * 100 < chance)
-                            miss = SpellMissInfo.resist;
+                        miss = rollSpellHit(me.fighter, f, *spell, other.resistance(spell.casting.school), 0,
+                            world_.random);
                     }
                 }
             results ~= TargetResult(guid, miss);
         }
         auto targets = targetsOf(target);
         world_.sendToObservers(me.guid, Opcode.SMSG_SPELL_GO, spellGoPacket(me.guid, spell.id, results, targets));
+        foreach (r; results) // the combat log's line for each miss, as for a player's spell
+            if (r.miss != SpellMissInfo.none)
+                world_.sendToObservers(me.guid, Opcode.SMSG_SPELLLOGMISS, spellMissLog(spell.id, me.guid, r.guid, r.miss));
         bool[ulong] missed;
         foreach (r; results)
             if (r.miss != SpellMissInfo.none)
@@ -499,23 +502,17 @@ mixin template CreatureCasting()
             damage = cast(uint) armorReducedDamage(me.values.get!UNIT_FIELD_LEVEL, other.fighter.armor, damage);
         else if (school > 1)
         {
-            // Partly resisted by its resistance (a binary spell was resisted whole or not at all).
+            // Partly resisted by its resistance (a binary spell was resisted whole or not at all), as a player's.
             import std.random : uniform;
-            import dmangos.world.combat : effectiveResistPercent, rollPartialResist;
+            import dmangos.world.combat : partiallyResisted;
             import dmangos.world.spellcast : isBinarySpell;
 
-            if (!isBinarySpell(*spell))
+            if (!isBinarySpell(*spell)) // nothing to roll for a binary spell
             {
-                const percent = effectiveResistPercent(other.resistance(school), me.values.get!UNIT_FIELD_LEVEL,
-                    other.fighter.level, false);
-                const share = rollPartialResist(percent, uniform!"[]"(1u, 10000u, world_.random));
-                if (share > 0)
-                {
-                    resisted = cast(uint)(damage * share);
-                    damage -= resisted;
-                }
-                else if (share < 0)
-                    damage += cast(uint)(damage * -share);
+                const r = partiallyResisted(damage, other.resistance(school), me.values.get!UNIT_FIELD_LEVEL,
+                    other.fighter, false, true, uniform!"[]"(1u, 10000u, world_.random));
+                damage = r.damage;
+                resisted = r.resisted;
             }
         }
         const absorbed = other.absorb(school < 0 ? 0 : school, damage);

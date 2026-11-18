@@ -781,6 +781,7 @@ immutable uint[5][101] partialResistRows = [
  * plus 0.4 per point of the victim's level skill above the attacker's; at most 75.
  */
 float effectiveResistPercent(int resistance, uint attackerLevel, uint victimLevel, bool victimCreature)
+    pure nothrow @nogc @safe
 {
     import std.algorithm.comparison : max, min;
 
@@ -802,6 +803,7 @@ float effectiveResistPercent(int resistance, uint attackerLevel, uint victimLeve
  * resists all of it.
  */
 float fullResistChance(int resistance, uint attackerLevel, uint victimLevel, bool binary, bool victimCreature)
+    pure nothrow @nogc @safe
 {
     const percent = effectiveResistPercent(resistance, attackerLevel, victimLevel, victimCreature);
     if (!(percent > 0))
@@ -823,7 +825,7 @@ unittest
  * or 0.75; never all, which was the hit roll's), from `percent` and a `roll` of 1 .. 10000. Negative
  * percents are vulnerability: a negative share. A direct hit with more than 54% never goes whole.
  */
-float rollPartialResist(float percent, uint roll, bool direct = true)
+float rollPartialResist(float percent, uint roll, bool direct = true) pure nothrow @nogc @safe
 {
     import std.math : round;
 
@@ -883,4 +885,62 @@ unittest
     const plain = missChance(player, wolf, AttackType.mainHand);
     player.hitBonus = 3;
     assert(missChance(player, wolf, AttackType.mainHand) == plain - 3);
+}
+
+/// What a partial resist left of a spell's damage, and what it took.
+struct Resisted
+{
+    uint damage;   /// what lands
+    uint resisted; /// what was resisted (shown in the damage log)
+}
+
+/**
+ * A spell's `damage` against `victim`, after the partial resist of its `resistance` to the spell's school,
+ * for every caster kind and victim kind alike. `roll` is a number from 1 to 10000.
+ *
+ * The level bonus of `effectiveResistPercent` counts for a creature victim of a spell that is not binary.
+ * A binary spell's direct damage is not resisted in part (it was resisted whole, or not at all, by the hit
+ * roll); its ticks are, at a tenth of the resistance. A negative resistance adds to the damage.
+ */
+Resisted partiallyResisted(uint damage, int resistance, uint casterLevel, const Fighter victim, bool binary,
+    bool direct, uint roll) pure nothrow @nogc @safe
+{
+    if (binary && direct)
+        return Resisted(damage, 0);
+    float percent = effectiveResistPercent(resistance, casterLevel, victim.level, !victim.player && !binary);
+    if (binary && percent > 0)
+        percent *= 0.1f;
+    const share = rollPartialResist(percent, roll, direct);
+    if (share > 0)
+    {
+        const taken = cast(uint)(damage * share);
+        return Resisted(damage - taken, taken);
+    }
+    if (share < 0)
+        return Resisted(damage + cast(uint)(damage * -share), 0);
+    return Resisted(damage, 0);
+}
+
+pure nothrow @nogc @safe unittest
+{
+    Fighter wolf, player;
+    wolf.level = 60;
+    player.level = 60;
+    player.player = true;
+    assert(partiallyResisted(100, 0, 60, wolf, false, true, 5000) == Resisted(100, 0), "no resistance: all lands");
+    assert(partiallyResisted(100, 300, 60, wolf, true, true, 1) == Resisted(100, 0), "binary direct: never in part");
+    const half = partiallyResisted(100, 300, 60, player, false, true, 10000);
+    assert(half.damage + half.resisted == 100 && half.resisted > 0, "75% effective: a share resisted");
+    // The level bonus is the creature's only: a level-63 creature resists more than a level-63 player.
+    Fighter boss = wolf, champion = player;
+    boss.level = champion.level = 63;
+    assert(effectiveResistPercent(100, 60, 63, true) > effectiveResistPercent(100, 60, 63, false));
+}
+
+pure nothrow @nogc @safe unittest
+{
+    Fighter weak;
+    weak.level = 10;
+    const more = partiallyResisted(100, -50, 60, weak, false, true, 5000);
+    assert(more.damage >= 100 && more.resisted == 0, "a negative resistance adds");
 }
