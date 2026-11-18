@@ -154,6 +154,11 @@ private T deserializeFields(T)(ref ByteReader reader)
             else
             {
                 alias Element = typeof(Field.init[0]);
+                // Before allocating: the count is the sender's word, and every element takes at least its
+                // fixed size (or a byte). A count the bytes cannot hold would otherwise allocate gigabytes,
+                // and the OutOfMemoryError (an Error) would pass every catch (Exception) and end the process.
+                enum size_t leastBytes = wireSize!Element > 0 ? wireSize!Element : 1;
+                reader.ensureAvailable(count * leastBytes);
                 result.tupleof[i] = new Element[count];
                 foreach (ref element; result.tupleof[i])
                     element = readValue!Element(reader);
@@ -371,4 +376,25 @@ unittest
 version (unittest) private struct ServerTestPacket
 {
     uint id;
+}
+
+// A length prefix larger than the bytes behind it is refused before anything is allocated.
+unittest
+{
+    import std.exception : assertThrown;
+
+    static struct Big
+    {
+        ulong a, b, c, d;
+    }
+
+    static struct Message
+    {
+        @LengthPrefix!uint Big[] items;
+    }
+
+    auto frame = ByteReader([0xFF, 0xFF, 0xFF, 0x7F]); // two billion 32-byte items, in four bytes
+    assertThrown!IncompletePacketException(deserialize!Message(frame));
+    auto two = ByteReader(cast(ubyte[])[2, 0, 0, 0] ~ new ubyte[64]);
+    assert(deserialize!Message(two).items.length == 2);
 }

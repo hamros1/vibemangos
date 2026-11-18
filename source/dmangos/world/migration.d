@@ -49,10 +49,15 @@ const(ubyte)[] encodeBundle(const(ulong)[] cells, const(Migrant)[] objects)
 void decodeBundle(const(ubyte)[] bytes, out ulong[] cells, out Migrant[] objects)
 {
     auto r = ByteReader(bytes);
-    cells = new ulong[r.read!uint];
+    // Each count is checked against the bytes left before anything is allocated (a peer's frame).
+    const cellCount = r.read!uint;
+    r.ensureAvailable(cellCount * ulong.sizeof);
+    cells = new ulong[cellCount];
     foreach (ref cell; cells)
         cell = r.read!ulong;
-    objects = new Migrant[r.read!uint];
+    const objectCount = r.read!uint;
+    r.ensureAvailable(objectCount * (ubyte.sizeof + uint.sizeof + ulong.sizeof + uint.sizeof));
+    objects = new Migrant[objectCount];
     foreach (ref m; objects)
     {
         m.kind = cast(MigrantKind) r.read!ubyte;
@@ -69,4 +74,16 @@ unittest
     Migrant[] back;
     decodeBundle(encodeBundle([7, 8, 9], objects), cells, back);
     assert(cells == [7, 8, 9] && back == objects);
+}
+
+// A bundle whose counts the bytes cannot hold is refused before anything is allocated.
+unittest
+{
+    import std.exception : assertThrown;
+    import dmangos.bytes : IncompletePacketException;
+
+    ulong[] cells;
+    Migrant[] objects;
+    assertThrown!IncompletePacketException(decodeBundle([0xFF, 0xFF, 0xFF, 0x7F], cells, objects));
+    assertThrown!IncompletePacketException(decodeBundle([0, 0, 0, 0, 0xFF, 0xFF, 0xFF, 0x7F], cells, objects));
 }
