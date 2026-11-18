@@ -1,6 +1,6 @@
 /**
- * Flight masters (CMaNGOS `Maps/TaxiHandler.cpp`, `Player::ActivateTaxiPathTo` and the taxi
- * movement), mixed into `dmangos.world.character.Character`.
+ * Flight masters: the client's taxi requests, starting a flight, and the flight itself, mixed into
+ * `dmangos.world.character.Character`.
  *
  * A flight master's node becomes known the first time the player talks to it; afterwards it shows
  * the known nodes. A flight to one of them (directly, or over several legs) costs its price (10%
@@ -43,7 +43,7 @@ mixin template TaxiHandlers()
         return nearestTaxiNode(context.client, npc.position, map.id, context.client.teamForRace(player.data.race));
     }
 
-    /// `HandleTaxiNodeStatusQueryOpcode`: whether the master's node is known (the flight master's icon).
+    /// The client asks whether the master's node is known (for the flight master's icon).
     @Handles(Opcode.CMSG_TAXINODE_STATUS_QUERY, WorldState.inWorld)
     void handleTaxiNodeStatusQuery(const ClientGuid request)
     {
@@ -59,7 +59,7 @@ mixin template TaxiHandlers()
         deliver(Opcode.SMSG_TAXINODE_STATUS, w.data);
     }
 
-    /// `HandleTaxiQueryAvailableNodes`: a new node learned, or the map of the known ones.
+    /// The player talks to a flight master: a new node learned, or the map of the known ones.
     @Handles(Opcode.CMSG_TAXIQUERYAVAILABLENODES, WorldState.inWorld)
     void handleTaxiQueryAvailableNodes(const ClientGuid request)
     {
@@ -69,7 +69,7 @@ mixin template TaxiHandlers()
         const node = taxiNodeOf(npc);
         if (node == 0)
             return;
-        // `SendLearnNewTaxiNode`
+        // A node not known yet: learned, and the client told.
         if (learnNode(player.data.taxiMask, node))
         {
             deliver(Opcode.SMSG_NEW_TAXI_PATH, null);
@@ -80,7 +80,7 @@ mixin template TaxiHandlers()
             info!"%s: '%s' learned flight node %s"(remoteAddress, player.data.name, node);
             return;
         }
-        // `SendTaxiMenu`
+        // The map of the known nodes.
         ByteWriter w;
         w.put(1u);
         w.put(request.guid);
@@ -90,7 +90,7 @@ mixin template TaxiHandlers()
         deliver(Opcode.SMSG_SHOWTAXINODES, w.data);
     }
 
-    /// `SendActivateTaxiReply`
+    /// Tells the client whether its flight starts, or why not (`SMSG_ACTIVATETAXIREPLY`).
     void sendTaxiReply(TaxiReply reply)
     {
         ByteWriter w;
@@ -98,7 +98,7 @@ mixin template TaxiHandlers()
         deliver(Opcode.SMSG_ACTIVATETAXIREPLY, w.data);
     }
 
-    /// `HandleActivateTaxiOpcode`: a flight to a node.
+    /// The client asks for a flight to a node.
     @Handles(Opcode.CMSG_ACTIVATETAXI, WorldState.inWorld)
     void handleActivateTaxi(ref ByteReader reader)
     {
@@ -112,7 +112,7 @@ mixin template TaxiHandlers()
         activateTaxiPathTo(nodes[], npc);
     }
 
-    /// `HandleActivateTaxiExpressOpcode`: a flight over several nodes.
+    /// The client asks for a flight over several nodes.
     @Handles(Opcode.CMSG_ACTIVATETAXIEXPRESS, WorldState.inWorld)
     void handleActivateTaxiExpress(ref ByteReader reader)
     {
@@ -133,13 +133,13 @@ mixin template TaxiHandlers()
         activateTaxiPathTo(nodes, npc);
     }
 
-    /// `HandleMoveSplineDoneOpcode`: the client's word that the flight's spline ended; the server follows its own.
+    /// The client's word that the flight's spline ended; the server follows its own.
     @Handles(Opcode.CMSG_MOVE_SPLINE_DONE, WorldState.inWorld)
     void handleMoveSplineDone(ref ByteReader reader)
     {
     }
 
-    /// `Player::ActivateTaxiPathTo` from a flight master.
+    /// Starts a flight along `nodes` from a flight master: checks, payment, and take-off.
     void activateTaxiPathTo(const(uint)[] nodes, Npc npc)
     {
         enum float interactionDistance = 5;
@@ -149,7 +149,7 @@ mixin template TaxiHandlers()
             return sendTaxiReply(TaxiReply.playerBusy);
         if (player.values.get!UNIT_FIELD_MOUNTDISPLAYID)
             return sendTaxiReply(TaxiReply.alreadyMounted);
-        // `IsInDisallowedMountForm`: forms but the warrior's stances, Shadowform and Stealth.
+        // No flying in a shapeshift form, except the warrior's stances, Shadowform and Stealth.
         enum ubyte battleStance = 17, defensiveStance = 18, berserkerStance = 19, shadow = 28, stealth = 30;
         const form = player.values.getByte!UNIT_FIELD_BYTES_1(2);
         if (form && form != battleStance && form != defensiveStance && form != berserkerStance && form != shadow
@@ -181,7 +181,7 @@ mixin template TaxiHandlers()
         cancelTrade(true);
         player.modifyMoney(-cast(long) flight.cost);
         sendTaxiReply(TaxiReply.ok);
-        // `MoveTaxi`: mounted, flagged, along the path from where the player stands.
+        // Mounted, flagged, along the path from where the player stands.
         player.values.set!UNIT_FIELD_MOUNTDISPLAYID(display);
         player.values.set!UNIT_FIELD_FLAGS(player.values.get!UNIT_FIELD_FLAGS | UnitFlags.taxiFlight);
         flushPlayerChanges();
@@ -213,7 +213,7 @@ mixin template TaxiHandlers()
             landTaxi();
     }
 
-    /// `OnTaxiFlightSplineEnd` and `OnTaxiFlightEnd`: unmounted, unflagged, at the destination node.
+    /// The flight ends: unmounted, unflagged, at the destination node.
     void landTaxi()
     {
         const destination = context.client.taxiNodes.lookup(taxiDestination);

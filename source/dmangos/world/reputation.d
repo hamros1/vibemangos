@@ -1,5 +1,5 @@
 /**
- * A player's reputations (CMaNGOS `Reputation/ReputationMgr.cpp`): its standing with each faction
+ * A player's reputations: its standing with each faction
  * of the reputation list (`Faction.dbc`'s `reputationListID`), kept as the difference from the
  * base its race and class start with, and each one's flags: shown in the list, at war, inactive.
  *
@@ -12,7 +12,7 @@ module dmangos.world.reputation;
 import dmangos.world.clientdata : ClientData, FactionEntry;
 import dmangos.world.relations : ReputationRank, reputationToRank;
 
-/// `FactionFlags`
+/// A faction's flags in the reputation list.
 enum FactionFlag : uint
 {
     visible = 0x01,         /// shown in the reputation list
@@ -23,13 +23,13 @@ enum FactionFlag : uint
     inactive = 0x20,        /// moved to the list's inactive part
 }
 
-/// `Reputation_Cap`, `Reputation_Bottom`
+/// The highest and lowest standing.
 enum int reputationCap = 42_999, reputationBottom = -42_000;
 
-/// `MAX_REPUTATION_LIST` of 1.12's `SMSG_INITIALIZE_FACTIONS`.
+/// The entries of 1.12's `SMSG_INITIALIZE_FACTIONS`.
 enum reputationListSize = 64;
 
-/// `FactionState`: one faction of the list.
+/// One faction of the list.
 struct FactionState
 {
     uint faction;        /// its `Faction.dbc` id
@@ -73,7 +73,7 @@ final class Reputation
         initialize();
     }
 
-    /// `ReputationMgr::Initialize`: every faction with a reputation, at its base, with its starting flags.
+    /// Every faction with a reputation, at its base, with its starting flags.
     void initialize()
     {
         states = FactionState.init;
@@ -83,14 +83,14 @@ final class Reputation
                     states[f.reputationListId] = FactionState(f.id, 0, defaultFlags(f), true, true, true);
     }
 
-    /// `GetDefaultStateFlags`
+    /// The flags a faction starts with for this race and class.
     uint defaultFlags(const(FactionEntry)* f) const
     {
         const i = f.indexFitTo(raceMask, classMask);
         return i >= 0 ? f.reputationFlags[i] : 0;
     }
 
-    /// `GetBaseReputation`
+    /// The standing a faction starts at for this race and class.
     int baseOf(const(FactionEntry)* f) const
     {
         if (f is null)
@@ -108,7 +108,7 @@ final class Reputation
         return s.exists ? s : null;
     }
 
-    /// `GetReputation`: the standing, base included.
+    /// The standing, base included.
     int standingWith(const(FactionEntry)* f) const
     {
         if (auto s = stateOf(f))
@@ -122,7 +122,7 @@ final class Reputation
         return standingWith(client.factions.lookup(faction));
     }
 
-    /// `GetRank`
+    /// The rank of the standing with a faction.
     ReputationRank rankWith(const(FactionEntry)* f) const
     {
         return reputationToRank(standingWith(f));
@@ -134,7 +134,7 @@ final class Reputation
         return rankWith(client.factions.lookup(faction));
     }
 
-    /// `IsAtWar`
+    /// Whether the player is at war with a faction.
     bool atWarWith(const(FactionEntry)* f) const
     {
         if (auto s = stateOf(f))
@@ -143,7 +143,7 @@ final class Reputation
     }
 
     /**
-     * `SetReputation`/`ModifyReputation`: `standing` more (`incremental`) or exactly; the related
+     * Changes a standing: `standing` more (`incremental`) or exactly; the related
      * factions of `spillovers` get their share first unless `noSpillover`. True if a rank was gained.
      */
     bool change(const(FactionEntry)* f, int standing, bool incremental, const(Spillover)[uint] spillovers,
@@ -160,11 +160,11 @@ final class Reputation
         if (state is null)
             return false;
         const gained = changeOne(f, standing, incremental);
-        state.needSend = true; // `SendState` names it even if its own standing shows nowhere
+        state.needSend = true; // the client is told of it even if its own standing shows nowhere
         return gained;
     }
 
-    /// `SetOneFactionReputation`
+    /// Changes one faction's standing, its visibility and war with it; true if a rank was gained.
     private bool changeOne(const(FactionEntry)* f, int standing, bool incremental)
     {
         auto state = stateOf(f);
@@ -192,7 +192,7 @@ final class Reputation
         return newRank > oldRank;
     }
 
-    /// `SetVisible`: shown in the list, unless it may never be.
+    /// Shows the faction in the list, unless it may never be.
     void makeVisible(ref FactionState s)
     {
         if (s.flags & (FactionFlag.invisibleForced | FactionFlag.hidden) || s.flags & FactionFlag.visible)
@@ -204,14 +204,14 @@ final class Reputation
                 made ~= cast(uint) i;
     }
 
-    /// `SetVisible(FactionTemplateEntry)`: the faction of a template met (a quest giver's, ...).
+    /// ditto, for the faction of a template met (a quest giver's, ...).
     void makeVisible(uint faction)
     {
         if (auto s = stateOf(client.factions.lookup(faction)))
             makeVisible(*s);
     }
 
-    /// `SetAtWar(RepListID, bool)`: the client's checkbox; not for factions never shown.
+    /// The client's at-war checkbox, by list id; not for factions never shown.
     void setAtWarById(int listId, bool on)
     {
         if (listId < 0 || listId >= reputationListSize || !states[listId].exists)
@@ -222,7 +222,7 @@ final class Reputation
         setAtWar(*s, on);
     }
 
-    /// `SetAtWar(FactionState*, bool)`: no war on a peace-forced faction above hated.
+    /// Declares or ends war with a faction; no war on a peace-forced faction above hated.
     void setAtWar(ref FactionState s, bool on)
     {
         if (on && (s.flags & FactionFlag.peaceForced) && reputationToRank(s.standing) > ReputationRank.hated)
@@ -236,7 +236,7 @@ final class Reputation
         s.needSend = s.needSave = true;
     }
 
-    /// `SetInactive`: only a visible faction may be moved to the inactive part of the list.
+    /// Moves a faction to or from the inactive part of the list; only a visible one may be.
     void setInactive(int listId, bool on)
     {
         if (listId < 0 || listId >= reputationListSize || !states[listId].exists)
@@ -253,7 +253,7 @@ final class Reputation
         s.needSend = s.needSave = true;
     }
 
-    /// `LoadFromDB`: the saved standings and flags over the starting ones.
+    /// Loads the saved standings and flags over the starting ones.
     void load(const(ReputationRecord)[] rows)
     {
         initialize();
@@ -277,10 +277,10 @@ final class Reputation
             if (s.flags == row.flags)
                 s.needSend = s.needSave = false;
         }
-        made = null; // `SendVisible` is not sent while loading
+        made = null; // no faction is announced as made visible while loading
     }
 
-    /// The rows to write (`SaveToDB`), each faction changed since; they count as saved after.
+    /// The rows to write, each faction changed since; they count as saved after.
     ReputationRecord[] takeChanged()
     {
         ReputationRecord[] rows;

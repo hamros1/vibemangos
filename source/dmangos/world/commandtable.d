@@ -1,18 +1,16 @@
 /**
- * ArcEmu's chat command tables (`CommandTableStorage::Init` in ArcEmu 2.4.3's
- * `arcemu-world/Chat.cpp`), transcribed row for row: the same names, in the
- * same order, with the same permission letters, handlers and help texts.
- * Order matters: `ExecuteCommandInTable` takes the first row a typed word
- * abbreviates, so `.k` is `.kill`.
+ * The GM chat command tables. They must match ArcEmu 2.4.3's row for row:
+ * the same names, in the same order, with the same permission letters,
+ * handler names and help texts; edit them by hand only to keep it so.
+ * Order matters: a typed word takes the first row it abbreviates, so `.k`
+ * is `.kill`.
  *
- * `handler` is ArcEmu's handler name. `dmangos.world.commands` calls the
- * `Character` method of that name with a lower-case first letter
- * (`HandleGMOnCommand` is `handleGMOnCommand`); a row whose method does not
- * exist yet answers like ArcEmu's `HandleNYICommand`. Rows without a handler
- * either have `children` (a sub-table) or are `.modify` field rows, which
- * set `field` (and `fieldMax`) like `CmdSetValueField`.
- *
- * Generated from ArcEmu's source; edit by hand only to follow it.
+ * `dmangos.world.commands` calls the `Character` method named by `handler`
+ * with a lower-case first letter (`"HandleGMOnCommand"` is
+ * `handleGMOnCommand`); a row whose method does not exist yet answers "Not
+ * yet implemented.". Rows without a handler either have `children` (a
+ * sub-table) or are `.modify` field rows, which set the update field `field`
+ * (and its maximum, `fieldMax`) to the values typed.
  */
 module dmangos.world.commandtable;
 
@@ -20,16 +18,16 @@ module dmangos.world.commandtable;
 struct ChatCommand
 {
     string name;
-    char group;          /// the permission letter (`CommandGroup`); '0' for everyone with permissions
-    string handler;      /// ArcEmu's handler name, or null
+    char group;          /// the permission letter; '0' for everyone with permissions
+    string handler;      /// the handler's name, or null
     string help;
     immutable(ChatCommand)[] children;
-    string field;        /// `NormalValueField`: an update field, as a D expression
-    string fieldMax;     /// `MaxValueField`
-    ubyte valueType;     /// `ValueType`: 1 integer, 2 float
+    string field;        /// the update field a `.modify` row sets, as a D expression
+    string fieldMax;     /// the update field of its maximum, set too; or null
+    ubyte valueType;     /// 1 integer, 2 float
 }
 
-/// `modifyCommandTable`
+/// The `.modify` commands.
 immutable ChatCommand[] modifyCommandTable = [
     ChatCommand("hp", 'm', null, "Modifies health points (HP) of selected target", null, "UNIT_FIELD_HEALTH", "UNIT_FIELD_MAXHEALTH", 1),
     ChatCommand("gender", 'm', "HandleGenderChanger", "Changes gender of selected target. Usage: 0=male, 1=female.", null, null, null, 0),
@@ -67,7 +65,7 @@ immutable ChatCommand[] modifyCommandTable = [
     ChatCommand("bytes", 'm', null, "WARNING! Modifies the bytes entry of selected target.", null, "UNIT_FIELD_BYTES_0", null, 1),
 ];
 
-/// `debugCommandTable`
+/// The `.debug` commands.
 immutable ChatCommand[] debugCommandTable = [
     ChatCommand("infront", 'd', "HandleDebugInFrontCommand", "", null, null, null, 0),
     ChatCommand("showreact", 'd', "HandleShowReactionCommand", "", null, null, null, 0),
@@ -109,7 +107,7 @@ immutable ChatCommand[] debugCommandTable = [
     ChatCommand("getUint32Value", 'd', "HandleGetUint32ValueCommand", "", null, null, null, 0),
 ];
 
-/// `waypointCommandTable`
+/// The `.waypoint` commands.
 immutable ChatCommand[] waypointCommandTable = [
     ChatCommand("add", 'w', "HandleWPAddCommand", "Add wp at current pos", null, null, null, 0),
     ChatCommand("show", 'w', "HandleWPShowCommand", "Show wp's for creature", null, null, null, 0),
@@ -129,7 +127,7 @@ immutable ChatCommand[] waypointCommandTable = [
     ChatCommand("addfly", 'w', "HandleWaypointAddFlyCommand", "Adds a flying waypoint", null, null, null, 0),
 ];
 
-/// `GMTicketCommandTable`
+/// The `.gmTicket` commands.
 immutable ChatCommand[] gMTicketCommandTable = [
     ChatCommand("get", 'c', "HandleGMTicketListCommand", "Gets GM Ticket list.", null, null, null, 0),
     ChatCommand("getId", 'c', "HandleGMTicketGetByIdCommand", "Gets GM Ticket by player name.", null, null, null, 0),
@@ -144,7 +142,7 @@ immutable ChatCommand[] gMTicketCommandTable = [
     ChatCommand("toggle", 'z', "HandleGMTicketToggleTicketSystemStatusCommand", "Toggles the ticket system status.", null, null, null, 0),
 ];
 
-/// `GuildCommandTable`
+/// The `.guild` commands.
 immutable ChatCommand[] guildCommandTable = [
     ChatCommand("create", 'm', "CreateGuildCommand", "Creates a guild.", null, null, null, 0),
     ChatCommand("rename", 'm', "HandleRenameGuildCommand", "Renames a guild.", null, null, null, 0),
@@ -153,7 +151,7 @@ immutable ChatCommand[] guildCommandTable = [
     ChatCommand("disband", 'm', "HandleGuildDisbandCommand", "Disbands the guild of your target.", null, null, null, 0),
 ];
 
-/// `GameObjectCommandTable`
+/// The `.gobject` commands.
 immutable ChatCommand[] gameObjectCommandTable = [
     ChatCommand("select", 'o', "HandleGOSelect", "Selects the nearest GameObject to you", null, null, null, 0),
     ChatCommand("delete", 'o', "HandleGODelete", "Deletes selected GameObject", null, null, null, 0),
@@ -168,7 +166,7 @@ immutable ChatCommand[] gameObjectCommandTable = [
     ChatCommand("rotate", 'g', "HandleGORotate", "<Axis> <Value> - Rotates the object. <Axis> x,y, Default o.", null, null, null, 0),
 ];
 
-/// `BattlegroundCommandTable`
+/// The `.battleground` commands.
 immutable ChatCommand[] battlegroundCommandTable = [
     ChatCommand("setbgscore", 'e', "HandleSetBGScoreCommand", "<Teamid> <Score> - Sets battleground score. 2 Arguments.", null, null, null, 0),
     ChatCommand("startbg", 'e', "HandleStartBGCommand", "Starts current battleground match.", null, null, null, 0),
@@ -184,7 +182,7 @@ immutable ChatCommand[] battlegroundCommandTable = [
     ChatCommand("forcestart", 'z', "HandleInitializeAllQueuedBattlegroundsCommand", "Forces initialitation of all battlegrounds with active queue.", null, null, null, 0),
 ];
 
-/// `NPCCommandTable`
+/// The `.npc` commands.
 immutable ChatCommand[] nPCCommandTable = [
     ChatCommand("vendoradditem", 'n', "HandleItemCommand", "Adds to vendor", null, null, null, 0),
     ChatCommand("vendorremoveitem", 'n', "HandleItemRemoveCommand", "Removes from vendor.", null, null, null, 0),
@@ -211,7 +209,7 @@ immutable ChatCommand[] nPCCommandTable = [
     ChatCommand("formationclear", 'm', "HandleFormationClearCommand", "Removes formation from creature", null, null, null, 0),
 ];
 
-/// `CheatCommandTable`
+/// The `.cheat` commands.
 immutable ChatCommand[] cheatCommandTable = [
     ChatCommand("status", 'm', "HandleShowCheatsCommand", "Shows active cheats.", null, null, null, 0),
     ChatCommand("taxi", 'm', "HandleTaxiCheatCommand", "Enables all taxi nodes.", null, null, null, 0),
@@ -226,14 +224,14 @@ immutable ChatCommand[] cheatCommandTable = [
     ChatCommand("triggerpass", 'm', "HandleTriggerpassCheatCommand", "Ignores area trigger prerequisites.", null, null, null, 0),
 ];
 
-/// `accountCommandTable`
+/// The `.account` commands.
 immutable ChatCommand[] accountCommandTable = [
     ChatCommand("level", 'z', "HandleAccountLevelCommand", "Sets gm level on account. Pass it username and 0,1,2,3,az, etc.", null, null, null, 0),
     ChatCommand("mute", 'a', "HandleAccountMuteCommand", "Mutes account for <timeperiod>.", null, null, null, 0),
     ChatCommand("unmute", 'a', "HandleAccountUnmuteCommand", "Unmutes account <x>", null, null, null, 0),
 ];
 
-/// `honorCommandTable`
+/// The `.honor` commands.
 immutable ChatCommand[] honorCommandTable = [
     ChatCommand("addpoints", 'm', "HandleAddHonorCommand", "Adds x amount of honor points/currency", null, null, null, 0),
     ChatCommand("addkills", 'm', "HandleAddKillCommand", "Adds x amount of honor kills", null, null, null, 0),
@@ -242,7 +240,7 @@ immutable ChatCommand[] honorCommandTable = [
     ChatCommand("pvpcredit", 'm', "HandlePVPCreditCommand", "Sends PVP credit packet, with specified rank and points", null, null, null, 0),
 ];
 
-/// `petCommandTable`
+/// The `.pet` commands.
 immutable ChatCommand[] petCommandTable = [
     ChatCommand("createpet", 'm', "HandleCreatePetCommand", "Creates a pet with <entry>.", null, null, null, 0),
     ChatCommand("renamepet", 'm', "HandleRenamePetCommand", "Renames a pet to <name>.", null, null, null, 0),
@@ -251,7 +249,7 @@ immutable ChatCommand[] petCommandTable = [
     ChatCommand("spawnbot", 'a', "HandlePetSpawnAIBot", ".pet spawnbot <type> - spawn a helper bot for your aid", null, null, null, 0),
 ];
 
-/// `recallCommandTable`
+/// The `.recall` commands.
 immutable ChatCommand[] recallCommandTable = [
     ChatCommand("list", 'q', "HandleRecallListCommand", "List recall locations", null, null, null, 0),
     ChatCommand("port", 'q', "HandleRecallGoCommand", "Port to recalled location", null, null, null, 0),
@@ -260,7 +258,7 @@ immutable ChatCommand[] recallCommandTable = [
     ChatCommand("portplayer", 'm', "HandleRecallPortPlayerCommand", "recall ports player", null, null, null, 0),
 ];
 
-/// `questCommandTable`
+/// The `.quest` commands.
 immutable ChatCommand[] questCommandTable = [
     ChatCommand("addboth", '2', "HandleQuestAddBothCommand", "Add quest <id> to the targeted NPC as start & finish", null, null, null, 0),
     ChatCommand("addfinish", '2', "HandleQuestAddFinishCommand", "Add quest <id> to the targeted NPC as finisher", null, null, null, 0),
@@ -282,7 +280,7 @@ immutable ChatCommand[] questCommandTable = [
     ChatCommand("start", '2', "HandleQuestStartCommand", "Starts quest <id>", null, null, null, 0),
 ];
 
-/// `serverCommandTable`
+/// The `.server` commands.
 immutable ChatCommand[] serverCommandTable = [
     ChatCommand("setmotd", 'm', "HandleSetMotdCommand", "Sets MOTD", null, null, null, 0),
     ChatCommand("rehash", 'z', "HandleRehashCommand", "Reloads config file.", null, null, null, 0),
@@ -296,7 +294,7 @@ immutable ChatCommand[] serverCommandTable = [
     ChatCommand("netstatus", '0', "HandleNetworkStatusCommand", "Shows network status.", null, null, null, 0),
 ];
 
-/// `gmCommandTable`
+/// The `.gm` commands.
 immutable ChatCommand[] gmCommandTable = [
     ChatCommand("list", '0', "HandleGMListCommand", "Shows active GM's", null, null, null, 0),
     ChatCommand("off", 't', "HandleGMOffCommand", "Sets GM tag off", null, null, null, 0),
@@ -306,7 +304,7 @@ immutable ChatCommand[] gmCommandTable = [
     ChatCommand("blockwhispers", 'c', "HandleBlockWhispersCommand", "Blocks whispers from player <s> while in gmon mode.", null, null, null, 0),
 ];
 
-/// `characterCommandTable`
+/// The `.character` commands.
 immutable ChatCommand[] characterCommandTable = [
     ChatCommand("learn", 'm', "HandleLearnCommand", "Learns spell", null, null, null, 0),
     ChatCommand("unlearn", 'm', "HandleUnlearnCommand", "Unlearns spell", null, null, null, 0),
@@ -334,7 +332,7 @@ immutable ChatCommand[] characterCommandTable = [
     ChatCommand("settitle", 'm', "HandleSetTitle", "Adds title to a player", null, null, null, 0),
 ];
 
-/// `lookupCommandTable`
+/// The `.lookup` commands.
 immutable ChatCommand[] lookupCommandTable = [
     ChatCommand("item", 'l', "HandleLookupItemCommand", "Looks up item string x.", null, null, null, 0),
     ChatCommand("quest", 'l', "HandleQuestLookupCommand", "Looks up quest string x.", null, null, null, 0),
@@ -345,7 +343,7 @@ immutable ChatCommand[] lookupCommandTable = [
     ChatCommand("faction", '1', "HandleLookupFactionCommand", "Looks up faction string x.", null, null, null, 0),
 ];
 
-/// `adminCommandTable`
+/// The `.admin` commands.
 immutable ChatCommand[] adminCommandTable = [
     ChatCommand("castall", 'z', "HandleCastAllCommand", "Makes all players online cast spell <x>.", null, null, null, 0),
     ChatCommand("dispelall", 'z', "HandleDispelAllCommand", "Dispels all negative (or positive w/ 1) auras on all players.", null, null, null, 0),
@@ -354,28 +352,28 @@ immutable ChatCommand[] adminCommandTable = [
     ChatCommand("playall", 'z', "HandleGlobalPlaySoundCommand", "Plays a sound to the entire server.", null, null, null, 0),
 ];
 
-/// `kickCommandTable`
+/// The `.kick` commands.
 immutable ChatCommand[] kickCommandTable = [
     ChatCommand("byplayer", 'f', "HandleKillByPlayerCommand", "Disconnects the player with name <s>.", null, null, null, 0),
     ChatCommand("byaccount", 'f', "HandleKillBySessionCommand", "Disconnects the session with account name <s>.", null, null, null, 0),
     ChatCommand("byip", 'f', "HandleKillByIPCommand", "Disconnects the session with the ip <s>.", null, null, null, 0),
 ];
 
-/// `banCommandTable`
+/// The `.ban` commands.
 immutable ChatCommand[] banCommandTable = [
     ChatCommand("ip", 'm', "HandleIPBanCommand", "Adds an address to the IP ban table: <address> [duration]\nDuration must be a number optionally followed by a character representing the calendar subdivision to use (h>hours, d>days, w>weeks, m>months, y>years, default minutes)\nLack of duration results in a permanent ban.", null, null, null, 0),
     ChatCommand("character", 'b', "HandleBanCharacterCommand", "Bans character x with or without reason", null, null, null, 0),
     ChatCommand("account", 'a', "HandleAccountBannedCommand", "Ban account. .account ban name timeperiod", null, null, null, 0),
 ];
 
-/// `unbanCommandTable`
+/// The `.unban` commands.
 immutable ChatCommand[] unbanCommandTable = [
     ChatCommand("ip", 'm', "HandleIPUnBanCommand", "Deletes an address from the IP ban table: <address>", null, null, null, 0),
     ChatCommand("character", 'b', "HandleUnBanCharacterCommand", "Unbans character x", null, null, null, 0),
     ChatCommand("account", 'z', "HandleAccountUnbanCommand", "Unbans account x.", null, null, null, 0),
 ];
 
-/// `instanceCommandTable`
+/// The `.instance` commands.
 immutable ChatCommand[] instanceCommandTable = [
     ChatCommand("reset", 'z', "HandleResetInstanceCommand", "Removes instance ID x from target player.", null, null, null, 0),
     ChatCommand("resetall", 'm', "HandleResetAllInstancesCommand", "Removes all instance IDs from target player.", null, null, null, 0),
@@ -384,14 +382,14 @@ immutable ChatCommand[] instanceCommandTable = [
     ChatCommand("exit", 'm', "HandleExitInstanceCommand", "Exits current instance, return to entry point.", null, null, null, 0),
 ];
 
-/// `arenaCommandTable`
+/// The `.arena` commands.
 immutable ChatCommand[] arenaCommandTable = [
     ChatCommand("createteam", 'e', "HandleArenaCreateTeamCommand", "Creates arena team", null, null, null, 0),
     ChatCommand("setteamleader", 'e', "HandleArenaSetTeamLeaderCommand", "Sets the arena team leader", null, null, null, 0),
     ChatCommand("resetallratings", 'z', "HandleArenaResetAllRatingsCommand", "Resets all area teams to their default rating", null, null, null, 0),
 ];
 
-/// `commandTable`
+/// The top-level commands, in lookup order; a group's row points to its sub-table.
 immutable ChatCommand[] commandTable = [
     ChatCommand("commands", '0', "HandleCommandsCommand", "Shows Commands", null, null, null, 0),
     ChatCommand("help", '0', "HandleHelpCommand", "Shows help for command", null, null, null, 0),

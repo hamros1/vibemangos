@@ -1,6 +1,6 @@
 /**
- * Who may attack whom: CMaNGOS's Relations API, tier 1 (`Entities/Relations.cpp`), which is the
- * client's own logic (`CGUnit_C::UnitReaction`, `CanAttack`, `CanAttackNow`).
+ * Who may attack whom: how units react to each other, whether one may attack another at all, and
+ * whether it may now. The rules are the client's own, so server and client agree.
  *
  * A unit is described by a `Relating`: its unit flags, its faction template, and for a player its
  * race and class (the base reputation of `Faction.dbc` decides how it stands to factions that have
@@ -14,7 +14,7 @@ import dmangos.world.clientdata : ClientData, FactionEntry, FactionTemplateEntry
 import dmangos.world.defines : UnitFlags;
 import dmangos.world.reputation : Reputation;
 
-/// `ReputationRank`
+/// How one unit stands to another, or a player to a faction: hated to exalted.
 enum ReputationRank : ubyte
 {
     hated,
@@ -41,19 +41,19 @@ struct Relating
     uint playerFlags;                       /// `PLAYER_FLAGS` of the player it is or that controls it (FFA, contested)
     bool playerOwned;                       /// a player's pet, totem or guardian: it has a controlling player
 
-    /// `GetControllingPlayer() != nullptr`: a player, or a unit one controls.
+    /// Whether a player is in control: a player, or a unit one controls.
     @property bool hasControllingPlayer() const pure nothrow @nogc @safe
     {
         return player || playerOwned;
     }
 
-    /// `IsPvPFreeForAll`: in a free-for-all area (`PLAYER_FLAGS_FFA_PVP` of its controlling player).
+    /// In a free-for-all area (`PLAYER_FLAGS_FFA_PVP` of its controlling player).
     @property bool freeForAll() const pure nothrow @nogc @safe
     {
         return hasControllingPlayer && (playerFlags & PlayerFlagsPvP.freeForAll) != 0;
     }
 
-    /// `IsPvPContested`: attacked a flagged player of late (`PLAYER_FLAGS_CONTESTED_PVP`).
+    /// Contested: attacked a flagged player of late (`PLAYER_FLAGS_CONTESTED_PVP`).
     @property bool contested() const pure nothrow @nogc @safe
     {
         return hasControllingPlayer && (playerFlags & PlayerFlagsPvP.contested) != 0;
@@ -87,7 +87,7 @@ enum uint factionTemplateAssistPlayers = 0x800;
 /// `FACTION_FLAG_AT_WAR` of `Faction.dbc`'s reputation flags.
 private enum uint factionFlagAtWar = 0x02;
 
-/// `ReputationMgr::ReputationToRank`
+/// The rank a reputation standing falls in.
 ReputationRank reputationToRank(int standing) pure nothrow @nogc @safe
 {
     static immutable int[8] pointsInRank = [36_000, 3000, 3000, 3000, 6000, 12_000, 21_000, 1000];
@@ -101,7 +101,7 @@ ReputationRank reputationToRank(int standing) pure nothrow @nogc @safe
     return ReputationRank.hated;
 }
 
-/// A player's base standing with a faction (`ReputationMgr::GetBaseReputation`), and whether it starts at war.
+/// A player's base standing with a faction (by race and class), and whether it starts at war.
 private int baseReputation(const Relating player, const(FactionEntry)* faction, out bool atWar) pure nothrow @nogc
 {
     const index = faction.indexFitTo(player.raceMask, player.classMask);
@@ -111,7 +111,7 @@ private int baseReputation(const Relating player, const(FactionEntry)* faction, 
     return faction.baseRepValue[index];
 }
 
-/// `GetFactionReaction(FactionTemplateEntry, FactionTemplateEntry)`
+/// How one faction template reacts to another: by their enemy and friend groups and factions.
 ReputationRank factionReaction(const(FactionTemplateEntry)* self, const(FactionTemplateEntry)* other)
     pure nothrow @nogc
 in (self !is null && other !is null)
@@ -137,7 +137,7 @@ in (self !is null && other !is null)
     return ReputationRank.neutral;
 }
 
-/// `GetFactionReaction(FactionTemplateEntry, Unit)`: a faction template's reaction to a unit.
+/// A faction template's reaction to a unit.
 ReputationRank factionReaction(const(FactionTemplateEntry)* self, const Relating unit, const ClientData client)
 {
     if (self is null || unit.template_ is null)
@@ -159,7 +159,7 @@ ReputationRank factionReaction(const(FactionTemplateEntry)* self, const Relating
 }
 
 /**
- * `Unit::GetReactionTo`: how `self` stands to `unit`. `sameGroup` says whether two players are in
+ * How `self` stands to `unit`. `sameGroup` says whether two players are in
  * one group (they are friends whatever their factions).
  */
 ReputationRank reactionTo(const Relating self, const Relating unit, const ClientData client,
@@ -181,7 +181,7 @@ ReputationRank reactionTo(const Relating self, const Relating unit, const Client
         }
         if (self.player && unit.template_ !is null)
         {
-            // A contested player and a contested zone's guards: enemies (`IsContestedGuardFaction`).
+            // A contested player and a contested zone's guards: enemies.
             if (self.contested && (unit.template_.flags & factionTemplateContestedGuard))
                 return ReputationRank.hostile;
             const faction = client.factions.lookup(unit.template_.faction);
@@ -199,19 +199,19 @@ ReputationRank reactionTo(const Relating self, const Relating unit, const Client
     return factionReaction(self.template_, unit, client);
 }
 
-/// `Unit::IsEnemy`
+/// Whether `self` is hostile to `unit` (below unfriendly).
 bool isEnemy(const Relating self, const Relating unit, const ClientData client, bool sameGroup = false)
 {
     return reactionTo(self, unit, client, sameGroup) < ReputationRank.unfriendly;
 }
 
-/// `Unit::IsFriend`
+/// Whether `self` is friendly to `unit` (above neutral).
 bool isFriend(const Relating self, const Relating unit, const ClientData client, bool sameGroup = false)
 {
     return reactionTo(self, unit, client, sameGroup) > ReputationRank.neutral;
 }
 
-/// `Unit::CanAttack`: whether `self` may attack `unit` at all (duelists each other; no free-for-all yet).
+/// Whether `self` may attack `unit` at all (duelists each other; no free-for-all yet).
 bool canAttack(const Relating self, const Relating unit, const ClientData client, bool sameGroup = false)
 {
     enum uint mask = UnitFlags.spawning | UnitFlags.notAttackable1 | UnitFlags.untargetable | UnitFlags.taxiFlight
@@ -233,7 +233,7 @@ bool canAttack(const Relating self, const Relating unit, const ClientData client
                 return false;
             if (!self.hasControllingPlayer || !unit.hasControllingPlayer)
                 return true;
-            // The target's flag decides (`Player::IsPvP`; a pet carries its owner's), or both in a free-for-all.
+            // The target's PvP flag decides (a pet carries its owner's), or both in a free-for-all.
             return unit.hasFlag(UnitFlags.pvp) || (self.freeForAll && unit.freeForAll);
         }
         // A creature may attack a player at war with its faction, friend or not.
@@ -246,7 +246,7 @@ bool canAttack(const Relating self, const Relating unit, const ClientData client
     return isEnemy(self, unit, client) || isEnemy(unit, self, client);
 }
 
-/// `Unit::CanAttackNow`: an attack asked for now (not mounted: there are no mounts yet).
+/// Whether `self` may attack `unit` now: both alive (being mounted is not checked: there are no mounts yet).
 bool canAttackNow(const Relating self, const Relating unit, const ClientData client, bool sameGroup = false)
 {
     return self.alive && unit.alive && canAttack(self, unit, client, sameGroup);

@@ -1,12 +1,12 @@
 /**
- * Pets (CMaNGOS's `Pet`, `CharmInfo`): a creature that belongs to a player, follows it, fights for
+ * Pets: a creature that belongs to a player, follows it, fights for
  * it, and is saved with it. A hunter tames a beast (Tame Beast) and calls it back later (Call Pet);
  * a warlock summons a demon (Summon Imp, ...). The pet's state lives in `PetState`, which the
  * creature carries (`Creature.petData`); `dmangos.world.petai` moves and fights with it, and
  * `dmangos.world.pethandlers` does what the owner asks.
  *
  * This module holds what is the same for every pet: the types, the action bar of ten buttons and
- * how it is saved, the stats of a level (`Pet::InitStatsForLevel` with `UpdateAllStats`), the
+ * how it is saved, the stats of a level, the
  * world tables (`pet_levelstats`, `petcreateinfo_spell`, `pet_name_generation`), and the packets.
  */
 module dmangos.world.pet;
@@ -21,7 +21,7 @@ import dmangos.world.creatureai : ReactState;
 import dmangos.world.database : PetRecord, PetSpellRecord;
 import dmangos.world.movement : Position;
 
-/// `PetType`
+/// What kind of pet a creature is.
 enum PetType : ubyte
 {
     summon = 0,   /// a warlock's demon
@@ -29,19 +29,19 @@ enum PetType : ubyte
     guardian = 2, /// not controlled
 }
 
-/// `PetSaveMode`: where a pet is saved.
+/// Where a pet is saved (`character_pet.slot`).
 enum PetSlot : uint
 {
     current = 0,       /// with its owner
     firstStable = 1,
-    lastStable = 2,    /// `MAX_PET_STABLES`
+    lastStable = 2,    /// `maxStableSlots`
     notInSlot = 100,   /// dismissed (a warlock's other demons, a hunter's dead pet)
 }
 
-/// `MAX_PET_STABLES`
+/// The stable slots a player can buy.
 enum uint maxStableSlots = 2;
 
-/// `ActiveStates`: what an action bar button is.
+/// What an action bar button is: its type, in its top byte.
 enum ActiveState : ubyte
 {
     passive = 0x01,   /// a spell cast by hand (or a passive one)
@@ -52,7 +52,7 @@ enum ActiveState : ubyte
     decide = 0x00,    /// a spell: `disabled` if it can autocast, else `passive`
 }
 
-/// `CommandStates`
+/// What the pet was last told to do.
 enum CommandState : ubyte
 {
     stay = 0,
@@ -61,7 +61,7 @@ enum CommandState : ubyte
     dismiss = 3,
 }
 
-/// `PetActionFeedback`
+/// Why a pet did not do what it was told (`SMSG_PET_ACTION_FEEDBACK`).
 enum PetFeedback : ubyte
 {
     none = 0,
@@ -71,7 +71,7 @@ enum PetFeedback : ubyte
     noPath = 4,
 }
 
-/// `PetTameFailureReason`
+/// Why a beast could not be tamed (`SMSG_PET_TAME_FAILURE`).
 enum PetTameFailure : ubyte
 {
     invalidCreature = 1,
@@ -88,7 +88,7 @@ enum PetTameFailure : ubyte
     unknownError = 12,
 }
 
-/// `StableResultCode`
+/// The outcome of a stable master's service (`SMSG_STABLE_RESULT`).
 enum StableResult : ubyte
 {
     notEnoughMoney = 0x01,
@@ -98,16 +98,16 @@ enum StableResult : ubyte
     slotBought = 0x0A,
 }
 
-/// `ACTION_BAR_INDEX_START`, `_PET_SPELL_START`, `_PET_SPELL_END`, `_END`
+/// The bar's spell buttons are `barSpellStart .. barSpellEnd` of `barSize`.
 enum size_t barSpellStart = 3, barSpellEnd = 7, barSize = 10;
 
-/// `MAKE_UNIT_ACTION_BUTTON`: an action and its type in one word.
+/// An action and its type in one word.
 uint actionButton(uint action, ubyte type) pure nothrow @nogc @safe
 {
     return (action & 0x00FF_FFFF) | uint(type) << 24;
 }
 
-/// `UNIT_ACTION_BUTTON_ACTION`, `_TYPE`
+/// A button's action (its low 24 bits) and type (its top byte).
 uint buttonAction(uint button) pure nothrow @nogc @safe
 {
     return button & 0x00FF_FFFF;
@@ -119,19 +119,19 @@ ubyte buttonType(uint button) pure nothrow @nogc @safe
     return cast(ubyte)(button >> 24);
 }
 
-/// Whether a button of `type` holds a spell (`IsActionBarForSpell`).
+/// Whether a button of `type` holds a spell.
 bool isSpellType(ubyte type) pure nothrow @nogc @safe
 {
     return type == ActiveState.passive || type == ActiveState.disabled || type == ActiveState.enabled
         || type == ActiveState.decide;
 }
 
-/// The ten buttons of a pet's bar (`CharmInfo::PetActionBar`).
+/// The ten buttons of a pet's bar.
 struct ActionBar
 {
     uint[barSize] buttons;
 
-    /// `InitPetActionBar`: attack, follow, stay; four empty spell buttons; aggressive, defensive, passive.
+    /// A new bar: attack, follow, stay; four empty spell buttons; aggressive, defensive, passive.
     static ActionBar initial() pure nothrow @safe
     {
         ActionBar bar;
@@ -144,7 +144,7 @@ struct ActionBar
         return bar;
     }
 
-    /// `AddSpellToActionBar`: the spell on the first empty spell button (or where a lower rank is).
+    /// Puts the spell on the first empty spell button (or where a lower rank is).
     bool addSpell(uint spell, ubyte state, uint firstRank = 0)
     {
         foreach (ref b; buttons[barSpellStart .. barSpellEnd])
@@ -163,7 +163,7 @@ struct ActionBar
         return false;
     }
 
-    /// `RemoveSpellFromActionBar`
+    /// Empties every button that holds `spell`.
     void removeSpell(uint spell)
     {
         foreach (ref b; buttons)
@@ -171,7 +171,7 @@ struct ActionBar
                 b = actionButton(0, ActiveState.disabled);
     }
 
-    /// `SetSpellAutocast`
+    /// Turns autocasting of `spell` on or off on the first button that holds it.
     void setAutocast(uint spell, bool on)
     {
         foreach (ref b; buttons)
@@ -191,7 +191,7 @@ struct ActionBar
         return s;
     }
 
-    /// `LoadPetActionBar`: the saved bar, or the initial one if it is not twenty numbers.
+    /// The saved bar, or the initial one if it is not twenty numbers.
     static ActionBar parse(string saved)
     {
         auto bar = initial();
@@ -207,7 +207,7 @@ struct ActionBar
     }
 }
 
-/// What a pet is beyond its creature (`Pet`, `CharmInfo`): carried in `Creature.petData`.
+/// What a pet is beyond its creature: carried in `Creature.petData`.
 final class PetState
 {
     uint number;                /// `character_pet.id`; `UNIT_FIELD_PETNUMBER`
@@ -237,7 +237,7 @@ final class PetState
         return false;
     }
 
-    /// `Pet::addSpell` with the bar: learned, and on the bar unless passive.
+    /// Learns a spell, and puts it on the bar unless passive.
     void learn(uint spell, bool passive, bool autocastable)
     {
         if (knows(spell))
@@ -314,7 +314,7 @@ struct PetLevelStats
     uint[5] stats; /// strength, agility, stamina, intellect, spirit
 }
 
-/// The stats a pet has at a level (`InitStatsForLevel` and `UpdateAllStats`, without auras).
+/// The stats a pet has at a level, without auras.
 struct PetStats
 {
     uint health;
@@ -328,12 +328,12 @@ struct PetStats
 }
 
 /**
- * `Pet::InitStatsForLevel`. A hunter pet's health, armor and stats are `pet_levelstats`' of entry 1,
+ * A pet's stats at `level`. A hunter pet's health, armor and stats are `pet_levelstats`' of entry 1,
  * its weapon `attack time * level / 2000` (less a quarter, up to half as much again), its size its
  * family's. A demon's come from its own entry's rows, its weapon from its class's level stats.
- * Without auras, `UpdateMaxHealth` and `UpdateMaxPower` add nothing to the base (their bonuses are
+ * Without auras, maximum health and power add nothing to the base (their bonuses are
  * for stamina and intellect above it); attack power is `2 * strength - 20` (the imp's `strength - 10`),
- * and a fourteenth of it is added to each end of the weapon (`UpdateDamagePhysical`).
+ * and a fourteenth of it is added to each end of the weapon.
  */
 PetStats petStats(PetType type, const ref CreatureTemplate t, uint level, const(PetLevelStats)* levelStats,
     const(CreatureClassStats)* classStats, float minScale = 0, uint minScaleLevel = 0, float maxScale = 0,
@@ -422,7 +422,7 @@ struct PetData
         return null;
     }
 
-    /// `ObjectMgr::GeneratePetName`: a first half and a second, or (none for it) the creature's name.
+    /// A random name for a new pet: a first half and a second, or (none for it) the creature's name.
     string generateName(uint entry, string creatureName) const
     {
         if (auto parts = entry in nameParts)
@@ -457,7 +457,7 @@ struct PetData
 // Packets
 // ---------------------------------------------------------------------------
 
-/// A cooldown of a pet's spell, for `SMSG_PET_SPELLS` (`CharmCooldownInitialize`).
+/// A cooldown of a pet's spell, for `SMSG_PET_SPELLS`.
 struct PetCooldown
 {
     uint spell;
@@ -467,7 +467,7 @@ struct PetCooldown
 }
 
 /**
- * `SMSG_PET_SPELLS` (`Player::PetSpellInitialize`): the pet, its react and command states, the ten
+ * `SMSG_PET_SPELLS`: the pet, its react and command states, the ten
  * buttons, the spells it knows (for the spellbook) and its cooldowns. An empty body (just a zero
  * guid) takes the bar away.
  */
@@ -496,7 +496,7 @@ const(ubyte)[] petSpellsPacket(ulong pet, ReactState react, CommandState command
     return w.data;
 }
 
-/// `SMSG_PET_SPELLS` with only a zero guid: the owner has no pet bar any more (`RemovePetActionBar`).
+/// `SMSG_PET_SPELLS` with only a zero guid: the owner has no pet bar any more.
 const(ubyte)[] noPetSpellsPacket()
 {
     ByteWriter w;
@@ -532,7 +532,7 @@ struct StableEntry
     ubyte slot; /// 1: the current pet; 2, 3: the stable slots; 3 also: a dismissed pet
 }
 
-/// `MSG_LIST_STABLED_PETS` (`SendStablePet`)
+/// `MSG_LIST_STABLED_PETS`: the stable master's list of the player's pets and its bought slots.
 const(ubyte)[] stableListPacket(ulong npc, uint slotsBought, const(StableEntry)[] pets)
 {
     ByteWriter w;

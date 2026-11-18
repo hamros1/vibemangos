@@ -1,5 +1,5 @@
 /**
- * Auctions at an auctioneer (CMaNGOS `AuctionHouse/AuctionHouseHandler.cpp`), mixed into
+ * Auctions at an auctioneer: the client's auction requests, mixed into
  * `dmangos.world.character.Character`.
  *
  * An item put up (not bound, conjured or temporary) for 2, 8 or 24 hours costs a deposit, and
@@ -25,7 +25,7 @@ mixin template AuctionHandlers()
     import dmangos.world.opcodes;
     import dmangos.world.updatefields;
 
-    /// `GetCheckedAuctionHouseForAuctioneer`: the house of an auctioneer near; null if none.
+    /// The house of an auctioneer near; null if none.
     const(AuctionHouseEntry)* auctionHouseOf(ulong auctioneer)
     {
         auto npc = interactableNpc(auctioneer, NpcFlag.auctioneer);
@@ -41,7 +41,7 @@ mixin template AuctionHandlers()
         return context.auctionHouse(houseId);
     }
 
-    /// `SendAuctionCommandResult`
+    /// Tells the client how an auction command went (`SMSG_AUCTION_COMMAND_RESULT`).
     void sendAuctionResult(uint id, AuctionAction action, AuctionError error, uint inventoryError = 0,
         const(AuctionRecord)* auction = null)
     {
@@ -62,7 +62,7 @@ mixin template AuctionHandlers()
         deliver(Opcode.SMSG_AUCTION_COMMAND_RESULT, w.data);
     }
 
-    /// `HandleAuctionHelloOpcode`: the auction window, with its house.
+    /// The player talks to an auctioneer: the auction window, with its house.
     @Handles(Opcode.MSG_AUCTION_HELLO, WorldState.inWorld)
     void handleAuctionHello(ref ByteReader reader)
     {
@@ -76,7 +76,7 @@ mixin template AuctionHandlers()
         deliver(Opcode.MSG_AUCTION_HELLO, w.data);
     }
 
-    /// `HandleAuctionSellItem`
+    /// The player puts an item up for auction.
     @Handles(Opcode.CMSG_AUCTION_SELL_ITEM, WorldState.inWorld)
     void handleAuctionSellItem(ref ByteReader reader)
     {
@@ -106,7 +106,7 @@ mixin template AuctionHandlers()
         if (player.money < deposit)
             return sendAuctionResult(0, AuctionAction.started, AuctionError.notEnoughMoney);
 
-        // `AddAuction`: out of the bags into the house, the deposit paid.
+        // Out of the bags into the house, the deposit paid.
         player.modifyMoney(-cast(long) deposit);
         auto record = item.record;
         AuctionRecord a;
@@ -131,7 +131,7 @@ mixin template AuctionHandlers()
             a.itemEntry, a.itemCount, a.id, bid, buyout, deposit);
     }
 
-    /// `HandleAuctionPlaceBid`: a bid, or the buyout.
+    /// The player bids on an auction, or buys it out.
     @Handles(Opcode.CMSG_AUCTION_PLACE_BID, WorldState.inWorld)
     void handleAuctionPlaceBid(ref ByteReader reader)
     {
@@ -155,7 +155,7 @@ mixin template AuctionHandlers()
             return sendAuctionResult(a.id, AuctionAction.bidPlaced, AuctionError.bidIncrement);
         if (price < a.startBid)
             return;
-        // `UpdateBid`: no more than the buyout; the same bidder pays only what it adds.
+        // No more than the buyout; the same bidder pays only what it adds.
         if (a.buyout && price > a.buyout)
             price = a.buyout;
         const ownBid = a.bidder == player.data.guid;
@@ -190,7 +190,7 @@ mixin template AuctionHandlers()
             context.deliverTo(a.owner, Opcode.SMSG_AUCTION_OWNER_NOTIFICATION, ownerNotification(after, false));
     }
 
-    /// `HandleAuctionRemoveItem`: the seller takes it back; the item comes by mail.
+    /// The seller takes an auction back; the item comes by mail.
     @Handles(Opcode.CMSG_AUCTION_REMOVE_ITEM, WorldState.inWorld)
     void handleAuctionRemoveItem(ref ByteReader reader)
     {
@@ -209,7 +209,7 @@ mixin template AuctionHandlers()
             return sendAuctionResult(0, AuctionAction.removed, AuctionError.database); // bid on meanwhile
         if (a.bidder)
         {
-            // `SendAuctionCancelledToBidderMail`
+            // The bidder is told, and gets the bid back by mail.
             context.deliverTo(a.bidder, Opcode.SMSG_AUCTION_REMOVED_NOTIFICATION, removedNotification(a));
             context.auctionMail(a.bidder, a, AuctionMail.cancelledToBidder, a.bid, false);
         }
@@ -238,7 +238,7 @@ mixin template AuctionHandlers()
         deliver(opcode, w.data);
     }
 
-    /// `HandleAuctionListOwnerItems`
+    /// The list of the player's own auctions.
     @Handles(Opcode.CMSG_AUCTION_LIST_OWNER_ITEMS, WorldState.inWorld)
     void handleAuctionListOwnerItems(ref ByteReader reader)
     {
@@ -253,7 +253,7 @@ mixin template AuctionHandlers()
         sendAuctionList(Opcode.SMSG_AUCTION_OWNER_LIST_RESULT, mine, listFrom);
     }
 
-    /// `HandleAuctionListBidderItems`: the auctions this player bid on (the outbid ones asked for first).
+    /// The auctions this player bid on (the outbid ones asked for first).
     @Handles(Opcode.CMSG_AUCTION_LIST_BIDDER_ITEMS, WorldState.inWorld)
     void handleAuctionListBidderItems(ref ByteReader reader)
     {
@@ -277,7 +277,7 @@ mixin template AuctionHandlers()
             if (a.bidder == player.data.guid)
                 mine ~= a;
         }
-        // `BuildListBidderItems` after the outbid ones: all of those are shown, then the page of bids.
+        // After the outbid ones: all of those are shown, then the page of bids.
         ByteWriter lines;
         uint count;
         const now = context.unixTime;
@@ -303,7 +303,7 @@ mixin template AuctionHandlers()
         deliver(Opcode.SMSG_AUCTION_BIDDER_LIST_RESULT, w.data);
     }
 
-    /// `HandleAuctionListItems`: the search.
+    /// The search.
     @Handles(Opcode.CMSG_AUCTION_LIST_ITEMS, WorldState.inWorld)
     void handleAuctionListItems(ref ByteReader reader)
     {

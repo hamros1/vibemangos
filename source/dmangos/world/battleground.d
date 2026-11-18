@@ -1,6 +1,5 @@
 /**
- * Battleground copies and the players' battleground opcodes (CMaNGOS-classic's `BattleGround`,
- * `BattleGroundMgr::SendToBattleGround` and `BattleGroundHandler.cpp`).
+ * Battleground copies, sending players into them, and the players' battleground opcodes.
  *
  * The queues (`dmangos.world.bgqueue`) are a cluster service and decide who goes where. A copy of a
  * battleground runs on the node hosting its map, like a dungeon's copies: it is made when its first
@@ -24,13 +23,13 @@ import dmangos.world.map : MapObject;
 import dmangos.world.online : OnlinePlayer;
 import dmangos.world.opcodes : ChatType, Language, Opcode;
 
-/// `SPELL_ID_BATTLEGROUND_DESERTER`
+/// Deserter: no queueing for 15 minutes.
 enum uint spellDeserter = 26013;
 
 /// `Waiting to Resurrect`: a ghost queued at a spirit guide.
 enum uint spellWaitingToResurrect = 2584;
 
-/// `BattleGroundStartTimeIntervals`, `TIME_TO_AUTOREMOVE`, `MAX_OFFLINE_TIME`
+/// The countdown before the battle, the wait after it before everyone is sent out, and how long a player may be offline inside.
 enum Duration startDelay = 2.minutes, endDelay = 2.minutes, offlineLimit = 300.seconds;
 
 /// `mangos_string`: each battleground's "begins in 1 minute", "in 30 seconds" and "begin!" (by type).
@@ -42,13 +41,13 @@ enum uint stringAllianceWins = 600, stringHordeWins = 601;
 /// `mangos_string` 715: "You don't meet Battleground level requirements"
 enum uint stringLevelRequirement = 715;
 
-/// The sound of the start (`SOUND_BG_START`) and of each team's win.
+/// The sound of the start and of each team's win.
 enum uint soundStart = 3439, soundAllianceWins = 8455, soundHordeWins = 8454;
 
-/// `BattleGroundWinner`: what the scoreboard says of the winner.
+/// What the scoreboard says of the winner.
 enum ubyte winnerHorde = 0, winnerAlliance = 1, winnerNone = 2;
 
-/// `GroupJoinBattlegroundResult`: what `SMSG_GROUP_JOINED_BATTLEGROUND` says of a deserter.
+/// What `SMSG_GROUP_JOINED_BATTLEGROUND` says of a deserter.
 enum int joinedDeserter = -2;
 
 /// The number of extra scoreboard columns of each battleground.
@@ -62,23 +61,23 @@ ubyte[] battlegroundMessage(ChatType type, string text, ulong source = 0)
     return chatMessage(type, Language.LANG_UNIVERSAL, source, text);
 }
 
-/// A graveyard's side for `Battleground.graveyardTeams` (`Team`), and closed (`TEAM_INVALID`).
+/// A graveyard's side for `Battleground.graveyardTeams` (the team's faction id), and closed.
 enum uint teamAllianceLink = 469, teamHordeLink = 67, teamInvalidLink = 1;
 
-/// `BG_EVENT_DOOR`, and no event (`BG_EVENT_NONE`).
+/// The doors' event, and no event.
 enum ubyte eventDoors = 254, eventNone = 255;
 
 /// `mangos_string` 750, 751: the premature end's warnings (minutes, seconds).
 enum uint stringClosingMinutes = 750, stringClosingSeconds = 751;
 
-/// `BattleGround.PrematureFinishTimer`'s default.
+/// How long a team may be short of players before it loses (the premature end).
 enum Duration prematureFinish = 5.minutes;
 
-/// The mark of honor spells (`RewardMark`) of each battleground: a win's three marks, a loss's one.
+/// The mark of honor spells of each battleground: a win's three marks, a loss's one.
 immutable uint[2][4] markSpells = [[0, 0], [24955, 24954], [24951, 24950], [24953, 24952]];
 
 /**
- * `MaNGOS::Honor::GetHonorGain` with the battleground's top level (`BG_MaxLvl`, 60 for all three):
+ * The honor formula at the battleground's top level (60 for all three):
  * the bonus honor worth `kills` honorable kills.
  */
 uint bonusHonor(uint kills) pure nothrow @nogc @safe
@@ -99,31 +98,31 @@ unittest
  */
 class BattlegroundRules
 {
-    /// Before the first player comes (`Reset`): events and world states as they start.
+    /// Before the first player comes: events and world states as they start.
     void reset(Battleground copy) {}
 
-    /// The countdown is over (`StartingEventOpenDoors`), after the doors opened.
+    /// The countdown is over, after the doors opened.
     void started(Battleground copy) {}
 
     /// Each tick while the battle is on.
     void tick(Battleground copy, Duration elapsed) {}
 
-    /// `HandleKillPlayer`: `victim` died, killed by `killer` (0: no player), after the scores counted it.
+    /// `victim` died, killed by `killer` (0: no player), after the scores counted it.
     void playerKilled(Battleground copy, ulong victim, ulong killer) {}
 
-    /// `RemovePlayer`: `guid` leaves (or logs out while it runs): what it carried is dropped.
+    /// `guid` leaves (or logs out while it runs): what it carried is dropped.
     void playerLeaving(Battleground copy, ulong guid) {}
 
-    /// `HandlePlayerClickedOnFlag`, `HandleEvent`: `who` used `go`; true if it was the battleground's to handle.
+    /// `who` used `go` (a flag, a banner); true if it was the battleground's to handle.
     bool objectUsed(Battleground copy, ulong who, GameObject go) { return false; }
 
-    /// `HandleAreaTrigger`: true if the trigger is the battleground's (handled).
+    /// `who` walked into `trigger`; true if the trigger is the battleground's (handled).
     bool areaTrigger(Battleground copy, ulong who, uint trigger) { return false; }
 
-    /// `GetPrematureWinner`: who wins if it ends early; `winnerNone` leaves it to the player counts.
+    /// Who wins if it ends early; `winnerNone` leaves it to the player counts.
     ubyte prematureWinner(Battleground copy) { return winnerNone; }
 
-    /// `EndBattleGround`'s battleground part, before the shared rewards.
+    /// The battle is over: the battleground's own part, before the shared rewards.
     void ending(Battleground copy, ubyte winner) {}
 
     /// `MSG_BATTLEGROUND_PLAYER_POSITIONS`' body for a player of `team`.
@@ -147,20 +146,20 @@ final class Battleground
     ubyte winner = winnerNone;
     /// Its rules.
     BattlegroundRules rules;
-    /// `m_activeEvents`: each event's spawned state (`event1` -> `event2`); absent, none.
+    /// Each event's spawned state (`event1` -> `event2`); absent, none.
     ubyte[ubyte] activeEvents;
-    /// Its world states (`WorldStateVariableManager`), sent to players coming in.
+    /// Its world states, sent to players coming in.
     uint[uint] worldStates;
-    /// `BattleGroundMgr::ToggleTesting`: too few players do not end it.
+    /// Testing: too few players do not end it.
     bool testing;
-    /// `SetGraveYardLinkTeam`: the graveyards it gives a team (469, 67) or closes (`teamInvalid`), by `world_safe_locs` id.
+    /// The graveyards it gives a team (469, 67) or closes (`teamInvalidLink`), by `world_safe_locs` id.
     uint[uint] graveyardTeams;
     /// Players waiting at a spirit guide (`Waiting to Resurrect`), and the guide.
     ulong[ulong] awaitingResurrection;
     /// The spirit guides' pulse: every 30 s from the copy's making (`Spirit Heal Channel`).
     enum Duration spiritHealInterval = 30.seconds;
 
-    /// A player of the copy (`BattleGroundPlayer`) and its score (`BattleGroundScore`).
+    /// A player of the copy and its score.
     static struct Member
     {
         ubyte team;
@@ -225,7 +224,7 @@ final class Battleground
     }
 
     /**
-     * `BattleGround::AddPlayer`: player `guid` of `team` came in (or came back after logging out). The
+     * Player `guid` of `team` came in (or came back after logging out). The
      * other players of its team are told; over already, it is shown the scoreboard.
      */
     void arrived(ulong guid, ubyte team)
@@ -249,7 +248,7 @@ final class Battleground
     }
 
     /**
-     * `BattleGround::RemovePlayerAtLeave`, the copy's part: player `guid` is out, its team told, and the
+     * A player leaves, the copy's part: player `guid` is out, its team told, and the
      * queue (which frees its slot and its place). Whether it deserted is the leaving player's to know.
      */
     void removed(ulong guid)
@@ -274,7 +273,7 @@ final class Battleground
         context.services.call!(BattlegroundQueueHost.left)(BattlegroundLeft(instance, guid, team));
     }
 
-    /// `BattleGround::EventPlayerLoggedOut`: it keeps its place for five minutes (what it carried drops).
+    /// A player logged out inside: it keeps its place for five minutes (what it carried drops).
     void loggedOut(ulong guid)
     {
         if (auto m = guid in members)
@@ -285,7 +284,7 @@ final class Battleground
         }
     }
 
-    /// Whether players leaving now desert (`LeaveBattleground`'s deserter rule).
+    /// Whether players leaving now desert: before the battle and while it is on.
     @property bool deserting() const
     {
         return status == BattlegroundStatus.waitJoin || status == BattlegroundStatus.inProgress;
@@ -298,12 +297,12 @@ final class Battleground
         return (spiritHealInterval.total!"msecs" - since).msecs;
     }
 
-    /// `BattleGround::Update`
+    /// Each tick: the spirit guides, those offline too long, the countdown, the battle, the end.
     void tick(Duration elapsed)
     {
         const now = context.clock();
         spiritHealPulse(elapsed);
-        // Those offline too long go (`m_offlineQueue`).
+        // Those offline too long go.
         ulong[] gone;
         foreach (guid, ref m; members)
             if (m.offlineSince != MonoTime.init && now - m.offlineSince >= offlineLimit)
@@ -340,7 +339,7 @@ final class Battleground
         closeIfEmpty(now);
     }
 
-    /// The countdown's end: the battle begins (`StartingEventOpenDoors`, `SetStatus(STATUS_IN_PROGRESS)`).
+    /// The countdown's end: the doors open and the battle begins.
     void start()
     {
         import dmangos.log : info;
@@ -358,7 +357,7 @@ final class Battleground
     }
 
     /**
-     * `BattleGround::EndBattleGround`: `winner` (`winnerAlliance`, `winnerHorde`, `winnerNone`) is
+     * The battle is over: `winner` (`winnerAlliance`, `winnerHorde`, `winnerNone`) is
      * told; the winners get three marks of honor, the others one; everyone is shown the scoreboard,
      * and sent out two minutes later.
      */
@@ -411,7 +410,7 @@ final class Battleground
         return team == 0 ? winnerAlliance : winnerHorde;
     }
 
-    /// ArcEmu's `CBattleground::Close` (`.battleground leave`): everyone out now, the copy closed.
+    /// `.battleground leave`: everyone out now, the copy closed.
     void close()
     {
         if (status != BattlegroundStatus.waitLeave)
@@ -420,8 +419,8 @@ final class Battleground
     }
 
     /**
-     * `BattleGround::HandleKillPlayer`: the victim's death, the killer's killing blow and honorable
-     * kill, and an honorable kill to each of the killer's team near the victim (`IsAtGroupRewardDistance`).
+     * A player died: the victim's death, the killer's killing blow and honorable
+     * kill, and an honorable kill to each of the killer's team near the victim (within group reward distance).
      */
     void playerKilled(ulong victim, ulong killer)
     {
@@ -452,7 +451,7 @@ final class Battleground
         rules.playerKilled(this, victim, killer);
     }
 
-    /// `RewardHonorToTeam`: bonus honor worth `kills` kills to everyone of `team` here, on their scores.
+    /// Bonus honor worth `kills` kills to everyone of `team` here, on their scores.
     void rewardHonorToTeam(uint kills, ubyte team)
     {
         import dmangos.world.character : Character;
@@ -465,7 +464,7 @@ final class Battleground
                         m.bonusHonor += honor;
     }
 
-    /// `RewardReputationToTeam`: `amount` with `faction` to everyone of `team` here.
+    /// Reputation: `amount` with `faction` to everyone of `team` here.
     void rewardReputationToTeam(uint faction, int amount, ubyte team)
     {
         import dmangos.world.character : Character;
@@ -476,7 +475,7 @@ final class Battleground
                     c.battlegroundReputation(faction, amount);
     }
 
-    /// `CastSpellOnTeam`: `spell` on everyone of `team` here (a quest's credit).
+    /// Casts `spell` on everyone of `team` here (a quest's credit).
     void castOnTeam(uint spell, ubyte team)
     {
         import dmangos.world.character : Character;
@@ -487,7 +486,7 @@ final class Battleground
                     c.battlegroundCast(spell);
     }
 
-    /// `UpdatePlayerScore`'s battleground columns: `extra[column]` of `guid` up by `by`.
+    /// A battleground's own score column: `extra[column]` of `guid` up by `by`.
     void addScore(ulong guid, size_t column, uint by = 1)
     {
         if (auto m = guid in members)
@@ -495,7 +494,7 @@ final class Battleground
                 m.extra[column] += by;
     }
 
-    /// `BattleGroundMgr::BuildPvpLogDataPacket`: `MSG_PVP_LOG_DATA`'s body.
+    /// The scoreboard: `MSG_PVP_LOG_DATA`'s body.
     const(ubyte)[] scoreboard()
     {
         ByteWriter w;
@@ -507,7 +506,7 @@ final class Battleground
         foreach (guid, ref m; members)
         {
             w.put(guid);
-            uint rank = 4; // `GetHonorRankInfo().rank` of a player not here
+            uint rank = 4; // the honor rank shown for a player not on this node
             if (auto who = context.onlinePlayer(guid))
             {
                 import dmangos.world.character : Character;
@@ -538,7 +537,7 @@ final class Battleground
         return null;
     }
 
-    /// Whether member `guid` is here and alive (`CanUseBattleGroundObject`).
+    /// Whether member `guid` is here and alive (and so may use the battleground's objects).
     bool memberAlive(ulong guid)
     {
         import dmangos.world.player : DeathState;
@@ -565,7 +564,7 @@ final class Battleground
             c.battlegroundRemoveAura(spell);
     }
 
-    /// `SendNotification(mangos_string id)` to member `guid`.
+    /// A notification (`mangos_string` `id`) to member `guid`.
     void notify(ulong guid, uint id)
     {
         import dmangos.world.packets : ServerNotification;
@@ -580,7 +579,7 @@ final class Battleground
             }
     }
 
-    /// `LeaveBattleground()`: member `guid` out, back where it came from.
+    /// Member `guid` out, back where it came from.
     void sendOut(ulong guid)
     {
         import dmangos.world.character : Character;
@@ -630,7 +629,7 @@ final class Battleground
             map.removeObject(guid);
     }
 
-    // --- events: what is spawned (`SpawnEvent`, `OpenDoorEvent`) ---
+    // --- events: what is spawned, and the doors ---
 
     /// Whether a spawn of event `event` (null: of none) belongs in the copy now.
     bool spawnAllowed(const(ubyte[2])* event) const
@@ -645,7 +644,7 @@ final class Battleground
     }
 
     /**
-     * `SpawnEvent(event1, event2, spawn)`: the spawns of the pair come (an event shows one `event2` at a
+     * The spawns of the pair (`event1`, `event2`) come (an event shows one `event2` at a
      * time: the one before goes) or go.
      */
     void spawnEvent(ubyte event1, ubyte event2, bool spawn)
@@ -669,7 +668,7 @@ final class Battleground
         }
     }
 
-    /// `OpenDoorEvent(BG_EVENT_DOOR)`: the doors open for good.
+    /// The doors (`eventDoors`) open for good.
     void openDoors()
     {
         import dmangos.world.gameobject : GameObject;
@@ -693,7 +692,7 @@ final class Battleground
 
     // --- world states ---
 
-    /// `SetVariable`: a world state, sent to everyone in the copy if it changed.
+    /// Sets a world state, sent to everyone in the copy if it changed.
     void setWorldState(uint id, uint value)
     {
         if (auto known = id in worldStates)
@@ -710,7 +709,7 @@ final class Battleground
 
     // --- messages ---
 
-    /// `BattleGround::SendMessageToAll`: `mangos_string` `id` (with `args` for its `%s`s) to everyone in it.
+    /// `mangos_string` `id` (with `args` for its `%s`s) to everyone in it.
     void message(uint id, ChatType chatType, ulong source = 0, string[] args = null)
     {
         const text = id in context.data.serverStrings;
@@ -719,7 +718,7 @@ final class Battleground
         toAll(Opcode.SMSG_MESSAGECHAT, battlegroundMessage(chatType, formatServerString(*text, args), source));
     }
 
-    /// `PlaySoundToAll`, `PlaySoundToTeam` (`team` 0, 1; -1 all).
+    /// Plays a sound to everyone in it, or to one team (`team` 0, 1; -1 all).
     void playSound(uint sound, int team = -1)
     {
         ByteWriter w;
@@ -866,7 +865,7 @@ private:
             }
     }
 
-    /// `BattleGround::Update`'s premature end: a team short of players for five minutes loses.
+    /// The premature end: a team short of players for five minutes loses.
     void checkPrematureEnd(Duration elapsed)
     {
         import std.conv : to;
@@ -917,7 +916,7 @@ private:
         }
     }
 
-    /// Its players back where they came from (`RemovePlayerAtLeave` with teleport), not deserters.
+    /// Its players back where they came from (teleported), not deserters.
     void sendEveryoneOut()
     {
         import dmangos.world.character : Character;
@@ -930,7 +929,7 @@ private:
         }
     }
 
-    /// `BattleGroundMap::Update`: empty and with nobody invited, it closes.
+    /// Empty and with nobody invited, it closes.
     void closeIfEmpty(MonoTime now)
     {
         if (members.length || asking)
@@ -985,7 +984,7 @@ unittest
     assert(formatServerString("%s claims the %s!", ["The Alliance", "farm"]) == "The Alliance claims the farm!");
 }
 
-/// The battleground copies this node runs (`BattleGroundMgr`'s copies).
+/// The battleground copies this node runs.
 final class Battlegrounds
 {
     private
@@ -1012,7 +1011,7 @@ final class Battlegrounds
         return copies.values;
     }
 
-    /// Copy `instance` of `type`, made if it is new (`CreateNewBattleGround`, when its first player comes).
+    /// Copy `instance` of `type`, made if it is new (when its first player comes).
     Battleground open(uint instance, BattlegroundType type)
     {
         import dmangos.log : info;
@@ -1023,7 +1022,7 @@ final class Battlegrounds
         return copies[instance] = new Battleground(context, instance, type, rulesFor(type));
     }
 
-    /// Each battleground's rules (`BattleGroundWS`, `BattleGroundAB`, ...); the shared ones for the others.
+    /// Each battleground's rules (Warsong Gulch's, Arathi Basin's, ...); the shared ones for the others.
     BattlegroundRules rulesFor(BattlegroundType type)
     {
         import dmangos.world.warsong : WarsongRules;
@@ -1075,7 +1074,7 @@ final class Battlegrounds
         }
     }
 
-    /// The spawns of each event pair (`LoadBattleEventIndexes`'s spawn lists), found once.
+    /// The spawns of each event pair (from `creature_battleground` and `gameobject_battleground`), found once.
     void indexEvents()
     {
         if (indexed)
@@ -1125,13 +1124,13 @@ mixin template BattlegroundHandlers()
     /// `BGData`: the copy the player is in, and where it came from.
     package BattlegroundData battleground_;
 
-    /// `Player::_LoadBGData`, at login or arrival.
+    /// Loads the player's battleground data, at login or arrival.
     package void loadBattleground()
     {
         battleground_ = context.database.loadBattlegroundData(player.data.guid);
     }
 
-    /// `Player::_SaveBGData`, with the character.
+    /// Saves the player's battleground data, with the character.
     package void saveBattleground()
     {
         context.database.saveBattlegroundData(player.data.guid, battleground_);
@@ -1153,7 +1152,7 @@ mixin template BattlegroundHandlers()
         return context.battlegrounds.find(battleground_.instance);
     }
 
-    /// `Player::CanJoinToBattleground`: no Deserter.
+    /// Whether the player may join a battleground: no Deserter.
     package bool mayJoinBattleground()
     {
         return player.auras.find(spellDeserter) is null;
@@ -1167,7 +1166,7 @@ mixin template BattlegroundHandlers()
         deliver(Opcode.SMSG_GROUP_JOINED_BATTLEGROUND, w.data);
     }
 
-    /// `BattleGroundMgr::SendBattleGroundList`: the battlemaster's list of copies (by the queue, which knows them).
+    /// The battlemaster's list of copies (by the queue, which knows them).
     package void sendBattlegroundList(ulong battlemaster, BattlegroundType type)
     {
         context.services.call!(BattlegroundQueueHost.list)(BattlegroundList(player.guid, context.nodeId, battlemaster,
@@ -1181,7 +1180,7 @@ mixin template BattlegroundHandlers()
         return context.data.battlemasters.get(entry, BattlegroundType.none);
     }
 
-    /// `Creature::CanInteractWithBattleMaster`: whether the player is of the levels it takes (told if not).
+    /// Whether the player is of the levels a battlemaster takes (told if not).
     package bool canTalkToBattlemaster(BattlegroundType type, bool tell)
     {
         const t = type in context.data.battlegroundTemplates;
@@ -1196,7 +1195,7 @@ mixin template BattlegroundHandlers()
     }
 
     /**
-     * `Player::LeaveBattleground`: out of the copy, back where it came from if `teleport`; Deserter if
+     * The player leaves its copy: out of it, back where it came from if `teleport`; Deserter if
      * the battle was on (or about to be), but for game masters.
      */
     package void leaveBattleground(bool teleport)
@@ -1227,7 +1226,7 @@ mixin template BattlegroundHandlers()
             returnFromBattleground(back);
     }
 
-    /// `Player::TeleportToBGEntryPoint`: where it was when it went in (else its home).
+    /// Back to where it was when it went in (else its home).
     package void returnFromBattleground(const BattlegroundData back)
     {
         if (back.joinMap != 0 || back.joinX != 0 || back.joinY != 0)
@@ -1251,7 +1250,7 @@ mixin template BattlegroundHandlers()
         const start = t.startLocations[e.team] in context.data.safeLocations;
         if (start is null)
             return warning!"battleground %s: no start location %s"(e.type, t.startLocations[e.team]);
-        // Already in another copy: out of it first (`RemovePlayerAtLeave` without teleport, no deserter).
+        // Already in another copy: out of it first (no teleport, no deserter).
         if (battleground_.instance && battleground_.instance != e.instance)
         {
             if (auto copy = context.battlegrounds.find(battleground_.instance))
@@ -1295,7 +1294,7 @@ mixin template BattlegroundHandlers()
         teleportTo(start.map, Position(start.x, start.y, start.z, start.orientation), null, e.instance);
     }
 
-    /// The player arrived on a battleground map (`BattleGround::AddPlayer` from the world port's end).
+    /// The player arrived on a battleground map (at the world port's end): the copy adds it.
     package void battlegroundArrived()
     {
         if (battlegroundOfMap(player.data.map) == BattlegroundType.none || battleground_.instance != instanceId_)
@@ -1305,8 +1304,8 @@ mixin template BattlegroundHandlers()
     }
 
     /**
-     * Logged in (or arrived from another node) on a battleground's map (`Player::LoadFromDB`'s
-     * battleground part): back into its copy if it still runs and keeps the player's place; else out,
+     * Logged in (or arrived from another node) on a battleground's map: back into its copy if it
+     * still runs and keeps the player's place; else out,
      * back where it came from.
      */
     package void battlegroundOnLogin()
@@ -1326,8 +1325,8 @@ mixin template BattlegroundHandlers()
     }
 
     /**
-     * `EndBattleGround` for this player: alive again if dead (else out of combat), its marks of honor
-     * (`RewardMark`, a spell that makes them).
+     * The battle is over, for this player: alive again if dead (else out of combat), its marks of honor
+     * (a spell that makes them).
      */
     package void battlegroundEndedHere(uint markSpell)
     {
@@ -1336,7 +1335,7 @@ mixin template BattlegroundHandlers()
         battlegroundCastHere(markSpell);
     }
 
-    /// `CastSpell(player, spell, TRIGGERED_OLD_TRIGGERED)` on itself, if the spell exists.
+    /// Casts `spell` on the player itself, triggered, if the spell exists.
     package void battlegroundCastHere(uint spell)
     {
         import dmangos.world.spellcast : SpellTargets, TargetFlags;
@@ -1346,14 +1345,14 @@ mixin template BattlegroundHandlers()
                 castSpell(info, SpellTargets(TargetFlags.self, player.guid), true, 0);
     }
 
-    /// `RemoveAurasDueToSpell`
+    /// Removes the player's aura of `spell`, if it has one.
     package void battlegroundRemoveAuraHere(uint spell)
     {
         if (auto aura = player.auras.find(spell))
             removeAura(aura);
     }
 
-    /// `UpdatePlayerScore(SCORE_BONUS_HONOR)`: `AddHonorCP` of honor from no kill; whether it counted.
+    /// Bonus honor on the scoreboard: `honor` gained from no kill; whether it counted.
     package bool battlegroundBonusHonorHere(uint honor)
     {
         import dmangos.world.honor : HonorType;
@@ -1398,7 +1397,7 @@ mixin template BattlegroundHandlers()
         sendSpiritHealerTime(guide);
     }
 
-    /// The spirit guides' pulse came: alive again, whole (`EffectSpiritHeal`).
+    /// The spirit guides' pulse came: alive again, whole.
     package void spiritHealedHere()
     {
         if (player.deathState == DeathState.alive)
@@ -1435,7 +1434,7 @@ mixin template BattlegroundHandlers()
     }
 
     /**
-     * `Group::CanJoinBattleGroundQueue` and the group's queueing: every member online (here or on another
+     * A group queues together: every member online (here or on another
      * node), of the player's side and bracket, none a Deserter (of those here: another node's refuse at the
      * invitation), no more than a team. The queue checks their slots.
      */
@@ -1502,7 +1501,7 @@ mixin template BattlegroundHandlers()
             });
     }
 
-    /// Logging out: the queues left, a copy it is in keeps it a while (`WorldSession::LogoutPlayer`).
+    /// Logging out: the queues left, a copy it is in keeps it a while.
     package void battlegroundLoggedOut()
     {
         context.services.call!(BattlegroundQueueHost.logout)(BattlegroundPlayer(player.guid, context.nodeId));
@@ -1511,7 +1510,7 @@ mixin template BattlegroundHandlers()
     }
 
 private:
-    /// `HandleBattlemasterHelloOpcode`
+    /// The player talks to a battlemaster: the list of copies of its battleground.
     @Handles(Opcode.CMSG_BATTLEMASTER_HELLO, WorldState.inWorld)
     void handleBattlemasterHello(ref ByteReader reader)
     {
@@ -1525,7 +1524,7 @@ private:
         sendBattlegroundList(guid, type);
     }
 
-    /// `HandleBattlefieldListOpcode`: the list, from the battleground's map (the player's own guid as the battlemaster's).
+    /// The list of copies, asked for by map (the player's own guid as the battlemaster's).
     @Handles(Opcode.CMSG_BATTLEFIELD_LIST, WorldState.inWorld)
     void handleBattlefieldList(ref ByteReader reader)
     {
@@ -1534,7 +1533,7 @@ private:
             sendBattlegroundList(player.guid, type);
     }
 
-    /// `HandleBattlemasterJoinOpcode`: queueing, alone (a group's joining comes with the groups' battlegrounds).
+    /// Queueing at a battlemaster, alone or as a group.
     @Handles(Opcode.CMSG_BATTLEMASTER_JOIN, WorldState.inWorld)
     void handleBattlemasterJoin(ref ByteReader reader)
     {
@@ -1544,7 +1543,7 @@ private:
         if (type == BattlegroundType.none || type !in context.data.battlegroundTemplates)
             return;
         if (battleground_.instance && battlegroundOfMap(player.data.map) != BattlegroundType.none)
-            return; // `InBattleGround()`
+            return; // already in a battleground
         if (interactableNpc(guid, NpcFlag.battlemaster) is null)
             return;
         if (asGroup)
@@ -1555,7 +1554,7 @@ private:
             battlegroundTeam(), cast(ubyte) player.data.level, type, desired));
     }
 
-    /// `HandleBattleFieldPortOpcode`: accepting an invitation (`action` 1), or leaving a queue.
+    /// Accepting an invitation (`action` 1), or leaving a queue.
     @Handles(Opcode.CMSG_BATTLEFIELD_PORT, WorldState.inWorld)
     void handleBattlefieldPort(ref ByteReader reader)
     {
@@ -1578,14 +1577,14 @@ private:
             });
     }
 
-    /// `HandleBattlefieldStatusOpcode`: every queue slot's state again.
+    /// Every queue slot's state again.
     @Handles(Opcode.CMSG_BATTLEFIELD_STATUS, WorldState.inWorld)
     void handleBattlefieldStatus()
     {
         context.services.call!(BattlegroundQueueHost.status)(BattlegroundPlayer(player.guid, context.nodeId));
     }
 
-    /// `HandleLeaveBattlefieldOpcode`: not in combat, unless the battle is over.
+    /// Leaving the battleground: not in combat, unless the battle is over.
     @Handles(Opcode.CMSG_LEAVE_BATTLEFIELD, WorldState.inWorld)
     void handleLeaveBattlefield(ref ByteReader reader)
     {
@@ -1598,7 +1597,7 @@ private:
         leaveBattleground(true);
     }
 
-    /// `HandleAreaSpiritHealerQueryOpcode`
+    /// The time to a spirit guide's next pulse.
     @Handles(Opcode.CMSG_AREA_SPIRIT_HEALER_QUERY, WorldState.inWorld)
     void handleAreaSpiritHealerQuery(ref ByteReader reader)
     {
@@ -1607,7 +1606,7 @@ private:
             sendSpiritHealerTime(guid);
     }
 
-    /// `HandleAreaSpiritHealerQueueOpcode`
+    /// A ghost queues at a spirit guide.
     @Handles(Opcode.CMSG_AREA_SPIRIT_HEALER_QUEUE, WorldState.inWorld)
     void handleAreaSpiritHealerQueue(ref ByteReader reader)
     {
@@ -1616,7 +1615,7 @@ private:
             queueAtSpiritGuide(guid);
     }
 
-    /// `HandlePVPLogDataOpcode`: the scoreboard.
+    /// The scoreboard.
     @Handles(Opcode.MSG_PVP_LOG_DATA, WorldState.inWorld)
     void handlePvPLogData()
     {
@@ -1624,7 +1623,7 @@ private:
             deliver(Opcode.MSG_PVP_LOG_DATA, copy.scoreboard());
     }
 
-    /// `HandleBattleGroundPlayerPositionsOpcode`: nobody to show yet (Warsong Gulch's flag carriers come with it).
+    /// The positions of players to show on the map (Warsong Gulch's flag carriers), from the battleground's rules.
     @Handles(Opcode.MSG_BATTLEGROUND_PLAYER_POSITIONS, WorldState.inWorld)
     void handleBattlegroundPlayerPositions()
     {

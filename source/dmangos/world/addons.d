@@ -2,14 +2,13 @@
  * The addon list in `CMSG_AUTH_SESSION`, and the `SMSG_ADDON_INFO` reply.
  *
  * The client sends a zlib-compressed list of its addons, and a reply must
- * come back before it continues. As in CMaNGOS's default anticheat
- * (`Anticheat.hpp`, `ReadAddonInfo`), every addon is accepted. Addons
+ * come back before it continues. Every addon is accepted. Addons
  * whose CRC differs from Blizzard's standard one get the public key the
  * client checks addon signatures with.
  *
  * Each entry is `name\0`, `uint8` flags, `uint32` CRC, `uint32` unknown.
- * CMaNGOS reads it shifted by one byte and compares against `0x1C776D01`;
- * that is the same standard CRC, `0x4C1C776D`, read correctly here.
+ * The standard CRC is `0x4C1C776D` (read one byte off, it would look like
+ * `0x1C776D01`).
  */
 module dmangos.world.addons;
 
@@ -21,7 +20,7 @@ import dmangos.hex : hexLiteral;
 /// CRC of Blizzard's own signed addons.
 enum uint standardAddonCrc = 0x4C1C776D;
 
-/// Largest uncompressed addon list accepted (CMaNGOS: `0xFFFFF`).
+/// Largest uncompressed addon list accepted.
 enum maxAddonDataSize = 0xFFFFF;
 
 /// The addon-signing public key sent for non-standard addons, decoded at compile time.
@@ -46,7 +45,7 @@ struct ClientAddon
  * Decodes the addon block at the end of `CMSG_AUTH_SESSION`.
  *
  * Throws: `PacketException` if it is empty, oversized or not valid zlib
- * data. A real client never sends that, and CMaNGOS disconnects.
+ * data. A real client never sends that; the session disconnects it.
  */
 ClientAddon[] parseAddons(const(ubyte)[] block)
 {

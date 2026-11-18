@@ -1,10 +1,11 @@
 /**
- * Static game data from the CMaNGOS world (`mangos`) database.
+ * Static game data from the world (`mangos`) database, which has the
+ * CMaNGOS-classic schema.
  *
- * As in CMaNGOS, everything is read into memory once at start-up. The
- * `playercreateinfo_*` tables go through the same filters as
- * `ObjectMgr::LoadPlayerInfo`, so a character gets exactly what mangosd
- * would give it.
+ * Everything is read into memory once at start-up. The `playercreateinfo_*`
+ * rows are filtered (playable races and classes, items, spells, skills and
+ * action buttons that exist), so a new character starts with exactly what
+ * the data means it to.
  */
 module dmangos.world.worlddata;
 
@@ -74,10 +75,10 @@ struct ItemTemplate
     }
 }
 
-/// One of an item's stat bonuses (`_ItemStat`).
+/// One of an item's stat bonuses (`stat_typeN`, `stat_valueN`).
 struct ItemStat
 {
-    uint type;  /// `ItemModType`
+    uint type;  /// which stat
     int value;
 }
 
@@ -89,7 +90,7 @@ struct ItemDamage
     uint school;
 }
 
-/// One of an item's spells (`_Spell`), apart from the charges and category kept in `ItemTemplate`.
+/// One of an item's spells (`spellid_N` and its columns), apart from the charges and category kept in `ItemTemplate`.
 struct ItemSpell
 {
     uint id;
@@ -184,21 +185,21 @@ struct ModelInfo
     ubyte gender;
 }
 
-/// `PlayerCreateInfoItem`
+/// An item a new character starts with (`playercreateinfo_item`).
 struct CreateItem
 {
     uint itemId;
     uint amount;
 }
 
-/// `SkillRaceClassInfo`-checked `playercreateinfo_skills` entry.
+/// A `playercreateinfo_skills` entry, checked against `SkillRaceClassInfo.dbc`.
 struct CreateSkill
 {
     uint skillId;
     uint step;
 }
 
-/// `PlayerCreateInfoAction`
+/// An action button a new character starts with (`playercreateinfo_action`).
 struct CreateAction
 {
     ubyte button;
@@ -219,7 +220,7 @@ struct ClassLevelStats
     uint baseMana;
 }
 
-/// `PlayerInfo`: everything a new character of one race and class starts with.
+/// Everything a new character of one race and class starts with.
 struct PlayerInfo
 {
     uint map;
@@ -235,10 +236,10 @@ struct PlayerInfo
     LevelStats[] levelStats; /// index = level - 1
 }
 
-/// Highest level the stats tables are read for (`MAX_LEVEL` for 1.12 data is 60; up to 255 accepted).
+/// Highest level the stats tables are read for (1.12 data stops at 60; up to 255 accepted).
 enum maxLevel = 255;
 
-/// `areatrigger_teleport` (`AreaTrigger`): where an area trigger takes a player, and who may go.
+/// An `areatrigger_teleport` row: where an area trigger takes a player, and who may go.
 struct AreaTriggerTeleport
 {
     uint id;
@@ -267,29 +268,29 @@ struct GameTele
     string name;
 }
 
-/// The columns of `AreaTriggerTeleport`, as `ObjectMgr::LoadAreaTriggerTeleports` reads them.
+/// The columns of `AreaTriggerTeleport`.
 enum areaTriggerTeleportQuery = "SELECT id, IFNULL(name, ''), required_level, required_item, required_item2, "
     ~ "required_quest_done, target_map, target_position_x, target_position_y, target_position_z, target_orientation, "
     ~ "IFNULL(status_failed_text, ''), condition_id FROM areatrigger_teleport";
 
-/// The columns of `GameTele`, as `ObjectMgr::LoadGameTele` reads them.
+/// The columns of `GameTele`.
 enum gameTeleQuery = "SELECT position_x, position_y, position_z, orientation, map, name FROM game_tele ORDER BY id";
 
 /// See the module documentation.
-/// `GraveYardData`: a graveyard (`WorldSafeLocs.dbc`) for an area, zone or map, and for which team.
+/// A graveyard (`WorldSafeLocs.dbc`) for an area, zone or map, and for which team.
 struct GraveyardLink
 {
     uint safeLoc;
     uint team;   /// 0: both, otherwise ALLIANCE (469) or HORDE (67)
 }
 
-/// `GraveyardManager::GraveyardLinkKey`: an area or zone id (`GRAVEYARD_AREALINK`, 0) or a map id (`GRAVEYARD_MAPLINK`, 1).
+/// The key graveyards are linked by: an area or zone id (`linkKind` 0) or a map id (`linkKind` 1).
 uint graveyardLinkKey(uint location, uint linkKind) pure nothrow @nogc @safe
 {
     return location | linkKind << 31;
 }
 
-/// `ReputationOnKillEntry`: what killing a creature does to two factions' reputations.
+/// What killing a creature does to two factions' reputations.
 struct OnKillReputation
 {
     uint[2] faction;
@@ -299,7 +300,7 @@ struct OnKillReputation
     bool teamDependent;    /// the first for the Alliance only, the second for the Horde
 }
 
-/// `InstanceTemplate`'s ghost entrance: where on which map a ghost of an instance comes back out.
+/// An instance's ghost entrance: where on which map a ghost of an instance comes back out.
 struct GhostEntrance
 {
     int map = -1;
@@ -324,7 +325,7 @@ final class WorldData
     bool[dstring] reservedNames;            /// lower-cased
     SpellData spells;
     uint[] xpForNextLevel;                  /// `player_xp_for_level`, index = level
-    uint[uint] baseXp;                      /// `exploration_basexp`, by level (`ObjectMgr::GetBaseXP`)
+    uint[uint] baseXp;                      /// `exploration_basexp`, by level
     StaticMap!(uint, ModelInfo) models;                 /// `creature_model_info`, by display id
     AreaTriggerTeleport[uint] areaTriggers; /// `areatrigger_teleport`, by trigger id
     GameTele[] teleports;                   /// `game_tele`, in id order
@@ -386,7 +387,7 @@ final class WorldData
     }
 
     /**
-     * `ObjectMgr::GetMapEntranceTrigger`: a trigger that leads into `map` from another map, whose
+     * A trigger that leads into `map` from another map, whose
      * requirements are those of entering the map.
      */
     const(AreaTriggerTeleport)* mapEntranceTrigger(uint map, const ClientData client) const
@@ -400,7 +401,7 @@ final class WorldData
     }
 
     /**
-     * `ObjectMgr::GetGameTele`: the place called `name` (any case), or else the first whose name
+     * The place called `name` (any case), or else the first whose name
      * contains it; null if none.
      */
     const(GameTele)* findTeleport(string name) const
@@ -421,7 +422,7 @@ final class WorldData
         return partial;
     }
 
-    /// `ObjectMgr::GetXPForLevel`
+    /// The experience a character of `level` needs for the next level; 0 if unknown.
     uint xpForLevel(uint level) const
     {
         return level < xpForNextLevel.length ? xpForNextLevel[level] : 0;
@@ -433,19 +434,19 @@ final class WorldData
         return cast(ushort)(race << 8 | classId);
     }
 
-    /// Whether a character of this race and class may exist (`GetPlayerInfo` is not null).
+    /// Whether a character of this race and class may exist (it has create info).
     bool isValidRaceClass(ubyte race, ubyte classId) const
     {
         return (raceClassKey(race, classId) in playerInfo) !is null;
     }
 
-    /// `GetPlayerInfo`
+    /// What a new character of this race and class starts with; null if it may not exist.
     const(PlayerInfo)* createInfo(ubyte race, ubyte classId) const
     {
         return raceClassKey(race, classId) in playerInfo;
     }
 
-    /// `GetPlayerLevelInfo`: stats for a level, falling back to the highest level known.
+    /// A race and class's stats for a level, falling back to the highest level known.
     LevelStats levelStats(ubyte race, ubyte classId, uint level) const
     {
         import std.algorithm.comparison : min;
@@ -459,7 +460,7 @@ final class WorldData
         return LevelStats.init;
     }
 
-    /// `GetPlayerClassLevelInfo`
+    /// A class's base health and mana for a level, falling back to the highest level known.
     ClassLevelStats classStats(ubyte classId, uint level) const
     {
         import std.algorithm.comparison : min;
@@ -484,7 +485,7 @@ final class WorldData
             ~ "bonding, RandomProperty, MaxDurability, BagFamily, Duration FROM item_template")())
         {
             auto item = row.toTemplate();
-            // ObjectMgr::LoadItemPrototypes: every stack holds 1 to 255.
+            // Every stack holds 1 to 255.
             if (item.stackable == 0 || item.stackable > 255)
             {
                 const fixed = item.stackable == 0 ? 1 : 255;
@@ -546,8 +547,8 @@ final class WorldData
     }
 
     /**
-     * `ObjectMgr::LoadCreatureTemplates`, `LoadCreatures`, `LoadGameObjectTemplate`, `LoadGameObjects`,
-     * and what decides which spawns are in the world: pools (`PoolManager`, one choice per start-up) and
+     * Creature and game object templates and spawns,
+     * and what decides which spawns are in the world: pools (one choice per start-up) and
      * game events (spawns that only exist during an event are left out; no event is running).
      */
     /**
@@ -633,9 +634,9 @@ final class WorldData
                 row.get!float(7), row.get!uint(8));
         }
         foreach (row; world.query!"SELECT entry, bg_template FROM battlemaster_entry"())
-            if (row.get!uint(1) && row.get!uint(1) <= BattlegroundType.max) // `LoadBattleMastersEntry`
+            if (row.get!uint(1) && row.get!uint(1) <= BattlegroundType.max) // battleground types that exist
                 battlemasters[row.get!uint(0)] = cast(BattlegroundType) row.get!uint(1);
-        // `LoadBattleEventIndexes`: 255 is no event.
+        // Spawns' battleground events: 255 is no event.
         foreach (row; world.query!"SELECT guid, event1, event2 FROM creature_battleground"())
             if (row.get!uint(1) != 255)
                 creatureBattleEvents[row.get!uint(0)] = [cast(ubyte) row.get!uint(1), cast(ubyte) row.get!uint(2)];
@@ -722,7 +723,7 @@ final class WorldData
         auto rng = Random(spawnSeed ? cast(uint)(spawnSeed ^ spawnSeed >> 32) : unpredictableSeed);
         pools.choose(rng);
 
-        // Spawn groups (`SpawnGroup`): at most MaxCount members up at once, entries for members without one;
+        // Spawn groups: at most MaxCount members up at once, entries for members without one;
         // groups that depend on a world state stay down, as no world state is kept yet.
         auto groups = new SpawnGroups;
         foreach (row; world.query!"SELECT Id, Type, MaxCount, WorldState, WorldStateExpression FROM spawn_group"())
@@ -758,7 +759,7 @@ final class WorldData
                 ++skipped;
                 continue;
             }
-            // ObjectMgr::LoadCreatures: a wander needs a distance, and only a wander has one.
+            // A wander needs a distance, and only a wander has one.
             if (row.wanderDistance < 0)
                 row.wanderDistance = 0;
             else if (row.movementType == MotionType.random && row.wanderDistance == 0)
@@ -804,9 +805,9 @@ final class WorldData
     }
 
     /**
-     * `WaypointManager::Load` for `creature_movement` (by spawn guid) and `creature_movement_template`
-     * (by entry and path): points outside the world are left out (CMaNGOS moves them inside and
-     * writes them back; the database is not changed here), and so are paths with a point 0.
+     * Waypoints from `creature_movement` (by spawn guid) and `creature_movement_template`
+     * (by entry and path): points outside the world are left out (the database is not
+     * changed), and so are paths with a point 0.
      */
     void loadWaypoints(MySqlConnection world)
     {
@@ -814,7 +815,7 @@ final class WorldData
 
         static bool valid(const ref WaypointNode n)
         {
-            enum float limit = 17_066.6656f; // MAP_HALFSIZE - 0.5 (IsValidMapCoord)
+            enum float limit = 17_066.6656f; // half a map's width, less half a yard
             return abs(n.x) <= limit && abs(n.y) <= limit && abs(n.z) <= limit;
         }
 
@@ -858,7 +859,7 @@ final class WorldData
         info!"loaded %s creature waypoint paths (%s points skipped)"(waypoints.length, skipped);
     }
 
-    /// `ObjectMgr::LoadAreaTriggerTeleports` and `LoadGameTele`, with the same checks.
+    /// Area trigger teleports and `.recall` places, checked against the client data.
     void loadTeleports(MySqlConnection world, const ClientData client)
     {
         setTeleports(world.queryAs!(AreaTriggerTeleport, areaTriggerTeleportQuery)(),
@@ -896,7 +897,7 @@ final class WorldData
     }
 
 private:
-    /// `ObjectMgr::LoadPlayerInfo`
+    /// What new characters start with, and the race and class stats per level.
     void loadPlayerInfo(MySqlConnection world, const ClientData client)
     {
         static bool playable(uint race, uint classId)
@@ -995,7 +996,7 @@ private:
                 table.length = level;
             (*table)[level - 1] = ClassLevelStats(row.get!uint(2), row.get!uint(3));
         }
-        foreach (ref table; classLevelStats) // fill gaps with the level below, as CMaNGOS does
+        foreach (ref table; classLevelStats) // fill gaps with the level below
             foreach (level; 1 .. table.length)
                 if (table[level] == ClassLevelStats.init)
                     table[level] = table[level - 1];
@@ -1017,7 +1018,7 @@ private:
                     player.levelStats[level] = player.levelStats[level - 1];
     }
 
-    /// `Player::IsActionButtonDataValid`
+    /// Whether an action button's slot, type and action are valid.
     public bool isActionButtonDataValid(CreateAction action) const
     {
         import dmangos.world.defines : ActionButtonType, maxActionButtons;
@@ -1032,7 +1033,7 @@ private:
     }
 }
 
-/// CMaNGOS's `wstrToLower` (`wcharToLower`), used for reserved name comparisons.
+/// A name in lower case (by `wcharToLower`), used for reserved name comparisons.
 dstring toLowerName(string name) pure @safe
 {
     import std.utf : toUTF32;
@@ -1043,7 +1044,7 @@ dstring toLowerName(string name) pure @safe
     return text.idup;
 }
 
-/// CMaNGOS's `wcharToLower`.
+/// Lower case for the Latin, Latin-1, Latin Extended-A (up to U+012F) and Cyrillic capitals; other characters unchanged.
 dchar wcharToLower(dchar c) pure nothrow @nogc @safe
 {
     if (c >= 'A' && c <= 'Z')
@@ -1061,7 +1062,7 @@ dchar wcharToLower(dchar c) pure nothrow @nogc @safe
     return c;
 }
 
-/// CMaNGOS's `wcharToUpper`.
+/// Upper case for the same letters as `wcharToLower`; other characters unchanged.
 dchar wcharToUpper(dchar c) pure nothrow @nogc @safe
 {
     if (c >= 'a' && c <= 'z')
@@ -1125,7 +1126,7 @@ struct PoolMember
 }
 
 /**
- * `PoolManager` at start-up: each pool spawns at most its `max_limit` members, chosen at random
+ * Pools at start-up: each pool spawns at most its `max_limit` members, chosen at random
  * (those with a chance by their chance, the others evenly), and a pool inside another one only if
  * that one chose it. Spawns that are in no pool always spawn.
  */
@@ -1227,7 +1228,7 @@ unittest
 }
 
 /**
- * CMaNGOS's spawn groups (`spawn_group`, `spawn_group_spawn`, `spawn_group_entry`), as far as a
+ * Spawn groups (`spawn_group`, `spawn_group_spawn`, `spawn_group_entry`), as far as a
  * world without world states needs them: which members are up, and what a member without its own
  * entry is.
  */
@@ -1298,7 +1299,7 @@ final class SpawnGroups
     }
 
     /**
-     * `SpawnGroup`'s entries for its members: each entry's `MinCount` first (one Lady Anacondra),
+     * A group's entries for its members: each entry's `MinCount` first (one Lady Anacondra),
      * then the rest by chance among the entries not at their `MaxCount` (three Druids of the Fang).
      */
     private void assignEntries(const ref Group group, const(uint)[] members, ref Random rng)

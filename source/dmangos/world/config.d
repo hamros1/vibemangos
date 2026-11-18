@@ -1,9 +1,10 @@
 /**
  * World server configuration, read from a JSON file.
  *
- * The field initializers are the defaults. Settings with a CMaNGOS
- * `mangosd.conf` equivalent keep its meaning and default; the equivalent is
- * named in each field's comment.
+ * The field initializers are the defaults. A setting that has an equivalent
+ * key in the established server configuration files (`mangosd.conf`, and for
+ * the GM system ArcEmu's) keeps that key's meaning and default; the key is
+ * named in the field's comment, so existing configurations carry over.
  */
 module dmangos.world.config;
 
@@ -14,14 +15,14 @@ import dmangos.cluster.config : ClusterConfig;
 import dmangos.json;
 import dmangos.log : LogLevel;
 
-/// ArcEmu permission strings (`accounts.gm`) for CMaNGOS's account levels.
+/// The permission letters (`accounts.gm` strings) given to each `account.gmlevel`.
 struct GmPermissions
 {
     @JsonName("1") string moderator = "bcghiltuv";  /// kick, tickets, GM tag, announcements, appear and summon
     @JsonName("2") string gameMaster = "a";         /// every command but the `z` ones
     @JsonName("3") string administrator = "az";     /// every command
 
-    /// The letters of a level, read as `WorldSession::LoadSecurity` reads them.
+    /// The letters of a level, read by `loadSecurity` as a login reads them.
     string forLevel(uint level) const pure @safe
     {
         import dmangos.world.commands : loadSecurity;
@@ -117,7 +118,7 @@ struct WorldConfig
     /// `Instance.UnloadDelay` in seconds: an empty dungeon instance goes after so long, and with it its binds.
     @JsonName("instance_unload_delay_seconds") uint instanceUnloadDelay = 1800;
     /**
-     * Not in `mangosd.conf` (CMaNGOS leaves this to its anticheat module): check that players move no
+     * Has no key in the usual configuration file: check that players move no
      * faster than they can run, give or take `movement_speed_tolerance` (a factor) plus
      * `movement_speed_slack` yards. A player caught is put back where it was. Game masters are not checked.
      */
@@ -140,7 +141,7 @@ struct WorldConfig
     @JsonName("listen_range_say") float listenRangeSay = 25;
     @JsonName("listen_range_text_emote") float listenRangeTextEmote = 25; /// ditto
     @JsonName("listen_range_yell") float listenRangeYell = 300;           /// ditto
-    /// The world update tick, in milliseconds (mangosd's `WORLD_SLEEP_CONST`, 50).
+    /// The world update tick, in milliseconds (default 50).
     @JsonName("update_interval") uint updateIntervalMs = 50;
     /// `Compression`: the zlib level of update packets, 1 (fastest) to 9 (smallest).
     uint compression = 1;
@@ -162,9 +163,9 @@ struct WorldConfig
     @JsonName("packet_log") string packetLog;
     /// The cluster this node belongs to (docs/CLUSTER.md); standalone without it.
     ClusterConfig cluster;
-    /// Seconds a logout takes away from inns and cities (ArcEmu and CMaNGOS: 20); 0 logs out at once.
+    /// Seconds a logout takes away from inns and cities (default 20); 0 logs out at once.
     @JsonName("logout_delay") uint logoutDelay = 20;
-    /// `PlayerSave.Interval`, in seconds (mangosd: milliseconds).
+    /// `PlayerSave.Interval`, in seconds here (the configuration file's key is in milliseconds).
     @JsonName("player_save_interval") uint playerSaveInterval = 900;
     /// `Rate.Health`, `Rate.Mana`, `Rate.Rage.Loss`, `Rate.Energy`: regeneration rates.
     @JsonName("rate_health") float rateHealth = 1;
@@ -206,12 +207,12 @@ struct WorldConfig
     @JsonName("mail_delivery_delay") uint mailDeliveryDelay = 3600;
 
     // -----------------------------------------------------------------------
-    // The GM system, as ArcEmu's arcemu-world.conf and arcemu-optional.conf set it
+    // The GM system's settings
     // -----------------------------------------------------------------------
 
-    /// ArcEmu's permission letters for each CMaNGOS `account.gmlevel` (see `dmangos.world.commands`).
+    /// The permission letters for each `account.gmlevel` (see `dmangos.world.commands`).
     @JsonName("gm_permissions") GmPermissions gmPermissions;
-    /// `command_overrides` (an ArcEmu world table): give commands other permission letters.
+    /// `command_overrides`: give commands other permission letters.
     @JsonName("command_overrides") CommandOverride[] commandOverrides;
     /// `Server.AllowPlayerCommands`: accounts without permissions may use the `0` commands.
     @JsonName("allow_player_commands") bool allowPlayerCommands = false;

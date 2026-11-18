@@ -71,7 +71,7 @@ struct ServerOptions
     Duration tickInterval = 1.seconds;
 }
 
-/// A tick slower than this is logged, as Ember's watchdog reports a stalled map loop.
+/// A tick slower than this is logged, as a sign of a stalled update loop.
 private enum slowTick = 500.msecs;
 
 private shared bool shutdownRequested;

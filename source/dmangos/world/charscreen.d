@@ -1,5 +1,5 @@
 /**
- * The character screen's handlers (CMaNGOS `Entities/CharacterHandler.cpp`):
+ * The character screen's handlers:
  * the character list, creation, deletion, and entering the world.
  *
  * `CharacterScreenHandlers` is mixed into `dmangos.world.character.Character`.
@@ -7,10 +7,10 @@
  * `context`, `player`) and helpers (`send`, `sendUpdate`) directly, and resolve
  * `Handles` and `WorldState` where they are mixed in.
  *
- * Character creation follows `HandleCharCreateOpcode`, then
- * `dmangos.world.playercreate` builds the character as `Player::Create` does.
- * Deletion follows `HandleCharDeleteOpcode` and `Player::DeleteFromDB`.
- * Logging in follows `HandlePlayerLogin`: the character is loaded
+ * Character creation checks the request (name, looks, limits, factions),
+ * then `dmangos.world.playercreate` builds the character. Deletion checks
+ * ownership and guild leadership, then removes the character's rows.
+ * Logging in loads the character
  * (`dmangos.world.player`), the client is told the map and position, gets its
  * spellbook, action bars and other settings, and then the update packet that
  * creates its items and its player.
@@ -74,7 +74,7 @@ private:
         send(ServerCharCreate(result));
     }
 
-    /// `WorldSession::HandleCharCreateOpcode`; returns the result code for `SMSG_CHAR_CREATE`.
+    /// Creates a character as the client asked; returns the result code for `SMSG_CHAR_CREATE`.
     ubyte createCharacter(const ref ClientCharCreate request)
     {
         alias R = CharacterResponse;
@@ -131,7 +131,7 @@ private:
                 if (!allowTwoSide && (races[0] == 0
                     || context.client.teamForRace(races[0]) != context.client.teamForRace(request.race)))
                     return R.CHAR_CREATE_PVP_TEAMS_VIOLATION;
-                // As CMaNGOS: the first row is only used for the faction check above.
+                // The first row is only used for the faction check above.
                 haveSameRace = config.skipCinematics == 1 && races[1 .. $].canFind(request.race);
             }
         }
@@ -170,7 +170,7 @@ private:
         if (owner.isNull || owner.get.account != account.id)
         {
             warning!"%s: account %s tried to delete character %s, which is not theirs"(remoteAddress, account.id, guid);
-            return; // as CMaNGOS: no reply
+            return; // no reply
         }
 
         info!"%s: account %s deleted character '%s' (guid %s)"(remoteAddress, account.id, owner.get.name, guid);
@@ -206,7 +206,7 @@ private:
             return send(ServerCharacterLoginFailed(CharacterLoginFailure.CHAR_LOGIN_NO_CHARACTER));
         }
 
-        // Player::_LoadHomeBind: a character without a home is bound where its race starts.
+        // A character without a home is bound where its race starts.
         if (!character.hasHomeBind)
         {
             character.homeBind = HomeBind(createInfo.map, createInfo.zone, createInfo.x, createInfo.y, createInfo.z);
@@ -231,7 +231,7 @@ private:
 }
 
 /**
- * The character's side of logging in (`WorldSession::HandlePlayerLogin` after its checks), mixed
+ * The character's side of logging in (after the login request's checks), mixed
  * into `dmangos.world.character.Character`: the player made from its saved state, the login
  * packets, and the world entered.
  */
@@ -268,7 +268,7 @@ mixin template CharacterLogin()
         context.database.setOnline(guid, account.id, true, context.config.realmId);
         resetMovementCheck();
 
-        // The group, which the character may have been in while offline (CharacterHandler.cpp).
+        // The group, which the character may have been in while offline.
         if (auto group = context.groups.of(player.guid))
         {
             group.sendUpdateTo(player.guid);
@@ -280,7 +280,7 @@ mixin template CharacterLogin()
         loadHonor();
         loadBattleground();
         applyPassiveSpells();
-        petsOnArrival(); // `Player::LoadPet`
+        petsOnArrival(); // the saved current pet comes back
         battlegroundOnLogin();
         info!"%s: '%s' entered the world as '%s' (guid %s, map %s at %.1f %.1f %.1f)"(remoteAddress,
             account.username, character.name, guid, character.map, character.position.x, character.position.y,
@@ -293,7 +293,7 @@ mixin template CharacterLogin()
     }
 
     /**
-     * The player of a loaded character (`Player::LoadFromDB`): its spells and skills, and its rested
+     * The player of a loaded character: its spells and skills, and its rested
      * XP, with what the time offline earned if `offlineRest` (not for a player arriving from another
      * node, which was never offline).
      */
@@ -316,7 +316,7 @@ mixin template CharacterLogin()
         return made;
     }
 
-    /// `WorldSession::HandlePlayerLogin`, from `SMSG_LOGIN_VERIFY_WORLD` to the player's create packet.
+    /// The login packets, from `SMSG_LOGIN_VERIFY_WORLD` to the player's create packet.
     void sendLoginPackets()
     {
         const c = &player.data;
@@ -326,7 +326,7 @@ mixin template CharacterLogin()
         send(ServerExpectedSpamRecords());
         foreach (line; motdLines(context.config.motd))
             sendSystemMessage(line);
-        // ArcEmu's HandlePlayerLogin tells GMs, and with `send_stats_on_join` everyone, the population.
+        // GMs, and with `send_stats_on_join` everyone, are told the population (a GM system message).
         if (context.config.sendStatsOnJoin || hasGMPermissions)
         {
             import dmangos.world.commands : MSG_COLOR_WHITE;
@@ -340,7 +340,7 @@ mixin template CharacterLogin()
         send(ServerSetProficiency(2, player.proficiency[0])); // ITEM_CLASS_WEAPON
         send(ServerSetProficiency(4, player.proficiency[1])); // ITEM_CLASS_ARMOR
 
-        // The race's intro, the first time; not for GMs (ArcEmu).
+        // The race's intro, the first time; not for GMs (as the GM system requires).
         if (c.cinematic == 0)
         {
             player.data.cinematic = 1;
@@ -350,14 +350,14 @@ mixin template CharacterLogin()
                         send(ServerTriggerCinematic(race.cinematicSequence));
         }
 
-        // Map::Add: the client creates its items and itself, and the loading screen ends.
+        // Into the map: the client creates its items and itself, and the loading screen ends.
         const update = player.createForSelf(serverTime());
         sendUpdate(update);
         player.inventory.markAllSent();
         sendInitialPacketsAfterAddToMap();
     }
 
-    /// `Player::SendInitialPacketsBeforeAddToMap`, at login and after a far teleport.
+    /// The packets sent before the player is added to a map, at login and after a far teleport.
     void sendInitialPacketsBeforeAddToMap()
     {
         const c = &player.data;
@@ -373,7 +373,7 @@ mixin template CharacterLogin()
         send(ServerLoginSetTimeSpeed(gameTimeBits()));
     }
 
-    /// `Player::SendInitialPacketsAfterAddToMap`
+    /// The packets sent once the player is on the map: zone, social lists, world states, weather.
     void sendInitialPacketsAfterAddToMap()
     {
         setZoneOnArrival();
@@ -383,7 +383,7 @@ mixin template CharacterLogin()
     }
 }
 
-/// `WorldSession::SendMotd`: the message of the day, split at '@'.
+/// The message of the day's lines, split at '@'.
 string[] motdLines(string motd) pure @safe
 {
     import std.algorithm.iteration : filter, splitter;
@@ -448,7 +448,7 @@ unittest
     assert(db.realmCounts[4] == 2 && db.tutorialRows.length == 1);
 }
 
-/// Names, looks, limits and factions are checked as CMaNGOS checks them.
+/// Names, looks, limits and factions are checked.
 unittest
 {
     auto db = newDatabase();

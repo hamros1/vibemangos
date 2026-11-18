@@ -3,7 +3,7 @@
 
     python3 tools/commands_doc.py
 
-Reads source/dmangos/world/commandtable.d (ArcEmu's tables) and the
+Reads source/dmangos/world/commandtable.d (the GM command tables) and the
 `handle...(string args)` methods of the world modules, so the list of
 commands, their permission letters, help texts and whether they work here
 always match the code.

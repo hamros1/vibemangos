@@ -1,7 +1,8 @@
 /**
- * ArcEmu's `InstanceCommands.cpp`: `.instance reset`, `.instance resetall`, `.instance shutdown`,
+ * The instance commands: `.instance reset`, `.instance resetall`, `.instance shutdown`,
  * `.instance info`, `.instance exit`, and `.character showinstances`, on this server's instances
- * (`WorldContext`'s copies and binds). Vanilla has one difficulty, ArcEmu's "normal"; a persistent
+ * (`WorldContext`'s copies and binds). Their behaviour and messages match ArcEmu 2.4.3's exactly.
+ * Vanilla has one difficulty, the one the messages call "normal"; a persistent
  * instance is a raid copy (it lasts until its reset). Mixed into `dmangos.world.session.Character`.
  */
 module dmangos.world.gminstance;
@@ -179,7 +180,7 @@ private:
     }
 
 package:
-    /// ArcEmu's `Player::ExitInstance`: back to where it was before going into an instance; false if that is not known.
+    /// Back to where the player was before going into an instance; false if that is not known.
     bool exitInstance()
     {
         if (entryMap == uint.max)
@@ -202,7 +203,7 @@ bool instanceHere(WorldContext context, uint id)
     return context.instanceState(id) !is null;
 }
 
-/// ArcEmu's `GetMapTypeString` for a map of this server.
+/// The kind of a map, as `.instance info` names it: raid, dungeon ("Non-Raid"), battleground ("PvP") or continent.
 string mapTypeString(WorldContext context, uint mapId)
 {
     const entry = context.client.maps.lookup(mapId);
@@ -217,7 +218,7 @@ string mapTypeString(WorldContext context, uint mapId)
     return "Continent";
 }
 
-/// The map's name, as ArcEmu's `MapInfo.name`.
+/// The map's name from `Map.dbc` (its id if unknown), as the commands show it.
 string mapName(WorldContext context, uint mapId)
 {
     import std.format : format;
@@ -277,7 +278,7 @@ void shutdownInstanceHere(WorldContext context, uint id, GmSink sink)
     if (m is null)
         return sink.red(format!"Instance with id %u already shut down."(id));
     sink.system(format!"Attempting to shutdown instance with id %u..."(id));
-    // `MapMgr::InstanceShutdown`: everyone inside goes back out first.
+    // Everyone inside goes back out first.
     foreach (other; context.onlinePlayers)
         if (auto inside = cast(Character) other)
             if (inside.instanceId == id && inside.character !is null)
@@ -313,13 +314,13 @@ void resetInstanceHere(WorldContext context, uint id, ulong who, string name, bo
         return sink.red(format!"Failed to reset non-persistent instance with id %u, due to player still inside."(id));
     if (bound is null || *bound != id)
         return sink.red(format!"Player %s is not assigned to instance with id %u."(name, id));
-    sink.red("Resetting single non-persistent instances is not available yet."); // as ArcEmu says
+    sink.red("Resetting single non-persistent instances is not available yet."); // the required reply, word for word
 }
 
 /// `.instance resetall`'s work here: the player's copies this node hosts that are not persistent and empty.
 void resetAllHere(WorldContext context, ulong who)
 {
-    // `InstanceMgr::ResetSavedInstances`
+    // Resets each bound copy that is not persistent and has no one inside.
     foreach (mapId, id; context.bindsOf(who).dup)
     {
         const state = context.instanceState(id);

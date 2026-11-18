@@ -1,5 +1,5 @@
 /**
- * Handlers of CMaNGOS `Chat/ChannelHandler.cpp`, mixed into
+ * The client's chat channel requests (join, leave, list, moderate), mixed into
  * `dmangos.world.character.Character`. Each finds the channel in the
  * player's command to the channels, wherever they are kept
  * (`dmangos.world.channelservice`); `dmangos.world.channel` does the rest.
@@ -19,7 +19,7 @@ mixin template ChannelHandlers()
     import dmangos.world.packets;
 
 private:
-    /// `WorldSession::CheckChatChannelNameAndPassword`: names are cut at 128 characters, passwords are not.
+    /// Checks a channel name and password: names are cut at 128 characters, passwords are not.
     bool checkChannelName(ref string channel, string password)
     {
         if (channel.length > 128)
@@ -50,7 +50,7 @@ private:
         string name = request.channel;
         if (name.length == 0 || !checkChannelName(name, request.password))
             return;
-        // ArcEmu's `GMClient.GmClientChannel`: only accounts with permissions may join it.
+        // The GM client channel (`gm_client_channel`): only accounts with permissions may join it.
         const gmChannel = context.config.gmClientChannel;
         if (gmChannel.length && sicmp(gmChannel, name) == 0 && !hasPermissions)
             return;

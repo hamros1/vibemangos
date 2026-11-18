@@ -1,9 +1,8 @@
 /**
- * Melee from the player's side: CMaNGOS's `Combat/CombatHandler.cpp` (`CMSG_ATTACKSWING`,
- * `CMSG_ATTACKSTOP`, `CMSG_SETSHEATHED`) and the player's half of `Unit`'s melee: `Attack`,
- * `AttackStop`, the swing loop (`UpdateMeleeAttackingState`), and a swing's damage
- * (`AttackerStateUpdate`, `DealMeleeDamage`, `DealDamage`), mixed into
- * `dmangos.world.character.Character`. The formulas are in `dmangos.world.combat`.
+ * Melee from the player's side: the client's requests (`CMSG_ATTACKSWING`, `CMSG_ATTACKSTOP`,
+ * `CMSG_SETSHEATHED`) and the player's half of melee: starting and stopping an attack, the swing
+ * loop, and a swing's damage, mixed into `dmangos.world.character.Character`. The formulas are in
+ * `dmangos.world.combat`.
  *
  * Players fight creatures this node simulates, which fight back (`dmangos.world.creatureai`), and
  * each other in duels. Damage goes through `dmangos.world.unit.dealDamage`, the rules every unit
@@ -42,7 +41,7 @@ mixin template CombatHandlers()
     }
 
     /**
-     * `Unit::DealDamage` to the player (`dmangos.world.unit.dealDamage`), from a creature, a player or
+     * Damage dealt to the player (`dmangos.world.unit.dealDamage`), from a creature, a player or
      * nothing, by a swing, a spell or an aura's tick. Unless it was a tick, a sitting player stands
      * up. A warrior gets rage from what hit it (a swing's damage before blocks; dodges, parries and
      * misses give none). A critical swing shows a wound. The player is in combat, its auras that
@@ -103,7 +102,7 @@ mixin template CombatHandlers()
             group.updatePlayerOutOfRange(this, GroupUpdate.currentHealth | GroupUpdate.currentPower);
         if (died)
         {
-            // `Unit::Kill`: honor to the player who killed (or whose pet did), and its group.
+            // The player died: honor to the player who killed (or whose pet did), and its group.
             typeof(this) killer;
             if (attacker.kind == UnitKind.player)
                 killer = attacker.session;
@@ -111,7 +110,7 @@ mixin template CombatHandlers()
                 killer = cast(typeof(this)) context.onlinePlayer(attacker.creature.petOwner);
             if (killer !is null && killer !is this)
                 killer.playerKilledByMe(this);
-            if (auto copy = currentBattleground()) // `BattleGround::HandleKillPlayer`
+            if (auto copy = currentBattleground()) // the battleground counts the death and the kill
                 copy.playerKilled(player.guid, killer !is null && killer !is this ? killer.player.guid : 0);
             playerDied(attacker.kind != UnitKind.player); // only a player's kill costs no durability
         }
@@ -131,7 +130,7 @@ mixin template CombatHandlers()
     }
 
 private:
-    bool[ulong] threatenedBy;      // `HostileRefManager`: the creatures that have this player in their threat list
+    bool[ulong] threatenedBy;      // the creatures that have this player in their threat list
 
     /// In combat (`UNIT_FLAG_IN_COMBAT`) at least for `linger` more.
     void enterCombatFor(Duration linger)
@@ -144,7 +143,7 @@ private:
     }
 
     /**
-     * `Unit::Kill` of the player, as far as there is death yet: it stops attacking, and the creatures
+     * The player is killed, as far as there is death yet: it stops attacking, and the creatures
      * fighting it let it be. Releasing the spirit and coming back to life come with death proper; a
      * login brings it back with full health.
      */
@@ -152,16 +151,16 @@ private:
     {
         playerDied(true);
     }
-    package ulong attacking;       // `m_attacking`: the creature attacked
-    bool meleeAttacking;           // `UNIT_STAT_MELEE_ATTACKING`
+    package ulong attacking;       // the creature attacked
+    bool meleeAttacking;           // swinging in melee (the client was sent `SMSG_ATTACKSTART`)
     uint[2] attackTimer;           // main hand, off hand: milliseconds until the next swing may go
-    SwingError lastSwingError;     // `LastSwingErrorMsg`: an error is told once until it changes
+    SwingError lastSwingError;     // the last swing error told: an error is told once until it changes
     MonoTime combatUntil;          // in combat (`UNIT_FLAG_IN_COMBAT`) until then
 
     /// How long a player stays in combat after its last swing.
     enum combatLinger = 5.seconds;
 
-    /// `HandleAttackSwingOpcode`
+    /// The client starts attacking its target.
     @Handles(Opcode.CMSG_ATTACKSWING, WorldState.inWorld)
     void handleAttackSwing(const ClientGuid request)
     {
@@ -193,7 +192,7 @@ private:
         lastSwingError = SwingError.none; // each new attack shows its swing error again
     }
 
-    /// `HandleAttackStopOpcode`: the client keeps swinging until an `SMSG_ATTACKSTOP` names it.
+    /// The client stops attacking; it keeps swinging until an `SMSG_ATTACKSTOP` names it.
     @Handles(Opcode.CMSG_ATTACKSTOP, WorldState.inWorld)
     void handleAttackStop()
     {
@@ -203,7 +202,7 @@ private:
             map.sendToWatchers(this, Opcode.SMSG_ATTACKSTOP, attackStop(player.guid, 0, false), true);
     }
 
-    /// `HandleSetSheathedOpcode`
+    /// The client draws or sheathes its weapons.
     @Handles(Opcode.CMSG_SETSHEATHED, WorldState.inWorld)
     void handleSetSheathed(ref ByteReader reader)
     {
@@ -223,7 +222,7 @@ private:
             creature.alive);
     }
 
-    /// `Unit::Attack(victim, true)`: attacks `victim` in melee; false if it cannot.
+    /// Attacks `victim` in melee; false if it cannot.
     bool attack(Creature victim)
     {
         if (!player.fighter.alive || !victim.alive || victim.ai.runningHome)
@@ -243,11 +242,11 @@ private:
         if (player.fighter.dualWield)
             attackTimer[AttackType.offHand] = player.stats.attackTime[AttackType.offHand] / 2;
         meleeAttackStart(victim);
-        petAssistAgainst(victim.guid); // `OwnerAttacked`
+        petAssistAgainst(victim.guid); // the pet joins its owner's attack
         return true;
     }
 
-    /// `MeleeAttackStart`
+    /// Starts swinging at `victim`, shown to everyone who sees the player (`SMSG_ATTACKSTART`).
     void meleeAttackStart(Creature victim)
     {
         meleeAttackStartAt(victim.guid);
@@ -263,7 +262,7 @@ private:
         map.sendToWatchers(this, Opcode.SMSG_ATTACKSTART, attackStart(player.guid, victim), true);
     }
 
-    /// `Unit::Attack` of a player (a duel's opponent).
+    /// Attacks a player (a duel's opponent) in melee.
     void attackPlayer(typeof(this) other)
     {
         if (!player.fighter.alive)
@@ -276,7 +275,7 @@ private:
         meleeAttackStartAt(other.player.guid);
     }
 
-    /// A melee swing at a player (`AttackerStateUpdate` against a player victim).
+    /// A melee swing at a player.
     void swingAtPlayer(typeof(this) other, AttackType type)
     {
         auto d = calculateMeleeDamage(player.fighter, other.player.fighter, type, map.random);
@@ -289,7 +288,7 @@ private:
     }
 
     /**
-     * `Unit::AttackStop`: stops attacking. Unless the client asked, it is told to stop swinging
+     * Stops attacking. Unless the client asked, it is told to stop swinging
      * (`SMSG_CANCEL_COMBAT`); `targetSwitch` is set when another target follows at once.
      */
     package void stopAttack(bool clientInitiated, bool targetSwitch = false)
@@ -297,7 +296,7 @@ private:
         if (player is null)
             return;
         if (!clientInitiated)
-            deliver(Opcode.SMSG_CANCEL_COMBAT, null); // `SendAttackSwingCancelAttack`
+            deliver(Opcode.SMSG_CANCEL_COMBAT, null); // the client stops swinging
         if (meleeAttacking)
         {
             meleeAttacking = false;
@@ -312,7 +311,7 @@ private:
     }
 
     /**
-     * `Unit::Update`'s attack timers and `Player::Update`'s `UpdateMeleeAttackingState`: swings when a
+     * The attack timers and the swing loop, each tick: swings when a
      * weapon is ready, or tells the client why it cannot (once, until the reason changes); and the
      * combat state, which lasts `combatLinger` after the last swing.
      */
@@ -332,13 +331,13 @@ private:
         }
     }
 
-    /// Whether the player is in combat (`IsInCombat`).
+    /// Whether the player is in combat.
     @property bool inCombat() const
     {
         return player !is null && (player.values.get!UNIT_FIELD_FLAGS & UnitFlags.inCombat) != 0;
     }
 
-    /// `updateMeleeAttackingState` against a player: the same checks, the main hand only.
+    /// The swing loop against a player: the same checks, the main hand only.
     void updateMeleeAgainstPlayer(typeof(this) other)
     {
         if (attackTimer[AttackType.mainHand])
@@ -447,12 +446,12 @@ private:
     }
 
     /**
-     * `AttackerStateUpdate` and `DealMeleeDamage`: one swing at `victim`, shown to everyone who sees
+     * One swing at `victim`, shown to everyone who sees
      * the player; then its damage, the rage it earns, and the victim's death if it kills.
      */
     void swing(Creature victim, AttackType type)
     {
-        // `AttackerStateUpdate`: a spell for the next swing (Heroic Strike) is cast instead of it.
+        // A spell for the next swing (Heroic Strike) is cast instead of it.
         if (type == AttackType.mainHand && swingSpell(victim))
             return;
         auto d = calculateMeleeDamage(player.fighter, victim.fighter, type, map.random);
@@ -472,20 +471,20 @@ private:
             emote.put(victim.guid);
             map.sendToObservers(victim.guid, Opcode.SMSG_EMOTE, emote.data);
         }
-        // `DealDamage`: rage from weapon damage dealt, then the damage.
+        // Rage from weapon damage dealt, then the damage.
         if (player.powerType == Power.rage && type != AttackType.ranged)
             player.modifyPower(Power.rage, rageReward(player.data.level, d.damage, true));
         flushPlayerChanges();
-        // `DealMeleeDamage`: the creature fights back, takes it as threat, and may die of it.
+        // The creature fights back, takes it as threat, and may die of it.
         dealDamage(unit, map.unitOf(victim), d.damage, Blow.swing(d));
         if (d.damage && victim.alive)
             castItemCombatSpells(victim, type);
     }
 
     /**
-     * `Player::CastItemCombatSpell` after a hit: each chance-on-hit spell of the unbroken items worn
+     * After a hit: each chance-on-hit spell of the unbroken items worn
      * (a weapon only for its own hand's swings) is cast, by its procs a minute at the weapon's speed
-     * (`GetPPMProcChance`: speed * rate / 600 percent) or else the spell's own chance.
+     * (speed * rate / 600 percent) or else the spell's own chance.
      */
     package void castItemCombatSpells(Creature victim, AttackType type)
     {
@@ -524,9 +523,9 @@ private:
     }
 
     /**
-     * `ProcSkillsAndReactives` and `Player::UpdateCombatSkills`: a swing at a creature (not a critter),
+     * Skill gains from combat: a swing at a creature (not a critter),
      * or one of its at the player, may raise the weapon skill or defense, more likely the farther it
-     * is below its maximum (intellect helps weapon skills); then `UpdateSkill`'s own roll.
+     * is below its maximum (intellect helps weapon skills); then the skill's own roll to rise.
      */
     void updateCombatSkills(Creature target, AttackType type, bool defence)
     {
@@ -550,7 +549,7 @@ private:
             chance += chance * 0.02f * player.values.get!UNIT_FIELD_STAT0(Stat.intellect);
         if (uniform01(map.random) * 100 >= chance)
             return;
-        // `UpdateSkill`: the nearer the maximum, the less likely.
+        // The skill's roll: the nearer the maximum, the less likely.
         if (skill * 512 >= cap * uniform!"[]"(0, 512, map.random))
             return;
         const raised = cast(ushort) min(skill + 1, cap);
@@ -561,7 +560,7 @@ private:
         flushPlayerChanges();
     }
 
-    /// `Unit::Kill` of a creature, as far as there is death yet: everyone attacking it stops.
+    /// The player killed a creature, as far as there is death yet: everyone attacking it stops.
     void creatureKilled(Creature victim)
     {
         import dmangos.world.character : Character;
@@ -582,7 +581,7 @@ private:
         victim.die(map, context.unixTime);
         map.creatureDeaths.put(victim); // its dungeon's script and its respawn: the tick's deaths phase
         rewardKill(victim);
-        // `JustDied`'s database script (`dbscripts_on_creature_death`, by entry): the creature the source, the killer the target.
+        // The creature's death script (`dbscripts_on_creature_death`, by entry): the creature the source, the killer the target.
         {
             import dmangos.world.dbscripts : DbScriptType;
 
