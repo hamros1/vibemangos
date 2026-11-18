@@ -159,6 +159,8 @@ private:
     void playerDied(bool byCreature)
     {
         info!"%s: '%s' died"(remoteAddress, player.data.name);
+        // A way back of its own (a Soulstone, Reincarnation): the client offers it while it lies dead.
+        player.values.set!PLAYER_SELF_RES_SPELL(selfResurrectionSpell());
         petsOnLeave(); // the pet goes with its owner's death, and comes back with its life
         spellsOnLeave();
         removeAurasOnDeath();
@@ -378,6 +380,95 @@ private:
         deliver(Opcode.MSG_CORPSE_QUERY, w.data);
     }
 
+    /**
+     * The spell that brings this player back by itself, as it dies: a Soulstone's (its Soulstone
+     * Resurrection aura's rank), one time in ten the Twisting Nether's, or Reincarnation (known, ready,
+     * with an Ankh); 0 if none.
+     */
+    private uint selfResurrectionSpell()
+    {
+        import std.random : uniform;
+        import dmangos.world.auras : AuraType;
+
+        static immutable uint[2][6] soulstones = [[20707, 3026], [20762, 20758], [20763, 20759], [20764, 20760],
+            [20765, 20761], [27239, 27240]];
+        enum uint twistingNether = 23701, twistingNetherSpell = 23700;
+        enum uint reincarnationPassive = 20608, reincarnation = 21169, ankh = 17030;
+        uint spell;
+        foreach (aura; player.auras.list)
+        {
+            bool dummy;
+            foreach (i; 0 .. 3)
+                dummy |= (aura.effects & (1 << i)) && aura.type(i) == AuraType.dummy;
+            if (!dummy)
+                continue;
+            foreach (pair; soulstones)
+                if (aura.spell.id == pair[0])
+                    return pair[1];
+            if (aura.spell.id == twistingNether && uniform(0, 100, map.random) < 10)
+                spell = twistingNetherSpell;
+        }
+        if (spell)
+            return spell;
+        if (player.knowsSpell(reincarnationPassive) && spellIsReady(reincarnation)
+                && player.inventory.count(ankh) > 0)
+            return reincarnation;
+        return 0;
+    }
+
+    /// The client uses the way back the player has (`PLAYER_SELF_RES_SPELL`): its spell is cast, its reagents and cooldown taken.
+    @Handles(Opcode.CMSG_SELF_RES, WorldState.inWorld)
+    void handleSelfRes()
+    {
+        const id = player.values.get!PLAYER_SELF_RES_SPELL;
+        if (!id || player.deathState == DeathState.alive)
+            return;
+        player.values.set!PLAYER_SELF_RES_SPELL(0u);
+        const spell = context.data.spells.spell(id);
+        if (spell is null)
+            return;
+        foreach (i, reagent; spell.reagents)
+            if (reagent > 0 && spell.casting.reagentCount[i])
+                player.inventory.destroyCount(reagent, spell.casting.reagentCount[i]);
+        flushInventory();
+        startCooldown(spell);
+        // Its effect at once: the dead cannot cast, and the spell is nothing but the way back.
+        import std.random : uniform01;
+        import dmangos.world.spellcast : effectValue;
+
+        enum uint selfResurrectEffect = 94;
+        foreach (i; 0 .. 3)
+            if (spell.effect[i] == selfResurrectEffect)
+                selfResurrect(spell, i, effectValue(*spell, i, player.data.level, uniform01(map.random)));
+    }
+
+    /// Spell effect 94: the player comes back by itself, with the effect's share (or, negative, amount) of health and mana.
+    package void selfResurrect(const(SpellInfo)* spell, size_t i, int value)
+    {
+        if (player.deathState == DeathState.alive)
+            return;
+        const v = &player.values;
+        const maxHealth = v.get!UNIT_FIELD_MAXHEALTH, maxMana = v.get!UNIT_FIELD_MAXPOWER1(Power.mana);
+        uint health, mana;
+        if (value < 0)
+        {
+            health = cast(uint)(-value);
+            mana = spell.miscValue[i] > 0 ? spell.miscValue[i] : 0;
+        }
+        else
+        {
+            health = cast(uint)(ulong(maxHealth) * value / 100);
+            mana = cast(uint)(ulong(maxMana) * value / 100);
+        }
+        resurrect(0);
+        player.values.set!UNIT_FIELD_HEALTH(health == 0 ? 1 : health < maxHealth ? health : maxHealth);
+        player.values.set!UNIT_FIELD_POWER1(Power.mana, mana < maxMana ? mana : maxMana);
+        player.values.set!UNIT_FIELD_POWER1(Power.rage, 0u);
+        player.values.set!UNIT_FIELD_POWER1(Power.energy, player.values.get!UNIT_FIELD_MAXPOWER1(Power.energy));
+        flushPlayerChanges();
+        spawnCorpseBones();
+    }
+
     private ulong resurrectBy;          /// who offered to bring this player back (0: nobody)
     private uint resurrectMap;
     private Position resurrectAt;       /// where the offer brings it: beside the one who made it
@@ -445,6 +536,7 @@ private:
     void resurrect(float restore)
     {
         player.deathState = DeathState.alive;
+        player.values.set!PLAYER_SELF_RES_SPELL(0u);
         deathTimer = 0;
         setGhost(false);
         sendMovementOrder!(Opcode.SMSG_FORCE_MOVE_UNROOT)();

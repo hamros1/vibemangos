@@ -227,6 +227,23 @@ private:
         }
     }
 
+    /// Whether `spell` is off its cooldown.
+    package bool spellIsReady(uint spell)
+    {
+        if (auto at = spell in spellReadyAt)
+            return context.clock() >= *at;
+        return true;
+    }
+
+    /// Starts `spell`'s cooldown (its recovery time), as casting it does.
+    package void startCooldown(const(SpellInfo)* spell)
+    {
+        import core.time : msecs;
+
+        if (spell.recoveryTime > 0 && !cooldownCheat)
+            spellReadyAt[spell.id] = context.clock() + (cast(long) spell.recoveryTime).msecs;
+    }
+
     /// An auto-repeating spell (`SPELL_ATTR_EX2_AUTOREPEAT_FLAG`) cast by the client.
     static bool autoRepeats(const(SpellInfo)* spell) pure nothrow @nogc @safe
     {
@@ -1464,6 +1481,9 @@ private:
         }
         case 57: // SPELL_EFFECT_LEARN_PET_SPELL
             teachPet(spell.triggerSpell[i]);
+            break;
+        case 94: // SPELL_EFFECT_SELF_RESURRECT
+            selfResurrect(spell, i, value);
             break;
         case 18, 113: // SPELL_EFFECT_RESURRECT (a share of health and mana), SPELL_EFFECT_RESURRECT_NEW (amounts)
             resurrectEffect(spell, i, target, value, c);

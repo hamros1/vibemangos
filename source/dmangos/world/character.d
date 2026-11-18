@@ -1255,3 +1255,36 @@ unittest
     const most = her.values.get!UNIT_FIELD_MAXHEALTH;
     assert(her.values.get!UNIT_FIELD_HEALTH == most * 35 / 100, "with a third of its health");
 }
+
+/// A Soulstone: dying with its aura, the player is offered its way back, and uses it.
+unittest
+{
+    import dmangos.world.auras : AuraType, makeAura;
+    import dmangos.world.movement : Position;
+    import dmangos.world.opcodes : Opcode;
+    import dmangos.world.player : DeathState, Player;
+    import dmangos.world.spellcast : ImplicitTarget;
+    import dmangos.world.spellhandlers : testSpell;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+    import dmangos.world.unit : Blow, UnitRef;
+    import dmangos.world.updatefields;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f));
+    anduin.read();
+    auto me = cast(Player) anduin.session.character;
+    enum uint soulstone = 20707, rise = 3026;
+    context.data.spells.spells[soulstone] = testSpell(soulstone, 6, ImplicitTarget.caster, 0);
+    context.data.spells.spells.edit(soulstone).casting.applyAuraName[0] = AuraType.dummy;
+    context.data.spells.spells[rise] = testSpell(rise, 94, ImplicitTarget.caster, 20);
+    anduin.session.inWorld.addAura(makeAura(soulstone in context.data.spells.spells, me.guid, 1, -1, true, [0, 0, 0]));
+
+    anduin.session.inWorld.sufferDamage(UnitRef.init, 1_000_000, Blow.spell());
+    assert(me.deathState != DeathState.alive && me.values.get!PLAYER_SELF_RES_SPELL == rise, "offered its way back");
+    anduin.read();
+    anduin.write(Opcode.CMSG_SELF_RES, null);
+    assert(me.deathState == DeathState.alive && me.values.get!PLAYER_SELF_RES_SPELL == 0);
+    assert(me.values.get!UNIT_FIELD_HEALTH == me.values.get!UNIT_FIELD_MAXHEALTH * 20 / 100, "with a fifth of its health");
+}

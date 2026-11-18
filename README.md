@@ -433,11 +433,13 @@ What works now:
     (`death_sickness_level`), resurrection sickness: a minute for each level from 11, ten minutes from
     level 20. Another player's resurrection spell (Resurrection, Redemption, Ancestral Spirit,
     Rebirth), at the dead or their corpse, offers to bring them back beside its caster with the
-    spell's health and mana; accepted, the corpse goes. A ghost that logs out is one again
+    spell's health and mana; accepted, the corpse goes. A player who dies with a Soulstone's aura, or
+    knowing Reincarnation (ready, with an Ankh), is offered to come back by itself (the Ankh and the
+    cooldown taken). A ghost that logs out is one again
     at its next login. A creature killed leaves its corpse for a minute (5 for elites and rares, an
     hour for bosses, at most 90% of its respawn time) and comes back at its spawn point after
     `spawntimesecs` (to `spawntimesecsmax`), kept in `creature_respawn` across restarts. Not yet:
-    ghosts hidden from the living, self-resurrection (Soulstone, Reincarnation).
+    ghosts hidden from the living.
   * **Experience and loot:** the first
     player to hurt a creature taps it (others see it grey) for itself and its group. A kill gives
     experience (by the level difference, elites and `ExperienceMultiplier`; doubled from
