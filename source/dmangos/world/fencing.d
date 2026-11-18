@@ -1,5 +1,5 @@
 /**
- * Fencing of the databases (docs/CLUSTER.md, phase 4): a cluster node whose lease has lapsed must not
+ * Fencing of the databases (docs/CLUSTER.md): a cluster node whose lease has lapsed must not
  * write anything, because by the time the coordinator gives its accounts and regions to other nodes it
  * has certainly stopped, and anything it wrote after that could overwrite theirs.
  *

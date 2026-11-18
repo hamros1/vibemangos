@@ -220,7 +220,7 @@ final class Character : OnlinePlayer, Looter
         return connection.wantsClose;
     }
 
-    /// The node holding its client, if another (phase 4b); 0 if here.
+    /// The node holding its client, if another; 0 if here.
     @property ushort home() const
     {
         return connection.home;
@@ -697,7 +697,7 @@ private:
                     packet.body_);
         });
         if (!transferring)
-            map.playerChanged(this); // nodes holding a replica of this player (phase 3b)
+            map.playerChanged(this); // nodes holding a replica of this player
         player.clearChanges();
     }
 

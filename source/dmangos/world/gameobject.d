@@ -356,7 +356,7 @@ final class GameObject : Replicable, Moving, PerViewer
         return update;
     }
 
-    /// Its fields, for its next owner (docs/CLUSTER.md, phase 4).
+    /// Its fields, for its next owner (docs/CLUSTER.md).
     void saveState(ref ByteWriter w) const
     {
         w.put(cast(ushort) values.length);

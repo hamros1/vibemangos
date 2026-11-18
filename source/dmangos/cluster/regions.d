@@ -1,10 +1,10 @@
 /**
- * The world divided into regions that nodes own (docs/CLUSTER.md, phase 2).
+ * The world divided into regions that nodes own (docs/CLUSTER.md).
  *
  * A region is a rectangle of map cells (`dmangos.world.grid`, 66.67 yards). Every map starts as one
  * region over the whole grid; `partition` splits the most expensive region at the median of its
  * cost, along the longer side of where that cost lies, until there are as many regions as asked for
- * (a k-d tree whose leaves are the regions). Cost, until the cluster measures it (phase 6), is the
+ * (a k-d tree whose leaves are the regions). Cost, until the cluster measures it, is the
  * number of creature and game object spawns in a cell: what the benchmarks show spread-out load is
  * made of. A city full of spawns ends up in small regions, an empty sea in one large one.
  *
@@ -60,7 +60,7 @@ struct Region
     ushort owner;        /// node id; 0 for none
     ulong epoch;         /// increases whenever the region is granted anew: a fencing token
     RegionState state;
-    ushort next;         /// while revoking: the node it goes to, which the owner sends its objects to (phase 4)
+    ushort next;         /// while revoking: the node it goes to, which the owner sends its objects to
 }
 
 /// Spawns (or other cost) per cell: map -> cell key -> cost.

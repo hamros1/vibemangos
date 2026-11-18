@@ -1,6 +1,5 @@
 /**
- * The battleground queues and the queue opcodes' answers, as a cluster service (docs/SERVICES.md,
- * stage 5).
+ * The battleground queues and the queue opcodes' answers, as a cluster service (docs/SERVICES.md).
  *
  * Players of any node queue for a battleground of a type (Alterac Valley, Warsong Gulch, Arathi
  * Basin) in the bracket of their level. Waiting players are kept as groups (a player alone is a group

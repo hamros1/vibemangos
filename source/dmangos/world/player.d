@@ -336,7 +336,7 @@ final class Player : InventoryOwner
         return other;
     }
 
-    /// The fields a stranger sees, as (slot, value): a replica's state on another node (phase 3).
+    /// The fields a stranger sees, as (slot, value): a replica's state on another node.
     SlotValue[] strangerSlots() const
     {
         auto slots = values.publicSlots;

@@ -1241,7 +1241,7 @@ private:
             guid = plr.character.guid;
             found = plr.character.data.name;
         }
-        else if (const remote = context.remotePlayer(name)) // another node's player (phase 5b)
+        else if (const remote = context.remotePlayer(name)) // another node's player
         {
             guid = remote.entry.guid;
             found = remote.entry.name;
@@ -1267,7 +1267,7 @@ private:
             guid = plr.character.guid;
             found = plr.character.data.name;
         }
-        else if (const remote = context.remotePlayer(name)) // another node's player (phase 5b)
+        else if (const remote = context.remotePlayer(name)) // another node's player
         {
             guid = remote.entry.guid;
             found = remote.entry.name;

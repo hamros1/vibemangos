@@ -1,5 +1,5 @@
 /**
- * Objects moving to another node with a region (docs/CLUSTER.md, phase 4): what their last owner
+ * Objects moving to another node with a region (docs/CLUSTER.md): what their last owner
  * writes (`encodeBundle`) and their next owner reads (`decodeBundle`). A bundle lists the region's
  * cells the old owner had loaded, and every object homed there with its kind, spawn, home cell and
  * state (`Creature.saveState`, `GameObject.saveState`): the new owner rebuilds each from its spawn

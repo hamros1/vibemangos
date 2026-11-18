@@ -5,7 +5,7 @@
  * account tools do, so both can share a database, and accounts created by
  * either work in both.
  *
- * Time comparisons use the database server's `UNIX_TIMESTAMP()`, so bans
+ * Time comparisons use the database server's `UNIX_TIMESTAMP`, so bans
  * behave identically even if the servers' clocks differ.
  */
 module dmangos.auth.mysqldb;

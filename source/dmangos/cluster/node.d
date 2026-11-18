@@ -1,5 +1,5 @@
 /**
- * A world server's membership in a cluster (docs/CLUSTER.md, phases 1 and 2).
+ * A world server's membership in a cluster (docs/CLUSTER.md).
  *
  * The coordinator admits nodes and keeps the **view**: the live members, with a version that
  * increases at every change. Members dial the coordinator, and each other (the lower node id dials
@@ -11,7 +11,7 @@
  * lower incarnation is refused as stale, and a node refused as stale by its coordinator stops
  * dialing and reports itself `fenced`: it gets no more lease confirmations, so its regions lapse.
  *
- * Regions (phase 2, `dmangos.cluster.ownership`): the coordinator holds the `RegionAuthority` and
+ * Regions (`dmangos.cluster.ownership`): the coordinator holds the `RegionAuthority` and
  * publishes its table whenever it changes; every node keeps a `RegionView`, renews its lease from the
  * coordinator's heartbeat echoes, and tells the world server (`onOwnership`) which regions it gained
  * and lost, then answers the releases the coordinator waits for. Ids come in blocks from the
@@ -31,7 +31,7 @@ import dmangos.cluster.sessions;
 import dmangos.log;
 import dmangos.net.server : NetSession;
 
-/// Opens a connection for `session` to `host:port`; a failure ends in `session.disconnected()`.
+/// Opens a connection for `session` to `host:port`; a failure ends in `session.disconnected`.
 alias Dialer = void delegate(string host, ushort port, NetSession session);
 
 /// What the coordinator starts with: the world divided into regions, and the id counters it hands out from.
@@ -44,7 +44,7 @@ struct CoordinatorSetup
 }
 
 /**
- * What a node does with replication messages (phase 3): the world server implements it. Peers are
+ * What a node does with replication messages: the world server implements it. Peers are
  * node ids; a peer linked anew needs this node's whole interest, a lost one's replicas go.
  */
 interface ReplicationHandler
@@ -85,13 +85,13 @@ interface ReplicationHandler
     void dungeonEntryReply(ushort peer, const ref DungeonEntryReply message);
 }
 
-/// What a node does with messages about players simulated away from their client (phase 4b).
+/// What a node does with messages about players simulated away from their client.
 interface PlayerHandler
 {
     void player(ushort peer, PlayerMessageKind kind, uint account, ushort opcode, const(ubyte)[] data);
 }
 
-/// What a node does with session decisions (phase 3b): the world server implements it.
+/// What a node does with session decisions: the world server implements it.
 interface SessionHandler
 {
     /// The session `serial` of `account` may enter the world.
@@ -111,7 +111,7 @@ final class ClusterNode : LinkOwner
     /// The dial plan key for the coordinator, whose node id is not known before its hello.
     private enum ushort coordinatorKey = 0;
 
-    /// How long the standby waits, with no link to the coordinator, before taking over (phase 7).
+    /// How long the standby waits, with no link to the coordinator, before taking over.
     enum Duration standbyGrace = 500.msecs;
 
     immutable ushort id;
@@ -160,22 +160,22 @@ final class ClusterNode : LinkOwner
         SessionReleased[] releasesWaiting; // ditto
     }
 
-    /// Where session decisions go (phase 3b).
+    /// Where session decisions go.
     SessionHandler sessions;
 
-    /// Where messages about players simulated on another node go (phase 4b).
+    /// Where messages about players simulated on another node go.
     PlayerHandler players;
 
     /**
-     * The world server starts simulating `gained` and stops simulating `lost` (phase 2). For a gained
+     * The world server starts simulating `gained` and stops simulating `lost`. For a gained
      * region whose last owner handed over its objects, `arriving` has their state (by region id); for a
      * lost region on its way to another node (`Region.next`), the world puts its objects' state in
-     * `leaving`, and it goes with the release (phase 4).
+     * `leaving`, and it goes with the release.
      */
     void delegate(const(Region)[] gained, const(Region)[] lost, const(ubyte)[][uint] arriving,
         ref ubyte[][uint] leaving) onOwnership;
 
-    /// Where replication messages go (phase 3); null: they are dropped.
+    /// Where replication messages go; null: they are dropped.
     ReplicationHandler replication;
 
     /// Phase 7: this node, the standby, has just become the coordinator; the world server takes up its part.
@@ -201,7 +201,7 @@ final class ClusterNode : LinkOwner
         return false;
     }
 
-    /// What this node's regions cost it lately (phase 6), for the coordinator's balancing.
+    /// What this node's regions cost it lately, for the coordinator's balancing.
     void reportLoads(RegionLoad[] loads)
     {
         if (isCoordinator)
@@ -360,7 +360,7 @@ final class ClusterNode : LinkOwner
         }
     }
 
-    /// What this node owns (phase 2).
+    /// What this node owns.
     @property RegionView regions()
     {
         return regions_;
@@ -1530,7 +1530,7 @@ unittest
 
         events ~= format!"+%s -%s"(gained.length, lost.length);
     };
-    // Every node hands a region's "objects" to its next owner (phase 4): [region id, the old owner].
+    // Every node hands a region's "objects" to its next owner: [region id, the old owner].
     const(ubyte)[][uint][ushort] received;
     void handsOver(ClusterNode node)
     {
@@ -1785,7 +1785,7 @@ unittest
     assert(now.length == 1 && now[0] != first[0], "moved off the lost node");
 }
 
-// A gateway (docs/SERVICES.md, stage 6): no regions are dealt to it, and clients are sent to it.
+// A gateway (docs/SERVICES.md): no regions are dealt to it, and clients are sent to it.
 unittest
 {
     import dmangos.world.grid : cellKey;

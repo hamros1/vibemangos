@@ -115,7 +115,7 @@ struct Hello
     ushort nodeId;
     ulong incarnation;      /// larger for every start of the process
     @LengthPrefix!ubyte string address; /// "host:port" others dial it at
-    @LengthPrefix!ubyte string clientAddress; /// "host:port" clients connect to (phase 3b)
+    @LengthPrefix!ubyte string clientAddress; /// "host:port" clients connect to
     bool coordinator;       /// whether the sender is the coordinator
     ushort expected;        /// the node the dialer meant to reach; 0 for the coordinator
     bool gateway;           /// a gateway (docs/SERVICES.md): clients' connections, no regions or services
@@ -162,7 +162,7 @@ struct View
     @LengthPrefix!ushort ViewMember[] members;
 }
 
-/// The coordinator's region table (phase 2): who owns what. Sent whole when it changes; it is small.
+/// The coordinator's region table: who owns what. Sent whole when it changes; it is small.
 struct RegionTable
 {
     enum type = MessageType.regionTable;
@@ -179,10 +179,10 @@ struct RegionReleased
 
     uint region;
     ulong epoch;    /// the grant given up; a release of another epoch counts for nothing
-    @LengthPrefix!uint ubyte[] objects; /// the state of its objects, for the next owner (phase 4); may be empty
+    @LengthPrefix!uint ubyte[] objects; /// the state of its objects, for the next owner; may be empty
 }
 
-/// The state of a region's objects from its last owner, sent ahead of the grant on the same link (phase 4).
+/// The state of a region's objects from its last owner, sent ahead of the grant on the same link.
 struct RegionHandover
 {
     enum type = MessageType.regionHandover;
@@ -223,7 +223,7 @@ struct IdReport
     uint pet;
 }
 
-/// The cells of a map the sender's players became near (`added`) and left (`removed`) (phase 3).
+/// The cells of a map the sender's players became near (`added`) and left (`removed`).
 struct InterestUpdate
 {
     enum type = MessageType.interestUpdate;
@@ -311,7 +311,7 @@ struct SessionReleased
     ulong serial;
 }
 
-/// What a `PlayerMessage` is (phase 4b: a player simulated on another node than its client's).
+/// What a `PlayerMessage` is (a player simulated on another node than its client's).
 enum PlayerMessageKind : ubyte
 {
     migrate = 1,     /// the player's simulation moves to the receiver (`data`: its state)
@@ -333,7 +333,7 @@ struct PlayerMessage
     @LengthPrefix!uint ubyte[] data;
 }
 
-/// A packet for every player within `range` of a point (say, yell, emotes: phase 5).
+/// A packet for every player within `range` of a point (say, yell, emotes).
 struct InRange
 {
     enum type = MessageType.inRange;
@@ -345,7 +345,7 @@ struct InRange
     @LengthPrefix!uint ubyte[] body_;
 }
 
-/// A player as other nodes need to know it to whisper it or list it (phase 5).
+/// A player as other nodes need to know it to whisper it or list it.
 struct PresenceEntry
 {
     ulong guid;
@@ -359,7 +359,7 @@ struct PresenceEntry
     @LengthPrefix!ubyte string permissions; /// the account's GM permission letters (`.gm list`)
 }
 
-/// The players the sender simulates that changed (`entries`) or left (`gone`) (phase 5).
+/// The players the sender simulates that changed (`entries`) or left (`gone`).
 struct Presence
 {
     enum type = MessageType.presence;
@@ -369,7 +369,7 @@ struct Presence
     @LengthPrefix!uint ulong[] gone;
 }
 
-/// A packet for one player the receiver simulates (a whisper: phase 5).
+/// A packet for one player the receiver simulates (a whisper).
 struct DeliverTo
 {
     enum type = MessageType.deliverTo;
@@ -379,7 +379,7 @@ struct DeliverTo
     @LengthPrefix!uint ubyte[] body_;
 }
 
-/// A whisper for a player the receiver simulates; it checks and delivers it, and answers the sender (phase 5).
+/// A whisper for a player the receiver simulates; it checks and delivers it, and answers the sender.
 struct WhisperMessage
 {
     enum type = MessageType.whisper;
@@ -392,7 +392,7 @@ struct WhisperMessage
     @LengthPrefix!uint string text;
 }
 
-/// A player on the sender buys a limited item from a creature the receiver simulates: reserve it (phase 5).
+/// A player on the sender buys a limited item from a creature the receiver simulates: reserve it.
 struct StockRequest
 {
     enum type = MessageType.stockRequest;
@@ -423,7 +423,7 @@ struct StockRelease
     uint item, maxCount, count;
 }
 
-/// A player's chat channel command, for the coordinator, which keeps the channels (phase 5b).
+/// A player's chat channel command, for the coordinator, which keeps the channels.
 struct ChannelCommand
 {
     enum type = MessageType.channelCommand;
@@ -440,7 +440,7 @@ struct ChannelCommand
     byte pvpRank;          /// the visual honor rank (-4 to 14), for the defense channels
 }
 
-/// A player's group command (invitations, kicks, the leader, loot, raids), for the coordinator (phase 5b).
+/// A player's group command (invitations, kicks, the leader, loot, raids), for the coordinator.
 struct GroupCommand
 {
     enum type = MessageType.groupCommand;
@@ -494,7 +494,7 @@ struct MemberStatsRequest
     ulong member;
 }
 
-/// A packet for every player the receiver simulates (world texts: phase 5b); with `permission`, only for
+/// A packet for every player the receiver simulates (world texts); with `permission`, only for
 /// those who have that GM permission letter.
 struct ToEveryone
 {
@@ -630,7 +630,7 @@ struct Drain
     ulong incarnation;
 }
 
-/// What one region cost its owner: µs of loop time a second (phase 6).
+/// What one region cost its owner: µs of loop time a second.
 struct RegionLoad
 {
     uint region;
@@ -645,7 +645,7 @@ struct RegionLoads
     @LengthPrefix!uint RegionLoad[] loads;
 }
 
-/// From the standby: the coordinator is gone and the sender is the coordinator now (phase 7).
+/// From the standby: the coordinator is gone and the sender is the coordinator now.
 struct Takeover
 {
     enum type = MessageType.takeover;

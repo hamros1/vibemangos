@@ -79,7 +79,7 @@ private:
     {
         alias R = CharacterResponse;
         const config = context.config;
-        if (!admitted) // in a cluster, the account may still be in the world on another node (phase 3b)
+        if (!admitted) // in a cluster, the account may still be in the world on another node
             return R.CHAR_CREATE_ERROR;
         const isPlayer = account.level == AccountLevel.player;
 
@@ -161,7 +161,7 @@ private:
     void handleCharDelete(const ClientCharDelete request)
     {
         const guid = lowGuid(request.guid);
-        if (!admitted) // in a cluster, the character may be in the world on another node (phase 3b)
+        if (!admitted) // in a cluster, the character may be in the world on another node
             return send(ServerCharDelete(CharacterResponse.CHAR_DELETE_FAILED));
         if (context.database.isGuildLeader(guid))
             return send(ServerCharDelete(CharacterResponse.CHAR_DELETE_FAILED_GUILD_LEADER));

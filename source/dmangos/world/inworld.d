@@ -119,7 +119,7 @@ private:
     }
 
     // -----------------------------------------------------------------------
-    // Moving between nodes (docs/CLUSTER.md, phase 4b)
+    // Moving between nodes (docs/CLUSTER.md)
     // -----------------------------------------------------------------------
 
     /// How far around a player its ground must all be another node's before it moves there.
@@ -514,7 +514,7 @@ private:
         {
             checkZone();
             if (const target = migrationTarget())
-                return migrateTo(target); // the player is simulated there from now on (phase 4b)
+                return migrateTo(target); // the player is simulated there from now on
         }
 
         // A save starts the interval again: no catching up after a stall.
@@ -877,7 +877,6 @@ private:
         }
     }
 
-    /// Everyone within `range` yards hears it, the speaker included (say, yell, text emotes).
     /// Who is online, on this node and (in a cluster) on the others.
     @Handles(Opcode.CMSG_WHO, WorldState.inWorld)
     void handleWho(const ClientWho request)
@@ -903,6 +902,7 @@ private:
             account.level, config.allowTwoSideWhoList, config.gmLevelInWhoList, config.maxWhoListReturns, &areaName));
     }
 
+    /// Everyone within `range` yards hears it, the speaker included (say, yell, text emotes).
     void sayAround(ChatType type, Language language, string text, float range)
     {
         if (teleporting == Teleport.far)
@@ -926,7 +926,7 @@ private:
             return deliverWhisper(target, from, text, context.config.allowTwoSideInteractionChat,
                 (ulong sender) => sessionOf(target).allowsWhispersFrom(sender),
                 (ubyte race) => cast(uint) context.client.teamForRace(race), (Opcode op, const(ubyte)[] b) => deliver(op, b));
-        // Another node's player (phase 5): its node checks and delivers, and answers this one.
+        // Another node's player: its node checks and delivers, and answers this one.
         const remote = context.remotePlayer(to);
         if (remote is null || context.whisperRemote is null)
             return send(ServerChatPlayerNotFound(to));

@@ -425,7 +425,7 @@ struct VendorStocks
         return stock.count;
     }
 
-    /// Puts back `count` of a limited item a purchase did not complete with (stock it reserved: phase 5).
+    /// Puts back `count` of a limited item a purchase did not complete with (stock it reserved).
     void giveBack(uint item, uint maxCount, uint count)
     {
         if (auto stock = item in items)
@@ -435,7 +435,7 @@ struct VendorStocks
 
 /**
  * What NPC services (gossip, trainers, vendors, innkeepers, bankers) need of a creature: the creature
- * itself, or on a cluster node a stand-in for a replica of another node's (`NpcStandIn`, phase 5).
+ * itself, or on a cluster node a stand-in for a replica of another node's (`NpcStandIn`).
  */
 interface Npc
 {
@@ -450,7 +450,7 @@ interface Npc
 }
 
 /**
- * An NPC another node simulates, as this node serves it (phase 5): its replica's fields and position,
+ * An NPC another node simulates, as this node serves it: its replica's fields and position,
  * its template from the world data every node shares. Limited vendor stock is counted here, apart from
  * the real creature's: a known gap until it is kept by the creature's node.
  */
@@ -467,7 +467,7 @@ final class NpcStandIn : Npc
         this.template_ = template_;
     }
 
-    /// The node simulating the real creature: limited stock is reserved there (phase 5).
+    /// The node simulating the real creature: limited stock is reserved there.
     @property ushort owner() const
     {
         return replica.owner;
@@ -941,7 +941,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
 
     /**
      * Writes everything about the creature that changes once it exists, for its next owner to go on
-     * with (docs/CLUSTER.md, phase 4): every field, its movement and walk, its movement generator's
+     * with (docs/CLUSTER.md): every field, its movement and walk, its movement generator's
      * state and its vendor stock.
      */
     void saveState(ref ByteWriter w) const

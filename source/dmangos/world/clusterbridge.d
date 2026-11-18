@@ -1,5 +1,5 @@
 /**
- * The world server's side of replication (docs/CLUSTER.md, phase 3): replicas of this node's
+ * The world server's side of replication (docs/CLUSTER.md): replicas of this node's
  * objects go out through the cluster's links, replication messages from other nodes go to the map
  * they are about, and every tick each map's interest changes go to every linked node.
  */
@@ -22,7 +22,7 @@ import dmangos.world.replication : Replicator;
 import dmangos.world.character : Character;
 import dmangos.world.session : WorldSession, WorldState;
 
-/// See the module documentation. Also relays players simulated away from their client (phase 4b).
+/// See the module documentation. Also relays players simulated away from their client.
 final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerHandler
 {
     private ClusterNode node;
@@ -261,7 +261,7 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
         node.sendTo(peer, DeliverTo(m.requester, cast(ushort) Opcode.SMSG_PARTY_MEMBER_STATS_FULL, body_.dup));
     }
 
-    /// How much a cell's contents weigh in the loop (phase 6): an object in the tick, a resting one, a player.
+    /// How much a cell's contents weigh in the loop: an object in the tick, a resting one, a player.
     enum uint weightTicking = 10, weightResting = 1, weightPlayer = 100;
 
     /**
@@ -496,7 +496,7 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
         session.gmTargeted(m, sink, (GmRemote back) { node.sendTo(peer, back); });
     }
 
-    /// Every group, for every other node's mirror (a coordinator that has just taken over: phase 7).
+    /// Every group, for every other node's mirror (a coordinator that has just taken over).
     void broadcastGroups()
     {
         foreach (ref state; context.groups.states())

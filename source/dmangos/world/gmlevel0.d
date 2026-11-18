@@ -153,7 +153,7 @@ private:
             if (other.hasPermissions)
                 ++gm;
         }
-        // In a cluster, the other nodes' players too (phase 5b).
+        // In a cluster, the other nodes' players too.
         const elsewhere = context.remotePlayers;
         foreach (ref r; elsewhere)
             if (r.entry.flags & PresenceFlags.permissions)
@@ -251,7 +251,7 @@ private:
         foreach (other; context.onlinePlayers)
             if (other.hasPermissions)
                 list(other.character.data.name, sessionOf(other).permissions, other.character.gmTagOn);
-        // In a cluster, the other nodes' GMs too, as presence says (phase 5b).
+        // In a cluster, the other nodes' GMs too, as presence says.
         foreach (ref r; context.remotePlayers)
             if (r.entry.flags & PresenceFlags.permissions)
                 list(r.entry.name, r.entry.permissions, (r.entry.flags & PresenceFlags.gmTag) != 0);

@@ -1,5 +1,5 @@
 /**
- * One login per account across the cluster (docs/CLUSTER.md, phase 3b).
+ * One login per account across the cluster (docs/CLUSTER.md).
  *
  * Every node registers the sessions it accepts with the coordinator (`SessionClaim`). The coordinator's
  * `SessionDirectory` grants an account to one session at a time: a claim for an account another
@@ -9,7 +9,7 @@
  * character in the world, and the second never loads it before the first has saved it.
  *
  * A node that is lost cannot release its sessions; its accounts are freed once its lease has run out
- * (from then on it cannot be acting on anything: docs/CLUSTER.md, phase 2).
+ * (from then on it cannot be acting on anything: docs/CLUSTER.md).
  */
 module dmangos.cluster.sessions;
 

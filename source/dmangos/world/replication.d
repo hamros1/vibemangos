@@ -1,6 +1,6 @@
 /**
  * Replicas: what one node shows of the creatures and game objects another node simulates
- * (docs/CLUSTER.md, phase 3).
+ * (docs/CLUSTER.md).
  *
  * A node that simulates an object in a cell some other node is interested in sends that node the
  * object's state (`encodeState`: its fields as everyone sees them, and its movement), then what
@@ -34,7 +34,7 @@ interface Replicator
     /// `peer` no longer holds a replica of `guid`.
     void remove(ushort peer, uint map, ulong guid);
 
-    /// A packet for every player within `range` of `center` (say, yell, emotes: phase 5), for `peer`'s players.
+    /// A packet for every player within `range` of `center` (say, yell, emotes), for `peer`'s players.
     void inRange(ushort peer, uint map, Position center, float range, ushort opcode, const(ubyte)[] body_);
 }
 

@@ -287,7 +287,7 @@ struct UpdateValues
         writeSlot(slot, value);
     }
 
-    /// The slots everyone may see that are not zero, as (slot, value): a replica's state (phase 3).
+    /// The slots everyone may see that are not zero, as (slot, value): a replica's state.
     SlotValue[] publicSlots() const pure nothrow @safe
     {
         const visibility = visibilityOf(type_);
@@ -419,7 +419,7 @@ enum UpdateFlags : ubyte
     hasPosition = 0x40,   /// adds a position, for objects that are not living
 }
 
-/// A slot of an object's fields and its value (replication, phase 3).
+/// A slot of an object's fields and its value (replication).
 struct SlotValue
 {
     ushort slot;

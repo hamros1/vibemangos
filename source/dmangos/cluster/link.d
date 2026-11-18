@@ -1,5 +1,5 @@
 /**
- * A connection between two nodes (docs/CLUSTER.md, phase 1), as a `NetSession` on the server's
+ * A connection between two nodes (docs/CLUSTER.md), as a `NetSession` on the server's
  * event loop: no thread, no lock.
  *
  * The dialer speaks first with its `Hello`; the other side checks it, through its `LinkOwner`, and
@@ -249,7 +249,7 @@ final class Link : NetSession
     }
 
     /// The peer's hello, once open.
-    /// The peer has become the coordinator (phase 7: the standby took over).
+    /// The peer has become the coordinator (the standby took over).
     void markCoordinator() pure nothrow @nogc @safe
     {
         peer_.coordinator = true;

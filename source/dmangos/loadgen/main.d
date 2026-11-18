@@ -1,6 +1,6 @@
 /**
  * Load generator: many headless clients against a world server, to measure it under load
- * (docs/CLUSTER.md, phase 0; docs/BENCHMARKS.md).
+ * (docs/CLUSTER.md; docs/BENCHMARKS.md).
  *
  * ---
  * loadgen --world 127.0.0.1:8085 --login-db ... --character-db ... --world-db ... --bots 200 --scenario crowd

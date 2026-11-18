@@ -1,7 +1,7 @@
 /**
  * What the GM commands that name a player do to that player, as methods of the player's
  * `Character` (mixed in), so that they run where the player is simulated: on this node, or in a
- * cluster on another (docs/CLUSTER.md, phase 5b), the GM's messages then going back to its node.
+ * cluster on another (docs/CLUSTER.md), the GM's messages then going back to its node.
  * The GM's side (finding the player, logging) stays in the command handlers.
  */
 module dmangos.world.gmtargets;
@@ -77,7 +77,7 @@ mixin template GmTargets()
     }
 
     /**
-     * Sends `op` to the node simulating `name`, if another node does (phase 5b); false if none.
+     * Sends `op` to the node simulating `name`, if another node does; false if none.
      * `map` and `at` are the GM's map and position, for a summons.
      */
     package bool gmElsewhere(string name, GmRemoteOp op, string text = null)
@@ -324,7 +324,7 @@ mixin template GmTargets()
 // ---------------------------------------------------------------------------
 
 /**
- * GM commands naming a player another node simulates (phase 5b): sent there; there, done to the
+ * GM commands naming a player another node simulates: sent there; there, done to the
  * player, the GM told through its sink; and world texts reaching the other nodes.
  */
 unittest

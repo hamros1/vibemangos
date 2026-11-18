@@ -7,7 +7,7 @@
  * damage and heals over time, food's health and drink's mana, energize, triggered spells. Auras end
  * when their time is up, when cancelled (positive ones), at death, and by what their
  * `AuraInterruptFlags` say: standing up (food and drink), moving, taking damage, casting, attacking.
- * Not yet: saving auras (they end at logout), dispels, procs, absorbs, area auras on others.
+ * Auras are saved with the character and loaded at login and arrival. Not yet: dispels, procs, absorbs, area auras on others.
  */
 module dmangos.world.aurahandlers;
 

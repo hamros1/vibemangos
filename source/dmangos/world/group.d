@@ -8,7 +8,7 @@
  * or raid. Its methods keep the database up to date and tell the members
  * online, through `GroupDirectory`, what changed.
  *
- * In a cluster (docs/CLUSTER.md, phase 5b) the coordinator's `Groups` is the
+ * In a cluster (docs/CLUSTER.md) the coordinator's `Groups` is the
  * only one that changes; it tells its members on any node, and every other
  * node keeps a mirror of its groups (`mirror`) for what it decides itself:
  * who sees whose health, party chat, member stats.
@@ -777,7 +777,7 @@ private:
         owner.directory.deliverTo(guid, Opcode.SMSG_GROUP_LIST, empty[]);
     }
 
-    /// A created group changed: other nodes' mirrors follow (phase 5b).
+    /// A created group changed: other nodes' mirrors follow.
     void changed()
     {
         if (id && owner.changes !is null)
@@ -800,7 +800,7 @@ final class Groups
         WorldDatabase database;
         GroupDirectory directory;
         uint nextId;
-        uint delegate() idSource;  // a cluster member's group ids (phase 2); null: `nextId`
+        uint delegate() idSource;  // a cluster member's group ids; null: `nextId`
         Group[uint] byId;
         Group[ulong] memberOf;   // player guid -> created group
         Group[ulong] invitedTo;  // player guid -> group it is invited to (or leads, before creation)
@@ -904,7 +904,7 @@ final class Groups
     }
 
     // -----------------------------------------------------------------------
-    // Mirrors (phase 5b)
+    // Mirrors
     // -----------------------------------------------------------------------
 
     /// A group as other nodes' mirrors get it.

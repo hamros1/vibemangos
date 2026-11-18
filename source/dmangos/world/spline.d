@@ -194,7 +194,7 @@ struct MoveSpline
 
     /**
      * Writes the spline so that `readExact` rebuilds it exactly, times included: what a replica on
-     * another node follows (docs/CLUSTER.md, phase 3).
+     * another node follows (docs/CLUSTER.md).
      */
     void writeExact(ref ByteWriter w) const
     {

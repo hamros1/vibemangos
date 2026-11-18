@@ -122,7 +122,7 @@ struct HeaderCrypt
 
 @safe unittest
 {
-    // Before initialize() headers pass through untouched.
+    // Before initialize headers pass through untouched.
     HeaderCrypt crypt;
     ubyte[serverHeaderLength] header = [1, 2, 3, 4];
     crypt.encryptHeader(header);

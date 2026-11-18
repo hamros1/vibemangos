@@ -113,7 +113,7 @@ private:
     {
         if (transferring)
             return null;
-        auto creature = context.npcFor(map.findObject(guid)); // a creature, or another node's (phase 5)
+        auto creature = context.npcFor(map.findObject(guid)); // a creature, or another node's
         if (creature is null)
             return null;
         if (npcFlags && !(creature.npcValues.get!UNIT_NPC_FLAGS & npcFlags))

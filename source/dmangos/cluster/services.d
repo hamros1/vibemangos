@@ -4,7 +4,7 @@
  *
  * A service is a struct marked `@Service(kind)`. Its methods marked `@Call` are what it can be asked:
  * each takes one plain-data request (`dmangos.plaindata`) and returns a plain-data reply, or nothing.
- * It may also have `tick(Duration)` (its host's world tick), `start()` and `stop()`.
+ * It may also have `tick(Duration)` (its host's world tick), `start` and `stop`.
  *
  * ---
  * @Service(ServiceKind.example)
@@ -13,7 +13,7 @@
  *     uint total;
  *     @Call uint add(const ref Add request) { return total += request.amount; }
  * }
- * host.host(Counter());
+ * host.host(Counter);
  * host.call!(Counter.add)(Add(5), (uint total) { ... });
  * ---
  *
@@ -21,7 +21,7 @@
  * `@Call` methods): each call's id, a fingerprint of its name and its request's and reply's layout
  * (`callId`), and the dispatcher that runs a call from bytes (`Hosted.dispatch`). A call to a service
  * on this node is a direct method call with the request struct: nothing is encoded. A call to one on
- * another node goes as bytes over the cluster's links (stage 3); its reply comes back the same way.
+ * another node goes as bytes over the cluster's links; its reply comes back the same way.
  * Either way the caller's continuation gets the reply, so callers do not care where the service is.
  */
 module dmangos.cluster.services;
@@ -47,7 +47,7 @@ enum ServiceKind : ushort
 }
 
 // ---------------------------------------------------------------------------------------------------
-// Placement: a service is a region (docs/SERVICES.md, stage 2)
+// Placement: a service is a region (docs/SERVICES.md)
 // ---------------------------------------------------------------------------------------------------
 
 /**
@@ -331,7 +331,7 @@ final class ServiceHost
     }
 
     // -----------------------------------------------------------------------
-    // Calls: here directly, elsewhere as bytes (stage 3)
+    // Calls: here directly, elsewhere as bytes
     // -----------------------------------------------------------------------
 
     /// This node's id (0 standalone).

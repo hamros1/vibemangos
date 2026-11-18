@@ -160,7 +160,7 @@ abstract class MovementGenerator
         return 0;
     }
 
-    /// Writes what changes as it runs, for the creature's next owner (docs/CLUSTER.md, phase 4).
+    /// Writes what changes as it runs, for the creature's next owner (docs/CLUSTER.md).
     void save(ref ByteWriter w) const
     {
     }
@@ -866,7 +866,7 @@ unittest
     assert(world.sent.length == 2, "already stopped");
 }
 
-/// Migration (phase 4): a creature's state, saved and loaded into one made anew, goes on exactly the same.
+/// Migration: a creature's state, saved and loaded into one made anew, goes on exactly the same.
 unittest
 {
     import dmangos.bytes : ByteReader, ByteWriter;

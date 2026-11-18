@@ -39,7 +39,7 @@ struct ClusterConfig
      */
     @JsonName("lease_ms") uint leaseMs = 5000;
     /**
-     * How finely the coordinator divides the world (docs/CLUSTER.md, phase 2): until no region
+     * How finely the coordinator divides the world (docs/CLUSTER.md): until no region
      * holds more than 1/`region_count` of all spawns. Each map is a region at least.
      */
     @JsonName("region_count") uint regionCount = 32;
@@ -47,7 +47,7 @@ struct ClusterConfig
     @JsonName("id_block") uint idBlock = 1000;
 
     /**
-     * Load balancing by measured cost (docs/CLUSTER.md, phase 6): how often the coordinator looks, how
+     * Load balancing by measured cost (docs/CLUSTER.md): how often the coordinator looks, how
      * busy (µs of loop time a second) the busiest node must be before anything moves, and how long a
      * region that moved stays where it went.
      */
@@ -61,7 +61,7 @@ struct ClusterConfig
      */
     @JsonName("standby") bool standby;
     /**
-     * A gateway (docs/SERVICES.md, stage 6): it holds clients' connections and simulates nothing. The
+     * A gateway (docs/SERVICES.md): it holds clients' connections and simulates nothing. The
      * coordinator gives it no regions and no services; its players are simulated where they are, and
      * new clients are sent to the gateways when there are any. Not the coordinator, not the standby.
      */

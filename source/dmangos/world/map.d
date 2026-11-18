@@ -25,12 +25,12 @@
  * the players it came near get it and those it left lose it. The map is the
  * `MotionWorld` movement asks for heights and sends its packets through.
  *
- * In a cluster (docs/CLUSTER.md, phase 2) a map holds only what its node owns: a cell's spawns are
+ * In a cluster (docs/CLUSTER.md) a map holds only what its node owns: a cell's spawns are
  * created only if `owns` says the cell is this node's, an object belongs to the cell it spawned in
- * (its home, until objects migrate in phase 4), and when a region is lost its objects go (`release`)
+ * (its home, until objects migrate), and when a region is lost its objects go (`release`)
  * and the players who saw them get an out-of-range block. Standalone, `owns` is null: everything is.
  *
- * Replication (phase 3, `dmangos.world.replication`): the map tells other nodes which cells its
+ * Replication (`dmangos.world.replication`): the map tells other nodes which cells its
  * players are near (`takeInterest`), sends replicas of its own objects in cells other nodes are
  * interested in (`peerInterest`, through `replicator`), and keeps the replicas other nodes send
  * (`replicaCreated` and the like) with its own objects, where its players see them.
@@ -228,8 +228,8 @@ private struct Entity
 
     // A player's own.
     SlotBits known;             // the slots its client has: players and objects
-    ulong[] interest;           // the cells it is near (phase 3)
-    ulong[] lingering;          // guids its client has that this map does not hold yet (phase 4b)
+    ulong[] interest;           // the cells it is near
+    ulong[] lingering;          // guids its client has that this map does not hold yet
 }
 
 /// The players and objects in one cell, by slot.
@@ -302,12 +302,12 @@ final class Map : CombatWorld, GameObjectWorld
         size_t sleeping;                // how many are asleep
         bool delegate(ulong cell) owns; // whether this node owns a cell; null: every cell
 
-        // Replication (phase 3).
+        // Replication.
         bool[ushort][ulong] peerCells;     // cell key -> peers that want what this node simulates there
         uint[ulong] localInterest;         // cell key -> local players near it
         bool[ulong] interestAdded, interestRemoved; // changes since `takeInterest`
 
-        // Players arriving from another node (phase 4b): see `Entity.lingering`; forgotten after `lingerFor`.
+        // Players arriving from another node: see `Entity.lingering`; forgotten after `lingerFor`.
         MonoTime[ulong] lingerUntil;    // player guid -> when its lingering guids go out of range
         Duration unticked;              // time not yet given to the movers (under a millisecond)
         uint[ulong] idleMs;             // loaded cell -> how long no player (here or on a peer) has been near
@@ -740,7 +740,7 @@ final class Map : CombatWorld, GameObjectWorld
 
     /**
      * Takes in an object whose home is cell `key`. A replica of it here is replaced by it in its
-     * slot (this node owns it now, phase 3): its viewers keep seeing it.
+     * slot (this node owns it now): its viewers keep seeing it.
      */
     private void hold(MapObject object, ulong key)
     {
@@ -898,7 +898,7 @@ final class Map : CombatWorld, GameObjectWorld
     }
 
     // -----------------------------------------------------------------------
-    // Players moving between nodes (phase 4b)
+    // Players moving between nodes
     // -----------------------------------------------------------------------
 
     /// How long a guid an arriving player's client has may wait for this map to hold it.
@@ -1107,7 +1107,7 @@ final class Map : CombatWorld, GameObjectWorld
     }
 
     /**
-     * What each cell holds, weighed for how much of the loop it takes (phase 6): an object in the tick
+     * What each cell holds, weighed for how much of the loop it takes: an object in the tick
      * `ticking`, a resting one `resting`, a player simulated here `player`. Replicas count for nothing
      * here: the node that simulates them weighs them.
      */
@@ -1184,7 +1184,7 @@ final class Map : CombatWorld, GameObjectWorld
     }
 
     /**
-     * A region leaves for node `next` with its objects (phase 4; `inside` says which cells are it):
+     * A region leaves for node `next` with its objects (`inside` says which cells are it):
      * each object homed there is written out by `save`, and stays here as a replica of `next`'s object,
      * so nobody who sees it notices; peers holding replicas of it will get `next`'s. Returns the bundle
      * (`dmangos.world.migration`) for `next`.
@@ -1234,7 +1234,7 @@ final class Map : CombatWorld, GameObjectWorld
     }
 
     /**
-     * A region arrives with its objects from its last owner (phase 4): `restore` rebuilds each, which
+     * A region arrives with its objects from its last owner: `restore` rebuilds each, which
      * replaces any replica of it in its slot (its viewers keep seeing it), and the cells it had loaded
      * count as loaded here.
      */
@@ -1288,7 +1288,7 @@ final class Map : CombatWorld, GameObjectWorld
     }
 
     // -----------------------------------------------------------------------
-    // Replication (phase 3)
+    // Replication
     // -----------------------------------------------------------------------
 
     /**
@@ -1881,7 +1881,7 @@ final class Map : CombatWorld, GameObjectWorld
 
     /**
      * Delivers a packet to every player within `range` yards of `center`, whether they see each other or
-     * not, on this node and on every other with players near (phase 5).
+     * not, on this node and on every other with players near.
      */
     void sendInRange(Position center, float range, Opcode opcode, const(ubyte)[] body_)
     {
@@ -2010,7 +2010,7 @@ private:
         replicateSlot(slot, cell, () => encodeState(source, serverTime()));
     }
 
-    /// A local player, as `replicate` for objects: a replica on every node that wants its cell (phase 3b).
+    /// A local player, as `replicate` for objects: a replica on every node that wants its cell.
     void replicatePlayer(Inhabitant who)
     {
         if (replicator is null)
@@ -2087,7 +2087,7 @@ private:
         return replica.owner == owner ? replica : null;
     }
 
-    /// The cells a local player is near now; the map's interest follows (phase 3).
+    /// The cells a local player is near now; the map's interest follows.
     void updateInterest(uint slot, Position position)
     {
         ulong[] near;
@@ -2536,7 +2536,7 @@ unittest
         assert(w.take() == [Opcode.SMSG_COMPRESSED_UPDATE_OBJECT] && w.built == 1);
 }
 
-/// Ownership (phase 2): unowned cells do not spawn; a released region's objects go, and come back when regained.
+/// Ownership: unowned cells do not spawn; a released region's objects go, and come back when regained.
 unittest
 {
     import dmangos.world.updatefields : TypeId;
@@ -2598,7 +2598,7 @@ unittest
     assert(map.objectCount == 1);
 }
 
-/// Replication (phase 3): another node's player sees this node's objects, their changes and moves, and their going.
+/// Replication: another node's player sees this node's objects, their changes and moves, and their going.
 unittest
 {
     import dmangos.world.motion : MotionWorld;
@@ -2725,7 +2725,7 @@ unittest
     assert(owner.replicaCount == 0);
 }
 
-/// Players on different nodes (phase 3b): each sees the other's replica, its moves, its changes and its going.
+/// Players on different nodes: each sees the other's replica, its moves, its changes and its going.
 unittest
 {
     import dmangos.world.replication : Replicator;
@@ -2798,7 +2798,7 @@ unittest
     assert(!one.isReplica(2) && !one.seesObject(1, 2));
 }
 
-/// Migration (phase 4): a region's objects move to another node, and no player on any node notices.
+/// Migration: a region's objects move to another node, and no player on any node notices.
 unittest
 {
     import core.time : msecs;
@@ -2950,7 +2950,7 @@ unittest
     assert(a.findObject(stag.guid).position.x == 505 && c.findObject(stag.guid).position.x == 505);
 }
 
-/// Migration (phase 4): a migrant that finds a fresh spawn of itself replaces it; the migrated state wins.
+/// Migration: a migrant that finds a fresh spawn of itself replaces it; the migrated state wins.
 unittest
 {
     import dmangos.bytes : ByteReader, ByteWriter;
@@ -2997,7 +2997,7 @@ unittest
 }
 
 
-/// Players moving between nodes (phase 4b): the handover sends nothing to anyone; what follows reaches everyone.
+/// Players moving between nodes: the handover sends nothing to anyone; what follows reaches everyone.
 unittest
 {
     import dmangos.world.replication : Replicator;
@@ -3066,7 +3066,7 @@ unittest
     assert(homeWatcher.take() == [Opcode.MSG_MOVE_HEARTBEAT] && home.findObject(1).position.x == 5);
 }
 
-/// Speech across nodes (phase 5): a say reaches players in range on other nodes, each node delivering to its own.
+/// Speech across nodes: a say reaches players in range on other nodes, each node delivering to its own.
 unittest
 {
     import dmangos.world.replication : Replicator;

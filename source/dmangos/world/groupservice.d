@@ -1,5 +1,5 @@
 /**
- * Groups as a cluster service (docs/CLUSTER.md, phase 5b): the rules for what changes a group:
+ * Groups as a cluster service (docs/CLUSTER.md): the rules for what changes a group:
  * invitations, leaving, kicks, leadership, loot settings, raids and subgroups.
  *
  * A group's members may be simulated by any node, so its changes happen in one place: the

@@ -464,7 +464,7 @@ private:
         buyItemFromVendor(request.vendor, request.item, request.count, bag, request.slot);
     }
 
-    /// Limited stock reserved on the node simulating a vendor this node serves through a stand-in (phase 5).
+    /// Limited stock reserved on the node simulating a vendor this node serves through a stand-in.
     static struct StockReservation
     {
         bool held;
@@ -747,7 +747,7 @@ unittest
     assert(packet!ServerBuyBankSlotResult(anduin.read()).result == 0);
 }
 
-/// Limited stock of a vendor another node simulates (phase 5): reserved there, used, refused or given back.
+/// Limited stock of a vendor another node simulates: reserved there, used, refused or given back.
 unittest
 {
     import dmangos.world.grid : cellKeyAt;

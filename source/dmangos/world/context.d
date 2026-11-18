@@ -65,7 +65,7 @@ import dmangos.world.online : OnlinePlayer;
 import dmangos.world.playercreate : CreationSettings;
 import dmangos.world.worlddata : WorldData;
 
-/// How a player simulated on another node than its client's talks to the other node (phase 4b).
+/// How a player simulated on another node than its client's talks to the other node.
 interface PlayerRelay
 {
     void toHome(ushort home, uint account, ushort opcode, const(ubyte)[] body_);
@@ -79,7 +79,7 @@ interface PlayerRelay
     void remoteDone(uint account);
 }
 
-/// A player another node of the cluster simulates (phase 5), as its node described it.
+/// A player another node of the cluster simulates, as its node described it.
 struct RemotePlayer
 {
     ushort node;
@@ -101,7 +101,7 @@ interface Kickable
     /// Closes the session.
     void kick(string reason);
 
-    /// The session may enter the world (at once standalone; in a cluster once the account is its: phase 3b).
+    /// The session may enter the world (at once standalone; in a cluster once the account is its).
     void admit();
 
     /// The client's address.
@@ -238,7 +238,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
     /// The chat channels (on the coordinator; other nodes send it their players' commands).
 
-    /// This node is shutting down cleanly (a drain): players visiting it move on at once (phase 4b).
+    /// This node is shutting down cleanly (a drain): players visiting it move on at once.
     bool draining;
 
     /// The rules of what changes groups (on the coordinator; other nodes send it their players' commands).
@@ -281,24 +281,24 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     bool restartRequested;
 
     /**
-     * In a cluster, whether this node owns a cell of a map (docs/CLUSTER.md, phase 2); null when
+     * In a cluster, whether this node owns a cell of a map (docs/CLUSTER.md); null when
      * standalone, where every cell is this server's.
      */
     bool delegate(uint map, ulong cell) ownsCell;
 
-    /// In a cluster, where maps send replicas of their objects (phase 3); null when standalone.
+    /// In a cluster, where maps send replicas of their objects; null when standalone.
     Replicator replicator;
 
-    /// On a cluster member, the id blocks the coordinator handed out (phase 2); null otherwise.
+    /// On a cluster member, the id blocks the coordinator handed out; null otherwise.
     IdPool idPool;
 
     /**
      * In a cluster, where sessions are claimed when they start and released when they end (their
-     * characters saved), so that an account plays on one node at a time (phase 3b); null standalone.
+     * characters saved), so that an account plays on one node at a time; null standalone.
      */
     void delegate(uint account, ulong serial) claimSession, releaseSession;
 
-    /// In a cluster, this node's id, and the node that owns a map's ground around a point (phase 4b):
+    /// In a cluster, this node's id, and the node that owns a map's ground around a point:
     /// a player simulated here moves to the owner of where it stands. Null when standalone.
     ushort nodeId;
     ushort delegate(uint map, Position at, float radius) regionOwnerAround;
@@ -331,7 +331,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return sessions.values;
     }
 
-    /// A player arrives from another node (phase 4b): in the lists of who is online, and on its map.
+    /// A player arrives from another node: in the lists of who is online, and on its map.
     void enterWorldMigrated(OnlinePlayer who, const(ulong)[] known)
     {
         import dmangos.world.worlddata : toLowerName;
@@ -341,7 +341,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         mapOf(who).addMigrated(who, known);
     }
 
-    /// A player's simulation leaves for node `next` (phase 4b): off the map and the lists, without a word.
+    /// A player's simulation leaves for node `next`: off the map and the lists, without a word.
     void leaveWorldForMigration(OnlinePlayer who, ushort next)
     {
         import dmangos.world.worlddata : toLowerName;
@@ -351,11 +351,11 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         onlineByName.remove(toLowerName(who.character.data.name));
     }
 
-    // Players other nodes simulate (phase 5): what each node said of its own.
+    // Players other nodes simulate: what each node said of its own.
     private RemotePlayer[ulong][ushort] remoteByNode;
 
     /**
-     * Reserves limited vendor stock on the node simulating the creature (phase 5); `then` gets
+     * Reserves limited vendor stock on the node simulating the creature; `then` gets
      * whether it was there and what is left. Null standalone.
      */
     void delegate(ushort owner, uint map, ulong creature, uint item, uint maxCount, uint incrTime, uint buyCount,
@@ -512,7 +512,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     /// The battleground copies this node runs.
     Battlegrounds battlegrounds;
 
-    /// The battleground queues, as the service on this node runs them (docs/SERVICES.md, stage 5).
+    /// The battleground queues, as the service on this node runs them (docs/SERVICES.md).
     private BattlegroundQueue newBattlegroundQueue()
     {
         import dmangos.cluster.ownership : IdKind;
@@ -1276,7 +1276,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     }
 
     /**
-     * What NPC services see of a map object (phase 5): a creature, or a stand-in for a replica of a
+     * What NPC services see of a map object: a creature, or a stand-in for a replica of a
      * creature another node simulates; null for anything else.
      */
     Npc npcFor(MapObject object)
@@ -1310,7 +1310,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     }
 
     /**
-     * The cluster moved regions (phase 2): what was lost leaves the maps, players near what was
+     * The cluster moved regions: what was lost leaves the maps, players near what was
      * gained see it load.
      */
     void regionsChanged(const(Region)[] gained, const(Region)[] lost, const(ubyte)[][uint] arriving,
@@ -1354,7 +1354,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             {
                 if (instanceable(r.map))
                     continue; // a dungeon's copies went above (its map itself is never simulated)
-                if (r.next) // moving to another node: its objects go along (phase 4)
+                if (r.next) // moving to another node: its objects go along
                 {
                     const before = m.objectCount - m.replicaCount;
                     leaving[r.id] = cast(ubyte[]) m.migrateOut((ulong cell) => r.rect.containsKey(cell), r.next,
@@ -1549,7 +1549,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     }
 
     // -----------------------------------------------------------------------
-    // Migration (docs/CLUSTER.md, phase 4)
+    // Migration (docs/CLUSTER.md)
     // -----------------------------------------------------------------------
 
     /// An object's state for its next owner; kind 0 for one that does not move (a player's corpse stays with its player).
@@ -1722,7 +1722,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         database.saveCreatureRespawn(creature.spawn.guid, creature.respawnAt);
     }
 
-    /// A corpse went; one that died elsewhere (handed over dead: phase 4) comes back a respawn time from now.
+    /// A corpse went; one that died elsewhere (handed over dead) comes back a respawn time from now.
     private void corpseRemoved(Creature creature)
     {
         if (creature.petOwner)
@@ -1833,7 +1833,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     private MonoTime[ulong] noticedLately; // player ^ creature -> when it moved for it: not again for a while
 
     /**
-     * A player comes into sight of another node's creature (CLUSTER.md, phase 8): if it would attack the
+     * A player comes into sight of another node's creature (CLUSTER.md): if it would attack the
      * player on sight (an aggressive enemy, the player within its aggro radius and in sight), the
      * player moves to the creature's node, where the creature decides for itself. A player is moved
      * for the same creature once in 30 seconds, so one that does not attack after all is not
@@ -3060,7 +3060,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return true;
     }
 
-    /// Ends every session (a cluster node whose lease lapsed: its writes are fenced, docs/CLUSTER.md phase 4).
+    /// Ends every session (a cluster node whose lease lapsed: its writes are fenced, docs/CLUSTER.md).
     /// A standalone server hosts every service it provides (docs/SERVICES.md).
     void startAllServices()
     {
@@ -3117,7 +3117,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     }
 }
 
-/// NPC services across nodes (phase 5): a replica of a creature is served through a stand-in.
+/// NPC services across nodes: a replica of a creature is served through a stand-in.
 unittest
 {
     import dmangos.world.creature : CreatureParts, CreatureTemplate;

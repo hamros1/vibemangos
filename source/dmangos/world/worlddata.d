@@ -553,7 +553,7 @@ final class WorldData
      */
     /**
      * `spawnSeed` decides pools, spawn groups and spawns' entries; 0 for an unpredictable one. Every
-     * node of a cluster must choose the same (docs/CLUSTER.md, phase 4), so they pass the same seed.
+     * node of a cluster must choose the same (docs/CLUSTER.md), so they pass the same seed.
      */
     void loadSpawns(MySqlConnection world, const ClientData client, ulong spawnSeed = 0)
     {

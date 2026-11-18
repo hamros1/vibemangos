@@ -1,5 +1,5 @@
 /**
- * Who owns which region, and the id blocks nodes allocate from (docs/CLUSTER.md, phase 2).
+ * Who owns which region, and the id blocks nodes allocate from (docs/CLUSTER.md).
  *
  * The coordinator's `RegionAuthority` grants regions and takes them back. Every grant carries a new
  * epoch, larger than any before it, even across restarts of the coordinator (its incarnation is the
@@ -59,7 +59,7 @@ final class RegionAuthority
         uint partitionLastId;          // the start-up partition's highest id: regions above it came of splits
     }
 
-    /// How load balancing by measured cost behaves (phase 6; `ClusterConfig`).
+    /// How load balancing by measured cost behaves (`ClusterConfig`).
     static struct Balancing
     {
         Duration interval = 30.seconds;
@@ -154,7 +154,7 @@ final class RegionAuthority
     }
 
     /**
-     * What `node`'s regions cost it lately, µs of loop time a second (phase 6). The first report
+     * What `node`'s regions cost it lately, µs of loop time a second. The first report
      * switches every cost to measured ones: a region nobody has reported costs nothing, which is
      * right, as a node loads only the cells near its players. Each cost follows its reports smoothly
      * (half the old value and half the new), so one busy moment does not move a region.
@@ -539,7 +539,7 @@ final class RegionView
         this.lease = lease;
     }
 
-    /// This node became the coordinator (phase 7): its own grants need no lease from now on.
+    /// This node became the coordinator: its own grants need no lease from now on.
     void promote()
     {
         authority = true;

@@ -1,5 +1,5 @@
 /**
- * Chat channels as a cluster service (docs/SERVICES.md, stage 4; first docs/CLUSTER.md, phase 5b).
+ * Chat channels as a cluster service (docs/SERVICES.md; first docs/CLUSTER.md).
  *
  * A channel's members may be simulated by any node, so the channels' state lives in one place: the
  * `ChannelService` hosted by the node the cluster placed the channels service on (`ChannelsHost`;

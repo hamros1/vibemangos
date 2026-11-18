@@ -1,6 +1,6 @@
 /**
  * Measurements of the server's own performance: how long ticks take and what the garbage collector
- * does, so memory and scheduling work goes where the numbers point (docs/CLUSTER.md, phase 0).
+ * does, so memory and scheduling work goes where the numbers point (docs/CLUSTER.md).
  *
  * Recording a tick never allocates: durations go into a fixed histogram of power-of-two buckets
  * (from 1 µs up), which is enough to read percentiles to within a factor of two.

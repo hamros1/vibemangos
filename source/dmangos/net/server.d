@@ -168,7 +168,7 @@ final class TcpServer
      */
     TickStats busy;
 
-    /// All the loop's busy time since the start; unlike `busy`, never reset (cluster balancing, phase 6).
+    /// All the loop's busy time since the start; unlike `busy`, never reset (cluster balancing).
     Duration busyTotal;
 
     private ServerOptions options;

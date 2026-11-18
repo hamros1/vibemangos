@@ -1,6 +1,6 @@
 /**
- * Whispers (`CHAT_MSG_WHISPER`), wherever the receiver is simulated (docs/CLUSTER.md,
- * phase 5): the checks and deliveries happen where the receiver is, with what the whisper says of its
+ * Whispers (`CHAT_MSG_WHISPER`), wherever the receiver is simulated (docs/CLUSTER.md):
+ * the checks and deliveries happen where the receiver is, with what the whisper says of its
  * sender, and whatever goes back to the sender (its copy of the whisper, the receiver's away message,
  * a refusal) goes through `toSender`: straight to its client on the same node, or back to its node.
  */

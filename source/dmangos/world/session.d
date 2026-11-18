@@ -60,7 +60,7 @@ enum WorldState
     awaitingAuth,    /// challenge sent, waiting for CMSG_AUTH_SESSION
     characterScreen, /// authenticated; the client shows its character list
     inWorld,         /// playing a character
-    elsewhere,       /// playing a character simulated on another node of the cluster (phase 4b)
+    elsewhere,       /// playing a character simulated on another node of the cluster
     closed,
 }
 
@@ -81,7 +81,7 @@ final class WorldSession : NetSession, ReusesOutput, BoundedOutput, Kickable
         return size_t(context.config.maxPendingOutputKb) * 1024;
     }
 
-    // A player simulated on another node than its client's (docs/CLUSTER.md, phase 4b).
+    // A player simulated on another node than its client's (docs/CLUSTER.md).
     package ushort ownerNode;              // home: the node simulating this session's player; 0: here
     package ushort homeNode;               // owner: the node holding this session's client; 0: here
     package bool releaseWhenBack;          // home: the client left while elsewhere; release once the owner saved
@@ -151,7 +151,7 @@ final class WorldSession : NetSession, ReusesOutput, BoundedOutput, Kickable
     }
 
     /**
-     * A session whose client is on node `home` (phase 4b): its player's simulation came here. It has
+     * A session whose client is on node `home`: its player's simulation came here. It has
      * no socket: what it sends goes to `home`, what the client sends comes through `fromHome`.
      */
     this(WorldContext context, WorldAccount account, ushort home)
@@ -167,13 +167,13 @@ final class WorldSession : NetSession, ReusesOutput, BoundedOutput, Kickable
         state_ = WorldState.characterScreen;
     }
 
-    /// The node holding this session's client, if it is another (phase 4b); 0 if here.
+    /// The node holding this session's client, if it is another; 0 if here.
     @property ushort home() const pure nothrow @nogc @safe
     {
         return homeNode;
     }
 
-    /// The node simulating this session's player, if it is another (phase 4b); 0 if here.
+    /// The node simulating this session's player, if it is another; 0 if here.
     @property ushort owner() const pure nothrow @nogc @safe
     {
         return ownerNode;
@@ -449,7 +449,7 @@ final class WorldSession : NetSession, ReusesOutput, BoundedOutput, Kickable
 package:
     void handle(Opcode opcode, ref ByteReader reader)
     {
-        // Playing on another node: everything the client says goes there (phase 4b).
+        // Playing on another node: everything the client says goes there.
         if (state_ == WorldState.elsewhere)
             return context.relayToOwner(ownerNode, account.id, cast(ushort) opcode, reader.readBytes(reader.remaining));
         DispatchResult result;
@@ -763,7 +763,7 @@ unittest
 }
 
 
-/// In a cluster (phase 3b) a player login waits until the coordinator grants the account; an eviction kicks.
+/// In a cluster a player login waits until the coordinator grants the account; an eviction kicks.
 unittest
 {
     import dmangos.world.player : CharacterData;
@@ -802,7 +802,7 @@ unittest
     assert(released == [c.account]);
 }
 
-/// A player simulated on another node (phase 4b): handed over, relayed both ways, and back to the character screen.
+/// A player simulated on another node: handed over, relayed both ways, and back to the character screen.
 unittest
 {
     import core.time : seconds;
@@ -889,7 +889,7 @@ unittest
 }
 
 /**
- * A player away from home moving on to a third node (phase 4b): straight there, its home told, the
+ * A player away from home moving on to a third node: straight there, its home told, the
  * client's packets then going there; and back home from there.
  */
 unittest
@@ -1012,7 +1012,7 @@ unittest
     assert(client.session.owner == 0 && nodes[1].onlinePlayer(guid) !is null);
 }
 
-/// Whispers across nodes (phase 5): to a player another node simulates, checked and delivered by that node.
+/// Whispers across nodes: to a player another node simulates, checked and delivered by that node.
 unittest
 {
     import dmangos.cluster.protocol : PresenceEntry;
@@ -1049,7 +1049,7 @@ unittest
     assert(opcodesOf(client.read()) == [Opcode.SMSG_CHAT_PLAYER_NOT_FOUND]);
 }
 
-/// Whispers from another node (phase 5): checked where the receiver is, the answers going back to the sender.
+/// Whispers from another node: checked where the receiver is, the answers going back to the sender.
 unittest
 {
     import dmangos.world.player : CharacterData;

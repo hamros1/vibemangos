@@ -18,8 +18,8 @@
  * (the server stopped between the two) is written first (`replayLog`). A crash so loses only what was
  * queued and not yet logged: what came while the writer was busy with the writes before.
  *
- * Each queued write carries the time until which this node may write (its cluster lease, docs/CLUSTER.md
- * phase 4); the writer drops a write it reaches after that, and so does the replay. A standalone server
+ * Each queued write carries the time until which this node may write (its cluster lease, docs/CLUSTER.md);
+ * the writer drops a write it reaches after that, and so does the replay. A standalone server
  * writes always.
  *
  * Everything is generated from the interface (`std.typecons.AutoImplement`, as in `fencing.d`), so a

@@ -703,7 +703,7 @@ unittest
 }
 
 /**
- * Dungeons in a cluster (docs/CLUSTER.md, phase 8): node 2 hosts the Deadmines, node 1 the ground
+ * Dungeons in a cluster (docs/CLUSTER.md): node 2 hosts the Deadmines, node 1 the ground
  * outside. A player on node 1 going in moves to node 2 first and gets its copy there, with an id of
  * the cluster's; another player sent into that copy (as `.appear` and `.summon` do) joins it there;
  * `.instance exit` brings the first out, and on node 1's ground it moves back home. A player saved

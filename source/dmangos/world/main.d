@@ -91,7 +91,7 @@ private int run(WorldConfig config, string configPath)
 
     auto client = ClientData.load(config.dataDir);
     // The nodes of a cluster must choose the same pooled and grouped spawns: they share a seed made from the
-    // cluster's name and the realm (docs/CLUSTER.md, phase 4). Standalone, the choice is new at every start.
+    // cluster's name and the realm (docs/CLUSTER.md). Standalone, the choice is new at every start.
     ulong spawnSeed;
     if (config.cluster.enabled)
     {
@@ -137,7 +137,7 @@ private int run(WorldConfig config, string configPath)
     auto context = new WorldContext(config, behind, data, client, new MySqlLoginDatabase(login));
     context.writer = writer;
     context.configPath = configPath;
-    // Every node serves clients (docs/CLUSTER.md, phase 3b); only a standalone server or a cluster's coordinator speaks
+    // Every node serves clients (docs/CLUSTER.md); only a standalone server or a cluster's coordinator speaks
     // for the realm: its row in the realm list, and marking everyone offline at start.
     bool speaksForRealm = !config.cluster.enabled || config.cluster.isCoordinator; // the standby may take it over
     context.keepsHonorWeek = speaksForRealm; // the honor week is reckoned once, by the realm's speaker
@@ -174,7 +174,7 @@ private int run(WorldConfig config, string configPath)
     {
         const linkIdle = (2 * config.cluster.failureTimeoutMs).msecs; // the links time out first, on heartbeats
         CoordinatorSetup setup;
-        if (config.cluster.isCoordinator || config.cluster.standby) // the standby keeps it for a takeover (phase 7)
+        if (config.cluster.isCoordinator || config.cluster.standby) // the standby keeps it for a takeover
             setup = coordinatorSetup(config.cluster.regionCount, data, client, context);
         cluster = new ClusterNode(config.cluster, ClusterNode.newIncarnation(), () => MonoTime.currTime,
             (host, port, session) => server.connect(host, port, session, linkIdle),
@@ -183,14 +183,14 @@ private int run(WorldConfig config, string configPath)
         // The world simulates only what this node owns: maps ask, and are told of changes.
         context.ownsCell = (uint map, ulong cell) => cluster.regions.ownsCell(map, cell);
         cluster.onOwnership = &context.regionsChanged;
-        // Replicas go both ways between nodes (phase 3).
+        // Replicas go both ways between nodes.
         bridge = new ClusterBridge(cluster, context, config.cluster.leaseMs);
         cluster.replication = bridge;
         context.replicator = bridge;
-        // Players move to the node that owns the ground they stand on, their clients staying put (phase 4b).
+        // Players move to the node that owns the ground they stand on, their clients staying put.
         cluster.players = bridge;
         context.playerRelay = bridge;
-        // Whispers to players other nodes simulate (phase 5).
+        // Whispers to players other nodes simulate.
         context.whisperRemote = &bridge.whisperRemote;
         context.deliverRemote = &bridge.deliverRemote;
         context.requestMemberStats = &bridge.requestMemberStats;
@@ -225,7 +225,7 @@ private int run(WorldConfig config, string configPath)
             return owner;
         };
         // A node whose lease lapsed writes nothing: by the time its accounts and regions go elsewhere it has
-        // certainly stopped, and writes after that could overwrite theirs (phase 4).
+        // certainly stopped, and writes after that could overwrite theirs.
         context.database = new FencedDatabase(context.database, () => cluster.regions.leaseHolds(MonoTime.currTime));
         // Cluster services (docs/SERVICES.md): where each runs is in the region table; calls go over the links.
         {
@@ -248,14 +248,14 @@ private int run(WorldConfig config, string configPath)
                 return long.max;
             return Clock.currStdTime + (ends > at ? (ends - at).total!"hnsecs" : -1);
         };
-        // One login per account across the cluster (phase 3b), and members' ids from the coordinator's blocks.
+        // One login per account across the cluster, and members' ids from the coordinator's blocks.
         cluster.sessions = context;
         context.claimSession = (uint account, ulong serial) => cluster.claimSession(account, serial);
         context.releaseSession = (uint account, ulong serial) => cluster.releaseSession(account, serial);
         if (!cluster.isCoordinator)
         {
             context.idPool = cluster.pool;
-            // Groups are the coordinator's (phase 5b): this node mirrors them.
+            // Groups are the coordinator's: this node mirrors them.
             context.groups.clear();
         }
         // Phase 7: the standby, become the coordinator, takes up the coordinator's part of the world server.
@@ -317,7 +317,7 @@ private int run(WorldConfig config, string configPath)
                     info!"%s"(context.services.describe());
                 }
             }
-            // What this node's regions cost it, for the coordinator's balancing (phase 6).
+            // What this node's regions cost it, for the coordinator's balancing.
             if (cluster !is null && now - lastLoadReport >= 10.seconds)
             {
                 const busyNow = server.busyTotal;
@@ -326,7 +326,7 @@ private int run(WorldConfig config, string configPath)
                 lastBusy = busyNow;
                 lastLoadReport = now;
             }
-            // The coordinator sends new clients to the node with the fewest players (phase 3b).
+            // The coordinator sends new clients to the node with the fewest players.
             if (cluster !is null && cluster.isCoordinator && now - lastSteering >= 10.seconds)
             {
                 lastSteering = now;
@@ -396,7 +396,7 @@ private int run(WorldConfig config, string configPath)
 }
 
 /**
- * The coordinator's start (docs/CLUSTER.md, phase 2): every map of `Map.dbc` divided into about
+ * The coordinator's start (docs/CLUSTER.md): every map of `Map.dbc` divided into about
  * `regionCount` regions by where creatures and game objects spawn, and the counters ids come from.
  */
 private CoordinatorSetup coordinatorSetup(uint regionCount, WorldData data, ClientData client, WorldContext context)
