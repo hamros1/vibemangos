@@ -376,3 +376,30 @@ unittest
     // Unhappy, it hits a quarter softer; happy, a quarter harder.
     assert(moodDamageFactor(0) == 0.75f && moodDamageFactor(2 * happinessLevel) == 1.25f);
 }
+
+/// The owner's death sends the pet away; it comes back when its owner comes back to life.
+unittest
+{
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    auto rexxar = loggedIn(context, db, 7, "Rexxar", Position(-8949.95f, -132.49f, 83.53f, 0), AccountLevel.player,
+        raceOrc);
+    rexxar.read();
+    addPetData(&rexxar, context);
+    auto session = rexxar.session.inWorld;
+    auto map = context.map(0);
+    auto beast = context.summonCreature(map, wolf, Position(-8947, -132.49f, 83.53f, 0), TempSpawnType.dead, 0, 0);
+    auto tame = effectSpell(spellTameBeastDone, 55);
+    session.tameCreature(&tame, beast.guid);
+    assert(session.ownPet !is null);
+    rexxar.read();
+
+    import dmangos.world.unit : Blow, UnitRef;
+
+    session.sufferDamage(UnitRef.init, 1_000_000, Blow.spell());
+    assert(session.ownPet is null, "gone with its owner");
+    session.bringBack(1.0f);
+    assert(session.ownPet !is null && session.ownPet.template_.entry == wolf, "back with its owner");
+}

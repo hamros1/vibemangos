@@ -218,8 +218,8 @@ GM command set has none).
   dismissing, reviving, the bar and its commands, following and fighting, experience, renaming,
   abandoning, stables, saving. Loyalty and happiness over time and Feed Pet: done. Not yet: pet training and
   `.pet` GM commands, `pet_aura` and `pet_spell_cooldown`, a pet's spells beyond its autocast and
-  ordered casts (opener spells), creatures noticing pets on sight, the owner's death sending the pet
-  away.
+  ordered casts (opener spells), creatures noticing pets on sight. The owner's death sends the pet
+  away until the owner lives again: done.
 * Quests: done (above).
 * The rest of the GM commands, as their systems arrive (COMMANDS.md lists them): each is one
   method of the handler group it belongs to.

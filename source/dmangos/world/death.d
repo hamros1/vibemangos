@@ -159,6 +159,7 @@ private:
     void playerDied(bool byCreature)
     {
         info!"%s: '%s' died"(remoteAddress, player.data.name);
+        petsOnLeave(); // the pet goes with its owner's death, and comes back with its life
         spellsOnLeave();
         removeAurasOnDeath();
         cancelTrade(true);
@@ -396,6 +397,7 @@ private:
         }
         flushPlayerChanges();
         map.refreshVisibility(this); // the spirit healers go
+        petsOnArrival();
         if (auto group = context.groups.of(player.guid))
             group.updatePlayerOutOfRange(this, GroupUpdate.status | GroupUpdate.currentHealth | GroupUpdate.currentPower);
         info!"%s: '%s' came back to life"(remoteAddress, player.data.name);

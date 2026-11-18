@@ -911,10 +911,12 @@ mixin template PetHandlers()
             unsummonPet(PetSlot.current);
     }
 
-    /// At login and after a teleport or move: the pet saved out with the player comes back.
+    /// At login, after a teleport or move, and on coming back to life: the pet saved out with the player comes back (not to the dead).
     package void petsOnArrival()
     {
-        if (pet_ !is null || player is null)
+        import dmangos.world.player : DeathState;
+
+        if (pet_ !is null || player is null || player.deathState != DeathState.alive)
             return;
         foreach (r; savedPets())
             if (r.slot == PetSlot.current)

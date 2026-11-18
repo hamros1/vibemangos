@@ -293,6 +293,12 @@ final class Character : OnlinePlayer, Looter
     }
 
     /// See `dmangos.world.unit.dealDamage`: damage the player suffers.
+    /// Brings the player back to life with `restore` of its health and mana (see `DeathHandlers.resurrect`).
+    void bringBack(float restore)
+    {
+        resurrect(restore);
+    }
+
     /// See `TeleportHandlers.crossOnShip`.
     void rideShipAcross(uint mapId, Position shipAt, ulong shipGuid, uint shipEntry)
     {
