@@ -234,7 +234,8 @@ What works now:
     abilities at once, and of its others one time in ten as the pet uses them. A hunters' pet trainer
     untrains the pet (10 silver, then 50, then a gold more each time the same day, at most 10 gold). The owner's death
     sends the pet away until the owner lives again. Hostile creatures notice a pet that comes within
-    their aggro radius and attack it. Not yet: pet auras and cooldowns saved.
+    their aggro radius and attack it. A pet's auras (with the time they have left) and its
+    cooldowns are saved with it (`pet_aura`, `pet_spell_cooldown`) and are back on it when it comes back.
   * **Friends and ignore lists:** up to 50 friends and 25 ignored players,
     in `character_social`; the friend list shows who is online (zone, level, class, away or busy),
     on this node or another; friends hear of a login and a logout (across nodes too); a friend of

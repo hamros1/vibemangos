@@ -36,10 +36,12 @@ mixin template PetBehaviour()
     import dmangos.world.relations : canAttack;
     import dmangos.world.spells : SpellInfo;
 
+    /// Its spells' cooldowns left, in milliseconds (saved with the pet).
+    int[uint] petCooldowns;
+
     private
     {
         Position followedTo;        // where the owner was when it last set off after it
-        int[uint] petCooldowns;     // its spells' cooldowns left, in milliseconds
         int lookTimer;              // until an aggressive pet next looks around
     }
 

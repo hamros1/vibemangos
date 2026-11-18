@@ -1094,6 +1094,53 @@ final class CharacterStatements
         characters.execute!"UPDATE characters SET name = ?, at_login = at_login & ~1 WHERE guid = ?"(newName, guid);
     }
 
+    /// See `WorldDatabase.savePetAuras`.
+    void savePetAuras(uint pet, const(AuraRecord)[] auras)
+    {
+        characters.transaction({
+            characters.execute!"DELETE FROM pet_aura WHERE guid = ?"(pet);
+            foreach (ref a; auras)
+                characters.execute!("INSERT IGNORE INTO pet_aura (guid, caster_guid, item_guid, spell, stackcount, "
+                    ~ "remaincharges, basepoints0, basepoints1, basepoints2, periodictime0, periodictime1, periodictime2, "
+                    ~ "maxduration, remaintime, effIndexMask) VALUES (?, ?, 0, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)")(pet,
+                    a.caster, a.spell, a.stacks, a.amount[0], a.amount[1], a.amount[2], a.periodTimer[0],
+                    a.periodTimer[1], a.periodTimer[2], a.maxDuration, a.remaining, a.effectMask);
+        });
+    }
+
+    /// See `WorldDatabase.loadPetAuras`.
+    AuraRecord[] loadPetAuras(uint pet)
+    {
+        AuraRecord[] found;
+        foreach (row; characters.query!("SELECT caster_guid, spell, stackcount, basepoints0, basepoints1, basepoints2, "
+                ~ "periodictime0, periodictime1, periodictime2, maxduration, remaintime, effIndexMask "
+                ~ "FROM pet_aura WHERE guid = ?")(pet))
+            found ~= AuraRecord(row.get!ulong(0), row.get!uint(1), row.get!uint(2), [row.get!int(3), row.get!int(4),
+                row.get!int(5)], [row.get!int(6), row.get!int(7), row.get!int(8)], row.get!int(9), row.get!int(10),
+                row.get!uint(11));
+        return found;
+    }
+
+    /// See `WorldDatabase.savePetCooldowns`.
+    void savePetCooldowns(uint pet, const(ulong[2])[] cooldowns)
+    {
+        characters.transaction({
+            characters.execute!"DELETE FROM pet_spell_cooldown WHERE guid = ?"(pet);
+            foreach (c; cooldowns)
+                characters.execute!"INSERT IGNORE INTO pet_spell_cooldown (guid, spell, time) VALUES (?, ?, ?)"(pet,
+                    cast(uint) c[0], c[1]);
+        });
+    }
+
+    /// See `WorldDatabase.loadPetCooldowns`.
+    ulong[2][] loadPetCooldowns(uint pet)
+    {
+        ulong[2][] found;
+        foreach (row; characters.query!"SELECT spell, time FROM pet_spell_cooldown WHERE guid = ?"(pet))
+            found ~= [ulong(row.get!uint(0)), row.get!ulong(1)];
+        return found;
+    }
+
     /// See `WorldDatabase.gameEventStatus`.
     ushort[] gameEventStatus()
     {

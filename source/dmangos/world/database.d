@@ -665,6 +665,16 @@ interface WorldDatabase
     /// A bug report or suggestion from a client (`bugreport`).
     void saveBugReport(string type, string content);
 
+    /// A pet's auras that last (`pet_aura`), all of them (the old rows go); and those saved.
+    void savePetAuras(uint pet, const(AuraRecord)[] auras);
+    /// ditto
+    AuraRecord[] loadPetAuras(uint pet);
+
+    /// A pet's cooldowns still running (`pet_spell_cooldown`: spell, Unix time ready), all of them; and those saved.
+    void savePetCooldowns(uint pet, const(ulong[2])[] cooldowns);
+    /// ditto
+    ulong[2][] loadPetCooldowns(uint pet);
+
     /// The game events on when last looked (`game_event_status`), and one's change.
     ushort[] gameEventStatus();
     /// ditto
@@ -939,6 +949,10 @@ final class MySqlWorldDatabase : WorldDatabase
     TicketRecord[] tickets(bool all) { return statements.tickets(all); }
     void saveBugReport(string type, string content) { statements.saveBugReport(type, content); }
     ushort[] gameEventStatus() { return statements.gameEventStatus(); }
+    void savePetAuras(uint pet, const(AuraRecord)[] auras) { statements.savePetAuras(pet, auras); }
+    AuraRecord[] loadPetAuras(uint pet) { return statements.loadPetAuras(pet); }
+    void savePetCooldowns(uint pet, const(ulong[2])[] cooldowns) { statements.savePetCooldowns(pet, cooldowns); }
+    ulong[2][] loadPetCooldowns(uint pet) { return statements.loadPetCooldowns(pet); }
     void setGameEventStatus(ushort event, bool on) { statements.setGameEventStatus(event, on); }
     uint[] charactersFor(uint raceMask, uint quest) { return statements.charactersFor(raceMask, quest); }
     void saveAccountData(bool perCharacter, uint owner, uint type, long time, const(ubyte)[] data)
@@ -1175,6 +1189,12 @@ final class MemoryWorldDatabase : WorldDatabase
         return accountDataRows.get(format!"%s:%s:%s"(perCharacter, owner, type), null);
     }
     void saveBugReport(string type, string content) { bugReports ~= [type, content]; }
+    AuraRecord[][uint] petAuraRows;
+    ulong[2][][uint] petCooldownRows;
+    void savePetAuras(uint pet, const(AuraRecord)[] auras) { petAuraRows[pet] = auras.dup; }
+    AuraRecord[] loadPetAuras(uint pet) { return petAuraRows.get(pet, null).dup; }
+    void savePetCooldowns(uint pet, const(ulong[2])[] cooldowns) { petCooldownRows[pet] = cooldowns.dup; }
+    ulong[2][] loadPetCooldowns(uint pet) { return petCooldownRows.get(pet, null).dup; }
     bool[ushort] gameEventStatusRows;
     ushort[] gameEventStatus() { return gameEventStatusRows.keys; }
     void setGameEventStatus(ushort event, bool on)

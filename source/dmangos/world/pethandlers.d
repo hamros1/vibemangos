@@ -136,7 +136,7 @@ mixin template PetHandlers()
     import dmangos.world.creature : classStatsKey, Creature;
     import dmangos.world.creatureai : ReactState;
     import dmangos.world.unit : UnitRef;
-    import dmangos.world.database : PetRecord, PetSpellRecord;
+    import dmangos.world.database : AuraRecord, PetRecord, PetSpellRecord;
     import dmangos.world.defines : UnitFlags;
     import dmangos.world.movement : baseMoveSpeed, MoveType, Position;
     import dmangos.world.npchandlers : NpcFlag;
@@ -383,11 +383,18 @@ mixin template PetHandlers()
         uint level = r.level;
         if (r.type == PetType.summon || level > player.data.level)
             level = player.data.level;
+        const savedAuras = context.database.loadPetAuras(r.id), savedCooldowns = context.database.loadPetCooldowns(r.id);
         auto state = PetState.from(r, player.guid);
         auto creature = bringPet(state, r.entry, r.modelId, level, r.exp, cast(ReactState) r.reactState,
             r.health == 0 && healthPercent ? 1 : health, mana, focus);
         if (creature is null)
             return false;
+        if (r.health != 0 || fullHealth)
+        {
+            restorePetAurasAndCooldowns(savedAuras, savedCooldowns);
+            if (savedAuras.length || savedCooldowns.length)
+                writePet(PetSlot.current); // as it is now
+        }
         if (r.health == 0 && healthPercent)
         {
             const most = creature.values.get!UNIT_FIELD_MAXHEALTH;
@@ -429,6 +436,51 @@ mixin template PetHandlers()
                 context.database.deletePet(player.data.guid, other.id);
         }
         context.database.savePet(r);
+        savePetAurasAndCooldowns(r.id);
+    }
+
+    /// The pet's auras that last and its cooldowns still running, saved with it (`pet_aura`, `pet_spell_cooldown`).
+    private void savePetAurasAndCooldowns(uint id)
+    {
+        AuraRecord[] rows;
+        if (pet_.alive)
+            foreach (aura; pet_.auras.list)
+                if (!aura.passive && aura.duration != 0)
+                    rows ~= AuraRecord(aura.caster, aura.spell.id, aura.stacks, aura.amount, aura.periodTimer,
+                        aura.maxDuration, aura.duration, aura.effects);
+        context.database.savePetAuras(id, rows);
+        ulong[2][] cooldowns;
+        const now = context.unixTime;
+        foreach (spell, ms; pet_.ai.petCooldowns)
+            if (ms >= 1000)
+                cooldowns ~= [ulong(spell), cast(ulong)(now + ms / 1000)];
+        context.database.savePetCooldowns(id, cooldowns);
+    }
+
+    /// The pet's saved auras (with the time they had left) and cooldowns (read before it came: it is saved as it comes), on it.
+    private void restorePetAurasAndCooldowns(const(AuraRecord)[] auras, const(ulong[2])[] cooldowns)
+    {
+        import dmangos.world.auras : makeAura;
+
+        foreach (ref row; auras)
+        {
+            const spell = context.data.spells.spell(row.spell);
+            if (spell is null || row.remaining == 0)
+                continue;
+            auto aura = makeAura(spell, row.caster, pet_.values.get!UNIT_FIELD_LEVEL, row.maxDuration, true, row.amount);
+            aura.duration = row.remaining;
+            aura.stacks = row.stacks ? row.stacks : 1;
+            foreach (i; 0 .. 3)
+                if (aura.period[i] > 0 && row.periodTimer[i] > 0)
+                    aura.periodTimer[i] = row.periodTimer[i];
+            bool isNew;
+            pet_.auras.apply(aura, pet_.values, isNew);
+        }
+        const now = context.unixTime;
+        foreach (c; cooldowns)
+            if (c[1] > now)
+                pet_.ai.petCooldowns[cast(uint) c[0]] = cast(int)((c[1] - now) * 1000);
+        map.flushObjectChanges(pet_);
     }
 
     /**
@@ -462,8 +514,13 @@ mixin template PetHandlers()
         auto state = petState();
         if (state is null)
             return;
+        import dmangos.world.pet : PetCooldown;
+
+        PetCooldown[] cooldowns;
+        foreach (spell, ms; pet_.ai.petCooldowns)
+            cooldowns ~= PetCooldown(spell, ms > 0 ? ms : 0, 0, 0);
         deliver(Opcode.SMSG_PET_SPELLS, petSpellsPacket(pet_.guid, pet_.ai.react, state.command, state.bar,
-            state.spells, null));
+            state.spells, cooldowns));
     }
 
     /// `SMSG_PET_TAME_FAILURE`

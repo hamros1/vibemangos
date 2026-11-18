@@ -315,13 +315,30 @@ unittest
     assert(pet !is null && pet.alive && pet.values.get!UNIT_FIELD_HEALTH == pet.values.get!UNIT_FIELD_MAXHEALTH * 15 / 100);
     assert(session.petCastCheck(&callPet, none) == SpellCastResult.alreadyHaveSummon);
 
-    // Out at logout, out again at login.
+    // Out at logout, out again at login: with its aura's time left and its cooldown.
+    {
+        import dmangos.world.auras : AuraType, makeAura;
+        import dmangos.world.spellhandlers : testSpell;
+
+        enum uint mark = 97301, bite = 97302;
+        context.data.spells.spells[mark] = testSpell(mark, 6, 1, 0);
+        context.data.spells.spells.edit(mark).casting.applyAuraName[0] = AuraType.modResistance;
+        bool isNew;
+        pet.auras.apply(makeAura(mark in context.data.spells.spells, pet.guid, 1, 300_000, true, [10, 0, 0]),
+            pet.values, isNew);
+        pet.ai.petCooldowns[bite] = 30_000;
+    }
+    const petId = (cast(PetState) pet.petData).number;
     rexxar.write(Opcode.CMSG_LOGOUT_REQUEST, null);
     rexxar.read();
     tick(100);
     assert(db.loadPets(7)[0].slot == PetSlot.current && map.findObject(pet.guid) is null);
+    assert(db.loadPetAuras(petId).length == 1 && db.loadPetAuras(petId)[0].remaining > 290_000, "its aura saved");
+    assert(db.loadPetCooldowns(petId).length == 1 && db.loadPetCooldowns(petId)[0][0] == 97302, "its cooldown saved");
     rexxar = loggedIn(context, db, 7, "Rexxar", start, AccountLevel.player, raceOrc);
     assert(rexxar.session.inWorld.ownPet !is null && (cast(PetState) rexxar.session.inWorld.ownPet.petData).name == "Misha");
+    assert(rexxar.session.inWorld.ownPet.auras.find(97301) !is null, "its aura back");
+    assert(97302 in rexxar.session.inWorld.ownPet.ai.petCooldowns, "its cooldown back");
 
     // Abandoned: gone for good.
     {
