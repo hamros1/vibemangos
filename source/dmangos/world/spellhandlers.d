@@ -172,8 +172,100 @@ private:
         castSpell(spell, SpellTargets(TargetFlags.unit, target ? target : player.guid), true, 0);
     }
 
+    // -----------------------------------------------------------------------
+    // Auto-repeating spells (Auto Shot, a wand's Shoot)
+    // -----------------------------------------------------------------------
+
+    private const(SpellInfo)* autoRepeat; /// the spell shot again and again; null if none
+    private int autoRepeatMs;             /// until the next shot
+    private bool autoRepeatWindUp;        /// moved (or just began): half a second before shooting
+
+    /// An auto-repeating spell (`SPELL_ATTR_EX2_AUTOREPEAT_FLAG`) cast by the client.
+    static bool autoRepeats(const(SpellInfo)* spell) pure nothrow @nogc @safe
+    {
+        enum uint spellAttrEx2AutoRepeat = 0x20;
+        return (spell.attributesEx2 & spellAttrEx2AutoRepeat) != 0;
+    }
+
+    /// Starts shooting `spell` again and again at the player's target (the first shot after half a second).
+    private SpellCastResult startAutoRepeat(const(SpellInfo)* spell, SpellTargets targets)
+    {
+        const result = checkCast(spell, targets, false, 0, false);
+        if (result != SpellCastResult.ok)
+        {
+            deliver(Opcode.SMSG_CAST_RESULT, castResultPacket(spell.id, result, spell));
+            return result;
+        }
+        autoRepeat = spell;
+        autoRepeatWindUp = true;
+        return SpellCastResult.ok;
+    }
+
+    /// The client stops shooting.
+    @Handles(Opcode.CMSG_CANCEL_AUTO_REPEAT_SPELL, WorldState.inWorld)
+    void handleCancelAutoRepeat()
+    {
+        autoRepeat = null;
+    }
+
+    /**
+     * Each tick: the auto-repeating spell shoots at the player's current target whenever its time comes
+     * (the ranged weapon's attack time). Moving holds it (and ends a wand's, which moving cancels); a
+     * target it may not shoot at, or a failed check, ends it.
+     */
+    package void updateAutoRepeat(Duration elapsed)
+    {
+        if (autoRepeat is null || player is null)
+            return;
+        enum uint movingCancels = 0x08; // AURA_INTERRUPT_FLAG_MOVING
+        import dmangos.world.movement : MovementFlags;
+
+        enum uint moving = MovementFlags.forward | MovementFlags.backward | MovementFlags.strafeLeft
+            | MovementFlags.strafeRight | MovementFlags.fallingFar; // not just turning
+        if (player.movement.flags & moving)
+        {
+            if (autoRepeat.casting.channelInterruptFlags & movingCancels)
+            {
+                autoRepeat = null;
+                return;
+            }
+            autoRepeatWindUp = true;
+            return;
+        }
+        if (autoRepeatWindUp)
+        {
+            autoRepeatWindUp = false;
+            if (autoRepeatMs < 500)
+                autoRepeatMs = 500;
+            return;
+        }
+        autoRepeatMs -= cast(int) elapsed.total!"msecs";
+        if (autoRepeatMs > 0)
+            return;
+        const target = player.values.get!UNIT_FIELD_TARGET;
+        if (!target)
+        {
+            autoRepeat = null;
+            return;
+        }
+        auto targets = SpellTargets(TargetFlags.unit, target);
+        const result = checkCast(autoRepeat, targets, false, 0, false);
+        if (result != SpellCastResult.ok)
+        {
+            deliver(Opcode.SMSG_CAST_RESULT, castResultPacket(autoRepeat.id, result, autoRepeat));
+            autoRepeat = null;
+            return;
+        }
+        const spell = autoRepeat;
+        castSpell(spell, targets, true, 0);
+        autoRepeatMs = cast(int) player.values.get!UNIT_FIELD_RANGEDATTACKTIME + cast(int) spell.recoveryTime;
+    }
+
     package SpellCastResult castSpell(const(SpellInfo)* spell, SpellTargets targets, bool triggered, uint itemEntry)
     {
+        // Auto Shot and the like: from now on, at each of their times.
+        if (!triggered && autoRepeats(spell))
+            return startAutoRepeat(spell, targets);
         if (targets.mask == TargetFlags.self)
             targets.unit = player.guid;
         const result = checkCast(spell, targets, triggered, itemEntry, true);
@@ -1930,7 +2022,9 @@ private:
             if (spell.effect[j] == 17 || spell.effect[j] == 58 || spell.effect[j] == 121 || spell.effect[j] == 31)
                 return;
         const me = player.fighter, it = victim.fighter;
-        const type = spell.casting.dmgClass == DamageClass.ranged ? AttackType.ranged : AttackType.mainHand;
+        enum uint spellAttrRanged = 0x2; // SPELL_ATTR_RANGED: the ranged slot's weapon (a wand's Shoot too)
+        const type = spell.casting.dmgClass == DamageClass.ranged || (spell.attributes & spellAttrRanged)
+            ? AttackType.ranged : AttackType.mainHand;
         float damage = weaponDamage(me, type, map.random);
         float percent = 100;
         foreach (j; i .. 3)
@@ -2946,4 +3040,62 @@ unittest
     assert(taken + resisted == 1_000_000 && resisted > 300_000, "most of it resisted at the most");
     uint none = 1000;
     assert(session.partialResist(none, 0, 60) == 0 && none == 1000, "no resistance: nothing resisted");
+}
+
+/// Auto Shot: the first shot half a second after starting, then one each ranged attack time, until cancelled.
+unittest
+{
+    import core.time : MonoTime, msecs;
+    import dmangos.dbc : buildDbc;
+    import dmangos.world.clientdata : spellCastTimesFormat, spellRangeFormat;
+    import dmangos.world.creature : Creature;
+    import dmangos.world.movement : Position;
+    import dmangos.world.objects : HighGuid, makeGuid;
+    import dmangos.world.opcodes : Opcode;
+    import dmangos.world.player : Player;
+    import dmangos.world.spellcast : ImplicitTarget, SpellTargets, TargetFlags;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+    import dmangos.world.updatefields;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    uint bits(float f) { return *cast(uint*) &f; }
+    context.client.spellCastTimes = typeof(context.client.spellCastTimes).parse(buildDbc(spellCastTimesFormat,
+        [[1u, 0, 0, 0]]), "SpellCastTimes.dbc");
+    context.client.spellRanges = typeof(context.client.spellRanges).parse(buildDbc(spellRangeFormat,
+        [[1u, bits(0), bits(35), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]), "SpellRange.dbc");
+    enum uint shot = 97200;
+    context.data.spells.spells[shot] = testSpell(shot, 2, ImplicitTarget.enemy, 10);
+    with (*context.data.spells.spells.edit(shot))
+    {
+        attributesEx2 |= 0x20 | 0x20000000; // auto-repeat; no crit
+        casting.school = 1;                  // holy: not resisted
+        casting.dmgClass = 0;
+    }
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f, 1.97f));
+    auto me = cast(Player) anduin.session.character;
+    me.spells ~= shot;
+    anduin.read();
+    auto session = anduin.session.inWorld;
+    auto keeper = cast(Creature) context.map(0).findObject(makeGuid(HighGuid.unit, creatureInnkeeper, innkeeperSpawn));
+    keeper.values.set!UNIT_FIELD_MAXHEALTH(500u);
+    keeper.values.set!UNIT_FIELD_HEALTH(500u);
+    me.values.set!UNIT_FIELD_TARGET(keeper.guid);
+    me.values.set!UNIT_FIELD_RANGEDATTACKTIME(2000u);
+
+    session.castSpell(shot in context.data.spells.spells, SpellTargets(TargetFlags.unit, keeper.guid), false, 0);
+    assert(keeper.values.get!UNIT_FIELD_HEALTH == 500, "not at once");
+    session.updateAutoRepeat(100.msecs); // the wind-up starts
+    session.updateAutoRepeat(600.msecs);
+    assert(keeper.values.get!UNIT_FIELD_HEALTH == 490, "the first shot");
+    session.updateAutoRepeat(1000.msecs);
+    assert(keeper.values.get!UNIT_FIELD_HEALTH == 490, "not yet");
+    session.updateAutoRepeat(1100.msecs);
+    assert(keeper.values.get!UNIT_FIELD_HEALTH == 480, "the second, a weapon's time later");
+    anduin.write(Opcode.CMSG_CANCEL_AUTO_REPEAT_SPELL, null);
+    session.updateAutoRepeat(5000.msecs);
+    assert(keeper.values.get!UNIT_FIELD_HEALTH == 480, "stopped");
 }

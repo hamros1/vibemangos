@@ -477,7 +477,8 @@ What works now:
     another node, and shown in `SMSG_INITIAL_SPELLS` at login), its cost is taken, the hit rolled (magic: 4% and the level difference; melee
     abilities: the attack table), and its effects done: school damage (crits from intellect),
     weapon damage with a bonus or percentage (Heroic Strike waits for the next swing and replaces
-    it), heals, energize, teleports home (the hearthstone), creating items, learning and triggering
+    it; Auto Shot and a wand's Shoot fire at the target again and again, each ranged weapon's time,
+    held while moving, until cancelled or the target can no longer be shot), heals, energize, teleports home (the hearthstone), creating items, learning and triggering
     spells. Items cast their on-use spells (with the item's own cooldowns; food and drink are used
     up); an item's on-equip spells, and its item set's bonuses for as many of the set's items as are
     worn (ItemSet.dbc), are on as auras while it is worn (and unbroken); a weapon's or other worn
