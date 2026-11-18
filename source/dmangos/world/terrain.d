@@ -1,17 +1,17 @@
 /**
- * The ground of each map, from the extractor's `.map` files (CMaNGOS `Maps/GridMap.cpp`):
+ * The ground of each map, from the extractor's `.map` files:
  * heights, areas, liquids and holes, per 533-yard tile.
  *
- * `GridMap` is one tile, read from `<data_dir>/maps/MMMXXYY.map` and queried the way CMaNGOS
- * queries it: `height` interpolates the triangle of the terrain square the point is in, `areaFlag`
+ * `GridMap` is one tile, read from `<data_dir>/maps/MMMXXYY.map`: `height` interpolates the
+ * triangle of the terrain square the point is in, `areaFlag`
  * gives the cell's `AreaTable.dbc` explore flag, and `liquidStatus` whether a point is above, on,
- * in or under water. `Terrain` is CMaNGOS's `TerrainInfo`: the tiles of one map, loaded the first
+ * in or under water. `Terrain` is the tiles of one map (and its buildings), loaded the first
  * time something asks about them, and the questions answered for the map (zone and area ids, the
  * height under a point).
  *
  * Without vmaps, heights come from the terrain alone: inside buildings and in caves the ground
  * found is the terrain above or below. A tile without a file (no data extracted, or an instance
- * with none) has no height (`invalidHeightValue`), and its area is the map's own, as in CMaNGOS.
+ * with none) has no height (`invalidHeightValue`), and its area is the map's own.
  */
 module dmangos.world.terrain;
 
@@ -29,22 +29,22 @@ import dmangos.mapfile;
 import dmangos.vmap.maptree : liquidLevel, LocationInfo, ModelCache, StaticMapTree, toInternal, vmapInvalidHeightValue;
 import dmangos.world.clientdata : AreaTableEntry, ClientData;
 
-/// `SIZE_OF_GRIDS`: a tile's side, in yards.
+/// A tile's side, in yards.
 enum float sizeOfGrids = 533.33333f;
 
-/// `MAX_NUMBER_OF_GRIDS`: tiles per map side; the map's centre is tile 32.
+/// Tiles per map side; the map's centre is tile 32.
 enum maxNumberOfGrids = 64;
 
-/// `MAP_RESOLUTION`: terrain squares per tile side.
+/// Terrain squares per tile side.
 enum mapResolution = 128;
 
-/// `INVALID_HEIGHT`: heights at or below this are "none found".
+/// Heights at or below this are "none found".
 enum float invalidHeight = -100_000.0f;
 
-/// `INVALID_HEIGHT_VALUE`: what a lookup that finds nothing returns.
+/// What a lookup that finds nothing returns.
 enum float invalidHeightValue = -200_000.0f;
 
-/// `GridMapLiquidStatus`
+/// Where a point is relative to the liquid there.
 enum LiquidStatus : uint
 {
     noWater = 0x0,
@@ -54,7 +54,7 @@ enum LiquidStatus : uint
     underWater = 0x8,
 }
 
-/// `GridMapLiquidData`
+/// The liquid at a point: its type flags, `LiquidType.dbc` entry, surface and bottom.
 struct LiquidData
 {
     uint typeFlags;
@@ -63,7 +63,7 @@ struct LiquidData
     float depthLevel = 0;
 }
 
-/// The tile a point is on (`TerrainInfo::GetGrid`): x and y indexes, 0 .. 63.
+/// The tile a point is on: x and y indexes, 0 .. 63.
 int[2] tileOf(float x, float y) pure nothrow @nogc @safe
 {
     return [cast(int)(32 - x / sizeOfGrids), cast(int)(32 - y / sizeOfGrids)];
@@ -104,8 +104,8 @@ final class GridMap
     }
 
     /**
-     * `GridMap::loadData` from the file's bytes. Throws for a file of another version or a
-     * damaged one; CMaNGOS logs the same and stops using the tile.
+     * A tile from the file's bytes. Throws for a file of another version or a
+     * damaged one; `Terrain` logs that and goes without the tile.
      */
     this(const(ubyte)[] file, string name)
     {
@@ -177,7 +177,7 @@ final class GridMap
         }
     }
 
-    /// `GridMap::getArea`: the explore flag of the cell the point is in.
+    /// The explore flag of the cell the point is in.
     ushort areaFlag(float x, float y) const
     {
         if (areaMap is null)
@@ -187,7 +187,7 @@ final class GridMap
         return areaMap[lx * 16 + ly];
     }
 
-    /// `GridMap::getHeight`: the terrain's height at the point; `invalidHeightValue` in a hole.
+    /// The terrain's height at the point; `invalidHeightValue` in a hole.
     float height(float x, float y) const
     {
         final switch (heightFormat)
@@ -203,7 +203,7 @@ final class GridMap
         }
     }
 
-    /// `GridMap::getLiquidLevel`
+    /// The liquid's surface height at the point.
     float liquidLevel(float x, float y) const
     {
         if (liquidMap is null)
@@ -215,7 +215,7 @@ final class GridMap
         return liquidMap[cx * liquidWidth + cy];
     }
 
-    /// `GridMap::getTerrainType`: the liquid flags of the cell (`MAP_LIQUID_TYPE_*`).
+    /// The liquid flags of the cell (`MAP_LIQUID_TYPE_*`).
     ubyte terrainType(float x, float y) const
     {
         if (liquidFlags is null)
@@ -226,7 +226,7 @@ final class GridMap
     }
 
     /**
-     * `GridMap::getLiquidStatus`: where a point at height `z` is relative to the liquid there.
+     * Where a point at height `z` is relative to the liquid there.
      * `requiredType` (`MAP_LIQUID_TYPE_*` bits, 0 for any) narrows which liquids count.
      */
     LiquidStatus liquidStatus(float x, float y, float z, ubyte requiredType, const ClientData client,
@@ -244,8 +244,8 @@ final class GridMap
             entry = liquid.id;
             type &= mapLiquidTypeDeepWater;
             uint typeIndex = liquid.type;
-            // An area may make its water another liquid (AreaTable's LiquidTypeOverride). As in CMaNGOS,
-            // the area is looked up by the cell's explore flag taken as an area id.
+            // An area may make its water another liquid (AreaTable's LiquidTypeOverride). The area is
+            // looked up by the cell's explore flag taken as an area id.
             if (entry < 21)
                 if (auto area = client.areas.lookup(areaFlag(x, y)))
                 {
@@ -333,7 +333,7 @@ private:
         }
     }
 
-    /// `GridMap::isHole`
+    /// Whether the terrain square at (`row`, `col`) is a hole.
     public bool isHole(int row, int col) const
     {
         const cellRow = row / 8, cellCol = col / 8;
@@ -342,7 +342,7 @@ private:
     }
 
     /**
-     * `GridMap::getHeightFromFloat`. A square's corners are h1 .. h4 (V9) and its centre h5 (V8);
+     * The height from a tile of float heights. A square's corners are h1 .. h4 (V9) and its centre h5 (V8);
      * the four triangles between them each make a plane h = a*x + b*y + c.
      */
     float heightFromFloat(float x, float y) const
@@ -360,7 +360,7 @@ private:
         return a * fx + b * fy + c;
     }
 
-    /// `GridMap::getHeightFromUint8` and `getHeightFromUint16`, which do not look for holes.
+    /// The height from a tile of packed 8- or 16-bit heights; these do not look for holes.
     float heightFromPacked(T)(const(T)[] corners, const(T)[] centres, float x, float y) const
     {
         int xInt, yInt;
@@ -407,10 +407,10 @@ private:
     }
 }
 
-/// `DEFAULT_HEIGHT_SEARCH`, `DEFAULT_WATER_SEARCH`: how far down (and up) heights are looked for.
+/// How far down (and up) heights, and water, are looked for.
 enum float defaultHeightSearch = 10.0f, defaultWaterSearch = 50.0f;
 
-/// `TerrainInfo::GetAreaInfo`: the building group a point is in.
+/// The building group a point is in.
 struct BuildingArea
 {
     uint flags;     /// the group's `mogpFlags`
@@ -420,7 +420,7 @@ struct BuildingArea
     float floorZ = 0;
 }
 
-/// `TerrainInfo`: one map's tiles and buildings; see the module documentation.
+/// One map's tiles and buildings; see the module documentation.
 final class Terrain
 {
     immutable uint mapId;
@@ -445,7 +445,7 @@ final class Terrain
         this.mapId = mapId;
         this.client = client;
         directory = buildPath(dataDir, "maps");
-        // `MMapManager::loadMapData`: the map's movement maps, if it has them; their tiles come with the grids'.
+        // The map's movement maps, if it has them; their tiles come with the grids'.
         navDirectory = buildPath(dataDir, "mmaps");
         if (movementMaps && exists(buildPath(navDirectory, format!"%03d.mmap"(mapId))))
         {
@@ -471,7 +471,7 @@ final class Terrain
     }
 
     /**
-     * `TerrainInfo::GetGrid` and `LoadMapAndVMap`: the tile the point is on, loaded with its
+     * The tile the point is on, loaded with its
      * buildings if it was not; null if it has no `.map` file.
      */
     const(GridMap) tile(float x, float y)
@@ -523,7 +523,7 @@ final class Terrain
         return navPending.length;
     }
 
-    /// `MMapManager::loadMap`: grid tile [gx, gy]'s movement map (`MMMXXYY.mmtile`), if there is one.
+    /// Loads grid tile [gx, gy]'s movement map (`MMMXXYY.mmtile`), if there is one.
     private void loadNavigationTile(int gx, int gy)
     {
         import dmangos.bytes : ByteReader;
@@ -552,9 +552,9 @@ final class Terrain
     }
 
     /**
-     * `PathFinder::calculate`: the way from `from` to `to` over the movement maps, its corners from
-     * `from` on; empty if the map has none there, or either end is off them (the caller walks straight,
-     * as `BuildShortcut` does). An unreachable end gives the way to the nearest place to it.
+     * The way from `from` to `to` over the movement maps, its corners from
+     * `from` on; empty if the map has none there, or either end is off them (the caller then walks
+     * straight). An unreachable end gives the way to the nearest place to it.
      */
     Vector3[] pathBetween(Vector3 from, Vector3 to)
     {
@@ -586,7 +586,7 @@ final class Terrain
     }
 
     /**
-     * `TerrainInfo::GetHeightStatic`: the ground under (or a little above) the point at height `z`:
+     * The ground under (or a little above) the point at height `z`:
      * the terrain, or a building's floor, bridge or roof, whichever the point stands on.
      */
     float heightStatic(float x, float y, float z, bool useVmaps = true, float maxSearchDist = defaultHeightSearch)
@@ -618,7 +618,7 @@ final class Terrain
     }
 
     /**
-     * `TerrainInfo::GetAreaInfo`: the building group the point is in, unless terrain lies between
+     * The building group the point is in, unless terrain lies between
      * the point and the group's floor.
      */
     bool buildingArea(float x, float y, float z, out BuildingArea area)
@@ -639,8 +639,8 @@ final class Terrain
         return true;
     }
 
-    /// `TerrainInfo::IsOutdoors`: outside any building, or in an outdoor part of one.
-    /// The vmap height under `z` (`VMapManager::getHeight`), searching `maxSearchDist` down.
+    /// Outdoors is outside any building, or in an outdoor part of one.
+    /// The vmap height under `z`, searching `maxSearchDist` down.
     float vmapHeight(float x, float y, float z, float maxSearchDist = 10_000.0f)
     {
         return vmap is null ? vmapInvalidHeightValue : buildingHeight(x, y, z, maxSearchDist);
@@ -653,7 +653,7 @@ final class Terrain
     }
 
     /**
-     * `TerrainInfo::GetAreaFlag`: the point's explore flag: a building group's area (from
+     * The point's explore flag: a building group's area (from
      * `WMOAreaTable.dbc`) if it is in one with an area on this map, else the land's, else the map's own.
      */
     ushort areaFlag(float x, float y, float z)
@@ -674,7 +674,7 @@ final class Terrain
         return cast(ushort) client.areaFlagOfMap(mapId);
     }
 
-    /// `TerrainInfo::GetZoneAndAreaId`: [zone, area], 0 for unknown.
+    /// The point's [zone, area], 0 for unknown.
     uint[2] zoneAndArea(float x, float y, float z)
     {
         const area = client.areaByFlag(areaFlag(x, y, z), mapId);
@@ -684,7 +684,7 @@ final class Terrain
     }
 
     /**
-     * `VMapManager2::isInLineOfSight`: nothing built stands between the two points; doodads (trees,
+     * Whether nothing built stands between the two points; doodads (trees,
      * barrels) left out with `ignoreM2`. Without vmaps everything is in sight.
      */
     bool isInLineOfSight(float x1, float y1, float z1, float x2, float y2, float z2, bool ignoreM2 = false)
@@ -698,7 +698,7 @@ final class Terrain
     }
 
     /**
-     * `TerrainInfo::getLiquidStatus`: water in a building first, then the land's. `data` is filled
+     * Where the point is relative to liquid: water in a building first, then the land's. `data` is filled
      * when the point is in, on or above some.
      */
     LiquidStatus liquidStatus(float x, float y, float z, ubyte requiredType, out LiquidData data,
@@ -743,7 +743,7 @@ final class Terrain
             LiquidData found;
             const status = grid.liquidStatus(x, y, z, requiredType, client, found, collisionHeight);
             // Water below a building's floor is not the point's. A building found (without water)
-            // gives its floor, as CMaNGOS's GetLiquidLevel leaves it.
+            // gives its floor.
             const under = isNaN(floor) ? ground : floor;
             if (status != LiquidStatus.noWater && found.level > under)
             {
@@ -755,7 +755,7 @@ final class Terrain
     }
 
 private:
-    /// `VMapManager2::getHeight`: a building's surface below `z` (above, if `maxSearchDist` is negative).
+    /// A building's surface below `z` (above, if `maxSearchDist` is negative).
     float buildingHeight(float x, float y, float z, float maxSearchDist)
     {
         tile(x, y);
@@ -806,7 +806,7 @@ version (unittest)
     import std.math : isClose;
     import dmangos.extractor.maps : buildTestAdt, convertAdt, TestTerrain;
 
-    /// A world position on tile [tileX, tileY] at fractional square (row, column), as `GridMap` counts them.
+    /// A world position on tile [tileX, tileY] at fractional square (row, column), as a tile counts them.
     float[2] pointAt(int tileX, int tileY, float row, float column)
     {
         return [sizeOfGrids * (32 - (mapResolution * tileX + row) / mapResolution),

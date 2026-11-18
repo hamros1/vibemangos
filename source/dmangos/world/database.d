@@ -1,9 +1,8 @@
 /**
- * What the world server reads and writes in the CMaNGOS login (`realmd`)
- * and `characters` databases.
+ * What the world server reads and writes in the login (`realmd`) and
+ * `characters` databases, which have the CMaNGOS-classic schema.
  *
- * `MySqlWorldDatabase` uses the same statements as CMaNGOS
- * (`Server/WorldSocket.cpp`, `Entities/CharacterHandler.cpp`).
+ * `MySqlWorldDatabase` runs the statements on MySQL.
  * `MemoryWorldDatabase` stands in for it in tests.
  */
 module dmangos.world.database;
@@ -42,7 +41,7 @@ struct WorldAccount
     long muteTime;       /// `account.mutetime`: chat is off until this Unix time
 }
 
-/// One row of CMaNGOS's character list query, in its column order.
+/// One row of the character list query, in its column order.
 struct CharacterRecord
 {
     uint guid;
@@ -75,14 +74,14 @@ struct CorpseRecord
     float x = 0, y = 0, z = 0, orientation = 0;
     uint map;
     long time;          /// when the spirit was released
-    ubyte type;         /// `CorpseType`
+    ubyte type;         /// a `CorpseType`
 }
 
 /// A `mail` row and its one item (`mail_items`; 1.12 sends at most one).
 struct MailRecord
 {
     uint id;
-    ubyte messageType;     /// `MailMessageType`: 0 a player's
+    ubyte messageType;     /// who sent it: 0 a player
     ubyte stationery = 41;
     uint templateId;
     uint sender;
@@ -93,7 +92,7 @@ struct MailRecord
     long deliverTime;
     uint money;
     uint cod;
-    uint checked;          /// `MailCheckMask`
+    uint checked;          /// the `mail.checked` flags (read, returned, ...)
     uint itemGuid;         /// 0: none
     uint itemEntry;
 }
@@ -155,10 +154,10 @@ struct PetitionRecord
 struct SocialRow
 {
     uint other;
-    ubyte flags; /// `SocialFlag`s
+    ubyte flags; /// `SocialFlag` bits
 }
 
-/// A `character_pet` row with its `pet_spell` rows (`Pet::LoadPetFromDB`, `SavePetToDB`).
+/// A `character_pet` row with its `pet_spell` rows.
 struct PetRecord
 {
     uint id;                  /// the pet number
@@ -176,7 +175,7 @@ struct PetRecord
     int trainingPoints;
     string name = "Pet";
     bool renamed;
-    uint slot;                /// `PetSaveMode`: 0 out with its owner, 1 and 2 stabled, 100 not in a slot
+    uint slot;                /// a `PetSlot`: 0 out with its owner, 1 and 2 stabled, 100 not in a slot
     uint health;
     uint mana;
     uint happiness;
@@ -186,7 +185,7 @@ struct PetRecord
     PetSpellRecord[] spells;
 }
 
-/// A `pet_spell` row: a spell the pet knows, and its autocast state (`ActiveStates`).
+/// A `pet_spell` row: a spell the pet knows, and its autocast state (an `ActiveState`).
 struct PetSpellRecord
 {
     uint spell;
@@ -236,10 +235,10 @@ struct InstanceRespawnRecord
 /// A `character_honor_cp` row: honor from a kill or another source, on a day.
 struct HonorPointRecord
 {
-    ubyte victimType;  /// the victim's `TypeID` (3 a creature, 4 a player; 0 no victim)
+    ubyte victimType;  /// the victim's `TypeId` (3 a creature, 4 a player; 0 no victim)
     uint victim;       /// a player's guid, a creature's entry
     float honor = 0;
-    uint date;         /// `(year - 1900) << 16 | day of the year`, as CMaNGOS counts days
+    uint date;         /// `(year - 1900) << 16 | day of the year`, as the honor tables count days
     ubyte type;        /// 1 honorable, 2 dishonorable
 }
 
@@ -260,7 +259,7 @@ struct HonorColumns
 struct BattlegroundData
 {
     uint instance;
-    ubyte type;     /// `BattleGroundTypeId`
+    ubyte type;     /// a `BattlegroundType`
     ubyte team;     /// 0 the Alliance, 1 the Horde
     uint joinMap;
     float joinX = 0, joinY = 0, joinZ = 0, joinO = 0;
@@ -347,7 +346,7 @@ interface WorldDatabase
     /// Stores the home a character without one gets.
     void insertHomeBind(uint guid, const HomeBind bind);
 
-    /// `Player::SetHomebindToLocation`: the hearthstone's new place.
+    /// The hearthstone's new place.
     void updateHomeBind(uint guid, const HomeBind bind);
 
     /// Marks a character (and its account, on this realm) as online or offline.
@@ -365,22 +364,22 @@ interface WorldDatabase
     /// Saves the account's tutorial flags.
     void saveTutorials(uint accountId, const uint[tutorialFields] tutorials);
 
-    /// `Corpse::SaveToDB`: a player's corpse (its row replaces any earlier one).
+    /// A player's corpse (its row replaces any earlier one).
     void saveCorpse(const ref CorpseRecord corpse);
 
-    /// `Corpse::DeleteFromDB`: the player's corpse is gone.
+    /// The player's corpse is gone.
     void deleteCorpse(uint player);
 
     /// The player's corpse, if it has one.
     Nullable!CorpseRecord loadCorpse(uint player);
 
-    /// `MapPersistentState::SaveCreatureRespawnTime`: a dead creature comes back at `respawnTime` (0: forget it).
+    /// A dead creature comes back at `respawnTime` (0: forget it).
     void saveCreatureRespawn(uint spawnGuid, long respawnTime);
 
-    /// `Player::_SaveAuras`: the player's auras, replacing those saved before.
+    /// The player's auras, replacing those saved before.
     @Replaces void saveAuras(uint player, const(AuraRecord)[] auras);
 
-    /// Every guild, with its ranks and members (`GuildMgr::LoadGuilds`); one guild alone.
+    /// Every guild, with its ranks and members; one guild alone.
     GuildRecord[] loadGuilds();
     /// ditto
     Nullable!GuildRecord loadGuild(uint id);
@@ -407,7 +406,7 @@ interface WorldDatabase
     bool accountSignedPetition(uint account, uint petition);
     /// A charter turned in or gone.
     void deletePetition(uint petition);
-    /// `RemovePetitionsAndSigns`: a character's own charters and its signatures go (it joined a guild).
+    /// A character's own charters and its signatures go (it joined a guild).
     void deletePetitionsOf(uint player);
 
     /// `character_social`: the player's friends and ignored players.
@@ -430,9 +429,9 @@ interface WorldDatabase
 
     /// `character_pet` and `pet_spell`: every pet of `owner`, in id order.
     PetRecord[] loadPets(uint owner);
-    /// A pet's row and spells, written whole (`SavePetToDB`).
+    /// A pet's row and spells, written whole.
     void savePet(const ref PetRecord pet);
-    /// A pet moved to another slot (`ChangePetSlot`).
+    /// A pet moved to another slot.
     void setPetSlot(uint owner, uint pet, uint slot);
     /// A pet gone for good (abandoned): its row, spells, auras and cooldowns.
     void deletePet(uint owner, uint pet);
@@ -441,26 +440,26 @@ interface WorldDatabase
     /// ditto
     void saveStableSlots(uint player, uint slots);
 
-    /// `Player::_LoadAuras`
+    /// The player's saved auras.
     AuraRecord[] loadAuras(uint player);
 
-    /// `ReputationMgr::SaveToDB`: these factions' rows replaced.
+    /// The player's reputation: these factions' rows replaced.
     void saveReputation(uint player, const(ReputationRecord)[] rows);
 
     /// The player's `character_reputation` rows.
     ReputationRecord[] loadReputation(uint player);
 
-    /// `Player::LoadFromDB`'s honor columns and `_LoadHonorCP`: what the player has of honor.
+    /// What the player has of honor: its honor columns and `character_honor_cp` rows.
     HonorRecord loadHonor(uint player);
 
-    /// `Player::_LoadBGData`: the player's `character_battleground_data` row (none: all 0).
+    /// The player's `character_battleground_data` row (none: all 0).
     BattlegroundData loadBattlegroundData(uint player);
 
-    /// `Player::_SaveBGData`: the row replaced (deleted if the player is in no copy and came from nowhere).
+    /// The player's `character_battleground_data` row replaced (deleted if the player is in no copy and came from nowhere).
     void saveBattlegroundData(uint player, const BattlegroundData data);
 
     /**
-     * `Player::SaveToDB`'s honor columns and `_SaveHonorCP`: the columns, and the honor gained since the
+     * The player's honor: the columns, and the honor gained since the
      * last save (`character_honor_cp` rows added).
      */
     void saveHonor(uint player, const HonorColumns columns, const(HonorPointRecord)[] added);
@@ -476,7 +475,7 @@ interface WorldDatabase
     /// The day of the oldest honorable `character_honor_cp` row; 0 if none.
     uint oldestHonorDay();
 
-    /// `LoadStandingList`: each player's honorable honor and kills on days from `from` until `until`.
+    /// The standing's input: each player's honorable honor and kills on days from `from` until `until`.
     HonorWeekEntry[] honorWeek(uint from, uint until);
 
     /// A player's rating after a week, and with `setStanding` its place in last week's standing.
@@ -488,10 +487,10 @@ interface WorldDatabase
     /// The kills of rows before `day` added to the stored totals, and the rows deleted.
     void foldHonorPoints(uint day);
 
-    /// `Player::_SaveQuestStatus`: the quests that changed (a status of none, never rewarded, deletes the row).
+    /// The quests that changed (a status of none, never rewarded, deletes the row).
     void saveQuestStatus(uint player, const(QuestStatus)[] quests);
 
-    /// `MailDraft::SendMailTo`: the mail and its item row.
+    /// A mail sent: the mail and its item row.
     void sendMail(const ref MailRecord mail);
 
     /// The player's mail, delivered or not, oldest first (`_LoadMail`).
@@ -530,7 +529,7 @@ interface WorldDatabase
     /// Every creature that is dead now: spawn guid -> when it comes back (Unix time).
     long[uint] loadCreatureRespawns();
 
-    /// `AuctionEntry::SaveToDB`: a new auction.
+    /// A new auction.
     void insertAuction(const ref AuctionRecord auction);
 
     /// The auctions of house `houseId` (0: of every house).
@@ -551,7 +550,7 @@ interface WorldDatabase
     /// The highest auction id in use.
     uint maxAuctionId();
 
-    /// `GameObject::SaveRespawnTime`: a used-up game object comes back then (0: it is back).
+    /// A used-up game object comes back at `respawnTime` (0: it is back).
     void saveGameObjectRespawn(uint spawnGuid, long respawnTime);
 
     /// Every game object used up now: spawn guid -> when it comes back (Unix time).
@@ -612,25 +611,25 @@ interface WorldDatabase
     /// Name, race, gender and class of a character, or null.
     Nullable!NameInfo nameInfo(uint guid);
 
-    /// Every group with its members (`ObjectMgr::LoadGroups`).
+    /// Every group with its members.
     GroupRecord[] loadGroups();
 
-    /// The `groups` row of a new group (`Group::Create`).
+    /// The `groups` row of a new group.
     void createGroup(const ref GroupRecord group);
 
     /// The `groups` columns that change after creation.
     void updateGroup(const ref GroupRecord group);
 
-    /// Deletes a group and its members (`Group::Disband`).
+    /// Deletes a group and its members.
     void deleteGroup(uint groupId);
 
-    /// `Group::_addMember`
+    /// A member joins a group.
     void addGroupMember(uint groupId, const GroupMemberRecord member);
 
     /// A member's assistant flag and sub-group.
     void updateGroupMember(const GroupMemberRecord member);
 
-    /// `Group::_removeMember`
+    /// A member leaves its group.
     void removeGroupMember(uint guid);
 
     // --- what GM commands change ---
@@ -644,22 +643,22 @@ interface WorldDatabase
     /// Gives an offline character a new name (`characters.name`).
     void renameCharacter(uint guid, string newName);
 
-    /// Moves a character that is not online (ArcEmu's `.summon` of an offline player).
+    /// Moves a character that is not online (`.summon` of an offline player).
     void moveOfflineCharacter(uint guid, uint map, float x, float y, float z, uint zone);
 
-    /// `Player::_SaveSpells` for one spell learned, or changed (a higher rank made it inactive).
+    /// One spell learned, or changed (a higher rank made it inactive).
     void saveSpell(uint guid, uint spell, bool active, bool disabled);
 
-    /// `Player::_SaveSpells` for a spell forgotten: its row is deleted.
+    /// A spell forgotten: its row is deleted.
     void deleteSpell(uint guid, uint spell);
 
-    /// `Player::_SaveSkills` for one skill; a `max` of 0 removes it.
+    /// One skill's value and maximum; a `max` of 0 removes it.
     void saveSkill(uint guid, uint skill, uint value, uint max);
 
     /**
-     * `Player::_SaveInventory` with the money and `playerBytes2` (the bank bag slots bought) that
-     * paid for the changes, in one transaction: each item's `character_inventory` and
-     * `item_instance` rows written or deleted, as `Player::SaveItemToInventory` and `Item::SaveToDB` do.
+     * Inventory changes with the money and `playerBytes2` (the bank bag slots bought) that
+     * paid for them, in one transaction: each item's `character_inventory` and
+     * `item_instance` rows written or deleted.
      */
     void saveInventory(uint owner, uint money, uint playerBytes2, const(ItemChange)[] changes);
 
@@ -693,10 +692,10 @@ struct LookupResult
     string name;
 }
 
-/// `account_logons.loginSource` for connections to the world server (`LOGIN_TYPE_MANGOSD`).
+/// `account_logons.loginSource` for connections to the world server.
 enum uint loginSourceMangosd = 1;
 
-/// `WorldDatabase` on the CMaNGOS login and characters databases.
+/// `WorldDatabase` on the MySQL login and characters databases.
 final class MySqlWorldDatabase : WorldDatabase
 {
     private MySqlConnection login;
@@ -931,14 +930,14 @@ final class MySqlWorldDatabase : WorldDatabase
         }
     }
 
-    /// `ObjectMgr::AddGameTele`
+    /// Adds a `game_tele` place.
     void addTeleport(const GameTele t)
     {
         world.execute!("INSERT INTO game_tele (position_x, position_y, position_z, orientation, map, name) "
             ~ "VALUES (?, ?, ?, ?, ?, ?)")(t.x, t.y, t.z, t.orientation, t.map, t.name);
     }
 
-    /// `ObjectMgr::DeleteGameTele`
+    /// Deletes the `game_tele` place called `name`; false if there is none.
     bool deleteTeleport(string name)
     {
         if (world.query!"SELECT id FROM game_tele WHERE name = ?"(name).length == 0)
@@ -1006,7 +1005,7 @@ final class MySqlWorldDatabase : WorldDatabase
         account.os = row.os;
         account.platform = row.platform;
         account.muteTime = row.mutetime;
-        // CMaNGOS accepts only a full 80-digit key: anything shorter (an empty string in
+        // Only a full 80-digit key is accepted: anything shorter (an empty string in
         // particular) would let a client compute the proof without knowing the key.
         if (row.sessionkey.length == 2 * sessionKeyLength)
         {
@@ -1047,7 +1046,7 @@ final class MySqlWorldDatabase : WorldDatabase
             ~ "WHERE characters.account = ? ORDER BY characters.guid")(petSaveAsCurrent, accountId);
     }
 
-    /// `character_pet.slot` of the pet currently with its owner (`PET_SAVE_AS_CURRENT`).
+    /// `character_pet.slot` of the pet currently with its owner.
     private enum uint petSaveAsCurrent = 0;
 }
 

@@ -1,6 +1,6 @@
 /**
  * The `conditions` table: requirements that gossip menus, gossip options, trainer spells and vendor
- * items name by id (CMaNGOS `Globals/Conditions.cpp`, `ConditionEntry::Meets` and `Evaluate`).
+ * items name by id, and whether a player meets them.
  *
  * A condition checks a player (its items, skills, spells, quests, reputation, race, class, level,
  * zone, death, combat), or
@@ -15,7 +15,7 @@ import dmangos.log;
 import dmangos.world.clientdata : ClientData, Team;
 import dmangos.world.player : Player;
 
-/// `ConditionType`
+/// What a condition checks: the `conditions.type` column's values.
 enum ConditionType : int
 {
     not = -3,
@@ -107,7 +107,7 @@ final class Conditions
         return entries.length;
     }
 
-    /// `ObjectMgr::IsConditionSatisfied`: whether condition `id` holds; 0 always does, an unknown id never.
+    /// Whether condition `id` holds; 0 always does, an unknown id never.
     bool satisfied(uint id, const ref ConditionSubject subject, const ClientData client)
     {
         return id == 0 || meets(id, subject, client, 0);
@@ -117,7 +117,7 @@ private:
     bool meets(uint id, const ref ConditionSubject subject, const ClientData client, uint depth)
     {
         const condition = id in entries;
-        if (condition is null || depth > 16) // checked at load in CMaNGOS: a missing or circular reference
+        if (condition is null || depth > 16) // a missing or circular reference: not met
             return false;
         if ((condition.flags & conditionFlagSwapTargets) && !isLogic(condition.type))
             return unsupported(condition.type, "with swapped targets");
@@ -171,7 +171,7 @@ private:
         case questRewarded:
             return (c.value1 in player.data.rewardedQuests) !is null;
         case questTaken:
-            // `IsCurrentQuest`: 1 incomplete, 2 complete and not rewarded, else either.
+            // The quest is in the log: 1 incomplete, 2 complete and not rewarded, else either.
             import dmangos.world.quests : QuestState;
 
             const q = c.value1 in player.questStatus;

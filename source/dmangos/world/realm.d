@@ -1,6 +1,6 @@
 /**
- * The world server's entry in the login database, maintained as mangosd
- * does (`mangosd/Master.cpp`, `World/World.cpp`).
+ * The world server's entry in the login database (`realmlist`), kept up to
+ * date while the server runs.
  *
  * At start-up the realm is marked online and its `realmbuilds` set, so login
  * servers list it as reachable. While it runs, `population` and the
@@ -56,7 +56,7 @@ final class RealmRegistration
         info!"realm %s is online for builds %s"(realmId, buildNames.join(", "));
     }
 
-    /// `realmlist.population`: sessions relative to the player limit, times two, as CMaNGOS computes it.
+    /// `realmlist.population`: sessions relative to the player limit, times two (what login servers expect).
     void updatePopulation(size_t sessions, uint playerLimit)
     {
         if (playerLimit == 0)

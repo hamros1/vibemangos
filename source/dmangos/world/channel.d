@@ -1,7 +1,7 @@
 /**
- * Chat channels (CMaNGOS `Chat/Channel.cpp`, `ChannelMgr.cpp`).
+ * Chat channels: joining and leaving, moderation, and what is said in them.
  *
- * `Channels` is one team's set of channels (`ChannelMgr`); there is one per
+ * `Channels` is one team's set of channels; there is one per
  * team, or one for everybody with `allow_two_side_interaction_channel`. A
  * channel exists while somebody is in it. The built-in ones of
  * `ChatChannels.dbc` (General, Trade, LocalDefense, ...) have no owner and
@@ -9,8 +9,7 @@
  *
  * The client joins the built-in channels by itself after logging in, naming
  * them after its zone ("General - Elwynn Forest"). When the zone changes,
- * the server moves the player to the new zone's channels
- * (`Player::UpdateLocalChannels`).
+ * the server moves the player to the new zone's channels (`zoneChanged`).
  *
  * Every reply is an `SMSG_CHANNEL_NOTIFY`: a `ChatNotify` code, the channel's
  * name, and what the code needs (`notice`).
@@ -30,7 +29,7 @@ import dmangos.world.clientdata : ChatChannelsEntry, ClientData, Team;
 import dmangos.world.opcodes : ChatType, Language, Opcode;
 import dmangos.world.queries : chatMessage;
 
-/// `ChatNotify`
+/// The code of an `SMSG_CHANNEL_NOTIFY`: what happened, or why a request failed.
 enum ChatNotify : ubyte
 {
     joined = 0x00,           /// "%s joined channel."
@@ -67,7 +66,7 @@ enum ChatNotify : ubyte
     throttled = 0x1F,
 }
 
-/// `Channel::ChannelFlags`, as the client sees them.
+/// A channel's flags, as the client sees them.
 enum ChannelFlags : ubyte
 {
     none = 0x00,
@@ -79,7 +78,7 @@ enum ChannelFlags : ubyte
     lfg = 0x40,
 }
 
-/// `Channel::ChannelDBCFlags`
+/// The flags of a `ChatChannels.dbc` entry.
 enum ChannelDbcFlags : uint
 {
     initial = 0x00001,
@@ -93,7 +92,7 @@ enum ChannelDbcFlags : uint
     lfg = 0x40000,
 }
 
-/// `Channel::ChannelMemberFlags`
+/// A member's flags in a channel.
 enum MemberFlags : ubyte
 {
     none = 0x00,
@@ -111,10 +110,10 @@ interface ChannelMember
     @property string name() const;
     @property ubyte race() const;
 
-    /// ArcEmu's `c` permission: it moderates every channel but the built-in ones.
+    /// The `c` permission letter: it moderates every channel but the built-in ones.
     @property bool moderatesAll() const;
 
-    /// The visual honor rank (-4 to 14): the defense channels need one (`SPEAK_IN_*DEFENSE_RANK`).
+    /// The visual honor rank (-4 to 14): the defense channels need one to speak in.
     @property byte pvpRank() const;
 
     void deliver(Opcode opcode, const(ubyte)[] body_);
@@ -127,7 +126,7 @@ interface MemberDirectory
     ChannelMember member(string name);
 }
 
-/// The channel settings of `mangosd.conf`.
+/// The channel settings of the world server's configuration.
 struct ChannelSettings
 {
     bool crossFaction;                                   /// `AllowTwoSide.Interaction.Channel`
@@ -191,7 +190,7 @@ final class Channel
         }
     }
 
-    /// `IsConstant`: a built-in channel.
+    /// Whether this is a built-in channel.
     @property bool isConstant() const
     {
         return entry !is null;
@@ -227,7 +226,7 @@ final class Channel
         return players.get(guid, MemberFlags.none);
     }
 
-    /// `Channel::Join`
+    /// `player` joins, with the password `pass`, unless already in, banned or the password is wrong.
     void join(ChannelMember player, string pass)
     {
         const guid = player.guid;
@@ -244,7 +243,7 @@ final class Channel
 
         if (announcements)
             sendToAll(notice(ChatNotify.joined, name, guid));
-        // ArcEmu's Channel::AttemptJoin: the `c` permission moderates every channel but the built-in ones.
+        // The `c` permission moderates every channel but the built-in ones.
         players[guid] = !isConstant && player.moderatesAll ? MemberFlags.moderator : MemberFlags.none;
         owner_.joined(guid, this);
         notify(player, ChatNotify.youJoined, uint(flags), uint(0));
@@ -252,7 +251,7 @@ final class Channel
             setOwner(guid, players.length > 1);
     }
 
-    /// `Channel::Leave`; `tell` is false when the client already knows (logging out, changing zone).
+    /// `player` leaves; `tell` is false when the client already knows (logging out, changing zone).
     void leave(ChannelMember player, bool tell = true)
     {
         const guid = player.guid;
@@ -273,7 +272,7 @@ final class Channel
             setOwner(selectNewOwner(), players.length > 1);
     }
 
-    /// `Channel::KickOrBan`
+    /// A moderator kicks, or bans, a member; only the owner may remove the owner.
     void kickOrBan(ChannelMember player, string targetName, bool ban)
     {
         const guid = player.guid;
@@ -299,7 +298,7 @@ final class Channel
             setOwner(selectNewOwner(), players.length > 1);
     }
 
-    /// `Channel::UnBan`
+    /// A moderator lifts a ban.
     void unban(ChannelMember player, string targetName)
     {
         if (!checkModerator(player))
@@ -314,7 +313,7 @@ final class Channel
         sendToAll(notice(ChatNotify.playerUnbanned, name, targetGuid, player.guid));
     }
 
-    /// `Channel::SetPassword`
+    /// A moderator sets the channel's password.
     void setPassword(ChannelMember player, string pass)
     {
         if (!checkModerator(player))
@@ -323,7 +322,7 @@ final class Channel
         sendToAll(notice(ChatNotify.passwordChanged, name, player.guid));
     }
 
-    /// `Channel::SetModeFlags` for a player: moderator or muted.
+    /// Sets or clears a member's flag: moderator or muted.
     void setModeFlags(ChannelMember player, string targetName, MemberFlags flag, bool set)
     in (flag == MemberFlags.moderator || flag == MemberFlags.muted)
     {
@@ -343,7 +342,7 @@ final class Channel
         setMemberFlag(targetGuid, flag, set);
     }
 
-    /// `Channel::SetOwner` for a player.
+    /// `player` gives the channel to the member named.
     void setOwner(ChannelMember player, string targetName)
     {
         const guid = player.guid;
@@ -357,13 +356,13 @@ final class Channel
         setOwner(target.guid, players.length > 1);
     }
 
-    /// `Channel::SendChannelOwnerResponse`: the owner's name, or "Nobody".
+    /// Tells `player` who owns the channel: the owner's name, or "Nobody".
     void sendOwner(ChannelMember player)
     {
         if (!isOn(player.guid))
             return notify(player, ChatNotify.notMember);
-        // CMaNGOS writes the asking player's guid here, so the client always names the asker; this sends
-        // the owner, as the message means.
+        // The guid here is the owner's, as the message means (with the asker's, the client would name the
+        // asker).
         string ownerName = "Nobody";
         if (ownerGuid)
         {
@@ -373,7 +372,7 @@ final class Channel
         notify(player, ChatNotify.channelOwner, ownerName);
     }
 
-    /// `Channel::SendChannelListResponse`: the members, each with its flags.
+    /// Tells `player` the members, each with its flags.
     void sendList(ChannelMember player)
     {
         if (!isOn(player.guid))
@@ -391,7 +390,7 @@ final class Channel
         player.deliver(Opcode.SMSG_CHANNEL_LIST, w.data);
     }
 
-    /// `Channel::ToggleAnnouncements`
+    /// Turns announcing joins and leaves on or off.
     void toggleAnnouncements(ChannelMember player)
     {
         if (!checkModerator(player))
@@ -401,10 +400,10 @@ final class Channel
             player.guid));
     }
 
-    /// `Channel::ToggleModeration`
+    /// Turns moderation on or off.
     void toggleModeration(ChannelMember player)
     {
-        // ArcEmu's Channel::Moderate: moderators, and anyone with the `c` permission.
+        // Moderators, and anyone with the `c` permission.
         if (!checkModerator(player, player.moderatesAll))
             return;
         moderation = !moderation;
@@ -412,13 +411,13 @@ final class Channel
             player.guid));
     }
 
-    /// `Channel::Say`
+    /// `player` says `text` in the channel.
     void say(ChannelMember player, string text, Language language, ubyte chatTag)
     {
         const guid = player.guid;
         if (!isOn(guid))
             return notify(player, ChatNotify.notMember);
-        // `SPEAK_IN_LOCALDEFENSE_RANK` and `SPEAK_IN_WORLDDEFENSE_RANK`: LocalDefense needs a rank of 0 (none of
+        // Speaking in the defense channels: LocalDefense needs a rank of 0 (none of
         // the dishonored ranks), WorldDefense 11 (Knight-Captain, Legionnaire).
         enum uint localDefense = 22, worldDefense = 23;
         if ((players[guid] & MemberFlags.muted) || (entry !is null && ((entry.channelId == worldDefense
@@ -431,7 +430,7 @@ final class Channel
         sendToAll(chatMessage(ChatType.CHAT_MSG_CHANNEL, language, guid, text, chatTag, name), Opcode.SMSG_MESSAGECHAT);
     }
 
-    /// `Channel::Invite`
+    /// `player` invites the player named to the channel.
     void invite(ChannelMember player, string targetName)
     {
         const guid = player.guid;
@@ -458,7 +457,7 @@ private:
         player.deliver(Opcode.SMSG_CHANNEL_NOTIFY, notice(type, name, extra));
     }
 
-    /// The members in guid order, as CMaNGOS's `std::map` keeps them.
+    /// The members in guid order.
     ulong[] memberGuids() const
     {
         auto guids = players.keys;
@@ -514,7 +513,7 @@ private:
         sendToAll(notice(ChatNotify.modeChange, name, guid, cast(ubyte) old, cast(ubyte) *current));
     }
 
-    /// `Channel::SetOwner(guid)`: the old owner stays a moderator, the new one becomes both.
+    /// Makes `guid` the owner: the old owner stays a moderator, the new one becomes both.
     void setOwner(ulong guid, bool exclaim)
     {
         if (ownerGuid)
@@ -568,7 +567,7 @@ final class Channels
         this.settings = settings;
     }
 
-    /// `ChannelMgr::GetJoinChannel`: the channel, created if needed.
+    /// The channel, created if needed.
     Channel getOrCreate(string name)
     {
         const key = keyOf(name);
@@ -579,7 +578,7 @@ final class Channels
         return channel;
     }
 
-    /// `ChannelMgr::GetChannel`: the channel, or null after telling `player` it is not in it.
+    /// The channel, or null after telling `player` it is not in it.
     Channel find(string name, ChannelMember player)
     {
         if (auto found = keyOf(name) in byName)
@@ -601,7 +600,7 @@ final class Channels
         return byName.length;
     }
 
-    /// `ChannelMgr::LeftChannel`: a channel nobody is in goes away.
+    /// Someone left: a channel nobody is in goes away.
     void leftChannel(string name)
     {
         const key = keyOf(name);
@@ -610,7 +609,7 @@ final class Channels
                 byName.remove(key);
     }
 
-    /// `Player::CleanupChannels`: logging out leaves every channel without telling the client.
+    /// Logging out leaves every channel without telling the client.
     void leaveAll(ChannelMember player)
     {
         foreach (channel; joinedBy.get(player.guid, null).dup)
@@ -622,7 +621,7 @@ final class Channels
     }
 
     /**
-     * `Player::UpdateLocalChannels`: after a zone change, the zone channels the player is in are
+     * After a zone change, the zone channels the player is in are
      * replaced by those of the new zone ("General - Elwynn Forest" by "General - Westfall").
      */
     void zoneChanged(ChannelMember player, string zoneName)
@@ -643,7 +642,7 @@ final class Channels
         }
     }
 
-    /// Whether two players may meet in a channel (`Player::GetTeam` comparisons).
+    /// Whether two players may meet in a channel: the same team, or cross-faction channels allowed.
     bool sameTeam(const ChannelMember a, const ChannelMember b) const
     {
         return settings.crossFaction

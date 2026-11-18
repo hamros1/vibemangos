@@ -1,10 +1,10 @@
 /**
- * Experience for kills (CMaNGOS `Tools/Formulas.h`, `MaNGOS::XP`): what a creature is worth to a
+ * Experience for kills: what a creature is worth to a
  * player of a level, and how a group shares it.
  */
 module dmangos.world.experience;
 
-/// `XP::IsTrivialLevelDifference`: a creature this far below gives nothing (grey).
+/// Whether a creature this far below gives nothing (grey).
 bool isTrivialLevelDifference(uint unitLevel, uint targetLevel) pure nothrow @nogc @safe
 {
     if (unitLevel <= targetLevel)
@@ -15,7 +15,7 @@ bool isTrivialLevelDifference(uint unitLevel, uint targetLevel) pure nothrow @no
     return diff > (band < limit.length ? limit[band] : 12);
 }
 
-/// `XP::GetGrayLevel`
+/// The highest level that is grey (worth nothing) to a player of `level`.
 uint grayLevel(uint level) pure nothrow @nogc @safe
 {
     if (level <= 5)
@@ -27,14 +27,14 @@ uint grayLevel(uint level) pure nothrow @nogc @safe
     return level - 9;
 }
 
-/// `XP::GetQuestGreenRange`: how far below the player a level still counts as green.
+/// How far below the player a level still counts as green.
 uint questGreenRange(uint level) pure nothrow @nogc @safe
 {
     static immutable uint[12] byFive = [4, 4, 5, 5, 6, 6, 7, 7, 8, 9, 10, 11];
     return level / 5 < byFive.length ? byFive[level / 5] : 12;
 }
 
-/// `XP::GetZeroDifference`
+/// The level difference below the player at which a kill's experience falls to nothing.
 uint zeroDifference(uint level) pure nothrow @nogc @safe
 {
     if (level < 8)
@@ -62,7 +62,7 @@ uint zeroDifference(uint level) pure nothrow @nogc @safe
     return 17;
 }
 
-/// `XP::BaseGain`: a creature of `mobLevel` to a player of `level`, before its rank and multiplier.
+/// What a creature of `mobLevel` is worth to a player of `level`, before its rank and multiplier.
 float baseGain(uint level, uint mobLevel) pure nothrow @nogc @safe
 {
     const base = level * 5 + 45;
@@ -76,17 +76,17 @@ float baseGain(uint level, uint mobLevel) pure nothrow @nogc @safe
     return base * (1.0f - float(level - mobLevel) / zeroDifference(level));
 }
 
-/// What `XP::Gain` needs of the creature.
+/// What `killGain` needs of the creature.
 struct KillValue
 {
     uint level;
     bool elite;          /// rank neither normal nor rare
-    bool raidMap;        /// `IsNoRaid` false: elites give double, not two and a half
+    bool raidMap;        /// on a raid map: elites give double, not two and a half
     float multiplier = 1; /// `ExperienceMultiplier`
     bool noXp;           /// a critter, `NO_XP`, a pet or a totem
 }
 
-/// `XP::Gain` (kill rate 1, no damage by others).
+/// The experience a kill gives a player of `level` (kill rate 1, no damage by others).
 uint killGain(uint level, const KillValue creature) pure nothrow @nogc @safe
 {
     import std.math : nearbyint;
@@ -102,7 +102,7 @@ uint killGain(uint level, const KillValue creature) pure nothrow @nogc @safe
     return cast(uint) nearbyint(gain);
 }
 
-/// `XP::xp_in_group_rate`: the group's bonus for its size.
+/// The group's bonus for its size.
 float groupRate(uint count) pure nothrow @nogc @safe
 {
     switch (count)
@@ -123,7 +123,7 @@ float groupRate(uint count) pure nothrow @nogc @safe
     }
 }
 
-/// `CONFIG_FLOAT_GROUP_XP_DISTANCE`: group members farther than this from a kill share none of it.
+/// Group members farther than this from a kill share none of it.
 enum float groupXpDistance = 74;
 
 unittest

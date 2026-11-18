@@ -1,6 +1,6 @@
 /**
- * Teleports (CMaNGOS `Player::TeleportTo`, `MovementHandler.cpp`'s
- * acknowledgements, `MiscHandler.cpp`'s area triggers and world teleport).
+ * Teleports: ordering one, the client's acknowledgements, area triggers and
+ * the client's world teleport.
  *
  * A teleport on the same map is "near": the server sends
  * `MSG_MOVE_TELEPORT_ACK` with the new position, the player is at the
@@ -12,8 +12,8 @@
  * packets of a login again (the client forgets every object on a world
  * change) and puts the player on the new map.
  *
- * Between the order and the answer, movement packets are ignored, as in
- * CMaNGOS (`Player::IsBeingTeleported`). Logging out halfway saves the
+ * Between the order and the answer, movement packets are ignored.
+ * Logging out halfway saves the
  * destination.
  *
  * There is one map per map id, so a dungeon is shared by everyone who
@@ -29,7 +29,7 @@ enum Teleport
     far,  /// `MSG_MOVE_WORLDPORT_ACK` expected
 }
 
-/// `AreaLockStatus`: why an area trigger, or a map entrance, does not let a player through.
+/// Why an area trigger, or a map entrance, does not let a player through.
 enum AreaLockStatus
 {
     ok,
@@ -64,7 +64,7 @@ mixin template TeleportHandlers()
 
 private:
     /**
-     * `Player::TeleportTo`: false if the destination is not valid or the player may not enter the
+     * Teleports the player: false if the destination is not valid or the player may not enter the
      * map. `trigger` is the area trigger walked into, if any; a teleport to another map without one
      * is checked against that map's entrance. `toInstance` is the dungeon copy to go into (a GM
      * appearing to a player there); by default the player's own (`instanceFor`). `checked`: the
@@ -84,7 +84,7 @@ private:
             return false;
         }
         const mapEntry = client.maps.lookup(mapId);
-        // `Player::TeleportTo`: a battleground's map only into the copy the queue sent the player to (game
+        // A battleground's map only into the copy the queue sent the player to (game
         // masters also into the copy of a player they go to).
         if (mapEntry.isBattleground)
         {
@@ -94,7 +94,7 @@ private:
             if (toInstance == uint.max)
                 toInstance = battleground_.instance;
         }
-        // Leaving a battleground's map for another: out of the copy (`LeaveBattleground(false)`).
+        // Leaving a battleground's map for another: out of the copy.
         if (player.data.map != mapId && battleground_.instance && client.maps.lookup(player.data.map) !is null
             && client.maps.lookup(player.data.map).isBattleground)
             leaveBattleground(false);
@@ -186,7 +186,7 @@ private:
         player.movement.flags = 0;
         const instance = toInstance != uint.max ? toInstance
             : player.data.map == mapId ? instanceId_ : context.instanceFor(player.guid, mapId);
-        // `InstanceMap::CanEnter`: a copy of a dungeon with its players already in (game masters aside).
+        // No entering a copy of a dungeon with its most players already in (game masters aside).
         if (instance && (player.data.map != mapId || instance != instanceId_) && account.level < AccountLevel.gameMaster)
             if (const most = mapId in context.data.instanceMaxPlayers)
                 if (auto there = context.existingMap(mapId, instance))
@@ -208,7 +208,7 @@ private:
             order.write(ack);
             deliver(Opcode.MSG_MOVE_TELEPORT_ACK, ack.data);
 
-            // Unit::SendTeleportPacket: the others see the jump; then visibility at the new place.
+            // The others see the jump; then visibility at the new place.
             ByteWriter seen;
             seen.putPackedGuid(player.guid);
             order.write(seen);
@@ -234,14 +234,14 @@ private:
             map.remove(this);
             // From here on the character is saved at its destination (a dungeon: its instance).
             teleporting = Teleport.far;
-            // ArcEmu's `m_bgEntryPoint`: where it was before going into an instance, for `.instance exit`.
+            // Where it was before going into an instance, for `.instance exit`.
             if (instance && instanceId_ == 0)
             {
                 entryMap = player.data.map;
                 entryPoint = player.position;
             }
             instanceId_ = instance;
-            if (mapEntry.isBattleground && instance == battleground_.instance) // `CreateNewBattleGround`
+            if (mapEntry.isBattleground && instance == battleground_.instance) // the copy starts with its first player
             {
                 import dmangos.world.bgqueue : battlegroundOfMap;
 
@@ -258,12 +258,12 @@ private:
         return true;
     }
 
-    /// `Player::GetAreaTriggerLockStatus`
+    /// Whether the player may pass an area trigger into a map, and if not, why (and the level, item or quest needed).
     AreaLockStatus lockStatus(const ref AreaTriggerTeleport trigger, const(MapEntry)* mapEntry, out uint requirement)
     {
         if (mapEntry is null)
             return AreaLockStatus.unknownError;
-        if (triggerpassCheat) // ArcEmu: only `.cheat triggerpass` passes (CheckTriggerPrerequsites)
+        if (triggerpassCheat) // only `.cheat triggerpass` skips the requirements
             return AreaLockStatus.ok;
         if (player.data.level < trigger.requiredLevel && !context.config.instanceIgnoreLevel)
         {
@@ -296,14 +296,14 @@ private:
             requirement = trigger.requiredQuest;
             return AreaLockStatus.questNotCompleted;
         }
-        // `ENTER_HALL_RANK`: the Hall of Champions and the Hall of Legends take a visual rank of 6.
+        // The Hall of Champions and the Hall of Legends take a visual rank of 6.
         enum uint championsHall = 2532, hallOfLegends = 2527;
         if ((trigger.id == championsHall || trigger.id == hallOfLegends) && honorRank.visualRank < 6)
             return AreaLockStatus.pvpRank;
         return AreaLockStatus.ok;
     }
 
-    /// `Player::SendTransferAbortedByLockStatus`
+    /// Tells the player why it may not pass, in an area trigger message, for the reasons that have one.
     void sendLockStatus(const ref AreaTriggerTeleport trigger, AreaLockStatus status, uint requirement)
     {
         const ownText = status.among(AreaLockStatus.tooLowLevel, AreaLockStatus.questNotCompleted,
@@ -321,11 +321,11 @@ private:
                 trigger.requiredLevel, item is null ? "?" : item.details.name)));
             break;
         default:
-            break; // CMaNGOS sends nothing for the others either
+            break; // nothing is sent for the others
         }
     }
 
-    /// `SendAreaTriggerMessage(text, requirement)`: the text is a printf format with at most one number.
+    /// An area trigger message's text with its requirement: the text is a printf format with at most one number.
     static string formatRequirement(string text, uint requirement)
     {
         import std.array : replace;
@@ -334,7 +334,7 @@ private:
         return text.replace("%u", requirement.to!string).replace("%d", requirement.to!string);
     }
 
-    /// `WorldSession::HandleMoveWorldportAckOpcode`: the client has loaded the new map.
+    /// The client has loaded the new map.
     @Handles(Opcode.MSG_MOVE_WORLDPORT_ACK, WorldState.inWorld)
     void handleWorldportAck()
     {
@@ -355,7 +355,7 @@ private:
             group.updatePlayerOutOfRange(this, GroupUpdate.full);
     }
 
-    /// `WorldSession::HandleMoveTeleportAckOpcode`: the client has arrived at a near teleport's destination.
+    /// The client has arrived at a near teleport's destination.
     @Handles(Opcode.MSG_MOVE_TELEPORT_ACK, WorldState.inWorld)
     void handleTeleportAck(const ClientTeleportAck ack)
     {
@@ -368,7 +368,7 @@ private:
             group.updatePlayerOutOfRange(this, GroupUpdate.position);
     }
 
-    /// `WorldSession::HandleAreaTriggerOpcode`: an instance portal, or another trigger that teleports.
+    /// The player walked into an area trigger: an instance portal, or another trigger that teleports.
     @Handles(Opcode.CMSG_AREATRIGGER, WorldState.inWorld)
     void handleAreaTrigger(const ClientAreaTrigger request)
     {
@@ -382,7 +382,7 @@ private:
         if (!entry.contains(player.data.map, p.x, p.y, p.z, delta))
             return trace!"%s: '%s' is too far from area trigger %s"(remoteAddress, player.data.name, request.id);
 
-        // A battleground's own triggers (its flag rooms, exit portals) first (`BattleGround::HandleAreaTrigger`).
+        // A battleground's own triggers (its flag rooms, exit portals) first.
         if (auto copy = currentBattleground())
             if (copy.rules.areaTrigger(copy, player.guid, request.id))
                 return;
@@ -395,7 +395,7 @@ private:
                 return;
         }
 
-        // The place a quest under way asks for (`GetQuestForAreaTrigger`).
+        // The place a quest under way asks for.
         if (const quest = request.id in context.data.quests.triggerQuests)
             if (player.deathState == DeathState.alive && questState(*quest) == QuestState.incomplete)
                 areaExploredOrEventHappens(*quest);
@@ -422,7 +422,7 @@ private:
         teleportTo(trigger.targetMap, Position(trigger.x, trigger.y, trigger.z, trigger.orientation), trigger);
     }
 
-    /// `WorldSession::HandleWorldTeleportOpcode`: the client's `worldport` command.
+    /// The client's `worldport` command.
     @Handles(Opcode.CMSG_WORLD_TELEPORT, WorldState.inWorld)
     void handleWorldTeleport(const ClientWorldTeleport request)
     {
@@ -431,7 +431,7 @@ private:
         teleportTo(request.map, Position(request.x, request.y, request.z, request.orientation));
     }
 
-    /// ArcEmu's `Player::SafeTeleport`, which GM commands use: nothing happens while a teleport is under way.
+    /// The teleport GM commands use: nothing happens while a teleport is under way.
     package bool commandTeleport(uint mapId, Position destination, uint toInstance = uint.max)
     {
         if (teleporting != Teleport.none)

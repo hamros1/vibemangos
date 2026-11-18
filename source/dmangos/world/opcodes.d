@@ -1,9 +1,9 @@
 /**
  * World protocol opcodes and result codes for 1.12.x clients.
  *
- * Names and values are those of CMaNGOS `Server/Opcodes.h` and
- * `Globals/SharedDefines.h`. Unlike the rest of the code base they keep
- * their upper-case spelling, so they can be looked up in any 1.12 protocol
+ * Names and values are the protocol's usual ones. Unlike the rest of the
+ * code base they keep their upper-case spelling, so they can be looked up in
+ * any 1.12 protocol
  * reference unchanged. Only the opcodes this server uses are listed, in
  * value order; the client knows `numMessageTypes` of them.
  */
@@ -477,10 +477,10 @@ enum Opcode : uint
     MSG_INSPECT_HONOR_STATS = 0x2D6,
 }
 
-/// One past the highest opcode a 1.12 client uses (`NUM_MSG_TYPES`).
+/// One past the highest opcode a 1.12 client uses.
 enum uint numMessageTypes = 0x33C;
 
-/// Result codes of `SMSG_AUTH_RESPONSE` (`ResponseCodes`, AUTH_* range).
+/// Result codes of `SMSG_AUTH_RESPONSE` (the AUTH_* range of the response codes).
 enum AuthResponse : ubyte
 {
     AUTH_OK = 0x0C,
@@ -507,7 +507,7 @@ enum AuthResponse : ubyte
     AUTH_PARENTAL_CONTROL = 0x21,
 }
 
-/// Result codes of `SMSG_CHARACTER_LOGIN_FAILED` (`CharLoginFailReasons`).
+/// Result codes of `SMSG_CHARACTER_LOGIN_FAILED`.
 enum CharacterLoginFailure : ubyte
 {
     CHAR_LOGIN_NO_WORLD = 0x01,
@@ -520,7 +520,7 @@ enum CharacterLoginFailure : ubyte
     CHAR_LOGIN_FAILED = 0x08,
 }
 
-/// Result codes of `SMSG_CHAR_CREATE` and `SMSG_CHAR_DELETE` (`ResponseCodes`, CHAR_* range).
+/// Result codes of `SMSG_CHAR_CREATE` and `SMSG_CHAR_DELETE` (the CHAR_* range of the response codes).
 enum CharacterResponse : ubyte
 {
     CHAR_CREATE_IN_PROGRESS = 0x2D,
@@ -535,10 +535,10 @@ enum CharacterResponse : ubyte
     CHAR_DELETE_IN_PROGRESS = 0x38,
     CHAR_DELETE_SUCCESS = 0x39,
     CHAR_DELETE_FAILED = 0x3A,
-    CHAR_DELETE_FAILED_GUILD_LEADER = 0x3A, /// as CMaNGOS sends it ("unsure")
+    CHAR_DELETE_FAILED_GUILD_LEADER = 0x3A, /// the same code as `CHAR_DELETE_FAILED`: the real one is not known
 }
 
-/// `ChatMsg`
+/// The kind of a chat message (`SMSG_MESSAGECHAT`, `CMSG_MESSAGECHAT`).
 enum ChatType : uint
 {
     CHAT_MSG_SAY = 0x00,
@@ -571,7 +571,7 @@ enum ChatType : uint
     CHAT_MSG_RAID_BOSS_EMOTE = 0x5A,
 }
 
-/// `ChatTagFlags`: the badge shown next to a speaker's name.
+/// The badge shown next to a speaker's name.
 enum ChatTag : ubyte
 {
     CHAT_TAG_NONE = 0,
@@ -580,7 +580,7 @@ enum ChatTag : ubyte
     CHAT_TAG_GM = 3,
 }
 
-/// `Language`
+/// The language a message is spoken in.
 enum Language : uint
 {
     LANG_UNIVERSAL = 0,

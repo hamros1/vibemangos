@@ -1,6 +1,5 @@
 /**
- * A timer that fires every `interval` of the time fed to it (Ember's
- * `DeltaTimer`, CMaNGOS's `IntervalTimer`). The update loop hands each
+ * A timer that fires every `interval` of the time fed to it. The update loop hands each
  * object the time since the last tick, and the object asks its timers
  * whether their period has come round.
  */
@@ -33,8 +32,8 @@ struct IntervalTimer
         return true;
     }
 
-    /// Takes every whole period off at once and returns the time they cover (CMaNGOS's
-    /// `m_regenTimer / 100 * 100` style: what has passed, in steps of the interval).
+    /// Takes every whole period off at once and returns the time they cover (what has
+    /// passed, rounded down to a multiple of the interval).
     Duration takeAll() pure nothrow @nogc @safe
     {
         if (interval == Duration.zero)

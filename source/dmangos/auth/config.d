@@ -2,9 +2,10 @@
  * Server configuration, read from a JSON file.
  *
  * The field initializers are the defaults, and a configuration file only
- * needs to list what it changes. Settings with a CMaNGOS `realmd.conf`
- * equivalent use the same meaning and defaults; the equivalent is named in
- * each field's comment.
+ * needs to list what it changes. A setting that corresponds to a key of the
+ * `realmd.conf` login server configuration file shared with the database's
+ * other servers uses the same meaning and default; the key is named in the
+ * field's comment.
  */
 module dmangos.auth.config;
 

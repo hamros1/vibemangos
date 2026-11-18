@@ -1,24 +1,24 @@
 /**
- * Movement maps (CMaNGOS's mmaps): navigation meshes over the terrain and the buildings, which
+ * Movement maps (mmaps): navigation meshes over the terrain and the buildings, which
  * creatures find their way over.
  *
- * Recast builds them and Detour searches them: recastnavigation 1.6.0 (zlib licence), the library
- * CMaNGOS uses, compiled from `thirdparty/` with a small C interface (`thirdparty/dmnav/dmnav.cpp`).
+ * Recast builds them and Detour searches them: recastnavigation 1.6.0 (zlib licence), compiled
+ * from `thirdparty/` with a small C interface (`thirdparty/dmnav/dmnav.cpp`).
  * This module is that interface in D: building a tile (`buildTile`, for the extractor), and a map's
  * mesh with the tiles it has loaded, which finds paths (`NavMesh`).
  *
- * Recast has y up; the world has z up. A world point (x, y, z) is (y, z, x) to Recast, as in
- * CMaNGOS. A map is 64 x 64 grid tiles of 533 1/3 yards (`tileOf` in `dmangos.world.terrain`), and
+ * Recast has y up; the world has z up. A world point (x, y, z) is (y, z, x) to Recast. A map is
+ * 64 x 64 grid tiles of 533 1/3 yards (`tileOf` in `dmangos.world.terrain`), and
  * each is one tile of the mesh: grid tile [gx, gy] is mesh tile (63 - gy, 63 - gx).
  */
 module dmangos.navigation;
 
 import dmangos.vmap.math : Vector3;
 
-/// Yards per side of a grid tile (`SIZE_OF_GRIDS`), and so of a mesh tile.
+/// Yards per side of a grid tile, and so of a mesh tile.
 enum float gridTileSize = 533.33333f;
 
-/// What a polygon is, and the flag it carries (`NavArea`, `NavTerrainFlag` in CMaNGOS).
+/// What a polygon is, and the flag it carries.
 enum NavArea : ubyte
 {
     none = 0,     /// not walkable
@@ -33,7 +33,7 @@ enum ushort navFlag(NavArea area) = cast(ushort)(1 << (area - 1));
 /// The flags a walking creature may cross (it swims, too).
 enum ushort walkingFlags = navFlag!(NavArea.ground) | navFlag!(NavArea.water);
 
-/// How a tile is built: `MapBuilder::buildMoveMapTile`'s settings (`BASE_UNIT_DIM`, 80 cells a piece).
+/// How a tile is built: its cell size (80 cells a piece) and the steepest walkable slope, in degrees.
 struct BuildConfig
 {
     float cellSize = 0.2666666f;
@@ -216,7 +216,7 @@ final class NavMesh
     NavPath findPath(Vector3 start, Vector3 end, ushort include = walkingFlags, float extents = 3,
         float extentsUp = 5) @trusted
     {
-        enum maxPoints = 74; // MAX_POINT_PATH_LENGTH
+        enum maxPoints = 74; // the longest path, in points
         const s = toRecast(start), e = toRecast(end);
         const float[3] ext = [extents, extentsUp, extents];
         float[3 * maxPoints] corners;
