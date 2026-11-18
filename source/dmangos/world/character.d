@@ -294,30 +294,9 @@ final class Character : OnlinePlayer, Looter
         return UnitRef.of(this);
     }
 
-    /// See `dmangos.world.unit.dealDamage`: damage the player suffers.
-    /// Brings the player back to life with `restore` of its health and mana (see `DeathHandlers.resurrect`).
-    void bringBack(float restore)
-    {
-        resurrect(restore);
-    }
 
-    /// Its pet used `spell` (see `PetHandlers.petUsedSpell`).
-    void petCastSpell(uint spell)
-    {
-        petUsedSpell(spell);
-    }
 
-    /// See `TeleportHandlers.crossOnShip`.
-    void rideShipAcross(uint mapId, Position shipAt, ulong shipGuid, uint shipEntry)
-    {
-        crossOnShip(mapId, shipAt, shipGuid, shipEntry);
-    }
 
-    /// See `UnitRef.absorb`.
-    uint absorbIncoming(uint school, ref uint damage)
-    {
-        return absorbDamage(school, damage);
-    }
 
     /// See `dealDamage`.
     void sufferDamage(UnitRef attacker, uint damage, const Blow blow)
@@ -338,17 +317,7 @@ final class Character : OnlinePlayer, Looter
             procAuras(ProcFlag.takeHarmfulSpell, attacker);
     }
 
-    /// See `dealDamage`: a creature this player (or its pet) damaged is tapped for it.
-    void tapCreature(Creature creature)
-    {
-        tap(creature);
-    }
 
-    /// See `dealDamage`: a creature this player (or its pet) killed: its rewards.
-    void killedCreature(Creature creature)
-    {
-        creatureKilled(creature);
-    }
 
     /// See `UnitRef`. The player's pet joins in.
     void threatAdded(ulong creature)
@@ -357,17 +326,7 @@ final class Character : OnlinePlayer, Looter
         petAssistAgainst(creature);
     }
 
-    /// ditto
-    void threatRemoved(ulong creature)
-    {
-        removeThreatener(creature);
-    }
 
-    /// See `UnitRef`.
-    void auraTick(Creature target, Aura aura, size_t effect)
-    {
-        creatureAuraTick(target, aura, effect);
-    }
 
     /// See `UnitRef`.
     uint healthPercent()
@@ -432,17 +391,7 @@ final class Character : OnlinePlayer, Looter
         sendPreparedGossip(creature);
     }
 
-    /// A player came online or went offline (`SocialHandlers.friendChanged`), for another node's news.
-    void friendNews(ulong guid, bool online, const FriendInfo info)
-    {
-        friendChanged(guid, online, info);
-    }
 
-    /// The guild fields from its guild now (`GuildHandlers.updateGuildFields`), for the context.
-    void refreshGuildFields()
-    {
-        updateGuildFields();
-    }
 
     /// The guild its `PLAYER_GUILDID` names (what it was in, until told otherwise).
     @property uint guildOfField()
@@ -452,23 +401,8 @@ final class Character : OnlinePlayer, Looter
         return player is null ? 0 : player.values.get!PLAYER_GUILDID;
     }
 
-    /// An invitation from another node (`GuildHandlers.guildInvitedBy`).
-    void guildInvite(uint guild, ulong inviter, string inviterName, string guildName)
-    {
-        guildInvitedBy(guild, inviter, inviterName, guildName);
-    }
 
-    /// See `OnlinePlayer.ignores`.
-    bool ignores(ulong guid) const
-    {
-        return ignoresGuid(guid);
-    }
 
-    /// This player's pet died.
-    void ownPetDied()
-    {
-        petDiedHere();
-    }
 
     /// The weekly honor maintenance ran: the honor columns and rows again from the database.
     void honorReckoned()
@@ -531,17 +465,7 @@ final class Character : OnlinePlayer, Looter
         return player is null ? 4 : honorRank.rank;
     }
 
-    /// The corpse of this player's pet went.
-    void petCorpseGone(Creature pet)
-    {
-        petCorpseGoneHere(pet);
-    }
 
-    /// See `UnitRef`.
-    QuestProgress questStatusOf(uint quest)
-    {
-        return questStatusFor(quest);
-    }
 
     /// See `UnitRef`.
     void showScriptGossip(ulong npc, uint textId, const(MenuOption)[] options, bool withQuests)
@@ -550,12 +474,6 @@ final class Character : OnlinePlayer, Looter
             sendScriptGossip(npc, textId, options, withQuests);
     }
 
-    /// See `UnitRef`.
-    void closeGossip()
-    {
-        if (player !is null)
-            deliver(Opcode.SMSG_GOSSIP_COMPLETE, null);
-    }
 
     /// See `UnitRef`.
     void killCreditFrom(uint entry, ulong creature)
@@ -600,29 +518,9 @@ final class Character : OnlinePlayer, Looter
         return player is null ? 0 : player.guid;
     }
 
-    /// See `Looter`.
-    uint storeLoot(uint item, uint count, int randomPropertyId, bool sendError)
-    {
-        return lootStore(item, count, randomPropertyId, sendError);
-    }
 
-    /// See `Looter`.
-    void receiveMoney(uint copper)
-    {
-        lootMoney(copper);
-    }
 
-    /// See `Looter`.
-    bool canUseItem(uint item)
-    {
-        return lootCanUse(item);
-    }
 
-    /// See `Looter`.
-    void lootWindow(ulong target, bool open)
-    {
-        setLootWindow(target, open);
-    }
 
     /// The account's level.
     @property AccountLevel security() const

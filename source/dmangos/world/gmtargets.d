@@ -211,7 +211,7 @@ mixin template GmTargets()
     {
         import dmangos.world.updatefields : UNIT_FIELD_HEALTH, UNIT_FIELD_MAXHEALTH;
 
-        resurrect(1);
+        bringBack(1);
         spawnCorpseBones();
         player.values.set!UNIT_FIELD_HEALTH(player.values.get!UNIT_FIELD_MAXHEALTH);
         flushPlayerChanges();

@@ -433,6 +433,12 @@ the same character: its parser points at the broken block.
 
 ## Pitfalls found so far
 
+* **Character's mixins share one namespace.** A member that `Character` defines itself silently hides a
+  mixin's member of the same name, and two mixins defining the same name collide only where it is used.
+  `tools/harness/mixin-names.py` (run by `check.sh`) reports any name defined twice. A mixin method
+  that implements one of `Character`'s interfaces needs no forwarder: give it the interface's name
+  and make it `public`.
+
 These are facts about the database, its data and the 1.12 client that the code relies on, and
 that cost time to find.
 

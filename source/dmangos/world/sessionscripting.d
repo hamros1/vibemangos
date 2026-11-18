@@ -78,7 +78,7 @@ mixin template SessionScripting()
     }
 
     /// Where this player stands with `quest` (`UnitRef.questStatusOf`).
-    package QuestProgress questStatusFor(uint quest)
+    public QuestProgress questStatusOf(uint quest)
     {
         import dmangos.world.quests : QuestState;
 
@@ -272,7 +272,7 @@ mixin template SessionScripting()
     QuestProgress hostQuestStatusOf(EntityRef who, uint quest)
     {
         if (auto other = sessionHere(who))
-            return other.questStatusFor(quest);
+            return other.questStatusOf(quest);
         return QuestProgress.none;
     }
 

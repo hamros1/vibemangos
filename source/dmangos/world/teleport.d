@@ -72,7 +72,7 @@ private:
      * player goes with it, at the same place aboard. The loading screen names the ship, and the player is
      * on it when it arrives.
      */
-    package void crossOnShip(uint mapId, Position shipAt, ulong shipGuid, uint shipEntry)
+    public void rideShipAcross(uint mapId, Position shipAt, ulong shipGuid, uint shipEntry)
     {
         import dmangos.world.transports : passengerPosition;
 

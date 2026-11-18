@@ -273,7 +273,7 @@ private:
      * left; a mana shield too, while the player has the mana, each point costing the effect's multiple
      * value in mana. A shield used up goes. Returns what was absorbed.
      */
-    package uint absorbDamage(uint school, ref uint damage)
+    public uint absorbIncoming(uint school, ref uint damage)
     {
         if (player is null || damage == 0)
             return 0;
@@ -631,7 +631,7 @@ private:
             uint damage = amount;
             if (aura.spell.casting.school == 0)
                 damage = cast(uint) armorReducedDamage(aura.casterLevel, player.fighter.armor, damage);
-            const absorbed = absorbDamage(aura.spell.casting.school, damage);
+            const absorbed = absorbIncoming(aura.spell.casting.school, damage);
             periodicLog(player.guid, aura, i, damage, 0, absorbed);
             import dmangos.world.unit : Blow, dealDamage;
 
@@ -684,7 +684,7 @@ private:
      * See `UnitRef.auraTick`: a periodic effect of this player's aura on a creature ticked: damage
      * over time hurts it as a spell would (tapping, threat, the kill); a leech heals this player.
      */
-    package void creatureAuraTick(Creature target, Aura aura, size_t i)
+    public void auraTick(Creature target, Aura aura, size_t i)
     {
         if (!target.alive || player is null)
             return;
@@ -946,18 +946,18 @@ unittest
     auto me = cast(Player) jaina.session.character;
     session.addAura(makeAura(shield in context.data.spells.spells, me.guid, 1, -1, true, [50, 0, 0]));
     uint damage = 30;
-    assert(session.absorbDamage(4, damage) == 30 && damage == 0, "fire, all of it");
+    assert(session.absorbIncoming(4, damage) == 30 && damage == 0, "fire, all of it");
     damage = 30;
-    assert(session.absorbDamage(0, damage) == 20 && damage == 10, "the last 20");
+    assert(session.absorbIncoming(0, damage) == 20 && damage == 10, "the last 20");
     assert(!me.auras.has(AuraType.schoolAbsorb), "used up: gone");
 
     // A mana shield: 2 mana a point; with 30 mana it takes 15.
     session.addAura(makeAura(manaShield in context.data.spells.spells, me.guid, 1, -1, true, [100, 0, 0]));
     me.values.set!UNIT_FIELD_POWER1(0, 30u);
     damage = 40;
-    assert(session.absorbDamage(0, damage) == 15 && damage == 25 && me.values.get!UNIT_FIELD_POWER1(0) == 0);
+    assert(session.absorbIncoming(0, damage) == 15 && damage == 25 && me.values.get!UNIT_FIELD_POWER1(0) == 0);
     damage = 10;
-    assert(session.absorbDamage(4, damage) == 0, "fire is not its school");
+    assert(session.absorbIncoming(4, damage) == 0, "fire is not its school");
 }
 
 /// A party area aura: its caster's group members near get it, those who move away lose it, and all do when it ends.

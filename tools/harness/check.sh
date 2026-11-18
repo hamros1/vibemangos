@@ -17,6 +17,8 @@ if ! dmd -unittest -main -Isource -od="$H/unittest/obj" -of="$H/unittest/test" \
 fi
 "$H/unittest/test" > "$H/unittest/run.log" 2>&1 || { tail -20 "$H/unittest/run.log"; echo "FAIL: unit tests"; exit 1; }
 grep "modules passed unittests" "$H/unittest/run.log"
+echo "== names defined twice in Character"
+python3 "$REPO/tools/harness/mixin-names.py" || { echo "FAIL: a name is defined twice in Character"; exit 1; }
 echo "== release builds"
 for c in worldserver authserver loadgen; do
     dub build -q -c $c -b release > "$H/unittest/dub-$c.log" 2>&1 || { tail -20 "$H/unittest/dub-$c.log"; echo "FAIL: release build of $c"; exit 1; }

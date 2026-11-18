@@ -1297,7 +1297,7 @@ mixin template BattlegroundHandlers()
         battleground_ = d;
         saveBattleground();
         if (player.deathState != DeathState.alive)
-            resurrect(1.0f);
+            bringBack(1.0f);
         info!"%s: '%s' goes into %s (copy %s)"(remoteAddress, player.data.name, cast(BattlegroundType) e.type,
             e.instance);
         teleportTo(start.map, Position(start.x, start.y, start.z, start.orientation), null, e.instance);
@@ -1394,7 +1394,7 @@ mixin template BattlegroundHandlers()
     package void battlegroundEndedHere(uint markSpell)
     {
         if (player.deathState != DeathState.alive)
-            resurrect(1.0f);
+            bringBack(1.0f);
         battlegroundCastHere(markSpell);
     }
 
@@ -1465,7 +1465,7 @@ mixin template BattlegroundHandlers()
     {
         if (player.deathState == DeathState.alive)
             return;
-        resurrect(1.0f);
+        bringBack(1.0f);
         spawnCorpseBones();
         if (auto waiting = player.auras.find(spellWaitingToResurrect))
             removeAura(waiting);

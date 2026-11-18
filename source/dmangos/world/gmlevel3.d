@@ -656,7 +656,7 @@ private:
         // Resurrected: alive, its corpse gone to bones.
         if (plr.player.deathState != DeathState.alive)
         {
-            plr.resurrect(1);
+            plr.bringBack(1);
             plr.spawnCorpseBones();
         }
         auto values = &plr.player.values;

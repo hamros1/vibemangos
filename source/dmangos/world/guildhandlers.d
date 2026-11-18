@@ -67,7 +67,7 @@ mixin template GuildHandlers()
     }
 
     /// The guild and rank fields others see, from the guild this player is in now.
-    package void updateGuildFields()
+    public void refreshGuildFields()
     {
         if (player is null)
             return;
@@ -535,7 +535,7 @@ mixin template GuildHandlers()
         {
             if (here.guildInvited)
                 return guildResult(GuildCommand.invite, realName, GuildError.alreadyInvitedS);
-            here.guildInvitedBy(g.id, player.guid, player.data.name, g.name);
+            here.guildInvite(g.id, player.guid, player.data.name, g.name);
         }
         else if (context.guildInviteElsewhere !is null)
             context.guildInviteElsewhere(node, guid, g.id, player.guid, player.data.name, g.name);
@@ -543,7 +543,7 @@ mixin template GuildHandlers()
     }
 
     /// An invitation for this player (here, or from another node): it is asked.
-    package void guildInvitedBy(uint guild, ulong inviter, string inviterName, string guildName)
+    public void guildInvite(uint guild, ulong inviter, string inviterName, string guildName)
     {
         if (guildInvited || ownGuild() !is null)
             return;
@@ -613,7 +613,7 @@ mixin template GuildHandlers()
         context.guilds.memberLeft(member);
         context.database.deleteGuildMember(member);
         if (auto gone = cast(typeof(this)) context.onlinePlayer(makeGuid(HighGuid.player, member)))
-            gone.updateGuildFields();
+            gone.refreshGuildFields();
         guildChanged(g);
     }
 
@@ -937,7 +937,7 @@ mixin template GuildHandlers()
     package void guildLogin()
     {
         auto g = ownGuild();
-        updateGuildFields();
+        refreshGuildFields();
         if (g is null)
             return;
         deliver(Opcode.SMSG_GUILD_EVENT, guildEventPacket(GuildEvent.motd, [g.motd]));

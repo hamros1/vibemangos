@@ -2123,7 +2123,7 @@ private:
         else if (school != 1 && !isBinarySpell(*spell))
             resisted = partialResist(damage, cast(int) other.player.values.get!UNIT_FIELD_RESISTANCES(school),
                 other.player.data.level);
-        const absorbed = other.absorbDamage(school, damage);
+        const absorbed = other.absorbIncoming(school, damage);
         map.sendToWatchers(this, Opcode.SMSG_SPELLNONMELEEDAMAGELOG, nonMeleeDamageLog(target: other.player.guid, attacker: player.guid,
             spell.id, damage, school, absorbed, resisted, false, 0, crit), true);
         enterCombatFor(combatLinger);
@@ -2881,7 +2881,7 @@ unittest
         context.data.spells.spells.edit(smite).attributesEx2 |= 0x20000000; // no crit
         context.data.items.edit(itemSword).details.spells[0].id = smite;
         context.data.items.edit(itemSword).details.spells[0].trigger = 2; // chance on hit
-        anduin.session.inWorld.lootStore(itemSword, 1, 0, false);
+        anduin.session.inWorld.storeLoot(itemSword, 1, 0, false);
         anduin.read();
         ubyte slot;
         foreach (s; ubyte(23) .. ubyte(39))
@@ -3410,8 +3410,8 @@ unittest
     import dmangos.world.defines : inventorySlotBag0;
     import dmangos.world.packets : ClientItemPos;
 
-    rexxar.session.inWorld.lootStore(itemBow, 1, 0, false);
-    rexxar.session.inWorld.lootStore(itemArrow, 20, 0, false);
+    rexxar.session.inWorld.storeLoot(itemBow, 1, 0, false);
+    rexxar.session.inWorld.storeLoot(itemArrow, 20, 0, false);
     rexxar.read();
     ubyte slot;
     foreach (s; ubyte(23) .. ubyte(39))

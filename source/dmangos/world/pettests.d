@@ -464,7 +464,7 @@ unittest
     auto me = cast(Player) rexxar.session.character;
     foreach (_; 0 .. 300)
     {
-        session.petUsedSpell(bite);
+        session.petCastSpell(bite);
         if (me.knowsSpell(teachBite))
             break;
     }

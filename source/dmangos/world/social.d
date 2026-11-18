@@ -96,7 +96,7 @@ mixin template SocialHandlers()
     }
 
     /// Whether this player ignores `guid` (see also `OnlinePlayer.ignores`).
-    bool ignoresGuid(ulong guid) const
+    public bool ignores(ulong guid) const
     {
         return (social.get(guid, 0) & SocialFlag.ignored) != 0;
     }
@@ -228,7 +228,7 @@ mixin template SocialHandlers()
         const guid = makeGuid(HighGuid.player, low);
         if (guid == player.guid)
             return deliver(Opcode.SMSG_FRIEND_STATUS, friendStatusPacket(FriendsResult.ignoreSelf, guid));
-        if (ignoresGuid(guid))
+        if (ignores(guid))
             return deliver(Opcode.SMSG_FRIEND_STATUS, friendStatusPacket(FriendsResult.ignoreAlready, guid));
         if (countWith(SocialFlag.ignored) >= ignoreLimit)
             return deliver(Opcode.SMSG_FRIEND_STATUS, friendStatusPacket(FriendsResult.ignoreFull, guid));
@@ -239,7 +239,7 @@ mixin template SocialHandlers()
     @Handles(Opcode.CMSG_DEL_IGNORE, WorldState.inWorld)
     void handleDelIgnore(const ClientGuid request)
     {
-        if (!ignoresGuid(request.guid))
+        if (!ignores(request.guid))
             return;
         setSocial(request.guid, cast(ubyte)(social[request.guid] & ~SocialFlag.ignored));
         deliver(Opcode.SMSG_FRIEND_STATUS, friendStatusPacket(FriendsResult.ignoreRemoved, request.guid));
@@ -259,13 +259,13 @@ mixin template SocialHandlers()
         foreach (other; context.onlinePlayers)
             if (auto session = cast(Character) other)
                 if (session !is this && session.character !is null)
-                    session.friendChanged(player.guid, online, info);
+                    session.friendNews(player.guid, online, info);
         if (context.announceFriendElsewhere !is null)
             context.announceFriendElsewhere(player.guid, online, info.status, info.area, info.level, info.classId);
     }
 
     /// A player came online or went offline: told if it is a friend of this one.
-    void friendChanged(ulong guid, bool online, const FriendInfo info)
+    public void friendNews(ulong guid, bool online, const FriendInfo info)
     {
         if (!befriends(guid))
             return;

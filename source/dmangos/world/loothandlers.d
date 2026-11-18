@@ -221,7 +221,7 @@ private:
         if (auto loot = lootOf(request.guid))
             return loot.release(this);
         if (lootTarget == request.guid)
-            setLootWindow(request.guid, false);
+            lootWindow(request.guid, false);
     }
 
     /// The master looter hands an item to a member who may have it.
@@ -266,7 +266,7 @@ private:
     // -----------------------------------------------------------------------
 
     /// The first player to hurt a creature taps it, for itself and its group.
-    void tap(Creature victim)
+    public void tapCreature(Creature victim)
     {
         if (victim.lootRecipient)
             return;
@@ -286,7 +286,7 @@ private:
         if (tapper is null || tapper.map !is map)
             tapper = this;
         if (victim.lootRecipient == 0)
-            tap(victim);
+            tapCreature(victim);
         tapper.rewardAtKill(victim);
         tapper.prepareBodyLoot(victim);
         map.flushObjectChanges(victim);
@@ -596,7 +596,7 @@ private:
     // -----------------------------------------------------------------------
 
     /// See `Looter.storeLoot`: the item stored, everyone in the group told.
-    package uint lootStore(uint entry, uint count, int randomPropertyId, bool sendError)
+    public uint storeLoot(uint entry, uint count, int randomPropertyId, bool sendError)
     {
         ItemPosCount[] dest;
         const result = player.inventory.canStoreNew(nullBag, nullSlot, dest, entry, count);
@@ -620,21 +620,21 @@ private:
     }
 
     /// See `Looter.receiveMoney`.
-    package void lootMoney(uint copper)
+    public void receiveMoney(uint copper)
     {
         player.receive(Copper(copper));
         flushPlayerChanges();
     }
 
     /// See `Looter.canUseItem`.
-    package bool lootCanUse(uint entry)
+    public bool canUseItem(uint entry)
     {
         const proto = entry in context.data.items;
         return proto !is null && player.inventory.canUse(proto) == InventoryResult.ok;
     }
 
     /// See `Looter.lootWindow`: the player starts looting (`UNIT_FLAG_LOOTING`), or stops.
-    package void setLootWindow(ulong target, bool open)
+    public void lootWindow(ulong target, bool open)
     {
         const flags = player.values.get!UNIT_FIELD_FLAGS;
         if (open)
@@ -849,7 +849,7 @@ unittest
     context.data.loot.item.add(itemJerky, lootRow(itemSword, 100, 0, 1, 1, 0)); // the "clam" holds a sword
     auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f));
     auto me = cast(Player) anduin.session.character;
-    anduin.session.inWorld.lootStore(itemJerky, 1, 0, false);
+    anduin.session.inWorld.storeLoot(itemJerky, 1, 0, false);
     anduin.read();
     Item clam;
     foreach (item; me.inventory.all())

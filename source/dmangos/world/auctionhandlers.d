@@ -400,8 +400,8 @@ unittest
     auto seller = cast(Player) anduin.session.character, first = cast(Player) jaina.session.character,
         second = cast(Player) varian.session.character;
     seller.receive(Copper(1000));
-    anduin.session.inWorld.lootStore(itemSword, 1, 0, false);
-    jaina.session.inWorld.lootStore(itemJerky, 1, 0, false);
+    anduin.session.inWorld.storeLoot(itemSword, 1, 0, false);
+    jaina.session.inWorld.storeLoot(itemJerky, 1, 0, false);
     first.receive(Copper(1000));
     second.receive(Copper(1000));
     foreach (c; [&anduin, &jaina, &varian])

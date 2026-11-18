@@ -294,7 +294,7 @@ private:
         const d = corpse.at, p = player.position;
         if ((d.x - p.x) ^^ 2 + (d.y - p.y) ^^ 2 + (d.z - p.z) ^^ 2 > corpseReclaimRadius ^^ 2)
             return;
-        resurrect(0.5f);
+        bringBack(0.5f);
         spawnCorpseBones();
     }
 
@@ -307,7 +307,7 @@ private:
             return;
         if (interactableNpc(request.guid, spiritHealer) is null)
             return;
-        resurrect(0.5f);
+        bringBack(0.5f);
         durabilityLossAll(0.25, true);
         applyResurrectionSickness();
         // To the graveyard nearest the corpse, if that is another than the one nearest the ghost.
@@ -460,7 +460,7 @@ private:
             health = cast(uint)(ulong(maxHealth) * value / 100);
             mana = cast(uint)(ulong(maxMana) * value / 100);
         }
-        resurrect(0);
+        bringBack(0);
         player.values.set!UNIT_FIELD_HEALTH(health == 0 ? 1 : health < maxHealth ? health : maxHealth);
         player.values.set!UNIT_FIELD_POWER1(Power.mana, mana < maxMana ? mana : maxMana);
         player.values.set!UNIT_FIELD_POWER1(Power.rage, 0u);
@@ -521,7 +521,7 @@ private:
         const health = resurrectHealth, mana = resurrectMana;
         if (resurrectMap == player.data.map)
             teleportTo(resurrectMap, Position(resurrectAt.x, resurrectAt.y, resurrectAt.z, player.position.orientation));
-        resurrect(0);
+        bringBack(0);
         auto v = &player.values;
         const maxHealth = v.get!UNIT_FIELD_MAXHEALTH, maxMana = v.get!UNIT_FIELD_MAXPOWER1(Power.mana);
         v.set!UNIT_FIELD_HEALTH(health == 0 ? 1 : health < maxHealth ? health : maxHealth);
@@ -533,7 +533,7 @@ private:
     }
 
     /// Resurrects the player: alive, the ghost aura gone, with `restore` of its health, mana and energy (no rage).
-    void resurrect(float restore)
+    public void bringBack(float restore)
     {
         player.deathState = DeathState.alive;
         player.values.set!PLAYER_SELF_RES_SPELL(0u);

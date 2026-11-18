@@ -520,7 +520,7 @@ unittest
     {
         aura.duration = 24_000 - tick * 2000;
         const before = victim.values.get!UNIT_FIELD_HEALTH;
-        warlock.session.inWorld.creatureAuraTick(victim, aura, 0);
+        warlock.session.inWorld.auraTick(victim, aura, 0);
         dealt ~= before - victim.values.get!UNIT_FIELD_HEALTH;
     }
     assert(dealt == [5, 5, 5, 5, 10, 10, 10, 10, 15, 15, 15, 15], "a ramp");

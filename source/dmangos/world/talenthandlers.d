@@ -436,7 +436,7 @@ unittest
     context.data.items.edit(itemSword).details.spells[0].trigger = 1; // on equip
     auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f));
     auto me = cast(Player) anduin.session.character;
-    anduin.session.inWorld.lootStore(itemSword, 1, 0, false);
+    anduin.session.inWorld.storeLoot(itemSword, 1, 0, false);
     anduin.read();
     ubyte slot;
     foreach (s; ubyte(23) .. ubyte(39))

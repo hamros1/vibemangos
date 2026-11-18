@@ -1508,7 +1508,7 @@ unittest
     found.reqCreatureOrGoCount[0] = 1;
     found.specialFlags = 0x20;
     context.data.quests.quests[9301] = found;
-    anduin.session.inWorld.lootStore(itemJerky, 1, 0, false);
+    anduin.session.inWorld.storeLoot(itemJerky, 1, 0, false);
     ulong noteGuid;
     foreach (item; me.inventory.all())
         if (item.entry == itemJerky)

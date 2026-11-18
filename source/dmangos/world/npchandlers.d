@@ -459,10 +459,11 @@ private:
         }
     }
 
-    /// Closes the gossip window.
-    void closeGossip()
+    /// Closes the gossip window (also `UnitRef`'s, for scripts).
+    public void closeGossip()
     {
-        send(ServerGossipComplete());
+        if (player !is null)
+            send(ServerGossipComplete());
     }
 
     /// Marks point of interest `id` (`points_of_interest`) on the player's map.

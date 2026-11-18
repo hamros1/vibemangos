@@ -694,7 +694,7 @@ mixin template PetHandlers()
     }
 
     /// The pet used `spell`: one time in ten its owner learns the spell that teaches it (if it was noted).
-    package void petUsedSpell(uint spell)
+    public void petCastSpell(uint spell)
     {
         import std.random : uniform;
 
@@ -946,7 +946,7 @@ mixin template PetHandlers()
     // -----------------------------------------------------------------------
 
     /// The pet died: a demon goes back at once; a beast lies dead a while, a third of its happiness lost (not in a battleground).
-    package void petDiedHere()
+    public void ownPetDied()
     {
         if (pet_ is null)
             return;
@@ -963,7 +963,7 @@ mixin template PetHandlers()
     }
 
     /// The pet's corpse went: it is set aside, dead.
-    package void petCorpseGoneHere(Creature creature)
+    public void petCorpseGone(Creature creature)
     {
         if (pet_ !is creature)
             return;
@@ -1289,7 +1289,7 @@ mixin template PetHandlers()
             return;
         if (pet.ai.petCastByCommand(info, target, map))
         {
-            petUsedSpell(spell);
+            petCastSpell(spell);
             ByteWriter w;
             w.put(pet.guid);
             w.put(2u);

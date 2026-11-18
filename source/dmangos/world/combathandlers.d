@@ -124,7 +124,7 @@ mixin template CombatHandlers()
     }
 
     /// ditto
-    package void removeThreatener(ulong creature)
+    public void threatRemoved(ulong creature)
     {
         threatenedBy.remove(creature);
     }
@@ -282,7 +282,7 @@ private:
         if (type == AttackType.mainHand && swingSpell(other.combatGuid))
             return;
         auto d = calculateMeleeDamage(player.fighter, other.player.fighter, type, map.random);
-        if ((d.absorbed = other.absorbDamage(d.school, d.damage)) != 0)
+        if ((d.absorbed = other.absorbIncoming(d.school, d.damage)) != 0)
             d.hitInfo |= HitInfo.absorb;
         map.sendToWatchers(this, Opcode.SMSG_ATTACKERSTATEUPDATE, attackerStateUpdate(d), true);
         enterCombatFor(combatLinger);
@@ -627,7 +627,7 @@ private:
     }
 
     /// The player killed a creature, as far as there is death yet: everyone attacking it stops.
-    void creatureKilled(Creature victim)
+    public void killedCreature(Creature victim)
     {
         import dmangos.world.aurahandlers : ProcFlag;
         import dmangos.world.character : Character;

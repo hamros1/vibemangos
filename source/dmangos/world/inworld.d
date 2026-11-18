@@ -394,7 +394,7 @@ private:
         loadCooldowns();
         loadTalentReset();
         loadSocial();
-        updateGuildFields();
+        refreshGuildFields();
         applyPassiveSpells();
         resetMovementCheck();
         petsOnArrival();

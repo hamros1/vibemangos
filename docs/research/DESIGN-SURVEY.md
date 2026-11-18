@@ -62,9 +62,11 @@ These requirements come from the code and from the measurements in docs/BENCHMAR
    * Creatures see their enemies through `Combatant`, an interface of about two dozen methods that
      only sessions implemented, so creatures fighting creatures needed an adapter
      (`CreatureCombatant`).
-   * Per-kind state hangs off a creature as an untyped `Object`.
+   * Per-kind state hangs off a creature as an untyped `Object`. (Since typed: `PetState petData`.)
    * Mixin methods cannot implement an interface or be reliably called from another module, so
-     every such crossing needs a hand-written forwarder.
+     every such crossing needs a hand-written forwarder. (This turned out to be wrong, on dmd 2.114:
+     a public mixin method implements the class's interface, and a `package` one is called from
+     other modules. The rename-only forwarders were removed on 2026-11-18.)
 
    PvP and battlegrounds are next. Both would build on these seams.
 
