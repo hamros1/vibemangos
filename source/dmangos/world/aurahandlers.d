@@ -22,6 +22,8 @@ enum ProcFlag : uint
     kill = 0x2,                /// it killed something worth experience
     dealMeleeSwing = 0x4,      /// it hit with a melee swing
     takeMeleeSwing = 0x8,      /// a melee swing hit it
+    dealRangedAttack = 0x40,   /// its ranged attack (Auto Shot, a wand) hit
+    takeRangedAttack = 0x80,   /// a ranged attack hit it
     dealHarmfulSpell = 0x10000, /// its damaging spell hit
     takeHarmfulSpell = 0x20000, /// a damaging spell hit it
 }

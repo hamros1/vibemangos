@@ -329,6 +329,15 @@ private:
         }
         castSpell(spell, targets, true, 0);
         takeAmmo(spell);
+        // A ranged attack that went: the shooter's auras that proc on it, and the target's if a player.
+        {
+            import dmangos.world.aurahandlers : ProcFlag;
+
+            procAuras(ProcFlag.dealRangedAttack, map.unit(target));
+            if (auto other = cast(typeof(this)) context.onlinePlayer(target))
+                if (other.player !is null && other.map is map)
+                    other.procAuras(ProcFlag.takeRangedAttack, unit);
+        }
         autoRepeatMs = cast(int) player.values.get!UNIT_FIELD_RANGEDATTACKTIME + cast(int) spell.recoveryTime;
     }
 
@@ -3183,6 +3192,28 @@ unittest
     anduin.write(Opcode.CMSG_CANCEL_AUTO_REPEAT_SPELL, null);
     session.updateAutoRepeat(5000.msecs);
     assert(keeper.values.get!UNIT_FIELD_HEALTH == 480, "stopped");
+
+    // An aura that procs on a ranged attack: each shot brings its bolt.
+    import dmangos.world.auras : AuraType, makeAura;
+
+    enum uint bolt = 97210, hawk = 97211;
+    context.data.spells.spells[bolt] = testSpell(bolt, 2, ImplicitTarget.enemy, 5);
+    context.data.spells.spells.edit(bolt).casting.school = 1;
+    context.data.spells.spells.edit(bolt).casting.dmgClass = 0;
+    context.data.spells.spells.edit(bolt).attributesEx2 |= 0x20000000;
+    context.data.spells.spells[hawk] = testSpell(hawk, 6, ImplicitTarget.caster, 0);
+    with (*context.data.spells.spells.edit(hawk))
+    {
+        casting.applyAuraName[0] = AuraType.procTriggerSpell;
+        triggerSpell[0] = bolt;
+        casting.procFlags = 0x40;
+        casting.procChance = 100;
+    }
+    session.addAura(makeAura(hawk in context.data.spells.spells, me.guid, 1, -1, true, [0, 0, 0]));
+    session.castSpell(shot in context.data.spells.spells, SpellTargets(TargetFlags.unit, keeper.guid), false, 0);
+    session.updateAutoRepeat(100.msecs);
+    session.updateAutoRepeat(2100.msecs); // the weapon's time, which a restart does not cut short
+    assert(keeper.values.get!UNIT_FIELD_HEALTH == 480 - 10 - 5, "the shot and its proc");
 }
 
 /// Each shot of a bow uses an arrow; out of arrows, the shooting stops ("no ammo").
