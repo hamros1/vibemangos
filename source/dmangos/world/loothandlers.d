@@ -581,7 +581,7 @@ private:
                 sendEquipError(EquipError(result, null, null, 0, entry));
             return result;
         }
-        auto item = player.inventory.storeNew(dest, entry);
+        auto item = player.inventory.storeNew(dest, entry, randomPropertyId > 0 ? randomPropertyId : 0);
         if (item is null)
             return InventoryResult.itemNotFound;
         const pushed = ServerItemPushResult(player.guid, 0, 0, 1, item.bagSlot, item.count == count ? item.slot

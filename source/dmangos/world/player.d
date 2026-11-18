@@ -986,7 +986,15 @@ private:
         foreach (ubyte slot; 0 .. equipmentSlotEnd)
             if (const item = inventory.equipped(slot))
                 if (item.durability != 0 || item.maxDurability == 0) // a broken item gives nothing
+                {
                     input.equipment[slot] = item.proto;
+                    // Its enchantments: the permanent, the temporary and the random property's.
+                    const attack = slot == equipmentSlotMainhand ? 0 : slot == equipmentSlotOffhand ? 1
+                        : slot == equipmentSlotRanged ? 2 : -1;
+                    foreach (enchantSlot; [0, 1, 3, 4, 5])
+                        if (const effects = item.enchantment(enchantSlot) in world.enchantmentEffects)
+                            input.enchantments.add(*effects, attack);
+                }
         // What auras add (stat and resistance modifiers, ...).
         foreach (i; 0 .. 5)
         {

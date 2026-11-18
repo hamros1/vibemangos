@@ -16,6 +16,7 @@
  */
 module dmangos.world.loot;
 
+import dmangos.world.enchantments : RandomEnchantment;
 import dmangos.frozen : StaticMap;
 import std.random : Random, uniform, uniform01;
 import dmangos.bytes : ByteWriter;
@@ -129,6 +130,8 @@ struct LootStores
     LootStore fishing;    /// `fishing_loot_template`: by area (or zone)
     LootStore skinning;   /// `skinning_loot_template`: a creature's skin (by `SkinningLootId`)
     LootStore pickpocketing; /// `pickpocketing_loot_template`: a creature's pockets (by `PickpocketLootId`)
+    /// `item_enchantment_template`: the random properties an item of a `RandomProperty` may drop with.
+    const(RandomEnchantment[])[uint] randomProperties;
 }
 
 /// The columns every `*_loot_template` query selects, in `LootStoreItem` order after the id.
@@ -410,7 +413,7 @@ final class Loot
                         process(referenced, stores, protos, random, meets);
             }
             else
-                add(entry, protos, random);
+                add(entry, protos, random, stores.randomProperties);
         }
         foreach (ref group; template_.groups)
         {
@@ -467,8 +470,11 @@ final class Loot
     }
 
     /// One more item, `mincount` to `maxcount` of it.
-    private void add(const ref LootStoreItem entry, const ref StaticMap!(uint, ItemTemplate) protos, ref Random random)
+    private void add(const ref LootStoreItem entry, const ref StaticMap!(uint, ItemTemplate) protos, ref Random random,
+        const(RandomEnchantment[][uint]) properties = null)
     {
+        import dmangos.world.enchantments : chooseRandomProperty;
+
         if (items.length >= maxLootItems)
             return;
         auto item = new LootItem;
@@ -484,6 +490,9 @@ final class Loot
             item.quality = proto.details.quality;
             item.freeForAll = (proto.flags & itemFlagMultiDrop) != 0;
             item.underThreshold = item.quality < threshold;
+            // It drops with its random property, so the window shows it.
+            if (proto.randomProperty)
+                item.randomPropertyId = chooseRandomProperty(properties.get(proto.randomProperty, null), random);
         }
         if (!item.underThreshold)
             haveItemOverThreshold = true;

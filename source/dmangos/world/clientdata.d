@@ -213,6 +213,28 @@ struct LockEntry
 
 enum lockFormat = "niiiiiiiiiiiiiiiiiiiiiiiixxxxxxxx"; ///
 
+/// `ItemRandomProperties.dbc`: a random property, and the enchantments it gives (up to three).
+struct ItemRandomPropertiesEntry
+{
+    uint id;
+    uint[3] enchantments;
+}
+
+enum itemRandomPropertiesFormat = "nxiiixxxxxxxxxxx"; ///
+
+/// `SpellItemEnchantment.dbc`: an enchantment's effects (`dmangos.world.enchantments`).
+struct SpellItemEnchantmentEntry
+{
+    uint id;
+    uint[3] type;
+    uint[3] amount;
+    uint[3] arg;     /// the stat type, the resistance's school or the spell
+    uint itemVisual;
+    uint flags;
+}
+
+enum spellItemEnchantmentFormat = "niiiiiixxxiiixxxxxxxxxii"; ///
+
 /// `TaxiNodes.dbc`: a flight master's place, and the mounts of its flights (Horde, Alliance).
 struct TaxiNodesEntry
 {
@@ -642,6 +664,8 @@ final class ClientData
     DbcStore!(AuctionHouseEntry, auctionHouseFormat) auctionHouses;
     DbcStore!(FactionTemplateEntry, factionTemplateFormat) factionTemplates;
     DbcStore!(WorldSafeLocsEntry, worldSafeLocsFormat) worldSafeLocs;
+    DbcStore!(ItemRandomPropertiesEntry, itemRandomPropertiesFormat) itemRandomProperties;
+    DbcStore!(SpellItemEnchantmentEntry, spellItemEnchantmentFormat) spellItemEnchantments;
     DbcStore!(SpellCastTimesEntry, spellCastTimesFormat) spellCastTimes;
     DbcStore!(SpellDurationEntry, spellDurationFormat) spellDurations;
     DbcStore!(SpellRangeEntry, spellRangeFormat) spellRanges;
@@ -678,7 +702,8 @@ final class ClientData
             "durabilityQualities:DurabilityQuality", "liquidTypes:LiquidType", "wmoAreas:WMOAreaTable",
             "factions:Faction", "factionTemplates:FactionTemplate", "worldSafeLocs:WorldSafeLocs", "spellCastTimes:SpellCastTimes", "spellDurations:SpellDuration",
             "spellRanges:SpellRange", "spellRadii:SpellRadius", "locks:Lock", "auctionHouses:AuctionHouse",
-            "taxiNodes:TaxiNodes", "taxiPaths:TaxiPath", "taxiPathNodes:TaxiPathNode", "itemSets:ItemSet"])
+            "taxiNodes:TaxiNodes", "taxiPaths:TaxiPath", "taxiPathNodes:TaxiPathNode", "itemSets:ItemSet",
+            "itemRandomProperties:ItemRandomProperties", "spellItemEnchantments:SpellItemEnchantment"])
         {{
             enum parts = member.findSplit(":");
             enum field = parts[0];

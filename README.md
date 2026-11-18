@@ -411,7 +411,10 @@ What works now:
     * **Pickpocketing:** a living creature's pockets are a rogue's loot, with some money; emptied, they
       are empty for `creature_pickpocket_restock_delay` seconds.
 
-    Not yet: random enchantments. Items with loot (clams, sacks, boxes of
+    An item with random properties drops with one of them (`item_enchantment_template`, shown in
+    the loot window) or gets one when it is made. Worn, its enchantments count: stats, resistances,
+    weapon damage and equip spells (most "of the Bear" stats are these), as many times as items give
+    them. Items with loot (clams, sacks, boxes of
     supplies) open in the bags (`CMSG_OPEN_ITEM`, unless a lock needs picking) to their
     `item_loot_template` loot and money; emptied, they are gone (an item left half looted keeps its
     loot until logout, not across it: `item_loot` is not used).

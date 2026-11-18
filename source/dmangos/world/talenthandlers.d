@@ -233,7 +233,7 @@ private:
     }
 
     /// Every passive spell known puts its auras on.
-    package bool[uint] equipSpells; // the item spells on equip applied now (`spelltrigger` 1)
+    package uint[uint] equipSpells; // the item spells on equip applied now (`spelltrigger` 1), and how many items give each
 
     /**
      * For every item worn: the on-equip spells of the unbroken items
@@ -244,8 +244,10 @@ private:
     {
         import dmangos.world.defines : equipmentSlotEnd;
 
+        import dmangos.world.enchantments : EnchantmentType;
+
         enum uint onEquip = 1, applyAura = 6;
-        bool[uint] wanted;
+        uint[uint] wanted; // spell -> how many worn items give it
         uint[uint] worn; // item set -> items of it worn
         foreach (ubyte slot; 0 .. equipmentSlotEnd)
         {
@@ -254,7 +256,13 @@ private:
                 continue;
             foreach (ref s; item.proto.details.spells)
                 if (s.id && s.trigger == onEquip)
-                    wanted[s.id] = true;
+                    ++wanted[s.id];
+            // Its enchantments' equip spells (most of a random property's stats are these).
+            foreach (enchantSlot; [0, 1, 3, 4, 5])
+                if (const effects = item.enchantment(enchantSlot) in context.data.enchantmentEffects)
+                    foreach (ref e; *effects)
+                        if (e.type == EnchantmentType.equipSpell && e.arg)
+                            ++wanted[e.arg];
             if (const set = item.proto.details.itemSet)
                 worn[set]++;
         }
@@ -266,16 +274,17 @@ private:
                     continue;
                 foreach (k; 0 .. 8)
                     if (entry.spells[k] && entry.thresholds[k] && count >= entry.thresholds[k])
-                        wanted[entry.spells[k]] = true;
+                        wanted[entry.spells[k]] = 1;
             }
-        foreach (id, _; equipSpells.dup)
-            if (id !in wanted)
+        // Gone, or given by another number of items now: off (and on again below, as many times over).
+        foreach (id, count; equipSpells.dup)
+            if (wanted.get(id, 0) != count)
             {
                 if (auto aura = player.auras.find(id))
                     removeAura(aura);
                 equipSpells.remove(id);
             }
-        foreach (id, _; wanted)
+        foreach (id, count; wanted)
         {
             if (id in equipSpells)
                 continue;
@@ -287,7 +296,7 @@ private:
             foreach (i; 0 .. 3)
                 if (spell.effect[i] == applyAura)
                 {
-                    values[i] = effectValue(*spell, i, player.data.level, 0);
+                    values[i] = effectValue(*spell, i, player.data.level, 0) * cast(int) count;
                     any = true;
                 }
             if (!any)
@@ -295,7 +304,7 @@ private:
             auto aura = makeAura(spell, player.guid, player.data.level, -1, true, values);
             aura.passive = true;
             addAura(aura);
-            equipSpells[id] = true;
+            equipSpells[id] = count;
         }
     }
 

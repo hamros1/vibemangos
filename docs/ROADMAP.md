@@ -50,11 +50,12 @@
   (the client hides an ignored player's other chat itself).
   LocalDefense and WorldDefense need PvP ranks, which do not exist, so WorldDefense is read-only.
   The GM tag and `.gm allowwhispers` are not kept between logins (as the GM contract specifies).
-* **Inventory:** prices have no honor discounts, and items that need an honor rank cannot be bought
-  or used (there are no ranks). An off-hand item with no room left
-  when a two-hander is put on stays worn; it should be mailed to the player (not yet). Item
-  enchantments, random properties, readable items, wrapping and loot in
-  items (lockboxes, clams: `CMSG_OPEN_ITEM` is) are not done. Dying and the spirit healer wear gear
+* **Inventory:** an off-hand item with no room left when a two-hander is put on stays worn; it should
+  be mailed to the player (not yet).
+  * Random properties are done, and so are enchantments' stats, resistances, weapon damage and equip
+    spells.
+  * Enchanting by the enchanting profession is not done, nor are temporary enchantments (poisons,
+    oils), enchantments' procs, readable items and wrapping. Loot in items is done (`CMSG_OPEN_ITEM`). Dying and the spirit healer wear gear
   down; a broken worn item's stats come back when it is repaired.
 * **GM system:** commands that need missing systems answer "Not yet implemented."
   (COMMANDS.md lists them); GM invisibility (`.invisible`) needs sight to be one-sided first. The
@@ -118,9 +119,8 @@ The largest area. In order:
    battleground spirit guides, corpses of a player on another node of a cluster (a corpse is put on
    the map its player's node simulates; a node that does not own the cell keeps it anyway).
 4. **Experience and loot: done** (`experience.d`, `loot.d`, `loothandlers.d`; README's "Experience
-   and loot"). Quest drops, skinning and pickpocketing: done. Not yet:
-   `item_enchantment_template` random properties, loot of
-   a creature another node of a cluster simulates.
+   and loot"). Quest drops, skinning, pickpocketing and random
+   properties: done. Not yet: loot of a creature another node of a cluster simulates.
 5. Spells, cooldowns and auras. **Casting and auras: done** (`spellcast.d`, `spellhandlers.d`,
    `auras.d`, `aurahandlers.d`; README's "Spells" and "Auras"); creatures' spells come with their
    scripts (above), talents with milestone 7. Channelled spells, area, cone, party and chain targets, persistent area auras, missiles' flight, items'

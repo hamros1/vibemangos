@@ -1050,3 +1050,31 @@ unittest
     me.pickPocket(victim.guid);
     assert(response(0) && !victim.pocketsEmptied, "full again after the restock delay");
 }
+
+// A random property: a new item gets one of its template's, with the property's enchantment, which counts worn.
+unittest
+{
+    import dmangos.world.enchantments : EnchantmentEffect, EnchantmentType, RandomEnchantment;
+    import dmangos.world.movement : Position;
+    import dmangos.world.stats : Stat;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+    import dmangos.world.updatefields;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    context.data.items.edit(itemShirt).randomProperty = 1000;
+    context.data.randomProperties[1000] = [RandomEnchantment(55, 100)];
+    context.data.propertyEnchantments[55] = [777, 0, 0];
+    context.data.enchantmentEffects[777] = [EnchantmentEffect(EnchantmentType.stat, 5, 7), EnchantmentEffect.init,
+        EnchantmentEffect.init]; // +5 stamina
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f));
+    anduin.read();
+    auto me = cast() anduin.session.character;
+    const before = me.stats.stats[Stat.stamina];
+    auto shirt = me.inventory.create(itemShirt, 1);
+    assert(shirt.values[ITEM_FIELD_RANDOM_PROPERTIES_ID] == 55 && shirt.enchantment(3) == 777, "of the property");
+    me.inventory.equip(4, shirt); // the shirt slot (taking the place of what was there)
+    me.refreshEquipmentStats(context.data);
+    assert(me.stats.stats[Stat.stamina] >= before + 5 - 0.01f, "its enchantment's stamina counts");
+}

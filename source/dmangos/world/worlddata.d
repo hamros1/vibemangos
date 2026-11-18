@@ -23,6 +23,7 @@ import dmangos.world.creature : CreatureAddon, CreatureClassStats, CreatureSpawn
     creatureTemplateQuery;
 import dmangos.world.gameobject : GameObjectSpawn, GameObjectTemplate, GameObjectType;
 import dmangos.world.bgqueue : BattlegroundTemplate, BattlegroundType;
+import dmangos.world.enchantments : EnchantmentEffect, EnchantmentType, RandomEnchantment;
 import dmangos.world.grid : cellKeyAt;
 import dmangos.world.motion : MotionType, WaypointNode, WaypointStore;
 import dmangos.world.loot : lootColumns, lootRow, LootStore, LootStores;
@@ -349,6 +350,9 @@ final class WorldData
     BattlegroundType[uint] battlemasters;           /// `battlemaster_entry`: a creature entry's battleground
     SafeLocation[uint] safeLocations;               /// `world_safe_locs` (with the facing the DBC lacks)
     ubyte[2][uint] creatureBattleEvents;            /// `creature_battleground`: a spawn's battleground event
+    RandomEnchantment[][uint] randomProperties;     /// `item_enchantment_template`, by an item's `RandomProperty`
+    uint[3][uint] propertyEnchantments;             /// a random property's enchantments (`ItemRandomProperties.dbc`)
+    EnchantmentEffect[3][uint] enchantmentEffects;  /// an enchantment's effects (`SpellItemEnchantment.dbc`)
     ubyte[2][uint] gameObjectBattleEvents;          /// `gameobject_battleground`: ditto
     string[uint] serverStrings;                     /// `mangos_string`'s default texts
     GhostEntrance[uint] ghostEntrances;             /// `instance_template`'s ghost entrances, by instance map
@@ -518,6 +522,7 @@ final class WorldData
 
         data.npcs = NpcData.load(world, data.spells);
         data.loadTeleports(world, client);
+        data.loadEnchantments(world, client);
         data.loadSpawns(world, client, spawnSeed);
         data.loadWaypoints(world);
         data.loadPlayerInfo(world, client);
@@ -860,6 +865,31 @@ final class WorldData
     }
 
     /// Area trigger teleports and `.recall` places, checked against the client data.
+    /// Random properties (`item_enchantment_template`) and what properties and enchantments are (the DBCs).
+    void loadEnchantments(MySqlConnection world, const ClientData client)
+    {
+        foreach (row; world.query!"SELECT entry, ench, chance FROM item_enchantment_template"())
+            randomProperties[row.get!uint(0)] ~= RandomEnchantment(row.get!uint(1), row.get!float(2));
+        setEnchantments(client);
+        loot.randomProperties = cast(const(RandomEnchantment[])[uint]) randomProperties;
+        info!"loaded %s random property lists, %s enchantments"(randomProperties.length, enchantmentEffects.length);
+    }
+
+    /// The properties' and enchantments' data from the client's DBCs.
+    void setEnchantments(const ClientData client)
+    {
+        foreach (ref p; client.itemRandomProperties.rows)
+            propertyEnchantments[p.id] = p.enchantments;
+        foreach (ref e; client.spellItemEnchantments.rows)
+        {
+            EnchantmentEffect[3] effects;
+            foreach (i; 0 .. 3)
+                effects[i] = EnchantmentEffect(e.type[i] <= EnchantmentType.max ? cast(EnchantmentType) e.type[i]
+                    : EnchantmentType.none, e.amount[i], e.arg[i]);
+            enchantmentEffects[e.id] = effects;
+        }
+    }
+
     void loadTeleports(MySqlConnection world, const ClientData client)
     {
         setTeleports(world.queryAs!(AreaTriggerTeleport, areaTriggerTeleportQuery)(),

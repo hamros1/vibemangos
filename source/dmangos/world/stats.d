@@ -8,6 +8,8 @@
  */
 module dmangos.world.stats;
 
+import dmangos.world.enchantments : EnchantmentBonus;
+
 import std.algorithm.comparison : max, min;
 import std.math : round;
 import std.traits : EnumMembers;
@@ -74,6 +76,7 @@ struct StatInputs
     ClassLevelStats classStats;
     const(ItemTemplate)*[equipmentSlotEnd] equipment; /// null where nothing is equipped
     AuraMods auras;      /// what auras add (`dmangos.world.auras`)
+    EnchantmentBonus enchantments; /// what the worn items' enchantments add (`dmangos.world.enchantments`)
 }
 
 /// What a player's auras add to its stats (`SPELL_AURA_MOD_STAT`, `MOD_RESISTANCE`, `MOD_ATTACK_POWER`, ...).
@@ -140,6 +143,21 @@ out (result; result.maxHealth >= 1, "a living character has at least one health 
         armor += item.details.armor;
         foreach (i, value; item.details.resistances)
             resistance[i] += value;
+    }
+
+    // Enchantments: stats, health and mana, resistances (armor first).
+    with (input.enchantments)
+    {
+        manaMod += mods[itemModMana];
+        healthMod += mods[itemModHealth];
+        addStatBonus(result, Stat.agility, mods[itemModAgility]);
+        addStatBonus(result, Stat.strength, mods[itemModStrength]);
+        addStatBonus(result, Stat.intellect, mods[itemModIntellect]);
+        addStatBonus(result, Stat.spirit, mods[itemModSpirit]);
+        addStatBonus(result, Stat.stamina, mods[itemModStamina]);
+        armor += resistances[0];
+        foreach (i; 1 .. 7)
+            resistance[i - 1] += resistances[i];
     }
 
     // Auras: flat stats, then percentages of the totals.
@@ -260,6 +278,8 @@ private void weaponDamage(const ref StatInputs input, AttackType type, ref Playe
     }
     const attackPower = type == AttackType.ranged ? result.rangedAttackPower : result.attackPower;
     const fromAttackPower = max(attackPower, 0) / 14.0f * (result.attackTime[type] / 1000.0f);
+    weaponMin += input.enchantments.damage[type];
+    weaponMax += input.enchantments.damage[type];
     const pct = type == AttackType.offHand ? offHandDamagePct : 1.0f;
     result.damage[type] = DamageRange(max((fromAttackPower + weaponMin) * pct, 0.0f),
         max((fromAttackPower + weaponMax) * pct, 0.0f));

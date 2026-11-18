@@ -323,6 +323,28 @@ final class Item
     private bool queued;            /// in the inventory's save queue
     private bool sent;              /// the client has its create block
 
+    /**
+     * Its random property: the property's id in `ITEM_FIELD_RANDOM_PROPERTIES_ID` (the client names the
+     * item by it) and the property's enchantments in slots 3 to 5.
+     */
+    void setRandomProperty(uint property, const WorldData world)
+    {
+        import dmangos.world.enchantments : EnchantmentSlot, fieldsPerSlot;
+
+        values.set!ITEM_FIELD_RANDOM_PROPERTIES_ID(property);
+        if (const enchantments = property in world.propertyEnchantments)
+            foreach (i, enchantment; *enchantments)
+                values.set!ITEM_FIELD_ENCHANTMENT((EnchantmentSlot.property0 + i) * fieldsPerSlot, enchantment);
+    }
+
+    /// The enchantments in its slots (0 where there is none).
+    uint enchantment(size_t slot) const
+    {
+        import dmangos.world.enchantments : fieldsPerSlot;
+
+        return values.get!ITEM_FIELD_ENCHANTMENT(slot * fieldsPerSlot);
+    }
+
     /// A new item (or bag) of `proto` for `owner`, one in the stack.
     this(uint guid, const(ItemTemplate)* proto, ulong owner)
     in (proto !is null)
@@ -829,15 +851,21 @@ final class Inventory
     // -----------------------------------------------------------------------
 
     /// A new item, its stack cut to what stacks; null for no count or no template.
-    Item create(uint entry, uint count)
+    Item create(uint entry, uint count, uint randomProperty = 0)
     {
+        import std.random : rndGen;
+        import dmangos.world.enchantments : chooseRandomProperty;
+
         const proto = entry in world.items;
         if (proto is null || count < 1)
             return null;
         auto item = new Item(nextGuid(), proto, owner.ownerGuid);
         item.count = min(count, proto.stackable ? proto.stackable : 1);
-        if (proto.randomProperty)
-            warning!"item %s has random properties; they are not generated yet"(entry);
+        // A random property: the one it dropped with, else one chosen now.
+        if (proto.randomProperty && randomProperty == 0)
+            randomProperty = chooseRandomProperty(world.randomProperties.get(proto.randomProperty, null), rndGen);
+        if (randomProperty)
+            item.setRandomProperty(randomProperty, world);
         return item;
     }
 
@@ -1398,12 +1426,12 @@ final class Inventory
     // -----------------------------------------------------------------------
 
     /// A new item, as many as `dest` holds, put there.
-    Item storeNew(const(ItemPosCount)[] dest, uint entry)
+    Item storeNew(const(ItemPosCount)[] dest, uint entry, uint randomProperty = 0)
     {
         uint count;
         foreach (position; dest)
             count += position.count;
-        auto item = create(entry, count);
+        auto item = create(entry, count, randomProperty);
         return item is null ? null : store(dest, item);
     }
 
