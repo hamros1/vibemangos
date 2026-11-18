@@ -2693,7 +2693,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return false;
     }
 
-    private MonoTime[ulong] noticedLately; // player ^ creature -> when it moved for it: not again for a while
+    private NoticeThrottle noticedLately; // a player moved for a creature: not again for a while
 
     /**
      * A player comes into sight of another node's creature (CLUSTER.md): if it would attack the
@@ -2742,16 +2742,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         auto map_ = existingMap(session.character.data.map);
         if (map_ is null || !map_.inLineOfSight(from, at))
             return;
-        const key = session.character.guid ^ replica.guid;
-        const now = MonoTime.currTime;
-        if (auto last = key in noticedLately)
-            if (now - *last < 30.seconds)
-                return;
-        noticedLately[key] = now;
-        if (noticedLately.length > 4096)
-            foreach (k, when; noticedLately.dup)
-                if (now - when >= 30.seconds)
-                    noticedLately.remove(k);
+        if (!noticedLately.mayAct(session.character.guid, replica.guid, MonoTime.currTime))
+            return;
         ArrivalAction action;
         action.noticedBy = replica.guid;
         session.actAtReplica(replica.guid, action);
@@ -4280,4 +4272,46 @@ unittest
     restarted.updateGameEvents(restarted.clock(), true);
     restarted.eventMails();
     assert(db.mails.length == 1 && db.gameEventStatusRows.length == 0, "its end: no orcs to write to");
+}
+
+/**
+ * When each player last moved to another node for a creature that noticed it: not again for the same pair
+ * within `quiet`. Keyed by the pair itself (two guids XORed together collide between pairs).
+ */
+struct NoticeThrottle
+{
+    private static struct Pair
+    {
+        ulong player, creature;
+    }
+
+    enum quiet = 30.seconds;
+    private MonoTime[Pair] last;
+
+    /// Whether `player` may move for `creature` now; if so, it is noted.
+    bool mayAct(ulong player, ulong creature, MonoTime now)
+    {
+        const key = Pair(player, creature);
+        if (auto when = key in last)
+            if (now - *when < quiet)
+                return false;
+        last[key] = now;
+        if (last.length > 4096)
+            foreach (k, when; last.dup)
+                if (now - when >= quiet)
+                    last.remove(k);
+        return true;
+    }
+}
+
+// Pairs whose guids XOR to the same value are told apart; the same pair waits its quiet time.
+unittest
+{
+    NoticeThrottle t;
+    const now = MonoTime.currTime;
+    assert(t.mayAct(1, 2, now));
+    assert(t.mayAct(2, 1, now), "1^2 == 2^1, but these are different pairs");
+    assert(t.mayAct(3, 0, now), "and so is 3^0");
+    assert(!t.mayAct(1, 2, now + 29.seconds));
+    assert(t.mayAct(1, 2, now + 31.seconds));
 }
