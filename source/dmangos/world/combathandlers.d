@@ -343,7 +343,7 @@ private:
     }
 
     /// Whether the player is in combat.
-    @property bool inCombat() const
+    package @property bool inCombat() const
     {
         return player !is null && (player.values.get!UNIT_FIELD_FLAGS & UnitFlags.inCombat) != 0;
     }

@@ -868,7 +868,9 @@ mixin template PetHandlers()
         const health = beast.values.get!UNIT_FIELD_HEALTH, maxHealth = beast.values.get!UNIT_FIELD_MAXHEALTH;
         const percent = maxHealth ? (ulong(health) * 100 + maxHealth - 1) / maxHealth : 100;
         const entry = beast.template_.entry, model = beast.values.get!UNIT_FIELD_DISPLAYID;
-        // The beast goes, to come back after its respawn time.
+        // The beast goes, to come back after its respawn time; whoever it fought (the hunter, as it tamed it)
+        // is no longer in combat with it.
+        beast.ai.dropThreat(map);
         beast.ai.petStopAttack(map);
         map.corpseExpired(beast);
         auto creature = bringPet(state, entry, model, level, 0, ReactState.defensive, 0, 0);

@@ -502,7 +502,7 @@ private:
     }
 
     /// Adds threat; a new entry tells the player it is in combat.
-    void addThreat(UnitRef who, float amount)
+    package void addThreat(UnitRef who, float amount)
     {
         const guid = who.combatGuid;
         if (auto t = guid in threat)
@@ -512,6 +512,14 @@ private:
             threat[guid] = amount;
             who.threatAdded(me.guid);
         }
+    }
+
+    /// Forgets everyone it fought, each told it no longer threatens them (a beast tamed, gone from the world).
+    package void dropThreat(CombatWorld world)
+    {
+        foreach (guid, _; threat)
+            notifyRemoved(guid, world);
+        threat = null;
     }
 
     void notifyRemoved(ulong guid, CombatWorld world)

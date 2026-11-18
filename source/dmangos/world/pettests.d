@@ -197,6 +197,7 @@ unittest
     auto beast = context.summonCreature(map, wolf, Position(-8947, -132.49f, 83.53f, 0), TempSpawnType.dead, 0, 0);
     beast.values.set!UNIT_FIELD_HEALTH(beast.values.get!UNIT_FIELD_MAXHEALTH / 2);
     auto tame = effectSpell(spellTameBeastDone, 55);
+    beast.ai.addThreat(map.unit(session.character.guid), 10); // it fought the hunter through the channel
     session.tameCreature(&tame, beast.guid);
     assert(map.findObject(beast.guid) is null, "the beast went");
     auto pet = session.ownPet;
@@ -208,6 +209,9 @@ unittest
     assert(pet.values.get!UNIT_FIELD_MAXHEALTH == 60 && pet.values.get!UNIT_FIELD_HEALTH == 30);
     assert(pet.values.get!UNIT_FIELD_FLAGS & unitFlagPetRename, "it may be named");
     assert(pet.values.getByte!UNIT_FIELD_BYTES_0(3) == 2 && pet.values.get!UNIT_FIELD_MAXPOWER1(2) == maxFocus);
+    // The beast fought the hunter through the channel; gone, it holds the hunter in combat no more.
+    tick(6000);
+    assert(!session.inCombat, "out of combat once the tamed beast is gone");
     rexxar.read();
 
     // Another beast cannot be tamed while it is out.
