@@ -1711,6 +1711,12 @@ private:
         import dmangos.world.unit : Blow, dealDamage;
 
         dealDamage(unit, other.unit, damage, Blow.spell());
+        if (other.player !is null && other.player.fighter.alive)
+        {
+            import dmangos.world.aurahandlers : ProcFlag;
+
+            procAuras(ProcFlag.dealHarmfulSpell, other.unit);
+        }
     }
 
     /// A school's damage: a crit is half again; armor for physical.
@@ -1786,6 +1792,12 @@ private:
         map.sendToWatchers(this, Opcode.SMSG_SPELLNONMELEEDAMAGELOG, nonMeleeDamageLog(victim.guid, player.guid,
             spell.id, damage, school, 0, resisted, false, 0, crit), true);
         spellAttacked(victim, damage);
+        if (victim.alive)
+        {
+            import dmangos.world.aurahandlers : ProcFlag;
+
+            procAuras(ProcFlag.dealHarmfulSpell, map.unitOf(victim));
+        }
     }
 
     /**
@@ -2699,6 +2711,21 @@ unittest
     assert(!me.auras.has(AuraType.procTriggerSpell), "out of charges: gone");
     session.sufferDamage(attacker, 5, Blow.swing(d));
     assert(keeper.values.get!UNIT_FIELD_HEALTH == 497 - 29, "thorns alone");
+
+    // An aura that procs on a damaging spell: the bolt brings a second bolt, and that one nothing more.
+    enum uint echo = 95703;
+    context.data.spells.spells[echo] = testSpell(echo, 6, ImplicitTarget.caster, 0);
+    with (*context.data.spells.spells.edit(echo))
+    {
+        casting.applyAuraName[0] = AuraType.procTriggerSpell;
+        triggerSpell[0] = bolt;
+        casting.procFlags = 0x10000;
+        casting.procChance = 100;
+    }
+    session.addAura(makeAura(echo in context.data.spells.spells, me.guid, 1, -1, true, [0, 0, 0]));
+    const before = keeper.values.get!UNIT_FIELD_HEALTH;
+    session.castTriggeredAt(bolt, keeper.guid);
+    assert(keeper.values.get!UNIT_FIELD_HEALTH == before - 20, "two bolts, not more");
 }
 
 /// Dispelling: magic only where it hurts, by dispel type, a friend's harmful magic too.

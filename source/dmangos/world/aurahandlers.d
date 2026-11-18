@@ -8,7 +8,8 @@
  * when their time is up, when cancelled (positive ones), at death, and by what their
  * `AuraInterruptFlags` say: standing up (food and drink), moving, taking damage, casting, attacking.
  * Auras are saved with the character and loaded at login and arrival. A player's shields (school absorbs, mana shields) take damage before it lands; damage shields
- * strike back at melee attackers; auras that trigger a spell proc on melee swings dealt and taken.
+ * strike back at melee attackers; auras that trigger a spell proc on melee swings and damaging spells,
+ * dealt and taken, and on kills.
  * Not yet: procs on other events, area auras on others, saved charges (an aura loaded at login has its full charges).
  */
 module dmangos.world.aurahandlers;
@@ -17,8 +18,11 @@ module dmangos.world.aurahandlers;
 /// Events auras may proc on (`procFlags`).
 enum ProcFlag : uint
 {
-    dealMeleeSwing = 0x4,  /// it hit with a melee swing
-    takeMeleeSwing = 0x8,  /// a melee swing hit it
+    kill = 0x2,                /// it killed something worth experience
+    dealMeleeSwing = 0x4,      /// it hit with a melee swing
+    takeMeleeSwing = 0x8,      /// a melee swing hit it
+    dealHarmfulSpell = 0x10000, /// its damaging spell hit
+    takeHarmfulSpell = 0x20000, /// a damaging spell hit it
 }
 
 mixin template AuraHandlers()
@@ -159,19 +163,24 @@ private:
         return absorbed;
     }
 
+    private bool inProc; /// casting what procs cast
+
     /**
      * Something happened to this player (`flags`: `ProcFlag`s) with `other`, the unit it struck or that struck
      * it. Each of its auras whose spell procs on that (`procFlags`) and that triggers a spell (Proc Trigger
      * Spell: Lightning Shield, Seal of Righteousness, Blood Craze) rolls its spell's `procChance`; on success
      * the triggered spell is cast at `other` (its own implicit targets decide where it lands), and a charge is
-     * used: an aura out of charges goes.
+     * used: an aura out of charges goes. A spell cast by a proc does not set off procs itself.
      */
     package void procAuras(uint flags, UnitRef other)
     {
         import std.random : uniform01;
 
-        if (player is null || !player.fighter.alive)
+        if (player is null || !player.fighter.alive || inProc)
             return;
+        inProc = true;
+        scope (exit)
+            inProc = false;
         uint[] casts;
         Aura[] spent;
         foreach (aura; player.auras.list)

@@ -497,10 +497,11 @@ What works now:
     carries them. A player's shields (Power Word: Shield, Ice Barrier, Mana Shield at its mana per
     point) take damage of their schools until used up; the log shows what they absorbed. Damage
     shields (Thorns) hurt whoever hits the player in melee, and auras that trigger a spell on a melee
-    hit dealt or taken (Lightning Shield, Seal of Righteousness) do so by their chance, using their
-    charges. Dispels (Dispel Magic, Cleanse, Remove Curse, Purge) take random auras of their type:
+    hit or damaging spell, dealt or taken, or on a kill worth experience (Lightning Shield, Seal of
+    Righteousness) do so by their chance, using their charges; what a proc casts sets off no procs. Dispels (Dispel Magic, Cleanse, Remove Curse, Purge) take random auras of their type:
     harmful magic off friends, helpful magic off enemies. Creatures are slowed and sped up by their
-    auras, and stand still while rooted or stunned. Not yet: procs on spells and other events.
+    auras, and stand still while rooted or stunned. Not yet: procs on ranged attacks, heals and other
+    events.
   * **Quests:** quest givers (`creature_questrelation`, `creature_involvedrelation`) show what they have for the player
     (the exclamation and question marks), list their quests in their gossip (or open the only one),
     and give them as `quest_template` says who may take them (class, race, level, skill, condition,

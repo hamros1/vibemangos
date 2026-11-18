@@ -607,7 +607,13 @@ private:
     /// The player killed a creature, as far as there is death yet: everyone attacking it stops.
     void creatureKilled(Creature victim)
     {
+        import dmangos.world.aurahandlers : ProcFlag;
         import dmangos.world.character : Character;
+        import dmangos.world.experience : grayLevel;
+
+        // A kill worth experience: auras that proc on a kill.
+        if (victim.values.get!UNIT_FIELD_LEVEL > grayLevel(player.data.level))
+            procAuras(ProcFlag.kill, UnitRef.init);
 
         foreach (guid, _; victim.attackers)
             if (auto other = cast(Character) context.onlinePlayer(guid))

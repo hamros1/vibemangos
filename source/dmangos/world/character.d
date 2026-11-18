@@ -314,6 +314,8 @@ final class Character : OnlinePlayer, Looter
             damageShields(attacker);
             procAuras(ProcFlag.takeMeleeSwing, attacker);
         }
+        else if (blow.kind == BlowKind.spell && damage && attacker && player !is null && player.fighter.alive)
+            procAuras(ProcFlag.takeHarmfulSpell, attacker);
     }
 
     /// See `dealDamage`: a creature this player (or its pet) damaged is tapped for it.
