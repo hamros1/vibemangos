@@ -485,8 +485,8 @@ mixin template CreatureCasting()
             raiseScript(KilledUnit(EntityRef(guid)));
     }
 
-    /// `SPELL_EFFECT_APPLY_AURA`: a debuff on a player, or a buff on itself.
-    private void auraOn(const(SpellInfo)* spell, ulong guid)
+    /// `SPELL_EFFECT_APPLY_AURA`: a debuff on an enemy (a player, a pet, another creature), a buff on itself or a friend.
+    package void auraOn(const(SpellInfo)* spell, ulong guid)
     {
         enum uint applyAura = 6;
         const level = me.values.get!UNIT_FIELD_LEVEL;
@@ -497,8 +497,11 @@ mixin template CreatureCasting()
         const ms = duration(*spell, lore.clientData, level);
         if (auto creature = guid == me.guid ? me : world_.creatureAt(guid))
         {
+            // On an enemy (a player's pet, a creature of another side) it is a debuff, as a player's would be.
+            const positive = creature is me || creature.ai is null
+                || !canAttack(relating, creature.ai.relating, me.client);
             bool isNew;
-            creature.auras.apply(makeAura(spell, me.guid, level, ms, true, values), creature.values, isNew);
+            creature.auras.apply(makeAura(spell, me.guid, level, ms, positive, values), creature.values, isNew);
             if (creature !is me)
                 world_.flushCreature(creature);
             world_.wake(creature.guid);
@@ -1333,4 +1336,58 @@ unittest
                 ++casts;
     }
     assert(casts == 2, "its list's spell, twice");
+}
+
+// A creature's aura on an enemy creature (a hunter's pet, say) is a debuff; on itself, a buff.
+unittest
+{
+    import core.time : MonoTime;
+    import dmangos.dbc : buildDbc;
+    import dmangos.world.auras : AuraType;
+    import dmangos.world.clientdata : factionTemplateFormat, spellDurationFormat;
+    import dmangos.world.creature : Creature;
+    import dmangos.world.movement : Position;
+    import dmangos.world.objects : HighGuid, makeGuid;
+    import dmangos.world.spellhandlers : testSpell;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+    import dmangos.world.updatefields;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    context.client.spellDurations = typeof(context.client.spellDurations).parse(buildDbc(spellDurationFormat,
+        [[1u, 6000, 0, 6000]]), "SpellDuration.dbc");
+    enum uint rot = 95101, ward = 95102;
+    with (context.data.spells)
+    {
+        spells[rot] = testSpell(rot, 6, 6, 3); // a periodic shadow aura
+        spells.edit(rot).casting.applyAuraName[0] = AuraType.periodicDamage;
+        spells.edit(rot).casting.amplitude[0] = 1000;
+        spells.edit(rot).casting.durationIndex = 1;
+        spells[ward] = testSpell(ward, 6, 6, 0);
+        spells.edit(ward).casting.applyAuraName[0] = AuraType.modResistance;
+        spells.edit(ward).casting.durationIndex = 1;
+    }
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f, 1.97f));
+    anduin.read();
+    auto map = context.map(0);
+    auto keeper = cast(Creature) map.findObject(makeGuid(HighGuid.unit, creatureInnkeeper, innkeeperSpawn));
+    auto banker = cast(Creature) map.findObject(makeGuid(HighGuid.unit, creatureBanker, bankerSpawn));
+    assert(keeper !is null && banker !is null);
+    enum uint players = 1, monsters = 8, playerSide = 1, monsterSide = 14;
+    context.client.factionTemplates = typeof(context.client.factionTemplates).parse(buildDbc(factionTemplateFormat,
+        [[playerSide, 1, 0, players, 0, monsters, 0, 0, 0, 0, 0, 0, 0, 0],
+         [monsterSide, 14, 0, monsters, 0, players, 0, 0, 0, 0, 0, 0, 0, 0]]), "FactionTemplate.dbc");
+    keeper.factionTemplate = context.client.factionTemplates.lookup(monsterSide);
+    banker.factionTemplate = context.client.factionTemplates.lookup(playerSide); // as a pet would be
+
+    keeper.ai.moveInLineOfSight(map.unit(banker.guid), map); // as the map does: the AI learns its world
+    keeper.ai.auraOn(rot in context.data.spells.spells, banker.guid);
+    auto debuff = banker.auras.find(rot);
+    assert(debuff !is null && !debuff.positive, "on an enemy creature: a debuff, in a negative slot");
+    keeper.ai.auraOn(ward in context.data.spells.spells, keeper.guid);
+    auto buff = keeper.auras.find(ward);
+    assert(buff !is null && buff.positive, "on itself: a buff");
 }
