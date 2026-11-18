@@ -203,6 +203,8 @@ unittest
     assert(pet !is null && pet.template_.entry == wolf);
     auto state = pet.petData;
     assert(state.type == PetType.hunter && state.name == "Young Wolf" && pet.ai.react == ReactState.defensive);
+    // Rebellious and unhappy at first, but with loyalty to lose (some ten minutes of it), not none.
+    assert(state.loyalty == 1 && state.loyaltyPoints == tamedLoyaltyPoints);
     assert(pet.values.get!UNIT_FIELD_MAXHEALTH == 60 && pet.values.get!UNIT_FIELD_HEALTH == 30);
     assert(pet.values.get!UNIT_FIELD_FLAGS & unitFlagPetRename, "it may be named");
     assert(pet.values.getByte!UNIT_FIELD_BYTES_0(3) == 2 && pet.values.get!UNIT_FIELD_MAXPOWER1(2) == maxFocus);

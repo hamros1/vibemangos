@@ -36,6 +36,8 @@ enum ubyte petByte2Flags = 0x08 | 0x10;
 
 /// A hunter pet's happiness: its most, and a tamed beast's.
 enum uint maxHappiness = 1_050_000, tamedHappiness = 166_500;
+/// A newly tamed pet's loyalty points (rebellious, the lowest level).
+enum int tamedLoyaltyPoints = 1000;
 
 /// A third of the happiness bar: below one third a pet is unhappy, from two thirds happy.
 enum uint happinessLevel = 333_000;
@@ -860,6 +862,7 @@ mixin template PetHandlers()
         state.bar = ActionBar.initial();
         state.happiness = tamedHappiness;
         state.loyalty = 1;
+        state.loyaltyPoints = tamedLoyaltyPoints; // unhappy, it loses 20 every 12 s: some ten minutes before it rebels
         learnCreateSpells(state, beast.template_.entry);
         const level = beast.values.get!UNIT_FIELD_LEVEL;
         const health = beast.values.get!UNIT_FIELD_HEALTH, maxHealth = beast.values.get!UNIT_FIELD_MAXHEALTH;
@@ -1093,11 +1096,31 @@ mixin template PetHandlers()
             }
             else
             {
-                // Rebellious and unhappy: it leaves its master.
-                info!"%s: '%s''s pet ran away"(remoteAddress, player.data.name);
-                deliver(Opcode.SMSG_PET_BROKEN, null);
-                state.loyaltyPoints = 0;
-                return unsummonPet(0, true);
+                // Rebellious and out of loyalty: one of three, at random. It leaves its master; or it turns
+                // aggressive; or it stays where it is, passive. In the last two its points start again at 500.
+                import std.random : uniform;
+
+                final switch (uniform(0, 3, map.random))
+                {
+                case 0:
+                    info!"%s: '%s''s pet ran away"(remoteAddress, player.data.name);
+                    deliver(Opcode.SMSG_PET_BROKEN, null);
+                    state.loyaltyPoints = 0;
+                    return unsummonPet(0, true);
+                case 1:
+                    pet_.ai.react = ReactState.aggressive;
+                    state.loyaltyPoints = 500;
+                    break;
+                case 2:
+                    pet_.ai.petStopAttack(map);
+                    pet_.ai.react = ReactState.passive;
+                    state.command = CommandState.stay;
+                    state.hasStay = false;
+                    state.loyaltyPoints = 500;
+                    break;
+                }
+                sendPetSpells(); // the bar shows its new mood
+                return;
             }
         }
         else if (state.loyaltyPoints > loyaltyToLevelUp[level - 1] && state.xpForNextLoyalty == 0 && level < 6)
