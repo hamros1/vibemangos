@@ -922,7 +922,24 @@ private:
         }
         if (!needsEnemy && !needsUnit)
             return SpellCastResult.ok;
-        const guid = targets.unit ? targets.unit : player.guid;
+        // A resurrection: at a dead player (or its corpse, which stands for it), never the living.
+        enum uint resurrect = 18, resurrectNew = 113;
+        const raising = spell.hasEffect(cast(SpellEffect) resurrect) || spell.hasEffect(cast(SpellEffect) resurrectNew);
+        ulong unitTarget = targets.unit;
+        bool atCorpse;
+        Position corpseAt;
+        if (raising && !unitTarget && targets.corpse)
+        {
+            import dmangos.world.corpse : Corpse;
+
+            if (auto corpse = cast(Corpse) map.findObject(targets.corpse))
+            {
+                unitTarget = corpse.values.get!CORPSE_FIELD_OWNER;
+                atCorpse = true;
+                corpseAt = corpse.position;
+            }
+        }
+        const guid = unitTarget ? unitTarget : player.guid;
         if (guid == player.guid)
             return needsEnemy ? SpellCastResult.badTargets : SpellCastResult.ok;
         auto creature = cast(Creature) map.findObject(guid);
@@ -943,9 +960,14 @@ private:
                 return SpellCastResult.badTargets;
             if (needsEnemy && !canAttack(relatingNow(), other.relatingNow(), context.client))
                 return SpellCastResult.targetFriendly;
-            if (other.player.deathState != DeathState.alive)
+            if (raising)
+            {
+                if (other.player.deathState == DeathState.alive)
+                    return SpellCastResult.targetNotDead;
+            }
+            else if (other.player.deathState != DeathState.alive)
                 return SpellCastResult.targetsDead;
-            at = other.player.position;
+            at = atCorpse ? corpseAt : other.player.position;
             reach = other.player.values.get!UNIT_FIELD_COMBATREACH;
         }
         else
@@ -1293,6 +1315,9 @@ private:
         case 57: // SPELL_EFFECT_LEARN_PET_SPELL
             teachPet(spell.triggerSpell[i]);
             break;
+        case 18, 113: // SPELL_EFFECT_RESURRECT (a share of health and mana), SPELL_EFFECT_RESURRECT_NEW (amounts)
+            resurrectEffect(spell, i, target, value, c);
+            break;
         case 38: // SPELL_EFFECT_DISPEL
             dispelEffect(spell, i, target, value);
             break;
@@ -1588,6 +1613,41 @@ private:
         if (share < 0)
             damage += cast(uint)(damage * -share);
         return 0;
+    }
+
+    /**
+     * A resurrection spell at a dead player (or its corpse): it is offered to come back beside this
+     * player, with the effect's share (effect 18) or amounts (113: the value its health, the misc value
+     * its mana) of health and mana.
+     */
+    void resurrectEffect(const(SpellInfo)* spell, size_t i, ulong target, int value, const ref Casting c)
+    {
+        import dmangos.world.corpse : Corpse;
+        import dmangos.world.player : DeathState;
+
+        enum uint resurrectNew = 113, noResurrectTimer = 0x00100000; // SPELL_ATTR_EX3_NO_RES_TIMER
+        ulong owner = target;
+        if (c.targets.corpse)
+            if (auto corpse = cast(Corpse) map.findObject(c.targets.corpse))
+                owner = corpse.values.get!CORPSE_FIELD_OWNER;
+        auto other = owner == player.guid ? null : cast(typeof(this)) context.onlinePlayer(owner);
+        if (other is null || other.player is null || other.player.deathState == DeathState.alive)
+            return;
+        const v = &other.player.values;
+        uint health, mana;
+        if (spell.effect[i] == resurrectNew)
+        {
+            health = value > 0 ? value : 0;
+            mana = spell.miscValue[i] > 0 ? spell.miscValue[i] : 0;
+        }
+        else
+        {
+            const share = value > 0 ? value : 0;
+            health = cast(uint)(ulong(v.get!UNIT_FIELD_MAXHEALTH) * share / 100);
+            mana = cast(uint)(ulong(v.get!UNIT_FIELD_MAXPOWER1(0)) * share / 100);
+        }
+        other.resurrectRequested(player.guid, player.data.map, player.position, health, mana,
+            !(spell.casting.attributesEx3 & noResurrectTimer));
     }
 
     /// Percent less often its spells miss (`MOD_SPELL_HIT_CHANCE` auras).

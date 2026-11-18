@@ -1215,3 +1215,43 @@ unittest
     other.id = 7001;
     assert(me.questInSeason(other), "a quest of no event is always given");
 }
+
+/// Resurrection by another player: the dead are offered it, and accepting brings them back with the spell's share.
+unittest
+{
+    import std.algorithm.searching : canFind;
+    import dmangos.bytes : ByteWriter;
+    import dmangos.world.movement : Position;
+    import dmangos.world.opcodes : Opcode;
+    import dmangos.world.player : DeathState, Player;
+    import dmangos.world.spellcast : ImplicitTarget;
+    import dmangos.world.spellhandlers : testSpell;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+    import dmangos.world.unit : Blow, UnitRef;
+    import dmangos.world.updatefields;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f));
+    auto jaina = loggedIn(context, db, 8, "Jaina", Position(-8947, -132.49f, 83.53f));
+    anduin.read();
+    jaina.read();
+    auto her = cast(Player) jaina.session.character;
+    jaina.session.inWorld.sufferDamage(UnitRef.init, 1_000_000, Blow.spell());
+    assert(her.deathState != DeathState.alive);
+    jaina.read();
+
+    enum uint resurrection = 97100;
+    context.data.spells.spells[resurrection] = testSpell(resurrection, 18, ImplicitTarget.friend, 35);
+    anduin.session.inWorld.castTriggeredAt(resurrection, her.guid);
+    assert(opcodesOf(jaina.read()).canFind(Opcode.SMSG_RESURRECT_REQUEST), "offered");
+
+    ByteWriter w;
+    w.put(anduin.session.character.guid);
+    w.put(ubyte(1));
+    jaina.write(Opcode.CMSG_RESURRECT_RESPONSE, w.data);
+    assert(her.deathState == DeathState.alive, "back");
+    const most = her.values.get!UNIT_FIELD_MAXHEALTH;
+    assert(her.values.get!UNIT_FIELD_HEALTH == most * 35 / 100, "with a third of its health");
+}

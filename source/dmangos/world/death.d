@@ -378,6 +378,69 @@ private:
         deliver(Opcode.MSG_CORPSE_QUERY, w.data);
     }
 
+    private ulong resurrectBy;          /// who offered to bring this player back (0: nobody)
+    private uint resurrectMap;
+    private Position resurrectAt;       /// where the offer brings it: beside the one who made it
+    private uint resurrectHealth, resurrectMana;
+
+    /**
+     * Another's resurrection spell would bring this dead player back (`SMSG_RESURRECT_REQUEST`): remembered
+     * until the player answers. A second offer while one waits is not made.
+     */
+    package void resurrectRequested(ulong caster, uint mapId, Position at, uint health, uint mana, bool waitForTimer)
+    {
+        import dmangos.bytes : ByteWriter;
+
+        if (player is null || player.deathState == DeathState.alive || resurrectBy)
+            return;
+        resurrectBy = caster;
+        resurrectMap = mapId;
+        resurrectAt = at;
+        resurrectHealth = health;
+        resurrectMana = mana;
+        ByteWriter w;
+        w.put(caster);
+        w.put(1u);       // the name's length with its end: a player's is not sent
+        w.putCString("");
+        w.put(ubyte(0)); // not a spirit healer
+        w.put(ubyte(waitForTimer ? 1 : 0));
+        deliver(Opcode.SMSG_RESURRECT_REQUEST, w.data);
+    }
+
+    /**
+     * The dead player answers an offer of resurrection: declined, it is forgotten; accepted (from the one
+     * who made it), the player is taken to where the offer was made and comes back to life with the
+     * spell's health and mana (no rage, full energy), its corpse gone.
+     */
+    @Handles(Opcode.CMSG_RESURRECT_RESPONSE, WorldState.inWorld)
+    void handleResurrectResponse(ref ByteReader reader)
+    {
+        const from = reader.read!ulong;
+        const accept = reader.read!ubyte != 0;
+        if (player.deathState == DeathState.alive)
+            return;
+        if (!accept)
+        {
+            resurrectBy = 0;
+            return;
+        }
+        if (from != resurrectBy || from == 0)
+            return;
+        resurrectBy = 0;
+        const health = resurrectHealth, mana = resurrectMana;
+        if (resurrectMap == player.data.map)
+            teleportTo(resurrectMap, Position(resurrectAt.x, resurrectAt.y, resurrectAt.z, player.position.orientation));
+        resurrect(0);
+        auto v = &player.values;
+        const maxHealth = v.get!UNIT_FIELD_MAXHEALTH, maxMana = v.get!UNIT_FIELD_MAXPOWER1(Power.mana);
+        v.set!UNIT_FIELD_HEALTH(health == 0 ? 1 : health < maxHealth ? health : maxHealth);
+        v.set!UNIT_FIELD_POWER1(Power.mana, mana < maxMana ? mana : maxMana);
+        v.set!UNIT_FIELD_POWER1(Power.rage, 0u);
+        v.set!UNIT_FIELD_POWER1(Power.energy, v.get!UNIT_FIELD_MAXPOWER1(Power.energy));
+        flushPlayerChanges();
+        spawnCorpseBones();
+    }
+
     /// Resurrects the player: alive, the ghost aura gone, with `restore` of its health, mana and energy (no rage).
     void resurrect(float restore)
     {
