@@ -306,7 +306,7 @@ def describe(op, p):
                 else:
                     # GAMEOBJECT_POS_X .. _Z (0xF .. 0x11) where the movement block has no position.
                     if not move and 0xF in v:
-                        seen_positions[g] = tuple(struct.unpack("<f", struct.pack("<I", v[i]))[0] for i in (0xF, 0x10, 0x11))
+                        seen_positions[g] = tuple(struct.unpack("<f", struct.pack("<I", v.get(i, 0)))[0] for i in (0xF, 0x10, 0x11))
                     print(f"  [game object] {entry} guid {g & 0xFFFFFF}: type {v.get(0x15)}, display {v.get(0x8)}, "
                           f"state {v.get(0xE)}")
             elif kind == 0:

@@ -291,6 +291,11 @@ What works now:
       capture and three kills' honor for a win; Arathi Basin honor every 160 resources and reputation
       every 120.
     * Not yet: event models and mail.
+  * **Ships and zeppelins** (`transports`, `world/transports.d`): each sails its taxi path round, on the
+    schedule the client computes too (its speed, acceleration, stops and crossings), from the wall
+    clock, so every node of a cluster agrees. A ship is seen from anywhere on its map. At a crossing it
+    leaves for the other continent, and the players aboard go with it (the loading screen names the
+    ship, and they arrive on its deck). Ships whose path is in a dungeon (Naxxramas) do not sail.
   * **Using game objects:** doors and buttons open
     for their time and close again; chairs seat the player at the nearest slot; goobers are in use
     for their time, show their page, count for the quests that need them (for the group near them

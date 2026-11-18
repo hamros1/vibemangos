@@ -310,6 +310,17 @@ struct GhostEntrance
     float x = 0, y = 0;
 }
 
+/// A ship or zeppelin: its game object template, a round's length in milliseconds and its schedule.
+struct Ship
+{
+    import dmangos.world.transports : KeyFrame;
+
+    uint entry;
+    string name;
+    uint period;
+    KeyFrame[] frames;
+}
+
 /// A row of `world_safe_locs`.
 struct SafeLocation
 {
@@ -362,7 +373,8 @@ final class WorldData
     uint[2][uint] formationSlots;                   /// a formation member's spawn -> (its group, its slot)
     uint[3][uint] propertyEnchantments;             /// a random property's enchantments (`ItemRandomProperties.dbc`)
     EnchantmentEffect[3][uint] enchantmentEffects;  /// an enchantment's effects (`SpellItemEnchantment.dbc`)
-    float[uint] enchantProcRates;                   /// `spell_proc_item_enchant`: an enchantment proc's procs a minute, by spell
+    float[uint] enchantProcRates;
+    Ship[] ships;                                   /// `transports`: the ships and zeppelins, with their schedules                   /// `spell_proc_item_enchant`: an enchantment proc's procs a minute, by spell
     ubyte[2][uint] gameObjectBattleEvents;          /// `gameobject_battleground`: ditto
     string[uint] serverStrings;                     /// `mangos_string`'s default texts
     GhostEntrance[uint] ghostEntrances;             /// `instance_template`'s ghost entrances, by instance map
@@ -544,6 +556,7 @@ final class WorldData
             data.creatureLinks.addTemplate(row.get!uint(0), row.get!uint(1), row.get!uint(2), row.get!uint(3),
                 row.get!uint(4));
         data.loadSpawns(world, client, spawnSeed);
+        data.loadTransports(world, client); // after the game object templates
         data.loadWaypoints(world);
         data.loadPlayerInfo(world, client);
         data.eventAi = EventAiData.load(world);
@@ -922,6 +935,41 @@ final class WorldData
         foreach (row; world.query!"SELECT quest, event FROM game_event_quest"())
             questGameEvents[row.get!uint(0)] ~= cast(ushort) row.get!uint(1);
         info!"loaded %s game events"(gameEvents.length);
+    }
+
+    /**
+     * The ships and zeppelins (`transports`): each a game object template of type 15 whose taxi path
+     * (`data0`), speed (`data1`) and acceleration (`data2`) give its schedule; a round takes `period`.
+     */
+    void loadTransports(MySqlConnection world, const ClientData client)
+    {
+        import dmangos.world.gameobject : GameObjectType;
+        import dmangos.world.transports : PathNode, generatePath, roundTime;
+
+        ships = null;
+        foreach (row; world.query!"SELECT entry, name, period FROM transports"())
+        {
+            const entry = row.get!uint(0), name = row.get!string(1), period = row.get!uint(2);
+            const t = entry in gameObjectTemplates;
+            if (t is null || t.type != GameObjectType.moTransport)
+            {
+                warning!"transport %s (%s): no game object template of type 15"(entry, name);
+                continue;
+            }
+            PathNode[] path;
+            foreach (point; client.taxiPathPoints.get(cast(uint) t.data[0], null))
+                path ~= PathNode(point.mapId, point.x, point.y, point.z, point.actionFlag, point.delay);
+            auto frames = generatePath(path, t.data[1], t.data[2], period);
+            if (frames.length == 0 || period == 0)
+            {
+                warning!"transport %s (%s): taxi path %s gives no schedule"(entry, name, t.data[0]);
+                continue;
+            }
+            info!"transport %s (%s): %s path nodes, %s key frames, round %s ms (the path alone: %s ms)"(entry, name,
+                path.length, frames.length, period, roundTime(generatePath(path, t.data[1], t.data[2])));
+            ships ~= Ship(entry, name, period, frames);
+        }
+        info!"loaded %s ships and zeppelins"(ships.length);
     }
 
     /// Random properties (`item_enchantment_template`) and what properties and enchantments are (the DBCs).

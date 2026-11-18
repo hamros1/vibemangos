@@ -1815,6 +1815,45 @@ final class Map : CombatWorld, GameObjectWorld
         place(slot, who.character.position);
         updateVisibility(who);
         replicatePlayer(who);
+        foreach (object; everywhere_)
+            deliverUpdate(who, object.appearance(serverTime()));
+    }
+
+    private MapObject[] everywhere_; /// objects every player here sees wherever they are (ships)
+
+    /// An object every player on the map sees wherever they are (a ship): shown to everyone here now, and to whoever comes.
+    void addEverywhere(MapObject object)
+    {
+        foreach (o; everywhere_)
+            if (o.guid == object.guid)
+                return;
+        everywhere_ ~= object;
+        const time = serverTime();
+        foreach (who; playersNow())
+            deliverUpdate(who, object.appearance(time));
+    }
+
+    /// It leaves the map: everyone here is told to forget it.
+    void removeEverywhere(ulong guid)
+    {
+        import std.algorithm.mutation : remove_ = remove;
+
+        foreach (i, o; everywhere_)
+            if (o.guid == guid)
+            {
+                everywhere_ = everywhere_.remove_(i);
+                UpdateData forget;
+                forget.addOutOfRange([guid]);
+                foreach (who; playersNow())
+                    deliverUpdate(who, forget);
+                return;
+            }
+    }
+
+    /// The objects seen from anywhere on the map.
+    @property const(MapObject)[] everywhere() const
+    {
+        return everywhere_;
     }
 
     /// Takes a player off the map; those who saw it are told to destroy it.

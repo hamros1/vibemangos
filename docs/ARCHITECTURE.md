@@ -324,6 +324,11 @@ recipient, because each client's header encryption is different.
   through `flushPlayerChanges`, which sends the private view to the player and, to each of
   `watchers`, the group view or the stranger's view. `sendInRange` reaches everyone within a
   distance, seen or not: say (25 yards), yell (300) and emotes (25).
+* **Seen from anywhere.** A ship (`transports.d`'s `ShipObject`) is not in a cell: `Map.addEverywhere`
+  shows it to every player on the map and to every player who arrives, and `removeEverywhere` takes it
+  away. The context's `updateShips` works out from the wall clock which map each ship is on
+  (`generatePath`'s schedule, `mapAt`), moves it between maps, and sends the players aboard (their
+  movement says which transport they are on) across with it (`crossOnShip`).
 
 ## The update loop
 
@@ -579,7 +584,11 @@ session's side: `SPELL_EFFECT_APPLY_AURA`, what each aura type does as it begins
 (`auraEffects`: stats through `StatInputs.auras` and `refreshEquipmentStats`, speeds, roots, forms,
 mounts), the player's own ticks, the interrupt flags, and `UnitRef.auraTick` for the ticks of its
 auras on creatures (a creature's tick asks its caster's session, so damage over time taps and kills
-like any spell).
+like any spell). A player's shields absorb damage before it lands (`absorbDamage`); damage shields
+strike back at melee attackers (`damageShields`); `procAuras` fires the auras that trigger a spell on
+an event (`ProcFlag`), and a spell a proc casts sets off no procs. A creature's slows, roots and stuns
+change its movement on its next tick (`Creature.refreshAuraMovement`). Dispels are
+`SpellHandlers.dispelEffect`.
 
 ## Quests
 

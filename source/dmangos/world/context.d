@@ -57,6 +57,7 @@ import dmangos.scripts : scriptModules;
 import dmangos.world.instancescripting : InstanceScript;
 import dmangos.world.guild : Guilds, Guild, GuildRight;
 import dmangos.world.characterdb : DeleteOptions, GuidCounters;
+import dmangos.world.transports : ShipObject, mapAt, transportClock;
 import dmangos.world.clientdata : ClientData;
 import dmangos.world.config : WorldConfig;
 import dmangos.world.database : WorldDatabase;
@@ -68,7 +69,7 @@ import dmangos.cluster.protocol : GmRemote, GroupCommand, KillShare, ScriptSigna
 import dmangos.world.map : Inhabitant, Map, MapObject, MapSettings;
 import dmangos.world.online : OnlinePlayer;
 import dmangos.world.playercreate : CreationSettings;
-import dmangos.world.worlddata : WorldData;
+import dmangos.world.worlddata : Ship, WorldData;
 
 /// How a player simulated on another node than its client's talks to the other node.
 interface PlayerRelay
@@ -446,6 +447,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
     /// When the server started, in Unix time and on `MonoTime`'s clock.
     private long startUnixTime;
+    private long startUnixMillis; /// the same, to the millisecond (ships' schedules)
     private MonoTime startClock;
 
     /// Chooses creatures' models and levels.
@@ -490,7 +492,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         {
             import std.datetime.systime : Clock;
 
-            startUnixTime = Clock.currTime.toUnixTime;
+            const wall = Clock.currTime;
+            startUnixTime = wall.toUnixTime;
+            startUnixMillis = wall.toUnixTime!long * 1000 + wall.fracSecs.total!"msecs";
             startClock = MonoTime.currTime;
         }
         this.next = database.highestGuids();
@@ -995,6 +999,86 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return DeleteOptions(config.charDeleteMethod, config.charDeleteMinLevel, config.mailDeliveryDelay);
     }
 
+    // -----------------------------------------------------------------------
+    // Ships and zeppelins (`dmangos.world.transports`)
+    // -----------------------------------------------------------------------
+
+    /// A ship sailing: its schedule, its object, and the map it is on now (`uint.max`: not placed yet).
+    private struct ShipAtSea
+    {
+        const(Ship)* ship;
+        ShipObject object;
+        uint map = uint.max;
+    }
+
+    private ShipAtSea[] ships;
+
+    /// The transport clock now: the wall clock's milliseconds, moving with `clock`.
+    uint transportNow()
+    {
+        return transportClock(startUnixMillis + (clock() - startClock).total!"msecs");
+    }
+
+    /**
+     * Each tick: each ship is where its schedule says. One that came to another map leaves the old one (its
+     * players forget it) for the new one (its players get it), and the players aboard cross with it.
+     * Ships on dungeon maps are not sailed.
+     */
+    private void updateShips()
+    {
+        import dmangos.log : info;
+        import dmangos.world.character : Character;
+        import dmangos.world.movement : MovementFlags, Position;
+
+        if (ships.length == 0 && data.ships.length)
+            foreach (ref ship; data.ships)
+            {
+                bool dungeon;
+                foreach (ref k; ship.frames)
+                    dungeon |= instanceable(k.node.map);
+                if (dungeon)
+                    continue;
+                const k = ship.frames[0];
+                const t = ship.entry in data.gameObjectTemplates;
+                ships ~= ShipAtSea(&ship, new ShipObject(t, ship.period,
+                    Position(k.node.x, k.node.y, k.node.z, k.facing), &transportNow));
+            }
+        const clock = transportNow();
+        foreach (ref s; ships)
+        {
+            size_t frame;
+            const map = mapAt(s.ship.frames, clock % s.ship.period, frame);
+            // Arriving at a crossing, it is at the next frame, on the next map.
+            auto k = &s.ship.frames[frame];
+            if (k.teleport)
+                k = &s.ship.frames[(frame + 1) % s.ship.frames.length];
+            const at = Position(k.node.x, k.node.y, k.node.z, k.facing);
+            s.object.moveTo(at);
+            if (map == s.map)
+                continue;
+            const from = s.map;
+            s.map = map;
+            Character[] aboard;
+            if (from != uint.max)
+                if (auto old = existingMap(from))
+                {
+                    foreach (who; old.playersNow())
+                    {
+                        const move = &who.character.movement;
+                        if (move.has(MovementFlags.onTransport) && move.transportGuid == s.object.guid)
+                            if (auto session = cast(Character) who)
+                                aboard ~= session;
+                    }
+                    old.removeEverywhere(s.object.guid);
+                }
+            if (auto there = existingMap(map))
+                there.addEverywhere(s.object);
+            info!"%s sails to map %s (%s aboard)"(s.ship.name, map, aboard.length);
+            foreach (session; aboard)
+                session.rideShipAcross(map, at, s.object.guid, s.ship.entry);
+        }
+    }
+
     /// Unix time, moving with `clock` (so tests that replace the clock move it too).
     long unixTime()
     {
@@ -1093,6 +1177,10 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                     instanceScripts[instance] = script;
                 }
             }
+        if (instance == 0) // the ships on this map now
+            foreach (ref ship; ships)
+                if (ship.map == id)
+                    created.addEverywhere(ship.object);
         created.groupOf = (ulong player) {
             auto group = groups.of(player);
             return group is null ? 0 : group.id;
@@ -3296,6 +3384,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         services.tick(elapsed);
         battlegrounds.tick(elapsed);
         updateGameEvents(now);
+        updateShips();
         linkFollowers();
         scriptedGameObjectsDue();
         respawnDue(now);

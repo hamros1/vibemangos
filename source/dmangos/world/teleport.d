@@ -63,6 +63,32 @@ mixin template TeleportHandlers()
     import dmangos.world.worlddata : AreaTriggerTeleport;
 
 private:
+    private ulong ridingShip;     /// the ship a far teleport carries the player across on (0: none)
+    private uint ridingShipEntry;
+    private Position rideOffset;  /// where on the ship
+
+    /**
+     * The ship the player is on (its movement says so) crosses to map `mapId`, arriving at `shipAt`: the
+     * player goes with it, at the same place aboard. The loading screen names the ship, and the player is
+     * on it when it arrives.
+     */
+    package void crossOnShip(uint mapId, Position shipAt, ulong shipGuid, uint shipEntry)
+    {
+        import dmangos.world.transports : passengerPosition;
+
+        const offset = player.movement.transportOffset;
+        float x, y, z, o;
+        passengerPosition(shipAt.x, shipAt.y, shipAt.z, shipAt.orientation, offset.x, offset.y, offset.z,
+            offset.orientation, x, y, z, o);
+        ridingShip = shipGuid;
+        ridingShipEntry = shipEntry;
+        rideOffset = offset;
+        scope (exit)
+            ridingShip = 0;
+        if (!teleportTo(mapId, Position(x, y, z, o), null, uint.max, true))
+            warning!"%s: '%s' could not cross on ship %s to map %s"(remoteAddress, player.data.name, shipEntry, mapId);
+    }
+
     /**
      * Teleports the player: false if the destination is not valid or the player may not enter the
      * map. `trigger` is the area trigger walked into, if any; a teleport to another map without one
@@ -230,7 +256,17 @@ private:
             duelComplete(dmangos.world.duelhandlers.DuelEnd.fled);
             petsOnLeave(); // it comes out again on the other side
             flushPlayerChanges();
-            send(ServerTransferPending(mapId));
+            if (ridingShip)
+            {
+                // The loading screen of a crossing: the ship and the map it leaves.
+                ByteWriter pending;
+                pending.put(mapId);
+                pending.put(ridingShipEntry);
+                pending.put(player.data.map);
+                deliver(Opcode.SMSG_TRANSFER_PENDING, pending.data);
+            }
+            else
+                send(ServerTransferPending(mapId));
             map.remove(this);
             // From here on the character is saved at its destination (a dungeon: its instance).
             teleporting = Teleport.far;
@@ -251,7 +287,16 @@ private:
                 context.bindOnEntering(player.guid, mapId, instance);
             player.data.map = mapId;
             player.movement.position = destination;
-            send(ServerNewWorld(mapId, destination.x, destination.y, destination.z, destination.orientation));
+            if (ridingShip)
+            {
+                // Aboard: the new world gives the place on the ship, and the player stays on it.
+                player.movement.flags = MovementFlags.onTransport;
+                player.movement.transportGuid = ridingShip;
+                player.movement.transportOffset = rideOffset;
+                send(ServerNewWorld(mapId, rideOffset.x, rideOffset.y, rideOffset.z, rideOffset.orientation));
+            }
+            else
+                send(ServerNewWorld(mapId, destination.x, destination.y, destination.z, destination.orientation));
         }
         info!"%s: '%s' teleported to map %s (%.1f, %.1f, %.1f)"(remoteAddress, player.data.name, mapId, destination.x,
             destination.y, destination.z);

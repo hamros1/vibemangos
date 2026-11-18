@@ -6,7 +6,7 @@
  * a consumable chest or goober, and a generic object used, goes once done and
  * comes back after its spawn's respawn time. What using them does is
  * `dmangos.world.gameobjecthandlers`. Boats and zeppelins
- * (`GAMEOBJECT_TYPE_MO_TRANSPORT`) move along paths and are not spawned yet.
+ * (`GAMEOBJECT_TYPE_MO_TRANSPORT`) are not spawns: `dmangos.world.transports` sails them.
  */
 module dmangos.world.gameobject;
 

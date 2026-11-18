@@ -31,6 +31,7 @@ enum HighGuid : ushort
     gameObject = 0xF110,
     unit = 0xF130,
     pet = 0xF140,
+    moTransport = 0x8000, /// ships and zeppelins: the high part and the entry
 }
 
 /// The full guid of an object with low guid `low`.

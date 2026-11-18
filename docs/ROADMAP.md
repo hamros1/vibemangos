@@ -32,8 +32,8 @@
   (`creature_linking`) aggro together and follow their master, and formations (`spawn_group_formation`) walk their
   path with their members in place, and creatures in water do not swim. Conditions
   that need world states or scripts are never met. Elevators
-  are created but do not move. Ships and zeppelins are not
-  spawned. Idle cells unload after `grid_cleanup_delay_seconds`.
+  are created but do not move. Ships and zeppelins sail and carry their passengers across
+  (`transports.d`); elevators use another clock than ships, which a real client may need to agree on. Idle cells unload after `grid_cleanup_delay_seconds`.
 * **Terrain:** heights put wandering creatures on the ground; line of sight decides aggro and
   spells. Game objects' models (doors, elevators) are extracted but
   do not block sight (that needs a dynamic tree of game object models). Movement maps give creatures paths round buildings
@@ -75,7 +75,7 @@ and an update loop.
 Players see each other (`world/map.d`), teleport between maps (`world/teleport.d`), group up
 (`world/group.d`), talk in channels (`world/channel.d`) and are checked for speed. See
 ARCHITECTURE.md's sections on maps, teleports, groups, channels and commands, and the gaps
-listed above. Transports (boats, zeppelins) need game objects and come with milestone 3.
+listed above. Ships and zeppelins: done (`transports.d`).
 
 ### 2. An update loop and timers: done
 
@@ -118,9 +118,9 @@ The largest area. In order:
    game objects (`dbscripts.d`). Temporary summons (EventAI's and the scripts'). Not yet: EventAI's morphs,
    paths by id, summons handed over between nodes, spell lists, interrupting creatures' casts, movement maps for chasing, help
    from another node's creatures in a cluster.
-3. **Death: done** (`death.d`, `corpse.d`; README's "Death"). Not yet: resurrection sickness and the
-   ghost's own auras (applied by hand until there are auras), ghosts hidden from the living, bones,
-   battleground spirit guides, corpses of a player on another node of a cluster (a corpse is put on
+3. **Death: done** (`death.d`, `corpse.d`; README's "Death"), resurrection sickness and battleground
+   spirit guides included. Not yet: the ghost's own auras (applied by hand), ghosts hidden from the
+   living, bones, corpses of a player on another node of a cluster (a corpse is put on
    the map its player's node simulates; a node that does not own the cell keeps it anyway).
 4. **Experience and loot: done** (`experience.d`, `loot.d`, `loothandlers.d`; README's "Experience
    and loot"). Quest drops, skinning, pickpocketing and random
@@ -163,7 +163,6 @@ The largest area. In order:
      * Removing stealth and the like on objectives (`AURA_INTERRUPT_FLAG_PVP_ACTIVE_CANCELS`).
      * A flag dropped when its carrier becomes immune.
      * Insignia loot from the dead.
-     * Call to Arms weekends.
      * pvpstats.
      * Alterac Valley (mostly data: about 1000 event spawns, captains, mines, towers).
      * A queue service that moves to another node starts empty.

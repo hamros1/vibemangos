@@ -293,6 +293,12 @@ final class Character : OnlinePlayer, Looter
     }
 
     /// See `dmangos.world.unit.dealDamage`: damage the player suffers.
+    /// See `TeleportHandlers.crossOnShip`.
+    void rideShipAcross(uint mapId, Position shipAt, ulong shipGuid, uint shipEntry)
+    {
+        crossOnShip(mapId, shipAt, shipGuid, shipEntry);
+    }
+
     /// See `UnitRef.absorb`.
     uint absorbIncoming(uint school, ref uint damage)
     {
