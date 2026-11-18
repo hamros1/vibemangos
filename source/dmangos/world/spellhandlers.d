@@ -638,9 +638,20 @@ private:
         persistentAreas ~= PersistentArea(spot, spell, i, value > 0 ? value : 0, amplitude, amplitude, ms);
     }
 
+    /// A persistent area's aura amounts: its own effect's (the spot's value), the others' as cast.
+    private int[3] areaAuraValues(const ref PersistentArea area)
+    {
+        int[3] values;
+        foreach (j; 0 .. 3)
+            values[j] = j == area.effect ? area.value
+                : effectValue(*area.spell, j, player.data.level, uniform01(map.random));
+        return values;
+    }
+
     /// The spots' ticks and ends.
     void updatePersistentAreas(int diff)
     {
+        import dmangos.world.auras : AuraType, makeAura;
         import dmangos.world.spellcast : radius;
 
         foreach_reverse (k, ref area; persistentAreas)
@@ -652,13 +663,42 @@ private:
                 area.timer += area.amplitude;
                 const r = radius(*area.spell, area.effect, context.client);
                 const at = area.spot.position;
+                bool inside(Position p)
+                {
+                    return (p.x - at.x) ^^ 2 + (p.y - at.y) ^^ 2 + (p.z - at.z) ^^ 2 <= r * r;
+                }
+                // Damage over time hurts; another aura (a slow, a stun) is held on those inside, a little past each tick.
+                const auraType = area.spell.casting.applyAuraName[area.effect];
+                const hurts = auraType == 0 || auraType == AuraType.periodicDamage;
+                const holdMs = area.amplitude + 500;
                 foreach (creature; map.creaturesNear(at, r))
                 {
-                    const p = creature.position;
-                    if ((p.x - at.x) ^^ 2 + (p.y - at.y) ^^ 2 + (p.z - at.z) ^^ 2 > r * r || !spellEnemy(creature))
+                    if (!inside(creature.position) || !spellEnemy(creature))
                         continue;
-                    spellDamage(area.spell, creature, area.value, area.spell.casting.school);
+                    if (hurts)
+                        spellDamage(area.spell, creature, area.value, area.spell.casting.school);
+                    else
+                    {
+                        bool isNew;
+                        creature.auras.apply(makeAura(area.spell, player.guid, player.data.level, holdMs, false,
+                            areaAuraValues(area)), creature.values, isNew);
+                        map.flushObjectChanges(creature);
+                        if (isNew)
+                            spellAttacked(creature, 0);
+                    }
                 }
+                // Players it may fight (a duel's opponent, the other faction where that is allowed).
+                foreach (u; map.playersNear(at, r))
+                    if (auto other = enemyPlayer(u.combatGuid))
+                    {
+                        if (!other.player.fighter.alive || !inside(other.player.position))
+                            continue;
+                        if (hurts)
+                            spellDamageToPlayer(area.spell, other, area.value);
+                        else
+                            other.addAura(makeAura(area.spell, player.guid, player.data.level, holdMs, false,
+                                areaAuraValues(area)));
+                    }
             }
             if (area.left <= 0)
             {
@@ -2896,6 +2936,28 @@ unittest
     }
     assert(keeper.values.get!UNIT_FIELD_HEALTH == 500 - 3 * 10, "three ticks of 10");
     assert(map.findObject(spot.guid) is null, "gone after its 3 seconds");
+
+    // A ground effect that slows (a frost trap's): those inside are held slowed, not hurt.
+    import dmangos.world.auras : AuraType;
+
+    enum uint frostTrap = 95701;
+    context.data.spells.spells[frostTrap] = testSpell(frostTrap, 27, ImplicitTarget.caster, -60);
+    with (context.data.spells.spells.edit(frostTrap).casting)
+    {
+        applyAuraName[0] = AuraType.modDecreaseSpeed;
+        radiusIndex[0] = 1;
+        durationIndex = 1;
+        dmgClass = 0;
+    }
+    me.spells ~= frostTrap;
+    ByteWriter w2;
+    w2.put(frostTrap);
+    SpellTargets(TargetFlags.self, 0).write(w2);
+    anduin.write(Opcode.CMSG_CAST_SPELL, w2.data);
+    now += 1000.msecs;
+    anduin.session.update(1000.msecs);
+    assert(keeper.auras.find(frostTrap) !is null, "slowed while inside");
+    assert(keeper.values.get!UNIT_FIELD_HEALTH == 500 - 3 * 10, "and not hurt");
 }
 
 /// Cooldowns last through a logout: saved, read back at login, and shown in `SMSG_INITIAL_SPELLS`.

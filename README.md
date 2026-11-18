@@ -528,8 +528,9 @@ What works now:
     binary spell (one with a non-damage effect on its target, such as Frostbolt's slow, or only
     auras) is resisted whole or not at all, its resistance added to its chance to miss; damage over
     time ticks are partly resisted too. A player's resistances work the same against spells, players' and
-    creatures' (without the creature's level bonus). Not yet: the area auras' other effects (slows) and
-    their hitting players.
+    creatures' (without the creature's level bonus). Ground effects (persistent area auras:
+    Consecration, Blizzard, a frost trap) hurt the enemies inside every tick, players it may fight
+    too, or hold their other aura (a slow) on them while they stay.
   * **Auras:** buffs and debuffs fill the aura fields
     (positive slots 0..31, negative 32..47) and the buff bar's durations, refresh and stack, and end
     when their time is up, when clicked off, at death, or by their interrupt flags (standing up ends
