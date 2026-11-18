@@ -290,7 +290,10 @@ What works now:
     * A battleground made during its Call to Arms weekend gives more: Warsong Gulch 45 reputation a
       capture and three kills' honor for a win; Arathi Basin honor every 160 resources and reputation
       every 120.
-    * Not yet: event models and mail.
+    * While an event is on, the creatures it changes (`game_event_creature_data`) are of its entry,
+      model or equipment, with its spell's auras (costumes: a transformation takes the named creature's
+      look); when it starts or ends, those alive and out of a fight are made again.
+    * Not yet: event mail (`game_event_mail`).
   * **Ships and zeppelins** (`transports`, `world/transports.d`): each sails its taxi path round, on the
     schedule the client computes too (its speed, acceleration, stops and crossings), from the wall
     clock, so every node of a cluster agrees. A ship is seen from anywhere on its map. At a crossing it

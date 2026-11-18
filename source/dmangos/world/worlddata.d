@@ -310,6 +310,16 @@ struct GhostEntrance
     float x = 0, y = 0;
 }
 
+/// A `game_event_creature_data` row: while `event` is on, its spawn is of another entry, model or equipment, and has a spell's auras.
+struct EventCreature
+{
+    ushort event;
+    uint entry;     /// 0: its own
+    uint model;     /// 0: its entry's
+    uint equipment; /// 0: its entry's
+    uint spell;     /// auras it has meanwhile (a transformation, a costume)
+}
+
 /// A ship or zeppelin: its game object template, a round's length in milliseconds and its schedule.
 struct Ship
 {
@@ -365,6 +375,7 @@ final class WorldData
     ubyte[2][uint] creatureBattleEvents;            /// `creature_battleground`: a spawn's battleground event
     RandomEnchantment[][uint] randomProperties;     /// `item_enchantment_template`, by an item's `RandomProperty`
     short[uint] creatureGameEvents;                 /// `game_event_creature`: a spawn's game event (negative: away while it is on)
+    EventCreature[][uint] eventCreatures;           /// `game_event_creature_data`: how events change spawns, by spawn
     short[uint] gameObjectGameEvents;               /// `game_event_gameobject`: ditto
     GameEvent[] gameEvents;                         /// `game_event` and `game_event_time`
     ushort[][uint] questGameEvents;                 /// `game_event_quest`: the events a quest is given during
@@ -748,6 +759,10 @@ final class WorldData
             creatureGameEvents[row.get!uint(0)] = cast(short) row.get!int(1);
         foreach (row; world.query!"SELECT guid, event FROM game_event_gameobject"())
             gameObjectGameEvents[row.get!uint(0)] = cast(short) row.get!int(1);
+        foreach (row; world.query!("SELECT guid, entry_id, modelid, equipment_id, spell_start, event "
+            ~ "FROM game_event_creature_data")())
+            eventCreatures[row.get!uint(0)] ~= EventCreature(cast(ushort) row.get!int(5), row.get!uint(1),
+                row.get!uint(2), row.get!uint(3), row.get!uint(4));
         // Which spawns are out: the pool members not chosen this time.
         auto pools = new PoolChooser;
         foreach (row; world.query!"SELECT entry, max_limit FROM pool_template"())

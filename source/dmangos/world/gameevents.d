@@ -23,7 +23,8 @@
  *
  * While an event is active, the creatures and game objects of `game_event_creature` and
  * `game_event_gameobject` listed with its id are in the world, and those listed with its negated id
- * are not. Every node of a cluster works the schedule out from the clock alone, so they agree.
+ * are not; the creatures of `game_event_creature_data` listed with it take its entry, model, equipment
+ * and auras. Every node of a cluster works the schedule out from the clock alone, so they agree.
  */
 module dmangos.world.gameevents;
 

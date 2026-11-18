@@ -69,7 +69,7 @@ import dmangos.cluster.protocol : GmRemote, GroupCommand, KillShare, ScriptSigna
 import dmangos.world.map : Inhabitant, Map, MapObject, MapSettings;
 import dmangos.world.online : OnlinePlayer;
 import dmangos.world.playercreate : CreationSettings;
-import dmangos.world.worlddata : Ship, WorldData;
+import dmangos.world.worlddata : EventCreature, Ship, WorldData;
 
 /// How a player simulated on another node than its client's talks to the other node.
 interface PlayerRelay
@@ -911,13 +911,21 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
         void refresh(Map m)
         {
-            // Those to go.
+            // Those to go; and those an event changes (or changed), alive and out of a fight, to be made again.
             ulong[] gone;
+            const(CreatureSpawn)*[] remade;
             m.forEachObject((MapObject o) {
                 if (auto c = cast(Creature) o)
                 {
                     if (!creatureInEvents(c.spawnId))
                         gone ~= c.guid;
+                    else if (c.spawnId in data.eventCreatures && !c.petOwner && c.summon.type == TempSpawnType.none
+                            && c.alive && (c.ai is null || !c.ai.inCombat) && eventShapeOf(c.spawnId) != c.eventShape)
+                        if (const spawn = creatureSpawnOf(c.spawnId))
+                        {
+                            gone ~= c.guid;
+                            remade ~= spawn;
+                        }
                 }
                 else if (auto go = cast(GameObject) o)
                     if (go.spawn.guid in data.gameObjectGameEvents && !gameObjectInEvents(go.spawn.guid))
@@ -925,6 +933,12 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             });
             foreach (guid; gone)
                 m.removeObject(guid);
+            foreach (spawn; remade)
+                if (auto c = makeCreature(spawn))
+                {
+                    c.instanceId = m.instanceId;
+                    m.addObject(c);
+                }
             // Those to come, in loaded cells.
             bool[ulong] present;
             m.forEachObject((MapObject o) { present[o.guid] = true; });
@@ -2027,6 +2041,23 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         import dmangos.world.creature : chooseDisplay, chooseLevel, classStatsKey, CreatureParts, VirtualItem;
         import dmangos.world.motion : selectMovement;
 
+        // An event on now may make it another entry, model or equipment (`game_event_creature_data`).
+        const(EventCreature)* shape;
+        CreatureSpawn reshaped;
+        if (!petNumber)
+            if (auto list = spawn.guid in data.eventCreatures)
+                foreach (ref e; *list)
+                    if (gameEvents.isActive(e.event))
+                    {
+                        shape = &e;
+                        if (e.entry && e.entry in data.creatureTemplates)
+                        {
+                            reshaped = *spawn;
+                            reshaped.entry = e.entry;
+                            spawn = &reshaped;
+                        }
+                        break;
+                    }
         const template_ = spawn.entry in data.creatureTemplates;
         const display = chooseDisplay(*template_, spawnRandom);
         if (display == 0)
@@ -2048,13 +2079,16 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             parts.gender = model.gender;
         }
         parts.collisionHeight = client.collisionHeight(display);
-        if (const equipment = template_.equipmentTemplateId in data.creatureEquipment)
+        const equipmentId = shape !is null && shape.equipment ? shape.equipment : template_.equipmentTemplateId;
+        if (const equipment = equipmentId in data.creatureEquipment)
             foreach (slot, entry; *equipment)
                 if (const item = entry in data.items)
                     parts.equipment[slot] = VirtualItem(item.displayId, cast(ubyte) item.itemClass,
                         cast(ubyte) item.subClass, cast(ubyte) item.details.material, item.inventoryType,
                         cast(ubyte) item.details.sheath);
         auto creature = new Creature(*spawn, template_, display, level, parts, client, petNumber);
+        if (shape !is null)
+            applyEventShape(creature, *shape);
         // A creature of the water spawned where it can swim swims (unless made to walk in water: crabs).
         enum uint inhabitWater = 2, walkInWater = 0x8000;
         if ((template_.inhabitType & inhabitWater) && !(template_.extraFlags & walkInWater) && !petNumber)
@@ -2084,6 +2118,56 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             if (auto events = data.eventAi.eventsOf(spawn.entry, spawn.guid))
                 creature.ai.setScript(events, data.eventAi);
         return creature;
+    }
+
+    /**
+     * A creature made while event `shape.event` is on: its model, and its spell's auras (a transformation
+     * takes the named creature's model). It is marked with the event, to be made again when it ends.
+     */
+    private void applyEventShape(Creature creature, const ref EventCreature shape)
+    {
+        import dmangos.world.auras : AuraType, makeAura;
+        import dmangos.world.creature : chooseDisplay;
+        import dmangos.world.updatefields : UNIT_FIELD_DISPLAYID, UNIT_FIELD_NATIVEDISPLAYID;
+
+        creature.eventShape = shape.event;
+        if (shape.model)
+        {
+            creature.values.set!UNIT_FIELD_DISPLAYID(shape.model);
+            creature.values.set!UNIT_FIELD_NATIVEDISPLAYID(shape.model);
+        }
+        const spell = data.spells.spell(shape.spell);
+        if (spell is null)
+            return;
+        enum uint applyAura = 6;
+        int[3] amounts;
+        bool any;
+        foreach (i; 0 .. 3)
+            if (spell.effect[i] == applyAura)
+            {
+                any = true;
+                amounts[i] = spell.basePoints[i] + 1;
+                if (spell.casting.applyAuraName[i] == AuraType.transform)
+                    if (const t = cast(uint) spell.miscValue[i] in data.creatureTemplates)
+                        if (const model = chooseDisplay(*t, spawnRandom))
+                            creature.values.set!UNIT_FIELD_DISPLAYID(model);
+            }
+        if (!any)
+            return;
+        bool isNew;
+        creature.auras.apply(makeAura(spell, creature.guid, creature.values.get!(dmangos.world.updatefields.UNIT_FIELD_LEVEL),
+            -1, true, amounts), creature.values, isNew);
+        creature.values.clearChanges();
+    }
+
+    /// The event whose `game_event_creature_data` spawn `guid` should be made with now (0: none).
+    private ushort eventShapeOf(uint guid)
+    {
+        if (auto list = guid in data.eventCreatures)
+            foreach (ref e; *list)
+                if (gameEvents.isActive(e.event))
+                    return e.event;
+        return 0;
     }
 
     // -----------------------------------------------------------------------
@@ -3861,4 +3945,39 @@ unittest
     context.update(now);
     auto back = cast(Creature) m.findObject(bankerGuid);
     assert(back !is null && back.alive, "the banker came back as the innkeeper fell");
+}
+
+// Game events change creatures (`game_event_creature_data`): while one is on, its spawn is made with the event's
+// model; when it ends, the creature is made again as it was.
+unittest
+{
+    import dmangos.world.gameevents : GameEvent, ScheduleType;
+    import dmangos.world.movement : Position;
+    import dmangos.world.objects : HighGuid, makeGuid;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+    import dmangos.world.updatefields : UNIT_FIELD_DISPLAYID;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    context.data.eventCreatures[bankerSpawn] = [EventCreature(6, 0, 4242, 0, 0)];
+    const now = context.unixTime;
+    context.gameEvents.events[6] = GameEvent(6, ScheduleType.date, now + 3600, now + 7200, 1440, 60, 0, "test");
+    context.updateGameEvents(context.clock(), true);
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f));
+    anduin.read();
+    const guid = makeGuid(HighGuid.unit, creatureBanker, bankerSpawn);
+    auto m = context.map(0);
+    const usual = (cast(Creature) m.findObject(guid)).values.get!UNIT_FIELD_DISPLAYID;
+    assert(usual != 4242);
+
+    context.gameEvents.events[6].start = now - 60;
+    context.updateGameEvents(context.clock(), true);
+    auto dressed = cast(Creature) m.findObject(guid);
+    assert(dressed.values.get!UNIT_FIELD_DISPLAYID == 4242 && dressed.eventShape == 6, "the event's model");
+
+    context.gameEvents.events[6].end = now - 1;
+    context.updateGameEvents(context.clock(), true);
+    auto plain = cast(Creature) m.findObject(guid);
+    assert(plain !is dressed && plain.eventShape == 0 && plain.values.get!UNIT_FIELD_DISPLAYID != 4242, "as it was");
 }
