@@ -98,6 +98,8 @@ void serialize(T)(ref ByteWriter writer, auto ref const T value) if (is(T == str
             writer.put(cast(Prefix) field.length);
             static if (isSomeString!Field)
                 writer.putBytes(field.representation);
+            else static if (is(Unqual!(typeof(Field.init[0])) == ubyte))
+                writer.putBytes(field); // bytes as they are: one copy, as for @Remainder
             else
                 foreach (ref element; field)
                     writeValue(writer, element);
@@ -159,9 +161,14 @@ private T deserializeFields(T)(ref ByteReader reader)
                 // and the OutOfMemoryError (an Error) would pass every catch (Exception) and end the process.
                 enum size_t leastBytes = wireSize!Element > 0 ? wireSize!Element : 1;
                 reader.ensureAvailable(count * leastBytes);
-                result.tupleof[i] = new Element[count];
-                foreach (ref element; result.tupleof[i])
-                    element = readValue!Element(reader);
+                static if (is(Unqual!Element == ubyte))
+                    result.tupleof[i] = reader.readBytes(count).dup; // one copy, as for @Remainder
+                else
+                {
+                    result.tupleof[i] = new Element[count];
+                    foreach (ref element; result.tupleof[i])
+                        element = readValue!Element(reader);
+                }
             }
         }
         else static if (hasUDA!(T.tupleof[i], Remainder))
@@ -397,4 +404,22 @@ unittest
     assertThrown!IncompletePacketException(deserialize!Message(frame));
     auto two = ByteReader(cast(ubyte[])[2, 0, 0, 0] ~ new ubyte[64]);
     assert(deserialize!Message(two).items.length == 2);
+}
+
+// A length-prefixed byte array is its count, then its bytes as they are: copied whole, the same bytes as
+// one at a time (and so the same on the wire as before), and read back the same.
+unittest
+{
+    static struct Message
+    {
+        ushort kind;
+        @LengthPrefix!uint ubyte[] body_;
+    }
+
+    ByteWriter w;
+    serialize(w, Message(5, [0xAA, 0xBB, 0xCC]));
+    assert(w.data == [5, 0, 3, 0, 0, 0, 0xAA, 0xBB, 0xCC]);
+    auto r = ByteReader(w.data);
+    const back = deserialize!Message(r);
+    assert(back.kind == 5 && back.body_ == [0xAA, 0xBB, 0xCC] && r.empty);
 }
