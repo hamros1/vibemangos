@@ -1049,6 +1049,7 @@ private:
                 f.damageSchool[type] = item.proto.details.damage[0].school;
         }
         f.crit = chances.crit;
+        f.hitBonus = auras.total(AuraType.modHitChance); // `MOD_HIT_CHANCE`: fewer misses
         f.dualWield = dualWield && weaponFor(equipmentSlotOffhand) !is null; // `hasOffhandWeaponForAttack`
         const defense = skillValue(skillDefense);
         f.defenseSkill = defense[0];
@@ -1130,6 +1131,17 @@ private:
         if (const shield = inventory.equipped(equipmentSlotOffhand))
             if (shield.durability != 0 || shield.maxDurability == 0)
                 c.shieldBlock = shield.proto.details.block;
+        // What auras (talents, buffs) add to the chances; crit only those for the weapon in hand.
+        int subClassOf(ubyte slot)
+        {
+            const item = inventory.equipped(slot);
+            return item is null || item.proto.itemClass != 2 ? -1 : cast(int) item.proto.subClass;
+        }
+        c.auraCrit = auras.totalForWeapon(AuraType.modCritPercent, subClassOf(equipmentSlotMainhand));
+        c.auraRangedCrit = auras.totalForWeapon(AuraType.modCritPercent, subClassOf(equipmentSlotRanged));
+        c.auraDodge = auras.total(AuraType.modDodgePercent);
+        c.auraParry = auras.total(AuraType.modParryPercent);
+        c.auraBlock = auras.total(AuraType.modBlockPercent);
         return c;
     }
 

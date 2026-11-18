@@ -355,6 +355,8 @@ struct ChanceInputs
     uint mainHandSkill, rangedSkill, defenseSkill; /// current values
     bool canParry, canBlock;
     uint shieldBlock;            /// the worn shield's block value; 0 without one
+    float auraCrit = 0, auraRangedCrit = 0; /// what auras add to melee and ranged crit (`MOD_CRIT_PERCENT`, by weapon)
+    float auraDodge = 0, auraParry = 0, auraBlock = 0; /// `MOD_DODGE_PERCENT`, `MOD_PARRY_PERCENT`, `MOD_BLOCK_PERCENT`
 }
 
 /// Crit and dodge from agility: agility per percent, by class and level.
@@ -384,24 +386,25 @@ MeleeChances meleeChances(const ChanceInputs input) pure nothrow @nogc @safe
     const cap = input.level * 5; // the highest skill at this level
     const critRate = agilityPerPercent(input.classId, input.level, false);
     const agilityCrit = critRate > 0 ? input.agility / critRate : 0;
-    r.crit = r.rangedCrit = agilityCrit;
+    r.crit = agilityCrit + input.auraCrit;
+    r.rangedCrit = agilityCrit + input.auraRangedCrit;
     r.critShown = clampPct(r.crit + (int(input.mainHandSkill) - int(cap)) * 0.04f);
     r.rangedCritShown = clampPct(r.rangedCrit + (int(input.rangedSkill) - int(cap)) * 0.04f);
     const defense = (int(input.defenseSkill) - int(cap)) * 0.04f;
     const dodgeRate = agilityPerPercent(input.classId, input.level, true);
     r.dodge = (input.classId < baseDodge.length ? baseDodge[input.classId] : 0)
-        + (dodgeRate > 0 ? input.agility / dodgeRate : 0);
+        + (dodgeRate > 0 ? input.agility / dodgeRate : 0) + input.auraDodge;
     r.dodgeShown = clampPct(r.dodge + defense);
     r.canParry = input.canParry;
     if (input.canParry)
     {
-        r.parry = 5;
+        r.parry = 5 + input.auraParry;
         r.parryShown = clampPct(r.parry + defense);
     }
     r.canBlock = input.canBlock;
     if (input.canBlock)
     {
-        r.block = 5;
+        r.block = 5 + input.auraBlock;
         r.blockShown = clampPct(r.block + defense);
     }
     const shield = input.shieldBlock + input.strength / 20 - 1;
@@ -425,3 +428,18 @@ unittest
     assert(m.parry == 0 && m.block == 0 && m.parryShown == 0 && m.dodge > 3.25f + 1.5f && m.shieldBlock == 0);
 }
 
+
+// Auras add to the chances: crit (melee and ranged apart), dodge, and parry and block where known.
+unittest
+{
+    auto input = ChanceInputs(1, 1, 23, 23, 5, 0, 5, true, true, 5);
+    const plain = meleeChances(input);
+    input.auraCrit = 5;
+    input.auraRangedCrit = 1;
+    input.auraDodge = 2;
+    input.auraParry = 3;
+    input.auraBlock = 4;
+    const buffed = meleeChances(input);
+    assert(buffed.crit == plain.crit + 5 && buffed.rangedCrit == plain.rangedCrit + 1);
+    assert(buffed.dodge == plain.dodge + 2 && buffed.parry == 8 && buffed.block == 9);
+}

@@ -231,6 +231,7 @@ unittest
     second.values.set!UNIT_FIELD_HEALTH(20u);
     pet.values.set!UNIT_FIELD_MINDAMAGE(8.0f);
     pet.values.set!UNIT_FIELD_MAXDAMAGE(8.0f);
+    pet.values.set!UNIT_FIELD_POWER1(4, 500_000u); // content: its damage as it is
     {
         ByteWriter w;
         w.put(pet.guid);

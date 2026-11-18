@@ -1129,8 +1129,8 @@ private:
                 edge += parryChance(it, me, type);
                 return roll < edge ? SpellMissInfo.parry : SpellMissInfo.none;
             }
-            return roll < spellMissChance(player.data.level, other.player.data.level, true) ? SpellMissInfo.resist
-                : SpellMissInfo.none;
+            return roll < spellMissChance(player.data.level, other.player.data.level, true) - spellHitBonus
+                ? SpellMissInfo.resist : SpellMissInfo.none;
         }
         if (!creature.alive)
             return SpellMissInfo.none;
@@ -1157,7 +1157,7 @@ private:
             return SpellMissInfo.none;
         }
         const level = creature.values.get!UNIT_FIELD_LEVEL;
-        float chance = spellMissChance(player.data.level, level, false);
+        float chance = spellMissChance(player.data.level, level, false) - spellHitBonus;
         // A magic spell is also fully resisted by resistance: a binary spell
         // by its whole percent, another by the distribution's chance of all of it.
         const school = spell.casting.school;
@@ -1462,10 +1462,22 @@ private:
         return spellMod(SpellModOp.allEffects, spell, spellMod(effectOp(i), spell, value));
     }
 
+    /// Percent less often its spells miss (`MOD_SPELL_HIT_CHANCE` auras).
+    @property float spellHitBonus()
+    {
+        import dmangos.world.auras : AuraType;
+
+        return player.auras.total(AuraType.modSpellHitChance);
+    }
+
     /// The crit chance of `spell`: this player's (`spellCrit`) and the spell's modifiers.
     float spellCritOf(const(SpellInfo)* spell)
     {
-        return spellCrit() + spellMod(SpellModOp.critChance, spell, 0);
+        import dmangos.world.auras : AuraType;
+
+        // And what auras add: to every spell's crit, and to its school's.
+        return spellCrit() + spellMod(SpellModOp.critChance, spell, 0) + player.auras.total(AuraType.modSpellCritChance)
+            + player.auras.totalByMiscMask(AuraType.modSpellCritChanceSchool, 1 << spell.casting.school);
     }
 
     /// The crit chance of this player's spells, from its intellect by class and level.

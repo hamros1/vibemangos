@@ -102,6 +102,7 @@ struct Fighter
     float[2][3] damage = 0;    /// by attack type: minimum, maximum (`UNIT_FIELD_MINDAMAGE`, ...)
     uint[3] damageSchool;      /// by attack type: the school index (0: physical)
     float crit = 0;            /// its crit chance: a player's from agility; a creature's 5
+    float hitBonus = 0;        /// percent less often missed (`MOD_HIT_CHANCE` auras)
     bool dualWield;            /// it has an off-hand weapon to attack with
 
     // What it defends with.
@@ -236,6 +237,7 @@ float missChance(const Fighter attacker, const Fighter victim, AttackType type) 
             factor = 0.1f;
     }
     chance += difference * factor;
+    chance -= attacker.hitBonus;
     const minimum = difference > 10 ? 1.0f : 0.0f;
     return chance < minimum ? minimum : chance > 100 ? 100 : chance;
 }
@@ -845,4 +847,17 @@ unittest
     assert(effectiveResistPercent(0, 60, 63, true) == 6);
     assert(rollPartialResist(10, 1) == 0 && rollPartialResist(10, 10000) > 0);
     assert(effectiveResistPercent(-50, 60, 60, true) < 0 && rollPartialResist(-10, 1) < 0);
+}
+
+// Hit auras make misses rarer.
+unittest
+{
+    Fighter player, wolf;
+    player.player = player.playerControlled = true;
+    player.level = wolf.level = 10;
+    player.weaponSkill[0] = player.weaponSkillMax[0] = 50;
+    wolf.defenseSkill = wolf.defenseSkillMax = 50;
+    const plain = missChance(player, wolf, AttackType.mainHand);
+    player.hitBonus = 3;
+    assert(missChance(player, wolf, AttackType.mainHand) == plain - 3);
 }

@@ -71,6 +71,7 @@ enum AuraType : uint
     modSpellHitChance = 55,
     transform = 56,
     modSpellCritChance = 57,
+    modSpellCritChanceSchool = 71,
     modIncreaseSwimSpeed = 58,
     modDamageDoneCreature = 59,
     modPacifySilence = 60,
@@ -284,6 +285,27 @@ struct AuraSet
         return sum;
     }
 
+    /**
+     * The sum of the amounts of `type`, of auras with no item requirement or whose spell's weapon class
+     * and subclasses take `weaponSubClass` (-1: no weapon: only those with no requirement).
+     */
+    int totalForWeapon(AuraType type, int weaponSubClass) const
+    {
+        enum int itemClassWeapon = 2;
+        int sum;
+        foreach (aura; list)
+        {
+            const needs = aura.spell.equippedItemClass;
+            if (needs >= 0 && (needs != itemClassWeapon || weaponSubClass < 0
+                    || !(aura.spell.equippedItemSubClassMask & (1 << weaponSubClass))))
+                continue;
+            foreach (i; 0 .. 3)
+                if ((aura.effects & (1 << i)) && aura.type(i) == type)
+                    sum += aura.amount[i] * cast(int) aura.stacks;
+        }
+        return sum;
+    }
+
     /// The sum of those whose misc value is `misc`.
     int totalByMisc(AuraType type, int misc) const
     {
@@ -431,4 +453,29 @@ unittest
     // The same spell from the same caster refreshes.
     set.apply(makeAura(&buff, 1, 10, 60_000, true, [2, 0, 0]), values, isNew);
     assert(!isNew && set.list.length == 1);
+}
+
+// An aura for one kind of weapon counts only with it in hand.
+unittest
+{
+    import dmangos.world.updatefields : TypeId;
+
+    auto values = UpdateValues(TypeId.unit);
+    SpellInfo axes; // +5% crit with axes (subclasses 0 and 1)
+    axes.id = 12700;
+    axes.effect[0] = 6;
+    axes.casting.applyAuraName[0] = AuraType.modCritPercent;
+    axes.equippedItemClass = 2;
+    axes.equippedItemSubClassMask = 0b11;
+    SpellInfo any; // +1% crit with anything
+    any.id = 12701;
+    any.effect[0] = 6;
+    any.casting.applyAuraName[0] = AuraType.modCritPercent;
+    AuraSet set;
+    bool isNew;
+    set.apply(makeAura(&axes, 1, 10, -1, true, [5, 0, 0]), values, isNew);
+    set.apply(makeAura(&any, 1, 10, -1, true, [1, 0, 0]), values, isNew);
+    assert(set.totalForWeapon(AuraType.modCritPercent, 0) == 6, "an axe in hand");
+    assert(set.totalForWeapon(AuraType.modCritPercent, 7) == 1, "a sword: only the general one");
+    assert(set.totalForWeapon(AuraType.modCritPercent, -1) == 1, "no weapon");
 }
