@@ -66,7 +66,12 @@ mixin template AuctionHandlers()
     @Handles(Opcode.MSG_AUCTION_HELLO, WorldState.inWorld)
     void handleAuctionHello(ref ByteReader reader)
     {
-        const guid = reader.read!ulong;
+        sendAuctionHello(reader.read!ulong);
+    }
+
+    /// The auction window of auctioneer `guid`, with its house.
+    package void sendAuctionHello(ulong guid)
+    {
         const house = auctionHouseOf(guid);
         if (house is null)
             return;

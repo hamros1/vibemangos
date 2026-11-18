@@ -252,6 +252,10 @@ private:
     {
         switch (optionId)
         {
+        case GossipOption.taxiVendor, GossipOption.auctioneer, GossipOption.spiritGuide:
+            return true;
+        case GossipOption.spiritHealer:
+            return player.deathState != DeathState.alive; // only the dead are brought back
         case GossipOption.gossip, GossipOption.innkeeper, GossipOption.banker:
             return true;
         case GossipOption.vendor:
@@ -403,6 +407,28 @@ private:
         case GossipOption.innkeeper:
             closeGossip();
             send(ServerBinderConfirm(creature.guid)); // the client asks the player to be sure
+            break;
+        case GossipOption.taxiVendor:
+            closeGossip();
+            handleTaxiQueryAvailableNodes(ClientGuid(creature.guid)); // a new node learned, or the map
+            break;
+        case GossipOption.auctioneer:
+            closeGossip();
+            sendAuctionHello(creature.guid);
+            break;
+        case GossipOption.spiritHealer:
+        {
+            closeGossip();
+            if (player.deathState == DeathState.alive)
+                break;
+            ByteWriter w;
+            w.put(creature.guid);
+            deliver(Opcode.SMSG_SPIRIT_HEALER_CONFIRM, w.data); // the client asks; yes resurrects (`CMSG_SPIRIT_HEALER_ACTIVATE`)
+            break;
+        }
+        case GossipOption.spiritGuide:
+            closeGossip();
+            queueAtSpiritGuide(creature.guid);
             break;
         case GossipOption.banker:
             send(ServerShowBank(creature.guid));
@@ -969,4 +995,31 @@ unittest
     assert(opcodesOf(anduin.read()) == [Opcode.SMSG_SHOW_BANK]);
     anduin.write(Opcode.CMSG_BANKER_ACTIVATE, ClientNpcGuid(innkeeper));
     assert(anduin.read().length == 0, "not a banker");
+}
+
+/// A flight master's option shows for an NPC that is one, and a spirit healer's only to the dead.
+unittest
+{
+    import dmangos.world.npcdata : GossipMenuOption, GossipOption;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    context.data.npcs.options[0] ~= GossipMenuOption(0, 2, 2, "GOSSIP_OPTION_TAXIVENDOR", 0, GossipOption.taxiVendor,
+        NpcFlag.flightMaster);
+    context.data.npcs.options[0] ~= GossipMenuOption(0, 4, 4, "GOSSIP_OPTION_SPIRITHEALER", 0,
+        GossipOption.spiritHealer, NpcFlag.innkeeper);
+    context.data.creatureTemplates.edit(creatureInnkeeper).npcFlags |= NpcFlag.flightMaster;
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f));
+    anduin.read();
+    const innkeeper = makeGuid(HighGuid.unit, creatureInnkeeper, innkeeperSpawn);
+    anduin.write(Opcode.CMSG_GOSSIP_HELLO, ClientNpcGuid(innkeeper));
+    const menu = packet!ServerGossipMessage(anduin.read());
+    import std.algorithm.searching : canFind;
+
+    assert(menu.items.canFind!(i => i.message == "GOSSIP_OPTION_TAXIVENDOR"), "the flight option");
+    assert(!menu.items.canFind!(i => i.message == "GOSSIP_OPTION_SPIRITHEALER"), "no resurrection for the living");
+    foreach (i, item; menu.items)
+        if (item.message == "GOSSIP_OPTION_TAXIVENDOR")
+            anduin.write(Opcode.CMSG_GOSSIP_SELECT_OPTION, ClientGossipSelectOption(innkeeper, cast(uint) i));
+    assert(opcodesOf(anduin.read())[0] == Opcode.SMSG_GOSSIP_COMPLETE, "the menu closes for the flight map");
 }

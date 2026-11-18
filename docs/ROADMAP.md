@@ -29,7 +29,7 @@
   parry and block chances are applied; passives bound to a kind of weapon or armour are not yet.
 * **Not loaded:** pets.
 * **Creatures** wander, walk their waypoints (running their scripts), fight, die and respawn. Type 3 paths (flying) are walked as waypoints, formations
-  do not follow their leader, and creatures in water do not swim. Stable masters and battlemasters are not offered in menus yet. Conditions
+  do not follow their leader, and creatures in water do not swim. Conditions
   that need auras, world states or scripts are never met. Elevators
   are created but do not move. Ships and zeppelins are not
   spawned. Idle cells unload after `grid_cleanup_delay_seconds`.
