@@ -148,6 +148,8 @@ enum PlayerFlags : uint
     gm = 0x08,
     ghost = 0x10,
     resting = 0x20,
+    hideHelm = 0x400,
+    hideCloak = 0x800,
 }
 
 /// `DeathState`, for a player: alive, dead where it fell (`CORPSE`), or released (`DEAD`, a ghost).

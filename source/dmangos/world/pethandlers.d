@@ -1364,6 +1364,16 @@ mixin template PetHandlers()
         writePet(PetSlot.current);
     }
 
+    /// The client tells the pet to stop attacking.
+    @Handles(Opcode.CMSG_PET_STOP_ATTACK, WorldState.inWorld)
+    void handlePetStopAttack(ref ByteReader reader)
+    {
+        auto pet = ownPetNamed(reader.read!ulong);
+        if (pet is null || !pet.alive || pet.ai is null)
+            return;
+        pet.ai.petStopAttack(map);
+    }
+
     /// The client abandons the pet: a beast is let go for good; a demon goes back.
     @Handles(Opcode.CMSG_PET_ABANDON, WorldState.inWorld)
     void handlePetAbandon(ref ByteReader reader)

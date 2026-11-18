@@ -735,6 +735,86 @@ private:
     // The character's own state
     // -----------------------------------------------------------------------
 
+    /// The client hides or shows the player's helm, or its cloak.
+    @Handles(Opcode.CMSG_TOGGLE_HELM, WorldState.inWorld)
+    void handleToggleHelm()
+    {
+        import dmangos.world.player : PlayerFlags;
+
+        player.values.set!PLAYER_FLAGS(player.values.get!PLAYER_FLAGS ^ PlayerFlags.hideHelm);
+        flushPlayerChanges();
+    }
+
+    /// ditto
+    @Handles(Opcode.CMSG_TOGGLE_CLOAK, WorldState.inWorld)
+    void handleToggleCloak()
+    {
+        import dmangos.world.player : PlayerFlags;
+
+        player.values.set!PLAYER_FLAGS(player.values.get!PLAYER_FLAGS ^ PlayerFlags.hideCloak);
+        flushPlayerChanges();
+    }
+
+    /// The client's own emote (only none and the wave are allowed): those who see the player see it.
+    @Handles(Opcode.CMSG_EMOTE, WorldState.inWorld)
+    void handleEmote(ref ByteReader reader)
+    {
+        import dmangos.world.player : DeathState;
+
+        enum uint emoteNone = 0, emoteWave = 3;
+        const emote = reader.read!uint;
+        if (player.deathState != DeathState.alive || (emote != emoteNone && emote != emoteWave))
+            return;
+        map.sendToWatchers(this, Opcode.SMSG_EMOTE, packetBody(ServerEmote(emote, player.guid)), true);
+    }
+
+    /// The client inspects a player: one it may not attack, within 28 yards, is shown (`SMSG_INSPECT`).
+    @Handles(Opcode.CMSG_INSPECT, WorldState.inWorld)
+    void handleInspect(ref ByteReader reader)
+    {
+        import dmangos.world.relations : canAttack;
+
+        const guid = reader.read!ulong;
+        auto other = cast(typeof(this)) context.onlinePlayer(guid);
+        if (other is null || other.player is null || other.map !is map)
+            return;
+        const a = player.position, b = other.player.position;
+        if ((a.x - b.x) ^^ 2 + (a.y - b.y) ^^ 2 + (a.z - b.z) ^^ 2 > 28.0f ^^ 2)
+            return;
+        if (other !is this && canAttack(relatingNow(), other.relatingNow(), context.client))
+            return;
+        ByteWriter w;
+        w.put(guid);
+        deliver(Opcode.SMSG_INSPECT, w.data);
+    }
+
+    /**
+     * The client unlearns a skill (a profession): one its race and class may unlearn
+     * (`SkillRaceClassInfo.dbc`'s flag 0x20) goes, with the spells it taught by itself.
+     */
+    @Handles(Opcode.CMSG_UNLEARN_SKILL, WorldState.inWorld)
+    void handleUnlearnSkill(ref ByteReader reader)
+    {
+        enum uint canUnlearn = 0x20;
+        const skill = reader.read!uint;
+        if (skill == 0 || skill > ushort.max || player.skillValue(skill)[1] == 0)
+            return;
+        const raceMask = 1u << (player.data.race - 1), classMask = 1u << (player.data.classId - 1);
+        bool may;
+        foreach (ref info; context.client.skillRaceClassInfos.rows)
+            if (info.skillId == skill && (info.raceMask == 0 || (info.raceMask & raceMask))
+                    && (info.classMask == 0 || (info.classMask & classMask)) && (info.flags & canUnlearn))
+                may = true;
+        if (!may)
+            return;
+        player.setSkill(skill, 0, 0);
+        context.database.saveSkill(player.data.guid, skill, 0, 0);
+        foreach (ability; context.client.abilitiesForSkill(skill))
+            if (ability.learnOnGetSkill)
+                unlearn(ability.spellId);
+        flushPlayerChanges();
+    }
+
     @Handles(Opcode.CMSG_STANDSTATECHANGE, WorldState.inWorld)
     void handleStandStateChange(const ClientStandStateChange request)
     {
@@ -1459,4 +1539,44 @@ unittest
     assert(opcodesOf(anduin.read()).count(Opcode.SMSG_PAGE_TEXT_QUERY_RESPONSE) == 2, "both pages");
     anduin.write(Opcode.CMSG_READ_ITEM, [ubyte(255), ubyte(23)]);
     assert(opcodesOf(anduin.read()) == [Opcode.SMSG_INVENTORY_CHANGE_FAILURE], "nothing to read there");
+}
+
+/// Small requests: hiding the helm, the wave, inspecting a friend.
+unittest
+{
+    import std.algorithm.searching : canFind;
+    import dmangos.bytes : ByteWriter;
+    import dmangos.world.movement : Position;
+    import dmangos.world.opcodes : Opcode;
+    import dmangos.world.player : PlayerFlags;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+    import dmangos.world.updatefields : PLAYER_FLAGS;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f));
+    auto jaina = loggedIn(context, db, 8, "Jaina", Position(-8947, -132.49f, 83.53f));
+    anduin.read();
+    jaina.read();
+    anduin.write(Opcode.CMSG_TOGGLE_HELM, null);
+    assert(anduin.session.character.values.get!PLAYER_FLAGS & PlayerFlags.hideHelm);
+    anduin.write(Opcode.CMSG_TOGGLE_HELM, null);
+    assert(!(anduin.session.character.values.get!PLAYER_FLAGS & PlayerFlags.hideHelm), "shown again");
+    anduin.read();
+    jaina.read();
+
+    ByteWriter wave;
+    wave.put(3u);
+    anduin.write(Opcode.CMSG_EMOTE, wave.data);
+    assert(opcodesOf(jaina.read()).canFind(Opcode.SMSG_EMOTE), "the wave is seen");
+    ByteWriter dance;
+    dance.put(10u);
+    anduin.write(Opcode.CMSG_EMOTE, dance.data);
+    assert(!opcodesOf(jaina.read()).canFind(Opcode.SMSG_EMOTE), "only the wave");
+
+    ByteWriter inspect;
+    inspect.put(jaina.session.character.guid);
+    anduin.write(Opcode.CMSG_INSPECT, inspect.data);
+    assert(opcodesOf(anduin.read()).canFind(Opcode.SMSG_INSPECT));
 }
