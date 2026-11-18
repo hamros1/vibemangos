@@ -813,7 +813,8 @@ mixin template DbScriptRunner()
             break;
         case ScriptCommand.movement:
         {
-            // `MovementType`: 0 standing, 1 wandering (so far, or as its spawn says), 2 its path.
+            // `MovementType`: 0 standing, 1 wandering (so far, or as its spawn says), 2 a path round and round,
+            // 4 a path there and back: path `datalong2` (0: its own), of `waypoint_path` if `datalong3` has 2.
             import dmangos.world.motion : IdleMovement, MotionType, WanderMovement, WaypointMovement;
             import dmangos.vmap.math : Vector3;
 
@@ -829,11 +830,11 @@ mixin template DbScriptRunner()
                 creature.generator = new WanderMovement(Vector3(s.x, s.y, s.z),
                     step.datalong2 ? float(step.datalong2) : s.wanderDistance, false);
                 break;
-            case MotionType.waypoint:
-                const path = data.waypoints.defaultPath(s.entry, s.guid);
+            case MotionType.waypoint, MotionType.linearWaypoint:
+                const path = data.waypoints.pathFor(s.entry, s.guid, step.datalong2, (step.datalong3 & 2) != 0);
                 if (path.length == 0)
                     return false;
-                creature.generator = new WaypointMovement(path, false);
+                creature.generator = new WaypointMovement(path, step.datalong == MotionType.linearWaypoint);
                 break;
             default:
                 return false;

@@ -117,6 +117,19 @@ final class WaypointStore
         return byEntry.get(entry << 8, null);
     }
 
+    /**
+     * The path a script names: `pathId` of `waypoint_path` (`fromTable`), or else the entry's path `pathId`
+     * (`creature_movement_template`); path 0 is the spawn's own, or its entry's first.
+     */
+    const(WaypointNode)[] pathFor(uint entry, uint guid, uint pathId, bool fromTable) const
+    {
+        if (fromTable)
+            return path(pathId);
+        if (pathId == 0)
+            return defaultPath(entry, guid);
+        return byEntry.get(entry << 8 | pathId, null);
+    }
+
     /// Number of paths.
     @property size_t length() const
     {
@@ -1049,4 +1062,18 @@ unittest
     creature.tick(world, 1);
     assert(world.sent.canFind(Opcode.SMSG_SPLINE_MOVE_UNROOT) && near(creature.speeds[MoveType.walk], walk));
     assert(launch(creature, world, [Vector3(0, 0, 0), Vector3(60, 50, 0)], true) > 0, "free again");
+}
+
+// A script's path by id: the entry's, or `waypoint_path`'s; 0 the spawn's own.
+unittest
+{
+    auto store = new WaypointStore;
+    store.addSpawnNode(5, WaypointNode(1, 1, 1, 1));
+    store.addEntryNode(100, 0, WaypointNode(1, 2, 2, 2));
+    store.addEntryNode(100, 3, WaypointNode(1, 3, 3, 3));
+    store.addPathNode(3, WaypointNode(1, 4, 4, 4));
+    store.finish();
+    assert(store.pathFor(100, 5, 0, false)[0].x == 1 && store.pathFor(100, 6, 0, false)[0].x == 2);
+    assert(store.pathFor(100, 5, 3, false)[0].x == 3 && store.pathFor(100, 5, 3, true)[0].x == 4);
+    assert(store.pathFor(100, 5, 9, false) is null);
 }

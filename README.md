@@ -389,7 +389,8 @@ What works now:
     faction, models and mounts, stand states, NPC flags, other flags, facing someone, and stopping
     the script when a creature is (or is not) near, opening and closing doors, and moving: walking to a point (a relay script
     once there) or back to its spawn point, turning, teleporting, a movement type (standing,
-    wandering, its path), pausing and resuming its path, AI events. Not yet: paths by id.
+    wandering, its path round or there and back, by path id: its entry's or `waypoint_path`'s), pausing
+    and resuming its path, AI events.
   * **Creature scripts** (EventAI, `creature_ai_scripts`, for each creature entry or
     spawn): their events (timers in and out of combat, health, mana and the victim's health between
     two percentages, the victim within a range or casting, aggro, a kill, death, evading, spawning,
