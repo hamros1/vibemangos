@@ -15,9 +15,12 @@
  */
 module dmangos.world.spellhandlers;
 
+import dmangos.world.spellids;
+
 /// See the module documentation.
 mixin template SpellHandlers()
 {
+    import dmangos.world.spellids;
     import dmangos.world.spellmods : applySpellMod, effectOp, SpellModOp;
     import std.algorithm.comparison : max;
     import core.time : Duration, msecs, MonoTime;
@@ -1168,8 +1171,7 @@ private:
         if (!needsEnemy && !needsUnit)
             return SpellCastResult.ok;
         // A resurrection: at a dead player (or its corpse, which stands for it), never the living.
-        enum uint resurrect = 18, resurrectNew = 113;
-        const raising = spell.hasEffect(cast(SpellEffect) resurrect) || spell.hasEffect(cast(SpellEffect) resurrectNew);
+        const raising = spell.hasEffect(SpellEffect.resurrect) || spell.hasEffect(SpellEffect.resurrectNew);
         ulong unitTarget = targets.unit;
         bool atCorpse;
         Position corpseAt;
@@ -1312,8 +1314,8 @@ private:
                 continue;
             const a = spell.implicitTargetA[i];
             ulong[] targets;
-            const area = spell.effect[i] == 27 ? null : areaTargets(spell, i, c.targets);
-            if (spell.effect[i] == 27) // SPELL_EFFECT_PERSISTENT_AREA_AURA: once, whoever stands there
+            const area = spell.effect[i] == SpellEffect.persistentAreaAura ? null : areaTargets(spell, i, c.targets);
+            if (spell.effect[i] == SpellEffect.persistentAreaAura) // SPELL_EFFECT_PERSISTENT_AREA_AURA: once, whoever stands there
                 targets = [player.guid];
             else if (area.length || isAreaTarget(spell, i))
                 targets = area.dup; // an area, a cone, the party
@@ -1475,7 +1477,7 @@ private:
         const value = effectMod(spell, i, effectValue(*spell, i, player.data.level, uniform01(map.random)));
         switch (spell.effect[i])
         {
-        case 2: // SPELL_EFFECT_SCHOOL_DAMAGE
+        case SpellEffect.schoolDamage: // SPELL_EFFECT_SCHOOL_DAMAGE
         {
             const damage = spellMod(SpellModOp.damage, spell, value);
             if (auto creature = cast(Creature) map.findObject(target))
@@ -1484,7 +1486,7 @@ private:
                 spellDamageToPlayer(spell, other, damage > 0 ? damage : 0);
             break;
         }
-        case 3, 77: // SPELL_EFFECT_DUMMY, SPELL_EFFECT_SCRIPT_EFFECT: the spell's script, then its database script
+        case SpellEffect.dummy, SpellEffect.scriptEffect: // SPELL_EFFECT_DUMMY, SPELL_EFFECT_SCRIPT_EFFECT: the spell's script, then its database script
         {
             import dmangos.world.dbscripts : DbScriptType;
 
@@ -1493,7 +1495,7 @@ private:
             context.startScript(DbScriptType.spell, spell.id, map, player.guid, target ? target : c.targets.gameObject);
             break;
         }
-        case 41: // SPELL_EFFECT_SUMMON_WILD: creatures of its entry, at the destination or near the caster
+        case SpellEffect.summonWild: // SPELL_EFFECT_SUMMON_WILD: creatures of its entry, at the destination or near the caster
         {
             import dmangos.world.creature : TempSpawnType;
             import dmangos.world.spellcast : duration, TargetFlags;
@@ -1513,17 +1515,17 @@ private:
             }
             break;
         }
-        case 27: // SPELL_EFFECT_PERSISTENT_AREA_AURA: a spot that hurts who stands in it, made once a cast
+        case SpellEffect.persistentAreaAura: // SPELL_EFFECT_PERSISTENT_AREA_AURA: a spot that hurts who stands in it, made once a cast
             if (!(c.persistentDone & (1 << i)))
             {
                 c.persistentDone |= cast(ubyte)(1 << i);
                 makePersistentArea(spell, i, c.targets, value);
             }
             break;
-        case 50: // SPELL_EFFECT_TRANS_DOOR: an object the spell puts down (a fishing bobber)
+        case SpellEffect.transDoor: // SPELL_EFFECT_TRANS_DOOR: an object the spell puts down (a fishing bobber)
             castBobber(spell, i);
             break;
-        case 61: // SPELL_EFFECT_SEND_EVENT: the event's script, the caster its source and a game object its target
+        case SpellEffect.sendEvent: // SPELL_EFFECT_SEND_EVENT: the event's script, the caster its source and a game object its target
         {
             import dmangos.world.dbscripts : DbScriptType;
 
@@ -1531,59 +1533,58 @@ private:
                 c.targets.gameObject);
             break;
         }
-        case 83: // SPELL_EFFECT_DUEL
+        case SpellEffect.duel: // SPELL_EFFECT_DUEL
             startDuel(target);
             break;
-        case 55: // SPELL_EFFECT_TAMECREATURE
+        case SpellEffect.tamecreature: // SPELL_EFFECT_TAMECREATURE
             tameCreature(spell, target ? target : c.targets.unit);
             break;
-        case 56: // SPELL_EFFECT_SUMMON_PET
+        case SpellEffect.summonPet: // SPELL_EFFECT_SUMMON_PET
             summonPetEffect(spell, i);
             break;
-        case 102: // SPELL_EFFECT_DISMISS_PET
+        case SpellEffect.dismissPet: // SPELL_EFFECT_DISMISS_PET
             dismissPetEffect();
             break;
-        case 109: // SPELL_EFFECT_SUMMON_DEAD_PET
+        case SpellEffect.summonDeadPet: // SPELL_EFFECT_SUMMON_DEAD_PET
             reviveDeadPet(value);
             break;
-        case 1: // SPELL_EFFECT_INSTAKILL
+        case SpellEffect.instantKill: // SPELL_EFFECT_INSTAKILL
             instakill(spell, target);
             break;
-        case 36: // SPELL_EFFECT_LEARN_SPELL: the pet (a teaching spell aimed at it), or the target player, learns
+        case SpellEffect.learnSpell: // SPELL_EFFECT_LEARN_SPELL: the pet (a teaching spell aimed at it), or the target player, learns
         {
-            enum uint targetPet = 5;
             const learned = spell.triggerSpell[i];
-            if (spell.implicitTargetA[i] == targetPet)
+            if (spell.implicitTargetA[i] == ImplicitTarget.unitCasterPet)
                 teachPet(learned);
             else if (learned)
                 learn(learned);
             break;
         }
-        case 57: // SPELL_EFFECT_LEARN_PET_SPELL
+        case SpellEffect.learnPetSpell: // SPELL_EFFECT_LEARN_PET_SPELL
             teachPet(spell.triggerSpell[i]);
             break;
-        case 74, 87, 88, 89, 90: // SPELL_EFFECT_SUMMON_TOTEM, _SLOT1 .. _SLOT4 (fire, earth, water, air)
+        case SpellEffect.summonTotem, SpellEffect.summonTotemSlot1, SpellEffect.summonTotemSlot2, SpellEffect.summonTotemSlot3, SpellEffect.summonTotemSlot4: // SPELL_EFFECT_SUMMON_TOTEM, _SLOT1 .. _SLOT4 (fire, earth, water, air)
             summonTotem(spell, i, value);
             break;
-        case 94: // SPELL_EFFECT_SELF_RESURRECT
+        case SpellEffect.selfResurrect: // SPELL_EFFECT_SELF_RESURRECT
             selfResurrect(spell, i, value);
             break;
-        case 18, 113: // SPELL_EFFECT_RESURRECT (a share of health and mana), SPELL_EFFECT_RESURRECT_NEW (amounts)
+        case SpellEffect.resurrect, SpellEffect.resurrectNew: // SPELL_EFFECT_RESURRECT (a share of health and mana), SPELL_EFFECT_RESURRECT_NEW (amounts)
             resurrectEffect(spell, i, target, value, c);
             break;
-        case 38: // SPELL_EFFECT_DISPEL
+        case SpellEffect.dispel: // SPELL_EFFECT_DISPEL
             dispelEffect(spell, i, target, value);
             break;
-        case 71: // SPELL_EFFECT_PICKPOCKET
+        case SpellEffect.pickpocket: // SPELL_EFFECT_PICKPOCKET
             pickPocket(target);
             break;
-        case 95: // SPELL_EFFECT_SKINNING
+        case SpellEffect.skinning: // SPELL_EFFECT_SKINNING
             skinCreature(target);
             break;
-        case 33: // SPELL_EFFECT_OPEN_LOCK
+        case SpellEffect.openLock: // SPELL_EFFECT_OPEN_LOCK
             openLock(spell, i, target, c.castItemEntry);
             break;
-        case 68: // SPELL_EFFECT_INTERRUPT_CAST: the target's cast ends, and its school is locked out for the interrupt's time
+        case SpellEffect.interruptCast: // SPELL_EFFECT_INTERRUPT_CAST: the target's cast ends, and its school is locked out for the interrupt's time
         {
             import dmangos.world.spellcast : duration;
 
@@ -1599,20 +1600,20 @@ private:
                 }
             break;
         }
-        case 17: // SPELL_EFFECT_WEAPON_DAMAGE_NOSCHOOL
-        case 58: // SPELL_EFFECT_WEAPON_DAMAGE
-        case 121: // SPELL_EFFECT_NORMALIZED_WEAPON_DMG
-        case 31: // SPELL_EFFECT_WEAPON_PERCENT_DAMAGE
+        case SpellEffect.weaponDamageNoschool: // SPELL_EFFECT_WEAPON_DAMAGE_NOSCHOOL
+        case SpellEffect.weaponDamage: // SPELL_EFFECT_WEAPON_DAMAGE
+        case SpellEffect.normalizedWeaponDmg: // SPELL_EFFECT_NORMALIZED_WEAPON_DMG
+        case SpellEffect.weaponPercentDamage: // SPELL_EFFECT_WEAPON_PERCENT_DAMAGE
             if (auto victim = map.unit(target)) // a creature or a player (a duel, world PvP)
                 weaponSpellDamage(spell, i, victim, value);
             break;
-        case 10: // SPELL_EFFECT_HEAL
+        case SpellEffect.heal: // SPELL_EFFECT_HEAL
             heal(spell, target, spellMod(SpellModOp.damage, spell, value));
             break;
-        case 30: // SPELL_EFFECT_ENERGIZE
+        case SpellEffect.energize: // SPELL_EFFECT_ENERGIZE
             energize(spell, i, target, value);
             break;
-        case 5: // SPELL_EFFECT_TELEPORT_UNITS
+        case SpellEffect.teleportUnits: // SPELL_EFFECT_TELEPORT_UNITS
             teleportUnits(spell, i, c);
             break;
         case SpellEffect.createItem:
@@ -1620,27 +1621,27 @@ private:
                 if (giveItem(spell.itemType[i], value > 0 ? value : 1))
                     updateCraftSkill(spell.id); // made: a chance to learn from it
             break;
-        case 101: // SPELL_EFFECT_FEED_PET
+        case SpellEffect.feedPet: // SPELL_EFFECT_FEED_PET
             feedPet(c.targets.item);
             break;
-        case 53: // SPELL_EFFECT_ENCHANT_ITEM
+        case SpellEffect.enchantItem: // SPELL_EFFECT_ENCHANT_ITEM
             enchantItem(c.targets.item, cast(uint) spell.miscValue[i], false, 0);
             updateCraftSkill(spell.id);
             break;
-        case 54: // SPELL_EFFECT_ENCHANT_ITEM_TEMPORARY
+        case SpellEffect.enchantItemTemporary: // SPELL_EFFECT_ENCHANT_ITEM_TEMPORARY
             enchantItem(c.targets.item, cast(uint) spell.miscValue[i], true, value);
             break;
-        case 64: // SPELL_EFFECT_TRIGGER_SPELL
+        case SpellEffect.triggerSpell: // SPELL_EFFECT_TRIGGER_SPELL
             if (const triggered = context.data.spells.spell(spell.triggerSpell[i]))
                 castSpell(triggered, c.targets, true, 0);
             break;
-        case 6: // SPELL_EFFECT_APPLY_AURA
+        case SpellEffect.applyAura: // SPELL_EFFECT_APPLY_AURA
             applyAuraEffect(spell, i, target);
             break;
-        case 35: // SPELL_EFFECT_APPLY_AREA_AURA_PARTY: on the caster, and from it on its party (`updateAreaAuras`)
+        case SpellEffect.applyAreaAuraParty: // SPELL_EFFECT_APPLY_AREA_AURA_PARTY: on the caster, and from it on its party (`updateAreaAuras`)
             applyAuraEffect(spell, i, player.guid);
             break;
-        case 78: // SPELL_EFFECT_ATTACK
+        case SpellEffect.attack: // SPELL_EFFECT_ATTACK
             break;
         default:
             info!"%s: spell %s effect %s (%s) is not done yet"(remoteAddress, spell.id, i, spell.effect[i]);
@@ -1891,7 +1892,7 @@ private:
         import dmangos.world.corpse : Corpse;
         import dmangos.world.player : DeathState;
 
-        enum uint resurrectNew = 113, noResurrectTimer = 0x00100000; // SPELL_ATTR_EX3_NO_RES_TIMER
+        enum uint noResurrectTimer = 0x00100000; // SPELL_ATTR_EX3_NO_RES_TIMER
         ulong owner = target;
         if (c.targets.corpse)
             if (auto corpse = cast(Corpse) map.findObject(c.targets.corpse))
@@ -1901,7 +1902,7 @@ private:
             return;
         const v = &other.player.values;
         uint health, mana;
-        if (spell.effect[i] == resurrectNew)
+        if (spell.effect[i] == SpellEffect.resurrectNew)
         {
             health = value > 0 ? value : 0;
             mana = spell.miscValue[i] > 0 ? spell.miscValue[i] : 0;
@@ -2194,7 +2195,7 @@ private:
     {
         // Only the first weapon damage effect deals the damage; the others add to it.
         foreach (j; 0 .. i)
-            if (spell.effect[j] == 17 || spell.effect[j] == 58 || spell.effect[j] == 121 || spell.effect[j] == 31)
+            if (spell.effect[j] == SpellEffect.weaponDamageNoschool || spell.effect[j] == SpellEffect.weaponDamage || spell.effect[j] == SpellEffect.normalizedWeaponDmg || spell.effect[j] == SpellEffect.weaponPercentDamage)
                 return;
         const me = player.fighter, it = victim.fighter;
         enum uint spellAttrRanged = 0x2; // SPELL_ATTR_RANGED: the ranged slot's weapon (a wand's Shoot too)
@@ -2205,9 +2206,9 @@ private:
         foreach (j; i .. 3)
         {
             const v = effectMod(spell, j, effectValue(*spell, j, player.data.level, uniform01(map.random)));
-            if (spell.effect[j] == 17 || spell.effect[j] == 58 || spell.effect[j] == 121)
+            if (spell.effect[j] == SpellEffect.weaponDamageNoschool || spell.effect[j] == SpellEffect.weaponDamage || spell.effect[j] == SpellEffect.normalizedWeaponDmg)
                 damage += v;
-            else if (spell.effect[j] == 31)
+            else if (spell.effect[j] == SpellEffect.weaponPercentDamage)
                 percent = v;
         }
         damage = damage * percent / 100;
@@ -2324,13 +2325,13 @@ version (unittest)
     {
         SpellInfo s;
         s.id = id;
-        s.effect[0] = effect;
-        s.implicitTargetA[0] = target;
+        s.effect[0] = cast(SpellEffect) effect; // the tests give raw ids, as the data does
+        s.implicitTargetA[0] = cast(ImplicitTarget) target;
         s.basePoints[0] = value - 1;
         s.baseDice[0] = 1;
         s.casting.castingTimeIndex = castIndex;
         s.casting.rangeIndex = 1;
-        s.casting.dmgClass = 1;
+        s.casting.dmgClass = DamageClass.magic;
         return s;
     }
 }
@@ -2375,9 +2376,9 @@ unittest
         spells[mend] = testSpell(mend, 10, 1, 20);              // heals oneself 20
         spells[strike] = testSpell(strike, 17, 6, 11);          // next swing: weapon + 11
         spells.edit(strike).attributes = 0x4;
-        spells.edit(strike).casting.dmgClass = 2;
+        spells.edit(strike).casting.dmgClass = DamageClass.melee;
         spells[home] = testSpell(home, 5, 1, 0);                // home
-        spells.edit(home).casting.implicitTargetB[0] = 9;
+        spells.edit(home).casting.implicitTargetB[0] = ImplicitTarget.homeBind;
     }
     auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f, 1.97f));
     anduin.read();
@@ -2504,7 +2505,7 @@ unittest
         casting.applyAuraName[0] = AuraType.periodicDamage;
         casting.amplitude[0] = 1000;
         casting.durationIndex = 1;
-        casting.dmgClass = 0;
+        casting.dmgClass = DamageClass.none;
         casting.channelInterruptFlags = 0x08; // moving ends it
         attributesEx = 0x04;
     }
@@ -2590,7 +2591,7 @@ unittest
     {
         miscValue[0] = bobberEntry;
         casting.durationIndex = 1;
-        casting.dmgClass = 0;
+        casting.dmgClass = DamageClass.none;
         attributesEx = 0x04; // channelled
     }
     GameObjectTemplate bobberTemplate = {entry: bobberEntry, type: GameObjectType.fishingNode, displayId: 668,
@@ -2764,13 +2765,13 @@ unittest
     {
         implicitTargetB[0] = ImplicitTarget.enemiesAroundSource;
         radiusIndex[0] = 1;
-        dmgClass = 0;
+        dmgClass = DamageClass.none;
     }
     context.data.spells.spells[bolt] = testSpell(bolt, 2, ImplicitTarget.enemy, 20);
     with (context.data.spells.spells.edit(bolt).casting)
     {
         chainTarget[0] = 2;
-        dmgClass = 0;
+        dmgClass = DamageClass.none;
     }
     me.spells ~= [blast, bolt];
     anduin.read();
@@ -2796,7 +2797,7 @@ unittest
         context.data.spells.spells.edit(power).miscValue[0] = 1 << 2; // fire
         context.data.spells.spells[fire] = testSpell(fire, 2, ImplicitTarget.enemy, 20);
         context.data.spells.spells.edit(fire).casting.school = 2;
-        context.data.spells.spells.edit(fire).casting.dmgClass = 0;
+        context.data.spells.spells.edit(fire).casting.dmgClass = DamageClass.none;
         context.data.spells.spells.edit(fire).attributesEx2 |= 0x20000000; // no crit
         auto aura = makeAura((power in context.data.spells.spells), me.guid, 1, -1, true, [35, 0, 0]);
         aura.passive = true;
@@ -2827,7 +2828,7 @@ unittest
     enum uint missile = 95602;
     context.data.spells.spells[missile] = testSpell(missile, 2, ImplicitTarget.enemy, 20);
     context.data.spells.spells.edit(missile).casting.speed = 10;
-    context.data.spells.spells.edit(missile).casting.dmgClass = 0;
+    context.data.spells.spells.edit(missile).casting.dmgClass = DamageClass.none;
     const flying = keeper.values.get!UNIT_FIELD_HEALTH;
     anduin.session.inWorld.castTriggeredAt(missile, keeper.guid);
     assert(keeper.values.get!UNIT_FIELD_HEALTH == flying, "still in flight");
@@ -2843,7 +2844,7 @@ unittest
         enum uint smite = 95607;
         context.data.spells.spells[smite] = testSpell(smite, 2, ImplicitTarget.enemy, 25);
         context.data.spells.spells.edit(smite).casting.school = 1; // holy: not resisted
-        context.data.spells.spells.edit(smite).casting.dmgClass = 0;
+        context.data.spells.spells.edit(smite).casting.dmgClass = DamageClass.none;
         context.data.spells.spells.edit(smite).casting.procChance = 100;
         context.data.spells.spells.edit(smite).attributesEx2 |= 0x20000000; // no crit
         context.data.items.edit(itemSword).details.spells[0].id = smite;
@@ -2931,7 +2932,7 @@ unittest
         radiusIndex[0] = 1;
         durationIndex = 1;
         amplitude[0] = 1000;
-        dmgClass = 0;
+        dmgClass = DamageClass.none;
     }
     me.spells ~= consecrate;
     anduin.read();
@@ -2962,7 +2963,7 @@ unittest
         applyAuraName[0] = AuraType.modDecreaseSpeed;
         radiusIndex[0] = 1;
         durationIndex = 1;
-        dmgClass = 0;
+        dmgClass = DamageClass.none;
     }
     me.spells ~= frostTrap;
     ByteWriter w2;
@@ -2995,8 +2996,8 @@ unittest
     auto now = MonoTime.currTime;
     context.clock = () => now;
     auto shout = SpellInfo(29100);
-    shout.effect[0] = 3; // dummy
-    shout.implicitTargetA[0] = 1;
+    shout.effect[0] = SpellEffect.dummy; // dummy
+    shout.implicitTargetA[0] = ImplicitTarget.caster;
     shout.recoveryTime = 60_000;
     context.data.spells.spells[29100] = shout;
     const spell = (29100 in context.data.spells.spells);
@@ -3035,7 +3036,7 @@ unittest
     import dmangos.world.movement : Position;
     import dmangos.world.player : Player;
     import dmangos.world.spellcast : SpellCastResult, SpellTargets, TargetFlags;
-    import dmangos.world.spellmods : auraAddPctModifier, SpellModOp;
+    import dmangos.world.spellmods : SpellModOp;
     import dmangos.world.spells : SpellInfo;
     import dmangos.world.testclient;
     import dmangos.world.testdata;
@@ -3048,8 +3049,8 @@ unittest
     SpellInfo blast(uint id, ulong flags)
     {
         auto s = SpellInfo(id);
-        s.effect[0] = 3; // dummy
-        s.implicitTargetA[0] = 1;
+        s.effect[0] = SpellEffect.dummy; // dummy
+        s.implicitTargetA[0] = ImplicitTarget.caster;
         s.casting.manaCost = 100;
         s.casting.spellFamilyName = 3;
         s.casting.spellFamilyFlags = flags;
@@ -3058,8 +3059,8 @@ unittest
     context.data.spells.spells[29101] = blast(29101, 0x1);
     context.data.spells.spells[29102] = blast(29102, 0x2);
     auto talent = SpellInfo(29103);
-    talent.effect[0] = 6;
-    talent.casting.applyAuraName[0] = auraAddPctModifier;
+    talent.effect[0] = SpellEffect.applyAura;
+    talent.casting.applyAuraName[0] = AuraType.addPctModifier;
     talent.miscValue[0] = SpellModOp.cost;
     talent.itemType[0] = 0x1;
     talent.casting.spellFamilyName = 3;
@@ -3115,7 +3116,7 @@ unittest
         spells.edit(thorns).casting.school = 3; // nature
         spells[bolt] = testSpell(bolt, 2, ImplicitTarget.enemy, 10);
         spells.edit(bolt).casting.school = 1; // holy: not resisted
-        spells.edit(bolt).casting.dmgClass = 0;
+        spells.edit(bolt).casting.dmgClass = DamageClass.none;
         spells.edit(bolt).attributesEx2 |= 0x20000000; // no crit
         spells[shield] = testSpell(shield, 6, ImplicitTarget.caster, 0);
         spells.edit(shield).casting.applyAuraName[0] = AuraType.procTriggerSpell;
@@ -3283,7 +3284,7 @@ unittest
     {
         attributesEx2 |= 0x20 | 0x20000000; // auto-repeat; no crit
         casting.school = 1;                  // holy: not resisted
-        casting.dmgClass = 0;
+        casting.dmgClass = DamageClass.none;
     }
     auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f, 1.97f));
     auto me = cast(Player) anduin.session.character;
@@ -3315,7 +3316,7 @@ unittest
     enum uint bolt = 97210, hawk = 97211;
     context.data.spells.spells[bolt] = testSpell(bolt, 2, ImplicitTarget.enemy, 5);
     context.data.spells.spells.edit(bolt).casting.school = 1;
-    context.data.spells.spells.edit(bolt).casting.dmgClass = 0;
+    context.data.spells.spells.edit(bolt).casting.dmgClass = DamageClass.none;
     context.data.spells.spells.edit(bolt).attributesEx2 |= 0x20000000;
     context.data.spells.spells[hawk] = testSpell(hawk, 6, ImplicitTarget.caster, 0);
     with (*context.data.spells.spells.edit(hawk))
@@ -3365,7 +3366,7 @@ unittest
         attributes |= 0x2;                   // the ranged slot
         attributesEx2 |= 0x20 | 0x20000000; // auto-repeat; no crit
         casting.school = 1;
-        casting.dmgClass = 0;
+        casting.dmgClass = DamageClass.none;
     }
     auto rexxar = loggedIn(context, db, 7, "Rexxar", Position(-8949.95f, -132.49f, 83.53f, 1.97f), AccountLevel.player,
         raceOrc);
@@ -3485,7 +3486,7 @@ unittest
         spells.edit(power).miscValue[0] = 1 << 2; // fire
         spells[fire] = testSpell(fire, 2, ImplicitTarget.enemy, 20);
         spells.edit(fire).casting.school = 2;
-        spells.edit(fire).casting.dmgClass = 0;
+        spells.edit(fire).casting.dmgClass = DamageClass.none;
         spells.edit(fire).attributesEx2 |= 0x20000000; // no crit
     }
     auto aura = makeAura((power in context.data.spells.spells), anduin.session.character.guid, 1, -1, true, [35, 0, 0]);

@@ -14,6 +14,8 @@
  */
 module dmangos.world.character;
 
+import dmangos.world.spellids;
+
 import dmangos.world.honor : HonorHandlers;
 import dmangos.world.pvp : PvPHandlers;
 import dmangos.world.battleground : BattlegroundHandlers;
@@ -1174,8 +1176,8 @@ unittest
     with (context.data.spells.spells.edit(15007))
     {
         effect[0] = SpellEffect.applyAura;
-        casting.applyAuraName[0] = 4; // a dummy aura
-        implicitTargetA[0] = 1; // the caster
+        casting.applyAuraName[0] = AuraType.dummy; // a dummy aura
+        implicitTargetA[0] = ImplicitTarget.caster; // the caster
     }
     uint minutesOf(uint level)
     {

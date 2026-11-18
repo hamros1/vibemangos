@@ -23,6 +23,8 @@
  */
 module dmangos.world.dbscripts;
 
+import dmangos.world.spellids;
+
 import dmangos.mysql : MySqlConnection;
 
 /// Which table a script comes from.
@@ -251,6 +253,7 @@ final class ScriptRun
  */
 mixin template DbScriptRunner()
 {
+    import dmangos.world.spellids;
     import std.random : uniform;
     import dmangos.log : trace;
     import dmangos.world.dbscripts;
@@ -1076,7 +1079,7 @@ unittest
         context.data.quests.quests[rite] = r;
         anduin.session.inWorld.addQuest(context.data.quests.quests[rite]);
         context.data.spells.spells[ritual] = testSpell(ritual, 3, 1, 0);
-        context.data.spells.spells.edit(ritual).casting.dmgClass = 0;
+        context.data.spells.spells.edit(ritual).casting.dmgClass = DamageClass.none;
         context.data.dbScripts.add(DbScriptType.spell, DbScriptStep(ritual, 0, 0, ScriptCommand.questExplored, rite));
         anduin.session.inWorld.castTriggeredAt(ritual, me.guid);
         context.updateScripts(0);
@@ -1084,7 +1087,7 @@ unittest
 
         context.data.spells.spells[call] = testSpell(call, 41, 1, 0);
         context.data.spells.spells.edit(call).miscValue[0] = creatureTrainer;
-        context.data.spells.spells.edit(call).casting.dmgClass = 0;
+        context.data.spells.spells.edit(call).casting.dmgClass = DamageClass.none;
         anduin.session.inWorld.castTriggeredAt(call, me.guid);
         bool found;
         foreach (near; map.creaturesNear(me.position, 5))

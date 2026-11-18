@@ -81,7 +81,7 @@ version (unittest)
     {
         SpellInfo s;
         s.id = id;
-        s.effect[0] = effect;
+        s.effect[0] = cast(imported!"dmangos.world.spellids".SpellEffect) effect;
         s.miscValue[0] = misc;
         return s;
     }

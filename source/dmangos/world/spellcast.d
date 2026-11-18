@@ -6,6 +6,10 @@
  */
 module dmangos.world.spellcast;
 
+import dmangos.world.spellids;
+
+public import dmangos.world.spellids : ImplicitTarget, DamageClass;
+
 import dmangos.bytes : ByteReader, ByteWriter;
 import dmangos.world.clientdata : ClientData;
 import dmangos.world.spells : SpellInfo;
@@ -96,30 +100,6 @@ enum SpellMissInfo : ubyte
     reflect = 11,
 }
 
-/// The implicit targets (`Spell.dbc`'s target columns) this server picks.
-enum ImplicitTarget : uint
-{
-    none = 0,
-    caster = 1,
-    enemyNearCaster = 2,
-    friendNearCaster = 3,
-    enemy = 6,
-    homeBind = 9,
-    enemiesAroundSource = 15,
-    enemiesAroundDest = 16,
-    database = 17,
-    partyInRange = 20,
-    friend = 21,
-    casterSource = 22,
-    gameObject = 23,
-    enemiesInCone = 24,
-    unit = 25,
-    gameObjectItem = 26,
-    friendsAroundSource = 30,
-    friendsAroundDest = 31,
-    partyAroundSource = 33,
-    party = 35,
-}
 
 /// What interrupts a cast (`Spell.dbc`'s interrupt flags).
 enum uint interruptMovement = 0x01, interruptDamagePushback = 0x02, interruptDamageCancels = 0x10;
@@ -138,14 +118,6 @@ enum uint spellAttrEx3AlwaysHit = 0x00040000;
 /// The cast flags of `SMSG_SPELL_START` and `SMSG_SPELL_GO`.
 enum ushort castFlagUnknown2 = 0x0002, castFlagUnknown9 = 0x0100, castFlagAmmo = 0x0020;
 
-/// A spell's damage class (`Spell.dbc`).
-enum DamageClass : uint
-{
-    none = 0,
-    magic = 1,
-    melee = 2,
-    ranged = 3,
-}
 
 /// Whether a spell waits for the next main-hand swing (Heroic Strike).
 bool isNextMeleeSwingSpell(const ref SpellInfo spell) pure nothrow @nogc @safe
@@ -516,14 +488,11 @@ ubyte[] spellMissLog(uint spell, ulong caster, ulong target, SpellMissInfo miss)
  */
 bool isBinarySpell(const ref SpellInfo spell) pure nothrow @nogc @safe
 {
-    enum uint schoolDamage = 2, environmental = 7, healthLeech = 9, weaponNoSchool = 17, weaponPercent = 31,
-        weaponDamage = 58, normalizedWeapon = 121, dummy = 3, triggerSpell = 64;
-    enum uint periodicDamage = 3, periodicLeech = 53, periodicManaLeech = 64, periodicDamagePercent = 89;
     ubyte valid, nonDamage, aura;
     foreach (i; 0 .. 3)
     {
         const effect = spell.effect[i];
-        if (effect == 0 || effect == dummy || effect == triggerSpell)
+        if (effect == 0 || effect == SpellEffect.dummy || effect == SpellEffect.triggerSpell)
             continue;
         const ubyte bit = cast(ubyte)(1 << i);
         valid |= bit;
@@ -532,13 +501,13 @@ bool isBinarySpell(const ref SpellInfo spell) pure nothrow @nogc @safe
         if (auraName)
         {
             aura |= bit;
-            damage = auraName == periodicDamage || auraName == periodicLeech || auraName == periodicManaLeech
-                || auraName == periodicDamagePercent;
+            damage = auraName == AuraType.periodicDamage || auraName == AuraType.periodicLeech || auraName == AuraType.periodicManaLeech
+                || auraName == AuraType.periodicDamagePercent;
         }
         else
-            damage = effect == schoolDamage || effect == environmental || effect == healthLeech
-                || effect == weaponNoSchool || effect == weaponPercent || effect == weaponDamage
-                || effect == normalizedWeapon;
+            damage = effect == SpellEffect.schoolDamage || effect == SpellEffect.environmentalDamage || effect == SpellEffect.healthLeech
+                || effect == SpellEffect.weaponDamageNoschool || effect == SpellEffect.weaponPercentDamage || effect == SpellEffect.weaponDamage
+                || effect == SpellEffect.normalizedWeaponDmg;
         if (!damage)
             nonDamage |= bit;
     }
@@ -562,13 +531,13 @@ bool isBinarySpell(const ref SpellInfo spell) pure nothrow @nogc @safe
 unittest
 {
     SpellInfo bolt;
-    bolt.effect[0] = 2; // school damage
+    bolt.effect[0] = SpellEffect.schoolDamage; // school damage
     assert(!isBinarySpell(bolt), "Fireball's direct part");
-    bolt.effect[1] = 6; // a slow on the same target
-    bolt.casting.applyAuraName[1] = 33;
+    bolt.effect[1] = SpellEffect.applyAura; // a slow on the same target
+    bolt.casting.applyAuraName[1] = AuraType.modDecreaseSpeed;
     assert(isBinarySpell(bolt), "Frostbolt");
     SpellInfo dot;
-    dot.effect[0] = 6;
-    dot.casting.applyAuraName[0] = 3;
+    dot.effect[0] = SpellEffect.applyAura;
+    dot.casting.applyAuraName[0] = AuraType.periodicDamage;
     assert(isBinarySpell(dot), "a pure damage over time");
 }

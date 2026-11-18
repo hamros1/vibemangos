@@ -5,6 +5,8 @@
  */
 module dmangos.world.scripttests;
 
+import dmangos.world.spellids;
+
 version (unittest):
 
 import core.time : MonoTime, msecs, seconds;
@@ -335,10 +337,10 @@ unittest
     auto db = newDatabase();
     auto context = newCreationContext(db);
     auto tap = SpellInfo(1454);
-    tap.effect[0] = 3; // dummy
+    tap.effect[0] = SpellEffect.dummy; // dummy
     tap.basePoints[0] = 19;
     tap.baseDice[0] = 1;
-    tap.implicitTargetA[0] = 1; // the caster
+    tap.implicitTargetA[0] = ImplicitTarget.caster; // the caster
     context.data.spells.spells[1454] = tap;
     context.data.spellScriptNames[1454] = "spell_life_tap";
 
@@ -495,7 +497,7 @@ unittest
     auto db = newDatabase();
     auto context = newCreationContext(db);
     auto agony = SpellInfo(980);
-    agony.effect[0] = 6; // an aura
+    agony.effect[0] = SpellEffect.applyAura; // an aura
     agony.casting.applyAuraName[0] = AuraType.periodicDamage;
     agony.casting.amplitude[0] = 2000;
     agony.casting.school = 1; // holy here: no resistance roll in the test
@@ -532,7 +534,7 @@ unittest
     auto db = newDatabase();
     auto context = newCreationContext(db);
     auto hate = SpellInfo(9204);
-    hate.effect[0] = 3; // dummy
+    hate.effect[0] = SpellEffect.dummy; // dummy
     context.data.spells.spells[9204] = hate;
     context.data.spellScriptNames[9204] = "spell_hate_to_zero";
 

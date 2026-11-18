@@ -20,6 +20,8 @@
  */
 module dmangos.world.motion;
 
+import dmangos.world.spellids;
+
 import std.math : cos, isNaN, PI, sin;
 
 import std.random : Random, uniform, uniform01;
@@ -1037,10 +1039,10 @@ unittest
     const walk = creature.speeds[MoveType.walk];
     static SpellInfo slow, root;
     slow.id = 1;
-    slow.effect[0] = 6;
+    slow.effect[0] = SpellEffect.applyAura;
     slow.casting.applyAuraName[0] = AuraType.modDecreaseSpeed;
     root.id = 2;
-    root.effect[0] = 6;
+    root.effect[0] = SpellEffect.applyAura;
     root.casting.applyAuraName[0] = AuraType.modRoot;
     bool isNew;
     auto slowAura = creature.auras.apply(makeAura(&slow, 1, 1, -1, false, [-50, 0, 0]), creature.values, isNew);

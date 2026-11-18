@@ -11,88 +11,14 @@
  */
 module dmangos.world.auras;
 
+import dmangos.world.spellids;
+
+public import dmangos.world.spellids : AuraType;
+
 import dmangos.world.objects : UpdateValues;
 import dmangos.world.spells : SpellInfo;
 import dmangos.world.updatefields;
 
-/// The aura types (a spell effect's `EffectApplyAuraName`) this server does something with.
-enum AuraType : uint
-{
-    none = 0,
-    bindSight = 1,
-    modPossess = 2,
-    periodicDamage = 3,
-    dummy = 4,
-    modConfuse = 5,
-    modCharm = 6,
-    modFear = 7,
-    periodicHeal = 8,
-    modAttackSpeed = 9,
-    modThreat = 10,
-    modTaunt = 11,
-    modStun = 12,
-    modDamageDone = 13,
-    modDamageTaken = 14,
-    damageShield = 15,
-    modStealth = 16,
-    modInvisibility = 18,
-    obsModHealth = 20,
-    obsModMana = 21,
-    modResistance = 22,
-    periodicTriggerSpell = 23,
-    periodicEnergize = 24,
-    modPacify = 25,
-    modRoot = 26,
-    modSilence = 27,
-    reflectSpells = 28,
-    modStat = 29,
-    modSkill = 30,
-    modIncreaseSpeed = 31,
-    modIncreaseMountedSpeed = 32,
-    modDecreaseSpeed = 33,
-    modIncreaseHealth = 34,
-    modIncreaseEnergy = 35,
-    modShapeshift = 36,
-    effectImmunity = 37,
-    stateImmunity = 38,
-    schoolImmunity = 39,
-    damageImmunity = 40,
-    dispelImmunity = 41,
-    procTriggerSpell = 42,
-    procTriggerDamage = 43,
-    trackCreatures = 44,
-    trackResources = 45,
-    modParryPercent = 47,
-    modDodgePercent = 49,
-    modBlockPercent = 51,
-    modCritPercent = 52,
-    periodicLeech = 53,
-    modHitChance = 54,
-    modSpellHitChance = 55,
-    transform = 56,
-    modSpellCritChance = 57,
-    modSpellCritChanceSchool = 71,
-    modIncreaseSwimSpeed = 58,
-    modDamageDoneCreature = 59,
-    modPacifySilence = 60,
-    modScale = 61,
-    modMeleeHaste = 61 + 1000, // placeholder, not a vanilla id
-    periodicManaLeech = 64,
-    modCastingSpeed = 65,
-    modPowerCostSchoolPct = 72,
-    modPowerCostSchool = 73,
-    mounted = 78,
-    modDamagePercentDone = 79,
-    modPercentStat = 80,
-    modRegen = 84,
-    modPowerRegen = 85,
-    schoolAbsorb = 69,
-    manaShield = 97,
-    modAttackPower = 99,
-    modResistancePct = 101,
-    modRangedAttackPower = 124,
-    modHealingDone = 135,
-}
 
 /// Visible aura slots, and how many of them are for positive auras.
 enum uint maxAuras = 48, maxPositiveAuras = 32;
@@ -389,8 +315,7 @@ Aura makeAura(const(SpellInfo)* spell, ulong caster, uint casterLevel, int durat
     aura.charges = spell.casting.procCharges;
     foreach (i; 0 .. 3)
     {
-        enum uint applyAura = 6, areaAuraParty = 35;
-        if (spell.effect[i] != applyAura && spell.effect[i] != areaAuraParty)
+        if (spell.effect[i] != SpellEffect.applyAura && spell.effect[i] != SpellEffect.applyAreaAuraParty)
             continue;
         aura.effects |= cast(ubyte)(1 << i);
         aura.amount[i] = values[i];
@@ -424,12 +349,12 @@ unittest
     auto values = UpdateValues(TypeId.unit);
     SpellInfo dot;
     dot.id = 772;
-    dot.effect[0] = 6;
+    dot.effect[0] = SpellEffect.applyAura;
     dot.casting.applyAuraName[0] = AuraType.periodicDamage;
     dot.casting.amplitude[0] = 3000;
     SpellInfo buff;
     buff.id = 1459;
-    buff.effect[0] = 6;
+    buff.effect[0] = SpellEffect.applyAura;
     buff.casting.applyAuraName[0] = AuraType.modStat;
     buff.miscValue[0] = 3;
 
@@ -467,13 +392,13 @@ unittest
     auto values = UpdateValues(TypeId.unit);
     SpellInfo axes; // +5% crit with axes (subclasses 0 and 1)
     axes.id = 12700;
-    axes.effect[0] = 6;
+    axes.effect[0] = SpellEffect.applyAura;
     axes.casting.applyAuraName[0] = AuraType.modCritPercent;
     axes.equippedItemClass = 2;
     axes.equippedItemSubClassMask = 0b11;
     SpellInfo any; // +1% crit with anything
     any.id = 12701;
-    any.effect[0] = 6;
+    any.effect[0] = SpellEffect.applyAura;
     any.casting.applyAuraName[0] = AuraType.modCritPercent;
     AuraSet set;
     bool isNew;

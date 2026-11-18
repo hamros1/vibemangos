@@ -11,6 +11,8 @@
  */
 module dmangos.world.conditions;
 
+import dmangos.world.spellids;
+
 import dmangos.log;
 import dmangos.world.clientdata : ClientData, Team;
 import dmangos.world.player : Player;
@@ -332,7 +334,7 @@ unittest
 
     auto spell = new SpellInfo;
     spell.id = 1234;
-    spell.effect[0] = 6;
+    spell.effect[0] = SpellEffect.applyAura;
     bool isNew;
     player.auras.apply(makeAura(spell, 1, 10, 60_000, true, [1, 0, 0]), player.values, isNew);
     assert(conditions.satisfied(7, subject, client), "the aura is on");

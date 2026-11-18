@@ -8,6 +8,8 @@
  */
 module dmangos.world.spells;
 
+public import dmangos.world.spellids : AuraType, DamageClass, ImplicitTarget, SpellEffect;
+
 import dmangos.frozen : StaticMap;
 import std.algorithm.searching : canFind;
 import std.algorithm.sorting : sort;
@@ -16,23 +18,6 @@ import dmangos.log;
 import dmangos.mysql : MySqlConnection;
 import dmangos.world.clientdata : ClientData;
 
-/// Spell effects that matter when spells are learned.
-enum SpellEffect : uint
-{
-    none = 0,
-    instantKill = 1,
-    applyAura = 6,
-    createItem = 24,
-    learnSpell = 36,
-    dualWield = 40,
-    skillStep = 44,
-    parry = 22,
-    block = 23,
-    proficiency = 60,
-    skill = 118,
-    pickpocket = 71,
-    skinning = 95,
-}
 
 /// An `Attributes` bit: the spell is passive.
 enum uint spellAttrPassive = 0x00000040;
@@ -55,10 +40,10 @@ struct SpellInfo
     uint stances;
     uint casterAuraState;
     int[8] reagents;
-    uint[3] effect;
+    SpellEffect[3] effect;
     int[3] basePoints;
     int[3] baseDice;
-    uint[3] implicitTargetA;
+    ImplicitTarget[3] implicitTargetA;
     uint[3] itemType;
     int[3] miscValue;
     uint[3] triggerSpell;
@@ -124,9 +109,9 @@ struct SpellCastInfo
     int[3] dieSides;
     float[3] dicePerLevel = 0;
     float[3] realPointsPerLevel = 0;
-    uint[3] implicitTargetB;
+    ImplicitTarget[3] implicitTargetB;
     uint[3] radiusIndex;
-    uint[3] applyAuraName;
+    AuraType[3] applyAuraName;
     uint[3] amplitude;
     float[3] multipleValue = 0;
     uint[3] chainTarget;
@@ -140,7 +125,7 @@ struct SpellCastInfo
     uint spellFamilyName;
     ulong spellFamilyFlags;
     uint maxAffectedTargets;
-    uint dmgClass;             /// `SpellDmgClass`: none, magic, melee, ranged
+    DamageClass dmgClass;
     uint preventionType;
     float[3] dmgMultiplier = 0;
 }
@@ -199,14 +184,14 @@ struct SpellCastRow
                 "manaPerSecondPerLevel", "rangeIndex", "speed", "stackAmount", "spellVisual", "spellIconId", "manaCostPercentage",
                 "startRecoveryCategory", "startRecoveryTime", "maxTargetLevel", "spellFamilyName", "spellFamilyFlags",
                 "maxAffectedTargets", "dmgClass", "preventionType"])
-            __traits(getMember, c, field) = __traits(getMember, this, field);
+            __traits(getMember, c, field) = cast(typeof(__traits(getMember, c, field))) __traits(getMember, this, field);
         c.reagentCount = [rc1, rc2, rc3, rc4, rc5, rc6, rc7, rc8];
         c.dieSides = [ds1, ds2, ds3];
         c.dicePerLevel = [dpl1, dpl2, dpl3];
         c.realPointsPerLevel = [rpl1, rpl2, rpl3];
-        c.implicitTargetB = [tb1, tb2, tb3];
+        c.implicitTargetB = [cast(ImplicitTarget) tb1, cast(ImplicitTarget) tb2, cast(ImplicitTarget) tb3];
         c.radiusIndex = [ri1, ri2, ri3];
-        c.applyAuraName = [aa1, aa2, aa3];
+        c.applyAuraName = [cast(AuraType) aa1, cast(AuraType) aa2, cast(AuraType) aa3];
         c.amplitude = [am1, am2, am3];
         c.multipleValue = [mv1, mv2, mv3];
         c.chainTarget = [ct1, ct2, ct3];
@@ -550,7 +535,8 @@ private struct SpellRow
     SpellInfo toInfo() const
     {
         return SpellInfo(id, attributes, attributesEx, attributesEx2, stances, casterAuraState,
-            [r1, r2, r3, r4, r5, r6, r7, r8], [e1, e2, e3], [bp1, bp2, bp3], [bd1, bd2, bd3], [t1, t2, t3],
+            [r1, r2, r3, r4, r5, r6, r7, r8], [cast(SpellEffect) e1, cast(SpellEffect) e2, cast(SpellEffect) e3], [bp1, bp2, bp3], [bd1, bd2, bd3],
+            [cast(ImplicitTarget) t1, cast(ImplicitTarget) t2, cast(ImplicitTarget) t3],
             [it1, it2, it3], [m1, m2, m3], [ts1, ts2, ts3], category, recoveryTime, categoryRecoveryTime,
             equippedItemClass, equippedItemSubClassMask, spellLevel);
     }

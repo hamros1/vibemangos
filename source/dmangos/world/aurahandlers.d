@@ -15,6 +15,8 @@
  */
 module dmangos.world.aurahandlers;
 
+import dmangos.world.spellids;
+
 /// See the module documentation.
 /// Events auras may proc on (`procFlags`).
 enum ProcFlag : uint
@@ -30,6 +32,7 @@ enum ProcFlag : uint
 
 mixin template AuraHandlers()
 {
+    import dmangos.world.spellids;
     import core.time : Duration;
     import std.random : uniform01;
     import dmangos.bytes : ByteReader, ByteWriter;
@@ -55,8 +58,7 @@ private:
      */
     void applyAuraEffect(const(SpellInfo)* spell, size_t i, ulong target)
     {
-        enum uint applyAura = 6, areaAuraParty = 35;
-        static bool auraEffect(uint effect) { return effect == applyAura || effect == areaAuraParty; }
+        static bool auraEffect(uint effect) { return effect == SpellEffect.applyAura || effect == SpellEffect.applyAreaAuraParty; }
         foreach (j; 0 .. i)
             if (auraEffect(spell.effect[j]))
                 return;
@@ -120,9 +122,8 @@ private:
     /// Whether `spell` has an area aura for the party.
     private static bool partyAreaAura(const(SpellInfo)* spell)
     {
-        enum uint areaAuraParty = 35;
         foreach (i; 0 .. 3)
-            if (spell.effect[i] == areaAuraParty)
+            if (spell.effect[i] == SpellEffect.applyAreaAuraParty)
                 return true;
         return false;
     }
@@ -132,9 +133,8 @@ private:
     {
         import dmangos.world.spellcast : radius;
 
-        enum uint areaAuraParty = 35;
         foreach (i; 0 .. 3)
-            if (spell.effect[i] == areaAuraParty)
+            if (spell.effect[i] == SpellEffect.applyAreaAuraParty)
                 return radius(*spell, i, context.client);
         return 0;
     }
@@ -783,7 +783,7 @@ unittest
         spells.edit(gash).casting.amplitude[0] = 3000;
         spells.edit(gash).casting.durationIndex = 2;
         spells.edit(gash).casting.school = 1;
-        spells.edit(gash).casting.dmgClass = 0; // no hit roll: the test must not depend on a 1% miss
+        spells.edit(gash).casting.dmgClass = DamageClass.none; // no hit roll: the test must not depend on a 1% miss
         spells[haste] = testSpell(haste, 6, 1, 50);                 // 50% faster
         spells.edit(haste).casting.applyAuraName[0] = AuraType.modIncreaseSpeed;
         spells.edit(haste).casting.durationIndex = 1;

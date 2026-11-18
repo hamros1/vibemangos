@@ -15,9 +15,12 @@
  */
 module dmangos.world.creaturecasting;
 
+import dmangos.world.spellids;
+
 /// See the module documentation.
 mixin template CreatureCasting()
 {
+    import dmangos.world.spellids;
     import std.math : PI, sqrt;
     import std.random : uniform, uniform01;
     import dmangos.bytes : ByteWriter;
@@ -273,13 +276,12 @@ mixin template CreatureCasting()
     /// The implicit targets the creature resolves: the caster, enemies in an area or cone, or the target.
     private ulong[] targetsFor(const(SpellInfo)* spell, size_t i, ulong target)
     {
-        enum uint self = 1, enemyInArea = 15, enemyInAreaInstant = 16, casterCoordinates = 22, frontalCone = 24;
         const a = spell.implicitTargetA[i], b = spell.casting.implicitTargetB[i];
-        const area = a == enemyInArea || a == enemyInAreaInstant || b == enemyInArea || b == enemyInAreaInstant;
-        if (area || a == frontalCone)
+        const area = a == ImplicitTarget.enemiesAroundSource || a == ImplicitTarget.enemiesAroundDest || b == ImplicitTarget.enemiesAroundSource || b == ImplicitTarget.enemiesAroundDest;
+        if (area || a == ImplicitTarget.enemiesInCone)
         {
             auto center = me.position;
-            if (area && a != casterCoordinates && a != self && target != me.guid)
+            if (area && a != ImplicitTarget.casterSource && a != ImplicitTarget.caster && target != me.guid)
                 if (auto other = world_.unit(target))
                     center = other.fighter.position;
             const r = radius(*spell, i, lore.clientData);
@@ -289,13 +291,13 @@ mixin template CreatureCasting()
                 const f = other.fighter;
                 if (!f.alive || !canAttack(relating, other.relating, me.client))
                     continue;
-                if (a == frontalCone && !hasInArc(me.position, f.position, PI / 2))
+                if (a == ImplicitTarget.enemiesInCone && !hasInArc(me.position, f.position, PI / 2))
                     continue;
                 found ~= other.combatGuid;
             }
             return found;
         }
-        if (a == self || target == 0)
+        if (a == ImplicitTarget.caster || target == 0)
             return [me.guid];
         return [target];
     }
@@ -306,8 +308,6 @@ mixin template CreatureCasting()
      */
     private void go(const(SpellInfo)* spell, ulong target, bool takeMana)
     {
-        enum uint schoolDamage = 2, applyAura = 6, heal = 10, weaponDamageNoSchool = 17, weaponPercent = 31,
-            weaponDamage = 58, triggerSpell = 64, normalizedWeapon = 121;
         if (takeMana && spell.casting.powerType == 0)
         {
             const cost = manaCost(spell), mana = me.values.get!UNIT_FIELD_POWER1;
@@ -328,8 +328,8 @@ mixin template CreatureCasting()
         MeleeDamage[ulong] weaponRolls;
         bool weapon;
         foreach (i; 0 .. 3)
-            weapon |= spell.effect[i] == weaponDamageNoSchool || spell.effect[i] == weaponPercent
-                || spell.effect[i] == weaponDamage || spell.effect[i] == normalizedWeapon;
+            weapon |= spell.effect[i] == SpellEffect.weaponDamageNoschool || spell.effect[i] == SpellEffect.weaponPercentDamage
+                || spell.effect[i] == SpellEffect.weaponDamage || spell.effect[i] == SpellEffect.normalizedWeaponDmg;
         foreach (guid, _; all)
         {
             auto miss = SpellMissInfo.none;
@@ -356,7 +356,7 @@ mixin template CreatureCasting()
                         default: break;
                         }
                     }
-                    else if (spell.casting.dmgClass == 1)
+                    else if (spell.casting.dmgClass == DamageClass.magic)
                     {
                         // Missed, or resisted whole by the player's resistance to its school.
                         import dmangos.world.combat : fullResistChance;
@@ -393,15 +393,15 @@ mixin template CreatureCasting()
                     return;
                 switch (effect)
                 {
-                case schoolDamage:
+                case SpellEffect.schoolDamage:
                     if (guid != me.guid)
                         spellDamageTo(spell, guid, value > 0 ? value : 0, spell.casting.school);
                     break;
-                case weaponDamageNoSchool, weaponPercent, weaponDamage, normalizedWeapon:
+                case SpellEffect.weaponDamageNoschool, SpellEffect.weaponPercentDamage, SpellEffect.weaponDamage, SpellEffect.normalizedWeaponDmg:
                     if (auto d = guid in weaponRolls)
                     {
                         uint damage = d.damage;
-                        if (effect == weaponPercent)
+                        if (effect == SpellEffect.weaponPercentDamage)
                             damage = cast(uint)(damage * (value > 0 ? value : 0) / 100.0f);
                         else if (value > 0)
                             damage += cast(uint) armorReducedDamage(level,
@@ -409,21 +409,21 @@ mixin template CreatureCasting()
                         spellDamageTo(spell, guid, damage, -1);
                     }
                     break;
-                case applyAura:
+                case SpellEffect.applyAura:
                     if (!auraDone)
                         auraOn(spell, guid);
                     break;
-                case heal:
+                case SpellEffect.heal:
                     healCreature(spell, guid == me.guid ? me : world_.creatureAt(guid), value);
                     break;
-                case triggerSpell:
+                case SpellEffect.triggerSpell:
                     if (const triggered = lore.spellInfo(spell.triggerSpell[i]))
                         castSpell(triggered, guid, castTriggered);
                     break;
-                case 3, 77: // SPELL_EFFECT_DUMMY, SPELL_EFFECT_SCRIPT_EFFECT: the spell's script
+                case SpellEffect.dummy, SpellEffect.scriptEffect: // SPELL_EFFECT_DUMMY, SPELL_EFFECT_SCRIPT_EFFECT: the spell's script
                     spellEffectScript(spell, i, guid, value);
                     break;
-                case 68: // SPELL_EFFECT_INTERRUPT_CAST: and the school locked for the interrupt's duration
+                case SpellEffect.interruptCast: // SPELL_EFFECT_INTERRUPT_CAST: and the school locked for the interrupt's duration
                     if (guid != me.guid)
                         if (auto other = world_.unit(guid))
                         {
@@ -437,7 +437,7 @@ mixin template CreatureCasting()
                     break;
                 }
             }
-            if (effect == applyAura)
+            if (effect == SpellEffect.applyAura)
                 auraDone = true;
         }
         world_.flushCreature(me);
@@ -488,11 +488,10 @@ mixin template CreatureCasting()
     /// `SPELL_EFFECT_APPLY_AURA`: a debuff on an enemy (a player, a pet, another creature), a buff on itself or a friend.
     package void auraOn(const(SpellInfo)* spell, ulong guid)
     {
-        enum uint applyAura = 6;
         const level = me.values.get!UNIT_FIELD_LEVEL;
         int[3] values;
         foreach (j; 0 .. 3)
-            if (spell.effect[j] == applyAura)
+            if (spell.effect[j] == SpellEffect.applyAura)
                 values[j] = effectValue(*spell, j, level, uniform01(world_.random));
         const ms = duration(*spell, lore.clientData, level);
         if (auto creature = guid == me.guid ? me : world_.creatureAt(guid))
@@ -1134,7 +1133,7 @@ unittest
     {
         spells[bolt] = testSpell(bolt, 2, 6, 7, 2);         // 7 fire damage, 1.5 s
         spells.edit(bolt).casting.school = 2;
-        spells.edit(bolt).casting.dmgClass = 0;                  // never resisted, for the test
+        spells.edit(bolt).casting.dmgClass = DamageClass.none;                  // never resisted, for the test
         spells.edit(bolt).casting.manaCost = 50;
         spells[mend] = testSpell(mend, 10, 1, 200);         // heals itself 200
         spells[rot] = testSpell(rot, 6, 6, 3);              // 3 shadow damage every second for 6 s
@@ -1142,7 +1141,7 @@ unittest
         spells.edit(rot).casting.amplitude[0] = 1000;
         spells.edit(rot).casting.durationIndex = 1;
         spells.edit(rot).casting.school = 5;
-        spells.edit(rot).casting.dmgClass = 0;
+        spells.edit(rot).casting.dmgClass = DamageClass.none;
     }
     context.data.npcs.broadcastTexts[yell] = BroadcastText("You will die!", "", 0, 1);
 
@@ -1232,7 +1231,7 @@ unittest
     assert(keeper.ai.castSpell(context.data.spells.spell(bolt), me.guid, 0) && keeper.ai.castingNow);
     enum uint pummel = 95011;
     context.data.spells.spells[pummel] = testSpell(pummel, 68, 6, 0);
-    context.data.spells.spells.edit(pummel).casting.dmgClass = 0;
+    context.data.spells.spells.edit(pummel).casting.dmgClass = DamageClass.none;
     context.data.spells.spells.edit(pummel).casting.durationIndex = 1; // locks out for 6 s
     (cast(Player) me).spells ~= pummel;
     ByteWriter w;
@@ -1298,7 +1297,7 @@ unittest
     enum uint shout = 95201;
     context.data.spells.spells[shout] = testSpell(shout, 2, 6, 4); // 4 damage, instant
     context.data.spells.spells.edit(shout).casting.school = 2;
-    context.data.spells.spells.edit(shout).casting.dmgClass = 0;
+    context.data.spells.spells.edit(shout).casting.dmgClass = DamageClass.none;
     context.data.creatureTemplates.edit(creatureInnkeeper).spellList = 77;
     context.data.creatureSpellLists[77] = [SpellListEntry(shout, 0, 1, 100, 0, 1000, 1000, 3000, 3000)];
 

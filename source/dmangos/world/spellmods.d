@@ -6,6 +6,8 @@
  */
 module dmangos.world.spellmods;
 
+import dmangos.world.spellids;
+
 import dmangos.world.auras : Aura, AuraType;
 import dmangos.world.spells : SpellInfo;
 
@@ -40,9 +42,6 @@ enum SpellModOp : int
     resistDispelChance = 28,
 }
 
-/// `addFlatModifier` and `addPctModifier`.
-enum uint auraAddFlatModifier = 107, auraAddPctModifier = 108;
-
 /// Whether effect `i` of `mod` changes `spell`.
 bool affects(const Aura mod, size_t i, const ref SpellInfo spell)
 {
@@ -60,11 +59,11 @@ T applySpellMod(T)(const(Aura)[] auras, SpellModOp op, const ref SpellInfo spell
         foreach (i; 0 .. 3)
         {
             const type = aura.spell.casting.applyAuraName[i];
-            if ((type != auraAddFlatModifier && type != auraAddPctModifier) || aura.misc(i) != op || !(aura.effects & (1 << i)))
+            if ((type != AuraType.addFlatModifier && type != AuraType.addPctModifier) || aura.misc(i) != op || !(aura.effects & (1 << i)))
                 continue;
             if (aura.spell.id == spell.id || !affects(aura, i, spell))
                 continue;
-            if (type == auraAddFlatModifier)
+            if (type == AuraType.addFlatModifier)
                 flat += aura.amount[i];
             else
                 percent += aura.amount[i];
@@ -92,15 +91,15 @@ unittest
     frostbolt.casting.spellFamilyName = 3;
     frostbolt.casting.spellFamilyFlags = 0x20;
     auto improved = SpellInfo(12338); // Improved Fireball: 0.2 s less casting time
-    improved.effect[0] = 6;
-    improved.casting.applyAuraName[0] = auraAddFlatModifier;
+    improved.effect[0] = SpellEffect.applyAura;
+    improved.casting.applyAuraName[0] = AuraType.addFlatModifier;
     improved.miscValue[0] = SpellModOp.castingTime;
     improved.itemType[0] = 1;
     improved.casting.spellFamilyName = 3;
     auto talent = makeAura(&improved, 1, 60, -1, true, [-200, 0, 0]);
     auto clearcasting = SpellInfo(12536); // a percent off the cost of every mage spell (of the mask)
-    clearcasting.effect[0] = 6;
-    clearcasting.casting.applyAuraName[0] = auraAddPctModifier;
+    clearcasting.effect[0] = SpellEffect.applyAura;
+    clearcasting.casting.applyAuraName[0] = AuraType.addPctModifier;
     clearcasting.miscValue[0] = SpellModOp.cost;
     clearcasting.itemType[0] = 0xFFFFFFFF;
     clearcasting.casting.spellFamilyName = 3;
