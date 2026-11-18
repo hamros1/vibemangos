@@ -290,10 +290,10 @@ if (isPlainData!K && isPlainData!V)
     }
 
     /// The value, or `fallback`.
-    V get(const K key, lazy V fallback) const @trusted
+    Value get(const K key, lazy Value fallback) const @trusted
     {
         if (auto p = find(key))
-            return cast(V)*p;
+            return *p;
         return fallback;
     }
 
@@ -493,4 +493,15 @@ unittest
     plain.freeze();
     *(1 in plain) = 3;
     assert(plain[1] == 3 && plain.isFrozen);
+}
+
+// A value with indirections comes back const from every lookup, `get` included: its arrays live in the
+// arena, which the collector does not scan, so nothing may be written through them.
+unittest
+{
+    StaticMap!(uint, uint[]) withArrays;
+    StaticMap!(uint, uint) plain;
+    static assert(is(typeof(withArrays.get(1, null)) == const(uint[])));
+    static assert(is(typeof(withArrays[1]) == const(uint[])));
+    static assert(is(typeof(plain.get(1, 0)) == uint));
 }
