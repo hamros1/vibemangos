@@ -149,6 +149,19 @@ private:
             return (!c.value3 || sub(c.value3)) && (!c.value4 || sub(c.value4)) && sub(c.value1) && sub(c.value2);
         case none:
             return true;
+        case aura:
+            // An aura of spell value1 whose effect value2 is one.
+            foreach (a; player.auras.list)
+                if (a.spell.id == c.value1 && (c.value2 > 2 || a.spell.effect[c.value2] == 6 /* apply aura */))
+                    return true;
+            return false;
+        case adCommissionAura:
+            // An Argent Dawn commission: an aura usable while mounted or an ability, of spell visual 3580.
+            enum uint castableWhileMounted = 0x01000000, isAbility = 0x10;
+            foreach (a; player.auras.list)
+                if ((a.spell.attributes & (castableWhileMounted | isAbility)) && a.spell.casting.spellVisual == 3580)
+                    return true;
+            return false;
         case item:
             return player.hasItem(c.value1, c.value2);
         case itemWithBank:
@@ -290,7 +303,7 @@ unittest
         Condition(4, ConditionType.or, 1, 2),
         Condition(5, ConditionType.not, 1),
         Condition(6, ConditionType.level, 10, 1, 0, 0, conditionFlagReverseResult),
-        Condition(7, ConditionType.aura, 1234),         // not supported: never met
+        Condition(7, ConditionType.aura, 1234),         // the aura of spell 1234 (effect 0)
         Condition(8, ConditionType.team, 469),
     ];
     auto conditions = new Conditions(rows);
@@ -307,4 +320,15 @@ unittest
     assert(!conditions.satisfied(3, subject, client) && conditions.satisfied(4, subject, client));
     assert(conditions.satisfied(5, subject, client) && conditions.satisfied(6, subject, client));
     assert(!conditions.satisfied(7, subject, client) && conditions.satisfied(8, subject, client));
+
+    // With the aura of spell 1234 on, its condition holds.
+    import dmangos.world.auras : makeAura;
+    import dmangos.world.spells : SpellInfo;
+
+    auto spell = new SpellInfo;
+    spell.id = 1234;
+    spell.effect[0] = 6;
+    bool isNew;
+    player.auras.apply(makeAura(spell, 1, 10, 60_000, true, [1, 0, 0]), player.values, isNew);
+    assert(conditions.satisfied(7, subject, client), "the aura is on");
 }
