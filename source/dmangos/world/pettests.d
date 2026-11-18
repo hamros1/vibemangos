@@ -6,6 +6,8 @@
  */
 module dmangos.world.pettests;
 
+import dmangos.world.money : Copper;
+
 version (unittest)
 {
     import core.time : MonoTime, msecs;
@@ -263,7 +265,7 @@ unittest
     auto keeper = cast(Creature) map.findObject(imported!"dmangos.world.objects".makeGuid(HighGuid.unit,
         creatureInnkeeper, innkeeperSpawn));
     keeper.values.set!UNIT_NPC_FLAGS(keeper.values.get!UNIT_NPC_FLAGS | 0x2000);
-    (cast() session.character).modifyMoney(10_000);
+    (cast() session.character).receive(Copper(10_000));
     {
         ByteWriter w;
         w.put(keeper.guid);
@@ -590,15 +592,15 @@ unittest
         session.teachPet(id);
     }
     auto me = cast(Player) rexxar.session.character;
-    me.modifyMoney(10_000);
+    me.receive(Copper(10_000));
     const money = me.money;
     rexxar.read();
     ByteWriter w;
     w.put(pet.guid);
     rexxar.write(Opcode.CMSG_PET_UNLEARN, w.data);
-    assert(!state.knows(97501) && !state.knows(97502) && me.money == money - 1000, "for 10 silver");
+    assert(!state.knows(97501) && !state.knows(97502) && me.money == money - Copper(1000), "for 10 silver");
     foreach (uint id; [97501, 97502])
         session.teachPet(id);
     rexxar.write(Opcode.CMSG_PET_UNLEARN, w.data);
-    assert(me.money == money - 1000 - 5000, "then 50");
+    assert(me.money == money - Copper(1000) - Copper(5000), "then 50");
 }

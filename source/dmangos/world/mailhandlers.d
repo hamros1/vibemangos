@@ -14,6 +14,8 @@
  */
 module dmangos.world.mailhandlers;
 
+import dmangos.world.money : Copper;
+
 /// What a mail result answers (`SMSG_SEND_MAIL_RESULT`).
 enum MailAction : uint
 {
@@ -48,12 +50,13 @@ enum uint mailBodyItem = 8383;
 /// The postage of a letter: 30 copper.
 enum uint postage = 30;
 
-/// The most money a letter can carry: what a purse can hold (`Player.modifyMoney` keeps it under `int.max`).
+/// The most money a letter can carry: what a purse can hold (`Copper.max`).
 enum uint maxMailMoney = int.max;
 
 /// See the module documentation.
 mixin template MailHandlers()
 {
+    import dmangos.world.money : Copper;
     import dmangos.bytes : ByteReader, ByteWriter;
     import dmangos.log : info;
     import dmangos.world.clientdata : Team;
@@ -123,9 +126,9 @@ private:
             return sendMailResult(0, MailAction.send, MailError.recipientNotFound);
         if (receiver == player.data.guid)
             return sendMailResult(0, MailAction.send, MailError.cannotSendToSelf);
-        // In 64 bits: a uint sum near uint.max wraps, and a wrapped sum would pass this check for free.
-        const ulong cost = ulong(money) + postage;
-        if (money > maxMailMoney || player.money < cost)
+        // As money: a uint sum near uint.max would wrap, and a wrapped sum would pass this check for free.
+        const cost = Copper(money) + Copper(postage);
+        if (money > maxMailMoney || !player.canAfford(cost))
             return sendMailResult(0, MailAction.send, MailError.notEnoughMoney);
         const raceAccount = context.database.characterRaceAccount(receiver);
         if (context.client.teamForRace(cast(ubyte) raceAccount[0]) != context.client.teamForRace(player.data.race)
@@ -141,7 +144,7 @@ private:
                 return sendMailResult(0, MailAction.send, MailError.attachmentInvalid);
         }
         sendMailResult(0, MailAction.send, MailError.ok);
-        player.modifyMoney(-cast(long) cost);
+        player.pay(cost);
         MailRecord mail;
         mail.sender = player.data.guid;
         mail.receiver = receiver;
@@ -244,7 +247,7 @@ private:
         if (mail is null)
             return sendMailResult(id, MailAction.moneyTaken, MailError.internalError);
         sendMailResult(id, MailAction.moneyTaken, MailError.ok);
-        player.modifyMoney(mail.money);
+        player.receive(Copper(mail.money));
         mail.money = 0;
         context.database.updateMail(*mail);
         flushInventory(true);
@@ -260,7 +263,7 @@ private:
         auto mail = deliveredMail(id);
         if (mail is null || mail.itemGuid == 0)
             return sendMailResult(id, MailAction.itemTaken, MailError.internalError);
-        if (player.money < mail.cod)
+        if (!player.canAfford(Copper(mail.cod)))
             return sendMailResult(id, MailAction.itemTaken, MailError.notEnoughMoney);
         const record = context.database.looseItem(mail.itemGuid);
         const proto = record.isNull ? null : record.get.entry in context.data.items;
@@ -281,7 +284,7 @@ private:
             payment.money = mail.cod;
             payment.checked = mailCodPayment;
             postMail(payment, 0);
-            player.modifyMoney(-cast(long) mail.cod);
+            player.pay(Copper(mail.cod));
             mail.cod = 0;
         }
         const count = item.count, entry = item.entry;
@@ -443,7 +446,7 @@ unittest
     ItemPosCount[] dest;
     assert(a.inventory.canStoreNew(nullBag, nullSlot, dest, itemJerky, 5) == InventoryResult.ok);
     auto jerky = a.inventory.storeNew(dest, itemJerky);
-    a.modifyMoney(100);
+    a.receive(Copper(100));
 
     ByteWriter send;
     send.put(mailbox);
@@ -459,7 +462,7 @@ unittest
     send.put(ubyte(0));
     anduin.write(Opcode.CMSG_SEND_MAIL, send.data);
     assert(opcodesOf(anduin.read()).canFind(Opcode.SMSG_SEND_MAIL_RESULT));
-    assert(a.money == 60 && a.inventory.count(itemJerky) == 0, "the postage, the money and the jerky are gone");
+    assert(a.money == Copper(60) && a.inventory.count(itemJerky) == 0, "the postage, the money and the jerky are gone");
 
     // Money near uint.max: money + postage wraps to almost nothing in 32 bits. Refused, nothing taken or sent.
     {
@@ -478,7 +481,7 @@ unittest
         const mailsBefore = db.loadMail(j.data.guid).length;
         anduin.write(Opcode.CMSG_SEND_MAIL, greedy.data);
         anduin.read();
-        assert(a.money == 60, "nothing taken");
+        assert(a.money == Copper(60), "nothing taken");
         assert(db.loadMail(j.data.guid).length == mailsBefore, "and no letter with money in it");
     }
 
@@ -522,7 +525,7 @@ unittest
     jaina.write(Opcode.CMSG_MAIL_TAKE_MONEY, onMail(ids[0]));
     jaina.write(Opcode.CMSG_MAIL_TAKE_ITEM, onMail(ids[0]));
     jaina.read();
-    assert(j.money == 10 && j.inventory.count(itemJerky) == 5, "her jerky and money now");
+    assert(j.money == Copper(10) && j.inventory.count(itemJerky) == 5, "her jerky and money now");
 
     const mail = db.mails[ids[0]];
     ByteWriter text;

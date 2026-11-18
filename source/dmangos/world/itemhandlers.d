@@ -13,9 +13,12 @@
  */
 module dmangos.world.itemhandlers;
 
+import dmangos.world.money : Copper;
+
 /// See the module documentation.
 mixin template ItemHandlers()
 {
+    import dmangos.world.money : Copper;
     import std.algorithm.searching : countUntil;
     import dmangos.log;
     import dmangos.world.creature : Creature, Npc;
@@ -108,7 +111,7 @@ private:
             questItemsChanged(); // quest objectives that count items
         flushPlayerChanges(false);
         if (changes.length || moneyChanged)
-            context.database.saveInventory(player.data.guid, player.money, player.values[PLAYER_BYTES_2], changes);
+            context.database.saveInventory(player.data.guid, player.money.amount, player.values[PLAYER_BYTES_2], changes);
     }
 
     // -----------------------------------------------------------------------
@@ -416,10 +419,10 @@ private:
         const price = context.client.bankBagSlotPrices.lookup(slot);
         if (price is null)
             return send(ServerBuyBankSlotResult(bankSlotFailedTooMany));
-        if (player.money < price.price)
+        if (!player.canAfford(Copper(price.price)))
             return send(ServerBuyBankSlotResult(bankSlotInsufficientFunds));
         inventory.bankBagSlots = cast(ubyte) slot;
-        player.modifyMoney(-long(price.price));
+        player.pay(Copper(price.price));
         flushInventory(true);
     }
 
@@ -469,7 +472,7 @@ private:
             inventory.remove(item.bagSlot, item.slot);
             inventory.addToBuyback(item, money, secondsInWorld);
         }
-        player.modifyMoney(money);
+        player.receive(Copper(money));
         flushInventory(true);
     }
 
@@ -483,14 +486,14 @@ private:
         auto item = inventory.buyback(request.slot);
         if (item is null)
             return sendBuyError(BuyResult.cantFindItem, vendor, 0);
-        const price = inventory.buybackPrice(request.slot);
-        if (player.money < price)
+        const price = Copper(inventory.buybackPrice(request.slot));
+        if (!player.canAfford(price))
             return sendBuyError(BuyResult.notEnoughMoney, vendor, request.slot);
         ItemPosCount[] dest;
         ubyte bagSlot;
         if (const result = inventory.canStore(nullBag, nullSlot, dest, item, false, bagSlot))
             return sendEquipError(result, item, null, bagSlot);
-        player.modifyMoney(-long(price));
+        player.pay(price);
         inventory.removeFromBuyback(request.slot, false);
         inventory.store(dest, item);
         flushInventory(true);
@@ -600,8 +603,8 @@ private:
             return sendBuyError(BuyResult.rankRequired, vendor, vendorSlot);
         import std.math : floor;
 
-        const price = cast(uint) floor(proto.details.buyPrice * count * buyPriceDiscount(vendor.npcValues.get!UNIT_FIELD_FACTIONTEMPLATE));
-        if (player.money < price)
+        const price = Copper(cast(uint) floor(proto.details.buyPrice * count * buyPriceDiscount(vendor.npcValues.get!UNIT_FIELD_FACTIONTEMPLATE)));
+        if (!player.canAfford(price))
             return sendBuyError(BuyResult.notEnoughMoney, vendor, vendorSlot);
 
         Item item;
@@ -610,7 +613,7 @@ private:
             ItemPosCount[] dest;
             if (const result = inventory.canStoreNew(bag, slot, dest, entry, totalCount))
                 return sendEquipError(EquipError(result, null, null, 0, entry));
-            player.modifyMoney(-long(price));
+            player.pay(price);
             item = inventory.storeNew(dest, entry);
         }
         else if (isEquipmentPos(bag, slot))
@@ -620,7 +623,7 @@ private:
             ushort dest;
             if (const result = inventory.canEquipNew(slot, dest, entry, false))
                 return sendEquipError(EquipError(result, null, null, 0, entry));
-            player.modifyMoney(-long(price));
+            player.pay(price);
             item = inventory.equipNew(dest, entry);
             if (item !is null)
                 inventory.autoUnequipOffhand();
@@ -683,9 +686,9 @@ private:
             const price = repairCost(item, context.client, discount);
             if (price > 0)
             {
-                if (player.money < price)
+                if (!player.canAfford(Copper(price)))
                     return;
-                player.modifyMoney(-long(price));
+                player.pay(Copper(price));
             }
         }
         item.values.set!ITEM_FIELD_DURABILITY(item.maxDurability);
@@ -751,7 +754,7 @@ unittest
     const pushed = packet!ServerItemPushResult(bought);
     assert(pushed.entry == itemJerky && pushed.count == 10 && pushed.slot == 24 && pushed.bag == bag0);
     auto jerky = inventory[bag0, 24];
-    assert(jerky.count == 10 && character.money == 950);
+    assert(jerky.count == 10 && character.money == Copper(950));
     assert(db.itemRows[jerky.guid].count == 10 && db.itemOwners[jerky.guid] == 7 && db.moneySaves[7][0] == 950);
 
     // The sword, right-clicked, is worn; its row follows it.
@@ -778,10 +781,10 @@ unittest
     anduin.write(Opcode.CMSG_SELL_ITEM, ClientSellItem(innkeeper, four.fullGuid, 0));
     anduin.read();
     assert(inventory[bag0, 38] is null && inventory.buyback(buybackSlotStart).guid == fourGuid);
-    assert(character.money == 954 && fourGuid !in db.itemRows && db.moneySaves[7][0] == 954);
+    assert(character.money == Copper(954) && fourGuid !in db.itemRows && db.moneySaves[7][0] == 954);
     anduin.write(Opcode.CMSG_BUYBACK_ITEM, ClientBuybackItem(innkeeper, buybackSlotStart));
     anduin.read();
-    assert(character.money == 950 && inventory.buyback(buybackSlotStart) is null);
+    assert(character.money == Copper(950) && inventory.buyback(buybackSlotStart) is null);
     assert(jerky.count == 10 && db.itemRows[jerky.guid].count == 10, "bought back onto the stack it came from");
 
     // Three thrown away, then the rest.
@@ -846,7 +849,7 @@ unittest
     assert(anduin.read().length == 0 && asked.owner == 2 && asked.wanted == 5, "nothing until node 2 answers");
     asked.then(true, 1);
     const receipt = packet!ServerBuyItem(anduin.read());
-    assert(receipt.newCount == 1 && anduin.session.character.money == 35);
+    assert(receipt.newCount == 1 && anduin.session.character.money == Copper(35));
 
     // Sold out there: refused.
     anduin.write(Opcode.CMSG_BUY_ITEM, ClientBuyItem(innkeeper, itemJerky, 1, 1));

@@ -8,6 +8,8 @@
  */
 module dmangos.world.guildhandlers;
 
+import dmangos.world.money : Copper;
+
 /// The guild charter item, its cost (copper), the display id of its petition, and the signatures it needs.
 enum uint guildCharter = 5863, guildCharterCost = 1000, charterDisplayId = 16161, petitionSignsNeeded = 9;
 
@@ -27,6 +29,7 @@ enum : uint
 /// See the module documentation.
 mixin template GuildHandlers()
 {
+    import dmangos.world.money : Copper;
     import std.conv : to;
     import dmangos.bytes : ByteReader, ByteWriter;
     import dmangos.world.database : GuildMemberRecord, GuildRankRecord, GuildRecord;
@@ -316,7 +319,7 @@ mixin template GuildHandlers()
             return guildResult(GuildCommand.create, name, GuildError.nameInvalid);
         if (guildCharter !in context.data.items)
             return;
-        if (player.money < guildCharterCost)
+        if (!player.canAfford(Copper(guildCharterCost)))
             return;
         ItemPosCount[] dest;
         if (player.inventory.canStoreNew(nullBag, nullSlot, dest, guildCharter, 1) != InventoryResult.ok)
@@ -324,7 +327,7 @@ mixin template GuildHandlers()
         auto charter = player.inventory.storeNew(dest, guildCharter);
         if (charter is null)
             return;
-        player.modifyMoney(-cast(long) guildCharterCost);
+        player.pay(Copper(guildCharterCost));
         charter.values.set!ITEM_FIELD_ENCHANTMENT(charter.guid); // the guild (its id is the charter's)
         context.database.createPetition(player.data.guid, charter.guid, name);
         flushInventory();
@@ -900,9 +903,9 @@ mixin template GuildHandlers()
             return emblemResult(noGuild);
         if (g.leader != player.data.guid)
             return emblemResult(notMaster);
-        if (player.money < tabardCost)
+        if (!player.canAfford(Copper(tabardCost)))
             return emblemResult(notEnoughMoney);
-        player.modifyMoney(-cast(long) tabardCost);
+        player.pay(Copper(tabardCost));
         flushPlayerChanges();
         g.emblem = emblem;
         context.database.saveGuild(g.record);
@@ -1080,7 +1083,7 @@ unittest
     varian.read();
     jaina.read();
     auto me = cast(Player) varian.session.character;
-    me.modifyMoney(5000 - cast(long) me.money);
+    me.values.set!(imported!"dmangos.world.updatefields".PLAYER_FIELD_COINAGE)(5000u); // exactly this much
 
     bool got(TestClient* c, Opcode opcode, out const(ubyte)[] body_)
     {
@@ -1108,7 +1111,7 @@ unittest
     buy.put(uint(1));
     buy.put(uint(0));
     varian.write(Opcode.CMSG_PETITION_BUY, buy.data);
-    assert(me.money == 4000, "ten silver");
+    assert(me.money == Copper(4000), "ten silver");
     assert(me.hasItem(guildCharter), "the charter");
     import dmangos.world.defines : inventorySlotBag0, inventorySlotItemEnd;
     import dmangos.world.inventory : Item;

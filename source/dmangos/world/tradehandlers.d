@@ -11,6 +11,8 @@
  */
 module dmangos.world.tradehandlers;
 
+import dmangos.world.money : Copper;
+
 /// The trade statuses the client knows (`SMSG_TRADE_STATUS`).
 enum TradeStatus : uint
 {
@@ -54,6 +56,7 @@ final class TradeSide
 /// See the module documentation.
 mixin template TradeHandlers()
 {
+    import dmangos.world.money : Copper;
     import dmangos.bytes : ByteReader, ByteWriter;
     import dmangos.log : info;
     import dmangos.world.clientdata : Team;
@@ -343,13 +346,13 @@ private:
             mine.accepted = false;
             return;
         }
-        if (mine.money > player.money)
+        if (!player.canAfford(Copper(mine.money)))
         {
             sendTradeStatus(TradeStatus.closeWindow, 0, InventoryResult.notEnoughMoney);
             mine.accepted = false;
             return partner.sendTradeStatus(TradeStatus.backToTrade);
         }
-        if (his.money > partner.player.money)
+        if (!partner.player.canAfford(Copper(his.money)))
         {
             partner.sendTradeStatus(TradeStatus.closeWindow, 0, InventoryResult.notEnoughMoney);
             his.accepted = false;
@@ -398,8 +401,11 @@ private:
         partner.flushInventory();
         receiveTraded(hisGiven);
         partner.receiveTraded(mineGiven);
-        player.modifyMoney(cast(long) his.money - cast(long) mine.money);
-        partner.player.modifyMoney(cast(long) mine.money - cast(long) his.money);
+        // Each pays what it put up (checked above), then gets the other's.
+        player.pay(Copper(mine.money));
+        partner.player.pay(Copper(his.money));
+        player.receive(Copper(his.money));
+        partner.player.receive(Copper(mine.money));
         tradeSide = null;
         partner.tradeSide = null;
         flushInventory(true);
@@ -464,8 +470,8 @@ unittest
     ItemPosCount[] dest;
     assert(a.inventory.canStoreNew(nullBag, nullSlot, dest, itemJerky, 5) == InventoryResult.ok);
     auto jerky = a.inventory.storeNew(dest, itemJerky);
-    a.modifyMoney(100);
-    j.modifyMoney(100);
+    a.receive(Copper(100));
+    j.receive(Copper(100));
 
     ByteWriter target;
     target.put(j.guid);
@@ -491,7 +497,7 @@ unittest
     jaina.write(Opcode.CMSG_ACCEPT_TRADE, accept.data);
     assert(a.inventory[jerky.bagSlot, jerky.slot] is null, "gone from Anduin");
     assert(a.inventory.count(itemJerky) == 0 && j.inventory.count(itemJerky) == 5, "now Jaina's");
-    assert(a.money == 70 && j.money == 130);
+    assert(a.money == Copper(70) && j.money == Copper(130));
     assert(jerky.guid in db.itemRows, "saved again under its taker");
     assert(opcodesOf(jaina.read()).canFind(Opcode.SMSG_TRADE_STATUS));
 }

@@ -11,9 +11,12 @@
  */
 module dmangos.world.talenthandlers;
 
+import dmangos.world.money : Copper;
+
 /// See the module documentation.
 mixin template TalentHandlers()
 {
+    import dmangos.world.money : Copper;
     import dmangos.bytes : ByteReader;
     import dmangos.log : info;
     import dmangos.world.auras : Aura, makeAura;
@@ -182,9 +185,9 @@ private:
             return;
         }
         const cost = talentResetCost();
-        if (player.money < cost)
+        if (!player.canAfford(Copper(cost)))
             return refuse();
-        player.modifyMoney(-cast(long) cost);
+        player.pay(Copper(cost));
         resetTalents();
         talentResetCost_ = cost;
         talentResetTime_ = context.unixTime;
@@ -388,15 +391,15 @@ unittest
         ByteWriter w;
         w.put(makeGuid(HighGuid.unit, creatureTrainer, trainerSpawn));
         const wipe = w.data.dup;
-        me.modifyMoney(60_000 - cast(long) me.money);
+        me.values.set!PLAYER_FIELD_COINAGE(60_000u); // exactly this much
         garrosh.read();
         garrosh.write(Opcode.MSG_TALENT_WIPE_CONFIRM, wipe);
         assert(!me.knowsSpell(92002) && me.values.get!PLAYER_CHARACTER_POINTS1 == 3, "forgotten, the points back");
         assert(me.values.get!UNIT_FIELD_STAT0(Stat.strength) == strength, "their aura gone");
-        assert(me.money == 50_000, "one gold");
+        assert(me.money == Copper(50_000), "one gold");
         garrosh.write(Opcode.CMSG_LEARN_TALENT, learnPacket(1, 0));
         garrosh.write(Opcode.MSG_TALENT_WIPE_CONFIRM, wipe);
-        assert(!me.knowsSpell(92001) && me.money == 0, "five gold the second time");
+        assert(!me.knowsSpell(92001) && me.money == Copper(0), "five gold the second time");
         garrosh.write(Opcode.CMSG_LEARN_TALENT, learnPacket(1, 0));
         garrosh.read();
         garrosh.write(Opcode.MSG_TALENT_WIPE_CONFIRM, wipe);

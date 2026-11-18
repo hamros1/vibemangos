@@ -15,9 +15,12 @@
  */
 module dmangos.world.questhandlers;
 
+import dmangos.world.money : Copper;
+
 /// See the module documentation.
 mixin template QuestHandlers()
 {
+    import dmangos.world.money : Copper;
     import dmangos.bytes : ByteReader, ByteWriter;
     import dmangos.log : info;
     import dmangos.world.creature : Npc;
@@ -242,7 +245,7 @@ private:
             return false;
         if ((quest.specialFlags & specialTimed) && q.timer == 0)
             return false;
-        if (quest.rewOrReqMoney < 0 && player.money < -quest.rewOrReqMoney)
+        if (quest.rewOrReqMoney < 0 && !player.canAfford(Copper(-quest.rewOrReqMoney)))
             return false;
         if (quest.repObjectiveFaction && player.reputation !is null
             && player.reputation.standingWith(quest.repObjectiveFaction) < quest.repObjectiveValue)
@@ -260,7 +263,7 @@ private:
         foreach (i; 0 .. questObjectives)
             if (quest.reqItemCount[i] && player.inventory.count(quest.reqItemId[i]) < quest.reqItemCount[i])
                 return false;
-        return quest.rewOrReqMoney >= 0 || player.money >= -quest.rewOrReqMoney;
+        return quest.rewOrReqMoney >= 0 || player.canAfford(Copper(-quest.rewOrReqMoney));
     }
 
     // -----------------------------------------------------------------------
@@ -949,7 +952,14 @@ private:
             giveXP(xp);
         else
             maxLevelMoney = quest.rewMoneyMaxLevel;
-        player.modifyMoney(cast(long) quest.rewOrReqMoney + maxLevelMoney);
+        // A quest pays (rewOrReqMoney > 0), or costs what canRewardQuest saw the purse hold (< 0).
+        if (quest.rewOrReqMoney >= 0)
+            player.receive(Copper(quest.rewOrReqMoney) + Copper(maxLevelMoney));
+        else
+        {
+            player.pay(Copper(-quest.rewOrReqMoney));
+            player.receive(Copper(maxLevelMoney));
+        }
         rewardQuestReputation(quest);
         auto q = &statusOf(quest.id);
         q.status = quest.repeatable ? QuestState.none : QuestState.complete;
@@ -1429,7 +1439,7 @@ unittest
     anduin.write(Opcode.CMSG_QUESTGIVER_CHOOSE_REWARD, choose.data);
     assert(opcodesOf(anduin.read()).canFind(Opcode.SMSG_QUESTGIVER_QUEST_COMPLETE));
     assert(me.inventory.count(itemJerky) == 0 && me.inventory.count(itemShirt) == 1);
-    assert(me.money == money + 35 && me.values[PLAYER_XP] == xp + questXp(q, 1)); // 60 / 0.6f
+    assert(me.money == money + Copper(35) && me.values[PLAYER_XP] == xp + questXp(q, 1)); // 60 / 0.6f
     assert(me.questStatus[q.id].rewarded && me.values[PLAYER_QUEST_LOG_1_1] == 0);
     assert(db.questRows[7][q.id].rewarded, "saved");
     assert(statusOfTrainer() == DialogStatus.none, "nothing more");

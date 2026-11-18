@@ -14,6 +14,8 @@
  */
 module dmangos.world.pethandlers;
 
+import dmangos.world.money : Copper;
+
 /// `CLASS_HUNTER`, `CLASS_WARLOCK`
 enum ubyte classHunter = 3, classWarlock = 9;
 
@@ -130,6 +132,7 @@ bool validPetName(string name) @safe
 /// See the module documentation.
 mixin template PetHandlers()
 {
+    import dmangos.world.money : Copper;
     import std.algorithm.sorting : sort;
     import dmangos.bytes : ByteReader, ByteWriter;
     import dmangos.cluster.ownership : IdKind;
@@ -1617,8 +1620,8 @@ mixin template PetHandlers()
         auto pet = ownPetNamed(reader.read!ulong);
         if (pet is null || !petMayUntrain())
             return;
-        const cost = petUntrainCost();
-        if (player.money < cost)
+        const cost = Copper(petUntrainCost());
+        if (!player.canAfford(cost))
             return sendBuyError(BuyResult.notEnoughMoney, null, 0);
         auto state = petState();
         foreach (s; state.spells.dup)
@@ -1628,9 +1631,9 @@ mixin template PetHandlers()
         state.trainingPoints = cast(int)(pet.values.get!UNIT_FIELD_LEVEL * (state.loyalty > 0 ? state.loyalty - 1 : 0));
         pet.values.set!UNIT_TRAINING_POINTS(shownTrainingPoints(state));
         map.flushObjectChanges(pet);
-        state.resetCost = cost;
+        state.resetCost = cost.amount;
         state.resetTime = context.unixTime;
-        player.modifyMoney(-cast(long) cost);
+        player.pay(cost);
         flushPlayerChanges();
         sendPetSpells();
         writePet(PetSlot.current);
@@ -1848,12 +1851,12 @@ mixin template PetHandlers()
         if (stableSlots >= maxStableSlots)
             return sendStableResult(StableResult.failed);
         const price = context.client.stableSlotPrices.lookup(stableSlots + 1);
-        const cost = price is null ? 0 : price.price;
-        if (player.money < cost)
+        const cost = Copper(price is null ? 0 : price.price);
+        if (!player.canAfford(cost))
             return sendStableResult(StableResult.notEnoughMoney);
         stableSlots_ = stableSlots + 1;
         context.database.saveStableSlots(player.data.guid, stableSlots_);
-        player.modifyMoney(-cast(long) cost);
+        player.pay(cost);
         flushPlayerChanges();
         sendStableResult(StableResult.slotBought);
     }

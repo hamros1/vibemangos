@@ -12,9 +12,12 @@
  */
 module dmangos.world.auctionhandlers;
 
+import dmangos.world.money : Copper;
+
 /// See the module documentation.
 mixin template AuctionHandlers()
 {
+    import dmangos.world.money : Copper;
     import std.algorithm.searching : canFind;
     import std.uni : toLower;
     import dmangos.bytes : ByteReader, ByteWriter;
@@ -107,12 +110,12 @@ mixin template AuctionHandlers()
         const proto = item.entry in context.data.items;
         if (proto is null || (proto.flags & itemFlagConjured) || item.values[ITEM_FIELD_DURATION])
             return sendAuctionResult(0, AuctionAction.started, AuctionError.inventory, InventoryResult.itemNotFound);
-        const deposit = auctionDeposit(*house, seconds, proto.details.sellPrice, item.count);
-        if (player.money < deposit)
+        const deposit = Copper(auctionDeposit(*house, seconds, proto.details.sellPrice, item.count));
+        if (!player.canAfford(deposit))
             return sendAuctionResult(0, AuctionAction.started, AuctionError.notEnoughMoney);
 
         // Out of the bags into the house, the deposit paid.
-        player.modifyMoney(-cast(long) deposit);
+        player.pay(deposit);
         auto record = item.record;
         AuctionRecord a;
         a.id = context.nextMailId();
@@ -125,7 +128,7 @@ mixin template AuctionHandlers()
         a.startBid = bid;
         a.buyout = buyout;
         a.expireTime = context.unixTime + seconds;
-        a.deposit = deposit;
+        a.deposit = deposit.amount; // the row keeps the plain number
         player.inventory.destroy(item.bagSlot, item.slot);
         flushInventory(true);
         record.bag = 0;
@@ -164,8 +167,8 @@ mixin template AuctionHandlers()
         if (a.buyout && price > a.buyout)
             price = a.buyout;
         const ownBid = a.bidder == player.data.guid;
-        const pays = ownBid ? price - a.bid : price;
-        if (pays > player.money)
+        const pays = Copper(price) - Copper(ownBid ? a.bid : 0);
+        if (!player.canAfford(pays))
             return;
         const buyout = a.buyout && price >= a.buyout;
         // The table decides: the bid is placed only if the auction is still as it was seen.
@@ -178,7 +181,7 @@ mixin template AuctionHandlers()
                 return sendAuctionResult(0, AuctionAction.bidPlaced, AuctionError.database);
             return sendAuctionResult(id, AuctionAction.bidPlaced, AuctionError.higherBid, 0, &now.get());
         }
-        player.modifyMoney(-cast(long) pays);
+        player.pay(pays);
         flushPlayerChanges();
         if (a.bidder && !ownBid)
             context.auctionOutbid(a); // the old bidder's money back
@@ -207,8 +210,8 @@ mixin template AuctionHandlers()
         if (found.isNull || found.get.owner != player.data.guid)
             return sendAuctionResult(0, AuctionAction.removed, AuctionError.database);
         const a = found.get;
-        const cut = a.bid ? a.cut(*house) : 0;
-        if (player.money < cut)
+        const cut = Copper(a.bid ? a.cut(*house) : 0);
+        if (!player.canAfford(cut))
             return;
         if (!context.database.deleteAuction(a.id, a.bid))
             return sendAuctionResult(0, AuctionAction.removed, AuctionError.database); // bid on meanwhile
@@ -218,7 +221,7 @@ mixin template AuctionHandlers()
             context.deliverTo(a.bidder, Opcode.SMSG_AUCTION_REMOVED_NOTIFICATION, removedNotification(a));
             context.auctionMail(a.bidder, a, AuctionMail.cancelledToBidder, a.bid, false);
         }
-        player.modifyMoney(-cast(long) cut);
+        player.pay(cut);
         flushPlayerChanges();
         context.auctionMail(player.data.guid, a, AuctionMail.cancelled, 0, true);
         sendAuctionResult(a.id, AuctionAction.removed, AuctionError.ok);
@@ -396,11 +399,11 @@ unittest
     keeper.values.set!UNIT_NPC_FLAGS(keeper.values.get!UNIT_NPC_FLAGS | NpcFlag.auctioneer);
     auto seller = cast(Player) anduin.session.character, first = cast(Player) jaina.session.character,
         second = cast(Player) varian.session.character;
-    seller.modifyMoney(1000);
+    seller.receive(Copper(1000));
     anduin.session.inWorld.lootStore(itemSword, 1, 0, false);
     jaina.session.inWorld.lootStore(itemJerky, 1, 0, false);
-    first.modifyMoney(1000);
-    second.modifyMoney(1000);
+    first.receive(Copper(1000));
+    second.receive(Copper(1000));
     foreach (c; [&anduin, &jaina, &varian])
         c.read();
 
@@ -425,7 +428,7 @@ unittest
     sell.put(500u);
     sell.put(8u * 60);
     anduin.write(Opcode.CMSG_AUCTION_SELL_ITEM, sell.data);
-    assert(seller.inventory.count(itemSword) == 0 && seller.money == 1000 - 4, "up, the deposit paid");
+    assert(seller.inventory.count(itemSword) == 0 && seller.money == Copper(1000 - 4), "up, the deposit paid");
     const auctions = db.loadAuctions(0);
     assert(auctions.length == 1 && auctions[0].itemEntry == itemSword && auctions[0].deposit == 4);
     const id = auctions[0].id;
@@ -459,18 +462,18 @@ unittest
     // Anduin may not bid on his own; Jaina bids 100.
     anduin.write(Opcode.CMSG_AUCTION_PLACE_BID, bid(150));
     jaina.write(Opcode.CMSG_AUCTION_PLACE_BID, bid(100));
-    assert(first.money == 900 && db.auctionById(id).get.bidder == first.data.guid);
+    assert(first.money == Copper(900) && db.auctionById(id).get.bidder == first.data.guid);
     assert(opcodesOf(anduin.read()).canFind(Opcode.SMSG_AUCTION_OWNER_NOTIFICATION), "the seller hears of the bid");
     // Varian's 104 is not 5% more; 200 is, and Jaina's 100 comes back by mail.
     varian.write(Opcode.CMSG_AUCTION_PLACE_BID, bid(104));
-    assert(second.money == 1000);
+    assert(second.money == Copper(1000));
     varian.write(Opcode.CMSG_AUCTION_PLACE_BID, bid(200));
-    assert(second.money == 800 && db.auctionById(id).get.bid == 200);
+    assert(second.money == Copper(800) && db.auctionById(id).get.bid == 200);
     assert(db.loadMail(first.data.guid).canFind!(m => m.money == 100 && m.messageType == 2
         && m.subject == auctionMailSubject(db.auctionById(id).get, AuctionMail.outbidded)));
     // Then he buys it out at 500, paying the 300 more.
     varian.write(Opcode.CMSG_AUCTION_PLACE_BID, bid(500));
-    assert(second.money == 500 && db.auctionById(id).isNull, "bought out");
+    assert(second.money == Copper(500) && db.auctionById(id).isNull, "bought out");
     assert(db.loadMail(second.data.guid).canFind!(m => m.itemEntry == itemSword), "the sword by mail");
     // 500 and the deposit, less the 5% cut: 479.
     assert(db.loadMail(seller.data.guid).canFind!(m => m.money == 500 + 4 - 25), "the price by mail");

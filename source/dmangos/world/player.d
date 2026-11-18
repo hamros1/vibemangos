@@ -30,6 +30,7 @@ import dmangos.world.packets : ServerLevelUpInfo;
 import dmangos.world.defines;
 public import dmangos.world.inventory : ItemRecord, parseNumbers;
 import dmangos.world.inventory : Inventory, InventoryOwner, Item;
+public import dmangos.world.money : Copper; // the purse is Copper
 import dmangos.world.playercreate : KnownAbilities, KnownSkill, NewSkill, NewSpell;
 import dmangos.world.spells : SpellEffect;
 import dmangos.world.stats;
@@ -437,17 +438,29 @@ final class Player : InventoryOwner
         return inventory.count(entry) >= count;
     }
 
-    /// `PLAYER_FIELD_COINAGE`
-    @property uint money() const
+    /// The purse (`PLAYER_FIELD_COINAGE`).
+    @property Copper money() const
     {
-        return values[PLAYER_FIELD_COINAGE];
+        return Copper(values[PLAYER_FIELD_COINAGE]);
     }
 
-    /// Adds `amount` (or takes it, if negative), within 0 and the most money a player may have.
-    void modifyMoney(long amount)
+    /// Whether the purse holds `cost`.
+    bool canAfford(const Copper cost) const
     {
-        enum long maxMoney = int.max;
-        values.set!PLAYER_FIELD_COINAGE(cast(uint) clamp(money + amount, 0, maxMoney));
+        return money >= cost;
+    }
+
+    /// Takes `cost` from the purse, which must hold it (`canAfford`, asked first).
+    void pay(const Copper cost)
+    in (canAfford(cost), "paying more than the purse holds")
+    {
+        values.set!PLAYER_FIELD_COINAGE((money - cost).amount);
+    }
+
+    /// Puts `amount` in the purse, which holds at most `Copper.max`.
+    void receive(const Copper amount)
+    {
+        values.set!PLAYER_FIELD_COINAGE((money + amount).amount);
     }
 
     /**

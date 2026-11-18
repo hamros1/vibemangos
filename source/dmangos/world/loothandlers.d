@@ -9,9 +9,12 @@
  */
 module dmangos.world.loothandlers;
 
+import dmangos.world.money : Copper;
+
 /// See the module documentation.
 mixin template LootHandlers()
 {
+    import dmangos.world.money : Copper;
     import std.algorithm.comparison : max;
     import dmangos.log : info;
     import dmangos.world.creature : Creature;
@@ -619,7 +622,7 @@ private:
     /// See `Looter.receiveMoney`.
     package void lootMoney(uint copper)
     {
-        player.modifyMoney(copper);
+        player.receive(Copper(copper));
         flushPlayerChanges();
     }
 
@@ -779,7 +782,7 @@ unittest
     assert(opcodesOf(window).canFind(Opcode.SMSG_LOOT_RESPONSE));
     assert(me.values.get!UNIT_FIELD_FLAGS & UnitFlags.looting);
     anduin.write(Opcode.CMSG_LOOT_MONEY, null);
-    assert(me.money == money + 10);
+    assert(me.money == money + Copper(10));
     anduin.write(Opcode.CMSG_AUTOSTORE_LOOT_ITEM, ClientLootSlot(0));
     const took = opcodesOf(anduin.read());
     assert(took.canFind(Opcode.SMSG_ITEM_PUSH_RESULT) && took.canFind(Opcode.SMSG_LOOT_REMOVED));

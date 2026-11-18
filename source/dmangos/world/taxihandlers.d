@@ -11,9 +11,12 @@
  */
 module dmangos.world.taxihandlers;
 
+import dmangos.world.money : Copper;
+
 /// See the module documentation.
 mixin template TaxiHandlers()
 {
+    import dmangos.world.money : Copper;
     import dmangos.bytes : ByteReader, ByteWriter;
     import dmangos.log : info;
     import dmangos.vmap.math : Vector3;
@@ -174,12 +177,12 @@ mixin template TaxiHandlers()
         const display = mountTemplate is null ? 0 : chooseDisplay(*mountTemplate, map.random);
         if (!display)
             return sendTaxiReply(TaxiReply.unspecified);
-        if (player.money < flight.cost)
+        if (!player.canAfford(Copper(flight.cost)))
             return sendTaxiReply(TaxiReply.notEnoughMoney);
 
         stopAttack(false);
         cancelTrade(true);
-        player.modifyMoney(-cast(long) flight.cost);
+        player.pay(Copper(flight.cost));
         sendTaxiReply(TaxiReply.ok);
         // Mounted, flagged, along the path from where the player stands.
         player.values.set!UNIT_FIELD_MOUNTDISPLAYID(display);
@@ -297,7 +300,7 @@ unittest
 
     auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f));
     auto me = cast(Player) anduin.session.character;
-    me.modifyMoney(500);
+    me.receive(Copper(500));
     auto master = cast(Creature) context.map(0).findObject(makeGuid(HighGuid.unit, creatureTrainer, trainerSpawn));
     master.values.set!UNIT_NPC_FLAGS(master.values.get!UNIT_NPC_FLAGS | NpcFlag.flightMaster);
     anduin.read();
@@ -323,7 +326,7 @@ unittest
     learnNode(me.data.taxiMask, 5);
     anduin.write(Opcode.CMSG_ACTIVATETAXI, flyTo(5));
     assert(opcodesOf(anduin.read()).canFind(Opcode.SMSG_MONSTER_MOVE) && anduin.session.inWorld.flying);
-    assert(me.money == 500 - 120 && me.values.get!UNIT_FIELD_MOUNTDISPLAYID != 0);
+    assert(me.money == Copper(500 - 120) && me.values.get!UNIT_FIELD_MOUNTDISPLAYID != 0);
     assert(me.values.get!UNIT_FIELD_FLAGS & UnitFlags.taxiFlight);
     // 320 yards at 32 a second: about 10 s; half way it is in the air, half way along.
     anduin.session.update(5000.msecs);
