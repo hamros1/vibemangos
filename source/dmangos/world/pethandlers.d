@@ -478,6 +478,34 @@ mixin template PetHandlers()
         deliver(Opcode.SMSG_PET_ACTION_FEEDBACK, [cast(ubyte) feedback]);
     }
 
+    /// The pet out learns (or forgets) `spell` (a game master's doing); its bar is sent again and it is saved.
+    package void petLearnsSpell(uint spell, bool learns)
+    {
+        auto state = petState();
+        const info = context.data.spells.spell(spell);
+        if (state is null || info is null)
+            return;
+        if (learns)
+            state.learn(spell, info.isPassive, isAutocastable(*info));
+        else
+            state.unlearn(spell);
+        sendPetSpells();
+        writePet(PetSlot.current);
+    }
+
+    /// The pet out is named `name` (a game master's doing, without the client's name rules).
+    package void renamePetTo(string name)
+    {
+        auto state = petState();
+        if (state is null)
+            return;
+        state.name = name;
+        state.renamed = true;
+        pet_.values.set!UNIT_FIELD_PET_NAME_TIMESTAMP(cast(uint) context.unixTime);
+        map.flushObjectChanges(pet_);
+        writePet(PetSlot.current);
+    }
+
     /// What `petcreateinfo_spell` gives a new pet of `entry` (a spell that
     /// teaches a pet spell gives that spell).
     private void learnCreateSpells(PetState state, uint entry)

@@ -237,6 +237,20 @@ final class PetState
         return false;
     }
 
+    /// Forgets a spell, and takes it off the bar.
+    void unlearn(uint spell)
+    {
+        import std.algorithm.mutation : remove;
+
+        foreach (i, s; spells)
+            if (s.spell == spell)
+            {
+                spells = spells.remove(i);
+                break;
+            }
+        bar.removeSpell(spell);
+    }
+
     /// Learns a spell, and puts it on the bar unless passive.
     void learn(uint spell, bool passive, bool autocastable)
     {

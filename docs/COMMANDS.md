@@ -71,7 +71,7 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 * Arguments are read strictly: a number written wrong ("12abc", "abc") or a missing argument shows
   the command's help, where ArcEmu's C parsing read "12abc" as 12 and "abc" as 0 and went on.
 
-## Working (217)
+## Working (221)
 
 | Command | Letter | Help |
 |---|---|---|
@@ -220,6 +220,10 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 | `.quest status` | `2` | Lists the status of quest <id> |
 | `.quest spawn` | `2` | Port to spawn location for quest <id> |
 | `.quest start` | `2` | Starts quest <id> |
+| `.pet createpet` | `m` | Creates a pet with <entry>. |
+| `.pet renamepet` | `m` | Renames a pet to <name>. |
+| `.pet addspell` | `m` | Teaches pet <spell>. |
+| `.pet removespell` | `m` | Removes pet spell <spell>. |
 | `.recall list` | `q` | List recall locations |
 | `.recall port` | `q` | Port to recalled location |
 | `.recall add` | `q` | Add recall location |
@@ -293,7 +297,7 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 | `.removesickness` | `m` | Removes ressurrection sickness from the target |
 | `.fixscale` | `m` |  |
 
-## Not yet implemented (81)
+## Not yet implemented (77)
 
 These answer "Not yet implemented.", as ArcEmu's `HandleNYICommand` does: their systems (AI agents
 and waypoint editing, formations and possession, guilds, pets, honor, battlegrounds and arenas,
@@ -364,10 +368,6 @@ GM tickets, transports, GM invisibility, flying) do not exist yet.
 | `.cheat flyspeed` | `m` | Modifies fly speed. |
 | `.cheat stack` | `m` | Enables aura stacking cheat. |
 | `.quest load` | `2` | Loads quests from database |
-| `.pet createpet` | `m` | Creates a pet with <entry>. |
-| `.pet renamepet` | `m` | Renames a pet to <name>. |
-| `.pet addspell` | `m` | Teaches pet <spell>. |
-| `.pet removespell` | `m` | Removes pet spell <spell>. |
 | `.pet spawnbot` | `a` | .pet spawnbot <type> - spawn a helper bot for your aid |
 | `.guild create` | `m` | Creates a guild. |
 | `.guild rename` | `m` | Renames a guild. |

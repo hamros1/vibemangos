@@ -196,6 +196,80 @@ private:
     // Players
     // -----------------------------------------------------------------------
 
+    /// `.pet createpet`: its body does nothing (it was disabled), so the command answers nothing.
+    bool handleCreatePetCommand(Rest args = Rest.init)
+    {
+        return true;
+    }
+
+    /// `atol` of a command's argument: its leading digits (after spaces and a sign), 0 if none.
+    private static long leadingNumber(string text)
+    {
+        import std.ascii : isDigit;
+
+        size_t n;
+        while (n < text.length && (text[n] == ' ' || text[n] == '\t'))
+            ++n;
+        bool negative;
+        if (n < text.length && (text[n] == '-' || text[n] == '+'))
+            negative = text[n++] == '-';
+        long value;
+        while (n < text.length && text[n].isDigit && value < uint.max)
+            value = value * 10 + (text[n++] - '0');
+        return negative ? -value : value;
+    }
+
+    /// `.pet addspell <spell>`: the selected player's pet learns a spell.
+    bool handleAddPetSpellCommand(Rest args = Rest.init)
+    {
+        return petSpellCommand(args, true);
+    }
+
+    /// `.pet removespell <spell>`: the selected player's pet forgets a spell (answered as adding is).
+    bool handleRemovePetSpellCommand(Rest args = Rest.init)
+    {
+        return petSpellCommand(args, false);
+    }
+
+    private bool petSpellCommand(string args, bool learns)
+    {
+        auto plr = getSelectedChar(false);
+        if (plr is null)
+            return false;
+        if (plr.ownPet is null)
+        {
+            redSystemMessage(format!"%s has no pet."(plr.player.data.name));
+            return true;
+        }
+        const id = cast(uint) leadingNumber(args);
+        if (!id || context.data.spells.spell(id) is null)
+        {
+            redSystemMessage("Invalid spell id requested.");
+            return true;
+        }
+        plr.petLearnsSpell(id, learns);
+        greenSystemMessage(format!"Added spell %u to %s's pet."(id, plr.player.data.name));
+        return true;
+    }
+
+    /// `.pet renamepet <name>`: the player's own pet is renamed.
+    bool handleRenamePetCommand(Rest args = Rest.init)
+    {
+        if (ownPet is null)
+        {
+            redSystemMessage("You have no pet.");
+            return true;
+        }
+        if (args.length < 1)
+        {
+            redSystemMessage("You must specify a name.");
+            return true;
+        }
+        greenSystemMessage(format!"Renamed your pet to %s."(args.text));
+        renamePetTo(args.text);
+        return true;
+    }
+
     bool handleModifyLevelCommand(uint level = 0)
     {
         auto plr = getSelectedChar(true);

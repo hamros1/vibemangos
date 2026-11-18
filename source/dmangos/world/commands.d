@@ -1008,3 +1008,18 @@ unittest
     gm.say(".cheat triggerpass on");
     assert(systemMessages(gm.read()).count(activated) == 2);
 }
+
+/// `.pet`: without a pet, its commands say so as ArcEmu's do; `createpet` (disabled there) answers nothing.
+unittest
+{
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto gm = loggedIn(context, db, 9, "Jaina", Position(-8940, -132, 83.5f), AccountLevel.gameMaster);
+    gm.read();
+    gm.say(".pet renamepet Fluffy");
+    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTRED ~ "You have no pet.|r"]);
+    gm.say(".pet addspell 133");
+    assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTRED ~ "Jaina has no pet.|r"]);
+    gm.say(".pet createpet 299");
+    assert(systemMessages(gm.read()).length == 0);
+}
