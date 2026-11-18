@@ -57,7 +57,8 @@
     spells.
   * Enchanting is done: permanent enchantments, and temporary ones (stones, oils, poisons) that
     run down and expire. Crafting raises professions.
-  * Not yet: enchantments' procs (poisons' effects), enchanting another player's item through
+  * Weapon enchantments' procs (poisons, Crusader) are done.
+  * Not yet: enchanting another player's item through
     trade, readable items and wrapping. Loot in items is done (`CMSG_OPEN_ITEM`). Dying and the spirit healer wear gear
   down; a broken worn item's stats come back when it is repaired.
 * **GM system:** commands that need missing systems answer "Not yet implemented."

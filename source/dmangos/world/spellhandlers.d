@@ -2353,6 +2353,20 @@ unittest
         assert(keeper.values.get!UNIT_FIELD_HEALTH == struck - 25, "the proc");
         anduin.session.inWorld.castItemCombatSpells(keeper, AttackType.offHand);
         assert(keeper.values.get!UNIT_FIELD_HEALTH == struck - 25, "not for the other hand");
+
+        // An enchantment instead (a poison: its spell 100% of the time, by its amount): it procs too.
+        import dmangos.world.enchantments : EnchantmentEffect, EnchantmentType;
+
+        context.data.items.edit(itemSword).details.spells[0].id = 0;
+        enum uint poison = 9001;
+        context.data.enchantmentEffects[poison] = [EnchantmentEffect(EnchantmentType.combatSpell, 100, smite),
+            EnchantmentEffect.init, EnchantmentEffect.init];
+        auto sword = me.inventory.equipped(equipmentSlotMainhand);
+        anduin.session.inWorld.enchantItem(sword.fullGuid, poison, true, 1800);
+        anduin.read();
+        const poisoned = keeper.values.get!UNIT_FIELD_HEALTH;
+        anduin.session.inWorld.castItemCombatSpells(keeper, AttackType.mainHand);
+        assert(keeper.values.get!UNIT_FIELD_HEALTH == poisoned - 25, "the enchantment's proc");
     }
 }
 

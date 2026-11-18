@@ -445,7 +445,8 @@ What works now:
     * A temporary one (sharpening stones, weightstones, oils, poisons) lasts the spell's time, an hour
       if it gives none. It runs down, is saved with its item, and comes off when the time is up; the
       client shows the time left.
-    * Poisons' effects are procs, not done yet.
+    * A weapon enchantment that casts a spell on a hit (a poison, Crusader, Fiery Weapon) does so by its
+      procs a minute at the weapon's speed, else its own percent, else the weapon's normal chance.
   * **Crafting** (an item made, an enchantment) may raise the profession: always while the recipe is
     orange, three times in four yellow, one in four green, never grey. Items with loot (clams, sacks, boxes of
     supplies) open in the bags (`CMSG_OPEN_ITEM`, unless a lock needs picking) to their

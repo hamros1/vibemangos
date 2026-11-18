@@ -362,6 +362,7 @@ final class WorldData
     uint[2][uint] formationSlots;                   /// a formation member's spawn -> (its group, its slot)
     uint[3][uint] propertyEnchantments;             /// a random property's enchantments (`ItemRandomProperties.dbc`)
     EnchantmentEffect[3][uint] enchantmentEffects;  /// an enchantment's effects (`SpellItemEnchantment.dbc`)
+    float[uint] enchantProcRates;                   /// `spell_proc_item_enchant`: an enchantment proc's procs a minute, by spell
     ubyte[2][uint] gameObjectBattleEvents;          /// `gameobject_battleground`: ditto
     string[uint] serverStrings;                     /// `mangos_string`'s default texts
     GhostEntrance[uint] ghostEntrances;             /// `instance_template`'s ghost entrances, by instance map
@@ -928,6 +929,8 @@ final class WorldData
     {
         foreach (row; world.query!"SELECT entry, ench, chance FROM item_enchantment_template"())
             randomProperties[row.get!uint(0)] ~= RandomEnchantment(row.get!uint(1), row.get!float(2));
+        foreach (row; world.query!"SELECT entry, ppmRate FROM spell_proc_item_enchant"())
+            enchantProcRates[row.get!uint(0)] = row.get!float(1);
         setEnchantments(client);
         loot.randomProperties = cast(const(RandomEnchantment[])[uint]) randomProperties;
         info!"loaded %s random property lists, %s enchantments"(randomProperties.length, enchantmentEffects.length);

@@ -10,7 +10,8 @@
  *
  * What an enchantment does (`SpellItemEnchantment.dbc`) is up to three effects. Worn, these count:
  * a stat (its `ITEM_MOD_*` type and amount), a resistance (school and amount) and weapon damage
- * (added to the weapon's). Equip spells, procs and totems are not applied yet.
+ * (added to the weapon's). An equip spell is on the wearer while the item is worn, and a combat spell
+ * may be cast when the weapon hits (`castItemCombatSpells`). Totems are not applied yet.
  */
 module dmangos.world.enchantments;
 

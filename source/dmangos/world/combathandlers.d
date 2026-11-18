@@ -485,6 +485,11 @@ private:
      * After a hit: each chance-on-hit spell of the unbroken items worn
      * (a weapon only for its own hand's swings) is cast, by its procs a minute at the weapon's speed
      * (speed * rate / 600 percent) or else the spell's own chance.
+     *
+     * Then the swinging weapon's enchantments of the combat-spell kind (poisons, Crusader, Fiery Weapon):
+     * each by its procs a minute (`spell_proc_item_enchant`) at the weapon's speed, else the enchantment's
+     * amount as a percent, else the weapon's normal chance (its speed in seconds times 1.8, 1.6 off hand).
+     * Each spell picks its own targets: a buff lands on the player, a poison on the victim.
      */
     package void castItemCombatSpells(Creature victim, AttackType type)
     {
@@ -515,6 +520,31 @@ private:
                 const chance = s.ppmRate > 0 ? speed * s.ppmRate / 600.0f : float(spell.casting.procChance);
                 if (uniform01(map.random) * 100 < chance)
                     procs ~= s.id;
+            }
+            if (!weaponSlot || slot != own)
+                continue;
+            import dmangos.world.enchantments : EnchantmentType, enchantmentSlots;
+
+            foreach (e; 0 .. enchantmentSlots)
+            {
+                const effects = item.enchantment(e) in context.data.enchantmentEffects;
+                if (effects is null)
+                    continue;
+                foreach (ref effect; *effects)
+                {
+                    if (effect.type != EnchantmentType.combatSpell || context.data.spells.spell(effect.arg) is null)
+                        continue;
+                    const speed = item.proto.details.delay;
+                    float chance;
+                    if (const ppm = effect.arg in context.data.enchantProcRates)
+                        chance = speed * *ppm / 600.0f;
+                    else if (effect.amount)
+                        chance = effect.amount;
+                    else
+                        chance = speed * (type == AttackType.offHand ? 1.6f : 1.8f) / 1000.0f;
+                    if (uniform01(map.random) * 100 < chance)
+                        procs ~= effect.arg;
+                }
             }
         }
         foreach (id; procs)
