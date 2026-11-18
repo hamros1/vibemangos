@@ -48,6 +48,9 @@ enum uint mailBodyItem = 8383;
 /// The postage of a letter: 30 copper.
 enum uint postage = 30;
 
+/// The most money a letter can carry: what a purse can hold (`Player.modifyMoney` keeps it under `int.max`).
+enum uint maxMailMoney = int.max;
+
 /// See the module documentation.
 mixin template MailHandlers()
 {
@@ -120,7 +123,9 @@ private:
             return sendMailResult(0, MailAction.send, MailError.recipientNotFound);
         if (receiver == player.data.guid)
             return sendMailResult(0, MailAction.send, MailError.cannotSendToSelf);
-        if (player.money < money + postage)
+        // In 64 bits: a uint sum near uint.max wraps, and a wrapped sum would pass this check for free.
+        const ulong cost = ulong(money) + postage;
+        if (money > maxMailMoney || player.money < cost)
             return sendMailResult(0, MailAction.send, MailError.notEnoughMoney);
         const raceAccount = context.database.characterRaceAccount(receiver);
         if (context.client.teamForRace(cast(ubyte) raceAccount[0]) != context.client.teamForRace(player.data.race)
@@ -136,7 +141,7 @@ private:
                 return sendMailResult(0, MailAction.send, MailError.attachmentInvalid);
         }
         sendMailResult(0, MailAction.send, MailError.ok);
-        player.modifyMoney(-cast(long)(money + postage));
+        player.modifyMoney(-cast(long) cost);
         MailRecord mail;
         mail.sender = player.data.guid;
         mail.receiver = receiver;
@@ -455,6 +460,27 @@ unittest
     anduin.write(Opcode.CMSG_SEND_MAIL, send.data);
     assert(opcodesOf(anduin.read()).canFind(Opcode.SMSG_SEND_MAIL_RESULT));
     assert(a.money == 60 && a.inventory.count(itemJerky) == 0, "the postage, the money and the jerky are gone");
+
+    // Money near uint.max: money + postage wraps to almost nothing in 32 bits. Refused, nothing taken or sent.
+    {
+        ByteWriter greedy;
+        greedy.put(mailbox);
+        greedy.putCString("jaina");
+        greedy.putCString("Gold");
+        greedy.putCString("");
+        greedy.put(41u);
+        greedy.put(0u);
+        greedy.put(0UL);
+        greedy.put(uint.max - postage + 1); // + 30 is 0 in 32 bits
+        greedy.put(0u);
+        greedy.put(0UL);
+        greedy.put(ubyte(0));
+        const mailsBefore = db.loadMail(j.data.guid).length;
+        anduin.write(Opcode.CMSG_SEND_MAIL, greedy.data);
+        anduin.read();
+        assert(a.money == 60, "nothing taken");
+        assert(db.loadMail(j.data.guid).length == mailsBefore, "and no letter with money in it");
+    }
 
     ubyte[] listRequest()
     {
