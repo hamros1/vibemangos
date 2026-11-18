@@ -892,6 +892,57 @@ private:
         ticketResult(Opcode.SMSG_GMTICKET_SYSTEMSTATUS, context.gmTicketsOn ? 1 : 0);
     }
 
+    /// Whether the client's settings of `type` are the character's (else the account's): types 1, 3, 5, 6, 7.
+    private static bool perCharacterData(uint type) pure nothrow @nogc @safe
+    {
+        enum uint perCharacterMask = 0xEA;
+        return ((1u << type) & perCharacterMask) != 0;
+    }
+
+    /// The client saves its settings of a type (zlib-compressed; an empty size erases them).
+    @Handles(Opcode.CMSG_UPDATE_ACCOUNT_DATA, WorldState.inWorld)
+    void handleUpdateAccountData(ref ByteReader reader)
+    {
+        import std.zlib : uncompress;
+
+        const type = reader.read!uint, size = reader.read!uint;
+        if (type >= 8 || size > 0xFFFF)
+            return;
+        const perCharacter = perCharacterData(type);
+        const owner = perCharacter ? cast(uint) player.guid : account.id;
+        const(ubyte)[] data;
+        if (size)
+        {
+            try
+                data = cast(const(ubyte)[]) uncompress(reader.readBytes(reader.remaining), size);
+            catch (Exception e)
+                return;
+            // Kept as the text it is, without its final NUL.
+            while (data.length && data[$ - 1] == 0)
+                data = data[0 .. $ - 1];
+        }
+        context.database.saveAccountData(perCharacter, owner, type, context.unixTime, data);
+    }
+
+    /// The client asks for its settings of a type: `SMSG_UPDATE_ACCOUNT_DATA`, compressed.
+    @Handles(Opcode.CMSG_REQUEST_ACCOUNT_DATA, WorldState.inWorld)
+    void handleRequestAccountData(ref ByteReader reader)
+    {
+        import std.zlib : compress;
+
+        const type = reader.read!uint;
+        if (type >= 8)
+            return;
+        const perCharacter = perCharacterData(type);
+        const data = context.database.accountData(perCharacter, perCharacter ? cast(uint) player.guid : account.id, type);
+        ByteWriter w;
+        w.put(type);
+        w.put(cast(uint) data.length);
+        if (data.length)
+            w.putBytes(compress(data));
+        deliver(Opcode.SMSG_UPDATE_ACCOUNT_DATA, w.data);
+    }
+
     /// The client asks for an item's name (and its inventory type).
     @Handles(Opcode.CMSG_ITEM_NAME_QUERY, WorldState.inWorld)
     void handleItemNameQuery(ref ByteReader reader)
@@ -1826,4 +1877,35 @@ unittest
     ignored.put(jaina.session.character.guid);
     anduin.write(Opcode.CMSG_CHAT_IGNORED, ignored.data);
     assert(opcodesOf(jaina.read()).canFind(Opcode.SMSG_MESSAGECHAT), "she hears she is ignored");
+}
+
+/// The client's settings: saved compressed, given back the same.
+unittest
+{
+    import std.zlib : compress, uncompress;
+    import dmangos.bytes : ByteReader, ByteWriter;
+    import dmangos.world.movement : Position;
+    import dmangos.world.opcodes : Opcode;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f));
+    anduin.read();
+    const text = "MACRO 1 \"Charge\" Ability_Warrior_Charge\n/cast Charge\nEND\n\0";
+    ByteWriter up;
+    up.put(4u); // the account's macros
+    up.put(cast(uint) text.length);
+    up.putBytes(compress(text));
+    anduin.write(Opcode.CMSG_UPDATE_ACCOUNT_DATA, up.data);
+    ByteWriter ask;
+    ask.put(4u);
+    anduin.write(Opcode.CMSG_REQUEST_ACCOUNT_DATA, ask.data);
+    auto back = anduin.read();
+    assert(back.length == 1 && back[0].opcode == Opcode.SMSG_UPDATE_ACCOUNT_DATA);
+    auto r = ByteReader(back[0].body_);
+    assert(r.read!uint == 4);
+    const size = r.read!uint;
+    assert(cast(string) uncompress(r.readBytes(r.remaining), size) == text[0 .. $ - 1], "the same macros");
 }

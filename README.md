@@ -240,6 +240,8 @@ What works now:
     on this node or another; friends hear of a login and a logout (across nodes too); a friend of
     the other faction only with `allow_two_side_add_friend` (or GM permissions). An ignored
     player's whispers are refused (`CHAT_MSG_IGNORED`), and so are its group invitations.
+  * **Client settings:** what the client saves on the server (macros, key bindings, ...) is kept per
+    account (`account_data`) or per character (`character_account_data`) and given back on request.
   * **Chat:** say, yell and emotes reach those in range; whispers reach anyone online of the same
     faction; party, raid, raid leader and raid warning messages reach the group. `/afk` and `/dnd`
     set the flag, the chat tag and the reply to whispers. `/who` lists who is online, filtered by

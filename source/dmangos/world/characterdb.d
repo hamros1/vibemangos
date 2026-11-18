@@ -1100,6 +1100,36 @@ final class CharacterStatements
         characters.execute!"INSERT INTO bugreport (type, content) VALUES (?, ?)"(type, content);
     }
 
+    /// See `WorldDatabase.saveAccountData`.
+    void saveAccountData(bool perCharacter, uint owner, uint type, long time, const(ubyte)[] data)
+    {
+        if (perCharacter)
+        {
+            characters.execute!"DELETE FROM character_account_data WHERE guid = ? AND type = ?"(owner, type);
+            if (data.length)
+                characters.execute!"INSERT INTO character_account_data (guid, type, time, data) VALUES (?, ?, ?, ?)"(
+                    owner, type, time, cast(const(char)[]) data);
+        }
+        else
+        {
+            characters.execute!"DELETE FROM account_data WHERE account = ? AND type = ?"(owner, type);
+            if (data.length)
+                characters.execute!"INSERT INTO account_data (account, type, time, data) VALUES (?, ?, ?, ?)"(
+                    owner, type, time, cast(const(char)[]) data);
+        }
+    }
+
+    /// See `WorldDatabase.accountData`.
+    const(ubyte)[] accountData(bool perCharacter, uint owner, uint type)
+    {
+        auto rows = perCharacter
+            ? characters.query!"SELECT data FROM character_account_data WHERE guid = ? AND type = ?"(owner, type)
+            : characters.query!"SELECT data FROM account_data WHERE account = ? AND type = ?"(owner, type);
+        foreach (row; rows)
+            return cast(const(ubyte)[]) row.get!string(0);
+        return null;
+    }
+
     /// See `WorldDatabase.tickets`.
     TicketRecord[] tickets(bool all)
     {

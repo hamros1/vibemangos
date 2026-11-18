@@ -665,6 +665,11 @@ interface WorldDatabase
     /// A bug report or suggestion from a client (`bugreport`).
     void saveBugReport(string type, string content);
 
+    /// The client's saved settings of `type` (macros, key bindings, ...): the account's (`account_data`) or,
+    /// `perCharacter`, the character's (`character_account_data`); `owner` the account or character.
+    void saveAccountData(bool perCharacter, uint owner, uint type, long time, const(ubyte)[] data);
+    const(ubyte)[] accountData(bool perCharacter, uint owner, uint type); /// ditto
+
     /// GM tickets (`gm_tickets`): every ticket, the open ones only (`closed` too with `all`).
     TicketRecord[] tickets(bool all);
     /// A new ticket; returns its id.
@@ -925,6 +930,14 @@ final class MySqlWorldDatabase : WorldDatabase
     }
     TicketRecord[] tickets(bool all) { return statements.tickets(all); }
     void saveBugReport(string type, string content) { statements.saveBugReport(type, content); }
+    void saveAccountData(bool perCharacter, uint owner, uint type, long time, const(ubyte)[] data)
+    {
+        statements.saveAccountData(perCharacter, owner, type, time, data);
+    }
+    const(ubyte)[] accountData(bool perCharacter, uint owner, uint type)
+    {
+        return statements.accountData(perCharacter, owner, type);
+    }
     uint addTicket(TicketRecord ticket) { return statements.addTicket(ticket); }
     void updateTicketText(uint id, string text, long now) { statements.updateTicketText(id, text, now); }
     void closeTicket(uint id) { statements.closeTicket(id); }
@@ -1137,6 +1150,19 @@ final class MemoryWorldDatabase : WorldDatabase
     }
 
     string[2][] bugReports;
+    const(ubyte)[][string] accountDataRows;
+    void saveAccountData(bool perCharacter, uint owner, uint type, long time, const(ubyte)[] data)
+    {
+        import std.format : format;
+
+        accountDataRows[format!"%s:%s:%s"(perCharacter, owner, type)] = data.idup;
+    }
+    const(ubyte)[] accountData(bool perCharacter, uint owner, uint type)
+    {
+        import std.format : format;
+
+        return accountDataRows.get(format!"%s:%s:%s"(perCharacter, owner, type), null);
+    }
     void saveBugReport(string type, string content) { bugReports ~= [type, content]; }
     TicketRecord[] ticketRows;
     TicketRecord[] tickets(bool all)
