@@ -945,6 +945,8 @@ exclude.
 * [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): how the programs and modules fit together, the
   life of a packet, session states, static data, databases, entering the world, update fields.
 * [docs/DESIGN.md](docs/DESIGN.md): the design of the world server: why its parts are as they are.
+* [docs/DLANG.md](docs/DLANG.md): the rules the D code follows (types over integers, generated over
+  listed, exhaustive over silent, values and handles, safety), with where each is applied.
 * [docs/CLUSTER.md](docs/CLUSTER.md): several world server nodes simulating one world: regions,
   leases, replication, migration, failure handling.
 * [docs/SERVICES.md](docs/SERVICES.md): cluster services (chat channels, the battleground queue):
