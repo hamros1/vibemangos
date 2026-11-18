@@ -1,6 +1,7 @@
 {
 	"name": "dmangos",
 	"description": "A World of Warcraft 1.12 (vanilla) server written in D.",
+	"license": "AGPL-3.0-or-later",
 	"targetPath": "bin",
 	"preBuildCommands": [
 		"make -s -C $PACKAGE_DIR/thirdparty"

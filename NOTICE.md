@@ -5,10 +5,10 @@ whose copyright and licences apply to those parts. This file is where that is re
 documentation describes how dmangos works on its own terms; [PROVENANCE.md](PROVENANCE.md) lists, module
 by module, which functions of these projects each one reproduces.
 
-> **Licence of dmangos itself: not yet chosen.** The derived parts below come from works licensed under
-> the GNU GPL (version 2 or later) and the GNU AGPL (version 3 or later), so dmangos as a whole must be
-> distributed under terms compatible with both; the AGPL version 3 (or later) is the licence that meets
-> both. The project owner decides and adds the licence file.
+> **Licence of dmangos:** the GNU Affero General Public License, version 3 or (at your option) any later
+> version (`AGPL-3.0-or-later`); the text is in [LICENSE](LICENSE). The derived parts below come from works
+> licensed under the GNU GPL (version 2 or later) and the GNU AGPL (version 3 or later), and this is the
+> licence that meets both. Their copyright notices stay with them, as recorded below.
 
 ## Derived works
 

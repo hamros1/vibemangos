@@ -985,8 +985,12 @@ See [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Licence and attribution
 
+dmangos is licensed under the GNU Affero General Public License, version 3 or (at your option) any
+later version; see [LICENSE](LICENSE). Anyone who runs a modified server for players to connect to
+must offer those players its source.
+
 Parts of dmangos are derived from other projects, whose copyright and licences apply to those
 parts; bundled third-party code (Recast & Detour) keeps its own licence. [NOTICE.md](NOTICE.md)
-records these, the trademark notice, and the state of dmangos's own licence.
+records these and the trademark notice.
 [PROVENANCE.md](PROVENANCE.md) lists, module by module, where each module's behaviour was taken
 from.
