@@ -12,6 +12,8 @@
  */
 module dmangos.events;
 
+@safe: // the compiler checks every function here; the @trusted ones say why
+
 /// See the module documentation.
 struct EventQueue(T)
 {

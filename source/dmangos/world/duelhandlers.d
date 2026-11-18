@@ -75,8 +75,10 @@ private:
             return;
         const a = player.position, b = other.player.position;
         const at = [(a.x + b.x) / 2, (a.y + b.y) / 2, a.z];
-        static uint flags;
-        const spawnGuid = (uint(context.nodeId) << 20) | (0x80000 + (++flags & 0x7FFFF));
+        import core.atomic : atomicOp;
+
+        static shared uint flags; // one count for the node, whichever thread the duel is on
+        const spawnGuid = (uint(context.nodeId) << 20) | (0x80000 + (atomicOp!"+="(flags, 1) & 0x7FFFF));
         ulong arbiter = makeGuid(HighGuid.gameObject, duelFlagEntry, spawnGuid);
         if (auto template_ = duelFlagEntry in context.data.gameObjectTemplates)
         {

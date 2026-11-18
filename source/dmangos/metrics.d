@@ -10,6 +10,8 @@ module dmangos.metrics;
 import core.memory : GC;
 import core.time : Duration, usecs;
 
+@safe: // the compiler checks every function here; the @trusted ones say why
+
 /// Durations of a series of ticks.
 struct TickStats
 {
@@ -108,8 +110,14 @@ struct GcSnapshot
         const profile = GC.profileStats();
         const stats = GC.stats();
         return GcSnapshot(profile.numCollections, profile.totalPauseTime, profile.maxPauseTime,
-            GC.allocatedInCurrentThread(), stats.usedSize, stats.freeSize);
+            allocatedHere(), stats.usedSize, stats.freeSize);
     }
+}
+
+// The bytes this thread has allocated: a counter druntime reads, though it does not mark the function @safe.
+private ulong allocatedHere() @trusted nothrow
+{
+    return GC.allocatedInCurrentThread();
 }
 
 /// Tick and GC measurements over an interval, reported as one line.

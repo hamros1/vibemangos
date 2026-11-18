@@ -41,20 +41,21 @@ private enum size_t chunkSize = 4 << 20;
 
 private __gshared
 {
-    ubyte* free;      // the rest of the current chunk
+    ubyte* free;      // the rest of the current chunk (only within arenaAllocate's critical section)
     size_t left;
-    size_t placed;    // bytes handed out
-    size_t reserved;  // bytes taken from malloc
 }
 
-private shared Object arenaLock = new Object;
+private shared size_t placed;    // bytes handed out
+private shared size_t reserved;  // bytes taken from malloc
 
 /// `size` bytes in the arena, aligned to `alignment`; never freed.
 void[] arenaAllocate(size_t size, size_t alignment) @trusted
 {
+    import core.atomic : atomicOp;
+
     if (size == 0)
         return null;
-    synchronized (arenaLock)
+    synchronized // one allocation at a time (static data is loaded from more than one thread)
     {
         auto skip = (alignment - cast(size_t) free % alignment) % alignment;
         if (free is null || skip + size > left)
@@ -64,33 +65,39 @@ void[] arenaAllocate(size_t size, size_t alignment) @trusted
             if (free is null)
                 assert(false, "out of memory for static data");
             left = want;
-            reserved += want;
+            atomicOp!"+="(reserved, want);
             skip = (alignment - cast(size_t) free % alignment) % alignment;
         }
         auto block = free + skip;
         free = block + size;
         left -= skip + size;
-        placed += size;
+        atomicOp!"+="(placed, size);
         return block[0 .. size];
     }
 }
 
 /// How much is in the arena, and how much memory it took (for the metrics).
-size_t arenaPlaced() @trusted
+size_t arenaPlaced() @safe
 {
-    synchronized (arenaLock)
-        return placed;
+    import core.atomic : atomicLoad;
+
+    return atomicLoad(placed);
 }
 
 /// ditto
-size_t arenaReserved() @trusted
+size_t arenaReserved() @safe
 {
-    synchronized (arenaLock)
-        return reserved;
+    import core.atomic : atomicLoad;
+
+    return atomicLoad(reserved);
 }
 
-/// Room for `count` values of `T` in the arena, set to `T.init`.
-T[] arenaArray(T)(size_t count) @trusted
+/**
+ * Room for `count` values of `T` in the arena, set to `T.init`. Private: the arena is not scanned by the
+ * collector, so only plain data whose arrays are themselves in the arena (`StaticMap.freeze`) may go in.
+ */
+private T[] arenaArray(T)(size_t count) @trusted
+if (isPlainData!T)
 {
     auto block = cast(T[]) arenaAllocate(count * T.sizeof, T.alignof);
     foreach (ref element; block)

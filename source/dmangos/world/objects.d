@@ -579,7 +579,7 @@ struct UpdateData
  * The zlib level update packets are compressed with (the `Compression` setting: 1, the fastest,
  * by default); set from the configuration at start-up.
  */
-int updateCompression = 1;
+__gshared int updateCompression = 1; // written once at start-up, before any other thread; read after
 
 /**
  * The most bytes of blocks one update packet should carry before it is compressed:

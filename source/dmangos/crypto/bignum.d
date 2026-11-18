@@ -6,6 +6,8 @@ module dmangos.crypto.bignum;
 
 import std.bigint : BigInt;
 
+@safe: // the compiler checks every function here
+
 /// Interprets `bytes` as an unsigned little-endian integer.
 BigInt fromLittleEndian(scope const(ubyte)[] bytes) @safe
 {

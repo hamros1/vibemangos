@@ -11,6 +11,8 @@ module dmangos.hex;
 import std.conv : ConvException;
 import std.exception : enforce;
 
+@safe: // the compiler checks every function here
+
 /// Value of a single hexadecimal digit.
 private ubyte nibble(char c) pure @safe
 {

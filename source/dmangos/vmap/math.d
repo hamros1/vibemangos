@@ -10,6 +10,8 @@ module dmangos.vmap.math;
 
 import std.math : abs, asin, atan2, cos, sin, sqrt;
 
+@safe: // the compiler checks every function here
+
 /// The base tolerance of the fuzzy comparisons.
 enum double fuzzyEpsilon = 0.00001;
 
@@ -280,7 +282,7 @@ struct Ray
      * The distance at which the ray enters the box (0 from inside it), or `float.infinity` if it
      * misses.
      */
-    float intersectionTime(const AABox box) const pure nothrow @nogc @trusted
+    float intersectionTime(const AABox box) const pure nothrow @nogc @safe
     {
         bool inside = true;
         Vector3 location;
@@ -291,14 +293,14 @@ struct Ray
             {
                 location[i] = box.lo[i];
                 inside = false;
-                if (*cast(const uint*)&direction[i]) // any bit set, -0 too
+                if (floatBits(direction[i])) // any bit set, -0 too
                     maxT[i] = (box.lo[i] - origin[i]) / direction[i];
             }
             else if (origin[i] > box.hi[i])
             {
                 location[i] = box.hi[i];
                 inside = false;
-                if (*cast(const uint*)&direction[i])
+                if (floatBits(direction[i]))
                     maxT[i] = (box.hi[i] - origin[i]) / direction[i];
             }
         }
@@ -309,7 +311,7 @@ struct Ray
             plane = 1;
         if (maxT[2] > maxT[plane])
             plane = 2;
-        if (*cast(const uint*)&maxT[plane] & 0x8000_0000) // a negative time: the box is behind
+        if (floatBits(maxT[plane]) & 0x8000_0000) // a negative time: the box is behind
             return float.infinity;
         foreach (i; 0 .. 3)
             if (i != plane)
@@ -323,15 +325,17 @@ struct Ray
 }
 
 /// `floatToRawIntBits`
-uint floatBits(float f) pure nothrow @nogc @trusted
+uint floatBits(float f) pure nothrow @nogc @safe
 {
-    return *cast(uint*)&f;
+    union Bits { float f; uint u; }
+    return Bits(f).u;
 }
 
 /// `intBitsToFloat`
-float bitsFloat(uint i) pure nothrow @nogc @trusted
+float bitsFloat(uint i) pure nothrow @nogc @safe
 {
-    return *cast(float*)&i;
+    union Bits { uint u; float f; }
+    return Bits(i).f;
 }
 
 unittest
@@ -377,6 +381,7 @@ unittest
 // ---------------------------------------------------------------------------
 
 import dmangos.bytes : ByteReader, ByteWriter;
+
 
 /// Three little-endian floats.
 void putVector(ref ByteWriter w, const Vector3 v)

@@ -19,6 +19,8 @@ import std.algorithm.sorting : sort;
 import dmangos.serialization : LengthPrefix;
 import dmangos.world.grid : cellKey;
 
+@safe: // the compiler checks every function here
+
 /// The cell coordinates of the world: 64 grids of 8 cells either side.
 enum int cellMin = -256, cellMax = 256;
 
@@ -221,11 +223,11 @@ bool unionOf(const CellRect a, const CellRect b, out CellRect union_) pure nothr
 }
 
 /// The region of `regions` holding cell (x, y) of `map`, or null.
-inout(Region)* regionAt(return scope inout(Region)[] regions, uint map, int x, int y) pure nothrow @nogc @trusted
+inout(Region)* regionAt(return scope inout(Region)[] regions, uint map, int x, int y) pure nothrow @nogc @safe
 {
-    foreach (ref r; regions)
-        if (r.map == map && r.rect.contains(x, y))
-            return &r;
+    foreach (i; 0 .. regions.length)
+        if (regions[i].map == map && regions[i].rect.contains(x, y))
+            return &regions[i];
     return null;
 }
 
@@ -310,12 +312,13 @@ Move[] rebalance(const Region[] regions, const ulong[uint] cost, const ushort[] 
         if (gap <= tolerance * mean || gap == 0)
             break;
         const(Region)* best;
-        foreach (ref r; regions)
+        foreach (i; 0 .. regions.length)
         {
+            const r = &regions[i];
             const c = cost.get(r.id, 0);
             if (r.owner == busiest && r.state == RegionState.granted && r.id !in moved && r.id !in frozen && c > 0
                 && 2 * c <= gap && (best is null || c > cost.get(best.id, 0)))
-                best = &r;
+                best = r;
         }
         if (best is null)
             break;

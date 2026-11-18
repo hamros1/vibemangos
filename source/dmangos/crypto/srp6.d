@@ -25,6 +25,8 @@ import dmangos.crypto.hash;
 import dmangos.crypto.random : secureRandom;
 import dmangos.hex : hexLiteral;
 
+@safe: // the compiler checks every function here
+
 enum size_t saltLength = 32;       /// Length of the salt `s`.
 enum size_t keyLength = 32;        /// Length of `N`, `A`, `B` and `v`.
 enum size_t privateKeyLength = 19; /// Length of the private ephemerals `a` and `b`.

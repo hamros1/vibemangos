@@ -7,6 +7,8 @@ module dmangos.timer;
 
 import core.time : Duration;
 
+@safe: // the compiler checks every function here
+
 /// See the module documentation.
 struct IntervalTimer
 {

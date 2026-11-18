@@ -661,8 +661,15 @@ MovementGenerator selectMovement(const Creature creature, const WaypointStore wa
     }
 }
 
-/// The next spline id (`splineCounter`): one counter for every unit on the server.
-private uint splineCounter = 1;
+/// The next spline id (`splineCounter`): one counter for every unit on the server, whichever thread moves it.
+private shared uint splineCounter = 1;
+
+private uint nextSplineId() @safe nothrow @nogc
+{
+    import core.atomic : atomicOp;
+
+    return atomicOp!"+="(splineCounter, 1) - 1;
+}
 
 /**
  * Starts a walk (or run) along `points` from where the creature is, tells
@@ -704,7 +711,7 @@ in (points.length > 1)
     const velocity = creature.speeds[walk ? MoveType.walk : MoveType.run];
     if (!(velocity > 0) || creature.immobilized)
         return 0; // it cannot move (rooted or stunned)
-    creature.spline = MoveSpline(points, flags, velocity, splineCounter++, angle);
+    creature.spline = MoveSpline(points, flags, velocity, nextSplineId(), angle);
     creature.positionTimer = 0;
     world.sendToObservers(creature.guid, Opcode.SMSG_MONSTER_MOVE, monsterMove(creature.guid, creature.spline));
     return creature.spline.duration;
@@ -716,7 +723,7 @@ void stopMoving(Creature creature, MotionWorld world)
     if (creature.spline.finalized)
         return;
     creature.movement.position = creature.spline.position;
-    creature.spline = MoveSpline.stopped(splineCounter++);
+    creature.spline = MoveSpline.stopped(nextSplineId());
     creature.movement.flags &= ~(MovementFlags.forward | MovementFlags.splineEnabled);
     world.sendToObservers(creature.guid, Opcode.SMSG_MONSTER_MOVE,
         monsterStop(creature.guid, creature.position, creature.spline.id));

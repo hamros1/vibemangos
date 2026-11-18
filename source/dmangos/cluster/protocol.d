@@ -23,6 +23,8 @@ import dmangos.cluster.ownership : IdKind;
 import dmangos.cluster.regions : Region;
 import dmangos.serialization : deserialize, LengthPrefix, serialize;
 
+@safe: // the compiler checks every function here
+
 /// Changes whenever a message changes; nodes speaking another version are turned away.
 enum ushort protocolVersion = 32; // 32: the battleground raid (a group operation); 31: the channels' forced say
 

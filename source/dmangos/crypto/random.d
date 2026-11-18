@@ -1,8 +1,10 @@
 /// Cryptographically secure random bytes from the operating system.
 module dmangos.crypto.random;
 
+@safe: // the compiler checks every function here
+
 /// Fills `buffer` with secure random bytes.
-void fillSecureRandom(scope ubyte[] buffer) @trusted
+void fillSecureRandom(scope ubyte[] buffer) @safe
 {
     version (Posix)
     {

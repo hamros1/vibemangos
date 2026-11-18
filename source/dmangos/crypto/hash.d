@@ -5,6 +5,8 @@ import std.digest.sha : SHA1;
 import std.string : representation;
 import std.traits : isArray, isSomeString;
 
+@safe: // the compiler checks every function here
+
 /// Length of a SHA-1 digest in bytes.
 enum sha1Length = 20;
 
