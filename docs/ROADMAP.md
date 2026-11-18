@@ -40,9 +40,8 @@
   and hills; doors are not in them, and swimmers path over the ground under the water.
 * **Movement:** the speed check assumes running speed; it must learn mounts, speed auras,
   knockbacks and taxis when those exist.
-* **Instances:** each group gets its own copy of a dungeon, saved with its binds and dead; raids
-  reset `reset_delay` days after they were made rather than at fixed weekly times, encounters are
-  not tracked. In a cluster a dungeon's copies are all on the node owning its one region, and move
+* **Instances:** each group gets its own copy of a dungeon, saved with its binds and dead; a raid's
+  copies reset together at fixed times, with warnings; encounters are not tracked. In a cluster a dungeon's copies are all on the node owning its one region, and move
   with it (their creatures as they were); only after a node's crash do they start from their spawns.
   Battlegrounds: see "Battlegrounds" below.
 * **Groups:** an offline leader is not replaced after a while (that needs a timer). Loot

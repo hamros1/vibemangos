@@ -193,13 +193,16 @@ What works now:
     are saved (`instance`, `character_instance`, `group_instance`, and `creature_respawn` and
     `gameobject_respawn` by instance) and read back at start-up. A dungeon copy nobody has been in
     for `instance_unload_delay_seconds` resets with its binds (or at once from the party menu's Reset
-    Instances, by a player alone or its group's leader, unless someone is inside); a raid copy lasts until its reset
-    (`instance_template.reset_delay` days after it was made), so its players stay locked to it, and
-    one bound to another copy than its group's is turned away. A player logging back in inside a
+    Instances, by a player alone or its group's leader, unless someone is inside); a raid copy lasts until its reset, so its
+    players stay locked to it. A raid's copies all reset together, every `reset_delay` days
+    (`instance_template`) at `instance_reset_time_hour`, counted on from the last (`instance_reset`); a
+    player entering one is told when, is warned an hour, 15, 5 and 1 minute(s) before, and at the reset
+    is sent to its home. One bound to another copy than its group's is turned away.
+    A player logging back in inside a
     dungeon returns to its copy; a GM's `.appear` and `.summon` go into the other's copy, and the
     `.instance` commands and `.character showinstances` work on the copies; a full copy
     (`instance_template.maxPlayers`) turns others away, game masters aside. Not yet: encounter
-    state, resets at fixed weekly times, the reset warnings. In a cluster each dungeon is one region
+    state. In a cluster each dungeon is one region
     and its node hosts every copy of it; a player going in from another node moves there first
     (docs/CLUSTER.md).
   * **Groups:** invitations, parties and raids of up to 40 in eight sub-groups, leaders and
@@ -673,6 +676,7 @@ database at the same time; a cluster's nodes take their ids in blocks from its c
 | `motd` | the message of the day (`@` starts a new line) | a short welcome |
 | `visibility_distance`, `visibility_relocation_lower_limit` | how far players see (yards); how far one moves before what it sees is worked out again | `100`, `10` |
 | `instance_unload_delay_seconds` | an empty dungeon copy resets after so long | `1800` |
+| `instance_reset_time_hour` | the hour of the day (UTC) raids reset at, every `reset_delay` days | `4` |
 | `grid_cleanup_delay_seconds` | a cell no player has been near for so long unloads its creatures and game objects; `0` never | `300` |
 | `listen_range_say`, `listen_range_text_emote`, `listen_range_yell` | how far each is heard (yards) | `25`, `25`, `300` |
 | `allow_two_side_interaction_chat` | whispers between factions | `false` |

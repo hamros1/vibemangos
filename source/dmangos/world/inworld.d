@@ -479,6 +479,7 @@ private:
         updatePetMood(elapsed);
         updateTaxi(cast(int) elapsed.total!"msecs");
         updateTimedQuests();
+        updateRaidReset();
         updateDuel();
         updatePvPTimers(cast(int) elapsed.total!"msecs");
         updateDeath(elapsed);

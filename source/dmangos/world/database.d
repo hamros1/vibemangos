@@ -665,6 +665,11 @@ interface WorldDatabase
     /// A bug report or suggestion from a client (`bugreport`).
     void saveBugReport(string type, string content);
 
+    /// The raids' next resets (`instance_reset`: Unix time, by map); and one's change.
+    long[uint] loadRaidResets();
+    /// ditto
+    void saveRaidReset(uint map, long time);
+
     /// A pet's auras that last (`pet_aura`), all of them (the old rows go); and those saved.
     void savePetAuras(uint pet, const(AuraRecord)[] auras);
     /// ditto
@@ -950,6 +955,8 @@ final class MySqlWorldDatabase : WorldDatabase
     void saveBugReport(string type, string content) { statements.saveBugReport(type, content); }
     ushort[] gameEventStatus() { return statements.gameEventStatus(); }
     void savePetAuras(uint pet, const(AuraRecord)[] auras) { statements.savePetAuras(pet, auras); }
+    long[uint] loadRaidResets() { return statements.loadRaidResets(); }
+    void saveRaidReset(uint map, long time) { statements.saveRaidReset(map, time); }
     AuraRecord[] loadPetAuras(uint pet) { return statements.loadPetAuras(pet); }
     void savePetCooldowns(uint pet, const(ulong[2])[] cooldowns) { statements.savePetCooldowns(pet, cooldowns); }
     ulong[2][] loadPetCooldowns(uint pet) { return statements.loadPetCooldowns(pet); }
@@ -1189,6 +1196,9 @@ final class MemoryWorldDatabase : WorldDatabase
         return accountDataRows.get(format!"%s:%s:%s"(perCharacter, owner, type), null);
     }
     void saveBugReport(string type, string content) { bugReports ~= [type, content]; }
+    long[uint] raidResetRows;
+    long[uint] loadRaidResets() { return raidResetRows.dup; }
+    void saveRaidReset(uint map, long time) { raidResetRows[map] = time; }
     AuraRecord[][uint] petAuraRows;
     ulong[2][][uint] petCooldownRows;
     void savePetAuras(uint pet, const(AuraRecord)[] auras) { petAuraRows[pet] = auras.dup; }

@@ -1445,7 +1445,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 warning!"instance of map %s not made: no instance ids (the coordinator's next block has not come)"(mapId);
                 return 0;
             }
-            const resetAt = raid ? unixTime + data.instanceResetDays.get(mapId, 7) * 86_400 : 0;
+            const resetAt = raid ? raidResetAt(mapId) : 0;
             instances[chosen] = InstanceState(mapId, resetAt, unixTime);
             database.saveInstance(chosen, mapId, resetAt);
             info!"instance %s of map %s made"(chosen, mapId);
@@ -1536,6 +1536,56 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     }
 
     /// The instances saved: their rows, binds and dead, read at start-up.
+    private long[uint] raidResets_;   /// each raid map's next reset (Unix time), as `instance_reset` keeps it
+    private bool raidResetsRead;
+
+    /**
+     * When the raid `mapId`'s copies next reset, all together: at `instance_reset_time_hour` every
+     * `reset_delay` days (`instance_template`), counted on from the last, kept in `instance_reset`.
+     */
+    long raidResetAt(uint mapId)
+    {
+        if (!raidResetsRead)
+        {
+            raidResetsRead = true;
+            raidResets_ = database.loadRaidResets();
+        }
+        const now = unixTime;
+        auto t = raidResets_.get(mapId, 0);
+        if (t > now)
+            return t;
+        const t2 = nextRaidReset(t, now, data.instanceResetDays.get(mapId, 7), config.instanceResetTimeHour);
+        raidResets_[mapId] = t2;
+        database.saveRaidReset(mapId, t2);
+        return t2;
+    }
+
+    /**
+     * The reset after `last` (0: none yet) that is after `now`, every `days` days at `hour` (as the reference
+     * counts them: the first `days` after today).
+     */
+    static long nextRaidReset(long last, long now, uint days, uint hour) pure nothrow @nogc @safe
+    {
+        enum long day = 86_400;
+        const period = (days ? days : 7) * day, diff = (hour % 24) * 3600L;
+        const today = now / day * day;
+        if (last == 0)
+            return today + period + diff;
+        long t = last / day * day;
+        t += ((today - t) / period + 1) * period + diff;
+        while (t <= now)
+            t += period;
+        return t;
+    }
+
+    /// When copy `instance` resets (Unix time); 0 for none (a dungeon, or not a copy known here).
+    long instanceResetAt(uint instance)
+    {
+        if (auto s = instance in instances)
+            return s.resetAt;
+        return 0;
+    }
+
     private void loadInstances()
     {
         loadInstancesOf((uint) => true);
@@ -1776,6 +1826,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 continue; // a battleground's copy closes when it is over and empty (`dmangos.world.battleground`)
             if (state.emptySince == MonoTime.init)
                 state.emptySince = now;
+            if (state.resetAt && time >= state.resetAt)
+                gone ~= id; // a raid's reset time: empty (its players were sent out), it goes now
             else if (now - state.emptySince >= config.instanceUnloadDelay.seconds)
             {
                 // A raid copy outlives its emptiness until its reset (only its map goes); a dungeon's resets.

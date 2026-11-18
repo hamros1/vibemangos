@@ -123,6 +123,8 @@ struct WorldConfig
     @JsonName("instance_ignore_raid") bool instanceIgnoreRaid = false;
     /// `Instance.UnloadDelay` in seconds: an empty dungeon instance goes after so long, and with it its binds.
     @JsonName("instance_unload_delay_seconds") uint instanceUnloadDelay = 1800;
+    /// `Instance.ResetTimeHour`: the hour of the day (server time, UTC) raids reset at.
+    @JsonName("instance_reset_time_hour") uint instanceResetTimeHour = 4;
     /**
      * Has no key in the usual configuration file: check that players move no
      * faster than they can run, give or take `movement_speed_tolerance` (a factor) plus

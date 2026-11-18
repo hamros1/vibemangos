@@ -1094,6 +1094,21 @@ final class CharacterStatements
         characters.execute!"UPDATE characters SET name = ?, at_login = at_login & ~1 WHERE guid = ?"(newName, guid);
     }
 
+    /// See `WorldDatabase.loadRaidResets`.
+    long[uint] loadRaidResets()
+    {
+        long[uint] found;
+        foreach (row; characters.query!"SELECT mapid, resettime FROM instance_reset"())
+            found[row.get!uint(0)] = row.get!long(1);
+        return found;
+    }
+
+    /// See `WorldDatabase.saveRaidReset`.
+    void saveRaidReset(uint map, long time)
+    {
+        characters.execute!"REPLACE INTO instance_reset (mapid, resettime) VALUES (?, ?)"(map, time);
+    }
+
     /// See `WorldDatabase.savePetAuras`.
     void savePetAuras(uint pet, const(AuraRecord)[] auras)
     {

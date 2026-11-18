@@ -396,8 +396,65 @@ private:
         petsOnArrival();
         pvpArrived();
         battlegroundArrived();
+        raidArrived();
         if (auto group = context.groups.of(player.guid))
             group.updatePlayerOutOfRange(this, GroupUpdate.full);
+    }
+
+    private uint raidWarned; /// the last of a raid's reset warnings sent (seconds before it), in this copy
+    private uint raidWarnedIn;
+
+    /// `SMSG_RAID_INSTANCE_MESSAGE`: 4 welcome (more than an hour left), 1 hours, 2 minutes, 3 minutes: leave.
+    private void sendRaidMessage(long left)
+    {
+        ByteWriter w;
+        w.put(uint(left > 3600 ? 4 : left > 900 ? 1 : left > 300 ? 2 : 3));
+        w.put(player.data.map);
+        w.put(cast(uint)(left > 0 ? left : 0));
+        deliver(Opcode.SMSG_RAID_INSTANCE_MESSAGE, w.data);
+    }
+
+    /// In a raid copy: welcomed with the time to its reset as it arrives.
+    private void raidArrived()
+    {
+        const left = context.instanceResetAt(instanceId) - context.unixTime;
+        if (instanceId == 0 || context.instanceResetAt(instanceId) == 0)
+            return;
+        raidWarnedIn = instanceId;
+        raidWarned = uint.max;
+        sendRaidMessage(left);
+    }
+
+    /**
+     * In a raid copy as its reset comes: warned an hour, 15, 5 and 1 minute(s) before; at the reset it is
+     * sent to its home (the copy, empty, resets).
+     */
+    package void updateRaidReset()
+    {
+        if (instanceId == 0 || teleporting != Teleport.none)
+            return;
+        const at = context.instanceResetAt(instanceId);
+        if (at == 0)
+            return;
+        if (raidWarnedIn != instanceId)
+        {
+            raidWarnedIn = instanceId;
+            raidWarned = uint.max;
+        }
+        const left = at - context.unixTime;
+        if (left <= 0)
+        {
+            const home = player.data.homeBind;
+            commandTeleport(home.map, Position(home.x, home.y, home.z, player.position.orientation));
+            return;
+        }
+        foreach (mark; [3600u, 900, 300, 60])
+            if (left <= mark && mark < raidWarned)
+            {
+                raidWarned = mark;
+                sendRaidMessage(left);
+                break;
+            }
     }
 
     /// The client has arrived at a near teleport's destination.
@@ -986,4 +1043,59 @@ unittest
     anduin.read();
     anduin.write(Opcode.CMSG_RESET_INSTANCES, null);
     assert(opcodesOf(anduin.read()).canFind(Opcode.SMSG_INSTANCE_RESET_FAILED), "not while inside");
+}
+
+/// A raid's copies reset all together at fixed times: welcomed with the time left, warned before, sent home at it.
+unittest
+{
+    import core.time : minutes;
+    import dmangos.world.context : WorldContext;
+
+    // The schedule: the first a period after today at the hour, then a period on from the last.
+    enum long day = 86_400;
+    const now = 20_000 * day + 10 * 3600; // 10:00
+    assert(WorldContext.nextRaidReset(0, now, 7, 4) == 20_007 * day + 4 * 3600);
+    assert(WorldContext.nextRaidReset(20_000 * day + 4 * 3600, now, 7, 4) == 20_007 * day + 4 * 3600,
+        "this morning's past: a week on");
+    assert(WorldContext.nextRaidReset(19_990 * day + 4 * 3600, now, 3, 4) == 20_002 * day + 4 * 3600, "missed ones skipped");
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto clock = MonoTime.currTime;
+    context.clock = () => clock;
+    const reset = context.raidResetAt(mapMoltenCore);
+    assert(reset > context.unixTime && db.loadRaidResets()[mapMoltenCore] == reset, "kept in instance_reset");
+
+    auto ragna = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f), AccountLevel.administrator);
+    ragna.read();
+    ragna.write(Opcode.CMSG_WORLD_TELEPORT, ClientWorldTeleport(0, mapMoltenCore, 1, 2, 3, 0));
+    ragna.read();
+    ragna.write(Opcode.MSG_MOVE_WORLDPORT_ACK, null);
+    const copy = ragna.session.inWorld.instanceId;
+    assert(copy && context.instanceResetAt(copy) == reset, "its copy resets with the raid");
+    const welcome = bodyOf(ragna.read(), Opcode.SMSG_RAID_INSTANCE_MESSAGE);
+    assert(welcome.length == 12 && ByteReader(welcome).read!uint == 4, "welcomed");
+
+    // An hour before: the warning in hours; a minute before: leave.
+    clock += (reset - context.unixTime - 3500).seconds;
+    ragna.session.update(1.seconds);
+    auto warned = bodyOf(ragna.read(), Opcode.SMSG_RAID_INSTANCE_MESSAGE);
+    assert(warned.length == 12 && ByteReader(warned).read!uint == 1, "hours");
+    ragna.session.update(1.seconds);
+    assert(bodyOf(ragna.read(), Opcode.SMSG_RAID_INSTANCE_MESSAGE).length == 0, "once");
+    clock += (reset - context.unixTime - 50).seconds;
+    ragna.session.update(1.seconds);
+    warned = bodyOf(ragna.read(), Opcode.SMSG_RAID_INSTANCE_MESSAGE);
+    assert(warned.length == 12 && ByteReader(warned).read!uint == 3, "a minute: leave");
+
+    // The reset: sent home; the copy, empty, goes.
+    clock += 60.seconds;
+    ragna.session.update(1.seconds);
+    assert(opcodesOf(ragna.read()).canFind(Opcode.SMSG_TRANSFER_PENDING), "sent home");
+    ragna.write(Opcode.MSG_MOVE_WORLDPORT_ACK, null);
+    assert(ragna.session.character.data.map == mapEasternKingdoms);
+    context.update(clock);
+    context.update(clock + 1.seconds);
+    assert(context.instanceResetAt(copy) == 0, "the copy reset");
+    assert(context.raidResetAt(mapMoltenCore) > reset, "the next one");
 }
