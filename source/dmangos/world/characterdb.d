@@ -1094,6 +1094,38 @@ final class CharacterStatements
         characters.execute!"UPDATE characters SET name = ?, at_login = at_login & ~1 WHERE guid = ?"(newName, guid);
     }
 
+    /// See `WorldDatabase.gameEventStatus`.
+    ushort[] gameEventStatus()
+    {
+        ushort[] events;
+        foreach (row; characters.query!"SELECT event FROM game_event_status"())
+            events ~= cast(ushort) row.get!uint(0);
+        return events;
+    }
+
+    /// See `WorldDatabase.setGameEventStatus`.
+    void setGameEventStatus(ushort event, bool on)
+    {
+        if (on)
+            characters.execute!"INSERT IGNORE INTO game_event_status (event) VALUES (?)"(event);
+        else
+            characters.execute!"DELETE FROM game_event_status WHERE event = ?"(event);
+    }
+
+    /// See `WorldDatabase.charactersFor`.
+    uint[] charactersFor(uint raceMask, uint quest)
+    {
+        uint[] guids;
+        if (quest)
+            foreach (row; characters.query!("SELECT c.guid FROM characters c JOIN character_queststatus q ON q.guid = c.guid "
+                ~ "WHERE (1 << (c.race - 1)) & ? AND q.quest = ? AND q.rewarded <> 0")(raceMask, quest))
+                guids ~= row.get!uint(0);
+        else
+            foreach (row; characters.query!"SELECT guid FROM characters WHERE (1 << (race - 1)) & ?"(raceMask))
+                guids ~= row.get!uint(0);
+        return guids;
+    }
+
     /// See `WorldDatabase.saveBugReport`.
     void saveBugReport(string type, string content)
     {

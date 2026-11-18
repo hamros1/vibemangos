@@ -665,6 +665,14 @@ interface WorldDatabase
     /// A bug report or suggestion from a client (`bugreport`).
     void saveBugReport(string type, string content);
 
+    /// The game events on when last looked (`game_event_status`), and one's change.
+    ushort[] gameEventStatus();
+    /// ditto
+    void setGameEventStatus(ushort event, bool on);
+
+    /// The characters of races in `raceMask` (and, `quest` not 0, rewarded for it): a game event's letters' receivers.
+    uint[] charactersFor(uint raceMask, uint quest);
+
     /// The client's saved settings of `type` (macros, key bindings, ...): the account's (`account_data`) or,
     /// `perCharacter`, the character's (`character_account_data`); `owner` the account or character.
     void saveAccountData(bool perCharacter, uint owner, uint type, long time, const(ubyte)[] data);
@@ -930,6 +938,9 @@ final class MySqlWorldDatabase : WorldDatabase
     }
     TicketRecord[] tickets(bool all) { return statements.tickets(all); }
     void saveBugReport(string type, string content) { statements.saveBugReport(type, content); }
+    ushort[] gameEventStatus() { return statements.gameEventStatus(); }
+    void setGameEventStatus(ushort event, bool on) { statements.setGameEventStatus(event, on); }
+    uint[] charactersFor(uint raceMask, uint quest) { return statements.charactersFor(raceMask, quest); }
     void saveAccountData(bool perCharacter, uint owner, uint type, long time, const(ubyte)[] data)
     {
         statements.saveAccountData(perCharacter, owner, type, time, data);
@@ -1164,6 +1175,24 @@ final class MemoryWorldDatabase : WorldDatabase
         return accountDataRows.get(format!"%s:%s:%s"(perCharacter, owner, type), null);
     }
     void saveBugReport(string type, string content) { bugReports ~= [type, content]; }
+    bool[ushort] gameEventStatusRows;
+    ushort[] gameEventStatus() { return gameEventStatusRows.keys; }
+    void setGameEventStatus(ushort event, bool on)
+    {
+        if (on)
+            gameEventStatusRows[event] = true;
+        else
+            gameEventStatusRows.remove(event);
+    }
+    uint[] charactersFor(uint raceMask, uint quest)
+    {
+        uint[] found;
+        foreach (guid, ref c; loadable)
+            if (c.race && (raceMask & (1u << (c.race - 1))))
+                if (quest == 0 || (guid in questRows && quest in questRows[guid] && questRows[guid][quest].rewarded))
+                    found ~= guid;
+        return found;
+    }
     TicketRecord[] ticketRows;
     TicketRecord[] tickets(bool all)
     {

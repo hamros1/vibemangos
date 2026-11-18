@@ -69,7 +69,7 @@ import dmangos.cluster.protocol : GmRemote, GroupCommand, KillShare, ScriptSigna
 import dmangos.world.map : Inhabitant, Map, MapObject, MapSettings;
 import dmangos.world.online : OnlinePlayer;
 import dmangos.world.playercreate : CreationSettings;
-import dmangos.world.worlddata : EventCreature, Ship, SpellListEntry, WorldData;
+import dmangos.world.worlddata : EventCreature, EventMail, Ship, SpellListEntry, WorldData;
 
 /// How a player simulated on another node than its client's talks to the other node.
 interface PlayerRelay
@@ -911,8 +911,76 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             info!"game event %s (%s) starts"(id, gameEvents.events[id].description);
         foreach (id; stopped)
             info!"game event %s (%s) ends"(id, gameEvents.events[id].description);
+
         if (started.length || stopped.length)
             gameEventSpawnsChanged();
+    }
+
+    private bool eventStatusRead;
+    private bool[ushort] eventsOnBefore; /// `game_event_status`: what was on when last looked (across restarts)
+
+    /**
+     * A game event's letters (`game_event_mail`): as it starts, and (negative rows) as it ends, compared with
+     * what `game_event_status` says was on, so a restart sends nothing for an event already on; one that
+     * ended while the server was down sends its ending letters when it comes back up.
+     */
+    private void eventMails()
+    {
+        if (!eventStatusRead)
+        {
+            eventStatusRead = true;
+            foreach (id; database.gameEventStatus())
+                eventsOnBefore[id] = true;
+        }
+        foreach (id, ref e; gameEvents.events)
+        {
+            const on = gameEvents.isActive(id);
+            const was = (id in eventsOnBefore) !is null;
+            if (on == was)
+                continue;
+            if (on)
+                eventsOnBefore[id] = true;
+            else
+                eventsOnBefore.remove(id);
+            database.setGameEventStatus(id, on);
+            foreach (ref m; data.gameEventMails.get(on ? cast(short) id : cast(short)(-cast(int) id), null))
+                foreach (guid; database.charactersFor(m.raceMask, m.quest))
+                    eventLetter(m, guid);
+        }
+    }
+
+    /// One `game_event_mail` letter to character `guid`: its template's text and the first item its loot gives.
+    private void eventLetter(const ref EventMail m, uint guid)
+    {
+        import std.random : rndGen;
+        import dmangos.world.database : MailRecord;
+        import dmangos.world.inventory : Item;
+        import dmangos.world.loot : Loot;
+        import dmangos.world.objects : HighGuid, makeGuid;
+
+        enum ubyte mailCreature = 3;
+        MailRecord mail;
+        mail.messageType = mailCreature;
+        mail.sender = m.sender;
+        mail.receiver = guid;
+        mail.templateId = m.mailTemplate;
+        if (const template_ = data.loot.mail[m.mailTemplate])
+        {
+            auto loot = new Loot(0, null);
+            loot.fill(template_, data.loot, data.items, rndGen, (uint c) => true, null);
+            foreach (lootItem; loot.items)
+                if (auto proto = lootItem.itemId in data.items)
+                {
+                    auto item = new Item(nextItemGuid(), proto, makeGuid(HighGuid.player, 0, guid));
+                    item.count = lootItem.count ? lootItem.count : 1;
+                    const record = item.record;
+                    database.saveLooseItem(record, guid);
+                    mail.itemGuid = record.guid;
+                    mail.itemEntry = record.entry;
+                    break; // a letter holds one item
+                }
+        }
+        postMail(mail, 0);
     }
 
     /// After events changed: in every loaded map, spawns now away go, and spawns now in come (where their cells are loaded).
@@ -3660,6 +3728,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         services.tick(elapsed);
         battlegrounds.tick(elapsed);
         updateGameEvents(now);
+        if (forwardGroup is null) // the coordinator, or alone (not while starting: who coordinates is not known yet)
+            eventMails();
         updateShips();
         linkFollowers();
         scriptedGameObjectsDue();
@@ -4111,4 +4181,44 @@ unittest
     m.update(100.msecs);
     assert(m.findObject(keeperGuid) is null, "the master gone");
     assert(m.findObject(bankerGuid) is null, "its slave with it");
+}
+
+// A game event's letters: sent as it starts to the characters of its races, once; a restart with it on sends none.
+unittest
+{
+    import dmangos.world.gameevents : GameEvent, ScheduleType;
+    import dmangos.world.movement : Position;
+    import dmangos.world.testclient;
+    import dmangos.world.worlddata : EventMail;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    const now = context.unixTime;
+    context.gameEvents.events[5] = GameEvent(5, ScheduleType.date, now + 3600, now + 7200, 1440, 60, 0, "test");
+    context.data.gameEventMails[5] = [EventMail(0x1, 0, 0, 16285)]; // to humans
+    context.data.gameEventMails[-5] = [EventMail(0x2, 0, 0, 16285)]; // to orcs, as it ends: none here
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f));
+    anduin.read();
+    context.updateGameEvents(context.clock(), true);
+    context.eventMails();
+    assert(db.mails.length == 0, "not on yet");
+
+    context.gameEvents.events[5].start = now - 60;
+    context.updateGameEvents(context.clock(), true);
+    context.eventMails();
+    context.eventMails();
+    assert(db.mails.length == 1 && db.mails.values[0].receiver == 7 && db.mails.values[0].sender == 16285, "one letter");
+    assert(db.gameEventStatusRows.keys == [ushort(5)]);
+
+    auto restarted = newCreationContext(db); // the same database: the event was on
+    restarted.gameEvents.events[5] = context.gameEvents.events[5];
+    restarted.data.gameEventMails = context.data.gameEventMails;
+    restarted.updateGameEvents(restarted.clock(), true);
+    restarted.eventMails();
+    assert(db.mails.length == 1, "nothing again after a restart");
+
+    restarted.gameEvents.events[5].end = now - 1;
+    restarted.updateGameEvents(restarted.clock(), true);
+    restarted.eventMails();
+    assert(db.mails.length == 1 && db.gameEventStatusRows.length == 0, "its end: no orcs to write to");
 }

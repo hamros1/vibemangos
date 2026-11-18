@@ -310,6 +310,15 @@ struct GhostEntrance
     float x = 0, y = 0;
 }
 
+/// A `game_event_mail` row: a templated letter from a creature to the characters of some races (and who did a quest).
+struct EventMail
+{
+    uint raceMask;
+    uint quest;          /// 0: any; else only those rewarded for it
+    uint mailTemplate;   /// `MailTemplate.dbc` (its items: `mail_loot_template`)
+    uint sender;         /// the creature entry it comes from
+}
+
 /// A `creature_spell_list` row: a spell a creature casts in a fight, its target, its chance, and its timers (milliseconds).
 struct SpellListEntry
 {
@@ -396,6 +405,7 @@ final class WorldData
     EventCreature[][uint] eventCreatures;           /// `game_event_creature_data`: how events change spawns, by spawn
     short[uint] gameObjectGameEvents;               /// `game_event_gameobject`: ditto
     GameEvent[] gameEvents;                         /// `game_event` and `game_event_time`
+    EventMail[][short] gameEventMails;              /// `game_event_mail`: by event (negative: sent as it ends)
     ushort[][uint] questGameEvents;                 /// `game_event_quest`: the events a quest is given during
     CreatureLinks creatureLinks;                    /// `creature_linking` and `creature_linking_template`
     Formation[uint] formations;                     /// `spawn_group_formation`, by spawn group
@@ -979,6 +989,9 @@ final class WorldData
         gameEvents = byId.values;
         foreach (row; world.query!"SELECT quest, event FROM game_event_quest"())
             questGameEvents[row.get!uint(0)] ~= cast(ushort) row.get!uint(1);
+        foreach (row; world.query!"SELECT event, raceMask, quest, mailTemplateId, senderEntry FROM game_event_mail"())
+            gameEventMails[cast(short) row.get!int(0)] ~= EventMail(row.get!uint(1), row.get!uint(2), row.get!uint(3),
+                row.get!uint(4));
         info!"loaded %s game events"(gameEvents.length);
     }
 

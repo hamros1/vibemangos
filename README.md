@@ -303,7 +303,10 @@ What works now:
     * While an event is on, the creatures it changes (`game_event_creature_data`) are of its entry,
       model or equipment, with its spell's auras (costumes: a transformation takes the named creature's
       look); when it starts or ends, those alive and out of a fight are made again.
-    * Not yet: event mail (`game_event_mail`).
+    * Their letters (`game_event_mail`): as an event starts (or, for negative rows, ends) every character
+      of its races (and, if it names a quest, rewarded for it) gets its templated letter from its creature,
+      with the first item the template's loot gives. Sent by one node; `game_event_status` remembers which
+      events were on, so a restart sends nothing for one still on.
   * **Ships and zeppelins** (`transports`, `world/transports.d`): each sails its taxi path round, on the
     schedule the client computes too (its speed, acceleration, stops and crossings), from the wall
     clock, so every node of a cluster agrees. A ship is seen from anywhere on its map. At a crossing it
