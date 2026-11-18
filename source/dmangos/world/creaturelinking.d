@@ -7,14 +7,19 @@
  * $(UL
  *   $(LI the master attacked: the slave joins in (`aggroOnAggro`); the slave attacked: the master does
  *        (`toAggroOnAggro`);)
- *   $(LI the master evades: the slave does too (`evadeOnEvade`);)
- *   $(LI the master dies: the slave dies with it (`selfKillOnDeath`) or goes (`despawnOnDeath`);)
+ *   $(LI the master evades: the slave does too (`evadeOnEvade`), goes (`despawnOnEvade`), or comes back
+ *        if dead (`respawnOnEvade`); a slave evading brings its dead master back (`toRespawnOnEvade`);)
+ *   $(LI the master dies: the slave dies with it (`selfKillOnDeath`) or goes (`despawnOnDeath`), and a
+ *        dead slave comes back (`respawnOnDeath`);)
+ *   $(LI the master respawns: its dead slaves come back with it (`respawnOnRespawn`), or its living ones go
+ *        (`despawnOnRespawn`);)
  *   $(LI out of combat the slave follows its master, keeping their spawns' distance and angle
  *        (`follow`);)
  *   $(LI in a dungeon copy, the slave does not come back once its master is dead (`cantSpawnIfBossDead`).)
  * )
- * Links between creatures simulated on different nodes of a cluster do nothing (the two are rarely
- * far apart). Respawning slaves with their master is not done yet.
+ * A dead creature brought back has its respawn made due at once (its corpse goes); in a dungeon copy
+ * nothing is brought back. Links between creatures simulated on different nodes of a cluster do
+ * nothing (the two are rarely far apart). `despawnOnDespawn` and `cantSpawnIfBossAlive` are not done.
  */
 module dmangos.world.creaturelinking;
 

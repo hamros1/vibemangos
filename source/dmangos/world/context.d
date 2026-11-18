@@ -602,6 +602,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         auto slaves = slavesOf(m, source, links);
         foreach (i, slave; slaves)
         {
+            if (event == LinkEvent.evade && !slave.alive && (links[i].flags & LinkFlag.respawnOnEvade))
+                respawnLinked(m, slave);
             if (!slave.alive || slave.ai is null)
                 continue;
             final switch (event)
@@ -611,19 +613,75 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                     joinFight(m, slave, enemy);
                 break;
             case LinkEvent.evade:
-                if (links[i].flags & LinkFlag.evadeOnEvade)
+                if (links[i].flags & LinkFlag.despawnOnEvade)
+                    slave.ai.despawnFor(m, 0);
+                else if (links[i].flags & LinkFlag.evadeOnEvade)
                     slave.ai.evadeWithLinked(m);
                 break;
             }
         }
-        // The other way: a slave attacked brings its master in.
-        if (event == LinkEvent.aggro)
+        if (event == LinkEvent.evade)
+            respawnLinkedSpawns(m, source, LinkFlag.respawnOnEvade);
+        // The other way: a slave attacked brings its master in; a slave evading brings its dead master back.
+        const(CreatureLink)* link;
+        if (auto master = masterOf(m, source, link))
         {
-            const(CreatureLink)* link;
-            if (auto master = masterOf(m, source, link))
-                if ((link.flags & LinkFlag.toAggroOnAggro) && master.alive && master.ai !is null)
-                    joinFight(m, master, enemy);
+            if (event == LinkEvent.aggro && (link.flags & LinkFlag.toAggroOnAggro) && master.alive && master.ai !is null)
+                joinFight(m, master, enemy);
+            if (event == LinkEvent.evade && (link.flags & LinkFlag.toRespawnOnEvade) && !master.alive)
+                respawnLinked(m, master);
         }
+    }
+
+    /**
+     * A dead creature of a pack comes back now: its corpse goes and its respawn is due at once (the next
+     * second's respawns bring it). Summons and dungeon creatures are left alone.
+     */
+    private void respawnLinked(Map m, Creature c)
+    {
+        if (c.alive || c.summon.type != TempSpawnType.none || c.instanceId || c.petOwner)
+            return;
+        if (m.findObject(c.guid) is c)
+            m.corpseExpired(c);
+        respawnSpawnNow(c.spawn.guid);
+    }
+
+    /// Spawn `guid`, dead and waiting, is due now.
+    private void respawnSpawnNow(uint guid)
+    {
+        if (auto at = guid in respawnAt)
+            if (*at > unixTime)
+            {
+                *at = unixTime;
+                database.saveCreatureRespawn(guid, unixTime);
+            }
+    }
+
+    /// The slaves (by spawn) of `master` linked with `flag` whose corpses are already gone come back too.
+    private void respawnLinkedSpawns(Map m, Creature master, LinkFlag flag)
+    {
+        foreach (guid; data.creatureLinks.slavesOfGuid.get(master.spawnId, null))
+            if (const l = guid in data.creatureLinks.bySlaveGuid)
+                if ((l.flags & flag) && !master.instanceId)
+                    if (const spawn = creatureSpawnOf(guid))
+                        if (m.findObject(makeGuid(HighGuid.unit, spawn.entry, guid)) is null)
+                            respawnSpawnNow(guid);
+    }
+
+    /// `master` has respawned: its dead slaves linked so come back with it, and those linked so go.
+    private void linkedRespawn(Map m, Creature master)
+    {
+        if (!data.creatureLinks.involves(master.spawnId, master.template_.entry))
+            return;
+        const(CreatureLink)*[] links;
+        foreach (i, slave; slavesOf(m, master, links))
+        {
+            if (!slave.alive && (links[i].flags & LinkFlag.respawnOnRespawn))
+                respawnLinked(m, slave);
+            else if (slave.alive && (links[i].flags & LinkFlag.despawnOnRespawn) && slave.ai !is null)
+                slave.ai.despawnFor(m, 0);
+        }
+        respawnLinkedSpawns(m, master, LinkFlag.respawnOnRespawn);
     }
 
     /// `c` fights `enemy` too: attacking it, or (fighting already) counting it as a threat.
@@ -644,7 +702,11 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         foreach (i, slave; slavesOf(m, master, links))
         {
             if (!slave.alive)
+            {
+                if (links[i].flags & LinkFlag.respawnOnDeath)
+                    respawnLinked(m, slave);
                 continue;
+            }
             if (links[i].flags & LinkFlag.selfKillOnDeath)
             {
                 import dmangos.world.updatefields : UNIT_FIELD_HEALTH;
@@ -3115,7 +3177,10 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             if (there is null || !there.cellLoaded(cellKeyAt(spawn.x, spawn.y)))
                 continue;
             if (auto creature = makeCreature(spawn))
+            {
                 there.addObject(creature);
+                linkedRespawn(there, creature);
+            }
         }
     }
 
@@ -3739,4 +3804,41 @@ unittest
     auto place = cast(FollowMovement) member.generator;
     assert(place !is null && place.leader == leader.guid && isClose(place.distance, 3) && isClose(place.angle, PI),
         "the member follows three yards behind");
+}
+
+// A pack member linked to come back when its master dies does: dead before it, it respawns as the master falls.
+unittest
+{
+    import core.time : msecs, MonoTime;
+    import dmangos.world.creaturelinking : LinkFlag;
+    import dmangos.world.movement : Position;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+    import dmangos.world.updatefields : UNIT_FIELD_HEALTH;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    context.data.creatureLinks.addGuid(bankerSpawn, innkeeperSpawn, LinkFlag.respawnOnDeath);
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f));
+    anduin.read();
+    now += 100.msecs;
+    context.update(now);
+    auto m = context.map(0);
+    const bankerGuid = makeGuid(HighGuid.unit, creatureBanker, bankerSpawn);
+    auto innkeeper = cast(Creature) m.findObject(makeGuid(HighGuid.unit, creatureInnkeeper, innkeeperSpawn));
+    auto banker = cast(Creature) m.findObject(bankerGuid);
+    void kill(Creature c)
+    {
+        c.values.set!UNIT_FIELD_HEALTH(0u);
+        m.creatureDeath(c);
+    }
+    kill(banker);
+    assert(!banker.alive);
+    kill(innkeeper);
+    now += 1100.msecs;
+    context.update(now);
+    auto back = cast(Creature) m.findObject(bankerGuid);
+    assert(back !is null && back.alive, "the banker came back as the innkeeper fell");
 }
