@@ -95,6 +95,8 @@ struct WorldConfig
     @JsonName("battleground_cast_deserter") bool battlegroundCastDeserter = true;
     /// Seconds before a creature whose pockets were emptied has something in them again.
     @JsonName("creature_pickpocket_restock_delay") uint creaturePickpocketRestockDelay = 600;
+    /// `SkillFail.Loot.Fishing`: a failed catch gives junk (`fishing_loot_template` entry 0) instead of nothing.
+    @JsonName("skill_fail_loot_fishing") bool skillFailLootFishing = false;
     /// The level from which the spirit healer's resurrection leaves resurrection sickness.
     @JsonName("death_sickness_level") uint deathSicknessLevel = 11;
     /// `BattleGround.PrematureFinishTimer`, in seconds: a battle a team is short of players for this long ends (0: never).

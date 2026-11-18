@@ -320,7 +320,8 @@ What works now:
     catch is looted from `fishing_loot_template`; too early nothing is hooked, too late the fish got
     away; it takes a fishing pole worn. A school of fish (`GAMEOBJECT_TYPE_FISHINGHOLE`) within 20
     yards of the bobber gives the catch from its own loot, and is fished out after a few catches.
-    Not yet: junk on a failed catch.
+    A failed catch gives junk (`fishing_loot_template` entry 0) if `skill_fail_loot_fishing` is on (off by
+    default: the fish escapes).
   * **Creature movement:** creatures move as their spawn's `MovementType` says:
     wandering within `spawndist` of their spawn point (type 1), or walking their `creature_movement`
     or `creature_movement_template` path (type 2 round and round, type 4 back and forth), waiting

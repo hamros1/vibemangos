@@ -528,8 +528,23 @@ private:
         updateSkillPro(skillFishing, (pure_ < 75 ? 100 : 2500 / (pure_ - 50)) * 10, 1);
         if (!success)
         {
-            deliver(Opcode.SMSG_FISH_ESCAPED, null);
-            return endChannel(false);
+            // Junk, if the server gives it (`fishing_loot_template` entry 0); else the fish escaped.
+            auto junk = context.config.skillFailLootFishing && context.data.loot.fishing !is null
+                ? context.data.loot.fishing[0] : null;
+            if (junk is null)
+            {
+                deliver(Opcode.SMSG_FISH_ESCAPED, null);
+                return endChannel(false);
+            }
+            auto loot = makeGameObjectLoot(go);
+            loot.fill(junk, context.data.loot, context.data.items, map.random, (uint c) => conditionMet(c),
+                (ulong guid, const LootItem item) => item.condition == 0 || conditionMet(item.condition));
+            loot.lootedForAll = () { removeBobber(); };
+            go.loot = loot;
+            bobberLooted = true;
+            endChannel(false);
+            loot.showContentTo(this);
+            return;
         }
         // A school of fish within 20 yards of the bobber gives the catch, from
         // its own loot; it is fished out after a few catches (its least to greatest, chosen once).
@@ -2320,6 +2335,28 @@ unittest
     anduin.write(Opcode.CMSG_GAMEOBJ_USE, ClientGuid(bob.guid));
     assert(opcodesOf(anduin.read()).canFind(Opcode.SMSG_LOOT_RESPONSE) && hole.loot !is null && hole.holeMaxCatches == 2,
         "the school's catch");
+
+    // Waters too hard for the angler: the fish escapes; or, if the server gives it, junk (entry 0).
+    context.data.fishingBaseSkill[me.data.zone] = 500;
+    context.data.loot.fishing.add(0, lootRow(itemShirt, 100, 0, 1, 1, 0));
+    auto reelIn()
+    {
+        now += 2000.msecs;
+        cast_();
+        bob = bobberNow();
+        anduin.read();
+        foreach (_; 0 .. 18)
+        {
+            tick(1000);
+            if (opcodesOf(anduin.read()).canFind(Opcode.SMSG_GAMEOBJECT_CUSTOM_ANIM))
+                break;
+        }
+        anduin.write(Opcode.CMSG_GAMEOBJ_USE, ClientGuid(bob.guid));
+        return anduin.read();
+    }
+    assert(opcodesOf(reelIn()).canFind(Opcode.SMSG_FISH_ESCAPED), "it got away");
+    context.config.skillFailLootFishing = true;
+    assert(opcodesOf(reelIn()).canFind(Opcode.SMSG_LOOT_RESPONSE), "junk");
 }
 
 /**
