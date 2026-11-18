@@ -686,6 +686,9 @@ private:
         if (auto divider = cast(Character) context.onlinePlayer(questDivider))
             divider.pushToPartyResponse(player.guid, QuestShare.accepted);
         questDivider = 0;
+        // An escort for the party: each member who could take it is asked to (`SMSG_QUEST_CONFIRM_ACCEPT`).
+        if (quest.questFlags & questFlagPartyAccept)
+            offerToParty(*quest);
         // The item that began it goes, unless the quest asks for it or gives it.
         if (giver.itemEntry && quest.srcItemId != giver.itemEntry)
         {
@@ -980,6 +983,48 @@ private:
     // -----------------------------------------------------------------------
 
     package ulong questDivider; // who shared the quest this player is offered
+
+    /// The members of the player's group in the world who could take `quest` are asked to: `SMSG_QUEST_CONFIRM_ACCEPT`.
+    private void offerToParty(const ref Quest quest)
+    {
+        auto group = context.groups.of(player.guid);
+        if (group is null)
+            return;
+        foreach (ref m; group.members)
+        {
+            if (m.guid == player.guid)
+                continue;
+            auto member = cast(typeof(this)) context.onlinePlayer(m.guid);
+            if (member is null || member.player is null || !member.canTakeQuest(quest))
+                continue;
+            member.questDivider = player.guid;
+            member.closeGossip();
+            ByteWriter w;
+            w.put(quest.id);
+            w.putCString(quest.title);
+            w.put(player.guid);
+            member.deliver(Opcode.SMSG_QUEST_CONFIRM_ACCEPT, w.data);
+        }
+    }
+
+    /**
+     * A member takes the escort it was offered: the one who offered it is in its group (its party, for a
+     * quest not for raids), and it may take the quest.
+     */
+    @Handles(Opcode.CMSG_QUEST_CONFIRM_ACCEPT, WorldState.inWorld)
+    void handleQuestConfirmAccept(ref ByteReader reader)
+    {
+        const id = reader.read!uint;
+        const quest = id in context.data.quests.quests;
+        if (quest is null || !(quest.questFlags & questFlagPartyAccept) || !questDivider)
+            return;
+        auto group = context.groups.of(player.guid);
+        if (group is null || context.groups.of(questDivider) !is group)
+            return;
+        questDivider = 0;
+        if (canTakeQuest(*quest))
+            addQuest(*quest);
+    }
 
     /// What became of a quest shared with a group member (`MSG_QUEST_PUSH_RESULT`).
     enum QuestShare : ubyte
@@ -1554,4 +1599,51 @@ unittest
             seen = true;
         }
     assert(seen);
+}
+
+/// An escort for the party: a member who takes it has the rest of the group asked to, and one who confirms has it too.
+unittest
+{
+    import std.algorithm.searching : canFind;
+    import dmangos.bytes : ByteWriter;
+    import dmangos.world.movement : Position;
+    import dmangos.world.opcodes;
+    import dmangos.world.packets : ClientGroupName;
+    import dmangos.world.player : Player;
+    import dmangos.world.quests : Quest, QuestState, QuestStatus, questFlagPartyAccept, questFlagSharable;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    Quest q = {id: 9310, method: 2, maxLevel: 60, questFlags: questFlagSharable | questFlagPartyAccept, title: "Escort"};
+    q.specialFlags = 0x20;
+    context.data.quests.quests[9310] = q;
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f));
+    auto jaina = loggedIn(context, db, 8, "Jaina", Position(-8945, -132, 83.5f));
+    auto varian = loggedIn(context, db, 9, "Varian", Position(-8946, -133, 83.5f));
+    anduin.write(Opcode.CMSG_GROUP_INVITE, ClientGroupName("jaina"));
+    jaina.write(Opcode.CMSG_GROUP_ACCEPT, null);
+    anduin.write(Opcode.CMSG_GROUP_INVITE, ClientGroupName("varian"));
+    varian.write(Opcode.CMSG_GROUP_ACCEPT, null);
+    auto me = cast(Player) anduin.session.character, him = cast(Player) varian.session.character;
+    me.questStatus[9310] = QuestStatus(9310, QuestState.incomplete);
+    anduin.read();
+    jaina.read();
+    varian.read();
+
+    // Shared with Jaina, who takes it: Varian is asked to take it as well.
+    ByteWriter push;
+    push.put(9310u);
+    anduin.write(Opcode.CMSG_PUSHQUESTTOPARTY, push.data);
+    varian.read();
+    ByteWriter accept;
+    accept.put(me.guid);
+    accept.put(9310u);
+    jaina.write(Opcode.CMSG_QUESTGIVER_ACCEPT_QUEST, accept.data);
+    assert(opcodesOf(varian.read()).canFind(Opcode.SMSG_QUEST_CONFIRM_ACCEPT), "asked");
+    ByteWriter confirm;
+    confirm.put(9310u);
+    varian.write(Opcode.CMSG_QUEST_CONFIRM_ACCEPT, confirm.data);
+    assert(him.questStatus.get(9310, QuestStatus.init).status == QuestState.incomplete, "taken");
 }

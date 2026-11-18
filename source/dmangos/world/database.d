@@ -662,6 +662,9 @@ interface WorldDatabase
     /// Moves a character that is not online (`.summon` of an offline player).
     void moveOfflineCharacter(uint guid, uint map, float x, float y, float z, uint zone);
 
+    /// A bug report or suggestion from a client (`bugreport`).
+    void saveBugReport(string type, string content);
+
     /// GM tickets (`gm_tickets`): every ticket, the open ones only (`closed` too with `all`).
     TicketRecord[] tickets(bool all);
     /// A new ticket; returns its id.
@@ -921,6 +924,7 @@ final class MySqlWorldDatabase : WorldDatabase
         statements.moveOfflineCharacter(guid, map, x, y, z, zone);
     }
     TicketRecord[] tickets(bool all) { return statements.tickets(all); }
+    void saveBugReport(string type, string content) { statements.saveBugReport(type, content); }
     uint addTicket(TicketRecord ticket) { return statements.addTicket(ticket); }
     void updateTicketText(uint id, string text, long now) { statements.updateTicketText(id, text, now); }
     void closeTicket(uint id) { statements.closeTicket(id); }
@@ -1132,6 +1136,8 @@ final class MemoryWorldDatabase : WorldDatabase
         return 0;
     }
 
+    string[2][] bugReports;
+    void saveBugReport(string type, string content) { bugReports ~= [type, content]; }
     TicketRecord[] ticketRows;
     TicketRecord[] tickets(bool all)
     {

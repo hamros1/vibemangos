@@ -892,6 +892,56 @@ private:
         ticketResult(Opcode.SMSG_GMTICKET_SYSTEMSTATUS, context.gmTicketsOn ? 1 : 0);
     }
 
+    /// The client asks for an item's name (and its inventory type).
+    @Handles(Opcode.CMSG_ITEM_NAME_QUERY, WorldState.inWorld)
+    void handleItemNameQuery(ref ByteReader reader)
+    {
+        const entry = reader.read!uint;
+        const item = entry in context.data.items;
+        if (item is null)
+            return;
+        ByteWriter w;
+        w.put(entry);
+        w.putCString(item.details.name);
+        w.put(cast(uint) item.inventoryType);
+        deliver(Opcode.SMSG_ITEM_NAME_QUERY_RESPONSE, w.data);
+    }
+
+    /// The player's mount rears up: those around see it.
+    @Handles(Opcode.CMSG_MOUNTSPECIAL_ANIM, WorldState.inWorld)
+    void handleMountSpecialAnim()
+    {
+        ByteWriter w;
+        w.put(player.guid);
+        map.sendToWatchers(this, Opcode.SMSG_MOUNTSPECIAL_ANIM, w.data);
+    }
+
+    /// The client tells a player who whispered this one that they are ignored (`CHAT_MSG_IGNORED`).
+    @Handles(Opcode.CMSG_CHAT_IGNORED, WorldState.inWorld)
+    void handleChatIgnored(ref ByteReader reader)
+    {
+        import dmangos.world.queries : chatMessage;
+
+        const guid = reader.read!ulong;
+        if (auto other = cast(typeof(this)) context.onlinePlayer(guid))
+            if (other.player !is null)
+                other.deliver(Opcode.SMSG_MESSAGECHAT, chatMessage(ChatType.CHAT_MSG_IGNORED, Language.LANG_UNIVERSAL,
+                    player.guid, player.data.name));
+    }
+
+    /// The client reports a bug or makes a suggestion: kept in `bugreport`.
+    @Handles(Opcode.CMSG_BUG, WorldState.inWorld)
+    void handleBug(ref ByteReader reader)
+    {
+        const suggestion = reader.read!uint;
+        reader.read!uint;
+        const content = reader.readCString();
+        reader.read!uint;
+        const type = reader.readCString();
+        info!"%s: '%s' %s (%s)"(remoteAddress, player.data.name, suggestion ? "made a suggestion" : "reported a bug", type);
+        context.database.saveBugReport(type, content);
+    }
+
     /// The client hides or shows the player's helm, or its cloak.
     @Handles(Opcode.CMSG_TOGGLE_HELM, WorldState.inWorld)
     void handleToggleHelm()
@@ -1738,4 +1788,42 @@ unittest
     inspect.put(jaina.session.character.guid);
     anduin.write(Opcode.CMSG_INSPECT, inspect.data);
     assert(opcodesOf(anduin.read()).canFind(Opcode.SMSG_INSPECT));
+}
+
+/// An item's name asked for; a bug report kept; a whisperer told it is ignored.
+unittest
+{
+    import std.algorithm.searching : canFind;
+    import dmangos.bytes : ByteWriter;
+    import dmangos.world.movement : Position;
+    import dmangos.world.opcodes : Opcode;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f));
+    auto jaina = loggedIn(context, db, 8, "Jaina", Position(-8947, -132.49f, 83.53f));
+    anduin.read();
+    jaina.read();
+    ByteWriter q;
+    q.put(itemSword);
+    q.put(0UL);
+    anduin.write(Opcode.CMSG_ITEM_NAME_QUERY, q.data);
+    auto named = anduin.read();
+    assert(named.length == 1 && named[0].opcode == Opcode.SMSG_ITEM_NAME_QUERY_RESPONSE);
+
+    ByteWriter bug;
+    bug.put(0u);
+    bug.put(6u);
+    bug.putCString("crash");
+    bug.put(4u);
+    bug.putCString("bug");
+    anduin.write(Opcode.CMSG_BUG, bug.data);
+    assert(db.bugReports == [["bug", "crash"]]);
+
+    ByteWriter ignored;
+    ignored.put(jaina.session.character.guid);
+    anduin.write(Opcode.CMSG_CHAT_IGNORED, ignored.data);
+    assert(opcodesOf(jaina.read()).canFind(Opcode.SMSG_MESSAGECHAT), "she hears she is ignored");
 }

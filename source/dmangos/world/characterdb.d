@@ -1094,6 +1094,12 @@ final class CharacterStatements
         characters.execute!"UPDATE characters SET name = ?, at_login = at_login & ~1 WHERE guid = ?"(newName, guid);
     }
 
+    /// See `WorldDatabase.saveBugReport`.
+    void saveBugReport(string type, string content)
+    {
+        characters.execute!"INSERT INTO bugreport (type, content) VALUES (?, ?)"(type, content);
+    }
+
     /// See `WorldDatabase.tickets`.
     TicketRecord[] tickets(bool all)
     {

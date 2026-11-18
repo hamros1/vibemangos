@@ -539,7 +539,8 @@ What works now:
     (the exclamation and question marks), list their quests in their gossip (or open the only one),
     and give them as `quest_template` says who may take them (class, race, level, skill, condition,
     the quests before, exclusive groups, done unless repeatable). The quest log holds 20 quests with
-    their kill counters. Kills count for the player and its group near the kill; the items asked
+    their kill counters. An escort for the party (`QuestFlags` 0x2) taken by one member is offered to
+    the others who could take it. Kills count for the player and its group near the kill; the items asked
     for count as they are carried (and quest drops are looted only while a quest asks for them); a
     quest whose objectives are met is complete, and its ender takes the items back and gives its
     experience (`Quest::XPValue`), money, items (one of the choices) and spell, then offers the
