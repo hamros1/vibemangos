@@ -1,6 +1,6 @@
 /**
- * Duels (CMaNGOS `DuelHandler.cpp`, `Spell::EffectDuel`, `Player::UpdateDuelFlag`,
- * `CheckDuelDistance` and `DuelComplete`), mixed into `dmangos.world.character.Character`.
+ * Duels: the request, the countdown, the flag's distance, and the end. Mixed into
+ * `dmangos.world.character.Character`.
  *
  * The Duel spell at another player plants a flag between them and asks the other; accepted, both
  * count down 3 seconds and are then enemies of each other (`PLAYER_DUEL_TEAM` 1 and 2 with the same
@@ -10,7 +10,7 @@
  */
 module dmangos.world.duelhandlers;
 
-/// `DuelCompleteType`
+/// How a duel ended.
 enum DuelEnd : ubyte
 {
     interrupted = 0,
@@ -21,7 +21,7 @@ enum DuelEnd : ubyte
 /// The duel flag (`gameobject_template` 21680), the Duel spell's `EffectMiscValue`.
 enum uint duelFlagEntry = 21680;
 
-/// One side of a duel (`DuelInfo`).
+/// One side of a duel.
 final class DuelState
 {
     ulong initiator;
@@ -45,7 +45,7 @@ mixin template DuelHandlers()
     import dmangos.world.updatefields;
 
 private:
-    DuelState duel; // `Player::duel`
+    DuelState duel; // this player's side of its duel, while one is asked or on
 
     /// The other duelist's session, while a duel is asked or on.
     typeof(this) duelOpponent()
@@ -63,7 +63,7 @@ private:
     }
 
     /**
-     * `Spell::EffectDuel`: a flag midway between the two, the request to both, and each one's side
+     * The Duel spell's effect: a flag midway between the two, the request to both, and each one's side
      * of the duel.
      */
     void startDuel(ulong target)
@@ -108,7 +108,7 @@ private:
         }
     }
 
-    /// `HandleDuelAcceptedOpcode`: the one asked accepts; both count down 3 seconds.
+    /// The one asked accepts; both count down 3 seconds.
     @Handles(Opcode.CMSG_DUEL_ACCEPTED, WorldState.inWorld)
     void handleDuelAccepted(ref ByteReader reader)
     {
@@ -125,7 +125,7 @@ private:
         other.deliver(Opcode.SMSG_DUEL_COUNTDOWN, w.data);
     }
 
-    /// `HandleDuelCancelledOpcode`: declined (or, once begun, given up: lost).
+    /// Declined (or, once begun, given up: lost).
     @Handles(Opcode.CMSG_DUEL_CANCELLED, WorldState.inWorld)
     void handleDuelCancelled(ref ByteReader reader)
     {
@@ -142,13 +142,13 @@ private:
         duelComplete(DuelEnd.interrupted);
     }
 
-    /// `Player::Update`'s duel part: it begins 3 seconds after it was accepted; the flag's distance is watched.
+    /// The duel each tick: it begins 3 seconds after it was accepted; the flag's distance is watched.
     void updateDuel()
     {
         if (duel is null)
             return;
         const now = context.unixTime;
-        // `UpdateDuelFlag`, by the initiator's side: the teams are set, and the duel is on.
+        // The countdown over, by the initiator's side: the teams are set, and the duel is on.
         if (duel.startTimer && now >= duel.startTimer + 3 && duel.initiator == player.guid)
             if (auto other = duelOpponent())
             {
@@ -161,7 +161,7 @@ private:
             }
         if (duel is null || duel.startTime == 0)
             return;
-        // `CheckDuelDistance`: 50 yards out, 10 seconds to come within 40 again.
+        // The flag's distance: 50 yards out, 10 seconds to come within 40 again.
         const p = player.position;
         const d2 = (p.x - duel.flagAt[0]) ^^ 2 + (p.y - duel.flagAt[1]) ^^ 2 + (p.z - duel.flagAt[2]) ^^ 2;
         if (duel.outOfBound == 0)
@@ -193,7 +193,7 @@ private:
 
     /**
      * The opponent's blow would have killed this player in the duel: it keeps 1 health, both stop
-     * fighting, it begs and loses (`Unit::DealDamage` with `duel_hasEnded`).
+     * fighting, it begs and loses.
      */
     package void duelLost()
     {
@@ -207,7 +207,7 @@ private:
     }
 
     /**
-     * `Player::DuelComplete`, called on the losing (or leaving) side: both are told it is over, the
+     * The duel is over, called on the losing (or leaving) side: both are told it is over, the
      * players around who won, the flag goes, the debuffs each put on the other in it go, and the
      * duel fields are cleared.
      */

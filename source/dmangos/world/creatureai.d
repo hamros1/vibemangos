@@ -1,8 +1,6 @@
 /**
- * Creatures that fight: CMaNGOS's base creature AI (`AI/BaseAI/UnitAI.cpp`, `CreatureAI.cpp`), its
- * threat list (`Combat/ThreatManager.cpp`), its combat timers and leash (`Combat/CombatManager.cpp`),
- * chasing (`ChaseMovementGenerator`) and going home (`HomeMovementGenerator`), and a creature's
- * half of melee (`Unit::Attack`, `UpdateMeleeAttackingState`).
+ * Creatures that fight: the base creature AI (`CreatureAI`), its threat list, its combat timers
+ * and leash, chasing its victim and going home, and a creature's half of melee.
  *
  * Every creature gets this AI; one with a script (`creature_ai_scripts`, `dmangos.world.eventai`)
  * runs it from here, and casts its spells with `dmangos.world.creaturecasting`. A creature with
@@ -52,14 +50,14 @@ interface CreatureLore
     /// `ListenRange.Say`, `.Yell`, `.TextEmote` in yards.
     float listenRange(ChatType type);
 
-    /// `SummonCreature`: a creature of `entry` at `at` (all zeros: near `summoner`), going as `type`
+    /// Summons a creature of `entry` at `at` (all zeros: near `summoner`), going as `type`
     /// (`TempSpawnType`) says after `durationMs`; null if it could not be made.
     Creature summon(CombatWorld world, uint entry, Position at, uint type, uint durationMs, ulong summoner);
 
     /// A `creature_ai_summons` row: where, and for how long; false if there is none.
     bool summonSpot(uint id, out Position at, out uint seconds);
 
-    /// `ScriptsStart(SCRIPT_TYPE_RELAY)` on `world` (negative `id`: one of the relay group -`id`).
+    /// Starts relay script `id` (`DbScriptType.relay`) on `world` (negative `id`: one of the relay group -`id`).
     void startRelay(int id, CombatWorld world, ulong source, ulong target);
 
     /// A `script_texts` row; null if there is none. Its sound (0: none).
@@ -94,7 +92,7 @@ interface CombatWorld : MotionWorld
     /// `creature` as a unit on this map.
     UnitRef unitOf(Creature creature);
 
-    /// `IsWithinLOSInMap`: whether nothing built stands between two points (at eye height).
+    /// Whether nothing built stands between two points (at eye height).
     bool inLineOfSight(Position a, Position b);
 
     /// Sends what changed in the creature's fields to those who see it.
@@ -122,7 +120,8 @@ interface CombatWorld : MotionWorld
     void sendInRange(Position center, float range, Opcode opcode, const(ubyte)[] body_);
 }
 
-/// `CreatureFamilyAssistanceRadius`, `CreatureFamilyAssistanceDelay`, `CreatureCheckForHelpRadius` (mangosd.conf).
+/// How far a creature's call for help reaches (yards), how long its allies take to come (ms), and
+/// how near an ally a fighting creature must pass to pull it in (yards).
 enum float assistanceRadius = 5;
 enum int assistanceDelay = 1500; /// ditto
 enum float checkForHelpRadius = 5; /// ditto
@@ -130,7 +129,7 @@ enum float checkForHelpRadius = 5; /// ditto
 /// `CREATURE_EXTRA_FLAG_NO_CALL_ASSIST`: it does not call for help when it starts fighting.
 enum uint extraFlagNoCallAssist = 0x800;
 
-/// `ReactStates`
+/// How a creature reacts to others.
 enum ReactState : ubyte
 {
     passive,    /// never attacks
@@ -138,16 +137,16 @@ enum ReactState : ubyte
     aggressive, /// also attacks on sight
 }
 
-/// `CONFIG_FLOAT_LEASH_RADIUS`: past this from where its timer last started, a creature's victim is out of reach.
+/// Past this from where its timer last started, a creature's victim is out of reach.
 enum float leashRadius = 30;
 
-/// `REGEN_TIME_FULL_UNIT`: out of combat a creature gets a third of its health back this often.
+/// Out of combat a creature gets a third of its health back this often.
 enum int regenInterval = 5000;
 
-/// `COMBAT_MANAGER_TICK`
+/// Milliseconds between leash checks.
 enum int combatManagerTick = 1200;
 
-/// `AI_REACTION_HOSTILE`
+/// The `SMSG_AI_REACTION` of a creature that turns hostile.
 enum uint aiReactionHostile = 2;
 
 /// See the module documentation.
@@ -165,21 +164,21 @@ final class CreatureAI : Scripted, CreatureHost
     private
     {
         Creature me;
-        float[ulong] threat;       // `ThreatManager`: who it fights, and how much each has done to it
+        float[ulong] threat;       // its threat list: who it fights, and how much each has done to it
         bool calledAssistance;     // `m_AlreadyCallAssistance`: once a fight
         Creature[] assistanceReceivers; // the allies called, until the call arrives
         ulong assistanceEnemy;     // whom they are called against
         int assistanceTimer;       // until then, in milliseconds
         int helpCheckTimer;        // until it next pulls in allies it passes
         ulong victim;              // `m_attacking`: whom it attacks
-        bool meleeAttacking;       // `UNIT_STAT_MELEE_ATTACKING`
+        bool meleeAttacking;       // swinging at its victim
         bool inCombat_;
-        bool evadingHome;          // `EVADE_HOME`: running back, ignoring everything
-        int unreachableTimer;      // `CombatManager::m_evadeTimer`: ms left before it gives up on its victim
-        bool victimReachable = true; // its last way to the victim ended within reach (`IsReachable`)
-        bool[ulong] suppressed;    // `STATE_SUPPRESSED`: given up on, while it has others to fight
+        bool evadingHome;          // running back, ignoring everything
+        int unreachableTimer;      // ms left before it gives up on its victim
+        bool victimReachable = true; // its last way to the victim ended within reach
+        bool[ulong] suppressed;    // given up on, while it has others to fight
         int attackTimer;           // until the next swing
-        int combatTimer;           // `CombatManager::m_combatTimer`: the pursuit time left
+        int combatTimer;           // the pursuit time left
         int combatTick;            // until the next leash check
         int regenTimer;
         Position lastRefresh;      // where it was when its combat timer last started
@@ -198,14 +197,14 @@ final class CreatureAI : Scripted, CreatureHost
         react = (me.template_.extraFlags & noAggroOnSight) ? ReactState.defensive : ReactState.aggressive;
     }
 
-    /// `IsInCombat`
+    /// Whether it is in combat.
     @property bool inCombat() const
     {
         return inCombat_;
     }
 
     /**
-     * `CombatManager::IsInEvadeMode`: running home, or unable to reach its victim (for up to 10 s):
+     * Running home, or unable to reach its victim (for up to 10 s):
      * attacks on it are evaded, so nobody fights it from where it cannot answer.
      */
     @property bool evading() const
@@ -213,7 +212,7 @@ final class CreatureAI : Scripted, CreatureHost
         return evadingHome || unreachableTimer > 0;
     }
 
-    /// `CombatManager::IsEvadingHome`: running home; it cannot be attacked.
+    /// Running home; it cannot be attacked.
     @property bool runningHome() const
     {
         return evadingHome;
@@ -257,7 +256,7 @@ final class CreatureAI : Scripted, CreatureHost
     // -----------------------------------------------------------------------
 
     /**
-     * `UnitAI::MoveInLineOfSight`: a player came into sight, or it came into a player's. An
+     * A player came into sight, or it came into a player's. An
      * aggressive creature that may attack it on sight attacks it if it is within its aggro radius
      * and line of sight.
      */
@@ -268,16 +267,16 @@ final class CreatureAI : Scripted, CreatureHost
             return;
         if (me.factionTemplate !is null && isNeutralToAll(*me.factionTemplate))
             return;
-        if (me.values.get!UNIT_FIELD_FLAGS & (UnitFlags.spawning | UnitFlags.uninteractible)) // `CanInitiateAttack`
+        if (me.values.get!UNIT_FIELD_FLAGS & (UnitFlags.spawning | UnitFlags.uninteractible)) // cannot start a fight
             return;
         const target = who.fighter;
         if (!target.alive || who.untouchable)
             return;
-        // `CanAttackOnSight`: may attack it, and is its enemy.
+        // May attack it, and is its enemy.
         const self = relating, other = who.relating;
         if (!canAttack(self, other, me.client) || !isEnemy(self, other, me.client))
             return;
-        // `DetectOrAttack`: within the aggro radius and in sight.
+        // Within the aggro radius and in sight.
         const radius = attackDistance(target);
         const dx = me.position.x - target.position.x, dy = me.position.y - target.position.y,
             dz = me.position.z - target.position.z;
@@ -289,7 +288,7 @@ final class CreatureAI : Scripted, CreatureHost
             attackStart(who, world);
     }
 
-    /// `UnitAI::AttackedBy`: hit (or swung at) by `attacker`; it fights back if it is not fighting yet.
+    /// Hit (or swung at) by `attacker`; it fights back if it is not fighting yet.
     void attackedBy(UnitRef attacker, CombatWorld world)
     {
         world_ = world;
@@ -303,7 +302,7 @@ final class CreatureAI : Scripted, CreatureHost
             addThreat(attacker, 0);
     }
 
-    /// `HandleDamageDealt`'s threat: what `attacker` did to it; direct damage restarts its combat timer.
+    /// The threat of damage taken: what `attacker` did to it; direct damage restarts its combat timer.
     void damageTaken(UnitRef attacker, uint damage)
     {
         if (!me.alive || evadingHome || me.petOwner)
@@ -346,7 +345,7 @@ final class CreatureAI : Scripted, CreatureHost
     // -----------------------------------------------------------------------
 
     /**
-     * `Creature::Update`'s AI part: the combat timers and leash, `UpdateAI` (choosing its victim,
+     * The creature's AI tick: the combat timers and leash, `updateAI` (choosing its victim,
      * evading when there is none, chasing, swinging), and regeneration out of combat.
      */
     void update(CombatWorld world, int diff)
@@ -354,7 +353,7 @@ final class CreatureAI : Scripted, CreatureHost
         if (!me.alive)
             return;
         world_ = world;
-        // `ForcedDespawn`: gone, to come back after its respawn time.
+        // A forced despawn: gone, to come back after its respawn time.
         if (despawnTimer > 0 && (despawnTimer -= diff) <= 0)
         {
             despawnTimer = 0;
@@ -388,7 +387,7 @@ final class CreatureAI : Scripted, CreatureHost
             updateCombatManager(world, diff);
             if (inCombat_ && fleeTimer > 0)
                 updateFleeing(diff);
-            else if (inCombat_ && !me.auras.has(AuraType.modStun)) // `UNIT_STAT_STUNNED`: it does nothing
+            else if (inCombat_ && !me.auras.has(AuraType.modStun)) // stunned, it does nothing
                 updateAI(world);
             if (inCombat_)
                 updateReachability(world, diff);
@@ -415,7 +414,7 @@ final class CreatureAI : Scripted, CreatureHost
         return threat;
     }
 
-    /// `GetAttackDistance` against `target`, in yards.
+    /// Its aggro radius against `target`, in yards.
     float attackDistanceTo(const Fighter target) const
     {
         return attackDistance(target);
@@ -443,7 +442,7 @@ private:
         return r;
     }
 
-    /// `Unit::GetAttackDistance`: its detection range, a yard more for each level its target is below it.
+    /// Its aggro radius: its detection range, a yard more for each level its target is below it.
     float attackDistance(const Fighter target) const
     {
         const self = me.fighter;
@@ -457,14 +456,14 @@ private:
         return distance < 5 ? 5 : distance;
     }
 
-    /// `ThreatManager::addThreat`: a new entry tells the player it is in combat.
-    /// `ModifyThreatPercent`: `who`'s threat changes by `percent` (-100: none left; it stays in the list).
+    /// `who`'s threat changes by `percent` (-100: none left; it stays in the list).
     public void modifyThreatPercent(ulong who, int percent)
     {
         if (auto t = who in threat)
             *t = *t * (percent <= -100 ? 0 : (100 + percent) / 100.0f);
     }
 
+    /// Adds threat; a new entry tells the player it is in combat.
     void addThreat(UnitRef who, float amount)
     {
         const guid = who.combatGuid;
@@ -485,8 +484,7 @@ private:
     }
 
     /**
-     * `UnitAI::AttackStart`: attacks `who` (`Unit::Attack`), enters combat with it
-     * (`EngageInCombatWith`), and chases it.
+     * Attacks `who`, enters combat with it, and chases it.
      */
     void attackStart(UnitRef who, CombatWorld world)
     {
@@ -514,7 +512,7 @@ private:
         if (!inCombat_)
         {
             enterCombat(world);
-            helpCheckTimer = 2000; // `CreatureCheckForHelpAggroDelay`
+            helpCheckTimer = 2000; // ms before it first looks for allies to pull in
             callAssistance(who, world);
             world_ = world;
             if (script !is null)
@@ -526,11 +524,11 @@ private:
     }
 
     // -----------------------------------------------------------------------
-    // Help (`Creature::CallAssistance`, `UnitAI::CheckForHelp`)
+    // Help: calling allies, and pulling in those it passes
     // -----------------------------------------------------------------------
 
     /**
-     * `Creature::CallAssistance` and `SendAIEventAround(AI_EVENT_CALL_ASSISTANCE)`: once a fight,
+     * Calling for help: once a fight,
      * the allies near it (`CallForHelp` yards, or 5) that may join are told, and join in after a
      * moment and a half.
      */
@@ -552,15 +550,15 @@ private:
         assistanceTimer = assistanceDelay;
     }
 
-    /// Whether it calls for help at all (`CanCallForAssistance`).
+    /// Whether it calls for help at all.
     @property bool canCallForAssistance() const
     {
         return !(me.template_.extraFlags & extraFlagNoCallAssist);
     }
 
     /**
-     * `CanAssistInCombatAgainst` (outside dungeons): not fighting already, an ally of `who`
-     * (`CanAssist`: friendly to it), and one that would attack `enemy` on sight.
+     * Whether it may help `who` against `enemy` (outside dungeons): not fighting already, an ally of
+     * `who` (friendly to it), and one that would attack `enemy` on sight.
      */
     bool canAssistAgainst(const Creature who, UnitRef enemy)
     {
@@ -578,7 +576,7 @@ private:
             && isEnemy(self, target, me.client);
     }
 
-    /// The help called for arrives: `HandleAssistanceCall` for each ally still free to come.
+    /// The help called for arrives: each ally still free to come attacks.
     void deliverAssistance(CombatWorld world)
     {
         auto enemy = world.unit(assistanceEnemy);
@@ -589,13 +587,13 @@ private:
         foreach (other; receivers)
             if (other.ai !is null && other.ai.canAssistAgainst(me, enemy))
             {
-                other.ai.calledAssistance = true; // `SetNoCallAssistance`: it does not call others in turn
+                other.ai.calledAssistance = true; // it does not call others in turn
                 other.ai.attackStart(enemy, world);
             }
     }
 
     /**
-     * `UnitAI::CheckForHelp` from the other side: a fighting creature that comes within 5 yards of an
+     * Pulling in help: a fighting creature that comes within 5 yards of an
      * ally free to help (and seen by it) pulls it into the fight against its victim.
      */
     void checkForHelp(CombatWorld world)
@@ -611,7 +609,7 @@ private:
                 other.ai.attackStart(enemy, world);
     }
 
-    /// `SetInCombatWith`: combat starts where it stands; its way of moving waits until it is home.
+    /// Combat starts where it stands; its way of moving waits until it is home.
     void enterCombat(CombatWorld world)
     {
         inCombat_ = true;
@@ -625,14 +623,14 @@ private:
         stopMoving(me, world);
     }
 
-    /// `CombatManager::TriggerCombatTimer`: its pursuit time again, from where it is.
+    /// Its pursuit time again, from where it is.
     void triggerCombatTimer()
     {
         combatTimer = me.template_.pursuit;
         lastRefresh = me.position;
     }
 
-    /// `MeleeAttackStop`
+    /// Stops swinging.
     void meleeStop(CombatWorld world)
     {
         if (meleeAttacking)
@@ -643,7 +641,7 @@ private:
     }
 
     /**
-     * `CombatManager::Update`: once its pursuit time has run out, a victim more than `leashRadius` from
+     * The leash: once its pursuit time has run out, a victim more than `leashRadius` from
      * where the timer last started has got away; past its template's leash distance from where the
      * fight began, it gives up whatever the timer says.
      */
@@ -670,11 +668,11 @@ private:
         }
     }
 
-    /// How long it tries to reach a victim it cannot (`CombatManager::StartEvadeTimer`).
+    /// How long it tries to reach a victim it cannot.
     enum int unreachableEvadeMs = 10_000;
 
     /**
-     * `Unit::SelectHostileTarget`'s reachability and `Unit::EvadeTimerExpired`: while its victim cannot
+     * Reachability: while its victim cannot
      * be reached (its way ends out of reach: on a rock, a ledge, across water it cannot path over), it
      * evades every attack; after 10 s it goes home if the victim was its only enemy, and otherwise
      * leaves that one be and turns to another. Reachable again, it fights on.
@@ -702,8 +700,8 @@ private:
     }
 
     /**
-     * `UnitAI::UpdateAI`: `SelectHostileTarget` (the threat list without those gone, dead or no longer
-     * to be attacked; evading if nobody is left), then chasing and `DoMeleeAttackIfReady`.
+     * Its fight each tick: choosing its victim (the threat list without those gone, dead or no longer
+     * to be attacked; evading if nobody is left), then chasing and swinging when ready.
      */
     void updateAI(CombatWorld world)
     {
@@ -726,7 +724,7 @@ private:
             attackStart(target, world);
         if (casting_ !is null)
         {
-            // Casting: it stands, facing its target (`SetInFront`).
+            // Casting: it stands, facing its target.
             me.movement.position.orientation = angleTo(me.position, target.fighter.position);
             return;
         }
@@ -735,7 +733,7 @@ private:
     }
 
     /**
-     * `ThreatContainer::selectNextVictim`: the most hated, but the current victim keeps its place
+     * The next victim: the most hated, but the current victim keeps its place
      * unless another has more than 110% of its threat in melee reach, or 130% anywhere.
      */
     ulong selectNextVictim(CombatWorld world)
@@ -744,7 +742,7 @@ private:
 
         auto order = threat.keys;
         order.sort!((a, b) => threat[a] > threat[b] || (threat[a] == threat[b] && a < b));
-        // Those given up on come last, while there are others (`STATE_SUPPRESSED`).
+        // Those given up on come last, while there are others.
         if (suppressed.length)
         {
             import std.algorithm.mutation : SwapStrategy;
@@ -773,8 +771,8 @@ private:
     }
 
     /**
-     * `ChaseMovementGenerator`: runs to its target until it can reach it, setting off again when the
-     * target has moved on, and faces it (`SetInFront`).
+     * Chasing: runs to its target until it can reach it, setting off again when the
+     * target has moved on, and faces it.
      */
     void chase(UnitRef target, CombatWorld world)
     {
@@ -809,14 +807,14 @@ private:
         chasedTo = other.position;
         Vector3[] points = [Vector3(0, 0, 0), Vector3(x, y, z)];
         launch(me, world, points, false, float.nan, true);
-        // `IsReachablePositionToTarget`: does the way end within reach of it?
+        // Does the way end within reach of it?
         const end = me.spline.finalDestination;
         const ex = end.x - other.position.x, ey = end.y - other.position.y;
         const within = meleeReach(self, other);
         victimReachable = ex * ex + ey * ey <= within * within;
     }
 
-    /// `UpdateMeleeAttackingState` for a creature: a swing whenever it is ready and can.
+    /// A creature's melee: a swing whenever it is ready and can.
     void meleeAttackIfReady(UnitRef target, CombatWorld world)
     {
         import std.math : PI;
@@ -844,7 +842,7 @@ private:
     }
 
     /**
-     * `UnitAI::EnterEvadeMode`: stops fighting (`CombatStop`), forgets its threat list, and runs back
+     * Evading: stops fighting, forgets its threat list, and runs back
      * to where the fight began, evading every attack on the way.
      */
     void enterEvadeMode(CombatWorld world)
@@ -868,7 +866,7 @@ private:
         unreachableTimer = 0;
         victimReachable = true;
         suppressed = null;
-        me.setLootRecipient(0, 0); // `TriggerEvadeEvents`: nobody's any more
+        me.setLootRecipient(0, 0); // its loot is nobody's any more
         calledAssistance = false;  // the next fight calls again
         assistanceReceivers = null;
         me.values.set!UNIT_FIELD_TARGET(0UL);
@@ -887,7 +885,7 @@ private:
         launch(me, world, points, false, home.orientation, true);
     }
 
-    /// `HomeMovementGenerator::Finalize`: home; it moves as before the fight.
+    /// Back home; it moves as before the fight.
     void reachedHome(CombatWorld world)
     {
         evadingHome = false;
@@ -903,7 +901,7 @@ private:
         }
     }
 
-    /// `Creature::RegenerateAll`: a third of its health every five seconds out of combat.
+    /// Regeneration: a third of its health every five seconds out of combat.
     void regenerate(CombatWorld world, int diff)
     {
         const health = me.values.get!UNIT_FIELD_HEALTH, maximum = me.values.get!UNIT_FIELD_MAXHEALTH;
@@ -916,7 +914,7 @@ private:
         regenTimer -= regenInterval;
         const added = health + maximum / 3;
         me.values.set!UNIT_FIELD_HEALTH(added > maximum ? maximum : added);
-        const addedMana = mana + maxMana / 3; // `RegenerateMana` out of combat: a third too
+        const addedMana = mana + maxMana / 3; // mana out of combat: a third too
         me.values.set!UNIT_FIELD_POWER1(addedMana > maxMana ? maxMana : addedMana);
         world.flushCreature(me);
     }
@@ -936,7 +934,7 @@ private:
     }
 }
 
-/// `FactionTemplateEntry::IsNeutralToAll`
+/// Whether a faction template has no enemies and no friends: neutral to everyone.
 bool isNeutralToAll(const ref FactionTemplateEntry t) pure nothrow @nogc @safe
 {
     foreach (f; t.enemyFactions)

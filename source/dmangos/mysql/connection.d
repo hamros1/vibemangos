@@ -50,9 +50,9 @@ struct ConnectionInfo
     string database;
 
     /**
-     * Parses the `"host;port;user;password;database"` format of CMaNGOS's
-     * `LoginDatabaseInfo`. As there, a host of `"."` means the port field is
-     * a Unix socket path.
+     * Parses the `"host;port;user;password;database"` format of the
+     * database settings. A host of `"."` means the port field is a Unix
+     * socket path.
      */
     static ConnectionInfo parse(string text)
     {
@@ -223,7 +223,7 @@ final class MySqlConnection
 
     /**
      * Runs `work` inside a transaction: committed if it returns, rolled back if it throws.
-     * (MyISAM tables, which CMaNGOS uses for many tables, ignore transactions.)
+     * (MyISAM tables, which the schema uses for many tables, ignore transactions.)
      *
      * If the connection is lost in the middle, the server has rolled back what was done; the
      * statements are not carried on one by one on a new connection (that would commit half of

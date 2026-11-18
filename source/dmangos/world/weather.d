@@ -1,6 +1,6 @@
 /**
- * Weather (CMaNGOS `Weather/Weather.cpp`): each zone with a `game_weather` row has its weather, which
- * changes now and then (`Weather::ReGenerate`, every `IntervalChangeWeather`) by the season's
+ * Weather: each zone with a `game_weather` row has its weather, which
+ * changes now and then (`Weather.regenerate`, every `weatherChangeInterval`) by the season's
  * chances of rain, snow and storms; the players in the zone see it (`SMSG_WEATHER`), and a player
  * entering a zone gets its weather, or fine weather where it has none.
  */
@@ -8,7 +8,7 @@ module dmangos.world.weather;
 
 import std.random : Random, uniform, uniform01;
 
-/// `WeatherType`
+/// The kinds of weather.
 enum WeatherType : uint
 {
     fine = 0,
@@ -17,16 +17,16 @@ enum WeatherType : uint
     storm = 3,
 }
 
-/// A season's chances (percent) of each (`WeatherSeasonChances`).
+/// A season's chances (percent) of each.
 struct SeasonChances
 {
     ubyte rain, snow, storm;
 }
 
-/// A zone's chances in spring, summer, fall and winter (`WeatherZoneChances`).
+/// A zone's chances in spring, summer, fall and winter.
 alias ZoneChances = SeasonChances[4];
 
-/// `IntervalChangeWeather`: milliseconds between changes (CMaNGOS's default, 10 minutes).
+/// Milliseconds between changes: 10 minutes.
 enum int weatherChangeInterval = 600_000;
 
 /// The season of a time: spring from about the 20th of March (`tm_yday - 78`), 91 days each.
@@ -39,7 +39,7 @@ uint seasonOf(long unixTime)
     return ((yday - 78 + 365) / 91) % 4;
 }
 
-/// One zone's weather (`Weather`).
+/// One zone's weather.
 struct Weather
 {
     WeatherType type;
@@ -48,7 +48,7 @@ struct Weather
     ZoneChances chances;
     bool permanent;
 
-    /// `Weather::ReGenerate`: a new weather, perhaps; true if it changed.
+    /// A new weather, perhaps; true if it changed.
     bool regenerate(ref Random random, uint season)
     {
         enum float third = 0.33333334f, twoThirds = 0.6666667f;
@@ -106,7 +106,7 @@ struct Weather
         return type != oldType || grade != oldGrade;
     }
 
-    /// `Weather::NormalizeGrade`
+    /// Keeps the grade strictly between 0 and 1.
     void normalize()
     {
         if (grade >= 1)
@@ -115,7 +115,7 @@ struct Weather
             grade = 0.0001f;
     }
 
-    /// `Weather::GetSound`: the 1.12 sound of it.
+    /// The 1.12 sound of it.
     uint sound() const
     {
         static uint pick(float grade, uint light, uint medium, uint heavy)
@@ -157,7 +157,7 @@ ubyte[] weatherPacket(WeatherType type, float grade, uint sound)
     return w.data.dup;
 }
 
-/// `Player::SendFineWeather`: fine weather at once (no sound, an instant change).
+/// Fine weather at once (no sound, an instant change).
 ubyte[] fineWeatherPacket()
 {
     import dmangos.bytes : ByteWriter;

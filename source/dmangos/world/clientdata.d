@@ -1,15 +1,14 @@
 /**
- * The client's DBC tables needed to create characters, plus the indexes
- * CMaNGOS builds from them (`Server/DBCStores.cpp`, `Spells/SpellMgr.cpp`).
+ * The client's DBC tables the world server needs, plus the indexes built
+ * from them (by area, skill, spell, talent, channel, ...).
  *
- * Every record struct follows CMaNGOS's `DBCStructure.h`, field for field,
- * with its format string from `DBCfmt.h`. `DbcStore` verifies the pair at
- * compile time. The files are read from `<data_dir>/dbc/`, the same layout
- * mangosd uses for its `DataDir`.
+ * Every record struct follows its 1.12 DBC file's layout, field for field,
+ * with a format string; `DbcStore` verifies the pair at compile time. The
+ * files are read from `<data_dir>/dbc/`.
  *
- * Indexes iterate the stores in ascending id order, as CMaNGOS's
- * `for (i = 0; i < GetNumRows(); ++i) LookupEntry(i)` loops do, so
- * multimap order (which decides "first match" lookups) is the same.
+ * Indexes are built by iterating the stores in ascending id order, so the
+ * order of entries under one key (which decides "first match" lookups) is
+ * the order of ids.
  */
 module dmangos.world.clientdata;
 
@@ -20,19 +19,19 @@ import std.path : buildPath;
 import dmangos.dbc;
 import dmangos.log;
 
-/// Bitmask of the eight playable 1.12 races (`RACEMASK_ALL_PLAYABLE`).
+/// Bitmask of the eight playable 1.12 races.
 enum uint playableRaceMask = 0xFF;
-/// Bitmask of the nine playable 1.12 classes (`CLASSMASK_ALL_PLAYABLE`).
+/// Bitmask of the nine playable 1.12 classes.
 enum uint playableClassMask = (1 << 0) | (1 << 1) | (1 << 2) | (1 << 3) | (1 << 4) | (1 << 6) | (1 << 7) | (1 << 8)
     | (1 << 10);
 
-/// `1 << (value - 1)`, as CMaNGOS's `convertEnumToFlag`.
+/// The mask bit of a race or class: `1 << (value - 1)`; 0 for 0.
 uint maskOf(uint raceOrClass) pure nothrow @nogc @safe
 {
     return raceOrClass ? 1u << (raceOrClass - 1) : 0;
 }
 
-/// `CharSectionType`
+/// What part of a character a `CharSections.dbc` record textures.
 enum CharSectionType : uint
 {
     skin = 0,
@@ -42,17 +41,17 @@ enum CharSectionType : uint
     underwear = 4,
 }
 
-/// `SECTION_FLAG_UNAVAILABLE`
+/// A `CharSections.dbc` flag: the section may not be chosen.
 enum uint sectionFlagUnavailable = 0x01;
 
-/// `SKILL_FLAG_MAXIMIZED`
+/// A `SkillRaceClassInfo.dbc` flag: the skill's value is always its maximum.
 enum uint skillFlagMaximized = 0x010;
 
-/// `MAX_SKILL_STEP`
+/// Steps in a `SkillTiers.dbc` record.
 enum maxSkillStep = 16;
 
 // ---------------------------------------------------------------------------
-// Records (DBCStructure.h) with their formats (DBCfmt.h)
+// Records with their formats
 // ---------------------------------------------------------------------------
 
 ///
@@ -104,7 +103,7 @@ struct ChrRacesEntry
 
 enum chrRacesFormat = "nxixiixxixxxxxixissssssssxxxx"; ///
 
-/// `CreatureDisplayInfoEntry`
+/// A `CreatureDisplayInfo.dbc` record.
 struct CreatureDisplayInfoEntry
 {
     uint id;
@@ -115,7 +114,7 @@ struct CreatureDisplayInfoEntry
 
 enum creatureDisplayInfoFormat = "nixifxxxxxxx"; ///
 
-/// `CreatureModelDataEntry`
+/// A `CreatureModelData.dbc` record.
 struct CreatureModelDataEntry
 {
     uint id;
@@ -127,7 +126,7 @@ struct CreatureModelDataEntry
 
 enum creatureModelDataFormat = "nixxfxxxxxxxxxff"; ///
 
-/// `EmotesTextEntry`: what a text emote (/wave) animates.
+/// `EmotesText.dbc`: what a text emote (/wave) animates.
 struct EmotesTextEntry
 {
     uint id;
@@ -136,7 +135,7 @@ struct EmotesTextEntry
 
 enum emotesTextFormat = "nxixxxxxxxxxxxxxxxx"; ///
 
-/// `EmotesEntry`
+/// An `Emotes.dbc` record.
 struct EmotesEntry
 {
     uint id;
@@ -147,15 +146,13 @@ struct EmotesEntry
 
 enum emotesFormat = "nxxiiix"; ///
 
-/// Number of item slots in a starting outfit (`MAX_OUTFIT_ITEMS`).
+/// Number of item slots in a starting outfit.
 enum maxOutfitItems = 12;
 
 /**
  * In the 1.12 file, race, class, gender and outfit are four one-byte fields.
- * CMaNGOS reads them as one 32-bit `RaceClassGender` field. That works only
- * because its loader never checks the record size, and the skipped fields
- * after it absorb the difference. Here the layout is exact, and
- * `raceClassGender` rebuilds the value CMaNGOS compares against.
+ * They are read as four bytes here, so the layout is exact, and
+ * `raceClassGender` packs them into the one 32-bit key lookups compare.
  */
 struct CharStartOutfitEntry
 {
@@ -165,7 +162,7 @@ struct CharStartOutfitEntry
     ubyte outfit;
     int[maxOutfitItems] itemId;
 
-    /// race | class << 8 | gender << 16 | outfit << 24, as CMaNGOS's `RaceClassGender`.
+    /// The four bytes as one key: race | class << 8 | gender << 16 | outfit << 24.
     @property uint raceClassGender() const pure nothrow @nogc @safe
     {
         return race | classId << 8 | gender << 16 | outfit << 24;
@@ -205,18 +202,18 @@ struct FactionEntry
 
 enum factionFormat = "niiiiiiiiiiiiiiiiiissssssssxxxxxxxxxx"; ///
 
-/// `LockEntry`: what opens a lock, case by case (a key item, or a lock type and its skill).
+/// `Lock.dbc`: what opens a lock, case by case (a key item, or a lock type and its skill).
 struct LockEntry
 {
     uint id;
-    uint[8] type;   /// `LockKeyType`: 1 an item, 2 a skill
-    uint[8] index;  /// the item, or the `LockType`
+    uint[8] type;   /// the key's kind: 1 an item, 2 a skill
+    uint[8] index;  /// the item, or the lock type
     uint[8] skill;  /// the skill needed
 }
 
 enum lockFormat = "niiiiiiiiiiiiiiiiiiiiiiiixxxxxxxx"; ///
 
-/// `TaxiNodesEntry`: a flight master's place, and the mounts of its flights (Horde, Alliance).
+/// `TaxiNodes.dbc`: a flight master's place, and the mounts of its flights (Horde, Alliance).
 struct TaxiNodesEntry
 {
     uint id;
@@ -228,7 +225,7 @@ struct TaxiNodesEntry
 
 enum taxiNodesFormat = "nifffssssssssxii"; ///
 
-/// `TaxiPathEntry`: a flight from one node to another, and its price.
+/// `TaxiPath.dbc`: a flight from one node to another, and its price.
 struct TaxiPathEntry
 {
     uint id;
@@ -239,7 +236,7 @@ struct TaxiPathEntry
 
 enum taxiPathFormat = "niii"; ///
 
-/// `TaxiPathNodeEntry`: a point of a flight's path.
+/// `TaxiPathNode.dbc`: a point of a flight's path.
 struct TaxiPathNodeEntry
 {
     uint path;
@@ -252,13 +249,13 @@ struct TaxiPathNodeEntry
 
 enum taxiPathNodeFormat = "diiifffii"; ///
 
-/// `FactionTemplateEntry`: how a unit of a faction stands to others (`dmangos.world.relations`).
+/// `FactionTemplate.dbc`: how a unit of a faction stands to others (`dmangos.world.relations`).
 struct FactionTemplateEntry
 {
     uint id;
     uint faction;
     uint flags;
-    uint groupMask;          /// `FactionGroupMask` of the groups this one is in
+    uint groupMask;          /// the faction groups this one is in
     uint friendGroupMask;    /// groups it is friendly to
     uint enemyGroupMask;     /// groups it is hostile to
     uint[4] enemyFactions;
@@ -267,7 +264,7 @@ struct FactionTemplateEntry
 
 enum factionTemplateFormat = "niiiiiiiiiiiii"; ///
 
-/// `WorldSafeLocsEntry`: a graveyard (or other safe place) where ghosts appear.
+/// `WorldSafeLocs.dbc`: a graveyard (or other safe place) where ghosts appear.
 struct WorldSafeLocsEntry
 {
     uint id;
@@ -277,7 +274,7 @@ struct WorldSafeLocsEntry
 
 enum worldSafeLocsFormat = "nifffxxxxxxxxx"; ///
 
-/// `SpellCastTimesEntry`: a cast time, in milliseconds.
+/// `SpellCastTimes.dbc`: a cast time, in milliseconds.
 struct SpellCastTimesEntry
 {
     uint id;
@@ -288,7 +285,7 @@ struct SpellCastTimesEntry
 
 enum spellCastTimesFormat = "niii"; ///
 
-/// `SpellDurationEntry`: how long an aura lasts, in milliseconds (-1: until cancelled).
+/// `SpellDuration.dbc`: how long an aura lasts, in milliseconds (-1: until cancelled).
 struct SpellDurationEntry
 {
     uint id;
@@ -299,7 +296,7 @@ struct SpellDurationEntry
 
 enum spellDurationFormat = "niii"; ///
 
-/// `SpellRangeEntry`
+/// A `SpellRange.dbc` record.
 struct SpellRangeEntry
 {
     uint id;
@@ -310,7 +307,7 @@ struct SpellRangeEntry
 
 enum spellRangeFormat = "nffixxxxxxxxxxxxxxxxxx"; ///
 
-/// `SpellRadiusEntry`
+/// A `SpellRadius.dbc` record.
 struct SpellRadiusEntry
 {
     uint id;
@@ -371,7 +368,7 @@ struct SkillTiersEntry
 
 enum skillTiersFormat = "niiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii"; ///
 
-/// Ranks a talent can have (`MAX_TALENT_RANK`).
+/// Ranks a talent can have.
 enum maxTalentRank = 5;
 
 ///
@@ -389,7 +386,7 @@ struct TalentEntry
 
 enum talentFormat = "niiiiiiiixxxxixxixxxi"; ///
 
-/// An item set (`ItemSetEntry`): its bonus spells and how many of its items each needs.
+/// An item set (`ItemSet.dbc`): its bonus spells and how many of its items each needs.
 struct ItemSetEntry
 {
     uint id;
@@ -411,34 +408,34 @@ struct TalentTabEntry
 
 enum talentTabFormat = "nxxxxxxxxxxxiix"; ///
 
-/// `MapEntry`
+/// A `Map.dbc` record.
 struct MapEntry
 {
     uint mapId;
-    uint mapType;    /// `MapTypes`
+    uint mapType;    /// a `MapType`
     string[8] name;
     uint linkedZone;
     uint multimapId;
 
-    /// `MapEntry::IsDungeon`: an instance or a raid.
+    /// Whether it is a dungeon: an instance or a raid.
     @property bool isDungeon() const pure nothrow @nogc @safe
     {
         return mapType == MapType.instance || mapType == MapType.raid;
     }
 
-    /// `MapEntry::IsRaid`
+    /// Whether it is a raid.
     @property bool isRaid() const pure nothrow @nogc @safe
     {
         return mapType == MapType.raid;
     }
 
-    /// `MapEntry::IsBattleGround`
+    /// Whether it is a battleground.
     @property bool isBattleground() const pure nothrow @nogc @safe
     {
         return mapType == MapType.battleground;
     }
 
-    /// `MapEntry::IsContinent`: Eastern Kingdoms or Kalimdor.
+    /// Whether it is a continent: Eastern Kingdoms or Kalimdor.
     @property bool isContinent() const pure nothrow @nogc @safe
     {
         return mapId == 0 || mapId == 1;
@@ -447,7 +444,7 @@ struct MapEntry
 
 enum mapFormat = "nxixssssssssxxxxxxxixxxxxxxxxxxxxxxxxxixxx"; ///
 
-/// `MapTypes`
+/// What kind of map a `Map.dbc` record is.
 enum MapType : uint
 {
     common = 0,
@@ -456,7 +453,7 @@ enum MapType : uint
     battleground = 3,
 }
 
-/// `AreaTableEntry`: zones and the areas inside them.
+/// `AreaTable.dbc`: zones and the areas inside them.
 struct AreaTableEntry
 {
     uint id;
@@ -472,7 +469,7 @@ struct AreaTableEntry
 
 enum areaTableFormat = "niiiixxxxxissssssssxixxxi"; ///
 
-/// `AreaTriggerEntry`: a sphere (radius) or a box the client reports entering.
+/// `AreaTrigger.dbc`: a sphere (radius) or a box the client reports entering.
 struct AreaTriggerEntry
 {
     uint id;
@@ -486,7 +483,7 @@ struct AreaTriggerEntry
     float boxZ = 0;
     float boxOrientation = 0;
 
-    /// `IsPointInAreaTriggerZone`: whether a point on `map` is inside, give or take `delta` yards.
+    /// Whether a point on `map` is inside, give or take `delta` yards.
     bool contains(uint map, float px, float py, float pz, float delta) const pure nothrow @nogc @safe
     {
         import std.math : abs, cos, PI, sin;
@@ -507,11 +504,11 @@ struct AreaTriggerEntry
 
 enum areaTriggerFormat = "niffffffff"; ///
 
-/// `ChatChannelsEntry`: the built-in channels (General, Trade, LocalDefense, ...).
+/// `ChatChannels.dbc`: the built-in channels (General, Trade, LocalDefense, ...).
 struct ChatChannelsEntry
 {
     uint channelId;
-    uint flags;       /// `ChannelDBCFlags`
+    uint flags;       /// the channel's flags in the DBC
     string[8] pattern; /// "General - %s"
 }
 
@@ -526,7 +523,7 @@ struct BankBagSlotPricesEntry
 
 enum bankBagSlotPricesFormat = "ni"; ///
 
-/// `StableSlotPricesEntry`: what the stable slot of each number costs.
+/// `StableSlotPrices.dbc`: what the stable slot of each number costs.
 struct StableSlotPricesEntry
 {
     uint id;
@@ -535,7 +532,7 @@ struct StableSlotPricesEntry
 
 enum stableSlotPricesFormat = "ni"; ///
 
-/// `CreatureFamilyEntry`: a beast family's size by level, and what its pets eat.
+/// `CreatureFamily.dbc`: a beast family's size by level, and what its pets eat.
 struct CreatureFamilyEntry
 {
     uint id;
@@ -567,12 +564,12 @@ struct DurabilityQualityEntry
 
 enum durabilityQualityFormat = "nf"; ///
 
-/// `LiquidTypeEntry`
+/// A `LiquidType.dbc` record.
 struct LiquidTypeEntry
 {
     uint id;
     uint liquidId;
-    uint type;    /// 0 magma, 2 slime, 3 water: the bit of `MAP_LIQUID_TYPE_*` it sets
+    uint type;    /// 0 magma, 2 slime, 3 water: which liquid-type bit of the `.map` files it sets
     uint spellId;
 }
 
@@ -592,7 +589,7 @@ struct WmoAreaTableEntry
 
 enum wmoAreaTableFormat = "niiixxxxxiissssssssx"; ///
 
-/// Talent and rank a spell belongs to (`TalentSpellPos`).
+/// Talent and rank a spell belongs to.
 struct TalentSpellPos
 {
     uint talentId;
@@ -772,7 +769,7 @@ final class ClientData
     }
 
     /**
-     * `GetAreaEntryByAreaFlagAndMap`: the area whose explore flag a map cell holds. 1.12's
+     * The area whose explore flag a map cell holds. 1.12's
      * `AreaTable.dbc` repeats flags, so the one on `map` is taken, else the last other one, else
      * the map's own zone.
      */
@@ -793,19 +790,19 @@ final class ClientData
         return null;
     }
 
-    /// `GetWMOAreaTableEntriesByTripple`: the areas of a building group, by root, placement name set and group.
+    /// The areas of a building group, by root, placement name set and group.
     const(WmoAreaTableEntry*)[] wmoAreasOf(int rootId, int adtId, int groupId) const
     {
         return wmoAreasByTriple.get([rootId, adtId, groupId], null);
     }
 
-    /// `GetAreaFlagByMapId`: the explore flag of an instance's area; 0 if it has none.
+    /// The explore flag of an instance's area; 0 if it has none.
     uint areaFlagOfMap(uint map) const
     {
         return areaFlagByMap.get(map, 0);
     }
 
-    /// `GetCharSectionEntry`: an available section of a type, variation and color, or null.
+    /// An available section of a type, variation and color, or null.
     const(CharSectionsEntry)* charSection(ubyte race, CharSectionType type, ubyte gender, ubyte variation,
         ubyte color) const
     {
@@ -816,7 +813,7 @@ final class ClientData
         return null;
     }
 
-    /// `GetCharFacialHairEntry`
+    /// The facial hair style `facialHairId` of a race and gender, or null.
     const(CharacterFacialHairStylesEntry)* facialHair(ubyte race, ubyte gender, ubyte facialHairId) const
     {
         if (auto entry = (race | gender << 8 | facialHairId << 16) in facialHairByKey)
@@ -824,31 +821,31 @@ final class ClientData
         return null;
     }
 
-    /// `GetSkillRaceClassInfoMapBounds`
+    /// The `SkillRaceClassInfo.dbc` records of a skill.
     const(SkillRaceClassInfoEntry*)[] raceClassInfo(uint skillId) const
     {
         return raceClassInfoBySkill.get(skillId, null);
     }
 
-    /// `GetSkillLineAbilityMapBoundsBySpellId`
+    /// The `SkillLineAbility.dbc` records of a spell.
     const(SkillLineAbilityEntry*)[] abilitiesForSpell(uint spellId) const
     {
         return abilitiesBySpell.get(spellId, null);
     }
 
-    /// `GetSkillLineAbilityMapBoundsBySkillId`
+    /// The `SkillLineAbility.dbc` records of a skill.
     const(SkillLineAbilityEntry*)[] abilitiesForSkill(uint skillId) const
     {
         return abilitiesBySkill.get(skillId, null);
     }
 
-    /// Every spell id that has a SkillLineAbility entry, ascending (CMaNGOS's multimap order).
+    /// Every spell id that has a SkillLineAbility entry, ascending.
     uint[] spellsWithAbilities() const
     {
         return abilitiesBySpell.keys.sort().release;
     }
 
-    /// `displayInfo->scale * modelData->Scale`, as `Player::InitDisplayIds` sets the object scale; 1 if unknown.
+    /// The object scale of a display: the display's scale times its model's; 1 if unknown.
     float displayScale(uint displayId) const
     {
         const display = creatureDisplays.lookup(displayId);
@@ -867,14 +864,14 @@ final class ClientData
         return 0;
     }
 
-        /// `GetTalentSpellPos`
+        /// The talent and rank of a spell, or null if it is no talent's.
     const(TalentSpellPos)* talentSpellPos(uint spellId) const
     {
         return spellId in talentSpellPositions;
     }
 
     /**
-     * `GetChatChannelsEntryFor`: the built-in channel a name belongs to, or null for a custom channel.
+     * The built-in channel a name belongs to, or null for a custom channel.
      * A pattern with `%s` matches any name containing the rest ("General - " in "General - Elwynn Forest").
      */
     const(ChatChannelsEntry)* chatChannelFor(string name) const
@@ -906,7 +903,7 @@ final class ClientData
     }
 
     /**
-     * `MapManager::IsValidMapCoord`: a map the client has, and a finite position within its
+     * Whether a position is valid: a map the client has, and a finite position within its
      * 64 by 64 grids of 533.33 yards.
      */
     bool isValidMapCoord(uint map, float x, float y, float z, float orientation = 0) const
@@ -918,7 +915,7 @@ final class ClientData
             && abs(x) <= mapHalfSize - 0.5f && abs(y) <= mapHalfSize - 0.5f;
     }
 
-    /// The team of a race: `Alliance` for TeamID 7, `Horde` for 1 (`Player::TeamForRace`).
+    /// The team of a race: `Alliance` for TeamID 7, `Horde` for 1.
     Team teamForRace(ubyte race) const
     {
         if (auto entry = races.lookup(race))

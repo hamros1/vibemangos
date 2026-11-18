@@ -1,22 +1,21 @@
 /**
- * Talking to NPCs (CMaNGOS `Entities/NPCHandler.cpp`, `GossipDef.cpp`, the gossip half of
- * `Player.cpp` and `QueryHandler.cpp`'s NPC texts): gossip menus with their conditions, the texts
- * they show, trainers' lists and lessons, innkeepers' hearthstone binding, bankers, and vendors'
- * lists. Mixed into `dmangos.world.session.Character`.
+ * Talking to NPCs: gossip menus with their conditions, the texts they show (and the `npc_text`
+ * queries for them), trainers' lists and lessons, innkeepers' hearthstone binding, bankers, and
+ * vendors' lists. Mixed into `dmangos.world.session.Character`.
  *
- * A gossip menu is prepared from `gossip_menu_option` (`PrepareGossipMenu`), shown with its
- * `npc_text` (`SendPreparedGossip`), and its options run when selected (`OnGossipSelect`). Options
+ * A gossip menu is prepared from `gossip_menu_option` (`prepareGossipMenu`), shown with its
+ * `npc_text` (`sendPreparedGossip`), and its options run when selected (`onGossipSelect`). Options
  * for services this server does not offer yet (flight masters, auctioneers, stable masters, guild
  * petitions and tabards, battlemasters, talent resets, spirit healers and guides) are left out of
  * the menu rather than shown and doing nothing. Quests do not exist yet, so no quest is listed.
  *
- * A trainer's lesson goes through `CharacterBuilder.learnInWorld`, the port of `Player::learnSpell`
- * that character creation uses, so a lesson teaches what CMaNGOS teaches: the spell, the ranks and
- * spells that come with it, and the skill of a profession.
+ * A trainer's lesson goes through `CharacterBuilder.learnInWorld`, the same spell learning that
+ * character creation uses, so a lesson teaches the spell, the ranks and spells that come with it,
+ * and the skill of a profession.
  */
 module dmangos.world.npchandlers;
 
-/// `NPCFlags` (`UNIT_NPC_FLAGS`)
+/// Bits of `UNIT_NPC_FLAGS`: the services an NPC offers.
 enum NpcFlag : uint
 {
     gossip = 0x1,
@@ -36,7 +35,7 @@ enum NpcFlag : uint
     repair = 0x4000,
 }
 
-/// `TrainerType`
+/// What a trainer teaches.
 enum TrainerType : uint
 {
     classes = 0,
@@ -45,7 +44,7 @@ enum TrainerType : uint
     pets = 3,
 }
 
-/// `TrainerSpellState`; `greenDisabled` is sent as green.
+/// How a trainer's spell shows for the player; `greenDisabled` is sent as green.
 enum TrainerSpellState : ubyte
 {
     green = 0,
@@ -77,16 +76,16 @@ mixin template NpcHandlers()
     import dmangos.world.worlddata : ItemTemplate;
 
 private:
-    /// `INTERACTION_DISTANCE`, in yards, to which both units' combat reach is added.
+    /// The interaction distance, in yards, to which both units' combat reach is added.
     enum float interactionDistance = 5;
 
-    /// `DEFAULT_GOSSIP_MESSAGE`: the client's own "Greetings" text.
+    /// The text id of the client's own "Greetings" text.
     enum uint defaultGossipMessage = 0xFF_FFFF;
 
     /// The spell an innkeeper casts to bind the hearthstone (`Bind`).
     enum uint bindSpell = 3286;
 
-    /// One line of the prepared gossip menu (`GossipMenuItem` and its `GossipMenuItemData`).
+    /// One line of the prepared gossip menu, with what selecting it does.
     struct GossipItem
     {
         uint icon;
@@ -99,14 +98,14 @@ private:
         uint actionScript;
     }
 
-    // The menu last sent (`PlayerMenu`).
+    // The menu last sent.
     uint gossipMenuId;
     GossipItem[] gossipItems;
     uint[] scriptGossipActions; // the menu shown is a script's: its options' actions
     bool scriptGossipShown;
 
     // -----------------------------------------------------------------------
-    // Finding the NPC (Player::GetNPCIfCanInteractWith)
+    // Finding the NPC the player may interact with
     // -----------------------------------------------------------------------
 
     /// The creature `guid` on the player's map, if it has one of `npcFlags` (0: any) and is close enough.
@@ -119,11 +118,11 @@ private:
             return null;
         if (npcFlags && !(creature.npcValues.get!UNIT_NPC_FLAGS & npcFlags))
             return null;
-        // `GetNPCIfCanInteractWith`: the dead talk only to spirit healers and guides.
+        // The dead talk only to spirit healers and guides.
         enum uint spiritServices = 0x20 | 0x40; // UNIT_NPC_FLAG_SPIRITHEALER, _SPIRITGUIDE
         if (player.deathState != DeathState.alive && !(creature.npcValues.get!UNIT_NPC_FLAGS & spiritServices))
             return null;
-        // WorldObject::IsWithinDistInMap: the distance plus both combat reaches.
+        // Close enough: the interaction distance plus both combat reaches.
         const a = player.position, b = creature.position;
         const reach = interactionDistance + player.values.get!UNIT_FIELD_COMBATREACH
             + creature.npcValues.get!UNIT_FIELD_COMBATREACH;
@@ -159,7 +158,7 @@ private:
     }
 
     // -----------------------------------------------------------------------
-    // Gossip (Player::PrepareGossipMenu, SendPreparedGossip, OnGossipSelect)
+    // Gossip: preparing a menu, showing it, running the option selected
     // -----------------------------------------------------------------------
 
     @Handles(Opcode.CMSG_GOSSIP_HELLO, WorldState.inWorld)
@@ -181,7 +180,7 @@ private:
                 return;
         }
         prepareGossipMenu(creature, creature.npcTemplate.gossipMenuId);
-        // `PrepareGossipMenu`'s quests; without gossip of its own a quest giver shows them alone.
+        // The menu's quests; without gossip of its own a quest giver shows them alone.
         enum uint gossipFlag = 0x1;
         questMenu = null;
         const flags = creature.npcValues.get!UNIT_NPC_FLAGS;
@@ -216,7 +215,7 @@ private:
         }
     }
 
-    /// `Player::PrepareGossipMenu`
+    /// Prepares menu `menuId` of `creature`: the options whose conditions are met and whose services exist.
     void prepareGossipMenu(Npc creature, uint menuId)
     {
         const npcs = context.data.npcs;
@@ -248,7 +247,7 @@ private:
         }
     }
 
-    /// The option checks of `PrepareGossipMenu`, and the services this server has.
+    /// Whether the menu offers an option: its checks, and the services this server has.
     bool offersOption(Npc creature, uint optionId)
     {
         switch (optionId)
@@ -264,13 +263,13 @@ private:
         case GossipOption.tabardDesigner:
             return (creature.npcValues.get!UNIT_NPC_FLAGS & NpcFlag.tabardDesigner) != 0;
         case GossipOption.battlefield:
-            // `Creature::CanInteractWithBattleMaster`, not telling.
+            // Whether the battlemaster would talk to the player, without telling why not.
         {
             const type = battlemasterType(creature);
             return type != BattlegroundType.none && canTalkToBattlemaster(type, false);
         }
         case GossipOption.stablePet:
-            // `GOSSIP_OPTION_STABLEPET`: for hunters.
+            // The stable master's option: for hunters.
             return player.data.classId == 3;
         case GossipOption.unlearnTalents:
             // A class trainer of the player's own class, from the level talents begin.
@@ -281,7 +280,7 @@ private:
         }
     }
 
-    /// `Player::SendPreparedGossip`
+    /// Shows the prepared menu with its text (or the NPC's own gossip text when there is no menu).
     void sendPreparedGossip(Npc creature)
     {
         ServerGossipMessage message;
@@ -296,7 +295,7 @@ private:
 
     import dmangos.script.api : MenuOption;
 
-    /// A menu a creature's script built (`SEND_GOSSIP_MENU` after `ADD_GOSSIP_ITEM`s), under `npc_text` `textId`.
+    /// A menu a creature's script built from its options, under `npc_text` `textId`.
     package void sendScriptGossip(ulong npc, uint textId, const(MenuOption)[] options, bool withQuests)
     {
         auto creature = context.npcFor(map.findObject(npc));
@@ -328,7 +327,7 @@ private:
         send(message);
     }
 
-    /// `Player::GetGossipTextId(menuId, source)`: the text whose condition is the highest one met.
+    /// The text of menu `menuId`: the one whose condition is the highest one met.
     uint gossipTextId(uint menuId, Npc creature)
     {
         uint textId = defaultGossipMessage, lastCondition;
@@ -342,13 +341,13 @@ private:
         return textId;
     }
 
-    /// `Player::OnGossipSelect`
+    /// The player picked option `index` of the prepared menu: runs its service.
     void onGossipSelect(Npc creature, uint index)
     {
         if (index >= gossipItems.length)
             return;
         const item = gossipItems[index];
-        // `OnGossipSelect`: the option's script, the NPC the source and the player the target.
+        // The option's script, the NPC the source and the player the target.
         if (item.actionScript)
         {
             import dmangos.world.dbscripts : DbScriptType;
@@ -403,7 +402,7 @@ private:
             break;
         case GossipOption.innkeeper:
             closeGossip();
-            send(ServerBinderConfirm(creature.guid)); // Player::SetBindPoint: the client asks to be sure
+            send(ServerBinderConfirm(creature.guid)); // the client asks the player to be sure
             break;
         case GossipOption.banker:
             send(ServerShowBank(creature.guid));
@@ -413,13 +412,13 @@ private:
         }
     }
 
-    /// `PlayerMenu::CloseGossip`
+    /// Closes the gossip window.
     void closeGossip()
     {
         send(ServerGossipComplete());
     }
 
-    /// `PlayerMenu::SendPointOfInterest`
+    /// Marks point of interest `id` (`points_of_interest`) on the player's map.
     void sendPointOfInterest(uint id)
     {
         const poi = id in context.data.npcs.pointsOfInterest;
@@ -431,7 +430,7 @@ private:
         send(ServerGossipPoi(poi.flags, poi.x, poi.y, poi.icon, poi.data, poi.name));
     }
 
-    /// `WorldSession::HandleNpcTextQueryOpcode`: the eight options of an `npc_text`, or the client's default.
+    /// The client asks for a text: the eight options of an `npc_text`, or the client's default.
     @Handles(Opcode.CMSG_NPC_TEXT_QUERY, WorldState.inWorld)
     void handleNpcTextQuery(const ClientNpcTextQuery request)
     {
@@ -468,7 +467,7 @@ private:
     // Innkeepers and bankers
     // -----------------------------------------------------------------------
 
-    /// `WorldSession::HandleBinderActivateOpcode` and `SendBindPoint`: the hearthstone is bound here.
+    /// The player confirmed binding at an innkeeper: the hearthstone is bound here.
     @Handles(Opcode.CMSG_BINDER_ACTIVATE, WorldState.inWorld)
     void handleBinderActivate(const ClientNpcGuid request)
     {
@@ -478,7 +477,7 @@ private:
         const mapEntry = context.client.maps.lookup(player.data.map);
         if (mapEntry is null || mapEntry.isDungeon || mapEntry.isBattleground)
             return;
-        // The Bind spell's effect (Spell::EffectBind). Without map data, the zone stands for the area.
+        // What the Bind spell's effect does. Without map data, the zone stands for the area.
         const at = player.position;
         const bind = HomeBind(player.data.map, player.data.zone, at.x, at.y, at.z);
         player.data.homeBind = bind;
@@ -497,7 +496,7 @@ private:
     }
 
     // -----------------------------------------------------------------------
-    // Trainers (NPCHandler.cpp, Creature::IsTrainerOf, Player::GetTrainerSpellState)
+    // Trainers: who they teach, their lists, and lessons
     // -----------------------------------------------------------------------
 
     @Handles(Opcode.CMSG_TRAINER_LIST, WorldState.inWorld)
@@ -515,8 +514,8 @@ private:
     }
 
     /**
-     * `Creature::IsTrainerOf`: whether this trainer teaches the player. With `tell`, the trainer says why
-     * not, with the text CMaNGOS shows.
+     * Whether this trainer teaches the player. With `tell`, the trainer says why not, with the
+     * `npc_text` for that kind of trainer.
      */
     bool isTrainerOf(Npc trainer, bool tell)
     {
@@ -542,7 +541,7 @@ private:
         case TrainerType.mounts:
             if (t.trainerRace && player.data.race != t.trainerRace)
             {
-                // CMaNGOS picks the text by `TrainerClass` here, which holds the race for these trainers.
+                // The text is picked by `trainerClass` here, which holds the race for these trainers.
                 static immutable uint[9] texts = [0, 5861, 5863, 5865, 5862, 624, 5864, 4881, 5816];
                 refusal = t.trainerClass < texts.length ? texts[t.trainerClass] : 0;
                 if (refusal == 0)
@@ -554,7 +553,7 @@ private:
                 refusal = 11031;
             break;
         default:
-            return false; // CMaNGOS reports these at load
+            return false; // any other trainer type is invalid data
         }
         if (refusal == 0)
             return true;
@@ -567,7 +566,7 @@ private:
         return false;
     }
 
-    /// `Player::IsSpellFitByClassAndRace`: whether the race and class may learn the spell, and from what level.
+    /// Whether the player's race and class may learn the spell, and from what level.
     bool spellFitsClassAndRace(uint spell, out uint requiredLevel)
     {
         const raceMask = 1u << (player.data.race - 1), classMask = 1u << (player.data.classId - 1);
@@ -596,7 +595,7 @@ private:
         return false;
     }
 
-    /// `SpellMgr::IsProfessionSpell` and `IsPrimaryProfessionSpell`: the spell's second effect teaches a profession.
+    /// Whether the spell's second effect teaches a profession (with `primaryOnly`, a primary one).
     bool isProfessionSpell(uint id, bool primaryOnly)
     {
         enum uint skillFishing = 356, skillCooking = 185, skillFirstAid = 129;
@@ -609,13 +608,13 @@ private:
         return primary || (!primaryOnly && (skill == skillFishing || skill == skillCooking || skill == skillFirstAid));
     }
 
-    /// `SpellMgr::IsPrimaryProfessionFirstRankSpell`
+    /// Whether the spell is the first rank of a primary profession.
     bool isPrimaryProfessionFirstRank(uint id)
     {
         return isProfessionSpell(id, true) && context.data.spells.rank(id) == 1;
     }
 
-    /// `Player::GetTrainerSpellState`
+    /// How a trainer's spell shows for the player: known (gray), learnable (green), or not yet (red).
     TrainerSpellState trainerSpellState(const ref TrainerSpell trainerSpell, uint requiredLevel)
     {
         const learned = trainerSpell.learnedSpell;
@@ -647,7 +646,7 @@ private:
         return trainerSpell.providedReqLevel ? trainerSpell.reqLevel : max(fitLevel, trainerSpell.reqLevel);
     }
 
-    /// `WorldSession::SendTrainerList`
+    /// Sends the trainer's list: each spell with its cost, level, requirements and state.
     void sendTrainerList(ulong guid)
     {
         auto trainer = interactableNpc(guid, NpcFlag.trainer);
@@ -684,14 +683,14 @@ private:
             sent.requiredSpells[2] = trainerSpell.reqAbility[2];
             list.spells ~= sent;
             if (isProfessionSpell(trainerSpell.learnedSpell, false))
-                list.trainerType = TrainerType.tradeskills; // ObjectMgr::LoadTrainers
+                list.trainerType = TrainerType.tradeskills; // a list teaching professions shows as one
         }
         list.greeting = context.data.npcs.trainerGreetings.get(trainer.npcTemplate.entry,
             "Hello! Ready for some training?");
         send(list);
     }
 
-    /// `WorldSession::HandleTrainerBuySpellOpcode`
+    /// The player buys a lesson: checked, paid for, and the spell learned.
     @Handles(Opcode.CMSG_TRAINER_BUY_SPELL, WorldState.inWorld)
     void handleTrainerBuySpell(const ClientTrainerBuySpell request)
     {
@@ -718,12 +717,12 @@ private:
         send(ServerPlaySpellVisual(trainer.guid, 0xB3));      // on the trainer
         send(ServerPlaySpellImpact(player.guid, 0x016A));     // on the player
         send(ServerTrainerBuySucceeded(trainer.guid, request.spell));
-        // The trainer casts its spell on the player, whose effect teaches the spell (Spell::EffectLearnSpell).
+        // The trainer casts its spell on the player, whose effect teaches the spell.
         learnSpellInWorld(found.learnedSpell);
     }
 
     /**
-     * `Player::learnSpell` while in the world: the spell and what comes with it are learned, the client
+     * Learning a spell while in the world: the spell and what comes with it are learned, the client
      * is told, and the spells and skills saved.
      */
     void learnSpellInWorld(uint spell)
@@ -774,7 +773,7 @@ private:
     }
 
     // -----------------------------------------------------------------------
-    // Vendors (ItemHandler.cpp)
+    // Vendors
     // -----------------------------------------------------------------------
 
     /// A vendor's items: its own (`npc_vendor`), then its template's, as the slots number them.
@@ -791,7 +790,7 @@ private:
         sendListInventory(request.guid);
     }
 
-    /// `Player::CanSeeVendorItem`
+    /// Whether the player sees a vendor's item: class, race, reputation and condition allow it.
     bool canSeeVendorItem(Npc vendor, const ref VendorItem vendorItem, const ref ItemTemplate proto)
     {
         enum uint bindWhenPickedUp = 1;
@@ -806,10 +805,10 @@ private:
         return !vendorItem.conditionId || conditionMet(vendorItem.conditionId, vendor);
     }
 
-    /// `WorldSession::SendListInventory`
+    /// Sends the vendor's list of items.
     void sendListInventory(ulong guid)
     {
-        enum maxVendorItems = 128; // MAX_VENDOR_ITEMS
+        enum maxVendorItems = 128; // the most items a vendor list holds
         auto vendor = interactableNpc(guid, NpcFlag.vendor);
         if (vendor is null)
             return;

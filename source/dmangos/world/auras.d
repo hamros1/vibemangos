@@ -1,11 +1,11 @@
 /**
- * Auras (CMaNGOS `Spells/SpellAuras.cpp`: `SpellAuraHolder` and `Aura`): what a spell leaves on a
+ * Auras: what a spell leaves on a
  * unit for a while, the unit's aura fields that show it, and what it adds up to.
  *
  * An `AuraSet` is a unit's auras. Applying one gives it a visible slot (positive 0 .. 31, negative
  * 32 .. 47; passive ones none) and fills `UNIT_FIELD_AURA`, its flags, level and applications;
- * applying the same spell from the same caster again refreshes it (and stacks it, up to
- * `StackAmount`). Each aura counts down its duration and its periodic effects' timers; `update`
+ * applying the same spell from the same caster again refreshes it (and stacks it, up to the
+ * spell's `StackAmount`). Each aura counts down its duration and its periodic effects' timers; `update`
  * says which ticked and which ended, and the unit's owner (a session, a creature's map) does what
  * they do. The sums (`total`, `totalByMisc`) are what stats, speeds and states are made of.
  */
@@ -15,7 +15,7 @@ import dmangos.world.objects : UpdateValues;
 import dmangos.world.spells : SpellInfo;
 import dmangos.world.updatefields;
 
-/// `AuraType`: the ones this server does something with.
+/// The aura types (a spell effect's `EffectApplyAuraName`) this server does something with.
 enum AuraType : uint
 {
     none = 0,
@@ -91,12 +91,12 @@ enum AuraType : uint
     modHealingDone = 135,
 }
 
-/// `MAX_AURAS`, `MAX_POSITIVE_AURAS`
+/// Visible aura slots, and how many of them are for positive auras.
 enum uint maxAuras = 48, maxPositiveAuras = 32;
 /// No visible slot.
 enum ubyte noSlot = 0xFF;
 
-/// `AuraInterruptFlags`
+/// Bits of a spell's `AuraInterruptFlags`: what removes its aura.
 enum AuraInterrupt : uint
 {
     hostileAction = 0x00000001,
@@ -111,13 +111,13 @@ enum AuraInterrupt : uint
     nonPeriodicDamage = 0x01000000,
 }
 
-/// `AuraFlags`
-enum ubyte auraFlagCancelable = 0x01, auraFlagPositive = 0x04 /* AFLAG_UNK3 */, auraFlagNegative = 0x08;
+/// An aura slot's flags in the `UNIT_FIELD_AURAFLAGS` fields.
+enum ubyte auraFlagCancelable = 0x01, auraFlagPositive = 0x04 /* what the client takes as positive */, auraFlagNegative = 0x08;
 
-/// `SPELL_ATTR_NO_AURA_CANCEL`
+/// A spell attribute: its aura cannot be cancelled by the player.
 enum uint spellAttrNoAuraCancel = 0x80000000;
 
-/// One spell's aura on a unit (`SpellAuraHolder` with its `Aura`s).
+/// One spell's aura on a unit, with each of its aura effects.
 final class Aura
 {
     const(SpellInfo)* spell;
@@ -169,7 +169,7 @@ struct AuraSet
     Aura[] list;
 
     /**
-     * `Unit::AddSpellAuraHolder`: `aura` is applied, or the same spell's from the same caster is
+     * Applies `aura`, or the same spell's from the same caster is
      * refreshed (and stacked) instead. Returns the aura in effect and whether it is new.
      */
     Aura apply(Aura aura, ref UpdateValues values, out bool isNew)
@@ -201,7 +201,7 @@ struct AuraSet
         return aura;
     }
 
-    /// `_RemoveSpellAuraHolder`: the aura goes, and its slot empties.
+    /// The aura goes, and its slot empties.
     void remove(Aura aura, ref UpdateValues values)
     {
         import std.algorithm.mutation : remove_ = remove;
@@ -221,7 +221,7 @@ struct AuraSet
         }
     }
 
-    /// `SetAura`, `SetAuraFlag`, `SetAuraLevel`, `UpdateAuraApplication`
+    /// Writes the aura's slot: its spell, flags, level and applications.
     void writeSlot(const Aura aura, ref UpdateValues values)
     {
         if (aura.slot == noSlot)
@@ -246,7 +246,7 @@ struct AuraSet
     }
 
     /**
-     * `SpellAuraHolder::Update`: `diff` milliseconds on. Periodic effects that came due are added to
+     * `diff` milliseconds on. Periodic effects that came due are added to
      * `ticks`; auras whose time ran out to `expired` (not yet removed).
      */
     void update(int diff, ref AuraTick[] ticks, ref Aura[] expired)
@@ -273,7 +273,7 @@ struct AuraSet
         }
     }
 
-    /// `GetTotalAuraModifier`: the amounts of every effect of `type`.
+    /// The sum of the amounts of every effect of `type`.
     int total(AuraType type) const
     {
         int sum;
@@ -284,7 +284,7 @@ struct AuraSet
         return sum;
     }
 
-    /// `GetTotalAuraModifierByMiscValue`: those whose misc value is `misc`.
+    /// The sum of those whose misc value is `misc`.
     int totalByMisc(AuraType type, int misc) const
     {
         int sum;
@@ -295,7 +295,7 @@ struct AuraSet
         return sum;
     }
 
-    /// `GetTotalAuraModifierByMiscMask`: those whose misc value has a bit of `mask`.
+    /// The sum of those whose misc value has a bit of `mask`.
     int totalByMiscMask(AuraType type, int mask) const
     {
         int sum;
@@ -306,7 +306,7 @@ struct AuraSet
         return sum;
     }
 
-    /// `GetMaxPositiveAuraModifier`/`GetMaxNegativeAuraModifier` of speeds: the strongest of each kind counts.
+    /// The strongest positive (or negative) amount of `type`, as speeds count: only the strongest of each kind.
     int strongest(AuraType type, bool positive) const
     {
         int best;
@@ -330,7 +330,7 @@ struct AuraSet
         return false;
     }
 
-    /// The auras whose `AuraInterruptFlags` has any of `flags` (`RemoveAurasWithInterruptFlags`).
+    /// The auras whose `AuraInterruptFlags` has any of `flags` (those the caller removes).
     Aura[] interruptedBy(uint flags)
     {
         Aura[] found;
@@ -350,7 +350,7 @@ struct AuraSet
     }
 }
 
-/// `CreateAura`'s amounts and periods for `spell`'s aura effects, from `effectValue`s already rolled.
+/// An aura of `spell`: its effects' amounts and periods, from `effectValue`s already rolled.
 Aura makeAura(const(SpellInfo)* spell, ulong caster, uint casterLevel, int durationMs, bool positive,
     const int[3] values)
 {
@@ -372,10 +372,10 @@ Aura makeAura(const(SpellInfo)* spell, ulong caster, uint casterLevel, int durat
         switch (cast(AuraType) spell.casting.applyAuraName[i])
         {
         case AuraType.modRegen:
-            period = 5000; // `HandleModRegen`
+            period = 5000; // regenerates every 5 seconds
             break;
         case AuraType.modPowerRegen:
-            period = 0; // drink adds to the regeneration (`UpdateManaRegen`)
+            period = 0; // drink adds to the regeneration
             break;
         case AuraType.periodicDamage, AuraType.periodicHeal, AuraType.obsModHealth, AuraType.obsModMana,
                 AuraType.periodicEnergize, AuraType.periodicTriggerSpell, AuraType.periodicLeech,

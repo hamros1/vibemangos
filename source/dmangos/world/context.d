@@ -1,4 +1,17 @@
-/// State shared by every session on a world server.
+/**
+ * The state every session on a world server shares: `WorldContext`.
+ *
+ * A world node has one `WorldContext`. It owns the configuration, the world and login databases
+ * (and the write-behind writer), the static world and client data, the scripts, the authenticated
+ * sessions and the players online, the maps with their terrain, the dungeon instances with their
+ * binds, groups, guilds, battlegrounds, weather, shutdown countdown, and the cluster's view of this
+ * node (its regions, the players other nodes simulate, the delegates that reach other nodes).
+ *
+ * It runs the world's tick (`update`): each map's players, creatures and game objects, then the
+ * deaths, then what belongs to no one map (instances, scripts, weather, respawns, auctions, mail,
+ * the honor week). It also makes creatures, pets, summons and spawns, and settles what happens
+ * outside any session. The server loop is single-threaded, so none of this needs locking.
+ */
 module dmangos.world.context;
 
 import dmangos.cluster.services : ServiceHost;
@@ -103,7 +116,7 @@ enum TickPhase : ubyte
     world,  /// what belongs to no one map: dungeon copies, scripts, weather, respawns, auctions, mail
 }
 
-/// A shutdown or restart counting down (`World::ShutdownServ`).
+/// A shutdown or restart counting down.
 struct ShutdownTimer
 {
     MonoTime at;        /// when the server stops
@@ -124,10 +137,10 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
     import dmangos.world.weather : Weather;
 
-    private Weather[uint] weathers; // by zone, while players are in it (`WeatherSystem`)
+    private Weather[uint] weathers; // by zone, while players are in it
 
     /**
-     * `WeatherSystem::FindOrCreateWeather` for a player entering `zone`: its weather's `SMSG_WEATHER`
+     * The weather of `zone`, for a player entering it: its weather's `SMSG_WEATHER`
      * body (made and generated the first time), or fine weather where it has no `game_weather` row.
      */
     ubyte[] weatherFor(uint zone)
@@ -146,7 +159,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return weathers[zone].packet();
     }
 
-    /// `WeatherSystem::UpdateWeathers`: each zone's change when due, shown to the players in it; a zone
+    /// Each zone's weather changes when due, shown to the players in it; a zone
     /// nobody is in any more forgets its weather.
     private void updateWeathers(int diff)
     {
@@ -198,7 +211,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     WorldData data;
     ClientData client;
 
-    /// The guilds (`GuildMgr`), all of them, as saved (`dmangos.world.guild`).
+    /// The guilds, all of them, as saved (`dmangos.world.guild`).
     Guilds guilds;
 
     /// The gameplay scripts (docs/SCRIPTING.md), found in `dmangos.scripts` at compile time.
@@ -220,7 +233,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     private OnlinePlayer[ulong] online;
     private OnlinePlayer[dstring] onlineByName;
 
-    /// Parties and raids, online or not (`ObjectMgr`'s groups).
+    /// Parties and raids, online or not.
     Groups groups;
 
     /// The chat channels (on the coordinator; other nodes send it their players' commands).
@@ -436,7 +449,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     /// The most sessions that were online at once, for the `uptime` table.
     size_t peakSessions;
 
-    /// Sessions authenticated since start-up (ArcEmu's `mAcceptedConnections`).
+    /// Sessions authenticated since start-up.
     size_t acceptedSessions;
 
     /// The time source sessions use (ping pacing); tests replace it.
@@ -545,7 +558,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return null;
     }
 
-    /// `CommandTableStorage::Load`: the `command_overrides` setting.
+    /// Reads the `command_overrides` setting: GM commands given another permission letter.
     void loadCommandOverrides()
     {
         import dmangos.log : info, warning;
@@ -565,7 +578,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         }
     }
 
-    /// `sGMLog`: a line in the GM command log (`gm_command_log`), with the time in front.
+    /// A line in the GM command log (`gm_command_log`), with the time in front.
     void writeGmLog(string line)
     {
         import dmangos.log : warning;
@@ -605,7 +618,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return startUnixTime + (clock() - startClock).total!"seconds";
     }
 
-    /// When the server started, in Unix time (`World::m_StartTime`).
+    /// When the server started, in Unix time.
     @property long startTime() const
     {
         return startUnixTime;
@@ -618,7 +631,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     }
 
     /// The map `id`, created when its first player arrives.
-    /// `TerrainManager::LoadTerrain`: a map's ground, from `data_dir`'s `.map` files.
+    /// A map's ground, from `data_dir`'s `.map` files, loaded the first time it is asked for.
     Terrain terrain(uint mapId)
     {
         if (vmapModels is null)
@@ -712,7 +725,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     }
 
     // -----------------------------------------------------------------------
-    // Dungeon instances (`InstanceSaveManager`, `MapManager::CreateInstance`)
+    // Dungeon instances: their copies, saved state and players' binds
     // -----------------------------------------------------------------------
 
     /// What is kept of an instance: its map, when it emptied, its dead and used-up spawns.
@@ -733,7 +746,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     private uint[uint][ulong] groupBinds;      // group leader guid -> map id -> instance (`group_instance`)
 
     /**
-     * Whether map `mapId` is a dungeon whose groups each get a copy of it (`Map::Instanceable`).
+     * Whether map `mapId` is a dungeon whose groups each get a copy of it.
      * In a cluster a dungeon is one region (never split), and the node owning it hosts every copy.
      */
     bool instanceable(uint mapId)
@@ -760,8 +773,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     }
 
     /**
-     * `Player::GetBoundInstance` and `MapManager::CreateInstance`: the instance of `mapId` the player
-     * goes into: its group's, else its own, else a new one, to which it (and its group) are bound.
+     * The instance of `mapId` the player goes into: its group's, else its own, else a new one, to
+     * which it (and its group) are bound.
      * 0 for a map that is not instanced, or (in a cluster) a dungeon another node hosts: the player
      * goes there (`InWorldHandlers.migrateTo`), and gets its copy there.
      */
@@ -772,7 +785,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
         if (!instanceable(mapId) || !hostsDungeon(mapId))
             return 0;
-        // A battleground's copy is the one the queue sent the player to (`BattleGroundMap::CanEnter`).
+        // A battleground's copy is the one the queue sent the player to.
         if (battlegroundOfMap(mapId))
             return database.loadBattlegroundData(cast(uint) player).instance;
         auto group = groups.of(player);
@@ -849,7 +862,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         void delegate(ubyte abort) then) askDungeonEntry;
 
     /**
-     * `DungeonMap::Add`: a player who is not a game master, sent into a copy of `mapId` (summoned,
+     * Entering a dungeon: a player who is not a game master, sent into a copy of `mapId` (summoned,
      * appearing), is bound to it unless it is bound to a copy of that map already.
      */
     void bindOnEntering(ulong player, uint mapId, uint instance)
@@ -862,7 +875,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
     /**
      * A raid's lockout: whether the player is bound to another copy of raid `mapId` than its group's
-     * (`MapManager::CanPlayerEnter` turns it away).
+     * (such a player may not enter).
      */
     bool lockedOutOfGroupRaid(ulong player, uint mapId)
     {
@@ -876,7 +889,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return mine && theirs && mine != theirs && mine in instances && theirs in instances;
     }
 
-    /// The instances saved: their rows, binds and dead (`InstanceSaveManager::LoadFromDB`).
+    /// The instances saved: their rows, binds and dead, read at start-up.
     private void loadInstances()
     {
         loadInstancesOf((uint) => true);
@@ -1034,13 +1047,13 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return instances.length;
     }
 
-    /// `ObjectGridLoader` for an instance: the cell's spawns but those killed or used up in it.
+    /// A cell of an instance loading: the cell's spawns but those killed or used up in it.
     private MapObject[] spawnCellIn(uint mapId, uint instance, ulong cell)
     {
         import dmangos.world.gameobject : GameObject;
 
         auto state = instance in instances;
-        // A battleground's copy: only the spawns of its events now (`OnObjectDBLoad`).
+        // A battleground's copy: only the spawns of its events now.
         auto copy = battlegroundOfMap(mapId) ? battlegrounds.find(instance) : null;
         MapObject[] spawned;
         if (auto cells = mapId in data.creatureCells)
@@ -1068,7 +1081,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 auto go = makeGameObject(spawn);
                 go.instanceId = instance;
                 if (copy !is null && event !is null && (*event)[0] == 254 && copy.doorsOpen)
-                    go.setDoorOpen(true); // a door loading after the start (`OnObjectDBLoad`)
+                    go.setDoorOpen(true); // a door loading after the start is open
                 spawned ~= go;
             }
         if (auto script = instance in instanceScripts)
@@ -1086,7 +1099,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return spawned;
     }
 
-    /// `InstanceMap::UnloadAll` after `Instance.UnloadDelay`: an empty instance goes, and its binds with it.
+    /// After `Instance.UnloadDelay` empty, an instance's map is unloaded, and its binds go with it.
     private void unloadEmptyInstances(MonoTime now)
     {
         import core.time : seconds;
@@ -1229,19 +1242,19 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return id in instances;
     }
 
-    /// The instance's map if it is loaded (ArcEmu's `m_mapMgr`), else null.
+    /// The instance's map if it is loaded, else null.
     Map instanceMap(uint id)
     {
         return instanceMaps.get(id, null);
     }
 
-    /// The player's binds: map id -> instance (ArcEmu's `savedInstanceIds`).
+    /// The player's binds: map id -> instance.
     const(uint[uint]) bindsOf(ulong player)
     {
         return playerBinds.get(player, null);
     }
 
-    /// Takes a player's bind to map `mapId` away (`SetPersistentInstanceId(map, 0)`).
+    /// Takes a player's bind to map `mapId` away.
     void revokeBind(ulong player, uint mapId)
     {
         if (auto binds = player in playerBinds)
@@ -1252,7 +1265,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             }
     }
 
-    /// `MapMgr::InstanceShutdown`: the instance's map goes (its state stays); false if it was not loaded.
+    /// Shuts an instance down: its map goes (its state stays); false if it was not loaded.
     bool shutdownInstance(uint id)
     {
         auto m = instanceMaps.get(id, null);
@@ -1423,7 +1436,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     }
 
     /**
-     * The creatures and game objects of one cell (`ObjectGridLoader`): each spawn's object, with a
+     * The creatures and game objects of one cell, as it loads: each spawn's object, with a
      * level and model chosen, its addon, equipment and model data looked up.
      */
     MapObject[] spawnCell(uint mapId, ulong cell)
@@ -1452,7 +1465,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     }
 
     /**
-     * A creature from its spawn (`Creature::Create`): a level and model chosen, its addon, equipment
+     * A creature from its spawn: a level and model chosen, its addon, equipment
      * and model data looked up, and its movement generator; null if its template has no model.
      */
     Creature makeCreature(const(CreatureSpawn)* spawn, uint petNumber = 0)
@@ -1657,7 +1670,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     }
 
     /**
-     * A packet for every player in the world, on every node (`World::SendGlobalMessage`); with
+     * A packet for every player in the world, on every node; with
      * `permission`, only for those with that GM permission letter.
      */
     void toEveryone(Opcode opcode, const(ubyte)[] body_, char permission = 0)
@@ -1683,7 +1696,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     private long[uint] respawnAt;
     private MonoTime lastRespawnCheck;
 
-    /// `Creature::SaveRespawnTime` (`SaveRespawnTimeImmediately`): a creature died; it comes back when it says.
+    /// A creature died: its respawn time is saved at once; it comes back when it says.
     void creatureDied(Creature creature)
     {
         if (creature.instanceId)
@@ -1739,7 +1752,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     }
 
     /**
-     * `WorldObject::SummonCreature`: a creature of `entry` at `at` on `world` (near `summoner` when
+     * Summons a creature of `entry` at `at` on `world` (near `summoner` when
      * `at` is all zeros), not saved and never respawned, gone as `type` says after `durationMs`.
      */
     Creature summonCreature(CombatWorld world, uint entry, Position at, TempSpawnType type, uint durationMs,
@@ -1753,7 +1766,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             return null;
         if (at.x == 0 && at.y == 0 && at.z == 0)
         {
-            // `GetClosePoint`: a couple of yards from the summoner, on the ground.
+            // Near the summoner: a couple of yards from it, on the ground.
             Position from;
             if (auto who = map.find(summoner))
                 from = who.character.position;
@@ -1781,7 +1794,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     }
 
     /**
-     * A pet's creature (`Pet::Create`): of `entry`, at `at` on `map`, not yet on the map (the owner's
+     * A pet's creature: of `entry`, at `at` on `map`, not yet on the map (the owner's
      * session makes it its pet and adds it). Null if there is no such creature or model.
      */
     Creature makePetCreature(Map map, uint entry, uint number, Position at)
@@ -1820,7 +1833,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     private MonoTime[ulong] noticedLately; // player ^ creature -> when it moved for it: not again for a while
 
     /**
-     * `MoveInLineOfSight` for another node's creature (CLUSTER.md, phase 8): if it would attack the
+     * A player comes into sight of another node's creature (CLUSTER.md, phase 8): if it would attack the
      * player on sight (an aggressive enemy, the player within its aggro radius and in sight), the
      * player moves to the creature's node, where the creature decides for itself. A player is moved
      * for the same creature once in 30 seconds, so one that does not attack after all is not
@@ -1853,7 +1866,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         if (!canAttack(self, other, client) || !isEnemy(self, other, client) || !session.fighter.alive
             || session.untouchable)
             return;
-        // `GetAttackDistance`
+        // The creature's aggro radius against the player (as `CreatureAI.attackDistance`).
         const at = session.fighter.position, from = replica.position;
         int levelDiff = int(session.fighter.level) - int(values.get!UNIT_FIELD_LEVEL);
         if (levelDiff < -25)
@@ -1882,7 +1895,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     }
 
     // -----------------------------------------------------------------------
-    // Spawns made and deleted by GMs (ArcEmu's `.npc spawn`, `.gobject spawn`, the deletes)
+    // Spawns made and deleted by GMs (`.npc spawn`, `.gobject spawn`, the deletes)
     // -----------------------------------------------------------------------
 
     private uint lastCreatureSpawn, lastGameObjectSpawn; // the highest spawn guids, once looked up
@@ -2024,7 +2037,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     }
 
     /**
-     * `GameObject::Update` for a trap (`GAMEOBJECT_TYPE_TRAP`) a player stepped near: one not friendly
+     * A trap (`GAMEOBJECT_TYPE_TRAP`) a player stepped near: one not friendly
      * to the player casts its spell at the player, then waits its cooldown; one with charges is used
      * up after them (and comes back with its spawn's respawn time).
      */
@@ -2042,7 +2055,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         const spell = cast(uint) trap.template_.data[3];
         if (spell == 0)
             return;
-        // Unfriendly units only (`AnyUnfriendlyUnitInObjectRangeCheck`): not one the trap's faction likes.
+        // Unfriendly units only: not one the trap's faction likes.
         const faction = client.factionTemplates.lookup(trap.template_.faction);
         if (faction !is null && isFriend(Relating(0, faction, false, 0, 0, true), session.relating, client))
             return;
@@ -2238,8 +2251,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return data.escortPaths.get(entry, null);
     }
 
-    /// `GameObject::Use`'s script part (`sScriptDevAIMgr.OnGameObjectUse`): the object's script hears
-    /// of `player` using it; true if it handled the use (the usual use does not follow).
+    /// A game object's use, for its script: the object's script hears of `player` using it; true if
+    /// it handled the use (the usual use does not follow).
     bool gameObjectUsed(GameObject go, Map map, ulong player)
     {
         import dmangos.script.api : GameObjectContext, ObjectUsed;
@@ -2312,7 +2325,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             startScript(DbScriptType.relay, relay, cast(Map) world, source, target);
     }
 
-    /// `.respawn` (`Creature::Despawn(0, 1000)`): the corpse goes now, and the creature comes back in a second.
+    /// `.respawn`: the corpse goes now, and the creature comes back in a second.
     void respawnSoon(Creature corpse, Map map)
     {
         if (corpse.instanceId)
@@ -2371,7 +2384,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return false;
     }
 
-    /// `GameObject::SaveRespawnTime`: used up, it comes back after its spawn's respawn time.
+    /// A game object used up: it comes back after its spawn's respawn time.
     private void gameObjectUsedUp(GameObject go)
     {
         if (go.instanceId)
@@ -2427,7 +2440,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     // -----------------------------------------------------------------------
 
     /**
-     * `MailDraft::SendMailTo`: a letter into the database, delivered after `delay` seconds; the
+     * Posts a letter: into the database, delivered after `delay` seconds; the
      * receiver, if online on any node and it is delivered now, hears of it.
      */
     void postMail(MailRecord mail, uint delay)
@@ -2444,7 +2457,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     }
 
     /**
-     * A mail from the auction house of `a` (`MailDraft` with an `AuctionEntry` sender): its subject
+     * A mail from the auction house of `a` (the house as its sender): its subject
      * says what happened; `money`, the auctioned item (handed to the receiver) and a body as given.
      * A note with neither money nor item comes an hour later.
      */
@@ -2485,9 +2498,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     }
 
     /**
-     * `AuctionBidWinning`, once the auction is out of the table: the seller gets the bid and its
-     * deposit back less the house's cut (`SendAuctionSuccessfulMail`), the buyer the item
-     * (`SendAuctionWonMail`), and both hear of it if they are online.
+     * An auction won, once it is out of the table: the seller gets the bid and its
+     * deposit back less the house's cut, the buyer the item, and both hear of it if they are
+     * online.
      */
     void auctionSold(const ref AuctionRecord a)
     {
@@ -2503,7 +2516,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         auctionMail(a.bidder, a, AuctionMail.won, 0, true, format!"%16x:%s:%s"(a.owner, a.bid, a.buyout));
     }
 
-    /// `SendAuctionExpiredMail`: nobody bid; the item goes back to the seller.
+    /// An auction expired: nobody bid; the item goes back to the seller.
     void auctionExpired(const ref AuctionRecord a)
     {
         import dmangos.world.opcodes : Opcode;
@@ -2512,7 +2525,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         auctionMail(a.owner, a, AuctionMail.expired, 0, true);
     }
 
-    /// `SendAuctionOutbiddedMail`: the bid of `old` (the auction as it was) back to its bidder.
+    /// Outbid: the bid of `old` (the auction as it was) back to its bidder.
     void auctionOutbid(const ref AuctionRecord old)
     {
         import dmangos.world.opcodes : Opcode;
@@ -2521,7 +2534,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         auctionMail(old.bidder, old, AuctionMail.outbidded, old.bid, false);
     }
 
-    /// `AuctionHouseObject::Update`: the auctions over are settled (here only on the coordinator, or alone).
+    /// The auctions over are settled (here only on the coordinator, or alone).
     private void settleAuctions()
     {
         foreach (ref a; database.expiredAuctions(unixTime))
@@ -2537,7 +2550,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     private MonoTime lastAuctionCheck, lastMailCheck;
 
     /**
-     * `ObjectMgr::ReturnOrDeleteOldMails`: a player's letter with an item, not returned or paid for
+     * Old mail: a player's letter with an item, not returned or paid for
      * before, goes back to its sender for 30 days more; every other one whose time is up is deleted,
      * with its item and its body.
      */
@@ -2576,7 +2589,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     }
 
     /**
-     * `Creature::Update` for the dead (`DEAD`): once a second, the creatures whose time has come are
+     * Respawning the dead (`DEAD`): once a second, the creatures whose time has come are
      * made anew at their spawn point, on maps whose cell they spawn in is loaded (elsewhere they come
      * when it loads).
      */
@@ -2726,8 +2739,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     }
 
     /**
-     * Called every second by the server loop: counts a shutdown down, warning everyone at the times
-     * `World::ShutdownMsg` does. Returns true when the server should stop.
+     * Called every second by the server loop: runs the tick, and counts a shutdown down, warning
+     * everyone as the time left passes each step. Returns true when the server should stop.
      */
     bool update(MonoTime now)
     {
@@ -2735,7 +2748,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         import dmangos.world.map : packetBody;
         import dmangos.world.opcodes : Opcode;
 
-        // World::Update, in its phases (docs/DESIGN.md, step 4).
+        // The world's tick, in its phases (docs/DESIGN.md, step 4).
         const elapsed = lastUpdate == MonoTime.init || now < lastUpdate ? Duration.zero : now - lastUpdate;
         if (now > lastUpdate)
             lastUpdate = now;
@@ -2788,8 +2801,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     }
 
     /**
-     * The tick's maps phase: on each map, its players (`Player::Update`), then its creatures and game
-     * objects (`Map::Update`). A map's own players and objects tick together, which is the unit a map's
+     * The tick's maps phase: on each map, its players, then its creatures and game
+     * objects. A map's own players and objects tick together, which is the unit a map's
      * own thread will run. A player between two maps (the halves of a far teleport) ticks after.
      */
     private void mapsPhase(Duration elapsed)
@@ -2885,7 +2898,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         battlegrounds.tick(elapsed);
         scriptedGameObjectsDue();
         respawnDue(now);
-        // `WUPDATE_AUCTIONS`: once a minute, by one node.
+        // Auctions over are settled once a minute, by one node.
         if (forwardGroup is null && now - lastAuctionCheck >= 60.seconds)
         {
             lastAuctionCheck = now;
@@ -3071,7 +3084,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     bool keepsHonorWeek = true;
     private MonoTime nextHonorCheck;
 
-    /// `World::Update`'s maintenance check, every 10 minutes.
+    /// Checks every 10 minutes whether the honor week's maintenance is due, and runs it.
     private void checkHonorWeek(MonoTime now)
     {
         import core.time : minutes;

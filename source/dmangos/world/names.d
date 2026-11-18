@@ -1,6 +1,6 @@
 /**
- * Character name rules, as in CMaNGOS's `normalizePlayerName`,
- * `ObjectMgr::CheckPlayerName` and `isValidString`.
+ * Character name rules: normalizing a name's case, and checking a new
+ * character's name for length and the realm's alphabets.
  */
 module dmangos.world.names;
 
@@ -9,12 +9,12 @@ import std.utf : toUTF32, toUTF8, UTFException, validate;
 
 import dmangos.world.worlddata : wcharToLower, wcharToUpper;
 
-/// The longest name the client accepts (`MAX_PLAYER_NAME`).
+/// The longest name the client accepts.
 enum maxPlayerName = 12;
-/// The longest name normalization accepts (`MAX_INTERNAL_PLAYER_NAME`).
+/// The longest name normalization accepts.
 enum maxInternalPlayerName = 15;
 
-/// `ResponseCodes` for names (`CHAR_NAME_*`).
+/// The character creation response codes for names.
 enum CharNameResult : ubyte
 {
     CHAR_NAME_SUCCESS = 0x50,
@@ -56,7 +56,7 @@ string normalizedName(string name) @safe
     return normalizePlayerName(name) ? name : null;
 }
 
-/// `ObjectMgr::CheckPlayerName` for a new character.
+/// Checks a new character's name: valid UTF-8, its length, and its letters.
 CharNameResult checkPlayerName(string name, uint minLength, uint strictMask, uint realmZone) @safe
 {
     dstring text;
@@ -82,7 +82,7 @@ private enum : uint
     ltAny = 0xFFFF,
 }
 
-/// `GetRealmLanguageType(create = true)`, by `RealmZone`.
+/// The alphabets a new name may use on a realm of `realmZone`.
 private uint realmLanguageType(uint realmZone) pure nothrow @nogc @safe
 {
     switch (realmZone)

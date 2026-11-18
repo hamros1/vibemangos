@@ -1,12 +1,11 @@
 /**
- * Parties and raids (CMaNGOS `Groups/Group.cpp`, the group parts of
- * `ObjectMgr` and `Player`).
+ * Parties and raids: the group registry, each group's members and settings,
+ * and the group list and member stats the members are sent.
  *
  * `Groups` is the registry: every group by id, and which group each player
  * belongs to or is invited to. It loads the `groups` and `group_member` rows
- * at start-up, as `ObjectMgr::LoadGroups` does, so an offline member keeps
- * its place. A `Group` is one party or raid. Its methods are those of
- * CMaNGOS's `Group`: they keep the database up to date and tell the members
+ * at start-up, so an offline member keeps its place. A `Group` is one party
+ * or raid. Its methods keep the database up to date and tell the members
  * online, through `GroupDirectory`, what changed.
  *
  * In a cluster (docs/CLUSTER.md, phase 5b) the coordinator's `Groups` is the
@@ -14,7 +13,7 @@
  * node keeps a mirror of its groups (`mirror`) for what it decides itself:
  * who sees whose health, party chat, member stats.
  *
- * A group is created in two steps, as in CMaNGOS: the first invitation makes
+ * A group is created in two steps: the first invitation makes
  * a group that only has a leader and invitees (`isCreated` is false, `id` is
  * 0); it gets an id and rows when the first invitee accepts.
  */
@@ -34,19 +33,19 @@ import dmangos.world.opcodes : Opcode;
 import dmangos.world.player : Player;
 import dmangos.world.updatefields;
 
-enum uint maxGroupSize = 5;  /// `MAX_GROUP_SIZE`
-enum uint maxRaidSize = 40;  /// `MAX_RAID_SIZE`
-enum uint maxRaidSubGroups = maxRaidSize / maxGroupSize; /// `MAX_RAID_SUBGROUPS`
-enum uint targetIconCount = 8; /// `TARGET_ICON_COUNT`
+enum uint maxGroupSize = 5;  /// members of a party, or of a raid's sub-group
+enum uint maxRaidSize = 40;  /// members of a raid
+enum uint maxRaidSubGroups = maxRaidSize / maxGroupSize; /// sub-groups of a raid
+enum uint targetIconCount = 8; /// target icons a group can place
 
-/// `GroupType`
+/// A party or a raid.
 enum GroupType : ubyte
 {
     normal = 0,
     raid = 1,
 }
 
-/// `LootMethod`
+/// How a group's loot is shared.
 enum LootMethod : ubyte
 {
     freeForAll = 0,
@@ -56,14 +55,14 @@ enum LootMethod : ubyte
     needBeforeGreed = 4,
 }
 
-/// `RemoveMethod`
+/// How a member leaves a group.
 enum RemoveMethod
 {
     leave,
     kick,
 }
 
-/// `GroupMemberStatus`: flags of a member in the group list and in member stats.
+/// Flags of a member in the group list and in member stats.
 enum MemberStatus : ubyte
 {
     offline = 0x00,
@@ -77,7 +76,7 @@ enum MemberStatus : ubyte
     dnd = 0x80,
 }
 
-/// `GroupUpdateFlags`: what an `SMSG_PARTY_MEMBER_STATS` carries.
+/// What an `SMSG_PARTY_MEMBER_STATS` carries.
 enum GroupUpdate : uint
 {
     none = 0,
@@ -112,7 +111,7 @@ private enum : uint
     playerFlagsDnd = 0x04,
 }
 
-/// `GetGroupMemberStatus`: online, away, busy, between maps. There is no PvP or death yet.
+/// A member's status flags: online, away, busy, between maps. There is no PvP or death yet.
 ubyte memberStatus(const OnlinePlayer member)
 {
     if (member is null)
@@ -129,7 +128,7 @@ ubyte memberStatus(const OnlinePlayer member)
 }
 
 /**
- * `WorldSession::BuildPartyMemberStatsChangedPacket`: the `SMSG_PARTY_MEMBER_STATS` body for the
+ * The `SMSG_PARTY_MEMBER_STATS` body for the
  * fields in `mask`. Players have no pets or auras yet, so those parts are empty.
  */
 ubyte[] partyMemberStats(const Player player, uint mask, ubyte status)
@@ -192,7 +191,7 @@ ubyte[] partyMemberStats(const Player player, uint mask, ubyte status)
 }
 
 /**
- * `WorldSession::HandleRequestPartyMemberStatsOpcode`: the `SMSG_PARTY_MEMBER_STATS_FULL` body.
+ * The `SMSG_PARTY_MEMBER_STATS_FULL` body, the answer to a request for a member's stats.
  * `player` is null for a member who is offline.
  */
 ubyte[] partyMemberStatsFull(ulong guid, const Player player, ubyte status)
@@ -219,7 +218,7 @@ ubyte[] partyMemberStatsFull(ulong guid, const Player player, ubyte status)
     w.put(cast(short) player.position.y);
     w.put(uint(0));   // positive auras
     w.put(ushort(0)); // negative auras
-    w.put(ubyte(0));  // CMaNGOS ends a member without a pet with an empty name and aura mask
+    w.put(ubyte(0));  // a member without a pet ends with an empty pet name and aura mask
     w.put(uint(0));
     return w.data.dup;
 }
@@ -233,14 +232,14 @@ interface GroupDirectory
     /// Sends a packet to a player online on any node; false if it is not online.
     bool deliverTo(ulong guid, Opcode opcode, const(ubyte)[] body_);
 
-    /// `GetGroupMemberStatus` of a player on any node; `MemberStatus.offline` if not online.
+    /// The status flags of a player on any node; `MemberStatus.offline` if not online.
     ubyte statusOf(ulong guid);
 
     /// Whether two players see each other.
     bool seeEachOther(ulong a, ulong b);
 }
 
-/// One member: `Group::MemberSlot`.
+/// One member of a group.
 struct MemberSlot
 {
     ulong guid;
@@ -261,7 +260,7 @@ final class Group
     LootMethod lootMethod = LootMethod.groupLoot;
     ulong looter;                 /// the master looter
     ulong nextLooter;             /// `m_currentLooterGuid`: round robin's next turn
-    ubyte lootThreshold = 2;      /// `ITEM_QUALITY_UNCOMMON`
+    ubyte lootThreshold = 2;      /// uncommon (green) quality
     ulong[targetIconCount] targetIcons;
 
     private
@@ -284,47 +283,47 @@ final class Group
         return slots;
     }
 
-    /// `IsCreated`
+    /// Whether the group exists yet: it has members, not only a leader and invitees.
     @property bool isCreated() const
     {
         return slots.length > 0;
     }
 
-    /// `IsRaidGroup`
+    /// Whether it is a raid.
     @property bool isRaid() const
     {
         return type == GroupType.raid;
     }
 
-    /// `IsFull`
+    /// Whether it has no room for another member.
     @property bool isFull() const
     {
         return slots.length >= (isRaid ? maxRaidSize : maxGroupSize);
     }
 
-    /// `GetMembersMinCount`: fewer than this, and the group is disbanded.
+    /// Fewer members than this, and the group is disbanded.
     enum uint membersMinCount = 2;
 
-    /// `IsMember`
+    /// Whether `guid` is a member.
     bool isMember(ulong guid) const
     {
         return slotIndex(guid) >= 0;
     }
 
-    /// `IsLeader`
+    /// Whether `guid` leads the group.
     bool isLeader(ulong guid) const
     {
         return leader == guid;
     }
 
-    /// `IsAssistant`
+    /// Whether `guid` is a member with the assistant flag.
     bool isAssistant(ulong guid) const
     {
         const i = slotIndex(guid);
         return i >= 0 && slots[i].assistant;
     }
 
-    /// `GetMemberGuid`: the member called `name` (exactly), or 0.
+    /// The member called `name` (exactly), or 0.
     ulong memberGuid(string name) const
     {
         foreach (ref slot; slots)
@@ -333,14 +332,14 @@ final class Group
         return 0;
     }
 
-    /// `GetMemberGroup`: the sub-group of a member, or `maxRaidSubGroups + 1` for a stranger.
+    /// The sub-group of a member, or `maxRaidSubGroups + 1` for a stranger.
     ubyte subGroupOf(ulong guid) const
     {
         const i = slotIndex(guid);
         return i >= 0 ? slots[i].subGroup : maxRaidSubGroups + 1;
     }
 
-    /// `HasFreeSlotSubGroup`
+    /// Whether a raid's sub-group has room for another member.
     bool hasFreeSlot(ubyte subGroup) const
     {
         return isRaid && subGroup < maxRaidSubGroups && countIn(subGroup) < maxGroupSize;
@@ -352,7 +351,7 @@ final class Group
         return (guid in invitees) !is null;
     }
 
-    /// `GetInvited` by name: the invitee's guid, or 0.
+    /// The invitee called `name`: its guid, or 0.
     ulong invitedGuid(string name) const
     {
         foreach (guid, invitee; invitees)
@@ -365,7 +364,7 @@ final class Group
     // Invitations
     // -----------------------------------------------------------------------
 
-    /// `AddInvite`: false if the player is already invited somewhere or in a group.
+    /// Invites a player: false if the player is already invited somewhere or in a group.
     bool addInvite(ulong guid, string name)
     {
         if (owner.invitationOf(guid) !is null || owner.of(guid) !is null)
@@ -375,7 +374,7 @@ final class Group
         return true;
     }
 
-    /// `AddLeaderInvite`: the leader of a group that is not created yet.
+    /// Invites the leader of a group that is not created yet.
     bool addLeaderInvite(ulong guid, string name)
     {
         if (!addInvite(guid, name))
@@ -385,7 +384,7 @@ final class Group
         return true;
     }
 
-    /// `RemoveInvite`
+    /// Drops a player's invitation.
     void removeInvite(ulong guid)
     {
         invitees.remove(guid);
@@ -394,7 +393,7 @@ final class Group
                 owner.invitedTo.remove(guid);
     }
 
-    /// `RemoveAllInvites`
+    /// Drops every invitation.
     void removeAllInvites()
     {
         foreach (guid; invitees.keys)
@@ -411,7 +410,7 @@ final class Group
     // Members
     // -----------------------------------------------------------------------
 
-    /// `Group::Create`: gives the group an id and its row, with the leader as its first member.
+    /// Gives the group an id and its row, with the leader as its first member.
     void create()
     in (!isCreated && leader != 0)
     {
@@ -427,7 +426,7 @@ final class Group
         addMember(leader, leaderName);
     }
 
-    /// `Group::AddMember`: false if the group is full.
+    /// Adds a member: false if the group is full.
     bool addMember(ulong guid, string name)
     {
         if (isFull || guid == 0)
@@ -458,7 +457,7 @@ final class Group
     }
 
     /**
-     * `Group::RemoveMember`: takes a member out, kicked or leaving. A group left with fewer than two
+     * Takes a member out, kicked or leaving. A group left with fewer than two
      * members is disbanded. Returns the number of members left.
      */
     size_t removeMember(ulong guid, RemoveMethod method)
@@ -480,7 +479,7 @@ final class Group
         return slots.length;
     }
 
-    /// `Group::ChangeLeader`
+    /// Makes member `guid` the leader, and tells the group.
     void changeLeader(ulong guid)
     {
         const i = slotIndex(guid);
@@ -491,7 +490,7 @@ final class Group
         sendUpdate();
     }
 
-    /// `Group::Disband`: every member is told, and the rows are deleted.
+    /// Disbands the group: every member is told, and the rows are deleted.
     void disband(bool hideDestroy = false)
     {
         auto former = slots;
@@ -517,7 +516,7 @@ final class Group
         leaderName = null;
     }
 
-    /// `Group::ConvertToRaid`
+    /// Makes the party a raid.
     void convertToRaid()
     {
         type = GroupType.raid;
@@ -525,7 +524,7 @@ final class Group
         sendUpdate();
     }
 
-    /// `SetAssistant`: raids only.
+    /// Gives or takes a member's assistant flag: raids only.
     void setAssistant(ulong guid, bool state)
     {
         if (!isRaid)
@@ -538,7 +537,7 @@ final class Group
         sendUpdate();
     }
 
-    /// `ChangeMembersGroup`: raids only.
+    /// Moves a member to another sub-group: raids only.
     void changeSubGroup(ulong guid, ubyte subGroup)
     {
         if (!isRaid || subGroup >= maxRaidSubGroups)
@@ -551,7 +550,7 @@ final class Group
         sendUpdate();
     }
 
-    /// `HandleLootMethodOpcode`: method, master looter and threshold together.
+    /// The loot settings: method, master looter and threshold together.
     void setLoot(LootMethod method, ulong master, ubyte threshold)
     {
         lootMethod = method;
@@ -561,7 +560,7 @@ final class Group
         sendUpdate();
     }
 
-    /// `Group::SetTargetIcon`: an icon on a target; a target has one icon at most.
+    /// An icon on a target; a target has one icon at most.
     void setTargetIcon(ubyte icon, ulong target)
     {
         if (icon >= targetIconCount)
@@ -579,7 +578,7 @@ final class Group
         changed();
     }
 
-    /// `Group::SendTargetIconList`
+    /// Sends the target icons to member `to`.
     void sendTargetIconList(ulong to)
     {
         ByteWriter w;
@@ -597,7 +596,7 @@ final class Group
     // Telling the members
     // -----------------------------------------------------------------------
 
-    /// `Group::SendUpdate`: the group list, to every member online.
+    /// The group list, to every member online.
     void sendUpdate()
     {
         foreach (ref slot; slots)
@@ -606,7 +605,7 @@ final class Group
         changed();
     }
 
-    /// `Group::SendUpdateTo`: the `SMSG_GROUP_LIST` a member sees, everyone but itself.
+    /// The `SMSG_GROUP_LIST` a member sees, everyone but itself.
     void sendUpdateTo(ulong guid)
     {
         const self = slotIndex(guid);
@@ -636,7 +635,7 @@ final class Group
     }
 
     /**
-     * `Group::BroadcastPacket`: to every member online, or those of one sub-group, except
+     * A packet to every member online, or those of one sub-group, except
      * `except`.
      */
     void broadcast(Opcode opcode, const(ubyte)[] body_, int subGroup = -1, ulong except = 0)
@@ -647,7 +646,7 @@ final class Group
     }
 
     /**
-     * `Group::UpdatePlayerOutOfRange`: member stats to the members that do not see `player`; those
+     * Member stats to the members that do not see `player`; those
      * who see it get its fields instead.
      */
     void updatePlayerOutOfRange(OnlinePlayer player, uint mask)
@@ -661,7 +660,7 @@ final class Group
                 owner.directory.deliverTo(slot.guid, Opcode.SMSG_PARTY_MEMBER_STATS, body_);
     }
 
-    /// `Group::UpdatePlayerOnlineStatus`: a member logged in or out.
+    /// A member logged in or out.
     void updatePlayerOnlineStatus(OnlinePlayer player, bool online)
     {
         if (!isMember(player.character.guid))
@@ -703,7 +702,7 @@ private:
         return cast(ubyte)(slot.subGroup | (slot.assistant ? 0x80 : 0));
     }
 
-    /// `_removeMember`: true if the leader left, and a new one was chosen.
+    /// Removes a member's slot: true if the leader left, and a new one was chosen.
     bool removeSlot(ulong guid)
     {
         import std.algorithm.mutation : remove;
@@ -717,7 +716,7 @@ private:
         return true;
     }
 
-    /// `_chooseLeader`: an online assistant in a raid, any online member in a party, else the first.
+    /// A new leader: an online assistant in a raid, any online member in a party, else the first.
     void chooseLeader()
     {
         ulong first, chosen;
@@ -742,7 +741,7 @@ private:
             setLeader(chosen);
     }
 
-    /// `_setLeader`
+    /// Sets the leader and saves it; the old and new leaders are told.
     void setLeader(ulong guid)
     {
         const i = slotIndex(guid);
@@ -826,7 +825,7 @@ final class Groups
         this.nextId = nextId;
     }
 
-    /// `ObjectMgr::LoadGroups`: groups whose leader or members are gone are cleaned up as there.
+    /// The groups loaded at start-up: one whose leader is gone is disbanded, members who are gone are removed.
     void load(GroupRecord[] records)
     {
         foreach (ref r; records)
@@ -873,13 +872,13 @@ final class Groups
         info!"loaded %s groups"(byId.length);
     }
 
-    /// The group the player belongs to, online or not, or null (`Player::GetGroup`).
+    /// The group the player belongs to, online or not, or null.
     Group of(ulong guid)
     {
         return memberOf.get(guid, null);
     }
 
-    /// The group the player is invited to, or null (`Player::GetGroupInvite`).
+    /// The group the player is invited to, or null.
     Group invitationOf(ulong guid)
     {
         return invitedTo.get(guid, null);
@@ -897,7 +896,7 @@ final class Groups
         return byId.length;
     }
 
-    /// Whether two players are in the same group (`Player::IsInSameGroupWith`).
+    /// Whether two players are in the same group.
     bool sameGroup(ulong a, ulong b) const
     {
         const first = a in memberOf, second = b in memberOf;
@@ -1005,7 +1004,7 @@ final class Groups
         }
     }
 
-    /// `Player::UninviteFromGroup`: drops a pending invitation, and the group if nobody is left in it.
+    /// Drops a pending invitation, and the group if nobody is left in it.
     void uninvite(ulong guid)
     {
         auto group = invitationOf(guid);

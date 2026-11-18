@@ -1,20 +1,19 @@
 /**
- * Quests (CMaNGOS `Quests/QuestDef.cpp`, `ObjectMgr::LoadQuests` and the relation tables): the
- * quest templates, who starts and who ends each, and a character's progress in them.
+ * Quests: the quest templates, who starts and who ends each, and a character's progress in them.
  *
  * `QuestData` is `quest_template` (the columns this server uses), `creature_questrelation` (the
- * starters) and `creature_involvedrelation` (the enders), with what `LoadQuests` works out: which
+ * starters) and `creature_involvedrelation` (the enders), with what loading works out (`link`): which
  * quests lead to which (`prevQuests`), the exclusive groups, and the special flags (an item to
  * deliver, a creature to kill). `QuestStatus` is one character's `character_queststatus` row.
  */
 module dmangos.world.quests;
 
-/// `MAX_QUEST_LOG_SIZE`
+/// Quests a quest log holds.
 enum uint maxQuestLogSize = 20;
-/// `QUEST_OBJECTIVES_COUNT`, `QUEST_REWARD_CHOICES_COUNT`, `QUEST_REWARDS_COUNT`
+/// A quest's objectives, reward choices, rewards and reputation rewards, at most.
 enum uint questObjectives = 4, questRewardChoices = 6, questRewards = 4, questReputations = 5;
 
-/// `QuestStatus`
+/// Where a character stands with a quest.
 enum QuestState : ubyte
 {
     none = 0,
@@ -25,7 +24,7 @@ enum QuestState : ubyte
     failed = 5,
 }
 
-/// `__QuestGiverStatus`: the mark over a quest giver's head.
+/// The mark over a quest giver's head.
 enum DialogStatus : ubyte
 {
     none = 0,
@@ -38,18 +37,18 @@ enum DialogStatus : ubyte
     reward2 = 7,
 }
 
-/// `QuestFlags`
+/// Bits of the `QuestFlags` column.
 enum uint questFlagPartyAccept = 0x02, questFlagSharable = 0x08, questFlagHiddenRewards = 0x200,
     questFlagAutoRewarded = 0x400;
 
-/// `QuestSpecialFlags`
+/// Bits of the `SpecialFlags` column (some worked out at load).
 enum uint specialRepeatable = 0x01, specialExplorationOrEvent = 0x02, specialDeliver = 0x08,
     specialKillOrCast = 0x20, specialTimed = 0x40;
 
-/// `INVALIDREASON_*` (`SMSG_QUESTGIVER_QUEST_INVALID`)
+/// Why a quest may not be taken (`SMSG_QUESTGIVER_QUEST_INVALID`).
 enum uint invalidDontHaveReq = 0, invalidLowLevel = 1, invalidWrongRace = 6, invalidAlreadyOn = 13;
 
-/// A `quest_template` row (`Quest`).
+/// A `quest_template` row.
 struct Quest
 {
     uint id;
@@ -118,34 +117,34 @@ struct Quest
     uint startScript;         /// `dbscripts_on_quest_start` when it is taken
     uint completeScript;      /// `dbscripts_on_quest_end` when it is rewarded
 
-    // What `LoadQuests` works out.
+    // What loading works out (`QuestData.link`).
     int[] prevQuests;         /// quests that must be done first (negative: be on), from `PrevQuestId` and others' `NextQuestId`
 
-    /// `IsAutoComplete`
+    /// Whether it completes itself (`Method` 0).
     @property bool autoComplete() const pure nothrow @nogc @safe
     {
         return method == 0;
     }
 
-    /// `IsRepeatable`
+    /// Whether it may be done again.
     @property bool repeatable() const pure nothrow @nogc @safe
     {
         return (specialFlags & specialRepeatable) != 0;
     }
 
-    /// `HasSpecialFlag(QUEST_SPECIAL_FLAG_DELIVER)`: it asks for items.
+    /// It asks for items.
     @property bool deliver() const pure nothrow @nogc @safe
     {
         return (specialFlags & specialDeliver) != 0;
     }
 
-    /// `HasSpecialFlag(QUEST_SPECIAL_FLAG_KILL_OR_CAST)`: it asks for creatures killed (or objects used).
+    /// It asks for creatures killed (or objects used).
     @property bool killOrCast() const pure nothrow @nogc @safe
     {
         return (specialFlags & specialKillOrCast) != 0;
     }
 
-    /// `GetRewChoiceItemsCount`
+    /// How many reward items there are to choose from.
     uint rewChoiceCount() const pure nothrow @nogc @safe
     {
         uint count;
@@ -155,7 +154,7 @@ struct Quest
         return count;
     }
 
-    /// `GetRewItemsCount`
+    /// How many reward items are given.
     uint rewItemsCount() const pure nothrow @nogc @safe
     {
         uint count;
@@ -165,7 +164,7 @@ struct Quest
         return count;
     }
 
-    /// `GetReqItemsCount`
+    /// How many items it asks for.
     uint reqItemsCount() const pure nothrow @nogc @safe
     {
         uint count;
@@ -175,14 +174,14 @@ struct Quest
         return count;
     }
 
-    /// `Player::GetQuestLevelForPlayer`: the quest's level, or (if it has none) the player's.
+    /// The quest's level, or (if it has none) the player's.
     uint levelFor(uint playerLevel) const pure nothrow @nogc @safe
     {
         return questLevel > 0 ? questLevel : playerLevel;
     }
 }
 
-/// `Quest::XPValue` (quest rate 1): the experience for turning the quest in at `playerLevel`.
+/// The experience for turning the quest in at `playerLevel` (quest rate 1).
 uint questXp(const ref Quest quest, uint playerLevel) pure nothrow @nogc @safe
 {
     import std.math : ceil;
@@ -210,7 +209,7 @@ uint questXp(const ref Quest quest, uint playerLevel) pure nothrow @nogc @safe
     return cast(uint) ceil(full * reduced[over < 4 ? over : 4]);
 }
 
-/// A character's progress in a quest (`QuestStatusData`, a `character_queststatus` row).
+/// A character's progress in a quest (a `character_queststatus` row).
 struct QuestStatus
 {
     uint quest;
@@ -265,7 +264,7 @@ final class QuestData
         return false;
     }
 
-    /// `LoadQuests`'s second pass: the special flags, the previous quests, the exclusive groups.
+    /// Loading's second pass: the special flags, the previous quests, the exclusive groups.
     void link()
     {
         foreach (ref q; quests)

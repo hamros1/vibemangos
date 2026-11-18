@@ -1,6 +1,5 @@
 /**
- * Honor (CMaNGOS-classic's `Player::RewardHonor`, `AddHonorCP`, `UpdateHonor` and `MaNGOS::Honor`):
- * points for kills, ranks from rank points, and the fields the client shows them in.
+ * Honor: points for kills, ranks from rank points, and the fields the client shows them in.
  *
  * $(UL
  *   $(LI A kill of an enemy player who is not grey to the killer gives honor (`honorableKillPoints`):
@@ -14,9 +13,9 @@
  *   $(LI The rank (Private/Scout 1 to Grand Marshal/High Warlord 14) comes from the rank points.)
  * )
  *
- * Days are CMaNGOS's: `(year - 1900) << 16 | day of the year` in the server's local time (the
- * `date` column). Arithmetic on them goes through the calendar here, where CMaNGOS's `date - 7`
- * goes wrong across a new year.
+ * A day is `(year - 1900) << 16 | day of the year` in the server's local time (the `date`
+ * column). Arithmetic on days goes through the calendar, since arithmetic on the number itself
+ * (`date - 7`) goes wrong across a new year.
  */
 module dmangos.world.honor;
 
@@ -45,7 +44,7 @@ uint honorDayPlus(uint day, int n) pure @safe
     return honorDay(dateOfHonorDay(day) + n.days);
 }
 
-/// `World::GetDateLastMaintenanceDay`: the last `maintenanceDay` (0 Sunday) on or before `today`.
+/// The last `maintenanceDay` (0 Sunday) on or before `today`.
 uint lastMaintenanceDay(Date today, uint maintenanceDay) pure @safe
 {
     const back = (cast(int) today.dayOfWeek - cast(int) maintenanceDay + 7) % 7;
@@ -81,7 +80,7 @@ unittest
 // Ranks
 // ---------------------------------------------------------------------------------------------------
 
-/// `HonorRankInfo`: an internal rank (0 none, 1 to 4 negative, 5 to 18 the titles) and what it spans.
+/// An internal rank (0 none, 1 to 4 negative, 5 to 18 the titles) and what it spans.
 struct HonorRank
 {
     ubyte rank;
@@ -91,8 +90,8 @@ struct HonorRank
     bool positive = true;
 }
 
-/// `CalculateRankInfo`: what an internal rank spans. (Rank 1's bar runs from 0 to 2000, where
-/// CMaNGOS gives it maximum 0 and minimum 2000, a bar that runs backwards.)
+/// What an internal rank spans. (Rank 1's bar runs from 0 to 2000, not backwards from a minimum
+/// of 2000 to a maximum of 0.)
 HonorRank rankInfo(ubyte rank, bool positive = true) pure nothrow @nogc @safe
 {
     HonorRank r;
@@ -112,7 +111,7 @@ HonorRank rankInfo(ubyte rank, bool positive = true) pure nothrow @nogc @safe
     return r;
 }
 
-/// `CalculateHonorRank`: the rank of `rankPoints`.
+/// The rank of `rankPoints`.
 HonorRank rankOf(float rankPoints) pure nothrow @nogc @safe
 {
     if (rankPoints == 0)
@@ -164,14 +163,14 @@ unittest
 // Points for kills
 // ---------------------------------------------------------------------------------------------------
 
-/// `TYPE_OF_HONOR`
+/// Whether a gain is honor, or rank points lost for a dishonorable kill.
 enum HonorType : ubyte
 {
     honorable = 1,
     dishonorable = 2,
 }
 
-/// `IsTrivialLevelDifference`: grey to a unit of `level` (the honor tables' steps).
+/// Whether `targetLevel` is grey to a unit of `level` (the honor tables' steps).
 bool greyForHonor(uint level, uint targetLevel) pure nothrow @nogc @safe
 {
     if (level <= targetLevel)
@@ -182,14 +181,14 @@ bool greyForHonor(uint level, uint targetLevel) pure nothrow @nogc @safe
 }
 
 /**
- * `MaNGOS::Honor::HonorableKillPoints`: a kill of a player of `victimLevel`, `victimRP` rank points
+ * The honor of a kill of a player of `victimLevel`, `victimRP` rank points
  * and visual rank `victimVisualRank` by one of `killerLevel` and `killerRP`, who has killed it
  * `killsToday` times today before, shared among `groupSize`.
  */
 float honorableKillPoints(uint killerLevel, float killerRP, uint victimLevel, float victimRP, int victimVisualRank,
     uint killsToday, uint groupSize) pure nothrow @nogc @safe
 {
-    const rank = victimVisualRank > 0 ? victimVisualRank : 0; // CMaNGOS wraps a negative rank into a huge one
+    const rank = victimVisualRank > 0 ? victimVisualRank : 0; // a negative rank counts as 0, not as a huge unsigned one
     const diffHonor = victimRP / (killerRP + 1) + 1;
     const diffLevel = victimLevel * (1.0 / (killerLevel ? killerLevel : 1));
     const f = killsToday < 10 ? 10 - killsToday : 0;
@@ -197,7 +196,7 @@ float honorableKillPoints(uint killerLevel, float killerRP, uint victimLevel, fl
     return (honor <= 400 ? honor : 400) / (groupSize ? groupSize : 1);
 }
 
-/// `MaNGOS::Honor::DishonorableKillPoints`: the rank points a dishonorable kill costs at `level`.
+/// The rank points a dishonorable kill costs at `level`.
 float dishonorableKillPoints(uint level) pure nothrow @nogc @safe
 {
     float points = 10;
@@ -230,7 +229,7 @@ unittest
 // The player's side
 // ---------------------------------------------------------------------------------------------------
 
-/// A gain of honor in memory (`HonorCP`), with whether it is in the database yet.
+/// A gain of honor in memory (a `character_honor_cp` row), with whether it is in the database yet.
 struct HonorPoint
 {
     import dmangos.world.database : HonorPointRecord;
@@ -238,7 +237,7 @@ struct HonorPoint
     HonorPointRecord record;
     bool saved;
 
-    /// `HonorCP::isKill`: a kill of a creature or a player (not honor from elsewhere).
+    /// Whether the gain is a kill of a creature or a player (not honor from elsewhere).
     @property bool isKill() const pure nothrow @nogc @safe
     {
         return record.victimType == 3 || record.victimType == 4;
@@ -274,7 +273,7 @@ struct HonorTally
 }
 
 /**
- * `Player::UpdateHonor`'s counting: kills and honor of today, yesterday, this week (from the last
+ * The honor counted from the rows: kills and honor of today, yesterday, this week (from the last
  * maintenance day) and last week, and the lifetime kills (the stored ones and the rows').
  */
 HonorTally tallyHonor(const(HonorPoint)[] points, uint today, uint weekBegin, uint storedKills, uint storedDishonorable)
@@ -343,19 +342,19 @@ mixin template HonorHandlers()
         HonorRank honorRank_;      // `m_honor_rank`
     }
 
-    /// `Player::GetRankPoints`: the stored rating (the weekly maintenance adds each week's earning to it).
+    /// The rank points: the stored rating (the weekly maintenance adds each week's earning to it).
     @property float rankPoints()
     {
         return honorStored.storedRating;
     }
 
-    /// `GetHonorRankInfo`
+    /// The player's rank, as last worked out by `updateHonor`.
     @property HonorRank honorRank() const
     {
         return honorRank_;
     }
 
-    /// `_LoadHonorCP` and the honor columns, at login or arrival.
+    /// Loads the honor rows and the honor columns, at login or arrival.
     package void loadHonor()
     {
         const loaded = context.database.loadHonor(player.data.guid);
@@ -366,7 +365,7 @@ mixin template HonorHandlers()
         updateHonor();
     }
 
-    /// `_SaveHonorCP` and the honor columns, with the character.
+    /// Saves the new honor rows and the honor columns, with the character.
     package void saveHonor()
     {
         HonorPointRecord[] added;
@@ -380,7 +379,7 @@ mixin template HonorHandlers()
     }
 
     /**
-     * `Player::AddHonorCP`: honor gained (or, dishonorable, rank points lost at once), the client told
+     * Honor gained (or, dishonorable, rank points lost at once), the client told
      * (`SMSG_PVP_CREDIT`), the fields counted again. `victimType` 0 is honor from no kill.
      */
     void addHonorPoints(float honor, HonorType type, ubyte victimType = 0, uint victim = 0, ulong victimGuid = 0,
@@ -408,7 +407,7 @@ mixin template HonorHandlers()
         updateHonor();
     }
 
-    /// `Player::CalculateTotalKills`: kills of the player `victim` today, before this one.
+    /// Kills of the player `victim` today, before this one.
     private uint killsTodayOf(uint victim)
     {
         const today = honorDay(honorToday());
@@ -420,7 +419,7 @@ mixin template HonorHandlers()
     }
 
     /**
-     * `Player::RewardHonor` for a player killed: unless it is an Honorless Target, of this side, or grey
+     * Honor for a player killed: unless it is an Honorless Target, of this side, or grey
      * to this player, honor by the formula, shared among `groupSize`.
      */
     package void rewardHonorForPlayer(typeof(this) victim, uint groupSize)
@@ -440,8 +439,8 @@ mixin template HonorHandlers()
     }
 
     /**
-     * `Player::RewardHonor` for a creature killed: a racial leader gives 398, a grey civilian of the
-     * other side (flagged for PvP) costs rank points (`IsCivilianForTarget`).
+     * Honor for a creature killed: a racial leader gives 398, a grey civilian of the
+     * other side (flagged for PvP) costs rank points.
      */
     package void rewardHonorForCreature(Creature victim)
     {
@@ -460,7 +459,7 @@ mixin template HonorHandlers()
     }
 
     /**
-     * `Unit::Kill` of a player by this one (or its pet): `RewardGroupAtKill`'s honor to the living
+     * This player (or its pet) killed `victim`: honor to the living
      * members of its group near the kill, each a share; or all of it, alone.
      */
     package void playerKilledByMe(typeof(this) victim)
@@ -486,7 +485,7 @@ mixin template HonorHandlers()
                 member.rewardHonorForPlayer(victim, cast(uint) near.length);
     }
 
-    /// `Player::UpdateHonor`: the rank and every honor field, from the rows and the stored columns.
+    /// The honor rank and every honor field, worked out again from the rows and the stored columns.
     void updateHonor()
     {
         const today = honorDay(honorToday());
@@ -515,10 +514,10 @@ mixin template HonorHandlers()
     }
 
     // -----------------------------------------------------------------------
-    // ArcEmu's `.honor` commands (HonorHandler.cpp)
+    // The `.honor` GM commands
     // -----------------------------------------------------------------------
 
-    /// `HandleAddHonorCommand`: honor added to the selected player (here this week's, with no victim).
+    /// `.honor addpoints`: honor added to the selected player (here this week's, with no victim).
     bool handleAddHonorCommand(Rest args = Rest(""))
     {
         import std.format : format;
@@ -533,7 +532,7 @@ mixin template HonorHandlers()
         return true;
     }
 
-    /// `HandleAddKillCommand`: the messages; ArcEmu's `OnPlayerKilledUnit(plr, 0)` then does nothing.
+    /// `.honor addkills`: only the messages; no kills are added.
     bool handleAddKillCommand(Rest args = Rest(""))
     {
         import std.format : format;
@@ -547,7 +546,7 @@ mixin template HonorHandlers()
         return true;
     }
 
-    /// `HandlePVPCreditCommand`: `SMSG_PVP_CREDIT` to oneself, for the selection, the points times ten.
+    /// `.honor pvpcredit`: `SMSG_PVP_CREDIT` to oneself, for the selection, the points times ten.
     bool handlePVPCreditCommand(Rest args = Rest(""))
     {
         import std.conv : to;
@@ -582,20 +581,20 @@ mixin template HonorHandlers()
         return true;
     }
 
-    /// `HandleGlobalHonorDailyMaintenanceCommand`: not done in ArcEmu either.
+    /// `.honor globaldailyupdate`: not implemented; does nothing.
     bool handleGlobalHonorDailyMaintenanceCommand()
     {
         return false;
     }
 
-    /// `HandleNextDayCommand`: ditto.
+    /// `.honor singledailyupdate`: ditto.
     bool handleNextDayCommand()
     {
         return false;
     }
 
     /**
-     * `WorldSession::HandleInspectHonorStatsOpcode`: another player's honor, for one who is near
+     * The client inspects another player's honor: sent for one who is near
      * (28 yards) and may not attack it.
      */
     @Handles(Opcode.MSG_INSPECT_HONOR_STATS, WorldState.inWorld)

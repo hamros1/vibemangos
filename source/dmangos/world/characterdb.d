@@ -1,7 +1,8 @@
 /**
- * Creating and deleting characters in the CMaNGOS `characters` and
- * `realmd` databases, with CMaNGOS's statements (`Player::SaveToDB`,
- * `Player::DeleteFromDB`, `World::UpdateRealmCharCount`).
+ * The characters database (and the realm's character counts in the login database): creating,
+ * loading, saving and deleting characters, with their items, spells, skills, groups, mail,
+ * auctions, honor and instances. The tables and columns are the CMaNGOS-classic `characters` and
+ * `realmd` schemas, which this server reads and writes unchanged.
  */
 module dmangos.world.characterdb;
 
@@ -50,7 +51,7 @@ struct DeleteOptions
     uint mailDeliveryDelay = 3600; /// `MailDeliveryDelay`, for returned mail to another account
 }
 
-/// Next free ids, taken from `MAX(id) + 1` at start-up as CMaNGOS's `SetHighestGuids` does.
+/// Next free ids, taken from `MAX(id) + 1` at start-up.
 struct GuidCounters
 {
     uint character = 1;
@@ -61,7 +62,7 @@ struct GuidCounters
     uint pet = 1;
 }
 
-/// A `groups` row with its `group_member` rows (`Group::LoadGroupFromDB`, `LoadMemberFromDB`).
+/// A `groups` row with its `group_member` rows.
 struct GroupRecord
 {
     uint id;
@@ -113,7 +114,7 @@ final class CharacterStatements
         this.login = login;
     }
 
-    /// `ObjectMgr::SetHighestGuids`, for the ids creation and deletion allocate.
+    /// The next free ids, for those creation and deletion allocate.
     GuidCounters highestGuids()
     {
         GuidCounters next;
@@ -134,7 +135,7 @@ final class CharacterStatements
         return rows.length ? rows[0].get!uint(0) + 1 : 1;
     }
 
-    /// `ObjectMgr::GetPlayerGuidByName` found something.
+    /// Whether a character is called `name` already.
     bool nameTaken(string name)
     {
         return characters.query!"SELECT guid FROM characters WHERE name = ?"(name).length > 0;
@@ -160,13 +161,13 @@ final class CharacterStatements
             .map!(row => row.get!ubyte(0)).array;
     }
 
-    /// Whether `character_tutorial` has the account's row (`LoadTutorialsData`).
+    /// Whether `character_tutorial` has the account's row.
     bool hasTutorialData(uint accountId)
     {
         return characters.query!"SELECT 1 FROM character_tutorial WHERE account = ?"(accountId).length > 0;
     }
 
-    /// `Player::SaveToDB` for a new character, in one transaction.
+    /// Saves a new character, with everything it starts with, in one transaction.
     void saveNew(const ref NewCharacter c, bool insertTutorialData)
     {
         const now = Clock.currTime.toUnixTime;
@@ -216,7 +217,7 @@ final class CharacterStatements
     // Entering and leaving the world
     // -----------------------------------------------------------------------
 
-    /// `Player::LoadFromDB` with the queries of `LoginQueryHolder`. Null if there is no such character.
+    /// A character with everything it logs in with. Null if there is no such character.
     Nullable!CharacterData loadCharacter(uint guid)
     {
         const rows = characters.query!("SELECT guid, account, name, race, class, gender, level, xp, money, "
@@ -275,7 +276,7 @@ final class CharacterStatements
                 }
         }
 
-        // _LoadInventory orders by bag, so bags come before what is in them.
+        // Ordered by bag, so bags come before what is in them.
         c.items = characters.queryAs!(ItemRecord, "SELECT ci.bag, ci.slot, ci.item, ii.itemEntry, ii.creatorGuid, "
             ~ "ii.giftCreatorGuid, ii.count, ii.duration, ii.charges, ii.flags, ii.enchantments, "
             ~ "ii.randomPropertyId, ii.durability, ii.itemTextId FROM character_inventory ci "
@@ -320,8 +321,8 @@ final class CharacterStatements
         return nullable(c);
     }
 
-    /// `_LoadHomeBind` for a character without one: binds it where it was created.
-    /// `Player::SetHomebindToLocation`
+    /// Moves the character's hearthstone bind; at login, a character without one is bound where it
+    /// was created.
     void updateHomeBind(uint guid, const HomeBind bind)
     {
         characters.execute!("UPDATE character_homebind SET map = ?, zone = ?, position_x = ?, position_y = ?, "
@@ -348,7 +349,7 @@ final class CharacterStatements
         login.execute!"UPDATE account SET active_realm_id = 0 WHERE active_realm_id = ?"(realmId);
     }
 
-    /// The part of `Player::SaveToDB` that changes in the world so far.
+    /// Saves the part of a character that changes in the world so far.
     void saveProgress(const ref CharacterProgress p)
     {
         const now = Clock.currTime.toUnixTime;
@@ -681,7 +682,7 @@ final class CharacterStatements
         characters.execute!"UPDATE character_pet SET slot = ? WHERE owner = ? AND id = ?"(slot, owner, pet);
     }
 
-    /// See `WorldDatabase.deletePet` (`Pet::DeleteFromDB`).
+    /// See `WorldDatabase.deletePet`.
     void deletePet(uint owner, uint pet)
     {
         characters.transaction({
@@ -1077,7 +1078,7 @@ final class CharacterStatements
         return all;
     }
 
-    /// `ObjectMgr::GetPlayerGuidByName`: the guid of the character called `name`, or 0.
+    /// The guid of the character called `name`, or 0.
     uint characterGuid(string name)
     {
         const rows = characters.query!"SELECT guid FROM characters WHERE name = ?"(name);
@@ -1097,7 +1098,7 @@ final class CharacterStatements
             ~ "WHERE guid = ?")(map, x, y, z, zone, guid);
     }
 
-    /// `Player::_SaveSpells` for one spell.
+    /// Saves one known spell.
     void saveSpell(uint guid, uint spell, bool active, bool disabled)
     {
         deleteSpell(guid, spell);
@@ -1105,13 +1106,13 @@ final class CharacterStatements
             guid, spell, active, disabled);
     }
 
-    /// `Player::_SaveSpells` for a removed spell.
+    /// Deletes a spell no longer known.
     void deleteSpell(uint guid, uint spell)
     {
         characters.execute!"DELETE FROM character_spell WHERE guid = ? AND spell = ?"(guid, spell);
     }
 
-    /// `Player::_SaveSkills` for one skill; a `max` of 0 deletes it.
+    /// Saves one skill; a `max` of 0 deletes it.
     void saveSkill(uint guid, uint skill, uint value, uint max)
     {
         characters.execute!"DELETE FROM character_skills WHERE guid = ? AND skill = ?"(guid, skill);
@@ -1160,7 +1161,7 @@ final class CharacterStatements
         });
     }
 
-    /// `Player::_SaveActions` for one button. An action of 0 removes the button.
+    /// Saves one action button. An action of 0 removes the button.
     void setActionButton(uint guid, ubyte button, uint action, ubyte type)
     {
         characters.execute!"DELETE FROM character_action WHERE guid = ? AND button = ?"(guid, button);
@@ -1169,7 +1170,7 @@ final class CharacterStatements
                 guid, button, action, type);
     }
 
-    /// `WorldSession::SaveTutorialsData`
+    /// Saves the account's tutorial flags.
     void saveTutorials(uint accountId, const uint[tutorialFields] t)
     {
         characters.execute!("UPDATE character_tutorial SET tut0 = ?, tut1 = ?, tut2 = ?, tut3 = ?, tut4 = ?, "
@@ -1177,7 +1178,7 @@ final class CharacterStatements
             accountId);
     }
 
-    /// `ObjectMgr::LoadGroups`: every group with its members, and the names of both.
+    /// Every group with its members, and the names of both.
     GroupRecord[] loadGroups()
     {
         GroupRecord[] groups;
@@ -1214,7 +1215,7 @@ final class CharacterStatements
         return groups;
     }
 
-    /// `Group::Create`
+    /// Saves a new group with its members.
     void createGroup(const ref GroupRecord g)
     {
         characters.transaction({
@@ -1228,7 +1229,7 @@ final class CharacterStatements
         });
     }
 
-    /// The `groups` columns that change after creation (`_setLeader`, `ConvertToRaid`, `SetLootMethod`, ...).
+    /// The `groups` columns that change after creation (leader, raid, loot method, ...).
     void updateGroup(const ref GroupRecord g)
     {
         characters.execute!("UPDATE `groups` SET leaderGuid = ?, mainTank = ?, mainAssistant = ?, lootMethod = ?, "
@@ -1236,7 +1237,7 @@ final class CharacterStatements
             g.lootMethod, g.looter, g.lootThreshold, g.isRaid ? 1 : 0, g.id);
     }
 
-    /// `Group::Disband`
+    /// Deletes a disbanded group and its members.
     void deleteGroup(uint groupId)
     {
         characters.transaction({
@@ -1245,27 +1246,27 @@ final class CharacterStatements
         });
     }
 
-    /// `Group::_addMember`
+    /// Adds a member to a group.
     void addGroupMember(uint groupId, const GroupMemberRecord m)
     {
         characters.execute!"INSERT INTO group_member (groupId, memberGuid, assistant, subgroup) VALUES (?, ?, ?, ?)"(
             groupId, m.guid, m.assistant ? 1 : 0, m.subGroup);
     }
 
-    /// `Group::_setAssistantFlag`, `_setMembersGroup`
+    /// A member's assistant flag and subgroup.
     void updateGroupMember(const GroupMemberRecord m)
     {
         characters.execute!"UPDATE group_member SET assistant = ?, subgroup = ? WHERE memberGuid = ?"(
             m.assistant ? 1 : 0, m.subGroup, m.guid);
     }
 
-    /// `Group::_removeMember`
+    /// Removes a member from its group.
     void removeGroupMember(uint guid)
     {
         characters.execute!"DELETE FROM group_member WHERE memberGuid = ?"(guid);
     }
 
-    /// `SendNameQueryResponseFromDB`
+    /// A character's name, race, gender and class, for a name query; null if there is no such character.
     Nullable!NameInfo nameInfo(uint guid)
     {
         auto rows = characters.queryAs!(NameInfo, "SELECT name, race, gender, class FROM characters WHERE guid = ?")(
@@ -1273,7 +1274,7 @@ final class CharacterStatements
         return rows.length ? nullable(rows[0]) : Nullable!NameInfo.init;
     }
 
-    /// `World::UpdateRealmCharCount`
+    /// The account's character count on this realm, in the login database's `realmcharacters`.
     void updateRealmCharacters(uint accountId, uint realmId)
     {
         const count = realmCharacterCount(accountId);
@@ -1293,13 +1294,14 @@ final class CharacterStatements
         return nullable(CharacterOwner(rows[0].get!uint(0), rows[0].get!string(1), rows[0].get!uint(2)));
     }
 
-    /// `GuildMgr::GetGuildByLeader`
+    /// Whether the character leads a guild.
     bool isGuildLeader(uint guid)
     {
         return characters.query!"SELECT 1 FROM guild WHERE leaderguid = ?"(guid).length > 0;
     }
 
-    /// `Player::DeleteFromDB`. `nextMailId` allocates ids for returned mail.
+    /// Deletes a character (or, with method 1, unlinks it to be restored). `nextMailId` allocates ids
+    /// for returned mail.
     void deleteCharacter(uint guid, uint accountId, DeleteOptions options, uint delegate() nextMailId)
     {
         uint method = options.method;
@@ -1386,7 +1388,7 @@ final class CharacterStatements
             characters.execute!statement(guid, guid);
     }
 
-    /// `Guild::DelMember`, disbanding the guild if it is left empty.
+    /// Removes the character from its guild, disbanding the guild if it is left empty.
     private void leaveGuild(uint guid)
     {
         const rows = characters.query!"SELECT guildid FROM guild_member WHERE guid = ?"(guid);
@@ -1405,7 +1407,7 @@ final class CharacterStatements
         }
     }
 
-    /// `Group::RemoveMember` for an offline member: leave, pass on the lead, or disband a two-person group.
+    /// An offline member leaves its group: leave, pass on the lead, or disband a two-person group.
     private void leaveGroup(uint guid)
     {
         const rows = characters.query!"SELECT groupId FROM group_member WHERE memberGuid = ?"(guid);
@@ -1442,7 +1444,7 @@ final class CharacterStatements
         });
     }
 
-    /// `Player::RemovePetitionsAndSigns`
+    /// Deletes the character's petitions and its signatures on others.
     private void removePetitions(uint guid)
     {
         characters.execute!"DELETE FROM petition_sign WHERE playerguid = ?"(guid);
@@ -1452,7 +1454,7 @@ final class CharacterStatements
         });
     }
 
-    /// `AuctionHouseMgr::RemovePlayerAuctions`: own auctions are cancelled (bids refunded by mail), own bids dropped.
+    /// The character's auctions are cancelled (bids refunded by mail), its own bids dropped.
     private void removeAuctions(uint guid, uint delegate() nextMailId)
     {
         characters.execute!"UPDATE auction SET buyguid = 0, lastbid = 0 WHERE buyguid = ? AND itemowner <> ?"(guid,
@@ -1476,7 +1478,7 @@ final class CharacterStatements
         }
     }
 
-    /// Mail with items still unpaid (COD) goes back to its senders, as `MailDraft::SendReturnToSender` does.
+    /// Mail with items still unpaid (COD) goes back to its senders.
     private void returnMail(uint guid, uint accountId, DeleteOptions options, uint delegate() nextMailId)
     {
         foreach (mail; characters.query!("SELECT id, messageType, mailTemplateId, sender, subject, itemTextId, money, "
@@ -1644,7 +1646,7 @@ final class CharacterStatements
         return rows.length ? [rows[0].get!uint(0), rows[0].get!uint(1)] : [0u, 0u];
     }
 
-    /// `MailDraft::SendMailTo`
+    /// Writes a letter with its items, delivered after `deliverDelay` seconds.
     private void sendMail(uint mailId, uint type, uint stationery, uint templateId, uint sender, uint receiver,
         string subject, uint itemTextId, const(uint[2])[] items, uint money, uint checked, uint deliverDelay)
     {

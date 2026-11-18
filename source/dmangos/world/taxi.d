@@ -1,6 +1,5 @@
 /**
- * Flight paths (CMaNGOS `Entities/Taxi.cpp`, `ObjectMgr::GetNearestTaxiNode`,
- * `GetTaxiMountDisplayId`): the taxi network of `TaxiNodes.dbc`, `TaxiPath.dbc` and
+ * Flight paths: the taxi network of `TaxiNodes.dbc`, `TaxiPath.dbc` and
  * `TaxiPathNode.dbc`, which nodes a character knows (`taximask`, a bit a node), the node a flight
  * master stands at, and a flight over one or more legs: their points one after the other, and
  * their price. `dmangos.world.taxihandlers` flies it.
@@ -11,10 +10,10 @@ import dmangos.vmap.math : Vector3;
 import dmangos.world.clientdata : ClientData, Team, TaxiNodesEntry;
 import dmangos.world.movement : Position;
 
-/// `PLAYER_FLIGHT_SPEED`, in yards a second.
+/// How fast a player flies, in yards a second.
 enum float flightSpeed = 32;
 
-/// `ActivateTaxiReply`
+/// The answer to a flight request (`SMSG_ACTIVATETAXIREPLY`).
 enum TaxiReply : uint
 {
     ok = 0,
@@ -32,7 +31,7 @@ enum TaxiReply : uint
     notStanding = 12,
 }
 
-/// Whether the mask has node `id` (`IsTaximaskNodeKnown`).
+/// Whether the mask has node `id`.
 bool knowsNode(const uint[8] mask, uint id) pure nothrow @nogc @safe
 {
     if (id == 0 || id > 8 * 32)
@@ -40,7 +39,7 @@ bool knowsNode(const uint[8] mask, uint id) pure nothrow @nogc @safe
     return (mask[(id - 1) / 32] & (1u << ((id - 1) % 32))) != 0;
 }
 
-/// `SetTaximaskNode`: true if it was not known.
+/// Adds node `id` to the mask: true if it was not known.
 bool learnNode(ref uint[8] mask, uint id) pure nothrow @nogc @safe
 {
     if (id == 0 || id > 8 * 32 || knowsNode(mask, id))
@@ -49,7 +48,7 @@ bool learnNode(ref uint[8] mask, uint id) pure nothrow @nogc @safe
     return true;
 }
 
-/// `GetNearestTaxiNode`: the network node nearest `at` on `mapId` with a mount for `team`; 0 if none.
+/// The network node nearest `at` on `mapId` with a mount for `team`; 0 if none.
 uint nearestTaxiNode(const ClientData client, Position at, uint mapId, Team team)
 {
     uint best;
@@ -71,7 +70,7 @@ uint nearestTaxiNode(const ClientData client, Position at, uint mapId, Team team
     return best;
 }
 
-/// `GetTaxiMountDisplayId`'s creature: the node's mount for `team`, else the other's.
+/// The creature a flight from `node` rides: the node's mount for `team`, else the other's.
 uint taxiMountCreature(const(TaxiNodesEntry)* node, Team team) pure nothrow @nogc @safe
 {
     if (node is null)
@@ -90,7 +89,7 @@ struct TaxiFlight
 }
 
 /**
- * `Tracker::AddRoutes` and `Prepare` for `nodes` (each leg from one to the next): every leg must be
+ * Plans a flight over `nodes` (each leg from one to the next): every leg must be
  * a path of the network on the first node's map; the points of all legs one after another, the
  * prices added (times `priceRate`, the reputation's discount).
  */

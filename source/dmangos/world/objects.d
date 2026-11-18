@@ -1,7 +1,6 @@
 /**
  * Objects as the client sees them: guids, update field values, and the
- * `SMSG_UPDATE_OBJECT` blocks that create and change them (CMaNGOS
- * `Entities/Object.cpp`, `UpdateData.cpp`, `UpdateMask.h`).
+ * `SMSG_UPDATE_OBJECT` blocks that create and change them.
  *
  * A create block is:
  * $(OL
@@ -24,7 +23,7 @@ import dmangos.world.movement;
 import dmangos.world.spline : MoveSpline, writeSplineCreate;
 import dmangos.world.updatefields;
 
-/// `HighGuid`: the top 16 bits of a guid.
+/// The top 16 bits of a guid: what kind of object it is.
 enum HighGuid : ushort
 {
     player = 0x0000,
@@ -40,14 +39,14 @@ ulong makeGuid(HighGuid high, uint low) pure nothrow @nogc @safe
     return ulong(high) << 48 | low;
 }
 
-/// The guid of a creature or game object: its spawn's database guid (24 bits) and its entry (`ObjectGuid`).
+/// The guid of a creature or game object: its spawn's database guid (24 bits) and its entry.
 ulong makeGuid(HighGuid high, uint entry, uint counter) pure nothrow @nogc @safe
 in (counter < 1 << 24, "a creature or game object counter has 24 bits")
 {
     return ulong(high) << 48 | ulong(entry) << 24 | counter;
 }
 
-/// A pet's guid: `HIGHGUID_PET`, its pet number and a counter (`ObjectGuid(HIGHGUID_PET, petNumber, low)`).
+/// A pet's guid: `HighGuid.pet`, its pet number (24 bits) and a counter (24 bits).
 ulong makePetGuid(uint number, uint counter) pure nothrow @nogc @safe
 {
     return ulong(HighGuid.pet) << 48 | ulong(number & 0xFF_FFFF) << 24 | (counter & 0xFF_FFFF);
@@ -72,7 +71,7 @@ uint lowGuid(ulong guid) pure nothrow @nogc @safe
 }
 
 
-/// Which fields a viewer sees (`Object::GetUpdateFieldFlagsForTarget`).
+/// Which fields a viewer sees: everyone.
 enum Visibility seenByEveryone = Visibility.public_ | Visibility.dynamic;
 /// ditto: a player looking at itself.
 enum Visibility seenBySelf = seenByEveryone | Visibility.private_;
@@ -241,8 +240,8 @@ struct UpdateValues
 
     /**
      * Writes the values part of a create block: every non-zero field `seen` lets the viewer see.
-     * `adjust`, if given, changes what this viewer is told (`Object::BuildValuesUpdate`'s per-viewer
-     * cases, such as health in percent for strangers).
+     * `adjust`, if given, changes what this viewer is told (per-viewer cases, such as health in
+     * percent for strangers).
      */
     void writeCreate(ref ByteWriter writer, Visibility seen, scope ValueAdjuster adjust = null) const
     {
@@ -396,7 +395,7 @@ private float bitsFloat(uint bits) pure nothrow @nogc @trusted
     return *cast(float*)&bits;
 }
 
-/// `OBJECT_UPDATE_TYPE`
+/// The kind of an update block.
 enum UpdateType : ubyte
 {
     values = 0,
@@ -407,7 +406,7 @@ enum UpdateType : ubyte
     nearObjects = 5,
 }
 
-/// `OBJECT_UPDATE_FLAGS`
+/// What a create block's movement part holds.
 enum UpdateFlags : ubyte
 {
     none = 0x00,
@@ -430,7 +429,7 @@ struct SlotValue
 /// What the movement part of a create block contains.
 struct MovementBlock
 {
-    ubyte flags;         /// `UpdateFlags`
+    ubyte flags;         /// a set of `UpdateFlags`
     MovementInfo info;   /// for `living`
     float[MoveType.max + 1] speeds = baseMoveSpeed; /// for `living`
     Position position;   /// for `hasPosition` without `living`
@@ -438,7 +437,7 @@ struct MovementBlock
     uint transportTime;  /// for `transport`: the path's time (elevators)
     const(MoveSpline)* spline; /// for `living` with `MovementFlags.splineEnabled`: the walk under way
 
-    /// `Object::BuildMovementUpdate`, without transports or attack targets.
+    /// Writes the movement part, as `flags` selects it, without transports or attack targets.
     void write(ref ByteWriter writer) const
     {
         writer.put(flags);
@@ -488,7 +487,7 @@ struct UpdateData
         return count;
     }
 
-    /// `Object::BuildCreateUpdateBlockForPlayer`, for a viewer that sees the fields `seen` covers.
+    /// A create block, for a viewer that sees the fields `seen` covers.
     void addCreate(UpdateType type, ulong guid, const ref MovementBlock movement, const ref UpdateValues values,
         Visibility seen, scope ValueAdjuster adjust = null)
     in (type == UpdateType.createObject || type == UpdateType.createObject2)
@@ -501,7 +500,7 @@ struct UpdateData
         ++count;
     }
 
-    /// `Object::BuildValuesUpdateBlockForPlayer`: the fields changed since the last `clearChanges`.
+    /// A values block: the fields changed since the last `clearChanges`.
     void addValues(ulong guid, const ref UpdateValues values, Visibility seen, scope ValueAdjuster adjust = null)
     {
         blocks.put(cast(ubyte) UpdateType.values);
@@ -510,7 +509,7 @@ struct UpdateData
         ++count;
     }
 
-    /// A values block with the slots `which`, whether they changed or not (`ForceValuesUpdateAtIndex`).
+    /// A values block with the slots `which`, whether they changed or not.
     void addSlots(ulong guid, const ref UpdateValues values, const(size_t)[] which, scope ValueAdjuster adjust = null)
     {
         blocks.put(cast(ubyte) UpdateType.values);
@@ -519,7 +518,7 @@ struct UpdateData
         ++count;
     }
 
-    /// `UpdateData::AddOutOfRangeGUID`: objects the viewer should forget, sent as one block.
+    /// Objects the viewer should forget, sent as one block.
     void addOutOfRange(const(ulong)[] guids)
     in (guids.length > 0)
     {
@@ -544,8 +543,8 @@ struct UpdateData
     }
 
     /**
-     * `UpdateData::BuildPacketOfBlocks`: the block count and transport flag,
-     * then the blocks. Bodies over 100 bytes are compressed, as CMaNGOS does.
+     * The packet body: the block count and transport flag,
+     * then the blocks. Bodies over 100 bytes are compressed.
      */
     /// Bytes of blocks so far, before compression.
     @property size_t byteSize() const pure nothrow @nogc @safe
@@ -570,14 +569,14 @@ struct UpdateData
 }
 
 /**
- * The zlib level update packets are compressed with (`Compression` in mangosd.conf: 1, the fastest,
+ * The zlib level update packets are compressed with (the `Compression` setting: 1, the fastest,
  * by default); set from the configuration at start-up.
  */
 int updateCompression = 1;
 
 /**
  * The most bytes of blocks one update packet should carry before it is compressed:
- * `MAX_NETCLIENT_PACKET_SIZE` less what CMaNGOS keeps in reserve (`UpdateData::GetPacketEnd`).
+ * the largest packet the client accepts (32766 bytes), less 128 kept in reserve.
  */
 enum size_t maxUpdatePacketBytes = 32_766 - 128;
 

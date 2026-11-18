@@ -1,8 +1,8 @@
 /**
  * Spell data from the world database (`spell_template`, `spell_chain`,
- * `spell_learn_spell`), and the derived maps CMaNGOS's `SpellMgr` builds:
- * spell chains (`LoadSpellChains`), spells learned with other spells
- * (`LoadSpellLearnSpells`) and skills learned with spells (`LoadSpellLearnSkills`).
+ * `spell_learn_spell`), and the maps derived from them at load:
+ * spell chains (`buildChains`), spells learned with other spells
+ * (`buildLearnSpells`) and skills learned with spells (`buildLearnSkills`).
  *
  * Only the fields that character creation uses are loaded.
  */
@@ -16,7 +16,7 @@ import dmangos.log;
 import dmangos.mysql : MySqlConnection;
 import dmangos.world.clientdata : ClientData;
 
-/// Spell effects that matter when spells are learned (`SpellEffects`).
+/// Spell effects that matter when spells are learned.
 enum SpellEffect : uint
 {
     none = 0,
@@ -34,15 +34,15 @@ enum SpellEffect : uint
     skinning = 95,
 }
 
-/// `SPELL_ATTR_PASSIVE`
+/// An `Attributes` bit: the spell is passive.
 enum uint spellAttrPassive = 0x00000040;
-/// `SPELL_ATTR_DO_NOT_DISPLAY`
+/// An `Attributes` bit: the spell is not shown.
 enum uint spellAttrDoNotDisplay = 0x00000080;
-/// `SPELL_ATTR_EX_CAST_WHEN_LEARNED`
+/// An `AttributesEx` bit: the spell is cast when learned.
 enum uint spellAttrExCastWhenLearned = 0x80000000;
-/// `SPELL_ATTR_EX2_ALLOW_WHILE_NOT_SHAPESHIFTED`
+/// An `AttributesEx2` bit: the spell may be cast while not shapeshifted.
 enum uint spellAttrEx2AllowWhileNotShapeshifted = 0x00080000;
-/// `TARGET_UNIT_CASTER_PET`
+/// An implicit target: the caster's pet.
 enum uint targetUnitCasterPet = 5;
 
 /// The `spell_template` fields character creation needs.
@@ -70,19 +70,19 @@ struct SpellInfo
     uint spellLevel;            /// `SpellLevel`: the level a trainer teaches it from
     SpellCastInfo casting;      /// what casting it needs (`dmangos.world.spellcast`)
 
-    /// `IsPassiveSpell`
+    /// Whether the spell is passive.
     bool isPassive() const pure nothrow @nogc @safe
     {
         return (attributes & spellAttrPassive) != 0;
     }
 
-    /// `IsSpellHaveEffect`
+    /// Whether one of the spell's effects is `wanted`.
     bool hasEffect(SpellEffect wanted) const pure nothrow @nogc @safe
     {
         return effect[].canFind(wanted);
     }
 
-    /// `CalculateSimpleValue`: base points plus base dice.
+    /// An effect's value without a roll: base points plus base dice.
     int simpleValue(size_t index) const pure nothrow @nogc @safe
     {
         return basePoints[index] + baseDice[index];
@@ -216,7 +216,7 @@ struct SpellCastRow
     }
 }
 
-/// `SpellChainNode`
+/// A spell's place in its chain: the rank before, the first rank, its rank, and a spell it requires.
 struct SpellChainNode
 {
     uint prev;
@@ -225,7 +225,7 @@ struct SpellChainNode
     uint req;
 }
 
-/// `SpellLearnSpellNode`
+/// A spell learned with another (`spell_learn_spell`, or a learn-spell effect).
 struct SpellLearnSpellNode
 {
     uint spell;
@@ -233,7 +233,7 @@ struct SpellLearnSpellNode
     bool autoLearned;
 }
 
-/// `SpellLearnSkillNode`
+/// A skill learned with a spell: the skill, its step, and the effect that teaches it.
 struct SpellLearnSkillNode
 {
     uint skill;
@@ -258,7 +258,7 @@ final class SpellData
         return id in spells;
     }
 
-    /// `GetPrevSpellInChain`
+    /// The rank before `id` in its chain; 0 if none.
     uint prevInChain(uint id) const
     {
         if (auto node = id in chains)
@@ -266,7 +266,7 @@ final class SpellData
         return 0;
     }
 
-    /// `GetSpellRank`
+    /// The rank of `id` in its chain; 0 if none.
     ubyte rank(uint id) const
     {
         if (auto node = id in chains)
@@ -274,25 +274,25 @@ final class SpellData
         return 0;
     }
 
-    /// Spells listed after `id` in a chain (`GetSpellChainNext`), in id order.
+    /// Spells listed after `id` in a chain, in id order.
     const(uint)[] nextInChain(uint id) const
     {
         return chainNext.get(id, null);
     }
 
-    /// `GetSpellLearnSpellMapBounds`
+    /// The spells learned with spell `id`.
     const(SpellLearnSpellNode)[] learnedWith(uint id) const
     {
         return learnSpells.get(id, null);
     }
 
-    /// `IsSpellLearnToSpell`
+    /// Whether learning `spell` teaches `learned` too.
     bool learnsSpell(uint spell, uint learned) const
     {
         return learnedWith(spell).canFind!(node => node.spell == learned);
     }
 
-    /// `GetSpellLearnSkill`
+    /// The skill spell `id` teaches, or null.
     const(SpellLearnSkillNode)* learnedSkill(uint id) const
     {
         return id in learnSkills;
@@ -333,7 +333,7 @@ final class SpellData
     }
 
 private:
-    /// `LoadSpellLearnSkills`: spells with a SPELL_EFFECT_SKILL effect teach that skill.
+    /// Spells with a SPELL_EFFECT_SKILL effect teach that skill.
     void buildLearnSkills()
     {
         learnSkills = null;
@@ -355,7 +355,7 @@ private:
         }
     }
 
-    /// `LoadSpellChains`: talent ranks, then SkillLineAbility forward links, then `spell_chain`.
+    /// The spell chains: talent ranks, then SkillLineAbility forward links, then `spell_chain`.
     void buildChains(const ClientData client, const(SpellChainRow)[] rows)
     {
         chains.clear();
@@ -475,7 +475,7 @@ private:
             chains[spellId] = SpellChainNode(prevId, prevNode.first, cast(ubyte)(prevNode.rank + 1), 0);
     }
 
-    /// `LoadSpellLearnSpells`: `spell_learn_spell` rows, then SPELL_EFFECT_LEARN_SPELL effects.
+    /// The spells learned with others: `spell_learn_spell` rows, then SPELL_EFFECT_LEARN_SPELL effects.
     void buildLearnSpells(const ClientData client, const(LearnRow)[] rows)
     {
         learnSpells = null;

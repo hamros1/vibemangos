@@ -1,8 +1,7 @@
 /**
- * How creatures move on their own (CMaNGOS `MotionGenerators/`): each creature has a movement
- * generator, chosen from its spawn's `MovementType` as `MotionMaster::Initialize` chooses it, that
- * starts walks along splines (`MoveSplineInit::Launch`) when it is time, and the creature follows its
- * spline as the map ticks (`Unit::UpdateSplineMovement`).
+ * How creatures move on their own: each creature has a movement generator, chosen from its spawn's
+ * `MovementType` (`selectMovement`), that starts walks along splines (`launch`) when it is time,
+ * and the creature follows its spline as the map ticks (`followSpline`).
  *
  * - `IdleMovement` (type 0): stands.
  * - `WanderMovement` (type 1): walks to random points within `spawndist` of its spawn point, one to
@@ -16,8 +15,8 @@
  * A point's script (`ScriptId`) runs when the creature gets there. What is not here yet: AI being
  * told of arrivals, scripts pausing the path or changing it, formations,
  * and type 3 (a flying path, which here walks as type 2 does). Without movement maps, paths are
- * straight lines; a random point's height is taken from the terrain (`Unit::UpdateAllowedPositionZ`,
- * which CMaNGOS applies only with `PathFinder.NormalizeZ` and otherwise takes from its movement maps).
+ * straight lines; a random point's height is always taken from the terrain (`allowedPositionZ`),
+ * not from movement maps.
  */
 module dmangos.world.motion;
 
@@ -32,7 +31,7 @@ import dmangos.world.movement : MovementFlags, MoveType, Position;
 import dmangos.world.opcodes : Opcode;
 import dmangos.world.spline;
 
-/// `MovementGeneratorType`, as far as the database uses it.
+/// The kinds of movement, as far as the database uses them.
 enum MotionType : uint
 {
     idle = 0,
@@ -43,7 +42,7 @@ enum MotionType : uint
     point = 8,
 }
 
-/// `WaypointNode`: a point of a path.
+/// A point of a path.
 struct WaypointNode
 {
     uint point;         /// its number in the path, from 1
@@ -55,7 +54,7 @@ struct WaypointNode
     uint scriptId;      /// `dbscripts_on_creature_movement`, run when it gets there
 }
 
-/// `WaypointManager`: the paths of `creature_movement` (by spawn) and `creature_movement_template`.
+/// The paths of `creature_movement` (by spawn) and `creature_movement_template`.
 final class WaypointStore
 {
     private
@@ -76,7 +75,7 @@ final class WaypointStore
         byEntry[entry << 8 | pathId] ~= node;
     }
 
-    /// Puts each path in point order, and drops those with a point 0 (as `WaypointManager::Load`).
+    /// Puts each path in point order, and drops those with a point 0.
     void finish()
     {
         import std.algorithm.searching : canFind;
@@ -96,7 +95,7 @@ final class WaypointStore
         }
     }
 
-    /// `GetDefaultPath`: the spawn's own path, or else its entry's path 0; null if neither.
+    /// The spawn's own path, or else its entry's path 0; null if neither.
     const(WaypointNode)[] defaultPath(uint entry, uint guid) const
     {
         if (auto path = guid in bySpawn)
@@ -114,10 +113,10 @@ final class WaypointStore
 /// What movement needs from the map the creature is on.
 interface MotionWorld
 {
-    /// `Map::GetHeight`: the ground below or near `z`; `invalidHeightValue` and below if none.
+    /// The ground below or near `z`; `invalidHeightValue` and below if none.
     float groundHeight(float x, float y, float z, bool swim);
 
-    /// `TerrainInfo::GetWaterOrGroundLevel`: how high a swimmer may be above `groundZ`.
+    /// How high a swimmer may be above `groundZ`.
     float waterOrGroundLevel(float x, float y, float z, float groundZ, float minWaterDeep);
 
     /// Sends a packet to the players whose clients have the object `guid`.
@@ -126,17 +125,17 @@ interface MotionWorld
     /// The map's random numbers.
     ref Random random();
 
-    /// `ScriptsStart(SCRIPT_TYPE_CREATURE_MOVEMENT)`: a waypoint's script, the creature its source and target.
+    /// Starts a waypoint's script (`DbScriptType.creatureMovement`), the creature its source and target.
     void waypointScript(Creature creature, uint scriptId);
 
     /**
-     * `PathFinder`: the way from `from` to `to` over the map's movement maps, `from` first; empty
+     * The way from `from` to `to` over the map's movement maps, `from` first; empty
      * where there are none (or an end is off them): then the unit walks straight.
      */
     Vector3[] pathBetween(Vector3 from, Vector3 to);
 }
 
-/// `MovementGenerator`: see the module documentation.
+/// How a creature moves on its own: see the module documentation.
 abstract class MovementGenerator
 {
     /// The type, as the database and `.npc info` know it.
@@ -172,7 +171,7 @@ abstract class MovementGenerator
     }
 }
 
-/// `IdleMovementGenerator`
+/// Standing still.
 final class IdleMovement : MovementGenerator
 {
     override @property MotionType type() const
@@ -186,7 +185,7 @@ final class IdleMovement : MovementGenerator
     }
 }
 
-/// `WanderMovementGenerator`
+/// Wandering: random walks near the spawn point, with waits between them.
 final class WanderMovement : MovementGenerator
 {
     enum delayMin = 3000, delayMax = 10_000, movesMax = 3;
@@ -256,7 +255,7 @@ final class WanderMovement : MovementGenerator
     }
 
 private:
-    /// `_setLocation` with `PathFinder`: a walk to a random point, round what is in the way.
+    /// A walk to a random point, round what is in the way.
     bool setLocation(Creature creature, MotionWorld world)
     {
         const angle = uniform01!float(world.random) * 2 * cast(float) PI;
@@ -273,7 +272,7 @@ private:
     }
 }
 
-/// `WaypointMovementGenerator<Creature>` and, back and forth, `LinearWPMovementGenerator`.
+/// Walking a waypoint path, round and round or (`linear`) back and forth.
 final class WaypointMovement : MovementGenerator
 {
     /// A path is sent with the points after the next until it is this long (milliseconds).
@@ -294,9 +293,9 @@ final class WaypointMovement : MovementGenerator
         size_t[] nodeIndexes; // spline points that are path points, to arrive at on the way
     }
 
-    bool paused; /// `SCRIPT_COMMAND_PAUSE_WAYPOINTS`: stands where it is until resumed
+    bool paused; /// paused by a script (`ScriptCommand.pauseWaypoints`): stands where it is until resumed
 
-    /// `LoadPath`: a lone point without a wait waits five seconds.
+    /// A lone point without a wait waits five seconds.
     this(const(WaypointNode)[] path, bool linear)
     {
         this.path = path.dup;
@@ -340,7 +339,7 @@ final class WaypointMovement : MovementGenerator
             current = 0;
     }
 
-    /// `InitializeWaypointPath`: off to the first point at once.
+    /// Off to the first point at once.
     override void initialize(Creature creature, MotionWorld world)
     {
         if (path.length)
@@ -399,7 +398,7 @@ final class WaypointMovement : MovementGenerator
     }
 
 private:
-    /// `OnArrived`: at the current point; on to the next, waiting first if the point says so.
+    /// At the current point; on to the next, waiting first if the point says so.
     void arrived(Creature creature, MotionWorld world)
     {
         if (lastReached == currentPoint)
@@ -414,7 +413,7 @@ private:
         currentPoint = path[current].point;
     }
 
-    /// `SwitchToNextNode`
+    /// Moves on to the next point of the path.
     void switchToNextNode()
     {
         if (!linear)
@@ -429,7 +428,7 @@ private:
         }
     }
 
-    /// `GetNodeAfter`: the point after `node` along the way; false where a linear path turns.
+    /// The point after `node` along the way; false where a linear path turns.
     bool nodeAfter(ref size_t node, bool looped) const
     {
         if (!linear)
@@ -445,7 +444,7 @@ private:
     }
 
     /**
-     * `SendNextWayPointPath`: a walk to the current point, and on through the points after it
+     * A walk to the current point, and on through the points after it
      * without a wait until the walk lasts `minimumPathTime`; facing as the last point says.
      */
     void sendNextPath(Creature creature, MotionWorld world)
@@ -495,7 +494,7 @@ private:
 }
 
 /**
- * `PointMovementGenerator` (`MotionMaster::MovePoint`): a walk (or run) to one point, facing there as
+ * A walk (or run) to one point, facing there as
  * told; then the movement it had before goes on, and `onArrived` is told.
  */
 final class PointMovement : MovementGenerator
@@ -543,7 +542,7 @@ final class PointMovement : MovementGenerator
 }
 
 /**
- * `FactorySelector::selectMovementGenerator` with `MotionMaster::Initialize`: the generator for the
+ * The generator for the
  * spawn's movement type. A waypoint creature without a path stands.
  */
 MovementGenerator selectMovement(const Creature creature, const WaypointStore waypoints)
@@ -569,7 +568,7 @@ MovementGenerator selectMovement(const Creature creature, const WaypointStore wa
 private uint splineCounter = 1;
 
 /**
- * `MoveSplineInit::Launch`: starts a walk (or run) along `points` from where the creature is, tells
+ * Starts a walk (or run) along `points` from where the creature is, tells
  * the clients, and returns its duration in milliseconds. `facing` (radians, unless NaN) is where it
  * looks at the end. With `generatePath`, a walk from one point to another goes round what is in the
  * way (`MotionWorld.pathBetween`).
@@ -580,7 +579,7 @@ in (points.length > 1)
 {
     const at = creature.spline.finalized ? creature.position : creature.spline.position;
     points[0] = Vector3(at.x, at.y, at.z);
-    // `MoveSplineInit::MoveTo(dest, generatePath)`: round what stands in the way, over the movement maps.
+    // A walk to one point with `generatePath`: round what stands in the way, over the movement maps.
     if (generatePath && points.length == 2)
     {
         auto way = world.pathBetween(points[0], points[1]);
@@ -614,7 +613,7 @@ in (points.length > 1)
     return creature.spline.duration;
 }
 
-/// `Unit::StopMoving` with `MoveSplineInit::Stop`: stands where it is, and tells the clients.
+/// Stands where it is, and tells the clients.
 void stopMoving(Creature creature, MotionWorld world)
 {
     if (creature.spline.finalized)
@@ -626,7 +625,7 @@ void stopMoving(Creature creature, MotionWorld world)
         monsterStop(creature.guid, creature.position, creature.spline.id));
 }
 
-/// `Unit::InterruptMoving`: stops a walk at the point reached.
+/// Stops a walk at the point reached.
 void interruptMoving(Creature creature, MotionWorld world)
 {
     if (creature.spline.finalized)
@@ -636,7 +635,7 @@ void interruptMoving(Creature creature, MotionWorld world)
 }
 
 /**
- * `Unit::UpdateSplineMovement`: `diff` milliseconds along the walk. The creature's position follows
+ * `diff` milliseconds along the walk. The creature's position follows
  * every 400 ms, and when it arrives.
  */
 void followSpline(Creature creature, int diff)
@@ -671,7 +670,7 @@ void followSpline(Creature creature, int diff)
     creature.movement.position = next;
 }
 
-/// `Unit::UpdateAllowedPositionZ` for a creature: on the ground, or between it and the water's surface.
+/// A creature's allowed height at `p`: on the ground, or between it and the water's surface.
 void allowedPositionZ(const Creature creature, MotionWorld world, ref Vector3 p)
 {
     import dmangos.world.terrain : invalidHeight;

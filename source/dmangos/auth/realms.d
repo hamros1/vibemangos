@@ -1,6 +1,5 @@
 /**
- * The realm list, following CMaNGOS `RealmList.cpp` and
- * `AuthSocket::LoadRealmlist`.
+ * The realm list: the realms the login server offers, and how each is shown.
  *
  * Realms come from the `realmlist` table and are re-read every
  * `realms_state_update_delay` seconds (0 = load once). A realm is shown
@@ -49,14 +48,14 @@ struct Realm
     ushort[] builds; /// Sorted ascending.
 }
 
-/// Flags an administrator may set in `realmlist.realmflags`; CMaNGOS masks out anything else.
+/// Flags an administrator may set in `realmlist.realmflags`; anything else is masked out.
 enum ubyte allowedRealmFlags = RealmFlags.offline | RealmFlags.newPlayers | RealmFlags.recommended
     | RealmFlags.specifyBuild;
 
 /**
  * Category id for each realm zone (the `timezone` column) on a 1.x client.
- * This is the "Classic" row of CMaNGOS's
- * `RealmCategoryIdsByRealmZoneByMajorVersion`, built at compile time.
+ * These are the 1.x client's category ids by realm zone, built at
+ * compile time.
  */
 static immutable ubyte[38] classicRealmCategories = () {
     ubyte[38] categories = 1;
@@ -73,7 +72,7 @@ static immutable ubyte[38] classicRealmCategories = () {
 /// Realm zone used when the `timezone` column is out of range.
 private enum ubyte developmentZone = 1;
 
-/// Turns `realmlist` rows into listable realms, applying the same checks as CMaNGOS.
+/// Turns `realmlist` rows into listable realms: id 0 skipped, flags masked, builds parsed.
 Realm[] prepareRealms(RealmRecord[] rows)
 {
     import std.algorithm.iteration : splitter;
@@ -112,7 +111,7 @@ Realm[] prepareRealms(RealmRecord[] rows)
         realm.builds.sort();
         realms ~= realm;
     }
-    realms.sort!((a, b) => a.name < b.name); // CMaNGOS keeps realms in a std::map keyed by name
+    realms.sort!((a, b) => a.name < b.name); // the list is in name order
     return realms;
 }
 

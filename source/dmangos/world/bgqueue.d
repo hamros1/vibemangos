@@ -1,20 +1,20 @@
 /**
- * The battleground queues (CMaNGOS-classic's `BattleGroundQueue`, `BattleGroundMgr`'s queue parts and
- * the queue opcodes of `BattleGroundHandler.cpp`), as a cluster service (docs/SERVICES.md, stage 5).
+ * The battleground queues and the queue opcodes' answers, as a cluster service (docs/SERVICES.md,
+ * stage 5).
  *
  * Players of any node queue for a battleground of a type (Alterac Valley, Warsong Gulch, Arathi
  * Basin) in the bracket of their level. Waiting players are kept as groups (a player alone is a group
  * of one), in the order they joined, per type, bracket and team. When a running copy of the
  * battleground has room, the first groups that fit are invited to it; when enough of both teams wait
- * (`MinPlayersPerTeam`), a new copy is made for them. An invitation lasts 80 s, with a reminder at
+ * (`battleground_template.MinPlayersPerTeam`), a new copy is made for them. An invitation lasts 80 s, with a reminder at
  * 60 s; accepting it (`CMSG_BATTLEFIELD_PORT`) gives the player's node what it needs to send the player
  * in. The copies themselves run on the node hosting their map (`dmangos.world.battleground`), which
  * tells the queue who leaves and how the copy is doing.
  *
- * `BattleGroundMgr`'s default configuration is followed: invitations fill greedily
- * (`InvitationType` 0), and there are no premade groups (`PremadeGroupWaitForMatch` 0).
+ * Invitations fill greedily (the first groups that fit), and premade groups get no matching of
+ * their own (none waits for an opposing premade).
  *
- * A player may wait in up to three queues (`PLAYER_MAX_BATTLEGROUND_QUEUES`), each a slot the client
+ * A player may wait in up to three queues (`queueSlots`), each a slot the client
  * shows; the queue keeps them, and what it tells a player (`SMSG_BATTLEFIELD_STATUS`,
  * `SMSG_BATTLEFIELD_LIST`) goes to the player's node. If the service moves to another node, the
  * queues there start empty (and running copies are not refilled).
@@ -27,7 +27,7 @@ import dmangos.bytes : ByteWriter;
 import dmangos.cluster.services : Call, Service, ServiceKind;
 import dmangos.world.opcodes : Opcode;
 
-/// `BattleGroundTypeId`: the index of `BattlemasterList.dbc` and of `battleground_template`.
+/// A battleground type: the index of `BattlemasterList.dbc` and of `battleground_template`.
 enum BattlegroundType : ubyte
 {
     none = 0,
@@ -61,7 +61,7 @@ struct BattlegroundTemplate
     uint skinLoot;             /// `PlayerSkinReflootId`
 }
 
-/// `BattleGroundStatus`
+/// Where a player (or a copy) stands, as `SMSG_BATTLEFIELD_STATUS` says it.
 enum BattlegroundStatus : ubyte
 {
     none = 0,
@@ -71,16 +71,16 @@ enum BattlegroundStatus : ubyte
     waitLeave = 4,  /// (a copy) over: its players leave
 }
 
-/// `MAX_BATTLEGROUND_BRACKETS`, `PLAYER_MAX_BATTLEGROUND_QUEUES`
+/// Level brackets of a battleground (ten levels each), and queues a player may wait in at once.
 enum uint bracketCount = 6, queueSlots = 3;
 
-/// `INVITE_ACCEPT_WAIT_TIME`, `INVITATION_REMIND_TIME`
+/// How long an invitation lasts, and when the invited are reminded.
 enum Duration inviteTime = 80.seconds, remindAfter = 60.seconds;
 
-/// `COUNT_OF_PLAYERS_TO_AVERAGE_WAIT_TIME`
+/// Invited players whose waits make the average wait.
 enum uint waitSamples = 10;
 
-/// `BattleGroundMgr::GetBattleGroundBracketIdFromLevel`
+/// The bracket of `level`: ten levels each from the minimum, the last holding the rest.
 ubyte bracketOf(const ref BattlegroundTemplate t, uint level) pure nothrow @nogc @safe
 {
     if (level < t.minLevel)
@@ -89,14 +89,14 @@ ubyte bracketOf(const ref BattlegroundTemplate t, uint level) pure nothrow @nogc
     return cast(ubyte)(b >= bracketCount ? bracketCount - 1 : b);
 }
 
-/// `GetBGAccessByLevel`: whether a player of `level` may queue for it (asked at the battlemaster).
+/// Whether a player of `level` may queue for it (asked at the battlemaster).
 bool levelAllowed(const ref BattlegroundTemplate t, uint level) pure nothrow @nogc @safe
 {
     return level >= t.minLevel && level <= t.maxLevel;
 }
 
 /**
- * `BattleGroundMgr::BuildBattleGroundStatusPacket`: queue slot `slot`'s state. `time1` and `time2`:
+ * The `SMSG_BATTLEFIELD_STATUS` body: queue slot `slot`'s state. `time1` and `time2`:
  * waiting, the average wait and the time waited; invited, the time left to accept; in a copy, the time
  * left before it sends everyone out (0 while running) and the time since it was made.
  */
@@ -143,7 +143,7 @@ final class BattlegroundQueue
     MonoTime delegate() clock;
     /// `battleground_template`, by type.
     BattlegroundTemplate[ubyte] templates;
-    /// `BattleGroundMgr::ToggleTesting` (`.debug bg`): one player of either team makes a copy.
+    /// Testing (`.debug bg`): one player of either team makes a copy.
     bool testing;
 
     /// Where a player is with one of its queue slots.
@@ -158,7 +158,7 @@ final class BattlegroundQueue
         Waiting group;   /// while waiting or invited
     }
 
-    /// `GroupQueueInfo`: players who queued together.
+    /// Players who queued together.
     static final class Waiting
     {
         ulong[] players;
@@ -172,7 +172,7 @@ final class BattlegroundQueue
         bool reminded;
     }
 
-    /// A copy of a battleground, as the queue knows it (`BattleGroundInQueueInfo`).
+    /// A copy of a battleground, as the queue knows it.
     struct Running
     {
         uint instance;
@@ -221,9 +221,9 @@ final class BattlegroundQueue
     }
 
     /**
-     * `HandleBattlemasterJoinOpcode`, for one player (its node has checked it may: no Deserter): queues
+     * A player joins at a battlemaster (its node has checked it may: no Deserter): queues
      * it for `type`, in the bracket of `level`, as `team` (0 the Alliance). Silent if it already waits
-     * for that type or has no free slot, as there.
+     * for that type or has no free slot.
      */
     void join(ulong guid, ushort node, ubyte team, uint level, BattlegroundType type, uint desired)
     {
@@ -255,7 +255,7 @@ final class BattlegroundQueue
         update(type, g.bracket);
     }
 
-    /// `GroupJoinBattlegroundResult`s the queue decides (the others are the group's node's).
+    /// The `SMSG_GROUP_JOINED_BATTLEGROUND` results the queue decides (the others are the group's node's).
     enum JoinError : ubyte
     {
         ok = 0,
@@ -264,7 +264,7 @@ final class BattlegroundQueue
     }
 
     /**
-     * `HandleBattlemasterJoinOpcode` for a group (its node has checked size, faction, levels and Deserter):
+     * A group joins at a battlemaster (its node has checked size, faction, levels and Deserter):
      * its members queue as one, in the bracket of `level`, unless one already waits for `type` or has
      * no free slot. Each is told its slot and `SMSG_GROUP_JOINED_BATTLEGROUND`.
      */
@@ -323,7 +323,7 @@ final class BattlegroundQueue
     }
 
     /**
-     * `HandleBattleFieldPortOpcode`: player `guid` accepts (`enter`) its invitation to `type`, or leaves
+     * `CMSG_BATTLEFIELD_PORT`: player `guid` accepts (`enter`) its invitation to `type`, or leaves
      * that queue. Accepted, the player stays counted in the copy; the answer says which.
      */
     Entry port(ulong guid, ushort node, BattlegroundType type, bool enter)
@@ -358,7 +358,7 @@ final class BattlegroundQueue
         return Entry(true, copy.instance, team, type);
     }
 
-    /// `HandleBattlefieldStatusOpcode`: every slot's state, sent again.
+    /// The client asks for its queues: every slot's state, sent again.
     void status(ulong guid, ushort node)
     {
         nodes[guid] = node;
@@ -390,7 +390,7 @@ final class BattlegroundQueue
         }
     }
 
-    /// `WorldSession::LogoutPlayer`: the player leaves every queue (a copy it is in keeps it a while).
+    /// The player logged out: it leaves every queue (a copy it is in keeps it a while).
     void logout(ulong guid)
     {
         auto mine = guid in tickets;
@@ -402,7 +402,7 @@ final class BattlegroundQueue
         forgetIfIdle(guid);
     }
 
-    /// `BattleGroundQueue::BuildBattleGroundListPacket`: the copies of `type` in the bracket of `level`.
+    /// The `SMSG_BATTLEFIELD_LIST`: the copies of `type` in the bracket of `level`.
     void list(ulong guid, ushort node, ulong battlemaster, BattlegroundType type, uint level)
     {
         const t = type in templates;
@@ -428,7 +428,7 @@ final class BattlegroundQueue
     }
 
     /**
-     * From the copy's node (`BattleGround::RemovePlayerAtLeave`): player `guid` of `team` left copy
+     * From the copy's node: player `guid` of `team` left copy
      * `instance`. Its slot is free again, and so is its place in the copy.
      */
     void left(uint instance, ulong guid, ubyte team)
@@ -478,7 +478,7 @@ final class BattlegroundQueue
     }
 
     /**
-     * ArcEmu's `EventQueueUpdate(true)` (`.battleground forcestart`): a copy for whoever waits, in every
+     * `.battleground forcestart`: a copy for whoever waits, in every
      * queue, however few.
      */
     void forceStart()
@@ -509,7 +509,7 @@ final class BattlegroundQueue
                             expired ~= g;
                         else if (!g.reminded && now >= g.inviteEnds - (inviteTime - remindAfter))
                         {
-                            g.reminded = true; // `BgQueueInviteEvent`
+                            g.reminded = true; // the reminder of the invitation
                             foreach (p; g.players)
                             {
                                 const slot = slotOf(p, g.type);
@@ -519,7 +519,7 @@ final class BattlegroundQueue
                             }
                         }
                     }
-        foreach (g; expired) // `BgQueueRemoveEvent`
+        foreach (g; expired) // invitations not accepted in time
             foreach (p; g.players.dup)
             {
                 const slot = slotOf(p, g.type);
@@ -569,7 +569,7 @@ private:
         }
     }
 
-    /// `RemovePlayer` and `RemoveBattleGroundQueueId`: slot `slot` emptied, the player told.
+    /// The player leaves a queue: slot `slot` emptied, the player told.
     void leaveQueue(ulong guid, int slot, bool tell)
     {
         auto ticket = &tickets[guid][slot];
@@ -607,7 +607,7 @@ private:
         }
     }
 
-    /// `BattleGroundQueue::GetAverageQueueWaitTime`: once ten were invited, the average of their waits.
+    /// The average wait: once ten were invited, the average of their waits.
     uint averageWait(BattlegroundType type, ubyte team, ubyte bracket) const
     {
         const samples = waitTimes[type][team][bracket];
@@ -619,7 +619,7 @@ private:
         return cast(uint)(sum / waitSamples);
     }
 
-    /// `InviteGroupToBg`
+    /// Invites a waiting group to a copy.
     void invite(Waiting g, ref Running copy)
     {
         const now = clock();
@@ -642,14 +642,14 @@ private:
         }
     }
 
-    /// `BattleGroundQueueItem::Update`: running copies filled, then a new one made if enough wait.
+    /// A queue's turn: running copies filled, then a new one made if enough wait.
     void update(BattlegroundType type, ubyte bracket)
     {
         const t = type in templates;
         if (t is null)
             return;
         auto lists = &waiting[type][bracket];
-        // Running copies with room first (`FillPlayersToBg`), the oldest made first.
+        // Running copies with room first, the oldest made first.
         foreach (instance; runningOf(type, bracket))
         {
             auto copy = &running[instance];
@@ -669,7 +669,7 @@ private:
                 }
             }
         }
-        // A new copy (`CheckNormalMatch`): both teams' first groups, up to enough of each.
+        // A new copy: both teams' first groups, up to enough of each.
         const least = testing ? 1 : t.minPerTeam;
         Waiting[][2] pools;
         uint[2] counts;
@@ -708,7 +708,7 @@ private:
         return ids;
     }
 
-    /// `CreateClientVisibleInstanceId`: the lowest number not taken by a copy of its type and bracket.
+    /// The number the client shows for a new copy: the lowest not taken by a copy of its type and bracket.
     uint freeClientId(BattlegroundType type, ubyte bracket)
     {
         bool[uint] taken;
@@ -746,7 +746,7 @@ struct BattlegroundGroupJoin
     uint desired;
 }
 
-/// What `BattlegroundQueueHost.joinGroup` answers: 0, or a `GroupJoinBattlegroundResult`.
+/// What `BattlegroundQueueHost.joinGroup` answers: 0, or an `SMSG_GROUP_JOINED_BATTLEGROUND` result.
 struct BattlegroundJoinResult
 {
     ubyte error;

@@ -1,8 +1,7 @@
 /**
- * Melee combat: CMaNGOS's `Unit` melee formulas (`Entities/Unit.cpp`: `CalculateMeleeDamage`,
- * `RollMeleeOutcomeAgainst`, the `CalculateEffective*Chance` family, `CalcArmorReducedDamage`,
- * `CanReachWithMeleeAttack`) and the packets of an attack (`SendAttackStateUpdate`,
- * `SendMeleeAttackStart`, `SendMeleeAttackStop`).
+ * Melee combat: the melee formulas (reach, the chances of the attack table and the roll through it,
+ * weapon damage, armor, glancing and crushing blows, rage) and the packets of an attack
+ * (`SMSG_ATTACKERSTATEUPDATE`, `SMSG_ATTACKSTART`, `SMSG_ATTACKSTOP`), and spells' partial resists.
  *
  * A fighter, player or creature, is described by a `Fighter`: what the formulas need of it as it
  * is now. There are no auras yet, so every aura modifier is zero: no hit or crit bonuses, no
@@ -17,7 +16,7 @@ import dmangos.bytes : ByteWriter;
 import dmangos.world.movement : Position;
 public import dmangos.world.stats : AttackType;
 
-/// `HitInfo`
+/// Flags of a swing in `SMSG_ATTACKERSTATEUPDATE`.
 enum HitInfo : uint
 {
     normalSwing = 0x00000000,
@@ -34,7 +33,7 @@ enum HitInfo : uint
     swingNoHitSound = 0x00080000,
 }
 
-/// `VictimState`
+/// What happened to the victim of a swing, as `SMSG_ATTACKERSTATEUPDATE` says.
 enum VictimState : uint
 {
     unaffected = 0,
@@ -48,7 +47,7 @@ enum VictimState : uint
     deflects = 8,
 }
 
-/// `MeleeHitOutcome`
+/// The attack table's outcome of a swing.
 enum MeleeHitOutcome : ubyte
 {
     evade,
@@ -62,7 +61,7 @@ enum MeleeHitOutcome : ubyte
     normal,
 }
 
-/// `SwingError`: why a swing did not happen, as the client is told.
+/// Why a swing did not happen, as the client is told.
 enum SwingError : ubyte
 {
     none,
@@ -72,29 +71,29 @@ enum SwingError : ubyte
     targetNotAlive,
 }
 
-/// `ATTACK_DISTANCE`, `BASE_MELEERANGE_OFFSET`, `MELEE_LEEWAY`
+/// The least melee reach, the offset added to both reaches, and the leeway of a moving pair (yards).
 enum float attackDistance = 5.0f, baseMeleeRangeOffset = 1.33f, meleeLeeway = 8.0f / 3.0f;
 
-/// `ATTACK_DISPLAY_DELAY`: milliseconds between a main hand and an off hand swing.
+/// Milliseconds between a main hand and an off hand swing.
 enum uint attackDisplayDelay = 200;
 
-/// `CONFIG_UINT32_WORLD_BOSS_LEVEL_DIFF`: a world boss is this much above whoever it fights.
+/// A world boss is this much above whoever it fights.
 enum uint worldBossLevelDiff = 3;
 
 /// What the melee formulas need of a player or a creature, as it is now.
 struct Fighter
 {
     ulong guid;
-    bool player;               /// `TYPEID_PLAYER`
+    bool player;               /// a player, not a creature
     bool playerControlled;     /// `UNIT_FLAG_PLAYER_CONTROLLED`
     bool worldBoss;            /// a creature of rank 3: its level is that of its target plus 3
     uint level;
     ubyte classId;             /// a player's (casters glance less)
     Position position;         /// with its orientation
     float combatReach = 1.5f;  /// `UNIT_FIELD_COMBATREACH`
-    bool runningAround;        /// moving, and not walking (`IsMoving() && !IsWalking()`)
+    bool runningAround;        /// moving, and not walking
     bool alive = true;
-    bool standing = true;      /// `IsStandState`: a player not standing is hit critically
+    bool standing = true;      /// standing up: a player not standing is hit critically
     bool evading;              /// a creature returning home after a fight
 
     // What it attacks with.
@@ -102,14 +101,14 @@ struct Fighter
     uint[3] weaponSkillMax;    /// a player's maximum (against players, the higher counts)
     float[2][3] damage = 0;    /// by attack type: minimum, maximum (`UNIT_FIELD_MINDAMAGE`, ...)
     uint[3] damageSchool;      /// by attack type: the school index (0: physical)
-    float crit = 0;            /// `GetCritChance`: a player's from agility; a creature's 5
-    bool dualWield;            /// `hasOffhandWeaponForAttack`
+    float crit = 0;            /// its crit chance: a player's from agility; a creature's 5
+    bool dualWield;            /// it has an off-hand weapon to attack with
 
     // What it defends with.
     uint defenseSkill, defenseSkillMax; /// a player's
-    float dodge = 0, parry = 0, block = 0; /// `GetDodgeChance` ...: a player's own; a creature's 5 each
+    float dodge = 0, parry = 0, block = 0; /// its chances: a player's own; a creature's 5 each
     bool canDodge = true, canParry, canBlock; /// able at all: Parry known and a weapon, Block and a shield
-    uint shieldBlock;          /// `GetShieldBlockValue`
+    uint shieldBlock;          /// what its shield stops of a blocked blow
     uint armor;
 }
 
@@ -117,7 +116,7 @@ struct Fighter
 // Levels and skills
 // ---------------------------------------------------------------------------
 
-/// `GetLevelForTarget`: a world boss counts as above its target.
+/// Its level against `target`: a world boss counts as above its target.
 uint levelFor(const Fighter self, const Fighter target) pure nothrow @nogc @safe
 {
     if (!self.worldBoss)
@@ -126,28 +125,28 @@ uint levelFor(const Fighter self, const Fighter target) pure nothrow @nogc @safe
     return level > 255 ? 255 : level;
 }
 
-/// `GetSkillMaxForLevel`
+/// The most skill its level against `target` allows: five a level.
 uint skillMaxForLevel(const Fighter self, const Fighter target) pure nothrow @nogc @safe
 {
     return levelFor(self, target) * 5;
 }
 
-/// `GetSkillMaxForLevel` without a target.
+/// The most skill its level allows, without a target.
 uint skillMaxForLevel(const Fighter self) pure nothrow @nogc @safe
 {
     return self.level * 5;
 }
 
-/// `GetWeaponSkillValue`: against players a player uses the higher of its skill and maximum.
+/// Its weapon skill: against players a player uses the higher of its skill and maximum.
 uint weaponSkillValue(const Fighter self, AttackType type, const Fighter target) pure nothrow @nogc @safe
 {
     if (!self.player)
-        return levelFor(self, target) * 5; // `GetUnitMeleeSkill`
+        return levelFor(self, target) * 5; // a creature's: five a level
     const value = self.weaponSkill[type];
     return target.player && self.weaponSkillMax[type] > value ? self.weaponSkillMax[type] : value;
 }
 
-/// `GetDefenseSkillValue`
+/// Its defense skill: a creature's five a level; against players a player uses the higher of its skill and maximum.
 uint defenseSkillValue(const Fighter self, const Fighter attacker) pure nothrow @nogc @safe
 {
     if (!self.player)
@@ -159,7 +158,7 @@ uint defenseSkillValue(const Fighter self, const Fighter attacker) pure nothrow 
 // Where they stand
 // ---------------------------------------------------------------------------
 
-/// `WorldObject::HasInArc`: whether `target` is within `arc` radians of where `self` faces.
+/// Whether `target` is within `arc` radians of where `self` faces.
 bool hasInArc(Position self, Position target, float arc = PI) pure nothrow @nogc @safe
 {
     if (self.x == target.x && self.y == target.y)
@@ -173,26 +172,26 @@ bool hasInArc(Position self, Position target, float arc = PI) pure nothrow @nogc
     return angle >= -arc / 2 && angle <= arc / 2;
 }
 
-/// `IsFacingTargetsFront`: each in front of the other.
+/// Each in front of the other.
 bool isFacingFront(const Fighter self, const Fighter target) pure nothrow @nogc @safe
 {
     return hasInArc(target.position, self.position) && hasInArc(self.position, target.position);
 }
 
-/// `IsFacingTargetsBack`: facing the target, which faces away.
+/// Facing the target, which faces away.
 bool isFacingBack(const Fighter self, const Fighter target) pure nothrow @nogc @safe
 {
     return !hasInArc(target.position, self.position) && hasInArc(self.position, target.position);
 }
 
-/// `GetCombinedCombatReach` for melee: both reaches and the offset, at least `ATTACK_DISTANCE`.
+/// The melee reach of the two: both reaches and the offset, at least `attackDistance`.
 float meleeReach(const Fighter self, const Fighter target) pure nothrow @nogc @safe
 {
     const reach = self.combatReach + target.combatReach + baseMeleeRangeOffset;
     return reach < attackDistance ? attackDistance : reach;
 }
 
-/// `CanReachWithMeleeAttack`: players measure in three dimensions, creatures on the ground.
+/// Whether `self` reaches `target` in melee: players measure in three dimensions, creatures on the ground.
 bool canReachWithMelee(const Fighter self, const Fighter target) pure nothrow @nogc @safe
 {
     float reach = meleeReach(self, target);
@@ -216,10 +215,10 @@ private float clamp100(float chance) pure nothrow @nogc @safe
     return chance < 0 ? 0 : chance > 100 ? 100 : chance;
 }
 
-/// `CalculateEffectiveMissChance`: 5%, more for dual wielding and better defense, less for skill.
+/// The chance to miss: 5%, more for dual wielding and better defense, less for skill.
 float missChance(const Fighter attacker, const Fighter victim, AttackType type) pure nothrow @nogc @safe
 {
-    float chance = 5; // `GetMissChance`: totems aside, everyone is missed 5% of the time
+    float chance = 5; // totems aside, everyone is missed 5% of the time
     if (type != AttackType.ranged && attacker.dualWield)
         chance += 19;
     int difference = int(defenseSkillValue(victim, attacker)) - int(weaponSkillValue(attacker, type, victim));
@@ -241,7 +240,7 @@ float missChance(const Fighter attacker, const Fighter victim, AttackType type) 
     return chance < minimum ? minimum : chance > 100 ? 100 : chance;
 }
 
-/// `CalculateEffectiveDodgeChance`
+/// The chance the victim dodges.
 float dodgeChance(const Fighter victim, const Fighter attacker, AttackType type) pure nothrow @nogc @safe
 {
     float chance = victim.dodge;
@@ -252,7 +251,7 @@ float dodgeChance(const Fighter victim, const Fighter attacker, AttackType type)
     return clamp100(chance + difference * factor);
 }
 
-/// `CalculateEffectiveParryChance`
+/// The chance the victim parries.
 float parryChance(const Fighter victim, const Fighter attacker, AttackType type) pure nothrow @nogc @safe
 {
     if (type == AttackType.ranged)
@@ -267,7 +266,7 @@ float parryChance(const Fighter victim, const Fighter attacker, AttackType type)
     return clamp100(chance + difference * factor);
 }
 
-/// `CalculateEffectiveBlockChance`
+/// The chance the victim blocks.
 float blockChance(const Fighter victim, const Fighter attacker, AttackType type) pure nothrow @nogc @safe
 {
     float chance = victim.block;
@@ -278,7 +277,7 @@ float blockChance(const Fighter victim, const Fighter attacker, AttackType type)
     return clamp100(chance + difference * factor);
 }
 
-/// `CalculateEffectiveCrushChance`: 15% and 2% a point when the weapon beats the capped defense by 15.
+/// The chance of a crushing blow: 15% and 2% a point when the weapon beats the capped defense by 15.
 float crushChance(const Fighter attacker, const Fighter victim, AttackType type) pure nothrow @nogc @safe
 {
     const cap = skillMaxForLevel(victim);
@@ -289,7 +288,7 @@ float crushChance(const Fighter attacker, const Fighter victim, AttackType type)
     return deficit >= 15 ? clamp100(2 * deficit - 15) : 0;
 }
 
-/// `CalculateEffectiveGlanceChance`: from 10% up with the victim's defense over the capped skill.
+/// The chance of a glancing blow: from 10% up with the victim's defense over the capped skill.
 float glanceChance(const Fighter attacker, const Fighter victim, AttackType type) pure nothrow @nogc @safe
 {
     const cap = skillMaxForLevel(attacker);
@@ -306,7 +305,7 @@ float glanceChance(const Fighter attacker, const Fighter victim, AttackType type
     return clamp100(chance);
 }
 
-/// `CalculateEffectiveCritChance`: against creatures, 1% less for each level above the attacker.
+/// The chance of a critical hit: against creatures, 1% less for each level above the attacker.
 float critChance(const Fighter attacker, const Fighter victim, AttackType type) pure nothrow @nogc @safe
 {
     float chance = attacker.crit;
@@ -319,13 +318,13 @@ float critChance(const Fighter attacker, const Fighter victim, AttackType type) 
     return clamp100(chance);
 }
 
-/// `CLASSMASK_WAND_USERS`: priests, mages and warlocks.
+/// The classes that use wands: priests, mages and warlocks.
 private bool isWandUser(ubyte classId) pure nothrow @nogc @safe
 {
     return classId == 5 || classId == 8 || classId == 9;
 }
 
-/// `CanDodgeInCombat(attacker)`: a player dodges only what comes from the front.
+/// Whether the victim may dodge: a player dodges only what comes from the front.
 private bool canDodge(const Fighter victim, const Fighter attacker) pure nothrow @nogc @safe
 {
     if (!victim.canDodge || victim.dodge < 0.005f)
@@ -333,13 +332,13 @@ private bool canDodge(const Fighter victim, const Fighter attacker) pure nothrow
     return !victim.player || isFacingFront(attacker, victim);
 }
 
-/// `CanParryInCombat(attacker)`: only from the front.
+/// Whether the victim may parry: only from the front.
 private bool canParry(const Fighter victim, const Fighter attacker) pure nothrow @nogc @safe
 {
     return victim.canParry && victim.parry >= 0.005f && isFacingFront(attacker, victim);
 }
 
-/// `CanBlockInCombat(attacker)`: physical attacks from the front.
+/// Whether the victim may block: physical attacks from the front.
 private bool canBlock(const Fighter victim, const Fighter attacker, uint school) pure nothrow @nogc @safe
 {
     return school == 0 && victim.canBlock && victim.block >= 0.005f && isFacingFront(attacker, victim);
@@ -352,7 +351,7 @@ private uint hundredths(float chance) pure nothrow @nogc @safe
 }
 
 /**
- * `RollMeleeOutcomeAgainst`: the attack table, one roll (`random`, 1 to 10000) through miss, dodge,
+ * The attack table: one roll (`random`, 1 to 10000) through miss, dodge,
  * parry, block, glance, crit and crush in that order; a hit if it goes past them all.
  */
 MeleeHitOutcome rollMeleeOutcome(const Fighter attacker, const Fighter victim, AttackType type, uint random)
@@ -396,7 +395,7 @@ MeleeHitOutcome rollMeleeOutcome(const Fighter attacker, const Fighter victim, A
 // Damage
 // ---------------------------------------------------------------------------
 
-/// `CalcDamageInfo`: one swing worked out.
+/// One swing worked out.
 struct MeleeDamage
 {
     ulong attacker, target;
@@ -410,7 +409,7 @@ struct MeleeDamage
     uint blocked;
 }
 
-/// `CalcArmorReducedDamage`: armor takes up to 75%, less against higher levels.
+/// Damage after armor: armor takes up to 75%, less against higher levels.
 float armorReducedDamage(uint attackerLevel, uint armor, float damage) pure nothrow @nogc @safe
 {
     float reduction = 0.1f * armor / (8.5f * attackerLevel + 40);
@@ -423,7 +422,7 @@ float armorReducedDamage(uint attackerLevel, uint armor, float damage) pure noth
     return reduced > 1 ? reduced : 1;
 }
 
-/// `CalculateDamage`: a whole number between the weapon's minimum and maximum (5 if it has none).
+/// A weapon's damage: a whole number between its minimum and maximum (5 if it has none).
 uint weaponDamage(const Fighter attacker, AttackType type, ref Random rng) @safe
 {
     float low = attacker.damage[type][0], high = attacker.damage[type][1];
@@ -438,7 +437,7 @@ uint weaponDamage(const Fighter attacker, AttackType type, ref Random rng) @safe
     return uniform!"[]"(cast(uint) low, cast(uint) high, rng);
 }
 
-/// `CalculateGlanceAmount`: a glancing blow does 1% to 99% of the damage, less the better the defense.
+/// A glancing blow does 1% to 99% of the damage, less the better the defense.
 uint glanceAmount(const Fighter attacker, const Fighter victim, AttackType type, uint damage, ref Random rng) @safe
 {
     const skill = weaponSkillValue(attacker, type, victim);
@@ -457,7 +456,7 @@ uint glanceAmount(const Fighter attacker, const Fighter victim, AttackType type,
 }
 
 /**
- * `CalculateMeleeDamage`: the weapon's damage less armor (for physical attacks), then the attack
+ * One swing: the weapon's damage less armor (for physical attacks), then the attack
  * table's outcome: nothing for a miss, dodge or parry, double for a crit, less what the shield
  * stops for a block, less for a glance, half again for a crushing blow.
  */
@@ -499,7 +498,7 @@ MeleeDamage calculateMeleeDamage(const Fighter attacker, const Fighter victim, A
     case MeleeHitOutcome.crit:
         d.hitInfo |= HitInfo.criticalHit;
         d.targetState = VictimState.normal;
-        d.damage *= 2; // `GetCritMultiplier`: 2 for attacks
+        d.damage *= 2; // a critical attack does double
         break;
     case MeleeHitOutcome.parry:
         d.targetState = VictimState.parry;
@@ -539,7 +538,7 @@ MeleeDamage calculateMeleeDamage(const Fighter attacker, const Fighter victim, A
     return d;
 }
 
-/// `Player::RewardRage`: rage (in tenths, as the power field holds it) for melee damage dealt or taken.
+/// Rage (in tenths, as the power field holds it) for melee damage dealt or taken.
 uint rageReward(uint level, uint damage, bool dealt) pure nothrow @nogc @safe
 {
     const conversion = cast(float)(0.0091107836 * level * level + 3.225598133 * level) + 4.2652911f;
@@ -551,7 +550,7 @@ uint rageReward(uint level, uint damage, bool dealt) pure nothrow @nogc @safe
 // Packets
 // ---------------------------------------------------------------------------
 
-/// `SMSG_ATTACKERSTATEUPDATE` (`SendAttackStateUpdate`): one damage line, no debug block.
+/// `SMSG_ATTACKERSTATEUPDATE`: one damage line, no debug block.
 const(ubyte)[] attackerStateUpdate(const ref MeleeDamage d)
 {
     ByteWriter w;
@@ -572,7 +571,7 @@ const(ubyte)[] attackerStateUpdate(const ref MeleeDamage d)
     return w.data;
 }
 
-/// `SMSG_ATTACKSTART` (`SendMeleeAttackStart`)
+/// `SMSG_ATTACKSTART`: `attacker` starts swinging at `victim`.
 const(ubyte)[] attackStart(ulong attacker, ulong victim)
 {
     ByteWriter w;
@@ -581,7 +580,7 @@ const(ubyte)[] attackStart(ulong attacker, ulong victim)
     return w.data;
 }
 
-/// `SMSG_ATTACKSTOP` (`SendMeleeAttackStop`): `victim` 0 for none; `dead` says the attacker died.
+/// `SMSG_ATTACKSTOP`: `victim` 0 for none; `dead` says the attacker died.
 const(ubyte)[] attackStop(ulong attacker, ulong victim, bool dead)
 {
     ByteWriter w;
@@ -740,7 +739,7 @@ unittest
 }
 
 /**
- * `SPELL_PARTIAL_RESIST_DISTRIBUTION`'s precalculated rows (CMaNGOS `Entities/Unit.cpp`): for each
+ * The partial resist distribution, precalculated: for each
  * whole percent of effective resistance 0 .. 100, the chances (in hundredths of a percent) of 0%,
  * 25%, 50%, 75% and 100% of a spell's damage resisted; percents between are interpolated.
  */
@@ -774,7 +773,7 @@ immutable uint[5][101] partialResistRows = [
 ];
 
 /**
- * `Unit::CalculateEffectiveMagicResistancePercent` of a creature hit by a player's spell of `school`
+ * The effective resistance (percent) of a creature hit by a player's spell of `school`
  * (not physical, not holy): `resistance` against 5 per attacker level (100 at least), times 0.75,
  * plus 0.4 per point of the victim's level skill above the attacker's; at most 75.
  */
@@ -795,7 +794,7 @@ float effectiveResistPercent(int resistance, uint attackerLevel, uint victimLeve
 }
 
 /**
- * `Unit::RollMagicResistanceMultiplierOutcomeAgainst`: the share of the damage resisted (0, 0.25, 0.5
+ * A partial resist roll: the share of the damage resisted (0, 0.25, 0.5
  * or 0.75; never all, which was the hit roll's), from `percent` and a `roll` of 1 .. 10000. Negative
  * percents are vulnerability: a negative share. A direct hit with more than 54% never goes whole.
  */
