@@ -1293,6 +1293,9 @@ private:
                 if (giveItem(spell.itemType[i], value > 0 ? value : 1))
                     updateCraftSkill(spell.id); // made: a chance to learn from it
             break;
+        case 101: // SPELL_EFFECT_FEED_PET
+            feedPet(c.targets.item);
+            break;
         case 53: // SPELL_EFFECT_ENCHANT_ITEM
             enchantItem(c.targets.item, cast(uint) spell.miscValue[i], false, 0);
             updateCraftSkill(spell.id);

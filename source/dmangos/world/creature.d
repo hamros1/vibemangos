@@ -795,6 +795,19 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
         f.damage = [[values.get!UNIT_FIELD_MINDAMAGE, values.get!UNIT_FIELD_MAXDAMAGE],
             [values.get!UNIT_FIELD_MINOFFHANDDAMAGE, values.get!UNIT_FIELD_MAXOFFHANDDAMAGE],
             [values.get!UNIT_FIELD_MINRANGEDDAMAGE, values.get!UNIT_FIELD_MAXRANGEDDAMAGE]];
+        // A hunter's pet hits by its mood (its happiness, the fourth power).
+        {
+            import dmangos.world.pet : PetState, PetType;
+            import dmangos.world.pethandlers : moodDamageFactor;
+
+            if (auto pet = cast(const PetState) petData)
+                if (pet.type == PetType.hunter)
+                {
+                    const factor = moodDamageFactor(values.get!UNIT_FIELD_POWER1(4));
+                    f.damage[0][0] *= factor;
+                    f.damage[0][1] *= factor;
+                }
+        }
         f.damageSchool[] = template_.damageSchool;
         // Crit, dodge, parry and block chances: 5% each for creatures.
         f.crit = f.dodge = f.parry = f.block = 5;

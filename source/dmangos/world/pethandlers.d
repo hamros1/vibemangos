@@ -35,6 +35,57 @@ enum ubyte petByte2Flags = 0x08 | 0x10;
 /// A hunter pet's happiness: its most, and a tamed beast's.
 enum uint maxHappiness = 1_050_000, tamedHappiness = 166_500;
 
+/// A third of the happiness bar: below one third a pet is unhappy, from two thirds happy.
+enum uint happinessLevel = 333_000;
+
+/// A hunter pet's mood, by its happiness.
+enum Happiness : ubyte { unhappy = 1, content = 2, happy = 3 }
+
+/// The mood `happiness` is.
+Happiness moodOf(uint happiness) pure nothrow @nogc @safe
+{
+    return happiness < happinessLevel ? Happiness.unhappy : happiness >= 2 * happinessLevel ? Happiness.happy
+        : Happiness.content;
+}
+
+/// The loyalty points that take a pet to the next loyalty level, and those it starts a level with (levels 1 to 6).
+immutable int[6] loyaltyToLevelUp = [5500, 11500, 17000, 23500, 31000, 39500];
+/// ditto
+immutable int[6] loyaltyAtLevelStart = [2000, 4500, 7000, 10000, 13500, 17500];
+
+/// What a hunter pet's melee damage is multiplied by: a happy pet hits a quarter harder, an unhappy one a quarter softer.
+float moodDamageFactor(uint happiness) pure nothrow @nogc @safe
+{
+    final switch (moodOf(happiness))
+    {
+    case Happiness.happy:
+        return 1.25f;
+    case Happiness.content:
+        return 1;
+    case Happiness.unhappy:
+        return 0.75f;
+    }
+}
+
+/// How much happiness food of `itemLevel` gives a pet of `petLevel` (0: too poor to eat).
+uint foodBenefit(uint petLevel, uint itemLevel) pure nothrow @nogc @safe
+{
+    if (petLevel <= itemLevel + 5)
+        return 35_000;
+    if (petLevel <= itemLevel + 10)
+        return 17_000;
+    if (petLevel <= itemLevel + 14)
+        return 8000;
+    return 0;
+}
+
+unittest
+{
+    assert(moodOf(0) == Happiness.unhappy && moodOf(333_000) == Happiness.content && moodOf(666_000) == Happiness.happy);
+    assert(moodDamageFactor(700_000) == 1.25f && moodDamageFactor(100_000) == 0.75f);
+    assert(foodBenefit(20, 18) == 35_000 && foodBenefit(30, 18) == 8000 && foodBenefit(40, 18) == 0);
+}
+
 /// A hunter pet's focus.
 enum uint maxFocus = 100;
 
@@ -642,13 +693,19 @@ mixin template PetHandlers()
     // What happens to the pet and its owner
     // -----------------------------------------------------------------------
 
-    /// The pet died: a demon goes back at once; a beast lies dead a while.
+    /// The pet died: a demon goes back at once; a beast lies dead a while, a third of its happiness lost (not in a battleground).
     package void petDiedHere()
     {
         if (pet_ is null)
             return;
         if (petState().type != PetType.hunter)
             return unsummonPet(PetSlot.notInSlot);
+        if (const entry = context.client.maps.lookup(map.id))
+            if (!entry.isBattleground)
+            {
+                const now = pet_.values.get!UNIT_FIELD_POWER1(4);
+                pet_.values.set!UNIT_FIELD_POWER1(4, now > happinessLevel ? now - happinessLevel : 0u);
+            }
         pet_.corpseTimer = petCorpseMs;
         writePet(PetSlot.notInSlot);
     }
@@ -699,6 +756,136 @@ mixin template PetHandlers()
             v.set!UNIT_FIELD_PETNEXTLEVELEXP(level >= context.config.maxPlayerLevel ? 1000 : next);
         }
         v.set!UNIT_FIELD_PETEXPERIENCE(level < most ? current : 0);
+        map.flushObjectChanges(pet_);
+        // Its loyalty: experience counts towards the next level; a kill earns a little (more at low levels).
+        auto state = petState();
+        state.xpForNextLoyalty = xp >= state.xpForNextLoyalty ? 0 : state.xpForNextLoyalty - xp;
+        if (level <= 100)
+            modifyLoyalty(cast(int)((100 - level) / 10 + (6 - state.loyalty)));
+    }
+
+    // -----------------------------------------------------------------------
+    // A hunter pet's happiness and loyalty
+    // -----------------------------------------------------------------------
+
+    private int happinessTimerMs = 7500, loyaltyTimerMs = 12_000;
+
+    /**
+     * Each tick: a hunter pet out and alive loses happiness every 7.5 s (less the more loyal it is, half
+     * again in combat), and every 12 s its loyalty moves by its mood: up when happy or content, down when
+     * unhappy.
+     */
+    package void updatePetMood(Duration elapsed)
+    {
+        if (pet_ is null || !pet_.alive || petState() is null || petState().type != PetType.hunter)
+            return;
+        const ms = cast(int) elapsed.total!"msecs";
+        happinessTimerMs -= ms;
+        if (happinessTimerMs <= 0)
+        {
+            happinessTimerMs += 7500;
+            const loyalty = petState().loyalty < 7 ? petState().loyalty : 6;
+            int loss = (140 >> loyalty) * 125;
+            if (pet_.ai !is null && pet_.ai.inCombat)
+                loss = loss * 3 / 2;
+            const now = pet_.values.get!UNIT_FIELD_POWER1(4);
+            pet_.values.set!UNIT_FIELD_POWER1(4, now > loss ? now - loss : 0u);
+            petState().happiness = pet_.values.get!UNIT_FIELD_POWER1(4);
+            map.flushObjectChanges(pet_);
+        }
+        loyaltyTimerMs -= ms;
+        if (loyaltyTimerMs <= 0)
+        {
+            loyaltyTimerMs += 12_000;
+            final switch (moodOf(pet_.values.get!UNIT_FIELD_POWER1(4)))
+            {
+            case Happiness.happy:
+                modifyLoyalty(20);
+                break;
+            case Happiness.content:
+                modifyLoyalty(10);
+                break;
+            case Happiness.unhappy:
+                modifyLoyalty(-20);
+                break;
+            }
+        }
+    }
+
+    /**
+     * Loyalty points gained or lost: past a level's points (and the experience it asks for) the pet's
+     * loyalty rises, its training points with it; below none it falls, and a rebellious pet runs off.
+     */
+    package void modifyLoyalty(int change)
+    {
+        auto state = petState();
+        if (state is null || state.type != PetType.hunter)
+            return;
+        uint level = state.loyalty >= 1 && state.loyalty <= 6 ? state.loyalty : 1;
+        if (level >= 6 && state.loyaltyPoints + change > loyaltyToLevelUp[5])
+            return;
+        state.loyaltyPoints += change;
+        const petLevel = pet_.values.get!UNIT_FIELD_LEVEL;
+        if (state.loyaltyPoints < 0)
+        {
+            if (level > 1)
+            {
+                --level;
+                setLoyalty(level);
+                state.loyaltyPoints = loyaltyAtLevelStart[level - 1];
+                state.trainingPoints -= petLevel;
+            }
+            else
+            {
+                // Rebellious and unhappy: it leaves its master.
+                info!"%s: '%s''s pet ran away"(remoteAddress, player.data.name);
+                deliver(Opcode.SMSG_PET_BROKEN, null);
+                state.loyaltyPoints = 0;
+                return unsummonPet(0, true);
+            }
+        }
+        else if (state.loyaltyPoints > loyaltyToLevelUp[level - 1] && state.xpForNextLoyalty == 0 && level < 6)
+        {
+            ++level;
+            setLoyalty(level);
+            state.loyaltyPoints = loyaltyAtLevelStart[level - 1];
+            state.trainingPoints += petLevel;
+        }
+        else
+            return;
+        pet_.values.set!UNIT_TRAINING_POINTS(cast(uint)(state.trainingPoints > 0 ? state.trainingPoints : 0));
+        map.flushObjectChanges(pet_);
+        writePet(PetSlot.current);
+    }
+
+    /// The pet's loyalty level, and the experience its next one asks for (5% of a level of its owner's).
+    private void setLoyalty(uint level)
+    {
+        auto state = petState();
+        state.loyalty = level;
+        pet_.values.setByte!UNIT_FIELD_BYTES_1(1, cast(ubyte) level);
+        const ownerLevel = player.data.level;
+        const at = ownerLevel < context.config.maxPlayerLevel ? ownerLevel : ownerLevel - 1;
+        state.xpForNextLoyalty = level >= 6 ? 0
+            : (at < context.data.xpForNextLevel.length ? context.data.xpForNextLevel[at] * 5 / 100 : 0);
+    }
+
+    /// Feeding the pet (spell effect 101): one of the food item gone, happiness for it by its level.
+    package void feedPet(ulong foodGuid)
+    {
+        if (pet_ is null || !pet_.alive || petState().type != PetType.hunter)
+            return;
+        auto food = player.inventory.byGuid(foodGuid);
+        if (food is null || food.proto is null)
+            return;
+        const benefit = foodBenefit(pet_.values.get!UNIT_FIELD_LEVEL, food.proto.details.itemLevel);
+        if (benefit == 0)
+            return;
+        player.inventory.destroyCount(food.proto.entry, 1);
+        flushInventory();
+        const now = pet_.values.get!UNIT_FIELD_POWER1(4);
+        pet_.values.set!UNIT_FIELD_POWER1(4, now + benefit > maxHappiness ? maxHappiness : now + benefit);
+        petState().happiness = pet_.values.get!UNIT_FIELD_POWER1(4);
         map.flushObjectChanges(pet_);
     }
 

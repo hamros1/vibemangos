@@ -330,3 +330,48 @@ unittest
     }
     assert(rexxar.session.inWorld.ownPet is null && db.loadPets(7).length == 0);
 }
+
+/**
+ * A hunter pet's mood: its happiness falls with time, its loyalty rises while it is content or happy, food
+ * makes it happier, and its mood sets how hard it hits.
+ */
+unittest
+{
+    import dmangos.world.pethandlers : happinessLevel, moodDamageFactor;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    auto rexxar = loggedIn(context, db, 7, "Rexxar", Position(-8949.95f, -132.49f, 83.53f, 0), AccountLevel.player,
+        raceOrc);
+    rexxar.read();
+    addPetData(&rexxar, context);
+    auto session = rexxar.session.inWorld;
+    auto map = context.map(0);
+    auto beast = context.summonCreature(map, wolf, Position(-8947, -132.49f, 83.53f, 0), TempSpawnType.dead, 0, 0);
+    auto tame = effectSpell(spellTameBeastDone, 55);
+    session.tameCreature(&tame, beast.guid);
+    auto pet = session.ownPet;
+    auto state = cast(PetState) pet.petData;
+    rexxar.read();
+
+    // Content: every 7.5 s a pet of loyalty level 1 loses (140 >> 1) x 125 = 8750 happiness.
+    pet.values.set!UNIT_FIELD_POWER1(4, 2 * happinessLevel - 1);
+    const before = pet.values.get!UNIT_FIELD_POWER1(4);
+    session.updatePetMood(7500.msecs);
+    assert(pet.values.get!UNIT_FIELD_POWER1(4) == before - 8750, "happiness falls");
+    const points = state.loyaltyPoints;
+    session.updatePetMood(4500.msecs); // 12 s in all: a loyalty tick
+    assert(state.loyaltyPoints == points + 10, "content: ten loyalty points");
+
+    // Past its level's points, and no experience owed: its loyalty rises, with training points.
+    state.xpForNextLoyalty = 0;
+    state.loyaltyPoints = 5495;
+    const trainingBefore = state.trainingPoints;
+    session.modifyLoyalty(10);
+    assert(state.loyalty == 2 && state.loyaltyPoints == 4500 && state.trainingPoints > trainingBefore, "level 2");
+
+    // Unhappy, it hits a quarter softer; happy, a quarter harder.
+    assert(moodDamageFactor(0) == 0.75f && moodDamageFactor(2 * happinessLevel) == 1.25f);
+}
