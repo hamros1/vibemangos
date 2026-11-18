@@ -729,6 +729,12 @@ private:
         const result = checkTarget(spell, targets, triggered);
         if (result != SpellCastResult.ok)
             return result;
+        if (spell.hasEffect(SpellEffect.skinning))
+        {
+            const skinResult = checkSkinning(targets.unit);
+            if (skinResult != SpellCastResult.ok)
+                return skinResult;
+        }
         // A game object: near, free, its lock opened.
         const goResult = checkGameObjectTarget(spell, targets, itemEntry);
         if (goResult != SpellCastResult.ok)
@@ -743,6 +749,74 @@ private:
                     return SpellCastResult.reagents;
         }
         return SpellCastResult.ok;
+    }
+
+    /**
+     * Whether `target` may be skinned by this player: a creature, dead, looted, with its skin on, and
+     * the player's skill high enough for its level (under 100 skill, (level - 10) x 10; then level x 5).
+     */
+    SpellCastResult checkSkinning(ulong target)
+    {
+        auto creature = cast(Creature) map.findObject(target);
+        if (creature is null)
+            return SpellCastResult.badTargets;
+        if (creature.alive)
+            return SpellCastResult.targetNotDead;
+        if (!creature.skinnable)
+            return SpellCastResult.targetUnskinnable;
+        if (creature.loot !is null)
+            return SpellCastResult.targetNotLooted;
+        const value = cast(int) player.skillValue(creature.skinningSkill)[0];
+        const level = cast(int) creature.values.get!UNIT_FIELD_LEVEL;
+        const required = value < 100 ? (level - 10) * 10 : level * 5;
+        if (required > value)
+            return SpellCastResult.lowCastLevel;
+        return SpellCastResult.ok;
+    }
+
+    /**
+     * The skinning effect: the creature's skin as loot for this player alone (`skinning_loot_template`),
+     * a chance to improve the skill (twice for elites), and the corpse no longer skinnable; once the
+     * skin is all taken, the corpse goes.
+     */
+    void skinCreature(ulong target)
+    {
+        import dmangos.world.loot : Loot, LootRule;
+
+        auto creature = cast(Creature) map.findObject(target);
+        if (creature is null || !creature.skinnable)
+            return;
+        const t = creature.template_;
+        auto loot = new Loot(creature.guid, (ulong guid) => guid == player.guid ? cast(Looter) this : null);
+        loot.clock = () => context.unixTime;
+        loot.owners[player.guid] = true;
+        loot.currentLooter = player.guid;
+        loot.rule = LootRule.notGroup;
+        if (const template_ = context.data.loot.skinning[t.skinningLootId])
+            loot.fill(template_, context.data.loot, context.data.items, map.random, (uint condition) => conditionMet(condition),
+                (ulong, const LootItem item) => item.condition == 0 || conditionMet(item.condition));
+        // The skill: a chance to rise by the level's requirement.
+        const level = cast(int) creature.values.get!UNIT_FIELD_LEVEL;
+        const required = level < 10 ? 0 : level < 20 ? (level - 10) * 10 : level * 5;
+        const skill = creature.skinningSkill;
+        enum uint rankNormal = 0, rankRare = 4;
+        updateGatherSkill(skill, player.skillValue(skill)[0], required,
+            t.rank != rankNormal && t.rank != rankRare ? 2 : 1);
+        creature.values.set!UNIT_FIELD_FLAGS(creature.values.get!UNIT_FIELD_FLAGS & ~Creature.unitFlagSkinnable);
+        creature.skinned = true;
+        creature.loot = loot;
+        auto theMap = map;
+        loot.changed = () => theMap.refreshViewers(creature);
+        loot.lootedForAll = () {
+            creature.loot = null;
+            creature.corpseTimer = 1; // nothing more to take from it: it goes
+            theMap.refreshViewers(creature);
+        };
+        map.flushObjectChanges(creature);
+        if (lootTarget && lootTarget != creature.guid)
+            if (auto other = lootOf(lootTarget))
+                other.release(this);
+        loot.showContentTo(this);
     }
 
     /// The power `spell` costs this player.
@@ -781,7 +855,7 @@ private:
         float reach;
         if (creature !is null)
         {
-            if (!creature.alive)
+            if (!creature.alive && !spell.hasEffect(SpellEffect.skinning))
                 return SpellCastResult.targetsDead;
             if (needsEnemy && !canAttack(relatingNow(), creature.ai.relatingOf(), context.client))
                 return SpellCastResult.targetFriendly;
@@ -1122,6 +1196,9 @@ private:
             break;
         case 1: // SPELL_EFFECT_INSTAKILL
             instakill(spell, target);
+            break;
+        case 95: // SPELL_EFFECT_SKINNING
+            skinCreature(target);
             break;
         case 33: // SPELL_EFFECT_OPEN_LOCK
             openLock(spell, i, target, c.castItemEntry);

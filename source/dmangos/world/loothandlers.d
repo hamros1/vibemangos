@@ -438,7 +438,7 @@ private:
         enum uint noLoot = 0x4; // the static flag for no loot
         const t = victim.template_;
         if (t.staticFlags1 & noLoot)
-            return victim.lootedOut();
+            return lootedOutNow(victim);
         auto theMap = map;
         auto loot = new Loot(victim.guid, (ulong guid) {
             auto session = cast(Character) context.onlinePlayer(guid);
@@ -449,7 +449,7 @@ private:
 
         const(LootTemplate) template_ = t.lootId ? context.data.loot.creature[t.lootId] : null;
         if (template_ is null && t.maxLootGold == 0)
-            return victim.lootedOut();
+            return lootedOutNow(victim);
         if (template_ !is null)
         {
             bool meets(uint condition)
@@ -475,13 +475,21 @@ private:
         }
         loot.generateMoney(t.minLootGold, t.maxLootGold, map.random);
         if (loot.lootedForEveryone())
-            return victim.lootedOut();
+            return lootedOutNow(victim);
         victim.loot = loot;
         loot.changed = () => map.refreshViewers(victim);
         loot.lootedForAll = () {
             victim.lootedOut();
+            map.flushObjectChanges(victim);
             map.refreshViewers(victim);
         };
+    }
+
+    /// Nothing (more) to loot from `victim`: skinnable if it has a skin, its viewers told.
+    void lootedOutNow(Creature victim)
+    {
+        victim.lootedOut();
+        map.flushObjectChanges(victim);
     }
 
     /// Who may loot: for loot at `at`; `fought` says who fought for it (a creature's threat list).

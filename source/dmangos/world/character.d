@@ -963,3 +963,48 @@ unittest
     me.updateHonor();
     assert(me.lockStatus(hall, mapEntry, requirement) == AreaLockStatus.ok);
 }
+
+// Skinning: a looted beast with a skin is skinnable; the skin is its skinner's loot, and then the corpse goes.
+unittest
+{
+    import core.time : MonoTime, msecs, seconds;
+    import dmangos.world.creature : Creature;
+    import dmangos.world.loot : lootRow, LootStore, LootStores;
+    import dmangos.world.movement : Position;
+    import dmangos.world.objects : HighGuid, makeGuid;
+    import dmangos.world.opcodes : Opcode;
+    import dmangos.world.spellcast : SpellCastResult;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+    import dmangos.world.updatefields;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    context.data.loot = LootStores(new LootStore("creature_loot_template"), new LootStore("reference_loot_template"),
+        new LootStore("gameobject_loot_template"), new LootStore("item_loot_template"), new LootStore("fishing"),
+        new LootStore("skinning_loot_template"), new LootStore("pickpocketing_loot_template"));
+    context.data.loot.skinning.add(200, lootRow(itemJerky, 100, 0, 1, 1, 0));
+    auto t = context.data.creatureTemplates.edit(creatureInnkeeper);
+    t.lootId = 0;
+    t.minLootGold = t.maxLootGold = 0;
+    t.skinningLootId = 200;
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f, 1.97f));
+    anduin.read();
+    auto victim = cast(Creature) context.map(0).findObject(makeGuid(HighGuid.unit, creatureInnkeeper, innkeeperSpawn));
+    victim.values.set!UNIT_FIELD_LEVEL(1u);
+    auto me = anduin.session.inWorld;
+    assert(me.checkSkinning(victim.guid) == SpellCastResult.targetNotDead);
+    victim.values.set!UNIT_FIELD_HEALTH(0u);
+    me.prepareBodyLoot(victim);
+    assert(victim.skinnable, "nothing to loot, a skin to take: skinnable at once");
+    assert(me.checkSkinning(victim.guid) == SpellCastResult.ok);
+    me.skinCreature(victim.guid);
+    assert(!victim.skinnable && victim.loot !is null && victim.skinned);
+    assert(me.checkSkinning(victim.guid) == SpellCastResult.targetUnskinnable, "once only");
+    bool shown;
+    foreach (p; anduin.read())
+        shown = shown || p.opcode == Opcode.SMSG_LOOT_RESPONSE;
+    assert(shown, "the skin, shown as loot");
+}

@@ -613,7 +613,7 @@ final class WorldData
         foreach (row; world.query!"SELECT faction, quest_rate, creature_rate, spell_rate FROM reputation_reward_rate"())
             reputationRates[row.get!uint(0)] = [row.get!float(1), row.get!float(2), row.get!float(3)];
         static foreach (table; [["creature", "creature"], ["reference", "reference"], ["gameobject", "gameObject"],
-                ["item", "item"], ["fishing", "fishing"]])
+                ["item", "item"], ["fishing", "fishing"], ["skinning", "skinning"], ["pickpocketing", "pickpocketing"]])
             foreach (row; world.query!("SELECT " ~ lootColumns ~ " FROM " ~ table[0] ~ "_loot_template")())
                 __traits(getMember, loot, table[1]).add(row.get!uint(0), lootRow(row.get!uint(1), row.get!float(2),
                     row.get!uint(3), row.get!int(4), row.get!uint(5), row.get!uint(6)));

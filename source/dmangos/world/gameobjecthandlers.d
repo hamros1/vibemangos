@@ -390,9 +390,10 @@ mixin template GameObjectHandlers()
      * nearer the skill is to the lock's (`SkillGainChance` with the grey, green and yellow levels
      * 100, 50 and 25 above it).
      */
-    void updateGatherSkill(uint skill, uint value, int redLevel)
+    void updateGatherSkill(uint skill, uint value, int redLevel, int multiplier = 1)
     {
-        if (skill != skillHerbalism && skill != skillLockpicking && skill != skillMining)
+        enum uint skillSkinning = 393;
+        if (skill != skillHerbalism && skill != skillLockpicking && skill != skillMining && skill != skillSkinning)
             return;
         if (redLevel == 1)
             redLevel = 5; // what starts at 1 stops at 105, not 101
@@ -406,7 +407,7 @@ mixin template GameObjectHandlers()
             chance = 750;
         else
             chance = 1000;
-        updateSkillPro(skill, chance, 1);
+        updateSkillPro(skill, chance * multiplier, 1);
     }
 
     /// `Player::UpdateSkillPro`: by `chance` in a thousand, `step` more up to its maximum (and saved).

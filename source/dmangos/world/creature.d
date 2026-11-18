@@ -731,8 +731,35 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
     {
         enum int minimumLootingTime = 2 * 60 * 1000;
         loot = null;
+        // A creature with a skin to take is skinnable now; its corpse stays its full time for that.
+        if (template_.skinningLootId && !skinned)
+        {
+            values.set!UNIT_FIELD_FLAGS(values.get!UNIT_FIELD_FLAGS | unitFlagSkinnable);
+            return;
+        }
         if (corpseTimer > minimumLootingTime)
             corpseTimer = minimumLootingTime;
+    }
+
+    /// `UNIT_FLAG_SKINNABLE`: looted, and its skin is still on.
+    enum uint unitFlagSkinnable = 0x04000000;
+
+    /// Its skin was taken (cast at): the corpse goes once that loot is gone.
+    bool skinned;
+
+    /// Whether it may be skinned now: dead, looted, with its skin still on.
+    @property bool skinnable() const
+    {
+        return !alive && (values.get!UNIT_FIELD_FLAGS & unitFlagSkinnable) != 0;
+    }
+
+    /// The skill a skin of it takes: herbalism or mining for those `CreatureTypeFlags` says, else skinning.
+    @property uint skinningSkill() const
+    {
+        enum uint skinWithHerbalism = 0x100, skinWithMining = 0x200;
+        enum uint herbalism = 182, mining = 186, skinning = 393;
+        return template_.typeFlags & skinWithHerbalism ? herbalism : template_.typeFlags & skinWithMining ? mining
+            : skinning;
     }
 
     /// Its fighting mind (`dmangos.world.creatureai`).

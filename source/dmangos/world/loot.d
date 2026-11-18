@@ -127,6 +127,8 @@ struct LootStores
     LootStore gameObject; /// `gameobject_loot_template`
     LootStore item;       /// `item_loot_template`: what an item opened holds
     LootStore fishing;    /// `fishing_loot_template`: by area (or zone)
+    LootStore skinning;   /// `skinning_loot_template`: a creature's skin (by `SkinningLootId`)
+    LootStore pickpocketing; /// `pickpocketing_loot_template`: a creature's pockets (by `PickpocketLootId`)
 }
 
 /// The columns every `*_loot_template` query selects, in `LootStoreItem` order after the id.

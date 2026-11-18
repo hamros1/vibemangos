@@ -30,6 +30,8 @@ enum SpellEffect : uint
     block = 23,
     proficiency = 60,
     skill = 118,
+    pickpocket = 71,
+    skinning = 95,
 }
 
 /// `SPELL_ATTR_PASSIVE`
