@@ -380,3 +380,30 @@ the reply. The network adds its round trip on top.
   the server raises its open-file limit to the hard limit at start.
 * 1,500 players in one crowd fill one core (the fan-out grows with the square of the crowd); spread out,
   or divided between nodes, they cost far less.
+
+## Where a crowd's allocation went (2026-11-18)
+
+`crowd` and `spread`, 500 bots, `--seed 7`, 60 s, against the build before:
+
+| | crowd: before | crowd: after | spread: before | spread: after |
+|---|---|---|---|---|
+| Allocated per tick | 430 KB | 103 KB | 240 KB | 215 KB |
+| GC collections in the run | 3 | 0 | 1 | 1 |
+| Ping p99 | 7.5 ms | 4.5 ms | 7.3 ms | 6.8 ms |
+| Event loop busy | 7.5% | 7.9% | 10.5% | 11.2% |
+
+**How it was found.** `-profile=gc` builds and links (with `-allinst`, without `-inline`), but the
+server then took over a quarter of an hour to load the world, so it was not usable. Instead, a
+throw-away build counted `GC.allocatedInCurrentThread` between marks: first in the event loop (87% of
+the bytes in packet handling, 13% in the tick, none in sending), then in the movement handler (92% in
+`Map.relocated`), then inside it: `updateVisibility`, about 77 KB a call, 800 calls in ten seconds. It
+built two associative arrays of everyone and everything in sight (500 players and some hundreds of
+objects in a crowd) and fresh arrays for the cell searches, each time a player had moved a few yards.
+
+**The change.** The sets in sight are `SlotBits` kept by the map and emptied again by each call, and
+the cell searches and the known-object lists fill lists lent from a small pool (`borrowList`,
+`knownInto`), so their memory is kept from call to call.
+
+**Tried and dropped.** Update masks from compile-time words (no per-slot pass, no arrays): a
+micro-benchmark showed the helpers 1 µs and 176 B cheaper per player, but the crowd allocated 443 KB a
+tick against 430: they were not where the bytes went. Reverted.

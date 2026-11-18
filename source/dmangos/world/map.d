@@ -400,6 +400,42 @@ final class Map : CombatWorld, GameObjectWorld
         return found;
     }
 
+    /**
+     * What `knownOf` gives, into a list borrowed from `borrowList` (the hot paths: every movement packet
+     * goes through one), so that no array is grown for it. A copy, as `knownOf`'s, because what the
+     * loop over it does may change what `slot` knows.
+     */
+    private void knownInto(uint slot, bool wantPlayers, ref uint[] into)
+    {
+        foreach (k; at(slot).known)
+            if ((at(k).player !is null) == wantPlayers)
+                into ~= k;
+    }
+
+    // Lists of slots for the hot paths, lent out and given back last first (`scope (exit)`), so that one
+    // in use is never lent again and their memory is kept from call to call.
+    private uint[][] spareLists;
+    private size_t listsLent;
+    // What `updateVisibility` sees, kept between calls for their memory (empty outside it).
+    private SlotBits playersInSight, objectsInSight;
+    private bool updatingVisibility;
+
+    private uint[] borrowList()
+    {
+        if (listsLent == spareLists.length)
+            spareLists ~= null;
+        auto list = spareLists[listsLent++];
+        list.length = 0;
+        list.assumeSafeAppend();
+        return list;
+    }
+
+    private void giveBackList(uint[] list)
+    in (listsLent > 0)
+    {
+        spareLists[--listsLent] = list;
+    }
+
     /// Puts `slot` in cell `key`'s list.
     private void putInCell(uint slot, ulong key)
     {
@@ -633,6 +669,13 @@ final class Map : CombatWorld, GameObjectWorld
     private uint[] objectSlotsNear(Position center, float range, bool load = false)
     {
         uint[] found;
+        objectSlotsInto(center, range, found, load);
+        return found;
+    }
+
+    /// What `objectSlotsNear` gives, appended to `found` (a list from `borrowList`).
+    private void objectSlotsInto(Position center, float range, ref uint[] found, bool load = false)
+    {
         void look(ulong key, ref const CellList list)
         {
             foreach (slot; list.objects)
@@ -649,7 +692,7 @@ final class Map : CombatWorld, GameObjectWorld
                 if (x >= cx - reach && x <= cx + reach && y >= cy - reach && y <= cy + reach)
                     look(key, list);
             }
-            return found;
+            return;
         }
         foreach (key; cellKeysNear(center, range))
         {
@@ -658,7 +701,6 @@ final class Map : CombatWorld, GameObjectWorld
             if (const list = key in cellLists)
                 look(key, *list);
         }
-        return found;
     }
 
     /// The creatures and game objects within `range` yards of `center` (in loaded cells).
@@ -1716,7 +1758,11 @@ final class Map : CombatWorld, GameObjectWorld
         if (!combatant)
             return;
         const atNow = who.character.position;
-        foreach (k; knownOf(slot, false))
+        auto known = borrowList();
+        scope (exit)
+            giveBackList(known);
+        knownInto(slot, false, known);
+        foreach (k; known)
         {
             if (!entities.holds(k) || at(k).object is null)
                 continue; // gone as an earlier one acted
@@ -1972,12 +2018,18 @@ final class Map : CombatWorld, GameObjectWorld
     private uint[] playerSlotsNear(Position center, float range)
     {
         uint[] found;
+        playerSlotsInto(center, range, found);
+        return found;
+    }
+
+    /// What `playerSlotsNear` gives, appended to `found` (a list from `borrowList`).
+    private void playerSlotsInto(Position center, float range, ref uint[] found)
+    {
         foreach (key; cellKeysNear(center, range))
             if (const list = key in cellLists)
                 foreach (slot; list.players)
                     if (distanceSquared(center, entities.at(slot).player.character.position) <= range ^^ 2)
                         found ~= slot;
-        return found;
     }
 
     /// The players within `range` yards of `center`.
@@ -2201,18 +2253,31 @@ private:
         at(slot).visibilityAt = who.character.position;
         updateInterest(slot, who.character.position); // for peers, and for unloading idle cells
 
-        bool[uint] inSight;
-        foreach (o; playerSlotsNear(who.character.position, settings.visibilityDistance))
+        // Who is in sight: a set kept by the map (its memory reused), emptied again on the way out. Not
+        // reentered: nothing it calls updates another player's visibility.
+        assert(!updatingVisibility, "updateVisibility reentered: its sets are the map's");
+        updatingVisibility = true;
+        scope (exit)
+            updatingVisibility = false;
+        auto near = borrowList();
+        scope (exit)
+            giveBackList(near);
+        playerSlotsInto(who.character.position, settings.visibilityDistance, near);
+        alias inSight = playersInSight;
+        foreach (o; near)
             if (o != slot)
-                inSight[o] = true;
+                inSight.add(o);
+        scope (exit)
+            foreach (o; near)
+                inSight.remove(o);
 
         // Newly in sight: each gets the other's create block. `who` gets theirs a packet's worth at a time;
         // they get `who`'s, built and compressed once for each kind of viewer (a crowd is one kind).
         const time = serverTime();
         UpdateData received;
         UpdatePacket[uint] shown;
-        foreach (o, _; inSight)
-            if (!at(slot).known[o])
+        foreach (o; near)
+            if (o != slot && !at(slot).known[o])
             {
                 see(slot, o);
                 see(o, slot);
@@ -2235,8 +2300,12 @@ private:
 
         // Out of sight: both forget, `who` in one block for everyone it lost.
         ulong[] gone;
-        foreach (o; knownOf(slot, true))
-            if (o !in inSight)
+        auto knownPlayers = borrowList();
+        scope (exit)
+            giveBackList(knownPlayers);
+        knownInto(slot, true, knownPlayers);
+        foreach (o; knownPlayers)
+            if (!inSight[o])
             {
                 gone ~= at(o).guid;
                 unsee(slot, o);
@@ -2247,15 +2316,21 @@ private:
             }
 
         // Creatures and game objects: those that came into sight, in packets of a few dozen, and those that left.
-        bool[uint] objectsInSight;
+        auto nearObjects = borrowList();
+        scope (exit)
+            giveBackList(nearObjects);
+        objectSlotsInto(who.character.position, settings.visibilityDistance, nearObjects, true);
+        scope (exit)
+            foreach (o; nearObjects)
+                objectsInSight.remove(o);
         UpdateData created;
         MapObject[] personalAfter; // shown with a view of their own, after their create blocks
-        foreach (o; objectSlotsNear(who.character.position, settings.visibilityDistance, true))
+        foreach (o; nearObjects)
         {
             auto object = at(o).object;
             if (!objectVisibleTo(object, who))
                 continue;
-            objectsInSight[o] = true;
+            objectsInSight.add(o);
             if (!see(slot, o))
                 continue;
             if (adoptLingering(slot, object.guid))
@@ -2275,8 +2350,12 @@ private:
             deliverUpdate(who, created);
         foreach (object; personalAfter)
             personalize(who, object);
-        foreach (o; knownOf(slot, false))
-            if (o !in objectsInSight)
+        auto knownObjects = borrowList();
+        scope (exit)
+            giveBackList(knownObjects);
+        knownInto(slot, false, knownObjects);
+        foreach (o; knownObjects)
+            if (!objectsInSight[o])
             {
                 gone ~= at(o).guid;
                 unsee(slot, o);
