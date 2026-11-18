@@ -223,14 +223,14 @@ struct UnitRef
         }
     }
 
-    /// Its cast is interrupted by the creature `by`.
-    void castInterruptedBy(ulong by)
+    /// Its cast is interrupted by the creature `by`; its school locked for `lockMs`.
+    void castInterruptedBy(ulong by, int lockMs = 0)
     {
         final switch (kind)
         {
         case UnitKind.none: return;
-        case UnitKind.player: return session.castInterruptedBy(by);
-        case UnitKind.creature: return creature.ai.interruptCast();
+        case UnitKind.player: return session.castInterruptedBy(by, lockMs);
+        case UnitKind.creature: return creature.ai.interruptCast(lockMs);
         }
     }
 

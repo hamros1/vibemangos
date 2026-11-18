@@ -125,6 +125,8 @@ mixin template CreatureCasting()
             return false;
         if (casting_ !is null && !(flags & (castTriggered | castInterruptPrevious)))
             return false;
+        if (!triggered && spell.casting.school < schoolLockMs.length && schoolLockMs[spell.casting.school] > 0)
+            return false; // its school locked out
         // `CAST_FORCE_TARGET_SELF`: the target casts it on itself; only it itself can be made to.
         if ((flags & castForceTargetSelf) && target != me.guid)
             return false;
@@ -186,6 +188,9 @@ mixin template CreatureCasting()
     /// The cast under way: it goes off when its time is up, or fails if its target is gone.
     private void updateCasting(int diff)
     {
+        foreach (ref t; schoolLockMs)
+            if (t > 0)
+                t -= diff;
         if (casting_ is null)
             return;
         if (castTarget != me.guid)
@@ -203,13 +208,17 @@ mixin template CreatureCasting()
         go(spell, castTarget, true);
     }
 
-    /// The cast stops (`SMSG_SPELL_FAILURE` around).
-    void interruptCast()
+    private int[7] schoolLockMs; /// each school's lockout left (an interrupt's), in milliseconds
+
+    /// The cast stops (`SMSG_SPELL_FAILURE` around); an interrupt locks its school for `lockMs`.
+    void interruptCast(int lockMs = 0)
     {
         import dmangos.world.spellcast : spellFailurePacket, SpellCastResult;
 
         if (casting_ is null)
             return;
+        if (lockMs > 0 && casting_.casting.school < schoolLockMs.length)
+            schoolLockMs[casting_.casting.school] = lockMs;
         if (world_ !is null)
             world_.sendToObservers(me.guid, Opcode.SMSG_SPELL_FAILURE,
                 spellFailurePacket(me.guid, casting_.id, SpellCastResult.interrupted));
@@ -414,10 +423,15 @@ mixin template CreatureCasting()
                 case 3, 77: // SPELL_EFFECT_DUMMY, SPELL_EFFECT_SCRIPT_EFFECT: the spell's script
                     spellEffectScript(spell, i, guid, value);
                     break;
-                case 68: // SPELL_EFFECT_INTERRUPT_CAST
+                case 68: // SPELL_EFFECT_INTERRUPT_CAST: and the school locked for the interrupt's duration
                     if (guid != me.guid)
                         if (auto other = world_.unit(guid))
-                            other.castInterruptedBy(me.guid);
+                        {
+                            import dmangos.world.spellcast : duration;
+
+                            other.castInterruptedBy(me.guid, duration(*spell, lore.clientData,
+                                me.values.get!UNIT_FIELD_LEVEL));
+                        }
                     break;
                 default:
                     break;
@@ -1216,6 +1230,7 @@ unittest
     enum uint pummel = 95011;
     context.data.spells.spells[pummel] = testSpell(pummel, 68, 6, 0);
     context.data.spells.spells.edit(pummel).casting.dmgClass = 0;
+    context.data.spells.spells.edit(pummel).casting.durationIndex = 1; // locks out for 6 s
     (cast(Player) me).spells ~= pummel;
     ByteWriter w;
     w.put(pummel);
@@ -1223,6 +1238,13 @@ unittest
     anduin.read();
     anduin.write(Opcode.CMSG_CAST_SPELL, w.data);
     assert(!keeper.ai.castingNow && opcodesOf(anduin.read()).canFind(Opcode.SMSG_SPELL_FAILURE), "interrupted");
+    // Its school locked for the interrupt's 6 seconds; another school's spell it may cast.
+    assert(!keeper.ai.castSpell(context.data.spells.spell(bolt), me.guid, 0), "fire locked out");
+    assert(keeper.ai.castSpell(context.data.spells.spell(mend), keeper.guid, 0), "not its other spells");
+    foreach (_; 0 .. 13)
+        tick(500);
+    assert(keeper.ai.castSpell(context.data.spells.spell(bolt), me.guid, 0), "fire again after the lockout");
+    keeper.ai.interruptCast();
 
     // A friend in the fight, badly hurt: healed (`EVENT_T_FRIENDLY_HP`, cast at the event's own target).
     auto trainer = cast(Creature) map.findObject(makeGuid(HighGuid.unit, creatureTrainer, trainerSpawn));

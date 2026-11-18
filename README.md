@@ -434,10 +434,9 @@ What works now:
     next swing waits for the swing. Its spells do school damage (a magic one resisted by the level
     difference), weapon damage, auras (debuffs on players, damage over time included; buffs on
     itself), heal it, and trigger other spells, at its target, itself, or the enemies in their area
-    or cone. Creatures get their mana back with their health out of combat. Not yet: the other
-    events and actions (summons, morphs, AI events between creatures, quest events, relay scripts),
-    spell lists (`creature_template_spells`), spell school lockouts. Their
-    casts are interrupted by interrupting spells (Pummel's `SPELL_EFFECT_INTERRUPT_CAST`), and
+    or cone. Creatures get their mana back with their health out of combat. Their
+    casts are interrupted by interrupting spells (Pummel's `SPELL_EFFECT_INTERRUPT_CAST`), which lock
+    the interrupted spell's school for the interrupt's duration (a player's too, shown as cooldowns), and
     theirs interrupt a player's.
   * **Death:** a player killed loses a tenth
     of its gear's durability and lies rooted until it releases its spirit (or six minutes pass, or it
@@ -563,8 +562,7 @@ What works now:
     taken; a sharable quest is offered to the group's members within 10 yards who may take it, and
     the one who shared it hears who took it. A timed quest shows its end in the log (one at a time)
     and fails when its time is up. A list of several quests is headed by the giver's
-    `questgiver_greeting` and its emote. Progress is saved in `character_queststatus`. Not yet: escort
-    quests.
+    `questgiver_greeting` and its emote. Progress is saved in `character_queststatus`.
   * **Flight masters:** a flight master's node (`TaxiNodes.dbc`) is learned at the first talk and saved in `taximask`; then the
     master shows the known nodes. A flight to one, directly or over several legs (`TaxiPath.dbc`,
     `TaxiPathNode.dbc`), costs the paths' prices (10% less at honored with the master's faction),

@@ -236,6 +236,32 @@ private:
     }
 
     /// Starts `spell`'s cooldown (its recovery time), as casting it does.
+    private MonoTime[7] schoolLockedUntil; /// each school's lockout (an interrupt's), till then
+
+    /**
+     * Interrupted: the school of the cast that was going is locked for `ms` (the interrupt's duration); the
+     * client sees its spells of the school cooling down (`SMSG_SPELL_COOLDOWN`).
+     */
+    package void lockOutSchool(uint school, int ms)
+    {
+        import core.time : msecs;
+        import dmangos.bytes : ByteWriter;
+
+        if (school >= schoolLockedUntil.length || ms <= 0)
+            return;
+        schoolLockedUntil[school] = context.clock() + ms.msecs;
+        ByteWriter w;
+        w.put(player.guid);
+        foreach (id; player.spells)
+            if (const s = context.data.spells.spell(id))
+                if (s.casting.school == school && !s.isPassive)
+                {
+                    w.put(id);
+                    w.put(cast(uint) ms);
+                }
+        deliver(Opcode.SMSG_SPELL_COOLDOWN, w.data);
+    }
+
     package void startCooldown(const(SpellInfo)* spell)
     {
         import core.time : msecs;
@@ -891,6 +917,9 @@ private:
                         return SpellCastResult.notReady;
             if (spell.casting.startRecoveryCategory == 133 && gcdReadyAt > now && !cooldownCheat)
                 return SpellCastResult.notReady;
+            if (spell.casting.school < schoolLockedUntil.length && schoolLockedUntil[spell.casting.school] > now
+                    && !cooldownCheat)
+                return SpellCastResult.notReady; // its school locked out by an interrupt
             if ((spell.attributes & spellAttrNotInCombat) && inCombat)
                 return SpellCastResult.affectingCombat;
             if (player.values.getByte!UNIT_FIELD_BYTES_1(0) != 0 && !(spell.attributes & castableWhileSitting))
@@ -1513,12 +1542,22 @@ private:
         case 33: // SPELL_EFFECT_OPEN_LOCK
             openLock(spell, i, target, c.castItemEntry);
             break;
-        case 68: // SPELL_EFFECT_INTERRUPT_CAST: the target's cast ends (its school's lockout: not yet)
+        case 68: // SPELL_EFFECT_INTERRUPT_CAST: the target's cast ends, and its school is locked out for the interrupt's time
+        {
+            import dmangos.world.spellcast : duration;
+
+            const lockMs = duration(*spell, context.client, player.data.level);
             if (auto creature = cast(Creature) map.findObject(target))
-                creature.ai.interruptCast();
+                creature.ai.interruptCast(lockMs);
             else if (auto other = enemyPlayer(target))
-                other.interruptCast(SpellCastResult.interrupted);
+                if (other.generic.active)
+                {
+                    const school = other.generic.spell.casting.school;
+                    other.interruptCast(SpellCastResult.interrupted);
+                    other.lockOutSchool(school, lockMs);
+                }
             break;
+        }
         case 17: // SPELL_EFFECT_WEAPON_DAMAGE_NOSCHOOL
         case 58: // SPELL_EFFECT_WEAPON_DAMAGE
         case 121: // SPELL_EFFECT_NORMALIZED_WEAPON_DMG
@@ -3292,4 +3331,51 @@ unittest
     const health = keeper.values.get!UNIT_FIELD_HEALTH;
     session.updateAutoRepeat(5000.msecs);
     assert(keeper.values.get!UNIT_FIELD_HEALTH == health, "stopped");
+}
+
+/// A player's school locked out by an interrupt: its spells of the school are not ready (shown cooling down), others are.
+unittest
+{
+    import core.time : MonoTime, msecs;
+    import dmangos.world.movement : Position;
+    import dmangos.world.opcodes : Opcode;
+    import dmangos.world.player : Player;
+    import dmangos.world.spellcast : ImplicitTarget, SpellCastResult, SpellTargets, TargetFlags;
+    import dmangos.world.testclient;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    enum uint fire = 97401, frost = 97402;
+    context.data.spells.spells[fire] = testSpell(fire, 6, ImplicitTarget.caster, 0);
+    context.data.spells.spells.edit(fire).casting.school = 2;
+    context.data.spells.spells[frost] = testSpell(frost, 6, ImplicitTarget.caster, 0);
+    context.data.spells.spells.edit(frost).casting.school = 4;
+    auto jaina = loggedIn(context, db, 7, "Jaina", Position(-8949.95f, -132.49f, 83.53f));
+    jaina.read();
+    auto session = jaina.session.inWorld;
+    (cast(Player) session.character).spells ~= [fire, frost];
+    const self = SpellTargets(TargetFlags.self, 0);
+
+    // What the client hears of casting `spell` at itself: its failure's reason, or 0.
+    ubyte castReason(uint spell)
+    {
+        import dmangos.bytes : ByteWriter;
+
+        ByteWriter w;
+        w.put(spell);
+        self.write(w);
+        jaina.write(Opcode.CMSG_CAST_SPELL, w.data);
+        const r = bodyOf(jaina.read(), Opcode.SMSG_CAST_RESULT);
+        return r.length >= 6 && r[4] == 2 ? r[5] : 0;
+    }
+
+    session.lockOutSchool(2, 4000);
+    const shown = bodyOf(jaina.read(), Opcode.SMSG_SPELL_COOLDOWN);
+    assert(shown.length == 8 + 8, "its fire spell, cooling down");
+    assert(castReason(fire) == SpellCastResult.notReady, "fire locked out");
+    assert(castReason(frost) != SpellCastResult.notReady, "frost not");
+    now += 4001.msecs;
+    assert(castReason(fire) != SpellCastResult.notReady, "the lockout over");
 }

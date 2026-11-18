@@ -577,11 +577,15 @@ final class Character : OnlinePlayer, Looter
     }
 
     /// See `UnitRef`.
-    void castInterruptedBy(ulong creature)
+    void castInterruptedBy(ulong creature, int lockMs = 0)
     {
         import dmangos.world.spellcast : SpellCastResult;
 
+        if (!generic.active)
+            return;
+        const school = generic.spell.casting.school;
         interruptCast(SpellCastResult.interrupted);
+        lockOutSchool(school, lockMs);
     }
 
     // -----------------------------------------------------------------------
