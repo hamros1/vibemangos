@@ -1,8 +1,7 @@
 /**
- * What NPCs say and offer, from the world database (CMaNGOS `ObjectMgr::LoadGossipMenus`,
- * `LoadGossipText`, `LoadBroadcastText`, `LoadNpcGossips`, `LoadPointsOfInterest`,
- * `LoadTrainerGreetings`, `LoadTrainers`, `LoadVendors` and `LoadConditions`): gossip menus and
- * their options, the texts they show, trainers' spell lists and vendors' item lists.
+ * What NPCs say and offer, from the world database: gossip menus and
+ * their options, the texts they show, points of interest, trainer greetings, trainers' spell
+ * lists, vendors' item lists, and the conditions that decide what is shown.
  */
 module dmangos.world.npcdata;
 
@@ -40,7 +39,7 @@ struct GossipMenuOption
     uint conditionId;
 }
 
-/// `GossipOption` (`option_id`)
+/// What selecting a gossip option does (`option_id`).
 enum GossipOption : uint
 {
     none = 0,
@@ -82,7 +81,7 @@ struct GossipTextOption
     uint broadcastText;      /// `npc_text_broadcast_text`: the texts come from `broadcast_text`
 }
 
-/// An `npc_text` row (`GossipText`).
+/// An `npc_text` row.
 struct GossipText
 {
     GossipTextOption[8] options;
@@ -94,10 +93,10 @@ struct BroadcastText
     string maleText;
     string femaleText;
     uint language;
-    uint chatType;   /// `ChatType` of `DoDisplayText`: 0 say, 1 yell, 2 emote, 3 boss emote, 4 whisper, 5 boss whisper, 6 zone yell
+    uint chatType;   /// how the text is spoken: 0 say, 1 yell, 2 emote, 3 boss emote, 4 whisper, 5 boss whisper, 6 zone yell
     TextEmote[3] emotes;
 
-    /// `BroadcastText::GetText`: the gender's text, or the other one if it has none.
+    /// The gender's text, or the other one if it has none.
     string text(bool female) const pure nothrow @nogc @safe
     {
         if (female)
@@ -117,7 +116,7 @@ struct PointOfInterest
     string name;
 }
 
-/// An `npc_trainer` or `npc_trainer_template` row, checked (`TrainerSpell`).
+/// An `npc_trainer` or `npc_trainer_template` row, checked.
 struct TrainerSpell
 {
     uint spell;              /// the trainer's spell that teaches it
@@ -217,7 +216,7 @@ final class NpcData
         return data;
     }
 
-    /// `ObjectMgr::LoadGossipText`: `npc_text`, then `npc_text_broadcast_text`, which overrides it.
+    /// `npc_text`, then `npc_text_broadcast_text`, which overrides it.
     private void loadTexts(MySqlConnection world)
     {
         enum perOption = 10;
@@ -262,7 +261,7 @@ final class NpcData
         }
     }
 
-    /// `ObjectMgr::LoadTrainers`: rows whose spell teaches another, keyed by creature entry or template id.
+    /// Rows whose spell teaches another, keyed by creature entry or template id.
     static TrainerSpell[][uint] loadTrainers(Rows)(Rows rows, const SpellData spells)
     {
         enum uint targetNone = 0, targetUnitCaster = 1; // TARGET_NONE, TARGET_UNIT_CASTER

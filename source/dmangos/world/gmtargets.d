@@ -1,5 +1,5 @@
 /**
- * What ArcEmu's GM commands that name a player do to that player, as methods of the player's
+ * What the GM commands that name a player do to that player, as methods of the player's
  * `Character` (mixed in), so that they run where the player is simulated: on this node, or in a
  * cluster on another (docs/CLUSTER.md, phase 5b), the GM's messages then going back to its node.
  * The GM's side (finding the player, logging) stays in the command handlers.
@@ -15,7 +15,7 @@ enum GmRemoteOp : ubyte
     summon,       /// `.summon`: to the GM's map and position
     appear,       /// `.appear`: the GM comes to the target (`appearAt` goes back)
     appearAt,     /// the target's map and position, for the GM
-    disconnect,   /// `.kill`-by-name (`World::DisconnectUsersWithPlayerName`)
+    disconnect,   /// `.kill`-by-name: the player's session is disconnected
     banKick,      /// `.ban character`: the account is banned already; the player goes
     rename,       /// `.rename`: the database has the new name (`text`) already
     playerInfo,   /// `.playerinfo`
@@ -41,7 +41,7 @@ bool everywhere(GmRemoteOp op) pure nothrow @nogc @safe
     return op == GmRemoteOp.saveAll || op == GmRemoteOp.massSummon;
 }
 
-/// Where a GM command's messages go: the GM's client, here or on its node (`ChatHandler`'s colours).
+/// Where a GM command's messages go: the GM's client, here or on its node (in the command colours).
 struct GmSink
 {
     void delegate(string text) send;
@@ -188,7 +188,7 @@ mixin template GmTargets()
         return nodes.length;
     }
 
-    /// `.kill`'s part on a player: health 0 and `KillPlayer`; it is told who did it.
+    /// `.kill`'s part on a player: health 0, and it dies; it is told who did it.
     package void killedByGm(string gmName)
     {
         import dmangos.world.player : DeathState;
@@ -215,7 +215,7 @@ mixin template GmTargets()
         gm.green(format!"Killed player %s."(args));
     }
 
-    /// `.reviveplr`'s part on the player: `RemoteRevive` (alive with full health, its corpse gone).
+    /// `.reviveplr`'s part on the player: `remoteRevive` (alive with full health, its corpse gone).
     package void revivedByName(GmSink gm, string args)
     {
         import dmangos.world.player : DeathState;
@@ -226,7 +226,7 @@ mixin template GmTargets()
         gm.green(format!"Revived player %s."(args));
     }
 
-    /// `Player::RemoteRevive`: `ResurrectPlayer`, unrooted, full health.
+    /// Resurrected, unrooted, with full health; its corpse turns to bones.
     package void remoteRevive()
     {
         import dmangos.world.updatefields : UNIT_FIELD_HEALTH, UNIT_FIELD_MAXHEALTH;
@@ -272,7 +272,7 @@ mixin template GmTargets()
         goThere(player.data.map, player.position, instanceId_);
     }
 
-    /// `World::DisconnectUsersWithPlayerName`'s part on the session.
+    /// `.kill`-by-name's part on the session: the player is disconnected.
     package void disconnectedBy(GmSink gm, string gmName)
     {
         gm.system(format!"Disconnecting user with account `%s` IP `%s` Player `%s`."(account.username, address,

@@ -355,7 +355,7 @@ struct PresenceEntry
     uint flags;          /// `PresenceFlags`
     ubyte security;      /// the account's level (the who list hides GMs from players above `gm_level_in_who_list`)
     @LengthPrefix!ubyte string autoReply; /// while away or busy
-    @LengthPrefix!ubyte string permissions; /// ArcEmu's GM permission letters (`.gm list`)
+    @LengthPrefix!ubyte string permissions; /// the account's GM permission letters (`.gm list`)
 }
 
 /// The players the sender simulates that changed (`entries`) or left (`gone`) (phase 5).
@@ -430,7 +430,7 @@ struct ChannelCommand
     ulong guid;
     @LengthPrefix!uint string name;
     ubyte race;
-    bool moderateAll;      /// ArcEmu's `c` permission
+    bool moderateAll;      /// the `c` permission: moderates every channel
     ubyte chatTag;
     ubyte op;              /// `dmangos.world.channelservice.ChannelOp`
     @LengthPrefix!uint string channel;
@@ -523,7 +523,7 @@ struct GmRemote
 
 /**
  * A group member's share of a kill on the sender, for the receiver, which simulates that member
- * (`Group::RewardGroupAtKill` across nodes): the kill credit, the experience and the reputation.
+ * (the group's kill reward, shared across nodes): the kill credit, the experience and the reputation.
  */
 struct KillShare
 {

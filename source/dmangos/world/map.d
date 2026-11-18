@@ -1,22 +1,22 @@
 /**
- * A map with the players on it, who sees whom, and the packets that follows
- * from that (CMaNGOS `Maps/Map.cpp`, `Grids/`, `Object::UpdateVisibilityOf`).
+ * A map with the players and objects on it, who sees whom, and the packets
+ * that follow from that.
  *
- * Players are kept in square cells of `cellSize` yards, CMaNGOS's grid cell
+ * Players are kept in square cells of `cellSize` yards (an eighth of a map tile),
  * size, so "who is near" looks at a handful of cells instead of the whole map.
  * Seeing is symmetric: two players see each other when they are within the
  * visibility distance. When that starts, each gets the other's create block;
  * when it ends, an out-of-range block; when one leaves the world, the other
  * gets `SMSG_DESTROY_OBJECT`. Visibility is recomputed when a player has
- * moved `relocationLimit` yards since the last time, as with CMaNGOS's
- * `Visibility.RelocationLowerLimit`.
+ * moved `relocationLimit` yards since the last time (the
+ * `visibility_relocation_lower_limit` setting).
  *
  * The map knows players through `Inhabitant`, which `Character` implements:
  * the character, and a way to deliver a packet. Tests implement it directly.
  *
  * Creatures and game objects (`MapObject`) are kept in the same cells. A
  * cell's spawns are created when a player first comes near it
- * (`ObjectGridLoader`), through the `Spawner` the map was given, and stay.
+ * (`loadCell`), through the `Spawner` the map was given, and stay.
  * Players see objects within the visibility distance; the create blocks of
  * everything that came into sight are sent together.
  *
@@ -87,7 +87,7 @@ interface Inhabitant
 
 /**
  * A map object some of whose fields each viewer sees differently (a creature's tapped and lootable
- * flags: `Object::BuildValuesUpdate`). The map sends the fields as everyone sees them, and to each
+ * flags). The map sends the fields as everyone sees them, and to each
  * viewer whose differ, its own.
  */
 interface PerViewer
@@ -161,12 +161,12 @@ alias Spawner = MapObject[] delegate(uint map, ulong cell);
 /// The most create blocks in one update packet, so that a crowded place does not make one huge packet.
 private enum maxBlocksPerPacket = 40;
 
-/// Distances that decide who sees and hears whom (`mangosd.conf`'s `Visibility.*`, `ListenRange.*`).
+/// Distances that decide who sees and hears whom (the `visibility_*` and `listen_range_*` settings).
 struct MapSettings
 {
-    float visibilityDistance = 100; /// `Visibility.Distance.Continents`
-    float relocationLimit = 10;     /// `Visibility.RelocationLowerLimit`
-    uint unloadIdleMs;              /// `GridCleanUpDelay`: a cell idle for so long unloads (0: never)
+    float visibilityDistance = 100; /// `visibility_distance`
+    float relocationLimit = 10;     /// `visibility_relocation_lower_limit`
+    uint unloadIdleMs;              /// `grid_cleanup_delay_seconds`: a cell idle for so long unloads (0: never)
 }
 
 /// Sends `packet` to `to`, serialized and framed for that client.
@@ -252,7 +252,7 @@ private enum size_t wheelBuckets = 256;
 /// ditto
 private enum ulong wheelGrain = 100;
 
-/// `Visibility.AIRelocationNotifyDelay`: a moving creature looks for players to notice at most this often (ms).
+/// A moving creature looks for players to notice at most this often (ms).
 private enum ulong aiRelocationNotifyDelay = 1000;
 
 /// An object idle for less than this stays in the tick (sleeping it would cost more than it saves).
@@ -468,7 +468,7 @@ final class Map : CombatWorld, GameObjectWorld
     /// Sends what changed in an object's fields to the players whose clients have it, then forgets the changes.
     void flushObjectChanges(MapObject object)
     {
-        // In the map's tick, the change waits for the tick's end (`Map::SendObjectUpdates`): several
+        // In the map's tick, the change waits for the tick's end: several
         // changes of one object in a tick go out as one update.
         if (ticking_)
         {
@@ -625,8 +625,8 @@ final class Map : CombatWorld, GameObjectWorld
 
     /**
      * The slots of the objects within `range` yards of `center`. Only a player's sight loads cells
-     * (`load`, `ObjectGridLoader`); every other search looks at what is loaded, as CMaNGOS's searchers
-     * do (`Cell::SetNoCreate`): a creature looking for help, or a script for its buddy a thousand yards
+     * (`load`, `loadCell`); every other search looks at what is loaded only:
+     * a creature looking for help, or a script for its buddy a thousand yards
      * off, loads nothing. A search wider than the cells that hold anything goes through those.
      */
     private uint[] objectSlotsNear(Position center, float range, bool load = false)
@@ -669,7 +669,7 @@ final class Map : CombatWorld, GameObjectWorld
         return found;
     }
 
-    /// `ObjectGridLoader::Load` for one cell: its spawns, once.
+    /// Loads one cell: its spawns, once.
     private void loadCell(ulong key)
     {
         if (spawner is null || key in loadedCells || (owns !is null && !owns(key)))
@@ -683,7 +683,7 @@ final class Map : CombatWorld, GameObjectWorld
     enum int idleCheckInterval = 10_000;
 
     /**
-     * `GridMap` unloading (`GridCleanUpDelay`): a loaded cell no player is near, here or on a peer that
+     * Unloading idle cells (`grid_cleanup_delay_seconds`): a loaded cell no player is near, here or on a peer that
      * wants replicas of it, for `unloadIdleMs` unloads after `elapsedMs` more: its creatures and game
      * objects go (the dead keep their saved respawn time; the living come back fresh when it loads
      * again). A cell keeps its objects while one of them is fighting or away in a busy cell, or while
@@ -822,7 +822,7 @@ final class Map : CombatWorld, GameObjectWorld
 
     /**
      * Whether `who` can see `object` at all, wherever they are: a spirit healer only shows itself to the
-     * dead (CMaNGOS gives it the ghost aura).
+     * dead (by its NPC flags).
      */
     bool objectVisibleTo(const MapObject object, const Inhabitant who) const
     {
@@ -833,7 +833,7 @@ final class Map : CombatWorld, GameObjectWorld
         return true;
     }
 
-    /// One tick of the world update (`Map::Update`): every object that moves on its own, then where it got to.
+    /// One tick of the world update: every object that moves on its own, then where it got to.
     void update(Duration elapsed)
     {
         unticked += elapsed;
@@ -1137,14 +1137,14 @@ final class Map : CombatWorld, GameObjectWorld
         return sleeping;
     }
 
-    /// `Map::CreatureRelocation`: an object moved; its cell follows, and who sees it once it has gone far enough.
+    /// An object moved; its cell follows, and who sees it once it has gone far enough.
     void objectRelocated(MapObject object)
     {
         const slot = objectSlot(object);
         if (slot == uint.max)
             return;
         const position = object.position;
-        // `Unit::OnRelocated` with `ScheduleAINotify`: at most once a second, as CMaNGOS.
+        // A creature notices and is noticed at most once a second.
         if (auto creature = cast(Creature) object)
             if (clockMs >= at(slot).noticeAt)
             {
@@ -1472,7 +1472,7 @@ final class Map : CombatWorld, GameObjectWorld
     {
         if (terrain is null || terrain.tile(x, y) is null)
             return invalidHeightValue;
-        enum ubyte allLiquids = 0x0F; // MAP_ALL_LIQUIDS
+        enum ubyte allLiquids = 0x0F; // every liquid type
         LiquidData liquid;
         if (terrain.liquidStatus(x, y, groundZ, allLiquids, liquid) == LiquidStatus.noWater)
             return groundZ;
@@ -1556,7 +1556,7 @@ final class Map : CombatWorld, GameObjectWorld
     }
 
     /// See `CombatWorld.inLineOfSight`: at eye height, through the vmaps; anything goes without terrain.
-    /// Whether nothing built stands between the two points exactly (`CollideInterface.CheckLOS`).
+    /// Whether nothing built stands between the two points exactly.
     bool lineOfSightBetween(Position a, Position b)
     {
         return terrain is null || terrain.isInLineOfSight(a.x, a.y, a.z, b.x, b.y, b.z);
@@ -1571,7 +1571,7 @@ final class Map : CombatWorld, GameObjectWorld
     /// Tests: water everywhere at this level (NaN: as the terrain says).
     float waterForTests = float.nan;
 
-    /// The water's surface at (x, y) near `z`, if there is water there (`TerrainInfo::IsInWater`);
+    /// The water's surface at (x, y) near `z`, if there is water there;
     /// without terrain (tests) everything is water at `z`.
     bool waterAt(float x, float y, float z, out float level)
     {
@@ -1585,7 +1585,7 @@ final class Map : CombatWorld, GameObjectWorld
             level = z;
             return true;
         }
-        enum ubyte allLiquids = 0x0F; // MAP_ALL_LIQUIDS
+        enum ubyte allLiquids = 0x0F; // every liquid type
         LiquidData liquid;
         if (terrain.liquidStatus(x, y, z, allLiquids, liquid) == LiquidStatus.noWater)
             return false;
@@ -1654,7 +1654,7 @@ final class Map : CombatWorld, GameObjectWorld
             each(object);
     }
 
-    /// Told when a creature's corpse goes (`RemoveCorpse`), to bring it back later; null: never comes back.
+    /// Told when a creature's corpse goes, to bring it back later; null: never comes back.
     void delegate(Creature creature) onCorpseRemoved;
 
     /// See `CombatWorld.corpseExpired`.
@@ -1691,7 +1691,7 @@ final class Map : CombatWorld, GameObjectWorld
     /// How far away a creature can notice a player at all: the widest aggro radius (`Detection` and 25 levels).
     enum float noticeDistance = 50;
 
-    /// `MoveInLineOfSight` for the creatures a player sees, when it has moved.
+    /// The creatures a player sees notice it, when it has moved (`CreatureAI.moveInLineOfSight`).
     private void playerNoticed(Inhabitant who, uint slot)
     {
         import dmangos.world.defines : UnitFlags;
@@ -1741,7 +1741,7 @@ final class Map : CombatWorld, GameObjectWorld
      */
     void delegate(Inhabitant who, Replica replica) onReplicaNoticing;
 
-    /// `MoveInLineOfSight` for the players who see a creature, when it has moved.
+    /// The players who see a creature are noticed by it, when it has moved.
     private void creatureNoticing(Creature creature, uint slot)
     {
         if (creature.ai is null || creature.ai.inCombat || creature.ai.evading || !creature.ai.mayNotice)
@@ -1780,7 +1780,7 @@ final class Map : CombatWorld, GameObjectWorld
         return slot == uint.max ? null : at(slot).player;
     }
 
-    /// `Map::Add`: puts a player on the map, and introduces it to everyone in sight.
+    /// Puts a player on the map, and introduces it to everyone in sight.
     void add(Inhabitant who)
     in (find(who.character.guid) is null, "a player is on a map once")
     {
@@ -1806,7 +1806,7 @@ final class Map : CombatWorld, GameObjectWorld
         replicatePlayer(who);
     }
 
-    /// `Map::Remove`: takes a player off the map; those who saw it are told to destroy it.
+    /// Takes a player off the map; those who saw it are told to destroy it.
     void remove(Inhabitant who)
     in (find(who.character.guid) !is null, "only a player on the map can leave it")
     {
@@ -1828,7 +1828,7 @@ final class Map : CombatWorld, GameObjectWorld
         dropEntity(slot);
     }
 
-    /// `Map::PlayerRelocation`: after a player moved. Updates its cell, and visibility if it moved far enough.
+    /// After a player moved: updates its cell, and visibility if it moved far enough.
     void relocated(Inhabitant who)
     in (find(who.character.guid) !is null)
     {
@@ -2129,7 +2129,7 @@ private:
         return true;
     }
 
-    /// `Player::UpdateVisibilityOf` for every player near `who`, both ways.
+    /// Who sees whom, for every player near `who`, both ways.
     void updateVisibility(Inhabitant who)
     {
         const guid = who.character.guid;
@@ -3107,7 +3107,7 @@ unittest
 }
 
 /**
- * `GridCleanUpDelay`: a cell no player has been near for the delay unloads with its objects; the
+ * A cell no player has been near for the unload delay unloads with its objects; the
  * cells near a player stay, and so does a cell holding what cannot simply go (a corpse).
  */
 unittest
@@ -3212,8 +3212,8 @@ unittest
         map.update(50.msecs);
 }
 
-/// Only a player's sight loads cells: a creature's or a script's search looks at what is loaded, as
-/// CMaNGOS's searchers do (`Cell::SetNoCreate`), so searches do not spread loading across the map.
+/// Only a player's sight loads cells: a creature's or a script's search looks at what is loaded,
+/// so searches do not spread loading across the map.
 unittest
 {
     ulong[] loaded;
@@ -3232,7 +3232,7 @@ unittest
     assert(loaded.length > 0 && map.cellLoaded(cellKeyAt(0, 0)), "a player's sight does");
 }
 
-/// Changes in the map's tick go out once, at its end (`Map::SendObjectUpdates`); outside it at once.
+/// Changes in the map's tick go out once, at its end; outside it at once.
 unittest
 {
     import core.time : msecs;

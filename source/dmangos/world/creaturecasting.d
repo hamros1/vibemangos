@@ -1,6 +1,6 @@
 /**
- * A creature's spells and script (CMaNGOS `UnitAI::DoCastSpellIfCan`, `Spell::prepare`/`cast` for a
- * creature caster, `CreatureEventAI`'s side of the AI), mixed into `dmangos.world.creatureai.CreatureAI`.
+ * A creature's spells and script: the creature as a caster, and the script's side of its AI, mixed
+ * into `dmangos.world.creatureai.CreatureAI`.
  *
  * A spell is cast at itself or at a player: refused while it casts another (unless the flags say
  * otherwise), out of range or mana, or on one that has its aura already when asked. A cast with a
@@ -46,16 +46,16 @@ mixin template CreatureCasting()
         ulong castTarget;
         int castTimer;                 // until it goes off
         const(SpellInfo)* nextSwing;   // a spell on its next swing
-        bool combatMovement_ = true;   // `UNIT_STAT_NO_COMBAT_MOVEMENT` off
-        bool rangedModeSet;            // `m_rangedMode`: its script keeps it at a distance to cast
-        bool rangedMode_;              // `m_currentRangedMode`: and it does now (not out of mana)
-        float chaseDistance_ = 0;      // `m_chaseDistance`
+        bool combatMovement_ = true;   // it chases its victim
+        bool rangedModeSet;            // its script keeps it at a distance to cast
+        bool rangedMode_;              // and it does now (not out of mana)
+        float chaseDistance_ = 0;      // how far from its victim it keeps
         int fleeTimer;                 // running in fear, for so long yet
-        int despawnTimer;              // `ForcedDespawn`: gone in so long (0: not)
-        bool meleeEnabled = true;      // `SetMeleeEnabled`
+        int despawnTimer;              // gone in so long (0: not)
+        bool meleeEnabled = true;      // it swings at its victim
     }
 
-    bool deathPrevention;              /// `SetDeathPrevention`: damage leaves it at 1 health
+    bool deathPrevention;              /// damage leaves it at 1 health
 
     /// What its casts and texts need of the world's data (every creature made in the world has it).
     void setLore(CreatureLore lore)
@@ -63,13 +63,13 @@ mixin template CreatureCasting()
         this.lore = lore;
     }
 
-    /// `CreatureEventAI`: the creature runs `events` (from `data`).
+    /// The creature runs `events` (from `data`) as its script.
     void setScript(const(EventAiEvent)[] events, const EventAiData data)
     {
         this.script = new EventAI(events, data);
     }
 
-    /// `SpellHit`: a player's spell hit it (its script hears of it).
+    /// A player's spell hit it (its script hears of it).
     void spellHitBy(ulong caster, uint spell, uint schoolMask, CombatWorld world)
     {
         world_ = world;
@@ -79,7 +79,7 @@ mixin template CreatureCasting()
         script.spellHit(this, caster, spell, schoolMask);
     }
 
-    /// `ReceiveEmote`: a player's text emote at it.
+    /// A player's text emote at it.
     void receivedEmote(ulong player, uint textEmote, CombatWorld world)
     {
         if (script is null)
@@ -113,7 +113,7 @@ mixin template CreatureCasting()
     // -----------------------------------------------------------------------
 
     /**
-     * `DoCastSpellIfCan`: casts `spell` at `target` (itself, or a player) as `flags`
+     * Casts `spell` at `target` (itself, or a player) as `flags`
      * (`castTriggered`, ...) allow; false if it could not.
      */
     bool castSpell(const(SpellInfo)* spell, ulong target, uint flags)
@@ -154,7 +154,7 @@ mixin template CreatureCasting()
                 return false;
             if (spell.casting.powerType == 0 && manaCost(spell) > me.values.get!UNIT_FIELD_POWER1)
             {
-                // `HandleSpellCastResult`: out of mana, it comes in to fight (unless told not to).
+                // Out of mana, it comes in to fight (unless told not to).
                 if (rangedMode_ && !(flags & castNoMeleeIfOom))
                     rangedMode_ = false;
                 return false;
@@ -203,7 +203,7 @@ mixin template CreatureCasting()
         go(spell, castTarget, true);
     }
 
-    /// `InterruptNonMeleeSpells`: the cast stops (`SMSG_SPELL_FAILURE` around).
+    /// The cast stops (`SMSG_SPELL_FAILURE` around).
     void interruptCast()
     {
         import dmangos.world.spellcast : spellFailurePacket, SpellCastResult;
@@ -216,21 +216,21 @@ mixin template CreatureCasting()
         casting_ = null;
     }
 
-    /// The spell's mana cost for it (`CalculatePowerCost`).
+    /// The spell's mana cost for it.
     private int manaCost(const(SpellInfo)* spell)
     {
         return powerCost(*spell, me.values.get!UNIT_FIELD_LEVEL, me.values.get!UNIT_FIELD_MAXPOWER1,
             me.values.get!UNIT_FIELD_MAXHEALTH, me.values.get!UNIT_FIELD_MAXPOWER1);
     }
 
-    /// `Spell::CheckRange`: within the spell's range of its target (and out of its minimum).
+    /// Within the spell's range of its target (and out of its minimum).
     private bool inRangeFor(const(SpellInfo)* spell, ulong target)
     {
         if (target == me.guid)
             return true;
         const r = range(*spell, lore.clientData);
         const d = distanceTo(target);
-        // Its combat reach and the target's count towards the maximum (`GetCombatDistance`).
+        // Its combat reach and the target's count towards the maximum.
         return d <= r[1] + me.fighter.combatReach + 1.5f && (r[0] == 0 || d >= r[0]);
     }
 
@@ -261,7 +261,7 @@ mixin template CreatureCasting()
         return t;
     }
 
-    /// `ImplicitTarget`s the creature resolves: the caster, enemies in an area or cone, or the target.
+    /// The implicit targets the creature resolves: the caster, enemies in an area or cone, or the target.
     private ulong[] targetsFor(const(SpellInfo)* spell, size_t i, ulong target)
     {
         enum uint self = 1, enemyInArea = 15, enemyInAreaInstant = 16, casterCoordinates = 22, frontalCone = 24;
@@ -292,7 +292,7 @@ mixin template CreatureCasting()
     }
 
     /**
-     * `Spell::cast`: the spell goes off (`SMSG_SPELL_GO` with who it hit and missed) and its effects
+     * The spell goes off (`SMSG_SPELL_GO` with who it hit and missed) and its effects
      * happen to each target; its mana is spent.
      */
     private void go(const(SpellInfo)* spell, ulong target, bool takeMana)
@@ -327,7 +327,7 @@ mixin template CreatureCasting()
             if (guid != me.guid)
                 if (auto other = world_.unit(guid))
                 {
-                    // Only what it may attack rolls (`IsFriendlyTo`: a heal on a friend never misses).
+                    // Only what it may attack rolls (a heal on a friend never misses).
                     if (!canAttack(relating, other.relating, me.client))
                     {
                         results ~= TargetResult(guid, miss);
@@ -419,7 +419,7 @@ mixin template CreatureCasting()
         world_.flushCreature(me);
     }
 
-    /// A school's damage to a player (`DealSpellDamage`), armor taking some of physical; -1: already through armor.
+    /// A school's damage to a player, armor taking some of physical; -1: already through armor.
     private void spellDamageTo(const(SpellInfo)* spell, ulong guid, uint damage, int school)
     {
         auto other = world_.unit(guid);
@@ -487,7 +487,7 @@ mixin template CreatureCasting()
     }
 
     // -----------------------------------------------------------------------
-    // Fleeing (`DoFlee`, `TimedFleeingMovementGenerator`)
+    // Fleeing
     // -----------------------------------------------------------------------
 
     /// Running in fear from its victim: away, and again when it gets there; it does not fight meanwhile.
@@ -557,7 +557,7 @@ mixin template CreatureCasting()
         return other && other.castingSpell;
     }
 
-    /// ditto: `MostHPMissingInRangeCheck` over itself and those near it in combat that are not its enemies.
+    /// ditto: the one most hurt among itself and those near it in combat that are not its enemies.
     ulong lowestHpFriendly(float radius, uint deficit, bool percent)
     {
         ulong best;
@@ -566,7 +566,7 @@ mixin template CreatureCasting()
         {
             if (!other.alive || other.ai is null || !other.ai.inCombat)
                 continue;
-            if (other !is me && isEnemy(relating, other.ai.relating, me.client)) // `!IsHostileTo`
+            if (other !is me && isEnemy(relating, other.ai.relating, me.client)) // not hostile to it
                 continue;
             const maximum = other.values.get!UNIT_FIELD_MAXHEALTH, health = other.values.get!UNIT_FIELD_HEALTH;
             const missing = maximum - health;
@@ -650,7 +650,7 @@ mixin template CreatureCasting()
         world_.flushCreature(me);
     }
 
-    /// ditto: for every player fighting it (`all`, `GroupEventHappens` on its threat list), or one.
+    /// ditto: for every player fighting it (`all`: those on its threat list), or one.
     void scriptQuestEvent(uint quest, ulong player, bool all)
     {
         if (!all)
@@ -672,8 +672,8 @@ mixin template CreatureCasting()
             other.killCreditFrom(entry, me.guid);
     }
 
-    /// ditto: summoned for a while out of combat (`TEMPSPAWN_TIMED_OOC_OR_DEAD_DESPAWN`), or until
-    /// out of combat at all (`TEMPSPAWN_TIMED_OOC_DESPAWN` with no time).
+    /// ditto: summoned for a while out of combat, or until its corpse goes (`timedOutOfCombatOrDead`), or until
+    /// out of combat at all (`timedOutOfCombat` with no time).
     bool scriptSummon(uint entry, ulong target, uint durationMs, uint spot)
     {
         import dmangos.world.creature : TempSpawnType;
@@ -706,7 +706,7 @@ mixin template CreatureCasting()
                 other.ai.aiEventFrom(type, me, invoker, world_);
     }
 
-    /// `ReceiveAIEvent`: another creature's AI event, for its script.
+    /// Another creature's AI event, for its script.
     void aiEventFrom(uint type, Creature sender, ulong invoker, CombatWorld world)
     {
         if (script is null)
@@ -735,7 +735,7 @@ mixin template CreatureCasting()
         return victim ? distanceTo(victim) : float.infinity;
     }
 
-    /// ditto: `GetTargetByType` over its threat list.
+    /// ditto: by the target type, its threat list among the choices.
     ulong targetFor(int type, ulong invoker)
     {
         import std.algorithm.sorting : sort;
@@ -780,7 +780,7 @@ mixin template CreatureCasting()
     }
 
     /**
-     * ditto: `DoDisplayText` — the text said, yelled or emoted around it (as far as each is heard),
+     * ditto: the text said, yelled or emoted around it (as far as each is heard),
      * or whispered to `target`; its emote with it.
      */
     void scriptText(uint id, ulong target)
@@ -791,7 +791,7 @@ mixin template CreatureCasting()
         speak(text, target);
     }
 
-    /// `DoDisplayText`: `text` said, yelled or emoted as its type says (whispered to `target`).
+    /// `text` said, yelled or emoted as its type says (whispered to `target`).
     void speak(const(BroadcastText)* text, ulong target)
     {
         ChatType type;
@@ -830,7 +830,7 @@ mixin template CreatureCasting()
             scriptEmote(text.emotes[0].emote);
     }
 
-    /// ditto: `HandleEmote`
+    /// ditto
     void scriptEmote(uint emote)
     {
         ByteWriter w;
@@ -839,14 +839,14 @@ mixin template CreatureCasting()
         world_.sendToObservers(me.guid, Opcode.SMSG_EMOTE, w.data);
     }
 
-    /// ditto: `SetStandState`
+    /// ditto
     void scriptStandState(uint state)
     {
         me.values.setByte!UNIT_FIELD_BYTES_1(0, cast(ubyte) state);
         world_.flushCreature(me);
     }
 
-    /// ditto: `DoFlee` — in fear for `CreatureFamilyFleeDelay` (7 seconds).
+    /// ditto: in fear for 7 seconds.
     bool scriptFlee()
     {
         if (!victim || fleeTimer > 0)
@@ -860,7 +860,7 @@ mixin template CreatureCasting()
         return true;
     }
 
-    /// ditto: `CallForHelp` — the allies within `radius` yards that may help join in now.
+    /// ditto: the allies within `radius` yards that may help join in now.
     void scriptCallForHelp(float radius)
     {
         auto enemy = victim ? world_.unit(victim) : UnitRef.init;
@@ -885,7 +885,7 @@ mixin template CreatureCasting()
             attackStart(other, world_);
     }
 
-    /// ditto: `SetCombatMovement` — it stops where it is, or chases again.
+    /// ditto: it stops where it is, or chases again.
     void scriptCombatMovement(bool on)
     {
         combatMovement_ = on;
@@ -893,7 +893,7 @@ mixin template CreatureCasting()
             stopMoving(me, world_);
     }
 
-    /// ditto: `SetRangedMode` — it keeps `distance` yards from its victim to cast.
+    /// ditto: it keeps `distance` yards from its victim to cast.
     void scriptRangedMode(bool on, float distance)
     {
         rangedModeSet = rangedMode_ = on;

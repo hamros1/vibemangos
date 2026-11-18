@@ -1,6 +1,5 @@
 /**
- * The honor week (CMaNGOS-classic's `World::ServerMaintenanceStart`, `ObjectMgr::FlushRankPoints`,
- * `DistributeRankPoints` and `MaNGOS::Honor`'s standing formulas): once a week, on the maintenance
+ * The honor week and its standing formulas: once a week, on the maintenance
  * day, each finished week's honor becomes rank points.
  *
  * For each faction, the players with at least `min_honor_kills` honorable kills that week stand in
@@ -8,30 +7,30 @@
  * rank points the week earns (`rankPointEarning`), and their rating becomes the old one decayed by a
  * fifth plus that (`decayedRankPoints`). Last week's place is the `honor_standing` column.
  *
- * Unlike CMaNGOS, a week is reckoned once and its earning counted once: CMaNGOS stores the decayed
- * rating plus the earning again, and works out which weeks to reckon from what rows are left, so a
- * restart can reckon one twice. Here the weeks reckoned are those since the last maintenance
- * (`NextMaintenanceDate` minus a week). Rows of weeks before last week are then folded into the stored
+ * A week is reckoned once and its earning counted once, so a restart cannot reckon one twice: the
+ * weeks reckoned are those since the last maintenance (`saved_variables.NextMaintenanceDate` minus a
+ * week), not those worked out from what rows are left, and the stored rating is the decayed one plus
+ * the earning, once. Rows of weeks before last week are then folded into the stored
  * kill totals and deleted; last week's stay, for its fields. Online players load their honor again
- * after (CMaNGOS saves theirs over the new values).
+ * after, so their old values are not saved over the new ones.
  */
 module dmangos.world.honorweek;
 
 import dmangos.world.honor;
 
-/// `MaNGOS::Honor::BRK`: the standing's breakpoints, as fractions of the list (the top place first).
+/// The standing's breakpoints, as fractions of the list (the top place first).
 private immutable float[14] breakpoints = [1.000, 0.858, 0.715, 0.587, 0.477, 0.377, 0.287, 0.207, 0.137, 0.077,
     0.037, 0.017, 0.007, 0.002];
 
 /// What `standingScores` works out of a week's standing.
 struct StandingScores
 {
-    uint[14] places;    /// `BRK`: the place (from 1) at each breakpoint
-    float[15] honor;    /// `FX`: the honor at each breakpoint
-    float[15] points;   /// `FY`: the rank points it earns
+    uint[14] places;    /// the place (from 1) at each breakpoint
+    float[15] honor;    /// the honor at each breakpoint
+    float[15] points;   /// the rank points it earns
 }
 
-/// `ObjectMgr::GenerateScores`: the breakpoints of a faction's week, its honors in order (most first).
+/// The breakpoints of a faction's week, its honors in order (most first).
 StandingScores standingScores(const(float)[] honors) pure nothrow @safe
 {
     import std.math : floor;
@@ -62,7 +61,7 @@ StandingScores standingScores(const(float)[] honors) pure nothrow @safe
     return s;
 }
 
-/// `ObjectMgr::CalculateRpEarning`: the rank points `honor` earns in the week of `s`.
+/// The rank points `honor` earns in the week of `s`.
 float rankPointEarning(const ref StandingScores s, float honor) pure nothrow @nogc @safe
 {
     size_t i = 0;
@@ -76,7 +75,7 @@ float rankPointEarning(const ref StandingScores s, float honor) pure nothrow @no
     return (s.points[i] - s.points[i - 1]) * (honor - s.honor[i - 1]) / span + s.points[i - 1];
 }
 
-/// `ObjectMgr::CalculateRpDecay`: last week's rank points, a fifth gone, the week's earning added.
+/// Last week's rank points, a fifth gone, the week's earning added.
 float decayedRankPoints(float earning, float rankPoints) pure nothrow @nogc @safe
 {
     import std.math : floor;
@@ -105,7 +104,7 @@ unittest
     assert(decayedRankPoints(0, 60_000) == 57_500, "at most 2500 lost a week");
 }
 
-/// One player's week (`LoadStandingList`'s row): honor, kills, side and rating.
+/// One player's week: honor, kills, side and rating.
 struct HonorWeekEntry
 {
     uint guid;
@@ -116,7 +115,7 @@ struct HonorWeekEntry
 }
 
 /**
- * Reckons the finished weeks since the last maintenance (`ServerMaintenanceStart`), if the maintenance
+ * Reckons the finished weeks since the last maintenance, if the maintenance
  * day has come: rank points, last week's standing, old rows folded. Returns whether it ran.
  */
 bool runHonorMaintenance(WorldContext context)
@@ -160,7 +159,7 @@ bool runHonorMaintenance(WorldContext context)
                 && a.guid < b.guid));
             float[] honors;
             foreach (ref e; list)
-                honors ~= cast(uint) e.honor; // read as whole points, as CMaNGOS does
+                honors ~= cast(uint) e.honor; // read as whole points
             const scores = standingScores(honors);
             foreach (i, ref e; list)
             {

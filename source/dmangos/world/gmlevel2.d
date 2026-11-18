@@ -1,8 +1,8 @@
 /**
- * ArcEmu's `Level2.cpp` handlers that this server's systems support:
- * `.server saveall`, `.character repairitems`, `.demorph`, `.mount`,
+ * The level 2 GM commands this server's systems support (their permissions and messages match
+ * ArcEmu 2.4.3's exactly): `.server saveall`, `.character repairitems`, `.demorph`, `.mount`,
  * `.invincible`, `.npc flags`, `.npc say` and `.npc yell`, `.kill`, `.killplr`, `.reviveplr`,
- * `.castspell`, `.castspellne` and `.castself`. Mixed into
+ * `.castspell`, `.castspellne` and `.castself`, and more. Mixed into
  * `dmangos.world.character.Character`.
  */
 module dmangos.world.gmlevel2;
@@ -21,7 +21,7 @@ mixin template Level2Commands()
     import dmangos.world.player : DeathState;
     import dmangos.world.spells : SpellInfo;
 
-    package bool invincible; // `.invincible` (Player::bInvincible): creatures do not attack it
+    package bool invincible; // `.invincible`: creatures do not attack it
 
 private:
 
@@ -45,13 +45,13 @@ private:
         return true;
     }
 
-    /// ArcEmu's `GetSelectedGo`: the game object selected, if it is still on the map.
+    /// The game object selected, if it is still on the map.
     GameObject selectedGameObject()
     {
         return selectedGo ? cast(GameObject) map.findObject(selectedGo) : null;
     }
 
-    /// ArcEmu's `.npc vendoradditem <item> <amount> [extended cost]`: a ware for the selected vendor.
+    /// `.npc vendoradditem <item> <amount> [extended cost]`: a ware for the selected vendor.
     bool handleItemCommand(uint item, int amount = -1, uint costId = 0)
     {
         import dmangos.world.creature : Creature;
@@ -84,7 +84,7 @@ private:
         string text;
         if (const proto = item in context.data.items)
         {
-            // CMaNGOS sells an item by its own BuyCount; the amount is ArcEmu's and not kept.
+            // The vendor sells the item by its own `BuyCount`; the amount is not kept.
             auto list = &context.data.npcs.vendors.require(entry, null);
             const slot = cast(uint) list.length;
             *list ~= VendorItem(item, 0, 0, slot, 0);
@@ -98,7 +98,7 @@ private:
         return true;
     }
 
-    /// ArcEmu's `.npc vendorremoveitem <item>`.
+    /// `.npc vendorremoveitem <item>`.
     bool handleItemRemoveCommand(uint item)
     {
         import std.algorithm.mutation : remove;
@@ -138,7 +138,7 @@ private:
         return true;
     }
 
-    /// ArcEmu's `.npc select`: the creature nearest on the ground among those in sight becomes the selection.
+    /// `.npc select`: the creature nearest on the ground among those in sight becomes the selection.
     bool handleNpcSelectCommand()
     {
         import dmangos.world.creature : Creature;
@@ -181,7 +181,7 @@ private:
             return sqrt((p.x - me.x) ^^ 2 + (p.y - me.y) ^^ 2 + (p.z - me.z) ^^ 2);
         }
 
-        GameObject[] seen; // ArcEmu's in-range set: the objects this player sees
+        GameObject[] seen; // the objects this player sees
         foreach (o; map.objectsNear(me, context.config.visibilityDistance))
             if (auto go = cast(GameObject) o)
                 if (map.seesObject(player.guid, go.guid))
@@ -377,7 +377,7 @@ private:
         go.values.set!OBJECT_FIELD_SCALE_X(scale);
         blueSystemMessage(format!"Set scale to %.3f"(scale));
         gmLog(format!"set scale on gameobject %s to %.3f, entry %u"(go.template_.name, scale, go.spawn.entry));
-        // Made anew for the clients to see (CMaNGOS's `gameobject` has no size: it is not saved).
+        // Made anew for the clients to see (the `gameobject` table has no size: it is not saved).
         map.removeObject(go.guid);
         map.addObject(go);
         return true;
@@ -465,7 +465,7 @@ private:
         auto creature = getSelectedCreature(false);
         if (creature is null)
             return true;
-        // Its fight forgotten (`WipeHateList`), back to its spawn point.
+        // Its fight forgotten, back to its spawn point.
         if (creature.ai !is null && creature.ai.inCombat)
         {
             creature.ai.bind(map);
@@ -480,7 +480,7 @@ private:
         return true;
     }
 
-    /// `AIInterface::MoveTo`: a walk to `at`, then what it did before.
+    /// A walk to `at`, then what it did before.
     void npcWalkTo(Creature creature, Position at)
     {
         import dmangos.vmap.math : Vector3;
@@ -503,7 +503,7 @@ private:
             systemMessage("Select a player or yourself first.");
             return true;
         }
-        if (plr.player.reputation !is null) // `_InitialReputation`: every standing back to its start
+        if (plr.player.reputation !is null) // every standing back to its start
         {
             plr.player.reputation.initialize();
             plr.saveReputation();
@@ -518,7 +518,7 @@ private:
         auto plr = getSelectedChar(false);
         if (plr is null)
             return false;
-        foreach (item; plr.player.inventory.all()) // RepairItem2: back to full durability
+        foreach (item; plr.player.inventory.all()) // back to full durability
         {
             if (item.durability == item.maxDurability)
                 continue;
@@ -537,7 +537,7 @@ private:
         auto target = getSelectedChar(true);
         if (target is null)
             target = this;
-        auto values = &target.player.values; // Unit::DeMorph
+        auto values = &target.player.values; // back to its own model
         values.set!UNIT_FIELD_DISPLAYID(values.get!UNIT_FIELD_NATIVEDISPLAYID);
         target.flushPlayerChanges();
         return true;
@@ -574,7 +574,7 @@ private:
     }
 
     // -----------------------------------------------------------------------
-    // Killing, reviving and casting (`HandleKillCommand`, `HandleCastSpellCommand`, ...)
+    // Killing, reviving and casting
     // -----------------------------------------------------------------------
 
     bool handleKillCommand()
@@ -593,7 +593,7 @@ private:
         if (plr !is null)
         {
             gmLog("used kill command on PLAYER " ~ plr.player.data.name);
-            // `KillPlayer` (not `DealDamage`: god mode does not stop it).
+            // Killed outright, not by damage: god mode does not stop it.
             plr.killedByGm(player.data.name);
             return true;
         }
@@ -778,7 +778,7 @@ private:
             message = "Select a player or yourself first.";
         if (chr !is null && chr !is this)
             gmLog("toggled invincibility on " ~ chr.player.data.name);
-        systemMessage(message.length > 99 ? message[0 .. 99] : message); // ArcEmu's 100-byte buffer
+        systemMessage(message.length > 99 ? message[0 .. 99] : message); // at most 99 bytes
         return true;
     }
 
@@ -798,7 +798,7 @@ private:
         }
         creature.values.set!UNIT_NPC_FLAGS(flags);
         map.flushObjectChanges(creature);
-        // ArcEmu saves its spawn row; CMaNGOS keeps npc flags in creature_template, which stays as it is.
+        // Not saved: npc flags are kept in creature_template, which stays as it is.
         systemMessage("Value saved, you may need to rejoin or clean your client cache.");
         gmLog(format!"changed npc flags of creature %u [%s] to %u"(creature.template_.entry, creature.template_.name,
             flags));

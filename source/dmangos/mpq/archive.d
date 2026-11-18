@@ -391,7 +391,7 @@ version (unittest)
         const(ubyte)[] imploded; /// already PKWare-compressed data, stored with MPQ_FILE_IMPLODE as one unit
     }
 
-    /// Builds an MPQ archive the way Blizzard's tools lay them out, with zlib for compressed files.
+    /// Builds an MPQ archive laid out as the client's own archives are, with zlib for compressed files.
     ubyte[] buildArchive(const(TestFile)[] files, ushort sectorShift = 3)
     {
         import std.bitmanip : nativeToLittleEndian;

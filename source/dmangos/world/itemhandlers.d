@@ -1,14 +1,13 @@
 /**
- * The client's item requests (CMaNGOS `Server/ItemHandler.cpp`, the repairs of `NPCHandler.cpp`,
- * `Player::BuyItemFromVendor`, `DurabilityRepair` and `SendEquipError`): moving, splitting,
+ * The client's item requests, with vendor purchases, repairs and equip errors: moving, splitting,
  * equipping, destroying and banking items, setting ammo and buying bank bag slots; buying from
  * vendors, selling to them, buying back and repairing. Mixed into
  * `dmangos.world.character.Character`; the rules themselves are `dmangos.world.inventory`'s.
  *
  * Each request ends with `flushInventory`: the client is sent the items and fields that changed,
  * and the changed `character_inventory` and `item_instance` rows are saved at once, with the money
- * that paid for them. CMaNGOS saves them with the character, every few minutes and at logout;
- * saving each change keeps a crash from undoing a purchase or bringing a sold item back.
+ * that paid for them. Saving each change at once, rather than with the character every few minutes,
+ * keeps a crash from undoing a purchase or bringing a sold item back.
  *
  * Prices have the reputation's discount and the honor rank's.
  */
@@ -43,7 +42,7 @@ private:
         return player.inventory;
     }
 
-    /// `Player::SendEquipError`
+    /// Sends `SMSG_INVENTORY_CHANGE_FAILURE` for an error; `ok` sends nothing.
     void sendEquipError(const EquipError error)
     {
         if (!error)
@@ -66,19 +65,19 @@ private:
         sendEquipError(EquipError(result, item, other, bagSlot));
     }
 
-    /// `Player::SendBuyError`
+    /// Sends `SMSG_BUY_FAILED`.
     void sendBuyError(BuyResult result, const Npc vendor, size_t vendorSlot)
     {
         send(ServerBuyFailed(vendor is null ? 0 : vendor.guid, cast(uint) vendorSlot + 1, result));
     }
 
-    /// `Player::SendSellError`
+    /// Sends `SMSG_SELL_ITEM` with an error.
     void sendSellError(SellResult result, const Npc vendor, ulong item)
     {
         send(ServerSellItem(vendor is null ? 0 : vendor.guid, item, result));
     }
 
-    /// `Player::SendNewItem`: "You receive item: ...". `received`: from an NPC; `created`: made.
+    /// "You receive item: ...". `received`: from an NPC; `created`: made.
     void sendNewItem(const Item item, uint count, bool received, bool created)
     {
         send(ServerItemPushResult(player.guid, received, created, 1, item.bagSlot,
@@ -87,7 +86,7 @@ private:
     }
 
     /**
-     * Sends what the request changed and saves it; see the module documentation. As in CMaNGOS, one
+     * Sends what the request changed and saves it; see the module documentation. One
      * update carries it all: new and changed items, then the player's fields that point at them, then
      * the items gone.
      */
@@ -106,7 +105,7 @@ private:
             sendUpdate(update);
         const changes = inventory.takeChanges();
         if (changes.length)
-            questItemsChanged(); // `ItemAddedQuestCheck`, `ItemRemovedQuestCheck`
+            questItemsChanged(); // quest objectives that count items
         flushPlayerChanges(false);
         if (changes.length || moneyChanged)
             context.database.saveInventory(player.data.guid, player.money, player.values[PLAYER_BYTES_2], changes);
@@ -116,7 +115,7 @@ private:
     // Moving items
     // -----------------------------------------------------------------------
 
-    /// `WorldSession::HandleSplitItemOpcode`
+    /// Moves some of a stack to another slot.
     @Handles(Opcode.CMSG_SPLIT_ITEM, WorldState.inWorld)
     void handleSplitItem(const ClientSplitItem request)
     {
@@ -131,7 +130,7 @@ private:
         flushInventory();
     }
 
-    /// `WorldSession::HandleSwapInvItemOpcode`: between two of the character's own slots.
+    /// Between two of the character's own slots.
     @Handles(Opcode.CMSG_SWAP_INV_ITEM, WorldState.inWorld)
     void handleSwapInvItem(const ClientSwapInvItem request)
     {
@@ -146,7 +145,7 @@ private:
         flushInventory();
     }
 
-    /// `WorldSession::HandleSwapItem`
+    /// Moves an item between any two slots, bags included.
     @Handles(Opcode.CMSG_SWAP_ITEM, WorldState.inWorld)
     void handleSwapItem(const ClientSwapItem request)
     {
@@ -161,7 +160,7 @@ private:
         flushInventory();
     }
 
-    /// `WorldSession::HandleAutoEquipItemSlotOpcode`: an item dragged onto an equipment slot.
+    /// An item dragged onto an equipment slot.
     @Handles(Opcode.CMSG_AUTOEQUIP_ITEM_SLOT, WorldState.inWorld)
     void handleAutoEquipItemSlot(const ClientAutoEquipItemSlot request)
     {
@@ -175,7 +174,7 @@ private:
         flushInventory();
     }
 
-    /// `WorldSession::HandleAutoEquipItemOpcode`: right-clicking an item to wear it.
+    /// Right-clicking an item to wear it.
     @Handles(Opcode.CMSG_AUTOEQUIP_ITEM, WorldState.inWorld)
     void handleAutoEquipItem(const ClientItemPos request)
     {
@@ -208,7 +207,7 @@ private:
             InventoryResult result;
             if (isInventoryPos(src) || isBankPos(src))
             {
-                // CMaNGOS keeps the positions a failed try found; each try starts afresh here.
+                // Each try starts afresh, without the positions a failed try found.
                 const ubyte[2][3] tries = [[request.bag, request.slot], [request.bag, nullSlot], [nullBag, nullSlot]];
                 foreach (attempt; tries)
                 {
@@ -242,7 +241,7 @@ private:
             send(ServerOpenContainer(source.fullGuid));
     }
 
-    /// `WorldSession::HandleDestroyItemOpcode`
+    /// Destroys an item, or `count` of its stack.
     @Handles(Opcode.CMSG_DESTROYITEM, WorldState.inWorld)
     void handleDestroyItem(const ClientDestroyItem request)
     {
@@ -265,7 +264,7 @@ private:
         flushInventory();
     }
 
-    /// `WorldSession::HandleAutoStoreBagItemOpcode`: an item dropped onto a bag.
+    /// An item dropped onto a bag.
     @Handles(Opcode.CMSG_AUTOSTORE_BAG_ITEM, WorldState.inWorld)
     void handleAutoStoreBagItem(const ClientAutoStoreBagItem request)
     {
@@ -289,7 +288,7 @@ private:
         flushInventory();
     }
 
-    /// `WorldSession::HandleAutoBankItemOpcode`: right-clicking a carried item at the bank.
+    /// Right-clicking a carried item at the bank.
     @Handles(Opcode.CMSG_AUTOBANK_ITEM, WorldState.inWorld)
     void handleAutoBankItem(const ClientItemPos request)
     {
@@ -307,7 +306,7 @@ private:
         flushInventory();
     }
 
-    /// `WorldSession::HandleAutoStoreBankItemOpcode`: right-clicking a banked item, or a carried one.
+    /// Right-clicking a banked item, or a carried one.
     @Handles(Opcode.CMSG_AUTOSTORE_BANK_ITEM, WorldState.inWorld)
     void handleAutoStoreBankItem(const ClientItemPos request)
     {
@@ -326,7 +325,7 @@ private:
         flushInventory();
     }
 
-    /// `WorldSession::HandleSetAmmoOpcode` with `Player::SetAmmo` and `RemoveAmmo`.
+    /// Sets the ammo the character shoots (0: none).
     @Handles(Opcode.CMSG_SET_AMMO, WorldState.inWorld)
     void handleSetAmmo(const ClientSetAmmo request)
     {
@@ -345,11 +344,11 @@ private:
         flushPlayerChanges();
     }
 
-    /// `WorldSession::HandleBuyBankSlotOpcode`
+    /// Buys the next bank bag slot.
     @Handles(Opcode.CMSG_BUY_BANK_SLOT, WorldState.inWorld)
     void handleBuyBankSlot(const ClientNpcGuid request)
     {
-        // CheckBanker. The player's own guid stands for CMaNGOS's `.bank` command, which ArcEmu has not.
+        // The banker must be near. No GM command opens the bank from afar, so the player's own guid is not accepted.
         if (interactableNpc(request.guid, NpcFlag.banker) is null)
             return;
         const slot = inventory.bankBagSlots + 1;
@@ -369,7 +368,7 @@ private:
     // Vendors
     // -----------------------------------------------------------------------
 
-    /// `WorldSession::HandleSellItemOpcode`
+    /// Sells an item, or `count` of its stack, to a vendor; it waits in a buyback slot.
     @Handles(Opcode.CMSG_SELL_ITEM, WorldState.inWorld)
     void handleSellItem(const ClientSellItem request)
     {
@@ -415,7 +414,7 @@ private:
         flushInventory(true);
     }
 
-    /// `WorldSession::HandleBuybackItem`
+    /// Buys back an item sold.
     @Handles(Opcode.CMSG_BUYBACK_ITEM, WorldState.inWorld)
     void handleBuybackItem(const ClientBuybackItem request)
     {
@@ -438,14 +437,14 @@ private:
         flushInventory(true);
     }
 
-    /// `WorldSession::HandleBuyItemOpcode`: into the first place that holds it.
+    /// Buys into the first place that holds it.
     @Handles(Opcode.CMSG_BUY_ITEM, WorldState.inWorld)
     void handleBuyItem(const ClientBuyItem request)
     {
         buyItemFromVendor(request.vendor, request.item, request.count, nullBag, nullSlot);
     }
 
-    /// `WorldSession::HandleBuyItemInSlotOpcode`: dragged from the vendor into a slot.
+    /// Buys an item dragged from the vendor into a slot.
     @Handles(Opcode.CMSG_BUY_ITEM_IN_SLOT, WorldState.inWorld)
     void handleBuyItemInSlot(const ClientBuyItemInSlot request)
     {
@@ -477,7 +476,7 @@ private:
     }
 
     /**
-     * `Player::BuyItemFromVendor`: `count` times the item's buy count, into `bag` and `slot` if given.
+     * Buys `count` times the item's buy count, into `bag` and `slot` if given.
      * A limited item of a vendor another node simulates is reserved there first, and the purchase goes
      * on when the answer comes (`reserved`); stock it reserved but did not use goes back.
      */
@@ -533,7 +532,7 @@ private:
         if (ware.maxCount != 0 && !reserved.held
             && vendor.vendorItemCount(entry, ware.maxCount, ware.incrTime, proto.buyCount, now) < totalCount)
             return sendBuyError(BuyResult.itemAlreadySold, vendor, vendorSlot);
-        // The reputation it needs, and the honor rank (`RANK_REQUIRE`: the highest reached, and the level too).
+        // The reputation it needs, and the honor rank (the highest reached, and the level too).
         if (proto.requiredReputationFaction && player.reputation !is null
             && player.reputation.rankWith(proto.requiredReputationFaction) < proto.requiredReputationRank)
             return sendBuyError(BuyResult.reputationRequired, vendor, vendorSlot);
@@ -584,7 +583,7 @@ private:
     // Repairs
     // -----------------------------------------------------------------------
 
-    /// `WorldSession::HandleRepairItemOpcode`: one item, or everything carried and worn.
+    /// Repairs one item, or everything carried and worn.
     @Handles(Opcode.CMSG_REPAIR_ITEM, WorldState.inWorld)
     void handleRepairItem(const ClientRepairItem request)
     {
@@ -603,7 +602,7 @@ private:
         flushInventory(true);
     }
 
-    /// `Player::DurabilityRepairAll`: worn, in the backpack, the bags themselves and what is in them.
+    /// Repairs what is worn, in the backpack, the bags themselves and what is in them.
     void durabilityRepairAll(bool cost, float discount)
     {
         foreach (ubyte i; 0 .. inventorySlotItemEnd)
@@ -613,7 +612,7 @@ private:
                 durabilityRepair(itemPos(bag, i), cost, discount);
     }
 
-    /// `Player::DurabilityRepair`: back to full durability, paid for if `cost` and the player has the money.
+    /// Back to full durability, paid for if `cost` and the player has the money.
     void durabilityRepair(ushort pos, bool cost, float discount)
     {
         auto item = inventory[pos];

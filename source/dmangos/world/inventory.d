@@ -1,23 +1,21 @@
 /**
- * A character's items: the item objects, where they are, and every rule for moving them (CMaNGOS
- * `Entities/Item.cpp`, `Entities/Bag.cpp` and the inventory half of `Entities/Player.cpp`).
+ * A character's items: the item objects and bags, where they are, and every rule for moving them.
  *
- * `Inventory` is CMaNGOS's `Player::m_items` with the functions that check and change it, ported
- * one for one: `CanStoreItem`, `CanBankItem`, `CanEquipItem`, `CanUnequipItem`, `CanUseItem`,
- * `StoreItem`, `EquipItem`, `RemoveItem`, `DestroyItem`, `DestroyItemCount`, `SplitItem`,
- * `SwapItem`, the buyback slots and `DurabilityRepair`. Character creation and players in the world
+ * `Inventory` holds the character's slots with the functions that check and change them: storing,
+ * banking, equipping, unequipping and using items, removing, destroying, splitting and swapping them,
+ * the buyback slots and repairs. Character creation and players in the world
  * both use it; what it needs to know about its owner (level, skills, spells, ...) it asks through
  * `InventoryOwner`.
  *
- * Positions are CMaNGOS's: a `ushort` holding the bag in the high byte (`inventorySlotBag0` for the
+ * Positions are a `ushort` holding the bag in the high byte (`inventorySlotBag0` for the
  * character's own slots, else the slot of an equipped bag) and the slot in the low byte.
  *
  * Changes are kept for the two who need them: the client (items to create, items whose fields
- * changed, items to forget: `writeUpdates`) and the database (`Item::SetState` and the update queue
- * of `Player::_SaveInventory`: `takeChanges`). The owner's own fields (the slot guids, the visible
+ * changed, items to forget: `writeUpdates`) and the database (each item's save state and the
+ * save queue: `takeChanges`). The owner's own fields (the slot guids, the visible
  * items, the buyback prices) are written into the `UpdateValues` given to the constructor.
  *
- * Not ported, because the systems do not exist yet: loot held in items, item enchantments and
+ * Not handled yet, because the systems do not exist: loot held in items, item enchantments and
  * their durations, item sets, item spells and cooldowns, random properties, reputation (every
  * faction counts as neutral) and honor ranks (none), and mailing an item that has no room.
  */
@@ -36,7 +34,7 @@ import dmangos.world.updatefields;
 import dmangos.world.worlddata : ItemTemplate, WorldData;
 
 // ---------------------------------------------------------------------------
-// Constants (ItemPrototype.h, Item.h, SharedDefines.h)
+// Constants
 // ---------------------------------------------------------------------------
 
 /// Item sub-classes, bag families, bindings and flags the inventory rules read.
@@ -59,10 +57,10 @@ enum : uint
     skillFistWeapons = 473,
 }
 
-/// `LevelUpKeyringSize`: keyring slots the client shows, by level / 10.
+/// Keyring slots the client shows, by level / 10.
 private immutable uint[7] keyringSizeByLevel = [4, 4, 4, 4, 8, 12, 12];
 
-/// `InventoryResult`: the client's equip errors (`SMSG_INVENTORY_CHANGE_FAILURE`); values are on the wire.
+/// The client's equip errors (`SMSG_INVENTORY_CHANGE_FAILURE`); values are on the wire.
 enum InventoryResult : ubyte
 {
     ok,
@@ -137,7 +135,7 @@ enum InventoryResult : ubyte
 static assert(InventoryResult.inventoryFull == 50 && InventoryResult.none == 59
     && InventoryResult.lootCantLootThatNow == 66, "EQUIP_ERR_* values");
 
-/// `BuyResult` (`SMSG_BUY_FAILED`)
+/// Why a purchase failed (`SMSG_BUY_FAILED`).
 enum BuyResult : ubyte
 {
     cantFindItem = 0,
@@ -152,7 +150,7 @@ enum BuyResult : ubyte
     reputationRequired = 12,
 }
 
-/// `SellResult` (`SMSG_SELL_ITEM`)
+/// Why a sale failed (`SMSG_SELL_ITEM`).
 enum SellResult : ubyte
 {
     cantFindItem = 1,
@@ -164,7 +162,7 @@ enum SellResult : ubyte
 }
 
 // ---------------------------------------------------------------------------
-// Positions (Player::IsInventoryPos and its kin)
+// Positions
 // ---------------------------------------------------------------------------
 
 /// A position from a bag and a slot.
@@ -173,7 +171,7 @@ ushort itemPos(ubyte bag, ubyte slot) pure nothrow @nogc @safe
     return cast(ushort)(bag << 8 | slot);
 }
 
-/// `Player::IsInventoryPos`: the backpack, the equipped bags, the keyring, or "anywhere carried".
+/// The backpack, the equipped bags, the keyring, or "anywhere carried".
 bool isInventoryPos(ubyte bag, ubyte slot) pure nothrow @nogc @safe
 {
     if (bag == inventorySlotBag0)
@@ -188,7 +186,7 @@ bool isInventoryPos(ushort pos) pure nothrow @nogc @safe
     return isInventoryPos(pos >> 8, pos & 0xFF);
 }
 
-/// `Player::IsEquipmentPos`: worn, or an equipped bag's slot.
+/// Worn, or an equipped bag's slot.
 bool isEquipmentPos(ubyte bag, ubyte slot) pure nothrow @nogc @safe
 {
     return bag == inventorySlotBag0 && (slot < equipmentSlotEnd
@@ -201,7 +199,7 @@ bool isEquipmentPos(ushort pos) pure nothrow @nogc @safe
     return isEquipmentPos(pos >> 8, pos & 0xFF);
 }
 
-/// `Player::IsBankPos`: the bank's slots, its bag slots, or a bank bag.
+/// The bank's slots, its bag slots, or a bank bag.
 bool isBankPos(ubyte bag, ubyte slot) pure nothrow @nogc @safe
 {
     if (bag == inventorySlotBag0)
@@ -215,7 +213,7 @@ bool isBankPos(ushort pos) pure nothrow @nogc @safe
     return isBankPos(pos >> 8, pos & 0xFF);
 }
 
-/// `Player::IsBagPos`: a slot that holds a bag, carried or in the bank.
+/// A slot that holds a bag, carried or in the bank.
 bool isBagPos(ushort pos) pure nothrow @nogc @safe
 {
     const bag = pos >> 8, slot = pos & 0xFF;
@@ -223,7 +221,7 @@ bool isBagPos(ushort pos) pure nothrow @nogc @safe
         || (slot >= bankBagSlotStart && slot < bankBagSlotEnd));
 }
 
-/// `ItemCanGoIntoBag`
+/// Whether the kind of bag `bag` takes the item `proto`.
 bool itemCanGoIntoBag(const(ItemTemplate)* proto, const(ItemTemplate)* bag) pure nothrow @nogc @safe
 {
     if (bag.itemClass == ItemClass.container)
@@ -248,7 +246,7 @@ bool itemCanGoIntoBag(const(ItemTemplate)* proto, const(ItemTemplate)* bag) pure
     return false;
 }
 
-/// `ItemPrototype::CanChangeEquipStateInCombat`
+/// Whether the item may be put on or taken off in combat: weapons, ammo, shields, relics and held items.
 bool canChangeEquipStateInCombat(const(ItemTemplate)* proto) pure nothrow @nogc @safe
 {
     switch (proto.inventoryType)
@@ -260,7 +258,7 @@ bool canChangeEquipStateInCombat(const(ItemTemplate)* proto) pure nothrow @nogc 
     }
 }
 
-/// `Item::GetSkill`: the weapon or armor skill an item needs.
+/// The weapon or armor skill an item needs.
 uint itemSkill(const(ItemTemplate)* proto) pure nothrow @nogc @safe
 {
     static immutable uint[21] weaponSkills = [44, 172, 45, 46, 54, 160, 229, 43, 55, 0, 136, 0, 0, 162, 0, 173,
@@ -296,7 +294,7 @@ struct ItemRecord
     uint textId;
 }
 
-/// `ItemUpdateState`: what the next save does with an item.
+/// What the next save does with an item.
 enum ItemState
 {
     unchanged,
@@ -305,14 +303,14 @@ enum ItemState
     removed,  /// delete its rows
 }
 
-/// An item's rows to write or delete (`Player::SaveItemToInventory`).
+/// An item's rows to write or delete.
 struct ItemChange
 {
     ItemState state;
     ItemRecord record;
 }
 
-/// `Item`, and `Bag` when it has `contents`.
+/// An item, and a bag when it has `contents`.
 final class Item
 {
     const uint guid;                /// the low guid
@@ -325,7 +323,7 @@ final class Item
     private bool queued;            /// in the inventory's save queue
     private bool sent;              /// the client has its create block
 
-    /// `Item::Create` and `Bag::Create`: a new item of `proto` for `owner`, one in the stack.
+    /// A new item (or bag) of `proto` for `owner`, one in the stack.
     this(uint guid, const(ItemTemplate)* proto, ulong owner)
     in (proto !is null)
     {
@@ -353,7 +351,7 @@ final class Item
         }
     }
 
-    /// `Item::LoadFromDB`: the item a saved row describes.
+    /// The item a saved row describes.
     static Item load(const ref ItemRecord record, const(ItemTemplate)* proto, ulong owner)
     {
         auto item = new Item(record.guid, proto, owner);
@@ -419,55 +417,55 @@ final class Item
         return values.get!ITEM_FIELD_OWNER;
     }
 
-    /// A bag (`Item::IsBag`).
+    /// A bag.
     @property bool isBag() const pure nothrow @safe
     {
         return contents.length > 0;
     }
 
-    /// `Bag::IsEmpty`
+    /// Whether the bag holds nothing.
     @property bool isEmpty() const
     {
         return !contents.canFind!(content => content !is null);
     }
 
-    /// `Item::IsSoulBound`
+    /// Bound to its owner.
     @property bool bound() const
     {
         return (values[ITEM_FIELD_FLAGS] & itemDynFlagBound) != 0;
     }
 
-    /// `Item::SetBinding`
+    /// Binds the item to its owner.
     void bind()
     {
         values.set!ITEM_FIELD_FLAGS(values[ITEM_FIELD_FLAGS] | itemDynFlagBound);
     }
 
-    /// `Item::GetBagSlot`: the slot of the bag it is in, or `inventorySlotBag0`.
+    /// The slot of the bag it is in, or `inventorySlotBag0`.
     @property ubyte bagSlot() const pure nothrow @nogc @safe
     {
         return container is null ? inventorySlotBag0 : container.slot;
     }
 
-    /// `Item::GetPos`
+    /// Its position.
     @property ushort pos() const pure nothrow @nogc @safe
     {
         return itemPos(bagSlot, slot);
     }
 
-    /// `Item::IsEquipped`
+    /// Worn: in one of the owner's equipment slots.
     @property bool isEquipped() const pure nothrow @nogc @safe
     {
         return container is null && slot < equipmentSlotEnd;
     }
 
-    /// `Item::IsBindedNotWith`: bound to someone else.
+    /// Bound to someone else.
     bool isBoundNotWith(ulong player) const
     {
         return owner != player && bound;
     }
 
-    /// `Item::CanBeMergedPartlyWith`: whether some of a stack of `other` fits onto this one.
+    /// Whether some of a stack of `other` fits onto this one.
     InventoryResult canBeMergedPartlyWith(const(ItemTemplate)* other) const
     {
         if (entry != other.entry || count >= other.stackable)
@@ -475,7 +473,7 @@ final class Item
         return InventoryResult.ok;
     }
 
-    /// `Item::GetSellPrice`
+    /// What a vendor pays for it, less the cost of repairing it, but at least 1 if it is worth anything.
     uint sellPrice(uint baseRepairCost) const
     {
         int price = proto.details.sellPrice;
@@ -490,7 +488,7 @@ final class Item
         return price - baseRepairCost;
     }
 
-    /// `Bag::StoreItem`
+    /// Puts `item` into the bag's slot `bagSlot`.
     void storeInBag(ubyte bagSlot, Item item)
     in (isBag && bagSlot < contents.length)
     {
@@ -502,7 +500,7 @@ final class Item
         item.slot = bagSlot;
     }
 
-    /// `Bag::RemoveItem`
+    /// Empties the bag's slot `bagSlot`.
     void removeFromBag(ubyte bagSlot)
     in (isBag && bagSlot < contents.length)
     {
@@ -512,7 +510,7 @@ final class Item
         values.set!CONTAINER_FIELD_SLOT_1(bagSlot, 0UL);
     }
 
-    /// `Item::SaveToDB`'s columns.
+    /// Its row in the item table.
     ItemRecord record() const
     {
         import std.array : appender;
@@ -542,7 +540,7 @@ final class Item
     }
 }
 
-/// `count` space-separated numbers from a CMaNGOS text column; missing or malformed ones are 0.
+/// `count` space-separated numbers from a text column; missing or malformed ones are 0.
 int[] parseNumbers(string text, size_t count) pure @safe
 out (numbers; numbers.length == count)
 {
@@ -561,7 +559,7 @@ out (numbers; numbers.length == count)
     return numbers;
 }
 
-/// `Item::GetBaseRepairCost`: what repairing the item fully costs, before discounts.
+/// What repairing the item fully costs, before discounts.
 uint baseRepairCost(const Item item, const ClientData client)
 {
     if (item.values[ITEM_FIELD_FLAGS] & itemDynFlagWrapped)
@@ -578,7 +576,7 @@ uint baseRepairCost(const Item item, const ClientData client)
     const quality = client.durabilityQualities.lookup((proto.details.quality + 1) * 2);
     if (costs is null || quality is null)
         return 0;
-    // ItemSubClassToDurabilityMultiplierId
+    // The durability cost column for the item's class and subclass.
     const multiplier = costs.multiplier[isWeapon ? proto.subClass : proto.subClass + 21];
     // This order of operations and this rounding (half away from zero, at least 1) decide the prices shown.
     const cost = double(maxDurability - current) * double(quality.qualityMod) * double(multiplier);
@@ -586,7 +584,7 @@ uint baseRepairCost(const Item item, const ClientData client)
     return rounded ? rounded : 1;
 }
 
-/// `Item::CalculateDurabilityRepairCost`: the discounted price, rounded as a float to the nearest, ties to even.
+/// The discounted repair price, rounded as a float to the nearest, ties to even.
 uint repairCost(const Item item, const ClientData client, float discount)
 {
     import std.math : lrint;
@@ -594,14 +592,14 @@ uint repairCost(const Item item, const ClientData client, float discount)
     return cast(uint) lrint(float(baseRepairCost(item, client)) * discount);
 }
 
-/// Where some of a stack goes (`ItemPosCount`).
+/// Where some of a stack goes.
 struct ItemPosCount
 {
     ushort pos;
     uint count;
 }
 
-/// An `SMSG_INVENTORY_CHANGE_FAILURE` to send (`Player::SendEquipError`). `ok` sends nothing.
+/// An `SMSG_INVENTORY_CHANGE_FAILURE` to send. `ok` sends nothing.
 struct EquipError
 {
     InventoryResult result;
@@ -632,9 +630,9 @@ interface InventoryOwner
     ushort skillRank(uint skill) const;
     /// The highest honor rank it reached (internal, 0 to 18), which items' `RequiredHonorRank` counts.
     @property ubyte highestHonorRank() const;
-    /// `Player::HasSpell`
+    /// Whether the character knows `spell`.
     bool hasSpell(uint spell) const;
-    /// `Player::CanDualWield`
+    /// Whether the character can wield a weapon in each hand.
     @property bool dualWields() const;
     ///
     @property bool alive() const;
@@ -656,7 +654,7 @@ final class Inventory
         InventoryOwner owner;
         UpdateValues* fields;      // the owner's: slot guids, visible items, buyback slots
         uint delegate() nextGuid;
-        Item[] queue;              // m_itemUpdateQueue
+        Item[] queue;              // items to save, in order
         Item[] toCreate;           // not yet sent to the client
         ulong[] toForget;          // sent, now gone
         ubyte currentBuybackSlot = buybackSlotStart;
@@ -679,7 +677,7 @@ final class Inventory
     // Looking things up
     // -----------------------------------------------------------------------
 
-    /// `Player::GetItemByPos`
+    /// The item at a position, or null.
     inout(Item) opIndex(ubyte bag, ubyte slot) inout
     {
         if (bag == inventorySlotBag0)
@@ -718,7 +716,7 @@ final class Inventory
         return found;
     }
 
-    /// `Player::GetItemByGuid`: carried, worn or banked; not in the buyback slots.
+    /// The item with `guid`: carried, worn or banked; not in the buyback slots.
     inout(Item) byGuid(ulong guid) inout
     {
         foreach (item; all())
@@ -728,7 +726,7 @@ final class Inventory
         return null;
     }
 
-    /// `Player::GetItemCount`: in the backpack, worn, in bags and the keyring; with the bank, if asked.
+    /// How many of `entry` there are: in the backpack, worn, in bags and the keyring; with the bank, if asked.
     uint count(uint entry, bool inBank = false, const Item skip = null) const
     {
         uint n;
@@ -761,7 +759,7 @@ final class Inventory
         return n;
     }
 
-    /// `Player::HasItemWithIdEquipped`
+    /// Whether `count` of `entry` are worn, not counting `exceptSlot`.
     bool hasEquipped(uint entry, uint count, ubyte exceptSlot = nullSlot) const
     {
         uint n;
@@ -773,33 +771,33 @@ final class Inventory
         return false;
     }
 
-    /// `Player::IsTwoHandUsed`
+    /// Whether a two-handed weapon is in the main hand.
     bool twoHandUsed() const
     {
         const main = slots[equipmentSlotMainhand];
         return main !is null && main.proto.inventoryType == InventoryType.twoHandWeapon;
     }
 
-    /// `Player::GetBankBagSlotCount`: bank bag slots bought.
+    /// Bank bag slots bought.
     @property ubyte bankBagSlots() const
     {
         return fields.getByte!PLAYER_BYTES_2(2);
     }
 
-    /// `Player::SetBankBagSlotCount`
+    /// ditto
     @property void bankBagSlots(ubyte count)
     {
         fields.setByte!PLAYER_BYTES_2(2, count);
     }
 
-    /// `Player::GetMaxKeyringClientSize`
+    /// Keyring slots the client shows at the owner's level.
     @property uint keyringSize() const
     {
         const level = owner.ownerLevel;
         return level <= 60 ? keyringSizeByLevel[level / 10] : keyringSlotEnd - keyringSlotStart;
     }
 
-    /// `Player::IsValidPos`: whether the position can exist; without `explicitPos`, "anywhere" may be meant.
+    /// Whether the position can exist; without `explicitPos`, "anywhere" may be meant.
     bool isValidPos(ubyte bag, ubyte slot, bool explicitPos) const
     {
         if (bag == nullBag && !explicitPos)
@@ -830,7 +828,7 @@ final class Inventory
     // Creating and loading
     // -----------------------------------------------------------------------
 
-    /// `Item::CreateItem`: a new item, its stack cut to what stacks; null for no count or no template.
+    /// A new item, its stack cut to what stacks; null for no count or no template.
     Item create(uint entry, uint count)
     {
         const proto = entry in world.items;
@@ -844,7 +842,7 @@ final class Inventory
     }
 
     /**
-     * `Player::_LoadInventory` for one row, character slots before bags: puts the saved item where it
+     * Loads one saved row, character slots before bags: puts the saved item where it
      * was. Returns why it could not, or null.
      */
     string load(const ref ItemRecord record)
@@ -881,10 +879,10 @@ final class Inventory
     }
 
     // -----------------------------------------------------------------------
-    // Checks (Player::CanStoreItem, CanBankItem, CanEquipItem, CanUnequipItem, CanUseItem)
+    // Checks
     // -----------------------------------------------------------------------
 
-    /// `Player::CanUseItem(ItemPrototype const*)`
+    /// Whether the character may use items of `proto`: class, race, skill, spell, honor rank and level.
     InventoryResult canUse(const(ItemTemplate)* proto, bool directAction = true) const
     {
         if (proto is null)
@@ -909,7 +907,8 @@ final class Inventory
         return InventoryResult.ok;
     }
 
-    /// `Player::CanUseItem(Item*)`
+    /// Whether the character may use `item`: alive, owning it, the template's checks, its weapon or
+    /// armor skill and reputation.
     InventoryResult canUse(const Item item, bool directAction = true) const
     {
         if (item is null)
@@ -933,7 +932,7 @@ final class Inventory
         return InventoryResult.ok;
     }
 
-    /// `Player::CanUseAmmo`
+    /// Whether the character may use the ammo `entry`.
     InventoryResult canUseAmmo(uint entry) const
     {
         if (!owner.alive)
@@ -946,7 +945,7 @@ final class Inventory
         return canUse(proto);
     }
 
-    /// `Player::ViableEquipSlots`: where an item may be worn; false if nowhere.
+    /// Where an item may be worn; false if nowhere.
     bool viableEquipSlots(const(ItemTemplate)* proto, ref ubyte[4] viable) const
     {
         viable[] = nullSlot;
@@ -994,7 +993,8 @@ final class Inventory
         return viable[0] != nullSlot;
     }
 
-    /// `Player::FindEquipSlot`
+    /// The slot to wear the item in: `slot` if viable (and free, unless swapping), else a free viable
+    /// one, else with `swap` the first viable; `nullSlot` if none.
     ubyte findEquipSlot(const(ItemTemplate)* proto, ubyte slot, bool swap) const
     {
         ubyte[4] viable;
@@ -1024,7 +1024,7 @@ final class Inventory
         return nullSlot;
     }
 
-    /// `Player::_CanTakeMoreSimilarItems`: the item's limit per character. `noSpace` gets what does not fit.
+    /// The item's limit per character. `noSpace` gets what does not fit.
     InventoryResult canTakeMoreSimilar(uint entry, uint count, const Item skip, uint* noSpace = null) const
     {
         const proto = entry in world.items;
@@ -1047,7 +1047,7 @@ final class Inventory
         return InventoryResult.ok;
     }
 
-    /// `Player::CanStoreNewItem`: where `count` new items of `entry` would go.
+    /// Where `count` new items of `entry` would go.
     InventoryResult canStoreNew(ubyte bag, ubyte slot, ref ItemPosCount[] dest, uint entry, uint count,
         uint* noSpace = null) const
     {
@@ -1055,7 +1055,7 @@ final class Inventory
         return canStore(bag, slot, dest, entry, count, null, false, bagSlot, noSpace);
     }
 
-    /// `Player::CanStoreItem`: where the item would go, carried.
+    /// Where the item would go, carried.
     InventoryResult canStore(ubyte bag, ubyte slot, ref ItemPosCount[] dest, const Item item, bool swap,
         ref ubyte bagSlot) const
     {
@@ -1065,7 +1065,7 @@ final class Inventory
     }
 
     /**
-     * `Player::_CanStoreItem`: where `count` of `entry` (the item `source`, if it exists) would go,
+     * Where `count` of `entry` (the item `source`, if it exists) would go,
      * carried: in `bag` and `slot` if given, else onto stacks first, then special bags, then anywhere.
      */
     InventoryResult canStore(ubyte bag, ubyte slot, ref ItemPosCount[] dest, uint entry, uint count,
@@ -1202,7 +1202,7 @@ final class Inventory
         return fail(InventoryResult.inventoryFull, count + noSimilar);
     }
 
-    /// `Player::CanBankItem`: where the item would go in the bank.
+    /// Where the item would go in the bank.
     InventoryResult canBank(ubyte bag, ubyte slot, ref ItemPosCount[] dest, const Item item, bool swap,
         ref ubyte bagSlot, bool notLoading = true) const
     {
@@ -1307,7 +1307,7 @@ final class Inventory
         return InventoryResult.bankFull;
     }
 
-    /// `Player::CanEquipNewItem`: checks with a throw-away item, which takes a guid as in CMaNGOS.
+    /// `canEquip` for a new item of `entry`, checked with a throw-away item (which takes a guid).
     InventoryResult canEquipNew(ubyte slot, out ushort dest, uint entry, bool swap)
     {
         auto probe = create(entry, 1);
@@ -1316,7 +1316,7 @@ final class Inventory
         return canEquip(slot, dest, probe, swap);
     }
 
-    /// `Player::CanEquipItem`: where the item would be worn. `directAction`: the player does it.
+    /// Where the item would be worn. `directAction`: the player does it.
     InventoryResult canEquip(ubyte slot, out ushort dest, const Item item, bool swap, bool directAction = true) const
     {
         if (item is null)
@@ -1336,7 +1336,7 @@ final class Inventory
             return result;
         if (!swap && slots[eslot] !is null)
             return InventoryResult.noEquipmentSlotAvailable;
-        // CanEquipUniqueItem
+        // A unique-equipped item may be worn once.
         if ((proto.flags & itemFlagUniqueEquippable) && hasEquipped(proto.entry, 1, swap ? eslot : nullSlot))
             return InventoryResult.itemCantBeEquipped;
 
@@ -1378,7 +1378,7 @@ final class Inventory
         return InventoryResult.ok;
     }
 
-    /// `Player::CanUnequipItem`: whether what is at `pos` (worn or a bag) may be taken off.
+    /// Whether what is at `pos` (worn or a bag) may be taken off.
     InventoryResult canUnequip(ushort pos, bool swap) const
     {
         if (!isEquipmentPos(pos) && !isBagPos(pos))
@@ -1394,10 +1394,10 @@ final class Inventory
     }
 
     // -----------------------------------------------------------------------
-    // Changes (Player::StoreItem, EquipItem, RemoveItem, DestroyItem, ...)
+    // Changes
     // -----------------------------------------------------------------------
 
-    /// `Player::StoreNewItem`: a new item, as many as `dest` holds, put there.
+    /// A new item, as many as `dest` holds, put there.
     Item storeNew(const(ItemPosCount)[] dest, uint entry)
     {
         uint count;
@@ -1407,7 +1407,7 @@ final class Inventory
         return item is null ? null : store(dest, item);
     }
 
-    /// `Player::StoreItem` (and `BankItem`): every position but the last gets a copy. Returns the last.
+    /// Puts the item at `dest`, carried or banked: every position but the last gets a copy. Returns the last.
     Item store(const(ItemPosCount)[] dest, Item item)
     {
         if (item is null)
@@ -1418,24 +1418,24 @@ final class Inventory
         return last;
     }
 
-    /// `Player::EquipNewItem`
+    /// Wears a new item of `entry` at `pos`.
     Item equipNew(ushort pos, uint entry)
     {
         auto item = create(entry, 1);
         return item is null ? null : equip(pos, item);
     }
 
-    /// `Player::EquipItem`
+    /// Wears `item` at `pos`, binding it if it binds.
     Item equip(ushort pos, Item item)
     {
         visualize(pos & 0xFF, item);
         if (owner.alive)
-            equipmentChanged = true; // _ApplyItemMods
+            equipmentChanged = true; // its stats change the owner's
         created(item);
         return item;
     }
 
-    /// `Player::RemoveItem`: takes the item out of its place, to be put somewhere else.
+    /// Takes the item out of its place, to be put somewhere else.
     void remove(ubyte bag, ubyte slot)
     {
         auto item = this[bag, slot];
@@ -1456,13 +1456,13 @@ final class Inventory
         item.slot = nullSlot;
     }
 
-    /// `Player::DestroyItem`: removes the item for good, and what is in it.
+    /// Removes the item for good, and what is in it.
     void destroy(ubyte bag, ubyte slot)
     {
         auto item = this[bag, slot];
         if (item is null)
             return;
-        if (item.isBag && item.isEquipped) // as CMaNGOS: an equipped bag's slot is past the equipment slots
+        if (item.isBag && item.isEquipped) // an equipped bag's slot is past the equipment slots
             foreach (ubyte i; 0 .. cast(ubyte) item.contents.length)
                 destroy(slot, i);
         if (bag == inventorySlotBag0)
@@ -1482,7 +1482,7 @@ final class Inventory
         setState(item, ItemState.removed);
     }
 
-    /// `Player::DestroyItemCount(Item&, uint32&)`: takes up to `count` off the stack.
+    /// Takes up to `count` off the stack.
     void destroyCount(Item item, ref uint count)
     {
         if (item.count <= count)
@@ -1498,7 +1498,7 @@ final class Inventory
         }
     }
 
-    /// `Player::DestroyItemCount(uint32 item, ...)`: `count` of `entry`, the backpack first. Returns what is left.
+    /// Destroys `count` of `entry`, the backpack first. Returns what is left.
     uint destroyCount(uint entry, uint count, bool unequipCheck = false, bool inBank = false)
     {
         bool take(Item item)
@@ -1540,7 +1540,7 @@ final class Inventory
         return count;
     }
 
-    /// `Player::SplitItem`: moves `count` off the stack at `src` to `dst`.
+    /// Moves `count` off the stack at `src` to `dst`.
     EquipError split(ushort src, ushort dst, uint count)
     {
         const srcBag = cast(ubyte)(src >> 8), srcSlot = cast(ubyte) src;
@@ -1588,7 +1588,7 @@ final class Inventory
         return EquipError.init;
     }
 
-    /// `Player::SwapItem`: moves the item at `src` to `dst`, onto a stack there or trading places with it.
+    /// Moves the item at `src` to `dst`, onto a stack there or trading places with it.
     EquipError swap(ushort src, ushort dst)
     {
         const srcBag = cast(ubyte)(src >> 8), srcSlot = cast(ubyte) src;
@@ -1764,8 +1764,8 @@ final class Inventory
     }
 
     /**
-     * `Player::AutoUnequipOffhandIfNeed`: with a two-hander in the main hand, the off hand goes into
-     * `bag`, or anywhere carried. CMaNGOS mails it when there is no room; with no mail yet it stays.
+     * With a two-hander in the main hand, the off hand goes into
+     * `bag`, or anywhere carried. With no room it stays worn, until there is mail to send it by.
      */
     void autoUnequipOffhand(ubyte bag = nullBag)
     {
@@ -1784,7 +1784,7 @@ final class Inventory
                 offhand.entry, owner.ownerGuid);
     }
 
-    /// `Item::CloneItem`: a new stack of `count` with the source's creator, flags and duration.
+    /// A new stack of `count` with the source's creator, flags and duration.
     Item cloneOf(const Item source, uint count)
     {
         auto copy = create(source.entry, count);
@@ -1797,7 +1797,7 @@ final class Inventory
         return copy;
     }
 
-    /// `Item::SetState` for an item of this inventory: queues it for the next save.
+    /// Sets the save state of an item of this inventory and queues it for the next save.
     void setState(Item item, ItemState state)
     {
         if (item.state == ItemState.new_ && state == ItemState.removed)
@@ -1818,16 +1818,16 @@ final class Inventory
     }
 
     // -----------------------------------------------------------------------
-    // Buyback (Player::AddItemToBuyBackSlot, RemoveItemFromBuyBackSlot)
+    // Buyback
     // -----------------------------------------------------------------------
 
-    /// `Player::AddItemToBuyBackSlot`: a sold item, which can be bought back for `money` until it is pushed out.
+    /// A sold item, which can be bought back for `money` until it is pushed out.
     void addToBuyback(Item item, uint money, uint secondsOnline)
     {
         ubyte slot = currentBuybackSlot;
         if (slots[slot] !is null)
         {
-            // The first free slot, else the oldest. CMaNGOS takes the oldest even after finding a free one.
+            // Stop at the first free slot; the slot taken is the oldest seen before it, not the free one.
             uint oldestTime = fields.get!PLAYER_FIELD_BUYBACK_TIMESTAMP_1(0);
             ubyte oldestSlot = buybackSlotStart;
             foreach (ubyte i; buybackSlotStart + 1 .. buybackSlotEnd)
@@ -1857,7 +1857,7 @@ final class Inventory
             ++currentBuybackSlot;
     }
 
-    /// `Player::GetItemFromBuyBackSlot`
+    /// The item in buyback slot `slot`, or null.
     inout(Item) buyback(uint slot) inout
     {
         return slot >= buybackSlotStart && slot < buybackSlotEnd ? slots[slot] : null;
@@ -1870,7 +1870,7 @@ final class Inventory
         return fields.get!PLAYER_FIELD_BUYBACK_PRICE_1(slot - buybackSlotStart);
     }
 
-    /// `Player::RemoveItemFromBuyBackSlot`: empties the slot; `destroy` deletes the item, else it is bought back.
+    /// Empties the slot; `destroy` deletes the item, else it is bought back.
     void removeFromBuyback(uint slot, bool destroy)
     {
         if (slot < buybackSlotStart || slot >= buybackSlotEnd)
@@ -1951,7 +1951,7 @@ final class Inventory
     }
 
     /**
-     * `Player::_SaveInventory`: the rows to write, in order, and every item marked saved. Items in the
+     * The rows to write, in order, and every item marked saved. Items in the
      * buyback slots are not kept: their rows are deleted, to be written again if they are bought back.
      * Returns null, with nothing marked, if an item is not where it says it is.
      */
@@ -1983,7 +1983,7 @@ final class Inventory
     }
 
 private:
-    /// `Player::_StoreItem`: puts `count` of the item at `pos`, as a copy if `clone`, onto a stack if one is there.
+    /// Puts `count` of the item at `pos`, as a copy if `clone`, onto a stack if one is there.
     Item storeAt(ushort pos, Item item, uint count, bool clone)
     {
         const bag = cast(ubyte)(pos >> 8), slot = cast(ubyte) pos;
@@ -2029,7 +2029,7 @@ private:
             || (proto.bonding == bindWhenEquipped && isBagPos(pos));
     }
 
-    /// The owner's slot `slot` holds the item (the bag-0 half of `_StoreItem` and `VisualizeItem`).
+    /// The owner's slot `slot` holds the item (the bag-0 half of `storeAt` and `visualize`).
     void place(ubyte slot, Item item)
     {
         slots[slot] = item;
@@ -2045,7 +2045,7 @@ private:
         }
     }
 
-    /// `Player::VisualizeItem`
+    /// Wears the item in `slot`: binds it if it binds on equip or pickup, and queues it for saving.
     void visualize(ubyte slot, Item item)
     {
         const bonding = item.proto.bonding;
@@ -2055,7 +2055,7 @@ private:
         setState(item, ItemState.changed);
     }
 
-    /// `Player::SetVisibleItemSlot`: what others see worn in `slot`.
+    /// What others see worn in `slot`.
     void setVisibleItem(ubyte slot, const Item item)
     {
         // Each equipment slot has a block of `visibleItemStride` fields: the creator's guid, the entry and
@@ -2098,7 +2098,7 @@ private:
         item.queued = false;
     }
 
-    /// `Player::_CanStoreItem_InSpecificSlot`
+    /// Where `count` of the item would go at one given position, bag 0 or in a bag.
     InventoryResult storeInSpecificSlot(ubyte bag, ubyte slot, ref ItemPosCount[] dest, const(ItemTemplate)* proto,
         ref uint count, bool swap, const Item source, ref ubyte bagSlot) const
     {
@@ -2145,7 +2145,7 @@ private:
         return InventoryResult.ok;
     }
 
-    /// `Player::_CanStoreItem_InBag`: onto stacks (`merge`) or into free slots of an equipped bag.
+    /// Onto stacks (`merge`) or into free slots of an equipped bag.
     InventoryResult storeInBag(ubyte bag, ref ItemPosCount[] dest, const(ItemTemplate)* proto, ref uint count,
         bool merge, bool nonSpecialized, const Item source, ubyte skipBag, ubyte skipSlot, ref ubyte bagSlot) const
     {
@@ -2177,7 +2177,7 @@ private:
         return InventoryResult.ok;
     }
 
-    /// `Player::_CanStoreItem_InInventorySlots`
+    /// Onto stacks (`merge`) or into free slots among the owner's slots `begin` to `end`.
     InventoryResult storeInSlots(ubyte begin, ubyte end, ref ItemPosCount[] dest, const(ItemTemplate)* proto,
         ref uint count, bool merge, const Item source, ubyte skipBag, ubyte skipSlot) const
     {
@@ -2208,7 +2208,7 @@ private:
         return addPosition(dest, pos, min(needSpace, count), count) && count == 0;
     }
 
-    /// Adds a destination unless it is already one (`ItemPosCount::isContainedIn`); takes `amount` off `count`.
+    /// Adds a destination unless it is already one; takes `amount` off `count`.
     static bool addPosition(ref ItemPosCount[] dest, ushort pos, uint amount, ref uint count)
     {
         if (dest.canFind!(position => position.pos == pos))

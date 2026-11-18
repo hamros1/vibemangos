@@ -1,5 +1,5 @@
 /**
- * Trading between two players (CMaNGOS `Trade/TradeHandler.cpp` and `TradeData`), mixed into
+ * Trading between two players, mixed into
  * `dmangos.world.character.Character`.
  *
  * One player opens a trade with another of its faction within 11 yards; the other's client asks
@@ -11,7 +11,7 @@
  */
 module dmangos.world.tradehandlers;
 
-/// `TradeStatus`
+/// The trade statuses the client knows (`SMSG_TRADE_STATUS`).
 enum TradeStatus : uint
 {
     busy = 0,
@@ -36,13 +36,13 @@ enum TradeStatus : uint
     targetLogout = 20,
 }
 
-/// `TRADE_SLOT_COUNT`, `TRADE_SLOT_TRADED_COUNT`
+/// Trade slots: seven, of which six change hands (the last is "will not be traded").
 enum uint tradeSlotCount = 7, tradeSlotTradedCount = 6;
 
-/// `TRADE_DISTANCE`
+/// How far apart two players may trade, in yards.
 enum float tradeDistance = 11.11f;
 
-/// `TradeData`: one side of a trade.
+/// One side of a trade.
 final class TradeSide
 {
     ulong trader;           /// the other player
@@ -67,7 +67,7 @@ mixin template TradeHandlers()
     import dmangos.world.updatefields;
 
 private:
-    TradeSide tradeSide; // `m_trade`
+    TradeSide tradeSide; // this player's side of the trade under way; null if none
 
     /// The other side's session, while trading.
     typeof(this) tradePartner()
@@ -78,7 +78,7 @@ private:
         return other is null || other.tradeSide is null || other.player is null ? null : other;
     }
 
-    /// `SendTradeStatus`
+    /// Sends `SMSG_TRADE_STATUS`.
     void sendTradeStatus(TradeStatus status, ulong trader = 0, uint result = 0, bool targetResult = false)
     {
         ByteWriter w;
@@ -113,7 +113,7 @@ private:
         return null;
     }
 
-    /// `Item::CanBeTraded`: not bound, not an equipped or non-empty bag, not worn.
+    /// Whether an item may be traded: not bound, not an equipped or non-empty bag, not worn.
     bool canBeTraded(const Item item)
     {
         if (item.bound)
@@ -123,7 +123,7 @@ private:
         return !(item.bagSlot == inventorySlotBag0 && item.slot < inventorySlotBagEnd);
     }
 
-    /// `SendUpdateTrade`: one side of the window (`traderSide`: the other's), for this player's client.
+    /// One side of the window (`traderSide`: the other's), for this player's client.
     void sendUpdateTrade(bool traderSide)
     {
         auto partner = tradePartner();
@@ -163,7 +163,7 @@ private:
         deliver(Opcode.SMSG_TRADE_STATUS_EXTENDED, w.data);
     }
 
-    /// `TradeData::SetAccepted(false)` for both sides: something changed, so both look again.
+    /// Both sides' acceptance taken back: something changed, so both look again.
     void tradeChanged()
     {
         auto partner = tradePartner();
@@ -178,7 +178,7 @@ private:
         partner.sendUpdateTrade(true);
     }
 
-    /// `Player::TradeCancel`: the trade ends, the other told (and this player if `tellMe`).
+    /// The trade ends, the other told (and this player if `tellMe`).
     package void cancelTrade(bool tellMe, TradeStatus status = TradeStatus.tradeCanceled)
     {
         if (tradeSide is null)
@@ -193,7 +193,7 @@ private:
         tradeSide = null;
     }
 
-    /// `HandleInitiateTradeOpcode`: this player asks another to trade.
+    /// This player asks another to trade.
     @Handles(Opcode.CMSG_INITIATE_TRADE, WorldState.inWorld)
     void handleInitiateTrade(ref ByteReader reader)
     {
@@ -229,7 +229,7 @@ private:
         other.sendTradeStatus(TradeStatus.beginTrade, player.guid);
     }
 
-    /// `HandleBeginTradeOpcode`: the asked one's client agrees; both windows open.
+    /// The asked one's client agrees; both windows open.
     @Handles(Opcode.CMSG_BEGIN_TRADE, WorldState.inWorld)
     void handleBeginTrade()
     {
@@ -240,7 +240,7 @@ private:
         }
     }
 
-    /// `HandleBusyTradeOpcode`, `HandleIgnoreTradeOpcode`
+    /// The other player is busy, or ignores this one: the trade ends.
     @Handles(Opcode.CMSG_BUSY_TRADE, WorldState.inWorld)
     void handleBusyTrade()
     {
@@ -254,14 +254,14 @@ private:
         cancelTrade(true, TradeStatus.ignoreYou);
     }
 
-    /// `HandleCancelTradeOpcode`
+    /// This player cancels the trade.
     @Handles(Opcode.CMSG_CANCEL_TRADE, WorldState.inWorld)
     void handleCancelTrade()
     {
         cancelTrade(true);
     }
 
-    /// `HandleSetTradeItemOpcode`: an item of this player's in a trade slot.
+    /// An item of this player's in a trade slot.
     @Handles(Opcode.CMSG_SET_TRADE_ITEM, WorldState.inWorld)
     void handleSetTradeItem(ref ByteReader reader)
     {
@@ -278,7 +278,7 @@ private:
         tradeChanged();
     }
 
-    /// `HandleClearTradeItemOpcode`
+    /// A trade slot emptied.
     @Handles(Opcode.CMSG_CLEAR_TRADE_ITEM, WorldState.inWorld)
     void handleClearTradeItem(ref ByteReader reader)
     {
@@ -289,7 +289,7 @@ private:
         tradeChanged();
     }
 
-    /// `HandleSetTradeGoldOpcode`: checked when the trade goes through.
+    /// The money this side offers: checked when the trade goes through.
     @Handles(Opcode.CMSG_SET_TRADE_GOLD, WorldState.inWorld)
     void handleSetTradeGold(ref ByteReader reader)
     {
@@ -300,7 +300,7 @@ private:
         tradeChanged();
     }
 
-    /// `HandleUnacceptTradeOpcode`
+    /// This side takes back its acceptance.
     @Handles(Opcode.CMSG_UNACCEPT_TRADE, WorldState.inWorld)
     void handleUnacceptTrade()
     {
@@ -327,7 +327,7 @@ private:
         return free;
     }
 
-    /// `HandleAcceptTradeOpcode`: this side accepts; when both have, the trade goes through.
+    /// This side accepts; when both have, the trade goes through.
     @Handles(Opcode.CMSG_ACCEPT_TRADE, WorldState.inWorld)
     void handleAcceptTrade(ref ByteReader reader)
     {
@@ -375,7 +375,7 @@ private:
             return partner.sendTradeStatus(TradeStatus.tradeAccept);
 
         partner.sendTradeStatus(TradeStatus.tradeAccept);
-        // `CanStoreItems`: room for what each gets, counting what each gives away.
+        // Room for what each gets, counting what each gives away.
         if (hisItems.length > freeSlots() + myItems.length)
         {
             partner.sendTradeStatus(TradeStatus.closeWindow, 0, InventoryResult.inventoryFull);

@@ -1,12 +1,12 @@
 /**
- * CMaNGOS's bounding interval hierarchy (`vmap/BIH.h`, `BIH.cpp`, from the Sunflow ray tracer):
+ * The bounding interval hierarchy (as in the Sunflow ray tracer):
  * the tree that finds, among many boxes, those a ray or a point meets. Maps index their placed
  * models with it, models their groups, and groups their triangles.
  *
  * The tree is an array of `uint`s: each node is three words, the first holding the split axis (two
  * bits), a BVH2 flag and the offset of its children, the other two the clip planes (as float bits),
- * or for a leaf the first object and the object count. Built and walked exactly as CMaNGOS does,
- * so trees built here are read by CMaNGOS and the other way round.
+ * or for a leaf the first object and the object count. Built and walked exactly as the vmap file
+ * format has it, so trees built here and those in existing vmap files read the same both ways.
  */
 module dmangos.vmap.bih;
 
@@ -17,7 +17,7 @@ import std.math : isNaN;
 import dmangos.bytes : ByteReader, ByteWriter;
 import dmangos.vmap.math;
 
-/// `MAX_STACK_SIZE`: the deepest a tree goes.
+/// The deepest a tree goes.
 enum maxStackSize = 64;
 
 /// See the module documentation.
@@ -34,7 +34,7 @@ struct BIH
     }
 
     /**
-     * `BIH::build`: a tree over `count` objects whose boxes `boundsOf` gives, at most `leafSize`
+     * A tree over `count` objects whose boxes `boundsOf` gives, at most `leafSize`
      * objects to a leaf.
      */
     void build(size_t count, scope AABox delegate(size_t) boundsOf, uint leafSize = 3)
@@ -61,7 +61,7 @@ struct BIH
     }
 
     /**
-     * `BIH::intersectRay`: `hit(entry, maxDist)` for each object whose cell the ray crosses within
+     * `hit(entry, maxDist)` for each object whose cell the ray crosses within
      * `maxDist`, nearest cells first; the callback shortens `maxDist` when it hits. With
      * `stopAtFirst`, the first hit ends the search.
      */
@@ -188,7 +188,7 @@ struct BIH
         }
     }
 
-    /// `BIH::intersectPoint`: `hit(entry)` for each object whose cell holds the point.
+    /// `hit(entry)` for each object whose cell holds the point.
     void intersectPoint(const Vector3 p, scope void delegate(uint entry) hit) const
     {
         if (!bounds.contains(p))
@@ -249,7 +249,7 @@ struct BIH
         }
     }
 
-    /// `BIH::writeToFile`
+    /// The tree as a vmap file stores it: its bounds, its nodes, its objects.
     void write(ref ByteWriter w) const
     {
         putBox(w, bounds);
@@ -261,7 +261,7 @@ struct BIH
             w.put(o);
     }
 
-    /// `BIH::readFromFile`
+    /// ditto
     static BIH read(ref ByteReader r)
     {
         BIH b;
@@ -294,7 +294,7 @@ private:
         tree[nodeIndex + 1] = right - left + 1;
     }
 
-    /// `BIH::subdivide`
+    /// Splits the objects from `left` to `right` into a node's children, recursively, down to leaves.
     static void subdivide(int left, int right, ref uint[] tree, uint[] indices, const AABox[] primBounds,
         uint maxPrims, ref Bound gridBox, ref Bound nodeBox, int nodeIndex, int depth)
     {

@@ -1,6 +1,7 @@
 /**
- * Talents and passive spells (CMaNGOS `Player::LearnTalent`, `learnSpell`'s passive part and
- * `_LoadSpells`' casting of passives), mixed into `dmangos.world.character.Character`.
+ * Talents and passive spells: learning talents, resetting them at a trainer, the auras of passive
+ * spells, and the on-equip spells and set bonuses of the items worn. Mixed into
+ * `dmangos.world.character.Character`.
  *
  * From level 10 a player gets a talent point a level (`PLAYER_CHARACTER_POINTS1` holds those not
  * spent). A talent of its class may be learned, a rank at a time, if its tree has 5 points spent for
@@ -23,7 +24,7 @@ mixin template TalentHandlers()
     import dmangos.world.updatefields;
 
 private:
-    /// `HandleLearnTalentOpcode` and `Player::LearnTalent`
+    /// The client learns a talent rank: checked, then learned.
     @Handles(Opcode.CMSG_LEARN_TALENT, WorldState.inWorld)
     void handleLearnTalent(ref ByteReader reader)
     {
@@ -94,7 +95,7 @@ private:
     }
 
     /**
-     * `Player::Reset_Talents`: every talent rank known forgotten (its passive aura gone with it), and
+     * Every talent rank known forgotten (its passive aura gone with it), and
      * the talent points of the level back.
      */
     package void resetTalents()
@@ -114,16 +115,16 @@ private:
         flushPlayerChanges();
     }
 
-    private uint talentResetCost_; // `m_resetTalentsCost`: what the last reset cost (copper)
-    private long talentResetTime_; // `m_resetTalentsTime`: when (Unix time)
+    private uint talentResetCost_; // what the last reset cost (copper)
+    private long talentResetTime_; // when (Unix time)
 
-    /// `_LoadFromDB`'s `resettalents_cost` and `resettalents_time`.
+    /// Loads `resettalents_cost` and `resettalents_time`.
     package void loadTalentReset()
     {
         context.database.loadTalentReset(player.data.guid, talentResetCost_, talentResetTime_);
     }
 
-    /// `Player::resetTalentsCost`: 1 gold the first time, then 5, then 10; after that 5 more each time up
+    /// The next reset's price: 1 gold the first time, then 5, then 10; after that 5 more each time up
     /// to 50, and 5 less for each month without a reset, down to 10.
     package uint talentResetCost()
     {
@@ -145,7 +146,7 @@ private:
         return cost > 50 * gold ? 50 * gold : cost;
     }
 
-    /// How many talent ranks the player knows (`m_usedTalentCount`).
+    /// How many talent ranks the player knows.
     package uint talentRanksKnown()
     {
         uint count;
@@ -157,8 +158,8 @@ private:
         return count;
     }
 
-    /// `HandleTalentWipeConfirmOpcode`: the player agreed to the price at its class trainer: its talents
-    /// go for it (`Player::resetTalents`); without the money, or the trainer, an empty answer.
+    /// The player agreed to the price at its class trainer: its talents
+    /// go for it; without the money, or the trainer, an empty answer.
     @Handles(Opcode.MSG_TALENT_WIPE_CONFIRM, WorldState.inWorld)
     void handleTalentWipeConfirm(const ClientGuid request)
     {
@@ -188,7 +189,7 @@ private:
         talentResetCost_ = cost;
         talentResetTime_ = context.unixTime;
         context.database.saveTalentReset(player.data.guid, cost, talentResetTime_);
-        // `CastSpell(_player, 14867)`: "Untalent Visual Effect", where the server has it.
+        // Spell 14867, "Untalent Visual Effect", on the player, where the server has it.
         if (const visual = context.data.spells.spell(14_867))
         {
             import dmangos.world.spellcast : SpellTargets, TargetFlags;
@@ -213,7 +214,7 @@ private:
         enum uint applyAura = 6;
         if (!spell.isPassive || player.auras.find(spell.id) !is null)
             return;
-        // Those bound to a kind of weapon or armour (`IsFitToSpellRequirements`) are not applied yet.
+        // Those bound to a kind of weapon or armour are not applied yet.
         if (spell.equippedItemClass >= 0)
             return;
         int[3] values;
@@ -231,11 +232,11 @@ private:
         addAura(aura);
     }
 
-    /// `_LoadSpells`' passives: every passive spell known puts its auras on.
-    package bool[uint] equipSpells; // the item spells on equip applied now (`ITEM_SPELLTRIGGER_ON_EQUIP`)
+    /// Every passive spell known puts its auras on.
+    package bool[uint] equipSpells; // the item spells on equip applied now (`spelltrigger` 1)
 
     /**
-     * `Player::ApplyItemEquipSpell` for every item worn: the on-equip spells of the unbroken items
+     * For every item worn: the on-equip spells of the unbroken items
      * worn are on as auras (lasting while worn), and the bonuses of the item sets they make up;
      * those of items taken off (or broken) go.
      */
@@ -257,7 +258,7 @@ private:
             if (const set = item.proto.details.itemSet)
                 worn[set]++;
         }
-        // `Player::AddItemsSetItem`: a set's bonuses for as many of its items as are worn (and its skill).
+        // A set's bonuses for as many of its items as are worn (and its skill).
         foreach (set, count; worn)
             if (const entry = context.client.itemSets.lookup(set))
             {
