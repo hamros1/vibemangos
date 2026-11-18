@@ -2904,7 +2904,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
      * to the player casts its spell at the player, then waits its cooldown; one with charges is used
      * up after them (and comes back with its spawn's respawn time).
      */
-    private void trapSprung(Map map, Inhabitant who, GameObject trap)
+    package void trapSprung(Map map, Inhabitant who, GameObject trap)
     {
         import dmangos.world.gameobject : GoLootState;
         import dmangos.world.relations : isFriend, Relating;

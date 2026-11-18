@@ -106,6 +106,7 @@ mixin template GameObjectHandlers()
         context.startScript(DbScriptType.goTemplateUse, go.spawn.entry, map, player.guid, go.guid);
         if (go.type == GameObjectType.door || go.type == GameObjectType.button || go.type == GameObjectType.goober)
             context.startScript(DbScriptType.goUse, go.spawn.guid, map, player.guid, go.guid);
+        springLinkedTrap(go);
         uint spellId;
         switch (go.type)
         {
@@ -342,6 +343,45 @@ mixin template GameObjectHandlers()
             if (auto other = lootOf(lootTarget))
                 other.release(this);
         go.loot.showContentTo(this);
+    }
+
+    /**
+     * A button, chest, spell focus or goober with a linked trap (`linkedTrapId`): used, its trap springs on
+     * the user, the trap of that entry standing at it (half a yard) if there is one, else its spell directly.
+     */
+    private void springLinkedTrap(GameObject go)
+    {
+        import dmangos.world.objects : HighGuid;
+
+        uint trapEntry;
+        switch (go.type)
+        {
+        case GameObjectType.button: trapEntry = go.template_.data[3]; break;
+        case GameObjectType.chest: trapEntry = go.template_.data[7]; break;
+        case GameObjectType.spellFocus: trapEntry = go.template_.data[2]; break;
+        case GameObjectType.goober: trapEntry = go.template_.data[12]; break;
+        default: return;
+        }
+        const trapTemplate = trapEntry ? trapEntry in context.data.gameObjectTemplates : null;
+        if (trapTemplate is null || trapTemplate.type != GameObjectType.trap)
+            return;
+        GameObject trap;
+        const at = go.position;
+        foreach (o; map.objectsNear(at, 1))
+            if (auto other = cast(GameObject) o)
+                if (other !is go && other.spawn.entry == trapEntry)
+                {
+                    const p = other.position;
+                    if ((p.x - at.x) ^^ 2 + (p.y - at.y) ^^ 2 + (p.z - at.z) ^^ 2 <= 0.25f)
+                    {
+                        trap = other;
+                        break;
+                    }
+                }
+        if (trap !is null)
+            return context.trapSprung(map, this, trap);
+        if (const spell = trapTemplate.data[3])
+            castTriggeredAt(spell, player.guid);
     }
 
     /// A chest's loot: its template's items, with the loot rights of a group as a corpse has them.
@@ -722,4 +762,30 @@ unittest
     map.relocated(anduin.session.inWorld);
     assert(opcodesOf(anduin.read()).canFind(Opcode.SMSG_SPELL_GO), "sprung");
     assert(map.findObject(go.guid) is null && context.gameObjectAwaitingRespawn(90020), "its one charge used");
+
+    // Linked traps: a button standing on its trap springs it when used; a goober with none casts the trap's spell.
+    import dmangos.world.packets : ClientGuid;
+
+    GameObjectTemplate hidden = {entry: 9023, type: GameObjectType.trap, displayId: 1, name: "Hidden trap"};
+    hidden.data[3] = sting; // no radius: only its link springs it
+    GameObjectTemplate lever = {entry: 9024, type: GameObjectType.button, displayId: 1, name: "Lever"};
+    lever.data[3] = 9023;
+    GameObjectTemplate urn = {entry: 9025, type: GameObjectType.goober, displayId: 1, name: "Urn"};
+    urn.data[12] = 9023;
+    context.data.gameObjectTemplates[9023] = hidden;
+    context.data.gameObjectTemplates[9024] = lever;
+    context.data.gameObjectTemplates[9025] = urn;
+    context.data.gameObjectSpawns ~= [GameObjectSpawn(90023, 9023, 0, -8946, -130, 83.53f),
+        GameObjectSpawn(90024, 9024, 0, -8946, -130, 83.53f), GameObjectSpawn(90025, 9025, 0, -8946, -134, 83.53f)];
+    GameObject[3] linked;
+    foreach (i; 0 .. 3)
+    {
+        linked[i] = context.makeGameObject(&context.data.gameObjectSpawns[$ - 3 + i]);
+        map.addObject(linked[i]);
+    }
+    anduin.read();
+    anduin.write(Opcode.CMSG_GAMEOBJ_USE, ClientGuid(linked[1].guid));
+    assert(opcodesOf(anduin.read()).canFind(Opcode.SMSG_SPELL_GO) && linked[0].trapReadyAt > 0, "the lever's trap");
+    anduin.write(Opcode.CMSG_GAMEOBJ_USE, ClientGuid(linked[2].guid));
+    assert(opcodesOf(anduin.read()).canFind(Opcode.SMSG_SPELL_GO), "the urn's trap spell");
 }
