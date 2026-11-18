@@ -423,6 +423,72 @@ struct StockRelease
     uint item, maxCount, count;
 }
 
+/// What a `ChannelCommand` does.
+enum ChannelOp : ubyte
+{
+    join,           /// `arg`: the password
+    leave,
+    list,
+    password,       /// `arg`: the new password
+    owner,
+    announcements,
+    moderate,
+    setOwner,       /// `arg`, here and below: the target's name
+    moderator,
+    unmoderator,
+    mute,
+    unmute,
+    invite,
+    kick,
+    ban,
+    unban,
+    say,            /// `arg`: the text, in `language`
+    leaveAll,       /// logging out
+    zoneChanged,    /// `arg`: the new zone's name
+    forcedSay,      /// `arg`: the text, to every member of an existing channel, its sayer a member or not
+}
+
+/// What a `GroupCommand` does.
+enum GroupOp : ubyte
+{
+    invite,          /// `text`: the invitee's name
+    accept,
+    decline,
+    uninviteGuid,    /// `target`
+    uninvite,        /// `text`: the name
+    setLeader,       /// `target`
+    disband,         /// leaving, or giving up a group that never formed
+    lootMethod,      /// `number`: the method, `target`: the master looter, `number2`: the threshold
+    targetIcon,      /// `number`: the icon, `target`: what it marks
+    raidConvert,
+    changeSubGroup,  /// `text`: the member's name, `number`: the sub-group
+    swapSubGroup,    /// `text`, `text2`: the two members' names
+    assistant,       /// `target`, `number`: set (1) or not (0)
+    logout,          /// `number`: 1 when logging out normally, 0 for a lost connection
+    battlegroundAdd, /// `target` (named `text`) joins its team's battleground raid, whose leader gives the command
+}
+
+/// What a `GmRemote` does to its target.
+enum GmRemoteOp : ubyte
+{
+    kick,         /// `.kick`; `text`: the reason
+    summon,       /// `.summon`: to the GM's map and position
+    appear,       /// `.appear`: the GM comes to the target (`appearAt` goes back)
+    appearAt,     /// the target's map and position, for the GM
+    disconnect,   /// `.kill`-by-name: the player's session is disconnected
+    banKick,      /// `.ban character`: the account is banned already; the player goes
+    rename,       /// `.rename`: the database has the new name (`text`) already
+    playerInfo,   /// `.playerinfo`
+    kill,         /// `.killplr`; `text`: the name as the GM typed it
+    revive,       /// `.reviveplr`; `text`: ditto
+    saveAll,      /// `.server saveall`: every node saves its players (no target)
+    massSummon,   /// `.masssummon`: every node asks its players to the GM's place; `text`: the GM's zone
+    instanceInfo,     /// `.instance info` of copy `instance`, on its dungeon's host (no target)
+    instanceShutdown, /// `.instance shutdown` of copy `instance`, ditto
+    instanceReset,    /// `.instance reset` of copy `instance` for the player `target`, ditto
+    instanceResetAll, /// `.instance resetall`: the player `target`'s copies each node hosts
+}
+
 /// A player's chat channel command, for the coordinator, which keeps the channels.
 struct ChannelCommand
 {
@@ -433,7 +499,7 @@ struct ChannelCommand
     ubyte race;
     bool moderateAll;      /// the `c` permission: moderates every channel
     ubyte chatTag;
-    ubyte op;              /// `dmangos.world.channelservice.ChannelOp`
+    ChannelOp op;
     @LengthPrefix!uint string channel;
     @LengthPrefix!uint string arg;
     uint language;
@@ -449,7 +515,7 @@ struct GroupCommand
     @LengthPrefix!uint string name;
     ubyte race;
     bool permissions;      /// any GM permission: invites across factions
-    ubyte op;              /// `dmangos.world.groupservice.GroupOp`
+    GroupOp op;
     ulong target;
     @LengthPrefix!uint string text;
     @LengthPrefix!uint string text2;
@@ -511,7 +577,7 @@ struct GmRemote
 {
     enum type = MessageType.gmRemote;
 
-    ubyte op;
+    GmRemoteOp op;
     ulong gm;
     @LengthPrefix!uint string gmName;
     bool gmCanKickGms;       /// the GM has the `z` permission
@@ -807,3 +873,75 @@ unittest
     auto bad = ByteReader(bytes);
     assertThrown!PacketException(deserialize!ServiceReply(bad));
 }
+
+// ---------------------------------------------------------------------------------------------------
+// What the compiler checks about the protocol
+// ---------------------------------------------------------------------------------------------------
+
+/// The protocol's message structs: those with an `enum type` naming their `MessageType`.
+private template messageStructs()
+{
+    import std.meta : AliasSeq;
+
+    alias messageStructs = AliasSeq!();
+    static foreach (name; __traits(allMembers, dmangos.cluster.protocol))
+        static if (is(__traits(getMember, dmangos.cluster.protocol, name) == struct))
+            static if (__traits(compiles, { enum MessageType t = __traits(getMember, dmangos.cluster.protocol, name).type; }))
+                messageStructs = AliasSeq!(messageStructs, __traits(getMember, dmangos.cluster.protocol, name));
+}
+
+// Every message type has exactly one struct, and the types are contiguous (`takeFrame` checks min..max).
+static assert(() {
+    import std.traits : EnumMembers;
+
+    foreach (m; EnumMembers!MessageType)
+    {
+        size_t structs;
+        static foreach (S; messageStructs!())
+            if (S.type == m)
+                ++structs;
+        if (structs != 1)
+            return false;
+    }
+    return [EnumMembers!MessageType].length == MessageType.max - MessageType.min + 1;
+}(), "each MessageType needs exactly one message struct, and the types must be contiguous");
+
+/**
+ * A fingerprint of every message's layout on the wire: each struct's name, its fields' types and attributes
+ * (their length prefixes), and every enum's members (an enum field refuses values it does not list). It is
+ * recorded for the current `protocolVersion`, so a message changed without the version raised does not
+ * compile: nodes of the two builds would misread each other. Raise `protocolVersion` and record the new
+ * fingerprint (the assertion's message says it).
+ */
+private enum ulong protocolFingerprint = () {
+    string text;
+    static foreach (S; messageStructs!())
+    {
+        text ~= __traits(identifier, S) ~ "{";
+        static foreach (i, F; typeof(S.tupleof))
+        {
+            text ~= F.stringof ~ " " ~ __traits(identifier, S.tupleof[i]);
+            static foreach (attribute; __traits(getAttributes, S.tupleof[i]))
+                text ~= " @" ~ attribute.stringof;
+            static if (is(F == enum))
+                text ~= " " ~ [__traits(allMembers, F)].stringof;
+            text ~= ";";
+        }
+        text ~= "}";
+    }
+    ulong hash = 0xcbf29ce484222325; // FNV-1a
+    foreach (c; text)
+    {
+        hash ^= c;
+        hash *= 0x100000001b3;
+    }
+    return hash;
+}();
+
+/// The protocol version whose messages `protocolFingerprint` was recorded for, and the fingerprint.
+private enum recordedVersion = 32, recordedFingerprint = 0xca20162115d9d052UL;
+
+static assert(protocolVersion == recordedVersion && protocolFingerprint == recordedFingerprint,
+    "the cluster messages (or protocolVersion) changed: if the messages changed, raise protocolVersion; then record "
+    ~ "recordedVersion = protocolVersion and recordedFingerprint = "
+    ~ imported!"std.format".format!"0x%016x"(protocolFingerprint));

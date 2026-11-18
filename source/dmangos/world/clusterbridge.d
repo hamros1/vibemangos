@@ -453,11 +453,11 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
         });
         import dmangos.world.gmtargets : aboutInstances, everywhere, GmRemoteOp;
 
-        if (m.op <= GmRemoteOp.max && aboutInstances(cast(GmRemoteOp) m.op))
+        if (aboutInstances(m.op))
         {
             import dmangos.world.gminstance : describeInstance, resetAllHere, resetInstanceHere, shutdownInstanceHere;
 
-            final switch (cast(GmRemoteOp) m.op)
+            final switch (m.op)
             {
             case GmRemoteOp.instanceInfo:
                 return describeInstance(context, m.instance, sink);
@@ -481,7 +481,7 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
             }
         }
 
-        if (m.op <= GmRemoteOp.max && everywhere(cast(GmRemoteOp) m.op))
+        if (everywhere(m.op))
         {
             // For every player here.
             foreach (other; context.onlinePlayers)

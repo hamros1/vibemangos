@@ -12,6 +12,8 @@
  */
 module dmangos.world.channelservice;
 
+public import dmangos.cluster.protocol : ChannelOp; // a cluster message's field
+
 import dmangos.cluster.protocol : ChannelCommand;
 import dmangos.cluster.services : Call, Service, ServiceKind;
 import dmangos.world.channel;
@@ -20,30 +22,6 @@ import dmangos.world.context : WorldContext;
 import dmangos.world.online : OnlinePlayer;
 import dmangos.world.opcodes : Language, Opcode;
 
-/// What a `ChannelCommand` does.
-enum ChannelOp : ubyte
-{
-    join,           /// `arg`: the password
-    leave,
-    list,
-    password,       /// `arg`: the new password
-    owner,
-    announcements,
-    moderate,
-    setOwner,       /// `arg`, here and below: the target's name
-    moderator,
-    unmoderator,
-    mute,
-    unmute,
-    invite,
-    kick,
-    ban,
-    unban,
-    say,            /// `arg`: the text, in `language`
-    leaveAll,       /// logging out
-    zoneChanged,    /// `arg`: the new zone's name
-    forcedSay,      /// `arg`: the text, to every member of an existing channel, its sayer a member or not
-}
 
 /// `op` on `channel`, by `who`.
 ChannelCommand channelCommand(const OnlinePlayer who, ChannelOp op, string channel, string arg = null,
@@ -100,8 +78,6 @@ final class ChannelService : MemberDirectory
     /// Runs a command that came from node `via` (this node's own id for its own players).
     void run(const ChannelCommand c, ushort via)
     {
-        if (c.op > ChannelOp.max)
-            return;
         auto who = memberFor(c, via);
         auto set = channels.forTeam(context.client.teamForRace(c.race));
         Channel named()
@@ -109,7 +85,7 @@ final class ChannelService : MemberDirectory
             return set.find(c.channel, who);
         }
 
-        final switch (cast(ChannelOp) c.op)
+        final switch (c.op)
         {
         case ChannelOp.join:
             return set.getOrCreate(c.channel).join(who, c.arg);

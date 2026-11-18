@@ -6,28 +6,10 @@
  */
 module dmangos.world.gmtargets;
 
+public import dmangos.cluster.protocol : GmRemoteOp; // a cluster message's field
+
 import dmangos.world.commands : MSG_COLOR_GREEN, MSG_COLOR_LIGHTBLUE, MSG_COLOR_LIGHTRED;
 
-/// What a `GmRemote` does to its target.
-enum GmRemoteOp : ubyte
-{
-    kick,         /// `.kick`; `text`: the reason
-    summon,       /// `.summon`: to the GM's map and position
-    appear,       /// `.appear`: the GM comes to the target (`appearAt` goes back)
-    appearAt,     /// the target's map and position, for the GM
-    disconnect,   /// `.kill`-by-name: the player's session is disconnected
-    banKick,      /// `.ban character`: the account is banned already; the player goes
-    rename,       /// `.rename`: the database has the new name (`text`) already
-    playerInfo,   /// `.playerinfo`
-    kill,         /// `.killplr`; `text`: the name as the GM typed it
-    revive,       /// `.reviveplr`; `text`: ditto
-    saveAll,      /// `.server saveall`: every node saves its players (no target)
-    massSummon,   /// `.masssummon`: every node asks its players to the GM's place; `text`: the GM's zone
-    instanceInfo,     /// `.instance info` of copy `instance`, on its dungeon's host (no target)
-    instanceShutdown, /// `.instance shutdown` of copy `instance`, ditto
-    instanceReset,    /// `.instance reset` of copy `instance` for the player `target`, ditto
-    instanceResetAll, /// `.instance resetall`: the player `target`'s copies each node hosts
-}
 
 /// Whether `op` is about a dungeon copy (or a player's), done on the node hosting it.
 bool aboutInstances(GmRemoteOp op) pure nothrow @nogc @safe
@@ -109,9 +91,7 @@ mixin template GmTargets()
     /// sends a command back to the GM's node (`appearAt`).
     package void gmTargeted(const ref GmRemote m, GmSink gm, void delegate(GmRemote) reply)
     {
-        if (m.op > GmRemoteOp.max)
-            return;
-        final switch (cast(GmRemoteOp) m.op)
+        final switch (m.op) // the deserializer refused any other value
         {
         case GmRemoteOp.kick:
             return kickedBy(gm, m.gmName, m.gmCanKickGms, m.text);

@@ -142,8 +142,13 @@ no lock of its own.
   * acknowledges the highest sequence number the sender has received.
 
   Those sent to the coordinator are echoed, which is what renews a node's lease.
-* **Protocol version.** `protocolVersion` (30) changes whenever a message changes. Nodes speaking
-  another version are refused at the handshake, so a cluster runs one build throughout.
+* **Protocol version.** `protocolVersion` (32) changes whenever a message changes. Nodes speaking
+  another version are refused at the handshake, so a cluster runs one build throughout. The compiler
+  enforces it: a fingerprint of every message's layout (fields, length prefixes, enum members) is
+  recorded with the version, and a message changed without both being updated does not compile. It
+  also checks that every message type has exactly one struct and that the types are contiguous.
+* **Enum fields.** A field typed as an enum (a group, channel or GM operation, a service status)
+  accepts only that enum's members: any other value makes the frame malformed.
 
 There are 47 message types. They fall into:
 

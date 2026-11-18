@@ -11,6 +11,8 @@
  */
 module dmangos.world.groupservice;
 
+public import dmangos.cluster.protocol : GroupOp; // a cluster message's field
+
 import dmangos.cluster.protocol : GroupCommand;
 import dmangos.world.context : WorldContext;
 import dmangos.world.group;
@@ -19,25 +21,6 @@ import dmangos.world.online : OnlinePlayer;
 import dmangos.world.opcodes : Opcode;
 import dmangos.world.packets;
 
-/// What a `GroupCommand` does.
-enum GroupOp : ubyte
-{
-    invite,          /// `text`: the invitee's name
-    accept,
-    decline,
-    uninviteGuid,    /// `target`
-    uninvite,        /// `text`: the name
-    setLeader,       /// `target`
-    disband,         /// leaving, or giving up a group that never formed
-    lootMethod,      /// `number`: the method, `target`: the master looter, `number2`: the threshold
-    targetIcon,      /// `number`: the icon, `target`: what it marks
-    raidConvert,
-    changeSubGroup,  /// `text`: the member's name, `number`: the sub-group
-    swapSubGroup,    /// `text`, `text2`: the two members' names
-    assistant,       /// `target`, `number`: set (1) or not (0)
-    logout,          /// `number`: 1 when logging out normally, 0 for a lost connection
-    battlegroundAdd, /// `target` (named `text`) joins its team's battleground raid, whose leader gives the command
-}
 
 /// `op` by `who`.
 GroupCommand groupCommand(const OnlinePlayer who, GroupOp op, ulong target = 0, string text = null,
@@ -62,11 +45,9 @@ final class GroupService
     /// Runs a command that came from node `via` (this node's own id for its own players).
     void run(const GroupCommand c, ushort via)
     {
-        if (c.op > GroupOp.max)
-            return;
         context.heardFrom(c.guid, via);
         auto groups = context.groups;
-        final switch (cast(GroupOp) c.op)
+        final switch (c.op) // the deserializer refused any other value
         {
         case GroupOp.invite:
             return invite(c);
