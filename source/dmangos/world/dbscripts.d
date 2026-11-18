@@ -1124,6 +1124,16 @@ unittest
     keeper.ai.receivedEmote(me.guid, wave + 2, map);
     assert(keeper.values.get!UNIT_FIELD_DISPLAYID == 1234 && keeper.values.get!UNIT_FIELD_MOUNTDISPLAYID == 555
         && keeper.values.getByte!UNIT_FIELD_BYTES_2(0) == 1, "its new look");
+    // Held in place, a unit field set, threat wiped from everyone.
+    EventAiEvent held = {id: 5, type: EventType.receiveEmote, chance: 100, params: [wave + 4, 0, 0, 0, 0, 0]};
+    held.actions[0] = EventAiAction(ActionType.setImmobilized, [1, 0, 0]);
+    held.actions[1] = EventAiAction(ActionType.setUnitField, [UNIT_NPC_EMOTESTATE.offset, 69, EventTarget.self]);
+    held.actions[2] = EventAiAction(ActionType.threatAllPct, [-100, 0, 0]);
+    auto holding = [held];
+    keeper.ai.setScript(holding, context.data.eventAi);
+    keeper.ai.receivedEmote(me.guid, wave + 4, map);
+    assert(keeper.immobilized && keeper.values.get!UNIT_NPC_EMOTESTATE == 69, "held, and its emote state set");
+
     EventAiEvent ended = {id: 4, type: EventType.receiveEmote, chance: 100, params: [wave + 3, 0, 0, 0, 0, 0]};
     ended.actions[0] = EventAiAction(ActionType.die, [0, 0, 0]);
     auto ending = [ended];

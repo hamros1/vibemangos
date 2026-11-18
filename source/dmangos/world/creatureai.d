@@ -175,6 +175,8 @@ final class CreatureAI : Scripted, CreatureHost
     {
         Creature me;
         float[ulong] threat;       // its threat list: who it fights, and how much each has done to it
+        bool chaseWalking;         // its script has it walk after its victim
+        bool rootedForFight;       // its script holds it in place until the fight ends
         bool calledAssistance;     // `m_AlreadyCallAssistance`: once a fight
         Creature[] assistanceReceivers; // the allies called, until the call arrives
         ulong assistanceEnemy;     // whom they are called against
@@ -833,7 +835,7 @@ private:
             z = other.position.z;
         chasedTo = other.position;
         Vector3[] points = [Vector3(0, 0, 0), Vector3(x, y, z)];
-        launch(me, world, points, false, float.nan, true);
+        launch(me, world, points, chaseWalking, float.nan, true);
         // Does the way end within reach of it?
         const end = me.spline.finalDestination;
         const ex = end.x - other.position.x, ey = end.y - other.position.y;
@@ -878,6 +880,11 @@ private:
     {
         const wasFighting = inCombat_;
         world_ = world;
+        if (rootedForFight)
+        {
+            me.scriptRooted = false;
+            rootedForFight = false;
+        }
         scope (exit)
             if (wasFighting)
                 world.linked(me, LinkEvent.evade, 0);

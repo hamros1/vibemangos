@@ -702,12 +702,14 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
     private float auraSpeedFactor = 1; /// what its slows and speed-ups multiply its speeds by now
     private bool auraHeld;              /// rooted or stunned, as last told
 
-    /// Rooted or stunned: it does not move.
+    bool scriptRooted; /// held in place by its script
+
+    /// Rooted or stunned (or held by its script): it does not move.
     @property bool immobilized() const
     {
         import dmangos.world.auras : AuraType;
 
-        return auras.has(AuraType.modRoot) || auras.has(AuraType.modStun);
+        return scriptRooted || auras.has(AuraType.modRoot) || auras.has(AuraType.modStun);
     }
 
     /**

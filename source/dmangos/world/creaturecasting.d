@@ -722,6 +722,81 @@ mixin template CreatureCasting()
             lore.signalDungeon(me.instanceId, EntityRef(me.guid), field, value);
     }
 
+    /// ditto: each percent of threat added (negative: taken off; -100: none left).
+    void scriptThreatPercent(ulong target, int percent)
+    {
+        foreach (guid, ref amount; threat)
+            if (target == 0 || guid == target)
+            {
+                amount += amount * percent / 100.0f;
+                if (amount < 0)
+                    amount = 0;
+            }
+    }
+
+    /// ditto: only a creature's, and only its unit fields.
+    void scriptUnitField(ulong target, uint field, uint value)
+    {
+        import dmangos.world.updatefields : OBJECT_END, UNIT_END;
+
+        auto c = world_.creatureAt(target);
+        if (c is null || field < OBJECT_END || field >= UNIT_END)
+            return;
+        c.values.setSlot(field, value);
+        world_.flushCreature(c);
+    }
+
+    /// ditto
+    void scriptWalk(uint type)
+    {
+        import dmangos.world.movement : MovementFlags;
+
+        switch (type)
+        {
+        case 0:
+            me.movement.flags |= MovementFlags.walkMode;
+            break;
+        case 1:
+            me.movement.flags &= ~MovementFlags.walkMode;
+            break;
+        case 2, 3:
+            chaseWalking = type == 2;
+            break;
+        default:
+            break;
+        }
+    }
+
+    /// ditto
+    void scriptFace(ulong target, bool reset)
+    {
+        import std.math : atan2;
+        import dmangos.vmap.math : Vector3;
+        import dmangos.world.motion : launch;
+
+        float facing = me.spawn.orientation;
+        if (!reset)
+        {
+            Position at;
+            if (!world_.positionOf(target, at))
+                return;
+            facing = atan2(at.y - me.position.y, at.x - me.position.x);
+        }
+        const p = me.position;
+        launch(me, world_, [Vector3(p.x, p.y, p.z), Vector3(p.x, p.y, p.z)], true, facing);
+    }
+
+    /// ditto
+    void scriptImmobilized(bool on, bool combatOnly)
+    {
+        import dmangos.world.motion : stopMoving;
+
+        me.scriptRooted = on;
+        rootedForFight = on && combatOnly;
+        if (on)
+            stopMoving(me, world_);
+    }
+
     /// ditto: back to its template's faction with 0.
     void scriptFaction(uint faction)
     {

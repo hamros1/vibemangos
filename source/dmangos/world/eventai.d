@@ -19,7 +19,9 @@
  * joining the fight (zone combat pulse), and setting instance data (a signal to the dungeon copy's
  * script, the field its id and the data its value).
  *
- * Not yet: the other actions (updating the template, threat percentages, rooting, following, facing),
+ * Also threat percentages, setting a unit field, walking or running, facing, and being held in place.
+ *
+ * Not yet: the other actions (updating the template, following),
  * spell lists (`creature_template_spells`), immunities.
  */
 module dmangos.world.eventai;
@@ -97,6 +99,12 @@ enum ActionType : ubyte
     startRelayScript = 53,
     textNew = 54,
     morph = 3,
+    threatSinglePct = 13,
+    threatAllPct = 14,
+    setUnitField = 17,
+    setWalk = 58,
+    setFacing = 59,
+    setImmobilized = 61,
     setInstanceData = 34,
     die = 37,
     zoneCombatPulse = 38,
@@ -289,6 +297,17 @@ interface Scripted
     void scriptDie();
     void scriptZoneCombatPulse(); /// ditto
     void scriptInstanceData(uint field, int value); /// ditto
+
+    /// Its threat of `target` (0: everyone on its threat list) changed by `percent` (-100: forgotten).
+    void scriptThreatPercent(ulong target, int percent);
+    /// A unit field of a creature `target` set (not the object's own fields).
+    void scriptUnitField(ulong target, uint field, uint value);
+    /// Walking or running: 0 walking, 1 running, 2 walking to chase, 3 running to chase.
+    void scriptWalk(uint type);
+    /// It turns to `target`, or (`reset`) back the way it faces at its spawn.
+    void scriptFace(ulong target, bool reset);
+    /// Held where it stands (`on`), until it leaves the fight if `combatOnly`.
+    void scriptImmobilized(bool on, bool combatOnly);
 
     /// A quest's event happens for the player `player`, or (`all`) every player fighting it.
     void scriptQuestEvent(uint quest, ulong player, bool all);
@@ -609,6 +628,35 @@ final class EventAI
         case ActionType.setInstanceData:
             me.scriptInstanceData(a.params[0] > 0 ? a.params[0] : 0, a.params[1]);
             return true;
+        case ActionType.threatSinglePct:
+        {
+            const target = targetOf(a.params[1], me, invoker);
+            if (target)
+                me.scriptThreatPercent(target, a.params[0]);
+            return target != 0;
+        }
+        case ActionType.threatAllPct:
+            me.scriptThreatPercent(0, a.params[0]);
+            return true;
+        case ActionType.setUnitField:
+        {
+            const target = targetOf(a.params[2], me, invoker);
+            if (target && a.params[0] > 0)
+                me.scriptUnitField(target, a.params[0], cast(uint) a.params[1]);
+            return target != 0;
+        }
+        case ActionType.setWalk:
+            me.scriptWalk(a.params[0] > 0 ? a.params[0] : 0);
+            return true;
+        case ActionType.setFacing:
+        {
+            const target = a.params[1] ? 0 : targetOf(a.params[0], me, invoker);
+            me.scriptFace(target, a.params[1] != 0);
+            return true;
+        }
+        case ActionType.setImmobilized:
+            me.scriptImmobilized(a.params[0] != 0, a.params[1] != 0);
+            return true;
         case ActionType.startRelayScript:
             me.scriptRelay(a.params[0], targetOf(a.params[1], me, invoker));
             return a.params[0] != 0;
@@ -887,6 +935,11 @@ unittest
         void scriptDie() {}
         void scriptZoneCombatPulse() {}
         void scriptInstanceData(uint field, int value) {}
+        void scriptThreatPercent(ulong target, int percent) {}
+        void scriptUnitField(ulong target, uint field, uint value) {}
+        void scriptWalk(uint type) {}
+        void scriptFace(ulong target, bool reset) {}
+        void scriptImmobilized(bool on, bool combatOnly) {}
         void scriptQuestEvent(uint quest, ulong player, bool all) {}
         void scriptKillCredit(uint entry, ulong player) {}
         bool scriptSummon(uint entry, ulong target, uint durationMs, uint spot) { return false; }
