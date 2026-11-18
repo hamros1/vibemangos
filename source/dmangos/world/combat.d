@@ -4,8 +4,8 @@
  * (`SMSG_ATTACKERSTATEUPDATE`, `SMSG_ATTACKSTART`, `SMSG_ATTACKSTOP`), and spells' partial resists.
  *
  * A fighter, player or creature, is described by a `Fighter`: what the formulas need of it as it
- * is now. There are no auras yet, so every aura modifier is zero: no hit or crit bonuses, no
- * absorbs or resists, no immunities, no damage shields.
+ * is now, its auras' crit, dodge, parry, block and hit bonuses included. Shields' absorbs are taken
+ * off by the callers before the log is sent; there are no immunities or damage shields here.
  */
 module dmangos.world.combat;
 
@@ -409,6 +409,7 @@ struct MeleeDamage
     uint damage;               /// what the victim takes
     uint cleanDamage;          /// before blocks and glances (rage from damage taken uses it)
     uint blocked;
+    uint absorbed;             /// what the victim's shields took (`damage` is after it)
 }
 
 /// Damage after armor: armor takes up to 75%, less against higher levels.
@@ -564,7 +565,7 @@ const(ubyte)[] attackerStateUpdate(const ref MeleeDamage d)
     w.put(d.school);
     w.put(float(d.damage));
     w.put(d.damage);
-    w.put(uint(0)); // absorbed
+    w.put(d.absorbed);
     w.put(int(0));  // resisted
     w.put(cast(uint) d.targetState);
     w.put(uint(0));

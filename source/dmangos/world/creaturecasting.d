@@ -427,8 +427,9 @@ mixin template CreatureCasting()
             return;
         if (school == 0)
             damage = cast(uint) armorReducedDamage(me.values.get!UNIT_FIELD_LEVEL, other.fighter.armor, damage);
+        const absorbed = other.absorb(school < 0 ? 0 : school, damage);
         world_.sendToObservers(me.guid, Opcode.SMSG_SPELLNONMELEEDAMAGELOG, nonMeleeDamageLog(guid, me.guid,
-            spell.id, damage, school < 0 ? 0 : school, 0, 0, false, 0, false));
+            spell.id, damage, school < 0 ? 0 : school, absorbed, 0, false, 0, false));
         if (damage)
             triggerCombatTimer();
         other.spellHitBy(me.guid, damage);

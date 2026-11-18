@@ -7,7 +7,7 @@
  * damage and heals over time, food's health and drink's mana, energize, triggered spells. Auras end
  * when their time is up, when cancelled (positive ones), at death, and by what their
  * `AuraInterruptFlags` say: standing up (food and drink), moving, taking damage, casting, attacking.
- * Auras are saved with the character and loaded at login and arrival. Not yet: dispels, procs, absorbs, area auras on others.
+ * Auras are saved with the character and loaded at login and arrival. A player's shields (school absorbs, mana shields) take damage before it lands. Not yet: dispels, procs, area auras on others.
  */
 module dmangos.world.aurahandlers;
 
@@ -105,6 +105,49 @@ private:
                     && (school == uint.max || (aura.misc(k) & (1 << school))))
                     done += aura.amount[k];
         return done;
+    }
+
+    /**
+     * Damage of `school` (an index) about to hit this player: its shields take what they can, and the
+     * rest is left in `damage`. A school absorb (Power Word: Shield, Ice Barrier) takes up to what it has
+     * left; a mana shield too, while the player has the mana, each point costing the effect's multiple
+     * value in mana. A shield used up goes. Returns what was absorbed.
+     */
+    package uint absorbDamage(uint school, ref uint damage)
+    {
+        if (player is null || damage == 0)
+            return 0;
+        uint absorbed;
+        Aura[] spent;
+        foreach (aura; player.auras.list)
+            foreach (i; 0 .. 3)
+            {
+                if (damage == 0 || !(aura.effects & (1 << i)) || aura.amount[i] <= 0
+                        || !(aura.misc(i) & (1 << school)))
+                    continue;
+                const type = aura.type(i);
+                if (type != AuraType.schoolAbsorb && type != AuraType.manaShield)
+                    continue;
+                uint take = damage < cast(uint) aura.amount[i] ? damage : cast(uint) aura.amount[i];
+                if (type == AuraType.manaShield)
+                {
+                    const perPoint = aura.spell.casting.multipleValue[i];
+                    const mana = player.values.get!UNIT_FIELD_POWER1(0);
+                    if (perPoint > 0 && take * perPoint > mana)
+                        take = cast(uint)(mana / perPoint);
+                    player.values.set!UNIT_FIELD_POWER1(0, mana - cast(uint)(take * perPoint));
+                }
+                aura.amount[i] -= take;
+                damage -= take;
+                absorbed += take;
+                if (aura.amount[i] <= 0)
+                    spent ~= aura;
+            }
+        foreach (aura; spent)
+            removeAura(aura);
+        if (absorbed)
+            flushPlayerChanges();
+        return absorbed;
     }
 
     /// The aura on this player: its effects begin (if new), its duration shown.
@@ -357,7 +400,8 @@ private:
             uint damage = amount;
             if (aura.spell.casting.school == 0)
                 damage = cast(uint) armorReducedDamage(aura.casterLevel, player.fighter.armor, damage);
-            periodicLog(player.guid, aura, i, damage, 0);
+            const absorbed = absorbDamage(aura.spell.casting.school, damage);
+            periodicLog(player.guid, aura, i, damage, 0, absorbed);
             import dmangos.world.unit : Blow, dealDamage;
 
             return dealDamage(map.unit(aura.caster), unit, damage, Blow.periodic());
@@ -374,7 +418,7 @@ private:
     }
 
     /// `SMSG_PERIODICAURALOG`
-    void periodicLog(ulong target, const Aura aura, size_t i, uint amount, uint powerOrSchool)
+    void periodicLog(ulong target, const Aura aura, size_t i, uint amount, uint powerOrSchool, uint absorbed = 0)
     {
         ByteWriter w;
         w.putPackedGuid(target);
@@ -387,7 +431,7 @@ private:
         case AuraType.periodicDamage:
             w.put(amount);
             w.put(aura.spell.casting.school);
-            w.put(0u);
+            w.put(absorbed);
             w.put(0);
             break;
         case AuraType.periodicHeal, AuraType.obsModHealth:
@@ -639,4 +683,48 @@ unittest
 
     anduin.session.update(25.seconds);
     assert(db.auraRows[7].length == 1 && db.auraRows[7][0].remaining > 0, "saved again at logout");
+}
+
+/// Shields: a school absorb takes damage until used up, then goes; a mana shield pays mana for what it takes.
+unittest
+{
+    import dmangos.world.auras : AuraType, makeAura;
+    import dmangos.world.movement : Position;
+    import dmangos.world.player : Player;
+    import dmangos.world.spellhandlers : testSpell;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+    import dmangos.world.updatefields;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto jaina = loggedIn(context, db, 3, "Jaina", Position(-8949.95f, -132.49f, 83.53f, 0));
+    jaina.read();
+    auto session = jaina.session.inWorld;
+    enum uint shield = 91101, manaShield = 91102;
+    with (context.data.spells)
+    {
+        spells[shield] = testSpell(shield, 6, 1, 50);
+        spells.edit(shield).casting.applyAuraName[0] = AuraType.schoolAbsorb;
+        spells.edit(shield).miscValue[0] = 127; // every school
+        spells[manaShield] = testSpell(manaShield, 6, 1, 100);
+        spells.edit(manaShield).casting.applyAuraName[0] = AuraType.manaShield;
+        spells.edit(manaShield).miscValue[0] = 1; // physical
+        spells.edit(manaShield).casting.multipleValue[0] = 2;
+    }
+    auto me = cast(Player) jaina.session.character;
+    session.addAura(makeAura(shield in context.data.spells.spells, me.guid, 1, -1, true, [50, 0, 0]));
+    uint damage = 30;
+    assert(session.absorbDamage(4, damage) == 30 && damage == 0, "fire, all of it");
+    damage = 30;
+    assert(session.absorbDamage(0, damage) == 20 && damage == 10, "the last 20");
+    assert(!me.auras.has(AuraType.schoolAbsorb), "used up: gone");
+
+    // A mana shield: 2 mana a point; with 30 mana it takes 15.
+    session.addAura(makeAura(manaShield in context.data.spells.spells, me.guid, 1, -1, true, [100, 0, 0]));
+    me.values.set!UNIT_FIELD_POWER1(0, 30u);
+    damage = 40;
+    assert(session.absorbDamage(0, damage) == 15 && damage == 25 && me.values.get!UNIT_FIELD_POWER1(0) == 0);
+    damage = 10;
+    assert(session.absorbDamage(4, damage) == 0, "fire is not its school");
 }

@@ -1630,8 +1630,9 @@ private:
             damage = damage * 3 / 2;
         if (spell.casting.school == 0)
             damage = cast(uint) armorReducedDamage(player.data.level, other.player.fighter.armor, damage);
+        const absorbed = other.absorbDamage(spell.casting.school, damage);
         map.sendToWatchers(this, Opcode.SMSG_SPELLNONMELEEDAMAGELOG, nonMeleeDamageLog(other.player.guid, player.guid,
-            spell.id, damage, spell.casting.school, 0, 0, false, 0, crit), true);
+            spell.id, damage, spell.casting.school, absorbed, 0, false, 0, crit), true);
         enterCombatFor(combatLinger);
         import dmangos.world.unit : Blow, dealDamage;
 

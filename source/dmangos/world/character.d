@@ -293,6 +293,13 @@ final class Character : OnlinePlayer, Looter
     }
 
     /// See `dmangos.world.unit.dealDamage`: damage the player suffers.
+    /// See `UnitRef.absorb`.
+    uint absorbIncoming(uint school, ref uint damage)
+    {
+        return absorbDamage(school, damage);
+    }
+
+    /// See `dealDamage`.
     void sufferDamage(UnitRef attacker, uint damage, const Blow blow)
     {
         takeBlow(attacker, damage, blow);

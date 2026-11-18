@@ -279,6 +279,8 @@ private:
     void swingAtPlayer(typeof(this) other, AttackType type)
     {
         auto d = calculateMeleeDamage(player.fighter, other.player.fighter, type, map.random);
+        if ((d.absorbed = other.absorbDamage(d.school, d.damage)) != 0)
+            d.hitInfo |= HitInfo.absorb;
         map.sendToWatchers(this, Opcode.SMSG_ATTACKERSTATEUPDATE, attackerStateUpdate(d), true);
         enterCombatFor(combatLinger);
         if (player.powerType == Power.rage && type != AttackType.ranged)

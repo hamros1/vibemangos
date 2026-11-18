@@ -855,6 +855,8 @@ private:
         if (swingSpell(target))
             return;
         auto d = calculateMeleeDamage(self, other, AttackType.mainHand, world.random);
+        if ((d.absorbed = target.absorb(d.school, d.damage)) != 0)
+            d.hitInfo |= HitInfo.absorb;
         world.sendToObservers(me.guid, Opcode.SMSG_ATTACKERSTATEUPDATE, attackerStateUpdate(d));
         if (d.damage)
             triggerCombatTimer(); // direct damage either way

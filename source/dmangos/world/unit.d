@@ -240,6 +240,12 @@ struct UnitRef
         dealDamage(map.unit(attacker), this, damage.damage, Blow.swing(damage));
     }
 
+    /// Damage of `school` (an index) about to hit it: what its shields absorb comes off `damage` (a player's; a creature has none).
+    uint absorb(uint school, ref uint damage)
+    {
+        return kind == UnitKind.player ? session.absorbIncoming(school, damage) : 0;
+    }
+
     /// A spell from `caster` hit it for `damage`: `dealDamage`.
     void spellHitBy(ulong caster, uint damage)
     {

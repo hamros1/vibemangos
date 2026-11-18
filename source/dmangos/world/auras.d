@@ -86,6 +86,8 @@ enum AuraType : uint
     modPercentStat = 80,
     modRegen = 84,
     modPowerRegen = 85,
+    schoolAbsorb = 69,
+    manaShield = 97,
     modAttackPower = 99,
     modResistancePct = 101,
     modRangedAttackPower = 124,

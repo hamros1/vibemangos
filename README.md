@@ -494,7 +494,9 @@ What works now:
     over time (on creatures too, as the caster's spell: threat, tapping, the kill), food's health
     every 5 seconds and drink's mana, energize, triggered spells. Auras are saved (`character_aura`)
     at logout and with each save, and come back with the time they had left; a cluster's hand-off
-    carries them. Not yet: dispels, procs, absorbs, auras on creatures slowing or rooting them.
+    carries them. A player's shields (Power Word: Shield, Ice Barrier, Mana Shield at its mana per
+    point) take damage of their schools until used up; the log shows what they absorbed. Not yet:
+    dispels, aura procs, auras on creatures slowing or rooting them.
   * **Quests:** quest givers (`creature_questrelation`, `creature_involvedrelation`) show what they have for the player
     (the exclamation and question marks), list their quests in their gossip (or open the only one),
     and give them as `quest_template` says who may take them (class, race, level, skill, condition,
