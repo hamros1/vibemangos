@@ -49,6 +49,7 @@ enum SpellCastResult : ubyte
     noPower = 0x4D,
     outOfRange = 0x59,
     reagents = 0x5C,
+    noAmmo = 0x43,
     spellInProgress = 0x61,
     targetsDead = 0x65,
     targetEnemy = 0x69,

@@ -180,6 +180,53 @@ private:
     private int autoRepeatMs;             /// until the next shot
     private bool autoRepeatWindUp;        /// moved (or just began): half a second before shooting
 
+    /**
+     * What a shot of `spell` (a spell of the ranged slot, `SPELL_ATTR_RANGED`) uses up: with a bow, gun or
+     * crossbow, one of the ammunition set (`PLAYER_AMMO_ID`); with a thrown weapon that stacks, one of it.
+     * False if it uses nothing.
+     */
+    private bool ammoFor(const(SpellInfo)* spell, out uint entry)
+    {
+        import dmangos.world.defines : equipmentSlotRanged, InventoryType;
+
+        enum uint spellAttrRanged = 0x2, itemClassWeapon = 2, bow = 2, gun = 3, crossbow = 18;
+        if (!(spell.attributes & spellAttrRanged))
+            return false;
+        const weapon = player.inventory.equipped(equipmentSlotRanged);
+        if (weapon is null || weapon.proto is null)
+            return false;
+        if (weapon.proto.inventoryType == InventoryType.thrown)
+        {
+            if (weapon.proto.stackable <= 1)
+                return false; // one that does not stack is not used up (it would wear instead)
+            entry = weapon.proto.entry;
+            return true;
+        }
+        const sub = weapon.proto.subClass;
+        if (weapon.proto.itemClass != itemClassWeapon || (sub != bow && sub != gun && sub != crossbow))
+            return false;
+        entry = player.values.get!PLAYER_AMMO_ID;
+        return true;
+    }
+
+    /// Whether the player has what a shot of `spell` uses up.
+    private bool hasAmmoFor(const(SpellInfo)* spell)
+    {
+        uint entry;
+        return !ammoFor(spell, entry) || (entry != 0 && player.inventory.count(entry) > 0);
+    }
+
+    /// A shot of `spell` uses up its ammunition (or thrown weapon).
+    private void takeAmmo(const(SpellInfo)* spell)
+    {
+        uint entry;
+        if (ammoFor(spell, entry) && entry)
+        {
+            player.inventory.destroyCount(entry, 1);
+            flushInventory();
+        }
+    }
+
     /// An auto-repeating spell (`SPELL_ATTR_EX2_AUTOREPEAT_FLAG`) cast by the client.
     static bool autoRepeats(const(SpellInfo)* spell) pure nothrow @nogc @safe
     {
@@ -257,7 +304,14 @@ private:
             return;
         }
         const spell = autoRepeat;
+        if (!hasAmmoFor(spell))
+        {
+            deliver(Opcode.SMSG_CAST_RESULT, castResultPacket(spell.id, SpellCastResult.noAmmo, spell));
+            autoRepeat = null;
+            return;
+        }
         castSpell(spell, targets, true, 0);
+        takeAmmo(spell);
         autoRepeatMs = cast(int) player.values.get!UNIT_FIELD_RANGEDATTACKTIME + cast(int) spell.recoveryTime;
     }
 
@@ -858,6 +912,8 @@ private:
             foreach (i, reagent; spell.reagents)
                 if (reagent > 0 && player.inventory.count(reagent) < spell.casting.reagentCount[i])
                     return SpellCastResult.reagents;
+            if (!hasAmmoFor(spell))
+                return SpellCastResult.noAmmo;
         }
         return SpellCastResult.ok;
     }
@@ -1139,6 +1195,8 @@ private:
                 foreach (i, reagent; spell.reagents)
                     if (reagent > 0 && spell.casting.reagentCount[i])
                         player.inventory.destroyCount(reagent, spell.casting.reagentCount[i]);
+                if (!autoRepeats(spell))
+                    takeAmmo(spell); // an auto-repeating shot's is taken as it shoots
             }
             else if (const proto = c.castItemEntry in context.data.items)
                 foreach (i, ref use; proto.details.spells)
@@ -3098,4 +3156,82 @@ unittest
     anduin.write(Opcode.CMSG_CANCEL_AUTO_REPEAT_SPELL, null);
     session.updateAutoRepeat(5000.msecs);
     assert(keeper.values.get!UNIT_FIELD_HEALTH == 480, "stopped");
+}
+
+/// Each shot of a bow uses an arrow; out of arrows, the shooting stops ("no ammo").
+unittest
+{
+    import core.time : MonoTime, msecs;
+    import std.algorithm.searching : canFind;
+    import dmangos.dbc : buildDbc;
+    import dmangos.world.clientdata : spellCastTimesFormat, spellRangeFormat;
+    import dmangos.world.creature : Creature;
+    import dmangos.world.movement : Position;
+    import dmangos.world.objects : HighGuid, makeGuid;
+    import dmangos.world.opcodes : Opcode;
+    import dmangos.world.player : Player;
+    import dmangos.world.spellcast : ImplicitTarget, SpellTargets, TargetFlags;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+    import dmangos.world.updatefields;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    uint bits(float f) { return *cast(uint*) &f; }
+    context.client.spellCastTimes = typeof(context.client.spellCastTimes).parse(buildDbc(spellCastTimesFormat,
+        [[1u, 0, 0, 0]]), "SpellCastTimes.dbc");
+    context.client.spellRanges = typeof(context.client.spellRanges).parse(buildDbc(spellRangeFormat,
+        [[1u, bits(0), bits(35), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]), "SpellRange.dbc");
+    enum uint shot = 97201;
+    context.data.spells.spells[shot] = testSpell(shot, 2, ImplicitTarget.enemy, 1);
+    with (*context.data.spells.spells.edit(shot))
+    {
+        attributes |= 0x2;                   // the ranged slot
+        attributesEx2 |= 0x20 | 0x20000000; // auto-repeat; no crit
+        casting.school = 1;
+        casting.dmgClass = 0;
+    }
+    auto rexxar = loggedIn(context, db, 7, "Rexxar", Position(-8949.95f, -132.49f, 83.53f, 1.97f), AccountLevel.player,
+        raceOrc);
+    auto me = cast(Player) rexxar.session.character;
+    me.spells ~= shot;
+    rexxar.read();
+    import dmangos.world.defines : equipmentSlotRanged;
+
+    import dmangos.world.defines : inventorySlotBag0;
+    import dmangos.world.packets : ClientItemPos;
+
+    rexxar.session.inWorld.lootStore(itemBow, 1, 0, false);
+    rexxar.session.inWorld.lootStore(itemArrow, 20, 0, false);
+    rexxar.read();
+    ubyte slot;
+    foreach (s; ubyte(23) .. ubyte(39))
+        if (const item = me.inventory[inventorySlotBag0, s])
+            if (item.entry == itemBow)
+                slot = s;
+    rexxar.write(Opcode.CMSG_AUTOEQUIP_ITEM, ClientItemPos(inventorySlotBag0, slot));
+    rexxar.read();
+    me.values.set!PLAYER_AMMO_ID(itemArrow); // the arrows as the ammunition
+    assert(me.inventory.equipped(equipmentSlotRanged) !is null && me.inventory.count(itemArrow) > 1, "a bow, arrows");
+    auto session = rexxar.session.inWorld;
+    auto keeper = cast(Creature) context.map(0).findObject(makeGuid(HighGuid.unit, creatureInnkeeper, innkeeperSpawn));
+    keeper.values.set!UNIT_FIELD_MAXHEALTH(5000u);
+    keeper.values.set!UNIT_FIELD_HEALTH(5000u);
+    me.values.set!UNIT_FIELD_TARGET(keeper.guid);
+    me.values.set!UNIT_FIELD_RANGEDATTACKTIME(2000u);
+    const arrows = me.inventory.count(itemArrow);
+    session.castSpell(shot in context.data.spells.spells, SpellTargets(TargetFlags.unit, keeper.guid), false, 0);
+    session.updateAutoRepeat(100.msecs);
+    session.updateAutoRepeat(600.msecs);
+    assert(me.inventory.count(itemArrow) == arrows - 1, "an arrow a shot");
+
+    me.inventory.destroyCount(itemArrow, arrows - 1);
+    rexxar.read();
+    session.updateAutoRepeat(2100.msecs);
+    assert(opcodesOf(rexxar.read()).canFind(Opcode.SMSG_CAST_RESULT), "no ammo");
+    const health = keeper.values.get!UNIT_FIELD_HEALTH;
+    session.updateAutoRepeat(5000.msecs);
+    assert(keeper.values.get!UNIT_FIELD_HEALTH == health, "stopped");
 }
