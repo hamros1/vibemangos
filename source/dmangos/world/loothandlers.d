@@ -75,6 +75,28 @@ private:
             if (lock is null || lock.skill[0] || lock.skill[1])
                 return sendEquipError(EquipError(InventoryResult.itemLocked, item));
         }
+        // A gift: unwrapped, what was in it (`character_gifts`) back as it was.
+        {
+            import dmangos.world.inventory : itemDynFlagWrapped, ItemState;
+
+            if (item.values[ITEM_FIELD_FLAGS] & itemDynFlagWrapped)
+            {
+                uint entry, flags;
+                const inside = context.database.loadGift(item.guid, entry, flags) ? entry in context.data.items : null;
+                if (inside is null)
+                {
+                    player.inventory.destroy(item.bagSlot, item.slot); // nothing known inside
+                    context.database.deleteGift(item.guid);
+                    return flushInventory();
+                }
+                item.changeEntry(inside);
+                item.values.set!ITEM_FIELD_GIFTCREATOR(0UL);
+                item.values.set!ITEM_FIELD_FLAGS(flags);
+                player.inventory.setState(item, ItemState.changed);
+                context.database.deleteGift(item.guid);
+                return flushInventory();
+            }
+        }
         const guid = item.fullGuid;
         auto loot = itemLoots.get(guid, null);
         if (loot is null)

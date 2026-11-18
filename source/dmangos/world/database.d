@@ -665,6 +665,13 @@ interface WorldDatabase
     /// A bug report or suggestion from a client (`bugreport`).
     void saveBugReport(string type, string content);
 
+    /// A wrapped item's own entry and flags (`character_gifts`): kept, read back (found: true), and dropped.
+    void saveGift(uint owner, uint item, uint entry, uint flags);
+    /// ditto
+    bool loadGift(uint item, out uint entry, out uint flags);
+    /// ditto
+    void deleteGift(uint item);
+
     /// The raids' next resets (`instance_reset`: Unix time, by map); and one's change.
     long[uint] loadRaidResets();
     /// ditto
@@ -956,6 +963,9 @@ final class MySqlWorldDatabase : WorldDatabase
     ushort[] gameEventStatus() { return statements.gameEventStatus(); }
     void savePetAuras(uint pet, const(AuraRecord)[] auras) { statements.savePetAuras(pet, auras); }
     long[uint] loadRaidResets() { return statements.loadRaidResets(); }
+    void saveGift(uint owner, uint item, uint entry, uint flags) { statements.saveGift(owner, item, entry, flags); }
+    bool loadGift(uint item, out uint entry, out uint flags) { return statements.loadGift(item, entry, flags); }
+    void deleteGift(uint item) { statements.deleteGift(item); }
     void saveRaidReset(uint map, long time) { statements.saveRaidReset(map, time); }
     AuraRecord[] loadPetAuras(uint pet) { return statements.loadPetAuras(pet); }
     void savePetCooldowns(uint pet, const(ulong[2])[] cooldowns) { statements.savePetCooldowns(pet, cooldowns); }
@@ -1196,6 +1206,19 @@ final class MemoryWorldDatabase : WorldDatabase
         return accountDataRows.get(format!"%s:%s:%s"(perCharacter, owner, type), null);
     }
     void saveBugReport(string type, string content) { bugReports ~= [type, content]; }
+    uint[2][uint] giftRows; /// by item: its entry and flags
+    void saveGift(uint owner, uint item, uint entry, uint flags) { giftRows[item] = [entry, flags]; }
+    bool loadGift(uint item, out uint entry, out uint flags)
+    {
+        if (auto g = item in giftRows)
+        {
+            entry = (*g)[0];
+            flags = (*g)[1];
+            return true;
+        }
+        return false;
+    }
+    void deleteGift(uint item) { giftRows.remove(item); }
     long[uint] raidResetRows;
     long[uint] loadRaidResets() { return raidResetRows.dup; }
     void saveRaidReset(uint map, long time) { raidResetRows[map] = time; }

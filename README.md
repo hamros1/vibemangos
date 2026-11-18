@@ -621,6 +621,9 @@ What works now:
     settled: a player's letter with an item goes back to
     its sender once, every other one is deleted with its item. Auction houses send mail too. Not
     yet: mail from NPCs and quests (`mail_template`).
+  * **Gift wrapping:** an item wrapped in gift paper (a sheet used) becomes the wrapped gift, what it
+    was kept in `character_gifts`; opened, it is that item again. Bags, equipped, bound, stackable,
+    unique and wrapped items cannot be wrapped.
   * **Trading:** two players of a faction within 11 yards trade up
     to six items and money each; any change takes back both acceptances; when both accept, it goes
     through if both can pay and carry it (the items keep their guids and change owners, their

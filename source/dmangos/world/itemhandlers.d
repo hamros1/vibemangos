@@ -130,6 +130,65 @@ private:
         flushInventory();
     }
 
+    /**
+     * `CMSG_WRAP_ITEM`: an item wrapped in gift paper (a stack of `ITEM_FLAG_WRAPPER` paper, one used): it
+     * becomes the wrapped gift (the paper's own wrapped kind), its own entry and flags kept in `character_gifts`
+     * till it is opened. Not a bag, an equipped, bound, stackable, unique or already wrapped item, nor while
+     * casting.
+     */
+    @Handles(Opcode.CMSG_WRAP_ITEM, WorldState.inWorld)
+    void handleWrapItem(ref ByteReader reader)
+    {
+        import dmangos.world.inventory : itemDynFlagWrapped;
+
+        enum uint itemFlagWrapper = 0x200;
+        const giftBag = reader.read!ubyte, giftSlot = reader.read!ubyte;
+        const itemBag = reader.read!ubyte, itemSlot = reader.read!ubyte;
+        auto gift = inventory[giftBag, giftSlot];
+        if (gift is null || !(gift.proto.flags & itemFlagWrapper) || gift.proto.stackable == 1)
+            return sendEquipError(InventoryResult.itemNotFound);
+        auto item = inventory[itemBag, itemSlot];
+        if (item is null)
+            return sendEquipError(InventoryResult.itemNotFound);
+        if (item is gift || item.values.get!ITEM_FIELD_GIFTCREATOR)
+            return sendEquipError(InventoryResult.wrappedCantBeWrapped);
+        if (isEquipmentPos(item.pos))
+            return sendEquipError(InventoryResult.equippedCantBeWrapped);
+        if (item.contents.length)
+            return sendEquipError(InventoryResult.bagsCantBeWrapped);
+        if (item.bound)
+            return sendEquipError(InventoryResult.boundCantBeWrapped);
+        if (item.proto.stackable != 1)
+            return sendEquipError(InventoryResult.stackableCantBeWrapped);
+        if (item.proto.maxCount > 0)
+            return sendEquipError(InventoryResult.uniqueCantBeWrapped);
+        if (generic.active)
+            return sendEquipError(InventoryResult.cantDoRightNow);
+        // The paper's wrapped kind.
+        uint wrapped = gift.entry;
+        switch (wrapped)
+        {
+        case 5042: wrapped = 5043; break;
+        case 5048: wrapped = 5044; break;
+        case 17303: wrapped = 17302; break;
+        case 17304: wrapped = 17305; break;
+        case 17307: wrapped = 17308; break;
+        case 21830: wrapped = 21831; break;
+        default: break;
+        }
+        const to = wrapped in context.data.items;
+        if (to is null)
+            return sendEquipError(InventoryResult.itemNotFound);
+        context.database.saveGift(player.data.guid, item.guid, item.entry, item.values[ITEM_FIELD_FLAGS]);
+        item.changeEntry(to);
+        item.values.set!ITEM_FIELD_GIFTCREATOR(player.guid);
+        item.values.set!ITEM_FIELD_FLAGS(itemDynFlagWrapped);
+        inventory.setState(item, ItemState.changed);
+        uint one = 1;
+        inventory.destroyCount(gift, one);
+        flushInventory();
+    }
+
     /// Between two of the character's own slots.
     @Handles(Opcode.CMSG_SWAP_INV_ITEM, WorldState.inWorld)
     void handleSwapInvItem(const ClientSwapInvItem request)
@@ -799,4 +858,57 @@ unittest
     asked.then(true, 0);
     assert(packet!ServerBuyFailed(anduin.read()).result == BuyResult.notEnoughMoney);
     assert(released == [10], "two lots of five back to node 2");
+}
+
+/// Gift wrapping: an item wrapped in paper becomes the gift (the paper used); opened, it is itself again.
+unittest
+{
+    import dmangos.world.inventory : itemDynFlagWrapped;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    import dmangos.world.worlddata : ItemTemplate;
+
+    ItemTemplate paper = cast() context.data.items[itemJerky];
+    paper.entry = 5042;
+    paper.flags = 0x200;
+    paper.stackable = 20;
+    context.data.items[5042] = paper;
+    ItemTemplate gift = paper;
+    gift.entry = 5043;
+    gift.flags = 0;
+    gift.stackable = 1;
+    context.data.items[5043] = gift;
+    void setup(ref CharacterData c)
+    {
+        c.items = [ItemRecord(0, 23, 500, itemSword, 0, 0, 1, 0, "", 0, "", 0, 20),
+            ItemRecord(0, 24, 501, 5042, 0, 0, 3, 0, "", 0, "", 0, 0)];
+    }
+
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f), AccountLevel.player,
+        raceHuman, 0, 1, &setup);
+    anduin.read();
+    enum ubyte bag0 = inventorySlotBag0;
+    const inventory = anduin.session.character.inventory;
+
+    // Paper cannot wrap itself.
+    anduin.write(Opcode.CMSG_WRAP_ITEM, cast(const(ubyte)[]) [bag0, ubyte(24), bag0, ubyte(24)]);
+    assert(packet!ServerInventoryChangeFailure(anduin.read()).result == InventoryResult.wrappedCantBeWrapped);
+
+    anduin.write(Opcode.CMSG_WRAP_ITEM, cast(const(ubyte)[]) [bag0, ubyte(24), bag0, ubyte(23)]);
+    anduin.read();
+    auto wrapped = inventory[bag0, 23];
+    assert(wrapped.guid == 500 && wrapped.entry == 5043 && (wrapped.values[ITEM_FIELD_FLAGS] & itemDynFlagWrapped));
+    assert(inventory[bag0, 24].count == 2, "a sheet of paper used");
+    assert(db.giftRows[500] == [itemSword, 0], "what is inside, kept");
+
+    // Wrapped, it cannot be wrapped again.
+    anduin.write(Opcode.CMSG_WRAP_ITEM, cast(const(ubyte)[]) [bag0, ubyte(24), bag0, ubyte(23)]);
+    assert(packet!ServerInventoryChangeFailure(anduin.read()).result == InventoryResult.wrappedCantBeWrapped);
+
+    // Opened: the sword again.
+    anduin.write(Opcode.CMSG_OPEN_ITEM, cast(const(ubyte)[]) [bag0, ubyte(23)]);
+    anduin.read();
+    assert(inventory[bag0, 23].entry == itemSword && !inventory[bag0, 23].values.get!ITEM_FIELD_GIFTCREATOR);
+    assert(500 !in db.giftRows && db.itemRows[500].entry == itemSword);
 }

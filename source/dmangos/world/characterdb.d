@@ -1094,6 +1094,30 @@ final class CharacterStatements
         characters.execute!"UPDATE characters SET name = ?, at_login = at_login & ~1 WHERE guid = ?"(newName, guid);
     }
 
+    /// See `WorldDatabase.saveGift`.
+    void saveGift(uint owner, uint item, uint entry, uint flags)
+    {
+        characters.execute!"REPLACE INTO character_gifts (guid, item_guid, entry, flags) VALUES (?, ?, ?, ?)"(owner,
+            item, entry, flags);
+    }
+
+    /// See `WorldDatabase.loadGift`.
+    bool loadGift(uint item, out uint entry, out uint flags)
+    {
+        const rows = characters.query!"SELECT entry, flags FROM character_gifts WHERE item_guid = ?"(item);
+        if (rows.length == 0)
+            return false;
+        entry = rows[0].get!uint(0);
+        flags = rows[0].get!uint(1);
+        return true;
+    }
+
+    /// See `WorldDatabase.deleteGift`.
+    void deleteGift(uint item)
+    {
+        characters.execute!"DELETE FROM character_gifts WHERE item_guid = ?"(item);
+    }
+
     /// See `WorldDatabase.loadRaidResets`.
     long[uint] loadRaidResets()
     {

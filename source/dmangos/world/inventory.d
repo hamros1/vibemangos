@@ -345,6 +345,14 @@ final class Item
         return values.get!ITEM_FIELD_ENCHANTMENT(slot * fieldsPerSlot);
     }
 
+    /// It becomes an item of `proto` (wrapped in paper, or unwrapped), the rest of it as it was.
+    void changeEntry(const(ItemTemplate)* to)
+    in (to !is null)
+    {
+        proto = to;
+        values.set!OBJECT_FIELD_ENTRY(to.entry);
+    }
+
     /// A new item (or bag) of `proto` for `owner`, one in the stack.
     this(uint guid, const(ItemTemplate)* proto, ulong owner)
     in (proto !is null)
