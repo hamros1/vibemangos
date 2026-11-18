@@ -78,7 +78,7 @@ void validateNewCredentials(string username, string password)
     enforce(isValidPassword(password), "passwords must be 1-16 characters long");
 }
 
-/// A `LoginDatabase` held in memory, following the same rules as the CMaNGOS tables.
+/// A `LoginDatabase` held in memory, following the same rules as the MySQL tables.
 class MemoryLoginDatabase : LoginDatabase
 {
     private static struct BanRow

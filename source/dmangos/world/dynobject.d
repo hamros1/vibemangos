@@ -1,5 +1,5 @@
 /**
- * Dynamic objects (CMaNGOS `Entities/DynamicObject.cpp`): the spot a persistent area aura covers
+ * Dynamic objects: the spot a persistent area aura covers
  * (Blizzard, Consecration, Rain of Fire), seen by the clients as the spell's effect on the ground.
  * The caster's session ticks it (`dmangos.world.spellhandlers`); here is what the clients see of it.
  */
@@ -10,7 +10,7 @@ import dmangos.world.movement : Position;
 import dmangos.world.objects;
 import dmangos.world.updatefields;
 
-/// `HIGHGUID_DYNAMICOBJECT`
+/// The high 16 bits of a dynamic object's guid.
 enum ushort highGuidDynamicObject = 0xF100;
 
 /// See the module documentation.
@@ -20,7 +20,7 @@ final class DynamicObject : MapObject
     Position at;
     UpdateValues values;
 
-    /// `DynamicObject::Create`: `spell`'s spot of `radius` yards at `at`, cast by `caster`.
+    /// `spell`'s spot of `radius` yards at `at`, cast by `caster`.
     this(uint counter, ulong caster, uint spell, size_t effect, float radius, Position at)
     {
         guid_ = ulong(highGuidDynamicObject) << 48 | counter;

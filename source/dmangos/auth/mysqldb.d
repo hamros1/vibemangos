@@ -1,13 +1,12 @@
 /**
- * `LoginDatabase` on a CMaNGOS `realmd` MySQL/MariaDB database.
+ * `LoginDatabase` on a MySQL/MariaDB database with the CMaNGOS `realmd` schema.
  *
- * The tables are used exactly as CMaNGOS uses them, with the same statements
- * (see `realmd/AuthSocket.cpp`, `realmd/RealmList.cpp` and
- * `game/Accounts/AccountMgr.cpp`). CMaNGOS and dmangos can therefore share
- * a database, and accounts created by either tool work in both.
+ * The tables are read and written exactly as the CMaNGOS login server and
+ * account tools do, so both can share a database, and accounts created by
+ * either work in both.
  *
- * Time comparisons use the database server's `UNIX_TIMESTAMP()`, as
- * CMaNGOS does, so bans behave identically even if the clocks differ.
+ * Time comparisons use the database server's `UNIX_TIMESTAMP()`, so bans
+ * behave identically even if the servers' clocks differ.
  */
 module dmangos.auth.mysqldb;
 
@@ -28,7 +27,7 @@ final class MySqlLoginDatabase : LoginDatabase
 {
     private MySqlConnection db;
 
-    /// Account columns plus the ban counts, as in CMaNGOS's logon challenge query.
+    /// Account columns plus the ban counts, as the logon challenge needs them.
     private enum selectAccounts = "SELECT a.id, a.username, a.gmlevel, a.v, a.s, a.sessionkey, a.locked, "
         ~ "a.lockedIp, a.failed_logins, "
         ~ "(SELECT COUNT(*) FROM account_banned WHERE account_id = a.id AND active = 1 AND expires_at = banned_at), "
@@ -153,7 +152,7 @@ final class MySqlLoginDatabase : LoginDatabase
             name, credentials.verifierHex, credentials.saltHex);
         if (level != AccountLevel.player)
             db.execute!"UPDATE account SET gmlevel = ? WHERE username = ?"(level, name);
-        // As AccountMgr::CreateAccount: give the new account a zero character count on every realm.
+        // The new account gets a zero character count on every realm.
         db.execute!("INSERT INTO realmcharacters (realmid, acctid, numchars) SELECT realmlist.id, account.id, 0 "
             ~ "FROM realmlist, account LEFT JOIN realmcharacters ON acctid = account.id WHERE acctid IS NULL")();
         return findAccount(name).get;
@@ -179,7 +178,7 @@ final class MySqlLoginDatabase : LoginDatabase
     }
 
 private:
-    /// `account_logons.loginSource` for logins through realmd (`LOGIN_TYPE_REALMD`).
+    /// `account_logons.loginSource` for logins through the login server.
     enum uint loginSourceRealmd = 0;
 
     Account require(string username)
@@ -189,7 +188,7 @@ private:
         return account.get;
     }
 
-    /// Fails early, with a clear message, if the database is not a CMaNGOS realmd database.
+    /// Fails early, with a clear message, if the database lacks a `realmd` table.
     void checkSchema()
     {
         static immutable tables = ["account", "account_banned", "account_logons", "ip_banned", "realmcharacters",

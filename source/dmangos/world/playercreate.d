@@ -1,15 +1,15 @@
 /**
- * Character creation: a port of CMaNGOS's `Player::Create`, limited to what
+ * Character creation: building a new character, limited to what
  * ends up in the database.
  *
- * `CharacterBuilder` keeps only the parts of CMaNGOS's `Player` state that
+ * `CharacterBuilder` keeps only the parts of a player's state that
  * creation touches: spells, skills, inventory, ammo and dual wielding. It
- * runs the same steps in the same order:
+ * runs these steps in this order:
  * $(OL
  *   $(LI start position, appearance, level, money;)
  *   $(LI stats for the level, then health and mana from stamina and intellect;)
  *   $(LI the race's starting taxi nodes;)
- *   $(LI default skills (`LearnDefaultSkills`) and spells (`learnDefaultSpells` -> `addSpell`),
+ *   $(LI default skills and spells (`learnDefaultSpells` -> `addSpell`),
  *        including the skills and spells each of them teaches in turn;)
  *   $(LI default action bars;)
  *   $(LI the starting outfit (`CharStartOutfit.dbc`) and `playercreateinfo_item`, equipped where
@@ -17,13 +17,13 @@
  *        follow `dmangos.world.inventory`'s rules, the same a player in the world is held to.)
  * )
  *
- * The result is a `NewCharacter`, the rows CMaNGOS's `SaveToDB` would write.
+ * The result is a `NewCharacter`, the rows a new character is saved as.
  *
  * `CharacterBuilder.loadAbilities` runs the skill and spell part of
- * `Player::LoadFromDB` with the same machinery, for a character entering the
+ * loading a character with the same machinery, for a character entering the
  * world.
  *
- * Like CMaNGOS, this saves only spells learned as non-dependent (default
+ * This saves only spells learned as non-dependent (default
  * spells are re-learned at every login), and no reputations (they are
  * initialized at the first login). Passive spells are "cast" only for the
  * effects that persist (learning a spell or a skill step) and for dual
@@ -52,7 +52,7 @@ import dmangos.world.updatefields : maxPlayerSkills, TypeId;
 import dmangos.world.worlddata;
 
 // ---------------------------------------------------------------------------
-// Constants (SharedDefines.h, Player.h, ItemPrototype.h)
+// Constants
 // ---------------------------------------------------------------------------
 
 private enum : uint
@@ -62,11 +62,11 @@ private enum : uint
     abilityLearnedOnGetRaceOrClassSkill = 2,
 }
 
-/// `TaxiMaskSize`
+/// The number of 32-bit words in a taxi node mask.
 enum taxiMaskSize = 8;
-/// `MAX_ENCHANTMENT_SLOT`
+/// The number of enchantment slots of an item.
 enum maxEnchantmentSlot = 7;
-/// `AT_LOGIN_FIRST`
+/// The `at_login` flag of a character that has never logged in.
 enum uint atLoginFirst = 0x20;
 
 private enum uint powerRageDefault = 1000, powerEnergyDefault = 100;
@@ -90,14 +90,14 @@ struct CreateRequest
     ubyte outfitId;
 }
 
-/// Configuration that affects new characters (mangosd.conf equivalents in parentheses).
+/// Configuration that affects new characters (the configuration keys in parentheses).
 struct CreationSettings
 {
-    uint startPlayerLevel = 1;          /// `StartPlayerLevel`
-    uint startGmLevel = 1;              /// `GM.StartLevel`, for accounts of moderator level and up
-    uint startPlayerMoney = 0;          /// `StartPlayerMoney`
-    uint maxPrimaryTradeSkill = 2;      /// `MaxPrimaryTradeSkill`
-    uint gmIgnoreMaxPrimarySkills = 4;  /// `TradeSkill.GMIgnore.MaxPrimarySkillsCount`
+    uint startPlayerLevel = 1;          /// `start_player_level`
+    uint startGmLevel = 1;              /// `start_gm_level`, for accounts of moderator level and up
+    uint startPlayerMoney = 0;          /// `start_player_money`
+    uint maxPrimaryTradeSkill = 2;      /// `max_primary_trade_skill`
+    uint gmIgnoreMaxPrimarySkills = 4;  /// the account level from which the limit is 10
 }
 
 /// One item of a new character, as `item_instance` and `character_inventory` store it.
@@ -108,7 +108,7 @@ struct NewItem
     uint count;
     uint duration;
     int[5] charges;
-    uint flags;        /// `ITEM_DYNFLAG_BINDED` if bound
+    uint flags;        /// the bound flag if bound
     uint durability;
     uint containerGuid; /// the bag it is in, 0 for the backpack and equipment
     ubyte slot;
@@ -130,7 +130,7 @@ struct NewSpell
     bool disabled;
 }
 
-/// Everything `SaveToDB` writes for a new character.
+/// Everything saved for a new character.
 struct NewCharacter
 {
     uint guid;
@@ -228,7 +228,7 @@ struct KnownAbilities
     uint freePrimaryProfessions; /// primary professions that can still be learned
 }
 
-/// A packet `Player::learnSpell` sends to a player in the world.
+/// A packet learning a spell sends to a player in the world.
 struct LearnEvent
 {
     enum Kind
@@ -246,16 +246,16 @@ struct LearnEvent
 struct LearnResult
 {
     KnownAbilities abilities;    /// the abilities now
-    LearnEvent[] events;         /// in the order CMaNGOS sends them
+    LearnEvent[] events;         /// in the order they are sent
     NewSpell[] savedSpells;      /// `character_spell` rows to write
     uint[] removedSpells;        /// `character_spell` rows to delete
     NewSkill[] savedSkills;      /// `character_skills` rows to write; a `max` of 0 deletes the row
 }
 
-/// `SkillRangeType`
+/// How a skill's maximum is set: by language, by level, fixed, or by rank.
 enum SkillRange { none, language, level, mono, rank }
 
-/// `GetSkillRangeType`
+/// The kind of range `skill` has, by its category (`racial`: learned from the race).
 SkillRange skillRangeType(const(SkillLineEntry)* skill, bool racial)
 {
     switch (skill.categoryId)
@@ -277,7 +277,7 @@ SkillRange skillRangeType(const(SkillLineEntry)* skill, bool racial)
     }
 }
 
-/// `IsProfessionOrRidingSkill`
+/// Whether `skill` is a profession, a secondary skill (fishing, cooking, first aid) or riding.
 bool isProfessionOrRiding(const(SkillLineEntry)* skill)
 {
     return skill.categoryId == SkillCategory.profession || skill.id == skillFishing || skill.id == skillCooking
@@ -325,7 +325,7 @@ final class CharacterBuilder : InventoryOwner
     }
 
     /**
-     * Runs `Player::Create`. Returns false, as CMaNGOS does, if the race/class pair or the
+     * Creates the character. Returns false if the race/class pair or the
      * gender is invalid, or the class is missing from the DBC files.
      */
     bool create(uint guid, uint account, AccountLevel accountLevel, CreateRequest req, bool skipCinematic,
@@ -374,7 +374,7 @@ final class CharacterBuilder : InventoryOwner
         result.level = level;
         result.money = settings.startPlayerMoney;
 
-        // InitStatsForLevel, then UpdateMaxHealth / UpdateMaxPower(POWER_MANA) in Create.
+        // The stats for the level, then the most health and mana from them.
         const stats = world.levelStats(req.race, req.classId, level);
         const classStats = world.classStats(req.classId, level);
         result.health = cast(uint) round(max(classStats.baseHealth + healthBonusFromStamina(stats.stats[Stat.stamina]),
@@ -395,17 +395,17 @@ final class CharacterBuilder : InventoryOwner
 
         result.cinematic = skipCinematic ? 1 : 0;
         result.atLogin = atLoginFirst;
-        result.zone = 0; // CMaNGOS saves the cached zone, which is only known once in the world
+        result.zone = 0; // the zone is only known once in the world
         result.ammoId = ammoId;
         collect(result);
         return true;
     }
 
     /**
-     * The skill and spell part of `Player::LoadFromDB`: `InitPrimaryProfessions`, `_LoadSkills`,
-     * `_LoadSpells` (talents first, then what the skills teach, then the other saved spells) and
+     * The skill and spell part of loading a character: the free primary professions, the skills,
+     * the spells (talents first, then what the skills teach, then the other saved spells) and
      * `learnDefaultSpells`. Default spells and the spells skills teach are never saved, so this
-     * learns them again, as CMaNGOS does at every login. Returns false for an invalid race/class pair.
+     * learns them again at every login. Returns false for an invalid race/class pair.
      */
     bool loadAbilities(ubyte race, ubyte classId, uint characterLevel, AccountLevel accountLevel,
         const(NewSkill)[] savedSkills, const(NewSpell)[] savedSpells, out KnownAbilities result)
@@ -475,7 +475,7 @@ final class CharacterBuilder : InventoryOwner
     }
 
     /**
-     * `Player::learnSpell` for a character in the world, as a trainer teaches it: after `loadAbilities`
+     * Learning a spell for a character in the world, as a trainer teaches it: after `loadAbilities`
      * has loaded what the character knows, learns `id` and what comes with it (lower ranks, dependent
      * spells, skills). The result says what to tell the player and what to save.
      */
@@ -536,7 +536,7 @@ final class CharacterBuilder : InventoryOwner
         return request.race;
     }
 
-    /// `Player::HasSpell`
+    /// Whether the character knows `id`, and it is not disabled.
     bool hasSpell(uint id) const
     {
         if (auto spell = id in spells)
@@ -583,7 +583,7 @@ private:
         return result;
     }
 
-    /// `Player::InitPrimaryProfessions`: `MaxPrimaryTradeSkill`, or 10 from the `TradeSkill.GMIgnore` account level.
+    /// The free primary professions: `max_primary_trade_skill`, or 10 from the `gmIgnoreMaxPrimarySkills` account level.
     void initPrimaryProfessions()
     {
         freePrimaryProfessions = cast(uint) security < settings.gmIgnoreMaxPrimarySkills
@@ -591,7 +591,7 @@ private:
     }
 
     // -----------------------------------------------------------------------
-    // Stats (StatSystem.cpp)
+    // Stats
     // -----------------------------------------------------------------------
 
     @property ushort skillMaxForLevel() const
@@ -600,7 +600,7 @@ private:
     }
 
     // -----------------------------------------------------------------------
-    // Spells (Player::addSpell, learnSpell, learnDefaultSpells)
+    // Spells
     // -----------------------------------------------------------------------
 
     void learnDefaultSpells(const ref PlayerInfo info)
@@ -623,7 +623,7 @@ private:
                         learnSpell(next, false);
     }
 
-    /// `SpellMgr::GetSpellBookSuccessorSpellId`
+    /// The next rank of a spell in the spell book, 0 if none.
     uint spellBookSuccessor(uint id) const
     {
         foreach (ability; client.abilitiesForSpell(id))
@@ -632,7 +632,7 @@ private:
         return 0;
     }
 
-    /// `SpellMgr::IsSpellValid`
+    /// Whether the items a spell creates, its reagents and the spells it teaches all exist.
     bool isSpellValid(const(SpellInfo)* spell) const
     {
         if (spell is null)
@@ -662,7 +662,7 @@ private:
         return true;
     }
 
-    /// `Player::IsNeedCastPassiveLikeSpellAtLearn`, for a player in no shapeshift form and without aura states.
+    /// Whether a learned spell is cast on oneself at once, for a player in no shapeshift form and without aura states.
     static bool needCastAtLearn(const(SpellInfo)* spell)
     {
         if (spell.attributesEx & spellAttrExCastWhenLearned)
@@ -673,8 +673,8 @@ private:
         return needCast && !spell.casterAuraState;
     }
 
-    /// The persistent effects of casting a learned spell on oneself (`Spell::EffectLearnSpell`, `EffectLearnSkill`,
-    /// `EffectDualWield`).
+    /// The persistent effects of casting a learned spell on oneself (learning a spell,
+    /// a skill step, dual wielding).
     void castOnSelf(const(SpellInfo)* spell)
     {
         foreach (i; 0 .. 3)
@@ -864,7 +864,7 @@ private:
         return active && !disabled && !supercededOld;
     }
 
-    /// `SpellMgr::IsPrimaryProfessionFirstRankSpell`
+    /// Whether `id` is the first rank of a primary profession.
     bool isPrimaryProfessionFirstRank(uint id) const
     {
         const spell = world.spells.spell(id);
@@ -886,7 +886,7 @@ private:
     }
 
     // -----------------------------------------------------------------------
-    // Skills (Player::SetSkill, SetSkillStep, UpdateSkillTrainedSpells, UpdateSpellTrainedSkills)
+    // Skills
     // -----------------------------------------------------------------------
 
     bool hasSkill(uint id) const
@@ -910,7 +910,7 @@ private:
         return 0;
     }
 
-    /// `Player::GetSkillInfo`: the first race/class info for a skill that `filter` accepts.
+    /// The first race/class info for a skill that `filter` accepts.
     const(SkillRaceClassInfoEntry)* skillInfo(uint id,
         scope bool delegate(const ref SkillRaceClassInfoEntry) filter = null) const
     {
@@ -1123,7 +1123,7 @@ private:
     }
 
     // -----------------------------------------------------------------------
-    // Items (Player::StoreNewItemInBestSlots, on dmangos.world.inventory)
+    // Items (on dmangos.world.inventory)
     // -----------------------------------------------------------------------
 
     void addStartingItems(const ref PlayerInfo info)
@@ -1215,7 +1215,7 @@ private:
         return false;
     }
 
-    /// `Player::SetAmmo`
+    /// The ammo, if the character can use it.
     void setAmmo(uint entry)
     {
         if (entry && ammoId != entry && inventory.canUseAmmo(entry) == InventoryResult.ok)
@@ -1271,7 +1271,7 @@ private:
 }
 
 /**
- * `Player::ValidateAppearance`: every chosen look must exist in `CharSections.dbc` and
+ * Whether the appearance is valid: every chosen look must exist in `CharSections.dbc` and
  * `CharacterFacialHairStyles.dbc`.
  */
 bool validateAppearance(const ClientData client, ubyte race, ubyte gender, ubyte hairStyle, ubyte hairColor,
@@ -1330,7 +1330,7 @@ unittest
     assert(c.equipmentCache[equipmentSlotBody][0] == itemShirt);
     assert(c.equipmentCacheText.length && c.taxiMaskText == "2 0 0 0 0 0 0 0 ");
 
-    // Every equip check creates (and numbers) a throw-away item first, as CMaNGOS does.
+    // Every equip check creates (and numbers) a throw-away item first.
     assert(c.items.length == 4);
     assert(itemOf(c, itemSword).guid == 2 && itemOf(c, itemSword).slot == equipmentSlotMainhand);
     assert(itemOf(c, itemSword).durability == 20);
@@ -1372,7 +1372,7 @@ unittest
     assert(itemOf(c, itemHearthstone).slot == inventorySlotItemStart);
 }
 
-/// GM accounts start at GM.StartLevel; invalid race/class pairs are refused.
+/// GM accounts start at `start_gm_level`; invalid race/class pairs are refused.
 unittest
 {
     auto client = testClientData();

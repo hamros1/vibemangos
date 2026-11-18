@@ -1,7 +1,7 @@
 /**
  * World packet layouts and framing for 1.12.x clients.
  *
- * Framing (CMaNGOS `WorldSocket.cpp`):
+ * Framing:
  * $(UL
  *   $(LI server -> client: `uint16` size, big-endian, counting the opcode; `uint16` opcode; body;)
  *   $(LI client -> server: `uint16` size, big-endian, counting the opcode; `uint32` opcode; body.)
@@ -18,7 +18,7 @@ import dmangos.serialization;
 import dmangos.world.crypt : HeaderCrypt, serverHeaderLength;
 import dmangos.world.opcodes;
 
-/// Largest client packet CMaNGOS accepts, counting the opcode (`0x2800`).
+/// Largest client packet accepted, counting the opcode (`0x2800`).
 enum maxClientPacketSize = 0x2800;
 
 /// Declares the opcode of a server packet.
@@ -97,7 +97,7 @@ struct ServerPong
 // Character screen
 // ---------------------------------------------------------------------------
 
-/// Number of equipment entries in a character list entry (`INVENTORY_SLOT_BAG_START + 1`).
+/// Number of equipment entries in a character list entry (the equipment slots and the first bag slot).
 enum characterListEquipmentSlots = 20;
 
 /// The most characters a 1.12 client accepts in its list.
@@ -196,7 +196,7 @@ struct ServerCharacterLoginFailed
 }
 
 // ---------------------------------------------------------------------------
-// Entering the world (Player::SendInitialPacketsBeforeAddToMap and after)
+// Entering the world
 // ---------------------------------------------------------------------------
 
 /// `SMSG_LOGIN_VERIFY_WORLD`: the client starts loading the map.
@@ -210,7 +210,7 @@ struct ServerLoginVerifyWorld
     float orientation = 0;
 }
 
-/// Account data types (`NUM_ACCOUNT_DATA_TYPES`).
+/// Account data types.
 enum accountDataTypes = 8;
 
 /// `SMSG_ACCOUNT_DATA_TIMES`: an MD5 per account data type; zero means "none stored".
@@ -265,7 +265,7 @@ struct InitialSpell
     ushort unknown; /// "it's not slot id"
 }
 
-/// One cooldown of `SMSG_INITIAL_SPELLS` (`Player::SendInitialSpells`).
+/// One cooldown of `SMSG_INITIAL_SPELLS`.
 struct InitialCooldown
 {
     ushort spell;
@@ -291,7 +291,7 @@ struct ServerActionButtons
     uint[120] buttons;
 }
 
-/// Reputation list entries (`MAX_REPUTATION_LIST`... 64 in 1.12).
+/// Reputation list entries (64 in 1.12).
 enum reputationListSize = 64;
 
 /// One faction of `SMSG_INITIALIZE_FACTIONS`.
@@ -313,7 +313,7 @@ struct ServerInitializeFactions
 struct ServerLoginSetTimeSpeed
 {
     mixin ServerPacket!(Opcode.SMSG_LOGIN_SETTIMESPEED);
-    uint gameTime;              /// `secsToTimeBitFields`
+    uint gameTime;              /// the game time, packed into the client's date bit fields
     float speed = 0.01666667f;  /// game minutes per real second, as the client expects
 }
 
@@ -571,7 +571,7 @@ struct ServerTextEmote
 }
 
 // ---------------------------------------------------------------------------
-// Teleports (MovementHandler.cpp, MiscHandler.cpp, Player::TeleportTo)
+// Teleports
 // ---------------------------------------------------------------------------
 
 /// `SMSG_TRANSFER_PENDING`: the loading screen of a far teleport.
@@ -650,7 +650,7 @@ struct ClientTeleportAck
 }
 
 // ---------------------------------------------------------------------------
-// Groups (GroupHandler.cpp)
+// Groups
 // ---------------------------------------------------------------------------
 
 /// `PartyOperation`
@@ -799,7 +799,7 @@ struct ServerRaidInstanceInfo
 }
 
 // ---------------------------------------------------------------------------
-// Channels (ChannelHandler.cpp)
+// Channels
 // ---------------------------------------------------------------------------
 
 /// `CMSG_JOIN_CHANNEL`, `CMSG_CHANNEL_PASSWORD`
@@ -824,7 +824,7 @@ struct ClientChannelTarget
 }
 
 // ---------------------------------------------------------------------------
-// What GM commands change (Player::SetSpeedRate, SetRoot, LearnSpell, GiveLevel, ...)
+// What GM commands change (speeds, rooting, learning spells, levels, ...)
 // ---------------------------------------------------------------------------
 
 /// The orders that only name the player and count: `SMSG_FORCE_MOVE_ROOT`, `SMSG_FORCE_MOVE_UNROOT`,
@@ -871,7 +871,7 @@ struct ServerRemovedSpell
     ushort spell;
 }
 
-/// `SMSG_ITEM_PUSH_RESULT` (`Player::SendNewItem`): "You receive item: ..."
+/// `SMSG_ITEM_PUSH_RESULT`: "You receive item: ..."
 struct ServerItemPushResult
 {
     mixin ServerPacket!(Opcode.SMSG_ITEM_PUSH_RESULT);
@@ -923,7 +923,7 @@ struct ServerUpdateWorldState
     uint value;
 }
 
-/// `SMSG_SUMMON_REQUEST`: someone offers to summon the player (`Player::SendSummonRequest`).
+/// `SMSG_SUMMON_REQUEST`: someone offers to summon the player.
 struct ServerSummonRequest
 {
     mixin ServerPacket!(Opcode.SMSG_SUMMON_REQUEST);
@@ -1088,7 +1088,7 @@ unittest
 }
 
 // ---------------------------------------------------------------------------
-// NPCs (GossipDef.cpp, NPCHandler.cpp, QueryHandler.cpp)
+// NPCs: gossip, trainers, vendors, binders
 // ---------------------------------------------------------------------------
 
 /// The NPC a player talks to: `CMSG_GOSSIP_HELLO`, `CMSG_BANKER_ACTIVATE`, `CMSG_BINDER_ACTIVATE`,
@@ -1124,7 +1124,7 @@ struct GossipQuestItem
     @CString string title;
 }
 
-/// `SMSG_GOSSIP_MESSAGE` (`PlayerMenu::SendGossipMenu`)
+/// `SMSG_GOSSIP_MESSAGE`: an NPC's gossip menu.
 struct ServerGossipMessage
 {
     mixin ServerPacket!(Opcode.SMSG_GOSSIP_MESSAGE);
@@ -1140,7 +1140,7 @@ struct ServerGossipComplete
     mixin ServerPacket!(Opcode.SMSG_GOSSIP_COMPLETE);
 }
 
-/// `SMSG_GOSSIP_POI`: a flag on the minimap (`PlayerMenu::SendPointOfInterest`).
+/// `SMSG_GOSSIP_POI`: a flag on the minimap.
 struct ServerGossipPoi
 {
     mixin ServerPacket!(Opcode.SMSG_GOSSIP_POI);
@@ -1176,7 +1176,7 @@ struct NpcTextOption
     NpcTextEmote[3] emotes;
 }
 
-/// `SMSG_NPC_TEXT_UPDATE` (`WorldSession::HandleNpcTextQueryOpcode`)
+/// `SMSG_NPC_TEXT_UPDATE`: the answer to an NPC text query.
 struct ServerNpcTextUpdate
 {
     mixin ServerPacket!(Opcode.SMSG_NPC_TEXT_UPDATE);
@@ -1191,7 +1191,7 @@ struct ServerShowBank
     ulong banker;
 }
 
-/// `SMSG_PLAYERBOUND`: the hearthstone is bound here (`Spell::EffectBind`).
+/// `SMSG_PLAYERBOUND`: the hearthstone is bound here.
 struct ServerPlayerBound
 {
     mixin ServerPacket!(Opcode.SMSG_PLAYERBOUND);
@@ -1199,7 +1199,7 @@ struct ServerPlayerBound
     uint area;
 }
 
-/// One spell of `SMSG_TRAINER_LIST` (`SendTrainerSpellHelper`).
+/// One spell of `SMSG_TRAINER_LIST`.
 struct TrainerListSpell
 {
     uint spell;
@@ -1213,7 +1213,7 @@ struct TrainerListSpell
     uint[3] requiredSpells;
 }
 
-/// `SMSG_TRAINER_LIST` (`WorldSession::SendTrainerList`)
+/// `SMSG_TRAINER_LIST`: what a trainer teaches.
 struct ServerTrainerList
 {
     mixin ServerPacket!(Opcode.SMSG_TRAINER_LIST);
@@ -1277,7 +1277,7 @@ struct VendorListItem
     uint buyCount;
 }
 
-/// `SMSG_LIST_INVENTORY` (`WorldSession::SendListInventory`); an empty list is followed by an error byte.
+/// `SMSG_LIST_INVENTORY`: what a vendor sells; an empty list is followed by an error byte.
 struct ServerListInventory
 {
     mixin ServerPacket!(Opcode.SMSG_LIST_INVENTORY);
@@ -1286,7 +1286,7 @@ struct ServerListInventory
     @Remainder ubyte[] error;
 }
 
-/// `SMSG_BINDER_CONFIRM`: the client asks whether to bind the hearthstone here (`Player::SetBindPoint`).
+/// `SMSG_BINDER_CONFIRM`: the client asks whether to bind the hearthstone here.
 struct ServerBinderConfirm
 {
     mixin ServerPacket!(Opcode.SMSG_BINDER_CONFIRM);
@@ -1294,7 +1294,7 @@ struct ServerBinderConfirm
 }
 
 // ---------------------------------------------------------------------------
-// Items (ItemHandler.cpp, NPCHandler.cpp's repairs, Player::SendEquipError)
+// Items, repairs and inventory errors
 // ---------------------------------------------------------------------------
 
 /// `CMSG_SWAP_INV_ITEM`: two of the character's own slots.
@@ -1372,7 +1372,7 @@ struct ClientSellItem
 struct ClientBuybackItem
 {
     ulong vendor;
-    uint slot; /// `BUYBACK_SLOT_START` + the index
+    uint slot; /// `buybackSlotStart` + the index
 }
 
 /// `CMSG_BUY_ITEM`
@@ -1410,7 +1410,7 @@ struct ServerInventoryChangeFailure
 }
 
 /**
- * `Player::SendEquipError`: for an error, the required level (for "too low level"), then the two
+ * An inventory error: for an error, the required level (for "too low level"), then the two
  * items involved and the slot of the bag that refused the item.
  */
 ServerInventoryChangeFailure inventoryChangeFailure(ubyte result, bool levelError, uint requiredLevel,
@@ -1440,7 +1440,7 @@ struct ServerBuyItem
     uint count;
 }
 
-/// `SMSG_BUY_FAILED` (`Player::SendBuyError`)
+/// `SMSG_BUY_FAILED`: why buying from a vendor failed.
 struct ServerBuyFailed
 {
     mixin ServerPacket!(Opcode.SMSG_BUY_FAILED);
@@ -1449,7 +1449,7 @@ struct ServerBuyFailed
     ubyte result;
 }
 
-/// `SMSG_SELL_ITEM` (`Player::SendSellError`)
+/// `SMSG_SELL_ITEM`: why selling to a vendor failed.
 struct ServerSellItem
 {
     mixin ServerPacket!(Opcode.SMSG_SELL_ITEM);
@@ -1465,7 +1465,7 @@ struct ServerBuyBankSlotResult
     uint result;
 }
 
-/// `SMSG_OPEN_CONTAINER` (`Player::SendOpenContainer`): opens a bag just put on.
+/// `SMSG_OPEN_CONTAINER`: opens a bag just put on.
 struct ServerOpenContainer
 {
     mixin ServerPacket!(Opcode.SMSG_OPEN_CONTAINER);
@@ -1473,7 +1473,7 @@ struct ServerOpenContainer
 }
 
 // ---------------------------------------------------------------------------
-// Experience (Player::SendLogXPGain, SendExplorationExperience)
+// Experience
 // ---------------------------------------------------------------------------
 
 /// `SMSG_LOG_XPGAIN` for experience not from a kill ("You gain N experience").

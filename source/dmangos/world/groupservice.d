@@ -1,6 +1,6 @@
 /**
- * Groups as a cluster service (docs/CLUSTER.md, phase 5b): the rules of CMaNGOS's
- * `Groups/GroupHandler.cpp` for what changes a group.
+ * Groups as a cluster service (docs/CLUSTER.md, phase 5b): the rules for what changes a group:
+ * invitations, leaving, kicks, leadership, loot settings, raids and subgroups.
  *
  * A group's members may be simulated by any node, so its changes happen in one place: the
  * coordinator's `Groups` (standalone, the one server's), which saves them and tells the members
@@ -167,7 +167,7 @@ final class GroupService
                 group.setAssistant(c.target, c.number != 0);
             return;
         case GroupOp.logout:
-            // `WorldSession::LogoutPlayer`'s group part: invitations lapse; a party (not a raid) is left
+            // Logging out: invitations lapse; a party (not a raid) is left
             // when logging out normally.
             groups.uninvite(c.guid);
             auto group = groups.of(c.guid);
@@ -178,14 +178,14 @@ final class GroupService
     }
 
 private:
-    /// `WorldSession::SendPartyResult`
+    /// `SMSG_PARTY_COMMAND_RESULT` to the player who gave the command.
     void result(const ref GroupCommand c, PartyOperation operation, string member, PartyResult code)
     {
         context.deliverTo(c.guid, Opcode.SMSG_PARTY_COMMAND_RESULT,
             packetBody(ServerPartyCommandResult(operation, member, code)));
     }
 
-    /// `WorldSession::HandleGroupInviteOpcode`; the name is checked on the player's node.
+    /// An invitation; the name is checked on the player's node.
     void invite(const ref GroupCommand c)
     {
         with (PartyOperation) with (PartyResult)
@@ -246,7 +246,7 @@ private:
         }
     }
 
-    /// `Player::CanUninviteFromGroup`
+    /// Whether the player may uninvite: only a group's leader or an assistant.
     PartyResult canUninvite(const ref GroupCommand c)
     {
         auto group = context.groups.of(c.guid);

@@ -3,8 +3,8 @@
  *
  * Each packet is a plain struct, (de)serialized by
  * `dmangos.serialization`. Fixed-size packets `static assert` their
- * length so that a layout mistake fails the build. The expected lengths come
- * from CMaNGOS `realmd/AuthSocket.cpp` and Ember's `libs/grunt`.
+ * length so that a layout mistake fails the build. The expected lengths are
+ * those the 1.12 client sends and expects.
  *
  * Client packets omit their opcode byte, which the session reads before
  * dispatching. Server packets declare their opcode through the
@@ -95,7 +95,7 @@ immutable ClientBuild[] supportedBuilds = [
     ClientBuild(6141, "1.12.3", 1, 12, 3),
 ];
 
-/// The supported build `build`, or an all-zero entry (as CMaNGOS shows unknown builds).
+/// The supported build `build`, or an all-zero entry (how an unknown build is shown).
 ClientBuild findBuild(ushort build) pure nothrow @nogc @safe
 {
     foreach (known; supportedBuilds)

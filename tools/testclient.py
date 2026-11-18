@@ -1,4 +1,4 @@
-"""A scripted 1.12.1 client for testing dmangos (or mangosd) end to end.
+"""A scripted 1.12.1 client for testing dmangos end to end.
 
 It logs in through the login server (SRP6), reads the realm list, connects to
 the realm's world server, and then runs the actions given on the command line

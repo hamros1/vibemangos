@@ -1,6 +1,6 @@
 /**
- * A player's pet (CMaNGOS's `PetHandler.cpp`, the pet parts of `Player`, `Pet` and `SpellEffects.cpp`,
- * and the stable master's `NPCHandler.cpp` handlers), mixed into `dmangos.world.character.Character`.
+ * A player's pet: taming, summoning, its bar and spells, saving and loading it, its experience, and
+ * the stable master, mixed into `dmangos.world.character.Character`.
  *
  * A hunter tames a beast (Tame Beast: a twenty-second channel, then the beast is its pet), calls it
  * (Call Pet), dismisses it (Dismiss Pet) and revives it (Revive Pet); a warlock summons a demon, the
@@ -17,13 +17,13 @@ module dmangos.world.pethandlers;
 /// `CLASS_HUNTER`, `CLASS_WARLOCK`
 enum ubyte classHunter = 3, classWarlock = 9;
 
-/// Tame Beast: the channel (`spell_tame_beast_channel`) and what makes the beast a pet at its end.
+/// Tame Beast: the channel and what makes the beast a pet at its end.
 enum uint spellTameBeast = 1515, spellTameBeastDone = 13481;
 
-/// Summon Imp: the imp casts from afar and does not melee (`PetAI::PetAI`).
+/// Summon Imp: the imp casts from afar and does not melee.
 enum uint spellSummonImp = 688;
 
-/// The imp's casting distance (`m_attackDistance`).
+/// The imp's casting distance.
 enum float impAttackDistance = 25;
 
 /// `UNIT_FLAG_PET_RENAME`, `UNIT_FLAG_PET_ABANDON`
@@ -32,16 +32,16 @@ enum uint unitFlagPetRename = 0x10, unitFlagPetAbandon = 0x20;
 /// `UNIT_BYTE2_FLAG_SUPPORTABLE | UNIT_BYTE2_FLAG_AURAS`
 enum ubyte petByte2Flags = 0x08 | 0x10;
 
-/// A hunter pet's happiness: its most (`GetCreatePowers(POWER_HAPPINESS)`), and a tamed beast's.
+/// A hunter pet's happiness: its most, and a tamed beast's.
 enum uint maxHappiness = 1_050_000, tamedHappiness = 166_500;
 
 /// A hunter pet's focus.
 enum uint maxFocus = 100;
 
-/// `CORPSE_DECAY_NORMAL`: how long a hunter pet's corpse lies before it is set aside.
+/// How long a hunter pet's corpse lies before it is set aside.
 enum int petCorpseMs = 60_000;
 
-/// `MAX_PET_NAME`, `CONFIG_UINT32_MIN_PET_NAME`
+/// The longest and shortest pet names, in letters.
 enum size_t maxPetName = 12, minPetName = 2;
 
 /// `SPELL_ATTR_EX_DISMISS_PET_FIRST`
@@ -50,13 +50,13 @@ enum uint spellAttrExDismissPetFirst = 0x0000_0001;
 /// `CREATURE_TYPE_BEAST`, `CREATURE_TYPEFLAGS_TAMEABLE`
 enum uint creatureTypeBeast = 1, typeFlagTameable = 0x01;
 
-/// `CreatureInfo::isTameable`: a beast of a family, marked tameable.
+/// Whether a creature can be tamed: a beast of a family, marked tameable.
 bool isTameable(const ref imported!"dmangos.world.creature".CreatureTemplate t) pure nothrow @nogc @safe
 {
     return t.creatureType == creatureTypeBeast && t.family != 0 && (t.typeFlags & typeFlagTameable);
 }
 
-/// `ObjectMgr::CheckPetName`: 2 to 12 letters.
+/// Whether a pet name is valid: 2 to 12 letters.
 bool validPetName(string name) @safe
 {
     import std.uni : isAlpha;
@@ -99,7 +99,7 @@ mixin template PetHandlers()
     import dmangos.world.updatefields;
 
     private Creature pet_;          // the pet out, alive or dead; null if none
-    private uint stableSlots_;      // `m_stableSlots`
+    private uint stableSlots_;      // the stable slots bought
     private bool stableSlotsRead;
 
     // -----------------------------------------------------------------------
@@ -118,7 +118,7 @@ mixin template PetHandlers()
         return pet_ is null ? null : cast(PetState) pet_.petData;
     }
 
-    /// `m_stableSlots`, read when first needed.
+    /// The stable slots bought, read when first needed.
     private @property uint stableSlots()
     {
         if (!stableSlotsRead)
@@ -136,7 +136,7 @@ mixin template PetHandlers()
     }
 
     /**
-     * `Pet::TryLoadFromDB` for a hunter's Call Pet, Revive Pet and the stables: the pet out with it or
+     * The saved pet for a hunter's Call Pet, Revive Pet and the stables: the pet out with it or
      * set aside (not stabled). Null if none.
      */
     private PetRecord* unstabledPet()
@@ -151,7 +151,7 @@ mixin template PetHandlers()
         return null;
     }
 
-    /// `GetPetSpawnPosition`: beside its owner, a yard and a half to its left.
+    /// Where a pet comes out: beside its owner, a yard and a half to its left.
     private Position petSpawnPosition()
     {
         import std.math : cos, sin;
@@ -168,7 +168,7 @@ mixin template PetHandlers()
     }
 
     /**
-     * `InitStatsForLevel` and `UpdateAllStats`: the pet's level, health, power, armor, stats, attack
+     * The pet's level, health, power, armor, stats, attack
      * power and damage; `full`: at full health and power, else at most what it has.
      */
     private void setPetLevel(Creature creature, uint level, bool full)
@@ -205,7 +205,7 @@ mixin template PetHandlers()
             v.set!UNIT_FIELD_MAXPOWER1(0, s.mana);
             v.set!UNIT_FIELD_POWER1(0, full || mana > s.mana ? s.mana : mana);
         }
-        v.set!UNIT_FIELD_MAXPOWER1(1, 0u); // `SetMaxPower(POWER_RAGE, 0)`
+        v.set!UNIT_FIELD_MAXPOWER1(1, 0u); // no rage
         v.set!UNIT_FIELD_POWER1(1, 0u);
         v.set!UNIT_FIELD_RESISTANCES(0, s.armor);
         v.set!UNIT_FIELD_STAT0(s.stats[0]);
@@ -220,16 +220,16 @@ mixin template PetHandlers()
             v.set!OBJECT_FIELD_SCALE_X(s.scale);
     }
 
-    /// `ObjectMgr::GetXPForPetLevel`: a quarter of what a player needs.
+    /// The experience a pet needs for its next level: a quarter of what a player needs.
     private uint petXpForLevel(uint level)
     {
         return level < context.data.xpForNextLevel.length ? context.data.xpForNextLevel[level] / 4 : 0;
     }
 
     /**
-     * `Pet::LoadPetFromDB` and the making of a new pet: a creature of `entry` beside the player, made
-     * its pet with `state`, at `level`, with `health` and `mana` (0: as `InitStatsForLevel` leaves
-     * it, full). It is saved as the player's current pet, and its bar is sent.
+     * Loading a saved pet or making a new one: a creature of `entry` beside the player, made
+     * its pet with `state`, at `level`, with `health` and `mana` (0: as the stats for the level
+     * leave it, full). It is saved as the player's current pet, and its bar is sent.
      */
     private Creature bringPet(PetState state, uint entry, uint modelId, uint level, uint exp, ReactState react,
         uint health, uint mana, uint focus = maxFocus)
@@ -245,7 +245,7 @@ mixin template PetHandlers()
             v.set!UNIT_FIELD_DISPLAYID(modelId);
             v.set!UNIT_FIELD_NATIVEDISPLAYID(modelId);
         }
-        // `setFaction(owner->GetFaction())`, the flags of something a player controls.
+        // The owner's faction, and the flags of something a player controls.
         const faction = player.values.get!UNIT_FIELD_FACTIONTEMPLATE;
         v.set!UNIT_FIELD_FACTIONTEMPLATE(faction);
         creature.factionTemplate = context.client.factionTemplates.lookup(faction);
@@ -272,7 +272,7 @@ mixin template PetHandlers()
         }
         else
             v.setByte!UNIT_FIELD_BYTES_0(3, cast(ubyte) 0);
-        // As fast as its owner (`UpdateSpeed` of a pet following).
+        // As fast as its owner, to follow it.
         creature.speeds[MoveType.walk] = baseMoveSpeed[MoveType.walk];
         creature.speeds[MoveType.run] = baseMoveSpeed[MoveType.run];
         setPetLevel(creature, level, true);
@@ -311,7 +311,7 @@ mixin template PetHandlers()
         return creature;
     }
 
-    /// `Pet::LoadPetFromDB`: the saved pet `r` comes out. `fullHealth`: at full health and mana (a
+    /// The saved pet `r` comes out. `fullHealth`: at full health and mana (a
     /// demon summoned again); `healthPercent`: a dead hunter pet revived with so much.
     private bool loadPet(PetRecord r, bool fullHealth = false, uint healthPercent = 0)
     {
@@ -328,7 +328,7 @@ mixin template PetHandlers()
             else if (r.type != PetType.summon)
                 return false; // a dead hunter pet stays dead
         }
-        // `SynchronizeLevelWithOwner`: a demon has its master's level; a beast no more than its owner's.
+        // A demon has its master's level; a beast no more than its owner's.
         uint level = r.level;
         if (r.type == PetType.summon || level > player.data.level)
             level = player.data.level;
@@ -349,7 +349,7 @@ mixin template PetHandlers()
     }
 
     /**
-     * `Pet::SavePetToDB(mode)`: the pet out, saved in `slot`. A dead one is not saved as current; a
+     * The pet out, saved in `slot`. A dead one is not saved as current; a
      * stable slot taken by another pet has that one set aside; a hunter has only one pet out or set
      * aside, so any other there goes.
      */
@@ -381,7 +381,7 @@ mixin template PetHandlers()
     }
 
     /**
-     * `Pet::Unsummon(mode)`: the pet goes, saved in `slot` (`deleted`: forgotten), and its bar with it.
+     * The pet goes, saved in `slot` (`deleted`: forgotten), and its bar with it.
      */
     package void unsummonPet(uint slot, bool deleted = false)
     {
@@ -405,7 +405,7 @@ mixin template PetHandlers()
         }
     }
 
-    /// `Player::PetSpellInitialize`: the pet's bar and spellbook.
+    /// The pet's bar and spellbook, sent to the owner.
     package void sendPetSpells()
     {
         auto state = petState();
@@ -427,7 +427,7 @@ mixin template PetHandlers()
         deliver(Opcode.SMSG_PET_ACTION_FEEDBACK, [cast(ubyte) feedback]);
     }
 
-    /// `Pet::InitPetCreateSpells`: what `petcreateinfo_spell` gives a new pet of `entry` (a spell that
+    /// What `petcreateinfo_spell` gives a new pet of `entry` (a spell that
     /// teaches a pet spell gives that spell).
     private void learnCreateSpells(PetState state, uint entry)
     {
@@ -456,13 +456,13 @@ mixin template PetHandlers()
     // Spells
     // -----------------------------------------------------------------------
 
-    /// `Spell::CheckCast` for the pet spells: summoning, calling, reviving, taming.
+    /// The cast checks of the pet spells: summoning, calling, reviving, taming.
     package SpellCastResult petCastCheck(const(SpellInfo)* spell, const ref SpellTargets targets)
     {
         enum uint summonPetEffect = 56, summonDeadPetEffect = 109;
         if (spell.id == spellTameBeast)
         {
-            // `TameBeastChannel::OnCheckCast`
+            // Tame Beast
             auto target = cast(Creature) map.findObject(targets.unit);
             if (target is null)
                 return SpellCastResult.badImplicitTargets;
@@ -517,7 +517,7 @@ mixin template PetHandlers()
         return SpellCastResult.ok;
     }
 
-    /// The end of Tame Beast's channel (its `spell_tame_beast_dummy`): the beast is tamed.
+    /// The end of Tame Beast's channel: the beast is tamed.
     package void tameBeastChannelDone(ulong target)
     {
         if (const spell = context.data.spells.spell(spellTameBeastDone))
@@ -525,7 +525,7 @@ mixin template PetHandlers()
     }
 
     /**
-     * `SPELL_EFFECT_TAMECREATURE` (its `CheckCast` with it): a hunter with no pet makes a tameable beast
+     * `SPELL_EFFECT_TAMECREATURE` (with its cast checks): a hunter with no pet makes a tameable beast
      * of no higher level its pet, at the beast's level and health; the beast itself goes.
      */
     package void tameCreature(const(SpellInfo)* spell, ulong target)
@@ -562,7 +562,7 @@ mixin template PetHandlers()
         const health = beast.values.get!UNIT_FIELD_HEALTH, maxHealth = beast.values.get!UNIT_FIELD_MAXHEALTH;
         const percent = maxHealth ? (ulong(health) * 100 + maxHealth - 1) / maxHealth : 100;
         const entry = beast.template_.entry, model = beast.values.get!UNIT_FIELD_DISPLAYID;
-        // `ForcedDespawn`: the beast goes, to come back after its respawn time.
+        // The beast goes, to come back after its respawn time.
         beast.ai.petStopAttack(map);
         map.corpseExpired(beast);
         auto creature = bringPet(state, entry, model, level, 0, ReactState.defensive, 0, 0);
@@ -577,7 +577,7 @@ mixin template PetHandlers()
     /**
      * `SPELL_EFFECT_SUMMON_PET`: a hunter's Call Pet brings its pet; a warlock's summon sends the demon
      * out back to rest and brings the one of the spell's entry, as it was saved (at full health) or
-     * new (`GeneratePetName`, its spells from `petcreateinfo_spell`).
+     * new (with a generated name, its spells from `petcreateinfo_spell`).
      */
     package void summonPetEffect(const(SpellInfo)* spell, size_t i)
     {
@@ -642,7 +642,7 @@ mixin template PetHandlers()
     // What happens to the pet and its owner
     // -----------------------------------------------------------------------
 
-    /// The pet died: a demon goes back at once; a beast lies dead a while (`Pet::Update` of a corpse).
+    /// The pet died: a demon goes back at once; a beast lies dead a while.
     package void petDiedHere()
     {
         if (pet_ is null)
@@ -665,7 +665,7 @@ mixin template PetHandlers()
         deliver(Opcode.SMSG_PET_SPELLS, noPetSpellsPacket());
     }
 
-    /// `OwnerAttacked`, `OwnerAttackedBy`: the pet joins its owner's fight against `enemy`.
+    /// The owner attacks or is attacked: the pet joins its owner's fight against `enemy`.
     package void petAssistAgainst(ulong enemy)
     {
         if (pet_ is null || !pet_.alive || petState().command == CommandState.stay)
@@ -677,8 +677,8 @@ mixin template PetHandlers()
     }
 
     /**
-     * `Pet::GivePetXP`: a hunter pet's share of its owner's kill, up to its owner's level; each level
-     * it gains brings it to full health (`GivePetLevel`).
+     * A hunter pet's share of its owner's kill, up to its owner's level; each level
+     * it gains brings it to full health.
      */
     package void petGainsXp(uint xp)
     {
@@ -702,7 +702,7 @@ mixin template PetHandlers()
         map.flushObjectChanges(pet_);
     }
 
-    /// `Player::SynchronizeLevelWithOwner` at a new level: a demon rises with its master.
+    /// The owner reaches a new level: a demon rises with its master.
     package void petOwnerLevelChanged()
     {
         if (pet_ is null || !pet_.alive)
@@ -724,7 +724,7 @@ mixin template PetHandlers()
             unsummonPet(PetSlot.current);
     }
 
-    /// `Player::LoadPet` at login and after a teleport or move: the pet saved out with the player comes back.
+    /// At login and after a teleport or move: the pet saved out with the player comes back.
     package void petsOnArrival()
     {
         if (pet_ !is null || player is null)
@@ -750,7 +750,7 @@ mixin template PetHandlers()
         return pet_;
     }
 
-    /// `WorldSession::HandlePetAction`: a button of the pet's bar.
+    /// The client presses a button of the pet's bar.
     @Handles(Opcode.CMSG_PET_ACTION, WorldState.inWorld)
     void handlePetAction(ref ByteReader reader)
     {
@@ -800,7 +800,7 @@ mixin template PetHandlers()
                 {
                     pet.ai.petStopAttack(map);
                     pet.ai.petAttack(target, map);
-                    // `SendPetAIReaction`
+                    // The pet reacts with hostility.
                     ByteWriter w;
                     w.put(pet.guid);
                     w.put(2u); // AI_REACTION_HOSTILE
@@ -850,7 +850,7 @@ mixin template PetHandlers()
         }
     }
 
-    /// `HandlePetCastSpellOpcode`: a spell from the pet's spellbook.
+    /// The client casts a spell from the pet's spellbook.
     @Handles(Opcode.CMSG_PET_CAST_SPELL, WorldState.inWorld)
     void handlePetCastSpell(ref ByteReader reader)
     {
@@ -863,7 +863,7 @@ mixin template PetHandlers()
         petCastOrdered(pet, spell, targets.unit);
     }
 
-    /// `HandlePetSetAction`: a button moved, or a spell put on or taken off the bar.
+    /// The client moves a button, or a spell put on or taken off the bar.
     @Handles(Opcode.CMSG_PET_SET_ACTION, WorldState.inWorld)
     void handlePetSetAction(ref ByteReader reader)
     {
@@ -909,7 +909,7 @@ mixin template PetHandlers()
         }
     }
 
-    /// `Pet::ToggleAutocast`
+    /// Sets an autocastable spell of the pet to cast by itself, or not.
     private void setPetAutocast(PetState state, uint spell, bool on)
     {
         if (const info = context.data.spells.spell(spell))
@@ -920,7 +920,7 @@ mixin template PetHandlers()
                 s.active = on ? ActiveState.enabled : ActiveState.disabled;
     }
 
-    /// `HandlePetSpellAutocastOpcode`
+    /// The client sets a pet spell to cast by itself, or not.
     @Handles(Opcode.CMSG_PET_SPELL_AUTOCAST, WorldState.inWorld)
     void handlePetSpellAutocast(ref ByteReader reader)
     {
@@ -940,7 +940,7 @@ mixin template PetHandlers()
         state.bar.setAutocast(spell, on);
     }
 
-    /// `HandlePetNameQueryOpcode`
+    /// The client asks for a pet's name.
     @Handles(Opcode.CMSG_PET_NAME_QUERY, WorldState.inWorld)
     void handlePetNameQuery(ref ByteReader reader)
     {
@@ -954,7 +954,7 @@ mixin template PetHandlers()
             creature.values.get!UNIT_FIELD_PET_NAME_TIMESTAMP));
     }
 
-    /// `HandlePetRename`: a hunter pet never renamed takes a name of 2 to 12 letters, not reserved.
+    /// The client renames the pet: a hunter pet never renamed takes a name of 2 to 12 letters, not reserved.
     @Handles(Opcode.CMSG_PET_RENAME, WorldState.inWorld)
     void handlePetRename(ref ByteReader reader)
     {
@@ -978,7 +978,7 @@ mixin template PetHandlers()
         writePet(PetSlot.current);
     }
 
-    /// `HandlePetAbandon`: a beast is let go for good; a demon goes back.
+    /// The client abandons the pet: a beast is let go for good; a demon goes back.
     @Handles(Opcode.CMSG_PET_ABANDON, WorldState.inWorld)
     void handlePetAbandon(ref ByteReader reader)
     {
@@ -1017,7 +1017,7 @@ mixin template PetHandlers()
     // Stables
     // -----------------------------------------------------------------------
 
-    /// `CheckStableMaster`
+    /// Whether `npc` is a stable master the player can talk to.
     private bool atStableMaster(ulong npc)
     {
         return interactableNpc(npc, NpcFlag.stableMaster) !is null;
@@ -1029,7 +1029,7 @@ mixin template PetHandlers()
         deliver(Opcode.SMSG_STABLE_RESULT, [cast(ubyte) result]);
     }
 
-    /// `SendStablePet`: the pet out (or those set aside), then the stabled ones.
+    /// The stable list: the pet out (or those set aside), then the stabled ones.
     package void sendStableList(ulong npc)
     {
         StableEntry[] list;
@@ -1049,7 +1049,7 @@ mixin template PetHandlers()
         deliver(Opcode.MSG_LIST_STABLED_PETS, stableListPacket(npc, stableSlots, list));
     }
 
-    /// `HandleListStabledPetsOpcode`
+    /// The client asks for the stable list.
     @Handles(Opcode.MSG_LIST_STABLED_PETS, WorldState.inWorld)
     void handleListStabledPets(ref ByteReader reader)
     {
@@ -1061,7 +1061,7 @@ mixin template PetHandlers()
 
     /**
      * Whether the pet out (or set aside) is a living beast that can go into the stable or out of it;
-     * the reasons it cannot are told (`PETTAME_DEAD`, `notOk`).
+     * the reasons it cannot are told (`PetTameFailure.dead`, `notOk`).
      */
     private bool stablePetUsable(PetTameFailure notOk, out PetRecord* setAside)
     {
@@ -1095,7 +1095,7 @@ mixin template PetHandlers()
         return true;
     }
 
-    /// `HandleStablePet`: the pet out (or set aside) into the first free stable slot bought.
+    /// The client stables the pet: the pet out (or set aside) into the first free stable slot bought.
     @Handles(Opcode.CMSG_STABLE_PET, WorldState.inWorld)
     void handleStablePet(ref ByteReader reader)
     {
@@ -1122,7 +1122,7 @@ mixin template PetHandlers()
         sendStableResult(StableResult.stabled);
     }
 
-    /// `HandleUnstablePet` and `HandleStableSwapPet`: a stabled pet comes out; the one out takes its slot.
+    /// Unstabling or swapping: a stabled pet comes out; the one out takes its slot.
     private void takeOutOfStable(ulong npc, uint number)
     {
         if (!atStableMaster(npc))
@@ -1171,7 +1171,7 @@ mixin template PetHandlers()
         takeOutOfStable(npc, reader.read!uint);
     }
 
-    /// `HandleBuyStableSlot`: another slot, at `StableSlotPrices.dbc`'s price.
+    /// The client buys another stable slot, at `StableSlotPrices.dbc`'s price.
     @Handles(Opcode.CMSG_BUY_STABLE_SLOT, WorldState.inWorld)
     void handleBuyStableSlot(ref ByteReader reader)
     {
@@ -1190,7 +1190,7 @@ mixin template PetHandlers()
         sendStableResult(StableResult.slotBought);
     }
 
-    /// `HandleStableRevivePet`: does nothing in CMaNGOS either.
+    /// The client asks to revive a stabled pet: nothing happens.
     @Handles(Opcode.CMSG_STABLE_REVIVE_PET, WorldState.inWorld)
     void handleStableRevivePet()
     {

@@ -1,9 +1,9 @@
 /**
- * ArcEmu's `QuestCommands.cpp` that this server's quests support: `.quest status`, `.quest start`,
- * `.quest complete` (ArcEmu's `HandleQuestFinishCommand`), `.quest remove`, `.quest giver`,
- * `.quest finisher`, `.quest spawn` and `.quest reward`. ArcEmu's tables are CMaNGOS's here:
- * `creature_quest_starter` is `creature_questrelation`, `creature_quest_finisher`
- * `creature_involvedrelation`, the game object ones likewise, and `creature_spawns` is `creature`.
+ * The quest commands this server's quests support: `.quest status`, `.quest start`,
+ * `.quest complete` (`handleQuestFinishCommand`), `.quest remove`, `.quest giver`,
+ * `.quest finisher`, `.quest spawn` and `.quest reward`. Quest givers are read from
+ * `creature_questrelation`, finishers from `creature_involvedrelation`, the game object ones
+ * likewise, and spawns from `creature`.
  * Mixed into `dmangos.world.session.Character`.
  */
 module dmangos.world.gmquest;
@@ -18,7 +18,7 @@ mixin template QuestCommands()
 
 private:
 
-    /// ArcEmu's `getSelectedChar(m_session, true)`, else the GM itself ("Auto-targeting self.").
+    /// The selected player, else the GM itself ("Auto-targeting self.").
     auto questTarget()
     {
         auto plr = getSelectedChar(true);
@@ -30,14 +30,14 @@ private:
         return plr;
     }
 
-    /// `Player::HasFinishedQuest`
+    /// Whether `plr` has finished (been rewarded for) the quest `id`.
     static bool finished(typeof(this) plr, uint id)
     {
         const q = id in plr.player.questStatus;
         return q !is null && q.rewarded;
     }
 
-    /// `Player::GetQuestLogForEntry`: in the log.
+    /// Whether the quest `id` is in `plr`'s log.
     static bool onQuest(typeof(this) plr, uint id)
     {
         return plr.questSlot(id) < maxQuestLogSize;
@@ -167,7 +167,7 @@ private:
         if (quest !is null)
         {
             recout = "|cff00ff00";
-            // ArcEmu's `RemoveQuestFromPlayer`.
+            // The quest is taken out of the player's log.
             if (plr.player.questStatus.length)
             {
                 if (finished(plr, questId))
@@ -248,7 +248,7 @@ private:
 
     bool handleQuestItemCommand(uint questId)
     {
-        // CMaNGOS keeps a quest's items in its own row (ArcEmu: `gameobject_quest_item_binding`).
+        // A quest's items are in its own row (`reqItemId`, `reqItemCount`).
         const quest = context.data.quests.quest(questId);
         uint count;
         if (quest !is null)
@@ -345,8 +345,8 @@ private:
     }
 
     /**
-     * ArcEmu's `.quest addstart` .. `.quest delfinish`: the selected quest giver's quests, in memory
-     * and in `creature_questrelation` / `creature_involvedrelation`. Returns what ArcEmu's do.
+     * `.quest addstart` .. `.quest delfinish`: the selected quest giver's quests, in memory
+     * and in `creature_questrelation` / `creature_involvedrelation`. False (the help is shown too) for a wrong target or quest.
      */
     bool questRelationCommand(uint questId, bool start, bool add)
     {
@@ -533,7 +533,7 @@ package:
         flushPlayerChanges();
     }
 
-    /// `Player::AddToFinishedQuests`
+    /// The quest `id` marked complete and rewarded, and saved.
     void markQuestFinished(uint id)
     {
         auto q = &statusOf(id);
@@ -543,7 +543,7 @@ package:
         saveQuests();
     }
 
-    /// ArcEmu's `RemoveQuestFromPlayer` for a quest in the log: out of it, with what its giver gave.
+    /// A quest dropped by a GM: out of the log, with what its giver gave.
     void gmDropQuest(const ref Quest quest)
     {
         const slot = questSlot(quest.id);
@@ -562,7 +562,7 @@ package:
 
 /**
  * `.quest start`, `.quest status`, `.quest complete`, `.quest remove`, `.quest giver` and
- * `.quest reward` on a player, in ArcEmu's words.
+ * `.quest reward` on a player, with their exact messages.
  */
 unittest
 {

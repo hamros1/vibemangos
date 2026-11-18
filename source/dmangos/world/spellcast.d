@@ -1,5 +1,5 @@
 /**
- * The parts of casting a spell (CMaNGOS `Spells/Spell.cpp`) that need no session or map: cast
+ * The parts of casting a spell that need no session or map: cast
  * targets as the client sends them, the cast time, duration and range from the DBCs, an effect's
  * value at a level, the power a cast costs, the spell hit roll, and the packets that show a cast.
  * `dmangos.world.spellhandlers` puts them to work.
@@ -53,7 +53,7 @@ enum SpellCastResult : ubyte
     ok = 0xFF,
 }
 
-/// `SpellCastTargetFlags`
+/// What a cast's targets include, as the client sends them.
 enum TargetFlags : ushort
 {
     self = 0x0000,
@@ -89,7 +89,7 @@ enum SpellMissInfo : ubyte
     reflect = 11,
 }
 
-/// `SpellTarget`: the implicit targets this server picks.
+/// The implicit targets (`Spell.dbc`'s target columns) this server picks.
 enum ImplicitTarget : uint
 {
     none = 0,
@@ -114,7 +114,7 @@ enum ImplicitTarget : uint
     party = 35,
 }
 
-/// `SpellInterruptFlags`
+/// What interrupts a cast (`Spell.dbc`'s interrupt flags).
 enum uint interruptMovement = 0x01, interruptDamagePushback = 0x02, interruptDamageCancels = 0x10;
 
 /// `SPELL_ATTR_ON_NEXT_SWING_NO_DAMAGE` and `SPELL_ATTR_ON_NEXT_SWING`: Heroic Strike and its kind.
@@ -128,10 +128,10 @@ enum uint spellAttrEx2CantCrit = 0x20000000;
 /// `SPELL_ATTR_EX3_ALWAYS_HIT`
 enum uint spellAttrEx3AlwaysHit = 0x00040000;
 
-/// `CastFlags`
+/// The cast flags of `SMSG_SPELL_START` and `SMSG_SPELL_GO`.
 enum ushort castFlagUnknown2 = 0x0002, castFlagUnknown9 = 0x0100, castFlagAmmo = 0x0020;
 
-/// `SpellDmgClass`
+/// A spell's damage class (`Spell.dbc`).
 enum DamageClass : uint
 {
     none = 0,
@@ -140,7 +140,7 @@ enum DamageClass : uint
     ranged = 3,
 }
 
-/// `IsNextMeleeSwingSpell`
+/// Whether a spell waits for the next main-hand swing (Heroic Strike).
 bool isNextMeleeSwingSpell(const ref SpellInfo spell) pure nothrow @nogc @safe
 {
     return (spell.attributes & (spellAttrOnNextSwing1 | spellAttrOnNextSwing2)) != 0;
@@ -150,7 +150,7 @@ bool isNextMeleeSwingSpell(const ref SpellInfo spell) pure nothrow @nogc @safe
 // Targets
 // ---------------------------------------------------------------------------
 
-/// `SpellCastTargets`: what the client says a cast is at.
+/// What the client says a cast is at.
 struct SpellTargets
 {
     ushort mask;
@@ -162,7 +162,7 @@ struct SpellTargets
     float[3] dest = 0;
     string text;
 
-    /// `SpellCastTargets::read`
+    /// Reads the targets from a client packet.
     static SpellTargets read(ref ByteReader r)
     {
         SpellTargets t;
@@ -188,7 +188,7 @@ struct SpellTargets
         return t;
     }
 
-    /// `SpellCastTargets::write`
+    /// Writes the targets into a packet.
     void write(ref ByteWriter w) const
     {
         w.put(mask);
@@ -218,7 +218,7 @@ struct SpellTargets
 // Numbers
 // ---------------------------------------------------------------------------
 
-/// `GetSpellCastTime`: milliseconds, by `SpellCastTimes.dbc` (and the caster's level); 0 is instant.
+/// The cast time, in milliseconds, by `SpellCastTimes.dbc` (and the caster's level); 0 is instant.
 int castTime(const ref SpellInfo spell, const ClientData client, uint level)
 {
     const entry = client.spellCastTimes.lookup(spell.casting.castingTimeIndex);
@@ -230,7 +230,7 @@ int castTime(const ref SpellInfo spell, const ClientData client, uint level)
     return time > 0 ? time : 0;
 }
 
-/// `CalculateSpellDuration`: milliseconds an aura lasts; -1 until cancelled, 0 none.
+/// The milliseconds an aura lasts; -1 until cancelled, 0 none.
 int duration(const ref SpellInfo spell, const ClientData client, uint level)
 {
     const entry = client.spellDurations.lookup(spell.casting.durationIndex);
@@ -245,7 +245,7 @@ int duration(const ref SpellInfo spell, const ClientData client, uint level)
     return value;
 }
 
-/// `GetSpellMinRange`, `GetSpellMaxRange` (yards).
+/// The spell's least and greatest range (yards).
 float[2] range(const ref SpellInfo spell, const ClientData client)
 {
     const entry = client.spellRanges.lookup(spell.casting.rangeIndex);
@@ -254,7 +254,7 @@ float[2] range(const ref SpellInfo spell, const ClientData client)
     return [entry.minRange, entry.maxRange];
 }
 
-/// `GetSpellRadius` for effect `index` (yards).
+/// The radius of effect `index` (yards).
 float radius(const ref SpellInfo spell, size_t index, const ClientData client)
 {
     const entry = client.spellRadii.lookup(spell.casting.radiusIndex[index]);
@@ -262,7 +262,7 @@ float radius(const ref SpellInfo spell, size_t index, const ClientData client)
 }
 
 /**
- * `CalculateSpellEffectValue`: effect `index`'s value for a caster of `level` (base points, more per
+ * Effect `index`'s value for a caster of `level` (base points, more per
  * level between the spell's levels, and the dice); `roll` picks within the dice (0 .. 1).
  */
 int effectValue(const ref SpellInfo spell, size_t index, uint level, float roll)
@@ -293,14 +293,14 @@ int effectValue(const ref SpellInfo spell, size_t index, uint level, float roll)
     return cast(int) basePoints;
 }
 
-/// `Spell::CalculatePowerCost` (no item, no modifiers): the cost and its percentage of the base.
+/// The power a cast costs (no item, no modifiers): the cost and its percentage of the base.
 int powerCost(const ref SpellInfo spell, uint level, uint createMana, uint createHealth, uint maxPower)
 {
     const c = &spell.casting;
     int cost = cast(int) c.manaCost;
     if (c.manaCostPerLevel)
     {
-        const rankLevel = cast(int) level; // `GetSpellRank` for a player is its level
+        const rankLevel = cast(int) level; // a player's rank for this is its level
         cost += cast(int) c.manaCostPerLevel * (rankLevel / 5 - cast(int) c.baseLevel);
     }
     if (c.manaCostPercentage)
@@ -317,7 +317,7 @@ int powerCost(const ref SpellInfo spell, uint level, uint createMana, uint creat
 }
 
 /**
- * `CalculateSpellMissChance` for a magic spell: 4%, and the level difference (1% a level up to
+ * The chance a magic spell misses: 4%, and the level difference (1% a level up to
  * two above; then 11% a level against creatures, 7% against players), 1% at least.
  */
 float spellMissChance(uint casterLevel, uint victimLevel, bool victimIsPlayer) pure nothrow @nogc @safe
@@ -502,7 +502,7 @@ ubyte[] spellMissLog(uint spell, ulong caster, ulong target, SpellMissInfo miss)
 }
 
 /**
- * `IsBinarySpell` (pre-WotLK): a spell resisted whole or not at all, whose resistance adds to its
+ * Whether a spell is binary (as before WotLK): a spell resisted whole or not at all, whose resistance adds to its
  * chance to miss instead of taking a share of its damage: all its effects are not damage, or all are
  * auras, or all its damage is over time, or a non-damage effect hits the targets of a direct damage
  * one (Frostbolt's slow). Dummy (3) and trigger spell (64) effects do not count.

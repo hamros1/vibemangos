@@ -1,7 +1,6 @@
 /**
- * Killing for experience and loot (CMaNGOS `LootHandler.cpp`, `Unit::Kill`'s rewards,
- * `Player::RewardSinglePlayerAtKill`, `Group::RewardGroupAtKill`, `Creature::PrepareBodyLootState`,
- * `Loot::SetGroupLootRight`), mixed into `dmangos.world.character.Character`.
+ * Killing for experience and loot: tapping, the rewards of a kill, who may loot a corpse, and the
+ * loot opcodes, mixed into `dmangos.world.character.Character`.
  *
  * The first player to hurt a creature taps it: it and its group get the experience and the loot.
  * A group shares the experience by level among its members near the kill (74 yards), with a bonus
@@ -29,7 +28,7 @@ mixin template LootHandlers()
     import dmangos.world.player : DeathState;
     import dmangos.world.updatefields;
 
-    package ulong lootTarget; // `m_lootGuid`: the loot whose window is open
+    package ulong lootTarget; // the loot whose window is open
 
 private:
 
@@ -47,11 +46,11 @@ private:
         return null;
     }
 
-    /// The loot of the items this player opened and has not emptied, by item guid (`Item::m_loot`).
+    /// The loot of the items this player opened and has not emptied, by item guid.
     Loot[ulong] itemLoots;
 
     /**
-     * `HandleOpenItemOpcode`: a lootable item in the bags opened (not locked, or unlocked, and the
+     * The client opens a lootable item in the bags (not locked, or unlocked, and the
      * player's level enough), its loot (`item_loot_template`, its money) shown; emptied, it is gone.
      */
     @Handles(Opcode.CMSG_OPEN_ITEM, WorldState.inWorld)
@@ -69,7 +68,7 @@ private:
             return sendEquipError(InventoryResult.itemNotFound);
         if (proto.requiredLevel > player.data.level)
             return sendEquipError(EquipError(InventoryResult.lootCantLootThatNow, item));
-        // A lock that needs picking stays shut (`LockEntry::Skill`).
+        // A lock that needs picking (a `Lock.dbc` skill) stays shut.
         if (proto.details.lockId && !(item.values[ITEM_FIELD_FLAGS] & itemDynFlagUnlocked))
         {
             const lock = context.client.locks.lookup(proto.details.lockId);
@@ -104,7 +103,7 @@ private:
                 loot.fill(template_, context.data.loot, context.data.items, map.random, &meets, &allowed);
             }
             loot.generateMoney(proto.details.minMoneyLoot, proto.details.maxMoneyLoot, map.random);
-            // `Loot::Release` of an item: emptied, it is destroyed.
+            // An item's loot released: emptied, the item is destroyed.
             loot.lootedForAll = () {
                 itemLoots.remove(guid);
                 if (auto still = itemByGuid(guid))
@@ -121,7 +120,7 @@ private:
         loot.showContentTo(this);
     }
 
-    /// `Player::SendLootError`
+    /// `SMSG_LOOT_RESPONSE` with an error: the window does not open.
     void sendLootError(ulong guid, LootError error)
     {
         ByteWriter w;
@@ -131,7 +130,7 @@ private:
         deliver(Opcode.SMSG_LOOT_RESPONSE, w.data);
     }
 
-    /// `HandleLootOpcode`: the window opens on a corpse in reach, if there is something for this player.
+    /// The client loots: the window opens on a corpse in reach, if there is something for this player.
     @Handles(Opcode.CMSG_LOOT, WorldState.inWorld)
     void handleLoot(const ClientGuid request)
     {
@@ -164,7 +163,7 @@ private:
         creature.inspectingLoot();
     }
 
-    /// `HandleLootMoneyOpcode`
+    /// The client takes the money from the open window.
     @Handles(Opcode.CMSG_LOOT_MONEY, WorldState.inWorld)
     void handleLootMoney()
     {
@@ -172,7 +171,7 @@ private:
             loot.sendGold(this);
     }
 
-    /// `HandleAutostoreLootItemOpcode`: an item from the open window into the bags.
+    /// The client takes an item from the open window into the bags.
     @Handles(Opcode.CMSG_AUTOSTORE_LOOT_ITEM, WorldState.inWorld)
     void handleAutostoreLootItem(const ClientLootSlot request)
     {
@@ -190,7 +189,7 @@ private:
         loot.sendItem(this, item);
     }
 
-    /// `HandleLootReleaseOpcode`: the window closes.
+    /// The client closes the loot window.
     @Handles(Opcode.CMSG_LOOT_RELEASE, WorldState.inWorld)
     void handleLootRelease(const ClientGuid request)
     {
@@ -200,7 +199,7 @@ private:
             setLootWindow(request.guid, false);
     }
 
-    /// `HandleLootMasterGiveOpcode`: the master hands an item to a member who may have it.
+    /// The master looter hands an item to a member who may have it.
     @Handles(Opcode.CMSG_LOOT_MASTER_GIVE, WorldState.inWorld)
     void handleLootMasterGive(const ClientLootMasterGive request)
     {
@@ -227,7 +226,7 @@ private:
             sendLootError(request.loot, LootError.masterOther);
     }
 
-    /// `HandleLootRoll`: need, greed or pass.
+    /// The client rolls on an item: need, greed or pass.
     @Handles(Opcode.CMSG_LOOT_ROLL, WorldState.inWorld)
     void handleLootRoll(const ClientLootRoll request)
     {
@@ -241,7 +240,7 @@ private:
     // The kill
     // -----------------------------------------------------------------------
 
-    /// `Unit::DealDamage`: the first player to hurt a creature taps it, for itself and its group.
+    /// The first player to hurt a creature taps it, for itself and its group.
     void tap(Creature victim)
     {
         if (victim.lootRecipient)
@@ -251,7 +250,7 @@ private:
     }
 
     /**
-     * `Unit::Kill`'s rewards and `Creature::PrepareBodyLootState`: the player who tapped the creature
+     * The rewards of a kill: the player who tapped the creature
      * (or this one) and its group get the experience, and the loot is made for them.
      */
     void rewardKill(Creature victim)
@@ -269,7 +268,7 @@ private:
         map.refreshViewers(victim);
     }
 
-    /// `Group::RewardGroupAtKill` or `Player::RewardSinglePlayerAtKill`: the experience.
+    /// The experience of a kill, for the player alone or shared by its group.
     package void rewardAtKill(Creature victim)
     {
         import dmangos.cluster.protocol : KillShare;
@@ -285,7 +284,7 @@ private:
             rewardHonorForCreature(victim);
             killedMonster(victim.template_.entry, victim.guid);
             const xp = killGain(player.data.level, value);
-            petGainsXp(xp); // `GivePetXP`, before its owner perhaps passes its level
+            petGainsXp(xp); // the pet's share, before its owner perhaps passes its level
             return giveXP(xp, victim.guid, 1.0f);
         }
         // The members near the kill: here, or (in a cluster) simulated by another node whose replica is here.
@@ -319,7 +318,7 @@ private:
                             replica.fields().get!UNIT_FIELD_HEALTH > 0);
                 }
         }
-        // `GetDataForXPAtKill`: the living members near the kill.
+        // The living members near the kill, their levels added up, the highest and the highest not grey.
         uint sumLevel, nearCount;
         Near* highest, highestNotGray;
         foreach (ref m; members)
@@ -334,7 +333,7 @@ private:
                 && (highestNotGray is null || highestNotGray.level < m.level))
                 highestNotGray = &m;
         }
-        // `RewardGroupAtKill_helper`'s reputation: a share each (all of it in a dungeon).
+        // The reputation: a share each (all of it in a dungeon).
         const dungeon = context.client.maps.lookup(map.id) !is null && context.client.maps.lookup(map.id).isDungeon;
         foreach (ref m; members)
             if (m.alive)
@@ -345,7 +344,7 @@ private:
 
             const xp = killGain(highestNotGray.level, value);
             const rate = groupRate(nearCount);
-            // `RewardGroupAtKill_helper`: each a share by its level; members above the highest not grey get none.
+            // The experience: each a share by its level; members above the highest not grey get none.
             foreach (ref m; members)
             {
                 if (!m.alive || m.level > highestNotGray.level)
@@ -357,7 +356,7 @@ private:
             }
         }
         const entry = victim.template_.entry, level = victim.values.get!UNIT_FIELD_LEVEL;
-        // `RewardGroupAtKill_helper`: `KilledMonster` for every member near the kill, its reputation, its experience.
+        // Every member near the kill gets the kill's quest credit, its reputation, its experience.
         foreach (ref m; members)
         {
             if (m.here !is null)
@@ -369,7 +368,7 @@ private:
                     m.here.rewardKillReputation(victim, m.reputationRate);
                 if (m.xp)
                 {
-                    m.here.petGainsXp(m.xp / 2); // `RewardGroupAtKill_helper`: half for its pet
+                    m.here.petGainsXp(m.xp / 2); // half for its pet
                     m.here.giveXP(m.xp, victim.guid, m.rate);
                 }
             }
@@ -393,10 +392,10 @@ private:
         flushPlayerChanges();
     }
 
-    /// What `XP::Gain` needs of `victim`.
+    /// What the experience of a kill needs to know of `victim`.
     KillValue killValue(const Creature victim)
     {
-        enum uint critter = 8, noXp = 0x2; // CREATURE_TYPE_CRITTER, CreatureStaticFlags::NO_XP
+        enum uint critter = 8, noXp = 0x2; // the critter creature type; the static flag for no experience
         enum uint rankNormal = 0, rankRare = 4;
         const t = victim.template_;
         KillValue value;
@@ -409,7 +408,7 @@ private:
         return value;
     }
 
-    /// `Player::IsAtGroupRewardDistance`: on the kill's map, and within 74 yards of it (anywhere in a dungeon).
+    /// Whether this player shares a group kill: on the kill's map, and within 74 yards of it (anywhere in a dungeon).
     package bool atGroupRewardDistance(const Creature victim)
     {
         return atGroupRewardDistance(context.existingMap(victim.spawn.map, victim.instanceId), victim.position);
@@ -428,7 +427,7 @@ private:
     }
 
     /**
-     * `Creature::PrepareBodyLootState`, `Loot::Loot` for a corpse and `SetGroupLootRight`: who may
+     * A corpse's loot: who may
      * loot (this player, or its group's members near the kill or fighting it, by the group's method,
      * the round-robin turn moving on), and what there is.
      */
@@ -436,7 +435,7 @@ private:
     {
         import dmangos.world.character : Character;
 
-        enum uint noLoot = 0x4; // CreatureStaticFlags::NO_LOOT
+        enum uint noLoot = 0x4; // the static flag for no loot
         const t = victim.template_;
         if (t.staticFlags1 & noLoot)
             return victim.lootedOut();
@@ -462,7 +461,7 @@ private:
             {
                 if (item.quest)
                 {
-                    // `HasQuestForItem`: only for one whose quest still asks for it.
+                    // A quest item: only for one whose quest still asks for it.
                     auto owner = cast(Character) context.onlinePlayer(guid);
                     return owner !is null && owner.hasQuestForItem(item.itemId);
                 }
@@ -485,7 +484,7 @@ private:
         };
     }
 
-    /// `Loot::SetGroupLootRight`: for loot at `at`; `fought` says who fought for it (a creature's threat list).
+    /// Who may loot: for loot at `at`; `fought` says who fought for it (a creature's threat list).
     package void setLootRights(Loot loot, Position at, scope bool delegate(ulong guid) fought)
     {
         import dmangos.world.character : Character;
@@ -550,7 +549,7 @@ private:
         loot.rule = LootRule.notGroup;
     }
 
-    /// `ObjectMgr::IsConditionSatisfied` for this player (no source).
+    /// Whether the condition `condition` holds for this player (no source).
     package bool conditionMet(uint condition)
     {
         import dmangos.world.conditions : ConditionSubject;
@@ -563,7 +562,7 @@ private:
     // The looter
     // -----------------------------------------------------------------------
 
-    /// See `Looter.storeLoot`: the item stored, everyone in the group told (`SendNewItem` broadcast).
+    /// See `Looter.storeLoot`: the item stored, everyone in the group told.
     package uint lootStore(uint entry, uint count, int randomPropertyId, bool sendError)
     {
         ItemPosCount[] dest;
@@ -601,7 +600,7 @@ private:
         return proto !is null && player.inventory.canUse(proto) == InventoryResult.ok;
     }
 
-    /// See `Looter.lootWindow`: `Loot::SetPlayerIsLooting` (`UNIT_FLAG_LOOTING`) and its end.
+    /// See `Looter.lootWindow`: the player starts looting (`UNIT_FLAG_LOOTING`), or stops.
     package void setLootWindow(ulong target, bool open)
     {
         const flags = player.values.get!UNIT_FIELD_FLAGS;
@@ -619,7 +618,7 @@ private:
         flushPlayerChanges();
     }
 
-    /// Leaving the map (logging out, a far teleport): an open loot window is let go (`Player::RemoveFromWorld`).
+    /// Leaving the map (logging out, a far teleport): an open loot window is let go.
     void releaseLootOnLeave()
     {
         if (lootTarget == 0)
@@ -729,7 +728,7 @@ unittest
     const unarmedBefore = me.skillValue(162)[0];
     killIt(anduin, victim, now);
     auto after = anduin.read();
-    // The swings taught it (`UpdateCombatSkills`): far below its maximum, a skill rises nearly every time.
+    // The swings taught it: far below its maximum, a skill rises nearly every time.
     assert(me.skillValue(162)[0] > unarmedBefore && 162 in db.skillRows.get(7, null), "unarmed skill gained and saved");
     assert(opcodesOf(after).canFind(Opcode.SMSG_LOG_XPGAIN));
     assert(me.values[PLAYER_XP] == 50, "a level 1 creature is worth 50 to level 1");

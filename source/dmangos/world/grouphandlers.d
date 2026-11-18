@@ -1,6 +1,6 @@
 /**
- * Handlers of CMaNGOS `Groups/GroupHandler.cpp` and the loot method of
- * `LootHandler.cpp`, mixed into `dmangos.world.character.Character`. What
+ * The group opcodes (invitations, leaving, leadership, raids and subgroups, pings,
+ * rolls, target icons, ready checks, member stats) and the loot method, mixed into `dmangos.world.character.Character`. What
  * changes a group is a command for the groups' service, wherever it is
  * (`dmangos.world.groupservice`, which has the rules); what only reads one is
  * answered here. What a change does to a group, its rows and its members is
@@ -22,7 +22,7 @@ mixin template GroupHandlers()
     import dmangos.world.packets;
 
 private:
-    /// `WorldSession::SendPartyResult`
+    /// `SMSG_PARTY_COMMAND_RESULT`: how a group command went.
     void sendPartyResult(PartyOperation operation, string member, PartyResult result)
     {
         send(ServerPartyCommandResult(operation, member, result));
@@ -190,7 +190,7 @@ private:
         send(ServerRaidInstanceInfo(0));
     }
 
-    /// `WorldSession::LogoutPlayer`'s group part: invitations lapse; a party (not a raid) is left
+    /// Logging out: invitations lapse; a party (not a raid) is left
     /// when logging out normally; the others see the player go offline.
     void leaveGroupsOnLogout(bool loggingOut)
     {

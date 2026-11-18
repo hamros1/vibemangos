@@ -1,34 +1,34 @@
 /**
- * Chat commands as ArcEmu 2.4.3 has them (`arcemu-world/Chat.cpp`,
- * `Level0.cpp` .. `Level3.cpp`, `debugcmds.cpp`, `RecallCommands.cpp`,
- * `BattlegroundCommands.cpp`): the same tables, the same permission
- * letters, the same lookup and the same replies.
+ * Chat commands: parsing a typed `.command`, checking the account's permission letters, finding
+ * the command's row in `dmangos.world.commandtable` and running its handler. The commands, their
+ * permission letters, the lookup and the replies match ArcEmu 2.4.3's exactly; that is a
+ * requirement of the project.
  *
  * $(UL
- *   $(LI $(B Permissions.) ArcEmu gives each account a string of letters (`accounts.gm`); a
- *        command's letter must be in it (`WorldSession::CanUseCommand`), and `a` stands for
- *        every letter but `z`. CMaNGOS's `account.gmlevel` is a number, so the
+ *   $(LI $(B Permissions.) Each account has a string of permission letters; a
+ *        command's letter must be in it (`canUseCommand`), and `a` stands for
+ *        every letter but `z`. The database's `account.gmlevel` is a number, so the
  *        `gm_permissions` setting gives each level its string; the default gives game masters
- *        (2) `a` and administrators (3) `az`. The string goes through ArcEmu's
- *        `LoadSecurity`, so "3" means `a` there too.)
+ *        (2) `a` and administrators (3) `az`. The string goes through
+ *        `loadSecurity`, so "3" means `a` there too.)
  *   $(LI $(B Lookup.) A message starting with `.` or `!` is a command if the account has any
  *        permission (or `allow_player_commands` is set); otherwise it is said aloud. Each word
  *        is matched against `dmangos.world.commandtable`'s rows in order, and the first row the
  *        word abbreviates, and whose letter the account has, is taken
- *        (`ExecuteCommandInTable`). A sub-table without a matching word lists its commands.
+ *        (`executeCommandInTable`). A sub-table without a matching word lists its commands.
  *        A handler returning false shows the row's help, or "Incorrect syntax specified".)
- *   $(LI $(B Handlers.) Each row names ArcEmu's handler; the `Character` method of that name,
+ *   $(LI $(B Handlers.) Each row names its handler; the `Character` method of that name,
  *        with a lower-case first letter, runs it. Its parameters say what it takes: the command's
  *        words are converted to their types with `std.conv.to` (`invoke`); a `Rest` takes the rest
  *        of the line, `OnOff` reads "on" or "off", and a word that is missing or does not convert
- *        shows the command's help. The handlers are in `gmlevel0` .. `gmlevel3` and `gmdebug`, by
- *        the ArcEmu file they come from. Rows whose handler is not
- *        written yet (their systems do not exist yet) answer "Not yet implemented.", as ArcEmu's
- *        `HandleNYICommand` does. docs/COMMANDS.md lists both.)
- *   $(LI $(B GM log.) What ArcEmu writes with `sGMLog.writefromsession` goes to the file
+ *        shows the command's help. The handlers are in `gmlevel0` .. `gmlevel3` and `gmdebug`, grouped
+ *        by command level. Rows whose handler is not
+ *        written yet (their systems do not exist yet) answer "Not yet implemented."
+ *        (`handleNYICommand`). docs/COMMANDS.md lists both.)
+ *   $(LI $(B GM log.) Commands that log what they do (`gmLog`) write to the file
  *        `gm_command_log` names, if any.)
  * )
- * `command_overrides` changes a command's letter, like ArcEmu's `command_overrides` table.
+ * The `command_overrides` table changes a command's letter.
  */
 module dmangos.world.commands;
 
@@ -37,7 +37,7 @@ public import std.typecons : Nullable; // handler parameters may be `Nullable`
 import dmangos.world.commandtable;
 import dmangos.world.updatefields;
 
-/// The colours of ArcEmu's `Chat.h`.
+/// The colour codes of system messages.
 enum : string
 {
     MSG_COLOR_LIGHTRED = "|cffff6060",
@@ -54,7 +54,7 @@ enum : string
     MSG_COLOR_CYAN = "|cff00ffff",
 }
 
-/// `ChatHandler::hasStringAbbr(s1, s2)`: whether `typed` is the start of `name`, in any case.
+/// Whether `typed` is the start of `name`, in any case.
 bool hasStringAbbr(const(char)[] name, const(char)[] typed) pure nothrow @safe @nogc
 {
     import std.ascii : toLower;
@@ -72,7 +72,7 @@ unittest
 }
 
 /**
- * `WorldSession::LoadSecurity`: the permission letters of a security string, in lower case;
+ * The permission letters of a security string, in lower case;
  * `3` and `4` stand for `a`; after `a` only `z` is kept; a leading `0` means none.
  */
 string loadSecurity(string security) pure @safe
@@ -99,7 +99,7 @@ string loadSecurity(string security) pure @safe
     return letters;
 }
 
-/// `WorldSession::CanUseCommand`
+/// Whether `permissions` allow a command of the letter `group`: `a` allows all but `z`; group 0 needs any permission.
 bool canUseCommand(string permissions, char group) pure nothrow @safe @nogc
 {
     if (permissions.length == 0)
@@ -114,7 +114,7 @@ bool canUseCommand(string permissions, char group) pure nothrow @safe @nogc
     return false;
 }
 
-/// `WorldSession::HasGMPermissions`: an `a` among the letters.
+/// Whether the account is a game master: an `a` among the letters.
 bool hasGMPermissions(string permissions) pure nothrow @safe @nogc
 {
     foreach (c; permissions)
@@ -133,7 +133,7 @@ unittest
 }
 
 /**
- * `CommandTableStorage::Override`: the letter `level` for the command `command` ("name" or "name sub",
+ * The rows a `command_overrides` row gives a new letter: the command `command` ("name" or "name sub",
  * each the start of a row's name; "name *" for every row of a sub-table). Returns the full paths of
  * the rows changed, which are empty if none matched.
  */
@@ -145,7 +145,7 @@ string[] overrideTargets(string command) pure @safe
     const space = command.indexOf(' ');
     const name = space < 0 ? command : command[0 .. space];
     const sub = space < 0 ? null : command[space + 1 .. $];
-    // strnicmp(row, typed, strlen(typed)): the typed text starts the row's name.
+    // The typed text starts the row's name, in any case.
     static bool starts(string row, string typed)
     {
         return typed.length <= row.length && sicmp(row[0 .. typed.length], typed) == 0;
@@ -176,7 +176,7 @@ unittest
     assert(overrideTargets("gm *").length == 6 && overrideTargets("nosuch").length == 0);
 }
 
-/// The method that runs ArcEmu's handler `handler`: `HandleGMOnCommand` is `handleGMOnCommand`.
+/// The method that runs the handler `handler`: `HandleGMOnCommand` is `handleGMOnCommand`.
 string handlerMethod(string handler) pure @safe
 {
     import std.ascii : toLower;
@@ -239,7 +239,7 @@ unittest
 
 /**
  * A handler parameter that takes the rest of the command's text, as many words as there are: an
- * announcement, a ban reason, a player's name as ArcEmu reads it (`GetPlayer(args)`). It converts to
+ * announcement, a ban reason, a player's name (which may contain spaces). It converts to
  * `string`. With no default value it is required, like any other parameter.
  */
 struct Rest
@@ -318,7 +318,7 @@ unittest
     assert(!isIPv4Address("1.2.3.4.5") && !isIPv4Address("a.b.c.d") && !isIPv4Address(""));
 }
 
-/// ArcEmu's `TIME_*` constants (`Common.h`): a month is 30 days, a year 12 months.
+/// Lengths of time in seconds, as commands count them: a month is 30 days, a year 12 months.
 enum : uint
 {
     TIME_MINUTE = 60,
@@ -329,7 +329,7 @@ enum : uint
 }
 
 /**
- * ArcEmu's `GetTimePeriodFromString` (`Util.cpp`): numbers each followed by `y`, `m` (months), `d`
+ * A time period typed in a command: numbers each followed by `y`, `m` (months), `d`
  * or `h`, added up, in seconds. Reading stops at anything that is not a digit, and a number
  * without a letter is ignored, so "perm" is 0. -1 for an unknown letter.
  */
@@ -361,7 +361,7 @@ int getTimePeriodFromString(const(char)[] text) pure nothrow @safe @nogc
     return cast(int) total;
 }
 
-/// ArcEmu's `ConvertTimeStampToString` (`Util.cpp`): "1 days, 2 hours, " and so on.
+/// A number of seconds in words: "1 days, 2 hours, " and so on.
 string convertTimeStampToString(uint timestamp) pure @safe
 {
     import std.conv : to;
@@ -388,7 +388,7 @@ string convertTimeStampToString(uint timestamp) pure @safe
     return result;
 }
 
-/// ArcEmu's `ConvertTimeStampToDataTime` (`Util.cpp`): "Monday, 05 January 2026, 09:04:01", in local time.
+/// A Unix time as a date: "Monday, 05 January 2026, 09:04:01", in local time.
 string convertTimeStampToDataTime(long timestamp) @safe
 {
     import std.datetime.systime : SysTime;
@@ -402,7 +402,7 @@ string convertTimeStampToDataTime(long timestamp) @safe
         t.minute, t.second);
 }
 
-/// C's `ctime`: "Wed Jun 30 21:49:08 1993\n", in local time, as ArcEmu's IP ban message prints it.
+/// C's `ctime`: "Wed Jun 30 21:49:08 1993\n", in local time, as the IP ban message prints it.
 string ctimeString(long timestamp) @safe
 {
     import std.datetime.systime : SysTime;
@@ -440,11 +440,11 @@ mixin template ChatCommands()
     import dmangos.world.updatefields;
 
 private:
-    /// Every handler ArcEmu's tables name.
+    /// Every handler the command tables name.
     enum string[] arcHandlers = collectHandlers(commandTable);
 
     // -----------------------------------------------------------------------
-    // Permissions (WorldSession::LoadSecurity, CanUseCommand)
+    // Permissions
     // -----------------------------------------------------------------------
 
     /// A row's letter, after `command_overrides`.
@@ -456,10 +456,10 @@ private:
     }
 
     // -----------------------------------------------------------------------
-    // ChatHandler::ParseCommands and ExecuteCommandInTable
+    // Parsing and running commands
     // -----------------------------------------------------------------------
 
-    /// `ChatHandler::ParseCommands`: true if `text` was a command (run or refused), false if it is to be said.
+    /// True if `text` was a command (run or refused), false if it is to be said.
     bool parseCommands(string text)
     {
         if (text.length == 0)
@@ -476,7 +476,8 @@ private:
         return true;
     }
 
-    /// `ChatHandler::ExecuteCommandInTable`. `path` is the names of the tables above, for overrides.
+    /// Finds the row of `table` the first word of `text` abbreviates and runs it, or the sub-table's row
+    /// for the next word; false if no row matches. `path` is the names of the tables above, for overrides.
     bool executeCommandInTable(immutable(ChatCommand)[] table, string path, string text)
     {
         size_t i;
@@ -541,7 +542,7 @@ private:
         return false;
     }
 
-    /// Runs ArcEmu's handler `handler` with the text after the command's words.
+    /// Runs the handler `handler` with the text after the command's words.
     bool callHandler(string handler, string args)
     {
         switch (handler)
@@ -564,7 +565,7 @@ private:
      * with `std.conv.to`, and a `Rest` takes what is left. A missing word takes the parameter's default
      * value; a `Nullable` parameter is optional, and null when its word is missing. False (the command's
      * help is shown) when a required word is missing or a word does not convert; words left over are
-     * ignored, as ArcEmu ignores them.
+     * ignored.
      */
     bool invoke(string member)(string text)
     {
@@ -608,7 +609,7 @@ private:
         return __traits(getMember, this, member)(values);
     }
 
-    /// `ChatHandler::HandleNYICommand`: what a command whose system does not exist yet answers.
+    /// What a command whose system does not exist yet answers.
     bool handleNYICommand()
     {
         redSystemMessage("Not yet implemented.");
@@ -616,41 +617,41 @@ private:
     }
 
     // -----------------------------------------------------------------------
-    // Messages (ChatHandler::SystemMessage and friends)
+    // System messages
     // -----------------------------------------------------------------------
 
-    /// `ChatHandler::SystemMessage`, cut at 1023 bytes as its buffer cuts it.
+    /// A system message to this player, cut at 1023 bytes.
     void systemMessage(string text)
     {
         send(ServerMessageChat(chatMessage(ChatType.CHAT_MSG_SYSTEM, Language.LANG_UNIVERSAL, 0,
             text.length > 1023 ? text[0 .. 1023] : text)));
     }
 
-    /// `ChatHandler::ColorSystemMessage`
+    /// A system message in the colour `color`.
     void colorSystemMessage(string color, string text)
     {
         systemMessage(color ~ (text.length > 1023 ? text[0 .. 1023] : text) ~ "|r");
     }
 
-    /// `ChatHandler::RedSystemMessage` (light red)
+    /// A system message in light red.
     void redSystemMessage(string text)
     {
         colorSystemMessage(MSG_COLOR_LIGHTRED, text);
     }
 
-    /// `ChatHandler::GreenSystemMessage`
+    /// A system message in green.
     void greenSystemMessage(string text)
     {
         colorSystemMessage(MSG_COLOR_GREEN, text);
     }
 
-    /// `ChatHandler::BlueSystemMessage` (light blue)
+    /// A system message in light blue.
     void blueSystemMessage(string text)
     {
         colorSystemMessage(MSG_COLOR_LIGHTBLUE, text);
     }
 
-    /// `ChatHandler::SendMultilineMessage`: one system message per line.
+    /// One system message per line of `text`.
     void sendMultilineMessage(string text)
     {
         import std.array : split;
@@ -662,7 +663,7 @@ private:
             systemMessage(line);
     }
 
-    /// `sGMLog.writefromsession`: a line in the GM command log, if there is one.
+    /// A line in the GM command log, if there is one.
     void gmLog(string text)
     {
         context.writeGmLog(format!"Account %s [%s], IP %s, Player %s :: %s"(account.id, account.username,
@@ -670,10 +671,10 @@ private:
     }
 
     // -----------------------------------------------------------------------
-    // Selections (ChatHandler::getSelectedChar, getSelectedCreature)
+    // Selections
     // -----------------------------------------------------------------------
 
-    /// `ChatHandler::getSelectedChar`: the selected player on this map, oneself if nothing is selected.
+    /// The selected player on this map, oneself if nothing is selected.
     Character getSelectedChar(bool showError)
     {
         const guid = player.values.get!UNIT_FIELD_TARGET;
@@ -689,7 +690,7 @@ private:
         return found;
     }
 
-    /// `ChatHandler::getSelectedCreature`
+    /// The selected creature, or null (with an error message if `showError`).
     Creature getSelectedCreature(bool showError)
     {
         const guid = player.values.get!UNIT_FIELD_TARGET;
@@ -702,11 +703,11 @@ private:
     }
 
     // -----------------------------------------------------------------------
-    // .modify's field rows (ChatHandler::CmdSetValueField, CmdSetFloatField)
+    // .modify's field rows
     // -----------------------------------------------------------------------
 
     /**
-     * `ChatHandler::CmdSetValueField` (`T` is `uint`) and `CmdSetFloatField` (`float`): the selected
+     * A `.modify` row that sets a field, as an integer (`T` is `uint`) or a `float`: the selected
      * player's, or creature's, field set to the first word of `args`, and `fieldMax` to the second.
      */
     bool cmdSetField(T)(string field, string fieldMax, string fieldName, string args)
@@ -725,7 +726,7 @@ private:
         }
         catch (ConvException)
             return false;
-        // ArcEmu's two versions check the value a little differently.
+        // Integer and float values are checked a little differently.
         static if (is(T == float))
             const invalidValue = av <= 0;
         else
@@ -747,7 +748,7 @@ private:
         const slot = fieldSlot(field);
         const maxSlot = hasMax ? fieldSlot(fieldMax) : 0;
         static if (is(T == uint))
-            const stored = slot == UNIT_FIELD_STAT1 ? av / 2 : av; // ArcEmu halves agility
+            const stored = slot == UNIT_FIELD_STAT1 ? av / 2 : av; // the agility row stores half the value
         else
             const stored = av;
         if (auto plr = getSelectedChar(false))
@@ -804,7 +805,7 @@ unittest
     player.read();
     mod.read();
 
-    // Without permissions, a command is said aloud (Server.AllowPlayerCommands is off).
+    // Without permissions, a command is said aloud (`allow_player_commands` is off).
     player.say(".gm on");
     assert(opcodesOf(gm.read()) == [Opcode.SMSG_MESSAGECHAT] && !player.session.character.gmTagOn);
     player.read();
@@ -835,7 +836,7 @@ unittest
     gm.say(".levelup -2");
     assert(systemMessages(gm.read()) == ["Levelup x lvls"]);
 
-    // Levels raise the caps of the skills that go with the level (`UpdateSkillsForLevel`), not their values.
+    // Levels raise the caps of the skills that go with the level, not their values.
     {
         import dmangos.world.player : Player;
 

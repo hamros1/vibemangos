@@ -1,7 +1,6 @@
 /**
- * Casting spells (CMaNGOS `SpellHandler.cpp`, `Spells/Spell.cpp`'s `SpellStart`, `Prepare`,
- * `update`, `cast`, `CheckCast`, `TakePower`, and `SpellEffects.cpp`'s effects), mixed into
- * `dmangos.world.character.Character`.
+ * Casting spells: the cast opcodes, checking, counting down, casting, the cost, the hit rolls and
+ * the spell effects, mixed into `dmangos.world.character.Character`.
  *
  * A cast is checked (known, alive, not busy, off cooldown, enough power and reagents, a fitting
  * target in range and in sight), shown (`SMSG_SPELL_START`), counts down its cast time (moving
@@ -42,7 +41,7 @@ mixin template SpellHandlers()
     import dmangos.world.updatefields;
 
 private:
-    /// A spell being cast or waiting for the next swing (`Spell` in `m_currentSpells`).
+    /// A spell being cast or waiting for the next swing.
     struct Casting
     {
         const(SpellInfo)* spell;
@@ -78,8 +77,8 @@ private:
         int left;       // ms it lasts yet
     }
 
-    Casting generic;                 // `CURRENT_GENERIC_SPELL`
-    const(SpellInfo)* channelSpell;  // `CURRENT_CHANNELED_SPELL`: the spell being channelled, if any
+    Casting generic;                 // the spell being cast (with a cast time), if any
+    const(SpellInfo)* channelSpell;  // the spell being channelled, if any
     ulong channelObject;             // an object the channel is at (a fishing bobber)
     ulong bobber;                    // this angler's fishing bobber, while it floats
     int bobberAge, bobberBite, bobberGone; // ms since cast; when the fish bites; when the bobber goes
@@ -89,25 +88,25 @@ private:
     PendingHit[] pendingHits;         // missiles on their way: their effects when they arrive
     ulong channelTarget;             // ... at whom
     int channelTimer;                // ... for so many more milliseconds
-    Casting nextSwing;               // `CURRENT_MELEE_SPELL`
-    MonoTime[uint] spellReadyAt;     // `m_cooldownMap` by spell
+    Casting nextSwing;               // the spell waiting for the next main-hand swing, if any
+    MonoTime[uint] spellReadyAt;     // when each spell's cooldown ends
     MonoTime[uint] categoryReadyAt;  // ... and by category
     uint[uint] cooldownCategory;     // spell -> the category its cooldown started (to save and show it)
     uint[uint] cooldownItem;         // spell -> the item it was cast from
-    MonoTime gcdReadyAt;             // `AddGCD`: category 133's global cooldown
+    MonoTime gcdReadyAt;             // when category 133's global cooldown ends
 
     // -----------------------------------------------------------------------
     // The opcodes
     // -----------------------------------------------------------------------
 
-    /// `HandleCastSpellOpcode`: a spell the player knows, at what it chose.
+    /// The client casts a spell the player knows, at what it chose.
     @Handles(Opcode.CMSG_CAST_SPELL, WorldState.inWorld)
     void handleCastSpell(ref ByteReader reader)
     {
         const id = reader.read!uint;
         auto targets = SpellTargets.read(reader);
         const spell = context.data.spells.spell(id);
-        // Not known or passive: a cheat, ignored (as CMaNGOS does).
+        // Not known or passive: a cheat, ignored.
         if (spell is null || !player.knowsSpell(id) || spell.isPassive)
             return;
         // At another node's creature: cast there.
@@ -119,7 +118,7 @@ private:
         castSpell(spell, targets, false, 0);
     }
 
-    /// `HandleCancelCastOpcode`
+    /// The client cancels the cast in progress.
     @Handles(Opcode.CMSG_CANCEL_CAST, WorldState.inWorld)
     void handleCancelCast(ref ByteReader reader)
     {
@@ -130,7 +129,7 @@ private:
             nextSwing.active = false;
     }
 
-    /// `HandleUseItemOpcode`: an item's on-use spell (food, drink, a hearthstone).
+    /// The client uses an item: its on-use spell (food, drink, a hearthstone).
     @Handles(Opcode.CMSG_USE_ITEM, WorldState.inWorld)
     void handleUseItem(ref ByteReader reader)
     {
@@ -161,10 +160,10 @@ private:
     // -----------------------------------------------------------------------
 
     /**
-     * `Spell::SpellStart` and `Prepare`: checked, shown, and either cast now (instant), kept for the
+     * A spell starting: checked, shown, and either cast now (instant), kept for the
      * next swing, or counted down.
      */
-    /// A spell a script casts for the player (`TRIGGERED_OLD_TRIGGERED`): at `target` (a unit), or itself.
+    /// A spell a script casts for the player (triggered: no checks, no cost): at `target` (a unit), or itself.
     package void castTriggeredAt(uint spellId, ulong target)
     {
         const spell = context.data.spells.spell(spellId);
@@ -206,7 +205,7 @@ private:
         return SpellCastResult.ok;
     }
 
-    /// The countdown of a cast in progress (`Spell::update`): it goes when its time is up.
+    /// The countdown of a cast in progress: it goes when its time is up.
     void updateSpells(Duration elapsed)
     {
         if (bobber)
@@ -242,7 +241,7 @@ private:
         go(c);
     }
 
-    /// `Spell::cancel`: the cast in progress stops; the player and everyone around are told.
+    /// The cast in progress stops; the player and everyone around are told.
     void interruptCast(SpellCastResult reason)
     {
         if (!generic.active)
@@ -254,7 +253,7 @@ private:
     }
 
     /**
-     * `Spell::SendChannelStart`: a channelled spell (`SPELL_ATTR_EX_IS_CHANNELED`, `_IS_SELF_CHANNELED`)
+     * A channelled spell (`SPELL_ATTR_EX_IS_CHANNELED`, `_IS_SELF_CHANNELED`)
      * goes on for its duration: `MSG_CHANNEL_START`, and the caster's channel fields for everyone.
      */
     void startChannel(const(SpellInfo)* spell, ulong target)
@@ -280,7 +279,7 @@ private:
     }
 
     /**
-     * `Spell::SendChannelUpdate(0)`: the channel ends, at its time or cut short (`cancelled`: moving,
+     * The channel ends, at its time or cut short (`cancelled`: moving,
      * `CMSG_CANCEL_CHANNELLING`, another cast), when its auras on the target go with it.
      */
     void endChannel(bool cancelled)
@@ -312,10 +311,10 @@ private:
         }
         if (bobber && !bobberLooted)
             removeBobber();
-        // Tame Beast's twenty seconds are up: the beast is tamed (`spell_tame_beast_dummy`).
+        // Tame Beast's twenty seconds are up: the beast is tamed.
         if (!cancelled && spell.id == imported!"dmangos.world.pethandlers".spellTameBeast)
             tameBeastChannelDone(channelTarget);
-        // `Spell::cancel` of a channel: its spots go with it.
+        // A channel cancelled: its spots go with it.
         if (cancelled)
             foreach_reverse (k, ref area; persistentAreas)
                 if (area.spell is spell)
@@ -331,7 +330,7 @@ private:
         flushPlayerChanges();
     }
 
-    /// `HandleCancelChanneling`: the player stops channelling.
+    /// The client stops channelling.
     @Handles(Opcode.CMSG_CANCEL_CHANNELLING, WorldState.inWorld)
     void handleCancelChanneling(ref ByteReader reader)
     {
@@ -341,10 +340,10 @@ private:
     }
 
     /**
-     * `Spell::EffectTransmitted` for a fishing bobber: between the spell's least and greatest range in
+     * A fishing bobber cast: between the spell's least and greatest range in
      * front of the angler, a little to either side, on the water there (or the cast fails: not
      * fishable). The fish bites 3, 7, 13 or 17 seconds before the channel would end, and the bobber
-     * waits 5 seconds more for the angler (`FISHING_BOBBER_READY_TIME`).
+     * waits 5 seconds more for the angler.
      */
     void castBobber(const(SpellInfo)* spell, size_t i)
     {
@@ -419,7 +418,7 @@ private:
     }
 
     /**
-     * `Spell::EffectPersistentAA`: a dynamic object at the destination (or the caster) of the effect's
+     * A persistent area effect: a dynamic object at the destination (or the caster) of the effect's
      * radius, lasting the spell's duration; every amplitude it hurts the creatures the caster may
      * attack within it (`SPELL_AURA_PERIODIC_DAMAGE`'s ticks).
      */
@@ -471,7 +470,7 @@ private:
         }
     }
 
-    /// `Spell::m_delayMoment` for a missile: its flight to `target` at the spell's speed (yards a second); 0: at once.
+    /// A missile's flight time, in milliseconds: to `target` at the spell's speed (yards a second); 0: at once.
     int flightTime(const(SpellInfo)* spell, ulong target)
     {
         import std.math : sqrt;
@@ -500,7 +499,7 @@ private:
     }
 
     /**
-     * `GameObject::Use` of the angler's own bobber: before the bite nothing is hooked; in the bite's
+     * The angler uses its own bobber: before the bite nothing is hooked; in the bite's
      * 5 seconds the catch depends on the fishing skill against the area's (or zone's)
      * `skill_fishing_base_level` (5% at that skill, more above it), and every try may raise the skill;
      * a catch is looted from `fishing_loot_template`, else the fish escaped.
@@ -524,7 +523,7 @@ private:
         const skill = cast(int) player.skillValue(skillFishing)[0];
         const chance = skill - zoneSkill + 5;
         const success = skill >= zoneSkill && chance >= uniform!"[]"(1, 100, map.random);
-        // `Player::UpdateFishingSkill`
+        // Every try may raise the fishing skill, less often the higher it is.
         const pure_ = player.skillValue(skillFishing)[0];
         updateSkillPro(skillFishing, (pure_ < 75 ? 100 : 2500 / (pure_ - 50)) * 10, 1);
         if (!success)
@@ -532,7 +531,7 @@ private:
             deliver(Opcode.SMSG_FISH_ESCAPED, null);
             return endChannel(false);
         }
-        // `LookupFishingHoleAround`: a school of fish within 20 yards of the bobber gives the catch, from
+        // A school of fish within 20 yards of the bobber gives the catch, from
         // its own loot; it is fished out after a few catches (its least to greatest, chosen once).
         GameObject hole;
         float nearest = 20.0f * 20.0f;
@@ -628,7 +627,7 @@ private:
         nextSwing.active = false;
     }
 
-    /// `Unit::AttackerStateUpdate`'s melee spell: a spell waiting for the next main-hand swing is cast
+    /// A spell waiting for the next main-hand swing is cast
     /// instead of it. False if there was none (or it cannot be cast now): the swing goes as usual.
     bool swingSpell(Creature victim)
     {
@@ -645,11 +644,11 @@ private:
     }
 
     /**
-     * `Spell::CheckCast`: whether the cast may go, and if not, why. `start`: also what only matters
+     * Whether the cast may go, and if not, why. `start`: also what only matters
      * when it starts (cooldowns, a cast in progress, standing, moving).
      */
     /**
-     * `Player::HasItemFitToSpellReqirements`: a worn item of the spell's class and subclass, not broken:
+     * Whether the player wears an item of the spell's class and subclass, not broken:
      * a weapon in the hands or the ranged slot; armour anywhere worn (a shield in the off hand).
      */
     bool hasItemFitToSpell(const(SpellInfo)* spell)
@@ -708,10 +707,10 @@ private:
                 return SpellCastResult.affectingCombat;
             if (player.values.getByte!UNIT_FIELD_BYTES_1(0) != 0 && !(spell.attributes & castableWhileSitting))
                 return SpellCastResult.notStanding;
-            // `Spell::CheckItems`: the item the spell needs worn (a fishing pole, a ranged weapon to shoot).
+            // The item the spell needs worn (a fishing pole, a ranged weapon to shoot).
             if (spell.equippedItemClass >= 0 && !hasItemFitToSpell(spell))
                 return SpellCastResult.equippedItemClass;
-            // `GetErrorAtShapeshiftedCast`: a spell for some stances (or forms) only in one of them.
+            // A spell for some stances (or forms) only in one of them.
             enum uint allowWhileNotShapeshifted = 0x00080000; // SPELL_ATTR_EX2_ALLOW_WHILE_NOT_SHAPESHIFTED
             enum SpellCastResult onlyShapeshift = cast(SpellCastResult) 0x56;
             const form = player.values.getByte!UNIT_FIELD_BYTES_1(2);
@@ -726,11 +725,11 @@ private:
             if (petResult != SpellCastResult.ok)
                 return petResult;
         }
-        // The target the effects need (a triggered spell's at any range: `CheckRange` is not for it).
+        // The target the effects need (a triggered spell's at any range: the range check is not for it).
         const result = checkTarget(spell, targets, triggered);
         if (result != SpellCastResult.ok)
             return result;
-        // A game object: near, free, its lock opened (`CanOpenLock`).
+        // A game object: near, free, its lock opened.
         const goResult = checkGameObjectTarget(spell, targets, itemEntry);
         if (goResult != SpellCastResult.ok)
             return goResult;
@@ -804,7 +803,7 @@ private:
             return SpellCastResult.badTargets;
         if (triggered)
             return SpellCastResult.ok;
-        // `CheckRange`: within the spell's range, reaches included; `IsWithinLOSInMap`.
+        // Within the spell's range, reaches included, and in line of sight.
         auto r = range(*spell, context.client);
         r[1] = spellMod(SpellModOp.range, spell, r[1]);
         const p = player.position;
@@ -822,7 +821,7 @@ private:
     }
 
     /**
-     * `Spell::cast`: checked again, its cooldowns started, its cost taken, the hits rolled, everyone
+     * The cast goes: checked again, its cooldowns started, its cost taken, the hits rolled, everyone
      * around shown, and the effects done on each target hit.
      */
     SpellCastResult go(Casting c)
@@ -842,7 +841,7 @@ private:
         const now = context.clock();
         if (!c.triggered)
         {
-            // `AddCooldown`: the item's cooldowns, else the spell's.
+            // The cooldowns start: the item's, else the spell's.
             int recovery = spell.recoveryTime, categoryRecovery = spell.categoryRecoveryTime;
             uint category = spell.category;
             if (c.castItemEntry)
@@ -868,7 +867,7 @@ private:
                 cooldownCategory[spell.id] = category && categoryRecovery > 0 ? category : 0;
                 cooldownItem[spell.id] = c.castItemEntry;
             }
-            // `TakePower`, `TakeReagents`, and an item used up (`spellcharges` -1: one use).
+            // The power and reagents taken, and an item used up (`spellcharges` -1: one use).
             if (c.castItemEntry == 0)
             {
                 const cost = costOf(*spell);
@@ -899,7 +898,7 @@ private:
             if (spell.effect[i] == 27) // SPELL_EFFECT_PERSISTENT_AREA_AURA: once, whoever stands there
                 targets = [player.guid];
             else if (area.length || isAreaTarget(spell, i))
-                targets = area.dup; // `SetTargetMap` for an area, a cone, the party
+                targets = area.dup; // an area, a cone, the party
             else if (a == ImplicitTarget.caster || a == ImplicitTarget.none)
                 targets = [player.guid];
             else if (a == ImplicitTarget.enemy || a == ImplicitTarget.unit || a == ImplicitTarget.friend)
@@ -928,7 +927,7 @@ private:
         }
         if (!c.triggered)
         {
-            interruptAuras(AuraInterrupt.action); // `RemoveAurasOnCast`
+            interruptAuras(AuraInterrupt.action); // auras that end when the player casts
             deliver(Opcode.SMSG_CAST_RESULT, castResultPacket(spell.id, SpellCastResult.ok));
         }
         map.sendToWatchers(this, Opcode.SMSG_SPELL_GO, spellGoPacket(player.guid, spell.id, results, c.targets), true);
@@ -940,7 +939,7 @@ private:
                 if (auto creature = cast(Creature) map.findObject(r.guid))
                     spellAttacked(creature, 0);
             }
-        // A missile (`speed`) reaches each target after its flight (`m_delayMoment`): the effects then.
+        // A missile (`speed`) reaches each target after its flight: the effects then.
         foreach (i; 0 .. 3)
             foreach (target; effectTargets[i])
                 if (missOf[target] == SpellMissInfo.none)
@@ -967,8 +966,8 @@ private:
     }
 
     /**
-     * `Unit::SpellHitResult` against a creature: a magic spell misses (resisted) by
-     * `CalculateSpellMissChance`; a melee one by the attack table (miss, dodge, parry, block).
+     * The hit roll against a creature: a magic spell misses (resisted) by
+     * the level-based spell miss chance; a melee one by the attack table (miss, dodge, parry, block).
      * Friendly targets are always hit.
      */
     SpellMissInfo rollHit(const ref SpellInfo spell, ulong target)
@@ -981,7 +980,7 @@ private:
             if (other is null || other.player is null || !canAttack(relatingNow(), other.relatingNow(), context.client))
                 return SpellMissInfo.none;
             if ((spell.casting.attributesEx3 & spellAttrEx3AlwaysHit) || spell.casting.dmgClass == DamageClass.none)
-                return SpellMissInfo.none; // `SpellHitResult`: no damage class, no roll
+                return SpellMissInfo.none; // no damage class, no roll
             const roll = uniform01(map.random) * 100;
             if (spell.casting.dmgClass == DamageClass.melee || spell.casting.dmgClass == DamageClass.ranged)
             {
@@ -1025,7 +1024,7 @@ private:
         }
         const level = creature.values.get!UNIT_FIELD_LEVEL;
         float chance = spellMissChance(player.data.level, level, false);
-        // `CalculateSpellResistChance`: a magic spell is also fully resisted by resistance: a binary spell
+        // A magic spell is also fully resisted by resistance: a binary spell
         // by its whole percent, another by the distribution's chance of all of it.
         const school = spell.casting.school;
         if (spell.casting.dmgClass == DamageClass.magic && school > 1)
@@ -1042,7 +1041,7 @@ private:
     }
 
     // -----------------------------------------------------------------------
-    // Effects (`SpellEffects.cpp`)
+    // Effects
     // -----------------------------------------------------------------------
 
     void doEffect(const(SpellInfo)* spell, size_t i, ulong target, ref Casting c)
@@ -1172,7 +1171,7 @@ private:
         }
     }
 
-    /// `Spell::EffectInstaKill`: `SMSG_SPELLINSTAKILLLOG` around, and damage of all the target's health.
+    /// An instant kill: `SMSG_SPELLINSTAKILLLOG` around, and damage of all the target's health.
     void instakill(const(SpellInfo)* spell, ulong target)
     {
         ByteWriter w;
@@ -1196,7 +1195,7 @@ private:
         }
     }
 
-    /// `Player::_SaveSpellCooldowns`: the cooldowns still running, with when they end (Unix time).
+    /// The cooldowns still running, saved, with when they end (Unix time).
     package void saveCooldowns()
     {
         import dmangos.world.database : CooldownRecord;
@@ -1224,7 +1223,7 @@ private:
         context.database.saveCooldowns(player.data.guid, rows);
     }
 
-    /// `Player::_LoadSpellCooldowns`: those saved that have not ended yet.
+    /// The saved cooldowns that have not ended yet, loaded.
     package void loadCooldowns()
     {
         const now = context.clock(), unixNow = context.unixTime;
@@ -1258,7 +1257,7 @@ private:
             entry.spell = cast(ushort) spellId;
             entry.item = cast(ushort) cooldownItem.get(spellId, 0);
             entry.category = cast(ushort) category;
-            // `SendInitialSpells`: a category's cooldown in the second number, the spell's in the first.
+            // In the initial spell list a category's cooldown is in the second number, the spell's in the first.
             if (categoryLeft > Duration.zero)
                 entry.categoryMs = cast(uint) categoryLeft.total!"msecs";
             else
@@ -1268,7 +1267,7 @@ private:
         return list;
     }
 
-    /// `Player::ClearCooldownForSpell`: `SMSG_CLEAR_COOLDOWN`, and the spell ready again.
+    /// A spell's cooldown cleared: `SMSG_CLEAR_COOLDOWN`, and the spell ready again.
     package void clearCooldownFor(uint spell)
     {
         ByteWriter w;
@@ -1281,7 +1280,7 @@ private:
                 categoryReadyAt.remove(info.category);
     }
 
-    /// `Player::ClearCooldownsOnLine`: the cooldowns of the spells known of a skill line, but `calledFrom`.
+    /// Clears the cooldowns of the spells known of a skill line, but `calledFrom`.
     package void clearCooldownsOnLine(uint skillLine, uint calledFrom)
     {
         foreach (spell; player.spells.dup)
@@ -1300,7 +1299,7 @@ private:
         return ms > 0 ? max(0, spellMod(SpellModOp.duration, spell, ms)) : ms;
     }
 
-    /// `ApplySpellMod`: `value` of `spell`'s property `op`, with this player's spell modifiers (talents).
+    /// `value` of `spell`'s property `op`, with this player's spell modifiers (talents).
     T spellMod(T)(SpellModOp op, const(SpellInfo)* spell, T value)
     {
         return applySpellMod(player.auras.list, op, *spell, value);
@@ -1318,7 +1317,7 @@ private:
         return spellCrit() + spellMod(SpellModOp.critChance, spell, 0);
     }
 
-    /// The crit chance of this player's spells: `GetSpellCritFromIntellect`.
+    /// The crit chance of this player's spells, from its intellect by class and level.
     float spellCrit()
     {
         static immutable float[3][12] table = [[0, 0, 10], [0, 0, 10], [3.70f, 14.77f, 0.65f], [0, 0, 10],
@@ -1352,7 +1351,7 @@ private:
                 partyAroundSource, partyInRange, friendsAroundSource, friendsAroundDest) != 0;
     }
 
-    /// Whether this player may hurt the creature with an area or chained spell (`CanAttackSpell`: alive,
+    /// Whether this player may hurt the creature with an area or chained spell (alive,
     /// attackable, neutral ones too).
     bool spellEnemy(Creature creature)
     {
@@ -1360,7 +1359,7 @@ private:
     }
 
     /**
-     * `Spell::SetTargetMap` for the area targets: the enemies (creatures, and players it may fight)
+     * The area targets: the enemies (creatures, and players it may fight)
      * within the effect's radius of the caster, of the destination, or in a cone in front (60 degrees
      * to either side); or the party members (and itself) within the radius. Empty for other targets.
      */
@@ -1425,7 +1424,7 @@ private:
                 friendsAroundSource, friendsAroundDest, party) != 0;
     }
 
-    /// Chain targets (`EffectChainTarget`): from `first`, the nearest enemy within 10 yards of the last, `count` times.
+    /// Chain targets: from `first`, the nearest enemy within 10 yards of the last, `count` times.
     ulong[] chainTargets(ulong first, uint count)
     {
         enum float jump = 10;
@@ -1460,7 +1459,7 @@ private:
         return chain;
     }
 
-    /// A school's damage to a player (`DealSpellDamage`): a crit is half again; armor for physical.
+    /// A school's damage to a player: a crit is half again; armor for physical.
     void spellDamageToPlayer(const(SpellInfo)* spell, typeof(this) other, uint damage)
     {
         const crit = !(spell.attributesEx2 & spellAttrEx2CantCrit) && uniform01(map.random) * 100 < spellCritOf(spell);
@@ -1476,9 +1475,9 @@ private:
         dealDamage(unit, other.unit, damage, Blow.spell());
     }
 
-    /// `Unit::CalculateSpellDamage` and `DealSpellDamage` for a school's damage: a crit is half again; armor for physical.
+    /// A school's damage: a crit is half again; armor for physical.
     /**
-     * `Unit::SpellDamageBonusDone` for a direct spell: the caster's `SPELL_AURA_MOD_DAMAGE_DONE` for
+     * The damage bonus of a direct spell: the caster's `SPELL_AURA_MOD_DAMAGE_DONE` for
      * the spell's school (its items' and talents' "damage done by spells"), times the spell's
      * coefficient, its cast time over 3.5 seconds (from 1.5 to 3.5 seconds: instant spells count as
      * 1.5). Physical spells get none.
@@ -1502,7 +1501,7 @@ private:
         return cast(uint)(done * time / 3500.0f);
     }
 
-    /// `Unit::SpellHealingBonusDone`: the caster's `SPELL_AURA_MOD_HEALING_DONE` times the same coefficient.
+    /// The healing bonus: the caster's `SPELL_AURA_MOD_HEALING_DONE` times the same coefficient.
     uint healingBonus(const(SpellInfo)* spell)
     {
         import dmangos.world.auras : AuraType;
@@ -1531,7 +1530,7 @@ private:
             damage = cast(uint) armorReducedDamage(player.data.level, victim.fighter.armor, damage);
         else if (school != 1 && !isBinarySpell(*spell)) // holy: no resistance; a binary spell: all or nothing
         {
-            // A partial resist (`RollMagicResistanceMultiplierOutcomeAgainst`): a share of it resisted.
+            // A partial resist: a share of it resisted.
             import dmangos.world.combat : effectiveResistPercent, rollPartialResist;
             import std.random : uniform;
 
@@ -1552,12 +1551,12 @@ private:
     }
 
     /**
-     * `Spell::EffectWeaponDmg`: the weapon's damage, plus the effect's bonus (or times its percentage),
+     * Weapon damage: the weapon's damage, plus the effect's bonus (or times its percentage),
      * less armor; a crit is double (the melee crit chance); a block takes off what the shield stops.
      */
     void weaponSpellDamage(const(SpellInfo)* spell, size_t i, Creature victim, int value)
     {
-        // Only the first weapon damage effect deals the damage; the others add to it (`EffectWeaponDmg`).
+        // Only the first weapon damage effect deals the damage; the others add to it.
         foreach (j; 0 .. i)
             if (spell.effect[j] == 17 || spell.effect[j] == 58 || spell.effect[j] == 121 || spell.effect[j] == 31)
                 return;
@@ -1603,7 +1602,7 @@ private:
         dealDamage(unit, map.unitOf(victim), damage, tick ? Blow.periodic() : Blow.spell());
     }
 
-    /// `Spell::EffectHeal`: health back, a crit half again (`DealHeal`, `SendHealSpellLog`).
+    /// A heal: health back, a crit half again, and the heal log sent.
     void heal(const(SpellInfo)* spell, ulong target, int value)
     {
         if (value <= 0)
@@ -1626,7 +1625,7 @@ private:
             who.flushPlayerChanges();
     }
 
-    /// `Spell::EffectEnergize`: power of the effect's kind (`EffectMiscValue`).
+    /// Power given back, of the effect's kind (`EffectMiscValue`).
     void energize(const(SpellInfo)* spell, size_t i, ulong target, int value)
     {
         if (value <= 0)
@@ -1644,7 +1643,7 @@ private:
             who.flushPlayerChanges();
     }
 
-    /// `Spell::EffectTeleportUnits`: to the home bind (the hearthstone), or where the client chose.
+    /// A teleport: to the home bind (the hearthstone), or where the client chose.
     void teleportUnits(const(SpellInfo)* spell, size_t i, ref Casting c)
     {
         const b = spell.casting.implicitTargetB[i];
