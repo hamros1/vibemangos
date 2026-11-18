@@ -1852,7 +1852,7 @@ final class Map : CombatWorld, GameObjectWorld
     }
 
     /// Puts a player on the map, and introduces it to everyone in sight.
-    void add(Inhabitant who)
+    void add(Inhabitant who, bool shipsShown = false)
     in (find(who.character.guid) is null, "a player is on a map once")
     {
         const guid = who.character.guid;
@@ -1875,8 +1875,9 @@ final class Map : CombatWorld, GameObjectWorld
         place(slot, who.character.position);
         updateVisibility(who);
         replicatePlayer(who);
-        foreach (object; everywhere_)
-            deliverUpdate(who, object.appearance(serverTime()));
+        if (!shipsShown) // the session showed them already, before the player's own create block
+            foreach (object; everywhere_)
+                deliverUpdate(who, object.appearance(serverTime()));
     }
 
     private MapObject[] everywhere_; /// objects every player here sees wherever they are (ships)

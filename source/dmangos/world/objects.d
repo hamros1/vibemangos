@@ -487,6 +487,7 @@ struct UpdateData
 {
     private ByteWriter blocks;
     private uint count;
+    private bool hasTransport; // a block creates a ship or zeppelin (the header says so)
 
     /// Number of blocks added.
     @property uint blockCount() const pure nothrow @nogc @safe
@@ -505,6 +506,8 @@ struct UpdateData
         movement.write(blocks);
         values.writeCreate(blocks, seen, adjust);
         ++count;
+        if (highGuidOf(guid) == HighGuid.moTransport)
+            hasTransport = true;
     }
 
     /// A values block: the fields changed since the last `clearChanges`.
@@ -541,6 +544,7 @@ struct UpdateData
     {
         blocks.putBytes(other.blocks.data);
         count += other.count;
+        hasTransport |= other.hasTransport;
     }
 
     /// Whether no block has been added.
@@ -549,21 +553,23 @@ struct UpdateData
         return count == 0;
     }
 
-    /**
-     * The packet body: the block count and transport flag,
-     * then the blocks. Bodies over 100 bytes are compressed.
-     */
     /// Bytes of blocks so far, before compression.
     @property size_t byteSize() const pure nothrow @nogc @safe
     {
         return blocks.length;
     }
 
+    /**
+     * The packet body: the block count and whether a block creates a transport, then the blocks. Bodies over
+     * 100 bytes are compressed.
+     */
     UpdatePacket build() const
     {
         ByteWriter body_;
         body_.put(count);
-        body_.put(ubyte(0)); // no block describes a transport
+        // Whether a block creates a transport: the 1.12 client sets a ship up from such a packet (as vmangos and
+        // CMaNGOS send it); with 0, it crashed a few seconds after showing a zeppelin.
+        body_.put(ubyte(hasTransport ? 1 : 0));
         body_.putBytes(blocks.data);
         if (body_.length <= 100)
             return UpdatePacket(false, body_.data.dup);

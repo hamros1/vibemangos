@@ -669,10 +669,15 @@ for action in actions:
                         print(f"    position {move[0]:.2f} {move[1]:.2f} {move[2]:.2f}, run speed {move[4][1]}")
                         inv = {i: v[UNIT_END + 0x12A + 2 * i] for i in range(113) if v.get(UNIT_END + 0x12A + 2 * i)}
                         print(f"    inventory slots in use: {sorted(inv)}")
+                    elif t == 5:  # a game object: at login, the map's ships and zeppelins (before the player)
+                        print(f"  [game object] {v[3]} guid {g & 0xFFFFFFFF}: high {g >> 48:#06x} (a ship or zeppelin)")
                     else:
                         print(f"  {'bag ' if t == 2 else 'item'} {g & 0xFFFFFFFF}: entry {v[3]} count {v.get(OBJECT_END + 8)} contained in {(v.get(OBJECT_END + 2, 0) | v.get(OBJECT_END + 3, 0) << 32):#x}"
                               + (f", {v[ITEM_END]} slots" if t == 2 else ""))
-                me = [o for o in objs if o[2] == 4][0]; player_guid = me[1]; track(objs)
+                players_here = [o for o in objs if o[2] == 4]
+                if not players_here:  # the transports' packets, sent before the player's own
+                    track(objs); continue
+                me = players_here[0]; player_guid = me[1]; track(objs)
                 items = {o[1]: o for o in objs if o[2] in (1, 2)}
                 pv = me[3]
                 for i in range(113):

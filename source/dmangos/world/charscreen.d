@@ -294,6 +294,23 @@ mixin template CharacterLogin()
     import dmangos.world.playercreate : CharacterBuilder, KnownAbilities;
 
     /// Enters the world as `character`, which the connection loaded and checked.
+    /**
+     * The ships and zeppelins of the player's map, each in a packet marked as a transport's, before the
+     * player's own create block: the order and the mark the 1.12 client is sent them in by other servers
+     * (shown after the player, unmarked, a zeppelin crashed it a few seconds later). `Map.add` is then told
+     * they were shown.
+     */
+    package void showShipsHere()
+    {
+        // The map the player is about to be added to (made now if it is not yet: `enterWorld` would make it).
+        if (auto here = context.mapOf(this))
+            foreach (ship; here.everywhere)
+            {
+                const shown = ship.appearance(serverTime());
+                sendUpdate(shown);
+            }
+    }
+
     package void enterWorldAtLogin(CharacterData character)
     {
         const guid = character.guid;
@@ -308,7 +325,7 @@ mixin template CharacterLogin()
         connection.playing = this; // in the world from here on
         instanceId_ = context.instanceFor(player.guid, player.data.map); // a dungeon: its group's copy, or its own
         sendLoginPackets();
-        context.enterWorld(this); // after the player's own create block: now others see it, and it sees them
+        context.enterWorld(this, true); // after the player's own create block: now others see it, and it sees them
         context.database.setOnline(guid, account.id, true, context.config.realmId);
         resetMovementCheck();
 
@@ -395,7 +412,9 @@ mixin template CharacterLogin()
                         send(ServerTriggerCinematic(race.cinematicSequence));
         }
 
-        // Into the map: the client creates its items and itself, and the loading screen ends.
+        // The map's ships and zeppelins first, then into the map: the client creates its items and itself, and
+        // the loading screen ends.
+        showShipsHere();
         const update = player.createForSelf(serverTime());
         sendUpdate(update);
         player.inventory.markAllSent();

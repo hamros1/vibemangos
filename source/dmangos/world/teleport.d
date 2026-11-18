@@ -387,10 +387,11 @@ private:
             return;
         teleporting = Teleport.none;
         sendInitialPacketsBeforeAddToMap();
+        showShipsHere(); // before the player's own create block, as at login
         const self = player.createForSelf(serverTime());
         sendUpdate(self);
         player.inventory.markAllSent();
-        map.add(this);
+        map.add(this, true);
         sendInitialPacketsAfterAddToMap();
         resetMovementCheck();
         petsOnArrival();

@@ -1193,6 +1193,10 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         if (ships.length == 0 && data.ships.length)
             foreach (ref ship; data.ships)
             {
+                import std.algorithm.searching : canFind;
+
+                if (config.disabledTransports.canFind(ship.entry))
+                    continue; // left out by the configuration
                 bool dungeon;
                 foreach (ref k; ship.frames)
                     dungeon |= instanceable(k.node.map);
@@ -2478,14 +2482,14 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     private size_t[uint] spawnIndex, gameObjectSpawnIndex; // spawn guid -> its place in the world data
 
     /// Puts a player in the world: on its map and in the lists of who is online.
-    void enterWorld(OnlinePlayer who)
+    void enterWorld(OnlinePlayer who, bool shipsShown = false)
     in (who.character.guid !in online, "a character is in the world once")
     {
         import dmangos.world.worlddata : toLowerName;
 
         online[who.character.guid] = who;
         onlineByName[toLowerName(who.character.data.name)] = who;
-        mapOf(who).add(who);
+        mapOf(who).add(who, shipsShown);
     }
 
     /// A player in the world was renamed (`.character rename`): it is found by its new name.

@@ -199,6 +199,8 @@ struct WorldConfig
     @JsonName("start_gm_level") uint startGmLevel = 1;
     /// `StartPlayerMoney`, in copper.
     @JsonName("start_player_money") uint startPlayerMoney = 0;
+    /// Ships and zeppelins (`transports.entry`) that do not sail: for one a client cannot show.
+    @JsonName("disabled_transports") uint[] disabledTransports;
     /// `MaxPrimaryTradeSkill`
     @JsonName("max_primary_trade_skill") uint maxPrimaryTradeSkill = 2;
     /// `TradeSkill.GMIgnore.MaxPrimarySkillsCount`
