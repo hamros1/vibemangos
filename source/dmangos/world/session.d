@@ -1181,7 +1181,7 @@ unittest
         0, 0, 0]]), "FactionTemplate.dbc");
     owned.factionTemplate = nodes[2].client.factionTemplates.lookup(14);
     nodes[1].map(0).removeObject(innkeeper);
-    nodes[1].map(0).replicaCreated(2, cell, innkeeper, encodeState(owned, 0));
+    nodes[1].map(0).replicaCreated(owner: 2, cell: cell, guid: innkeeper, encodeState(owned, 0));
     assert(cast(Replica) nodes[1].map(0).findObject(innkeeper) !is null);
 
     // Attacking the replica: the player moves to node 2, and the attack begins there.
@@ -1304,7 +1304,7 @@ unittest
     foreach (node; nodes)
         node.data.creatureTemplates.edit(creatureInnkeeper).detection = 20;
     nodes[1].map(0).removeObject(innkeeper);
-    nodes[1].map(0).replicaCreated(2, cell, innkeeper, encodeState(owned, 0));
+    nodes[1].map(0).replicaCreated(owner: 2, cell: cell, guid: innkeeper, encodeState(owned, 0));
     assert(cast(Replica) nodes[1].map(0).findObject(innkeeper) !is null);
 
     // The player moves near it: node 1 judges the creature would notice it, and it moves to node 2.

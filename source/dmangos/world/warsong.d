@@ -502,7 +502,7 @@ unittest
     assert(rules.carrier[0] == 8 && copy.worldStates[stateFlagAlliance] == flagOnPlayer);
     assert(flag(goSilverwingFlag) is null, "gone from its base");
     // Killed carrying it: it falls; Anduin returns it.
-    copy.playerKilled(8, 7);
+    copy.playerKilled(victim: 8, killer: 7);
     assert(rules.carrier[0] == 0 && copy.worldStates[stateFlagAlliance] == flagOnGround);
     auto fallen = flag(goSilverwingFlagDrop);
     assert(fallen !is null, "the dropped flag on the ground");

@@ -2711,7 +2711,7 @@ unittest
     {
         Map[ushort] node;
         ushort from;
-        void create(ushort peer, uint, ulong cell, ulong guid, const(ubyte)[] state) { node[peer].replicaCreated(from, cell, guid, state); }
+        void create(ushort peer, uint, ulong cell, ulong guid, const(ubyte)[] state) { node[peer].replicaCreated(owner: from, cell: cell, guid: guid, state); }
         void values(ushort peer, uint, ulong guid, const(ubyte)[] slots) { node[peer].replicaValues(from, guid, slots); }
         void move(ushort peer, uint, ulong guid, ushort op, const(ubyte)[] b, const(ubyte)[] m) { node[peer].replicaMoved(from, guid, op, b, m); }
         void remove(ushort peer, uint, ulong guid) { node[peer].replicaRemoved(from, guid); }
@@ -2799,7 +2799,7 @@ unittest
     {
         Map to;
         ushort from;
-        void create(ushort, uint, ulong cell, ulong guid, const(ubyte)[] state) { to.replicaCreated(from, cell, guid, state); }
+        void create(ushort, uint, ulong cell, ulong guid, const(ubyte)[] state) { to.replicaCreated(owner: from, cell: cell, guid: guid, state); }
         void values(ushort, uint, ulong guid, const(ubyte)[] slots) { to.replicaValues(from, guid, slots); }
         void move(ushort, uint, ulong guid, ushort op, const(ubyte)[] b, const(ubyte)[] m) { to.replicaMoved(from, guid, op, b, m); }
         void remove(ushort, uint, ulong guid) { to.replicaRemoved(from, guid); }
@@ -2911,7 +2911,7 @@ unittest
     {
         Map[ushort] node;
         ushort from;
-        void create(ushort peer, uint, ulong cell, ulong guid, const(ubyte)[] state) { node[peer].replicaCreated(from, cell, guid, state); }
+        void create(ushort peer, uint, ulong cell, ulong guid, const(ubyte)[] state) { node[peer].replicaCreated(owner: from, cell: cell, guid: guid, state); }
         void values(ushort peer, uint, ulong guid, const(ubyte)[] slots) { node[peer].replicaValues(from, guid, slots); }
         void move(ushort peer, uint, ulong guid, ushort op, const(ubyte)[] b, const(ubyte)[] m) { node[peer].replicaMoved(from, guid, op, b, m); }
         void remove(ushort peer, uint, ulong guid) { node[peer].replicaRemoved(from, guid); }
@@ -3070,7 +3070,7 @@ unittest
     {
         Map to;
         ushort from;
-        void create(ushort, uint, ulong cell, ulong guid, const(ubyte)[] state) { to.replicaCreated(from, cell, guid, state); }
+        void create(ushort, uint, ulong cell, ulong guid, const(ubyte)[] state) { to.replicaCreated(owner: from, cell: cell, guid: guid, state); }
         void values(ushort, uint, ulong guid, const(ubyte)[] slots) { to.replicaValues(from, guid, slots); }
         void move(ushort, uint, ulong guid, ushort op, const(ubyte)[] b, const(ubyte)[] m) { to.replicaMoved(from, guid, op, b, m); }
         void remove(ushort, uint, ulong guid) { to.replicaRemoved(from, guid); }
@@ -3117,7 +3117,7 @@ unittest
     // The object the owner did not hold arrives as a replica a moment later: adopted, not created again.
     import dmangos.world.replication : encodePlayerState;
 
-    owner.replicaCreated(1, cellKeyAt(10, 0), 0xF130_0000_0000_0099, encodePlayerState(homeWatcher.player, 0));
+    owner.replicaCreated(owner: 1, cell: cellKeyAt(10, 0), guid: 0xF130_0000_0000_0099, encodePlayerState(homeWatcher.player, 0));
     assert(arrived.take() == [] && owner.seesObject(1, 0xF130_0000_0000_0099), "the client had it already");
     assert(ownerWatcher.take().length == 1, "the owner's own player had not seen it: it gets its create block");
 
@@ -3139,7 +3139,7 @@ unittest
     {
         Map to;
         ushort from;
-        void create(ushort, uint, ulong cell, ulong guid, const(ubyte)[] state) { to.replicaCreated(from, cell, guid, state); }
+        void create(ushort, uint, ulong cell, ulong guid, const(ubyte)[] state) { to.replicaCreated(owner: from, cell: cell, guid: guid, state); }
         void values(ushort, uint, ulong guid, const(ubyte)[] slots) { to.replicaValues(from, guid, slots); }
         void move(ushort, uint, ulong guid, ushort op, const(ubyte)[] b, const(ubyte)[] m) { to.replicaMoved(from, guid, op, b, m); }
         void remove(ushort, uint, ulong guid) { to.replicaRemoved(from, guid); }

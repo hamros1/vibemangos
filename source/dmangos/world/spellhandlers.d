@@ -2092,7 +2092,7 @@ private:
             resisted = partialResist(damage, cast(int) other.player.values.get!UNIT_FIELD_RESISTANCES(school),
                 other.player.data.level);
         const absorbed = other.absorbDamage(school, damage);
-        map.sendToWatchers(this, Opcode.SMSG_SPELLNONMELEEDAMAGELOG, nonMeleeDamageLog(other.player.guid, player.guid,
+        map.sendToWatchers(this, Opcode.SMSG_SPELLNONMELEEDAMAGELOG, nonMeleeDamageLog(target: other.player.guid, attacker: player.guid,
             spell.id, damage, school, absorbed, resisted, false, 0, crit), true);
         enterCombatFor(combatLinger);
         import dmangos.world.unit : Blow, dealDamage;
@@ -2176,7 +2176,7 @@ private:
             else if (share < 0)
                 damage += cast(uint)(damage * -share);
         }
-        map.sendToWatchers(this, Opcode.SMSG_SPELLNONMELEEDAMAGELOG, nonMeleeDamageLog(victim.guid, player.guid,
+        map.sendToWatchers(this, Opcode.SMSG_SPELLNONMELEEDAMAGELOG, nonMeleeDamageLog(target: victim.guid, attacker: player.guid,
             spell.id, damage, school, 0, resisted, false, 0, crit), true);
         spellAttacked(victim, damage);
         if (victim.alive)
@@ -2223,7 +2223,7 @@ private:
         if (uniform01(map.random) * 100 < blockChance(it, me, type))
             blocked = 0; // creatures carry no shield values yet
         const total = damage > 0 ? cast(uint) damage : 0;
-        map.sendToWatchers(this, Opcode.SMSG_SPELLNONMELEEDAMAGELOG, nonMeleeDamageLog(victim.combatGuid, player.guid,
+        map.sendToWatchers(this, Opcode.SMSG_SPELLNONMELEEDAMAGELOG, nonMeleeDamageLog(target: victim.combatGuid, attacker: player.guid,
             spell.id, total, 0, 0, 0, false, blocked, crit), true);
         enterCombatFor(combatLinger);
         final switch (victim.kind)
@@ -2272,7 +2272,7 @@ private:
             return;
         const healed = health + amount > maxHealth ? maxHealth - health : amount;
         v.set!UNIT_FIELD_HEALTH(health + healed);
-        map.sendToWatchers(this, Opcode.SMSG_SPELLHEALLOG, healLog(target, player.guid, spell.id, amount, crit), true);
+        map.sendToWatchers(this, Opcode.SMSG_SPELLHEALLOG, healLog(target: target, caster: player.guid, spell.id, amount, crit), true);
         if (who !is this)
             who.flushPlayerChanges();
     }

@@ -111,7 +111,7 @@ mixin template CombatHandlers()
             if (killer !is null && killer !is this)
                 killer.playerKilledByMe(this);
             if (auto copy = currentBattleground()) // the battleground counts the death and the kill
-                copy.playerKilled(player.guid, killer !is null && killer !is this ? killer.player.guid : 0);
+                copy.playerKilled(victim: player.guid, killer: killer !is null && killer !is this ? killer.player.guid : 0);
             playerDied(attacker.kind != UnitKind.player); // only a player's kill costs no durability
         }
     }

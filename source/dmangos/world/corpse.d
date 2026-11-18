@@ -22,8 +22,6 @@ enum CorpseType : ubyte
     resurrectablePvp,
 }
 
-/// The high part of a corpse's guid.
-enum ushort highGuidCorpse = 0xF101;
 
 /// How near its corpse a ghost must be to come back to life there.
 enum float corpseReclaimRadius = 39;
@@ -46,7 +44,7 @@ final class Corpse : MapObject
         enum uint flagUnk2 = 0x04, hideHelm = 0x08, hideCloak = 0x10;               // corpse flags
         enum uint playerHideHelm = 0x00000400, playerHideCloak = 0x00000800;      // player flags
         owner = player.data.guid;
-        guid_ = ulong(highGuidCorpse) << 48 | owner;
+        guid_ = makeGuid(HighGuid.corpse, owner);
         map = player.data.map;
         at = player.position;
         this.type = type;

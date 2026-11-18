@@ -834,7 +834,7 @@ unittest
     const state = encodeState(spawned, 0);
     const home = cellKeyAt(-8951, -130);
     map.release((ulong cell) => cell == home);
-    map.replicaCreated(2, home, innkeeper, state);
+    map.replicaCreated(owner: 2, cell: home, guid: innkeeper, state);
     anduin.read();
 
     // Node 2 has two lots left: it reserves one, and the purchase goes on with what it says is left.

@@ -10,9 +10,6 @@ import dmangos.world.movement : Position;
 import dmangos.world.objects;
 import dmangos.world.updatefields;
 
-/// The high 16 bits of a dynamic object's guid.
-enum ushort highGuidDynamicObject = 0xF100;
-
 /// See the module documentation.
 final class DynamicObject : MapObject
 {
@@ -23,7 +20,7 @@ final class DynamicObject : MapObject
     /// `spell`'s spot of `radius` yards at `at`, cast by `caster`.
     this(uint counter, ulong caster, uint spell, size_t effect, float radius, Position at)
     {
-        guid_ = ulong(highGuidDynamicObject) << 48 | counter;
+        guid_ = makeGuid(HighGuid.dynamicObject, counter);
         this.at = at;
         values = UpdateValues(TypeId.dynamicObject);
         values.set!OBJECT_FIELD_GUID(guid_);
@@ -73,6 +70,6 @@ final class DynamicObject : MapObject
 unittest
 {
     auto spot = new DynamicObject(5, 7, 10, 0, 8, Position(1, 2, 3, 0));
-    assert(spot.guid >> 48 == highGuidDynamicObject && spot.values.get!DYNAMICOBJECT_SPELLID == 10);
+    assert(highGuidOf(spot.guid) == HighGuid.dynamicObject && spot.values.get!DYNAMICOBJECT_SPELLID == 10);
     assert(spot.values.get!DYNAMICOBJECT_RADIUS == 8 && spot.appearance(0).blockCount == 1);
 }

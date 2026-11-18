@@ -475,7 +475,7 @@ unittest
     auto thereMap = there.map(mapEasternKingdoms);
     thereMap.addObject(creature);
     auto hereMap = here.map(mapEasternKingdoms);
-    hereMap.replicaCreated(2, cellKeyAt(at.x, at.y), creature.guid, encodeState(creature, 0));
+    hereMap.replicaCreated(owner: 2, cell: cellKeyAt(at.x, at.y), guid: creature.guid, encodeState(creature, 0));
 
     assert(here.signalCreature(hereMap, EntityRef(7), EntityRef(creature.guid), 5, 1) == ActionResult.ok);
     assert(sentTo == 2 && sent.length == 1 && sent[0].to == creature.guid && sent[0].origin == 1);

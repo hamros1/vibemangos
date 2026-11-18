@@ -707,7 +707,7 @@ final class ClusterBridge : Replicator, ReplicationHandler, PlayerRelay, PlayerH
 
     void replicaCreate(ushort peer, uint map, ulong cell, ulong guid, const(ubyte)[] state)
     {
-        context.map(map).replicaCreated(peer, cell, guid, state);
+        context.map(map).replicaCreated(owner: peer, cell: cell, guid: guid, state);
     }
 
     void replicaValues(ushort peer, uint map, ulong guid, const(ubyte)[] slots)

@@ -896,7 +896,7 @@ unittest
     auto map = context.map(0);
     const state = encodePlayerState(cast(Player) varian.session.character, 0);
     context.leaveWorldForMigration(varian.session.inWorld, 2);
-    map.replicaCreated(2, cellKeyAt(-8945, -132), 9, state);
+    map.replicaCreated(owner: 2, cell: cellKeyAt(-8945, -132), guid: 9, state);
     assert(context.onlinePlayer(9) is null && map.findObject(9) !is null);
     anduin.read();
 

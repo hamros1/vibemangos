@@ -474,7 +474,7 @@ mixin template CreatureCasting()
             }
         }
         const absorbed = other.absorb(school < 0 ? 0 : school, damage);
-        world_.sendToObservers(me.guid, Opcode.SMSG_SPELLNONMELEEDAMAGELOG, nonMeleeDamageLog(guid, me.guid,
+        world_.sendToObservers(me.guid, Opcode.SMSG_SPELLNONMELEEDAMAGELOG, nonMeleeDamageLog(target: guid, attacker: me.guid,
             spell.id, damage, school < 0 ? 0 : school, absorbed, resisted, false, 0, false));
         if (damage)
             triggerCombatTimer();
@@ -519,7 +519,7 @@ mixin template CreatureCasting()
         const healed = health + value > maximum ? maximum - health : value;
         who.values.set!UNIT_FIELD_HEALTH(health + healed);
         world_.sendToObservers(who.guid, Opcode.SMSG_SPELLHEALLOG,
-            healLog(who.guid, me.guid, spell.id, healed, false));
+            healLog(target: who.guid, caster: me.guid, spell.id, healed, false));
         if (who !is me)
             world_.flushCreature(who);
     }

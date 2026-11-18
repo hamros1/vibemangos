@@ -31,6 +31,8 @@ enum HighGuid : ushort
     gameObject = 0xF110,
     unit = 0xF130,
     pet = 0xF140,
+    dynamicObject = 0xF100, /// a spell's spot on the ground (`dmangos.world.dynobject`)
+    corpse = 0xF101,        /// low guid: its player's
     moTransport = 0x8000, /// ships and zeppelins: the high part and the entry
 }
 

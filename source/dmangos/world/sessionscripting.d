@@ -184,7 +184,7 @@ mixin template SessionScripting()
             if (health == 0)
                 return ActionResult.notAllowed;
             player.values.set!UNIT_FIELD_HEALTH(amount >= health ? 0 : health - amount);
-            map.sendToWatchers(this, Opcode.SMSG_SPELLNONMELEEDAMAGELOG, nonMeleeDamageLog(player.guid, player.guid,
+            map.sendToWatchers(this, Opcode.SMSG_SPELLNONMELEEDAMAGELOG, nonMeleeDamageLog(target: player.guid, attacker: player.guid,
                 spellId, amount, 0, 0, 0, false, 0, false), true);
             flushPlayerChanges();
             if (amount >= health)

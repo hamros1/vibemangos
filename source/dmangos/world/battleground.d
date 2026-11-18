@@ -456,7 +456,7 @@ final class Battleground
                 }
             }
         }
-        rules.playerKilled(this, victim, killer);
+        rules.playerKilled(this, victim: victim, killer: killer);
     }
 
     /// Bonus honor worth `kills` kills to everyone of `team` here, on their scores.
@@ -1917,7 +1917,7 @@ unittest
 
     // Thrall killed by Anduin: a killing blow and a kill to Anduin, a death to Thrall; none to Varian, at
     // the Alliance's start, far from Thrall at the Horde's.
-    copy.playerKilled(8, 7);
+    copy.playerKilled(victim: 8, killer: 7);
     assert(copy.members[7].killingBlows == 1 && copy.members[7].honorableKills == 1);
     assert(copy.members[9].honorableKills == 0 && copy.members[9].killingBlows == 0);
     assert(copy.members[8].deaths == 1);
