@@ -192,7 +192,8 @@ What works now:
     one, to which it and its group are bound. Copies, binds and what was killed or used up in them
     are saved (`instance`, `character_instance`, `group_instance`, and `creature_respawn` and
     `gameobject_respawn` by instance) and read back at start-up. A dungeon copy nobody has been in
-    for `instance_unload_delay_seconds` resets with its binds; a raid copy lasts until its reset
+    for `instance_unload_delay_seconds` resets with its binds (or at once from the party menu's Reset
+    Instances, by a player alone or its group's leader, unless someone is inside); a raid copy lasts until its reset
     (`instance_template.reset_delay` days after it was made), so its players stay locked to it, and
     one bound to another copy than its group's is turned away. A player logging back in inside a
     dungeon returns to its copy; a GM's `.appear` and `.summon` go into the other's copy, and the

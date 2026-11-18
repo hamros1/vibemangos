@@ -736,6 +736,31 @@ private:
     // The character's own state
     // -----------------------------------------------------------------------
 
+    /**
+     * The client resets the player's dungeons (alone, or its group's as the leader): `SMSG_INSTANCE_RESET`
+     * for each reset, `SMSG_INSTANCE_RESET_FAILED` (players still inside) for each that is not.
+     */
+    @Handles(Opcode.CMSG_RESET_INSTANCES, WorldState.inWorld)
+    void handleResetInstances()
+    {
+        uint[] reset, busy;
+        context.resetDungeonsOf(player.guid, reset, busy);
+        foreach (mapId; reset)
+        {
+            ByteWriter w;
+            w.put(mapId);
+            deliver(Opcode.SMSG_INSTANCE_RESET, w.data);
+        }
+        foreach (mapId; busy)
+        {
+            enum uint playersInside = 0;
+            ByteWriter w;
+            w.put(playersInside);
+            w.put(mapId);
+            deliver(Opcode.SMSG_INSTANCE_RESET_FAILED, w.data);
+        }
+    }
+
     /// The client hides or shows the player's helm, or its cloak.
     @Handles(Opcode.CMSG_TOGGLE_HELM, WorldState.inWorld)
     void handleToggleHelm()

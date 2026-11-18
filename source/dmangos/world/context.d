@@ -1705,6 +1705,43 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         }
     }
 
+    /**
+     * The player (or, its group's leader, the group) resets its dungeons: each copy of a dungeon (not a
+     * raid) it is bound to, hosted here, with nobody in it, is reset (`reset`); one with players inside
+     * is not (`busy`). By map.
+     */
+    void resetDungeonsOf(ulong player, out uint[] reset, out uint[] busy)
+    {
+        import dmangos.log : info;
+
+        uint[uint]* binds;
+        if (auto group = groups.of(player))
+        {
+            if (group.leader != player)
+                return;
+            binds = group.leader in groupBinds;
+        }
+        else
+            binds = player in playerBinds;
+        if (binds is null)
+            return;
+        foreach (mapId, id; (*binds).dup)
+        {
+            const entry = client.maps.lookup(mapId);
+            if (entry is null || entry.isRaid || !hostsDungeon(mapId))
+                continue;
+            if (auto m = instanceMaps.get(id, null))
+                if (m.population > 0)
+                {
+                    busy ~= mapId;
+                    continue;
+                }
+            info!"instance %s of map %s reset by its owner"(id, mapId);
+            resetInstance(id);
+            reset ~= mapId;
+        }
+    }
+
     /// An instance gone for good: its map, state, saved rows and binds.
     void resetInstance(uint id)
     {

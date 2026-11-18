@@ -965,3 +965,25 @@ unittest
     assert(a.instanceState(copy) is null, "node 1 forgot it");
     assert(db.loadInstances().instances.length == 2, "and deleted nothing");
 }
+
+/// Resetting one's dungeons: an empty copy goes (and the bind with it); one with the player inside does not.
+unittest
+{
+    import std.algorithm.searching : canFind;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    const at = Position(deadminesEntrance[0], deadminesEntrance[1], deadminesEntrance[2]);
+    auto anduin = loggedIn(context, db, 7, "Anduin", at, AccountLevel.player, raceHuman, mapEasternKingdoms, 10);
+    anduin.read();
+    const first = context.instanceFor(7, mapDeadmines);
+    anduin.write(Opcode.CMSG_RESET_INSTANCES, null);
+    assert(opcodesOf(anduin.read()).canFind(Opcode.SMSG_INSTANCE_RESET), "reset");
+    assert(context.instanceFor(7, mapDeadmines) != first, "a new copy next time");
+
+    anduin.session.inWorld.teleportTo(mapDeadmines, Position(-16, -383, 61));
+    anduin.write(Opcode.MSG_MOVE_WORLDPORT_ACK, null);
+    anduin.read();
+    anduin.write(Opcode.CMSG_RESET_INSTANCES, null);
+    assert(opcodesOf(anduin.read()).canFind(Opcode.SMSG_INSTANCE_RESET_FAILED), "not while inside");
+}
