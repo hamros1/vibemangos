@@ -387,7 +387,8 @@ final class WorldData
         dbScripts = new DbScriptData;
         loot = LootStores(new LootStore("creature_loot_template"), new LootStore("reference_loot_template"),
             new LootStore("gameobject_loot_template"), new LootStore("item_loot_template"),
-            new LootStore("fishing_loot_template"));
+            new LootStore("fishing_loot_template"), new LootStore("skinning_loot_template"),
+            new LootStore("pickpocketing_loot_template"));
     }
 
     /**
@@ -1463,4 +1464,15 @@ unittest
         }
     }
     assert(entry == 100 || entry == 101);
+}
+
+// Every loot store exists from the start (the loader fills them; a missing one would crash it).
+unittest
+{
+    import dmangos.world.loot : LootStore;
+
+    auto data = new WorldData;
+    static foreach (member; __traits(allMembers, typeof(data.loot)))
+        static if (is(typeof(__traits(getMember, data.loot, member)) == LootStore))
+            assert(__traits(getMember, data.loot, member) !is null, "the " ~ member ~ " loot store");
 }
