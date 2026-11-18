@@ -1,7 +1,6 @@
 /**
  * A player's derived numbers: stats with item bonuses, health and mana,
- * armor and resistances, attack power, weapon damage and swing times
- * (CMaNGOS `Entities/StatSystem.cpp`, `Player::_ApplyItemBonuses`).
+ * armor and resistances, attack power, weapon damage and swing times.
  *
  * Auras and talents are not applied yet, so this is what a character has
  * with its gear and nothing else. Crit, dodge, parry and block chances come
@@ -17,7 +16,7 @@ public import dmangos.world.defines : Power, Stat;
 import dmangos.world.defines;
 import dmangos.world.worlddata : ItemTemplate, LevelStats, ClassLevelStats;
 
-/// `WeaponAttackType`
+/// The kinds of weapon attack.
 enum AttackType
 {
     mainHand,
@@ -25,7 +24,7 @@ enum AttackType
     ranged,
 }
 
-/// `ItemModType` values that change stats.
+/// Item stat types (`item_template`'s `stat_type*`) that change stats.
 private enum : uint
 {
     itemModMana = 0,
@@ -39,7 +38,7 @@ private enum : uint
 
 private enum uint baseAttackTime = 2000;
 private enum float baseMinDamage = 1, baseMaxDamage = 2;
-private enum float offHandDamagePct = 0.5f; // UNIT_MOD_DAMAGE_OFFHAND starts at TOTAL_PCT 0.5
+private enum float offHandDamagePct = 0.5f; // the off hand deals half damage
 
 /// A weapon's damage range.
 struct DamageRange
@@ -89,7 +88,7 @@ struct AuraMods
     float mana = 0;              /// `MOD_INCREASE_ENERGY` of mana
 }
 
-/// `Player::InitStatsForLevel`, `_ApplyAllItemMods` and the `Update*` functions of `StatSystem.cpp`.
+/// A player's derived numbers: its level's base stats with what its gear and `input`'s other bonuses add.
 PlayerStats computeStats(const ref StatInputs input) pure nothrow @safe
 in (input.level > 0)
 out (result; result.maxHealth >= 1, "a living character has at least one health point")
@@ -157,7 +156,7 @@ out (result; result.maxHealth >= 1, "a living character has at least one health 
     foreach (i; 0 .. 6)
         resistance[i] += input.auras.resistances[i + 1];
 
-    // UpdateMaxHealth, UpdateMaxPower
+    // Maximum health and power
     result.maxHealth = cast(uint) max(round(healthMod + result.baseHealth
         + healthBonusFromStamina(result.stats[Stat.stamina])), 1);
     if (result.baseMana > 0)
@@ -166,12 +165,12 @@ out (result; result.maxHealth >= 1, "a living character has at least one health 
     result.maxPower[Power.rage] = 1000;
     result.maxPower[Power.energy] = 100;
 
-    // UpdateArmor, UpdateResistances
+    // Armor and resistances
     result.resistances[0] = cast(int)(armor + result.stats[Stat.agility] * 2);
     foreach (i; 0 .. 6)
         result.resistances[i + 1] = cast(int) resistance[i];
 
-    // UpdateAttackPowerAndDamage
+    // Attack power and damage
     result.attackPower = cast(int)(meleeAttackPower(input.classId, input.level, result.stats) + input.auras.attackPower);
     result.rangedAttackPower = cast(int)(rangedAttackPower(input.classId, input.level, result.stats)
         + input.auras.rangedAttackPower);
@@ -180,14 +179,14 @@ out (result; result.maxHealth >= 1, "a living character has at least one health 
     return result;
 }
 
-/// `Player::GetHealthBonusFromStamina`: the first 20 points give 1 health each, the rest 10.
+/// Health from stamina: the first 20 points give 1 health each, the rest 10.
 float healthBonusFromStamina(float stamina) pure nothrow @nogc @safe
 {
     const base = min(stamina, 20.0f);
     return base + (stamina - base) * 10.0f;
 }
 
-/// `Player::GetManaBonusFromIntellect`: the first 20 points give 1 mana each, the rest 15.
+/// Mana from intellect: the first 20 points give 1 mana each, the rest 15.
 float manaBonusFromIntellect(float intellect) pure nothrow @nogc @safe
 {
     const base = min(intellect, 20.0f);
@@ -241,7 +240,7 @@ private float rangedAttackPower(ubyte classId, uint level, const float[5] s) pur
     }
 }
 
-/// `UpdateDamagePhysical` via `CalculateMinMaxDamage`, without auras or ammo.
+/// Physical weapon damage, without auras or ammo.
 private void weaponDamage(const ref StatInputs input, AttackType type, ref PlayerStats result) pure nothrow @safe
 {
     static immutable ubyte[3] slots = [equipmentSlotMainhand, equipmentSlotOffhand, equipmentSlotRanged];
@@ -315,16 +314,15 @@ unittest
 }
 
 /**
- * A player's own melee chances (`Player::UpdateCritPercentage`, `UpdateDodgePercentage`,
- * `UpdateParryPercentage`, `UpdateBlockPercentage`, `GetShieldBlockValue`): what the combat rolls
- * use (`Unit::m_modCritChance` and the others), and what the character sheet shows, which adds
+ * A player's own melee chances (crit, dodge, parry, block) and shield block value: what the combat
+ * rolls use, and what the character sheet shows, which adds
  * the weapon or defense skill against a target of the same level.
  */
 struct MeleeChances
 {
     float crit = 0, rangedCrit = 0, dodge = 0, parry = 0, block = 0; /// what the rolls use
     float critShown = 0, rangedCritShown = 0, dodgeShown = 0, parryShown = 0, blockShown = 0; /// the fields
-    uint shieldBlock;            /// `GetShieldBlockValue`
+    uint shieldBlock;            /// the shield's block value
     bool canParry, canBlock;     /// the Parry and Block spells are known
 }
 
@@ -339,7 +337,7 @@ struct ChanceInputs
     uint shieldBlock;            /// the worn shield's block value; 0 without one
 }
 
-/// `Player::GetMeleeCritFromAgility` and `GetDodgeFromAgility`: agility per percent, by class and level.
+/// Crit and dodge from agility: agility per percent, by class and level.
 private float agilityPerPercent(ubyte classId, uint level, bool dodge) pure nothrow @nogc @safe
 {
     float low, high; // at levels 1 and 60
@@ -363,7 +361,7 @@ MeleeChances meleeChances(const ChanceInputs input) pure nothrow @nogc @safe
     static immutable float[12] baseDodge = [0, 0, 0.75f, 0.64f, 0, 3.00f, 0, 1.75f, 3.25f, 2.00f, 0, 0.75f];
     float clampPct(float v) { return v < 0 ? 0 : v > 100 ? 100 : v; }
     MeleeChances r;
-    const cap = input.level * 5; // `GetSkillMaxForLevel`
+    const cap = input.level * 5; // the highest skill at this level
     const critRate = agilityPerPercent(input.classId, input.level, false);
     const agilityCrit = critRate > 0 ? input.agility / critRate : 0;
     r.crit = r.rangedCrit = agilityCrit;

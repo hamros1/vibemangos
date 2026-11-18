@@ -1,5 +1,5 @@
 /**
- * Whispers (`ChatHandler`'s CHAT_MSG_WHISPER), wherever the receiver is simulated (docs/CLUSTER.md,
+ * Whispers (`CHAT_MSG_WHISPER`), wherever the receiver is simulated (docs/CLUSTER.md,
  * phase 5): the checks and deliveries happen where the receiver is, with what the whisper says of its
  * sender, and whatever goes back to the sender (its copy of the whisper, the receiver's away message,
  * a refusal) goes through `toSender`: straight to its client on the same node, or back to its node.
@@ -23,7 +23,7 @@ struct WhisperFrom
 }
 
 /**
- * Delivers a whisper to `target`, as `WorldSession::HandleMessagechatOpcode` does: a GM with its tag
+ * Delivers a whisper to `target`: a GM with its tag
  * on hears only senders with permissions or those it allowed (`allowsWhispersFrom`); factions may not
  * whisper each other unless allowed or one has permissions. Whispers are always readable.
  */
@@ -32,7 +32,7 @@ void deliverWhisper(OnlinePlayer target, const WhisperFrom from, string text, bo
     scope void delegate(Opcode, const(ubyte)[]) toSender)
 {
     const receiver = target.character;
-    // `HasIgnore`: the sender hears that it is ignored, and the whisper goes nowhere.
+    // Ignored: the sender hears that it is ignored, and the whisper goes nowhere.
     if (!from.permissions && target.ignores(from.guid))
         return toSender(Opcode.SMSG_MESSAGECHAT, chatMessage(ChatType.CHAT_MSG_IGNORED, Language.LANG_UNIVERSAL,
             receiver.guid, ""));

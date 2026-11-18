@@ -1,14 +1,15 @@
 /**
- * ArcEmu's `Level1.cpp` handlers: announcements, `.gm on` and `.gm off`, `.gps`,
+ * The moderator-level GM commands: announcements, `.gm on` and `.gm off`, `.gps`,
  * `.kickplayer`, `.character additem`, `.summon`, `.appear`, `.modify speed`
  * and `.modify gold`, the skill commands, `.npc emote`, `.gotrig` and
- * `.character unlearn`. Mixed into `dmangos.world.session.Character`.
+ * `.character unlearn`. Their behaviour and messages match ArcEmu 2.4.3's. Mixed into
+ * `dmangos.world.session.Character`.
  */
 module dmangos.world.gmlevel1;
 
 import dmangos.world.commands;
 
-/// ArcEmu's `World::AnnounceColorChooser`: the colour of an `announce_*_color` number.
+/// The colour of an `announce_*_color` number.
 string announceColor(uint number) pure nothrow @safe @nogc
 {
     static immutable string[11] colors = ["", MSG_COLOR_LIGHTRED, MSG_COLOR_LIGHTBLUE, MSG_COLOR_BLUE, MSG_COLOR_GREEN,
@@ -16,7 +17,7 @@ string announceColor(uint number) pure nothrow @safe @nogc
     return number < colors.length ? colors[number] : "";
 }
 
-/// The client's colour for an item quality (ArcEmu's `GetItemLinkByProto`).
+/// The client's colour for an item quality, as item links use it.
 string itemQualityColor(uint quality) pure nothrow @safe @nogc
 {
     static immutable string[7] colors = ["|cff9d9d9d", "|cffffffff", "|cff1eff00", "|cff0070dd", "|cffa335ee",
@@ -45,7 +46,7 @@ mixin template Level1Commands()
     import dmangos.world.updatefields;
 
 private:
-    /// A chat link to an item, as ArcEmu's `GetItemLinkByProto` makes one (in 1.12's link format).
+    /// A chat link to an item, in 1.12's link format.
     string itemLink(uint entry)
     {
         const item = entry in context.data.items;
@@ -200,7 +201,7 @@ private:
             return true;
         }
         gmLog(format!"used add item command, item id %u [%s] to %s"(itemId, item.details.name, chr.player.data.name));
-        // ArcEmu makes one item of `min(count, MaxCount)`; this gives `count`, in as many stacks as it takes.
+        // Gives `count`, in as many stacks as it takes, not one stack capped at the item's maximum.
         if (chr.giveItem(itemId, count == 0 ? 1 : count) == 0)
         {
             sendNotification("No free slots were found in your inventory!");
@@ -300,7 +301,7 @@ private:
         return true;
     }
 
-    /// The name of a skill (ArcEmu's `SkillNameMgr`, from SkillLine.dbc), or null.
+    /// The name of a skill (from SkillLine.dbc), or null.
     string skillName(uint skill)
     {
         const line = context.client.skillLines.lookup(skill);

@@ -1,11 +1,10 @@
 /**
  * Where a player is, from the map data (`dmangos.world.terrain`), and what that brings: the zone
- * and area (`Player::UpdateZone`, `UpdateArea`, the once-a-second zone check of `Player::Update`
- * and the client's `CMSG_ZONEUPDATE`), explored areas and their experience
- * (`Player::CheckAreaExploreAndOutdoor`), and experience itself (`Player::GiveXP`). Mixed into
+ * and area (checked after moves, once a second, and on the client's `CMSG_ZONEUPDATE`), explored
+ * areas and their experience, and experience itself. Mixed into
  * `dmangos.world.character.Character`.
  *
- * As in CMaNGOS, the server decides the zone: the client's `CMSG_ZONEUPDATE` only asks it to look
+ * The server decides the zone: the client's `CMSG_ZONEUPDATE` only asks it to look
  * at the next position. Where there is no map data (none extracted, or a map without files and
  * without an area of its own), the client's zone is taken as it comes, and its area is the zone,
  * which is how this server worked before it read maps. Without vmaps every point is outdoors.
@@ -27,7 +26,7 @@ mixin template Exploration()
     import dmangos.world.updatefields;
 
 private:
-    /// `AREA_FLAG_CAPITAL`
+    /// The `AreaTable.dbc` flag of a capital city.
     enum uint areaFlagCapital = 0x100;
 
     /// The player's map's terrain, if it has data where the player is.
@@ -38,7 +37,7 @@ private:
         return terrain.knows(p.x, p.y) ? terrain : null;
     }
 
-    /// `Player::GetZoneAndAreaId`: [zone, area] where the player is; null where there is no map data.
+    /// [zone, area] where the player is; null where there is no map data.
     bool serverZoneAndArea(out uint[2] zoneAndArea)
     {
         auto terrain = mappedTerrain();
@@ -64,7 +63,7 @@ private:
         lastPositionCheck = serverTime() - 100; // the first move is checked
     }
 
-    /// `WorldSession::HandleZoneUpdateOpcode`: the client thinks it entered `zone`; the next move tells.
+    /// The client thinks it entered `zone`; the next move tells.
     @Handles(Opcode.CMSG_ZONEUPDATE, WorldState.inWorld)
     void handleZoneUpdate(const ClientZoneUpdate request)
     {
@@ -80,7 +79,7 @@ private:
     }
 
     /**
-     * After the player moved (`Player::SetPosition`): a zone the client announced is checked against
+     * After the player moved: a zone the client announced is checked against
      * the map data, and, at most every 100 ms, what the player has explored.
      */
     void afterMove()
@@ -97,14 +96,14 @@ private:
             }
         }
         const now = serverTime();
-        if (now - lastPositionCheck >= 100) // m_positionStatusUpdateTimer
+        if (now - lastPositionCheck >= 100) // a tenth of a second
         {
             lastPositionCheck = now;
             checkAreaExplore();
         }
     }
 
-    /// `Player::Update`'s zone check, every second: a new zone, or a new area in the same zone.
+    /// The zone check, every second: a new zone, or a new area in the same zone.
     void checkZone()
     {
         uint[2] found;
@@ -117,7 +116,7 @@ private:
     }
 
     /**
-     * `Player::UpdateZone`: world states for the zone, its channels, rest in a capital, and the area.
+     * The player entered a zone: world states for the zone, its channels, rest in a capital, and the area.
      * A zone `AreaTable.dbc` does not know changes nothing.
      */
     void updateZone(uint zone, uint area)
@@ -129,7 +128,7 @@ private:
         {
             player.data.zone = zone;
             sendInitWorldStates(zone);
-            deliver(Opcode.SMSG_WEATHER, context.weatherFor(zone)); // `Player::UpdateZone`
+            deliver(Opcode.SMSG_WEATHER, context.weatherFor(zone)); // the zone's weather
             if (const zoneName = context.client.areaName(zone))
                 context.channelCommand(this, ChannelOp.zoneChanged, null, zoneName);
         }
@@ -149,7 +148,7 @@ private:
         flushPlayerChanges();
     }
 
-    /// `Player::UpdateArea`: the group hears of the move.
+    /// The player entered an area: the group hears of the move.
     void updateArea(uint area)
     {
         const changed = area != player.area;
@@ -161,7 +160,7 @@ private:
                 group.updatePlayerOutOfRange(this, GroupUpdate.zone);
     }
 
-    /// `Player::CheckAreaExploreAndOutdoor`: an area entered for the first time is explored, for experience.
+    /// An area entered for the first time is explored, for experience.
     void checkAreaExplore()
     {
         if (!player.alive)
@@ -213,14 +212,14 @@ private:
         send(ServerExplorationExperience(area.id, xp));
     }
 
-    /// `ObjectMgr::GetBaseXP`
+    /// The base experience for exploring at `level` (`exploration_basexp`); 0 if none.
     uint baseXp(uint level)
     {
         return context.data.baseXp.get(level, 0);
     }
 
     /**
-     * `Player::GiveXP` for experience not from a kill: logged to the client, and levels gained while
+     * Gives experience; for experience not from a kill: logged to the client, and levels gained while
      * it lasts. Nothing past the highest level. Kills and quests will give theirs through it too.
      */
     package void giveXP(uint xp, ulong victim = 0, float groupRate = 1)
@@ -231,7 +230,7 @@ private:
         uint level = player.data.level;
         if (level >= maxLevel)
             return;
-        // `GetXPRestBonus`: a kill gives as much again from the rested pool, while it lasts.
+        // Rested bonus: a kill gives as much again from the rested pool, while it lasts.
         uint rested;
         if (victim)
         {
@@ -242,7 +241,7 @@ private:
         }
         if (victim)
         {
-            // `SendLogXPGain` for a kill: the victim, the whole gain, the gain without the rest, the group's rate.
+            // The experience log for a kill: the victim, the whole gain, the gain without the rest, the group's rate.
             ByteWriter w;
             w.put(victim);
             w.put(xp + rested);
@@ -259,7 +258,7 @@ private:
         while (total >= next && level < maxLevel)
         {
             total -= next;
-            applyLevel(level + 1); // Player::GiveLevel
+            applyLevel(level + 1); // a level gained
             level = player.data.level;
             next = player.values[PLAYER_NEXT_LEVEL_XP];
         }

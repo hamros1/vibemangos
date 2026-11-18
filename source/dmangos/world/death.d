@@ -1,8 +1,7 @@
 /**
- * A player's death and return (CMaNGOS `Player::KillPlayer`, `BuildPlayerRepop`, `RepopAtGraveyard`,
- * `ResurrectPlayer`, `SpawnCorpseBones`, `DurabilityLossAll`; `MiscHandler.cpp`'s repop and reclaim,
- * `NPCHandler.cpp`'s spirit healer, `QueryHandler.cpp`'s corpse query; the graveyards of
- * `GraveyardManager`), mixed into `dmangos.world.character.Character`.
+ * A player's death and return: dying, releasing the spirit, the graveyards, reclaiming the corpse,
+ * the spirit healer, resurrection, the corpse query and durability loss, mixed into
+ * `dmangos.world.character.Character`.
  *
  * Dead, a player lies rooted where it fell; released (or after six minutes, or logging out), it is a
  * ghost at the nearest graveyard of its team, its corpse left behind. Back within 39 yards of the
@@ -21,22 +20,22 @@ import dmangos.world.clientdata : ClientData, Team, WorldSafeLocsEntry;
 import dmangos.world.movement : Position;
 import dmangos.world.worlddata : graveyardLinkKey, WorldData;
 
-/// `CORPSE_RECLAIM_DELAY`s: 30 s, then 60 and 120 for deaths close together; `DEATH_EXPIRE_STEP` apart.
+/// Corpse reclaim delays: 30 s, then 60 and 120 for deaths close together; `deathExpireStep` apart.
 enum uint[3] corpseReclaimDelays = [30, 60, 120];
 enum long deathExpireStep = 5 * 60; /// ditto
 enum uint maxDeathCount = 3;        /// ditto
 
-/// `CONFIG_UINT32_DEATH_... m_deathTimer`: a player not released after this is released anyway.
+/// A player not released after this is released anyway.
 enum uint autoReleaseMs = 6 * 60 * 1000;
 
 /// The team ids `game_graveyard_zone.faction` uses.
 enum uint teamAlliance = 469, teamHorde = 67;
 
-/// `TEAM_INVALID`: a graveyard a battleground has closed.
+/// The team of a graveyard a battleground has closed.
 enum uint teamInvalid = 1;
 
 /**
- * `GraveyardManager::GetClosestGraveYard`: the nearest graveyard for `team` linked to the area, else
+ * The nearest graveyard for `team` linked to the area, else
  * the zone, else the map; on another map than the death (an instance), the one nearest to its ghost
  * entrance; null if none.
  */
@@ -52,7 +51,7 @@ const(WorldSafeLocsEntry)* closestGraveyard(const WorldData data, const ClientDa
         foreach (link; links)
         {
             const entry = client.worldSafeLocs.lookup(link.safeLoc);
-            // A battleground's own say first (`SetGraveYardLinkTeam`): whose it is, or nobody's.
+            // A battleground's own say first: whose it is, or nobody's.
             uint linkTeam = link.team;
             if (auto own = link.safeLoc in linkTeams)
                 linkTeam = *own;
@@ -96,7 +95,7 @@ const(WorldSafeLocsEntry)* closestGraveyard(const WorldData data, const ClientDa
     return found;
 }
 
-/// `Player::getCorpseReclaimDelayHelper`: seconds a ghost waits by its corpse, by how many deaths are recent.
+/// Seconds a ghost waits by its corpse, by how many deaths are recent.
 uint corpseReclaimDelay(long deathExpireTime, long now) pure nothrow @nogc @safe
 {
     uint count;
@@ -109,7 +108,7 @@ uint corpseReclaimDelay(long deathExpireTime, long now) pure nothrow @nogc @safe
     return corpseReclaimDelays[count];
 }
 
-/// `Player::UpdateCorpseReclaimDelay`: one more death; the next corpse waits longer if it comes soon.
+/// One more death; the next corpse waits longer if it comes soon.
 long nextDeathExpireTime(long deathExpireTime, long now) pure nothrow @nogc @safe
 {
     if (now < deathExpireTime)
@@ -123,7 +122,7 @@ long nextDeathExpireTime(long deathExpireTime, long now) pure nothrow @nogc @saf
 unittest
 {
     assert(corpseReclaimDelay(0, 1000) == 30);
-    // A death at 1000, released a second later: 30 s (in the very second of the death, CMaNGOS's whole
+    // A death at 1000, released a second later: 30 s (in the very second of the death, whole-number
     // division makes it 60).
     const once = nextDeathExpireTime(0, 1000);
     assert(once == 1300 && corpseReclaimDelay(once, 1001) == 30 && corpseReclaimDelay(once, 1000) == 60);
@@ -150,11 +149,11 @@ mixin template DeathHandlers()
     import dmangos.world.updatefields;
 
 private:
-    int deathTimer;                // `m_deathTimer`: until a body not released is released anyway
+    int deathTimer;                // until a body not released is released anyway
     Corpse corpse;                 // the body, while there is one
 
     /**
-     * `Unit::Kill` of the player and `Player::KillPlayer`: a tenth of what it wears is worn out (killed
+     * The player died: a tenth of what it wears is worn out (killed
      * by a creature), it stops fighting, and lies rooted where it fell until it releases its spirit.
      */
     void playerDied(bool byCreature)
@@ -182,7 +181,7 @@ private:
             group.updatePlayerOutOfRange(this, GroupUpdate.status | GroupUpdate.currentHealth);
     }
 
-    /// `HandleRepopRequestOpcode`: the player releases its spirit.
+    /// The player releases its spirit.
     @Handles(Opcode.CMSG_REPOP_REQUEST, WorldState.inWorld)
     void handleRepopRequest()
     {
@@ -193,7 +192,7 @@ private:
     }
 
     /**
-     * `BuildPlayerRepop`: a ghost (the ghost aura), its corpse left where it lay (and saved), with one
+     * The player becomes a ghost (the ghost aura), its corpse left where it lay (and saved), with one
      * health; it can move again, and is told how long its corpse makes it wait.
      */
     void buildPlayerRepop()
@@ -213,7 +212,7 @@ private:
         flushPlayerChanges();
     }
 
-    /// `SendCorpseReclaimDelay`: how long until the ghost may take its body back, in milliseconds.
+    /// Tells the client how long until the ghost may take its body back, in milliseconds.
     void sendReclaimDelay()
     {
         if (corpse is null)
@@ -227,7 +226,7 @@ private:
         deliver(Opcode.SMSG_CORPSE_RECLAIM_DELAY, w.data);
     }
 
-    /// `RepopAtGraveyard`: to the nearest graveyard of the player's team; where it is if there is none.
+    /// The ghost goes to the nearest graveyard of the player's team; where it is if there is none.
     void repopAtGraveyard()
     {
         const at = player.position;
@@ -278,7 +277,7 @@ private:
         resetMovementCheck();
     }
 
-    /// `HandleReclaimCorpseOpcode`: the ghost takes its body back, if near it and the delay is over.
+    /// The ghost takes its body back, if near it and the delay is over.
     @Handles(Opcode.CMSG_RECLAIM_CORPSE, WorldState.inWorld)
     void handleReclaimCorpse(const ClientGuid request)
     {
@@ -296,7 +295,7 @@ private:
         spawnCorpseBones();
     }
 
-    /// `HandleSpiritHealerActivateOpcode` and `SendSpiritResurrect`: back to life at once, gear a quarter worn.
+    /// The spirit healer: back to life at once, gear a quarter worn.
     @Handles(Opcode.CMSG_SPIRIT_HEALER_ACTIVATE, WorldState.inWorld)
     void handleSpiritHealerActivate(const ClientGuid request)
     {
@@ -320,7 +319,7 @@ private:
             commandTeleport(corpseGrave.map, Position(corpseGrave.x, corpseGrave.y, corpseGrave.z, 0));
     }
 
-    /// `HandleCorpseQueryOpcode`: where the corpse is, for the map (its instance's entrance on another map).
+    /// The client asks where the corpse is, for the map (its instance's entrance on another map).
     @Handles(Opcode.MSG_CORPSE_QUERY, WorldState.inWorld)
     void handleCorpseQuery()
     {
@@ -351,7 +350,7 @@ private:
         deliver(Opcode.MSG_CORPSE_QUERY, w.data);
     }
 
-    /// `ResurrectPlayer`: alive, the ghost aura gone, with `restore` of its health, mana and energy (no rage).
+    /// Resurrects the player: alive, the ghost aura gone, with `restore` of its health, mana and energy (no rage).
     void resurrect(float restore)
     {
         player.deathState = DeathState.alive;
@@ -375,7 +374,7 @@ private:
         info!"%s: '%s' came back to life"(remoteAddress, player.data.name);
     }
 
-    /// `SpawnCorpseBones`: the corpse is gone (bones are not kept), and so is its row.
+    /// The corpse is gone (bones are not kept), and so is its row.
     void spawnCorpseBones()
     {
         if (corpse is null)
@@ -387,7 +386,7 @@ private:
         savePlayer();
     }
 
-    /// `DurabilityLossAll`: what it wears (and with `inventory` what it carries) loses `percent` of its durability.
+    /// What it wears (and with `inventory` what it carries) loses `percent` of its durability.
     void durabilityLossAll(double percent, bool inventory)
     {
         import dmangos.world.defines : equipmentSlotEnd, inventorySlotBag0, inventorySlotItemEnd,
@@ -420,7 +419,7 @@ private:
         flushInventory(true);
     }
 
-    /// `Player::Update`'s death timer: a body not released in six minutes is released.
+    /// The death timer: a body not released in six minutes is released.
     void updateDeath(Duration elapsed)
     {
         if (player.deathState != DeathState.corpse || deathTimer <= 0)
@@ -444,7 +443,7 @@ private:
         const saved = context.database.loadCorpse(player.data.guid);
         if (saved.isNull)
         {
-            // No corpse: nothing to come back to; CMaNGOS would leave a ghost without one. Back to life.
+            // No corpse: nothing to come back to, so rather than a ghost without one, back to life.
             player.values.set!PLAYER_FLAGS(player.values.get!PLAYER_FLAGS & ~PlayerFlags.ghost);
             return;
         }
@@ -468,7 +467,7 @@ private:
         map.refreshVisibility(this);
     }
 
-    /// `WorldSession::LogoutPlayer`: a body not released is released (and goes to its graveyard) before the save.
+    /// On logout: a body not released is released (and goes to its graveyard) before the save.
     void deathOnLogout()
     {
         if (player.deathState != DeathState.corpse)

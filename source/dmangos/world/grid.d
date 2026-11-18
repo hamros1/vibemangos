@@ -1,5 +1,5 @@
 /**
- * The world's grid cells (CMaNGOS `GridDefines.h`): squares of 533.33 / 8
+ * The world's grid cells: squares of 533.33 / 8
  * yards, keyed by their two coordinates. Maps keep players and spawned
  * objects by cell, and the world data indexes spawns the same way.
  */
@@ -7,7 +7,7 @@ module dmangos.world.grid;
 
 import std.math : floor;
 
-/// Side of a grid cell, in yards (`SIZE_OF_GRID_CELL`: 533.33 / 8).
+/// Side of a grid cell, in yards (533.33 / 8).
 enum float cellSize = 533.3333f / 8;
 
 /// The cell coordinate of a world coordinate.

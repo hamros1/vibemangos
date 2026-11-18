@@ -1,38 +1,38 @@
 /**
- * The 3D math of CMaNGOS's vmaps, from the G3D library it bundles (`dep/g3dlite`): vectors,
- * 3 x 3 rotation matrices, axis-aligned boxes and rays, computed in `float` as G3D computes them,
- * so that trees built and queried here match CMaNGOS's.
+ * The 3D math of the vmaps: vectors, 3 x 3 rotation matrices, axis-aligned boxes and rays,
+ * computed in `float` exactly as the G3D library that the standard vmap tools use computes them,
+ * so that trees built and queried here match theirs.
  *
- * Only what the vmap code uses is here. The layouts are G3D's, so a `Vector3` is three floats and
- * an `AABox` six, as the vmap files store them.
+ * Only what the vmap code uses is here. A `Vector3` is three floats and an `AABox` six, as the
+ * vmap files store them.
  */
 module dmangos.vmap.math;
 
 import std.math : abs, asin, atan2, cos, sin, sqrt;
 
-/// `G3D::fuzzyEpsilon`
+/// The base tolerance of the fuzzy comparisons.
 enum double fuzzyEpsilon = 0.00001;
 
-/// `G3D::eps`: the tolerance for comparing `a` with something of its magnitude.
+/// The tolerance for comparing `a` with something of its magnitude.
 double eps(double a) pure nothrow @nogc @safe
 {
     const aa = abs(a) + 1.0;
     return aa == double.infinity ? fuzzyEpsilon : fuzzyEpsilon * aa;
 }
 
-/// `G3D::fuzzyEq`
+/// Whether `a` and `b` are equal within `eps(a)`.
 bool fuzzyEq(double a, double b) pure nothrow @nogc @safe
 {
     return a == b || abs(a - b) <= eps(a);
 }
 
-/// `G3D::fuzzyNe`
+/// Whether `a` and `b` differ by more than `eps(a)`.
 bool fuzzyNe(double a, double b) pure nothrow @nogc @safe
 {
     return !fuzzyEq(a, b);
 }
 
-/// `G3D::Vector3`
+/// A point or direction in 3D.
 struct Vector3
 {
     float x = 0, y = 0, z = 0;
@@ -82,7 +82,7 @@ struct Vector3
         return Vector3(y * v.z - z * v.y, z * v.x - x * v.z, x * v.y - y * v.x);
     }
 
-    /// `Vector3::magnitude`, with `sqrtf`.
+    /// The length, with a `float` square root.
     float magnitude() const pure nothrow @nogc @safe
     {
         return sqrt(x * x + y * y + z * z);
@@ -100,7 +100,7 @@ struct Vector3
         return Vector3(x > v.x ? x : v.x, y > v.y ? y : v.y, z > v.z ? z : v.z);
     }
 
-    /// `Vector3::primaryAxis`: the axis of the largest component; ties go to the later axis.
+    /// The axis of the largest component; ties go to the later axis.
     int primaryAxis() const pure nothrow @nogc @safe
     {
         const double nx = abs(x), ny = abs(y), nz = abs(z);
@@ -110,7 +110,7 @@ struct Vector3
     }
 }
 
-/// `G3D::Matrix3`, row major.
+/// A 3 x 3 matrix, row major.
 struct Matrix3
 {
     float[3][3] elt = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
@@ -125,7 +125,7 @@ struct Matrix3
     /// `Matrix3(const Quat&)`: the rotation of a quaternion (x, y, z, w), normalized first.
     static Matrix3 fromQuaternion(float qx, float qy, float qz, float qw) pure nothrow @nogc @safe
     {
-        const float k = 1.0f / sqrt(qx * qx + qy * qy + qz * qz + qw * qw); // Quat::unitize, rsq
+        const float k = 1.0f / sqrt(qx * qx + qy * qy + qz * qz + qw * qw); // the quaternion made a unit one
         qx *= k;
         qy *= k;
         qz *= k;
@@ -138,7 +138,7 @@ struct Matrix3
             xz - yw, yz + xw, 1.0f - xx - yy);
     }
 
-    /// `Matrix3::fromEulerAnglesZYX`: yaw about z, then pitch about y, then roll about x (radians).
+    /// Yaw about z, then pitch about y, then roll about x (radians).
     static Matrix3 fromEulerAnglesZYX(float yaw, float pitch, float roll) pure nothrow @nogc @safe
     {
         float c = cos(yaw), s = sin(yaw);
@@ -180,7 +180,7 @@ struct Matrix3
         return p;
     }
 
-    /// `Matrix3::inverse` by cofactors; the zero matrix if singular (tolerance 1e-6).
+    /// The inverse, by cofactors; the zero matrix if singular (tolerance 1e-6).
     Matrix3 inverse() const pure nothrow @nogc @safe
     {
         Matrix3 i;
@@ -202,7 +202,7 @@ struct Matrix3
         return i;
     }
 
-    /// `Matrix3::toEulerAnglesXYZ`: the angles (radians) whose X, then Y, then Z rotations make this one.
+    /// The angles (radians) whose X, then Y, then Z rotations make this one.
     void toEulerAnglesXYZ(out float xAngle, out float yAngle, out float zAngle) const pure nothrow @nogc @safe
     {
         enum float halfPi = 1.5707963267948966;
@@ -229,7 +229,7 @@ struct Matrix3
         }
     }
 
-    /// `G3D::aSin`, whose out-of-range answers have their signs swapped, as in G3D.
+    /// Arc sine, whose out-of-range answers have their signs swapped (kept, so results match the vmap tools').
     private static double aSin(double value) pure nothrow @nogc @safe
     {
         enum double halfPi = 1.5707963267948966;
@@ -239,12 +239,12 @@ struct Matrix3
     }
 }
 
-/// `G3D::AABox`: an axis-aligned box.
+/// An axis-aligned box.
 struct AABox
 {
     Vector3 lo, hi;
 
-    /// `AABox::merge`
+    /// Grows the box to hold `b` too.
     void merge(const AABox b) pure nothrow @nogc @safe
     {
         lo = lo.min(b.lo);
@@ -258,7 +258,7 @@ struct AABox
         hi = hi.max(p);
     }
 
-    /// `AABox::contains`: the point is inside or on the box.
+    /// Whether the point is inside or on the box.
     bool contains(const Vector3 p) const pure nothrow @nogc @safe
     {
         return p.x >= lo.x && p.y >= lo.y && p.z >= lo.z && p.x <= hi.x && p.y <= hi.y && p.z <= hi.z;
@@ -271,14 +271,14 @@ struct AABox
     }
 }
 
-/// `G3D::Ray`: an origin and a unit direction.
+/// A ray: an origin and a unit direction.
 struct Ray
 {
     Vector3 origin, direction;
 
     /**
-     * `Ray::intersectionTime(const AABox&)`: the distance at which the ray enters the box (0 from
-     * inside it), or `float.infinity` if it misses (`CollisionDetection::collisionLocationForMovingPointFixedAABox`).
+     * The distance at which the ray enters the box (0 from inside it), or `float.infinity` if it
+     * misses.
      */
     float intersectionTime(const AABox box) const pure nothrow @nogc @trusted
     {

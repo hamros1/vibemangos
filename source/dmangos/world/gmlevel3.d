@@ -1,19 +1,19 @@
 /**
- * ArcEmu's `Level3.cpp` handlers that this server's systems support:
+ * The administrator-level GM commands that this server's systems support:
  * `.modify level` and `.modify gender`, `.worldport`, `.levelup`, `.playerinfo`,
  * `.revive`, `.paralyze`, the account, ban, unban and kick groups, the server
  * group, `.admin masssummon` and `.admin playall`, the cheat group's status,
  * explore and triggerpass, `.gm whisperblock`, `.gm allowwhispers` and
  * `.gm blockwhispers`, the character group's spell, item and skill commands,
  * the lookups, `.npc info`, and
- * `.character rename` (from `CharacterHandler.cpp`). Mixed into
+ * `.character rename`. Their behaviour and messages match ArcEmu 2.4.3's. Mixed into
  * `dmangos.world.character.Character`.
  *
- * CMaNGOS's schema decides a few things ArcEmu's does not have:
+ * The database schema decides a few things:
  * $(UL
- *   $(LI `.account level` takes a permission string, as ArcEmu's does; it is stored as the
+ *   $(LI `.account level` takes a permission string; it is stored as the
  *        `account.gmlevel` whose `gm_permissions` string it is (or a level number, 0-3).)
- *   $(LI CMaNGOS bans accounts, not characters, so `.ban character` and `.unban character` ban and
+ *   $(LI Bans apply to accounts, not characters, so `.ban character` and `.unban character` ban and
  *        unban the character's account.)
  *   $(LI `ip_banned` holds addresses, not CIDR ranges: a `/32` is dropped, other ranges are kept as
  *        written and match nothing.)
@@ -21,7 +21,7 @@
  */
 module dmangos.world.gmlevel3;
 
-/// ArcEmu `HandleLearnCommand`'s `spellarray`.
+/// The spells `.learn all` teaches each class (by class id).
 immutable uint[][] classSpells = [
     [],
     [71, 2458, 355, 469, 674, 676, 750, 871, 1161, 1680, 1719, 2048, 2565, 2687, 3411, 5246, 6554, 7620, 11578, 11585,
@@ -103,7 +103,7 @@ immutable uint[][] classSpells = [
         27006, 27008, 27012, 29166, 31018, 33357, 33745, 33763, 33786, 33943, 34090],
 ];
 
-/// ArcEmu `HandleLearnCommand`'s `paladinspellarray`.
+/// The extra spells `.learn all` teaches a paladin, by race.
 immutable uint[][] paladinRaceSpells = [
     [],
     [13819],
@@ -118,7 +118,7 @@ immutable uint[][] paladinRaceSpells = [
     [13819],
 ];
 
-/// ArcEmu `HandleLearnCommand`'s `priestspellarray`.
+/// The extra spells `.learn all` teaches a priest, by race.
 immutable uint[][] priestRaceSpells = [
     [],
     [13896, 13908, 19236, 19238, 19240, 19241, 19242, 19243, 19271, 19273, 19274, 19275, 25437, 25441],
@@ -133,7 +133,7 @@ immutable uint[][] priestRaceSpells = [
     [32548, 44041, 44043, 44044, 44045, 44046, 44047],
 ];
 
-/// ArcEmu `HandleLearnCommand`'s `shamanspellarray`.
+/// The extra spells `.learn all` teaches a shaman, by race.
 immutable uint[][] shamanRaceSpells = [
     [],
     [],
@@ -148,7 +148,7 @@ immutable uint[][] shamanRaceSpells = [
     [32182],
 ];
 
-/// ArcEmu `HandleLearnCommand`'s `magespellarray`.
+/// The extra spells `.learn all` teaches a mage, by race.
 immutable uint[][] mageRaceSpells = [
     [],
     [3561, 3562, 3565, 10059, 11416, 11419, 32266, 32271, 33690, 33691, 49359, 49360],
@@ -228,7 +228,7 @@ private:
         p.data.gender = cast(ubyte) gender;
         p.values.setByte!UNIT_FIELD_BYTES_0(2, cast(ubyte) gender);
         p.values.setHalf!PLAYER_BYTES_3(0, cast(ushort) gender);
-        // ArcEmu's trick: a race's female model follows its male one.
+        // A race's female model id follows its male one.
         const display = gender == 0 ? displayId - 1 : displayId + 1;
         p.values.set!UNIT_FIELD_DISPLAYID(display);
         p.values.set!UNIT_FIELD_NATIVEDISPLAYID(display);
@@ -297,7 +297,7 @@ private:
         if (plr is null)
             return true;
         plr.sendMovementOrder!(Opcode.SMSG_FORCE_MOVE_UNROOT)();
-        // `ResurrectPlayer`: alive, its corpse gone to bones.
+        // Resurrected: alive, its corpse gone to bones.
         if (plr.player.deathState != DeathState.alive)
         {
             plr.resurrect(1);
@@ -313,7 +313,7 @@ private:
         return true;
     }
 
-    /// The selected player, on this map (`MapMgr::GetUnit` that is a player), or null after "Invalid target.".
+    /// The selected player, on this map, or null after "Invalid target.".
     Character selectedPlayerUnit()
     {
         auto plr = cast(Character) map.find(player.values.get!UNIT_FIELD_TARGET);
@@ -350,7 +350,7 @@ private:
     // Accounts (sLogonCommHandler.Account_*)
     // -----------------------------------------------------------------------
 
-    /// `World::FindSessionByName`: the connection of the account named `name` (in the world or at the
+    /// The connection of the account named `name` (in the world or at the
     /// character screen), in any case, or null.
     WorldSession connectionOfAccountName(string name)
     {
@@ -367,7 +367,7 @@ private:
         return connection is null ? null : connection.inWorld;
     }
 
-    /// The `account.gmlevel` an ArcEmu permission string stands for: a level number as is, otherwise
+    /// The `account.gmlevel` a GM permission string stands for: a level number as is, otherwise
     /// the level whose `gm_permissions` string has the same letters. -1 if none has.
     int levelForPermissions(string flags)
     {
@@ -438,20 +438,20 @@ private:
     }
 
     // -----------------------------------------------------------------------
-    // Disconnecting (World::DisconnectUsersWith*)
+    // Disconnecting
     // -----------------------------------------------------------------------
 
-    /// The message `DisconnectUsersWith*` sends for each session it closes, then the close.
+    /// The message sent for each session a disconnect command closes, then the close.
     void disconnect(imported!"dmangos.world.session".WorldSession connection)
     {
-        // ArcEmu's "Disconnecting user with ...": an account at its character screen too.
+        // "Disconnecting user with ...": an account at its character screen too.
         const name = connection.character is null ? "noplayer" : connection.character.data.name;
         gmSink.system(format!"Disconnecting user with account `%s` IP `%s` Player `%s`."(connection.account.username,
             connection.address, name));
         connection.kick(format!"disconnected by %s"(player.data.name));
     }
 
-    /// `World::DisconnectUsersWithIP`
+    /// Disconnects every session from `ip`.
     void disconnectUsersWithIP(string ip)
     {
         auto sessions = context.sessionsFrom(ip);
@@ -462,7 +462,7 @@ private:
             systemMessage(format!"There is nobody online with ip [%s]"(ip));
     }
 
-    /// `World::DisconnectUsersWithAccount`
+    /// Disconnects the session of the account named `account`.
     void disconnectUsersWithAccount(string account)
     {
         if (auto connection = connectionOfAccountName(account))
@@ -478,8 +478,7 @@ private:
             redSystemMessage("A player's name is required.");
             return true;
         }
-        // `World::DisconnectUsersWithPlayerName`. ArcEmu forgets to note that it found someone and
-        // always adds "There is no body online"; this does not.
+        // Disconnects the player's session. "There is no body online" is said only when nobody was found.
         if (auto found = context.onlinePlayer(name))
             disconnect(sessionOf(found).connection);
         else if (gmElsewhere(name, GmRemoteOp.disconnect))
@@ -575,7 +574,7 @@ private:
             accountId = sessionOf(online).account.id;
             systemMessage(format!"Banning player '%s' ingame for '%s'."(name, reason));
         }
-        // CMaNGOS bans accounts: the character's account is banned.
+        // Bans apply to accounts: the character's account is banned.
         context.accounts.banAccount(accountId, banTime, player.data.name, reason);
         systemMessage(format!"This ban is due to expire %s%s."("on ",
             convertTimeStampToDataTime(context.unixTime + banTime)));
@@ -694,7 +693,7 @@ private:
         sendWorldText(format!("%s%s initiated server-side reload of table `%s`. The server may experience some lag "
             ~ "while this occurs.")(MSG_COLOR_LIGHTRED, player.data.name, table));
         bool reloaded;
-        // `Storage_ReloadTable`, for the CMaNGOS tables this server keeps in memory and can read again.
+        // The tables this server keeps in memory and can read again.
         if (sicmp(table, "areatrigger_teleport") == 0 || sicmp(table, "game_tele") == 0)
         {
             context.data.setTeleports(context.database.loadAreaTriggerTeleports(), context.database.loadTeleports(),
@@ -722,8 +721,7 @@ private:
 
     bool handleShutdownCommand(uint delay = 5)
     {
-        // ArcEmu checks for a null argument, which it never gets, so a bare `.server shutdown` is
-        // immediate there; this keeps the 5 seconds its help promises.
+        // A bare `.server shutdown` waits the 5 seconds its help promises.
         sendWorldText(format!"%sServer shutdown initiated by %s, shutting down in %u seconds."(MSG_COLOR_LIGHTBLUE,
             player.data.name, delay));
         gmLog(format!"initiated server shutdown timer %u sec"(delay));
@@ -754,7 +752,7 @@ private:
     // The admin group
     // -----------------------------------------------------------------------
 
-    /// A summon offered with `SMSG_SUMMON_REQUEST` (`Player::SummonRequest`), and when it lapses.
+    /// A summon offered with `SMSG_SUMMON_REQUEST`, and when it lapses.
     struct SummonOffer
     {
         uint map;
@@ -780,7 +778,7 @@ private:
         return true;
     }
 
-    /// `Player::SummonRequest`: the player is asked; it has two minutes to accept.
+    /// Offers the player a summon; it has two minutes to accept.
     void summonRequest(ulong summoner, uint zone, uint mapId, Position at)
     {
         summonOffer = SummonOffer(mapId, at, context.clock() + 120.seconds);
@@ -788,7 +786,7 @@ private:
         send(ServerSummonRequest(summoner, zone, 120_000));
     }
 
-    /// `WorldSession::HandleSummonResponseOpcode`: the player accepted.
+    /// The player answered a summon offer.
     @Handles(Opcode.CMSG_SUMMON_RESPONSE, WorldState.inWorld)
     void handleSummonResponse(const ClientSummonResponse)
     {
@@ -846,7 +844,7 @@ private:
         auto chr = getSelectedChar(true);
         if (chr is null)
             return true;
-        // ArcEmu sends both messages to the GM; the second is meant for the player and goes there.
+        // The first message goes to the GM, the second to the player it is meant for.
         if (state == OnOff.on)
         {
             greenSystemMessage(format!"%s has all taxi nodes now."(chr.player.data.name));
@@ -870,7 +868,7 @@ private:
             systemMessage("Auto-targeting self.");
         }
         const name = chr.player.data.name;
-        // ArcEmu sends both messages to the GM; the second is meant for the player and goes there.
+        // The first message goes to the GM, the second to the player it is meant for.
         if (state == OnOff.on)
         {
             systemMessage(format!"%s has explored all zones now."(name));
@@ -890,7 +888,7 @@ private:
     }
 
     /**
-     * The shape of ArcEmu's cheat toggles: on, off, or (with nothing said) the other way; the GM and
+     * The shape of the cheat toggles: on, off, or (with nothing said) the other way; the GM and
      * the player told, and the GM log when it goes off for another.
      */
     bool toggleCheat(Nullable!OnOff state, string name, string logLine, bool* delegate(Character) flag,
@@ -928,7 +926,7 @@ private:
 
     bool handleCooldownCheatCommand(Nullable!OnOff state)
     {
-        // On, every spell known has its cooldown cleared (`ClearCooldownForSpell`).
+        // On, every spell known has its cooldown cleared.
         return toggleCheat(state, "cooldown", "cooldown cheat", (Character p) => &p.cooldownCheat,
             (Character p) {
                 foreach (spell; p.player.spells)
@@ -966,7 +964,7 @@ private:
         }
         if (plr !is this)
             gmLog("Cleared all cooldowns for player " ~ plr.player.data.name);
-        // The class's three skill lines (ArcEmu's ids), and its name.
+        // The class's three skill lines (the skill lines of its talent trees), and its name.
         static immutable uint[3][12] lines = [[0, 0, 0], [26, 256, 257], [594, 267, 184], [50, 51, 163],
             [253, 38, 39], [56, 78, 613], [0, 0, 0], [373, 374, 375], [6, 8, 237], [355, 354, 593], [0, 0, 0],
             [573, 574, 134]];
@@ -1042,7 +1040,7 @@ private:
         uint skill;
         if (it !is null && it.proto !is null)
         {
-            // ArcEmu's weapon subclasses to skill lines (its own oddities kept: exotic ones are staves).
+            // Weapon subclasses to skill lines, oddities included (exotic ones count as staves).
             static immutable uint[21] bySubClass = [44, 172, 45, 46, 54, 160, 229, 43, 55, 136, 136, 0, 473, 0, 0,
                 173, 176, 227, 226, 228, 356];
             if (it.proto.subClass < bySubClass.length)
@@ -1068,7 +1066,7 @@ private:
         return true;
     }
 
-    /// What a new character of `plr`'s race, class and gender starts with (`PlayerCreateInfo`).
+    /// What a new character of `plr`'s race, class and gender starts with, as character creation gives it.
     package static bool startingAbilities(typeof(this) plr, out NewCharacter fresh)
     {
         import dmangos.auth.accounts : AccountLevel;
@@ -1088,7 +1086,7 @@ private:
         auto plr = getSelectedChar(true);
         if (plr is null)
             return true;
-        // `Player::Reset_Spells`: back to the spells a new character of its race and class has.
+        // Back to the spells a new character of its race and class has.
         NewCharacter fresh;
         if (startingAbilities(plr, fresh))
         {
@@ -1129,7 +1127,7 @@ private:
         return true;
     }
 
-    /// ArcEmu's `.fixscale <scale>`: the selected creature's size, and its template's, kept.
+    /// `.fixscale <scale>`: the selected creature's size, and its template's, kept.
     bool handleFixScaleCommand(float sc = 0)
     {
         import dmangos.world.updatefields : OBJECT_FIELD_SCALE_X;
@@ -1211,7 +1209,7 @@ private:
                 corpse.spawn.entry, map.id, corpse.spawn.guid);
             blueSystemMessage(line);
             gmLog("Respawned" ~ line[10 .. $]);
-            // `Despawn(0, 1000)`: the corpse goes now, the creature comes back a second later.
+            // The corpse goes now, the creature comes back a second later.
             context.respawnSoon(corpse, map);
             return true;
         }
@@ -1421,7 +1419,7 @@ private:
         auto plr = getSelectedChar(true);
         if (plr is null)
             return true;
-        foreach (item; plr.player.inventory.all()) // `SendItemLinkToPlayer` with the count
+        foreach (item; plr.player.inventory.all()) // each item as a link, with its count
             systemMessage(format!"Item %u %s Count %u Slot %u ContainerSlots %u"(item.entry, itemLink(item.entry),
                 cast(ubyte) plr.player.inventory.count(item.entry), item.slot, item.proto.containerSlots));
         gmLog(format!"used show items command on %s,"(plr.player.data.name));
@@ -1476,7 +1474,7 @@ private:
     // Lookups
     // -----------------------------------------------------------------------
 
-    /// `SendHighlightedName`: "Creature 42: Name" with the part searched for in light red.
+    /// "Creature 42: Name" with the part searched for in light red.
     void sendHighlightedName(string prefix, string fullName, string search, uint id)
     {
         const offset = fullName.toLower.indexOf(search);
@@ -1573,7 +1571,7 @@ private:
         if (plr is null)
             return true;
         blueSystemMessage(format!"Setting standing of %u to %d on %s."(faction, standing, plr.player.data.name));
-        if (plr.player.reputation !is null) // `Player::SetStanding`: to that value, its neighbours untouched
+        if (plr.player.reputation !is null) // to that value, its neighbouring factions untouched
             plr.modifyReputation(faction, standing - plr.player.reputation.standingWith(faction), true);
         plr.flushPlayerChanges();
         plr.greenSystemMessage(format!"%s set your standing of faction %u to %d."(player.data.name, faction, standing));
@@ -1661,7 +1659,7 @@ private:
         return true;
     }
 
-    /// `QuestCommands.cpp`'s `HandleQuestLookupCommand`, which `.lookup quest` runs.
+    /// `.lookup quest`: the quests whose name matches the search text, at most 25.
     bool handleQuestLookupCommand(Rest search)
     {
         const x = search.toLower;

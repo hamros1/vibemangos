@@ -1,6 +1,7 @@
 /**
- * Game constants shared by the world server's modules (CMaNGOS
- * `Globals/SharedDefines.h`, `Entities/Player.h`, `Entities/ItemPrototype.h`).
+ * Game constants shared by the world server's modules: classes, powers,
+ * stats, item classes and inventory types, inventory positions, action
+ * buttons and unit flags.
  *
  * Values with a fixed set of members are enums, so a class can't be passed
  * where a power type is expected. Inventory positions stay plain `ubyte`
@@ -8,7 +9,7 @@
  */
 module dmangos.world.defines;
 
-/// `Classes`
+/// The player classes (`ChrClasses.dbc` ids).
 enum PlayerClass : ubyte
 {
     warrior = 1,
@@ -22,7 +23,7 @@ enum PlayerClass : ubyte
     druid = 11,
 }
 
-/// `Powers`, also the index of a power in `UNIT_FIELD_POWER1..5`.
+/// The power types, also the index of a power in `UNIT_FIELD_POWER1..5`.
 enum Power : ubyte
 {
     mana,
@@ -32,10 +33,10 @@ enum Power : ubyte
     happiness,
 }
 
-/// Number of powers (`MAX_POWERS`).
+/// Number of powers.
 enum maxPowers = Power.max + 1;
 
-/// `Stats`, also the index of a stat in `UNIT_FIELD_STAT0..4`.
+/// The primary stats, also the index of a stat in `UNIT_FIELD_STAT0..4`.
 enum Stat : ubyte
 {
     strength,
@@ -45,7 +46,7 @@ enum Stat : ubyte
     spirit,
 }
 
-/// `ItemClass`
+/// Item classes (`item_template.class`).
 enum ItemClass : uint
 {
     consumable = 0,
@@ -62,7 +63,7 @@ enum ItemClass : uint
     misc = 15,
 }
 
-/// `SkillCategory` (`SkillLine.dbc`'s category)
+/// Skill categories (`SkillLine.dbc`'s category)
 enum SkillCategory : int
 {
     attributes = 5,
@@ -74,7 +75,7 @@ enum SkillCategory : int
     profession = 11,
 }
 
-/// `InventoryType`
+/// Where an item is worn (`item_template.InventoryType`).
 enum InventoryType : ubyte
 {
     nonEquip = 0, head, neck, shoulders, body, chest, waist, legs, feet, wrists, hands, finger, trinket, weapon,
@@ -82,21 +83,21 @@ enum InventoryType : ubyte
     rangedRight, quiver, relic,
 }
 
-/// `PLAYER_EXPLORED_ZONES_SIZE`: the explored-zone bit fields.
+/// Number of explored-zone bit fields (`PLAYER_EXPLORED_ZONES_1` on).
 enum exploredZonesSize = 64;
 
-/// `REST_STATE_*`, kept in the top byte of `playerBytes2`.
+/// The rest state, kept in the top byte of `playerBytes2`.
 enum RestState : ubyte
 {
     rested = 0x01,
     normal = 0x02,
 }
 
-// Inventory positions (`EquipmentSlots`, `InventorySlots`, `BankItemSlots`, ...).
+// Inventory positions: equipment, bags, backpack, bank, buyback and keyring slots.
 
-enum ubyte inventorySlotBag0 = 255;  /// `INVENTORY_SLOT_BAG_0`
-enum ubyte nullBag = 0;              /// `NULL_BAG`
-enum ubyte nullSlot = 255;           /// `NULL_SLOT`
+enum ubyte inventorySlotBag0 = 255;  /// the player itself as a bag: equipment, backpack, bank
+enum ubyte nullBag = 0;              /// no bag
+enum ubyte nullSlot = 255;           /// no slot
 
 enum : ubyte
 {
@@ -115,10 +116,10 @@ enum ubyte buybackSlotStart = 69, buybackSlotEnd = 81;             ///
 enum ubyte keyringSlotStart = 81, keyringSlotEnd = 97;             ///
 enum playerSlots = keyringSlotEnd;                                  /// positions of bag 0 creation uses
 
-/// Number of action bar buttons (`MAX_ACTION_BUTTONS`).
+/// Number of action bar buttons.
 enum maxActionButtons = 120;
 
-/// `ActionButtonType`
+/// What an action button holds: a spell, a macro or an item.
 enum ActionButtonType : ubyte
 {
     spell = 0x00,
@@ -126,7 +127,7 @@ enum ActionButtonType : ubyte
     item = 0x80,
 }
 
-/// `UnitFlags` (`UNIT_FIELD_FLAGS`).
+/// Unit flags (`UNIT_FIELD_FLAGS`).
 enum UnitFlags : uint
 {
     spawning = 0x00000002,         /// not attackable
@@ -134,7 +135,7 @@ enum UnitFlags : uint
     notAttackable1 = 0x00000080,
     immuneToPlayer = 0x00000100,
     immuneToNpc = 0x00000200,
-    looting = 0x00000400,          /// `UNIT_FLAG_LOOTING`: its loot window is open
+    looting = 0x00000400,          /// its loot window is open
     pvp = 0x00001000,
     untargetable = 0x00010000,
     pacified = 0x00020000,
@@ -142,7 +143,7 @@ enum UnitFlags : uint
     inCombat = 0x00080000,
     taxiFlight = 0x00100000,
     disarmed = 0x00200000,
-    fleeing = 0x00800000,          /// `UNIT_FLAG_FLEEING`: running in fear
+    fleeing = 0x00800000,          /// running in fear
     uninteractible = 0x02000000,
 }
 

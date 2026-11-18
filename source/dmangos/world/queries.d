@@ -1,7 +1,6 @@
 /**
- * Bodies of the variable-layout packets: the item query response
- * (`WorldSession::HandleItemQuerySingleOpcode`) and chat messages
- * (`ChatHandler::BuildChatPacket`).
+ * Bodies of the variable-layout packets: the item, creature and game object query responses,
+ * chat messages and the who list.
  */
 module dmangos.world.queries;
 
@@ -117,7 +116,7 @@ ubyte[] itemQueryResponse(uint entry, const ItemTemplate* item, const SpellData 
     return w.data.dup;
 }
 
-/// `WorldSession::HandleCreatureQueryOpcode`: the name, title and kind of a creature; the entry with its top
+/// The creature query response: the name, title and kind of a creature; the entry with its top
 /// bit set if there is none.
 ubyte[] creatureQueryResponse(uint entry, const(CreatureTemplate)* t) pure @safe
 {
@@ -144,7 +143,7 @@ ubyte[] creatureQueryResponse(uint entry, const(CreatureTemplate)* t) pure @safe
     return w.data.dup;
 }
 
-/// `WorldSession::HandleGameObjectQueryOpcode`: type, model, name, icon and the 24 data fields.
+/// The game object query response: type, model, name, icon and the 24 data fields.
 ubyte[] gameObjectQueryResponse(uint entry, const(GameObjectTemplate)* t) pure @safe
 {
     ByteWriter w;
@@ -167,7 +166,7 @@ ubyte[] gameObjectQueryResponse(uint entry, const(GameObjectTemplate)* t) pure @
 }
 
 /**
- * `ChatHandler::BuildChatPacket`: the body of `SMSG_MESSAGECHAT` for the message types a player
+ * The body of `SMSG_MESSAGECHAT` for the message types a player
  * sends. `channel` is the channel's name for `CHAT_MSG_CHANNEL`.
  */
 ubyte[] chatMessage(ChatType type, Language language, ulong sender, string text, ubyte chatTag = 0,
@@ -199,7 +198,7 @@ ubyte[] chatMessage(ChatType type, Language language, ulong sender, string text,
     return w.data.dup;
 }
 
-/// `ChatHandler::BuildChatPacket` for a creature's say, yell, emote or whisper: its name, and whom it addresses.
+/// The `SMSG_MESSAGECHAT` body for a creature's say, yell, emote or whisper: its name, and whom it addresses.
 ubyte[] monsterChatMessage(ChatType type, ulong sender, string name, string text,
     Language language = Language.LANG_UNIVERSAL, ulong target = 0) pure @safe
 {
@@ -277,7 +276,7 @@ unittest
     assert(body_.length == 4 * numbers + "Worn Shortsword".length + 1 + 3 + 1);
     assert(body_[12 .. 12 + 15] == cast(const(ubyte)[]) "Worn Shortsword");
 
-    // Say: the type (uint8, as BuildChatPacket writes it), language, the sender twice, length with the
+    // Say: the type (uint8), language, the sender twice, length with the
     // terminator, text, tag.
     const say = chatMessage(ChatType.CHAT_MSG_SAY, Language.LANG_COMMON, 7, "hi");
     assert(say.length == 1 + 4 + 8 + 8 + 4 + 3 + 1);
@@ -299,7 +298,7 @@ unittest
     assert(chat.type == ChatType.CHAT_MSG_WHISPER && chat.target == "Someone" && chat.text == "hello");
 }
 
-/// `CMSG_WHO`: what /who asks for (`WorldSession::HandleWhoOpcode`).
+/// `CMSG_WHO`: what /who asks for.
 struct ClientWho
 {
     uint levelMin, levelMax;
@@ -341,7 +340,7 @@ struct WhoEntry
 }
 
 /**
- * The `SMSG_WHO` body for `request`, from `candidates`, as `HandleWhoOpcode` chooses them: a player
+ * The `SMSG_WHO` body for `request`, from `candidates`, chosen thus: a player
  * (security 0) sees only its own team unless `twoSide`, and no one above `gmLevel`; then the level
  * range (a maximum of 100 or more means any), the class and race masks, the zones, and the name, guild
  * and strings as parts, in any case (`areaName` gives a zone's name for the strings). At most 49 are

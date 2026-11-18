@@ -1,6 +1,6 @@
 /**
- * A map's buildings and doodads, as the world server queries them (CMaNGOS `vmap/MapTree.cpp`,
- * `ModelInstance.cpp`, `VMapManager2.cpp`): `StaticMapTree` reads `<data_dir>/vmaps/MMM.vmtree`
+ * A map's buildings and doodads, as the world server queries them: `StaticMapTree` reads
+ * `<data_dir>/vmaps/MMM.vmtree`
  * (the tree over every model placed on the map) and, as tiles are needed, `MMM_YY_XX.vmtile` (the
  * models placed on that tile), whose models (`*.vmo`) are shared between maps through
  * `ModelCache`.
@@ -8,12 +8,10 @@
  * The questions: the height of the first surface below a point (`height`), whether one point sees
  * another (`isInLineOfSight`), which building group a point is in and its floor (`areaInfo`, for
  * WMO areas and indoors), and the liquid there (`liquidLevel`). Positions are world coordinates;
- * the trees use CMaNGOS's internal ones (`convertPositionToInternalRep`), mirrored about the map's
- * centre.
+ * the trees use the vmap files' internal ones (`toInternal`), mirrored about the map's centre.
  *
- * One difference: CMaNGOS's area query keeps the floor of the building with the highest floor
- * below the point but the group of the last building it tested, which can be another one; here
- * both come from the building with the highest floor, as its location query already does.
+ * The area query takes both the floor and the group from the building with the highest floor
+ * below the point, never the group of another building it tested.
  */
 module dmangos.vmap.maptree;
 
@@ -30,17 +28,17 @@ import dmangos.vmap.bih;
 import dmangos.vmap.math;
 import dmangos.vmap.model;
 
-/// `VMAP_INVALID_HEIGHT_VALUE`: no height found.
+/// No height found.
 enum float vmapInvalidHeightValue = -200_000.0f;
 
-/// `VMapManager2::convertPositionToInternalRep` (it is its own inverse).
+/// World coordinates to the trees' internal ones (it is its own inverse).
 Vector3 toInternal(float x, float y, float z) pure nothrow @nogc @safe
 {
     enum float mid = 0.5f * 64.0f * 533.33333333f;
     return Vector3(mid - x, mid - y, z);
 }
 
-/// The models loaded, shared by every map that places them (`VMapManager2::acquireModelInstance`).
+/// The models loaded, shared by every map that places them.
 final class ModelCache
 {
     private string directory;
@@ -77,7 +75,7 @@ final class ModelCache
     }
 }
 
-/// `ModelInstance`: a placed model, with the transform back into its own coordinates.
+/// A placed model, with the transform back into its own coordinates.
 struct ModelInstance
 {
     ModelSpawn spawn;
@@ -96,7 +94,7 @@ struct ModelInstance
         invScale = 1.0f / spawn.scale;
     }
 
-    /// `ModelInstance::intersectRay`
+    /// Whether `ray` hits the model within `maxDist`, which it shortens to the hit (world units).
     bool intersectRay(const Ray ray, ref float maxDist, bool stopAtFirstHit, bool ignoreM2) const
     {
         if (model is null || ray.intersectionTime(spawn.bound) == float.infinity)
@@ -111,7 +109,7 @@ struct ModelInstance
     }
 
     /**
-     * `ModelInstance::intersectPoint` and `GetLocationInfo`: the building group the point is in, and
+     * The building group the point is in, and
      * the world height of its floor below; buildings only.
      */
     bool locate(const Vector3 p, ref LocationInfo info) const
@@ -135,7 +133,7 @@ struct ModelInstance
         return true;
     }
 
-    /// `ModelInstance::GetLiquidLevel`: the level of the located group's liquid at `p`, in world height.
+    /// The level of the located group's liquid at `p`, in world height.
     bool liquidLevel(const Vector3 p, const ref LocationInfo info, out float height) const
     {
         const pModel = invRot * (p - spawn.pos) * invScale;
@@ -147,7 +145,7 @@ struct ModelInstance
     }
 }
 
-/// `LocationInfo` and `AreaInfo`: what `StaticMapTree.locate` found.
+/// What `StaticMapTree.locate` found.
 struct LocationInfo
 {
     float groundZ = -float.infinity;
@@ -163,7 +161,7 @@ struct LocationInfo
     }
 }
 
-/// `StaticMapTree`: see the module documentation.
+/// A map's tree of placed models: see the module documentation.
 final class StaticMapTree
 {
     immutable uint mapId;
@@ -179,14 +177,14 @@ final class StaticMapTree
         bool[uint] loadedTiles;   // packed tile -> whether it had a file
     }
 
-    /// `StaticMapTree::packTileID`
+    /// The key of tile [x, y].
     static uint packTileId(uint x, uint y) pure nothrow @nogc @safe
     {
         return x << 16 | y;
     }
 
     /**
-     * `StaticMapTree::InitMap`: `MMM.vmtree` from `directory`, with its global models if the map
+     * Reads `MMM.vmtree` from `directory`, with its global models if the map
      * has no tiles. Throws if the file is missing or damaged.
      */
     this(uint mapId, string directory, ModelCache cache)
@@ -208,19 +206,19 @@ final class StaticMapTree
                 place(ModelSpawn.read(r), r.read!uint);
     }
 
-    /// `StaticMapTree::CanLoadMap` / `VMapManager2::existsMap` for the map file alone.
+    /// Whether the map's `.vmtree` file exists (the map file alone).
     static bool exists(uint mapId, string directory)
     {
         return std.file.exists(buildPath(directory, format!"%03d.vmtree"(mapId)));
     }
 
-    /// `StaticMapTree::getTileFileName`: note the file names the y tile before the x.
+    /// A tile's file name: note it names the y tile before the x.
     static string tileFileName(uint mapId, uint tileX, uint tileY)
     {
         return format!"%03d_%02d_%02d.vmtile"(mapId, tileY, tileX);
     }
 
-    /// `StaticMapTree::LoadMapTile`: the models of grid tile [x, y]; once.
+    /// Loads the models of grid tile [x, y]; once.
     void loadTile(uint tileX, uint tileY)
     {
         const key = packTileId(tileX, tileY);
@@ -278,13 +276,13 @@ final class StaticMapTree
         return listed;
     }
 
-    /// `StaticMapTree::IsTileLoaded`
+    /// Whether tile [x, y] is loaded (always, on a map without tiles).
     bool isTileLoaded(uint tileX, uint tileY) const
     {
         return !tiled || (packTileId(tileX, tileY) in loadedTiles) !is null;
     }
 
-    /// `StaticMapTree::isInLineOfSight` (internal coordinates).
+    /// Whether nothing is between `from` and `to` (internal coordinates).
     bool isInLineOfSight(const Vector3 from, const Vector3 to, bool ignoreM2) const
     {
         float maxDist = (to - from).magnitude();
@@ -295,8 +293,8 @@ final class StaticMapTree
     }
 
     /**
-     * `StaticMapTree::getHeight` (internal coordinates): the first surface below `p` within
-     * `maxSearchDist` (above, if negative); `float.infinity` if none.
+     * The first surface below `p` (internal coordinates) within `maxSearchDist` (above, if
+     * negative); `float.infinity` if none.
      */
     float height(const Vector3 p, float maxSearchDist) const
     {
@@ -307,7 +305,7 @@ final class StaticMapTree
         return up ? p.z + maxDist : p.z - maxDist;
     }
 
-    /// `StaticMapTree::getAreaInfo` / `GetLocationInfo` (internal coordinates).
+    /// The building group `p` is in and its floor (internal coordinates).
     bool locate(const Vector3 p, out LocationInfo info) const
     {
         bool found;
@@ -327,7 +325,7 @@ final class StaticMapTree
     }
 
 private:
-    /// `StaticMapTree::getIntersectionTime`: shortens `maxDist` to the nearest hit.
+    /// Whether `ray` hits a model; shortens `maxDist` to the nearest hit.
     bool intersection(const Ray ray, ref float maxDist, bool stopAtFirstHit, bool ignoreM2) const
     {
         float distance = maxDist;
@@ -364,7 +362,7 @@ private:
     }
 }
 
-/// `GetLiquidMask` (VMapManager2.cpp): a WMO liquid type as `MAP_LIQUID_TYPE_*` bits.
+/// A WMO liquid type as `mapLiquidType*` bits.
 ubyte liquidMask(uint type) pure nothrow @nogc @safe
 {
     switch (type)
@@ -377,7 +375,7 @@ ubyte liquidMask(uint type) pure nothrow @nogc @safe
     }
 }
 
-/// `VMapManager2::GetLiquidLevel` on one map tree (world coordinates).
+/// The liquid at a point on one map tree (world coordinates): its level, the floor below, and its type.
 bool liquidLevel(const StaticMapTree tree, float x, float y, float z, ubyte requiredMask, out float level,
     out float floor, out uint type)
 {

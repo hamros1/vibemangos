@@ -1,10 +1,10 @@
 /**
- * A dead player's body (CMaNGOS `Entities/Corpse.cpp`): where the player died, looking like it,
+ * A dead player's body: where the player died, looking like it,
  * until the ghost reclaims it or is resurrected elsewhere. It is saved in `corpse` while it lasts,
  * so a ghost that logs out finds it again.
  *
- * Deviation: a corpse's guid is its player's (CMaNGOS counts corpses on their own); a player has
- * at most one corpse, and the guid needs no counter of its own across a cluster.
+ * A corpse's guid is its player's, not counted on its own: a player has at most one corpse, and
+ * the guid needs no counter of its own across a cluster.
  */
 module dmangos.world.corpse;
 
@@ -14,7 +14,7 @@ import dmangos.world.objects;
 import dmangos.world.player : Player, PlayerFlags;
 import dmangos.world.updatefields;
 
-/// `CorpseType`
+/// What a corpse is: bones, or a body to come back to (from a death in PvE or PvP).
 enum CorpseType : ubyte
 {
     bones,
@@ -22,10 +22,10 @@ enum CorpseType : ubyte
     resurrectablePvp,
 }
 
-/// `HIGHGUID_CORPSE`
+/// The high part of a corpse's guid.
 enum ushort highGuidCorpse = 0xF101;
 
-/// `CORPSE_RECLAIM_RADIUS`: how near its corpse a ghost must be to come back to life there.
+/// How near its corpse a ghost must be to come back to life there.
 enum float corpseReclaimRadius = 39;
 
 /// See the module documentation.
@@ -37,14 +37,14 @@ final class Corpse : MapObject
     uint instanceId;               /// the dungeon instance it lies in (0: none; not saved)
     Position at;
     CorpseType type;
-    long ghostTime;                /// `m_time`: when the player released its spirit (Unix time)
+    long ghostTime;                /// when the player released its spirit (Unix time)
     UpdateValues values;
 
-    /// `Corpse::Create` and `Player::CreateCorpse`: `player`'s body where it stands, looking like it.
+    /// `player`'s body where it stands, looking like it.
     this(const Player player, CorpseType type, long now)
     {
-        enum uint flagUnk2 = 0x04, hideHelm = 0x08, hideCloak = 0x10;               // CORPSE_FLAG_*
-        enum uint playerHideHelm = 0x00000400, playerHideCloak = 0x00000800;      // PLAYER_FLAGS_HIDE_*
+        enum uint flagUnk2 = 0x04, hideHelm = 0x08, hideCloak = 0x10;               // corpse flags
+        enum uint playerHideHelm = 0x00000400, playerHideCloak = 0x00000800;      // player flags
         owner = player.data.guid;
         guid_ = ulong(highGuidCorpse) << 48 | owner;
         map = player.data.map;

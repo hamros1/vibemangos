@@ -2,7 +2,7 @@
  * Spell modifiers (`SPELL_AURA_ADD_FLAT_MODIFIER`, `SPELL_AURA_ADD_PCT_MODIFIER`): what most talents
  * are. An aura effect of either type changes one property (`SpellModOp`, its misc value) of the
  * spells of its own family whose family flags meet its mask (the effect's `EffectItemType`): flat
- * amounts are added first, then the percentages (`Player::ApplySpellMod`).
+ * amounts are added first, then the percentages (`applySpellMod`).
  */
 module dmangos.world.spellmods;
 
@@ -43,7 +43,7 @@ enum SpellModOp : int
 /// `addFlatModifier` and `addPctModifier`.
 enum uint auraAddFlatModifier = 107, auraAddPctModifier = 108;
 
-/// `SpellModifier::isAffectedOnSpell`: whether effect `i` of `mod` changes `spell`.
+/// Whether effect `i` of `mod` changes `spell`.
 bool affects(const Aura mod, size_t i, const ref SpellInfo spell)
 {
     const mask = mod.spell.itemType[i];
@@ -51,7 +51,7 @@ bool affects(const Aura mod, size_t i, const ref SpellInfo spell)
         && (spell.casting.spellFamilyFlags & mask) != 0;
 }
 
-/// `Player::ApplySpellMod`: `value` of `spell`'s property `op`, with the modifiers among `auras`.
+/// `value` of `spell`'s property `op`, with the modifiers among `auras`.
 T applySpellMod(T)(const(Aura)[] auras, SpellModOp op, const ref SpellInfo spell, T value)
 {
     long flat;
