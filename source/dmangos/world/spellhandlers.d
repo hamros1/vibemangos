@@ -1257,6 +1257,9 @@ private:
         case 1: // SPELL_EFFECT_INSTAKILL
             instakill(spell, target);
             break;
+        case 38: // SPELL_EFFECT_DISPEL
+            dispelEffect(spell, i, target, value);
+            break;
         case 71: // SPELL_EFFECT_PICKPOCKET
             pickPocket(target);
             break;
@@ -1460,6 +1463,77 @@ private:
     int effectMod(const(SpellInfo)* spell, size_t i, int value)
     {
         return spellMod(SpellModOp.allEffects, spell, spellMod(effectOp(i), spell, value));
+    }
+
+    /**
+     * Dispelling (spell effect 38): up to `count` (at least one) of the target's auras of the effect's dispel
+     * type (its misc value; 7: magic, curses, diseases and poisons), chosen at random, go. Magic is taken
+     * only where it hurts: harmful magic off a friend, helpful magic off an enemy. Passive auras stay. The
+     * auras removed are told to those around (`SMSG_SPELLDISPELLOG`).
+     */
+    package void dispelEffect(const(SpellInfo)* spell, size_t i, ulong target, int count)
+    {
+        import std.algorithm.mutation : remove;
+        import std.random : uniform;
+        import dmangos.bytes : ByteWriter;
+        import dmangos.world.auras : Aura;
+
+        enum uint dispelMagic = 1, dispelAll = 7;
+        const type = spell.miscValue[i];
+        const uint mask = type == dispelAll ? 0b11110 : type < 32 ? 1u << type : 0;
+        Creature creature;
+        typeof(this) other;
+        bool friendly;
+        if (target == 0 || target == player.guid)
+        {
+            other = this;
+            friendly = true;
+        }
+        else if ((creature = cast(Creature) map.findObject(target)) !is null)
+            friendly = !canAttack(relatingNow(), creature.ai.relatingOf(), context.client);
+        else
+        {
+            other = cast(typeof(this)) context.onlinePlayer(target);
+            if (other is null || other.player is null || other.map !is map)
+                return;
+            friendly = enemyPlayer(target) is null;
+        }
+        Aura[] eligible;
+        foreach (aura; creature !is null ? creature.auras.list : other.player.auras.list)
+        {
+            if (aura.passive || !(mask & (1u << aura.spell.casting.dispel)))
+                continue;
+            if (aura.spell.casting.dispel == dispelMagic && aura.positive == friendly)
+                continue;
+            eligible ~= aura;
+        }
+        Aura[] removed;
+        foreach (_; 0 .. count > 0 ? count : 1)
+        {
+            if (eligible.length == 0)
+                break;
+            const at = uniform(0, eligible.length, map.random);
+            removed ~= eligible[at];
+            eligible = eligible.remove(at);
+        }
+        if (removed.length == 0)
+            return;
+        ByteWriter w;
+        w.putPackedGuid(creature !is null ? creature.guid : other.player.guid);
+        w.putPackedGuid(player.guid);
+        w.put(cast(uint) removed.length);
+        foreach (aura; removed)
+            w.put(aura.spell.id);
+        map.sendToWatchers(this, Opcode.SMSG_SPELLDISPELLOG, w.data, true);
+        foreach (aura; removed)
+        {
+            if (creature !is null)
+                creature.auras.remove(aura, creature.values);
+            else
+                other.removeAura(aura);
+        }
+        if (creature !is null)
+            map.flushObjectChanges(creature);
     }
 
     /// Percent less often its spells miss (`MOD_SPELL_HIT_CHANCE` auras).
@@ -2625,4 +2699,59 @@ unittest
     assert(!me.auras.has(AuraType.procTriggerSpell), "out of charges: gone");
     session.sufferDamage(attacker, 5, Blow.swing(d));
     assert(keeper.values.get!UNIT_FIELD_HEALTH == 497 - 29, "thorns alone");
+}
+
+/// Dispelling: magic only where it hurts, by dispel type, a friend's harmful magic too.
+unittest
+{
+    import std.algorithm.searching : canFind;
+    import dmangos.world.opcodes : Opcode;
+    import dmangos.world.spells : SpellInfo;
+    import dmangos.world.auras : AuraType, makeAura;
+    import dmangos.world.creature : Creature;
+    import dmangos.world.movement : Position;
+    import dmangos.world.objects : HighGuid, makeGuid;
+    import dmangos.world.player : Player;
+    import dmangos.world.spellcast : ImplicitTarget;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f));
+    auto me = cast(Player) anduin.session.character;
+    anduin.read();
+    auto session = anduin.session.inWorld;
+    enum uint hex = 95800, blessing = 95801, curse = 95802, dispelMagic = 95803, removeCurse = 95804;
+    with (context.data.spells)
+    {
+        foreach (id; [hex, blessing, curse])
+        {
+            spells[id] = testSpell(id, 6, ImplicitTarget.caster, 1);
+            spells.edit(id).casting.applyAuraName[0] = AuraType.modStat;
+            spells.edit(id).casting.dispel = id == curse ? 2 : 1;
+        }
+        spells[dispelMagic] = testSpell(dispelMagic, 38, ImplicitTarget.caster, 2);
+        spells.edit(dispelMagic).miscValue[0] = 1;
+        spells[removeCurse] = testSpell(removeCurse, 38, ImplicitTarget.caster, 1);
+        spells.edit(removeCurse).miscValue[0] = 2;
+    }
+    const(SpellInfo)* s(uint id) { return id in context.data.spells.spells; }
+    session.addAura(makeAura(s(hex), 1, 1, -1, false, [1, 0, 0]));
+    session.addAura(makeAura(s(blessing), me.guid, 1, -1, true, [1, 0, 0]));
+    session.addAura(makeAura(s(curse), 1, 1, -1, false, [1, 0, 0]));
+    anduin.read();
+    session.dispelEffect(s(dispelMagic), 0, me.guid, 2);
+    assert(me.auras.find(hex) is null && me.auras.find(blessing) !is null && me.auras.find(curse) !is null,
+        "harmful magic only");
+    assert(opcodesOf(anduin.read()).canFind(Opcode.SMSG_SPELLDISPELLOG));
+    session.dispelEffect(s(removeCurse), 0, me.guid, 1);
+    assert(me.auras.find(curse) is null && me.auras.find(blessing) !is null, "the curse");
+
+    // A creature it may attack: its harmful magic stays, its helpful magic is purged.
+    auto keeper = cast(Creature) context.map(0).findObject(makeGuid(HighGuid.unit, creatureInnkeeper, innkeeperSpawn));
+    keeper.auras.list ~= makeAura(s(hex), 1, 1, -1, false, [1, 0, 0]);
+    keeper.auras.list ~= makeAura(s(blessing), keeper.guid, 1, -1, true, [1, 0, 0]);
+    session.dispelEffect(s(dispelMagic), 0, keeper.guid, 2);
+    assert(keeper.auras.find(hex) !is null && keeper.auras.find(blessing) is null);
 }

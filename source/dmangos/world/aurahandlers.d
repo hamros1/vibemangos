@@ -9,7 +9,7 @@
  * `AuraInterruptFlags` say: standing up (food and drink), moving, taking damage, casting, attacking.
  * Auras are saved with the character and loaded at login and arrival. A player's shields (school absorbs, mana shields) take damage before it lands; damage shields
  * strike back at melee attackers; auras that trigger a spell proc on melee swings dealt and taken.
- * Not yet: dispels, procs on other events, area auras on others, saved charges (an aura loaded at login has its full charges).
+ * Not yet: procs on other events, area auras on others, saved charges (an aura loaded at login has its full charges).
  */
 module dmangos.world.aurahandlers;
 
