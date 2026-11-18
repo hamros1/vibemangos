@@ -3786,14 +3786,16 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         linkFollowers();
         scriptedGameObjectsDue();
         respawnDue(now);
-        // Auctions over are settled once a minute, by one node.
-        if (forwardGroup is null && now - lastAuctionCheck >= 60.seconds)
+        // Auctions over are settled once a minute, by one node; first at the first tick. (Not `now - init`:
+        // MonoTime counts from the machine's start, so that is its uptime, and an hour's check would
+        // wait for the first hour after a reboot.)
+        if (forwardGroup is null && (lastAuctionCheck == MonoTime.init || now - lastAuctionCheck >= 60.seconds))
         {
             lastAuctionCheck = now;
             settleAuctions();
         }
         // Old mail, once an hour, by one node.
-        if (forwardGroup is null && now - lastMailCheck >= 60.minutes)
+        if (forwardGroup is null && (lastMailCheck == MonoTime.init || now - lastMailCheck >= 60.minutes))
         {
             lastMailCheck = now;
             settleOldMail();
