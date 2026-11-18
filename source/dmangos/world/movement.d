@@ -1,6 +1,6 @@
 /**
- * Movement data as 1.12 clients send and receive it (CMaNGOS
- * `MovementInfo::Read`/`Write` in `Entities/Unit.cpp`).
+ * Movement data as 1.12 clients send and receive it, read from and
+ * written to packets.
  *
  * Client movement packets (`MSG_MOVE_*`) carry a `MovementInfo` and nothing
  * else. The same structure starts the "living" part of a unit's create
@@ -12,7 +12,7 @@ import std.math : isFinite;
 
 import dmangos.bytes;
 
-/// `MovementFlags` (only the ones that change the packet layout or matter here).
+/// The movement flags (only the ones that change the packet layout or matter here).
 enum MovementFlags : uint
 {
     none = 0,
@@ -34,7 +34,7 @@ enum MovementFlags : uint
     splineElevation = 0x04000000, /// adds one float
 }
 
-/// `MOVEFLAG_MASK_MOVING` with the turning flags: the player is moving or turning, so it stands up and
+/// The moving flags with the turning flags: the player is moving or turning, so it stands up and
 /// stops a looping emote.
 enum uint movingOrTurning = MovementFlags.forward | MovementFlags.backward | MovementFlags.strafeLeft
     | MovementFlags.strafeRight | MovementFlags.pitchUp | MovementFlags.pitchDown | MovementFlags.fallingFar
@@ -48,14 +48,14 @@ struct Position
     float z = 0;
     float orientation = 0;
 
-    /// Whether every coordinate is a real number (`MaNGOS::IsValidMapCoord` checks this first).
+    /// Whether every coordinate is a real number (the first check of a valid map position).
     bool isFinite() const pure nothrow @nogc @safe
     {
         return .isFinite(x) && .isFinite(y) && .isFinite(z) && .isFinite(orientation);
     }
 }
 
-/// `MovementInfo`
+/// Where a unit is and how it moves, as movement packets carry it.
 struct MovementInfo
 {
     uint flags;          /// `MovementFlags`
@@ -77,7 +77,7 @@ struct MovementInfo
         return (flags & flag) != 0;
     }
 
-    /// `MovementInfo::Read`
+    /// Reads one from a packet.
     static MovementInfo read(ref ByteReader reader)
     {
         MovementInfo m;
@@ -104,7 +104,7 @@ struct MovementInfo
         return m;
     }
 
-    /// `MovementInfo::Write`
+    /// Writes it to a packet.
     void write(ref ByteWriter writer) const
     {
         writer.put(flags);
@@ -148,7 +148,7 @@ private void writePosition(ref ByteWriter writer, const Position p)
     writer.put(p.orientation);
 }
 
-/// `UnitMoveType`
+/// The kinds of movement, each with its own speed.
 enum MoveType
 {
     walk,

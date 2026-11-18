@@ -1,5 +1,5 @@
 /**
- * Guilds (CMaNGOS's `Guild`, `GuildMgr`): a guild's ranks (at least 5, at most 10; rank 0 its
+ * Guilds: a guild's ranks (at least 5, at most 10; rank 0 its
  * master) with their rights, its members with their notes, its message of the day, information and
  * tabard; and the packets that show them. `dmangos.world.guildhandlers` does what players ask.
  *
@@ -15,10 +15,10 @@ import std.uni : toLower;
 import dmangos.bytes : ByteWriter;
 import dmangos.world.database : GuildMemberRecord, GuildRankRecord, GuildRecord;
 
-/// `GUILD_RANKS_MIN_COUNT`, `GUILD_RANKS_MAX_COUNT`
+/// The fewest and the most ranks a guild has.
 enum uint minRanks = 5, maxRanks = 10;
 
-/// `GuildDefaultRanks`
+/// The ranks a new guild starts with.
 enum GuildRank : uint
 {
     master = 0,
@@ -28,7 +28,7 @@ enum GuildRank : uint
     initiate = 4,
 }
 
-/// `GuildRankRights`
+/// What a rank may do (bits).
 enum GuildRight : uint
 {
     empty = 0x40,
@@ -48,7 +48,7 @@ enum GuildRight : uint
     all = 0xFF1FF,
 }
 
-/// `Typecommand`
+/// The guild command a `SMSG_GUILD_COMMAND_RESULT` answers.
 enum GuildCommand : uint
 {
     create = 0x00,
@@ -57,7 +57,7 @@ enum GuildCommand : uint
     founder = 0x0E,
 }
 
-/// `CommandErrors`
+/// The errors of `SMSG_GUILD_COMMAND_RESULT`.
 enum GuildError : uint
 {
     noMoreInGuild = 0x00,
@@ -78,7 +78,7 @@ enum GuildError : uint
     rankTooLowS = 0x0E,
 }
 
-/// `GuildEvents`
+/// The events of `SMSG_GUILD_EVENT`.
 enum GuildEvent : ubyte
 {
     promotion = 0x00,
@@ -126,7 +126,7 @@ final class Guild
         return null;
     }
 
-    /// `Guild::HasRankRight`: whether rank `rank` has `right` (all its bits).
+    /// Whether rank `rank` has `right` (all its bits).
     bool hasRight(uint rank, GuildRight right) const
     {
         foreach (ref r; record.ranks)
@@ -141,7 +141,7 @@ final class Guild
         return record.ranks.length ? cast(uint) record.ranks.length - 1 : GuildRank.initiate;
     }
 
-    /// How many accounts its members belong to (`m_accountsNumber`).
+    /// How many accounts its members belong to.
     @property uint accountCount() const
     {
         bool[uint] accounts;
@@ -150,7 +150,7 @@ final class Guild
         return cast(uint) accounts.length;
     }
 
-    /// `CreateDefaultGuildRanks`
+    /// The ranks a new guild starts with, named, with their rights.
     static GuildRankRecord[] defaultRanks()
     {
         with (GuildRight)
@@ -159,7 +159,7 @@ final class Guild
                 GuildRankRecord(4, "Initiate", chatListen | chatSpeak)];
     }
 
-    /// `SMSG_GUILD_QUERY_RESPONSE` (`Guild::Query`): its name, ten rank names, its tabard.
+    /// `SMSG_GUILD_QUERY_RESPONSE`: its name, ten rank names, its tabard.
     const(ubyte)[] queryResponse() const
     {
         ByteWriter w;
@@ -196,7 +196,7 @@ const(ubyte)[] guildCommandResult(GuildCommand command, string text, GuildError 
     return w.data;
 }
 
-/// The guilds of the server (`GuildMgr`).
+/// The guilds of the server.
 final class Guilds
 {
     private Guild[uint] byId;

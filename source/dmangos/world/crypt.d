@@ -1,5 +1,5 @@
 /**
- * The header cipher of the 1.12 world protocol (CMaNGOS `Server/AuthCrypt`).
+ * The header cipher of the 1.12 world protocol.
  *
  * After authentication, every packet header is obfuscated with the 40-byte
  * SRP6 session key: the 4-byte server header and the 6-byte client header.

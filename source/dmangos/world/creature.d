@@ -1,9 +1,8 @@
 /**
- * Creatures (CMaNGOS `Entities/Creature.cpp`, the creature parts of
- * `ObjectMgr`): what `creature_template` and its companion tables say about
+ * Creatures: what `creature_template` and its companion tables say about
  * an entry, what `creature` says about a spawn, and the `Creature` object
- * built from the two, as `Creature::Create`, `InitEntry`, `UpdateEntry` and
- * `SelectLevel` build it.
+ * built from the two: its level, model, faction, equipment and combat
+ * stats.
  *
  * A creature moves as its movement generator (`dmangos.world.motion`) has it
  * move, as the map ticks; AI, combat, death and respawning come with the
@@ -77,7 +76,7 @@ struct CreatureTemplate
     uint trainerRace;           /// `TrainerRace`
     uint trainerTemplateId;     /// `TrainerTemplateId`: its `npc_trainer_template` list
     uint vendorTemplateId;      /// `VendorTemplateId`: its `npc_vendor_template` list
-    // Combat (`Creature::SelectLevel`).
+    // Combat (see `selectLevel`).
     float damageMultiplier = 1; /// `DamageMultiplier`; negative: the template's own damage
     float damageVariance = 1;   /// `DamageVariance`
     float armorMultiplier = 1;  /// `ArmorMultiplier`; negative: the template's own armor
@@ -138,7 +137,7 @@ enum creatureTemplateQuery = "SELECT Entry, Name, IFNULL(SubName, ''), MinLevel,
     ~ "ResistanceHoly, ResistanceFire, ResistanceNature, ResistanceFrost, ResistanceShadow, ResistanceArcane "
     ~ "FROM creature_template";
 
-/// `TempSpawnType` (plus `none`: not a summon): when a summoned creature goes.
+/// When a summoned creature goes (`none`: not a summon).
 enum TempSpawnType : ubyte
 {
     manual = 0,              /// when unsummoned
@@ -154,7 +153,7 @@ enum TempSpawnType : ubyte
     none = 255,
 }
 
-/// A summoned creature's state (`TemporarySpawn`).
+/// A summoned creature's state.
 struct TempSpawn
 {
     TempSpawnType type = TempSpawnType.none;
@@ -169,7 +168,7 @@ struct TempSpawn
             timedOutOfCombatOrDead, timedOutOfCombatOrCorpse) != 0;
     }
 
-    /// `TemporarySpawn::Update`: `diff` milliseconds on; whether it goes now.
+    /// `diff` milliseconds on; whether it goes now.
     bool update(Creature creature, int diff)
     {
         with (TempSpawnType) final switch (type)
@@ -236,10 +235,10 @@ struct CreatureClassStats
 }
 
 /**
- * `Creature::SelectLevel` and `UpdateAllStats` for combat: health, mana, armor, attack power and
+ * A creature's combat stats: health, mana, armor, attack power and
  * weapon damage, from the class stats of its level, or (without them, or when the template's
- * multipliers say so) the template's own numbers. The rate settings of `mangosd.conf`
- * (`Rate.Creature.*`) are all 1.
+ * multipliers say so) the template's own numbers. The creature rate settings
+ * are all 1.
  */
 struct CreatureCombatStats
 {
@@ -261,7 +260,7 @@ CreatureCombatStats selectLevel(const ref CreatureTemplate t, uint level, const(
     float[2][3] weapon = 0;
     float meleePower = 0, rangedPower = 0;
     bool usedDamageMulti;
-    const damageMulti = t.damageMultiplier; // * _GetDamageMod(rank), 1
+    const damageMulti = t.damageMultiplier; // times the rank's damage modifier, which is 1
     if (stats !is null)
     {
         if (t.healthMultiplier >= 0)
@@ -314,8 +313,8 @@ CreatureCombatStats selectLevel(const ref CreatureTemplate t, uint level, const(
     r.armor = armor;
     r.meleeAttackPower = meleePower;
     r.rangedAttackPower = rangedPower;
-    // `Creature::UpdateDamagePhysical`: the weapon's damage and the attack power over its swing time;
-    // the off hand's damage modifier is 50% (`UNIT_MOD_DAMAGE_OFFHAND`).
+    // Physical damage: the weapon's damage and the attack power over its swing time;
+    // the off hand's damage modifier is 50%.
     const uint[3] times = [t.meleeBaseAttackTime, t.meleeBaseAttackTime, t.rangedBaseAttackTime];
     foreach (type; 0 .. 3)
     {
@@ -333,7 +332,7 @@ uint classStatsKey(uint level, uint unitClass) pure nothrow @nogc @safe
     return level << 8 | unitClass;
 }
 
-/// An item a creature holds: what `SetVirtualItem` shows of it.
+/// An item a creature holds: what `setVirtualItem` shows of it.
 struct VirtualItem
 {
     uint display;
@@ -357,7 +356,7 @@ struct CreatureParts
     float collisionHeight = 0;       /// the model's (`CreatureModelData.dbc`), before scaling; 0 if unknown
 }
 
-/// `DEFAULT_COLLISION_HEIGHT`
+/// The collision height of a model that has none.
 enum float defaultCollisionHeight = 2.03128f;
 
 private enum : uint
@@ -366,7 +365,7 @@ private enum : uint
     sheathMelee = 1,           // SHEATH_STATE_MELEE
 }
 
-/// A vendor's limited items (`Creature::m_vendorItemCounts`): how many are left, and since when.
+/// A vendor's limited items: how many are left, and since when.
 struct VendorStocks
 {
     /// A limited item's stock since it was first bought, and when it last grew.
@@ -379,7 +378,7 @@ struct VendorStocks
     Stock[uint] items; /// by item
 
     /**
-     * `Creature::GetVendorItemCurrentCount`: how many of a limited item (`maxCount` > 0) the vendor
+     * How many of a limited item (`maxCount` > 0) the vendor
      * has at Unix time `now`; it grows by `buyCount` every `incrTime` seconds, back to `maxCount`.
      */
     uint count(uint item, uint maxCount, uint incrTime, uint buyCount, long now)
@@ -391,7 +390,7 @@ struct VendorStocks
             return maxCount;
         if (stock.lastIncrement + incrTime <= now)
         {
-            // A restock time of 0 would divide by zero in CMaNGOS: here the item is simply back.
+            // A restock time of 0 restocks the item fully at once, rather than dividing by zero.
             const steps = incrTime == 0 ? maxCount : cast(uint)((now - stock.lastIncrement) / incrTime);
             if (stock.count + steps * buyCount >= maxCount)
             {
@@ -404,7 +403,7 @@ struct VendorStocks
         return stock.count;
     }
 
-    /// `Creature::UpdateVendorItemCurrentCount`: `used` were bought; returns how many are left.
+    /// `used` were bought; returns how many are left.
     uint take(uint item, uint maxCount, uint incrTime, uint buyCount, uint used, long now)
     {
         if (maxCount == 0)
@@ -506,15 +505,15 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
     MovementInfo movement;
     UpdateValues values;
     float[MoveType.max + 1] speeds = baseMoveSpeed;
-    float collisionHeight = defaultCollisionHeight; /// `Unit::GetCollisionHeight`
+    float collisionHeight = defaultCollisionHeight; /// its height, by its model and scale
 
-    MoveSpline spline;              /// `movespline`: the walk under way, if not finalized
+    MoveSpline spline;              /// the walk under way, if not finalized
     int positionTimer;              /// milliseconds until the position follows the walk
     MovementGenerator generator;      /// how it moves on its own; idle unless set before its first tick
     private bool motionStarted;
 
     /**
-     * `Creature::Create` from a spawn: a level between the template's, a model among its models,
+     * A creature from a spawn: a level between the template's, a model among its models,
      * and the fields that follow. `display` is the chosen model; `level` the chosen level.
      */
     this(const ref CreatureSpawn spawn, const(CreatureTemplate)* template_, uint display, uint level,
@@ -526,7 +525,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
         // A pet's guid is `HIGHGUID_PET`'s, with its number where a creature has its entry.
         guid_ = petNumber ? makePetGuid(petNumber, spawn.guid) : makeGuid(HighGuid.unit, spawn.entry, spawn.guid);
         movement.position = Position(spawn.x, spawn.y, spawn.z, spawn.orientation);
-        movement.flags = MovementFlags.walkMode; // SetWalk(true, true)
+        movement.flags = MovementFlags.walkMode; // it walks, not runs
         generator = new IdleMovement;
         speeds[MoveType.walk] = baseMoveSpeed[MoveType.walk] * template_.speedWalk;
         speeds[MoveType.run] = baseMoveSpeed[MoveType.run] * template_.speedRun;
@@ -539,7 +538,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
             values.set!UNIT_FIELD_FLAGS(values.get!UNIT_FIELD_FLAGS | UnitFlags.pvp);
         templateEquipment = parts.equipment;
         ai = new CreatureAI(this);
-        // Unit::GetCollisionHeight: the model's, scaled; DEFAULT_COLLISION_HEIGHT if it has none.
+        // The model's collision height, scaled; `defaultCollisionHeight` if it has none.
         const height = parts.collisionHeight * values.get!OBJECT_FIELD_SCALE_X;
         collisionHeight = height == 0 ? defaultCollisionHeight : height;
         values.clearChanges();
@@ -548,7 +547,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
     /// What its template gives it to hold (main hand, off hand, ranged).
     VirtualItem[3] templateEquipment;
 
-    /// `SetVirtualItem`: what it holds in `slot` (0 main hand, 1 off hand, 2 ranged); no display: nothing.
+    /// What it holds in `slot` (0 main hand, 1 off hand, 2 ranged); no display: nothing.
     void setVirtualItem(size_t slot, const VirtualItem item)
     {
         values.set!UNIT_VIRTUAL_ITEM_SLOT_DISPLAY(slot, item.display);
@@ -558,7 +557,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
     }
 
     /**
-     * Made a pet (`Pet::Create`), before it is added to a map: it belongs to `owner`. Its guid is
+     * Made a pet, before it is added to a map: it belongs to `owner`. Its guid is
      * already `HIGHGUID_PET`'s, with its pet number where a creature has its entry.
      */
     void becomePet(ulong owner, Object state)
@@ -574,7 +573,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
         return guid_;
     }
 
-    private VendorStocks vendorStock; // `m_vendorItemCounts`
+    private VendorStocks vendorStock; // what its limited items have left
 
     /// See `VendorStocks.count`.
     uint vendorItemCount(uint item, uint maxCount, uint incrTime, uint buyCount, long now)
@@ -624,10 +623,10 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
         return movement.position;
     }
 
-    /// The players attacking it (`Unit::m_attackers`), by guid.
+    /// The players attacking it, by guid.
     bool[ulong] attackers;
 
-    /// A temporary summon (`TemporarySpawn`): how it goes (`TempSpawnType`), its time, who summoned it.
+    /// A temporary summon: how it goes (`TempSpawnType`), its time, who summoned it.
     TempSpawn summon;
 
     /// A pet's owner (a player's guid); 0 for any other creature.
@@ -640,14 +639,14 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
     /// The dungeon instance it lives in (0: none): it does not respawn there, and is not saved.
     uint instanceId;
 
-    /// Dead: milliseconds until its corpse goes (`m_corpseExpirationTime`); and when it comes back (Unix time).
+    /// Dead: milliseconds until its corpse goes; and when it comes back (Unix time).
     int corpseTimer;
     long respawnAt; /// ditto
 
-    /// `m_lootRecipientGuid` and `m_lootGroupRecipientId`: who tapped it (its first damage), and that one's group.
+    /// Who tapped it (its first damage), and that one's group.
     ulong lootRecipient;
     uint lootGroupRecipient; /// ditto
-    /// Dead: what it dropped (`m_loot`); null when nothing (or looted).
+    /// Dead: what it dropped; null when nothing (or looted).
     Loot loot;
 
     /// Its auras (`dmangos.world.auras`): what players' spells left on it.
@@ -656,7 +655,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
     /// `UNIT_DYNFLAG_LOOTABLE`, `UNIT_DYNFLAG_TAPPED`
     enum uint dynLootable = 0x01, dynTapped = 0x04;
 
-    /// `Creature::SetLootRecipient`: tapped by `player` (and its group), or (0) by nobody; everyone sees it grey.
+    /// Tapped by `player` (and its group), or (0) by nobody; everyone sees it grey.
     void setLootRecipient(ulong player, uint group)
     {
         lootRecipient = player;
@@ -665,7 +664,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
         values.set!UNIT_DYNAMIC_FLAGS(player ? flags | dynTapped : flags);
     }
 
-    /// `Creature::IsTappedBy`
+    /// Whether `player` (or its group `group`) tapped it.
     bool tappedBy(ulong player, uint group) const
     {
         return lootRecipient && (player == lootRecipient || (lootGroupRecipient && group == lootGroupRecipient));
@@ -685,7 +684,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
     }
 
     /**
-     * See `PerViewer.fieldFor`: `Object::BuildValuesUpdate`'s dynamic flags. Who tapped it (or its
+     * See `PerViewer.fieldFor`: the dynamic flags each viewer sees. Who tapped it (or its
      * group) does not see it tapped, and sees its corpse sparkle while there is something for it.
      */
     uint fieldFor(ulong viewer, uint viewerGroup, size_t slot, uint value) const
@@ -718,15 +717,15 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
             world.flushCreature(this);
     }
 
-    /// `Creature::InspectingLoot`: someone looks into its loot; the corpse lasts two minutes more at least.
+    /// Someone looks into its loot; the corpse lasts two minutes more at least.
     void inspectingLoot()
     {
-        enum int minimumLootingTime = 2 * 60 * 1000; // MINIMUM_LOOTING_TIME
+        enum int minimumLootingTime = 2 * 60 * 1000;
         if (corpseTimer < minimumLootingTime)
             corpseTimer = minimumLootingTime;
     }
 
-    /// `SetLootStatus(CREATURE_LOOT_STATUS_LOOTED)` and `ReduceCorpseDecayTimer`: nothing left; it goes within two minutes.
+    /// Nothing left in its loot; it goes within two minutes.
     void lootedOut()
     {
         enum int minimumLootingTime = 2 * 60 * 1000;
@@ -769,7 +768,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
     const ClientData client;
     const(FactionTemplateEntry)* factionTemplate;
 
-    /// `IsAlive`: it has health left.
+    /// It has health left.
     @property bool alive() const
     {
         return values.get!UNIT_FIELD_HEALTH > 0;
@@ -778,8 +777,8 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
     /// What the melee formulas (`dmangos.world.combat`) need of it now.
     Fighter fighter() const
     {
-        enum uint noParry = 0x04, noBlock = 0x10; // CREATURE_EXTRA_FLAG_NO_PARRY, _NO_BLOCK
-        enum uint rankWorldBoss = 3;              // CREATURE_ELITE_WORLDBOSS
+        enum uint noParry = 0x04, noBlock = 0x10; // `extra_flags`: never parries, never blocks
+        enum uint rankWorldBoss = 3;              // the world boss rank
         Fighter f;
         f.guid = guid_;
         f.worldBoss = template_.rank == rankWorldBoss;
@@ -793,7 +792,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
             [values.get!UNIT_FIELD_MINOFFHANDDAMAGE, values.get!UNIT_FIELD_MAXOFFHANDDAMAGE],
             [values.get!UNIT_FIELD_MINRANGEDDAMAGE, values.get!UNIT_FIELD_MAXRANGEDDAMAGE]];
         f.damageSchool[] = template_.damageSchool;
-        // `GetCritChance`, `GetDodgeChance`, `GetParryChance`, `GetBlockChance`: 5% each for creatures.
+        // Crit, dodge, parry and block chances: 5% each for creatures.
         f.crit = f.dodge = f.parry = f.block = 5;
         f.canParry = !(template_.extraFlags & noParry);
         f.canBlock = !(template_.extraFlags & noBlock);
@@ -803,13 +802,13 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
     }
 
     /**
-     * `Unit::DealDamage` to it: takes `damage` from its health. Returns whether that killed it
-     * (`Unit::Kill`); the caller then lets it die (`die`).
+     * Takes `damage` from its health. Returns whether that killed it;
+     * the caller then lets it die (`die`).
      */
     bool takeDamage(uint damage)
     {
         const health = values.get!UNIT_FIELD_HEALTH;
-        // `SetDeathPrevention`: its script keeps it at 1 health.
+        // Death prevention: its script keeps it at 1 health.
         if (health <= damage && ai !is null && ai.deathPrevention)
         {
             values.set!UNIT_FIELD_HEALTH(1u);
@@ -825,7 +824,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
     }
 
     /**
-     * `Creature::SetDeathState(JUST_DIED)`, as far as there is death yet: it stops where it is and
+     * It has just died, as far as there is death yet: it stops where it is and
      * moves no more; its corpse stays (despawning, respawning and loot come with death proper).
      */
     void die(MotionWorld world, long now)
@@ -833,8 +832,8 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
         import std.random : uniform;
         import dmangos.world.motion : IdleMovement, stopMoving;
 
-        // `SetDeathState(JUST_DIED)`: its corpse lasts by its rank (`Corpse.Decay.*`), at most 90% of its
-        // respawn time (`GetRandomRespawnTime`), which counts from now; it no longer offers its services.
+        // Its corpse lasts by its rank, at most 90% of its
+        // respawn time (random between the spawn's two), which counts from now; it no longer offers its services.
         static immutable uint[5] decayByRank = [60, 300, 300, 3600, 300]; // normal, elite, rare elite, boss, rare
         const respawnDelay = spawn.respawnSecondsMax > spawn.respawnSeconds
             ? uniform!"[]"(spawn.respawnSeconds, spawn.respawnSecondsMax) : spawn.respawnSeconds;
@@ -843,7 +842,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
             decay = respawnDelay * 9 / 10;
         corpseTimer = decay * 1000;
         respawnAt = now + respawnDelay;
-        foreach (aura; auras.list.dup) // `RemoveAllAurasOnDeath`
+        foreach (aura; auras.list.dup) // every aura goes on death
             auras.remove(aura, values);
         values.set!UNIT_NPC_FLAGS(0u);
         stopMoving(this, world);
@@ -856,7 +855,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
     }
 
     /**
-     * `Creature::Update` for movement: follows the walk under way, then lets the movement generator
+     * Movement on each tick: follows the walk under way, then lets the movement generator
      * decide, starting it on the first tick.
      */
     void tick(MotionWorld world, int diff)
@@ -869,12 +868,12 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
         if (summon.type != TempSpawnType.none && summon.update(this, diff))
         {
             if (auto combat = cast(CombatWorld) world)
-                combat.corpseExpired(this); // `UnSummon`
+                combat.corpseExpired(this); // its summoned time is up: it goes
             return;
         }
         if (!alive)
         {
-            // `Creature::Update` for a corpse: rolls on its loot end; when its time is up it goes (`RemoveCorpse`).
+            // A corpse: rolls on its loot end; when its time is up it goes.
             if (loot !is null)
                 loot.update();
             corpseTimer -= diff;
@@ -895,7 +894,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
         generator.update(this, world, diff);
     }
 
-    /// `Object::BuildCreateUpdateBlockForPlayer`: a unit with its movement, its walk and public fields.
+    /// What a create block shows of it: a unit with its movement, its walk and public fields.
     UpdateData appearance(uint serverTime) const
     {
         UpdateData update;
@@ -1016,7 +1015,7 @@ private:
         const scale = t.scale > 0 ? t.scale : client.displayScale(display);
         values.set!OBJECT_FIELD_SCALE_X(scale);
 
-        // InitEntry: class, gender, power type, model.
+        // Class, gender, power type, model.
         enum : ubyte { powerMana = 0, powerRage = 1, powerEnergy = 3 }
         const powerType = t.unitClass == 1 ? powerRage : t.unitClass == 4 ? powerEnergy : powerMana;
         values.set!UNIT_FIELD_BYTES_0(uint(t.unitClass) << 8 | uint(parts.gender) << 16 | uint(powerType) << 24);
@@ -1026,7 +1025,7 @@ private:
         values.set!UNIT_FIELD_COMBATREACH(parts.combatReach * scale);
         values.set!UNIT_MOD_CAST_SPEED(1.0f);
 
-        // SelectLevel: health, mana, armor, attack power and damage from the class stats, or the template's.
+        // Health, mana, armor, attack power and damage from the class stats, or the template's.
         values.set!UNIT_FIELD_LEVEL(level);
         const combat = selectLevel(*t, level, parts.hasClassStats ? &parts.classStats : null);
         const health = combat.health, mana = combat.mana;
@@ -1045,11 +1044,11 @@ private:
         values.set!UNIT_FIELD_MAXHEALTH(health);
         values.set!UNIT_FIELD_POWER1(0, mana);
         values.set!UNIT_FIELD_MAXPOWER1(0, mana);
-        values.set!UNIT_FIELD_MAXPOWER1(1, 1000u); // rage, as Unit::SetPowerType gives it
+        values.set!UNIT_FIELD_MAXPOWER1(1, 1000u); // rage
         values.set!UNIT_FIELD_MAXPOWER1(3, 100u);  // energy
         values.set!UNIT_FIELD_POWER1(3, 100u);
 
-        // UpdateEntry: faction, flags, attack times.
+        // Faction, flags, attack times.
         values.set!UNIT_FIELD_FACTIONTEMPLATE(t.faction);
         values.set!UNIT_NPC_FLAGS(t.npcFlags);
         values.set!UNIT_FIELD_FLAGS(t.unitFlags);
@@ -1060,7 +1059,7 @@ private:
         values.setByte!UNIT_FIELD_BYTES_2(0, cast(ubyte) sheathMelee);
         values.setByte!UNIT_FIELD_BYTES_2(1, cast(ubyte) unitByte2FlagAuras);
 
-        // LoadEquipment: what it holds.
+        // What it holds.
         foreach (slot, ref item; parts.equipment)
             if (item.display)
                 setVirtualItem(slot, item);
@@ -1076,7 +1075,7 @@ private:
     }
 }
 
-/// `Creature::ChooseDisplayId`: one of the template's models, each as likely.
+/// One of the template's models, each as likely.
 uint chooseDisplay(const ref CreatureTemplate t, ref Random rng)
 {
     uint[4] models;
@@ -1087,7 +1086,7 @@ uint chooseDisplay(const ref CreatureTemplate t, ref Random rng)
     return count ? models[uniform(0, count, rng)] : 0;
 }
 
-/// `SelectLevel`'s level: between the template's minimum and maximum.
+/// The level: between the template's minimum and maximum.
 uint chooseLevel(const ref CreatureTemplate t, ref Random rng)
 {
     const low = max(1, min(t.minLevel, t.maxLevel)), high = max(low, max(t.minLevel, t.maxLevel));
@@ -1119,8 +1118,8 @@ unittest
     auto creature = new Creature(spawn, &hogger, 384, 11, parts, testClientData());
     assert(highGuidOf(creature.guid) == HighGuid.unit && counterOf(creature.guid) == 89);
     assert(creature.values[OBJECT_FIELD_ENTRY] == 448 && creature.values[UNIT_FIELD_MAXHEALTH] == 222);
-    // SelectLevel's combat numbers: armor 400, attack power 30; damage over its 2 s swing:
-    // ((10.5 + 30 / 14) * 2) plus the attack power's 30 * 2 / 14 again (UpdateDamagePhysical), up to 1.5 times the base.
+    // The combat numbers: armor 400, attack power 30; damage over its 2 s swing:
+    // ((10.5 + 30 / 14) * 2) plus the attack power's 30 * 2 / 14 again (physical damage), up to 1.5 times the base.
     assert(creature.values[UNIT_FIELD_RESISTANCES] == 400 && creature.values.get!UNIT_FIELD_ATTACK_POWER == 30);
     const minDamage = creature.values.get!UNIT_FIELD_MINDAMAGE, maxDamage = creature.values.get!UNIT_FIELD_MAXDAMAGE;
     assert(minDamage > 29.56f && minDamage < 29.58f && maxDamage > 40.06f && maxDamage < 40.08f);

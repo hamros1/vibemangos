@@ -1,5 +1,5 @@
 /**
- * Creature scripts (CMaNGOS `AI/EventAI/CreatureEventAI.cpp`): `creature_ai_scripts`' events and
+ * Creature scripts: `creature_ai_scripts`' events and
  * actions for the creatures whose `AIName` is `EventAI`.
  *
  * Each event waits for its moment: timers in and out of combat, health and mana between two
@@ -24,7 +24,7 @@ import std.random : uniform;
 
 import dmangos.mysql : MySqlConnection;
 
-/// `EventAI_Type`, the ones handled.
+/// The event types (`event_type`), the ones handled.
 enum EventType : ubyte
 {
     timerInCombat = 0,
@@ -57,7 +57,7 @@ struct SummonSpot
     uint seconds;
 }
 
-/// `EventAI_ActionType`, the ones handled.
+/// The action types (`action*_type`), the ones handled.
 enum ActionType : ubyte
 {
     none = 0,
@@ -97,15 +97,15 @@ enum ActionType : ubyte
     setRangedMode = 57,
 }
 
-/// `EventFlags`
+/// `event_flags`
 enum uint eventRepeatable = 0x01, eventRandomAction = 0x20, eventRangedModeOnly = 0x100, eventMeleeModeOnly = 0x200,
     eventCombatAction = 0x400;
 
-/// `CastFlags`
+/// The cast flags of the cast action.
 enum uint castInterruptPrevious = 0x01, castTriggered = 0x02, castForceCast = 0x04, castNoMeleeIfOom = 0x08,
     castForceTargetSelf = 0x10, castAuraNotPresent = 0x20;
 
-/// `EventAI_Target`, the ones handled.
+/// The targets of actions, the ones handled.
 enum EventTarget : int
 {
     self = 0,
@@ -193,7 +193,7 @@ final class EventAiData
         return data;
     }
 
-    /// The events of a creature: its entry's, then its spawn's (`CreatureEventAI`'s two maps).
+    /// The events of a creature: its entry's, then its spawn's.
     const(EventAiEvent)[] eventsOf(uint entry, uint spawnGuid) const
     {
         return byCreature.get(entry, null) ~ bySpawn.get(spawnGuid, null);
@@ -213,7 +213,7 @@ enum eventAiQuery = "SELECT id, creature_id, event_type, event_inverse_phase_mas
     ~ "action1_param1, action1_param2, action1_param3, action2_type, action2_param1, action2_param2, action2_param3, "
     ~ "action3_type, action3_param1, action3_param2, action3_param3 FROM creature_ai_scripts";
 
-/// An event as it stands for one creature (`CreatureEventAIHolder`).
+/// An event as it stands for one creature.
 struct EventHolder
 {
     const(EventAiEvent)* event;
@@ -239,47 +239,47 @@ interface Scripted
     /// Whether its victim is casting.
     bool victimCasting();
 
-    /// `DoSelectLowestHpFriendly`: the friend within `radius` most hurt, by at least `deficit`
+    /// The friend within `radius` most hurt, by at least `deficit`
     /// (health, or percent); 0 if none.
     ulong lowestHpFriendly(float radius, uint deficit, bool percent);
 
-    /// `PlayDirectSound` around it.
+    /// Plays a sound around it.
     void scriptSound(uint sound);
 
     /// Unit flags set on or cleared from a target.
     void scriptUnitFlags(ulong target, uint flags, bool set);
 
-    /// `SetMeleeEnabled`
+    /// Its melee swings on or off.
     void scriptMelee(bool on);
 
-    /// `RemoveAurasDueToSpell` on a target.
+    /// Takes the aura of `spell` off a target.
     void scriptRemoveAura(ulong target, uint spell);
 
-    /// `ForcedDespawn` after `delay` milliseconds.
+    /// It despawns after `delay` milliseconds.
     void scriptDespawn(uint delay);
 
-    /// `SetDeathPrevention`: it does not die of damage (left at 1 health).
+    /// It does not die of damage (left at 1 health).
     void scriptDeathPrevention(bool on);
 
-    /// `SetReactState`: 0 passive, 1 defensive, 2 aggressive.
+    /// Its react state: 0 passive, 1 defensive, 2 aggressive.
     void scriptReactState(uint state);
 
-    /// `ScriptsStart(SCRIPT_TYPE_RELAY)`: relay script `id` (negative: one of group -`id`), at `target`.
+    /// Starts relay script `id` (negative: one of group -`id`), at `target`.
     void scriptRelay(int id, ulong target);
 
-    /// `SetFactionTemporary`; 0 puts its own back.
+    /// A temporary faction; 0 puts its own back.
     void scriptFaction(uint faction);
 
-    /// `AreaExploredOrEventHappens` for the player `player`, or (`all`) every player fighting it.
+    /// A quest's event happens for the player `player`, or (`all`) every player fighting it.
     void scriptQuestEvent(uint quest, ulong player, bool all);
 
-    /// `KilledMonsterCredit` of `entry` for the player `player`.
+    /// Kill credit of `entry` for the player `player`.
     void scriptKillCredit(uint entry, ulong player);
 
-    /// `SendAIEventAround`: an AI event of `type` to the friendly creatures within `radius`, `invoker` its invoker.
+    /// An AI event of `type` to the friendly creatures within `radius`, `invoker` its invoker.
     void scriptThrowAiEvent(uint type, float radius, ulong invoker);
 
-    /// `SummonCreature` of `entry`: near it, or at summon spot `spot` (`creature_ai_summons`); it
+    /// Summons a creature of `entry`: near it, or at summon spot `spot` (`creature_ai_summons`); it
     /// attacks `target` (0: none). False if it could not be summoned.
     bool scriptSummon(uint entry, ulong target, uint durationMs, uint spot);
 
@@ -287,26 +287,26 @@ interface Scripted
     uint victimHealthPercent();
     float victimDistance(); /// ditto
 
-    /// The target of an action (`GetTargetByType`); 0 if there is none.
+    /// The target of an action by its type; 0 if there is none.
     ulong targetFor(int type, ulong invoker);
 
-    /// `DoCastSpellIfCan`: false if it could not.
+    /// Casts `spell` at `target` as `flags` say: false if it could not.
     bool scriptCast(uint spell, ulong target, uint flags);
 
-    /// `DoDisplayText`: a broadcast text, said, yelled, emoted or whispered as the text says.
+    /// A broadcast text, said, yelled, emoted or whispered as the text says.
     void scriptText(uint text, ulong target);
 
-    /// `HandleEmote`, `SetStandState`
+    /// An emote; a stand state.
     void scriptEmote(uint emote);
     void scriptStandState(uint state); /// ditto
 
-    /// `DoFlee`, `CallForHelp`, `EnterEvadeMode`, `AttackStart`
+    /// Fleeing, calling for help, evading, attacking.
     bool scriptFlee();
     void scriptCallForHelp(float radius); /// ditto
     void scriptEvade(); /// ditto
     void scriptAttack(ulong target); /// ditto
 
-    /// `SetCombatMovement`, `SetRangedMode`
+    /// Combat movement on or off; ranged mode (keeping its distance to cast).
     void scriptCombatMovement(bool on);
     void scriptRangedMode(bool on, float distance); /// ditto
     @property bool rangedMode(); /// ditto
@@ -320,7 +320,7 @@ final class EventAI
     private uint phase;
     private ulong eventTarget; // the event's own target, for `TARGET_T_EVENT_SPECIFIC`
     private ulong eventSender; // the creature that sent an AI event, for `TARGET_T_EVENT_SENDER`
-    private int updateIn = 500;     // `EVENT_UPDATE_TIME`: the timers are looked at twice a second
+    private int updateIn = 500;     // the timers are looked at twice a second
     private uint pendingDiff;
     private bool spawnPending = true;
     private bool hasOutOfCombatTimers;
@@ -344,7 +344,7 @@ final class EventAI
         return spawnPending || hasOutOfCombatTimers;
     }
 
-    /// `JustRespawned`: the timers start (in combat ones wait for the fight).
+    /// It has spawned: the timers start (in combat ones wait for the fight).
     private void resetSpawned()
     {
         foreach (ref h; holders)
@@ -356,7 +356,7 @@ final class EventAI
         }
     }
 
-    /// `UpdateRepeatTimer`
+    /// Sets the timer to between `min` and `max`; with `max` below `min` the event is off.
     private static void setTimer(ref EventHolder h, int min, int max)
     {
         if (min == max)
@@ -367,7 +367,7 @@ final class EventAI
             h.enabled = false;
     }
 
-    /// `IsTimerBasedEvent`'s repeat timers (`GetRepeatTimers`): most events' third and fourth parameters.
+    /// The repeat timers of a timer-based event: most events' third and fourth parameters.
     private static void repeatTimers(const ref EventAiEvent e, out int min, out int max)
     {
         if (e.type == EventType.kill || e.type == EventType.targetCasting)
@@ -382,7 +382,7 @@ final class EventAI
         }
     }
 
-    /// `CheckEvent`: whether the event may go now.
+    /// Whether the event may go now.
     private bool check(ref EventHolder h, Scripted me)
     {
         const e = h.event;
@@ -445,7 +445,7 @@ final class EventAI
         }
     }
 
-    /// `ProcessEvent`: by its chance, its actions (one at random with `EFLAG_RANDOM_ACTION`), then its reset.
+    /// By its chance, its actions (one at random with `EFLAG_RANDOM_ACTION`), then its reset.
     private void process(ref EventHolder h, Scripted me, ulong invoker)
     {
         eventTarget = h.eventTarget;
@@ -473,14 +473,14 @@ final class EventAI
             reset(h);
     }
 
-    /// `ResetEvent`: timer-based events wait their repeat time; those that do not repeat are done.
+    /// Timer-based events wait their repeat time; those that do not repeat are done.
     private void reset(ref EventHolder h)
     {
         const e = h.event;
         switch (e.type)
         {
         case EventType.spawned, EventType.death, EventType.aggro, EventType.evade, EventType.reachedHome:
-            h.enabled = false; // `IsRepeatableEvent`: never again
+            h.enabled = false; // these never happen again
             return;
         default:
             break;
@@ -501,7 +501,7 @@ final class EventAI
             h.enabled = false;
     }
 
-    /// `ProcessAction`
+    /// Runs one action; whether it succeeded.
     private bool act(const ref EventAiAction a, Scripted me, ulong invoker)
     {
         switch (a.type)
@@ -674,7 +674,7 @@ final class EventAI
         }
     }
 
-    /// `GetTargetByType` with the event's own target (`TARGET_T_EVENT_SPECIFIC`).
+    /// The target of an action by its type, with the event's own target (`TARGET_T_EVENT_SPECIFIC`).
     private ulong targetOf(int type, Scripted me, ulong invoker)
     {
         if (type == EventTarget.eventSender)
@@ -682,7 +682,7 @@ final class EventAI
         return type == EventTarget.eventSpecific ? eventTarget : me.targetFor(type, invoker);
     }
 
-    /// `SpellHit`: a spell (`spell` of `schoolMask`) hit it.
+    /// A spell (`spell` of `schoolMask`) hit it.
     void spellHit(Scripted me, ulong caster, uint spell, uint schoolMask)
     {
         foreach (ref h; holders)
@@ -696,7 +696,7 @@ final class EventAI
             }
     }
 
-    /// `ReceiveAIEvent`: another creature's AI event of `type` (from `sender`, of `senderEntry`), `invoker` its cause.
+    /// Another creature's AI event of `type` (from `sender`, of `senderEntry`), `invoker` its cause.
     void aiEventReceived(Scripted me, uint type, ulong sender, uint senderEntry, ulong invoker)
     {
         foreach (ref h; holders)
@@ -709,7 +709,7 @@ final class EventAI
             }
     }
 
-    /// `ReceiveEmote`: a player's text emote at it.
+    /// A player's text emote at it.
     void receivedEmote(Scripted me, ulong player, uint emote)
     {
         foreach (ref h; holders)
@@ -717,7 +717,7 @@ final class EventAI
                 process(h, me, player);
     }
 
-    /// Runs the events of `type` now (`CheckAndReadyEventForExecution` then `ProcessEvents`).
+    /// Runs the events of `type` that may go now.
     private void fire(EventType type, Scripted me, ulong invoker)
     {
         foreach (ref h; holders)
@@ -729,7 +729,7 @@ final class EventAI
     // The AI's moments
     // -------------------------------------------------------------------
 
-    /// `EnterCombat`: the in-combat timers start, and the aggro events go.
+    /// The fight starts: the in-combat timers start, and the aggro events go.
     void combatStarted(Scripted me, ulong enemy)
     {
         foreach (ref h; holders)
@@ -745,19 +745,19 @@ final class EventAI
         pendingDiff = 0;
     }
 
-    /// `KilledUnit`
+    /// It killed `victim`.
     void killed(Scripted me, ulong victim)
     {
         fire(EventType.kill, me, victim);
     }
 
-    /// `JustDied`
+    /// It died.
     void died(Scripted me, ulong killer)
     {
         fire(EventType.death, me, killer);
     }
 
-    /// `EnterEvadeMode`: the evade events, then `Reset`.
+    /// It evades: the evade events, then the events start over for out of combat.
     void evaded(Scripted me)
     {
         fire(EventType.evade, me, 0);
@@ -778,13 +778,13 @@ final class EventAI
             }
     }
 
-    /// `JustReachedHome`
+    /// It is back at its spawn point.
     void reachedHome(Scripted me)
     {
         fire(EventType.reachedHome, me, 0);
     }
 
-    /// `UpdateEventTimers`, twice a second; the spawned events at the first.
+    /// The event timers, twice a second; the spawned events at the first.
     void update(Scripted me, int diff)
     {
         if (spawnPending)

@@ -1,16 +1,16 @@
 /**
- * The pet's AI (CMaNGOS's `PetAI`), mixed into `dmangos.world.creatureai.CreatureAI`: a creature
+ * The pet's AI, mixed into `dmangos.world.creatureai.CreatureAI`: a creature
  * with an owner (`Creature.petOwner`) runs `petUpdate` instead of a creature's fight. It has no
  * threat list and never evades. It attacks what its owner tells it to (`petAttack`), and unless
- * passive it also attacks what attacks it or its owner, or what its owner attacks (`OwnerAttacked`,
- * `OwnerAttackedBy`). When its victim is dead or gone it goes back to its owner, following at a
- * yard and a half to its left (`m_followDist`, `m_followAngle`), or to where it was told to stay.
+ * passive it also attacks what attacks it or its owner, or what its owner attacks
+ * (`petAssist`). When its victim is dead or gone it goes back to its owner, following at a
+ * yard and a half to its left (`petFollowDistance`, `petFollowAngle`), or to where it was told to stay.
  * Spells set to cast by themselves (`ACT_ENABLED`) are cast at its victim as their cooldowns allow;
  * the imp casts from 25 yards and does not melee.
  */
 module dmangos.world.petai;
 
-/// `PetAI::m_followDist`, `m_followAngle`: a yard and a half, a quarter turn left of the owner.
+/// Where a pet follows: a yard and a half, a quarter turn left of the owner.
 enum float petFollowDistance = 1.5f;
 /// ditto
 enum float petFollowAngle = 1.5707964f;
@@ -18,7 +18,7 @@ enum float petFollowAngle = 1.5707964f;
 /// `SPELL_ATTR_EX_NO_AUTOCAST_AI`
 enum uint spellAttrExNoAutocast = 0x0002_0000;
 
-/// `IsAutocastable`: neither passive nor marked not to be autocast.
+/// Neither passive nor marked not to be autocast.
 bool isAutocastable(const ref imported!"dmangos.world.spells".SpellInfo spell) pure nothrow @nogc @safe
 {
     return !spell.isPassive && !(spell.attributesEx & spellAttrExNoAutocast);
@@ -43,7 +43,7 @@ mixin template PetBehaviour()
         int lookTimer;              // until an aggressive pet next looks around
     }
 
-    /// The imp's way (`m_attackDistance`, `m_meleeEnabled`): it casts from `distance` and never melees.
+    /// The imp's way: it casts from `distance` and never melees.
     void petRangedAttacker(float distance)
     {
         meleeEnabled = false;
@@ -57,13 +57,13 @@ mixin template PetBehaviour()
         return cast(PetState) me.petData;
     }
 
-    /// `CharmInfo::GetCommandState`
+    /// What its owner told it to do: stay, follow, attack or dismiss.
     @property CommandState petCommand()
     {
         return pet.command;
     }
 
-    /// `PetAI::AttackStart`: attacks `who`, chasing it (or casting from afar, the imp).
+    /// Attacks `who`, chasing it (or casting from afar, the imp).
     void petAttack(UnitRef who, CombatWorld world)
     {
         world_ = world;
@@ -90,7 +90,7 @@ mixin template PetBehaviour()
         world.wake(me.guid);
     }
 
-    /// `AttackStop` and `CombatStop`: it stops fighting and goes back to its owner (or its place).
+    /// It stops fighting and goes back to its owner (or its place).
     void petStopAttack(CombatWorld world)
     {
         world_ = world;
@@ -104,7 +104,7 @@ mixin template PetBehaviour()
         world.flushCreature(me);
     }
 
-    /// `OwnerAttackedBy`, `OwnerAttacked`, and its own `AttackedBy`: unless passive, staying out of
+    /// Its owner was attacked, its owner attacked, or it was attacked: unless passive, staying out of
     /// it, or already fighting, it attacks.
     void petAssist(UnitRef enemy, CombatWorld world)
     {
@@ -115,7 +115,7 @@ mixin template PetBehaviour()
         petAttack(enemy, world);
     }
 
-    /// `PetAI::UpdateAI`
+    /// The pet's tick: its fight, its spells, following or staying.
     void petUpdate(CombatWorld world, int diff)
     {
         world_ = world;
@@ -163,7 +163,7 @@ mixin template PetBehaviour()
     }
 
     /**
-     * `PetAI::MoveInLineOfSight` of an aggressive pet: the nearest enemy (not a civilian) within its
+     * An aggressive pet looks around: the nearest enemy (not a civilian) within its
      * attack distance and in sight. Whether it found one.
      */
     private bool petLookAround(CombatWorld world)
@@ -246,7 +246,7 @@ mixin template PetBehaviour()
         }
     }
 
-    /// `MoveStay`: back to where it was told to stay.
+    /// Back to where it was told to stay.
     private void petHoldStay(CombatWorld world)
     {
         if (!pet.hasStay)
@@ -261,7 +261,7 @@ mixin template PetBehaviour()
         launch(me, world, points, false, float.nan, true);
     }
 
-    /// `FollowMovementGenerator`: to its place beside its owner, setting off again when it moved on.
+    /// To its place beside its owner, setting off again when it moved on.
     private void petFollow(Position owner, CombatWorld world)
     {
         const angle = owner.orientation + petFollowAngle;
@@ -282,7 +282,7 @@ mixin template PetBehaviour()
             z = owner.z;
         followedTo = owner;
         Vector3[] points = [Vector3(0, 0, 0), Vector3(x, y, z)];
-        // As fast as its owner runs, to keep up (`UpdateSpeed` from the owner's).
+        // As fast as its owner runs, to keep up.
         launch(me, world, points, false, owner.orientation, true);
     }
 

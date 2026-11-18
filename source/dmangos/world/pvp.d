@@ -1,6 +1,6 @@
 /**
- * The PvP flag (CMaNGOS-classic's `Player::UpdatePvP`, `UpdatePvPContested`, `UpdateZone`'s enforced
- * areas and `Unit::SetInCombatWith*`): whether other players may attack this one.
+ * The PvP flag, the contested flag and the free-for-all flag: whether other players may attack this
+ * one, and how zones, areas and fights set and clear the flags.
  *
  * $(UL
  *   $(LI `UNIT_FLAG_PVP` is the flag. It is set by the player's wish (`/pvp`, `PLAYER_FLAGS_PVP_DESIRED`),
@@ -19,13 +19,13 @@
  */
 module dmangos.world.pvp;
 
-/// `PvPInfo` timers, in milliseconds.
+/// The PvP flag's and the contested flag's timers, in milliseconds.
 enum int pvpFlagMs = 300_000, pvpContestedMs = 30_000;
 
-/// `RealmType`: the realm types (`GameType` in the configuration) that are PvP realms, and the free-for-all one.
+/// The realm types (`game_type` in the configuration) that are PvP realms, and the free-for-all one.
 bool isPvPRealm(uint gameType) pure nothrow @nogc @safe
 {
-    return gameType == 1 || gameType == 8 || gameType == 16; // REALM_TYPE_PVP, RPPVP, FFA_PVP
+    return gameType == 1 || gameType == 8 || gameType == 16; // PvP, RP-PvP, free-for-all
 }
 
 /// ditto
@@ -34,7 +34,7 @@ bool isFreeForAllRealm(uint gameType) pure nothrow @nogc @safe
     return gameType == 16;
 }
 
-/// `AreaTeams`: whose a zone is.
+/// Whose a zone is.
 enum AreaTeam : uint
 {
     none = 0,       /// contested
@@ -49,7 +49,7 @@ enum uint areaFlagArena = 0x80, areaFlagCapital = 0x100;
 enum uint spellHonorlessTarget = 2479;
 
 /**
- * `Player::UpdateZone`'s `inPvPEnforcedArea`: whether a zone flags a player of `alliance` (or the
+ * Whether a zone enforces PvP: whether it flags a player of `alliance` (or the
  * Horde) for PvP, on a realm of `gameType`.
  */
 bool enforcedPvPZone(uint zoneTeam, uint zoneFlags, bool alliance, uint gameType, bool inBattleground = false)
@@ -92,14 +92,14 @@ mixin template PvPHandlers()
 
     private
     {
-        bool pvpInCombat;          // `inPvPCombat`: fighting a flagged player (until out of combat)
-        bool pvpEnforcedArea;      // `inPvPEnforcedArea`
-        int pvpTimer;              // `timerPvPRemaining`
-        int pvpContestedTimer;     // `timerPvPContestedRemaining`
+        bool pvpInCombat;          // fighting a flagged player (until out of combat)
+        bool pvpEnforcedArea;      // in a zone that flags the player
+        int pvpTimer;              // milliseconds until the PvP flag may go
+        int pvpContestedTimer;     // milliseconds until the contested flag may go
         bool pvpArrivedFar;        // a teleport or flight ended: the next zone check may make it honorless
     }
 
-    /// `WorldSession::HandleTogglePvP`: a byte sets the wish to fight players, none toggles it.
+    /// The client toggles PvP: a byte sets the wish to fight players, none toggles it.
     @Handles(Opcode.CMSG_TOGGLE_PVP, WorldState.inWorld)
     void handleTogglePvP(ref ByteReader reader)
     {
@@ -110,19 +110,19 @@ mixin template PvPHandlers()
         flushPlayerChanges();
     }
 
-    /// `IsPvP`
+    /// Whether the player has the PvP flag.
     @property bool isPvP() const
     {
         return (player.values.get!UNIT_FIELD_FLAGS & UnitFlags.pvp) != 0;
     }
 
-    /// `IsPvPContested`
+    /// Whether the player has the contested flag.
     @property bool isPvPContested() const
     {
         return hasPlayerFlag(PlayerFlagsPvP.contested);
     }
 
-    /// `IsPvPFreeForAll`
+    /// Whether the player has the free-for-all flag.
     @property bool isFreeForAll() const
     {
         return hasPlayerFlag(PlayerFlagsPvP.freeForAll);
@@ -140,7 +140,7 @@ mixin template PvPHandlers()
         pvpFlagsToPet();
     }
 
-    /// `Unit::SetPvP`: the flag on the player and on its pet; its group hears.
+    /// The flag on the player and on its pet; its group hears.
     void setPvP(bool on)
     {
         const flags = player.values.get!UNIT_FIELD_FLAGS;
@@ -167,7 +167,7 @@ mixin template PvPHandlers()
     }
 
     /**
-     * `Player::UpdatePvP`: flagged now, for 5 minutes more (`state`); or, the timer run out (or
+     * Flagged now, for 5 minutes more (`state`); or, the timer run out (or
      * `overriding`), unflagged.
      */
     void updatePvP(bool state, bool overriding = false)
@@ -188,7 +188,7 @@ mixin template PvPHandlers()
         }
     }
 
-    /// `Player::UpdatePvPContested`: as `updatePvP`, for the contested flag and 30 s.
+    /// As `updatePvP`, for the contested flag and 30 s.
     void updatePvPContested(bool state, bool overriding = false)
     {
         if (!state || overriding)
@@ -207,7 +207,7 @@ mixin template PvPHandlers()
         }
     }
 
-    /// `Player::UpdatePvPFlagTimer` and `UpdatePvPContestedFlagTimer`, every tick.
+    /// The flags' timers, every tick: they run only while nothing keeps the flag.
     package void updatePvPTimers(int diff)
     {
         const kept = pvpInCombat || pvpEnforcedArea || hasPlayerFlag(PlayerFlagsPvP.desired);
@@ -222,14 +222,14 @@ mixin template PvPHandlers()
             flushPlayerChanges();
     }
 
-    /// `Unit::ClearInCombat`: out of combat, out of PvP combat.
+    /// Out of combat, out of PvP combat.
     package void pvpLeftCombat()
     {
         pvpInCombat = false;
     }
 
     /**
-     * `Player::UpdateZone`'s part: an enforced area flags the player. Arriving there by teleport or
+     * The zone changed: an enforced area flags the player. Arriving there by teleport or
      * flight, it is an Honorless Target.
      */
     package void pvpZoneChanged(uint zone)
@@ -250,7 +250,7 @@ mixin template PvPHandlers()
         }
     }
 
-    /// `Player::UpdateArea`'s part: the free-for-all arenas.
+    /// The area changed: the free-for-all arenas.
     package void pvpAreaChanged(uint area)
     {
         const entry = context.client.areas.lookup(area);
@@ -268,9 +268,8 @@ mixin template PvPHandlers()
     }
 
     /**
-     * `Unit::SetInCombatWithAggressor` (this player hit) and, for the attacker, `SetInCombatWithVictim`:
-     * a hit between players (not duellists) flags the attacker if the victim is flagged, and the
-     * victim if the attacker is; the attacker becomes contested.
+     * This player was hit by `attacker`: a hit between players (not duellists) flags the attacker if
+     * the victim is flagged, and the victim if the attacker is; the attacker becomes contested.
      */
     package void pvpHitBy(typeof(this) attacker, bool attackerFlagged)
     {
@@ -290,7 +289,7 @@ mixin template PvPHandlers()
         }
     }
 
-    /// `Unit::SetInCombatWithAssisted`: healing or buffing a flagged player in combat flags the helper.
+    /// Healing or buffing a flagged player in combat flags the helper.
     package void pvpAssisted(typeof(this) other)
     {
         if (other is null || other is this || !other.isPvP || !other.inCombat)

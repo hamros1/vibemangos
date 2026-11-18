@@ -1,8 +1,8 @@
 /**
- * Reader for the client's DBC tables (`WDBC` files, as extracted for mangosd's `DataDir`).
+ * Reader for the client's DBC tables (`WDBC` files, as extracted into the data directory's `dbc/` folder).
  *
  * A DBC file is a header, fixed-size records and a string block. Records
- * are described by the same format strings CMaNGOS uses (`DBCfmt.h`), one
+ * are described by format strings, one
  * character per field:
  *
  * $(UL
@@ -186,7 +186,7 @@ struct DbcStore(Entry, string fmt)
         return null;
     }
 
-    /// Highest id + 1 (CMaNGOS's `GetNumRows`), for loops over the id range.
+    /// Highest id + 1, for loops over the id range.
     @property uint idLimit() const
     {
         uint limit;

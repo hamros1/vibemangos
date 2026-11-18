@@ -1,6 +1,6 @@
 /**
- * Auras on players and the creatures they cast at (CMaNGOS `Spell::EffectApplyAura`, `SpellAuras.cpp`'s
- * handlers and periodic ticks, `HandleCancelAuraOpcode`), mixed into `dmangos.world.character.Character`.
+ * Auras on players and the creatures they cast at: applying them, what they do, their periodic
+ * ticks, and cancelling them; mixed into `dmangos.world.character.Character`.
  *
  * What an aura does while it lasts: stats, resistances, armor and attack power (the stats are worked
  * out again), speeds (and mounts), a stance or form, being rooted or stunned, and periodic effects:
@@ -52,7 +52,7 @@ private:
         foreach (j; 0 .. 3)
             if (spell.effect[j] == applyAura && spell.casting.applyAuraName[j] == AuraType.periodicDamage)
                 values[j] = spellMod(SpellModOp.dot, spell, values[j]);
-        // `SpellDamageBonusDone` / `SpellHealingBonusDone` over time: the bonus times the duration over
+        // The caster's spell damage or healing bonus over time: the bonus times the duration over
         // 15 seconds (at most whole), shared out among the ticks.
         foreach (j; 0 .. 3)
             if (spell.effect[j] == applyAura && spell.casting.amplitude[j] > 0 && ms > 0)
@@ -126,7 +126,7 @@ private:
         flushPlayerChanges();
     }
 
-    /// `Unit::DispelAll`: the negative auras go, and with `positive` the positive ones too (not the passive).
+    /// The negative auras go, and with `positive` the positive ones too (not the passive).
     package void dispelAll(bool positive)
     {
         if (player is null)
@@ -148,8 +148,8 @@ private:
     }
 
     /**
-     * What an aura's effects do as it begins (`apply`) and ends: the `HandleAura*` functions this
-     * server has.
+     * What an aura's effects do as it begins (`apply`) and ends: the aura types this
+     * server handles.
      */
     void auraEffects(Aura aura, bool apply)
     {
@@ -187,7 +187,7 @@ private:
                 break;
             }
         }
-        // Food and drink sit down (`_AddSpellAuraHolder`).
+        // Food and drink sit down.
         if (apply && (aura.spell.casting.auraInterruptFlags & AuraInterrupt.standingCancels)
             && player.values.getByte!UNIT_FIELD_BYTES_1(0) == 0)
         {
@@ -202,7 +202,7 @@ private:
             refreshRooted();
     }
 
-    /// `UpdateSpeed`: run and swim speeds by the strongest speed-up (or mount) and slow.
+    /// Run and swim speeds by the strongest speed-up (or mount) and slow.
     void refreshSpeeds()
     {
         const auras = &player.auras;
@@ -223,7 +223,7 @@ private:
             forceSpeed!(Opcode.SMSG_FORCE_SWIM_SPEED_CHANGE)(MoveType.swim, swim);
     }
 
-    /// `SetRooted`, `SetStunned`: rooted while any root or stun lasts (and stunned while a stun does).
+    /// Rooted while any root or stun lasts (and stunned while a stun does).
     void refreshRooted()
     {
         const stunned = player.auras.has(AuraType.modStun);
@@ -236,7 +236,7 @@ private:
             sendMovementOrder!(Opcode.SMSG_FORCE_MOVE_UNROOT)();
     }
 
-    /// `RemoveAurasWithInterruptFlags`: what standing up, moving, damage, casting or attacking ends.
+    /// What standing up, moving, damage, casting or attacking ends.
     package void interruptAuras(uint flags)
     {
         if (player is null)
@@ -245,7 +245,7 @@ private:
             removeAura(aura);
     }
 
-    /// `RemoveAllAurasOnDeath`: all but the passive ones.
+    /// Every aura goes on death but the passive ones.
     package void removeAurasOnDeath()
     {
         foreach (aura; player.auras.list.dup)
@@ -253,7 +253,7 @@ private:
                 removeAura(aura);
     }
 
-    /// `Player::_SaveAuras`: the auras that last (not passive ones), as they are now.
+    /// Saves the auras that last (not passive ones), as they are now.
     package void saveAuras()
     {
         import dmangos.world.database : AuraRecord;
@@ -266,7 +266,7 @@ private:
         context.database.saveAuras(player.data.guid, rows);
     }
 
-    /// `Player::_LoadAuras`: the auras saved at the last logout, with the time they had left.
+    /// Loads the auras saved at the last logout, with the time they had left.
     package void loadAuras()
     {
         foreach (ref row; context.database.loadAuras(player.data.guid))
@@ -284,7 +284,7 @@ private:
         }
     }
 
-    /// `HandleCancelAuraOpcode`: a positive aura the player clicks off.
+    /// A positive aura the player clicks off.
     @Handles(Opcode.CMSG_CANCEL_AURA, WorldState.inWorld)
     void handleCancelAura(ref ByteReader reader)
     {
@@ -294,7 +294,7 @@ private:
                 removeAura(aura);
     }
 
-    /// The auras' time passes (`SpellAuraHolder::Update`): their ticks, then those that ended; drink's mana.
+    /// The auras' time passes: their ticks, then those that ended; drink's mana.
     void updateAuras(Duration elapsed)
     {
         const ms = cast(int) elapsed.total!"msecs";
@@ -305,7 +305,7 @@ private:
         player.auras.update(ms, ticks, expired);
         foreach (tick; ticks)
             selfTick(tick.aura, tick.effect);
-        // `UpdateManaRegen`: drink (`MOD_POWER_REGEN` of mana) adds its mana every 5 seconds' worth.
+        // Drink (`MOD_POWER_REGEN` of mana) adds its mana every 5 seconds' worth.
         const drink = player.auras.totalByMisc(AuraType.modPowerRegen, Power.mana);
         if (drink > 0 && player.deathState == DeathState.alive)
         {
@@ -322,7 +322,7 @@ private:
             flushPlayerChanges();
     }
 
-    /// `Aura::PeriodicTick` on this player.
+    /// One periodic tick of an aura on this player.
     void selfTick(Aura aura, size_t i)
     {
         if (player.deathState != DeathState.alive)
@@ -413,7 +413,7 @@ private:
     {
         if (!target.alive || player is null)
             return;
-        // Its spell's script may make this tick another (`OnPeriodicCalculateAmount`).
+        // Its spell's script may make this tick another amount (`auraTickScript`).
         int scripted = aura.amount[i];
         if (aura.period[i] > 0 && aura.maxDuration > 0)
             scripted = auraTickScript(aura.spell, i, target.guid, (aura.maxDuration - aura.duration) / aura.period[i],

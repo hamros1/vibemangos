@@ -1,14 +1,13 @@
 /**
- * Extracts the client's DBC files, as CMaNGOS's `ad` extractor does
- * (`contrib/extractor/System.cpp`, `ExtractDBCFiles`).
+ * Extracts the client's DBC files.
  *
  * The archives `model`, `dbc`, `terrain`, `patch` and `patch-2` are opened
  * from the client's `Data` folder. Files are looked up newest archive
  * first, so patches win. Every `.dbc` named in an archive's `(listfile)` is
- * copied unchanged into `<output>/dbc/`, the layout mangosd's `DataDir`
- * and dmangos's `data_dir` expect.
+ * copied unchanged into `<output>/dbc/`, the layout dmangos's `data_dir`
+ * expects.
  *
- * Unlike CMaNGOS, a patch entry of one byte or less (a "removed" placeholder)
+ * A patch entry of one byte or less (a "removed" placeholder)
  * is skipped with a warning instead of being written as an empty file.
  * Every extracted file is also checked to be a complete DBC.
  */
@@ -25,7 +24,7 @@ import dmangos.dbc : dbcMagic;
 import dmangos.mpq.archive;
 import dmangos.mpq.crypt : readWord;
 
-/// Archives searched, oldest first (`CONF_mpq_list`).
+/// Archives searched, oldest first.
 immutable string[] clientArchives = ["model.MPQ", "dbc.MPQ", "terrain.MPQ", "patch.MPQ", "patch-2.MPQ"];
 
 /// What an extraction did.

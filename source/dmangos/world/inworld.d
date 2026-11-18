@@ -1,8 +1,6 @@
 /**
- * Handlers for a character in the world: logging out (`MiscHandler.cpp`),
- * movement (`MovementHandler.cpp`), queries (`QueryHandler.cpp`,
- * `ItemHandler.cpp`), the character's own settings, and chat
- * (`ChatHandler.cpp`).
+ * Handlers for a character in the world: logging out, movement, queries
+ * (names, items, ...), the character's own settings, and chat.
  *
  * `InWorldHandlers` is mixed into `dmangos.world.character.Character`, like
  * `dmangos.world.charscreen.CharacterScreenHandlers`.
@@ -64,7 +62,7 @@ private:
     enum ubyte standStateStand = 0;
 
     /**
-     * `WorldSession::LogoutPlayer`: saves the character and leaves the world, its channels and
+     * Saves the character and leaves the world, its channels and
      * (logging out normally, from a party) its group. `loggingOut` is false for a lost connection.
      */
     void leaveWorld(string why, bool loggingOut)
@@ -404,8 +402,8 @@ private:
     }
 
     /**
-     * `WorldSession::HandleLogoutRequestOpcode`: not while jumping or falling; at once when resting
-     * or for accounts with GM permissions (ArcEmu); otherwise sitting, stunned, for `logout_delay` seconds.
+     * Logging out: not while jumping or falling; at once when resting
+     * or for accounts with GM permissions; otherwise sitting, stunned, for `logout_delay` seconds.
      */
     @Handles(Opcode.CMSG_LOGOUT_REQUEST, WorldState.inWorld)
     void handleLogoutRequest()
@@ -445,7 +443,7 @@ private:
     }
 
     /**
-     * One tick (`WorldSession::Update`, `Player::Update`): the logout countdown, regeneration every
+     * One tick: the logout countdown, regeneration every
      * two seconds, rest, the zone check every second, and the periodic save.
      */
     void updateInWorld(Duration elapsed)
@@ -478,7 +476,7 @@ private:
         if (regenTimer.update(elapsed))
         {
             const ms = cast(uint) regenTimer.takeAll().total!"msecs";
-            // `Player::RegenerateAll`: only the living.
+            // Only the living regenerate.
             if (player.deathState == DeathState.alive && player.regenerate(ms, config.rateHealth, config.rateMana, config.rateRageLoss, config.rateEnergy,
                     inCombat))
             {
@@ -491,7 +489,7 @@ private:
         if (restTimer.update(elapsed) && restTimer.consume())
         {
             const now = context.unixTime;
-            // Player::Update: leaving the inn ends the rest.
+            // Leaving the inn ends the rest.
             if (player.restType == RestType.tavern)
             {
                 const inn = context.client.areaTriggers.lookup(player.innTrigger);
@@ -502,7 +500,7 @@ private:
                     flushPlayerChanges();
                 }
             }
-            // Rested XP, counted in steps of 10 seconds as CMaNGOS does.
+            // Rested XP, counted in steps of 10 seconds.
             if (player.restType != RestType.none && now - player.restCountedAt >= 10)
             {
                 player.setRestBonus(player.restBonus + player.computeRest(now - player.restCountedAt,
@@ -519,13 +517,13 @@ private:
                 return migrateTo(target); // the player is simulated there from now on (phase 4b)
         }
 
-        // A save starts the interval again (SaveToDB resets m_nextSave): no catching up after a stall.
+        // A save starts the interval again: no catching up after a stall.
         if (saveTimer.update(elapsed))
             savePlayer();
     }
 
     // -----------------------------------------------------------------------
-    // Movement (MovementHandler.cpp)
+    // Movement
     // -----------------------------------------------------------------------
 
     @Handles(movementOpcodes, WorldState.inWorld)
@@ -534,7 +532,7 @@ private:
         // In flight the server moves the player (the client may still send heartbeats).
         if (flying)
             return;
-        // WorldSession::VerifyMovementInfo: a position the client cannot be at.
+        // A position the client cannot be at.
         const p = movement.position;
         if (!context.client.isValidMapCoord(player.data.map, p.x, p.y, p.z, p.orientation))
         {
@@ -553,7 +551,7 @@ private:
         player.movement = movement;
         spellsOnMovement(movement.flags);
 
-        // HandleMovementOpcodes: moving stands the player up and ends a looping emote.
+        // Moving stands the player up and ends a looping emote.
         if (movement.flags & movingOrTurning)
         {
             if (player.values.getByte!UNIT_FIELD_BYTES_1(0) != standStateStand)
@@ -591,7 +589,7 @@ private:
         import core.time : seconds;
         import std.algorithm.comparison : max;
 
-        // ArcEmu's speed hack check skips accounts with permissions (MovementHandler.cpp).
+        // Accounts with permissions skip the speed check.
         if (!context.config.movementSpeedCheck || hasPermissions)
             return true;
         const now = context.clock();
@@ -757,19 +755,19 @@ private:
     }
 
     // -----------------------------------------------------------------------
-    // Chat (ChatHandler.cpp)
+    // Chat
     // -----------------------------------------------------------------------
 
     /**
-     * `HandleMessagechatOpcode`. The GM parts follow ArcEmu's `ChatHandler.cpp`: flood protection for
-     * players without permissions, the moderator's mute, commands in the chat types ArcEmu reads them
+     * A chat message, by its type. The GM parts: flood protection for
+     * players without permissions, the moderator's mute, commands in the chat types they are read
      * from, everyone understanding the `c` permission, and the GM tag.
      */
     @Handles(Opcode.CMSG_MESSAGECHAT, WorldState.inWorld)
     void handleMessageChat(const ClientChat chat)
     {
         if (chat.language == Language.LANG_ADDON)
-            return; // `AddonChannel` is off
+            return; // addon messages are ignored
         const config = context.config;
         const now = context.unixTime;
         if (!hasPermissions && config.floodLines && config.floodSeconds)
@@ -791,7 +789,7 @@ private:
         {
         case ChatType.CHAT_MSG_EMOTE, ChatType.CHAT_MSG_SAY, ChatType.CHAT_MSG_YELL, ChatType.CHAT_MSG_WHISPER,
             ChatType.CHAT_MSG_CHANNEL:
-            if (account.muteTime && account.muteTime >= now) // `.account mute` (WorldSession::m_muted)
+            if (account.muteTime && account.muteTime >= now) // `.account mute`
                 return systemMessage("Your voice is currently muted by a moderator.");
             break;
         default:
@@ -879,8 +877,8 @@ private:
         }
     }
 
-    /// Everyone within `range` yards hears it, the speaker included (`Player::Say`, `Yell`, `TextEmote`).
-    /// `HandleWhoOpcode`: who is online, on this node and (in a cluster) on the others.
+    /// Everyone within `range` yards hears it, the speaker included (say, yell, text emotes).
+    /// Who is online, on this node and (in a cluster) on the others.
     @Handles(Opcode.CMSG_WHO, WorldState.inWorld)
     void handleWho(const ClientWho request)
     {
@@ -914,9 +912,9 @@ private:
     }
 
     /**
-     * `HandleMessagechatOpcode`'s whisper case and `Player::Whisper`: anyone online, of the same
+     * A whisper: anyone online, of the same
      * faction unless one of the two has GM permissions; an away or busy player's message comes back.
-     * A player whispering a GM with the GM tag on gets ArcEmu's automatic reply instead, unless the GM
+     * A player whispering a GM with the GM tag on gets an automatic reply instead, unless the GM
      * allowed it (`.gm allowwhispers`).
      */
     void whisper(string to, string text)
@@ -942,7 +940,7 @@ private:
     }
 
     /**
-     * `/afk` and `/dnd` (`HandleMessagechatOpcode`, `ToggleAFK`, `ToggleDND`): set with a message, or
+     * `/afk` and `/dnd`: set with a message, or
      * the default one; the same command without a message clears it; the two exclude each other.
      */
     void setAway(ChatType type, string message)
@@ -968,7 +966,7 @@ private:
             group.updatePlayerOutOfRange(this, GroupUpdate.status);
     }
 
-    /// `HandleTextEmoteOpcode`: the animation for those who see the player, the text for those in range.
+    /// A text emote: the animation for those who see the player, the text for those in range.
     @Handles(Opcode.CMSG_TEXT_EMOTE, WorldState.inWorld)
     void handleTextEmote(const ClientTextEmote request)
     {
@@ -979,7 +977,7 @@ private:
         if (textEntry is null)
             return;
 
-        // Unit::HandleEmote: a one-shot animation, or a state that lasts until the player moves.
+        // A one-shot animation, or a state that lasts until the player moves.
         const emote = textEntry.emote;
         if (emote != oneshotNone && emote != stateSleep && emote != stateSit && emote != stateKneel)
             if (const entry = context.client.emotes.lookup(emote))
@@ -993,14 +991,14 @@ private:
                     map.sendToWatchers(this, Opcode.SMSG_EMOTE, packetBody(ServerEmote(emote, player.guid)), true);
             }
 
-        // EmoteChatBuilder: "<player> waves at <target>." for everyone within the text emote range.
+        // "<player> waves at <target>." for everyone within the text emote range.
         string targetName;
         if (const target = context.onlinePlayer(request.target))
             targetName = target.character.data.name;
         else if (auto creature = cast(Creature) map.findObject(request.target))
         {
             targetName = creature.template_.name;
-            // `ReceiveEmote`: its script hears it.
+            // Its script hears it.
             if (creature.ai !is null && creature.alive)
                 creature.ai.receivedEmote(player.guid, request.textEmote, map);
         }

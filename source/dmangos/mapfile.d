@@ -1,5 +1,5 @@
 /**
- * The layout of CMaNGOS's `.map` terrain files (`GridMapDefines.h`), shared by the extractor that
+ * The layout of the `.map` terrain files, shared by the extractor that
  * writes them (`dmangos.extractor.maps`) and the world server that reads them
  * (`dmangos.world.terrain`).
  *
@@ -9,11 +9,11 @@
  */
 module dmangos.mapfile;
 
-/// The four-character codes, as the file stores them (`*(uint32*)"MAPS"`).
+/// The four-character codes, as the file stores them (the letters read as a little-endian `uint`).
 enum uint mapMagic = fourCC("MAPS"), mapVersionMagic = fourCC("z1.4"), mapAreaMagic = fourCC("AREA"),
     mapHeightMagic = fourCC("MHGT"), mapLiquidMagic = fourCC("MLIQ");
 
-/// A code read as a little-endian `uint`, the way the C++ code casts the string.
+/// A code read as a little-endian `uint`: its first letter in the lowest byte.
 uint fourCC(string code) pure @safe
 in (code.length == 4)
 {

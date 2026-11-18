@@ -1,10 +1,10 @@
 /**
- * ArcEmu's `debugcmds.cpp` handlers (the `.debug` group) that need no AI,
- * spells or line of sight, `RecallCommands.cpp` (the `.recall` group) and
- * `BattlegroundCommands.cpp`'s `playsound` and `setworldstate`. Mixed into
- * `dmangos.world.character.Character`.
+ * The `.debug` GM commands that need no AI, spells or line of sight, the
+ * `.recall` group, and the battleground commands `playsound` and
+ * `setworldstate`. Their permissions and messages match ArcEmu 2.4.3's
+ * exactly. Mixed into `dmangos.world.character.Character`.
  *
- * ArcEmu's recall locations are its `recall` table; CMaNGOS's is `game_tele`,
+ * Recall locations are the `game_tele` table,
  * which `.recall` reads and writes here, in name order.
  */
 module dmangos.world.gmdebug;
@@ -27,7 +27,7 @@ mixin template DebugCommands()
     import dmangos.world.worlddata : GameTele;
 
 private:
-    /// What `GetMapMgr()->GetUnit(selection)` finds, or oneself without a selection.
+    /// The selected unit, or oneself without a selection.
     struct SelectedUnit
     {
         Character player;
@@ -72,7 +72,7 @@ private:
     }
 
     // -----------------------------------------------------------------------
-    // debugcmds.cpp
+    // .debug
     // -----------------------------------------------------------------------
 
     bool handleThreatListCommand()
@@ -124,7 +124,7 @@ private:
                 return true;
             }
         }
-        // `Object::isInFront`: within the half circle it faces.
+        // In front: within the half circle it faces.
         const me = player.position;
         double angle = atan2(at.y - me.y, at.x - me.x);
         angle = angle >= 0 ? angle : 2 * PI + angle;
@@ -180,7 +180,7 @@ private:
         return true;
     }
 
-    /// ArcEmu's `.debug itempushresult`: an `SMSG_ITEM_PUSH_RESULT` laid out as ArcEmu's (2.4.3's) is.
+    /// `.debug itempushresult`: an `SMSG_ITEM_PUSH_RESULT` laid out as in 2.4.3.
     bool handleSendItemPushResult(uint itemId, uint count = 0, uint type = 0, uint unk1 = 0, uint unk2 = 0,
         uint unk3 = 0, uint unk4 = 0)
     {
@@ -204,7 +204,7 @@ private:
         return true;
     }
 
-    /// ArcEmu's `.debug face`: the creature's facing, in degrees, changed here only (the clients are not told).
+    /// `.debug face`: the creature's facing, in degrees, changed here only (the clients are not told).
     bool handleFaceCommand(uint degrees = 0)
     {
         auto creature = getSelectedCreature(false);
@@ -247,7 +247,7 @@ private:
         const z2 = terrain.vmapHeight(at.x, at.y, at.z + 5.0f);
         const z3 = terrain.vmapHeight(at.x, at.y, at.z);
         const z4 = terrain.height(at.x, at.y);
-        // `GetFirstPoint` with -1.5: whether something stands in the way 5 yards ahead.
+        // Whether something stands in the way 5 yards ahead (1.5 yards short of the point).
         const fp = !terrain.isInLineOfSight(at.x, at.y, at.z, at.x + radius * cos(at.orientation),
             at.y + radius * sin(at.orientation), at.z);
         systemMessage(format!"Results were: %f(offset2.0f) | %f(offset5.0f) | %f(org) | landheight:%f | target radius5 FP:%d"(
@@ -290,7 +290,7 @@ private:
             return true;
         const ubyte[4] b = [b0, b1, b2, b3];
         if (index >= unit.values.length)
-            return false; // past the object's fields (ArcEmu writes there regardless)
+            return false; // past the object's fields: refused, not written
         unit.values.setSlot(index, b[0] | b[1] << 8 | b[2] << 16 | uint(b[3]) << 24);
         unit.flush(this);
         systemMessage(format!"Set Field %s bytes to %s %s %s %s"(index, b[0], b[1], b[2], b[3]));
@@ -310,7 +310,7 @@ private:
         return true;
     }
 
-    /// The four `SetMovement` tests: an order to the selected player, then "... Test Ran.".
+    /// The four movement tests: an order to the selected player, then "... Test Ran.".
     bool movementTest(Opcode opcode)(string what, bool failWithoutSelection)
     {
         auto chr = getSelectedChar(true);
@@ -349,7 +349,7 @@ private:
         if (f == 0)
             f = 5;
         const o = player.position.orientation;
-        // ArcEmu's packet: cos, sin, the speed, and two thirds of it upwards.
+        // The packet: cos, sin, the speed, and two thirds of it upwards.
         send(ServerKnockBack(player.guid, moveOrderCounter++, cos(o), sin(o), f, f * 0.66f));
         resetMovementCheck();
         return true;
@@ -390,7 +390,7 @@ private:
         return true;
     }
 
-    /// ArcEmu compiles this command's body out (`_ONLY_FOOLS_TRY_THIS_`): it does nothing.
+    /// Does nothing: sending raw packets is disabled.
     bool handleSendpacket()
     {
         return true;
@@ -419,10 +419,10 @@ private:
     }
 
     // -----------------------------------------------------------------------
-    // RecallCommands.cpp, on game_tele
+    // .recall, on game_tele
     // -----------------------------------------------------------------------
 
-    /// `SELECT * FROM recall ORDER BY name`
+    /// The recall locations, in name order.
     GameTele[] recallLocations()
     {
         auto places = context.data.teleports.dup;
@@ -430,7 +430,7 @@ private:
         return places;
     }
 
-    /// `strnicmp(text, name, length)`: the first `length` letters of the two are the same, in any case.
+    /// The first `length` letters of the two are the same, in any case.
     static bool sameStart(string text, string name, size_t length)
     {
         const a = text.length < length ? text : text[0 .. length];
@@ -509,8 +509,8 @@ private:
         if (found is null)
             return false;
         auto plr = sessionOf(found);
-        // ArcEmu compares `strlen(args)` letters, the whole command line, and so finds nothing unless the
-        // location's name is that long; this compares the location's letters.
+        // A location matches when its name starts with the name given (in any case): the name's
+        // length counts, not the whole command line's, which would match only names that long.
         foreach (ref place; recallLocations())
             if (sameStart(location, place.name, location.length))
             {
@@ -523,10 +523,10 @@ private:
     }
 
     // -----------------------------------------------------------------------
-    // BattlegroundCommands.cpp
+    // Battleground commands
     // -----------------------------------------------------------------------
 
-    /// `HandleInitializeAllQueuedBattlegroundsCommand`: a copy for whoever waits, however few.
+    /// Starts every queued battleground: a copy for whoever waits, however few.
     bool handleInitializeAllQueuedBattlegroundsCommand()
     {
         import dmangos.world.bgqueue : BattlegroundInstance, BattlegroundQueueHost;
@@ -537,7 +537,7 @@ private:
         return true;
     }
 
-    /// `HandleBattlegroundExitCommand`: ArcEmu closes the battleground the player is in (`CBattleground::Close`).
+    /// Closes the battleground the player is in.
     bool handleBattlegroundExitCommand()
     {
         auto copy = currentBattleground();
@@ -552,7 +552,7 @@ private:
 
     bool handleSetWorldStateCommand(uint id, uint value)
     {
-        return true; // ArcEmu sets it in the player's battleground, if any
+        return true; // meant for the player's battleground, if any; nothing is set
     }
 
     bool handlePlaySoundCommand()
