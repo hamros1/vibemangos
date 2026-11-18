@@ -1432,3 +1432,61 @@ unittest
     auto buff = keeper.auras.find(ward);
     assert(buff !is null && buff.positive, "on itself: a buff");
 }
+
+// A creature's melee-class spell that deals no weapon damage (Pierce Armor) is rolled like a blow: some of
+// many casts at a player are missed, dodged or parried, and each such is told (SMSG_SPELLLOGMISS).
+unittest
+{
+    import core.time : MonoTime;
+    import std.algorithm.searching : count;
+    import dmangos.dbc : buildDbc;
+    import dmangos.world.clientdata : factionTemplateFormat, spellRangeFormat;
+    import dmangos.world.creature : Creature;
+    import dmangos.world.eventai : castTriggered;
+    import dmangos.world.movement : Position;
+    import dmangos.world.objects : HighGuid, makeGuid;
+    import dmangos.world.opcodes;
+    import dmangos.world.spellhandlers : testSpell;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+    import dmangos.world.updatefields;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    uint bits(float f) { return *cast(uint*) &f; }
+    context.client.spellRanges = typeof(context.client.spellRanges).parse(buildDbc(spellRangeFormat,
+        [[1u, bits(0), bits(30), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]), "SpellRange.dbc");
+    enum uint pierce = 95301;
+    with (context.data.spells)
+    {
+        spells[pierce] = testSpell(pierce, 6, 6, 0); // an aura, no damage
+        spells.edit(pierce).casting.dmgClass = DamageClass.melee;
+    }
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f, 1.97f));
+    anduin.read();
+    auto map = context.map(0);
+    auto keeper = cast(Creature) map.findObject(makeGuid(HighGuid.unit, creatureInnkeeper, innkeeperSpawn));
+    enum uint players = 1, monsters = 8;
+    const humans = anduin.session.character.values.get!UNIT_FIELD_FACTIONTEMPLATE;
+    context.client.factionTemplates = typeof(context.client.factionTemplates).parse(buildDbc(factionTemplateFormat,
+        [[humans, 1, 0, players | 2, 2, monsters, 0, 0, 0, 0, 0, 0, 0, 0], [14u, 14, 0, monsters, 0, players, 0, 0, 0,
+        0, 0, 0, 0, 0]]), "FactionTemplate.dbc");
+    keeper.factionTemplate = context.client.factionTemplates.lookup(14);
+    keeper.values.set!UNIT_FIELD_LEVEL(1u); // the player's level: the usual chances to miss and dodge
+    keeper.ai.moveInLineOfSight(map.unit(anduin.session.character.guid), map);
+
+    enum tries = 400;
+    size_t told, went;
+    foreach (i; 0 .. tries)
+    {
+        keeper.ai.castSpell(pierce in context.data.spells.spells, anduin.session.character.guid, castTriggered);
+        const got = opcodesOf(anduin.read());
+        told += got.count(Opcode.SMSG_SPELLLOGMISS);
+        went += got.count(Opcode.SMSG_SPELL_GO);
+    }
+    assert(went == tries, "every cast went");
+    assert(told > 0, "some casts missed, dodged or parried");
+    assert(told < tries / 2, "most land");
+}

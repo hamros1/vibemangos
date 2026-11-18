@@ -313,6 +313,9 @@ mixin template PetHandlers()
         v.set!UNIT_FIELD_FLAGS(flags);
         v.setByte!UNIT_FIELD_BYTES_2(1, petByte2Flags);
         v.set!UNIT_FIELD_SUMMONEDBY(player.guid);
+        // And made by it, as vmangos sets it (and as totems have it here): the 1.12 client showed an attack
+        // cursor over a pet without it.
+        v.set!UNIT_FIELD_CREATEDBY(player.guid);
         v.set!UNIT_FIELD_PETNUMBER(state.number);
         v.set!UNIT_FIELD_PET_NAME_TIMESTAMP(cast(uint) context.unixTime);
         v.set!UNIT_CREATED_BY_SPELL(state.createdBySpell);

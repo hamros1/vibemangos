@@ -116,6 +116,7 @@ unittest
     assert(state.type == PetType.summon && state.name == "Abazim", "a name from pet_name_generation");
     assert(pet.values.get!UNIT_FIELD_MAXHEALTH == 140 && pet.values.get!UNIT_FIELD_MAXPOWER1 == 48);
     assert(pet.values.get!UNIT_FIELD_SUMMONEDBY == session.character.guid);
+    assert(pet.values.get!UNIT_FIELD_CREATEDBY == session.character.guid, "made by its owner");
     assert(session.character.values.get!UNIT_FIELD_SUMMON == pet.guid);
     const sent = gul.read();
     const spells = bodyOf(sent, Opcode.SMSG_PET_SPELLS);
