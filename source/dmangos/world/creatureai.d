@@ -27,6 +27,7 @@ import dmangos.world.clientdata : ClientData;
 import dmangos.world.npcdata : BroadcastText;
 import dmangos.world.opcodes : ChatType;
 import dmangos.world.spells : SpellInfo;
+import dmangos.world.worlddata : SpellListEntry;
 import dmangos.world.eventai : Scripted;
 import dmangos.script.registry : ScriptHandle, ScriptRuntime;
 import dmangos.script.api : ActionResult, MenuOption, QuestProgress, Waypoint, CreatureHost, Damaged, Died, EnteredCombat, EntityRef, Evaded, KilledUnit, Reset;
@@ -76,6 +77,9 @@ interface CreatureLore
 
     /// A model of creature `entry` (its template's first); 0 if none.
     uint displayOf(uint entry);
+
+    /// Spell list `id`'s spells (`creature_spell_list`); empty if none.
+    const(SpellListEntry)[] spellList(uint id);
 
     /// `creature` becomes a creature of `entry` (`Creature.changeEntry`); false if there is no such entry.
     bool changeEntry(Creature creature, uint entry);
@@ -400,6 +404,8 @@ final class CreatureAI : Scripted, CreatureHost
         else if (inCombat_)
         {
             updateCombatManager(world, diff);
+            if (!me.auras.has(AuraType.modStun) && fleeTimer <= 0)
+                spellListTick(world, diff);
             if (inCombat_ && fleeTimer > 0)
                 updateFleeing(diff);
             else if (inCombat_ && !me.auras.has(AuraType.modStun)) // stunned, it does nothing
@@ -846,6 +852,149 @@ private:
         victimReachable = ex * ex + ey * ey <= within * within;
     }
 
+    // -----------------------------------------------------------------------
+    // Its spell list (`creature_spell_list`)
+    // -----------------------------------------------------------------------
+
+    private int[] spellListTimers; /// each spell's time until it is ready; empty out of a fight
+
+    /**
+     * In a fight, the spells of its list come round on their timers: the ready ones with no probability
+     * first, in order, else one by their probabilities; each at its target (`creature_spell_targeting`),
+     * then again after its repeat time. A spell is used at all in a fight by its availability.
+     */
+    private void spellListTick(CombatWorld world, int diff)
+    {
+        import std.random : uniform;
+
+        if (lore is null || me.template_.spellList == 0 || casting_ !is null || !victim || me.petOwner)
+            return;
+        const list = lore.spellList(me.template_.spellList);
+        if (list.length == 0)
+            return;
+        int span(uint low, uint high)
+        {
+            return cast(int)(high > low ? uniform!"[]"(low, high, world.random) : low);
+        }
+        if (spellListTimers.length != list.length)
+        {
+            spellListTimers = new int[list.length];
+            foreach (i, ref e; list)
+                spellListTimers[i] = e.availability >= 100 || uniform(0, 100, world.random) < e.availability
+                    ? span(e.initialMin, e.initialMax) : int.max;
+            // A ranged main attack: it keeps its distance to cast it.
+            foreach (ref e; list)
+                if (e.flags & 2)
+                    if (const info = lore.spellInfo(e.spell))
+                    {
+                        import dmangos.world.spellcast : range;
+
+                        const r = range(*info, lore.clientData)[1];
+                        if (r > 5)
+                            scriptRangedMode(true, r - 2);
+                    }
+        }
+        foreach (ref t; spellListTimers)
+            if (t != int.max)
+                t -= diff;
+        size_t pick = size_t.max;
+        uint total;
+        foreach (i, ref e; list)
+            if (spellListTimers[i] <= 0)
+            {
+                if (e.probability == 0)
+                {
+                    pick = i;
+                    break;
+                }
+                total += e.probability;
+            }
+        if (pick == size_t.max && total)
+        {
+            uint roll = uniform(0, total, world.random);
+            foreach (i, ref e; list)
+                if (spellListTimers[i] <= 0 && e.probability)
+                {
+                    if (roll < e.probability)
+                    {
+                        pick = i;
+                        break;
+                    }
+                    roll -= e.probability;
+                }
+        }
+        if (pick == size_t.max)
+            return;
+        const e = list[pick];
+        const spell = lore.spellInfo(e.spell);
+        const target = spellListTarget(e.targetId, world);
+        if (spell is null || target == 0)
+        {
+            spellListTimers[pick] = 1000; // no one to cast it at now: try again in a second
+            return;
+        }
+        spellListTimers[pick] = castSpell(spell, target, 0) ? span(e.repeatMin, e.repeatMax) : 500;
+    }
+
+    /// The target `creature_spell_targeting` row `id` names for it now; 0 if none.
+    private ulong spellListTarget(int id, CombatWorld world)
+    {
+        import std.random : uniform;
+
+        switch (id)
+        {
+        case 0, 2, 3, 5: // none (the spell picks), self, and its own dispels and buffs
+            return me.guid;
+        case 1, 103, 104: // its victim (an area spell's, with someone there)
+            return victim;
+        case 7: // its victim, if not alone
+            return threat.length > 1 ? victim : 0;
+        case 4, 6: // a friend other than itself
+            foreach (c; world.creaturesNear(me.position, 30))
+                if (c !is me && c.alive && !c.petOwner && c.factionTemplate is me.factionTemplate)
+                    return c.guid;
+            return 0;
+        case 200: .. case 207: // a friend missing a share of its health (itself too, for some)
+        {
+            static immutable uint[8] missing = [10, 50, 90, 10, 50, 90, 25, 25];
+            static immutable bool[8] withSelf = [true, true, true, false, false, false, true, false];
+            const share = missing[id - 200];
+            ulong best;
+            float lowest = 101;
+            void consider(Creature c)
+            {
+                const most = c.values.get!UNIT_FIELD_MAXHEALTH;
+                if (!c.alive || most == 0)
+                    return;
+                const pct = 100.0f * c.values.get!UNIT_FIELD_HEALTH / most;
+                if (pct <= 100 - share && pct < lowest)
+                {
+                    lowest = pct;
+                    best = c.guid;
+                }
+            }
+            if (withSelf[id - 200])
+                consider(me);
+            foreach (c; world.creaturesNear(me.position, 40))
+                if (c !is me && !c.petOwner && c.factionTemplate is me.factionTemplate)
+                    consider(c);
+            return best;
+        }
+        default: // attacks: a player it fights, at random (not its victim, for the "non-tank" ones, if it can)
+        {
+            const nonTank = id == 101 || id == 108 || id == 110 || id == 120;
+            ulong[] players;
+            foreach (guid, _; threat)
+                if (auto who = world.unit(guid))
+                    if (who.kind == imported!"dmangos.world.unit".UnitKind.player && who.fighter.alive && (!nonTank || guid != victim))
+                        players ~= guid;
+            if (players.length == 0)
+                return nonTank ? victim : 0;
+            return players[uniform(0, players.length, world.random)];
+        }
+        }
+    }
+
     /// A creature's melee: a swing whenever it is ready and can.
     void meleeAttackIfReady(UnitRef target, CombatWorld world)
     {
@@ -883,6 +1032,7 @@ private:
     {
         const wasFighting = inCombat_;
         world_ = world;
+        spellListTimers = null; // its list's timers start again in its next fight
         if (rootedForFight)
         {
             me.scriptRooted = false;

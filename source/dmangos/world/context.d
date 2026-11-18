@@ -69,7 +69,7 @@ import dmangos.cluster.protocol : GmRemote, GroupCommand, KillShare, ScriptSigna
 import dmangos.world.map : Inhabitant, Map, MapObject, MapSettings;
 import dmangos.world.online : OnlinePlayer;
 import dmangos.world.playercreate : CreationSettings;
-import dmangos.world.worlddata : EventCreature, Ship, WorldData;
+import dmangos.world.worlddata : EventCreature, Ship, SpellListEntry, WorldData;
 
 /// How a player simulated on another node than its client's talks to the other node.
 interface PlayerRelay
@@ -3039,6 +3039,12 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     }
 
     /// See `CreatureLore.signalDungeon`.
+    /// See `CreatureLore.spellList`.
+    const(SpellListEntry)[] spellList(uint id)
+    {
+        return data.creatureSpellLists.get(id, null);
+    }
+
     /// See `CreatureLore.displayOf`.
     uint displayOf(uint entry)
     {

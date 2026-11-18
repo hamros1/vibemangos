@@ -402,6 +402,11 @@ What works now:
     once there) or back to its spawn point, turning, teleporting, a movement type (standing,
     wandering, its path round or there and back, by path id: its entry's or `waypoint_path`'s), pausing
     and resuming its path, AI events.
+  * **Spell lists** (`creature_spell_list`, a template's `SpellList`): in a fight a creature casts its
+    list's spells as their timers come round (first after their initial time, then their repeat time;
+    those with no probability first, else by their probabilities; each used at all by its
+    availability), at the target its `creature_spell_targeting` names (its victim, itself, a random
+    player it fights, a friend missing health, ...); a ranged main attack makes it keep its distance.
   * **Creature scripts** (EventAI, `creature_ai_scripts`, for each creature entry or
     spawn): their events (timers in and out of combat, health, mana and the victim's health between
     two percentages, the victim within a range or casting, aggro, a kill, death, evading, spawning,

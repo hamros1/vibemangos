@@ -1242,3 +1242,73 @@ unittest
     tick(600);
     assert(trainer.values.get!UNIT_FIELD_HEALTH == 300, "the friend healed");
 }
+
+/// A spell list: in a fight the creature casts its list's spell at its victim, and again after its repeat time.
+unittest
+{
+    import core.time : MonoTime, msecs;
+    import std.algorithm.searching : canFind, count;
+    import dmangos.dbc : buildDbc;
+    import dmangos.world.clientdata : factionTemplateFormat, spellCastTimesFormat, spellRangeFormat;
+    import dmangos.world.creature : Creature;
+    import dmangos.world.movement : Position;
+    import dmangos.world.objects : HighGuid, makeGuid;
+    import dmangos.world.opcodes;
+    import dmangos.world.packets : ClientGuid;
+    import dmangos.world.spellhandlers : testSpell;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+    import dmangos.world.updatefields;
+    import dmangos.world.worlddata : SpellListEntry;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    uint bits(float f) { return *cast(uint*) &f; }
+    context.client.spellCastTimes = typeof(context.client.spellCastTimes).parse(buildDbc(spellCastTimesFormat,
+        [[1u, 0, 0, 0]]), "SpellCastTimes.dbc");
+    context.client.spellRanges = typeof(context.client.spellRanges).parse(buildDbc(spellRangeFormat,
+        [[1u, bits(0), bits(30), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]), "SpellRange.dbc");
+    enum uint shout = 95201;
+    context.data.spells.spells[shout] = testSpell(shout, 2, 6, 4); // 4 damage, instant
+    context.data.spells.spells.edit(shout).casting.school = 2;
+    context.data.spells.spells.edit(shout).casting.dmgClass = 0;
+    context.data.creatureTemplates.edit(creatureInnkeeper).spellList = 77;
+    context.data.creatureSpellLists[77] = [SpellListEntry(shout, 0, 1, 100, 0, 1000, 1000, 3000, 3000)];
+
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f, 1.97f));
+    anduin.read();
+    auto map = context.map(0);
+    auto keeper = cast(Creature) map.findObject(makeGuid(HighGuid.unit, creatureInnkeeper, innkeeperSpawn));
+    enum uint players = 1, monsters = 8;
+    const humans = anduin.session.character.values.get!UNIT_FIELD_FACTIONTEMPLATE;
+    context.client.factionTemplates = typeof(context.client.factionTemplates).parse(buildDbc(factionTemplateFormat,
+        [[humans, 1, 0, players | 2, 2, monsters, 0, 0, 0, 0, 0, 0, 0, 0], [14u, 14, 0, monsters, 0, players, 0, 0, 0,
+        0, 0, 0, 0, 0]]), "FactionTemplate.dbc");
+    keeper.factionTemplate = context.client.factionTemplates.lookup(14);
+    keeper.values.set!UNIT_FIELD_MINDAMAGE(0.0f);
+    keeper.values.set!UNIT_FIELD_MAXDAMAGE(0.0f);
+    keeper.values.set!UNIT_FIELD_MAXHEALTH(5000u);
+    keeper.values.set!UNIT_FIELD_HEALTH(5000u);
+    void tick(int ms)
+    {
+        now += ms.msecs;
+        anduin.session.update(ms.msecs);
+        map.update(ms.msecs);
+    }
+
+    anduin.write(Opcode.CMSG_ATTACKSWING, ClientGuid(keeper.guid));
+    anduin.read();
+    import std.bitmanip : nativeToLittleEndian;
+
+    uint casts;
+    foreach (_; 0 .. 50) // five seconds: at one second, then at four
+    {
+        tick(100);
+        foreach (p; anduin.read())
+            if (p.opcode == Opcode.SMSG_SPELL_GO && p.body_.canFind(nativeToLittleEndian(shout)[]))
+                ++casts;
+    }
+    assert(casts == 2, "its list's spell, twice");
+}

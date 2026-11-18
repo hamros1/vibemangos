@@ -310,6 +310,17 @@ struct GhostEntrance
     float x = 0, y = 0;
 }
 
+/// A `creature_spell_list` row: a spell a creature casts in a fight, its target, its chance, and its timers (milliseconds).
+struct SpellListEntry
+{
+    uint spell;
+    uint flags;          /// 2: its main ranged attack (the creature keeps its distance)
+    int targetId;        /// `creature_spell_targeting`
+    uint availability;   /// percent chance it is used at all in a fight
+    uint probability;    /// its weight among those ready (0: cast whenever ready, first)
+    uint initialMin, initialMax, repeatMin, repeatMax;
+}
+
 /// A `page_text` row: a page's text, and the page after it (0: the last).
 struct PageText
 {
@@ -394,7 +405,8 @@ final class WorldData
     float[uint] enchantProcRates;
     Ship[] ships;                                   /// `transports`: the ships and zeppelins, with their schedules
     PageText[uint] pageTexts;                       /// `page_text`: books', letters' and plaques' pages, by id
-    uint[uint] creatureFirstSpell;                  /// `creature_template_spells` (set 0): a creature's first spell (a totem's)                   /// `spell_proc_item_enchant`: an enchantment proc's procs a minute, by spell
+    uint[uint] creatureFirstSpell;                  /// `creature_template_spells` (set 0): a creature's first spell (a totem's)
+    SpellListEntry[][uint] creatureSpellLists;      /// `creature_spell_list`: by list, in position order                   /// `spell_proc_item_enchant`: an enchantment proc's procs a minute, by spell
     ubyte[2][uint] gameObjectBattleEvents;          /// `gameobject_battleground`: ditto
     string[uint] serverStrings;                     /// `mangos_string`'s default texts
     GhostEntrance[uint] ghostEntrances;             /// `instance_template`'s ghost entrances, by instance map
@@ -577,6 +589,10 @@ final class WorldData
                 row.get!uint(4));
         data.loadSpawns(world, client, spawnSeed);
         data.loadTransports(world, client); // after the game object templates
+        foreach (row; world.query!("SELECT Id, SpellId, Flags, TargetId, Availability, Probability, InitialMin, "
+            ~ "InitialMax, RepeatMin, RepeatMax FROM creature_spell_list ORDER BY Id, Position")())
+            data.creatureSpellLists[row.get!uint(0)] ~= SpellListEntry(row.get!uint(1), row.get!uint(2), row.get!int(3),
+                row.get!uint(4), row.get!uint(5), row.get!uint(6), row.get!uint(7), row.get!uint(8), row.get!uint(9));
         foreach (row; world.query!"SELECT entry, spell1 FROM creature_template_spells WHERE setId = 0"())
             if (row.get!uint(1))
                 data.creatureFirstSpell[row.get!uint(0)] = row.get!uint(1);

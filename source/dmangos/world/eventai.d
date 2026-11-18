@@ -24,7 +24,7 @@
  * And becoming another entry (updating the template).
  *
  * Not yet: the other actions (following),
- * spell lists (`creature_template_spells`), immunities.
+ * immunities. Spell lists (`creature_spell_list`) are run by the creature AI itself.
  */
 module dmangos.world.eventai;
 

@@ -116,7 +116,7 @@ The largest area. In order:
    included, and EventAI scripts with creatures' spells, texts and fleeing (`eventai.d`,
    `creaturecasting.d`; README's "Creature scripts"), and database scripts for quests, gossip and
    game objects (`dbscripts.d`). Temporary summons (EventAI's and the scripts'). EventAI's morphs, mounts and
-   instance data, and paths by id in scripts: done. Not yet: summons handed over between nodes, spell lists,
+   instance data, and paths by id in scripts: done. Not yet: summons handed over between nodes,
    movement maps for chasing, help from another node's creatures in a cluster.
 3. **Death: done** (`death.d`, `corpse.d`; README's "Death"), resurrection sickness and battleground
    spirit guides included. Not yet: the ghost's own auras (applied by hand), ghosts hidden from the

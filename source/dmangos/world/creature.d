@@ -101,6 +101,7 @@ struct CreatureTemplate
     uint callForHelp;           /// `CallForHelp`: how far it calls for help when it starts fighting; 0: 5 yards
     int resistanceHoly, resistanceFire, resistanceNature; /// `Resistance*`
     int resistanceFrost, resistanceShadow, resistanceArcane;
+    uint spellList;             /// `SpellList`: its `creature_spell_list` (0: none)
 
     /// Its resistance to `school` (1 holy .. 6 arcane).
     int resistance(uint school) const pure nothrow @nogc @safe
@@ -134,8 +135,8 @@ enum creatureTemplateQuery = "SELECT Entry, Name, IFNULL(SubName, ''), MinLevel,
     ~ "DamageMultiplier, DamageVariance, ArmorMultiplier, MinMeleeDmg, MaxMeleeDmg, MinRangedDmg, MaxRangedDmg, "
     ~ "Armor, MeleeAttackPower, RangedAttackPower, DamageSchool, Detection, Pursuit, Leash, ExperienceMultiplier, "
     ~ "LootId, MinLootGold, MaxLootGold, SkinningLootId, PickpocketLootId, StaticFlags1, CallForHelp, "
-    ~ "ResistanceHoly, ResistanceFire, ResistanceNature, ResistanceFrost, ResistanceShadow, ResistanceArcane "
-    ~ "FROM creature_template";
+    ~ "ResistanceHoly, ResistanceFire, ResistanceNature, ResistanceFrost, ResistanceShadow, ResistanceArcane, "
+    ~ "SpellList FROM creature_template";
 
 /// When a summoned creature goes (`none`: not a summon).
 enum TempSpawnType : ubyte
