@@ -114,6 +114,29 @@ final class FakeCreature : CreatureHost
     ActionResult hostDespawnOther(EntityRef, uint) { return ActionResult.ok; }
     QuestProgress hostQuestStatus(EntityRef, uint) { return QuestProgress.none; }
     void hostSendGossip(EntityRef, uint, const(MenuOption)[], bool) {}
+
+    // Eastern Kingdoms scripts:
+    uint faction;
+    void hostSetFaction(uint f) { faction = f; }
+    void hostUnitFlags(uint, bool) {}
+    void hostReactState(Reaction) {}
+    void hostDeathPrevention(bool) {}
+    void hostEvade() {}
+    ActionResult hostAttackBy(EntityRef, EntityRef) { return ActionResult.ok; }
+    ActionResult hostMoveOther(EntityRef, Location, uint, bool) { return ActionResult.ok; }
+    void hostFace(EntityRef) {}
+    void hostSheath(Sheath) {}
+    void hostMount(uint) {}
+    void hostDie() {}
+    bool hostChangeEntry(uint) { return true; }
+    EntityRef hostObjectNearby(uint, float) { return EntityRef.init; }
+    ActionResult hostUseObject(EntityRef) { return ActionResult.ok; }
+    ActionResult hostRemoveAura(EntityRef, uint) { return ActionResult.ok; }
+    bool hostHasAura(EntityRef, uint) { return false; }
+    ActionResult hostSayOther(EntityRef, int, EntityRef) { return ActionResult.ok; }
+    void hostMovementScript(uint) {}
+    void hostRelay(int, EntityRef) {}
+    void hostKillCredit(EntityRef, uint) {}
 }
 
 unittest
