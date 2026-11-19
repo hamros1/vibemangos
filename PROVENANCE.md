@@ -185,6 +185,12 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Files: `ScriptDevAI/scripts/eastern_kingdoms/tirisfal_glades.cpp`
 * Functions/ScriptNames: `go_mausoleum_door`, `go_mausoleum_trigger`, `npc_calvin_montague`
 
+## scripts/westfall.d
+
+* Projects: CMaNGOS
+* Files: `ScriptDevAI/scripts/eastern_kingdoms/westfall.cpp`
+* Functions/ScriptNames: `npc_defias_traitor`, `npc_daphne_stilwell`
+
 ## scripts/wetlands.d
 
 * Projects: CMaNGOS
