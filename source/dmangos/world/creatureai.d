@@ -30,7 +30,7 @@ import dmangos.world.spells : SpellInfo;
 import dmangos.world.worlddata : SpellListEntry;
 import dmangos.world.eventai : Scripted;
 import dmangos.script.registry : ScriptHandle, ScriptRuntime;
-import dmangos.script.api : ActionResult, MenuOption, QuestProgress, Waypoint, CreatureHost, Damaged, Died, EnteredCombat, EntityRef, Evaded, KilledUnit, Reset;
+import dmangos.script.api : ActionResult, MenuOption, QuestProgress, Waypoint, CreatureHost, Damaged, Died, EnteredCombat, EntityRef, Evaded, KilledUnit, Reset, UnitInSight;
 import dmangos.world.updatefields;
 import dmangos.vmap.math : Vector3;
 import dmangos.world.unit : UnitRef;
@@ -256,6 +256,9 @@ final class CreatureAI : Scripted, CreatureHost
     /// (`moveInLineOfSight`'s first checks, for the map to skip it early).
     @property bool mayNotice() const
     {
+        // Eastern Kingdoms scripts: a script that wants to hear of the players in its sight (`UnitInSight`) does.
+        if (behaviour && me.alive && scripts_.handles!UnitInSight(behaviour))
+            return true;
         return react == ReactState.aggressive && me.alive && !me.petOwner
             && (me.factionTemplate is null || !isNeutralToAll(*me.factionTemplate));
     }
