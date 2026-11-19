@@ -257,6 +257,22 @@ final class InstanceScript : InstanceHost
         return n;
     }
 
+    Location hostLocationOf(EntityRef who)
+    {
+        import dmangos.world.movement : Position;
+
+        foreach (object; loading)
+            if (object.guid == who.guid)
+            {
+                const p = object.position;
+                return Location(p.x, p.y, p.z, p.orientation);
+            }
+        Position at;
+        if (map is null || !map.positionOf(who.guid, at))
+            return Location.init;
+        return Location(at.x, at.y, at.z, at.orientation);
+    }
+
     ActionResult hostSay(EntityRef speaker, int textEntry, EntityRef target)
     {
         auto c = creatureHere(speaker);

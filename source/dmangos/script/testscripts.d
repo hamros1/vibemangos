@@ -142,6 +142,7 @@ final class FakeCreature : CreatureHost
     void hostRooted(bool) {}
     void hostDie() {}
     void hostMoveNow(Location, uint, bool) {}
+    void hostSpellList(uint) {}
 }
 
 unittest

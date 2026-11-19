@@ -301,6 +301,7 @@ interface CreatureHost
     void hostRooted(bool on);
     void hostDie();
     void hostMoveNow(Location at, uint point, bool run);
+    void hostSpellList(uint id);
 }
 
 /**
@@ -561,6 +562,9 @@ struct CreatureContext
     /// As `moveTo`, but at once even in a fight (turn its combat movement off first, or it chases its
     /// victim again): a dragon taking to the air, a boss going to its place.
     void moveNow(Location at, uint point, bool run = true) { host.hostMoveNow(at, point, run); }
+
+    /// The spells it casts by itself in a fight: `creature_spell_list` `id` from now (0: its template's).
+    void spellList(uint id) { host.hostSpellList(id); }
 }
 
 // ---------------------------------------------------------------------------
@@ -664,6 +668,7 @@ interface InstanceHost
     ActionResult hostCastAs(EntityRef caster, uint spell, EntityRef target, bool triggered);
     size_t hostPlayers(EntityRef[] into);
     ActionResult hostSay(EntityRef speaker, int textEntry, EntityRef target);
+    Location hostLocationOf(EntityRef who);
 }
 
 /// A dungeon script's handle on its copy, for the length of one handler.
@@ -746,6 +751,9 @@ struct InstanceContext
     {
         return host.hostSay(speaker, entry, target);
     }
+
+    /// Where a creature, object or player of the copy is; `Location.init` if it is not here.
+    Location locationOf(EntityRef who) { return host.hostLocationOf(who); }
 }
 
 unittest

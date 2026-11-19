@@ -872,6 +872,16 @@ private:
     // -----------------------------------------------------------------------
 
     private int[] spellListTimers; /// each spell's time until it is ready; empty out of a fight
+    private uint spellListChosen;  /// its script's list instead of its template's (raid scripts); 0: its template's
+
+    /// Its script's spell list from now (0: its template's again); the list's timers start afresh.
+    package void chooseSpellList(uint id)
+    {
+        if (id == spellListChosen)
+            return;
+        spellListChosen = id;
+        spellListTimers = null;
+    }
 
     /**
      * In a fight, the spells of its list come round on their timers: the ready ones with no probability
@@ -882,9 +892,10 @@ private:
     {
         import std.random : uniform;
 
-        if (lore is null || me.template_.spellList == 0 || casting_ !is null || !victim || me.petOwner)
+        const listId = spellListChosen ? spellListChosen : me.template_.spellList;
+        if (lore is null || listId == 0 || casting_ !is null || !victim || me.petOwner)
             return;
-        const list = lore.spellList(me.template_.spellList);
+        const list = lore.spellList(listId);
         if (list.length == 0)
             return;
         int span(uint low, uint high)

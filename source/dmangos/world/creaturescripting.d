@@ -911,4 +911,9 @@ mixin template CreatureScripting()
             world_.wake(me.guid);
         }
     }
+
+    void hostSpellList(uint id)
+    {
+        chooseSpellList(id);
+    }
 }

@@ -155,6 +155,17 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
   `boss_onyxia.cpp`)
 * Functions/ScriptNames: `instance_onyxias_lair`, `boss_onyxia`
 
+## scripts/zulgurub.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/eastern_kingdoms/zulgurub/` (`zulgurub.cpp`, `zulgurub.h`, `zulgurubScripts.cpp`,
+  `boss_venoxis.cpp`, `boss_jeklik.cpp`, `boss_marli.cpp`, `boss_thekal.cpp`, `boss_arlokk.cpp`,
+  `boss_mandokir.cpp`, `boss_renataki.cpp`, `boss_hakkar.cpp`)
+* Functions/ScriptNames: `instance_zulgurub`, `at_zulgurub`, `boss_venoxis`, `boss_jeklik`,
+  `npc_gurubashi_bat_rider`, `boss_marli`, `boss_thekal`, `mob_zealot_lorkhan`, `mob_zealot_zath`,
+  `boss_arlokk`, `npc_zulian_prowler`, `go_gong_of_bethekk`, `boss_mandokir`, `mob_ohgan`, `boss_renataki`,
+  `boss_hakkar`, `npc_soulflayer`, `spell_arlokk_vanish`, `spell_renataki_vanish`, `spell_thekal_resurrect`
+
 ## timer.d
 
 * Projects: CMaNGOS, Ember

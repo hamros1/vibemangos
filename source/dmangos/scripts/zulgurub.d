@@ -1,0 +1,1427 @@
+/**
+ * Zul'Gurub (map 309): the copy's script (the high priests, Bloodlord Mandokir and Ohgan, the Zealots,
+ * Arlokk's forcefield and her prowlers, Hakkar's power waning as each priest falls), the area triggers
+ * where Hakkar speaks, the bosses High Priest Venoxis, High Priestess Jeklik and her bat riders, High
+ * Priestess Mar'li, High Priest Thekal with Zealots Lor'Khan and Zath (who rise again unless all three
+ * fall together), High Priestess Arlokk and the Zulian Prowlers, Bloodlord Mandokir and Ohgan, Renataki,
+ * Hakkar, the Soulflayers, and the Gong of Bethekk. Most of their spells are their `creature_spell_list`s;
+ * the scripts change lists with their phases.
+ */
+module dmangos.scripts.zulgurub;
+
+import core.time : Duration;
+
+import dmangos.script;
+
+/// The copy's encounters (CMaNGOS's `TYPE_*`).
+enum ZgEncounter : ubyte
+{
+    jeklik,
+    venoxis,
+    marli,
+    thekal,
+    arlokk,
+    ohgan,   /// Mandokir's; `special`: he comes down from his perch
+    lorkhan,
+    zath,
+}
+
+/// Creatures and objects of the copy.
+enum : uint
+{
+    npcLorkhan = 11347,
+    npcZath = 11348,
+    npcThekal = 14509,
+    npcJindo = 11380,
+    npcHakkar = 14834,
+    npcPantherTrigger = 15091,
+    npcMandokir = 11382,
+    npcMarli = 14510,
+    npcArlokk = 14515,
+    npcOhgan = 14988,
+    npcChainedSpirit = 15117,
+    npcZulianProwler = 15101,
+    npcBatRider = 14750,
+    npcFrenziedBat = 14965,
+
+    goGongOfBethekk = 180526,
+    goForcefield = 180497,
+}
+
+/// What scripts of the copy say to each other, beyond the encounters' states (ids 0 .. 7).
+enum ZgSignal : uint
+{
+    powerDown = 100,    /// the copy to Hakkar: a priest fell
+    comeDown = 101,     /// the copy to Mandokir: his raptor's keepers are slain
+    toAid = 102,        /// the copy to a prowler it summoned: to Arlokk's wall
+    prowlers = 103,     /// Arlokk to the copy: her prowlers come (value 1) or stop (0)
+    vanished = 104,     /// a spell script to Arlokk or Renataki: the vanish took hold (`value`: low guid bits of no use)
+    preventRevive = 105, /// Thekal to a Zealot: all three are down at once; stay down
+    revive = 106,       /// a resurrect spell script to its caster
+    evade = 107,        /// Thekal to his Zealots: back home with me
+    gratsJindo = 108,   /// Mandokir to the copy: Jin'do congratulates him
+}
+
+private static immutable float[3] mandokirDownstairs = [-12196.30f, -1948.37f, 130.31f];
+private static immutable float[3] arlokkWallShield = [-11494.76f, -1627.56f, 41.30f];
+
+/// A random length between `low` and `high` milliseconds.
+private Duration between(ref CreatureContext me, uint low, uint high)
+{
+    return (low + me.random(high - low + 1)).msecs;
+}
+
+/// A step whose cast failed is tried again this soon.
+private enum retry = 400.msecs;
+
+/// What the copy remembers: its encounters (saved in `instance.data`).
+@instance("instance_zulgurub")
+struct ZulGurub
+{
+    enum int sayMinionDestroy = -1_309_022, sayHakkarProtect = -1_309_023;
+    enum uint triggerEnter = 3958, triggerAltar = 3960;
+
+    EncounterState[ZgEncounter.max + 1] encounters;
+    bool introYelled, altarYelled;
+
+    @transient EntityRef hakkar, mandokir, jindo, forcefield;
+    @transient EntityRef[5] leftTriggers, rightTriggers;
+    @transient ubyte lefts, rights;
+    @transient bool prowling;
+    @transient uint prowlersSent;
+
+    enum Step : ubyte { prowlers }
+    Schedule!Step steps;
+
+    void on(ref InstanceContext copy, const ref CreatureLoaded e)
+    {
+        switch (e.creature.entry)
+        {
+        case npcHakkar:
+            hakkar = e.creature;
+            break;
+        case npcMandokir:
+            mandokir = e.creature;
+            break;
+        case npcJindo:
+            jindo = e.creature;
+            break;
+        case npcPantherTrigger:
+            addTrigger(e.creature, copy.locationOf(e.creature).y);
+            break;
+        default:
+            break;
+        }
+    }
+
+    void on(ref InstanceContext copy, const ref ObjectLoaded e)
+    {
+        if (e.object.entry == goForcefield)
+        {
+            forcefield = e.object;
+            copy.door(e.object, encounters[ZgEncounter.arlokk] != EncounterState.inProgress);
+        }
+    }
+
+    /// The panther triggers by Arlokk's altar, left and right of it.
+    void addTrigger(EntityRef trigger, float y)
+    {
+        if (y < -1626)
+        {
+            if (lefts < leftTriggers.length)
+                leftTriggers[lefts++] = trigger;
+        }
+        else if (rights < rightTriggers.length)
+            rightTriggers[rights++] = trigger;
+    }
+
+    void on(ref InstanceContext copy, const ref Asked e)
+    {
+        if (e.id <= ZgEncounter.max)
+            copy.answer(encounters[e.id]);
+    }
+
+    void on(ref InstanceContext copy, const ref Signal e)
+    {
+        if (e.id == ZgSignal.prowlers)
+        {
+            prowling = e.value != 0;
+            if (prowling)
+                steps.every(Step.prowlers, 0.msecs, 8.seconds);
+            else
+                steps.cancel(Step.prowlers);
+            return;
+        }
+        if (e.id > ZgYell.base)
+            return yellAt(copy, e.id - ZgYell.base);
+        if (e.id == ZgSignal.gratsJindo)
+        {
+            if (jindo && copy.alive(jindo))
+                copy.say(jindo, Mandokir.sayGratsJindo);
+            return;
+        }
+        if (e.id > ZgEncounter.max)
+            return;
+        const which = cast(ZgEncounter) e.id;
+        const state = cast(EncounterState) e.value;
+        encounters[which] = state;
+        final switch (which)
+        {
+        case ZgEncounter.jeklik, ZgEncounter.venoxis, ZgEncounter.thekal, ZgEncounter.marli:
+            if (state == EncounterState.done && hakkar && copy.alive(hakkar))
+                copy.signal(hakkar, ZgSignal.powerDown);
+            break;
+        case ZgEncounter.arlokk:
+            if (forcefield)
+                copy.door(forcefield, state != EncounterState.inProgress);
+            if (state == EncounterState.done && hakkar && copy.alive(hakkar))
+                copy.signal(hakkar, ZgSignal.powerDown);
+            if (state != EncounterState.inProgress)
+            {
+                prowling = false;
+                steps.cancel(Step.prowlers);
+            }
+            break;
+        case ZgEncounter.ohgan:
+            if (state == EncounterState.special && mandokir)
+                copy.signal(mandokir, ZgSignal.comeDown);
+            break;
+        case ZgEncounter.lorkhan, ZgEncounter.zath:
+            break;
+        }
+    }
+
+    void on(ref InstanceContext copy, Step step)
+    {
+        // A prowler from a trigger on each side, to Arlokk's aid (forty at most).
+        foreach (side; [leftTriggers[0 .. lefts], rightTriggers[0 .. rights]])
+        {
+            if (side.length == 0)
+                continue;
+            const from = side[(prowlersSent++) % side.length];
+            const prowler = copy.summon(npcZulianProwler, copy.locationOf(from), 0);
+            if (prowler)
+                copy.signal(prowler, ZgSignal.toAid, cast(int) from.guid);
+        }
+    }
+
+    /// Hakkar speaks to those entering, and to those reaching his altar.
+    void yellAt(ref InstanceContext copy, uint trigger)
+    {
+        if (trigger == triggerEnter && !introYelled)
+        {
+            introYelled = true;
+            if (hakkar)
+                copy.say(hakkar, sayHakkarProtect);
+        }
+        else if (trigger == triggerAltar && !altarYelled)
+        {
+            altarYelled = true;
+            if (hakkar)
+                copy.say(hakkar, sayMinionDestroy);
+        }
+    }
+}
+
+/// A Zul'Gurub area trigger where Hakkar speaks (once a copy).
+@areaTrigger("at_zulgurub")
+struct AtZulGurub
+{
+    void on(ref AreaTriggerContext at, const ref TriggerEntered e)
+    {
+        if (e.trigger == ZulGurub.triggerEnter || e.trigger == ZulGurub.triggerAltar)
+            at.signalDungeon(ZgYell.base + e.trigger);
+    }
+}
+
+/// Signals of the area trigger: Hakkar's yell at trigger `id - base`.
+enum ZgYell : uint { base = 1000 }
+
+/**
+ * High Priest Venoxis: a priest of Hethiss (spell list one), a snake below half health (list two, his
+ * threat forgotten, a poison cloud), and fiercer still below a quarter; frenzied below a fifth.
+ */
+@creature("boss_venoxis")
+struct Venoxis
+{
+    enum int sayTransform = -1_309_000, sayDeath = -1_309_001;
+    enum : uint { snakeForm = 23849, frenzy = 23537, virulentPoisonProc = 22413, poisonCloud = 23861 }
+    enum : uint { listPhase1 = 1450701, listPhase2 = 1450702, listPhase3 = 1450703 }
+    ubyte phase;
+    bool frenzied;
+
+    void on(ref CreatureContext me, const ref Spawned e)
+    {
+        me.spellList(listPhase1);
+    }
+
+    void on(ref CreatureContext me, const ref Reset e)
+    {
+        phase = 0;
+        frenzied = false;
+        me.spellList(listPhase1);
+        me.signalDungeon(ZgEncounter.venoxis, EncounterState.failed);
+    }
+
+    void on(ref CreatureContext me, const ref EnteredCombat e)
+    {
+        me.signalDungeon(ZgEncounter.venoxis, EncounterState.inProgress);
+    }
+
+    void on(ref CreatureContext me, const ref Damaged e)
+    {
+        if (phase == 0 && e.after <= 50 && me.castSelf(snakeForm) == ActionResult.ok)
+        {
+            phase = 1;
+            me.say(sayTransform);
+            me.castSelf(poisonCloud);
+            if (!me.hasAura(virulentPoisonProc))
+                me.castSelf(virulentPoisonProc, true);
+            me.resetThreat();
+            me.spellList(listPhase2);
+        }
+        if (phase == 1 && e.after < 25)
+        {
+            phase = 2;
+            me.spellList(listPhase3);
+        }
+        if (!frenzied && e.after < 20 && me.castSelf(frenzy) == ActionResult.ok)
+            frenzied = true;
+    }
+
+    void on(ref CreatureContext me, const ref Died e)
+    {
+        me.say(sayDeath);
+        me.signalDungeon(ZgEncounter.venoxis, EncounterState.done);
+    }
+}
+
+/**
+ * High Priestess Jeklik: takes to the air as a bat when attacked (list one), lands at half health in
+ * her troll form (list two, her threat forgotten), and at 35% calls bat riders who rain liquid fire.
+ */
+@creature("boss_jeklik")
+struct Jeklik
+{
+    enum : int
+    {
+        sayAggro = -1_309_002,
+        sayRainFire = -1_309_003,
+        sayDeath = -1_309_004,
+    }
+    enum : uint { greenChanneling = 13540, batForm = 23966, transformVisual = 24085, liquidFire = 23968 }
+    enum : uint { listPhase1 = 1451701, listPhase2 = 1451702 }
+    static immutable flyTo = Location(-12281.58f, -1392.84f, 146.1f);
+    static immutable Location[2] ridersAt = [
+        Location(-12298.03f, -1368.506f, 145.3976f, 4.799655f),
+        Location(-12301.69f, -1371.292f, 145.0924f, 4.747295f),
+    ];
+
+    enum Step : ubyte { delayedRider }
+    Schedule!Step steps;
+    bool landed, ridersCalled;
+    EntityRef[2] riders;
+
+    void on(ref CreatureContext me, const ref Spawned e)
+    {
+        rest(me);
+    }
+
+    private void rest(ref CreatureContext me)
+    {
+        steps.clear();
+        landed = ridersCalled = false;
+        me.spellList(listPhase1);
+        me.castSelf(greenChanneling);
+        me.combatMovement(false);
+        me.flying(false);
+    }
+
+    void on(ref CreatureContext me, const ref EnteredCombat e)
+    {
+        me.say(sayAggro);
+        me.signalDungeon(ZgEncounter.jeklik, EncounterState.inProgress);
+        if (me.castSelf(batForm) == ActionResult.ok)
+        {
+            me.flying(true);
+            me.moveNow(flyTo, 1);
+        }
+        else
+            me.combatMovement(true);
+    }
+
+    void on(ref CreatureContext me, const ref MovementDone e)
+    {
+        if (e.point == 1 && me.inCombat)
+        {
+            me.combatMovement(true);
+            if (const victim = me.selectTarget(Pick.topThreat))
+                me.attack(victim);
+        }
+    }
+
+    void on(ref CreatureContext me, const ref Damaged e)
+    {
+        if (!landed && e.after < 50 && me.castSelf(transformVisual) == ActionResult.ok)
+        {
+            landed = true;
+            me.removeAura(batForm);
+            me.flying(false);
+            me.resetThreat();
+            me.spellList(listPhase2);
+        }
+        if (!ridersCalled && e.after < 35)
+        {
+            ridersCalled = true;
+            riders[0] = me.summon(npcBatRider, ridersAt[0]);
+            riders[1] = me.summon(npcBatRider, ridersAt[1]);
+            if (riders[1])
+                me.signal(riders[1], ZgSignal.toAid);
+            steps.after(Step.delayedRider, 15.seconds);
+            me.say(sayRainFire);
+        }
+    }
+
+    void on(ref CreatureContext me, Step step)
+    {
+        if (riders[0])
+            me.signal(riders[0], ZgSignal.toAid);
+    }
+
+    void on(ref CreatureContext me, const ref Evaded e)
+    {
+        despawnRiders(me);
+        me.flying(false);
+        me.teleport(me.location); // straight home from the air, as she evades
+    }
+
+    void on(ref CreatureContext me, const ref Reset e)
+    {
+        rest(me);
+        me.signalDungeon(ZgEncounter.jeklik, EncounterState.failed);
+    }
+
+    void on(ref CreatureContext me, const ref Died e)
+    {
+        me.say(sayDeath);
+        despawnRiders(me);
+        me.signalDungeon(ZgEncounter.jeklik, EncounterState.done);
+    }
+
+    private void despawnRiders(ref CreatureContext me)
+    {
+        foreach (ref r; riders)
+            if (r)
+            {
+                me.despawn(r);
+                r = EntityRef.init;
+            }
+    }
+}
+
+/// A Gurubashi Bat Rider: one of Jeklik's raining liquid fire (passive, flying over), or one met on
+/// the way, who shouts as it fights and drinks its unstable concoction when hurt.
+@creature("npc_gurubashi_bat_rider")
+struct GurubashiBatRider
+{
+    enum int saySelfDetonate = -1_309_028;
+    enum : uint { thrash = 8876, demoralizingShout = 23511, unstableConcoction = 24024, liquidFire = 23968 }
+    bool bomber, concocted;
+
+    void on(ref CreatureContext me, const ref Spawned e)
+    {
+        if (!me.hasAura(thrash))
+            me.castSelf(thrash, true);
+    }
+
+    void on(ref CreatureContext me, const ref Signal e)
+    {
+        if (e.id != ZgSignal.toAid)
+            return;
+        // Jeklik's: it flies over the fight, raining fire, and is no one's to fight.
+        bomber = true;
+        me.react(React.passive);
+        me.flying(true);
+        me.unitFlags(UnitFlag.notSelectable, true);
+        me.castSelf(liquidFire, true);
+    }
+
+    void on(ref CreatureContext me, const ref EnteredCombat e)
+    {
+        if (bomber)
+            return;
+        me.castSelf(demoralizingShout);
+        me.unitFlags(UnitFlag.notSelectable, false);
+    }
+
+    void on(ref CreatureContext me, const ref Damaged e)
+    {
+        if (!concocted && e.after < 40 && me.castSelf(unstableConcoction) == ActionResult.ok)
+        {
+            concocted = true;
+            me.say(saySelfDetonate);
+        }
+    }
+
+    void on(ref CreatureContext me, const ref Reset e)
+    {
+        concocted = false;
+        if (!me.hasAura(thrash))
+            me.castSelf(thrash, true);
+    }
+}
+
+/// High Priestess Mar'li: every minute between her troll form (list one) and her spider form (list two,
+/// her threat forgotten, a charge at someone).
+@creature("boss_marli")
+struct Marli
+{
+    enum : int
+    {
+        sayAggro = -1_309_005,
+        sayTransform = -1_309_006,
+        sayTransformBack = -1_309_025,
+        sayDeath = -1_309_008,
+    }
+    enum : uint { charge = 22911, spiderForm = 24084, transformBack = 24085, hatchEggs = 24083 }
+    enum : uint { listPhase1 = 1451001, listPhase2 = 1451002 }
+    enum Step : ubyte { phaseChange, charge }
+    Schedule!Step steps;
+    bool spider;
+
+    void on(ref CreatureContext me, const ref Spawned e)
+    {
+        me.spellList(listPhase1);
+    }
+
+    void on(ref CreatureContext me, const ref EnteredCombat e)
+    {
+        me.say(sayAggro);
+        me.castSelf(hatchEggs);
+        me.signalDungeon(ZgEncounter.marli, EncounterState.inProgress);
+        steps.after(Step.phaseChange, 60.seconds);
+    }
+
+    void on(ref CreatureContext me, Step step)
+    {
+        final switch (step)
+        {
+        case Step.phaseChange:
+            if (!spider && me.castSelf(spiderForm) == ActionResult.ok)
+            {
+                me.say(sayTransform);
+                me.resetThreat();
+                me.spellList(listPhase2);
+                spider = true;
+                steps.after(Step.charge, 1.seconds);
+                steps.after(step, 60.seconds);
+            }
+            else if (spider && me.castSelf(transformBack) == ActionResult.ok)
+            {
+                me.say(sayTransformBack);
+                me.removeAura(spiderForm);
+                me.spellList(listPhase1);
+                spider = false;
+                steps.after(step, 60.seconds);
+            }
+            else
+                steps.after(step, retry);
+            break;
+        case Step.charge:
+            const target = me.selectTarget(Pick.random, PickFilter.player);
+            if (!target || me.castSpell(charge, target) != ActionResult.ok)
+                steps.after(step, retry);
+            break;
+        }
+    }
+
+    void on(ref CreatureContext me, const ref Reset e)
+    {
+        steps.clear();
+        spider = false;
+        me.spellList(listPhase1);
+        me.signalDungeon(ZgEncounter.marli, EncounterState.failed);
+    }
+
+    void on(ref CreatureContext me, const ref Died e)
+    {
+        steps.clear();
+        me.say(sayDeath);
+        me.signalDungeon(ZgEncounter.marli, EncounterState.done);
+    }
+}
+
+/**
+ * What High Priest Thekal and his Zealots share: none of them dies of his wounds. Each falls as if dead,
+ * and after ten seconds rises again, unless the other two are down too: then Thekal rises as a tiger
+ * (and dies for good the next time), and the Zealots stay down.
+ */
+private mixin template FakeDeath(ZgEncounter which)
+{
+    enum uint pacifySelf = 19951, resurrect = 24173;
+
+    /// Down, as if dead.
+    private void fall(ref CreatureContext me)
+    {
+        me.interrupt();
+        me.unitFlags(UnitFlag.notSelectable, true);
+        me.standState(StandState.dead);
+        me.castSelf(pacifySelf, true);
+        me.combatMovement(false);
+        me.melee(false);
+        down = true;
+        me.signalDungeon(which, EncounterState.special);
+    }
+
+    /// Up again (only its look, with `onlyLook`).
+    private void rise(ref CreatureContext me, bool onlyLook = false)
+    {
+        me.unitFlags(UnitFlag.notSelectable, false);
+        me.standState(StandState.stand);
+        me.removeAura(pacifySelf);
+        down = false;
+        if (onlyLook)
+            return;
+        me.setHealthPercent(100);
+        me.resetThreat();
+        me.combatMovement(true);
+        me.melee(true);
+        me.deathPrevention(true);
+        if (const victim = me.selectTarget(Pick.topThreat))
+            me.attack(victim);
+    }
+
+    /// Whether the other two are down too (as the copy knows).
+    private bool othersDown(ref CreatureContext me, ZgEncounter a, ZgEncounter b)
+    {
+        return me.askDungeon(a) == EncounterState.special && me.askDungeon(b) == EncounterState.special;
+    }
+}
+
+/// High Priest Thekal: spell list one; down (not dead) he rises in ten seconds, or as a tiger (list two)
+/// if his Zealots are down with him; the tiger enrages below 11%.
+@creature("boss_thekal")
+struct Thekal
+{
+    enum int sayAggro = -1_309_009, sayDeath = -1_309_010;
+    enum uint diesEmote = 10453; /// broadcast text
+    enum : uint { tigerForm = 24169, enrage = 8269, resurrectVisual = 24171 }
+    enum : uint { listPhase1 = 1450901, listPhase2 = 1450902 }
+    enum Step : ubyte { resurrect, tiger }
+    Schedule!Step steps;
+    bool down, tiger, enraged;
+
+    mixin FakeDeath!(ZgEncounter.thekal);
+
+    void on(ref CreatureContext me, const ref Spawned e)
+    {
+        me.deathPrevention(true);
+        me.spellList(listPhase1);
+    }
+
+    void on(ref CreatureContext me, const ref EnteredCombat e)
+    {
+        me.say(sayAggro);
+        me.signalDungeon(ZgEncounter.thekal, EncounterState.inProgress);
+    }
+
+    void on(ref CreatureContext me, const ref Damaged e)
+    {
+        if (!tiger && !down && e.after == 0)
+        {
+            fall(me);
+            steps.after(Step.resurrect, 10.seconds);
+            if (preventAddsRising(me))
+                steps.after(Step.resurrect, 1.seconds);
+        }
+        if (tiger && !enraged && e.after < 11 && me.castSelf(enrage) == ActionResult.ok)
+            enraged = true;
+    }
+
+    /// His Zealots are down with him: they stay down, and he rises as the tiger.
+    private bool preventAddsRising(ref CreatureContext me)
+    {
+        if (!othersDown(me, ZgEncounter.zath, ZgEncounter.lorkhan))
+            return false;
+        EntityRef[1] z;
+        if (me.creaturesNear(npcZath, 150, z[]))
+            me.signal(z[0], ZgSignal.preventRevive);
+        if (me.creaturesNear(npcLorkhan, 150, z[]))
+            me.signal(z[0], ZgSignal.preventRevive);
+        return true;
+    }
+
+    void on(ref CreatureContext me, Step step)
+    {
+        final switch (step)
+        {
+        case Step.resurrect:
+            me.castSelf(resurrect, true);
+            me.signalDungeon(ZgEncounter.thekal, EncounterState.inProgress);
+            if (preventAddsRising(me))
+            {
+                // The tiger's turn.
+                rise(me, true);
+                me.unitFlags(UnitFlag.notSelectable, true);
+                me.melee(false);
+                me.castSelf(resurrectVisual);
+                steps.after(Step.tiger, 5.seconds);
+            }
+            else
+                rise(me);
+            break;
+        case Step.tiger:
+            me.castSelf(tigerForm);
+            tiger = true;
+            me.setHealthPercent(100);
+            me.deathPrevention(false);
+            me.melee(true);
+            me.combatMovement(true);
+            me.unitFlags(UnitFlag.notSelectable, false);
+            me.spellList(listPhase2);
+            if (const victim = me.selectTarget(Pick.topThreat))
+                me.attack(victim);
+            break;
+        }
+    }
+
+    void on(ref CreatureContext me, const ref Evaded e)
+    {
+        EntityRef[1] z;
+        foreach (entry; [npcZath, npcLorkhan])
+            if (me.creaturesNear(entry, 150, z[]))
+                me.signal(z[0], ZgSignal.evade);
+    }
+
+    void on(ref CreatureContext me, const ref Reset e)
+    {
+        steps.clear();
+        if (down)
+            rise(me, true);
+        tiger = enraged = false;
+        me.deathPrevention(true);
+        me.combatMovement(true);
+        me.melee(true);
+        me.removeAura(tigerForm);
+        me.spellList(listPhase1);
+        me.signalDungeon(ZgEncounter.thekal, EncounterState.failed);
+    }
+
+    void on(ref CreatureContext me, const ref Died e)
+    {
+        steps.clear();
+        me.say(sayDeath);
+        me.signalDungeon(ZgEncounter.thekal, EncounterState.done);
+        EntityRef[1] z;
+        foreach (entry; [npcZath, npcLorkhan])
+            if (me.creaturesNear(entry, 150, z[]))
+            {
+                me.sayAs(z[0], diesEmote);
+                me.despawn(z[0], 1000);
+            }
+    }
+}
+
+/// Zealot Lor'Khan and Zealot Zath, at Thekal's side: down (not dead) each rises in ten seconds, unless
+/// Thekal and the other are down too.
+@creature("mob_zealot_lorkhan", "mob_zealot_zath")
+struct Zealot
+{
+    enum Step : ubyte { resurrect }
+    Schedule!Step steps;
+    bool down, stayDown;
+    ZgEncounter which = ZgEncounter.lorkhan;
+
+    mixin FakeDeath!(ZgEncounter.lorkhan) deathOfLorkhan;
+
+    void on(ref CreatureContext me, const ref Spawned e)
+    {
+        which = me.self.entry == npcZath ? ZgEncounter.zath : ZgEncounter.lorkhan;
+        me.deathPrevention(true);
+        me.signalDungeon(which, EncounterState.notStarted);
+    }
+
+    void on(ref CreatureContext me, const ref EnteredCombat e)
+    {
+        me.signalDungeon(which, EncounterState.inProgress);
+    }
+
+    void on(ref CreatureContext me, const ref Damaged e)
+    {
+        if (down || e.after != 0)
+            return;
+        // Down, as its fellows: the copy knows which of them it is.
+        me.interrupt();
+        me.unitFlags(UnitFlag.notSelectable, true);
+        me.standState(StandState.dead);
+        me.castSelf(deathOfLorkhan.pacifySelf, true);
+        me.combatMovement(false);
+        me.melee(false);
+        down = true;
+        me.signalDungeon(which, EncounterState.special);
+        steps.after(Step.resurrect, 10.seconds);
+    }
+
+    void on(ref CreatureContext me, const ref Signal e)
+    {
+        if (e.id == ZgSignal.preventRevive)
+        {
+            stayDown = true;
+            steps.clear();
+            me.interrupt();
+        }
+        else if (e.id == ZgSignal.evade)
+            me.evade();
+    }
+
+    void on(ref CreatureContext me, Step step)
+    {
+        const other = which == ZgEncounter.zath ? ZgEncounter.lorkhan : ZgEncounter.zath;
+        if (stayDown || (me.askDungeon(ZgEncounter.thekal) == EncounterState.special
+                && me.askDungeon(other) == EncounterState.special))
+            return;
+        me.castSelf(deathOfLorkhan.resurrect, true);
+        me.signalDungeon(which, EncounterState.inProgress);
+        deathOfLorkhan.rise(me);
+    }
+
+    void on(ref CreatureContext me, const ref Reset e)
+    {
+        steps.clear();
+        if (down)
+            deathOfLorkhan.rise(me, true);
+        stayDown = false;
+        me.deathPrevention(true);
+        me.combatMovement(true);
+        me.melee(true);
+        me.signalDungeon(which, EncounterState.notStarted);
+    }
+}
+
+/// High Priestess Arlokk: her forcefield closes as she fights; prowlers come from both sides; every so
+/// often she turns panther (list two, her threat forgotten) or back (list one); she vanishes and strikes
+/// from hiding.
+@creature("boss_arlokk")
+struct Arlokk
+{
+    enum : int { sayAggro = -1_309_011, sayFeastPanther = -1_309_012, sayDeath = -1_309_013 }
+    enum : uint { pantherTransform = 24190, hateToZero = 20538, transformVisual = 24085, superInvis = 24235 }
+    enum : uint { listPhase1 = 1451501, listPhase2 = 1451502 }
+    enum Step : ubyte { transition, invisSelect, invisEnd }
+    Schedule!Step steps;
+    bool panther;
+
+    void on(ref CreatureContext me, const ref Spawned e)
+    {
+        me.spellList(listPhase1);
+    }
+
+    void on(ref CreatureContext me, const ref EnteredCombat e)
+    {
+        me.say(sayAggro);
+        me.signalDungeon(ZgEncounter.arlokk, EncounterState.inProgress);
+        me.signalDungeon(ZgSignal.prowlers, 1);
+        steps.after(Step.transition, 30.seconds);
+    }
+
+    void on(ref CreatureContext me, const ref Signal e)
+    {
+        if (e.id != ZgSignal.vanished)
+            return;
+        // Hidden: she forgets everyone, then picks her prey.
+        me.resetThreat();
+        me.melee(false);
+        me.unitFlags(UnitFlag.notSelectable, true);
+        steps.after(Step.invisSelect, 10.seconds);
+        steps.after(Step.invisEnd, 50.seconds);
+    }
+
+    void on(ref CreatureContext me, Step step)
+    {
+        final switch (step)
+        {
+        case Step.transition:
+            if (panther && me.castSelf(transformVisual) == ActionResult.ok)
+            {
+                me.removeAura(pantherTransform);
+                panther = false;
+                me.spellList(listPhase1);
+                steps.after(step, 30.seconds);
+            }
+            else if (!panther && me.castSelf(pantherTransform) == ActionResult.ok)
+            {
+                me.castSelf(hateToZero);
+                panther = true;
+                me.spellList(listPhase2);
+                steps.after(step, 120.seconds);
+            }
+            else
+                steps.after(step, retry);
+            break;
+        case Step.invisSelect:
+            if (const prey = me.selectTarget(Pick.random, PickFilter.player))
+            {
+                me.teleport(me.locationOf(prey));
+                me.attack(prey);
+            }
+            me.removeAura(superInvis);
+            me.unitFlags(UnitFlag.notSelectable, false);
+            me.melee(true);
+            break;
+        case Step.invisEnd:
+            me.removeAura(superInvis);
+            me.unitFlags(UnitFlag.notSelectable, false);
+            me.melee(true);
+            break;
+        }
+    }
+
+    void on(ref CreatureContext me, const ref Reset e)
+    {
+        steps.clear();
+        panther = false;
+        me.unitFlags(UnitFlag.notSelectable, false);
+        me.melee(true);
+        me.spellList(listPhase1);
+        me.signalDungeon(ZgEncounter.arlokk, EncounterState.failed);
+        me.signalDungeon(ZgSignal.prowlers, 0);
+        me.despawn(); // summoned by the gong: gone until it is struck again
+    }
+
+    void on(ref CreatureContext me, const ref Died e)
+    {
+        steps.clear();
+        me.say(sayDeath);
+        me.signalDungeon(ZgSignal.prowlers, 0);
+        me.signalDungeon(ZgEncounter.arlokk, EncounterState.done);
+    }
+}
+
+/// `spell_arlokk_vanish`, `spell_renataki_vanish`: the vanish took hold; its caster's script hides it.
+@spell("spell_arlokk_vanish", "spell_renataki_vanish")
+struct ZgVanish
+{
+    void on(ref SpellContext spell, const ref EffectHit e)
+    {
+        if (e.caster.isCreature)
+            spell.signal(e.caster, ZgSignal.vanished, cast(int)(e.target.guid & 0x7FFF_FFFF));
+    }
+}
+
+/// `spell_thekal_resurrect`: its caster rises (the scripts raise themselves with the cast; nothing else).
+@spell("spell_thekal_resurrect")
+struct ThekalResurrect
+{
+    void on(ref SpellContext spell, const ref EffectHit e)
+    {
+        spell.consume();
+    }
+}
+
+/// A Zulian Prowler: one Arlokk calls slinks to her wall and joins the fight; one of the jungle just sneaks.
+@creature("npc_zulian_prowler")
+struct ZulianProwler
+{
+    enum uint sneak = 22766;
+
+    void on(ref CreatureContext me, const ref Spawned e)
+    {
+        me.castSelf(sneak);
+    }
+
+    void on(ref CreatureContext me, const ref Signal e)
+    {
+        if (e.id != ZgSignal.toAid)
+            return;
+        EntityRef[41] others;
+        if (me.creaturesNear(npcZulianProwler, 200, others[]) > 40)
+            return me.despawn();
+        me.moveTo(Location(arlokkWallShield[0], arlokkWallShield[1], arlokkWallShield[2]), 1, true);
+    }
+
+    void on(ref CreatureContext me, const ref MovementDone e)
+    {
+        if (e.point == 1)
+            me.zoneCombat();
+    }
+}
+
+/**
+ * Bloodlord Mandokir: watches from his perch until the copy says his keepers are slain, then comes down
+ * to fight; Ohgan fights with him (enraging him when slain), chained spirits revive the fallen, and
+ * every third player he kills makes him stronger.
+ */
+@creature("boss_mandokir")
+struct Mandokir
+{
+    enum : int
+    {
+        sayAggro = -1_309_015,
+        sayDingKill = -1_309_016,
+        sayGratsJindo = -1_309_017,
+        emoteRage = -1_309_024,
+    }
+    enum : uint { enrage = 23537, levelUp = 24312, revive = 24341 }
+    static immutable Location[19] spirits = [
+        Location(-12150.9f, -1956.24f, 133.407f, 2.57835f), Location(-12157.1f, -1972.78f, 133.947f, 2.64903f),
+        Location(-12172.3f, -1982.63f, 134.061f, 1.48664f), Location(-12194.0f, -1979.54f, 132.194f, 1.45916f),
+        Location(-12211.3f, -1978.49f, 133.580f, 1.35705f), Location(-12228.4f, -1977.10f, 132.728f, 1.25495f),
+        Location(-12250.0f, -1964.78f, 135.066f, 0.92901f), Location(-12264.0f, -1953.08f, 134.072f, 0.62663f),
+        Location(-12289.0f, -1924.00f, 132.620f, 5.37829f), Location(-12267.3f, -1902.26f, 131.328f, 5.32724f),
+        Location(-12255.3f, -1893.53f, 134.026f, 5.06413f), Location(-12229.9f, -1891.39f, 134.704f, 4.40047f),
+        Location(-12215.9f, -1889.09f, 137.273f, 4.70285f), Location(-12200.5f, -1890.69f, 135.777f, 4.84422f),
+        Location(-12186.0f, -1890.12f, 134.261f, 4.36513f), Location(-12246.3f, -1890.09f, 135.475f, 4.73427f),
+        Location(-12170.7f, -1894.85f, 133.852f, 3.51690f), Location(-12279.0f, -1931.92f, 136.130f, 0.04151f),
+        Location(-12266.1f, -1940.72f, 132.606f, 0.70910f),
+    ];
+
+    enum Step : ubyte { ohganCheck }
+    Schedule!Step steps;
+    ubyte kills;
+    EntityRef ohgan;
+    EntityRef[19] chained;
+
+    void on(ref CreatureContext me, const ref Signal e)
+    {
+        if (e.id == ZgSignal.comeDown)
+            me.moveTo(Location(mandokirDownstairs[0], mandokirDownstairs[1], mandokirDownstairs[2]), 1, true);
+    }
+
+    void on(ref CreatureContext me, const ref MovementDone e)
+    {
+        if (e.point != 1)
+            return;
+        me.unitFlags(UnitFlag.immuneToPlayer, false);
+        me.zoneCombat();
+    }
+
+    void on(ref CreatureContext me, const ref EnteredCombat e)
+    {
+        me.say(sayAggro);
+        foreach (i, at; spirits)
+            chained[i] = me.summon(npcChainedSpirit, at);
+        ohgan = me.summon(npcOhgan, Location.init, 0, me.victim);
+        me.signalDungeon(ZgEncounter.ohgan, EncounterState.inProgress);
+        steps.every(Step.ohganCheck, 1.seconds);
+    }
+
+    void on(ref CreatureContext me, Step step)
+    {
+        // Ohgan slain: his master rages.
+        if (ohgan && !me.alive(ohgan))
+        {
+            ohgan = EntityRef.init;
+            me.castSelf(enrage, true);
+            me.say(emoteRage);
+            steps.cancel(Step.ohganCheck);
+        }
+    }
+
+    void on(ref CreatureContext me, const ref KilledUnit e)
+    {
+        if (!e.victim.isPlayer)
+            return;
+        if (++kills == 3)
+        {
+            me.say(sayDingKill);
+            me.signalDungeon(ZgSignal.gratsJindo);
+            me.castSelf(levelUp, true);
+            kills = 0;
+        }
+        reviveFallen(me, e.victim);
+    }
+
+    /// The chained spirit nearest the fallen player brings it back.
+    private void reviveFallen(ref CreatureContext me, EntityRef player)
+    {
+        EntityRef best;
+        float nearest = 50;
+        const at = me.locationOf(player);
+        foreach (s; chained)
+            if (s && me.alive(s))
+            {
+                const there = me.locationOf(s);
+                const d = (there.x - at.x) ^^ 2 + (there.y - at.y) ^^ 2;
+                if (d < nearest * nearest)
+                {
+                    nearest = d ^^ 0.5f;
+                    best = s;
+                }
+            }
+        if (best)
+            me.castAs(best, revive, player);
+    }
+
+    private void unchain(ref CreatureContext me)
+    {
+        foreach (ref s; chained)
+            if (s)
+            {
+                me.despawn(s);
+                s = EntityRef.init;
+            }
+    }
+
+    void on(ref CreatureContext me, const ref Evaded e)
+    {
+        steps.clear();
+        me.signalDungeon(ZgEncounter.ohgan, EncounterState.failed);
+        unchain(me);
+    }
+
+    void on(ref CreatureContext me, const ref Reset e)
+    {
+        kills = 0;
+    }
+
+    void on(ref CreatureContext me, const ref Died e)
+    {
+        steps.clear();
+        me.signalDungeon(ZgEncounter.ohgan, EncounterState.done);
+        unchain(me);
+    }
+}
+
+/// Ohgan, Mandokir's raptor: sunders armor; players he kills are revived by the chained spirits too.
+@creature("mob_ohgan")
+struct Ohgan
+{
+    enum uint sunderArmor = 24317;
+    enum Step : ubyte { sunder }
+    Schedule!Step steps;
+
+    void on(ref CreatureContext me, const ref EnteredCombat e)
+    {
+        steps.after(Step.sunder, 5.seconds);
+    }
+
+    void on(ref CreatureContext me, Step step)
+    {
+        steps.after(step, me.castSpell(sunderArmor) == ActionResult.ok ? between(me, 10_000, 15_000) : retry);
+    }
+
+    void on(ref CreatureContext me, const ref KilledUnit e)
+    {
+        if (!e.victim.isPlayer)
+            return;
+        EntityRef[1] spirit;
+        if (me.creaturesNear(npcChainedSpirit, 50, spirit[]))
+            me.castAs(spirit[0], Mandokir.revive, e.victim);
+    }
+
+    void on(ref CreatureContext me, const ref Reset e)
+    {
+        steps.clear();
+    }
+}
+
+/// Renataki: his spell list; vanished, he hides a moment and strikes from behind his prey.
+@creature("boss_renataki")
+struct Renataki
+{
+    enum : uint { thrash = 3391, spiritParticles = 18951, redLightning = 24240 }
+    enum Step : ubyte { reappear }
+    Schedule!Step steps;
+    EntityRef prey;
+
+    void on(ref CreatureContext me, const ref Spawned e)
+    {
+        me.castSelf(spiritParticles);
+        me.castSelf(redLightning);
+    }
+
+    void on(ref CreatureContext me, const ref Signal e)
+    {
+        if (e.id != ZgSignal.vanished)
+            return;
+        me.melee(false);
+        me.combatMovement(false);
+        prey = me.selectTarget(Pick.random, PickFilter.player);
+        steps.after(Step.reappear, 5.seconds);
+    }
+
+    void on(ref CreatureContext me, Step step)
+    {
+        if (prey && me.alive(prey))
+        {
+            me.teleport(me.locationOf(prey));
+            me.attack(prey);
+            me.castSelf(thrash, true);
+        }
+        me.melee(true);
+        me.combatMovement(true);
+    }
+
+    void on(ref CreatureContext me, const ref Reset e)
+    {
+        steps.clear();
+        me.melee(true);
+        me.combatMovement(true);
+    }
+}
+
+/// Hakkar the Soulflayer: as strong as the high priests still living (a stack of Hakkar's Power each);
+/// his spell list does the rest.
+@creature("boss_hakkar")
+struct Hakkar
+{
+    enum int sayAggro = -1_309_020;
+    enum : uint { doubleAttack = 19818, hakkarsPower = 24692 }
+
+    void on(ref CreatureContext me, const ref Spawned e)
+    {
+        empower(me);
+    }
+
+    void on(ref CreatureContext me, const ref Reset e)
+    {
+        empower(me);
+    }
+
+    /// A stack of his power for each priest alive.
+    private void empower(ref CreatureContext me)
+    {
+        if (!me.hasAura(doubleAttack))
+            me.castSelf(doubleAttack, true);
+        me.removeAura(hakkarsPower);
+        foreach (priest; ZgEncounter.jeklik .. ZgEncounter.ohgan)
+            if (me.askDungeon(priest) != EncounterState.done)
+                me.castSelf(hakkarsPower, true);
+    }
+
+    void on(ref CreatureContext me, const ref EnteredCombat e)
+    {
+        me.say(sayAggro);
+    }
+
+    void on(ref CreatureContext me, const ref Signal e)
+    {
+        if (e.id == ZgSignal.powerDown)
+            empower(me);
+    }
+}
+
+/// A Soulflayer: Soul Tap, Lightning Breath, and one of fear or knockdown; one of enrage, frenzy (when
+/// hurt) or thrash.
+@creature("npc_soulflayer")
+struct Soulflayer
+{
+    enum : uint { soulTap = 24619, lightningBreath = 20543, thrash = 8876, knockdown = 20276, fear = 22678,
+        frenzy = 28371, enrage = 8269 }
+    enum Step : ubyte { soulTap, breath, cc }
+    Schedule!Step steps;
+    uint ccSpell, buffSpell;
+
+    void on(ref CreatureContext me, const ref Spawned e)
+    {
+        ccSpell = me.random(2) ? fear : knockdown;
+        static immutable uint[3] buffs = [enrage, frenzy, thrash];
+        buffSpell = buffs[me.random(3)];
+        if (buffSpell == thrash && !me.hasAura(thrash))
+            me.castSelf(thrash, true);
+    }
+
+    void on(ref CreatureContext me, const ref EnteredCombat e)
+    {
+        const cc = between(me, 2000, 5000);
+        steps.after(Step.cc, cc);
+        steps.after(Step.soulTap, between(me, cast(uint) cc.total!"msecs", 7000));
+        steps.after(Step.breath, between(me, 7000, 9000));
+    }
+
+    void on(ref CreatureContext me, Step step)
+    {
+        if (me.casting)
+            return cast(void) steps.after(step, retry);
+        final switch (step)
+        {
+        case Step.soulTap:
+            const target = me.selectTarget(Pick.random);
+            steps.after(step, target && me.castSpell(soulTap, target) == ActionResult.ok ? between(me, 10_000, 15_000) : retry);
+            break;
+        case Step.breath:
+            steps.after(step, me.castSpell(lightningBreath) == ActionResult.ok ? between(me, 10_000, 15_000) : retry);
+            break;
+        case Step.cc:
+            steps.after(step, me.castSpell(ccSpell) == ActionResult.ok ? between(me, 8000, 10_000) : retry);
+            break;
+        }
+    }
+
+    void on(ref CreatureContext me, const ref Damaged e)
+    {
+        if (buffSpell != thrash && e.after <= 30 && !me.hasAura(buffSpell))
+            me.castSelf(buffSpell);
+    }
+
+    void on(ref CreatureContext me, const ref Reset e)
+    {
+        steps.clear();
+        if (buffSpell == thrash && !me.hasAura(thrash))
+            me.castSelf(thrash, true);
+    }
+}
+
+/// The Gong of Bethekk: struck, it summons Arlokk (its own event does) unless she fights or has fallen.
+@gameObject("go_gong_of_bethekk")
+struct GongOfBethekk
+{
+    void on(ref GameObjectContext gong, const ref ObjectUsed e)
+    {
+        const state = gong.askDungeon(ZgEncounter.arlokk);
+        if (state == EncounterState.done || state == EncounterState.inProgress)
+            return gong.consume();
+        gong.signalDungeon(ZgEncounter.arlokk, EncounterState.inProgress);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+version (unittest)
+{
+    import std.typecons : BlackHole;
+    import dmangos.script.registry : ScriptKind, ScriptRuntime;
+
+    /// A priest as its script sees it; the copy's states answer its questions.
+    class FakePriest : BlackHole!CreatureHost
+    {
+        uint[] casts, lists;
+        Signal[] dungeon, signals;
+        EncounterState[8] states;
+        uint flags, health = 100;
+        bool preventing, swings = true;
+        StandState stand;
+
+        override EntityRef hostSelf() { return EntityRef(0xF130_0000_0000_0001UL | (ulong(npcThekal) << 24)); }
+        override ActionResult hostCast(uint spell, EntityRef, bool) { casts ~= spell; return ActionResult.ok; }
+        override void hostSignalDungeon(uint id, int value)
+        {
+            dungeon ~= Signal(EntityRef.init, id, value);
+            if (id <= ZgEncounter.max)
+                states[id] = cast(EncounterState) value;
+        }
+        override ActionResult hostSignal(EntityRef to, uint id, int value)
+        {
+            signals ~= Signal(to, id, value);
+            return ActionResult.ok;
+        }
+        override int hostAskDungeon(uint id) { return id < states.length ? states[id] : 0; }
+        override void hostSpellList(uint id) { lists ~= id; }
+        override void hostUnitFlags(EntityRef, uint f, bool set) { flags = set ? flags | f : flags & ~f; }
+        override void hostDeathPrevention(bool on) { preventing = on; }
+        override void hostStandState(StandState s) { stand = s; }
+        override void hostSetHealthPercent(EntityRef, uint p) { health = p; }
+        override void hostMelee(bool on) { swings = on; }
+        override size_t hostCreaturesNear(uint entry, float, EntityRef[] into)
+        {
+            if (into.length == 0 || (entry != npcZath && entry != npcLorkhan))
+                return 0;
+            into[0] = EntityRef(0xF130_0000_0000_0002UL | (ulong(entry) << 24));
+            return 1;
+        }
+    }
+}
+
+/// Thekal and his Zealots: Thekal falls alone and rises in ten seconds; when all three are down he
+/// rises as the tiger (list two), the Zealots told to stay down, and the tiger dies for good.
+unittest
+{
+    import std.algorithm.searching : canFind;
+
+    alias self = dmangos.scripts.zulgurub;
+    auto runtime = ScriptRuntime.of!self();
+    auto host = new FakePriest;
+    auto me = CreatureContext(host);
+    auto h = runtime.create(ScriptKind.creature, "boss_thekal");
+    void run(int ms)
+    {
+        foreach (_; 0 .. ms / 100)
+            runtime.tick(h, me, 100);
+    }
+
+    runtime.raise(h, me, Spawned());
+    assert(host.preventing && host.lists == [Thekal.listPhase1]);
+    runtime.raise(h, me, EnteredCombat(EntityRef(7)));
+    runtime.raise(h, me, Damaged(EntityRef(7), 5000, 3, 0));
+    assert(host.stand == StandState.dead && (host.flags & UnitFlag.notSelectable));
+    assert(host.states[ZgEncounter.thekal] == EncounterState.special);
+    run(10_000);
+    assert(host.stand == StandState.stand && host.health == 100 && host.preventing, "up again");
+
+    // All three down: the tiger.
+    host.states[ZgEncounter.zath] = EncounterState.special;
+    host.states[ZgEncounter.lorkhan] = EncounterState.special;
+    runtime.raise(h, me, Damaged(EntityRef(7), 5000, 3, 0));
+    assert(host.signals.canFind!(s => s.id == ZgSignal.preventRevive), "the Zealots stay down");
+    run(1000);
+    assert(!host.swings && (host.flags & UnitFlag.notSelectable), "rising");
+    run(5000);
+    assert(host.casts.canFind(Thekal.tigerForm) && !host.preventing && host.lists[$ - 1] == Thekal.listPhase2);
+    runtime.raise(h, me, Died(EntityRef(7)));
+    assert(host.states[ZgEncounter.thekal] == EncounterState.done);
+}
+
+version (unittest)
+{
+    class FakeZgCopy : BlackHole!InstanceHost
+    {
+        Signal[] signals;
+        bool[ulong] opened;
+        EntityRef[] summoned;
+        override ActionResult hostSignal(EntityRef to, uint id, int value)
+        {
+            signals ~= Signal(to, id, value);
+            return ActionResult.ok;
+        }
+        override bool hostAlive(EntityRef) { return true; }
+        override ActionResult hostDoor(EntityRef door, bool open)
+        {
+            opened[door.guid] = open;
+            return ActionResult.ok;
+        }
+        override Location hostLocationOf(EntityRef who) { return Location(0, (who.guid & 1) ? -1650 : -1605, 41); }
+        override EntityRef hostSummon(uint entry, Location, uint)
+        {
+            summoned ~= EntityRef(0xF130_0000_0000_0100UL | (ulong(entry) << 24) | summoned.length);
+            return summoned[$ - 1];
+        }
+    }
+}
+
+/// Zul'Gurub's copy: each priest's fall weakens Hakkar; Arlokk's forcefield closes while she fights and
+/// her prowlers come from both sides; Mandokir comes down when his keepers are slain.
+unittest
+{
+    alias self = dmangos.scripts.zulgurub;
+    auto runtime = ScriptRuntime.of!self();
+    auto copy = new FakeZgCopy;
+    auto c = InstanceContext(copy);
+    auto h = runtime.create(ScriptKind.instance, "instance_zulgurub");
+    const hakkar = EntityRef(0xF130_0000_0000_0001UL | (ulong(npcHakkar) << 24));
+    const mandokir = EntityRef(0xF130_0000_0000_0002UL | (ulong(npcMandokir) << 24));
+    const field = EntityRef(0xF110_0000_0000_0003UL | (ulong(goForcefield) << 24));
+    runtime.raise(h, c, CreatureLoaded(hakkar));
+    runtime.raise(h, c, CreatureLoaded(mandokir));
+    runtime.raise(h, c, ObjectLoaded(field));
+    foreach (i; 0 .. 4)
+        runtime.raise(h, c, CreatureLoaded(EntityRef(0xF130_0000_0000_0010UL | (ulong(npcPantherTrigger) << 24) | i)));
+    assert(copy.opened[field.guid]);
+
+    runtime.raise(h, c, Signal(EntityRef.init, ZgEncounter.venoxis, EncounterState.done));
+    assert(copy.signals[$ - 1] == Signal(hakkar, ZgSignal.powerDown, 0));
+
+    runtime.raise(h, c, Signal(EntityRef.init, ZgEncounter.arlokk, EncounterState.inProgress));
+    assert(!copy.opened[field.guid], "closed while she fights");
+    runtime.raise(h, c, Signal(EntityRef.init, ZgSignal.prowlers, 1));
+    runtime.tick(h, c, 100);
+    assert(copy.summoned.length == 2, "one from each side");
+    runtime.raise(h, c, Signal(EntityRef.init, ZgEncounter.arlokk, EncounterState.done));
+    assert(copy.opened[field.guid]);
+    runtime.tick(h, c, 10_000);
+    assert(copy.summoned.length == 2, "no more once she has fallen");
+
+    runtime.raise(h, c, Signal(EntityRef.init, ZgEncounter.ohgan, EncounterState.special));
+    assert(copy.signals[$ - 1] == Signal(mandokir, ZgSignal.comeDown, 0));
+}
