@@ -917,6 +917,7 @@ interface AreaTriggerHost
 
     // Eastern Kingdoms scripts:
     void hostKillCreditAt(EntityRef player, uint entry);
+    ActionResult hostSayAt(EntityRef speaker, int entry, EntityRef target);
 }
 
 /// An area trigger script's handle, for the length of one handler.
@@ -970,4 +971,10 @@ struct AreaTriggerContext
 
     /// `KilledMonsterCredit` of `entry` for `player`.
     void killCredit(EntityRef player, uint entry) { host.hostKillCreditAt(player, entry); }
+
+    /// A creature here says the `script_texts` row `entry` (negative), with its sound and emote.
+    ActionResult say(EntityRef speaker, int entry, EntityRef target = EntityRef.init)
+    {
+        return host.hostSayAt(speaker, entry, target);
+    }
 }

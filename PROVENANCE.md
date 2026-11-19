@@ -143,6 +143,12 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Files: `ScriptDevAI/scripts/eastern_kingdoms/arathi_highlands.cpp`
 * Functions/ScriptNames: `npc_professor_phizzlethorpe`, `npc_kinelory`
 
+## scripts/areatriggers.d
+
+* Projects: CMaNGOS
+* Files: `ScriptDevAI/scripts/world/areatrigger_scripts.cpp`
+* Functions/ScriptNames: `at_huldar_miran`, `at_ravenholdt`, `at_twilight_grove`, `at_ancient_leaf`
+
 ## scripts/blastedlands.d
 
 * Projects: CMaNGOS

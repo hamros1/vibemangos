@@ -802,4 +802,11 @@ mixin template CreatureScripting()
             if (auto other = world_.unit(player.guid))
                 other.killCreditFrom(entry, me.guid);
     }
+
+    /// Something else's script (an area trigger's) has it say `script_texts` row `entry`.
+    ActionResult sayScriptFor(CombatWorld world, int entry, EntityRef target)
+    {
+        world_ = world;
+        return hostSay(entry, target);
+    }
 }
