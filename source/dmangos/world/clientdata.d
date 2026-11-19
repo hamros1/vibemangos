@@ -318,6 +318,25 @@ struct SpellDurationEntry
 
 enum spellDurationFormat = "niii"; ///
 
+/// A `SpellShapeshiftForm.dbc` record: whether a form acts as a shapeshift for spells.
+struct SpellShapeshiftFormEntry
+{
+    uint id;
+    uint flags; /// `flags1`: 1 = a stance (battle, Shadowform, Stealth, Moonkin): spells are cast as unshifted
+}
+
+enum spellShapeshiftFormFormat = "nxxxxxxxxxxixx"; ///
+
+/// Whether being in `form` (0: none) counts as shapeshifted for spells (CMaNGOS's `GetErrorAtShapeshiftedCast`):
+/// Cat, Bear, Travel Form, Ghost Wolf do; the warrior's stances, Shadowform, Stealth and Moonkin Form do not.
+bool actsAsShapeshifted(const ClientData client, uint form)
+{
+    if (form == 0)
+        return false;
+    const entry = client.spellShapeshiftForms.lookup(form);
+    return entry !is null && !(entry.flags & 1);
+}
+
 /// A `SpellRange.dbc` record.
 struct SpellRangeEntry
 {
@@ -677,6 +696,7 @@ final class ClientData
     @DbcFile("SpellCastTimes") DbcStore!(SpellCastTimesEntry, spellCastTimesFormat) spellCastTimes;
     @DbcFile("SpellDuration") DbcStore!(SpellDurationEntry, spellDurationFormat) spellDurations;
     @DbcFile("SpellRange") DbcStore!(SpellRangeEntry, spellRangeFormat) spellRanges;
+    @DbcFile("SpellShapeshiftForm") DbcStore!(SpellShapeshiftFormEntry, spellShapeshiftFormFormat) spellShapeshiftForms;
     @DbcFile("SpellRadius") DbcStore!(SpellRadiusEntry, spellRadiusFormat) spellRadii;
 
     private

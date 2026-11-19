@@ -456,7 +456,7 @@ private bool isWandUser(ubyte classId) pure nothrow @nogc @safe
 }
 
 /// Whether the victim may dodge: a player dodges only what comes from the front.
-private bool canDodge(const Fighter victim, const Fighter attacker) pure nothrow @nogc @safe
+bool canDodge(const Fighter victim, const Fighter attacker) pure nothrow @nogc @safe
 {
     if (!victim.canDodge || victim.dodge < 0.005f)
         return false;
@@ -487,7 +487,7 @@ unittest
 }
 
 /// Whether the victim may parry: only from the front.
-private bool canParry(const Fighter victim, const Fighter attacker) pure nothrow @nogc @safe
+bool canParry(const Fighter victim, const Fighter attacker) pure nothrow @nogc @safe
 {
     return victim.canParry && victim.parry >= 0.005f && isFacingFront(attacker, victim);
 }
