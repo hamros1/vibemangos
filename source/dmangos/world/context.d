@@ -3131,6 +3131,13 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     {
         import dmangos.script.api : GameObjectContext, ObjectUsed;
 
+        if (go.instanceId) // Raid scripts: the copy's script hears of it first
+            if (auto script = go.instanceId in instanceScripts)
+            {
+                import dmangos.script.api : ObjectUsedHere;
+
+                script.raise(ObjectUsedHere(EntityRef(go.guid), EntityRef(player)));
+            }
         if (!go.behaviour)
             return false;
         goHost.go = go;
@@ -3215,6 +3222,15 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 return true;
             }
         return false;
+    }
+
+    /// See `CreatureLore.creatureEngaged`.
+    void creatureEngaged(uint instance, EntityRef creature, EntityRef enemy)
+    {
+        import dmangos.script.api : CreatureEngaged;
+
+        if (auto script = instance in instanceScripts)
+            script.raise(CreatureEngaged(creature, enemy));
     }
 
     /// See `CreatureLore.askDungeon`.

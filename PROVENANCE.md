@@ -166,6 +166,16 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
   `boss_arlokk`, `npc_zulian_prowler`, `go_gong_of_bethekk`, `boss_mandokir`, `mob_ohgan`, `boss_renataki`,
   `boss_hakkar`, `npc_soulflayer`, `spell_arlokk_vanish`, `spell_renataki_vanish`, `spell_thekal_resurrect`
 
+## scripts/blackwinglair.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/eastern_kingdoms/blackwing_lair/` (`blackwing_lair.cpp`, `blackwing_lair.h`,
+  `boss_razorgore.cpp`, `boss_vaelastrasz.cpp`, `boss_broodlord_lashlayer.cpp`, `boss_firemaw.cpp`,
+  `boss_ebonroc.cpp`, `boss_flamegor.cpp`, `boss_chromaggus.cpp`, `boss_victor_nefarius.cpp`, `boss_nefarian.cpp`)
+* Functions/ScriptNames: `instance_blackwing_lair`, `at_vaelastrasz`, `boss_razorgore`, `npc_blackwing_orb`,
+  `boss_vaelastrasz`, `boss_broodlord`, `boss_firemaw`, `boss_ebonroc`, `boss_flamegor`, `boss_chromaggus`,
+  `boss_victor_nefarius`, `boss_nefarian`
+
 ## timer.d
 
 * Projects: CMaNGOS, Ember

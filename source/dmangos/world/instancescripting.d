@@ -273,6 +273,24 @@ final class InstanceScript : InstanceHost
         return Location(at.x, at.y, at.z, at.orientation);
     }
 
+    uint hostRandom(uint below)
+    {
+        import std.random : uniform;
+
+        return below == 0 || map is null ? 0 : uniform(0, below, map.random);
+    }
+
+    ActionResult hostZoneCombat(EntityRef creature)
+    {
+        auto c = creatureHere(creature);
+        if (c is null || map is null || !c.alive)
+            return ActionResult.notHere;
+        c.ai.bind(map);
+        c.ai.scriptZoneCombatPulse();
+        map.wake(c.guid);
+        return ActionResult.ok;
+    }
+
     ActionResult hostSay(EntityRef speaker, int textEntry, EntityRef target)
     {
         auto c = creatureHere(speaker);

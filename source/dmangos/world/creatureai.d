@@ -99,6 +99,9 @@ interface CreatureLore
 
     /// The answer of dungeon copy `instance`'s script to question `id` from `from` (0: none).
     int askDungeon(uint instance, EntityRef from, uint id);
+
+    /// A creature of dungeon copy `instance` started a fight with `enemy` (its script hears of it).
+    void creatureEngaged(uint instance, EntityRef creature, EntityRef enemy);
 }
 
 /// What a creature's AI needs of its map.
@@ -570,6 +573,8 @@ private:
             if (script !is null)
                 script.combatStarted(this, guid);
             raiseScript(EnteredCombat(EntityRef(guid)));
+            if (me.instanceId && lore !is null) // Raid scripts: its copy's script hears of it
+                lore.creatureEngaged(me.instanceId, EntityRef(me.guid), EntityRef(guid));
             world.linked(me, LinkEvent.aggro, guid); // its pack joins in
         }
         world.flushCreature(me);

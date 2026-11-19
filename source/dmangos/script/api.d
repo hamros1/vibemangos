@@ -302,6 +302,7 @@ interface CreatureHost
     void hostDie();
     void hostMoveNow(Location at, uint point, bool run);
     void hostSpellList(uint id);
+    ubyte hostClassOf(EntityRef who);
 }
 
 /**
@@ -565,6 +566,9 @@ struct CreatureContext
 
     /// The spells it casts by itself in a fight: `creature_spell_list` `id` from now (0: its template's).
     void spellList(uint id) { host.hostSpellList(id); }
+
+    /// A player's class (`Classes`: 1 warrior .. 11 druid); 0 for anyone else.
+    ubyte classOf(EntityRef who) { return host.hostClassOf(who); }
 }
 
 // ---------------------------------------------------------------------------
@@ -669,6 +673,8 @@ interface InstanceHost
     size_t hostPlayers(EntityRef[] into);
     ActionResult hostSay(EntityRef speaker, int textEntry, EntityRef target);
     Location hostLocationOf(EntityRef who);
+    ActionResult hostZoneCombat(EntityRef creature);
+    uint hostRandom(uint below);
 }
 
 /// A dungeon script's handle on its copy, for the length of one handler.
@@ -754,6 +760,12 @@ struct InstanceContext
 
     /// Where a creature, object or player of the copy is; `Location.init` if it is not here.
     Location locationOf(EntityRef who) { return host.hostLocationOf(who); }
+
+    /// A creature of the copy fights every living player in it (`SetInCombatWithZone`).
+    ActionResult zoneCombat(EntityRef creature) { return host.hostZoneCombat(creature); }
+
+    /// A random number below `below`.
+    uint random(uint below) { return host.hostRandom(below); }
 }
 
 unittest
@@ -989,6 +1001,20 @@ struct Asked
 /// A player came into the copy (entered it, logged in there, or was carried there).
 struct PlayerEntered
 {
+    EntityRef player;
+}
+
+/// A creature of the copy started a fight (`OnCreatureEnterCombat`).
+struct CreatureEngaged
+{
+    EntityRef creature;
+    EntityRef enemy;
+}
+
+/// A player used a game object of the copy (before the object's own script and its usual use).
+struct ObjectUsedHere
+{
+    EntityRef object;
     EntityRef player;
 }
 

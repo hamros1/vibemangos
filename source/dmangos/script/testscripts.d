@@ -143,6 +143,7 @@ final class FakeCreature : CreatureHost
     void hostDie() {}
     void hostMoveNow(Location, uint, bool) {}
     void hostSpellList(uint) {}
+    ubyte hostClassOf(EntityRef) { return 0; }
 }
 
 unittest

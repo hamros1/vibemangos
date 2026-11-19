@@ -916,4 +916,14 @@ mixin template CreatureScripting()
     {
         chooseSpellList(id);
     }
+
+    ubyte hostClassOf(EntityRef who)
+    {
+        import dmangos.world.unit : UnitKind;
+
+        if (world_ is null || !who.isPlayer)
+            return 0;
+        auto unit = world_.unit(who.guid);
+        return unit && unit.kind == UnitKind.player ? unit.session.player.values.getByte!UNIT_FIELD_BYTES_0(1) : 0;
+    }
 }
