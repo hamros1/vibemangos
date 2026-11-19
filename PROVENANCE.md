@@ -161,11 +161,29 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Files: `ScriptDevAI/scripts/eastern_kingdoms/redridge_mountains.cpp`
 * Functions/ScriptNames: `npc_corporal_keeshan`
 
+## scripts/searinggorge.d
+
+* Projects: CMaNGOS
+* Files: `ScriptDevAI/scripts/eastern_kingdoms/searing_gorge.cpp`
+* Functions/ScriptNames: `npc_dorius_stonetender`
+
 ## scripts/silverpine.d
 
 * Projects: CMaNGOS
 * Files: `ScriptDevAI/scripts/eastern_kingdoms/silverpine_forest.cpp`
 * Functions/ScriptNames: `npc_deathstalker_erland`, `npc_deathstalker_faerleia`
+
+## scripts/swamp.d
+
+* Projects: CMaNGOS
+* Files: `ScriptDevAI/scripts/eastern_kingdoms/swamp_of_sorrows.cpp`
+* Functions/ScriptNames: `npc_galen_goodward`
+
+## scripts/tirisfal.d
+
+* Projects: CMaNGOS
+* Files: `ScriptDevAI/scripts/eastern_kingdoms/tirisfal_glades.cpp`
+* Functions/ScriptNames: `go_mausoleum_door`, `go_mausoleum_trigger`, `npc_calvin_montague`
 
 ## scripts/wetlands.d
 
