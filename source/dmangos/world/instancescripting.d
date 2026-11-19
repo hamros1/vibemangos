@@ -69,24 +69,53 @@ final class InstanceScript : InstanceHost
         return script;
     }
 
-    /// Raises `event` for the script, then saves its state if it changed.
-    void raise(E)(const E event)
+    /**
+     * Raises `event` for the script, then saves its state if it changed; whether the script consumed
+     * it. An event caused by one of the script's own actions (a creature it summoned coming into the
+     * world) is raised once the handler it came from is done.
+     */
+    bool raise(E)(const E event)
     {
         if (!runtime.handles!E(handle))
-            return;
+            return false;
+        if (raising)
+        {
+            pending ~= () { raise(event); };
+            return false;
+        }
+        raising = true;
         auto context = InstanceContext(this);
         runtime.raise(handle, context, event);
+        raising = false;
         save();
+        while (pending.length)
+        {
+            auto next = pending[0];
+            pending = pending[1 .. $];
+            next();
+        }
+        return context.consumed;
     }
+
+    private bool raising;              // a handler runs
+    private void delegate()[] pending; // events its actions caused, for after it
 
     /// Its schedules, `ms` milliseconds on (nothing to do when none is pending).
     void tick(int ms)
     {
         if (!runtime.busy(handle))
             return;
+        raising = true;
         auto context = InstanceContext(this);
         runtime.tick(handle, context, ms);
+        raising = false;
         save();
+        while (pending.length)
+        {
+            auto next = pending[0];
+            pending = pending[1 .. $];
+            next();
+        }
     }
 
     private void save()
@@ -301,6 +330,15 @@ final class InstanceScript : InstanceHost
     {
         auto c = creatureOf(creature);
         return c is null ? EntityRef.init : c.ai.hostVictim();
+    }
+
+    bool hostLocate(EntityRef who, out Location at)
+    {
+        Position there;
+        if (map is null || !map.positionOf(who.guid, there))
+            return false;
+        at = Location(there.x, there.y, there.z, there.orientation);
+        return true;
     }
 
     uint hostRandom(uint below)

@@ -612,6 +612,7 @@ interface InstanceHost
     uint hostRandom(uint below);
     ActionResult hostRemoveAura(EntityRef creature, uint spell);
     EntityRef hostVictimOf(EntityRef creature);
+    bool hostLocate(EntityRef who, out Location at);
 }
 
 /// `GameObjectFlags`, as dungeon scripts set and clear them (`InstanceContext.objectFlags`).
@@ -714,11 +715,22 @@ struct InstanceContext
     /// A random number below `below`.
     uint random(uint below) { return host.hostRandom(below); }
 
+    /// For `EventHappened`: the script handled the event; its database script does not run.
+    void consume() { consumed_ = true; }
+
+    /// Whether a handler called `consume`.
+    @property bool consumed() const { return consumed_; }
+
+    private bool consumed_;
+
     /// Takes the auras of `spell` off a creature (a statue's stone skin).
     ActionResult removeAura(EntityRef creature, uint spell) { return host.hostRemoveAura(creature, spell); }
 
     /// Whom a creature fights; nothing if it does not (or is not here).
     EntityRef victimOf(EntityRef creature) { return host.hostVictimOf(creature); }
+
+    /// Where an entity of the copy is; false if it is not here.
+    bool locate(EntityRef who, out Location at) { return host.hostLocate(who, at); }
 }
 
 unittest

@@ -2659,6 +2659,13 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         creature.instanceId = map.instanceId;
         map.addObject(creature);
         map.wake(creature.guid);
+        if (map.instanceId) // the dungeon's script hears of it as of any creature of the copy
+            if (auto script = map.instanceId in instanceScripts)
+            {
+                import dmangos.script.api : CreatureLoaded, EntityRef;
+
+                script.raise(CreatureLoaded(EntityRef(creature.guid)));
+            }
         return creature;
     }
 
@@ -3208,7 +3215,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     }
 
     /// Scripted event `event` (a spell's `SEND_EVENT`, a goober's event) happens on `map`, `source` using
-    /// `target`: the dungeon copy's script hears of it, then the event's database script runs.
+    /// `target`: the dungeon copy's script hears of it, then (unless it consumed it) the event's database script runs.
     void scriptedEvent(uint event, Map map, ulong source, ulong target)
     {
         import dmangos.script.api : EntityRef, EventHappened;
@@ -3218,7 +3225,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             return;
         if (map.instanceId)
             if (auto script = map.instanceId in instanceScripts)
-                script.raise(EventHappened(event, EntityRef(source), EntityRef(target)));
+                if (script.raise(EventHappened(event, EntityRef(source), EntityRef(target))))
+                    return; // the script did what the event does
         startScript(DbScriptType.event, event, map, source, target);
     }
 

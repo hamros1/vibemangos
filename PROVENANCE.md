@@ -167,6 +167,12 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Files: `AI/ScriptDevAI/scripts/eastern_kingdoms/uldaman/instance_uldaman.cpp`, `boss_archaedas.cpp`, `uldaman.h`
 * Functions/ScriptNames: `instance_uldaman` (`StartEvent`, `Update`, `GetClosestDwarfNotInCombat`), `event_spell_altar_boss_aggro`, `boss_archaedas`, `spell_awaken_vault_warder`, `spell_awaken_earthen_archaedas`
 
+## scripts/zulfarrak.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/kalimdor/zulfarrak/instance_zulfarrak.cpp`, `zulfarrak.cpp`, `boss_zumrah.cpp`, `zulfarrak.h`
+* Functions/ScriptNames: `instance_zulfarrak` (`Update`, `OnCreatureEnterCombat`, `OnCreatureEvade`), `event_go_zulfarrak_gong`, `event_spell_unlocking`, `at_zulfarrak`, `boss_zumrah`
+
 ## timer.d
 
 * Projects: CMaNGOS, Ember
