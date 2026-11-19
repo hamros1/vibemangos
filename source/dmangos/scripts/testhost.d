@@ -180,14 +180,15 @@ struct Driven(alias Module)
         return point;
     }
 
-    /// Walks its escort on until it stops moving on (paused, finished or failed), or reaches `until` (0-based).
-    void walk(uint until = uint.max)
+    /// Walks its escort on until it stops moving on (paused, finished or failed), or reaches `until`
+    /// (0-based), `ms` passing at each point.
+    void walk(uint until = uint.max, int ms = 60_000)
     {
         foreach (_; 0 .. 1000)
         {
             if (host.lastPoint == uint.max)
                 return;
-            const point = arrive(60_000);
+            const point = arrive(ms);
             if (point == until)
                 return;
         }
