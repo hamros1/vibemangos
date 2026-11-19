@@ -1536,6 +1536,9 @@ interface AreaTriggerHost
     void hostFlagForPvP(EntityRef player);
     ActionResult hostAiEvent(EntityRef creature, uint type, EntityRef invoker);
     size_t hostCreaturesNear(Location at, uint entry, float range, EntityRef[] into);
+
+    // World events:
+    uint hostCompanionEntry(EntityRef player);
 }
 
 /// An area trigger script's handle, for the length of one handler.
@@ -1556,6 +1559,8 @@ struct AreaTriggerContext
     QuestProgress questStatus(EntityRef player, uint quest) { return host.hostQuestStatusOf(player, quest); }
 
     /// `AreaExploredOrEventHappens` for `player`.
+    /// The creature entry of the player's companion (a mini-pet) out, 0 if none.
+    uint companionEntry(EntityRef player) { return host.hostCompanionEntry(player); }
     void questEvent(EntityRef player, uint quest) { host.hostQuestEvent(player, quest); }
 
     /// A creature of `entry` at `at`, gone after `despawnMs` out of combat (0: when it dies), attacking `attack`.

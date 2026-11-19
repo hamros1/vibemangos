@@ -95,6 +95,7 @@ struct PlayerView
     bool ghost;   /// released: a spirit (a body not yet released is neither)
     bool gmTag;   /// `.gm on` (`PlayerFlags.gm`)
     bool gmInvisible; /// `.invisible`
+    bool stealthed;   /// under Stealth or Prowl (`MOD_STEALTH`)
 }
 
 /// What the world knows of a viewer and a player it might see (`Map.visibilityFacts`).
@@ -103,6 +104,7 @@ struct VisibilityFacts
     bool sameGroup;
     bool cooperate;         /// may help each other: the same side
     float corpseDistance = float.infinity; /// from the viewer's corpse to the other, on this map
+    bool detected = true;   /// the viewer detects the other's stealth (`dmangos.world.combat.detects`)
 }
 
 /// How near its corpse a ghost sees the living: CMaNGOS's 20 + 25 yards (times an aggro rate of 1).
@@ -122,6 +124,13 @@ bool playerSees(PlayerView viewer, PlayerView seen, scope VisibilityFacts delega
             return false;
         return viewer.gmTag || facts().sameGroup;
     }
+    // Stealth: its group and its side see it, an enemy only when it detects it (CMaNGOS's `Unit::IsVisibleForOrDetect`
+    // for players); a ghost by the ghosts' rules below.
+    if (seen.stealthed && seen.guid != viewer.guid && !seen.ghost && !viewer.ghost && !viewer.gmTag)
+    {
+        const f = facts();
+        return f.sameGroup || f.cooperate || f.detected;
+    }
     if (!viewer.ghost && !seen.ghost)
         return true; // every rule below would say so
     if (viewer.gmTag)
@@ -136,13 +145,32 @@ bool playerSees(PlayerView viewer, PlayerView seen, scope VisibilityFacts delega
     return seen.alive && f.corpseDistance <= ghostSightOfTheLiving;
 }
 
+unittest
+{
+    // A stealthed player: its group and its side see it, an enemy only when it detects it.
+    const hidden = PlayerView(2, true, false, false, false, true);
+    const enemy = PlayerView(1, true), gm = PlayerView(3, true, false, true);
+    assert(!playerSees(enemy, hidden, () => VisibilityFacts(false, false, float.infinity, false)));
+    assert(playerSees(enemy, hidden, () => VisibilityFacts(false, false, float.infinity, true)));
+    assert(playerSees(enemy, hidden, () => VisibilityFacts(false, true, float.infinity, false)));
+    assert(playerSees(enemy, hidden, () => VisibilityFacts(true, false, float.infinity, false)));
+    assert(playerSees(gm, hidden, () => VisibilityFacts(false, false, float.infinity, false)));
+    assert(playerSees(hidden, hidden, () => VisibilityFacts.init));
+    // A ghost of its side sees it only near its corpse, as any living player.
+    const ghost = PlayerView(4, false, true);
+    assert(!playerSees(ghost, hidden, () => VisibilityFacts(false, true, 100, true)));
+    assert(playerSees(ghost, hidden, () => VisibilityFacts(false, true, 10, true)));
+}
+
 /// A local player's `PlayerView`.
 PlayerView viewOf(const Player p)
 {
     import dmangos.world.player : PlayerFlags;
 
+    import dmangos.world.spellids : AuraType;
+
     return PlayerView(p.guid, p.deathState == DeathState.alive, p.deathState == DeathState.ghost,
-        p.hasFlag(PlayerFlags.gm), p.gmInvisible);
+        p.hasFlag(PlayerFlags.gm), p.gmInvisible, p.auras.hasType(AuraType.modStealth));
 }
 
 /// A player replica's `PlayerView`, from its fields.
@@ -489,6 +517,7 @@ final class Map : CombatWorld, GameObjectWorld
     private size_t listsLent;
     // What `updateVisibility` sees, kept between calls for their memory (empty outside it).
     private SlotBits playersInSight, objectsInSight;
+    private int stealthCheck = 1000; // milliseconds until stealthed players' visibility is worked out again
     private uint ghosts; // players here released (`Entity.ghost`): with none, who sees whom is symmetric
     private bool updatingVisibility;
 
@@ -994,6 +1023,17 @@ final class Map : CombatWorld, GameObjectWorld
             unloadIdleCells(step);
         }
         clockMs += diff;
+        // A stealthed player is seen or lost as enemies come near it, turn and step away: who sees it is worked
+        // out again once a second (stealth's detection range is a few yards, not the 10 a relocation waits for).
+        if (ghosts && (stealthCheck -= diff) <= 0)
+        {
+            import dmangos.world.spellids : AuraType;
+
+            stealthCheck = 1000;
+            foreach (who; playersNow())
+                if (who.character.auras.hasType(AuraType.modStealth))
+                    updateVisibility(who);
+        }
         ticking_ = true;
         scope (exit)
         {
@@ -2412,8 +2452,11 @@ private:
         const guid = who.character.guid;
         const slot = slotFor(guid);
         at(slot).visibilityAt = who.character.position;
-        // One way: a ghost, or an invisible game master (the slot's `ghost` stands for both).
-        const ghost = who.character.deathState == DeathState.ghost || who.character.gmInvisible;
+        // One way: a ghost, an invisible game master, a stealthed player (the slot's `ghost` stands for all three).
+        import dmangos.world.spellids : AuraType;
+
+        const ghost = who.character.deathState == DeathState.ghost || who.character.gmInvisible
+            || who.character.auras.hasType(AuraType.modStealth);
         const turned = ghost != at(slot).ghost;
         if (turned)
         {

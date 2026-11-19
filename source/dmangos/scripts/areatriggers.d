@@ -152,3 +152,33 @@ unittest
     context.scriptedEvent(7778, map, anduin.session.character.guid, 0); // no script: nothing, no harm
     assert(trainers() == before + 1);
 }
+
+/**
+ * Children's Week: an orphan's wish, a place to see (a quest of its own each); reaching it with the orphan out
+ * as a companion completes it (CMaNGOS's `at_childrens_week_spot`).
+ */
+@areaTrigger("at_childrens_week_spot")
+struct ChildrensWeekSpot
+{
+    enum uint humanOrphan = 14305, orcOrphan = 14444;
+    private static immutable uint[3][6] spots = [
+        [3546, humanOrphan, 1479], // The Bough of the Eternals
+        [3547, orcOrphan, 1800],   // Lordaeron Throne Room
+        [3548, humanOrphan, 1558], // The Stonewrought Dam
+        [3549, orcOrphan, 911],    // Gateway to the Frontier
+        [3550, orcOrphan, 910],    // Down at the Docks
+        [3552, humanOrphan, 1687], // Spooky Lighthouse
+    ];
+
+    void on(ref AreaTriggerContext spot, const ref TriggerEntered e)
+    {
+        foreach (s; spots)
+            if (s[0] == e.trigger && spot.questStatus(e.player, s[2]) == QuestProgress.incomplete
+                    && spot.companionEntry(e.player) == s[1])
+            {
+                spot.questEvent(e.player, s[2]);
+                spot.consume();
+                return;
+            }
+    }
+}

@@ -1369,6 +1369,16 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         }
         const a = raceOf(viewer), b = raceOf(seen);
         f.cooperate = a && b && client.teamForRace(a) == client.teamForRace(b);
+        // Stealth: whether the viewer detects the other (both players here; another node's are taken as seen).
+        {
+            auto watcher = cast(Character) onlinePlayer(viewer), hidden = cast(Character) onlinePlayer(seen);
+            if (watcher !is null && hidden !is null && watcher.player !is null && hidden.player !is null)
+            {
+                import dmangos.world.combat : detects, maxPlayerStealthDetectRange;
+
+                f.detected = detects(watcher.player.fighter, hidden.player.fighter, maxPlayerStealthDetectRange);
+            }
+        }
         if (auto local = cast(Character) onlinePlayer(viewer))
             if (const body_ = local.ownCorpse())
                 if (body_.map == map_.id)

@@ -154,7 +154,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 
 * Projects: CMaNGOS
 * Files: `ScriptDevAI/scripts/world/areatrigger_scripts.cpp`
-* Functions/ScriptNames: `at_huldar_miran`, `at_ravenholdt`, `at_twilight_grove`, `at_ancient_leaf`
+* Functions/ScriptNames: `at_huldar_miran`, `at_ravenholdt`, `at_twilight_grove`, `at_ancient_leaf`, `at_childrens_week_spot`
 
 ## scripts/ashenvale.d
 
@@ -433,7 +433,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 
 * Projects: CMaNGOS
 * Files: `ScriptDevAI/scripts/eastern_kingdoms/westfall.cpp`
-* Functions/ScriptNames: `npc_defias_traitor`, `npc_daphne_stilwell`
+* Functions/ScriptNames: `npc_defias_traitor`, `npc_daphne_stilwell`, `npc_foreman_klaven_mortwake`
 
 ## scripts/wetlands.d
 

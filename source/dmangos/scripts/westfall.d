@@ -250,3 +250,15 @@ unittest
     d.walk();
     assert(d.host.did("say -1000296") && d.host.did("equip back") && d.host.did("event 1651") && d.host.did("despawn"));
 }
+
+/// Foreman Klaven Mortwake: calls out a stealthed player he notices.
+@creature("npc_foreman_klaven_mortwake")
+struct ForemanKlavenMortwake
+{
+    enum uint sayAlert = 3092; // `broadcast_text`
+
+    void on(ref CreatureContext me, const ref StealthAlert e)
+    {
+        me.sayText(sayAlert, e.unit);
+    }
+}

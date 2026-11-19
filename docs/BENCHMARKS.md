@@ -474,3 +474,10 @@ The price, `crowd` 500 bots, runs alternated: busy 7.9-8.1% and tick 0.33-0.38 m
 Without `-inline`, DMD's optimizer miscompiled `frozenCopy!(float[3])` (a static array returned by value):
 the server crashed loading its data. `frozenCopy` now copies a field with nothing to copy deep as it is,
 without the call.
+
+## Stealthed players in visibility (2026-11-19)
+
+A stealthed player counts as one-way in the map's visibility (as a ghost does): only its group, its side, and
+enemies that detect it see it, worked out again once a second while anyone on the map is stealthed. With no one
+stealthed nothing changes on the hot path but one aura check per relocation: `crowd` 500, release-fast builds,
+alternated: busy 7.7-7.9% before, 7.7-7.8% after; tick 0.32-0.35 ms both.
