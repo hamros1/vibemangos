@@ -344,6 +344,8 @@ interface CreatureHost
     void hostPreventDeath(bool on);
     void hostMovementScript(uint id, EntityRef target);
     EntityRef hostOwner();
+    uint hostItemCount(EntityRef player, uint item);
+    uint hostGiveItem(EntityRef player, uint item, uint count);
 }
 
 /**
@@ -616,6 +618,12 @@ struct CreatureContext
 
     /// Whose it is: the player whose pet it is, or whoever summoned it; nothing for a creature of its own.
     @property EntityRef owner() { return host.hostOwner(); }
+
+    /// How many of `item` a player here carries (its bank not counted).
+    uint itemCount(EntityRef player, uint item) { return host.hostItemCount(player, item); }
+
+    /// Gives a player here `count` of `item`, into its bags as far as they hold; how many it got.
+    uint giveItem(EntityRef player, uint item, uint count = 1) { return host.hostGiveItem(player, item, count); }
 }
 
 // ---------------------------------------------------------------------------

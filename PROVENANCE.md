@@ -196,6 +196,18 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Files: `AI/ScriptDevAI/scripts/kalimdor/thousand_needles.cpp`
 * Functions/ScriptNames: `npc_kanati`, `npc_lakota_windsong`, `npc_paoka_swiftmountain`, `npc_plucky_johnson`
 
+## scripts/tanaris.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/kalimdor/tanaris.cpp`
+* Functions/ScriptNames: `mob_aquementas`, `npc_oox17tn`, `npc_tooga`
+
+## scripts/teldrassil.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/kalimdor/teldrassil.cpp`
+* Functions/ScriptNames: `npc_mist`
+
 ## scripts/barrens.d
 
 * Projects: CMaNGOS

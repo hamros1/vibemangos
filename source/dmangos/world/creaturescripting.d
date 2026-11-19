@@ -856,6 +856,26 @@ mixin template CreatureScripting()
         return EntityRef(me.petOwner ? me.petOwner : me.summon.summoner);
     }
 
+    uint hostItemCount(EntityRef player, uint item)
+    {
+        import dmangos.world.unit : UnitKind;
+
+        auto unit = world_ is null ? UnitRef.init : world_.unit(player.guid);
+        if (!unit || unit.kind != UnitKind.player || unit.session.player is null)
+            return 0;
+        return unit.session.player.inventory.count(item);
+    }
+
+    uint hostGiveItem(EntityRef player, uint item, uint count)
+    {
+        import dmangos.world.unit : UnitKind;
+
+        auto unit = world_ is null ? UnitRef.init : world_.unit(player.guid);
+        if (!unit || unit.kind != UnitKind.player || unit.session.player is null || count == 0)
+            return 0;
+        return unit.session.scriptGiveItem(item, count);
+    }
+
     /// A creature it summoned died: its script hears of it.
     void summonDied(EntityRef summon, EntityRef killer, CombatWorld world)
     {

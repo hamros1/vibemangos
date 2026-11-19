@@ -174,6 +174,14 @@ final class RecordingCreature : CreatureHost
     void hostMovementScript(uint id, EntityRef) { note("script " ~ id.to!string); }
     EntityRef owner_;
     EntityRef hostOwner() { return owner_; }
+    uint[uint] items;           /// the hero's
+    uint hostItemCount(EntityRef, uint item) { return items.get(item, 0); }
+    uint hostGiveItem(EntityRef, uint item, uint count)
+    {
+        note("give " ~ item.to!string);
+        items[item] = items.get(item, 0) + count;
+        return count;
+    }
 }
 
 /// A script of `Module` on a recording creature, and the means to drive it.

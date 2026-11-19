@@ -140,6 +140,8 @@ final class FakeCreature : CreatureHost
     void hostPreventDeath(bool) {}
     void hostMovementScript(uint, EntityRef) {}
     EntityRef hostOwner() { return EntityRef.init; }
+    uint hostItemCount(EntityRef, uint) { return 0; }
+    uint hostGiveItem(EntityRef, uint, uint) { return 0; }
 }
 
 unittest
