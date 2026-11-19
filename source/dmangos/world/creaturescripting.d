@@ -829,6 +829,22 @@ mixin template CreatureScripting()
             world_.flushCreature(me);
     }
 
+    size_t hostCreaturesNearby(uint entry, float range, EntityRef[] found)
+    {
+        if (world_ is null)
+            return 0;
+        size_t n;
+        foreach (other; world_.creaturesNear(me.position, range))
+            if (n < found.length && other !is me && other.spawn.entry == entry && other.alive)
+                found[n++] = EntityRef(other.guid);
+        return n;
+    }
+
+    void hostPreventDeath(bool on)
+    {
+        scriptDeathPrevention(on);
+    }
+
     /// A creature it summoned died: its script hears of it.
     void summonDied(EntityRef summon, EntityRef killer, CombatWorld world)
     {

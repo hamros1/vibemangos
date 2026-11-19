@@ -338,6 +338,8 @@ interface CreatureHost
     ActionResult hostUseObject(EntityRef object, uint restoreMs);
     bool hostLocationOf(EntityRef who, out Location at);
     void hostEmoteState(uint emote);
+    size_t hostCreaturesNearby(uint entry, float range, EntityRef[] found);
+    void hostPreventDeath(bool on);
 }
 
 /**
@@ -598,6 +600,12 @@ struct CreatureContext
 
     /// The emote it keeps playing (`EMOTE_STATE_*`: 234 chopping wood, 173 working; 0: none).
     void emoteState(uint emote) { host.hostEmoteState(emote); }
+
+    /// The living creatures of `entry` within `range` yards, as many as `found` holds; how many were put there.
+    size_t creaturesNearby(uint entry, float range, EntityRef[] found) { return host.hostCreaturesNearby(entry, range, found); }
+
+    /// Whether it cannot die: blows that would kill it leave it at 1 health (a surrender at low health).
+    void preventDeath(bool on) { host.hostPreventDeath(on); }
 }
 
 // ---------------------------------------------------------------------------

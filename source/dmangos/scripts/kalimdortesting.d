@@ -163,6 +163,14 @@ final class RecordingCreature : CreatureHost
         return cast(bool) who;
     }
     void hostEmoteState(uint emote) { note("emote state " ~ emote.to!string); }
+    size_t hostCreaturesNearby(uint entry, float, EntityRef[] found)
+    {
+        if (found.length == 0 || entry !in nearby)
+            return 0;
+        found[0] = nearby[entry];
+        return 1;
+    }
+    void hostPreventDeath(bool on) { note(on ? "immortal" : "mortal"); }
 }
 
 /// A script of `Module` on a recording creature, and the means to drive it.

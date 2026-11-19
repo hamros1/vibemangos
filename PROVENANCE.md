@@ -170,6 +170,12 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Files: `AI/ScriptDevAI/scripts/kalimdor/durotar.cpp`, `AI/ScriptDevAI/scripts/kalimdor/orgrimmar.cpp`
 * Functions/ScriptNames: `npc_lazy_peon` (with `AwakenPeon`), `npc_overlord_runthalak`, `npc_high_overlord_saurfang`
 
+## scripts/dustwallow.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/kalimdor/dustwallow_marsh.cpp`
+* Functions/ScriptNames: `npc_morokk`, `npc_ogron`, `npc_private_hendel`, `npc_stinky_ignatz`, `at_sentry_point`
+
 ## scripts/barrens.d
 
 * Projects: CMaNGOS

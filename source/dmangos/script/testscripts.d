@@ -136,6 +136,8 @@ final class FakeCreature : CreatureHost
     ActionResult hostUseObject(EntityRef, uint) { return ActionResult.ok; }
     bool hostLocationOf(EntityRef, out Location) { return false; }
     void hostEmoteState(uint) {}
+    size_t hostCreaturesNearby(uint, float, EntityRef[]) { return 0; }
+    void hostPreventDeath(bool) {}
 }
 
 unittest
