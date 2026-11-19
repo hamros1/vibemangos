@@ -281,8 +281,8 @@ struct Archaedas
         case Step.attack:
             awake = true;
             me.say(sayAggro);
-            me.removeAura(freezeAnim);
-            me.unitFlags(0, UnitFlag.notSelectable);
+            me.removeAura(me.self, freezeAnim);
+            me.unitFlags(UnitFlag.notSelectable, false);
             if (const enemy = me.playerNearby(80))
                 me.attack(enemy);
             break;

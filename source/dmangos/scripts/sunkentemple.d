@@ -106,12 +106,12 @@ struct SunkenTemple
         case jammalan, ogom:
             (e.creature.entry == jammalan ? jammalanRef : ogomRef) = e.creature;
             if (barrierDown)
-                st.unitFlags(e.creature, 0, UnitFlag.immuneToPlayer);
+                st.unitFlags(e.creature, UnitFlag.immuneToPlayer, false);
             break;
         case shadeOfEranikus:
             eranikusRef = e.creature;
             if (jammalanDead)
-                st.unitFlags(e.creature, 0, UnitFlag.immuneToPlayer);
+                st.unitFlags(e.creature, UnitFlag.immuneToPlayer, false);
             break;
         default:
             break;
@@ -158,7 +158,7 @@ struct SunkenTemple
         case jammalan:
             jammalanDead = true;
             if (eranikusRef)
-                st.unitFlags(eranikusRef, 0, UnitFlag.immuneToPlayer);
+                st.unitFlags(eranikusRef, UnitFlag.immuneToPlayer, false);
             break;
         case avatarOfHakkar:
             avatar = Fight.done;
@@ -178,7 +178,7 @@ struct SunkenTemple
                     st.say(jammalanRef, sayJammalanIntro);
                 foreach (who; [jammalanRef, ogomRef])
                     if (who)
-                        st.unitFlags(who, 0, UnitFlag.immuneToPlayer);
+                        st.unitFlags(who, UnitFlag.immuneToPlayer, false);
             }
             break;
         default:
@@ -195,7 +195,7 @@ struct SunkenTemple
                 failAvatar(st);
             break;
         case jammalan, ogom, shadeOfEranikus:
-            st.unitFlags(e.creature, 0, UnitFlag.immuneToPlayer);
+            st.unitFlags(e.creature, UnitFlag.immuneToPlayer, false);
             break;
         default:
             break;

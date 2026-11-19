@@ -426,3 +426,23 @@ the build before it:
   by the visibility rules, and the looted item that completed a quest had its change cleared after it
   went to others only. Those are found by the tests now (`assertSeesItself`, docs/DEVELOPING.md) and
   fixed where they were.
+
+## Ghosts in the visibility pass (2026-11-19)
+
+Hiding ghosts from the living made who sees whom one-way, decided per pair (`Map`'s `playerSees`). The
+first version cost the event loop about a tenth more in `crowd`, 500 bots (busy 8.6-8.7% against
+7.7-7.9%, runs alternated with the build before it, the tick unchanged); none of the bots was dead.
+Taken apart, build by build:
+
+* Not the rule itself: the pair check was given a fast path from a ghost bit in the map's own entry; no
+  change.
+* Not the casts: `objectVisibleTo` tried a cast to `Replica` for every object near a moving player; it
+  now asks the map's flag first; no change either.
+* The old `updateVisibility` body with everything else new: back to the baseline. The new body read the
+  *other* player's known set for every pair in sight, to decide the way back: a cache miss per pair,
+  hundreds per call.
+
+The fix: the map counts its ghosts; with none, and the player not just dead or alive again, visibility is
+symmetric and the pass does what it did before (no rule, no other player's set, no pass over those who
+see the player). Measured again, side by side while other builds ran on the machine: 9.3-9.6% before,
+9.5-9.8% after, within the noise.

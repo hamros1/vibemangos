@@ -435,7 +435,12 @@ private:
             switch (aura.type(i))
             {
             case AuraType.modStat, AuraType.modPercentStat, AuraType.modResistance, AuraType.modAttackPower,
-                    AuraType.modRangedAttackPower, AuraType.modIncreaseHealth, AuraType.modIncreaseEnergy:
+                    AuraType.modRangedAttackPower, AuraType.modIncreaseHealth, AuraType.modIncreaseEnergy,
+                    AuraType.modTotalStatPercentage, AuraType.modBaseResistancePct, AuraType.modResistancePct,
+                    AuraType.modIncreaseHealthPercent, AuraType.modIncreaseEnergyPercent, AuraType.modAttackPowerPct,
+                    AuraType.modOffhandDamagePct, AuraType.modSkill, AuraType.modSkillTalent,
+                    AuraType.modDamagePercentDone, AuraType.modDamagePercentTaken, AuraType.modDamageDoneVersus,
+                    AuraType.modCritPercentVersus, AuraType.modThreat:
                 stats = true;
                 break;
             case AuraType.modIncreaseSpeed, AuraType.modDecreaseSpeed, AuraType.modIncreaseSwimSpeed:
@@ -713,7 +718,7 @@ private:
                     uniform!"[]"(1u, 10000u, map.random)).damage;
             }
             periodicLog(target.guid, aura, i, damage, aura.spell.casting.school);
-            spellAttacked(target, damage, true);
+            spellAttacked(target, damage, true, aura.spell.casting.school);
             break;
         default:
             break;

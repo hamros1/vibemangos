@@ -240,7 +240,7 @@ final class InstanceScript : InstanceHost
         if (attack)
         {
             made.ai.bind(map);
-            made.ai.hostAttack(attack);
+            made.ai.hostAttackBy(EntityRef(made.guid), attack);
         }
         return EntityRef(made.guid);
     }
@@ -270,19 +270,19 @@ final class InstanceScript : InstanceHost
         return ActionResult.ok;
     }
 
-    ActionResult hostUnitFlags(EntityRef creature, uint set, uint clear)
+    ActionResult hostUnitFlags(EntityRef creature, uint flags, bool set)
     {
         auto c = creatureOf(creature);
         if (c is null)
             return ActionResult.notHere;
-        c.ai.hostUnitFlags(set, clear);
+        c.ai.hostUnitFlags(flags, set);
         return ActionResult.ok;
     }
 
     ActionResult hostAttack(EntityRef creature, EntityRef target)
     {
         auto c = creatureOf(creature);
-        return c is null ? ActionResult.notHere : c.ai.hostAttack(target);
+        return c is null ? ActionResult.notHere : c.ai.hostAttackBy(creature, target);
     }
 
     ActionResult hostMoveTo(EntityRef creature, Location at, uint point, bool run)
@@ -341,7 +341,7 @@ final class InstanceScript : InstanceHost
         auto c = creatureOf(creature);
         if (c is null)
             return ActionResult.notHere;
-        c.ai.hostRemoveAura(spell);
+        c.ai.hostRemoveAura(creature, spell);
         return ActionResult.ok;
     }
 

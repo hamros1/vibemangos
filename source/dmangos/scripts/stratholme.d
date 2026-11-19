@@ -431,7 +431,7 @@ struct Stratholme
         {
             strat.say(ysidaRef, sayEpilogue);
             strat.moveTo(ysidaRef, ysidaFree);
-            strat.unitFlags(ysidaRef, 0, UnitFlag.nonAttackable);
+            strat.unitFlags(ysidaRef, UnitFlag.nonAttackable, false);
         }
     }
 

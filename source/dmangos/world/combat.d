@@ -104,6 +104,9 @@ struct Fighter
     float crit = 0;            /// its crit chance: a player's from agility; a creature's 5
     float hitBonus = 0;        /// percent less often missed (`MOD_HIT_CHANCE` auras)
     bool dualWield;            /// it has an off-hand weapon to attack with
+    float[3] damageDone = 1;   /// by attack type: what its auras multiply its blows by (`MOD_DAMAGE_PERCENT_DONE`)
+    float[creatureTypes] damageVersus = 1; /// by the victim's creature type (`MOD_DAMAGE_DONE_VERSUS`)
+    float[creatureTypes] critVersus = 0;   /// crit percent more by the victim's type (`MOD_CRIT_PERCENT_VERSUS`)
 
     // What it defends with.
     uint defenseSkill, defenseSkillMax; /// a player's
@@ -111,6 +114,79 @@ struct Fighter
     bool canDodge = true, canParry, canBlock; /// able at all: Parry known and a weapon, Block and a shield
     uint shieldBlock;          /// what its shield stops of a blocked blow
     uint armor;
+    float[7] damageTaken = 1;  /// by school: what its auras multiply blows against it by (`MOD_DAMAGE_PERCENT_TAKEN`)
+    uint creatureType = creatureTypeHumanoid; /// `CreatureType` (a player is a humanoid)
+}
+
+/**
+ * What a unit's auras do to the damage it deals and takes: `MOD_DAMAGE_PERCENT_DONE` (by school, and for a weapon
+ * swing only if the aura's spell takes the weapon: Two-Handed Weapon Specialization), `MOD_DAMAGE_DONE_VERSUS` and
+ * `MOD_CRIT_PERCENT_VERSUS` (by the victim's creature type), `MOD_DAMAGE_PERCENT_TAKEN` (by school). Percentages
+ * of one kind multiply (`AuraSet.multiplier`).
+ */
+struct DamageMods
+{
+    float[3] swing = 1;        /// by attack type
+    float[7] school = 1;       /// spells, by school
+    float[creatureTypes] versus = 1;
+    float[creatureTypes] critVersus = 0;
+    float[7] taken = 1;
+    float[7] threat = 1;       /// by school: what its damage is worth in threat (`MOD_THREAT`)
+
+    /**
+     * From `auras`; `weaponOf(slot)` is the subclass of the weapon in an equipment slot (-1: none), `schoolOf(type)`
+     * the school of a swing of that type.
+     */
+    static DamageMods of(A)(const ref A auras, scope int delegate(ubyte slot) weaponOf,
+        scope uint delegate(AttackType) schoolOf)
+    {
+        import dmangos.world.spellids : AuraType;
+
+        DamageMods m;
+        if (auras.list.length == 0)
+            return m;
+        static immutable ubyte[3] slots = [15, 16, 17]; // main hand, off hand, ranged
+        foreach (type; 0 .. 3)
+        {
+            const school = schoolOf(cast(AttackType) type);
+            m.swing[type] = auras.multiplier(AuraType.modDamagePercentDone, (int mask) => (mask & (1 << school)) != 0,
+                weaponOf(slots[type]));
+        }
+        foreach (int s; 0 .. 7)
+        {
+            m.school[s] = auras.multiplier(AuraType.modDamagePercentDone, (int mask) => (mask & (1 << s)) != 0, -1);
+            m.taken[s] = auras.multiplier(AuraType.modDamagePercentTaken, (int mask) => (mask & (1 << s)) != 0);
+            m.threat[s] = auras.multiplier(AuraType.modThreat, (int mask) => (mask & (1 << s)) != 0);
+        }
+        foreach (int t; 1 .. cast(int) creatureTypes)
+        {
+            m.versus[t] = auras.multiplier(AuraType.modDamageDoneVersus, (int mask) => (mask & (1 << (t - 1))) != 0);
+            m.critVersus[t] = auras.totalByMiscMask(AuraType.modCritPercentVersus, 1 << (t - 1));
+        }
+        return m;
+    }
+
+    /// Into a `Fighter` for the melee formulas.
+    void into(ref Fighter f) const pure nothrow @nogc @safe
+    {
+        f.damageDone = swing;
+        f.damageVersus = versus;
+        f.critVersus = critVersus;
+        f.damageTaken = taken;
+    }
+}
+
+/// Creature types (`CreatureType`), as the tables by type in `Fighter` index them: 1 beast to 10 not specified.
+enum size_t creatureTypes = 12;
+/// ditto: a humanoid, as players are.
+enum uint creatureTypeHumanoid = 7;
+
+/// What `type` of a victim of `creatureType` takes from the attacker's auras and its own (by the blow's school).
+float damageFactor(const Fighter attacker, const Fighter victim, AttackType type, uint school)
+    pure nothrow @nogc @safe
+{
+    const versus = victim.creatureType < creatureTypes ? attacker.damageVersus[victim.creatureType] : 1;
+    return attacker.damageDone[type] * versus * (school < 7 ? victim.damageTaken[school] : 1);
 }
 
 // ---------------------------------------------------------------------------
@@ -376,7 +452,8 @@ MeleeHitOutcome rollMeleeOutcome(const Fighter attacker, const Fighter victim, A
         // Players glance against creatures above level 10; creatures crush players.
         if (attacker.playerControlled && !victim.playerControlled && levelFor(victim, attacker) > 10)
             chance[4] = hundredths(glanceChance(attacker, victim, type));
-        chance[5] = hundredths(critChance(attacker, victim, type));
+        chance[5] = hundredths(critChance(attacker, victim, type)
+            + (victim.creatureType < creatureTypes ? attacker.critVersus[victim.creatureType] : 0));
         if (!attacker.playerControlled && victim.playerControlled)
             chance[6] = hundredths(crushChance(attacker, victim, type));
     }
@@ -476,7 +553,7 @@ MeleeDamage calculateMeleeDamage(const Fighter attacker, const Fighter victim, A
         return d;
     d.hitInfo = type == AttackType.offHand ? HitInfo.leftSwing : HitInfo.normalSwing2;
 
-    float damage = weaponDamage(attacker, type, rng);
+    float damage = weaponDamage(attacker, type, rng) * damageFactor(attacker, victim, type, d.school);
     if (d.school == 0)
         damage = armorReducedDamage(attacker.level, victim.armor, damage);
     d.damage = cast(uint) damage;
@@ -943,4 +1020,34 @@ pure nothrow @nogc @safe unittest
     weak.level = 10;
     const more = partiallyResisted(100, -50, 60, weak, false, true, 5000);
     assert(more.damage >= 100 && more.resisted == 0, "a negative resistance adds");
+}
+
+// Auras on both sides of a swing: the attacker's damage done (by attack type) and against a creature type, the
+// victim's damage taken (by school); and crit against a type in the attack table.
+unittest
+{
+    import std.math : isClose;
+
+    Fighter attacker, victim;
+    attacker.damageDone[AttackType.mainHand] = 1.1f;   // Two-Handed Weapon Specialization
+    attacker.damageVersus[2] = 1.05f;                  // Monster Slaying: dragonkin
+    victim.creatureType = 2;
+    victim.damageTaken[0] = 0.9f;                      // Defensive Stance
+    assert(isClose(damageFactor(attacker, victim, AttackType.mainHand, 0), 1.1f * 1.05f * 0.9f));
+    assert(isClose(damageFactor(attacker, victim, AttackType.offHand, 3), 1.05f), "fire: not taken less; off hand");
+    victim.creatureType = 7;
+    assert(isClose(damageFactor(attacker, victim, AttackType.mainHand, 0), 1.1f * 0.9f), "not dragonkin");
+
+    // 3% more crit against beasts moves the crit band.
+    attacker.player = attacker.playerControlled = true;
+    attacker.level = victim.level = 10;
+    attacker.weaponSkill[0] = attacker.weaponSkillMax[0] = 50;
+    victim.defenseSkill = victim.defenseSkillMax = 50;
+    attacker.crit = 5;
+    victim.canDodge = false;
+    victim.creatureType = 1;
+    const plain = rollMeleeOutcome(attacker, victim, AttackType.mainHand, 1100); // past 5% miss and 5% crit
+    attacker.critVersus[1] = 3;
+    const withTalent = rollMeleeOutcome(attacker, victim, AttackType.mainHand, 1100);
+    assert(plain == MeleeHitOutcome.normal && withTalent == MeleeHitOutcome.crit, "8% crit now: the 11th percent is one");
 }

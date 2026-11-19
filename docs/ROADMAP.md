@@ -118,8 +118,8 @@ The largest area. In order:
    instance data, and paths by id in scripts: done. Not yet: summons handed over between nodes,
    movement maps for chasing, help from another node's creatures in a cluster.
 3. **Death: done** (`death.d`, `corpse.d`; README's "Death"), resurrection sickness and battleground
-   spirit guides included. Not yet: the ghost's own auras (applied by hand), ghosts hidden from the
-   living, bones, corpses of a player on another node of a cluster (a corpse is put on
+   spirit guides included, and ghosts hidden from the living. Not yet: the ghost's own auras (applied by
+   hand), bones, corpses of a player on another node of a cluster (a corpse is put on
    the map its player's node simulates; a node that does not own the cell keeps it anyway).
 4. **Experience and loot: done** (`experience.d`, `loot.d`, `loothandlers.d`; README's "Experience
    and loot"). Quest drops, skinning, pickpocketing and random
@@ -157,12 +157,13 @@ The largest area. In order:
      win, the exit portals.
    * Milestone D, Arathi Basin: **done** (`arathi.d`): five bases, claims, assaults, defences, resources,
      2000 to win.
+   * Milestone E, Alterac Valley: **done** (`alterac.d`): reinforcements, graveyards and towers, mines,
+     captains and generals; the turn-in quests' events not yet.
    * Not yet:
      * Removing stealth and the like on objectives (`AURA_INTERRUPT_FLAG_PVP_ACTIVE_CANCELS`).
      * A flag dropped when its carrier becomes immune.
      * Insignia loot from the dead.
      * pvpstats.
-     * Alterac Valley (mostly data: about 1000 event spawns, captains, mines, towers).
      * A queue service that moves to another node starts empty.
 
 * Spell casting with effects, auras (feeding `stats.d`), cooldowns and the attack swing loop.
@@ -193,8 +194,13 @@ none yet), the PvP rank's discount, reputation from spells.
 ### Talents
 
 **Done** (`talenthandlers.d`, `spellmods.d`; README's "Talents"): learning ranks, passive auras,
-the spell modifiers most talents are, unlearning them at a class trainer. Next: threat and charges
-modifiers, parry, dodge and crit chance auras feeding the combat chances.
+the spell modifiers most talents are, unlearning them at a class trainer. The auras talents (and buffs)
+use for stats and combat: crit, dodge, parry, block and hit chances; percentages of stats, health, power,
+armor and resistances, attack power and the off hand's damage (`stats.d`); weapon and defense skill
+bonuses; damage done and taken by school and by creature type, crit by creature type, threat
+(`combat.d`'s `DamageMods`); the five-second rule and Meditation. Not yet: charges, mechanic
+resistance, spell power from a share of a stat, `overrideClassScripts` (each talent its own), procs on
+the target.
 
 ### Mail
 

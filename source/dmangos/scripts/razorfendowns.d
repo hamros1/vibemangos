@@ -192,9 +192,9 @@ struct Belnistrasz
             inRitual = false;
             me.questEvent(escort.player, quest);
             me.signalDungeon(RazorfenDowns.Signals.ritualOver);
-            me.removeAura(idolShutdown);
+            me.removeAura(me.self, idolShutdown);
             me.castSelf(idolRoomShake);
-            escort.resume();
+            escort.paused = false;
             return;
         default:
             return;

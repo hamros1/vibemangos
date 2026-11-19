@@ -89,6 +89,14 @@ struct AuraMods
     float rangedAttackPower = 0; /// `MOD_RANGED_ATTACK_POWER`
     float health = 0;            /// `MOD_INCREASE_HEALTH`
     float mana = 0;              /// `MOD_INCREASE_ENERGY` of mana
+    // Multipliers (how percentages of one kind stack: `AuraSet.multiplier`).
+    float[5] statTotal = 1;      /// `MOD_TOTAL_STAT_PERCENTAGE`: each stat's total
+    float[7] resistanceBase = 1; /// `MOD_BASE_RESISTANCE_PCT`: armor and resistances from items
+    float[7] resistanceTotal = 1; /// `MOD_RESISTANCE_PCT`: the totals
+    float healthTotal = 1;       /// `MOD_INCREASE_HEALTH_PERCENT`
+    float[5] powerTotal = 1;     /// `MOD_INCREASE_ENERGY_PERCENT`, by `Power`
+    float attackPowerTotal = 1;  /// `MOD_ATTACK_POWER_PCT`
+    float offHandDamage = 1;     /// `MOD_OFFHAND_DAMAGE_PCT`
 }
 
 /// A player's derived numbers: its level's base stats with what its gear and `input`'s other bonuses add.
@@ -140,9 +148,9 @@ out (result; result.maxHealth >= 1, "a living character has at least one health 
                 break;
             }
         }
-        armor += item.details.armor;
+        armor += item.details.armor * input.auras.resistanceBase[0];
         foreach (i, value; item.details.resistances)
-            resistance[i] += value;
+            resistance[i] += value * input.auras.resistanceBase[i + 1];
     }
 
     // Enchantments: stats, health and mana, resistances (armor first).
@@ -167,6 +175,8 @@ out (result; result.maxHealth >= 1, "a living character has at least one health 
             addStatBonus(result, cast(Stat) i, input.auras.stats[i]);
         if (input.auras.statPercent[i] != 0)
             addStatBonus(result, cast(Stat) i, result.stats[i] * input.auras.statPercent[i] / 100);
+        if (input.auras.statTotal[i] != 1)
+            addStatBonus(result, cast(Stat) i, result.stats[i] * (input.auras.statTotal[i] - 1));
     }
     healthMod += input.auras.health;
     manaMod += input.auras.mana;
@@ -175,21 +185,22 @@ out (result; result.maxHealth >= 1, "a living character has at least one health 
         resistance[i] += input.auras.resistances[i + 1];
 
     // Maximum health and power
-    result.maxHealth = cast(uint) max(round(healthMod + result.baseHealth
-        + healthBonusFromStamina(result.stats[Stat.stamina])), 1);
+    result.maxHealth = cast(uint) max(round((healthMod + result.baseHealth
+        + healthBonusFromStamina(result.stats[Stat.stamina])) * input.auras.healthTotal), 1);
     if (result.baseMana > 0)
-        result.maxPower[Power.mana] = cast(uint) max(round(manaMod + result.baseMana
-            + manaBonusFromIntellect(result.stats[Stat.intellect])), 0);
-    result.maxPower[Power.rage] = 1000;
-    result.maxPower[Power.energy] = 100;
+        result.maxPower[Power.mana] = cast(uint) max(round((manaMod + result.baseMana
+            + manaBonusFromIntellect(result.stats[Stat.intellect])) * input.auras.powerTotal[Power.mana]), 0);
+    result.maxPower[Power.rage] = cast(uint) round(1000 * input.auras.powerTotal[Power.rage]);
+    result.maxPower[Power.energy] = cast(uint) round(100 * input.auras.powerTotal[Power.energy]);
 
     // Armor and resistances
-    result.resistances[0] = cast(int)(armor + result.stats[Stat.agility] * 2);
+    result.resistances[0] = cast(int)((armor + result.stats[Stat.agility] * 2) * input.auras.resistanceTotal[0]);
     foreach (i; 0 .. 6)
-        result.resistances[i + 1] = cast(int) resistance[i];
+        result.resistances[i + 1] = cast(int)(resistance[i] * input.auras.resistanceTotal[i + 1]);
 
     // Attack power and damage
-    result.attackPower = cast(int)(meleeAttackPower(input.classId, input.level, result.stats) + input.auras.attackPower);
+    result.attackPower = cast(int)((meleeAttackPower(input.classId, input.level, result.stats) + input.auras.attackPower)
+        * input.auras.attackPowerTotal);
     result.rangedAttackPower = cast(int)(rangedAttackPower(input.classId, input.level, result.stats)
         + input.auras.rangedAttackPower);
     foreach (type; EnumMembers!AttackType)
@@ -280,7 +291,7 @@ private void weaponDamage(const ref StatInputs input, AttackType type, ref Playe
     const fromAttackPower = max(attackPower, 0) / 14.0f * (result.attackTime[type] / 1000.0f);
     weaponMin += input.enchantments.damage[type];
     weaponMax += input.enchantments.damage[type];
-    const pct = type == AttackType.offHand ? offHandDamagePct : 1.0f;
+    const pct = type == AttackType.offHand ? offHandDamagePct * input.auras.offHandDamage : 1.0f;
     result.damage[type] = DamageRange(max((fromAttackPower + weaponMin) * pct, 0.0f),
         max((fromAttackPower + weaponMax) * pct, 0.0f));
 }
@@ -331,6 +342,40 @@ unittest
     const m = computeStats(mage);
     assert(m.maxPower[Power.mana] == 100 + 20 + 3 * 15 && m.maxHealth == 32 + 20);
     assert(m.attackPower == 10 && isClose(m.damage[AttackType.mainHand].min, 10 / 14.0f * 2 + 1));
+}
+
+// Percentages of totals (talents, Blessing of Kings): they multiply; the items' armor alone is the base.
+unittest
+{
+    import std.math : isClose;
+
+    auto chest = ItemTemplate.display(1, 5);
+    chest.details.armor = 100;
+    auto dagger = ItemTemplate.display(2, 13);
+    dagger.itemClass = 2;
+    dagger.details.delay = 2000;
+    dagger.details.damage[0].min = 10;
+    dagger.details.damage[0].max = 10;
+    StatInputs input;
+    input.classId = PlayerClass.rogue;
+    input.level = 1;
+    input.levelStats = LevelStats([20, 20, 100, 20, 20]);
+    input.classStats = ClassLevelStats(100, 0);
+    input.equipment[4] = &chest;
+    input.equipment[equipmentSlotOffhand] = &dagger;
+    const plain = computeStats(input);
+
+    input.auras.statTotal[Stat.stamina] = 1.1f * 1.2f; // Kings and Heart of the Wild: 32%, not 30%
+    input.auras.resistanceBase[0] = 1.1f;            // Toughness: the items' armor only
+    input.auras.healthTotal = 1.05f;
+    input.auras.powerTotal[Power.energy] = 1.1f;
+    input.auras.offHandDamage = 1.1f;                // Dual Wield Specialization
+    const s = computeStats(input);
+    assert(isClose(s.stats[Stat.stamina], 132.0f) && isClose(s.positiveBonus[Stat.stamina], 32.0f, 1e-4));
+    assert(s.resistances[0] == plain.resistances[0] + 10, "a tenth more of the chest's 100, none of the agility's");
+    assert(s.maxHealth == cast(uint) round((100 + healthBonusFromStamina(132)) * 1.05f));
+    assert(s.maxPower[Power.energy] == 110);
+    assert(isClose(s.damage[AttackType.offHand].min, plain.damage[AttackType.offHand].min * 1.1f));
 }
 
 /**

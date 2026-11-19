@@ -251,7 +251,7 @@ struct Mograine
             me.emote(emoteRoar);
             break;
         case Step.revived:
-            me.unitFlags(0, UnitFlag.immuneToNpc | UnitFlag.notSelectable);
+            me.unitFlags(UnitFlag.immuneToNpc | UnitFlag.notSelectable, false);
             me.melee(true);
             me.combatMovement(true);
             me.castSelf(retributionAura);
@@ -287,7 +287,7 @@ struct Mograine
     {
         steps.clear();
         fallen = raised = shielded = false;
-        me.unitFlags(0, UnitFlag.immuneToNpc | UnitFlag.notSelectable);
+        me.unitFlags(UnitFlag.immuneToNpc | UnitFlag.notSelectable, false);
         me.standState(StandState.stand);
         me.melee(true);
         me.combatMovement(true);

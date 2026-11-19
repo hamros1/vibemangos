@@ -128,9 +128,30 @@ final class TestCreature : CreatureHost
     ActionResult hostDespawnOther(EntityRef c, uint) { did ~= format("despawn %s", c.entry); return ActionResult.ok; }
     void hostSendGossip(EntityRef, uint, const(MenuOption)[] options, bool) { did ~= format("gossip %s", options.length); }
     void hostSetFaction(uint faction) { did ~= format("faction %s", faction); }
-    void hostUnitFlags(uint set, uint clear) { did ~= format("flags +%x -%x", set, clear); }
-    ActionResult hostAttack(EntityRef target) { did ~= "attack"; return ActionResult.ok; }
-    void hostRemoveAura(uint spell) { did ~= format("unaura %s", spell); }
+    void hostUnitFlags(uint flags, bool set) { did ~= format("flags +%x -%x", set ? flags : 0, set ? 0 : flags); }
+    ActionResult hostAttackBy(EntityRef attacker, EntityRef target)
+    {
+        did ~= attacker == me ? "attack" : format("attack %s", attacker.entry);
+        return ActionResult.ok;
+    }
+    ActionResult hostRemoveAura(EntityRef who, uint spell)
+    {
+        did ~= who == me ? format("unaura %s", spell) : format("unaura %s %s", who.entry, spell);
+        return ActionResult.ok;
+    }
+    void hostReactState(Reaction) {}
+    void hostEvade() { did ~= "evade"; }
+    ActionResult hostMoveOther(EntityRef c, Location, uint point, bool) { did ~= format("move %s %s", c.entry, point); return ActionResult.ok; }
+    void hostFace(EntityRef) {}
+    void hostSheath(Sheath) {}
+    void hostMount(uint) {}
+    void hostDie() { did ~= "die"; }
+    EntityRef hostObjectNearby(uint, float) { return EntityRef.init; }
+    ActionResult hostUseObject(EntityRef) { return ActionResult.ok; }
+    bool hostHasAura(EntityRef, uint) { return false; }
+    ActionResult hostSayOther(EntityRef speaker, int entry, EntityRef) { did ~= format("say %s %s", speaker.entry, entry); return ActionResult.ok; }
+    void hostMovementScript(uint) {}
+    void hostRelay(int, EntityRef) {}
     void hostFollow(EntityRef, float, float) { did ~= "follow"; }
     void hostDeathPrevention(bool on) { did ~= format("death prevention %s", on); }
     EntityRef hostPlayerNearby(float) { return victim; }
@@ -181,9 +202,9 @@ final class TestInstance : InstanceHost
         did ~= format("faction %s %s", c.entry, faction);
         return ActionResult.ok;
     }
-    ActionResult hostUnitFlags(EntityRef c, uint set, uint clear)
+    ActionResult hostUnitFlags(EntityRef c, uint flags, bool set)
     {
-        did ~= format("flags %s +%x -%x", c.entry, set, clear);
+        did ~= format("flags %s +%x -%x", c.entry, set ? flags : 0, set ? 0 : flags);
         return ActionResult.ok;
     }
     ActionResult hostAttack(EntityRef c, EntityRef)

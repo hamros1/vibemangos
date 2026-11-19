@@ -30,7 +30,7 @@ import dmangos.world.spells : SpellInfo;
 import dmangos.world.worlddata : SpellListEntry;
 import dmangos.world.eventai : Scripted;
 import dmangos.script.registry : ScriptHandle, ScriptRuntime;
-import dmangos.script.api : ActionResult, MenuOption, QuestProgress, Waypoint, CreatureHost, Damaged, Died, EnteredCombat, EntityRef, Evaded, KilledUnit, Reset;
+import dmangos.script.api : ActionResult, MenuOption, QuestProgress, Waypoint, CreatureHost, Damaged, Died, EnteredCombat, EntityRef, Evaded, KilledUnit, Reset, UnitInSight;
 import dmangos.world.updatefields;
 import dmangos.vmap.math : Vector3;
 import dmangos.world.unit : UnitRef;
@@ -94,6 +94,14 @@ interface CreatureLore
     @property ScriptRuntime scriptRuntime();
     /// ditto
     ScriptHandle spellScript(uint id);
+
+    // Eastern Kingdoms scripts:
+
+    /// The guid of the nearest game object of `entry` within `range` yards of `center` on `world`; 0 if none.
+    ulong gameObjectNear(CombatWorld world, Position center, uint entry, float range);
+
+    /// Uses game object `guid` on `world` as a door or button is used: open for its time.
+    ActionResult useGameObject(CombatWorld world, ulong guid);
 
     /// A creature of dungeon copy `instance` began fighting `enemy`, or (no enemy) gave its fight up:
     /// the copy's script hears of it (`CreatureEngaged`, `CreatureEvaded`).
@@ -252,6 +260,9 @@ final class CreatureAI : Scripted, CreatureHost
     /// (`moveInLineOfSight`'s first checks, for the map to skip it early).
     @property bool mayNotice() const
     {
+        // Eastern Kingdoms scripts: a script that wants to hear of the players in its sight (`UnitInSight`) does.
+        if (behaviour && me.alive && scripts_.handles!UnitInSight(behaviour))
+            return true;
         return react == ReactState.aggressive && me.alive && !me.petOwner
             && (me.factionTemplate is null || !isNeutralToAll(*me.factionTemplate));
     }
@@ -286,6 +297,8 @@ final class CreatureAI : Scripted, CreatureHost
     void moveInLineOfSight(UnitRef who, CombatWorld world)
     {
         world_ = world;
+        if (behaviour && me.alive)
+            unitInSight(who); // Eastern Kingdoms scripts
         if (react != ReactState.aggressive || victim || evadingHome || !me.alive || me.petOwner)
             return;
         if (me.factionTemplate !is null && isNeutralToAll(*me.factionTemplate))
@@ -325,12 +338,15 @@ final class CreatureAI : Scripted, CreatureHost
             addThreat(attacker, 0);
     }
 
-    /// The threat of damage taken: what `attacker` did to it; direct damage restarts its combat timer.
-    void damageTaken(UnitRef attacker, uint damage)
+    /**
+     * The threat of damage taken: what `attacker` did to it, times `threatFactor` (the attacker's threat auras);
+     * direct damage restarts its combat timer.
+     */
+    void damageTaken(UnitRef attacker, uint damage, float threatFactor = 1)
     {
         if (!me.alive || evadingHome || me.petOwner)
             return;
-        addThreat(attacker, damage);
+        addThreat(attacker, damage * threatFactor);
         if (damage)
             triggerCombatTimer();
         if (behaviour)
@@ -355,6 +371,11 @@ final class CreatureAI : Scripted, CreatureHost
             script.died(this, victim);
         if (world !is null)
             raiseScript(Died(EntityRef(victim)));
+        // Eastern Kingdoms scripts: its summoner's script hears of it.
+        if (world !is null && me.summon.summoner)
+            if (auto summoner = world.creatureAt(me.summon.summoner))
+                if (summoner.ai !is null)
+                    summoner.ai.summonedDied(world, EntityRef(me.guid), EntityRef(victim));
         foreach (guid, _; threat)
             notifyRemoved(guid, world);
         threat = null;

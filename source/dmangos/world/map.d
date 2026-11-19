@@ -60,6 +60,7 @@ import dmangos.world.objects : maxUpdatePacketBytes, seenByEveryone, seenByOwner
 import dmangos.world.opcodes : Opcode;
 import dmangos.world.packets : ServerDestroyObject;
 import dmangos.world.player : DeathState, Player;
+import dmangos.world.updatefields : TypeId;
 import dmangos.world.migration : decodeBundle, encodeBundle, Migrant, MigrantKind;
 import dmangos.world.replication : decodeSlots, encodeMotion, encodePlayerState, encodeSlots, encodeState, Replica,
     Replicable, Replicator;
@@ -84,6 +85,68 @@ interface Inhabitant
      * group member's view).
      */
     uint appearanceKind(const Inhabitant viewer) const;
+}
+
+/// What visibility needs of a player (`playerSees`): a local one's, or a replica's from its fields.
+struct PlayerView
+{
+    ulong guid;
+    bool alive;   /// not dead at all
+    bool ghost;   /// released: a spirit (a body not yet released is neither)
+    bool gmTag;   /// `.gm on` (`PlayerFlags.gm`)
+}
+
+/// What the world knows of a viewer and a player it might see (`Map.visibilityFacts`).
+struct VisibilityFacts
+{
+    bool sameGroup;
+    bool cooperate;         /// may help each other: the same side
+    float corpseDistance = float.infinity; /// from the viewer's corpse to the other, on this map
+}
+
+/// How near its corpse a ghost sees the living: CMaNGOS's 20 + 25 yards (times an aggro rate of 1).
+enum float ghostSightOfTheLiving = 45;
+
+/**
+ * Whether `viewer` sees the player `seen`. A game master with its tag on sees ghosts (ArcEmu's `Player::CanSee`,
+ * `bGMTagOn`); the rest is CMaNGOS's `Player::IsVisibleInGridForPlayer`: group members see each other; the
+ * living (and the dead not yet released) see only those not released; a ghost sees the ghosts of its side,
+ * and the living near its own corpse. `facts` is only asked when a ghost is involved.
+ */
+bool playerSees(PlayerView viewer, PlayerView seen, scope VisibilityFacts delegate() facts)
+{
+    if (!viewer.ghost && !seen.ghost)
+        return true; // every rule below would say so
+    if (viewer.gmTag)
+        return true;
+    const f = facts();
+    if (f.sameGroup)
+        return true;
+    if (!viewer.ghost)
+        return false; // the living do not see ghosts
+    if (seen.ghost)
+        return f.cooperate;
+    return seen.alive && f.corpseDistance <= ghostSightOfTheLiving;
+}
+
+/// A local player's `PlayerView`.
+PlayerView viewOf(const Player p)
+{
+    import dmangos.world.player : PlayerFlags;
+
+    return PlayerView(p.guid, p.deathState == DeathState.alive, p.deathState == DeathState.ghost,
+        p.hasFlag(PlayerFlags.gm));
+}
+
+/// A player replica's `PlayerView`, from its fields.
+PlayerView viewOf(ulong guid, const ref UpdateValues values)
+{
+    import dmangos.world.player : PlayerFlags;
+    import dmangos.world.updatefields : PLAYER_FLAGS, UNIT_FIELD_HEALTH;
+
+    const flags = values.get!PLAYER_FLAGS;
+    return PlayerView(guid, values.get!UNIT_FIELD_HEALTH > 0 && !(flags & PlayerFlags.ghost),
+        (flags & PlayerFlags.ghost) != 0, (flags & PlayerFlags.gm) != 0);
 }
 
 /**
@@ -228,6 +291,7 @@ private struct Entity
     ushort[] replicatedTo;      // the peers holding a replica of it (an own object, a player here)
 
     // A player's own.
+    bool ghost;                 // released, as of its last `updateVisibility` (which each death and life runs)
     SlotBits known;             // the slots its client has: players and objects
     ulong[] interest;           // the cells it is near
     ulong[] lingering;          // guids its client has that this map does not hold yet
@@ -418,6 +482,7 @@ final class Map : CombatWorld, GameObjectWorld
     private size_t listsLent;
     // What `updateVisibility` sees, kept between calls for their memory (empty outside it).
     private SlotBits playersInSight, objectsInSight;
+    private uint ghosts; // players here released (`Entity.ghost`): with none, who sees whom is symmetric
     private bool updatingVisibility;
 
     private uint[] borrowList()
@@ -864,17 +929,46 @@ final class Map : CombatWorld, GameObjectWorld
     }
 
     /**
-     * Whether `who` can see `object` at all, wherever they are: a spirit healer only shows itself to the
-     * dead (by its NPC flags).
+     * Whether `who` can see `object` (in `slot`) at all, wherever they are: a spirit healer only shows itself to
+     * the dead (by its NPC flags), and another node's player follows `playerSees`. `replica` is the map's flag
+     * for the slot, so that the creature's test is the only cast an object of this node costs (this runs for
+     * every object near a player who moves).
      */
-    bool objectVisibleTo(const MapObject object, const Inhabitant who) const
+    private bool objectVisibleTo(uint slot, const MapObject object, const Inhabitant who, bool replica) const
     {
         enum uint spiritHealer = 0x20, spiritGuide = 0x40; // UNIT_NPC_FLAG_SPIRITHEALER, _SPIRITGUIDE
+        if (replica)
+        {
+            // Another node's player: as a player here would be seen.
+            auto copy = cast(const Replica) object;
+            if (copy !is null && copy.fieldsOf.type == TypeId.player)
+                return playerSees(viewOf(who.character), viewOf(copy.guid, copy.fieldsOf),
+                    () => factsOf(who.character.guid, copy.guid, copy.position));
+            return true;
+        }
         if (auto creature = cast(const Creature) object)
-            if (creature.template_.npcFlags & (spiritHealer | spiritGuide))
-                return who.character.deathState != DeathState.alive;
+            return !(creature.template_.npcFlags & (spiritHealer | spiritGuide))
+                || who.character.deathState != DeathState.alive;
         return true;
     }
+
+    /// The world's facts for `playerSees` (none without `visibilityFacts`: a test's map).
+    private VisibilityFacts factsOf(ulong viewer, ulong seen, Position seenAt) const
+    {
+        return visibilityFacts is null ? VisibilityFacts.init : visibilityFacts(viewer, seen, seenAt);
+    }
+
+    /// Whether the player in `viewer` sees the one in `seen`, both on this map.
+    private bool playerSeesSlot(uint viewer, uint seen)
+    {
+        if (!at(viewer).ghost && !at(seen).ghost)
+            return true; // the common case, from the map's own memory (`playerSees` would say so too)
+        const a = at(viewer).player.character, b = at(seen).player.character;
+        return playerSees(viewOf(a), viewOf(b), () => factsOf(a.guid, b.guid, b.position));
+    }
+
+    /// What the world knows of two players, for visibility; set by the world (`WorldContext`).
+    VisibilityFacts delegate(ulong viewer, ulong seen, Position seenAt) visibilityFacts;
 
     /// One tick of the world update: every object that moves on its own, then where it got to.
     void update(Duration elapsed)
@@ -1062,7 +1156,7 @@ final class Map : CombatWorld, GameObjectWorld
         foreach (o; objectSlotsNear(who.character.position, settings.visibilityDistance, true))
         {
             auto object = at(o).object;
-            if (!objectVisibleTo(object, who))
+            if (!objectVisibleTo(o, object, who, at(o).replica))
                 continue;
             inSight[o] = true;
             see(slot, o);
@@ -1428,8 +1522,13 @@ final class Map : CombatWorld, GameObjectWorld
     {
         if (auto replica = replicaFrom(owner, guid))
         {
+            const isPlayer = replica.fieldsOf.type == TypeId.player;
+            const before = isPlayer ? viewOf(guid, replica.fieldsOf) : PlayerView.init;
             replica.applySlots(slots);
             flushObjectChanges(replica);
+            // Another node's player died, released or came back: who sees it may change (`playerSees`).
+            if (isPlayer && viewOf(guid, replica.fieldsOf) != before)
+                updateObjectVisibility(replica);
         }
     }
 
@@ -1930,11 +2029,15 @@ final class Map : CombatWorld, GameObjectWorld
             replicator.remove(peer, id, guid);
         at(slot).replicatedTo = null;
         foreach (o; knownOf(slot, true))
-        {
-            unsee(o, slot);
             unsee(slot, o);
-            deliverPacket(at(o).player, ServerDestroyObject(guid));
-        }
+        foreach (v; at(slot).viewers.dup) // those who see it (not always those it sees: a ghost)
+            if (at(v).player !is null)
+            {
+                unsee(v, slot);
+                deliverPacket(at(v).player, ServerDestroyObject(guid));
+            }
+        if (at(slot).ghost)
+            --ghosts;
         lingerUntil.remove(guid);
         dropEntity(slot);
     }
@@ -1977,6 +2080,18 @@ final class Map : CombatWorld, GameObjectWorld
             return;
         foreach (v; at(slot).viewers)
             each(at(v).player);
+    }
+
+    /// The players `viewer` sees (whose objects its client has).
+    Inhabitant[] seenBy(const Inhabitant viewer)
+    {
+        Inhabitant[] found;
+        const slot = slotFor(viewer.character.guid);
+        if (slot != uint.max)
+            foreach (k; at(slot).known)
+                if (auto p = at(k).player)
+                    found ~= p;
+        return found;
     }
 
     /// The players that see `from`.
@@ -2252,6 +2367,17 @@ private:
         const guid = who.character.guid;
         const slot = slotFor(guid);
         at(slot).visibilityAt = who.character.position;
+        const ghost = who.character.deathState == DeathState.ghost;
+        const turned = ghost != at(slot).ghost;
+        if (turned)
+        {
+            at(slot).ghost = ghost;
+            ghost ? ++ghosts : --ghosts;
+        }
+        // No ghost on the map: everyone in sight sees each other, so what `who` knows is what knows `who`: no rule
+        // to ask, no other player's set to read (a cache miss each, in a crowd), no pass over those who see it.
+        // Not when `who` has just died or lived (its sets are still one way from before).
+        const symmetric = ghosts == 0 && !turned;
         updateInterest(slot, who.character.position); // for peers, and for unloading idle cells
 
         // Who is in sight: a set kept by the map (its memory reused), emptied again on the way out. Not
@@ -2272,49 +2398,76 @@ private:
             foreach (o; near)
                 inSight.remove(o);
 
-        // Newly in sight: each gets the other's create block. `who` gets theirs a packet's worth at a time;
-        // they get `who`'s, built and compressed once for each kind of viewer (a crowd is one kind).
+        // Newly in sight, each way on its own (a ghost and the living do not see each other alike,
+        // `playerSees`): `who` gets the others' create blocks a packet's worth at a time; they get `who`'s,
+        // built and compressed once for each kind of viewer (a crowd is one kind).
         const time = serverTime();
         UpdateData received;
         UpdatePacket[uint] shown;
         foreach (o; near)
-            if (o != slot && !at(slot).known[o])
+        {
+            if (o == slot)
+                continue;
+            auto other = at(o).player;
+            const iSee = !at(slot).known[o] && (symmetric || playerSeesSlot(slot, o));
+            if (iSee)
             {
                 see(slot, o);
-                see(o, slot);
-                auto viewer = at(o).player;
-                const block = viewer.appearanceFor(who, time);
+                const block = other.appearanceFor(who, time);
                 if (!received.empty && received.byteSize + block.byteSize > maxUpdatePacketBytes)
                 {
                     deliverUpdate(who, received);
                     received = UpdateData.init;
                 }
                 received.append(block);
-                const kind = who.appearanceKind(viewer);
+            }
+            if (symmetric ? iSee : !at(o).known[slot] && playerSeesSlot(o, slot))
+            {
+                see(o, slot);
+                const kind = who.appearanceKind(other);
                 auto packet = kind in shown;
                 if (packet is null)
-                    packet = &(shown[kind] = who.appearanceFor(viewer, time).build());
-                deliverBuilt(viewer, *packet);
+                    packet = &(shown[kind] = who.appearanceFor(other, time).build());
+                deliverBuilt(other, *packet);
             }
+        }
         if (!received.empty)
             deliverUpdate(who, received);
 
-        // Out of sight: both forget, `who` in one block for everyone it lost.
+        // Out of sight, or no longer seen: `who` forgets those in one block, and those who no longer see `who`
+        // forget it.
         ulong[] gone;
         auto knownPlayers = borrowList();
         scope (exit)
             giveBackList(knownPlayers);
         knownInto(slot, true, knownPlayers);
+        void forgetMe(uint v)
+        {
+            unsee(v, slot);
+            UpdateData forget;
+            forget.addOutOfRange([guid]);
+            deliverUpdate(at(v).player, forget);
+        }
         foreach (o; knownPlayers)
-            if (!inSight[o])
+            if (!inSight[o] || (!symmetric && !playerSeesSlot(slot, o)))
             {
                 gone ~= at(o).guid;
                 unsee(slot, o);
-                unsee(o, slot);
-                UpdateData forget;
-                forget.addOutOfRange([guid]);
-                deliverUpdate(at(o).player, forget);
+                if (symmetric && at(o).known[slot])
+                    forgetMe(o); // it saw `who` too
             }
+        if (!symmetric)
+        {
+            auto watching = borrowList();
+            scope (exit)
+                giveBackList(watching);
+            foreach (v; at(slot).viewers)
+                if (at(v).player !is null)
+                    watching ~= v;
+            foreach (v; watching)
+                if (!inSight[v] || !playerSeesSlot(v, slot))
+                    forgetMe(v);
+        }
 
         // Creatures and game objects: those that came into sight, in packets of a few dozen, and those that left.
         auto nearObjects = borrowList();
@@ -2329,7 +2482,7 @@ private:
         foreach (o; nearObjects)
         {
             auto object = at(o).object;
-            if (!objectVisibleTo(object, who))
+            if (!objectVisibleTo(o, object, who, at(o).replica))
                 continue;
             objectsInSight.add(o);
             if (!see(slot, o))
@@ -2379,7 +2532,7 @@ private:
         foreach (p; playerSlotsNear(object.position, settings.visibilityDistance))
         {
             auto who = at(p).player;
-            if (at(p).known[slot] || !objectVisibleTo(object, who))
+            if (at(p).known[slot] || !objectVisibleTo(slot, object, who, at(slot).replica))
                 continue;
             see(p, slot);
             if (adoptLingering(p, guid))
@@ -2388,7 +2541,8 @@ private:
             personalize(who, object);
         }
         foreach (p; at(slot).viewers.dup)
-            if (distanceSquared(at(p).player.character.position, object.position) > settings.visibilityDistance ^^ 2)
+            if (distanceSquared(at(p).player.character.position, object.position) > settings.visibilityDistance ^^ 2
+                || (at(slot).replica && !objectVisibleTo(slot, object, at(p).player, true))) // another node's ghost
             {
                 unsee(p, slot);
                 UpdateData forget;
@@ -3426,4 +3580,28 @@ unittest
     fidget.values.set!UNIT_FIELD_HEALTH(100u);
     map.flushObjectChanges(fidget);
     assert(alice.take() == [Opcode.SMSG_UPDATE_OBJECT], "outside the tick: at once");
+}
+
+// `playerSees`, rule by rule.
+unittest
+{
+    const alive = PlayerView(1, true, false), body_ = PlayerView(2, false, false), ghost = PlayerView(3, false, true);
+    PlayerView gm = alive;
+
+    gm.gmTag = true;
+    VisibilityFacts f;
+    size_t asked;
+    VisibilityFacts facts() { ++asked; return f; }
+
+    assert(playerSees(alive, body_, &facts) && playerSees(body_, alive, &facts) && asked == 0, "no ghost: no facts");
+    assert(!playerSees(alive, ghost, &facts) && playerSees(gm, ghost, &facts));
+    f.sameGroup = true;
+    assert(playerSees(alive, ghost, &facts), "its group");
+    f = VisibilityFacts.init;
+    assert(!playerSees(ghost, ghost, &facts), "a ghost of the other side");
+    f.cooperate = true;
+    assert(playerSees(ghost, ghost, &facts), "of its own");
+    assert(!playerSees(ghost, alive, &facts), "the living far from its corpse");
+    f.corpseDistance = 44;
+    assert(playerSees(ghost, alive, &facts) && !playerSees(ghost, body_, &facts), "near it: the living, not a body");
 }

@@ -235,6 +235,31 @@ struct AuraSet
         return sum;
     }
 
+    /**
+     * How percentages of one kind stack (CMaNGOS's `TOTAL_PCT`): the product of (100 + amount) / 100 over the
+     * effects of `type` whose misc value `matches` (null: any). Given a weapon subclass (-1: none), an aura whose
+     * spell asks for a weapon counts only if it takes that one; `int.min` ignores the requirement.
+     */
+    float multiplier(AuraType type, scope bool delegate(int misc) matches = null, int weaponSubClass = int.min) const
+    {
+        enum int itemClassWeapon = 2;
+        float product = 1;
+        foreach (aura; list)
+        {
+            if (weaponSubClass != int.min)
+            {
+                const needs = aura.spell.equippedItemClass;
+                if (needs >= 0 && (needs != itemClassWeapon || weaponSubClass < 0
+                        || !(aura.spell.equippedItemSubClassMask & (1 << weaponSubClass))))
+                    continue;
+            }
+            foreach (i; 0 .. 3)
+                if ((aura.effects & (1 << i)) && aura.type(i) == type && (matches is null || matches(aura.misc(i))))
+                    product *= (100.0f + aura.amount[i] * cast(int) aura.stacks) / 100.0f;
+        }
+        return product;
+    }
+
     /// The sum of those whose misc value is `misc`.
     int totalByMisc(AuraType type, int misc) const
     {
@@ -407,4 +432,44 @@ unittest
     assert(set.totalForWeapon(AuraType.modCritPercent, 0) == 6, "an axe in hand");
     assert(set.totalForWeapon(AuraType.modCritPercent, 7) == 1, "a sword: only the general one");
     assert(set.totalForWeapon(AuraType.modCritPercent, -1) == 1, "no weapon");
+}
+
+// Percentages of one kind multiply (`multiplier`), by misc mask; damage and threat mods built from them.
+unittest
+{
+    import std.math : isClose;
+    import dmangos.world.combat : AttackType, DamageMods;
+    import dmangos.world.updatefields : TypeId;
+
+    auto values = UpdateValues(TypeId.unit);
+    SpellInfo defiance; // +15% threat, every school
+    defiance.id = 12305;
+    defiance.effect[0] = SpellEffect.applyAura;
+    defiance.casting.applyAuraName[0] = AuraType.modThreat;
+    defiance.miscValue[0] = 127;
+    SpellInfo stance; // 10% less damage taken, every school; 10% more threat
+    stance.id = 71;
+    stance.effect[0] = stance.effect[1] = SpellEffect.applyAura;
+    stance.casting.applyAuraName[0] = AuraType.modDamagePercentTaken;
+    stance.miscValue[0] = 127;
+    stance.casting.applyAuraName[1] = AuraType.modThreat;
+    stance.miscValue[1] = 127;
+    SpellInfo twoHanded; // +5% damage, physical, two-handed swords (subclass 8) only
+    twoHanded.id = 12163;
+    twoHanded.effect[0] = SpellEffect.applyAura;
+    twoHanded.casting.applyAuraName[0] = AuraType.modDamagePercentDone;
+    twoHanded.miscValue[0] = 1;
+    twoHanded.equippedItemClass = 2;
+    twoHanded.equippedItemSubClassMask = 1 << 8;
+    AuraSet set;
+    bool isNew;
+    set.apply(makeAura(&defiance, 1, 10, -1, true, [15, 0, 0]), values, isNew);
+    set.apply(makeAura(&stance, 1, 10, -1, true, [-10, 10, 0]), values, isNew);
+    set.apply(makeAura(&twoHanded, 1, 10, -1, true, [5, 0, 0]), values, isNew);
+    assert(isClose(set.multiplier(AuraType.modThreat), 1.15f * 1.1f), "they multiply");
+
+    const m = DamageMods.of(set, (ubyte slot) => slot == 15 ? 8 : -1, (AttackType) => 0u);
+    assert(isClose(m.threat[0], 1.265f) && isClose(m.threat[5], 1.265f));
+    assert(isClose(m.taken[0], 0.9f) && isClose(m.swing[AttackType.mainHand], 1.05f));
+    assert(m.swing[AttackType.offHand] == 1 && m.school[0] == 1, "not without the sword: not the off hand, not spells");
 }

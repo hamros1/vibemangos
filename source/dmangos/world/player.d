@@ -37,7 +37,7 @@ import dmangos.world.stats;
 import dmangos.world.auras : AuraSet, AuraType;
 import dmangos.world.quests : QuestData, QuestStatus;
 import dmangos.world.reputation : Reputation;
-import dmangos.world.combat : AttackType, Fighter;
+import dmangos.world.combat : AttackType, DamageMods, Fighter;
 import dmangos.world.updatefields;
 import dmangos.world.worlddata : CreateAction, maxLevel, WorldData;
 
@@ -190,6 +190,7 @@ final class Player : InventoryOwner
     MovementInfo movement;
     PlayerStats stats;
     MeleeChances chances;                /// own melee chances (`meleeChances`), for the combat rolls
+    DamageMods damageMods;               /// what its auras do to damage it deals and takes (`computeDerived`)
     AuraSet auras;                       /// its auras (`dmangos.world.auras`)
     Reputation reputation;               /// its standing with factions (`dmangos.world.reputation`); null until loaded
     QuestStatus[uint] questStatus;       /// its progress in quests, by quest (`mQuestStatus`)
@@ -623,8 +624,28 @@ final class Player : InventoryOwner
         }
     }
 
-    /// Mana per second, from spirit and class.
+    /// Milliseconds left of the five-second rule: after mana is spent, spirit regenerates none of it (`manaSpent`).
+    uint spiritPaused;
+
+    /// Mana was spent on a spell: for five seconds spirit's regeneration stops, but for the share
+    /// `MOD_MANA_REGEN_INTERRUPT` auras keep (Meditation).
+    void manaSpent()
+    {
+        spiritPaused = 5000;
+    }
+
+    /// Mana per second, from spirit and class; while the five-second rule holds, only the share auras keep.
     float manaRegenPerSecond() const
+    {
+        const full = spiritManaPerSecond();
+        if (spiritPaused == 0)
+            return full;
+        const kept = auras.total(AuraType.modManaRegenInterrupt);
+        return kept > 0 ? full * min(kept, 100) / 100.0f : 0;
+    }
+
+    /// Mana per second from spirit, by class.
+    float spiritManaPerSecond() const
     {
         const spirit = float(values.get!UNIT_FIELD_STAT0(Stat.spirit));
         float perTick;
@@ -669,6 +690,7 @@ final class Player : InventoryOwner
             }
         }
         changed |= addPower(Power.mana, cast(int)(manaRegenPerSecond() * manaRate * (milliseconds / 1000)));
+        spiritPaused = spiritPaused > milliseconds ? spiritPaused - milliseconds : 0;
         changed |= addPower(Power.energy, cast(int)((milliseconds / 100) * energyRate));
         if (!inCombat)
             changed |= addPower(Power.rage, -cast(int)((milliseconds / 200) * 2.5f * rageLoss));
@@ -870,6 +892,36 @@ final class Player : InventoryOwner
         return [cast(ushort) word, cast(ushort)(word >> 16)];
     }
 
+    /**
+     * A skill's value with what auras add (`MOD_SKILL` for a while, `MOD_SKILL_TALENT` for good: the skill's
+     * third field): what combat uses. 0 if the player does not have it.
+     */
+    uint skillWithBonus(uint skill) const
+    {
+        const slot = skillSlot(skill);
+        if (slot < 0)
+            return 0;
+        const value = values[PLAYER_SKILL_INFO_1_1 + 3 * slot + 1] & 0xFFFF;
+        const bonus = values[PLAYER_SKILL_INFO_1_1 + 3 * slot + 2];
+        const total = cast(int) value + cast(short)(bonus & 0xFFFF) + cast(short)(bonus >> 16);
+        return total > 0 ? total : 0;
+    }
+
+    /// The auras' skill bonuses into the skills' third fields: the temporary half, then the permanent.
+    void refreshSkillBonuses()
+    {
+        foreach (i; 0 .. maxPlayerSkills)
+        {
+            const id = values[PLAYER_SKILL_INFO_1_1 + 3 * i] & 0xFFFF;
+            if (id == 0)
+                continue;
+            const temporary = auras.totalByMisc(AuraType.modSkill, id);
+            const permanent = auras.totalByMisc(AuraType.modSkillTalent, id);
+            values.setSlot(PLAYER_SKILL_INFO_1_1 + 3 * i + 2,
+                cast(uint) cast(ushort) cast(short) temporary | cast(uint) cast(ushort) cast(short) permanent << 16);
+        }
+    }
+
     /// The skills the player has: id, value and maximum.
     uint[3][] skillList() const
     {
@@ -995,6 +1047,7 @@ private:
 
     void computeDerived(const WorldData world)
     {
+        refreshSkillBonuses(); // before the chances, which use them
         StatInputs input;
         input.race = data.race;
         input.classId = data.classId;
@@ -1026,8 +1079,35 @@ private:
         input.auras.rangedAttackPower = auras.total(AuraType.modRangedAttackPower);
         input.auras.health = auras.total(AuraType.modIncreaseHealth);
         input.auras.mana = auras.totalByMisc(AuraType.modIncreaseEnergy, 0);
+        foreach (int i; 0 .. 5)
+        {
+            input.auras.statTotal[i] = auras.multiplier(AuraType.modTotalStatPercentage, (int m) => m == i || m == -1);
+            input.auras.powerTotal[i] = auras.multiplier(AuraType.modIncreaseEnergyPercent, (int m) => m == i);
+        }
+        foreach (int school; 0 .. 7)
+        {
+            input.auras.resistanceBase[school] = auras.multiplier(AuraType.modBaseResistancePct,
+                (int m) => (m & (1 << school)) != 0);
+            input.auras.resistanceTotal[school] = auras.multiplier(AuraType.modResistancePct,
+                (int m) => (m & (1 << school)) != 0);
+        }
+        input.auras.healthTotal = auras.multiplier(AuraType.modIncreaseHealthPercent);
+        input.auras.attackPowerTotal = auras.multiplier(AuraType.modAttackPowerPct);
+        input.auras.offHandDamage = auras.multiplier(AuraType.modOffhandDamagePct);
         stats = computeStats(input);
         chances = meleeChances(chanceInputs(world));
+        damageMods = DamageMods.of(auras, (ubyte slot) {
+            const item = inventory.equipped(slot);
+            return item is null || item.proto.itemClass != 2 ? -1 : cast(int) item.proto.subClass;
+        }, (AttackType type) => stats.damage[type].max > 0 ? weaponSchool(type) : 0);
+    }
+
+    // The school index of a swing of `type`: its weapon's first damage line.
+    private uint weaponSchool(AttackType type) const
+    {
+        static immutable ubyte[3] slots = [equipmentSlotMainhand, equipmentSlotOffhand, equipmentSlotRanged];
+        const item = inventory.equipped(slots[type]);
+        return item is null ? 0 : item.proto.details.damage[0].school;
     }
 
     /**
@@ -1058,9 +1138,8 @@ private:
             const skill = item !is null ? itemSkill(item.proto) : type == AttackType.mainHand ? skillUnarmed : 0;
             if (skill)
             {
-                const value = skillValue(skill);
-                f.weaponSkill[type] = value[0];
-                f.weaponSkillMax[type] = value[1];
+                f.weaponSkill[type] = skillWithBonus(skill);
+                f.weaponSkillMax[type] = skillValue(skill)[1];
             }
             f.damage[type] = [stats.damage[type].min, stats.damage[type].max];
             if (item !is null)
@@ -1069,9 +1148,8 @@ private:
         f.crit = chances.crit;
         f.hitBonus = auras.total(AuraType.modHitChance); // `MOD_HIT_CHANCE`: fewer misses
         f.dualWield = dualWield && weaponFor(equipmentSlotOffhand) !is null; // `hasOffhandWeaponForAttack`
-        const defense = skillValue(skillDefense);
-        f.defenseSkill = defense[0];
-        f.defenseSkillMax = defense[1];
+        f.defenseSkill = skillWithBonus(skillDefense);
+        f.defenseSkillMax = skillValue(skillDefense)[1];
         f.dodge = chances.dodge;
         f.parry = chances.parry;
         f.block = chances.block;
@@ -1083,6 +1161,7 @@ private:
             && (shield.durability != 0 || shield.maxDurability == 0);
         f.shieldBlock = chances.shieldBlock;
         f.armor = stats.resistances[0] > 0 ? stats.resistances[0] : 0;
+        damageMods.into(f);
         return f;
     }
 
@@ -1134,12 +1213,12 @@ private:
         {
             const item = inventory.equipped(slot);
             const skill = item is null ? unarmed : itemSkill(item.proto);
-            return skill ? skillValue(skill)[0] : 0;
+            return skill ? skillWithBonus(skill) : 0;
         }
         enum uint skillUnarmed = 162, skillDefense = 95;
         c.mainHandSkill = skillFor(equipmentSlotMainhand, skillUnarmed);
         c.rangedSkill = skillFor(equipmentSlotRanged, 0);
-        c.defenseSkill = skillValue(skillDefense)[0];
+        c.defenseSkill = skillWithBonus(skillDefense);
         foreach (id; spells)
             if (const info = world.spells.spell(id))
             {
@@ -1444,4 +1523,24 @@ unittest
     assert(saved.equipmentCache.split.length == 2 * (equipmentSlotEnd + 1));
     assert(saved.equipmentCache.split[2 * equipmentSlotMainhand] == "25" && saved.equipmentCache.split[$ - 2] == "2101",
         "the sword, and the quiver in the first bag slot");
+}
+
+// The five-second rule: mana spent stops spirit's regeneration for five seconds, but for what Meditation keeps.
+unittest
+{
+    import dmangos.world.testclient;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto rexxar = loggedIn(context, db, 7, "Rexxar", Position(-8949.95f, -132.49f, 83.53f), AccountLevel.player,
+        raceOrc); // a hunter: mana
+    auto me = cast(Player) rexxar.session.character;
+    const full = me.manaRegenPerSecond();
+    assert(full > 0);
+    me.manaSpent();
+    assert(me.manaRegenPerSecond() == 0, "casting: none from spirit");
+    me.regenerate(2000, 1, 1, 1, 1);
+    assert(me.spiritPaused == 3000 && me.manaRegenPerSecond() == 0);
+    me.regenerate(3000, 1, 1, 1, 1);
+    assert(me.spiritPaused == 0 && me.manaRegenPerSecond() == full, "five seconds on: all of it again");
 }

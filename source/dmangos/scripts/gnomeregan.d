@@ -446,7 +446,7 @@ struct Emi
         case 23: next(3.seconds); break;
         case 24: me.say(sayHear2); next(8.seconds); break;
         case 25:
-            escort.resume(); // on to point 16: the northern cave-in opens as she goes
+            escort.paused = false; // on to point 16: the northern cave-in opens as she goes
             me.say(sayCharge3);
             me.signalDungeon(Gnomeregan.Signals.emi, Event.openNorth);
             pack(me, 4);

@@ -252,7 +252,7 @@ struct BlackrockSpire
             return;
         brs.signal(emberseerRef, Emberseer.Signals.grow);
         foreach (who; incarcerators)
-            brs.unitFlags(who, 0, UnitFlag.immuneToPlayer | UnitFlag.immuneToNpc);
+            brs.unitFlags(who, UnitFlag.immuneToPlayer | UnitFlag.immuneToNpc, false);
     }
 
     void on(ref InstanceContext brs, const ref CreatureEngaged e)
@@ -650,7 +650,7 @@ struct Emberseer
                 me.say(sayFree);
                 foreach (spell; [fullStrength, bonusDamage, transform])
                     me.castSelf(spell, true);
-                me.unitFlags(0, UnitFlag.notSelectable | UnitFlag.immuneToPlayer);
+                me.unitFlags(UnitFlag.notSelectable | UnitFlag.immuneToPlayer, false);
                 me.signalDungeon(BlackrockSpire.Signals.emberseerFree);
                 if (const enemy = me.playerNearby(60))
                     me.attack(enemy);
@@ -731,7 +731,7 @@ struct Gyth
         {
             rendDown = true;
             me.deathPrevention(false);
-            me.removeAura(rendMounts);
+            me.removeAura(me.self, rendMounts);
             me.summon(rend, me.location, 0, me.victim);
             me.say(emoteKnockedOff);
         }

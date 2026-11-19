@@ -316,7 +316,7 @@ struct BlackrockDepths
         case Signals.hurleyArrived:
             foreach (crony; cronies)
             {
-                brd.unitFlags(crony, 0, UnitFlag.immuneToPlayer | UnitFlag.immuneToNpc);
+                brd.unitFlags(crony, UnitFlag.immuneToPlayer | UnitFlag.immuneToNpc, false);
                 if (const target = brd.anyPlayer())
                     brd.attack(crony, target);
             }
@@ -1183,7 +1183,7 @@ struct Hurley
             break;
         case 6:
             walk.stop();
-            me.unitFlags(0, UnitFlag.immuneToPlayer);
+            me.unitFlags(UnitFlag.immuneToPlayer, false);
             me.signalDungeon(BlackrockDepths.Signals.hurleyArrived);
             if (const enemy = me.playerNearby(40))
                 me.attack(enemy);
@@ -1246,7 +1246,7 @@ struct IronhandGuardian
         if (e.id != Signals.wake || awake)
             return;
         awake = true;
-        me.removeAura(stoned);
+        me.removeAura(me.self, stoned);
         me.castSelf(stonedVisual, true);
         steps.after(Step.gout, ((4 + me.random(27)) * 1000).msecs);
     }
@@ -1572,7 +1572,7 @@ struct MarshalWindsor
         if (e.id != Signals.prisonerDone || !escort.paused || awaited == 0)
             return;
         if (--awaited == 0)
-            escort.resume();
+            escort.paused = false;
     }
 
     void on(ref CreatureContext me, const ref MovementDone e)
