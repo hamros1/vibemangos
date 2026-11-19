@@ -618,6 +618,14 @@ mixin template CreatureScripting()
             world_.wake(me.guid);
     }
 
+    /// A creature it summoned went away alive, its time up: its script hears of it.
+    package void summonedGone(CombatWorld world, ulong summoned)
+    {
+        if (world !is null)
+            world_ = world;
+        raiseScript(SummonedDied(EntityRef(summoned), EntityRef.init, true));
+    }
+
     /// It arrived where creature `orderedBy`'s script sent it: that script hears of it.
     private void tellArrival(ulong orderedBy, uint point)
     {

@@ -974,7 +974,14 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
         if (summon.type != TempSpawnType.none && summon.update(this, diff))
         {
             if (auto combat = cast(CombatWorld) world)
+            {
+                // Eastern Kingdoms scripts: alive, its summoner's script hears it went.
+                if (alive && summon.summoner)
+                    if (auto summoner = combat.creatureAt(summon.summoner))
+                        if (summoner.ai !is null)
+                            summoner.ai.summonedGone(combat, guid);
                 combat.corpseExpired(this); // its summoned time is up: it goes
+            }
             return;
         }
         if (!alive)

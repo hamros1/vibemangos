@@ -253,11 +253,13 @@ struct Waypoint
 
 // Eastern Kingdoms scripts:
 
-/// A creature it summoned died (`SummonedCreatureJustDied`).
+/// A creature it summoned died (`SummonedCreatureJustDied`), or went away alive, its time up
+/// (`SummonedCreatureDespawn`; `gone`).
 struct SummonedDied
 {
     EntityRef summoned;
     EntityRef killer;
+    bool gone; /// it did not die: its summoned time was up
 }
 
 /// A creature it summoned and sent somewhere (`CreatureContext.moveCreature`) arrived at `point`

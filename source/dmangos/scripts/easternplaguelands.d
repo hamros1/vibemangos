@@ -107,6 +107,12 @@ struct ErisHavenfire
     {
         if (!active || !forget(e.summoned))
             return;
+        if (e.gone) // not lost: it is just not there any more
+        {
+            if (--total == saved + killed)
+                waveOver(me);
+            return;
+        }
         if (++killed == maxKilled)
         {
             me.failQuest(player, questBalanceOfLightAndShadow);
