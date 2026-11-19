@@ -36,7 +36,8 @@ struct GrarkLorkrub
     Schedule!Step steps;
     Escort escort = { despawnAfterMs: 5000 };
     bool shackled, submitted;
-    ubyte killed;           /// ambushers dead
+    ubyte alive;            /// of the ambush under way
+    ubyte ambushes;         /// ambushes so far
     EntityRef[3] drakes;
     EntityRef nuzarkRef, lexlortRef;
 
@@ -71,7 +72,7 @@ struct GrarkLorkrub
     {
         if (e.quest != questPrecariousPredicament || escort.active)
             return;
-        killed = 0;
+        alive = ambushes = 0;
         drakes[] = EntityRef.init;
         escort.start(me, e.player, e.quest);
     }
@@ -89,24 +90,30 @@ struct GrarkLorkrub
         case 12:
             me.say(sayFirstAmbushStart);
             escort.paused = true;
+            ambushes = 1;
             ambush(me, ambusher, Location(-7844.3f, -1521.6f, 139.2f, 0.0f));
             ambush(me, ambusher, Location(-7860.4f, -1507.8f, 141.0f, 6.0f));
             ambush(me, raider, Location(-7845.6f, -1508.1f, 138.8f, 6.1f));
             ambush(me, raider, Location(-7859.8f, -1521.8f, 139.2f, 6.2f));
+            ambushSent(me);
             break;
         case 24:
             me.say(saySecondAmbushStart);
             escort.paused = true;
+            ambushes = 2;
             ambush(me, ambusher, Location(-8035.3f, -1222.2f, 135.5f, 5.1f));
             ambush(me, dragonspawn, Location(-8037.5f, -1216.9f, 135.8f, 5.1f));
             ambush(me, ambusher, Location(-8009.5f, -1222.1f, 139.2f, 3.9f));
             ambush(me, dragonspawn, Location(-8007.1f, -1219.4f, 140.1f, 3.9f));
+            ambushSent(me);
             break;
         case 28:
             static immutable Location[3] drakesAt = [Location(-7897.8f, -1123.1f, 233.4f, 3.0f),
                 Location(-7898.8f, -1125.1f, 193.9f, 3.0f), Location(-7895.6f, -1119.5f, 194.5f, 3.1f)];
+            ambushes = 3;
             foreach (i, at; drakesAt)
-                drakes[i] = me.summon(drake, at, 60_000);
+                if ((drakes[i] = me.summon(drake, at, 60_000)) != EntityRef.init)
+                    ++alive;
             break;
         case 30:
             escort.paused = true;
@@ -114,6 +121,7 @@ struct GrarkLorkrub
             foreach (d; drakes)
                 if (d)
                     me.attack(d, escort.player);
+            ambushSent(me);
             break;
         case 36:
             me.say(emoteLaugh);
@@ -132,25 +140,25 @@ struct GrarkLorkrub
 
     void on(ref CreatureContext me, const ref SummonedDied e)
     {
-        if (e.summoned.entry == nuzark || e.summoned.entry == lexlort)
+        if (e.summoned.entry == nuzark || e.summoned.entry == lexlort || alive == 0)
             return;
-        switch (++killed)
-        {
-        case 4:
-            me.say(sayFirstAmbushEnd);
-            escort.paused = false;
-            break;
-        case 8:
-            me.say(saySecondAmbushEnd);
-            escort.paused = false;
-            break;
-        case 11:
-            me.say(sayThirdAmbushEnd);
-            escort.paused = false;
-            break;
-        default:
-            break;
-        }
+        if (--alive == 0 && escort.paused)
+            ambushBeaten(me);
+    }
+
+    /// The ambush is out: if none of it could come (or the drakes are dead already), it is beaten.
+    private void ambushSent(ref CreatureContext me)
+    {
+        if (alive == 0)
+            ambushBeaten(me);
+    }
+
+    private void ambushBeaten(ref CreatureContext me)
+    {
+        static immutable int[3] ends = [sayFirstAmbushEnd, saySecondAmbushEnd, sayThirdAmbushEnd];
+        if (ambushes >= 1 && ambushes <= 3)
+            me.say(ends[ambushes - 1]);
+        escort.paused = false;
     }
 
     void on(ref CreatureContext me, Step step)
@@ -202,7 +210,8 @@ struct GrarkLorkrub
     /// One of the ambush, at `at`, for the player.
     private void ambush(ref CreatureContext me, uint entry, Location at)
     {
-        me.summon(entry, at, 20_000, escort.player);
+        if (me.summon(entry, at, 20_000, escort.player))
+            ++alive;
     }
 }
 

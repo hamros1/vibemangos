@@ -88,6 +88,7 @@ struct DaphneStilwell
     ubyte wave;       /// waves sent
     ubyte raiders;    /// alive
     bool yelled;      /// the raiders' leader yelled
+    bool beaten;      /// the three waves are
 
     /// Where the raiders come from, and the two spots of the way down each runs to.
     private static immutable Location[5] raiderFrom = [Location(-11428.520f, 1612.757f, 72.241f),
@@ -106,7 +107,7 @@ struct DaphneStilwell
             return;
         me.say(sayStart);
         wave = raiders = 0;
-        yelled = false;
+        yelled = beaten = false;
         escort.start(me, e.player, e.quest, true);
     }
 
@@ -126,7 +127,7 @@ struct DaphneStilwell
             escort.run = false;
             me.say(yellDaphneStart);
             me.combatMovement(false);
-            escort.paused = true;
+            escort.paused = !beaten;
             break;
         case cheerPoint:
             me.say(sayDown3);
@@ -169,6 +170,8 @@ struct DaphneStilwell
                 }
             if (wave < 3)
                 steps.after(Step.wave, 50.seconds);
+            else if (raiders == 0)
+                allBeaten(); // none could come
             break;
         case Step.shoot:
             if (!me.inCombat)
@@ -192,10 +195,7 @@ struct DaphneStilwell
         if (e.summoned.entry != defiasRaider || raiders == 0 || --raiders > 0)
             return;
         if (wave == 3)
-        {
-            escort.paused = false;
-            wave = 0;
-        }
+            allBeaten();
         else
         {
             static immutable int[3] waveDown = [sayWaveDown1, sayWaveDown2, sayWaveDown3];
@@ -207,6 +207,14 @@ struct DaphneStilwell
     {
         me.combatMovement(false);
         steps.after(Step.shoot, 0.msecs);
+    }
+
+    /// The third wave is beaten: she goes on (or does not stop at the door).
+    private void allBeaten()
+    {
+        beaten = true;
+        escort.paused = false;
+        wave = 0;
     }
 
     void on(ref CreatureContext me, const ref Reset e)
