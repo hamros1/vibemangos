@@ -811,6 +811,24 @@ mixin template CreatureScripting()
         return ActionResult.ok;
     }
 
+    bool hostLocationOf(EntityRef who, out Location at)
+    {
+        Position p;
+        if (world_ is null || !world_.positionOf(who.guid, p))
+            return false;
+        at = Location(p.x, p.y, p.z, p.orientation);
+        return true;
+    }
+
+    void hostEmoteState(uint emote)
+    {
+        import dmangos.world.updatefields : UNIT_NPC_EMOTESTATE;
+
+        me.values.set!UNIT_NPC_EMOTESTATE(emote);
+        if (world_ !is null)
+            world_.flushCreature(me);
+    }
+
     /// A creature it summoned died: its script hears of it.
     void summonDied(EntityRef summon, EntityRef killer, CombatWorld world)
     {

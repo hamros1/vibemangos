@@ -157,6 +157,12 @@ final class RecordingCreature : CreatureHost
     uint hostEntryOf(EntityRef who) { return who.entry; }
     void hostGroupQuestEvent(EntityRef, uint quest) { note("event " ~ quest.to!string); }
     ActionResult hostUseObject(EntityRef o, uint) { note("use " ~ o.entry.to!string); return ActionResult.ok; }
+    bool hostLocationOf(EntityRef who, out Location at)
+    {
+        at = Location(10, 20, 30);
+        return cast(bool) who;
+    }
+    void hostEmoteState(uint emote) { note("emote state " ~ emote.to!string); }
 }
 
 /// A script of `Module` on a recording creature, and the means to drive it.

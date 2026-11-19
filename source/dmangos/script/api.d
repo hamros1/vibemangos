@@ -336,6 +336,8 @@ interface CreatureHost
     uint hostEntryOf(EntityRef who);
     void hostGroupQuestEvent(EntityRef player, uint quest);
     ActionResult hostUseObject(EntityRef object, uint restoreMs);
+    bool hostLocationOf(EntityRef who, out Location at);
+    void hostEmoteState(uint emote);
 }
 
 /**
@@ -590,6 +592,12 @@ struct CreatureContext
 
     /// Opens a door (presses a button, activates a goober) here, for `restoreMs` (0: its own time).
     ActionResult useObject(EntityRef object, uint restoreMs = 0) { return host.hostUseObject(object, restoreMs); }
+
+    /// Where another unit or object on its map is; false if it is not seen here.
+    bool locationOf(EntityRef who, out Location at) { return host.hostLocationOf(who, at); }
+
+    /// The emote it keeps playing (`EMOTE_STATE_*`: 234 chopping wood, 173 working; 0: none).
+    void emoteState(uint emote) { host.hostEmoteState(emote); }
 }
 
 // ---------------------------------------------------------------------------

@@ -134,6 +134,8 @@ final class FakeCreature : CreatureHost
     uint hostEntryOf(EntityRef) { return 0; }
     void hostGroupQuestEvent(EntityRef, uint quest) { quests ~= "event"; }
     ActionResult hostUseObject(EntityRef, uint) { return ActionResult.ok; }
+    bool hostLocationOf(EntityRef, out Location) { return false; }
+    void hostEmoteState(uint) {}
 }
 
 unittest

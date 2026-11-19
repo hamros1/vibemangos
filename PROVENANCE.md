@@ -164,6 +164,12 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Functions/ScriptNames: `npc_aged_dying_ancient_kodo` (with `KodoKombobulator`), `npc_dalinda_malem`,
   `npc_melizza_brimbuzzle`, `npc_magrami_spectre`
 
+## scripts/durotar.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/kalimdor/durotar.cpp`, `AI/ScriptDevAI/scripts/kalimdor/orgrimmar.cpp`
+* Functions/ScriptNames: `npc_lazy_peon` (with `AwakenPeon`), `npc_overlord_runthalak`, `npc_high_overlord_saurfang`
+
 ## scripts/barrens.d
 
 * Projects: CMaNGOS
