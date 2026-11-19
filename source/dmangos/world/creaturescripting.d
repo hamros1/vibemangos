@@ -593,4 +593,303 @@ mixin template CreatureScripting()
             return 0;
         return world_ is null ? 0 : uniform(0, below, world_.random);
     }
+
+    // -----------------------------------------------------------------------
+    // Raid scripts:
+    // -----------------------------------------------------------------------
+
+    /// Its dungeon's script has it say `script_texts` row `entry`.
+    ActionResult sayScriptFor(CombatWorld world, int entry, EntityRef target)
+    {
+        world_ = world;
+        return hostSay(entry, target);
+    }
+
+    int hostAskDungeon(uint id)
+    {
+        return lore is null || !me.instanceId ? 0 : lore.askDungeon(me.instanceId, EntityRef(me.guid), id);
+    }
+
+    EntityRef hostSelectTarget(Pick pick, uint filter, uint skip)
+    {
+        import std.algorithm.sorting : sort;
+        import std.random : uniform;
+        import dmangos.world.defines : Power;
+        import dmangos.world.unit : UnitKind;
+
+        if (world_ is null || threat.length == 0)
+            return EntityRef.init;
+        const self = me.fighter;
+        ulong[] list;
+        foreach (guid, _; threat)
+        {
+            auto who = world_.unit(guid);
+            if (!who || !who.fighter.alive || who.untouchable)
+                continue;
+            const isPlayer = who.kind == UnitKind.player;
+            if ((filter & PickFilter.player) && !isPlayer)
+                continue;
+            if ((filter & PickFilter.notVictim) && guid == victim)
+                continue;
+            if (filter & (PickFilter.manaUser | PickFilter.notManaUser))
+            {
+                const mana = isPlayer ? who.session.player.powerType == Power.mana
+                    : who.creature.values.get!UNIT_FIELD_MAXPOWER1 > 0;
+                if (((filter & PickFilter.manaUser) && !mana) || ((filter & PickFilter.notManaUser) && mana))
+                    continue;
+            }
+            if (filter & (PickFilter.inMelee | PickFilter.notInMelee))
+            {
+                const near = canReachWithMelee(self, who.fighter);
+                if (((filter & PickFilter.inMelee) && !near) || ((filter & PickFilter.notInMelee) && near))
+                    continue;
+            }
+            list ~= guid;
+        }
+        float distance(ulong guid)
+        {
+            Position at;
+            if (!world_.positionOf(guid, at))
+                return float.infinity;
+            return (at.x - me.position.x) ^^ 2 + (at.y - me.position.y) ^^ 2 + (at.z - me.position.z) ^^ 2;
+        }
+        final switch (pick)
+        {
+        case Pick.random, Pick.topThreat, Pick.bottomThreat:
+            list.sort!((a, b) => threat[a] > threat[b] || (threat[a] == threat[b] && a < b));
+            break;
+        case Pick.nearest:
+            list.sort!((a, b) => distance(a) < distance(b));
+            break;
+        case Pick.farthest:
+            list.sort!((a, b) => distance(a) > distance(b));
+            break;
+        }
+        if (skip >= list.length)
+            return EntityRef.init;
+        final switch (pick)
+        {
+        case Pick.random:
+            return EntityRef(list[uniform(skip, list.length, world_.random)]);
+        case Pick.topThreat, Pick.nearest, Pick.farthest:
+            return EntityRef(list[skip]);
+        case Pick.bottomThreat:
+            return EntityRef(list[$ - 1 - skip]);
+        }
+    }
+
+    size_t hostThreatList(EntityRef[] into)
+    {
+        import std.algorithm.sorting : sort;
+
+        auto list = threat.keys;
+        list.sort!((a, b) => threat[a] > threat[b] || (threat[a] == threat[b] && a < b));
+        size_t n;
+        foreach (guid; list)
+            if (n < into.length)
+                into[n++] = EntityRef(guid);
+        return n;
+    }
+
+    ActionResult hostModifyThreat(EntityRef target, int percent)
+    {
+        if (!target)
+        {
+            foreach (guid, ref amount; threat)
+                amount = percent <= -100 ? 0 : amount * (100 + percent) / 100.0f;
+            return ActionResult.ok;
+        }
+        if (target.guid !in threat)
+            return ActionResult.notHere;
+        modifyThreatPercent(target.guid, percent);
+        return ActionResult.ok;
+    }
+
+    void hostUnitFlags(EntityRef who, uint flags, bool set)
+    {
+        if (world_ is null)
+        {
+            if (!who || who.guid == me.guid)
+            {
+                const now = me.values.get!UNIT_FIELD_FLAGS;
+                me.values.set!UNIT_FIELD_FLAGS(set ? now | flags : now & ~flags);
+            }
+            return;
+        }
+        scriptUnitFlags(who ? who.guid : me.guid, flags, set);
+    }
+
+    void hostFaction(uint faction)
+    {
+        if (world_ !is null)
+            scriptFaction(faction);
+    }
+
+    void hostDeathPrevention(bool on)
+    {
+        deathPrevention = on;
+    }
+
+    bool hostHasAura(EntityRef who, uint spell)
+    {
+        if (who.guid == me.guid)
+            return me.auras.find(spell) !is null;
+        if (world_ is null)
+            return false;
+        auto unit = world_.unit(who.guid);
+        return unit && unit.hasAuraOf(spell);
+    }
+
+    void hostRemoveAura(EntityRef who, uint spell)
+    {
+        if (world_ !is null)
+            scriptRemoveAura(who.guid, spell);
+    }
+
+    size_t hostCreaturesNear(uint entry, float range, EntityRef[] into)
+    {
+        if (world_ is null)
+            return 0;
+        size_t n;
+        foreach (other; world_.creaturesNear(me.position, range))
+            if (other !is me && other.alive && (entry == 0 || other.spawn.entry == entry) && n < into.length)
+                into[n++] = EntityRef(other.guid);
+        return n;
+    }
+
+    size_t hostPlayersNear(float range, EntityRef[] into)
+    {
+        if (world_ is null)
+            return 0;
+        size_t n;
+        foreach (p; world_.playersNear(me.position, range))
+            if (p.fighter.alive && n < into.length)
+                into[n++] = EntityRef(p.combatGuid);
+        return n;
+    }
+
+    void hostTeleport(Location at)
+    {
+        import dmangos.world.map : Map;
+        import dmangos.world.motion : stopMoving;
+        import dmangos.world.spline : monsterStop;
+
+        if (world_ is null)
+            return;
+        stopMoving(me, world_);
+        me.movement.position = Position(at.x, at.y, at.z, at.orientation);
+        world_.sendToObservers(me.guid, Opcode.SMSG_MONSTER_MOVE, monsterStop(me.guid, me.position, me.spline.id));
+        if (auto map = cast(Map) world_)
+            map.objectRelocated(me);
+    }
+
+    void hostFace(EntityRef target)
+    {
+        if (world_ !is null)
+            scriptFace(target.guid, false);
+    }
+
+    void hostAttack(EntityRef who)
+    {
+        if (world_ is null)
+            return;
+        if (auto other = world_.unit(who.guid))
+        {
+            if (inCombat_)
+                addThreat(other, 0);
+            attackStart(other, world_);
+        }
+    }
+
+    void hostEvade()
+    {
+        if (world_ !is null && inCombat_)
+            enterEvadeMode(world_);
+    }
+
+    void hostZoneCombat()
+    {
+        if (world_ !is null)
+            scriptZoneCombatPulse();
+    }
+
+    void hostReact(React state)
+    {
+        react = cast(ReactState) state;
+    }
+
+    bool hostCasting()
+    {
+        return castingNow;
+    }
+
+    void hostInterrupt()
+    {
+        if (world_ !is null)
+            interruptCast();
+    }
+
+    ActionResult hostCastAs(EntityRef caster, uint spellId, EntityRef target, bool triggered)
+    {
+        if (caster.guid == me.guid || !caster)
+            return hostCast(spellId, target, triggered);
+        auto other = world_ is null ? null : world_.creatureAt(caster.guid);
+        if (other is null)
+            return ActionResult.notHere;
+        return other.ai.castFor(world_, spellId, target.guid, triggered);
+    }
+
+    void hostFlying(bool on)
+    {
+        enum uint levitating = 0x0000_0400; // MOVEFLAG_LEVITATING
+        me.scriptFlying = on;
+        if (on)
+            me.movement.flags |= levitating;
+        else
+            me.movement.flags &= ~levitating;
+    }
+
+    void hostDisplay(uint model)
+    {
+        if (world_ !is null)
+            scriptMorph(0, model);
+    }
+
+    void hostSetHealthPercent(EntityRef who, uint percent)
+    {
+        auto c = who.guid == me.guid ? me : world_ is null ? null : world_.creatureAt(who.guid);
+        if (c is null || !c.alive)
+            return;
+        const most = c.values.get!UNIT_FIELD_MAXHEALTH;
+        auto health = cast(uint)(ulong(most) * (percent > 100 ? 100 : percent) / 100);
+        c.values.set!UNIT_FIELD_HEALTH(health ? health : 1);
+        if (world_ !is null)
+            world_.flushCreature(c);
+    }
+
+    Location hostLocationOf(EntityRef who)
+    {
+        Position at;
+        if (who.guid == me.guid)
+            at = me.position;
+        else if (world_ is null || !world_.positionOf(who.guid, at))
+            return Location.init;
+        return Location(at.x, at.y, at.z, at.orientation);
+    }
+
+    void hostRooted(bool on)
+    {
+        if (world_ !is null)
+            scriptImmobilized(on, true);
+        else
+            me.scriptRooted = on;
+    }
+
+    void hostDie()
+    {
+        if (world_ is null || !me.alive)
+            return;
+        deathPrevention = false;
+        scriptDie();
+    }
 }

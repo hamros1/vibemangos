@@ -137,6 +137,17 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Projects: CMaNGOS
 * Constants: `DEFAULT_MAX_PLAYER_DISTANCE`
 
+## scripts/moltencore.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/eastern_kingdoms/molten_core/` (`molten_core.cpp`, `molten_core.h`,
+  `molten_coreScripts.cpp`, `boss_lucifron.cpp`, `boss_magmadar.cpp`, `boss_gehennas.cpp`, `boss_garr.cpp`,
+  `boss_shazzrah.cpp`, `boss_baron_geddon.cpp`, `boss_golemagg.cpp`, `boss_sulfuron_harbinger.cpp`,
+  `boss_majordomo_executus.cpp`, `boss_ragnaros.cpp`)
+* Functions/ScriptNames: `instance_molten_core`, `go_molten_core_rune`, `boss_lucifron`, `boss_magmadar`,
+  `boss_gehennas`, `boss_garr`, `mob_firesworn`, `boss_shazzrah`, `boss_baron_geddon`, `boss_golemagg`,
+  `mob_core_rager`, `boss_sulfuron`, `mob_flamewaker_priest`, `boss_majordomo`, `boss_ragnaros`
+
 ## timer.d
 
 * Projects: CMaNGOS, Ember

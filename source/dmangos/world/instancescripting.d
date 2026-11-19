@@ -11,6 +11,7 @@ import dmangos.log : info;
 import dmangos.script.api;
 import dmangos.script.registry : ScriptHandle, ScriptKind, ScriptRuntime;
 import dmangos.world.creature : Creature;
+import dmangos.world.creatureai : CreatureLore;
 import dmangos.world.gameobject : GameObject;
 import dmangos.world.map : Map, MapObject;
 
@@ -34,6 +35,15 @@ final class InstanceScript : InstanceHost
 
     /// Objects of a cell being loaded, not on the map yet (a door opened now is open when it appears).
     MapObject[] loading;
+
+    // Raid scripts:
+
+    /// The world's data, for summoning and texts (`WorldContext`).
+    CreatureLore lore;
+
+    /// Puts the game object of a spawn of `entry` on the copy's map in the world for `seconds` (0: for
+    /// good); false if there is none (`WorldContext` sets it).
+    bool delegate(Map map, uint entry, uint seconds) respawnObjectOf;
 
     /**
      * The script `name` for copy `id` of `mapId`, its state read from `data` (`instance.data`);
@@ -74,6 +84,25 @@ final class InstanceScript : InstanceHost
             saved = data;
             persist(data);
         }
+    }
+
+    // Raid scripts:
+
+    /// Asks the script question `id` (`Asked`) from `from`; its answer, 0 if it gave none.
+    int ask(EntityRef from, uint id)
+    {
+        auto context = InstanceContext(this);
+        runtime.raise(handle, context, Asked(from, id));
+        return context.answerGiven;
+    }
+
+    /// `ms` of the copy's time pass for the script's schedules. Its state is saved with its next event.
+    void tick(int ms)
+    {
+        if (!runtime.busy(handle))
+            return;
+        auto context = InstanceContext(this);
+        runtime.tick(handle, context, ms);
     }
 
     /// The copy goes from this node: the script's state goes from memory (it is saved).
@@ -141,6 +170,99 @@ final class InstanceScript : InstanceHost
     void hostLog(string text)
     {
         info!"script %s (instance %s of map %s): %s"(name, id, mapId, text);
+    }
+
+    // Raid scripts:
+
+    private Creature creatureHere(EntityRef who)
+    {
+        foreach (object; loading)
+            if (object.guid == who.guid)
+                return cast(Creature) object;
+        return map is null ? null : cast(Creature) map.findObject(who.guid);
+    }
+
+    EntityRef hostSummon(uint entry, Location at, uint despawnMs)
+    {
+        import dmangos.world.creature : TempSpawnType;
+        import dmangos.world.movement : Position;
+
+        if (lore is null || map is null)
+            return EntityRef.init;
+        auto made = lore.summon(map, entry, Position(at.x, at.y, at.z, at.orientation),
+            despawnMs ? TempSpawnType.timedOutOfCombatOrDead : TempSpawnType.dead, despawnMs, 0);
+        return made is null ? EntityRef.init : EntityRef(made.guid);
+    }
+
+    bool hostAlive(EntityRef who)
+    {
+        auto c = creatureHere(who);
+        return c !is null && c.alive;
+    }
+
+    ActionResult hostDespawnObject(EntityRef object)
+    {
+        foreach (i, o; loading)
+            if (o.guid == object.guid)
+            {
+                loading = loading[0 .. i] ~ loading[i + 1 .. $]; // not added at all
+                return ActionResult.ok;
+            }
+        if (map is null || cast(GameObject) map.findObject(object.guid) is null)
+            return ActionResult.notHere;
+        map.removeObject(object.guid);
+        return ActionResult.ok;
+    }
+
+    bool hostRespawnObject(uint entry, uint seconds)
+    {
+        return map !is null && respawnObjectOf !is null && respawnObjectOf(map, entry, seconds);
+    }
+
+    ActionResult hostUseObject(EntityRef object)
+    {
+        auto go = map is null ? null : cast(GameObject) map.findObject(object.guid);
+        if (go is null)
+            return ActionResult.notHere;
+        go.useDoorOrButton(map);
+        map.flushGameObject(go);
+        return ActionResult.ok;
+    }
+
+    ActionResult hostDespawnCreature(EntityRef creature, uint delayMs)
+    {
+        auto c = creatureHere(creature);
+        if (c is null || map is null)
+            return ActionResult.notHere;
+        c.ai.despawnFor(map, delayMs);
+        return ActionResult.ok;
+    }
+
+    ActionResult hostCastAs(EntityRef caster, uint spell, EntityRef target, bool triggered)
+    {
+        auto c = creatureHere(caster);
+        if (c is null || map is null)
+            return ActionResult.notHere;
+        return c.ai.castFor(map, spell, target.guid, triggered);
+    }
+
+    size_t hostPlayers(EntityRef[] into)
+    {
+        if (map is null)
+            return 0;
+        size_t n;
+        foreach (who; map.playersNow())
+            if (n < into.length)
+                into[n++] = EntityRef(who.character.guid);
+        return n;
+    }
+
+    ActionResult hostSay(EntityRef speaker, int textEntry, EntityRef target)
+    {
+        auto c = creatureHere(speaker);
+        if (c is null || map is null)
+            return ActionResult.notHere;
+        return c.ai.sayScriptFor(map, textEntry, target);
     }
 }
 

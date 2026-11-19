@@ -709,6 +709,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
     private bool auraHeld;              /// rooted or stunned, as last told
 
     bool scriptRooted; /// held in place by its script
+    bool scriptFlying; /// its script has it fly: its ways go straight through the air (raid scripts)
 
     /// Rooted or stunned (or held by its script): it does not move.
     @property bool immobilized() const

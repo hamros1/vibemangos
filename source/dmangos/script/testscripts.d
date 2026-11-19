@@ -114,6 +114,33 @@ final class FakeCreature : CreatureHost
     ActionResult hostDespawnOther(EntityRef, uint) { return ActionResult.ok; }
     QuestProgress hostQuestStatus(EntityRef, uint) { return QuestProgress.none; }
     void hostSendGossip(EntityRef, uint, const(MenuOption)[], bool) {}
+    // Raid scripts:
+    int hostAskDungeon(uint) { return 0; }
+    EntityRef hostSelectTarget(Pick, uint, uint) { return EntityRef.init; }
+    size_t hostThreatList(EntityRef[]) { return 0; }
+    ActionResult hostModifyThreat(EntityRef, int) { return ActionResult.ok; }
+    void hostUnitFlags(EntityRef, uint, bool) {}
+    void hostFaction(uint) {}
+    void hostDeathPrevention(bool) {}
+    bool hostHasAura(EntityRef, uint) { return false; }
+    void hostRemoveAura(EntityRef, uint) {}
+    size_t hostCreaturesNear(uint, float, EntityRef[]) { return 0; }
+    size_t hostPlayersNear(float, EntityRef[]) { return 0; }
+    void hostTeleport(Location) {}
+    void hostFace(EntityRef) {}
+    void hostAttack(EntityRef) {}
+    void hostEvade() {}
+    void hostZoneCombat() {}
+    void hostReact(React) {}
+    bool hostCasting() { return false; }
+    void hostInterrupt() {}
+    ActionResult hostCastAs(EntityRef, uint, EntityRef, bool) { return ActionResult.ok; }
+    void hostFlying(bool) {}
+    void hostDisplay(uint) {}
+    void hostSetHealthPercent(EntityRef, uint) {}
+    Location hostLocationOf(EntityRef) { return Location.init; }
+    void hostRooted(bool) {}
+    void hostDie() {}
 }
 
 unittest

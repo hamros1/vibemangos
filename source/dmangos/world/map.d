@@ -1851,6 +1851,9 @@ final class Map : CombatWorld, GameObjectWorld
         return slot == uint.max ? null : at(slot).player;
     }
 
+    /// Raid scripts: a player was put on the map (`add`).
+    void delegate(Inhabitant who) onPlayerAdded;
+
     /// Puts a player on the map, and introduces it to everyone in sight.
     void add(Inhabitant who, bool shipsShown = false)
     in (find(who.character.guid) is null, "a player is on a map once")
@@ -1878,6 +1881,8 @@ final class Map : CombatWorld, GameObjectWorld
         if (!shipsShown) // the session showed them already, before the player's own create block
             foreach (object; everywhere_)
                 deliverUpdate(who, object.appearance(serverTime()));
+        if (onPlayerAdded !is null) // Raid scripts: a copy's script hears of it
+            onPlayerAdded(who);
     }
 
     private MapObject[] everywhere_; /// objects every player here sees wherever they are (ships)

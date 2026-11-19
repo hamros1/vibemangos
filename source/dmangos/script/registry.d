@@ -126,7 +126,8 @@ template KindInfo(ScriptKind kind)
     else static if (kind == ScriptKind.instance)
     {
         alias Context = InstanceContext;
-        alias Events = AliasSeq!(CreatureLoaded, ObjectLoaded, CreatureDied, Signal);
+        alias Events = AliasSeq!(CreatureLoaded, ObjectLoaded, CreatureDied, Signal,
+            /* Raid scripts: */ Asked, PlayerEntered);
         alias Attribute = .instance;
     }
 }

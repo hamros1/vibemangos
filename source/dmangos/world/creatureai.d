@@ -94,6 +94,11 @@ interface CreatureLore
     @property ScriptRuntime scriptRuntime();
     /// ditto
     ScriptHandle spellScript(uint id);
+
+    // Raid scripts:
+
+    /// The answer of dungeon copy `instance`'s script to question `id` from `from` (0: none).
+    int askDungeon(uint instance, EntityRef from, uint id);
 }
 
 /// What a creature's AI needs of its map.
