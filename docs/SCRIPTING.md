@@ -121,7 +121,7 @@ code) what is not here or not allowed. Nothing a script keeps can dangle.
 | Kind | UDA | Bound by | Events (implemented / planned) |
 |---|---|---|---|
 | Creature | `@creature` | `creature_template.ScriptName` | spawned, reset, entered combat, damaged, killed a unit, died, evaded, spell hit, signal, steps, movement done, gossip hello and select, quest accepted and rewarded; *summoned, emote* |
-| Dungeon | `@instance` | `instance_template.ScriptName` | creature or object loaded, creature died, signal; *player entered, encounter start/wipe* |
+| Dungeon | `@instance` | `instance_template.ScriptName` | creature or object loaded (summons too), creature died, signal, a creature engaged or evaded (an encounter's start and wipe), scripted event (`scripted_event_id`: a spell's or a goober's event), steps of its own schedules; *player entered* |
 | Game object | `@gameObject` | `gameobject_template.ScriptName` | used, signal; *loaded, state changed* |
 | Area trigger | `@areaTrigger` | `scripted_areatrigger` | entered |
 | Spell | `@spell` | `spell_scripts` | a dummy or script effect hit (a player's or a creature's cast), a player's aura applied, its periodic tick on a creature (the amount changeable); *aura removed, cast check, auras on players from creatures* |
@@ -141,11 +141,28 @@ waiting where the path says), takes its NPC flags away on the way, fails the que
 dies or falls more than 50 yards behind, and may send the creature home when it is over. The script
 passes it its `MovementDone`s and reacts to the points it reports (a line at Moonbrook, the quest's
 event at the end). Being data, an escort handed to another node goes on there; if the creature's
-movement did not come along, the escort sends it on again.
+movement did not come along, the escort sends it on again. An escort may pause on the way (a
+ritual at a point) and resume.
 
-A handler of `GossipHello`, `GossipSelect`, `ObjectUsed`, `EffectHit` or `TriggerEntered` may call
-`consume()` on its context: the script answered, and the server's usual menu, use, database script
-or trigger does not follow.
+`Walk` (`dmangos.script.walk`) takes a creature along its path with nobody escorting it (a drunk to
+the keg, a guard to his door); `Pack` (`dmangos.script.pack`) counts the creatures a dungeon script
+watches together (the keepers of a ward, a wave's adds), so "the last one fell" survives a restart.
+
+A handler of `GossipHello`, `GossipSelect`, `ObjectUsed`, `EffectHit`, `TriggerEntered` or (a
+dungeon's) `EventHappened` may call `consume()` on its context: the script answered, and the
+server's usual menu, use, database script or trigger does not follow.
+
+### Dungeon scripts
+
+A dungeon's script is the copy's memory: which encounters are done (saved in `instance.data` after
+every event), which doors are open (it opens them again as their objects load), and the events no
+single creature owns: waves called by a gong, a ritual's timer, a boss who comes when six others
+are dead. It acts on the copy's creatures and objects by their guids (summon, say, cast, attack,
+walk, faction and flags, despawn; doors and object flags; spawning the dungeon's objects of an
+entry), hears every creature of the copy engage, evade and die, and talks with the creatures' and
+objects' own scripts through signals. The `creature_ai_scripts` "set instance data" action is a
+signal to it too (its field the signal's id), so a dungeon script keeps the numbers of CMaNGOS's
+`TYPE_*` for those and numbers its own signals from 100.
 
 ### Gossip menus of a script's own
 
