@@ -176,17 +176,16 @@ objectives, rewards, saving, game objects and items as givers, sharing, explorat
 timed quests, `questgiver_greeting`, quest scripts (`dbscripts_on_quest_*`). Next: escort quests
 (with the D scripts' waypoint and gossip events), quest POIs.
 
-**Scripting** (docs/SCRIPTING.md): the framework in D is done for creatures, dungeons and game
-objects (typed events, schedules as data, state saved by reflection, migration, `instance.data`,
-gossip and quest events, script movement, the `Escort` component), with the Deadmines' doors, its
-cannon and Mr. Smite, and the Defias Traitor's escort; spell and area trigger scripts, gossip menus
-of a script's own and signals across nodes are done too (Life Tap, Lady Katrana Prestor, the scent
-of Lar'korwi), and spell scripts for creatures' casts and for auras (Curse of Agony, Hate to Zero).
-Shadowfang Keep is scripted (not yet: Deathstalker Vincent and Arugal's introduction, Arugal's
-teleports, which need creatures casting teleports on themselves). Wailing Caverns is scripted
-(the Fanglords, the Disciple of Naralex's escort and ritual). Next: creatures' teleport spells,
-world and command scripts, the other escorts, then the next dungeons (Blackfathom Deeps, the
-Stockade, Gnomeregan, Razorfen Kraul; the server logs 15 of 657 script names served).
+**Scripting** (docs/SCRIPTING.md): the framework in D is done for creatures, dungeons, game objects,
+spells, area triggers and scripted events (typed events, schedules as data, state saved by reflection,
+migration, `instance.data`, gossip and quest events, script movement, the `Escort`, `Follower`, `Walk` and
+`Pack` components, signals across nodes). Ported from CMaNGOS's ScriptDevAI (2026-11-19): the quest and
+event scripts of Kalimdor's and the Eastern Kingdoms' zones, every five-player dungeon, and the raids
+(Molten Core, Onyxia, Zul'Gurub, Blackwing Lair, both Ahn'Qiraj, Naxxramas); the server logs 344 of 674
+script rows served (317 distinct names; about 97 left). Not yet: the rest of the world scripts (guards,
+the Emerald Dragons, the war effort, profession specializations, the Scourge Invasion), the dungeons' and
+raids' scripted events, and the mechanics the raids approximate (possession, mind control, C'Thun's
+stomach); each module's documentation says what it leaves out.
 Reputation is done (`reputation.d`, `reputationhandlers.d`; README's "Reputation"): kills, quests,
 spillover, war and peace, discounts, requirements. Not yet: `SMSG_SET_FORCED_REACTIONS` (spells force
 none yet), the PvP rank's discount, reputation from spells.
