@@ -120,7 +120,7 @@ code) what is not here or not allowed. Nothing a script keeps can dangle.
 
 | Kind | UDA | Bound by | Events (implemented / planned) |
 |---|---|---|---|
-| Creature | `@creature` | `creature_template.ScriptName` | spawned, reset, entered combat, damaged, killed a unit, died, evaded, spell hit, signal, steps, movement done, gossip hello and select, quest accepted and rewarded; *summoned, emote* |
+| Creature | `@creature` | `creature_template.ScriptName` | spawned, reset, entered combat, damaged, killed a unit, died, evaded, spell hit, signal, steps, movement done, gossip hello and select, quest accepted and rewarded, a creature it summoned died (or went) or arrived where it sent it, a player in sight, a text emote at it; *summoned* |
 | Dungeon | `@instance` | `instance_template.ScriptName` | creature or object loaded, creature died, signal; *player entered, encounter start/wipe* |
 | Game object | `@gameObject` | `gameobject_template.ScriptName` | used, signal; *loaded, state changed* |
 | Area trigger | `@areaTrigger` | `scripted_areatrigger` | entered |
@@ -140,7 +140,8 @@ with a player and a quest, it walks the creature's `script_waypoint` path (`move
 waiting where the path says), takes its NPC flags away on the way, fails the quest when the player
 dies or falls more than 50 yards behind, and may send the creature home when it is over. The script
 passes it its `MovementDone`s and reacts to the points it reports (a line at Moonbrook, the quest's
-event at the end). Being data, an escort handed to another node goes on there; if the creature's
+event at the end). It can be paused (an ambush to fight off, a scene to play) and can run its points'
+movement scripts (a sniffed path's scenery). Being data, an escort handed to another node goes on there; if the creature's
 movement did not come along, the escort sends it on again.
 
 A handler of `GossipHello`, `GossipSelect`, `ObjectUsed`, `EffectHit` or `TriggerEntered` may call
