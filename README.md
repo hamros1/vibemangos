@@ -383,6 +383,8 @@ What works now:
     of a yard a point (a level 60 monster sees Stealth rank 4 at 7.5 yards); a little further, a
     script hears a `StealthAlert`. Players see a stealthed player of their group or side; an enemy by
     the same rule, worked out again once a second.
+    Far Sight, Eagle Eye and Mind Vision move the player's sight to their spot or target (`PLAYER_FARSIGHT`)
+    while the channel lasts; others still see the player where it stands.
     They keep a threat list (damage is threat; a new victim needs 110% of the current one's in melee
     reach, 130% elsewhere), chase in straight lines, swing with the attack table (crushing
     blows included), and give warriors rage. They give up (evade) when nobody is left to fight, or

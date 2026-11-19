@@ -484,6 +484,55 @@ private:
         player.values.set!UNIT_CHANNEL_SPELL(spell.id);
         player.values.set!UNIT_FIELD_CHANNEL_OBJECT(channelTarget);
         flushPlayerChanges();
+        // Mind Vision (`SPELL_AURA_BIND_SIGHT`): the player sees through the channel's target while it lasts.
+        import dmangos.world.spellids : AuraType;
+
+        foreach (j; 0 .. 3)
+            if (spell.effect[j] == SpellEffect.applyAura && spell.casting.applyAuraName[j] == AuraType.bindSight
+                    && channelTarget != player.guid)
+                seeFrom(channelTarget);
+    }
+
+    /// Far Sight's spot (`SPELL_EFFECT_ADD_FARSIGHT`): a dynamic object at the spell's destination, seen from
+    /// until the channel ends (it is the channel's object).
+    void makeFarSightSpot(const(SpellInfo)* spell, size_t i, const ref SpellTargets targets)
+    {
+        import dmangos.world.dynobject : DynamicObject;
+        import dmangos.world.spellcast : radius;
+
+        Position at = player.position;
+        if (targets.mask & TargetFlags.destLocation)
+            at = Position(targets.dest[0], targets.dest[1], targets.dest[2], at.orientation);
+        removeFarSightSpot();
+        auto spot = new DynamicObject(context.nextTemporaryCounter(), player.guid, spell.id, i,
+            radius(*spell, i, context.client), at);
+        map.addObject(spot);
+        farSightSpot = spot.guid;
+        channelObject = spot.guid;
+        seeFrom(spot.guid);
+    }
+
+    /**
+     * The player sees from `eye` (an object or unit on its map: `Map.eyeOf`), or from where it stands again (0):
+     * `PLAYER_FARSIGHT`, which the client moves its camera to, and the map's sight worked out from there.
+     */
+    void seeFrom(ulong eye)
+    {
+        import dmangos.world.updatefields : PLAYER_FARSIGHT;
+
+        if (player.values.get!PLAYER_FARSIGHT == eye)
+            return;
+        player.values.set!PLAYER_FARSIGHT(eye);
+        if (map !is null)
+            map.refreshVisibility(this); // the eye's surroundings (and the spot itself) before the camera moves
+        flushPlayerChanges();
+    }
+
+    private void removeFarSightSpot()
+    {
+        if (farSightSpot && map !is null)
+            map.removeObject(farSightSpot);
+        farSightSpot = 0;
     }
 
     /**
@@ -530,6 +579,9 @@ private:
                     map.removeObject(area.spot.guid);
                     persistentAreas = persistentAreas[0 .. k] ~ persistentAreas[k + 1 .. $];
                 }
+        // Far Sight, Eagle Eye, Mind Vision: the camera comes back, the spot goes.
+        seeFrom(0);
+        removeFarSightSpot();
         ByteWriter w;
         w.put(0u);
         deliver(Opcode.MSG_CHANNEL_UPDATE, w.data);
@@ -1569,6 +1621,9 @@ private:
         case SpellEffect.summonCritter: // SPELL_EFFECT_SUMMON_CRITTER: a companion; the same again sends it away
             summonCompanion(spell, i);
             break;
+        case SpellEffect.addFarsight: // SPELL_EFFECT_ADD_FARSIGHT: Far Sight, Eagle Eye: a spot to see from
+            makeFarSightSpot(spell, i, c.targets);
+            break;
         case SpellEffect.energize: // SPELL_EFFECT_ENERGIZE
             energize(spell, i, target, value);
             break;
@@ -1623,7 +1678,7 @@ private:
             SpellEffect.tradeSkill, SpellEffect.stealth, SpellEffect.detect, SpellEffect.forceCriticalHit,
             SpellEffect.guaranteeHit, SpellEffect.openLockItem, SpellEffect.proficiency, SpellEffect.powerBurn,
             SpellEffect.threat, SpellEffect.healthFunnel, SpellEffect.powerFunnel, SpellEffect.healMaxHealth,
-            SpellEffect.distract, SpellEffect.pull, SpellEffect.addFarsight, SpellEffect.summonPossessed,
+            SpellEffect.distract, SpellEffect.pull, SpellEffect.summonPossessed,
             SpellEffect.healMechanical, SpellEffect.summonObjectWild, SpellEffect.sanctuary,
             SpellEffect.addComboPoints, SpellEffect.createHouse, SpellEffect.bindSight, SpellEffect.stuck,
             SpellEffect.summonPlayer, SpellEffect.activateObject, SpellEffect.threatAll,
@@ -2365,6 +2420,8 @@ private:
 
     /// The player's companion (a mini-pet: `SUMMON_CRITTER`), if out; 0 if none.
     package ulong companion;
+    /// Far Sight's or Eagle Eye's spot, while the player sees from it; 0 if none.
+    ulong farSightSpot;
 
     /**
      * `SUMMON_CRITTER` (CMaNGOS's `EffectSummonCritter`): the effect's creature beside the player, of its faction,

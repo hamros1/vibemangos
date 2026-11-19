@@ -327,6 +327,8 @@ private struct Entity
 
     // A player's own.
     bool ghost;                 // released, as of its last `updateVisibility` (which each death and life runs)
+    bool farSeeing;             // it sees from `eye`, not where it stands (Far Sight, Eagle Eye, Mind Vision)
+    Position eye;               // where it sees from, while `farSeeing`
     SlotBits known;             // the slots its client has: players and objects
     ulong[] interest;           // the cells it is near
     ulong[] lingering;          // guids its client has that this map does not hold yet
@@ -1025,13 +1027,16 @@ final class Map : CombatWorld, GameObjectWorld
         clockMs += diff;
         // A stealthed player is seen or lost as enemies come near it, turn and step away: who sees it is worked
         // out again once a second (stealth's detection range is a few yards, not the 10 a relocation waits for).
+        // So is what a far-seeing player sees (its eye may move, and what comes near the eye is not told it).
         if (ghosts && (stealthCheck -= diff) <= 0)
         {
             import dmangos.world.spellids : AuraType;
+            import dmangos.world.updatefields : PLAYER_FARSIGHT;
 
             stealthCheck = 1000;
             foreach (who; playersNow())
-                if (who.character.auras.hasType(AuraType.modStealth))
+                if (who.character.auras.hasType(AuraType.modStealth) || at(slotFor(who.character.guid)).farSeeing
+                        || who.character.values.get!PLAYER_FARSIGHT)
                     updateVisibility(who);
         }
         ticking_ = true;
@@ -2446,17 +2451,53 @@ private:
         return true;
     }
 
+    /**
+     * Where `who` sees from: the object or unit in its `PLAYER_FARSIGHT` (Far Sight's and Eagle Eye's spot, the
+     * unit under its Mind Vision) while that is on this map; else where it stands.
+     */
+    Position eyeOf(Inhabitant who, out bool far)
+    {
+        import dmangos.world.updatefields : PLAYER_FARSIGHT;
+
+        const target = who.character.values.get!PLAYER_FARSIGHT;
+        far = false;
+        if (target == 0 || target == who.character.guid)
+            return who.character.position;
+        const slot = slotFor(target);
+        if (slot == uint.max)
+            return who.character.position;
+        far = true;
+        return at(slot).player !is null ? at(slot).player.character.position : at(slot).object.position;
+    }
+
+    /// Where the player in `slot` sees from (`eyeOf`, as of its last `updateVisibility`).
+    private Position sightOf(uint slot)
+    {
+        return at(slot).farSeeing ? at(slot).eye : at(slot).player.character.position;
+    }
+
+    /// Whether the player in `viewer` sees as far as `position` (`visibilityDistance` from where it sees from).
+    private bool inSightOf(uint viewer, Position position)
+    {
+        return distanceSquared(sightOf(viewer), position) <= settings.visibilityDistance ^^ 2;
+    }
+
     /// Who sees whom, for every player near `who`, both ways.
     void updateVisibility(Inhabitant who)
     {
         const guid = who.character.guid;
         const slot = slotFor(guid);
         at(slot).visibilityAt = who.character.position;
+        bool far;
+        const eye = eyeOf(who, far);
+        at(slot).farSeeing = far;
+        at(slot).eye = eye;
         // One way: a ghost, an invisible game master, a stealthed player (the slot's `ghost` stands for all three).
         import dmangos.world.spellids : AuraType;
 
+        // A far-seeing player too: it sees from one place and is seen at another.
         const ghost = who.character.deathState == DeathState.ghost || who.character.gmInvisible
-            || who.character.auras.hasType(AuraType.modStealth);
+            || who.character.auras.hasType(AuraType.modStealth) || far;
         const turned = ghost != at(slot).ghost;
         if (turned)
         {
@@ -2479,12 +2520,22 @@ private:
         scope (exit)
             giveBackList(near);
         playerSlotsInto(who.character.position, settings.visibilityDistance, near);
+        // What `who` sees is near its eye; who sees `who`, near where it stands (the same, unless far-seeing).
+        auto seenNear = near;
+        if (far)
+        {
+            seenNear = borrowList();
+            playerSlotsInto(eye, settings.visibilityDistance, seenNear);
+        }
+        scope (exit)
+            if (far)
+                giveBackList(seenNear);
         alias inSight = playersInSight;
-        foreach (o; near)
+        foreach (o; seenNear)
             if (o != slot)
                 inSight.add(o);
         scope (exit)
-            foreach (o; near)
+            foreach (o; seenNear)
                 inSight.remove(o);
 
         // Newly in sight, each way on its own (a ghost and the living do not see each other alike,
@@ -2493,12 +2544,8 @@ private:
         const time = serverTime();
         UpdateData received;
         UpdatePacket[uint] shown;
-        foreach (o; near)
+        void iSeeIt(uint o, bool iSee)
         {
-            if (o == slot)
-                continue;
-            // Only `who`'s own set is read for a pair already known (the other's entry is a cache miss each).
-            const iSee = !at(slot).known[o] && (symmetric || playerSeesSlot(slot, o));
             if (iSee)
             {
                 see(slot, o);
@@ -2510,7 +2557,10 @@ private:
                 }
                 received.append(block);
             }
-            if (symmetric ? iSee : !at(o).known[slot] && playerSeesSlot(o, slot))
+        }
+        void itSeesMe(uint o, bool sees)
+        {
+            if (sees)
             {
                 see(o, slot);
                 auto other = at(o).player;
@@ -2521,6 +2571,22 @@ private:
                 deliverBuilt(other, *packet);
             }
         }
+        foreach (o; seenNear)
+        {
+            if (o == slot)
+                continue;
+            // Only `who`'s own set is read for a pair already known (the other's entry is a cache miss each).
+            const iSee = !at(slot).known[o] && (symmetric || playerSeesSlot(slot, o));
+            iSeeIt(o, iSee);
+            if (!far) // the same players see `who`
+                itSeesMe(o, symmetric ? iSee : !at(o).known[slot] && (!at(o).farSeeing
+                    || inSightOf(o, who.character.position)) && playerSeesSlot(o, slot));
+        }
+        if (far)
+            foreach (o; near)
+                if (o != slot)
+                    itSeesMe(o, !at(o).known[slot] && (!at(o).farSeeing || inSightOf(o, who.character.position))
+                        && playerSeesSlot(o, slot));
         if (!received.empty)
             deliverUpdate(who, received);
 
@@ -2555,7 +2621,8 @@ private:
                 if (at(v).player !is null)
                     watching ~= v;
             foreach (v; watching)
-                if (!inSight[v] || !playerSeesSlot(v, slot))
+                if (!(far || at(v).farSeeing ? inSightOf(v, who.character.position) : inSight[v] != 0)
+                        || !playerSeesSlot(v, slot))
                     forgetMe(v);
         }
 
@@ -2563,7 +2630,7 @@ private:
         auto nearObjects = borrowList();
         scope (exit)
             giveBackList(nearObjects);
-        objectSlotsInto(who.character.position, settings.visibilityDistance, nearObjects, true);
+        objectSlotsInto(eye, settings.visibilityDistance, nearObjects, true);
         scope (exit)
             foreach (o; nearObjects)
                 objectsInSight.remove(o);
@@ -2622,7 +2689,8 @@ private:
         foreach (p; playerSlotsNear(object.position, settings.visibilityDistance))
         {
             auto who = at(p).player;
-            if (at(p).known[slot] || !objectVisibleTo(slot, object, who, at(slot).replica))
+            if (at(p).known[slot] || (at(p).farSeeing && !inSightOf(p, object.position))
+                    || !objectVisibleTo(slot, object, who, at(slot).replica))
                 continue;
             see(p, slot);
             if (adoptLingering(p, guid))
@@ -2631,7 +2699,7 @@ private:
             personalize(who, object);
         }
         foreach (p; at(slot).viewers.dup)
-            if (distanceSquared(at(p).player.character.position, object.position) > settings.visibilityDistance ^^ 2
+            if (!inSightOf(p, object.position)
                 || (at(slot).replica && !objectVisibleTo(slot, object, at(p).player, true))) // another node's ghost
             {
                 unsee(p, slot);
@@ -2769,6 +2837,34 @@ unittest
     map.remove(bob);
     assert(carol.take() == [Opcode.SMSG_DESTROY_OBJECT] && alice.take() == [] && map.population == 2);
     assert(map.find(2) is null && map.find(1) is alice);
+}
+
+/// Far Sight: a player sees from its eye (here a player far off), and is still seen where it stands.
+unittest
+{
+    import dmangos.world.updatefields : PLAYER_FARSIGHT;
+
+    auto map = new Map(0, MapSettings.init, () => 1000u);
+    auto alice = new Watcher(1, Position(0, 0, 0));
+    auto bob = new Watcher(2, Position(50, 0, 0));
+    auto carol = new Watcher(3, Position(500, 0, 0));
+    map.add(alice);
+    map.add(bob);
+    map.add(carol);
+
+    alice.player.values.set!PLAYER_FARSIGHT(carol.player.guid);
+    map.refreshVisibility(alice);
+    assert(map.seeEachOther(1, 3) && !map.seeEachOther(1, 2), "alice sees what is near her eye, not bob");
+    assert(map.seeEachOther(2, 1) && !map.seeEachOther(3, 1), "bob still sees her; carol does not");
+
+    // Bob moving far enough to work out his sight again does not take alice from him, nor carol from her.
+    bob.moveTo(70, 0);
+    map.relocated(bob);
+    assert(map.seeEachOther(2, 1) && map.seeEachOther(1, 3));
+
+    alice.player.values.set!PLAYER_FARSIGHT(0UL);
+    map.refreshVisibility(alice);
+    assert(map.seeEachOther(1, 2) && !map.seeEachOther(1, 3) && map.seeEachOther(2, 1));
 }
 
 /// Creatures and game objects: cells load when a player comes near, and objects come and go with sight.
