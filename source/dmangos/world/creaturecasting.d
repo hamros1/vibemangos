@@ -85,6 +85,13 @@ mixin template CreatureCasting()
     /// A player's text emote at it.
     void receivedEmote(ulong player, uint textEmote, CombatWorld world)
     {
+        import dmangos.script.api : EmoteReceived;
+
+        if (behaviour) // Eastern Kingdoms scripts: its script hears of it
+        {
+            world_ = world;
+            raiseScript(EmoteReceived(EntityRef(player), textEmote));
+        }
         if (script is null)
             return;
         world_ = world;

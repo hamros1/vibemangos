@@ -121,6 +121,8 @@ mixin template SessionScripting()
         void hostSignalDungeon(uint id, int value) { this.outer.hostSignalDungeon(id, value); }
         void hostLog(string text) { this.outer.hostLog(text); }
         ActionResult hostModifyThreat(EntityRef creature, EntityRef target, int percent) { return this.outer.hostModifyThreat(creature, target, percent); }
+        // Eastern Kingdoms scripts:
+        void hostKillCreditAt(EntityRef who, uint entry) { this.outer.hostKillCredit(who, entry); }
     }
 
     private ScriptHost scriptHost_;

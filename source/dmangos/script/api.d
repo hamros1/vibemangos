@@ -274,6 +274,13 @@ struct UnitInSight
     EntityRef unit;
 }
 
+/// A player made a text emote (`TextEmotes`: 34 chicken, 21 cheer, 101 wave, ...) at it (`ReceiveEmote`).
+struct EmoteReceived
+{
+    EntityRef player;
+    uint textEmote;
+}
+
 /// The core's side of a creature script's context (`CreatureAI` implements it).
 interface CreatureHost
 {
@@ -336,6 +343,7 @@ interface CreatureHost
     ActionResult hostSayOther(EntityRef speaker, int entry, EntityRef target);
     void hostMovementScript(uint id);
     void hostRelay(int id, EntityRef target);
+    void hostKillCredit(EntityRef player, uint entry);
 }
 
 /**
@@ -566,6 +574,9 @@ struct CreatureContext
 
     /// Starts `dbscripts_on_relay` script `id` (negative: one of relay group -`id`) on it, with `target`.
     void relay(int id, EntityRef target = EntityRef.init) { host.hostRelay(id, target); }
+
+    /// `KilledMonsterCredit` (or `TalkedToCreature`) of `entry` for `player`.
+    void killCredit(EntityRef player, uint entry) { host.hostKillCredit(player, entry); }
 
     /// Another creature here says the `script_texts` row `entry` (negative), with its sound and emote.
     ActionResult sayOther(EntityRef speaker, int entry, EntityRef target = EntityRef.init)
@@ -903,6 +914,9 @@ interface AreaTriggerHost
     ActionResult hostCastFrom(EntityRef caster, uint spell, EntityRef target, bool triggered);
     void hostSignalDungeon(uint id, int value);
     void hostLog(string text);
+
+    // Eastern Kingdoms scripts:
+    void hostKillCreditAt(EntityRef player, uint entry);
 }
 
 /// An area trigger script's handle, for the length of one handler.
@@ -951,4 +965,9 @@ struct AreaTriggerContext
 
     /// Whether a handler called `consume`.
     @property bool consumed() const { return consumed_; }
+
+    // Eastern Kingdoms scripts:
+
+    /// `KilledMonsterCredit` of `entry` for `player`.
+    void killCredit(EntityRef player, uint entry) { host.hostKillCreditAt(player, entry); }
 }

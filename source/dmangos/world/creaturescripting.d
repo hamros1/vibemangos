@@ -795,4 +795,11 @@ mixin template CreatureScripting()
         if (world_ !is null)
             scriptRelay(id, target.guid);
     }
+
+    void hostKillCredit(EntityRef player, uint entry)
+    {
+        if (world_ !is null)
+            if (auto other = world_.unit(player.guid))
+                other.killCreditFrom(entry, me.guid);
+    }
 }

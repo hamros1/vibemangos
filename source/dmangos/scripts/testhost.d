@@ -135,6 +135,7 @@ final class TestCreature : CreatureHost
     }
     void hostMovementScript(uint id) { note("movement script", id); }
     void hostRelay(int id, EntityRef) { note("relay", id); }
+    void hostKillCredit(EntityRef, uint entry) { note("credit", entry); }
 }
 
 /// A script under test: the runtime of `Module`, one creature's script, and its host.

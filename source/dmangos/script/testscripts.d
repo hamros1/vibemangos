@@ -136,6 +136,7 @@ final class FakeCreature : CreatureHost
     ActionResult hostSayOther(EntityRef, int, EntityRef) { return ActionResult.ok; }
     void hostMovementScript(uint) {}
     void hostRelay(int, EntityRef) {}
+    void hostKillCredit(EntityRef, uint) {}
 }
 
 unittest
