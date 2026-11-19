@@ -278,6 +278,7 @@ interface CreatureHost
     void hostUnitFlags(uint set, uint clear);
     ActionResult hostAttack(EntityRef target);
     void hostRemoveAura(uint spell);
+    void hostFollow(EntityRef leader, float distance, float angle);
 }
 
 /// `UnitFlags`, as dungeon scripts set and clear them (`CreatureContext.unitFlags`).
@@ -467,6 +468,13 @@ struct CreatureContext
 
     /// Takes the auras of `spell` off itself.
     void removeAura(uint spell) { host.hostRemoveAura(spell); }
+
+    /// Follows `leader` (a player, a creature), `distance` yards from it at `angle` (radians) from
+    /// its facing, until it is told to go elsewhere; after a fight it follows again.
+    void follow(EntityRef leader, float distance = 2, float angle = 3.14159f)
+    {
+        host.hostFollow(leader, distance, angle);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -587,7 +595,7 @@ interface InstanceHost
     ActionResult hostMoveTo(EntityRef creature, Location at, uint point, bool run);
     ActionResult hostDespawn(EntityRef creature, uint delayMs);
     bool hostAlive(EntityRef creature);
-    uint hostSpawnObjects(uint entry, uint despawnSeconds);
+    uint hostSpawnObjects(uint entry, uint despawnSeconds, Location near, float range);
     ActionResult hostObjectFlags(EntityRef object, uint set, uint clear);
     uint hostRandom(uint below);
 }
@@ -675,9 +683,13 @@ struct InstanceContext
     /// Whether a creature of the copy is alive (one not here counts as dead).
     bool alive(EntityRef creature) { return host.hostAlive(creature); }
 
-    /// Every game object of `entry` of the dungeon not in the world is put there (a chest, a rocket);
-    /// one not there by default goes again after `despawnSeconds`. How many came.
-    uint spawnObjects(uint entry, uint despawnSeconds = 3600) { return host.hostSpawnObjects(entry, despawnSeconds); }
+    /// Every game object of `entry` of the dungeon (within `range` yards of `near`, if a range is
+    /// given) not in the world is put there (a chest, a rocket); one not there by default goes again
+    /// after `despawnSeconds`. How many came.
+    uint spawnObjects(uint entry, uint despawnSeconds = 3600, Location near = Location.init, float range = 0)
+    {
+        return host.hostSpawnObjects(entry, despawnSeconds, near, range);
+    }
 
     /// Sets a game object's `ObjectFlag`s `set` and clears those of `clear`.
     ActionResult objectFlags(EntityRef object, uint set, uint clear = 0)

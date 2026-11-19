@@ -51,7 +51,7 @@ import dmangos.world.opcodes : ChatType, Language, Opcode;
 import dmangos.world.creatureai : CombatWorld, CreatureLore;
 import dmangos.world.npcdata : BroadcastText;
 import dmangos.world.spells : SpellInfo;
-import dmangos.script.api : ActionResult, EntityRef, GameObjectHost, Waypoint;
+import dmangos.script.api : ActionResult, EntityRef, GameObjectHost, Location, Waypoint;
 import dmangos.script.registry : ScriptHandle, ScriptKind, ScriptRuntime;
 import dmangos.scripts : scriptModules;
 import dmangos.world.instancescripting : InstanceScript;
@@ -3222,14 +3222,15 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         startScript(DbScriptType.event, event, map, source, target);
     }
 
-    /// See `InstanceContext.spawnObjects`: the game objects of `entry` on `map` not in the world come.
-    private uint spawnDungeonObjects(Map map, uint entry, uint despawnSeconds)
+    /// See `InstanceContext.spawnObjects`: the game objects of `entry` on `map` (near a place) not in the world come.
+    private uint spawnDungeonObjects(Map map, uint entry, uint despawnSeconds, Location near, float range)
     {
         import dmangos.world.objects : makeGuid, HighGuid;
 
         uint count;
         foreach (ref spawn; data.gameObjectSpawns)
             if (spawn.entry == entry && spawn.map == map.id
+                && (range <= 0 || (spawn.x - near.x) ^^ 2 + (spawn.y - near.y) ^^ 2 + (spawn.z - near.z) ^^ 2 <= range * range)
                 && map.findObject(makeGuid(HighGuid.gameObject, spawn.entry, spawn.guid)) is null)
             {
                 scriptSpawnGameObject(map, spawn.guid, null, despawnSeconds);

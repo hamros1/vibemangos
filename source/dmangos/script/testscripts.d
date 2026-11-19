@@ -119,6 +119,7 @@ final class FakeCreature : CreatureHost
     void hostUnitFlags(uint, uint) {}
     ActionResult hostAttack(EntityRef) { return ActionResult.ok; }
     void hostRemoveAura(uint) {}
+    void hostFollow(EntityRef, float, float) {}
 }
 
 unittest

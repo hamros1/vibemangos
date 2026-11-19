@@ -137,6 +137,12 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Projects: CMaNGOS
 * Constants: `DEFAULT_MAX_PLAYER_DISTANCE`
 
+## scripts/gnomeregan.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/eastern_kingdoms/gnomeregan/instance_gnomeregan.cpp`, `gnomeregan.cpp`, `boss_thermaplugg.cpp`, `gnomeregan.h`
+* Functions/ScriptNames: `instance_gnomeregan` (`DoActivateBombFace`, `DoDeactivateBombFace`), `npc_blastmaster_emi_shortfuse`, `npc_kernobee`, `boss_thermaplugg`, `go_gnomeface_button`
+
 ## scripts/razorfendowns.d
 
 * Projects: CMaNGOS

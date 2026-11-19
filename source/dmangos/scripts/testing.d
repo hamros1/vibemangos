@@ -131,6 +131,7 @@ final class TestCreature : CreatureHost
     void hostUnitFlags(uint set, uint clear) { did ~= format("flags +%x -%x", set, clear); }
     ActionResult hostAttack(EntityRef target) { did ~= "attack"; return ActionResult.ok; }
     void hostRemoveAura(uint spell) { did ~= format("unaura %s", spell); }
+    void hostFollow(EntityRef, float, float) { did ~= "follow"; }
 }
 
 /// A dungeon copy: see the module documentation.
@@ -196,7 +197,7 @@ final class TestInstance : InstanceHost
         return ActionResult.ok;
     }
     bool hostAlive(EntityRef c) { return c && c.guid !in dead; }
-    uint hostSpawnObjects(uint entry, uint)
+    uint hostSpawnObjects(uint entry, uint, Location, float)
     {
         did ~= format("spawn objects %s", entry);
         return 1;

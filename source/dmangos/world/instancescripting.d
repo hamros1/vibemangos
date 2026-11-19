@@ -41,7 +41,7 @@ final class InstanceScript : InstanceHost
     CreatureLore lore;
 
     /// Puts the dungeon's game objects of an entry in the world (`InstanceContext.spawnObjects`).
-    uint delegate(Map map, uint entry, uint despawnSeconds) spawnObjects;
+    uint delegate(Map map, uint entry, uint despawnSeconds, Location near, float range) spawnObjects;
 
     /**
      * The script `name` for copy `id` of `mapId`, its state read from `data` (`instance.data`);
@@ -265,9 +265,9 @@ final class InstanceScript : InstanceHost
         return c !is null && c.alive;
     }
 
-    uint hostSpawnObjects(uint entry, uint despawnSeconds)
+    uint hostSpawnObjects(uint entry, uint despawnSeconds, Location near, float range)
     {
-        return spawnObjects is null || map is null ? 0 : spawnObjects(map, entry, despawnSeconds);
+        return spawnObjects is null || map is null ? 0 : spawnObjects(map, entry, despawnSeconds, near, range);
     }
 
     ActionResult hostObjectFlags(EntityRef object, uint set, uint clear)

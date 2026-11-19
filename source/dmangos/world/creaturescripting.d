@@ -625,4 +625,22 @@ mixin template CreatureScripting()
         if (world_ !is null)
             scriptRemoveAura(me.guid, spell);
     }
+
+    void hostFollow(EntityRef leader, float distance, float angle)
+    {
+        import dmangos.world.motion : FollowMovement;
+
+        auto move = new FollowMovement(leader.guid, distance, angle);
+        if (inCombat_ || evadingHome)
+        {
+            outOfCombat = move; // once home from the fight
+            return;
+        }
+        me.generator = move;
+        if (world_ !is null)
+        {
+            move.initialize(me, world_);
+            world_.wake(me.guid);
+        }
+    }
 }
