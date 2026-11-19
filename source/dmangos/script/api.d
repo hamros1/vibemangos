@@ -283,6 +283,7 @@ interface CreatureHost
     EntityRef hostPlayerNearby(float range);
     bool hostLocate(EntityRef who, out Location at);
     bool hostChangeEntry(uint entry);
+    void hostKillCredit(EntityRef player, uint entry);
 }
 
 /// `UnitFlags`, as dungeon scripts set and clear them (`CreatureContext.unitFlags`).
@@ -492,6 +493,9 @@ struct CreatureContext
     /// It becomes a creature of `entry` (its look, faction, flags and stats; `UpdateEntry`), its
     /// script staying with it; false if there is no such creature.
     bool changeEntry(uint entry) { return host.hostChangeEntry(entry); }
+
+    /// `KilledMonsterCredit` of `entry` for `player` (a soul freed, a spirit put to rest).
+    void killCredit(EntityRef player, uint entry) { host.hostKillCredit(player, entry); }
 }
 
 // ---------------------------------------------------------------------------

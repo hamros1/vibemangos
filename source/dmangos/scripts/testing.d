@@ -136,6 +136,7 @@ final class TestCreature : CreatureHost
     EntityRef hostPlayerNearby(float) { return victim; }
     bool hostLocate(EntityRef, out Location where) { where = at; return true; }
     bool hostChangeEntry(uint entry) { did ~= format("become %s", entry); return true; }
+    void hostKillCredit(EntityRef, uint entry) { did ~= format("credit %s", entry); }
 }
 
 /// A dungeon copy: see the module documentation.

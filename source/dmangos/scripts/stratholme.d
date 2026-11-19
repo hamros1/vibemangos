@@ -807,6 +807,74 @@ struct Balnazzar
     }
 }
 
+/// The blaster of Egan's quest ("The Restless Souls") and what it does to Stratholme's spirits.
+enum : uint { eganBlaster = 17368, soulFreed = 17370, summonFreedSoul = 17408, restlessSoul = 11122, freedSoul = 11136 }
+
+/**
+ * A Restless Soul: struck by Egan's Blaster from one on "The Restless Souls" (quest 5282), it is
+ * freed a moment later (a Freed Soul for a minute), and the one who freed it is credited.
+ */
+@creature("mob_restless_soul")
+struct RestlessSoul
+{
+    enum uint quest = 5282;
+    enum int sayZapped1 = -1329000;
+    enum Step : ubyte { free }
+    Schedule!Step steps;
+    EntityRef tagger;
+
+    void on(ref CreatureContext me, const ref SpellHit e)
+    {
+        if (tagger || e.spell != eganBlaster || !e.caster.isPlayer
+            || me.questStatus(e.caster, quest) != QuestProgress.incomplete)
+            return;
+        tagger = e.caster;
+        steps.after(Step.free, 1.seconds);
+    }
+
+    void on(ref CreatureContext me, Step step)
+    {
+        me.changeEntry(freedSoul);
+        me.despawn(60_000);
+        const pick = me.random(7);
+        if (pick < 4)
+            me.say(sayZapped1 - cast(int) pick);
+        me.killCredit(tagger, restlessSoul);
+    }
+}
+
+/// A Spectral or Ghostly Citizen: struck by Egan's Blaster, its soul is freed and it is gone.
+@creature("mobs_spectral_ghostly_citizen")
+struct SpectralCitizen
+{
+    enum uint incorporealDefense = 16331;
+    enum Step : ubyte { gone }
+    Schedule!Step steps;
+    bool tagged;
+
+    void on(ref CreatureContext me, const ref Spawned e)
+    {
+        me.castSelf(incorporealDefense, true);
+    }
+
+    void on(ref CreatureContext me, const ref SpellHit e)
+    {
+        if (tagged || e.spell != eganBlaster)
+            return;
+        tagged = true;
+        me.castSelf(soulFreed);
+        me.combatMovement(false);
+        me.melee(false);
+        steps.after(Step.gone, 2.seconds);
+    }
+
+    void on(ref CreatureContext me, Step step)
+    {
+        me.castSelf(summonFreedSoul, true);
+        me.despawn();
+    }
+}
+
 unittest
 {
     import dmangos.scripts.testing;
@@ -848,4 +916,19 @@ unittest
     // The Baron dies in time: Ysida is saved.
     strat.raise(CreatureDied(creatureRef(baron)));
     assert(strat.host.done("credit 16031") && strat.host.done("door 181071 open") && strat.host.done("say 16031 -1329015"));
+}
+
+unittest
+{
+    import dmangos.scripts.testing;
+
+    alias self = dmangos.scripts.stratholme;
+    auto soul = runCreature!self("mob_restless_soul", restlessSoul);
+    soul.raise(SpellHit(playerRef, eganBlaster));
+    soul.run(2000);
+    assert(!soul.host.done("credit 11122"), "not on the quest: nothing");
+    soul.host.progress = QuestProgress.incomplete;
+    soul.raise(SpellHit(playerRef, eganBlaster));
+    soul.run(2000);
+    assert(soul.host.done("become 11136") && soul.host.done("credit 11122"));
 }

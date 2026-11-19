@@ -207,7 +207,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 
 * Projects: CMaNGOS
 * Files: `AI/ScriptDevAI/scripts/eastern_kingdoms/stratholme/stratholme.cpp`, `stratholmeScripts.cpp`, `boss_baroness_anastari.cpp`, `boss_cannon_master_willey.cpp`, `boss_maleki_the_pallid.cpp`, `boss_dathrohan_balnazzar.cpp`, `stratholme.h`
-* Functions/ScriptNames: `instance_stratholme` (`DoSortZiggurats`, `ThazudinAcolyteJustDied`, `StartSlaughterSquare`, `DoScarletBastionDefense`, `Update`), `go_gauntlet_gate`, `go_service_gate`, `go_stratholme_postbox`, `npc_aurius`, `boss_baroness_anastari`, `boss_cannon_master_willey`, `boss_maleki_the_pallid`, `boss_dathrohan_balnazzar`
+* Functions/ScriptNames: `instance_stratholme` (`DoSortZiggurats`, `ThazudinAcolyteJustDied`, `StartSlaughterSquare`, `DoScarletBastionDefense`, `Update`), `go_gauntlet_gate`, `go_service_gate`, `go_stratholme_postbox`, `npc_aurius`, `boss_baroness_anastari`, `boss_cannon_master_willey`, `boss_maleki_the_pallid`, `boss_dathrohan_balnazzar`, `mob_restless_soul`, `mobs_spectral_ghostly_citizen`
 
 ## scripts/sunkentemple.d
 
