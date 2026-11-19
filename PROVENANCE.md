@@ -144,6 +144,12 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Functions: `FollowerAI::StartFollow`, `FollowerAI::SetFollowComplete`, `FollowerAI::SetFollowPaused`
 * Constants: `MAX_PLAYER_DISTANCE`
 
+## scripts/ashenvale.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/kalimdor/ashenvale.cpp`
+* Functions/ScriptNames: `npc_muglash`, `go_naga_brazier`, `npc_ruul_snowhoof`, `npc_torek`, `npc_feero_ironhand`
+
 ## scripts/barrens.d
 
 * Projects: CMaNGOS

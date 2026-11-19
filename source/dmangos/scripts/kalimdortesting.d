@@ -211,3 +211,62 @@ struct Driven(alias Module)
         return runtime.busy(handle);
     }
 }
+
+/// A game object host that writes down what its script does.
+final class RecordingObject : GameObjectHost
+{
+    EntityRef self_;
+    string[] did;
+    QuestProgress[uint] quests;
+    EntityRef[uint] nearby;
+
+    this(uint entry)
+    {
+        self_ = EntityRef(0xF110_0000_0000_0000UL | (cast(ulong) entry << 24) | 1);
+    }
+
+    bool has(string what) const
+    {
+        foreach (d; did)
+            if (d == what)
+                return true;
+        return false;
+    }
+
+    EntityRef hostSelf() { return self_; }
+    void hostDoor(bool open) { did ~= open ? "open" : "close"; }
+    void hostSignalDungeon(uint, int) {}
+    void hostLog(string) {}
+    Location hostObjectLocation() { return Location(1, 2, 3); }
+    QuestProgress hostObjectQuestStatus(EntityRef, uint quest) { return quests.get(quest, QuestProgress.none); }
+    void hostObjectQuestEvent(EntityRef, uint quest) { did ~= "event " ~ quest.to!string; }
+    void hostObjectKillCredit(EntityRef, uint entry) { did ~= "credit " ~ entry.to!string; }
+    EntityRef hostObjectSummon(uint entry, Location, uint, EntityRef)
+    {
+        did ~= "summon " ~ entry.to!string;
+        return creatureRef(entry, 100);
+    }
+    EntityRef hostObjectCreatureNear(uint entry, float) { return nearby.get(entry, EntityRef.init); }
+    ActionResult hostObjectSignal(EntityRef to, uint id, int)
+    {
+        did ~= "signal " ~ to.entry.to!string ~ " " ~ id.to!string;
+        return ActionResult.ok;
+    }
+    void hostObjectUsable(bool usable) { did ~= usable ? "usable" : "unusable"; }
+    ActionResult hostObjectCast(EntityRef, uint spell, EntityRef)
+    {
+        did ~= "cast " ~ spell.to!string;
+        return ActionResult.ok;
+    }
+}
+
+/// `hero` uses game object script `name` of `Module` on `host`; whether the script consumed the use.
+bool use(alias Module)(string name, RecordingObject host)
+{
+    auto runtime = ScriptRuntime.of!Module();
+    auto h = runtime.create(ScriptKind.gameObject, name);
+    assert(h, name ~ " is not served");
+    auto it = GameObjectContext(host);
+    runtime.raise(h, it, ObjectUsed(hero));
+    return it.consumed;
+}
