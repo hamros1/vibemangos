@@ -830,3 +830,118 @@ unittest
     }
     assert(keeper.ai.inCombat, "the keeper wakes and attacks");
 }
+
+/**
+ * Signals between a dungeon's script and its objects' scripts, in the world: a Fire of Aku'mai (here
+ * in the test world's dungeon) cannot be lit while Kelris lives; his death is told to the fire by the
+ * copy's script, and lit then, it calls the first wave.
+ */
+unittest
+{
+    import dmangos.scripts.blackfathomdeeps : akumaiSnapjaw, kelris, shrine1;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    const fireAt = Position(-16, -385, 61), kelrisAt = Position(-24, -383, 61);
+    auto fire = GameObjectTemplate.init;
+    fire.entry = shrine1;
+    fire.type = 1; // a button
+    fire.displayId = 411;
+    fire.name = "Fire of Aku'mai";
+    context.data.gameObjectTemplates[shrine1] = fire;
+    context.data.gameObjectSpawns ~= GameObjectSpawn(90400, shrine1, mapDeadmines, fireAt.x, fireAt.y, fireAt.z);
+    context.data.gameObjectCells[mapDeadmines][cellKeyAt(fireAt.x, fireAt.y)] ~= context.data.gameObjectSpawns.length - 1;
+    context.data.gameObjectScriptNames[shrine1] = "go_fire_of_akumai";
+    foreach (entry; [kelris, akumaiSnapjaw])
+    {
+        auto t = cast() context.data.creatureTemplates[creatureInnkeeper];
+        t.entry = entry;
+        t.npcFlags = 0;
+        context.data.creatureTemplates[entry] = t;
+    }
+    context.data.creatureSpawns ~= CreatureSpawn(90401, kelris, mapDeadmines, kelrisAt.x, kelrisAt.y, kelrisAt.z);
+    context.data.creatureCells[mapDeadmines][cellKeyAt(kelrisAt.x, kelrisAt.y)] ~= context.data.creatureSpawns.length - 1;
+    context.data.instanceScriptNames[mapDeadmines] = "instance_blackfathom_deeps";
+
+    const outside = Position(deadminesEntrance[0], deadminesEntrance[1], deadminesEntrance[2]);
+    auto hero = loggedIn(context, db, 7, "Varian", outside, AccountLevel.administrator, raceHuman, mapEasternKingdoms, 60);
+    hero.say(".worldport 36 -16 -383 61");
+    hero.write(Opcode.MSG_MOVE_WORLDPORT_ACK, null);
+    hero.say(".cheat god");
+    hero.read();
+    auto map = context.instanceMap(hero.session.inWorld.instanceId);
+    auto theFire = cast(GameObject) map.findObject(makeDoorGuid(shrine1, 90400));
+    auto boss = cast(Creature) map.findObject(makeCreatureGuid(kelris, 90401));
+    assert(theFire !is null && boss !is null && theFire.goState == 1);
+    size_t snapjaws()
+    {
+        size_t n;
+        foreach (c; map.creaturesNear(Position(-818, -160, -26), 100))
+            n += c.spawn.entry == akumaiSnapjaw && c.alive;
+        return n;
+    }
+    void run(int seconds)
+    {
+        foreach (_; 0 .. seconds * 4)
+        {
+            now += 250.msecs;
+            context.update(now);
+        }
+    }
+
+    hero.session.inWorld.useGameObject(theFire);
+    run(5);
+    assert(theFire.goState == 1 && snapjaws == 0, "not while Kelris lives");
+    boss.die(map, context.unixTime);
+    context.creatureDied(boss);
+    hero.session.inWorld.useGameObject(theFire);
+    run(5);
+    assert(theFire.goState == 0 && snapjaws == 3, "lit: the first wave comes");
+}
+
+/**
+ * A dungeon script hears its creatures' fights, in the world: Kirtonos the Herald (here in the test
+ * world's dungeon) attacked, his gate shuts; he gives up, and it opens again.
+ */
+unittest
+{
+    import dmangos.scripts.scholomance : gateKirtonos, kirtonos;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    const gateAt = Position(-16, -385, 61), bossAt = Position(-20, -383, 61);
+    auto gate = GameObjectTemplate.init;
+    gate.entry = gateKirtonos;
+    gate.displayId = 411;
+    gate.name = "Gate";
+    gate.data[0] = 1; // open until a fight shuts it
+    context.data.gameObjectTemplates[gateKirtonos] = gate;
+    context.data.gameObjectSpawns ~= GameObjectSpawn(90500, gateKirtonos, mapDeadmines, gateAt.x, gateAt.y, gateAt.z);
+    context.data.gameObjectCells[mapDeadmines][cellKeyAt(gateAt.x, gateAt.y)] ~= context.data.gameObjectSpawns.length - 1;
+    auto t = cast() context.data.creatureTemplates[creatureInnkeeper];
+    t.entry = kirtonos;
+    t.npcFlags = 0;
+    context.data.creatureTemplates[kirtonos] = t;
+    context.data.creatureSpawns ~= CreatureSpawn(90501, kirtonos, mapDeadmines, bossAt.x, bossAt.y, bossAt.z);
+    context.data.creatureCells[mapDeadmines][cellKeyAt(bossAt.x, bossAt.y)] ~= context.data.creatureSpawns.length - 1;
+    context.data.instanceScriptNames[mapDeadmines] = "instance_scholomance";
+
+    const outside = Position(deadminesEntrance[0], deadminesEntrance[1], deadminesEntrance[2]);
+    auto hero = loggedIn(context, db, 7, "Varian", outside, AccountLevel.administrator, raceHuman, mapEasternKingdoms, 60);
+    hero.say(".worldport 36 -16 -383 61");
+    hero.write(Opcode.MSG_MOVE_WORLDPORT_ACK, null);
+    hero.read();
+    auto map = context.instanceMap(hero.session.inWorld.instanceId);
+    auto theGate = cast(GameObject) map.findObject(makeDoorGuid(gateKirtonos, 90500));
+    auto boss = cast(Creature) map.findObject(makeCreatureGuid(kirtonos, 90501));
+    assert(theGate !is null && boss !is null);
+    boss.ai.attackedBy(hero.session.inWorld.unit, map);
+    assert(boss.ai.inCombat && theGate.goState == 1, "the fight shuts the gate");
+    // The fight given up (as `enterEvadeMode` tells it).
+    import dmangos.script.api : EntityRef;
+
+    context.dungeonFight(map.instanceId, EntityRef(boss.guid), EntityRef.init);
+    assert(theGate.goState == 0, "given up: open again");
+}
