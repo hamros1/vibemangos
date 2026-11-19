@@ -219,9 +219,16 @@ final class TestInstance : InstanceHost
     }
     EntityRef fought = EntityRef(7); /// whom every creature fights
     EntityRef hostVictimOf(EntityRef) { return fought; }
-    bool hostLocate(EntityRef, out Location at) { return true; }
+    Location[ulong] places; /// where `locate` finds entities (anything else: at the origin)
+    bool hostLocate(EntityRef who, out Location at)
+    {
+        if (auto p = who.guid in places)
+            at = *p;
+        return true;
+    }
     EntityRef hostAnyPlayer() { return players ? EntityRef(7) : EntityRef.init; }
     void hostKillCreditAll(uint entry) { did ~= format("credit %s", entry); }
+    bool hostChangeEntry(EntityRef c, uint entry) { did ~= format("become %s %s", c.entry, entry); return true; }
 }
 
 /// A script of module `M` with its fake, run as the server runs it (through a `ScriptRuntime`).

@@ -155,6 +155,12 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Files: `AI/ScriptDevAI/scripts/eastern_kingdoms/blackrock_spire/instance_blackrock_spire.cpp`, `boss_pyroguard_emberseer.cpp`, `boss_gyth.cpp`, `boss_overlord_wyrmthalak.cpp`, `blackrock_spire.h`
 * Functions/ScriptNames: `instance_blackrock_spire` (`DoSortRoomEventMobs`, `DoProcessEmberseerEvent`, `DoUseEmberseerRunes`, `DoSendNextStadiumWave`, `DoSendNextFlamewreathWave`, `Update`), `at_blackrock_spire`, `event_spell_altar_emberseer`, `go_father_flame`, `npc_rookery_hatcher`, `boss_pyroguard_emberseer`, `boss_gyth`, `boss_overlord_wyrmthalak`
 
+## scripts/diremaul.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/kalimdor/dire_maul/instance_dire_maul.cpp`, `dire_maul.h`
+* Functions/ScriptNames: `instance_dire_maul` (`SortPylonGuards`, `PylonGuardJustDied`, `ProcessForceFieldOpening`)
+
 ## scripts/gnomeregan.d
 
 * Projects: CMaNGOS

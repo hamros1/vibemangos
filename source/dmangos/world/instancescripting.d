@@ -385,6 +385,12 @@ final class InstanceScript : InstanceHost
                     unit.killCreditFrom(entry, 0);
     }
 
+    bool hostChangeEntry(EntityRef creature, uint entry)
+    {
+        auto c = creatureOf(creature);
+        return c !is null && c.ai.hostChangeEntry(entry);
+    }
+
     uint hostRandom(uint below)
     {
         import std.random : uniform;

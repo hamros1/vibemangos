@@ -620,6 +620,7 @@ interface InstanceHost
     bool hostLocate(EntityRef who, out Location at);
     EntityRef hostAnyPlayer();
     void hostKillCreditAll(uint entry);
+    bool hostChangeEntry(EntityRef creature, uint entry);
 }
 
 /// `GameObjectFlags`, as dungeon scripts set and clear them (`InstanceContext.objectFlags`).
@@ -744,6 +745,9 @@ struct InstanceContext
 
     /// `KilledMonsterCredit` of `entry` for every player of the copy (whose quests want it).
     void killCreditAll(uint entry) { host.hostKillCreditAll(entry); }
+
+    /// A creature of the copy becomes a creature of `entry` (Old Ironbark redeemed); false if it cannot.
+    bool changeEntry(EntityRef creature, uint entry) { return host.hostChangeEntry(creature, entry); }
 }
 
 unittest
