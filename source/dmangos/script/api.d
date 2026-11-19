@@ -279,6 +279,9 @@ interface CreatureHost
     ActionResult hostAttack(EntityRef target);
     void hostRemoveAura(uint spell);
     void hostFollow(EntityRef leader, float distance, float angle);
+    void hostDeathPrevention(bool on);
+    EntityRef hostPlayerNearby(float range);
+    bool hostLocate(EntityRef who, out Location at);
 }
 
 /// `UnitFlags`, as dungeon scripts set and clear them (`CreatureContext.unitFlags`).
@@ -475,6 +478,15 @@ struct CreatureContext
     {
         host.hostFollow(leader, distance, angle);
     }
+
+    /// Whether blows that would kill it leave it at 1 health instead (`Damaged.after` is then 0).
+    void deathPrevention(bool on) { host.hostDeathPrevention(on); }
+
+    /// The nearest living player within `range` yards that may be attacked; nothing if none.
+    EntityRef playerNearby(float range) { return host.hostPlayerNearby(range); }
+
+    /// Where another entity on its map is; false (and `at` untouched) if it is not seen here.
+    bool locate(EntityRef who, out Location at) { return host.hostLocate(who, at); }
 }
 
 // ---------------------------------------------------------------------------

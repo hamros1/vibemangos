@@ -120,6 +120,9 @@ final class FakeCreature : CreatureHost
     ActionResult hostAttack(EntityRef) { return ActionResult.ok; }
     void hostRemoveAura(uint) {}
     void hostFollow(EntityRef, float, float) {}
+    void hostDeathPrevention(bool) {}
+    EntityRef hostPlayerNearby(float) { return EntityRef.init; }
+    bool hostLocate(EntityRef, out Location) { return false; }
 }
 
 unittest

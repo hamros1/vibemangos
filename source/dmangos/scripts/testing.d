@@ -132,6 +132,9 @@ final class TestCreature : CreatureHost
     ActionResult hostAttack(EntityRef target) { did ~= "attack"; return ActionResult.ok; }
     void hostRemoveAura(uint spell) { did ~= format("unaura %s", spell); }
     void hostFollow(EntityRef, float, float) { did ~= "follow"; }
+    void hostDeathPrevention(bool on) { did ~= format("death prevention %s", on); }
+    EntityRef hostPlayerNearby(float) { return victim; }
+    bool hostLocate(EntityRef, out Location where) { where = at; return true; }
 }
 
 /// A dungeon copy: see the module documentation.
