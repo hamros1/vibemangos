@@ -2,8 +2,9 @@
  * The Scarlet Monastery (map 189): the Cathedral's fight with Scarlet Commander Mograine and High
  * Inquisitor Whitemane (Mograine falls but does not die; Whitemane comes through her door, and at
  * half health puts the room to sleep and raises him; then both fight to the end), Herod in the
- * Armory, whose death calls twenty Scarlet Trainees down the hall, Arcanist Doan in the Library, and
- * Vorrel Sengutz's last word on Interrogator Vishas in the Graveyard.
+ * Armory, whose death calls twenty Scarlet Trainees down the hall, Arcanist Doan in the Library,
+ * Vorrel Sengutz's last word on Interrogator Vishas in the Graveyard, and the Cathedral bowing to
+ * whoever carries the Corrupted Ashbringer.
  */
 module dmangos.scripts.scarletmonastery;
 
@@ -21,7 +22,11 @@ enum : uint
 
     whitemaneDoor = 104600,
     chapelDoor = 104591,
+    corruptedAshbringer = 22691,
 }
+
+/// The Cathedral's Scarlet, who bow before the Ashbringer.
+static immutable uint[10] cathedralScarlet = [4294, 4295, 4298, 4299, 4300, 4301, 4302, 4303, 4540, 4542];
 
 /// The Cathedral's fight, as the monastery's script tracks it.
 enum Encounter : ubyte { notStarted, inProgress, resurrected, done, failed }
@@ -31,15 +36,23 @@ enum Encounter : ubyte { notStarted, inProgress, resurrected, done, failed }
 struct ScarletMonastery
 {
     /// Signals: Mograine fell (and is lying there), was raised, one of the two gave up (`failed`).
-    enum Signals : uint { mograineFell = 100, mograineRaised = 101, failed = 102 }
-    enum int sayVorrel = -1189015;
+    enum Signals : uint { mograineFell = 100, mograineRaised = 101, failed = 102, ashbringer = 103 }
+    enum int sayVorrel = -1189015, sayAshbringer = -1189036;
+    enum uint factionFriendly = 35;
 
     Encounter cathedral;
-    bool mograineDead, whitemaneDead;
-    @transient EntityRef door, mograineRef, whitemaneRef, vorrelRef;
+    bool mograineDead, whitemaneDead, ashbringerCame;
+    @transient EntityRef door, chapel, mograineRef, whitemaneRef, vorrelRef;
+    @transient Pack!64 scarlet;
 
     void on(ref InstanceContext sm, const ref ObjectLoaded e)
     {
+        if (e.object.entry == chapelDoor)
+        {
+            chapel = e.object;
+            if (ashbringerCame)
+                sm.door(e.object, true);
+        }
         if (e.object.entry == whitemaneDoor)
         {
             door = e.object;
@@ -57,6 +70,15 @@ struct ScarletMonastery
         case vorrel: vorrelRef = e.creature; break;
         default: break;
         }
+        foreach (entry; cathedralScarlet)
+            if (e.creature.entry == entry)
+            {
+                scarlet.add(e.creature);
+                if (ashbringerCame && !sm.victimOf(e.creature))
+                    sm.setFaction(e.creature, factionFriendly);
+            }
+        if (e.creature.entry == mograine)
+            scarlet.add(e.creature);
     }
 
     void on(ref InstanceContext sm, const ref CreatureDied e)
@@ -96,6 +118,21 @@ struct ScarletMonastery
                 sm.door(door, true);
             if (whitemaneRef)
                 sm.signal(whitemaneRef, Whitemane.Signals.mograineFell);
+            break;
+        case Signals.ashbringer:
+            if (ashbringerCame)
+                break;
+            // The Cathedral bows: its Scarlet stand aside, the chapel opens, Mograine speaks.
+            ashbringerCame = true;
+            if (chapel)
+                sm.door(chapel, true);
+            if (whitemaneRef && sm.alive(whitemaneRef) && !sm.victimOf(whitemaneRef))
+                sm.despawn(whitemaneRef);
+            foreach (who; scarlet)
+                if (!sm.victimOf(who))
+                    sm.setFaction(who, factionFriendly);
+            if (mograineRef)
+                sm.say(mograineRef, sayAshbringer);
             break;
         case Signals.mograineRaised:
             if (cathedral == Encounter.inProgress)
@@ -589,6 +626,17 @@ struct ArcanistDoan
     }
 }
 
+/// The Cathedral's entrance: who carries the Corrupted Ashbringer is bowed to.
+@areaTrigger("at_cathedral_entrance")
+struct AtCathedralEntrance
+{
+    void on(ref AreaTriggerContext at, const ref TriggerEntered e)
+    {
+        if (at.hasItem(e.player, corruptedAshbringer))
+            at.signalDungeon(ScarletMonastery.Signals.ashbringer);
+    }
+}
+
 unittest
 {
     import dmangos.scripts.testing;
@@ -631,4 +679,18 @@ unittest
     wh.raise(MovementDone(Whitemane.pointMograine));
     wh.run(9000);
     assert(wh.host.done("cast 9232") && wh.host.done("say -1189010") && wh.host.done("death prevention false"));
+}
+
+unittest
+{
+    import dmangos.scripts.testing;
+
+    alias self = dmangos.scripts.scarletmonastery;
+    auto sm = runInstance!self("instance_scarlet_monastery");
+    sm.host.fought = EntityRef.init;
+    sm.raise(ObjectLoaded(objectRef(chapelDoor)));
+    sm.raise(CreatureLoaded(creatureRef(mograine)));
+    sm.raise(CreatureLoaded(creatureRef(4302, 5)));
+    sm.raise(Signal(playerRef, ScarletMonastery.Signals.ashbringer));
+    assert(sm.host.done("door 104591 open") && sm.host.done("faction 4302 35") && sm.host.done("say 3976 -1189036"));
 }
