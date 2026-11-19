@@ -244,6 +244,12 @@ final class RecordingCreature : CreatureHost
     }
     void hostOpenWindow(EntityRef, NpcWindow window) { note(window == NpcWindow.vendor ? "vendor" : "trainer"); }
     void hostZoneUnderAttack(EntityRef) { note("zone under attack"); }
+    void hostWalkPath() { note("path"); }
+    ActionResult hostSendHome(EntityRef c)
+    {
+        note(c == self_ ? "home" : "home " ~ c.entry.to!string);
+        return ActionResult.ok;
+    }
 }
 
 /// A script of `Module` on a recording creature, and the means to drive it.

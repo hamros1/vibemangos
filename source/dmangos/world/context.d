@@ -223,6 +223,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     /// The gameplay scripts (docs/SCRIPTING.md), found in `dmangos.scripts` at compile time.
     ScriptRuntime scripts;
     private InstanceScript[uint] instanceScripts; // by instance id: the scripts of the copies loaded here
+    private InstanceScript[uint] worldScripts;    // open-world round 2: by map id, the continents' scripts here
 
     /// Next free character, item and mail ids.
     GuidCounters next;
@@ -1409,6 +1410,18 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                     };
                 }
             }
+        if (instance == 0) // open-world round 2: the continent's script (`world_template`)
+            if (const name = id in data.worldScriptNames)
+                if (auto script = InstanceScript.makeWorld(scripts, *name, id))
+                {
+                    script.map = created;
+                    script.lore = this;
+                    script.spawnObjects = &spawnDungeonObjects;
+                    script.signalObject = &gameObjectSignalled;
+                    script.respawnObjectOf = &respawnObjectOfEntry;
+                    script.summonObjectAt = &summonGameObjectAt;
+                    worldScripts[id] = script;
+                }
         if (instance == 0) // the ships on this map now
             foreach (ref ship; ships)
                 if (ship.map == id)
@@ -2014,7 +2027,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         }
         foreach (kind, names; [ScriptKind.gameObject: data.gameObjectScriptNames, ScriptKind.spell: data.spellScriptNames,
                 ScriptKind.areaTrigger: data.areaTriggerScriptNames, ScriptKind.event: data.eventScriptNames,
-                ScriptKind.item: data.itemScriptNames])
+                ScriptKind.item: data.itemScriptNames, ScriptKind.world: data.worldScriptNames])
         {
             import std.conv : to;
 
@@ -2034,7 +2047,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         import std.conv : to;
 
         foreach (k; [ScriptKind.creature, ScriptKind.instance, ScriptKind.gameObject, ScriptKind.spell,
-                ScriptKind.areaTrigger, ScriptKind.event, ScriptKind.item])
+                ScriptKind.areaTrigger, ScriptKind.event, ScriptKind.item, ScriptKind.world])
             foreach (name; scripts.names(k))
                 if (k.to!string ~ ":" ~ name !in used)
                     warning!"scripts: no %s row names script %s"(k, name);
@@ -2625,13 +2638,16 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     /// A creature died: its respawn time is saved at once; it comes back when it says.
     void creatureDied(Creature creature)
     {
-        if (creature.instanceId)
-            if (auto script = creature.instanceId in instanceScripts)
-            {
-                import dmangos.script.api : CreatureDied, EntityRef;
+        import dmangos.script.api : CreatureDied, EntityRef;
 
-                script.raise(CreatureDied(EntityRef(creature.guid), EntityRef(creature.lootRecipient)));
-            }
+        const summoned = creature.summon.type != TempSpawnType.none;
+        if (creature.instanceId)
+        {
+            if (auto script = creature.instanceId in instanceScripts)
+                script.raise(CreatureDied(EntityRef(creature.guid), EntityRef(creature.lootRecipient), summoned));
+        }
+        else if (auto script = creature.spawn.map in worldScripts) // open-world round 2
+            script.raise(CreatureDied(EntityRef(creature.guid), EntityRef(creature.lootRecipient), summoned));
         if (creature.summon.type != TempSpawnType.none)
             return; // a summon never comes back
         if (creature.instanceId)
@@ -3349,6 +3365,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         {
             if (go.instanceId)
                 signalDungeon(go.instanceId, EntityRef(go.guid), id, value);
+            else // open-world round 2: its continent's script
+                signalWorld(map.id, EntityRef(go.guid), id, value);
         }
 
         void hostLog(string text)
@@ -3408,15 +3426,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 return ActionResult.notHere;
             if (c.ai.inCombat)
                 return ActionResult.notAllowed;
-            import dmangos.vmap.math : Vector3;
-            import dmangos.world.motion : PointMovement, selectMovement;
-
-            // Back to its spawn point, walking, and then as it moves by itself (`MoveTargetedHome`).
-            const home = c.spawn;
-            c.generator = new PointMovement(Vector3(home.x, home.y, home.z), home.orientation, true,
-                selectMovement(c, data.waypoints));
-            c.generator.initialize(c, map);
-            map.wake(c.guid);
+            sendCreatureHome(map, c);
             return ActionResult.ok;
         }
 
@@ -3680,6 +3690,43 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         if (auto script = instance in instanceScripts)
             return script.ask(from, id);
         return 0;
+    }
+
+    /// Open-world round 2: see `CreatureLore.sendCreatureHome`.
+    void sendCreatureHome(CombatWorld world, Creature c)
+    {
+        import dmangos.vmap.math : Vector3;
+        import dmangos.world.motion : PointMovement, selectMovement;
+
+        // Back to its spawn point, walking, and then as it moves by itself (`MoveTargetedHome`).
+        const home = c.spawn;
+        c.generator = new PointMovement(Vector3(home.x, home.y, home.z), home.orientation, true,
+            selectMovement(c, data.waypoints));
+        c.generator.initialize(c, world);
+        world.wake(c.guid);
+    }
+
+    /// Open-world round 2: a `Signal` for the script of continent `map` (nothing if it has none here).
+    void signalWorld(uint map, EntityRef from, uint id, int value)
+    {
+        import dmangos.script.api : Signal;
+
+        if (auto script = map in worldScripts)
+            script.raise(Signal(from, id, value));
+    }
+
+    /// Open-world round 2: see `CreatureLore.signalWorldMap`.
+    void signalWorldMap(CombatWorld world, EntityRef from, uint id, int value)
+    {
+        if (auto map = cast(Map) world)
+            if (map.instanceId == 0)
+                signalWorld(map.id, from, id, value);
+    }
+
+    /// Open-world round 2: see `CreatureLore.creaturePath`.
+    const(imported!"dmangos.world.motion".WaypointNode)[] creaturePath(uint entry, uint guid)
+    {
+        return data.waypoints is null ? null : data.waypoints.defaultPath(entry, guid);
     }
 
     /// Open-world round 2: see `CreatureLore.zoneUnderAttack`.
@@ -4367,6 +4414,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             unloadEmptyInstances(now);
         updateScripts(cast(uint) elapsed.total!"msecs");
         foreach (script; instanceScripts) // the dungeon scripts' own timers
+            script.tick(cast(int) elapsed.total!"msecs");
+        foreach (script; worldScripts) // open-world round 2: the continents'
             script.tick(cast(int) elapsed.total!"msecs");
         gameObjectScriptsTick(cast(int) elapsed.total!"msecs"); // open-world round 2
         updateWeathers(cast(int) elapsed.total!"msecs");

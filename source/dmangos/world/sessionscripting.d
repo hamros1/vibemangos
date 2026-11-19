@@ -202,6 +202,29 @@ mixin template SessionScripting()
             return map is null ? 0 : context.respawnObjectsNear(map, entry, at, range, seconds);
         }
 
+        ActionResult hostAiEvent(EntityRef creature, uint type, EntityRef invoker)
+        {
+            auto c = map is null ? null : map.creatureAt(creature.guid);
+            if (c is null || c.ai is null || !c.alive)
+                return ActionResult.notHere;
+            if (c.ai.inCombat)
+                return ActionResult.notAllowed;
+            c.ai.aiEventFrom(type, c, invoker.guid, map);
+            return ActionResult.ok;
+        }
+
+        size_t hostCreaturesNear(Location at, uint entry, float range, EntityRef[] into)
+        {
+            import dmangos.world.movement : Position;
+
+            size_t n;
+            if (map !is null)
+                foreach (c; map.creaturesNear(Position(at.x, at.y, at.z), range))
+                    if (c.alive && (entry == 0 || c.spawn.entry == entry) && n < into.length)
+                        into[n++] = EntityRef(c.guid);
+            return n;
+        }
+
         void hostFlagForPvP(EntityRef who)
         {
             if (auto other = sessionHere(who))
@@ -482,6 +505,8 @@ mixin template SessionScripting()
     {
         if (instanceId_)
             context.signalDungeon(instanceId_, EntityRef(player.guid), id, value);
+        else if (map !is null) // open-world round 2: the continent's script
+            context.signalWorld(map.id, EntityRef(player.guid), id, value);
     }
 
     /// Raid scripts: see `AreaTriggerHost.hostAskDungeon`.

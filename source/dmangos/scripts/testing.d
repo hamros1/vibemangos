@@ -203,6 +203,8 @@ final class TestCreature : CreatureHost
     void hostUnlearnSpell(EntityRef, uint) {}
     void hostOpenWindow(EntityRef, NpcWindow) {}
     void hostZoneUnderAttack(EntityRef) {}
+    void hostWalkPath() {}
+    ActionResult hostSendHome(EntityRef) { return ActionResult.ok; }
 }
 
 /// A dungeon copy: see the module documentation.

@@ -4,10 +4,10 @@ How gameplay that the database cannot describe (boss fights, dungeon doors and e
 quests, special spells, scripted objects and triggers) is written for dmangos, in D, with the
 framework in `dmangos.script` and the scripts in `dmangos.scripts`.
 
-Status: the framework with creature, dungeon (instance), game object, spell and area trigger
-scripts, their persistence, gossip (menus of the database's or the script's own) and quest events,
-script movement, escorts, and signals between scripts on different nodes is implemented and tested.
-World and command scripts are planned.
+Status: the framework with creature, dungeon (instance), game object, spell, area trigger, scripted
+event, item and world map scripts, their persistence, gossip (menus of the database's or the script's
+own) and quest events, script movement, escorts, and signals between scripts on different nodes is
+implemented and tested. Command scripts are planned.
 
 ## Principles
 
@@ -122,10 +122,12 @@ code) what is not here or not allowed. Nothing a script keeps can dangle.
 |---|---|---|---|
 | Creature | `@creature` | `creature_template.ScriptName` | spawned, reset, entered combat, damaged, killed a unit, died, evaded, spell hit, signal, steps, movement done, gossip hello and select, quest accepted and rewarded, a creature it summoned died (or went) or arrived where it sent it, a player in sight, a text emote at it; *summoned* |
 | Dungeon | `@instance` | `instance_template.ScriptName` | creature or object loaded (summons too), creature died, signal, a creature engaged or evaded (an encounter's start and wipe), scripted event (`scripted_event_id`: a spell's or a goober's event), a player entered, an object used, a question asked (`Asked`, answered with `answer`), steps of its own schedules |
-| Game object | `@gameObject` | `gameobject_template.ScriptName` | used, signal; *loaded, state changed* |
+| Game object | `@gameObject` | `gameobject_template.ScriptName` | used, signal, spawned (put in the world), a quest accepted from it, its trap set off (`TrapSprung`, refusable), steps of its own schedules; *state changed* |
 | Area trigger | `@areaTrigger` | `scripted_areatrigger` | entered |
+| Scripted event | `@scriptedEvent` | `scripted_event_id` | started (a spell's `SEND_EVENT`, a goober's event) |
+| Item | `@item` | `item_template.ScriptName` | used (`ItemUsed`; `consume` makes the use fail) |
 | Spell | `@spell` | `spell_scripts` | a dummy or script effect hit (a player's or a creature's cast), a player's aura applied, its periodic tick on a creature (the amount changeable); *aura removed, cast check, auras on players from creatures* |
-| World | `@world` | always | *player login/logout, level, zone change, world events* |
+| World map | `@world` | `world_template.ScriptName` (a continent) | a creature of it died (`summoned` says whether a script's), signal (`signalDungeon` on the continent), asked, steps of its own schedules; *player login/logout, level, zone change, world events* |
 | Command | `@command` | its name | *a GM command of a script* |
 
 Each kind adds a context type, an event list and a host interface; the registry, pools, schedules
@@ -155,6 +157,20 @@ watches together (the keepers of a ward, a wave's adds), so "the last one fell" 
 A handler of `GossipHello`, `GossipSelect`, `ObjectUsed`, `EffectHit`, `TriggerEntered` or (a
 dungeon's) `EventHappened` may call `consume()` on its context: the script answered, and the
 server's usual menu, use, database script or trigger does not follow.
+
+### Game objects' and continents' own time
+
+A game object script may keep schedules like a creature's: the world ticks the scripted objects whose
+steps are pending (and only those), and an object hears `Spawned` once it is in the world, its cell
+loaded (a bell watching the hour, a rift sending invaders). A trap's script hears `TrapSprung` before its
+spell and may keep it from going off for that unit (the transpolyporter takes only those with a
+transponder).
+
+A world map script (`@world`) is a dungeon script for a continent: it has the same abilities
+(`WorldMapContext` is an `InstanceContext`), hears the continent's creatures die and the signals its
+creatures', objects' and triggers' scripts send with `signalDungeon`, and ticks. A node has one for each
+continent it simulates a part of; its state is kept in memory only (CMaNGOS keeps none either), so a
+wave half done when the server stops begins anew.
 
 ### Dungeon scripts
 

@@ -474,6 +474,8 @@ mixin template CreatureScripting()
     {
         if (lore !is null && me.instanceId)
             lore.signalDungeon(me.instanceId, EntityRef(me.guid), id, value);
+        else if (lore !is null && world_ !is null) // open-world round 2: its continent's script
+            lore.signalWorldMap(world_, EntityRef(me.guid), id, value);
     }
 
     void hostLog(string text)
@@ -1324,6 +1326,38 @@ mixin template CreatureScripting()
             session.scriptOpenWindow(me.guid, true);
             break;
         }
+    }
+
+    void hostWalkPath()
+    {
+        import dmangos.world.motion : WaypointMovement;
+
+        const path = lore is null ? null : lore.creaturePath(me.spawn.entry, me.spawn.guid);
+        if (path.length == 0)
+            return;
+        auto next = new WaypointMovement(path, false);
+        if (inCombat_ || evadingHome)
+        {
+            outOfCombat = next; // once home from the fight
+            return;
+        }
+        me.generator = next;
+        if (world_ !is null)
+        {
+            next.initialize(me, world_);
+            world_.wake(me.guid);
+        }
+    }
+
+    ActionResult hostSendHome(EntityRef creature)
+    {
+        auto c = creature.guid == me.guid ? me : scriptCreature(creature);
+        if (c is null || !c.alive || lore is null || world_ is null)
+            return ActionResult.notHere;
+        if (c.ai.inCombat)
+            return ActionResult.notAllowed;
+        lore.sendCreatureHome(world_, c);
+        return ActionResult.ok;
     }
 
     void hostZoneUnderAttack(EntityRef attacker)

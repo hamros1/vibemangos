@@ -424,6 +424,8 @@ interface CreatureHost
     void hostUnlearnSpell(EntityRef player, uint spell);
     void hostOpenWindow(EntityRef player, NpcWindow window);
     void hostZoneUnderAttack(EntityRef attacker);
+    void hostWalkPath();
+    ActionResult hostSendHome(EntityRef creature);
 }
 
 // Open-world round 2:
@@ -527,7 +529,7 @@ struct CreatureContext
     /// A `Signal` for another creature's script.
     ActionResult signal(EntityRef to, uint id, int value = 0) { return host.hostSignal(to, id, value); }
 
-    /// A `Signal` for its dungeon's script (nothing outside a dungeon).
+    /// A `Signal` for its dungeon's script (outside a dungeon: its continent's world map script, if any).
     void signalDungeon(uint id, int value = 0) { host.hostSignalDungeon(id, value); }
 
     /// A line in the server's log, naming the creature.
@@ -834,6 +836,14 @@ struct CreatureContext
     /// Its zone is under attack by `attacker` (a player, or a pet): the players of its side are told
     /// (`SMSG_ZONE_UNDER_ATTACK`, the defense channels).
     void zoneUnderAttack(EntityRef attacker) { host.hostZoneUnderAttack(attacker); }
+
+    /// Walks its waypoint path (`creature_movement`, or its entry's `creature_movement_template`), as a
+    /// creature spawned to do so does (`MoveWaypoint`); nothing if it has none.
+    void walkPath() { host.hostWalkPath(); }
+
+    /// It (or another creature here) not fighting goes back where it belongs, and moves as it did
+    /// before (`EnterEvadeMode` out of a fight, `MoveTargetedHome`).
+    ActionResult sendHome(EntityRef creature = EntityRef.init) { return host.hostSendHome(creature ? creature : host.hostSelf()); }
 }
 
 // ---------------------------------------------------------------------------
@@ -1040,6 +1050,7 @@ struct CreatureDied
 {
     EntityRef creature;
     EntityRef killer;
+    bool summoned; /// Open-world round 2: it was summoned (a script's, a spell's), not a spawn of the map's
 }
 
 // Dungeon scripts:
@@ -1486,6 +1497,8 @@ interface AreaTriggerHost
     bool hostHasAura(EntityRef who, uint spell);
     uint hostRespawnObjectsNear(uint entry, Location at, float range, uint seconds);
     void hostFlagForPvP(EntityRef player);
+    ActionResult hostAiEvent(EntityRef creature, uint type, EntityRef invoker);
+    size_t hostCreaturesNear(Location at, uint entry, float range, EntityRef[] into);
 }
 
 /// An area trigger script's handle, for the length of one handler.
@@ -1580,6 +1593,39 @@ struct AreaTriggerContext
 
     /// A player is flagged for PvP (`UpdatePvP(true)`), as attacking an enemy would flag it.
     void flagForPvP(EntityRef player) { host.hostFlagForPvP(player); }
+
+    /// A creature here (one run by its `creature_ai_scripts`) receives AI event `type` (`AIEventType`: 5 is
+    /// `AI_EVENT_CUSTOM_EVENTAI_A`) from itself, `invoker` its cause (`SendAIEvent`).
+    ActionResult aiEvent(EntityRef creature, uint type, EntityRef invoker) { return host.hostAiEvent(creature, type, invoker); }
+
+    /// The living creatures of `entry` (0: any) within `range` yards of `at`, as many as `into` holds.
+    size_t creaturesNear(Location at, uint entry, float range, EntityRef[] into)
+    {
+        return host.hostCreaturesNear(at, entry, range, into);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Open-world round 2: world map scripts (`@world`, bound by `world_template.ScriptName`), one per continent
+// ---------------------------------------------------------------------------
+
+/**
+ * A world map script's handle on its continent (as much of it as this node simulates): what a dungeon
+ * script can do in its copy. It hears the continent's creatures die, the signals of the scripts on it
+ * (`signalDungeon` there), questions, and its own steps; it keeps nothing across a restart.
+ */
+struct WorldMapContext
+{
+    InstanceContext inner; /// what it can do (a dungeon script's abilities, on the continent)
+    alias inner this;
+
+    @disable this(this);
+
+    /// The core makes one around a continent's map.
+    this(InstanceHost host) pure nothrow @nogc @safe
+    {
+        inner = InstanceContext(host);
+    }
 }
 
 // ---------------------------------------------------------------------------

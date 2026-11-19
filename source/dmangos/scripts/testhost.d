@@ -182,6 +182,8 @@ final class TestCreature : CreatureHost
     void hostUnlearnSpell(EntityRef, uint) {}
     void hostOpenWindow(EntityRef, NpcWindow) {}
     void hostZoneUnderAttack(EntityRef) {}
+    void hostWalkPath() {}
+    ActionResult hostSendHome(EntityRef) { return ActionResult.ok; }
 }
 
 /// A script under test: the runtime of `Module`, one creature's script, and its host.

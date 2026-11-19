@@ -125,6 +125,15 @@ interface CreatureLore
     /// `defender`'s zone is under attack by `attacker` (a player, or a pet): the players of the other side
     /// on this node are told (`SMSG_ZONE_UNDER_ATTACK`; the client writes it in its defense channel).
     void zoneUnderAttack(CombatWorld world, Creature defender, ulong attacker);
+
+    /// `creature`, not fighting, goes back to its spawn point and then moves as it does by itself.
+    void sendCreatureHome(CombatWorld world, Creature creature);
+
+    /// A `Signal` from `from` for the script of the continent `world` is (nothing in a dungeon, or without one).
+    void signalWorldMap(CombatWorld world, EntityRef from, uint id, int value);
+
+    /// The waypoint path a creature of `entry` (spawn `guid`) walks by default; none if it has none.
+    const(imported!"dmangos.world.motion".WaypointNode)[] creaturePath(uint entry, uint guid);
 }
 
 /// What a creature's AI needs of its map.
