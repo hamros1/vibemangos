@@ -1921,6 +1921,16 @@ final class Map : CombatWorld, GameObjectWorld
                     other.ai.moveInLineOfSight(pet, this);
             return;
         }
+        // A creature a script set apart (an escortee on another faction, a summoned ambusher) is noticed by the
+        // creatures near it that would attack it on sight: monsters fall on the escorted.
+        if (creature.alive && creatureNoticeable(creature))
+        {
+            auto moving = unitOf(creature);
+            foreach (other; creaturesNear(creature.position, noticeDistance))
+                if (other !is creature && !other.petOwner && other.ai !is null && !other.ai.inCombat && !other.ai.evading
+                        && other.ai.mayNotice)
+                    other.ai.moveInLineOfSight(moving, this);
+        }
         if (creature.ai is null || creature.ai.inCombat || creature.ai.evading || !creature.ai.mayNotice)
             return;
         // The players near it (by cell), of those that see it.
@@ -1928,6 +1938,17 @@ final class Map : CombatWorld, GameObjectWorld
             if (at(p).known[slot])
                 if (auto combatant = unitOf(at(p).player))
                     creature.ai.moveInLineOfSight(combatant, this);
+    }
+
+    /**
+     * Whether other creatures notice `creature` on sight, as they do players: one a script set apart, its faction
+     * not its template's (an escortee, a creature turned hostile) or summoned by someone (an ambush). Creatures
+     * of the world as spawned do not fall on each other.
+     */
+    private static bool creatureNoticeable(const Creature creature)
+    {
+        const own = creature.factionTemplate is null ? 0 : creature.factionTemplate.id;
+        return own != creature.template_.faction || creature.summon.summoner != 0;
     }
 
     /// See `MotionWorld.random`.
@@ -3611,4 +3632,47 @@ unittest
     assert(!playerSees(ghost, alive, &facts), "the living far from its corpse");
     f.corpseDistance = 44;
     assert(playerSees(ghost, alive, &facts) && !playerSees(ghost, body_, &facts), "near it: the living, not a body");
+}
+
+// A creature a script set apart (an escortee on the players' faction) is attacked by the monsters near it that
+// would attack a player; creatures as spawned leave each other alone.
+unittest
+{
+    import core.time : MonoTime, msecs;
+    import dmangos.dbc : buildDbc;
+    import dmangos.world.clientdata : factionTemplateFormat;
+    import dmangos.world.objects : HighGuid, makeGuid;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+    import dmangos.world.updatefields;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f)); // the cells load
+    auto map = context.map(0);
+    auto escortee = cast(Creature) map.findObject(makeGuid(HighGuid.unit, creatureInnkeeper, innkeeperSpawn));
+    auto monster = cast(Creature) map.findObject(makeGuid(HighGuid.unit, creatureTrainer, trainerSpawn));
+    enum uint players = 1, monsters = 8;
+    enum uint escortFaction = 100; // on the players' side
+    context.client.factionTemplates = typeof(context.client.factionTemplates).parse(buildDbc(factionTemplateFormat,
+        [[escortFaction, 1, 0, players | 2, 2, monsters, 0, 0, 0, 0, 0, 0, 0, 0], [14u, 14, 0, monsters, 0, players, 0,
+        0, 0, 0, 0, 0, 0, 0]]), "FactionTemplate.dbc");
+    monster.factionTemplate = context.client.factionTemplates.lookup(14);
+    context.data.creatureTemplates.edit(creatureTrainer).faction = 14; // its own: as spawned
+    context.data.creatureTemplates.edit(creatureTrainer).detection = 20; // it aggroes as a monster does
+    escortee.movement.position = Position(monster.position.x + 3, monster.position.y, monster.position.z);
+
+    void moved()
+    {
+        now += 2000.msecs;
+        map.update(2000.msecs);
+        map.objectRelocated(escortee);
+    }
+    moved();
+    assert(monster.ai.currentVictim == 0, "as spawned: no fight");
+    escortee.factionTemplate = context.client.factionTemplates.lookup(escortFaction); // a script's escort faction
+    moved();
+    assert(monster.ai.currentVictim == escortee.guid, "the monster falls on the escorted");
 }
