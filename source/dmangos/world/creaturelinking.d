@@ -19,9 +19,9 @@
  *   $(LI in a dungeon copy, the slave does not come back once its master is dead (`cantSpawnIfBossDead`), or
  *        does not come while its master lives (`cantSpawnIfBossAlive`).)
  * )
- * A dead creature brought back has its respawn made due at once (its corpse goes); in a dungeon copy
- * nothing is brought back. Links between creatures simulated on different nodes of a cluster do
- * nothing (the two are rarely far apart).
+ * A dead creature brought back has its respawn made due at once (its corpse goes); in a dungeon copy it
+ * is made again at once and is no longer counted dead there (a boss's wipe brings its adds back). Links
+ * between creatures simulated on different nodes of a cluster do nothing (the two are rarely far apart).
  */
 module dmangos.world.creaturelinking;
 

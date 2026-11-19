@@ -5,8 +5,10 @@
  * him the mindless undead and the Black Guards; then the Baron's door), the Baron's run (the gauntlet
  * gate opened, Ysida Harmon has forty-five minutes; saved, she gives thanks and her quest's credit),
  * Aurius joining the fight against the Baron, the service gate and Magistrate Barthilas, the
- * postboxes and the Postmaster, Timmy the Cruel in the courtyard, and the bosses: Baroness Anastari,
- * Cannon Master Willey, Maleki the Pallid, Balnazzar.
+ * postboxes and the Postmaster, Timmy the Cruel in the courtyard, the two gate traps (a player at one
+ * and its portcullises drop for twenty seconds while thirty plagued rats, maggots or insects swarm
+ * him; it rearms after half an hour), and the bosses: Baroness Anastari, Cannon Master Willey, Maleki
+ * the Pallid, Balnazzar.
  */
 module dmangos.scripts.stratholme;
 
@@ -103,8 +105,19 @@ struct Stratholme
     @transient Pack!24 acolyteCandidates, crystalCandidates;
     @transient Pack!16 abominations;
 
-    enum Step : ubyte { runClock, mindless, blackGuards, slaughterDoorClose, aurius }
-    Schedule!(Step, 6) steps;
+    enum Step : ubyte { runClock, mindless, blackGuards, slaughterDoorClose, aurius, gateTraps }
+    Schedule!(Step, 7) steps;
+
+    // The gate traps: where each is, its two portcullises, and its clocks (rearming, reopening, the swarm).
+    static immutable Location[2] gateTrapPlaces = [
+        Location(3612.29f, -3335.39f, 124.077f), Location(3919.88f, -3547.34f, 134.269f),
+    ];
+    static immutable uint[2][2] gateTrapGates = [[175351, 175350], [175355, 175354]];
+    static immutable uint[3] plaguedCritters = [10441, 10536, 10461];
+    enum int gateTrapPoll = 500;
+    @transient EntityRef[2][2] gateTrapRefs;
+    @transient int[2] trapRearmMs, trapReopenMs, trapSwarmMs;
+    @transient EntityRef[2] trapVictim;
 
     void on(ref InstanceContext strat, const ref ObjectLoaded e)
     {
@@ -116,6 +129,14 @@ struct Stratholme
                 if (ziggurats[i] == Fight.done || ziggurats[i] == Fight.crystalDead)
                     strat.door(e.object, true);
             }
+        foreach (t, trapGates; gateTrapGates)
+            foreach (k, gate; trapGates)
+                if (entry == gate)
+                {
+                    gateTrapRefs[t][k] = e.object;
+                    if (!steps.pending(Step.gateTraps))
+                        steps.every(Step.gateTraps, gateTrapPoll.msecs);
+                }
         switch (entry)
         {
         case zigguratDoor4:
@@ -339,6 +360,9 @@ struct Stratholme
     {
         final switch (step)
         {
+        case Step.gateTraps:
+            gateTraps(strat);
+            break;
         case Step.runClock:
             runClock(strat, 1000);
             break;
@@ -375,6 +399,52 @@ struct Stratholme
                 strat.attack(auriusRef, baronRef);
             }
             break;
+        }
+    }
+
+    /// The gate traps, half a second on: a player within five and a half yards of an armed one springs it.
+    private void gateTraps(ref InstanceContext strat)
+    {
+        EntityRef[40] players;
+        const n = strat.players(players[]);
+        foreach (t; 0 .. 2)
+        {
+            if (trapRearmMs[t] > 0)
+                trapRearmMs[t] -= gateTrapPoll;
+            else
+                foreach (who; players[0 .. n])
+                {
+                    Location at;
+                    const place = gateTrapPlaces[t];
+                    if (strat.locationOf(who, at) && (at.x - place.x) ^^ 2 + (at.y - place.y) ^^ 2 <= 5.5f * 5.5f)
+                    {
+                        // Sprung: the portcullises drop; the swarm comes in two seconds; they open in twenty.
+                        foreach (gate; gateTrapRefs[t])
+                            if (gate)
+                                strat.door(gate, false);
+                        trapVictim[t] = who;
+                        trapRearmMs[t] = 30 * 60 * 1000;
+                        trapReopenMs[t] = 20_000;
+                        trapSwarmMs[t] = 2000;
+                        break;
+                    }
+                }
+            if (trapSwarmMs[t] > 0 && (trapSwarmMs[t] -= gateTrapPoll) <= 0)
+            {
+                const kind = plaguedCritters[strat.random(3)];
+                const victim = trapVictim[t] && strat.alive(trapVictim[t]) ? trapVictim[t] : strat.anyPlayer();
+                foreach (i; 0 .. 30)
+                {
+                    Location at = gateTrapPlaces[t];
+                    at.x += (cast(int) strat.random(17) - 8) * 0.5f;
+                    at.y += (cast(int) strat.random(17) - 8) * 0.5f;
+                    strat.summon(kind, at, 0, victim);
+                }
+            }
+            if (trapReopenMs[t] > 0 && (trapReopenMs[t] -= gateTrapPoll) <= 0)
+                foreach (gate; gateTrapRefs[t])
+                    if (gate)
+                        strat.door(gate, true);
         }
     }
 
@@ -931,4 +1001,27 @@ unittest
     soul.raise(SpellHit(playerRef, eganBlaster));
     soul.run(2000);
     assert(soul.host.done("become 11136") && soul.host.done("credit 11122"));
+}
+
+/// A gate trap: a player at it, its portcullises drop, thirty plagued critters swarm, and in twenty seconds
+/// they open again; it does not spring again until it has rearmed.
+unittest
+{
+    import dmangos.scripts.testing;
+
+    alias self = dmangos.scripts.stratholme;
+    auto strat = runInstance!self("instance_stratholme");
+    foreach (gate; Stratholme.gateTrapGates[0])
+        strat.raise(ObjectLoaded(objectRef(gate)));
+    strat.run(1000);
+    assert(!strat.host.done("door 175351 closed"), "nobody there");
+    strat.host.places[playerRef.guid] = Location(3613, -3336, 124);
+    strat.run(500);
+    assert(strat.host.done("door 175351 closed") && strat.host.done("door 175350 closed"));
+    strat.run(2000);
+    assert(strat.host.times("summon 10441") == 30, "the swarm (the fake's dice: rats)");
+    strat.run(18_000);
+    assert(strat.host.done("door 175351 open") && strat.host.done("door 175350 open"));
+    strat.run(10_000);
+    assert(strat.host.times("door 175351 closed") == 1, "not again until it rearms");
 }

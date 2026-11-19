@@ -67,7 +67,14 @@ enum : uint
     goDoorLashlayer = 179365,
     goBlackDragonEgg = 177807,
     goSuppressionDevice = 179784,
+    npcOrbTrigger = 14449,
 }
+
+/// The weekly selection's events (`event_weekly_chromatic_selection`): Chromaggus' left breath (five), his right
+/// (five), then the left tunnel's drakonids (five) and the right's, in the order of `leftBreaths` and `spawners`.
+private enum uint leftBreathEvents = 8446, rightBreathEvents = 8451, leftTunnelEvents = 8520, rightTunnelEvents = 8525;
+/// The Orb of Domination's possession (`event_razorgore_possess`).
+private enum uint possessEvent = 8302;
 
 /// The drakonid spawners of Nefarian's tunnels, and the drakonids.
 private static immutable uint[5] spawners = [14307, 14309, 14310, 14311, 14312];
@@ -113,6 +120,7 @@ struct BlackwingLair
         sayEggsBroken1 = -1_469_022,
     }
     enum ubyte maxEggDefenders = 4, maxDragonspawn = 12, maxBlackwingDefenders = 40, drakonidsToSlay = 42;
+    enum uint possessVisual = 23014;
 
     EncounterState[BwlEncounter.max + 1] encounters;
     uint leftBreath, rightBreath, leftTunnel, rightTunnel;
@@ -132,6 +140,32 @@ struct BlackwingLair
 
     enum Step : ubyte { defense, nefarian, eggsGone }
     Schedule!Step steps;
+
+    void on(ref InstanceContext copy, const ref EventHappened e)
+    {
+        if (e.event == possessEvent)
+        {
+            // A player took Razorgore through the orb: the orb's trigger shows it (not the database script).
+            copy.consume();
+            Location at;
+            EntityRef[1] trigger;
+            if (copy.locationOf(e.source, at) && copy.creaturesNear(at, npcOrbTrigger, 30, trigger[]))
+                copy.castSpell(trigger[0], possessVisual, trigger[0]);
+            return;
+        }
+        // The week's selection: what it picks wins over the copy's own draw while the fight is not begun.
+        draw(copy);
+        const chroma = encounters[BwlEncounter.chromaggus] == EncounterState.notStarted;
+        const nef = encounters[BwlEncounter.nefarian] == EncounterState.notStarted;
+        if (e.event >= leftBreathEvents && e.event < leftBreathEvents + 5 && chroma)
+            leftBreath = leftBreaths[e.event - leftBreathEvents];
+        else if (e.event >= rightBreathEvents && e.event < rightBreathEvents + 5 && chroma)
+            rightBreath = rightBreaths[e.event - rightBreathEvents];
+        else if (e.event >= leftTunnelEvents && e.event < leftTunnelEvents + 5 && nef)
+            leftTunnel = spawners[e.event - leftTunnelEvents];
+        else if (e.event >= rightTunnelEvents && e.event < rightTunnelEvents + 5 && nef)
+            rightTunnel = spawners[e.event - rightTunnelEvents];
+    }
 
     private static immutable uint[6] doorEntries = [goDoorRazorgoreEnter, goDoorRazorgoreExit, goDoorNefarian,
         goDoorChromaggusExit, goDoorVaelastrasz, goDoorLashlayer];
@@ -1358,6 +1392,15 @@ struct Nefarian
     }
 }
 
+/// The week's Chromaggus breaths and Nefarian's drakonids (`event_weekly_chromatic_selection`), and Razorgore
+/// possessed through the Orb of Domination (`event_razorgore_possess`): the copy's script takes them
+/// (`EventHappened`); the events' own scripts let them through to it.
+@scriptedEvent("event_weekly_chromatic_selection", "event_razorgore_possess")
+struct BlackwingLairEvent
+{
+    void on(ref EventContext c, const ref EventStarted e) {}
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -1474,4 +1517,21 @@ unittest
     assert(host.casts.canFind(23340) && host.casts.canFind(Ebonroc.drake.shadowFlame));
     runtime.raise(h, me, Died(EntityRef(7)));
     assert(host.dungeon[$ - 1] == Signal(EntityRef.init, BwlEncounter.ebonroc, EncounterState.done));
+}
+
+/// The week's selection: a breath and a tunnel picked by its events, before the fights begin.
+unittest
+{
+    alias self = dmangos.scripts.blackwinglair;
+    auto runtime = ScriptRuntime.of!self();
+    auto lair = new FakeLair;
+    auto c = InstanceContext(lair);
+    auto h = runtime.create(ScriptKind.instance, "instance_blackwing_lair");
+    runtime.raise(h, c, EventHappened(8448, EntityRef.init, EntityRef.init)); // left: Time Lapse
+    runtime.raise(h, c, EventHappened(8529, EntityRef.init, EntityRef.init)); // right tunnel: the blue
+    runtime.raise(h, c, Asked(EntityRef.init, BwlQuestion.chromaLeftBreath));
+    assert(c.answerGiven == 23310);
+    runtime.raise(h, c, CreatureLoaded(bwlCreature(npcVictorNefarius, 4)));
+    runtime.raise(h, c, Signal(EntityRef.init, BwlEncounter.nefarian, EncounterState.inProgress));
+    assert(lair.summoned[1].entry == 14312);
 }

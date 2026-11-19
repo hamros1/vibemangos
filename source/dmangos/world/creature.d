@@ -788,6 +788,14 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
         speeds[MoveType.run] = baseMoveSpeed[MoveType.run] * t.speedRun * auraSpeedFactor;
     }
 
+    /// Its aura goes (it ran out, was dispelled or cancelled, or a script took it away): its script hears of it.
+    void loseAura(Aura aura, CombatWorld world)
+    {
+        auras.remove(aura, values);
+        if (ai !is null)
+            ai.auraLost(aura.caster, aura.spell.id, world);
+    }
+
     /// Its auras' time passes: their casters do what their ticks do; those that ended go.
     void updateAuras(CombatWorld world, int diff)
     {
@@ -802,7 +810,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
                 caster.auraTick(this, tick.aura, tick.effect);
         }
         foreach (aura; expired)
-            auras.remove(aura, values);
+            loseAura(aura, world);
         if (expired.length)
             world.flushCreature(this);
     }

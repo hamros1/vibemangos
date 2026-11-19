@@ -326,6 +326,14 @@ struct Archaedas
     }
 }
 
+/// An altar of Uldaman used (`event_spell_altar_boss_aggro`): the dungeon's script wakes the Stone Keepers or
+/// Archaedas (`EventHappened`); the event's own script lets it through to it.
+@scriptedEvent("event_spell_altar_boss_aggro")
+struct UldamanAltarEvent
+{
+    void on(ref EventContext c, const ref EventStarted e) {}
+}
+
 unittest
 {
     import dmangos.scripts.testing;

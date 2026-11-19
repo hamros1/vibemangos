@@ -171,6 +171,11 @@ final class TestCreature : CreatureHost
     void hostMoveNow(Location, uint, bool) {}
     void hostSpellList(uint) {}
     ubyte hostClassOf(EntityRef) { return 0; }
+
+    // Instance round 2:
+    ActionResult hostTeleportPlayer(EntityRef, Location) { return ActionResult.ok; }
+    ActionResult hostMovementScriptOf(EntityRef, uint) { return ActionResult.ok; }
+    float hostThreatOf(EntityRef) { return 0; }
 }
 
 /// A script under test: the runtime of `Module`, one creature's script, and its host.

@@ -4,8 +4,8 @@ How gameplay that the database cannot describe (boss fights, dungeon doors and e
 quests, special spells, scripted objects and triggers) is written for dmangos, in D, with the
 framework in `dmangos.script` and the scripts in `dmangos.scripts`.
 
-Status: the framework with creature, dungeon (instance), game object, spell and area trigger
-scripts, their persistence, gossip (menus of the database's or the script's own) and quest events,
+Status: the framework with creature, dungeon (instance), game object, spell, area trigger and
+scripted event scripts, their persistence, gossip (menus of the database's or the script's own) and quest events,
 script movement, escorts, and signals between scripts on different nodes is implemented and tested.
 World and command scripts are planned.
 
@@ -120,10 +120,11 @@ code) what is not here or not allowed. Nothing a script keeps can dangle.
 
 | Kind | UDA | Bound by | Events (implemented / planned) |
 |---|---|---|---|
-| Creature | `@creature` | `creature_template.ScriptName` | spawned, reset, entered combat, damaged, killed a unit, died, evaded, spell hit, signal, steps, movement done, gossip hello and select, quest accepted and rewarded, a creature it summoned died (or went) or arrived where it sent it, a player in sight, a text emote at it; *summoned* |
+| Creature | `@creature` | `creature_template.ScriptName` | spawned, reset, entered combat, damaged, killed a unit, died, evaded, spell hit, signal, steps, movement done, gossip hello and select, quest accepted and rewarded, a creature it summoned died (or went) or arrived where it sent it, a player in sight, a text emote at it, an aura of its gone (`AuraRemoved`: run out, dispelled, cancelled or taken away); *summoned* |
 | Dungeon | `@instance` | `instance_template.ScriptName` | creature or object loaded (summons too), creature died, signal, a creature engaged or evaded (an encounter's start and wipe), scripted event (`scripted_event_id`: a spell's or a goober's event), a player entered, an object used, a question asked (`Asked`, answered with `answer`), steps of its own schedules |
 | Game object | `@gameObject` | `gameobject_template.ScriptName` | used, signal; *loaded, state changed* |
 | Area trigger | `@areaTrigger` | `scripted_areatrigger` | entered |
+| Scripted event | `@scriptedEvent` | `scripted_event_id` | started (`EventStarted`: a player's or a creature's `SEND_EVENT` spell, a goober's event), around the player who started it or is its target; then the dungeon's `EventHappened`, then `dbscripts_on_event` |
 | Spell | `@spell` | `spell_scripts` | a dummy or script effect hit (a player's or a creature's cast), a player's aura applied, its periodic tick on a creature (the amount changeable); *aura removed, cast check, auras on players from creatures* |
 | World | `@world` | always | *player login/logout, level, zone change, world events* |
 | Command | `@command` | its name | *a GM command of a script* |
@@ -152,9 +153,12 @@ says it has arrived, and that fails the player's quest when the player dies or i
 the keg, a guard to his door); `Pack` (`dmangos.script.pack`) counts the creatures a dungeon script
 watches together (the keepers of a ward, a wave's adds), so "the last one fell" survives a restart.
 
-A handler of `GossipHello`, `GossipSelect`, `ObjectUsed`, `EffectHit`, `TriggerEntered` or (a
+A handler of `GossipHello`, `GossipSelect`, `ObjectUsed`, `EffectHit`, `TriggerEntered`, `EventStarted` or (a
 dungeon's) `EventHappened` may call `consume()` on its context: the script answered, and the
-server's usual menu, use, database script or trigger does not follow.
+server's usual menu, use, database script or trigger does not follow. An event's own script that
+leaves the work to its dungeon (most of them do: the dungeon holds the state) handles `EventStarted`
+without consuming it; with no player near the event (a creature's cast at nobody) only the dungeon
+hears of it.
 
 ### Dungeon scripts
 
@@ -166,7 +170,10 @@ walk, faction and flags, despawn; doors and object flags; spawning the dungeon's
 entry), hears every creature of the copy engage, evade and die, and talks with the creatures' and
 objects' own scripts through signals. The `creature_ai_scripts` "set instance data" action is a
 signal to it too (its field the signal's id), so a dungeon script keeps the numbers of CMaNGOS's
-`TYPE_*` for those and numbers its own signals from 100.
+`TYPE_*` for those and numbers its own signals from 100. It hears `ObjectLoaded` for the objects
+database scripts spawn in the copy (a ritual's bell, a trap) as for those its cells load, and
+`CreatureLoaded` for linked creatures a boss's wipe brings back (`creature_linking`'s respawn flags work
+in copies too).
 
 ### Gossip menus of a script's own
 

@@ -497,7 +497,7 @@ private:
                 if (auto aura = creature.auras.find(spell.id))
                     if (aura.caster == player.guid)
                     {
-                        creature.auras.remove(aura, creature.values);
+                        creature.loseAura(aura, map);
                         map.flushCreature(creature);
                     }
             }
@@ -1337,6 +1337,13 @@ private:
                     continue; // an item's lock: not yet
                 targets = [c.targets.gameObject];
             }
+            else if (a == ImplicitTarget.unitScriptNearCaster)
+            {
+                // Instance round 2: the nearest creature `spell_script_target` names (a banner's trigger); none
+                // near, and the caster stands in as before.
+                const near = scriptTargetNear(spell);
+                targets = [near ? near : player.guid];
+            }
             else
                 targets = [player.guid]; // other targets: not yet; the caster stands in
             foreach (target; targets)
@@ -1827,7 +1834,7 @@ private:
         foreach (aura; removed)
         {
             if (creature !is null)
-                creature.auras.remove(aura, creature.values);
+                creature.loseAura(aura, map);
             else
                 other.removeAura(aura);
         }
@@ -1945,6 +1952,41 @@ private:
     bool spellEnemy(Creature creature)
     {
         return creature.alive && creature.ai !is null && canAttack(relatingNow(), relatingOf(creature), context.client);
+    }
+
+    /// Instance round 2: the nearest living creature within the spell's range (at least 5 yards) of an entry
+    /// `spell_script_target` gives the spell; 0 if none.
+    private ulong scriptTargetNear(const(SpellInfo)* spell)
+    {
+        import dmangos.world.spellcast : range;
+
+        const entries = spell.id in context.data.spellScriptTargets;
+        if (entries is null)
+            return 0;
+        auto r = range(*spell, context.client)[1];
+        if (r < 5)
+            r = 5;
+        ulong best;
+        float bestDistance = float.max;
+        const p = player.position;
+        foreach (creature; map.creaturesNear(p, r))
+        {
+            if (!creature.alive)
+                continue;
+            bool named;
+            foreach (entry; *entries)
+                named |= creature.spawn.entry == entry;
+            if (!named)
+                continue;
+            const q = creature.position;
+            const d = (q.x - p.x) ^^ 2 + (q.y - p.y) ^^ 2 + (q.z - p.z) ^^ 2;
+            if (d < bestDistance)
+            {
+                bestDistance = d;
+                best = creature.guid;
+            }
+        }
+        return best;
     }
 
     /**

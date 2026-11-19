@@ -201,6 +201,16 @@ struct SpellHit
     uint schoolMask; /// Raid scripts: the schools it struck with (`SpellSchoolMask`: 1 physical, 4 fire, 8 nature, 16 frost, ...)
 }
 
+// Instance round 2:
+
+/// Its aura of `spell`, from `caster`, went: it ran out, was dispelled or cancelled, or a script took it away
+/// (not when it died).
+struct AuraRemoved
+{
+    EntityRef caster;
+    uint spell;
+}
+
 /// A message from another script (`from`: a creature, or nothing for its dungeon's script).
 struct Signal
 {
@@ -413,6 +423,11 @@ interface CreatureHost
     void hostMoveNow(Location at, uint point, bool run);
     void hostSpellList(uint id);
     ubyte hostClassOf(EntityRef who);
+
+    // Instance round 2:
+    ActionResult hostTeleportPlayer(EntityRef player, Location at);
+    ActionResult hostMovementScriptOf(EntityRef creature, uint id);
+    float hostThreatOf(EntityRef who);
 }
 
 /**
@@ -635,7 +650,7 @@ struct CreatureContext
     /// `spell`'s aura goes from `who` (itself, another creature here, a player).
     ActionResult removeAura(EntityRef who, uint spell) { return host.hostRemoveAura(who, spell); }
 
-    /// Whether `who` (itself or another creature here) has `spell`'s aura.
+    /// Whether `who` (itself, another creature or a player here) has `spell`'s aura.
     bool hasAura(EntityRef who, uint spell) { return host.hostHasAura(who, spell); }
 
     /// Runs `dbscripts_on_creature_movement` script `id` on it (as a waypoint's script runs).
@@ -771,6 +786,17 @@ struct CreatureContext
     /// The nearest living player within `range` yards that may be attacked; nothing if none.
     EntityRef playerNearby(float range) { return host.hostPlayerNearby(range); }
 
+    // Instance round 2:
+
+    /// `player` (here) is at `at` at once, on this map (C'Thun swallowing a player).
+    ActionResult teleport(EntityRef player, Location at) { return host.hostTeleportPlayer(player, at); }
+
+    /// Runs `dbscripts_on_creature_movement` script `id` on another creature here (as its waypoint's script
+    /// runs: a summoned imp walked along its path by this script).
+    ActionResult movementScript(EntityRef creature, uint id) { return host.hostMovementScriptOf(creature, id); }
+
+    /// `who`'s threat on it (0 if `who` is not on its threat list).
+    float threatOf(EntityRef who) { return host.hostThreatOf(who); }
 }
 
 // ---------------------------------------------------------------------------
@@ -1365,6 +1391,10 @@ interface AreaTriggerHost
 
     // Raid scripts:
     int hostAskDungeon(uint id);
+
+    // Instance round 2:
+    ActionResult hostTeleportPlayer(EntityRef player, Location at);
+    bool hostHasAura(EntityRef who, uint spell);
 }
 
 /// An area trigger script's handle, for the length of one handler.
@@ -1438,6 +1468,14 @@ struct AreaTriggerContext
 
     /// The dungeon script's answer to question `id` (`Asked`); 0 outside a dungeon copy.
     int askDungeon(uint id) { return host.hostAskDungeon(id); }
+
+    // Instance round 2:
+
+    /// `player` is at `at` at once, on this map (out of C'Thun's stomach).
+    ActionResult teleport(EntityRef player, Location at) { return host.hostTeleportPlayer(player, at); }
+
+    /// Whether `who` (a player or a creature here) has `spell`'s aura.
+    bool hasAura(EntityRef who, uint spell) { return host.hostHasAura(who, spell); }
 }
 
 // ---------------------------------------------------------------------------

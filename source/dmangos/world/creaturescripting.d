@@ -776,9 +776,46 @@ mixin template CreatureScripting()
         if (who.guid == me.guid)
             return me.auras.find(spell) !is null;
         if (world_ !is null)
+        {
             if (auto other = world_.creatureAt(who.guid))
                 return other.auras.find(spell) !is null;
+            if (auto unit = world_.unit(who.guid)) // a player
+                return unit.hasAuraOf(spell);
+        }
         return false;
+    }
+
+    // Instance round 2:
+
+    float hostThreatOf(EntityRef who)
+    {
+        return threatOf(who.guid);
+    }
+
+    ActionResult hostMovementScriptOf(EntityRef who, uint id)
+    {
+        if (world_ is null || id == 0)
+            return ActionResult.notHere;
+        auto creature = who.guid == me.guid ? me : world_.creatureAt(who.guid);
+        if (creature is null)
+            return ActionResult.notHere;
+        world_.waypointScript(creature, id);
+        return ActionResult.ok;
+    }
+
+    ActionResult hostTeleportPlayer(EntityRef who, Location at)
+    {
+        import dmangos.world.map : Map;
+        import dmangos.world.unit : UnitKind;
+
+        auto map = cast(Map) world_;
+        if (map is null)
+            return ActionResult.notHere;
+        auto unit = world_.unit(who.guid);
+        if (unit.kind != UnitKind.player)
+            return ActionResult.notHere;
+        unit.session.spellTeleport(map.id, Position(at.x, at.y, at.z, at.orientation));
+        return ActionResult.ok;
     }
 
     ActionResult hostSayOther(EntityRef speaker, int entry, EntityRef target)

@@ -228,6 +228,14 @@ struct Belnistrasz
     }
 }
 
+/// The gong of Razorfen Downs (`event_go_tutenkash_gong`): the dungeon's script calls the next wave or Tuten'kash
+/// (`EventHappened`); the event's own script lets it through to it.
+@scriptedEvent("event_go_tutenkash_gong")
+struct TutenkashGongEvent
+{
+    void on(ref EventContext c, const ref EventStarted e) {}
+}
+
 unittest
 {
     import dmangos.scripts.testing;

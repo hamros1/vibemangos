@@ -5,9 +5,8 @@
  * Unyielding, Viscidus and his globs, Princess Huhuran, the Twin Emperors, Ouro and his mounds, the Eye
  * of C'Thun and C'Thun, the Giant Claw Tentacle, and the Anubisath Sentinels and Defenders.
  *
- * C'Thun's stomach is not here: the core cannot send players into it. Instead, in his second phase two
- * Flesh Tentacles rise beside him every so often, and slaying both weakens him, as killing those in his
- * stomach does.
+ * In C'Thun's second phase his mouth tentacles seize players and he swallows them: his stomach (its
+ * acid, its two Flesh Tentacles whose deaths weaken him, its way out, `at_stomach_cthun`) is here.
  */
 module dmangos.scripts.templeofahnqiraj;
 
@@ -62,6 +61,7 @@ enum : uint
     npcGiantClawTentacle = 15728,
     npcGiantEyeTentacle = 15334,
     npcFleshTentacle = 15802,
+    npcWorldTrigger = 15384,
     npcSpawnOfFankriss = 15630,
     npcVeknissHatchling = 15962,
     npcYaujBrood = 15621,
@@ -84,12 +84,14 @@ enum Aq40Signal : uint
     twinDied = 105,      /// a twin to the other: I die; you too
     sentinelAbility = 106, /// a sentinel to another: your ability (`value`), or (dying) one more
     eyeDown = 107,       /// the Eye of C'Thun to C'Thun: the second phase
-    weakened = 108,      /// the copy to C'Thun: his flesh tentacles are slain
     ouroGone = 109,      /// Ouro to the spawner: wake again (the fight failed)
     cthunWhisper = 110,  /// the copy's tick: C'Thun whispers
 }
 
 private enum uint triggerTwinEmperors = 4047, triggerSartura = 4052;
+
+/// C'Thun's Check Reset spell's event (`event_cthun_reset`).
+private enum uint cthunResetEvent = 9738;
 
 /// A random length between `low` and `high` milliseconds.
 private Duration between(ref CreatureContext me, uint low, uint high)
@@ -139,7 +141,6 @@ struct TempleOfAhnQiraj
     @transient EntityRef[3] trio;
     @transient EntityRef[3] doors; /// Skeram's gate, the Twins' doors in and out
     @transient ubyte trioDeaths, introStep;
-    @transient EntityRef[2] fleshTentacles;
 
     enum Step : ubyte { intro, whisper }
     Schedule!Step steps;
@@ -218,26 +219,14 @@ struct TempleOfAhnQiraj
             copy.answer(encounters[e.id]);
     }
 
-    void on(ref InstanceContext copy, const ref CreatureDied e)
+    /// C'Thun's Check Reset found nobody left to fight (`event_cthun_reset`): his encounter has failed.
+    void on(ref InstanceContext copy, const ref EventHappened e)
     {
-        foreach (i, t; fleshTentacles)
-            if (t && t == e.creature)
-            {
-                fleshTentacles[i] = EntityRef.init;
-                if (!fleshTentacles[0] && !fleshTentacles[1] && cthun)
-                    copy.signal(cthun, Aq40Signal.weakened);
-            }
-    }
-
-    void on(ref InstanceContext copy, const ref CreatureEngaged e)
-    {
-        if (e.creature.entry == npcFleshTentacle)
-            foreach (ref t; fleshTentacles)
-                if (!t)
-                {
-                    t = e.creature;
-                    break;
-                }
+        if (e.event != cthunResetEvent)
+            return;
+        copy.consume();
+        if (encounters[Aq40Encounter.cthun] == EncounterState.inProgress)
+            encounters[Aq40Encounter.cthun] = EncounterState.failed;
     }
 
     void on(ref InstanceContext copy, const ref Signal e)
@@ -336,6 +325,53 @@ struct AtTempleAhnQiraj
     {
         if (e.trigger == triggerTwinEmperors || e.trigger == triggerSartura)
             at.signalDungeon(1000 + e.trigger);
+    }
+}
+
+/// C'Thun's Check Reset found nobody (`event_cthun_reset`): the copy's script fails his encounter
+/// (`EventHappened`); the event's own script lets it through to it.
+@scriptedEvent("event_cthun_reset")
+struct CthunResetEvent
+{
+    void on(ref EventContext c, const ref EventStarted e) {}
+}
+
+/**
+ * The way out of C'Thun's stomach: on the platform at its end (4033) a world trigger throws the player up
+ * (Exit Stomach) and they come out at the ceiling (4034), above C'Thun; landing at his feet (4036) with his
+ * Digestive Acid still on them, they are thrown back into the room.
+ */
+@areaTrigger("at_stomach_cthun")
+struct AtStomachCthun
+{
+    enum uint platform = 4033, ceiling = 4034, feet = 4036;
+    enum uint exitStomach = 26_221, exitStomachEffect = 26_230;
+
+    void on(ref AreaTriggerContext at, const ref TriggerEntered e)
+    {
+        switch (e.trigger)
+        {
+        case platform:
+            at.consume();
+            if (const trigger = at.creatureNear(npcWorldTrigger, e.at, 30))
+                at.castSpell(trigger, exitStomach, trigger);
+            // Up and out (where the throw would carry them through the ceiling).
+            at.teleport(e.player, Cthun.stomachExit);
+            break;
+        case ceiling:
+            at.consume();
+            at.teleport(e.player, Cthun.stomachExit);
+            break;
+        case feet:
+            if (!at.hasAura(e.player, Cthun.digestiveAcid))
+                return; // only those coming out of the stomach
+            at.consume();
+            if (const trigger = at.creatureNear(npcWorldTrigger, e.at, 30))
+                at.castSpell(trigger, exitStomachEffect, e.player);
+            break;
+        default:
+            break;
+        }
     }
 }
 
@@ -1802,23 +1838,39 @@ private void despawnTentacles(ref CreatureContext me)
 {
     EntityRef[32] t;
     foreach (entry; [npcClawTentacle, npcEyeTentacle, npcGiantClawTentacle, npcGiantEyeTentacle, npcFleshTentacle])
-        foreach (tentacle; t[0 .. me.creaturesNearby(entry, 200, t[])])
+        foreach (tentacle; t[0 .. me.creaturesNearby(entry, 250, t[])]) // the stomach's too
             me.despawn(tentacle);
 }
 
 /**
  * C'Thun: rises when his Eye dies, behind his carapace; giant claw and eye tentacles come in turn and eye
- * tentacles ring the room. Two Flesh Tentacles rise beside him every so often: slaying both weakens him
- * for 45 seconds (the stomach of the original, which the core cannot send players into).
+ * tentacles ring the room. Every ten seconds a mouth tentacle seizes a player and he swallows them: in his
+ * stomach his Digestive Acid eats at them (a stack every five seconds) and two Flesh Tentacles grow; slaying
+ * both weakens him for 45 seconds, when no tentacles come and nobody is swallowed. Those who climb out
+ * (`at_stomach_cthun`) lose the acid. On a wipe those still inside are put out of the stomach (CMaNGOS kills
+ * them).
  */
 @creature("boss_cthun")
 struct Cthun
 {
     enum int emoteWeakened = 11_476; /// broadcast text
-    enum : uint { carapace = 26_156, transform = 26_232, vulnerable = 26_235 }
-    enum Step : ubyte { emerge, giantClaw, giantEye, eyeTentacles, flesh, weakenedEnd }
+    enum : uint { carapace = 26_156, transform = 26_232, vulnerable = 26_235, mouthTentacle = 26_332, digestiveAcid = 26_476 }
+    /// Where the swallowed land (Digestive Acid's teleport), and where those climbing out come up.
+    static immutable Location stomach = Location(-8563.56f, 2040.69f, -97.0f, 4.9426f);
+    static immutable Location stomachExit = Location(-8576.06f, 1985.8359f, 100.22033f, 6.108652f);
+    /// The two Flesh Tentacles' places in the stomach.
+    static immutable Location[2] fleshPlaces = [
+        Location(-8571.472f, 1990.2048f, -98.777855f, 1.0123f), Location(-8525.083f, 1994.7125f, -98.255325f, 2.5831f),
+    ];
+    /// Below this height a player is in the stomach.
+    enum float stomachTop = 0;
+
+    enum Step : ubyte { emerge, giantClaw, giantEye, eyeTentacles, mouth, swallow, acid, weakenedEnd }
     Schedule!Step steps;
     bool risen, weakened;
+    ubyte fleshSlain;
+    EntityRef seized;          /// the player a mouth tentacle holds, about to be swallowed
+    EntityRef[40] inStomach;   /// those swallowed (empty slots: nothing)
 
     void on(ref CreatureContext me, const ref Spawned e)
     {
@@ -1831,14 +1883,14 @@ struct Cthun
     {
         if (e.id == Aq40Signal.eyeDown && !risen)
             steps.after(Step.emerge, 5.seconds);
-        else if (e.id == Aq40Signal.weakened && risen && !weakened)
-        {
-            weakened = true;
-            me.sayText(emoteWeakened);
-            me.removeAura(me.self, carapace);
-            me.castSelf(vulnerable, true);
-            steps.after(Step.weakenedEnd, 45.seconds);
-        }
+    }
+
+    void on(ref CreatureContext me, const ref SummonedDied e)
+    {
+        if (e.summoned.entry != npcFleshTentacle || e.gone || !risen || weakened)
+            return;
+        if (++fleshSlain >= fleshPlaces.length)
+            weaken(me);
     }
 
     void on(ref CreatureContext me, Step step)
@@ -1852,36 +1904,66 @@ struct Cthun
             me.unitFlags(UnitFlag.uninteractible, false);
             me.reactState(Reaction.aggressive);
             me.zoneCombat();
-            steps.after(Step.giantClaw, 10.seconds);
-            steps.after(Step.giantEye, 40.seconds);
-            steps.after(Step.eyeTentacles, 35.seconds);
-            steps.after(Step.flesh, 15.seconds);
+            startTentacles(me);
+            steps.every(Step.acid, 5.seconds);
             break;
         case Step.giantClaw, Step.giantEye:
             if (const target = me.selectTarget(Pick.random, PickFilter.player))
-                me.summon(step == Step.giantClaw ? npcGiantClawTentacle : npcGiantEyeTentacle, where(me, target), 0, target);
-            steps.after(step, 30.seconds);
+                if (!swallowedAlready(target))
+                    me.summon(step == Step.giantClaw ? npcGiantClawTentacle : npcGiantEyeTentacle, where(me, target), 0, target);
+            steps.after(step, 60.seconds);
             break;
         case Step.eyeTentacles:
             summonRing(me, npcEyeTentacle, 8, 35);
             steps.after(step, 30.seconds);
             break;
-        case Step.flesh:
-            if (!weakened)
+        case Step.mouth:
+            // A mouth tentacle seizes someone still in the room.
+            foreach (attempt; 0 .. 3)
             {
-                import std.math : cos, sin;
-
-                const at = me.location;
-                foreach (i; 0 .. 2)
-                    me.summon(npcFleshTentacle, Location(at.x + 15 * cos(i * 3.14f), at.y + 15 * sin(i * 3.14f), at.z),
-                        0, me.selectTarget(Pick.random, PickFilter.player));
+                const target = me.selectTarget(Pick.random, PickFilter.player);
+                if (!target || swallowedAlready(target) || target == seized)
+                    continue;
+                me.castSpell(mouthTentacle, target, true);
+                seized = target;
+                steps.after(Step.swallow, 4.seconds);
+                break;
             }
-            steps.after(step, 60.seconds);
+            steps.after(step, 10.seconds);
+            break;
+        case Step.swallow:
+            if (seized && me.alive(seized) && me.teleport(seized, stomach) == ActionResult.ok)
+                foreach (ref slot; inStomach)
+                    if (!slot)
+                    {
+                        slot = seized;
+                        break;
+                    }
+            seized = EntityRef.init;
+            break;
+        case Step.acid:
+            // The acid eats at the swallowed; those who climbed out are rid of it.
+            foreach (ref who; inStomach)
+            {
+                if (!who)
+                    continue;
+                Location at;
+                if (!me.alive(who) || !me.locationOf(who, at))
+                    who = EntityRef.init;
+                else if (at.z > stomachTop)
+                {
+                    me.removeAura(who, digestiveAcid);
+                    who = EntityRef.init;
+                }
+                else
+                    me.castSpell(digestiveAcid, who, true);
+            }
             break;
         case Step.weakenedEnd:
             weakened = false;
             me.removeAura(me.self, vulnerable);
             me.castSelf(carapace, true);
+            startTentacles(me);
             break;
         }
     }
@@ -1891,6 +1973,14 @@ struct Cthun
         steps.clear();
         risen = weakened = false;
         despawnTentacles(me);
+        foreach (ref who; inStomach)
+            if (who)
+            {
+                me.removeAura(who, digestiveAcid);
+                me.teleport(who, stomachExit);
+                who = EntityRef.init;
+            }
+        seized = EntityRef.init;
         me.signalDungeon(Aq40Encounter.cthun, EncounterState.failed);
         me.reactState(Reaction.passive);
         me.unitFlags(UnitFlag.uninteractible, true);
@@ -1900,7 +1990,46 @@ struct Cthun
     {
         steps.clear();
         despawnTentacles(me);
+        foreach (ref who; inStomach)
+            if (who)
+            {
+                me.removeAura(who, digestiveAcid);
+                who = EntityRef.init;
+            }
         me.signalDungeon(Aq40Encounter.cthun, EncounterState.done);
+    }
+
+    /// The tentacles come (his rise, or the end of his weakness): giant ones, eye tentacles, mouths, and the
+    /// two Flesh Tentacles in his stomach.
+    private void startTentacles(ref CreatureContext me)
+    {
+        steps.after(Step.giantClaw, 10.seconds);
+        steps.after(Step.giantEye, 40.seconds);
+        steps.after(Step.eyeTentacles, 35.seconds);
+        steps.after(Step.mouth, 10.seconds);
+        fleshSlain = 0;
+        foreach (place; fleshPlaces)
+            me.summon(npcFleshTentacle, place);
+    }
+
+    /// Both Flesh Tentacles slain: his carapace falls for 45 seconds, and the tentacles stop.
+    private void weaken(ref CreatureContext me)
+    {
+        weakened = true;
+        me.sayText(emoteWeakened);
+        me.removeAura(me.self, carapace);
+        me.castSelf(vulnerable, true);
+        foreach (s; [Step.giantClaw, Step.giantEye, Step.eyeTentacles, Step.mouth])
+            steps.cancel(s);
+        steps.after(Step.weakenedEnd, 45.seconds);
+    }
+
+    private bool swallowedAlready(EntityRef who) const
+    {
+        foreach (s; inStomach)
+            if (s == who)
+                return true;
+        return false;
     }
 }
 
@@ -2236,4 +2365,48 @@ unittest
     foreach (_; 0 .. 30)
         runtime.tick(h, me, 100);
     assert(host.health == 50 && !(host.flags & UnitFlag.uninteractible));
+}
+
+/// C'Thun swallows whom his mouth tentacle seizes: the acid eats at them in his stomach and leaves them once
+/// they are out; both Flesh Tentacles slain weaken him.
+unittest
+{
+    import std.algorithm.searching : canFind;
+
+    static class FakeCthun : FakeQiraji
+    {
+        EntityRef[] teleported, unaura;
+        float z = -97;
+        override EntityRef hostSelectTarget(Pick, uint, uint) { return EntityRef(7); }
+        override ActionResult hostTeleportPlayer(EntityRef who, Location) { teleported ~= who; return ActionResult.ok; }
+        override bool hostLocationOf(EntityRef, out Location at) { at = Location(0, 0, z); return true; }
+        override ActionResult hostRemoveAura(EntityRef who, uint) { unaura ~= who; return ActionResult.ok; }
+    }
+
+    alias self = dmangos.scripts.templeofahnqiraj;
+    auto runtime = ScriptRuntime.of!self();
+    auto host = new FakeCthun;
+    host.entry = npcCthun;
+    auto me = CreatureContext(host);
+    auto h = runtime.create(ScriptKind.creature, "boss_cthun");
+    runtime.raise(h, me, Spawned());
+    runtime.raise(h, me, Signal(EntityRef.init, Aq40Signal.eyeDown));
+    runtime.tick(h, me, 5000);
+    assert(host.casts.canFind(Cthun.transform) && host.summoned.length == 2, "risen, his flesh tentacles grow");
+    const flesh = host.summoned.dup;
+    runtime.tick(h, me, 10_000);
+    assert(host.casts.canFind(Cthun.mouthTentacle) && host.teleported.length == 0, "seized");
+    runtime.tick(h, me, 4000);
+    assert(host.teleported == [EntityRef(7)], "swallowed");
+    host.casts = null;
+    runtime.tick(h, me, 5000);
+    assert(host.casts.canFind(Cthun.digestiveAcid), "the acid eats at them");
+    host.z = 100; // out of the stomach
+    runtime.tick(h, me, 5000);
+    assert(host.unaura == [EntityRef(7)]);
+
+    runtime.raise(h, me, SummonedDied(flesh[0], EntityRef(7)));
+    assert(!host.casts.canFind(Cthun.vulnerable));
+    runtime.raise(h, me, SummonedDied(flesh[1], EntityRef(7)));
+    assert(host.casts.canFind(Cthun.vulnerable), "weakened");
 }

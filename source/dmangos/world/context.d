@@ -643,11 +643,37 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
      */
     private void respawnLinked(Map m, Creature c)
     {
-        if (c.alive || c.summon.type != TempSpawnType.none || c.instanceId || c.petOwner)
+        if (c.alive || c.summon.type != TempSpawnType.none || c.petOwner)
             return;
+        if (c.instanceId)
+            return respawnInCopy(m, &c.spawn, c);
         if (m.findObject(c.guid) is c)
             m.corpseExpired(c);
         respawnSpawnNow(c.spawn.guid);
+    }
+
+    /// Instance round 2: a dead creature of dungeon copy `m` (its corpse `corpse`, or none: gone already) is back
+    /// now, as a linked boss's wipe brings its adds back; the copy's script hears of it as of any creature.
+    private void respawnInCopy(Map m, const(CreatureSpawn)* spawn, Creature corpse)
+    {
+        if (corpse !is null && m.findObject(corpse.guid) is corpse)
+            m.corpseExpired(corpse);
+        if (auto state = m.instanceId in instances)
+            if (state.dead.remove(spawn.guid))
+                database.deleteInstanceRespawn(spawn.guid, m.instanceId);
+        if (m.findObject(makeGuid(HighGuid.unit, spawn.entry, spawn.guid)) !is null)
+            return;
+        auto back = makeCreature(spawn);
+        if (back is null)
+            return;
+        back.instanceId = m.instanceId;
+        m.addObject(back);
+        if (auto script = m.instanceId in instanceScripts)
+        {
+            import dmangos.script.api : CreatureLoaded, EntityRef;
+
+            script.raise(CreatureLoaded(EntityRef(back.guid)));
+        }
     }
 
     /// Spawn `guid`, dead and waiting, is due now.
@@ -666,10 +692,20 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     {
         foreach (guid; data.creatureLinks.slavesOfGuid.get(master.spawnId, null))
             if (const l = guid in data.creatureLinks.bySlaveGuid)
-                if ((l.flags & flag) && !master.instanceId)
+                if (l.flags & flag)
                     if (const spawn = creatureSpawnOf(guid))
                         if (m.findObject(makeGuid(HighGuid.unit, spawn.entry, guid)) is null)
-                            respawnSpawnNow(guid);
+                        {
+                            if (master.instanceId)
+                            {
+                                // In a copy only the dead come back (one not loaded yet is not dead).
+                                if (auto state = master.instanceId in instances)
+                                    if (guid in state.dead)
+                                        respawnInCopy(m, spawn, null);
+                            }
+                            else
+                                respawnSpawnNow(guid);
+                        }
     }
 
     /// `master` has respawned: its dead slaves linked so come back with it, and those linked so go.
@@ -2984,6 +3020,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         const faction = client.factionTemplates.lookup(trap.template_.faction);
         if (faction !is null && isFriend(Relating(0, faction, false, 0, 0, true), session.relating, client))
             return;
+        // Instance round 2: a trap with a script is asked first (one only its creature springs refuses players).
+        if (trap.behaviour && gameObjectUsed(trap, map, session.character.guid))
+            return;
         trap.trapReadyAt = unixTime + (trap.template_.data[5] > 0 ? trap.template_.data[5] : 1);
         session.castTriggeredAt(spell, session.character.guid);
         const charges = trap.template_.data[4];
@@ -3540,6 +3579,12 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 if (script.raise(EventHappened(event, EntityRef(source), EntityRef(target))))
                     return; // the script did what the event does
         startScript(DbScriptType.event, event, map, source, target);
+    }
+
+    /// See `CreatureLore.scriptedEvent`.
+    void scriptedEvent(uint event, CombatWorld world, ulong source, ulong target)
+    {
+        scriptedEvent(event, cast(Map) world, source, target);
     }
 
     /// See `InstanceContext.spawnObjects`: the game objects of `entry` on `map` (near a place) not in the world come.
@@ -4691,4 +4736,53 @@ unittest
     assert(t.mayAct(3, 0, now), "and so is 3^0");
     assert(!t.mayAct(1, 2, now + 29.seconds));
     assert(t.mayAct(1, 2, now + 31.seconds));
+}
+
+// Instance round 2: in a dungeon copy too a linked creature comes back (a boss's wipe or death brings its
+// adds back): alive again at once, and no longer counted dead in the copy.
+unittest
+{
+    import core.time : msecs, MonoTime;
+    import dmangos.world.creaturelinking : LinkFlag;
+    import dmangos.world.movement : Position;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+    import dmangos.world.updatefields : UNIT_FIELD_HEALTH;
+    import dmangos.auth.accounts : AccountLevel;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    const addAt = Position(-20, -383, 61), bossAt = Position(-25, -383, 61);
+    context.data.creatureSpawns ~= CreatureSpawn(90080, creatureBanker, mapDeadmines, addAt.x, addAt.y, addAt.z);
+    context.data.creatureCells[mapDeadmines][cellKeyAt(addAt.x, addAt.y)] ~= context.data.creatureSpawns.length - 1;
+    context.data.creatureSpawns ~= CreatureSpawn(90081, creatureInnkeeper, mapDeadmines, bossAt.x, bossAt.y, bossAt.z);
+    context.data.creatureCells[mapDeadmines][cellKeyAt(bossAt.x, bossAt.y)] ~= context.data.creatureSpawns.length - 1;
+    context.data.creatureLinks.addGuid(90080, 90081, LinkFlag.respawnOnDeath);
+
+    const outside = Position(deadminesEntrance[0], deadminesEntrance[1], deadminesEntrance[2]);
+    auto hero = loggedIn(context, db, 7, "Varian", outside, AccountLevel.administrator, raceHuman, mapEasternKingdoms, 60);
+    hero.say(".worldport 36 -18 -381 61");
+    hero.write(Opcode.MSG_MOVE_WORLDPORT_ACK, null);
+    hero.read();
+    auto m = context.instanceMap(hero.session.inWorld.instanceId);
+    const addGuid = makeGuid(HighGuid.unit, creatureBanker, 90080);
+    auto add = cast(Creature) m.findObject(addGuid);
+    auto boss = cast(Creature) m.findObject(makeGuid(HighGuid.unit, creatureInnkeeper, 90081));
+    assert(add !is null && boss !is null);
+    void kill(Creature c)
+    {
+        c.values.set!UNIT_FIELD_HEALTH(0u);
+        m.creatureDeath(c);
+    }
+    kill(add);
+    now += 100.msecs;
+    context.update(now); // the deaths phase
+    assert(!add.alive && context.deadInInstance(m.instanceId, 90080));
+    kill(boss);
+    now += 1100.msecs;
+    context.update(now);
+    auto back = cast(Creature) m.findObject(addGuid);
+    assert(back !is null && back.alive && !context.deadInInstance(m.instanceId, 90080), "the add came back");
 }

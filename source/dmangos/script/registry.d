@@ -117,7 +117,9 @@ template KindInfo(ScriptKind kind)
         alias Events = AliasSeq!(Spawned, Reset, EnteredCombat, Damaged, KilledUnit, Died, Evaded, SpellHit, Signal,
             MovementDone, GossipHello, GossipSelect, QuestAccepted, QuestRewarded,
             // Eastern Kingdoms scripts:
-            SummonedDied, SummonedArrived, UnitInSight, EmoteReceived);
+            SummonedDied, SummonedArrived, UnitInSight, EmoteReceived,
+            // Instance round 2:
+            AuraRemoved);
         alias Attribute = .creature;
     }
     else static if (kind == ScriptKind.gameObject)

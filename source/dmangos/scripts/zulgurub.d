@@ -957,7 +957,8 @@ struct ZulianProwler
 /**
  * Bloodlord Mandokir: watches from his perch until the copy says his keepers are slain, then comes down
  * to fight; Ohgan fights with him (enraging him when slain), chained spirits revive the fallen, and
- * every third player he kills makes him stronger.
+ * every third player he kills makes him stronger. His Threatening Gaze (his spell list casts it) he
+ * announces to its player; whoever gains threat on him while it lasts is charged when it ends.
  */
 @creature("boss_mandokir")
 struct Mandokir
@@ -968,8 +969,10 @@ struct Mandokir
         sayDingKill = -1_309_016,
         sayGratsJindo = -1_309_017,
         emoteRage = -1_309_024,
+        sayWatch = -1_309_018,
+        sayWatchWhisper = -1_309_019,
     }
-    enum : uint { enrage = 23537, levelUp = 24312, revive = 24341 }
+    enum : uint { enrage = 23537, levelUp = 24312, revive = 24341, threateningGaze = 24314, chargeGaze = 24315 }
     static immutable Location[19] spirits = [
         Location(-12150.9f, -1956.24f, 133.407f, 2.57835f), Location(-12157.1f, -1972.78f, 133.947f, 2.64903f),
         Location(-12172.3f, -1982.63f, 134.061f, 1.48664f), Location(-12194.0f, -1979.54f, 132.194f, 1.45916f),
@@ -983,11 +986,13 @@ struct Mandokir
         Location(-12266.1f, -1940.72f, 132.606f, 0.70910f),
     ];
 
-    enum Step : ubyte { ohganCheck }
+    enum Step : ubyte { ohganCheck, gaze }
     Schedule!Step steps;
     ubyte kills;
     EntityRef ohgan;
     EntityRef[19] chained;
+    EntityRef watched;  /// the player under his gaze
+    float watchedThreat; /// their threat on him when it fell on them
 
     void on(ref CreatureContext me, const ref Signal e)
     {
@@ -1011,18 +1016,50 @@ struct Mandokir
         ohgan = me.summon(npcOhgan, Location.init, 0, me.victim);
         me.signalDungeon(ZgEncounter.ohgan, EncounterState.inProgress);
         steps.every(Step.ohganCheck, 1.seconds);
+        steps.every(Step.gaze, 500.msecs);
     }
 
     void on(ref CreatureContext me, Step step)
     {
-        // Ohgan slain: his master rages.
-        if (ohgan && !me.alive(ohgan))
+        final switch (step)
         {
-            ohgan = EntityRef.init;
-            me.castSelf(enrage, true);
-            me.say(emoteRage);
-            steps.cancel(Step.ohganCheck);
+        case Step.ohganCheck:
+            // Ohgan slain: his master rages.
+            if (ohgan && !me.alive(ohgan))
+            {
+                ohgan = EntityRef.init;
+                me.castSelf(enrage, true);
+                me.say(emoteRage);
+                steps.cancel(Step.ohganCheck);
+            }
+            break;
+        case Step.gaze:
+            watch(me);
+            break;
         }
+    }
+
+    /// His gaze: who it falls on is told and watched; it over, the one who gained threat on him meanwhile is charged.
+    private void watch(ref CreatureContext me)
+    {
+        if (watched)
+        {
+            if (me.hasAura(watched, threateningGaze))
+                return;
+            if (me.alive(watched) && me.threatOf(watched) > watchedThreat)
+                me.castSpell(chargeGaze, watched, true);
+            watched = EntityRef.init;
+        }
+        EntityRef[40] foes;
+        foreach (foe; foes[0 .. me.threatList(foes[])])
+            if (foe.isPlayer && me.hasAura(foe, threateningGaze))
+            {
+                watched = foe;
+                watchedThreat = me.threatOf(foe);
+                me.say(sayWatch, foe);
+                me.say(sayWatchWhisper, foe);
+                break;
+            }
     }
 
     void on(ref CreatureContext me, const ref KilledUnit e)
@@ -1080,6 +1117,7 @@ struct Mandokir
     void on(ref CreatureContext me, const ref Reset e)
     {
         kills = 0;
+        watched = EntityRef.init;
     }
 
     void on(ref CreatureContext me, const ref Died e)
@@ -1432,4 +1470,46 @@ unittest
 
     runtime.raise(h, c, Signal(EntityRef.init, ZgEncounter.ohgan, EncounterState.special));
     assert(copy.signals[$ - 1] == Signal(mandokir, ZgSignal.comeDown, 0));
+}
+
+/// Mandokir's gaze: its player is told; gaining threat on him while it lasts, they are charged when it ends.
+unittest
+{
+    import std.algorithm.searching : canFind;
+    import std.typecons : BlackHole;
+    import dmangos.script.registry : ScriptKind, ScriptRuntime;
+
+    static class FakeMandokir : BlackHole!CreatureHost
+    {
+        bool gazed;
+        float threat = 100;
+        uint[] casts;
+        int[] said;
+        override EntityRef hostSelf() { return EntityRef(0xF130_0000_0000_0001UL | (ulong(11_382) << 24)); }
+        override size_t hostThreatList(EntityRef[] into) { into[0] = EntityRef(7); return 1; }
+        override bool hostHasAura(EntityRef who, uint spell) { return who == EntityRef(7) && gazed && spell == Mandokir.threateningGaze; }
+        override float hostThreatOf(EntityRef) { return threat; }
+        override bool hostAlive(EntityRef) { return true; }
+        override ActionResult hostCast(uint spell, EntityRef, bool) { casts ~= spell; return ActionResult.ok; }
+        override ActionResult hostSay(int text, EntityRef) { said ~= text; return ActionResult.ok; }
+    }
+
+    alias self = dmangos.scripts.zulgurub;
+    auto runtime = ScriptRuntime.of!self();
+    auto host = new FakeMandokir;
+    auto me = CreatureContext(host);
+    auto h = runtime.create(ScriptKind.creature, "boss_mandokir");
+    runtime.raise(h, me, EnteredCombat(EntityRef(7)));
+    host.gazed = true;
+    runtime.tick(h, me, 500);
+    assert(host.said.canFind(Mandokir.sayWatch));
+    host.gazed = false; // it ended; they kept still
+    runtime.tick(h, me, 500);
+    assert(!host.casts.canFind(Mandokir.chargeGaze));
+    host.gazed = true;
+    runtime.tick(h, me, 500);
+    host.threat = 150; // they struck him while watched
+    host.gazed = false;
+    runtime.tick(h, me, 500);
+    assert(host.casts.canFind(Mandokir.chargeGaze));
 }

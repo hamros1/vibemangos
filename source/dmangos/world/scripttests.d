@@ -1101,3 +1101,79 @@ unittest
     }
     assert(count(npcMajordomo) == 1, "summoned once");
 }
+
+/// Instance round 2: a creature's SEND_EVENT spell starts its event as a player's does: the event's script runs,
+/// around the player it was cast at (`event_test_summon` puts a creature beside them).
+unittest
+{
+    import dmangos.world.map : MapObject;
+    import dmangos.world.spells : SpellInfo;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto call = SpellInfo(99_001);
+    call.effect[0] = SpellEffect.sendEvent;
+    call.implicitTargetA[0] = ImplicitTarget.enemy;
+    call.miscValue[0] = 7777;
+    context.data.spells.spells[99_001] = call;
+    context.data.eventScriptNames[7777] = "event_test_summon";
+
+    const at = Position(-8949.95f, -132.49f, 83.53f);
+    auto hero = loggedIn(context, db, 7, "Varian", at, AccountLevel.player, raceHuman, mapEasternKingdoms, 10);
+    hero.read();
+    CreatureSpawn spawn = {guid: 90090, entry: creatureInnkeeper, map: mapEasternKingdoms, x: at.x + 2, y: at.y, z: at.z};
+    auto map = context.map(mapEasternKingdoms);
+    auto caller = context.makeCreature(&spawn);
+    map.addObject(caller);
+    size_t trainers()
+    {
+        size_t n;
+        map.forEachObject((MapObject o) {
+            if (auto c = cast(Creature) o)
+                if (c.template_.entry == creatureTrainer)
+                    ++n;
+        });
+        return n;
+    }
+    const before = trainers();
+    assert(caller.ai.castFor(map, 99_001, hero.session.character.guid, true) == ActionResult.ok);
+    assert(trainers() == before + 1, "the event's script ran");
+}
+
+/// Instance round 2: a creature's script hears its aura go when it runs out (`AuraRemoved`).
+unittest
+{
+    import dmangos.world.auras : makeAura;
+    import dmangos.world.map : MapObject;
+    import dmangos.world.spells : SpellInfo;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto mark = SpellInfo(99_002);
+    mark.effect[0] = SpellEffect.applyAura;
+    context.data.spells.spells[99_002] = mark;
+    context.data.creatureScriptNames[creatureInnkeeper] = "npc_test_aura_removed";
+
+    const at = Position(-8949.95f, -132.49f, 83.53f);
+    CreatureSpawn spawn = {guid: 90091, entry: creatureInnkeeper, map: mapEasternKingdoms, x: at.x, y: at.y, z: at.z};
+    auto map = context.map(mapEasternKingdoms);
+    auto marked = context.makeCreature(&spawn);
+    map.addObject(marked);
+    size_t trainers()
+    {
+        size_t n;
+        map.forEachObject((MapObject o) {
+            if (auto c = cast(Creature) o)
+                if (c.template_.entry == creatureTrainer)
+                    ++n;
+        });
+        return n;
+    }
+    const before = trainers();
+    bool isNew;
+    marked.auras.apply(makeAura(99_002 in context.data.spells.spells, 7, 10, 100, false, [0, 0, 0]), marked.values, isNew);
+    marked.updateAuras(map, 50);
+    assert(trainers() == before, "still on");
+    marked.updateAuras(map, 100);
+    assert(marked.auras.find(99_002) is null && trainers() == before + 1, "it ran out, and the script heard");
+}

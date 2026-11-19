@@ -119,6 +119,12 @@ interface CreatureLore
 
     /// The answer of dungeon copy `instance`'s script to question `id` from `from` (0: none).
     int askDungeon(uint instance, EntityRef from, uint id);
+
+    // Instance round 2:
+
+    /// Scripted event `event` (a creature's `SEND_EVENT`) happens on `world`, `source` starting it at
+    /// `target`: its script, the dungeon's, then its database script (`WorldContext.scriptedEvent`).
+    void scriptedEvent(uint event, CombatWorld world, ulong source, ulong target);
 }
 
 /// What a creature's AI needs of its map.
