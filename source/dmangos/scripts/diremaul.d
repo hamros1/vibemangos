@@ -62,8 +62,8 @@ struct DireMaul
     Pack!12[5] pylonGuards;
     @transient EntityRef[5] generatorRefs;
     @transient EntityRef wall, vine, conservatory, field, warpDoor, ironbarkRef, princeRef, immoltharRef, kromcrushRef, chorushRef;
-    @transient Pack!32 guardCandidates;
-    @transient Pack!8 summoners;
+    @transient Pack!48 guardCandidates;
+    @transient Pack!24 summoners;
 
     void on(ref InstanceContext dm, const ref ObjectLoaded e)
     {
