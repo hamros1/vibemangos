@@ -905,6 +905,8 @@ interface AreaTriggerHost
     ActionResult hostCastFrom(EntityRef caster, uint spell, EntityRef target, bool triggered);
     void hostSignalDungeon(uint id, int value);
     void hostLog(string text);
+    // Dungeon scripts:
+    bool hostHasItem(EntityRef player, uint item);
 }
 
 /// An area trigger script's handle, for the length of one handler.
@@ -947,6 +949,11 @@ struct AreaTriggerContext
 
     /// A line in the server's log.
     void log(string text) { host.hostLog(text); }
+
+    // Dungeon scripts:
+
+    /// Whether `player` carries item `item` (a key, a seal; the bank does not count).
+    bool hasItem(EntityRef player, uint item) { return host.hostHasItem(player, item); }
 
     /// The script handled the trigger; its usual effects do not follow.
     void consume() { consumed_ = true; }
