@@ -155,6 +155,12 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Files: `ScriptDevAI/scripts/eastern_kingdoms/burning_steppes.cpp`
 * Functions/ScriptNames: `npc_grark_lorkrub`, `npc_klinfran`
 
+## scripts/easternplaguelands.d
+
+* Projects: CMaNGOS
+* Files: `ScriptDevAI/scripts/eastern_kingdoms/eastern_plaguelands.cpp`
+* Functions/ScriptNames: `npc_eris_havenfire`
+
 ## scripts/hinterlands.d
 
 * Projects: CMaNGOS
