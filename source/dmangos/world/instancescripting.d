@@ -356,6 +356,18 @@ final class InstanceScript : InstanceHost
         return true;
     }
 
+    EntityRef hostAnyPlayer()
+    {
+        if (map is null)
+            return EntityRef.init;
+        foreach (who; map.playersNow())
+            if (who.character !is null)
+                if (auto unit = map.unit(who.character.guid))
+                    if (unit.fighter.alive && !unit.untouchable)
+                        return EntityRef(unit.combatGuid);
+        return EntityRef.init;
+    }
+
     uint hostRandom(uint below)
     {
         import std.random : uniform;

@@ -613,6 +613,7 @@ interface InstanceHost
     ActionResult hostRemoveAura(EntityRef creature, uint spell);
     EntityRef hostVictimOf(EntityRef creature);
     bool hostLocate(EntityRef who, out Location at);
+    EntityRef hostAnyPlayer();
 }
 
 /// `GameObjectFlags`, as dungeon scripts set and clear them (`InstanceContext.objectFlags`).
@@ -731,6 +732,9 @@ struct InstanceContext
 
     /// Where an entity of the copy is; false if it is not here.
     bool locate(EntityRef who, out Location at) { return host.hostLocate(who, at); }
+
+    /// A living player of the copy that may be attacked (the first found); nothing if none.
+    EntityRef anyPlayer() { return host.hostAnyPlayer(); }
 }
 
 unittest

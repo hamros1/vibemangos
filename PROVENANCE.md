@@ -143,6 +143,12 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Files: `AI/ScriptDevAI/scripts/kalimdor/blackfathom_deeps/instance_blackfathom_deeps.cpp`, `blackfathom_deeps.h`
 * Functions/ScriptNames: `instance_blackfathom_deeps` (`DoSpawnMobs`, `IsWaveEventFinished`), `go_fire_of_akumai`, `go_fathom_stone`
 
+## scripts/blackrockdepths.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/eastern_kingdoms/blackrock_depths/instance_blackrock_depths.cpp`, `blackrock_depths.cpp`, `boss_ambassador_flamelash.cpp`, `boss_emperor_dagran_thaurissan.cpp`, `boss_general_angerforge.cpp`, `boss_high_interrogator_gerstahn.cpp`, `blackrock_depths.h`
+* Functions/ScriptNames: `instance_blackrock_depths` (`DoCallNextDwarf`, `HandleBarPatrons`, `Update`), `at_ring_of_law`, `npc_grimstone`, `at_shadowforge_bridge`, `go_shadowforge_brazier`, `go_relic_coffer_door`, `go_bar_beer_keg`, `go_bar_ale_mug`, `boss_doomrel`, `npc_rocknot`, `npc_phalanx`, `boss_plugger_spazzring`, `npc_hurley_blackbreath`, `npc_ironhand_guardian`, `boss_emperor_dagran_thaurissan`, `boss_moira_bronzebeard`, `boss_ambassador_flamelash`, `boss_general_angerforge`, `boss_high_interrogator_gerstahn`
+
 ## scripts/gnomeregan.d
 
 * Projects: CMaNGOS

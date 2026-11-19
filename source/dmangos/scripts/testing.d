@@ -219,6 +219,7 @@ final class TestInstance : InstanceHost
     EntityRef fought = EntityRef(7); /// whom every creature fights
     EntityRef hostVictimOf(EntityRef) { return fought; }
     bool hostLocate(EntityRef, out Location at) { return true; }
+    EntityRef hostAnyPlayer() { return players ? EntityRef(7) : EntityRef.init; }
 }
 
 /// A script of module `M` with its fake, run as the server runs it (through a `ScriptRuntime`).

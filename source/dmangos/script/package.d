@@ -28,6 +28,7 @@ public import core.time : msecs, seconds;
 public import dmangos.script.api;
 public import dmangos.script.escort : Escort;
 public import dmangos.script.pack : Pack;
+public import dmangos.script.walk : Walk;
 public import dmangos.script.registry : areaTrigger, creature, gameObject, instance, spell;
 public import dmangos.script.schedule : Schedule;
 public import dmangos.script.state : transient;
