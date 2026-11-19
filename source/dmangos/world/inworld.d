@@ -557,9 +557,6 @@ private:
         // logging out is rooted.
         if (teleporting != Teleport.none || loggingOut)
             return;
-        // On a transport the position is relative to it; without transports, keep the last world position.
-        if (movement.has(MovementFlags.onTransport))
-            return;
         // On a ship or an elevator the player moves with it: not checked, and checked afresh once off.
         if (movement.has(MovementFlags.onTransport))
             checkpoint = p, checkpointTime = context.clock();
