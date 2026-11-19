@@ -9,6 +9,14 @@ import core.time : Duration;
 
 import dmangos.script;
 
+/// Where `who` is, as `ctx` sees it (`Location.init` if it is not here).
+private Location where(C)(ref C ctx, EntityRef who)
+{
+    Location at;
+    ctx.locationOf(who, at);
+    return at;
+}
+
 /// Creatures of the lair.
 enum : uint
 {

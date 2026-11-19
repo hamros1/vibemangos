@@ -136,24 +136,37 @@ final class FakeCreature : CreatureHost
     ActionResult hostSayOther(EntityRef, int, EntityRef) { return ActionResult.ok; }
     void hostMovementScript(uint) {}
     void hostRelay(int, EntityRef) {}
+    // Dungeon scripts:
+    EntityRef hostPlayerNearby(float) { return EntityRef.init; }
     void hostKillCredit(EntityRef, uint) {}
+    // Kalimdor scripts:
+    ActionResult hostFactionOf(EntityRef, uint) { return ActionResult.ok; }
+    ActionResult hostUnitFlagsOf(EntityRef, uint, bool) { return ActionResult.ok; }
+    void hostFollow(EntityRef, float, float) {}
+    ActionResult hostCastAs(EntityRef, uint, EntityRef, bool) { return ActionResult.ok; }
+    ActionResult hostObjectUsable(EntityRef, bool) { return ActionResult.ok; }
+    uint hostEntryOf(EntityRef) { return 0; }
+    void hostGroupQuestEvent(EntityRef, uint quest) { quests ~= "event"; }
+    bool hostLocationOf(EntityRef, out Location) { return false; }
+    void hostEmoteState(uint) {}
+    size_t hostCreaturesNearby(uint, float, EntityRef[]) { return 0; }
+    EntityRef hostOwner() { return EntityRef.init; }
+    uint hostItemCount(EntityRef, uint) { return 0; }
+    uint hostGiveItem(EntityRef, uint, uint) { return 0; }
 
     // Raid scripts:
     int hostAskDungeon(uint) { return 0; }
     EntityRef hostSelectTarget(Pick, uint, uint) { return EntityRef.init; }
     size_t hostThreatList(EntityRef[]) { return 0; }
     ActionResult hostModifyThreat(EntityRef, int) { return ActionResult.ok; }
-    size_t hostCreaturesNear(uint, float, EntityRef[]) { return 0; }
     size_t hostPlayersNear(float, EntityRef[]) { return 0; }
     void hostTeleport(Location) {}
     void hostZoneCombat() {}
     bool hostCasting() { return false; }
     void hostInterrupt() {}
-    ActionResult hostCastAs(EntityRef, uint, EntityRef, bool) { return ActionResult.ok; }
     void hostFlying(bool) {}
     void hostDisplay(uint) {}
     void hostSetHealthPercent(EntityRef, uint) {}
-    Location hostLocationOf(EntityRef) { return Location.init; }
     void hostRooted(bool) {}
     void hostAddThreat(EntityRef, float) {}
     void hostMoveNow(Location, uint, bool) {}

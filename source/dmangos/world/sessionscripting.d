@@ -77,6 +77,31 @@ mixin template SessionScripting()
         return c.consumed;
     }
 
+    // Kalimdor scripts:
+
+    /// A script gives this player `count` of `entry`: onto stacks first, then free slots, as many as
+    /// fit (as a quest's reward is given). How many it got.
+    public uint scriptGiveItem(uint entry, uint count)
+    {
+        import dmangos.world.inventory : InventoryResult, ItemPosCount;
+        import dmangos.world.defines : nullBag, nullSlot;
+
+        if (player is null || count == 0)
+            return 0;
+        ItemPosCount[] dest;
+        uint noSpace;
+        if (player.inventory.canStoreNew(nullBag, nullSlot, dest, entry, count, &noSpace) != InventoryResult.ok)
+            count -= noSpace;
+        if (count == 0 || dest.length == 0)
+            return 0;
+        auto made = player.inventory.storeNew(dest, entry);
+        if (made is null)
+            return 0;
+        sendNewItem(made, count, true, false);
+        flushInventory();
+        return count;
+    }
+
     /// Where this player stands with `quest` (`UnitRef.questStatusOf`).
     public QuestProgress questStatusOf(uint quest)
     {
@@ -119,6 +144,7 @@ mixin template SessionScripting()
         QuestProgress hostQuestStatusOf(EntityRef who, uint quest) { return this.outer.hostQuestStatusOf(who, quest); }
         EntityRef hostCreatureNear(uint entry, Location at, float range) { return this.outer.hostCreatureNear(entry, at, range); }
         void hostSignalDungeon(uint id, int value) { this.outer.hostSignalDungeon(id, value); }
+        bool hostHasItem(EntityRef who, uint item) { return this.outer.hostHasItem(who, item); }
         int hostAskDungeon(uint id) { return this.outer.hostAskDungeon(id); }
         void hostLog(string text) { this.outer.hostLog(text); }
         ActionResult hostModifyThreat(EntityRef creature, EntityRef target, int percent) { return this.outer.hostModifyThreat(creature, target, percent); }
@@ -277,6 +303,14 @@ mixin template SessionScripting()
     ActionResult hostSignalCreature(EntityRef to, uint id, int value)
     {
         return context.signalCreature(map, EntityRef(player.guid), to, id, value);
+    }
+
+    /// See `AreaTriggerContext.hasItem`.
+    bool hostHasItem(EntityRef who, uint item)
+    {
+        if (auto other = sessionHere(who))
+            return other.player.inventory.count(item, false) > 0;
+        return false;
     }
 
     QuestProgress hostQuestStatusOf(EntityRef who, uint quest)

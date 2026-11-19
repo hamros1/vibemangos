@@ -137,6 +137,13 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Projects: CMaNGOS
 * Constants: `DEFAULT_MAX_PLAYER_DISTANCE`
 
+## script/follower.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/base/follower_ai.cpp`
+* Functions: `FollowerAI::StartFollow`, `FollowerAI::SetFollowComplete`, `FollowerAI::SetFollowPaused`
+* Constants: `MAX_PLAYER_DISTANCE`
+
 ## scripts/arathi.d
 
 * Projects: CMaNGOS
@@ -148,6 +155,43 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Projects: CMaNGOS
 * Files: `ScriptDevAI/scripts/world/areatrigger_scripts.cpp`
 * Functions/ScriptNames: `at_huldar_miran`, `at_ravenholdt`, `at_twilight_grove`, `at_ancient_leaf`
+
+## scripts/ashenvale.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/kalimdor/ashenvale.cpp`
+* Functions/ScriptNames: `npc_muglash`, `go_naga_brazier`, `npc_ruul_snowhoof`, `npc_torek`, `npc_feero_ironhand`
+
+## scripts/azshara.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/kalimdor/azshara.cpp`, `AI/ScriptDevAI/scripts/kalimdor/boss_azuregos.cpp`
+* Functions/ScriptNames: `mobs_spitelashes`, `npc_felhound_tracker`, `boss_maws`, `boss_azuregos`
+
+## scripts/barrens.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/kalimdor/the_barrens.cpp`
+* Functions/ScriptNames: `npc_gilthares`, `npc_taskmaster_fizzule`, `npc_twiggy_flathead`, `at_twiggy_flathead`,
+  `npc_wizzlecranks_shredder`, `npc_regthar_deathgate`
+
+## scripts/blackfathomdeeps.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/kalimdor/blackfathom_deeps/instance_blackfathom_deeps.cpp`, `blackfathom_deeps.h`
+* Functions/ScriptNames: `instance_blackfathom_deeps` (`DoSpawnMobs`, `IsWaveEventFinished`), `go_fire_of_akumai`, `go_fathom_stone`
+
+## scripts/blackrockdepths.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/eastern_kingdoms/blackrock_depths/instance_blackrock_depths.cpp`, `blackrock_depths.cpp`, `boss_ambassador_flamelash.cpp`, `boss_emperor_dagran_thaurissan.cpp`, `boss_general_angerforge.cpp`, `boss_high_interrogator_gerstahn.cpp`, `blackrock_depths.h`
+* Functions/ScriptNames: `instance_blackrock_depths` (`DoCallNextDwarf`, `HandleBarPatrons`, `Update`), `at_ring_of_law`, `npc_grimstone`, `at_shadowforge_bridge`, `go_shadowforge_brazier`, `go_relic_coffer_door`, `go_bar_beer_keg`, `go_bar_ale_mug`, `boss_doomrel`, `npc_rocknot`, `npc_phalanx`, `boss_plugger_spazzring`, `npc_hurley_blackbreath`, `npc_ironhand_guardian`, `boss_emperor_dagran_thaurissan`, `boss_moira_bronzebeard`, `boss_ambassador_flamelash`, `boss_general_angerforge`, `boss_high_interrogator_gerstahn`, `npc_marshal_windsor`, `npc_dughal_stormwing`, `npc_tobias_seecher`, `npc_mistress_nagmara`
+
+## scripts/blackrockspire.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/eastern_kingdoms/blackrock_spire/instance_blackrock_spire.cpp`, `boss_pyroguard_emberseer.cpp`, `boss_gyth.cpp`, `boss_overlord_wyrmthalak.cpp`, `blackrock_spire.h`
+* Functions/ScriptNames: `instance_blackrock_spire` (`DoSortRoomEventMobs`, `DoProcessEmberseerEvent`, `DoUseEmberseerRunes`, `DoSendNextStadiumWave`, `DoSendNextFlamewreathWave`, `Update`), `at_blackrock_spire`, `event_spell_altar_emberseer`, `go_father_flame`, `npc_rookery_hatcher`, `boss_pyroguard_emberseer`, `boss_gyth`, `boss_overlord_wyrmthalak`
 
 ## scripts/blastedlands.d
 
@@ -161,11 +205,63 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Files: `ScriptDevAI/scripts/eastern_kingdoms/burning_steppes.cpp`
 * Functions/ScriptNames: `npc_grark_lorkrub`, `npc_klinfran`
 
+## scripts/darkshore.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/kalimdor/darkshore.cpp`
+* Functions/ScriptNames: `npc_kerlonian` (with `AwakenKerlonian`), `npc_prospector_remtravel`, `npc_threshwackonator`,
+  `npc_volcor`, `npc_therylune`, `npc_rabid_bear`, `npc_blackwood_warrior`, `npc_blackwood_totemic`, `go_furbolg_food`
+
+## scripts/desolace.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/kalimdor/desolace.cpp`
+* Functions/ScriptNames: `npc_aged_dying_ancient_kodo` (with `KodoKombobulator`), `npc_dalinda_malem`,
+  `npc_melizza_brimbuzzle`, `npc_magrami_spectre`
+
+## scripts/diremaul.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/kalimdor/dire_maul/instance_dire_maul.cpp`, `dire_maul.h`
+* Functions/ScriptNames: `instance_dire_maul` (`SortPylonGuards`, `PylonGuardJustDied`, `ProcessForceFieldOpening`)
+
+## scripts/durotar.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/kalimdor/durotar.cpp`, `AI/ScriptDevAI/scripts/kalimdor/orgrimmar.cpp`
+* Functions/ScriptNames: `npc_lazy_peon` (with `AwakenPeon`), `npc_overlord_runthalak`, `npc_high_overlord_saurfang`
+
+## scripts/dustwallow.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/kalimdor/dustwallow_marsh.cpp`
+* Functions/ScriptNames: `npc_morokk`, `npc_ogron`, `npc_private_hendel`, `npc_stinky_ignatz`, `at_sentry_point`
+
 ## scripts/easternplaguelands.d
 
 * Projects: CMaNGOS
 * Files: `ScriptDevAI/scripts/eastern_kingdoms/eastern_plaguelands.cpp`
 * Functions/ScriptNames: `npc_eris_havenfire`
+
+## scripts/felwood.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/kalimdor/felwood.cpp`
+* Functions/ScriptNames: `npc_kitten` (with `CorruptedSaberVisual`), `npc_corrupt_saber`, `npc_captured_arkonarin`, `npc_arei`
+
+## scripts/feralas.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/kalimdor/feralas.cpp`, `AI/ScriptDevAI/scripts/kalimdor/world_kalimdor.cpp`
+  (`TYPE_FREEDOM_CREATURES`)
+* Functions/ScriptNames: `npc_oox22fe`, `npc_shay_leafrunner` (with `ShaysBell`), `npc_captured_sprite_darter`,
+  `go_cage_door`, `npc_kindal_moonweaver`
+
+## scripts/gnomeregan.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/eastern_kingdoms/gnomeregan/instance_gnomeregan.cpp`, `gnomeregan.cpp`, `boss_thermaplugg.cpp`, `gnomeregan.h`
+* Functions/ScriptNames: `instance_gnomeregan` (`DoActivateBombFace`, `DoDeactivateBombFace`), `npc_blastmaster_emi_shortfuse`, `npc_kernobee`, `boss_thermaplugg`, `go_gnomeface_button`
 
 ## scripts/hinterlands.d
 
@@ -179,11 +275,35 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Files: `ScriptDevAI/scripts/eastern_kingdoms/loch_modan.cpp`
 * Functions/ScriptNames: `npc_miran`
 
+## scripts/maraudon.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/kalimdor/maraudon/instance_maraudon.cpp`, `boss_noxxion.cpp`, `maraudon.h`
+* Functions/ScriptNames: `instance_maraudon` (`Update`), `go_larva_spewer`, `boss_noxxion`
+
+## scripts/moonglade.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/kalimdor/moonglade.cpp`
+* Functions/ScriptNames: `npc_keeper_remulos`, `boss_eranikus` (with `ConjureDreamRift`)
+
 ## scripts/npcs.d
 
 * Projects: CMaNGOS
 * Files: `ScriptDevAI/scripts/world/npcs_special.cpp`, `ScriptDevAI/scripts/world/guards.cpp`, `ScriptDevAI/scripts/world/spell_scripts.cpp`, `ScriptDevAI/base/guard_ai.cpp`
 * Functions/ScriptNames: `npc_doctor`, `npc_injured_patient`, `npc_garments_of_quests`, `npc_redemption_target`, `npc_chicken_cluck`, `npc_the_cleaner`, `guard_stormwind`, `spell_dummy_npc`
+
+## scripts/razorfendowns.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/kalimdor/razorfen_downs/instance_razorfen_downs.cpp`, `razorfen_downs.cpp`, `razorfen_downs.h`
+* Functions/ScriptNames: `instance_razorfen_downs` (`DoSpawnWaveIfCan`, `OnCreatureDeath`), `event_go_tutenkash_gong`, `npc_belnistrasz`
+
+## scripts/razorfenkraul.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/kalimdor/razorfen_kraul/instance_razorfen_kraul.cpp`, `razorfen_kraul.cpp`, `razorfen_kraul.h`
+* Functions/ScriptNames: `instance_razorfen_kraul`, `npc_willix_the_importer`, `npc_snufflenose_gopher`, `spell_snufflenose_command`, `spell_left_for_dead`
 
 ## scripts/redridge.d
 
@@ -191,17 +311,47 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Files: `ScriptDevAI/scripts/eastern_kingdoms/redridge_mountains.cpp`
 * Functions/ScriptNames: `npc_corporal_keeshan`
 
+## scripts/scarletmonastery.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/eastern_kingdoms/scarlet_monastery/instance_scarlet_monastery.cpp`, `boss_mograine_and_whitemane.cpp`, `boss_herod.cpp`, `boss_arcanist_doan.cpp`, `scarlet_monastery.h`
+* Functions/ScriptNames: `instance_scarlet_monastery`, `boss_scarlet_commander_mograine`, `boss_high_inquisitor_whitemane`, `boss_herod`, `mob_scarlet_trainee`, `boss_arcanist_doan`, `at_cathedral_entrance`
+
+## scripts/scholomance.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/eastern_kingdoms/scholomance/instance_scholomance.cpp`, `boss_darkmaster_gandling.cpp`, `boss_jandice_barov.cpp`, `scholomance.cpp`, `scholomance.h`
+* Functions/ScriptNames: `instance_scholomance` (`DoSpawnGandlingIfCan`, `DoRespawnEntranceRoom`, `HandleDawnGambitEvent`), `event_dawn_gambit`, `boss_darkmaster_gandling`, `boss_jandice_barov`, `npc_spectral_tutor`
+
 ## scripts/searinggorge.d
 
 * Projects: CMaNGOS
 * Files: `ScriptDevAI/scripts/eastern_kingdoms/searing_gorge.cpp`
 * Functions/ScriptNames: `npc_dorius_stonetender`
 
+## scripts/shadowfang.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/eastern_kingdoms/shadowfang_keep/instance_shadowfang_keep.cpp`, `shadowfang_keep.cpp`, `shadowfang_keep.h`
+* Functions/ScriptNames: `instance_shadowfang_keep` (`DoSpeech`, `JustDidDialogueStep`, `OnCreatureDeath`), `npc_shadowfang_prisoner`, `npc_deathstalker_vincent`, `mob_arugal_voidwalker`, `boss_arugal`
+
+## scripts/silithus.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/kalimdor/silithus.cpp`
+* Functions/ScriptNames: `npc_solenor`
+
 ## scripts/silverpine.d
 
 * Projects: CMaNGOS
 * Files: `ScriptDevAI/scripts/eastern_kingdoms/silverpine_forest.cpp`
 * Functions/ScriptNames: `npc_deathstalker_erland`, `npc_deathstalker_faerleia`
+
+## scripts/stonetalon.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/kalimdor/stonetalon_mountains.cpp`
+* Functions/ScriptNames: `npc_kaya`
 
 ## scripts/stormwind.d
 
@@ -215,17 +365,60 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Files: `ScriptDevAI/scripts/eastern_kingdoms/stranglethorn_vale.cpp`
 * Functions/ScriptNames: `mob_yenniku`
 
+## scripts/stratholme.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/eastern_kingdoms/stratholme/stratholme.cpp`, `stratholmeScripts.cpp`, `boss_baroness_anastari.cpp`, `boss_cannon_master_willey.cpp`, `boss_maleki_the_pallid.cpp`, `boss_dathrohan_balnazzar.cpp`, `stratholme.h`
+* Functions/ScriptNames: `instance_stratholme` (`DoSortZiggurats`, `ThazudinAcolyteJustDied`, `StartSlaughterSquare`, `DoScarletBastionDefense`, `Update`), `go_gauntlet_gate`, `go_service_gate`, `go_stratholme_postbox`, `npc_aurius`, `boss_baroness_anastari`, `boss_cannon_master_willey`, `boss_maleki_the_pallid`, `boss_dathrohan_balnazzar`, `mob_restless_soul`, `mobs_spectral_ghostly_citizen`
+
+## scripts/sunkentemple.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/eastern_kingdoms/sunken_temple/sunken_temple.cpp`, `sunken_templeScripts.cpp`, `sunken_temple.h`
+* Functions/ScriptNames: `instance_sunken_temple` (`ProcessStatueEvent`, `DoSpawnAtalarionIfCan`, `Update`), `event_antalarion_statue_activation`, `event_avatar_of_hakkar`, `go_eternal_flame`, `at_shade_of_eranikus`, `npc_malfurion_stormrage`, `spell_summon_hakkar`
+
 ## scripts/swamp.d
 
 * Projects: CMaNGOS
 * Files: `ScriptDevAI/scripts/eastern_kingdoms/swamp_of_sorrows.cpp`
 * Functions/ScriptNames: `npc_galen_goodward`
 
+## scripts/tanaris.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/kalimdor/tanaris.cpp`
+* Functions/ScriptNames: `mob_aquementas`, `npc_oox17tn`, `npc_tooga`
+
+## scripts/teldrassil.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/kalimdor/teldrassil.cpp`
+* Functions/ScriptNames: `npc_mist`
+
+## scripts/thousandneedles.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/kalimdor/thousand_needles.cpp`
+* Functions/ScriptNames: `npc_kanati`, `npc_lakota_windsong`, `npc_paoka_swiftmountain`, `npc_plucky_johnson`
+
 ## scripts/tirisfal.d
 
 * Projects: CMaNGOS
 * Files: `ScriptDevAI/scripts/eastern_kingdoms/tirisfal_glades.cpp`
 * Functions/ScriptNames: `go_mausoleum_door`, `go_mausoleum_trigger`, `npc_calvin_montague`
+
+## scripts/uldaman.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/eastern_kingdoms/uldaman/instance_uldaman.cpp`, `boss_archaedas.cpp`, `uldaman.h`
+* Functions/ScriptNames: `instance_uldaman` (`StartEvent`, `Update`, `GetClosestDwarfNotInCombat`), `event_spell_altar_boss_aggro`, `boss_archaedas`, `spell_awaken_vault_warder`, `spell_awaken_earthen_archaedas`
+
+## scripts/ungoro.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/kalimdor/ungoro_crater.cpp`
+* Functions/ScriptNames: `at_scent_larkorwi`, `npc_ame01`, `npc_ringo`, `npc_simone_the_inconspicuous`,
+  `npc_simone_seductress`, `npc_precious_the_devourer`
 
 ## scripts/westernplaguelands.d
 
@@ -244,6 +437,18 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Projects: CMaNGOS
 * Files: `ScriptDevAI/scripts/eastern_kingdoms/wetlands.cpp`
 * Functions/ScriptNames: `npc_mikhail`, `npc_tapoke_slim_jahn`
+
+## scripts/winterspring.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/kalimdor/winterspring.cpp`
+* Functions/ScriptNames: `npc_ranshalla`, `go_elune_fire`, `npc_artorius`
+
+## scripts/zulfarrak.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/kalimdor/zulfarrak/instance_zulfarrak.cpp`, `zulfarrak.cpp`, `boss_zumrah.cpp`, `zulfarrak.h`
+* Functions/ScriptNames: `instance_zulfarrak` (`Update`, `OnCreatureEnterCombat`, `OnCreatureEvade`), `event_go_zulfarrak_gong`, `event_spell_unlocking`, `at_zulfarrak`, `boss_zumrah`
 
 ## scripts/moltencore.d
 

@@ -13,6 +13,14 @@ import core.time : Duration;
 
 import dmangos.script;
 
+/// Where `who` is, as `ctx` sees it (`Location.init` if it is not here).
+private Location where(C)(ref C ctx, EntityRef who)
+{
+    Location at;
+    ctx.locationOf(who, at);
+    return at;
+}
+
 /// The copy's encounters (CMaNGOS's `TYPE_*`).
 enum ZgEncounter : ubyte
 {
@@ -107,7 +115,7 @@ struct ZulGurub
             jindo = e.creature;
             break;
         case npcPantherTrigger:
-            addTrigger(e.creature, copy.locationOf(e.creature).y);
+            addTrigger(e.creature, where(copy, e.creature).y);
             break;
         default:
             break;
@@ -199,7 +207,7 @@ struct ZulGurub
             if (side.length == 0)
                 continue;
             const from = side[(prowlersSent++) % side.length];
-            const prowler = copy.summon(npcZulianProwler, copy.locationOf(from), 0);
+            const prowler = copy.summon(npcZulianProwler, where(copy, from), 0);
             if (prowler)
                 copy.signal(prowler, ZgSignal.toAid, cast(int) from.guid);
         }
@@ -442,7 +450,7 @@ struct GurubashiBatRider
         bomber = true;
         me.reactState(Reaction.passive);
         me.flying(true);
-        me.unitFlags(UnitFlag.notSelectable, true);
+        me.unitFlags(UnitFlag.uninteractible, true);
         me.castSelf(liquidFire, true);
     }
 
@@ -451,7 +459,7 @@ struct GurubashiBatRider
         if (bomber)
             return;
         me.castSelf(demoralizingShout);
-        me.unitFlags(UnitFlag.notSelectable, false);
+        me.unitFlags(UnitFlag.uninteractible, false);
     }
 
     void on(ref CreatureContext me, const ref Damaged e)
@@ -564,7 +572,7 @@ private mixin template FakeDeath(ZgEncounter which)
     private void fall(ref CreatureContext me)
     {
         me.interrupt();
-        me.unitFlags(UnitFlag.notSelectable, true);
+        me.unitFlags(UnitFlag.uninteractible, true);
         me.standState(StandState.dead);
         me.castSelf(pacifySelf, true);
         me.combatMovement(false);
@@ -576,7 +584,7 @@ private mixin template FakeDeath(ZgEncounter which)
     /// Up again (only its look, with `onlyLook`).
     private void rise(ref CreatureContext me, bool onlyLook = false)
     {
-        me.unitFlags(UnitFlag.notSelectable, false);
+        me.unitFlags(UnitFlag.uninteractible, false);
         me.standState(StandState.stand);
         me.removeAura(me.self, pacifySelf);
         down = false;
@@ -644,9 +652,9 @@ struct Thekal
         if (!othersDown(me, ZgEncounter.zath, ZgEncounter.lorkhan))
             return false;
         EntityRef[1] z;
-        if (me.creaturesNear(npcZath, 150, z[]))
+        if (me.creaturesNearby(npcZath, 150, z[]))
             me.signal(z[0], ZgSignal.preventRevive);
-        if (me.creaturesNear(npcLorkhan, 150, z[]))
+        if (me.creaturesNearby(npcLorkhan, 150, z[]))
             me.signal(z[0], ZgSignal.preventRevive);
         return true;
     }
@@ -662,7 +670,7 @@ struct Thekal
             {
                 // The tiger's turn.
                 rise(me, true);
-                me.unitFlags(UnitFlag.notSelectable, true);
+                me.unitFlags(UnitFlag.uninteractible, true);
                 me.melee(false);
                 me.castSelf(resurrectVisual);
                 steps.after(Step.tiger, 5.seconds);
@@ -677,7 +685,7 @@ struct Thekal
             me.deathPrevention(false);
             me.melee(true);
             me.combatMovement(true);
-            me.unitFlags(UnitFlag.notSelectable, false);
+            me.unitFlags(UnitFlag.uninteractible, false);
             me.spellList(listPhase2);
             if (const victim = me.selectTarget(Pick.topThreat))
                 me.attack(victim);
@@ -689,7 +697,7 @@ struct Thekal
     {
         EntityRef[1] z;
         foreach (entry; [npcZath, npcLorkhan])
-            if (me.creaturesNear(entry, 150, z[]))
+            if (me.creaturesNearby(entry, 150, z[]))
                 me.signal(z[0], ZgSignal.evade);
     }
 
@@ -714,7 +722,7 @@ struct Thekal
         me.signalDungeon(ZgEncounter.thekal, EncounterState.done);
         EntityRef[1] z;
         foreach (entry; [npcZath, npcLorkhan])
-            if (me.creaturesNear(entry, 150, z[]))
+            if (me.creaturesNearby(entry, 150, z[]))
             {
                 me.sayAs(z[0], diesEmote);
                 me.despawn(z[0], 1000);
@@ -752,7 +760,7 @@ struct Zealot
             return;
         // Down, as its fellows: the copy knows which of them it is.
         me.interrupt();
-        me.unitFlags(UnitFlag.notSelectable, true);
+        me.unitFlags(UnitFlag.uninteractible, true);
         me.standState(StandState.dead);
         me.castSelf(deathOfLorkhan.pacifySelf, true);
         me.combatMovement(false);
@@ -831,7 +839,7 @@ struct Arlokk
         // Hidden: she forgets everyone, then picks her prey.
         me.resetThreat();
         me.melee(false);
-        me.unitFlags(UnitFlag.notSelectable, true);
+        me.unitFlags(UnitFlag.uninteractible, true);
         steps.after(Step.invisSelect, 10.seconds);
         steps.after(Step.invisEnd, 50.seconds);
     }
@@ -861,16 +869,16 @@ struct Arlokk
         case Step.invisSelect:
             if (const prey = me.selectTarget(Pick.random, PickFilter.player))
             {
-                me.teleport(me.locationOf(prey));
+                me.teleport(where(me, prey));
                 me.attack(prey);
             }
             me.removeAura(me.self, superInvis);
-            me.unitFlags(UnitFlag.notSelectable, false);
+            me.unitFlags(UnitFlag.uninteractible, false);
             me.melee(true);
             break;
         case Step.invisEnd:
             me.removeAura(me.self, superInvis);
-            me.unitFlags(UnitFlag.notSelectable, false);
+            me.unitFlags(UnitFlag.uninteractible, false);
             me.melee(true);
             break;
         }
@@ -880,7 +888,7 @@ struct Arlokk
     {
         steps.clear();
         panther = false;
-        me.unitFlags(UnitFlag.notSelectable, false);
+        me.unitFlags(UnitFlag.uninteractible, false);
         me.melee(true);
         me.spellList(listPhase1);
         me.signalDungeon(ZgEncounter.arlokk, EncounterState.failed);
@@ -934,7 +942,7 @@ struct ZulianProwler
         if (e.id != ZgSignal.toAid)
             return;
         EntityRef[41] others;
-        if (me.creaturesNear(npcZulianProwler, 200, others[]) > 40)
+        if (me.creaturesNearby(npcZulianProwler, 200, others[]) > 40)
             return me.despawn();
         me.moveTo(Location(arlokkWallShield[0], arlokkWallShield[1], arlokkWallShield[2]), 1, true);
     }
@@ -1036,11 +1044,11 @@ struct Mandokir
     {
         EntityRef best;
         float nearest = 50;
-        const at = me.locationOf(player);
+        const at = where(me, player);
         foreach (s; chained)
             if (s && me.alive(s))
             {
-                const there = me.locationOf(s);
+                const there = where(me, s);
                 const d = (there.x - at.x) ^^ 2 + (there.y - at.y) ^^ 2;
                 if (d < nearest * nearest)
                 {
@@ -1105,7 +1113,7 @@ struct Ohgan
         if (!e.victim.isPlayer)
             return;
         EntityRef[1] spirit;
-        if (me.creaturesNear(npcChainedSpirit, 50, spirit[]))
+        if (me.creaturesNearby(npcChainedSpirit, 50, spirit[]))
             me.castAs(spirit[0], Mandokir.revive, e.victim);
     }
 
@@ -1144,7 +1152,7 @@ struct Renataki
     {
         if (prey && me.alive(prey))
         {
-            me.teleport(me.locationOf(prey));
+            me.teleport(where(me, prey));
             me.attack(prey);
             me.castSelf(thrash, true);
         }
@@ -1314,7 +1322,7 @@ version (unittest)
         override void hostStandState(StandState s) { stand = s; }
         override void hostSetHealthPercent(EntityRef, uint p) { health = p; }
         override void hostMelee(bool on) { swings = on; }
-        override size_t hostCreaturesNear(uint entry, float, EntityRef[] into)
+        override size_t hostCreaturesNearby(uint entry, float, EntityRef[] into)
         {
             if (into.length == 0 || (entry != npcZath && entry != npcLorkhan))
                 return 0;
@@ -1345,7 +1353,7 @@ unittest
     assert(host.preventing && host.lists == [Thekal.listPhase1]);
     runtime.raise(h, me, EnteredCombat(EntityRef(7)));
     runtime.raise(h, me, Damaged(EntityRef(7), 5000, 3, 0));
-    assert(host.stand == StandState.dead && (host.flags & UnitFlag.notSelectable));
+    assert(host.stand == StandState.dead && (host.flags & UnitFlag.uninteractible));
     assert(host.states[ZgEncounter.thekal] == EncounterState.special);
     run(10_000);
     assert(host.stand == StandState.stand && host.health == 100 && host.preventing, "up again");
@@ -1356,7 +1364,7 @@ unittest
     runtime.raise(h, me, Damaged(EntityRef(7), 5000, 3, 0));
     assert(host.signals.canFind!(s => s.id == ZgSignal.preventRevive), "the Zealots stay down");
     run(1000);
-    assert(!host.swings && (host.flags & UnitFlag.notSelectable), "rising");
+    assert(!host.swings && (host.flags & UnitFlag.uninteractible), "rising");
     run(5000);
     assert(host.casts.canFind(Thekal.tigerForm) && !host.preventing && host.lists[$ - 1] == Thekal.listPhase2);
     runtime.raise(h, me, Died(EntityRef(7)));
@@ -1381,8 +1389,8 @@ version (unittest)
             opened[door.guid] = open;
             return ActionResult.ok;
         }
-        override Location hostLocationOf(EntityRef who) { return Location(0, (who.guid & 1) ? -1650 : -1605, 41); }
-        override EntityRef hostSummon(uint entry, Location, uint)
+        override bool hostLocationOf(EntityRef who, out Location at) { at = Location(0, (who.guid & 1) ? -1650 : -1605, 41); return true; }
+        override EntityRef hostSummon(uint entry, Location, uint, EntityRef)
         {
             summoned ~= EntityRef(0xF130_0000_0000_0100UL | (ulong(entry) << 24) | summoned.length);
             return summoned[$ - 1];

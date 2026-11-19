@@ -198,9 +198,9 @@ the spell modifiers most talents are, unlearning them at a class trainer. The au
 use for stats and combat: crit, dodge, parry, block and hit chances; percentages of stats, health, power,
 armor and resistances, attack power and the off hand's damage (`stats.d`); weapon and defense skill
 bonuses; damage done and taken by school and by creature type, crit by creature type, threat
-(`combat.d`'s `DamageMods`); the five-second rule and Meditation. Not yet: charges, mechanic
-resistance, spell power from a share of a stat, `overrideClassScripts` (each talent its own), procs on
-the target.
+(`combat.d`'s `DamageMods`); the five-second rule and Meditation; resistance to a mechanic; spell power
+from spirit (Spiritual Guidance); shield block value; lowering the target's resistances. Not yet:
+charges, `overrideClassScripts` (each talent its own), procs on the target.
 
 ### Mail
 

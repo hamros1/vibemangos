@@ -736,6 +736,318 @@ unittest
 }
 
 /**
+ * Kalimdor scripts in the world (`npc_twiggy_flathead`, `npc_mist`): summons made friendly, one set
+ * on the player with a hostile faction, its death told to its summoner (the next comes sooner); a
+ * follower following its player; an item given.
+ */
+unittest
+{
+    import dmangos.dbc : buildDbc;
+    import dmangos.script.api : EntityRef;
+    import dmangos.scripts.barrens : TwiggyFlathead;
+    import dmangos.scripts.teldrassil : Mist;
+    import dmangos.world.clientdata : factionTemplateFormat;
+    import dmangos.world.motion : FollowMovement;
+    import dmangos.world.quests : Quest, QuestState;
+    import dmangos.world.teleport : moveTo;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    enum uint mist = 3568;
+    foreach (entry; [TwiggyFlathead.twiggy, TwiggyFlathead.challenger, TwiggyFlathead.bigWill, mist])
+    {
+        auto t = cast() context.data.creatureTemplates[creatureInnkeeper];
+        t.entry = entry;
+        context.data.creatureTemplates[entry] = t;
+    }
+    context.data.creatureScriptNames[TwiggyFlathead.twiggy] = "npc_twiggy_flathead";
+    context.data.creatureScriptNames[mist] = "npc_mist";
+    (cast() context.data.creatureTemplates[mist]).npcFlags = 2; // a quest giver
+    Quest q = {id: Mist.questMist, method: 2, maxLevel: 60, title: "Mist"};
+    q.specialFlags = 0x2;
+    context.data.quests.quests[q.id] = q;
+    context.data.quests.creatureStarts[mist] = [q.id];
+
+    const at = Position(-1690, -4330, 2.79f); // by the arena (on the test world's one map)
+    auto hero = loggedIn(context, db, 7, "Varian", at, AccountLevel.player, raceHuman, mapEasternKingdoms, 30);
+    hero.read();
+    enum uint players = 1, monsters = 8;
+    const humans = hero.session.character.values.get!UNIT_FIELD_FACTIONTEMPLATE;
+    context.client.factionTemplates = typeof(context.client.factionTemplates).parse(buildDbc(factionTemplateFormat,
+        [[humans, 1, 0, players | 2, 2, monsters, 0, 0, 0, 0, 0, 0, 0, 0],
+        [14u, 14, 0, monsters, 0, players, 0, 0, 0, 0, 0, 0, 0, 0],
+        [35u, 35, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        [79u, 79, 0, players | 2, 2, monsters, 0, 0, 0, 0, 0, 0, 0, 0]]), "FactionTemplate.dbc");
+    auto map = context.map(mapEasternKingdoms);
+    void run(int ms)
+    {
+        for (; ms > 0; ms -= 250)
+        {
+            now += 250.msecs;
+            context.update(now);
+        }
+    }
+
+    // Twiggy: six challengers come, friendly; the first is set on the player.
+    CreatureSpawn spawn = {guid: 90040, entry: TwiggyFlathead.twiggy, map: mapEasternKingdoms, x: at.x + 3, y: at.y, z: at.z};
+    auto twiggy = context.makeCreature(&spawn);
+    map.addObject(twiggy);
+    twiggy.ai.signalled(EntityRef(hero.session.character.guid), TwiggyFlathead.signalStart, 0, map);
+    run(1500);
+    Creature[] challengers;
+    foreach (c; map.creaturesNear(Position(-1680, -4330, 2.79f), 30)) // the arena's places
+        if (c.spawn.entry == TwiggyFlathead.challenger)
+            challengers ~= c;
+    assert(challengers.length == 6, "the challengers come");
+    foreach (c; challengers)
+        assert(c.values.get!UNIT_FIELD_FACTIONTEMPLATE == 35 && c.summon.summoner == twiggy.guid);
+    run(5000);
+    Creature[] fighting()
+    {
+        Creature[] found;
+        foreach (c; challengers)
+            if (c.alive && c.ai.inCombat)
+                found ~= c;
+        return found;
+    }
+    assert(fighting.length == 1 && fighting[0].ai.currentVictim == hero.session.character.guid
+        && fighting[0].values.get!UNIT_FIELD_FACTIONTEMPLATE == 14, "the first steps up");
+    // It falls: Twiggy hears of it, and the next steps up fifteen seconds later (not twenty-five).
+    fighting[0].die(map, context.unixTime);
+    run(16_000);
+    assert(fighting.length == 1, "the next, sooner");
+
+    // Mist: her quest taken, she follows the player with her faction.
+    CreatureSpawn mistSpawn = {guid: 90041, entry: mist, map: mapEasternKingdoms, x: at.x - 3, y: at.y, z: at.z};
+    auto cub = context.makeCreature(&mistSpawn);
+    map.addObject(cub);
+    ByteWriter accept;
+    accept.put(cub.guid);
+    accept.put(q.id);
+    hero.write(Opcode.CMSG_QUESTGIVER_ACCEPT_QUEST, accept.data);
+    assert(hero.session.character.questStatus[q.id].status == QuestState.incomplete);
+    assert(cast(FollowMovement) cub.generator !is null && cub.values.get!UNIT_FIELD_FACTIONTEMPLATE == 79);
+    assert(cub.values.get!UNIT_NPC_FLAGS == 0, "nobody else takes her");
+    // The player gone far away: she goes, and the quest fails.
+    hero.write(Opcode.MSG_MOVE_HEARTBEAT, moveTo(Position(at.x + 150, at.y, at.z)));
+    run(2000);
+    assert(hero.session.character.questStatus[q.id].status == QuestState.failed && map.findObject(cub.guid) is null);
+}
+
+/**
+ * Dungeon scripts' own hooks in the world: Tuten'kash's gong (here in the test world's dungeon) is a
+ * goober whose event reaches the copy's script; it summons the first wave on the one who rang it and
+ * the gong cannot be rung again while the wave lives.
+ */
+unittest
+{
+    import dmangos.scripts.razorfendowns : gong, gongEvent, tombFiend;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    const gongAt = Position(-16, -385, 61);
+    auto t = GameObjectTemplate.init;
+    t.entry = gong;
+    t.type = 10; // a goober
+    t.displayId = 411;
+    t.name = "Gong";
+    t.data[2] = gongEvent;
+    context.data.gameObjectTemplates[gong] = t;
+    context.data.gameObjectSpawns ~= GameObjectSpawn(90200, gong, mapDeadmines, gongAt.x, gongAt.y, gongAt.z);
+    context.data.gameObjectCells[mapDeadmines][cellKeyAt(gongAt.x, gongAt.y)] ~= context.data.gameObjectSpawns.length - 1;
+    auto fiend = cast() context.data.creatureTemplates[creatureInnkeeper];
+    fiend.entry = tombFiend;
+    context.data.creatureTemplates[tombFiend] = fiend;
+    context.data.instanceScriptNames[mapDeadmines] = "instance_razorfen_downs";
+
+    const outside = Position(deadminesEntrance[0], deadminesEntrance[1], deadminesEntrance[2]);
+    auto hero = loggedIn(context, db, 7, "Varian", outside, AccountLevel.administrator, raceHuman, mapEasternKingdoms, 60);
+    hero.say(".worldport 36 -16 -383 61");
+    hero.write(Opcode.MSG_MOVE_WORLDPORT_ACK, null);
+    hero.read();
+    auto map = context.instanceMap(hero.session.inWorld.instanceId);
+    auto theGong = cast(GameObject) map.findObject(makeDoorGuid(gong, 90200));
+    assert(theGong !is null);
+    size_t fiends()
+    {
+        size_t n;
+        foreach (c; map.creaturesNear(Position(2500, 850, 45), 200))
+            n += c.spawn.entry == tombFiend && c.alive;
+        return n;
+    }
+
+    hero.session.inWorld.useGameObject(theGong);
+    assert(fiends == 8, "the first wave");
+    assert(theGong.values.get!GAMEOBJECT_FLAGS & 0x10, "the gong is silent while they live");
+}
+
+/**
+ * A dungeon script's own timer and its actions on the copy's creatures, in the world: the Altar of
+ * the Keepers (here in the test world's dungeon) is used; five seconds later the first Stone Keeper
+ * is woken by the copy's script and attacks the one who used it.
+ */
+unittest
+{
+    import dmangos.scripts.uldaman : keepersAltar, stoneKeeper;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    const at = Position(-20, -383, 61);
+    auto t = cast() context.data.creatureTemplates[creatureInnkeeper];
+    t.entry = stoneKeeper;
+    t.npcFlags = 0;
+    context.data.creatureTemplates[stoneKeeper] = t;
+    context.data.creatureSpawns ~= CreatureSpawn(90300, stoneKeeper, mapDeadmines, at.x, at.y, at.z);
+    context.data.creatureCells[mapDeadmines][cellKeyAt(at.x, at.y)] ~= context.data.creatureSpawns.length - 1;
+    context.data.instanceScriptNames[mapDeadmines] = "instance_uldaman";
+
+    const outside = Position(deadminesEntrance[0], deadminesEntrance[1], deadminesEntrance[2]);
+    auto hero = loggedIn(context, db, 7, "Varian", outside, AccountLevel.administrator, raceHuman, mapEasternKingdoms, 60);
+    hero.say(".worldport 36 -16 -383 61");
+    hero.write(Opcode.MSG_MOVE_WORLDPORT_ACK, null);
+    hero.say(".cheat god");
+    hero.read();
+    auto map = context.instanceMap(hero.session.inWorld.instanceId);
+    auto keeper = cast(Creature) map.findObject(makeCreatureGuid(stoneKeeper, 90300));
+    assert(keeper !is null && !keeper.ai.inCombat);
+
+    context.scriptedEvent(keepersAltar, map, hero.session.character.guid, 0);
+    foreach (_; 0 .. 12) // three seconds: not yet
+    {
+        now += 250.msecs;
+        context.update(now);
+    }
+    assert(!keeper.ai.inCombat);
+    foreach (_; 0 .. 12)
+    {
+        now += 250.msecs;
+        context.update(now);
+    }
+    assert(keeper.ai.inCombat, "the keeper wakes and attacks");
+}
+
+/**
+ * Signals between a dungeon's script and its objects' scripts, in the world: a Fire of Aku'mai (here
+ * in the test world's dungeon) cannot be lit while Kelris lives; his death is told to the fire by the
+ * copy's script, and lit then, it calls the first wave.
+ */
+unittest
+{
+    import dmangos.scripts.blackfathomdeeps : akumaiSnapjaw, kelris, shrine1;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    const fireAt = Position(-16, -385, 61), kelrisAt = Position(-24, -383, 61);
+    auto fire = GameObjectTemplate.init;
+    fire.entry = shrine1;
+    fire.type = 1; // a button
+    fire.displayId = 411;
+    fire.name = "Fire of Aku'mai";
+    context.data.gameObjectTemplates[shrine1] = fire;
+    context.data.gameObjectSpawns ~= GameObjectSpawn(90400, shrine1, mapDeadmines, fireAt.x, fireAt.y, fireAt.z);
+    context.data.gameObjectCells[mapDeadmines][cellKeyAt(fireAt.x, fireAt.y)] ~= context.data.gameObjectSpawns.length - 1;
+    context.data.gameObjectScriptNames[shrine1] = "go_fire_of_akumai";
+    foreach (entry; [kelris, akumaiSnapjaw])
+    {
+        auto t = cast() context.data.creatureTemplates[creatureInnkeeper];
+        t.entry = entry;
+        t.npcFlags = 0;
+        context.data.creatureTemplates[entry] = t;
+    }
+    context.data.creatureSpawns ~= CreatureSpawn(90401, kelris, mapDeadmines, kelrisAt.x, kelrisAt.y, kelrisAt.z);
+    context.data.creatureCells[mapDeadmines][cellKeyAt(kelrisAt.x, kelrisAt.y)] ~= context.data.creatureSpawns.length - 1;
+    context.data.instanceScriptNames[mapDeadmines] = "instance_blackfathom_deeps";
+
+    const outside = Position(deadminesEntrance[0], deadminesEntrance[1], deadminesEntrance[2]);
+    auto hero = loggedIn(context, db, 7, "Varian", outside, AccountLevel.administrator, raceHuman, mapEasternKingdoms, 60);
+    hero.say(".worldport 36 -16 -383 61");
+    hero.write(Opcode.MSG_MOVE_WORLDPORT_ACK, null);
+    hero.say(".cheat god");
+    hero.read();
+    auto map = context.instanceMap(hero.session.inWorld.instanceId);
+    auto theFire = cast(GameObject) map.findObject(makeDoorGuid(shrine1, 90400));
+    auto boss = cast(Creature) map.findObject(makeCreatureGuid(kelris, 90401));
+    assert(theFire !is null && boss !is null && theFire.goState == 1);
+    size_t snapjaws()
+    {
+        size_t n;
+        foreach (c; map.creaturesNear(Position(-818, -160, -26), 100))
+            n += c.spawn.entry == akumaiSnapjaw && c.alive;
+        return n;
+    }
+    void run(int seconds)
+    {
+        foreach (_; 0 .. seconds * 4)
+        {
+            now += 250.msecs;
+            context.update(now);
+        }
+    }
+
+    hero.session.inWorld.useGameObject(theFire);
+    run(5);
+    assert(theFire.goState == 1 && snapjaws == 0, "not while Kelris lives");
+    boss.die(map, context.unixTime);
+    context.creatureDied(boss);
+    hero.session.inWorld.useGameObject(theFire);
+    run(5);
+    assert(theFire.goState == 0 && snapjaws == 3, "lit: the first wave comes");
+}
+
+/**
+ * A dungeon script hears its creatures' fights, in the world: Kirtonos the Herald (here in the test
+ * world's dungeon) attacked, his gate shuts; he gives up, and it opens again.
+ */
+unittest
+{
+    import dmangos.scripts.scholomance : gateKirtonos, kirtonos;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    const gateAt = Position(-16, -385, 61), bossAt = Position(-20, -383, 61);
+    auto gate = GameObjectTemplate.init;
+    gate.entry = gateKirtonos;
+    gate.displayId = 411;
+    gate.name = "Gate";
+    gate.data[0] = 1; // open until a fight shuts it
+    context.data.gameObjectTemplates[gateKirtonos] = gate;
+    context.data.gameObjectSpawns ~= GameObjectSpawn(90500, gateKirtonos, mapDeadmines, gateAt.x, gateAt.y, gateAt.z);
+    context.data.gameObjectCells[mapDeadmines][cellKeyAt(gateAt.x, gateAt.y)] ~= context.data.gameObjectSpawns.length - 1;
+    auto t = cast() context.data.creatureTemplates[creatureInnkeeper];
+    t.entry = kirtonos;
+    t.npcFlags = 0;
+    context.data.creatureTemplates[kirtonos] = t;
+    context.data.creatureSpawns ~= CreatureSpawn(90501, kirtonos, mapDeadmines, bossAt.x, bossAt.y, bossAt.z);
+    context.data.creatureCells[mapDeadmines][cellKeyAt(bossAt.x, bossAt.y)] ~= context.data.creatureSpawns.length - 1;
+    context.data.instanceScriptNames[mapDeadmines] = "instance_scholomance";
+
+    const outside = Position(deadminesEntrance[0], deadminesEntrance[1], deadminesEntrance[2]);
+    auto hero = loggedIn(context, db, 7, "Varian", outside, AccountLevel.administrator, raceHuman, mapEasternKingdoms, 60);
+    hero.say(".worldport 36 -16 -383 61");
+    hero.write(Opcode.MSG_MOVE_WORLDPORT_ACK, null);
+    hero.read();
+    auto map = context.instanceMap(hero.session.inWorld.instanceId);
+    auto theGate = cast(GameObject) map.findObject(makeDoorGuid(gateKirtonos, 90500));
+    auto boss = cast(Creature) map.findObject(makeCreatureGuid(kirtonos, 90501));
+    assert(theGate !is null && boss !is null);
+    boss.ai.attackedBy(hero.session.inWorld.unit, map);
+    assert(boss.ai.inCombat && theGate.goState == 1, "the fight shuts the gate");
+    // The fight given up (as `enterEvadeMode` tells it).
+    import dmangos.script.api : EntityRef;
+
+    context.dungeonFight(map.instanceId, EntityRef(boss.guid), EntityRef.init);
+    assert(theGate.goState == 0, "given up: open again");
+}
+
+/**
  * A raid's copy script in the real world (Molten Core's, here on the test world's dungeon): a player
  * entering is told to it; the runes doused, Majordomo and his eight guards are summoned onto the copy's
  * map (each summon told to the script as it loads), and the copy answers its creatures' questions.

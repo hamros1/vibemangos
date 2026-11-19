@@ -15,6 +15,14 @@ import core.time : Duration;
 
 import dmangos.script;
 
+/// Where `who` is, as `ctx` sees it (`Location.init` if it is not here).
+private Location where(C)(ref C ctx, EntityRef who)
+{
+    Location at;
+    ctx.locationOf(who, at);
+    return at;
+}
+
 /// The copy's encounters (CMaNGOS's `TYPE_*`).
 enum BwlEncounter : ubyte
 {
@@ -418,7 +426,7 @@ struct BlackwingLair
             const nefarian = copy.summon(npcNefarian, nefarianLocs[2], 0);
             if (nefarius && copy.alive(nefarius))
             {
-                copy.castAs(nefarius, 22_681, nefarius); // Shadowblink
+                copy.castSpell(nefarius, 22_681, nefarius); // Shadowblink
                 copy.despawn(nefarius, 2500);
             }
             if (nefarian)
@@ -460,7 +468,7 @@ struct BlackwingLair
             }
             if (!entry)
                 continue;
-            const made = copy.summon(entry, copy.locationOf(generator), 0);
+            const made = copy.summon(entry, where(copy, generator), 0);
             if (!made)
                 continue;
             remember(defenders[], made);
@@ -617,7 +625,7 @@ struct BlackwingOrb
     void on(ref CreatureContext me, Step step)
     {
         EntityRef[1] grethok;
-        if (me.creaturesNear(npcGrethok, 10, grethok[]))
+        if (me.creaturesNearby(npcGrethok, 10, grethok[]))
         {
             me.castSelf(possessVisual, true);
             me.castAs(grethok[0], controlOrb, grethok[0], true);
@@ -1074,7 +1082,7 @@ struct VictorNefarius
         if (e.id == BwlSignal.nefariusLine)
         {
             corrupter = true;
-            me.unitFlags(UnitFlag.notSelectable, true);
+            me.unitFlags(UnitFlag.uninteractible, true);
             me.say(e.value);
         }
     }
@@ -1150,7 +1158,7 @@ struct VictorNefarius
                 me.castSelf(nefariusBarrier, true);
                 me.castSelf(shadowblink);
                 me.unitFlags(UnitFlag.immuneToPlayer, false);
-                me.unitFlags(UnitFlag.notSelectable, true);
+                me.unitFlags(UnitFlag.uninteractible, true);
                 me.combatMovement(false);
                 me.zoneCombat();
             }
@@ -1184,7 +1192,7 @@ struct VictorNefarius
             return;
         me.npcFlags(1);
         me.setFaction(0);
-        me.unitFlags(UnitFlag.notSelectable, false);
+        me.unitFlags(UnitFlag.uninteractible, false);
         me.combatMovement(true);
         me.signalDungeon(BwlEncounter.nefarian, EncounterState.failed);
     }
@@ -1295,7 +1303,7 @@ struct Nefarian
             me.reactState(Reaction.aggressive);
             me.removeAura(me.self, speedBurst);
             me.combatMovement(true);
-            me.unitFlags(UnitFlag.notSelectable, false);
+            me.unitFlags(UnitFlag.uninteractible, false);
             me.zoneCombat();
             if (const target = me.selectTarget(Pick.random))
                 me.attack(target);
@@ -1376,12 +1384,12 @@ version (unittest)
             opened[door.guid] = open;
             return ActionResult.ok;
         }
-        override EntityRef hostSummon(uint entry, Location, uint)
+        override EntityRef hostSummon(uint entry, Location, uint, EntityRef)
         {
             summoned ~= EntityRef(0xF130_0000_0000_0100UL | (ulong(entry) << 24) | summoned.length);
             return summoned[$ - 1];
         }
-        override ActionResult hostDespawnCreature(EntityRef c, uint) { despawned ~= c; return ActionResult.ok; }
+        override ActionResult hostDespawn(EntityRef c, uint) { despawned ~= c; return ActionResult.ok; }
         override ActionResult hostDespawnObject(EntityRef o) { objectsGone ~= o; return ActionResult.ok; }
         override ActionResult hostSay(EntityRef, int text, EntityRef) { said ~= text; return ActionResult.ok; }
     }

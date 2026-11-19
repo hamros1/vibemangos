@@ -17,6 +17,14 @@ import core.time : Duration;
 
 import dmangos.script;
 
+/// Where `who` is, as `ctx` sees it (`Location.init` if it is not here).
+private Location where(C)(ref C ctx, EntityRef who)
+{
+    Location at;
+    ctx.locationOf(who, at);
+    return at;
+}
+
 /// The copy's encounters (CMaNGOS's `TYPE_*`).
 enum NaxxEncounter : ubyte
 {
@@ -538,7 +546,7 @@ struct Maexxna
         frenzied = false;
         EntityRef[24] adds;
         foreach (entry; [npcSpiderling, npcWebWrap])
-            foreach (a; adds[0 .. me.creaturesNear(entry, 150, adds[])])
+            foreach (a; adds[0 .. me.creaturesNearby(entry, 150, adds[])])
                 me.despawn(a);
     }
 
@@ -560,7 +568,7 @@ struct Maexxna
             if (const target = me.selectTarget(Pick.random, PickFilter.player | PickFilter.notVictim))
             {
                 me.castSpell(webWrapStun, target, true);
-                if (const wrap = me.summon(npcWebWrap, me.locationOf(target)))
+                if (const wrap = me.summon(npcWebWrap, where(me, target)))
                     me.signal(wrap, NaxxSignal.webWrapped, cast(int)(target.guid & 0x7FFF_FFFF));
             }
             steps.after(step, 40.seconds);
@@ -656,13 +664,13 @@ struct Noth
     {
         balconyVisits = 0;
         onBalcony = false;
-        me.unitFlags(UnitFlag.notSelectable, false);
+        me.unitFlags(UnitFlag.uninteractible, false);
         me.removeAura(me.self, immuneAll);
         me.rooted(false);
         me.melee(true);
         EntityRef[32] adds;
         foreach (entry; [npcPlaguedWarrior, npcPlaguedChampion, npcPlaguedGuardian])
-            foreach (a; adds[0 .. me.creaturesNear(entry, 200, adds[])])
+            foreach (a; adds[0 .. me.creaturesNearby(entry, 200, adds[])])
                 me.despawn(a);
     }
 
@@ -672,7 +680,7 @@ struct Noth
         foreach (_; 0 .. count)
             if (const target = me.selectTarget(Pick.random, PickFilter.player))
             {
-                const l = me.locationOf(target);
+                const l = where(me, target);
                 me.summon(entry, Location(l.x + me.random(10) - 5.0f, l.y + me.random(10) - 5.0f, l.z), 0, target);
             }
     }
@@ -706,7 +714,7 @@ struct Noth
                 steps.cancel(s);
             me.teleport(balcony);
             me.castSelf(immuneAll, true);
-            me.unitFlags(UnitFlag.notSelectable, true);
+            me.unitFlags(UnitFlag.uninteractible, true);
             me.melee(false);
             me.rooted(true);
             steps.after(Step.waves, 10.seconds);
@@ -725,7 +733,7 @@ struct Noth
             steps.cancel(Step.waves);
             me.teleport(ground);
             me.removeAura(me.self, immuneAll);
-            me.unitFlags(UnitFlag.notSelectable, false);
+            me.unitFlags(UnitFlag.uninteractible, false);
             me.rooted(false);
             me.melee(true);
             me.resetThreat();
@@ -825,7 +833,7 @@ struct DiseasedMaggot
     void on(ref CreatureContext me, Step step)
     {
         EntityRef[1] trigger;
-        if (me.creaturesNear(npcWorldTrigger, 45, trigger[]))
+        if (me.creaturesNearby(npcWorldTrigger, 45, trigger[]))
             me.evade();
     }
 
@@ -862,7 +870,7 @@ struct Loatheb
     {
         enraged = false;
         EntityRef[16] spores;
-        foreach (s; spores[0 .. me.creaturesNear(npcSpore, 100, spores[])])
+        foreach (s; spores[0 .. me.creaturesNearby(npcSpore, 100, spores[])])
             me.despawn(s);
     }
 
@@ -961,7 +969,7 @@ struct Gothik
     void engaged(ref CreatureContext me, const ref EnteredCombat e)
     {
         me.castSelf(immuneAll, true);
-        me.unitFlags(UnitFlag.notSelectable, true);
+        me.unitFlags(UnitFlag.uninteractible, true);
         me.rooted(true);
         me.melee(false);
         speechStep = 0;
@@ -976,12 +984,12 @@ struct Gothik
     void reset(ref CreatureContext me)
     {
         me.removeAura(me.self, immuneAll);
-        me.unitFlags(UnitFlag.notSelectable, false);
+        me.unitFlags(UnitFlag.uninteractible, false);
         me.rooted(false);
         me.melee(true);
         EntityRef[40] adds;
         foreach (entry; [npcUnrelentingTrainee, npcUnrelentingKnight, npcUnrelentingRider])
-            foreach (a; adds[0 .. me.creaturesNear(entry, 200, adds[])])
+            foreach (a; adds[0 .. me.creaturesNearby(entry, 200, adds[])])
                 me.despawn(a);
     }
 
@@ -989,11 +997,11 @@ struct Gothik
     private void wave(ref CreatureContext me, uint entry, uint count)
     {
         EntityRef[13] anchors;
-        const n = me.creaturesNear(npcSubBossTrigger, 120, anchors[]);
+        const n = me.creaturesNearby(npcSubBossTrigger, 120, anchors[]);
         foreach (i; 0 .. count)
         {
             const target = me.selectTarget(Pick.random, PickFilter.player);
-            const at = n ? me.locationOf(anchors[me.random(cast(uint) n)]) : me.locationOf(target);
+            const at = n ? where(me, anchors[me.random(cast(uint) n)]) : where(me, target);
             me.summon(entry, at, 0, target);
         }
     }
@@ -1026,7 +1034,7 @@ struct Gothik
                 steps.cancel(s);
             me.sayText(sayTeleport);
             me.removeAura(me.self, immuneAll);
-            me.unitFlags(UnitFlag.notSelectable, false);
+            me.unitFlags(UnitFlag.uninteractible, false);
             me.rooted(false);
             me.melee(true);
             me.teleport(sides[side]);
@@ -1082,7 +1090,7 @@ private mixin template Horseman(uint mark, uint special, uint spirit, uint aggro
         foreach (other; [npcMograine, npcZeliek, npcThane, npcBlaumeux])
         {
             EntityRef[1] h;
-            if (other != me.self.entry && me.creaturesNear(other, 200, h[]))
+            if (other != me.self.entry && me.creaturesNearby(other, 200, h[]))
                 me.attack(h[0], e.enemy);
         }
     }
@@ -1283,7 +1291,7 @@ struct Grobbulus
     {
         EntityRef[24] adds;
         foreach (entry; [npcFalloutSlime, npcGrobbulusCloud])
-            foreach (a; adds[0 .. me.creaturesNear(entry, 150, adds[])])
+            foreach (a; adds[0 .. me.creaturesNearby(entry, 150, adds[])])
                 me.despawn(a);
     }
 
@@ -1303,14 +1311,14 @@ struct Grobbulus
             break;
         case Step.cloudAtVictim:
             if (injected && me.alive(injected))
-                me.summon(npcGrobbulusCloud, me.locationOf(injected), 60_000);
+                me.summon(npcGrobbulusCloud, where(me, injected), 60_000);
             injected = EntityRef.init;
             break;
         case Step.spray:
             if (me.castSelf(slimeSpray) == ActionResult.ok)
             {
                 if (const v = me.victim)
-                    me.summon(npcFalloutSlime, me.locationOf(v), 0, me.selectTarget(Pick.random, PickFilter.player));
+                    me.summon(npcFalloutSlime, where(me, v), 0, me.selectTarget(Pick.random, PickFilter.player));
                 steps.after(step, between(me, 30_000, 33_000));
             }
             else
@@ -1367,7 +1375,7 @@ struct Gluth
     void reset(ref CreatureContext me)
     {
         EntityRef[40] chows;
-        foreach (c; chows[0 .. me.creaturesNear(npcZombieChow, 200, chows[])])
+        foreach (c; chows[0 .. me.creaturesNearby(npcZombieChow, 200, chows[])])
             me.despawn(c);
     }
 
@@ -1378,9 +1386,9 @@ struct Gluth
         case Step.chow:
             // A zombie chow from one of the doors.
             EntityRef[12] doorsNear;
-            const n = me.creaturesNear(npcWorldTrigger, 120, doorsNear[]);
+            const n = me.creaturesNearby(npcWorldTrigger, 120, doorsNear[]);
             if (n)
-                me.summon(npcZombieChow, me.locationOf(doorsNear[me.random(cast(uint) n)]), 0,
+                me.summon(npcZombieChow, where(me, doorsNear[me.random(cast(uint) n)]), 0,
                     me.selectTarget(Pick.random, PickFilter.player));
             steps.after(step, 6.seconds);
             break;
@@ -1392,7 +1400,7 @@ struct Gluth
             {
                 // Every chow brought low; they crawl to him.
                 EntityRef[40] chows;
-                foreach (c; chows[0 .. me.creaturesNear(npcZombieChow, 200, chows[])])
+                foreach (c; chows[0 .. me.creaturesNearby(npcZombieChow, 200, chows[])])
                 {
                     me.setHealthPercent(5, c);
                     me.moveCreature(c, me.location, 0);
@@ -1421,7 +1429,7 @@ struct Gluth
         case Step.eat:
             // Chows that reach him are eaten: five percent of his health each.
             EntityRef[8] near;
-            foreach (c; near[0 .. me.creaturesNear(npcZombieChow, 6, near[])])
+            foreach (c; near[0 .. me.creaturesNearby(npcZombieChow, 6, near[])])
             {
                 me.sayText(emoteDevours);
                 me.despawn(c);
@@ -1456,7 +1464,7 @@ private mixin template ThaddiusAdd(uint other, uint warstompOrPull, uint aggro, 
         me.sayText(aggro);
         steps.after(Step.ability, between(me, 10_000, 15_000));
         EntityRef[1] o;
-        if (me.creaturesNear(other, 200, o[]))
+        if (me.creaturesNearby(other, 200, o[]))
             me.attack(o[0], e.enemy);
     }
 
@@ -1472,12 +1480,12 @@ private mixin template ThaddiusAdd(uint other, uint warstompOrPull, uint aggro, 
             return;
         down = true;
         me.standState(StandState.dead);
-        me.unitFlags(UnitFlag.notSelectable, true);
+        me.unitFlags(UnitFlag.uninteractible, true);
         me.melee(false);
         me.combatMovement(false);
         steps.clear();
         EntityRef[1] o;
-        if (me.creaturesNear(other, 200, o[]))
+        if (me.creaturesNearby(other, 200, o[]))
             me.signal(o[0], NaxxSignal.addFell);
         steps.after(Step.rise, 5.seconds);
     }
@@ -1490,7 +1498,7 @@ private mixin template ThaddiusAdd(uint other, uint warstompOrPull, uint aggro, 
         steps.clear();
         me.signalDungeon(NaxxEncounter.thaddius, EncounterState.special);
         EntityRef[1] o;
-        if (me.creaturesNear(other, 200, o[]))
+        if (me.creaturesNearby(other, 200, o[]))
             me.signal(o[0], NaxxSignal.addsDone);
         me.sayText(death);
         me.deathPrevention(false);
@@ -1508,7 +1516,7 @@ private mixin template ThaddiusAdd(uint other, uint warstompOrPull, uint aggro, 
             // Alone too long: it rises again.
             down = false;
             me.standState(StandState.stand);
-            me.unitFlags(UnitFlag.notSelectable, false);
+            me.unitFlags(UnitFlag.uninteractible, false);
             me.melee(true);
             me.combatMovement(true);
             me.setHealthPercent(100);
@@ -1524,7 +1532,7 @@ private mixin template ThaddiusAdd(uint other, uint warstompOrPull, uint aggro, 
         steps.clear();
         down = false;
         me.standState(StandState.stand);
-        me.unitFlags(UnitFlag.notSelectable, false);
+        me.unitFlags(UnitFlag.uninteractible, false);
         me.melee(true);
         me.combatMovement(true);
         me.signalDungeon(NaxxEncounter.thaddius, EncounterState.failed);
@@ -1568,7 +1576,7 @@ struct Thaddius
     {
         if (me.askDungeon(NaxxEncounter.thaddius) != EncounterState.special)
         {
-            me.unitFlags(UnitFlag.notSelectable | UnitFlag.immuneToPlayer, true);
+            me.unitFlags(UnitFlag.uninteractible | UnitFlag.immuneToPlayer, true);
             me.reactState(Reaction.passive);
         }
     }
@@ -1594,7 +1602,7 @@ struct Thaddius
         case Step.wake:
             awake = true;
             me.castSelf(spawn, true);
-            me.unitFlags(UnitFlag.notSelectable | UnitFlag.immuneToPlayer, false);
+            me.unitFlags(UnitFlag.uninteractible | UnitFlag.immuneToPlayer, false);
             me.reactState(Reaction.aggressive);
             me.zoneCombat();
             break;
@@ -1799,7 +1807,7 @@ struct Kelthuzad
         phase = 1;
         me.sayText(saySummonMinions);
         me.castSelf(channelVisual, true);
-        me.unitFlags(UnitFlag.notSelectable, true);
+        me.unitFlags(UnitFlag.uninteractible, true);
         me.rooted(true);
         me.melee(false);
         steps.after(Step.soldiers, 5.seconds);
@@ -1812,10 +1820,10 @@ struct Kelthuzad
     private void fromAlcove(ref CreatureContext me, uint entry)
     {
         EntityRef[12] alcoves;
-        const n = me.creaturesNear(npcWorldTrigger, 120, alcoves[]);
+        const n = me.creaturesNearby(npcWorldTrigger, 120, alcoves[]);
         if (!n)
             return;
-        const made = me.summon(entry, me.locationOf(alcoves[me.random(cast(uint) n)]), 0,
+        const made = me.summon(entry, where(me, alcoves[me.random(cast(uint) n)]), 0,
             me.selectTarget(Pick.random, PickFilter.player));
         foreach (ref m; minions)
             if (!m)
@@ -1877,7 +1885,7 @@ struct Kelthuzad
             phase = 2;
             me.interrupt();
             me.removeAura(me.self, channelVisual);
-            me.unitFlags(UnitFlag.notSelectable, false);
+            me.unitFlags(UnitFlag.uninteractible, false);
             me.rooted(false);
             me.melee(true);
             me.zoneCombat();
@@ -1915,7 +1923,7 @@ struct Kelthuzad
             break;
         case Step.lichKing:
             EntityRef[1] lichKing;
-            if (me.creaturesNear(16_980, 200, lichKing[]))
+            if (me.creaturesNearby(16_980, 200, lichKing[]))
                 me.sayAs(lichKing[0], sayAnswerRequest);
             break;
         case Step.guardians:
@@ -1934,7 +1942,7 @@ struct Kelthuzad
         steps.clear();
         phase = guardiansSent = 0;
         me.removeAura(me.self, channelVisual);
-        me.unitFlags(UnitFlag.notSelectable, false);
+        me.unitFlags(UnitFlag.uninteractible, false);
         me.rooted(false);
         me.melee(true);
         foreach (ref m; minions)
@@ -2012,7 +2020,7 @@ struct StoneskinGargoyle
     {
         if (me.castSelf(stoneform, true) == ActionResult.ok)
         {
-            me.unitFlags(UnitFlag.notSelectable | UnitFlag.immuneToPlayer, true);
+            me.unitFlags(UnitFlag.uninteractible | UnitFlag.immuneToPlayer, true);
             steps.every(Step.watch, 1.seconds);
         }
     }
@@ -2021,7 +2029,7 @@ struct StoneskinGargoyle
     {
         steps.cancel(Step.watch);
         me.removeAura(me.self, stoneform);
-        me.unitFlags(UnitFlag.notSelectable | UnitFlag.immuneToPlayer, false);
+        me.unitFlags(UnitFlag.uninteractible | UnitFlag.immuneToPlayer, false);
         steps.after(Step.volley, 4.seconds);
     }
 
@@ -2040,7 +2048,7 @@ struct StoneskinGargoyle
             if (me.playersNear(17, near[]))
             {
                 steps.cancel(Step.watch);
-                me.unitFlags(UnitFlag.notSelectable | UnitFlag.immuneToPlayer, false);
+                me.unitFlags(UnitFlag.uninteractible | UnitFlag.immuneToPlayer, false);
                 me.attack(near[0]);
             }
             break;
@@ -2110,7 +2118,7 @@ version (unittest)
             return ActionResult.ok;
         }
         override bool hostRespawnObject(uint entry, uint) { respawned ~= entry; return true; }
-        override EntityRef hostSummon(uint entry, Location, uint)
+        override EntityRef hostSummon(uint entry, Location, uint, EntityRef)
         {
             summoned ~= EntityRef(0xF130_0000_0000_0100UL | (ulong(entry) << 24) | summoned.length);
             return summoned[$ - 1];
@@ -2181,7 +2189,7 @@ version (unittest)
         override void hostDeathPrevention(bool on) { preventing = on; }
         override void hostStandState(StandState s) { stand = s; }
         override void hostSetHealthPercent(EntityRef, uint p) { health = p; }
-        override size_t hostCreaturesNear(uint e, float, EntityRef[] into)
+        override size_t hostCreaturesNearby(uint e, float, EntityRef[] into)
         {
             if (into.length == 0 || (e != npcFeugen && e != npcStalagg))
                 return 0;

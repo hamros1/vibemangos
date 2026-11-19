@@ -819,6 +819,189 @@ mixin template CreatureScripting()
     }
 
     // -----------------------------------------------------------------------
+    // Kalimdor scripts: `CreatureHost`
+    // -----------------------------------------------------------------------
+
+    /// Itself or another creature here, bound to its world; null if not here.
+    private Creature scriptCreature(EntityRef who)
+    {
+        if (who.guid == me.guid)
+            return me;
+        if (world_ is null)
+            return null;
+        auto other = world_.creatureAt(who.guid);
+        if (other !is null && other.ai !is null)
+            other.ai.bind(world_);
+        return other;
+    }
+
+    ActionResult hostFactionOf(EntityRef creature, uint faction)
+    {
+        auto who = scriptCreature(creature);
+        if (who is null || world_ is null)
+            return ActionResult.notHere;
+        who.ai.scriptFaction(faction);
+        return ActionResult.ok;
+    }
+
+    ActionResult hostUnitFlagsOf(EntityRef creature, uint flags, bool set)
+    {
+        auto who = scriptCreature(creature);
+        if (who is null || world_ is null)
+            return ActionResult.notHere;
+        scriptUnitFlags(who.guid, flags, set);
+        return ActionResult.ok;
+    }
+
+    void hostFollow(EntityRef leader, float distance, float angle)
+    {
+        import dmangos.world.motion : FollowMovement, IdleMovement;
+
+        MovementGenerator next = leader ? new FollowMovement(leader.guid, distance, angle) : new IdleMovement;
+        if (inCombat_ || evadingHome)
+        {
+            outOfCombat = next; // how it moves once home from the fight
+            return;
+        }
+        me.generator = next;
+        if (world_ !is null)
+        {
+            if (!leader)
+                stopMoving(me, world_);
+            next.initialize(me, world_);
+            world_.wake(me.guid);
+        }
+    }
+
+    ActionResult hostCastAs(EntityRef caster, uint spell, EntityRef target, bool triggered)
+    {
+        if (caster.guid == me.guid)
+            return hostCast(spell, target, triggered);
+        auto who = scriptCreature(caster);
+        if (who is null)
+            return ActionResult.notHere;
+        return who.ai.castFor(world_, spell, target.guid, triggered);
+    }
+
+    ActionResult hostObjectUsable(EntityRef object, bool usable)
+    {
+        import dmangos.world.updatefields : GAMEOBJECT_FLAGS;
+
+        enum uint goFlagNoInteract = 0x10;
+        auto go = world_ is null ? null : world_.gameObjectAt(object.guid);
+        if (go is null)
+            return ActionResult.notHere;
+        const flags = go.values.get!GAMEOBJECT_FLAGS;
+        go.values.set!GAMEOBJECT_FLAGS(usable ? flags & ~goFlagNoInteract : flags | goFlagNoInteract);
+        world_.flushGameObject(go);
+        return ActionResult.ok;
+    }
+
+    uint hostEntryOf(EntityRef who)
+    {
+        if (who.guid == me.guid)
+            return me.template_.entry;
+        if (world_ is null)
+            return 0;
+        if (auto c = world_.creatureAt(who.guid))
+            return c.template_.entry;
+        if (auto go = world_.gameObjectAt(who.guid))
+            return go.template_.entry;
+        return 0;
+    }
+
+    void hostGroupQuestEvent(EntityRef player, uint quest)
+    {
+        if (world_ is null || lore is null)
+            return;
+        if (auto leader = world_.unit(player.guid))
+            leader.questEventHappened(quest);
+        foreach (other; world_.playersNear(me.position, 100))
+            if (other.combatGuid != player.guid && other.fighter.alive && lore.sameGroup(player.guid, other.combatGuid))
+                other.questEventHappened(quest);
+    }
+
+    bool hostLocationOf(EntityRef who, out Location at)
+    {
+        Position p;
+        if (world_ is null || !world_.positionOf(who.guid, p))
+            return false;
+        at = Location(p.x, p.y, p.z, p.orientation);
+        return true;
+    }
+
+    void hostEmoteState(uint emote)
+    {
+        import dmangos.world.updatefields : UNIT_NPC_EMOTESTATE;
+
+        me.values.set!UNIT_NPC_EMOTESTATE(emote);
+        if (world_ !is null)
+            world_.flushCreature(me);
+    }
+
+    size_t hostCreaturesNearby(uint entry, float range, EntityRef[] found)
+    {
+        if (world_ is null)
+            return 0;
+        size_t n;
+        foreach (other; world_.creaturesNear(me.position, range))
+            if (n < found.length && other !is me && other.spawn.entry == entry && other.alive)
+                found[n++] = EntityRef(other.guid);
+        return n;
+    }
+
+    EntityRef hostOwner()
+    {
+        return EntityRef(me.petOwner ? me.petOwner : me.summon.summoner);
+    }
+
+    uint hostItemCount(EntityRef player, uint item)
+    {
+        import dmangos.world.unit : UnitKind;
+
+        auto unit = world_ is null ? UnitRef.init : world_.unit(player.guid);
+        if (!unit || unit.kind != UnitKind.player || unit.session.player is null)
+            return 0;
+        return unit.session.player.inventory.count(item);
+    }
+
+    uint hostGiveItem(EntityRef player, uint item, uint count)
+    {
+        import dmangos.world.unit : UnitKind;
+
+        auto unit = world_ is null ? UnitRef.init : world_.unit(player.guid);
+        if (!unit || unit.kind != UnitKind.player || unit.session.player is null || count == 0)
+            return 0;
+        return unit.session.scriptGiveItem(item, count);
+    }
+
+    // Dungeon scripts:
+
+    EntityRef hostPlayerNearby(float range)
+    {
+        if (world_ is null)
+            return EntityRef.init;
+        const here = me.position;
+        UnitRef best;
+        float bestDistance = float.infinity;
+        foreach (player; world_.playersNear(here, range))
+        {
+            if (!player.fighter.alive || player.untouchable)
+                continue;
+            Position at;
+            if (!world_.positionOf(player.combatGuid, at))
+                continue;
+            const d = (at.x - here.x) ^^ 2 + (at.y - here.y) ^^ 2 + (at.z - here.z) ^^ 2;
+            if (d < bestDistance)
+            {
+                bestDistance = d;
+                best = player;
+            }
+        }
+        return best ? EntityRef(best.combatGuid) : EntityRef.init;
+    }
+
+    // -----------------------------------------------------------------------
     // Raid scripts:
     // -----------------------------------------------------------------------
 
@@ -927,16 +1110,6 @@ mixin template CreatureScripting()
 
 
 
-    size_t hostCreaturesNear(uint entry, float range, EntityRef[] into)
-    {
-        if (world_ is null)
-            return 0;
-        size_t n;
-        foreach (other; world_.creaturesNear(me.position, range))
-            if (other !is me && other.alive && (entry == 0 || other.spawn.entry == entry) && n < into.length)
-                into[n++] = EntityRef(other.guid);
-        return n;
-    }
 
     size_t hostPlayersNear(float range, EntityRef[] into)
     {
@@ -985,15 +1158,6 @@ mixin template CreatureScripting()
             interruptCast();
     }
 
-    ActionResult hostCastAs(EntityRef caster, uint spellId, EntityRef target, bool triggered)
-    {
-        if (caster.guid == me.guid || !caster)
-            return hostCast(spellId, target, triggered);
-        auto other = world_ is null ? null : world_.creatureAt(caster.guid);
-        if (other is null)
-            return ActionResult.notHere;
-        return other.ai.castFor(world_, spellId, target.guid, triggered);
-    }
 
     void hostFlying(bool on)
     {
@@ -1023,15 +1187,6 @@ mixin template CreatureScripting()
             world_.flushCreature(c);
     }
 
-    Location hostLocationOf(EntityRef who)
-    {
-        Position at;
-        if (who.guid == me.guid)
-            at = me.position;
-        else if (world_ is null || !world_.positionOf(who.guid, at))
-            return Location.init;
-        return Location(at.x, at.y, at.z, at.orientation);
-    }
 
     void hostRooted(bool on)
     {
@@ -1083,6 +1238,4 @@ mixin template CreatureScripting()
         if (auto other = world_.unit(who.guid))
             addThreat(other, amount);
     }
-
-
 }

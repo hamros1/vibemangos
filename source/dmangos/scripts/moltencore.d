@@ -11,6 +11,14 @@ import core.time : Duration;
 
 import dmangos.script;
 
+/// Where `who` is, as `ctx` sees it (`Location.init` if it is not here).
+private Location where(C)(ref C ctx, EntityRef who)
+{
+    Location at;
+    ctx.locationOf(who, at);
+    return at;
+}
+
 /// The encounters, in the order of the copy's state (CMaNGOS's `TYPE_*`).
 enum Encounter : ubyte
 {
@@ -433,7 +441,7 @@ struct Garr
             break;
         case Step.eruption:
             EntityRef[8] near;
-            const n = me.creaturesNear(npcFiresworn, 100, near[]);
+            const n = me.creaturesNearby(npcFiresworn, 100, near[]);
             if (n)
             {
                 me.signal(near[me.random(cast(uint) n)], McSignal.erupt);
@@ -478,7 +486,7 @@ struct Firesworn
         erupted = true;
         me.castSelf(eruption, true);
         EntityRef[1] garr;
-        if (me.creaturesNear(npcGarr, 100, garr[]))
+        if (me.creaturesNearby(npcGarr, 100, garr[]))
             me.signal(garr[0], McSignal.enrage);
     }
 
@@ -530,7 +538,7 @@ struct Shazzrah
             const target = me.selectTarget(Pick.random, PickFilter.player);
             if (target && me.castSelf(gate) == ActionResult.ok)
             {
-                me.teleport(me.locationOf(target));
+                me.teleport(where(me, target));
                 me.resetThreat();
                 me.attack(target);
                 steps.after(Step.explodeAfterGate, 100.msecs);
@@ -647,7 +655,7 @@ struct Golemagg
     {
         steps.clear();
         EntityRef[8] ragers;
-        foreach (rager; ragers[0 .. me.creaturesNear(npcCoreRager, 100, ragers[])])
+        foreach (rager; ragers[0 .. me.creaturesNearby(npcCoreRager, 100, ragers[])])
             me.signal(rager, McSignal.suicide);
         me.signalDungeon(Encounter.golemagg, EncounterState.done);
     }
@@ -762,7 +770,7 @@ struct Sulfuron
             EntityRef[8] priests;
             EntityRef[8] without;
             size_t n;
-            foreach (p; priests[0 .. me.creaturesNear(npcFlamewakerPriest, 45, priests[])])
+            foreach (p; priests[0 .. me.creaturesNearby(npcFlamewakerPriest, 45, priests[])])
                 if (!me.hasAura(p, inspire))
                     without[n++] = p;
             const target = n ? without[me.random(cast(uint) n)] : me.self;
@@ -817,8 +825,8 @@ struct FlamewakerPriest
         case Step.mending:
             // The most hurt of Sulfuron's company (himself, his priests), if any is hurt.
             EntityRef[9] near;
-            size_t n = me.creaturesNear(Sulfuron.npcFlamewakerPriest, 60, near[0 .. 8]);
-            n += me.creaturesNear(npcSulfuron, 60, near[n .. n + 1]);
+            size_t n = me.creaturesNearby(Sulfuron.npcFlamewakerPriest, 60, near[0 .. 8]);
+            n += me.creaturesNearby(npcSulfuron, 60, near[n .. n + 1]);
             EntityRef best = me.self;
             uint lowest = me.healthPercent;
             foreach (other; near[0 .. n])
@@ -1230,7 +1238,7 @@ struct Ragnaros
         me.signalDungeon(Encounter.ragnaros, EncounterState.failed);
         if (phase != Phase.emerged)
             me.castSelf(emerge);
-        me.unitFlags(UnitFlag.notSelectable, false);
+        me.unitFlags(UnitFlag.uninteractible, false);
     }
 
     void on(ref CreatureContext me, const ref Reset e)
@@ -1247,7 +1255,7 @@ struct Ragnaros
         me.removeAura(me.self, submergeEffect);
         auras(me);
         EntityRef[8] sons;
-        foreach (son; sons[0 .. me.creaturesNear(npcSonOfFlame, 150, sons[])])
+        foreach (son; sons[0 .. me.creaturesNearby(npcSonOfFlame, 150, sons[])])
             me.despawn(son);
     }
 
@@ -1320,7 +1328,7 @@ struct Ragnaros
         case Step.sonsCheck:
             // All his sons slain: he comes up soon.
             EntityRef[8] sons;
-            if (phase == Phase.submerged && me.creaturesNear(npcSonOfFlame, 150, sons[]) == 0)
+            if (phase == Phase.submerged && me.creaturesNearby(npcSonOfFlame, 150, sons[]) == 0)
             {
                 if (steps.remaining(Step.transition) > 1000)
                     steps.after(Step.transition, 1.seconds);
@@ -1340,7 +1348,7 @@ struct Ragnaros
             me.castSelf(submergeVisual, true);
             me.castSelf(submergeEffect, true);
             me.standState(cast(StandState) 9); // UNIT_STAND_STATE_CUSTOM: under the lava
-            me.unitFlags(UnitFlag.notSelectable, true);
+            me.unitFlags(UnitFlag.uninteractible, true);
             me.say(submergedOnce ? sayReinforcements2 : sayReinforcements1);
             submergedOnce = true;
             summonSons(me);
@@ -1366,7 +1374,7 @@ struct Ragnaros
         case Phase.emerging:
             me.standState(StandState.stand);
             me.castSelf(emerge);
-            me.unitFlags(UnitFlag.notSelectable, false);
+            me.unitFlags(UnitFlag.uninteractible, false);
             phase = Phase.emerged;
             steps.after(Step.transition, 3 * 60.seconds);
             steps.after(Step.wrath, 20.seconds);
@@ -1418,7 +1426,7 @@ version (unittest)
         int[] said;
         ulong next = 1;
 
-        override EntityRef hostSummon(uint entry, Location, uint)
+        override EntityRef hostSummon(uint entry, Location, uint, EntityRef)
         {
             auto made = EntityRef(0xF130_0000_0000_0000UL | (ulong(entry) << 24) | next++);
             summoned ~= made;
@@ -1439,7 +1447,7 @@ version (unittest)
         }
         override ActionResult hostDespawnObject(EntityRef o) { objectsGone ~= o; return ActionResult.ok; }
         override bool hostRespawnObject(uint entry, uint) { respawned ~= entry; return true; }
-        override ActionResult hostDespawnCreature(EntityRef c, uint) { despawned ~= c; return ActionResult.ok; }
+        override ActionResult hostDespawn(EntityRef c, uint) { despawned ~= c; return ActionResult.ok; }
         override ActionResult hostSay(EntityRef, int text, EntityRef) { said ~= text; return ActionResult.ok; }
     }
 
@@ -1648,11 +1656,11 @@ unittest
     run(30_000);
     assert(host.casts.canFind(Ragnaros.wrathOfRagnaros) && host.said.canFind(Ragnaros.sayWrath));
     run(150_000);
-    assert(host.summoned.length == 8 && (host.flags & UnitFlag.notSelectable), "submerged, his sons out");
+    assert(host.summoned.length == 8 && (host.flags & UnitFlag.uninteractible), "submerged, his sons out");
     assert(host.said.canFind(Ragnaros.sayReinforcements1));
     // No sons near (the fake finds none): he comes up within seconds.
     run(3000 + 3000);
-    assert(!(host.flags & UnitFlag.notSelectable), "emerged");
+    assert(!(host.flags & UnitFlag.uninteractible), "emerged");
 }
 
 /// The bosses tell the copy how their encounters go: begun, failed (home again), done.

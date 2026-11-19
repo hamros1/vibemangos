@@ -17,6 +17,7 @@ import std.math : atan2, cos, sin, sqrt;
 import dmangos.world.combat;
 alias attackStartPacket = dmangos.world.combat.attackStart;
 import dmangos.world.creature : Creature, VirtualItem;
+import dmangos.world.gameobject : GameObject;
 import dmangos.world.defines : UnitFlags;
 import dmangos.world.motion : IdleMovement, launch, MotionWorld, MovementGenerator, stopMoving;
 import dmangos.world.movement : MovementFlags, Position;
@@ -95,6 +96,10 @@ interface CreatureLore
     /// ditto
     ScriptHandle spellScript(uint id);
 
+    // Kalimdor scripts:
+
+    /// Whether two players are in one group.
+    bool sameGroup(ulong a, ulong b);
     // Eastern Kingdoms scripts:
 
     /// The guid of the nearest game object of `entry` within `range` yards of `center` on `world`; 0 if none.
@@ -103,13 +108,17 @@ interface CreatureLore
     /// Uses game object `guid` on `world` as a door or button is used: open for its time.
     ActionResult useGameObject(CombatWorld world, ulong guid);
 
+    /// Spell `spell` teleports player `guid` to its `spell_target_position` (a creature's cast: a boss's room).
+    void teleportBySpell(ulong guid, uint spell);
+
+    /// A creature of dungeon copy `instance` began fighting `enemy`, or (no enemy) gave its fight up:
+    /// the copy's script hears of it (`CreatureEngaged`, `CreatureEvaded`).
+    void dungeonFight(uint instance, EntityRef creature, EntityRef enemy);
+
     // Raid scripts:
 
     /// The answer of dungeon copy `instance`'s script to question `id` from `from` (0: none).
     int askDungeon(uint instance, EntityRef from, uint id);
-
-    /// A creature of dungeon copy `instance` started a fight with `enemy` (its script hears of it).
-    void creatureEngaged(uint instance, EntityRef creature, EntityRef enemy);
 }
 
 /// What a creature's AI needs of its map.
@@ -151,6 +160,14 @@ interface CombatWorld : MotionWorld
 
     /// A packet for the players within `range` yards of `center`.
     void sendInRange(Position center, float range, Opcode opcode, const(ubyte)[] body_);
+
+    // Kalimdor scripts:
+
+    /// The game object with this guid here; null if none.
+    GameObject gameObjectAt(ulong guid);
+
+    /// Sends what changed in the game object's fields to those who see it.
+    void flushGameObject(GameObject go);
 }
 
 /// How far a creature's call for help reaches (yards), how long its allies take to come (ms), and
@@ -594,8 +611,8 @@ private:
             if (script !is null)
                 script.combatStarted(this, guid);
             raiseScript(EnteredCombat(EntityRef(guid)));
-            if (me.instanceId && lore !is null) // Raid scripts: its copy's script hears of it
-                lore.creatureEngaged(me.instanceId, EntityRef(me.guid), EntityRef(guid));
+            if (lore !is null && me.instanceId) // its dungeon's script: an encounter may begin
+                lore.dungeonFight(me.instanceId, EntityRef(me.guid), EntityRef(guid));
             world.linked(me, LinkEvent.aggro, guid); // its pack joins in
         }
         world.flushCreature(me);
@@ -1119,6 +1136,8 @@ private:
         if (script !is null)
             script.evaded(this);
         raiseScript(Evaded());
+        if (wasFighting && lore !is null && me.instanceId)
+            lore.dungeonFight(me.instanceId, EntityRef(me.guid), EntityRef.init);
         world.flushCreature(me);
         evadingHome = true;
         regenTimer = 0;

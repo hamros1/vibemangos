@@ -136,23 +136,36 @@ final class TestCreature : CreatureHost
     void hostMovementScript(uint id) { note("movement script", id); }
     void hostRelay(int id, EntityRef) { note("relay", id); }
     void hostKillCredit(EntityRef, uint entry) { note("credit", entry); }
+    // Kalimdor scripts:
+    ActionResult hostFactionOf(EntityRef c, uint f) { note("faction of", c.entry, f); return ActionResult.ok; }
+    ActionResult hostUnitFlagsOf(EntityRef c, uint flags, bool) { note("flags of", c.entry, flags); return ActionResult.ok; }
+    void hostFollow(EntityRef leader, float, float) { note(leader ? "follow" : "unfollow"); }
+    ActionResult hostCastAs(EntityRef c, uint spell, EntityRef, bool) { note("cast as", c.entry, spell); return ActionResult.ok; }
+    ActionResult hostObjectUsable(EntityRef, bool) { return ActionResult.ok; }
+    uint hostEntryOf(EntityRef who) { return who.entry; }
+    void hostGroupQuestEvent(EntityRef, uint quest) { note("group event", quest); }
+    bool hostLocationOf(EntityRef, out Location) { return false; }
+    void hostEmoteState(uint emote) { note("emote state", emote); }
+    size_t hostCreaturesNearby(uint, float, EntityRef[]) { return 0; }
+    EntityRef hostOwner() { return EntityRef.init; }
+    uint hostItemCount(EntityRef, uint) { return 0; }
+    uint hostGiveItem(EntityRef, uint, uint) { return 0; }
+    // Dungeon scripts:
+    EntityRef hostPlayerNearby(float) { return EntityRef.init; }
 
     // Raid scripts:
     int hostAskDungeon(uint) { return 0; }
     EntityRef hostSelectTarget(Pick, uint, uint) { return EntityRef.init; }
     size_t hostThreatList(EntityRef[]) { return 0; }
     ActionResult hostModifyThreat(EntityRef, int) { return ActionResult.ok; }
-    size_t hostCreaturesNear(uint, float, EntityRef[]) { return 0; }
     size_t hostPlayersNear(float, EntityRef[]) { return 0; }
     void hostTeleport(Location) {}
     void hostZoneCombat() {}
     bool hostCasting() { return false; }
     void hostInterrupt() {}
-    ActionResult hostCastAs(EntityRef, uint, EntityRef, bool) { return ActionResult.ok; }
     void hostFlying(bool) {}
     void hostDisplay(uint) {}
     void hostSetHealthPercent(EntityRef, uint) {}
-    Location hostLocationOf(EntityRef) { return Location.init; }
     void hostRooted(bool) {}
     void hostAddThreat(EntityRef, float) {}
     void hostMoveNow(Location, uint, bool) {}

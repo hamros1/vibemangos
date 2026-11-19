@@ -440,7 +440,7 @@ private:
                     AuraType.modIncreaseHealthPercent, AuraType.modIncreaseEnergyPercent, AuraType.modAttackPowerPct,
                     AuraType.modOffhandDamagePct, AuraType.modSkill, AuraType.modSkillTalent,
                     AuraType.modDamagePercentDone, AuraType.modDamagePercentTaken, AuraType.modDamageDoneVersus,
-                    AuraType.modCritPercentVersus, AuraType.modThreat:
+                    AuraType.modCritPercentVersus, AuraType.modThreat, AuraType.modMechanicResistance, AuraType.modShieldBlockvaluePct:
                 stats = true;
                 break;
             case AuraType.modIncreaseSpeed, AuraType.modDecreaseSpeed, AuraType.modIncreaseSwimSpeed:
@@ -713,7 +713,7 @@ private:
                 import dmangos.world.spellcast : isBinarySpell;
                 import std.random : uniform;
 
-                damage = partiallyResisted(damage, cast(int) target.values.get!UNIT_FIELD_RESISTANCES(school),
+                damage = partiallyResisted(damage, targetResistance(cast(int) target.values.get!UNIT_FIELD_RESISTANCES(school), school),
                     player.data.level, target.fighter, isBinarySpell(*aura.spell), false,
                     uniform!"[]"(1u, 10000u, map.random)).damage;
             }

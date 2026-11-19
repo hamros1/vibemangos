@@ -11,6 +11,14 @@ import core.time : Duration;
 
 import dmangos.script;
 
+/// Where `who` is, as `ctx` sees it (`Location.init` if it is not here).
+private Location where(C)(ref C ctx, EntityRef who)
+{
+    Location at;
+    ctx.locationOf(who, at);
+    return at;
+}
+
 /// The copy's encounters (CMaNGOS's `TYPE_*`).
 enum Aq20Encounter : ubyte
 {
@@ -157,7 +165,7 @@ struct RuinsOfAhnQiraj
         if (encounters[Aq20Encounter.kurinnaxx] == EncounterState.done)
             summonAndorov(copy);
         if (!crystals[0] && encounters[Aq20Encounter.ossirian] != EncounterState.done && triggerCount)
-            crystals[0] = copy.summonObject(goOssirianCrystal, copy.locationOf(triggers[0]));
+            crystals[0] = copy.summonObject(goOssirianCrystal, where(copy, triggers[0]));
     }
 
     void on(ref InstanceContext copy, const ref Asked e)
@@ -222,12 +230,12 @@ struct RuinsOfAhnQiraj
         if (e.object.entry != goOssirianCrystal)
             return;
         // The nearest trigger weakens Ossirian; the crystal is spent; the next appears elsewhere.
-        const at = copy.locationOf(e.object);
+        const at = where(copy, e.object);
         EntityRef nearest;
         float best = 15;
         foreach (t; triggers[0 .. triggerCount])
         {
-            const l = copy.locationOf(t);
+            const l = where(copy, t);
             const d = ((l.x - at.x) ^^ 2 + (l.y - at.y) ^^ 2) ^^ 0.5f;
             if (d < best)
             {
@@ -237,7 +245,7 @@ struct RuinsOfAhnQiraj
         }
         const weakness = weaknesses[copy.random(weaknesses.length)];
         if (nearest && ossirian)
-            copy.castAs(nearest, weakness, ossirian);
+            copy.castSpell(nearest, weakness, ossirian);
         if (ossirian)
             copy.signal(ossirian, Aq20Signal.weakened, weakness);
         foreach (ref c; crystals)
@@ -286,7 +294,7 @@ struct RuinsOfAhnQiraj
             if (slot == size_t.max)
                 return;
             const trigger = triggers[1 + copy.random(triggerCount - 1)];
-            crystals[slot] = copy.summonObject(goOssirianCrystal, copy.locationOf(trigger));
+            crystals[slot] = copy.summonObject(goOssirianCrystal, where(copy, trigger));
         }
     }
 
@@ -371,7 +379,7 @@ struct RuinsOfAhnQiraj
             size_t n;
             if (copy.alive(captain))
                 waveMembers[n++] = captain;
-            const at = copy.locationOf(captain);
+            const at = where(copy, captain);
             n += copy.creaturesNear(at, npcQirajiWarrior, 25, waveMembers[n .. $]);
             n += copy.creaturesNear(at, npcSwarmguardNeedler, 25, waveMembers[n .. $]);
             foreach (m; waveMembers[0 .. n])
@@ -522,7 +530,7 @@ struct GeneralAndorov
     private void follow(ref CreatureContext me)
     {
         EntityRef[4] elites;
-        foreach (elite; elites[0 .. me.creaturesNear(npcKaldoreiElite, 40, elites[])])
+        foreach (elite; elites[0 .. me.creaturesNearby(npcKaldoreiElite, 40, elites[])])
             me.signal(elite, Aq20Signal.startEvent, cast(int) point);
     }
 
@@ -883,9 +891,9 @@ struct Buru
                 me.removeAura(me.self, thorns);
                 // His eggs hatch.
                 EntityRef[16] eggs;
-                foreach (egg; eggs[0 .. me.creaturesNear(npcBuruEgg, 200, eggs[])])
+                foreach (egg; eggs[0 .. me.creaturesNearby(npcBuruEgg, 200, eggs[])])
                 {
-                    me.summon(npcHatchling, me.locationOf(egg), 0, me.selectTarget(Pick.random));
+                    me.summon(npcHatchling, where(me, egg), 0, me.selectTarget(Pick.random));
                     me.despawn(egg);
                 }
                 steps.after(step, 5.seconds);
@@ -937,7 +945,7 @@ struct BuruEgg
         burst = true;
         me.castSelf(explode, true);
         EntityRef[1] buru;
-        if (me.creaturesNear(npcBuru, 25, buru[]))
+        if (me.creaturesNearby(npcBuru, 25, buru[]))
             me.signal(buru[0], Aq20Signal.eggBurst);
         EntityRef[1] near;
         me.summon(npcHatchling, me.location, 0, me.playersNear(30, near[]) ? near[0] : EntityRef.init);
@@ -1236,7 +1244,7 @@ struct Ossirian
         steps.clear();
         auras(me);
         EntityRef[4] v;
-        foreach (vortex; v[0 .. me.creaturesNear(npcSandVortex, 300, v[])])
+        foreach (vortex; v[0 .. me.creaturesNearby(npcSandVortex, 300, v[])])
             me.despawn(vortex);
         me.signalDungeon(Aq20Encounter.ossirian, EncounterState.failed);
     }
@@ -1376,7 +1384,7 @@ version (unittest)
             return ActionResult.ok;
         }
         override bool hostAlive(EntityRef who) { return (who.guid in dead) is null; }
-        override EntityRef hostSummon(uint entry, Location, uint)
+        override EntityRef hostSummon(uint entry, Location, uint, EntityRef)
         {
             summoned ~= EntityRef(0xF130_0000_0000_0100UL | (ulong(entry) << 24) | summoned.length);
             return summoned[$ - 1];

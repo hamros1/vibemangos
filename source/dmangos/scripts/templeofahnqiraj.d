@@ -15,6 +15,14 @@ import core.time : Duration;
 
 import dmangos.script;
 
+/// Where `who` is, as `ctx` sees it (`Location.init` if it is not here).
+private Location where(C)(ref C ctx, EntityRef who)
+{
+    Location at;
+    ctx.locationOf(who, at);
+    return at;
+}
+
 /// The copy's encounters (CMaNGOS's `TYPE_*`).
 enum Aq40Encounter : ubyte
 {
@@ -521,7 +529,7 @@ private mixin template Royalty()
         me.standState(StandState.dead);
         me.melee(false);
         me.combatMovement(false);
-        me.unitFlags(UnitFlag.notSelectable, true);
+        me.unitFlags(UnitFlag.uninteractible, true);
         deathAbility(me);
         me.castSelf(bloodyDeath, true);
         me.despawn(3000);
@@ -559,7 +567,7 @@ private mixin template Royalty()
         me.standState(StandState.stand);
         me.melee(true);
         me.combatMovement(true);
-        me.unitFlags(UnitFlag.notSelectable, false);
+        me.unitFlags(UnitFlag.uninteractible, false);
         me.castSelf(despawnBrood, true);
         me.signalDungeon(Aq40Encounter.bugTrio, EncounterState.failed);
     }
@@ -933,7 +941,7 @@ struct Viscidus
     {
         phase = Phase.normal;
         hits = 0;
-        me.unitFlags(UnitFlag.notSelectable, false);
+        me.unitFlags(UnitFlag.uninteractible, false);
         me.rooted(false);
         me.melee(true);
         foreach (ref g; globs)
@@ -992,7 +1000,7 @@ struct Viscidus
         me.say(emoteExplode);
         me.castSelf(explode, true);
         me.removeAura(me.self, freeze);
-        me.unitFlags(UnitFlag.notSelectable, true);
+        me.unitFlags(UnitFlag.uninteractible, true);
         me.melee(false);
         me.rooted(true);
         me.resetThreat();
@@ -1069,7 +1077,7 @@ struct Viscidus
             phase = Phase.normal;
             hits = 0;
             me.setHealthPercent(globsBack * 5);
-            me.unitFlags(UnitFlag.notSelectable, false);
+            me.unitFlags(UnitFlag.uninteractible, false);
             me.rooted(false);
             me.melee(true);
             me.removeAura(me.self, slowed);
@@ -1163,7 +1171,7 @@ private mixin template Emperor(uint twin, uint bugSpell)
     private EntityRef brother(ref CreatureContext me)
     {
         EntityRef[1] b;
-        return me.creaturesNear(twin, 200, b[]) ? b[0] : EntityRef.init;
+        return me.creaturesNearby(twin, 200, b[]) ? b[0] : EntityRef.init;
     }
 
     private void emperorEngaged(ref CreatureContext me)
@@ -1198,7 +1206,7 @@ private mixin template Emperor(uint twin, uint bugSpell)
         {
             // Vek'lor swaps places with me: to where he stands, my hatred forgotten, a moment stunned.
             if (const b = brother(me))
-                me.teleport(me.locationOf(b));
+                me.teleport(where(me, b));
             stunned(me);
         }
     }
@@ -1224,8 +1232,8 @@ private mixin template Emperor(uint twin, uint bugSpell)
             break;
         case Step.bugAbility:
             EntityRef[8] bugs;
-            size_t n = me.creaturesNear(npcQirajiScarab, 50, bugs[0 .. 4]);
-            n += me.creaturesNear(npcQirajiScorpion, 50, bugs[n .. $]);
+            size_t n = me.creaturesNearby(npcQirajiScarab, 50, bugs[0 .. 4]);
+            n += me.creaturesNearby(npcQirajiScorpion, 50, bugs[n .. $]);
             if (n)
             {
                 const bug = bugs[me.random(cast(uint) n)];
@@ -1390,7 +1398,7 @@ struct Veklor
             // He and his brother change places.
             if (const b = brother(me))
             {
-                const his = me.locationOf(b);
+                const his = where(me, b);
                 me.signal(b, Aq40Signal.twinSwap); // he comes here first
                 me.teleport(his);
                 stunned(me);
@@ -1471,7 +1479,7 @@ struct Ouro
             return;
         under = true;
         me.melee(false);
-        me.unitFlags(UnitFlag.notSelectable, true);
+        me.unitFlags(UnitFlag.uninteractible, true);
         foreach (s; [Step.submerge, Step.noMelee, Step.sandBlast, Step.sweep, Step.boulder])
             steps.cancel(s);
         foreach (ref m; mounds)
@@ -1489,7 +1497,7 @@ struct Ouro
             break;
         case Step.attack:
             me.melee(true);
-            me.unitFlags(UnitFlag.notSelectable, false);
+            me.unitFlags(UnitFlag.uninteractible, false);
             if (const target = me.selectTarget(Pick.nearest))
             {
                 me.attack(target);
@@ -1507,7 +1515,7 @@ struct Ouro
                     m = EntityRef.init;
                 }
             if (const prey = me.selectTarget(Pick.random, PickFilter.player))
-                me.teleport(me.locationOf(prey));
+                me.teleport(where(me, prey));
             me.resetThreat();
             steps.after(Step.emerge, 0.msecs);
             break;
@@ -1565,7 +1573,7 @@ struct Ouro
             }
         me.signalDungeon(Aq40Encounter.ouro, EncounterState.failed);
         EntityRef[1] spawner;
-        if (me.creaturesNear(npcOuroSpawner, 100, spawner[]))
+        if (me.creaturesNearby(npcOuroSpawner, 100, spawner[]))
             me.signal(spawner[0], Aq40Signal.ouroGone);
         me.despawn();
     }
@@ -1597,7 +1605,7 @@ struct OuroSpawner
         summoned = true;
         me.summon(npcOuro, me.location);
         me.reactState(Reaction.passive);
-        me.unitFlags(UnitFlag.notSelectable, true);
+        me.unitFlags(UnitFlag.uninteractible, true);
         me.evade();
     }
 
@@ -1607,7 +1615,7 @@ struct OuroSpawner
             return;
         summoned = false;
         me.reactState(Reaction.aggressive);
-        me.unitFlags(UnitFlag.notSelectable, false);
+        me.unitFlags(UnitFlag.uninteractible, false);
     }
 }
 
@@ -1747,7 +1755,7 @@ struct EyeOfCthun
             break;
         case Step.clawTentacle:
             if (const target = me.selectTarget(Pick.random, PickFilter.player))
-                me.summon(npcClawTentacle, me.locationOf(target), 0, target);
+                me.summon(npcClawTentacle, where(me, target), 0, target);
             steps.after(step, 8.seconds);
             break;
         case Step.eyeTentacles:
@@ -1770,7 +1778,7 @@ struct EyeOfCthun
         steps.clear();
         despawnTentacles(me);
         EntityRef[1] cthun;
-        if (me.creaturesNear(npcCthun, 50, cthun[]))
+        if (me.creaturesNearby(npcCthun, 50, cthun[]))
             me.signal(cthun[0], Aq40Signal.eyeDown);
     }
 }
@@ -1794,7 +1802,7 @@ private void despawnTentacles(ref CreatureContext me)
 {
     EntityRef[32] t;
     foreach (entry; [npcClawTentacle, npcEyeTentacle, npcGiantClawTentacle, npcGiantEyeTentacle, npcFleshTentacle])
-        foreach (tentacle; t[0 .. me.creaturesNear(entry, 200, t[])])
+        foreach (tentacle; t[0 .. me.creaturesNearby(entry, 200, t[])])
             me.despawn(tentacle);
 }
 
@@ -1816,7 +1824,7 @@ struct Cthun
     {
         me.combatMovement(false);
         me.reactState(Reaction.passive);
-        me.unitFlags(UnitFlag.notSelectable, true);
+        me.unitFlags(UnitFlag.uninteractible, true);
     }
 
     void on(ref CreatureContext me, const ref Signal e)
@@ -1841,7 +1849,7 @@ struct Cthun
             risen = true;
             me.castSelf(transform, true);
             me.castSelf(carapace, true);
-            me.unitFlags(UnitFlag.notSelectable, false);
+            me.unitFlags(UnitFlag.uninteractible, false);
             me.reactState(Reaction.aggressive);
             me.zoneCombat();
             steps.after(Step.giantClaw, 10.seconds);
@@ -1851,7 +1859,7 @@ struct Cthun
             break;
         case Step.giantClaw, Step.giantEye:
             if (const target = me.selectTarget(Pick.random, PickFilter.player))
-                me.summon(step == Step.giantClaw ? npcGiantClawTentacle : npcGiantEyeTentacle, me.locationOf(target), 0, target);
+                me.summon(step == Step.giantClaw ? npcGiantClawTentacle : npcGiantEyeTentacle, where(me, target), 0, target);
             steps.after(step, 30.seconds);
             break;
         case Step.eyeTentacles:
@@ -1885,7 +1893,7 @@ struct Cthun
         despawnTentacles(me);
         me.signalDungeon(Aq40Encounter.cthun, EncounterState.failed);
         me.reactState(Reaction.passive);
-        me.unitFlags(UnitFlag.notSelectable, true);
+        me.unitFlags(UnitFlag.uninteractible, true);
     }
 
     void on(ref CreatureContext me, const ref Died e)
@@ -1933,7 +1941,7 @@ struct GiantClawTentacle
             else if (const prey = me.selectTarget(Pick.random, PickFilter.player))
             {
                 // Under someone else.
-                me.teleport(me.locationOf(prey));
+                me.teleport(where(me, prey));
                 me.resetThreat();
                 me.attack(prey);
                 steps.after(Step.rupture, 1.seconds);
@@ -1975,7 +1983,7 @@ struct AnubisathSentinel
         }
         take(me, order[0]);
         EntityRef[4] buddies;
-        foreach (i, b; buddies[0 .. me.creaturesNear(entry, 80, buddies[])])
+        foreach (i, b; buddies[0 .. me.creaturesNearby(entry, 80, buddies[])])
             me.signal(b, Aq40Signal.sentinelAbility, cast(int) order[1 + i]);
     }
 
@@ -2005,7 +2013,7 @@ struct AnubisathSentinel
     {
         // Its power to those still standing.
         EntityRef[4] buddies;
-        const n = me.creaturesNear(entry, 80, buddies[]);
+        const n = me.creaturesNearby(entry, 80, buddies[]);
         if (n && ability)
             me.say(emoteSharePowers);
         foreach (b; buddies[0 .. n])
@@ -2134,7 +2142,7 @@ version (unittest)
         override uint hostHealthPercentOf(EntityRef) { return 100; }
         override void hostSetHealthPercent(EntityRef, uint p) { health = p; }
         override void hostUnitFlags(uint f, bool set) { flags = set ? flags | f : flags & ~f; }
-        override size_t hostCreaturesNear(uint e, float, EntityRef[] into)
+        override size_t hostCreaturesNearby(uint e, float, EntityRef[] into)
         {
             if (!other || other.entry != e || into.length == 0)
                 return 0;
@@ -2223,9 +2231,9 @@ unittest
     foreach (_; 0 .. 150)
         runtime.raise(h, me, Damaged(EntityRef(7), 10, 50, 50));
     assert(host.said[$ - 1] == Viscidus.emoteExplode && host.summoned.length == 10);
-    assert(host.flags & UnitFlag.notSelectable);
+    assert(host.flags & UnitFlag.uninteractible);
     // Every glob crawls back (the fake has them beside him at once): he rises with all of his health.
     foreach (_; 0 .. 30)
         runtime.tick(h, me, 100);
-    assert(host.health == 50 && !(host.flags & UnitFlag.notSelectable));
+    assert(host.health == 50 && !(host.flags & UnitFlag.uninteractible));
 }
