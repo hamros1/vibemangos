@@ -74,7 +74,7 @@ struct Escort
             return;
         if (!playerNear(me))
             return fail(me);
-        if (me.inCombat)
+        if (me.inCombat || paused)
             return;
         if (waiting)
         {
@@ -99,6 +99,17 @@ struct Escort
     @property bool busy() const
     {
         return active;
+    }
+
+    // Dungeon scripts:
+
+    /// It stays where it is (a ritual on the way) until `resume`; the player must still stay near.
+    bool paused;
+
+    /// It goes on from where it stopped: past the point it waits at, after its wait.
+    void resume()
+    {
+        paused = false;
     }
 
     private void over(ref CreatureContext me)

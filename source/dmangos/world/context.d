@@ -1348,6 +1348,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 if (script !is null)
                 {
                     script.map = created;
+                    script.lore = this;
+                    script.spawnObjects = &spawnDungeonObjects;
                     instanceScripts[instance] = script;
                 }
             }
@@ -3191,6 +3193,51 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             script.raise(Signal(from, id, value));
     }
 
+    /// See `CreatureLore.dungeonFight`.
+    void dungeonFight(uint instance, EntityRef creature, EntityRef enemy)
+    {
+        import dmangos.script.api : CreatureEngaged, CreatureEvaded;
+
+        if (auto script = instance in instanceScripts)
+        {
+            if (enemy)
+                script.raise(CreatureEngaged(creature, enemy));
+            else
+                script.raise(CreatureEvaded(creature));
+        }
+    }
+
+    /// Scripted event `event` (a spell's `SEND_EVENT`, a goober's event) happens on `map`, `source` using
+    /// `target`: the dungeon copy's script hears of it, then the event's database script runs.
+    void scriptedEvent(uint event, Map map, ulong source, ulong target)
+    {
+        import dmangos.script.api : EntityRef, EventHappened;
+        import dmangos.world.dbscripts : DbScriptType;
+
+        if (map is null || event == 0)
+            return;
+        if (map.instanceId)
+            if (auto script = map.instanceId in instanceScripts)
+                script.raise(EventHappened(event, EntityRef(source), EntityRef(target)));
+        startScript(DbScriptType.event, event, map, source, target);
+    }
+
+    /// See `InstanceContext.spawnObjects`: the game objects of `entry` on `map` not in the world come.
+    private uint spawnDungeonObjects(Map map, uint entry, uint despawnSeconds)
+    {
+        import dmangos.world.objects : makeGuid, HighGuid;
+
+        uint count;
+        foreach (ref spawn; data.gameObjectSpawns)
+            if (spawn.entry == entry && spawn.map == map.id
+                && map.findObject(makeGuid(HighGuid.gameObject, spawn.entry, spawn.guid)) is null)
+            {
+                scriptSpawnGameObject(map, spawn.guid, null, despawnSeconds);
+                count += map.findObject(makeGuid(HighGuid.gameObject, spawn.entry, spawn.guid)) !is null;
+            }
+        return count;
+    }
+
     /// See `CreatureLore.startRelay`.
     void startRelay(int id, CombatWorld world, ulong source, ulong target)
     {
@@ -3770,6 +3817,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         if (instances.length)
             unloadEmptyInstances(now);
         updateScripts(cast(uint) elapsed.total!"msecs");
+        foreach (script; instanceScripts) // the dungeon scripts' own timers
+            script.tick(cast(int) elapsed.total!"msecs");
         updateWeathers(cast(int) elapsed.total!"msecs");
         addPendingNavigation();
         checkHonorWeek(now);

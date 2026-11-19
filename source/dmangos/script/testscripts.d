@@ -114,6 +114,11 @@ final class FakeCreature : CreatureHost
     ActionResult hostDespawnOther(EntityRef, uint) { return ActionResult.ok; }
     QuestProgress hostQuestStatus(EntityRef, uint) { return QuestProgress.none; }
     void hostSendGossip(EntityRef, uint, const(MenuOption)[], bool) {}
+    // Dungeon scripts:
+    void hostSetFaction(uint) {}
+    void hostUnitFlags(uint, uint) {}
+    ActionResult hostAttack(EntityRef) { return ActionResult.ok; }
+    void hostRemoveAura(uint) {}
 }
 
 unittest

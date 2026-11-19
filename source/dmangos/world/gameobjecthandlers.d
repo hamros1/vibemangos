@@ -180,6 +180,8 @@ mixin template GameObjectHandlers()
             const t = go.template_;
             go.activateGoober(map);
             map.wake(go.guid);
+            if (const event = t.data[2]) // its event (`eventId`): the dungeon's script, the event's database script
+                context.scriptedEvent(event, map, player.guid, go.guid);
             if (const page = t.data[7]) // show the page
             {
                 ByteWriter w;

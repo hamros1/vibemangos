@@ -593,4 +593,36 @@ mixin template CreatureScripting()
             return 0;
         return world_ is null ? 0 : uniform(0, below, world_.random);
     }
+
+    // Dungeon scripts:
+
+    void hostSetFaction(uint faction)
+    {
+        if (world_ !is null)
+            scriptFaction(faction);
+    }
+
+    void hostUnitFlags(uint set, uint clear)
+    {
+        me.values.set!UNIT_FIELD_FLAGS((me.values.get!UNIT_FIELD_FLAGS | set) & ~clear);
+        if (world_ !is null)
+            world_.flushCreature(me);
+    }
+
+    ActionResult hostAttack(EntityRef target)
+    {
+        if (world_ is null || !me.alive)
+            return ActionResult.notHere;
+        auto other = world_.unit(target.guid);
+        if (!other || other.combatGuid == me.guid)
+            return ActionResult.notHere;
+        attackStart(other, world_);
+        return victim == other.combatGuid ? ActionResult.ok : ActionResult.notAllowed;
+    }
+
+    void hostRemoveAura(uint spell)
+    {
+        if (world_ !is null)
+            scriptRemoveAura(me.guid, spell);
+    }
 }
