@@ -2402,7 +2402,8 @@ private:
     package void spellDamageToPlayer(const(SpellInfo)* spell, typeof(this) other, uint damage)
     {
         damage += spellDamageBonus(spell, spell.casting.school); // spell power, as against a creature
-        damage = spellDamageFactors(damage, spell.casting.school, creatureTypeHumanoid, other.player.damageMods.taken);
+        damage = spellDamageFactors(damage, spell.casting.school, creatureTypeHumanoid, other.player.damageMods.taken,
+            other.player.damageMods.takenFlat);
         const crit = !(spell.attributesEx2 & spellAttrEx2CantCrit) && uniform01(map.random) * 100 < spellCritOf(spell);
         if (crit)
             damage = damage * 3 / 2;
@@ -2501,7 +2502,8 @@ private:
      * `damage` with what auras make of it: the caster's for its school and the victim's creature type
      * (`MOD_DAMAGE_PERCENT_DONE`, `MOD_DAMAGE_DONE_VERSUS`), the victim's for the school (`taken`).
      */
-    uint spellDamageFactors(uint damage, uint school, uint victimType, const ref float[7] taken)
+    uint spellDamageFactors(uint damage, uint school, uint victimType, const ref float[7] taken,
+        const ref int[7] takenFlat)
     {
         import dmangos.world.combat : creatureTypes;
 
@@ -2509,7 +2511,8 @@ private:
             return damage;
         const mods = &player.damageMods;
         const versus = victimType < creatureTypes ? mods.versus[victimType] : 1;
-        return cast(uint)(damage * mods.school[school] * versus * taken[school]);
+        const total = (damage * mods.school[school] * versus + takenFlat[school]) * taken[school];
+        return total > 0 ? cast(uint) total : 0;
     }
 
     void spellDamage(const(SpellInfo)* spell, Creature victim, uint damage, uint school)
@@ -2517,7 +2520,8 @@ private:
         damage += spellDamageBonus(spell, school);
         {
             const victimFighter = victim.fighter;
-            damage = spellDamageFactors(damage, school, victimFighter.creatureType, victimFighter.damageTaken);
+            damage = spellDamageFactors(damage, school, victimFighter.creatureType, victimFighter.damageTaken,
+                victimFighter.damageTakenFlat);
         }
         const crit = !(spell.attributesEx2 & spellAttrEx2CantCrit) && uniform01(map.random) * 100 < spellCritOf(spell);
         if (crit)
@@ -2624,8 +2628,9 @@ private:
             return;
         pvpAssisted(who);
         value += healingBonus(spell);
+        value = cast(int)(value * player.auras.multiplier(AuraType.modHealingDonePercent)); // the healer's
         const crit = !(spell.attributesEx2 & spellAttrEx2CantCrit) && uniform01(map.random) * 100 < spellCritOf(spell);
-        uint amount = crit ? value * 3 / 2 : value;
+        uint amount = who.player.auras.healingTaken(crit ? value * 3 / 2 : value, spell.casting.school);
         auto v = &who.player.values;
         const health = v.get!UNIT_FIELD_HEALTH, maxHealth = v.get!UNIT_FIELD_MAXHEALTH;
         if (health == 0)

@@ -97,6 +97,7 @@ struct AuraMods
     float[5] powerTotal = 1;     /// `MOD_INCREASE_ENERGY_PERCENT`, by `Power`
     float attackPowerTotal = 1;  /// `MOD_ATTACK_POWER_PCT`
     float offHandDamage = 1;     /// `MOD_OFFHAND_DAMAGE_PCT`
+    float[3] attackTime = 1;     /// haste and slows by `AttackType` (`AuraSet.attackTimeFactor`)
 }
 
 /// A player's derived numbers: its level's base stats with what its gear and `input`'s other bonuses add.
@@ -294,6 +295,8 @@ private void weaponDamage(const ref StatInputs input, AttackType type, ref Playe
     const pct = type == AttackType.offHand ? offHandDamagePct * input.auras.offHandDamage : 1.0f;
     result.damage[type] = DamageRange(max((fromAttackPower + weaponMin) * pct, 0.0f),
         max((fromAttackPower + weaponMax) * pct, 0.0f));
+    // Haste and slows change how often it swings, not what a swing deals (that by the weapon's own speed).
+    result.attackTime[type] = cast(uint)(result.attackTime[type] * input.auras.attackTime[type]);
 }
 
 unittest

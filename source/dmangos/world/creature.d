@@ -747,6 +747,19 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
                 world.sendToObservers(guid, cast(Opcode) pair[0], w.data);
             }
         }
+        // Its attack times by its haste and slows (Thunder Clap, Chilled): the template's, scaled.
+        {
+            const melee = cast(uint)(template_.meleeBaseAttackTime * auras.attackTimeFactor(0)),
+                ranged = cast(uint)(template_.rangedBaseAttackTime * auras.attackTimeFactor(2));
+            if (melee != values.get!UNIT_FIELD_BASEATTACKTIME || ranged != values.get!UNIT_FIELD_RANGEDATTACKTIME)
+            {
+                values.set!UNIT_FIELD_BASEATTACKTIME(melee);
+                values.set!UNIT_FIELD_BASEATTACKTIME(1, melee);
+                values.set!UNIT_FIELD_RANGEDATTACKTIME(ranged);
+                if (auto combat = cast(CombatWorld) world)
+                    combat.flushCreature(this);
+            }
+        }
         const held = immobilized;
         const stunned = auras.has(AuraType.modStun);
         const flags = values.get!UNIT_FIELD_FLAGS;

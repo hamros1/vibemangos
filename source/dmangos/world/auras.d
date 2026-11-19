@@ -280,6 +280,53 @@ struct AuraSet
         return product;
     }
 
+    /**
+     * By how much its attacks of `attackType` (0 main hand, 1 off hand, 2 ranged) take longer: haste of a% makes
+     * them take 100 / (100 + a) as long, a slow of a% (100 + a) / 100 as long (CMaNGOS's `ApplyAttackTimePercentMod`).
+     * The main hand: `MOD_MELEE_HASTE` (Slice and Dice, Flurry) and `MOD_ATTACKSPEED`; the off hand the first;
+     * ranged: `MOD_RANGED_HASTE` (Rapid Fire) and the greatest `MOD_RANGED_AMMO_HASTE` (a quiver).
+     */
+    float attackTimeFactor(uint attackType) const
+    {
+        float factor = 1;
+        int ammo;
+        void apply(int a)
+        {
+            factor *= a > 0 ? 100.0f / (100 + a) : (100.0f - a) / 100;
+        }
+        foreach (aura; list)
+            foreach (i; 0 .. 3)
+            {
+                if (!(aura.effects & (1 << i)))
+                    continue;
+                const amount = aura.amount[i] * cast(int) aura.stacks;
+                switch (aura.type(i))
+                {
+                case AuraType.modMeleeHaste:
+                    if (attackType < 2)
+                        apply(amount);
+                    break;
+                case AuraType.modAttackSpeed:
+                    if (attackType == 0)
+                        apply(amount);
+                    break;
+                case AuraType.modRangedHaste:
+                    if (attackType == 2)
+                        apply(amount);
+                    break;
+                case AuraType.modRangedAmmoHaste:
+                    if (attackType == 2 && amount > ammo)
+                        ammo = amount;
+                    break;
+                default:
+                    break;
+                }
+            }
+        if (ammo)
+            apply(ammo);
+        return factor;
+    }
+
     /// The sum of those whose misc value is `misc`.
     int totalByMisc(AuraType type, int misc) const
     {
@@ -300,6 +347,35 @@ struct AuraSet
                 if ((aura.effects & (1 << i)) && aura.type(i) == type && (aura.misc(i) & mask))
                     sum += aura.amount[i] * cast(int) aura.stacks;
         return sum;
+    }
+
+    /**
+     * Healing of `amount` from a spell of `school` as its target takes it (CMaNGOS's `SpellHealingBonusTaken`): what
+     * `MOD_HEALING` adds (Amplify Magic; Dampen Magic takes off), then `MOD_HEALING_PCT` (Mortal Strike's half).
+     */
+    uint healingTaken(uint amount, uint school) const
+    {
+        if (list.length == 0)
+            return amount;
+        const flat = cast(long) amount + totalByMiscMask(AuraType.modHealing, 1 << school);
+        const total = flat * multiplier(AuraType.modHealingPct);
+        return total > 0 ? cast(uint) total : 0;
+    }
+
+    /// The greatest of those whose misc value has a bit of `mask` (0 if none): `MOD_RESISTANCE_EXCLUSIVE`'s, of
+    /// which only the strongest of each school counts (Mark of the Wild and a resistance aura do not add up).
+    int greatestByMiscMask(AuraType type, int mask) const
+    {
+        int greatest;
+        foreach (aura; list)
+            foreach (i; 0 .. 3)
+                if ((aura.effects & (1 << i)) && aura.type(i) == type && (aura.misc(i) & mask))
+                {
+                    const amount = aura.amount[i] * cast(int) aura.stacks;
+                    if (amount > greatest)
+                        greatest = amount;
+                }
+        return greatest;
     }
 
     /// The strongest positive (or negative) amount of `type`, as speeds count: only the strongest of each kind.
@@ -492,4 +568,34 @@ unittest
     assert(isClose(m.threat[0], 1.265f) && isClose(m.threat[5], 1.265f));
     assert(isClose(m.taken[0], 0.9f) && isClose(m.swing[AttackType.mainHand], 1.05f));
     assert(m.swing[AttackType.offHand] == 1 && m.school[0] == 1, "not without the sword: not the off hand, not spells");
+}
+
+/// Haste and slows on attack times: haste divides, a slow multiplies.
+unittest
+{
+    import std.math : isClose;
+    import dmangos.world.updatefields : TypeId;
+
+    auto values = UpdateValues(TypeId.unit);
+    SpellInfo sliceAndDice, thunderClap, rapidFire;
+    sliceAndDice.id = 5171;
+    sliceAndDice.effect[0] = SpellEffect.applyAura;
+    sliceAndDice.casting.applyAuraName[0] = AuraType.modMeleeHaste;
+    thunderClap.id = 6343;
+    thunderClap.effect[0] = SpellEffect.applyAura;
+    thunderClap.casting.applyAuraName[0] = AuraType.modAttackSpeed;
+    rapidFire.id = 3045;
+    rapidFire.effect[0] = SpellEffect.applyAura;
+    rapidFire.casting.applyAuraName[0] = AuraType.modRangedHaste;
+
+    AuraSet set;
+    bool isNew;
+    set.apply(makeAura(&sliceAndDice, 1, 10, 9000, true, [20, 0, 0]), values, isNew);
+    assert(isClose(set.attackTimeFactor(0), 100.0f / 120) && isClose(set.attackTimeFactor(1), 100.0f / 120));
+    assert(set.attackTimeFactor(2) == 1, "not ranged");
+    set.apply(makeAura(&thunderClap, 2, 10, 10_000, false, [-10, 0, 0]), values, isNew);
+    assert(isClose(set.attackTimeFactor(0), 100.0f / 120 * 1.1f) && isClose(set.attackTimeFactor(1), 100.0f / 120),
+        "a slow of the main hand only");
+    set.apply(makeAura(&rapidFire, 1, 10, 15_000, true, [40, 0, 0]), values, isNew);
+    assert(isClose(set.attackTimeFactor(2), 100.0f / 140));
 }

@@ -670,6 +670,7 @@ mixin template CreatureCasting()
     {
         if (value <= 0 || who is null || !who.alive)
             return;
+        value = who.auras.healingTaken(value, spell.casting.school); // Mortal Strike on it: half
         const health = who.values.get!UNIT_FIELD_HEALTH, maximum = who.values.get!UNIT_FIELD_MAXHEALTH;
         const healed = health + value > maximum ? maximum - health : value;
         who.values.set!UNIT_FIELD_HEALTH(health + healed);

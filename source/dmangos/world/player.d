@@ -1081,7 +1081,8 @@ private:
                 + auras.totalByMisc(AuraType.modPercentStat, -1);
         }
         foreach (school; 0 .. 7)
-            input.auras.resistances[school] = auras.totalByMiscMask(AuraType.modResistance, 1 << school);
+            input.auras.resistances[school] = auras.totalByMiscMask(AuraType.modResistance, 1 << school)
+                + auras.greatestByMiscMask(AuraType.modResistanceExclusive, 1 << school);
         input.auras.attackPower = auras.total(AuraType.modAttackPower);
         input.auras.rangedAttackPower = auras.total(AuraType.modRangedAttackPower);
         input.auras.health = auras.total(AuraType.modIncreaseHealth);
@@ -1101,6 +1102,8 @@ private:
         input.auras.healthTotal = auras.multiplier(AuraType.modIncreaseHealthPercent);
         input.auras.attackPowerTotal = auras.multiplier(AuraType.modAttackPowerPct);
         input.auras.offHandDamage = auras.multiplier(AuraType.modOffhandDamagePct);
+        foreach (uint type; 0 .. 3)
+            input.auras.attackTime[type] = auras.attackTimeFactor(type);
         stats = computeStats(input);
         chances = meleeChances(chanceInputs(world));
         damageMods = DamageMods.of(auras, (ubyte slot) {

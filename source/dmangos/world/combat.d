@@ -115,6 +115,7 @@ struct Fighter
     uint shieldBlock;          /// what its shield stops of a blocked blow
     uint armor;
     float[7] damageTaken = 1;  /// by school: what its auras multiply blows against it by (`MOD_DAMAGE_PERCENT_TAKEN`)
+    int[7] damageTakenFlat;    /// by school: what its auras add to each blow first (`MOD_DAMAGE_TAKEN`: Blessing of Sanctuary)
     float[mechanics] mechanicResist = 0; /// percent more often it resists spells of each mechanic (`MOD_MECHANIC_RESISTANCE`)
     uint creatureType = creatureTypeHumanoid; /// `CreatureType` (a player is a humanoid)
     bool stealthed;            /// under a `MOD_STEALTH` aura (Stealth, Prowl)
@@ -173,6 +174,7 @@ struct DamageMods
     float[creatureTypes] versus = 1;
     float[creatureTypes] critVersus = 0;
     float[7] taken = 1;
+    int[7] takenFlat;          /// `MOD_DAMAGE_TAKEN`, by school
     float[7] threat = 1;       /// by school: what its damage is worth in threat (`MOD_THREAT`)
     float[mechanics] mechanicResist = 0;
 
@@ -199,6 +201,7 @@ struct DamageMods
         {
             m.school[s] = auras.multiplier(AuraType.modDamagePercentDone, (int mask) => (mask & (1 << s)) != 0, -1);
             m.taken[s] = auras.multiplier(AuraType.modDamagePercentTaken, (int mask) => (mask & (1 << s)) != 0);
+            m.takenFlat[s] = auras.totalByMiscMask(AuraType.modDamageTaken, 1 << s);
             m.threat[s] = auras.multiplier(AuraType.modThreat, (int mask) => (mask & (1 << s)) != 0);
         }
         foreach (int mechanic; 1 .. cast(int) mechanics)
@@ -218,6 +221,7 @@ struct DamageMods
         f.damageVersus = versus;
         f.critVersus = critVersus;
         f.damageTaken = taken;
+        f.damageTakenFlat = takenFlat;
         f.mechanicResist = mechanicResist;
     }
 }
@@ -626,6 +630,8 @@ MeleeDamage calculateMeleeDamage(const Fighter attacker, const Fighter victim, A
     d.hitInfo = type == AttackType.offHand ? HitInfo.leftSwing : HitInfo.normalSwing2;
 
     float damage = weaponDamage(attacker, type, rng) * damageFactor(attacker, victim, type, d.school);
+    if (d.school < 7 && victim.damageTakenFlat[d.school]) // the victim's flat part, as its percent takes it
+        damage = imported!"std.algorithm.comparison".max(0.0f, damage + victim.damageTakenFlat[d.school] * victim.damageTaken[d.school]);
     if (d.school == 0)
         damage = armorReducedDamage(attacker.level, victim.armor, damage);
     d.damage = cast(uint) damage;

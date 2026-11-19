@@ -444,8 +444,10 @@ private:
                     AuraType.modTotalStatPercentage, AuraType.modBaseResistancePct, AuraType.modResistancePct,
                     AuraType.modIncreaseHealthPercent, AuraType.modIncreaseEnergyPercent, AuraType.modAttackPowerPct,
                     AuraType.modOffhandDamagePct, AuraType.modSkill, AuraType.modSkillTalent,
-                    AuraType.modDamagePercentDone, AuraType.modDamagePercentTaken, AuraType.modDamageDoneVersus,
-                    AuraType.modCritPercentVersus, AuraType.modThreat, AuraType.modMechanicResistance, AuraType.modShieldBlockvaluePct:
+                    AuraType.modDamagePercentDone, AuraType.modDamagePercentTaken, AuraType.modDamageTaken, AuraType.modDamageDoneVersus,
+                    AuraType.modCritPercentVersus, AuraType.modThreat, AuraType.modMechanicResistance, AuraType.modShieldBlockvaluePct,
+                    AuraType.modMeleeHaste, AuraType.modRangedHaste, AuraType.modAttackSpeed, AuraType.modRangedAmmoHaste,
+                    AuraType.modResistanceExclusive:
                 stats = true;
                 break;
             case AuraType.modIncreaseSpeed, AuraType.modDecreaseSpeed, AuraType.modIncreaseSwimSpeed:
@@ -661,7 +663,10 @@ private:
         uint healed;
         switch (aura.type(i))
         {
-        case AuraType.periodicHeal, AuraType.modRegen:
+        case AuraType.periodicHeal:
+            healed = player.auras.healingTaken(amount, aura.spell.casting.school);
+            break;
+        case AuraType.modRegen:
             healed = amount;
             break;
         case AuraType.obsModHealth:
