@@ -2008,7 +2008,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 ++unserved;
         }
         foreach (kind, names; [ScriptKind.gameObject: data.gameObjectScriptNames, ScriptKind.spell: data.spellScriptNames,
-                ScriptKind.areaTrigger: data.areaTriggerScriptNames])
+                ScriptKind.areaTrigger: data.areaTriggerScriptNames, ScriptKind.event: data.eventScriptNames])
         {
             import std.conv : to;
 
@@ -2028,7 +2028,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         import std.conv : to;
 
         foreach (k; [ScriptKind.creature, ScriptKind.instance, ScriptKind.gameObject, ScriptKind.spell,
-                ScriptKind.areaTrigger])
+                ScriptKind.areaTrigger, ScriptKind.event])
             foreach (name; scripts.names(k))
                 if (k.to!string ~ ":" ~ name !in used)
                     warning!"scripts: no %s row names script %s"(k, name);
@@ -3030,7 +3030,13 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return statelessScript(ScriptKind.areaTrigger, id, data.areaTriggerScriptNames, areaTriggerScripts);
     }
 
-    private ScriptHandle[uint] spellScripts, areaTriggerScripts; // made on first use (no handle: none serves it)
+    /// The script of scripted event `id` (`scripted_event_id`); no handle if none serves it. One per event.
+    ScriptHandle eventScript(uint id)
+    {
+        return statelessScript(ScriptKind.event, id, data.eventScriptNames, eventScripts);
+    }
+
+    private ScriptHandle[uint] spellScripts, areaTriggerScripts, eventScripts; // made on first use (none: no script)
 
     private ScriptHandle statelessScript(ScriptKind kind, uint id, const string[uint] names, ref ScriptHandle[uint] made)
     {
@@ -3518,6 +3524,17 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
         if (map is null || event == 0)
             return;
+        // Its own script (`@scriptedEvent`), around the player who started it or is its target.
+        if (const handle = eventScript(event))
+        {
+            import dmangos.world.character : Character;
+
+            auto player = cast(Character) onlinePlayer(source);
+            if (player is null)
+                player = cast(Character) onlinePlayer(target);
+            if (player !is null && player.eventScript(handle, event, source, target))
+                return; // the script did what the event does
+        }
         if (map.instanceId)
             if (auto script = map.instanceId in instanceScripts)
                 if (script.raise(EventHappened(event, EntityRef(source), EntityRef(target))))

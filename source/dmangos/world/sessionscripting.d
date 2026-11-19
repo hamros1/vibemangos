@@ -9,8 +9,9 @@ module dmangos.world.sessionscripting;
 /// See the module documentation.
 mixin template SessionScripting()
 {
-    import dmangos.script.api : ActionResult, AreaTriggerContext, AreaTriggerHost, EffectHit, EntityRef, Location,
+    import dmangos.script.api : ActionResult, AreaTriggerContext, AreaTriggerHost, EventContext, EventStarted, EffectHit, EntityRef, Location,
         QuestProgress, SpellContext, SpellHost, TriggerEntered;
+    import dmangos.script.registry : ScriptHandle;
     import dmangos.world.spells : SpellInfo;
     import dmangos.world.updatefields : UNIT_FIELD_HEALTH;
 
@@ -64,6 +65,15 @@ mixin template SessionScripting()
         context.scripts.raise(handle, c, AuraTicked(EntityRef(player.guid), EntityRef(target), cast(ubyte) i, tick,
             ticks, amount));
         return c.amountChanged ? c.amount : amount;
+    }
+
+    /// Scripted event `event` (started by `source`, at `target`) reached its script, around this player: true if the
+    /// script consumed it.
+    package bool eventScript(ScriptHandle handle, uint event, ulong source, ulong target)
+    {
+        auto c = EventContext(scriptHost);
+        context.scripts.raise(handle, c, EventStarted(event, EntityRef(source), EntityRef(target)));
+        return c.consumed;
     }
 
     /// The player walked into area trigger `id` (at `at`): its script hears of it; true if it consumed it.

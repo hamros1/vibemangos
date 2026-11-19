@@ -1310,6 +1310,31 @@ struct SpellContext
 // Area trigger scripts (`@areaTrigger`, bound by `scripted_areatrigger`), one per trigger
 // ---------------------------------------------------------------------------
 
+/**
+ * A scripted event began (`scripted_event_id`): a spell's `SEND_EVENT` or a game object's event, started by
+ * `source` (the caster, the object's user) at `target`. `consume` keeps its database script from following.
+ */
+struct EventStarted
+{
+    uint event;
+    EntityRef source, target;
+}
+
+/// An event script's handle: what an area trigger's script can do, around the player who started it.
+struct EventContext
+{
+    AreaTriggerContext inner; /// what it can do (an area trigger script's abilities)
+    alias inner this;
+
+    @disable this(this);
+
+    /// The core makes one around the player who started the event, or is its target.
+    this(AreaTriggerHost host) pure nothrow @nogc @safe
+    {
+        inner = AreaTriggerContext(host);
+    }
+}
+
 /// A player walked into area trigger `trigger`, whose centre is `at`. `consume` keeps the trigger's
 /// usual effects (its teleport, its quest) from following.
 struct TriggerEntered

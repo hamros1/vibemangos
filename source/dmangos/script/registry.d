@@ -85,6 +85,18 @@ struct areaTrigger
     }
 }
 
+/// A scripted event's script (`scripted_event_id`: an event a spell or a game object starts), for these names.
+struct scriptedEvent
+{
+    string[] names;
+
+    ///
+    this(string[] names...) pure nothrow @safe
+    {
+        this.names = names.dup;
+    }
+}
+
 /// What kind of script.
 enum ScriptKind : ubyte
 {
@@ -93,6 +105,7 @@ enum ScriptKind : ubyte
     gameObject,
     spell,
     areaTrigger,
+    event,
 }
 
 /// The context and events of each kind.
@@ -124,6 +137,12 @@ template KindInfo(ScriptKind kind)
         alias Context = AreaTriggerContext;
         alias Events = AliasSeq!(TriggerEntered);
         alias Attribute = .areaTrigger;
+    }
+    else static if (kind == ScriptKind.event)
+    {
+        alias Context = EventContext;
+        alias Events = AliasSeq!(EventStarted);
+        alias Attribute = .scriptedEvent;
     }
     else static if (kind == ScriptKind.instance)
     {

@@ -97,3 +97,48 @@ struct AncientLeaf
         grove.summon(hastat, Location(6193.449219f, -1137.834106f, 366.260529f, 5.77332f), 5 * 60_000);
     }
 }
+
+version (unittest)
+{
+    /// An event script for the tests of the kind (`@scriptedEvent`): a creature beside the player who started it.
+    @scriptedEvent("event_test_summon")
+    struct TestEventSummon
+    {
+        void on(ref EventContext c, const ref EventStarted e)
+        {
+            c.summon(imported!"dmangos.world.testdata".creatureTrainer, Location(-8945, -132, 83.5f), 60_000);
+            c.consume();
+        }
+    }
+}
+
+// A scripted event reaches its script, around the player who started it; consumed, no database script follows.
+unittest
+{
+    import dmangos.world.creature : Creature;
+    import dmangos.world.map : MapObject;
+    import dmangos.world.movement : Position;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    context.data.eventScriptNames[7777] = "event_test_summon";
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f));
+    auto map = context.map(0);
+    size_t trainers()
+    {
+        size_t n;
+        map.forEachObject((MapObject o) {
+            if (auto c = cast(Creature) o)
+                if (c.template_.entry == creatureTrainer)
+                    ++n;
+        });
+        return n;
+    }
+    const before = trainers();
+    context.scriptedEvent(7777, map, anduin.session.character.guid, 0);
+    assert(trainers() == before + 1);
+    context.scriptedEvent(7778, map, anduin.session.character.guid, 0); // no script: nothing, no harm
+    assert(trainers() == before + 1);
+}
