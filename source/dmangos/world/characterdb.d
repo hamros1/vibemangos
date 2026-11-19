@@ -1079,6 +1079,12 @@ final class CharacterStatements
         characters.execute!"DELETE FROM character_instance WHERE guid = ? AND instance = ?"(guid, instance);
     }
 
+    /// See `WorldDatabase.deleteInstanceRespawn`.
+    void deleteInstanceRespawn(uint spawnGuid, uint instance)
+    {
+        characters.execute!"DELETE FROM creature_respawn WHERE guid = ? AND instance = ?"(spawnGuid, instance);
+    }
+
     /// See `WorldDatabase.saveInstanceRespawn`.
     void saveInstanceRespawn(bool gameObject, uint spawnGuid, uint instance, long until)
     {

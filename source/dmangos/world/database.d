@@ -646,6 +646,9 @@ interface WorldDatabase
     /// A creature (or game object) spawn dead (used up) in an instance until `until` (`creature_respawn`, `gameobject_respawn`).
     void saveInstanceRespawn(bool gameObject, uint spawnGuid, uint instance, long until);
 
+    /// Instance round 2: a creature spawn of an instance alive again (its `creature_respawn` row goes).
+    void deleteInstanceRespawn(uint spawnGuid, uint instance);
+
     /// Name, race, gender and class of a character, or null.
     Nullable!NameInfo nameInfo(uint guid);
 
@@ -944,6 +947,7 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
     {
         statements.saveInstanceRespawn(gameObject, spawnGuid, instance, until);
     }
+    void deleteInstanceRespawn(uint spawnGuid, uint instance) { statements.deleteInstanceRespawn(spawnGuid, instance); }
     void deleteInstanceBind(uint guid, uint instance) { statements.deleteInstanceBind(guid, instance); }
     void insertCreatureSpawn(const ref CreatureSpawn s)
     {
@@ -1930,6 +1934,13 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
     void saveInstanceRespawn(bool gameObject, uint spawnGuid, uint instance, long until)
     {
         instanceRows.respawns ~= InstanceRespawnRecord(gameObject, spawnGuid, instance, until);
+    }
+    void deleteInstanceRespawn(uint spawnGuid, uint instance)
+    {
+        import std.algorithm.mutation : remove;
+
+        instanceRows.respawns = instanceRows.respawns.remove!(r => !r.gameObject && r.spawnGuid == spawnGuid
+            && r.instance == instance);
     }
     CreatureSpawn[uint] creatureSpawnRows;     /// what `insertCreatureSpawn` wrote, by guid
     GameObjectSpawn[uint] gameObjectSpawnRows; /// ditto, game objects
