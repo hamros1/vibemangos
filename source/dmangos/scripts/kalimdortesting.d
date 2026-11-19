@@ -216,6 +216,7 @@ final class RecordingCreature : CreatureHost
     // Instance round 2:
     ActionResult hostTeleportPlayer(EntityRef, Location) { return ActionResult.ok; }
     ActionResult hostMovementScriptOf(EntityRef, uint) { return ActionResult.ok; }
+    float hostThreatOf(EntityRef) { return 0; }
 }
 
 /// A script of `Module` on a recording creature, and the means to drive it.

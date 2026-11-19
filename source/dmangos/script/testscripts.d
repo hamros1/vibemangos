@@ -176,6 +176,7 @@ final class FakeCreature : CreatureHost
     // Instance round 2:
     ActionResult hostTeleportPlayer(EntityRef, Location) { return ActionResult.ok; }
     ActionResult hostMovementScriptOf(EntityRef, uint) { return ActionResult.ok; }
+    float hostThreatOf(EntityRef) { return 0; }
 }
 
 unittest

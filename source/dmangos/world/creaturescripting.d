@@ -787,6 +787,11 @@ mixin template CreatureScripting()
 
     // Instance round 2:
 
+    float hostThreatOf(EntityRef who)
+    {
+        return threatOf(who.guid);
+    }
+
     ActionResult hostMovementScriptOf(EntityRef who, uint id)
     {
         if (world_ is null || id == 0)

@@ -196,6 +196,7 @@ final class TestCreature : CreatureHost
     // Instance round 2:
     ActionResult hostTeleportPlayer(EntityRef who, Location) { did ~= format("teleport %s", who.guid); return ActionResult.ok; }
     ActionResult hostMovementScriptOf(EntityRef, uint) { return ActionResult.ok; }
+    float hostThreatOf(EntityRef) { return 0; }
 }
 
 /// A dungeon copy: see the module documentation.
