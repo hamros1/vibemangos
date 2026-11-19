@@ -1,7 +1,7 @@
 /**
  * Special creatures found all over the world (ScriptDevAI's world scripts): the Triage doctors and
  * their patients, the priests' wounded of the starting areas, the paladins' redemption targets, Cluck
- * the chicken, The Cleaner, and Stormwind's guards saluting Reginald Windsor.
+ * the chicken, The Cleaner, Stormwind's guards saluting Reginald Windsor, and quest spells' dummies.
  */
 module dmangos.scripts.npcs;
 
@@ -455,6 +455,39 @@ struct GuardStormwind
 
     void on(ref CreatureContext me, Step step)
     {
+    }
+}
+
+/**
+ * Creatures that quest spells are cast on, or that only the dead see: Franclorn Forgewright and
+ * Gaeriyan wear a shroud of death; a Deeprun Rat charmed by Melodious Rapture becomes an Enthralled
+ * Deeprun Rat and counts for the player's quest.
+ */
+@creature("spell_dummy_npc")
+struct SpellDummyNpc
+{
+    enum uint franclornForgewright = 8888, gaeriyan = 9299, deeprunRat = 13016, enthralledDeeprunRat = 13017;
+    enum uint spellShroudOfDeath = 10848, spellSpiritParticles = 17327, spellMelodiousRapture = 21050,
+        spellMelodiousRaptureVisual = 21051;
+
+    void on(ref CreatureContext me, const ref Spawned e)
+    {
+        const entry = me.self.entry;
+        if (entry == franclornForgewright || entry == gaeriyan)
+        {
+            me.castSelf(spellShroudOfDeath, true);
+            me.castSelf(spellSpiritParticles, true);
+        }
+    }
+
+    void on(ref CreatureContext me, const ref SpellHit e)
+    {
+        if (e.spell != spellMelodiousRapture || !e.caster.isPlayer || me.self.entry != deeprunRat)
+            return;
+        if (!me.changeEntry(enthralledDeeprunRat))
+            return;
+        me.castSelf(spellMelodiousRaptureVisual, true);
+        me.killCredit(e.caster, enthralledDeeprunRat);
     }
 }
 
