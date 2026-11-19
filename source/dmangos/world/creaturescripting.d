@@ -485,11 +485,21 @@ mixin template CreatureScripting()
 
     void hostMoveTo(Location at, uint point, bool run)
     {
+        moveOrdered(at, point, run, 0);
+    }
+
+    /// `hostMoveTo`, for itself or for creature `orderedBy`'s script, which hears of the arrival.
+    private void moveOrdered(Location at, uint point, bool run, ulong orderedBy)
+    {
         import dmangos.vmap.math : Vector3;
         import dmangos.world.motion : PointMovement;
 
         auto move = new PointMovement(Vector3(at.x, at.y, at.z), at.orientation, !run, null);
-        move.onArrived = (Creature c) { c.ai.movementArrived(point); };
+        move.onArrived = (Creature c) {
+            c.ai.movementArrived(point);
+            if (orderedBy)
+                c.ai.tellArrival(orderedBy, point);
+        };
         if (inCombat_ || evadingHome)
         {
             outOfCombat = move; // where it goes once home from the fight
@@ -592,5 +602,174 @@ mixin template CreatureScripting()
         if (below == 0)
             return 0;
         return world_ is null ? 0 : uniform(0, below, world_.random);
+    }
+
+    // -----------------------------------------------------------------------
+    // Eastern Kingdoms scripts: `CreatureHost`
+    // -----------------------------------------------------------------------
+
+    /// A creature it summoned died: its script hears of it.
+    package void summonedDied(CombatWorld world, EntityRef summoned, EntityRef killer)
+    {
+        if (world !is null)
+            world_ = world;
+        raiseScript(SummonedDied(summoned, killer));
+        if (world_ !is null)
+            world_.wake(me.guid);
+    }
+
+    /// It arrived where creature `orderedBy`'s script sent it: that script hears of it.
+    private void tellArrival(ulong orderedBy, uint point)
+    {
+        if (world_ is null)
+            return;
+        auto orderer = world_.creatureAt(orderedBy);
+        if (orderer is null || orderer.ai is null)
+            return;
+        orderer.ai.world_ = world_;
+        orderer.ai.raiseScript(SummonedArrived(EntityRef(me.guid), point));
+        world_.wake(orderedBy);
+    }
+
+    /// A player (or pet) came into its sight: its script hears of it.
+    package void unitInSight(UnitRef who)
+    {
+        import dmangos.script.registry : ScriptKind;
+
+        if (behaviour && scripts_.handles!UnitInSight(behaviour))
+            raiseScript(UnitInSight(EntityRef(who.combatGuid)));
+    }
+
+    void hostSetFaction(uint faction)
+    {
+        if (world_ !is null)
+            scriptFaction(faction);
+    }
+
+    void hostUnitFlags(uint flags, bool set)
+    {
+        if (world_ !is null)
+            scriptUnitFlags(me.guid, flags, set);
+    }
+
+    void hostReactState(Reaction state)
+    {
+        scriptReactState(cast(uint) state);
+    }
+
+    void hostDeathPrevention(bool on)
+    {
+        scriptDeathPrevention(on);
+    }
+
+    void hostEvade()
+    {
+        if (world_ !is null)
+            scriptEvade();
+    }
+
+    ActionResult hostAttackBy(EntityRef attacker, EntityRef target)
+    {
+        if (world_ is null)
+            return ActionResult.notHere;
+        auto victim_ = world_.unit(target.guid);
+        if (!victim_ || !victim_.fighter.alive)
+            return ActionResult.notHere;
+        if (attacker.guid == me.guid)
+        {
+            if (!me.alive)
+                return ActionResult.notAllowed;
+            attackStart(victim_, world_);
+            return ActionResult.ok;
+        }
+        auto other = world_.creatureAt(attacker.guid);
+        if (other is null || other.ai is null)
+            return ActionResult.notHere;
+        if (!other.alive)
+            return ActionResult.notAllowed;
+        other.ai.attackStart(victim_, world_);
+        return ActionResult.ok;
+    }
+
+    ActionResult hostMoveOther(EntityRef creature, Location at, uint point, bool run)
+    {
+        if (world_ is null)
+            return ActionResult.notHere;
+        if (creature.guid == me.guid)
+        {
+            hostMoveTo(at, point, run);
+            return ActionResult.ok;
+        }
+        auto other = world_.creatureAt(creature.guid);
+        if (other is null || other.ai is null)
+            return ActionResult.notHere;
+        if (!other.alive)
+            return ActionResult.notAllowed;
+        other.ai.world_ = world_;
+        other.ai.moveOrdered(at, point, run, other.summon.summoner == me.guid ? me.guid : 0);
+        return ActionResult.ok;
+    }
+
+    void hostFace(EntityRef target)
+    {
+        if (world_ !is null)
+            scriptFace(target.guid, false);
+    }
+
+    void hostSheath(Sheath state)
+    {
+        if (world_ !is null)
+            scriptSheath(cast(uint) state);
+    }
+
+    void hostMount(uint display)
+    {
+        if (world_ !is null)
+            scriptMount(0, display);
+    }
+
+    void hostDie()
+    {
+        if (world_ !is null)
+            scriptDie();
+    }
+
+    bool hostChangeEntry(uint entry)
+    {
+        return world_ !is null && scriptUpdateTemplate(entry);
+    }
+
+    EntityRef hostObjectNearby(uint entry, float range)
+    {
+        if (world_ is null || lore is null)
+            return EntityRef.init;
+        return EntityRef(lore.gameObjectNear(world_, me.position, entry, range));
+    }
+
+    ActionResult hostUseObject(EntityRef object)
+    {
+        if (world_ is null || lore is null)
+            return ActionResult.notHere;
+        return lore.useGameObject(world_, object.guid);
+    }
+
+    ActionResult hostRemoveAura(EntityRef who, uint spell)
+    {
+        if (world_ is null)
+            return ActionResult.notHere;
+        if (who.guid != me.guid && !world_.unit(who.guid))
+            return ActionResult.notHere;
+        scriptRemoveAura(who.guid, spell);
+        return ActionResult.ok;
+    }
+
+    bool hostHasAura(EntityRef who, uint spell)
+    {
+        if (who.guid == me.guid)
+            return me.auras.find(spell) !is null;
+        if (world_ !is null)
+            if (auto other = world_.creatureAt(who.guid))
+                return other.auras.find(spell) !is null;
+        return false;
     }
 }

@@ -137,6 +137,12 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Projects: CMaNGOS
 * Constants: `DEFAULT_MAX_PLAYER_DISTANCE`
 
+## scripts/redridge.d
+
+* Projects: CMaNGOS
+* Files: `ScriptDevAI/scripts/eastern_kingdoms/redridge_mountains.cpp`
+* Functions/ScriptNames: `npc_corporal_keeshan`
+
 ## timer.d
 
 * Projects: CMaNGOS, Ember

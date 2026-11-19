@@ -51,7 +51,7 @@ import dmangos.world.opcodes : ChatType, Language, Opcode;
 import dmangos.world.creatureai : CombatWorld, CreatureLore;
 import dmangos.world.npcdata : BroadcastText;
 import dmangos.world.spells : SpellInfo;
-import dmangos.script.api : ActionResult, EntityRef, GameObjectHost, Waypoint;
+import dmangos.script.api : ActionResult, EntityRef, GameObjectHost, Location, QuestProgress, Waypoint;
 import dmangos.script.registry : ScriptHandle, ScriptKind, ScriptRuntime;
 import dmangos.scripts : scriptModules;
 import dmangos.world.instancescripting : InstanceScript;
@@ -3155,6 +3155,120 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
             info!"script %s (%s %s): %s"(scripts.nameOf(go.behaviour), go.template_.name, go.spawn.guid, text);
         }
+
+        // Eastern Kingdoms scripts:
+
+        QuestProgress hostQuestStatus(EntityRef player, uint quest)
+        {
+            if (auto who = map.unit(player.guid))
+                return who.questStatusOf(quest);
+            return QuestProgress.none;
+        }
+
+        void hostQuestEvent(EntityRef player, uint quest)
+        {
+            if (auto who = map.unit(player.guid))
+                who.questEventHappened(quest);
+        }
+
+        EntityRef hostObjectNearby(uint entry, float range)
+        {
+            return EntityRef(nearestGameObject(map, go.position, entry, range, go.guid));
+        }
+
+        ActionResult hostObjectOpen(EntityRef object, bool open)
+        {
+            auto other = cast(GameObject) map.findObject(object.guid);
+            if (other is null)
+                return ActionResult.notHere;
+            other.setDoorOpen(open);
+            map.flushGameObject(other);
+            return ActionResult.ok;
+        }
+
+        ActionResult hostObjectFlags(EntityRef object, uint flags, bool set)
+        {
+            import dmangos.world.updatefields : GAMEOBJECT_FLAGS;
+
+            auto other = cast(GameObject) map.findObject(object.guid);
+            if (other is null)
+                return ActionResult.notHere;
+            const now = other.values.get!GAMEOBJECT_FLAGS;
+            other.values.set!GAMEOBJECT_FLAGS(set ? now | flags : now & ~flags);
+            map.flushGameObject(other);
+            return ActionResult.ok;
+        }
+
+        EntityRef hostCreatureNearby(uint entry, float range)
+        {
+            foreach (c; map.creaturesNear(go.position, range))
+                if (c.spawn.entry == entry && c.alive)
+                    return EntityRef(c.guid);
+            return EntityRef.init;
+        }
+
+        EntityRef hostSummon(uint entry, Location at, uint despawnMs, EntityRef attack)
+        {
+            import dmangos.world.creature : TempSpawnType;
+
+            auto summoned = summonCreature(map, entry, Position(at.x, at.y, at.z, at.orientation),
+                despawnMs ? TempSpawnType.timedOutOfCombatOrDead : TempSpawnType.dead, despawnMs, go.guid);
+            if (summoned is null)
+                return EntityRef.init;
+            if (attack)
+                if (auto victim = map.unit(attack.guid))
+                    summoned.ai.attackedBy(victim, map);
+            return EntityRef(summoned.guid);
+        }
+
+        ActionResult hostSayAs(EntityRef speaker, uint text, EntityRef target)
+        {
+            if (broadcastText(text) is null)
+                return ActionResult.failed;
+            auto c = map.creatureAt(speaker.guid);
+            if (c is null || c.ai is null)
+                return ActionResult.notHere;
+            c.ai.sayFor(map, text, target.guid);
+            return ActionResult.ok;
+        }
+    }
+
+    /// The guid of the nearest game object of `entry` within `range` yards of `center` (not `except`); 0 if none.
+    private static ulong nearestGameObject(Map map, Position center, uint entry, float range, ulong except = 0)
+    {
+        ulong best;
+        float bestDistance = float.max;
+        foreach (o; map.objectsNear(center, range))
+            if (auto g = cast(GameObject) o)
+                if (g.template_.entry == entry && g.guid != except)
+                {
+                    const p = g.position;
+                    const d = (p.x - center.x) ^^ 2 + (p.y - center.y) ^^ 2 + (p.z - center.z) ^^ 2;
+                    if (d <= range * range && d < bestDistance)
+                    {
+                        bestDistance = d;
+                        best = g.guid;
+                    }
+                }
+        return best;
+    }
+
+    /// See `CreatureLore.gameObjectNear`.
+    ulong gameObjectNear(CombatWorld world, Position center, uint entry, float range)
+    {
+        auto map = cast(Map) world;
+        return map is null ? 0 : nearestGameObject(map, center, entry, range);
+    }
+
+    /// See `CreatureLore.useGameObject`.
+    ActionResult useGameObject(CombatWorld world, ulong guid)
+    {
+        auto map = cast(Map) world;
+        auto g = map is null ? null : cast(GameObject) map.findObject(guid);
+        if (g is null)
+            return ActionResult.notHere;
+        g.useDoorOrButton(map);
+        return ActionResult.ok;
     }
 
     private GoHost goHost_;

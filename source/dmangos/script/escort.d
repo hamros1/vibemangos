@@ -22,6 +22,7 @@ struct Escort
     bool finished;          /// it reached its last point and waited there
     float maxDistance = 50; /// the player farther than this: the escort fails
     uint despawnAfterMs;    /// over (done or failed), it goes this long after, to come back home; 0: it stays
+    bool paused;            /// it stays where it is (an ambush to fight off, a scene) until unpaused
 
     /// Sets off with `player` on `quest`, walking (running) from the first point; its NPC flags go
     /// (nobody else can take it on its way).
@@ -74,7 +75,7 @@ struct Escort
             return;
         if (!playerNear(me))
             return fail(me);
-        if (me.inCombat)
+        if (me.inCombat || paused)
             return;
         if (waiting)
         {

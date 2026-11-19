@@ -94,6 +94,14 @@ interface CreatureLore
     @property ScriptRuntime scriptRuntime();
     /// ditto
     ScriptHandle spellScript(uint id);
+
+    // Eastern Kingdoms scripts:
+
+    /// The guid of the nearest game object of `entry` within `range` yards of `center` on `world`; 0 if none.
+    ulong gameObjectNear(CombatWorld world, Position center, uint entry, float range);
+
+    /// Uses game object `guid` on `world` as a door or button is used: open for its time.
+    ActionResult useGameObject(CombatWorld world, ulong guid);
 }
 
 /// What a creature's AI needs of its map.
@@ -282,6 +290,8 @@ final class CreatureAI : Scripted, CreatureHost
     void moveInLineOfSight(UnitRef who, CombatWorld world)
     {
         world_ = world;
+        if (behaviour && me.alive)
+            unitInSight(who); // Eastern Kingdoms scripts
         if (react != ReactState.aggressive || victim || evadingHome || !me.alive || me.petOwner)
             return;
         if (me.factionTemplate !is null && isNeutralToAll(*me.factionTemplate))
@@ -351,6 +361,11 @@ final class CreatureAI : Scripted, CreatureHost
             script.died(this, victim);
         if (world !is null)
             raiseScript(Died(EntityRef(victim)));
+        // Eastern Kingdoms scripts: its summoner's script hears of it.
+        if (world !is null && me.summon.summoner)
+            if (auto summoner = world.creatureAt(me.summon.summoner))
+                if (summoner.ai !is null)
+                    summoner.ai.summonedDied(world, EntityRef(me.guid), EntityRef(victim));
         foreach (guid, _; threat)
             notifyRemoved(guid, world);
         threat = null;

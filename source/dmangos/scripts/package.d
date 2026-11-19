@@ -13,8 +13,12 @@ static import dmangos.scripts.stormwind;
 static import dmangos.scripts.ungoro;
 static import dmangos.scripts.shadowfang;
 static import dmangos.scripts.wailingcaverns;
+// Eastern Kingdoms scripts:
+static import dmangos.scripts.redridge;
 
 /// Every module holding scripts.
 alias scriptModules = AliasSeq!(dmangos.scripts.deadmines, dmangos.scripts.westfall, dmangos.scripts.spells,
     dmangos.scripts.stormwind, dmangos.scripts.ungoro, dmangos.scripts.shadowfang,
-    dmangos.scripts.wailingcaverns);
+    dmangos.scripts.wailingcaverns,
+    // Eastern Kingdoms scripts:
+    dmangos.scripts.redridge);
