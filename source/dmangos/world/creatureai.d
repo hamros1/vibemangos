@@ -321,12 +321,15 @@ final class CreatureAI : Scripted, CreatureHost
             addThreat(attacker, 0);
     }
 
-    /// The threat of damage taken: what `attacker` did to it; direct damage restarts its combat timer.
-    void damageTaken(UnitRef attacker, uint damage)
+    /**
+     * The threat of damage taken: what `attacker` did to it, times `threatFactor` (the attacker's threat auras);
+     * direct damage restarts its combat timer.
+     */
+    void damageTaken(UnitRef attacker, uint damage, float threatFactor = 1)
     {
         if (!me.alive || evadingHome || me.petOwner)
             return;
-        addThreat(attacker, damage);
+        addThreat(attacker, damage * threatFactor);
         if (damage)
             triggerCombatTimer();
         if (behaviour)

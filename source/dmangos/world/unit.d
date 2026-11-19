@@ -45,23 +45,24 @@ struct Blow
 {
     BlowKind kind;
     MeleeDamage melee; /// a swing's outcome, hit flags and damage before blocks
+    uint school;       /// a spell's or a tick's school index (a swing's is its own)
 
     ///
     static Blow swing(const ref MeleeDamage d)
     {
-        return Blow(BlowKind.melee, d);
+        return Blow(BlowKind.melee, d, d.school);
     }
 
     ///
-    static Blow spell()
+    static Blow spell(uint school = 0)
     {
-        return Blow(BlowKind.spell);
+        return Blow(BlowKind.spell, MeleeDamage.init, school);
     }
 
     ///
-    static Blow periodic()
+    static Blow periodic(uint school = 0)
     {
-        return Blow(BlowKind.periodic);
+        return Blow(BlowKind.periodic, MeleeDamage.init, school);
     }
 }
 
@@ -369,7 +370,12 @@ private void creatureDamaged(UnitRef attacker, UnitRef victim, uint damage, cons
     if (attacker)
     {
         creature.ai.attackedBy(attacker, map);
-        creature.ai.damageTaken(attacker, damage);
+        // A player's threat by its auras for the school (`MOD_THREAT`: Defiance, Subtlety).
+        float threat = 1;
+        if (attacker.kind == UnitKind.player && blow.school < 7)
+            if (const p = attacker.session.character)
+                threat = p.damageMods.threat[blow.school];
+        creature.ai.damageTaken(attacker, damage, threat);
     }
     map.wake(creature.guid);
     if (damage == 0)

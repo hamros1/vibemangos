@@ -194,8 +194,13 @@ none yet), the PvP rank's discount, reputation from spells.
 ### Talents
 
 **Done** (`talenthandlers.d`, `spellmods.d`; README's "Talents"): learning ranks, passive auras,
-the spell modifiers most talents are, unlearning them at a class trainer. Next: threat and charges
-modifiers, parry, dodge and crit chance auras feeding the combat chances.
+the spell modifiers most talents are, unlearning them at a class trainer. The auras talents (and buffs)
+use for stats and combat: crit, dodge, parry, block and hit chances; percentages of stats, health, power,
+armor and resistances, attack power and the off hand's damage (`stats.d`); weapon and defense skill
+bonuses; damage done and taken by school and by creature type, crit by creature type, threat
+(`combat.d`'s `DamageMods`); the five-second rule and Meditation. Not yet: charges, mechanic
+resistance, spell power from a share of a stat, `overrideClassScripts` (each talent its own), procs on
+the target.
 
 ### Mail
 
