@@ -282,6 +282,7 @@ interface CreatureHost
     void hostDeathPrevention(bool on);
     EntityRef hostPlayerNearby(float range);
     bool hostLocate(EntityRef who, out Location at);
+    bool hostChangeEntry(uint entry);
 }
 
 /// `UnitFlags`, as dungeon scripts set and clear them (`CreatureContext.unitFlags`).
@@ -487,6 +488,10 @@ struct CreatureContext
 
     /// Where another entity on its map is; false (and `at` untouched) if it is not seen here.
     bool locate(EntityRef who, out Location at) { return host.hostLocate(who, at); }
+
+    /// It becomes a creature of `entry` (its look, faction, flags and stats; `UpdateEntry`), its
+    /// script staying with it; false if there is no such creature.
+    bool changeEntry(uint entry) { return host.hostChangeEntry(entry); }
 }
 
 // ---------------------------------------------------------------------------
@@ -614,6 +619,7 @@ interface InstanceHost
     EntityRef hostVictimOf(EntityRef creature);
     bool hostLocate(EntityRef who, out Location at);
     EntityRef hostAnyPlayer();
+    void hostKillCreditAll(uint entry);
 }
 
 /// `GameObjectFlags`, as dungeon scripts set and clear them (`InstanceContext.objectFlags`).
@@ -735,6 +741,9 @@ struct InstanceContext
 
     /// A living player of the copy that may be attacked (the first found); nothing if none.
     EntityRef anyPlayer() { return host.hostAnyPlayer(); }
+
+    /// `KilledMonsterCredit` of `entry` for every player of the copy (whose quests want it).
+    void killCreditAll(uint entry) { host.hostKillCreditAll(entry); }
 }
 
 unittest

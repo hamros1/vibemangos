@@ -681,4 +681,9 @@ mixin template CreatureScripting()
         at = Location(there.x, there.y, there.z, there.orientation);
         return true;
     }
+
+    bool hostChangeEntry(uint entry)
+    {
+        return world_ !is null && scriptUpdateTemplate(entry);
+    }
 }

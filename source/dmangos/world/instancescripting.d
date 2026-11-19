@@ -350,7 +350,14 @@ final class InstanceScript : InstanceHost
     bool hostLocate(EntityRef who, out Location at)
     {
         Position there;
-        if (map is null || !map.positionOf(who.guid, there))
+        bool found;
+        foreach (object; loading) // loading: not on the map yet
+            if (object.guid == who.guid)
+            {
+                there = object.position;
+                found = true;
+            }
+        if (!found && (map is null || !map.positionOf(who.guid, there)))
             return false;
         at = Location(there.x, there.y, there.z, there.orientation);
         return true;
@@ -366,6 +373,16 @@ final class InstanceScript : InstanceHost
                     if (unit.fighter.alive && !unit.untouchable)
                         return EntityRef(unit.combatGuid);
         return EntityRef.init;
+    }
+
+    void hostKillCreditAll(uint entry)
+    {
+        if (map is null)
+            return;
+        foreach (who; map.playersNow())
+            if (who.character !is null)
+                if (auto unit = map.unit(who.character.guid))
+                    unit.killCreditFrom(entry, 0);
     }
 
     uint hostRandom(uint below)

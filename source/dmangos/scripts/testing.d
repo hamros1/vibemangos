@@ -135,6 +135,7 @@ final class TestCreature : CreatureHost
     void hostDeathPrevention(bool on) { did ~= format("death prevention %s", on); }
     EntityRef hostPlayerNearby(float) { return victim; }
     bool hostLocate(EntityRef, out Location where) { where = at; return true; }
+    bool hostChangeEntry(uint entry) { did ~= format("become %s", entry); return true; }
 }
 
 /// A dungeon copy: see the module documentation.
@@ -220,6 +221,7 @@ final class TestInstance : InstanceHost
     EntityRef hostVictimOf(EntityRef) { return fought; }
     bool hostLocate(EntityRef, out Location at) { return true; }
     EntityRef hostAnyPlayer() { return players ? EntityRef(7) : EntityRef.init; }
+    void hostKillCreditAll(uint entry) { did ~= format("credit %s", entry); }
 }
 
 /// A script of module `M` with its fake, run as the server runs it (through a `ScriptRuntime`).

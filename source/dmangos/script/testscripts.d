@@ -123,6 +123,7 @@ final class FakeCreature : CreatureHost
     void hostDeathPrevention(bool) {}
     EntityRef hostPlayerNearby(float) { return EntityRef.init; }
     bool hostLocate(EntityRef, out Location) { return false; }
+    bool hostChangeEntry(uint) { return false; }
 }
 
 unittest
