@@ -787,6 +787,17 @@ mixin template CreatureScripting()
 
     // Instance round 2:
 
+    ActionResult hostMovementScriptOf(EntityRef who, uint id)
+    {
+        if (world_ is null || id == 0)
+            return ActionResult.notHere;
+        auto creature = who.guid == me.guid ? me : world_.creatureAt(who.guid);
+        if (creature is null)
+            return ActionResult.notHere;
+        world_.waypointScript(creature, id);
+        return ActionResult.ok;
+    }
+
     ActionResult hostTeleportPlayer(EntityRef who, Location at)
     {
         import dmangos.world.map : Map;

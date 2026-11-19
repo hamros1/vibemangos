@@ -195,6 +195,7 @@ final class TestCreature : CreatureHost
 
     // Instance round 2:
     ActionResult hostTeleportPlayer(EntityRef who, Location) { did ~= format("teleport %s", who.guid); return ActionResult.ok; }
+    ActionResult hostMovementScriptOf(EntityRef, uint) { return ActionResult.ok; }
 }
 
 /// A dungeon copy: see the module documentation.
@@ -290,7 +291,7 @@ final class TestInstance : InstanceHost
     bool hostChangeEntry(EntityRef c, uint entry) { did ~= format("become %s %s", c.entry, entry); return true; }
 
     // Raid scripts:
-    ActionResult hostDespawnObject(EntityRef) { return ActionResult.ok; }
+    ActionResult hostDespawnObject(EntityRef o) { did ~= format("despawn object %s", o.entry); return ActionResult.ok; }
     bool hostRespawnObject(uint, uint) { return false; }
     ActionResult hostUseObject(EntityRef) { return ActionResult.ok; }
     size_t hostPlayers(EntityRef[]) { return 0; }
@@ -306,11 +307,15 @@ struct Running(alias M, Host, Context)
     ScriptHandle handle;
     Host host;
 
-    /// Raises `event`.
-    void raise(E)(E event)
+    /// Raises `event`; whether a handler consumed it (for contexts that can be).
+    bool raise(E)(E event)
     {
         auto context = Context(host);
         runtime.raise(handle, context, event);
+        static if (__traits(hasMember, Context, "consumed"))
+            return context.consumed;
+        else
+            return false;
     }
 
     /// `ms` milliseconds pass, in steps of a quarter second.

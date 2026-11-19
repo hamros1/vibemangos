@@ -426,6 +426,7 @@ interface CreatureHost
 
     // Instance round 2:
     ActionResult hostTeleportPlayer(EntityRef player, Location at);
+    ActionResult hostMovementScriptOf(EntityRef creature, uint id);
 }
 
 /**
@@ -694,6 +695,10 @@ struct CreatureContext
 
     /// `player` (here) is at `at` at once, on this map (C'Thun swallowing a player).
     ActionResult teleport(EntityRef player, Location at) { return host.hostTeleportPlayer(player, at); }
+
+    /// Runs `dbscripts_on_creature_movement` script `id` on another creature here (as its waypoint's script
+    /// runs: a summoned imp walked along its path by this script).
+    ActionResult movementScript(EntityRef creature, uint id) { return host.hostMovementScriptOf(creature, id); }
 
     /// In a dungeon: every living player of the copy joins its fight (`DoZoneInCombat`).
     void zoneCombat() { host.hostZoneCombat(); }

@@ -603,6 +603,14 @@ mixin template DbScriptRunner()
             scriptedGameObjects[made.guid] = unixTime + (despawnSeconds ? despawnSeconds : 0);
         gameObjectRespawnAt.remove(spawn.guid);
         map.addObject(made);
+        // Instance round 2: the dungeon's script hears of it as of any object of the copy (a ritual's bell, a trap).
+        if (map.instanceId)
+            if (auto script = map.instanceId in instanceScripts)
+            {
+                import dmangos.script.api : EntityRef, ObjectLoaded;
+
+                script.raise(ObjectLoaded(EntityRef(made.guid)));
+            }
     }
 
     /// The game objects a script spawned whose time is up, gone again.

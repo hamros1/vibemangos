@@ -174,6 +174,7 @@ final class TestCreature : CreatureHost
 
     // Instance round 2:
     ActionResult hostTeleportPlayer(EntityRef, Location) { return ActionResult.ok; }
+    ActionResult hostMovementScriptOf(EntityRef, uint) { return ActionResult.ok; }
 }
 
 /// A script under test: the runtime of `Module`, one creature's script, and its host.
