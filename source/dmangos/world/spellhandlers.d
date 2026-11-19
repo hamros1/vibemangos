@@ -4275,3 +4275,37 @@ unittest
     now += 11.seconds;
     assert(mage.session.inWorld.spellIsReady(12043));
 }
+
+/// A talent's modifier tells the client its new total for each bit of its mask (`SMSG_SET_PCT_SPELL_MODIFIER`).
+unittest
+{
+    import dmangos.auth.accounts : AccountLevel;
+    import dmangos.world.auras : makeAura;
+    import dmangos.world.movement : Position;
+    import dmangos.world.opcodes : Opcode;
+    import dmangos.world.spells : SpellInfo;
+    import dmangos.world.spellmods : SpellModOp;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto talent = SpellInfo(29103);
+    talent.effect[0] = SpellEffect.applyAura;
+    talent.casting.applyAuraName[0] = AuraType.addPctModifier;
+    talent.miscValue[0] = SpellModOp.cost;
+    talent.itemType[0] = 0x5; // bits 0 and 2
+    context.data.spells.spells[29103] = talent;
+
+    auto mage = loggedIn(context, db, 7, "Jaina", Position(-8949.95f, -132.49f, 83.53f), AccountLevel.player);
+    mage.read();
+    auto session = mage.session.inWorld;
+    session.addAura(makeAura((29103 in context.data.spells.spells), 7, 10, -1, true, [-10, 0, 0]));
+    ubyte[][] mods;
+    foreach (p; mage.read())
+        if (p.opcode == Opcode.SMSG_SET_PCT_SPELL_MODIFIER)
+            mods ~= p.body_.dup;
+    assert(mods.length == 2, "one for each bit of its mask");
+    assert(mods[0][0] == 0 && mods[0][1] == SpellModOp.cost && *cast(int*) &mods[0][2] == -10);
+    assert(mods[1][0] == 2);
+}
