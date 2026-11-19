@@ -683,6 +683,9 @@ What works now:
       events (as in CMaNGOS), the herald speaking (its lines are battleground messages).
     * The players of a team who came alone are in one raid in the copy (its raid frames), made as the
     second arrives and left as they leave; those who came with a group stay in it.
+    * A player killed there may have their insignia taken by an enemy (Remove Insignia, from the body or the
+    corpse): released if not yet, the corpse turns to bones the enemy loots (a little money by level, the
+    battleground's `PlayerSkinReflootId`). Elsewhere a body taken back or healed leaves bones for an hour.
   * **The update tick** (every 50 ms, `update_interval`): health, mana, rage and energy regenerate
     (health and the loss of rage only out of combat, and only for the living); inns and capitals give rested XP, also while offline; characters are saved every
     15 minutes (`player_save_interval`).

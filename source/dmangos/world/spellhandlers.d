@@ -1621,6 +1621,35 @@ private:
         case SpellEffect.summonCritter: // SPELL_EFFECT_SUMMON_CRITTER: a companion; the same again sends it away
             summonCompanion(spell, i);
             break;
+        case SpellEffect.skinPlayerCorpse: // SPELL_EFFECT_SKIN_PLAYER_CORPSE: Remove Insignia, a dead enemy's
+        {
+            import dmangos.world.corpse : Corpse, CorpseFlags;
+            import dmangos.world.defines : UnitFlags;
+
+            // The corpse (`TARGET_FLAG_PVP_CORPSE`), or the body not yet released; within reach, and marked for it.
+            ulong owner = c.targets.unit;
+            Position at;
+            bool marked;
+            if (auto body_ = c.targets.corpse ? cast(Corpse) map.findObject(c.targets.corpse) : null)
+            {
+                owner = body_.values.get!CORPSE_FIELD_OWNER;
+                at = body_.position;
+                marked = (body_.values.get!CORPSE_FIELD_FLAGS & CorpseFlags.lootable) != 0;
+            }
+            auto victim = owner ? cast(typeof(this)) context.onlinePlayer(owner) : null;
+            if (victim is null || victim is this || victim.player is null || victim.map !is map
+                    || victim.player.deathState == DeathState.alive || victim.teamId == teamId)
+                break;
+            if (!c.targets.corpse)
+            {
+                at = victim.player.position;
+                marked = (victim.player.values.get!UNIT_FIELD_FLAGS & UnitFlags.skinnable) != 0;
+            }
+            const p = player.position;
+            if (marked && (p.x - at.x) ^^ 2 + (p.y - at.y) ^^ 2 + (p.z - at.z) ^^ 2 <= 10.0f ^^ 2)
+                victim.removedInsignia(this);
+            break;
+        }
         case SpellEffect.addFarsight: // SPELL_EFFECT_ADD_FARSIGHT: Far Sight, Eagle Eye: a spot to see from
             makeFarSightSpot(spell, i, c.targets);
             break;
@@ -1687,7 +1716,7 @@ private:
             SpellEffect.summonObjectSlot1, SpellEffect.summonObjectSlot2, SpellEffect.summonObjectSlot3,
             SpellEffect.summonObjectSlot4, SpellEffect.dispelMechanic, SpellEffect.destroyAllTotems,
             SpellEffect.durabilityDamage, SpellEffect.summonDemon, SpellEffect.attackMe,
-            SpellEffect.durabilityDamagePct, SpellEffect.skinPlayerCorpse, SpellEffect.spiritHeal,
+            SpellEffect.durabilityDamagePct, SpellEffect.spiritHeal,
             SpellEffect.skill, SpellEffect.applyAreaAuraPet, SpellEffect.teleportGraveyard, SpellEffect.n122,
             SpellEffect.sendTaxi, SpellEffect.pullTowards, SpellEffect.modifyThreatPercent, SpellEffect.n126,
             SpellEffect.n127, SpellEffect.applyAreaAuraFriend, SpellEffect.applyAreaAuraEnemy:

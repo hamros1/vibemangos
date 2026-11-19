@@ -119,8 +119,9 @@ The largest area. In order:
    instance data, and paths by id in scripts: done. Not yet: summons handed over between nodes,
    movement maps for chasing, help from another node's creatures in a cluster.
 3. **Death: done** (`death.d`, `corpse.d`; README's "Death"), resurrection sickness and battleground
-   spirit guides included, and ghosts hidden from the living. Not yet: the ghost's own auras (applied by
-   hand), bones, corpses of a player on another node of a cluster (a corpse is put on
+   spirit guides included, and ghosts hidden from the living. Bones (an hour where a body was, bare; CMaNGOS's
+   `Death.Bones` on): done. Not yet: the ghost's own auras (applied by
+   hand), corpses of a player on another node of a cluster (a corpse is put on
    the map its player's node simulates; a node that does not own the cell keeps it anyway).
 4. **Experience and loot: done** (`experience.d`, `loot.d`, `loothandlers.d`; README's "Experience
    and loot"). Quest drops, skinning, pickpocketing and random
@@ -163,7 +164,6 @@ The largest area. In order:
    * Not yet:
      * Removing stealth and the like on objectives (`AURA_INTERRUPT_FLAG_PVP_ACTIVE_CANCELS`).
      * A flag dropped when its carrier becomes immune.
-     * Insignia loot from the dead.
      * pvpstats.
      * A queue service that moves to another node starts empty.
 

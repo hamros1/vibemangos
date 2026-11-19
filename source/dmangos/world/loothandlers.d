@@ -42,6 +42,8 @@ private:
 
         if (auto creature = cast(Creature) map.findObject(guid))
             return creature.loot;
+        if (auto bones = cast(imported!"dmangos.world.corpse".Corpse) map.findObject(guid))
+            return bones.loot;
         if (auto go = cast(GameObject) map.findObject(guid))
             return go.loot;
         if (auto loot = guid in itemLoots)
@@ -163,6 +165,24 @@ private:
             return;
         if (player.values.getByte!UNIT_FIELD_BYTES_1(0) != 0)
             return sendLootError(request.guid, LootError.notStanding);
+        // Bones whose insignia this player took (`removedInsignia`).
+        if (auto bones = cast(imported!"dmangos.world.corpse".Corpse) map.findObject(request.guid))
+        {
+            const a = player.position, b = bones.position;
+            if ((a.x - b.x) ^^ 2 + (a.y - b.y) ^^ 2 + (a.z - b.z) ^^ 2 > 10.0f ^^ 2)
+                return sendLootError(request.guid, LootError.tooFar);
+            if (bones.loot is null)
+            {
+                ByteWriter w;
+                w.put(request.guid);
+                w.put(ubyte(1));
+                return deliver(Opcode.SMSG_LOOT_RELEASE_RESPONSE, w.data);
+            }
+            if (lootTarget && lootTarget != request.guid)
+                if (auto other = lootOf(lootTarget))
+                    other.release(this);
+            return bones.loot.showContentTo(this);
+        }
         auto creature = cast(Creature) map.findObject(request.guid);
         if (creature is null)
         {

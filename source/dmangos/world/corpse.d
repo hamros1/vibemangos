@@ -23,6 +23,15 @@ enum CorpseType : ubyte
 }
 
 
+/// `CORPSE_FIELD_FLAGS`
+enum CorpseFlags : uint { bones = 0x01, pvp = 0x04, lootable = 0x20 }
+
+/// `CORPSE_FIELD_DYNAMIC_FLAGS`: its loot may be taken (bones whose insignia was removed).
+enum uint corpseDynLootable = 0x01;
+
+/// How long bones lie before they go (CMaNGOS's `Corpse::IsExpired`), in seconds.
+enum long bonesLifetime = 60 * 60;
+
 /// How near its corpse a ghost must be to come back to life there.
 enum float corpseReclaimRadius = 39;
 
@@ -35,8 +44,39 @@ final class Corpse : MapObject
     uint instanceId;               /// the dungeon instance it lies in (0: none; not saved)
     Position at;
     CorpseType type;
-    long ghostTime;                /// when the player released its spirit (Unix time)
+    long ghostTime;                /// when the player released its spirit (Unix time); bones: when they were left
     UpdateValues values;
+    import dmangos.world.loot : Loot;
+    Loot loot;                     /// bones whose insignia was removed: what the remover may take
+
+    /**
+     * The bones a body leaves (CMaNGOS's `ConvertCorpseForPlayer`): its fields, bare of what it wore, with the
+     * bones flag; `guid` its own (the body's goes with it).
+     */
+    this(const Corpse body_, ulong guid, long now)
+    {
+        guid_ = guid;
+        owner = body_.owner;
+        map = body_.map;
+        instanceId = body_.instanceId;
+        at = body_.at;
+        type = CorpseType.bones;
+        ghostTime = now;
+        values = UpdateValues(TypeId.corpse);
+        const v = &body_.values;
+        values.set!OBJECT_FIELD_GUID(guid);
+        values.set!OBJECT_FIELD_SCALE_X(1.0f);
+        values.set!CORPSE_FIELD_OWNER(v.get!CORPSE_FIELD_OWNER);
+        values.set!CORPSE_FIELD_FACING(v.get!CORPSE_FIELD_FACING);
+        values.set!CORPSE_FIELD_POS_X(v.get!CORPSE_FIELD_POS_X);
+        values.set!CORPSE_FIELD_POS_Y(v.get!CORPSE_FIELD_POS_Y);
+        values.set!CORPSE_FIELD_POS_Z(v.get!CORPSE_FIELD_POS_Z);
+        values.set!CORPSE_FIELD_BYTES_1(v.get!CORPSE_FIELD_BYTES_1);
+        values.set!CORPSE_FIELD_BYTES_2(v.get!CORPSE_FIELD_BYTES_2);
+        values.set!CORPSE_FIELD_DISPLAY_ID(v.get!CORPSE_FIELD_DISPLAY_ID);
+        values.set!CORPSE_FIELD_FLAGS((body_.values.get!CORPSE_FIELD_FLAGS & CorpseFlags.pvp) | CorpseFlags.bones);
+        values.clearChanges();
+    }
 
     /// `player`'s body where it stands, looking like it.
     this(const Player player, CorpseType type, long now)
