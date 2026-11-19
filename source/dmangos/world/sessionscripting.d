@@ -144,6 +144,7 @@ mixin template SessionScripting()
         QuestProgress hostQuestStatusOf(EntityRef who, uint quest) { return this.outer.hostQuestStatusOf(who, quest); }
         EntityRef hostCreatureNear(uint entry, Location at, float range) { return this.outer.hostCreatureNear(entry, at, range); }
         void hostSignalDungeon(uint id, int value) { this.outer.hostSignalDungeon(id, value); }
+        bool hostHasItem(EntityRef who, uint item) { return this.outer.hostHasItem(who, item); }
         void hostLog(string text) { this.outer.hostLog(text); }
         ActionResult hostModifyThreat(EntityRef creature, EntityRef target, int percent) { return this.outer.hostModifyThreat(creature, target, percent); }
         // Eastern Kingdoms scripts:
@@ -301,6 +302,14 @@ mixin template SessionScripting()
     ActionResult hostSignalCreature(EntityRef to, uint id, int value)
     {
         return context.signalCreature(map, EntityRef(player.guid), to, id, value);
+    }
+
+    /// See `AreaTriggerContext.hasItem`.
+    bool hostHasItem(EntityRef who, uint item)
+    {
+        if (auto other = sessionHere(who))
+            return other.player.inventory.count(item, false) > 0;
+        return false;
     }
 
     QuestProgress hostQuestStatusOf(EntityRef who, uint quest)

@@ -974,4 +974,30 @@ mixin template CreatureScripting()
             return 0;
         return unit.session.scriptGiveItem(item, count);
     }
+
+    // Dungeon scripts:
+
+    EntityRef hostPlayerNearby(float range)
+    {
+        if (world_ is null)
+            return EntityRef.init;
+        const here = me.position;
+        UnitRef best;
+        float bestDistance = float.infinity;
+        foreach (player; world_.playersNear(here, range))
+        {
+            if (!player.fighter.alive || player.untouchable)
+                continue;
+            Position at;
+            if (!world_.positionOf(player.combatGuid, at))
+                continue;
+            const d = (at.x - here.x) ^^ 2 + (at.y - here.y) ^^ 2 + (at.z - here.z) ^^ 2;
+            if (d < bestDistance)
+            {
+                bestDistance = d;
+                best = player;
+            }
+        }
+        return best ? EntityRef(best.combatGuid) : EntityRef.init;
+    }
 }

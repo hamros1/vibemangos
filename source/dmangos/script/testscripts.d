@@ -136,6 +136,8 @@ final class FakeCreature : CreatureHost
     ActionResult hostSayOther(EntityRef, int, EntityRef) { return ActionResult.ok; }
     void hostMovementScript(uint) {}
     void hostRelay(int, EntityRef) {}
+    // Dungeon scripts:
+    EntityRef hostPlayerNearby(float) { return EntityRef.init; }
     void hostKillCredit(EntityRef, uint) {}
     // Kalimdor scripts:
     ActionResult hostFactionOf(EntityRef, uint) { return ActionResult.ok; }

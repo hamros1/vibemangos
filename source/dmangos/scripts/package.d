@@ -46,6 +46,20 @@ static import dmangos.scripts.easternplaguelands;
 static import dmangos.scripts.westernplaguelands;
 static import dmangos.scripts.npcs;
 static import dmangos.scripts.areatriggers;
+static import dmangos.scripts.razorfenkraul;
+static import dmangos.scripts.razorfendowns;
+static import dmangos.scripts.gnomeregan;
+static import dmangos.scripts.scarletmonastery;
+static import dmangos.scripts.uldaman;
+static import dmangos.scripts.zulfarrak;
+static import dmangos.scripts.maraudon;
+static import dmangos.scripts.blackfathomdeeps;
+static import dmangos.scripts.sunkentemple;
+static import dmangos.scripts.blackrockdepths;
+static import dmangos.scripts.blackrockspire;
+static import dmangos.scripts.stratholme;
+static import dmangos.scripts.scholomance;
+static import dmangos.scripts.diremaul;
 
 /// Every module holding scripts.
 alias scriptModules = AliasSeq!(dmangos.scripts.deadmines, dmangos.scripts.westfall, dmangos.scripts.spells,
@@ -62,4 +76,9 @@ alias scriptModules = AliasSeq!(dmangos.scripts.deadmines, dmangos.scripts.westf
     dmangos.scripts.wetlands, dmangos.scripts.hinterlands, dmangos.scripts.swamp, dmangos.scripts.searinggorge,
     dmangos.scripts.tirisfal, dmangos.scripts.burningsteppes, dmangos.scripts.blastedlands,
     dmangos.scripts.stranglethorn, dmangos.scripts.easternplaguelands, dmangos.scripts.westernplaguelands,
-    dmangos.scripts.npcs, dmangos.scripts.areatriggers);
+    dmangos.scripts.npcs, dmangos.scripts.areatriggers,
+    // Dungeon scripts:
+    dmangos.scripts.razorfenkraul, dmangos.scripts.razorfendowns, dmangos.scripts.gnomeregan,
+    dmangos.scripts.scarletmonastery, dmangos.scripts.uldaman, dmangos.scripts.zulfarrak, dmangos.scripts.maraudon,
+    dmangos.scripts.blackfathomdeeps, dmangos.scripts.sunkentemple, dmangos.scripts.blackrockdepths,
+    dmangos.scripts.blackrockspire, dmangos.scripts.stratholme, dmangos.scripts.scholomance, dmangos.scripts.diremaul);

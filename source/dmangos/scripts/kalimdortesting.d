@@ -191,6 +191,8 @@ final class RecordingCreature : CreatureHost
         items[item] = items.get(item, 0) + count;
         return count;
     }
+    // Dungeon scripts:
+    EntityRef hostPlayerNearby(float) { return EntityRef.init; }
 }
 
 /// A script of `Module` on a recording creature, and the means to drive it.

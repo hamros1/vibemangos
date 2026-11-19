@@ -389,6 +389,8 @@ interface CreatureHost
     EntityRef hostOwner();
     uint hostItemCount(EntityRef player, uint item);
     uint hostGiveItem(EntityRef player, uint item, uint count);
+    // Dungeon scripts:
+    EntityRef hostPlayerNearby(float range);
 }
 
 /**
@@ -679,6 +681,11 @@ struct CreatureContext
 
     /// Gives a player here `count` of `item`, into its bags as far as they hold; how many it got.
     uint giveItem(EntityRef player, uint item, uint count = 1) { return host.hostGiveItem(player, item, count); }
+    // Dungeon scripts:
+
+    /// The nearest living player within `range` yards that may be attacked; nothing if none.
+    EntityRef playerNearby(float range) { return host.hostPlayerNearby(range); }
+
 }
 
 // ---------------------------------------------------------------------------
@@ -829,6 +836,30 @@ struct CreatureDied
     EntityRef killer;
 }
 
+// Dungeon scripts:
+
+/// A creature of the copy started fighting `enemy` (a boss pulled: its encounter begins).
+struct CreatureEngaged
+{
+    EntityRef creature;
+    EntityRef enemy;
+}
+
+/// A creature of the copy gave up its fight and goes home (a wipe).
+struct CreatureEvaded
+{
+    EntityRef creature;
+}
+
+/// Scripted event `event` happened in the copy (`scripted_event_id`): a spell's `SEND_EVENT`, or a
+/// goober's event, `source` (a player) using `target` (a game object, or nothing).
+struct EventHappened
+{
+    uint event;
+    EntityRef source;
+    EntityRef target;
+}
+
 /// The core's side of a dungeon script's context.
 interface InstanceHost
 {
@@ -838,6 +869,33 @@ interface InstanceHost
     ActionResult hostSignal(EntityRef to, uint id, int value);
     uint hostPlayerCount();
     void hostLog(string text);
+    // Dungeon scripts:
+    EntityRef hostSummon(uint entry, Location at, uint despawnMs, EntityRef attack);
+    ActionResult hostSay(EntityRef speaker, int textEntry, EntityRef target);
+    ActionResult hostCast(EntityRef caster, uint spell, EntityRef target, bool triggered);
+    ActionResult hostSetFaction(EntityRef creature, uint faction);
+    ActionResult hostUnitFlags(EntityRef creature, uint flags, bool set);
+    ActionResult hostAttack(EntityRef creature, EntityRef target);
+    ActionResult hostMoveTo(EntityRef creature, Location at, uint point, bool run);
+    ActionResult hostDespawn(EntityRef creature, uint delayMs);
+    bool hostAlive(EntityRef creature);
+    uint hostSpawnObjects(uint entry, uint despawnSeconds, Location near, float range);
+    ActionResult hostObjectFlags(EntityRef object, uint set, uint clear);
+    uint hostRandom(uint below);
+    ActionResult hostRemoveAura(EntityRef creature, uint spell);
+    EntityRef hostVictimOf(EntityRef creature);
+    bool hostLocationOf(EntityRef who, out Location at);
+    EntityRef hostAnyPlayer();
+    void hostKillCreditAll(uint entry);
+    bool hostChangeEntry(EntityRef creature, uint entry);
+}
+
+/// `GameObjectFlags`, as dungeon scripts set and clear them (`InstanceContext.objectFlags`).
+enum ObjectFlag : uint
+{
+    inUse = 0x01,      /// in use: nobody else can use it now
+    locked = 0x02,     /// it needs a key (a door opened by a script only)
+    noInteract = 0x10, /// nobody can use it (a gong after the waves it called)
 }
 
 /// A dungeon script's handle on its copy, for the length of one handler.
@@ -861,7 +919,7 @@ struct InstanceContext
     /// Opens or closes a door (it stays so).
     ActionResult door(EntityRef door, bool open) { return host.hostDoor(door, open); }
 
-    /// A `Signal` for a creature's script in the copy.
+    /// A `Signal` for a creature's (or game object's) script in the copy.
     ActionResult signal(EntityRef to, uint id, int value = 0) { return host.hostSignal(to, id, value); }
 
     /// The players in the copy.
@@ -869,6 +927,94 @@ struct InstanceContext
 
     /// A line in the server's log, naming the copy.
     void log(string text) { host.hostLog(text); }
+
+    // Dungeon scripts:
+
+    /// A creature of `entry` at `at`, gone after `despawnMs` out of combat (0: when it dies), attacking
+    /// `attack`; nothing if it could not be made.
+    EntityRef summon(uint entry, Location at, uint despawnMs = 0, EntityRef attack = EntityRef.init)
+    {
+        return host.hostSummon(entry, at, despawnMs, attack);
+    }
+
+    /// A creature of the copy says (yells, emotes) the `script_texts` row `entry` (negative).
+    ActionResult say(EntityRef speaker, int entry, EntityRef target = EntityRef.init)
+    {
+        return host.hostSay(speaker, entry, target);
+    }
+
+    /// A creature of the copy casts `spell` at `target` (itself if nothing).
+    ActionResult castSpell(EntityRef caster, uint spell, EntityRef target = EntityRef.init, bool triggered = true)
+    {
+        return host.hostCast(caster, spell, target ? target : caster, triggered);
+    }
+
+    /// A creature's faction, until it respawns (0: its template's again).
+    ActionResult setFaction(EntityRef creature, uint faction) { return host.hostSetFaction(creature, faction); }
+
+    /// Sets (or clears) a creature's `UnitFlag`s.
+    ActionResult unitFlags(EntityRef creature, uint flags, bool set = true)
+    {
+        return host.hostUnitFlags(creature, flags, set);
+    }
+
+    /// A creature attacks `target`.
+    ActionResult attack(EntityRef creature, EntityRef target) { return host.hostAttack(creature, target); }
+
+    /// A creature walks (runs) to `at`; its script hears `MovementDone(point)` on arrival.
+    ActionResult moveTo(EntityRef creature, Location at, uint point = 0, bool run = false)
+    {
+        return host.hostMoveTo(creature, at, point, run);
+    }
+
+    /// A creature goes away (to come back after its respawn time; a summon for good) in `delayMs`.
+    ActionResult despawn(EntityRef creature, uint delayMs = 0) { return host.hostDespawn(creature, delayMs); }
+
+    /// Whether a creature (or player) of the copy is alive (one not here counts as dead).
+    bool alive(EntityRef creature) { return host.hostAlive(creature); }
+
+    /// Every game object of `entry` of the dungeon (within `range` yards of `near`, if a range is
+    /// given) not in the world is put there (a chest, a rocket); one not there by default goes again
+    /// after `despawnSeconds`. How many came.
+    uint spawnObjects(uint entry, uint despawnSeconds = 3600, Location near = Location.init, float range = 0)
+    {
+        return host.hostSpawnObjects(entry, despawnSeconds, near, range);
+    }
+
+    /// Sets a game object's `ObjectFlag`s `set` and clears those of `clear`.
+    ActionResult objectFlags(EntityRef object, uint set, uint clear = 0)
+    {
+        return host.hostObjectFlags(object, set, clear);
+    }
+
+    /// A random number below `below`.
+    uint random(uint below) { return host.hostRandom(below); }
+
+    /// For `EventHappened`: the script handled the event; its database script does not run.
+    void consume() { consumed_ = true; }
+
+    /// Whether a handler called `consume`.
+    @property bool consumed() const { return consumed_; }
+
+    private bool consumed_;
+
+    /// Takes the auras of `spell` off a creature (a statue's stone skin).
+    ActionResult removeAura(EntityRef creature, uint spell) { return host.hostRemoveAura(creature, spell); }
+
+    /// Whom a creature fights; nothing if it does not (or is not here).
+    EntityRef victimOf(EntityRef creature) { return host.hostVictimOf(creature); }
+
+    /// Where an entity of the copy is; false if it is not here.
+    bool locationOf(EntityRef who, out Location at) { return host.hostLocationOf(who, at); }
+
+    /// A living player of the copy that may be attacked (the first found); nothing if none.
+    EntityRef anyPlayer() { return host.hostAnyPlayer(); }
+
+    /// `KilledMonsterCredit` of `entry` for every player of the copy (whose quests want it).
+    void killCreditAll(uint entry) { host.hostKillCreditAll(entry); }
+
+    /// A creature of the copy becomes a creature of `entry` (Old Ironbark redeemed); false if it cannot.
+    bool changeEntry(EntityRef creature, uint entry) { return host.hostChangeEntry(creature, entry); }
 }
 
 unittest
@@ -1045,6 +1191,8 @@ interface AreaTriggerHost
     ActionResult hostSayAt(EntityRef speaker, int entry, EntityRef target);
     // Kalimdor scripts:
     ActionResult hostSignalCreature(EntityRef to, uint id, int value);
+    // Dungeon scripts:
+    bool hostHasItem(EntityRef player, uint item);
 }
 
 /// An area trigger script's handle, for the length of one handler.
@@ -1087,6 +1235,11 @@ struct AreaTriggerContext
 
     /// A line in the server's log.
     void log(string text) { host.hostLog(text); }
+
+    // Dungeon scripts:
+
+    /// Whether `player` carries item `item` (a key, a seal; the bank does not count).
+    bool hasItem(EntityRef player, uint item) { return host.hostHasItem(player, item); }
 
     /// The script handled the trigger; its usual effects do not follow.
     void consume() { consumed_ = true; }

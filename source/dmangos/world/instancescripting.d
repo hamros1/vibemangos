@@ -10,7 +10,9 @@ import dmangos.bytes : ByteReader, ByteWriter;
 import dmangos.log : info;
 import dmangos.script.api;
 import dmangos.script.registry : ScriptHandle, ScriptKind, ScriptRuntime;
-import dmangos.world.creature : Creature;
+import dmangos.world.creature : Creature, TempSpawnType;
+import dmangos.world.creatureai : CreatureLore;
+import dmangos.world.movement : Position;
 import dmangos.world.gameobject : GameObject;
 import dmangos.world.map : Map, MapObject;
 
@@ -34,6 +36,15 @@ final class InstanceScript : InstanceHost
 
     /// Objects of a cell being loaded, not on the map yet (a door opened now is open when it appears).
     MapObject[] loading;
+
+    /// The world's creatures (summons); null in tests without one.
+    CreatureLore lore;
+
+    /// A `Signal` for a game object's script (`InstanceContext.signal` to an object).
+    bool delegate(GameObject go, Map map, EntityRef from, uint id, int value) signalObject;
+
+    /// Puts the dungeon's game objects of an entry in the world (`InstanceContext.spawnObjects`).
+    uint delegate(Map map, uint entry, uint despawnSeconds, Location near, float range) spawnObjects;
 
     /**
      * The script `name` for copy `id` of `mapId`, its state read from `data` (`instance.data`);
@@ -61,11 +72,57 @@ final class InstanceScript : InstanceHost
         return script;
     }
 
-    /// Raises `event` for the script, then saves its state if it changed.
-    void raise(E)(const E event)
+    /**
+     * Raises `event` for the script, then saves its state if it changed; whether the script consumed
+     * it. An event caused by one of the script's own actions (a creature it summoned coming into the
+     * world) is raised once the handler it came from is done.
+     */
+    bool raise(E)(const E event)
     {
+        if (!runtime.handles!E(handle))
+            return false;
+        if (raising)
+        {
+            pending ~= () { raise(event); };
+            return false;
+        }
+        raising = true;
         auto context = InstanceContext(this);
         runtime.raise(handle, context, event);
+        raising = false;
+        save();
+        while (pending.length)
+        {
+            auto next = pending[0];
+            pending = pending[1 .. $];
+            next();
+        }
+        return context.consumed;
+    }
+
+    private bool raising;              // a handler runs
+    private void delegate()[] pending; // events its actions caused, for after it
+
+    /// Its schedules, `ms` milliseconds on (nothing to do when none is pending).
+    void tick(int ms)
+    {
+        if (!runtime.busy(handle))
+            return;
+        raising = true;
+        auto context = InstanceContext(this);
+        runtime.tick(handle, context, ms);
+        raising = false;
+        save();
+        while (pending.length)
+        {
+            auto next = pending[0];
+            pending = pending[1 .. $];
+            next();
+        }
+    }
+
+    private void save()
+    {
         ByteWriter w;
         runtime.save(handle, w);
         const data = instanceDataPrefix ~ toHex(w.data);
@@ -119,6 +176,18 @@ final class InstanceScript : InstanceHost
 
     ActionResult hostSignal(EntityRef to, uint signal, int value)
     {
+        if (to.isGameObject)
+        {
+            GameObject go;
+            foreach (object; loading)
+                if (object.guid == to.guid)
+                    go = cast(GameObject) object;
+            if (go is null && map !is null)
+                go = cast(GameObject) map.findObject(to.guid);
+            if (go is null || signalObject is null)
+                return ActionResult.notHere;
+            return signalObject(go, map, EntityRef.init, signal, value) ? ActionResult.ok : ActionResult.failed;
+        }
         foreach (object; loading) // loading with it: not on the map yet
             if (object.guid == to.guid)
                 if (auto creature = cast(Creature) object)
@@ -141,6 +210,196 @@ final class InstanceScript : InstanceHost
     void hostLog(string text)
     {
         info!"script %s (instance %s of map %s): %s"(name, id, mapId, text);
+    }
+
+    // Dungeon scripts:
+
+    /// A creature of the copy, ready to act on this map; null if it is not here.
+    private Creature creatureOf(EntityRef who)
+    {
+        Creature found;
+        foreach (object; loading)
+            if (object.guid == who.guid)
+                found = cast(Creature) object;
+        if (found is null && map !is null)
+            found = cast(Creature) map.findObject(who.guid);
+        if (found is null || found.ai is null || map is null)
+            return null;
+        found.ai.bind(map);
+        return found;
+    }
+
+    EntityRef hostSummon(uint entry, Location at, uint despawnMs, EntityRef attack)
+    {
+        if (lore is null || map is null)
+            return EntityRef.init;
+        auto made = lore.summon(map, entry, Position(at.x, at.y, at.z, at.orientation),
+            despawnMs ? TempSpawnType.timedOutOfCombatOrDead : TempSpawnType.dead, despawnMs, 0);
+        if (made is null)
+            return EntityRef.init;
+        if (attack)
+        {
+            made.ai.bind(map);
+            made.ai.hostAttackBy(EntityRef(made.guid), attack);
+        }
+        return EntityRef(made.guid);
+    }
+
+    ActionResult hostSay(EntityRef speaker, int textEntry, EntityRef target)
+    {
+        auto c = creatureOf(speaker);
+        return c is null ? ActionResult.notHere : c.ai.hostSay(textEntry, target);
+    }
+
+    ActionResult hostCast(EntityRef caster, uint spell, EntityRef target, bool triggered)
+    {
+        auto c = creatureOf(caster);
+        if (c is null)
+            return ActionResult.notHere;
+        const result = c.ai.hostCast(spell, target, triggered);
+        map.wake(c.guid);
+        return result;
+    }
+
+    ActionResult hostSetFaction(EntityRef creature, uint faction)
+    {
+        auto c = creatureOf(creature);
+        if (c is null)
+            return ActionResult.notHere;
+        c.ai.hostSetFaction(faction);
+        return ActionResult.ok;
+    }
+
+    ActionResult hostUnitFlags(EntityRef creature, uint flags, bool set)
+    {
+        auto c = creatureOf(creature);
+        if (c is null)
+            return ActionResult.notHere;
+        c.ai.hostUnitFlags(flags, set);
+        return ActionResult.ok;
+    }
+
+    ActionResult hostAttack(EntityRef creature, EntityRef target)
+    {
+        auto c = creatureOf(creature);
+        return c is null ? ActionResult.notHere : c.ai.hostAttackBy(creature, target);
+    }
+
+    ActionResult hostMoveTo(EntityRef creature, Location at, uint point, bool run)
+    {
+        auto c = creatureOf(creature);
+        if (c is null || !c.alive)
+            return ActionResult.notHere;
+        c.ai.hostMoveTo(at, point, run);
+        return ActionResult.ok;
+    }
+
+    ActionResult hostDespawn(EntityRef creature, uint delayMs)
+    {
+        auto c = creatureOf(creature);
+        if (c is null)
+            return ActionResult.notHere;
+        c.ai.despawnFor(map, delayMs);
+        return ActionResult.ok;
+    }
+
+    bool hostAlive(EntityRef creature)
+    {
+        if (auto c = creatureOf(creature))
+            return c.alive;
+        if (map !is null && creature.isPlayer)
+            if (auto player = map.unit(creature.guid))
+                return player.fighter.alive;
+        return false;
+    }
+
+    uint hostSpawnObjects(uint entry, uint despawnSeconds, Location near, float range)
+    {
+        return spawnObjects is null || map is null ? 0 : spawnObjects(map, entry, despawnSeconds, near, range);
+    }
+
+    ActionResult hostObjectFlags(EntityRef object, uint set, uint clear)
+    {
+        import dmangos.world.updatefields : GAMEOBJECT_FLAGS;
+
+        GameObject go;
+        foreach (o; loading)
+            if (o.guid == object.guid)
+                go = cast(GameObject) o;
+        if (go is null && map !is null)
+            go = cast(GameObject) map.findObject(object.guid);
+        if (go is null)
+            return ActionResult.notHere;
+        go.values.set!GAMEOBJECT_FLAGS((go.values.get!GAMEOBJECT_FLAGS | set) & ~clear);
+        if (map !is null)
+            map.flushGameObject(go);
+        return ActionResult.ok;
+    }
+
+    ActionResult hostRemoveAura(EntityRef creature, uint spell)
+    {
+        auto c = creatureOf(creature);
+        if (c is null)
+            return ActionResult.notHere;
+        c.ai.hostRemoveAura(creature, spell);
+        return ActionResult.ok;
+    }
+
+    EntityRef hostVictimOf(EntityRef creature)
+    {
+        auto c = creatureOf(creature);
+        return c is null ? EntityRef.init : c.ai.hostVictim();
+    }
+
+    bool hostLocationOf(EntityRef who, out Location at)
+    {
+        Position there;
+        bool found;
+        foreach (object; loading) // loading: not on the map yet
+            if (object.guid == who.guid)
+            {
+                there = object.position;
+                found = true;
+            }
+        if (!found && (map is null || !map.positionOf(who.guid, there)))
+            return false;
+        at = Location(there.x, there.y, there.z, there.orientation);
+        return true;
+    }
+
+    EntityRef hostAnyPlayer()
+    {
+        if (map is null)
+            return EntityRef.init;
+        foreach (who; map.playersNow())
+            if (who.character !is null)
+                if (auto unit = map.unit(who.character.guid))
+                    if (unit.fighter.alive && !unit.untouchable)
+                        return EntityRef(unit.combatGuid);
+        return EntityRef.init;
+    }
+
+    void hostKillCreditAll(uint entry)
+    {
+        if (map is null)
+            return;
+        foreach (who; map.playersNow())
+            if (who.character !is null)
+                if (auto unit = map.unit(who.character.guid))
+                    unit.killCreditFrom(entry, 0);
+    }
+
+    bool hostChangeEntry(EntityRef creature, uint entry)
+    {
+        auto c = creatureOf(creature);
+        return c !is null && c.ai.hostChangeEntry(entry);
+    }
+
+    uint hostRandom(uint below)
+    {
+        import std.random : uniform;
+
+        return below == 0 ? 0 : uniform(0, below);
     }
 }
 

@@ -150,6 +150,8 @@ final class TestCreature : CreatureHost
     EntityRef hostOwner() { return EntityRef.init; }
     uint hostItemCount(EntityRef, uint) { return 0; }
     uint hostGiveItem(EntityRef, uint, uint) { return 0; }
+    // Dungeon scripts:
+    EntityRef hostPlayerNearby(float) { return EntityRef.init; }
 }
 
 /// A script under test: the runtime of `Module`, one creature's script, and its host.

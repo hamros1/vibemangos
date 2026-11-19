@@ -1390,6 +1390,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 if (script !is null)
                 {
                     script.map = created;
+                    script.lore = this;
+                    script.spawnObjects = &spawnDungeonObjects;
+                    script.signalObject = &gameObjectSignalled;
                     instanceScripts[instance] = script;
                 }
             }
@@ -2699,6 +2702,13 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         creature.instanceId = map.instanceId;
         map.addObject(creature);
         map.wake(creature.guid);
+        if (map.instanceId) // the dungeon's script hears of it as of any creature of the copy
+            if (auto script = map.instanceId in instanceScripts)
+            {
+                import dmangos.script.api : CreatureLoaded, EntityRef;
+
+                script.raise(CreatureLoaded(EntityRef(creature.guid)));
+            }
         return creature;
     }
 
@@ -3175,6 +3185,24 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return context.consumed;
     }
 
+    /// A `Signal` for game object `go`'s script (from its dungeon's script); false if it has none.
+    bool gameObjectSignalled(GameObject go, Map map, EntityRef from, uint id, int value)
+    {
+        import dmangos.script.api : GameObjectContext, Signal;
+
+        if (!go.behaviour)
+            return false;
+        // A signal may come while another object's script runs (it signalled its dungeon): theirs is kept.
+        auto before = goHost.go, beforeMap = goHost.map;
+        goHost.go = go;
+        goHost.map = map;
+        auto context = GameObjectContext(goHost);
+        scripts.raise(go.behaviour, context, Signal(from, id, value));
+        goHost.go = before;
+        goHost.map = beforeMap;
+        return true;
+    }
+
     private final class GoHost : GameObjectHost
     {
         GameObject go;
@@ -3398,6 +3426,53 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
         if (auto script = instance in instanceScripts)
             script.raise(Signal(from, id, value));
+    }
+
+    /// See `CreatureLore.dungeonFight`.
+    void dungeonFight(uint instance, EntityRef creature, EntityRef enemy)
+    {
+        import dmangos.script.api : CreatureEngaged, CreatureEvaded;
+
+        if (auto script = instance in instanceScripts)
+        {
+            if (enemy)
+                script.raise(CreatureEngaged(creature, enemy));
+            else
+                script.raise(CreatureEvaded(creature));
+        }
+    }
+
+    /// Scripted event `event` (a spell's `SEND_EVENT`, a goober's event) happens on `map`, `source` using
+    /// `target`: the dungeon copy's script hears of it, then (unless it consumed it) the event's database script runs.
+    void scriptedEvent(uint event, Map map, ulong source, ulong target)
+    {
+        import dmangos.script.api : EntityRef, EventHappened;
+        import dmangos.world.dbscripts : DbScriptType;
+
+        if (map is null || event == 0)
+            return;
+        if (map.instanceId)
+            if (auto script = map.instanceId in instanceScripts)
+                if (script.raise(EventHappened(event, EntityRef(source), EntityRef(target))))
+                    return; // the script did what the event does
+        startScript(DbScriptType.event, event, map, source, target);
+    }
+
+    /// See `InstanceContext.spawnObjects`: the game objects of `entry` on `map` (near a place) not in the world come.
+    private uint spawnDungeonObjects(Map map, uint entry, uint despawnSeconds, Location near, float range)
+    {
+        import dmangos.world.objects : makeGuid, HighGuid;
+
+        uint count;
+        foreach (ref spawn; data.gameObjectSpawns)
+            if (spawn.entry == entry && spawn.map == map.id
+                && (range <= 0 || (spawn.x - near.x) ^^ 2 + (spawn.y - near.y) ^^ 2 + (spawn.z - near.z) ^^ 2 <= range * range)
+                && map.findObject(makeGuid(HighGuid.gameObject, spawn.entry, spawn.guid)) is null)
+            {
+                scriptSpawnGameObject(map, spawn.guid, null, despawnSeconds);
+                count += map.findObject(makeGuid(HighGuid.gameObject, spawn.entry, spawn.guid)) !is null;
+            }
+        return count;
     }
 
     /// See `CreatureLore.startRelay`.
@@ -3979,6 +4054,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         if (instances.length)
             unloadEmptyInstances(now);
         updateScripts(cast(uint) elapsed.total!"msecs");
+        foreach (script; instanceScripts) // the dungeon scripts' own timers
+            script.tick(cast(int) elapsed.total!"msecs");
         updateWeathers(cast(int) elapsed.total!"msecs");
         addPendingNavigation();
         checkHonorWeek(now);

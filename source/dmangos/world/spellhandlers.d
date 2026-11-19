@@ -1473,10 +1473,7 @@ private:
             break;
         case SpellEffect.sendEvent: // SPELL_EFFECT_SEND_EVENT: the event's script, the caster its source and a game object its target
         {
-            import dmangos.world.dbscripts : DbScriptType;
-
-            context.startScript(DbScriptType.event, cast(uint) spell.miscValue[i], map, player.guid,
-                c.targets.gameObject);
+            context.scriptedEvent(cast(uint) spell.miscValue[i], map, player.guid, c.targets.gameObject);
             break;
         }
         case SpellEffect.duel: // SPELL_EFFECT_DUEL

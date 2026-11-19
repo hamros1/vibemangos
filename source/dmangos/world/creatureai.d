@@ -110,6 +110,10 @@ interface CreatureLore
 
     /// Spell `spell` teleports player `guid` to its `spell_target_position` (a creature's cast: a boss's room).
     void teleportBySpell(ulong guid, uint spell);
+
+    /// A creature of dungeon copy `instance` began fighting `enemy`, or (no enemy) gave its fight up:
+    /// the copy's script hears of it (`CreatureEngaged`, `CreatureEvaded`).
+    void dungeonFight(uint instance, EntityRef creature, EntityRef enemy);
 }
 
 /// What a creature's AI needs of its map.
@@ -602,6 +606,8 @@ private:
             if (script !is null)
                 script.combatStarted(this, guid);
             raiseScript(EnteredCombat(EntityRef(guid)));
+            if (lore !is null && me.instanceId) // its dungeon's script: an encounter may begin
+                lore.dungeonFight(me.instanceId, EntityRef(me.guid), EntityRef(guid));
             world.linked(me, LinkEvent.aggro, guid); // its pack joins in
         }
         world.flushCreature(me);
@@ -1114,6 +1120,8 @@ private:
         if (script !is null)
             script.evaded(this);
         raiseScript(Evaded());
+        if (wasFighting && lore !is null && me.instanceId)
+            lore.dungeonFight(me.instanceId, EntityRef(me.guid), EntityRef.init);
         world.flushCreature(me);
         evadingHome = true;
         regenTimer = 0;
