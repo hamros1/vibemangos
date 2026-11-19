@@ -869,6 +869,8 @@ final class Map : CombatWorld, GameObjectWorld
         if (at(slot).mover !is null)
             startTicking(slot);
         replicate(slot, key);
+        if (onObjectArrived !is null)
+            onObjectArrived(object);
     }
 
     /// A replica's slot holds the real object from now on, homed in `home` and in cell `cell`.
@@ -1811,6 +1813,9 @@ final class Map : CombatWorld, GameObjectWorld
 
     /// Told when an object leaves this map for good (gone, or handed to another node) after its state was saved.
     void delegate(MapObject object) onObjectGone;
+
+    /// Open-world round 2: an object became this map's own (spawned with its cell, put here, or handed over).
+    void delegate(MapObject object) onObjectArrived;
 
     /// Every object here, replicas included.
     void forEachObject(scope void delegate(MapObject object) each)

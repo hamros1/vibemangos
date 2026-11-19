@@ -68,6 +68,12 @@ static import dmangos.scripts.blackwinglair;
 static import dmangos.scripts.ruinsofahnqiraj;
 static import dmangos.scripts.templeofahnqiraj;
 static import dmangos.scripts.naxxramas;
+// Open-world round 2:
+static import dmangos.scripts.professions;
+static import dmangos.scripts.emeralddragons;
+static import dmangos.scripts.worldobjects;
+static import dmangos.scripts.guards;
+static import dmangos.scripts.worldmaps;
 
 /// Every module holding scripts.
 alias scriptModules = AliasSeq!(dmangos.scripts.deadmines, dmangos.scripts.westfall, dmangos.scripts.spells,
@@ -92,4 +98,7 @@ alias scriptModules = AliasSeq!(dmangos.scripts.deadmines, dmangos.scripts.westf
     dmangos.scripts.blackrockspire, dmangos.scripts.stratholme, dmangos.scripts.scholomance, dmangos.scripts.diremaul,
     // Raid scripts:
     dmangos.scripts.moltencore, dmangos.scripts.onyxia, dmangos.scripts.zulgurub, dmangos.scripts.blackwinglair,
-    dmangos.scripts.ruinsofahnqiraj, dmangos.scripts.templeofahnqiraj, dmangos.scripts.naxxramas);
+    dmangos.scripts.ruinsofahnqiraj, dmangos.scripts.templeofahnqiraj, dmangos.scripts.naxxramas,
+    // Open-world round 2:
+    dmangos.scripts.professions, dmangos.scripts.emeralddragons, dmangos.scripts.worldobjects,
+    dmangos.scripts.guards, dmangos.scripts.worldmaps);

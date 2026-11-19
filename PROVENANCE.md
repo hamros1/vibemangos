@@ -166,6 +166,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 
 * Projects: CMaNGOS
 * Files: `AI/ScriptDevAI/scripts/kalimdor/azshara.cpp`, `AI/ScriptDevAI/scripts/kalimdor/boss_azuregos.cpp`
+* Open-world round 2: ScriptDev2-classic `scripts/kalimdor/azshara.cpp`, `npc_loramus_thalipedes`; `boss_maws` walking its path as `event_arcanite_buoy` starts it
 * Functions/ScriptNames: `mobs_spitelashes`, `npc_felhound_tracker`, `boss_maws`, `boss_azuregos`
 
 ## scripts/barrens.d
@@ -211,6 +212,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Files: `AI/ScriptDevAI/scripts/kalimdor/darkshore.cpp`
 * Functions/ScriptNames: `npc_kerlonian` (with `AwakenKerlonian`), `npc_prospector_remtravel`, `npc_threshwackonator`,
   `npc_volcor`, `npc_therylune`, `npc_rabid_bear`, `npc_blackwood_warrior`, `npc_blackwood_totemic`, `go_furbolg_food`
+* Open-world round 2: `npc_corrupted_furbolgAI::SeekPurification`, `event_purify_food` (`ProcessEventId_event_purify_food`)
 
 ## scripts/desolace.d
 
@@ -291,7 +293,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 
 * Projects: CMaNGOS
 * Files: `ScriptDevAI/scripts/world/npcs_special.cpp`, `ScriptDevAI/scripts/world/guards.cpp`, `ScriptDevAI/scripts/world/spell_scripts.cpp`, `ScriptDevAI/base/guard_ai.cpp`
-* Functions/ScriptNames: `npc_doctor`, `npc_injured_patient`, `npc_garments_of_quests`, `npc_redemption_target`, `npc_chicken_cluck`, `npc_the_cleaner`, `guard_stormwind`, `spell_dummy_npc`
+* Functions/ScriptNames: `npc_doctor`, `npc_injured_patient`, `npc_garments_of_quests`, `npc_redemption_target`, `npc_chicken_cluck`, `npc_the_cleaner`, `guard_stormwind` (open-world round 2: `guardAI::JustDied`, `guardAI_stormwind::ReceiveEmote`), `spell_dummy_npc`; open-world round 2: `npc_guardian`, `npc_advanced_target_dummy`, `npc_aoe_damage_trigger`
 
 ## scripts/razorfendowns.d
 
@@ -338,8 +340,8 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 ## scripts/silithus.d
 
 * Projects: CMaNGOS
-* Files: `AI/ScriptDevAI/scripts/kalimdor/silithus.cpp`
-* Functions/ScriptNames: `npc_solenor`
+* Files: `AI/ScriptDevAI/scripts/kalimdor/silithus.cpp`; open-world round 2: ScriptDev2-classic `scripts/kalimdor/silithus.cpp` (`npc_anachronos_the_ancient`, `go_crystalline_tear`), CMaNGOS `ScriptDevAI/scripts/world/war_effort.cpp` (`npc_silithus_boss`)
+* Functions/ScriptNames: `npc_solenor`, `npc_anachronos_the_ancient` (`aEventDialogue`, `JustDidDialogueStep`), `go_crystalline_tear`, `npc_silithus_boss`
 
 ## scripts/silverpine.d
 
@@ -387,6 +389,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 
 * Projects: CMaNGOS
 * Files: `AI/ScriptDevAI/scripts/kalimdor/tanaris.cpp`
+* Open-world round 2: ScriptDev2-classic `scripts/kalimdor/tanaris.cpp`, `npc_stone_watcher_of_norgannon`
 * Functions/ScriptNames: `mob_aquementas`, `npc_oox17tn`, `npc_tooga`
 
 ## scripts/teldrassil.d
@@ -449,6 +452,36 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Projects: CMaNGOS
 * Files: `AI/ScriptDevAI/scripts/kalimdor/zulfarrak/instance_zulfarrak.cpp`, `zulfarrak.cpp`, `boss_zumrah.cpp`, `zulfarrak.h`
 * Functions/ScriptNames: `instance_zulfarrak` (`Update`, `OnCreatureEnterCombat`, `OnCreatureEvade`), `event_go_zulfarrak_gong`, `event_spell_unlocking`, `at_zulfarrak`, `boss_zumrah`
+
+## scripts/professions.d
+
+* Projects: CMaNGOS
+* Files: `ScriptDevAI/scripts/world/npc_professions.cpp`
+* Functions/ScriptNames: `npc_prof_blacksmith`, `npc_prof_leather` (`GetUnlearnCostMedium`, `GetUnlearnCostLow`, `EquippedOk`, `IsEligibleSpecializeLW`); forgetting a specialization is done directly, Classic having no unlearn spells
+
+## scripts/emeralddragons.d
+
+* Projects: CMaNGOS
+* Files: `ScriptDevAI/scripts/world/bosses_emerald_dragons.cpp`
+* Functions/ScriptNames: `boss_emerald_dragonAI` (as the `DreamDragon` component), `boss_emeriss`, `boss_lethon`, `npc_spirit_shade`, `boss_taerar`, `boss_ysondre`
+
+## scripts/worldobjects.d
+
+* Projects: CMaNGOS
+* Files: `ScriptDevAI/scripts/world/go_scripts.cpp`, `item_scripts.cpp`, `areatrigger_scripts.cpp`, `ScriptDevAI/scripts/kalimdor/azshara.cpp`, `stonetalon_mountains.cpp`, `ScriptDevAI/scripts/eastern_kingdoms/blasted_lands.cpp`, `hinterlands.cpp`
+* Functions/ScriptNames: `go_bells`, `go_darkmoon_faire_music`, `go_elemental_rift`, `go_dragon_head`, `go_unadorned_spike`, `go_lightning`, `go_covert_ops`, `go_transpolyporter_bb` (`TrapTargetSearch`), `go_rune_of_the_defiler`, `event_arcanite_buoy`, `event_wildhammer_message`, `item_orb_of_draconic_energy`, `at_wondervolt`, `at_hive_tower`, `at_stormwind_recruiter`
+
+## scripts/worldmaps.d
+
+* Projects: CMaNGOS
+* Files: `ScriptDevAI/scripts/kalimdor/world_kalimdor.cpp`, `world_kalimdor.h`, `ScriptDevAI/scripts/world/areatrigger_scripts.cpp`, `ScriptDevAI/scripts/kalimdor/moonglade.cpp`
+* Functions/ScriptNames: `world_map_kalimdor` (`OnCreatureDeath`, `SetData` of `TYPE_OMEN`, `Update`), `at_murkdeep`, `go_omen_cluster`
+
+## scripts/guards.d
+
+* Projects: CMaNGOS
+* Files: `ScriptDevAI/scripts/world/guards.cpp`, `ScriptDevAI/base/guard_ai.cpp`
+* Functions/ScriptNames: `guard_bluffwatcher`, `guard_darnassus`, `guard_dunmorogh`, `guard_durotar`, `guard_elwynnforest`, `guard_ironforge`, `guard_mulgore`, `guard_orgrimmar`, `guard_teldrassil`, `guard_tirisfal`, `guard_undercity` (`guardAI::JustDied`, `DoReplyToTextEmote`)
 
 ## scripts/moltencore.d
 

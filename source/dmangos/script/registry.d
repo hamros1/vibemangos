@@ -97,6 +97,30 @@ struct scriptedEvent
     }
 }
 
+/// Open-world round 2: an item script, for the `item_template` rows with these `ScriptName`s.
+struct item
+{
+    string[] names;
+
+    ///
+    this(string[] names...) pure nothrow @safe
+    {
+        this.names = names.dup;
+    }
+}
+
+/// Open-world round 2: a world map's script, for the `world_template` row (a continent) with this `ScriptName`.
+struct world
+{
+    string[] names;
+
+    ///
+    this(string[] names...) pure nothrow @safe
+    {
+        this.names = names.dup;
+    }
+}
+
 /// What kind of script.
 enum ScriptKind : ubyte
 {
@@ -106,6 +130,8 @@ enum ScriptKind : ubyte
     spell,
     areaTrigger,
     event,
+    item, /// Open-world round 2
+    world, /// ditto
 }
 
 /// The context and events of each kind.
@@ -125,8 +151,20 @@ template KindInfo(ScriptKind kind)
     else static if (kind == ScriptKind.gameObject)
     {
         alias Context = GameObjectContext;
-        alias Events = AliasSeq!(ObjectUsed, Signal);
+        alias Events = AliasSeq!(ObjectUsed, Signal, /* Open-world round 2: */ Spawned, QuestAccepted, TrapSprung);
         alias Attribute = .gameObject;
+    }
+    else static if (kind == ScriptKind.item) // Open-world round 2
+    {
+        alias Context = ItemContext;
+        alias Events = AliasSeq!(ItemUsed);
+        alias Attribute = .item;
+    }
+    else static if (kind == ScriptKind.world) // Open-world round 2
+    {
+        alias Context = WorldMapContext;
+        alias Events = AliasSeq!(CreatureDied, Signal, Asked);
+        alias Attribute = .world;
     }
     else static if (kind == ScriptKind.spell)
     {

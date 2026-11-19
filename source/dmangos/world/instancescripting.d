@@ -9,7 +9,8 @@ module dmangos.world.instancescripting;
 import dmangos.bytes : ByteReader, ByteWriter;
 import dmangos.log : info;
 import dmangos.script.api;
-import dmangos.script.registry : ScriptHandle, ScriptKind, ScriptRuntime;
+import dmangos.script.registry : KindInfo, ScriptHandle, ScriptKind, ScriptRuntime;
+import std.meta : staticIndexOf;
 import dmangos.world.creature : Creature, TempSpawnType;
 import dmangos.world.creatureai : CreatureLore;
 import dmangos.world.movement : Position;
@@ -29,6 +30,7 @@ final class InstanceScript : InstanceHost
         void delegate(string data) persist;
         string saved;
         uint id, mapId;
+        bool world; // open-world round 2: a continent's script (`@world`), kept in memory only
     }
 
     /// The copy's map, once it is made.
@@ -82,6 +84,36 @@ final class InstanceScript : InstanceHost
         return script;
     }
 
+    /// Open-world round 2: the script `name` (`world_template.ScriptName`) of continent `mapId`; null if none serves it.
+    static InstanceScript makeWorld(ScriptRuntime runtime, string name, uint mapId)
+    {
+        if (runtime is null || !runtime.serves(ScriptKind.world, name))
+            return null;
+        auto script = new InstanceScript;
+        script.runtime = runtime;
+        script.handle = runtime.create(ScriptKind.world, name);
+        script.mapId = mapId;
+        script.world = true;
+        return script;
+    }
+
+    /// Raises `event` with the context of its kind; whether it consumed it (a world map's never does).
+    private bool dispatch(E)(const E event)
+    {
+        if (world)
+        {
+            static if (staticIndexOf!(E, KindInfo!(ScriptKind.world).Events) >= 0)
+            {
+                auto context = WorldMapContext(this);
+                runtime.raise(handle, context, event);
+            }
+            return false;
+        }
+        auto context = InstanceContext(this);
+        runtime.raise(handle, context, event);
+        return context.consumed;
+    }
+
     /**
      * Raises `event` for the script, then saves its state if it changed; whether the script consumed
      * it. An event caused by one of the script's own actions (a creature it summoned coming into the
@@ -97,8 +129,7 @@ final class InstanceScript : InstanceHost
             return false;
         }
         raising = true;
-        auto context = InstanceContext(this);
-        runtime.raise(handle, context, event);
+        const consumed = dispatch(event);
         raising = false;
         save();
         while (pending.length)
@@ -107,7 +138,7 @@ final class InstanceScript : InstanceHost
             pending = pending[1 .. $];
             next();
         }
-        return context.consumed;
+        return consumed;
     }
 
     private bool raising;              // a handler runs
@@ -119,8 +150,16 @@ final class InstanceScript : InstanceHost
         if (!runtime.busy(handle))
             return;
         raising = true;
-        auto context = InstanceContext(this);
-        runtime.tick(handle, context, ms);
+        if (world)
+        {
+            auto context = WorldMapContext(this);
+            runtime.tick(handle, context, ms);
+        }
+        else
+        {
+            auto context = InstanceContext(this);
+            runtime.tick(handle, context, ms);
+        }
         raising = false;
         save();
         while (pending.length)
@@ -133,6 +172,8 @@ final class InstanceScript : InstanceHost
 
     private void save()
     {
+        if (persist is null) // a world map's script: kept in memory only
+            return;
         ByteWriter w;
         runtime.save(handle, w);
         const data = instanceDataPrefix ~ toHex(w.data);
@@ -146,6 +187,12 @@ final class InstanceScript : InstanceHost
     /// Raid scripts: asks the script question `id` (`Asked`) from `from`; its answer, 0 if it gave none.
     int ask(EntityRef from, uint id)
     {
+        if (world)
+        {
+            auto context = WorldMapContext(this);
+            runtime.raise(handle, context, Asked(from, id));
+            return context.answerGiven;
+        }
         auto context = InstanceContext(this);
         runtime.raise(handle, context, Asked(from, id));
         return context.answerGiven;

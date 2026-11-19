@@ -170,6 +170,149 @@ mixin template SessionScripting()
                 return ActionResult.notHere;
             return c.ai.sayScriptFor(map, entry, target);
         }
+
+        // Open-world round 2:
+
+        bool hostLocationOf(EntityRef who, out Location at)
+        {
+            import dmangos.world.movement : Position;
+
+            Position p;
+            if (map is null || !map.positionOf(who.guid, p))
+                return false;
+            at = Location(p.x, p.y, p.z, p.orientation);
+            return true;
+        }
+
+        uint hostHealthPercentOf(EntityRef who)
+        {
+            if (map is null)
+                return uint.max;
+            auto unit = map.unit(who.guid);
+            return unit ? unit.healthPercent : uint.max;
+        }
+
+        uint hostRespawnObjectsNear(uint entry, Location at, float range, uint seconds)
+        {
+            return map is null ? 0 : context.respawnObjectsNear(map, entry, at, range, seconds);
+        }
+
+        ActionResult hostAiEvent(EntityRef creature, uint type, EntityRef invoker)
+        {
+            auto c = map is null ? null : map.creatureAt(creature.guid);
+            if (c is null || c.ai is null || !c.alive)
+                return ActionResult.notHere;
+            if (c.ai.inCombat)
+                return ActionResult.notAllowed;
+            c.ai.aiEventFrom(type, c, invoker.guid, map);
+            return ActionResult.ok;
+        }
+
+        size_t hostCreaturesNear(Location at, uint entry, float range, EntityRef[] into)
+        {
+            import dmangos.world.movement : Position;
+
+            size_t n;
+            if (map !is null)
+                foreach (c; map.creaturesNear(Position(at.x, at.y, at.z), range))
+                    if (c.alive && (entry == 0 || c.spawn.entry == entry) && n < into.length)
+                        into[n++] = EntityRef(c.guid);
+            return n;
+        }
+
+        void hostFlagForPvP(EntityRef who)
+        {
+            if (auto other = sessionHere(who))
+            {
+                other.updatePvP(true);
+                other.flushPlayerChanges();
+            }
+        }
+    }
+
+    /// Open-world round 2: a creature's script opens its goods (or its training) for this player.
+    public void scriptOpenWindow(ulong npc, bool training)
+    {
+        if (training)
+            sendTrainerList(npc);
+        else
+            sendListInventory(npc);
+    }
+
+    /// Open-world round 2: this player casts `spell` at `target` (itself if nothing) for a creature's script.
+    public ActionResult scriptCast(uint spell, ulong target, bool triggered)
+    {
+        if (player is null)
+            return ActionResult.notHere;
+        return hostCastFrom(EntityRef(player.guid), spell, EntityRef(target), triggered);
+    }
+
+    /// Open-world round 2: a script takes `copper` of this player's money; false (nothing taken) if it has less.
+    public bool scriptTakeMoney(uint copper)
+    {
+        import dmangos.world.updatefields : PLAYER_FIELD_COINAGE;
+
+        if (player is null)
+            return false;
+        const money = player.values.get!PLAYER_FIELD_COINAGE;
+        if (money < copper)
+            return false;
+        player.values.set!PLAYER_FIELD_COINAGE(money - copper);
+        flushPlayerChanges();
+        return true;
+    }
+
+    /// Open-world round 2: whether this player wears an item that needs `spell` (`item_template.requiredspell`).
+    public bool scriptWearsItemNeeding(uint spell)
+    {
+        import dmangos.world.defines : equipmentSlotEnd;
+
+        if (player is null || spell == 0)
+            return false;
+        foreach (ubyte slot; 0 .. equipmentSlotEnd)
+            if (const item = player.inventory.equipped(slot))
+                if (item.proto.requiredSpell == spell)
+                    return true;
+        return false;
+    }
+
+    /**
+     * Open-world round 2: this player forgets `spell` (a specialization) and the recipes it learned from
+     * the items that need it (a plan's or a pattern's learning spell teaches the recipe).
+     */
+    public void scriptUnlearnSpecialization(uint spell)
+    {
+        import dmangos.world.spellids : SpellEffect;
+
+        if (player is null)
+            return;
+        unlearn(spell);
+        foreach (ref item; context.data.items)
+        {
+            if (item.requiredSpell != spell)
+                continue;
+            foreach (ref use; item.details.spells)
+                if (const teaching = use.id ? context.data.spells.spell(use.id) : null)
+                    foreach (i; 0 .. 3)
+                        if (teaching.effect[i] == SpellEffect.learnSpell && teaching.triggerSpell[i])
+                            unlearn(teaching.triggerSpell[i]);
+        }
+    }
+
+    /**
+     * Open-world round 2: this player uses item `entry` (at `target`): the item's script hears of it; true
+     * if it refused the use (the item's spell is not cast).
+     */
+    package bool itemScript(uint entry, ulong target)
+    {
+        import dmangos.script.api : ItemContext, ItemUsed;
+
+        auto handle = context.itemScript(entry);
+        if (!handle)
+            return false;
+        auto c = ItemContext(scriptHost);
+        context.scripts.raise(handle, c, ItemUsed(EntityRef(player.guid), entry, EntityRef(target)));
+        return c.consumed;
     }
 
     private ScriptHost scriptHost_;
@@ -383,6 +526,8 @@ mixin template SessionScripting()
     {
         if (instanceId_)
             context.signalDungeon(instanceId_, EntityRef(player.guid), id, value);
+        else if (map !is null) // open-world round 2: the continent's script
+            context.signalWorld(map.id, EntityRef(player.guid), id, value);
     }
 
     /// Raid scripts: see `AreaTriggerHost.hostAskDungeon`.

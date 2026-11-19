@@ -474,6 +474,8 @@ mixin template CreatureScripting()
     {
         if (lore !is null && me.instanceId)
             lore.signalDungeon(me.instanceId, EntityRef(me.guid), id, value);
+        else if (lore !is null && world_ !is null) // open-world round 2: its continent's script
+            lore.signalWorldMap(world_, EntityRef(me.guid), id, value);
     }
 
     void hostLog(string text)
@@ -914,6 +916,12 @@ mixin template CreatureScripting()
     {
         if (caster.guid == me.guid)
             return hostCast(spell, target, triggered);
+        // Open-world round 2: a player here casts it (a mark on the one it killed, a lesson it learns).
+        if (caster.isPlayer)
+        {
+            auto session = playerSession(caster);
+            return session is null ? ActionResult.notHere : session.scriptCast(spell, target.guid, triggered);
+        }
         auto who = scriptCreature(caster);
         if (who is null)
             return ActionResult.notHere;
@@ -1274,5 +1282,124 @@ mixin template CreatureScripting()
             return;
         if (auto other = world_.unit(who.guid))
             addThreat(other, amount);
+    }
+
+    // -----------------------------------------------------------------------
+    // Open-world round 2: `CreatureHost`
+    // -----------------------------------------------------------------------
+
+    /// The session of a player on its map; null if `who` is no player here.
+    private auto playerSession(EntityRef who)
+    {
+        import dmangos.world.unit : UnitKind;
+
+        if (world_ is null || !who.isPlayer)
+            return null;
+        auto unit = world_.unit(who.guid);
+        return unit && unit.kind == UnitKind.player && unit.session.player !is null ? unit.session : null;
+    }
+
+    uint hostLevelOf(EntityRef who)
+    {
+        import dmangos.world.updatefields : UNIT_FIELD_LEVEL;
+
+        if (who.guid == me.guid)
+            return me.values.get!UNIT_FIELD_LEVEL;
+        if (auto session = playerSession(who))
+            return session.player.values.get!UNIT_FIELD_LEVEL;
+        if (auto c = world_ is null ? null : world_.creatureAt(who.guid))
+            return c.values.get!UNIT_FIELD_LEVEL;
+        return 0;
+    }
+
+    uint hostSkillOf(EntityRef player, uint skill)
+    {
+        auto session = playerSession(player);
+        return session is null ? 0 : session.player.skillValue(skill)[0];
+    }
+
+    bool hostKnowsSpell(EntityRef player, uint spell)
+    {
+        auto session = playerSession(player);
+        return session !is null && session.player.knowsSpell(spell);
+    }
+
+    Standing hostStandingOf(EntityRef player, uint faction)
+    {
+        auto session = playerSession(player);
+        return session is null || session.player.reputation is null ? Standing.hated
+            : cast(Standing) session.player.reputation.rankWith(faction);
+    }
+
+    bool hostWearsItemNeeding(EntityRef player, uint spell)
+    {
+        auto session = playerSession(player);
+        return session !is null && session.scriptWearsItemNeeding(spell);
+    }
+
+    bool hostTakeMoney(EntityRef player, uint copper)
+    {
+        auto session = playerSession(player);
+        return session !is null && session.scriptTakeMoney(copper);
+    }
+
+    void hostUnlearnSpell(EntityRef player, uint spell)
+    {
+        if (auto session = playerSession(player))
+            session.scriptUnlearnSpecialization(spell);
+    }
+
+    void hostOpenWindow(EntityRef player, NpcWindow window)
+    {
+        auto session = playerSession(player);
+        if (session is null)
+            return;
+        final switch (window)
+        {
+        case NpcWindow.vendor:
+            session.scriptOpenWindow(me.guid, false);
+            break;
+        case NpcWindow.trainer:
+            session.scriptOpenWindow(me.guid, true);
+            break;
+        }
+    }
+
+    void hostWalkPath()
+    {
+        import dmangos.world.motion : WaypointMovement;
+
+        const path = lore is null ? null : lore.creaturePath(me.spawn.entry, me.spawn.guid);
+        if (path.length == 0)
+            return;
+        auto next = new WaypointMovement(path, false);
+        if (inCombat_ || evadingHome)
+        {
+            outOfCombat = next; // once home from the fight
+            return;
+        }
+        me.generator = next;
+        if (world_ !is null)
+        {
+            next.initialize(me, world_);
+            world_.wake(me.guid);
+        }
+    }
+
+    ActionResult hostSendHome(EntityRef creature)
+    {
+        auto c = creature.guid == me.guid ? me : scriptCreature(creature);
+        if (c is null || !c.alive || lore is null || world_ is null)
+            return ActionResult.notHere;
+        if (c.ai.inCombat)
+            return ActionResult.notAllowed;
+        lore.sendCreatureHome(world_, c);
+        return ActionResult.ok;
+    }
+
+    void hostZoneUnderAttack(EntityRef attacker)
+    {
+        if (lore !is null && world_ !is null)
+            lore.zoneUnderAttack(world_, me, attacker.guid);
     }
 }
