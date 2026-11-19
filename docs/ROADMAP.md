@@ -181,11 +181,13 @@ spells, area triggers and scripted events (typed events, schedules as data, stat
 migration, `instance.data`, gossip and quest events, script movement, the `Escort`, `Follower`, `Walk` and
 `Pack` components, signals across nodes). Ported from CMaNGOS's ScriptDevAI (2026-11-19): the quest and
 event scripts of Kalimdor's and the Eastern Kingdoms' zones, every five-player dungeon, and the raids
-(Molten Core, Onyxia, Zul'Gurub, Blackwing Lair, both Ahn'Qiraj, Naxxramas); the server logs 344 of 674
-script rows served (317 distinct names; about 97 left). Not yet: the rest of the world scripts (guards,
-the Emerald Dragons, the war effort, profession specializations, the Scourge Invasion), the dungeons' and
-raids' scripted events, and the mechanics the raids approximate (possession, mind control, C'Thun's
-stomach); each module's documentation says what it leaves out.
+(Molten Core, Onyxia, Zul'Gurub, Blackwing Lair, both Ahn'Qiraj, Naxxramas), then the dungeons' and
+raids' scripted events, the profession specializations, the Emerald Dragons, the Ahn'Qiraj opening, the
+guards, world objects, item and world map scripts; the server logs 444 script rows served. Not yet
+(about 20 names, each module's documentation and SCRIPTING.md say why): what needs stealth detection
+(Venture Co. lookouts, Gallywix), the war effort's server-wide state, the Scourge Invasion, caravans,
+the Eastern Kingdoms' world map script, and the mechanics the raids approximate (possession, mind
+control, Heigan's floor).
 Reputation is done (`reputation.d`, `reputationhandlers.d`; README's "Reputation"): kills, quests,
 spillover, war and peace, discounts, requirements. Not yet: `SMSG_SET_FORCED_REACTIONS` (spells force
 none yet), the PvP rank's discount, reputation from spells.
