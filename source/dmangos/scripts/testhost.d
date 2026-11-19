@@ -152,6 +152,25 @@ final class TestCreature : CreatureHost
     uint hostGiveItem(EntityRef, uint, uint) { return 0; }
     // Dungeon scripts:
     EntityRef hostPlayerNearby(float) { return EntityRef.init; }
+
+    // Raid scripts:
+    int hostAskDungeon(uint) { return 0; }
+    EntityRef hostSelectTarget(Pick, uint, uint) { return EntityRef.init; }
+    size_t hostThreatList(EntityRef[]) { return 0; }
+    ActionResult hostModifyThreat(EntityRef, int) { return ActionResult.ok; }
+    size_t hostPlayersNear(float, EntityRef[]) { return 0; }
+    void hostTeleport(Location) {}
+    void hostZoneCombat() {}
+    bool hostCasting() { return false; }
+    void hostInterrupt() {}
+    void hostFlying(bool) {}
+    void hostDisplay(uint) {}
+    void hostSetHealthPercent(EntityRef, uint) {}
+    void hostRooted(bool) {}
+    void hostAddThreat(EntityRef, float) {}
+    void hostMoveNow(Location, uint, bool) {}
+    void hostSpellList(uint) {}
+    ubyte hostClassOf(EntityRef) { return 0; }
 }
 
 /// A script under test: the runtime of `Module`, one creature's script, and its host.

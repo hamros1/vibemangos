@@ -1393,7 +1393,15 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                     script.lore = this;
                     script.spawnObjects = &spawnDungeonObjects;
                     script.signalObject = &gameObjectSignalled;
+                    script.respawnObjectOf = &respawnObjectOfEntry;
+                    script.summonObjectAt = &summonGameObjectAt;
                     instanceScripts[instance] = script;
+                    created.onPlayerAdded = (Inhabitant who) {
+                        import dmangos.script.api : PlayerEntered;
+
+                        if (auto s = instance in instanceScripts)
+                            s.raise(PlayerEntered(EntityRef(who.character.guid)));
+                    };
                 }
             }
         if (instance == 0) // the ships on this map now
@@ -3174,6 +3182,13 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     {
         import dmangos.script.api : GameObjectContext, ObjectUsed;
 
+        if (go.instanceId) // Raid scripts: the copy's script hears of it first
+            if (auto script = go.instanceId in instanceScripts)
+            {
+                import dmangos.script.api : ObjectUsedHere;
+
+                script.raise(ObjectUsedHere(EntityRef(go.guid), EntityRef(player)));
+            }
         if (!go.behaviour)
             return false;
         goHost.go = go;
@@ -3230,6 +3245,13 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             import dmangos.log : info;
 
             info!"script %s (%s %s): %s"(scripts.nameOf(go.behaviour), go.template_.name, go.spawn.guid, text);
+        }
+
+        // Raid scripts:
+
+        int hostAskDungeon(uint id)
+        {
+            return go.instanceId ? askDungeon(go.instanceId, EntityRef(go.guid), id) : 0;
         }
 
         // Eastern Kingdoms scripts:
@@ -3416,6 +3438,51 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             foreach (model; t.modelIds)
                 if (model)
                     return model;
+        return 0;
+    }
+
+    /// Raid scripts: the game object of the first spawn of `entry` on `map` (one not there by default) put
+    /// in the world for `seconds` (0: for good); false if the map has no spawn of it.
+    private bool respawnObjectOfEntry(Map map, uint entry, uint seconds)
+    {
+        foreach (ref spawn; data.gameObjectSpawns)
+            if (spawn.entry == entry && spawn.map == map.id)
+            {
+                scriptSpawnGameObject(map, spawn.guid, null, seconds);
+                return true;
+            }
+        return false;
+    }
+
+    /// Raid scripts: a game object of `entry` at `at` on `map`, of no spawn of the map's (it is in no
+    /// other copy, and comes back nowhere), gone after `seconds` (0: with the map); null if there is no such object.
+    private GameObject summonGameObjectAt(Map map, uint entry, Location at, uint seconds)
+    {
+        import std.math : cos, sin;
+
+        if (entry !in data.gameObjectTemplates)
+            return null;
+        if (lastGameObjectSpawn == 0)
+            foreach (ref s; data.gameObjectSpawns)
+                if (s.guid > lastGameObjectSpawn)
+                    lastGameObjectSpawn = s.guid;
+        auto spawn = new GameObjectSpawn;
+        *spawn = GameObjectSpawn(++lastGameObjectSpawn, entry, map.id, at.x, at.y, at.z);
+        spawn.orientation = at.orientation;
+        spawn.rotation = [0, 0, sin(at.orientation / 2), cos(at.orientation / 2)];
+        auto go = makeGameObject(spawn);
+        go.instanceId = map.instanceId;
+        map.addObject(go);
+        if (seconds)
+            scriptedGameObjects[go.guid] = unixTime + seconds;
+        return go;
+    }
+
+    /// See `CreatureLore.askDungeon`.
+    int askDungeon(uint instance, EntityRef from, uint id)
+    {
+        if (auto script = instance in instanceScripts)
+            return script.ask(from, id);
         return 0;
     }
 

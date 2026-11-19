@@ -46,6 +46,16 @@ final class InstanceScript : InstanceHost
     /// Puts the dungeon's game objects of an entry in the world (`InstanceContext.spawnObjects`).
     uint delegate(Map map, uint entry, uint despawnSeconds, Location near, float range) spawnObjects;
 
+    // Raid scripts:
+
+    /// Puts the game object of a spawn of `entry` on the copy's map in the world for `seconds` (0: for
+    /// good); false if there is none (`WorldContext` sets it).
+    bool delegate(Map map, uint entry, uint seconds) respawnObjectOf;
+
+    /// A game object of `entry` (no spawn of the map's) put at `at` for `seconds` (0: for good); null if
+    /// there is no such object (`WorldContext` sets it).
+    GameObject delegate(Map map, uint entry, Location at, uint seconds) summonObjectAt;
+
     /**
      * The script `name` for copy `id` of `mapId`, its state read from `data` (`instance.data`);
      * `persist` writes its state back. Null if no script serves `name`.
@@ -131,6 +141,14 @@ final class InstanceScript : InstanceHost
             saved = data;
             persist(data);
         }
+    }
+
+    /// Raid scripts: asks the script question `id` (`Asked`) from `from`; its answer, 0 if it gave none.
+    int ask(EntityRef from, uint id)
+    {
+        auto context = InstanceContext(this);
+        runtime.raise(handle, context, Asked(from, id));
+        return context.answerGiven;
     }
 
     /// The copy goes from this node: the script's state goes from memory (it is saved).
@@ -400,6 +418,77 @@ final class InstanceScript : InstanceHost
         import std.random : uniform;
 
         return below == 0 ? 0 : uniform(0, below);
+    }
+
+    // Raid scripts:
+
+    ActionResult hostDespawnObject(EntityRef object)
+    {
+        foreach (i, o; loading)
+            if (o.guid == object.guid)
+            {
+                loading = loading[0 .. i] ~ loading[i + 1 .. $]; // not added at all
+                return ActionResult.ok;
+            }
+        if (map is null || cast(GameObject) map.findObject(object.guid) is null)
+            return ActionResult.notHere;
+        map.removeObject(object.guid);
+        return ActionResult.ok;
+    }
+
+    bool hostRespawnObject(uint entry, uint seconds)
+    {
+        return map !is null && respawnObjectOf !is null && respawnObjectOf(map, entry, seconds);
+    }
+
+    ActionResult hostUseObject(EntityRef object)
+    {
+        auto go = map is null ? null : cast(GameObject) map.findObject(object.guid);
+        if (go is null)
+            return ActionResult.notHere;
+        go.useDoorOrButton(map);
+        map.flushGameObject(go);
+        return ActionResult.ok;
+    }
+
+    size_t hostPlayers(EntityRef[] into)
+    {
+        if (map is null)
+            return 0;
+        size_t n;
+        foreach (who; map.playersNow())
+            if (who.character !is null && n < into.length)
+                into[n++] = EntityRef(who.character.guid);
+        return n;
+    }
+
+    EntityRef hostSummonObject(uint entry, Location at, uint seconds)
+    {
+        if (map is null || summonObjectAt is null)
+            return EntityRef.init;
+        auto go = summonObjectAt(map, entry, at, seconds);
+        return go is null ? EntityRef.init : EntityRef(go.guid);
+    }
+
+    size_t hostCreaturesNear(Location at, uint entry, float range, EntityRef[] into)
+    {
+        if (map is null)
+            return 0;
+        size_t n;
+        foreach (c; map.creaturesNear(Position(at.x, at.y, at.z), range))
+            if (c.alive && (entry == 0 || c.spawn.entry == entry) && n < into.length)
+                into[n++] = EntityRef(c.guid);
+        return n;
+    }
+
+    ActionResult hostZoneCombat(EntityRef creature)
+    {
+        auto c = creatureOf(creature);
+        if (c is null || !c.alive)
+            return ActionResult.notHere;
+        c.ai.scriptZoneCombatPulse();
+        map.wake(c.guid);
+        return ActionResult.ok;
     }
 }
 

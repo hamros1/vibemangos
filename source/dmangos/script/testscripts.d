@@ -153,6 +153,25 @@ final class FakeCreature : CreatureHost
     EntityRef hostOwner() { return EntityRef.init; }
     uint hostItemCount(EntityRef, uint) { return 0; }
     uint hostGiveItem(EntityRef, uint, uint) { return 0; }
+
+    // Raid scripts:
+    int hostAskDungeon(uint) { return 0; }
+    EntityRef hostSelectTarget(Pick, uint, uint) { return EntityRef.init; }
+    size_t hostThreatList(EntityRef[]) { return 0; }
+    ActionResult hostModifyThreat(EntityRef, int) { return ActionResult.ok; }
+    size_t hostPlayersNear(float, EntityRef[]) { return 0; }
+    void hostTeleport(Location) {}
+    void hostZoneCombat() {}
+    bool hostCasting() { return false; }
+    void hostInterrupt() {}
+    void hostFlying(bool) {}
+    void hostDisplay(uint) {}
+    void hostSetHealthPercent(EntityRef, uint) {}
+    void hostRooted(bool) {}
+    void hostAddThreat(EntityRef, float) {}
+    void hostMoveNow(Location, uint, bool) {}
+    void hostSpellList(uint) {}
+    ubyte hostClassOf(EntityRef) { return 0; }
 }
 
 unittest

@@ -1046,3 +1046,58 @@ unittest
     context.dungeonFight(map.instanceId, EntityRef(boss.guid), EntityRef.init);
     assert(theGate.goState == 0, "given up: open again");
 }
+
+/**
+ * A raid's copy script in the real world (Molten Core's, here on the test world's dungeon): a player
+ * entering is told to it; the runes doused, Majordomo and his eight guards are summoned onto the copy's
+ * map (each summon told to the script as it loads), and the copy answers its creatures' questions.
+ */
+unittest
+{
+    import dmangos.script.api : EncounterState, EntityRef;
+    import dmangos.scripts.moltencore;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    foreach (entry; [npcMajordomo, npcFlamewakerHealer, npcFlamewakerElite])
+    {
+        auto t = cast() context.data.creatureTemplates[creatureInnkeeper];
+        t.entry = entry;
+        context.data.creatureTemplates[entry] = t;
+    }
+    context.data.creatureScriptNames[npcMajordomo] = "boss_majordomo";
+    context.data.instanceScriptNames[mapDeadmines] = "instance_molten_core";
+
+    const outside = Position(deadminesEntrance[0], deadminesEntrance[1], deadminesEntrance[2]);
+    auto hero = loggedIn(context, db, 7, "Varian", outside, AccountLevel.administrator, raceHuman, mapEasternKingdoms, 60);
+    hero.say(".worldport 36 -16 -380 61");
+    hero.write(Opcode.MSG_MOVE_WORLDPORT_ACK, null);
+    const copy = hero.session.inWorld.instanceId;
+    auto map = context.instanceMap(copy);
+    size_t count(uint entry)
+    {
+        size_t n;
+        map.forEachObject((o) {
+            if (auto c = cast(Creature) o)
+                n += c.spawn.entry == entry && c.alive;
+        });
+        return n;
+    }
+
+    assert(count(npcMajordomo) == 0, "the runes burn");
+    foreach (which; Encounter.magmadar .. Encounter.majordomo)
+    {
+        context.signalDungeon(copy, EntityRef.init, which, EncounterState.done);
+        context.signalDungeon(copy, EntityRef.init, which, EncounterState.special);
+    }
+    assert(count(npcMajordomo) == 1 && count(npcFlamewakerHealer) == 4 && count(npcFlamewakerElite) == 4);
+    assert(context.askDungeon(copy, EntityRef.init, Encounter.sulfuron) == EncounterState.special);
+    foreach (_; 0 .. 8)
+    {
+        now += 250.msecs;
+        context.update(now);
+    }
+    assert(count(npcMajordomo) == 1, "summoned once");
+}

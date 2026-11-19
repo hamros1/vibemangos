@@ -450,6 +450,80 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Files: `AI/ScriptDevAI/scripts/kalimdor/zulfarrak/instance_zulfarrak.cpp`, `zulfarrak.cpp`, `boss_zumrah.cpp`, `zulfarrak.h`
 * Functions/ScriptNames: `instance_zulfarrak` (`Update`, `OnCreatureEnterCombat`, `OnCreatureEvade`), `event_go_zulfarrak_gong`, `event_spell_unlocking`, `at_zulfarrak`, `boss_zumrah`
 
+## scripts/moltencore.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/eastern_kingdoms/molten_core/` (`molten_core.cpp`, `molten_core.h`,
+  `molten_coreScripts.cpp`, `boss_lucifron.cpp`, `boss_magmadar.cpp`, `boss_gehennas.cpp`, `boss_garr.cpp`,
+  `boss_shazzrah.cpp`, `boss_baron_geddon.cpp`, `boss_golemagg.cpp`, `boss_sulfuron_harbinger.cpp`,
+  `boss_majordomo_executus.cpp`, `boss_ragnaros.cpp`)
+* Functions/ScriptNames: `instance_molten_core`, `go_molten_core_rune`, `boss_lucifron`, `boss_magmadar`,
+  `boss_gehennas`, `boss_garr`, `mob_firesworn`, `boss_shazzrah`, `boss_baron_geddon`, `boss_golemagg`,
+  `mob_core_rager`, `boss_sulfuron`, `mob_flamewaker_priest`, `boss_majordomo`, `boss_ragnaros`
+
+## scripts/onyxia.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/kalimdor/onyxias_lair/` (`instance_onyxias_lair.cpp`, `onyxias_lair.h`,
+  `boss_onyxia.cpp`)
+* Functions/ScriptNames: `instance_onyxias_lair`, `boss_onyxia`
+
+## scripts/zulgurub.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/eastern_kingdoms/zulgurub/` (`zulgurub.cpp`, `zulgurub.h`, `zulgurubScripts.cpp`,
+  `boss_venoxis.cpp`, `boss_jeklik.cpp`, `boss_marli.cpp`, `boss_thekal.cpp`, `boss_arlokk.cpp`,
+  `boss_mandokir.cpp`, `boss_renataki.cpp`, `boss_hakkar.cpp`)
+* Functions/ScriptNames: `instance_zulgurub`, `at_zulgurub`, `boss_venoxis`, `boss_jeklik`,
+  `npc_gurubashi_bat_rider`, `boss_marli`, `boss_thekal`, `mob_zealot_lorkhan`, `mob_zealot_zath`,
+  `boss_arlokk`, `npc_zulian_prowler`, `go_gong_of_bethekk`, `boss_mandokir`, `mob_ohgan`, `boss_renataki`,
+  `boss_hakkar`, `npc_soulflayer`, `spell_arlokk_vanish`, `spell_renataki_vanish`, `spell_thekal_resurrect`
+
+## scripts/blackwinglair.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/eastern_kingdoms/blackwing_lair/` (`blackwing_lair.cpp`, `blackwing_lair.h`,
+  `boss_razorgore.cpp`, `boss_vaelastrasz.cpp`, `boss_broodlord_lashlayer.cpp`, `boss_firemaw.cpp`,
+  `boss_ebonroc.cpp`, `boss_flamegor.cpp`, `boss_chromaggus.cpp`, `boss_victor_nefarius.cpp`, `boss_nefarian.cpp`)
+* Functions/ScriptNames: `instance_blackwing_lair`, `at_vaelastrasz`, `boss_razorgore`, `npc_blackwing_orb`,
+  `boss_vaelastrasz`, `boss_broodlord`, `boss_firemaw`, `boss_ebonroc`, `boss_flamegor`, `boss_chromaggus`,
+  `boss_victor_nefarius`, `boss_nefarian`
+
+## scripts/ruinsofahnqiraj.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/kalimdor/ruins_of_ahnqiraj/` (`ruins_of_ahnqiraj.cpp`, `ruins_of_ahnqiraj.h`,
+  `ruins_of_ahnqirajScripts.cpp`, `boss_kurinnaxx.cpp`, `boss_rajaxx.cpp`, `boss_moam.cpp`, `boss_buru.cpp`,
+  `boss_ayamiss.cpp`, `boss_ossirian.cpp`)
+* Functions/ScriptNames: `instance_ruins_of_ahnqiraj`, `boss_kurinnaxx`, `npc_general_andorov`,
+  `npc_kaldorei_elite`, `boss_moam`, `boss_buru`, `npc_buru_egg`, `boss_ayamiss`, `npc_hive_zara_larva`,
+  `boss_ossirian`, `go_ossirian_crystal`, `mob_anubisath_guardian`
+
+## scripts/templeofahnqiraj.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/kalimdor/temple_of_ahnqiraj/` (`temple_of_ahnqiraj.cpp`, `temple_of_ahnqiraj.h`,
+  `boss_skeram.cpp`, `boss_bug_trio.cpp`, `boss_sartura.cpp`, `boss_fankriss.cpp`, `boss_viscidus.cpp`,
+  `boss_huhuran.cpp`, `boss_twinemperors.cpp`, `boss_ouro.cpp`, `boss_cthun.cpp`, `mob_anubisath_sentinel.cpp`)
+* Functions/ScriptNames: `instance_temple_of_ahnqiraj`, `at_temple_ahnqiraj`, `boss_skeram`, `boss_kri`,
+  `boss_vem`, `boss_yauj`, `boss_sartura`, `boss_fankriss`, `boss_viscidus`, `boss_huhuran`, `boss_veknilash`,
+  `boss_veklor`, `boss_ouro`, `npc_ouro_spawner`, `npc_ouro_mound`, `npc_ouro_scarab`, `npc_ouro_trigger`,
+  `boss_eye_of_cthun`, `boss_cthun`, `mob_giant_claw_tentacle`, `mob_anubisath_sentinel`, `mob_anubisath_defender`
+
+## scripts/naxxramas.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/eastern_kingdoms/naxxramas/` (`naxxramas.cpp`, `naxxramas.h`, `boss_anubrekhan.cpp`,
+  `boss_faerlina.cpp`, `boss_maexxna.cpp`, `boss_noth.cpp`, `boss_heigan.cpp`, `boss_loatheb.cpp`,
+  `boss_razuvious.cpp`, `boss_gothik.cpp`, `boss_four_horsemen.cpp`, `boss_patchwerk.cpp`, `boss_grobbulus.cpp`,
+  `boss_gluth.cpp`, `boss_thaddius.cpp`, `boss_sapphiron.cpp`, `boss_kelthuzad.cpp`)
+* Functions/ScriptNames: `instance_naxxramas`, `at_naxxramas`, `go_anub_door`, `go_sapphiron_birth`,
+  `boss_anubrekhan`, `boss_faerlina`, `boss_maexxna`, `npc_web_wrap`, `boss_noth`, `boss_heigan`,
+  `npc_diseased_maggot`, `boss_loatheb`, `boss_razuvious`, `boss_gothik`, `boss_lady_blaumeux`,
+  `boss_alexandros_mograine`, `boss_thane_korthazz`, `boss_sir_zeliek`, `boss_patchwerk`, `boss_grobbulus`,
+  `boss_gluth`, `boss_stalagg`, `boss_feugen`, `boss_thaddius`, `boss_sapphiron`, `boss_kelthuzad`,
+  `npc_icecrown_guardian`, `npc_stoneskin_gargoyle`, `npc_living_poison`
+
 ## timer.d
 
 * Projects: CMaNGOS, Ember

@@ -1,0 +1,2223 @@
+/**
+ * Naxxramas (map 533): the copy's script (its fifteen encounters and the doors of its four quarters, the
+ * eyes and portals each quarter's end opens, the Four Horsemen's chest, Sapphiron's birth and the way to
+ * Kel'Thuzad), its area triggers, and the bosses: Anub'Rekhan, Grand Widow Faerlina, Maexxna and her web
+ * wraps, Noth the Plaguebringer, Heigan the Unclean, Loatheb, Instructor Razuvious, Gothik the Harvester,
+ * the Four Horsemen, Patchwerk, Grobbulus, Gluth, Stalagg, Feugen and Thaddius, Sapphiron and Kel'Thuzad
+ * with his Guardians of Icecrown, and the Stoneskin Gargoyles, Living Poison and Diseased Maggots.
+ *
+ * What the core cannot do is left out, and named where it would be: players mind-controlled (Faerlina's
+ * worshippers, Razuvious' understudies, Kel'Thuzad's chains), carried by a spell (Heigan's platform),
+ * Heigan's eruptions, and the ice blocks that shelter players from Sapphiron's frost breath (so his
+ * breath is not cast; the rest of his air phase is).
+ */
+module dmangos.scripts.naxxramas;
+
+import core.time : Duration;
+
+import dmangos.script;
+
+/// Where `who` is, as `ctx` sees it (`Location.init` if it is not here).
+private Location where(C)(ref C ctx, EntityRef who)
+{
+    Location at;
+    ctx.locationOf(who, at);
+    return at;
+}
+
+/// The copy's encounters (CMaNGOS's `TYPE_*`).
+enum NaxxEncounter : ubyte
+{
+    anubRekhan,
+    faerlina,
+    maexxna,
+    noth,
+    heigan,
+    loatheb,
+    razuvious,
+    gothik,
+    fourHorsemen,
+    patchwerk,
+    grobbulus,
+    gluth,
+    thaddius,
+    sapphiron,
+    kelthuzad,
+}
+
+/// Creatures and objects of the copy.
+enum : uint
+{
+    npcAnubRekhan = 15_956,
+    npcFaerlina = 15_953,
+    npcGluth = 15_932,
+    npcThaddius = 15_928,
+    npcStalagg = 15_929,
+    npcFeugen = 15_930,
+    npcMograine = 16_062,
+    npcZeliek = 16_063,
+    npcThane = 16_064,
+    npcBlaumeux = 16_065,
+    npcSapphiron = 15_989,
+    npcKelthuzad = 15_990,
+    npcGothik = 16_060,
+    npcSubBossTrigger = 16_137,
+    npcWorldTrigger = 15_384,
+    npcZombieChow = 16_360,
+    npcCryptGuard = 16_573,
+    npcSpiderling = 17_055,
+    npcWebWrap = 16_486,
+    npcPlaguedWarrior = 16_984,
+    npcPlaguedChampion = 16_983,
+    npcPlaguedGuardian = 16_981,
+    npcSpore = 16_286,
+    npcFalloutSlime = 16_290,
+    npcGrobbulusCloud = 16_363,
+    npcUnrelentingTrainee = 16_124,
+    npcUnrelentingKnight = 16_125,
+    npcUnrelentingRider = 16_126,
+    npcSoldierFrozen = 16_427,
+    npcUnstoppableAbom = 16_428,
+    npcSoulWeaver = 16_429,
+    npcGuardianIcecrown = 16_441,
+
+    goSapphironBirth = 181_356,
+    goChestHorsemen = 181_366,
+}
+
+/// What scripts of the copy say to each other, beyond the encounters' states (ids 0 .. 14).
+enum NaxxSignal : uint
+{
+    webWrapped = 100,   /// Maexxna to a web wrap: it holds the player of guid `value`
+    addFell = 101,      /// Stalagg or Feugen to the other: I am down (fake death)
+    addsDone = 102,     /// the copy (or an add) to Thaddius: both are dead; awake
+    reviveAdd = 103,    /// the other's window passed: rise again
+    startKt = 104,      /// the copy to Kel'Thuzad: the fight begins
+    faerlinaIntro = 105, /// the copy to Faerlina: players came near
+    triggerBase = 1000, /// an area trigger: `triggerBase + id`
+}
+
+/// A random length between `low` and `high` milliseconds.
+private Duration between(ref CreatureContext me, uint low, uint high)
+{
+    return (low + me.random(high - low + 1)).msecs;
+}
+
+/// A step whose cast failed is tried again this soon.
+private enum retry = 400.msecs;
+
+/// What every boss of the copy shares: its encounter under way, failed (home again), done; its aggro, slay
+/// and death lines (`broadcast_text`, `aggroLines` one at random) if it has them.
+private enum encounterOf(string which) = `
+    void on(ref CreatureContext me, const ref EnteredCombat e)
+    {
+        me.signalDungeon(` ~ which ~ `, EncounterState.inProgress);
+        static if (__traits(hasMember, typeof(this), "aggroLines"))
+            me.sayText(aggroLines[me.random(cast(uint) aggroLines.length)]);
+        static if (__traits(hasMember, typeof(this), "engaged"))
+            engaged(me, e);
+    }
+
+    void on(ref CreatureContext me, const ref Died e)
+    {
+        steps.clear();
+        static if (__traits(hasMember, typeof(this), "deathLine"))
+            me.sayText(deathLine);
+        me.signalDungeon(` ~ which ~ `, EncounterState.done);
+        static if (__traits(hasMember, typeof(this), "died"))
+            died(me);
+    }
+
+    void on(ref CreatureContext me, const ref Reset e)
+    {
+        steps.clear();
+        me.signalDungeon(` ~ which ~ `, EncounterState.failed);
+        static if (__traits(hasMember, typeof(this), "reset"))
+            reset(me);
+    }
+
+    void on(ref CreatureContext me, const ref KilledUnit e)
+    {
+        static if (__traits(hasMember, typeof(this), "slayLine"))
+            if (e.victim.isPlayer)
+                me.sayText(slayLine);
+    }
+`;
+
+/// The quarters' doors and what opens them, by entry.
+private struct NaxxDoor
+{
+    uint entry;
+    /// Open when: `after` is done (or none), and `during` is not under way (or none).
+    byte after, during;
+}
+
+private static immutable NaxxDoor[] naxxDoors = [
+    NaxxDoor(181_126, -1, NaxxEncounter.anubRekhan),           // Anub'Rekhan's door
+    NaxxDoor(181_195, NaxxEncounter.anubRekhan, -1),           // his gate on
+    NaxxDoor(181_235, -1, NaxxEncounter.faerlina),             // Faerlina's web
+    NaxxDoor(181_167, NaxxEncounter.faerlina, -1),             // to the outer ring
+    NaxxDoor(181_209, NaxxEncounter.faerlina, -1),             // before Maexxna
+    NaxxDoor(181_197, -1, NaxxEncounter.maexxna),              // Maexxna's inner door
+    NaxxDoor(181_200, -1, NaxxEncounter.noth),                 // Noth's entry
+    NaxxDoor(181_201, NaxxEncounter.noth, -1),                 // his exit
+    NaxxDoor(181_202, NaxxEncounter.noth, NaxxEncounter.heigan), // Heigan's entry
+    NaxxDoor(181_496, NaxxEncounter.heigan, -1),               // the hallway past Heigan
+    NaxxDoor(181_241, -1, NaxxEncounter.loatheb),              // Loatheb's door
+    NaxxDoor(181_124, -1, NaxxEncounter.gothik),               // Gothik's entry gate
+    NaxxDoor(181_170, -1, NaxxEncounter.gothik),               // his combat gate
+    NaxxDoor(181_125, NaxxEncounter.gothik, -1),               // his exit
+    NaxxDoor(181_119, NaxxEncounter.gothik, NaxxEncounter.fourHorsemen), // the Horsemen's door
+    NaxxDoor(181_123, NaxxEncounter.patchwerk, -1),            // past Patchwerk
+    NaxxDoor(181_120, NaxxEncounter.gluth, -1),                // past Gluth
+    NaxxDoor(181_121, NaxxEncounter.gluth, NaxxEncounter.thaddius), // Thaddius' door
+    NaxxDoor(181_225, NaxxEncounter.sapphiron, -1),            // the waterfall to Kel'Thuzad
+    NaxxDoor(181_228, -1, NaxxEncounter.kelthuzad),            // Kel'Thuzad's exit
+    // The eyes of each quarter, opened by its end.
+    NaxxDoor(181_212, NaxxEncounter.maexxna, -1), NaxxDoor(181_233, NaxxEncounter.maexxna, -1),
+    NaxxDoor(181_211, NaxxEncounter.loatheb, -1), NaxxDoor(181_231, NaxxEncounter.loatheb, -1),
+    NaxxDoor(181_210, NaxxEncounter.fourHorsemen, -1), NaxxDoor(181_230, NaxxEncounter.fourHorsemen, -1),
+    NaxxDoor(181_213, NaxxEncounter.thaddius, -1), NaxxDoor(181_232, NaxxEncounter.thaddius, -1),
+];
+
+/// The portals home each quarter's end opens.
+private static immutable uint[4] portals = [181_575, 181_577, 181_578, 181_576];
+private static immutable NaxxEncounter[4] wingEnds = [NaxxEncounter.maexxna, NaxxEncounter.loatheb,
+    NaxxEncounter.fourHorsemen, NaxxEncounter.thaddius];
+
+/// What the copy remembers: its encounters (saved in `instance.data`).
+@instance("instance_naxxramas")
+struct Naxxramas
+{
+    enum int sayThaddiusGreet = -1_533_029;
+    enum uint triggerKelthuzad = 4112, triggerThaddiusDoor = 4113, triggerFaerlinaIntro = 4115,
+        triggerFrostwyrmTele = 4156;
+    enum uint sayFaerlinaIntro = 12_852;
+    static immutable sapphironAt = Location(3521.48f, -5234.87f, 137.626f, 4.53329f);
+
+    EncounterState[NaxxEncounter.max + 1] encounters;
+    ubyte horsemenKilled;
+    bool faerlinaIntroDone;
+
+    @transient EntityRef[naxxDoors.length] doors;
+    @transient EntityRef thaddius, kelthuzad, faerlina, sapphiron;
+
+    enum Step : ubyte { sapphiron }
+    Schedule!Step steps;
+
+    private bool doorOpen(size_t i) const
+    {
+        const d = naxxDoors[i];
+        if (d.after >= 0 && encounters[d.after] != EncounterState.done)
+            return false;
+        if (d.during >= 0 && (encounters[d.during] == EncounterState.inProgress
+                || (d.during == NaxxEncounter.gothik && encounters[d.during] == EncounterState.special)))
+            return false;
+        return true;
+    }
+
+    private void updateDoors(ref InstanceContext copy)
+    {
+        foreach (i, d; doors)
+            if (d)
+                copy.door(d, doorOpen(i));
+    }
+
+    void on(ref InstanceContext copy, const ref ObjectLoaded e)
+    {
+        foreach (i, d; naxxDoors)
+            if (e.object.entry == d.entry)
+            {
+                doors[i] = e.object;
+                copy.door(e.object, doorOpen(i));
+            }
+    }
+
+    void on(ref InstanceContext copy, const ref CreatureLoaded e)
+    {
+        switch (e.creature.entry)
+        {
+        case npcThaddius:
+            thaddius = e.creature;
+            break;
+        case npcKelthuzad:
+            kelthuzad = e.creature;
+            break;
+        case npcFaerlina:
+            faerlina = e.creature;
+            break;
+        case npcSapphiron:
+            sapphiron = e.creature;
+            break;
+        default:
+            break;
+        }
+    }
+
+    void on(ref InstanceContext copy, const ref PlayerEntered e)
+    {
+        // The portals of the quarters ended stand open; Sapphiron, once born, is there.
+        foreach (i, wing; wingEnds)
+            if (encounters[wing] == EncounterState.done)
+                copy.respawnObject(portals[i]);
+        if (encounters[NaxxEncounter.sapphiron] == EncounterState.special && !sapphiron)
+            steps.after(Step.sapphiron, 0.msecs);
+    }
+
+    /// The question whether the way to Sapphiron is open (every quarter ended).
+    enum uint askFrostwyrm = 100;
+
+    void on(ref InstanceContext copy, const ref Asked e)
+    {
+        if (e.id <= NaxxEncounter.max)
+            copy.answer(encounters[e.id]);
+        else if (e.id == askFrostwyrm)
+            copy.answer(frostwyrmOpen ? 1 : 0);
+    }
+
+    void on(ref InstanceContext copy, const ref Signal e)
+    {
+        if (e.id > NaxxSignal.triggerBase)
+            return trigger(copy, e.id - NaxxSignal.triggerBase);
+        if (e.id > NaxxEncounter.max)
+            return;
+        const which = cast(NaxxEncounter) e.id;
+        auto state = cast(EncounterState) e.value;
+        if (which == NaxxEncounter.fourHorsemen)
+        {
+            // Four deaths make the encounter.
+            if (state == EncounterState.done && ++horsemenKilled < 4)
+                return;
+            if (state == EncounterState.failed)
+                horsemenKilled = 0;
+            if (state == EncounterState.done)
+                copy.respawnObject(goChestHorsemen, 30 * 60);
+        }
+        if ((which == NaxxEncounter.thaddius || which == NaxxEncounter.fourHorsemen) && encounters[which] == state)
+            return;
+        encounters[which] = state;
+        foreach (i, wing; wingEnds)
+            if (wing == which && state == EncounterState.done)
+                copy.respawnObject(portals[i], 30 * 60);
+        if (which == NaxxEncounter.sapphiron && state == EncounterState.special)
+            steps.after(Step.sapphiron, 22.seconds);
+        if (which == NaxxEncounter.thaddius && state == EncounterState.special && thaddius)
+            copy.signal(thaddius, NaxxSignal.addsDone);
+        updateDoors(copy);
+    }
+
+    private void trigger(ref InstanceContext copy, uint id)
+    {
+        switch (id)
+        {
+        case triggerKelthuzad:
+            const kt = encounters[NaxxEncounter.kelthuzad];
+            if ((kt == EncounterState.notStarted || kt == EncounterState.failed) && kelthuzad)
+            {
+                encounters[NaxxEncounter.kelthuzad] = EncounterState.inProgress;
+                copy.signal(kelthuzad, NaxxSignal.startKt);
+                updateDoors(copy);
+            }
+            break;
+        case triggerFaerlinaIntro:
+            if (!faerlinaIntroDone && encounters[NaxxEncounter.faerlina] == EncounterState.notStarted && faerlina)
+            {
+                faerlinaIntroDone = true;
+                copy.signal(faerlina, NaxxSignal.faerlinaIntro);
+            }
+            break;
+        case triggerThaddiusDoor:
+            if (encounters[NaxxEncounter.thaddius] == EncounterState.notStarted && thaddius)
+                copy.say(thaddius, sayThaddiusGreet);
+            break;
+        default:
+            break;
+        }
+    }
+
+    void on(ref InstanceContext copy, Step step)
+    {
+        if (!sapphiron && encounters[NaxxEncounter.sapphiron] != EncounterState.done && copy.playerCount)
+            sapphiron = copy.summon(npcSapphiron, sapphironAt);
+    }
+
+    /// Whether the way to Sapphiron is open: every quarter ended.
+    bool frostwyrmOpen() const
+    {
+        foreach (wing; wingEnds)
+            if (encounters[wing] != EncounterState.done)
+                return false;
+        return true;
+    }
+}
+
+/// Naxxramas' area triggers: Kel'Thuzad's chamber, Faerlina's greeting, Thaddius' door, and the way up to
+/// Sapphiron (only with every quarter ended).
+@areaTrigger("at_naxxramas")
+struct AtNaxxramas
+{
+    void on(ref AreaTriggerContext at, const ref TriggerEntered e)
+    {
+        if (e.trigger == Naxxramas.triggerFrostwyrmTele && !at.askDungeon(Naxxramas.askFrostwyrm))
+            return at.consume(); // the quarters first
+        at.signalDungeon(NaxxSignal.triggerBase + e.trigger);
+    }
+}
+
+/// The Anub door: opening it starts Anub'Rekhan's greeting.
+@gameObject("go_anub_door")
+struct AnubDoor
+{
+    void on(ref GameObjectContext door, const ref ObjectUsed e)
+    {
+    }
+}
+
+/// The Frostwyrm's birth: used once the quarters are ended, Sapphiron comes.
+@gameObject("go_sapphiron_birth")
+struct SapphironBirth
+{
+    void on(ref GameObjectContext birth, const ref ObjectUsed e)
+    {
+        if (birth.askDungeon(NaxxEncounter.sapphiron) != EncounterState.notStarted)
+            return birth.consume();
+        birth.signalDungeon(NaxxEncounter.sapphiron, EncounterState.special);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The Arachnid Quarter
+// ---------------------------------------------------------------------------
+
+/// Anub'Rekhan: Impale, Locust Swarm (a Crypt Guard comes after it), and corpse scarabs (left out).
+@creature("boss_anubrekhan")
+struct AnubRekhan
+{
+    static immutable uint[3] aggroLines = [13_000, 13_002, 13_003];
+    enum uint slayLine = 13_005;
+    enum : uint { doubleAttack = 18_943, impale = 28_783, locustSwarm = 28_785 }
+    enum Step : ubyte { impale, swarm, guard }
+    Schedule!Step steps;
+    EntityRef[4] guards;
+
+    mixin(encounterOf!"NaxxEncounter.anubRekhan");
+
+    void on(ref CreatureContext me, const ref Spawned e)
+    {
+        if (!me.hasAura(me.self, doubleAttack))
+            me.castSelf(doubleAttack, true);
+    }
+
+    void engaged(ref CreatureContext me, const ref EnteredCombat e)
+    {
+        steps.after(Step.impale, 15.seconds);
+        steps.after(Step.swarm, between(me, 80_000, 120_000));
+        steps.after(Step.guard, 20.seconds);
+    }
+
+    void reset(ref CreatureContext me)
+    {
+        foreach (ref g; guards)
+            if (g)
+            {
+                me.despawn(g);
+                g = EntityRef.init;
+            }
+    }
+
+    void on(ref CreatureContext me, Step step)
+    {
+        final switch (step)
+        {
+        case Step.impale:
+            const target = me.selectTarget(Pick.random, PickFilter.player);
+            steps.after(step, target && me.castSpell(impale, target) == ActionResult.ok ? 15.seconds : retry);
+            break;
+        case Step.swarm:
+            if (me.castSelf(locustSwarm) == ActionResult.ok)
+            {
+                steps.after(Step.guard, 3.seconds);
+                steps.after(step, between(me, 80_000, 120_000));
+            }
+            else
+                steps.after(step, retry);
+            break;
+        case Step.guard:
+            foreach (ref g; guards)
+                if (!g || !me.alive(g))
+                {
+                    g = me.summon(npcCryptGuard, Location.init, 0, me.selectTarget(Pick.random, PickFilter.player));
+                    break;
+                }
+            break;
+        }
+    }
+}
+
+/// Grand Widow Faerlina: Poison Bolt Volley, Rain of Fire, and an enrage every minute (her worshippers'
+/// embrace, which mind control gave, is not here).
+@creature("boss_faerlina")
+struct Faerlina
+{
+    static immutable uint[1] aggroLines = [12_856];
+    enum uint slayLine = 12_854, deathLine = 12_853, emoteFrenzy = 1191;
+    enum : uint { poisonboltVolley = 28_796, enrage = 28_798, rainOfFire = 28_794 }
+    enum Step : ubyte { volley, rain, enrage }
+    Schedule!Step steps;
+
+    mixin(encounterOf!"NaxxEncounter.faerlina");
+
+    void on(ref CreatureContext me, const ref Signal e)
+    {
+        if (e.id == NaxxSignal.faerlinaIntro)
+            me.sayText(Naxxramas.sayFaerlinaIntro);
+    }
+
+    void engaged(ref CreatureContext me, const ref EnteredCombat e)
+    {
+        steps.after(Step.volley, 8.seconds);
+        steps.after(Step.rain, between(me, 6000, 18_000));
+        steps.after(Step.enrage, 60.seconds);
+    }
+
+    void on(ref CreatureContext me, Step step)
+    {
+        final switch (step)
+        {
+        case Step.volley:
+            steps.after(step, me.castSelf(poisonboltVolley) == ActionResult.ok ? between(me, 8000, 15_000) : retry);
+            break;
+        case Step.rain:
+            const target = me.selectTarget(Pick.random, PickFilter.player);
+            steps.after(step, target && me.castSpell(rainOfFire, target) == ActionResult.ok ? between(me, 6000, 18_000) : retry);
+            break;
+        case Step.enrage:
+            if (me.castSelf(enrage) == ActionResult.ok)
+            {
+                me.sayText(12_857 + me.random(3));
+                me.sayText(emoteFrenzy);
+                steps.after(step, 60.seconds);
+            }
+            else
+                steps.after(step, retry);
+            break;
+        }
+    }
+}
+
+/// Maexxna: Web Wrap (a player cocooned on the wall until the wrap is broken), Web Spray, Poison Shock,
+/// Necrotic Poison, spiderlings every thirty seconds, and a frenzy below 30%.
+@creature("boss_maexxna")
+struct Maexxna
+{
+    enum uint emoteFrenzy = 1191;
+    enum : uint
+    {
+        doubleAttack = 19_818,
+        webSpray = 29_484,
+        poisonShock = 28_741,
+        necroticPoison = 28_776,
+        frenzy = 28_747,
+        webWrapStun = 28_622,
+    }
+    enum Step : ubyte { wrap, spray, shock, necrotic, spiderlings }
+    Schedule!Step steps;
+    bool frenzied;
+
+    mixin(encounterOf!"NaxxEncounter.maexxna");
+
+    void on(ref CreatureContext me, const ref Spawned e)
+    {
+        if (!me.hasAura(me.self, doubleAttack))
+            me.castSelf(doubleAttack, true);
+    }
+
+    void engaged(ref CreatureContext me, const ref EnteredCombat e)
+    {
+        steps.after(Step.wrap, 20.seconds);
+        steps.after(Step.spray, 40.seconds);
+        steps.after(Step.shock, between(me, 10_000, 20_000));
+        steps.after(Step.necrotic, between(me, 20_000, 30_000));
+        steps.after(Step.spiderlings, 30.seconds);
+    }
+
+    void reset(ref CreatureContext me)
+    {
+        frenzied = false;
+        EntityRef[24] adds;
+        foreach (entry; [npcSpiderling, npcWebWrap])
+            foreach (a; adds[0 .. me.creaturesNearby(entry, 150, adds[])])
+                me.despawn(a);
+    }
+
+    void on(ref CreatureContext me, const ref Damaged e)
+    {
+        if (!frenzied && e.after < 30 && me.castSelf(frenzy) == ActionResult.ok)
+        {
+            frenzied = true;
+            me.sayText(emoteFrenzy);
+        }
+    }
+
+    void on(ref CreatureContext me, Step step)
+    {
+        final switch (step)
+        {
+        case Step.wrap:
+            // A player at random, not her victim, wrapped where it stands.
+            if (const target = me.selectTarget(Pick.random, PickFilter.player | PickFilter.notVictim))
+            {
+                me.castSpell(webWrapStun, target, true);
+                if (const wrap = me.summon(npcWebWrap, where(me, target)))
+                    me.signal(wrap, NaxxSignal.webWrapped, cast(int)(target.guid & 0x7FFF_FFFF));
+            }
+            steps.after(step, 40.seconds);
+            break;
+        case Step.spray:
+            steps.after(step, me.castSelf(webSpray) == ActionResult.ok ? 40.seconds : retry);
+            break;
+        case Step.shock:
+            steps.after(step, me.castSelf(poisonShock) == ActionResult.ok ? between(me, 10_000, 20_000) : retry);
+            break;
+        case Step.necrotic:
+            steps.after(step, me.castSpell(necroticPoison) == ActionResult.ok ? between(me, 20_000, 30_000) : retry);
+            break;
+        case Step.spiderlings:
+            import std.math : cos, sin, PI;
+
+            const at = me.location;
+            foreach (i; 0 .. 8)
+                me.summon(npcSpiderling, Location(at.x + 12 * cos(i * PI / 4), at.y + 12 * sin(i * PI / 4), at.z), 0,
+                    me.selectTarget(Pick.random, PickFilter.player));
+            steps.after(step, 30.seconds);
+            break;
+        }
+    }
+}
+
+/// A Web Wrap: holds its player until broken (or until the player is dead).
+@creature("npc_web_wrap")
+struct WebWrap
+{
+    enum uint selfStun = 29_826;
+    EntityRef held;
+
+    void on(ref CreatureContext me, const ref Spawned e)
+    {
+        me.combatMovement(false);
+        me.castSelf(selfStun, true);
+    }
+
+    void on(ref CreatureContext me, const ref Signal e)
+    {
+        if (e.id == NaxxSignal.webWrapped)
+            held = EntityRef(cast(uint) e.value);
+    }
+
+    void on(ref CreatureContext me, const ref Died e)
+    {
+        if (held)
+            me.removeAura(held, Maexxna.webWrapStun);
+        me.despawn(5000);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The Plague Quarter
+// ---------------------------------------------------------------------------
+
+/**
+ * Noth the Plaguebringer: Blink (his hatred forgotten), his curse, Plagued Warriors; every ninety
+ * seconds he goes up to his balcony (untouchable) and his skeletal champions and guardians come in
+ * waves, longer each time.
+ */
+@creature("boss_noth")
+struct Noth
+{
+    static immutable uint[3] aggroLines = [13_061, 13_062, 13_063];
+    enum uint slayLine = 13_065, deathLine = 13_064, saySummon = 13_067;
+    enum : uint { blink = 29_208, cripple = 29_212, curse = 29_213, immuneAll = 29_230 }
+    static immutable balcony = Location(2633.49f, -3529.56f, 274.111f, 6.18113f);
+    static immutable ground = Location(2685.06f, -3502.37f, 261.315f, 0);
+
+    enum Step : ubyte { warriors, blink, curse, balconyPhase, groundPhase, waves }
+    Schedule!Step steps;
+    ubyte balconyVisits;
+    bool onBalcony;
+
+    mixin(encounterOf!"NaxxEncounter.noth");
+
+    void engaged(ref CreatureContext me, const ref EnteredCombat e)
+    {
+        groundSteps(me);
+    }
+
+    private void groundSteps(ref CreatureContext me)
+    {
+        steps.after(Step.warriors, 12.seconds);
+        steps.after(Step.blink, between(me, 25_000, 30_000));
+        steps.after(Step.curse, between(me, 10_000, 15_000));
+        steps.after(Step.balconyPhase, 90.seconds);
+    }
+
+    void reset(ref CreatureContext me)
+    {
+        balconyVisits = 0;
+        onBalcony = false;
+        me.unitFlags(UnitFlag.uninteractible, false);
+        me.removeAura(me.self, immuneAll);
+        me.rooted(false);
+        me.melee(true);
+        EntityRef[32] adds;
+        foreach (entry; [npcPlaguedWarrior, npcPlaguedChampion, npcPlaguedGuardian])
+            foreach (a; adds[0 .. me.creaturesNearby(entry, 200, adds[])])
+                me.despawn(a);
+    }
+
+    /// `count` of `entry` near random players.
+    private void summonNear(ref CreatureContext me, uint entry, uint count)
+    {
+        foreach (_; 0 .. count)
+            if (const target = me.selectTarget(Pick.random, PickFilter.player))
+            {
+                const l = where(me, target);
+                me.summon(entry, Location(l.x + me.random(10) - 5.0f, l.y + me.random(10) - 5.0f, l.z), 0, target);
+            }
+    }
+
+    void on(ref CreatureContext me, Step step)
+    {
+        final switch (step)
+        {
+        case Step.warriors:
+            me.sayText(saySummon);
+            summonNear(me, npcPlaguedWarrior, 3);
+            steps.after(step, 30.seconds);
+            break;
+        case Step.blink:
+            // Those near him crippled, he blinks away, his hatred forgotten.
+            me.castSelf(cripple);
+            const l = me.location;
+            me.castSelf(blink, true);
+            me.teleport(Location(l.x + me.random(30) - 15.0f, l.y + me.random(30) - 15.0f, l.z, l.orientation));
+            me.resetThreat();
+            steps.after(step, between(me, 25_000, 30_000));
+            break;
+        case Step.curse:
+            steps.after(step, me.castSelf(curse) == ActionResult.ok ? between(me, 50_000, 60_000) : retry);
+            break;
+        case Step.balconyPhase:
+            // Up to his balcony: untouchable while his skeletons fight.
+            onBalcony = true;
+            ++balconyVisits;
+            foreach (s; [Step.warriors, Step.blink, Step.curse])
+                steps.cancel(s);
+            me.teleport(balcony);
+            me.castSelf(immuneAll, true);
+            me.unitFlags(UnitFlag.uninteractible, true);
+            me.melee(false);
+            me.rooted(true);
+            steps.after(Step.waves, 10.seconds);
+            static immutable uint[3] stay = [70_000, 97_000, 120_000];
+            steps.after(Step.groundPhase, stay[balconyVisits > 3 ? 2 : balconyVisits - 1].msecs);
+            break;
+        case Step.waves:
+            if (!onBalcony)
+                break;
+            summonNear(me, balconyVisits == 1 ? npcPlaguedChampion : npcPlaguedGuardian, 2);
+            summonNear(me, npcPlaguedChampion, 2);
+            steps.after(step, 30.seconds);
+            break;
+        case Step.groundPhase:
+            onBalcony = false;
+            steps.cancel(Step.waves);
+            me.teleport(ground);
+            me.removeAura(me.self, immuneAll);
+            me.unitFlags(UnitFlag.uninteractible, false);
+            me.rooted(false);
+            me.melee(true);
+            me.resetThreat();
+            if (const target = me.selectTarget(Pick.nearest))
+                me.attack(target);
+            groundSteps(me);
+            steps.after(Step.warriors, 5.seconds);
+            break;
+        }
+    }
+}
+
+/// Heigan the Unclean: Decrepit Fever and Mana Burn on the ground for ninety seconds, then 45 seconds on
+/// his platform channelling his plague cloud (the eruptions of his floor are not here).
+@creature("boss_heigan")
+struct Heigan
+{
+    static immutable uint[3] aggroLines = [13_041, 13_042, 13_043];
+    enum uint slayLine = 13_045, deathLine = 13_044, sayChanneling = 13_049;
+    static immutable uint[4] taunts = [13_046, 13_047, 13_048, 13_050];
+    enum : uint { decrepitFever = 29_998, manaBurn = 29_310, plagueCloud = 29_350 }
+    static immutable platform = Location(2794.61f, -3707.68f, 276.552f, 2.32f);
+
+    enum Step : ubyte { fever, burn, platformPhase, groundPhase, taunt }
+    Schedule!Step steps;
+
+    mixin(encounterOf!"NaxxEncounter.heigan");
+
+    void engaged(ref CreatureContext me, const ref EnteredCombat e)
+    {
+        groundSteps(me);
+        steps.after(Step.taunt, between(me, 25_000, 90_000));
+    }
+
+    private void groundSteps(ref CreatureContext me)
+    {
+        steps.after(Step.fever, between(me, 15_000, 20_000));
+        steps.after(Step.burn, 5.seconds);
+        steps.after(Step.platformPhase, 90.seconds);
+    }
+
+    void reset(ref CreatureContext me)
+    {
+        me.rooted(false);
+        me.melee(true);
+    }
+
+    void on(ref CreatureContext me, Step step)
+    {
+        final switch (step)
+        {
+        case Step.fever:
+            steps.after(step, me.castSelf(decrepitFever) == ActionResult.ok ? between(me, 20_000, 25_000) : retry);
+            break;
+        case Step.burn:
+            steps.after(step, me.castSelf(manaBurn) == ActionResult.ok ? between(me, 10_000, 15_000) : retry);
+            break;
+        case Step.platformPhase:
+            steps.cancel(Step.fever);
+            steps.cancel(Step.burn);
+            me.teleport(platform);
+            me.sayText(sayChanneling);
+            me.melee(false);
+            me.rooted(true);
+            me.castSelf(plagueCloud);
+            steps.after(Step.groundPhase, 45.seconds);
+            break;
+        case Step.groundPhase:
+            me.interrupt();
+            me.removeAura(me.self, plagueCloud);
+            me.rooted(false);
+            me.melee(true);
+            if (const target = me.selectTarget(Pick.nearest))
+                me.attack(target);
+            groundSteps(me);
+            break;
+        case Step.taunt:
+            me.sayText(taunts[me.random(4)]);
+            steps.after(step, between(me, 25_000, 90_000));
+            break;
+        }
+    }
+}
+
+/// A Diseased (or Rotting) Maggot: does not follow into Heigan's room.
+@creature("npc_diseased_maggot")
+struct DiseasedMaggot
+{
+    enum Step : ubyte { check }
+    Schedule!Step steps;
+
+    void on(ref CreatureContext me, const ref EnteredCombat e)
+    {
+        steps.every(Step.check, 3.seconds);
+    }
+
+    void on(ref CreatureContext me, Step step)
+    {
+        EntityRef[1] trigger;
+        if (me.creaturesNearby(npcWorldTrigger, 45, trigger[]))
+            me.evade();
+    }
+
+    void on(ref CreatureContext me, const ref Reset e)
+    {
+        steps.clear();
+    }
+}
+
+/// Loatheb: his poison aura, Corrupted Mind, Inevitable Doom (faster after five minutes), spores every
+/// thirteen seconds, and his own curses removed.
+@creature("boss_loatheb")
+struct Loatheb
+{
+    enum : uint { corruptedMind = 29_201, poisonAura = 29_865, inevitableDoom = 29_204, removeCurse = 30_281 }
+    enum Step : ubyte { mind, doom, spore, curse, softEnrage }
+    Schedule!Step steps;
+    bool enraged;
+
+    mixin(encounterOf!"NaxxEncounter.loatheb");
+
+    void engaged(ref CreatureContext me, const ref EnteredCombat e)
+    {
+        if (!me.hasAura(me.self, poisonAura))
+            me.castSelf(poisonAura, true);
+        steps.after(Step.mind, 5.seconds);
+        steps.after(Step.doom, 2 * 60.seconds);
+        steps.after(Step.spore, 13.seconds);
+        steps.after(Step.curse, 2.seconds);
+        steps.after(Step.softEnrage, 5 * 60.seconds);
+    }
+
+    void reset(ref CreatureContext me)
+    {
+        enraged = false;
+        EntityRef[16] spores;
+        foreach (s; spores[0 .. me.creaturesNearby(npcSpore, 100, spores[])])
+            me.despawn(s);
+    }
+
+    void on(ref CreatureContext me, Step step)
+    {
+        final switch (step)
+        {
+        case Step.mind:
+            steps.after(step, me.castSelf(corruptedMind) == ActionResult.ok ? 15.seconds : retry);
+            break;
+        case Step.doom:
+            steps.after(step, me.castSelf(inevitableDoom) == ActionResult.ok ? (enraged ? 15.seconds : 30.seconds) : retry);
+            break;
+        case Step.spore:
+            import std.math : cos, sin, PI;
+
+            const at = me.location;
+            const angle = me.random(360) * PI / 180;
+            me.summon(npcSpore, Location(at.x + 15 * cos(angle), at.y + 15 * sin(angle), at.z));
+            steps.after(step, 13.seconds);
+            break;
+        case Step.curse:
+            steps.after(step, me.castSelf(removeCurse) == ActionResult.ok ? 30.seconds : retry);
+            break;
+        case Step.softEnrage:
+            enraged = true;
+            steps.after(Step.doom, 15.seconds);
+            break;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The Military Quarter
+// ---------------------------------------------------------------------------
+
+/// Instructor Razuvious: Unbalancing Strike, Disrupting Shout (his understudies, mind-controlled in the
+/// original, are not here); Hopeless on his death.
+@creature("boss_razuvious")
+struct Razuvious
+{
+    static immutable uint[4] aggroLines = [13_075, 13_076, 13_078, 13_080];
+    enum uint slayLine = 13_081, deathLine = 13_079;
+    enum : uint { unbalancingStrike = 26_613, disruptingShout = 29_107, hopeless = 29_125 }
+    enum Step : ubyte { strike, shout }
+    Schedule!Step steps;
+
+    mixin(encounterOf!"NaxxEncounter.razuvious");
+
+    void engaged(ref CreatureContext me, const ref EnteredCombat e)
+    {
+        steps.after(Step.strike, 30.seconds);
+        steps.after(Step.shout, 15.seconds);
+    }
+
+    void died(ref CreatureContext me)
+    {
+        me.castSelf(hopeless, true);
+    }
+
+    void on(ref CreatureContext me, Step step)
+    {
+        final switch (step)
+        {
+        case Step.strike:
+            steps.after(step, me.castSpell(unbalancingStrike) == ActionResult.ok ? 30.seconds : retry);
+            break;
+        case Step.shout:
+            steps.after(step, me.castSelf(disruptingShout) == ActionResult.ok ? 25.seconds : retry);
+            break;
+        }
+    }
+}
+
+/**
+ * Gothik the Harvester: from his balcony (untouchable) he sends unrelenting trainees, death knights and
+ * riders against the living side for four and a half minutes, then comes down and fights with Shadow
+ * Bolt and Harvest Soul, teleporting between the two sides until he has done so four times or is below
+ * 30%.
+ */
+@creature("boss_gothik")
+struct Gothik
+{
+    static immutable uint[4] speech = [13_030, 13_031, 13_032, 13_033];
+    enum uint slayLine = 13_027, deathLine = 13_026, sayTeleport = 13_028;
+    enum : uint { harvestSoul = 28_679, shadowBolt = 29_317, immuneAll = 29_230 }
+    static immutable Location[2] sides = [Location(2692f, -3399.27f, 267.686f, 4.70454f),
+        Location(2692f, -3321.86f, 267.686f, 2.19126f)];
+
+    enum Step : ubyte { speech, trainee, knight, rider, groundPhase, bolt, harvest, teleport }
+    Schedule!Step steps;
+    ubyte speechStep, teleports, side;
+
+    mixin(encounterOf!"NaxxEncounter.gothik");
+
+    void engaged(ref CreatureContext me, const ref EnteredCombat e)
+    {
+        me.castSelf(immuneAll, true);
+        me.unitFlags(UnitFlag.uninteractible, true);
+        me.rooted(true);
+        me.melee(false);
+        speechStep = 0;
+        teleports = 0;
+        steps.after(Step.speech, 1.seconds);
+        steps.after(Step.trainee, 24.seconds);
+        steps.after(Step.knight, 74.seconds);
+        steps.after(Step.rider, 134.seconds);
+        steps.after(Step.groundPhase, 274.seconds);
+    }
+
+    void reset(ref CreatureContext me)
+    {
+        me.removeAura(me.self, immuneAll);
+        me.unitFlags(UnitFlag.uninteractible, false);
+        me.rooted(false);
+        me.melee(true);
+        EntityRef[40] adds;
+        foreach (entry; [npcUnrelentingTrainee, npcUnrelentingKnight, npcUnrelentingRider])
+            foreach (a; adds[0 .. me.creaturesNearby(entry, 200, adds[])])
+                me.despawn(a);
+    }
+
+    /// One of `entry` at each of the anchors on the living side (or by a random player).
+    private void wave(ref CreatureContext me, uint entry, uint count)
+    {
+        EntityRef[13] anchors;
+        const n = me.creaturesNearby(npcSubBossTrigger, 120, anchors[]);
+        foreach (i; 0 .. count)
+        {
+            const target = me.selectTarget(Pick.random, PickFilter.player);
+            const at = n ? where(me, anchors[me.random(cast(uint) n)]) : where(me, target);
+            me.summon(entry, at, 0, target);
+        }
+    }
+
+    void on(ref CreatureContext me, Step step)
+    {
+        final switch (step)
+        {
+        case Step.speech:
+            if (speechStep < speech.length)
+            {
+                me.sayText(speech[speechStep++]);
+                steps.after(step, 4.seconds);
+            }
+            break;
+        case Step.trainee:
+            wave(me, npcUnrelentingTrainee, 2);
+            steps.after(step, 20.seconds);
+            break;
+        case Step.knight:
+            wave(me, npcUnrelentingKnight, 1);
+            steps.after(step, 25.seconds);
+            break;
+        case Step.rider:
+            wave(me, npcUnrelentingRider, 1);
+            steps.after(step, 30.seconds);
+            break;
+        case Step.groundPhase:
+            foreach (s; [Step.trainee, Step.knight, Step.rider])
+                steps.cancel(s);
+            me.sayText(sayTeleport);
+            me.removeAura(me.self, immuneAll);
+            me.unitFlags(UnitFlag.uninteractible, false);
+            me.rooted(false);
+            me.melee(true);
+            me.teleport(sides[side]);
+            me.signalDungeon(NaxxEncounter.gothik, EncounterState.special); // the combat gate opens
+            me.resetThreat();
+            if (const target = me.selectTarget(Pick.nearest))
+                me.attack(target);
+            steps.after(Step.bolt, 2.seconds);
+            steps.after(Step.harvest, 2.seconds);
+            steps.after(Step.teleport, 20.seconds);
+            break;
+        case Step.bolt:
+            steps.after(step, me.castSpell(shadowBolt) == ActionResult.ok ? between(me, 1000, 2000) : retry);
+            break;
+        case Step.harvest:
+            steps.after(step, me.castSelf(harvestSoul) == ActionResult.ok ? 15.seconds : retry);
+            break;
+        case Step.teleport:
+            if (teleports >= 4 || me.healthPercent <= 30)
+                break;
+            ++teleports;
+            side ^= 1;
+            me.teleport(sides[side]);
+            me.resetThreat();
+            if (const target = me.selectTarget(Pick.nearest))
+                me.attack(target);
+            steps.after(step, 20.seconds);
+            break;
+        }
+    }
+}
+
+/**
+ * What the Four Horsemen share: their mark every twelve seconds, their special every twelve, shield walls
+ * at 50% and 20%; each that dies leaves its spirit; the four dead are the encounter.
+ */
+private mixin template Horseman(uint mark, uint special, uint spirit, uint aggro, uint specialLine, uint slay,
+    uint death)
+{
+    enum uint shieldWall = 29_061;
+    enum Step : ubyte { mark, special, enrage }
+    Schedule!Step steps;
+    ubyte walls;
+
+    void on(ref CreatureContext me, const ref EnteredCombat e)
+    {
+        me.signalDungeon(NaxxEncounter.fourHorsemen, EncounterState.inProgress);
+        me.sayText(aggro);
+        steps.after(Step.mark, 20.seconds);
+        steps.after(Step.special, 15.seconds);
+        steps.after(Step.enrage, 20 * 60.seconds);
+        // His fellows join in.
+        foreach (other; [npcMograine, npcZeliek, npcThane, npcBlaumeux])
+        {
+            EntityRef[1] h;
+            if (other != me.self.entry && me.creaturesNearby(other, 200, h[]))
+                me.attack(h[0], e.enemy);
+        }
+    }
+
+    void on(ref CreatureContext me, const ref Damaged e)
+    {
+        if ((walls == 0 && e.after <= 50) || (walls == 1 && e.after <= 20))
+            if (me.castSelf(shieldWall, true) == ActionResult.ok)
+                ++walls;
+    }
+
+    void on(ref CreatureContext me, const ref KilledUnit e)
+    {
+        if (e.victim.isPlayer)
+            me.sayText(slay);
+    }
+
+    void on(ref CreatureContext me, Step step)
+    {
+        final switch (step)
+        {
+        case Step.mark:
+            steps.after(step, me.castSelf(mark) == ActionResult.ok ? 12.seconds : retry);
+            break;
+        case Step.special:
+            const target = me.selectTarget(Pick.random, PickFilter.player);
+            if (target && me.castSpell(special, target) == ActionResult.ok)
+            {
+                if (me.random(10) == 0)
+                    me.sayText(specialLine);
+                steps.after(step, 12.seconds);
+            }
+            else
+                steps.after(step, retry);
+            break;
+        case Step.enrage:
+            me.castSelf(26_662, true); // berserk
+            break;
+        }
+    }
+
+    void on(ref CreatureContext me, const ref Reset e)
+    {
+        steps.clear();
+        walls = 0;
+        me.signalDungeon(NaxxEncounter.fourHorsemen, EncounterState.failed);
+    }
+
+    void on(ref CreatureContext me, const ref Died e)
+    {
+        steps.clear();
+        me.sayText(death);
+        me.castSelf(spirit, true);
+        me.signalDungeon(NaxxEncounter.fourHorsemen, EncounterState.done);
+    }
+}
+
+/// Lady Blaumeux: Mark of Blaumeux, Void Zone.
+@creature("boss_lady_blaumeux")
+struct LadyBlaumeux
+{
+    mixin Horseman!(28_833, 28_863, 28_931, 13_010, 13_013, 13_012, 13_011) horseman;
+    alias steps = horseman.steps;
+    alias on = horseman.on;
+}
+
+/// Highlord Mograine: Mark of Mograine, Righteous Fire.
+@creature("boss_alexandros_mograine")
+struct HighlordMograine
+{
+    mixin Horseman!(28_834, 28_882, 28_928, 13_051, 13_057, 13_055, 13_054) horseman;
+    alias steps = horseman.steps;
+    alias on = horseman.on;
+}
+
+/// Thane Korth'azz: Mark of Korth'azz, Meteor.
+@creature("boss_thane_korthazz")
+struct ThaneKorthazz
+{
+    mixin Horseman!(28_832, 28_884, 28_932, 13_034, 13_037, 13_036, 13_035) horseman;
+    alias steps = horseman.steps;
+    alias on = horseman.on;
+}
+
+/// Sir Zeliek: Mark of Zeliek, Holy Wrath.
+@creature("boss_sir_zeliek")
+struct SirZeliek
+{
+    mixin Horseman!(28_835, 28_883, 28_934, 13_097, 13_100, 13_099, 13_098) horseman;
+    alias steps = horseman.steps;
+    alias on = horseman.on;
+}
+
+// ---------------------------------------------------------------------------
+// The Construct Quarter
+// ---------------------------------------------------------------------------
+
+/// Patchwerk: Hateful Strike on the healthiest of those in his reach among his most hated, a frenzy at
+/// 5%, berserk after seven minutes (and slime bolts at whoever then).
+@creature("boss_patchwerk")
+struct Patchwerk
+{
+    static immutable uint[2] aggroLines = [13_068, 13_069];
+    enum uint slayLine = 13_071, deathLine = 13_070, emoteBerserk = 4428, emoteEnraged = 2384;
+    enum : uint { hatefulStrike = 28_308, enrage = 28_131, berserk = 26_662, slimebolt = 32_309 }
+    enum Step : ubyte { strike, berserk, slimebolt }
+    Schedule!Step steps;
+    bool enraged, berserked;
+
+    mixin(encounterOf!"NaxxEncounter.patchwerk");
+
+    void engaged(ref CreatureContext me, const ref EnteredCombat e)
+    {
+        steps.after(Step.strike, 1200.msecs);
+        steps.after(Step.berserk, 7 * 60.seconds);
+    }
+
+    void reset(ref CreatureContext me)
+    {
+        enraged = berserked = false;
+    }
+
+    void on(ref CreatureContext me, const ref Damaged e)
+    {
+        if (!enraged && e.after < 5 && me.castSelf(enrage) == ActionResult.ok)
+        {
+            enraged = true;
+            me.sayText(emoteEnraged);
+        }
+    }
+
+    void on(ref CreatureContext me, Step step)
+    {
+        final switch (step)
+        {
+        case Step.strike:
+            // The healthiest of the four most hated within his reach.
+            EntityRef best;
+            uint bestHealth;
+            foreach (uint i; 0 .. 4)
+            {
+                const t = me.selectTarget(Pick.topThreat, PickFilter.player | PickFilter.inMelee, i);
+                if (!t)
+                    break;
+                const h = me.healthPercentOf(t);
+                if (!best || h > bestHealth)
+                {
+                    best = t;
+                    bestHealth = h;
+                }
+            }
+            if (best)
+                me.castSpell(hatefulStrike, best);
+            steps.after(step, 1200.msecs);
+            break;
+        case Step.berserk:
+            if (me.castSelf(berserk) == ActionResult.ok)
+            {
+                berserked = true;
+                me.sayText(emoteBerserk);
+                steps.after(Step.slimebolt, 2.seconds);
+            }
+            else
+                steps.after(step, retry);
+            break;
+        case Step.slimebolt:
+            me.castSpell(slimebolt);
+            steps.after(step, 2.seconds);
+            break;
+        }
+    }
+}
+
+/// Grobbulus: Mutating Injection (a poison cloud where its bearer stands ten seconds on), Slime Spray (a
+/// fallout slime from it), poison clouds of his own, slime streams at whoever when nobody is in his reach,
+/// berserk after twelve minutes.
+@creature("boss_grobbulus")
+struct Grobbulus
+{
+    enum : uint { slimeStream = 28_137, mutatingInjection = 28_169, poisonCloud = 28_240, slimeSpray = 28_157,
+        berserk = 26_662 }
+    enum Step : ubyte { injection, cloudAtVictim, spray, ownCloud, berserk, meleeCheck }
+    Schedule!(Step, 10) steps;
+    EntityRef injected;
+
+    mixin(encounterOf!"NaxxEncounter.grobbulus");
+
+    void engaged(ref CreatureContext me, const ref EnteredCombat e)
+    {
+        steps.after(Step.injection, 12.seconds);
+        steps.after(Step.spray, between(me, 20_000, 30_000));
+        steps.after(Step.ownCloud, 15.seconds);
+        steps.after(Step.berserk, 12 * 60.seconds);
+        steps.after(Step.meleeCheck, 5.seconds);
+    }
+
+    void reset(ref CreatureContext me)
+    {
+        EntityRef[24] adds;
+        foreach (entry; [npcFalloutSlime, npcGrobbulusCloud])
+            foreach (a; adds[0 .. me.creaturesNearby(entry, 150, adds[])])
+                me.despawn(a);
+    }
+
+    void on(ref CreatureContext me, Step step)
+    {
+        final switch (step)
+        {
+        case Step.injection:
+            const target = me.selectTarget(Pick.random, PickFilter.player);
+            if (target && me.castSpell(mutatingInjection, target) == ActionResult.ok)
+            {
+                injected = target;
+                steps.after(Step.cloudAtVictim, 10.seconds);
+            }
+            // Faster as he weakens.
+            steps.after(step, (6000 + me.healthPercent * 70).msecs);
+            break;
+        case Step.cloudAtVictim:
+            if (injected && me.alive(injected))
+                me.summon(npcGrobbulusCloud, where(me, injected), 60_000);
+            injected = EntityRef.init;
+            break;
+        case Step.spray:
+            if (me.castSelf(slimeSpray) == ActionResult.ok)
+            {
+                if (const v = me.victim)
+                    me.summon(npcFalloutSlime, where(me, v), 0, me.selectTarget(Pick.random, PickFilter.player));
+                steps.after(step, between(me, 30_000, 33_000));
+            }
+            else
+                steps.after(step, retry);
+            break;
+        case Step.ownCloud:
+            me.summon(npcGrobbulusCloud, me.location, 60_000);
+            steps.after(step, 15.seconds);
+            break;
+        case Step.berserk:
+            if (me.castSelf(berserk) != ActionResult.ok)
+                steps.after(step, retry);
+            break;
+        case Step.meleeCheck:
+            if (!me.selectTarget(Pick.topThreat, PickFilter.inMelee))
+                me.castSelf(slimeStream, true);
+            steps.after(step, 5.seconds);
+            break;
+        }
+    }
+}
+
+/// Gluth: Mortal Wound, Terrifying Roar, frenzies, Decimate every 105 seconds (his zombie chows brought
+/// low, and they crawl to him), eating the chows that reach him; zombie chows come from the doors every
+/// six seconds; berserk after six and a half minutes.
+@creature("boss_gluth")
+struct Gluth
+{
+    enum uint emoteEnraged = 2384, emoteDevours = 12_242;
+    enum : uint { doubleAttack = 19_818, mortalWound = 25_646, decimate = 28_374, frenzy = 28_371,
+        berserk = 26_662, terrifyingRoar = 29_685 }
+    enum Step : ubyte { chow, mortalWound, decimate, frenzy, roar, berserk, eat }
+    Schedule!(Step, 10) steps;
+
+    mixin(encounterOf!"NaxxEncounter.gluth");
+
+    void on(ref CreatureContext me, const ref Spawned e)
+    {
+        if (!me.hasAura(me.self, doubleAttack))
+            me.castSelf(doubleAttack, true);
+    }
+
+    void engaged(ref CreatureContext me, const ref EnteredCombat e)
+    {
+        steps.after(Step.chow, 6.seconds);
+        steps.after(Step.mortalWound, 10.seconds);
+        steps.after(Step.decimate, 105.seconds);
+        steps.after(Step.frenzy, 10.seconds);
+        steps.after(Step.roar, 20.seconds);
+        steps.after(Step.berserk, 390.seconds);
+        steps.after(Step.eat, 3.seconds);
+    }
+
+    void reset(ref CreatureContext me)
+    {
+        EntityRef[40] chows;
+        foreach (c; chows[0 .. me.creaturesNearby(npcZombieChow, 200, chows[])])
+            me.despawn(c);
+    }
+
+    void on(ref CreatureContext me, Step step)
+    {
+        final switch (step)
+        {
+        case Step.chow:
+            // A zombie chow from one of the doors.
+            EntityRef[12] doorsNear;
+            const n = me.creaturesNearby(npcWorldTrigger, 120, doorsNear[]);
+            if (n)
+                me.summon(npcZombieChow, where(me, doorsNear[me.random(cast(uint) n)]), 0,
+                    me.selectTarget(Pick.random, PickFilter.player));
+            steps.after(step, 6.seconds);
+            break;
+        case Step.mortalWound:
+            steps.after(step, me.castSpell(mortalWound) == ActionResult.ok ? 10.seconds : retry);
+            break;
+        case Step.decimate:
+            if (me.castSelf(decimate) == ActionResult.ok)
+            {
+                // Every chow brought low; they crawl to him.
+                EntityRef[40] chows;
+                foreach (c; chows[0 .. me.creaturesNearby(npcZombieChow, 200, chows[])])
+                {
+                    me.setHealthPercent(5, c);
+                    me.moveCreature(c, me.location, 0);
+                }
+                steps.after(step, 105.seconds);
+            }
+            else
+                steps.after(step, retry);
+            break;
+        case Step.frenzy:
+            if (me.castSelf(frenzy) == ActionResult.ok)
+            {
+                me.sayText(emoteEnraged);
+                steps.after(step, 10.seconds);
+            }
+            else
+                steps.after(step, retry);
+            break;
+        case Step.roar:
+            steps.after(step, me.castSelf(terrifyingRoar) == ActionResult.ok ? 20.seconds : retry);
+            break;
+        case Step.berserk:
+            if (me.castSelf(berserk) != ActionResult.ok)
+                steps.after(step, retry);
+            break;
+        case Step.eat:
+            // Chows that reach him are eaten: five percent of his health each.
+            EntityRef[8] near;
+            foreach (c; near[0 .. me.creaturesNearby(npcZombieChow, 6, near[])])
+            {
+                me.sayText(emoteDevours);
+                me.despawn(c);
+                const hp = me.healthPercent + 5;
+                me.setHealthPercent(hp > 100 ? 100 : hp);
+            }
+            steps.after(step, 3.seconds);
+            break;
+        }
+    }
+}
+
+/**
+ * What Stalagg and Feugen share: each falls (not dead) when slain; if the other falls within five seconds
+ * both die and Thaddius wakes, else the fallen one rises again.
+ */
+private mixin template ThaddiusAdd(uint other, uint warstompOrPull, uint aggro, uint slay, uint death)
+{
+    enum uint powerSurgeOrStatic = warstompOrPull;
+    enum Step : ubyte { ability, rise }
+    Schedule!Step steps;
+    bool down;
+
+    void on(ref CreatureContext me, const ref Spawned e)
+    {
+        me.deathPrevention(true);
+    }
+
+    void on(ref CreatureContext me, const ref EnteredCombat e)
+    {
+        me.signalDungeon(NaxxEncounter.thaddius, EncounterState.inProgress);
+        me.sayText(aggro);
+        steps.after(Step.ability, between(me, 10_000, 15_000));
+        EntityRef[1] o;
+        if (me.creaturesNearby(other, 200, o[]))
+            me.attack(o[0], e.enemy);
+    }
+
+    void on(ref CreatureContext me, const ref KilledUnit e)
+    {
+        if (e.victim.isPlayer)
+            me.sayText(slay);
+    }
+
+    void on(ref CreatureContext me, const ref Damaged e)
+    {
+        if (down || e.after != 0)
+            return;
+        down = true;
+        me.standState(StandState.dead);
+        me.unitFlags(UnitFlag.uninteractible, true);
+        me.melee(false);
+        me.combatMovement(false);
+        steps.clear();
+        EntityRef[1] o;
+        if (me.creaturesNearby(other, 200, o[]))
+            me.signal(o[0], NaxxSignal.addFell);
+        steps.after(Step.rise, 5.seconds);
+    }
+
+    void on(ref CreatureContext me, const ref Signal e)
+    {
+        if (e.id != NaxxSignal.addFell || !down)
+            return;
+        // Both down within the window: both die, and Thaddius wakes.
+        steps.clear();
+        me.signalDungeon(NaxxEncounter.thaddius, EncounterState.special);
+        EntityRef[1] o;
+        if (me.creaturesNearby(other, 200, o[]))
+            me.signal(o[0], NaxxSignal.addsDone);
+        me.sayText(death);
+        me.deathPrevention(false);
+        me.die();
+    }
+
+    void on(ref CreatureContext me, Step step)
+    {
+        final switch (step)
+        {
+        case Step.ability:
+            steps.after(step, me.castSelf(powerSurgeOrStatic) == ActionResult.ok ? between(me, 10_000, 15_000) : retry);
+            break;
+        case Step.rise:
+            // Alone too long: it rises again.
+            down = false;
+            me.standState(StandState.stand);
+            me.unitFlags(UnitFlag.uninteractible, false);
+            me.melee(true);
+            me.combatMovement(true);
+            me.setHealthPercent(100);
+            steps.after(Step.ability, between(me, 10_000, 15_000));
+            if (const t = me.selectTarget(Pick.nearest))
+                me.attack(t);
+            break;
+        }
+    }
+
+    void on(ref CreatureContext me, const ref Reset e)
+    {
+        steps.clear();
+        down = false;
+        me.standState(StandState.stand);
+        me.unitFlags(UnitFlag.uninteractible, false);
+        me.melee(true);
+        me.combatMovement(true);
+        me.signalDungeon(NaxxEncounter.thaddius, EncounterState.failed);
+    }
+}
+
+/// Stalagg: Power Surge.
+@creature("boss_stalagg")
+struct Stalagg
+{
+    mixin ThaddiusAdd!(npcFeugen, 28_134, 13_083, 13_085, 13_084) add;
+    alias steps = add.steps;
+    alias on = add.on;
+}
+
+/// Feugen: Static Field.
+@creature("boss_feugen")
+struct Feugen
+{
+    mixin ThaddiusAdd!(npcStalagg, 28_135, 13_023, 13_025, 13_024) add;
+    alias steps = add.steps;
+    alias on = add.on;
+}
+
+/// Thaddius: wakes when Stalagg and Feugen are dead; Polarity Shift, Chain Lightning, Ball Lightning at
+/// whoever when nobody is in his reach; berserk after six minutes.
+@creature("boss_thaddius")
+struct Thaddius
+{
+    static immutable uint[3] aggroLines = [13_086, 13_087, 13_088];
+    enum uint slayLine = 13_096, deathLine = 13_089, sayElect = 13_090;
+    enum : uint { spawn = 28_160, ballLightning = 28_299, chainLightning = 28_167, polarityShift = 28_089,
+        berserk = 27_680 }
+    enum Step : ubyte { wake, polarity, chain, ball, berserk }
+    Schedule!Step steps;
+    bool awake;
+
+    mixin(encounterOf!"NaxxEncounter.thaddius");
+
+    void on(ref CreatureContext me, const ref Spawned e)
+    {
+        if (me.askDungeon(NaxxEncounter.thaddius) != EncounterState.special)
+        {
+            me.unitFlags(UnitFlag.uninteractible | UnitFlag.immuneToPlayer, true);
+            me.reactState(Reaction.passive);
+        }
+    }
+
+    void on(ref CreatureContext me, const ref Signal e)
+    {
+        if (e.id == NaxxSignal.addsDone && !awake)
+            steps.after(Step.wake, 10.seconds);
+    }
+
+    void engaged(ref CreatureContext me, const ref EnteredCombat e)
+    {
+        steps.after(Step.polarity, 15.seconds);
+        steps.after(Step.chain, between(me, 10_000, 20_000));
+        steps.after(Step.ball, 1.seconds);
+        steps.after(Step.berserk, 6 * 60.seconds);
+    }
+
+    void on(ref CreatureContext me, Step step)
+    {
+        final switch (step)
+        {
+        case Step.wake:
+            awake = true;
+            me.castSelf(spawn, true);
+            me.unitFlags(UnitFlag.uninteractible | UnitFlag.immuneToPlayer, false);
+            me.reactState(Reaction.aggressive);
+            me.zoneCombat();
+            break;
+        case Step.polarity:
+            if (me.castSelf(polarityShift) == ActionResult.ok)
+            {
+                me.sayText(sayElect);
+                steps.after(step, 30.seconds);
+            }
+            else
+                steps.after(step, retry);
+            break;
+        case Step.chain:
+            const target = me.selectTarget(Pick.random, PickFilter.player);
+            steps.after(step, target && me.castSpell(chainLightning, target) == ActionResult.ok ? 15.seconds : retry);
+            break;
+        case Step.ball:
+            if (!me.selectTarget(Pick.topThreat, PickFilter.inMelee))
+                if (const target = me.selectTarget(Pick.random, PickFilter.player))
+                    me.castSpell(ballLightning, target);
+            steps.after(step, 1.seconds);
+            break;
+        case Step.berserk:
+            if (me.castSelf(berserk) != ActionResult.ok)
+                steps.after(step, retry);
+            break;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The Frostwyrm Lair
+// ---------------------------------------------------------------------------
+
+/**
+ * Sapphiron: his frost aura, Cleave, Tail Sweep, Life Drain, blizzards; above a tenth of his health he
+ * takes to the air every so often, bolting five players with ice, and lands again (his frost breath,
+ * against which ice blocks shelter, is not cast: the core cannot make those blocks shelter anyone).
+ */
+@creature("boss_sapphiron")
+struct Sapphiron
+{
+    enum uint emoteBreath = 7213, emoteEnraged = 2384;
+    enum : uint
+    {
+        doubleAttack = 19_818,
+        frostAura = 28_529,
+        berserk = 26_662,
+        cleave = 19_983,
+        tailSweep = 15_847,
+        lifeDrain = 28_542,
+        summonBlizzard = 28_560,
+        dragonHover = 18_430,
+        icebolt = 28_522,
+        frostBreathDummy = 30_101,
+    }
+    enum Step : ubyte { berserk, air, cleave, tail, drain, blizzard, icebolt, land, ground }
+    Schedule!(Step, 12) steps;
+    bool inAir;
+    ubyte icebolts;
+    Location home;
+
+    mixin(encounterOf!"NaxxEncounter.sapphiron");
+
+    void on(ref CreatureContext me, const ref Spawned e)
+    {
+        if (!me.hasAura(me.self, doubleAttack))
+            me.castSelf(doubleAttack, true);
+        home = me.location;
+        me.zoneCombat();
+    }
+
+    void engaged(ref CreatureContext me, const ref EnteredCombat e)
+    {
+        me.castSelf(frostAura, true);
+        steps.after(Step.berserk, 15 * 60.seconds);
+        steps.after(Step.air, 46.seconds);
+        groundSteps(me);
+    }
+
+    private void groundSteps(ref CreatureContext me)
+    {
+        steps.after(Step.cleave, 5.seconds);
+        steps.after(Step.tail, 12.seconds);
+        steps.after(Step.drain, 11.seconds);
+        steps.after(Step.blizzard, 15.seconds);
+    }
+
+    void reset(ref CreatureContext me)
+    {
+        inAir = false;
+        me.flying(false);
+        me.melee(true);
+        me.combatMovement(true);
+    }
+
+    void on(ref CreatureContext me, Step step)
+    {
+        final switch (step)
+        {
+        case Step.berserk:
+            if (me.castSelf(berserk) == ActionResult.ok)
+                me.sayText(emoteEnraged);
+            else
+                steps.after(step, retry);
+            break;
+        case Step.air:
+            if (me.healthPercent <= 10)
+                break;
+            inAir = true;
+            foreach (s; [Step.cleave, Step.tail, Step.drain, Step.blizzard])
+                steps.cancel(s);
+            me.melee(false);
+            me.combatMovement(false);
+            me.emote(254); // EMOTE_ONESHOT_LIFTOFF
+            me.flying(true);
+            me.castSelf(dragonHover, true);
+            icebolts = 0;
+            steps.after(Step.icebolt, 8.seconds);
+            break;
+        case Step.icebolt:
+            if (icebolts < 5)
+            {
+                if (const target = me.selectTarget(Pick.random, PickFilter.player))
+                    me.castSpell(icebolt, target, true);
+                ++icebolts;
+                steps.after(step, 3.seconds);
+            }
+            else
+            {
+                me.sayText(emoteBreath);
+                me.castSelf(frostBreathDummy, true);
+                steps.after(Step.land, 8.seconds);
+            }
+            break;
+        case Step.land:
+            me.removeAura(me.self, dragonHover);
+            me.emote(293); // EMOTE_ONESHOT_LAND
+            me.flying(false);
+            steps.after(Step.ground, 2.seconds);
+            break;
+        case Step.ground:
+            inAir = false;
+            me.melee(true);
+            me.combatMovement(true);
+            if (const t = me.selectTarget(Pick.topThreat))
+                me.attack(t);
+            groundSteps(me);
+            steps.after(Step.air, 67.seconds);
+            break;
+        case Step.cleave:
+            steps.after(step, me.castSpell(cleave) == ActionResult.ok ? between(me, 5000, 10_000) : retry);
+            break;
+        case Step.tail:
+            steps.after(step, me.castSelf(tailSweep) == ActionResult.ok ? between(me, 15_000, 20_000) : retry);
+            break;
+        case Step.drain:
+            steps.after(step, me.castSelf(lifeDrain) == ActionResult.ok ? 24.seconds : retry);
+            break;
+        case Step.blizzard:
+            if (const target = me.selectTarget(Pick.random, PickFilter.player))
+                me.castSpell(summonBlizzard, target, true);
+            steps.after(step, 20.seconds);
+            break;
+        }
+    }
+}
+
+/**
+ * Kel'Thuzad: summons the dead from his alcoves for five minutes while he channels; then fights with
+ * Frostbolt, Frost Bolt Nova, Mana Detonation, Shadow Fissure and Frost Blast; below 40% the Lich King
+ * sends him Guardians of Icecrown (his chains, a mind control, are not here).
+ */
+@creature("boss_kelthuzad")
+struct Kelthuzad
+{
+    enum uint saySummonMinions = 12_999, sayRequestAid = 12_998, sayAnswerRequest = 12_994, sayFrostBlast = 13_020,
+        deathLine = 13_019;
+    static immutable uint[3] aggroLines = [12_995, 12_996, 12_997];
+    enum uint slayLine = 13_021;
+    enum : uint
+    {
+        channelVisual = 29_422,
+        frostBolt = 28_478,
+        frostBoltNova = 28_479,
+        manaDetonation = 27_819,
+        shadowFissure = 27_810,
+        frostBlast = 27_808,
+    }
+
+    enum Step : ubyte { soldiers, abominations, weavers, phase2, frostBolt, nova, detonation, fissure, blast,
+        guardians, lichKing }
+    Schedule!(Step, 12) steps;
+    ubyte phase, guardiansSent;
+    EntityRef[64] minions;
+
+    void on(ref CreatureContext me, const ref Signal e)
+    {
+        if (e.id != NaxxSignal.startKt || phase)
+            return;
+        // Phase one: he channels, untouchable, while his minions come from the alcoves.
+        phase = 1;
+        me.sayText(saySummonMinions);
+        me.castSelf(channelVisual, true);
+        me.unitFlags(UnitFlag.uninteractible, true);
+        me.rooted(true);
+        me.melee(false);
+        steps.after(Step.soldiers, 5.seconds);
+        steps.after(Step.abominations, 30.seconds);
+        steps.after(Step.weavers, 40.seconds);
+        steps.after(Step.phase2, (5 * 60 + 25).seconds);
+    }
+
+    /// A minion of `entry` from one of the alcoves, after someone.
+    private void fromAlcove(ref CreatureContext me, uint entry)
+    {
+        EntityRef[12] alcoves;
+        const n = me.creaturesNearby(npcWorldTrigger, 120, alcoves[]);
+        if (!n)
+            return;
+        const made = me.summon(entry, where(me, alcoves[me.random(cast(uint) n)]), 0,
+            me.selectTarget(Pick.random, PickFilter.player));
+        foreach (ref m; minions)
+            if (!m)
+            {
+                m = made;
+                break;
+            }
+    }
+
+    void on(ref CreatureContext me, const ref EnteredCombat e)
+    {
+        if (phase >= 2)
+            me.sayText(aggroLines[me.random(3)]);
+    }
+
+    void on(ref CreatureContext me, const ref KilledUnit e)
+    {
+        if (e.victim.isPlayer)
+            me.sayText(slayLine);
+    }
+
+    void on(ref CreatureContext me, const ref Damaged e)
+    {
+        if (phase == 2 && e.after < 40)
+        {
+            phase = 3;
+            me.sayText(sayRequestAid);
+            steps.after(Step.lichKing, 4.seconds);
+            steps.after(Step.guardians, 5.seconds);
+        }
+    }
+
+    void on(ref CreatureContext me, Step step)
+    {
+        final switch (step)
+        {
+        case Step.soldiers:
+            if (phase == 1)
+            {
+                fromAlcove(me, npcSoldierFrozen);
+                steps.after(step, 3.seconds);
+            }
+            break;
+        case Step.abominations:
+            if (phase == 1)
+            {
+                fromAlcove(me, npcUnstoppableAbom);
+                steps.after(step, 25.seconds);
+            }
+            break;
+        case Step.weavers:
+            if (phase == 1)
+            {
+                fromAlcove(me, npcSoulWeaver);
+                steps.after(step, 30.seconds);
+            }
+            break;
+        case Step.phase2:
+            phase = 2;
+            me.interrupt();
+            me.removeAura(me.self, channelVisual);
+            me.unitFlags(UnitFlag.uninteractible, false);
+            me.rooted(false);
+            me.melee(true);
+            me.zoneCombat();
+            me.sayText(aggroLines[me.random(3)]);
+            steps.after(Step.frostBolt, between(me, 1000, 60_000));
+            steps.after(Step.nova, 15.seconds);
+            steps.after(Step.detonation, 20.seconds);
+            steps.after(Step.fissure, 25.seconds);
+            steps.after(Step.blast, between(me, 30_000, 60_000));
+            break;
+        case Step.frostBolt:
+            steps.after(step, me.castSpell(frostBolt) == ActionResult.ok ? between(me, 1000, 60_000) : retry);
+            break;
+        case Step.nova:
+            steps.after(step, me.castSelf(frostBoltNova) == ActionResult.ok ? 15.seconds : retry);
+            break;
+        case Step.detonation:
+            const target = me.selectTarget(Pick.random, PickFilter.player | PickFilter.manaUser);
+            steps.after(step, target && me.castSpell(manaDetonation, target) == ActionResult.ok ? 20.seconds : retry);
+            break;
+        case Step.fissure:
+            const target = me.selectTarget(Pick.random, PickFilter.player);
+            steps.after(step, target && me.castSpell(shadowFissure, target) == ActionResult.ok ? 25.seconds : retry);
+            break;
+        case Step.blast:
+            const target = me.selectTarget(Pick.random, PickFilter.player);
+            if (target && me.castSpell(frostBlast, target) == ActionResult.ok)
+            {
+                if (me.random(2))
+                    me.sayText(sayFrostBlast);
+                steps.after(step, between(me, 30_000, 60_000));
+            }
+            else
+                steps.after(step, retry);
+            break;
+        case Step.lichKing:
+            EntityRef[1] lichKing;
+            if (me.creaturesNearby(16_980, 200, lichKing[]))
+                me.sayAs(lichKing[0], sayAnswerRequest);
+            break;
+        case Step.guardians:
+            if (guardiansSent < 5)
+            {
+                ++guardiansSent;
+                fromAlcove(me, npcGuardianIcecrown);
+                steps.after(step, 10.seconds);
+            }
+            break;
+        }
+    }
+
+    void on(ref CreatureContext me, const ref Reset e)
+    {
+        steps.clear();
+        phase = guardiansSent = 0;
+        me.removeAura(me.self, channelVisual);
+        me.unitFlags(UnitFlag.uninteractible, false);
+        me.rooted(false);
+        me.melee(true);
+        foreach (ref m; minions)
+            if (m)
+            {
+                me.despawn(m);
+                m = EntityRef.init;
+            }
+        me.signalDungeon(NaxxEncounter.kelthuzad, EncounterState.failed);
+    }
+
+    void on(ref CreatureContext me, const ref Died e)
+    {
+        steps.clear();
+        me.sayText(deathLine);
+        me.signalDungeon(NaxxEncounter.kelthuzad, EncounterState.done);
+        foreach (ref m; minions)
+            if (m)
+            {
+                me.despawn(m);
+                m = EntityRef.init;
+            }
+    }
+}
+
+/// A Guardian of Icecrown: Blood Tap as it fights on.
+@creature("npc_icecrown_guardian")
+struct IcecrownGuardian
+{
+    enum uint guardianPassive = 29_897, bloodTap = 28_470;
+    enum Step : ubyte { tap }
+    Schedule!Step steps;
+
+    void on(ref CreatureContext me, const ref Spawned e)
+    {
+        if (!me.hasAura(me.self, guardianPassive))
+            me.castSelf(guardianPassive, true);
+    }
+
+    void on(ref CreatureContext me, const ref EnteredCombat e)
+    {
+        steps.after(Step.tap, 15.seconds);
+    }
+
+    void on(ref CreatureContext me, Step step)
+    {
+        steps.after(step, me.castSelf(bloodTap) == ActionResult.ok ? 15.seconds : retry);
+    }
+
+    void on(ref CreatureContext me, const ref Reset e)
+    {
+        steps.clear();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The halls' creatures
+// ---------------------------------------------------------------------------
+
+/// A Stoneskin Gargoyle: stone (untouchable) until someone comes within 17 yards; Acid Volley; Stoneskin
+/// below 30%.
+@creature("npc_stoneskin_gargoyle")
+struct StoneskinGargoyle
+{
+    enum uint stoneform = 29_154, stoneskin = 28_995, acidVolley = 29_325, noise = 13_080;
+    enum Step : ubyte { volley, watch }
+    Schedule!Step steps;
+
+    void on(ref CreatureContext me, const ref Spawned e)
+    {
+        stone(me);
+    }
+
+    private void stone(ref CreatureContext me)
+    {
+        if (me.castSelf(stoneform, true) == ActionResult.ok)
+        {
+            me.unitFlags(UnitFlag.uninteractible | UnitFlag.immuneToPlayer, true);
+            steps.every(Step.watch, 1.seconds);
+        }
+    }
+
+    void on(ref CreatureContext me, const ref EnteredCombat e)
+    {
+        steps.cancel(Step.watch);
+        me.removeAura(me.self, stoneform);
+        me.unitFlags(UnitFlag.uninteractible | UnitFlag.immuneToPlayer, false);
+        steps.after(Step.volley, 4.seconds);
+    }
+
+    void on(ref CreatureContext me, const ref Damaged e)
+    {
+        if (e.after < 30 && !me.hasAura(me.self, stoneskin))
+            me.castSelf(stoneskin);
+    }
+
+    void on(ref CreatureContext me, Step step)
+    {
+        final switch (step)
+        {
+        case Step.watch:
+            EntityRef[1] near;
+            if (me.playersNear(17, near[]))
+            {
+                steps.cancel(Step.watch);
+                me.unitFlags(UnitFlag.uninteractible | UnitFlag.immuneToPlayer, false);
+                me.attack(near[0]);
+            }
+            break;
+        case Step.volley:
+            steps.after(step, me.castSelf(acidVolley) == ActionResult.ok ? 8.seconds : retry);
+            break;
+        }
+    }
+
+    void on(ref CreatureContext me, const ref Reset e)
+    {
+        steps.clear();
+        stone(me);
+    }
+}
+
+/// A Living Poison: bursts when a player comes within four yards of it.
+@creature("npc_living_poison")
+struct LivingPoison
+{
+    enum uint explode = 28_433;
+    enum Step : ubyte { watch }
+    Schedule!Step steps;
+
+    void on(ref CreatureContext me, const ref Spawned e)
+    {
+        me.melee(false);
+        steps.every(Step.watch, 500.msecs);
+    }
+
+    void on(ref CreatureContext me, Step step)
+    {
+        EntityRef[1] near;
+        if (me.playersNear(4, near[]))
+        {
+            steps.clear();
+            me.castSelf(explode, true);
+            me.die();
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+version (unittest)
+{
+    import std.typecons : BlackHole;
+    import dmangos.script.registry : ScriptKind, ScriptRuntime;
+
+    class FakeNecropolis : BlackHole!InstanceHost
+    {
+        Signal[] signals;
+        bool[ulong] opened;
+        uint[] respawned;
+        EntityRef[] summoned;
+        override uint hostPlayerCount() { return 1; }
+        override ActionResult hostSignal(EntityRef to, uint id, int value)
+        {
+            signals ~= Signal(to, id, value);
+            return ActionResult.ok;
+        }
+        override ActionResult hostDoor(EntityRef door, bool open)
+        {
+            opened[door.guid] = open;
+            return ActionResult.ok;
+        }
+        override bool hostRespawnObject(uint entry, uint) { respawned ~= entry; return true; }
+        override EntityRef hostSummon(uint entry, Location, uint, EntityRef)
+        {
+            summoned ~= EntityRef(0xF130_0000_0000_0100UL | (ulong(entry) << 24) | summoned.length);
+            return summoned[$ - 1];
+        }
+    }
+
+    EntityRef naxxObject(uint entry) { return EntityRef(0xF110_0000_0000_0001UL | (ulong(entry) << 24)); }
+}
+
+/// Naxxramas' copy: Anub'Rekhan's door shuts while he fights and his gate opens when he dies; the
+/// Horsemen are done with the fourth death (their chest and the quarter's portal appear); Thaddius wakes
+/// when his two are dead; Sapphiron comes 22 seconds after his birth; the way up waits for every quarter.
+unittest
+{
+    alias self = dmangos.scripts.naxxramas;
+    auto runtime = ScriptRuntime.of!self();
+    auto naxx = new FakeNecropolis;
+    auto c = InstanceContext(naxx);
+    auto h = runtime.create(ScriptKind.instance, "instance_naxxramas");
+    const door = naxxObject(181_126), gate = naxxObject(181_195);
+    runtime.raise(h, c, ObjectLoaded(door));
+    runtime.raise(h, c, ObjectLoaded(gate));
+    assert(naxx.opened[door.guid] && !naxx.opened[gate.guid]);
+    runtime.raise(h, c, Signal(EntityRef.init, NaxxEncounter.anubRekhan, EncounterState.inProgress));
+    assert(!naxx.opened[door.guid]);
+    runtime.raise(h, c, Signal(EntityRef.init, NaxxEncounter.anubRekhan, EncounterState.done));
+    assert(naxx.opened[door.guid] && naxx.opened[gate.guid]);
+
+    foreach (i; 0 .. 3)
+        runtime.raise(h, c, Signal(EntityRef.init, NaxxEncounter.fourHorsemen, EncounterState.done));
+    assert(naxx.respawned.length == 0, "three of four");
+    runtime.raise(h, c, Signal(EntityRef.init, NaxxEncounter.fourHorsemen, EncounterState.done));
+    assert(naxx.respawned == [goChestHorsemen, 181_578]);
+
+    const thaddius = EntityRef(0xF130_0000_0000_0002UL | (ulong(npcThaddius) << 24));
+    runtime.raise(h, c, CreatureLoaded(thaddius));
+    runtime.raise(h, c, Signal(EntityRef.init, NaxxEncounter.thaddius, EncounterState.special));
+    assert(naxx.signals[$ - 1] == Signal(thaddius, NaxxSignal.addsDone, 0));
+
+    runtime.raise(h, c, Signal(EntityRef.init, NaxxEncounter.sapphiron, EncounterState.special));
+    runtime.tick(h, c, 21_000);
+    assert(naxx.summoned.length == 0);
+    runtime.tick(h, c, 1000);
+    assert(naxx.summoned.length == 1 && naxx.summoned[0].entry == npcSapphiron);
+
+    auto ask = InstanceContext(naxx);
+    runtime.raise(h, ask, Asked(EntityRef.init, Naxxramas.askFrostwyrm));
+    assert(ask.answerGiven == 0, "Maexxna, Loatheb and Thaddius live");
+}
+
+version (unittest)
+{
+    class FakeConstruct : BlackHole!CreatureHost
+    {
+        uint entry = npcStalagg;
+        Signal[] dungeon, signals;
+        bool dead, preventing;
+        uint health = 100;
+        StandState stand;
+        override EntityRef hostSelf() { return EntityRef(0xF130_0000_0000_0001UL | (ulong(entry) << 24)); }
+        override void hostSignalDungeon(uint id, int value) { dungeon ~= Signal(EntityRef.init, id, value); }
+        override ActionResult hostSignal(EntityRef to, uint id, int value)
+        {
+            signals ~= Signal(to, id, value);
+            return ActionResult.ok;
+        }
+        override void hostDie() { dead = true; }
+        override void hostDeathPrevention(bool on) { preventing = on; }
+        override void hostStandState(StandState s) { stand = s; }
+        override void hostSetHealthPercent(EntityRef, uint p) { health = p; }
+        override size_t hostCreaturesNearby(uint e, float, EntityRef[] into)
+        {
+            if (into.length == 0 || (e != npcFeugen && e != npcStalagg))
+                return 0;
+            into[0] = EntityRef(0xF130_0000_0000_0002UL | (ulong(e) << 24));
+            return 1;
+        }
+    }
+}
+
+/// Stalagg and Feugen: one falling alone rises again after five seconds; both falling together die, and
+/// Thaddius' encounter goes on.
+unittest
+{
+    alias self = dmangos.scripts.naxxramas;
+    auto runtime = ScriptRuntime.of!self();
+    auto host = new FakeConstruct;
+    auto me = CreatureContext(host);
+    auto h = runtime.create(ScriptKind.creature, "boss_stalagg");
+    runtime.raise(h, me, Spawned());
+    assert(host.preventing);
+    runtime.raise(h, me, EnteredCombat(EntityRef(7)));
+    runtime.raise(h, me, Damaged(EntityRef(7), 900, 3, 0));
+    assert(host.stand == StandState.dead && host.signals[$ - 1].id == NaxxSignal.addFell);
+    foreach (_; 0 .. 50)
+        runtime.tick(h, me, 100);
+    assert(host.stand == StandState.stand && host.health == 100 && !host.dead, "alone: it rose again");
+
+    runtime.raise(h, me, Damaged(EntityRef(7), 900, 3, 0));
+    runtime.raise(h, me, Signal(EntityRef.init, NaxxSignal.addFell, 0)); // Feugen fell too
+    assert(host.dead && host.dungeon[$ - 1] == Signal(EntityRef.init, NaxxEncounter.thaddius, EncounterState.special));
+}

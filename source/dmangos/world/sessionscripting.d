@@ -145,6 +145,7 @@ mixin template SessionScripting()
         EntityRef hostCreatureNear(uint entry, Location at, float range) { return this.outer.hostCreatureNear(entry, at, range); }
         void hostSignalDungeon(uint id, int value) { this.outer.hostSignalDungeon(id, value); }
         bool hostHasItem(EntityRef who, uint item) { return this.outer.hostHasItem(who, item); }
+        int hostAskDungeon(uint id) { return this.outer.hostAskDungeon(id); }
         void hostLog(string text) { this.outer.hostLog(text); }
         ActionResult hostModifyThreat(EntityRef creature, EntityRef target, int percent) { return this.outer.hostModifyThreat(creature, target, percent); }
         // Eastern Kingdoms scripts:
@@ -343,6 +344,12 @@ mixin template SessionScripting()
     {
         if (instanceId_)
             context.signalDungeon(instanceId_, EntityRef(player.guid), id, value);
+    }
+
+    /// Raid scripts: see `AreaTriggerHost.hostAskDungeon`.
+    int hostAskDungeon(uint id)
+    {
+        return instanceId_ ? context.askDungeon(instanceId_, EntityRef(player.guid), id) : 0;
     }
 
     void hostLog(string text)

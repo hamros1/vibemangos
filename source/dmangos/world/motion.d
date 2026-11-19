@@ -684,7 +684,7 @@ in (points.length > 1)
     const at = creature.spline.finalized ? creature.position : creature.spline.position;
     points[0] = Vector3(at.x, at.y, at.z);
     // A walk to one point with `generatePath`: round what stands in the way, over the movement maps.
-    if (generatePath && points.length == 2)
+    if (generatePath && points.length == 2 && !creature.scriptFlying)
     {
         auto way = world.pathBetween(points[0], points[1]);
         if (way.length >= 2)
@@ -695,6 +695,8 @@ in (points.length > 1)
     }
 
     uint flags = walk ? SplineFlags.none : SplineFlags.runMode;
+    if (creature.scriptFlying)
+        flags |= SplineFlags.flying;
     float angle = 0;
     if (!isNaN(facing))
     {

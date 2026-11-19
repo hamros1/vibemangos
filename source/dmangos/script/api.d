@@ -198,6 +198,7 @@ struct SpellHit
 {
     EntityRef caster;
     uint spell;
+    uint schoolMask; /// Raid scripts: the schools it struck with (`SpellSchoolMask`: 1 physical, 4 fire, 8 nature, 16 frost, ...)
 }
 
 /// A message from another script (`from`: a creature, or nothing for its dungeon's script).
@@ -252,6 +253,8 @@ enum UnitFlag : uint
     immuneToPlayer = 0x0000_0100,
     immuneToNpc = 0x0000_0200,
     untargetable = 0x0001_0000,
+    pacified = 0x0002_0000, /// Raid scripts
+    stunned = 0x0004_0000,  /// Raid scripts
     uninteractible = 0x0200_0000,
 }
 
@@ -391,6 +394,25 @@ interface CreatureHost
     uint hostGiveItem(EntityRef player, uint item, uint count);
     // Dungeon scripts:
     EntityRef hostPlayerNearby(float range);
+
+    // Raid scripts:
+    int hostAskDungeon(uint id);
+    EntityRef hostSelectTarget(Pick pick, uint filter, uint skip);
+    size_t hostThreatList(EntityRef[] into);
+    ActionResult hostModifyThreat(EntityRef target, int percent);
+    size_t hostPlayersNear(float range, EntityRef[] into);
+    void hostTeleport(Location at);
+    void hostZoneCombat();
+    bool hostCasting();
+    void hostInterrupt();
+    void hostFlying(bool on);
+    void hostDisplay(uint model);
+    void hostSetHealthPercent(EntityRef who, uint percent);
+    void hostRooted(bool on);
+    void hostAddThreat(EntityRef who, float amount);
+    void hostMoveNow(Location at, uint point, bool run);
+    void hostSpellList(uint id);
+    ubyte hostClassOf(EntityRef who);
 }
 
 /**
@@ -630,6 +652,41 @@ struct CreatureContext
     {
         return host.hostSayOther(speaker, entry, target);
     }
+
+    // Raid scripts:
+
+    /// Its dungeon script's answer to question `id` (`Asked`); 0 outside a dungeon or unanswered.
+    int askDungeon(uint id) { return host.hostAskDungeon(id); }
+
+    /// One of those it fights, picked by `pick` among those `filter` (`PickFilter` bits) lets through,
+    /// the first `skip` passed over (the second most hated: `Pick.topThreat`, skip 1); nothing if none.
+    EntityRef selectTarget(Pick pick, uint filter = 0, uint skip = 0) { return host.hostSelectTarget(pick, filter, skip); }
+
+    /// Those it fights (its threat list), most hated first, as many as `into` holds; how many were written.
+    size_t threatList(EntityRef[] into) { return host.hostThreatList(into); }
+
+    /// `target`'s threat on it changes by `percent` (-100: none left; it stays on the list).
+    ActionResult modifyThreat(EntityRef target, int percent) { return host.hostModifyThreat(target, percent); }
+
+    /// Everyone's threat on it gone (`DoResetThreat`).
+    void resetThreat() { host.hostModifyThreat(EntityRef.init, -100); }
+
+    /// The living players within `range` yards, as many as `into` holds.
+    size_t playersNear(float range, EntityRef[] into) { return host.hostPlayersNear(range, into); }
+
+    /// It is at `at` at once (`NearTeleportTo`), on its map.
+    void teleport(Location at) { host.hostTeleport(at); }
+
+    /// In a dungeon: every living player of the copy joins its fight (`DoZoneInCombat`).
+    void zoneCombat() { host.hostZoneCombat(); }
+
+    /// Whether it is casting a spell.
+    @property bool casting() { return host.hostCasting(); }
+
+    /// Its spell being cast is stopped.
+    void interrupt() { host.hostInterrupt(); }
+
+
     // Kalimdor scripts:
 
     /// Another creature here takes faction `faction` (0: its template's).
@@ -653,6 +710,34 @@ struct CreatureContext
     {
         return host.hostCastAs(caster, spell, target, triggered);
     }
+
+    /// It flies (`moveTo` flies it, and it hovers where it stops), or walks again.
+    void flying(bool on) { host.hostFlying(on); }
+
+    /// It looks like model `model` (0: its own again).
+    void display(uint model) { host.hostDisplay(model); }
+
+    /// A creature's health (its own by default) set to `percent` of its most.
+    void setHealthPercent(uint percent, EntityRef who = EntityRef.init)
+    {
+        host.hostSetHealthPercent(who ? who : host.hostSelf(), percent);
+    }
+
+    /// Held in place (it still turns and casts), or free to move again.
+    void rooted(bool on) { host.hostRooted(on); }
+
+    /// Threat of `who` (a unit here) on it, added (its list takes it in if it was not there).
+    void addThreat(EntityRef who, float amount) { host.hostAddThreat(who, amount); }
+
+    /// As `moveTo`, but at once even in a fight (turn its combat movement off first, or it chases its
+    /// victim again): a dragon taking to the air, a boss going to its place.
+    void moveNow(Location at, uint point, bool run = true) { host.hostMoveNow(at, point, run); }
+
+    /// The spells it casts by itself in a fight: `creature_spell_list` `id` from now (0: its template's).
+    void spellList(uint id) { host.hostSpellList(id); }
+
+    /// A player's class (`Classes`: 1 warrior .. 11 druid); 0 for anyone else.
+    ubyte classOf(EntityRef who) { return host.hostClassOf(who); }
 
     /// Whether players may use a game object here (`GO_FLAG_NO_INTERACT` cleared or set).
     ActionResult objectUsable(EntityRef object, bool usable) { return host.hostObjectUsable(object, usable); }
@@ -721,6 +806,9 @@ interface GameObjectHost
     ActionResult hostObjectSignal(EntityRef to, uint id, int value);
     ActionResult hostObjectCast(EntityRef caster, uint spell, EntityRef target);
     size_t hostObjectCreaturesNear(uint entry, float range, EntityRef[] found);
+
+    // Raid scripts:
+    int hostAskDungeon(uint id);
 }
 
 /// A game object script's handle on its object, for the length of one handler.
@@ -811,6 +899,10 @@ struct GameObjectContext
     {
         return host.hostObjectCreaturesNear(entry, range, found);
     }
+    // Raid scripts:
+
+    /// Its dungeon script's answer to question `id` (`Asked`); 0 outside a dungeon or unanswered.
+    int askDungeon(uint id) { return host.hostAskDungeon(id); }
 }
 
 // ---------------------------------------------------------------------------
@@ -888,6 +980,14 @@ interface InstanceHost
     EntityRef hostAnyPlayer();
     void hostKillCreditAll(uint entry);
     bool hostChangeEntry(EntityRef creature, uint entry);
+    // Raid scripts:
+    ActionResult hostDespawnObject(EntityRef object);
+    bool hostRespawnObject(uint entry, uint seconds);
+    ActionResult hostUseObject(EntityRef object);
+    size_t hostPlayers(EntityRef[] into);
+    ActionResult hostZoneCombat(EntityRef creature);
+    EntityRef hostSummonObject(uint entry, Location at, uint seconds);
+    size_t hostCreaturesNear(Location at, uint entry, float range, EntityRef[] into);
 }
 
 /// `GameObjectFlags`, as dungeon scripts set and clear them (`InstanceContext.objectFlags`).
@@ -927,6 +1027,37 @@ struct InstanceContext
 
     /// A line in the server's log, naming the copy.
     void log(string text) { host.hostLog(text); }
+
+    // Raid scripts:
+
+    private bool answered_;
+    private int answer_;
+
+    /// For `Asked`: the answer.
+    void answer(int value)
+    {
+        answered_ = true;
+        answer_ = value;
+    }
+
+    /// Whether a handler answered, and what.
+    @property bool answered() const { return answered_; }
+    /// ditto
+    @property int answerGiven() const { return answer_; }
+
+    /// A game object goes (it comes back when its cell loads again).
+    ActionResult despawnObject(EntityRef object) { return host.hostDespawnObject(object); }
+
+    /// The game object of `entry` the copy's map has a spawn of (one not there by default) appears, for
+    /// `seconds` (0: for good); false if there is no such spawn.
+    bool respawnObject(uint entry, uint seconds = 0) { return host.hostRespawnObject(entry, seconds); }
+
+    /// A door or button is used: it opens (or closes), and goes back by itself after its time.
+    ActionResult useObject(EntityRef object) { return host.hostUseObject(object); }
+
+    /// The players in the copy, as many as `into` holds.
+    size_t players(EntityRef[] into) { return host.hostPlayers(into); }
+
 
     // Dungeon scripts:
 
@@ -987,6 +1118,9 @@ struct InstanceContext
         return host.hostObjectFlags(object, set, clear);
     }
 
+    /// A creature of the copy fights every living player in it (`SetInCombatWithZone`).
+    ActionResult zoneCombat(EntityRef creature) { return host.hostZoneCombat(creature); }
+
     /// A random number below `below`.
     uint random(uint below) { return host.hostRandom(below); }
 
@@ -1015,6 +1149,16 @@ struct InstanceContext
 
     /// A creature of the copy becomes a creature of `entry` (Old Ironbark redeemed); false if it cannot.
     bool changeEntry(EntityRef creature, uint entry) { return host.hostChangeEntry(creature, entry); }
+
+    /// A game object of `entry` at `at` in the copy (none of the map's spawns), gone after `seconds`
+    /// (0: when the copy goes); nothing if there is no such object.
+    EntityRef summonObject(uint entry, Location at, uint seconds = 0) { return host.hostSummonObject(entry, at, seconds); }
+
+    /// The living creatures of `entry` (0: any) within `range` yards of `at`, as many as `into` holds.
+    size_t creaturesNear(Location at, uint entry, float range, EntityRef[] into)
+    {
+        return host.hostCreaturesNear(at, entry, range, into);
+    }
 }
 
 unittest
@@ -1193,6 +1337,9 @@ interface AreaTriggerHost
     ActionResult hostSignalCreature(EntityRef to, uint id, int value);
     // Dungeon scripts:
     bool hostHasItem(EntityRef player, uint item);
+
+    // Raid scripts:
+    int hostAskDungeon(uint id);
 }
 
 /// An area trigger script's handle, for the length of one handler.
@@ -1261,4 +1408,66 @@ struct AreaTriggerContext
 
     /// A `Signal` for a creature's script (on another node: sent there).
     ActionResult signal(EntityRef to, uint id, int value = 0) { return host.hostSignalCreature(to, id, value); }
+
+    // Raid scripts:
+
+    /// The dungeon script's answer to question `id` (`Asked`); 0 outside a dungeon copy.
+    int askDungeon(uint id) { return host.hostAskDungeon(id); }
+}
+
+// ---------------------------------------------------------------------------
+// Raid scripts: questions to a dungeon, players arriving, picking targets, flags
+// ---------------------------------------------------------------------------
+
+/// A script asks its dungeon's script question `id` (`CreatureContext.askDungeon`), which answers with
+/// `InstanceContext.answer`. Asking changes nothing.
+struct Asked
+{
+    EntityRef from;
+    uint id;
+}
+
+/// A player came into the copy (entered it, logged in there, or was carried there).
+struct PlayerEntered
+{
+    EntityRef player;
+}
+
+/// A player used a game object of the copy (before the object's own script and its usual use).
+struct ObjectUsedHere
+{
+    EntityRef object;
+    EntityRef player;
+}
+
+/// How `CreatureContext.selectTarget` picks among those it fights.
+enum Pick : ubyte
+{
+    random,       /// any of them
+    topThreat,    /// the most hated (`skip` 1: the second, ...)
+    bottomThreat, /// the least hated
+    nearest,
+    farthest,
+}
+
+/// What a target `selectTarget` picks must be: bits, any together.
+enum PickFilter : uint
+{
+    none = 0,
+    player = 1,      /// a player (not a pet or a creature)
+    notVictim = 2,   /// not its victim
+    manaUser = 4,    /// with mana
+    notManaUser = 8, /// without mana
+    inMelee = 16,    /// within its melee reach
+    notInMelee = 32, /// beyond it
+}
+
+/// Where an encounter of a dungeon stands (CMaNGOS's instance data values).
+enum EncounterState : ubyte
+{
+    notStarted = 0,
+    inProgress = 1,
+    failed = 2,
+    done = 3,
+    special = 4,
 }

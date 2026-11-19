@@ -173,6 +173,25 @@ final class TestCreature : CreatureHost
     uint hostGiveItem(EntityRef, uint, uint) { return 0; }
     bool hostChangeEntry(uint entry) { did ~= format("become %s", entry); return true; }
     void hostKillCredit(EntityRef, uint entry) { did ~= format("credit %s", entry); }
+
+    // Raid scripts:
+    int hostAskDungeon(uint) { return 0; }
+    EntityRef hostSelectTarget(Pick, uint, uint) { return EntityRef.init; }
+    size_t hostThreatList(EntityRef[]) { return 0; }
+    ActionResult hostModifyThreat(EntityRef, int) { return ActionResult.ok; }
+    size_t hostPlayersNear(float, EntityRef[]) { return 0; }
+    void hostTeleport(Location) {}
+    void hostZoneCombat() {}
+    bool hostCasting() { return false; }
+    void hostInterrupt() {}
+    void hostFlying(bool) {}
+    void hostDisplay(uint) {}
+    void hostSetHealthPercent(EntityRef, uint) {}
+    void hostRooted(bool) {}
+    void hostAddThreat(EntityRef, float) {}
+    void hostMoveNow(Location, uint, bool) {}
+    void hostSpellList(uint) {}
+    ubyte hostClassOf(EntityRef) { return 0; }
 }
 
 /// A dungeon copy: see the module documentation.
@@ -266,6 +285,15 @@ final class TestInstance : InstanceHost
     EntityRef hostAnyPlayer() { return players ? EntityRef(7) : EntityRef.init; }
     void hostKillCreditAll(uint entry) { did ~= format("credit %s", entry); }
     bool hostChangeEntry(EntityRef c, uint entry) { did ~= format("become %s %s", c.entry, entry); return true; }
+
+    // Raid scripts:
+    ActionResult hostDespawnObject(EntityRef) { return ActionResult.ok; }
+    bool hostRespawnObject(uint, uint) { return false; }
+    ActionResult hostUseObject(EntityRef) { return ActionResult.ok; }
+    size_t hostPlayers(EntityRef[]) { return 0; }
+    ActionResult hostZoneCombat(EntityRef) { return ActionResult.ok; }
+    EntityRef hostSummonObject(uint, Location, uint) { return EntityRef.init; }
+    size_t hostCreaturesNear(Location, uint, float, EntityRef[]) { return 0; }
 }
 
 /// A script of module `M` with its fake, run as the server runs it (through a `ScriptRuntime`).

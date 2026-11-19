@@ -193,6 +193,25 @@ final class RecordingCreature : CreatureHost
     }
     // Dungeon scripts:
     EntityRef hostPlayerNearby(float) { return EntityRef.init; }
+
+    // Raid scripts:
+    int hostAskDungeon(uint) { return 0; }
+    EntityRef hostSelectTarget(Pick, uint, uint) { return EntityRef.init; }
+    size_t hostThreatList(EntityRef[]) { return 0; }
+    ActionResult hostModifyThreat(EntityRef, int) { return ActionResult.ok; }
+    size_t hostPlayersNear(float, EntityRef[]) { return 0; }
+    void hostTeleport(Location) {}
+    void hostZoneCombat() {}
+    bool hostCasting() { return false; }
+    void hostInterrupt() {}
+    void hostFlying(bool) {}
+    void hostDisplay(uint) {}
+    void hostSetHealthPercent(EntityRef, uint) {}
+    void hostRooted(bool) {}
+    void hostAddThreat(EntityRef, float) {}
+    void hostMoveNow(Location, uint, bool) {}
+    void hostSpellList(uint) {}
+    ubyte hostClassOf(EntityRef) { return 0; }
 }
 
 /// A script of `Module` on a recording creature, and the means to drive it.
@@ -309,6 +328,9 @@ final class RecordingObject : GameObjectHost
         did ~= "cast " ~ spell.to!string;
         return ActionResult.ok;
     }
+
+    // Raid scripts:
+    int hostAskDungeon(uint) { return 0; }
 }
 
 /// `hero` uses game object script `name` of `Module` on `host`; whether the script consumed the use.
