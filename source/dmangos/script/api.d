@@ -645,6 +645,7 @@ interface GameObjectHost
     ActionResult hostObjectSignal(EntityRef to, uint id, int value);
     void hostObjectUsable(bool usable);
     ActionResult hostObjectCast(EntityRef caster, uint spell, EntityRef target);
+    size_t hostObjectCreaturesNear(uint entry, float range, EntityRef[] found);
 }
 
 /// A game object script's handle on its object, for the length of one handler.
@@ -713,6 +714,12 @@ struct GameObjectContext
     ActionResult castSpell(EntityRef caster, uint spell, EntityRef target)
     {
         return host.hostObjectCast(caster, spell, target);
+    }
+
+    /// The living creatures of `entry` within `range` yards of it, as many as `found` holds; how many were put there.
+    size_t creaturesNearby(uint entry, float range, EntityRef[] found)
+    {
+        return host.hostObjectCreaturesNear(entry, range, found);
     }
 }
 

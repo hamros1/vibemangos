@@ -3228,6 +3228,15 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             return signalCreature(map, EntityRef(go.guid), to, id, value);
         }
 
+        size_t hostObjectCreaturesNear(uint entry, float range, EntityRef[] found)
+        {
+            size_t n;
+            foreach (c; map.creaturesNear(go.position, range))
+                if (n < found.length && c.spawn.entry == entry && c.alive)
+                    found[n++] = EntityRef(c.guid);
+            return n;
+        }
+
         void hostObjectUsable(bool usable)
         {
             import dmangos.world.updatefields : GAMEOBJECT_FLAGS;

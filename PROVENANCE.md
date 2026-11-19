@@ -182,6 +182,14 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Files: `AI/ScriptDevAI/scripts/kalimdor/felwood.cpp`
 * Functions/ScriptNames: `npc_kitten` (with `CorruptedSaberVisual`), `npc_corrupt_saber`, `npc_captured_arkonarin`, `npc_arei`
 
+## scripts/feralas.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/kalimdor/feralas.cpp`, `AI/ScriptDevAI/scripts/kalimdor/world_kalimdor.cpp`
+  (`TYPE_FREEDOM_CREATURES`)
+* Functions/ScriptNames: `npc_oox22fe`, `npc_shay_leafrunner` (with `ShaysBell`), `npc_captured_sprite_darter`,
+  `go_cage_door`, `npc_kindal_moonweaver`
+
 ## scripts/barrens.d
 
 * Projects: CMaNGOS

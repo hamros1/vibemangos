@@ -271,6 +271,13 @@ final class RecordingObject : GameObjectHost
         return ActionResult.ok;
     }
     void hostObjectUsable(bool usable) { did ~= usable ? "usable" : "unusable"; }
+    size_t hostObjectCreaturesNear(uint entry, float, EntityRef[] found)
+    {
+        if (found.length == 0 || entry !in nearby)
+            return 0;
+        found[0] = nearby[entry];
+        return 1;
+    }
     ActionResult hostObjectCast(EntityRef, uint spell, EntityRef)
     {
         did ~= "cast " ~ spell.to!string;
