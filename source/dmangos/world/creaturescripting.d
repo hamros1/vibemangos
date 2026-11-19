@@ -772,4 +772,27 @@ mixin template CreatureScripting()
                 return other.auras.find(spell) !is null;
         return false;
     }
+
+    ActionResult hostSayOther(EntityRef speaker, int entry, EntityRef target)
+    {
+        if (speaker.guid == me.guid)
+            return hostSay(entry, target);
+        auto other = world_ is null ? null : world_.creatureAt(speaker.guid);
+        if (other is null || other.ai is null)
+            return ActionResult.notHere;
+        other.ai.world_ = world_;
+        return other.ai.hostSay(entry, target);
+    }
+
+    void hostMovementScript(uint id)
+    {
+        if (world_ !is null && id)
+            world_.waypointScript(me, id);
+    }
+
+    void hostRelay(int id, EntityRef target)
+    {
+        if (world_ !is null)
+            scriptRelay(id, target.guid);
+    }
 }

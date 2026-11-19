@@ -127,6 +127,13 @@ final class TestCreature : CreatureHost
     ActionResult hostUseObject(EntityRef o) { note("use", o.entry); return ActionResult.ok; }
     ActionResult hostRemoveAura(EntityRef, uint spell) { note("unaura", spell); return ActionResult.ok; }
     bool hostHasAura(EntityRef, uint) { return false; }
+    ActionResult hostSayOther(EntityRef speaker, int entry, EntityRef)
+    {
+        note("say of", speaker.entry, entry);
+        return ActionResult.ok;
+    }
+    void hostMovementScript(uint id) { note("movement script", id); }
+    void hostRelay(int id, EntityRef) { note("relay", id); }
 }
 
 /// A script under test: the runtime of `Module`, one creature's script, and its host.
@@ -185,4 +192,10 @@ struct Driven(alias Module)
                 return;
         }
     }
+}
+
+/// A creature of `entry` (its guid's `low` part).
+EntityRef creatureRef(uint entry, uint low = 1)
+{
+    return EntityRef(0xF130_0000_0000_0000 | (ulong(entry) << 24) | low);
 }

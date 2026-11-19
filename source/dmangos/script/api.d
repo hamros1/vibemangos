@@ -248,6 +248,7 @@ struct Waypoint
 {
     Location at;
     uint waitMs; /// how long it stays there
+    uint scriptId; /// Eastern Kingdoms scripts: its `dbscripts_on_creature_movement` script (0: none)
 }
 
 // Eastern Kingdoms scripts:
@@ -332,6 +333,9 @@ interface CreatureHost
     ActionResult hostUseObject(EntityRef object);
     ActionResult hostRemoveAura(EntityRef who, uint spell);
     bool hostHasAura(EntityRef who, uint spell);
+    ActionResult hostSayOther(EntityRef speaker, int entry, EntityRef target);
+    void hostMovementScript(uint id);
+    void hostRelay(int id, EntityRef target);
 }
 
 /**
@@ -556,6 +560,18 @@ struct CreatureContext
 
     /// Whether `who` (itself or another creature here) has `spell`'s aura.
     bool hasAura(EntityRef who, uint spell) { return host.hostHasAura(who, spell); }
+
+    /// Runs `dbscripts_on_creature_movement` script `id` on it (as a waypoint's script runs).
+    void movementScript(uint id) { host.hostMovementScript(id); }
+
+    /// Starts `dbscripts_on_relay` script `id` (negative: one of relay group -`id`) on it, with `target`.
+    void relay(int id, EntityRef target = EntityRef.init) { host.hostRelay(id, target); }
+
+    /// Another creature here says the `script_texts` row `entry` (negative), with its sound and emote.
+    ActionResult sayOther(EntityRef speaker, int entry, EntityRef target = EntityRef.init)
+    {
+        return host.hostSayOther(speaker, entry, target);
+    }
 }
 
 // ---------------------------------------------------------------------------

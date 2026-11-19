@@ -133,6 +133,9 @@ final class FakeCreature : CreatureHost
     ActionResult hostUseObject(EntityRef) { return ActionResult.ok; }
     ActionResult hostRemoveAura(EntityRef, uint) { return ActionResult.ok; }
     bool hostHasAura(EntityRef, uint) { return false; }
+    ActionResult hostSayOther(EntityRef, int, EntityRef) { return ActionResult.ok; }
+    void hostMovementScript(uint) {}
+    void hostRelay(int, EntityRef) {}
 }
 
 unittest

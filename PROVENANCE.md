@@ -143,11 +143,35 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Files: `ScriptDevAI/scripts/eastern_kingdoms/arathi_highlands.cpp`
 * Functions/ScriptNames: `npc_professor_phizzlethorpe`, `npc_kinelory`
 
+## scripts/hinterlands.d
+
+* Projects: CMaNGOS
+* Files: `ScriptDevAI/scripts/eastern_kingdoms/hinterlands.cpp`
+* Functions/ScriptNames: `npc_00x09hl`, `npc_rinji`
+
+## scripts/lochmodan.d
+
+* Projects: CMaNGOS
+* Files: `ScriptDevAI/scripts/eastern_kingdoms/loch_modan.cpp`
+* Functions/ScriptNames: `npc_miran`
+
 ## scripts/redridge.d
 
 * Projects: CMaNGOS
 * Files: `ScriptDevAI/scripts/eastern_kingdoms/redridge_mountains.cpp`
 * Functions/ScriptNames: `npc_corporal_keeshan`
+
+## scripts/silverpine.d
+
+* Projects: CMaNGOS
+* Files: `ScriptDevAI/scripts/eastern_kingdoms/silverpine_forest.cpp`
+* Functions/ScriptNames: `npc_deathstalker_erland`, `npc_deathstalker_faerleia`
+
+## scripts/wetlands.d
+
+* Projects: CMaNGOS
+* Files: `ScriptDevAI/scripts/eastern_kingdoms/wetlands.cpp`
+* Functions/ScriptNames: `npc_mikhail`, `npc_tapoke_slim_jahn`
 
 ## timer.d
 
