@@ -137,6 +137,20 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Projects: CMaNGOS
 * Constants: `DEFAULT_MAX_PLAYER_DISTANCE`
 
+## script/follower.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/base/follower_ai.cpp`
+* Functions: `FollowerAI::StartFollow`, `FollowerAI::SetFollowComplete`, `FollowerAI::SetFollowPaused`
+* Constants: `MAX_PLAYER_DISTANCE`
+
+## scripts/barrens.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/kalimdor/the_barrens.cpp`
+* Functions/ScriptNames: `npc_gilthares`, `npc_taskmaster_fizzule`, `npc_twiggy_flathead`, `at_twiggy_flathead`,
+  `npc_wizzlecranks_shredder`, `npc_regthar_deathgate`
+
 ## timer.d
 
 * Projects: CMaNGOS, Ember

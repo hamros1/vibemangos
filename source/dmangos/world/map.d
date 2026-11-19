@@ -1666,6 +1666,23 @@ final class Map : CombatWorld, GameObjectWorld
         return slot == uint.max ? null : cast(Creature) at(slot).object;
     }
 
+    /// See `CombatWorld.gameObjectsNear`.
+    GameObject[] gameObjectsNear(Position center, float range)
+    {
+        GameObject[] found;
+        foreach (slot; objectSlotsNear(center, range))
+            if (auto go = cast(GameObject) at(slot).object)
+                found ~= go;
+        return found;
+    }
+
+    /// See `CombatWorld.gameObjectAt`.
+    GameObject gameObjectAt(ulong guid)
+    {
+        const slot = slotFor(guid);
+        return slot == uint.max ? null : cast(GameObject) at(slot).object;
+    }
+
     /// See `CombatWorld.positionOf`.
     bool positionOf(ulong guid, out Position at_)
     {

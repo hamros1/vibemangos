@@ -85,9 +85,12 @@ mixin template CreatureCasting()
     /// A player's text emote at it.
     void receivedEmote(ulong player, uint textEmote, CombatWorld world)
     {
+        import dmangos.script.api : Emoted;
+
+        world_ = world;
+        raiseScript(Emoted(EntityRef(player), textEmote)); // Kalimdor scripts
         if (script is null)
             return;
-        world_ = world;
         script.receivedEmote(this, player, textEmote);
     }
 

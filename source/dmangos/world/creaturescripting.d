@@ -593,4 +593,215 @@ mixin template CreatureScripting()
             return 0;
         return world_ is null ? 0 : uniform(0, below, world_.random);
     }
+
+    // -----------------------------------------------------------------------
+    // Kalimdor scripts: `CreatureHost`'s later part
+    // -----------------------------------------------------------------------
+
+    /// Itself or another creature here, bound to its world; null if not here.
+    private Creature scriptCreature(EntityRef who)
+    {
+        if (who.guid == me.guid)
+            return me;
+        if (world_ is null)
+            return null;
+        auto other = world_.creatureAt(who.guid);
+        if (other !is null && other.ai !is null)
+            other.ai.bind(world_);
+        return other;
+    }
+
+    ActionResult hostFaction(EntityRef creature, uint faction)
+    {
+        auto who = scriptCreature(creature);
+        if (who is null || world_ is null)
+            return ActionResult.notHere;
+        who.ai.scriptFaction(faction);
+        return ActionResult.ok;
+    }
+
+    ActionResult hostUnitFlags(EntityRef creature, uint flags, bool set)
+    {
+        auto who = scriptCreature(creature);
+        if (who is null || world_ is null)
+            return ActionResult.notHere;
+        scriptUnitFlags(who.guid, flags, set);
+        return ActionResult.ok;
+    }
+
+    ActionResult hostAttack(EntityRef creature, EntityRef victim)
+    {
+        auto who = scriptCreature(creature);
+        if (who is null || world_ is null)
+            return ActionResult.notHere;
+        auto target = world_.unit(victim.guid);
+        if (!target)
+            return ActionResult.notHere;
+        if (!who.alive || !target.fighter.alive || target.untouchable
+            || !canAttack(who.ai.relatingOf, target.relating, me.client))
+            return ActionResult.notAllowed;
+        who.ai.attackStart(target, world_);
+        return ActionResult.ok;
+    }
+
+    void hostFollow(EntityRef leader, float distance, float angle)
+    {
+        import dmangos.world.motion : FollowMovement, IdleMovement;
+
+        MovementGenerator next = leader ? new FollowMovement(leader.guid, distance, angle) : new IdleMovement;
+        if (inCombat_ || evadingHome)
+        {
+            outOfCombat = next; // how it moves once home from the fight
+            return;
+        }
+        me.generator = next;
+        if (world_ !is null)
+        {
+            if (!leader)
+                stopMoving(me, world_);
+            next.initialize(me, world_);
+            world_.wake(me.guid);
+        }
+    }
+
+    void hostKillCredit(EntityRef player, uint entry)
+    {
+        if (world_ !is null)
+            scriptKillCredit(entry, player.guid);
+    }
+
+    ActionResult hostMoveOther(EntityRef creature, Location at, uint point, bool run)
+    {
+        auto who = scriptCreature(creature);
+        if (who is null)
+            return ActionResult.notHere;
+        if (!who.alive)
+            return ActionResult.notAllowed;
+        who.ai.hostMoveTo(at, point, run);
+        return ActionResult.ok;
+    }
+
+    void hostFace(EntityRef who)
+    {
+        if (world_ !is null && !inCombat_)
+            scriptFace(who.guid, false);
+    }
+
+    ActionResult hostCastAs(EntityRef caster, uint spell, EntityRef target, bool triggered)
+    {
+        if (caster.guid == me.guid)
+            return hostCast(spell, target, triggered);
+        auto who = scriptCreature(caster);
+        if (who is null)
+            return ActionResult.notHere;
+        return who.ai.castFor(world_, spell, target.guid, triggered);
+    }
+
+    ActionResult hostRemoveAura(EntityRef who, uint spell)
+    {
+        if (world_ is null || !world_.unit(who.guid))
+            return ActionResult.notHere;
+        scriptRemoveAura(who.guid, spell);
+        return ActionResult.ok;
+    }
+
+    bool hostHasAura(EntityRef who, uint spell)
+    {
+        if (world_ is null)
+            return who.guid == me.guid && me.auras.find(spell) !is null;
+        auto unit = world_.unit(who.guid);
+        return unit && unit.hasAuraOf(spell);
+    }
+
+    ActionResult hostSayAs(EntityRef speaker, int textEntry, EntityRef target)
+    {
+        auto who = scriptCreature(speaker);
+        if (who is null)
+            return ActionResult.notHere;
+        return who.ai.hostSay(textEntry, target);
+    }
+
+    bool hostUpdateEntry(uint entry)
+    {
+        return world_ !is null && scriptUpdateTemplate(entry);
+    }
+
+    void hostMount(uint display)
+    {
+        if (world_ !is null)
+            scriptMount(0, display);
+    }
+
+    void hostPassive(bool on)
+    {
+        enum uint noAggroOnSight = 0x2; // CREATURE_EXTRA_FLAG_NO_AGGRO_ON_SIGHT
+        if (on)
+        {
+            react = ReactState.passive;
+            if (world_ !is null && inCombat_)
+                enterEvadeMode(world_);
+        }
+        else
+            react = (me.template_.extraFlags & noAggroOnSight) ? ReactState.defensive : ReactState.aggressive;
+    }
+
+    EntityRef hostObjectNearby(uint entry, float range)
+    {
+        if (world_ is null)
+            return EntityRef.init;
+        foreach (go; world_.gameObjectsNear(me.position, range))
+            if (go.template_.entry == entry)
+                return EntityRef(go.guid);
+        return EntityRef.init;
+    }
+
+    ActionResult hostObjectUsable(EntityRef object, bool usable)
+    {
+        import dmangos.world.updatefields : GAMEOBJECT_FLAGS;
+
+        enum uint goFlagNoInteract = 0x10;
+        auto go = world_ is null ? null : world_.gameObjectAt(object.guid);
+        if (go is null)
+            return ActionResult.notHere;
+        const flags = go.values.get!GAMEOBJECT_FLAGS;
+        go.values.set!GAMEOBJECT_FLAGS(usable ? flags & ~goFlagNoInteract : flags | goFlagNoInteract);
+        world_.flushGameObject(go);
+        return ActionResult.ok;
+    }
+
+    uint hostEntryOf(EntityRef who)
+    {
+        if (who.guid == me.guid)
+            return me.template_.entry;
+        if (world_ is null)
+            return 0;
+        if (auto c = world_.creatureAt(who.guid))
+            return c.template_.entry;
+        if (auto go = world_.gameObjectAt(who.guid))
+            return go.template_.entry;
+        return 0;
+    }
+
+    void hostGroupQuestEvent(EntityRef player, uint quest)
+    {
+        if (world_ is null || lore is null)
+            return;
+        if (auto leader = world_.unit(player.guid))
+            leader.questEventHappened(quest);
+        foreach (other; world_.playersNear(me.position, 100))
+            if (other.combatGuid != player.guid && other.fighter.alive && lore.sameGroup(player.guid, other.combatGuid))
+                other.questEventHappened(quest);
+    }
+
+    /// A creature it summoned died: its script hears of it.
+    void summonDied(EntityRef summon, EntityRef killer, CombatWorld world)
+    {
+        if (!behaviour)
+            return;
+        if (world !is null)
+            world_ = world;
+        raiseScript(SummonDied(summon, killer));
+        if (world_ !is null)
+            world_.wake(me.guid);
+    }
 }

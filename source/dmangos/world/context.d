@@ -51,7 +51,7 @@ import dmangos.world.opcodes : ChatType, Language, Opcode;
 import dmangos.world.creatureai : CombatWorld, CreatureLore;
 import dmangos.world.npcdata : BroadcastText;
 import dmangos.world.spells : SpellInfo;
-import dmangos.script.api : ActionResult, EntityRef, GameObjectHost, Waypoint;
+import dmangos.script.api : ActionResult, EntityRef, GameObjectHost, Location, QuestProgress, Waypoint;
 import dmangos.script.registry : ScriptHandle, ScriptKind, ScriptRuntime;
 import dmangos.scripts : scriptModules;
 import dmangos.world.instancescripting : InstanceScript;
@@ -2685,6 +2685,12 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return summonCreature(world, entry, at, cast(TempSpawnType) type, durationMs, summoner);
     }
 
+    /// See `CreatureLore.sameGroup`.
+    bool sameGroup(ulong a, ulong b)
+    {
+        return groups.sameGroup(a, b);
+    }
+
     /// See `CreatureLore.summonSpot`.
     bool summonSpot(uint id, out Position at, out uint seconds)
     {
@@ -3154,6 +3160,93 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             import dmangos.log : info;
 
             info!"script %s (%s %s): %s"(scripts.nameOf(go.behaviour), go.template_.name, go.spawn.guid, text);
+        }
+
+        // Kalimdor scripts:
+
+        Location hostObjectLocation()
+        {
+            const p = go.position;
+            return Location(p.x, p.y, p.z, p.orientation);
+        }
+
+        QuestProgress hostObjectQuestStatus(EntityRef player, uint quest)
+        {
+            auto unit = map.unit(player.guid);
+            return unit ? unit.questStatusOf(quest) : QuestProgress.none;
+        }
+
+        void hostObjectQuestEvent(EntityRef player, uint quest)
+        {
+            if (auto unit = map.unit(player.guid))
+                unit.questEventHappened(quest);
+        }
+
+        void hostObjectKillCredit(EntityRef player, uint entry)
+        {
+            if (auto unit = map.unit(player.guid))
+                unit.killCreditFrom(entry, 0);
+        }
+
+        EntityRef hostObjectSummon(uint entry, Location at, uint despawnMs, EntityRef attack)
+        {
+            import dmangos.world.creature : TempSpawnType;
+
+            if (at == Location.init)
+            {
+                const p = go.position;
+                at = Location(p.x, p.y, p.z, p.orientation);
+            }
+            auto summoned = summonCreature(map, entry, Position(at.x, at.y, at.z, at.orientation),
+                despawnMs ? TempSpawnType.timedOutOfCombatOrDead : TempSpawnType.dead, despawnMs, 0);
+            if (summoned is null)
+                return EntityRef.init;
+            if (attack)
+                if (auto victim = map.unit(attack.guid))
+                    summoned.ai.attackedBy(victim, map);
+            return EntityRef(summoned.guid);
+        }
+
+        EntityRef hostObjectCreatureNear(uint entry, float range)
+        {
+            foreach (c; map.creaturesNear(go.position, range))
+                if (c.spawn.entry == entry && c.alive)
+                    return EntityRef(c.guid);
+            return EntityRef.init;
+        }
+
+        ActionResult hostObjectSignal(EntityRef to, uint id, int value)
+        {
+            return signalCreature(map, EntityRef(go.guid), to, id, value);
+        }
+
+        void hostObjectUsable(bool usable)
+        {
+            import dmangos.world.updatefields : GAMEOBJECT_FLAGS;
+
+            enum uint goFlagNoInteract = 0x10;
+            const flags = go.values.get!GAMEOBJECT_FLAGS;
+            go.values.set!GAMEOBJECT_FLAGS(usable ? flags & ~goFlagNoInteract : flags | goFlagNoInteract);
+            map.flushGameObject(go);
+        }
+
+        ActionResult hostObjectCast(EntityRef caster, uint spell, EntityRef target)
+        {
+            import dmangos.world.character : Character;
+            import dmangos.world.spellcast : SpellCastResult, SpellTargets, TargetFlags;
+
+            if (auto creature = map.creatureAt(caster.guid))
+                return creature.ai.castFor(map, spell, target.guid, true);
+            auto session = cast(Character) onlinePlayer(caster.guid);
+            if (session is null || session.player is null || session.currentMap !is map)
+                return ActionResult.notHere;
+            const info = data.spells.spell(spell);
+            if (info is null)
+                return ActionResult.failed;
+            const self = !target || target.guid == caster.guid;
+            const result = session.castSpell(info, SpellTargets(self ? TargetFlags.self : TargetFlags.unit,
+                self ? caster.guid : target.guid), true, 0);
+            return result == SpellCastResult.ok ? ActionResult.ok : ActionResult.notAllowed;
         }
     }
 

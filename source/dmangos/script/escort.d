@@ -74,7 +74,7 @@ struct Escort
             return;
         if (!playerNear(me))
             return fail(me);
-        if (me.inCombat)
+        if (me.inCombat || paused)
             return;
         if (waiting)
         {
@@ -99,6 +99,15 @@ struct Escort
     @property bool busy() const
     {
         return active;
+    }
+
+    // Kalimdor scripts:
+    bool paused; /// it stays where it is (an event on its way) until `pause(false)`
+
+    /// It stays where it is (`SetEscortPaused`), or goes on.
+    void pause(bool on)
+    {
+        paused = on;
     }
 
     private void over(ref CreatureContext me)

@@ -17,6 +17,7 @@ import std.math : atan2, cos, sin, sqrt;
 import dmangos.world.combat;
 alias attackStartPacket = dmangos.world.combat.attackStart;
 import dmangos.world.creature : Creature, VirtualItem;
+import dmangos.world.gameobject : GameObject;
 import dmangos.world.defines : UnitFlags;
 import dmangos.world.motion : IdleMovement, launch, MotionWorld, MovementGenerator, stopMoving;
 import dmangos.world.movement : MovementFlags, Position;
@@ -94,6 +95,11 @@ interface CreatureLore
     @property ScriptRuntime scriptRuntime();
     /// ditto
     ScriptHandle spellScript(uint id);
+
+    // Kalimdor scripts:
+
+    /// Whether two players are in one group.
+    bool sameGroup(ulong a, ulong b);
 }
 
 /// What a creature's AI needs of its map.
@@ -135,6 +141,17 @@ interface CombatWorld : MotionWorld
 
     /// A packet for the players within `range` yards of `center`.
     void sendInRange(Position center, float range, Opcode opcode, const(ubyte)[] body_);
+
+    // Kalimdor scripts:
+
+    /// The game objects within `range` yards of `center` here.
+    GameObject[] gameObjectsNear(Position center, float range);
+
+    /// The game object with this guid here; null if none.
+    GameObject gameObjectAt(ulong guid);
+
+    /// Sends what changed in the game object's fields to those who see it.
+    void flushGameObject(GameObject go);
 }
 
 /// How far a creature's call for help reaches (yards), how long its allies take to come (ms), and
@@ -351,6 +368,11 @@ final class CreatureAI : Scripted, CreatureHost
             script.died(this, victim);
         if (world !is null)
             raiseScript(Died(EntityRef(victim)));
+        // Kalimdor scripts: its summoner's script hears of it.
+        if (world !is null && me.summon.summoner)
+            if (auto summoner = world.creatureAt(me.summon.summoner))
+                if (summoner.ai !is null)
+                    summoner.ai.summonDied(EntityRef(me.guid), EntityRef(victim), world);
         foreach (guid, _; threat)
             notifyRemoved(guid, world);
         threat = null;
