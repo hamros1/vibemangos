@@ -388,6 +388,7 @@ mixin template CreatureCasting()
             if (r.miss != SpellMissInfo.none)
                 missed[r.guid] = true;
         bool auraDone;
+        bool[3] summonedBy;
         foreach (i; 0 .. 3)
         {
             const effect = spell.effect[i];
@@ -444,6 +445,44 @@ mixin template CreatureCasting()
                     break;
                 case SpellEffect.none:
                     break;
+                case SpellEffect.summon, SpellEffect.summonWild, SpellEffect.summonGuardian:
+                    if (!summonedBy[i]) // once for the effect, whatever its targets
+                    {
+                        summonedBy[i] = true;
+                        summonBySpell(spell, i, value);
+                    }
+                    break;
+                case SpellEffect.knockBack: // SPELL_EFFECT_KNOCK_BACK: a player thrown from the caster
+                    if (guid != me.guid)
+                        if (auto other = world_.unit(guid))
+                            if (other.session !is null)
+                                other.session.knockedBack(me.position, spell.miscValue[i] / 10.0f, value / 10.0f);
+                    break;
+                case SpellEffect.healthLeech: // SPELL_EFFECT_HEALTH_LEECH: damage, and as much health to the caster
+                    if (guid != me.guid && value > 0)
+                    {
+                        spellDamageTo(spell, guid, value, spell.casting.school);
+                        const multiple = spell.casting.multipleValue[i];
+                        healCreature(spell, me, cast(int)(value * (multiple > 0 ? multiple : 1)));
+                    }
+                    break;
+                case SpellEffect.powerDrain, SpellEffect.powerBurn: // a player's power drained to the caster, or burnt
+                    if (guid != me.guid && value > 0)
+                        if (auto other = world_.unit(guid))
+                            if (other.session !is null)
+                            {
+                                const taken = other.session.drainPower(cast(ubyte) spell.miscValue[i], value);
+                                const multiple = spell.casting.multipleValue[i];
+                                const worth = cast(int)(taken * (multiple > 0 ? multiple : 1));
+                                if (effect == SpellEffect.powerBurn)
+                                    spellDamageTo(spell, guid, worth, spell.casting.school);
+                                else if (worth > 0)
+                                {
+                                    const mana = me.values.get!UNIT_FIELD_POWER1(0), maximum = me.values.get!UNIT_FIELD_MAXPOWER1(0);
+                                    me.values.set!UNIT_FIELD_POWER1(0, mana + worth > maximum ? maximum : mana + worth);
+                                }
+                            }
+                    break;
                 case SpellEffect.teleportUnits: // SPELL_EFFECT_TELEPORT_UNITS: a player to the spell's place
                     if (guid != me.guid)
                         lore.teleportBySpell(guid, spell.id);
@@ -459,22 +498,20 @@ mixin template CreatureCasting()
                     break;
                 // Not done by a creature's cast:
                 case SpellEffect.portalTeleport,
-                    SpellEffect.environmentalDamage, SpellEffect.powerDrain, SpellEffect.healthLeech,
-                    SpellEffect.bind, SpellEffect.portal, SpellEffect.ritualBase, SpellEffect.ritualSpecialize,
+                    SpellEffect.environmentalDamage, SpellEffect.bind, SpellEffect.portal, SpellEffect.ritualBase, SpellEffect.ritualSpecialize,
                     SpellEffect.ritualActivatePortal, SpellEffect.questComplete, SpellEffect.resurrect,
                     SpellEffect.addExtraAttacks, SpellEffect.dodge, SpellEffect.evade, SpellEffect.parry,
                     SpellEffect.block, SpellEffect.createItem, SpellEffect.weapon, SpellEffect.defense,
-                    SpellEffect.persistentAreaAura, SpellEffect.summon, SpellEffect.leap, SpellEffect.energize,
+                    SpellEffect.persistentAreaAura, SpellEffect.leap, SpellEffect.energize,
                     SpellEffect.triggerMissile, SpellEffect.openLock, SpellEffect.summonChangeItem,
                     SpellEffect.applyAreaAuraParty, SpellEffect.learnSpell, SpellEffect.spellDefense,
-                    SpellEffect.dispel, SpellEffect.language, SpellEffect.dualWield, SpellEffect.summonWild,
-                    SpellEffect.summonGuardian, SpellEffect.teleportUnitsFaceCaster, SpellEffect.skillStep,
+                    SpellEffect.dispel, SpellEffect.language, SpellEffect.dualWield, SpellEffect.teleportUnitsFaceCaster, SpellEffect.skillStep,
                     SpellEffect.addHonor, SpellEffect.spawn, SpellEffect.tradeSkill, SpellEffect.stealth,
                     SpellEffect.detect, SpellEffect.transDoor, SpellEffect.forceCriticalHit,
                     SpellEffect.guaranteeHit, SpellEffect.enchantItem, SpellEffect.enchantItemTemporary,
                     SpellEffect.tamecreature, SpellEffect.summonPet, SpellEffect.learnPetSpell,
                     SpellEffect.openLockItem, SpellEffect.proficiency, SpellEffect.sendEvent,
-                    SpellEffect.powerBurn, SpellEffect.threat, SpellEffect.healthFunnel, SpellEffect.powerFunnel,
+                    SpellEffect.threat, SpellEffect.healthFunnel, SpellEffect.powerFunnel,
                     SpellEffect.healMaxHealth, SpellEffect.distract, SpellEffect.pull, SpellEffect.pickpocket,
                     SpellEffect.addFarsight, SpellEffect.summonPossessed, SpellEffect.summonTotem,
                     SpellEffect.healMechanical, SpellEffect.summonObjectWild, SpellEffect.attack,
@@ -483,8 +520,7 @@ mixin template CreatureCasting()
                     SpellEffect.activateObject, SpellEffect.summonTotemSlot1, SpellEffect.summonTotemSlot2,
                     SpellEffect.summonTotemSlot3, SpellEffect.summonTotemSlot4, SpellEffect.threatAll,
                     SpellEffect.enchantHeldItem, SpellEffect.summonPhantasm, SpellEffect.selfResurrect,
-                    SpellEffect.skinning, SpellEffect.charge, SpellEffect.summonCritter, SpellEffect.knockBack,
-                    SpellEffect.disenchant, SpellEffect.inebriate, SpellEffect.feedPet, SpellEffect.dismissPet,
+                    SpellEffect.skinning, SpellEffect.charge, SpellEffect.summonCritter, SpellEffect.disenchant, SpellEffect.inebriate, SpellEffect.feedPet, SpellEffect.dismissPet,
                     SpellEffect.reputation, SpellEffect.summonObjectSlot1, SpellEffect.summonObjectSlot2,
                     SpellEffect.summonObjectSlot3, SpellEffect.summonObjectSlot4, SpellEffect.dispelMechanic,
                     SpellEffect.summonDeadPet, SpellEffect.destroyAllTotems, SpellEffect.durabilityDamage,
@@ -577,6 +613,35 @@ mixin template CreatureCasting()
     }
 
     /// `SPELL_EFFECT_HEAL` on itself or a friend.
+    /**
+     * `SPELL_EFFECT_SUMMON`, `_SUMMON_WILD`, `_SUMMON_GUARDIAN`: the creature of the effect's misc value (several for
+     * a wild summon's value, at most five) beside the caster, for the spell's duration, fighting its victim.
+     */
+    private void summonBySpell(const(SpellInfo)* spell, size_t i, int value)
+    {
+        import std.math : cos, sin, PI;
+        import dmangos.world.creature : TempSpawnType;
+        import dmangos.world.spellcast : duration;
+
+        const entry = cast(uint) spell.miscValue[i];
+        if (entry == 0 || lore is null || world_ is null)
+            return;
+        const count = spell.effect[i] == SpellEffect.summonWild && value > 1 ? (value > 5 ? 5 : value) : 1;
+        const ms = duration(*spell, lore.clientData, me.values.get!UNIT_FIELD_LEVEL);
+        auto victim = world_.unit(currentVictim);
+        foreach (n; 0 .. count)
+        {
+            const angle = me.position.orientation + PI / 2 + n * 2 * PI / count;
+            auto at = me.position;
+            at.x += 3 * cos(angle);
+            at.y += 3 * sin(angle);
+            auto summoned = lore.summon(world_, entry, at, ms > 0 ? TempSpawnType.timedOutOfCombatOrDead : TempSpawnType.dead,
+                ms > 0 ? ms : 0, me.guid);
+            if (summoned !is null && victim)
+                summoned.ai.attackStart(victim, world_);
+        }
+    }
+
     private void healCreature(const(SpellInfo)* spell, Creature who, int value)
     {
         if (value <= 0 || who is null || !who.alive)
@@ -1513,4 +1578,86 @@ unittest
     assert(went == tries, "every cast went");
     assert(told > 0, "some casts missed, dodged or parried");
     assert(told < tries / 2, "most land");
+}
+
+// A creature's summons (a wild summon's two beside it), its knockback on a player, its drain of a player's power.
+unittest
+{
+    import core.time : MonoTime, msecs;
+    import std.algorithm.searching : canFind;
+    import dmangos.dbc : buildDbc;
+    import dmangos.world.clientdata : factionTemplateFormat, spellRangeFormat;
+    import dmangos.world.creature : Creature;
+    import dmangos.world.map : MapObject;
+    import dmangos.world.movement : Position;
+    import dmangos.world.objects : HighGuid, makeGuid;
+    import dmangos.world.opcodes;
+    import dmangos.world.spellhandlers : testSpell;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+    import dmangos.world.updatefields;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    uint bits(float f) { return *cast(uint*) &f; }
+    context.client.spellRanges = typeof(context.client.spellRanges).parse(buildDbc(spellRangeFormat,
+        [[1u, bits(0), bits(30), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]), "SpellRange.dbc");
+    enum uint call = 95301, shove = 95302, drain = 95303;
+    with (context.data.spells)
+    {
+        spells[call] = testSpell(call, SpellEffect.summonWild, ImplicitTarget.caster, 2);
+        spells.edit(call).miscValue[0] = creatureTrainer;
+        spells.edit(call).casting.dmgClass = DamageClass.none;
+        spells[shove] = testSpell(shove, SpellEffect.knockBack, ImplicitTarget.enemy, 50);
+        spells.edit(shove).miscValue[0] = 100;
+        spells.edit(shove).casting.dmgClass = DamageClass.none;
+        spells[drain] = testSpell(drain, SpellEffect.powerDrain, ImplicitTarget.enemy, 50);
+        spells.edit(drain).miscValue[0] = 1; // rage
+        spells.edit(drain).casting.dmgClass = DamageClass.none;
+    }
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f, 1.97f));
+    anduin.read();
+    auto map = context.map(0);
+    auto keeper = cast(Creature) map.findObject(makeGuid(HighGuid.unit, creatureInnkeeper, innkeeperSpawn));
+    enum uint players = 1, monsters = 8;
+    const humans = anduin.session.character.values.get!UNIT_FIELD_FACTIONTEMPLATE;
+    context.client.factionTemplates = typeof(context.client.factionTemplates).parse(buildDbc(factionTemplateFormat,
+        [[humans, 1, 0, players | 2, 2, monsters, 0, 0, 0, 0, 0, 0, 0, 0], [14u, 14, 0, monsters, 0, players, 0, 0, 0,
+        0, 0, 0, 0, 0]]), "FactionTemplate.dbc");
+    keeper.factionTemplate = context.client.factionTemplates.lookup(14);
+    const me = anduin.session.character;
+
+    size_t trainers()
+    {
+        size_t n;
+        map.forEachObject((MapObject o) {
+            if (auto c = cast(Creature) o)
+                if (c.template_.entry == creatureTrainer)
+                    ++n;
+        });
+        return n;
+    }
+
+    import dmangos.world.packets : ClientGuid;
+
+    anduin.write(Opcode.CMSG_ATTACKSWING, ClientGuid(keeper.guid)); // it fights, and knows its map
+    now += 50.msecs;
+    anduin.session.update(50.msecs);
+    map.update(50.msecs);
+    anduin.read();
+    const before = trainers();
+    assert(keeper.ai.castSpell(context.data.spells.spell(call), keeper.guid, 0));
+    assert(trainers() == before + 2, "two summoned beside it");
+
+    assert(keeper.ai.castSpell(context.data.spells.spell(shove), me.guid, 0));
+    assert(opcodesOf(anduin.read()).canFind(Opcode.SMSG_MOVE_KNOCK_BACK), "thrown");
+
+    alias Power = imported!"dmangos.world.defines".Power;
+    anduin.session.inWorld.player.modifyPower(Power.rage, 200);
+    const rage = me.values.get!UNIT_FIELD_POWER1(Power.rage);
+    assert(rage >= 50);
+    assert(keeper.ai.castSpell(context.data.spells.spell(drain), me.guid, 0));
+    assert(me.values.get!UNIT_FIELD_POWER1(Power.rage) == rage - 50, "50 of its rage drained");
 }

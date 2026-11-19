@@ -459,6 +459,37 @@ final class Character : OnlinePlayer, Looter
     }
 
     /// A spell its battleground casts on it (a quest's credit).
+    /// Thrown from `from` (a creature's knockback): its client is told how, and moves.
+    void knockedBack(Position from, float horizontal, float vertical)
+    {
+        import std.math : atan2, cos, sin;
+        import dmangos.world.packets : ServerKnockBack;
+
+        if (player is null)
+            return;
+        const p = player.position;
+        const angle = atan2(p.y - from.y, p.x - from.x);
+        send(ServerKnockBack(player.guid, moveOrderCounter++, cos(angle), sin(angle), horizontal, vertical));
+    }
+
+    /// Up to `amount` of power `type` taken (a creature's drain or burn): what was taken.
+    int drainPower(ubyte type, int amount)
+    {
+        import dmangos.world.defines : Power;
+        import dmangos.world.updatefields : UNIT_FIELD_POWER1;
+
+        if (player is null || type > 4)
+            return 0;
+        const have = cast(int) player.values.get!UNIT_FIELD_POWER1(type);
+        const taken = amount < have ? amount : have;
+        if (taken > 0)
+        {
+            player.modifyPower(cast(Power) type, -taken);
+            flushPlayerChanges();
+        }
+        return taken;
+    }
+
     /// A spell (a creature's) sends the player to `at` on map `mapId` (`TELEPORT_UNITS`).
     void spellTeleport(uint mapId, Position at)
     {
