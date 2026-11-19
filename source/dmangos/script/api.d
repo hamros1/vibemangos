@@ -201,6 +201,16 @@ struct SpellHit
     uint schoolMask; /// Raid scripts: the schools it struck with (`SpellSchoolMask`: 1 physical, 4 fire, 8 nature, 16 frost, ...)
 }
 
+// Instance round 2:
+
+/// Its aura of `spell`, from `caster`, went: it ran out, was dispelled or cancelled, or a script took it away
+/// (not when it died).
+struct AuraRemoved
+{
+    EntityRef caster;
+    uint spell;
+}
+
 /// A message from another script (`from`: a creature, or nothing for its dungeon's script).
 struct Signal
 {

@@ -217,7 +217,7 @@ struct UnitRef
         case UnitKind.creature:
             if (auto aura = creature.auras.find(spell))
             {
-                creature.auras.remove(aura, creature.values);
+                creature.loseAura(aura, map);
                 map.flushObjectChanges(creature);
             }
             return;

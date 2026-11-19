@@ -3542,6 +3542,12 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         startScript(DbScriptType.event, event, map, source, target);
     }
 
+    /// See `CreatureLore.scriptedEvent`.
+    void scriptedEvent(uint event, CombatWorld world, ulong source, ulong target)
+    {
+        scriptedEvent(event, cast(Map) world, source, target);
+    }
+
     /// See `InstanceContext.spawnObjects`: the game objects of `entry` on `map` (near a place) not in the world come.
     private uint spawnDungeonObjects(Map map, uint entry, uint despawnSeconds, Location near, float range)
     {

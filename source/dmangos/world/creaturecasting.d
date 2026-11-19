@@ -38,7 +38,7 @@ mixin template CreatureCasting()
     import dmangos.world.spells : SpellInfo;
     import dmangos.world.updatefields;
     import dmangos.world.npcdata : BroadcastText;
-    import dmangos.script.api : EntityRef, KilledUnit, SpellHit;
+    import dmangos.script.api : AuraRemoved, EntityRef, KilledUnit, SpellHit;
 
     private
     {
@@ -80,6 +80,13 @@ mixin template CreatureCasting()
         if (script is null)
             return;
         script.spellHit(this, caster, spell, schoolMask);
+    }
+
+    /// Its aura of `spell` from `caster` went (`Creature.loseAura`): its script hears of it.
+    void auraLost(ulong caster, uint spell, CombatWorld world)
+    {
+        world_ = world;
+        raiseScript(AuraRemoved(EntityRef(caster), spell));
     }
 
     /// A player's text emote at it.
@@ -388,7 +395,7 @@ mixin template CreatureCasting()
             if (r.miss != SpellMissInfo.none)
                 missed[r.guid] = true;
         bool auraDone;
-        bool[3] summonedBy;
+        bool[3] summonedBy; // the effects done once whatever their targets (a summon, an event)
         foreach (i; 0 .. 3)
         {
             const effect = spell.effect[i];
@@ -444,6 +451,13 @@ mixin template CreatureCasting()
                         }
                     break;
                 case SpellEffect.none:
+                    break;
+                case SpellEffect.sendEvent: // SPELL_EFFECT_SEND_EVENT: the event's scripts, once, the caster its source
+                    if (!summonedBy[i])
+                    {
+                        summonedBy[i] = true;
+                        lore.scriptedEvent(cast(uint) spell.miscValue[i], world_, me.guid, guid == me.guid ? 0 : guid);
+                    }
                     break;
                 case SpellEffect.summon, SpellEffect.summonWild, SpellEffect.summonGuardian:
                     if (!summonedBy[i]) // once for the effect, whatever its targets
@@ -510,7 +524,7 @@ mixin template CreatureCasting()
                     SpellEffect.detect, SpellEffect.transDoor, SpellEffect.forceCriticalHit,
                     SpellEffect.guaranteeHit, SpellEffect.enchantItem, SpellEffect.enchantItemTemporary,
                     SpellEffect.tamecreature, SpellEffect.summonPet, SpellEffect.learnPetSpell,
-                    SpellEffect.openLockItem, SpellEffect.proficiency, SpellEffect.sendEvent,
+                    SpellEffect.openLockItem, SpellEffect.proficiency,
                     SpellEffect.threat, SpellEffect.healthFunnel, SpellEffect.powerFunnel,
                     SpellEffect.healMaxHealth, SpellEffect.distract, SpellEffect.pull, SpellEffect.pickpocket,
                     SpellEffect.addFarsight, SpellEffect.summonPossessed, SpellEffect.summonTotem,
@@ -794,7 +808,7 @@ mixin template CreatureCasting()
         {
             if (auto aura = creature.auras.find(spell))
             {
-                creature.auras.remove(aura, creature.values);
+                creature.loseAura(aura, world_);
                 world_.flushCreature(creature);
             }
         }

@@ -497,7 +497,7 @@ private:
                 if (auto aura = creature.auras.find(spell.id))
                     if (aura.caster == player.guid)
                     {
-                        creature.auras.remove(aura, creature.values);
+                        creature.loseAura(aura, map);
                         map.flushCreature(creature);
                     }
             }
@@ -1827,7 +1827,7 @@ private:
         foreach (aura; removed)
         {
             if (creature !is null)
-                creature.auras.remove(aura, creature.values);
+                creature.loseAura(aura, map);
             else
                 other.removeAura(aura);
         }
