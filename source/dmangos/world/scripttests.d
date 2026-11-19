@@ -734,3 +734,104 @@ unittest
     const saved = db.loadInstances().instances;
     assert(saved.length == 1 && saved[0].data.length > 30, "the caverns remember");
 }
+
+/**
+ * Kalimdor scripts in the world (`npc_twiggy_flathead`, `npc_mist`): summons made friendly, one set
+ * on the player with a hostile faction, its death told to its summoner (the next comes sooner); a
+ * follower following its player; an item given.
+ */
+unittest
+{
+    import dmangos.dbc : buildDbc;
+    import dmangos.script.api : EntityRef;
+    import dmangos.scripts.barrens : TwiggyFlathead;
+    import dmangos.scripts.teldrassil : Mist;
+    import dmangos.world.clientdata : factionTemplateFormat;
+    import dmangos.world.motion : FollowMovement;
+    import dmangos.world.quests : Quest, QuestState;
+    import dmangos.world.teleport : moveTo;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    enum uint mist = 3568;
+    foreach (entry; [TwiggyFlathead.twiggy, TwiggyFlathead.challenger, TwiggyFlathead.bigWill, mist])
+    {
+        auto t = cast() context.data.creatureTemplates[creatureInnkeeper];
+        t.entry = entry;
+        context.data.creatureTemplates[entry] = t;
+    }
+    context.data.creatureScriptNames[TwiggyFlathead.twiggy] = "npc_twiggy_flathead";
+    context.data.creatureScriptNames[mist] = "npc_mist";
+    (cast() context.data.creatureTemplates[mist]).npcFlags = 2; // a quest giver
+    Quest q = {id: Mist.questMist, method: 2, maxLevel: 60, title: "Mist"};
+    q.specialFlags = 0x2;
+    context.data.quests.quests[q.id] = q;
+    context.data.quests.creatureStarts[mist] = [q.id];
+
+    const at = Position(-1690, -4330, 2.79f); // by the arena (on the test world's one map)
+    auto hero = loggedIn(context, db, 7, "Varian", at, AccountLevel.player, raceHuman, mapEasternKingdoms, 30);
+    hero.read();
+    enum uint players = 1, monsters = 8;
+    const humans = hero.session.character.values.get!UNIT_FIELD_FACTIONTEMPLATE;
+    context.client.factionTemplates = typeof(context.client.factionTemplates).parse(buildDbc(factionTemplateFormat,
+        [[humans, 1, 0, players | 2, 2, monsters, 0, 0, 0, 0, 0, 0, 0, 0],
+        [14u, 14, 0, monsters, 0, players, 0, 0, 0, 0, 0, 0, 0, 0],
+        [35u, 35, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        [79u, 79, 0, players | 2, 2, monsters, 0, 0, 0, 0, 0, 0, 0, 0]]), "FactionTemplate.dbc");
+    auto map = context.map(mapEasternKingdoms);
+    void run(int ms)
+    {
+        for (; ms > 0; ms -= 250)
+        {
+            now += 250.msecs;
+            context.update(now);
+        }
+    }
+
+    // Twiggy: six challengers come, friendly; the first is set on the player.
+    CreatureSpawn spawn = {guid: 90040, entry: TwiggyFlathead.twiggy, map: mapEasternKingdoms, x: at.x + 3, y: at.y, z: at.z};
+    auto twiggy = context.makeCreature(&spawn);
+    map.addObject(twiggy);
+    twiggy.ai.signalled(EntityRef(hero.session.character.guid), TwiggyFlathead.signalStart, 0, map);
+    run(1500);
+    Creature[] challengers;
+    foreach (c; map.creaturesNear(Position(-1680, -4330, 2.79f), 30)) // the arena's places
+        if (c.spawn.entry == TwiggyFlathead.challenger)
+            challengers ~= c;
+    assert(challengers.length == 6, "the challengers come");
+    foreach (c; challengers)
+        assert(c.values.get!UNIT_FIELD_FACTIONTEMPLATE == 35 && c.summon.summoner == twiggy.guid);
+    run(5000);
+    Creature[] fighting()
+    {
+        Creature[] found;
+        foreach (c; challengers)
+            if (c.alive && c.ai.inCombat)
+                found ~= c;
+        return found;
+    }
+    assert(fighting.length == 1 && fighting[0].ai.currentVictim == hero.session.character.guid
+        && fighting[0].values.get!UNIT_FIELD_FACTIONTEMPLATE == 14, "the first steps up");
+    // It falls: Twiggy hears of it, and the next steps up fifteen seconds later (not twenty-five).
+    fighting[0].die(map, context.unixTime);
+    run(16_000);
+    assert(fighting.length == 1, "the next, sooner");
+
+    // Mist: her quest taken, she follows the player with her faction.
+    CreatureSpawn mistSpawn = {guid: 90041, entry: mist, map: mapEasternKingdoms, x: at.x - 3, y: at.y, z: at.z};
+    auto cub = context.makeCreature(&mistSpawn);
+    map.addObject(cub);
+    ByteWriter accept;
+    accept.put(cub.guid);
+    accept.put(q.id);
+    hero.write(Opcode.CMSG_QUESTGIVER_ACCEPT_QUEST, accept.data);
+    assert(hero.session.character.questStatus[q.id].status == QuestState.incomplete);
+    assert(cast(FollowMovement) cub.generator !is null && cub.values.get!UNIT_FIELD_FACTIONTEMPLATE == 79);
+    assert(cub.values.get!UNIT_NPC_FLAGS == 0, "nobody else takes her");
+    // The player gone far away: she goes, and the quest fails.
+    hero.write(Opcode.MSG_MOVE_HEARTBEAT, moveTo(Position(at.x + 150, at.y, at.z)));
+    run(2000);
+    assert(hero.session.character.questStatus[q.id].status == QuestState.failed && map.findObject(cub.guid) is null);
+}
