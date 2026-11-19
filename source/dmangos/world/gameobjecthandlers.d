@@ -83,6 +83,7 @@ mixin template GameObjectHandlers()
             actAtReplica(request.guid, action);
             return;
         }
+        interruptAuras(AuraInterrupt.interacting); // using it (CMaNGOS's `DoInteraction`)
         if (!withinInteraction(go, 2))
             return;
         // Never for these: generic objects are used by spells, and some may not be touched.

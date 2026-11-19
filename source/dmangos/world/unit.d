@@ -273,6 +273,15 @@ struct UnitRef
         }
     }
 
+    /// A hostile spell landed on it: a player's auras that end with that go (Sap, Polymorph, Stealth...).
+    void hostileSpellLanded()
+    {
+        import dmangos.world.auras : AuraInterrupt;
+
+        if (kind == UnitKind.player)
+            session.interruptAuras(AuraInterrupt.hostileAction);
+    }
+
     /// A spell from `caster` hit it for `damage`: `dealDamage`.
     void spellHitBy(ulong caster, uint damage)
     {

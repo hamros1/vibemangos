@@ -343,6 +343,7 @@ mixin template CreatureCasting()
                     }
             }
         TargetResult[] results;
+        bool[ulong] attacked; // the targets it may attack (rolled)
         MeleeDamage[ulong] weaponRolls;
         bool weapon;
         foreach (i; 0 .. 3)
@@ -360,6 +361,7 @@ mixin template CreatureCasting()
                         results ~= TargetResult(guid, miss);
                         continue;
                     }
+                    attacked[guid] = true;
                     const f = other.fighter;
                     if (weapon)
                     {
@@ -394,6 +396,9 @@ mixin template CreatureCasting()
         foreach (r; results)
             if (r.miss != SpellMissInfo.none)
                 missed[r.guid] = true;
+            else if (r.guid in attacked) // a hostile spell landed: what that ends (`AURA_INTERRUPT_FLAG_HOSTILE_ACTION`)
+                if (auto other = world_.unit(r.guid))
+                    other.hostileSpellLanded();
         bool auraDone;
         bool[3] summonedBy; // the effects done once whatever their targets (a summon, an event)
         foreach (i; 0 .. 3)

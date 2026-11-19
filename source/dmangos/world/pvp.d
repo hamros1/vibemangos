@@ -282,6 +282,10 @@ mixin template PvPHandlers()
         }
         if (isPvP)
         {
+            // Fighting a flagged player ends Stealth, Divine Shield and the like (`PVP_ACTIVE_CANCELS`).
+            import dmangos.world.auras : AuraInterrupt;
+
+            attacker.interruptAuras(AuraInterrupt.pvpActiveCancels);
             attacker.pvpInCombat = true;
             attacker.updatePvP(true);
             attacker.updatePvPContested(true);

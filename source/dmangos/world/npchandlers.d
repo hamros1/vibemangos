@@ -116,6 +116,7 @@ private:
         auto creature = context.npcFor(map.findObject(guid)); // a creature, or another node's
         if (creature is null)
             return null;
+        interruptAuras(AuraInterrupt.interacting); // talking to it (CMaNGOS's `DoInteraction`), even if it fails
         if (npcFlags && !(creature.npcValues.get!UNIT_NPC_FLAGS & npcFlags))
             return null;
         // The dead talk only to spirit healers and guides.

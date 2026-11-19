@@ -458,6 +458,7 @@ private:
                     if (const t = cast(uint) aura.misc(i) in context.data.creatureTemplates)
                         display = t.modelId1;
                 player.values.set!UNIT_FIELD_MOUNTDISPLAYID(display);
+                interruptAuras(apply ? AuraInterrupt.mounting : AuraInterrupt.dismount, aura);
                 break;
             // An immunity purges what ends with one (a carried flag: `AURA_INTERRUPT_FLAG_INVULNERABILITY_BUFF_CANCELS`):
             // an effect immunity that helps, a school immunity with `SPELL_ATTR_EX_IMMUNITY_PURGES_EFFECT`.
@@ -467,12 +468,20 @@ private:
                         : (aura.spell.attributesEx & immunityPurges) != 0))
                     interruptAuras(invulnerabilityCancels);
                 break;
-            case AuraType.modStealth: // who sees it changes (`Map`'s `playerSees`)
+            case AuraType.modStealth: // who sees it changes (`Map`'s `playerSees`); a carried flag falls
+                if (apply)
+                    interruptAuras(AuraInterrupt.stealthInvisCancels, aura);
                 if (map !is null)
                     map.refreshVisibility(this);
                 break;
+            case AuraType.modInvisibility:
+                if (apply)
+                    interruptAuras(AuraInterrupt.stealthInvisCancels, aura);
+                break;
             case AuraType.modShapeshift:
                 player.values.setByte!UNIT_FIELD_BYTES_1(2, apply ? cast(ubyte) aura.misc(i) : 0);
+                if (apply)
+                    interruptAuras(AuraInterrupt.shapeshifting, aura);
                 break;
             case AuraType.modRoot, AuraType.modStun:
                 movement = true;
@@ -530,13 +539,37 @@ private:
             sendMovementOrder!(Opcode.SMSG_FORCE_MOVE_UNROOT)();
     }
 
-    /// What standing up, moving, damage, casting or attacking ends.
-    package void interruptAuras(uint flags)
+    /// What standing up, moving, damage, casting or attacking ends (`except`: the aura that causes it, kept).
+    package void interruptAuras(uint flags, const Aura except = null)
     {
         if (player is null)
             return;
         foreach (aura; player.auras.interruptedBy(flags))
+            if (aura !is except)
+                removeAura(aura);
+    }
+
+    /**
+     * What casting `spell` ends (CMaNGOS's `RemoveAurasOnCast`): the auras with `flag`, but its own aura from
+     * this player, Stealth for a spell allowed while stealthed (Pick Pocket, Distract), and invisibility for one
+     * allowed while invisible.
+     */
+    package void interruptAurasOnCast(uint flag, const(SpellInfo)* spell)
+    {
+        enum uint dispelStealth = 5, dispelInvisibility = 6;
+        enum uint allowWhileStealthed = 0x00000020, allowWhileInvisible = 0x00004000; // attributes ex, ex 2
+        if (player is null)
+            return;
+        foreach (aura; player.auras.interruptedBy(flag))
+        {
+            if (aura.spell.id == spell.id && aura.caster == player.guid)
+                continue;
+            if (aura.spell.casting.dispel == dispelStealth && (spell.attributesEx & allowWhileStealthed))
+                continue;
+            if (aura.spell.casting.dispel == dispelInvisibility && (spell.attributesEx2 & allowWhileInvisible))
+                continue;
             removeAura(aura);
+        }
     }
 
     /// Every aura goes on death but the passive ones.

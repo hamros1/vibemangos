@@ -392,6 +392,15 @@ private:
             return result;
         }
         auto c = Casting(spell, targets, 0, itemEntry, triggered, true);
+        // What a cast ends as it starts (`Spell::Prepare`): an item's use, then any action; not a triggered spell's,
+        // nor one that is not an action (`SPELL_ATTR_EX2_NOT_AN_ACTION`).
+        enum uint notAnAction = 0x10000000;
+        if (!triggered && !(spell.attributesEx2 & notAnAction))
+        {
+            if (itemEntry)
+                interruptAurasOnCast(AuraInterrupt.itemUse, spell);
+            interruptAurasOnCast(AuraInterrupt.action, spell);
+        }
         if (!triggered)
         {
             c.timer = castTimeCheat ? 0 : max(0, spellMod(SpellModOp.castingTime, spell,
@@ -1414,12 +1423,21 @@ private:
                 }
             }
         }
+        enum uint notAnAction = 0x10000000; // SPELL_ATTR_EX2_NOT_AN_ACTION
         if (!c.triggered)
         {
-            interruptAuras(AuraInterrupt.action); // auras that end when the player casts
+            if (!(spell.attributesEx2 & notAnAction))
+                interruptAurasOnCast(AuraInterrupt.actionLate, spell); // what a cast ends as it completes
             deliver(Opcode.SMSG_CAST_RESULT, castResultPacket(spell.id, SpellCastResult.ok));
         }
         map.sendToWatchers(this, Opcode.SMSG_SPELL_GO, spellGoPacket(player.guid, spell.id, results, c.targets), true);
+        // A hostile spell landed on another player (a duel, world PvP): what that ends (`HOSTILE_ACTION`).
+        foreach (r; results)
+            if (r.miss == SpellMissInfo.none && r.guid != player.guid)
+                if (auto other = cast(typeof(this)) context.onlinePlayer(r.guid))
+                    if (other.player !is null && other.map is map
+                            && canAttack(relatingNow(), other.relatingNow(), context.client))
+                        other.interruptAuras(AuraInterrupt.hostileAction);
         foreach (r; results)
             if (r.miss != SpellMissInfo.none)
             {
@@ -1428,6 +1446,11 @@ private:
                 if (auto creature = cast(Creature) map.findObject(r.guid))
                     spellAttacked(creature, 0);
             }
+        // The modifiers with charges it has now: those that may be spent by it (`spendChargedMods`).
+        Aura[] chargedAtStart;
+        foreach (aura; player.auras.list)
+            if (aura.charges)
+                chargedAtStart ~= aura;
         // A missile (`speed`) reaches each target after its flight: the effects then.
         foreach (i; 0 .. 3)
             foreach (target; effectTargets[i])
@@ -1450,6 +1473,7 @@ private:
                 if (auto creature = cast(Creature) map.findObject(r.guid))
                     if (creature.alive && creature.ai !is null)
                         creature.ai.spellHitBy(player.guid, spell.id, 1u << spell.casting.school, map);
+        spendChargedMods(spell, chargedAtStart, c.triggered);
         flushPlayerChanges();
         return SpellCastResult.ok;
     }
@@ -1862,7 +1886,70 @@ private:
     /// `value` of `spell`'s property `op`, with this player's spell modifiers (talents).
     T spellMod(T)(SpellModOp op, const(SpellInfo)* spell, T value)
     {
-        return applySpellMod(player.auras.list, op, *spell, value);
+        const modified = applySpellMod(player.auras.list, op, *spell, value);
+        if (modified != value)
+            noteChargedMods(op, spell);
+        return modified;
+    }
+
+    /// The modifiers with charges (Clearcasting, Presence of Mind, Nature's Swiftness) that changed a cast of a
+    /// spell, by spell: spent when that cast completes (`spendChargedMods`).
+    private ChargedModUse[] chargedModsUsed;
+
+    private struct ChargedModUse
+    {
+        Aura aura;
+        uint spell;
+    }
+
+    private void noteChargedMods(SpellModOp op, const(SpellInfo)* spell)
+    {
+        import std.algorithm.searching : canFind;
+        import dmangos.world.spellmods : affects;
+
+        foreach (aura; player.auras.list)
+        {
+            if (aura.charges == 0 || aura.spell.id == spell.id)
+                continue;
+            foreach (i; 0 .. 3)
+            {
+                const type = aura.spell.casting.applyAuraName[i];
+                if ((type == AuraType.addFlatModifier || type == AuraType.addPctModifier) && aura.misc(i) == op
+                        && (aura.effects & (1 << i)) && affects(aura, i, *spell))
+                {
+                    if (!chargedModsUsed.canFind!(u => u.aura is aura && u.spell == spell.id))
+                        chargedModsUsed ~= ChargedModUse(aura, spell.id);
+                    break;
+                }
+            }
+        }
+    }
+
+    /**
+     * A cast of `spell` completed: each modifier with charges that changed it loses one, and goes with its last
+     * (CMaNGOS's `RemoveSpellMods`); only those it had as its effects began (not a Clearcasting it set off). A
+     * triggered cast spends none.
+     */
+    private void spendChargedMods(const(SpellInfo)* spell, const(Aura)[] hadAtStart, bool triggered)
+    {
+        import std.algorithm.searching : canFind;
+
+        auto used = chargedModsUsed;
+        chargedModsUsed = null;
+        foreach (u; used)
+        {
+            if (u.spell != spell.id)
+            {
+                chargedModsUsed ~= u; // another cast's, still going
+                continue;
+            }
+            if (triggered || !hadAtStart.canFind!(a => a is u.aura) || !player.auras.list.canFind!(a => a is u.aura))
+                continue;
+            if (u.aura.charges > 1)
+                --u.aura.charges;
+            else
+                removeAura(u.aura);
+        }
     }
 
     /// An effect's value with the modifiers of its own index and of all effects.
@@ -3319,6 +3406,25 @@ unittest
     assert(mage.session.inWorld.castSpell((29102 in context.data.spells.spells), SpellTargets(TargetFlags.self, 0), false, 0)
         == SpellCastResult.ok);
     assert(me.values.get!UNIT_FIELD_POWER1 == 850, "not of its mask: the whole cost");
+
+    // With a charge (Clearcasting): spent by the first spell it changes, not by one it does not; then gone.
+    me.auras.remove(me.auras.find(29103), me.values);
+    auto charged = makeAura((29103 in context.data.spells.spells), me.guid, 10, -1, true, [-50, 0, 0]);
+    charged.charges = 1;
+    me.auras.apply(charged, me.values, isNew);
+    now += 2.seconds;
+    assert(mage.session.inWorld.castSpell((29102 in context.data.spells.spells), SpellTargets(TargetFlags.self, 0), false, 0)
+        == SpellCastResult.ok);
+    assert(me.auras.find(29103) !is null, "not spent by a spell it did not change");
+    now += 2.seconds;
+    assert(mage.session.inWorld.castSpell((29101 in context.data.spells.spells), SpellTargets(TargetFlags.self, 0), false, 0)
+        == SpellCastResult.ok);
+    assert(me.values.get!UNIT_FIELD_POWER1 == 700, "half the cost, once");
+    assert(me.auras.find(29103) is null, "its charge spent: gone");
+    now += 2.seconds;
+    assert(mage.session.inWorld.castSpell((29101 in context.data.spells.spells), SpellTargets(TargetFlags.self, 0), false, 0)
+        == SpellCastResult.ok);
+    assert(me.values.get!UNIT_FIELD_POWER1 == 600, "the whole cost again");
 }
 
 /// Struck in melee: a damage shield hurts the attacker; an aura that procs on being struck casts its spell, until out of charges.
@@ -3816,4 +3922,50 @@ unittest
     const again = anduin.session.inWorld.companion;
     anduin.write(Opcode.CMSG_LOGOUT_REQUEST, null); // a game master's account: at once
     assert(context.map(0).findObject(again) is null, "gone with its owner");
+}
+
+/// Casting ends what ends with an action (Stealth), but not for a spell allowed while stealthed (Pick Pocket).
+unittest
+{
+    import core.time : MonoTime, seconds;
+    import dmangos.auth.accounts : AccountLevel;
+    import dmangos.world.auras : AuraInterrupt, makeAura;
+    import dmangos.world.movement : Position;
+    import dmangos.world.player : Player;
+    import dmangos.world.spellcast : SpellCastResult, SpellTargets, TargetFlags;
+    import dmangos.world.spells : SpellInfo;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    auto stealth = SpellInfo(1784);
+    stealth.effect[0] = SpellEffect.applyAura;
+    stealth.casting.applyAuraName[0] = AuraType.modStealth;
+    stealth.casting.dispel = 5; // DISPEL_STEALTH
+    stealth.casting.auraInterruptFlags = AuraInterrupt.action | AuraInterrupt.damage;
+    context.data.spells.spells[1784] = stealth;
+    foreach (id, attributesEx; [921u: 0x20u, 29104u: 0u]) // Pick Pocket (allowed while stealthed), another
+    {
+        auto s = SpellInfo(id);
+        s.effect[0] = SpellEffect.dummy;
+        s.implicitTargetA[0] = ImplicitTarget.caster;
+        s.attributesEx = attributesEx;
+        context.data.spells.spells[id] = s;
+    }
+
+    auto rogue = loggedIn(context, db, 7, "Valeera", Position(-8949.95f, -132.49f, 83.53f), AccountLevel.player);
+    rogue.read();
+    auto me = cast(Player) rogue.session.character;
+    bool isNew;
+    me.auras.apply(makeAura((1784 in context.data.spells.spells), me.guid, 10, -1, true, [0, 0, 0]), me.values, isNew);
+    assert(rogue.session.inWorld.castSpell((921 in context.data.spells.spells), SpellTargets(TargetFlags.self, 0), false, 0)
+        == SpellCastResult.ok);
+    assert(me.auras.find(1784) !is null, "still stealthed");
+    now += 2.seconds;
+    assert(rogue.session.inWorld.castSpell((29104 in context.data.spells.spells), SpellTargets(TargetFlags.self, 0), false, 0)
+        == SpellCastResult.ok);
+    assert(me.auras.find(1784) is null, "another cast ends it");
 }

@@ -181,6 +181,7 @@ private:
             if (lootTarget && lootTarget != request.guid)
                 if (auto other = lootOf(lootTarget))
                     other.release(this);
+            interruptAuras(AuraInterrupt.looting);
             return bones.loot.showContentTo(this);
         }
         auto creature = cast(Creature) map.findObject(request.guid);
@@ -204,6 +205,7 @@ private:
         if (lootTarget && lootTarget != request.guid)
             if (auto other = lootOf(lootTarget))
                 other.release(this);
+        interruptAuras(AuraInterrupt.looting); // CMaNGOS's `DoLoot`
         creature.loot.showContentTo(this);
         creature.inspectingLoot();
     }

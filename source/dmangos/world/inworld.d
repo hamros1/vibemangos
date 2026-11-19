@@ -70,6 +70,8 @@ private:
     {
         // The map it is on: `deathOnLogout` may put its saved place at a graveyard of another map.
         auto leaving = map;
+        if (loggingOut)
+            interruptAuras(AuraInterrupt.leaveWorld);
         releaseLootOnLeave();
         spellsOnLeave();
         petsOnLeave();
@@ -1028,6 +1030,7 @@ private:
         const emote = reader.read!uint;
         if (player.deathState != DeathState.alive || (emote != emoteNone && emote != emoteWave))
             return;
+        interruptAuras(AuraInterrupt.animCancels);
         map.sendToWatchers(this, Opcode.SMSG_EMOTE, packetBody(ServerEmote(emote, player.guid)), true);
     }
 
@@ -1084,6 +1087,7 @@ private:
         enum : uint { stand = 0, sit = 1, sleep = 3, kneel = 8 }
         if (request.state != stand && request.state != sit && request.state != sleep && request.state != kneel)
             return;
+        interruptAuras(AuraInterrupt.animCancels);
         player.setStandState(cast(ubyte) request.state);
         if (request.state == stand)
             interruptAuras(AuraInterrupt.standingCancels); // food and drink end
@@ -1372,6 +1376,8 @@ private:
 
         // A one-shot animation, or a state that lasts until the player moves.
         const emote = textEntry.emote;
+        if (emote != oneshotNone && emote != stateSleep && emote != stateSit && emote != stateKneel)
+            interruptAuras(AuraInterrupt.animCancels);
         if (emote != oneshotNone && emote != stateSleep && emote != stateSit && emote != stateKneel)
             if (const entry = context.client.emotes.lookup(emote))
             {

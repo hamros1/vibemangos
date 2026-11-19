@@ -189,7 +189,7 @@ the Eastern Kingdoms' world map script, and the mechanics the raids approximate 
 control, Heigan's floor).
 Reputation is done (`reputation.d`, `reputationhandlers.d`; README's "Reputation"): kills, quests,
 spillover, war and peace, discounts, requirements. Not yet: `SMSG_SET_FORCED_REACTIONS` (spells force
-none yet), the PvP rank's discount. Reputation from spells (effect 103): done.
+none yet). Reputation from spells (effect 103) and the PvP rank's discount: done.
 
 ### Talents
 
@@ -199,8 +199,9 @@ use for stats and combat: crit, dodge, parry, block and hit chances; percentages
 armor and resistances, attack power and the off hand's damage (`stats.d`); weapon and defense skill
 bonuses; damage done and taken by school and by creature type, crit by creature type, threat
 (`combat.d`'s `DamageMods`); the five-second rule and Meditation; resistance to a mechanic; spell power
-from spirit (Spiritual Guidance); shield block value; lowering the target's resistances. Not yet:
-charges, `overrideClassScripts` (each talent its own), procs on the target.
+from spirit (Spiritual Guidance); shield block value; lowering the target's resistances; modifiers with
+charges (Clearcasting, Presence of Mind, Nature's Swiftness: spent by the cast they change). Not yet:
+`overrideClassScripts` (each talent its own), procs on the target.
 
 ### Mail
 
