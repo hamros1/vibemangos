@@ -197,6 +197,20 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
   `boss_veklor`, `boss_ouro`, `npc_ouro_spawner`, `npc_ouro_mound`, `npc_ouro_scarab`, `npc_ouro_trigger`,
   `boss_eye_of_cthun`, `boss_cthun`, `mob_giant_claw_tentacle`, `mob_anubisath_sentinel`, `mob_anubisath_defender`
 
+## scripts/naxxramas.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/eastern_kingdoms/naxxramas/` (`naxxramas.cpp`, `naxxramas.h`, `boss_anubrekhan.cpp`,
+  `boss_faerlina.cpp`, `boss_maexxna.cpp`, `boss_noth.cpp`, `boss_heigan.cpp`, `boss_loatheb.cpp`,
+  `boss_razuvious.cpp`, `boss_gothik.cpp`, `boss_four_horsemen.cpp`, `boss_patchwerk.cpp`, `boss_grobbulus.cpp`,
+  `boss_gluth.cpp`, `boss_thaddius.cpp`, `boss_sapphiron.cpp`, `boss_kelthuzad.cpp`)
+* Functions/ScriptNames: `instance_naxxramas`, `at_naxxramas`, `go_anub_door`, `go_sapphiron_birth`,
+  `boss_anubrekhan`, `boss_faerlina`, `boss_maexxna`, `npc_web_wrap`, `boss_noth`, `boss_heigan`,
+  `npc_diseased_maggot`, `boss_loatheb`, `boss_razuvious`, `boss_gothik`, `boss_lady_blaumeux`,
+  `boss_alexandros_mograine`, `boss_thane_korthazz`, `boss_sir_zeliek`, `boss_patchwerk`, `boss_grobbulus`,
+  `boss_gluth`, `boss_stalagg`, `boss_feugen`, `boss_thaddius`, `boss_sapphiron`, `boss_kelthuzad`,
+  `npc_icecrown_guardian`, `npc_stoneskin_gargoyle`, `npc_living_poison`
+
 ## timer.d
 
 * Projects: CMaNGOS, Ember

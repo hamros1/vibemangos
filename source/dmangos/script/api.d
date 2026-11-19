@@ -961,6 +961,8 @@ interface AreaTriggerHost
     ActionResult hostCastFrom(EntityRef caster, uint spell, EntityRef target, bool triggered);
     void hostSignalDungeon(uint id, int value);
     void hostLog(string text);
+    // Raid scripts:
+    int hostAskDungeon(uint id);
 }
 
 /// An area trigger script's handle, for the length of one handler.
@@ -1009,6 +1011,11 @@ struct AreaTriggerContext
 
     /// Whether a handler called `consume`.
     @property bool consumed() const { return consumed_; }
+
+    // Raid scripts:
+
+    /// The dungeon script's answer to question `id` (`Asked`); 0 outside a dungeon copy.
+    int askDungeon(uint id) { return host.hostAskDungeon(id); }
 }
 
 // ---------------------------------------------------------------------------
