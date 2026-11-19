@@ -190,6 +190,12 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Functions/ScriptNames: `npc_oox22fe`, `npc_shay_leafrunner` (with `ShaysBell`), `npc_captured_sprite_darter`,
   `go_cage_door`, `npc_kindal_moonweaver`
 
+## scripts/thousandneedles.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/kalimdor/thousand_needles.cpp`
+* Functions/ScriptNames: `npc_kanati`, `npc_lakota_windsong`, `npc_paoka_swiftmountain`, `npc_plucky_johnson`
+
 ## scripts/barrens.d
 
 * Projects: CMaNGOS

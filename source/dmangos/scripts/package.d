@@ -21,6 +21,7 @@ static import dmangos.scripts.durotar;
 static import dmangos.scripts.dustwallow;
 static import dmangos.scripts.felwood;
 static import dmangos.scripts.feralas;
+static import dmangos.scripts.thousandneedles;
 
 /// Every module holding scripts.
 alias scriptModules = AliasSeq!(dmangos.scripts.deadmines, dmangos.scripts.westfall, dmangos.scripts.spells,
@@ -29,4 +30,4 @@ alias scriptModules = AliasSeq!(dmangos.scripts.deadmines, dmangos.scripts.westf
     // Kalimdor scripts:
     dmangos.scripts.barrens, dmangos.scripts.ashenvale, dmangos.scripts.darkshore,
     dmangos.scripts.desolace, dmangos.scripts.durotar, dmangos.scripts.dustwallow,
-    dmangos.scripts.felwood, dmangos.scripts.feralas);
+    dmangos.scripts.felwood, dmangos.scripts.feralas, dmangos.scripts.thousandneedles);
