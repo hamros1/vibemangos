@@ -703,7 +703,7 @@ struct InstanceContext
     /// A creature goes away (to come back after its respawn time; a summon for good) in `delayMs`.
     ActionResult despawn(EntityRef creature, uint delayMs = 0) { return host.hostDespawn(creature, delayMs); }
 
-    /// Whether a creature of the copy is alive (one not here counts as dead).
+    /// Whether a creature (or player) of the copy is alive (one not here counts as dead).
     bool alive(EntityRef creature) { return host.hostAlive(creature); }
 
     /// Every game object of `entry` of the dungeon (within `range` yards of `near`, if a range is

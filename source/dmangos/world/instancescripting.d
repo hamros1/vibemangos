@@ -305,8 +305,12 @@ final class InstanceScript : InstanceHost
 
     bool hostAlive(EntityRef creature)
     {
-        auto c = creatureOf(creature);
-        return c !is null && c.alive;
+        if (auto c = creatureOf(creature))
+            return c.alive;
+        if (map !is null && creature.isPlayer)
+            if (auto player = map.unit(creature.guid))
+                return player.fighter.alive;
+        return false;
     }
 
     uint hostSpawnObjects(uint entry, uint despawnSeconds, Location near, float range)

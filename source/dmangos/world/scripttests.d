@@ -783,3 +783,50 @@ unittest
     assert(fiends == 8, "the first wave");
     assert(theGong.values.get!GAMEOBJECT_FLAGS & 0x10, "the gong is silent while they live");
 }
+
+/**
+ * A dungeon script's own timer and its actions on the copy's creatures, in the world: the Altar of
+ * the Keepers (here in the test world's dungeon) is used; five seconds later the first Stone Keeper
+ * is woken by the copy's script and attacks the one who used it.
+ */
+unittest
+{
+    import dmangos.scripts.uldaman : keepersAltar, stoneKeeper;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    const at = Position(-20, -383, 61);
+    auto t = cast() context.data.creatureTemplates[creatureInnkeeper];
+    t.entry = stoneKeeper;
+    t.npcFlags = 0;
+    context.data.creatureTemplates[stoneKeeper] = t;
+    context.data.creatureSpawns ~= CreatureSpawn(90300, stoneKeeper, mapDeadmines, at.x, at.y, at.z);
+    context.data.creatureCells[mapDeadmines][cellKeyAt(at.x, at.y)] ~= context.data.creatureSpawns.length - 1;
+    context.data.instanceScriptNames[mapDeadmines] = "instance_uldaman";
+
+    const outside = Position(deadminesEntrance[0], deadminesEntrance[1], deadminesEntrance[2]);
+    auto hero = loggedIn(context, db, 7, "Varian", outside, AccountLevel.administrator, raceHuman, mapEasternKingdoms, 60);
+    hero.say(".worldport 36 -16 -383 61");
+    hero.write(Opcode.MSG_MOVE_WORLDPORT_ACK, null);
+    hero.say(".cheat god");
+    hero.read();
+    auto map = context.instanceMap(hero.session.inWorld.instanceId);
+    auto keeper = cast(Creature) map.findObject(makeCreatureGuid(stoneKeeper, 90300));
+    assert(keeper !is null && !keeper.ai.inCombat);
+
+    context.scriptedEvent(keepersAltar, map, hero.session.character.guid, 0);
+    foreach (_; 0 .. 12) // three seconds: not yet
+    {
+        now += 250.msecs;
+        context.update(now);
+    }
+    assert(!keeper.ai.inCombat);
+    foreach (_; 0 .. 12)
+    {
+        now += 250.msecs;
+        context.update(now);
+    }
+    assert(keeper.ai.inCombat, "the keeper wakes and attacks");
+}
