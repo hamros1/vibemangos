@@ -692,18 +692,6 @@ struct CreatureContext
     /// It is at `at` at once (`NearTeleportTo`), on its map.
     void teleport(Location at) { host.hostTeleport(at); }
 
-    // Instance round 2:
-
-    /// `player` (here) is at `at` at once, on this map (C'Thun swallowing a player).
-    ActionResult teleport(EntityRef player, Location at) { return host.hostTeleportPlayer(player, at); }
-
-    /// Runs `dbscripts_on_creature_movement` script `id` on another creature here (as its waypoint's script
-    /// runs: a summoned imp walked along its path by this script).
-    ActionResult movementScript(EntityRef creature, uint id) { return host.hostMovementScriptOf(creature, id); }
-
-    /// `who`'s threat on it (0 if `who` is not on its threat list).
-    float threatOf(EntityRef who) { return host.hostThreatOf(who); }
-
     /// In a dungeon: every living player of the copy joins its fight (`DoZoneInCombat`).
     void zoneCombat() { host.hostZoneCombat(); }
 
@@ -798,6 +786,17 @@ struct CreatureContext
     /// The nearest living player within `range` yards that may be attacked; nothing if none.
     EntityRef playerNearby(float range) { return host.hostPlayerNearby(range); }
 
+    // Instance round 2:
+
+    /// `player` (here) is at `at` at once, on this map (C'Thun swallowing a player).
+    ActionResult teleport(EntityRef player, Location at) { return host.hostTeleportPlayer(player, at); }
+
+    /// Runs `dbscripts_on_creature_movement` script `id` on another creature here (as its waypoint's script
+    /// runs: a summoned imp walked along its path by this script).
+    ActionResult movementScript(EntityRef creature, uint id) { return host.hostMovementScriptOf(creature, id); }
+
+    /// `who`'s threat on it (0 if `who` is not on its threat list).
+    float threatOf(EntityRef who) { return host.hostThreatOf(who); }
 }
 
 // ---------------------------------------------------------------------------
