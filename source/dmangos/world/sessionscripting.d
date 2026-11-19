@@ -157,6 +157,9 @@ mixin template SessionScripting()
         bool hostHasItem(EntityRef who, uint item) { return this.outer.hostHasItem(who, item); }
         int hostAskDungeon(uint id) { return this.outer.hostAskDungeon(id); }
         void hostLog(string text) { this.outer.hostLog(text); }
+        // Instance round 2:
+        ActionResult hostTeleportPlayer(EntityRef who, Location at) { return this.outer.hostTeleportPlayer(who, at); }
+        bool hostHasAura(EntityRef who, uint spell) { return this.outer.hostHasAura(who, spell); }
         ActionResult hostModifyThreat(EntityRef creature, EntityRef target, int percent) { return this.outer.hostModifyThreat(creature, target, percent); }
         // Eastern Kingdoms scripts:
         void hostKillCreditAt(EntityRef who, uint entry) { this.outer.hostKillCredit(who, entry); }
@@ -328,6 +331,32 @@ mixin template SessionScripting()
         if (auto other = sessionHere(who))
             return other.questStatusOf(quest);
         return QuestProgress.none;
+    }
+
+    // Instance round 2:
+
+    /// See `AreaTriggerContext.teleport`.
+    ActionResult hostTeleportPlayer(EntityRef who, Location at)
+    {
+        import dmangos.world.movement : Position;
+        import dmangos.world.unit : UnitKind;
+
+        if (map is null)
+            return ActionResult.notHere;
+        auto unit = map.unit(who.guid);
+        if (unit.kind != UnitKind.player)
+            return ActionResult.notHere;
+        unit.session.spellTeleport(map.id, Position(at.x, at.y, at.z, at.orientation));
+        return ActionResult.ok;
+    }
+
+    /// See `AreaTriggerContext.hasAura`.
+    bool hostHasAura(EntityRef who, uint spell)
+    {
+        if (map is null)
+            return false;
+        auto unit = map.unit(who.guid);
+        return unit && unit.hasAuraOf(spell);
     }
 
     EntityRef hostCreatureNear(uint entry, Location at, float range)

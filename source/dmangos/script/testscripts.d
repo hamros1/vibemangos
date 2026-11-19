@@ -172,6 +172,9 @@ final class FakeCreature : CreatureHost
     void hostMoveNow(Location, uint, bool) {}
     void hostSpellList(uint) {}
     ubyte hostClassOf(EntityRef) { return 0; }
+
+    // Instance round 2:
+    ActionResult hostTeleportPlayer(EntityRef, Location) { return ActionResult.ok; }
 }
 
 unittest

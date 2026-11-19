@@ -423,6 +423,9 @@ interface CreatureHost
     void hostMoveNow(Location at, uint point, bool run);
     void hostSpellList(uint id);
     ubyte hostClassOf(EntityRef who);
+
+    // Instance round 2:
+    ActionResult hostTeleportPlayer(EntityRef player, Location at);
 }
 
 /**
@@ -645,7 +648,7 @@ struct CreatureContext
     /// `spell`'s aura goes from `who` (itself, another creature here, a player).
     ActionResult removeAura(EntityRef who, uint spell) { return host.hostRemoveAura(who, spell); }
 
-    /// Whether `who` (itself or another creature here) has `spell`'s aura.
+    /// Whether `who` (itself, another creature or a player here) has `spell`'s aura.
     bool hasAura(EntityRef who, uint spell) { return host.hostHasAura(who, spell); }
 
     /// Runs `dbscripts_on_creature_movement` script `id` on it (as a waypoint's script runs).
@@ -686,6 +689,11 @@ struct CreatureContext
 
     /// It is at `at` at once (`NearTeleportTo`), on its map.
     void teleport(Location at) { host.hostTeleport(at); }
+
+    // Instance round 2:
+
+    /// `player` (here) is at `at` at once, on this map (C'Thun swallowing a player).
+    ActionResult teleport(EntityRef player, Location at) { return host.hostTeleportPlayer(player, at); }
 
     /// In a dungeon: every living player of the copy joins its fight (`DoZoneInCombat`).
     void zoneCombat() { host.hostZoneCombat(); }
@@ -1375,6 +1383,10 @@ interface AreaTriggerHost
 
     // Raid scripts:
     int hostAskDungeon(uint id);
+
+    // Instance round 2:
+    ActionResult hostTeleportPlayer(EntityRef player, Location at);
+    bool hostHasAura(EntityRef who, uint spell);
 }
 
 /// An area trigger script's handle, for the length of one handler.
@@ -1448,6 +1460,14 @@ struct AreaTriggerContext
 
     /// The dungeon script's answer to question `id` (`Asked`); 0 outside a dungeon copy.
     int askDungeon(uint id) { return host.hostAskDungeon(id); }
+
+    // Instance round 2:
+
+    /// `player` is at `at` at once, on this map (out of C'Thun's stomach).
+    ActionResult teleport(EntityRef player, Location at) { return host.hostTeleportPlayer(player, at); }
+
+    /// Whether `who` (a player or a creature here) has `spell`'s aura.
+    bool hasAura(EntityRef who, uint spell) { return host.hostHasAura(who, spell); }
 }
 
 // ---------------------------------------------------------------------------
