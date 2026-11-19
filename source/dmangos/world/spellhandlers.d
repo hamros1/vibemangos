@@ -1326,32 +1326,17 @@ private:
         const now = context.clock();
         if (!c.triggered)
         {
-            // The cooldowns start: the item's, else the spell's.
-            int recovery = spell.recoveryTime, categoryRecovery = spell.categoryRecoveryTime;
-            uint category = spell.category;
-            if (c.castItemEntry)
-                if (const proto = c.castItemEntry in context.data.items)
-                    foreach (i, ref use; proto.details.spells)
-                        if (use.id == spell.id)
-                        {
-                            if (use.cooldown >= 0)
-                                recovery = use.cooldown;
-                            if (use.categoryCooldown >= 0)
-                                categoryRecovery = use.categoryCooldown;
-                            if (proto.spellCategory[i])
-                                category = proto.spellCategory[i];
-                        }
-            recovery = spellMod(SpellModOp.cooldown, spell, recovery);
-            categoryRecovery = spellMod(SpellModOp.cooldown, spell, categoryRecovery);
-            if (recovery > 0 && !cooldownCheat)
-                spellReadyAt[spell.id] = now + recovery.msecs;
-            if (category && categoryRecovery > 0 && !cooldownCheat)
-                categoryReadyAt[category] = now + categoryRecovery.msecs;
-            if ((recovery > 0 || (category && categoryRecovery > 0)) && !cooldownCheat)
+            // The cooldowns start: the item's, else the spell's; one that starts on an event (Presence of Mind,
+            // Nature's Swiftness: `SPELL_ATTR_COOLDOWN_ON_EVENT`) when its aura ends (`cooldownEvent`), the spell
+            // held in use until then.
+            enum uint cooldownOnEvent = 0x02000000;
+            if (spell.attributes & cooldownOnEvent && !cooldownCheat)
             {
-                cooldownCategory[spell.id] = category && categoryRecovery > 0 ? category : 0;
-                cooldownItem[spell.id] = c.castItemEntry;
+                eventCooldowns[spell.id] = c.castItemEntry;
+                spellReadyAt[spell.id] = MonoTime.max;
             }
+            else
+                startCooldown(spell, c.castItemEntry, now);
             // The power and reagents taken, and an item used up (`spellcharges` -1: one use).
             if (c.castItemEntry == 0)
             {
@@ -1881,6 +1866,58 @@ private:
     int modDuration(const(SpellInfo)* spell, int ms)
     {
         return ms > 0 ? max(0, spellMod(SpellModOp.duration, spell, ms)) : ms;
+    }
+
+    /// The cooldowns of a cast of `spell` (from the item `itemEntry`, 0: none) start at `now`: the item's, else the spell's.
+    private void startCooldown(const(SpellInfo)* spell, uint itemEntry, MonoTime now)
+    {
+        int recovery = spell.recoveryTime, categoryRecovery = spell.categoryRecoveryTime;
+        uint category = spell.category;
+        if (itemEntry)
+            if (const proto = itemEntry in context.data.items)
+                foreach (i, ref use; proto.details.spells)
+                    if (use.id == spell.id)
+                    {
+                        if (use.cooldown >= 0)
+                            recovery = use.cooldown;
+                        if (use.categoryCooldown >= 0)
+                            categoryRecovery = use.categoryCooldown;
+                        if (proto.spellCategory[i])
+                            category = proto.spellCategory[i];
+                    }
+        recovery = spellMod(SpellModOp.cooldown, spell, recovery);
+        categoryRecovery = spellMod(SpellModOp.cooldown, spell, categoryRecovery);
+        if (recovery > 0 && !cooldownCheat)
+            spellReadyAt[spell.id] = now + recovery.msecs;
+        if (category && categoryRecovery > 0 && !cooldownCheat)
+            categoryReadyAt[category] = now + categoryRecovery.msecs;
+        if ((recovery > 0 || (category && categoryRecovery > 0)) && !cooldownCheat)
+        {
+            cooldownCategory[spell.id] = category && categoryRecovery > 0 ? category : 0;
+            cooldownItem[spell.id] = itemEntry;
+        }
+    }
+
+    /// The spells whose cooldown waits for their aura to end, with the item each was cast from.
+    private uint[uint] eventCooldowns;
+
+    /**
+     * The aura of a spell whose cooldown starts on an event ended: its cooldown starts now, and the client's
+     * (`SMSG_COOLDOWN_EVENT`, CMaNGOS's `SendCooldownEvent`).
+     */
+    package void cooldownEvent(const(SpellInfo)* spell)
+    {
+        const item = spell.id in eventCooldowns;
+        if (item is null)
+            return;
+        const itemEntry = *item;
+        eventCooldowns.remove(spell.id);
+        spellReadyAt.remove(spell.id);
+        startCooldown(spell, itemEntry, context.clock());
+        ByteWriter w;
+        w.put(spell.id);
+        w.put(player.guid);
+        deliver(Opcode.SMSG_COOLDOWN_EVENT, w.data);
     }
 
     /// `value` of `spell`'s property `op`, with this player's spell modifiers (talents).
@@ -3968,4 +4005,50 @@ unittest
     assert(rogue.session.inWorld.castSpell((29104 in context.data.spells.spells), SpellTargets(TargetFlags.self, 0), false, 0)
         == SpellCastResult.ok);
     assert(me.auras.find(1784) is null, "another cast ends it");
+}
+
+/// A cooldown that starts on an event (Presence of Mind): held while its aura lasts, started as it ends.
+unittest
+{
+    import core.time : MonoTime, seconds;
+    import dmangos.auth.accounts : AccountLevel;
+    import dmangos.world.auras : makeAura;
+    import dmangos.world.movement : Position;
+    import dmangos.world.opcodes : Opcode;
+    import dmangos.world.player : Player;
+    import dmangos.world.spellcast : SpellCastResult, SpellTargets, TargetFlags;
+    import dmangos.world.spells : SpellInfo;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    auto presence = SpellInfo(12043);
+    presence.effect[0] = SpellEffect.dummy;
+    presence.implicitTargetA[0] = ImplicitTarget.caster;
+    presence.attributes = 0x02000000; // SPELL_ATTR_COOLDOWN_ON_EVENT
+    presence.recoveryTime = 180_000;
+    context.data.spells.spells[12043] = presence;
+    const spell = 12043 in context.data.spells.spells;
+
+    auto mage = loggedIn(context, db, 7, "Jaina", Position(-8949.95f, -132.49f, 83.53f), AccountLevel.player);
+    mage.read();
+    auto me = cast(Player) mage.session.character;
+    assert(mage.session.inWorld.castSpell(spell, SpellTargets(TargetFlags.self, 0), false, 0) == SpellCastResult.ok);
+    bool isNew;
+    auto aura = me.auras.apply(makeAura(spell, me.guid, 10, -1, true, [0, 0, 0]), me.values, isNew);
+    now += 600.seconds;
+    assert(!mage.session.inWorld.spellIsReady(12043), "held while its aura lasts");
+    mage.read();
+    mage.session.inWorld.removeAura(aura);
+    bool told;
+    foreach (p; mage.read())
+        told |= p.opcode == Opcode.SMSG_COOLDOWN_EVENT;
+    assert(told, "the client's cooldown starts");
+    now += 170.seconds;
+    assert(!mage.session.inWorld.spellIsReady(12043), "three minutes from the aura's end");
+    now += 11.seconds;
+    assert(mage.session.inWorld.spellIsReady(12043));
 }

@@ -397,6 +397,8 @@ private:
     {
         player.auras.remove(aura, player.values);
         auraEffects(aura, false);
+        if (aura.caster == player.guid)
+            cooldownEvent(aura.spell); // Presence of Mind's cooldown starts now
         flushPlayerChanges();
         if (battleground_.instance)
             if (auto copy = currentBattleground())
