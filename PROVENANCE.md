@@ -233,6 +233,12 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Files: `AI/ScriptDevAI/scripts/kalimdor/winterspring.cpp`
 * Functions/ScriptNames: `npc_ranshalla`, `go_elune_fire`, `npc_artorius`
 
+## scripts/azshara.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/kalimdor/azshara.cpp`, `AI/ScriptDevAI/scripts/kalimdor/boss_azuregos.cpp`
+* Functions/ScriptNames: `mobs_spitelashes`, `npc_felhound_tracker`, `boss_maws`, `boss_azuregos`
+
 ## scripts/barrens.d
 
 * Projects: CMaNGOS
