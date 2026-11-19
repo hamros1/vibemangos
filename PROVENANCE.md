@@ -208,6 +208,18 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Files: `AI/ScriptDevAI/scripts/kalimdor/teldrassil.cpp`
 * Functions/ScriptNames: `npc_mist`
 
+## scripts/stonetalon.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/kalimdor/stonetalon_mountains.cpp`
+* Functions/ScriptNames: `npc_kaya`
+
+## scripts/silithus.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/kalimdor/silithus.cpp`
+* Functions/ScriptNames: `npc_solenor`
+
 ## scripts/barrens.d
 
 * Projects: CMaNGOS
