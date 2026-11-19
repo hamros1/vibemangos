@@ -197,6 +197,12 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Files: `AI/ScriptDevAI/scripts/eastern_kingdoms/scholomance/instance_scholomance.cpp`, `boss_darkmaster_gandling.cpp`, `boss_jandice_barov.cpp`, `scholomance.cpp`, `scholomance.h`
 * Functions/ScriptNames: `instance_scholomance` (`DoSpawnGandlingIfCan`, `DoRespawnEntranceRoom`, `HandleDawnGambitEvent`), `event_dawn_gambit`, `boss_darkmaster_gandling`, `boss_jandice_barov`, `npc_spectral_tutor`
 
+## scripts/shadowfang.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/eastern_kingdoms/shadowfang_keep/instance_shadowfang_keep.cpp`, `shadowfang_keep.cpp`, `shadowfang_keep.h`
+* Functions/ScriptNames: `instance_shadowfang_keep` (`DoSpeech`, `JustDidDialogueStep`, `OnCreatureDeath`), `npc_shadowfang_prisoner`, `npc_deathstalker_vincent`, `mob_arugal_voidwalker`, `boss_arugal`
+
 ## scripts/stratholme.d
 
 * Projects: CMaNGOS
