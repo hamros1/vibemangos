@@ -294,7 +294,13 @@ final class TestInstance : InstanceHost
     ActionResult hostDespawnObject(EntityRef o) { did ~= format("despawn object %s", o.entry); return ActionResult.ok; }
     bool hostRespawnObject(uint, uint) { return false; }
     ActionResult hostUseObject(EntityRef) { return ActionResult.ok; }
-    size_t hostPlayers(EntityRef[]) { return 0; }
+    size_t hostPlayers(EntityRef[] into)
+    {
+        if (!players || into.length == 0)
+            return 0;
+        into[0] = EntityRef(7); // the player of `hostAnyPlayer`
+        return 1;
+    }
     ActionResult hostZoneCombat(EntityRef) { return ActionResult.ok; }
     EntityRef hostSummonObject(uint, Location, uint) { return EntityRef.init; }
     size_t hostCreaturesNear(Location, uint, float, EntityRef[]) { return 0; }

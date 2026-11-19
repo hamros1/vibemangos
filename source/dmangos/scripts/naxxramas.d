@@ -720,6 +720,19 @@ struct InvisibleMan
     }
 }
 
+/// A Naxxramas Military Sub-Boss Trigger (`spell_anchor`): one of the places in Gothik's hall his trainees,
+/// knights and riders come from (his script finds them), and the anchor his summoning spells aim at; it stays
+/// where it is and keeps out of fights.
+@creature("spell_anchor")
+struct SubBossAnchor
+{
+    void on(ref CreatureContext me, const ref Spawned e)
+    {
+        me.reactState(Reaction.passive);
+        me.combatMovement(false);
+    }
+}
+
 /// A Web Wrap: holds its player until broken (or until the player is dead).
 @creature("npc_web_wrap")
 struct WebWrap
