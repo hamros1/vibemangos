@@ -9,7 +9,8 @@
  * open bar door; Plugger Spazzring and his stolen mugs; Hurley Blackbreath, called by three broken
  * kegs; Phalanx at the door), the ambush on the Shadowforge bridge, and the bosses' abilities:
  * Emperor Dagran Thaurissan and Moira, Ambassador Flamelash and the burning spirits of the runes,
- * General Angerforge's alarm, High Interrogator Gerstahn.
+ * General Angerforge's alarm, High Interrogator Gerstahn; and "Jail Break!" (Marshal Windsor led
+ * through the prison, Dughal Stormwing and Tobias Seecher freed, the cells' prisoners dealt with).
  */
 module dmangos.scripts.blackrockdepths;
 
@@ -49,6 +50,14 @@ enum : uint
     grimstone = 10096,
     burningSpirit = 9178,
     ironhandGuardian = 8982,
+    marshalWindsor = 9023,
+    reginaldWindsor = 9682,
+    dughal = 9022,
+    tobias = 9679,
+    ograbisi = 9677,
+    shill = 9678,
+    crest = 9680,
+    jaz = 9681,
     // Ring of Law: beasts (with how many come in each of the two waves) and champions.
     worm = 8925, stinger = 8926, screecher = 8927, thundersnout = 8928, creeper = 8933, beetle = 8932,
     gorosh = 9027, grizzle = 9028, eviscerator = 9029, okthor = 9030, anubshiah = 9031, hedrum = 9032,
@@ -88,7 +97,7 @@ struct BlackrockDepths
     {
         ringTrigger = 100, tombChallenge = 101, brazier = 102, cofferOpened = 103, aleGiven = 104,
         rocknotDone = 105, kegBroken = 106, mugStolen = 107, bridgeTrigger = 108, hurleyArrived = 109,
-        flamelash = 110,
+        flamelash = 110, jailPrisoner = 111, jailSupplyDoor = 112,
     }
     enum : int
     {
@@ -148,6 +157,7 @@ struct BlackrockDepths
     @transient Pack!80 patrons;
     @transient Pack!8 guardians;
     bool senatorYellCooling;
+    @transient EntityRef windsorRef, supplyDoor;
 
     enum Step : ubyte { ring, nextDwarf, senatorYell }
     Schedule!(Step, 4) steps;
@@ -194,6 +204,7 @@ struct BlackrockDepths
                 brd.door(e.object, true);
             break;
         case barKegShot: kegShot = e.object; break;
+        case 170561: supplyDoor = e.object; break; // the prison's supply room
         default:
             if (entry >= dwarfRuneA && entry < dwarfRuneA + 7)
                 runeObjects[entry - dwarfRuneA] = e.object;
@@ -214,6 +225,7 @@ struct BlackrockDepths
         case plugger: pluggerRef = e.creature; break;
         case phalanx: phalanxRef = e.creature; break;
         case loregrain: loregrainRef = e.creature; break;
+        case marshalWindsor: windsorRef = e.creature; break;
         case rocknot, nagmara:
             if (pluggerDead)
                 brd.despawn(e.creature);
@@ -308,6 +320,14 @@ struct BlackrockDepths
                 if (const target = brd.anyPlayer())
                     brd.attack(crony, target);
             }
+            break;
+        case Signals.jailPrisoner:
+            if (windsorRef)
+                brd.signal(windsorRef, MarshalWindsor.Signals.prisonerDone);
+            break;
+        case Signals.jailSupplyDoor:
+            if (supplyDoor)
+                brd.door(supplyDoor, true);
             break;
         case Signals.flamelash:
             // A rune lit for a spirit (value: the rune, 0 to 6): a burning spirit comes from it.
@@ -426,6 +446,10 @@ struct BlackrockDepths
                 brd.despawn(nagmaraRef, 1000);
             }
             openBarDoor(brd);
+            break;
+        case ograbisi, shill, crest, jaz:
+            if (windsorRef)
+                brd.signal(windsorRef, MarshalWindsor.Signals.prisonerDone);
             break;
         case shadowforgeSenator:
             if (emperorRef && brd.alive(emperorRef) && !senatorYellCooling)
@@ -1376,6 +1400,141 @@ struct Gerstahn
     }
 }
 
+// ---------------------------------------------------------------------------
+// "Jail Break!" (quest 4322)
+// ---------------------------------------------------------------------------
+
+/**
+ * Marshal Windsor: escorted through the prison; he stops at each cell until its prisoner is freed
+ * (Dughal and Tobias, by talking to them) or dealt with (Jaz and Ograbisi, Shill Dinger, Crest
+ * Killer), takes back his gear in the supply room (as Reginald Windsor from then on), and at the
+ * prison's gate the quest's event happens.
+ */
+@creature("npc_marshal_windsor")
+struct MarshalWindsor
+{
+    enum Signals : uint { prisonerDone = 1 }
+    enum uint quest = 4322;
+    enum uint factionEscort = 231; // FACTION_ESCORT_A_NEUTRAL_ACTIVE
+    enum uint windsorsFrenzy = 15167;
+    enum : int
+    {
+        sayAggro1 = -1230011, sayAggro2 = -1230012, sayAggro3 = -1230013, sayStart = -1230014, sayDughal1 = -1230015,
+        sayDughal3 = -1230016, sayEquipment1 = -1230017, sayEquipment2 = -1230018, sayEquipment3 = -1230019,
+        sayEquipment4 = -1230020, sayJaz1 = -1230021, sayJaz2 = -1230022, sayShill1 = -1230023, sayShill2 = -1230024,
+        sayShill3 = -1230025, sayCrest1 = -1230026, sayCrest2 = -1230027, sayTobias1 = -1230028, sayTobias2 = -1230029,
+        sayFree1 = -1230030, sayFree2 = -1230031,
+    }
+
+    Escort escort;
+    ubyte awaited; /// prisoners still to be dealt with at the cell he waits at
+
+    void on(ref CreatureContext me, const ref QuestAccepted e)
+    {
+        if (e.quest != quest || escort.active)
+            return;
+        me.setFaction(factionEscort);
+        escort.start(me, e.player, quest);
+    }
+
+    void on(ref CreatureContext me, const ref EnteredCombat e)
+    {
+        static immutable int[3] lines = [sayAggro1, sayAggro2, sayAggro3];
+        me.say(lines[me.random(3)], e.enemy);
+    }
+
+    void on(ref CreatureContext me, const ref Signal e)
+    {
+        if (e.id != Signals.prisonerDone || !escort.paused || awaited == 0)
+            return;
+        if (--awaited == 0)
+            escort.resume();
+    }
+
+    void on(ref CreatureContext me, const ref MovementDone e)
+    {
+        const player = escort.player;
+        // The database's points count from 1.
+        switch (escort.reached(me, e) + 1)
+        {
+        case 1: me.say(sayStart); break;
+        case 7: wait(me, sayDughal1, 1, player); break;
+        case 9: me.say(sayDughal3, player); break;
+        case 14: me.say(sayEquipment1, player); break;
+        case 16: me.signalDungeon(BlackrockDepths.Signals.jailSupplyDoor); break;
+        case 18: me.say(sayEquipment2); break;
+        case 21: me.changeEntry(reginaldWindsor); break;
+        case 22:
+            me.castSelf(windsorsFrenzy, true);
+            me.say(sayEquipment3, player);
+            break;
+        case 23: me.say(sayEquipment4); break;
+        case 30: wait(me, sayJaz1, 2); break; // Jaz and Ograbisi
+        case 32: me.say(sayJaz2); break;
+        case 35: wait(me, sayShill1, 1); break;
+        case 37: me.say(sayShill2); break;
+        case 38: me.say(sayShill3); break;
+        case 45: wait(me, sayCrest1, 1); break;
+        case 47: me.say(sayCrest2); break;
+        case 49: wait(me, sayTobias1, 1); break;
+        case 51: me.say(sayTobias2, player); break;
+        case 57: me.say(sayFree1); break;
+        case 58:
+            me.say(sayFree2);
+            me.questEvent(player, quest);
+            break;
+        default: break;
+        }
+    }
+
+    private void wait(ref CreatureContext me, int line, ubyte prisoners, EntityRef player = EntityRef.init)
+    {
+        me.say(line, player);
+        escort.paused = true;
+        awaited = prisoners;
+    }
+
+    void on(ref CreatureContext me, const ref Died e)
+    {
+        escort.fail(me);
+    }
+}
+
+/// A prisoner of the cells (Dughal Stormwing, Tobias Seecher): freed by one on "Jail Break!", he runs.
+@creature("npc_dughal_stormwing", "npc_tobias_seecher")
+struct JailPrisoner
+{
+    enum uint free = 1;
+    enum : int { sayDughalFree = -1230010, sayTobiasFree1 = -1230032, sayTobiasFree2 = -1230033 }
+    bool freed;
+
+    void on(ref CreatureContext me, const ref GossipHello e)
+    {
+        if (freed || me.questStatus(e.player, MarshalWindsor.quest) != QuestProgress.incomplete)
+            return;
+        GossipMenu menu;
+        menu.add(GossipIcon.chat, "Your bonds are broken. Go!", free);
+        me.sendGossip(e.player, me.self.entry == dughal ? 2846 : 2847, menu, false);
+        me.consume();
+    }
+
+    void on(ref CreatureContext me, const ref GossipSelect e)
+    {
+        if (e.action != free || freed)
+            return;
+        freed = true;
+        me.closeGossip(e.player);
+        if (me.self.entry == dughal)
+            me.say(sayDughalFree, e.player);
+        else
+            me.say(me.random(2) ? sayTobiasFree1 : sayTobiasFree2);
+        me.npcFlags(0);
+        me.signalDungeon(BlackrockDepths.Signals.jailPrisoner);
+        me.despawn(5000); // gone to safety
+        me.consume();
+    }
+}
+
 unittest
 {
     import dmangos.scripts.testing;
@@ -1450,4 +1609,38 @@ unittest
     rock.run(8000);
     assert(rock.host.done("cast 14872") && rock.host.done("say -1230046") && rock.host.done("dungeon 105 0"));
     assert(!rock.host.done("move 9"), "home again, he stays");
+}
+
+unittest
+{
+    import dmangos.scripts.testing;
+
+    alias self = dmangos.scripts.blackrockdepths;
+    auto windsor = runCreature!self("npc_marshal_windsor", marshalWindsor);
+    foreach (i; 0 .. 58)
+        windsor.host.path ~= Waypoint(Location(i, 0, 0));
+    windsor.raise(QuestAccepted(playerRef, MarshalWindsor.quest));
+    assert(windsor.host.done("faction 231"));
+    void walk(uint to)
+    {
+        foreach (point; windsor.state!MarshalWindsor.escort.point .. to)
+        {
+            windsor.host.walking = false;
+            windsor.raise(MovementDone(point));
+            windsor.run(250);
+        }
+    }
+    walk(7);
+    assert(windsor.host.done("say -1230015") && !windsor.host.done("move 7"), "he waits at Dughal's cell");
+    windsor.raise(Signal(EntityRef.init, MarshalWindsor.Signals.prisonerDone));
+    windsor.run(250);
+    assert(windsor.host.done("move 7"));
+    walk(30);
+    assert(windsor.host.done("become 9682") && windsor.host.done("dungeon 112 0"));
+    windsor.raise(Signal(EntityRef.init, MarshalWindsor.Signals.prisonerDone));
+    windsor.run(250);
+    assert(!windsor.host.done("move 30"), "Jaz and Ograbisi both");
+    windsor.raise(Signal(EntityRef.init, MarshalWindsor.Signals.prisonerDone));
+    windsor.run(250);
+    assert(windsor.host.done("move 30"));
 }
