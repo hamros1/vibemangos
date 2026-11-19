@@ -1409,4 +1409,18 @@ mixin template CreatureScripting()
         if (lore !is null && world_ !is null)
             lore.zoneUnderAttack(world_, me, attacker.guid);
     }
+
+    // The war effort:
+
+    void hostWarEffortHandIn(uint quest, uint resource)
+    {
+        if (lore !is null)
+            lore.warEffortHandIn(quest, resource);
+    }
+
+    void hostWarEffortColossus(uint colossus)
+    {
+        if (lore !is null)
+            lore.warEffortColossusFell(colossus);
+    }
 }

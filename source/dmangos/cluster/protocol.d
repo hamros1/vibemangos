@@ -26,7 +26,7 @@ import dmangos.serialization : deserialize, LengthPrefix, serialize;
 @safe: // the compiler checks every function here
 
 /// Changes whenever a message changes; nodes speaking another version are turned away.
-enum ushort protocolVersion = 33; // 33: the meeting stones (group operations); 32: the battleground raid (a group operation); 31: the channels' forced say
+enum ushort protocolVersion = 34; // 34: services' news (the war effort); 33: the meeting stones (group operations); 32: the battleground raid (a group operation); 31: the channels' forced say
 
 /// Size of a frame header.
 enum frameHeaderSize = 16;
@@ -84,6 +84,7 @@ enum MessageType : ushort
     guildInvitation = 45,
     serviceCall = 46,
     serviceReply = 47,
+    serviceNews = 48,
 }
 
 /// Why a hello was refused.
@@ -862,6 +863,19 @@ struct ServiceReply
     @LengthPrefix!uint ubyte[] reply;
 }
 
+/**
+ * News a cluster service gives every node (docs/SERVICES.md, `ServiceHost.announce`): the war effort's
+ * state, say. `news` names the news's type and layout (`newsId`).
+ */
+struct ServiceNews
+{
+    enum type = MessageType.serviceNews;
+
+    ushort kind;       /// `ServiceKind`
+    ulong news;        /// `newsId`
+    @LengthPrefix!uint ubyte[] body_;
+}
+
 // A reply's status is checked as it is read: a peer cannot put an unknown one in front of a final switch.
 unittest
 {
@@ -944,7 +958,7 @@ private enum ulong protocolFingerprint = () {
 }();
 
 /// The protocol version whose messages `protocolFingerprint` was recorded for, and the fingerprint.
-private enum recordedVersion = 33, recordedFingerprint = 0x631bcac4c4b1c417UL;
+private enum recordedVersion = 34, recordedFingerprint = 0xf5d2513321652ed4UL;
 
 static assert(protocolVersion == recordedVersion && protocolFingerprint == recordedFingerprint,
     "the cluster messages (or protocolVersion) changed: if the messages changed, raise protocolVersion; then record "

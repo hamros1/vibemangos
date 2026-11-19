@@ -190,6 +190,8 @@ final class FakeCreature : CreatureHost
     void hostZoneUnderAttack(EntityRef) {}
     void hostWalkPath() {}
     ActionResult hostSendHome(EntityRef) { return ActionResult.ok; }
+    void hostWarEffortHandIn(uint, uint) {}
+    void hostWarEffortColossus(uint) {}
 }
 
 unittest

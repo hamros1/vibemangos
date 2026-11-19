@@ -1502,7 +1502,8 @@ mixin template BattlegroundHandlers()
             removeAura(waiting);
     }
 
-    /// `SMSG_INIT_WORLD_STATES` for `zone`: on a battleground's map, its copy's states.
+    /// `SMSG_INIT_WORLD_STATES` for `zone`: on a battleground's map, its copy's states; elsewhere the
+    /// server-wide ones (the war effort's, in the capitals).
     package void sendInitWorldStates(uint zone)
     {
         ByteWriter w;
@@ -1511,7 +1512,13 @@ mixin template BattlegroundHandlers()
         auto copy = currentBattleground();
         if (copy is null)
         {
-            w.put(ushort(0));
+            const states = context.warEffortWorldStates(zone);
+            w.put(cast(ushort) states.length);
+            foreach (s; states)
+            {
+                w.put(s[0]);
+                w.put(s[1]);
+            }
             return deliver(Opcode.SMSG_INIT_WORLD_STATES, w.data);
         }
         import std.algorithm.sorting : sort;

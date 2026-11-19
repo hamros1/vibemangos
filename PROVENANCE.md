@@ -341,7 +341,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 
 * Projects: CMaNGOS
 * Files: `AI/ScriptDevAI/scripts/kalimdor/silithus.cpp`; open-world round 2: ScriptDev2-classic `scripts/kalimdor/silithus.cpp` (`npc_anachronos_the_ancient`, `go_crystalline_tear`), CMaNGOS `ScriptDevAI/scripts/world/war_effort.cpp` (`npc_silithus_boss`)
-* Functions/ScriptNames: `npc_solenor`, `npc_anachronos_the_ancient` (`aEventDialogue`, `JustDidDialogueStep`), `go_crystalline_tear`, `npc_silithus_boss`
+* Functions/ScriptNames: `npc_solenor`, `npc_anachronos_the_ancient` (`aEventDialogue`, `JustDidDialogueStep`), `go_crystalline_tear`, `npc_silithus_boss` (`JustRespawned`, `JustDied`)
 
 ## scripts/silverpine.d
 
@@ -422,6 +422,12 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Files: `AI/ScriptDevAI/scripts/kalimdor/ungoro_crater.cpp`
 * Functions/ScriptNames: `at_scent_larkorwi`, `npc_ame01`, `npc_ringo`, `npc_simone_the_inconspicuous`,
   `npc_simone_seductress`, `npc_precious_the_devourer`
+
+## scripts/wareffort.d
+
+* Projects: CMaNGOS
+* Files: `ScriptDevAI/scripts/world/war_effort.cpp`
+* Functions/ScriptNames: `npc_war_effort` (`QuestRewarded_war_effort`, the quest ids), `go_scarab_gong` (`QuestRewarded_war_effort`, `SendBgNeutralToPlayer`)
 
 ## scripts/westernplaguelands.d
 
@@ -1246,6 +1252,13 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Projects: CMaNGOS
 * Files: `UpdateFields.cpp`
 * Constants: `ITEM_FIELD_SPELL_CHARGES`, `MAX_BAG_SIZE`, `MAX_INSPECTED_ENCHANTMENT_SLOT`, `OBJECT_FIELD_TYPE`, `PLAYER_FIELD_MOD_DAMAGE_DONE_PCT`, `PLAYER_MAX_SKILLS`, `UNIT_FIELD_HEALTH`, `UNIT_FIELD_TARGET`
+
+## world/wareffort.d
+
+* Projects: CMaNGOS
+* Files: `World/WorldState.cpp`, `World/WorldState.h`, `World/WorldStateDefines.h`
+* Functions: `AhnQirajData::GetData`, `AhnQirajData::GetDaysRemaining`, `WorldState::Load` (`SAVE_ID_AHN_QIRAJ`), `WorldState::Save`, `WorldState::Update` (the war effort's timer), `WorldState::AddWarEffortProgress`, `WorldState::HandleWarEffortPhaseTransition`, `WorldState::StartWarEffortEvent`, `WorldState::StopWarEffortEvent`, `WorldState::SpawnWarEffortGos`, `WorldState::ChangeWarEffortGoSpawns`, `WorldState::ChangeWarEffortPhase2Tier`, `WorldState::SetSilithusBossKilled`, `WorldState::GetResourceInfo`, `WorldState::GetResourceCounterAndMax`, `GetResourceTier`, `WorldState::HandlePlayerEnterZone`, `WorldState::FillInitialWorldStates` (the war effort's part)
+* Constants: `AQResources`, `AQResourceGroup`, `AQPhase`, `AQSilithusBoss`, `aqWorldstateMap`, `aqWorldStateTotalsMap`, `warEffortSpawns`, `WAR_EFFORT_DB_GUID_PREFIX`, `GAME_EVENT_AHN_QIRAJ_EFFORT_PHASE_1`..`_5`, `GAME_EVENT_ASHI_DEAD`, `GAME_EVENT_REGAL_DEAD`, `GAME_EVENT_ZORA_DEAD`, `WORLD_STATE_AQ_*`, `ZONEID_*` (the capitals)
 
 ## world/weather.d
 

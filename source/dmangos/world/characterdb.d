@@ -1235,6 +1235,20 @@ final class CharacterStatements
             characters.execute!"DELETE FROM game_event_status WHERE event = ?"(event);
     }
 
+    /// See `WorldDatabase.worldState`.
+    string worldState(uint id)
+    {
+        foreach (row; characters.query!"SELECT Data FROM world_state WHERE Id = ?"(id))
+            return row.isNull(0) ? null : row.get!string(0);
+        return null;
+    }
+
+    /// See `WorldDatabase.saveWorldState`.
+    void saveWorldState(uint id, string data)
+    {
+        characters.execute!"REPLACE INTO world_state (Id, Data) VALUES (?, ?)"(id, data);
+    }
+
     /// See `WorldDatabase.charactersFor`.
     uint[] charactersFor(uint raceMask, uint quest)
     {

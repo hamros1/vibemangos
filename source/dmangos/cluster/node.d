@@ -187,6 +187,9 @@ final class ClusterNode : LinkOwner
     /// ditto
     void delegate(ushort peer, const ref ServiceReply reply) onServiceReply;
 
+    /// ditto: a service's news for every node.
+    void delegate(ushort peer, const ref ServiceNews news) onServiceNews;
+
     /**
      * Sends a message to node `peer` if it is linked; false if not (replication is resent in full when
      * a link opens, so a message that cannot go now is not needed later).
@@ -687,6 +690,15 @@ final class ClusterNode : LinkOwner
             {
                 const m = decode!ServiceReply(payload);
                 onServiceReply(peer, m);
+            }
+            return;
+        }
+        if (type == MessageType.serviceNews)
+        {
+            if (onServiceNews !is null)
+            {
+                const m = decode!ServiceNews(payload);
+                onServiceNews(peer, m);
             }
             return;
         }

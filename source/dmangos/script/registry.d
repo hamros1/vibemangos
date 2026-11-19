@@ -152,7 +152,8 @@ template KindInfo(ScriptKind kind)
     else static if (kind == ScriptKind.gameObject)
     {
         alias Context = GameObjectContext;
-        alias Events = AliasSeq!(ObjectUsed, Signal, /* Open-world round 2: */ Spawned, QuestAccepted, TrapSprung);
+        alias Events = AliasSeq!(ObjectUsed, Signal, /* Open-world round 2: */ Spawned, QuestAccepted, TrapSprung,
+            /* the war effort: */ QuestRewarded);
         alias Attribute = .gameObject;
     }
     else static if (kind == ScriptKind.item) // Open-world round 2

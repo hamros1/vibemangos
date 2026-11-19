@@ -331,7 +331,7 @@ struct ServerIgnoreList
     ubyte count;
 }
 
-/// `SMSG_INIT_WORLD_STATES`, without any world states.
+/// `SMSG_INIT_WORLD_STATES`, without any world states (those with some are written by `sendInitWorldStates`).
 struct ServerInitWorldStates
 {
     mixin ServerPacket!(Opcode.SMSG_INIT_WORLD_STATES);

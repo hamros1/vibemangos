@@ -189,6 +189,8 @@ final class TestCreature : CreatureHost
     void hostZoneUnderAttack(EntityRef) {}
     void hostWalkPath() {}
     ActionResult hostSendHome(EntityRef) { return ActionResult.ok; }
+    void hostWarEffortHandIn(uint, uint) {}
+    void hostWarEffortColossus(uint) {}
 }
 
 /// A script under test: the runtime of `Module`, one creature's script, and its host.

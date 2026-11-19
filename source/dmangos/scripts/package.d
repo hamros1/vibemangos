@@ -74,6 +74,7 @@ static import dmangos.scripts.emeralddragons;
 static import dmangos.scripts.worldobjects;
 static import dmangos.scripts.guards;
 static import dmangos.scripts.worldmaps;
+static import dmangos.scripts.wareffort; // the war effort
 
 /// Every module holding scripts.
 alias scriptModules = AliasSeq!(dmangos.scripts.deadmines, dmangos.scripts.westfall, dmangos.scripts.spells,
@@ -101,4 +102,6 @@ alias scriptModules = AliasSeq!(dmangos.scripts.deadmines, dmangos.scripts.westf
     dmangos.scripts.ruinsofahnqiraj, dmangos.scripts.templeofahnqiraj, dmangos.scripts.naxxramas,
     // Open-world round 2:
     dmangos.scripts.professions, dmangos.scripts.emeralddragons, dmangos.scripts.worldobjects,
-    dmangos.scripts.guards, dmangos.scripts.worldmaps);
+    dmangos.scripts.guards, dmangos.scripts.worldmaps,
+    // The war effort:
+    dmangos.scripts.wareffort);

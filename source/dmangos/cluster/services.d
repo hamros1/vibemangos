@@ -33,7 +33,7 @@ import std.traits : getUDAs, hasUDA, Parameters, ReturnType, Unqual;
 import core.time : MonoTime, seconds;
 import std.array : join;
 
-import dmangos.cluster.protocol : ServiceCall, ServiceReply, ServiceStatus;
+import dmangos.cluster.protocol : ServiceCall, ServiceNews, ServiceReply, ServiceStatus;
 import dmangos.cluster.regions : CellRect, Region;
 import dmangos.plaindata : decode, encode, isPlainData, layout;
 
@@ -43,6 +43,7 @@ enum ServiceKind : ushort
     none = 0,
     channels = 1,           /// chat channels (`dmangos.world.channelservice`)
     battlegroundQueue = 2,  /// the battleground queues
+    warEffort = 3,          /// the Ahn'Qiraj war effort (`dmangos.world.wareffort`)
     example = 0xFFFF,       /// for tests
 }
 
@@ -59,7 +60,8 @@ enum ServiceKind : ushort
 enum uint serviceMapBase = 0xFFFF_0000;
 
 /// The services a cluster places (not `example`, which is for tests).
-immutable ServiceKind[] clusterServiceKinds = [ServiceKind.channels, ServiceKind.battlegroundQueue];
+immutable ServiceKind[] clusterServiceKinds = [ServiceKind.channels, ServiceKind.battlegroundQueue,
+    ServiceKind.warEffort];
 
 /// The map a service's region is on.
 uint serviceMap(ServiceKind kind) pure nothrow @nogc @safe
@@ -147,6 +149,25 @@ template callId(alias method)
         string text = kindOf!S.stringof ~ "." ~ __traits(identifier, method) ~ "(" ~ layout!(Parameters!method[0]) ~ ")";
         static if (!is(ReturnType!method == void))
             text ~= layout!(ReturnType!method);
+        ulong hash = 0xcbf29ce484222325;
+        foreach (c; text)
+        {
+            hash ^= c;
+            hash *= 0x100000001b3;
+        }
+        return hash;
+    }();
+}
+
+/**
+ * The id of news of type `News` from the service `S` (`ServiceHost.announce`): the FNV-1a hash of its
+ * kind and `News`'s layout, so builds that disagree on either do not misread each other's news.
+ */
+template newsId(S, News)
+{
+    static assert(isPlainData!News, News.stringof ~ ": news must be plain data");
+    enum newsId = () {
+        string text = kindOf!S.stringof ~ ".news(" ~ layout!News ~ ")";
         ulong hash = 0xcbf29ce484222325;
         foreach (c; text)
         {
@@ -338,6 +359,9 @@ final class ServiceHost
     /// ditto
     bool delegate(ushort node, const ref ServiceReply reply) sendReply;
 
+    /// Sends a service's news to every other node (each that is linked now).
+    void delegate(const ref ServiceNews news) sendNews;
+
     /// Calls still unanswered after this are given up (and logged).
     enum giveUpAfter = 30.seconds;
 
@@ -359,6 +383,8 @@ final class ServiceHost
         ulong served;     /// other nodes' calls run here
         ulong repeated;   /// resent calls answered from memory
         ulong givenUp;    /// calls unanswered for `giveUpAfter`
+        ulong announced;  /// news this node's services gave
+        ulong heard;      /// other nodes' news heard here
     }
 
     /// ditto
@@ -510,6 +536,62 @@ final class ServiceHost
                 p.sentTo = 0;
     }
 
+    // -----------------------------------------------------------------------
+    // News: from a service to every node
+    // -----------------------------------------------------------------------
+
+    private struct Listener
+    {
+        void delegate(const(void)* news) direct;     // this node's own news, as it is
+        void delegate(const(ubyte)[] bytes) decoded; // another node's, from its bytes
+    }
+
+    private Listener[][ulong] listeners; // by `newsId`
+
+    /**
+     * `hear` gets every `News` the service `S` announces, wherever it runs: what each node must follow
+     * of a service's state (the war effort's phase, say). A node listens from its start, before it knows
+     * where the service is.
+     */
+    void listen(S, News)(void delegate(const ref News news) hear)
+    {
+        listeners[newsId!(S, News)] ~= Listener(
+            (const(void)* news) { hear(*cast(const(News)*) news); },
+            (const(ubyte)[] bytes) {
+                News news;
+                decode(bytes, news);
+                hear(news);
+            });
+    }
+
+    /**
+     * News from the service `S` for every node: this node's listeners hear it at once, as it is; every
+     * other linked node gets it as bytes (`ServiceNews`). Links deliver in order, so a node hears one
+     * host's news in the order it was given; a node not linked now misses it, so news is best repeated
+     * (or asked for with a call) by a service whose state the nodes follow.
+     */
+    void announce(S, News)(auto ref const News news)
+    {
+        enum id = newsId!(S, News);
+        ++counts.announced;
+        foreach (ref l; listeners.get(id, null))
+            l.direct(&news);
+        if (sendNews is null)
+            return;
+        ubyte[] bytes;
+        encode(bytes, news);
+        const message = ServiceNews(kindOf!S, id, bytes);
+        sendNews(message);
+    }
+
+    /// Another node's service's news: this node's listeners hear it. News nobody here listens for is dropped.
+    void receiveNews(ushort from, const ref ServiceNews news)
+    {
+        ++counts.heard;
+        foreach (ref l; listeners.get(news.news, null))
+            l.decoded(news.body_);
+    }
+
     /// The metrics line's part: the services here, and the calls so far.
     string describe() const
     {
@@ -521,9 +603,9 @@ final class ServiceHost
         foreach (kind, _; hosted)
             here ~= kind.to!string;
         here.sort();
-        return format!"services: %s here; calls %s local, %s sent, %s served, %s repeated, %s given up, %s waiting"(
-            here.length ? here.join(", ") : "none", counts.local, counts.sent, counts.served, counts.repeated,
-            counts.givenUp, pending.length);
+        return format!("services: %s here; calls %s local, %s sent, %s served, %s repeated, %s given up, %s waiting; "
+            ~ "news %s announced, %s heard")(here.length ? here.join(", ") : "none", counts.local, counts.sent,
+            counts.served, counts.repeated, counts.givenUp, pending.length, counts.announced, counts.heard);
     }
 
     /// Calls in flight or waiting.
@@ -758,4 +840,36 @@ unittest
     placed = 1;
     b.tick(50.msecs);
     assert(b.pendingCalls == 0 && seen.total == 7, "sent where it went");
+}
+
+// News: the announcing node's listeners hear it as it is, the others' from its bytes; news of another
+// layout (another build's) is not misread.
+unittest
+{
+    static struct Weather
+    {
+        uint zone;
+        string sky;
+    }
+
+    auto a = new ServiceHost, b = new ServiceHost;
+    a.self = 1;
+    b.self = 2;
+    a.host(Counter());
+    Weather[] heardA, heardB;
+    a.listen!(Counter, Weather)((const ref Weather w) { heardA ~= w; });
+    b.listen!(Counter, Weather)((const ref Weather w) { heardB ~= w; });
+    a.sendNews = (const ref ServiceNews n) { b.receiveNews(1, n); };
+    a.announce!Counter(Weather(12, "rain"));
+    assert(heardA == [Weather(12, "rain")] && heardB == [Weather(12, "rain")]);
+    assert(a.counts.announced == 1 && b.counts.heard == 1);
+
+    static struct Other
+    {
+        uint zone;
+    }
+
+    a.announce!Counter(Other(5));
+    assert(heardA.length == 1 && heardB.length == 1, "nobody listens for that");
+    static assert(newsId!(Counter, Weather) != newsId!(Counter, Other));
 }

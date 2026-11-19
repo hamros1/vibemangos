@@ -726,6 +726,11 @@ interface WorldDatabase
     /// The characters of races in `raceMask` (and, `quest` not 0, rewarded for it): a game event's letters' receivers.
     uint[] charactersFor(uint raceMask, uint quest);
 
+    /// A server-wide state's saved text (`world_state`, by its id: 1 the war effort), empty if none; and its change.
+    string worldState(uint id);
+    /// ditto
+    @Replaces void saveWorldState(uint id, string data);
+
     /// The client's saved settings of `type` (macros, key bindings, ...): the account's (`account_data`) or,
     /// `perCharacter`, the character's (`character_account_data`); `owner` the account or character.
     void saveAccountData(bool perCharacter, uint owner, uint type, long time, const(ubyte)[] data);
@@ -1028,6 +1033,8 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
     ulong[2][] loadPetCooldowns(uint pet) { return statements.loadPetCooldowns(pet); }
     void setGameEventStatus(ushort event, bool on) { statements.setGameEventStatus(event, on); }
     uint[] charactersFor(uint raceMask, uint quest) { return statements.charactersFor(raceMask, quest); }
+    string worldState(uint id) { return statements.worldState(id); }
+    void saveWorldState(uint id, string data) { statements.saveWorldState(id, data); }
     void saveAccountData(bool perCharacter, uint owner, uint type, long time, const(ubyte)[] data)
     {
         statements.saveAccountData(perCharacter, owner, type, time, data);
@@ -1295,6 +1302,9 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
     AuraRecord[] loadPetAuras(uint pet) { return petAuraRows.get(pet, null).dup; }
     void savePetCooldowns(uint pet, const(ulong[2])[] cooldowns) { petCooldownRows[pet] = cooldowns.dup; }
     ulong[2][] loadPetCooldowns(uint pet) { return petCooldownRows.get(pet, null).dup; }
+    string[uint] worldStateRows;
+    string worldState(uint id) { return worldStateRows.get(id, null); }
+    void saveWorldState(uint id, string data) { worldStateRows[id] = data; }
     bool[ushort] gameEventStatusRows;
     ushort[] gameEventStatus() { return gameEventStatusRows.keys; }
     void setGameEventStatus(ushort event, bool on)
