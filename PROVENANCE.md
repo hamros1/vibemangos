@@ -185,7 +185,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 
 * Projects: CMaNGOS
 * Files: `AI/ScriptDevAI/scripts/eastern_kingdoms/blackrock_depths/instance_blackrock_depths.cpp`, `blackrock_depths.cpp`, `boss_ambassador_flamelash.cpp`, `boss_emperor_dagran_thaurissan.cpp`, `boss_general_angerforge.cpp`, `boss_high_interrogator_gerstahn.cpp`, `blackrock_depths.h`
-* Functions/ScriptNames: `instance_blackrock_depths` (`DoCallNextDwarf`, `HandleBarPatrons`, `Update`), `at_ring_of_law`, `npc_grimstone`, `at_shadowforge_bridge`, `go_shadowforge_brazier`, `go_relic_coffer_door`, `go_bar_beer_keg`, `go_bar_ale_mug`, `boss_doomrel`, `npc_rocknot`, `npc_phalanx`, `boss_plugger_spazzring`, `npc_hurley_blackbreath`, `npc_ironhand_guardian`, `boss_emperor_dagran_thaurissan`, `boss_moira_bronzebeard`, `boss_ambassador_flamelash`, `boss_general_angerforge`, `boss_high_interrogator_gerstahn`, `npc_marshal_windsor`, `npc_dughal_stormwing`, `npc_tobias_seecher`, `npc_mistress_nagmara`
+* Functions/ScriptNames: `instance_blackrock_depths` (`DoCallNextDwarf`, `HandleBarPatrons`, `Update`), `at_ring_of_law`, `npc_grimstone`, `at_shadowforge_bridge`, `go_shadowforge_brazier`, `go_relic_coffer_door`, `go_bar_beer_keg`, `go_bar_ale_mug`, `boss_doomrel`, `npc_rocknot`, `npc_phalanx`, `boss_plugger_spazzring`, `npc_hurley_blackbreath`, `npc_ironhand_guardian`, `boss_emperor_dagran_thaurissan`, `boss_moira_bronzebeard`, `boss_ambassador_flamelash`, `boss_general_angerforge`, `boss_high_interrogator_gerstahn`, `npc_marshal_windsor`, `npc_dughal_stormwing`, `npc_tobias_seecher`, `npc_mistress_nagmara`, `SummonThelrinDnd` (27517, `npc_theldren_trigger`), `npc_grimstone` (Theldren's gladiators, `DoChallengeQuestCredit`)
 
 ## scripts/blackrockspire.d
 
@@ -222,8 +222,8 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 ## scripts/diremaul.d
 
 * Projects: CMaNGOS
-* Files: `AI/ScriptDevAI/scripts/kalimdor/dire_maul/instance_dire_maul.cpp`, `dire_maul.h`
-* Functions/ScriptNames: `instance_dire_maul` (`SortPylonGuards`, `PylonGuardJustDied`, `ProcessForceFieldOpening`)
+* Files: `AI/ScriptDevAI/scripts/kalimdor/dire_maul/instance_dire_maul.cpp`, `dire_maul.h`, `dire_maul.cpp`
+* Functions/ScriptNames: `instance_dire_maul` (`SortPylonGuards`, `PylonGuardJustDied`, `ProcessForceFieldOpening`), `Update` (the ritual's failure), `ProcessDreadsteedRitualStart`, `GetRitualSymbolGuids`; `event_spells_warlock_dreadsteed`, `npc_warlock_mount_ritual`, `go_dreadsteed_quest_objects` (`DreadsteedQuestObjects`), `go_fixed_trap`
 
 ## scripts/durotar.d
 
@@ -321,7 +321,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 
 * Projects: CMaNGOS
 * Files: `AI/ScriptDevAI/scripts/eastern_kingdoms/scholomance/instance_scholomance.cpp`, `boss_darkmaster_gandling.cpp`, `boss_jandice_barov.cpp`, `scholomance.cpp`, `scholomance.h`
-* Functions/ScriptNames: `instance_scholomance` (`DoSpawnGandlingIfCan`, `DoRespawnEntranceRoom`, `HandleDawnGambitEvent`), `event_dawn_gambit`, `boss_darkmaster_gandling`, `boss_jandice_barov`, `npc_spectral_tutor`
+* Functions/ScriptNames: `instance_scholomance` (`DoSpawnGandlingIfCan`, `DoRespawnEntranceRoom`, `HandleDawnGambitEvent`), `event_dawn_gambit`, `boss_darkmaster_gandling`, `boss_jandice_barov`, `npc_spectral_tutor`, `event_spell_gandling_shadow_portal` (`HandlePortalEvent`; Shadow Portal 17950's dummy: one of 17863, 17939, 17943, 17944, 17946, 17948)
 
 ## scripts/searinggorge.d
 
@@ -369,7 +369,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 
 * Projects: CMaNGOS
 * Files: `AI/ScriptDevAI/scripts/eastern_kingdoms/stratholme/stratholme.cpp`, `stratholmeScripts.cpp`, `boss_baroness_anastari.cpp`, `boss_cannon_master_willey.cpp`, `boss_maleki_the_pallid.cpp`, `boss_dathrohan_balnazzar.cpp`, `stratholme.h`
-* Functions/ScriptNames: `instance_stratholme` (`DoSortZiggurats`, `ThazudinAcolyteJustDied`, `StartSlaughterSquare`, `DoScarletBastionDefense`, `Update`), `go_gauntlet_gate`, `go_service_gate`, `go_stratholme_postbox`, `npc_aurius`, `boss_baroness_anastari`, `boss_cannon_master_willey`, `boss_maleki_the_pallid`, `boss_dathrohan_balnazzar`, `mob_restless_soul`, `mobs_spectral_ghostly_citizen`
+* Functions/ScriptNames: `instance_stratholme` (`DoSortZiggurats`, `ThazudinAcolyteJustDied`, `StartSlaughterSquare`, `DoScarletBastionDefense`, `Update`), `go_gauntlet_gate`, `go_service_gate`, `go_stratholme_postbox`, `npc_aurius`, `boss_baroness_anastari`, `boss_cannon_master_willey`, `boss_maleki_the_pallid`, `boss_dathrohan_balnazzar`, `mob_restless_soul`, `mobs_spectral_ghostly_citizen`; the gate traps (`DoGateTrap`, `DoSpawnPlaguedCritters`, `Update`)
 
 ## scripts/sunkentemple.d
 
@@ -477,7 +477,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Functions/ScriptNames: `instance_zulgurub`, `at_zulgurub`, `boss_venoxis`, `boss_jeklik`,
   `npc_gurubashi_bat_rider`, `boss_marli`, `boss_thekal`, `mob_zealot_lorkhan`, `mob_zealot_zath`,
   `boss_arlokk`, `npc_zulian_prowler`, `go_gong_of_bethekk`, `boss_mandokir`, `mob_ohgan`, `boss_renataki`,
-  `boss_hakkar`, `npc_soulflayer`, `spell_arlokk_vanish`, `spell_renataki_vanish`, `spell_thekal_resurrect`
+  `boss_hakkar`, `npc_soulflayer`, `spell_arlokk_vanish`, `spell_renataki_vanish`, `spell_thekal_resurrect`, `spell_threatening_gaze` (`ThreateningGaze`, Mandokir's `ReceiveAIEvent`)
 
 ## scripts/blackwinglair.d
 
@@ -487,7 +487,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
   `boss_ebonroc.cpp`, `boss_flamegor.cpp`, `boss_chromaggus.cpp`, `boss_victor_nefarius.cpp`, `boss_nefarian.cpp`)
 * Functions/ScriptNames: `instance_blackwing_lair`, `at_vaelastrasz`, `boss_razorgore`, `npc_blackwing_orb`,
   `boss_vaelastrasz`, `boss_broodlord`, `boss_firemaw`, `boss_ebonroc`, `boss_flamegor`, `boss_chromaggus`,
-  `boss_victor_nefarius`, `boss_nefarian`
+  `boss_victor_nefarius`, `boss_nefarian`, `event_weekly_chromatic_selection` (`InitiateBreath`, `InitiateDrakonid`), `event_razorgore_possess`
 
 ## scripts/ruinsofahnqiraj.d
 
@@ -508,7 +508,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Functions/ScriptNames: `instance_temple_of_ahnqiraj`, `at_temple_ahnqiraj`, `boss_skeram`, `boss_kri`,
   `boss_vem`, `boss_yauj`, `boss_sartura`, `boss_fankriss`, `boss_viscidus`, `boss_huhuran`, `boss_veknilash`,
   `boss_veklor`, `boss_ouro`, `npc_ouro_spawner`, `npc_ouro_mound`, `npc_ouro_scarab`, `npc_ouro_trigger`,
-  `boss_eye_of_cthun`, `boss_cthun`, `mob_giant_claw_tentacle`, `mob_anubisath_sentinel`, `mob_anubisath_defender`
+  `boss_eye_of_cthun`, `boss_cthun`, `mob_giant_claw_tentacle`, `mob_anubisath_sentinel`, `mob_anubisath_defender`, `event_cthun_reset`, `at_stomach_cthun`; C'Thun's stomach (`DoSpawnTentacles`, `HandleWeaken`, `EnterEvadeMode`, `ExitStomach`, `CThunMouthTentacle`, `DigestiveAcidPeriodic`)
 
 ## scripts/naxxramas.d
 
@@ -522,7 +522,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
   `npc_diseased_maggot`, `boss_loatheb`, `boss_razuvious`, `boss_gothik`, `boss_lady_blaumeux`,
   `boss_alexandros_mograine`, `boss_thane_korthazz`, `boss_sir_zeliek`, `boss_patchwerk`, `boss_grobbulus`,
   `boss_gluth`, `boss_stalagg`, `boss_feugen`, `boss_thaddius`, `boss_sapphiron`, `boss_kelthuzad`,
-  `npc_icecrown_guardian`, `npc_stoneskin_gargoyle`, `npc_living_poison`
+  `npc_icecrown_guardian`, `npc_stoneskin_gargoyle`, `npc_living_poison`, `event_naxxramas` (`DoHandleEvent`, the shackles check of `Update`), `npc_invible_man` (`npc_invisible_manAI`, `WebWrapMaexxna`), `spell_anchor`
 
 ## timer.d
 
@@ -694,6 +694,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Projects: ArcEmu, EventAI
 * Functions: `AuctionHouseObject::Update`, `BattleGroundMap::CanEnter`, `CommandTableStorage::Load`, `Creature::Create`, `Creature::Despawn`, `Creature::SaveRespawnTime`, `Creature::Update`, `DungeonMap::Add`, `GameObject::SaveRespawnTime`, `GameObject::Update`, `GameObject::Use`, `InstanceMap::UnloadAll`, `InstanceSaveManager::LoadFromDB`, `MailDraft::SendMailTo`, `Map::Instanceable`, `Map::Update`, `MapManager::CanPlayerEnter`, `MapManager::CreateInstance`, `MapMgr::InstanceShutdown`, `ObjectMgr::ReturnOrDeleteOldMails`, `Pet::Create`, `Player::GetBoundInstance`, `Player::Update`, `TerrainManager::LoadTerrain`, `WeatherSystem::FindOrCreateWeather`, `WeatherSystem::UpdateWeathers`, `World::SendGlobalMessage`, `World::ShutdownMsg`, `World::ShutdownServ`, `World::Update`, `World::m_StartTime`, `WorldObject::SummonCreature`
 * Constants: `DEAD`, `GAMEOBJECT_TYPE_TRAP`, `SMSG_TRANSFER_ABORTED`, `SMSG_WEATHER`, `WUPDATE_AUCTIONS`
+* Also: `CreatureLinkingHolder::DoCreatureLinkingEvent` (the respawn flags in dungeon copies), `Creature::Respawn`
 
 ## world/corpse.d
 
@@ -721,6 +722,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Projects: CMaNGOS, EventAI
 * Functions: `Spell::CheckRange`, `Spell::cast`, `Spell::prepare`, `UnitAI::DoCastSpellIfCan`
 * Constants: `CAST_FORCE_TARGET_SELF`, `EVENT_T_FRIENDLY_HP`, `SMSG_SPELL_FAILURE`, `SMSG_SPELL_GO`, `SPELL_EFFECT_APPLY_AURA`, `SPELL_EFFECT_HEAL`, `TEMPSPAWN_TIMED_OOC_DESPAWN`, `TEMPSPAWN_TIMED_OOC_OR_DEAD_DESPAWN`, `UNIT_STAT_NO_COMBAT_MOVEMENT`
+* Also: `Spell::EffectSendEvent` (a creature's `SPELL_EFFECT_SEND_EVENT`), `Unit::RemoveAura` (its script told, `AuraRemoved`)
 
 ## world/crypt.d
 
@@ -739,6 +741,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Files: `ScriptMgr.cpp`
 * Functions: `Map::ScriptsProcess`, `Map::ScriptsStart`
 * Constants: `FORCED_MOVEMENT_RUN`, `SCRIPT_COMMAND_MOVE_TO`, `SCRIPT_COMMAND_RESPAWN_GAMEOBJECT`, `SCRIPT_COMMAND_TERMINATE_SCRIPT`, `SCRIPT_FLAG_BUDDY_AS_TARGET`, `SCRIPT_FLAG_BUDDY_BY_GUID`, `SPELL_EFFECT_SEND_EVENT`, `TYPEMASK_CREATURE_OR_GAMEOBJECT`
+* Also: `InstanceData::OnObjectCreate` (an object the script spawns, told to the dungeon's script)
 
 ## world/death.d
 
@@ -1132,6 +1135,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Files: `Spell.cpp`, `SpellEffects.cpp`, `SpellHandler.cpp`
 * Functions: `GameObject::Use`, `Player::ClearCooldownForSpell`, `Player::ClearCooldownsOnLine`, `Player::HasItemFitToSpellReqirements`, `Player::UpdateFishingSkill`, `Player::_LoadSpellCooldowns`, `Player::_SaveSpellCooldowns`, `Spell::CheckCast`, `Spell::CheckItems`, `Spell::EffectEnergize`, `Spell::EffectHeal`, `Spell::EffectInstaKill`, `Spell::EffectPersistentAA`, `Spell::EffectTeleportUnits`, `Spell::EffectTransmitted`, `Spell::EffectWeaponDmg`, `Spell::SendChannelStart`, `Spell::SendChannelUpdate`, `Spell::SetTargetMap`, `Spell::SpellStart`, `Spell::cancel`, `Spell::cast`, `Spell::m_delayMoment`, `Spell::update`, `Unit::AttackerStateUpdate`, `Unit::CalculateSpellDamage`, `Unit::SpellDamageBonusDone`, `Unit::SpellHealingBonusDone`, `Unit::SpellHitResult`
 * Constants: `CMSG_CANCEL_CHANNELLING`, `CURRENT_CHANNELED_SPELL`, `CURRENT_GENERIC_SPELL`, `CURRENT_MELEE_SPELL`, `FISHING_BOBBER_READY_TIME`, `MSG_CHANNEL_START`, `MSG_CHANNEL_UPDATE`, `SMSG_CLEAR_COOLDOWN`, `SMSG_FISH_NOT_HOOKED`, `SMSG_INITIAL_SPELLS`, `SMSG_SPELLINSTAKILLLOG`, `SMSG_SPELL_GO`, `SMSG_SPELL_START`, `SPELL_ATTR_EX_IS_CHANNELED`, `SPELL_AURA_MOD_DAMAGE_DONE`, `SPELL_AURA_MOD_HEALING_DONE`, `SPELL_AURA_PERIODIC_DAMAGE`, `SPELL_EFFECT_APPLY_AURA`, `SPELL_FAILED_EQUIPPED_ITEM_CLASS`, `SPELL_INTERRUPT_FLAG_MOVEMENT`, `TARGET_ALL_ENEMY_IN_AREA`, `TARGET_CASTER_COORDINATES`, `TRIGGERED_OLD_TRIGGERED`
+* Also: `TARGET_UNIT_SCRIPT_NEAR_CASTER`, `Spell::CheckScriptTargeting` (`spell_script_target`)
 
 ## world/spellmods.d
 
@@ -1226,3 +1230,4 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Projects: CMaNGOS, mangosd
 * Functions: `GraveyardManager::GraveyardLinkKey`, `ObjectMgr::GetBaseXP`, `ObjectMgr::GetGameTele`, `ObjectMgr::GetMapEntranceTrigger`, `ObjectMgr::GetXPForLevel`, `ObjectMgr::LoadAreaTriggerTeleports`, `ObjectMgr::LoadCreatureTemplates`, `ObjectMgr::LoadCreatures`, `ObjectMgr::LoadGameTele`, `ObjectMgr::LoadItemPrototypes`, `ObjectMgr::LoadPlayerInfo`, `Player::IsActionButtonDataValid`, `WaypointManager::Load`
 * Constants: `GRAVEYARD_AREALINK`, `GRAVEYARD_MAPLINK`, `MAX_LEVEL`, `SMSG_ITEM_QUERY_SINGLE_RESPONSE`
+* Also: `SpellMgr::LoadSpellScriptTarget` (`spell_script_target`)
