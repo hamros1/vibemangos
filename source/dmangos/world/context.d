@@ -3020,6 +3020,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         const faction = client.factionTemplates.lookup(trap.template_.faction);
         if (faction !is null && isFriend(Relating(0, faction, false, 0, 0, true), session.relating, client))
             return;
+        // Instance round 2: a trap with a script is asked first (one only its creature springs refuses players).
+        if (trap.behaviour && gameObjectUsed(trap, map, session.character.guid))
+            return;
         trap.trapReadyAt = unixTime + (trap.template_.data[5] > 0 ? trap.template_.data[5] : 1);
         session.castTriggeredAt(spell, session.character.guid);
         const charges = trap.template_.data[4];
