@@ -363,6 +363,19 @@ Character creditedPlayer(UnitRef unit)
  */
 void dealDamage(UnitRef attacker, UnitRef victim, uint damage, const Blow blow)
 {
+    if (blow.kind == BlowKind.melee && blow.melee.targetState == VictimState.parry)
+        final switch (victim.kind)
+        {
+        case UnitKind.none:
+            break;
+        case UnitKind.player:
+            victim.session.parried();
+            break;
+        case UnitKind.creature:
+            if (victim.creature.ai !is null)
+                victim.creature.ai.parried();
+            break;
+        }
     final switch (victim.kind)
     {
     case UnitKind.none:

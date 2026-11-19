@@ -459,6 +459,29 @@ private bool canDodge(const Fighter victim, const Fighter attacker) pure nothrow
     return !victim.player || isFacingFront(attacker, victim);
 }
 
+/**
+ * Parry haste: a parry brings the parrier's next swing nearer (CMaNGOS's `Unit::DealMeleeDamage`). A swing more
+ * than 60% of the weapon's time away comes 40% of it sooner; one between 20% and 60% away comes at 20%; one
+ * nearer stays.
+ */
+uint parryHasted(uint timer, uint attackTime) pure nothrow @nogc @safe
+{
+    const p20 = attackTime * 0.2f, p60 = 3 * p20;
+    if (timer > p60)
+        return cast(uint) (timer - 2 * p20);
+    if (timer > p20)
+        return cast(uint) p20;
+    return timer;
+}
+
+unittest
+{
+    assert(parryHasted(2000, 2000) == 1200); // just swung: 40% sooner
+    assert(parryHasted(1000, 2000) == 400);  // half way: to 20%
+    assert(parryHasted(300, 2000) == 300);   // nearly ready: as it is
+    assert(parryHasted(0, 2000) == 0);
+}
+
 /// Whether the victim may parry: only from the front.
 private bool canParry(const Fighter victim, const Fighter attacker) pure nothrow @nogc @safe
 {
