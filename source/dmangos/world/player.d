@@ -1227,7 +1227,7 @@ private:
             }
         if (const shield = inventory.equipped(equipmentSlotOffhand))
             if (shield.durability != 0 || shield.maxDurability == 0)
-                c.shieldBlock = shield.proto.details.block;
+                c.shieldBlock = cast(uint)(shield.proto.details.block * auras.multiplier(AuraType.modShieldBlockvaluePct));
         // What auras (talents, buffs) add to the chances; crit only those for the weapon in hand.
         int subClassOf(ubyte slot)
         {
