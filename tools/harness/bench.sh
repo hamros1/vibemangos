@@ -10,6 +10,7 @@
 LABEL=$1; SCENARIO=$2; BOTS=$3; BIN="${4:-$WORLDSERVER}"
 [ -f "$H/world.json" ] || { echo "no harness; run tools/harness/setup.sh first" >&2; exit 1; }
 db_start || exit 1
+revive_bots || exit 1
 ulimit -n 8192 2>/dev/null
 mkdir -p "$H/bench"
 WORLDSERVER="$BIN" LOADGEN="$LOADGEN" CONFIG="$H/world.json" WORLD=127.0.0.1:38085 \

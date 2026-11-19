@@ -35,6 +35,13 @@ db_stop() {
     while kill -0 "$pid" 2>/dev/null; do sleep 0.25; done
 }
 
+# Brings the harness's characters back to life (bots that died in a run log out dead and come back as ghosts,
+# and a crowd of ghosts is not what a benchmark means to measure): their corpses go, the ghost flag goes.
+revive_bots() {
+    LD_LIBRARY_PATH="$(dirname "$MYSQL_LIB")" "$MARIADB_ROOT/usr/bin/mariadb" -S "$SOCK" -u root classiccharacters \
+        -e "DELETE FROM corpse; UPDATE characters SET playerFlags = playerFlags & ~16 WHERE playerFlags & 16;"
+}
+
 # Waits until every log given has said it listens (twice: client port and, in a cluster, the node port).
 wait_listening() {
     want=$1; shift

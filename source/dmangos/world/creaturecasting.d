@@ -497,6 +497,11 @@ mixin template CreatureCasting()
                                 }
                             }
                     break;
+                case SpellEffect.reputation: // SPELL_EFFECT_REPUTATION: a player it hits gains (or loses) standing
+                    if (auto other = world_.unit(guid))
+                        if (other.session !is null && spell.miscValue[i] > 0)
+                            other.session.spellReputation(cast(uint) spell.miscValue[i], value);
+                    break;
                 case SpellEffect.teleportUnits: // SPELL_EFFECT_TELEPORT_UNITS: a player to the spell's place
                     if (guid != me.guid)
                         lore.teleportBySpell(guid, spell.id);
@@ -535,7 +540,7 @@ mixin template CreatureCasting()
                     SpellEffect.summonTotemSlot3, SpellEffect.summonTotemSlot4, SpellEffect.threatAll,
                     SpellEffect.enchantHeldItem, SpellEffect.summonPhantasm, SpellEffect.selfResurrect,
                     SpellEffect.skinning, SpellEffect.charge, SpellEffect.summonCritter, SpellEffect.disenchant, SpellEffect.inebriate, SpellEffect.feedPet, SpellEffect.dismissPet,
-                    SpellEffect.reputation, SpellEffect.summonObjectSlot1, SpellEffect.summonObjectSlot2,
+                    SpellEffect.summonObjectSlot1, SpellEffect.summonObjectSlot2,
                     SpellEffect.summonObjectSlot3, SpellEffect.summonObjectSlot4, SpellEffect.dispelMechanic,
                     SpellEffect.summonDeadPet, SpellEffect.destroyAllTotems, SpellEffect.durabilityDamage,
                     SpellEffect.summonDemon, SpellEffect.resurrectNew, SpellEffect.attackMe,

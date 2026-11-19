@@ -10,6 +10,7 @@
 BOTS="${BOTS:-250}"; DURATION="${DURATION:-180}"; AFTER="${AFTER:-60}"
 [ -f "$H/node1.json" ] || { echo "no harness; run tools/harness/setup.sh first" >&2; exit 1; }
 db_start || exit 1
+revive_bots || exit 1
 ulimit -n 8192 2>/dev/null
 R="$H/regression"; mkdir -p "$R"; rm -f "$R"/*.log "$R"/*.md "$R"/*.out "$H"/writes-*.log
 cd "$R"

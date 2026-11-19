@@ -479,6 +479,13 @@ final class Character : OnlinePlayer, Looter
             disbandGuild(g);
     }
 
+    /// A creature's spell changes the player's standing with `faction` (`SPELL_EFFECT_REPUTATION`).
+    void spellReputation(uint faction, int amount)
+    {
+        if (player !is null)
+            modifyReputation(faction, amount);
+    }
+
     /// Thrown from `from` (a creature's knockback): its client is told how, and moves.
     void knockedBack(Position from, float horizontal, float vertical)
     {

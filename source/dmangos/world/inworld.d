@@ -73,6 +73,7 @@ private:
         releaseLootOnLeave();
         spellsOnLeave();
         petsOnLeave();
+        dismissCompanion();
         cancelTrade(false, TradeStatus.targetLogout);
         duelComplete(DuelEnd.fled);
         if (player.deathState == DeathState.alive)

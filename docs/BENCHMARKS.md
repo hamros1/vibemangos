@@ -446,3 +446,17 @@ The fix: the map counts its ghosts; with none, and the player not just dead or a
 symmetric and the pass does what it did before (no rule, no other player's set, no pass over those who
 see the player). Measured again, side by side while other builds ran on the machine: 9.3-9.6% before,
 9.5-9.8% after, within the noise.
+
+## A crowd of ghosts (2026-11-19)
+
+The crowd benchmark seemed a point slower after the ghosts' visibility (busy 8.5-8.9% against 7.8-8.0% for
+the build before it, measured with nothing else running). Bisecting by build put it all in
+`updateVisibility`, and a counting build showed why: every one of the 500 bots was a ghost. The
+harness's characters had died over earlier runs and logged out dead, so they came back released, and the
+map took the one-way path for every pass. The earlier "Ghosts in the visibility pass" numbers were
+measured on that crowd too.
+
+`tools/harness/bench.sh` and `regression.sh` now bring the harness's characters back to life before a run
+(`revive_bots`: the corpses and the ghost flag go). With living bots the build before the ghosts and
+today's are the same: busy 7.1-7.3% and 7.1-7.2%. A crowd of 500 ghosts, all seeing each other, costs
+about 0.7 points more than one of the living; that is the one-way path's price, paid only by ghosts.

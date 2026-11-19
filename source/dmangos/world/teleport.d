@@ -255,6 +255,7 @@ private:
             cancelTrade(true);
             duelComplete(dmangos.world.duelhandlers.DuelEnd.fled);
             petsOnLeave(); // it comes out again on the other side
+            dismissCompanion(); // a companion does not
             flushPlayerChanges();
             if (ridingShip)
             {

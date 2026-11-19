@@ -1566,9 +1566,19 @@ private:
         case SpellEffect.heal: // SPELL_EFFECT_HEAL
             heal(spell, target, spellMod(SpellModOp.damage, spell, value));
             break;
+        case SpellEffect.summonCritter: // SPELL_EFFECT_SUMMON_CRITTER: a companion; the same again sends it away
+            summonCompanion(spell, i);
+            break;
         case SpellEffect.energize: // SPELL_EFFECT_ENERGIZE
             energize(spell, i, target, value);
             break;
+        case SpellEffect.reputation: // SPELL_EFFECT_REPUTATION: the faction of the misc value, by the value
+        {
+            auto who = target == player.guid ? this : cast(typeof(this)) context.onlinePlayer(target);
+            if (who !is null && who.player !is null && spell.miscValue[i] > 0)
+                who.modifyReputation(cast(uint) spell.miscValue[i], value);
+            break;
+        }
         case SpellEffect.teleportUnits: // SPELL_EFFECT_TELEPORT_UNITS
             teleportUnits(spell, i, c);
             break;
@@ -1617,8 +1627,8 @@ private:
             SpellEffect.healMechanical, SpellEffect.summonObjectWild, SpellEffect.sanctuary,
             SpellEffect.addComboPoints, SpellEffect.createHouse, SpellEffect.bindSight, SpellEffect.stuck,
             SpellEffect.summonPlayer, SpellEffect.activateObject, SpellEffect.threatAll,
-            SpellEffect.enchantHeldItem, SpellEffect.summonPhantasm, SpellEffect.charge, SpellEffect.summonCritter,
-            SpellEffect.knockBack, SpellEffect.disenchant, SpellEffect.inebriate, SpellEffect.reputation,
+            SpellEffect.enchantHeldItem, SpellEffect.summonPhantasm, SpellEffect.charge,
+            SpellEffect.knockBack, SpellEffect.disenchant, SpellEffect.inebriate,
             SpellEffect.summonObjectSlot1, SpellEffect.summonObjectSlot2, SpellEffect.summonObjectSlot3,
             SpellEffect.summonObjectSlot4, SpellEffect.dispelMechanic, SpellEffect.destroyAllTotems,
             SpellEffect.durabilityDamage, SpellEffect.summonDemon, SpellEffect.attackMe,
@@ -2351,6 +2361,64 @@ private:
             value), true);
         if (who !is this)
             who.flushPlayerChanges();
+    }
+
+    /// The player's companion (a mini-pet: `SUMMON_CRITTER`), if out; 0 if none.
+    package ulong companion;
+
+    /**
+     * `SUMMON_CRITTER` (CMaNGOS's `EffectSummonCritter`): the effect's creature beside the player, of its faction,
+     * passive, immune to players and creatures, following it, for the spell's time (none: until sent away). The
+     * same companion again sends it away; another takes its place.
+     */
+    void summonCompanion(const(SpellInfo)* spell, size_t i)
+    {
+        import std.math : PI;
+        import dmangos.script.api : EntityRef, Reaction;
+        import dmangos.world.creature : TempSpawnType;
+        import dmangos.world.defines : UnitFlags;
+        import dmangos.world.movement : Position;
+        import dmangos.world.spellcast : duration;
+        import dmangos.world.updatefields;
+
+        const entry = cast(uint) spell.miscValue[i];
+        if (entry == 0)
+            return;
+        if (auto old = companion ? cast(Creature) map.findObject(companion) : null)
+        {
+            const same = old.template_.entry == entry;
+            dismissCompanion();
+            if (same)
+                return;
+        }
+        const ms = duration(*spell, context.client, player.data.level);
+        auto critter = context.summonCreature(map, entry, Position.init, ms > 0 ? TempSpawnType.timed : TempSpawnType.manual,
+            ms > 0 ? ms : 0, player.guid);
+        if (critter is null)
+            return;
+        companion = critter.guid;
+        const faction = player.values.get!UNIT_FIELD_FACTIONTEMPLATE;
+        critter.factionTemplate = context.client.factionTemplates.lookup(faction);
+        critter.values.set!UNIT_FIELD_FACTIONTEMPLATE(faction);
+        critter.values.set!UNIT_FIELD_SUMMONEDBY(player.guid);
+        critter.values.set!UNIT_FIELD_CREATEDBY(player.guid);
+        critter.values.set!UNIT_CREATED_BY_SPELL(spell.id);
+        critter.values.set!UNIT_FIELD_FLAGS(critter.values.get!UNIT_FIELD_FLAGS | UnitFlags.immuneToPlayer
+            | UnitFlags.immuneToNpc);
+        critter.ai.bind(map);
+        critter.ai.hostReactState(Reaction.passive);
+        critter.ai.hostFollow(EntityRef(player.guid), 2, PI / 2);
+        map.flushCreature(critter);
+    }
+
+    /// The companion goes (sent away, or its owner left the map or the world).
+    package void dismissCompanion()
+    {
+        if (companion == 0)
+            return;
+        if (map !is null && map.findObject(companion) !is null)
+            map.removeObject(companion);
+        companion = 0;
     }
 
     /// A teleport: to the home bind (the hearthstone), or where the client chose.
@@ -3613,4 +3681,53 @@ unittest
     assert(victim, "she is a unit on his map");
     anduin.session.inWorld.weaponSpellDamage(strike in context.data.spells.spells, 0, victim, 10);
     assert(j.values.get!UNIT_FIELD_HEALTH < 500, "the strike landed on a player");
+}
+
+// A companion (SUMMON_CRITTER): out beside its owner, of its faction and following it; the same spell again sends it
+// away; it does not outlast its owner's leaving the world.
+unittest
+{
+    import dmangos.bytes : ByteWriter;
+    import dmangos.dbc : buildDbc;
+    import dmangos.world.clientdata : spellRangeFormat;
+    import dmangos.world.creature : Creature;
+    import dmangos.world.movement : Position;
+    import dmangos.world.opcodes;
+    import dmangos.world.player : Player;
+    import dmangos.world.spellcast : SpellTargets, TargetFlags;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+    import dmangos.world.updatefields;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    uint bits(float f) { return *cast(uint*) &f; }
+    context.client.spellRanges = typeof(context.client.spellRanges).parse(buildDbc(spellRangeFormat,
+        [[1u, bits(0), bits(30), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]), "SpellRange.dbc");
+    enum uint whistle = 90801;
+    context.data.spells.spells[whistle] = testSpell(whistle, SpellEffect.summonCritter, ImplicitTarget.caster, 0);
+    context.data.spells.spells.edit(whistle).miscValue[0] = creatureTrainer; // the companion
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f), AccountLevel.gameMaster);
+    anduin.read();
+    auto me = cast(Player) anduin.session.character;
+    me.spells ~= whistle;
+    void cast_()
+    {
+        ByteWriter w;
+        w.put(whistle);
+        SpellTargets(TargetFlags.self).write(w);
+        anduin.write(Opcode.CMSG_CAST_SPELL, w.data);
+        anduin.read();
+    }
+    cast_();
+    const pet = anduin.session.inWorld.companion;
+    auto critter = cast(Creature) context.map(0).findObject(pet);
+    assert(pet && critter !is null && critter.values.get!UNIT_FIELD_SUMMONEDBY == me.guid);
+    assert(critter.values.get!UNIT_FIELD_FACTIONTEMPLATE == me.values.get!UNIT_FIELD_FACTIONTEMPLATE);
+    cast_();
+    assert(anduin.session.inWorld.companion == 0 && context.map(0).findObject(pet) is null, "sent away");
+    cast_();
+    const again = anduin.session.inWorld.companion;
+    anduin.write(Opcode.CMSG_LOGOUT_REQUEST, null); // a game master's account: at once
+    assert(context.map(0).findObject(again) is null, "gone with its owner");
 }

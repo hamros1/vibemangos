@@ -2454,12 +2454,12 @@ private:
         {
             if (o == slot)
                 continue;
-            auto other = at(o).player;
+            // Only `who`'s own set is read for a pair already known (the other's entry is a cache miss each).
             const iSee = !at(slot).known[o] && (symmetric || playerSeesSlot(slot, o));
             if (iSee)
             {
                 see(slot, o);
-                const block = other.appearanceFor(who, time);
+                const block = at(o).player.appearanceFor(who, time);
                 if (!received.empty && received.byteSize + block.byteSize > maxUpdatePacketBytes)
                 {
                     deliverUpdate(who, received);
@@ -2470,6 +2470,7 @@ private:
             if (symmetric ? iSee : !at(o).known[slot] && playerSeesSlot(o, slot))
             {
                 see(o, slot);
+                auto other = at(o).player;
                 const kind = who.appearanceKind(other);
                 auto packet = kind in shown;
                 if (packet is null)

@@ -357,3 +357,42 @@ unittest
     assert(rows.length == 2 && rows.canFind!(r => r.faction == guild && r.standing == 30
         && (r.flags & (FactionFlag.visible | FactionFlag.atWar)) == (FactionFlag.visible | FactionFlag.atWar)));
 }
+
+// A spell's REPUTATION effect: the caster's standing with the faction of its misc value grows by its value.
+unittest
+{
+    import dmangos.bytes : ByteWriter;
+    import dmangos.dbc : buildDbc;
+    import dmangos.world.clientdata : factionFormat, spellRangeFormat;
+    import dmangos.world.movement : Position;
+    import dmangos.world.opcodes;
+    import dmangos.world.player : Player;
+    import dmangos.world.spellcast : SpellTargets, TargetFlags;
+    import dmangos.world.spellhandlers : testSpell;
+    import dmangos.world.spellids : ImplicitTarget, SpellEffect;
+    import dmangos.world.testclient;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    uint bits(float f) { return *cast(uint*) &f; }
+    context.client.spellRanges = typeof(context.client.spellRanges).parse(buildDbc(spellRangeFormat,
+        [[1u, bits(0), bits(30), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]), "SpellRange.dbc");
+    enum uint armorsmiths = 72;
+    auto row = new uint[factionFormat.length];
+    row[0] = armorsmiths;
+    row[1] = 3;
+    context.client.factions = typeof(context.client.factions).parse(buildDbc(factionFormat, [row]), "Faction.dbc");
+    enum uint favour = 90701;
+    context.data.spells.spells[favour] = testSpell(favour, SpellEffect.reputation, ImplicitTarget.caster, 500);
+    context.data.spells.spells.edit(favour).miscValue[0] = armorsmiths;
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f));
+    anduin.read();
+    auto me = cast(Player) anduin.session.character;
+    me.spells ~= favour;
+    ByteWriter w;
+    w.put(favour);
+    SpellTargets(TargetFlags.self).write(w);
+    anduin.write(Opcode.CMSG_CAST_SPELL, w.data);
+    anduin.read();
+    assert(me.reputation.standingWith(armorsmiths) == 500);
+}

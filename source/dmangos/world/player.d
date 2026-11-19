@@ -899,13 +899,19 @@ final class Player : InventoryOwner
      */
     uint skillWithBonus(uint skill) const
     {
+        return skillNow(skill)[0];
+    }
+
+    /// `skillWithBonus` and the skill's maximum, from one look through the skills (combat asks often).
+    uint[2] skillNow(uint skill) const
+    {
         const slot = skillSlot(skill);
         if (slot < 0)
-            return 0;
-        const value = values[PLAYER_SKILL_INFO_1_1 + 3 * slot + 1] & 0xFFFF;
+            return [0, 0];
+        const word = values[PLAYER_SKILL_INFO_1_1 + 3 * slot + 1];
         const bonus = values[PLAYER_SKILL_INFO_1_1 + 3 * slot + 2];
-        const total = cast(int) value + cast(short)(bonus & 0xFFFF) + cast(short)(bonus >> 16);
-        return total > 0 ? total : 0;
+        const total = cast(int)(word & 0xFFFF) + cast(short)(bonus & 0xFFFF) + cast(short)(bonus >> 16);
+        return [total > 0 ? total : 0, word >> 16];
     }
 
     /// The auras' skill bonuses into the skills' third fields: the temporary half, then the permanent.
@@ -1139,8 +1145,9 @@ private:
             const skill = item !is null ? itemSkill(item.proto) : type == AttackType.mainHand ? skillUnarmed : 0;
             if (skill)
             {
-                f.weaponSkill[type] = skillWithBonus(skill);
-                f.weaponSkillMax[type] = skillValue(skill)[1];
+                const now = skillNow(skill);
+                f.weaponSkill[type] = now[0];
+                f.weaponSkillMax[type] = now[1];
             }
             f.damage[type] = [stats.damage[type].min, stats.damage[type].max];
             if (item !is null)
@@ -1149,8 +1156,9 @@ private:
         f.crit = chances.crit;
         f.hitBonus = auras.total(AuraType.modHitChance); // `MOD_HIT_CHANCE`: fewer misses
         f.dualWield = dualWield && weaponFor(equipmentSlotOffhand) !is null; // `hasOffhandWeaponForAttack`
-        f.defenseSkill = skillWithBonus(skillDefense);
-        f.defenseSkillMax = skillValue(skillDefense)[1];
+        const defense = skillNow(skillDefense);
+        f.defenseSkill = defense[0];
+        f.defenseSkillMax = defense[1];
         f.dodge = chances.dodge;
         f.parry = chances.parry;
         f.block = chances.block;
