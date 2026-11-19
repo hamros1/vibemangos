@@ -28,6 +28,7 @@ static import dmangos.scripts.stonetalon;
 static import dmangos.scripts.silithus;
 static import dmangos.scripts.winterspring;
 static import dmangos.scripts.azshara;
+static import dmangos.scripts.moonglade;
 
 /// Every module holding scripts.
 alias scriptModules = AliasSeq!(dmangos.scripts.deadmines, dmangos.scripts.westfall, dmangos.scripts.spells,
@@ -38,4 +39,4 @@ alias scriptModules = AliasSeq!(dmangos.scripts.deadmines, dmangos.scripts.westf
     dmangos.scripts.desolace, dmangos.scripts.durotar, dmangos.scripts.dustwallow,
     dmangos.scripts.felwood, dmangos.scripts.feralas, dmangos.scripts.thousandneedles,
     dmangos.scripts.tanaris, dmangos.scripts.teldrassil, dmangos.scripts.stonetalon, dmangos.scripts.silithus,
-    dmangos.scripts.winterspring, dmangos.scripts.azshara);
+    dmangos.scripts.winterspring, dmangos.scripts.azshara, dmangos.scripts.moonglade);
