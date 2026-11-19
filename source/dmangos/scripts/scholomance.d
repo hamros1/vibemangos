@@ -5,6 +5,10 @@
  * fights, Ras Frostwhisper's door, the entrance hall filled again after Rattlegore's death, the
  * Dawn's Gambit thrown into the viewing room (the students turn, and Vectus and Marduk with them),
  * and the abilities of Gandling, Jandice Barov and the spectral tutors.
+ *
+ * Gandling's Shadow Portal sends a player into one of the six rooms (each room's spell teleports and
+ * starts its event): the room's gate shuts behind them, Risen Guardians rise there (the event's
+ * database script), and the gate opens again when the guardians are slain or give up their fight.
  */
 module dmangos.scripts.scholomance;
 
@@ -30,6 +34,7 @@ enum : uint
     vectus = 10432,
     marduk = 10433,
     gandling = 1853,
+    risenGuardian = 11598,
 }
 
 /// Objects of Scholomance.
@@ -74,7 +79,13 @@ struct Scholomance
         Location(209.233f, 73.2819f, 104.80f, 1.29154f),
     ];
 
+    /// The events of Gandling's portals into the masters' rooms, in the order of `roomMasters`.
+    static immutable uint[6] portalEvents = [5620, 5619, 5618, 5623, 5622, 5621];
+
     Fight kirtonosFight, rattlegoreFight, rasFight, gandlingFight;
+    ubyte portalRoom;          /// the room (index + 1) Gandling's last portal led to; 0: none yet
+    bool[6] portalShut;        /// the room's gate is shut on a portal's guardians
+    Pack!12[6] portalGuardians;
     Fight[6] rooms;
     bool entranceRefilled, gambitThrown;
     @transient bool gandlingCalled; /// summoned since the copy loaded (a summon does not outlive a restart)
@@ -114,6 +125,11 @@ struct Scholomance
         switch (e.creature.entry)
         {
         case student: students.add(e.creature); break;
+        case risenGuardian:
+            // The guardians the last portal's event raised in its room.
+            if (portalRoom)
+                portalGuardians[portalRoom - 1].add(e.creature);
+            break;
         case vectus: vectusRef = e.creature; break;
         case marduk: mardukRef = e.creature; break;
         default: break;
@@ -124,21 +140,35 @@ struct Scholomance
 
     void on(ref InstanceContext scholo, const ref CreatureEngaged e)
     {
+        if (e.creature.entry == risenGuardian)
+            return portalFight(scholo, e.creature, Fight.inProgress);
         fight(scholo, e.creature.entry, Fight.inProgress);
     }
 
     void on(ref InstanceContext scholo, const ref CreatureEvaded e)
     {
+        if (e.creature.entry == risenGuardian)
+            return portalFight(scholo, e.creature, Fight.failed);
         fight(scholo, e.creature.entry, Fight.failed);
     }
 
     void on(ref InstanceContext scholo, const ref CreatureDied e)
     {
+        if (e.creature.entry == risenGuardian)
+            return portalFight(scholo, e.creature, Fight.done);
         fight(scholo, e.creature.entry, Fight.done);
     }
 
     void on(ref InstanceContext scholo, const ref EventHappened e)
     {
+        foreach (i, event; portalEvents)
+            if (e.event == event)
+            {
+                // A player sent into a room: its gate shuts; the database script raises the guardians.
+                portalRoom = cast(ubyte)(i + 1);
+                shutPortalRoom(scholo, i, true);
+                return;
+            }
         if (e.event != dawnGambitEvent || gambitThrown)
             return;
         scholo.consume();
@@ -207,6 +237,41 @@ struct Scholomance
         }
     }
 
+    /// A portal room's guardian began fighting, gave up (its gate opens: a wipe) or died (the last one
+    /// slain, the gate opens).
+    private void portalFight(ref InstanceContext scholo, EntityRef guardian, Fight how)
+    {
+        foreach (i, ref guardians; portalGuardians)
+            if (guardians.has(guardian))
+            {
+                final switch (how)
+                {
+                case Fight.inProgress: shutPortalRoom(scholo, i, true); break;
+                case Fight.failed: shutPortalRoom(scholo, i, false); break;
+                case Fight.done:
+                    guardians.died(guardian);
+                    if (guardians.allDead)
+                    {
+                        guardians.clear();
+                        shutPortalRoom(scholo, i, false);
+                    }
+                    break;
+                case Fight.notStarted: break;
+                }
+                return;
+            }
+    }
+
+    /// A portal room's gate shuts on its guardians, or opens again (unless the room's master is fighting there).
+    private void shutPortalRoom(ref InstanceContext scholo, size_t room, bool shut)
+    {
+        if (portalShut[room] == shut)
+            return;
+        portalShut[room] = shut;
+        if (gates[room] && (shut || rooms[room] != Fight.inProgress))
+            scholo.door(gates[room], !shut);
+    }
+
     private void callGandlingIfCan(ref InstanceContext scholo, bool announce)
     {
         if (gandlingCalled || gandlingFight == Fight.done)
@@ -244,14 +309,19 @@ struct Scholomance
     }
 }
 
-/// Darkmaster Gandling: arcane missiles, shadow shield, curse of the darkmaster; he sends players away through his shadow portal.
+/// Darkmaster Gandling: arcane missiles, shadow shield, curse of the darkmaster; he sends players away through
+/// his shadow portal, into one of the six rooms (each room's spell teleports there and starts the room's event),
+/// and forgets them.
 @creature("boss_darkmaster_gandling")
 struct DarkmasterGandling
 {
     enum : uint { arcaneMissiles = 15790, shadowShield = 12040, curse = 18702, shadowPortal = 17950 }
+    /// The rooms' portal spells (what Shadow Portal's dummy effect picks from).
+    static immutable uint[6] roomPortals = [17863, 17939, 17943, 17944, 17946, 17948];
 
-    enum Step : ubyte { missiles, shield, curse, portal }
+    enum Step : ubyte { missiles, shield, curse, portal, portalDone }
     Schedule!Step steps;
+    EntityRef portalTarget;
 
     void on(ref CreatureContext me, const ref EnteredCombat e)
     {
@@ -279,10 +349,22 @@ struct DarkmasterGandling
             break;
         case Step.portal:
             if (me.healthPercent > 3)
-                if (const target = me.randomTarget())
-                    if (target.isPlayer)
-                        me.castSpell(shadowPortal, target);
+                if (const target = me.selectTarget(Pick.random, PickFilter.player))
+                    if (me.castSpell(shadowPortal, target) == ActionResult.ok)
+                    {
+                        portalTarget = target;
+                        steps.after(Step.portalDone, 1.seconds); // its cast
+                    }
             steps.after(Step.portal, (20_000 + me.random(15_000)).msecs);
+            break;
+        case Step.portalDone:
+            // The dummy's work: one of the rooms, and the player is no longer his concern.
+            if (portalTarget && me.alive(portalTarget))
+            {
+                me.castSpell(roomPortals[me.random(6)], portalTarget, true);
+                me.modifyThreat(portalTarget, -100);
+            }
+            portalTarget = EntityRef.init;
             break;
         }
     }
@@ -385,6 +467,15 @@ struct SpectralTutor
     }
 }
 
+/// Gandling's portal into a room (`event_spell_gandling_shadow_portal`): the dungeon's script shuts the room's
+/// gate (`EventHappened`) and the event's database script raises the guardians; the event's own script lets it
+/// through to them.
+@scriptedEvent("event_spell_gandling_shadow_portal")
+struct GandlingPortalEvent
+{
+    void on(ref EventContext c, const ref EventStarted e) {}
+}
+
 /// The Dawn's Gambit thrown (`event_dawn_gambit`): the dungeon's script turns the viewing room's students
 /// (`EventHappened`); the event's own script lets it through to it.
 @scriptedEvent("event_dawn_gambit")
@@ -415,4 +506,23 @@ unittest
     assert(scholo.host.done("summon 1853") && scholo.host.done("say 1853 -1289000"), "Gandling comes");
     scholo.raise(CreatureDied(creatureRef(rattlegore)));
     assert(scholo.host.times("summon 11551") == 1);
+
+    // Gandling's portal into Polkelt's room (open since he died): it shuts on its guardians, and opens as
+    // the last of them falls.
+    const opened = scholo.host.times("door 177376 open");
+    scholo.raise(EventHappened(5618, creatureRef(gandling), playerRef));
+    assert(scholo.host.times("door 177376 closed") == 1);
+    foreach (spawn; 1 .. 4)
+        scholo.raise(CreatureLoaded(creatureRef(risenGuardian, spawn)));
+    scholo.raise(CreatureEngaged(creatureRef(risenGuardian, 1), playerRef));
+    scholo.raise(CreatureDied(creatureRef(risenGuardian, 1)));
+    scholo.raise(CreatureDied(creatureRef(risenGuardian, 2)));
+    assert(scholo.host.times("door 177376 open") == opened);
+    scholo.raise(CreatureDied(creatureRef(risenGuardian, 3)));
+    assert(scholo.host.times("door 177376 open") == opened + 1);
+    // Another portal there, its guardians give up: the gate opens too.
+    scholo.raise(EventHappened(5618, creatureRef(gandling), playerRef));
+    scholo.raise(CreatureLoaded(creatureRef(risenGuardian, 4)));
+    scholo.raise(CreatureEvaded(creatureRef(risenGuardian, 4)));
+    assert(scholo.host.times("door 177376 open") == opened + 2);
 }
