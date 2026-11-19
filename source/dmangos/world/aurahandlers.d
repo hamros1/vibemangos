@@ -456,6 +456,10 @@ private:
                         display = t.modelId1;
                 player.values.set!UNIT_FIELD_MOUNTDISPLAYID(display);
                 break;
+            case AuraType.modStealth: // who sees it changes (`Map`'s `playerSees`)
+                if (map !is null)
+                    map.refreshVisibility(this);
+                break;
             case AuraType.modShapeshift:
                 player.values.setByte!UNIT_FIELD_BYTES_1(2, apply ? cast(ubyte) aura.misc(i) : 0);
                 break;

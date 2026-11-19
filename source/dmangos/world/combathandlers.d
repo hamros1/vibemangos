@@ -284,6 +284,17 @@ private:
         meleeAttackStartAt(other.player.guid);
     }
 
+    /// It parried a swing: its own next one comes sooner (`combat.parryHasted`): the off hand's if that one is
+    /// the nearer, else the main hand's.
+    package void parried()
+    {
+        import dmangos.world.combat : parryHasted;
+
+        const hand = player.fighter.dualWield && attackTimer[AttackType.offHand] < attackTimer[AttackType.mainHand]
+            ? AttackType.offHand : AttackType.mainHand;
+        attackTimer[hand] = parryHasted(attackTimer[hand], player.stats.attackTime[hand]);
+    }
+
     /// A melee swing at a player.
     void swingAtPlayer(typeof(this) other, AttackType type)
     {

@@ -108,7 +108,8 @@ hearthstones, opening bags of loot) comes with milestone 6's spells and loot.
 The largest area. In order:
 
 1. **Melee auto-attack: done** (`combat.d`, `combathandlers.d`, `relations.d`; README's "Melee").
-   Weapon and defense skills rise with use. Not yet: `NO_SKILL_GAINS` creatures (`StaticFlags2`), parry haste, PvP (no way to be
+   Weapon and defense skills rise with use. Parry haste: done (`combat.parryHasted`; not for a creature with
+   `CREATURE_EXTRA_FLAG_NO_PARRY_HASTEN`). `NO_SKILL_GAINS` is defined by CMaNGOS but used nowhere. Not yet: PvP (no way to be
    flagged yet). Another node's creature: attacking (casting at, looting) its replica moves the
    player to that node, and a fight keeps it there (docs/CLUSTER.md).
 2. **Creatures fighting back: done** (`creatureai.d`; README's "Creatures fight"), calling for help
@@ -191,7 +192,7 @@ the Eastern Kingdoms' world map script, and the mechanics the raids approximate 
 control, Heigan's floor).
 Reputation is done (`reputation.d`, `reputationhandlers.d`; README's "Reputation"): kills, quests,
 spillover, war and peace, discounts, requirements. Not yet: `SMSG_SET_FORCED_REACTIONS` (spells force
-none yet), the PvP rank's discount, reputation from spells.
+none yet), the PvP rank's discount. Reputation from spells (effect 103): done.
 
 ### Talents
 
@@ -238,6 +239,8 @@ GM command set has none).
   * the process exited silently after a kill and loot.
   The pattern suggests memory corruption or something the collector freed while still in use. Live
   tests run under gdb until one leaves a backtrace.
+  DMD's optimizer has since been caught miscompiling one template (`frozenCopy!(float[3])`, without
+  `-inline`; docs/BENCHMARKS.md): a miscompile is now a suspect too.
 * **A start that stalled.** Once a benchmark's server stopped at start-up inside its third database
   connection (the world database) and never listened. The game loop also talks to the database
   synchronously (saves, pets, mail), so a stalled database call stalls the loop. That may explain the

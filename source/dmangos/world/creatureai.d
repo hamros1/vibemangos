@@ -1105,6 +1105,18 @@ private:
         }
     }
 
+    /// It parried a swing: its own comes sooner (`combat.parryHasted`), unless its template says it never does
+    /// (`CREATURE_EXTRA_FLAG_NO_PARRY_HASTEN`).
+    package void parried()
+    {
+        import dmangos.world.combat : parryHasted;
+
+        enum uint noParryHasten = 0x08;
+        if (me.template_.extraFlags & noParryHasten || attackTimer <= 0)
+            return;
+        attackTimer = parryHasted(attackTimer, me.values.get!UNIT_FIELD_BASEATTACKTIME);
+    }
+
     /// A creature's melee: a swing whenever it is ready and can.
     void meleeAttackIfReady(UnitRef target, CombatWorld world)
     {

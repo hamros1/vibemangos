@@ -208,6 +208,17 @@ mixin template SessionScripting()
             return ActionResult.ok;
         }
 
+        uint hostCompanionEntry(EntityRef who)
+        {
+            import dmangos.world.creature : Creature;
+
+            auto c = sessionHere(who);
+            if (c is null || !c.companion || map is null)
+                return 0;
+            auto pet = cast(Creature) map.findObject(c.companion);
+            return pet is null ? 0 : pet.spawn.entry;
+        }
+
         size_t hostCreaturesNear(Location at, uint entry, float range, EntityRef[] into)
         {
             import dmangos.world.movement : Position;
