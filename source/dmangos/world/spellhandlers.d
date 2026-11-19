@@ -154,6 +154,12 @@ private:
             const spell = context.data.spells.spell(use.id);
             if (spell is null)
                 continue;
+            // Open-world round 2: the item's script may refuse the use.
+            if (itemScript(proto.entry, targets.unit ? targets.unit : targets.gameObject))
+            {
+                deliver(Opcode.SMSG_CAST_RESULT, castResultPacket(spell.id, SpellCastResult.dontReport, spell));
+                return;
+            }
             castSpell(spell, targets, false, proto.entry);
             break;
         }

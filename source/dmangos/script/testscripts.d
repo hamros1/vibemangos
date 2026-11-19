@@ -172,6 +172,17 @@ final class FakeCreature : CreatureHost
     void hostMoveNow(Location, uint, bool) {}
     void hostSpellList(uint) {}
     ubyte hostClassOf(EntityRef) { return 0; }
+
+    // Open-world round 2:
+    uint hostLevelOf(EntityRef) { return 0; }
+    uint hostSkillOf(EntityRef, uint) { return 0; }
+    bool hostKnowsSpell(EntityRef, uint) { return false; }
+    Standing hostStandingOf(EntityRef, uint) { return Standing.neutral; }
+    bool hostWearsItemNeeding(EntityRef, uint) { return false; }
+    bool hostTakeMoney(EntityRef, uint) { return false; }
+    void hostUnlearnSpell(EntityRef, uint) {}
+    void hostOpenWindow(EntityRef, NpcWindow) {}
+    void hostZoneUnderAttack(EntityRef) {}
 }
 
 unittest

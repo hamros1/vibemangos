@@ -112,6 +112,8 @@ final class RecordingCreature : CreatureHost
     ActionResult hostDespawnOther(EntityRef c, uint) { note("despawn " ~ c.entry.to!string); return ActionResult.ok; }
     void hostSendGossip(EntityRef, uint textId, const(MenuOption)[] options, bool)
     {
+        menu = options.dup;
+        menuText = textId;
         note("gossip " ~ textId.to!string ~ " " ~ options.length.to!string);
     }
     // Eastern Kingdoms scripts' part of the host:
@@ -162,7 +164,7 @@ final class RecordingCreature : CreatureHost
     void hostFollow(EntityRef leader, float, float) { note(leader ? "follow" : "unfollow"); }
     ActionResult hostCastAs(EntityRef c, uint spell, EntityRef, bool)
     {
-        note("cast as " ~ c.entry.to!string ~ " " ~ spell.to!string);
+        note("cast as " ~ (c == hero ? "hero" : c.entry.to!string) ~ " " ~ spell.to!string);
         return ActionResult.ok;
     }
     ActionResult hostObjectUsable(EntityRef, bool usable) { note(usable ? "usable" : "unusable"); return ActionResult.ok; }
@@ -212,6 +214,36 @@ final class RecordingCreature : CreatureHost
     void hostMoveNow(Location, uint, bool) {}
     void hostSpellList(uint) {}
     ubyte hostClassOf(EntityRef) { return 0; }
+
+    // Open-world round 2: a player's facts as a test sets them, and what the script did with them.
+    uint level = 60;
+    uint[uint] skills;          /// the hero's, by skill
+    bool[uint] spells;          /// the hero's spellbook
+    Standing[uint] standings;   /// the hero's, by faction (neutral if not set)
+    uint money;                 /// the hero's, in copper
+    bool wearing;               /// whether the hero wears an item needing a spell
+    const(MenuOption)[] menu;   /// the last menu the script built
+    uint menuText;              /// and its text
+    uint hostLevelOf(EntityRef who) { return who == hero ? level : 0; }
+    uint hostSkillOf(EntityRef, uint skill) { return skills.get(skill, 0); }
+    bool hostKnowsSpell(EntityRef, uint spell) { return spells.get(spell, false); }
+    Standing hostStandingOf(EntityRef, uint faction) { return standings.get(faction, Standing.neutral); }
+    bool hostWearsItemNeeding(EntityRef, uint) { return wearing; }
+    bool hostTakeMoney(EntityRef, uint copper)
+    {
+        if (money < copper)
+            return false;
+        money -= copper;
+        note("pay " ~ copper.to!string);
+        return true;
+    }
+    void hostUnlearnSpell(EntityRef, uint spell)
+    {
+        note("unlearn " ~ spell.to!string);
+        spells.remove(spell);
+    }
+    void hostOpenWindow(EntityRef, NpcWindow window) { note(window == NpcWindow.vendor ? "vendor" : "trainer"); }
+    void hostZoneUnderAttack(EntityRef) { note("zone under attack"); }
 }
 
 /// A script of `Module` on a recording creature, and the means to drive it.
@@ -331,6 +363,66 @@ final class RecordingObject : GameObjectHost
 
     // Raid scripts:
     int hostAskDungeon(uint) { return 0; }
+
+    // Open-world round 2:
+    bool[uint] items;   /// what the hero carries
+    uint minute;        /// the time of day
+    uint area;          /// where it stands
+    uint randomValue;
+    void hostCustomAnim() { did ~= "anim"; }
+    void hostPlaySound(uint sound, bool music) { did ~= (music ? "music " : "sound ") ~ sound.to!string; }
+    ActionResult hostMoveCreature(EntityRef c, Location, uint, bool)
+    {
+        did ~= "move " ~ c.entry.to!string;
+        return ActionResult.ok;
+    }
+    ActionResult hostSendHome(EntityRef c)
+    {
+        did ~= "home " ~ c.entry.to!string;
+        return ActionResult.ok;
+    }
+    bool hostHasItem(EntityRef, uint item) { return items.get(item, false); }
+    uint hostRandom(uint below) { return below ? randomValue % below : 0; }
+    uint hostMinuteOfDay() { return minute; }
+    uint hostAreaId() { return area; }
+}
+
+/// Open-world round 2: a game object script of `Module` on a recording object, and the means to drive it.
+struct DrivenObject(alias Module)
+{
+    ScriptRuntime runtime;
+    ScriptHandle handle;
+    RecordingObject host;
+
+    this(string name, uint entry)
+    {
+        runtime = ScriptRuntime.of!Module();
+        host = new RecordingObject(entry);
+        handle = runtime.create(ScriptKind.gameObject, name);
+        assert(handle, name ~ " is not served");
+    }
+
+    /// Raises `event`; whether the script consumed it.
+    bool raise(E)(E event)
+    {
+        auto it = GameObjectContext(host);
+        runtime.raise(handle, it, event);
+        return it.consumed;
+    }
+
+    /// `ms` milliseconds pass, in ticks of 100.
+    void run(int ms)
+    {
+        auto it = GameObjectContext(host);
+        for (; ms > 0; ms -= 100)
+            runtime.tick(handle, it, 100);
+    }
+
+    /// Whether it still has something to do.
+    @property bool busy()
+    {
+        return runtime.busy(handle);
+    }
 }
 
 /// `hero` uses game object script `name` of `Module` on `host`; whether the script consumed the use.

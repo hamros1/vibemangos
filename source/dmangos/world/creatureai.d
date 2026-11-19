@@ -119,6 +119,12 @@ interface CreatureLore
 
     /// The answer of dungeon copy `instance`'s script to question `id` from `from` (0: none).
     int askDungeon(uint instance, EntityRef from, uint id);
+
+    // Open-world round 2:
+
+    /// `defender`'s zone is under attack by `attacker` (a player, or a pet): the players of the other side
+    /// on this node are told (`SMSG_ZONE_UNDER_ATTACK`; the client writes it in its defense channel).
+    void zoneUnderAttack(CombatWorld world, Creature defender, ulong attacker);
 }
 
 /// What a creature's AI needs of its map.

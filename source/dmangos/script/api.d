@@ -413,6 +413,39 @@ interface CreatureHost
     void hostMoveNow(Location at, uint point, bool run);
     void hostSpellList(uint id);
     ubyte hostClassOf(EntityRef who);
+
+    // Open-world round 2:
+    uint hostLevelOf(EntityRef who);
+    uint hostSkillOf(EntityRef player, uint skill);
+    bool hostKnowsSpell(EntityRef player, uint spell);
+    Standing hostStandingOf(EntityRef player, uint faction);
+    bool hostWearsItemNeeding(EntityRef player, uint spell);
+    bool hostTakeMoney(EntityRef player, uint copper);
+    void hostUnlearnSpell(EntityRef player, uint spell);
+    void hostOpenWindow(EntityRef player, NpcWindow window);
+    void hostZoneUnderAttack(EntityRef attacker);
+}
+
+// Open-world round 2:
+
+/// Where a player stands with a faction (`ReputationRank`).
+enum Standing : ubyte
+{
+    hated,
+    hostile,
+    unfriendly,
+    neutral,
+    friendly,
+    honored,
+    revered,
+    exalted,
+}
+
+/// A window of an NPC's service a script opens for a player (`CreatureContext.openWindow`).
+enum NpcWindow : ubyte
+{
+    vendor,  /// its goods (`SEND_VENDORLIST`)
+    trainer, /// its training (`SEND_TRAINERLIST`)
 }
 
 /**
@@ -771,6 +804,36 @@ struct CreatureContext
     /// The nearest living player within `range` yards that may be attacked; nothing if none.
     EntityRef playerNearby(float range) { return host.hostPlayerNearby(range); }
 
+    // Open-world round 2:
+
+    /// A unit's level (a player's or a creature's here); 0 if it is not here.
+    uint levelOf(EntityRef who) { return host.hostLevelOf(who); }
+
+    /// A player's value in skill `skill` (`SkillLine`: 164 blacksmithing, 165 leatherworking), without
+    /// what auras and items add; 0 if it does not have the skill (or is not here).
+    uint skillOf(EntityRef player, uint skill) { return host.hostSkillOf(player, skill); }
+
+    /// Whether a player here knows `spell` (its spellbook: a profession's specialization, a recipe).
+    bool knowsSpell(EntityRef player, uint spell) { return host.hostKnowsSpell(player, spell); }
+
+    /// Where a player stands with `faction` (`Faction.dbc`); hated if it is not here.
+    Standing standingOf(EntityRef player, uint faction) { return host.hostStandingOf(player, faction); }
+
+    /// Whether a player wears an item that needs `spell` to be worn (`item_template.requiredspell`).
+    bool wearsItemNeeding(EntityRef player, uint spell) { return host.hostWearsItemNeeding(player, spell); }
+
+    /// Takes `copper` from a player's money; false (and nothing taken) if it has less, or is not here.
+    bool takeMoney(EntityRef player, uint copper) { return host.hostTakeMoney(player, copper); }
+
+    /// A player forgets `spell`, and the recipes taught by the items that need it (a specialization's).
+    void unlearnSpell(EntityRef player, uint spell) { host.hostUnlearnSpell(player, spell); }
+
+    /// Opens a window of its services for a player (its goods, its training), as its menu's option would.
+    void openWindow(EntityRef player, NpcWindow window) { host.hostOpenWindow(player, window); }
+
+    /// Its zone is under attack by `attacker` (a player, or a pet): the players of its side are told
+    /// (`SMSG_ZONE_UNDER_ATTACK`, the defense channels).
+    void zoneUnderAttack(EntityRef attacker) { host.hostZoneUnderAttack(attacker); }
 }
 
 // ---------------------------------------------------------------------------
@@ -809,6 +872,27 @@ interface GameObjectHost
 
     // Raid scripts:
     int hostAskDungeon(uint id);
+
+    // Open-world round 2:
+    void hostCustomAnim();
+    void hostPlaySound(uint sound, bool music);
+    ActionResult hostMoveCreature(EntityRef creature, Location at, uint point, bool run);
+    ActionResult hostSendHome(EntityRef creature);
+    bool hostHasItem(EntityRef player, uint item);
+    uint hostRandom(uint below);
+    uint hostMinuteOfDay();
+    uint hostAreaId();
+}
+
+// Open-world round 2:
+
+/**
+ * A unit (a player) comes within reach of it, a trap, and sets it off (`pTrapSearching`): the trap's
+ * spell follows unless `GameObjectContext.consume` keeps it from springing for this unit.
+ */
+struct TrapSprung
+{
+    EntityRef unit;
 }
 
 /// A game object script's handle on its object, for the length of one handler.
@@ -903,6 +987,36 @@ struct GameObjectContext
 
     /// Its dungeon script's answer to question `id` (`Asked`); 0 outside a dungeon or unanswered.
     int askDungeon(uint id) { return host.hostAskDungeon(id); }
+
+    // Open-world round 2:
+
+    /// Plays its custom animation for those who see it (a lightning bolt's flash).
+    void customAnim() { host.hostCustomAnim(); }
+
+    /// Plays sound `sound` (`SoundEntries.dbc`) from it for the players who see it; `music`: as music
+    /// (`SMSG_PLAY_MUSIC`), which the client fades with its music volume.
+    void playSound(uint sound, bool music = false) { host.hostPlaySound(sound, music); }
+
+    /// A creature here runs (walks) to `at`; one fighting is not distracted (`notAllowed`).
+    ActionResult moveCreature(EntityRef creature, Location at, uint point = 0, bool run = true)
+    {
+        return host.hostMoveCreature(creature, at, point, run);
+    }
+
+    /// A creature here not fighting goes back where it belongs (`EnterEvadeMode`).
+    ActionResult sendHome(EntityRef creature) { return host.hostSendHome(creature); }
+
+    /// Whether a player here carries `item` (its bank not counted).
+    bool hasItem(EntityRef player, uint item) { return host.hostHasItem(player, item); }
+
+    /// A random number below `below`.
+    uint random(uint below) { return host.hostRandom(below); }
+
+    /// The server's local time of day, in minutes since midnight (the bells toll the hours).
+    @property uint minuteOfDay() { return host.hostMinuteOfDay(); }
+
+    /// The area (`AreaTable.dbc`) it stands in, as the map's terrain has it; 0 if unknown.
+    @property uint areaId() { return host.hostAreaId(); }
 }
 
 // ---------------------------------------------------------------------------
@@ -1365,6 +1479,13 @@ interface AreaTriggerHost
 
     // Raid scripts:
     int hostAskDungeon(uint id);
+
+    // Open-world round 2:
+    bool hostLocationOf(EntityRef who, out Location at);
+    uint hostHealthPercentOf(EntityRef who);
+    bool hostHasAura(EntityRef who, uint spell);
+    uint hostRespawnObjectsNear(uint entry, Location at, float range, uint seconds);
+    void hostFlagForPvP(EntityRef player);
 }
 
 /// An area trigger script's handle, for the length of one handler.
@@ -1438,6 +1559,55 @@ struct AreaTriggerContext
 
     /// The dungeon script's answer to question `id` (`Asked`); 0 outside a dungeon copy.
     int askDungeon(uint id) { return host.hostAskDungeon(id); }
+
+    // Open-world round 2:
+
+    /// Where a unit or object on the player's map is; false if it is not seen here.
+    bool locationOf(EntityRef who, out Location at) { return host.hostLocationOf(who, at); }
+
+    /// A unit's health in percent; uint.max if it is not here.
+    uint healthPercentOf(EntityRef who) { return host.hostHealthPercentOf(who); }
+
+    /// Whether a unit here (the player, a creature) has `spell`'s aura.
+    bool hasAura(EntityRef who, uint spell) { return host.hostHasAura(who, spell); }
+
+    /// The game objects of `entry` within `range` yards of `at` that were taken away (used up, not there
+    /// by default) come back for `seconds` (0: until their own respawn time says); how many came.
+    uint respawnObjectsNear(uint entry, Location at, float range, uint seconds = 0)
+    {
+        return host.hostRespawnObjectsNear(entry, at, range, seconds);
+    }
+
+    /// A player is flagged for PvP (`UpdatePvP(true)`), as attacking an enemy would flag it.
+    void flagForPvP(EntityRef player) { host.hostFlagForPvP(player); }
+}
+
+// ---------------------------------------------------------------------------
+// Open-world round 2: item scripts (`@item`, bound by `item_template.ScriptName`), one per item
+// ---------------------------------------------------------------------------
+
+/// A player uses item `item` (its spell about to be cast at `target`): `ItemContext.consume` makes the
+/// use fail (the cast does not start, the item stays), as a script refusing it does (`pItemUse`).
+struct ItemUsed
+{
+    EntityRef player;
+    uint item;
+    EntityRef target;
+}
+
+/// An item script's handle: what an area trigger's script can do, around the player using the item.
+struct ItemContext
+{
+    AreaTriggerContext inner; /// what it can do (an area trigger script's abilities)
+    alias inner this;
+
+    @disable this(this);
+
+    /// The core makes one around the player using the item.
+    this(AreaTriggerHost host) pure nothrow @nogc @safe
+    {
+        inner = AreaTriggerContext(host);
+    }
 }
 
 // ---------------------------------------------------------------------------
