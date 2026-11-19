@@ -227,6 +227,12 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Functions/ScriptNames: `at_scent_larkorwi`, `npc_ame01`, `npc_ringo`, `npc_simone_the_inconspicuous`,
   `npc_simone_seductress`, `npc_precious_the_devourer`
 
+## scripts/winterspring.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/kalimdor/winterspring.cpp`
+* Functions/ScriptNames: `npc_ranshalla`, `go_elune_fire`, `npc_artorius`
+
 ## scripts/barrens.d
 
 * Projects: CMaNGOS
