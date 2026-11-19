@@ -6,6 +6,10 @@
  * the Four Horsemen, Patchwerk, Grobbulus, Gluth, Stalagg, Feugen and Thaddius, Sapphiron and Kel'Thuzad
  * with his Guardians of Icecrown, and the Stoneskin Gargoyles, Living Poison and Diseased Maggots.
  *
+ * Maexxna's Web Wrap throws up to three players to the invisible men on her walls (`npc_invible_man`), who
+ * wrap them there; Kel'Thuzad dispels the shackles when more than three of his Guardians of Icecrown are
+ * shackled (`event_naxxramas`, which also carries Gluth's Decimate).
+ *
  * What the core cannot do is left out, and named where it would be: players mind-controlled (Faerlina's
  * worshippers, Razuvious' understudies, Kel'Thuzad's chains), carried by a spell (Heigan's platform),
  * Heigan's eruptions, and the ice blocks that shelter players from Sapphiron's frost breath (so his
@@ -80,6 +84,7 @@ enum : uint
     npcUnstoppableAbom = 16_428,
     npcSoulWeaver = 16_429,
     npcGuardianIcecrown = 16_441,
+    npcInvisibleMan = 17_286,
 
     goSapphironBirth = 181_356,
     goChestHorsemen = 181_366,
@@ -94,6 +99,8 @@ enum NaxxSignal : uint
     reviveAdd = 103,    /// the other's window passed: rise again
     startKt = 104,      /// the copy to Kel'Thuzad: the fight begins
     faerlinaIntro = 105, /// the copy to Faerlina: players came near
+    webWrapPull = 106,  /// Maexxna to an invisible man: the player of guid `value` is thrown to you; wrap them
+    clearShackles = 107, /// the copy to Kel'Thuzad: too many of his guardians are shackled
     triggerBase = 1000, /// an area trigger: `triggerBase + id`
 }
 
@@ -202,7 +209,13 @@ struct Naxxramas
     @transient EntityRef[naxxDoors.length] doors;
     @transient EntityRef thaddius, kelthuzad, faerlina, sapphiron;
 
-    enum Step : ubyte { sapphiron }
+    /// The events of `event_naxxramas`: Gluth's Decimate; Kel'Thuzad's guardians counted from now; a guardian shackled.
+    enum uint decimateEvent = 10_495, clearShacklesEvent = 10_536, guardianShackleEvent = 10_537;
+    /// How many shackled Guardians of Icecrown Kel'Thuzad lets be.
+    enum ubyte maxShackles = 3;
+    ubyte shackled; /// guardians that said so since the last check
+
+    enum Step : ubyte { sapphiron, shackles }
     Schedule!Step steps;
 
     private bool doorOpen(size_t i) const
@@ -335,10 +348,46 @@ struct Naxxramas
         }
     }
 
+    void on(ref InstanceContext copy, const ref EventHappened e)
+    {
+        switch (e.event)
+        {
+        case decimateEvent:
+            // Gluth's own script brings the zombie chows to him and has him eat them; the event's database
+            // script (which would too) does not follow.
+            copy.consume();
+            break;
+        case clearShacklesEvent:
+            copy.consume();
+            shackled = 0;
+            steps.every(Step.shackles, 2.seconds);
+            break;
+        case guardianShackleEvent:
+            copy.consume();
+            ++shackled;
+            break;
+        default:
+            break;
+        }
+    }
+
     void on(ref InstanceContext copy, Step step)
     {
-        if (!sapphiron && encounters[NaxxEncounter.sapphiron] != EncounterState.done && copy.playerCount)
-            sapphiron = copy.summon(npcSapphiron, sapphironAt);
+        final switch (step)
+        {
+        case Step.sapphiron:
+            if (!sapphiron && encounters[NaxxEncounter.sapphiron] != EncounterState.done && copy.playerCount)
+                sapphiron = copy.summon(npcSapphiron, sapphironAt);
+            break;
+        case Step.shackles:
+            // Every two seconds: more than three guardians shackled, and Kel'Thuzad breaks the shackles.
+            if (encounters[NaxxEncounter.kelthuzad] != EncounterState.inProgress)
+                steps.cancel(Step.shackles);
+            else if (shackled > maxShackles && kelthuzad)
+                copy.signal(kelthuzad, NaxxSignal.clearShackles);
+            shackled = 0;
+            break;
+        }
     }
 
     /// Whether the way to Sapphiron is open: every quarter ended.
@@ -349,6 +398,14 @@ struct Naxxramas
                 return false;
         return true;
     }
+}
+
+/// Naxxramas' scripted events (`event_naxxramas`): Gluth's Decimate and the shackling of Kel'Thuzad's guardians;
+/// the copy's script handles them (`EventHappened`), and the event's own script lets them through to it.
+@scriptedEvent("event_naxxramas")
+struct NaxxramasEvent
+{
+    void on(ref EventContext c, const ref EventStarted e) {}
 }
 
 /// Naxxramas' area triggers: Kel'Thuzad's chamber, Faerlina's greeting, Thaddius' door, and the way up to
@@ -559,18 +616,51 @@ struct Maexxna
         }
     }
 
+    /// Up to three players (not her victim) thrown to the invisible men on her walls, one each, who wrap them;
+    /// with none of them about, a player is wrapped where they stand.
+    private void webWrap(ref CreatureContext me)
+    {
+        EntityRef[6] men;
+        auto n = me.creaturesNearby(npcInvisibleMan, 100, men[]);
+        EntityRef[3] chosen;
+        size_t taken;
+        foreach (attempt; 0 .. 8)
+        {
+            if (taken == chosen.length || (n == 0 && taken == 1))
+                break;
+            const target = me.selectTarget(Pick.random, PickFilter.player | PickFilter.notVictim);
+            if (!target)
+                break;
+            bool again;
+            foreach (c; chosen[0 .. taken])
+                again |= c == target;
+            if (!again)
+                chosen[taken++] = target;
+        }
+        foreach (target; chosen[0 .. taken])
+        {
+            if (n == 0)
+            {
+                me.castSpell(webWrapStun, target, true);
+                if (const wrap = me.summon(npcWebWrap, where(me, target)))
+                    me.signal(wrap, NaxxSignal.webWrapped, cast(int)(target.guid & 0x7FFF_FFFF));
+                continue;
+            }
+            // A wall of its own (the chosen man taken out of the choice).
+            const i = me.random(cast(uint) n);
+            const man = men[i];
+            men[i] = men[--n];
+            me.teleport(target, where(me, man));
+            me.signal(man, NaxxSignal.webWrapPull, cast(int)(target.guid & 0x7FFF_FFFF));
+        }
+    }
+
     void on(ref CreatureContext me, Step step)
     {
         final switch (step)
         {
         case Step.wrap:
-            // A player at random, not her victim, wrapped where it stands.
-            if (const target = me.selectTarget(Pick.random, PickFilter.player | PickFilter.notVictim))
-            {
-                me.castSpell(webWrapStun, target, true);
-                if (const wrap = me.summon(npcWebWrap, where(me, target)))
-                    me.signal(wrap, NaxxSignal.webWrapped, cast(int)(target.guid & 0x7FFF_FFFF));
-            }
+            webWrap(me);
             steps.after(step, 40.seconds);
             break;
         case Step.spray:
@@ -592,6 +682,41 @@ struct Maexxna
             steps.after(step, 30.seconds);
             break;
         }
+    }
+}
+
+/// An invisible man on Maexxna's walls (`npc_invible_man`): the player she throws to him is wrapped there a few
+/// seconds later (stunned, in a Web Wrap that holds them until broken), if still alive.
+@creature("npc_invible_man")
+struct InvisibleMan
+{
+    EntityRef victim;
+    enum Step : ubyte { wrap }
+    Schedule!Step steps;
+
+    void on(ref CreatureContext me, const ref Spawned e)
+    {
+        me.reactState(Reaction.passive);
+        me.combatMovement(false);
+    }
+
+    void on(ref CreatureContext me, const ref Signal e)
+    {
+        if (e.id != NaxxSignal.webWrapPull)
+            return;
+        victim = EntityRef(cast(uint) e.value);
+        steps.after(Step.wrap, 5.seconds); // they have landed
+    }
+
+    void on(ref CreatureContext me, Step step)
+    {
+        if (victim && me.alive(victim))
+        {
+            me.castSpell(Maexxna.webWrapStun, victim, true);
+            if (const wrap = me.summon(npcWebWrap, where(me, victim)))
+                me.signal(wrap, NaxxSignal.webWrapped, cast(int)(victim.guid & 0x7FFF_FFFF));
+        }
+        victim = EntityRef.init;
     }
 }
 
@@ -1774,7 +1899,8 @@ struct Sapphiron
 /**
  * Kel'Thuzad: summons the dead from his alcoves for five minutes while he channels; then fights with
  * Frostbolt, Frost Bolt Nova, Mana Detonation, Shadow Fissure and Frost Blast; below 40% the Lich King
- * sends him Guardians of Icecrown (his chains, a mind control, are not here).
+ * sends him Guardians of Icecrown (his chains, a mind control, are not here), and from then on he breaks
+ * the shackles when more than three of them are shackled (the copy counts them).
  */
 @creature("boss_kelthuzad")
 struct Kelthuzad
@@ -1791,7 +1917,10 @@ struct Kelthuzad
         manaDetonation = 27_819,
         shadowFissure = 27_810,
         frostBlast = 27_808,
+        guardianInit = 29_898,     /// the copy starts counting shackled guardians (event 10536)
+        clearAllShackles = 29_910,
     }
+    enum uint sayShackles = 13_492;
 
     enum Step : ubyte { soldiers, abominations, weavers, phase2, frostBolt, nova, detonation, fissure, blast,
         guardians, lichKing }
@@ -1801,6 +1930,12 @@ struct Kelthuzad
 
     void on(ref CreatureContext me, const ref Signal e)
     {
+        if (e.id == NaxxSignal.clearShackles)
+        {
+            me.sayText(sayShackles);
+            me.castSelf(clearAllShackles, true);
+            return;
+        }
         if (e.id != NaxxSignal.startKt || phase)
             return;
         // Phase one: he channels, untouchable, while his minions come from the alcoves.
@@ -1851,6 +1986,7 @@ struct Kelthuzad
         {
             phase = 3;
             me.sayText(sayRequestAid);
+            me.castSelf(guardianInit, true);
             steps.after(Step.lichKing, 4.seconds);
             steps.after(Step.guardians, 5.seconds);
         }
@@ -1968,18 +2104,22 @@ struct Kelthuzad
     }
 }
 
-/// A Guardian of Icecrown: Blood Tap as it fights on.
+/// A Guardian of Icecrown: Blood Tap as it fights on; every two seconds it tells the copy whether it is
+/// shackled (Guardian of Icecrown, event 10537).
 @creature("npc_icecrown_guardian")
 struct IcecrownGuardian
 {
-    enum uint guardianPassive = 29_897, bloodTap = 28_470;
-    enum Step : ubyte { tap }
+    enum uint guardianPassive = 29_897, bloodTap = 28_470, guardianShackle = 29_899;
+    /// Shackle Undead, its three ranks.
+    static immutable uint[3] shackleUndead = [9484, 9485, 10_955];
+    enum Step : ubyte { tap, shackleCheck }
     Schedule!Step steps;
 
     void on(ref CreatureContext me, const ref Spawned e)
     {
         if (!me.hasAura(me.self, guardianPassive))
             me.castSelf(guardianPassive, true);
+        steps.every(Step.shackleCheck, 2.seconds);
     }
 
     void on(ref CreatureContext me, const ref EnteredCombat e)
@@ -1989,7 +2129,20 @@ struct IcecrownGuardian
 
     void on(ref CreatureContext me, Step step)
     {
-        steps.after(step, me.castSelf(bloodTap) == ActionResult.ok ? 15.seconds : retry);
+        final switch (step)
+        {
+        case Step.tap:
+            steps.after(step, me.castSelf(bloodTap) == ActionResult.ok ? 15.seconds : retry);
+            break;
+        case Step.shackleCheck:
+            foreach (rank; shackleUndead)
+                if (me.hasAura(me.self, rank))
+                {
+                    me.castSelf(guardianShackle, true);
+                    break;
+                }
+            break;
+        }
     }
 
     void on(ref CreatureContext me, const ref Reset e)
@@ -2220,4 +2373,87 @@ unittest
     runtime.raise(h, me, Damaged(EntityRef(7), 900, 3, 0));
     runtime.raise(h, me, Signal(EntityRef.init, NaxxSignal.addFell, 0)); // Feugen fell too
     assert(host.dead && host.dungeon[$ - 1] == Signal(EntityRef.init, NaxxEncounter.thaddius, EncounterState.special));
+}
+
+/// Kel'Thuzad's guardians: counted every two seconds once he starts the count (event 10536); more than three
+/// shackled (event 10537 each) and he is told to break the shackles. Gluth's Decimate is the scripts' own.
+unittest
+{
+    alias self = dmangos.scripts.naxxramas;
+    auto runtime = ScriptRuntime.of!self();
+    auto naxx = new FakeNecropolis;
+    auto c = InstanceContext(naxx);
+    auto h = runtime.create(ScriptKind.instance, "instance_naxxramas");
+    const kt = EntityRef(0xF130_0000_0000_0001UL | (ulong(npcKelthuzad) << 24));
+    runtime.raise(h, c, CreatureLoaded(kt));
+    runtime.raise(h, c, Signal(kt, NaxxEncounter.kelthuzad, EncounterState.inProgress));
+    runtime.raise(h, c, EventHappened(Naxxramas.decimateEvent, EntityRef.init, EntityRef.init));
+    assert(c.consumed, "Gluth does what the database script would");
+    runtime.raise(h, c, EventHappened(Naxxramas.clearShacklesEvent, kt, EntityRef.init));
+    foreach (_; 0 .. 3)
+        runtime.raise(h, c, EventHappened(Naxxramas.guardianShackleEvent, EntityRef.init, EntityRef.init));
+    runtime.tick(h, c, 2000);
+    assert(naxx.signals.length == 0, "three may be shackled");
+    foreach (_; 0 .. 4)
+        runtime.raise(h, c, EventHappened(Naxxramas.guardianShackleEvent, EntityRef.init, EntityRef.init));
+    runtime.tick(h, c, 2000);
+    assert(naxx.signals == [Signal(kt, NaxxSignal.clearShackles, 0)]);
+}
+
+/// Maexxna throws up to three players to the invisible men on her walls (one each); a man wraps his player
+/// five seconds later.
+unittest
+{
+    import std.algorithm.searching : canFind;
+
+    static class FakeMaexxna : BlackHole!CreatureHost
+    {
+        uint entry = 15_952; // Maexxna
+        EntityRef[] teleported, summoned;
+        Signal[] signals;
+        uint[] casts;
+        uint picks;
+        override EntityRef hostSelf() { return EntityRef(0xF130_0000_0000_0001UL | (ulong(entry) << 24)); }
+        override EntityRef hostSelectTarget(Pick, uint, uint) { return EntityRef(7 + picks++ % 4); }
+        override ActionResult hostTeleportPlayer(EntityRef who, Location) { teleported ~= who; return ActionResult.ok; }
+        override ActionResult hostSignal(EntityRef to, uint id, int value) { signals ~= Signal(to, id, value); return ActionResult.ok; }
+        override ActionResult hostCast(uint spell, EntityRef, bool) { casts ~= spell; return ActionResult.ok; }
+        override bool hostAlive(EntityRef) { return true; }
+        override EntityRef hostSummon(uint e, Location, uint, EntityRef)
+        {
+            summoned ~= EntityRef(0xF130_0000_0000_0100UL | (ulong(e) << 24) | summoned.length);
+            return summoned[$ - 1];
+        }
+        override size_t hostCreaturesNearby(uint e, float, EntityRef[] into)
+        {
+            if (e != npcInvisibleMan)
+                return 0;
+            foreach (i; 0 .. 6)
+                into[i] = EntityRef(0xF130_0000_0000_0000UL | (ulong(e) << 24) | (i + 1));
+            return 6;
+        }
+    }
+
+    alias self = dmangos.scripts.naxxramas;
+    auto runtime = ScriptRuntime.of!self();
+    auto host = new FakeMaexxna;
+    auto me = CreatureContext(host);
+    auto h = runtime.create(ScriptKind.creature, "boss_maexxna");
+    runtime.raise(h, me, EnteredCombat(EntityRef(7)));
+    runtime.tick(h, me, 20_000);
+    assert(host.teleported.length == 3 && host.signals.length == 3);
+    foreach (i, s; host.signals)
+    {
+        assert(s.id == NaxxSignal.webWrapPull && s.from.entry == npcInvisibleMan); // `from`: whom it went to
+        foreach (t; host.signals[0 .. i])
+            assert(t.from != s.from, "a wall each");
+    }
+
+    auto man = new FakeMaexxna;
+    man.entry = npcInvisibleMan;
+    auto manCtx = CreatureContext(man);
+    auto m = runtime.create(ScriptKind.creature, "npc_invible_man");
+    runtime.raise(m, manCtx, Signal(host.hostSelf(), NaxxSignal.webWrapPull, 9));
+    runtime.tick(m, manCtx, 5000);
+    assert(man.casts.canFind(Maexxna.webWrapStun) && man.summoned.length == 1 && man.signals[$ - 1].value == 9);
 }
