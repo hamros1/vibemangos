@@ -459,6 +459,13 @@ final class Character : OnlinePlayer, Looter
     }
 
     /// A spell its battleground casts on it (a quest's credit).
+    /// A spell (a creature's) sends the player to `at` on map `mapId` (`TELEPORT_UNITS`).
+    void spellTeleport(uint mapId, Position at)
+    {
+        if (player !is null)
+            commandTeleport(mapId, at);
+    }
+
     /// Kill credit for a battleground's objective (a mine taken, a tower assaulted) toward the player's quests.
     void battlegroundKillCredit(uint entry)
     {

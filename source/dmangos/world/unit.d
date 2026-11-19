@@ -260,6 +260,19 @@ struct UnitRef
         }
     }
 
+    /// Its health now.
+    @property uint health() const
+    {
+        import dmangos.world.updatefields : UNIT_FIELD_HEALTH;
+
+        final switch (kind)
+        {
+        case UnitKind.none: return 0;
+        case UnitKind.player: return session.character.values.get!UNIT_FIELD_HEALTH;
+        case UnitKind.creature: return creature.values.get!UNIT_FIELD_HEALTH;
+        }
+    }
+
     /// A spell from `caster` hit it for `damage`: `dealDamage`.
     void spellHitBy(ulong caster, uint damage)
     {

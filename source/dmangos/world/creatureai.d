@@ -107,6 +107,9 @@ interface CreatureLore
 
     /// Uses game object `guid` on `world` as a door or button is used: open for its time.
     ActionResult useGameObject(CombatWorld world, ulong guid);
+
+    /// Spell `spell` teleports player `guid` to its `spell_target_position` (a creature's cast: a boss's room).
+    void teleportBySpell(ulong guid, uint spell);
 }
 
 /// What a creature's AI needs of its map.

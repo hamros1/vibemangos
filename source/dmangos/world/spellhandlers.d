@@ -2317,6 +2317,14 @@ private:
             const home = player.data.homeBind;
             commandTeleport(home.map, Position(home.x, home.y, home.z, player.position.orientation));
         }
+        else if (b == ImplicitTarget.database || spell.implicitTargetA[i] == ImplicitTarget.database)
+        {
+            // The spell's own place (`spell_target_position`): a mage's teleports, a portal's.
+            if (const to = spell.id in context.data.spellTargets)
+                commandTeleport(to.map, to.at);
+            else
+                info!"%s: spell %s teleports to a place `spell_target_position` does not have"(remoteAddress, spell.id);
+        }
         else if (c.targets.mask & TargetFlags.destLocation)
             commandTeleport(player.data.map, Position(c.targets.dest[0], c.targets.dest[1], c.targets.dest[2],
                 player.position.orientation));
@@ -2476,6 +2484,26 @@ unittest
     now += 2.seconds; // the global cooldown is over
     anduin.write(Opcode.CMSG_USE_ITEM, use.data);
     assert(opcodesOf(anduin.read()).canFind(Opcode.MSG_MOVE_TELEPORT_ACK), "home");
+
+    // A teleport to the spell's own place (`spell_target_position`): a mage's Teleport: Stormwind.
+    {
+        import dmangos.world.packets : ClientTeleportAck;
+        import dmangos.world.worlddata : SpellTarget;
+
+        anduin.write(Opcode.MSG_MOVE_TELEPORT_ACK, ClientTeleportAck(me.guid, 0, 0));
+        anduin.read();
+        enum uint teleport = 90005;
+        context.data.spells.spells[teleport] = testSpell(teleport, 5, 1, 0);
+        context.data.spells.spells.edit(teleport).casting.implicitTargetB[0] = ImplicitTarget.database;
+        context.data.spellTargets[teleport] = SpellTarget(0, Position(-8900, -120, 85, 1));
+        me.spells ~= teleport;
+        now += 2.seconds;
+        anduin.write(Opcode.CMSG_CAST_SPELL, castAt(teleport, 0));
+        assert(opcodesOf(anduin.read()).canFind(Opcode.MSG_MOVE_TELEPORT_ACK));
+        anduin.write(Opcode.MSG_MOVE_TELEPORT_ACK, ClientTeleportAck(me.guid, 0, 0));
+        anduin.read();
+        assert(me.position.x == -8900 && me.position.y == -120);
+    }
 }
 
 /**

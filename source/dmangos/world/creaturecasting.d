@@ -444,8 +444,21 @@ mixin template CreatureCasting()
                     break;
                 case SpellEffect.none:
                     break;
+                case SpellEffect.teleportUnits: // SPELL_EFFECT_TELEPORT_UNITS: a player to the spell's place
+                    if (guid != me.guid)
+                        lore.teleportBySpell(guid, spell.id);
+                    break;
+                case SpellEffect.instantKill: // SPELL_EFFECT_INSTAKILL
+                    if (auto other = world_.unit(guid))
+                        if (other.fighter.alive)
+                        {
+                            other.spellHitBy(me.guid, other.health);
+                            if (!other.fighter.alive)
+                                raiseScript(KilledUnit(EntityRef(guid)));
+                        }
+                    break;
                 // Not done by a creature's cast:
-                case SpellEffect.instantKill, SpellEffect.portalTeleport, SpellEffect.teleportUnits,
+                case SpellEffect.portalTeleport,
                     SpellEffect.environmentalDamage, SpellEffect.powerDrain, SpellEffect.healthLeech,
                     SpellEffect.bind, SpellEffect.portal, SpellEffect.ritualBase, SpellEffect.ritualSpecialize,
                     SpellEffect.ritualActivatePortal, SpellEffect.questComplete, SpellEffect.resurrect,

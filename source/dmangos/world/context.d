@@ -1305,6 +1305,16 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return map(who.character.data.map, who.instanceId);
     }
 
+    /// See `CreatureLore.teleportBySpell`.
+    void teleportBySpell(ulong guid, uint spell)
+    {
+        import dmangos.world.character : Character;
+
+        if (const to = spell in data.spellTargets)
+            if (auto c = cast(Character) onlinePlayer(guid))
+                c.spellTeleport(to.map, to.at);
+    }
+
     /// What `Map`'s `playerSees` needs of the world: a group, a side, the viewer's corpse.
     private VisibilityFacts visibilityFacts(Map map_, ulong viewer, ulong seen, Position seenAt)
     {

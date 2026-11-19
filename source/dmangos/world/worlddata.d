@@ -13,7 +13,8 @@ import dmangos.frozen : StaticMap;
 import std.random : Random;
 
 import dmangos.log;
-import dmangos.mysql : MySqlConnection;
+import dmangos.mysql : Column, MySqlConnection;
+import dmangos.world.movement : Position;
 import dmangos.world.clientdata : ClientData, maskOf, maxSkillStep, playableClassMask, playableRaceMask;
 import dmangos.world.eventai : EventAiData;
 import dmangos.world.pet : PetData;
@@ -210,6 +211,24 @@ struct CreateAction
     ubyte type;
 }
 
+/// Where a spell sends its target (`spell_target_position`, for `TARGET_TABLE_X_Y_Z_COORDINATES`).
+struct SpellTarget
+{
+    uint map;
+    Position at;
+}
+
+/// A `spell_target_position` row.
+private struct SpellTargetRow
+{
+    uint id;
+    @Column("target_map") uint map;
+    @Column("target_position_x") float x;
+    @Column("target_position_y") float y;
+    @Column("target_position_z") float z;
+    @Column("target_orientation") float orientation;
+}
+
 /// `player_levelstats`: strength, agility, stamina, intellect, spirit.
 struct LevelStats
 {
@@ -380,6 +399,7 @@ final class WorldData
     StaticMap!(uint, ModelInfo) models;                 /// `creature_model_info`, by display id
     AreaTriggerTeleport[uint] areaTriggers; /// `areatrigger_teleport`, by trigger id
     GameTele[] teleports;                   /// `game_tele`, in id order
+    SpellTarget[uint] spellTargets;         /// `spell_target_position`: where a spell sends its target, by spell
     bool[uint] taverns;                     /// `areatrigger_tavern`: the inns' area triggers
 
     StaticMap!(uint, CreatureTemplate) creatureTemplates;       /// by entry
@@ -1061,6 +1081,9 @@ final class WorldData
     {
         setTeleports(world.queryAs!(AreaTriggerTeleport, areaTriggerTeleportQuery)(),
             world.queryAs!(GameTele, gameTeleQuery)(), client);
+        foreach (row; world.select!(SpellTargetRow, "FROM spell_target_position"))
+            if (client.maps.lookup(row.map) !is null)
+                spellTargets[row.id] = SpellTarget(row.map, Position(row.x, row.y, row.z, row.orientation));
         foreach (row; world.query!"SELECT id FROM areatrigger_tavern"())
             taverns[row.get!uint(0)] = true;
     }
