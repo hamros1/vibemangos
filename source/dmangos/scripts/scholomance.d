@@ -385,6 +385,14 @@ struct SpectralTutor
     }
 }
 
+/// The Dawn's Gambit thrown (`event_dawn_gambit`): the dungeon's script turns the viewing room's students
+/// (`EventHappened`); the event's own script lets it through to it.
+@scriptedEvent("event_dawn_gambit")
+struct DawnsGambitEvent
+{
+    void on(ref EventContext c, const ref EventStarted e) {}
+}
+
 unittest
 {
     import dmangos.scripts.testing;

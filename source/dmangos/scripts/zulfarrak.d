@@ -305,6 +305,23 @@ struct Zumrah
     }
 }
 
+/// The Gong of Zul'Farrak (`event_go_zulfarrak_gong`): the dungeon's script lets Gahz'rilla come once
+/// (`EventHappened`; the event's database script brings her); the event's own script lets it through to it.
+@scriptedEvent("event_go_zulfarrak_gong")
+struct ZulFarrakGongEvent
+{
+    void on(ref EventContext c, const ref EventStarted e) {}
+}
+
+/// The troll cage unlocked (`event_spell_unlocking`): the dungeon's script starts the pyramid's siege once
+/// (`EventHappened`; the event's database script frees the prisoners and brings the Sandfury); the event's own
+/// script lets it through to it.
+@scriptedEvent("event_spell_unlocking")
+struct PyramidUnlockingEvent
+{
+    void on(ref EventContext c, const ref EventStarted e) {}
+}
+
 unittest
 {
     import dmangos.scripts.testing;

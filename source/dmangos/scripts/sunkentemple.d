@@ -402,6 +402,22 @@ struct MalfurionStormrage
     }
 }
 
+/// An Atal'ai statue used (`event_antalarion_statue_activation`): the dungeon's script checks the order and
+/// brings Atal'alarion after the sixth (`EventHappened`); the event's own script lets it through to it.
+@scriptedEvent("event_antalarion_statue_activation")
+struct AtalaiStatueEvent
+{
+    void on(ref EventContext c, const ref EventStarted e) {}
+}
+
+/// The Soulflayer awakened (`event_avatar_of_hakkar`): the dungeon's script starts the Avatar of Hakkar's
+/// ritual (`EventHappened`); the event's own script lets it through to it.
+@scriptedEvent("event_avatar_of_hakkar")
+struct AvatarOfHakkarEvent
+{
+    void on(ref EventContext c, const ref EventStarted e) {}
+}
+
 unittest
 {
     import dmangos.scripts.testing;

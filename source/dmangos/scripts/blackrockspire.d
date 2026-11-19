@@ -870,6 +870,14 @@ struct RookeryHatcher
     }
 }
 
+/// The altar of Emberseer used (`event_spell_altar_emberseer`): the dungeon's script wakes the incarcerators
+/// and Emberseer (`EventHappened`); the event's own script lets it through to it.
+@scriptedEvent("event_spell_altar_emberseer")
+struct EmberseerAltarEvent
+{
+    void on(ref EventContext c, const ref EventStarted e) {}
+}
+
 unittest
 {
     import dmangos.scripts.testing;
