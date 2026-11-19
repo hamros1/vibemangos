@@ -285,7 +285,8 @@ struct PrivateHendel
             return;
         surrendered = true;
         me.say(emoteSurrender);
-        me.passive(true); // the fight stops
+        me.restoreFaction(); // friendly again: the fight stops
+        me.passive(true);
         EntityRef[4] sentries;
         foreach (s; sentries[0 .. me.creaturesNearby(sentry, 40, sentries[])])
         {
