@@ -137,6 +137,13 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Projects: CMaNGOS
 * Constants: `DEFAULT_MAX_PLAYER_DISTANCE`
 
+## script/follower.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/base/follower_ai.cpp`
+* Functions: `FollowerAI::StartFollow`, `FollowerAI::SetFollowComplete`, `FollowerAI::SetFollowPaused`
+* Constants: `MAX_PLAYER_DISTANCE`
+
 ## scripts/arathi.d
 
 * Projects: CMaNGOS
@@ -148,6 +155,25 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Projects: CMaNGOS
 * Files: `ScriptDevAI/scripts/world/areatrigger_scripts.cpp`
 * Functions/ScriptNames: `at_huldar_miran`, `at_ravenholdt`, `at_twilight_grove`, `at_ancient_leaf`
+
+## scripts/ashenvale.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/kalimdor/ashenvale.cpp`
+* Functions/ScriptNames: `npc_muglash`, `go_naga_brazier`, `npc_ruul_snowhoof`, `npc_torek`, `npc_feero_ironhand`
+
+## scripts/azshara.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/kalimdor/azshara.cpp`, `AI/ScriptDevAI/scripts/kalimdor/boss_azuregos.cpp`
+* Functions/ScriptNames: `mobs_spitelashes`, `npc_felhound_tracker`, `boss_maws`, `boss_azuregos`
+
+## scripts/barrens.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/kalimdor/the_barrens.cpp`
+* Functions/ScriptNames: `npc_gilthares`, `npc_taskmaster_fizzule`, `npc_twiggy_flathead`, `at_twiggy_flathead`,
+  `npc_wizzlecranks_shredder`, `npc_regthar_deathgate`
 
 ## scripts/blastedlands.d
 
@@ -161,11 +187,51 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Files: `ScriptDevAI/scripts/eastern_kingdoms/burning_steppes.cpp`
 * Functions/ScriptNames: `npc_grark_lorkrub`, `npc_klinfran`
 
+## scripts/darkshore.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/kalimdor/darkshore.cpp`
+* Functions/ScriptNames: `npc_kerlonian` (with `AwakenKerlonian`), `npc_prospector_remtravel`, `npc_threshwackonator`,
+  `npc_volcor`, `npc_therylune`, `npc_rabid_bear`, `npc_blackwood_warrior`, `npc_blackwood_totemic`, `go_furbolg_food`
+
+## scripts/desolace.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/kalimdor/desolace.cpp`
+* Functions/ScriptNames: `npc_aged_dying_ancient_kodo` (with `KodoKombobulator`), `npc_dalinda_malem`,
+  `npc_melizza_brimbuzzle`, `npc_magrami_spectre`
+
+## scripts/durotar.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/kalimdor/durotar.cpp`, `AI/ScriptDevAI/scripts/kalimdor/orgrimmar.cpp`
+* Functions/ScriptNames: `npc_lazy_peon` (with `AwakenPeon`), `npc_overlord_runthalak`, `npc_high_overlord_saurfang`
+
+## scripts/dustwallow.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/kalimdor/dustwallow_marsh.cpp`
+* Functions/ScriptNames: `npc_morokk`, `npc_ogron`, `npc_private_hendel`, `npc_stinky_ignatz`, `at_sentry_point`
+
 ## scripts/easternplaguelands.d
 
 * Projects: CMaNGOS
 * Files: `ScriptDevAI/scripts/eastern_kingdoms/eastern_plaguelands.cpp`
 * Functions/ScriptNames: `npc_eris_havenfire`
+
+## scripts/felwood.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/kalimdor/felwood.cpp`
+* Functions/ScriptNames: `npc_kitten` (with `CorruptedSaberVisual`), `npc_corrupt_saber`, `npc_captured_arkonarin`, `npc_arei`
+
+## scripts/feralas.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/kalimdor/feralas.cpp`, `AI/ScriptDevAI/scripts/kalimdor/world_kalimdor.cpp`
+  (`TYPE_FREEDOM_CREATURES`)
+* Functions/ScriptNames: `npc_oox22fe`, `npc_shay_leafrunner` (with `ShaysBell`), `npc_captured_sprite_darter`,
+  `go_cage_door`, `npc_kindal_moonweaver`
 
 ## scripts/hinterlands.d
 
@@ -178,6 +244,12 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Projects: CMaNGOS
 * Files: `ScriptDevAI/scripts/eastern_kingdoms/loch_modan.cpp`
 * Functions/ScriptNames: `npc_miran`
+
+## scripts/moonglade.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/kalimdor/moonglade.cpp`
+* Functions/ScriptNames: `npc_keeper_remulos`, `boss_eranikus` (with `ConjureDreamRift`)
 
 ## scripts/npcs.d
 
@@ -197,11 +269,23 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Files: `ScriptDevAI/scripts/eastern_kingdoms/searing_gorge.cpp`
 * Functions/ScriptNames: `npc_dorius_stonetender`
 
+## scripts/silithus.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/kalimdor/silithus.cpp`
+* Functions/ScriptNames: `npc_solenor`
+
 ## scripts/silverpine.d
 
 * Projects: CMaNGOS
 * Files: `ScriptDevAI/scripts/eastern_kingdoms/silverpine_forest.cpp`
 * Functions/ScriptNames: `npc_deathstalker_erland`, `npc_deathstalker_faerleia`
+
+## scripts/stonetalon.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/kalimdor/stonetalon_mountains.cpp`
+* Functions/ScriptNames: `npc_kaya`
 
 ## scripts/stormwind.d
 
@@ -221,11 +305,36 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Files: `ScriptDevAI/scripts/eastern_kingdoms/swamp_of_sorrows.cpp`
 * Functions/ScriptNames: `npc_galen_goodward`
 
+## scripts/tanaris.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/kalimdor/tanaris.cpp`
+* Functions/ScriptNames: `mob_aquementas`, `npc_oox17tn`, `npc_tooga`
+
+## scripts/teldrassil.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/kalimdor/teldrassil.cpp`
+* Functions/ScriptNames: `npc_mist`
+
+## scripts/thousandneedles.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/kalimdor/thousand_needles.cpp`
+* Functions/ScriptNames: `npc_kanati`, `npc_lakota_windsong`, `npc_paoka_swiftmountain`, `npc_plucky_johnson`
+
 ## scripts/tirisfal.d
 
 * Projects: CMaNGOS
 * Files: `ScriptDevAI/scripts/eastern_kingdoms/tirisfal_glades.cpp`
 * Functions/ScriptNames: `go_mausoleum_door`, `go_mausoleum_trigger`, `npc_calvin_montague`
+
+## scripts/ungoro.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/kalimdor/ungoro_crater.cpp`
+* Functions/ScriptNames: `at_scent_larkorwi`, `npc_ame01`, `npc_ringo`, `npc_simone_the_inconspicuous`,
+  `npc_simone_seductress`, `npc_precious_the_devourer`
 
 ## scripts/westernplaguelands.d
 
@@ -244,6 +353,12 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Projects: CMaNGOS
 * Files: `ScriptDevAI/scripts/eastern_kingdoms/wetlands.cpp`
 * Functions/ScriptNames: `npc_mikhail`, `npc_tapoke_slim_jahn`
+
+## scripts/winterspring.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/kalimdor/winterspring.cpp`
+* Functions/ScriptNames: `npc_ranshalla`, `go_elune_fire`, `npc_artorius`
 
 ## timer.d
 

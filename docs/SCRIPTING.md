@@ -144,6 +144,10 @@ event at the end). It can be paused (an ambush to fight off, a scene to play) an
 movement scripts (a sniffed path's scenery). Being data, an escort handed to another node goes on there; if the creature's
 movement did not come along, the escort sends it on again.
 
+`Follower` (`dmangos.script.follower`) is the
+second component: a creature that follows its player (a lost cub, a sleepwalker) until its script
+says it has arrived, and that fails the player's quest when the player dies or is left behind.
+
 A handler of `GossipHello`, `GossipSelect`, `ObjectUsed`, `EffectHit` or `TriggerEntered` may call
 `consume()` on its context: the script answered, and the server's usual menu, use, database script
 or trigger does not follow.

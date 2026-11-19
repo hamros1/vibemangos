@@ -136,6 +136,20 @@ final class TestCreature : CreatureHost
     void hostMovementScript(uint id) { note("movement script", id); }
     void hostRelay(int id, EntityRef) { note("relay", id); }
     void hostKillCredit(EntityRef, uint entry) { note("credit", entry); }
+    // Kalimdor scripts:
+    ActionResult hostFactionOf(EntityRef c, uint f) { note("faction of", c.entry, f); return ActionResult.ok; }
+    ActionResult hostUnitFlagsOf(EntityRef c, uint flags, bool) { note("flags of", c.entry, flags); return ActionResult.ok; }
+    void hostFollow(EntityRef leader, float, float) { note(leader ? "follow" : "unfollow"); }
+    ActionResult hostCastAs(EntityRef c, uint spell, EntityRef, bool) { note("cast as", c.entry, spell); return ActionResult.ok; }
+    ActionResult hostObjectUsable(EntityRef, bool) { return ActionResult.ok; }
+    uint hostEntryOf(EntityRef who) { return who.entry; }
+    void hostGroupQuestEvent(EntityRef, uint quest) { note("group event", quest); }
+    bool hostLocationOf(EntityRef, out Location) { return false; }
+    void hostEmoteState(uint emote) { note("emote state", emote); }
+    size_t hostCreaturesNearby(uint, float, EntityRef[]) { return 0; }
+    EntityRef hostOwner() { return EntityRef.init; }
+    uint hostItemCount(EntityRef, uint) { return 0; }
+    uint hostGiveItem(EntityRef, uint, uint) { return 0; }
 }
 
 /// A script under test: the runtime of `Module`, one creature's script, and its host.
