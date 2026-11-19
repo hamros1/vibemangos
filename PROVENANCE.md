@@ -185,6 +185,12 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Files: `AI/ScriptDevAI/scripts/eastern_kingdoms/scarlet_monastery/instance_scarlet_monastery.cpp`, `boss_mograine_and_whitemane.cpp`, `boss_herod.cpp`, `boss_arcanist_doan.cpp`, `scarlet_monastery.h`
 * Functions/ScriptNames: `instance_scarlet_monastery`, `boss_scarlet_commander_mograine`, `boss_high_inquisitor_whitemane`, `boss_herod`, `mob_scarlet_trainee`, `boss_arcanist_doan`
 
+## scripts/scholomance.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/eastern_kingdoms/scholomance/instance_scholomance.cpp`, `boss_darkmaster_gandling.cpp`, `boss_jandice_barov.cpp`, `scholomance.cpp`, `scholomance.h`
+* Functions/ScriptNames: `instance_scholomance` (`DoSpawnGandlingIfCan`, `DoRespawnEntranceRoom`, `HandleDawnGambitEvent`), `event_dawn_gambit`, `boss_darkmaster_gandling`, `boss_jandice_barov`, `npc_spectral_tutor`
+
 ## scripts/stratholme.d
 
 * Projects: CMaNGOS

@@ -25,6 +25,7 @@ static import dmangos.scripts.sunkentemple;
 static import dmangos.scripts.blackrockdepths;
 static import dmangos.scripts.blackrockspire;
 static import dmangos.scripts.stratholme;
+static import dmangos.scripts.scholomance;
 
 /// Every module holding scripts.
 alias scriptModules = AliasSeq!(dmangos.scripts.deadmines, dmangos.scripts.westfall, dmangos.scripts.spells,
@@ -33,4 +34,4 @@ alias scriptModules = AliasSeq!(dmangos.scripts.deadmines, dmangos.scripts.westf
     dmangos.scripts.gnomeregan, dmangos.scripts.scarletmonastery, dmangos.scripts.uldaman,
     dmangos.scripts.zulfarrak, dmangos.scripts.maraudon, dmangos.scripts.blackfathomdeeps,
     dmangos.scripts.sunkentemple, dmangos.scripts.blackrockdepths, dmangos.scripts.blackrockspire,
-    dmangos.scripts.stratholme);
+    dmangos.scripts.stratholme, dmangos.scripts.scholomance);
