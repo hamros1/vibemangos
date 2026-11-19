@@ -345,9 +345,10 @@ struct TaelanFordring
             break;
         case At.cavalierAttacks:
             me.setFaction(factionEscortFriendPassive);
-            if (cavalier)
-                me.attack(cavalier, me.self);
-            scarletComplete = true;
+            if (cavalier && me.attack(cavalier, me.self) == ActionResult.ok)
+                scarletComplete = true; // the rest when the fight is over
+            else
+                steps.after(Step.line, 3.seconds); // nobody to fight: on with it
             break;
         case At.completeTwo:
             me.npcFlags(npcFlagQuestGiver);
@@ -598,6 +599,13 @@ unittest
     c.host.progress = QuestProgress.incomplete;
     c.raise(UnitInSight(c.host.player));
     assert(c.host.did("die") && c.host.did("summon 11075"), "the test host stands at Felstone Field's end");
+
+    // "Scarlet Subterfuge" handed in, with no cavalier about: he gives "In Dreams" all the same.
+    auto s = Driven!zone.make("npc_taelan_fordring");
+    s.raise(QuestRewarded(s.host.player, 5862));
+    assert(s.host.did("stand 8") && s.host.did("npc flags 0"));
+    s.tick(20_000);
+    assert(s.host.did("say -1001076") && s.host.did("say -1001077") && s.host.did("npc flags 2"));
 
     // Taelan: the whole story, with the others' parts played by hand.
     auto t = Driven!zone.make("npc_taelan_fordring");
