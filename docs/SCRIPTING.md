@@ -120,7 +120,7 @@ code) what is not here or not allowed. Nothing a script keeps can dangle.
 
 | Kind | UDA | Bound by | Events (implemented / planned) |
 |---|---|---|---|
-| Creature | `@creature` | `creature_template.ScriptName` | spawned, reset, entered combat, damaged, killed a unit, died, evaded, spell hit, signal, steps, movement done, gossip hello and select, quest accepted and rewarded; *summoned, emote* |
+| Creature | `@creature` | `creature_template.ScriptName` | spawned, reset, entered combat, damaged, killed a unit, died, evaded, spell hit, signal, steps, movement done, gossip hello and select, quest accepted and rewarded, a summon died, a player's emote; *summoned* |
 | Dungeon | `@instance` | `instance_template.ScriptName` | creature or object loaded, creature died, signal; *player entered, encounter start/wipe* |
 | Game object | `@gameObject` | `gameobject_template.ScriptName` | used, signal; *loaded, state changed* |
 | Area trigger | `@areaTrigger` | `scripted_areatrigger` | entered |
@@ -142,6 +142,11 @@ dies or falls more than 50 yards behind, and may send the creature home when it 
 passes it its `MovementDone`s and reacts to the points it reports (a line at Moonbrook, the quest's
 event at the end). Being data, an escort handed to another node goes on there; if the creature's
 movement did not come along, the escort sends it on again.
+
+An escort may stop on its way (`pause`, for an event at a point) and run its path's point scripts
+(`dbscripts_on_creature_movement`, `pointScripts`). `Follower` (`dmangos.script.follower`) is the
+second component: a creature that follows its player (a lost cub, a sleepwalker) until its script
+says it has arrived, and that fails the player's quest when the player dies or is left behind.
 
 A handler of `GossipHello`, `GossipSelect`, `ObjectUsed`, `EffectHit` or `TriggerEntered` may call
 `consume()` on its context: the script answered, and the server's usual menu, use, database script

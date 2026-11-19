@@ -150,6 +150,19 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Files: `AI/ScriptDevAI/scripts/kalimdor/ashenvale.cpp`
 * Functions/ScriptNames: `npc_muglash`, `go_naga_brazier`, `npc_ruul_snowhoof`, `npc_torek`, `npc_feero_ironhand`
 
+## scripts/azshara.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/kalimdor/azshara.cpp`, `AI/ScriptDevAI/scripts/kalimdor/boss_azuregos.cpp`
+* Functions/ScriptNames: `mobs_spitelashes`, `npc_felhound_tracker`, `boss_maws`, `boss_azuregos`
+
+## scripts/barrens.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/kalimdor/the_barrens.cpp`
+* Functions/ScriptNames: `npc_gilthares`, `npc_taskmaster_fizzule`, `npc_twiggy_flathead`, `at_twiggy_flathead`,
+  `npc_wizzlecranks_shredder`, `npc_regthar_deathgate`
+
 ## scripts/darkshore.d
 
 * Projects: CMaNGOS
@@ -190,11 +203,23 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Functions/ScriptNames: `npc_oox22fe`, `npc_shay_leafrunner` (with `ShaysBell`), `npc_captured_sprite_darter`,
   `go_cage_door`, `npc_kindal_moonweaver`
 
-## scripts/thousandneedles.d
+## scripts/moonglade.d
 
 * Projects: CMaNGOS
-* Files: `AI/ScriptDevAI/scripts/kalimdor/thousand_needles.cpp`
-* Functions/ScriptNames: `npc_kanati`, `npc_lakota_windsong`, `npc_paoka_swiftmountain`, `npc_plucky_johnson`
+* Files: `AI/ScriptDevAI/scripts/kalimdor/moonglade.cpp`
+* Functions/ScriptNames: `npc_keeper_remulos`, `boss_eranikus` (with `ConjureDreamRift`)
+
+## scripts/silithus.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/kalimdor/silithus.cpp`
+* Functions/ScriptNames: `npc_solenor`
+
+## scripts/stonetalon.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/kalimdor/stonetalon_mountains.cpp`
+* Functions/ScriptNames: `npc_kaya`
 
 ## scripts/tanaris.d
 
@@ -208,17 +233,11 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Files: `AI/ScriptDevAI/scripts/kalimdor/teldrassil.cpp`
 * Functions/ScriptNames: `npc_mist`
 
-## scripts/stonetalon.d
+## scripts/thousandneedles.d
 
 * Projects: CMaNGOS
-* Files: `AI/ScriptDevAI/scripts/kalimdor/stonetalon_mountains.cpp`
-* Functions/ScriptNames: `npc_kaya`
-
-## scripts/silithus.d
-
-* Projects: CMaNGOS
-* Files: `AI/ScriptDevAI/scripts/kalimdor/silithus.cpp`
-* Functions/ScriptNames: `npc_solenor`
+* Files: `AI/ScriptDevAI/scripts/kalimdor/thousand_needles.cpp`
+* Functions/ScriptNames: `npc_kanati`, `npc_lakota_windsong`, `npc_paoka_swiftmountain`, `npc_plucky_johnson`
 
 ## scripts/ungoro.d
 
@@ -232,25 +251,6 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Projects: CMaNGOS
 * Files: `AI/ScriptDevAI/scripts/kalimdor/winterspring.cpp`
 * Functions/ScriptNames: `npc_ranshalla`, `go_elune_fire`, `npc_artorius`
-
-## scripts/azshara.d
-
-* Projects: CMaNGOS
-* Files: `AI/ScriptDevAI/scripts/kalimdor/azshara.cpp`, `AI/ScriptDevAI/scripts/kalimdor/boss_azuregos.cpp`
-* Functions/ScriptNames: `mobs_spitelashes`, `npc_felhound_tracker`, `boss_maws`, `boss_azuregos`
-
-## scripts/moonglade.d
-
-* Projects: CMaNGOS
-* Files: `AI/ScriptDevAI/scripts/kalimdor/moonglade.cpp`
-* Functions/ScriptNames: `npc_keeper_remulos`, `boss_eranikus` (with `ConjureDreamRift`)
-
-## scripts/barrens.d
-
-* Projects: CMaNGOS
-* Files: `AI/ScriptDevAI/scripts/kalimdor/the_barrens.cpp`
-* Functions/ScriptNames: `npc_gilthares`, `npc_taskmaster_fizzule`, `npc_twiggy_flathead`, `at_twiggy_flathead`,
-  `npc_wizzlecranks_shredder`, `npc_regthar_deathgate`
 
 ## timer.d
 
