@@ -110,6 +110,16 @@ version (unittest)
             c.consume();
         }
     }
+
+    /// Instance round 2: a creature script for the tests of `AuraRemoved`: a creature beside it when its aura goes.
+    @creature("npc_test_aura_removed")
+    struct TestAuraRemoved
+    {
+        void on(ref CreatureContext me, const ref AuraRemoved e)
+        {
+            me.summon(imported!"dmangos.world.testdata".creatureTrainer, me.location, 60_000);
+        }
+    }
 }
 
 // A scripted event reaches its script, around the player who started it; consumed, no database script follows.

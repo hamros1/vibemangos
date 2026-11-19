@@ -1,7 +1,8 @@
 /**
  * Blackrock Depths (map 230): the Ring of Law (High Justice Grimstone sentences who walks into the
  * arena: two waves of beasts through the east gate, a champion through the north gate, and the way
- * on opens), the Tomb of the Seven (Doomrel's challenge: the seven dwarves one after another; then
+ * on opens; with the Banner of Provocation planted, before the fight or during the beasts, Theldren and
+ * four of his gladiators come instead of the champion, for "The Challenge"), the Tomb of the Seven (Doomrel's challenge: the seven dwarves one after another; then
  * their chest and the tomb's far door), the Lyceum's two braziers (lit, the golem rooms open), the
  * Iron Hall (Magmus's fight shuts its doors and wakes the Ironhand Guardians; his death opens the
  * throne room), the Relic Vault (the twelve coffers opened, Watcher Doomgrip and his constructs;
@@ -61,6 +62,8 @@ enum : uint
     // Ring of Law: beasts (with how many come in each of the two waves) and champions.
     worm = 8925, stinger = 8926, screecher = 8927, thundersnout = 8928, creeper = 8933, beetle = 8932,
     gorosh = 9027, grizzle = 9028, eviscerator = 9029, okthor = 9030, anubshiah = 9031, hedrum = 9032,
+    theldren = 16059,
+    theldrenCredit = 16166, // "The Challenge"'s kill credit
 }
 
 /// Objects of the depths.
@@ -98,6 +101,7 @@ struct BlackrockDepths
         ringTrigger = 100, tombChallenge = 101, brazier = 102, cofferOpened = 103, aleGiven = 104,
         rocknotDone = 105, kegBroken = 106, mugStolen = 107, bridgeTrigger = 108, hurleyArrived = 109,
         flamelash = 110, jailPrisoner = 111, jailSupplyDoor = 112, barDoorOpened = 113,
+        theldrenBanner = 114, // the Banner of Provocation planted (npc_theldren_trigger)
     }
     enum : int
     {
@@ -110,6 +114,9 @@ struct BlackrockDepths
     static immutable uint[6] beasts = [worm, stinger, screecher, thundersnout, creeper, beetle];
     static immutable ubyte[6] beastCount = [4, 2, 5, 3, 3, 7];
     static immutable uint[6] champions = [gorosh, grizzle, eviscerator, okthor, anubshiah, hedrum];
+    /// Theldren's possible gladiators (four come with him): Lefty, Rotfang, Snokh, Malgen, Korv, Rezznik,
+    /// Va'jashni and Volida.
+    static immutable uint[8] gladiators = [16049, 16050, 16051, 16052, 16053, 16054, 16055, 16058];
     static immutable uint[7] tombDwarves = [angerrel, seethrel, doperel, gloomrel, vilerel, haterel, doomrel];
     static immutable Location eastSpawn = Location(608.960f, -235.322f, -53.907f, 1.857f);
     static immutable Location northSpawn = Location(644.300f, -175.989f, -53.739f, 3.418f);
@@ -129,6 +136,7 @@ struct BlackrockDepths
     // The Ring of Law.
     Fight ring;
     ubyte ringStage;
+    bool banner, theldrenFight; /// the Banner of Provocation planted; Theldren came for it
     EntityRef ringPlayer, grimstoneRef;
     Pack!12 ringMobs;
     // The Tomb of the Seven.
@@ -253,6 +261,11 @@ struct BlackrockDepths
     {
         switch (e.id)
         {
+        case Signals.theldrenBanner:
+            // Before the fight, or while the beasts come: Theldren will come instead of a champion.
+            if (ring != Fight.done && !(ring == Fight.inProgress && ringStage > 6))
+                banner = true;
+            break;
         case Signals.ringTrigger:
             if (ring == Fight.notStarted || ring == Fight.failed)
             {
@@ -525,9 +538,26 @@ struct BlackrockDepths
         case 6:
             say(brd, sayNorthGate);
             ringMobs.clear();
-            summonRingMob(brd, champions[brd.random(6)], northSpawn);
+            if (banner)
+            {
+                // Theldren and four of the eight gladiators, chosen at random.
+                theldrenFight = true;
+                summonRingMob(brd, theldren, northSpawn);
+                uint chosen;
+                foreach (i, g; gladiators)
+                    if (chosen < 4 && (brd.random(2) || gladiators.length - i <= 4 - chosen))
+                    {
+                        summonRingMob(brd, g, northSpawn);
+                        ++chosen;
+                    }
+            }
+            else
+                summonRingMob(brd, champions[brd.random(6)], northSpawn);
             break;
         case 7:
+            if (theldrenFight)
+                brd.killCreditAll(theldrenCredit);
+            banner = theldrenFight = false;
             ring = Fight.done;
             gate(brd, arenaGate2, false);
             gate(brd, arenaGate3, true);
@@ -683,6 +713,26 @@ struct BlackrockDepths
 // ---------------------------------------------------------------------------
 // Objects and triggers
 // ---------------------------------------------------------------------------
+
+/// The Theldren Trigger in the Ring of Law (`npc_theldren_trigger`): the Banner of Provocation (Summon Thelrin DND)
+/// planted at it tells the depths' script that Theldren is challenged.
+@creature("npc_theldren_trigger")
+struct TheldrenTrigger
+{
+    enum uint summonThelrin = 27_517;
+
+    void on(ref CreatureContext me, const ref Spawned e)
+    {
+        me.reactState(Reaction.passive);
+        me.combatMovement(false);
+    }
+
+    void on(ref CreatureContext me, const ref SpellHit e)
+    {
+        if (e.spell == summonThelrin)
+            me.signalDungeon(BlackrockDepths.Signals.theldrenBanner);
+    }
+}
 
 /// The Ring of Law: who walks in is sentenced.
 @areaTrigger("at_ring_of_law")
@@ -1787,4 +1837,34 @@ unittest
         him.host.path ~= Waypoint(Location(i, 0, 0));
     him.raise(Signal(creatureRef(nagmara), Rocknot.Signals.love));
     assert(him.host.done("move 9"), "off on his second walk");
+}
+
+/// The Banner of Provocation planted at the Theldren Trigger: Theldren and four gladiators come instead of the
+/// champion, and their deaths credit "The Challenge".
+unittest
+{
+    import dmangos.scripts.testing;
+
+    alias self = dmangos.scripts.blackrockdepths;
+    auto trigger = runCreature!self("npc_theldren_trigger", 16_079);
+    trigger.raise(SpellHit(playerRef, TheldrenTrigger.summonThelrin));
+    assert(trigger.host.done("dungeon 114 0"));
+
+    auto brd = runInstance!self("instance_blackrock_depths");
+    brd.raise(Signal(creatureRef(16_079), BlackrockDepths.Signals.theldrenBanner));
+    brd.raise(Signal(playerRef, BlackrockDepths.Signals.ringTrigger));
+    brd.run(32_000);
+    foreach (spawn; 2 .. 10)
+        brd.raise(CreatureDied(creatureRef(worm, 1000 + spawn)));
+    brd.run(11_000);
+    assert(brd.host.done("summon 16059") && !brd.host.done("summon 9027"));
+    size_t gladiatorsCame;
+    foreach (g; BlackrockDepths.gladiators)
+        gladiatorsCame += brd.host.times(imported!"std.format".format("summon %s", g));
+    assert(gladiatorsCame == 4);
+    brd.raise(CreatureDied(creatureRef(theldren, 1010)));
+    foreach (i, g; BlackrockDepths.gladiators[4 .. 8]) // the fake's dice: always the last four
+        brd.raise(CreatureDied(creatureRef(g, cast(uint)(1011 + i))));
+    brd.run(6000);
+    assert(brd.host.done("credit 16166") && brd.state!BlackrockDepths.ring == Fight.done);
 }

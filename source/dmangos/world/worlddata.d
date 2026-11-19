@@ -218,6 +218,14 @@ struct SpellTarget
     Position at;
 }
 
+/// A `spell_script_target` row (Instance round 2): a creature (`type` 1) the spell's script target means.
+private struct SpellScriptTargetRow
+{
+    uint entry;
+    ubyte type;
+    uint targetEntry;
+}
+
 /// A `spell_target_position` row.
 private struct SpellTargetRow
 {
@@ -400,6 +408,9 @@ final class WorldData
     AreaTriggerTeleport[uint] areaTriggers; /// `areatrigger_teleport`, by trigger id
     GameTele[] teleports;                   /// `game_tele`, in id order
     SpellTarget[uint] spellTargets;         /// `spell_target_position`: where a spell sends its target, by spell
+    /// Instance round 2: `spell_script_target` (type 1, living creatures): the creatures of these entries a spell's
+    /// `TARGET_UNIT_SCRIPT_NEAR_CASTER` means, by spell.
+    uint[][uint] spellScriptTargets;
     bool[uint] taverns;                     /// `areatrigger_tavern`: the inns' area triggers
 
     StaticMap!(uint, CreatureTemplate) creatureTemplates;       /// by entry
@@ -1089,6 +1100,9 @@ final class WorldData
                 spellTargets[row.id] = SpellTarget(row.map, Position(row.x, row.y, row.z, row.orientation));
         foreach (row; world.query!"SELECT id FROM areatrigger_tavern"())
             taverns[row.get!uint(0)] = true;
+        foreach (row; world.select!(SpellScriptTargetRow, "FROM spell_script_target"))
+            if (row.type == 1)
+                spellScriptTargets[row.entry] ~= row.targetEntry;
     }
 
     /// Replaces the area trigger teleports and `.tele` places with those of these rows that are valid.
