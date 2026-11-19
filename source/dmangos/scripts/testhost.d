@@ -24,6 +24,7 @@ final class TestCreature : CreatureHost
     float distance = 5;           /// to anyone
     bool playerAlive = true;
     QuestProgress progress = QuestProgress.incomplete;
+    QuestProgress[uint] questProgress; /// of some quests (others: `progress`)
     EntityRef[uint] nearby;       /// creatures (and objects) near it, by entry
     uint summons;
     uint health = 100;
@@ -88,7 +89,7 @@ final class TestCreature : CreatureHost
     void hostGossipMenu(EntityRef, uint menu) { note("menu", menu); }
     void hostCloseGossip(EntityRef) { note("close gossip"); }
     uint hostRandom(uint below) { return below ? randomValue % below : 0; }
-    QuestProgress hostQuestStatus(EntityRef, uint) { return progress; }
+    QuestProgress hostQuestStatus(EntityRef, uint quest) { return questProgress.get(quest, progress); }
     EntityRef hostRandomTarget() { return fighting ? player : EntityRef.init; }
     ActionResult hostSayBroadcast(EntityRef speaker, uint text, EntityRef)
     {

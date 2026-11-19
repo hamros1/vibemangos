@@ -195,7 +195,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 
 * Projects: CMaNGOS
 * Files: `ScriptDevAI/scripts/eastern_kingdoms/stormwind_city.cpp`
-* Functions/ScriptNames: `npc_lady_katrana_prestor`, `npc_bartleby`, `npc_dashel_stonefist`, `npc_major_mattingly`, `npc_field_marshal_afrasiabi`
+* Functions/ScriptNames: `npc_lady_katrana_prestor`, `npc_bartleby`, `npc_dashel_stonefist`, `npc_major_mattingly`, `npc_field_marshal_afrasiabi`, `npc_squire_rowe`, `npc_reginald_windsor`
 
 ## scripts/stranglethorn.d
 
