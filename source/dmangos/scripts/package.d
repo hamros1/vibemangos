@@ -21,10 +21,12 @@ static import dmangos.scripts.uldaman;
 static import dmangos.scripts.zulfarrak;
 static import dmangos.scripts.maraudon;
 static import dmangos.scripts.blackfathomdeeps;
+static import dmangos.scripts.sunkentemple;
 
 /// Every module holding scripts.
 alias scriptModules = AliasSeq!(dmangos.scripts.deadmines, dmangos.scripts.westfall, dmangos.scripts.spells,
     dmangos.scripts.stormwind, dmangos.scripts.ungoro, dmangos.scripts.shadowfang,
     dmangos.scripts.wailingcaverns, dmangos.scripts.razorfenkraul, dmangos.scripts.razorfendowns,
     dmangos.scripts.gnomeregan, dmangos.scripts.scarletmonastery, dmangos.scripts.uldaman,
-    dmangos.scripts.zulfarrak, dmangos.scripts.maraudon, dmangos.scripts.blackfathomdeeps);
+    dmangos.scripts.zulfarrak, dmangos.scripts.maraudon, dmangos.scripts.blackfathomdeeps,
+    dmangos.scripts.sunkentemple);
