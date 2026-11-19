@@ -532,13 +532,13 @@ struct Razorgore
     {
         free = me.askDungeon(BwlEncounter.razorgore) == EncounterState.special;
         me.deathPrevention(!free);
-        if (!me.hasAura(doubleAttack))
+        if (!me.hasAura(me.self, doubleAttack))
             me.castSelf(doubleAttack, true);
     }
 
     void on(ref CreatureContext me, const ref EnteredCombat e)
     {
-        me.removeAura(possessVisual);
+        me.removeAura(me.self, possessVisual);
         steps.after(Step.conflagration, between(me, 10_000, 15_000));
         steps.after(Step.volley, between(me, 15_000, 20_000));
         steps.after(Step.stomp, 30.seconds);
@@ -552,7 +552,7 @@ struct Razorgore
         free = true;
         me.deathPrevention(false);
         me.melee(true);
-        me.removeAura(possessVisual);
+        me.removeAura(me.self, possessVisual);
         me.castSelf(warmingFlames, true);
         me.setHealthPercent(100);
     }
@@ -757,7 +757,7 @@ struct Vaelastrasz
             }
             else
             {
-                me.faction(factionHostile);
+                me.setFaction(factionHostile);
                 me.zoneCombat();
                 if (const nearest = me.selectTarget(Pick.nearest))
                     me.attack(nearest);
@@ -794,8 +794,6 @@ struct Vaelastrasz
         {
         case 0:
             nefarius = me.summon(npcVictorNefarius, nefariusAtThrone, 25_000);
-            if (nefarius)
-                me.unitFlags(UnitFlag.notSelectable, true, nefarius);
             next = 1000;
             break;
         case 1:
@@ -815,7 +813,7 @@ struct Vaelastrasz
             if (nefarius)
                 me.castAs(nefarius, redLightning, me.self);
             me.npcFlags(npcFlagGossip | npcFlagQuestGiver);
-            me.removeAura(nefariusCorruption);
+            me.removeAura(me.self, nefariusCorruption);
             break;
         default:
             break;
@@ -1076,6 +1074,7 @@ struct VictorNefarius
         if (e.id == BwlSignal.nefariusLine)
         {
             corrupter = true;
+            me.unitFlags(UnitFlag.notSelectable, true);
             me.say(e.value);
         }
     }
@@ -1147,7 +1146,7 @@ struct VictorNefarius
             {
                 // The games begin.
                 me.standState(StandState.stand);
-                me.faction(factionBlackDragon);
+                me.setFaction(factionBlackDragon);
                 me.castSelf(nefariusBarrier, true);
                 me.castSelf(shadowblink);
                 me.unitFlags(UnitFlag.immuneToPlayer, false);
@@ -1184,7 +1183,7 @@ struct VictorNefarius
         if (corrupter)
             return;
         me.npcFlags(1);
-        me.faction(0);
+        me.setFaction(0);
         me.unitFlags(UnitFlag.notSelectable, false);
         me.combatMovement(true);
         me.signalDungeon(BwlEncounter.nefarian, EncounterState.failed);
@@ -1239,10 +1238,10 @@ struct Nefarian
     void on(ref CreatureContext me, const ref Spawned e)
     {
         foreach (spell; [speedBurst, doubleAttack, shadowFlamePassive])
-            if (!me.hasAura(spell))
+            if (!me.hasAura(me.self, spell))
                 me.castSelf(spell, true);
         steps.after(Step.initialYell, 10.seconds);
-        me.react(React.passive);
+        me.reactState(Reaction.passive);
         me.melee(false);
         me.combatMovement(false);
         me.flying(true);
@@ -1293,8 +1292,8 @@ struct Nefarian
             break;
         case Step.attackStart:
             me.melee(true);
-            me.react(React.aggressive);
-            me.removeAura(speedBurst);
+            me.reactState(Reaction.aggressive);
+            me.removeAura(me.self, speedBurst);
             me.combatMovement(true);
             me.unitFlags(UnitFlag.notSelectable, false);
             me.zoneCombat();

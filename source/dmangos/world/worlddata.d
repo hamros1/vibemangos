@@ -747,20 +747,20 @@ final class WorldData
             spellScriptNames[row.get!uint(0)] = row.get!string(1);
         foreach (row; world.query!"SELECT entry, ScriptName FROM scripted_areatrigger"())
             areaTriggerScriptNames[row.get!uint(0)] = row.get!string(1);
-        foreach (row; world.query!("SELECT Entry, PositionX, PositionY, PositionZ, Orientation, WaitTime FROM script_waypoint "
-                ~ "WHERE PathId = 0 ORDER BY Entry, Point")())
+        foreach (row; world.query!("SELECT Entry, PositionX, PositionY, PositionZ, Orientation, WaitTime, ScriptId "
+                ~ "FROM script_waypoint WHERE PathId = 0 ORDER BY Entry, Point")())
             escortPaths[row.get!uint(0)] ~= Waypoint(Location(row.get!float(1), row.get!float(2), row.get!float(3),
-                row.get!float(4)), row.get!uint(5));
-        // Newer escort paths (`waypoint_path`, named "... Escort path"), by the creature entry they are numbered by.
+                row.get!float(4)), row.get!uint(5), row.get!uint(6));
+        // Newer escort paths (`waypoint_path`, named "... Escort path"), by the creature entry they are numbered by:
+        // sniffed, with their scripts, they replace an older `script_waypoint` path of the creature.
         Waypoint[][uint] named;
-        foreach (row; world.query!("SELECT p.PathId, p.PositionX, p.PositionY, p.PositionZ, p.Orientation, p.WaitTime "
-                ~ "FROM waypoint_path p JOIN waypoint_path_name n ON n.PathId = p.PathId "
+        foreach (row; world.query!("SELECT p.PathId, p.PositionX, p.PositionY, p.PositionZ, p.Orientation, p.WaitTime, "
+                ~ "p.ScriptId FROM waypoint_path p JOIN waypoint_path_name n ON n.PathId = p.PathId "
                 ~ "WHERE n.Name LIKE '%Escort%' ORDER BY p.PathId, p.Point")())
             named[row.get!uint(0)] ~= Waypoint(Location(row.get!float(1), row.get!float(2), row.get!float(3),
-                row.get!float(4)), row.get!uint(5));
+                row.get!float(4)), row.get!uint(5), row.get!uint(6));
         foreach (entry, path; named)
-            if (entry !in escortPaths)
-                escortPaths[entry] = path;
+            escortPaths[entry] = path;
         foreach (row; world.query!"SELECT entry, content_default, type, language, emote, sound FROM script_texts"())
         {
             BroadcastText text;

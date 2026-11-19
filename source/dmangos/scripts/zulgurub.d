@@ -275,7 +275,7 @@ struct Venoxis
             phase = 1;
             me.say(sayTransform);
             me.castSelf(poisonCloud);
-            if (!me.hasAura(virulentPoisonProc))
+            if (!me.hasAura(me.self, virulentPoisonProc))
                 me.castSelf(virulentPoisonProc, true);
             me.resetThreat();
             me.spellList(listPhase2);
@@ -365,7 +365,7 @@ struct Jeklik
         if (!landed && e.after < 50 && me.castSelf(transformVisual) == ActionResult.ok)
         {
             landed = true;
-            me.removeAura(batForm);
+            me.removeAura(me.self, batForm);
             me.flying(false);
             me.resetThreat();
             me.spellList(listPhase2);
@@ -430,7 +430,7 @@ struct GurubashiBatRider
 
     void on(ref CreatureContext me, const ref Spawned e)
     {
-        if (!me.hasAura(thrash))
+        if (!me.hasAura(me.self, thrash))
             me.castSelf(thrash, true);
     }
 
@@ -440,7 +440,7 @@ struct GurubashiBatRider
             return;
         // Jeklik's: it flies over the fight, raining fire, and is no one's to fight.
         bomber = true;
-        me.react(React.passive);
+        me.reactState(Reaction.passive);
         me.flying(true);
         me.unitFlags(UnitFlag.notSelectable, true);
         me.castSelf(liquidFire, true);
@@ -466,7 +466,7 @@ struct GurubashiBatRider
     void on(ref CreatureContext me, const ref Reset e)
     {
         concocted = false;
-        if (!me.hasAura(thrash))
+        if (!me.hasAura(me.self, thrash))
             me.castSelf(thrash, true);
     }
 }
@@ -519,7 +519,7 @@ struct Marli
             else if (spider && me.castSelf(transformBack) == ActionResult.ok)
             {
                 me.say(sayTransformBack);
-                me.removeAura(spiderForm);
+                me.removeAura(me.self, spiderForm);
                 me.spellList(listPhase1);
                 spider = false;
                 steps.after(step, 60.seconds);
@@ -578,7 +578,7 @@ private mixin template FakeDeath(ZgEncounter which)
     {
         me.unitFlags(UnitFlag.notSelectable, false);
         me.standState(StandState.stand);
-        me.removeAura(pacifySelf);
+        me.removeAura(me.self, pacifySelf);
         down = false;
         if (onlyLook)
             return;
@@ -702,7 +702,7 @@ struct Thekal
         me.deathPrevention(true);
         me.combatMovement(true);
         me.melee(true);
-        me.removeAura(tigerForm);
+        me.removeAura(me.self, tigerForm);
         me.spellList(listPhase1);
         me.signalDungeon(ZgEncounter.thekal, EncounterState.failed);
     }
@@ -843,7 +843,7 @@ struct Arlokk
         case Step.transition:
             if (panther && me.castSelf(transformVisual) == ActionResult.ok)
             {
-                me.removeAura(pantherTransform);
+                me.removeAura(me.self, pantherTransform);
                 panther = false;
                 me.spellList(listPhase1);
                 steps.after(step, 30.seconds);
@@ -864,12 +864,12 @@ struct Arlokk
                 me.teleport(me.locationOf(prey));
                 me.attack(prey);
             }
-            me.removeAura(superInvis);
+            me.removeAura(me.self, superInvis);
             me.unitFlags(UnitFlag.notSelectable, false);
             me.melee(true);
             break;
         case Step.invisEnd:
-            me.removeAura(superInvis);
+            me.removeAura(me.self, superInvis);
             me.unitFlags(UnitFlag.notSelectable, false);
             me.melee(true);
             break;
@@ -1181,9 +1181,9 @@ struct Hakkar
     /// A stack of his power for each priest alive.
     private void empower(ref CreatureContext me)
     {
-        if (!me.hasAura(doubleAttack))
+        if (!me.hasAura(me.self, doubleAttack))
             me.castSelf(doubleAttack, true);
-        me.removeAura(hakkarsPower);
+        me.removeAura(me.self, hakkarsPower);
         foreach (priest; ZgEncounter.jeklik .. ZgEncounter.ohgan)
             if (me.askDungeon(priest) != EncounterState.done)
                 me.castSelf(hakkarsPower, true);
@@ -1217,7 +1217,7 @@ struct Soulflayer
         ccSpell = me.random(2) ? fear : knockdown;
         static immutable uint[3] buffs = [enrage, frenzy, thrash];
         buffSpell = buffs[me.random(3)];
-        if (buffSpell == thrash && !me.hasAura(thrash))
+        if (buffSpell == thrash && !me.hasAura(me.self, thrash))
             me.castSelf(thrash, true);
     }
 
@@ -1250,14 +1250,14 @@ struct Soulflayer
 
     void on(ref CreatureContext me, const ref Damaged e)
     {
-        if (buffSpell != thrash && e.after <= 30 && !me.hasAura(buffSpell))
+        if (buffSpell != thrash && e.after <= 30 && !me.hasAura(me.self, buffSpell))
             me.castSelf(buffSpell);
     }
 
     void on(ref CreatureContext me, const ref Reset e)
     {
         steps.clear();
-        if (buffSpell == thrash && !me.hasAura(thrash))
+        if (buffSpell == thrash && !me.hasAura(me.self, thrash))
             me.castSelf(thrash, true);
     }
 }
@@ -1309,7 +1309,7 @@ version (unittest)
         }
         override int hostAskDungeon(uint id) { return id < states.length ? states[id] : 0; }
         override void hostSpellList(uint id) { lists ~= id; }
-        override void hostUnitFlags(EntityRef, uint f, bool set) { flags = set ? flags | f : flags & ~f; }
+        override void hostUnitFlags(uint f, bool set) { flags = set ? flags | f : flags & ~f; }
         override void hostDeathPrevention(bool on) { preventing = on; }
         override void hostStandState(StandState s) { stand = s; }
         override void hostSetHealthPercent(EntityRef, uint p) { health = p; }

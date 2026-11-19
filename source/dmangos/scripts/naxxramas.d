@@ -396,7 +396,7 @@ struct AnubRekhan
 
     void on(ref CreatureContext me, const ref Spawned e)
     {
-        if (!me.hasAura(doubleAttack))
+        if (!me.hasAura(me.self, doubleAttack))
             me.castSelf(doubleAttack, true);
     }
 
@@ -520,7 +520,7 @@ struct Maexxna
 
     void on(ref CreatureContext me, const ref Spawned e)
     {
-        if (!me.hasAura(doubleAttack))
+        if (!me.hasAura(me.self, doubleAttack))
             me.castSelf(doubleAttack, true);
     }
 
@@ -609,7 +609,7 @@ struct WebWrap
     void on(ref CreatureContext me, const ref Died e)
     {
         if (held)
-            me.removeAura(Maexxna.webWrapStun, held);
+            me.removeAura(held, Maexxna.webWrapStun);
         me.despawn(5000);
     }
 }
@@ -657,7 +657,7 @@ struct Noth
         balconyVisits = 0;
         onBalcony = false;
         me.unitFlags(UnitFlag.notSelectable, false);
-        me.removeAura(immuneAll);
+        me.removeAura(me.self, immuneAll);
         me.rooted(false);
         me.melee(true);
         EntityRef[32] adds;
@@ -724,7 +724,7 @@ struct Noth
             onBalcony = false;
             steps.cancel(Step.waves);
             me.teleport(ground);
-            me.removeAura(immuneAll);
+            me.removeAura(me.self, immuneAll);
             me.unitFlags(UnitFlag.notSelectable, false);
             me.rooted(false);
             me.melee(true);
@@ -795,7 +795,7 @@ struct Heigan
             break;
         case Step.groundPhase:
             me.interrupt();
-            me.removeAura(plagueCloud);
+            me.removeAura(me.self, plagueCloud);
             me.rooted(false);
             me.melee(true);
             if (const target = me.selectTarget(Pick.nearest))
@@ -849,7 +849,7 @@ struct Loatheb
 
     void engaged(ref CreatureContext me, const ref EnteredCombat e)
     {
-        if (!me.hasAura(poisonAura))
+        if (!me.hasAura(me.self, poisonAura))
             me.castSelf(poisonAura, true);
         steps.after(Step.mind, 5.seconds);
         steps.after(Step.doom, 2 * 60.seconds);
@@ -975,7 +975,7 @@ struct Gothik
 
     void reset(ref CreatureContext me)
     {
-        me.removeAura(immuneAll);
+        me.removeAura(me.self, immuneAll);
         me.unitFlags(UnitFlag.notSelectable, false);
         me.rooted(false);
         me.melee(true);
@@ -1025,7 +1025,7 @@ struct Gothik
             foreach (s; [Step.trainee, Step.knight, Step.rider])
                 steps.cancel(s);
             me.sayText(sayTeleport);
-            me.removeAura(immuneAll);
+            me.removeAura(me.self, immuneAll);
             me.unitFlags(UnitFlag.notSelectable, false);
             me.rooted(false);
             me.melee(true);
@@ -1083,7 +1083,7 @@ private mixin template Horseman(uint mark, uint special, uint spirit, uint aggro
         {
             EntityRef[1] h;
             if (other != me.self.entry && me.creaturesNear(other, 200, h[]))
-                me.sendAgainst(h[0], e.enemy);
+                me.attack(h[0], e.enemy);
         }
     }
 
@@ -1349,7 +1349,7 @@ struct Gluth
 
     void on(ref CreatureContext me, const ref Spawned e)
     {
-        if (!me.hasAura(doubleAttack))
+        if (!me.hasAura(me.self, doubleAttack))
             me.castSelf(doubleAttack, true);
     }
 
@@ -1395,7 +1395,7 @@ struct Gluth
                 foreach (c; chows[0 .. me.creaturesNear(npcZombieChow, 200, chows[])])
                 {
                     me.setHealthPercent(5, c);
-                    me.sendTo(c, me.location);
+                    me.moveCreature(c, me.location, 0);
                 }
                 steps.after(step, 105.seconds);
             }
@@ -1457,7 +1457,7 @@ private mixin template ThaddiusAdd(uint other, uint warstompOrPull, uint aggro, 
         steps.after(Step.ability, between(me, 10_000, 15_000));
         EntityRef[1] o;
         if (me.creaturesNear(other, 200, o[]))
-            me.sendAgainst(o[0], e.enemy);
+            me.attack(o[0], e.enemy);
     }
 
     void on(ref CreatureContext me, const ref KilledUnit e)
@@ -1493,6 +1493,7 @@ private mixin template ThaddiusAdd(uint other, uint warstompOrPull, uint aggro, 
         if (me.creaturesNear(other, 200, o[]))
             me.signal(o[0], NaxxSignal.addsDone);
         me.sayText(death);
+        me.deathPrevention(false);
         me.die();
     }
 
@@ -1568,7 +1569,7 @@ struct Thaddius
         if (me.askDungeon(NaxxEncounter.thaddius) != EncounterState.special)
         {
             me.unitFlags(UnitFlag.notSelectable | UnitFlag.immuneToPlayer, true);
-            me.react(React.passive);
+            me.reactState(Reaction.passive);
         }
     }
 
@@ -1594,7 +1595,7 @@ struct Thaddius
             awake = true;
             me.castSelf(spawn, true);
             me.unitFlags(UnitFlag.notSelectable | UnitFlag.immuneToPlayer, false);
-            me.react(React.aggressive);
+            me.reactState(Reaction.aggressive);
             me.zoneCombat();
             break;
         case Step.polarity:
@@ -1660,7 +1661,7 @@ struct Sapphiron
 
     void on(ref CreatureContext me, const ref Spawned e)
     {
-        if (!me.hasAura(doubleAttack))
+        if (!me.hasAura(me.self, doubleAttack))
             me.castSelf(doubleAttack, true);
         home = me.location;
         me.zoneCombat();
@@ -1730,7 +1731,7 @@ struct Sapphiron
             }
             break;
         case Step.land:
-            me.removeAura(dragonHover);
+            me.removeAura(me.self, dragonHover);
             me.emote(293); // EMOTE_ONESHOT_LAND
             me.flying(false);
             steps.after(Step.ground, 2.seconds);
@@ -1875,7 +1876,7 @@ struct Kelthuzad
         case Step.phase2:
             phase = 2;
             me.interrupt();
-            me.removeAura(channelVisual);
+            me.removeAura(me.self, channelVisual);
             me.unitFlags(UnitFlag.notSelectable, false);
             me.rooted(false);
             me.melee(true);
@@ -1932,7 +1933,7 @@ struct Kelthuzad
     {
         steps.clear();
         phase = guardiansSent = 0;
-        me.removeAura(channelVisual);
+        me.removeAura(me.self, channelVisual);
         me.unitFlags(UnitFlag.notSelectable, false);
         me.rooted(false);
         me.melee(true);
@@ -1969,7 +1970,7 @@ struct IcecrownGuardian
 
     void on(ref CreatureContext me, const ref Spawned e)
     {
-        if (!me.hasAura(guardianPassive))
+        if (!me.hasAura(me.self, guardianPassive))
             me.castSelf(guardianPassive, true);
     }
 
@@ -2019,14 +2020,14 @@ struct StoneskinGargoyle
     void on(ref CreatureContext me, const ref EnteredCombat e)
     {
         steps.cancel(Step.watch);
-        me.removeAura(stoneform);
+        me.removeAura(me.self, stoneform);
         me.unitFlags(UnitFlag.notSelectable | UnitFlag.immuneToPlayer, false);
         steps.after(Step.volley, 4.seconds);
     }
 
     void on(ref CreatureContext me, const ref Damaged e)
     {
-        if (e.after < 30 && !me.hasAura(stoneskin))
+        if (e.after < 30 && !me.hasAura(me.self, stoneskin))
             me.castSelf(stoneskin);
     }
 

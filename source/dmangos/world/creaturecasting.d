@@ -85,6 +85,13 @@ mixin template CreatureCasting()
     /// A player's text emote at it.
     void receivedEmote(ulong player, uint textEmote, CombatWorld world)
     {
+        import dmangos.script.api : EmoteReceived;
+
+        if (behaviour) // Eastern Kingdoms scripts: its script hears of it
+        {
+            world_ = world;
+            raiseScript(EmoteReceived(EntityRef(player), textEmote));
+        }
         if (script is null)
             return;
         world_ = world;
@@ -497,9 +504,14 @@ mixin template CreatureCasting()
         auto other = world_.unit(guid);
         if (!other)
             return;
+        // What the victim's auras make of the school's damage (`MOD_DAMAGE_PERCENT_TAKEN`: a stance, a curse).
+        const victim = other.fighter;
+        const schoolIndex = school < 0 ? 0 : school;
+        if (schoolIndex < 7)
+            damage = cast(uint)(damage * victim.damageTaken[schoolIndex]);
         uint resisted;
         if (school == 0)
-            damage = cast(uint) armorReducedDamage(me.values.get!UNIT_FIELD_LEVEL, other.fighter.armor, damage);
+            damage = cast(uint) armorReducedDamage(me.values.get!UNIT_FIELD_LEVEL, victim.armor, damage);
         else if (school > 1)
         {
             // Partly resisted by its resistance (a binary spell was resisted whole or not at all), as a player's.

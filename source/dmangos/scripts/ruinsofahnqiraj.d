@@ -738,7 +738,7 @@ struct Moam
                 steps.after(step, retry);
             break;
         case Step.cancelEnergize:
-            me.removeAura(energize);
+            me.removeAura(me.self, energize);
             break;
         case Step.fiendCheck:
             // The fiends slain: he wakes from the stone.
@@ -748,7 +748,7 @@ struct Moam
                     steps.after(step, 1.seconds);
                     return;
                 }
-            me.removeAura(energize);
+            me.removeAura(me.self, energize);
             break;
         }
     }
@@ -807,8 +807,8 @@ struct Buru
     {
         if (transformed)
             return;
-        me.removeAura(fullSpeed);
-        me.removeAura(gatheringSpeed);
+        me.removeAura(me.self, fullSpeed);
+        me.removeAura(me.self, gatheringSpeed);
         me.resetThreat();
         if (const target = me.selectTarget(Pick.random, PickFilter.player))
         {
@@ -867,7 +867,7 @@ struct Buru
         case Step.full:
             if (me.castSelf(fullSpeed) == ActionResult.ok)
             {
-                me.removeAura(gatheringSpeed);
+                me.removeAura(me.self, gatheringSpeed);
                 steps.cancel(Step.gathering);
             }
             else
@@ -880,7 +880,7 @@ struct Buru
             if (transformStep++ == 0)
             {
                 me.castSelf(buruTransform);
-                me.removeAura(thorns);
+                me.removeAura(me.self, thorns);
                 // His eggs hatch.
                 EntityRef[16] eggs;
                 foreach (egg; eggs[0 .. me.creaturesNear(npcBuruEgg, 200, eggs[])])
@@ -926,7 +926,7 @@ struct BuruEgg
     void on(ref CreatureContext me, const ref Spawned e)
     {
         me.combatMovement(false);
-        me.react(React.passive);
+        me.reactState(Reaction.passive);
         me.melee(false);
     }
 
@@ -1066,7 +1066,7 @@ struct Ayamiss
                 if (s && me.alive(s))
                 {
                     if (const target = me.selectTarget(Pick.random, PickFilter.player))
-                        me.sendAgainst(s, target);
+                        me.attack(s, target);
                     s = EntityRef.init;
                 }
             steps.after(step, 60.seconds);
@@ -1171,9 +1171,9 @@ struct Ossirian
 
     private void auras(ref CreatureContext me)
     {
-        if (!me.hasAura(doubleAttack))
+        if (!me.hasAura(me.self, doubleAttack))
             me.castSelf(doubleAttack, true);
-        if (!me.hasAura(supreme))
+        if (!me.hasAura(me.self, supreme))
             me.castSelf(supreme, true);
     }
 
@@ -1194,7 +1194,7 @@ struct Ossirian
     {
         if (e.id != Aq20Signal.weakened)
             return;
-        me.removeAura(supreme);
+        me.removeAura(me.self, supreme);
         steps.after(Step.supreme, 45.seconds);
     }
 
@@ -1211,7 +1211,7 @@ struct Ossirian
             me.signalDungeon(RuinsOfAhnQiraj.ossirianSpawnCrystals, 5);
             break;
         case Step.supreme:
-            if (me.hasAura(supreme) || me.castSelf(supreme) == ActionResult.ok)
+            if (me.hasAura(me.self, supreme) || me.castSelf(supreme) == ActionResult.ok)
             {
                 me.say(saySupreme1 - cast(int) me.random(3));
                 steps.after(step, 45.seconds);

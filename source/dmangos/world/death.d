@@ -826,3 +826,84 @@ unittest
     const saved = db.progressSaves[$ - 1];
     assert(saved.playerFlags == 0 && saved.health >= half, "saved alive");
 }
+
+/**
+ * A ghost and the living (`Map`'s `playerSees`): the living stop seeing a player once it releases its spirit;
+ * the ghost sees them only near its corpse; a group, or a game master's tag, sees it still; back to life, all
+ * see it again. What each client has is read from its packets.
+ */
+unittest
+{
+    import core.time : MonoTime, seconds;
+    import dmangos.world.combat : MeleeDamage, MeleeHitOutcome;
+    import dmangos.world.opcodes;
+    import dmangos.world.packets : ClientGroupName, ClientGuid;
+    import dmangos.world.player : DeathState;
+    import dmangos.world.teleport : moveTo;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    const fell = Position(-8949.95f, -132.49f, 83.53f, 1.97f);
+    auto anduin = loggedIn(context, db, 7, "Anduin", fell);
+    auto varian = loggedIn(context, db, 8, "Varian", Position(fell.x + 10, fell.y, fell.z));
+    auto gm = loggedIn(context, db, 9, "Jaina", Position(fell.x - 10, fell.y, fell.z), AccountLevel.gameMaster);
+    anduin.read();
+    varian.read();
+    gm.read();
+    const a = anduin.session.character.guid, v = varian.session.character.guid;
+    bool sees(ref TestClient viewer, ulong guid)
+    {
+        viewer.read();
+        return (guid in viewer.view.fields) !is null;
+    }
+    assert(sees(varian, a) && sees(anduin, v));
+    // Walks east to `x`, 5 yards a second (the movement check allows no more).
+    void walk(ref TestClient who, float x)
+    {
+        auto p = who.session.character.position;
+        while (p.x != x)
+        {
+            p.x = x > p.x ? (x - p.x > 5 ? p.x + 5 : x) : (p.x - x > 5 ? p.x - 5 : x);
+            now += 1.seconds;
+            who.write(Opcode.MSG_MOVE_HEARTBEAT, moveTo(Position(p.x, p.y, p.z)));
+        }
+    }
+
+    // Killed, then released where it fell (no graveyard here).
+    MeleeDamage blow;
+    blow.damage = 10_000;
+    blow.outcome = MeleeHitOutcome.normal;
+    anduin.session.inWorld.unit.meleeHitBy(0xF130_0000_0000_0001, blow);
+    assert(sees(varian, a), "a body not yet released is seen");
+    anduin.write(Opcode.CMSG_REPOP_REQUEST, null);
+    assert(anduin.session.character.deathState == DeathState.ghost);
+    assert(!sees(varian, a), "the living do not see a ghost");
+    assert(sees(anduin, v), "the ghost sees the living near its corpse");
+    assert(!sees(gm, a), "nor does a game master without the tag");
+    gm.say(".gm on");
+    assert(sees(gm, a), "with it, it does");
+
+    // The living walk 70 yards off: still in sight, but too far from the corpse for the ghost.
+    walk(varian, fell.x + 70);
+    assert(!sees(anduin, v) && !sees(varian, a));
+    walk(varian, fell.x + 20);
+    assert(sees(anduin, v) && !sees(varian, a), "back near the corpse: one way only");
+
+    // A group sees its ghost.
+    anduin.write(Opcode.CMSG_GROUP_INVITE, ClientGroupName("Varian"));
+    varian.write(Opcode.CMSG_GROUP_ACCEPT, null);
+    assert(sees(varian, a));
+    varian.write(Opcode.CMSG_GROUP_DISBAND, null);
+    assert(!sees(varian, a), "and no longer once out of it");
+
+    // Back to life at its body: seen by all.
+    now += 70.seconds;
+    walk(anduin, fell.x + 2);
+    anduin.write(Opcode.CMSG_RECLAIM_CORPSE, ClientGuid(0));
+    assert(anduin.session.character.deathState == DeathState.alive);
+    assert(sees(varian, a) && sees(anduin, v));
+}

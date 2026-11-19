@@ -174,8 +174,8 @@ struct Onyxia
     {
         steps.clear();
         me.flying(false);
-        me.removeAura(pacifySelf);
-        me.removeAura(dragonHover);
+        me.removeAura(me.self, pacifySelf);
+        me.removeAura(me.self, dragonHover);
     }
 
     void on(ref CreatureContext me, const ref EnteredCombat e)
@@ -226,7 +226,7 @@ struct Onyxia
             steps.cancel(Step.fireball);
             steps.cancel(Step.movement);
             steps.cancel(Step.breathMove);
-            me.removeAura(dragonHover);
+            me.removeAura(me.self, dragonHover);
             me.moveNow(landAt, pointLand);
         }
     }
@@ -240,7 +240,7 @@ struct Onyxia
         case pointLand:
             me.emote(293); // EMOTE_ONESHOT_LAND
             me.flying(false);
-            me.removeAura(pacifySelf);
+            me.removeAura(me.self, pacifySelf);
             steps.after(Step.transition, 2.seconds);
             return;
         case pointLiftoff:
@@ -366,7 +366,7 @@ struct Onyxia
                 break;
             }
             steps.after(step, between(me, 15_000, 25_000));
-            me.removeAura(dragonHover);
+            me.removeAura(me.self, dragonHover);
             me.moveNow(spots[movePoint].at, movePoint);
             break;
         case Step.breathMove:

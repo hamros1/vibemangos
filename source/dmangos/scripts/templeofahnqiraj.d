@@ -922,7 +922,7 @@ struct Viscidus
 
     void engaged(ref CreatureContext me, const ref EnteredCombat e)
     {
-        if (!me.hasAura(membrane))
+        if (!me.hasAura(me.self, membrane))
             me.castSelf(membrane, true);
         steps.after(Step.toxin, 30.seconds);
         steps.after(Step.shock, between(me, 7000, 12_000));
@@ -991,7 +991,7 @@ struct Viscidus
         steps.cancel(Step.thaw);
         me.say(emoteExplode);
         me.castSelf(explode, true);
-        me.removeAura(freeze);
+        me.removeAura(me.self, freeze);
         me.unitFlags(UnitFlag.notSelectable, true);
         me.melee(false);
         me.rooted(true);
@@ -1006,7 +1006,7 @@ struct Viscidus
             const angle = i * 2 * PI / globsOut;
             globs[i] = me.summon(npcGlobOfViscidus, Location(at.x + 30 * cos(angle), at.y + 30 * sin(angle), at.z));
             if (globs[i])
-                me.sendTo(globs[i], at); // they crawl back to him
+                me.moveCreature(globs[i], at, 0); // they crawl back to him
         }
         steps.after(Step.rejoinCheck, 1.seconds);
     }
@@ -1034,9 +1034,9 @@ struct Viscidus
             // Not shattered in time: he thaws.
             phase = Phase.normal;
             hits = 0;
-            me.removeAura(freeze);
-            me.removeAura(slowed);
-            me.removeAura(slowedMore);
+            me.removeAura(me.self, freeze);
+            me.removeAura(me.self, slowed);
+            me.removeAura(me.self, slowedMore);
             break;
         case Step.rejoinCheck:
             // Each glob still alive and back at his side rejoins him.
@@ -1072,8 +1072,8 @@ struct Viscidus
             me.unitFlags(UnitFlag.notSelectable, false);
             me.rooted(false);
             me.melee(true);
-            me.removeAura(slowed);
-            me.removeAura(slowedMore);
+            me.removeAura(me.self, slowed);
+            me.removeAura(me.self, slowedMore);
             me.zoneCombat();
             break;
         }
@@ -1232,7 +1232,7 @@ private mixin template Emperor(uint twin, uint bugSpell)
                 me.castSpell(bugSpell, bug);
                 static if (bugSpell == 802) // the mutated bug turns on the raid
                     if (const target = me.selectTarget(Pick.random, PickFilter.player))
-                        me.sendAgainst(bug, target);
+                        me.attack(bug, target);
             }
             steps.after(step, between(me, 10_000, 17_000));
             break;
@@ -1287,7 +1287,7 @@ struct Veknilash
 
     void on(ref CreatureContext me, const ref Spawned e)
     {
-        if (!me.hasAura(doubleAttack))
+        if (!me.hasAura(me.self, doubleAttack))
             me.castSelf(doubleAttack, true);
     }
 
@@ -1596,7 +1596,7 @@ struct OuroSpawner
             return;
         summoned = true;
         me.summon(npcOuro, me.location);
-        me.react(React.passive);
+        me.reactState(Reaction.passive);
         me.unitFlags(UnitFlag.notSelectable, true);
         me.evade();
     }
@@ -1606,7 +1606,7 @@ struct OuroSpawner
         if (e.id != Aq40Signal.ouroGone)
             return;
         summoned = false;
-        me.react(React.aggressive);
+        me.reactState(Reaction.aggressive);
         me.unitFlags(UnitFlag.notSelectable, false);
     }
 }
@@ -1621,7 +1621,7 @@ struct OuroMound
 
     void on(ref CreatureContext me, const ref Spawned e)
     {
-        if (!me.hasAura(dirtmoundPassive))
+        if (!me.hasAura(me.self, dirtmoundPassive))
             me.castSelf(dirtmoundPassive, true);
         steps.after(Step.pick, 1.seconds);
     }
@@ -1653,13 +1653,13 @@ struct OuroScarab
 
     void on(ref CreatureContext me, const ref Spawned e)
     {
-        me.react(React.defensive);
+        me.reactState(Reaction.defensive);
         steps.after(Step.attack, 4.seconds);
     }
 
     void on(ref CreatureContext me, Step step)
     {
-        me.react(React.aggressive);
+        me.reactState(Reaction.aggressive);
         me.zoneCombat();
         if (const target = me.selectTarget(Pick.random))
         {
@@ -1680,7 +1680,7 @@ struct OuroTrigger
 {
     void on(ref CreatureContext me, const ref Spawned e)
     {
-        me.react(React.passive);
+        me.reactState(Reaction.passive);
         me.combatMovement(false);
     }
 }
@@ -1743,7 +1743,7 @@ struct EyeOfCthun
             break;
         case Step.endGlare:
             glaring = false;
-            me.removeAura(darkGlare);
+            me.removeAura(me.self, darkGlare);
             break;
         case Step.clawTentacle:
             if (const target = me.selectTarget(Pick.random, PickFilter.player))
@@ -1815,7 +1815,7 @@ struct Cthun
     void on(ref CreatureContext me, const ref Spawned e)
     {
         me.combatMovement(false);
-        me.react(React.passive);
+        me.reactState(Reaction.passive);
         me.unitFlags(UnitFlag.notSelectable, true);
     }
 
@@ -1827,7 +1827,7 @@ struct Cthun
         {
             weakened = true;
             me.sayText(emoteWeakened);
-            me.removeAura(carapace);
+            me.removeAura(me.self, carapace);
             me.castSelf(vulnerable, true);
             steps.after(Step.weakenedEnd, 45.seconds);
         }
@@ -1842,7 +1842,7 @@ struct Cthun
             me.castSelf(transform, true);
             me.castSelf(carapace, true);
             me.unitFlags(UnitFlag.notSelectable, false);
-            me.react(React.aggressive);
+            me.reactState(Reaction.aggressive);
             me.zoneCombat();
             steps.after(Step.giantClaw, 10.seconds);
             steps.after(Step.giantEye, 40.seconds);
@@ -1872,7 +1872,7 @@ struct Cthun
             break;
         case Step.weakenedEnd:
             weakened = false;
-            me.removeAura(vulnerable);
+            me.removeAura(me.self, vulnerable);
             me.castSelf(carapace, true);
             break;
         }
@@ -1884,7 +1884,7 @@ struct Cthun
         risen = weakened = false;
         despawnTentacles(me);
         me.signalDungeon(Aq40Encounter.cthun, EncounterState.failed);
-        me.react(React.passive);
+        me.reactState(Reaction.passive);
         me.unitFlags(UnitFlag.notSelectable, true);
     }
 
@@ -2133,7 +2133,7 @@ version (unittest)
         override uint hostHealthPercent() { return health; }
         override uint hostHealthPercentOf(EntityRef) { return 100; }
         override void hostSetHealthPercent(EntityRef, uint p) { health = p; }
-        override void hostUnitFlags(EntityRef, uint f, bool set) { flags = set ? flags | f : flags & ~f; }
+        override void hostUnitFlags(uint f, bool set) { flags = set ? flags | f : flags & ~f; }
         override size_t hostCreaturesNear(uint e, float, EntityRef[] into)
         {
             if (!other || other.entry != e || into.length == 0)

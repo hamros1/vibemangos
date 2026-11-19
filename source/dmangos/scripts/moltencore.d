@@ -316,7 +316,7 @@ struct Magmadar
 
     void reset(ref CreatureContext me)
     {
-        if (!me.hasAura(magmaSpit))
+        if (!me.hasAura(me.self, magmaSpit))
             me.castSelf(magmaSpit, true);
     }
 
@@ -408,7 +408,7 @@ struct Garr
     void on(ref CreatureContext me, const ref EnteredCombat e)
     {
         me.signalDungeon(Encounter.garr, EncounterState.inProgress);
-        if (!me.hasAura(separationAnxiety))
+        if (!me.hasAura(me.self, separationAnxiety))
             me.castSelf(separationAnxiety, true);
         steps.after(Step.pulse, between(me, 10_000, 15_000));
         steps.after(Step.shackles, between(me, 5000, 10_000));
@@ -464,9 +464,9 @@ struct Firesworn
 
     private void auras(ref CreatureContext me)
     {
-        if (!me.hasAura(thrash))
+        if (!me.hasAura(me.self, thrash))
             me.castSelf(thrash, true);
-        if (!me.hasAura(immolate))
+        if (!me.hasAura(me.self, immolate))
             me.castSelf(immolate, true);
     }
 
@@ -624,7 +624,7 @@ struct Golemagg
     private void auras(ref CreatureContext me)
     {
         foreach (spell; [magmaSplash, doubleAttack, golemaggsTrust])
-            if (!me.hasAura(spell))
+            if (!me.hasAura(me.self, spell))
                 me.castSelf(spell, true);
     }
 
@@ -679,14 +679,14 @@ struct CoreRager
     void on(ref CreatureContext me, const ref Spawned e)
     {
         me.deathPrevention(true);
-        if (!me.hasAura(thrash))
+        if (!me.hasAura(me.self, thrash))
             me.castSelf(thrash, true);
     }
 
     void on(ref CreatureContext me, const ref Reset e)
     {
         steps.clear();
-        if (!me.hasAura(thrash))
+        if (!me.hasAura(me.self, thrash))
             me.castSelf(thrash, true);
     }
 
@@ -763,7 +763,7 @@ struct Sulfuron
             EntityRef[8] without;
             size_t n;
             foreach (p; priests[0 .. me.creaturesNear(npcFlamewakerPriest, 45, priests[])])
-                if (!me.hasAura(inspire, p))
+                if (!me.hasAura(p, inspire))
                     without[n++] = p;
             const target = n ? without[me.random(cast(uint) n)] : me.self;
             steps.after(step, me.castSpell(inspire, target) == ActionResult.ok ? 10.seconds : retry);
@@ -935,9 +935,9 @@ struct Majordomo
         if (e.enemy.entry == npcRagnaros)
             return;
         me.say(sayAggro);
-        if (!me.hasAura(separationAnxiety))
+        if (!me.hasAura(me.self, separationAnxiety))
             me.castSelf(separationAnxiety, true);
-        if (!me.hasAura(aegis))
+        if (!me.hasAura(me.self, aegis))
             me.castSelf(aegis, true);
         me.signalDungeon(Encounter.majordomo, EncounterState.inProgress);
         steps.after(Step.shield, 15.seconds);
@@ -973,7 +973,7 @@ struct Majordomo
     {
         finished = true;
         me.unitFlags(UnitFlag.immuneToPlayer, true);
-        me.faction(factionFriendly);
+        me.setFaction(factionFriendly);
         me.npcFlags(npcFlagGossip);
     }
 
@@ -1044,7 +1044,7 @@ struct Majordomo
                 steps.after(step, retry);
             break;
         case Step.aegis:
-            if (me.hasAura(aegis) || me.castSelf(aegis, true) == ActionResult.ok)
+            if (me.hasAura(me.self, aegis) || me.castSelf(aegis, true) == ActionResult.ok)
                 steps.after(step, between(me, 25_000, 30_000));
             else
                 steps.after(step, retry);
@@ -1185,9 +1185,9 @@ struct Ragnaros
 
     private void auras(ref CreatureContext me)
     {
-        if (!me.hasAura(meltWeapon))
+        if (!me.hasAura(me.self, meltWeapon))
             me.castSelf(meltWeapon, true);
-        if (!me.hasAura(elementalFireAura))
+        if (!me.hasAura(me.self, elementalFireAura))
             me.castSelf(elementalFireAura, true);
     }
 
@@ -1243,8 +1243,8 @@ struct Ragnaros
         me.combatMovement(false);
         me.melee(true);
         me.standState(StandState.stand);
-        me.removeAura(submerge);
-        me.removeAura(submergeEffect);
+        me.removeAura(me.self, submerge);
+        me.removeAura(me.self, submergeEffect);
         auras(me);
         EntityRef[8] sons;
         foreach (son; sons[0 .. me.creaturesNear(npcSonOfFlame, 150, sons[])])
@@ -1357,9 +1357,9 @@ struct Ragnaros
             steps.after(Step.sonsCheck, 1.seconds);
             break;
         case Phase.submerged:
-            me.removeAura(submerge);
-            me.removeAura(submergeEffect);
-            me.removeAura(submergeVisual);
+            me.removeAura(me.self, submerge);
+            me.removeAura(me.self, submergeEffect);
+            me.removeAura(me.self, submergeVisual);
             phase = Phase.emerging;
             steps.after(Step.transition, 500.msecs);
             break;
@@ -1553,8 +1553,8 @@ version (unittest)
             return ActionResult.ok;
         }
         override EntityRef hostSelectTarget(Pick, uint, uint) { return target; }
-        override void hostUnitFlags(EntityRef, uint f, bool set) { flags = set ? flags | f : flags & ~f; }
-        override void hostFaction(uint f) { factionNow = f; }
+        override void hostUnitFlags(uint f, bool set) { flags = set ? flags | f : flags & ~f; }
+        override void hostSetFaction(uint f) { factionNow = f; }
         override void hostNpcFlags(uint f) { npcFlagsNow = f; }
         override void hostEvade() { evaded = true; fighting = false; }
         override void hostDie() { dying = true; }

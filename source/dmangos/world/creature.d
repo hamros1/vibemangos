@@ -899,6 +899,13 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
                 }
         }
         f.damageSchool[] = template_.damageSchool;
+        f.creatureType = template_.creatureType;
+        {
+            import dmangos.world.combat : AttackType, DamageMods;
+
+            if (auras.list.length) // its own auras: an enrage's damage, a curse's damage taken
+                DamageMods.of(auras, (ubyte) => -1, (AttackType) => uint(template_.damageSchool)).into(f);
+        }
         // Crit, dodge, parry and block chances: 5% each for creatures.
         f.crit = f.dodge = f.parry = f.block = 5;
         f.canParry = !(template_.extraFlags & noParry);
@@ -975,7 +982,14 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
         if (summon.type != TempSpawnType.none && summon.update(this, diff))
         {
             if (auto combat = cast(CombatWorld) world)
+            {
+                // Eastern Kingdoms scripts: alive, its summoner's script hears it went.
+                if (alive && summon.summoner)
+                    if (auto summoner = combat.creatureAt(summon.summoner))
+                        if (summoner.ai !is null)
+                            summoner.ai.summonedGone(combat, guid);
                 combat.corpseExpired(this); // its summoned time is up: it goes
+            }
             return;
         }
         if (!alive)

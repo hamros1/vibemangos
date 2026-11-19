@@ -124,6 +124,24 @@ enum StandState : ubyte
     kneel = 8,
 }
 
+// Eastern Kingdoms scripts:
+
+/// How a creature reacts to others (`ReactStates`).
+enum Reaction : ubyte
+{
+    passive,    /// never fights
+    defensive,  /// fights back
+    aggressive, /// also attacks on sight
+}
+
+/// `SheathState`: its weapons put away, or drawn.
+enum Sheath : ubyte
+{
+    unarmed = 0,
+    melee = 1,
+    ranged = 2,
+}
+
 // ---------------------------------------------------------------------------
 // Creature scripts (`@creature`, bound by `creature_template.ScriptName`)
 // ---------------------------------------------------------------------------
@@ -231,6 +249,39 @@ struct Waypoint
 {
     Location at;
     uint waitMs; /// how long it stays there
+    uint scriptId; /// Eastern Kingdoms scripts: its `dbscripts_on_creature_movement` script (0: none)
+}
+
+// Eastern Kingdoms scripts:
+
+/// A creature it summoned died (`SummonedCreatureJustDied`), or went away alive, its time up
+/// (`SummonedCreatureDespawn`; `gone`).
+struct SummonedDied
+{
+    EntityRef summoned;
+    EntityRef killer;
+    bool gone; /// it did not die: its summoned time was up
+}
+
+/// A creature it summoned and sent somewhere (`CreatureContext.moveCreature`) arrived at `point`
+/// (`SummonedMovementInform`).
+struct SummonedArrived
+{
+    EntityRef summoned;
+    uint point;
+}
+
+/// A player (or a pet) came into its sight (`MoveInLineOfSight`), before it decides whether to attack.
+struct UnitInSight
+{
+    EntityRef unit;
+}
+
+/// A player made a text emote (`TextEmotes`: 34 chicken, 21 cheer, 101 wave, ...) at it (`ReceiveEmote`).
+struct EmoteReceived
+{
+    EntityRef player;
+    uint textEmote;
 }
 
 /// The core's side of a creature script's context (`CreatureAI` implements it).
@@ -274,24 +325,38 @@ interface CreatureHost
     EntityRef hostCreatureNearby(uint entry, float range);
     ActionResult hostDespawnOther(EntityRef creature, uint delayMs);
     void hostSendGossip(EntityRef player, uint textId, const(MenuOption)[] options, bool withQuests);
+
+    // Eastern Kingdoms scripts:
+    void hostSetFaction(uint faction);
+    void hostUnitFlags(uint flags, bool set);
+    void hostReactState(Reaction state);
+    void hostDeathPrevention(bool on);
+    void hostEvade();
+    ActionResult hostAttackBy(EntityRef attacker, EntityRef target);
+    ActionResult hostMoveOther(EntityRef creature, Location at, uint point, bool run);
+    void hostFace(EntityRef target);
+    void hostSheath(Sheath state);
+    void hostMount(uint display);
+    void hostDie();
+    bool hostChangeEntry(uint entry);
+    EntityRef hostObjectNearby(uint entry, float range);
+    ActionResult hostUseObject(EntityRef object);
+    ActionResult hostRemoveAura(EntityRef who, uint spell);
+    bool hostHasAura(EntityRef who, uint spell);
+    ActionResult hostSayOther(EntityRef speaker, int entry, EntityRef target);
+    void hostMovementScript(uint id);
+    void hostRelay(int id, EntityRef target);
+    void hostKillCredit(EntityRef player, uint entry);
+
     // Raid scripts:
     int hostAskDungeon(uint id);
     EntityRef hostSelectTarget(Pick pick, uint filter, uint skip);
     size_t hostThreatList(EntityRef[] into);
     ActionResult hostModifyThreat(EntityRef target, int percent);
-    void hostUnitFlags(EntityRef who, uint flags, bool set);
-    void hostFaction(uint faction);
-    void hostDeathPrevention(bool on);
-    bool hostHasAura(EntityRef who, uint spell);
-    void hostRemoveAura(EntityRef who, uint spell);
     size_t hostCreaturesNear(uint entry, float range, EntityRef[] into);
     size_t hostPlayersNear(float range, EntityRef[] into);
     void hostTeleport(Location at);
-    void hostFace(EntityRef target);
-    void hostAttack(EntityRef who);
-    void hostEvade();
     void hostZoneCombat();
-    void hostReact(React state);
     bool hostCasting();
     void hostInterrupt();
     ActionResult hostCastAs(EntityRef caster, uint spell, EntityRef target, bool triggered);
@@ -300,10 +365,7 @@ interface CreatureHost
     void hostSetHealthPercent(EntityRef who, uint percent);
     Location hostLocationOf(EntityRef who);
     void hostRooted(bool on);
-    void hostDie();
     void hostAddThreat(EntityRef who, float amount);
-    ActionResult hostSendAgainst(EntityRef creature, EntityRef target);
-    ActionResult hostSendTo(EntityRef creature, Location at, bool run);
     void hostMoveNow(Location at, uint point, bool run);
     void hostSpellList(uint id);
     ubyte hostClassOf(EntityRef who);
@@ -474,6 +536,79 @@ struct CreatureContext
     /// Whether a handler called `consume`.
     @property bool consumed() const { return consumed_; }
 
+    // Eastern Kingdoms scripts:
+
+    /// Its faction (`FactionTemplate.dbc`), until it respawns; 0: its template's again.
+    void setFaction(uint faction) { host.hostSetFaction(faction); }
+
+    /// Sets (or clears) unit flags (`UnitFlags`: 0x100 immune to players, 0x200 immune to creatures,
+    /// 0x2000000 not interactible).
+    void unitFlags(uint flags, bool set = true) { host.hostUnitFlags(flags, set); }
+
+    /// Whether it attacks on sight, only fights back, or never fights.
+    void reactState(Reaction state) { host.hostReactState(state); }
+
+    /// While on, a blow that would kill it leaves it at 1 health (`Damaged` still says it).
+    void deathPrevention(bool on) { host.hostDeathPrevention(on); }
+
+    /// Gives up its fight and goes back where it started it (`Evaded`, then `Reset` there).
+    void evade() { host.hostEvade(); }
+
+    /// It (or another creature here, `attacker`) attacks `target`.
+    ActionResult attack(EntityRef target) { return host.hostAttackBy(host.hostSelf(), target); }
+
+    /// ditto
+    ActionResult attack(EntityRef attacker, EntityRef target) { return host.hostAttackBy(attacker, target); }
+
+    /// Another creature here walks (runs) to `at`; if it is one this creature summoned, its arrival comes
+    /// back to this script as `SummonedArrived(point)`.
+    ActionResult moveCreature(EntityRef creature, Location at, uint point, bool run = false)
+    {
+        return host.hostMoveOther(creature, at, point, run);
+    }
+
+    /// Turns to face `target`.
+    void face(EntityRef target) { host.hostFace(target); }
+
+    /// Draws its weapons (or puts them away).
+    void sheath(Sheath state) { host.hostSheath(state); }
+
+    /// Rides model `display`; 0: off its mount.
+    void mount(uint display) { host.hostMount(display); }
+
+    /// Dies, nobody's kill.
+    void die() { host.hostDie(); }
+
+    /// Becomes a creature of `entry` (its name, model, faction, level); false if there is no such entry.
+    bool changeEntry(uint entry) { return host.hostChangeEntry(entry); }
+
+    /// A game object of `entry` within `range` yards of it; nothing if none.
+    EntityRef objectNearby(uint entry, float range) { return host.hostObjectNearby(entry, range); }
+
+    /// Uses a door, button or cage near it: open for the object's own time, then closed again.
+    ActionResult useObject(EntityRef object) { return host.hostUseObject(object); }
+
+    /// `spell`'s aura goes from `who` (itself, another creature here, a player).
+    ActionResult removeAura(EntityRef who, uint spell) { return host.hostRemoveAura(who, spell); }
+
+    /// Whether `who` (itself or another creature here) has `spell`'s aura.
+    bool hasAura(EntityRef who, uint spell) { return host.hostHasAura(who, spell); }
+
+    /// Runs `dbscripts_on_creature_movement` script `id` on it (as a waypoint's script runs).
+    void movementScript(uint id) { host.hostMovementScript(id); }
+
+    /// Starts `dbscripts_on_relay` script `id` (negative: one of relay group -`id`) on it, with `target`.
+    void relay(int id, EntityRef target = EntityRef.init) { host.hostRelay(id, target); }
+
+    /// `KilledMonsterCredit` (or `TalkedToCreature`) of `entry` for `player`.
+    void killCredit(EntityRef player, uint entry) { host.hostKillCredit(player, entry); }
+
+    /// Another creature here says the `script_texts` row `entry` (negative), with its sound and emote.
+    ActionResult sayOther(EntityRef speaker, int entry, EntityRef target = EntityRef.init)
+    {
+        return host.hostSayOther(speaker, entry, target);
+    }
+
     // Raid scripts:
 
     /// Its dungeon script's answer to question `id` (`Asked`); 0 outside a dungeon or unanswered.
@@ -492,21 +627,6 @@ struct CreatureContext
     /// Everyone's threat on it gone (`DoResetThreat`).
     void resetThreat() { host.hostModifyThreat(EntityRef.init, -100); }
 
-    /// `UnitFlag`s set on (or cleared from) itself, or another creature here.
-    void unitFlags(uint flags, bool set, EntityRef who = EntityRef.init) { host.hostUnitFlags(who, flags, set); }
-
-    /// A faction until changed again (0: its template's).
-    void faction(uint faction) { host.hostFaction(faction); }
-
-    /// Whether damage leaves it at 1 health instead of killing it.
-    void deathPrevention(bool on) { host.hostDeathPrevention(on); }
-
-    /// Whether a unit here (itself by default) has an aura of `spell`.
-    bool hasAura(uint spell, EntityRef who = EntityRef.init) { return host.hostHasAura(who ? who : host.hostSelf(), spell); }
-
-    /// Takes the aura of `spell` off a unit here (itself by default).
-    void removeAura(uint spell, EntityRef who = EntityRef.init) { host.hostRemoveAura(who ? who : host.hostSelf(), spell); }
-
     /// The living creatures of `entry` within `range` yards (itself left out), as many as `into` holds.
     size_t creaturesNear(uint entry, float range, EntityRef[] into) { return host.hostCreaturesNear(entry, range, into); }
 
@@ -516,20 +636,8 @@ struct CreatureContext
     /// It is at `at` at once (`NearTeleportTo`), on its map.
     void teleport(Location at) { host.hostTeleport(at); }
 
-    /// It turns to face `target`.
-    void face(EntityRef target) { host.hostFace(target); }
-
-    /// It attacks `who` (fighting already: its victim from now).
-    void attack(EntityRef who) { host.hostAttack(who); }
-
-    /// It gives up its fight and goes home.
-    void evade() { host.hostEvade(); }
-
     /// In a dungeon: every living player of the copy joins its fight (`DoZoneInCombat`).
     void zoneCombat() { host.hostZoneCombat(); }
-
-    /// Whether it attacks on sight, only fights back, or never fights.
-    void react(React state) { host.hostReact(state); }
 
     /// Whether it is casting a spell.
     @property bool casting() { return host.hostCasting(); }
@@ -561,17 +669,8 @@ struct CreatureContext
     /// Held in place (it still turns and casts), or free to move again.
     void rooted(bool on) { host.hostRooted(on); }
 
-    /// It dies, nobody's kill (its death prevention aside).
-    void die() { host.hostDie(); }
-
     /// Threat of `who` (a unit here) on it, added (its list takes it in if it was not there).
     void addThreat(EntityRef who, float amount) { host.hostAddThreat(who, amount); }
-
-    /// Another creature here attacks `target` (its adds, its summons).
-    ActionResult sendAgainst(EntityRef creature, EntityRef target) { return host.hostSendAgainst(creature, target); }
-
-    /// Another creature here walks (runs) to `at`, as its `moveTo` would.
-    ActionResult sendTo(EntityRef creature, Location at, bool run = false) { return host.hostSendTo(creature, at, run); }
 
     /// As `moveTo`, but at once even in a fight (turn its combat movement off first, or it chases its
     /// victim again): a dragon taking to the air, a boss going to its place.
@@ -601,6 +700,18 @@ interface GameObjectHost
     void hostDoor(bool open);
     void hostSignalDungeon(uint id, int value);
     void hostLog(string text);
+
+    // Eastern Kingdoms scripts:
+    QuestProgress hostQuestStatus(EntityRef player, uint quest);
+    void hostQuestEvent(EntityRef player, uint quest);
+    EntityRef hostObjectNearby(uint entry, float range);
+    ActionResult hostObjectOpen(EntityRef object, bool open);
+    ActionResult hostObjectFlags(EntityRef object, uint flags, bool set);
+    EntityRef hostCreatureNearby(uint entry, float range);
+    EntityRef hostSummon(uint entry, Location at, uint despawnMs, EntityRef attack);
+    ActionResult hostSayAs(EntityRef speaker, uint text, EntityRef target);
+    void hostKillCredit(EntityRef player, uint entry);
+
     // Raid scripts:
     int hostAskDungeon(uint id);
 }
@@ -636,6 +747,43 @@ struct GameObjectContext
 
     /// Whether a handler called `consume`.
     @property bool consumed() const { return consumed_; }
+
+    // Eastern Kingdoms scripts:
+
+    /// Where `player` stands with `quest`.
+    QuestProgress questStatus(EntityRef player, uint quest) { return host.hostQuestStatus(player, quest); }
+
+    /// `AreaExploredOrEventHappens` for `player`.
+    void questEvent(EntityRef player, uint quest) { host.hostQuestEvent(player, quest); }
+
+    /// Another game object of `entry` within `range` yards of it; nothing if none.
+    EntityRef objectNearby(uint entry, float range) { return host.hostObjectNearby(entry, range); }
+
+    /// Opens or closes another game object here (itself too), for good.
+    ActionResult open(EntityRef object, bool open) { return host.hostObjectOpen(object, open); }
+
+    /// Sets (or clears) a game object's flags (`GameObjectFlags`: 0x1 in use, 0x2 locked, 0x4 needs a
+    /// condition to be used, 0x10 not selectable).
+    ActionResult objectFlags(EntityRef object, uint flags, bool set) { return host.hostObjectFlags(object, flags, set); }
+
+    /// A living creature of `entry` within `range` yards of it; nothing if none.
+    EntityRef creatureNearby(uint entry, float range) { return host.hostCreatureNearby(entry, range); }
+
+    /// A creature of `entry` at `at` (zero: at the object), gone after `despawnMs` out of combat (0: when
+    /// it dies), attacking `attack`.
+    EntityRef summon(uint entry, Location at = Location.init, uint despawnMs = 0, EntityRef attack = EntityRef.init)
+    {
+        return host.hostSummon(entry, at, despawnMs, attack);
+    }
+
+    /// A creature here says `broadcast_text` row `text`.
+    ActionResult sayAs(EntityRef speaker, uint text, EntityRef target = EntityRef.init)
+    {
+        return host.hostSayAs(speaker, text, target);
+    }
+
+    /// `KilledMonsterCredit` of `entry` for `player`.
+    void killCredit(EntityRef player, uint entry) { host.hostKillCredit(player, entry); }
 
     // Raid scripts:
 
@@ -961,6 +1109,11 @@ interface AreaTriggerHost
     ActionResult hostCastFrom(EntityRef caster, uint spell, EntityRef target, bool triggered);
     void hostSignalDungeon(uint id, int value);
     void hostLog(string text);
+
+    // Eastern Kingdoms scripts:
+    void hostKillCreditAt(EntityRef player, uint entry);
+    ActionResult hostSayAt(EntityRef speaker, int entry, EntityRef target);
+
     // Raid scripts:
     int hostAskDungeon(uint id);
 }
@@ -1011,6 +1164,17 @@ struct AreaTriggerContext
 
     /// Whether a handler called `consume`.
     @property bool consumed() const { return consumed_; }
+
+    // Eastern Kingdoms scripts:
+
+    /// `KilledMonsterCredit` of `entry` for `player`.
+    void killCredit(EntityRef player, uint entry) { host.hostKillCreditAt(player, entry); }
+
+    /// A creature here says the `script_texts` row `entry` (negative), with its sound and emote.
+    ActionResult say(EntityRef speaker, int entry, EntityRef target = EntityRef.init)
+    {
+        return host.hostSayAt(speaker, entry, target);
+    }
 
     // Raid scripts:
 
@@ -1081,14 +1245,6 @@ enum UnitFlag : uint
     pacified = 0x0002_0000,
     stunned = 0x0004_0000,
     notSelectable = 0x0200_0000,
-}
-
-/// How a creature reacts to others (`CreatureContext.react`).
-enum React : ubyte
-{
-    passive,
-    defensive,
-    aggressive,
 }
 
 /// Where an encounter of a dungeon stands (CMaNGOS's instance data values).
