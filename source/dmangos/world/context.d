@@ -1350,6 +1350,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                     script.map = created;
                     script.lore = this;
                     script.spawnObjects = &spawnDungeonObjects;
+                    script.signalObject = &gameObjectSignalled;
                     instanceScripts[instance] = script;
                 }
             }
@@ -3134,6 +3135,24 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         goHost.go = null;
         goHost.map = null;
         return context.consumed;
+    }
+
+    /// A `Signal` for game object `go`'s script (from its dungeon's script); false if it has none.
+    bool gameObjectSignalled(GameObject go, Map map, EntityRef from, uint id, int value)
+    {
+        import dmangos.script.api : GameObjectContext, Signal;
+
+        if (!go.behaviour)
+            return false;
+        // A signal may come while another object's script runs (it signalled its dungeon): theirs is kept.
+        auto before = goHost.go, beforeMap = goHost.map;
+        goHost.go = go;
+        goHost.map = map;
+        auto context = GameObjectContext(goHost);
+        scripts.raise(go.behaviour, context, Signal(from, id, value));
+        goHost.go = before;
+        goHost.map = beforeMap;
+        return true;
     }
 
     private final class GoHost : GameObjectHost

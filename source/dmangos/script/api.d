@@ -644,7 +644,7 @@ struct InstanceContext
     /// Opens or closes a door (it stays so).
     ActionResult door(EntityRef door, bool open) { return host.hostDoor(door, open); }
 
-    /// A `Signal` for a creature's script in the copy.
+    /// A `Signal` for a creature's (or game object's) script in the copy.
     ActionResult signal(EntityRef to, uint id, int value = 0) { return host.hostSignal(to, id, value); }
 
     /// The players in the copy.

@@ -40,6 +40,9 @@ final class InstanceScript : InstanceHost
     /// The world's creatures (summons); null in tests without one.
     CreatureLore lore;
 
+    /// A `Signal` for a game object's script (`InstanceContext.signal` to an object).
+    bool delegate(GameObject go, Map map, EntityRef from, uint id, int value) signalObject;
+
     /// Puts the dungeon's game objects of an entry in the world (`InstanceContext.spawnObjects`).
     uint delegate(Map map, uint entry, uint despawnSeconds, Location near, float range) spawnObjects;
 
@@ -173,6 +176,18 @@ final class InstanceScript : InstanceHost
 
     ActionResult hostSignal(EntityRef to, uint signal, int value)
     {
+        if (to.isGameObject)
+        {
+            GameObject go;
+            foreach (object; loading)
+                if (object.guid == to.guid)
+                    go = cast(GameObject) object;
+            if (go is null && map !is null)
+                go = cast(GameObject) map.findObject(to.guid);
+            if (go is null || signalObject is null)
+                return ActionResult.notHere;
+            return signalObject(go, map, EntityRef.init, signal, value) ? ActionResult.ok : ActionResult.failed;
+        }
         foreach (object; loading) // loading with it: not on the map yet
             if (object.guid == to.guid)
                 if (auto creature = cast(Creature) object)

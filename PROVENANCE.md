@@ -137,11 +137,23 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Projects: CMaNGOS
 * Constants: `DEFAULT_MAX_PLAYER_DISTANCE`
 
+## scripts/blackfathomdeeps.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/kalimdor/blackfathom_deeps/instance_blackfathom_deeps.cpp`, `blackfathom_deeps.h`
+* Functions/ScriptNames: `instance_blackfathom_deeps` (`DoSpawnMobs`, `IsWaveEventFinished`), `go_fire_of_akumai`, `go_fathom_stone`
+
 ## scripts/gnomeregan.d
 
 * Projects: CMaNGOS
 * Files: `AI/ScriptDevAI/scripts/eastern_kingdoms/gnomeregan/instance_gnomeregan.cpp`, `gnomeregan.cpp`, `boss_thermaplugg.cpp`, `gnomeregan.h`
 * Functions/ScriptNames: `instance_gnomeregan` (`DoActivateBombFace`, `DoDeactivateBombFace`), `npc_blastmaster_emi_shortfuse`, `npc_kernobee`, `boss_thermaplugg`, `go_gnomeface_button`
+
+## scripts/maraudon.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/kalimdor/maraudon/instance_maraudon.cpp`, `boss_noxxion.cpp`, `maraudon.h`
+* Functions/ScriptNames: `instance_maraudon` (`Update`), `go_larva_spewer`, `boss_noxxion`
 
 ## scripts/razorfendowns.d
 
