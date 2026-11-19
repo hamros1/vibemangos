@@ -100,9 +100,9 @@ struct FelhoundTracker
     enum Step : ubyte { back }
     Schedule!Step steps;
 
-    void on(ref CreatureContext me, const ref Emoted e)
+    void on(ref CreatureContext me, const ref EmoteReceived e)
     {
-        if (e.emote != textEmoteRoar || me.questStatus(e.player, questAzsharite) != QuestProgress.incomplete)
+        if (e.textEmote != textEmoteRoar || me.questStatus(e.player, questAzsharite) != QuestProgress.incomplete)
             return;
         foreach (entry; crystals)
         {

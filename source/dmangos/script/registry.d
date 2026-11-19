@@ -103,8 +103,8 @@ template KindInfo(ScriptKind kind)
         alias Context = CreatureContext;
         alias Events = AliasSeq!(Spawned, Reset, EnteredCombat, Damaged, KilledUnit, Died, Evaded, SpellHit, Signal,
             MovementDone, GossipHello, GossipSelect, QuestAccepted, QuestRewarded,
-            // Kalimdor scripts:
-            SummonDied, Emoted);
+            // Eastern Kingdoms scripts:
+            SummonedDied, SummonedArrived, UnitInSight, EmoteReceived);
         alias Attribute = .creature;
     }
     else static if (kind == ScriptKind.gameObject)

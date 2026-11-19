@@ -144,6 +144,18 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Functions: `FollowerAI::StartFollow`, `FollowerAI::SetFollowComplete`, `FollowerAI::SetFollowPaused`
 * Constants: `MAX_PLAYER_DISTANCE`
 
+## scripts/arathi.d
+
+* Projects: CMaNGOS
+* Files: `ScriptDevAI/scripts/eastern_kingdoms/arathi_highlands.cpp`
+* Functions/ScriptNames: `npc_professor_phizzlethorpe`, `npc_kinelory`
+
+## scripts/areatriggers.d
+
+* Projects: CMaNGOS
+* Files: `ScriptDevAI/scripts/world/areatrigger_scripts.cpp`
+* Functions/ScriptNames: `at_huldar_miran`, `at_ravenholdt`, `at_twilight_grove`, `at_ancient_leaf`
+
 ## scripts/ashenvale.d
 
 * Projects: CMaNGOS
@@ -162,6 +174,18 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Files: `AI/ScriptDevAI/scripts/kalimdor/the_barrens.cpp`
 * Functions/ScriptNames: `npc_gilthares`, `npc_taskmaster_fizzule`, `npc_twiggy_flathead`, `at_twiggy_flathead`,
   `npc_wizzlecranks_shredder`, `npc_regthar_deathgate`
+
+## scripts/blastedlands.d
+
+* Projects: CMaNGOS
+* Files: `ScriptDevAI/scripts/eastern_kingdoms/boss_kazzak.cpp`
+* Functions/ScriptNames: `boss_kazzak`
+
+## scripts/burningsteppes.d
+
+* Projects: CMaNGOS
+* Files: `ScriptDevAI/scripts/eastern_kingdoms/burning_steppes.cpp`
+* Functions/ScriptNames: `npc_grark_lorkrub`, `npc_klinfran`
 
 ## scripts/darkshore.d
 
@@ -189,6 +213,12 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Files: `AI/ScriptDevAI/scripts/kalimdor/dustwallow_marsh.cpp`
 * Functions/ScriptNames: `npc_morokk`, `npc_ogron`, `npc_private_hendel`, `npc_stinky_ignatz`, `at_sentry_point`
 
+## scripts/easternplaguelands.d
+
+* Projects: CMaNGOS
+* Files: `ScriptDevAI/scripts/eastern_kingdoms/eastern_plaguelands.cpp`
+* Functions/ScriptNames: `npc_eris_havenfire`
+
 ## scripts/felwood.d
 
 * Projects: CMaNGOS
@@ -203,11 +233,41 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Functions/ScriptNames: `npc_oox22fe`, `npc_shay_leafrunner` (with `ShaysBell`), `npc_captured_sprite_darter`,
   `go_cage_door`, `npc_kindal_moonweaver`
 
+## scripts/hinterlands.d
+
+* Projects: CMaNGOS
+* Files: `ScriptDevAI/scripts/eastern_kingdoms/hinterlands.cpp`
+* Functions/ScriptNames: `npc_00x09hl`, `npc_rinji`
+
+## scripts/lochmodan.d
+
+* Projects: CMaNGOS
+* Files: `ScriptDevAI/scripts/eastern_kingdoms/loch_modan.cpp`
+* Functions/ScriptNames: `npc_miran`
+
 ## scripts/moonglade.d
 
 * Projects: CMaNGOS
 * Files: `AI/ScriptDevAI/scripts/kalimdor/moonglade.cpp`
 * Functions/ScriptNames: `npc_keeper_remulos`, `boss_eranikus` (with `ConjureDreamRift`)
+
+## scripts/npcs.d
+
+* Projects: CMaNGOS
+* Files: `ScriptDevAI/scripts/world/npcs_special.cpp`, `ScriptDevAI/scripts/world/guards.cpp`, `ScriptDevAI/scripts/world/spell_scripts.cpp`, `ScriptDevAI/base/guard_ai.cpp`
+* Functions/ScriptNames: `npc_doctor`, `npc_injured_patient`, `npc_garments_of_quests`, `npc_redemption_target`, `npc_chicken_cluck`, `npc_the_cleaner`, `guard_stormwind`, `spell_dummy_npc`
+
+## scripts/redridge.d
+
+* Projects: CMaNGOS
+* Files: `ScriptDevAI/scripts/eastern_kingdoms/redridge_mountains.cpp`
+* Functions/ScriptNames: `npc_corporal_keeshan`
+
+## scripts/searinggorge.d
+
+* Projects: CMaNGOS
+* Files: `ScriptDevAI/scripts/eastern_kingdoms/searing_gorge.cpp`
+* Functions/ScriptNames: `npc_dorius_stonetender`
 
 ## scripts/silithus.d
 
@@ -215,11 +275,35 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Files: `AI/ScriptDevAI/scripts/kalimdor/silithus.cpp`
 * Functions/ScriptNames: `npc_solenor`
 
+## scripts/silverpine.d
+
+* Projects: CMaNGOS
+* Files: `ScriptDevAI/scripts/eastern_kingdoms/silverpine_forest.cpp`
+* Functions/ScriptNames: `npc_deathstalker_erland`, `npc_deathstalker_faerleia`
+
 ## scripts/stonetalon.d
 
 * Projects: CMaNGOS
 * Files: `AI/ScriptDevAI/scripts/kalimdor/stonetalon_mountains.cpp`
 * Functions/ScriptNames: `npc_kaya`
+
+## scripts/stormwind.d
+
+* Projects: CMaNGOS
+* Files: `ScriptDevAI/scripts/eastern_kingdoms/stormwind_city.cpp`
+* Functions/ScriptNames: `npc_lady_katrana_prestor`, `npc_bartleby`, `npc_dashel_stonefist`, `npc_major_mattingly`, `npc_field_marshal_afrasiabi`, `npc_squire_rowe`, `npc_reginald_windsor`
+
+## scripts/stranglethorn.d
+
+* Projects: CMaNGOS
+* Files: `ScriptDevAI/scripts/eastern_kingdoms/stranglethorn_vale.cpp`
+* Functions/ScriptNames: `mob_yenniku`
+
+## scripts/swamp.d
+
+* Projects: CMaNGOS
+* Files: `ScriptDevAI/scripts/eastern_kingdoms/swamp_of_sorrows.cpp`
+* Functions/ScriptNames: `npc_galen_goodward`
 
 ## scripts/tanaris.d
 
@@ -239,12 +323,36 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Files: `AI/ScriptDevAI/scripts/kalimdor/thousand_needles.cpp`
 * Functions/ScriptNames: `npc_kanati`, `npc_lakota_windsong`, `npc_paoka_swiftmountain`, `npc_plucky_johnson`
 
+## scripts/tirisfal.d
+
+* Projects: CMaNGOS
+* Files: `ScriptDevAI/scripts/eastern_kingdoms/tirisfal_glades.cpp`
+* Functions/ScriptNames: `go_mausoleum_door`, `go_mausoleum_trigger`, `npc_calvin_montague`
+
 ## scripts/ungoro.d
 
 * Projects: CMaNGOS
 * Files: `AI/ScriptDevAI/scripts/kalimdor/ungoro_crater.cpp`
 * Functions/ScriptNames: `at_scent_larkorwi`, `npc_ame01`, `npc_ringo`, `npc_simone_the_inconspicuous`,
   `npc_simone_seductress`, `npc_precious_the_devourer`
+
+## scripts/westernplaguelands.d
+
+* Projects: CMaNGOS
+* Files: `ScriptDevAI/scripts/eastern_kingdoms/western_plaguelands.cpp`, `ScriptDevAI/scripts/world/go_scripts.cpp`
+* Functions/ScriptNames: `npc_the_scourge_cauldron`, `npc_taelan_fordring`, `npc_isillien`, `npc_tirion_fordring`, `go_andorhal_tower`
+
+## scripts/westfall.d
+
+* Projects: CMaNGOS
+* Files: `ScriptDevAI/scripts/eastern_kingdoms/westfall.cpp`
+* Functions/ScriptNames: `npc_defias_traitor`, `npc_daphne_stilwell`
+
+## scripts/wetlands.d
+
+* Projects: CMaNGOS
+* Files: `ScriptDevAI/scripts/eastern_kingdoms/wetlands.cpp`
+* Functions/ScriptNames: `npc_mikhail`, `npc_tapoke_slim_jahn`
 
 ## scripts/winterspring.d
 
@@ -286,6 +394,12 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 
 * Projects: Blizzard, CMaNGOS
 * Constants: `CMSG_AUTH_SESSION`, `SMSG_ADDON_INFO`
+
+## world/alterac.d
+
+* Projects: CMaNGOS
+* Files: `BattleGroundAV.cpp`, `BattleGroundAV.h`
+* Functions: `BattleGroundAV::Reset`, `Update`, `HandleKillPlayer`, `HandleKillUnit`, `HandlePlayerClickedOnFlag`, `ProcessPlayerAssaultsPoint`, `ProcessPlayerDefendsPoint`, `ProcessPlayerDestroyedPoint`, `ChangeMineOwner`, `UpdateScore`, `EndBattleGround`, `GetPrematureWinner`, `HandleAreaTrigger`
 
 ## world/auctionhandlers.d
 
@@ -682,9 +796,9 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 
 ## world/map.d
 
-* Projects: CMaNGOS, mangosd
-* Files: `Map.cpp`
-* Functions: `Cell::SetNoCreate`, `Map::Add`, `Map::CreatureRelocation`, `Map::PlayerRelocation`, `Map::Remove`, `Map::SendObjectUpdates`, `Map::Update`, `Object::BuildValuesUpdate`, `Object::UpdateVisibilityOf`, `ObjectGridLoader::Load`, `Player::UpdateVisibilityOf`, `TerrainInfo::IsInWater`, `Unit::OnRelocated`
+* Projects: CMaNGOS, mangosd, ArcEmu
+* Files: `Map.cpp`, `Player.cpp`; ArcEmu `Player.cpp`
+* Functions: `Player::IsVisibleInGridForPlayer` (ghosts), ArcEmu `Player::CanSee` (the GM tag sees ghosts), `Cell::SetNoCreate`, `Map::Add`, `Map::CreatureRelocation`, `Map::PlayerRelocation`, `Map::Remove`, `Map::SendObjectUpdates`, `Map::Update`, `Object::BuildValuesUpdate`, `Object::UpdateVisibilityOf`, `ObjectGridLoader::Load`, `Player::UpdateVisibilityOf`, `TerrainInfo::IsInWater`, `Unit::OnRelocated`
 * Constants: `SMSG_DESTROY_OBJECT`
 
 ## world/motion.d

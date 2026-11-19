@@ -61,15 +61,15 @@ struct Muglash
         switch (point + 1)
         {
         case 15: // at the brazier
-            escort.pause(true);
+            escort.paused = true;
             eventId = 0;
             steps.after(Step.event, 2.seconds);
             break;
         case 16:
-            escort.pause(true);
+            escort.paused = true;
             break;
         case 17:
-            escort.pause(true);
+            escort.paused = true;
             eventId = 5;
             steps.after(Step.event, 2.seconds);
             break;
@@ -88,15 +88,17 @@ struct Muglash
         steps.after(Step.event, 2.seconds);
     }
 
-    void on(ref CreatureContext me, const ref SummonDied e)
+    void on(ref CreatureContext me, const ref SummonedDied e)
     {
-        switch (e.summon.entry)
+        if (e.gone)
+            return;
+        switch (e.summoned.entry)
         {
         case wrathRazortail, wrathRider, wrathSorceress:
             if (firstAlive && --firstAlive == 0)
             {
                 foreach (i, entry; secondWave)
-                    if (me.attackBy(me.summon(entry, secondWaveAt[i], 60_000), me.self) == ActionResult.ok)
+                    if (me.attack(me.summon(entry, secondWaveAt[i], 60_000), me.self) == ActionResult.ok)
                         ++secondAlive;
                 eventId = 3;
                 steps.after(Step.event, 5.seconds);
@@ -105,8 +107,8 @@ struct Muglash
         case wrathMyrmidon, wrathSeawitch, wrathPriestess:
             if (secondAlive && --secondAlive == 0)
             {
-                me.attackBy(me.summon(vorsha, Location(3630.2092f, 1190.3536f, -16.624332f), 60_000), me.self);
-                escort.pause(false);
+                me.attack(me.summon(vorsha, Location(3630.2092f, 1190.3536f, -16.624332f), 60_000), me.self);
+                escort.paused = false;
             }
             break;
         case vorsha:
@@ -147,9 +149,9 @@ struct Muglash
         case 2:
             me.sayText(sayEvent1, escort.player);
             foreach (i, entry; firstWave)
-                if (me.attackBy(me.summon(entry, firstWaveAt[i], 60_000), me.self) == ActionResult.ok)
+                if (me.attack(me.summon(entry, firstWaveAt[i], 60_000), me.self) == ActionResult.ok)
                     ++firstAlive;
-            escort.pause(false);
+            escort.paused = false;
             break;
         case 3:
             me.sayText(sayEvent2);
@@ -219,7 +221,7 @@ struct NagaBrazier
     {
         if (const muglash = it.creatureNearby(12_717, 10))
             it.signal(muglash, Muglash.signalBrazierLit);
-        it.usable(false);
+        it.objectFlags(it.self, 0x10, true); // not usable any more
     }
 }
 
@@ -299,7 +301,7 @@ struct RuulSnowhoof
         {
             const at = ambushAt[index];
             const spot = Location(at.x + (cast(int) me.random(15) - 7), at.y + (cast(int) me.random(15) - 7), at.z);
-            me.attackBy(me.summon(entry, spot, 60_000), me.self);
+            me.attack(me.summon(entry, spot, 60_000), me.self);
         }
     }
 }
@@ -335,9 +337,9 @@ struct Torek
         case 2: me.say(sayMove, escort.player); break;
         case 9: me.say(sayPrepare, escort.player); break;
         case 20:
-            me.attackBy(me.summon(duriel, Location(1776.73f, -2049.06f, 109.83f, 1.54f), 25_000), me.self);
-            me.attackBy(me.summon(silverwingSentinel, Location(1774.64f, -2049.41f, 109.83f, 1.40f), 25_000), me.self);
-            me.attackBy(me.summon(silverwingWarrior, Location(1778.73f, -2049.50f, 109.83f, 1.67f), 25_000), me.self);
+            me.attack(me.summon(duriel, Location(1776.73f, -2049.06f, 109.83f, 1.54f), 25_000), me.self);
+            me.attack(me.summon(silverwingSentinel, Location(1774.64f, -2049.41f, 109.83f, 1.40f), 25_000), me.self);
+            me.attack(me.summon(silverwingWarrior, Location(1778.73f, -2049.50f, 109.83f, 1.67f), 25_000), me.self);
             break;
         case 21:
             me.say(sayWin, escort.player);
@@ -423,13 +425,13 @@ struct FeeroIronhand
             {
                 const scout = spawnAround(me, forsakenScout, 30, 0.95f - PI / 3 * i);
                 if (i == 0)
-                    me.sayFrom(scout, sayScoutSecondAmbush, me.self);
+                    me.sayOther(scout, sayScoutSecondAmbush, me.self);
             }
             break;
         case 30:
             me.say(sayFinalAmbushStart);
             const balizarRef = me.summon(balizar, Location(4243.12f, 108.22f, 38.12f, 3.62f), 20_000);
-            me.sayFrom(balizarRef, sayBalizarFinalAmbush);
+            me.sayOther(balizarRef, sayBalizarFinalAmbush);
             engage(me, balizarRef);
             engage(me, me.summon(aligar, Location(4240.95f, 114.04f, 38.35f, 3.56f), 20_000));
             engage(me, me.summon(caedakar, Location(4235.78f, 118.09f, 38.08f, 4.12f), 20_000));
@@ -451,11 +453,13 @@ struct FeeroIronhand
         }
     }
 
-    void on(ref CreatureContext me, const ref SummonDied e)
+    void on(ref CreatureContext me, const ref SummonedDied e)
     {
+        if (e.gone)
+            return;
         if (!alive || --alive)
             return;
-        switch (e.summon.entry)
+        switch (e.summoned.entry)
         {
         case darkStrandAssassin: me.say(sayFirstAmbushEnd); break;
         case forsakenScout: me.say(saySecondAmbushEnd); break;
@@ -484,7 +488,7 @@ struct FeeroIronhand
         if (summoned)
         {
             ++alive;
-            me.attackBy(summoned, me.self);
+            me.attack(summoned, me.self);
         }
     }
 }
@@ -508,16 +512,16 @@ unittest
     assert(m.host.has("text 8410") && m.host.summons == 3 && m.host.has("move 15"));
     m.walkTo(15);
     foreach (c; m.host.summoned[0 .. 3])
-        m.raise(SummonDied(c, hero));
+        m.raise(SummonedDied(c, hero));
     assert(m.host.summons == 6, "the second wave");
     m.run(5000);
     assert(m.host.has("text 8413"));
     foreach (c; m.host.summoned[3 .. 6])
-        m.raise(SummonDied(c, hero));
+        m.raise(SummonedDied(c, hero));
     m.run(100);
     assert(m.host.has("summon 12940") && m.host.has("move 16"));
     m.walkTo(16);
-    m.raise(SummonDied(m.host.summoned[6], hero));
+    m.raise(SummonedDied(m.host.summoned[6], hero));
     m.run(20_000);
     assert(m.host.has("event 6641") && m.host.has("text 8565"));
     m.run(6000);
@@ -534,7 +538,7 @@ unittest
     auto brazier = new RecordingObject(Muglash.nagaBrazier);
     brazier.nearby[12_717] = creatureRef(12_717);
     assert(!use!self("go_naga_brazier", brazier), "it is used as usual too");
-    assert(brazier.has("signal 12717 1") && brazier.has("unusable"));
+    assert(brazier.has("signal 12717 1") && brazier.has("flags+ 16"));
 
     // Feero: the assassins' end said when the last of them falls.
     auto f = Driven!self("npc_feero_ironhand", 4484, 33);
@@ -544,7 +548,7 @@ unittest
     foreach (i, c; f.host.summoned)
     {
         assert(!f.host.has("say -1000773"));
-        f.raise(SummonDied(c, hero));
+        f.raise(SummonedDied(c, hero));
     }
     assert(f.host.has("say -1000773"));
     f.walkTo(30);

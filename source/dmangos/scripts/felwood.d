@@ -42,7 +42,7 @@ struct Kitten
         {
         case Step.turn:
             me.castSelf(spellSaberVisual);
-            me.updateEntry(corruptSaber);
+            me.changeEntry(corruptSaber);
             me.say(emoteFollow, follower.player);
             follower.pause(me, false);
             break;
@@ -93,7 +93,7 @@ struct CapturedArkonarin
 
     enum Step : ubyte { mortalStrike, cleave }
     Schedule!Step steps;
-    Escort escort = { despawnAfterMs: 1000, pointScripts: true };
+    Escort escort = { despawnAfterMs: 1000, runScripts: true };
     bool canAttack;
 
     void on(ref CreatureContext me, const ref Spawned e)
@@ -161,7 +161,7 @@ struct CapturedArkonarin
             canAttack = true;
             break;
         case 83:
-            escort.pause(true); // until Trey's spirit is beaten
+            escort.paused = true; // until Trey's spirit is beaten
             break;
         case 85:
             me.face(escort.player);
@@ -174,10 +174,12 @@ struct CapturedArkonarin
         }
     }
 
-    void on(ref CreatureContext me, const ref SummonDied e)
+    void on(ref CreatureContext me, const ref SummonedDied e)
     {
-        if (e.summon.entry == spiritTrey)
-            escort.pause(false);
+        if (e.gone)
+            return;
+        if (e.summoned.entry == spiritTrey)
+            escort.paused = false;
     }
 
     void on(ref CreatureContext me, const ref Died e)
@@ -240,20 +242,22 @@ struct Arei
     {
         if (escort.reached(me, e) + 1 != 37)
             return;
-        escort.pause(true);
+        escort.paused = true;
         const stomper = me.summon(irontreeStomper, Location(6573.321f, -1195.213f, 442.489f), 60_000);
         me.say(sayExitWoods, stomper);
         foreach (summoned; [stomper, me.summon(irontreeWanderer, Location(6573.240f, -1213.475f, 443.643f), 60_000),
                 me.summon(irontreeWanderer, Location(6583.354f, -1209.811f, 444.769f), 60_000)])
-            if (summoned && me.attackBy(summoned, me.self) == ActionResult.ok)
+            if (summoned && me.attack(summoned, me.self) == ActionResult.ok)
                 ++irontreeLeft;
         if (!irontreeLeft)
             steps.after(Step.ashenvale, 4.seconds);
     }
 
-    void on(ref CreatureContext me, const ref SummonDied e)
+    void on(ref CreatureContext me, const ref SummonedDied e)
     {
-        if ((e.summon.entry == irontreeStomper || e.summon.entry == irontreeWanderer) && irontreeLeft && --irontreeLeft == 0)
+        if (e.gone)
+            return;
+        if ((e.summoned.entry == irontreeStomper || e.summoned.entry == irontreeWanderer) && irontreeLeft && --irontreeLeft == 0)
         {
             me.say(sayClearPath);
             steps.after(Step.ashenvale, 4.seconds);
@@ -325,7 +329,7 @@ unittest
     assert(a.host.has("script 1101601") && a.host.has("text 6433"));
     a.run(500);
     assert(!a.host.has("move 83"), "held until the spirit is beaten");
-    a.raise(SummonDied(creatureRef(CapturedArkonarin.spiritTrey), hero));
+    a.raise(SummonedDied(creatureRef(CapturedArkonarin.spiritTrey), hero));
     a.run(100);
     a.walkTo(84);
     assert(a.host.has("event 5203"));
@@ -336,7 +340,7 @@ unittest
     r.walkTo(36);
     assert(r.host.summons == 3);
     foreach (c; r.host.summoned)
-        r.raise(SummonDied(c, hero));
+        r.raise(SummonedDied(c, hero));
     r.run(20_000);
     assert(r.host.has("say -1001163") && r.host.has("cast 14888") && r.host.has("event 4261"));
 }

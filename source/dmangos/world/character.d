@@ -247,6 +247,12 @@ final class Character : OnlinePlayer, Looter
         return context.groups.sameGroup(player.guid, viewer.character.guid) ? 1 : 0;
     }
 
+    /// The player's body while it is dead and released (`DeathHandlers`); null otherwise.
+    package const(imported!"dmangos.world.corpse".Corpse) ownCorpse() const
+    {
+        return corpse;
+    }
+
     /// One tick of the world update; see `InWorldHandlers.updateInWorld`.
     void update(Duration elapsed)
     {
@@ -453,6 +459,13 @@ final class Character : OnlinePlayer, Looter
     }
 
     /// A spell its battleground casts on it (a quest's credit).
+    /// Kill credit for a battleground's objective (a mine taken, a tower assaulted) toward the player's quests.
+    void battlegroundKillCredit(uint entry)
+    {
+        if (player !is null)
+            scriptKillCredit(entry, 0);
+    }
+
     void battlegroundCast(uint spell)
     {
         if (player !is null)
@@ -582,13 +595,16 @@ final class Character : OnlinePlayer, Looter
         updateLeaderFlag();
         if (transferring)
             return;
-        foreach (watcher; map.watchers(this))
+        map.refreshVisibility(this); // a ghost and its group see each other
+        // Each way only where the client has the other (a ghost may see the living that do not see it).
+        Viewer viewOf(const Inhabitant other)
         {
-            const mates = context.groups.sameGroup(player.guid, watcher.character.guid);
-            const view = mates ? Viewer.groupMate : Viewer.stranger;
-            deliverUpdate(watcher, player.groupView(view));
-            deliverUpdate(this, watcher.character.groupView(view));
+            return context.groups.sameGroup(player.guid, other.character.guid) ? Viewer.groupMate : Viewer.stranger;
         }
+        foreach (watcher; map.watchers(this))
+            deliverUpdate(watcher, player.groupView(viewOf(watcher)));
+        foreach (seen; map.seenBy(this))
+            deliverUpdate(this, seen.character.groupView(viewOf(seen)));
     }
 
 

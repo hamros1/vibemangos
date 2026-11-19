@@ -53,7 +53,7 @@ struct Solenor
             break;
         case Step.transform:
             demon = true;
-            me.updateEntry(solenor);
+            me.changeEntry(solenor);
             me.castSelf(spellSoulFlame);
             steps.after(Step.soulFlame, 150.msecs); // again, so that the player sees it
             steps.after(Step.leave, 20 * 60.seconds);
@@ -114,9 +114,9 @@ struct Solenor
     private void leave(ref CreatureContext me, EntityRef intruder)
     {
         const cleaner = me.summon(theCleaner, Location.init, 20 * 60_000);
-        me.attackBy(cleaner, intruder);
+        me.attack(cleaner, intruder);
         if (hunter)
-            me.attackBy(cleaner, hunter);
+            me.attack(cleaner, hunter);
         steps.clear();
         me.despawn(1);
     }

@@ -40,19 +40,19 @@ struct Morokk
     {
         if (escort.reached(me, e) != 0)
             return;
-        escort.pause(true);
+        escort.paused = true;
         if (me.alive(escort.player) && me.distanceTo(escort.player) <= 70)
         {
             challenged = true;
             me.say(sayChallenge, escort.player);
             me.unitFlags(UnitFlag.immuneToPlayer, false);
-            me.passive(false);
+            me.reactState(Reaction.aggressive);
             me.setFaction(factionHostile);
-            me.preventDeath(true);
+            me.deathPrevention(true);
             me.attack(escort.player);
         }
         else
-            escort.pause(false);
+            escort.paused = false;
     }
 
     void on(ref CreatureContext me, const ref Damaged e)
@@ -63,10 +63,11 @@ struct Morokk
         me.groupQuestEvent(escort.player, questChallengeMorokk);
         me.setFaction(factionRunning);
         me.unitFlags(UnitFlag.immuneToPlayer);
-        me.passive(true);
-        me.preventDeath(false);
+        me.reactState(Reaction.passive);
+        me.evade();
+        me.deathPrevention(false);
         me.say(sayScared);
-        escort.pause(false);
+        escort.paused = false;
     }
 
     void on(ref CreatureContext me, const ref Reset e)
@@ -137,10 +138,10 @@ struct Ogron
             break;
         case 11:
             reetheRef = me.creatureNearby(reethe, 40);
-            me.sayFrom(reetheRef, sayRetWhat);
+            me.sayOther(reetheRef, sayRetWhat);
             break;
         case 12:
-            escort.pause(true);
+            escort.paused = true;
             steps.every(Step.talk, 5.seconds);
             break;
         default:
@@ -154,36 +155,36 @@ struct Ogron
             return;
         switch (counter)
         {
-        case 0: me.sayFrom(reetheRef, sayRetSwear); break;
+        case 0: me.sayOther(reetheRef, sayRetSwear); break;
         case 1: me.say(sayReplyRet); break;
-        case 2: me.sayFrom(reetheRef, sayRetTaken); break;
+        case 2: me.sayOther(reetheRef, sayRetTaken); break;
         case 3:
             me.say(sayTellFire);
-            me.sayFrom(reetheRef, sayRetNoCloser);
+            me.sayOther(reetheRef, sayRetNoCloser);
             break;
-        case 4: me.sayFrom(reetheRef, sayRetNoFire); break;
+        case 4: me.sayOther(reetheRef, sayRetNoFire); break;
         case 5:
-            me.sayFrom(reetheRef, sayRetHear);
+            me.sayOther(reetheRef, sayRetHear);
             foreach (i, entry; [caldwell, hallan, skirmisher, skirmisher])
             {
                 guests[i] = me.summon(entry, spawnAt, 300_000);
                 me.setFactionOf(guests[i], factionFriendly);
-                me.moveOther(guests[i], Location(meetAt.x + i, meetAt.y + (i & 1), meetAt.z));
+                me.moveCreature(guests[i], Location(meetAt.x + i, meetAt.y + (i & 1), meetAt.z), 0);
             }
             phase = Phase.guests;
             break;
-        case 6: me.sayFrom(guests[0], sayCalFound); break;
-        case 7: me.sayFrom(guests[0], sayCalMercy); break;
+        case 6: me.sayOther(guests[0], sayCalFound); break;
+        case 7: me.sayOther(guests[0], sayCalMercy); break;
         case 8:
-            me.sayFrom(guests[1], sayHallGlad);
+            me.sayOther(guests[1], sayHallGlad);
             me.castAs(guests[1], spellFakeShot, reetheRef);
             break;
         case 9:
-            me.sayFrom(reetheRef, emoteRetArrow);
-            me.sayFrom(reetheRef, sayRetArrow);
+            me.sayOther(reetheRef, emoteRetArrow);
+            me.sayOther(reetheRef, sayRetArrow);
             break;
         case 10:
-            me.sayFrom(guests[0], sayCalCleanup);
+            me.sayOther(guests[0], sayCalCleanup);
             me.say(sayNoDie);
             break;
         case 11:
@@ -191,7 +192,7 @@ struct Ogron
                 if (guest && me.alive(guest))
                 {
                     me.setFactionOf(guest, factionTheramoreHostile);
-                    if (me.attackBy(guest, me.self) == ActionResult.ok)
+                    if (me.attack(guest, me.self) == ActionResult.ok)
                         ++guestsAlive;
                 }
             phase = guestsAlive ? Phase.fight : Phase.complete;
@@ -200,11 +201,11 @@ struct Ogron
             me.groupQuestEvent(escort.player, questQuestioning);
             me.say(saySurvive);
             break;
-        case 13: me.sayFrom(reetheRef, sayRetLucky); break;
+        case 13: me.sayOther(reetheRef, sayRetLucky); break;
         case 14:
             me.say(sayThanks);
             escort.run = true;
-            escort.pause(false);
+            escort.paused = false;
             steps.cancel(Step.talk);
             break;
         default:
@@ -214,8 +215,10 @@ struct Ogron
             ++counter;
     }
 
-    void on(ref CreatureContext me, const ref SummonDied e)
+    void on(ref CreatureContext me, const ref SummonedDied e)
     {
+        if (e.gone)
+            return;
         if (phase == Phase.fight && guestsAlive && --guestsAlive == 0)
         {
             phase = Phase.complete;
@@ -269,13 +272,13 @@ struct PrivateHendel
             return;
         player = e.player;
         me.setFaction(factionHostile);
-        me.preventDeath(true);
+        me.deathPrevention(true);
         me.attack(e.player);
         EntityRef[4] sentries;
         foreach (s; sentries[0 .. me.creaturesNearby(sentry, 40, sentries[])])
         {
             me.setFactionOf(s, factionHostile);
-            me.attackBy(s, e.player);
+            me.attack(s, e.player);
         }
     }
 
@@ -285,20 +288,21 @@ struct PrivateHendel
             return;
         surrendered = true;
         me.say(emoteSurrender);
-        me.restoreFaction(); // friendly again: the fight stops
-        me.passive(true);
+        me.setFaction(0); // friendly again: the fight stops
+        me.reactState(Reaction.passive);
+        me.evade();
         EntityRef[4] sentries;
         foreach (s; sentries[0 .. me.creaturesNearby(sentry, 40, sentries[])])
         {
             me.setFactionOf(s, 0);
-            me.moveOther(s, sentryFlee, 0, true);
+            me.moveCreature(s, sentryFlee, 0, true);
             me.despawn(s, 4000);
         }
         foreach (i, entry; outroEntries)
         {
             const who = me.summon(entry, outroAt[i], 180_000);
             me.castAs(who, spellTeleportVisual, who);
-            me.moveOther(who, outroTo[i]);
+            me.moveCreature(who, outroTo[i], 0);
         }
         steps.after(Step.teleport, 15.seconds);
     }
@@ -317,8 +321,8 @@ struct PrivateHendel
     {
         if (!surrendered)
         {
-            me.restoreFaction();
-            me.preventDeath(false);
+            me.setFaction(0);
+            me.deathPrevention(false);
             player = EntityRef.init;
         }
     }
@@ -440,7 +444,7 @@ unittest
     o.run(30_000);
     assert(o.host.has("attack 5046 4983") && !o.host.has("event 1273"));
     foreach (c; o.host.summoned)
-        o.raise(SummonDied(c, hero));
+        o.raise(SummonedDied(c, hero));
     o.run(15_000);
     assert(o.host.has("event 1273") && o.host.has("say -1000471"));
 

@@ -124,7 +124,7 @@ struct Ranshalla
             channel(me, false);
             break;
         case 39:
-            escort.pause(true);
+            escort.paused = true;
             next = 0;
             steps.after(Step.line, 1.msecs);
             break;
@@ -133,17 +133,17 @@ struct Ranshalla
                 me.face(altar);
             break;
         case 42:
-            escort.pause(true);
+            escort.paused = true;
             rightPriestess = me.summon(priestessElune, thicket[0]);
-            me.moveOther(rightPriestess, thicket[3]);
+            me.moveCreature(rightPriestess, thicket[3], 0);
             leftPriestess = me.summon(priestessElune, thicket[1]);
-            me.moveOther(leftPriestess, thicket[4]);
+            me.moveCreature(leftPriestess, thicket[4], 0);
             me.say(sayAltar2);
             next = priestessesHere;
             steps.after(Step.line, 4.seconds); // as they arrive
             break;
         case 44:
-            escort.pause(true);
+            escort.paused = true;
             if (altar)
                 me.face(altar);
             break;
@@ -185,7 +185,7 @@ struct Ranshalla
         {
         case Step.walkOn:
             me.removeAura(me.self, spellLightTorch);
-            escort.pause(false);
+            escort.paused = false;
             break;
         case Step.line:
             if (next >= scene.length)
@@ -212,9 +212,9 @@ struct Ranshalla
         {
         case Speaker.none: break;
         case Speaker.ranshalla: me.say(line.text); break;
-        case Speaker.rightPriestess: me.sayFrom(rightPriestess, line.text); break;
-        case Speaker.leftPriestess: me.sayFrom(leftPriestess, line.text); break;
-        case Speaker.voice: me.sayFrom(voice, line.text); break;
+        case Speaker.rightPriestess: me.sayOther(rightPriestess, line.text); break;
+        case Speaker.leftPriestess: me.sayOther(leftPriestess, line.text); break;
+        case Speaker.voice: me.sayOther(voice, line.text); break;
         }
     }
 
@@ -228,33 +228,33 @@ struct Ranshalla
             channel(me, true);
             break;
         case Act.walkOn:
-            escort.pause(false);
+            escort.paused = false;
             break;
         case Act.firstPriestessCloser:
-            me.moveOther(rightPriestess, thicket[6]);
+            me.moveCreature(rightPriestess, thicket[6], 0);
             break;
         case Act.guardianAndVoice:
             guardian = me.summon(guardianElune, thicket[2]);
-            me.moveOther(guardian, thicket[5]);
+            me.moveCreature(guardian, thicket[5], 0);
             Location at;
             if (altar && me.locationOf(altar, at))
                 voice = me.summon(voiceElune, at, 30_000);
             break;
         case Act.secondPriestessCloser:
-            me.sayFrom(leftPriestess, sayPriestess14);
-            me.moveOther(leftPriestess, thicket[7]);
+            me.sayOther(leftPriestess, sayPriestess14);
+            me.moveCreature(leftPriestess, thicket[7], 0);
             me.castAs(guardian, spellBindWildkin, guardian);
             break;
         case Act.guardianLeaves:
-            me.moveOther(guardian, thicket[2]);
+            me.moveCreature(guardian, thicket[2], 0);
             me.despawn(guardian, 4000);
             break;
         case Act.firstPriestessLeaves:
-            me.moveOther(rightPriestess, thicket[0]);
+            me.moveCreature(rightPriestess, thicket[0], 0);
             me.despawn(rightPriestess, 4000);
             break;
         case Act.secondPriestessLeaves:
-            me.moveOther(leftPriestess, thicket[1]);
+            me.moveCreature(leftPriestess, thicket[1], 0);
             me.despawn(leftPriestess, 4000);
             break;
         case Act.turnToPlayer:
@@ -290,7 +290,7 @@ struct Ranshalla
         me.say(sayReachTorch1 - cast(int) me.random(3));
         me.say(emoteChantSpell);
         me.castSelf(spellLightTorch);
-        escort.pause(true);
+        escort.paused = true;
     }
 }
 
@@ -379,7 +379,7 @@ struct Artorius
             break;
         case Step.transform:
             demon = true;
-            me.updateEntry(doombringer);
+            me.changeEntry(doombringer);
             steps.after(Step.leave, 20 * 60.seconds);
             break;
         case Step.frenzy:
@@ -405,9 +405,9 @@ struct Artorius
     private void leave(ref CreatureContext me, EntityRef intruder)
     {
         const cleaner = me.summon(theCleaner, Location.init, 20 * 60_000);
-        me.attackBy(cleaner, intruder);
+        me.attack(cleaner, intruder);
         if (hunter)
-            me.attackBy(cleaner, hunter);
+            me.attack(cleaner, hunter);
         steps.clear();
         me.despawn(1);
     }

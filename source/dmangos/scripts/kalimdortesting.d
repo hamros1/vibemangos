@@ -114,49 +114,60 @@ final class RecordingCreature : CreatureHost
     {
         note("gossip " ~ textId.to!string ~ " " ~ options.length.to!string);
     }
-    ActionResult hostFaction(EntityRef c, uint faction)
-    {
-        note((c == self_ ? "faction " : "faction of " ~ c.entry.to!string ~ " ") ~ faction.to!string);
-        return ActionResult.ok;
-    }
-    ActionResult hostUnitFlags(EntityRef, uint flags, bool set)
-    {
-        note((set ? "flags+ " : "flags- ") ~ flags.to!string);
-        return ActionResult.ok;
-    }
-    ActionResult hostAttack(EntityRef c, EntityRef victim)
+    // Eastern Kingdoms scripts' part of the host:
+    void hostSetFaction(uint faction) { note("faction " ~ faction.to!string); }
+    void hostUnitFlags(uint flags, bool set) { note((set ? "flags+ " : "flags- ") ~ flags.to!string); }
+    void hostReactState(Reaction state) { note(state == Reaction.passive ? "passive" : "not passive"); }
+    void hostDeathPrevention(bool on) { note(on ? "immortal" : "mortal"); }
+    void hostEvade() { note("evade"); }
+    ActionResult hostAttackBy(EntityRef c, EntityRef victim)
     {
         note("attack " ~ c.entry.to!string ~ " " ~ (victim == hero ? "hero" : victim.entry.to!string));
         return ActionResult.ok;
     }
-    void hostFollow(EntityRef leader, float, float) { note(leader ? "follow" : "unfollow"); }
-    void hostKillCredit(EntityRef, uint entry) { note("credit " ~ entry.to!string); }
     ActionResult hostMoveOther(EntityRef c, Location, uint point, bool)
     {
         note("move " ~ c.entry.to!string ~ " " ~ point.to!string);
         return ActionResult.ok;
     }
     void hostFace(EntityRef) {}
+    void hostSheath(Sheath) {}
+    void hostMount(uint display) { note("mount " ~ display.to!string); }
+    void hostDie() { note("die"); }
+    bool hostChangeEntry(uint entry) { note("entry " ~ entry.to!string); return true; }
+    EntityRef hostObjectNearby(uint entry, float) { return objects.get(entry, EntityRef.init); }
+    ActionResult hostUseObject(EntityRef o) { note("use " ~ o.entry.to!string); return ActionResult.ok; }
+    ActionResult hostRemoveAura(EntityRef, uint spell) { note("unaura " ~ spell.to!string); auras.remove(spell); return ActionResult.ok; }
+    bool hostHasAura(EntityRef, uint spell) { return auras.get(spell, false); }
+    ActionResult hostSayOther(EntityRef c, int entry, EntityRef)
+    {
+        note("say as " ~ c.entry.to!string ~ " " ~ entry.to!string);
+        return ActionResult.ok;
+    }
+    void hostMovementScript(uint id) { note("script " ~ id.to!string); }
+    void hostRelay(int id, EntityRef) { note("relay " ~ id.to!string); }
+    void hostKillCredit(EntityRef, uint entry) { note("credit " ~ entry.to!string); }
+
+    // Kalimdor scripts' part:
+    ActionResult hostFactionOf(EntityRef c, uint faction)
+    {
+        note("faction of " ~ c.entry.to!string ~ " " ~ faction.to!string);
+        return ActionResult.ok;
+    }
+    ActionResult hostUnitFlagsOf(EntityRef, uint flags, bool set)
+    {
+        note((set ? "flags+ " : "flags- ") ~ flags.to!string);
+        return ActionResult.ok;
+    }
+    void hostFollow(EntityRef leader, float, float) { note(leader ? "follow" : "unfollow"); }
     ActionResult hostCastAs(EntityRef c, uint spell, EntityRef, bool)
     {
         note("cast as " ~ c.entry.to!string ~ " " ~ spell.to!string);
         return ActionResult.ok;
     }
-    ActionResult hostRemoveAura(EntityRef, uint spell) { note("unaura " ~ spell.to!string); auras.remove(spell); return ActionResult.ok; }
-    bool hostHasAura(EntityRef, uint spell) { return auras.get(spell, false); }
-    ActionResult hostSayAs(EntityRef c, int entry, EntityRef)
-    {
-        note("say as " ~ c.entry.to!string ~ " " ~ entry.to!string);
-        return ActionResult.ok;
-    }
-    bool hostUpdateEntry(uint entry) { note("entry " ~ entry.to!string); return true; }
-    void hostMount(uint display) { note("mount " ~ display.to!string); }
-    void hostPassive(bool on) { note(on ? "passive" : "not passive"); }
-    EntityRef hostObjectNearby(uint entry, float) { return objects.get(entry, EntityRef.init); }
     ActionResult hostObjectUsable(EntityRef, bool usable) { note(usable ? "usable" : "unusable"); return ActionResult.ok; }
     uint hostEntryOf(EntityRef who) { return who.entry; }
     void hostGroupQuestEvent(EntityRef, uint quest) { note("event " ~ quest.to!string); }
-    ActionResult hostUseObject(EntityRef o, uint) { note("use " ~ o.entry.to!string); return ActionResult.ok; }
     bool hostLocationOf(EntityRef who, out Location at)
     {
         at = Location(10, 20, 30);
@@ -170,8 +181,6 @@ final class RecordingCreature : CreatureHost
         found[0] = nearby[entry];
         return 1;
     }
-    void hostPreventDeath(bool on) { note(on ? "immortal" : "mortal"); }
-    void hostMovementScript(uint id, EntityRef) { note("script " ~ id.to!string); }
     EntityRef owner_;
     EntityRef hostOwner() { return owner_; }
     uint[uint] items;           /// the hero's
@@ -264,21 +273,28 @@ final class RecordingObject : GameObjectHost
     void hostSignalDungeon(uint, int) {}
     void hostLog(string) {}
     Location hostObjectLocation() { return Location(1, 2, 3); }
-    QuestProgress hostObjectQuestStatus(EntityRef, uint quest) { return quests.get(quest, QuestProgress.none); }
-    void hostObjectQuestEvent(EntityRef, uint quest) { did ~= "event " ~ quest.to!string; }
-    void hostObjectKillCredit(EntityRef, uint entry) { did ~= "credit " ~ entry.to!string; }
-    EntityRef hostObjectSummon(uint entry, Location, uint, EntityRef)
+    QuestProgress hostQuestStatus(EntityRef, uint quest) { return quests.get(quest, QuestProgress.none); }
+    void hostQuestEvent(EntityRef, uint quest) { did ~= "event " ~ quest.to!string; }
+    void hostKillCredit(EntityRef, uint entry) { did ~= "credit " ~ entry.to!string; }
+    EntityRef hostSummon(uint entry, Location, uint, EntityRef)
     {
         did ~= "summon " ~ entry.to!string;
         return creatureRef(entry, 100);
     }
-    EntityRef hostObjectCreatureNear(uint entry, float) { return nearby.get(entry, EntityRef.init); }
+    EntityRef hostCreatureNearby(uint entry, float) { return nearby.get(entry, EntityRef.init); }
     ActionResult hostObjectSignal(EntityRef to, uint id, int)
     {
         did ~= "signal " ~ to.entry.to!string ~ " " ~ id.to!string;
         return ActionResult.ok;
     }
-    void hostObjectUsable(bool usable) { did ~= usable ? "usable" : "unusable"; }
+    EntityRef hostObjectNearby(uint, float) { return EntityRef.init; }
+    ActionResult hostObjectOpen(EntityRef, bool open) { did ~= open ? "open" : "close"; return ActionResult.ok; }
+    ActionResult hostObjectFlags(EntityRef, uint flags, bool set)
+    {
+        did ~= (set ? "flags+ " : "flags- ") ~ flags.to!string;
+        return ActionResult.ok;
+    }
+    ActionResult hostSayAs(EntityRef, uint, EntityRef) { return ActionResult.ok; }
     size_t hostObjectCreaturesNear(uint entry, float, EntityRef[] found)
     {
         if (found.length == 0 || entry !in nearby)

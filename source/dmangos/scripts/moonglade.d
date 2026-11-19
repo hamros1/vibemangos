@@ -129,17 +129,17 @@ struct KeeperRemulos
             me.say(sayIntro2);
             break;
         case 14:
-            escort.pause(true);
+            escort.paused = true;
             next = 0;
             steps.after(Step.line, 1.msecs);
             break;
         case 18:
-            escort.pause(true);
+            escort.paused = true;
             next = atTheVillage;
             steps.after(Step.line, 1.msecs);
             break;
         case 19:
-            escort.pause(true);
+            escort.paused = true;
             break;
         default:
             break;
@@ -157,7 +157,7 @@ struct KeeperRemulos
             if (line.text)
             {
                 if (line.byEranikus)
-                    me.sayFrom(eranikus, line.text);
+                    me.sayOther(eranikus, line.text);
                 else
                     me.say(line.text);
             }
@@ -220,10 +220,12 @@ struct KeeperRemulos
         }
     }
 
-    void on(ref CreatureContext me, const ref SummonDied e)
+    void on(ref CreatureContext me, const ref SummonedDied e)
     {
+        if (e.gone)
+            return;
         foreach (ref d; defenders)
-            if (d == e.summon)
+            if (d == e.summoned)
                 d = EntityRef.init;
     }
 
@@ -252,19 +254,19 @@ struct KeeperRemulos
             me.castAs(eranikus, spellDragonHover, eranikus, true);
             break;
         case Act.eranikusComes:
-            me.sayFrom(eranikus, emoteSummonEranikus);
+            me.sayOther(eranikus, emoteSummonEranikus);
             break;
         case Act.flyOff:
             me.say(sayDefend1, escort.player);
             me.removeAura(eranikus, spellDragonHover);
-            me.moveOther(eranikus, eranikusAt[1], 1, true);
-            escort.pause(false);
+            me.moveCreature(eranikus, eranikusAt[1], 1, true);
+            escort.paused = false;
             break;
         case Act.faceEranikus:
             me.face(eranikus);
             break;
         case Act.holdTheVillage:
-            escort.pause(true);
+            escort.paused = true;
             me.setFaction(factionCenarionCircle);
             steps.after(Step.wave, 5.seconds);
             break;
@@ -279,7 +281,7 @@ struct KeeperRemulos
             firstWave = false;
             foreach (at; shadowsAt[0 .. maxShadows])
                 phantasm(me, at);
-            me.sayFrom(eranikus, sayEranikusAttack1);
+            me.sayOther(eranikus, sayEranikusAttack1);
         }
         if (waves < maxWaves)
         {
@@ -292,7 +294,7 @@ struct KeeperRemulos
             ++waves;
         }
         if (waves >= maxWaves)
-            me.moveOther(eranikus, eranikusAt[2], 2); // he lands, to fight
+            me.moveCreature(eranikus, eranikusAt[2], 2); // he lands, to fight
         else
             steps.after(Step.wave, (20 + me.random(11)).seconds);
     }
@@ -301,10 +303,10 @@ struct KeeperRemulos
     {
         const p = me.summon(nightmarePhantasm, at, 3 * 60_000);
         me.setFactionOf(p, 14);
-        me.attackBy(p, me.self);
+        me.attack(p, me.self);
         // A defender takes it on.
         foreach (d; defenders)
-            if (d && me.alive(d) && me.attackBy(d, p) == ActionResult.ok)
+            if (d && me.alive(d) && me.attack(d, p) == ActionResult.ok)
                 break;
     }
 
@@ -345,7 +347,7 @@ struct Eranikus
     void on(ref CreatureContext me, const ref Spawned e)
     {
         me.combatMovement(false);
-        me.preventDeath(true); // he is redeemed, not killed
+        me.deathPrevention(true); // he is redeemed, not killed
         remulosRef = me.owner;
     }
 
@@ -417,13 +419,13 @@ struct Eranikus
                 steps.after(step, me.castSelf(spellShadowboltVolley) == ActionResult.ok ? 25.seconds : 1.seconds);
             break;
         case Step.tyrandeHeals:
-            me.sayFrom(tyrandeRef, sayTyrandeHeal);
-            me.moveOther(tyrandeRef, tyrandeAt[2], 1, true);
+            me.sayOther(tyrandeRef, sayTyrandeHeal);
+            me.moveCreature(tyrandeRef, tyrandeAt[2], 1, true);
             steps.after(Step.tyrandeForgives, 4.seconds);
             break;
         case Step.tyrandeForgives:
             me.castAs(tyrandeRef, spellArcaneChanneling, tyrandeRef);
-            me.sayFrom(tyrandeRef, sayTyrandeForgiven1);
+            me.sayOther(tyrandeRef, sayTyrandeForgiven1);
             break;
         case Step.redeem:
             redemptionStep(me);
@@ -438,7 +440,7 @@ struct Eranikus
         {
         case 85:
             me.say(sayAttack3);
-            me.sayFrom(me.summon(tyrande, tyrandeAt[0], 1000), sayTyrandeAppear);
+            me.sayOther(me.summon(tyrande, tyrandeAt[0], 1000), sayTyrandeAppear);
             nextCheck = 75;
             break;
         case 75:
@@ -447,7 +449,7 @@ struct Eranikus
             break;
         case 50:
             tyrandeRef = me.summon(tyrande, tyrandeAt[0]);
-            me.moveOther(tyrandeRef, tyrandeAt[1], 0, true);
+            me.moveCreature(tyrandeRef, tyrandeAt[1], 0, true);
             steps.after(Step.tyrandeHeals, 8.seconds);
             nextCheck = 35;
             break;
@@ -456,17 +458,17 @@ struct Eranikus
             {
                 const at = tyrandeAt[0];
                 p = me.summon(elunePriestess, Location(at.x + (cast(int) me.random(21) - 10), at.y + (cast(int) me.random(21) - 10), at.z));
-                me.attackBy(p, me.self); // in the fight, to heal
+                me.attack(p, me.self); // in the fight, to heal
             }
             me.say(sayDefeat1);
             nextCheck = 31;
             break;
         case 31:
-            me.sayFrom(tyrandeRef, sayTyrandeForgiven2);
+            me.sayOther(tyrandeRef, sayTyrandeForgiven2);
             nextCheck = 27;
             break;
         case 27:
-            me.sayFrom(tyrandeRef, sayTyrandeForgiven3);
+            me.sayOther(tyrandeRef, sayTyrandeForgiven3);
             nextCheck = 25;
             break;
         case 25:
@@ -493,8 +495,9 @@ struct Eranikus
         foreach (p; priestesses)
             if (p && me.alive(p))
                 me.despawn(p);
-        me.passive(true); // the fight is over
-        me.updateEntry(eranikusRedeemed);
+        me.reactState(Reaction.passive);
+        me.evade(); // the fight is over
+        me.changeEntry(eranikusRedeemed);
         redemption = 0;
         steps.after(Step.redeem, 5.seconds);
     }
@@ -504,13 +507,13 @@ struct Eranikus
         switch (redemption++)
         {
         case 0:
-            me.sayFrom(tyrandeRef, emoteTyrandeKneel);
+            me.sayOther(tyrandeRef, emoteTyrandeKneel);
             me.say(emoteRedeem);
             me.standState(StandState.dead);
             steps.after(Step.redeem, 5.seconds);
             break;
         case 1:
-            me.sayFrom(tyrandeRef, sayTyrandeRedeemed);
+            me.sayOther(tyrandeRef, sayTyrandeRedeemed);
             steps.after(Step.redeem, 6.seconds);
             break;
         case 2:

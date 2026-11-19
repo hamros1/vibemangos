@@ -31,7 +31,7 @@ import dmangos.world.spells : SpellInfo;
 import dmangos.world.worlddata : SpellListEntry;
 import dmangos.world.eventai : Scripted;
 import dmangos.script.registry : ScriptHandle, ScriptRuntime;
-import dmangos.script.api : ActionResult, MenuOption, QuestProgress, Waypoint, CreatureHost, Damaged, Died, EnteredCombat, EntityRef, Evaded, KilledUnit, Reset;
+import dmangos.script.api : ActionResult, MenuOption, QuestProgress, Waypoint, CreatureHost, Damaged, Died, EnteredCombat, EntityRef, Evaded, KilledUnit, Reset, UnitInSight;
 import dmangos.world.updatefields;
 import dmangos.vmap.math : Vector3;
 import dmangos.world.unit : UnitRef;
@@ -100,9 +100,13 @@ interface CreatureLore
 
     /// Whether two players are in one group.
     bool sameGroup(ulong a, ulong b);
+    // Eastern Kingdoms scripts:
 
-    /// Starts `dbscripts_on_creature_movement` script `id` on `world`.
-    void startMovementScript(uint id, CombatWorld world, ulong source, ulong target);
+    /// The guid of the nearest game object of `entry` within `range` yards of `center` on `world`; 0 if none.
+    ulong gameObjectNear(CombatWorld world, Position center, uint entry, float range);
+
+    /// Uses game object `guid` on `world` as a door or button is used: open for its time.
+    ActionResult useGameObject(CombatWorld world, ulong guid);
 }
 
 /// What a creature's AI needs of its map.
@@ -146,9 +150,6 @@ interface CombatWorld : MotionWorld
     void sendInRange(Position center, float range, Opcode opcode, const(ubyte)[] body_);
 
     // Kalimdor scripts:
-
-    /// The game objects within `range` yards of `center` here.
-    GameObject[] gameObjectsNear(Position center, float range);
 
     /// The game object with this guid here; null if none.
     GameObject gameObjectAt(ulong guid);
@@ -268,6 +269,9 @@ final class CreatureAI : Scripted, CreatureHost
     /// (`moveInLineOfSight`'s first checks, for the map to skip it early).
     @property bool mayNotice() const
     {
+        // Eastern Kingdoms scripts: a script that wants to hear of the players in its sight (`UnitInSight`) does.
+        if (behaviour && me.alive && scripts_.handles!UnitInSight(behaviour))
+            return true;
         return react == ReactState.aggressive && me.alive && !me.petOwner
             && (me.factionTemplate is null || !isNeutralToAll(*me.factionTemplate));
     }
@@ -302,6 +306,8 @@ final class CreatureAI : Scripted, CreatureHost
     void moveInLineOfSight(UnitRef who, CombatWorld world)
     {
         world_ = world;
+        if (behaviour && me.alive)
+            unitInSight(who); // Eastern Kingdoms scripts
         if (react != ReactState.aggressive || victim || evadingHome || !me.alive || me.petOwner)
             return;
         if (me.factionTemplate !is null && isNeutralToAll(*me.factionTemplate))
@@ -341,12 +347,15 @@ final class CreatureAI : Scripted, CreatureHost
             addThreat(attacker, 0);
     }
 
-    /// The threat of damage taken: what `attacker` did to it; direct damage restarts its combat timer.
-    void damageTaken(UnitRef attacker, uint damage)
+    /**
+     * The threat of damage taken: what `attacker` did to it, times `threatFactor` (the attacker's threat auras);
+     * direct damage restarts its combat timer.
+     */
+    void damageTaken(UnitRef attacker, uint damage, float threatFactor = 1)
     {
         if (!me.alive || evadingHome || me.petOwner)
             return;
-        addThreat(attacker, damage);
+        addThreat(attacker, damage * threatFactor);
         if (damage)
             triggerCombatTimer();
         if (behaviour)
@@ -371,11 +380,11 @@ final class CreatureAI : Scripted, CreatureHost
             script.died(this, victim);
         if (world !is null)
             raiseScript(Died(EntityRef(victim)));
-        // Kalimdor scripts: its summoner's script hears of it.
+        // Eastern Kingdoms scripts: its summoner's script hears of it.
         if (world !is null && me.summon.summoner)
             if (auto summoner = world.creatureAt(me.summon.summoner))
                 if (summoner.ai !is null)
-                    summoner.ai.summonDied(EntityRef(me.guid), EntityRef(victim), world);
+                    summoner.ai.summonedDied(world, EntityRef(me.guid), EntityRef(victim));
         foreach (guid, _; threat)
             notifyRemoved(guid, world);
         threat = null;

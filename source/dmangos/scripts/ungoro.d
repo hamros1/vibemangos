@@ -154,12 +154,12 @@ struct Ringo
             switch (++talk)
             {
             case 1: me.say(sayEnd1); steps.after(Step.talk, 3.seconds); break;
-            case 2: me.sayFrom(spraggleRef, sayEnd2); steps.after(Step.talk, 5.seconds); break;
+            case 2: me.sayOther(spraggleRef, sayEnd2); steps.after(Step.talk, 5.seconds); break;
             case 3: me.say(sayEnd3); steps.after(Step.talk, 1.seconds); break;
             case 4: me.say(emoteEnd4); faint(me, false); steps.after(Step.talk, 9.seconds); break;
             case 5: me.say(emoteEnd5); wake(me, false); steps.after(Step.talk, 1.seconds); break;
             case 6: me.say(sayEnd6); steps.after(Step.talk, 3.seconds); break;
-            case 7: me.sayFrom(spraggleRef, sayEnd7); steps.after(Step.talk, 10.seconds); break;
+            case 7: me.sayOther(spraggleRef, sayEnd7); steps.after(Step.talk, 10.seconds); break;
             case 8: me.say(emoteEnd8); steps.after(Step.talk, 5.seconds); break;
             default: me.despawn(1000); break;
             }
@@ -296,7 +296,7 @@ struct SimoneSeductress
     void on(ref CreatureContext me, const ref EnteredCombat e)
     {
         if (const dog = me.creatureNearby(preciousDevourer, 40))
-            me.attackBy(dog, e.enemy);
+            me.attack(dog, e.enemy);
         if (!claim(me, e.enemy))
             return;
         steps.after(Step.kiss, (3 + me.random(4)).seconds);
@@ -364,9 +364,9 @@ struct SimoneSeductress
         {
             const c = me.summon(theCleaner, Location.init, 20 * 60_000);
             if (intruder)
-                me.attackBy(c, intruder);
+                me.attack(c, intruder);
             if (hunter)
-                me.attackBy(c, hunter);
+                me.attack(c, hunter);
         }
         if (const dog = me.creatureNearby(preciousDevourer, 60))
             me.despawn(dog);
@@ -384,7 +384,7 @@ struct PreciousTheDevourer
     void on(ref CreatureContext me, const ref EnteredCombat e)
     {
         if (const simone = me.creatureNearby(simoneSeductress, 40))
-            me.attackBy(simone, e.enemy);
+            me.attack(simone, e.enemy);
     }
 
     void on(ref CreatureContext me, const ref Damaged e)

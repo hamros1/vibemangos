@@ -34,7 +34,7 @@ struct Mist
         const aryniaRef = me.creatureNearby(arynia, 10);
         if (!aryniaRef)
             return;
-        me.sayFrom(aryniaRef, sayAtHome);
+        me.sayOther(aryniaRef, sayAtHome);
         me.say(emoteAtHome);
         if (me.questStatus(follower.player, questMist) == QuestProgress.incomplete)
             me.groupQuestEvent(follower.player, questMist);

@@ -22,16 +22,18 @@ struct Escort
     bool finished;          /// it reached its last point and waited there
     float maxDistance = 50; /// the player farther than this: the escort fails
     uint despawnAfterMs;    /// over (done or failed), it goes this long after, to come back home; 0: it stays
+    bool paused;            /// it stays where it is (an ambush to fight off, a scene) until unpaused
+    bool runScripts;        /// it runs each point's script (`Waypoint.scriptId`) as it arrives there
 
     /// Sets off with `player` on `quest`, walking (running) from the first point; its NPC flags go
     /// (nobody else can take it on its way).
     void start(ref CreatureContext me, EntityRef player, uint quest, bool run = false)
     {
-        const despawn = despawnAfterMs, distance = maxDistance, scripts = pointScripts;
+        const despawn = despawnAfterMs, distance = maxDistance, scripts = runScripts;
         this = Escort.init;
         despawnAfterMs = despawn;
         maxDistance = distance;
-        pointScripts = scripts;
+        runScripts = scripts;
         this.player = player;
         this.quest = quest;
         this.run = run;
@@ -49,8 +51,8 @@ struct Escort
         me.waypoint(point, w);
         waiting = true;
         waitLeft = w.waitMs;
-        if (pointScripts && w.scriptId)
-            me.movementScript(w.scriptId, player);
+        if (runScripts && w.scriptId)
+            me.movementScript(w.scriptId);
         return point;
     }
 
@@ -102,16 +104,6 @@ struct Escort
     @property bool busy() const
     {
         return active;
-    }
-
-    // Kalimdor scripts:
-    bool paused; /// it stays where it is (an event on its way) until `pause(false)`
-    bool pointScripts; /// it runs the scripts of its path's points (`Waypoint.scriptId`) as it reaches them
-
-    /// It stays where it is (`SetEscortPaused`), or goes on.
-    void pause(bool on)
-    {
-        paused = on;
     }
 
     private void over(ref CreatureContext me)

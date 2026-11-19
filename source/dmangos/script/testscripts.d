@@ -114,31 +114,40 @@ final class FakeCreature : CreatureHost
     ActionResult hostDespawnOther(EntityRef, uint) { return ActionResult.ok; }
     QuestProgress hostQuestStatus(EntityRef, uint) { return QuestProgress.none; }
     void hostSendGossip(EntityRef, uint, const(MenuOption)[], bool) {}
-    // Kalimdor scripts:
-    ActionResult hostFaction(EntityRef, uint) { return ActionResult.ok; }
-    ActionResult hostUnitFlags(EntityRef, uint, bool) { return ActionResult.ok; }
-    ActionResult hostAttack(EntityRef, EntityRef) { return ActionResult.ok; }
-    void hostFollow(EntityRef, float, float) {}
-    void hostKillCredit(EntityRef, uint) {}
+
+    // Eastern Kingdoms scripts:
+    uint faction;
+    void hostSetFaction(uint f) { faction = f; }
+    void hostUnitFlags(uint, bool) {}
+    void hostReactState(Reaction) {}
+    void hostDeathPrevention(bool) {}
+    void hostEvade() {}
+    ActionResult hostAttackBy(EntityRef, EntityRef) { return ActionResult.ok; }
     ActionResult hostMoveOther(EntityRef, Location, uint, bool) { return ActionResult.ok; }
     void hostFace(EntityRef) {}
-    ActionResult hostCastAs(EntityRef, uint, EntityRef, bool) { return ActionResult.ok; }
+    void hostSheath(Sheath) {}
+    void hostMount(uint) {}
+    void hostDie() {}
+    bool hostChangeEntry(uint) { return true; }
+    EntityRef hostObjectNearby(uint, float) { return EntityRef.init; }
+    ActionResult hostUseObject(EntityRef) { return ActionResult.ok; }
     ActionResult hostRemoveAura(EntityRef, uint) { return ActionResult.ok; }
     bool hostHasAura(EntityRef, uint) { return false; }
-    ActionResult hostSayAs(EntityRef, int, EntityRef) { return ActionResult.ok; }
-    bool hostUpdateEntry(uint) { return true; }
-    void hostMount(uint) {}
-    void hostPassive(bool) {}
-    EntityRef hostObjectNearby(uint, float) { return EntityRef.init; }
+    ActionResult hostSayOther(EntityRef, int, EntityRef) { return ActionResult.ok; }
+    void hostMovementScript(uint) {}
+    void hostRelay(int, EntityRef) {}
+    void hostKillCredit(EntityRef, uint) {}
+    // Kalimdor scripts:
+    ActionResult hostFactionOf(EntityRef, uint) { return ActionResult.ok; }
+    ActionResult hostUnitFlagsOf(EntityRef, uint, bool) { return ActionResult.ok; }
+    void hostFollow(EntityRef, float, float) {}
+    ActionResult hostCastAs(EntityRef, uint, EntityRef, bool) { return ActionResult.ok; }
     ActionResult hostObjectUsable(EntityRef, bool) { return ActionResult.ok; }
     uint hostEntryOf(EntityRef) { return 0; }
     void hostGroupQuestEvent(EntityRef, uint quest) { quests ~= "event"; }
-    ActionResult hostUseObject(EntityRef, uint) { return ActionResult.ok; }
     bool hostLocationOf(EntityRef, out Location) { return false; }
     void hostEmoteState(uint) {}
     size_t hostCreaturesNearby(uint, float, EntityRef[]) { return 0; }
-    void hostPreventDeath(bool) {}
-    void hostMovementScript(uint, EntityRef) {}
     EntityRef hostOwner() { return EntityRef.init; }
     uint hostItemCount(EntityRef, uint) { return 0; }
     uint hostGiveItem(EntityRef, uint, uint) { return 0; }

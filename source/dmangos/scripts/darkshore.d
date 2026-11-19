@@ -184,7 +184,7 @@ struct Threshwackonator
         const gelkakRef = me.creatureNearby(gelkak, 10);
         if (!gelkakRef)
             return;
-        me.sayFrom(gelkakRef, sayAtClose);
+        me.sayOther(gelkakRef, sayAtClose);
         me.setFaction(factionHostile);
         const holder = follower.player;
         follower.complete(me, true);
@@ -337,9 +337,10 @@ struct RabidBear
             return;
         captured = true;
         steps.cancel(Step.rabies);
-        me.passive(true); // the fight is over
-        me.updateEntry(capturedBear);
-        me.passive(false);
+        me.reactState(Reaction.passive);
+        me.evade(); // the fight is over
+        me.changeEntry(capturedBear);
+        me.reactState(Reaction.aggressive);
         if (me.questStatus(e.caster, questPlaguedLands) == QuestProgress.incomplete)
         {
             me.killCredit(e.caster, capturedBear);

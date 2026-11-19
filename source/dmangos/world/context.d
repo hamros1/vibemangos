@@ -66,7 +66,7 @@ import dmangos.world.terrain : Terrain;
 import dmangos.world.group : GroupDirectory, Groups, memberStatus, MemberStatus;
 import dmangos.world.groupservice : groupCommand, GroupOp, GroupService;
 import dmangos.cluster.protocol : GmRemote, GroupCommand, KillShare, ScriptSignal;
-import dmangos.world.map : Inhabitant, Map, MapObject, MapSettings;
+import dmangos.world.map : Inhabitant, Map, MapObject, MapSettings, VisibilityFacts;
 import dmangos.world.online : OnlinePlayer;
 import dmangos.world.playercreate : CreationSettings;
 import dmangos.world.worlddata : EventCreature, EventMail, Ship, SpellListEntry, WorldData;
@@ -1305,6 +1305,31 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return map(who.character.data.map, who.instanceId);
     }
 
+    /// What `Map`'s `playerSees` needs of the world: a group, a side, the viewer's corpse.
+    private VisibilityFacts visibilityFacts(Map map_, ulong viewer, ulong seen, Position seenAt)
+    {
+        import dmangos.world.character : Character;
+
+        VisibilityFacts f;
+        f.sameGroup = groups.sameGroup(viewer, seen);
+        ubyte raceOf(ulong guid)
+        {
+            if (auto local = onlinePlayer(guid))
+                return local.character.data.race;
+            if (auto remote = remotePlayer(guid))
+                return remote.entry.race;
+            return 0;
+        }
+        const a = raceOf(viewer), b = raceOf(seen);
+        f.cooperate = a && b && client.teamForRace(a) == client.teamForRace(b);
+        if (auto local = cast(Character) onlinePlayer(viewer))
+            if (const body_ = local.ownCorpse())
+                if (body_.map == map_.id)
+                    f.corpseDistance = ((body_.at.x - seenAt.x) ^^ 2 + (body_.at.y - seenAt.y) ^^ 2
+                        + (body_.at.z - seenAt.z) ^^ 2) ^^ 0.5f;
+        return f;
+    }
+
     private Map makeMap(uint id, uint instance)
     {
         bool delegate(ulong) owns;
@@ -1320,6 +1345,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         if (instance == 0) // a dungeon's copies are all on one node: nobody else needs replicas of them
             created.replicator = replicator;
         created.onCorpseRemoved = &corpseRemoved;
+        created.visibilityFacts = (ulong viewer, ulong seen, Position seenAt) => visibilityFacts(created, viewer,
+            seen, seenAt);
         created.onReplicaNoticing = &replicaNoticing;
         created.onTrap = (Inhabitant who, GameObject trap) { trapSprung(created, who, trap); };
         created.onWaypointScript = (Creature creature, uint scriptId) {
@@ -1331,8 +1358,13 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         created.onObjectGone = &objectGone;
         created.onCreatureDeath = (Creature c) {
             linkedDeath(created, c); // its pack's part first, while it is still known
+            const killer = c.lootRecipient; // before `die` forgets it
             c.die(created, unixTime);
             created.creatureDeaths.put(c);
+            if (instance) // a battleground's objectives (Alterac Valley's captains, generals and mines)
+                if (auto copy = battlegrounds.find(instance))
+                    if (copy.mapId == id)
+                        copy.rules.creatureKilled(copy, c.template_.entry, killer);
         };
         created.onLinked = &linkedEvent;
         if (instance)
@@ -2685,14 +2717,6 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return summonCreature(world, entry, at, cast(TempSpawnType) type, durationMs, summoner);
     }
 
-    /// See `CreatureLore.startMovementScript`.
-    void startMovementScript(uint id, CombatWorld world, ulong source, ulong target)
-    {
-        import dmangos.world.dbscripts : DbScriptType;
-
-        startScript(DbScriptType.creatureMovement, id, cast(Map) world, source, target);
-    }
-
     /// See `CreatureLore.sameGroup`.
     bool sameGroup(ulong a, ulong b)
     {
@@ -3170,43 +3194,63 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             info!"script %s (%s %s): %s"(scripts.nameOf(go.behaviour), go.template_.name, go.spawn.guid, text);
         }
 
-        // Kalimdor scripts:
+        // Eastern Kingdoms scripts:
 
-        Location hostObjectLocation()
+        QuestProgress hostQuestStatus(EntityRef player, uint quest)
         {
-            const p = go.position;
-            return Location(p.x, p.y, p.z, p.orientation);
+            if (auto who = map.unit(player.guid))
+                return who.questStatusOf(quest);
+            return QuestProgress.none;
         }
 
-        QuestProgress hostObjectQuestStatus(EntityRef player, uint quest)
+        void hostQuestEvent(EntityRef player, uint quest)
         {
-            auto unit = map.unit(player.guid);
-            return unit ? unit.questStatusOf(quest) : QuestProgress.none;
+            if (auto who = map.unit(player.guid))
+                who.questEventHappened(quest);
         }
 
-        void hostObjectQuestEvent(EntityRef player, uint quest)
+        EntityRef hostObjectNearby(uint entry, float range)
         {
-            if (auto unit = map.unit(player.guid))
-                unit.questEventHappened(quest);
+            return EntityRef(nearestGameObject(map, go.position, entry, range, go.guid));
         }
 
-        void hostObjectKillCredit(EntityRef player, uint entry)
+        ActionResult hostObjectOpen(EntityRef object, bool open)
         {
-            if (auto unit = map.unit(player.guid))
-                unit.killCreditFrom(entry, 0);
+            auto other = cast(GameObject) map.findObject(object.guid);
+            if (other is null)
+                return ActionResult.notHere;
+            other.setDoorOpen(open);
+            map.flushGameObject(other);
+            return ActionResult.ok;
         }
 
-        EntityRef hostObjectSummon(uint entry, Location at, uint despawnMs, EntityRef attack)
+        ActionResult hostObjectFlags(EntityRef object, uint flags, bool set)
+        {
+            import dmangos.world.updatefields : GAMEOBJECT_FLAGS;
+
+            auto other = cast(GameObject) map.findObject(object.guid);
+            if (other is null)
+                return ActionResult.notHere;
+            const now = other.values.get!GAMEOBJECT_FLAGS;
+            other.values.set!GAMEOBJECT_FLAGS(set ? now | flags : now & ~flags);
+            map.flushGameObject(other);
+            return ActionResult.ok;
+        }
+
+        EntityRef hostCreatureNearby(uint entry, float range)
+        {
+            foreach (c; map.creaturesNear(go.position, range))
+                if (c.spawn.entry == entry && c.alive)
+                    return EntityRef(c.guid);
+            return EntityRef.init;
+        }
+
+        EntityRef hostSummon(uint entry, Location at, uint despawnMs, EntityRef attack)
         {
             import dmangos.world.creature : TempSpawnType;
 
-            if (at == Location.init)
-            {
-                const p = go.position;
-                at = Location(p.x, p.y, p.z, p.orientation);
-            }
             auto summoned = summonCreature(map, entry, Position(at.x, at.y, at.z, at.orientation),
-                despawnMs ? TempSpawnType.timedOutOfCombatOrDead : TempSpawnType.dead, despawnMs, 0);
+                despawnMs ? TempSpawnType.timedOutOfCombatOrDead : TempSpawnType.dead, despawnMs, go.guid);
             if (summoned is null)
                 return EntityRef.init;
             if (attack)
@@ -3215,12 +3259,29 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             return EntityRef(summoned.guid);
         }
 
-        EntityRef hostObjectCreatureNear(uint entry, float range)
+        ActionResult hostSayAs(EntityRef speaker, uint text, EntityRef target)
         {
-            foreach (c; map.creaturesNear(go.position, range))
-                if (c.spawn.entry == entry && c.alive)
-                    return EntityRef(c.guid);
-            return EntityRef.init;
+            if (broadcastText(text) is null)
+                return ActionResult.failed;
+            auto c = map.creatureAt(speaker.guid);
+            if (c is null || c.ai is null)
+                return ActionResult.notHere;
+            c.ai.sayFor(map, text, target.guid);
+            return ActionResult.ok;
+        }
+
+        void hostKillCredit(EntityRef player, uint entry)
+        {
+            if (auto who = map.unit(player.guid))
+                who.killCreditFrom(entry, go.guid);
+        }
+
+        // Kalimdor scripts:
+
+        Location hostObjectLocation()
+        {
+            const p = go.position;
+            return Location(p.x, p.y, p.z, p.orientation);
         }
 
         ActionResult hostObjectSignal(EntityRef to, uint id, int value)
@@ -3235,16 +3296,6 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 if (n < found.length && c.spawn.entry == entry && c.alive)
                     found[n++] = EntityRef(c.guid);
             return n;
-        }
-
-        void hostObjectUsable(bool usable)
-        {
-            import dmangos.world.updatefields : GAMEOBJECT_FLAGS;
-
-            enum uint goFlagNoInteract = 0x10;
-            const flags = go.values.get!GAMEOBJECT_FLAGS;
-            go.values.set!GAMEOBJECT_FLAGS(usable ? flags & ~goFlagNoInteract : flags | goFlagNoInteract);
-            map.flushGameObject(go);
         }
 
         ActionResult hostObjectCast(EntityRef caster, uint spell, EntityRef target)
@@ -3265,6 +3316,44 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 self ? caster.guid : target.guid), true, 0);
             return result == SpellCastResult.ok ? ActionResult.ok : ActionResult.notAllowed;
         }
+    }
+
+    /// The guid of the nearest game object of `entry` within `range` yards of `center` (not `except`); 0 if none.
+    private static ulong nearestGameObject(Map map, Position center, uint entry, float range, ulong except = 0)
+    {
+        ulong best;
+        float bestDistance = float.max;
+        foreach (o; map.objectsNear(center, range))
+            if (auto g = cast(GameObject) o)
+                if (g.template_.entry == entry && g.guid != except)
+                {
+                    const p = g.position;
+                    const d = (p.x - center.x) ^^ 2 + (p.y - center.y) ^^ 2 + (p.z - center.z) ^^ 2;
+                    if (d <= range * range && d < bestDistance)
+                    {
+                        bestDistance = d;
+                        best = g.guid;
+                    }
+                }
+        return best;
+    }
+
+    /// See `CreatureLore.gameObjectNear`.
+    ulong gameObjectNear(CombatWorld world, Position center, uint entry, float range)
+    {
+        auto map = cast(Map) world;
+        return map is null ? 0 : nearestGameObject(map, center, entry, range);
+    }
+
+    /// See `CreatureLore.useGameObject`.
+    ActionResult useGameObject(CombatWorld world, ulong guid)
+    {
+        auto map = cast(Map) world;
+        auto g = map is null ? null : cast(GameObject) map.findObject(guid);
+        if (g is null)
+            return ActionResult.notHere;
+        g.useDoorOrButton(map);
+        return ActionResult.ok;
     }
 
     private GoHost goHost_;

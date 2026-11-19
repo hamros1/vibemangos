@@ -27,7 +27,7 @@ mixin template SpellHandlers()
     import std.random : uniform, uniform01;
     import dmangos.bytes : ByteReader, ByteWriter;
     import dmangos.log : info, warning;
-    import dmangos.world.combat : AttackType, armorReducedDamage, blockChance, critChance, dodgeChance, missChance,
+    import dmangos.world.combat : AttackType, armorReducedDamage, creatureTypeHumanoid, blockChance, critChance, dodgeChance, missChance,
         parryChance, weaponDamage;
     import dmangos.world.auras : AuraInterrupt;
     import dmangos.world.inworld : ArrivalAction;
@@ -1290,7 +1290,11 @@ private:
             {
                 const cost = costOf(*spell);
                 if (cost > 0)
+                {
                     player.modifyPower(cast(Power) spell.casting.powerType, -cost);
+                    if (spell.casting.powerType == Power.mana)
+                        player.manaSpent(); // the five-second rule
+                }
                 foreach (i, reagent; spell.reagents)
                     if (reagent > 0 && spell.casting.reagentCount[i])
                         player.inventory.destroyCount(reagent, spell.casting.reagentCount[i]);
@@ -2051,6 +2055,7 @@ private:
     package void spellDamageToPlayer(const(SpellInfo)* spell, typeof(this) other, uint damage)
     {
         damage += spellDamageBonus(spell, spell.casting.school); // spell power, as against a creature
+        damage = spellDamageFactors(damage, spell.casting.school, creatureTypeHumanoid, other.player.damageMods.taken);
         const crit = !(spell.attributesEx2 & spellAttrEx2CantCrit) && uniform01(map.random) * 100 < spellCritOf(spell);
         if (crit)
             damage = damage * 3 / 2;
@@ -2067,7 +2072,7 @@ private:
         enterCombatFor(combatLinger);
         import dmangos.world.unit : Blow, dealDamage;
 
-        dealDamage(unit, other.unit, damage, Blow.spell());
+        dealDamage(unit, other.unit, damage, Blow.spell(school));
         if (other.player !is null && other.player.fighter.alive)
         {
             import dmangos.world.aurahandlers : ProcFlag;
@@ -2120,9 +2125,28 @@ private:
         return cast(uint)(done * time / 3500.0f);
     }
 
+    /**
+     * `damage` with what auras make of it: the caster's for its school and the victim's creature type
+     * (`MOD_DAMAGE_PERCENT_DONE`, `MOD_DAMAGE_DONE_VERSUS`), the victim's for the school (`taken`).
+     */
+    uint spellDamageFactors(uint damage, uint school, uint victimType, const ref float[7] taken)
+    {
+        import dmangos.world.combat : creatureTypes;
+
+        if (school >= 7)
+            return damage;
+        const mods = &player.damageMods;
+        const versus = victimType < creatureTypes ? mods.versus[victimType] : 1;
+        return cast(uint)(damage * mods.school[school] * versus * taken[school]);
+    }
+
     void spellDamage(const(SpellInfo)* spell, Creature victim, uint damage, uint school)
     {
         damage += spellDamageBonus(spell, school);
+        {
+            const victimFighter = victim.fighter;
+            damage = spellDamageFactors(damage, school, victimFighter.creatureType, victimFighter.damageTaken);
+        }
         const crit = !(spell.attributesEx2 & spellAttrEx2CantCrit) && uniform01(map.random) * 100 < spellCritOf(spell);
         if (crit)
             damage = damage * 3 / 2;
@@ -2142,7 +2166,7 @@ private:
         }
         map.sendToWatchers(this, Opcode.SMSG_SPELLNONMELEEDAMAGELOG, nonMeleeDamageLog(target: victim.guid, attacker: player.guid,
             spell.id, damage, school, 0, resisted, false, 0, crit), true);
-        spellAttacked(victim, damage);
+        spellAttacked(victim, damage, false, school);
         if (victim.alive)
         {
             import dmangos.world.aurahandlers : ProcFlag;
@@ -2208,14 +2232,14 @@ private:
 
     /// A creature hit (or missed) by this player's spell, or its aura's tick: it fights back, takes the
     /// damage, and may die (`dmangos.world.unit.dealDamage`).
-    void spellAttacked(Creature victim, uint damage, bool tick = false)
+    void spellAttacked(Creature victim, uint damage, bool tick = false, uint school = 0)
     {
         import dmangos.world.unit : Blow, dealDamage;
 
         if (!victim.alive)
             return;
         enterCombatFor(combatLinger);
-        dealDamage(unit, map.unitOf(victim), damage, tick ? Blow.periodic() : Blow.spell());
+        dealDamage(unit, map.unitOf(victim), damage, tick ? Blow.periodic(school) : Blow.spell(school));
     }
 
     /// A heal: health back, a crit half again, and the heal log sent.

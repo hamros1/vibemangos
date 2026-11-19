@@ -95,7 +95,7 @@ struct Oox22fe
         foreach (i, entry; entries)
         {
             ambush[i] = me.summon(entry, at[i], 10_000);
-            me.attackBy(ambush[i], me.self);
+            me.attack(ambush[i], me.self);
         }
     }
 }
@@ -167,7 +167,7 @@ struct ShayLeafrunner
             if (!r)
                 break;
             me.say(sayComplete1);
-            me.sayFrom(r, sayComplete2);
+            me.sayOther(r, sayComplete2);
             me.groupQuestEvent(follower.player, questWanderingShay);
             follower.complete(me, true);
             Location there;

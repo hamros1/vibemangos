@@ -122,6 +122,7 @@ private:
             player.gmTagOn = true;
             player.setFlag(PlayerFlags.gm, true); // <GM>
             flushPlayerChanges();
+            map.refreshVisibility(this); // with the tag on, ghosts are seen
             blueSystemMessage("GM Flag Set. It will appear above your name and in chat messages until you use "
                 ~ "!gm off.");
         }
@@ -138,6 +139,7 @@ private:
             player.gmTagOn = false;
             player.setFlag(PlayerFlags.gm, false);
             flushPlayerChanges();
+            map.refreshVisibility(this); // with the tag on, ghosts are seen
             blueSystemMessage("GM Flag Removed. <GM> Will no longer show in chat messages or above your name.");
         }
         return true;

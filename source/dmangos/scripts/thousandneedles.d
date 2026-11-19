@@ -15,7 +15,7 @@ private void ambush(ref CreatureContext me, uint entry, const Location[] at, uin
     {
         const summoned = me.summon(entry, spot, despawnMs);
         if (atMe)
-            me.attackBy(summoned, me.self);
+            me.attack(summoned, me.self);
     }
 }
 
@@ -53,7 +53,7 @@ struct Kanati
         {
             me.unitFlags(UnitFlag.immuneToNpc);
             me.groupQuestEvent(escort.player, questProtectKanati);
-            me.restoreFaction();
+            me.setFaction(0);
         }
     }
 }
@@ -167,13 +167,13 @@ struct PluckyJohnson
         becomeChicken(me);
     }
 
-    void on(ref CreatureContext me, const ref Emoted e)
+    void on(ref CreatureContext me, const ref EmoteReceived e)
     {
         if (human)
             return;
-        if (e.emote == textEmoteBeckon && me.questStatus(e.player, questScoop) == QuestProgress.incomplete)
+        if (e.textEmote == textEmoteBeckon && me.questStatus(e.player, questScoop) == QuestProgress.incomplete)
             becomeHuman(me);
-        else if (e.emote == textEmoteChicken)
+        else if (e.textEmote == textEmoteChicken)
         {
             becomeHuman(me);
             me.emote(emoteWave);
@@ -221,7 +221,7 @@ struct PluckyJohnson
         human = false;
         steps.clear();
         me.restoreNpcFlags();
-        me.restoreFaction();
+        me.setFaction(0);
         me.removeAura(me.self, spellPluckyHuman);
         me.castSelf(spellPluckyChicken);
     }
@@ -244,10 +244,10 @@ unittest
 
     auto p = Driven!self("npc_plucky_johnson", 6626);
     p.raise(Spawned());
-    p.raise(Emoted(hero, PluckyJohnson.textEmoteBeckon));
+    p.raise(EmoteReceived(hero, PluckyJohnson.textEmoteBeckon));
     assert(!p.host.has("npcflags 1"), "not on the quest");
     p.host.quests[PluckyJohnson.questScoop] = QuestProgress.incomplete;
-    p.raise(Emoted(hero, PluckyJohnson.textEmoteBeckon));
+    p.raise(EmoteReceived(hero, PluckyJohnson.textEmoteBeckon));
     assert(p.host.has("npcflags 1") && p.host.has("cast 9192"));
     p.raise(GossipSelect(hero, 0, 0, PluckyJohnson.tellPhrase));
     assert(p.host.has("event 1950"));

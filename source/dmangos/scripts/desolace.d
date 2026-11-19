@@ -29,7 +29,7 @@ struct AgedDyingAncientKodo
             return;
         tamer = e.caster;
         me.castSpell(spellKomboPlayerBuff, e.caster, true);
-        me.updateEntry(tamedKodo);
+        me.changeEntry(tamedKodo);
         me.castSelf(spellKomboDespawnBuff, true);
         me.follow(e.caster);
         steps.every(Step.look, 1.seconds);
@@ -45,7 +45,7 @@ struct AgedDyingAncientKodo
             if (const smeedRef = me.creatureNearby(smeed, 10))
             {
                 home = true;
-                me.sayFrom(smeedRef, saySmeedHome1 - cast(int) me.random(3));
+                me.sayOther(smeedRef, saySmeedHome1 - cast(int) me.random(3));
                 me.follow(EntityRef.init);
                 me.npcFlags(gossipFlag);
                 steps.cancel(Step.look);
@@ -153,21 +153,21 @@ struct MelizzaBrimbuzzle
         case 4:
             foreach (at; marauderAt)
                 foreach (_; 0 .. 2)
-                    me.attackBy(me.summon(maraudineMarauder, near(me, at, 7)), me.self);
+                    me.attack(me.summon(maraudineMarauder, near(me, at, 7)), me.self);
             break;
         case 9:
             foreach (_; 0 .. 3)
             {
-                me.attackBy(me.summon(maraudineBonepaw, near(me, wranglerAt, 10)), me.self);
-                me.attackBy(me.summon(maraudineWrangler, near(me, wranglerAt, 10)), me.self);
+                me.attack(me.summon(maraudineBonepaw, near(me, wranglerAt, 10)), me.self);
+                me.attack(me.summon(maraudineWrangler, near(me, wranglerAt, 10)), me.self);
             }
             break;
         case 12:
-            escort.pause(true);
+            escort.paused = true;
             steps.after(Step.free, 1.seconds);
             break;
         case 19:
-            escort.pause(true);
+            escort.paused = true;
             steps.after(Step.say1, 2.seconds);
             break;
         default:
@@ -182,9 +182,9 @@ struct MelizzaBrimbuzzle
         case Step.free:
             me.say(sayFinish, escort.player);
             me.groupQuestEvent(escort.player, questGetMeOut);
-            me.restoreFaction();
+            me.setFaction(0);
             escort.run = true;
-            escort.pause(false);
+            escort.paused = false;
             break;
         case Step.say1:
             me.say(say1);
@@ -199,17 +199,17 @@ struct MelizzaBrimbuzzle
             steps.after(Step.onward, 4.seconds);
             break;
         case Step.onward:
-            escort.pause(false);
+            escort.paused = false;
             steps.after(Step.hornizz1, 6.seconds);
             break;
         case Step.hornizz1:
             if (const h = me.creatureNearby(hornizz, 100))
-                me.sayFrom(h, sayHornizz1);
+                me.sayOther(h, sayHornizz1);
             steps.after(Step.hornizz2, 10.seconds);
             break;
         case Step.hornizz2:
             if (const h = me.creatureNearby(hornizz, 100))
-                me.sayFrom(h, sayHornizz2);
+                me.sayOther(h, sayHornizz2);
             break;
         }
     }

@@ -130,7 +130,7 @@ struct Oox17tn
             ambush[0] = attacker(me, scofflaw, Location(-7488.02f, -4786.56f, 10.67f, 3.74f));
             ambush[1] = attacker(me, shadowMage, Location(-7486.41f, -4791.55f, 10.54f, 3.26f));
             ambush[2] = attacker(me, scofflaw, Location(-7488.47f, -4800.77f, 9.77f, 2.50f));
-            me.sayFrom(ambush[2], sayAmbushReply);
+            me.sayOther(ambush[2], sayAmbushReply);
             break;
         case 35:
             me.say(sayEnd);
@@ -152,7 +152,7 @@ struct Oox17tn
     private static EntityRef attacker(ref CreatureContext me, uint entry, Location at)
     {
         const summoned = me.summon(entry, at, 30_000);
-        me.attackBy(summoned, me.self);
+        me.attack(summoned, me.self);
         return summoned;
     }
 }
@@ -221,12 +221,12 @@ struct Tooga
             switch (++phase)
             {
             case 1: me.say(sayPost1); break;
-            case 2: me.sayFrom(tortaRef, sayTortPost2); break;
+            case 2: me.sayOther(tortaRef, sayTortPost2); break;
             case 3: me.say(sayPost3); break;
-            case 4: me.sayFrom(tortaRef, sayTortPost4); break;
+            case 4: me.sayOther(tortaRef, sayTortPost4); break;
             case 5: me.say(sayPost5); break;
             case 6:
-                me.sayFrom(tortaRef, sayTortPost6);
+                me.sayOther(tortaRef, sayTortPost6);
                 me.moveTo(Location(-7032.664551f, -4906.199219f, -1.606446f), pointWater);
                 steps.cancel(Step.talk);
                 break;

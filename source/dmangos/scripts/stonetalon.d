@@ -32,9 +32,9 @@ struct Kaya
         if (point + 1 == 17)
         {
             me.say(sayAmbush);
-            me.attackBy(me.summon(grimtotemRuffian, Location(-50.75f, -500.77f, -46.13f, 0.4f), 30_000), me.self);
-            me.attackBy(me.summon(grimtotemBrute, Location(-40.05f, -510.89f, -46.05f, 1.7f), 30_000), me.self);
-            me.attackBy(me.summon(grimtotemSorcerer, Location(-32.21f, -499.20f, -45.35f, 2.8f), 30_000), me.self);
+            me.attack(me.summon(grimtotemRuffian, Location(-50.75f, -500.77f, -46.13f, 0.4f), 30_000), me.self);
+            me.attack(me.summon(grimtotemBrute, Location(-40.05f, -510.89f, -46.05f, 1.7f), 30_000), me.self);
+            me.attack(me.summon(grimtotemSorcerer, Location(-32.21f, -499.20f, -45.35f, 2.8f), 30_000), me.self);
         }
         else if (point + 1 == 19)
         {

@@ -95,9 +95,9 @@ struct TaskmasterFizzule
             advance(me, 4);
     }
 
-    void on(ref CreatureContext me, const ref Emoted e)
+    void on(ref CreatureContext me, const ref EmoteReceived e)
     {
-        if (e.emote == textEmoteSalute && flares == 2)
+        if (e.textEmote == textEmoteSalute && flares == 2)
             advance(me, 3);
     }
 
@@ -106,8 +106,8 @@ struct TaskmasterFizzule
         flares = 0;
         me.restoreNpcFlags();
         me.unitFlags(UnitFlag.immuneToPlayer, false);
-        me.restoreFaction();
-        me.passive(false);
+        me.setFaction(0);
+        me.reactState(Reaction.aggressive);
     }
 
     private void advance(ref CreatureContext me, ubyte to)
@@ -139,7 +139,8 @@ struct TaskmasterFizzule
     private void standDown(ref CreatureContext me)
     {
         me.setFaction(factionFriendly);
-        me.passive(true); // the fight is over
+        me.reactState(Reaction.passive);
+        me.evade(); // the fight is over
     }
 }
 
@@ -213,7 +214,7 @@ struct TwiggyFlathead
             me.say(sayFray);
             const next = challengers[ready++];
             me.setFactionOf(next, factionChallenger);
-            me.attackBy(next, player);
+            me.attack(next, player);
             if (ready == challengers.length)
             {
                 ++stage;
@@ -225,13 +226,13 @@ struct TwiggyFlathead
         case 2:
             will = me.summon(bigWill, willSpawn, 300_000);
             me.setFactionOf(will, factionFriendly);
-            me.moveOther(will, willArena, 1, true);
+            me.moveCreature(will, willArena, 1, true);
             ++stage;
             steps.after(Step.next, 15.seconds);
             break;
         case 3:
             me.setFactionOf(will, factionWill);
-            me.sayFrom(will, sayBigWillReady, player);
+            me.sayOther(will, sayBigWillReady, player);
             ++stage;
             steps.after(Step.next, 5.seconds);
             break;
@@ -241,11 +242,13 @@ struct TwiggyFlathead
         }
     }
 
-    void on(ref CreatureContext me, const ref SummonDied e)
+    void on(ref CreatureContext me, const ref SummonedDied e)
     {
+        if (e.gone)
+            return;
         if (!inProgress)
             return;
-        if (e.summon == will)
+        if (e.summoned == will)
         {
             me.say(sayOver);
             reset();
@@ -327,12 +330,12 @@ struct WizzlecranksShredder
         case 18:
             if (const merc = me.summon(mercenary, Location(1128.489f, -3037.611f, 92.701f, 1.472f), 120_000))
             {
-                me.sayFrom(merc, sayMercenary);
-                me.attackBy(merc, me.self);
+                me.sayOther(merc, sayMercenary);
+                me.attack(merc, me.self);
                 mercenariesLeft = 1;
                 if (const other = me.summon(mercenary, Location(1160.172f, -2980.168f, 97.313f, 3.690f), 120_000))
                 {
-                    me.attackBy(other, me.self);
+                    me.attack(other, me.self);
                     ++mercenariesLeft;
                 }
             }
@@ -347,9 +350,11 @@ struct WizzlecranksShredder
         }
     }
 
-    void on(ref CreatureContext me, const ref SummonDied e)
+    void on(ref CreatureContext me, const ref SummonedDied e)
     {
-        if (e.summon.entry == mercenary && mercenariesLeft && --mercenariesLeft == 0)
+        if (e.gone)
+            return;
+        if (e.summoned.entry == mercenary && mercenariesLeft && --mercenariesLeft == 0)
             runOn(me);
     }
 
@@ -453,14 +458,16 @@ struct RegtharDeathgate
             begin(me, e.player);
     }
 
-    void on(ref CreatureContext me, const ref SummonDied e)
+    void on(ref CreatureContext me, const ref SummonedDied e)
     {
+        if (e.gone)
+            return;
         if (!started)
             return;
-        if (e.summon.entry == warlordKromzar)
+        if (e.summoned.entry == warlordKromzar)
             return finish(me);
         foreach (i, ref h; horde)
-            if (h == e.summon)
+            if (h == e.summoned)
             {
                 h = EntityRef.init;
                 uint dead;
@@ -472,7 +479,7 @@ struct RegtharDeathgate
                 return;
             }
         foreach (i, ref k; kolkar)
-            if (k == e.summon)
+            if (k == e.summoned)
             {
                 k = EntityRef.init;
                 kolkarDue[i] = 10_000;
@@ -563,11 +570,11 @@ unittest
     // Fizzule: two flares, then a salute: a quest giver; two minutes later himself again.
     auto f = Driven!self("npc_taskmaster_fizzule", 7233);
     f.raise(SpellHit(hero, TaskmasterFizzule.spellFlare));
-    f.raise(Emoted(hero, TaskmasterFizzule.textEmoteSalute));
+    f.raise(EmoteReceived(hero, TaskmasterFizzule.textEmoteSalute));
     assert(!f.host.has("npcflags 2"), "one flare is not enough");
     f.raise(SpellHit(hero, TaskmasterFizzule.spellFlare));
     assert(f.host.has("faction 35") && f.host.has("passive"));
-    f.raise(Emoted(hero, TaskmasterFizzule.textEmoteSalute));
+    f.raise(EmoteReceived(hero, TaskmasterFizzule.textEmoteSalute));
     assert(f.host.has("npcflags 2") && f.host.has("emote 66"));
     f.run(120_000);
     assert(f.host.has("npcflags restored") && f.host.has("faction 0"));
@@ -579,14 +586,14 @@ unittest
     assert(t.host.summons == 6);
     t.run(5000);
     assert(t.host.has("attack 6240 hero"));
-    t.raise(SummonDied(creatureRef(6240, 101), hero));
+    t.raise(SummonedDied(creatureRef(6240, 101), hero));
     assert(t.host.has("say -1000126"));
     foreach (_; 0 .. 6)
         t.run(25_000);
     assert(t.host.summons == 7 && t.host.has("move 6238 1"), "Big Will comes");
     t.run(15_000);
     assert(t.host.has("faction of 6238 32") && t.host.has("say as 6238 -1000123"));
-    t.raise(SummonDied(creatureRef(6238, 107), hero));
+    t.raise(SummonedDied(creatureRef(6238, 107), hero));
     assert(t.host.has("say -1000127") && !t.busy);
 
     // The shredder: mercenaries at point 18; it runs on once they are dead; the pilot at the end.
@@ -594,8 +601,8 @@ unittest
     s.raise(QuestAccepted(hero, WizzlecranksShredder.questEscape));
     s.walkTo(17);
     assert(s.host.has("say as 3282 -1000301") && s.host.has("attack 3282 3439"));
-    s.raise(SummonDied(creatureRef(3282, 101), hero));
-    s.raise(SummonDied(creatureRef(3282, 102), hero));
+    s.raise(SummonedDied(creatureRef(3282, 101), hero));
+    s.raise(SummonedDied(creatureRef(3282, 102), hero));
     assert(s.host.has("say -1000302"));
     s.walkTo(24);
     s.run(25_000);
@@ -612,7 +619,7 @@ unittest
             if ((c.entry == 9523 || c.entry == 9524) && c !in killed)
             {
                 killed[c] = true;
-                r.raise(SummonDied(c, hero));
+                r.raise(SummonedDied(c, hero));
                 break;
             }
         r.run(10_000);
@@ -621,6 +628,6 @@ unittest
     assert(r.host.has("summon 9456"));
     foreach (c; r.host.summoned)
         if (c.entry == 9456)
-            r.raise(SummonDied(c, hero));
+            r.raise(SummonedDied(c, hero));
     assert(r.host.has("say -1010003") && !r.busy);
 }
