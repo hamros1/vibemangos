@@ -683,6 +683,9 @@ What works now:
       events (as in CMaNGOS), the herald speaking (its lines are battleground messages).
     * The players of a team who came alone are in one raid in the copy (its raid frames), made as the
     second arrives and left as they leave; those who came with a group stay in it.
+    * Taking an objective (a flag, a banner, a capture) ends Stealth, Divine Shield and the like
+    (`AURA_INTERRUPT_FLAG_PVP_ACTIVE_CANCELS`); a carried flag falls when its aura goes otherwise (clicked off,
+    or purged as its carrier becomes immune).
     * A player killed there may have their insignia taken by an enemy (Remove Insignia, from the body or the
     corpse): released if not yet, the corpse turns to bones the enemy loots (a little money by level, the
     battleground's `PlayerSkinReflootId`). Elsewhere a body taken back or healed leaves bones for an hour.

@@ -129,7 +129,7 @@ mixin template GameObjectHandlers()
         // A battleground's objective (a flag, a banner): its rules first.
         if (auto copy = currentBattleground())
             if (copy.rules.objectUsed(copy, player.guid, go))
-                return;
+                return copy.pvpActive(player.guid);
         // Its script first: it may handle the use itself.
         if (context.gameObjectUsed(go, map, player.guid))
             return;

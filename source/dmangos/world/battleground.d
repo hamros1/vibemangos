@@ -119,6 +119,9 @@ class BattlegroundRules
     /// `who` used `go` (a flag, a banner); true if it was the battleground's to handle.
     bool objectUsed(Battleground copy, ulong who, GameObject go) { return false; }
 
+    /// `who` lost the aura of `spell` (cancelled, purged by an immunity, dispelled).
+    void auraLost(Battleground copy, ulong who, uint spell) {}
+
     /// `who` walked into `trigger`; true if the trigger is the battleground's (handled).
     bool areaTrigger(Battleground copy, ulong who, uint trigger) { return false; }
 
@@ -464,6 +467,18 @@ final class Battleground
         if (auto dead = cast(imported!"dmangos.world.character".Character) context.onlinePlayer(victim))
             if (dead.player !is null)
                 dead.markInsignia();
+    }
+
+    /**
+     * `who` acted on an objective (took a flag or a banner, captured): what ends with that ends
+     * (`AURA_INTERRUPT_FLAG_PVP_ACTIVE_CANCELS`: Stealth, Divine Shield, Ice Block and the like).
+     */
+    void pvpActive(ulong who)
+    {
+        import dmangos.world.auras : AuraInterrupt;
+
+        if (auto c = cast(imported!"dmangos.world.character".Character) context.onlinePlayer(who))
+            c.interruptAuras(AuraInterrupt.pvpActiveCancels);
     }
 
     /// Bonus honor worth `kills` kills to everyone of `team` here, on their scores.

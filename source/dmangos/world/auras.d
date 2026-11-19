@@ -37,6 +37,7 @@ enum AuraInterrupt : uint
     standingCancels = 0x00040000,
     leaveWorld = 0x00080000,
     mounting = 0x00020000,
+    pvpActiveCancels = 0x00800000, /// taking a battleground's objective (Stealth, Divine Shield, ...)
     nonPeriodicDamage = 0x01000000,
 }
 

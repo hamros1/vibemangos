@@ -311,6 +311,14 @@ private:
         }
     }
 
+    /// The flag's aura gone otherwise (cancelled, purged when its carrier became immune): the flag falls.
+    public override void auraLost(Battleground copy, ulong who, uint spell)
+    {
+        foreach (ubyte side; 0 .. 2)
+            if (carrier[side] == who && spell == carriedFlagSpells[side])
+                dropFlagOf(copy, who);
+    }
+
     /// `HandlePlayerDroppedFlag`: the flag `who` carries falls where it is.
     void dropFlagOf(Battleground copy, ulong who)
     {
@@ -341,6 +349,7 @@ private:
     /// `ProcessPlayerFlagScoreEvent`: `who` of `team` brought the enemy's flag home.
     void capture(Battleground copy, ulong who, ubyte team)
     {
+        copy.pvpActive(who);
         const other = cast(ubyte)(1 - team);
         carrier[other] = 0;
         copy.setWorldState(flagStates[other], flagOnBase);
@@ -510,6 +519,14 @@ unittest
     assert(copy.worldStates[stateFlagAlliance] == flagOnBase && flag(goSilverwingFlag) !is null
         && flag(goSilverwingFlagDrop) is null, "returned to its base");
     assert(copy.members[7].extra[scoreReturns] == 1);
+
+    // Its aura lost otherwise (an immunity purged it, or Thrall clicked it off): it falls too; Anduin returns it.
+    assert(rules.objectUsed(copy, 8, flag(goSilverwingFlag)) && rules.carrier[0] == 8);
+    rules.auraLost(copy, 8, carriedFlagSpells[1]);
+    assert(rules.carrier[0] == 8, "not the flag's aura");
+    rules.auraLost(copy, 8, carriedFlagSpells[0]);
+    assert(rules.carrier[0] == 0 && copy.worldStates[stateFlagAlliance] == flagOnGround);
+    assert(rules.objectUsed(copy, 7, flag(goSilverwingFlagDrop)) && copy.worldStates[stateFlagAlliance] == flagOnBase);
 
     // Three captures by the Horde.
     foreach (n; 1 .. 4)

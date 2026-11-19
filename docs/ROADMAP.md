@@ -162,8 +162,6 @@ The largest area. In order:
    * Milestone E, Alterac Valley: **done** (`alterac.d`): reinforcements, graveyards and towers, mines,
      captains and generals; the turn-in quests' events not yet.
    * Not yet:
-     * Removing stealth and the like on objectives (`AURA_INTERRUPT_FLAG_PVP_ACTIVE_CANCELS`).
-     * A flag dropped when its carrier becomes immune.
      * pvpstats.
      * A queue service that moves to another node starts empty.
 

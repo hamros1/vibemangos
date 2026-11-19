@@ -398,6 +398,9 @@ private:
         player.auras.remove(aura, player.values);
         auraEffects(aura, false);
         flushPlayerChanges();
+        if (battleground_.instance)
+            if (auto copy = currentBattleground())
+                copy.rules.auraLost(copy, player.guid, aura.spell.id); // a flag's: it falls
     }
 
     /// The negative auras go, and with `positive` the positive ones too (not the passive).
@@ -455,6 +458,14 @@ private:
                     if (const t = cast(uint) aura.misc(i) in context.data.creatureTemplates)
                         display = t.modelId1;
                 player.values.set!UNIT_FIELD_MOUNTDISPLAYID(display);
+                break;
+            // An immunity purges what ends with one (a carried flag: `AURA_INTERRUPT_FLAG_INVULNERABILITY_BUFF_CANCELS`):
+            // an effect immunity that helps, a school immunity with `SPELL_ATTR_EX_IMMUNITY_PURGES_EFFECT`.
+            case AuraType.effectImmunity, AuraType.schoolImmunity:
+                enum uint invulnerabilityCancels = 0x00200000, immunityPurges = 0x00008000;
+                if (apply && (aura.type(i) == AuraType.effectImmunity ? aura.positive
+                        : (aura.spell.attributesEx & immunityPurges) != 0))
+                    interruptAuras(invulnerabilityCancels);
                 break;
             case AuraType.modStealth: // who sees it changes (`Map`'s `playerSees`)
                 if (map !is null)
