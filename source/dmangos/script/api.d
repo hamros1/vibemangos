@@ -180,6 +180,7 @@ struct SpellHit
 {
     EntityRef caster;
     uint spell;
+    uint schoolMask; /// Raid scripts: the schools it struck with (`SpellSchoolMask`: 1 physical, 4 fire, 8 nature, 16 frost, ...)
 }
 
 /// A message from another script (`from`: a creature, or nothing for its dungeon's script).
@@ -302,6 +303,7 @@ interface CreatureHost
     void hostDie();
     void hostAddThreat(EntityRef who, float amount);
     ActionResult hostSendAgainst(EntityRef creature, EntityRef target);
+    ActionResult hostSendTo(EntityRef creature, Location at, bool run);
     void hostMoveNow(Location at, uint point, bool run);
     void hostSpellList(uint id);
     ubyte hostClassOf(EntityRef who);
@@ -567,6 +569,9 @@ struct CreatureContext
 
     /// Another creature here attacks `target` (its adds, its summons).
     ActionResult sendAgainst(EntityRef creature, EntityRef target) { return host.hostSendAgainst(creature, target); }
+
+    /// Another creature here walks (runs) to `at`, as its `moveTo` would.
+    ActionResult sendTo(EntityRef creature, Location at, bool run = false) { return host.hostSendTo(creature, at, run); }
 
     /// As `moveTo`, but at once even in a fight (turn its combat movement off first, or it chases its
     /// victim again): a dragon taking to the air, a boss going to its place.

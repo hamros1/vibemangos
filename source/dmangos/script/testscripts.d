@@ -143,6 +143,7 @@ final class FakeCreature : CreatureHost
     void hostDie() {}
     void hostAddThreat(EntityRef, float) {}
     ActionResult hostSendAgainst(EntityRef, EntityRef) { return ActionResult.ok; }
+    ActionResult hostSendTo(EntityRef, Location, bool) { return ActionResult.ok; }
     void hostMoveNow(Location, uint, bool) {}
     void hostSpellList(uint) {}
     ubyte hostClassOf(EntityRef) { return 0; }

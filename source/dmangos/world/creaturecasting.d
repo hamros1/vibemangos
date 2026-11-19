@@ -76,7 +76,7 @@ mixin template CreatureCasting()
     void spellHitBy(ulong caster, uint spell, uint schoolMask, CombatWorld world)
     {
         world_ = world;
-        raiseScript(SpellHit(EntityRef(caster), spell));
+        raiseScript(SpellHit(EntityRef(caster), spell, schoolMask));
         if (script is null)
             return;
         script.spellHit(this, caster, spell, schoolMask);

@@ -186,6 +186,17 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
   `npc_kaldorei_elite`, `boss_moam`, `boss_buru`, `npc_buru_egg`, `boss_ayamiss`, `npc_hive_zara_larva`,
   `boss_ossirian`, `go_ossirian_crystal`, `mob_anubisath_guardian`
 
+## scripts/templeofahnqiraj.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/kalimdor/temple_of_ahnqiraj/` (`temple_of_ahnqiraj.cpp`, `temple_of_ahnqiraj.h`,
+  `boss_skeram.cpp`, `boss_bug_trio.cpp`, `boss_sartura.cpp`, `boss_fankriss.cpp`, `boss_viscidus.cpp`,
+  `boss_huhuran.cpp`, `boss_twinemperors.cpp`, `boss_ouro.cpp`, `boss_cthun.cpp`, `mob_anubisath_sentinel.cpp`)
+* Functions/ScriptNames: `instance_temple_of_ahnqiraj`, `at_temple_ahnqiraj`, `boss_skeram`, `boss_kri`,
+  `boss_vem`, `boss_yauj`, `boss_sartura`, `boss_fankriss`, `boss_viscidus`, `boss_huhuran`, `boss_veknilash`,
+  `boss_veklor`, `boss_ouro`, `npc_ouro_spawner`, `npc_ouro_mound`, `npc_ouro_scarab`, `npc_ouro_trigger`,
+  `boss_eye_of_cthun`, `boss_cthun`, `mob_giant_claw_tentacle`, `mob_anubisath_sentinel`, `mob_anubisath_defender`
+
 ## timer.d
 
 * Projects: CMaNGOS, Ember

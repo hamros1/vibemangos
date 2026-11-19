@@ -944,4 +944,14 @@ mixin template CreatureScripting()
         other.ai.attackStart(victim, world_);
         return ActionResult.ok;
     }
+
+    ActionResult hostSendTo(EntityRef creature, Location at, bool run)
+    {
+        auto other = world_ is null ? null : world_.creatureAt(creature.guid);
+        if (other is null || !other.alive)
+            return ActionResult.notHere;
+        other.ai.bind(world_);
+        other.ai.hostMoveTo(at, 0, run);
+        return ActionResult.ok;
+    }
 }
