@@ -318,6 +318,13 @@ struct UnitInSight
     EntityRef unit;
 }
 
+/// A stealthed unit came near enough to put it on its guard, not near enough to be seen (CMaNGOS's
+/// `AI_EVENT_...` stealth alert: a lookout turns and calls out).
+struct StealthAlert
+{
+    EntityRef unit;
+}
+
 /// A player made a text emote (`TextEmotes`: 34 chicken, 21 cheer, 101 wave, ...) at it (`ReceiveEmote`).
 struct EmoteReceived
 {

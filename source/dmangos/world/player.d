@@ -1163,6 +1163,10 @@ private:
         f.shieldBlock = chances.shieldBlock;
         f.armor = stats.resistances[0] > 0 ? stats.resistances[0] : 0;
         damageMods.into(f);
+        f.stealthed = auras.hasType(AuraType.modStealth);
+        if (f.stealthed)
+            f.stealth = auras.total(AuraType.modStealth) + auras.total(AuraType.modStealthLevel);
+        f.stealthDetect = auras.totalByMisc(AuraType.modStealthDetect, 0);
         return f;
     }
 

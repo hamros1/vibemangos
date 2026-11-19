@@ -378,6 +378,10 @@ What works now:
   * **Creatures fight:** attacked, they fight back; aggressive ones
     (not `CREATURE_EXTRA_FLAG_NO_AGGRO_ON_SIGHT`) attack a hostile player that comes within their
     aggro radius (`Detection`, a yard more for each level the player is below them) and in sight.
+    A stealthed player (Stealth, Prowl) is seen only in front of them and near enough: CMaNGOS's 30
+    points, 5 a level above the first and detection auras, less the stealth's strength, three tenths
+    of a yard a point (a level 60 monster sees Stealth rank 4 at 7.5 yards); a little further, a
+    script hears a `StealthAlert`. Players still see stealthed players (not yet hidden from enemies).
     They keep a threat list (damage is threat; a new victim needs 110% of the current one's in melee
     reach, 130% elsewhere), chase in straight lines, swing with the attack table (crushing
     blows included), and give warriors rage. They give up (evade) when nobody is left to fight, or

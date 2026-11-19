@@ -203,6 +203,16 @@ struct AuraSet
         }
     }
 
+    /// Whether an effect of `type` is on, whatever its amount.
+    bool hasType(AuraType type) const
+    {
+        foreach (aura; list)
+            foreach (i; 0 .. 3)
+                if ((aura.effects & (1 << i)) && aura.type(i) == type)
+                    return true;
+        return false;
+    }
+
     /// The sum of the amounts of every effect of `type`.
     int total(AuraType type) const
     {

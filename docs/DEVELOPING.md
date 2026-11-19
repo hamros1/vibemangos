@@ -273,7 +273,8 @@ the databases (so load tests never touch a dev server's characters):
 ```sh
 tools/harness/setup.sh SOURCE_DATADIR   # once: copies a stopped MariaDB data directory, writes configs
 tools/harness/check.sh                  # unit tests, release builds, then the cluster regression
-tools/harness/check.sh --quick          # without the regression
+tools/harness/check.sh --quick          # without the regression (about 15 seconds: each module is compiled
+                                        # on its own, in parallel, with -allinst, then linked)
 tools/harness/regression.sh             # two nodes, 250 bots in a crowd while regions split and merge
 tools/harness/bench.sh LABEL crowd 500  # one benchmark run (docs/BENCHMARKS.md), report in LABEL.md
 tools/harness/db.sh start|stop|status

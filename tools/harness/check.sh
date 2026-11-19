@@ -11,9 +11,18 @@ cd "$REPO" || exit 1
 mkdir -p "$H/unittest"
 echo "== unit tests"
 rm -f "$H/unittest/test"
-if ! dmd -unittest -main -Isource -od="$H/unittest/obj" -of="$H/unittest/test" \
-        $(find source -name '*.d' ! -name main.d) thirdparty/build/libdmnav.a -L-lstdc++ > "$H/unittest/build.log" 2>&1; then
+# Each module compiled on its own, all at once (-allinst: each emits the template instances it uses, which
+# separate compilation needs), then linked: seconds, where one dmd for all of them took ten minutes.
+rm -rf "$H/unittest/obj" && mkdir -p "$H/unittest/obj"
+: > "$H/unittest/build.log"
+if ! find source -name '*.d' ! -name main.d | xargs -P "$(nproc)" -I{} \
+        sh -c 'dmd -c -unittest -allinst -Isource -od="$1" -op "$2" > "$1/$(echo "$2" | tr / _).log" 2>&1' _ "$H/unittest/obj" {}; then
+    cat "$H/unittest/obj"/*.log >> "$H/unittest/build.log"
     grep -m 20 Error "$H/unittest/build.log"; echo "FAIL: the tests do not compile"; exit 1
+fi
+if ! dmd -unittest -main -of="$H/unittest/test" $(find "$H/unittest/obj" -name '*.o') thirdparty/build/libdmnav.a \
+        -L-lstdc++ >> "$H/unittest/build.log" 2>&1; then
+    grep -m 20 -i error "$H/unittest/build.log"; echo "FAIL: the tests do not link"; exit 1
 fi
 "$H/unittest/test" > "$H/unittest/run.log" 2>&1 || { tail -20 "$H/unittest/run.log"; echo "FAIL: unit tests"; exit 1; }
 grep "modules passed unittests" "$H/unittest/run.log"

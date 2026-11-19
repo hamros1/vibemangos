@@ -641,6 +641,13 @@ mixin template CreatureScripting()
         world_.wake(orderedBy);
     }
 
+    /// A stealthed unit is near enough to alert it, not to be seen: its script hears of it.
+    package void stealthAlert(UnitRef who)
+    {
+        if (behaviour && scripts_.handles!StealthAlert(behaviour))
+            raiseScript(StealthAlert(EntityRef(who.combatGuid)));
+    }
+
     /// A player (or pet) came into its sight: its script hears of it.
     package void unitInSight(UnitRef who)
     {

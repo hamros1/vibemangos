@@ -911,8 +911,16 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
         {
             import dmangos.world.combat : AttackType, DamageMods;
 
-            if (auras.list.length) // its own auras: an enrage's damage, a curse's damage taken
+            if (auras.list.length) // its own auras: an enrage's damage, a curse's damage taken; stealth
+            {
+                import dmangos.world.spellids : AuraType;
+
                 DamageMods.of(auras, (ubyte) => -1, (AttackType) => uint(template_.damageSchool)).into(f);
+                f.stealthed = auras.hasType(AuraType.modStealth);
+                if (f.stealthed)
+                    f.stealth = auras.total(AuraType.modStealth) + auras.total(AuraType.modStealthLevel);
+                f.stealthDetect = auras.totalByMisc(AuraType.modStealthDetect, 0);
+            }
         }
         // Crit, dodge, parry and block chances: 5% each for creatures.
         f.crit = f.dodge = f.parry = f.block = 5;

@@ -117,6 +117,47 @@ struct Fighter
     float[7] damageTaken = 1;  /// by school: what its auras multiply blows against it by (`MOD_DAMAGE_PERCENT_TAKEN`)
     float[mechanics] mechanicResist = 0; /// percent more often it resists spells of each mechanic (`MOD_MECHANIC_RESISTANCE`)
     uint creatureType = creatureTypeHumanoid; /// `CreatureType` (a player is a humanoid)
+    bool stealthed;            /// under a `MOD_STEALTH` aura (Stealth, Prowl)
+    int stealth;               /// its stealth strength: `MOD_STEALTH` and `MOD_STEALTH_LEVEL` amounts
+    int stealthDetect;         /// its detection of stealth: `MOD_STEALTH_DETECT` (misc 0) amounts
+}
+
+/// The farthest a player detects a stealthed unit (`MAX_PLAYER_STEALTH_DETECT_RANGE`).
+enum float maxPlayerStealthDetectRange = 30;
+
+/**
+ * How near `detector` must be to see `stealthed` (CMaNGOS's `GetStealthVisibilityDistance`): 30 points, 5 more
+ * for each of the detector's levels above the first and its detection auras, less the stealth's strength; three
+ * tenths of a yard a point, at most `maxPlayerStealthDetectRange` for a player; `alert` looks 8% and a yard and a
+ * half further (a creature on its guard, not yet seeing). Never less than the stealthed unit's combat reach.
+ */
+float stealthDetectRange(const Fighter detector, const Fighter stealthed, bool alert = false) pure nothrow @nogc @safe
+{
+    const value = 30 + (cast(int) levelFor(detector, stealthed) - 1) * 5 + detector.stealthDetect - stealthed.stealth;
+    float range = value * 0.3f;
+    if (detector.player && range > maxPlayerStealthDetectRange)
+        range = maxPlayerStealthDetectRange;
+    if (alert)
+        range += range * 0.08f + 1.5f;
+    return range > stealthed.combatReach ? range : stealthed.combatReach;
+}
+
+/**
+ * Whether `detector` sees `stealthed` now: always if it is not stealthed; else only in front of the detector,
+ * within `stealthDetectRange` (and `maxDistance`, a creature's aggro radius).
+ */
+bool detects(const Fighter detector, const Fighter stealthed, float maxDistance, bool alert = false)
+    pure nothrow @nogc @safe
+{
+    if (!stealthed.stealthed)
+        return true;
+    const dx = detector.position.x - stealthed.position.x, dy = detector.position.y - stealthed.position.y,
+        dz = detector.position.z - stealthed.position.z;
+    const d2 = dx * dx + dy * dy + dz * dz;
+    if (d2 > maxDistance * maxDistance || !hasInArc(detector.position, stealthed.position))
+        return false;
+    const range = stealthDetectRange(detector, stealthed, alert);
+    return d2 <= range * range;
 }
 
 /**
@@ -1058,4 +1099,35 @@ unittest
     attacker.critVersus[1] = 3;
     const withTalent = rollMeleeOutcome(attacker, victim, AttackType.mainHand, 1100);
     assert(plain == MeleeHitOutcome.normal && withTalent == MeleeHitOutcome.crit, "8% crit now: the 11th percent is one");
+}
+
+// Stealth (CMaNGOS's numbers): a level 60 monster sees Stealth rank 4 (300) at 7.5 yards, in front only; an alert
+// reaches further; detection auras and the detector's level widen it.
+unittest
+{
+    import std.math : isClose;
+
+    Fighter monster, rogue;
+    monster.level = rogue.level = 60;
+    rogue.player = rogue.playerControlled = true;
+    rogue.stealthed = true;
+    rogue.stealth = 300;
+    assert(isClose(stealthDetectRange(monster, rogue), (30 + 59 * 5 - 300) * 0.3f));
+    assert(isClose(stealthDetectRange(monster, rogue, true), 7.5f + 7.5f * 0.08f + 1.5f));
+    monster.stealthDetect = 50; // a detection aura
+    assert(isClose(stealthDetectRange(monster, rogue), 22.5f));
+    monster.stealthDetect = 0;
+    rogue.stealth = 1000;
+    assert(stealthDetectRange(monster, rogue) == rogue.combatReach, "never nearer than its reach");
+
+    rogue.stealth = 300;
+    monster.position = Position(0, 0, 0, 0); // facing +x
+    rogue.position = Position(5, 0, 0);
+    assert(detects(monster, rogue, 20), "5 yards in front");
+    rogue.position = Position(-5, 0, 0);
+    assert(!detects(monster, rogue, 20), "behind: never");
+    rogue.position = Position(9, 0, 0);
+    assert(!detects(monster, rogue, 20) && detects(monster, rogue, 20, true), "9 yards: not seen, but on its guard");
+    rogue.stealthed = false;
+    assert(detects(monster, rogue, 20), "not stealthed: seen");
 }

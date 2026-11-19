@@ -145,7 +145,8 @@ template KindInfo(ScriptKind kind)
             // Eastern Kingdoms scripts:
             SummonedDied, SummonedArrived, UnitInSight, EmoteReceived,
             // Instance round 2:
-            AuraRemoved);
+            AuraRemoved,
+            StealthAlert);
         alias Attribute = .creature;
     }
     else static if (kind == ScriptKind.gameObject)
