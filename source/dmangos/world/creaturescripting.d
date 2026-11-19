@@ -793,6 +793,24 @@ mixin template CreatureScripting()
                 other.questEventHappened(quest);
     }
 
+    ActionResult hostUseObject(EntityRef object, uint restoreMs)
+    {
+        import dmangos.world.gameobject : GameObjectType, GameObjectWorld;
+
+        auto go = world_ is null ? null : world_.gameObjectAt(object.guid);
+        auto goWorld = cast(GameObjectWorld) world_;
+        if (go is null || goWorld is null)
+            return ActionResult.notHere;
+        if (go.type == GameObjectType.goober)
+            go.activateGoober(goWorld);
+        else if (go.type == GameObjectType.door || go.type == GameObjectType.button)
+            go.useDoorOrButton(goWorld, restoreMs);
+        else
+            return ActionResult.notAllowed;
+        world_.wake(go.guid);
+        return ActionResult.ok;
+    }
+
     /// A creature it summoned died: its script hears of it.
     void summonDied(EntityRef summon, EntityRef killer, CombatWorld world)
     {

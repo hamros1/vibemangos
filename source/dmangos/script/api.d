@@ -335,6 +335,7 @@ interface CreatureHost
     ActionResult hostObjectUsable(EntityRef object, bool usable);
     uint hostEntryOf(EntityRef who);
     void hostGroupQuestEvent(EntityRef player, uint quest);
+    ActionResult hostUseObject(EntityRef object, uint restoreMs);
 }
 
 /**
@@ -586,6 +587,9 @@ struct CreatureContext
     /// `RewardPlayerAndGroupAtEventExplored`: the event of `quest` for `player` and the members of its group
     /// near it (within 100 yards of the creature).
     void groupQuestEvent(EntityRef player, uint quest) { host.hostGroupQuestEvent(player, quest); }
+
+    /// Opens a door (presses a button, activates a goober) here, for `restoreMs` (0: its own time).
+    ActionResult useObject(EntityRef object, uint restoreMs = 0) { return host.hostUseObject(object, restoreMs); }
 }
 
 // ---------------------------------------------------------------------------

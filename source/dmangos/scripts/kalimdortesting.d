@@ -156,6 +156,7 @@ final class RecordingCreature : CreatureHost
     ActionResult hostObjectUsable(EntityRef, bool usable) { note(usable ? "usable" : "unusable"); return ActionResult.ok; }
     uint hostEntryOf(EntityRef who) { return who.entry; }
     void hostGroupQuestEvent(EntityRef, uint quest) { note("event " ~ quest.to!string); }
+    ActionResult hostUseObject(EntityRef o, uint) { note("use " ~ o.entry.to!string); return ActionResult.ok; }
 }
 
 /// A script of `Module` on a recording creature, and the means to drive it.

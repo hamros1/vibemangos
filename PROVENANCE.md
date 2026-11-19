@@ -157,6 +157,13 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Functions/ScriptNames: `npc_kerlonian` (with `AwakenKerlonian`), `npc_prospector_remtravel`, `npc_threshwackonator`,
   `npc_volcor`, `npc_therylune`, `npc_rabid_bear`, `npc_blackwood_warrior`, `npc_blackwood_totemic`, `go_furbolg_food`
 
+## scripts/desolace.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/kalimdor/desolace.cpp`
+* Functions/ScriptNames: `npc_aged_dying_ancient_kodo` (with `KodoKombobulator`), `npc_dalinda_malem`,
+  `npc_melizza_brimbuzzle`, `npc_magrami_spectre`
+
 ## scripts/barrens.d
 
 * Projects: CMaNGOS
