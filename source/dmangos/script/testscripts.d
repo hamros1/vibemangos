@@ -138,6 +138,8 @@ final class FakeCreature : CreatureHost
     void hostEmoteState(uint) {}
     size_t hostCreaturesNearby(uint, float, EntityRef[]) { return 0; }
     void hostPreventDeath(bool) {}
+    void hostMovementScript(uint, EntityRef) {}
+    EntityRef hostOwner() { return EntityRef.init; }
 }
 
 unittest

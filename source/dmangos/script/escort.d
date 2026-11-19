@@ -27,10 +27,11 @@ struct Escort
     /// (nobody else can take it on its way).
     void start(ref CreatureContext me, EntityRef player, uint quest, bool run = false)
     {
-        const despawn = despawnAfterMs, distance = maxDistance;
+        const despawn = despawnAfterMs, distance = maxDistance, scripts = pointScripts;
         this = Escort.init;
         despawnAfterMs = despawn;
         maxDistance = distance;
+        pointScripts = scripts;
         this.player = player;
         this.quest = quest;
         this.run = run;
@@ -48,6 +49,8 @@ struct Escort
         me.waypoint(point, w);
         waiting = true;
         waitLeft = w.waitMs;
+        if (pointScripts && w.scriptId)
+            me.movementScript(w.scriptId, player);
         return point;
     }
 
@@ -103,6 +106,7 @@ struct Escort
 
     // Kalimdor scripts:
     bool paused; /// it stays where it is (an event on its way) until `pause(false)`
+    bool pointScripts; /// it runs the scripts of its path's points (`Waypoint.scriptId`) as it reaches them
 
     /// It stays where it is (`SetEscortPaused`), or goes on.
     void pause(bool on)

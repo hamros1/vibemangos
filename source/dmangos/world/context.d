@@ -2685,6 +2685,14 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return summonCreature(world, entry, at, cast(TempSpawnType) type, durationMs, summoner);
     }
 
+    /// See `CreatureLore.startMovementScript`.
+    void startMovementScript(uint id, CombatWorld world, ulong source, ulong target)
+    {
+        import dmangos.world.dbscripts : DbScriptType;
+
+        startScript(DbScriptType.creatureMovement, id, cast(Map) world, source, target);
+    }
+
     /// See `CreatureLore.sameGroup`.
     bool sameGroup(ulong a, ulong b)
     {

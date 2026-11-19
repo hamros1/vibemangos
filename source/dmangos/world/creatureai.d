@@ -100,6 +100,9 @@ interface CreatureLore
 
     /// Whether two players are in one group.
     bool sameGroup(ulong a, ulong b);
+
+    /// Starts `dbscripts_on_creature_movement` script `id` on `world`.
+    void startMovementScript(uint id, CombatWorld world, ulong source, ulong target);
 }
 
 /// What a creature's AI needs of its map.

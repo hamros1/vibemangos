@@ -171,6 +171,9 @@ final class RecordingCreature : CreatureHost
         return 1;
     }
     void hostPreventDeath(bool on) { note(on ? "immortal" : "mortal"); }
+    void hostMovementScript(uint id, EntityRef) { note("script " ~ id.to!string); }
+    EntityRef owner_;
+    EntityRef hostOwner() { return owner_; }
 }
 
 /// A script of `Module` on a recording creature, and the means to drive it.

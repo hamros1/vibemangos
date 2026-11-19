@@ -273,6 +273,8 @@ struct Waypoint
 {
     Location at;
     uint waitMs; /// how long it stays there
+    // Kalimdor scripts:
+    uint scriptId; /// its `dbscripts_on_creature_movement` script, run on arrival by an escort that asks for it
 }
 
 /// The core's side of a creature script's context (`CreatureAI` implements it).
@@ -340,6 +342,8 @@ interface CreatureHost
     void hostEmoteState(uint emote);
     size_t hostCreaturesNearby(uint entry, float range, EntityRef[] found);
     void hostPreventDeath(bool on);
+    void hostMovementScript(uint id, EntityRef target);
+    EntityRef hostOwner();
 }
 
 /**
@@ -606,6 +610,12 @@ struct CreatureContext
 
     /// Whether it cannot die: blows that would kill it leave it at 1 health (a surrender at low health).
     void preventDeath(bool on) { host.hostPreventDeath(on); }
+
+    /// Runs `dbscripts_on_creature_movement` script `id`, it the source and `target` the target.
+    void movementScript(uint id, EntityRef target = EntityRef.init) { host.hostMovementScript(id, target); }
+
+    /// Whose it is: the player whose pet it is, or whoever summoned it; nothing for a creature of its own.
+    @property EntityRef owner() { return host.hostOwner(); }
 }
 
 // ---------------------------------------------------------------------------

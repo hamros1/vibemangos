@@ -845,6 +845,17 @@ mixin template CreatureScripting()
         scriptDeathPrevention(on);
     }
 
+    void hostMovementScript(uint id, EntityRef target)
+    {
+        if (lore !is null && world_ !is null && id)
+            lore.startMovementScript(id, world_, me.guid, target ? target.guid : me.guid);
+    }
+
+    EntityRef hostOwner()
+    {
+        return EntityRef(me.petOwner ? me.petOwner : me.summon.summoner);
+    }
+
     /// A creature it summoned died: its script hears of it.
     void summonDied(EntityRef summon, EntityRef killer, CombatWorld world)
     {
