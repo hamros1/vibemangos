@@ -14,8 +14,10 @@ static import dmangos.scripts.ungoro;
 static import dmangos.scripts.shadowfang;
 static import dmangos.scripts.wailingcaverns;
 static import dmangos.scripts.moltencore;
+static import dmangos.scripts.onyxia;
 
 /// Every module holding scripts.
 alias scriptModules = AliasSeq!(dmangos.scripts.deadmines, dmangos.scripts.westfall, dmangos.scripts.spells,
     dmangos.scripts.stormwind, dmangos.scripts.ungoro, dmangos.scripts.shadowfang,
-    dmangos.scripts.wailingcaverns, dmangos.scripts.moltencore);
+    dmangos.scripts.wailingcaverns, dmangos.scripts.moltencore,
+    dmangos.scripts.onyxia);

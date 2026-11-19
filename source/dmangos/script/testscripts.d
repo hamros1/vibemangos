@@ -141,6 +141,7 @@ final class FakeCreature : CreatureHost
     Location hostLocationOf(EntityRef) { return Location.init; }
     void hostRooted(bool) {}
     void hostDie() {}
+    void hostMoveNow(Location, uint, bool) {}
 }
 
 unittest

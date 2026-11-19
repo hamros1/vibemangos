@@ -300,6 +300,7 @@ interface CreatureHost
     Location hostLocationOf(EntityRef who);
     void hostRooted(bool on);
     void hostDie();
+    void hostMoveNow(Location at, uint point, bool run);
 }
 
 /**
@@ -556,6 +557,10 @@ struct CreatureContext
 
     /// It dies, nobody's kill (its death prevention aside).
     void die() { host.hostDie(); }
+
+    /// As `moveTo`, but at once even in a fight (turn its combat movement off first, or it chases its
+    /// victim again): a dragon taking to the air, a boss going to its place.
+    void moveNow(Location at, uint point, bool run = true) { host.hostMoveNow(at, point, run); }
 }
 
 // ---------------------------------------------------------------------------

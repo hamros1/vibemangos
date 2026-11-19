@@ -892,4 +892,23 @@ mixin template CreatureScripting()
         deathPrevention = false;
         scriptDie();
     }
+
+    void hostMoveNow(Location at, uint point, bool run)
+    {
+        import dmangos.vmap.math : Vector3;
+        import dmangos.world.motion : PointMovement;
+
+        if (evadingHome || !me.alive)
+            return;
+        if (!inCombat_)
+            return hostMoveTo(at, point, run);
+        auto move = new PointMovement(Vector3(at.x, at.y, at.z), at.orientation, !run, null);
+        move.onArrived = (Creature c) { c.ai.movementArrived(point); };
+        me.generator = move;
+        if (world_ !is null)
+        {
+            move.initialize(me, world_);
+            world_.wake(me.guid);
+        }
+    }
 }

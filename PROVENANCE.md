@@ -148,6 +148,13 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
   `boss_gehennas`, `boss_garr`, `mob_firesworn`, `boss_shazzrah`, `boss_baron_geddon`, `boss_golemagg`,
   `mob_core_rager`, `boss_sulfuron`, `mob_flamewaker_priest`, `boss_majordomo`, `boss_ragnaros`
 
+## scripts/onyxia.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/kalimdor/onyxias_lair/` (`instance_onyxias_lair.cpp`, `onyxias_lair.h`,
+  `boss_onyxia.cpp`)
+* Functions/ScriptNames: `instance_onyxias_lair`, `boss_onyxia`
+
 ## timer.d
 
 * Projects: CMaNGOS, Ember
