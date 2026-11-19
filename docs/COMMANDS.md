@@ -82,7 +82,7 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 * Arguments are read strictly: a number written wrong ("12abc", "abc") or a missing argument shows
   the command's help, where ArcEmu's C parsing read "12abc" as 12 and "abc" as 0 and went on.
 
-## Working (233)
+## Working (237)
 
 | Command | Letter | Help |
 |---|---|---|
@@ -251,6 +251,10 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 | `.recall add` | `q` | Add recall location |
 | `.recall del` | `q` | Remove a recall location |
 | `.recall portplayer` | `m` | recall ports player |
+| `.guild rename` | `m` | Renames a guild. |
+| `.guild members` | `m` | Lists guildmembers and their ranks. |
+| `.guild removeplayer` | `m` | Removes a player from a guild. |
+| `.guild disband` | `m` | Disbands the guild of your target. |
 | `.server setmotd` | `m` | Sets MOTD |
 | `.server rehash` | `z` | Reloads config file. |
 | `.server reloadtable` | `m` | Reloads some of the database tables |
@@ -320,7 +324,7 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 | `.removesickness` | `m` | Removes ressurrection sickness from the target |
 | `.fixscale` | `m` |  |
 
-## Not yet implemented (62)
+## Not yet implemented (58)
 
 These answer "Not yet implemented.", as ArcEmu's `HandleNYICommand` does: what they work on is not
 done yet (among them AI agents and waypoint editing, possession, arenas, GM invisibility, flying).
@@ -378,10 +382,6 @@ done yet (among them AI agents and waypoint editing, possession, arenas, GM invi
 | `.quest load` | `2` | Loads quests from database |
 | `.pet spawnbot` | `a` | .pet spawnbot <type> - spawn a helper bot for your aid |
 | `.guild create` | `m` | Creates a guild. |
-| `.guild rename` | `m` | Renames a guild. |
-| `.guild members` | `m` | Lists guildmembers and their ranks. |
-| `.guild removeplayer` | `m` | Removes a player from a guild. |
-| `.guild disband` | `m` | Disbands the guild of your target. |
 | `.character settitle` | `m` | Adds title to a player |
 | `.admin renameallinvalidchars` | `z` | Renames all invalid character names |
 | `.arena createteam` | `e` | Creates arena team |

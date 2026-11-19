@@ -681,6 +681,9 @@ interface WorldDatabase
     /// Gives an offline character a new name (`characters.name`).
     void renameCharacter(uint guid, string newName);
 
+    /// A guild's name in the database (`.guild rename`: what the next start loads).
+    void renameGuild(uint guildId, string name);
+
     /// Sets flags in an offline character's `at_login` (a rename asked for: `.character forcerename`).
     void addAtLoginFlags(uint guid, uint flags);
 
@@ -1002,6 +1005,7 @@ final class MySqlWorldDatabase : WorldDatabase, WriteLedger
     uint characterGuid(string name) { return statements.characterGuid(name); }
     void renameCharacter(uint guid, string newName) { statements.renameCharacter(guid, newName); }
     void addAtLoginFlags(uint guid, uint flags) { statements.addAtLoginFlags(guid, flags); }
+    void renameGuild(uint guildId, string name) { statements.renameGuild(guildId, name); }
     void moveOfflineCharacter(uint guid, uint map, float x, float y, float z, uint zone)
     {
         statements.moveOfflineCharacter(guid, map, x, y, z, zone);
@@ -1351,6 +1355,13 @@ final class MemoryWorldDatabase : WorldDatabase, WriteLedger
             c.zone = zone;
             c.position = Position(x, y, z, c.position.orientation);
         }
+    }
+
+    string[uint] guildRenames; /// `renameGuild`'s writes, by guild
+
+    void renameGuild(uint guildId, string name)
+    {
+        guildRenames[guildId] = name;
     }
 
     void addAtLoginFlags(uint guid, uint flags)

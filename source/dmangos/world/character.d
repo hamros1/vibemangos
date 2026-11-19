@@ -459,6 +459,26 @@ final class Character : OnlinePlayer, Looter
     }
 
     /// A spell its battleground casts on it (a quest's credit).
+    /// For the `.guild` GM commands: founds a guild named `name` led by this player (as a charter turned in).
+    package imported!"dmangos.world.guild".Guild gmFoundGuild(string name)
+    {
+        return foundGuild(name);
+    }
+
+    /// For `.guild removeplayer`: this player leaves its guild (removed, as a kick).
+    package void gmLeaveGuild()
+    {
+        if (auto g = ownGuild())
+            removeGuildMember(g, player.data.guid);
+    }
+
+    /// For `.guild disband`: this player's guild is disbanded.
+    package void gmDisbandGuild()
+    {
+        if (auto g = ownGuild())
+            disbandGuild(g);
+    }
+
     /// Thrown from `from` (a creature's knockback): its client is told how, and moves.
     void knockedBack(Position from, float horizontal, float vertical)
     {

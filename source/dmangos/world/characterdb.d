@@ -1107,6 +1107,12 @@ final class CharacterStatements
     }
 
     /// `.character rename` for an offline character.
+    /// See `WorldDatabase.renameGuild`.
+    void renameGuild(uint guildId, string name)
+    {
+        characters.execute!"UPDATE guild SET name = ? WHERE guildid = ?"(name, guildId);
+    }
+
     /// See `WorldDatabase.addAtLoginFlags`.
     void addAtLoginFlags(uint guid, uint flags)
     {

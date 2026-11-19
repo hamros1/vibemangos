@@ -785,6 +785,43 @@ private:
         return true;
     }
 
+    /// `.guild create <name>`: a guild of the selected player, who leads it alone.
+    bool createGuildCommand(Rest name = Rest.init)
+    {
+        import std.ascii : isAlpha;
+
+        if (name.length == 0)
+            return false;
+        auto target = getSelectedChar(true);
+        if (target is null)
+            return false;
+        if (target.ownGuild() !is null)
+        {
+            redSystemMessage(format!"%s is already in a guild."(target.player.data.name));
+            return true;
+        }
+        if (name.length > 75)
+        {
+            systemMessage(format!"The name was too long by %ui"(name.length - 75)); // ArcEmu's format, its "i" too
+            return true;
+        }
+        foreach (c; name)
+            if (!isAlpha(c) && c != ' ')
+            {
+                systemMessage("Error, name can only contain chars A-Z and a-z.");
+                return true;
+            }
+        if (context.guilds.named(name) !is null)
+        {
+            redSystemMessage("Guild name is already taken.");
+            return true;
+        }
+        target.gmFoundGuild(name);
+        context.guildFieldsHere();
+        greenSystemMessage("Guild created");
+        return true;
+    }
+
     bool handleInvincibleCommand()
     {
         auto chr = getSelectedChar(true);
