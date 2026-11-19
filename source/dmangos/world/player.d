@@ -201,6 +201,7 @@ final class Player : InventoryOwner
     string autoReply;                    /// the AFK or DND message
     /// The GM tag in chat (`.gm on`, `.gm whisperblock`).
     bool gmTagOn;
+    bool gmInvisible;                    /// `.invisible`: only game masters with their tag on (and its group) see it
     /// Whether the player can dual wield: a spell with `SPELL_EFFECT_DUAL_WIELD` is known.
     bool dualWield;
     /// The area within `data.zone`; the zone itself where there is no map data.

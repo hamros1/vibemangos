@@ -766,6 +766,25 @@ private:
         return (cast(Creature) target).guid;
     }
 
+    /**
+     * `.invisible`: invisible and invincible, or neither again (ArcEmu's `m_isGmInvisible`, `m_invisible`,
+     * `bInvincible`): only game masters with their tag on and the player's group see it, creatures leave it
+     * alone, its friends are told it went offline.
+     */
+    bool handleInvisibleCommand()
+    {
+        string message = "Invisibility and Invincibility are now ";
+        const on = !player.gmInvisible;
+        player.gmInvisible = on;
+        invincible = on;
+        announceToFriends(!on);
+        message ~= on ? " ON." : " OFF."; // ArcEmu's `"%s ON."` after the space already there
+        message ~= " You may have to leave and re-enter this zone for changes to take effect.";
+        map.refreshVisibility(this);
+        greenSystemMessage(message);
+        return true;
+    }
+
     bool handleInvincibleCommand()
     {
         auto chr = getSelectedChar(true);

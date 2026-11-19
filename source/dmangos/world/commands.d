@@ -840,8 +840,17 @@ unittest
     assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTRED ~ "A valid selection is required.|r"]);
 
     // A command whose system does not exist yet says so.
-    gm.say(".invisible");
+    gm.say(".cheat fly");
     assert(systemMessages(gm.read()) == [MSG_COLOR_LIGHTRED ~ "Not yet implemented.|r"]);
+
+    // `.invisible`, both ways, in ArcEmu's words (its double space included).
+    gm.say(".invisible");
+    assert(systemMessages(gm.read()) == [MSG_COLOR_GREEN ~ "Invisibility and Invincibility are now  ON. You may have "
+        ~ "to leave and re-enter this zone for changes to take effect.|r"]);
+    assert(gm.session.character.gmInvisible && gm.session.inWorld.untouchable);
+    gm.say(".invisible");
+    assert(systemMessages(gm.read())[0].canFind("now  OFF."));
+    assert(!gm.session.character.gmInvisible && !gm.session.inWorld.untouchable);
 
     // A handler refusing its arguments shows the row's help.
     gm.say(".levelup -2");

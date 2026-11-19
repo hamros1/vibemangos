@@ -74,10 +74,15 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
   ticket's assigned GM and comment are kept in memory only (CMaNGOS's `gm_tickets` has no columns
   for them); a removed ticket is kept as `state` 1 until deleted permanently. The client's ticket
   packets and result codes are 1.12's.
+* `.character forcerename` sets CMaNGOS's `at_login` rename flag (ArcEmu's `forced_rename_pending`); the
+  old name is reserved until the server restarts (ArcEmu's `banned_names` row; CMaNGOS keeps
+  `reserved_name` in the world database, which the server does not write).
+* `.invisible`: in a cluster, players of other nodes still see an invisible game master (their replica
+  of it carries no invisibility yet).
 * Arguments are read strictly: a number written wrong ("12abc", "abc") or a missing argument shows
   the command's help, where ArcEmu's C parsing read "12abc" as 12 and "abc" as 0 and went on.
 
-## Working (229)
+## Working (233)
 
 | Command | Letter | Help |
 |---|---|---|
@@ -98,6 +103,7 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 | `.worldport` | `v` |  |
 | `.start` | `m` | Teleport's you to a starting location |
 | `.invincible` | `j` | .invincible - Toggles INVINCIBILITY (mobs won't attack you) |
+| `.invisible` | `i` | .invisible - Toggles INVINCIBILITY and INVISIBILITY (mobs won't attack you and nobody can see you, but they can see your chat messages) |
 | `.playerinfo` | `m` | .playerinfo - Displays informations about the selected character (account...) |
 | `.levelup` | `m` | Levelup x lvls |
 | `.modify hp` | `m` | Modifies health points (HP) of selected target |
@@ -201,6 +207,8 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 | `.npc spawn` | `n` | .npc spawn - Spawns npc of entry <id> |
 | `.npc respawn` | `n` | .respawn - Respawns a dead npc from it's corpse. |
 | `.npc select` | `n` | .npc select - selects npc closest |
+| `.npc npcfollow` | `m` | Sets npc to follow you |
+| `.npc nullfollow` | `m` | Sets npc to not follow anything |
 | `.cheat status` | `m` | Shows active cheats. |
 | `.cheat taxi` | `m` | Enables all taxi nodes. |
 | `.cheat cooldown` | `m` | Enables no cooldown cheat. |
@@ -274,6 +282,7 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 | `.character showskills` | `m` | Shows skills of selected Player |
 | `.character showinstances` | `z` | Shows persistent instances of selected Player |
 | `.character rename` | `m` | Renames character x to y. |
+| `.character forcerename` | `m` | Forces character x to rename his char next login |
 | `.character repairitems` | `n` | .repairitems - Repair all items from selected player |
 | `.lookup item` | `l` | Looks up item string x. |
 | `.lookup quest` | `l` | Looks up quest string x. |
@@ -311,14 +320,13 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
 | `.removesickness` | `m` | Removes ressurrection sickness from the target |
 | `.fixscale` | `m` |  |
 
-## Not yet implemented (66)
+## Not yet implemented (62)
 
 These answer "Not yet implemented.", as ArcEmu's `HandleNYICommand` does: what they work on is not
 done yet (among them AI agents and waypoint editing, possession, arenas, GM invisibility, flying).
 
 | Command | Letter | Help |
 |---|---|---|
-| `.invisible` | `i` | .invisible - Toggles INVINCIBILITY and INVISIBILITY (mobs won't attack you and nobody can see you, but they can see your chat messages) |
 | `.waypoint add` | `w` | Add wp at current pos |
 | `.waypoint show` | `w` | Show wp's for creature |
 | `.waypoint hide` | `w` | Hide wp's for creature |
@@ -361,8 +369,6 @@ done yet (among them AI agents and waypoint editing, possession, arenas, GM invi
 | `.npc spawnlink` | `n` | .spawnlink sqlentry |
 | `.npc possess` | `n` | .npc possess - Possess an npc (mind control) |
 | `.npc unpossess` | `n` | .npc unpossess - Unposses any currently possessed npc. |
-| `.npc npcfollow` | `m` | Sets npc to follow you |
-| `.npc nullfollow` | `m` | Sets npc to not follow anything |
 | `.npc formationlink1` | `m` | Sets formation master. |
 | `.npc formationlink2` | `m` | Sets formation slave with distance and angle |
 | `.npc formationclear` | `m` | Removes formation from creature |
@@ -376,7 +382,6 @@ done yet (among them AI agents and waypoint editing, possession, arenas, GM invi
 | `.guild members` | `m` | Lists guildmembers and their ranks. |
 | `.guild removeplayer` | `m` | Removes a player from a guild. |
 | `.guild disband` | `m` | Disbands the guild of your target. |
-| `.character forcerename` | `m` | Forces character x to rename his char next login |
 | `.character settitle` | `m` | Adds title to a player |
 | `.admin renameallinvalidchars` | `z` | Renames all invalid character names |
 | `.arena createteam` | `e` | Creates arena team |

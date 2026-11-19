@@ -1107,6 +1107,12 @@ final class CharacterStatements
     }
 
     /// `.character rename` for an offline character.
+    /// See `WorldDatabase.addAtLoginFlags`.
+    void addAtLoginFlags(uint guid, uint flags)
+    {
+        characters.execute!"UPDATE characters SET at_login = at_login | ? WHERE guid = ?"(flags, guid);
+    }
+
     void renameCharacter(uint guid, string newName)
     {
         // A rename asked for at login (`at_login` 1) is done with it.

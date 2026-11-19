@@ -94,6 +94,7 @@ struct PlayerView
     bool alive;   /// not dead at all
     bool ghost;   /// released: a spirit (a body not yet released is neither)
     bool gmTag;   /// `.gm on` (`PlayerFlags.gm`)
+    bool gmInvisible; /// `.invisible`
 }
 
 /// What the world knows of a viewer and a player it might see (`Map.visibilityFacts`).
@@ -115,6 +116,12 @@ enum float ghostSightOfTheLiving = 45;
  */
 bool playerSees(PlayerView viewer, PlayerView seen, scope VisibilityFacts delegate() facts)
 {
+    if (seen.gmInvisible) // `.invisible` (ArcEmu's `m_isGmInvisible`): its group and tagged game masters; no ghost
+    {
+        if (viewer.ghost)
+            return false;
+        return viewer.gmTag || facts().sameGroup;
+    }
     if (!viewer.ghost && !seen.ghost)
         return true; // every rule below would say so
     if (viewer.gmTag)
@@ -135,7 +142,7 @@ PlayerView viewOf(const Player p)
     import dmangos.world.player : PlayerFlags;
 
     return PlayerView(p.guid, p.deathState == DeathState.alive, p.deathState == DeathState.ghost,
-        p.hasFlag(PlayerFlags.gm));
+        p.hasFlag(PlayerFlags.gm), p.gmInvisible);
 }
 
 /// A player replica's `PlayerView`, from its fields.
@@ -2400,7 +2407,8 @@ private:
         const guid = who.character.guid;
         const slot = slotFor(guid);
         at(slot).visibilityAt = who.character.position;
-        const ghost = who.character.deathState == DeathState.ghost;
+        // One way: a ghost, or an invisible game master (the slot's `ghost` stands for both).
+        const ghost = who.character.deathState == DeathState.ghost || who.character.gmInvisible;
         const turned = ghost != at(slot).ghost;
         if (turned)
         {
@@ -3637,6 +3645,15 @@ unittest
     assert(!playerSees(ghost, alive, &facts), "the living far from its corpse");
     f.corpseDistance = 44;
     assert(playerSees(ghost, alive, &facts) && !playerSees(ghost, body_, &facts), "near it: the living, not a body");
+
+    // An invisible game master: its group and tagged game masters see it, nobody else, never a ghost.
+    PlayerView hidden = alive;
+    hidden.gmInvisible = true;
+    f = VisibilityFacts.init;
+    assert(!playerSees(alive, hidden, &facts) && playerSees(gm, hidden, &facts));
+    f.sameGroup = true;
+    assert(playerSees(alive, hidden, &facts) && !playerSees(ghost, hidden, &facts));
+    assert(playerSees(hidden, alive, &facts), "it sees everyone");
 }
 
 // A creature a script set apart (an escortee on the players' faction) is attacked by the monsters near it that

@@ -1793,6 +1793,69 @@ private:
         return true;
     }
 
+    /// `.npc npcfollow`: the selected creature follows this player.
+    bool handleNpcFollowCommand()
+    {
+        import dmangos.script.api : EntityRef;
+        import std.math : PI;
+
+        auto creature = getSelectedCreature(true);
+        if (creature is null)
+            return true;
+        creature.ai.hostFollow(EntityRef(player.guid), 2.0f, PI / 2);
+        gmLog(format!"used npc follow command on %s, sqlid %u"(creature.template_.name, creature.spawn.guid));
+        return true;
+    }
+
+    /// `.npc nullfollow`: the selected creature follows nobody; it moves as before.
+    bool handleNullFollowCommand()
+    {
+        import dmangos.script.api : EntityRef;
+
+        auto creature = getSelectedCreature(true);
+        if (creature is null)
+            return true;
+        creature.ai.hostFollow(EntityRef.init, 0, 0);
+        gmLog(format!"cancelled npc follow command on %s, sqlid %u"(creature.template_.name, creature.spawn.guid));
+        return true;
+    }
+
+    /**
+     * `.character forcerename <name>`: the character must take a new name at its next login (CMaNGOS's `at_login`
+     * rename flag, ArcEmu's `forced_rename_pending`); its old name is reserved (in memory: the world database
+     * keeps `reserved_name`, which the server does not write).
+     */
+    bool handleForceRenameCommand(string name)
+    {
+        import dmangos.world.characters : AtLoginFlags;
+
+        if (name.length > 100)
+            return false;
+        const guid = context.database.characterGuid(normalizedName(name));
+        if (guid == 0)
+        {
+            redSystemMessage("Player with that name not found.");
+            return true;
+        }
+        auto online = context.onlinePlayer(guid);
+        const realName = online !is null ? online.character.data.name : normalizedName(name);
+        if (online !is null)
+        {
+            auto other = sessionOf(online);
+            other.player.data.atLogin |= AtLoginFlags.rename;
+            other.savePlayer();
+            other.blueSystemMessage(format!"%s forced your character to be renamed next logon."(player.data.name));
+        }
+        else
+            context.database.addAtLoginFlags(guid, AtLoginFlags.rename);
+        import dmangos.world.worlddata : toLowerName;
+
+        context.data.reservedNames[toLowerName(realName)] = true;
+        greenSystemMessage(format!"Forcing %s to rename his character next logon."(name));
+        gmLog(format!"forced %s to rename his charater (%u)"(realName, guid));
+        return true;
+    }
+
     bool handleRenameCommand(string name1, string name2)
     {
         import dmangos.world.names : checkPlayerName, CharNameResult;

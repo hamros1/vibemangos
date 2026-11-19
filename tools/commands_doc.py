@@ -144,6 +144,11 @@ What CMaNGOS's schema or 1.12 decides differently, and ArcEmu bugs not copied:
   ticket's assigned GM and comment are kept in memory only (CMaNGOS's `gm_tickets` has no columns
   for them); a removed ticket is kept as `state` 1 until deleted permanently. The client's ticket
   packets and result codes are 1.12's.
+* `.character forcerename` sets CMaNGOS's `at_login` rename flag (ArcEmu's `forced_rename_pending`); the
+  old name is reserved until the server restarts (ArcEmu's `banned_names` row; CMaNGOS keeps
+  `reserved_name` in the world database, which the server does not write).
+* `.invisible`: in a cluster, players of other nodes still see an invisible game master (their replica
+  of it carries no invisibility yet).
 * Arguments are read strictly: a number written wrong ("12abc", "abc") or a missing argument shows
   the command's help, where ArcEmu's C parsing read "12abc" as 12 and "abc" as 0 and went on.
 
