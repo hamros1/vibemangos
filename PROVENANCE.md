@@ -185,6 +185,12 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Files: `ScriptDevAI/scripts/eastern_kingdoms/silverpine_forest.cpp`
 * Functions/ScriptNames: `npc_deathstalker_erland`, `npc_deathstalker_faerleia`
 
+## scripts/stormwind.d
+
+* Projects: CMaNGOS
+* Files: `ScriptDevAI/scripts/eastern_kingdoms/stormwind_city.cpp`
+* Functions/ScriptNames: `npc_lady_katrana_prestor`, `npc_bartleby`, `npc_dashel_stonefist`, `npc_major_mattingly`, `npc_field_marshal_afrasiabi`
+
 ## scripts/stranglethorn.d
 
 * Projects: CMaNGOS
