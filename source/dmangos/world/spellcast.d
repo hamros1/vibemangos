@@ -18,6 +18,7 @@ import dmangos.world.combat : Fighter;
 /// `SpellCastResult` (1.12's values); `ok` is never sent as a failure.
 enum SpellCastResult : ubyte
 {
+    noComboPoints = 0x46, /// "That ability requires combo points"
     affectingCombat = 0x00,
     alreadyAtFullHealth = 0x01,
     alreadyAtFullPower = 0x02,

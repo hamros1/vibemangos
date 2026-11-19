@@ -1012,6 +1012,10 @@ private:
     {
         enum uint castableWhileSitting = 0x08000000; // SPELL_ATTR_CASTABLE_WHILE_SITTING
         const now = context.clock();
+        // A finishing move needs combo points on its target (Slice and Dice, cast on oneself: on anyone).
+        if (!triggered && usesComboPoints(*spell)
+                && (comboPoints == 0 || (targets.unit && targets.unit != player.guid && targets.unit != comboTarget)))
+            return SpellCastResult.noComboPoints;
         if (player.deathState != DeathState.alive && !(spell.attributes & spellAttrCastableWhileDead))
             return player.deathState == DeathState.ghost ? SpellCastResult.notWhileGhost : SpellCastResult.casterDead;
         if (start && !triggered)
@@ -1431,6 +1435,11 @@ private:
                 if (auto creature = cast(Creature) map.findObject(r.guid))
                     spellAttacked(creature, 0);
             }
+        // A finishing move uses the combo points (its values, its duration), spent once it is done unless it
+        // missed an enemy (CMaNGOS's `Spell::finish`).
+        castCombo = !c.triggered && usesComboPoints(*spell) ? comboPoints : 0;
+        scope (exit)
+            castCombo = 0;
         // The modifiers with charges it has now: those that may be spent by it (`spendChargedMods`).
         Aura[] chargedAtStart;
         foreach (aura; player.auras.list)
@@ -1459,6 +1468,14 @@ private:
                     if (creature.alive && creature.ai !is null)
                         creature.ai.spellHitBy(player.guid, spell.id, 1u << spell.casting.school, map);
         spendChargedMods(spell, chargedAtStart, c.triggered);
+        if (castCombo)
+        {
+            bool missedEnemy;
+            foreach (r; results)
+                missedEnemy |= r.miss != SpellMissInfo.none && r.guid != player.guid;
+            if (!missedEnemy)
+                clearComboPoints();
+        }
         flushPlayerChanges();
         return SpellCastResult.ok;
     }
@@ -1494,7 +1511,19 @@ private:
 
     void doEffect(const(SpellInfo)* spell, size_t i, ulong target, ref Casting c)
     {
-        const value = effectMod(spell, i, effectValue(*spell, i, player.data.level, uniform01(map.random)));
+        int base = effectValue(*spell, i, player.data.level, uniform01(map.random));
+        // A finishing move: more for each combo point (`EffectPointsPerComboPoint`); Eviscerate 3% of the attack
+        // power a point too (CMaNGOS's `EffectSchoolDMG`).
+        if (castCombo)
+        {
+            base += cast(int)(spell.casting.pointsPerComboPoint[i] * castCombo);
+            enum ulong eviscerate = 0x00020000;
+            enum uint familyRogue = 8;
+            if (spell.effect[i] == SpellEffect.schoolDamage && spell.casting.spellFamilyName == familyRogue
+                    && (spell.casting.spellFamilyFlags & eviscerate))
+                base += cast(int)(player.stats.attackPower * castCombo * 0.03f);
+        }
+        const value = effectMod(spell, i, base);
         final switch (spell.effect[i]) // every effect decided: done, or listed as not done below
         {
         case SpellEffect.schoolDamage: // SPELL_EFFECT_SCHOOL_DAMAGE
@@ -1630,6 +1659,10 @@ private:
         case SpellEffect.summonCritter: // SPELL_EFFECT_SUMMON_CRITTER: a companion; the same again sends it away
             summonCompanion(spell, i);
             break;
+        case SpellEffect.addComboPoints: // SPELL_EFFECT_ADD_COMBO_POINTS: Sinister Strike, Claw
+            if (target != player.guid)
+                addComboPoints(target, value);
+            break;
         case SpellEffect.skinPlayerCorpse: // SPELL_EFFECT_SKIN_PLAYER_CORPSE: Remove Insignia, a dead enemy's
         {
             import dmangos.world.corpse : Corpse, CorpseFlags;
@@ -1718,7 +1751,7 @@ private:
             SpellEffect.threat, SpellEffect.healthFunnel, SpellEffect.powerFunnel, SpellEffect.healMaxHealth,
             SpellEffect.distract, SpellEffect.pull, SpellEffect.summonPossessed,
             SpellEffect.healMechanical, SpellEffect.summonObjectWild, SpellEffect.sanctuary,
-            SpellEffect.addComboPoints, SpellEffect.createHouse, SpellEffect.bindSight, SpellEffect.stuck,
+            SpellEffect.createHouse, SpellEffect.bindSight, SpellEffect.stuck,
             SpellEffect.summonPlayer, SpellEffect.activateObject, SpellEffect.threatAll,
             SpellEffect.enchantHeldItem, SpellEffect.summonPhantasm, SpellEffect.charge,
             SpellEffect.knockBack, SpellEffect.disenchant, SpellEffect.inebriate,
@@ -1865,6 +1898,12 @@ private:
     /// A duration with the modifiers (an aura's that lasts until cancelled stays so).
     int modDuration(const(SpellInfo)* spell, int ms)
     {
+        // A finishing move lasts longer for each combo point: toward its greatest duration, a fifth a point
+        // (CMaNGOS's `CalculateSpellDuration`).
+        if (castCombo && ms > 0)
+            if (const entry = context.client.spellDurations.lookup(spell.casting.durationIndex))
+                if (entry.maximum > ms)
+                    ms += (entry.maximum - ms) * castCombo / 5;
         return ms > 0 ? max(0, spellMod(SpellModOp.duration, spell, ms)) : ms;
     }
 
@@ -1896,6 +1935,51 @@ private:
             cooldownCategory[spell.id] = category && categoryRecovery > 0 ? category : 0;
             cooldownItem[spell.id] = itemEntry;
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // Combo points
+    // -----------------------------------------------------------------------
+
+    /// The combo points (0 to 5) on `comboTarget`, built by Sinister Strike and the like, spent by finishing moves.
+    package ubyte comboPoints;
+    package ulong comboTarget;     /// ditto: whom they are on
+    private ubyte castCombo; // the points the finishing move being cast uses (its value, its duration)
+
+    /// A finishing move: it uses the combo points (`SPELL_ATTR_EX_FINISHING_MOVE_DAMAGE`, `_DURATION`).
+    static bool usesComboPoints(const ref SpellInfo spell) pure nothrow @nogc @safe
+    {
+        enum uint finishingDamage = 0x00100000, finishingDuration = 0x00400000;
+        return (spell.attributesEx & (finishingDamage | finishingDuration)) != 0;
+    }
+
+    /// `count` combo points on `target` (CMaNGOS's `Unit::AddComboPoints`): added on the same target, else they
+    /// start again on it; at most five.
+    package void addComboPoints(ulong target, int count)
+    {
+        if (count == 0 || target == 0)
+            return;
+        const now = target == comboTarget ? comboPoints + count : count;
+        comboTarget = target;
+        comboPoints = cast(ubyte)(now < 0 ? 0 : now > 5 ? 5 : now);
+        sendComboPoints();
+    }
+
+    /// The combo points are spent (or lost).
+    package void clearComboPoints()
+    {
+        if (comboTarget == 0)
+            return;
+        comboPoints = 0;
+        sendComboPoints();
+        comboTarget = 0;
+    }
+
+    private void sendComboPoints()
+    {
+        player.values.set!PLAYER__FIELD_COMBO_TARGET(comboTarget);
+        player.values.setByte!PLAYER_FIELD_BYTES(1, comboPoints);
+        flushPlayerChanges();
     }
 
     /// The spells whose cooldown waits for their aura to end, with the item each was cast from.
@@ -2747,6 +2831,50 @@ unittest
         auto t = SpellTargets(target ? TargetFlags.unit : TargetFlags.self, target);
         t.write(w);
         return w.data.dup;
+    }
+
+    // Combo points: a builder puts them on its target (at most five); a finishing move uses them (more damage
+    // a point) and spends them, unless it missed.
+    {
+        import dmangos.world.spellcast : SpellCastResult;
+
+        enum uint builder = 90011, finisher = 90012;
+        with (context.data.spells)
+        {
+            spells[builder] = testSpell(builder, 80, 6, 1);    // SPELL_EFFECT_ADD_COMBO_POINTS, 1 point
+            spells[finisher] = testSpell(finisher, 2, 6, 10);  // 10 damage
+            spells.edit(finisher).attributesEx = 0x00100000;   // a finishing move
+            spells.edit(finisher).casting.pointsPerComboPoint[0] = 50;
+        }
+        auto session = anduin.session.inWorld;
+        assert(session.castSpell((finisher in context.data.spells.spells), SpellTargets(TargetFlags.unit, keeper.guid),
+            false, 0) == SpellCastResult.noComboPoints, "none yet");
+        foreach (_; 0 .. 40)
+        {
+            if (session.comboPoints >= 2)
+                break;
+            now += 2.seconds;
+            session.castSpell((builder in context.data.spells.spells), SpellTargets(TargetFlags.unit, keeper.guid), false, 0);
+        }
+        assert(session.comboPoints == 2 && session.comboTarget == keeper.guid);
+        assert(me.values.getByte!PLAYER_FIELD_BYTES(1) == 2 && me.values.get!PLAYER__FIELD_COMBO_TARGET == keeper.guid,
+            "the client sees them");
+        foreach (_; 0 .. 10)
+            session.castSpell((builder in context.data.spells.spells), SpellTargets(TargetFlags.unit, keeper.guid), false, 0);
+        assert(session.comboPoints <= 5);
+        const pointsBefore = session.comboPoints;
+        const before = keeper.values.get!UNIT_FIELD_HEALTH;
+        now += 2.seconds;
+        assert(session.castSpell((finisher in context.data.spells.spells), SpellTargets(TargetFlags.unit, keeper.guid),
+            false, 0) == SpellCastResult.ok);
+        const dealt = before - keeper.values.get!UNIT_FIELD_HEALTH;
+        if (session.comboPoints == 0)
+            assert(dealt > 10 && dealt >= (10 + 50 * pointsBefore) / 4, "a hit: more a point (a partial resist at most 75%), and they are spent");
+        else
+            assert(dealt == 0 && session.comboPoints == pointsBefore, "a miss: they stay");
+        keeper.values.set!UNIT_FIELD_HEALTH(500u);
+        now += 2.seconds; // past the global cooldown
+        anduin.read();
     }
 
     // The bolt: started, then gone 1.5 s later, its damage dealt unless resisted.
