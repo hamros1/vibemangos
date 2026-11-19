@@ -155,7 +155,22 @@ final class TestCreature : CreatureHost
     void hostFollow(EntityRef, float, float) { did ~= "follow"; }
     void hostDeathPrevention(bool on) { did ~= format("death prevention %s", on); }
     EntityRef hostPlayerNearby(float) { return victim; }
-    bool hostLocate(EntityRef, out Location where) { where = at; return true; }
+    bool hostLocationOf(EntityRef, out Location where) { where = at; return true; }
+    ActionResult hostFactionOf(EntityRef c, uint f) { did ~= format("faction %s %s", c.entry, f); return ActionResult.ok; }
+    ActionResult hostUnitFlagsOf(EntityRef c, uint flags, bool set)
+    {
+        did ~= format("flags %s +%x -%x", c.entry, set ? flags : 0, set ? 0 : flags);
+        return ActionResult.ok;
+    }
+    ActionResult hostCastAs(EntityRef c, uint spell, EntityRef, bool) { did ~= format("cast %s %s", c.entry, spell); return ActionResult.ok; }
+    ActionResult hostObjectUsable(EntityRef, bool) { return ActionResult.ok; }
+    uint hostEntryOf(EntityRef who) { return who.entry; }
+    void hostGroupQuestEvent(EntityRef, uint quest) { did ~= format("quest event %s", quest); }
+    void hostEmoteState(uint emote) { did ~= format("emote state %s", emote); }
+    size_t hostCreaturesNearby(uint, float, EntityRef[]) { return 0; }
+    EntityRef hostOwner() { return EntityRef.init; }
+    uint hostItemCount(EntityRef, uint) { return 0; }
+    uint hostGiveItem(EntityRef, uint, uint) { return 0; }
     bool hostChangeEntry(uint entry) { did ~= format("become %s", entry); return true; }
     void hostKillCredit(EntityRef, uint entry) { did ~= format("credit %s", entry); }
 }
@@ -242,7 +257,7 @@ final class TestInstance : InstanceHost
     EntityRef fought = EntityRef(7); /// whom every creature fights
     EntityRef hostVictimOf(EntityRef) { return fought; }
     Location[ulong] places; /// where `locate` finds entities (anything else: at the origin)
-    bool hostLocate(EntityRef who, out Location at)
+    bool hostLocationOf(EntityRef who, out Location at)
     {
         if (auto p = who.guid in places)
             at = *p;

@@ -1765,6 +1765,13 @@ final class Map : CombatWorld, GameObjectWorld
         return slot == uint.max ? null : cast(Creature) at(slot).object;
     }
 
+    /// See `CombatWorld.gameObjectAt`.
+    GameObject gameObjectAt(ulong guid)
+    {
+        const slot = slotFor(guid);
+        return slot == uint.max ? null : cast(GameObject) at(slot).object;
+    }
+
     /// See `CombatWorld.positionOf`.
     bool positionOf(ulong guid, out Position at_)
     {

@@ -94,7 +94,6 @@ mixin template CreatureCasting()
         }
         if (script is null)
             return;
-        world_ = world;
         script.receivedEmote(this, player, textEmote);
     }
 

@@ -77,6 +77,31 @@ mixin template SessionScripting()
         return c.consumed;
     }
 
+    // Kalimdor scripts:
+
+    /// A script gives this player `count` of `entry`: onto stacks first, then free slots, as many as
+    /// fit (as a quest's reward is given). How many it got.
+    public uint scriptGiveItem(uint entry, uint count)
+    {
+        import dmangos.world.inventory : InventoryResult, ItemPosCount;
+        import dmangos.world.defines : nullBag, nullSlot;
+
+        if (player is null || count == 0)
+            return 0;
+        ItemPosCount[] dest;
+        uint noSpace;
+        if (player.inventory.canStoreNew(nullBag, nullSlot, dest, entry, count, &noSpace) != InventoryResult.ok)
+            count -= noSpace;
+        if (count == 0 || dest.length == 0)
+            return 0;
+        auto made = player.inventory.storeNew(dest, entry);
+        if (made is null)
+            return 0;
+        sendNewItem(made, count, true, false);
+        flushInventory();
+        return count;
+    }
+
     /// Where this player stands with `quest` (`UnitRef.questStatusOf`).
     public QuestProgress questStatusOf(uint quest)
     {

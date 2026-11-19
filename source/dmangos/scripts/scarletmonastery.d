@@ -205,7 +205,7 @@ struct Mograine
         steps.clear();
         me.melee(false);
         me.combatMovement(false);
-        me.unitFlags(UnitFlag.immuneToNpc | UnitFlag.notSelectable);
+        me.unitFlags(UnitFlag.immuneToNpc | UnitFlag.uninteractible);
         me.standState(StandState.dead);
         me.signalDungeon(ScarletMonastery.Signals.mograineFell);
     }
@@ -251,7 +251,7 @@ struct Mograine
             me.emote(emoteRoar);
             break;
         case Step.revived:
-            me.unitFlags(UnitFlag.immuneToNpc | UnitFlag.notSelectable, false);
+            me.unitFlags(UnitFlag.immuneToNpc | UnitFlag.uninteractible, false);
             me.melee(true);
             me.combatMovement(true);
             me.castSelf(retributionAura);
@@ -287,7 +287,7 @@ struct Mograine
     {
         steps.clear();
         fallen = raised = shielded = false;
-        me.unitFlags(UnitFlag.immuneToNpc | UnitFlag.notSelectable, false);
+        me.unitFlags(UnitFlag.immuneToNpc | UnitFlag.uninteractible, false);
         me.standState(StandState.stand);
         me.melee(true);
         me.combatMovement(true);
@@ -392,7 +392,7 @@ struct Whitemane
             me.melee(false);
             Location at;
             const him = me.creatureNearby(mograine, 100);
-            if (him && me.locate(him, at))
+            if (him && me.locationOf(him, at))
                 me.moveTo(at, pointMograine, true);
             else
                 steps.after(Step.raise, 3.seconds);

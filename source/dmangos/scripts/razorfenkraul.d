@@ -50,7 +50,7 @@ struct RazorfenKraul
     void on(ref InstanceContext kraul, const ref Signal e)
     {
         Location at;
-        if (e.id == Signals.gopherSniffs && e.from && kraul.locate(e.from, at))
+        if (e.id == Signals.gopherSniffs && e.from && kraul.locationOf(e.from, at))
             kraul.spawnObjects(blueleafTuber, 300, at, 20);
     }
 

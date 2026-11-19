@@ -217,7 +217,7 @@ struct DireMaul
         guardsSorted = true;
         Location at;
         foreach (who; guardCandidates)
-            if (dm.locate(who, at))
+            if (dm.locationOf(who, at))
                 foreach (i, place; generatorPlaces)
                     if ((at.x - place.x) ^^ 2 + (at.y - place.y) ^^ 2 < 20 * 20)
                     {

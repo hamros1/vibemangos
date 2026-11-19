@@ -161,7 +161,7 @@ struct ShadowfangKeep
             break;
         case lupineHorror, wolfguardWorg, bleakWorg, slaveringWorg:
             Location at;
-            if (keep.locate(e.creature, at) && at.z > nandosComes.z)
+            if (keep.locationOf(e.creature, at) && at.z > nandosComes.z)
                 nandosPack.add(e.creature);
             break;
         default:

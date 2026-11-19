@@ -282,7 +282,7 @@ struct Archaedas
             awake = true;
             me.say(sayAggro);
             me.removeAura(me.self, freezeAnim);
-            me.unitFlags(UnitFlag.notSelectable, false);
+            me.unitFlags(UnitFlag.uninteractible, false);
             if (const enemy = me.playerNearby(80))
                 me.attack(enemy);
             break;
@@ -317,7 +317,7 @@ struct Archaedas
         hpPhase = 1;
         awake = dwarvesDone = false;
         me.castSelf(freezeAnim, true);
-        me.unitFlags(UnitFlag.notSelectable);
+        me.unitFlags(UnitFlag.uninteractible);
     }
 
     void on(ref CreatureContext me, const ref Died e)

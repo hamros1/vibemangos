@@ -120,7 +120,7 @@ struct ZulFarrak
                     if (!zf.victimOf(troll))
                     {
                         Location at;
-                        if (!blyRef || !zf.locate(blyRef, at))
+                        if (!blyRef || !zf.locationOf(blyRef, at))
                             at = Location(1882.89f, 1299.27f, 48.38f);
                         at.x += (cast(int) zf.random(9) - 4) * 0.5f;
                         at.y += (cast(int) zf.random(9) - 4) * 0.5f;
@@ -180,10 +180,10 @@ struct ZulFarrak
             Location boss, at, nearest;
             EntityRef best;
             float bestDistance = float.infinity;
-            if (!zf.locate(zumrahRef, boss))
+            if (!zf.locationOf(zumrahRef, boss))
                 return;
             foreach (grave; graves)
-                if (zf.locate(grave, at))
+                if (zf.locationOf(grave, at))
                 {
                     const d = (at.x - boss.x) ^^ 2 + (at.y - boss.y) ^^ 2;
                     if (d < bestDistance)

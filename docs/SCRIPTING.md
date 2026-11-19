@@ -144,6 +144,10 @@ event at the end). It can be paused (an ambush to fight off, a scene to play) an
 movement scripts (a sniffed path's scenery). Being data, an escort handed to another node goes on there; if the creature's
 movement did not come along, the escort sends it on again.
 
+`Follower` (`dmangos.script.follower`) is the
+second component: a creature that follows its player (a lost cub, a sleepwalker) until its script
+says it has arrived, and that fails the player's quest when the player dies or is left behind.
+
 `Walk` (`dmangos.script.walk`) takes a creature along its path with nobody escorting it (a drunk to
 the keg, a guard to his door); `Pack` (`dmangos.script.pack`) counts the creatures a dungeon script
 watches together (the keepers of a ward, a wave's adds), so "the last one fell" survives a restart.

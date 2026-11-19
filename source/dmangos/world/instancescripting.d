@@ -351,7 +351,7 @@ final class InstanceScript : InstanceHost
         return c is null ? EntityRef.init : c.ai.hostVictim();
     }
 
-    bool hostLocate(EntityRef who, out Location at)
+    bool hostLocationOf(EntityRef who, out Location at)
     {
         Position there;
         bool found;

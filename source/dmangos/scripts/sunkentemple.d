@@ -128,7 +128,7 @@ struct SunkenTemple
                     return; // the wrong statue: nothing (its trap is the database's)
                 ++statuesDone;
                 Location at;
-                if (e.target && st.locate(e.target, at))
+                if (e.target && st.locationOf(e.target, at))
                     st.spawnObjects(atalaiLight, 1800, at, 8);
                 if (statuesDone == statueEvents.length)
                 {
@@ -218,7 +218,7 @@ struct SunkenTemple
                 Location at = shadePlace;
                 if (shade)
                 {
-                    st.locate(shade, at);
+                    st.locationOf(shade, at);
                     st.despawn(shade);
                 }
                 if (const him = st.summon(avatarOfHakkar, at))
@@ -327,7 +327,7 @@ struct SunkenTemple
     private void summonAt(ref InstanceContext st, uint entry, EntityRef circle)
     {
         Location at;
-        if (circle && st.locate(circle, at))
+        if (circle && st.locationOf(circle, at))
             st.summon(entry, at);
     }
 }

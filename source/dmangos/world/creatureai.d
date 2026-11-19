@@ -17,6 +17,7 @@ import std.math : atan2, cos, sin, sqrt;
 import dmangos.world.combat;
 alias attackStartPacket = dmangos.world.combat.attackStart;
 import dmangos.world.creature : Creature, VirtualItem;
+import dmangos.world.gameobject : GameObject;
 import dmangos.world.defines : UnitFlags;
 import dmangos.world.motion : IdleMovement, launch, MotionWorld, MovementGenerator, stopMoving;
 import dmangos.world.movement : MovementFlags, Position;
@@ -95,6 +96,10 @@ interface CreatureLore
     /// ditto
     ScriptHandle spellScript(uint id);
 
+    // Kalimdor scripts:
+
+    /// Whether two players are in one group.
+    bool sameGroup(ulong a, ulong b);
     // Eastern Kingdoms scripts:
 
     /// The guid of the nearest game object of `entry` within `range` yards of `center` on `world`; 0 if none.
@@ -147,6 +152,14 @@ interface CombatWorld : MotionWorld
 
     /// A packet for the players within `range` yards of `center`.
     void sendInRange(Position center, float range, Opcode opcode, const(ubyte)[] body_);
+
+    // Kalimdor scripts:
+
+    /// The game object with this guid here; null if none.
+    GameObject gameObjectAt(ulong guid);
+
+    /// Sends what changed in the game object's fields to those who see it.
+    void flushGameObject(GameObject go);
 }
 
 /// How far a creature's call for help reaches (yards), how long its allies take to come (ms), and

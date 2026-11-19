@@ -402,13 +402,13 @@ struct BlackrockSpire
         Location rune, mob;
         foreach (i, r; runes)
         {
-            if (!r || !brs.locate(r, rune))
+            if (!r || !brs.locationOf(r, rune))
             {
                 roomDone[i] = true; // no rune here: nothing to do there
                 continue;
             }
             foreach (who; roomCandidates)
-                if (brs.locate(who, mob) && (mob.x - rune.x) ^^ 2 + (mob.y - rune.y) ^^ 2 + (mob.z - rune.z) ^^ 2 < 100)
+                if (brs.locationOf(who, mob) && (mob.x - rune.x) ^^ 2 + (mob.y - rune.y) ^^ 2 + (mob.z - rune.z) ^^ 2 < 100)
                     roomMobs[i].add(who);
         }
         rooms = Fight.inProgress;
@@ -650,7 +650,7 @@ struct Emberseer
                 me.say(sayFree);
                 foreach (spell; [fullStrength, bonusDamage, transform])
                     me.castSelf(spell, true);
-                me.unitFlags(UnitFlag.notSelectable | UnitFlag.immuneToPlayer, false);
+                me.unitFlags(UnitFlag.uninteractible | UnitFlag.immuneToPlayer, false);
                 me.signalDungeon(BlackrockSpire.Signals.emberseerFree);
                 if (const enemy = me.playerNearby(60))
                     me.attack(enemy);
@@ -682,7 +682,7 @@ struct Emberseer
         steps.clear();
         stacks = 0;
         growingNow = free = false;
-        me.unitFlags(UnitFlag.notSelectable | UnitFlag.immuneToPlayer);
+        me.unitFlags(UnitFlag.uninteractible | UnitFlag.immuneToPlayer);
         me.castSelf(fireShield, true);
     }
 

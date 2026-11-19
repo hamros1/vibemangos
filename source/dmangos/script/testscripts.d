@@ -137,10 +137,22 @@ final class FakeCreature : CreatureHost
     void hostMovementScript(uint) {}
     void hostRelay(int, EntityRef) {}
     // Dungeon scripts:
-    void hostFollow(EntityRef, float, float) {}
     EntityRef hostPlayerNearby(float) { return EntityRef.init; }
-    bool hostLocate(EntityRef, out Location) { return false; }
     void hostKillCredit(EntityRef, uint) {}
+    // Kalimdor scripts:
+    ActionResult hostFactionOf(EntityRef, uint) { return ActionResult.ok; }
+    ActionResult hostUnitFlagsOf(EntityRef, uint, bool) { return ActionResult.ok; }
+    void hostFollow(EntityRef, float, float) {}
+    ActionResult hostCastAs(EntityRef, uint, EntityRef, bool) { return ActionResult.ok; }
+    ActionResult hostObjectUsable(EntityRef, bool) { return ActionResult.ok; }
+    uint hostEntryOf(EntityRef) { return 0; }
+    void hostGroupQuestEvent(EntityRef, uint quest) { quests ~= "event"; }
+    bool hostLocationOf(EntityRef, out Location) { return false; }
+    void hostEmoteState(uint) {}
+    size_t hostCreaturesNearby(uint, float, EntityRef[]) { return 0; }
+    EntityRef hostOwner() { return EntityRef.init; }
+    uint hostItemCount(EntityRef, uint) { return 0; }
+    uint hostGiveItem(EntityRef, uint, uint) { return 0; }
 }
 
 unittest

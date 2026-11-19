@@ -115,6 +115,7 @@ struct Fighter
     uint shieldBlock;          /// what its shield stops of a blocked blow
     uint armor;
     float[7] damageTaken = 1;  /// by school: what its auras multiply blows against it by (`MOD_DAMAGE_PERCENT_TAKEN`)
+    float[mechanics] mechanicResist = 0; /// percent more often it resists spells of each mechanic (`MOD_MECHANIC_RESISTANCE`)
     uint creatureType = creatureTypeHumanoid; /// `CreatureType` (a player is a humanoid)
 }
 
@@ -132,6 +133,7 @@ struct DamageMods
     float[creatureTypes] critVersus = 0;
     float[7] taken = 1;
     float[7] threat = 1;       /// by school: what its damage is worth in threat (`MOD_THREAT`)
+    float[mechanics] mechanicResist = 0;
 
     /**
      * From `auras`; `weaponOf(slot)` is the subclass of the weapon in an equipment slot (-1: none), `schoolOf(type)`
@@ -158,6 +160,8 @@ struct DamageMods
             m.taken[s] = auras.multiplier(AuraType.modDamagePercentTaken, (int mask) => (mask & (1 << s)) != 0);
             m.threat[s] = auras.multiplier(AuraType.modThreat, (int mask) => (mask & (1 << s)) != 0);
         }
+        foreach (int mechanic; 1 .. cast(int) mechanics)
+            m.mechanicResist[mechanic] = auras.totalByMisc(AuraType.modMechanicResistance, mechanic);
         foreach (int t; 1 .. cast(int) creatureTypes)
         {
             m.versus[t] = auras.multiplier(AuraType.modDamageDoneVersus, (int mask) => (mask & (1 << (t - 1))) != 0);
@@ -173,8 +177,12 @@ struct DamageMods
         f.damageVersus = versus;
         f.critVersus = critVersus;
         f.damageTaken = taken;
+        f.mechanicResist = mechanicResist;
     }
 }
+
+/// The spell mechanics (`Mechanics`) `Fighter.mechanicResist` covers.
+enum size_t mechanics = 32;
 
 /// Creature types (`CreatureType`), as the tables by type in `Fighter` index them: 1 beast to 10 not specified.
 enum size_t creatureTypes = 12;

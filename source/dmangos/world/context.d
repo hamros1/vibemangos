@@ -2727,6 +2727,12 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return summonCreature(world, entry, at, cast(TempSpawnType) type, durationMs, summoner);
     }
 
+    /// See `CreatureLore.sameGroup`.
+    bool sameGroup(ulong a, ulong b)
+    {
+        return groups.sameGroup(a, b);
+    }
+
     /// See `CreatureLore.summonSpot`.
     bool summonSpot(uint id, out Position at, out uint seconds)
     {
@@ -3296,6 +3302,47 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         {
             if (auto who = map.unit(player.guid))
                 who.killCreditFrom(entry, go.guid);
+        }
+
+        // Kalimdor scripts:
+
+        Location hostObjectLocation()
+        {
+            const p = go.position;
+            return Location(p.x, p.y, p.z, p.orientation);
+        }
+
+        ActionResult hostObjectSignal(EntityRef to, uint id, int value)
+        {
+            return signalCreature(map, EntityRef(go.guid), to, id, value);
+        }
+
+        size_t hostObjectCreaturesNear(uint entry, float range, EntityRef[] found)
+        {
+            size_t n;
+            foreach (c; map.creaturesNear(go.position, range))
+                if (n < found.length && c.spawn.entry == entry && c.alive)
+                    found[n++] = EntityRef(c.guid);
+            return n;
+        }
+
+        ActionResult hostObjectCast(EntityRef caster, uint spell, EntityRef target)
+        {
+            import dmangos.world.character : Character;
+            import dmangos.world.spellcast : SpellCastResult, SpellTargets, TargetFlags;
+
+            if (auto creature = map.creatureAt(caster.guid))
+                return creature.ai.castFor(map, spell, target.guid, true);
+            auto session = cast(Character) onlinePlayer(caster.guid);
+            if (session is null || session.player is null || session.currentMap !is map)
+                return ActionResult.notHere;
+            const info = data.spells.spell(spell);
+            if (info is null)
+                return ActionResult.failed;
+            const self = !target || target.guid == caster.guid;
+            const result = session.castSpell(info, SpellTargets(self ? TargetFlags.self : TargetFlags.unit,
+                self ? caster.guid : target.guid), true, 0);
+            return result == SpellCastResult.ok ? ActionResult.ok : ActionResult.notAllowed;
         }
     }
 

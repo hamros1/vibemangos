@@ -155,7 +155,7 @@ struct Stratholme
         case abomBile, abomVenom: abominations.add(e.creature); break;
         case crimsonInitiate, crimsonGallant, crimsonGuardsman, crimsonConjurer, crimsonBattleMage:
             Location at;
-            if (!timmyCalled && strat.locate(e.creature, at)
+            if (!timmyCalled && strat.locationOf(e.creature, at)
                 && (at.x - timmyCourtyard.x) ^^ 2 + (at.y - timmyCourtyard.y) ^^ 2 < 40 * 40)
                 courtyard.add(e.creature);
             break;
@@ -177,7 +177,7 @@ struct Stratholme
             strat.say(baronRef, sayRunStart);
             ysidaRef = strat.summon(ysida, ysidaSpawn);
             if (ysidaRef)
-                strat.unitFlags(ysidaRef, UnitFlag.nonAttackable);
+                strat.unitFlags(ysidaRef, UnitFlag.notAttackable);
             steps.every(Step.runClock, 1.seconds);
             break;
         case Signals.serviceGateUsed:
@@ -191,7 +191,7 @@ struct Stratholme
             break;
         case Signals.postboxUsed:
             Location at;
-            if (!e.from || !strat.locate(e.from, at))
+            if (!e.from || !strat.locationOf(e.from, at))
                 break;
             if (++postboxesUsed == 3)
                 strat.summon(postmasterMalown, at, 0, e.from);
@@ -431,7 +431,7 @@ struct Stratholme
         {
             strat.say(ysidaRef, sayEpilogue);
             strat.moveTo(ysidaRef, ysidaFree);
-            strat.unitFlags(ysidaRef, UnitFlag.nonAttackable, false);
+            strat.unitFlags(ysidaRef, UnitFlag.notAttackable, false);
         }
     }
 
@@ -443,7 +443,7 @@ struct Stratholme
         zigguratsSorted = true;
         Location at;
         foreach (who; acolyteCandidates)
-            if (strat.locate(who, at))
+            if (strat.locationOf(who, at))
                 foreach (i, door; zigguratDoors)
                     if ((at.x - door.x) ^^ 2 + (at.y - door.y) ^^ 2 < 35 * 35)
                     {
@@ -451,7 +451,7 @@ struct Stratholme
                         break;
                     }
         foreach (who; crystalCandidates)
-            if (strat.locate(who, at))
+            if (strat.locationOf(who, at))
                 foreach (i, door; zigguratDoors)
                     if ((at.x - door.x) ^^ 2 + (at.y - door.y) ^^ 2 < 50 * 50)
                     {

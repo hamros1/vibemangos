@@ -1405,13 +1405,13 @@ private:
             if (!creature.alive || !canAttack(relatingNow(), creature.ai.relatingOf(), context.client))
                 return SpellMissInfo.none;
             return rollSpellHit(player.fighter, creature.fighter, spell,
-                cast(int) creature.values.get!UNIT_FIELD_RESISTANCES(school), spellHitBonus, map.random);
+                targetResistance(cast(int) creature.values.get!UNIT_FIELD_RESISTANCES(school), school), spellHitBonus, map.random);
         }
         auto other = target == player.guid ? null : cast(typeof(this)) context.onlinePlayer(target);
         if (other is null || other.player is null || !canAttack(relatingNow(), other.relatingNow(), context.client))
             return SpellMissInfo.none;
         return rollSpellHit(player.fighter, other.player.fighter, spell,
-            cast(int) other.player.values.get!UNIT_FIELD_RESISTANCES(school), spellHitBonus, map.random);
+            targetResistance(cast(int) other.player.values.get!UNIT_FIELD_RESISTANCES(school), school), spellHitBonus, map.random);
     }
 
     // -----------------------------------------------------------------------
@@ -2061,7 +2061,7 @@ private:
         if (school == 0)
             damage = cast(uint) armorReducedDamage(player.data.level, other.player.fighter.armor, damage);
         else if (school != 1 && !isBinarySpell(*spell))
-            resisted = partialResist(damage, cast(int) other.player.values.get!UNIT_FIELD_RESISTANCES(school),
+            resisted = partialResist(damage, targetResistance(cast(int) other.player.values.get!UNIT_FIELD_RESISTANCES(school), school),
                 other.player.data.level);
         const absorbed = other.absorbIncoming(school, damage);
         map.sendToWatchers(this, Opcode.SMSG_SPELLNONMELEEDAMAGELOG, nonMeleeDamageLog(target: other.player.guid, attacker: player.guid,
@@ -2097,11 +2097,35 @@ private:
             foreach (i; 0 .. 3)
                 if ((aura.effects & (1 << i)) && aura.type(i) == AuraType.modDamageDone && (aura.misc(i) & (1 << school)))
                     done += aura.amount[i];
+        done += spellPowerFromSpirit(AuraType.modSpellDamageOfStatPercent, 1 << school);
         if (done <= 0)
             return 0;
         int time = castTime(*spell, context.client, player.data.level);
         time = time < 1500 ? 1500 : time > 3500 ? 3500 : time;
         return cast(uint)(done * time / 3500.0f);
+    }
+
+    /**
+     * Spell power from a share of spirit (`MOD_SPELL_DAMAGE_OF_STAT_PERCENT` for the schools in `schoolMask`,
+     * `MOD_SPELL_HEALING_OF_STAT_PERCENT`): Spiritual Guidance. 1.12's data names no stat; it is spirit, as
+     * CMaNGOS has it.
+     */
+    int spellPowerFromSpirit(AuraType type, int schoolMask)
+    {
+        import dmangos.world.updatefields : UNIT_FIELD_STAT0;
+
+        const percent = schoolMask == -1 ? player.auras.total(type) : player.auras.totalByMiscMask(type, schoolMask);
+        if (percent <= 0)
+            return 0;
+        return cast(int)(player.values.get!UNIT_FIELD_STAT0(Stat.spirit) * percent / 100.0f);
+    }
+
+    /// A target's resistance to `school` as this caster's spells meet it: less by its `MOD_TARGET_RESISTANCE`
+    /// (negative amounts: Arcane Subtlety), never below none.
+    int targetResistance(int resistance, uint school)
+    {
+        const reduced = resistance + player.auras.totalByMiscMask(AuraType.modTargetResistance, 1 << school);
+        return reduced > 0 ? reduced : 0;
     }
 
     /// The healing bonus: the caster's `SPELL_AURA_MOD_HEALING_DONE` times the same coefficient.
@@ -2115,6 +2139,7 @@ private:
             foreach (i; 0 .. 3)
                 if ((aura.effects & (1 << i)) && aura.type(i) == AuraType.modHealingDone)
                     done += aura.amount[i];
+        done += spellPowerFromSpirit(AuraType.modSpellHealingOfStatPercent, -1);
         if (done <= 0)
             return 0;
         int time = castTime(*spell, context.client, player.data.level);
@@ -2156,7 +2181,7 @@ private:
             import dmangos.world.combat : partiallyResisted;
             import std.random : uniform;
 
-            const r = partiallyResisted(damage, cast(int) victim.values.get!UNIT_FIELD_RESISTANCES(school),
+            const r = partiallyResisted(damage, targetResistance(cast(int) victim.values.get!UNIT_FIELD_RESISTANCES(school), school),
                 player.data.level, victim.fighter, false, true, uniform!"[]"(1u, 10000u, map.random));
             damage = r.damage;
             resisted = r.resisted;

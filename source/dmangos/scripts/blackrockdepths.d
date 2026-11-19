@@ -338,7 +338,7 @@ struct BlackrockDepths
                 if (const spirit = brd.summon(burningSpirit, runes[e.value], 60_000))
                 {
                     Location at;
-                    if (e.from && brd.locate(e.from, at))
+                    if (e.from && brd.locationOf(e.from, at))
                         brd.moveTo(spirit, at, 0, true);
                 }
             break;
@@ -627,7 +627,7 @@ struct BlackrockDepths
         vault = Fight.inProgress;
         Location at;
         foreach (construct; constructs)
-            if (brd.locate(construct, at) && (at.x - vaultPlace.x) ^^ 2 + (at.y - vaultPlace.y) ^^ 2 < 20 * 20)
+            if (brd.locationOf(construct, at) && (at.x - vaultPlace.x) ^^ 2 + (at.y - vaultPlace.y) ^^ 2 < 20 * 20)
             {
                 vaultGuards.add(construct);
                 brd.removeAura(construct, 10255);
@@ -769,7 +769,7 @@ struct Grimstone
 {
     void on(ref CreatureContext me, const ref Spawned e)
     {
-        me.unitFlags(UnitFlag.nonAttackable);
+        me.unitFlags(UnitFlag.notAttackable);
     }
 }
 
@@ -944,7 +944,7 @@ struct MistressNagmara
             return;
         lover = me.creatureNearby(rocknot, 80);
         Location at;
-        if (!lover || !me.locate(lover, at))
+        if (!lover || !me.locationOf(lover, at))
             return;
         begun = true;
         me.npcFlags(0);

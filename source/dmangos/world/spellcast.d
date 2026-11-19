@@ -554,7 +554,12 @@ float magicMissChance(const Fighter caster, const Fighter victim, const ref Spel
 {
     import dmangos.world.combat : fullResistChance;
 
+    import dmangos.world.combat : mechanics;
+
     float chance = spellMissChance(caster.level, victim.level, victim.player) - hitBonus;
+    // Resisted more often for its mechanic (a fear, a stun): the victim's `MOD_MECHANIC_RESISTANCE`.
+    if (spell.casting.mechanic && spell.casting.mechanic < mechanics)
+        chance += victim.mechanicResist[spell.casting.mechanic];
     if (spell.casting.dmgClass == DamageClass.magic && spell.casting.school > 1)
     {
         const binary = isBinarySpell(spell);
@@ -627,4 +632,24 @@ unittest
     wolf.evading = false;
     bolt.casting.dmgClass = DamageClass.none;
     assert(rollSpellHit(mage, wolf, bolt, 0, 0, low) == SpellMissInfo.none, "no damage class: no roll");
+}
+
+// A victim's resistance to a mechanic (a dwarf's or a talent's against fear) adds to the magic miss chance.
+unittest
+{
+    import std.math : isClose;
+    import dmangos.world.combat : Fighter;
+
+    Fighter caster, victim;
+    caster.level = victim.level = 60;
+    caster.player = victim.player = true;
+    SpellInfo fear;
+    fear.casting.dmgClass = DamageClass.magic;
+    fear.casting.school = 5; // shadow
+    fear.casting.mechanic = 5; // MECHANIC_FEAR
+    const plain = magicMissChance(caster, victim, fear, 0, 0);
+    victim.mechanicResist[5] = 15;
+    assert(isClose(magicMissChance(caster, victim, fear, 0, 0), plain + 15));
+    fear.casting.mechanic = 12; // a stun: not resisted for the fear's sake
+    assert(isClose(magicMissChance(caster, victim, fear, 0, 0), plain));
 }
