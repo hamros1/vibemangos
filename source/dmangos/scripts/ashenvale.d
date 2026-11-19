@@ -220,7 +220,6 @@ struct NagaBrazier
         if (const muglash = it.creatureNearby(12_717, 10))
             it.signal(muglash, Muglash.signalBrazierLit);
         it.usable(false);
-        it.consume();
     }
 }
 
@@ -534,7 +533,7 @@ unittest
     // The brazier tells him.
     auto brazier = new RecordingObject(Muglash.nagaBrazier);
     brazier.nearby[12_717] = creatureRef(12_717);
-    assert(use!self("go_naga_brazier", brazier));
+    assert(!use!self("go_naga_brazier", brazier), "it is used as usual too");
     assert(brazier.has("signal 12717 1") && brazier.has("unusable"));
 
     // Feero: the assassins' end said when the last of them falls.

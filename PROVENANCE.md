@@ -150,6 +150,13 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Files: `AI/ScriptDevAI/scripts/kalimdor/ashenvale.cpp`
 * Functions/ScriptNames: `npc_muglash`, `go_naga_brazier`, `npc_ruul_snowhoof`, `npc_torek`, `npc_feero_ironhand`
 
+## scripts/darkshore.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/kalimdor/darkshore.cpp`
+* Functions/ScriptNames: `npc_kerlonian` (with `AwakenKerlonian`), `npc_prospector_remtravel`, `npc_threshwackonator`,
+  `npc_volcor`, `npc_therylune`, `npc_rabid_bear`, `npc_blackwood_warrior`, `npc_blackwood_totemic`, `go_furbolg_food`
+
 ## scripts/barrens.d
 
 * Projects: CMaNGOS
