@@ -3231,6 +3231,12 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             c.ai.sayFor(map, text, target.guid);
             return ActionResult.ok;
         }
+
+        void hostKillCredit(EntityRef player, uint entry)
+        {
+            if (auto who = map.unit(player.guid))
+                who.killCreditFrom(entry, go.guid);
+        }
     }
 
     /// The guid of the nearest game object of `entry` within `range` yards of `center` (not `except`); 0 if none.

@@ -612,6 +612,7 @@ interface GameObjectHost
     EntityRef hostCreatureNearby(uint entry, float range);
     EntityRef hostSummon(uint entry, Location at, uint despawnMs, EntityRef attack);
     ActionResult hostSayAs(EntityRef speaker, uint text, EntityRef target);
+    void hostKillCredit(EntityRef player, uint entry);
 }
 
 /// A game object script's handle on its object, for the length of one handler.
@@ -679,6 +680,9 @@ struct GameObjectContext
     {
         return host.hostSayAs(speaker, text, target);
     }
+
+    /// `KilledMonsterCredit` of `entry` for `player`.
+    void killCredit(EntityRef player, uint entry) { host.hostKillCredit(player, entry); }
 }
 
 // ---------------------------------------------------------------------------

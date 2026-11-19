@@ -1,6 +1,6 @@
 /**
  * Western Plaguelands: the Scourge cauldrons, whose lords come out for the players on the cauldron
- * quests; and Highlord Taelan Fordring's story: his men turning on him when "Scarlet Subterfuge"
+ * quests; Andorhal's watchtowers; and Highlord Taelan Fordring's story: his men turning on him when "Scarlet Subterfuge"
  * (5862) is handed in, and "In Dreams" (5944), his ride out of Hearthglen to the tower where Grand
  * Inquisitor Isillien kills him, and his father Tirion comes too late.
  */
@@ -57,6 +57,25 @@ struct ScourgeCauldron
             }
         }
         return cauldrons[best];
+    }
+}
+
+/// The four watchtowers of Andorhal: used on "All Along the Watchtowers" (5097, 5098), each counts.
+@gameObject("go_andorhal_tower")
+struct AndorhalTower
+{
+    enum uint questAlliance = 5097, questHorde = 5098;
+    enum uint firstTower = 176094, firstTowerCredit = 10902;
+
+    void on(ref GameObjectContext tower, const ref ObjectUsed e)
+    {
+        if (tower.questStatus(e.player, questAlliance) != QuestProgress.incomplete
+                && tower.questStatus(e.player, questHorde) != QuestProgress.incomplete)
+            return;
+        const which = tower.self.entry - firstTower;
+        if (which < 4)
+            tower.killCredit(e.player, firstTowerCredit + which);
+        tower.consume();
     }
 }
 

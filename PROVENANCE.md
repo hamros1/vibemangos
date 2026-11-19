@@ -230,8 +230,8 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 ## scripts/westernplaguelands.d
 
 * Projects: CMaNGOS
-* Files: `ScriptDevAI/scripts/eastern_kingdoms/western_plaguelands.cpp`
-* Functions/ScriptNames: `npc_the_scourge_cauldron`, `npc_taelan_fordring`, `npc_isillien`, `npc_tirion_fordring`
+* Files: `ScriptDevAI/scripts/eastern_kingdoms/western_plaguelands.cpp`, `ScriptDevAI/scripts/world/go_scripts.cpp`
+* Functions/ScriptNames: `npc_the_scourge_cauldron`, `npc_taelan_fordring`, `npc_isillien`, `npc_tirion_fordring`, `go_andorhal_tower`
 
 ## scripts/westfall.d
 
