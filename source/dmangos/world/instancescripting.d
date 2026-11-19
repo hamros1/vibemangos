@@ -45,6 +45,10 @@ final class InstanceScript : InstanceHost
     /// good); false if there is none (`WorldContext` sets it).
     bool delegate(Map map, uint entry, uint seconds) respawnObjectOf;
 
+    /// A game object of `entry` (no spawn of the map's) put at `at` for `seconds` (0: for good); null if
+    /// there is no such object (`WorldContext` sets it).
+    GameObject delegate(Map map, uint entry, Location at, uint seconds) summonObjectAt;
+
     /**
      * The script `name` for copy `id` of `mapId`, its state read from `data` (`instance.data`);
      * `persist` writes its state back. Null if no script serves `name`.
@@ -271,6 +275,27 @@ final class InstanceScript : InstanceHost
         if (map is null || !map.positionOf(who.guid, at))
             return Location.init;
         return Location(at.x, at.y, at.z, at.orientation);
+    }
+
+    EntityRef hostSummonObject(uint entry, Location at, uint seconds)
+    {
+        if (map is null || summonObjectAt is null)
+            return EntityRef.init;
+        auto go = summonObjectAt(map, entry, at, seconds);
+        return go is null ? EntityRef.init : EntityRef(go.guid);
+    }
+
+    size_t hostCreaturesNear(Location at, uint entry, float range, EntityRef[] into)
+    {
+        import dmangos.world.movement : Position;
+
+        if (map is null)
+            return 0;
+        size_t n;
+        foreach (c; map.creaturesNear(Position(at.x, at.y, at.z), range))
+            if (c.alive && (entry == 0 || c.spawn.entry == entry) && n < into.length)
+                into[n++] = EntityRef(c.guid);
+        return n;
     }
 
     uint hostRandom(uint below)

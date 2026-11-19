@@ -616,7 +616,7 @@ mixin template DbScriptRunner()
         foreach (guid; due)
         {
             scriptedGameObjects.remove(guid);
-            foreach (map; maps)
+            foreach (map; maps.values ~ instanceMaps.values) // a dungeon copy's too
                 if (map.findObject(guid) !is null)
                     map.removeObject(guid);
         }

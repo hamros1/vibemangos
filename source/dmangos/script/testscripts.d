@@ -141,6 +141,8 @@ final class FakeCreature : CreatureHost
     Location hostLocationOf(EntityRef) { return Location.init; }
     void hostRooted(bool) {}
     void hostDie() {}
+    void hostAddThreat(EntityRef, float) {}
+    ActionResult hostSendAgainst(EntityRef, EntityRef) { return ActionResult.ok; }
     void hostMoveNow(Location, uint, bool) {}
     void hostSpellList(uint) {}
     ubyte hostClassOf(EntityRef) { return 0; }

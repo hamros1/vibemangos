@@ -300,6 +300,8 @@ interface CreatureHost
     Location hostLocationOf(EntityRef who);
     void hostRooted(bool on);
     void hostDie();
+    void hostAddThreat(EntityRef who, float amount);
+    ActionResult hostSendAgainst(EntityRef creature, EntityRef target);
     void hostMoveNow(Location at, uint point, bool run);
     void hostSpellList(uint id);
     ubyte hostClassOf(EntityRef who);
@@ -560,6 +562,12 @@ struct CreatureContext
     /// It dies, nobody's kill (its death prevention aside).
     void die() { host.hostDie(); }
 
+    /// Threat of `who` (a unit here) on it, added (its list takes it in if it was not there).
+    void addThreat(EntityRef who, float amount) { host.hostAddThreat(who, amount); }
+
+    /// Another creature here attacks `target` (its adds, its summons).
+    ActionResult sendAgainst(EntityRef creature, EntityRef target) { return host.hostSendAgainst(creature, target); }
+
     /// As `moveTo`, but at once even in a fight (turn its combat movement off first, or it chases its
     /// victim again): a dragon taking to the air, a boss going to its place.
     void moveNow(Location at, uint point, bool run = true) { host.hostMoveNow(at, point, run); }
@@ -675,6 +683,8 @@ interface InstanceHost
     Location hostLocationOf(EntityRef who);
     ActionResult hostZoneCombat(EntityRef creature);
     uint hostRandom(uint below);
+    EntityRef hostSummonObject(uint entry, Location at, uint seconds);
+    size_t hostCreaturesNear(Location at, uint entry, float range, EntityRef[] into);
 }
 
 /// A dungeon script's handle on its copy, for the length of one handler.
@@ -766,6 +776,16 @@ struct InstanceContext
 
     /// A random number below `below`.
     uint random(uint below) { return host.hostRandom(below); }
+
+    /// A game object of `entry` at `at` in the copy (none of the map's spawns), gone after `seconds`
+    /// (0: when the copy goes); nothing if there is no such object.
+    EntityRef summonObject(uint entry, Location at, uint seconds = 0) { return host.hostSummonObject(entry, at, seconds); }
+
+    /// The living creatures of `entry` (0: any) within `range` yards of `at`, as many as `into` holds.
+    size_t creaturesNear(Location at, uint entry, float range, EntityRef[] into)
+    {
+        return host.hostCreaturesNear(at, entry, range, into);
+    }
 }
 
 unittest

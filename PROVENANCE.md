@@ -176,6 +176,16 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
   `boss_vaelastrasz`, `boss_broodlord`, `boss_firemaw`, `boss_ebonroc`, `boss_flamegor`, `boss_chromaggus`,
   `boss_victor_nefarius`, `boss_nefarian`
 
+## scripts/ruinsofahnqiraj.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/kalimdor/ruins_of_ahnqiraj/` (`ruins_of_ahnqiraj.cpp`, `ruins_of_ahnqiraj.h`,
+  `ruins_of_ahnqirajScripts.cpp`, `boss_kurinnaxx.cpp`, `boss_rajaxx.cpp`, `boss_moam.cpp`, `boss_buru.cpp`,
+  `boss_ayamiss.cpp`, `boss_ossirian.cpp`)
+* Functions/ScriptNames: `instance_ruins_of_ahnqiraj`, `boss_kurinnaxx`, `npc_general_andorov`,
+  `npc_kaldorei_elite`, `boss_moam`, `boss_buru`, `npc_buru_egg`, `boss_ayamiss`, `npc_hive_zara_larva`,
+  `boss_ossirian`, `go_ossirian_crystal`, `mob_anubisath_guardian`
+
 ## timer.d
 
 * Projects: CMaNGOS, Ember

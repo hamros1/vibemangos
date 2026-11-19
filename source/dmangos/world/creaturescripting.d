@@ -926,4 +926,22 @@ mixin template CreatureScripting()
         auto unit = world_.unit(who.guid);
         return unit && unit.kind == UnitKind.player ? unit.session.player.values.getByte!UNIT_FIELD_BYTES_0(1) : 0;
     }
+
+    void hostAddThreat(EntityRef who, float amount)
+    {
+        if (world_ is null || !me.alive)
+            return;
+        if (auto other = world_.unit(who.guid))
+            addThreat(other, amount);
+    }
+
+    ActionResult hostSendAgainst(EntityRef creature, EntityRef target)
+    {
+        auto other = world_ is null ? null : world_.creatureAt(creature.guid);
+        auto victim = world_ is null ? UnitRef.init : world_.unit(target.guid);
+        if (other is null || !victim || !other.alive)
+            return ActionResult.notHere;
+        other.ai.attackStart(victim, world_);
+        return ActionResult.ok;
+    }
 }

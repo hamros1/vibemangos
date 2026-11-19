@@ -51,7 +51,7 @@ import dmangos.world.opcodes : ChatType, Language, Opcode;
 import dmangos.world.creatureai : CombatWorld, CreatureLore;
 import dmangos.world.npcdata : BroadcastText;
 import dmangos.world.spells : SpellInfo;
-import dmangos.script.api : ActionResult, EntityRef, GameObjectHost, Waypoint;
+import dmangos.script.api : ActionResult, EntityRef, GameObjectHost, Location, Waypoint;
 import dmangos.script.registry : ScriptHandle, ScriptKind, ScriptRuntime;
 import dmangos.scripts : scriptModules;
 import dmangos.world.instancescripting : InstanceScript;
@@ -1350,6 +1350,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                     script.map = created;
                     script.lore = this;
                     script.respawnObjectOf = &respawnObjectOfEntry;
+                    script.summonObjectAt = &summonGameObjectAt;
                     instanceScripts[instance] = script;
                     created.onPlayerAdded = (Inhabitant who) {
                         import dmangos.script.api : PlayerEntered;
@@ -3231,6 +3232,30 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
         if (auto script = instance in instanceScripts)
             script.raise(CreatureEngaged(creature, enemy));
+    }
+
+    /// Raid scripts: a game object of `entry` at `at` on `map`, of no spawn of the map's (it is in no
+    /// other copy, and comes back nowhere), gone after `seconds` (0: with the map); null if there is no such object.
+    private GameObject summonGameObjectAt(Map map, uint entry, Location at, uint seconds)
+    {
+        import std.math : cos, sin;
+
+        if (entry !in data.gameObjectTemplates)
+            return null;
+        if (lastGameObjectSpawn == 0)
+            foreach (ref s; data.gameObjectSpawns)
+                if (s.guid > lastGameObjectSpawn)
+                    lastGameObjectSpawn = s.guid;
+        auto spawn = new GameObjectSpawn;
+        *spawn = GameObjectSpawn(++lastGameObjectSpawn, entry, map.id, at.x, at.y, at.z);
+        spawn.orientation = at.orientation;
+        spawn.rotation = [0, 0, sin(at.orientation / 2), cos(at.orientation / 2)];
+        auto go = makeGameObject(spawn);
+        go.instanceId = map.instanceId;
+        map.addObject(go);
+        if (seconds)
+            scriptedGameObjects[go.guid] = unixTime + seconds;
+        return go;
     }
 
     /// See `CreatureLore.askDungeon`.
