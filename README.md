@@ -470,8 +470,11 @@ What works now:
     cooldown taken). A ghost that logs out is one again
     at its next login. A creature killed leaves its corpse for a minute (5 for elites and rares, an
     hour for bosses, at most 90% of its respawn time) and comes back at its spawn point after
-    `spawntimesecs` (to `spawntimesecsmax`), kept in `creature_respawn` across restarts. Not yet:
-    ghosts hidden from the living.
+    `spawntimesecs` (to `spawntimesecsmax`), kept in `creature_respawn` across restarts. Ghosts
+    (`Map`'s `playerSees`, CMaNGOS's rule): the living, and the dead not yet released, do not see
+    them; a ghost sees the ghosts of its side and the living within 45 yards of its corpse; group
+    members see each other whatever they are, and a game master with the `.gm on` tag sees ghosts
+    (as ArcEmu has it). In a cluster another node's players follow the same rule.
   * **Experience and loot:** the first
     player to hurt a creature taps it (others see it grey) for itself and its group. A kill gives
     experience (by the level difference, elites and `ExperienceMultiplier`; doubled from
@@ -665,9 +668,14 @@ What works now:
     * **Leaving early** gives Deserter (15 minutes without queueing). A side short of players for five
       minutes loses.
     * **Warsong Gulch:** three flag captures win. **Arathi Basin:** five bases and their resources;
-      2000 resources win.
+      2000 resources win. **Alterac Valley** (`alterac.d`): 600 reinforcements a side, one lost per death,
+      100 per captain, 75 per tower; graveyards and towers assaulted from their banners and taken (a
+      tower destroyed, its marshal gone) four minutes later unless defended; two mines taken by killing
+      their bosses, a reinforcement every 45 seconds for 20 minutes; a general's death wins; honor and
+      reputation for towers, captains, graveyards and mines at the end. Not yet: the quests' turn-in
+      events (as in CMaNGOS), the herald speaking (its lines are battleground messages).
     * The players of a team who came alone are in one raid in the copy (its raid frames), made as the
-    second arrives and left as they leave; those who came with a group stay in it. Not yet: Alterac Valley.
+    second arrives and left as they leave; those who came with a group stay in it.
   * **The update tick** (every 50 ms, `update_interval`): health, mana, rage and energy regenerate
     (health and the loss of rage only out of combat, and only for the living); inns and capitals give rested XP, also while offline; characters are saved every
     15 minutes (`player_save_interval`).

@@ -66,7 +66,7 @@ import dmangos.world.terrain : Terrain;
 import dmangos.world.group : GroupDirectory, Groups, memberStatus, MemberStatus;
 import dmangos.world.groupservice : groupCommand, GroupOp, GroupService;
 import dmangos.cluster.protocol : GmRemote, GroupCommand, KillShare, ScriptSignal;
-import dmangos.world.map : Inhabitant, Map, MapObject, MapSettings;
+import dmangos.world.map : Inhabitant, Map, MapObject, MapSettings, VisibilityFacts;
 import dmangos.world.online : OnlinePlayer;
 import dmangos.world.playercreate : CreationSettings;
 import dmangos.world.worlddata : EventCreature, EventMail, Ship, SpellListEntry, WorldData;
@@ -1305,6 +1305,31 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return map(who.character.data.map, who.instanceId);
     }
 
+    /// What `Map`'s `playerSees` needs of the world: a group, a side, the viewer's corpse.
+    private VisibilityFacts visibilityFacts(Map map_, ulong viewer, ulong seen, Position seenAt)
+    {
+        import dmangos.world.character : Character;
+
+        VisibilityFacts f;
+        f.sameGroup = groups.sameGroup(viewer, seen);
+        ubyte raceOf(ulong guid)
+        {
+            if (auto local = onlinePlayer(guid))
+                return local.character.data.race;
+            if (auto remote = remotePlayer(guid))
+                return remote.entry.race;
+            return 0;
+        }
+        const a = raceOf(viewer), b = raceOf(seen);
+        f.cooperate = a && b && client.teamForRace(a) == client.teamForRace(b);
+        if (auto local = cast(Character) onlinePlayer(viewer))
+            if (const body_ = local.ownCorpse())
+                if (body_.map == map_.id)
+                    f.corpseDistance = ((body_.at.x - seenAt.x) ^^ 2 + (body_.at.y - seenAt.y) ^^ 2
+                        + (body_.at.z - seenAt.z) ^^ 2) ^^ 0.5f;
+        return f;
+    }
+
     private Map makeMap(uint id, uint instance)
     {
         bool delegate(ulong) owns;
@@ -1320,6 +1345,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         if (instance == 0) // a dungeon's copies are all on one node: nobody else needs replicas of them
             created.replicator = replicator;
         created.onCorpseRemoved = &corpseRemoved;
+        created.visibilityFacts = (ulong viewer, ulong seen, Position seenAt) => visibilityFacts(created, viewer,
+            seen, seenAt);
         created.onReplicaNoticing = &replicaNoticing;
         created.onTrap = (Inhabitant who, GameObject trap) { trapSprung(created, who, trap); };
         created.onWaypointScript = (Creature creature, uint scriptId) {
@@ -1331,8 +1358,13 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         created.onObjectGone = &objectGone;
         created.onCreatureDeath = (Creature c) {
             linkedDeath(created, c); // its pack's part first, while it is still known
+            const killer = c.lootRecipient; // before `die` forgets it
             c.die(created, unixTime);
             created.creatureDeaths.put(c);
+            if (instance) // a battleground's objectives (Alterac Valley's captains, generals and mines)
+                if (auto copy = battlegrounds.find(instance))
+                    if (copy.mapId == id)
+                        copy.rules.creatureKilled(copy, c.template_.entry, killer);
         };
         created.onLinked = &linkedEvent;
         if (instance)

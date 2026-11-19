@@ -110,6 +110,9 @@ class BattlegroundRules
     /// `victim` died, killed by `killer` (0: no player), after the scores counted it.
     void playerKilled(Battleground copy, ulong victim, ulong killer) {}
 
+    /// A creature of `entry` died in the copy, killed by `killer` (the player who tapped it; 0: none).
+    void creatureKilled(Battleground copy, uint entry, ulong killer) {}
+
     /// `guid` leaves (or logs out while it runs): what it carried is dropped.
     void playerLeaving(Battleground copy, ulong guid) {}
 
@@ -492,6 +495,28 @@ final class Battleground
             if (m.team == team && m.offlineSince == MonoTime.init)
                 if (auto c = cast(Character) context.onlinePlayer(guid))
                     c.battlegroundCast(spell);
+    }
+
+    /// Kill credit `entry` to every member of `team` here (`KilledMonsterCredit` for each).
+    void killCreditToTeam(ubyte team, uint entry)
+    {
+        import dmangos.world.character : Character;
+
+        foreach (guid, ref m; members)
+            if (m.team == team && m.offlineSince == MonoTime.init)
+                if (auto c = cast(Character) context.onlinePlayer(guid))
+                    c.battlegroundKillCredit(entry);
+    }
+
+    /// Kill credit `entry` to `guid` and the members of its group here (`RewardPlayerAndGroupAtEventCredit`).
+    void killCreditToGroupOf(ulong guid, uint entry)
+    {
+        import dmangos.world.character : Character;
+
+        foreach (other, ref m; members)
+            if (m.offlineSince == MonoTime.init && (other == guid || context.groups.sameGroup(guid, other)))
+                if (auto c = cast(Character) context.onlinePlayer(other))
+                    c.battlegroundKillCredit(entry);
     }
 
     /// A battleground's own score column: `extra[column]` of `guid` up by `by`.
@@ -1044,6 +1069,12 @@ final class Battlegrounds
             import dmangos.world.arathi : ArathiRules;
 
             return new ArathiRules;
+        }
+        case BattlegroundType.alteracValley:
+        {
+            import dmangos.world.alterac : AlteracRules;
+
+            return new AlteracRules;
         }
         default:
             return new BattlegroundRules;

@@ -172,6 +172,12 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Projects: Blizzard, CMaNGOS
 * Constants: `CMSG_AUTH_SESSION`, `SMSG_ADDON_INFO`
 
+## world/alterac.d
+
+* Projects: CMaNGOS
+* Files: `BattleGroundAV.cpp`, `BattleGroundAV.h`
+* Functions: `BattleGroundAV::Reset`, `Update`, `HandleKillPlayer`, `HandleKillUnit`, `HandlePlayerClickedOnFlag`, `ProcessPlayerAssaultsPoint`, `ProcessPlayerDefendsPoint`, `ProcessPlayerDestroyedPoint`, `ChangeMineOwner`, `UpdateScore`, `EndBattleGround`, `GetPrematureWinner`, `HandleAreaTrigger`
+
 ## world/auctionhandlers.d
 
 * Projects: CMaNGOS
@@ -567,9 +573,9 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 
 ## world/map.d
 
-* Projects: CMaNGOS, mangosd
-* Files: `Map.cpp`
-* Functions: `Cell::SetNoCreate`, `Map::Add`, `Map::CreatureRelocation`, `Map::PlayerRelocation`, `Map::Remove`, `Map::SendObjectUpdates`, `Map::Update`, `Object::BuildValuesUpdate`, `Object::UpdateVisibilityOf`, `ObjectGridLoader::Load`, `Player::UpdateVisibilityOf`, `TerrainInfo::IsInWater`, `Unit::OnRelocated`
+* Projects: CMaNGOS, mangosd, ArcEmu
+* Files: `Map.cpp`, `Player.cpp`; ArcEmu `Player.cpp`
+* Functions: `Player::IsVisibleInGridForPlayer` (ghosts), ArcEmu `Player::CanSee` (the GM tag sees ghosts), `Cell::SetNoCreate`, `Map::Add`, `Map::CreatureRelocation`, `Map::PlayerRelocation`, `Map::Remove`, `Map::SendObjectUpdates`, `Map::Update`, `Object::BuildValuesUpdate`, `Object::UpdateVisibilityOf`, `ObjectGridLoader::Load`, `Player::UpdateVisibilityOf`, `TerrainInfo::IsInWater`, `Unit::OnRelocated`
 * Constants: `SMSG_DESTROY_OBJECT`
 
 ## world/motion.d
