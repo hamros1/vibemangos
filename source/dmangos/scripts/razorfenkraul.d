@@ -1,7 +1,9 @@
 /**
  * Razorfen Kraul (map 47): the ward around Agathelos, which falls when the last Death's Head Ward
- * Keeper dies (and stays down for the copy's life), and Willix the Importer, who is escorted out of
- * the kraul for "Willix the Importer" (quest 1144), two Raging Agamar charging him twice on the way.
+ * Keeper dies (and stays down for the copy's life), Willix the Importer, who is escorted out of
+ * the kraul for "Willix the Importer" (quest 1144), two Raging Agamar charging him twice on the way,
+ * the Snufflenose Gopher, who digs up the Blueleaf Tubers near it when commanded ("Blueleaf
+ * Tubers", quest 1221), and Left for Dead.
  */
 module dmangos.scripts.razorfenkraul;
 
@@ -13,7 +15,9 @@ enum : uint
     wardKeeper = 4625,
     willix = 4508,
     ragingAgamar = 4514,
+    snufflenoseGopher = 4781,
     agathelosWard = 21099,
+    blueleafTuber = 20920,
 }
 
 /// What the kraul remembers: whether the ward is down (`instance.data`).
@@ -38,6 +42,16 @@ struct RazorfenKraul
     {
         if (e.creature.entry == wardKeeper)
             keepers.add(e.creature);
+    }
+
+    enum Signals : uint { gopherSniffs = 100 }
+
+    /// The gopher, commanded, digs up the tubers around it (they go again after five minutes).
+    void on(ref InstanceContext kraul, const ref Signal e)
+    {
+        Location at;
+        if (e.id == Signals.gopherSniffs && e.from && kraul.locate(e.from, at))
+            kraul.spawnObjects(blueleafTuber, 300, at, 20);
     }
 
     void on(ref InstanceContext kraul, const ref CreatureDied e)
@@ -136,6 +150,30 @@ struct Willix
     void on(ref CreatureContext me, const ref Spawned e)
     {
         me.setFaction(0);
+    }
+}
+
+/// The Snufflenose Gopher: its owner's Snufflenose Command sets it sniffing out the tubers nearby.
+@creature("npc_snufflenose_gopher")
+struct SnufflenoseGopher
+{
+    enum uint snufflenoseCommand = 8283;
+
+    void on(ref CreatureContext me, const ref SpellHit e)
+    {
+        if (e.spell == snufflenoseCommand)
+            me.signalDungeon(RazorfenKraul.Signals.gopherSniffs);
+    }
+}
+
+/// Left for Dead: who is struck by it falls as if dead (its second spell, cast on the target).
+@spell("spell_left_for_dead")
+struct LeftForDead
+{
+    void on(ref SpellContext it, const ref EffectHit e)
+    {
+        if (e.target)
+            it.castSpell(e.target, 8359, e.target);
     }
 }
 

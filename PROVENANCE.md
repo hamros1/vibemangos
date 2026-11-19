@@ -183,7 +183,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 
 * Projects: CMaNGOS
 * Files: `AI/ScriptDevAI/scripts/kalimdor/razorfen_kraul/instance_razorfen_kraul.cpp`, `razorfen_kraul.cpp`, `razorfen_kraul.h`
-* Functions/ScriptNames: `instance_razorfen_kraul`, `npc_willix_the_importer`
+* Functions/ScriptNames: `instance_razorfen_kraul`, `npc_willix_the_importer`, `npc_snufflenose_gopher`, `spell_snufflenose_command`, `spell_left_for_dead`
 
 ## scripts/scarletmonastery.d
 
