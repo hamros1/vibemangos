@@ -354,7 +354,7 @@ struct AtStomachCthun
         case platform:
             at.consume();
             if (const trigger = at.creatureNear(npcWorldTrigger, e.at, 30))
-                at.castSpell(trigger, exitStomach, EntityRef.init);
+                at.castSpell(trigger, exitStomach, trigger);
             // Up and out (where the throw would carry them through the ceiling).
             at.teleport(e.player, Cthun.stomachExit);
             break;
