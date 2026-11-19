@@ -143,6 +143,18 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Files: `ScriptDevAI/scripts/eastern_kingdoms/arathi_highlands.cpp`
 * Functions/ScriptNames: `npc_professor_phizzlethorpe`, `npc_kinelory`
 
+## scripts/blastedlands.d
+
+* Projects: CMaNGOS
+* Files: `ScriptDevAI/scripts/eastern_kingdoms/boss_kazzak.cpp`
+* Functions/ScriptNames: `boss_kazzak`
+
+## scripts/burningsteppes.d
+
+* Projects: CMaNGOS
+* Files: `ScriptDevAI/scripts/eastern_kingdoms/burning_steppes.cpp`
+* Functions/ScriptNames: `npc_grark_lorkrub`, `npc_klinfran`
+
 ## scripts/hinterlands.d
 
 * Projects: CMaNGOS
@@ -172,6 +184,12 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Projects: CMaNGOS
 * Files: `ScriptDevAI/scripts/eastern_kingdoms/silverpine_forest.cpp`
 * Functions/ScriptNames: `npc_deathstalker_erland`, `npc_deathstalker_faerleia`
+
+## scripts/stranglethorn.d
+
+* Projects: CMaNGOS
+* Files: `ScriptDevAI/scripts/eastern_kingdoms/stranglethorn_vale.cpp`
+* Functions/ScriptNames: `mob_yenniku`
 
 ## scripts/swamp.d
 

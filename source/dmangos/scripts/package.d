@@ -23,6 +23,9 @@ static import dmangos.scripts.hinterlands;
 static import dmangos.scripts.swamp;
 static import dmangos.scripts.searinggorge;
 static import dmangos.scripts.tirisfal;
+static import dmangos.scripts.burningsteppes;
+static import dmangos.scripts.blastedlands;
+static import dmangos.scripts.stranglethorn;
 
 /// Every module holding scripts.
 alias scriptModules = AliasSeq!(dmangos.scripts.deadmines, dmangos.scripts.westfall, dmangos.scripts.spells,
@@ -31,4 +34,5 @@ alias scriptModules = AliasSeq!(dmangos.scripts.deadmines, dmangos.scripts.westf
     // Eastern Kingdoms scripts:
     dmangos.scripts.redridge, dmangos.scripts.arathi, dmangos.scripts.lochmodan, dmangos.scripts.silverpine,
     dmangos.scripts.wetlands, dmangos.scripts.hinterlands, dmangos.scripts.swamp, dmangos.scripts.searinggorge,
-    dmangos.scripts.tirisfal);
+    dmangos.scripts.tirisfal, dmangos.scripts.burningsteppes, dmangos.scripts.blastedlands,
+    dmangos.scripts.stranglethorn);
