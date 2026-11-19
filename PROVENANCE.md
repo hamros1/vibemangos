@@ -174,7 +174,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Projects: CMaNGOS
 * Files: `AI/ScriptDevAI/scripts/kalimdor/the_barrens.cpp`
 * Functions/ScriptNames: `npc_gilthares`, `npc_taskmaster_fizzule`, `npc_twiggy_flathead`, `at_twiggy_flathead`,
-  `npc_wizzlecranks_shredder`, `npc_regthar_deathgate`
+  `npc_wizzlecranks_shredder`, `npc_regthar_deathgate`, `npc_gallywix`, `npc_venture_co_lookout`, `npc_foreman_silixiz`
 
 ## scripts/blackfathomdeeps.d
 

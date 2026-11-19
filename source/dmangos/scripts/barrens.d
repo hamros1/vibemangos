@@ -631,3 +631,66 @@ unittest
             r.raise(SummonedDied(c, hero));
     assert(r.host.has("say -1010003") && !r.busy);
 }
+
+// ---------------------------------------------------------------------------
+// The Venture Co. at the Sludge Fen and Venture Co. Mine: on their guard against stealth (CMaNGOS's
+// npc_gallywix, npc_venture_co_lookout, npc_foreman_silixiz)
+// ---------------------------------------------------------------------------
+
+/// Grand Foreman Puzik Gallywix: calls out at a rogue it almost sees; an Ambush makes it Decimate.
+@creature("npc_gallywix")
+struct Gallywix
+{
+    enum int sayAlert = -1010005;
+    enum uint spellDecimate = 10268;
+    /// Ambush, every rank.
+    static immutable uint[] ambush = [8676, 8724, 8725, 11267, 11268, 11269];
+
+    void on(ref CreatureContext me, const ref StealthAlert e)
+    {
+        me.say(sayAlert, e.unit);
+    }
+
+    void on(ref CreatureContext me, const ref SpellHit e)
+    {
+        import std.algorithm.searching : canFind;
+
+        if (ambush.canFind(e.spell))
+            me.castSelf(spellDecimate, true);
+    }
+}
+
+/// A Venture Co. Lookout: calls out at a rogue it almost sees; an Eviscerate makes it cast Slush.
+@creature("npc_venture_co_lookout")
+struct VentureCoLookout
+{
+    enum int sayAlert1 = -1010007, sayAlert2 = -1010008;
+    enum uint spellSlush = 10267;
+    /// Eviscerate, every rank.
+    static immutable uint[] eviscerate = [2098, 6760, 6761, 6762, 8623, 8624, 11299, 11300];
+
+    void on(ref CreatureContext me, const ref StealthAlert e)
+    {
+        me.say(me.random(2) ? sayAlert1 : sayAlert2, e.unit);
+    }
+
+    void on(ref CreatureContext me, const ref SpellHit e)
+    {
+        import std.algorithm.searching : canFind;
+
+        if (eviscerate.canFind(e.spell))
+            me.castSelf(spellSlush, true);
+    }
+}
+
+/// Foreman Silixiz: calls out at a rogue it almost sees.
+@creature("npc_foreman_silixiz")
+struct ForemanSilixiz
+{
+    enum int sayAlert = -1010006;
+
+    void on(ref CreatureContext me, const ref StealthAlert e)
+    {
+        me.say(sayAlert, e.unit);
+    }
+}

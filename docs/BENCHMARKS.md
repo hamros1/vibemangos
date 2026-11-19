@@ -460,3 +460,17 @@ measured on that crowd too.
 (`revive_bots`: the corpses and the ghost flag go). With living bots the build before the ghosts and
 today's are the same: busy 7.1-7.3% and 7.1-7.2%. A crowd of 500 ghosts, all seeing each other, costs
 about 0.7 points more than one of the living; that is the one-way path's price, paid only by ghosts.
+
+## Release builds without -inline (2026-11-19)
+
+DMD with `-O -inline` took more than ten minutes on `world/context.d` alone (70 seconds with `-O` only), and
+every check built the world code three times (the world server, the login server and the load generator
+each compile the whole tree). `dub.json`'s `release-fast` build type is `-release -O` without `-inline`;
+`check.sh` builds the three with it at once: about 80 seconds in all.
+
+The price, `crowd` 500 bots, runs alternated: busy 7.9-8.1% and tick 0.33-0.38 ms without `-inline`,
+7.0-7.1% and 0.29-0.30 ms with it: about 13% more CPU. Measure performance with `dub build -b release`.
+
+Without `-inline`, DMD's optimizer miscompiled `frozenCopy!(float[3])` (a static array returned by value):
+the server crashed loading its data. `frozenCopy` now copies a field with nothing to copy deep as it is,
+without the call.

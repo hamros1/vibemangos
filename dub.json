@@ -12,6 +12,11 @@
 	"libs": [
 		"stdc++"
 	],
+	"buildTypes": {
+		"release-fast": {
+			"buildOptions": ["releaseMode", "optimize"]
+		}
+	},
 	"configurations": [
 		{
 			"name": "authserver",

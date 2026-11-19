@@ -149,8 +149,15 @@ if (isPlainData!T)
     {
         U copy;
         static foreach (i; 0 .. U.tupleof.length)
-            *cast(Unqual!(typeof(U.tupleof[i]))*) &copy.tupleof[i] = cast(Unqual!(typeof(U.tupleof[i])))
-                frozenCopy(value.tupleof[i]);
+        {{
+            alias F = Unqual!(typeof(U.tupleof[i]));
+            // A field with nothing to copy deep is copied as it is: no call returning it by value (DMD's -O without
+            // -inline miscompiled `frozenCopy!(float[3])`, a static array returned by value).
+            static if (!hasIndirections!F)
+                *cast(F*) &copy.tupleof[i] = *cast(const(F)*) &value.tupleof[i];
+            else
+                *cast(F*) &copy.tupleof[i] = cast(F) frozenCopy(value.tupleof[i]);
+        }}
         return copy;
     }
     else
