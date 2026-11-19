@@ -137,6 +137,18 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Projects: CMaNGOS
 * Constants: `DEFAULT_MAX_PLAYER_DISTANCE`
 
+## scripts/razorfendowns.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/kalimdor/razorfen_downs/instance_razorfen_downs.cpp`, `razorfen_downs.cpp`, `razorfen_downs.h`
+* Functions/ScriptNames: `instance_razorfen_downs` (`DoSpawnWaveIfCan`, `OnCreatureDeath`), `event_go_tutenkash_gong`, `npc_belnistrasz`
+
+## scripts/razorfenkraul.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/kalimdor/razorfen_kraul/instance_razorfen_kraul.cpp`, `razorfen_kraul.cpp`, `razorfen_kraul.h`
+* Functions/ScriptNames: `instance_razorfen_kraul`, `npc_willix_the_importer`
+
 ## timer.d
 
 * Projects: CMaNGOS, Ember

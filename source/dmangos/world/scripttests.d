@@ -734,3 +734,52 @@ unittest
     const saved = db.loadInstances().instances;
     assert(saved.length == 1 && saved[0].data.length > 30, "the caverns remember");
 }
+
+/**
+ * Dungeon scripts' own hooks in the world: Tuten'kash's gong (here in the test world's dungeon) is a
+ * goober whose event reaches the copy's script; it summons the first wave on the one who rang it and
+ * the gong cannot be rung again while the wave lives.
+ */
+unittest
+{
+    import dmangos.scripts.razorfendowns : gong, gongEvent, tombFiend;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    const gongAt = Position(-16, -385, 61);
+    auto t = GameObjectTemplate.init;
+    t.entry = gong;
+    t.type = 10; // a goober
+    t.displayId = 411;
+    t.name = "Gong";
+    t.data[2] = gongEvent;
+    context.data.gameObjectTemplates[gong] = t;
+    context.data.gameObjectSpawns ~= GameObjectSpawn(90200, gong, mapDeadmines, gongAt.x, gongAt.y, gongAt.z);
+    context.data.gameObjectCells[mapDeadmines][cellKeyAt(gongAt.x, gongAt.y)] ~= context.data.gameObjectSpawns.length - 1;
+    auto fiend = cast() context.data.creatureTemplates[creatureInnkeeper];
+    fiend.entry = tombFiend;
+    context.data.creatureTemplates[tombFiend] = fiend;
+    context.data.instanceScriptNames[mapDeadmines] = "instance_razorfen_downs";
+
+    const outside = Position(deadminesEntrance[0], deadminesEntrance[1], deadminesEntrance[2]);
+    auto hero = loggedIn(context, db, 7, "Varian", outside, AccountLevel.administrator, raceHuman, mapEasternKingdoms, 60);
+    hero.say(".worldport 36 -16 -383 61");
+    hero.write(Opcode.MSG_MOVE_WORLDPORT_ACK, null);
+    hero.read();
+    auto map = context.instanceMap(hero.session.inWorld.instanceId);
+    auto theGong = cast(GameObject) map.findObject(makeDoorGuid(gong, 90200));
+    assert(theGong !is null);
+    size_t fiends()
+    {
+        size_t n;
+        foreach (c; map.creaturesNear(Position(2500, 850, 45), 200))
+            n += c.spawn.entry == tombFiend && c.alive;
+        return n;
+    }
+
+    hero.session.inWorld.useGameObject(theGong);
+    assert(fiends == 8, "the first wave");
+    assert(theGong.values.get!GAMEOBJECT_FLAGS & 0x10, "the gong is silent while they live");
+}
