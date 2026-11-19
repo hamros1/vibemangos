@@ -211,6 +211,13 @@ final class TestInstance : InstanceHost
         return ActionResult.ok;
     }
     uint hostRandom(uint below) { return 0; }
+    ActionResult hostRemoveAura(EntityRef c, uint spell)
+    {
+        did ~= format("unaura %s %s", c.entry, spell);
+        return ActionResult.ok;
+    }
+    EntityRef fought = EntityRef(7); /// whom every creature fights
+    EntityRef hostVictimOf(EntityRef) { return fought; }
 }
 
 /// A script of module `M` with its fake, run as the server runs it (through a `ScriptRuntime`).

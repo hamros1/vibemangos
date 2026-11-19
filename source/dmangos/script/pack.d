@@ -49,6 +49,15 @@ struct Pack(size_t capacity = 8)
         return false;
     }
 
+    /// Where `who` is among the members (they keep the places they were added in); -1 if it is not one.
+    ptrdiff_t indexOf(EntityRef who) const
+    {
+        foreach (i; 0 .. count)
+            if (members[i] == who)
+                return i;
+        return -1;
+    }
+
     /// How many members are alive.
     @property uint alive() const
     {

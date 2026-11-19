@@ -610,6 +610,8 @@ interface InstanceHost
     uint hostSpawnObjects(uint entry, uint despawnSeconds, Location near, float range);
     ActionResult hostObjectFlags(EntityRef object, uint set, uint clear);
     uint hostRandom(uint below);
+    ActionResult hostRemoveAura(EntityRef creature, uint spell);
+    EntityRef hostVictimOf(EntityRef creature);
 }
 
 /// `GameObjectFlags`, as dungeon scripts set and clear them (`InstanceContext.objectFlags`).
@@ -711,6 +713,12 @@ struct InstanceContext
 
     /// A random number below `below`.
     uint random(uint below) { return host.hostRandom(below); }
+
+    /// Takes the auras of `spell` off a creature (a statue's stone skin).
+    ActionResult removeAura(EntityRef creature, uint spell) { return host.hostRemoveAura(creature, spell); }
+
+    /// Whom a creature fights; nothing if it does not (or is not here).
+    EntityRef victimOf(EntityRef creature) { return host.hostVictimOf(creature); }
 }
 
 unittest

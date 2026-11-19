@@ -288,6 +288,21 @@ final class InstanceScript : InstanceHost
         return ActionResult.ok;
     }
 
+    ActionResult hostRemoveAura(EntityRef creature, uint spell)
+    {
+        auto c = creatureOf(creature);
+        if (c is null)
+            return ActionResult.notHere;
+        c.ai.hostRemoveAura(spell);
+        return ActionResult.ok;
+    }
+
+    EntityRef hostVictimOf(EntityRef creature)
+    {
+        auto c = creatureOf(creature);
+        return c is null ? EntityRef.init : c.ai.hostVictim();
+    }
+
     uint hostRandom(uint below)
     {
         import std.random : uniform;
