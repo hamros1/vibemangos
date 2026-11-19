@@ -220,6 +220,13 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Files: `AI/ScriptDevAI/scripts/kalimdor/silithus.cpp`
 * Functions/ScriptNames: `npc_solenor`
 
+## scripts/ungoro.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/kalimdor/ungoro_crater.cpp`
+* Functions/ScriptNames: `at_scent_larkorwi`, `npc_ame01`, `npc_ringo`, `npc_simone_the_inconspicuous`,
+  `npc_simone_seductress`, `npc_precious_the_devourer`
+
 ## scripts/barrens.d
 
 * Projects: CMaNGOS
