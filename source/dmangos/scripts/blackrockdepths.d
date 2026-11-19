@@ -97,7 +97,7 @@ struct BlackrockDepths
     {
         ringTrigger = 100, tombChallenge = 101, brazier = 102, cofferOpened = 103, aleGiven = 104,
         rocknotDone = 105, kegBroken = 106, mugStolen = 107, bridgeTrigger = 108, hurleyArrived = 109,
-        flamelash = 110, jailPrisoner = 111, jailSupplyDoor = 112,
+        flamelash = 110, jailPrisoner = 111, jailSupplyDoor = 112, barDoorOpened = 113,
     }
     enum : int
     {
@@ -324,6 +324,9 @@ struct BlackrockDepths
         case Signals.jailPrisoner:
             if (windsorRef)
                 brd.signal(windsorRef, MarshalWindsor.Signals.prisonerDone);
+            break;
+        case Signals.barDoorOpened:
+            openBarDoor(brd);
             break;
         case Signals.jailSupplyDoor:
             if (supplyDoor)
@@ -811,7 +814,20 @@ struct Rocknot
     Schedule!Step steps;
     Walk walk;
     ubyte ales;
-    bool walked;
+    bool walked, inLove;
+
+    /// From Mistress Nagmara: her potion of love, given; he goes with her (his path's second walk).
+    enum Signals : uint { love = 1 }
+
+    void on(ref CreatureContext me, const ref Signal e)
+    {
+        if (e.id != Signals.love || inLove)
+            return;
+        inLove = true;
+        me.npcFlags(0);
+        walk.start(me, false, 9);
+        walk.stopAt = 33;
+    }
 
     void on(ref CreatureContext me, const ref QuestRewarded e)
     {
@@ -824,8 +840,19 @@ struct Rocknot
 
     void on(ref CreatureContext me, const ref MovementDone e)
     {
-        // The database's points count from 1; his ale walk is points 1 to 9.
-        switch (walk.reached(me, e) + 1)
+        // The database's points count from 1; his ale walk is points 1 to 9, the walk with
+        // Nagmara points 10 to 34.
+        const point = walk.reached(me, e) + 1;
+        if (inLove)
+        {
+            if (point == 17)
+                me.signalDungeon(BlackrockDepths.Signals.barDoorOpened);
+            else if (point == 34)
+                if (const her = me.creatureNearby(nagmara, 40))
+                    me.signal(her, MistressNagmara.Signals.underTheStairs);
+            return;
+        }
+        switch (point)
         {
         case 3, 6: me.say(sayBarrel1); break;
         case 4, 5: me.say(sayBarrel2); break;
@@ -861,6 +888,103 @@ struct Rocknot
             break;
         case Step.done:
             me.signalDungeon(BlackrockDepths.Signals.rocknotDone);
+            break;
+        }
+    }
+}
+
+/**
+ * Mistress Nagmara: with her "Potion of Love" (quest 4201) done, she goes to Rocknot, sweet-talks him,
+ * gives him the potion and leads him away under the stairs (opening the bar's door on the way),
+ * where the two stay, kissing.
+ */
+@creature("npc_mistress_nagmara")
+struct MistressNagmara
+{
+    enum Signals : uint { underTheStairs = 1 }
+    enum uint quest = 4201;
+    enum uint begin = 1;
+    enum : uint { potionOfLove = 14928, nagmaraRocknot = 15064 }
+    enum : int { say1 = -1230066, say2 = -1230067, emoteKiss = -1230068 }
+    enum Location underTheStairs = Location(878.1779f, -222.0662f, -49.96714f);
+
+    enum Step : ubyte { sweetTalk, potion, kiss }
+    Schedule!Step steps;
+    EntityRef lover;
+    bool begun;
+
+    void on(ref CreatureContext me, const ref QuestRewarded e)
+    {
+        if (e.quest == quest)
+            start(me);
+    }
+
+    void on(ref CreatureContext me, const ref GossipHello e)
+    {
+        if (begun || me.questStatus(e.player, quest) != QuestProgress.complete)
+            return;
+        GossipMenu menu;
+        menu.add(GossipIcon.chat, "Why don't you and Rocknot go find somewhere private...", begin);
+        me.sendGossip(e.player, 2729, menu);
+        me.consume();
+    }
+
+    void on(ref CreatureContext me, const ref GossipSelect e)
+    {
+        if (e.action != begin)
+            return;
+        me.closeGossip(e.player);
+        start(me);
+        me.consume();
+    }
+
+    private void start(ref CreatureContext me)
+    {
+        if (begun)
+            return;
+        lover = me.creatureNearby(rocknot, 80);
+        Location at;
+        if (!lover || !me.locate(lover, at))
+            return;
+        begun = true;
+        me.npcFlags(0);
+        at.x += 2;
+        me.moveTo(at, 1);
+    }
+
+    void on(ref CreatureContext me, const ref MovementDone e)
+    {
+        if (e.point == 1)
+        {
+            me.say(say1);
+            steps.after(Step.sweetTalk, 5.seconds);
+        }
+        else if (e.point == 2)
+            steps.every(Step.kiss, 1.seconds, 12.seconds);
+    }
+
+    void on(ref CreatureContext me, const ref Signal e)
+    {
+        if (e.id == Signals.underTheStairs)
+            me.moveTo(underTheStairs, 2);
+    }
+
+    void on(ref CreatureContext me, Step step)
+    {
+        final switch (step)
+        {
+        case Step.sweetTalk:
+            me.say(say2);
+            steps.after(Step.potion, 4.seconds);
+            break;
+        case Step.potion:
+            me.castSpell(potionOfLove, lover);
+            me.signal(lover, Rocknot.Signals.love);
+            me.follow(lover, 2, 0);
+            break;
+        case Step.kiss:
+            me.say(emoteKiss);
+            me.castSelf(nagmaraRocknot);
             break;
         }
     }
@@ -1643,4 +1767,24 @@ unittest
     windsor.raise(Signal(EntityRef.init, MarshalWindsor.Signals.prisonerDone));
     windsor.run(250);
     assert(windsor.host.done("move 30"));
+}
+
+unittest
+{
+    import dmangos.scripts.testing;
+
+    alias self = dmangos.scripts.blackrockdepths;
+    auto her = runCreature!self("npc_mistress_nagmara", nagmara);
+    her.host.nearby = creatureRef(rocknot);
+    her.raise(QuestRewarded(playerRef, MistressNagmara.quest));
+    assert(her.host.done("move 1"));
+    her.raise(MovementDone(1));
+    her.run(10_000);
+    assert(her.host.done("cast 14928") && her.host.done("signal 1 0") && her.host.done("follow"));
+
+    auto him = runCreature!self("npc_rocknot", rocknot);
+    foreach (i; 0 .. 34)
+        him.host.path ~= Waypoint(Location(i, 0, 0));
+    him.raise(Signal(creatureRef(nagmara), Rocknot.Signals.love));
+    assert(him.host.done("move 9"), "off on his second walk");
 }
