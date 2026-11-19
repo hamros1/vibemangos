@@ -5,6 +5,8 @@
  */
 module dmangos.scripts.tanaris;
 
+// Open-world round 2: and the Stone Watcher of Norgannon, who tells of the Plates of Uldum ("The Morrow Stone", 2954).
+
 import dmangos.script;
 
 /// Aquementas: friendly for ten seconds after it rises, then an elemental; Frost Shock and Aqua Jet.
@@ -249,6 +251,48 @@ struct Tooga
     }
 }
 
+// Open-world round 2:
+
+/**
+ * The Stone Watcher of Norgannon: asked about its function on "The Morrow Stone" (2954), it explains the
+ * Plates of Uldum page after page; the last answer is the quest's event.
+ */
+@creature("npc_stone_watcher_of_norgannon")
+struct StoneWatcherOfNorgannon
+{
+    enum uint questMorrowStone = 2954, textGreeting = 1674;
+
+    /// The pages (`npc_text`) and the question each ends on.
+    private static immutable uint[5] pages = [1675, 1676, 1677, 1678, 1679];
+    private static immutable string[6] questions = ["What function do you serve?", "What are the Plates of Uldum?",
+        "Where are the Plates of Uldum?",
+        "Excuse me? We've been \"reschedueled for visitations\"? What does that mean?!",
+        "So, what's inside Uldum?", "I will return when i have the Plates of Uldum."];
+
+    void on(ref CreatureContext me, const ref GossipHello e)
+    {
+        me.consume();
+        GossipMenu menu;
+        if (me.questStatus(e.player, questMorrowStone) == QuestProgress.incomplete)
+            menu.add(GossipIcon.chat, questions[0], 1);
+        me.sendGossip(e.player, textGreeting, menu);
+    }
+
+    void on(ref CreatureContext me, const ref GossipSelect e)
+    {
+        me.consume();
+        if (e.action >= 1 && e.action <= pages.length)
+        {
+            GossipMenu menu;
+            menu.add(GossipIcon.chat, questions[e.action], e.action + 1);
+            return me.sendGossip(e.player, pages[e.action - 1], menu, false);
+        }
+        me.closeGossip(e.player);
+        if (e.action == pages.length + 1)
+            me.questEvent(e.player, questMorrowStone);
+    }
+}
+
 unittest
 {
     import dmangos.scripts.kalimdortesting;
@@ -278,4 +322,21 @@ unittest
     assert(t.host.has("event 1560"));
     t.run(30_000);
     assert(t.host.has("say as 6015 -1000398") && t.host.has("move 1"));
+}
+
+unittest // Open-world round 2
+{
+    import dmangos.scripts.kalimdortesting;
+    alias self = dmangos.scripts.tanaris;
+
+    auto w = Driven!self("npc_stone_watcher_of_norgannon", 7918);
+    w.raise(GossipHello(hero));
+    assert(w.host.menu.length == 0, "not on the quest");
+    w.host.quests[StoneWatcherOfNorgannon.questMorrowStone] = QuestProgress.incomplete;
+    w.raise(GossipHello(hero));
+    foreach (_; 0 .. 5)
+        w.raise(GossipSelect(hero, 0, 0, w.host.menu[0].action));
+    assert(w.host.menuText == 1679);
+    w.raise(GossipSelect(hero, 0, 0, w.host.menu[0].action));
+    assert(w.host.has("event 2954") && w.host.has("close"));
 }

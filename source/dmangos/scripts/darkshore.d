@@ -379,14 +379,45 @@ struct RabidBear
     }
 }
 
-/// The Blackwood furbolgs: a warrior in Battle Stance with Thunderclap, a totemic with Healing Wards.
+/**
+ * The Blackwood furbolgs: a warrior in Battle Stance with Thunderclap, a totemic with Healing Wards.
+ * Open-world round 2: lured by the purified food a player put by their bonfire (`event_purify_food`),
+ * they come to it, eat, and are themselves again for a minute and a half.
+ */
 @creature("npc_blackwood_warrior", "npc_blackwood_totemic")
 struct BlackwoodFurbolg
 {
     enum : uint { warrior = 2168, totemic = 2169, spellBattleStance = 7165, spellThunderclap = 8078, spellHealingWard = 5605 }
+    enum : uint { factionBlackwood = 35, seekPurification = 1 }
+    enum : int { emoteLured = -1010027, emotePurified = -1010028 }
 
-    enum Step : ubyte { thunderclap, healingWard }
+    enum Step : ubyte { thunderclap, healingWard, lured, purified, corruptedAgain }
     Schedule!Step steps;
+    Location bowl;  /// where the food is
+    bool first;     /// the one who tells of the others
+    bool purifying;
+
+    void on(ref CreatureContext me, const ref Signal e)
+    {
+        if (e.id != seekPurification || me.inCombat || purifying)
+            return;
+        // The food: five yards before the player who put it there (`GetFirstCollisionPosition`).
+        import std.math : cos, sin;
+
+        Location at;
+        if (!me.locationOf(e.from, at))
+            return;
+        bowl = Location(at.x + 5 * cos(at.orientation), at.y + 5 * sin(at.orientation), at.z);
+        first = e.value != 0;
+        purifying = true;
+        steps.after(Step.lured, first ? 0.msecs : me.random(5001).msecs);
+    }
+
+    void on(ref CreatureContext me, const ref MovementDone e)
+    {
+        if (purifying && e.point == seekPurification)
+            steps.after(Step.purified, 5.seconds);
+    }
 
     void on(ref CreatureContext me, const ref Spawned e)
     {
@@ -397,12 +428,17 @@ struct BlackwoodFurbolg
     void on(ref CreatureContext me, const ref Reset e)
     {
         steps.clear();
+        if (purifying)
+            corruptedAgain(me);
+        purifying = false;
         if (me.self.entry == warrior)
             me.castSelf(spellBattleStance);
     }
 
     void on(ref CreatureContext me, const ref EnteredCombat e)
     {
+        if (purifying)
+            return;
         if (me.self.entry == warrior)
             steps.after(Step.thunderclap, (16 + me.random(6)).seconds);
         else
@@ -411,10 +447,35 @@ struct BlackwoodFurbolg
 
     void on(ref CreatureContext me, Step step)
     {
+        switch (step) // open-world round 2: the food
+        {
+        case Step.lured:
+            if (first)
+                me.say(emoteLured);
+            me.reactState(Reaction.passive);
+            me.unitFlags(UnitFlag.immuneToPlayer);
+            me.moveTo(bowl, seekPurification, true);
+            return;
+        case Step.purified:
+            if (first)
+                me.say(emotePurified);
+            me.setFaction(factionBlackwood);
+            steps.after(Step.corruptedAgain, 90.seconds);
+            return;
+        case Step.corruptedAgain:
+            corruptedAgain(me);
+            purifying = false;
+            me.sendHome();
+            return;
+        default:
+            break;
+        }
         if (!me.inCombat)
             return steps.clear();
         final switch (step)
         {
+        case Step.lured, Step.purified, Step.corruptedAgain:
+            break;
         case Step.thunderclap:
             if (me.victim && me.distanceTo(me.victim) < 5 && me.castSelf(spellThunderclap) == ActionResult.ok)
                 steps.after(Step.thunderclap, (16 + me.random(6)).seconds);
@@ -428,6 +489,45 @@ struct BlackwoodFurbolg
                 steps.after(Step.healingWard, 1.seconds);
             break;
         }
+    }
+}
+
+/// The food's purification over: a furbolg of the Blackwood again, aggressive.
+private void corruptedAgain(ref CreatureContext me)
+{
+    me.setFaction(0);
+    me.reactState(Reaction.aggressive);
+    me.unitFlags(UnitFlag.immuneToPlayer, false);
+}
+
+/**
+ * Open-world round 2: the purified food put by the Blackwood bonfire (the "Cleansing of the Infected"
+ * event, 3938): two more warriors come, and the furbolgs near who are not fighting are lured to it, the
+ * last one called telling of them. The event's database script goes on (Xabraxxis comes).
+ */
+@scriptedEvent("event_purify_food")
+struct PurifyFood
+{
+    void on(ref EventContext e, const ref EventStarted ev)
+    {
+        import std.math : cos, sin, PI;
+
+        Location fire;
+        if (!ev.source.isPlayer || !ev.target.isGameObject || !e.locationOf(ev.target, fire))
+            return;
+        EntityRef[24] furbolgs;
+        size_t count = e.creaturesNear(fire, BlackwoodFurbolg.warrior, 40, furbolgs[]);
+        count += e.creaturesNear(fire, BlackwoodFurbolg.totemic, 40, furbolgs[count .. $]);
+        foreach (i; 0 .. 2) // two warriors from around the fire, for two minutes out of a fight
+        {
+            const angle = 2 * PI * i / 2 + 0.5;
+            const warrior = e.summon(BlackwoodFurbolg.warrior,
+                Location(fire.x + 20 * cos(angle), fire.y + 20 * sin(angle), fire.z), 120_000);
+            if (warrior && count < furbolgs.length)
+                furbolgs[count++] = warrior;
+        }
+        foreach (i, furbolg; furbolgs[0 .. count])
+            e.signal(furbolg, BlackwoodFurbolg.seekPurification, i + 1 == count);
     }
 }
 
@@ -498,3 +598,20 @@ unittest
     b.run(1000);
     assert(b.host.has("despawn"));
 }
+
+unittest // Open-world round 2: a furbolg lured by the purified food
+{
+    import dmangos.scripts.kalimdortesting;
+    alias self = dmangos.scripts.darkshore;
+
+    auto f = Driven!self("npc_blackwood_warrior", BlackwoodFurbolg.warrior);
+    f.raise(Signal(hero, BlackwoodFurbolg.seekPurification, 1));
+    f.run(100);
+    assert(f.host.has("say -1010027") && f.host.has("passive") && f.host.has("move 1"));
+    f.raise(MovementDone(BlackwoodFurbolg.seekPurification));
+    f.run(5000);
+    assert(f.host.has("say -1010028") && f.host.has("faction 35"));
+    f.run(90_000);
+    assert(f.host.has("faction 0") && f.host.has("home"));
+}
+

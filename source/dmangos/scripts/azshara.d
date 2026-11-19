@@ -5,6 +5,8 @@
  */
 module dmangos.scripts.azshara;
 
+// Open-world round 2: and Loramus Thalipedes, who helps and tells his story (2744, 3141).
+
 import dmangos.script;
 
 /// The Spitelash naga: each kind with its abilities; polymorphed by a player on "Fragmented Magic", the sheep backfires.
@@ -144,6 +146,7 @@ struct Maws
     {
         me.castSelf(spellThrash, true);
         steps.after(Step.leave, 150 * 60.seconds);
+        me.walkPath(); // Open-world round 2: called up by the Arcanite Buoy, it swims its way (`MoveWaypoint`)
     }
 
     void on(ref CreatureContext me, const ref Reset e)
@@ -266,6 +269,55 @@ struct Azuregos
     }
 }
 
+// Open-world round 2:
+
+/**
+ * Loramus Thalipedes: asked for help (2744) it is the quest's event; on
+ * "Loramus" (3141) he tells his story page after page, the last answer the quest's event.
+ */
+@creature("npc_loramus_thalipedes")
+struct LoramusThalipedes
+{
+    enum uint questCanYouHelpMe = 2744, questStory = 3141;
+    enum : uint { help = 1, story = 2 }
+
+    private static immutable uint[5] pages = [1813, 1814, 1815, 1816, 1817];
+    private static immutable string[5] answers = ["Please continue", "I do not understand", "Indeed",
+        "I will do this with or your help, Loramus", "Yes"];
+
+    void on(ref CreatureContext me, const ref GossipHello e)
+    {
+        me.consume();
+        GossipMenu menu;
+        if (me.questStatus(e.player, questCanYouHelpMe) == QuestProgress.incomplete)
+            menu.add(GossipIcon.chat, "Can you help me?", help);
+        if (me.questStatus(e.player, questStory) == QuestProgress.incomplete)
+            menu.add(GossipIcon.chat, "Tell me your story", story);
+        me.sendGossip(e.player, 0, menu);
+    }
+
+    void on(ref CreatureContext me, const ref GossipSelect e)
+    {
+        me.consume();
+        if (e.action == help)
+        {
+            me.closeGossip(e.player);
+            return me.questEvent(e.player, questCanYouHelpMe);
+        }
+        // The story: actions 20 + page.
+        const page = e.action == story ? 0 : e.action - 20;
+        if (e.action == story || (e.action > 20 && page < pages.length))
+        {
+            GossipMenu menu;
+            menu.add(GossipIcon.chat, answers[page], 21 + page);
+            return me.sendGossip(e.player, pages[page], menu, false);
+        }
+        me.closeGossip(e.player);
+        if (e.action == 20 + pages.length)
+            me.questEvent(e.player, questStory);
+    }
+}
+
 unittest
 {
     import dmangos.scripts.kalimdortesting;
@@ -291,4 +343,21 @@ unittest
     a.raise(EnteredCombat(hero));
     a.run(31_000);
     assert(a.host.has("cast 21147") && a.host.has("say -1000100") && a.host.has("cast 19983"));
+}
+
+unittest // Open-world round 2
+{
+    import dmangos.scripts.kalimdortesting;
+    alias self = dmangos.scripts.azshara;
+
+    auto l = Driven!self("npc_loramus_thalipedes", 7783);
+    l.host.quests[LoramusThalipedes.questStory] = QuestProgress.incomplete;
+    l.raise(GossipHello(hero));
+    assert(l.host.menu.length == 1);
+    l.raise(GossipSelect(hero, 0, 0, l.host.menu[0].action));
+    foreach (_; 0 .. 4)
+        l.raise(GossipSelect(hero, 0, 0, l.host.menu[0].action));
+    assert(l.host.menuText == 1817 && !l.host.has("event 3141"));
+    l.raise(GossipSelect(hero, 0, 0, l.host.menu[0].action));
+    assert(l.host.has("event 3141"));
 }

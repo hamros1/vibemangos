@@ -355,7 +355,7 @@ struct RedemptionTarget
 @creature("npc_chicken_cluck")
 struct ChickenCluck
 {
-    enum uint questCluck = 3861, factionFriendly = 35, textEmoteChicken = 34, textEmoteCheer = 21;
+    enum uint questCluck = 3861, factionFriendly = 35, textEmoteChicken = 22, textEmoteCheer = 21;
     enum : int { emoteCluck1 = -1000204, emoteCluck2 = -1000205 }
 
     enum Step : ubyte { chickenAgain }
@@ -434,13 +434,30 @@ struct TheCleaner
 
 /**
  * A Stormwind guard: Reginald Windsor's inspiration passing by, it salutes him (at most once in two
- * minutes).
+ * minutes). Open-world round 2: like every guard, killed by a player it puts its zone under attack, and
+ * it answers the emotes of the Alliance.
  */
 @creature("guard_stormwind")
 struct GuardStormwind
 {
     enum uint spellWindsorInspirationEffect = 20275;
     enum int saySalute = -1000842;
+    enum uint factionStormwind = 72;
+
+    void on(ref CreatureContext me, const ref Died e)
+    {
+        import dmangos.scripts.guards : guardDied;
+
+        guardDied(me, e);
+    }
+
+    void on(ref CreatureContext me, const ref EmoteReceived e)
+    {
+        import dmangos.scripts.guards : replyToEmote;
+
+        if (me.standingOf(e.player, factionStormwind) >= Standing.neutral) // one of the Alliance
+            replyToEmote(me, e.textEmote);
+    }
 
     enum Step : ubyte { saluteAgain }
     Schedule!Step steps;
@@ -488,6 +505,88 @@ struct SpellDummyNpc
             return;
         me.castSelf(spellMelodiousRaptureVisual, true);
         me.killCredit(e.caster, enthralledDeeprunRat);
+    }
+}
+
+
+// Open-world round 2:
+
+/**
+ * A Guardian of Blizzard, keeping players out of where they may not go: whoever it fights it touches
+ * with death, at its every swing.
+ */
+@creature("npc_guardian")
+struct GuardianOfBlizzard
+{
+    enum uint spellDeathtouch = 5, sayAggro = 2077;
+
+    enum Step : ubyte { touch }
+    Schedule!Step steps;
+
+    void on(ref CreatureContext me, const ref EnteredCombat e)
+    {
+        me.sayText(sayAggro, e.enemy);
+        me.melee(false); // its swing is Deathtouch
+        steps.every(Step.touch, 0.msecs, 2.seconds);
+    }
+
+    void on(ref CreatureContext me, const ref Reset e)
+    {
+        steps.clear();
+        me.melee(true);
+    }
+
+    void on(ref CreatureContext me, Step step)
+    {
+        if (!me.inCombat)
+            return steps.clear();
+        if (const victim = me.victim)
+            me.castSpell(spellDeathtouch, victim, true);
+    }
+}
+
+/// The Advanced Target Dummy an engineer sets up: it draws the attacks for fifteen seconds and blows up.
+@creature("npc_advanced_target_dummy")
+struct AdvancedTargetDummy
+{
+    enum uint spellPassive = 4048, spellSpawnEffect = 4507, spellSuicide = 7;
+
+    enum Step : ubyte { die }
+    Schedule!Step steps;
+
+    void on(ref CreatureContext me, const ref Spawned e)
+    {
+        me.reactState(Reaction.passive);
+        me.castSelf(spellPassive, true); // what its EventAI casts
+        me.castSelf(spellSpawnEffect);
+        steps.after(Step.die, 15.seconds);
+    }
+
+    void on(ref CreatureContext me, Step step)
+    {
+        me.castSelf(spellSuicide, true);
+    }
+}
+
+/// A Void Zone (Naxxramas's Lady Blaumeux): passive; it keeps its Consumption up, looked at every 2.5 seconds.
+@creature("npc_aoe_damage_trigger")
+struct AoeDamageTrigger
+{
+    enum uint spellConsumption = 28874;
+
+    enum Step : ubyte { consume }
+    Schedule!Step steps;
+
+    void on(ref CreatureContext me, const ref Spawned e)
+    {
+        me.reactState(Reaction.passive);
+        steps.every(Step.consume, 2500.msecs);
+    }
+
+    void on(ref CreatureContext me, Step step)
+    {
+        if (!me.hasAura(me.self, spellConsumption))
+            me.castSelf(spellConsumption, true);
     }
 }
 
@@ -545,4 +644,27 @@ unittest
     assert(henze.host.did("text 2283") && henze.host.did("emote 16"));
     henze.tick(120_000);
     assert(henze.host.log[$ - 1] == "stand 7");
+}
+
+unittest // Open-world round 2
+{
+    import dmangos.scripts.kalimdortesting;
+    alias self = dmangos.scripts.npcs;
+
+    auto g = Driven!self("npc_guardian", 5764);
+    g.host.fighting = true;
+    g.raise(EnteredCombat(hero));
+    g.run(100);
+    assert(g.host.has("text 2077") && g.host.has("cast 5"));
+
+    auto dummy = Driven!self("npc_advanced_target_dummy", 2674);
+    dummy.raise(Spawned());
+    assert(dummy.host.has("passive") && dummy.host.has("cast 4048"));
+    dummy.run(15_000);
+    assert(dummy.host.has("cast 7"));
+
+    auto zone = Driven!self("npc_aoe_damage_trigger", 16_697);
+    zone.raise(Spawned());
+    zone.run(2500);
+    assert(zone.host.has("cast 28874"));
 }
