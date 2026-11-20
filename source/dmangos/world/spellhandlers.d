@@ -2138,6 +2138,18 @@ private:
                 entry.spellMs = cast(uint) spellLeft.total!"msecs";
             list ~= entry;
         }
+        // Held in use until an aura ends (CMaNGOS's permanent cooldown: 1, and the category's high bit).
+        foreach (spellId, item; eventCooldowns)
+        {
+            InitialCooldown entry;
+            entry.spell = cast(ushort) spellId;
+            entry.item = cast(ushort) item;
+            if (const info = context.data.spells.spell(spellId))
+                entry.category = cast(ushort) info.category;
+            entry.spellMs = 1;
+            entry.categoryMs = 0x80000000;
+            list ~= entry;
+        }
         return list;
     }
 
@@ -2252,6 +2264,14 @@ private:
         player.values.set!PLAYER__FIELD_COMBO_TARGET(comboTarget);
         player.values.setByte!PLAYER_FIELD_BYTES(1, comboPoints);
         flushPlayerChanges();
+    }
+
+    /// `spell` held in use until its aura ends (`cooldownEvent`), as after a login with the aura on.
+    package void holdForCooldownEvent(const(SpellInfo)* spell)
+    {
+        if (spell.id !in eventCooldowns)
+            eventCooldowns[spell.id] = 0;
+        spellReadyAt[spell.id] = MonoTime.max;
     }
 
     /// The spells whose cooldown waits for their aura to end, with the item each was cast from.

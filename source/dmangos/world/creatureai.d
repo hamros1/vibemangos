@@ -435,6 +435,9 @@ final class CreatureAI : Scripted, CreatureHost
         foreach (guid, _; threat)
             notifyRemoved(guid, world);
         threat = null;
+        // Its swing stops, as everyone watching is told (CMaNGOS's `CombatStop` for the dead).
+        if (meleeAttacking && world !is null)
+            world.sendToObservers(me.guid, Opcode.SMSG_ATTACKSTOP, attackStop(me.guid, victim, true));
         victim = 0;
         meleeAttacking = false;
         inCombat_ = evadingHome = false;

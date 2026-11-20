@@ -736,6 +736,10 @@ private:
                 if (aura.period[i] > 0 && row.periodTimer[i] > 0)
                     aura.periodTimer[i] = row.periodTimer[i];
             addAura(aura);
+            // Its own Presence of Mind still on: the spell held in use again, its cooldown to start as it ends.
+            enum uint cooldownOnEvent = 0x02000000; // SPELL_ATTR_COOLDOWN_ON_EVENT
+            if (row.caster == player.guid && (spell.attributes & cooldownOnEvent))
+                holdForCooldownEvent(spell);
         }
     }
 
