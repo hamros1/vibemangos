@@ -1944,3 +1944,31 @@ unittest
     learn(w, who, 14787);
     assert(isClose(me.player.damageMods.threat[1], 0.8f, 0.001), "20% less threat");
 }
+
+/**
+ * Eye of Kilrogg (126): an Eye of Kilrogg (4277) the warlock moves and sees as (possessed), for 45 sec; then it goes
+ * and the warlock is itself again.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    auto w = RealWorld.make();
+    auto who = w.character(1120, "Kilrogg", warlock, 60, [126]);
+    auto me = who.session.inWorld;
+    me.storeLoot(6265, 1, 0, false); // (a Soul Shard, should it need one)
+    who.read();
+    const r = w.cast_(who, 126);
+    assert(r == SpellCastResult.ok, format!"%s"(r));
+    pass(w, who, 6.seconds); // its cast time
+    const eye = me.player.values.get!UNIT_FIELD_CHARM;
+    assert(eye, "an eye charmed");
+    auto creature = creatureOf(w, eye);
+    assert(creature !is null && creature.template_.entry == 4277, "the Eye of Kilrogg");
+    assert(me.activeMover == eye, "moved by the warlock");
+    assert(who.read().canFind!(p => p.opcode == Opcode.SMSG_CLIENT_CONTROL_UPDATE), "the client's control on it");
+    assert(me.player.auras.find(126) !is null, "Controlling Eye of Kilrogg");
+    pass(w, who, 46.seconds);
+    assert(me.player.values.get!UNIT_FIELD_CHARM == 0 && me.activeMover == 0, "itself again");
+    assert(creatureOf(w, eye) is null, "the eye gone");
+}

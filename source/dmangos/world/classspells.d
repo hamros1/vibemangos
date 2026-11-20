@@ -864,7 +864,10 @@ mixin template ClassSpells()
         if (apply && aura.spell.id == shadowTrance && aura.charges == 0)
             aura.charges = 1;
         if (!apply)
+        {
             spiritOfRedemptionEnded(aura);
+            possessedSummonEnded(aura);
+        }
         if (apply)
             foreach (other; replacedBy(player.auras, aura))
                 removeAura(other);
@@ -1096,6 +1099,47 @@ mixin template ClassSpells()
     // -----------------------------------------------------------------------
     // Warlock
     // -----------------------------------------------------------------------
+
+    /**
+     * `SPELL_EFFECT_SUMMON_POSSESSED` (Eye of Kilrogg: "Summons an Eye of Kilrogg and binds your vision to it"): the
+     * creature of its misc value, in front of the caster, for the spell's time, possessed (`takeCharm`: the player
+     * moves it and sees as it). The caster's aura of the spell (its dummy: "Controlling Eye of Kilrogg") lasts as
+     * long; as either ends, the other does and the creature goes (`possessedSummonEnded`).
+     */
+    package void summonPossessedEffect(const(SpellInfo)* spell, size_t i)
+    {
+        import std.math : cos, sin;
+        import dmangos.world.creature : TempSpawnType;
+        import dmangos.world.spellcast : duration;
+
+        const entry = cast(uint) spell.miscValue[i];
+        const ms = modDuration(spell, duration(*spell, context.client, player.data.level));
+        if (!entry || ms <= 0)
+            return;
+        auto at = player.position;
+        at.x += 2 * cos(at.orientation);
+        at.y += 2 * sin(at.orientation);
+        auto creature = context.summonCreature(map, entry, at, TempSpawnType.timedOrCorpse, ms, player.guid);
+        if (creature is null)
+            return;
+        possessedSummon = creature.guid;
+        takeCharm(creature, spell, true);
+    }
+
+    private ulong possessedSummon; // the creature of a `summonPossessedEffect`, while possessed
+
+    /// The possession of a summoned creature ends (its spell's aura went, or it died): the creature goes.
+    private void possessedSummonEnded(Aura aura)
+    {
+        if (!possessedSummon || !aura.spell.hasEffect(SpellEffect.summonPossessed))
+            return;
+        auto creature = cast(Creature) map.findObject(possessedSummon);
+        possessedSummon = 0;
+        if (creature !is null && charmed is creature)
+            endCharm();
+        if (creature !is null)
+            map.removeObject(creature.guid);
+    }
 
     /**
      * This player's aura (`aura`, on a creature now dead) procs on its death: Drain Soul's Soul Siphon (18371), its

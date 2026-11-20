@@ -1,7 +1,6 @@
 # Spells the sweep (source/dmangos/world/realspellsweep.d) casts on the real data that do not yet do what their
 # data says, each with why: "id: reason". The sweep fails at a failure not listed here, and says which listed ones
 # pass now (take them off).
-126: Eye of Kilrogg: SPELL_EFFECT_SUMMON_POSSESSED is not done yet (see spell-audit-known.txt)
 877: Elemental Fury: its aura is at the caster's pet (TARGET_UNIT_CASTER_PET), and a shaman has none to give it
 7620: Fishing: the bobber needs water in front of the caster; the sweep casts in Stormwind's Trade District
 7731: Fishing: as 7620

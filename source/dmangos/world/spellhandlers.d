@@ -2365,6 +2365,13 @@ private:
                         spell.effect[i] == SpellEffect.summon);
             }
             break;
+        case SpellEffect.summonPossessed: // SPELL_EFFECT_SUMMON_POSSESSED: a creature the caster becomes (Eye of Kilrogg)
+            if (!(c.persistentDone & (1 << i)))
+            {
+                c.persistentDone |= cast(ubyte)(1 << i);
+                summonPossessedEffect(spell, i);
+            }
+            break;
         case SpellEffect.summonPlayer: // SPELL_EFFECT_SUMMON_PLAYER: the target asked to come (`dmangos.world.rituals`)
             if (!(c.persistentDone & (1 << i)))
             {
@@ -2389,7 +2396,7 @@ private:
             SpellEffect.teleportUnitsFaceCaster, SpellEffect.skillStep, SpellEffect.addHonor, SpellEffect.spawn,
             SpellEffect.tradeSkill, SpellEffect.stealth, SpellEffect.forceCriticalHit, SpellEffect.guaranteeHit,
             SpellEffect.proficiency, SpellEffect.healthFunnel, SpellEffect.powerFunnel, SpellEffect.pull,
-            SpellEffect.summonPossessed, SpellEffect.healMechanical,
+            SpellEffect.healMechanical,
             SpellEffect.createHouse, SpellEffect.bindSight, SpellEffect.activateObject,
             SpellEffect.threatAll, SpellEffect.enchantHeldItem, SpellEffect.summonPhantasm, SpellEffect.knockBack,
             SpellEffect.inebriate, SpellEffect.destroyAllTotems,
