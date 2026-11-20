@@ -41,6 +41,7 @@ mixin template CombatHandlers()
             v.get!PLAYER_DUEL_TEAM, player.reputation, v.get!PLAYER_FLAGS);
         r.controller = player.guid;
         r.mounted = v.get!UNIT_FIELD_MOUNTDISPLAYID != 0;
+        r.forced = &forcedReactions;
         return r;
     }
 

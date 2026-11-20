@@ -1208,7 +1208,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 
 * Projects: CMaNGOS
 * Files: `Relations.cpp`
-* Functions: `CGUnit_C::UnitReaction`, `Player::IsPvP`, `ReputationMgr::GetBaseReputation`, `ReputationMgr::ReputationToRank`, `Unit::CanAttack`, `Unit::CanAttackNow`, `Unit::GetReactionTo`, `Unit::IsEnemy`, `Unit::IsFriend`
+* Functions: `CGUnit_C::UnitReaction`, `Player::IsPvP`, `ReputationMgr::GetBaseReputation`, `ReputationMgr::ReputationToRank`, `Unit::CanAttack`, `Unit::CanAttackNow`, `Unit::GetReactionTo`, `Unit::IsEnemy`, `Unit::IsFriend`, `ReputationMgr::GetForcedRankIfAny` (in `Unit::GetReactionTo` and `GetFactionReaction`)
 * Constants: `FACTION_FLAG_AT_WAR`, `FACTION_TEMPLATE_FLAG_ASSIST_PLAYERS`, `FACTION_TEMPLATE_FLAG_ATTACK_PVP_ACTIVE_PLAYERS`, `PLAYER_DUEL_ARBITER`, `PLAYER_DUEL_TEAM`, `PLAYER_FLAGS`, `PLAYER_FLAGS_CONTESTED_PVP`, `PLAYER_FLAGS_FFA_PVP`, `PLAYER_FLAGS_PVP_DESIRED`, `UNIT_FIELD_FLAGS`
 
 ## world/reputation.d
@@ -1222,7 +1222,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 
 * Projects: CMaNGOS
 * Files: `MiscHandler.cpp`
-* Functions: `Player::CalculateReputationGain`, `Player::GetReputationPriceDiscount`, `Player::ReputationChanged`, `Player::RewardReputation`, `ReputationMgr::LoadFromDB`, `ReputationMgr::ModifyReputation`, `ReputationMgr::SaveToDB`
+* Functions: `Player::CalculateReputationGain`, `Player::GetReputationPriceDiscount`, `Player::ReputationChanged`, `Player::RewardReputation`, `ReputationMgr::LoadFromDB`, `ReputationMgr::ModifyReputation`, `ReputationMgr::SaveToDB`, `Aura::HandleForceReaction`, `ReputationMgr::ApplyForceReaction`, `ReputationMgr::SendForceReactions`, `Player::StopAttackFaction`
 * Constants: `SMSG_INITIALIZE_FACTIONS`, `SMSG_SET_FACTION_STANDING`
 
 ## world/session.d

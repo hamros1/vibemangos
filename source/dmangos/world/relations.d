@@ -42,6 +42,7 @@ struct Relating
     bool playerOwned;                       /// a player's pet, totem or guardian: it has a controlling player
     ulong controller;                       /// the player in control: the player itself, or a pet's owner; 0: none
     bool mounted;                           /// a player on its mount (or a flight's): it may start no attack
+    const(ReputationRank[uint])* forced;    /// a player's reactions forced by auras, by faction (`SPELL_AURA_FORCE_REACTION`)
 
     /// Whether a player is in control: a player, or a unit one controls.
     @property bool hasControllingPlayer() const pure nothrow @nogc @safe
@@ -148,6 +149,8 @@ ReputationRank factionReaction(const(FactionTemplateEntry)* self, const Relating
         return ReputationRank.hostile;
     if (unit.playerControlled && unit.player)
     {
+        if (const rank = unit.forced is null ? null : self.faction in *unit.forced) // a disguise (`GetForcedRankIfAny`)
+            return *rank;
         const faction = client.factions.lookup(self.faction);
         if (faction !is null && faction.hasReputation)
         {
@@ -187,6 +190,8 @@ ReputationRank reactionTo(const Relating self, const Relating unit, const Client
         if (self.player && unit.template_ !is null)
         {
             // A contested player and a contested zone's guards: enemies.
+            if (const rank = self.forced is null ? null : unit.template_.faction in *self.forced) // a disguise, first
+                return *rank;
             if (self.contested && (unit.template_.flags & factionTemplateContestedGuard))
                 return ReputationRank.hostile;
             const faction = client.factions.lookup(unit.template_.faction);
@@ -292,6 +297,13 @@ unittest
     wolf.alive = true;
     human.mounted = true;
     assert(!canAttackNow(human, wolf, client) && canAttack(human, wolf, client), "no attack started mounted");
+    human.mounted = false;
+    // A disguise forces the reaction to a faction both ways (the wolf's faction 22 friendly).
+    const ReputationRank[uint] disguise = [22: ReputationRank.friendly];
+    Relating disguised = Relating(UnitFlags.playerControlled, &templates[0], true, 1, 1);
+    disguised.forced = &disguise;
+    assert(reactionTo(disguised, wolf, client) == ReputationRank.friendly && !canAttack(disguised, wolf, client));
+    assert(reactionTo(wolf, disguised, client) == ReputationRank.friendly && !canAttack(wolf, disguised, client));
 
     assert(reputationToRank(0) == ReputationRank.neutral && reputationToRank(-1) == ReputationRank.unfriendly);
     assert(reputationToRank(3000) == ReputationRank.friendly && reputationToRank(-42_000) == ReputationRank.hated);

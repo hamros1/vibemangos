@@ -481,6 +481,9 @@ private:
             case AuraType.waterBreathing, AuraType.modWaterBreathing:
                 breathing = true;
                 break;
+            case AuraType.forceReaction: // a disguise: `dmangos.world.reputationhandlers`
+                forceReaction(cast(uint) aura.misc(i), aura.amount[i], apply);
+                break;
             case AuraType.mounted:
                 speeds = true; // mounted, the mount's speed counts instead of the speed on foot
                 uint display;
