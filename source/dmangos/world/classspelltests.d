@@ -948,3 +948,62 @@ unittest
     assert(isClose(crusaderDamageFactor(a.player.auras.list), 100.0f / 140), "40% quicker, 1/1.4 the damage");
     assert(isClose(a.player.damageMods.swing[0], 100.0f / 140));
 }
+
+/**
+ * Sweeping Strikes strikes another enemy in reach for the blow's damage (12723); Retaliation strikes back at a swing
+ * from the front, not one from behind.
+ */
+unittest
+{
+    auto a = new Arena(PlayerClass.warrior);
+    auto second = a.context.summonCreature(a.map, creatureInnkeeper, Position(-8948.6f, -131.8f, 83.53f, 3.14159f),
+        TempSpawnType.dead, 0, 0);
+    second.factionTemplate = a.foe.factionTemplate;
+    second.values.set!UNIT_FIELD_LEVEL(1u); // (the test character has little weapon skill)
+    second.values.set!UNIT_FIELD_MAXHEALTH(10_000u);
+    second.values.set!UNIT_FIELD_HEALTH(10_000u);
+    auto sweeping = a.spell(12292, SpellEffect.applyAura, ImplicitTarget.caster);
+    a.auraEffect(sweeping, 0, AuraType.dummy, ImplicitTarget.caster);
+    with (sweeping.casting)
+    {
+        procFlags = 20;
+        procChance = 100;
+        procCharges = 5;
+        durationIndex = 1;
+    }
+    with (a.spell(12723, SpellEffect.schoolDamage, ImplicitTarget.enemy, 0))
+        casting.dmgClass = DamageClass.melee;
+    a.cast_(12292);
+    a.hero.read();
+    foreach (attempt; 0 .. 60)
+    {
+        if (!a.hasAura(12292)) // (its strikes may miss, and its charges run out)
+            a.cast_(12292);
+        a.me.swing(a.foe, imported!"dmangos.world.combat".AttackType.mainHand);
+        if (second.values.get!UNIT_FIELD_HEALTH < 10_000)
+            break;
+    }
+    assert(second.values.get!UNIT_FIELD_HEALTH < 10_000, "the second enemy struck too");
+    const left = a.player.auras.find(12292);
+    assert(left is null || left.charges < 5, "a charge a strike");
+
+    auto retaliation = a.spell(20230, SpellEffect.applyAura, ImplicitTarget.caster);
+    a.auraEffect(retaliation, 0, AuraType.dummy, ImplicitTarget.caster);
+    with (retaliation.casting)
+    {
+        procFlags = 40;
+        procChance = 100;
+        procCharges = 30;
+        durationIndex = 1;
+    }
+    with (a.spell(22858, SpellEffect.weaponDamageNoschool, ImplicitTarget.enemy, 0))
+        casting.dmgClass = DamageClass.melee;
+    a.tick(1600);
+    a.cast_(20230);
+    a.hero.read();
+    a.swing(true, MeleeHitOutcome.normal, 5);
+    assert(a.damageLogs().canFind!(l => l[0] == 22858), "struck back");
+    a.player.movement.position.orientation = 3.14159f; // its back to the creature
+    a.swing(true, MeleeHitOutcome.normal, 5);
+    assert(!a.damageLogs().canFind!(l => l[0] == 22858), "not from behind");
+}

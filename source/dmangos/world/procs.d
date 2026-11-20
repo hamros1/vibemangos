@@ -292,6 +292,8 @@ mixin template ProcHandlers()
             return procDamage(aura, i, other);
         case AuraType.addFlatModifier, AuraType.addPctModifier: // their charges go as the spells they change are cast
             return false;
+        case AuraType.modMeleeHaste: // Blade Flurry, Flurry
+            return classHasteProc(aura, i, hit, other, casts);
         default:
             return aura.charges != 0; // a proc that only counts (`HandleNULLProc`): a charge goes
         }

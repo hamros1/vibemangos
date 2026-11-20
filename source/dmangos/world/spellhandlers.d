@@ -856,7 +856,10 @@ private:
                     if (!inside(creature.position) || !spellEnemy(creature))
                         continue;
                     if (hurts)
+                    {
                         spellDamage(area.spell, creature, area.value, area.spell.casting.school);
+                        classAreaTick(area.spell, map.unitOf(creature)); // Improved Blizzard's chill
+                    }
                     else
                     {
                         bool isNew;

@@ -20,7 +20,8 @@
  *   Forbearance, Hammer of Wrath under a fifth of health, Illumination's mana back, Blessing of Light.)
  * $(LI Warlock: Conflagrate (needs and consumes Immolate), Nightfall's Shadow Trance, Curse of Doom not at players,
  *   Drain Soul's and Shadowburn's Soul Shard.)
- * $(LI Mage: Cold Snap, Ignite, Combustion, Master of Elements, Shatter against frozen targets, Mana Shield's bonus.)
+ * $(LI Mage: Cold Snap, Ignite, Combustion, Master of Elements, Shatter against frozen targets, Mana Shield's bonus,
+ *   Improved Blizzard's chill.)
  * $(LI Rogue: Rupture's attack power, Ambush's bonus, Ruthlessness' and Seal Fate's points after the move; Vanish's
  *   Stealth (a script's call: `hostCastHighestRank`).)
  * $(LI Priest: Weakened Soul, Holy Nova's heal, Vampiric Embrace, Blessed Recovery, Touch of Weakness.)
@@ -969,6 +970,25 @@ mixin template ClassSpells()
         return value;
     }
 
+    /**
+     * A tick of this player's persistent area (`spell`) hurt `target`: Blizzard chills it with Improved Blizzard
+     * (`spell_blizzard`: the talent's override script names its rank).
+     */
+    package void classAreaTick(const(SpellInfo)* spell, UnitRef target)
+    {
+        static immutable uint[2][] improvedBlizzardChill = [[836, 12484], [988, 12485], [989, 12486]];
+        if (!ofFamily(spell, SpellFamily.mage, 0x80) || !target || !target.fighter.alive)
+            return;
+        uint chill;
+        foreach (aura; player.auras.list)
+            foreach (i; 0 .. 3)
+                if ((aura.effects & (1 << i)) && aura.type(i) == AuraType.overrideClassScripts)
+                    if (const ranked = rankSpell(improvedBlizzardChill, cast(uint) aura.misc(i)))
+                        chill = ranked;
+        if (chill)
+            castCustom(chill, target.combatGuid);
+    }
+
     /// The crit chance a class rule adds to `spell` against `target`: Shatter's against a frozen one.
     package float classCritBonus(const(SpellInfo)* spell, UnitRef target)
     {
@@ -1089,6 +1109,36 @@ mixin template ClassSpells()
     package bool classDummyProc(Aura aura, size_t i, const ref ProcHit hit, UnitRef other, ref ProcCast[] casts)
     {
         const spell = aura.spell;
+        // Sweeping Strikes: the blow again at another enemy near (Whirlwind's, and Execute's at one over a fifth of its
+        // health, as a weapon strike); not its own strikes again.
+        enum uint sweepingStrikes = 12292, sweepingStrikesCreature = 18765, sweepingDamage = 12723, sweepingWeapon = 26654;
+        if (spell.id == sweepingStrikes || spell.id == sweepingStrikesCreature)
+        {
+            if (hit.spell !is null && (hit.spell.id == sweepingDamage || hit.spell.id == sweepingWeapon))
+                return false;
+            const second = anotherEnemyNear(other);
+            if (!second)
+                return false;
+            enum uint whirlwind = 1680;
+            const execute = hit.spell !is null && hit.spell.casting.targetAuraState == AuraState.healthless20Percent;
+            auto unit = map.unit(second);
+            if (hit.spell !is null && (hit.spell.id == whirlwind || execute && !(healthOf(unit)[0] * 5 < healthOf(unit)[1])))
+                casts ~= ProcCast(sweepingWeapon, second);
+            else
+                casts ~= ProcCast(sweepingDamage, second, CustomValues.first(cast(int) hit.damage));
+            return true;
+        }
+        // Retaliation: a strike back at each swing that does not come from behind.
+        enum uint retaliation = 20230, retaliationStrike = 22858;
+        if (spell.id == retaliation)
+        {
+            import dmangos.world.combat : hasInArc;
+
+            if (!other || !hasInArc(player.position, other.fighter.position))
+                return false;
+            casts ~= ProcCast(retaliationStrike, other.combatGuid);
+            return true;
+        }
         // Seal of Righteousness
         if (ofFamily(spell, SpellFamily.paladin, 0x8000000) && i == 0)
         {
@@ -1136,6 +1186,39 @@ mixin template ClassSpells()
             return true;
         }
         return false;
+    }
+
+    /**
+     * A haste aura procced (`HandleHasteAuraProc`): Blade Flurry strikes another enemy near for the swing's damage; true
+     * if it did (a charge, as for the others, goes then).
+     */
+    package bool classHasteProc(Aura aura, size_t i, const ref ProcHit hit, UnitRef other, ref ProcCast[] casts)
+    {
+        enum uint bladeFlurry = 13877, bladeFlurryStrike = 22482;
+        if (aura.spell.id != bladeFlurry)
+            return aura.charges != 0;
+        const second = anotherEnemyNear(other);
+        if (!second)
+            return false;
+        casts ~= ProcCast(bladeFlurryStrike, second, CustomValues.first(cast(int) hit.damage));
+        return true;
+    }
+
+    /// Another enemy in melee reach than `victim` (`SelectRandomUnfriendlyTarget`); 0 if none.
+    private ulong anotherEnemyNear(UnitRef victim)
+    {
+        import dmangos.world.combat : canReachWithMelee;
+
+        ulong[] near;
+        foreach (creature; map.creaturesNear(player.position, 10))
+            if (creature.guid != victim.combatGuid && spellEnemy(creature)
+                    && canReachWithMelee(player.fighter, creature.fighter))
+                near ~= creature.guid;
+        if (near.length == 0)
+            return 0;
+        import std.random : uniform;
+
+        return near[uniform(0, near.length, map.random)];
     }
 
     /**
