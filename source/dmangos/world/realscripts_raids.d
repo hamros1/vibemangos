@@ -140,6 +140,15 @@ void fight(const Boss b)
     if (b.afterDeath !is null)
         b.afterDeath(s, boss);
     assert(s.deaths.length == 0, format!"%s: a god-like character died"(b.name));
+    // The copy unloaded and loaded again: the encounter is still done, and a boss the world spawns stays dead.
+    if (s.instance && b.encounter >= 0)
+    {
+        s.reload();
+        assert(s.ask(b.encounter) == 3, format!"%s: its encounter %s after the copy's reload"(b.name,
+            s.ask(b.encounter)));
+        if (b.summonAt.x == 0 && b.arrive is null)
+            assert(s.find(b.entry) is null, format!"%s: alive again after the copy's reload"(b.name));
+    }
 }
 
 /// `b` fought, the characters killed: it goes home whole, and its encounter is open again.
@@ -198,9 +207,11 @@ unittest
         Boss("Magmadar", 409, 11982, 1, [], [Stage(0, 35, [19408, 19411, 20474, 19451], [-1_000_001])], 0, 0, 0),
         // Gehennas: his curse, Rain of Fire, Shadow Bolt at random and at his victim; two Flamewakers.
         Boss("Gehennas", 409, 12259, 2, [flamewaker], [Stage(0, 15, [19716, 19717, 19729, 19728])]),
-        // Garr: Antimagic Pulse, Magma Shackles; a Firesworn killed erupts and enrages him.
+        // Garr: Antimagic Pulse, Magma Shackles; a Firesworn killed erupts and enrages him; Massive Eruption.
         Boss("Garr", 409, 12057, 3, [firesworn], [Stage(0, 18, [19492, 19496]),
-            Stage(0, 2, [19516], null, null, [[firesworn, 19497]], killOne(firesworn))]),
+            Stage(0, 2, [19516], null, null, [[firesworn, 19497]], killOne(firesworn)),
+            // after six minutes a Firesworn made to erupt every 20 s (his emote)
+            Stage(0, 345, null, [-1_409_025], null, [[firesworn, 20483]])]),
         // Shazzrah: Arcane Explosion, his curse, Counterspell, Magic Grounding (24 s), the Gate (30 s).
         Boss("Shazzrah", 409, 12264, 4, [], [Stage(0, 33, [19712, 19713, 19715, 19714, 23138])], 0, 0, 0),
         // Baron Geddon: Ignite Mana (30 s), Living Bomb (35 s), Inferno (45 s); Armageddon at 2% with his emote.
@@ -376,6 +387,8 @@ unittest
         Stage(0, 32, [18435, 19983, 15847, 18500, 19633]),
         Stage(64, 30, [18392], [-1_249_002], [[whelp, 2]]),
         Stage(0, 1, null, null, null, null, toDelegate(airborne)),
+        // in the air every 25 s a deep breath across the lair (its emote) or a flight to the next spot
+        Stage(0, 100, null, [-1_249_004]),
         Stage(39, 20, [18431], [-1_249_003]),
     ], -1_249_000, 0, 2, Position.init, [classWarrior, classMage], null, 80);
     fight(onyxia);
@@ -1068,7 +1081,7 @@ unittest
  * (40 s), spiderlings (30 s), Frenzy under 30%. Noth: Curse, Blink, his Plagued Warriors (12 s), to his balcony at
  * 90 s. Heigan: Mana Burn, Decrepit Fever, to his platform at 90 s (Plague Cloud). Loatheb: Corrupted Mind, his
  * Remove Curse, spores (13 s), Inevitable Doom at two minutes. Razuvious: Disrupting Shout, Unbalancing Strike.
- * Gothik: his trainees at 24 s. Patchwerk: Hateful Strike; under 5% Enrage. Grobbulus: Mutating Injection, Slime
+ * Gothik: his trainees at 24 s, down among the raid at 4:34 (Shadow Bolt, Harvest Soul). Patchwerk: Hateful Strike; under 5% Enrage. Grobbulus: Mutating Injection, Slime
  * Spray and its slimes, his poison clouds. Gluth: Mortal Wound, Frenzy, Terrifying Roar, his zombies, Decimate at
  * 105 s.
  */
@@ -1093,7 +1106,10 @@ unittest
         Boss("Loatheb", 533, 16_011, 5, [], [Stage(0, 16, [29_201, 30_281], null, [[spore, 1]]),
             Stage(0, 106, [29_204])]),
         Boss("Instructor Razuvious", 533, 16_061, 6, [], [Stage(0, 32, [29_107, 26_613])]),
-        Boss("Gothik the Harvester", 533, 16_060, 7, [], [Stage(0, 26, null, null, [[trainee, 1]])]),
+        Boss("Gothik the Harvester", 533, 16_060, 7, [], [Stage(0, 26, null, null, [[trainee, 1]]),
+            // at 4:34 he comes down (the gate opens: "special"): Shadow Bolt, Harvest Soul
+            Stage(0, 255, [29_317, 28_679], null, null, null, null)], 0, 0, 2, Position.init,
+            [classWarrior, classMage], (Scene s, Creature boss) {}, 60),
         Boss("Patchwerk", 533, 16_028, 9, [], [Stage(0, 5, [28_308]), Stage(4, 2, [28_131])]),
         Boss("Grobbulus", 533, 15_931, 10, [], [Stage(0, 32, [28_169, 28_157], null,
             [[falloutSlime, 1], [grobbulusCloud, 1]])]),
@@ -1373,4 +1389,76 @@ unittest
         }, 10, true, null, Position(gongAt.x + 3, gongAt.y, gongAt.z), toDelegate(arrive));
     fight(b);
     wipe(b);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The raids' scripted trash
+// ---------------------------------------------------------------------------------------------------------------
+
+/**
+ * The Temple's Anubisath Sentinels: a group pulled, each takes one of the nine abilities (none twice); one slain
+ * shares its own with the others (the emote); under 30% one frenzies (its emote). Wowpedia: "each Sentinel has a
+ * random ability ... when one dies, the others gain its ability".
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    enum uint sentinel = 15_264;
+    static immutable uint[9] abilities = [812, 2147, 2148, 2834, 9347, 13_022, 19_595, 21_737, 25_777];
+    const b = Boss("Anubisath Sentinel", 531, sentinel, -1, [sentinel], null);
+    Scene s;
+    auto first = setUp(b, s);
+    Creature[] group;
+    foreach (c; s.all(sentinel))
+        if (Scene.distance(c.position, first.position) < 80)
+            group ~= c;
+    assert(group.length >= 2, format!"%s sentinels together"(group.length));
+    s.engage(first);
+    s.run(2.seconds);
+    uint[] taken;
+    size_t abilityCount(Creature c)
+    {
+        size_t n;
+        foreach (a; abilities)
+            n += c.auras.find(a) !is null;
+        return n;
+    }
+    foreach (c; group)
+    {
+        uint mine;
+        foreach (a; abilities)
+            if (c.auras.find(a) !is null)
+                mine = a;
+        assert(mine, "a sentinel without its ability");
+        assert(!taken.canFind(mine), format!"two sentinels with %s"(mine));
+        taken ~= mine;
+    }
+    s.kill(first);
+    s.run(1.seconds);
+    assert(s.said(-1_531_047), "no emote as the powers are shared\n" ~ s.seen());
+    foreach (c; group[1 .. $])
+        assert(abilityCount(c) == 2, "a sentinel did not take the fallen one's ability");
+    s.hurtTo(group[1], 29);
+    s.run(1.seconds);
+    assert(s.castBy(sentinel, 8599) && s.said(-1_000_002), "no frenzy under 30%\n" ~ s.seen());
+}
+
+/**
+ * Naxxramas' Stoneskin Gargoyles (stone till pulled; Acid Volley; Stoneskin under 30%) and Living Poison (it explodes
+ * near a player).
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    enum uint gargoyle = 16_168, livingPoison = 16_027;
+    const b = Boss("Stoneskin Gargoyle", 533, gargoyle, -1, [], [Stage(0, 9, [29_325]), Stage(29, 2, [28_995])]);
+    fight(b);
+    // (No Living Poison is spawned in the data: the corridor's trigger sends them. One summoned by a player.)
+    auto at = spawnOf(533, 16_028);
+    auto s = new Scene(533, Position(at.x + 3, at.y, at.z), [classWarrior]);
+    s.run(1.seconds);
+    s.summon(livingPoison, Position(at.x + 4, at.y, at.z));
+    assert(s.runUntil(() => s.cast_(28_433), 30.seconds), "no Living Poison explodes by a player\n" ~ s.seen());
 }
