@@ -11,6 +11,7 @@
  */
 module dmangos.world.auras;
 
+import dmangos.world.tooltipeffects : hiddenEffectsOf;
 import dmangos.world.spellids;
 
 public import dmangos.world.spellids : AuraType;
@@ -530,6 +531,9 @@ struct AuraSet
             foreach (i; 0 .. 3)
                 if ((aura.effects & (1 << i)) && aura.type(i) == type && (matches is null || matches(aura.misc(i))))
                     product *= (100.0f + aura.amount[i] * cast(int) aura.stacks) / 100.0f;
+            foreach (ref e; hiddenEffectsOf(aura.spell.id)) // what only its tooltip gives (Barkskin's)
+                if (e.type == type && (matches is null || matches(e.misc)))
+                    product *= (100.0f + e.amount) / 100.0f;
         }
         return product;
     }
@@ -549,6 +553,10 @@ struct AuraSet
             factor *= a > 0 ? 100.0f / (100 + a) : (100.0f - a) / 100;
         }
         foreach (aura; list)
+        {
+            foreach (ref e; hiddenEffectsOf(aura.spell.id)) // what only its tooltip gives (Barkskin's slow)
+                if (e.type == AuraType.modMeleeHaste && attackType < 2)
+                    apply(e.amount);
             foreach (i; 0 .. 3)
             {
                 if (!(aura.effects & (1 << i)))
@@ -576,6 +584,7 @@ struct AuraSet
                     break;
                 }
             }
+        }
         if (ammo)
             apply(ammo);
         return factor;

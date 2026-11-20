@@ -458,3 +458,12 @@ pipeline; each tested in world/realclass_warrior_rogue_hunter.d). **Source: the 
   Shots on a normal ranged attack.
 - **Entrapment:** procs only as a trap's effect lands (Immolation, Explosive and Frost Trap's: the tooltip's three,
   not Freezing Trap's), on each target; its higher ranks' other proc flags (any harmful spell) are not taken.
+
+## Effects only a tooltip gives
+
+Some auras do more than their 1.12 data has room for: Blizzard's server added the rest. Where the tooltip states it
+plainly, `dmangos.world.tooltipeffects` adds it as a hidden effect of the aura, counted by the aura totals as if the
+data had it, quoting the tooltip:
+
+- Barkskin (22812): "Physical damage taken is reduced by 20%" and "melee combat is slowed by 25%". Its data has only
+  the pushback immunity and the second longer casts.

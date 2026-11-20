@@ -1508,6 +1508,10 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Functions: `GridMap::getArea`, `GridMap::getHeight`, `GridMap::getHeightFromFloat`, `GridMap::getHeightFromUint8`, `GridMap::getLiquidLevel`, `GridMap::getLiquidStatus`, `GridMap::getTerrainType`, `GridMap::isHole`, `GridMap::loadData`, `MMapManager::loadMap`, `MMapManager::loadMapData`, `PathFinder::calculate`, `TerrainInfo::GetAreaFlag`, `TerrainInfo::GetAreaInfo`, `TerrainInfo::GetGrid`, `TerrainInfo::GetHeightStatic`, `TerrainInfo::GetZoneAndAreaId`, `TerrainInfo::IsOutdoors`, `TerrainInfo::getLiquidStatus`, `VMapManager2::getHeight`, `VMapManager2::isInLineOfSight`, `VMapManager::getHeight`
 * Constants: `DEFAULT_HEIGHT_SEARCH`, `DEFAULT_WATER_SEARCH`, `INVALID_HEIGHT`, `INVALID_HEIGHT_VALUE`, `MAP_RESOLUTION`, `MAX_NUMBER_OF_GRIDS`, `SIZE_OF_GRIDS`
 
+## world/tooltipeffects.d
+
+* Not from an emulator: effects the 1.12.1 tooltips state that the data lacks (Barkskin's), docs/FORMULAS.md "Effects only a tooltip gives"
+
 ## world/tradehandlers.d
 
 * Projects: CMaNGOS

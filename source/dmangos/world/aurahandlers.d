@@ -520,6 +520,11 @@ private:
     {
         bool stats, speeds, movement, movementAuras, breathing;
         classAuraChanged(aura, apply); // a seal
+        {
+            import dmangos.world.tooltipeffects : hiddenEffectsOf;
+
+            stats = hiddenEffectsOf(aura.spell.id).length > 0; // what only its tooltip gives counts in the stats
+        }
         foreach (i; 0 .. 3)
         {
             if (!(aura.effects & (1 << i)))

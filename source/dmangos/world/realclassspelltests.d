@@ -501,3 +501,27 @@ unittest
     assert(healedBy(635) == 19982, "rank 1's own heal");
     assert(healedBy(10329) == 19968, "rank 8's: the common one");
 }
+
+/**
+ * Barkskin (22812) as its tooltip says, beyond its data (`dmangos.world.tooltipeffects`): "Physical damage taken is
+ * reduced by 20%" and "melee combat is slowed by 25%"; no other school's damage less.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    auto w = RealWorld.make();
+    auto druid = w.character(32, "Malfurion", PlayerClass.druid, 60, [22812], 4); // a night elf
+    auto me = druid.session.inWorld;
+    const swing = me.player.values.get!UNIT_FIELD_BASEATTACKTIME(0);
+    assert(me.player.damageMods.taken[0] == 1.0f);
+    assert(w.cast_(druid, 22812) == SpellCastResult.ok);
+    assert(me.player.auras.find(22812) !is null, "barkskinned");
+    import std.math : isClose;
+    assert(me.player.damageMods.taken[0].isClose(0.8f), "physical: 20% less");
+    assert(me.player.damageMods.taken[2] == 1.0f, "fire: as before");
+    const slowed = me.player.values.get!UNIT_FIELD_BASEATTACKTIME(0);
+    assert(slowed == cast(uint)(swing * 1.25f), "melee 25% slower");
+    me.removeAura(me.player.auras.find(22812));
+    assert(me.player.damageMods.taken[0] == 1.0f && me.player.values.get!UNIT_FIELD_BASEATTACKTIME(0) == swing, "and back");
+}
