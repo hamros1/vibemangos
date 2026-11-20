@@ -628,6 +628,8 @@ private:
         if (distance == 0)
             return 0;
         distance -= levelDiff;
+        // Mind Soothe, Soothe Animal: `MOD_DETECT_RANGE` on it (CMaNGOS's `Unit::GetAttackDistance`).
+        distance += me.auras.total(AuraType.modDetectRange);
         return distance < 5 ? 5 : distance;
     }
 
