@@ -1269,7 +1269,8 @@ mixin template CreatureCasting()
     /// ditto: in fear for 7 seconds.
     bool scriptFlee()
     {
-        if (!victim || fleeTimer > 0)
+        // Curse of Recklessness (`PREVENTS_FLEEING`) keeps it fighting (CMaNGOS's `DoFleeToGetAssistance`).
+        if (!victim || fleeTimer > 0 || me.auras.has(AuraType.preventsFleeing))
             return false;
         interruptCast();
         fleeTimer = 7000;

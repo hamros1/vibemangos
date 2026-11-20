@@ -38,7 +38,9 @@ mixin template CrowdControlHandlers()
     {
         if (player is null || map is null)
             return;
-        const feared = player.auras.hasType(AuraType.modFear), confused = player.auras.hasType(AuraType.modConfuse);
+        // Curse of Recklessness (`PREVENTS_FLEEING`) keeps a feared player in control (`HandlePreventFleeing`).
+        const feared = player.auras.hasType(AuraType.modFear) && !player.auras.hasType(AuraType.preventsFleeing);
+        const confused = player.auras.hasType(AuraType.modConfuse);
         if ((!feared && !confused) || player.deathState != imported!"dmangos.world.player".DeathState.alive)
         {
             if (controlLost)

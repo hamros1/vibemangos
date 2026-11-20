@@ -489,7 +489,9 @@ final class CreatureAI : Scripted, CreatureHost
         else if (inCombat_)
         {
             updateCombatManager(world, diff);
-            const feared = me.auras.has(AuraType.modFear), confused = me.auras.has(AuraType.modConfuse);
+            // Curse of Recklessness (`PREVENTS_FLEEING`) holds it in the fight through a fear (`HandlePreventFleeing`).
+            const feared = me.auras.has(AuraType.modFear) && !me.auras.has(AuraType.preventsFleeing);
+            const confused = me.auras.has(AuraType.modConfuse);
             if (!me.auras.has(AuraType.modStun) && fleeTimer <= 0 && !feared && !confused)
                 spellListTick(world, diff);
             if (inCombat_ && (feared || confused))
@@ -591,6 +593,86 @@ private:
     {
         if (auto t = who in threat)
             *t = *t * (percent <= -100 ? 0 : (100 + percent) / 100.0f);
+    }
+
+    /// The most threat anyone has on it; 0 with nobody in its list.
+    public float highestThreat() const
+    {
+        float top = 0;
+        foreach (_, t; threat)
+            if (t > top)
+                top = t;
+        return top;
+    }
+
+    /**
+     * Taunted by `who` (`SPELL_EFFECT_ATTACK_ME`, CMaNGOS's `EffectTaunt`): its threat raised to the
+     * highest in the list and attacked at once. Its taunt aura, if any, then holds it there (`tauntedBy`).
+     */
+    public void taunt(UnitRef who, CombatWorld world)
+    {
+        if (!me.alive || evadingHome || me.petOwner)
+            return;
+        world_ = world;
+        const top = highestThreat();
+        const own = threatOf(who.combatGuid);
+        addThreat(who, top > own ? top - own : 0);
+        attackStart(who, world);
+    }
+
+    /**
+     * The one whose taunt aura (`SPELL_AURA_MOD_TAUNT`) it is under, the latest first, while it is in its
+     * threat list: it attacks that one whatever the threat (CMaNGOS's taunt states); 0 if none.
+     */
+    public ulong tauntedBy() const
+    {
+        foreach_reverse (aura; me.auras.list)
+            if (aura.has(AuraType.modTaunt) && (aura.caster in threat) !is null)
+                return aura.caster;
+        return 0;
+    }
+
+    /**
+     * `guid` is out of its fight (Feign Death, Vanish, Divine Intervention: CMaNGOS's `CombatStop` of the
+     * player, which deletes its hostile references): out of the threat list, told so; with nobody left
+     * it evades at its next update.
+     */
+    public void forget(ulong guid, CombatWorld world)
+    {
+        if ((guid in threat) is null)
+            return;
+        threat.remove(guid);
+        suppressed.remove(guid);
+        notifyRemoved(guid, world);
+        if (victim == guid && threat.length)
+        {
+            world_ = world;
+            if (auto next = world.unit(selectNextVictim(world)))
+                attackStart(next, world);
+        }
+        world.wake(me.guid);
+    }
+
+    /**
+     * Distracted (`SPELL_EFFECT_DISTRACT`: Distract): out of combat and able to react, it stops where it
+     * is, faces `at`, and stands so for `ms` before it moves as it did (CMaNGOS's `MoveDistract`).
+     */
+    public void distract(Position at, int ms, CombatWorld world)
+    {
+        import dmangos.vmap.math : Vector3;
+        import dmangos.world.motion : DistractMovement;
+
+        if (!me.alive || inCombat_ || evadingHome || me.petOwner || me.immobilized || ms <= 0)
+            return;
+        world_ = world;
+        stopMoving(me, world);
+        const facing = angleTo(me.position, at);
+        const p = me.position;
+        launch(me, world, [Vector3(p.x, p.y, p.z), Vector3(p.x, p.y, p.z)], true, facing);
+        me.movement.position.orientation = facing;
+        auto after = cast(DistractMovement) me.generator;
+        me.generator = new DistractMovement(ms, after !is null ? after.after : me.generator);
+        world.wake(me.guid);
     }
 
     /// Adds threat; a new entry tells the player it is in combat.
@@ -759,7 +841,12 @@ private:
         combatTick = combatManagerTick;
         me.values.set!UNIT_FIELD_FLAGS(me.values.get!UNIT_FIELD_FLAGS | UnitFlags.inCombat);
         if (outOfCombat is null)
-            outOfCombat = me.generator;
+        {
+            import dmangos.world.motion : DistractMovement;
+
+            auto distracted = cast(DistractMovement) me.generator; // a fight ends a distraction
+            outOfCombat = distracted !is null ? distracted.after : me.generator;
+        }
         me.generator = new IdleMovement;
         stopMoving(me, world);
     }
@@ -881,6 +968,9 @@ private:
     {
         import std.algorithm.sorting : sort;
 
+        // Taunted: the taunter, whatever the threat.
+        if (const taunter = tauntedBy())
+            return taunter;
         auto order = threat.keys;
         order.sort!((a, b) => threat[a] > threat[b] || (threat[a] == threat[b] && a < b));
         // Those given up on come last, while there are others.

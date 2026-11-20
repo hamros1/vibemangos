@@ -770,7 +770,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
             | UnitFlags.pacified | UnitFlags.disarmed);
         if (stunned)
             flagged |= UnitFlags.stunned;
-        if (auras.has(AuraType.modFear) || (ai !is null && ai.fleeingAtLowHealth))
+        if ((auras.has(AuraType.modFear) && !auras.has(AuraType.preventsFleeing)) || (ai !is null && ai.fleeingAtLowHealth))
             flagged |= UnitFlags.fleeing;
         if (auras.has(AuraType.modConfuse))
             flagged |= UnitFlags.confused;

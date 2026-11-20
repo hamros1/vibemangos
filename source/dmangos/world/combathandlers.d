@@ -435,6 +435,8 @@ private:
             return updateMeleeAgainstPlayer(other);
         }
         const self = player.fighter;
+        if (extraAttacks)
+            swingExtraAttacks(victim);
         const dualWield = self.dualWield;
         if (attackTimer[AttackType.mainHand] && !(dualWield && attackTimer[AttackType.offHand] == 0))
             return;
@@ -495,6 +497,23 @@ private:
             }
             lastSwingError = error;
         }
+    }
+
+    /**
+     * The extra swings owed (`extraAttacks`: Sword Specialization), all at once at `victim` if it is within reach,
+     * alive and to be attacked; they grant no more extra swings (CMaNGOS's `DoExtraAttacks`).
+     */
+    void swingExtraAttacks(Creature victim)
+    {
+        const self = player.fighter, target = victim.fighter;
+        if (!canReachWithMelee(self, target) || !victim.alive || !canAttack(relatingNow, relatingOf(victim), context.client))
+            return;
+        extraAttacksExecuting = true;
+        scope (exit)
+            extraAttacksExecuting = false;
+        for (; extraAttacks && victim.alive; --extraAttacks)
+            swing(victim, AttackType.mainHand);
+        extraAttacks = 0;
     }
 
     /**

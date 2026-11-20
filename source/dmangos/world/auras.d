@@ -138,6 +138,7 @@ struct AuraSet
         }
         list ~= aura;
         writeSlot(aura, values);
+        showOnFields(aura, true, values);
         return aura;
     }
 
@@ -159,6 +160,44 @@ struct AuraSet
             setBits!UNIT_FIELD_AURAAPPLICATIONS(values, aura.slot, 8, 0);
             aura.slot = noSlot;
         }
+        showOnFields(aura, false, values);
+    }
+
+    /// `UNIT_DYNFLAG_TRACK_UNIT`, `UNIT_DYNFLAG_DEAD` and `UNIT_VIS_FLAG_UNTRACKABLE` (`UNIT_FIELD_BYTES_1`'s fourth byte).
+    enum uint dynTrackUnit = 0x02, dynDead = 0x20;
+    enum ubyte visUntrackable = 0x04; /// ditto
+
+    /**
+     * What the unit's fields show of an aura that began (`applied`) or ended, for every client that sees the
+     * unit (CMaNGOS's aura handlers): Hunter's Mark (`MOD_STALKED`) the track-unit flag, Feign Death the dead
+     * flag, while any such aura lasts; Aspect of the Beast (`UNTRACKABLE`) the untrackable flag; Bestial Wrath
+     * (`MOD_SCALE`) its size, by its percentage (`ApplyPercentModFloatValue`).
+     */
+    private void showOnFields(const Aura aura, bool applied, ref UpdateValues values)
+    {
+        void dynamicFlag(uint flag, AuraType type)
+        {
+            const flags = values.get!UNIT_DYNAMIC_FLAGS;
+            values.set!UNIT_DYNAMIC_FLAGS(has(type) ? flags | flag : flags & ~flag);
+        }
+
+        if (aura.has(AuraType.modStalked))
+            dynamicFlag(dynTrackUnit, AuraType.modStalked);
+        if (aura.has(AuraType.feignDeath))
+            dynamicFlag(dynDead, AuraType.feignDeath);
+        if (aura.has(AuraType.untrackable))
+        {
+            const vis = values.getByte!UNIT_FIELD_BYTES_1(3);
+            values.setByte!UNIT_FIELD_BYTES_1(3, cast(ubyte)(has(AuraType.untrackable) ? vis | visUntrackable
+                : vis & ~visUntrackable));
+        }
+        foreach (i; 0 .. 3)
+            if ((aura.effects & (1 << i)) && aura.type(i) == AuraType.modScale && aura.amount[i] > -100)
+            {
+                const factor = (100.0f + aura.amount[i]) / 100;
+                const scale = values.get!OBJECT_FIELD_SCALE_X;
+                values.set!OBJECT_FIELD_SCALE_X(applied ? scale * factor : scale / factor);
+            }
     }
 
     /// Writes the aura's slot: its spell, flags, level and applications.
