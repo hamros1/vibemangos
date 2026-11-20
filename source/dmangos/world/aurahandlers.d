@@ -86,7 +86,8 @@ private:
         foreach (j; 0 .. 3)
             if (auraEffect(j))
                 values[j] = effectMod(spell, j, effectCustom.has(j) ? effectCustom.values[j]
-                    : effectValue(*spell, j, player.data.level, uniform01(map.random)));
+                    : effectValue(*spell, j, player.data.level, uniform01(map.random))
+                        + cast(int)(spell.casting.pointsPerComboPoint[j] * castCombo)); // a finisher's (Expose Armor)
         classAuraValues(spell, values); // Rip's and Rupture's attack power, Mana Shield's spell power
         const ms = modDuration(spell, duration(*spell, context.client, player.data.level));
         // Damage over time (`SPELLMOD_DOT`): what each tick deals.
@@ -115,6 +116,8 @@ private:
             // A friendly creature's (one's pet's: Mend Pet) is a buff, and no attack on it.
             const hostile = canAttack(relatingNow(), creature.ai.relatingOf(), context.client);
             auto aura = makeAura(spell, player.guid, player.data.level, ms, !hostile, values);
+            if (aura.charges) // (`SPELLMOD_CHARGES`: Improved Shield Block)
+                aura.charges = spellMod(SpellModOp.charges, spell, aura.charges);
             if (effects)
                 aura.effects &= effects;
             if (hostile)
@@ -153,6 +156,8 @@ private:
         // On an enemy (a duel's opponent) it is a debuff.
         const hostile = who !is this && canAttack(relatingNow(), who.relatingNow(), context.client);
         auto given = makeAura(spell, player.guid, player.data.level, ms, !hostile, values);
+        if (given.charges)
+            given.charges = spellMod(SpellModOp.charges, spell, given.charges);
         if (effects)
             given.effects &= effects;
         if (hostile)
@@ -579,7 +584,9 @@ private:
             // player's auras of that mechanic go (CMaNGOS's `RemoveAurasAtMechanicImmunity`).
             case AuraType.mechanicImmunity, AuraType.mechanicImmunityMask:
                 enum uint immunityPurgesEffect = 0x00008000; // SPELL_ATTR_EX_IMMUNITY_PURGES_EFFECT
-                if (apply && (aura.spell.attributesEx & immunityPurgesEffect))
+                // (and Improved Sprint's, 30918, which is there only to "remove all movement impairing effects")
+                enum uint improvedSprintPurge = 30918;
+                if (apply && ((aura.spell.attributesEx & immunityPurgesEffect) || aura.spell.id == improvedSprintPurge))
                 {
                     const misc = aura.misc(i);
                     const mask = aura.type(i) == AuraType.mechanicImmunity
@@ -631,9 +638,16 @@ private:
                     map.refreshVisibility(this);
                 break;
             case AuraType.modShapeshift:
+                // One form, one stance at a time: the one it was in ends first.
+                if (apply)
+                    foreach (other; player.auras.list.dup)
+                        if (other !is aura && other.has(AuraType.modShapeshift))
+                            removeAura(other);
                 player.values.setByte!UNIT_FIELD_BYTES_1(2, apply ? cast(ubyte) aura.misc(i) : 0);
                 if (apply)
                     interruptAuras(AuraInterrupt.shapeshifting, aura);
+                if (apply && map !is null) // (in the world: a stance taken, not one put back at login)
+                    warriorStanceTaken();
                 break;
             case AuraType.modRoot:
                 movement = true;
@@ -691,8 +705,22 @@ private:
             player.setStandState(1);
             send(ServerStandStateUpdate(1));
         }
+        // The health an aura grants (`MOD_INCREASE_HEALTH`: Last Stand's "grants you 30% of your maximum hit
+        // points... After the effect expires, the hit points are lost"): the health itself, not only its maximum.
+        int granted;
+        foreach (i; 0 .. 3)
+            if ((aura.effects & (1 << i)) && aura.type(i) == AuraType.modIncreaseHealth && map !is null)
+                granted += aura.amount[i];
+        const healthBefore = cast(int) player.values.get!UNIT_FIELD_HEALTH;
         if (stats)
             player.refreshEquipmentStats(context.data);
+        if (granted && player.alive)
+        {
+            const max = cast(int) player.values.get!UNIT_FIELD_MAXHEALTH;
+            int health = apply ? healthBefore + granted : healthBefore - granted;
+            health = health < 1 ? 1 : health > max ? max : health;
+            player.values.set!UNIT_FIELD_HEALTH(cast(uint) health);
+        }
         if (speeds)
             refreshSpeeds();
         if (movement)

@@ -182,6 +182,7 @@ mixin template ProcHandlers()
     import std.random : uniform01;
     import dmangos.world.auras : Aura, AuraType;
     import dmangos.world.classspells : CustomValues;
+    import dmangos.world.physicalclasses : flatChanceProcs;
     import dmangos.world.aurahandlers : ProcFlag;
     import dmangos.world.procs : effectProcsOn, ppmChance, procEventMatches, ProcHit, takenProcFlags;
     import dmangos.world.spellcast : SpellTargets, TargetFlags;
@@ -238,7 +239,7 @@ mixin template ProcHandlers()
                 if (*at > now)
                     continue;
             float chance = event !is null && event.customChance ? event.customChance : aura.spell.casting.procChance;
-            if (!victim && event !is null && event.ppmRate)
+            if (!victim && event !is null && event.ppmRate && !flatChanceProcs.canFind(aura.spell.id))
                 chance = ppmChance(player.stats.attackTime[hit.hand < 3 ? hit.hand : 0], event.ppmRate);
             chance = spellMod(SpellModOp.chanceOfSuccess, aura.spell, chance);
             if (uniform01(map.random) * 100 >= chance)
@@ -329,13 +330,21 @@ mixin template ProcHandlers()
     {
         import dmangos.world.defines : equipmentSlotMainhand, equipmentSlotOffhand, equipmentSlotRanged, ItemClass;
 
-        enum uint noEquipRequirement = 0x00080000; // SPELL_ATTR_EX3_NO_PROC_EQUIP_REQUIREMENT
-        if (spell.casting.attributesEx3 & noEquipRequirement)
-            return true;
         if (spell.equippedItemClass != ItemClass.weapon && spell.equippedItemClass != ItemClass.armor)
             return true;
+        // (`SPELL_ATTR_EX3` 0x80000, which only Sword Specialization has: not the swinging hand's weapon, either
+        // hand's. Its tooltip, "after dealing damage with your Sword", still asks for a sword.)
+        enum uint eitherHand = 0x00080000;
+        if ((spell.casting.attributesEx3 & eitherHand) && hit.hand != 2)
+            return procWeaponInSlot(spell, equipmentSlotMainhand) || procWeaponInSlot(spell, equipmentSlotOffhand);
         const slot = spell.equippedItemClass == ItemClass.armor ? equipmentSlotOffhand
             : hit.hand == 1 ? equipmentSlotOffhand : hit.hand == 2 ? equipmentSlotRanged : equipmentSlotMainhand;
+        return procWeaponInSlot(spell, slot);
+    }
+
+    /// Whether the item in `slot` is of the kind `spell` needs (its `EquippedItemClass` and subclasses), unbroken.
+    private bool procWeaponInSlot(const(SpellInfo)* spell, uint slot)
+    {
         const item = player.inventory.equipped(cast(ubyte) slot);
         if (item is null || item.proto is null || (item.maxDurability && item.durability == 0))
             return false;

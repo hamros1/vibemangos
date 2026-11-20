@@ -29,7 +29,7 @@ mixin template SpellHandlers()
     import std.random : uniform, uniform01;
     import dmangos.bytes : ByteReader, ByteWriter;
     import dmangos.log : info, warning;
-    import dmangos.world.combat : AttackType, armorReducedDamage, creatureTypeHumanoid, blockChance, critChance, dodgeChance, missChance,
+    import dmangos.world.combat : AttackType, armorAgainst, armorReducedDamage, creatureTypeHumanoid, blockChance, critChance, dodgeChance, missChance,
         parryChance, weaponDamage;
     import dmangos.world.auras : AuraInterrupt;
     import dmangos.world.inworld : ArrivalAction;
@@ -1266,6 +1266,21 @@ private:
         if (!triggered && usesComboPoints(*spell)
                 && (comboPoints == 0 || (targets.unit && targets.unit != player.guid && targets.unit != comboTarget)))
             return player.data.classId == 1 ? SpellCastResult.casterAuraState : SpellCastResult.noComboPoints; // a warrior's Overpower
+        import dmangos.world.aurastate : AuraState;
+
+        // What its caster needs of itself (`CasterAuraState`: Revenge, Riposte, Mongoose Bite after a block, a dodge
+        // or a parry) and of its target (`TargetAuraState`: Execute under a fifth of its health).
+        if (!triggered && spell.casterAuraState && !hasAuraState(cast(AuraState) spell.casterAuraState))
+            return SpellCastResult.casterAuraState;
+        if (!triggered && spell.casting.targetAuraState && targets.unit && targets.unit != player.guid)
+            if (auto other = map.unit(targets.unit))
+            {
+                import dmangos.world.aurastate : auraStateFlag;
+
+                const values = other.kind == UnitKind.creature ? &other.creature.values : &other.session.player.values;
+                if (!(values.get!UNIT_FIELD_AURASTATE & auraStateFlag(cast(AuraState) spell.casting.targetAuraState)))
+                    return SpellCastResult.targetAuraState;
+            }
         if (player.deathState != DeathState.alive && !(spell.attributes & spellAttrCastableWhileDead))
             return player.deathState == DeathState.ghost ? SpellCastResult.notWhileGhost : SpellCastResult.casterDead;
         if (!triggered)
@@ -1885,9 +1900,11 @@ private:
             }
         // A finishing move uses the combo points (its values, its duration), spent once it is done unless it
         // missed an enemy (CMaNGOS's `Spell::finish`).
+        // (a cast within it, a proc's, leaves the finisher's as it was)
+        const outerCombo = castCombo;
         castCombo = !c.triggered && usesComboPoints(*spell) ? comboPoints : 0;
         scope (exit)
-            castCombo = 0;
+            castCombo = outerCombo;
         // The modifiers with charges it has now: those that may be spent by it (`spendChargedMods`).
         Aura[] chargedAtStart;
         foreach (aura; player.auras.list)
@@ -1962,6 +1979,7 @@ private:
             else if (r.miss == SpellMissInfo.dodge && spell.casting.dmgClass == DamageClass.melee)
                 dodgedBy ~= r.guid;
         }
+        landedWithoutDamageProcs(spell, c.triggered, landed);
         classAfterEffects(spell, landed, dodgedBy);
         flushPlayerChanges();
         return SpellCastResult.ok;
@@ -2852,10 +2870,15 @@ private:
         return spell.casting.dmgClass == DamageClass.melee || spell.casting.dmgClass == DamageClass.ranged;
     }
 
-    /// A crit's damage (`SpellCriticalDamageBonus`): double for a melee or ranged ability, half again for a spell.
-    static uint critDamage(const(SpellInfo)* spell, uint damage)
+    /**
+     * A crit's damage: double for a melee or ranged ability, half again for a spell; the bonus (the 100% or 50% more)
+     * greater by the spell's crit damage modifiers (`SPELLMOD_CRIT_DAMAGE_BONUS`: Impale, Lethality, Mortal Shots:
+     * "increases the critical strike damage bonus by 30%").
+     */
+    uint critDamage(const(SpellInfo)* spell, uint damage)
     {
-        return weaponCrit(spell) ? damage * 2 : damage * 3 / 2;
+        const bonus = spellMod(SpellModOp.critDamageBonus, spell, weaponCrit(spell) ? 100.0f : 50.0f);
+        return cast(uint)(damage * (100 + bonus) / 100);
     }
 
     float spellCritOf(const(SpellInfo)* spell)
@@ -2998,6 +3021,26 @@ private:
                 if (auto other = enemyPlayer(who.character.guid))
                     if (other.player !is null && other.player.alive && within(other.player.position))
                         found ~= other.player.guid;
+            // At most `MaxAffectedTargets` ("Up to 5 total nearby enemies", Thunder Clap's "up to 4 targets"): the one
+            // aimed at among them, then the nearest (the same for each of its effects).
+            const most = spell.casting.maxAffectedTargets;
+            if (most && found.length > most)
+            {
+                import std.algorithm.sorting : sort;
+
+                double away(ulong guid)
+                {
+                    if (guid == targets.unit)
+                        return -1;
+                    auto u = map.unit(guid);
+                    if (!u)
+                        return double.max;
+                    const p = u.position;
+                    return (p.x - center.x) ^^ 2 + (p.y - center.y) ^^ 2 + (p.z - center.z) ^^ 2;
+                }
+                found.sort!((x, y) => away(x) < away(y) || (away(x) == away(y) && x < y));
+                found = found[0 .. most];
+            }
             return found;
         }
         // The party (or every friend, here the party too) within the radius, itself included: in a raid, its own
@@ -3118,7 +3161,7 @@ private:
         const school = spell.casting.school;
         uint resisted;
         if (school == 0)
-            damage = cast(uint) armorReducedDamage(player.data.level, other.player.fighter.armor, damage);
+            damage = cast(uint) armorReducedDamage(player.data.level, armorAgainst(player.fighter, other.player.fighter), damage);
         else if (school != 1 && !isBinarySpell(*spell))
             resisted = partialResist(damage, targetResistance(cast(int) other.player.values.get!UNIT_FIELD_RESISTANCES(school), school),
                 other.player.data.level);
@@ -3252,7 +3295,7 @@ private:
             damage = critDamage(spell, damage);
         uint resisted;
         if (school == 0)
-            damage = cast(uint) armorReducedDamage(player.data.level, victim.fighter.armor, damage);
+            damage = cast(uint) armorReducedDamage(player.data.level, armorAgainst(player.fighter, victim.fighter), damage);
         else if (school != 1 && !isBinarySpell(*spell)) // holy: no resistance; a binary spell: all or nothing
         {
             // A partial resist: a share of it resisted.
@@ -3303,15 +3346,26 @@ private:
         // The fixed bonus is by the weapon percentage too, but Ambush's by its own (`EffectWeaponDmg`).
         const bonusFactor = classWeaponBonusFactor(spell);
         damage = damage * percent / 100 + fixed * (bonusFactor ? bonusFactor : percent / 100);
-        // Armor takes off a physical strike's, not a holy one's (Seal of Command's: its spell's school).
+        // The ability's damage modifiers (Aggression, Opportunity: "increases the damage of your Sinister Strike"),
+        // then what the auras of both make of a blow of its school, as of a swing (Enrage's more, Hemorrhage's).
         const school = spell.casting.school;
+        damage = spellMod(SpellModOp.damage, spell, damage);
+        {
+            import dmangos.world.combat : damageFactor;
+
+            damage *= damageFactor(me, it, type, school);
+            if (school < 7 && it.damageTakenFlat[school])
+                damage = max(0.0f, damage + it.damageTakenFlat[school] * it.damageTaken[school]);
+        }
+        // Armor takes off a physical strike's, not a holy one's (Seal of Command's: its spell's school).
         if (school == 0)
-            damage = armorReducedDamage(me.level, it.armor, damage);
+            damage = armorReducedDamage(me.level, armorAgainst(me, it), damage);
+        // Its crit chance with the ability's modifiers (Improved Backstab, Cold Blood), its bonus with theirs (Impale).
         bool crit;
-        if (uniform01(map.random) * 100 < critChance(me, it, type) + classCritBonus(spell, victim))
+        if (uniform01(map.random) * 100 < critChanceOf(spell, victim))
         {
             crit = true;
-            damage *= 2;
+            damage = critDamage(spell, cast(uint) damage);
         }
         uint blocked;
         if (uniform01(map.random) * 100 < blockChance(it, me, type))
@@ -3350,6 +3404,31 @@ private:
         procAuras(flags, victim, hit);
         if (victim.alive)
             victimAuraProcs(victim, flags, hit);
+    }
+
+    /**
+     * This player's `spell`, which deals no damage nor healing (a buff, a debuff, a stance: Berserker Rage, Sap),
+     * landed on `landed`: its procs of its kind as a hit of nothing (Improved Berserker Rage's rage, Improved Sap's
+     * stealth). Those that ask for damage do not take it (`effectProcsOn`); a spell that deals some sets them off as
+     * it does (`spellHitProcs`).
+     */
+    private void landedWithoutDamageProcs(const(SpellInfo)* spell, bool triggered, const(ulong)[] landed)
+    {
+        import dmangos.world.procs : ProcEx, ProcHit, spellProcFlags;
+
+        if (triggered)
+            return;
+        foreach (e; [SpellEffect.schoolDamage, SpellEffect.weaponDamageNoschool, SpellEffect.weaponDamage,
+                SpellEffect.normalizedWeaponDmg, SpellEffect.weaponPercentDamage, SpellEffect.heal,
+                SpellEffect.healthLeech, SpellEffect.environmentalDamage])
+            if (spell.hasEffect(e))
+                return;
+        foreach (target; landed)
+        {
+            auto other = target == player.guid ? unit : map.unit(target);
+            const harmful = target != player.guid && other && hostileTo(other);
+            procAuras(spellProcFlags(*spell, !harmful, false), other, ProcHit(spell, ProcEx.normalHit, 0, 0, false));
+        }
     }
 
     /// A creature hit (or missed) by this player's spell, or its aura's tick: it fights back, takes the

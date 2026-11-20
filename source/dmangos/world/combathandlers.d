@@ -644,6 +644,9 @@ private:
                         chance = effect.amount;
                     else
                         chance = speed * (type == AttackType.offHand ? 1.6f : 1.8f) / 1000.0f;
+                    // Its spell's chance modifiers (`SPELLMOD_CHANCE_OF_SUCCESS`: Improved Poisons' "increases the
+                    // chance to apply poisons to your target by 10%").
+                    chance = spellMod(imported!"dmangos.world.spellmods".SpellModOp.chanceOfSuccess, context.data.spells.spell(effect.arg), chance);
                     if (uniform01(map.random) * 100 < chance)
                         procs ~= effect.arg;
                 }

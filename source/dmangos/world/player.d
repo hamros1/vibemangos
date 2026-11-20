@@ -1207,6 +1207,8 @@ private:
                 f.damageSchool[type] = item.proto.details.damage[0].school;
         }
         f.crit = chances.crit;
+        const ignored = -auras.totalByMiscMask(AuraType.modTargetResistance, 1); // (its physical part: armor)
+        f.armorIgnored = ignored > 0 ? ignored : 0;
         f.hitBonus = auras.total(AuraType.modHitChance); // `MOD_HIT_CHANCE`: fewer misses
         f.dualWield = dualWield && weaponFor(equipmentSlotOffhand) !is null; // `hasOffhandWeaponForAttack`
         const defense = skillNow(skillDefense);

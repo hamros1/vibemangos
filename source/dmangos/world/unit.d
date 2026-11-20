@@ -523,6 +523,25 @@ private void creatureDamaged(UnitRef attacker, UnitRef victim, uint damage, cons
     map.wake(creature.guid);
     if (damage == 0)
         return;
+    // A blow of its school uses a charge of what adds to the damage it takes (Hemorrhage: "30 charges"); what any
+    // damage ends ends (`AuraInterruptFlags` damage: Wyvern Sting's "Any damage will cancel the effect", Sap).
+    {
+        import dmangos.world.auras : AuraInterrupt, AuraType;
+
+        foreach (aura; creature.auras.interruptedBy(AuraInterrupt.damage))
+            creature.loseAura(aura, map);
+        foreach (aura; creature.auras.list.dup)
+        {
+            if (!aura.charges || blow.school >= 7)
+                continue;
+            bool counts;
+            foreach (i; 0 .. 3)
+                counts |= (aura.effects & (1 << i)) && aura.type(i) == AuraType.modDamageTaken
+                    && (aura.misc(i) & (1 << blow.school));
+            if (counts && --aura.charges == 0)
+                creature.loseAura(aura, map);
+        }
+    }
     auto credited = creditedPlayer(attacker);
     if (credited !is null && !creature.petOwner)
         credited.tapCreature(creature);

@@ -569,6 +569,8 @@ mixin template ClassSpells()
                     castCustom(damage, targetGuid);
             return true;
         }
+        if (physicalClassDummy(spell, i, target, value)) // the warrior's, rogue's, hunter's (dmangos.world.physicalclasses)
+            return true;
         switch (cast(SpellFamily) spell.casting.spellFamilyName)
         {
         case SpellFamily.mage:
@@ -780,6 +782,10 @@ mixin template ClassSpells()
                 const chance = aura.amount[k] + aura.spell.casting.pointsPerComboPoint[k] * castCombo;
                 foreach (target; hit)
                 {
+                    // Once for each it struck: the caster, an effect of its own on it (Eviscerate's), only if it
+                    // struck no other (Relentless Strikes' "20% chance per combo point", not twice that).
+                    if (target == player.guid && hit.canFind!(t => t != player.guid))
+                        continue;
                     auto unit = target == player.guid ? UnitRef.of(this) : map.unit(target);
                     if (unit && unit.alive && uniform01(map.random) * 100 < chance)
                         casts ~= ProcCast(aura.spell.triggerSpell[k], target);
@@ -795,6 +801,7 @@ mixin template ClassSpells()
      */
     package void classAuraValues(const(SpellInfo)* spell, ref int[3] values)
     {
+        physicalClassAuraValues(spell, values); // Pathfinding (dmangos.world.physicalclasses)
         foreach (i; 0 .. 3)
         {
             const type = spell.casting.applyAuraName[i];
@@ -993,6 +1000,10 @@ mixin template ClassSpells()
      */
     package bool classProcTrigger(Aura aura, size_t i, const ref ProcHit hit, UnitRef other, ref ProcCast c)
     {
+        // The warrior's, rogue's and hunter's (dmangos.world.physicalclasses): Improved Sap's stealth.
+        bool casts;
+        if (physicalClassProcTrigger(aura, c, casts))
+            return casts;
         const spell = aura.spell;
         // Deep Wounds (its data names no family flags)
         if (spell.casting.spellFamilyName == SpellFamily.warrior && !spell.casting.spellFamilyFlags
@@ -1005,8 +1016,14 @@ mixin template ClassSpells()
             const offHand = hit.hand == AttackType.offHand;
             const average = (player.values.get!UNIT_FIELD_MINDAMAGE + player.values.get!UNIT_FIELD_MAXDAMAGE) / 2;
             const offAverage = (player.values.get!UNIT_FIELD_MINOFFHANDDAMAGE + player.values.get!UNIT_FIELD_MAXOFFHANDDAMAGE) / 2;
+            // The share over its 12 seconds: each of its ticks (every 3 seconds) a part.
+            import dmangos.world.spellcast : duration;
+
+            const bleed = context.data.spells.spell(deepWound);
+            const ticks = bleed is null || bleed.casting.amplitude[0] <= 0 ? 4
+                : duration(*bleed, context.client, player.data.level) / bleed.casting.amplitude[0];
             c = ProcCast(deepWound, other.combatGuid,
-                CustomValues.first(cast(int)((offHand ? offAverage : average) * share / 100 / 6)));
+                CustomValues.first(cast(int)((offHand ? offAverage : average) * share / 100 / ticks)));
             return true;
         }
         // Lightning Shield
@@ -1044,7 +1061,7 @@ mixin template ClassSpells()
             if (castCombo)
             {
                 heldProcs ~= c;
-                return true;
+                return false; // (cast then, not now as well)
             }
         }
         return true;

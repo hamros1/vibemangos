@@ -41,6 +41,7 @@ import dmangos.world.loothandlers : LootHandlers;
 import dmangos.world.spellhandlers : SpellHandlers;
 import dmangos.world.aurahandlers : AuraHandlers;
 import dmangos.world.classspells : ClassSpells;
+import dmangos.world.physicalclasses : PhysicalClassRules;
 import dmangos.world.procs : ProcHandlers;
 import dmangos.world.effecthandlers : EffectHandlers;
 import dmangos.world.tradehandlers : TradeHandlers;
@@ -826,6 +827,7 @@ private:
     mixin AuraHandlers;
     mixin ProcHandlers;
     mixin ClassSpells;
+    mixin PhysicalClassRules;
     mixin EffectHandlers;
     mixin TradeHandlers;
     mixin DuelHandlers;

@@ -666,6 +666,9 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Also: `Aura::HandleAuraTransform` and `Unit::RestoreDisplayId` (a player's), `Unit::Heartbeat` and
   `WorldObject::GetHeartbeatDuration` (`Aura::OnHeartbeat`), `Aura::OnPeriodicTickEnd`, `SpellAuraHolder` removal
   (`AURA_REMOVE_BY_EXPIRE`), `Aura::PeriodicTick`'s `SPELL_AURA_PERIODIC_MANA_LEECH` from a creature
+* Not from an emulator: `SPELLMOD_CHARGES` on a cast's aura (Improved Shield Block's tooltip), the health a
+  `MOD_INCREASE_HEALTH` aura grants and takes back (Last Stand's tooltip), one shapeshift aura at a time (a stance
+  ends the one before), a finisher's aura amounts by its combo points, Improved Sprint's purge
 * Also: a `SpellAuraHolder` per target with only the effects at it (`Spell::DoSpellHitOnUnit`)
 
 ## world/aurastate.d
@@ -760,6 +763,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
   `spell_judgement_of_wisdom_intermediate`, `spell_swiftmend`, `spell_curse_of_doom`, `spell_power_infusion`,
   `spell_shatter_mage`, `spell_retaliation_warrior`, `spell_blessing_of_light`, `spell_healing_way`, `spell_seal_of_the_crusader`, `spell_shadowguard`, `spell_blizzard`
 * Constants: `IsSealSpell`, `REACTIVE_TIMER_START`, `SPELL_ATTR_EX_DRAIN_ALL_POWER`, `TRIGGERED_IGNORE_HIT_CALCULATION`
+* Not from an emulator: Add Target Trigger talents roll once a target, the caster only alone (Relentless Strikes' tooltip); Ruthlessness and Seal Fate cast once, after the finishing move
 
 ## world/classspelltests.d
 
@@ -778,6 +782,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Files: `Unit.cpp`
 * Functions: `Player::RewardRage`, `Unit::CalculateEffectiveMagicResistancePercent`, `Unit::RollMagicResistanceMultiplierOutcomeAgainst`, `WorldObject::HasInArc`
 * Constants: `ATTACK_DISPLAY_DELAY`, `ATTACK_DISTANCE`, `BASE_MELEERANGE_OFFSET`, `CLASSMASK_WAND_USERS`, `CONFIG_UINT32_WORLD_BOSS_LEVEL_DIFF`, `MELEE_LEEWAY`, `SMSG_ATTACKERSTATEUPDATE`, `SMSG_ATTACKSTART`, `SMSG_ATTACKSTOP`, `SPELL_PARTIAL_RESIST_DISTRIBUTION`, `TYPEID_PLAYER`, `UNIT_FIELD_COMBATREACH`, `UNIT_FIELD_MINDAMAGE`, `UNIT_FLAG_PLAYER_CONTROLLED`
+* Not from an emulator: `armorAgainst`, the armor a blow ignores (Serrated Blades' tooltip and data)
 
 ## world/crowdcontrol.d
 
@@ -792,6 +797,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Files: `CombatHandler.cpp`
 * Functions: `BattleGround::HandleKillPlayer`, `Player::CastItemCombatSpell`, `Player::Update`, `Player::UpdateCombatSkills`, `Unit::Attack`, `Unit::AttackStop`, `Unit::DealDamage`, `Unit::Kill`, `Unit::Update`
 * Constants: `CMSG_ATTACKSTOP`, `CMSG_ATTACKSWING`, `CMSG_SETSHEATHED`, `SMSG_ATTACKSTOP`, `SMSG_CANCEL_COMBAT`, `UNIT_FLAG_IN_COMBAT`, `UNIT_STAT_MELEE_ATTACKING`
+* Not from an emulator: a weapon enchantment's proc chance with its spell's `SPELLMOD_CHANCE_OF_SUCCESS` (Improved Poisons' tooltip)
 
 ## world/commands.d
 
@@ -1271,7 +1277,20 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Functions: `Unit::ProcDamageAndSpell`, `Unit::IsTriggeredAtSpellProcEvent`, `SpellMgr::IsSpellProcEventCanTriggeredBy`,
   `Aura::CanProcFrom`, `Unit::GetPPMProcChance`, `Unit::TriggerProccedSpell`, `Unit::HandleProcTriggerDamageAuraProc`,
   `Spell::PrepareMasksForProcSystem`, `SpellMgr::LoadSpellProcEvents`
-* Constants: `PROC_FLAG_*`, `PROC_EX_*`, `SPELL_ATTR_EX3_NO_PROC_EQUIP_REQUIREMENT`, `spell_proc_event`
+* Constants: `PROC_FLAG_*`, `PROC_EX_*`, `spell_proc_event`
+* Not from an emulator: `SPELL_ATTR_EX3` 0x80000 read as "either hand's weapon" (only Sword Specialization has it;
+  its tooltip asks for a sword, which CMaNGOS's "no equip requirement" did not); Unbridled Wrath's and Mace
+  Specialization's chance the tooltip's flat one, not spell_proc_event's rate a minute (`flatChanceProcs`).
+
+## world/physicalclasses.d
+
+* Not from an emulator: the warrior's, rogue's and hunter's rules from their 1.12.1 tooltips and data
+  (docs/spells/warrior.md, rogue.md, hunter.md; docs/FORMULAS.md): Last Stand's 30% of the maximum health, Tactical
+  Mastery's rage kept by its script number's rank, Improved Sap's stealth, Pathfinding on the aspects' speed.
+
+## world/realclass_warrior_rogue_hunter.d
+
+* Not from an emulator: tests of the 1.12.1 tooltips' claims on the client's DBC files and the classic world database.
 
 ## world/professions.d
 
@@ -1377,6 +1396,11 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Also: `TARGET_UNIT_SCRIPT_NEAR_CASTER`, `Spell::CheckScriptTargeting` (`spell_script_target`), `TARGET_UNIT_FRIEND_AND_PARTY`
 * Also: `Spell::OnCheckCast` (a script's refusal last of `CheckCast`), `Spell::OnSuccessfulStart` (in `Spell::Prepare`),
   `TARGET_UNIT_RAID`
+* Not from an emulator: the spell data's `CasterAuraState` and `TargetAuraState` refused at the cast (Revenge,
+  Execute), `MaxAffectedTargets` (the target aimed at and the nearest), a weapon ability's crit chance, crit bonus
+  (`SPELLMOD_CRIT_DAMAGE_BONUS`: Impale's tooltip) and damage modifiers and its damage done and taken as a swing's,
+  procs of a spell that lands without damage (Improved Berserker Rage's tooltip), a cast within a finishing move
+  (a proc's) leaving its combo points as they were
 * Also: `Unit::MeleeDamageBonusDone`'s `SPELL_AURA_RANGED_ATTACK_POWER_ATTACKER_BONUS`
 * Also: `WorldObject::IsSpellReady` (an item's cooldown category, the lockout only of `SPELL_PREVENTION_TYPE_SILENCE`), `Player::AddCooldown`, `Spell::EffectInterruptCast`, `Spell::TakePower` and `Spell::CheckPower` (`POWER_HEALTH`), `SpellAuraHolder::UpdateHolder` (`manaPerSecond`)
 * Also: `Spell::FillFromTargetFlags` (no implicit target: the client's unit), `Unit::CanAssistSpell` for `TARGET_UNIT_RAID`
@@ -1461,6 +1485,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Projects: CMaNGOS
 * Functions: `Unit::DealDamage`
 * Constants: `DIRECT_DAMAGE`, `SPELL_DIRECT_DAMAGE`
+* Not from an emulator: a creature's damage-taken aura with charges spends one at a blow of its school (Hemorrhage's tooltip); a creature's auras that damage ends (`AuraInterruptFlags`: Wyvern Sting's tooltip)
 
 ## world/updatefields.d
 

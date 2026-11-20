@@ -224,7 +224,7 @@ def main():
     for path in glob.glob(os.path.join(SOURCE, '**', '*.d'), recursive=True):
         if not path.endswith('spellids.d'):
             code[os.path.relpath(path, REPO)] = open(path).read()
-    real_tests = code.get(os.path.join('source', 'dmangos', 'world', 'realspelltests.d'), '')
+    real_tests = ''.join(t for p, t in code.items() if re.search(r'real(spelltests|classspelltests|class_\w+)\.d$', p))
 
     def where(ids):
         """The source files naming one of `ids` (as a number), but the real-data tests."""
