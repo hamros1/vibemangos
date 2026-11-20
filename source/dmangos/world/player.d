@@ -1232,6 +1232,7 @@ private:
             import dmangos.world.combat : Immunities;
 
             f.immune = Immunities.of(auras);
+            f.attackerChancesFrom(auras);
         }
         return f;
     }
@@ -1390,6 +1391,7 @@ private:
         v.set!UNIT_FIELD_ATTACK_POWER(stats.attackPower);
         v.set!UNIT_FIELD_RANGED_ATTACK_POWER(stats.rangedAttackPower);
         // Attack times are sent as whole numbers, not floats.
+        v.set!UNIT_MOD_CAST_SPEED(auras.castTimeFactor()); // Curse of Tongues: the client's cast bar
         v.set!UNIT_FIELD_BASEATTACKTIME(stats.attackTime[AttackType.mainHand]);
         v.set!UNIT_FIELD_BASEATTACKTIME(1, stats.attackTime[AttackType.offHand]); // the off hand
         v.set!UNIT_FIELD_RANGEDATTACKTIME(stats.attackTime[AttackType.ranged]);

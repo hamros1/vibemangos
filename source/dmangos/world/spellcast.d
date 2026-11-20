@@ -627,7 +627,7 @@ float magicMissChance(const Fighter caster, const Fighter victim, const ref Spel
 
     import dmangos.world.combat : mechanics;
 
-    float chance = spellMissChance(caster.level, victim.level, victim.player) - hitBonus;
+    float chance = spellMissChance(caster.level, victim.level, victim.player) - hitBonus - victim.attackerHit[2];
     // Resisted more often for its mechanic (a fear, a stun): the victim's `MOD_MECHANIC_RESISTANCE`.
     if (spell.casting.mechanic && spell.casting.mechanic < mechanics)
         chance += victim.mechanicResist[spell.casting.mechanic];

@@ -458,7 +458,7 @@ private:
                     AuraType.modDamagePercentDone, AuraType.modDamagePercentTaken, AuraType.modDamageTaken, AuraType.modDamageDoneVersus,
                     AuraType.modCritPercentVersus, AuraType.modThreat, AuraType.modMechanicResistance, AuraType.modShieldBlockvaluePct,
                     AuraType.modMeleeHaste, AuraType.modRangedHaste, AuraType.modAttackSpeed, AuraType.modRangedAmmoHaste,
-                    AuraType.modResistanceExclusive:
+                    AuraType.modResistanceExclusive, AuraType.modCastingSpeed:
                 stats = true;
                 break;
             // Speeds (`dmangos.world.moveorders`: `speedRate`).
@@ -513,6 +513,10 @@ private:
                         if (other !is aura && !other.passive && hasMechanic(other))
                             removeAura(other);
                 }
+                break;
+            case AuraType.retainComboPoints: // Premeditation ran out: its combo points with it
+                if (!apply)
+                    retainedComboPointsExpired(aura.amount[i]);
                 break;
             case AuraType.addFlatModifier, AuraType.addPctModifier: // talents: the client's numbers
                 if (map !is null) // in the world (at login they all go at once: `sendAllSpellMods`)

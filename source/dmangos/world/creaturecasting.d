@@ -187,7 +187,8 @@ mixin template CreatureCasting()
             nextSwing = spell;
             return true;
         }
-        const time = triggered ? 0 : castTime(*spell, lore.clientData, me.values.get!UNIT_FIELD_LEVEL);
+        const time = triggered ? 0 : cast(int)(castTime(*spell, lore.clientData, me.values.get!UNIT_FIELD_LEVEL)
+            * me.auras.castTimeFactor()); // Curse of Tongues
         if (time <= 0)
         {
             go(spell, target, !triggered);

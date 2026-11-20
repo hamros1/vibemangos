@@ -117,6 +117,22 @@ struct Fighter
     float[7] damageTaken = 1;  /// by school: what its auras multiply blows against it by (`MOD_DAMAGE_PERCENT_TAKEN`)
     int[7] damageTakenFlat;    /// by school: what its auras add to each blow first (`MOD_DAMAGE_TAKEN`: Blessing of Sanctuary)
     Immunities immune;         /// what cannot touch it
+    /// What its auras do to its attackers' chances (melee, ranged, spell): crits against it (`MOD_ATTACKER_*_CRIT_CHANCE`:
+    /// Winter's Chill, Sleight of Hand), hits on it (`MOD_ATTACKER_*_HIT_CHANCE`: Heightened Senses).
+    float[3] attackerCrit = 0, attackerHit = 0;
+    int rangedTakenFlat;       /// `MOD_RANGED_DAMAGE_TAKEN` (Elune's Grace): added to each ranged blow against it
+
+    /// Fills `attackerCrit` and `attackerHit` from `auras`.
+    void attackerChancesFrom(A)(const ref A auras)
+    {
+        import dmangos.world.spellids : AuraType;
+
+        attackerCrit = [auras.total(AuraType.modAttackerMeleeCritChance), auras.total(AuraType.modAttackerRangedCritChance),
+            auras.total(AuraType.modAttackerSpellCritChance)];
+        attackerHit = [auras.total(AuraType.modAttackerMeleeHitChance), auras.total(AuraType.modAttackerRangedHitChance),
+            auras.total(AuraType.modAttackerSpellHitChance)];
+        rangedTakenFlat = auras.total(AuraType.modRangedDamageTaken);
+    }
     float[mechanics] mechanicResist = 0; /// percent more often it resists spells of each mechanic (`MOD_MECHANIC_RESISTANCE`)
     uint creatureType = creatureTypeHumanoid; /// `CreatureType` (a player is a humanoid)
     bool stealthed;            /// under a `MOD_STEALTH` aura (Stealth, Prowl)
@@ -468,6 +484,7 @@ float missChance(const Fighter attacker, const Fighter victim, AttackType type) 
     }
     chance += difference * factor;
     chance -= attacker.hitBonus;
+    chance -= victim.attackerHit[type == AttackType.ranged ? 1 : 0]; // Heightened Senses: less often hit
     const minimum = difference > 10 ? 1.0f : 0.0f;
     return chance < minimum ? minimum : chance > 100 ? 100 : chance;
 }
@@ -547,6 +564,7 @@ float critChance(const Fighter attacker, const Fighter victim, AttackType type) 
     const skill = !vsPlayer ? weaponSkillValue(attacker, type, victim) : skillMaxForLevel(attacker, victim);
     const difference = int(skill) - int(defenseSkillValue(victim, attacker));
     chance += difference * (vsPlayer ? 0.04f : 0.2f);
+    chance += victim.attackerCrit[type == AttackType.ranged ? 1 : 0]; // Sleight of Hand: crit less often
     return clamp100(chance);
 }
 
@@ -739,6 +757,8 @@ MeleeDamage calculateMeleeDamage(const Fighter attacker, const Fighter victim, A
         return d;
     }
     float damage = weaponDamage(attacker, type, rng) * damageFactor(attacker, victim, type, d.school);
+    if (type == AttackType.ranged && victim.rangedTakenFlat)
+        damage = imported!"std.algorithm.comparison".max(0.0f, damage + victim.rangedTakenFlat);
     if (d.school < 7 && victim.damageTakenFlat[d.school]) // the victim's flat part, as its percent takes it
         damage = imported!"std.algorithm.comparison".max(0.0f, damage + victim.damageTakenFlat[d.school] * victim.damageTaken[d.school]);
     if (d.school == 0)
@@ -970,6 +990,11 @@ unittest
     const immune = calculateMeleeDamage(player, wolf, AttackType.mainHand, rng);
     assert(immune.targetState == VictimState.isImmune && immune.damage == 0);
     wolf.immune.schools = 0;
+    // Sleight of Hand on the victim: crits against it less often.
+    const before = critChance(player, wolf, AttackType.mainHand);
+    wolf.attackerCrit[0] = -2;
+    assert(critChance(player, wolf, AttackType.mainHand) < before || before == 0);
+    wolf.attackerCrit[0] = 0;
 
     // Rage: a level 1 warrior hitting for 10 gets 10 / 7.49 * 7.5 = 10.0 rage, 100 in the field.
     const rage = rageReward(1, 10, true);

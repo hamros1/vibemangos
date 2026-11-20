@@ -124,7 +124,14 @@ mixin template ReputationHandlers()
     {
         import std.algorithm.comparison : max;
 
-        float percent = 100;
+        // The auras' share (`MOD_REPUTATION_GAIN`: Diplomacy; for kills `MOD_FACTION_REPUTATION_GAIN` by faction), up for
+        // a gain and down for a loss (CMaNGOS's `Player::CalculateReputationGain`).
+        import dmangos.world.spellids : AuraType;
+
+        float bonus = player.auras.total(AuraType.modReputationGain);
+        if (source == ReputationSource.kill)
+            bonus += player.auras.totalByMisc(AuraType.modFactionReputationGain, cast(int) faction);
+        float percent = 100 + (rep > 0 ? bonus : -bonus);
         const current = player.data.level;
         if (level > 0)
         {

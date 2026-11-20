@@ -110,7 +110,7 @@ private:
      * limit and the room allow. Returns how many were given. The client's line (`SMSG_ITEM_PUSH_RESULT`) is a
      * GM's gift by default ("You create"); a quest's item is `received` and not `created`, a spell's both.
      */
-    uint giveItem(uint entry, uint count, bool received = false, bool created = true, bool showInChat = true)
+    package uint giveItem(uint entry, uint count, bool received = false, bool created = true, bool showInChat = true)
     {
         import dmangos.world.inventory : InventoryResult, ItemPosCount;
         import dmangos.world.defines : nullBag, nullSlot;

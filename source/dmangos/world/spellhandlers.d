@@ -425,8 +425,8 @@ private:
         }
         if (!triggered)
         {
-            c.timer = castTimeCheat ? 0 : max(0, spellMod(SpellModOp.castingTime, spell,
-                castTime(*spell, context.client, player.data.level)));
+            c.timer = castTimeCheat ? 0 : max(0, cast(int)(spellMod(SpellModOp.castingTime, spell,
+                castTime(*spell, context.client, player.data.level)) * player.auras.castTimeFactor()));
             c.castTime = c.timer;
             pushbacks = 0;
             enum uint gcdCategory = 133;
@@ -2285,6 +2285,7 @@ private:
     {
         if (count == 0 || target == 0)
             return;
+        dropRetainedComboPoints();
         const now = target == comboTarget ? comboPoints + count : count;
         comboTarget = target;
         comboPoints = cast(ubyte)(now < 0 ? 0 : now > 5 ? 5 : now);
@@ -2296,9 +2297,33 @@ private:
     {
         if (comboTarget == 0)
             return;
+        dropRetainedComboPoints();
         comboPoints = 0;
         sendComboPoints();
         comboTarget = 0;
+    }
+
+    private bool droppingRetained; // the retaining auras go because the points changed: they keep their points
+
+    /**
+     * Premeditation's points (`SPELL_AURA_RETAIN_COMBO_POINTS`) are kept once others are added or they are spent:
+     * its aura goes then without taking them back (CMaNGOS's `Unit::AddComboPoints`); expired, it takes them.
+     */
+    private void dropRetainedComboPoints()
+    {
+        droppingRetained = true;
+        scope (exit)
+            droppingRetained = false;
+        foreach (aura; player.auras.list.dup)
+            if (aura.has(AuraType.retainComboPoints))
+                removeAura(aura);
+    }
+
+    /// A retaining aura ran out (`AURA_REMOVE_BY_EXPIRE`): its points go.
+    package void retainedComboPointsExpired(int points)
+    {
+        if (!droppingRetained && comboTarget && points > 0)
+            addComboPoints(comboTarget, -points);
     }
 
     private void sendComboPoints()
@@ -2742,7 +2767,8 @@ private:
             damage += spellDamageBonus(spell, spell.casting.school); // spell power, as against a creature
         damage = spellDamageFactors(damage, spell.casting.school, creatureTypeHumanoid, other.player.damageMods.taken,
             other.player.damageMods.takenFlat);
-        const crit = !(spell.attributesEx2 & spellAttrEx2CantCrit) && uniform01(map.random) * 100 < spellCritOf(spell);
+        const crit = !(spell.attributesEx2 & spellAttrEx2CantCrit)
+            && uniform01(map.random) * 100 < spellCritOf(spell) + other.player.fighter.attackerCrit[2];
         if (crit)
             damage = damage * 3 / 2;
         const school = spell.casting.school;
@@ -2859,12 +2885,15 @@ private:
     {
         if (withBonus)
             damage += spellDamageBonus(spell, school);
+        float victimCrit = 0;
         {
             const victimFighter = victim.fighter;
             damage = spellDamageFactors(damage, school, victimFighter.creatureType, victimFighter.damageTaken,
                 victimFighter.damageTakenFlat);
+            victimCrit = victimFighter.attackerCrit[2]; // Winter's Chill
         }
-        const crit = !(spell.attributesEx2 & spellAttrEx2CantCrit) && uniform01(map.random) * 100 < spellCritOf(spell);
+        const crit = !(spell.attributesEx2 & spellAttrEx2CantCrit)
+            && uniform01(map.random) * 100 < spellCritOf(spell) + victimCrit;
         if (crit)
             damage = damage * 3 / 2;
         uint resisted;

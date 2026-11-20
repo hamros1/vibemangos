@@ -366,6 +366,20 @@ struct AuraSet
         return factor;
     }
 
+    /// By how much its casts take longer (`MOD_CASTING_SPEED`: Curse of Tongues), as attack times are (`UNIT_MOD_CAST_SPEED`).
+    float castTimeFactor() const
+    {
+        float factor = 1;
+        foreach (aura; list)
+            foreach (i; 0 .. 3)
+                if ((aura.effects & (1 << i)) && aura.type(i) == AuraType.modCastingSpeed)
+                {
+                    const a = aura.amount[i] * cast(int) aura.stacks;
+                    factor *= a > 0 ? 100.0f / (100 + a) : (100.0f - a) / 100;
+                }
+        return factor;
+    }
+
     /// The sum of those whose misc value is `misc`.
     int totalByMisc(AuraType type, int misc) const
     {
@@ -637,4 +651,22 @@ unittest
         "a slow of the main hand only");
     set.apply(makeAura(&rapidFire, 1, 10, 15_000, true, [40, 0, 0]), values, isNew);
     assert(isClose(set.attackTimeFactor(2), 100.0f / 140));
+}
+
+/// Curse of Tongues: casts take longer, as a slow makes swings.
+unittest
+{
+    import std.math : isClose;
+    import dmangos.world.updatefields : TypeId;
+
+    auto values = UpdateValues(TypeId.unit);
+    SpellInfo tongues;
+    tongues.id = 1714;
+    tongues.effect[0] = SpellEffect.applyAura;
+    tongues.casting.applyAuraName[0] = AuraType.modCastingSpeed;
+    AuraSet set;
+    bool isNew;
+    assert(set.castTimeFactor() == 1);
+    set.apply(makeAura(&tongues, 1, 10, 30_000, false, [-50, 0, 0]), values, isNew);
+    assert(isClose(set.castTimeFactor(), 1.5f));
 }

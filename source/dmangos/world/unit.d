@@ -484,6 +484,7 @@ private void creatureDamaged(UnitRef attacker, UnitRef victim, uint damage, cons
     map.flushObjectChanges(creature);
     if (!killed)
         return;
+    deathItems(creature, map);
     if (creature.petOwner)
     {
         // A pet: dead for its owner to revive (or to summon again).
@@ -495,4 +496,40 @@ private void creatureDamaged(UnitRef attacker, UnitRef victim, uint damage, cons
     if (credited !is null)
         return credited.killedCreature(creature); // the player's kill: its rewards
     map.creatureDeath(creature);
+}
+
+/**
+ * A creature dies under a `SPELL_AURA_CHANNEL_DEATH_ITEM` (Drain Soul, Shadowburn): the caster gets the item
+ * (CMaNGOS's `Aura::HandleChannelDeathItem`). A Soul Shard only from a creature that is not grey to the warlock and
+ * tapped by it or its group, and one only for several such auras of the warlock on it.
+ */
+private void deathItems(Creature creature, Map map)
+{
+    import dmangos.world.auras : AuraType;
+    import dmangos.world.experience : grayLevel;
+    import dmangos.world.updatefields : UNIT_FIELD_LEVEL;
+
+    enum uint soulShard = 6265;
+    bool[ulong] shardGiven;
+    foreach (aura; creature.auras.list)
+        foreach (i; 0 .. 3)
+        {
+            if (!(aura.effects & (1 << i)) || aura.type(i) != AuraType.channelDeathItem || aura.amount[i] <= 0)
+                continue;
+            const item = aura.spell.itemType[i];
+            auto caster = cast(Character) map.find(aura.caster);
+            if (item == 0 || caster is null || caster.player is null)
+                continue;
+            if (item == soulShard)
+            {
+                const level = creature.values.get!UNIT_FIELD_LEVEL;
+                auto group = caster.context.groups.of(caster.player.guid);
+                if (level <= grayLevel(caster.player.data.level)
+                        || !creature.tappedBy(caster.player.guid, group is null ? 0 : group.id)
+                        || aura.caster in shardGiven)
+                    continue;
+                shardGiven[aura.caster] = true;
+            }
+            caster.giveItem(item, aura.amount[i], true, true);
+        }
 }
