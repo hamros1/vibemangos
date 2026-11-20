@@ -871,7 +871,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 ## world/gmactions.d
 
 * Projects: ArcEmu, CMaNGOS
-* Functions: `Player::DestroyItemCount`, `Player::GiveLevel`, `Player::SaveToDB`, `Player::SetPlayerSpeed`, `Player::SetSkill`, `Player::learnSpell`, `Player::removeSpell`, `World::SendGMWorldText`, `World::SendWorldText`, `World::SendWorldWideScreenText`
+* Functions: `Player::DestroyItemCount`, `Player::GiveLevel` (TBC's mail at level-up), `ObjectMgr::LoadMailLevelRewards` (TBC), `Player::SaveToDB`, `Player::SetPlayerSpeed`, `Player::SetSkill`, `Player::learnSpell`, `Player::removeSpell`, `World::SendGMWorldText`, `World::SendWorldText`, `World::SendWorldWideScreenText`
 * Constants: `SMSG_AREA_TRIGGER_MESSAGE`, `SMSG_LEARNED_SPELL`, `SMSG_LEVELUP_INFO`
 
 ## world/gmdebug.d

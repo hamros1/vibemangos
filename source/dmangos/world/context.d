@@ -1005,12 +1005,15 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             database.setGameEventStatus(id, on);
             foreach (ref m; data.gameEventMails.get(on ? cast(short) id : cast(short)(-cast(int) id), null))
                 foreach (guid; database.charactersFor(m.raceMask, m.quest))
-                    eventLetter(m, guid);
+                    templateLetter(m.mailTemplate, m.sender, guid);
         }
     }
 
-    /// One `game_event_mail` letter to character `guid`: its template's text and the first item its loot gives.
-    private void eventLetter(const ref EventMail m, uint guid)
+    /**
+     * A letter of `MailTemplate.dbc` from creature `sender` to character `guid` (a `game_event_mail`'s, a
+     * `mail_level_reward`'s): its template's text and the first item its loot gives.
+     */
+    package void templateLetter(uint mailTemplate, uint sender, uint guid)
     {
         import std.random : rndGen;
         import dmangos.world.database : MailRecord;
@@ -1021,10 +1024,10 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         enum ubyte mailCreature = 3;
         MailRecord mail;
         mail.messageType = mailCreature;
-        mail.sender = m.sender;
+        mail.sender = sender;
         mail.receiver = guid;
-        mail.templateId = m.mailTemplate;
-        if (const template_ = data.loot.mail[m.mailTemplate])
+        mail.templateId = mailTemplate;
+        if (const template_ = data.loot.mail[mailTemplate])
         {
             auto loot = new Loot(0, null);
             loot.fill(template_, data.loot, data.items, rndGen, (uint c) => true, null);

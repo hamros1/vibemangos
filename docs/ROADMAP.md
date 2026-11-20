@@ -220,8 +220,9 @@ charges (Clearcasting, Presence of Mind, Nature's Swiftness: spent by the cast t
 
 ### Mail
 
-**Done** (`mailhandlers.d`; README's "Mail"), auctions' mail and expiry included. Next: the mail
-templates NPCs and quests send (`RewMailTemplateId`).
+**Done** (`mailhandlers.d`; README's "Mail"), auctions' mail and expiry included, quest and game event letters, and
+`mail_level_reward`'s letter at a new level (TBC CMaNGOS's; only for templates a 1.12 client has, so none of the
+classic database's TBC rows is sent).
 
 ### Auctions
 
