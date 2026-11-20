@@ -128,6 +128,7 @@ struct SpellCastInfo
     DamageClass dmgClass;
     uint preventionType;
     float[3] dmgMultiplier = 0;
+    uint[3] effectMechanic;    /// `EffectMechanic1..3`: each effect's own mechanic (a stun on a damaging spell)
 }
 
 /// `spell_template`'s casting columns, in `SpellCastRow` order.
@@ -145,7 +146,7 @@ enum spellCastQuery = "SELECT Id, SpellName, School, Dispel, Mechanic, Attribute
     ~ "EffectPointsPerComboPoint1, EffectPointsPerComboPoint2, EffectPointsPerComboPoint3, SpellVisual, SpellIconID, "
     ~ "ManaCostPercentage, StartRecoveryCategory, StartRecoveryTime, MaxTargetLevel, SpellFamilyName, "
     ~ "SpellFamilyFlags, MaxAffectedTargets, DmgClass, PreventionType, DmgMultiplier1, DmgMultiplier2, "
-    ~ "DmgMultiplier3 FROM spell_template";
+    ~ "DmgMultiplier3, EffectMechanic1, EffectMechanic2, EffectMechanic3 FROM spell_template";
 
 /// One row of `spellCastQuery` (flat, for `Row.as`).
 struct SpellCastRow
@@ -173,6 +174,7 @@ struct SpellCastRow
     ulong spellFamilyFlags;
     uint maxAffectedTargets, dmgClass, preventionType;
     float dm1, dm2, dm3;
+    uint em1, em2, em3;
 
     SpellCastInfo toInfo() const
     {
@@ -197,6 +199,7 @@ struct SpellCastRow
         c.chainTarget = [ct1, ct2, ct3];
         c.pointsPerComboPoint = [pc1, pc2, pc3];
         c.dmgMultiplier = [dm1, dm2, dm3];
+        c.effectMechanic = [em1, em2, em3];
         return c;
     }
 }

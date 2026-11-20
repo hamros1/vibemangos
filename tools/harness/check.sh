@@ -32,11 +32,15 @@ python3 "$REPO/tools/harness/mixin-names.py" || { echo "FAIL: a name is defined 
 echo "== release builds"
 # `release-fast` (dub.json): optimized without -inline, which made DMD take ten minutes on context.d alone; the
 # three at once. About 13% slower at run time (docs/BENCHMARKS.md): build `-b release` to measure speed.
+pids=""
 for c in worldserver authserver loadgen; do
     dub build -q -c $c -b release-fast > "$H/unittest/dub-$c.log" 2>&1 &
+    pids="$pids $!"
 done
+# Each waited for by its pid: `$(jobs -p)` runs in a subshell, which has no jobs, so it waited for none and the
+# regression started while dub was still writing bin/worldserver ("not found").
 failed=0
-for job in $(jobs -p); do wait "$job" || failed=1; done
+for pid in $pids; do wait "$pid" || failed=1; done
 if [ $failed = 1 ]; then
     for c in worldserver authserver loadgen; do grep -m 10 -E "Error|error" "$H/unittest/dub-$c.log"; done
     echo "FAIL: a release build failed"; exit 1

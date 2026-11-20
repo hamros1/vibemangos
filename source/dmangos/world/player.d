@@ -1178,6 +1178,12 @@ private:
         if (f.stealthed)
             f.stealth = auras.total(AuraType.modStealth) + auras.total(AuraType.modStealthLevel);
         f.stealthDetect = auras.totalByMisc(AuraType.modStealthDetect, 0);
+        if (auras.list.length)
+        {
+            import dmangos.world.combat : Immunities;
+
+            f.immune = Immunities.of(auras);
+        }
         return f;
     }
 

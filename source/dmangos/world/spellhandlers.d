@@ -1601,6 +1601,16 @@ private:
 
     void doEffect(const(SpellInfo)* spell, size_t i, ulong target, ref Casting c)
     {
+        // An effect the target is immune to (a stun on a boss, beside the damage it still takes) does nothing.
+        if (target != player.guid)
+            if (auto other = map.unit(target))
+            {
+                enum uint noImmunities = 0x20000000; // SPELL_ATTR_NO_IMMUNITIES
+                const immune = other.fighter.immune;
+                if (immune.any && !(spell.attributes & noImmunities) && immune.toEffect(spell.effect[i],
+                        spell.casting.effectMechanic[i], spell.casting.applyAuraName[i]))
+                    return;
+            }
         int base = effectValue(*spell, i, player.data.level, uniform01(map.random));
         // A finishing move: more for each combo point (`EffectPointsPerComboPoint`); Eviscerate 3% of the attack
         // power a point too (CMaNGOS's `EffectSchoolDMG`).

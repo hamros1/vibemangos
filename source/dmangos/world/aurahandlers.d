@@ -472,6 +472,30 @@ private:
                         : (aura.spell.attributesEx & immunityPurges) != 0))
                     interruptAuras(invulnerabilityCancels);
                 break;
+            // A mechanic's immunity that purges (Berserker Rage and fear, Blessing of Freedom and roots): the
+            // player's auras of that mechanic go (CMaNGOS's `RemoveAurasAtMechanicImmunity`).
+            case AuraType.mechanicImmunity, AuraType.mechanicImmunityMask:
+                enum uint immunityPurgesEffect = 0x00008000; // SPELL_ATTR_EX_IMMUNITY_PURGES_EFFECT
+                if (apply && (aura.spell.attributesEx & immunityPurgesEffect))
+                {
+                    const misc = aura.misc(i);
+                    const mask = aura.type(i) == AuraType.mechanicImmunity
+                        ? (misc > 0 && misc <= 32 ? 1u << (misc - 1) : 0) : cast(uint) misc;
+                    bool hasMechanic(const Aura other)
+                    {
+                        static bool inMask(uint mechanic, uint mask) { return mechanic && mechanic <= 32 && (mask & (1u << (mechanic - 1))); }
+                        if (inMask(other.spell.casting.mechanic, mask))
+                            return true;
+                        foreach (j; 0 .. 3)
+                            if ((other.effects & (1 << j)) && inMask(other.spell.casting.effectMechanic[j], mask))
+                                return true;
+                        return false;
+                    }
+                    foreach (other; player.auras.list.dup)
+                        if (other !is aura && !other.passive && hasMechanic(other))
+                            removeAura(other);
+                }
+                break;
             case AuraType.addFlatModifier, AuraType.addPctModifier: // talents: the client's numbers
                 if (map !is null) // in the world (at login they all go at once: `sendAllSpellMods`)
                     spellModChanged(aura, i);

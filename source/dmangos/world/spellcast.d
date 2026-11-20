@@ -593,6 +593,11 @@ SpellMissInfo rollSpellHit(Rng)(const Fighter caster, const Fighter victim, cons
 
     if (victim.evading)
         return SpellMissInfo.evade;
+    // Immune to it (its school, dispel type or mechanic): "Immune", unless it ignores immunities (Charge).
+    enum uint noImmunities = 0x20000000; // SPELL_ATTR_NO_IMMUNITIES
+    if (!(spell.attributes & noImmunities)
+            && victim.immune.toSpell(spell.casting.school, spell.casting.dispel, spell.casting.mechanic))
+        return SpellMissInfo.immune;
     if ((spell.casting.attributesEx3 & spellAttrEx3AlwaysHit) || spell.casting.dmgClass == DamageClass.none)
         return SpellMissInfo.none;
     const roll = uniform01(rng) * 100;
@@ -664,6 +669,15 @@ unittest
     assert(rollSpellHit(mage, wolf, strike, 0, 0, dodged) == SpellMissInfo.dodge);
     strike.attributes = 0x00200000; // SPELL_ATTR_NO_ACTIVE_DEFENSE
     assert(rollSpellHit(mage, wolf, strike, 0, 0, dodged) == SpellMissInfo.none, "it cannot be dodged");
+
+    // A victim immune to the spell's mechanic (a boss and Hammer of Justice's stun): "Immune", whatever the roll.
+    SpellInfo hammer;
+    hammer.casting.dmgClass = DamageClass.magic;
+    hammer.casting.mechanic = 12; // MECHANIC_STUN
+    wolf.immune.mechanics = 1u << (12 - 1);
+    assert(rollSpellHit(mage, wolf, hammer, 0, 0, high) == SpellMissInfo.immune);
+    hammer.attributes = 0x20000000; // SPELL_ATTR_NO_IMMUNITIES
+    assert(rollSpellHit(mage, wolf, hammer, 0, 0, high) == SpellMissInfo.none);
 }
 
 // A victim's resistance to a mechanic (a dwarf's or a talent's against fear) adds to the magic miss chance.

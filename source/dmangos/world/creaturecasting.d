@@ -411,6 +411,14 @@ mixin template CreatureCasting()
             {
                 if (guid in missed)
                     continue;
+                if (guid != me.guid) // an effect its target is immune to (a stunned paladin under Divine Shield)
+                    if (auto other = world_.unit(guid))
+                    {
+                        const immune = other.fighter.immune;
+                        if (immune.any && immune.toEffect(effect, spell.casting.effectMechanic[i],
+                                spell.casting.applyAuraName[i]))
+                            continue;
+                    }
                 if (!me.alive)
                     return;
                 final switch (effect) // every effect decided: done, or listed as not done below
