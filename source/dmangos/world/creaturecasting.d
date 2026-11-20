@@ -451,6 +451,11 @@ mixin template CreatureCasting()
                     found ~= other.combatGuid;
             return found;
         }
+        // (Dungeon-script tests, a small fix: a script's area at a destination this cast does not resolve
+        // (`TARGET_ENUM_UNITS_SCRIPT_AOE_AT_DEST_LOC`, none named) reaches nobody, not its caster: Emi Shortfuse's
+        // Explosion, an instant kill at the tunnel's `spell_target_position`, killed Emi herself.)
+        if (b == ImplicitTarget.enumUnitsScriptAoeAtDestLoc && !named.length)
+            return null;
         // Its master (`TARGET_UNIT_CASTER_MASTER`: a voidwalker's Sacrifice shields its warlock).
         if (a == ImplicitTarget.unitCasterMaster)
         {

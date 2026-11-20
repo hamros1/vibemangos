@@ -486,7 +486,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 
 * Projects: CMaNGOS
 * Files: `AI/ScriptDevAI/scripts/kalimdor/zulfarrak/instance_zulfarrak.cpp`, `zulfarrak.cpp`, `boss_zumrah.cpp`, `zulfarrak.h`
-* Functions/ScriptNames: `instance_zulfarrak` (`Update`, `OnCreatureEnterCombat`, `OnCreatureEvade`), `event_go_zulfarrak_gong`, `event_spell_unlocking`, `at_zulfarrak`, `boss_zumrah`
+* Functions/ScriptNames: `instance_zulfarrak` (`Update`, `OnCreatureEnterCombat`, `OnCreatureEvade`), `event_go_zulfarrak_gong`, `event_spell_unlocking`, `at_zulfarrak`, `boss_zumrah` (`SetFactionTemporary`, `TEMPFACTION_TOGGLE_IMMUNE_TO_PLAYER`)
 
 ## scripts/professions.d
 
@@ -1692,6 +1692,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 ## world/worlddata.d
 
 * Projects: CMaNGOS, mangosd
+* Also: `ObjectMgr::LoadGameObjects` (`gameobject_spawn_entry`: a spawn without an entry takes one of its entries)
 * Functions: `GraveyardManager::GraveyardLinkKey`, `PoolGroup::RollOne`, `PoolGroup::SpawnObject`, `PoolManager::UpdatePool`, `ObjectMgr::GetBaseXP`, `ObjectMgr::GetGameTele`, `ObjectMgr::GetMapEntranceTrigger`, `ObjectMgr::GetXPForLevel`, `ObjectMgr::LoadAreaTriggerTeleports`, `ObjectMgr::LoadCreatureTemplates`, `ObjectMgr::LoadCreatures`, `ObjectMgr::LoadGameTele`, `ObjectMgr::LoadItemPrototypes`, `ObjectMgr::LoadPlayerInfo`, `Player::IsActionButtonDataValid`, `WaypointManager::Load`
 * Constants: `GRAVEYARD_AREALINK`, `GRAVEYARD_MAPLINK`, `MAX_LEVEL`, `SMSG_ITEM_QUERY_SINGLE_RESPONSE`
 * Also: `SpellMgr::LoadSpellScriptTarget` (`spell_script_target`)

@@ -11,6 +11,7 @@ module dmangos.world.realscripts_dungeons;
 version (unittest):
 
 import core.time : msecs, seconds;
+import std.algorithm.searching : canFind;
 import std.format : format;
 import dmangos.world.creature : Creature;
 import dmangos.world.gameobject : GameObject;
@@ -678,4 +679,324 @@ unittest
         d.run(2.seconds);
         assert(d.summoned(aquanis) == 1, "the baron again after a restart (he did not die)\n" ~ d.story);
     }
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Uldaman (70)
+// ---------------------------------------------------------------------------------------------------------------
+
+/**
+ * Archaedas (2748): woken at his altar (event 2268), he breaks free (-1070005) and fights (-1070001); every ten seconds
+ * or so he wakes an earthen dwarf (Awaken Earthen Dwarf 10259: a custodian 7309 or hallshaper 7077 sheds its stone
+ * skin 10255), until none is left; below two thirds his guardians (10252, -1070002), below one third his vault warders
+ * (10258, -1070003). Dead, the Ancient Treasure (141979) appears.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    enum uint archaedas = 2748, custodian = 7309, hallshaper = 7077, stoned = 10255, treasure = 141979;
+    auto d = Dungeon.enter(70, 45);
+    auto boss = d.spawned(archaedas, 0, 25);
+    d.run(1.seconds);
+    d.w.context.instanceScript(d.instanceId).raise(imported!"dmangos.script.api".EventHappened(2268,
+        imported!"dmangos.script.api".EntityRef(d.player.guid)));
+    d.goTo(Position(boss.position.x + 5, boss.position.y, boss.position.z));
+    d.run(8.seconds);
+    assert(d.heard(-1070005) && d.heard(-1070001), "he breaks free\n" ~ d.story);
+    assert(boss.ai.inCombat, "and fights");
+    size_t stillStone()
+    {
+        size_t n;
+        foreach (entry; [custodian, hallshaper])
+            foreach (c; d.all(entry))
+                n += c.auras.find(stoned) !is null;
+        return n;
+    }
+    const stoneBefore = stillStone();
+    d.run(25.seconds);
+    assert(d.cast_(10259, archaedas) && stillStone() < stoneBefore, "dwarves wake\n" ~ d.story);
+    d.hurtTo(boss, 60);
+    d.run(2.seconds);
+    assert(d.cast_(10252, archaedas) && d.heard(-1070002), "his guardians\n" ~ d.story);
+    d.hurtTo(boss, 30);
+    d.run(2.seconds);
+    assert(d.cast_(10258, archaedas) && d.heard(-1070003), "his warders\n" ~ d.story);
+    d.kill(boss);
+    d.run(2.seconds);
+    assert(d.loadedObject(treasure) !is null, "the treasure");
+}
+
+/**
+ * Uldaman's Stone Keepers (4857): the altar's event (2228) wakes them one at a time (their stone skin 10255 gone) on
+ * whoever used it; a wipe in the middle stops it, and the altar used again goes on with those left; the last one
+ * dead, the temple doors (124367, 141869) open, for good.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    import dmangos.script.api : EntityRef, EventHappened;
+
+    enum uint keeper = 4857, stoned = 10255, upper = 124367;
+    auto d = Dungeon.enter(70, 45);
+    d.spawned(keeper, 0, 20);
+    auto keepers = d.all(keeper);
+    assert(keepers.length >= 2, "the keepers");
+    void altar()
+    {
+        d.w.context.instanceScript(d.instanceId).raise(EventHappened(2228, EntityRef(d.player.guid)));
+    }
+    Creature awake()
+    {
+        foreach (k; d.all(keeper))
+            if (k.auras.find(stoned) is null)
+                return k;
+        return null;
+    }
+    altar();
+    d.run(7.seconds);
+    auto first = awake();
+    assert(first !is null && first.ai.inCombat, "the first wakes and fights");
+    d.kill(first);
+    d.run(7.seconds);
+    assert(awake() !is null, "the next wakes");
+    d.wipe(30.seconds);
+    d.revive();
+    d.run(5.seconds);
+    assert(awake() is null, "after the wipe they are stone again");
+    altar();
+    bool open()
+    {
+        if (auto k = awake())
+            d.kill(k);
+        return Dungeon.isOpen(d.objectOf(upper));
+    }
+    assert(d.runUntil(&open, 200.seconds), "the event done again, the doors open\n" ~ d.story);
+    d.restart();
+    assert(Dungeon.isOpen(d.objectOf(upper)), "open after a restart");
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Zul'Farrak (209)
+// ---------------------------------------------------------------------------------------------------------------
+
+/// Zul'Farrak: the Gong of Zul'Farrak (141832) calls Gahz'rilla (7273), once.
+unittest
+{
+    if (!haveRealData())
+        return;
+    enum uint gong = 141832, gahzrilla = 7273;
+    auto d = Dungeon.enter(209, 45);
+    auto it = d.objectOf(gong);
+    d.use(it);
+    d.run(15.seconds);
+    assert(d.summoned(gahzrilla) == 1, "Gahz'rilla\n" ~ d.story);
+    d.use(it);
+    d.run(15.seconds);
+    assert(d.summoned(gahzrilla) == 1, "once\n" ~ d.story);
+}
+
+/**
+ * The pyramid: the prisoners freed (event 2609, the cages unlocked), the Sandfury come, and run up the steps to
+ * Sergeant Bly (7604) a few at a time; Nekrum (7796) and Sezz'ziz (7275) come last, and dead, the End Door (146084) opens, for good.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    enum uint bly = 7604, nekrum = 7796, sezzziz = 7275, endDoor = 146084;
+    auto d = Dungeon.enter(209, 46);
+    auto sergeant = d.spawned(bly, 0, 10);
+    d.event(2609);
+    d.run(60.seconds);
+    // Trolls near Bly: sent up the steps.
+    size_t near;
+    d.map.forEachObject((imported!"dmangos.world.map".MapObject o) {
+        if (auto c = cast(Creature) o)
+            if ([7787u, 7788, 7789, 8876, 8877].canFind(c.template_.entry) && c.alive)
+            {
+                const p = c.position, b = sergeant.position;
+                near += (p.x - b.x) ^^ 2 + (p.y - b.y) ^^ 2 < 15 ^^ 2;
+            }
+    });
+    assert(near > 0, "the Sandfury come up to Bly\n" ~ d.story);
+    assert(!Dungeon.isOpen(d.objectOf(endDoor)), "shut");
+    // Nekrum and Sezz'ziz come after them (the event's database script, at 250 s).
+    d.run(200.seconds);
+    foreach (entry; [nekrum, sezzziz])
+    {
+        auto c = d.find(entry);
+        assert(c !is null, format!"%s came"(entry));
+        d.kill(c);
+    }
+    d.run(2.seconds);
+    assert(Dungeon.isOpen(d.objectOf(endDoor)), "the End Door opens");
+    d.restart();
+    assert(Dungeon.isOpen(d.objectOf(endDoor)), "open after a restart");
+}
+
+/**
+ * Witch Doctor Zum'rah (7271): come near, he turns hostile ("Sands consume you!", -1209000) and fights
+ * (-1209001); his Shadow Bolt (12739), and the graves give up their dead (zombies 7286, -1209003).
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    enum uint zumrah = 7271, zombie = 7286;
+    auto d = Dungeon.enter(209, 46);
+    auto boss = d.spawned(zumrah, 0, 30);
+    d.goTo(Position(boss.position.x + 6, boss.position.y, boss.position.z));
+    d.run(30.seconds);
+    assert(d.heard(-1209000), "he turns\n" ~ d.story);
+    assert(boss.ai.inCombat && d.heard(-1209001), "and fights\n" ~ d.story);
+    assert(d.cast_(12739, zumrah), "Shadow Bolt\n" ~ d.story);
+    assert(d.runUntil(() => d.summoned(zombie) && d.heard(-1209003), 60.seconds), "the dead rise\n" ~ d.story);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Gnomeregan (90)
+// ---------------------------------------------------------------------------------------------------------------
+
+/**
+ * Mekgineer Thermaplugg (7800): his yell (-1090024) as he starts, the Final Chamber (142207) shut behind the party,
+ * the third gnome face spitting walking bombs (7915) until its button (142216) is pressed; Knock Away (10101) and
+ * Activate Bomb (11511); below half "Usurpers! Gnomeregan is mine!" (-1090025); dead, the chamber opens.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    enum uint thermaplugg = 7800, bomb = 7915, chamber = 142207, button3 = 142216;
+    auto d = Dungeon.enter(90, 33);
+    auto boss = d.spawned(thermaplugg, 0, 30);
+    d.pull(boss);
+    d.run(8.seconds);
+    assert(d.heard(-1090024), "his yell\n" ~ d.story);
+    assert(!Dungeon.isOpen(d.objectOf(chamber)), "the chamber shut");
+    assert(d.summoned(bomb) > 0, "the third face's bombs\n" ~ d.story);
+    d.run(20.seconds);
+    assert(d.cast_(10101, thermaplugg) && d.cast_(11511, thermaplugg), "Knock Away, Activate Bomb\n" ~ d.story);
+    d.use(d.objectOf(button3));
+    d.pull(boss);
+    d.hurtTo(boss, 45);
+    d.run(2.seconds);
+    assert(d.heard(-1090025), "below half\n" ~ d.story);
+    d.kill(boss);
+    d.run(2.seconds);
+    assert(Dungeon.isOpen(d.objectOf(chamber)), "open when he is dead");
+}
+
+/// Thermaplugg's fight cut by a restart: his faces spit no bombs at nobody afterwards, and the chamber is not shut.
+unittest
+{
+    if (!haveRealData())
+        return;
+    enum uint thermaplugg = 7800, bomb = 7915, chamber = 142207;
+    auto d = Dungeon.enter(90, 33);
+    auto boss = d.spawned(thermaplugg, 0, 30);
+    d.pull(boss);
+    d.run(8.seconds);
+    assert(d.summoned(bomb) > 0);
+    d.goTo(Position(boss.position.x + 80, boss.position.y, boss.position.z));
+    d.restart();
+    d.forget();
+    d.run(40.seconds);
+    assert(d.summoned(bomb) == 0, "no bombs after the restart\n" ~ d.story);
+    assert(Dungeon.isOpen(d.objectOf(chamber)), "the chamber open");
+}
+
+/**
+ * Blastmaster Emi Shortfuse (7998): asked to begin (-1090000), she goes to the cave-ins, the troggs dig through
+ * (Caverndeep Ambushers 6207) while she sets her charges, and she blows both tunnels shut (12159, 12158; -1090012,
+ * -1090021); Grubbis (7361) comes out of the second (-1090023), and his death brings the red rockets (103820).
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    enum uint emi = 7998, ambusher = 6207, grubbis = 7361, rocket = 103820;
+    auto d = Dungeon.enter(90, 32);
+    auto her = d.spawned(emi, 0, 15);
+    d.talkTo(her);
+    d.choose(her, 0);
+    d.run(1.seconds);
+    assert(d.heard(-1090000), "she begins\n" ~ d.story);
+    bool grubbisDead()
+    {
+        d.keepUp(her);
+        d.defend(her);
+        d.killSummons([ambusher, 6206u]);
+        if (auto g = d.find(grubbis))
+            if (g.alive && d.heard(-1090023))
+                d.kill(g);
+        return d.summoned(grubbis) && d.find(grubbis) !is null && !d.find(grubbis).alive;
+    }
+    assert(d.runUntil(&grubbisDead, 600.seconds), format!"Grubbis comes and dies (she %s at %s)\n%s"(her.alive
+        ? "alive" : "dead", her.position, d.story));
+    d.run(25.seconds);
+    assert(d.summoned(ambusher) > 0, "the troggs\n" ~ d.story);
+    assert(d.heard(-1090012) && d.heard(-1090021), "both tunnels blown\n" ~ d.story);
+    assert(d.cast_(12159, emi) && d.cast_(12158, emi), "her explosions\n" ~ d.story);
+    assert(her.alive && d.heard(-1090022), "she lives to say it is done\n" ~ d.story);
+    assert(d.loadedObject(rocket) !is null, "the red rockets");
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The Sunken Temple (109)
+// ---------------------------------------------------------------------------------------------------------------
+
+/**
+ * The Sunken Temple: the six Atal'ai Statues (148830 .. 148835) used in their order light up and call Atal'alarion
+ * (8580), the Idol of Hakkar (148838) with him; used out of order, a statue does nothing for the event.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    enum uint atalarion = 8580, idol = 148838;
+    static immutable uint[6] statues = [148830, 148831, 148832, 148833, 148834, 148835];
+    auto d = Dungeon.enter(109, 50);
+    d.use(d.objectOf(statues[1]));
+    d.run(2.seconds);
+    d.use(d.objectOf(statues[0]));
+    d.run(2.seconds);
+    assert(d.saved!(imported!"dmangos.scripts.sunkentemple".SunkenTemple).statuesDone == 1, "the out of order one did not count");
+    foreach (statue; statues[1 .. $])
+    {
+        d.use(d.objectOf(statue));
+        d.run(2.seconds);
+    }
+    assert(d.summoned(atalarion) == 1, "Atal'alarion\n" ~ d.story);
+    assert(d.loadedObject(idol) !is null, "the idol");
+}
+
+/**
+ * Jammal'an's barrier (149431) falls with the last of his six protectors (5712 .. 5717): he (5710) may be fought then;
+ * his death lets the Shade of Eranikus (5709) be fought.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    import dmangos.world.defines : UnitFlags;
+
+    enum uint jammalan = 5710, eranikus = 5709, barrier = 149431;
+    auto d = Dungeon.enter(109, 52);
+    foreach (protector; 5712u .. 5718u)
+    {
+        auto p = d.spawned(protector, 0, 40);
+        d.kill(p);
+    }
+    d.run(2.seconds);
+    assert(Dungeon.isOpen(d.objectOf(barrier)), "the barrier falls");
+    auto prophet = d.spawned(jammalan, 0, 40);
+    assert(!(prophet.values.get!UNIT_FIELD_FLAGS & UnitFlags.immuneToPlayer), "he may be fought");
+    d.kill(prophet);
+    d.run(2.seconds);
+    auto shade = d.spawned(eranikus, 0, 40);
+    assert(!(shade.values.get!UNIT_FIELD_FLAGS & UnitFlags.immuneToPlayer), "and then the shade");
+    d.restart();
+    assert(Dungeon.isOpen(d.objectOf(barrier)), "down after a restart");
 }

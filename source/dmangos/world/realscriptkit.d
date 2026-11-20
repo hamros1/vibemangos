@@ -175,6 +175,14 @@ final class Dungeon
         return state;
     }
 
+    /// Scripted event `id` happens, character `i` its source (as a spell's `SEND_EVENT` or a goober's event): the
+    /// event's script, the copy's script, then its database script.
+    void event(uint id, ulong target = 0, size_t i = 0)
+    {
+        w.context.scriptedEvent(id, map, player(i).guid, target);
+        collect();
+    }
+
     /// Character `i` steps into area trigger `id` (`CMSG_AREATRIGGER`), standing at its centre.
     void trigger(uint id, size_t i = 0)
     {
