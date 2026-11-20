@@ -926,6 +926,12 @@ private:
 
             creature.ai.raiseFrom(map, QuestRewarded(EntityRef(player.guid), id));
         }
+        else if (auto go = cast(imported!"dmangos.world.gameobject".GameObject) map.findObject(guid))
+        {
+            import dmangos.script.api : EntityRef;
+
+            context.gameObjectQuestRewarded(go, map, EntityRef(player.guid), id);
+        }
         if (quest.nextQuestInChain)
             if (const next = context.data.quests.quest(quest.nextQuestInChain))
                 if (involves(giver, next.id, true, false) && canTakeQuest(*next))

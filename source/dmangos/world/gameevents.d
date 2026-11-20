@@ -6,7 +6,7 @@
  * for `length` minutes, until its end. How its start and end are found depends on its schedule type:
  *
  * $(UL
- *   $(LI 0: never by itself (a script or a GM would start it);)
+ *   $(LI 0: never by itself: the server's state starts it (`GameEvents.start`: the war effort's phases);)
  *   $(LI 1: the dates in `game_event_time`, as they are;)
  *   $(LI 2 and 3: a Darkmoon Faire week, Monday to Monday, the first whole week of every third month (2:
  *        January, April, July, October; 3: February, May, August, November);)
@@ -24,7 +24,9 @@
  * While an event is active, the creatures and game objects of `game_event_creature` and
  * `game_event_gameobject` listed with its id are in the world, and those listed with its negated id
  * are not; the creatures of `game_event_creature_data` listed with it take its entry, model, equipment
- * and auras. Every node of a cluster works the schedule out from the clock alone, so they agree.
+ * and auras. Every node of a cluster works the schedule out from the clock alone, so they agree; the
+ * events the server's state starts, every node starts as it hears of that state (the war effort's, from
+ * its service).
  */
 module dmangos.world.gameevents;
 
@@ -211,6 +213,25 @@ final class GameEvents
     /// By id.
     GameEvent[ushort] events;
     private bool[ushort] active_;
+    private bool[ushort] started_; // started by the server's own state (the war effort): on whatever the clock says
+
+    /**
+     * Starts (or stops) event `id` by the server's state rather than the clock: a server-side event
+     * (schedule type 0, the war effort's phases) is on only so. The next `update` starts or stops it.
+     */
+    void start(ushort id, bool on)
+    {
+        if (on)
+            started_[id] = true;
+        else
+            started_.remove(id);
+    }
+
+    /// Whether event `id` is on because it was started (`start`), not by the clock.
+    bool started(uint id) const
+    {
+        return id <= ushort.max && (cast(ushort) id in started_) !is null;
+    }
 
     /// Whether event `id` is active (as of the last `update`).
     bool isActive(uint id) const
@@ -242,6 +263,7 @@ final class GameEvents
             if (on && e.linkedTo)
                 if (const parent = e.linkedTo in events)
                     on = parent.activeAt(now);
+            on = on || (id in started_) !is null;
             const was = (id in active_) !is null;
             if (on && !was)
             {
@@ -284,4 +306,21 @@ unittest
     assert(!events.isActive(8), "its parent is off");
     events.update(1000 + 10 * 60 + 30, started, stopped);
     assert(events.isActive(7) && events.isActive(8), "its parent is on");
+}
+
+// A server-side event: on only while started, whatever the clock.
+unittest
+{
+    auto events = new GameEvents;
+    auto e = GameEvent(120, ScheduleType.serverSide, 0, 0, 525_600, 1);
+    events.events[120] = e;
+    ushort[] started, stopped;
+    events.update(5000, started, stopped);
+    assert(!events.isActive(120));
+    events.start(120, true);
+    events.update(5000, started, stopped);
+    assert(started == [120] && events.isActive(120) && events.started(120));
+    events.start(120, false);
+    events.update(5000, started, stopped);
+    assert(stopped == [120] && !events.isActive(120));
 }

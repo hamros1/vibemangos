@@ -197,7 +197,8 @@ migration, `instance.data`, gossip and quest events, script movement, the `Escor
 event scripts of Kalimdor's and the Eastern Kingdoms' zones, every five-player dungeon, and the raids
 (Molten Core, Onyxia, Zul'Gurub, Blackwing Lair, both Ahn'Qiraj, Naxxramas), then the dungeons' and
 raids' scripted events, the profession specializations, the Emerald Dragons, the Ahn'Qiraj opening, the
-guards, world objects, item and world map scripts; the server logs 444 script rows served. The spell
+guards, world objects, item and world map scripts, and the Ahn'Qiraj war effort (its server-wide state a
+cluster service, docs/SERVICES.md: phases, counters, piles, the capitals' world states, the gong); the server logs 444 script rows served. The spell
 scripts of items, quests and the world (2026-11-20): 25 more of the 167 `spell_scripts` names (32 served), with
 the cast check, cast start, aura heartbeat, aura end, tick end and target check events, players' transforms and
 creatures' mana drains on players; and 32 item and holiday spells CMaNGOS's core scripts by id (`@spellIds`:
@@ -206,7 +207,7 @@ creatures to cast as they die (the tribal deaths), summons and destinations a sc
 Festival's fireworks, which need players' game object summons too), auras forcing reactions (the
 Ashbringer), effect chances (the silithid egg), and the raids'. Not yet
 (about 20 names, each module's documentation and SCRIPTING.md say why): what needs stealth detection
-(Venture Co. lookouts, Gallywix), the war effort's server-wide state, the Scourge Invasion, caravans,
+(Venture Co. lookouts, Gallywix), the Scourge Invasion, caravans,
 the Eastern Kingdoms' world map script, and the mechanics the raids approximate (possession, mind
 control, Heigan's floor).
 Reputation is done (`reputation.d`, `reputationhandlers.d`; README's "Reputation"): kills, quests,

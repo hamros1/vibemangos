@@ -135,6 +135,12 @@ interface CreatureLore
     /// `creature`, not fighting, goes back to its spawn point and then moves as it does by itself.
     void sendCreatureHome(CombatWorld world, Creature creature);
 
+    /// The war effort: what quest `quest` asked for counts as `resource` (`dmangos.world.wareffort`).
+    void warEffortHandIn(uint quest, uint resource);
+
+    /// The war effort: a Colossus of Silithus fell (`Colossus`).
+    void warEffortColossusFell(uint colossus);
+
     /// A `Signal` from `from` for the script of the continent `world` is (nothing in a dungeon, or without one).
     void signalWorldMap(CombatWorld world, EntityRef from, uint id, int value);
 

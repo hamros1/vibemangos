@@ -448,6 +448,10 @@ interface CreatureHost
     void hostZoneUnderAttack(EntityRef attacker);
     void hostWalkPath();
     ActionResult hostSendHome(EntityRef creature);
+
+    // The war effort:
+    void hostWarEffortHandIn(uint quest, uint resource);
+    void hostWarEffortColossus(uint colossus);
 }
 
 // Open-world round 2:
@@ -878,6 +882,18 @@ struct CreatureContext
     /// It (or another creature here) not fighting goes back where it belongs, and moves as it did
     /// before (`EnterEvadeMode` out of a fight, `MoveTargetedHome`).
     ActionResult sendHome(EntityRef creature = EntityRef.init) { return host.hostSendHome(creature ? creature : host.hostSelf()); }
+
+    // The war effort (the server-wide state that opens Ahn'Qiraj, `dmangos.world.wareffort`):
+
+    /**
+     * What quest `quest` asked for (its first required item's count) was handed in, and counts for the war
+     * effort as `resource` (`AQResources`' order: 0 Peacebloom .. 29 the Horde's Runecloth Bandages), while
+     * the effort gathers. It counts once, server-wide, wherever the effort's state is kept.
+     */
+    void warEffortHandIn(uint quest, uint resource) { host.hostWarEffortHandIn(quest, resource); }
+
+    /// A Colossus of Silithus fell (0 Ashi, 1 Regal, 2 Zora): the war effort remembers it, server-wide.
+    void warEffortColossusFell(uint colossus) { host.hostWarEffortColossus(colossus); }
 }
 
 // ---------------------------------------------------------------------------
@@ -926,6 +942,11 @@ interface GameObjectHost
     uint hostRandom(uint below);
     uint hostMinuteOfDay();
     uint hostAreaId();
+
+    // The war effort:
+    uint hostWarEffortPhase();
+    void hostWarEffortGong(EntityRef player);
+    ActionResult hostZoneNotice(uint text);
 }
 
 // Open-world round 2:
@@ -1061,6 +1082,20 @@ struct GameObjectContext
 
     /// The area (`AreaTable.dbc`) it stands in, as the map's terrain has it; 0 if unknown.
     @property uint areaId() { return host.hostAreaId(); }
+
+    // The war effort (`dmangos.world.wareffort`):
+
+    /**
+     * The war effort's phase as this server last heard it: 0 not begun, 1 gathering, 2 carrying the
+     * supplies, 3 the gong's time, 4 the ten-hour war, 5 done.
+     */
+    @property uint warEffortPhase() { return host.hostWarEffortPhase(); }
+
+    /// `player` rang the Scarab Gong: the ten-hour war begins, if it is the gong's time (once, server-wide).
+    void warEffortGong(EntityRef player) { host.hostWarEffortGong(player); }
+
+    /// `broadcast_text` row `text` as a notice (`CHAT_MSG_BG_SYSTEM_NEUTRAL`) to the players in its zone.
+    ActionResult zoneNotice(uint text) { return host.hostZoneNotice(text); }
 }
 
 // ---------------------------------------------------------------------------

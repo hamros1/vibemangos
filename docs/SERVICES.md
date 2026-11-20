@@ -1,13 +1,13 @@
 # Cluster services
 
 A **cluster service** is a responsibility with an identity of its own that belongs to no place in
-the world: the chat channels, the battleground queues. The cluster (docs/CLUSTER.md) places each
+the world: the chat channels, the battleground queues, the Ahn'Qiraj war effort. The cluster (docs/CLUSTER.md) places each
 service on one node, and every node calls it by what it is, not by where it runs. A call to a
 service on the caller's own node is a direct function call; a call to one on another node goes over
 the cluster's links and its reply comes back the same way. Callers do not know which it was.
 
-The code is `cluster/services.d`. The services are `ChannelsHost` (`world/channelservice.d`) and
-`BattlegroundQueueHost` (`world/bgqueue.d`).
+The code is `cluster/services.d`. The services are `ChannelsHost` (`world/channelservice.d`),
+`BattlegroundQueueHost` (`world/bgqueue.d`) and `WarEffortHost` (`world/wareffort.d`).
 
 ## Why services
 
@@ -48,7 +48,8 @@ A service may also have:
 * `tick(Duration)`, run every world tick of its host;
 * `stop()`, run when it is released;
 * `saveState()`, returning bytes that go along with the service when it moves, from which the next
-  host's factory rebuilds it. Neither existing service has one: both start empty after a move.
+  host's factory rebuilds it. The channels and the queues have none (they start empty after a move);
+  the war effort's is its whole state.
 
 Everything about the calls is worked out at compile time, by `static foreach` over the `@Call`
 methods:
@@ -61,8 +62,8 @@ methods:
 * **The dispatcher** (`Hosted!S.dispatch`) runs a call from its request's bytes and writes its
   reply's. There is no virtual dispatch per call and no registry filled at run time.
 
-The kinds of service are an enum, `ServiceKind`: `channels`, `battlegroundQueue`, and `example` for
-tests. `clusterServiceKinds` lists those a cluster places.
+The kinds of service are an enum, `ServiceKind`: `channels`, `battlegroundQueue`, `warEffort`, and
+`example` for tests. `clusterServiceKinds` lists those a cluster places.
 
 ## Hosting
 
@@ -134,6 +135,24 @@ it, so a call reaching a node that is no longer the host gets `notHere`.
 Links between nodes deliver each direction in order (docs/CLUSTER.md), so the calls one node makes
 to a service arrive in the order they were made, behind every other message that node sent first.
 
+## News: from a service to every node
+
+A call goes to the service; some services must also tell every node something, without being asked: a
+state that every node follows (the war effort's phase starts game events, spawns objects and changes what
+players in the capitals see, on whichever node simulates them). That is **news**:
+
+```d
+services.listen!(WarEffortHost, WarEffort)(&warEffortHeard);   // every node, at start-up
+services.announce!WarEffortHost(state);                        // the service, on its node
+```
+
+* `announce!S(news)` runs this node's listeners for that type of news at once, with the struct as it is,
+  and sends it as a `ServiceNews` message (kind, `newsId`, bytes) to every other linked node, whose
+  listeners hear it decoded. The news id is a hash of the service kind and the news's layout, as for calls.
+* Links deliver in order, so a node hears one host's news in the order it was given. A node not linked
+  at the time misses it: a service whose state nodes follow sends its whole state each time, repeats it
+  now and then, and answers a call for it, so a node that comes late asks once and then listens.
+
 ## The services
 
 ### Chat channels
@@ -165,6 +184,22 @@ A battleground map, like a dungeon, is one region, so one node runs every copy o
 accepting an invitation moves to that node, as for a dungeon. After the service moves, the queues
 start empty: invitations are lost and running copies are not refilled.
 
+### The Ahn'Qiraj war effort
+
+`WarEffortHost` (`world/wareffort.d`) holds the war effort (`WarEffort`: the phase, when it ends, the
+thirty resource counters, the piles' tier while the supplies are carried, the fallen Colossi). The officers'
+scripts call `contribute` when a resource quest is turned in, the Scarab Gong's calls `gong`, and a Colossus
+dying calls `colossusDied`; `current` answers a node starting. Its `tick` moves the timed phases on
+(five days of carrying, the ten-hour war).
+
+Every change is saved to the characters database (`world_state`, row 1, in CMaNGOS's text, through the
+writes behind the game loop) by the node hosting it, and announced to every node as news (the whole
+`WarEffort`), and again once a minute. Each node keeps what it heard (`WorldContext.warEffort`) and follows
+it: it starts and stops the phases' game events (120 to 124, and 125 to 127 for fallen Colossi) through
+`GameEvents.start`, brings and takes away the piles of supplies (a spawn's presence is worked out from the
+state), and sends the capitals' world states to its own players as they change. After a move the service
+goes on with the state it moved with; started anew (first grant, or its node lost), it reads the row.
+
 ## Gateways
 
 A gateway (`cluster.gateway`) is a node that holds client connections and simulates nothing: it is
@@ -191,7 +226,7 @@ On a real network the round trip dominates a remote call.
 1. Add a kind to `ServiceKind`, and to `clusterServiceKinds` if a cluster should place it.
 2. Write the struct with `@Service(kind)`, its `@Call` methods over plain-data requests and replies,
    and `tick`, `stop` or `saveState` if it needs them.
-3. `provide!` it in `WorldContext`'s constructor.
+3. `provide!` it in `WorldContext`'s constructor (and `listen!` for its news, if it has some).
 4. Call it through `context.services.call!(S.method)`, which works the same standalone and in a
    cluster.
 

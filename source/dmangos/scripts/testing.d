@@ -210,6 +210,8 @@ final class TestCreature : CreatureHost
     void hostZoneUnderAttack(EntityRef) {}
     void hostWalkPath() {}
     ActionResult hostSendHome(EntityRef) { return ActionResult.ok; }
+    void hostWarEffortHandIn(uint, uint) {}
+    void hostWarEffortColossus(uint) {}
 }
 
 /// A dungeon copy: see the module documentation.

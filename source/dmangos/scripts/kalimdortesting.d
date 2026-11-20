@@ -255,6 +255,11 @@ final class RecordingCreature : CreatureHost
         note(c == self_ ? "home" : "home " ~ c.entry.to!string);
         return ActionResult.ok;
     }
+    void hostWarEffortHandIn(uint quest, uint resource)
+    {
+        note("war effort " ~ quest.to!string ~ " " ~ resource.to!string);
+    }
+    void hostWarEffortColossus(uint colossus) { note("colossus " ~ colossus.to!string); }
 }
 
 /// A script of `Module` on a recording creature, and the means to drive it.
@@ -396,6 +401,14 @@ final class RecordingObject : GameObjectHost
     uint hostRandom(uint below) { return below ? randomValue % below : 0; }
     uint hostMinuteOfDay() { return minute; }
     uint hostAreaId() { return area; }
+    uint warEffortPhase;        /// the war effort's phase, as heard
+    uint hostWarEffortPhase() { return warEffortPhase; }
+    void hostWarEffortGong(EntityRef player) { did ~= "gong"; }
+    ActionResult hostZoneNotice(uint text)
+    {
+        did ~= "notice " ~ text.to!string;
+        return ActionResult.ok;
+    }
 }
 
 /// Open-world round 2: a game object script of `Module` on a recording object, and the means to drive it.

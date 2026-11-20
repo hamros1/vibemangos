@@ -231,7 +231,7 @@ private int run(WorldConfig config, string configPath)
         context.database = new FencedDatabase(context.database, () => cluster.regions.leaseHolds(MonoTime.currTime));
         // Cluster services (docs/SERVICES.md): where each runs is in the region table; calls go over the links.
         {
-            import dmangos.cluster.protocol : ServiceCall, ServiceReply;
+            import dmangos.cluster.protocol : ServiceCall, ServiceNews, ServiceReply;
             import dmangos.cluster.services : serviceMap, ServiceKind;
 
             context.services.self = cluster.id;
@@ -240,6 +240,9 @@ private int run(WorldConfig config, string configPath)
             context.services.sendReply = (ushort node, const ref ServiceReply r) => cluster.sendTo(node, r);
             cluster.onServiceCall = (ushort peer, const ref ServiceCall c) { context.services.receiveCall(peer, c); };
             cluster.onServiceReply = (ushort peer, const ref ServiceReply r) { context.services.receiveReply(peer, r); };
+            context.services.sendNews = (const ref ServiceNews n) { cluster.broadcast(n); };
+            cluster.onServiceNews = (ushort peer, const ref ServiceNews n) { context.services.receiveNews(peer, n); };
+            context.askWarEffort(); // how it stands, once its service is placed (and every change after)
         }
         // And a queued write is dropped if the writer reaches it after the lease lapsed (step 6).
         behind.writableUntil = () {

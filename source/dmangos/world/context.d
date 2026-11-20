@@ -46,6 +46,7 @@ import dmangos.world.creatureai : LinkEvent;
 import dmangos.world.objects : HighGuid, makeGuid;
 import dmangos.world.unit : UnitKind;
 import dmangos.world.bgqueue : battlegroundOfMap, BattlegroundQueue, BattlegroundQueueHost;
+import dmangos.world.wareffort : WarEffort, WarEffortHost;
 import dmangos.cluster.protocol : ChannelCommand;
 import dmangos.world.opcodes : ChatType, Language, Opcode;
 import dmangos.world.creatureai : CombatWorld, CreatureLore;
@@ -525,6 +526,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         updateGameEvents(clock(), true); // before any cell loads, so its spawns follow the events now
         services.provide!ChannelsHost((const(ubyte)[]) => ChannelsHost(new ChannelService(this, client,
             ChannelSettings(config.allowTwoSideInteractionChannel))));
+        services.provide!WarEffortHost(&newWarEffortHost);
+        services.listen!(WarEffortHost, WarEffort)(&warEffortHeard); // before it starts: it tells as it does
         startAllServices();
     }
 
@@ -914,9 +917,14 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return true;
     }
 
-    /// Whether game object spawn `guid` is in the world as its game event (if any) stands.
+    /// Whether game object spawn `guid` is in the world as its game event (if any) stands, or as the war
+    /// effort does (its piles of supplies).
     bool gameObjectInEvents(uint guid)
     {
+        import dmangos.world.wareffort : isSupplyPile;
+
+        if (isSupplyPile(guid))
+            return warEffort.pileUp(guid);
         if (const e = guid in data.gameObjectGameEvents)
             return gameEvents.spawnIn(*e);
         return true;
@@ -1067,7 +1075,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                         }
                 }
                 else if (auto go = cast(GameObject) o)
-                    if (go.spawn.guid in data.gameObjectGameEvents && !gameObjectInEvents(go.spawn.guid))
+                    if (eventObject(go.spawn.guid) && !gameObjectInEvents(go.spawn.guid))
                         gone ~= go.guid;
             });
             foreach (guid; gone)
@@ -1104,7 +1112,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                         foreach (index; indexes)
                         {
                             const spawn = &data.gameObjectSpawns[index];
-                            if (spawn.guid !in data.gameObjectGameEvents || !gameObjectInEvents(spawn.guid)
+                            if (!eventObject(spawn.guid) || !gameObjectInEvents(spawn.guid)
                                 || spawn.respawnSeconds < 0 || !upInPool(PoolMember.Kind.gameObject, spawn.guid))
                                 continue;
                             auto go = makeGameObject(spawn);
@@ -1118,6 +1126,125 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             refresh(m);
         foreach (m; instanceMaps.values)
             refresh(m);
+    }
+
+    /// Whether game object spawn `guid` comes and goes as the events (or the war effort) say.
+    private bool eventObject(uint guid)
+    {
+        import dmangos.world.wareffort : isSupplyPile;
+
+        return (guid in data.gameObjectGameEvents) !is null || isSupplyPile(guid);
+    }
+
+    // -----------------------------------------------------------------------
+    // The Ahn'Qiraj war effort (`dmangos.world.wareffort`)
+    // -----------------------------------------------------------------------
+
+    /// The war effort as this node last heard it from its service: the events, piles and capitals follow it.
+    WarEffort warEffort;
+
+    /// The war effort's service, on the node the cluster places it on: from the state it moved with, or
+    /// from the characters database's row.
+    private WarEffortHost newWarEffortHost(const(ubyte)[] moved)
+    {
+        import dmangos.log : error, info;
+        import dmangos.plaindata : decode;
+        import dmangos.world.wareffort : saveId;
+
+        WarEffortHost host;
+        if (moved.length)
+            decode(moved, host.state);
+        else
+        {
+            const text = database.worldState(saveId);
+            if (!WarEffort.parse(text, unixTime, host.state))
+                error!"world_state %s: '%s' is not the war effort's state; it starts anew"(saveId, text);
+            else
+                info!"the war effort: phase %s"(host.state.phase);
+        }
+        host.clock = () => unixTime;
+        host.save = (string text) { database.saveWorldState(saveId, text); };
+        host.announce = (const ref WarEffort w) { services.announce!WarEffortHost(w); };
+        return host;
+    }
+
+    /// Asks the war effort's service how it stands (a cluster node starting: wherever it is placed).
+    void askWarEffort()
+    {
+        import dmangos.world.wareffort : WarEffortQuery;
+
+        services.call!(WarEffortHost.current)(WarEffortQuery(nodeId), (WarEffort w) { warEffortHeard(w); });
+    }
+
+    /**
+     * The war effort's service told how it stands: this node starts and stops its phases' game events,
+     * brings or takes away its piles of supplies, and updates the world states of its players in the capitals.
+     */
+    void warEffortHeard(const ref WarEffort now)
+    {
+        import std.algorithm.searching : canFind;
+        import dmangos.world.wareffort : colossusEvents, phaseEvents;
+
+        const before = warEffort;
+        warEffort = now;
+        const on = now.events;
+        bool eventsChanged;
+        foreach (id; phaseEvents[] ~ colossusEvents[])
+            if (on.canFind(id) != gameEvents.started(id))
+            {
+                gameEvents.start(id, on.canFind(id));
+                eventsChanged = true;
+            }
+        if (eventsChanged)
+            updateGameEvents(clock(), true);
+        if (before.pilesUp != now.pilesUp)
+            gameEventSpawnsChanged();
+
+        // The capitals' counters and days.
+        const time = unixTime;
+        foreach (player; online.values)
+        {
+            if (player.character is null)
+                continue;
+            const zone = player.character.data.zone;
+            uint[uint] was;
+            foreach (s; before.worldStates(zone, time))
+                was[s[0]] = s[1];
+            foreach (s; now.worldStates(zone, time))
+                if (was.get(s[0], uint.max) != s[1])
+                {
+                    import dmangos.world.map : packetBody;
+                    import dmangos.world.packets : ServerUpdateWorldState;
+
+                    player.deliver(Opcode.SMSG_UPDATE_WORLD_STATE, packetBody(ServerUpdateWorldState(s[0], s[1])));
+                }
+        }
+    }
+
+    /// The war effort's world states for a player in `zone` (`SMSG_INIT_WORLD_STATES`).
+    uint[2][] warEffortWorldStates(uint zone)
+    {
+        return warEffort.worldStates(zone, unixTime);
+    }
+
+    /// See `CreatureLore.warEffortHandIn`: the quest's first required items, for the service to count.
+    void warEffortHandIn(uint quest, uint resource)
+    {
+        import dmangos.world.wareffort : AqResource, resourceCount, WarEffortContribution;
+
+        const q = data.quests.quest(quest);
+        if (q is null || resource >= resourceCount)
+            return;
+        services.call!(WarEffortHost.contribute)(WarEffortContribution(cast(AqResource) resource, q.reqItemCount[0]));
+    }
+
+    /// See `CreatureLore.warEffortColossusFell`.
+    void warEffortColossusFell(uint colossus)
+    {
+        import dmangos.world.wareffort : Colossus, WarEffortColossus;
+
+        if (colossus <= Colossus.max)
+            services.call!(WarEffortHost.colossusDied)(WarEffortColossus(cast(Colossus) colossus));
     }
 
     /// The battleground queues, as the service on this node runs them (docs/SERVICES.md).
@@ -3433,6 +3560,14 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         raiseObject(go, map, QuestAccepted(player, quest));
     }
 
+    /// A player was rewarded for quest `quest` by game object `go` (the Scarab Gong): its script hears of it.
+    void gameObjectQuestRewarded(GameObject go, Map map, EntityRef player, uint quest)
+    {
+        import dmangos.script.api : QuestRewarded;
+
+        raiseObject(go, map, QuestRewarded(player, quest));
+    }
+
     /// The scripted game objects put in the world since the last tick hear `Spawned` (once their cell has
     /// loaded: what is near them is there), and those with steps pending tick `ms` on.
     private void gameObjectScriptsTick(int ms)
@@ -3582,6 +3717,45 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             auto t = terrain(map.id);
             const p = go.position;
             return t is null || !t.knows(p.x, p.y) ? 0 : t.zoneAndArea(p.x, p.y, p.z)[1];
+        }
+
+        // The war effort:
+
+        uint hostWarEffortPhase()
+        {
+            return warEffort.phase;
+        }
+
+        void hostWarEffortGong(EntityRef player)
+        {
+            import dmangos.log : info;
+            import dmangos.world.wareffort : WarEffortGong, WarEffortGongReply;
+
+            const who = player.guid;
+            services.call!(WarEffortHost.gong)(WarEffortGong(who), (WarEffortGongReply r) {
+                if (r.warBegan)
+                    info!"the war effort: player %s rang the Scarab Gong; the ten-hour war begins"(who & 0xFFFF_FFFF);
+            });
+        }
+
+        ActionResult hostZoneNotice(uint text)
+        {
+            import dmangos.world.battleground : battlegroundMessage;
+
+            const said = data.npcs.broadcastTexts.get(text, BroadcastText.init);
+            auto t = terrain(map.id);
+            const p = go.position;
+            if (said.maleText.length == 0 && said.femaleText.length == 0)
+                return ActionResult.failed;
+            if (t is null || !t.knows(p.x, p.y))
+                return ActionResult.notHere;
+            const zone = t.zoneAndArea(p.x, p.y, p.z)[0];
+            const body_ = battlegroundMessage(ChatType.CHAT_MSG_BG_SYSTEM_NEUTRAL, said.text(false));
+            foreach (player; online.values) // those this node simulates (a zone across nodes: each node's own)
+                if (player.character !is null && player.character.data.map == map.id
+                        && player.character.data.zone == zone)
+                    player.deliver(Opcode.SMSG_MESSAGECHAT, body_);
+            return ActionResult.ok;
         }
 
         // Eastern Kingdoms scripts:

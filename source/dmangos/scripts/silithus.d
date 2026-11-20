@@ -2,7 +2,8 @@
  * Silithus: Nelson the Nice, who shows a hunter on "Stave of the Ancients" (7636) his real face,
  * Solenor the Slayer, a demon to be fought alone: anyone else joining in, the demon leaves and The
  * Cleaner comes for them all. Open-world round 2: the opening of Ahn'Qiraj played again for "A Pawn on
- * the Eternal Board" (Anachronos the Ancient, called by the Crystalline Tear), and the Colossi waking.
+ * the Eternal Board" (Anachronos the Ancient, called by the Crystalline Tear), and the Colossi waking
+ * (and falling, which the war effort remembers).
  */
 module dmangos.scripts.silithus;
 
@@ -516,10 +517,22 @@ struct CrystallineTear
     }
 }
 
-/// The Colossi of Silithus (Ashi, Regal, Zora): each tells the land it has woken.
+/// The Colossi of Silithus (Ashi, Regal, Zora): each tells the land it has woken; the war effort remembers
+/// each that falls.
 @creature("npc_silithus_boss")
 struct SilithusColossus
 {
+    void on(ref CreatureContext me, const ref Died e)
+    {
+        switch (me.self.entry)
+        {
+        case 15742: me.warEffortColossusFell(0); break; // Ashi
+        case 15741: me.warEffortColossusFell(1); break; // Regal
+        case 15740: me.warEffortColossusFell(2); break; // Zora
+        default: break;
+        }
+    }
+
     void on(ref CreatureContext me, const ref Spawned e)
     {
         switch (me.self.entry)
@@ -548,6 +561,11 @@ unittest
     assert(s.host.has("summon 14503") && s.host.has("despawn"), "another player: the Cleaner");
 
     // Open-world round 2: the Tear calls Anachronos; the scene runs to its end and its credit.
+    // The war effort: a Colossus's fall.
+    auto regal = Driven!self("npc_silithus_boss", 15_741);
+    regal.raise(Died(hero));
+    assert(regal.host.has("colossus 1"));
+
     auto tear = DrivenObject!self("go_crystalline_tear", 180_633);
     tear.raise(QuestAccepted(hero, AnachronosTheAncient.questPawnOnTheEternalBoard));
     assert(tear.host.has("summon 15381"));
