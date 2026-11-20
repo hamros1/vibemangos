@@ -100,7 +100,7 @@ final class Scene
                 map.random.seed(seed); // the copy's rolls the same at every run
             }
             assert(me.player.data.map == mapId && me.instanceId == instance, "not there");
-            hero.read();
+            note(hero.read(), k == 0); // what met it as it came (a boss that saw it: its aggro line)
             heroes ~= hero;
         }
         fill();

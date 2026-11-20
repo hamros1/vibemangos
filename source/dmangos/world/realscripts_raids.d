@@ -1255,3 +1255,48 @@ unittest
     s.run(2.seconds);
     assert(s.ask(14) == 3, "his encounter not done");
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// World bosses
+// ---------------------------------------------------------------------------------------------------------------
+
+/**
+ * Lord Kazzak (Blasted Lands) and Azuregos (Azshara), where the world database spawns them; and the four dragons of
+ * the Emerald Dream, which this world database spawns nowhere (no `creature` row, no spawn group: they are summoned
+ * here, in Duskwood's Twilight Grove). Kazzak: one of his two aggro lines; Shadow Bolt Volley, Cleave, Thunderclap,
+ * Mark of Kazzak (25 s), Void Bolt (30 s), Twisted Reflection (33 s); his death line. Azuregos: Mark of Frost, Frost
+ * Breath, Cleave, Mana Storm, Chill, Reflection, Arcane Vacuum at 30 s with his line. The dragons: Mark of Nature at
+ * the pull, Noxious Breath, Tail Sweep, Seeping Fog at 30 s, their own spell, and at 75% their special (with its
+ * line): Emeriss' Corruption of the Earth, Lethon's Draw Spirit (his spirit shades), Taerar's banishment (his shades),
+ * Ysondre's demented druids.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    enum : uint { spiritShade = 15_261, shadeOfTaerar = 15_302, dementedDruid = 15_260 }
+    auto kazzakAggro = (Scene s, Creature boss) {
+        assert(s.said(-1_000_148) || s.said(-1_000_149), "Kazzak: no aggro line\n" ~ s.seen());
+    };
+    const grove = Position(-10_428, -392, 44.4f);
+    uint[] dragon = [24_818, 15_847, 24_813, 24_814, 25_041];
+    const Boss[] bosses = [
+        Boss("Lord Kazzak", 0, 12_397, -1, [], [Stage(0, 0, null, null, null, null, toDelegate(kazzakAggro)),
+            Stage(0, 34, [21_341, 20_691, 26_554, 21_056, 21_066, 21_063])], 0, -1_000_155),
+        Boss("Azuregos", 1, 6109, -1, [], [Stage(0, 32, [23_184, 21_099, 19_983, 21_097, 21_098, 22_067, 21_147],
+            [-1_000_100])]),
+        Boss("Emeriss", 0, 14_889, -1, [], [Stage(0, 31, dragon ~ [24_928u]),
+            Stage(74, 2, [24_910], [-1_000_402])], -1_000_401, 0, 2, grove),
+        Boss("Lethon", 0, 14_888, -1, [], [Stage(0, 31, dragon ~ [24_834u]),
+            Stage(74, 2, [24_811], [-1_000_667], [[spiritShade, 1]])], -1_000_666, 0, 2, grove),
+        Boss("Taerar", 0, 14_890, -1, [], [Stage(0, 31, dragon ~ [24_857u, 22_686u]),
+            Stage(74, 2, [24_883], [-1_000_400], [[shadeOfTaerar, 1]])], -1_000_399, 0, 2, grove),
+        Boss("Ysondre", 0, 14_887, -1, [], [Stage(0, 31, dragon ~ [24_819u]),
+            Stage(74, 2, [24_796], [-1_000_361], [[dementedDruid, 1]])], -1_000_360, 0, 2, grove),
+    ];
+    foreach (b; bosses)
+    {
+        fight(b);
+        wipe(b);
+    }
+}
