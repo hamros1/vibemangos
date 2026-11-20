@@ -387,7 +387,10 @@ private:
                 sendPreparedGossip(creature);
             }
             else if (item.actionMenu < 0)
+            {
                 closeGossip();
+                talkedToCreature(creature.npcTemplate.entry, creature.guid); // a "speak to" objective (`TalkedToCreature`)
+            }
             break;
         case GossipOption.vendor:
             sendListInventory(creature.guid);

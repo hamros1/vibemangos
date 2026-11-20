@@ -342,6 +342,8 @@ mixin template CharacterLogin()
         loadHonor();
         loadBattleground();
         loadEnchantmentTimers();
+        // Timed items that run in real time lose the time logged out.
+        loadItemDurations(player.data.logoutTime > 0 ? context.unixTime - player.data.logoutTime : 0);
         applyPassiveSpells();
         petsOnArrival(); // the saved current pet comes back
         battlegroundOnLogin();

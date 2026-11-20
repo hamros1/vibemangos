@@ -106,10 +106,11 @@ private:
     }
 
     /**
-     * An item given by a GM: `count` of `entry` carried, onto stacks first, then into free slots; as
-     * many as the item's limit and the room allow. Returns how many were given.
+     * An item given: `count` of `entry` carried, onto stacks first, then into free slots; as many as the item's
+     * limit and the room allow. Returns how many were given. The client's line (`SMSG_ITEM_PUSH_RESULT`) is a
+     * GM's gift by default ("You create"); a quest's item is `received` and not `created`, a spell's both.
      */
-    uint giveItem(uint entry, uint count)
+    uint giveItem(uint entry, uint count, bool received = false, bool created = true, bool showInChat = true)
     {
         import dmangos.world.inventory : InventoryResult, ItemPosCount;
         import dmangos.world.defines : nullBag, nullSlot;
@@ -123,7 +124,7 @@ private:
         auto item = player.inventory.storeNew(dest, entry);
         if (item is null)
             return 0;
-        sendNewItem(item, count, false, true);
+        sendNewItem(item, count, received, created, showInChat);
         flushInventory();
         return count;
     }
@@ -148,6 +149,7 @@ private:
         saveHonor();
         saveBattleground();
         saveEnchantmentTimes();
+        saveItemDurations();
         saveTimer.reset();
     }
 

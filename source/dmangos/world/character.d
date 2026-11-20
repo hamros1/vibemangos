@@ -20,6 +20,8 @@ import dmangos.world.honor : HonorHandlers;
 import dmangos.world.pvp : PvPHandlers;
 import dmangos.world.battleground : BattlegroundHandlers;
 import dmangos.world.enchanting : EnchantingHandlers;
+import dmangos.world.itemuse : ItemUseHandlers;
+import dmangos.world.professions : ProfessionHandlers;
 import core.time : Duration, MonoTime, msecs, seconds;
 import std.algorithm.searching : canFind;
 
@@ -797,6 +799,8 @@ private:
     mixin PvPHandlers;
     mixin BattlegroundHandlers;
     mixin EnchantingHandlers;
+    mixin ItemUseHandlers;
+    mixin ProfessionHandlers;
     mixin HonorHandlers;
     mixin Level0Commands;
     mixin Level1Commands;

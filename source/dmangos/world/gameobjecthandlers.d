@@ -218,16 +218,7 @@ mixin template GameObjectHandlers()
     /// A game object used counts for its quest objective, for the group near it too.
     void rewardAtCast(GameObject go)
     {
-        import dmangos.world.character : Character;
-
-        const target = -cast(int) go.template_.entry;
-        auto group = context.groups.of(player.guid);
-        if (group is null)
-            return creditCreatureOrGo(target, 0, go.guid);
-        foreach (ref slot; group.members)
-            if (auto member = cast(Character) context.onlinePlayer(slot.guid))
-                if (member is this || (member.map is map && member.withinInteraction(go, 74)))
-                    member.creditCreatureOrGo(target, 0, go.guid);
+        rewardPlayerAndGroupAtCast(go.guid, 0);
     }
 
     /// A chair (`GAMEOBJECT_TYPE_CHAIR`): to the nearest of its slots, sitting at its height.
@@ -315,7 +306,7 @@ mixin template GameObjectHandlers()
     package SpellCastResult checkGameObjectTarget(const(SpellInfo)* spell, const ref SpellTargets targets,
         uint castItem)
     {
-        enum uint openLock = 33;
+        enum uint openLock = 33, openLockItem = 59;
         if (!targets.gameObject)
             return SpellCastResult.ok;
         auto go = cast(GameObject) map.findObject(targets.gameObject);
@@ -324,7 +315,7 @@ mixin template GameObjectHandlers()
         if (!withinInteraction(go, 5))
             return SpellCastResult.outOfRange;
         foreach (i; 0 .. 3)
-            if (spell.effect[i] == openLock)
+            if (spell.effect[i] == openLock || spell.effect[i] == openLockItem)
             {
                 if (go.type == GameObjectType.chest && go.lootState != GoLootState.ready && go.loot is null)
                     return SpellCastResult.chestInUse;
@@ -453,7 +444,10 @@ mixin template GameObjectHandlers()
             sendGameObjectGossip(go, item.actionMenu, hasQuests ? &giver : null);
         }
         else if (item.actionMenu < 0)
+        {
             closeGossip();
+            talkedToCreature(go.template_.entry, go.guid); // as CMaNGOS does for any gossip source
+        }
     }
 
     /**

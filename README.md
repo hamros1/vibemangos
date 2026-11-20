@@ -291,6 +291,16 @@ What works now:
   * **Items:** moving, stacking, splitting, equipping, bags, the bank and
     its bag slots, the keyring, destroying, ammo; buying (with limited stock), selling, buyback and
     repairs. Every change is saved to `character_inventory` and `item_instance` as it happens.
+    Items asking for a reputation (`RequiredReputationFaction`/`Rank`) are worn by the player's real rank.
+    Using an item checks it may be used (worn if it is to be worn, class, skill, reputation, out-of-combat
+    spells) and binds one that binds on use. Charges count down (`ITEM_FIELD_SPELL_CHARGES`): out of them,
+    a used-up item goes and one with positive charges stays ("No charges remain"). Putting on an item with
+    an on-use spell starts its 30-second equip cooldown (`SMSG_ITEM_COOLDOWN`). Timed items
+    (`Duration`) run down by the second while carried and go at 0, the client told their time
+    (`SMSG_ITEM_TIME_UPDATE`); those flagged real-time lose the time logged out too. Damage dealt or
+    taken wears a random worn item now and then (0.5%), a thrown weapon that does not stack each throw.
+    Ammunition adds its damage per second, times the weapon's speed, to a bow's, crossbow's or gun's
+    damage; a quiver's or ammo pouch's haste applies while it is in a bag slot.
   * **Queries:** name, item (`SMSG_ITEM_QUERY_SINGLE_RESPONSE`, from every `item_template`
     column), time and played time.
   * **Settings:** sitting and standing, target selection, action bar buttons and toggles, and
@@ -521,7 +531,12 @@ What works now:
     orange, three times in four yellow, one in four green, never grey. Items with loot (clams, sacks, boxes of
     supplies) open in the bags (`CMSG_OPEN_ITEM`, unless a lock needs picking) to their
     `item_loot_template` loot and money; emptied, they are gone (an item left half looted keeps its
-    loot until logout, not across it: `item_loot` is not used).
+    loot until logout, not across it: `item_loot` is not used). A recipe needing a spell focus (an anvil,
+    a forge, a cooking fire: `RequiresSpellFocus`) is refused away from one ("Requires ...") and one needing
+    tools (`Totem1/2`: a hammer, a mining pick, thieves' tools) without them in the bags. Disenchanting
+    opens an uncommon to epic weapon's or armor's `disenchant_loot_template` loot (what is left goes into
+    the bags on release) and destroys it. A lockbox is picked open by Pick Lock with the lockpicking skill
+    its lock asks for (an orange one may resist: "Failed attempt"), raising the skill, then opens as any.
   * **Spells:** a known spell is checked (alive, not busy, its cooldown and category cooldown and the global
     cooldown over, standing, the power and reagents it costs, an enemy or friend in range and in
     sight), shown with its cast time (`SpellCastTimes.dbc`; moving interrupts most), then goes: its
@@ -585,7 +600,8 @@ What works now:
   * **Quests:** quest givers (`creature_questrelation`, `creature_involvedrelation`) show what they have for the player
     (the exclamation and question marks), list their quests in their gossip (or open the only one),
     and give them as `quest_template` says who may take them (class, race, level, skill, condition,
-    the quests before, exclusive groups, done unless repeatable). The quest log holds 20 quests with
+    the quests before, exclusive groups (a negative one asks for every quest of the group), done unless
+    repeatable). The quest log holds 20 quests with
     their kill counters. An escort for the party (`QuestFlags` 0x2) taken by one member is offered to
     the others who could take it. Kills count for the player and its group near the kill; the items asked
     for count as they are carried (and quest drops are looted only while a quest asks for them); a
@@ -598,6 +614,13 @@ What works now:
     the one who shared it hears who took it. A timed quest shows its end in the log (one at a time)
     and fails when its time is up. A list of several quests is headed by the giver's
     `questgiver_greeting` and its emote. Progress is saved in `character_queststatus`.
+    A spell cast at a quest's creature or object counts for an objective that names it (`ReqSpellCast`,
+    for the group near too; a channel's when it ends), as a quest-complete spell effect completes its
+    quest and closing a gossip menu counts "speak to" objectives. An abandoned quest takes its source item
+    back; a quest to be done alive (`QUEST_FLAGS_STAY_ALIVE`) fails when the player releases its spirit; a
+    flag quest (`QUEST_FLAGS_AUTO_REWARDED`) is turned in as it completes. In a raid group only raid quests
+    count kills, quest drops and quest objects. Quest objects' sparkle is sent again as the quests change.
+    Reward and source items are "received", not "created" (rewards with no chat line of their own).
   * **Flight masters:** a flight master's node (`TaxiNodes.dbc`) is learned at the first talk and saved in `taximask`; then the
     master shows the known nodes. A flight to one, directly or over several legs (`TaxiPath.dbc`,
     `TaxiPathNode.dbc`), costs the paths' prices (10% less at honored with the master's faction),

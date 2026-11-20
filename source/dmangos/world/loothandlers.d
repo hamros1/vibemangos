@@ -20,7 +20,7 @@ mixin template LootHandlers()
     import dmangos.world.creature : Creature;
     import dmangos.world.defines : nullBag, nullSlot, UnitFlags;
     import dmangos.world.experience;
-    import dmangos.world.inventory : EquipError, InventoryResult, ItemPosCount;
+    import dmangos.world.inventory : EquipError, InventoryResult, Item, ItemPosCount;
     import dmangos.world.loot;
     import dmangos.world.inworld : ArrivalAction;
     import dmangos.world.loothandlers : ClientLootMasterGive, ClientLootRoll, ClientLootSlot;
@@ -102,8 +102,27 @@ private:
                 return flushInventory();
             }
         }
+        showItemLoot(item);
+    }
+
+    /**
+     * An item's own loot (`item_loot_template`, its money) shown to the player: an item opened, or a
+     * lockbox picked open; emptied, the item is destroyed. `disenchanting`: what it disenchants into
+     * (`disenchant_loot_template` by its `DisenchantID`) instead, which is temporary: released, what is left
+     * goes into the bags (lost where it does not fit) and the item is destroyed all the same (CMaNGOS
+     * `Loot::Release`, `LOOT_DISENCHANTING`).
+     */
+    package void showItemLoot(Item item, bool disenchanting = false)
+    {
+        const proto = item.proto;
         const guid = item.fullGuid;
         auto loot = itemLoots.get(guid, null);
+        if (loot !is null && disenchanting)
+        {
+            loot.lootedForAll = null; // another kind of loot: made again
+            itemLoots.remove(guid);
+            loot = null;
+        }
         if (loot is null)
         {
             auto self = this;
@@ -113,7 +132,9 @@ private:
             loot.owners[player.guid] = true;
             loot.currentLooter = player.guid;
             loot.rule = LootRule.notGroup;
-            if (const template_ = context.data.loot.item[item.entry])
+            const lootTemplate = disenchanting ? context.data.loot.disenchant[proto.details.disenchantId]
+                : context.data.loot.item[item.entry];
+            if (const template_ = lootTemplate)
             {
                 bool meets(uint condition)
                 {
@@ -129,7 +150,15 @@ private:
 
                 loot.fill(template_, context.data.loot, context.data.items, map.random, &meets, &allowed);
             }
-            loot.generateMoney(proto.details.minMoneyLoot, proto.details.maxMoneyLoot, map.random);
+            if (disenchanting)
+                loot.beforeRelease = (Looter looter) {
+                    foreach (it; loot.items)
+                        if (it.slotTypeFor(looter.looterGuid, loot) != LootSlotType.none)
+                            looter.storeLoot(it.itemId, it.count, it.randomPropertyId, true);
+                    loot.items = null; // what did not fit is lost
+                };
+            else
+                loot.generateMoney(proto.details.minMoneyLoot, proto.details.maxMoneyLoot, map.random);
             // An item's loot released: emptied, the item is destroyed.
             loot.lootedForAll = () {
                 itemLoots.remove(guid);
