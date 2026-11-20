@@ -87,24 +87,20 @@ private:
         foreach (j; 0 .. 3)
             if (auraEffect(spell.effect[j]) && spell.casting.applyAuraName[j] == AuraType.periodicDamage)
                 values[j] = spellMod(SpellModOp.dot, spell, values[j]);
-        // The caster's spell damage or healing bonus over time: the bonus times the duration over
-        // 15 seconds (at most whole), shared out among the ticks.
+        // The caster's spell power over time: each tick its coefficient's share (`bonusCoefficient`).
         foreach (j; 0 .. 3)
             if (auraEffect(spell.effect[j]) && spell.casting.amplitude[j] > 0 && ms > 0)
             {
+                import dmangos.world.spellcast : bonusCoefficient;
+
                 const type = cast(AuraType) spell.casting.applyAuraName[j];
                 int done;
-                if (type == AuraType.periodicDamage)
-                    done = auraBonus(AuraType.modDamageDone, spell.casting.school);
+                if ((type == AuraType.periodicDamage || type == AuraType.periodicLeech) && spell.casting.school != 0)
+                    done = spellPower(1 << spell.casting.school);
                 else if (type == AuraType.periodicHeal)
-                    done = auraBonus(AuraType.modHealingDone, uint.max);
+                    done = healingPower();
                 if (done > 0)
-                {
-                    const ticks = ms / spell.casting.amplitude[j];
-                    const coefficient = ms >= 15_000 ? 1.0f : ms / 15_000.0f;
-                    if (ticks > 0)
-                        values[j] += cast(int)(done * coefficient / ticks);
-                }
+                    values[j] += cast(int)(done * bonusCoefficient(*spell, j, context.client, player.data.level));
             }
         if (auto creature = cast(Creature) map.findObject(target))
         {
@@ -294,20 +290,6 @@ private:
         foreach (aura; s.player.auras.list.dup)
             if (aura.spell.id == spell && aura.caster == source)
                 s.removeAura(aura);
-    }
-
-    /// The caster's auras of `type` (for spells of `school`; `uint.max`: any): their amounts summed.
-    int auraBonus(AuraType type, uint school)
-    {
-        if (school == 0)
-            return 0; // physical: none
-        int done;
-        foreach (aura; player.auras.list)
-            foreach (k; 0 .. 3)
-                if ((aura.effects & (1 << k)) && aura.type(k) == type
-                    && (school == uint.max || (aura.misc(k) & (1 << school))))
-                    done += aura.amount[k];
-        return done;
     }
 
     /**

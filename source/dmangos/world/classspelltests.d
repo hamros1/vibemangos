@@ -942,8 +942,8 @@ unittest
 }
 
 /**
- * Holy Shock heals a friend and blasts an enemy (its rank's spells); Holy Light's script effect heals by its own
- * spell (19968), and Illumination gives the mana of the spell cast back when it crits.
+ * Holy Shock heals a friend and blasts an enemy (its rank's spells); Holy Light's script effect heals by a spell of
+ * its own (rank 1's 19982), and Illumination gives the mana of the spell cast back when it crits.
  */
 unittest
 {
@@ -980,7 +980,7 @@ unittest
         casting.spellIconId = 70;
         casting.manaCost = 35;
     }
-    with (a.spell(19968, SpellEffect.heal, ImplicitTarget.friend, 0))
+    with (a.spell(19982, SpellEffect.heal, ImplicitTarget.friend, 0))
     {
         casting.spellFamilyName = 10;
         casting.spellFamilyFlags = 0x4000;
@@ -1008,7 +1008,7 @@ unittest
     a.player.values.set!UNIT_FIELD_POWER1(Power.mana, 500u);
     a.player.values.set!UNIT_FIELD_HEALTH(100u);
     a.cast_(635);
-    assert(a.player.values.get!UNIT_FIELD_HEALTH == 100 + 66, "44 healed by 19968, a crit");
+    assert(a.player.values.get!UNIT_FIELD_HEALTH == 100 + 66, "44 healed by 19982, a crit");
     assert(a.player.values.get!UNIT_FIELD_POWER1(Power.mana) == 500 - 35 + 35, "Holy Light's mana back");
 }
 
@@ -1202,12 +1202,17 @@ unittest
     auto power = a.spell(90102, SpellEffect.applyAura, ImplicitTarget.caster); // 100 holy spell power
     a.auraEffect(power, 0, AuraType.modDamageDone, ImplicitTarget.caster, 100, 2);
     a.me.addAura(makeAura(power, a.player.guid, 60, -1, true, [100, 0, 0]));
-    // 100 * 0.092 * 2.0 * 0.2875 = 5 more (and what every holy spell gets of it besides: 1.5 / 3.5).
-    const damage = struck();
-    assert(damage == 2 + 5 || damage == 2 + 5 + 42, "a level 1 spell's share of the spell power");
+    // Blizzard's coefficient of rank 1's damage (25742): 0.029, 0.1 less the level 1 penalty; 100 power, 2 more.
+    imported!"dmangos.world.clientdata".SpellCoefficient[3] row;
+    row[0] = imported!"dmangos.world.clientdata".SpellCoefficient(true, SpellEffect.schoolDamage, 0, 0.029f);
+    a.context.client.spellCoefficients[25742] = row;
+    assert(struck() == 2 + 2, "a level 1 spell's share of the spell power, and only once");
 }
 
-/// Mana Shield (1463: 120) absorbs half the arcane spell power more: each stack of Unstable Power (24659: 17).
+/**
+ * Mana Shield (1463: 120) absorbs what it says, however much spell power the mage has (three stacks of Unstable Power,
+ * 24659: 17 each): Blizzard's coefficient for it is none (absorbs took spell power only from 2.0 on).
+ */
 unittest
 {
     auto a = new Arena(PlayerClass.mage);
@@ -1229,7 +1234,7 @@ unittest
         a.me.addAura(makeAura(unstable, a.player.guid, 60, 10_000, true, [17, 0, 0]));
     assert(a.player.auras.find(24659).stacks == 3);
     a.cast_(1463);
-    assert(a.player.auras.find(1463).amount[0] == 120 + 3 * 17 / 2, "half of three stacks' 51");
+    assert(a.player.auras.find(1463).amount[0] == 120, "no spell power");
 }
 
 /// Healing Way (29203: 6% a stack, three at most) adds to Healing Wave (331: 34) by its stacks.

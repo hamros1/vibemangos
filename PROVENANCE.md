@@ -1355,6 +1355,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Constants: `SMSG_CAST_RESULT`, `SMSG_SPELLENERGIZELOG`, `SMSG_SPELLHEALLOG`, `SMSG_SPELLLOGMISS`, `SMSG_SPELLNONMELEEDAMAGELOG`, `SMSG_SPELL_FAILURE`, `SMSG_SPELL_GO`, `SMSG_SPELL_START`, `SPELL_ATTR_CANT_USED_IN_COMBAT`, `SPELL_ATTR_CASTABLE_WHILE_DEAD`, `SPELL_ATTR_EX2_CANT_CRIT`, `SPELL_ATTR_EX3_ALWAYS_HIT`, `SPELL_ATTR_ON_NEXT_SWING`, `SPELL_ATTR_ON_NEXT_SWING_NO_DAMAGE`, `SPELL_ATTR_HEARTBEAT_RESIST`, `SPELL_ATTR_EX3_COMPLETELY_BLOCKED`, `SPELL_MISS_BLOCK`
 * Also: `SpellLog::Initialize`, `SpellLog::AddLog`, `SpellLog::SendToSet` (`SMSG_SPELLLOGEXECUTE`; the targets' guids packed for the 1.12 client, where CMaNGOS writes them whole)
 * Also: `Spell::IsInterruptible` (`SPELL_INTERRUPT_FLAG_COMBAT`, `SPELL_PREVENTION_TYPE_SILENCE`), `CalculateSpellDuration` (combo points), `POWER_HEALTH`
+* Not from an emulator: `bonusCoefficient`, Blizzard's spell power coefficients (Classic Era's SpellEffect.db2, `tools/fetch-coefficients.py`) with the 1.12 rules as fallback (docs/FORMULAS.md)
 
 ## world/spellhandlers.d
 

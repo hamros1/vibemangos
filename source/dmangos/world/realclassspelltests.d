@@ -166,7 +166,8 @@ unittest
     import std.format : format; assert(heals.all!(h => fits(h, 18)) && heals.any!(h => !fits(h, 6)), format!"18%% more %s"(heals));
 }
 
-/// Mana Shield (1463) absorbs half the arcane spell power more: each of Unstable Power's stacks (24659: 17).
+/// Mana Shield (1463) absorbs the same however much spell power (Unstable Power's stacks, 24659: 17): Blizzard's
+/// coefficient for it is none.
 unittest
 {
     if (!haveRealData())
@@ -180,13 +181,13 @@ unittest
     giveAura(w, mage, 24659, 17, 3);
     w.now += 2.seconds;
     assert(w.cast_(mage, 1463) == SpellCastResult.ok);
-    assert(me.player.auras.find(1463).amount[0] == plain + 51 / 2, "half of three stacks' 51");
+    assert(me.player.auras.find(1463).amount[0] == plain, "no spell power");
 }
 
 /**
  * Seal of Righteousness, rank 1 (20154, learned at level 1), on a swing without a weapon: its holy damage (25742) is of
- * the weapon's own damage (a fist's 1 to 2), not the attack power's; and a level 1 spell's share of the spell power
- * (0.2875: `CalculateLevelPenalty`), of each of Unstable Power's six stacks.
+ * the weapon's own damage (a fist's 1 to 2), not the attack power's; and Blizzard's coefficient of 25742 (0.029: 0.1
+ * less the level 1 penalty) of the spell power, each of Unstable Power's six stacks' (102), once.
  */
 unittest
 {
@@ -203,8 +204,8 @@ unittest
     giveAura(w, paladin, 24659, 17, 6);
     const seal = w.context.data.spells.spell(20154);
     // Its 108 and 18 a level to level 7: 216. 0.85 * ceil(216 * 1.2 * 1.03 * 2.0 / 100) - 1 = 4.1; 0.03 of the fist's
-    // 1.5; 1; and 102 * 0.092 * 2.0 * 0.2875.
-    const expected = cast(int)(4.1f + 0.045f) + 1 + cast(int)(102 * 0.092f * 2.0f * 0.2875f);
+    // 1.5; 1; and 102 * 0.029.
+    const expected = cast(int)(4.1f + 0.045f) + 1 + cast(int)(102 * 0.029f);
     const hogger = w.enemy(paladin, 448);
     uint[] struck;
     foreach (attempt; 0 .. 60)
@@ -224,9 +225,8 @@ unittest
         w.now += 2.seconds;
     }
     assert(struck.length, "a swing lands");
-    // (and what every holy spell gets of the spell power besides, 1.5 / 3.5 of one stack's 17 or of all six's 102, if
-    // anything: CMaNGOS's spell_bonus_data gives 25742 none)
-    assert(seal.spellLevel == 1 && [expected, expected + 7, expected + 43].canFind(struck[0]), "of the fist, a level 1 share");
+    import std.format : format;
+    assert(seal.spellLevel == 1 && struck[0] == expected, format!"of the fist, a level 1 share: %s, not %s"(struck[0], expected));
 }
 
 /// Judgement of Wisdom (20186: proc flags 139944) gives mana to who strikes its target with a spell too (Fire Blast).
@@ -442,4 +442,62 @@ unittest
     assert(e == SpellCastResult.ok, format!"Enrage: %s"(e));
     auto armor = me.player.auras.find(25503);
     assert(armor !is null && armor.amount[1] == -16, "16% less armor");
+}
+
+/**
+ * Spell power by Blizzard's coefficients (data/coefficients.csv): 100 spell damage (Arcane Might, 17150, as 100)
+ * adds 81 to Frostbolt (25304: 0.814) and 16 to each tick of Shadow Word: Pain (10894: 0.167 a tick); 100 healing
+ * (Increase Healing 2, 7675, as 100) 71 to Holy Light's heal (19968: 0.714) but 20 to rank 1's own (19982: 0.205).
+ */
+unittest
+{
+    import dmangos.world.updatefields : UNIT_FIELD_HEALTH, UNIT_FIELD_MAXHEALTH;
+
+    if (!haveRealData())
+        return;
+    auto w = RealWorld.make();
+    if (w.context.client.spellCoefficients.length == 0)
+        return; // no data/coefficients.csv: the 1.12 formula, tested with invented spells
+    auto priest = w.character(30, "Faol", PlayerClass.priest, 60, [10894]);
+    auto me = priest.session.inWorld;
+    giveAura(w, priest, 17150, 100);
+    assert(me.spellDamageBonus(w.context.data.spells.spell(25304), 4) == 81, "Frostbolt: 0.814");
+    const kobold = w.enemy(priest);
+    me.player.movement.position.orientation = 0;
+    assert(w.castAt(priest, 10894, kobold) == SpellCastResult.ok);
+    const pain = creatureOf(w, kobold).auras.find(10894);
+    assert(pain !is null, "Shadow Word: Pain on the kobold");
+    // Rank 8's 142 a tick (its 141 + 1), 16 more by the power.
+    import std.format : format;
+    assert(pain.amount[0] == 142 + 16, format!"Shadow Word: Pain: 0.167 a tick: %s"(pain.amount[0]));
+
+    auto paladin = w.character(31, "Alonsus", PlayerClass.paladin, 60, [635, 10329]);
+    auto pal = paladin.session.inWorld;
+    giveAura(w, paladin, 7675, 100);
+    assert(pal.healingBonus(w.context.data.spells.spell(19968)) == 71, "Holy Light's heal: 0.714");
+    assert(pal.healingBonus(w.context.data.spells.spell(19982)) == 20, "rank 1's own: 0.205");
+    // Rank 1 heals by 19982 (rank 7 by 19968): what the heal log names.
+    uint healedBy(uint rank)
+    {
+        pal.player.values.set!UNIT_FIELD_HEALTH(1u);
+        w.now += 3.seconds;
+        assert(w.cast_(paladin, rank) == SpellCastResult.ok);
+        foreach (step; 0 .. 4)
+        {
+            w.now += 1.seconds;
+            pal.update(1.seconds);
+            w.context.map(0).update(1.seconds);
+        }
+        foreach (p; paladin.read())
+            if (p.opcode == Opcode.SMSG_SPELLHEALLOG)
+            {
+                auto r = ByteReader(p.body_);
+                r.readPackedGuid();
+                r.readPackedGuid();
+                return r.read!uint;
+            }
+        return 0;
+    }
+    assert(healedBy(635) == 19982, "rank 1's own heal");
+    assert(healedBy(10329) == 19968, "rank 8's: the common one");
 }

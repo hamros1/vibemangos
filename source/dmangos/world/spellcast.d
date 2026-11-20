@@ -269,6 +269,41 @@ int castTime(const ref SpellInfo spell, const ClientData client, uint level)
     return time > 0 ? time : 0;
 }
 
+/**
+ * The share of its caster's spell power effect `i` of `spell` adds (each tick's, for an effect over time); see
+ * docs/FORMULAS.md. Blizzard's own (`ClientData.spellCoefficients`) where its data has the effect as 1.12 has it;
+ * otherwise the 1.12 rule: a direct damage or heal by its cast time (1.5 to 3.5 seconds) over 3.5, one over time by
+ * its duration over 15 seconds (at most whole) shared among its ticks; less for a spell learned before level 20
+ * (3.75% a level). Nothing for anything else.
+ */
+float bonusCoefficient(const ref SpellInfo spell, size_t i, const ClientData client, uint level)
+{
+    if (auto row = spell.id in client.spellCoefficients)
+    {
+        const c = (*row)[i];
+        if (c.known && c.effect == spell.effect[i] && c.aura == spell.casting.applyAuraName[i])
+            return c.value;
+    }
+    const penalty = spell.spellLevel > 0 && spell.spellLevel < 20 ? 1.0f - (20.0f - spell.spellLevel) * 0.0375f : 1.0f;
+    switch (spell.effect[i])
+    {
+    case SpellEffect.schoolDamage, SpellEffect.heal, SpellEffect.healthLeech:
+        int time = castTime(spell, client, level);
+        time = time < 1500 ? 1500 : time > 3500 ? 3500 : time;
+        return time / 3500.0f * penalty;
+    case SpellEffect.applyAura, SpellEffect.persistentAreaAura, SpellEffect.applyAreaAuraParty:
+        const type = spell.casting.applyAuraName[i];
+        if (type != AuraType.periodicDamage && type != AuraType.periodicHeal && type != AuraType.periodicLeech)
+            return 0;
+        const ms = duration(spell, client, level), amplitude = spell.casting.amplitude[i];
+        if (ms <= 0 || amplitude <= 0 || ms < amplitude)
+            return 0;
+        return (ms >= 15_000 ? 1.0f : ms / 15_000.0f) / (ms / amplitude) * penalty;
+    default:
+        return 0;
+    }
+}
+
 /// The milliseconds an aura lasts; -1 until cancelled, 0 none.
 int duration(const ref SpellInfo spell, const ClientData client, uint level)
 {

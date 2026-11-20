@@ -654,8 +654,13 @@ mixin template ClassSpells()
             // The heal itself, of the amount rolled; the spell for Illumination's mana back.
             if (spell.effect[i] != SpellEffect.scriptEffect || !target.alive)
                 return false;
-            castCustom(spell.casting.spellIconId == holyLightIcon ? holyLightHeal : flashOfLightHeal, target.combatGuid,
-                CustomValues([value, cast(int) spell.id, 0], 0b11));
+            // Holy Light's first three ranks heal by spells of their own, whose share of the healing power is less by
+            // their level (Blizzard's coefficients: 0.205, 0.339, 0.554; the rest 19968's 0.714).
+            static immutable uint[2][] holyLightHeals = [[635, 19982], [639, 19981], [647, 19980]];
+            uint heal = spell.casting.spellIconId == holyLightIcon ? holyLightHeal : flashOfLightHeal;
+            if (const own = rankSpell(holyLightHeals, spell.id))
+                heal = own;
+            castCustom(heal, target.combatGuid, CustomValues([value, cast(int) spell.id, 0], 0b11));
             return true;
         default:
             return false;
@@ -682,24 +687,10 @@ mixin template ClassSpells()
             return true;
         const speed = item.proto.details.delay / 1000.0f;
         int total;
-        if (weapon)
-        {
-            // CMaNGOS's coefficient: 0.1 of the spell power per 1.0 speed (0.385 at 4.0 in its words).
-            const bonus = spellDamageBonusRaw(1 << spell.casting.school) * speed / 10.0f;
-            total = cast(int)(value * 0.01f * speed + bonus);
-        }
-        else
-            total = cast(int)(value * 0.01f * speed);
+        // The spell power is the attack spell's own (Blizzard's 0.1 for the weapon's, none for the totem's).
+        total = cast(int)(value * 0.01f * speed);
         castCustom(weapon ? weaponAttack : totemAttack, target.combatGuid, CustomValues.first(total));
         return true;
-    }
-
-    /// The caster's spell power for schools of `schoolMask` (`SpellBaseDamageBonusDone`): its `MOD_DAMAGE_DONE` (each
-    /// stack's: Unstable Power's twelve), and a share of its spirit (`MOD_SPELL_DAMAGE_OF_STAT_PERCENT`).
-    private int spellDamageBonusRaw(uint schoolMask)
-    {
-        return player.auras.totalByMiscMask(AuraType.modDamageDone, cast(int) schoolMask)
-            + spellPowerFromSpirit(AuraType.modSpellDamageOfStatPercent, cast(int) schoolMask);
     }
 
     package AttackType procHand; /// the hand whose swing set the current item procs off
@@ -814,8 +805,6 @@ mixin template ClassSpells()
                 else if (ofFamily(spell, SpellFamily.rogue, 0x100000)) // Rupture
                     values[i] += player.stats.attackPower * (castCombo > 3 ? 3 : castCombo) / 100;
             }
-            else if (type == AuraType.manaShield && ofFamily(spell, SpellFamily.mage, 0x8000))
-                values[i] += cast(int)(spellDamageBonusRaw(1 << spell.casting.school) * 0.5f * levelPenalty(spell));
         }
     }
 
@@ -1208,24 +1197,20 @@ mixin template ClassSpells()
         enum uint twoHanded = 17; // INVTYPE_2HWEAPON
         const item = player.inventory.equipped(equipmentSlotMainhand);
         const speed = (item is null || item.proto is null ? 2000 : item.proto.details.delay) / 1000.0f;
-        float base, coefficient;
+        float base;
         if (item !is null && item.proto !is null && item.proto.inventoryType == twoHanded)
         {
             base = 1.20f * amount * 1.2f * 1.03f * speed / 100.0f + 1;
-            coefficient = 0.108f * speed;
         }
         else
         {
             base = 0.85f * ceil(amount * 1.2f * 1.03f * speed / 100.0f) - 1;
-            coefficient = 0.092f * speed;
         }
         // The weapon's own damage (`GetBaseWeaponDamage`: its first line, no attack power), a fist's without one.
         const weapon = item is null || item.proto is null ? (1 + 2) / 2.0f
             : (item.proto.details.damage[0].min + item.proto.details.damage[0].max) / 2;
-        int damage = cast(int)(base + 0.03f * weapon) + 1;
-        if (damage >= 0)
-            damage += cast(int)(spellDamageBonusRaw(1 << seal.casting.school) * coefficient * levelPenalty(seal));
-        return damage;
+        // The spell power is the damage spell's own (Blizzard's 0.1 of it, less below level 20: `bonusCoefficient`).
+        return cast(int)(base + 0.03f * weapon) + 1;
     }
 
     /// An override class script aura procced: Nightfall's Shadow Trance on a Corruption or Drain Life tick.

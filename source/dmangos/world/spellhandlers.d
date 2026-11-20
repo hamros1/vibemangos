@@ -2714,7 +2714,7 @@ private:
      * The crit chance of `spell` at `victim` (`Unit::RollSpellCritOutcome`): a melee or ranged ability's is its
      * weapon's, a spell's the spell crit; and what the class rules add (Shatter).
      */
-    float critChanceOf(const(SpellInfo)* spell, UnitRef victim)
+    package float critChanceOf(const(SpellInfo)* spell, UnitRef victim)
     {
         float chance = spellCritOf(spell);
         if (victim && (spell.casting.dmgClass == DamageClass.melee || spell.casting.dmgClass == DamageClass.ranged))
@@ -2971,31 +2971,51 @@ private:
         return damage;
     }
 
-    /// A school's damage: a crit is half again; armor for physical.
     /**
-     * The damage bonus of a direct spell: the caster's `SPELL_AURA_MOD_DAMAGE_DONE` for
-     * the spell's school (its items' and talents' "damage done by spells"), times the spell's
-     * coefficient, its cast time over 3.5 seconds (from 1.5 to 3.5 seconds: instant spells count as
-     * 1.5). Physical spells get none.
+     * The damage bonus of a direct spell: the caster's `SPELL_AURA_MOD_DAMAGE_DONE` for the spell's school (its
+     * items' and talents' "damage done by spells") and spirit's share, times its damage effect's coefficient
+     * (`bonusCoefficient`). Physical spells get none.
      */
-    uint spellDamageBonus(const(SpellInfo)* spell, uint school)
+    package uint spellDamageBonus(const(SpellInfo)* spell, uint school)
     {
-        import dmangos.world.auras : AuraType;
-        import dmangos.world.spellcast : castTime;
-
         if (school == 0)
             return 0;
-        int done;
-        foreach (aura; player.auras.list)
-            foreach (i; 0 .. 3)
-                if ((aura.effects & (1 << i)) && aura.type(i) == AuraType.modDamageDone && (aura.misc(i) & (1 << school)))
-                    done += aura.amount[i];
-        done += spellPowerFromSpirit(AuraType.modSpellDamageOfStatPercent, 1 << school);
+        const done = spellPower(1 << school);
         if (done <= 0)
             return 0;
-        int time = castTime(*spell, context.client, player.data.level);
-        time = time < 1500 ? 1500 : time > 3500 ? 3500 : time;
-        return cast(uint)(done * time / 3500.0f);
+        return cast(uint)(done * directCoefficient(spell, false));
+    }
+
+    /// The coefficient (`bonusCoefficient`) of `spell`'s direct damage effect (`heal`: its heal), its first.
+    float directCoefficient(const(SpellInfo)* spell, bool heal)
+    {
+        import dmangos.world.spellcast : bonusCoefficient;
+
+        foreach (i; 0 .. 3)
+            if (heal ? spell.effect[i] == SpellEffect.heal
+                : (spell.effect[i] == SpellEffect.schoolDamage || spell.effect[i] == SpellEffect.healthLeech))
+                return bonusCoefficient(*spell, i, context.client, player.data.level);
+        return 0;
+    }
+
+    /**
+     * The caster's spell power for spells of the schools in `schoolMask` (`SpellBaseDamageBonusDone`): its
+     * `MOD_DAMAGE_DONE` auras (each stack's: Unstable Power's twelve) and spirit's share (Spiritual Guidance).
+     */
+    package int spellPower(uint schoolMask)
+    {
+        import dmangos.world.auras : AuraType;
+
+        return player.auras.totalByMiscMask(AuraType.modDamageDone, cast(int) schoolMask)
+            + spellPowerFromSpirit(AuraType.modSpellDamageOfStatPercent, cast(int) schoolMask);
+    }
+
+    /// The caster's healing power: its `MOD_HEALING_DONE` auras (each stack's) and spirit's share.
+    package int healingPower()
+    {
+        import dmangos.world.auras : AuraType;
+
+        return player.auras.total(AuraType.modHealingDone) + spellPowerFromSpirit(AuraType.modSpellHealingOfStatPercent, -1);
     }
 
     /**
@@ -3021,23 +3041,13 @@ private:
         return reduced > 0 ? reduced : 0;
     }
 
-    /// The healing bonus: the caster's `SPELL_AURA_MOD_HEALING_DONE` times the same coefficient.
-    uint healingBonus(const(SpellInfo)* spell)
+    /// The healing bonus: the caster's `SPELL_AURA_MOD_HEALING_DONE` and spirit's share, times its heal's coefficient.
+    package uint healingBonus(const(SpellInfo)* spell)
     {
-        import dmangos.world.auras : AuraType;
-        import dmangos.world.spellcast : castTime;
-
-        int done;
-        foreach (aura; player.auras.list)
-            foreach (i; 0 .. 3)
-                if ((aura.effects & (1 << i)) && aura.type(i) == AuraType.modHealingDone)
-                    done += aura.amount[i];
-        done += spellPowerFromSpirit(AuraType.modSpellHealingOfStatPercent, -1);
+        const done = healingPower();
         if (done <= 0)
             return 0;
-        int time = castTime(*spell, context.client, player.data.level);
-        time = time < 1500 ? 1500 : time > 3500 ? 3500 : time;
-        return cast(uint)(done * time / 3500.0f);
+        return cast(uint)(done * directCoefficient(spell, true));
     }
 
     /**

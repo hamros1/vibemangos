@@ -658,6 +658,14 @@ struct DbcFile
 private enum isDbcStore(T) = is(T == DbcStore!(E, format), E, string format);
 
 /// See the module documentation.
+/// One effect's coefficient as Blizzard's data has it, with what the effect is there (to tell a rebuilt one).
+struct SpellCoefficient
+{
+    bool known; /// the data has this effect
+    ushort effect, aura;
+    float value = 0;
+}
+
 final class ClientData
 {
     @DbcFile("CharSections") DbcStore!(CharSectionsEntry, charSectionsFormat) charSections;
@@ -695,6 +703,9 @@ final class ClientData
     @DbcFile("TaxiPathNode") DbcStore!(TaxiPathNodeEntry, taxiPathNodeFormat) taxiPathNodes;
     /// The taxi network: from -> to -> path; each path's points in order; the nodes flown from or to.
     uint[uint][uint] taxiPathBetween;
+    /// Blizzard's spell power coefficients by spell (data/coefficients.csv, tools/fetch-coefficients.py): what each
+    /// effect of it gets of the caster's spell power. Empty without the file: the 1.12 formula then (`bonusCoefficient`).
+    SpellCoefficient[3][uint] spellCoefficients;
     const(TaxiPathNodeEntry)*[][uint] taxiPathPoints;
     bool[uint] taxiNetwork;
     @DbcFile("AuctionHouse") DbcStore!(AuctionHouseEntry, auctionHouseFormat) auctionHouses;
@@ -737,10 +748,44 @@ final class ClientData
                 data.tupleof[i] = typeof(field).load(buildPath(dir, getUDAs!(data.tupleof[i], DbcFile)[0].name ~ ".dbc"));
             }
         data.buildIndexes();
+        data.loadCoefficients(buildPath(dataDir, "coefficients.csv"));
         info!"loaded client data from %s (%s races, %s classes, %s skill lines, %s skill abilities)"(dir,
             data.races.rows.length, data.classes.rows.length, data.skillLines.rows.length,
             data.skillLineAbilities.rows.length);
         return data;
+    }
+
+    /**
+     * The spell power coefficients of `path` (`spell,effect index,effect,aura,coefficient` a line, `#` comments), if
+     * it is there.
+     */
+    void loadCoefficients(string path)
+    {
+        import std.array : split;
+        import std.conv : to;
+        import std.file : exists, readText;
+        import std.string : lineSplitter, strip;
+
+        if (!exists(path))
+        {
+            warning!"no %s (tools/fetch-coefficients.py): spell power by the 1.12 formula"(path);
+            return;
+        }
+        foreach (line; readText(path).lineSplitter)
+        {
+            line = line.strip;
+            if (line.length == 0 || line[0] == '#')
+                continue;
+            const f = line.split(",");
+            const index = f[1].to!uint;
+            if (f.length != 5 || index > 2)
+                continue;
+            const spell = f[0].to!uint;
+            if (spell !in spellCoefficients)
+                spellCoefficients[spell] = (SpellCoefficient[3]).init;
+            spellCoefficients[spell][index] = SpellCoefficient(true, f[2].to!ushort, f[3].to!ushort, f[4].to!float);
+        }
+        info!"spell power coefficients of %s spells from %s"(spellCoefficients.length, path);
     }
 
     /// Builds the derived lookups. Call after filling the stores by hand (tests).

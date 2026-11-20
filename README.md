@@ -118,7 +118,8 @@ cp config/worldserver.example.json worldserver.json # then edit the *_database e
 ./bin/worldserver                                   # listens on 0.0.0.0:8085
 ```
 
-`data_dir` must point at a directory containing a `dbc/` folder extracted from your client, and
+`data_dir` must point at a directory containing a `dbc/` folder extracted from your client (and, for Blizzard's
+spell power coefficients, `coefficients.csv`: `tools/fetch-coefficients.py DATA_DIR`, docs/FORMULAS.md), and
 preferably a `maps/` folder too, made by the extractor (below). Without `maps/` the server takes the client's word for which zone it
 is in, and nothing is explored. With `vmaps/` too, buildings count: heights on floors, bridges and
 roofs, the areas inside buildings, indoors and outdoors, and what blocks a line of sight. Character creation reads
