@@ -114,6 +114,7 @@ struct AuraMods
     float attackPowerTotal = 1;  /// `MOD_ATTACK_POWER_PCT`
     float offHandDamage = 1;     /// `MOD_OFFHAND_DAMAGE_PCT`
     float[3] attackTime = 1;     /// haste and slows by `AttackType` (`AuraSet.attackTimeFactor`)
+    float armorFromIntellect = 0; /// `MOD_RESISTANCE_OF_STAT_PERCENT` (Arcane Resilience): percent of intellect as armor
 }
 
 /// A player's derived numbers: its level's base stats with what its gear and `input`'s other bonuses add.
@@ -211,7 +212,8 @@ out (result; result.maxHealth >= 1, "a living character has at least one health 
     result.maxPower[Power.energy] = cast(uint) round(100 * input.auras.powerTotal[Power.energy]);
 
     // Armor and resistances
-    result.resistances[0] = cast(int)((armor + result.stats[Stat.agility] * 2) * input.auras.resistanceTotal[0]);
+    result.resistances[0] = cast(int)((armor + result.stats[Stat.agility] * 2
+        + result.stats[Stat.intellect] * input.auras.armorFromIntellect / 100) * input.auras.resistanceTotal[0]);
     foreach (i; 0 .. 6)
         result.resistances[i + 1] = cast(int)(resistance[i] * input.auras.resistanceTotal[i + 1]);
 
