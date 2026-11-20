@@ -1487,12 +1487,12 @@ mixin template BattlegroundHandlers()
         return true;
     }
 
-    /// The graveyards the player's copy gives or closes (`closestGraveyard`'s `linkTeams`).
+    /// The graveyards the player's copy gives or closes (`closestGraveyard`'s `linkTeams`); outside one, world PvP's.
     package const(uint[uint]) battlegroundGraveyards()
     {
         if (auto copy = currentBattleground())
             return copy.graveyardTeams;
-        return null;
+        return context.worldPvp.graveyardTeams;
     }
 
     /// `SMSG_AREA_SPIRIT_HEALER_TIME`: when spirit guide `guide`'s next pulse is.
@@ -1533,7 +1533,7 @@ mixin template BattlegroundHandlers()
     }
 
     /// `SMSG_INIT_WORLD_STATES` for `zone`: on a battleground's map, its copy's states; elsewhere the
-    /// server-wide ones (the war effort's, in the capitals).
+    /// server-wide ones (the war effort's, in the capitals; world PvP's, in the Eastern Plaguelands and Silithus).
     package void sendInitWorldStates(uint zone)
     {
         ByteWriter w;
@@ -1542,7 +1542,7 @@ mixin template BattlegroundHandlers()
         auto copy = currentBattleground();
         if (copy is null)
         {
-            const states = context.warEffortWorldStates(zone);
+            const states = context.warEffortWorldStates(zone) ~ worldPvpStates(zone);
             w.put(cast(ushort) states.length);
             foreach (s; states)
             {

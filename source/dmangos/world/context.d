@@ -47,6 +47,7 @@ import dmangos.world.objects : HighGuid, makeGuid;
 import dmangos.world.unit : UnitKind;
 import dmangos.world.bgqueue : battlegroundOfMap, BattlegroundQueue, BattlegroundQueueHost;
 import dmangos.world.wareffort : WarEffort, WarEffortHost;
+import dmangos.world.worldpvp : WorldPvp, WorldPvpFollower, WorldPvpHost;
 import dmangos.cluster.protocol : ChannelCommand;
 import dmangos.world.opcodes : ChatType, Language, Opcode;
 import dmangos.world.creatureai : CombatWorld, CreatureLore;
@@ -569,6 +570,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             ChannelSettings(config.allowTwoSideInteractionChannel))));
         services.provide!WarEffortHost(&newWarEffortHost);
         services.listen!(WarEffortHost, WarEffort)(&warEffortHeard); // before it starts: it tells as it does
+        worldPvp = new WorldPvpFollower(this);
+        services.provide!WorldPvpHost(&newWorldPvpHost);
+        services.listen!(WorldPvpHost, WorldPvp)(&worldPvp.heard);
         startAllServices();
     }
 
@@ -966,6 +970,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
         if (isSupplyPile(guid))
             return warEffort.pileUp(guid);
+        if (WorldPvp.follows(guid))
+            return worldPvp.state.spawnUp(guid);
         if (const e = guid in data.gameObjectGameEvents)
             return gameEvents.spawnIn(*e);
         return true;
@@ -1157,7 +1163,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                         {
                             const spawn = &data.gameObjectSpawns[index];
                             if (!eventObject(spawn.guid) || !gameObjectInEvents(spawn.guid)
-                                || spawn.respawnSeconds < 0 || !upInPool(PoolMember.Kind.gameObject, spawn.guid))
+                                || (spawn.respawnSeconds < 0 && !WorldPvp.follows(spawn.guid))
+                                || !upInPool(PoolMember.Kind.gameObject, spawn.guid))
                                 continue;
                             auto go = makeGameObject(spawn);
                             if (go.guid in present)
@@ -1177,7 +1184,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     {
         import dmangos.world.wareffort : isSupplyPile;
 
-        return (guid in data.gameObjectGameEvents) !is null || isSupplyPile(guid);
+        return (guid in data.gameObjectGameEvents) !is null || isSupplyPile(guid) || WorldPvp.follows(guid);
     }
 
     // -----------------------------------------------------------------------
@@ -1289,6 +1296,32 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
         if (colossus <= Colossus.max)
             services.call!(WarEffortHost.colossusDied)(WarEffortColossus(cast(Colossus) colossus));
+    }
+
+    // -----------------------------------------------------------------------
+    // World PvP: the Eastern Plaguelands' towers, Silithus's Silithyst (`dmangos.world.worldpvp`)
+    // -----------------------------------------------------------------------
+
+    /// World PvP as this node follows it: the state it last heard, and what it does with it.
+    WorldPvpFollower worldPvp;
+
+    /// World PvP's service, on the node the cluster places it on: from the state it moved with, or anew (it was not
+    /// saved in 1.12: a restart began it again).
+    private WorldPvpHost newWorldPvpHost(const(ubyte)[] moved)
+    {
+        import dmangos.plaindata : decode;
+
+        WorldPvpHost host;
+        if (moved.length)
+            decode(moved, host.state);
+        host.announce = (const ref WorldPvp w) { services.announce!WorldPvpHost(w); };
+        return host;
+    }
+
+    /// The shrines world PvP brings and takes away: the spawns of loaded cells made to agree with it.
+    void worldPvpSpawnsChanged()
+    {
+        gameEventSpawnsChanged();
     }
 
     /// The battleground queues, as the service on this node runs them (docs/SERVICES.md).
@@ -2567,8 +2600,9 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             foreach (index; (*cells).get(cell, null))
             {
                 const spawn = &data.gameObjectSpawns[index];
-                // Not spawned by default (`spawntimesecs` < 0: events and scripts spawn it), or used up.
-                if (spawn.respawnSeconds < 0 || gameObjectAwaitingRespawn(spawn.guid) || !gameObjectInEvents(spawn.guid)
+                // Not spawned by default (`spawntimesecs` < 0: events, scripts and world PvP spawn it), or used up.
+                if ((spawn.respawnSeconds < 0 && !WorldPvp.follows(spawn.guid)) || gameObjectAwaitingRespawn(spawn.guid)
+                        || !gameObjectInEvents(spawn.guid)
                         || !upInPool(PoolMember.Kind.gameObject, spawn.guid))
                     continue;
                 spawned ~= makeGameObject(spawn);
@@ -4319,6 +4353,12 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         import dmangos.world.character : Character;
 
         auto go = new GameObject(*spawn, spawn.entry in data.gameObjectTemplates);
+        if (const kit = worldPvp is null ? 0 : worldPvp.artKitOf(spawn.entry, spawn.x, spawn.y, spawn.z))
+        {
+            import dmangos.world.updatefields : GAMEOBJECT_ARTKIT;
+
+            go.values.set!GAMEOBJECT_ARTKIT(kit); // a tower's banner in its holder's colours
+        }
         if (isQuestObject(go))
             go.activatesFor = (ulong viewer) {
                 auto session = cast(Character) onlinePlayer(viewer);
@@ -4883,6 +4923,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         addPendingNavigation();
         checkHonorWeek(now);
         services.tick(elapsed);
+        worldPvp.tick(elapsed);
         battlegrounds.tick(elapsed);
         updateGameEvents(now);
         removeExpiredBones();

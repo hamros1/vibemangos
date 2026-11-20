@@ -516,6 +516,9 @@ private:
         if (auto copy = currentBattleground())
             if (copy.rules.areaTrigger(copy, player.guid, request.id))
                 return;
+        // World PvP's (Silithus's camps, where Silithyst is turned in).
+        if (worldPvpAreaTrigger(request.id))
+            return;
 
         // Its script first (`scripted_areatrigger`): it may handle the trigger itself.
         {

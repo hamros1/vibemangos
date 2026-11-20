@@ -19,6 +19,7 @@ import dmangos.world.spellids;
 import dmangos.world.honor : HonorHandlers;
 import dmangos.world.pvp : PvPHandlers;
 import dmangos.world.battleground : BattlegroundHandlers;
+import dmangos.world.worldpvp : WorldPvpHandlers;
 import dmangos.world.enchanting : EnchantingHandlers;
 import dmangos.world.itemuse : ItemUseHandlers;
 import dmangos.world.professions : ProfessionHandlers;
@@ -868,6 +869,7 @@ private:
     mixin HomebindTimer;
     mixin PvPHandlers;
     mixin BattlegroundHandlers;
+    mixin WorldPvpHandlers;
     mixin EnchantingHandlers;
     mixin ItemUseHandlers;
     mixin ProfessionHandlers;

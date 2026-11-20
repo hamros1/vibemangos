@@ -243,6 +243,7 @@ private int run(WorldConfig config, string configPath)
             context.services.sendNews = (const ref ServiceNews n) { cluster.broadcast(n); };
             cluster.onServiceNews = (ushort peer, const ref ServiceNews n) { context.services.receiveNews(peer, n); };
             context.askWarEffort(); // how it stands, once its service is placed (and every change after)
+            context.worldPvp.ask(); // the same for world PvP
         }
         // And a queued write is dropped if the writer reaches it after the lease lapsed (step 6).
         behind.writableUntil = () {
