@@ -673,7 +673,12 @@ mixin template CreatureCasting()
             const positive = creature is me || creature.ai is null
                 || !canAttack(relating, creature.ai.relating, me.client);
             bool isNew;
-            creature.auras.apply(makeAura(spell, me.guid, level, ms, positive, values), creature.values, isNew);
+            auto aura = makeAura(spell, me.guid, level, ms, positive, values);
+            if (!positive) // it may break early (`SPELL_ATTR_HEARTBEAT_RESIST`)
+                aura.setHeartbeatResist(imported!"dmangos.world.spellcast".heartbeatResistChance(me.fighter,
+                    creature.fighter, *spell, cast(int) creature.values.get!UNIT_FIELD_RESISTANCES(spell.casting.school),
+                    0), ms);
+            creature.auras.apply(aura, creature.values, isNew);
             if (creature !is me)
                 world_.flushCreature(creature);
             world_.wake(creature.guid);

@@ -238,9 +238,15 @@ struct UnitRef
         case UnitKind.player:
             return session.auraFrom(caster, spell, casterLevel, durationMs, values);
         case UnitKind.creature:
+            import dmangos.world.spellcast : heartbeatResistChance;
+            import dmangos.world.updatefields : UNIT_FIELD_RESISTANCES;
+
             bool isNew;
-            creature.auras.apply(makeAura(spell, caster, casterLevel, durationMs, false, values), creature.values,
-                isNew);
+            auto aura = makeAura(spell, caster, casterLevel, durationMs, false, values);
+            if (auto from = map.unit(caster)) // it may break early (`SPELL_ATTR_HEARTBEAT_RESIST`)
+                aura.setHeartbeatResist(heartbeatResistChance(from.fighter, creature.fighter, *spell,
+                    cast(int) creature.values.get!UNIT_FIELD_RESISTANCES(spell.casting.school), 0), durationMs);
+            creature.auras.apply(aura, creature.values, isNew);
             map.flushObjectChanges(creature);
             return;
         }

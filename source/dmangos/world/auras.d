@@ -73,6 +73,23 @@ final class Aura
     int[3] amount;            /// `m_modifier.m_amount` of each
     int[3] period;            /// `periodictime`: milliseconds between ticks; 0 not periodic
     int[3] periodTimer;
+    float heartbeatChance = 0; /// percent: the chance it breaks at each heartbeat (`SPELL_ATTR_HEARTBEAT_RESIST`)
+    int heartbeatInterval;     /// milliseconds between heartbeats
+    int heartbeatTimer;        /// until the next
+
+    /**
+     * It may break early (`SpellAuraHolder::SetHeartbeatResist`): `chance` percent at each heartbeat, more for each
+     * diminishing level; the heartbeats come at its whole duration over two plus that level, at least a second apart.
+     */
+    void setHeartbeatResist(float chance, int originalDuration, uint diminishLevel = 0) pure nothrow @nogc @safe
+    {
+        if (chance <= 0 || originalDuration <= 0)
+            return;
+        heartbeatChance = chance * (1 + diminishLevel);
+        const interval = originalDuration / cast(int)(2 + diminishLevel);
+        heartbeatInterval = interval > 1000 ? interval : 1000;
+        heartbeatTimer = heartbeatInterval;
+    }
 
     /// `m_modifier.m_auraname` of effect `i`.
     AuraType type(size_t i) const
@@ -230,8 +247,27 @@ struct AuraSet
      */
     void update(int diff, ref AuraTick[] ticks, ref Aura[] expired)
     {
+        Aura[] heartbeats;
+        update(diff, ticks, expired, heartbeats);
+    }
+
+    /**
+     * ditto; each heartbeat that came due is added to `heartbeats` (`SpellAuraHolder::UpdateHeartbeatResist`), for
+     * the caller to roll whether the aura breaks. As CMaNGOS's, a timer that comes to exactly none stops.
+     */
+    void update(int diff, ref AuraTick[] ticks, ref Aura[] expired, ref Aura[] heartbeats)
+    {
         foreach (aura; list)
         {
+            if (aura.heartbeatChance > 0 && aura.heartbeatInterval && aura.heartbeatTimer > 0 && aura.duration)
+            {
+                aura.heartbeatTimer -= diff;
+                while (aura.heartbeatTimer < 0)
+                {
+                    aura.heartbeatTimer += aura.heartbeatInterval;
+                    heartbeats ~= aura;
+                }
+            }
             foreach (i; 0 .. 3)
             {
                 if (!(aura.effects & (1 << i)) || aura.period[i] <= 0)
@@ -669,4 +705,36 @@ unittest
     assert(set.castTimeFactor() == 1);
     set.apply(makeAura(&tongues, 1, 10, 30_000, false, [-50, 0, 0]), values, isNew);
     assert(isClose(set.castTimeFactor(), 1.5f));
+}
+
+/// Heartbeat resistance: a root of 8 s gets a heartbeat each 4 s (at least one a second); a timer at exactly none stops.
+unittest
+{
+    import dmangos.world.updatefields : TypeId;
+
+    auto values = UpdateValues(TypeId.unit);
+    SpellInfo root;
+    root.id = 339;
+    root.effect[0] = SpellEffect.applyAura;
+    root.casting.applyAuraName[0] = AuraType.modRoot;
+    AuraSet set;
+    bool isNew;
+    auto aura = set.apply(makeAura(&root, 1, 10, 8000, false, [0, 0, 0]), values, isNew);
+    aura.setHeartbeatResist(5, 8000);
+    assert(aura.heartbeatChance == 5 && aura.heartbeatInterval == 4000);
+    AuraTick[] ticks;
+    Aura[] expired, heartbeats;
+    set.update(3000, ticks, expired, heartbeats);
+    assert(heartbeats.length == 0);
+    set.update(1500, ticks, expired, heartbeats);
+    assert(heartbeats == [aura] && aura.heartbeatTimer == 3500);
+    heartbeats = null;
+    set.update(3500, ticks, expired, heartbeats);
+    assert(heartbeats.length == 0 && aura.heartbeatTimer == 0, "exactly none: no heartbeat");
+    set.update(100, ticks, expired, heartbeats);
+    assert(heartbeats.length == 0, "and none after (as CMaNGOS's)");
+
+    auto brief = new Aura;
+    brief.setHeartbeatResist(5, 1500, 1);
+    assert(brief.heartbeatChance == 10 && brief.heartbeatInterval == 1000, "a diminished one: more, and sooner");
 }

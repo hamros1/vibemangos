@@ -845,9 +845,12 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
     /// Its auras' time passes: their casters do what their ticks do; those that ended go.
     void updateAuras(CombatWorld world, int diff)
     {
+        import std.algorithm.searching : canFind;
+        import std.random : uniform01;
+
         AuraTick[] ticks;
-        Aura[] expired;
-        auras.update(diff, ticks, expired);
+        Aura[] expired, heartbeats;
+        auras.update(diff, ticks, expired, heartbeats);
         foreach (tick; ticks)
         {
             if (!alive)
@@ -855,6 +858,10 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
             if (auto caster = world.unit(tick.aura.caster))
                 caster.auraTick(this, tick.aura, tick.effect);
         }
+        // Crowd control breaking early (`SPELL_ATTR_HEARTBEAT_RESIST`).
+        foreach (aura; heartbeats)
+            if (!expired.canFind(aura) && uniform01(world.random) * 100 < aura.heartbeatChance)
+                expired ~= aura;
         foreach (aura; expired)
             loseAura(aura, world);
         if (expired.length)
