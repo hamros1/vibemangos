@@ -784,12 +784,11 @@ unittest
     learn(w, who, 29076);
     giveAura(w, who, 23434, 100); // every spell a crit
     const target = toughEnemy(w, who, 10);
-    who.read();
-    topUp(who);
-    assert(w.castAt(who, 10199, target) == SpellCastResult.ok);
     uint crit;
     uint[2][] energized;
-    foreach (p; who.read())
+    foreach (attempt; 0 .. 10) // (until one lands: a spell may miss)
+    foreach (p; crit ? null : () { w.now += 9.seconds; who.read(); topUp(who);
+        assert(w.castAt(who, 10199, target) == SpellCastResult.ok); return who.read(); }())
     {
         auto r = ByteReader(p.body_);
         if (p.opcode == Opcode.SMSG_SPELLNONMELEEDAMAGELOG)
@@ -868,7 +867,9 @@ unittest
         topUp(who);
         assert(w.cast_(who, armor) == SpellCastResult.ok);
         const striker = toughEnemy(w, who);
-        swingAt(w, who, striker, 10);
+        foreach (_; 0 .. 5) // (the chill, a spell, may miss)
+            if (auraOn(w, striker, chill) is null)
+                swingAt(w, who, striker, 10);
         assert(auraOn(w, striker, chill) !is null, format!"%s chills its striker"(armor));
     }
     const plain = me.player.auras.find(10220).amount[0];
@@ -1088,4 +1089,245 @@ unittest
     }
     giveAura(w, who, 18288);
     assert(me.effectMod(spellOf(w, 18223), 0, -10) == -30, "Amplify Curse: 20% more");
+}
+
+/// A creature casting `spell` at `who` (triggered: no cast time, no mana), as its own spell.
+private void creatureCasts(ref RealWorld w, ulong creature, uint spell, ref TestClient who)
+{
+    import dmangos.world.eventai : castTriggered, castForceCast;
+
+    pass(w, who, 100.msecs); // (the creature's AI knows its world once updated)
+    const ok = creatureOf(w, creature).ai.castSpell(spellOf(w, spell), who.session.inWorld.player.guid,
+        castTriggered | castForceCast);
+    assert(ok, format!"the creature cast %s: %s"(spell, creatureOf(w, creature).ai.castRefusal));
+}
+
+/**
+ * Magic Absorption (2 resistances and 1% a rank): all resistances more; a spell resisted whole gives back 5% of the
+ * mana (29442), once a second at most.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    auto w = RealWorld.make();
+    auto who = w.character(1050, "Absorber", mage, 60, []);
+    auto me = who.session.inWorld;
+    const before = me.player.values.get!UNIT_FIELD_RESISTANCES(4);
+    learn(w, who, 29447);
+    foreach (school; 2 .. 7) // (the magic schools a player resists: no holy)
+        assert(me.player.values.get!UNIT_FIELD_RESISTANCES(school) >= 10, "10 more of each");
+    assert(me.player.values.get!UNIT_FIELD_RESISTANCES(4) == before + 10);
+    const kobold = toughEnemy(w, who, 10); // a level 1 kobold: its spells at a level 60 mage mostly missed
+    const max = me.player.values.get!UNIT_FIELD_MAXPOWER1(Power.mana);
+    bool back;
+    foreach (_; 0 .. 40)
+    {
+        w.now += 2.seconds;
+        me.player.values.set!UNIT_FIELD_POWER1(Power.mana, 0u);
+        who.read();
+        creatureCasts(w, kobold, 116, who);
+        if (spellLogs(who, Opcode.SMSG_SPELLENERGIZELOG).canFind!(l => l[0] == 29442))
+        {
+            assert(me.player.values.get!UNIT_FIELD_POWER1(Power.mana) == max * 5 / 100, "5% of the mana");
+            back = true;
+            break;
+        }
+    }
+    assert(back, "mana back from a resisted Frostbolt");
+}
+
+/// Frost Warding (10%, 20%) and Improved Fire Ward (10%, 20%): Frost Ward (6143) and Fire Ward (543) send a spell
+/// of their school back at its caster.
+unittest
+{
+    if (!haveRealData())
+        return;
+    auto w = RealWorld.make();
+    foreach (ward, row; [6143u: [28332u, 116, 4], 543u: [13043u, 133, 2]])
+    {
+        auto who = w.character(1051 + row[2], format!"Warder%s"(row[2]), mage, 60, [ward, row[0]]);
+        auto me = who.session.inWorld;
+        const caster = toughEnemy(w, who, 10);
+        creatureOf(w, caster).values.set!UNIT_FIELD_LEVEL(60u); // (of the mage's level: its spells mostly land)
+        uint back;
+        foreach (_; 0 .. 60)
+        {
+            if (me.player.auras.find(ward) is null)
+            {
+                w.now += 31.seconds;
+                topUp(who);
+                assert(w.cast_(who, ward) == SpellCastResult.ok);
+            }
+            me.player.auras.find(ward).amount[0] = 1_000_000; // (an absorb that lasts)
+            const health = creatureOf(w, caster).values.get!UNIT_FIELD_HEALTH;
+            who.read();
+            creatureCasts(w, caster, row[1], who);
+            pass(w, who, 3.seconds);
+            if (creatureOf(w, caster).values.get!UNIT_FIELD_HEALTH < health)
+                ++back;
+        }
+        assert(back >= 3 && back <= 30, format!"%s: reflected %s of 60"(ward, back));
+        // Without the talent: none.
+        unlearn(who, row[0]);
+        me.player.spells = me.player.spells[0 .. 1];
+        back = 0;
+        foreach (_; 0 .. 30)
+        {
+            const health = creatureOf(w, caster).values.get!UNIT_FIELD_HEALTH;
+            creatureCasts(w, caster, row[1], who);
+            pass(w, who, 3.seconds);
+            if (creatureOf(w, caster).values.get!UNIT_FIELD_HEALTH < health)
+                ++back;
+        }
+        assert(back == 0, "none without the talent");
+    }
+}
+
+/// Frost Nova (10230): "Damage caused may interrupt the effect": a Fire Blast frees its target.
+unittest
+{
+    if (!haveRealData())
+        return;
+    auto w = RealWorld.make();
+    auto who = w.character(1055, "Novaer", mage, 60, [10230, 10199]);
+    const kobold = toughEnemy(w, who, 5);
+    assert(w.cast_(who, 10230) == SpellCastResult.ok);
+    assert(auraOn(w, kobold, 10230) !is null, "frozen");
+    w.now += 2.seconds;
+    assert(w.castAt(who, 10199, kobold) == SpellCastResult.ok);
+    assert(auraOn(w, kobold, 10230) is null, "free again");
+}
+
+/// Burning Soul rank 2 (12351): fire spells' threat 30% less; Arcane Subtlety rank 2 (12592): arcane's 40% less and
+/// the target's resistances 10 less.
+unittest
+{
+    import std.math : isClose;
+
+    if (!haveRealData())
+        return;
+    auto w = RealWorld.make();
+    auto who = w.character(1056, "Subtle", mage, 60, [10199, 10202]);
+    auto me = who.session.inWorld;
+    learn(w, who, 12351);
+    learn(w, who, 12592);
+    foreach (spell, factor; [10199u: 0.7f, 10202u: 0.6f])
+    {
+        const target = toughEnemy(w, who, spell == 10199 ? 10 : 3);
+        who.read();
+        topUp(who);
+        w.now += 9.seconds;
+        assert(w.castAt(who, spell, target) == SpellCastResult.ok);
+        uint dealt;
+        foreach (l; spellLogs(who, Opcode.SMSG_SPELLNONMELEEDAMAGELOG))
+            if (l[0] == spell)
+                dealt += l[1];
+        assert(dealt);
+        const threat = creatureOf(w, target).ai.threatOf(me.player.guid);
+        assert(isClose(threat, dealt * factor, 0.01), format!"%s: threat %s of %s"(spell, threat, dealt));
+    }
+    assert(me.targetResistance(50, 4) == 40, "10 less resistance");
+}
+
+/// Arcane Mind (2% a rank) more mana; Arcane Resilience (28574) armor of half the intellect.
+unittest
+{
+    if (!haveRealData())
+        return;
+    auto w = RealWorld.make();
+    auto who = w.character(1057, "Minded", mage, 60, []);
+    auto me = who.session.inWorld;
+    const mana = me.player.values.get!UNIT_FIELD_MAXPOWER1(Power.mana);
+    learn(w, who, 12503);
+    const more = me.player.values.get!UNIT_FIELD_MAXPOWER1(Power.mana);
+    assert(more >= mana * 109 / 100 && more <= mana * 111 / 100, format!"%s to %s: 10%% more"(mana, more));
+    const armor = me.player.values.get!UNIT_FIELD_RESISTANCES(0);
+    learn(w, who, 28574);
+    const intellect = me.player.values.get!UNIT_FIELD_STAT0(3);
+    const diff = cast(int) me.player.values.get!UNIT_FIELD_RESISTANCES(0) - cast(int) armor;
+    assert(diff >= cast(int) intellect / 2 - 1 && diff <= cast(int) intellect / 2 + 1, format!"%s armor of %s"(diff,
+        intellect));
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Priest
+// ---------------------------------------------------------------------------------------------------------------
+
+private enum : uint
+{
+    smite = 585, holyFire = 14914, heal = 2054, greaterHeal = 2060, lesserHeal = 2050, flashHeal = 2061,
+    prayerOfHealing = 596, holyNova = 15237, renew = 139, fortitude = 1243, prayerOfFortitude = 21562,
+    powerWordShield = 17, innerFire = 588, manaBurn = 8129, mindBlast = 8092, psychicScream = 8122,
+    shadowWordPain = 589, fade = 586, mindFlay = 15407, devouringPlague = 19276, starshards = 19296,
+    desperatePrayer = 19236, vampiricEmbrace = 15286, hexOfWeakness = 19281, mindSoothe = 453, mindControl = 605,
+    silence = 15487, shackleUndead = 9484, dispelMagic = 527, shadowProtection = 976,
+}
+
+/// The priest's talents that modify spells: each rank, on the spells its tooltip names.
+unittest
+{
+    if (!haveRealData())
+        return;
+    alias Op = SpellModOp;
+    static immutable uint[] heals = [lesserHeal, heal, greaterHeal, flashHeal, prayerOfHealing];
+    static immutable uint[] holy = [smite, holyFire, holyNova, desperatePrayer] ~ heals;
+    static immutable uint[] shadowDamage = [mindBlast, mindFlay, shadowWordPain, devouringPlague];
+    static immutable uint[] shadow = shadowDamage ~ [vampiricEmbrace, hexOfWeakness, mindSoothe, mindControl, silence,
+        psychicScream];
+    checkMods(priest, [
+        ModRow("Darkness: Mind Blast, Devouring Plague", [15259, 15307, 15308, 15309, 15310], Op.allEffects, true,
+            [2, 4, 6, 8, 10], [mindBlast, devouringPlague], 1000, [smite]),
+        ModRow("Darkness: over time", [15259, 15307, 15308, 15309, 15310], Op.dot, true, [2, 4, 6, 8, 10],
+            [mindFlay, shadowWordPain], 1000),
+        ModRow("Divine Fury", [18530, 18531, 18533, 18534, 18535], Op.castingTime, false, [-100, -200, -300, -400,
+            -500], [smite, holyFire, heal, greaterHeal], 3000, [flashHeal, mindBlast]),
+        ModRow("Force of Will: crit", [18544, 18547, 18548, 18549, 18550], Op.critChance, false, [1, 2, 3, 4, 5],
+            [smite, holyFire, holyNova, mindBlast, manaBurn], 0, [heal]),
+        ModRow("Force of Will: damage", [18544, 18547, 18548, 18549, 18550], Op.damage, true, [1, 2, 3, 4, 5],
+            [smite, holyFire, holyNova, mindBlast], 1000, [heal]),
+        ModRow("Force of Will: over time", [18544, 18547, 18548, 18549, 18550], Op.dot, true, [1, 2, 3, 4, 5],
+            [mindFlay, shadowWordPain, starshards], 1000),
+        ModRow("Healing Focus", [14913, 15012], Op.notLoseCastingTime, true, [35, 70], heals, 100, [smite]),
+        ModRow("Holy Reach: range", [27789, 27790], Op.range, true, [10, 20], [smite, holyFire], 30, [mindBlast]),
+        ModRow("Holy Reach: radius", [27789, 27790], Op.radius, true, [10, 20], [prayerOfHealing, holyNova], 30),
+        ModRow("Holy Specialization", [14889, 15008, 15009, 15010, 15011], Op.critChance, false, [1, 2, 3, 4, 5],
+            holy, 0, [mindBlast]),
+        ModRow("Improved Fade", [15274, 15311], Op.cooldown, false, [-3000, -6000], [fade], 30_000),
+        ModRow("Improved Healing", [14912, 15013, 15014], Op.cost, true, [-5, -10, -15], [lesserHeal, heal,
+            greaterHeal], 1000, [flashHeal]),
+        ModRow("Improved Inner Fire", [14747, 14770, 14771], Op.allEffects, true, [10, 20, 30], [innerFire], 1000),
+        ModRow("Improved Mana Burn", [14750, 14772], Op.castingTime, false, [-250, -500], [manaBurn], 3000),
+        ModRow("Improved Mind Blast", [15273, 15312, 15313, 15314, 15316], Op.cooldown, false,
+            [-500, -1000, -1500, -2000, -2500], [mindBlast], 8000),
+        ModRow("Improved Power Word: Fortitude", [14749, 14767], Op.allEffects, true, [15, 30], [fortitude,
+            prayerOfFortitude], 1000),
+        ModRow("Improved Power Word: Shield", [14748, 14768, 14769], Op.allEffects, true, [5, 10, 15],
+            [powerWordShield], 1000),
+        ModRow("Improved Prayer of Healing", [14911, 15018], Op.cost, true, [-10, -20], [prayerOfHealing], 1000,
+            [heal]),
+        ModRow("Improved Psychic Scream", [15392, 15448], Op.cooldown, false, [-2000, -4000], [psychicScream],
+            30_000),
+        ModRow("Improved Renew", [14908, 15020, 17191], Op.allEffects, true, [5, 10, 15], [renew], 1000),
+        ModRow("Improved Shadow Word: Pain", [15275, 15317], Op.duration, false, [3000, 6000], [shadowWordPain],
+            18_000),
+        ModRow("Improved Vampiric Embrace", [27839, 27840], Op.allEffects, false, [5, 10], [vampiricEmbrace], 20),
+        ModRow("Inner Focus: cost", [14751], Op.cost, true, [-100], heals ~ [smite, holyFire, holyNova] ~ shadowDamage,
+            1000), // (Desperate Prayer costs nothing)
+        ModRow("Inner Focus: crit", [14751], Op.critChance, false, [25], [smite, holyFire, heal, greaterHeal,
+            flashHeal, mindBlast], 0),
+        ModRow("Mental Agility", [14520, 14780, 14781, 14782, 14783], Op.cost, true, [-2, -4, -6, -8, -10],
+            [renew, fortitude, powerWordShield, shadowWordPain, innerFire, psychicScream, fade, dispelMagic,
+            shadowProtection], 1000, [heal, smite, mindBlast]),
+        ModRow("Searing Light", [14909, 15017], Op.damage, true, [5, 10], [smite, holyFire], 1000, [mindBlast]),
+        ModRow("Searing Light: over time", [14909, 15017], Op.dot, true, [5, 10], [holyFire], 1000),
+        ModRow("Shadow Affinity", [15318, 15272, 15320], Op.threat, true, [-8, -16, -25], shadow, 1000, [smite]),
+        ModRow("Shadow Focus", [15260, 15327, 15328, 15329, 15330], Op.resistMissChance, false, [2, 4, 6, 8, 10],
+            shadow, 0, [smite]),
+        ModRow("Shadow Reach", [17322, 17323, 17325], Op.range, true, [6, 13, 20], shadowDamage, 30, [smite]),
+        ModRow("Spiritual Healing", [14898, 15349, 15354, 15355, 15356], Op.allEffects, true, [2, 4, 6, 8, 10],
+            heals ~ [renew, desperatePrayer], 1000, [smite]),
+        ModRow("Focused Casting", [14743, 27828], Op.notLoseCastingTime, true, [100, 100], heals ~ [smite, holyFire,
+            mindBlast, mindFlay, manaBurn], 100),
+    ]);
 }

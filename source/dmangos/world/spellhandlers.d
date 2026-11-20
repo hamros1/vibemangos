@@ -487,6 +487,16 @@ private:
             pendingHits = still;
             foreach (hit; due)
                 doEffect(hit.spell, hit.effect, hit.target, hit.casting);
+            // A missile's last effect on a target landed: what lands with it (Frostbite's freeze after Frostbolt's
+            // damage, not before it).
+            foreach (k, hit; due)
+            {
+                bool last = !missileOnTheWay(hit.spell, hit.target);
+                foreach (other; due[k + 1 .. $])
+                    last &= !(other.spell is hit.spell && other.target == hit.target);
+                if (last)
+                    targetTriggers(hit.spell, [hit.target]);
+            }
             if (due.length)
                 flushPlayerChanges();
         }
@@ -502,6 +512,15 @@ private:
         auto c = generic;
         generic.active = false;
         go(c);
+    }
+
+    /// Whether an effect of `spell` is still flying at `target` (`pendingHits`).
+    package bool missileOnTheWay(const(SpellInfo)* spell, ulong target)
+    {
+        foreach (ref hit; pendingHits)
+            if (hit.spell is spell && hit.target == target)
+                return true;
+        return false;
     }
 
     private uint pushbacks; // of the cast or channel under way: each pushes back less (1000 ms, 800, ..., 200)
@@ -3250,7 +3269,7 @@ private:
 
     /// A target's resistance to `school` as this caster's spells meet it: less by its `MOD_TARGET_RESISTANCE`
     /// (negative amounts: Arcane Subtlety), never below none.
-    int targetResistance(int resistance, uint school)
+    package int targetResistance(int resistance, uint school)
     {
         const reduced = resistance + player.auras.totalByMiscMask(AuraType.modTargetResistance, 1 << school);
         return reduced > 0 ? reduced : 0;

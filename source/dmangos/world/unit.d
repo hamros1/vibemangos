@@ -14,7 +14,7 @@
  */
 module dmangos.world.unit;
 
-import dmangos.world.auras : Aura, makeAura;
+import dmangos.world.auras : Aura, AuraSet, makeAura;
 import dmangos.world.combat : Fighter, MeleeDamage, MeleeHitOutcome, VictimState;
 import dmangos.world.creature : Creature;
 import dmangos.world.map : Map;
@@ -524,6 +524,8 @@ private void creatureDamaged(UnitRef attacker, UnitRef victim, uint damage, cons
     map.wake(creature.guid);
     if (damage == 0)
         return;
+    foreach (aura; brokenByDamage(creature.auras, blow, map.random))
+        creature.loseAura(aura, map);
     auto credited = creditedPlayer(attacker);
     if (credited !is null && !creature.petOwner)
         credited.tapCreature(creature);
@@ -543,6 +545,35 @@ private void creatureDamaged(UnitRef attacker, UnitRef victim, uint damage, cons
     if (credited !is null)
         return credited.killedCreature(creature); // the player's kill: its rewards
     map.creatureDeath(creature);
+}
+
+/**
+ * The auras that `blow`'s damage breaks: a hold whose spell's proc flags take such a blow ("Damage caused may
+ * interrupt the effect": Frost Nova, Fear, Psychic Scream, Howl of Terror; their `ProcFlags` the blows taken, their
+ * `ProcChance` the chance, with no proc effect of their own), a root, a fear, a stun or a confusion.
+ */
+Aura[] brokenByDamage(R)(ref const AuraSet auras, const Blow blow, ref R random)
+{
+    import std.random : uniform01;
+    import dmangos.world.aurahandlers : ProcFlag;
+    import dmangos.world.auras : AuraType;
+
+    const uint taken = blow.kind == BlowKind.melee ? ProcFlag.takeMeleeSwing | ProcFlag.takeMeleeAbility
+        : blow.kind == BlowKind.periodic ? ProcFlag.takeHarmfulPeriodic
+        : ProcFlag.takeHarmfulSpell | ProcFlag.takeHarmfulAbility | ProcFlag.takeRangedAbility | ProcFlag.takeRangedAttack;
+    Aura[] broken;
+    foreach (aura; auras.list)
+    {
+        const spell = aura.spell;
+        if (!(spell.casting.procFlags & taken) || aura.has(AuraType.procTriggerSpell) || aura.has(AuraType.dummy))
+            continue;
+        if (!aura.has(AuraType.modRoot) && !aura.has(AuraType.modFear) && !aura.has(AuraType.modStun)
+                && !aura.has(AuraType.modConfuse))
+            continue;
+        if (uniform01(random) * 100 < spell.casting.procChance)
+            broken ~= cast(Aura) aura;
+    }
+    return broken;
 }
 
 /**

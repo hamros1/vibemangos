@@ -324,6 +324,13 @@ final class Character : OnlinePlayer, Looter
         import dmangos.world.combat : MeleeHitOutcome;
 
         takeBlow(attacker, damage, blow);
+        if (damage && player !is null && player.alive) // a hold the damage breaks (a fear, a root)
+        {
+            import dmangos.world.unit : brokenByDamage;
+
+            foreach (aura; brokenByDamage(player.auras, blow, map.random))
+                removeAura(aura);
+        }
         if (damage && player !is null && player.alive) // a cast under way pushed back, a channel cut short
             damagedWhileCasting(blow.kind == BlowKind.periodic,
                 attacker.kind == imported!"dmangos.world.unit".UnitKind.player && attacker.session is this);

@@ -752,7 +752,12 @@ mixin template ClassSpells()
                 castCustom(precast, target);
         foreach (target; dodgedBy)
             swingDodgedBy(target, MeleeHitOutcome.dodge);
-        targetTriggers(spell, hit);
+        // (a missile's targets when it lands: `missileLanded`)
+        ulong[] reached;
+        foreach (target; hit)
+            if (!missileOnTheWay(spell, target))
+                reached ~= target;
+        targetTriggers(spell, reached);
         auto held = heldProcs;
         heldProcs = null;
         foreach (c; held)
@@ -766,7 +771,7 @@ mixin template ClassSpells()
      * Improved Scorch, Shadow Weaving, Relentless Strikes, Initiative) may cast its spell at each target hit, by its
      * amount as a chance (and its points a combo point).
      */
-    private void targetTriggers(const(SpellInfo)* spell, const(ulong)[] hit)
+    package void targetTriggers(const(SpellInfo)* spell, const(ulong)[] hit)
     {
         import dmangos.world.spellmods : affects;
 
@@ -982,6 +987,61 @@ mixin template ClassSpells()
     }
 
     /**
+     * Whether this player's ward sends `spell` back (`SPELL_AURA_REFLECT_SPELLS_SCHOOL`, of the spell's school): Fire
+     * Ward's and Frost Ward's amount is none, the chance their talents' (Improved Fire Ward's, Frost Warding's dummy
+     * effect: "gives your Frost Ward a 20% chance to reflect Frost spells and effects while active").
+     */
+    package bool reflectsSpell(const(SpellInfo)* spell)
+    {
+        enum uint magic = 1; // SPELL_DAMAGE_CLASS_MAGIC
+        if (spell.casting.dmgClass != magic || spell.casting.school >= 7)
+            return false;
+        foreach (aura; player.auras.list)
+            foreach (k; 0 .. 3)
+                if ((aura.effects & (1 << k)) && aura.type(k) == AuraType.reflectSpellsSchool
+                        && (aura.misc(k) & (1 << spell.casting.school)))
+                {
+                    const chance = aura.amount[k] + wardTalentChance(aura.spell);
+                    if (chance > 0 && uniform01(map.random) * 100 < chance)
+                        return true;
+                }
+        return false;
+    }
+
+    /// The reflect chance a mage's talent gives `ward` (Fire Ward: Improved Fire Ward; Frost Ward: Frost Warding).
+    private int wardTalentChance(const(SpellInfo)* ward)
+    {
+        import dmangos.world.spellcast : effectValue;
+
+        static immutable uint[] improvedFireWard = [11094, 13043], frostWarding = [11189, 28332];
+        const(uint)[] ranks = ofFamily(ward, SpellFamily.mage, 0x8) ? improvedFireWard
+            : ofFamily(ward, SpellFamily.mage, 0x100) ? frostWarding : null;
+        int chance;
+        foreach (id; ranks)
+            if (player.knowsSpell(id))
+                if (const talent = context.data.spells.spell(id))
+                    foreach (i; 0 .. 3)
+                        if (talent.effect[i] == SpellEffect.dummy)
+                            chance = effectValue(*talent, i, player.data.level, 0);
+        return chance;
+    }
+
+    /// A creature's `spell` came back off this player's ward: this player's now, at the creature (`caster`).
+    package void reflectBack(const(SpellInfo)* spell, ulong caster)
+    {
+        castCustom(spell, SpellTargets(TargetFlags.unit, caster), CustomValues.init);
+    }
+
+    /// A creature's `spell` at this player was resisted whole: what procs on that (Magic Absorption).
+    package void spellResistedBy(const(SpellInfo)* spell, UnitRef caster)
+    {
+        import dmangos.world.aurahandlers : ProcFlag;
+        import dmangos.world.procs : ProcEx, ProcHit;
+
+        procAuras(ProcFlag.takeHarmfulSpell, caster, ProcHit(spell, ProcEx.resist, 0, 0, false));
+    }
+
+    /**
      * Arcane Concentration's override scripts (1388 to 1392, one a rank, their mask Blizzard's): a Blizzard tick that
      * hits is "a damage spell [that] hits a target" though no spell hit sets off its proc (its ticks are a persistent
      * area's), so each such tick rolls the rank's chance (2% a rank: the talent's own proc chance) of Clearcasting.
@@ -1189,6 +1249,19 @@ mixin template ClassSpells()
             }
             casts ~= ProcCast(combustionCrit, player.guid);
             return crit;
+        }
+        // Magic Absorption: a spell resisted whole gives back a share of the mana (29442), once a second at most
+        // (its `spell_proc_event` row).
+        enum uint magicAbsorption = 29441, magicAbsorptionMana = 29442;
+        if (chainFirstRank(spell.id) == magicAbsorption && i == 0)
+        {
+            import dmangos.world.defines : Power;
+
+            if (!(hit.procEx & ProcEx.resist))
+                return false;
+            const mana = cast(int)(player.values.get!UNIT_FIELD_MAXPOWER1(Power.mana) * aura.amount[i] / 100);
+            casts ~= ProcCast(magicAbsorptionMana, player.guid, CustomValues.first(mana));
+            return true;
         }
         // Master of Elements
         if (ofFamily(spell, SpellFamily.mage) && spell.casting.spellIconId == 1920)
