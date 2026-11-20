@@ -971,7 +971,10 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
             if (auras.list.length || template_.mechanicImmuneMask || template_.schoolImmuneMask)
                 f.immune = Immunities.of(auras, template_.mechanicImmuneMask, template_.schoolImmuneMask);
             if (auras.list.length)
+            {
                 f.attackerChancesFrom(auras);
+                f.invisibilityFrom(auras);
+            }
         }
         // Crit, dodge, parry and block chances: 5% each for creatures.
         f.crit = f.dodge = f.parry = f.block = 5;

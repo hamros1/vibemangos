@@ -383,6 +383,14 @@ final class CreatureAI : Scripted, CreatureHost
             return;
         if (!world.inLineOfSight(me.position, target.position))
             return;
+        // An invisible one (a Lesser Invisibility potion) only if it sees through it.
+        if (target.invisible)
+        {
+            import dmangos.world.combat : seesThrough;
+
+            if (!seesThrough(me.fighter, target))
+                return;
+        }
         // A stealthed one only if it detects it: in front, near enough for its level and the stealth's strength.
         // Short of that but within the alert range, its script hears of it (a lookout on its guard).
         if (target.stealthed)

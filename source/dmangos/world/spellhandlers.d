@@ -4638,3 +4638,42 @@ unittest
     priest.session.update(1800.msecs);
     assert(opcodesOf(priest.read()).canFind(Opcode.SMSG_SPELL_GO), "then it goes");
 }
+
+/// An invisible creature is not seen until the player sees through its invisibility (Detect Invisibility).
+unittest
+{
+    import dmangos.auth.accounts : AccountLevel;
+    import dmangos.world.auras : makeAura;
+    import dmangos.world.creature : Creature;
+    import dmangos.world.movement : Position;
+    import dmangos.world.objects : HighGuid, makeGuid;
+    import dmangos.world.spells : SpellInfo;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto unseen = SpellInfo(90071);
+    unseen.effect[0] = SpellEffect.applyAura;
+    unseen.casting.applyAuraName[0] = AuraType.modInvisibility;
+    unseen.miscValue[0] = 0;
+    auto detect = SpellInfo(90072);
+    detect.effect[0] = SpellEffect.applyAura;
+    detect.casting.applyAuraName[0] = AuraType.modInvisibilityDetection;
+    detect.miscValue[0] = 0;
+    context.data.spells.spells[90071] = unseen;
+    context.data.spells.spells[90072] = detect;
+
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f), AccountLevel.player);
+    anduin.read();
+    auto session = anduin.session.inWorld;
+    auto map = context.map(0);
+    auto keeper = cast(Creature) map.findObject(makeGuid(HighGuid.unit, creatureInnkeeper, innkeeperSpawn));
+    assert(map.seesObject(7, keeper.guid));
+    bool isNew;
+    keeper.auras.apply(makeAura((90071 in context.data.spells.spells), 0, 60, -1, true, [300, 0, 0]), keeper.values, isNew);
+    map.refreshVisibility(session);
+    assert(!map.seesObject(7, keeper.guid), "invisible: gone from the player's sight");
+    session.addAura(makeAura((90072 in context.data.spells.spells), 7, 60, 60_000, true, [300, 0, 0]));
+    assert(map.seesObject(7, keeper.guid), "seen through it");
+}

@@ -1400,7 +1400,11 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             {
                 import dmangos.world.combat : detects, maxPlayerStealthDetectRange;
 
-                f.detected = detects(watcher.player.fighter, hidden.player.fighter, maxPlayerStealthDetectRange);
+                import dmangos.world.combat : seesThrough;
+
+                const watcherFighter = watcher.player.fighter, hiddenFighter = hidden.player.fighter;
+                f.detected = (!hiddenFighter.stealthed || detects(watcherFighter, hiddenFighter, maxPlayerStealthDetectRange))
+                    && seesThrough(watcherFighter, hiddenFighter);
             }
         }
         if (auto local = cast(Character) onlinePlayer(viewer))

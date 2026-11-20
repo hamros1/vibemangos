@@ -1233,6 +1233,7 @@ private:
 
             f.immune = Immunities.of(auras);
             f.attackerChancesFrom(auras);
+            f.invisibilityFrom(auras);
         }
         return f;
     }

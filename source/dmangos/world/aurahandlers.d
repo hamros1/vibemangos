@@ -528,9 +528,22 @@ private:
                 if (map !is null)
                     map.refreshVisibility(this);
                 break;
-            case AuraType.modInvisibility:
+            case AuraType.modInvisibility: // the glow it sees itself with; who sees it changes
+            {
                 if (apply)
                     interruptAuras(AuraInterrupt.stealthInvisCancels, aura);
+                enum ubyte invisibilityGlow = 0x40; // PLAYER_FIELD_BYTE2_INVISIBILITY_GLOW
+                const bytes = player.values.getByte!PLAYER_FIELD_BYTES2(1);
+                const glowing = player.auras.hasType(AuraType.modInvisibility);
+                player.values.setByte!PLAYER_FIELD_BYTES2(1, cast(ubyte)(glowing ? bytes | invisibilityGlow
+                    : bytes & ~invisibilityGlow));
+                if (map !is null)
+                    map.refreshVisibility(this);
+                break;
+            }
+            case AuraType.modInvisibilityDetection: // what it sees changes
+                if (map !is null)
+                    map.refreshVisibility(this);
                 break;
             case AuraType.modShapeshift:
                 player.values.setByte!UNIT_FIELD_BYTES_1(2, apply ? cast(ubyte) aura.misc(i) : 0);

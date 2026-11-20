@@ -95,7 +95,7 @@ struct PlayerView
     bool ghost;   /// released: a spirit (a body not yet released is neither)
     bool gmTag;   /// `.gm on` (`PlayerFlags.gm`)
     bool gmInvisible; /// `.invisible`
-    bool stealthed;   /// under Stealth or Prowl (`MOD_STEALTH`)
+    bool stealthed;   /// under Stealth or Prowl (`MOD_STEALTH`), or invisible (`MOD_INVISIBILITY`): seen only if detected
 }
 
 /// What the world knows of a viewer and a player it might see (`Map.visibilityFacts`).
@@ -170,7 +170,8 @@ PlayerView viewOf(const Player p)
     import dmangos.world.spellids : AuraType;
 
     return PlayerView(p.guid, p.deathState == DeathState.alive, p.deathState == DeathState.ghost,
-        p.hasFlag(PlayerFlags.gm), p.gmInvisible, p.auras.hasType(AuraType.modStealth));
+        p.hasFlag(PlayerFlags.gm), p.gmInvisible, p.auras.hasType(AuraType.modStealth)
+        || p.auras.hasType(AuraType.modInvisibility));
 }
 
 /// A player replica's `PlayerView`, from its fields.
@@ -998,8 +999,21 @@ final class Map : CombatWorld, GameObjectWorld
             return true;
         }
         if (auto creature = cast(const Creature) object)
-            return !(creature.template_.npcFlags & (spiritHealer | spiritGuide))
-                || who.character.deathState != DeathState.alive;
+        {
+            if ((creature.template_.npcFlags & (spiritHealer | spiritGuide)) && who.character.deathState == DeathState.alive)
+                return false;
+            // An invisible creature (a ghost of a quest, an unseen spirit): only to who sees through it, or a game master.
+            import dmangos.world.spellids : AuraType;
+
+            if (creature.auras.hasType(AuraType.modInvisibility)
+                    && !who.character.hasFlag(imported!"dmangos.world.player".PlayerFlags.gm))
+            {
+                import dmangos.world.combat : seesThrough;
+
+                return seesThrough(who.character.fighter, creature.fighter);
+            }
+            return true;
+        }
         return true;
     }
 
@@ -2508,7 +2522,8 @@ private:
 
         // A far-seeing player too: it sees from one place and is seen at another.
         const ghost = who.character.deathState == DeathState.ghost || who.character.gmInvisible
-            || who.character.auras.hasType(AuraType.modStealth) || far;
+            || who.character.auras.hasType(AuraType.modStealth) || who.character.auras.hasType(AuraType.modInvisibility)
+            || far;
         const turned = ghost != at(slot).ghost;
         if (turned)
         {
