@@ -841,6 +841,8 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
         import dmangos.script.api : AuraEnded, EntityRef;
 
         auras.remove(aura, values);
+        if (auto caster = world.unit(aura.caster)) // its caster's class rules (Wyvern Sting's poison as it wakes)
+            caster.auraEndedOn(this, aura);
         if (ai is null)
             return;
         ai.auraLost(aura.caster, aura.spell.id, world);

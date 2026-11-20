@@ -130,7 +130,25 @@ struct SpellCastInfo
     float[3] dmgMultiplier = 0;
     uint[3] effectMechanic;    /// `EffectMechanic1..3`: each effect's own mechanic (a stun on a damaging spell)
     uint[2] totems;            /// `Totem1/2`: tools that must be in the bags (a blacksmith hammer, thieves' tools)
+    ulong[3] affectMask;       /// `spell_affect`: the spell family mask an effect affects, where it overrides `EffectItemType`
     uint attributesServerside; /// `AttributesServerside`: CMaNGOS's own flags (`SPELL_ATTR_SS_*`)
+}
+
+/**
+ * `spell_proc_event`: what an aura that procs procs on, beside (or instead of) its spell's own `ProcFlags` and
+ * `ProcChance`: a school (`schoolMask`), a family and its spells (`familyMask`, per effect), hit kinds (`procEx`:
+ * a crit only, a dodge...), a rate a minute instead of a chance, and a cooldown. One row stands for every rank.
+ */
+struct SpellProcEvent
+{
+    uint schoolMask;
+    uint family;
+    ulong[3] familyMask;
+    uint procFlags;            /// 0: the spell's own
+    uint procEx;               /// `PROC_EX_*`
+    float ppmRate = 0;         /// procs a minute at the weapon's speed; 0: by chance
+    float customChance = 0;    /// a chance instead of the spell's; 0: the spell's
+    uint cooldown;             /// milliseconds between procs
 }
 
 /// `spell_template`'s casting columns, in `SpellCastRow` order.
@@ -245,6 +263,17 @@ final class SpellData
     private uint[][uint] chainNext;                   // prev/req -> spells that follow it
     private SpellLearnSpellNode[][uint] learnSpells;  // spell -> spells learned with it
     private SpellLearnSkillNode[uint] learnSkills;    // spell -> skill it teaches
+    SpellProcEvent[uint] procEvents;                  /// `spell_proc_event`, by its (first rank's) spell
+
+    /// What the aura of `id` procs on (`spell_proc_event`, its rank's or its first rank's); null if the spell says.
+    const(SpellProcEvent)* procEvent(uint id) const
+    {
+        if (auto event = id in procEvents)
+            return event;
+        if (const node = id in chains)
+            return node.first in procEvents;
+        return null;
+    }
 
     /// The spell, or null.
     const(SpellInfo)* spell(uint id) const
@@ -308,6 +337,15 @@ final class SpellData
         foreach (row; world.queryAs!(SpellCastRow, spellCastQuery)())
             if (auto spell = data.spells.edit(row.id))
                 spell.casting = row.toInfo();
+        foreach (row; world.query!"SELECT entry, effectId, SpellFamilyMask FROM spell_affect"())
+            if (auto spell = data.spells.edit(row.get!uint(0)))
+                if (row.get!uint(1) < 3)
+                    spell.casting.affectMask[row.get!uint(1)] = row.get!ulong(2);
+        foreach (row; world.query!("SELECT entry, SchoolMask, SpellFamilyName, SpellFamilyMask0, SpellFamilyMask1, "
+                ~ "SpellFamilyMask2, procFlags, procEx, ppmRate, CustomChance, Cooldown FROM spell_proc_event")())
+            data.procEvents[row.get!uint(0)] = SpellProcEvent(row.get!uint(1), row.get!uint(2),
+                [row.get!ulong(3), row.get!ulong(4), row.get!ulong(5)], row.get!uint(6), row.get!uint(7),
+                row.get!float(8), row.get!float(9), row.get!uint(10));
         const unknown = data.forgetUnknownIds();
         if (unknown)
             warning!"%s effect, aura, target or damage class ids in spell_template name nothing 1.12 has: taken as none"(

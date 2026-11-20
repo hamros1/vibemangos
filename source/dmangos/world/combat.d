@@ -240,6 +240,11 @@ struct DamageMods
             m.swing[type] = auras.multiplier(AuraType.modDamagePercentDone, (int mask) => (mask & (1 << school)) != 0,
                 weaponOf(slots[type]));
         }
+        {
+            import dmangos.world.classspells : crusaderDamageFactor;
+
+            m.swing[AttackType.mainHand] *= crusaderDamageFactor(auras.list); // as much less as it is quicker
+        }
         foreach (int s; 0 .. 7)
         {
             m.school[s] = auras.multiplier(AuraType.modDamagePercentDone, (int mask) => (mask & (1 << s)) != 0, -1);

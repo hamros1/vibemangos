@@ -409,6 +409,21 @@ mixin template CreatureScripting()
                 }
             return ActionResult.notHere;
         }
+        // Class spells: a player's (a creature's casts take no custom amounts, power or cooldowns from a script).
+        ActionResult hostCastCustom(EntityRef, uint, EntityRef, int[3], ubyte) { return ActionResult.failed; }
+        ActionResult hostSetPower(EntityRef, ubyte, int) { return ActionResult.failed; }
+        float hostDamageMultiplier(ubyte effect) { return scriptSpell is null || effect > 2 ? 1 : scriptSpell.casting.dmgMultiplier[effect]; }
+        uint hostResetCooldowns(EntityRef, uint, uint, uint) { return 0; }
+        int hostEffectValue(ubyte effect)
+        {
+            import dmangos.world.spellcast : effectValue;
+
+            return scriptSpell is null || effect > 2 ? 0
+                : effectValue(*scriptSpell, effect, me.values.get!UNIT_FIELD_LEVEL, 0.5f);
+        }
+        int hostAffectingAuraTotal(EntityRef, ubyte) { return 0; }
+        int hostSpellPower(EntityRef) { return 0; }
+        ActionResult hostCastHighestRank(EntityRef, uint, bool) { return ActionResult.failed; }
 
         // Spell scripts of items, quests and the world (`dmangos.world.spellscripting`):
         private CombatWorld scriptWorld() { return world_; }

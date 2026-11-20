@@ -1,7 +1,5 @@
 # Gaps tools/harness/spell-audit.py knows of, each with why it is still open. Take a line off when it is done;
 # the audit fails on any gap not listed here.
-aura addTargetTrigger: talents that proc on the target (Frostbite, Improved Scorch, Relentless Strikes): the class spells' work
-aura overrideClassScripts: talents each with code of their own (Arcane Concentration, Illumination): the class spells' work
 aura aurasVisible: Detect Magic shows a target's auras: the client's, nothing yet sent for it
 aura empathy: Beast Lore's special info (UNIT_DYNFLAG_SPECIALINFO for the caster only): needs a per-viewer field
 aura reflectSpellsSchool: the Wards' reflection (a talent's chance; 0 without): not yet done

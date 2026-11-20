@@ -26,10 +26,22 @@ enum ProcFlag : uint
     kill = 0x2,                /// it killed something worth experience
     dealMeleeSwing = 0x4,      /// it hit with a melee swing
     takeMeleeSwing = 0x8,      /// a melee swing hit it
+    dealMeleeAbility = 0x10,   /// its melee ability (Sinister Strike, Mortal Strike) hit
+    takeMeleeAbility = 0x20,   /// a melee ability hit it
     dealRangedAttack = 0x40,   /// its ranged attack (Auto Shot, a wand) hit
     takeRangedAttack = 0x80,   /// a ranged attack hit it
+    dealRangedAbility = 0x100, /// its ranged ability (Aimed Shot) hit
+    takeRangedAbility = 0x200, /// a ranged ability hit it
+    dealHelpfulAbility = 0x400,
+    takeHelpfulAbility = 0x800,
+    dealHarmfulAbility = 0x1000,
+    takeHarmfulAbility = 0x2000,
+    dealHelpfulSpell = 0x4000, /// its heal landed
+    takeHelpfulSpell = 0x8000, /// a heal landed on it
     dealHarmfulSpell = 0x10000, /// its damaging spell hit
     takeHarmfulSpell = 0x20000, /// a damaging spell hit it
+    dealHarmfulPeriodic = 0x40000, /// its damage over time ticked
+    takeHarmfulPeriodic = 0x80000, /// a damage over time ticked on it
 }
 
 mixin template AuraHandlers()
@@ -67,7 +79,9 @@ private:
         int[3] values;
         foreach (j; 0 .. 3)
             if (auraEffect(spell.effect[j]))
-                values[j] = effectMod(spell, j, effectValue(*spell, j, player.data.level, uniform01(map.random)));
+                values[j] = effectMod(spell, j, effectCustom.has(j) ? effectCustom.values[j]
+                    : effectValue(*spell, j, player.data.level, uniform01(map.random)));
+        classAuraValues(spell, values); // Rip's and Rupture's attack power, Mana Shield's spell power
         const ms = modDuration(spell, duration(*spell, context.client, player.data.level));
         // Damage over time (`SPELLMOD_DOT`): what each tick deals.
         foreach (j; 0 .. 3)
@@ -101,7 +115,9 @@ private:
                 targetResistance(cast(int) creature.values.get!UNIT_FIELD_RESISTANCES(spell.casting.school),
                 spell.casting.school), spellHitBonus), ms);
             bool isNew;
-            creature.auras.apply(aura, creature.values, isNew);
+            auto applied = creature.auras.apply(aura, creature.values, isNew);
+            if (isNew)
+                classCreatureAuraApplied(creature, applied); // the sting or curse it replaces
             map.flushObjectChanges(creature);
             foreach (j; 0 .. 3)
                 if (auraEffect(spell.effect[j]))
@@ -340,47 +356,18 @@ private:
 
     /**
      * Something happened to this player (`flags`: `ProcFlag`s) with `other`, the unit it struck or that struck
-     * it. Each of its auras whose spell procs on that (`procFlags`) and that triggers a spell (Proc Trigger
-     * Spell: Lightning Shield, Seal of Righteousness, Blood Craze) rolls its spell's `procChance`; on success
-     * the triggered spell is cast at `other` (its own implicit targets decide where it lands), and a charge is
-     * used: an aura out of charges goes. A spell cast by a proc does not set off procs itself.
+     * it, and `hit` tells how (the spell, a crit, a dodge): its auras that proc on it do what they do
+     * (`dmangos.world.procs`, `runProcs`). A spell cast by a proc does not set off procs itself.
      */
-    package void procAuras(uint flags, UnitRef other)
+    package void procAuras(uint flags, UnitRef other, imported!"dmangos.world.procs".ProcHit hit
+        = imported!"dmangos.world.procs".ProcHit.init)
     {
-        import std.random : uniform01;
-
         if (player is null || !player.fighter.alive || inProc)
             return;
         inProc = true;
         scope (exit)
             inProc = false;
-        uint[] casts;
-        Aura[] spent;
-        foreach (aura; player.auras.list)
-        {
-            if (!(aura.spell.casting.procFlags & flags))
-                continue;
-            uint[] triggers;
-            foreach (i; 0 .. 3)
-                if ((aura.effects & (1 << i)) && aura.type(i) == AuraType.procTriggerSpell && aura.spell.triggerSpell[i])
-                {
-                    // An extra swing grants no more of them (CMaNGOS's `m_extraAttacksExecuting`).
-                    const trigger = context.data.spells.spell(aura.spell.triggerSpell[i]);
-                    if (extraAttacksExecuting && trigger !is null && trigger.hasEffect(SpellEffect.addExtraAttacks))
-                        continue;
-                    triggers ~= aura.spell.triggerSpell[i];
-                }
-            if (triggers.length == 0 || uniform01(map.random) * 100 >= aura.spell.casting.procChance)
-                continue;
-            casts ~= triggers;
-            if (aura.charges && --aura.charges == 0)
-                spent ~= aura;
-        }
-        foreach (aura; spent)
-            removeAura(aura);
-        const target = other ? other.combatGuid : player.guid;
-        foreach (id; casts)
-            castTriggeredAt(id, target);
+        runProcs(flags, other, hit);
     }
 
     /**
@@ -518,6 +505,7 @@ private:
     void auraEffects(Aura aura, bool apply)
     {
         bool stats, speeds, movement, movementAuras, breathing;
+        classAuraChanged(aura, apply); // a seal
         foreach (i; 0 .. 3)
         {
             if (!(aura.effects & (1 << i)))
@@ -983,6 +971,8 @@ private:
                 player.modifyPower(cast(Power) aura.misc(i), amount);
             return periodicLog(player.guid, aura, i, amount, cast(uint) aura.misc(i));
         case AuraType.periodicTriggerSpell:
+            if (classPeriodicTrigger(aura, i)) // Frenzied Regeneration
+                return;
             if (const spell = context.data.spells.spell(aura.spell.triggerSpell[i]))
                 castSpell(spell, SpellTargets(TargetFlags.self, player.guid), true, 0);
             return;
@@ -1154,6 +1144,13 @@ private:
                 return leechTick(map.unitOf(target), aura, i, damage);
             periodicLog(target.guid, aura, i, damage, aura.spell.casting.school);
             spellAttacked(target, damage, true, aura.spell.casting.school);
+            if (target.alive) // its ticks' procs (Nightfall)
+            {
+                import dmangos.world.aurahandlers : ProcFlag;
+                import dmangos.world.procs : ProcHit;
+
+                procAuras(ProcFlag.dealHarmfulPeriodic, map.unitOf(target), ProcHit(aura.spell, 1, damage, 0, damage != 0));
+            }
             break;
         case AuraType.periodicManaLeech:
             return manaLeechTick(map.unitOf(target), aura, i, amount);

@@ -228,6 +228,13 @@ struct UnitRef
             session.auraTick(target, aura, effect);
     }
 
+    /// An aura this unit cast on `target` ended.
+    void auraEndedOn(Creature target, Aura aura)
+    {
+        if (kind == UnitKind.player)
+            session.classCreatureAuraLost(target, aura);
+    }
+
     /// An aura of `spell` from `caster`.
     void auraFrom(ulong caster, const(SpellInfo)* spell, uint casterLevel, int durationMs, const int[3] values)
     {
@@ -440,6 +447,13 @@ void dealDamage(UnitRef attacker, UnitRef victim, uint damage, const Blow blow)
             attacker.session.wearOnHit();
         if (victim.kind == UnitKind.player)
             victim.session.wearOnHit();
+    }
+    // What a dodge, a parry or a block lets its victim and its striker do (Revenge, Overpower).
+    if (blow.kind == BlowKind.melee)
+    {
+        import dmangos.world.classspells : swingReactions;
+
+        swingReactions(attacker, victim, blow.melee);
     }
     if (blow.kind == BlowKind.melee && blow.melee.targetState == VictimState.parry)
         final switch (victim.kind)

@@ -41,6 +41,10 @@ enum SpellCastResult : ubyte
     badImplicitTargets = 0x09,
     badTargets = 0x0A,
     casterAuraState = 0x12,
+    targetAuraState = 0x67,    /// the target lacks what the spell needs on it (Conflagrate's Immolate), or is immune
+    fizzle = 0x1D,
+    auraBounced = 0x07,        /// "A more powerful spell is already active"
+    nothingToDispel = 0x4E,
     casterDead = 0x13,
     chestInUse = 0x15,
     dontReport = 0x17,

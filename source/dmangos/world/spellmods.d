@@ -45,7 +45,8 @@ enum SpellModOp : int
 /// Whether effect `i` of `mod` changes `spell`.
 bool affects(const Aura mod, size_t i, const ref SpellInfo spell)
 {
-    const mask = mod.spell.itemType[i];
+    // `spell_affect` where it has a mask (one wider than `EffectItemType`'s 32 bits: Clearcasting's, Arcane Power's).
+    const ulong mask = mod.spell.casting.affectMask[i] ? mod.spell.casting.affectMask[i] : mod.spell.itemType[i];
     return mask && spell.casting.spellFamilyName == mod.spell.casting.spellFamilyName
         && (spell.casting.spellFamilyFlags & mask) != 0;
 }

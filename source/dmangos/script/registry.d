@@ -189,7 +189,9 @@ template KindInfo(ScriptKind kind)
         alias Context = SpellContext;
         alias Events = AliasSeq!(EffectHit, AuraApplied, AuraTicked,
             // Spell scripts of items, quests and the world:
-            CastChecked, CastStarted, AuraHeartbeat, AuraEnded, AuraTickEnded, TargetChecked);
+            CastChecked, CastStarted, AuraHeartbeat, AuraEnded, AuraTickEnded, TargetChecked,
+            // Class spells:
+            SpellCast, SpellLanded);
         alias Attribute = .spell;
     }
     else static if (kind == ScriptKind.areaTrigger)

@@ -40,6 +40,8 @@ import dmangos.world.death : DeathHandlers;
 import dmangos.world.loothandlers : LootHandlers;
 import dmangos.world.spellhandlers : SpellHandlers;
 import dmangos.world.aurahandlers : AuraHandlers;
+import dmangos.world.classspells : ClassSpells;
+import dmangos.world.procs : ProcHandlers;
 import dmangos.world.effecthandlers : EffectHandlers;
 import dmangos.world.tradehandlers : TradeHandlers;
 import dmangos.world.duelhandlers : DuelHandlers;
@@ -325,15 +327,22 @@ final class Character : OnlinePlayer, Looter
         if (damage && player !is null && player.fighter.alive) // a cast under way pushed back, a channel cut short
             damagedWhileCasting(blow.kind == BlowKind.periodic,
                 attacker.kind == imported!"dmangos.world.unit".UnitKind.player && attacker.session is this);
-        // A swing that landed: its damage shields strike back, and its auras may proc.
+        // A swing that landed: its damage shields strike back. Its auras may proc on it, and on a dodge, a parry or a
+        // block (those that ask for one: `dmangos.world.procs`).
         if (blow.kind == BlowKind.melee && attacker && player !is null && player.fighter.alive
-                && blow.melee.outcome != MeleeHitOutcome.miss && blow.melee.outcome != MeleeHitOutcome.dodge
-                && blow.melee.outcome != MeleeHitOutcome.parry && blow.melee.outcome != MeleeHitOutcome.evade)
+                && blow.melee.outcome != MeleeHitOutcome.evade)
         {
-            damageShields(attacker);
+            import dmangos.world.procs : ProcHit, procExOfSwing;
+
+            const landed = blow.melee.outcome != MeleeHitOutcome.miss && blow.melee.outcome != MeleeHitOutcome.dodge
+                && blow.melee.outcome != MeleeHitOutcome.parry;
+            if (landed)
+                damageShields(attacker);
             if (blow.melee.outcome == MeleeHitOutcome.block)
                 blockDamageProcs(attacker); // Holy Shield
-            procAuras(ProcFlag.takeMeleeSwing, attacker);
+            if (player !is null && player.fighter.alive)
+                procAuras(ProcFlag.takeMeleeSwing, attacker, ProcHit(null, procExOfSwing(blow.melee.outcome), damage,
+                    cast(ubyte) blow.melee.type, damage != 0));
         }
         else if (blow.kind == BlowKind.spell && damage && attacker && player !is null && player.fighter.alive)
             procAuras(ProcFlag.takeHarmfulSpell, attacker);
@@ -807,6 +816,8 @@ private:
     mixin LootHandlers;
     mixin SpellHandlers;
     mixin AuraHandlers;
+    mixin ProcHandlers;
+    mixin ClassSpells;
     mixin EffectHandlers;
     mixin TradeHandlers;
     mixin DuelHandlers;
