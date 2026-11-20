@@ -26,9 +26,10 @@ mixin template SessionScripting()
         auto handle = context.spellScript(spell.id);
         if (!handle)
             return false;
+        const outer = scriptSpell; // (a script's cast runs scripts of its own)
         scriptSpell = spell;
         scope (exit)
-            scriptSpell = null;
+            scriptSpell = outer;
         auto c = SpellContext(scriptHost);
         context.scripts.raise(handle, c, EffectHit(EntityRef(player.guid), EntityRef(target), cast(ubyte) i, value));
         return c.consumed;
@@ -42,9 +43,10 @@ mixin template SessionScripting()
         auto handle = context.spellScript(spell.id);
         if (!handle)
             return;
+        const outer = scriptSpell; // (a script's cast runs scripts of its own)
         scriptSpell = spell;
         scope (exit)
-            scriptSpell = null;
+            scriptSpell = outer;
         auto c = SpellContext(scriptHost);
         context.scripts.raise(handle, c, AuraApplied(EntityRef(player.guid), EntityRef(target), cast(ubyte) i, amount));
     }
@@ -58,13 +60,46 @@ mixin template SessionScripting()
         auto handle = context.spellScript(spell.id);
         if (!handle)
             return amount;
+        const outer = scriptSpell; // (a script's cast runs scripts of its own)
         scriptSpell = spell;
         scope (exit)
-            scriptSpell = null;
+            scriptSpell = outer;
         auto c = SpellContext(scriptHost);
         context.scripts.raise(handle, c, AuraTicked(EntityRef(player.guid), EntityRef(target), cast(ubyte) i, tick,
             ticks, amount));
         return c.amountChanged ? c.amount : amount;
+    }
+
+    /// This player cast `spell` at `target` (before its hits are rolled): the spell's script hears of it (`OnCast`).
+    package void spellCastScript(const(SpellInfo)* spell, ulong target)
+    {
+        import dmangos.script.api : SpellCast;
+
+        auto handle = context.spellScript(spell.id);
+        if (!handle)
+            return;
+        const outer = scriptSpell; // (a script's cast runs scripts of its own)
+        scriptSpell = spell;
+        scope (exit)
+            scriptSpell = outer;
+        auto c = SpellContext(scriptHost);
+        context.scripts.raise(handle, c, SpellCast(EntityRef(player.guid), EntityRef(target)));
+    }
+
+    /// This player's `spell` reached `target`, or `missed` it: the spell's script hears of it (`OnHit`).
+    package void spellLandedScript(const(SpellInfo)* spell, ulong target, bool missed)
+    {
+        import dmangos.script.api : SpellLanded;
+
+        auto handle = context.spellScript(spell.id);
+        if (!handle)
+            return;
+        const outer = scriptSpell; // (a script's cast runs scripts of its own)
+        scriptSpell = spell;
+        scope (exit)
+            scriptSpell = outer;
+        auto c = SpellContext(scriptHost);
+        context.scripts.raise(handle, c, SpellLanded(EntityRef(player.guid), EntityRef(target), missed));
     }
 
     /// Scripted event `event` (started by `source`, at `target`) reached its script, around this player: true if the
@@ -161,6 +196,22 @@ mixin template SessionScripting()
         ActionResult hostTeleportPlayer(EntityRef who, Location at) { return this.outer.hostTeleportPlayer(who, at); }
         bool hostHasAura(EntityRef who, uint spell) { return this.outer.hostHasAura(who, spell); }
         ActionResult hostModifyThreat(EntityRef creature, EntityRef target, int percent) { return this.outer.hostModifyThreat(creature, target, percent); }
+        // Class spells (`dmangos.world.classspells`):
+        ActionResult hostCastCustom(EntityRef caster, uint spellId, EntityRef target, int[3] values, ubyte which) { return this.outer.hostCastCustom(caster, spellId, target, values, which); }
+        int hostPower(EntityRef who, ubyte power) { return this.outer.hostPower(who, power); }
+        ActionResult hostSetPower(EntityRef who, ubyte power, int value) { return this.outer.hostSetPower(who, power, value); }
+        float hostDamageMultiplier(ubyte effect) { return scriptSpell is null || effect > 2 ? 1 : scriptSpell.casting.dmgMultiplier[effect]; }
+        uint hostResetCooldowns(EntityRef who, uint family, uint schoolMask, uint except) { return this.outer.hostResetCooldowns(who, family, schoolMask, except); }
+        int hostEffectValue(ubyte effect)
+        {
+            import dmangos.world.spellcast : effectValue;
+            import std.random : uniform01;
+
+            return scriptSpell is null || effect > 2 ? 0
+                : effectValue(*scriptSpell, effect, player.data.level, uniform01(map.random));
+        }
+        int hostAffectingAuraTotal(EntityRef who, ubyte auraType) { return scriptSpell is null ? 0 : this.outer.affectingAuraTotal(who, scriptSpell, auraType); }
+        int hostSpellPower(EntityRef who) { return scriptSpell is null || who.guid != player.guid ? 0 : cast(int) spellDamageBonus(scriptSpell, scriptSpell.casting.school); }
         // Eastern Kingdoms scripts:
         void hostKillCreditAt(EntityRef who, uint entry) { this.outer.hostKillCredit(who, entry); }
         ActionResult hostSayAt(EntityRef speaker, int entry, EntityRef target)
@@ -382,13 +433,12 @@ mixin template SessionScripting()
         const spellId = hostSpellId();
         if (target.guid == player.guid)
         {
-            // Its own spell's cost in health (Life Tap): no fight comes of it.
+            // Its own spell's cost in health (Life Tap's: a power cost of health, as CMaNGOS has it, so no damage log
+            // and no fight comes of it).
             const health = player.values.get!UNIT_FIELD_HEALTH;
             if (health == 0)
                 return ActionResult.notAllowed;
             player.values.set!UNIT_FIELD_HEALTH(amount >= health ? 0 : health - amount);
-            map.sendToWatchers(this, Opcode.SMSG_SPELLNONMELEEDAMAGELOG, nonMeleeDamageLog(target: player.guid, attacker: player.guid,
-                spellId, amount, 0, 0, 0, false, 0, false), true);
             flushPlayerChanges();
             if (amount >= health)
                 playerDied(false);

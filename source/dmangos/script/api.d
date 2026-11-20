@@ -1363,6 +1363,21 @@ struct AuraTicked
     int amount;
 }
 
+/// The spell was cast at `target` (before its hits are rolled: CMaNGOS's `OnCast`).
+struct SpellCast
+{
+    EntityRef caster;
+    EntityRef target;
+}
+
+/// The spell reached `target`: hit, or not (`missed`: it missed, was dodged, parried, resisted...; `OnHit`).
+struct SpellLanded
+{
+    EntityRef caster;
+    EntityRef target;
+    bool missed;
+}
+
 /// The core's side of a spell script's context (the caster's session, or creature, implements it).
 interface SpellHost
 {
@@ -1377,6 +1392,15 @@ interface SpellHost
     ActionResult hostSignalCreature(EntityRef to, uint id, int value);
     void hostLog(string text);
     ActionResult hostModifyThreat(EntityRef creature, EntityRef target, int percent);
+    // Class spells:
+    ActionResult hostCastCustom(EntityRef caster, uint spell, EntityRef target, int[3] values, ubyte which);
+    int hostPower(EntityRef who, ubyte power);
+    ActionResult hostSetPower(EntityRef who, ubyte power, int value);
+    float hostDamageMultiplier(ubyte effect);
+    uint hostResetCooldowns(EntityRef who, uint family, uint schoolMask, uint except);
+    int hostEffectValue(ubyte effect);
+    int hostAffectingAuraTotal(EntityRef who, ubyte auraType);
+    int hostSpellPower(EntityRef who);
 }
 
 /// `Powers`, as scripts use them.
@@ -1445,6 +1469,45 @@ struct SpellContext
     {
         return host.hostModifyThreat(creature, target, percent);
     }
+
+    /**
+     * `CastCustomSpell`: `caster` casts `spell` at `target`, triggered, its effects' amounts the given ones (`values[i]`
+     * for each effect `i` with its bit in `which`; the rest as the spell has them).
+     */
+    ActionResult castCustom(EntityRef caster, uint spell, EntityRef target, int[3] values, ubyte which = 1)
+    {
+        return host.hostCastCustom(caster, spell, target, values, which);
+    }
+
+    /// A unit's power of a kind (rage as the client counts it: ten times what it shows); 0 if not here.
+    int power(EntityRef who, Power kind) { return host.hostPower(who, kind); }
+
+    /// A unit's power of a kind set to `value` (`SetPower`).
+    ActionResult setPower(EntityRef who, Power kind, int value) { return host.hostSetPower(who, kind, value); }
+
+    /// The spell's `DmgMultiplier` of an effect (what each point of rage is worth to Execute).
+    float damageMultiplier(ubyte effect) { return host.hostDamageMultiplier(effect); }
+
+    /**
+     * `RemoveSomeCooldown`: the player's cooldowns end on its spells of `family` (`SpellFamilyName`) that have
+     * one, of a school in `schoolMask` (0: any), but `except`. How many ended.
+     */
+    uint resetCooldowns(EntityRef who, uint family, uint schoolMask = 0, uint except = 0)
+    {
+        return host.hostResetCooldowns(who, family, schoolMask, except);
+    }
+
+    /// An amount of the spell's effect `effect`, rolled at its caster's level (`CalculateSpellEffectValue`).
+    int effectValue(ubyte effect) { return host.hostEffectValue(effect); }
+
+    /**
+     * The amounts summed of `who`'s auras of `auraType` (an `AuraType` number) that affect the spell (their spell
+     * mask has it: Improved Life Tap's dummy).
+     */
+    int affectingAuraTotal(EntityRef who, ubyte auraType) { return host.hostAffectingAuraTotal(who, auraType); }
+
+    /// What `who`'s spell power adds to the spell (`SpellDamageBonusDone`, by its cast time).
+    int spellPower(EntityRef who) { return host.hostSpellPower(who); }
 
     /// For `AuraTicked`: what this tick does instead.
     void setAmount(int amount)

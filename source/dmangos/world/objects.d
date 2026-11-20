@@ -175,12 +175,27 @@ struct UpdateValues
         }
         else
             writeSlot(slot, cast(uint) value);
+        // A unit under a fifth of its health shows it (Execute's target: `dmangos.world.aurastate`), wherever the
+        // health was set from (CMaNGOS checks it at each `Unit::Update`).
+        static if (field == UNIT_FIELD_HEALTH || field == UNIT_FIELD_MAXHEALTH)
+            refreshHealthAuraState();
     }
 
     /// ditto
     void set(UpdateFieldId field, T)(T value)
     {
         set!field(0, value);
+    }
+
+    /// `AURA_STATE_HEALTHLESS_20_PERCENT` as the unit's health has it.
+    private void refreshHealthAuraState() pure nothrow @nogc @safe
+    {
+        import dmangos.world.aurastate : AuraState, healthless20Percent, withAuraState;
+
+        if (type_ != TypeId.unit && type_ != TypeId.player)
+            return;
+        const low = healthless20Percent(slots[UNIT_FIELD_HEALTH], slots[UNIT_FIELD_MAXHEALTH]);
+        writeSlot(UNIT_FIELD_AURASTATE, withAuraState(slots[UNIT_FIELD_AURASTATE], AuraState.healthless20Percent, low));
     }
 
     /// Element `index` of `field`, as its type: `float`, `ulong` for guids, `uint` otherwise.

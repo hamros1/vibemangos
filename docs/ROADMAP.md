@@ -205,8 +205,11 @@ armor and resistances, attack power and the off hand's damage (`stats.d`); weapo
 bonuses; damage done and taken by school and by creature type, crit by creature type, threat
 (`combat.d`'s `DamageMods`); the five-second rule and Meditation; resistance to a mechanic; spell power
 from spirit (Spiritual Guidance); shield block value; lowering the target's resistances; modifiers with
-charges (Clearcasting, Presence of Mind, Nature's Swiftness: spent by the cast they change). Not yet:
-`overrideClassScripts` (each talent its own), procs on the target.
+charges (Clearcasting, Presence of Mind, Nature's Swiftness: spent by the cast they change); procs by
+`spell_proc_event` (`procs.d`) and the talents whose procs or effects are code (`classspells.d`: Ignite,
+Deep Wounds, Seal Fate, Ruthlessness, Illumination, Blessed Recovery, Nightfall, Combustion, Master of
+Elements, Shatter, Frostbite and the other Add Target Triggers). Not yet: the remaining override class scripts
+(Improved Blizzard, Arcane Concentration's script), procs of a creature's own auras, Pyroclasm.
 
 ### Mail
 

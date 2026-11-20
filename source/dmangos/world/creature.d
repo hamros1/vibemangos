@@ -832,6 +832,8 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
         auras.remove(aura, values);
         if (ai !is null)
             ai.auraLost(aura.caster, aura.spell.id, world);
+        if (auto caster = world.unit(aura.caster)) // its caster's class rules (Wyvern Sting's poison as it wakes)
+            caster.auraEndedOn(this, aura);
     }
 
     /// Its auras' time passes: their casters do what their ticks do; those that ended go.

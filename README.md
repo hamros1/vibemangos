@@ -591,9 +591,17 @@ What works now:
     at logout and with each save, and come back with the time they had left; a cluster's hand-off
     carries them. A player's shields (Power Word: Shield, Ice Barrier, Mana Shield at its mana per
     point) take damage of their schools until used up; the log shows what they absorbed. Damage
-    shields (Thorns) hurt whoever hits the player in melee, and auras that trigger a spell on a melee
-    hit, ranged attack or damaging spell, dealt or taken, or on a kill worth experience (Lightning Shield, Seal of
-    Righteousness) do so by their chance, using their charges; what a proc casts sets off no procs. A party area aura (a paladin's Devotion
+    shields (Thorns) hurt whoever hits the player in melee. Procs (`procs.d`): auras that proc on a swing,
+    an ability, a spell, a heal or a tick, dealt or taken, on a dodge, parry or block, or on a kill worth
+    experience do so as their spell and its `spell_proc_event` row say (its school, family and spells, crits
+    only, a rate a minute at the weapon's speed, a cooldown), by their chance, using their charges: a Proc
+    Trigger Spell casts its spell, Proc Trigger Damage deals its damage (Holy Shield), a dummy or an override
+    class script does its talent's thing (Ignite, Seal of Righteousness, Nightfall); what a proc casts sets
+    off no procs. The class abilities whose behaviour is code (`classspells.d`, by class there; and the spell
+    scripts `spell_scripts` binds: Execute, Life Tap, Preparation) work as CMaNGOS has them: the aura states
+    the client needs to allow Execute, Revenge, Overpower, Judgement and Counterattack, one seal at a time and
+    Judgement, Conflagrate, Bloodthirst, Cold Snap, Ferocious Bite, Swiftmend, Weakened Soul and Forbearance,
+    Lightning Shield, Flametongue, Windfury's extra attacks, Wyvern Sting, and the rest the module lists. A party area aura (a paladin's Devotion
     Aura) is on its caster and, refreshed each second, on its group's members within its radius. A
     shaman's totems stand beside it, one of each element (a new one replaces the old), with its level,
     their health and the spell's duration, and go when it dies or leaves: a passive one holds its
@@ -601,7 +609,8 @@ What works now:
     active one (Searing Totem) casts its spell at the nearest enemy in range. Their kills are their
     owner's. Dispels (Dispel Magic, Cleanse, Remove Curse, Purge) take random auras of their type:
     harmful magic off friends, helpful magic off enemies. Creatures are slowed and sped up by their
-    auras, and stand still while rooted or stunned. Not yet: procs on heals and other events.
+    auras, and stand still while rooted or stunned. Not yet: procs on a creature's own auras (beside
+    Judgement of Light, of Wisdom and Vampiric Embrace), spell stacking groups beside the seals.
   * **Quests:** quest givers (`creature_questrelation`, `creature_involvedrelation`) show what they have for the player
     (the exclamation and question marks), list their quests in their gossip (or open the only one),
     and give them as `quest_template` says who may take them (class, race, level, skill, condition,
@@ -965,6 +974,9 @@ source/dmangos/world/       the world server
   combathandlers.d            handlers: attack swings, melee against creatures and players, kills
   spellcast.d, spellhandlers.d  spell checks, targets and packets; casting, channels, effects, fishing
   auras.d, aurahandlers.d     auras: their fields, ticks, removal; applying them, cancelling them
+  aurastate.d                 aura states (`UNIT_FIELD_AURASTATE`): what the client needs to allow a spell
+  procs.d                     procs: what sets an aura off (`spell_proc_event`), and what it does
+  classspells.d               the class abilities whose behaviour is code (CMaNGOS's spell-family cases)
   dynobject.d                 the spot of a persistent area aura (a dynamic object)
   death.d, corpse.d           dying, releasing, ghosts, the spirit healer, corpses and reclaiming them
   experience.d, loot.d        experience for kills and a group's share; loot tables, rolls, the loot window

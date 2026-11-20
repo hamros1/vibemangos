@@ -490,6 +490,7 @@ private:
         updatePetMood(elapsed);
         updateTaxi(cast(int) elapsed.total!"msecs");
         updateCrowdControl(cast(int) elapsed.total!"msecs");
+        updateReactives(cast(int) elapsed.total!"msecs");
         updateTimedQuests();
         refreshQuestObjects();
         updateRaidReset();

@@ -349,6 +349,13 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Files: `ScriptDevAI/scripts/eastern_kingdoms/silverpine_forest.cpp`
 * Functions/ScriptNames: `npc_deathstalker_erland`, `npc_deathstalker_faerleia`
 
+## scripts/spells.d
+
+* Projects: CMaNGOS
+* Files: `Spells/Scripts/Scripting/ClassScripts/Warlock.cpp`, `Warrior.cpp`, `Rogue.cpp`
+* Functions/ScriptNames: `spell_life_tap`, `spell_warrior_execute`, `spell_warrior_execute_damage`, `spell_preparation`,
+  `spell_curse_of_agony`, `spell_hate_to_zero`
+
 ## scripts/stonetalon.d
 
 * Projects: CMaNGOS
@@ -617,6 +624,14 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Functions: `Aura::PeriodicTick`, `Player::_LoadAuras`, `Player::_SaveAuras`, `Spell::EffectApplyAura`, `SpellAuraHolder::Update`, `Unit::DispelAll`
 * Constants: `MOD_POWER_REGEN`, `SMSG_PERIODICAURALOG`, `SMSG_UPDATE_AURA_DURATION`, `SPELLMOD_DOT`, `SPELL_EFFECT_APPLY_AURA`
 
+## world/aurastate.d
+
+* Projects: CMaNGOS
+* Files: `SpellAuraDefines.h`, `Unit.cpp`
+* Functions: `Unit::ModifyAuraState`, `Unit::Update` (the health state)
+* Constants: `AURA_STATE_DEFENSE`, `AURA_STATE_HEALTHLESS_20_PERCENT`, `AURA_STATE_FROZEN`, `AURA_STATE_JUDGEMENT`,
+  `AURA_STATE_HUNTER_PARRY`, `UNIT_FIELD_AURASTATE`
+
 ## world/auras.d
 
 * Projects: CMaNGOS
@@ -675,6 +690,32 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Files: `CharacterHandler.cpp`
 * Functions: `Map::Add`, `Player::Create`, `Player::DeleteFromDB`, `Player::LoadFromDB`, `Player::LoadPet`, `Player::SendInitialPacketsAfterAddToMap`, `Player::SendInitialPacketsBeforeAddToMap`, `Player::_LoadHomeBind`, `WorldSession::HandleCharCreateOpcode`, `WorldSession::HandlePlayerLogin`, `WorldSession::SendMotd`
 * Constants: `SMSG_CHAR_CREATE`, `SMSG_LOGIN_SETTIMESPEED`, `SMSG_LOGIN_VERIFY_WORLD`
+
+## world/classspells.d
+
+* Projects: CMaNGOS
+* Files: `SpellEffects.cpp`, `SpellAuras.cpp`, `Spell.cpp`, `UnitAuraProcHandler.cpp`, `Unit.cpp`,
+  `Spells/Scripts/Scripting/ClassScripts/*.cpp`
+* Functions: `Spell::EffectSchoolDMG` (Bloodthirst, Conflagrate, Ferocious Bite), `Spell::EffectDummy` (Cold Snap,
+  Enrage, Holy Shock, Judgement of Command, Flametongue Weapon and Totem procs, Touch of Weakness),
+  `Spell::EffectScriptEffect` (Holy Light, Flash of Light), `Spell::EffectHeal` (Swiftmend), `Spell::EffectHealMaxHealth`,
+  `Spell::EffectAddExtraAttacks`, `Spell::EffectWeaponDmg` (Ambush), `Spell::CheckCast` (Conflagrate, Hammer of Wrath),
+  `Spell::Prepare` (`AddPrecastSpell`: Weakened Soul, Forbearance, Recently Bandaged; Holy Nova's heal),
+  `Spell::ProcSpellAuraTriggers`, `Spell::DoSpellHitOnUnit` (Bloodthirst's aura), `Aura::HandlePeriodicDamage` (Rip,
+  Rupture), `Aura::HandleManaShield`, `Aura::HandleAuraModStun` (Wyvern Sting), `Aura::TriggerSpell` (Frenzied
+  Regeneration), `SpellAuraHolder::_AddSpellAuraHolder`, `_RemoveSpellAuraHolder` (seals' aura state),
+  `Unit::HandleDummyAuraProc` (Seal of Righteousness, Ignite, Combustion, Master of Elements, Vampiric Embrace),
+  `Unit::HandleProcTriggerSpellAuraProc` (Deep Wounds, Lightning Shield, Illumination, Blessed Recovery, Ruthlessness,
+  Seal Fate), `Unit::HandleOverrideClassScriptAuraProc` (Nightfall), `Unit::ProcDamageAndSpell` (the reactive states),
+  `Unit::UpdateReactives`, `Unit::ClearAllReactives`, `Player::RemoveSomeCooldown`
+* Functions/ScriptNames: `spell_judgement`, `spell_judgement_of_command`, `spell_judgement_of_light_intermediate`,
+  `spell_judgement_of_wisdom_intermediate`, `spell_swiftmend`, `spell_curse_of_doom`, `spell_power_infusion`,
+  `spell_shatter_mage`, `spell_blessing_of_light`, `spell_healing_way`
+* Constants: `IsSealSpell`, `REACTIVE_TIMER_START`, `SPELL_ATTR_EX_DRAIN_ALL_POWER`, `TRIGGERED_IGNORE_HIT_CALCULATION`
+
+## world/classspelltests.d
+
+* Projects: CMaNGOS (the spells' fields as the world database has them)
 
 ## world/clientdata.d
 
@@ -1116,6 +1157,15 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Files: `ItemPrototype.h`, `Player.h`, `SharedDefines.h`, `StatSystem.cpp`
 * Functions: `Player::Create`, `Player::GetSkillInfo`, `Player::HasSpell`, `Player::InitPrimaryProfessions`, `Player::IsNeedCastPassiveLikeSpellAtLearn`, `Player::LoadFromDB`, `Player::SetAmmo`, `Player::SetSkill`, `Player::StoreNewItemInBestSlots`, `Player::ValidateAppearance`, `Player::addSpell`, `Player::learnSpell`, `Spell::EffectLearnSpell`, `SpellMgr::GetSpellBookSuccessorSpellId`, `SpellMgr::IsPrimaryProfessionFirstRankSpell`, `SpellMgr::IsSpellValid`
 * Constants: `AT_LOGIN_FIRST`, `CMSG_CHAR_CREATE`, `ITEM_DYNFLAG_BINDED`, `MAX_ENCHANTMENT_SLOT`, `SMSG_LEARNED_SPELL`, `SMSG_SUPERCEDED_SPELL`
+
+## world/procs.d
+
+* Projects: CMaNGOS
+* Files: `UnitAuraProcHandler.cpp`, `SpellMgr.cpp`, `Spell.cpp`
+* Functions: `Unit::ProcDamageAndSpell`, `Unit::IsTriggeredAtSpellProcEvent`, `SpellMgr::IsSpellProcEventCanTriggeredBy`,
+  `Aura::CanProcFrom`, `Unit::GetPPMProcChance`, `Unit::TriggerProccedSpell`, `Unit::HandleProcTriggerDamageAuraProc`,
+  `Spell::PrepareMasksForProcSystem`, `SpellMgr::LoadSpellProcEvents`
+* Constants: `PROC_FLAG_*`, `PROC_EX_*`, `SPELL_ATTR_EX3_NO_PROC_EQUIP_REQUIREMENT`, `spell_proc_event`
 
 ## world/professions.d
 

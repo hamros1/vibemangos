@@ -57,6 +57,7 @@ private:
         ubyte persistentDone; // effects whose persistent area is made (once a cast, not once a target)
         ulong castItemGuid;   // ... that very item, whose charges it takes (`dmangos.world.itemuse`)
         int castTime;         // its whole cast time (pushback adds back at most up to it); last: built by position
+        imported!"dmangos.world.classspells".CustomValues custom; // its own effect amounts (`castCustom`)
     }
 
     /// A missile's effect on its target, due when it arrives.
@@ -384,11 +385,11 @@ private:
         }
         castSpell(spell, targets, true, 0);
         takeAmmo(spell);
-        // A ranged attack that went: the shooter's auras that proc on it, and the target's if a player.
+        // A ranged attack that went: the target's auras that proc on it if a player (the shooter's procced as it
+        // struck: `spellHitProcs`).
         {
             import dmangos.world.aurahandlers : ProcFlag;
 
-            procAuras(ProcFlag.dealRangedAttack, map.unit(target));
             if (auto other = cast(typeof(this)) context.onlinePlayer(target))
                 if (other.player !is null && other.map is map)
                     other.procAuras(ProcFlag.takeRangedAttack, unit);
@@ -412,6 +413,8 @@ private:
         }
         auto c = Casting(spell, targets, 0, itemEntry, triggered, true);
         c.castItemGuid = itemEntry ? usingItemGuid : 0;
+        c.custom = pendingCustom; // a cast with amounts of its own (`castCustom`)
+        pendingCustom = typeof(pendingCustom).init;
         // What a cast ends as it starts (`Spell::Prepare`): an item's use, then any action; not a triggered spell's,
         // nor one that is not an action (`SPELL_ATTR_EX2_NOT_AN_ACTION`).
         enum uint notAnAction = 0x10000000;
@@ -1121,7 +1124,7 @@ private:
         // A finishing move needs combo points on its target (Slice and Dice, cast on oneself: on anyone).
         if (!triggered && usesComboPoints(*spell)
                 && (comboPoints == 0 || (targets.unit && targets.unit != player.guid && targets.unit != comboTarget)))
-            return SpellCastResult.noComboPoints;
+            return player.data.classId == 1 ? SpellCastResult.casterAuraState : SpellCastResult.noComboPoints; // a warrior's Overpower
         if (player.deathState != DeathState.alive && !(spell.attributes & spellAttrCastableWhileDead))
             return player.deathState == DeathState.ghost ? SpellCastResult.notWhileGhost : SpellCastResult.casterDead;
         if (!triggered)
@@ -1168,6 +1171,12 @@ private:
         const result = checkTarget(spell, targets, triggered);
         if (result != SpellCastResult.ok)
             return result;
+        if (!triggered)
+        {
+            const classResult = classCastCheck(spell, targets); // `dmangos.world.classspells`
+            if (classResult != SpellCastResult.ok)
+                return classResult;
+        }
         if (spell.hasEffect(SpellEffect.pickpocket))
             if (auto victim = cast(Creature) map.findObject(targets.unit))
                 if (!victim.template_.pickpocketLootId)
@@ -1451,6 +1460,9 @@ private:
         const createMana = player.stats.baseMana, createHealth = player.stats.baseHealth;
         const maxPower = spell.casting.powerType < 5
             ? player.values.get!UNIT_FIELD_MAXPOWER1(cast(Power) spell.casting.powerType) : 0;
+        enum uint drainAllPower = 0x2; // SPELL_ATTR_EX_DRAIN_ALL_POWER: Lay on Hands takes all the mana
+        if ((spell.attributesEx & drainAllPower) && spell.casting.powerType < 5)
+            return cast(int) player.values.get!UNIT_FIELD_POWER1(cast(Power) spell.casting.powerType);
         return max(0, spellMod(SpellModOp.cost, &spell, powerCost(spell, level, createMana, createHealth, maxPower)));
     }
 
@@ -1636,7 +1648,7 @@ private:
                 effectTargets[i] ~= target;
                 if (target !in missOf)
                 {
-                    missOf[target] = rollHit(*spell, target);
+                    missOf[target] = c.custom.alwaysHits ? SpellMissInfo.none : rollHit(*spell, target);
                     results ~= TargetResult(target, missOf[target]);
                 }
             }
@@ -1649,6 +1661,7 @@ private:
             deliver(Opcode.SMSG_CAST_RESULT, castResultPacket(spell.id, SpellCastResult.ok));
         }
         map.sendToWatchers(this, Opcode.SMSG_SPELL_GO, spellGoPacket(player.guid, spell.id, results, c.targets), true);
+        spellCastScript(spell, c.targets.unit ? c.targets.unit : player.guid); // `OnCast`
         // A hostile spell landed on another player (a duel, world PvP): what that ends (`HOSTILE_ACTION`).
         foreach (r; results)
             if (r.miss == SpellMissInfo.none && r.guid != player.guid)
@@ -1725,6 +1738,17 @@ private:
             if (!missedEnemy)
                 clearComboPoints();
         }
+        // Its scripts hear where it landed (`OnHit`), and the class rules do what follows it.
+        ulong[] landed, dodgedBy;
+        foreach (r; results)
+        {
+            spellLandedScript(spell, r.guid, r.miss != SpellMissInfo.none);
+            if (r.miss == SpellMissInfo.none)
+                landed ~= r.guid;
+            else if (r.miss == SpellMissInfo.dodge && spell.casting.dmgClass == DamageClass.melee)
+                dodgedBy ~= r.guid;
+        }
+        classAfterEffects(spell, landed, dodgedBy);
         flushPlayerChanges();
         return SpellCastResult.ok;
     }
@@ -1770,7 +1794,11 @@ private:
                         spell.casting.effectMechanic[i], spell.casting.applyAuraName[i]))
                     return;
             }
-        int base = effectValue(*spell, i, player.data.level, uniform01(map.random));
+        // A cast with amounts of its own (`castCustom`) has them instead of the rolled ones.
+        int base = c.custom.has(i) ? c.custom.values[i] : effectValue(*spell, i, player.data.level, uniform01(map.random));
+        effectCustom = c.custom;
+        scope (exit)
+            effectCustom = typeof(effectCustom).init;
         // A finishing move: more for each combo point (`EffectPointsPerComboPoint`); Eviscerate 3% of the attack
         // power a point too (CMaNGOS's `EffectSchoolDMG`).
         if (castCombo)
@@ -1783,11 +1811,13 @@ private:
                 base += cast(int)(player.stats.attackPower * castCombo * 0.03f);
         }
         const value = effectMod(spell, i, base);
+        if (classEffect(spell, i, target, value)) // `dmangos.world.classspells`: Lay on Hands, extra attacks
+            return;
         final switch (spell.effect[i]) // every effect decided: done, or listed as not done below
         {
         case SpellEffect.schoolDamage: // SPELL_EFFECT_SCHOOL_DAMAGE
         {
-            const damage = spellMod(SpellModOp.damage, spell, value);
+            const damage = classSchoolDamage(spell, i, target, spellMod(SpellModOp.damage, spell, value));
             if (auto creature = cast(Creature) map.findObject(target))
                 spellDamage(spell, creature, damage > 0 ? damage : 0, spell.casting.school);
             else if (auto other = enemyPlayer(target))
@@ -1798,7 +1828,7 @@ private:
         {
             import dmangos.world.dbscripts : DbScriptType;
 
-            if (spellEffectScript(spell, i, target, value))
+            if (classDummyEffect(spell, i, target, value, c.castItemEntry) || spellEffectScript(spell, i, target, value))
                 break;
             context.startScript(DbScriptType.spell, spell.id, map, player.guid, target ? target : c.targets.gameObject);
             break;
@@ -2484,6 +2514,26 @@ private:
     }
 
     /// The crit chance of `spell`: this player's (`spellCrit`) and the spell's modifiers.
+    /**
+     * The crit chance of `spell` at `victim` (`Unit::RollSpellCritOutcome`): a melee or ranged ability's is its
+     * weapon's, a spell's the spell crit; and what the class rules add (Shatter).
+     */
+    float critChanceOf(const(SpellInfo)* spell, UnitRef victim)
+    {
+        float chance = spellCritOf(spell);
+        if (victim && (spell.casting.dmgClass == DamageClass.melee || spell.casting.dmgClass == DamageClass.ranged))
+            chance = critChance(player.fighter, victim.fighter, spell.casting.dmgClass == DamageClass.ranged
+                ? AttackType.ranged : AttackType.mainHand) + spellMod(SpellModOp.critChance, spell, 0);
+        return chance + classCritBonus(spell, victim);
+    }
+
+    /// A crit's damage (`SpellCriticalDamageBonus`): double for a melee or ranged ability, half again for a spell.
+    static uint critDamage(const(SpellInfo)* spell, uint damage)
+    {
+        return spell.casting.dmgClass == DamageClass.melee || spell.casting.dmgClass == DamageClass.ranged
+            ? damage * 2 : damage * 3 / 2;
+    }
+
     float spellCritOf(const(SpellInfo)* spell)
     {
         import dmangos.world.auras : AuraType;
@@ -2676,9 +2726,9 @@ private:
         damage += spellDamageBonus(spell, spell.casting.school); // spell power, as against a creature
         damage = spellDamageFactors(damage, spell.casting.school, creatureTypeHumanoid, other.player.damageMods.taken,
             other.player.damageMods.takenFlat);
-        const crit = !(spell.attributesEx2 & spellAttrEx2CantCrit) && uniform01(map.random) * 100 < spellCritOf(spell);
+        const crit = !(spell.attributesEx2 & spellAttrEx2CantCrit) && uniform01(map.random) * 100 < critChanceOf(spell, other.unit);
         if (crit)
-            damage = damage * 3 / 2;
+            damage = critDamage(spell, damage);
         const school = spell.casting.school;
         uint resisted;
         if (school == 0)
@@ -2697,7 +2747,7 @@ private:
         {
             import dmangos.world.aurahandlers : ProcFlag;
 
-            procAuras(ProcFlag.dealHarmfulSpell, other.unit);
+            spellHitProcs(spell, other.unit, crit, damage);
         }
     }
 
@@ -2795,9 +2845,10 @@ private:
             damage = spellDamageFactors(damage, school, victimFighter.creatureType, victimFighter.damageTaken,
                 victimFighter.damageTakenFlat);
         }
-        const crit = !(spell.attributesEx2 & spellAttrEx2CantCrit) && uniform01(map.random) * 100 < spellCritOf(spell);
+        const crit = !(spell.attributesEx2 & spellAttrEx2CantCrit)
+            && uniform01(map.random) * 100 < critChanceOf(spell, map.unitOf(victim));
         if (crit)
-            damage = damage * 3 / 2;
+            damage = critDamage(spell, damage);
         uint resisted;
         if (school == 0)
             damage = cast(uint) armorReducedDamage(player.data.level, victim.fighter.armor, damage);
@@ -2816,11 +2867,7 @@ private:
             spell.id, damage, school, 0, resisted, false, 0, crit), true);
         spellAttacked(victim, damage, false, school);
         if (victim.alive)
-        {
-            import dmangos.world.aurahandlers : ProcFlag;
-
-            procAuras(ProcFlag.dealHarmfulSpell, map.unitOf(victim));
-        }
+            spellHitProcs(spell, map.unitOf(victim), crit, damage);
     }
 
     /**
@@ -2838,19 +2885,21 @@ private:
         const type = spell.casting.dmgClass == DamageClass.ranged || (spell.attributes & spellAttrRanged)
             ? AttackType.ranged : AttackType.mainHand;
         float damage = weaponDamage(me, type, map.random);
-        float percent = 100;
+        float percent = 100, fixed = 0;
         foreach (j; i .. 3)
         {
-            const v = effectMod(spell, j, effectValue(*spell, j, player.data.level, uniform01(map.random)));
+            const v = j == i ? value : effectMod(spell, j, effectValue(*spell, j, player.data.level, uniform01(map.random)));
             if (spell.effect[j] == SpellEffect.weaponDamageNoschool || spell.effect[j] == SpellEffect.weaponDamage || spell.effect[j] == SpellEffect.normalizedWeaponDmg)
-                damage += v;
+                fixed += v;
             else if (spell.effect[j] == SpellEffect.weaponPercentDamage)
                 percent = v;
         }
-        damage = damage * percent / 100;
+        // The fixed bonus is by the weapon percentage too, but Ambush's by its own (`EffectWeaponDmg`).
+        const bonusFactor = classWeaponBonusFactor(spell);
+        damage = damage * percent / 100 + fixed * (bonusFactor ? bonusFactor : percent / 100);
         damage = armorReducedDamage(me.level, it.armor, damage);
         bool crit;
-        if (uniform01(map.random) * 100 < critChance(me, it, type))
+        if (uniform01(map.random) * 100 < critChance(me, it, type) + classCritBonus(spell, victim))
         {
             crit = true;
             damage *= 2;
@@ -2876,6 +2925,22 @@ private:
                 dealDamage(unit, victim, total, Blow.spell());
             break;
         }
+        spellHitProcs(spell, victim, crit, total, cast(ubyte) type);
+    }
+
+    /// This player's damaging spell (`spell`) hit `victim` for `damage`: its procs and the victim's
+    /// (`dmangos.world.procs`, `victimAuraProcs`).
+    package void spellHitProcs(const(SpellInfo)* spell, UnitRef victim, bool crit, uint damage, ubyte hand = 0)
+    {
+        import dmangos.world.procs : ProcEx, ProcHit, spellProcFlags;
+
+        if (!victim || !victim.fighter.alive)
+            return;
+        const hit = ProcHit(spell, crit ? ProcEx.criticalHit : ProcEx.normalHit, damage, hand, damage != 0);
+        const flags = spellProcFlags(*spell, false, false);
+        procAuras(flags, victim, hit);
+        if (victim.fighter.alive)
+            victimAuraProcs(victim, flags, hit);
     }
 
     /// A creature hit (or missed) by this player's spell, or its aura's tick: it fights back, takes the
@@ -2899,6 +2964,7 @@ private:
         if (who is null || who.player is null || who.map !is map)
             return;
         pvpAssisted(who);
+        value = classHeal(spell, who.unit, value); // Swiftmend, Blessing of Light, Healing Way
         value += healingBonus(spell);
         value = cast(int)(value * player.auras.multiplier(AuraType.modHealingDonePercent)); // the healer's
         const crit = !(spell.attributesEx2 & spellAttrEx2CantCrit) && uniform01(map.random) * 100 < spellCritOf(spell);
@@ -2912,6 +2978,12 @@ private:
         map.sendToWatchers(this, Opcode.SMSG_SPELLHEALLOG, healLog(target: target, caster: player.guid, spell.id, amount, crit), true);
         if (who !is this)
             who.flushPlayerChanges();
+        {
+            import dmangos.world.procs : ProcEx, ProcHit, spellProcFlags;
+
+            procAuras(spellProcFlags(*spell, true, false), who.unit, ProcHit(spell, crit ? ProcEx.criticalHit
+                : ProcEx.normalHit, amount, 0, amount != 0));
+        }
     }
 
     /// Power given back, of the effect's kind (`EffectMiscValue`).
@@ -3125,7 +3197,7 @@ unittest
         }
         auto session = anduin.session.inWorld;
         assert(session.castSpell((finisher in context.data.spells.spells), SpellTargets(TargetFlags.unit, keeper.guid),
-            false, 0) == SpellCastResult.noComboPoints, "none yet");
+            false, 0) == SpellCastResult.casterAuraState, "none yet (a warrior is told of Overpower's state)");
         foreach (_; 0 .. 40)
         {
             if (session.comboPoints >= 2)

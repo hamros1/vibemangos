@@ -646,7 +646,8 @@ final class Player : InventoryOwner
     /// Mana per second, from spirit and class; while the five-second rule holds, only the share auras keep.
     float manaRegenPerSecond() const
     {
-        const full = spiritManaPerSecond();
+        // `MOD_POWER_REGEN_PERCENT` of mana multiplies it (Innervate, Evocation).
+        const full = spiritManaPerSecond() * auras.multiplier(AuraType.modPowerRegenPercent, (int misc) => misc == Power.mana);
         if (spiritPaused == 0)
             return full;
         const kept = auras.total(AuraType.modManaRegenInterrupt);
@@ -700,7 +701,8 @@ final class Player : InventoryOwner
         }
         changed |= addPower(Power.mana, cast(int)(manaRegenPerSecond() * manaRate * (milliseconds / 1000)));
         spiritPaused = spiritPaused > milliseconds ? spiritPaused - milliseconds : 0;
-        changed |= addPower(Power.energy, cast(int)((milliseconds / 100) * energyRate));
+        changed |= addPower(Power.energy, cast(int)((milliseconds / 100) * energyRate // and Adrenaline Rush's:
+            * auras.multiplier(AuraType.modPowerRegenPercent, (int misc) => misc == Power.energy)));
         if (!inCombat)
             changed |= addPower(Power.rage, -cast(int)((milliseconds / 200) * 2.5f * rageLoss));
         return changed;

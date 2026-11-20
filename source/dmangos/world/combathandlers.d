@@ -314,8 +314,20 @@ private:
         {
             import dmangos.world.aurahandlers : ProcFlag;
 
-            procAuras(ProcFlag.dealMeleeSwing, other.unit);
+            swingProcs(other.unit, d, type);
         }
+    }
+
+    /// A swing of `hand` hit `victim` (`d`): this player's procs on it (a crit's too), and what its victim's auras do.
+    private void swingProcs(UnitRef victim, const ref MeleeDamage d, AttackType hand)
+    {
+        import dmangos.world.aurahandlers : ProcFlag;
+        import dmangos.world.procs : ProcHit, procExOfSwing;
+
+        const hit = ProcHit(null, procExOfSwing(d.outcome), d.damage, cast(ubyte) hand);
+        procAuras(ProcFlag.dealMeleeSwing, victim, hit);
+        if (victim.fighter.alive)
+            victimAuraProcs(victim, ProcFlag.dealMeleeSwing, hit);
     }
 
     /**
@@ -501,7 +513,7 @@ private:
      * One swing at `victim`, shown to everyone who sees
      * the player; then its damage, the rage it earns, and the victim's death if it kills.
      */
-    void swing(Creature victim, AttackType type)
+    package void swing(Creature victim, AttackType type)
     {
         // A spell for the next swing (Heroic Strike) is cast instead of it.
         if (type == AttackType.mainHand && swingSpell(victim.guid))
@@ -535,7 +547,7 @@ private:
 
             castItemCombatSpells(victim, type);
             if (victim.alive)
-                procAuras(ProcFlag.dealMeleeSwing, map.unitOf(victim));
+                swingProcs(map.unitOf(victim), d, type);
         }
     }
 
@@ -556,6 +568,7 @@ private:
             equipmentSlotRanged;
 
         enum uint chanceOnHit = 2;
+        procHand = type; // Flametongue's speed is its weapon's
         uint[] procs;
         foreach (ubyte slot; 0 .. equipmentSlotEnd)
         {

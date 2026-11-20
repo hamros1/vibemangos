@@ -126,7 +126,7 @@ code) what is not here or not allowed. Nothing a script keeps can dangle.
 | Area trigger | `@areaTrigger` | `scripted_areatrigger` | entered |
 | Scripted event | `@scriptedEvent` | `scripted_event_id` | started (`EventStarted`: a player's or a creature's `SEND_EVENT` spell, a goober's event), around the player who started it or is its target; then the dungeon's `EventHappened`, then `dbscripts_on_event` |
 | Item | `@item` | `item_template.ScriptName` | used (`ItemUsed`; `consume` makes the use fail) |
-| Spell | `@spell` | `spell_scripts` | a dummy or script effect hit (a player's or a creature's cast), a player's aura applied, its periodic tick on a creature (the amount changeable); *aura removed, cast check, auras on players from creatures* |
+| Spell | `@spell` | `spell_scripts` | a dummy or script effect hit (a player's or a creature's cast), a player's aura applied, its periodic tick on a creature (the amount changeable), a player's cast (`SpellCast`, before its hits: Execute) and where it landed (`SpellLanded`, hit or missed); the class calls: a cast with its own amounts, power, cooldowns ended, an effect's amount, spell power, the auras that affect the spell; *aura removed, cast check, auras on players from creatures* |
 | World map | `@world` | `world_template.ScriptName` (a continent) | a creature of it died (`summoned` says whether a script's), signal (`signalDungeon` on the continent), asked, steps of its own schedules; *player login/logout, level, zone change, world events* |
 | Command | `@command` | its name | *a GM command of a script* |
 

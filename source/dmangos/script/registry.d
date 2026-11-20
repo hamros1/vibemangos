@@ -170,7 +170,7 @@ template KindInfo(ScriptKind kind)
     else static if (kind == ScriptKind.spell)
     {
         alias Context = SpellContext;
-        alias Events = AliasSeq!(EffectHit, AuraApplied, AuraTicked);
+        alias Events = AliasSeq!(EffectHit, AuraApplied, AuraTicked, /* Class spells: */ SpellCast, SpellLanded);
         alias Attribute = .spell;
     }
     else static if (kind == ScriptKind.areaTrigger)
