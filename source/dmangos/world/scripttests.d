@@ -514,7 +514,8 @@ unittest
     victim.values.set!UNIT_FIELD_MAXHEALTH(10_000u);
     victim.values.set!UNIT_FIELD_HEALTH(10_000u);
 
-    auto aura = makeAura((980 in context.data.spells.spells), warlock.session.character.guid, 10, 24_000, false, [10, 0, 0]);
+    // Rank 1's 7 a tick, as spell_template has it: the half points the first ticks lose come back at the last.
+    auto aura = makeAura((980 in context.data.spells.spells), warlock.session.character.guid, 10, 24_000, false, [7, 0, 0]);
     uint[] dealt;
     foreach (tick; 1 .. 13)
     {
@@ -523,7 +524,7 @@ unittest
         warlock.session.inWorld.auraTick(victim, aura, 0);
         dealt ~= before - victim.values.get!UNIT_FIELD_HEALTH;
     }
-    assert(dealt == [5, 5, 5, 5, 10, 10, 10, 10, 15, 15, 15, 15], "a ramp");
+    assert(dealt == [3, 3, 3, 3, 7, 7, 7, 7, 11, 11, 11, 11], "a ramp, 84 in all");
 }
 
 /// Hate to Zero (`spell_hate_to_zero`), a creature's spell: its target's threat on it is gone.

@@ -337,12 +337,82 @@ unittest
         assert(attempt < 29, "a swing lands");
     }
 
-    a.tick(2000);
-    a.hero.read();
-    assert(a.cast_(20271, a.foe.guid) == SpellCastResult.ok);
-    assert(a.damageLogs().canFind!(l => l[0] == 20187 && l[1] >= 20), "the judgement strikes");
+    // Judgement is rolled as any spell at an enemy: a miss leaves the seal on, to judge again.
+    uint[2][] logs;
+    foreach (attempt; 0 .. 30)
+    {
+        a.tick(2000);
+        a.hero.read();
+        assert(a.cast_(20271, a.foe.guid) == SpellCastResult.ok);
+        logs = a.damageLogs();
+        if (!a.hasAura(21084))
+            break;
+    }
+    assert(logs.canFind!(l => l[0] == 20187 && l[1] >= 20), "the judgement strikes");
     assert(!a.hasAura(21084), "the seal spent");
     assert(!(a.player.values.get!UNIT_FIELD_AURASTATE & auraStateFlag(AuraState.judgement)), "nothing left to judge");
+}
+
+/**
+ * Judgement of Command (`spell_judgement_of_command`): judging Seal of Command strikes with the judgement's damage
+ * spell (20467: spell_template gives it no family), at half unless the target is stunned.
+ */
+unittest
+{
+    auto a = new Arena(PlayerClass.paladin);
+    auto seal = a.spell(20375, SpellEffect.applyAura, ImplicitTarget.caster); // Seal of Command, rank 1
+    a.auraEffect(seal, 0, AuraType.procTriggerSpell, ImplicitTarget.caster);
+    a.auraEffect(seal, 2, AuraType.dummy, ImplicitTarget.caster, 20425);
+    with (seal.casting)
+    {
+        school = 1;
+        spellFamilyName = 10;
+        spellFamilyFlags = 0x2000000;
+        spellIconId = 561;
+        durationIndex = 1;
+    }
+    with (a.spell(20271, SpellEffect.scriptEffect, ImplicitTarget.enemy, 0)) // Judgement
+    {
+        casterAuraState = AuraState.judgement;
+        casting.school = 1;
+        casting.spellFamilyName = 10;
+        casting.spellFamilyFlags = 0x800000;
+    }
+    a.context.data.spellScriptNames[20271] = "spell_judgement";
+    with (a.spell(20425, SpellEffect.dummy, ImplicitTarget.enemy, 20467)) // Judgement of Command, rank 1
+    {
+        casting.school = 1;
+        casting.spellFamilyName = 10;
+        casting.spellIconId = 561;
+    }
+    with (a.spell(20467, SpellEffect.schoolDamage, ImplicitTarget.enemy, 93)) // its damage: no family
+    {
+        casting.school = 1;
+        casting.spellIconId = 561;
+        casting.dmgClass = DamageClass.melee;
+    }
+    uint[] judged()
+    {
+        uint[] damage;
+        foreach (attempt; 0 .. 20)
+        {
+            a.tick(2000);
+            a.cast_(20375);
+            a.tick(1600);
+            a.hero.read();
+            a.cast_(20271, a.foe.guid);
+            foreach (l; a.damageLogs())
+                if (l[0] == 20467 && l[1])
+                    damage ~= l[1];
+        }
+        return damage;
+    }
+    assert(judged().canFind!(d => d == 46), "93 halved: the target is not stunned");
+    auto stun = a.spell(90101, SpellEffect.applyAura, ImplicitTarget.enemy);
+    a.auraEffect(stun, 0, AuraType.modStun, ImplicitTarget.enemy);
+    bool isNew;
+    a.foe.auras.apply(makeAura(stun, a.player.guid, 60, -1, false, [0, 0, 0]), a.foe.values, isNew);
+    import std.format : format; const j = judged(); assert(j.canFind!(d => d == 93 || d == 186), format!"whole against a stunned target (a crit twice): %s"(j));
 }
 
 /// Conflagrate: refused without the warlock's Immolate on the target; with it, it strikes and the Immolate goes.
@@ -389,11 +459,13 @@ unittest
 unittest
 {
     auto a = new Arena(PlayerClass.mage);
-    with (a.spell(122, SpellEffect.dummy, ImplicitTarget.caster))
+    with (a.spell(122, SpellEffect.dummy, ImplicitTarget.caster)) // Frost Nova, rank 1: its category's 25 seconds
     {
-        recoveryTime = 25_000;
+        category = 35;
+        categoryRecoveryTime = 25_000;
         casting.school = 4;
         casting.spellFamilyName = 3;
+        casting.spellFamilyFlags = 0x80040;
     }
     with (a.spell(2136, SpellEffect.dummy, ImplicitTarget.caster)) // fire: not reset
     {
@@ -434,18 +506,29 @@ unittest
 unittest
 {
     auto a = new Arena(PlayerClass.rogue);
-    with (a.spell(1856, SpellEffect.dummy, ImplicitTarget.caster))
+    with (a.spell(1856, SpellEffect.dummy, ImplicitTarget.caster)) // Vanish, rank 1: its category's five minutes
+    {
+        category = 39;
+        categoryRecoveryTime = 300_000;
+        casting.spellFamilyName = 8;
+        casting.spellFamilyFlags = 0x800;
+    }
+    with (a.spell(2094, SpellEffect.dummy, ImplicitTarget.caster)) // Blind: its own five minutes
     {
         recoveryTime = 300_000;
         casting.spellFamilyName = 8;
+        casting.spellFamilyFlags = 0x1000000;
     }
-    with (a.spell(14185, SpellEffect.dummy, ImplicitTarget.caster))
+    with (a.spell(14185, SpellEffect.dummy, ImplicitTarget.caster)) // Preparation: of no family
         recoveryTime = 600_000;
     a.context.data.spellScriptNames[14185] = "spell_preparation";
     a.cast_(1856);
     a.tick(1600);
+    a.cast_(2094);
+    a.tick(1600);
+    assert(!a.me.spellIsReady(1856) && !a.me.spellIsReady(2094));
     a.cast_(14185);
-    assert(a.me.spellIsReady(1856) && !a.me.spellIsReady(14185), "all but itself");
+    assert(a.me.spellIsReady(1856) && a.me.spellIsReady(2094) && !a.me.spellIsReady(14185), "all but itself");
 }
 
 /**
@@ -551,6 +634,66 @@ unittest
     assert(a.cast_(17) == SpellCastResult.targetAuraState, "no shield while the soul is weak");
 }
 
+/// Shield Slam (23922: its second effect's 225, family flags 0x102000000 as Bloodthirst's 0x2000000) adds the
+/// shield's block value.
+unittest
+{
+    auto a = new Arena(PlayerClass.warrior);
+    auto slam = a.spell(23922, SpellEffect.dispel, ImplicitTarget.enemy, 1);
+    slam.effect[1] = SpellEffect.schoolDamage;
+    slam.implicitTargetA[1] = ImplicitTarget.enemy;
+    slam.basePoints[1] = 224;
+    slam.baseDice[1] = 1;
+    with (slam.casting)
+    {
+        dmgClass = DamageClass.melee;
+        spellFamilyName = 4;
+        spellFamilyFlags = 0x102000000;
+        spellIconId = 413;
+    }
+    a.player.chances.shieldBlock = 40; // (a shield's, as the stats would have it)
+    const block = a.player.fighter.shieldBlock;
+    assert(block == 40);
+    uint[2][] logs;
+    foreach (attempt; 0 .. 30)
+    {
+        a.tick(7000);
+        a.hero.read();
+        a.cast_(23922, a.foe.guid);
+        logs = a.damageLogs();
+        if (logs.canFind!(l => l[0] == 23922))
+            break;
+    }
+    assert(logs.canFind!(l => l[0] == 23922 && (l[1] == 225 + block || l[1] == 2 * (225 + block))), "225 and the block value");
+}
+
+/// Holy Nova (15237) heals the priest's party by its own spell (23455) though no enemy is near to hurt.
+unittest
+{
+    auto a = new Arena(PlayerClass.priest);
+    with (a.spell(15237, SpellEffect.schoolDamage, ImplicitTarget.casterSource, 28))
+    {
+        casting.implicitTargetB[0] = ImplicitTarget.enemiesAroundSource;
+        casting.radiusIndex[0] = 12; // (13, 10 yards, in the world: the test's client data has 12)
+        casting.school = 1;
+        casting.spellFamilyName = 6;
+        casting.spellFamilyFlags = 0x400000;
+    }
+    with (a.spell(23455, SpellEffect.heal, ImplicitTarget.partyInRange, 52))
+    {
+        casting.radiusIndex[0] = 12;
+        casting.school = 1;
+        casting.spellFamilyName = 6;
+        casting.spellFamilyFlags = 0x8000000;
+    }
+    // The creature a friend: nothing to hurt.
+    a.foe.factionTemplate = a.context.client.factionTemplates.lookup(a.player.values.get!UNIT_FIELD_FACTIONTEMPLATE);
+    a.player.values.set!UNIT_FIELD_MAXHEALTH(1000u);
+    a.player.values.set!UNIT_FIELD_HEALTH(500u);
+    assert(a.cast_(15237) == SpellCastResult.ok);
+    assert(a.player.values.get!UNIT_FIELD_HEALTH >= 552, "healed by 23455");
+}
+
 /// Ferocious Bite: the energy left after its cost is damage too (by the multiplier), and is spent.
 unittest
 {
@@ -637,11 +780,22 @@ unittest
     }
     with (a.spell(26364, SpellEffect.schoolDamage, ImplicitTarget.enemy, 13))
         casting.school = 3;
-    a.cast_(324);
-    a.hero.read();
-    a.swing(true, MeleeHitOutcome.normal, 10);
-    assert(a.damageLogs().canFind!(l => l[0] == 26364 && (l[1] == 13 || l[1] == 19)), "13 nature damage back (a crit half again)");
-    assert(a.player.auras.find(324).charges == 2);
+    // Its strike back is rolled as any spell at the creature: a miss sends no damage (but spends the charge).
+    bool struck;
+    foreach (attempt; 0 .. 30)
+    {
+        a.tick(2000);
+        a.cast_(324); // its three charges again
+        a.hero.read();
+        a.swing(true, MeleeHitOutcome.normal, 10);
+        assert(a.player.auras.find(324).charges == 2, "a charge a swing that hits");
+        if (a.damageLogs().canFind!(l => l[0] == 26364 && (l[1] == 13 || l[1] == 19)))
+        {
+            struck = true;
+            break;
+        }
+    }
+    assert(struck, "13 nature damage back (a crit half again)");
     a.swing(true, MeleeHitOutcome.dodge);
     assert(a.player.auras.find(324).charges == 2, "a dodged swing does not strike it");
 }
@@ -664,17 +818,25 @@ unittest
     poison.casting.durationIndex = 2;
     poison.casting.amplitude[0] = 3000;
     poison.casting.school = 3;
+    // The sting and the poison after it are rolled as any spell at the creature: a miss of either, again.
+    bool poisoned;
     foreach (attempt; 0 .. 30)
     {
         a.tick(2000);
         a.cast_(19386, a.foe.guid);
-        if (a.hasAura(a.foe, 19386))
+        if (!a.hasAura(a.foe, 19386))
+            continue;
+        assert(!a.hasAura(a.foe, 24131));
+        foreach (_; 0 .. 11)
+            a.tick(1000);
+        assert(!a.hasAura(a.foe, 19386), "awake");
+        if (a.hasAura(a.foe, 24131))
+        {
+            poisoned = true;
             break;
+        }
     }
-    assert(!a.hasAura(a.foe, 24131));
-    foreach (_; 0 .. 11)
-        a.tick(1000);
-    assert(!a.hasAura(a.foe, 19386) && a.hasAura(a.foe, 24131), "awake, and poisoned");
+    assert(poisoned, "awake, and poisoned");
 }
 
 /**
@@ -825,15 +987,16 @@ unittest
     }
     auto illumination = a.spell(20210, SpellEffect.applyAura, ImplicitTarget.caster);
     a.auraEffect(illumination, 0, AuraType.procTriggerSpell, ImplicitTarget.caster);
-    illumination.triggerSpell[0] = 20272;
+    illumination.triggerSpell[0] = 18350; // a Dummy Trigger, as spell_template has it
     with (illumination.casting)
     {
         spellFamilyName = 10;
         spellIconId = 241;
-        procFlags = 0x4000;
-        procChance = 100;
+        procFlags = 0x4400;
+        procChance = 100; // (rank 5's)
     }
-    a.context.data.spells.procEvents[20210] = SpellProcEvent(0, 10, [0xC0206000, 0, 0], 0, 0x2);
+    a.spell(18350, SpellEffect.dummy, ImplicitTarget.caster);
+    a.context.data.spells.procEvents[20210] = SpellProcEvent(0, 10, [0xC0206000, 0xC0206000, 0xC0206000], 0, 0x2);
     with (a.spell(20272, SpellEffect.energize, ImplicitTarget.caster, 0))
         miscValue[0] = Power.mana;
     auto sure = a.spell(90100, SpellEffect.applyAura, ImplicitTarget.caster);
@@ -911,6 +1074,60 @@ unittest
 
 }
 
+/**
+ * A mage has one armor (Ice Armor's flag 0x2000000, Mage Armor's 0x10000000); a frost spell's 0x80000, which Ice Armor
+ * has too, makes no armor of Ice Barrier or Frost Ward (spell_template's rows, the fields that matter).
+ */
+unittest
+{
+    auto a = new Arena(PlayerClass.mage);
+    auto iceArmor = a.spell(7302, SpellEffect.applyAura, ImplicitTarget.caster); // Ice Armor, rank 1
+    a.auraEffect(iceArmor, 0, AuraType.modResistance, ImplicitTarget.caster, 290, 16);
+    with (iceArmor.casting)
+    {
+        school = 4;
+        spellFamilyName = 3;
+        spellFamilyFlags = 0x2080000;
+        durationIndex = 4;
+    }
+    auto barrier = a.spell(11426, SpellEffect.applyAura, ImplicitTarget.caster); // Ice Barrier, rank 1
+    a.auraEffect(barrier, 0, AuraType.schoolAbsorb, ImplicitTarget.caster, 438, 127);
+    with (barrier.casting)
+    {
+        school = 4;
+        spellFamilyName = 3;
+        spellFamilyFlags = 0x80000;
+        durationIndex = 1;
+    }
+    auto frostWard = a.spell(6143, SpellEffect.applyAura, ImplicitTarget.caster); // Frost Ward, rank 1
+    a.auraEffect(frostWard, 0, AuraType.schoolAbsorb, ImplicitTarget.caster, 165, 16);
+    with (frostWard.casting)
+    {
+        school = 4;
+        spellFamilyName = 3;
+        spellFamilyFlags = 0x80100;
+        durationIndex = 1;
+    }
+    auto mageArmor = a.spell(6117, SpellEffect.applyAura, ImplicitTarget.caster); // Mage Armor, rank 1
+    a.auraEffect(mageArmor, 0, AuraType.modResistance, ImplicitTarget.caster, 5, 126);
+    with (mageArmor.casting)
+    {
+        school = 6;
+        spellFamilyName = 3;
+        spellFamilyFlags = 0x10000000;
+        durationIndex = 4;
+    }
+    a.cast_(7302);
+    a.tick(1600);
+    a.cast_(11426);
+    a.tick(1600);
+    a.cast_(6143);
+    assert(a.hasAura(7302) && a.hasAura(11426) && a.hasAura(6143), "Ice Barrier and Frost Ward are no armor");
+    a.tick(1600);
+    a.cast_(6117);
+    assert(a.hasAura(6117) && !a.hasAura(7302), "Mage Armor replaces Ice Armor");
+}
+
 /// Vanish (`spell_vanish`): the rogue stealths at once by the highest Stealth it knows, its cooldown ended.
 unittest
 {
@@ -935,6 +1152,109 @@ unittest
     assert(a.hasAura(1785) && !a.hasAura(1784), "stealthed by rank 2");
 }
 
+/**
+ * Seal of Righteousness, rank 1 (20154: 108, learned at level 1), on a swing without a weapon (2.0 seconds, a fist's
+ * 1 to 2): its holy damage (25742) is of the weapon's own damage, not of the damage the attack power adds; its spell
+ * power share is less for a spell learned before level 20 (`CalculateLevelPenalty`: 0.2875 at level 1).
+ */
+unittest
+{
+    auto a = new Arena(PlayerClass.paladin);
+    auto seal = a.spell(20154, SpellEffect.applyAura, ImplicitTarget.caster);
+    a.auraEffect(seal, 0, AuraType.dummy, ImplicitTarget.caster, 108);
+    seal.spellLevel = 1;
+    with (seal.casting)
+    {
+        school = 1;
+        spellFamilyName = 10;
+        spellFamilyFlags = 0x8000000;
+        procFlags = 0x4;
+        procChance = 100;
+        durationIndex = 1;
+    }
+    with (a.spell(25742, SpellEffect.schoolDamage, ImplicitTarget.enemy, 0))
+    {
+        casting.school = 1;
+        casting.spellFamilyName = 10;
+        casting.dmgClass = DamageClass.melee;
+        attributesEx2 = 0x20000000; // it cannot crit
+    }
+    uint struck()
+    {
+        foreach (attempt; 0 .. 60)
+        {
+            a.tick(2000);
+            if (!a.hasAura(20154))
+                a.cast_(20154);
+            // What the attack power makes of a swing, which the seal does not take.
+            a.player.values.set!UNIT_FIELD_MINDAMAGE(300.0f);
+            a.player.values.set!UNIT_FIELD_MAXDAMAGE(400.0f);
+            a.hero.read();
+            a.me.swing(a.foe, imported!"dmangos.world.combat".AttackType.mainHand);
+            foreach (l; a.damageLogs())
+                if (l[0] == 25742)
+                    return l[1];
+        }
+        assert(false, "a swing lands");
+    }
+    // 0.85 * ceil(108 * 1.2 * 1.03 * 2.0 / 100) - 1 = 1.55; 0.03 of the fist's 1.5; and 1.
+    assert(struck() == 2, "of the weapon's own damage");
+    auto power = a.spell(90102, SpellEffect.applyAura, ImplicitTarget.caster); // 100 holy spell power
+    a.auraEffect(power, 0, AuraType.modDamageDone, ImplicitTarget.caster, 100, 2);
+    a.me.addAura(makeAura(power, a.player.guid, 60, -1, true, [100, 0, 0]));
+    // 100 * 0.092 * 2.0 * 0.2875 = 5 more (and what every holy spell gets of it besides: 1.5 / 3.5).
+    const damage = struck();
+    assert(damage == 2 + 5 || damage == 2 + 5 + 42, "a level 1 spell's share of the spell power");
+}
+
+/// Mana Shield (1463: 120) absorbs half the arcane spell power more: each stack of Unstable Power (24659: 17).
+unittest
+{
+    auto a = new Arena(PlayerClass.mage);
+    auto shield = a.spell(1463, SpellEffect.applyAura, ImplicitTarget.caster);
+    a.auraEffect(shield, 0, AuraType.manaShield, ImplicitTarget.caster, 120);
+    shield.spellLevel = 20;
+    with (shield.casting)
+    {
+        school = 6;
+        spellFamilyName = 3;
+        spellFamilyFlags = 0x8000;
+        durationIndex = 1;
+    }
+    auto unstable = a.spell(24659, SpellEffect.applyAura, ImplicitTarget.caster);
+    a.auraEffect(unstable, 0, AuraType.modDamageDone, ImplicitTarget.caster, 17, 126);
+    unstable.casting.stackAmount = 12;
+    unstable.casting.durationIndex = 1;
+    foreach (_; 0 .. 3)
+        a.me.addAura(makeAura(unstable, a.player.guid, 60, 10_000, true, [17, 0, 0]));
+    assert(a.player.auras.find(24659).stacks == 3);
+    a.cast_(1463);
+    assert(a.player.auras.find(1463).amount[0] == 120 + 3 * 17 / 2, "half of three stacks' 51");
+}
+
+/// Healing Way (29203: 6% a stack, three at most) adds to Healing Wave (331: 34) by its stacks.
+unittest
+{
+    auto a = new Arena(PlayerClass.shaman);
+    auto way = a.spell(29203, SpellEffect.applyAura, ImplicitTarget.caster);
+    a.auraEffect(way, 0, AuraType.dummy, ImplicitTarget.caster, 6);
+    way.casting.stackAmount = 3;
+    way.casting.durationIndex = 1;
+    with (a.spell(331, SpellEffect.heal, ImplicitTarget.friend, 34))
+    {
+        casting.school = 3;
+        casting.spellFamilyName = 11;
+        casting.spellFamilyFlags = 0x40;
+    }
+    foreach (_; 0 .. 3)
+        a.me.addAura(makeAura(way, a.player.guid, 60, 10_000, true, [6, 0, 0]));
+    a.player.values.set!UNIT_FIELD_MAXHEALTH(1000u);
+    a.player.values.set!UNIT_FIELD_HEALTH(500u);
+    a.cast_(331);
+    const healed = a.player.values.get!UNIT_FIELD_HEALTH - 500;
+    assert(healed == 34 * 118 / 100 || healed == 34 * 118 / 100 * 3 / 2, "18% more (a crit half again)");
+}
+
 /// Seal of the Crusader: its quicker swings are as much less: the damage a second stays.
 unittest
 {
@@ -955,8 +1275,8 @@ unittest
 }
 
 /**
- * Sweeping Strikes strikes another enemy in reach for the blow's damage (12723); Retaliation strikes back at a swing
- * from the front, not one from behind.
+ * Sweeping Strikes strikes another enemy in reach for the blow's damage (12723); Retaliation strikes back (20240, the
+ * warrior's: 22858 is a creature's) at a swing from the front, not one from behind, without a hit roll.
  */
 unittest
 {
@@ -1001,25 +1321,19 @@ unittest
         procCharges = 30;
         durationIndex = 1;
     }
-    with (a.spell(22858, SpellEffect.weaponDamageNoschool, ImplicitTarget.enemy, 0))
+    with (a.spell(20240, SpellEffect.weaponDamageNoschool, ImplicitTarget.enemy, 0)) // the warrior's strike back
+    {
         casting.dmgClass = DamageClass.melee;
+        casting.spellFamilyName = 4;
+    }
     a.tick(1600);
     a.cast_(20230);
     a.hero.read();
-    bool struck; // the strike back is rolled: it may be dodged or parried
-    foreach (_; 0 .. 20)
-    {
-        a.swing(true, MeleeHitOutcome.normal, 5);
-        if (a.damageLogs().canFind!(l => l[0] == 22858))
-        {
-            struck = true;
-            break;
-        }
-    }
-    assert(struck, "struck back");
+    a.swing(true, MeleeHitOutcome.normal, 5);
+    assert(a.damageLogs().canFind!(l => l[0] == 20240), "struck back (20240, never missing: no hit roll)");
     a.player.movement.position.orientation = 3.14159f; // its back to the creature
     a.swing(true, MeleeHitOutcome.normal, 5);
-    assert(!a.damageLogs().canFind!(l => l[0] == 22858), "not from behind");
+    assert(!a.damageLogs().canFind!(l => l[0] == 20240), "not from behind");
 }
 
 /**

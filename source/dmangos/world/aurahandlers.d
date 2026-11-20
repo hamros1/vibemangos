@@ -1161,13 +1161,7 @@ private:
                 return leechTick(map.unitOf(target), aura, i, damage);
             periodicLog(target.guid, aura, i, damage, aura.spell.casting.school);
             spellAttacked(target, damage, true, aura.spell.casting.school);
-            if (target.alive) // its ticks' procs (Nightfall)
-            {
-                import dmangos.world.aurahandlers : ProcFlag;
-                import dmangos.world.procs : ProcHit;
-
-                procAuras(ProcFlag.dealHarmfulPeriodic, map.unitOf(target), ProcHit(aura.spell, 1, damage, 0, damage != 0));
-            }
+            tickProcs(map.unitOf(target), aura.spell, damage); // Nightfall, Vampiric Embrace
             break;
         case AuraType.periodicManaLeech:
             return manaLeechTick(map.unitOf(target), aura, i, amount);

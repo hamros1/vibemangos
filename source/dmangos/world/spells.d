@@ -148,7 +148,7 @@ struct SpellProcEvent
     uint procEx;               /// `PROC_EX_*`
     float ppmRate = 0;         /// procs a minute at the weapon's speed; 0: by chance
     float customChance = 0;    /// a chance instead of the spell's; 0: the spell's
-    uint cooldown;             /// milliseconds between procs
+    uint cooldown;             /// seconds between procs (this database's unit: Lightning Shield's 3, 22648's 120)
 }
 
 /// `spell_template`'s casting columns, in `SpellCastRow` order.

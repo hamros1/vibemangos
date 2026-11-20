@@ -133,7 +133,8 @@ ExclusiveKind exclusiveKind(const(SpellInfo)* spell) pure nothrow @safe
     case SpellFamily.warlock:
         return spell.casting.dispel == dispelCurse ? ExclusiveKind.curse : ExclusiveKind.none;
     case SpellFamily.mage:
-        return spell.casting.spellFamilyFlags & 0x12080000 ? ExclusiveKind.mageArmor : ExclusiveKind.none;
+        // Frost and Ice Armor (0x2000000), Mage Armor (0x10000000); not 0x80000, every frost spell's (Ice Barrier's).
+        return spell.casting.spellFamilyFlags & 0x12000000 ? ExclusiveKind.mageArmor : ExclusiveKind.none;
     case SpellFamily.generic:
         enum uint aspectOfTheBeastIcon = 1510; // (the data leaves it out of the hunter's family)
         return spell.casting.spellIconId == aspectOfTheBeastIcon && spell.casting.name.length > 6
@@ -155,6 +156,12 @@ float crusaderDamageFactor(A)(const(A)[] auras)
                 && aura.amount[1] > -100)
             factor *= 100.0f / (100 + aura.amount[1]);
     return factor;
+}
+
+/// `Unit::CalculateLevelPenalty`: the share of the spell power a spell learned before level 20 gets (3.75% less a level).
+float levelPenalty(const(SpellInfo)* spell) pure nothrow @nogc @safe
+{
+    return spell.spellLevel > 0 && spell.spellLevel < 20 ? 1.0f - (20.0f - spell.spellLevel) * 0.0375f : 1.0f;
 }
 
 /// The spell of `table` for `rank` (a rank of a talent or spell, as CMaNGOS lists them); 0 if none.
@@ -195,6 +202,8 @@ static immutable uint[2][] touchOfWeaknessCurse = [[2652, 2943], [19261, 19249],
 static immutable uint[2][] wyvernStingPoison = [[19386, 24131], [24132, 24134], [24133, 24135]];
 /// Blessed Recovery's ranks and its heal.
 static immutable uint[2][] blessedRecoveryHeal = [[27811, 27813], [27815, 27817], [27816, 27818]];
+/// Judgement of Command's damage, by rank (CMaNGOS's `spell_judgement_of_command`; spell_template gives them no family).
+static immutable uint[] judgementOfCommandDamage = [20467, 20963, 20964, 20965, 20966];
 /// Shatter's override script numbers and the crit chance each adds against a frozen target (`spell_shatter_mage`).
 static immutable uint[2][] shatterCrit = [[849, 10], [910, 20], [911, 30], [912, 40], [913, 50]];
 
@@ -499,8 +508,8 @@ mixin template ClassSpells()
 
     /**
      * A school damage effect's amount by the class rules (`EffectSchoolDMG`): Bloodthirst is a share of the attack
-     * power; Ferocious Bite turns the energy left into damage, and the attack power by the combo points; Conflagrate
-     * consumes the Immolate it needs.
+     * power; Shield Slam adds the shield's block value; Ferocious Bite turns the energy left into damage, and the
+     * attack power by the combo points; Conflagrate consumes the Immolate it needs.
      */
     package int classSchoolDamage(const(SpellInfo)* spell, size_t i, ulong targetGuid, int damage)
     {
@@ -509,6 +518,9 @@ mixin template ClassSpells()
         // Bloodthirst
         if (ofFamily(spell, SpellFamily.warrior, 0x2000000) && spell.casting.spellIconId == 38)
             return damage * player.stats.attackPower / 100;
+        // Shield Slam (the same family flag): its damage and the shield's block value.
+        if (ofFamily(spell, SpellFamily.warrior, 0x2000000) && spell.casting.spellIconId == 413)
+            return damage + cast(int) player.fighter.shieldBlock;
         // Ferocious Bite
         enum uint ferociousBiteVisual = 6587;
         if (ofFamily(spell, SpellFamily.druid, 0x800000) && spell.casting.spellVisual == ferociousBiteVisual)
@@ -519,8 +531,9 @@ mixin template ClassSpells()
             damage += cast(int)(player.stats.attackPower * 0.03f * castCombo);
             return damage;
         }
-        // Judgement of Command (`spell_judgement_of_command`): half, unless its target is stunned.
-        if (ofFamily(spell, SpellFamily.paladin) && spell.casting.spellIconId == 561)
+        // Judgement of Command (`spell_judgement_of_command`): half, unless its target is stunned. Its damage spells
+        // (what the judgement's dummy names) are of no family.
+        if (judgementOfCommandDamage.canFind(spell.id))
         {
             auto target = map.unit(targetGuid);
             if (auto set = aurasOf(target))
@@ -580,9 +593,10 @@ mixin template ClassSpells()
             enum uint enrage = 5229, enrageArmor = 25503, direBearForm = 9634;
             if (spell.id == enrage)
             {
-                // Less armor while enraged: a sixth less in Dire Bear Form, more in Bear Form.
+                // Less armor while enraged: 16% in Dire Bear Form, 27% in Bear Form: 25503's second effect (its first
+                // is none).
                 const reduction = player.auras.find(direBearForm) !is null ? -16 : -27;
-                castCustom(enrageArmor, player.guid, CustomValues.first(reduction));
+                castCustom(enrageArmor, player.guid, CustomValues([0, reduction, 0], 0b10));
                 return true;
             }
             return false;
@@ -680,15 +694,12 @@ mixin template ClassSpells()
         return true;
     }
 
-    /// The caster's `MOD_DAMAGE_DONE` for schools of `schoolMask` (`SpellBaseDamageBonusDone`).
+    /// The caster's spell power for schools of `schoolMask` (`SpellBaseDamageBonusDone`): its `MOD_DAMAGE_DONE` (each
+    /// stack's: Unstable Power's twelve), and a share of its spirit (`MOD_SPELL_DAMAGE_OF_STAT_PERCENT`).
     private int spellDamageBonusRaw(uint schoolMask)
     {
-        int done;
-        foreach (aura; player.auras.list)
-            foreach (k; 0 .. 3)
-                if ((aura.effects & (1 << k)) && aura.type(k) == AuraType.modDamageDone && (aura.misc(k) & schoolMask))
-                    done += aura.amount[k];
-        return done;
+        return player.auras.totalByMiscMask(AuraType.modDamageDone, cast(int) schoolMask)
+            + spellPowerFromSpirit(AuraType.modSpellDamageOfStatPercent, cast(int) schoolMask);
     }
 
     package AttackType procHand; /// the hand whose swing set the current item procs off
@@ -734,7 +745,7 @@ mixin template ClassSpells()
         {
             if (const aura = rankSpell(bloodthirstAura, spell.id))
                 castCustom(aura, player.guid);
-            if (const heal = rankSpell(holyNovaHeal, spell.id))
+            if (const heal = rankSpell(holyNovaHeal, spell.id)) // (its caster is among them, an enemy near or not)
                 castCustom(heal, player.guid);
         }
         uint precast;
@@ -804,7 +815,7 @@ mixin template ClassSpells()
                     values[i] += player.stats.attackPower * (castCombo > 3 ? 3 : castCombo) / 100;
             }
             else if (type == AuraType.manaShield && ofFamily(spell, SpellFamily.mage, 0x8000))
-                values[i] += spellDamageBonusRaw(1 << spell.casting.school) / 2;
+                values[i] += cast(int)(spellDamageBonusRaw(1 << spell.casting.school) * 0.5f * levelPenalty(spell));
         }
     }
 
@@ -923,8 +934,8 @@ mixin template ClassSpells()
                     value += aura.amount[which] * time / 3500;
                 }
             }
-            else if (aura.spell.id == healingWay && ofFamily(spell, SpellFamily.shaman, 0x40))
-                value = value * (aura.amount[0] + 100) / 100;
+            else if (aura.spell.id == healingWay && ofFamily(spell, SpellFamily.shaman, 0x40)) // by its stacks (3 at most)
+                value = value * (aura.amount[0] * cast(int) aura.stacks + 100) / 100;
         }
         return value;
     }
@@ -1015,13 +1026,15 @@ mixin template ClassSpells()
             c.spell = rankSpell(lightningShieldDamage, spell.id);
             return c.spell != 0 && other;
         }
-        // Illumination: the heal's mana back (of the spell cast: Holy Light's, Flash of Light's, Holy Shock's).
+        // Illumination: the heal's mana back (of the spell cast: Holy Light's, Flash of Light's, Holy Shock's), by its
+        // own spell (the data's trigger is 18350, a Dummy Trigger).
         if (ofFamily(spell, SpellFamily.paladin) && spell.casting.spellIconId == 241)
         {
+            enum uint illuminationMana = 20272;
             const healed = hit.spell is null ? null : illuminatedSpell(hit.spell);
             if (healed is null)
                 return false;
-            c = ProcCast(c.spell, player.guid, CustomValues.first(cast(int) healed.casting.manaCost));
+            c = ProcCast(illuminationMana, player.guid, CustomValues.first(cast(int) healed.casting.manaCost));
             return true;
         }
         // Blessed Recovery: a third of a share of the blow each tick.
@@ -1088,14 +1101,17 @@ mixin template ClassSpells()
             return true;
         }
         // Retaliation: a strike back at each swing that does not come from behind.
-        enum uint retaliation = 20230, retaliationStrike = 22858;
+        // (20240, `spell_retaliation_warrior`'s: 22858 is a creature's, `spell_retaliation_creature`)
+        enum uint retaliation = 20230, retaliationStrike = 20240;
         if (spell.id == retaliation)
         {
             import dmangos.world.combat : hasInArc;
 
             if (!other || !hasInArc(player.position, other.position))
                 return false;
-            casts ~= ProcCast(retaliationStrike, other.combatGuid);
+            auto always = CustomValues.init;
+            always.alwaysHits = true; // TRIGGERED_IGNORE_HIT_CALCULATION
+            casts ~= ProcCast(retaliationStrike, other.combatGuid, always);
             return true;
         }
         // Seal of Righteousness
@@ -1203,10 +1219,12 @@ mixin template ClassSpells()
             base = 0.85f * ceil(amount * 1.2f * 1.03f * speed / 100.0f) - 1;
             coefficient = 0.092f * speed;
         }
-        const weapon = (player.values.get!UNIT_FIELD_MINDAMAGE + player.values.get!UNIT_FIELD_MAXDAMAGE) / 2;
+        // The weapon's own damage (`GetBaseWeaponDamage`: its first line, no attack power), a fist's without one.
+        const weapon = item is null || item.proto is null ? (1 + 2) / 2.0f
+            : (item.proto.details.damage[0].min + item.proto.details.damage[0].max) / 2;
         int damage = cast(int)(base + 0.03f * weapon) + 1;
         if (damage >= 0)
-            damage += cast(int)(spellDamageBonusRaw(1 << seal.casting.school) * coefficient);
+            damage += cast(int)(spellDamageBonusRaw(1 << seal.casting.school) * coefficient * levelPenalty(seal));
         return damage;
     }
 
@@ -1226,23 +1244,25 @@ mixin template ClassSpells()
     }
 
     /**
-     * This player's spell or swing hit `victim` (`hit`): what the victim's auras do to it (`victim`'s procs as
-     * CMaNGOS runs them on its side): Judgement of Light and of Wisdom heal or give mana to who strikes it in melee,
-     * Vampiric Embrace heals the priest's party by a share of the priest's shadow damage.
+     * This player's spell, swing or tick hit `victim` (`hit`): what the victim's auras do to it (`victim`'s procs as
+     * CMaNGOS runs them on its side, each on what its spell's proc flags take): Judgement of Light heals who strikes it
+     * in melee, Judgement of Wisdom gives mana to who strikes it in melee, at range or with a spell, Vampiric Embrace
+     * heals the priest's party by a share of the priest's shadow damage (its damage over time's too).
      */
     package void victimAuraProcs(UnitRef victim, uint flags, const ref ProcHit hit)
     {
-        import dmangos.world.aurahandlers : ProcFlag;
-
         auto set = aurasOf(victim);
         if (set is null || !victim.alive)
             return;
+        const taken = flags << 1; // what the victim took: each taken flag is the dealt one's next bit
         ProcCast[] casts;
         Aura[] spent;
         enum uint vampiricEmbrace = 15286, vampiricHeal = 15290;
         foreach (aura; set.list)
         {
-            if ((flags & (ProcFlag.dealMeleeSwing | ProcFlag.dealMeleeAbility)) && aura.has(AuraType.procTriggerSpell))
+            if (!(aura.spell.casting.procFlags & taken))
+                continue;
+            if (aura.has(AuraType.procTriggerSpell))
             {
                 auto heal = rankSpell(judgementOfLightHeal, aura.spell.id);
                 if (!heal)

@@ -742,7 +742,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Projects: CMaNGOS
 * Files: `SpellEffects.cpp`, `SpellAuras.cpp`, `Spell.cpp`, `UnitAuraProcHandler.cpp`, `Unit.cpp`,
   `Spells/Scripts/Scripting/ClassScripts/*.cpp`
-* Functions: `Spell::EffectSchoolDMG` (Bloodthirst, Conflagrate, Ferocious Bite), `Spell::EffectDummy` (Cold Snap,
+* Functions: `Spell::EffectSchoolDMG` (Bloodthirst, Shield Slam, Conflagrate, Ferocious Bite), `Spell::EffectDummy` (Cold Snap,
   Enrage, Holy Shock, Judgement of Command, Flametongue Weapon and Totem procs, Touch of Weakness),
   `Spell::EffectScriptEffect` (Holy Light, Flash of Light), `Spell::EffectHeal` (Swiftmend),
   `Spell::EffectWeaponDmg` (Ambush), `Spell::CheckCast` (Conflagrate, Hammer of Wrath),
@@ -754,10 +754,11 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
   `Unit::HandleProcTriggerSpellAuraProc` (Deep Wounds, Lightning Shield, Illumination, Blessed Recovery, Ruthlessness,
   Seal Fate), `Unit::HandleOverrideClassScriptAuraProc` (Nightfall), `Unit::ProcDamageAndSpell` (the reactive states),
   `Unit::UpdateReactives`, `Unit::ClearAllReactives`, `Player::RemoveSomeCooldown`, `SpellMgr::GetSpellSpecific`,
-  `SpellStacker::IsStackableAuraEffect` (a helpful spell's ranks)
+  `SpellStacker::IsStackableAuraEffect` (a helpful spell's ranks), `Unit::CalculateLevelPenalty`,
+  `Unit::GetBaseWeaponDamage`, `Unit::SpellBaseDamageBonusDone`
 * Functions/ScriptNames: `spell_judgement`, `spell_judgement_of_command`, `spell_judgement_of_light_intermediate`,
   `spell_judgement_of_wisdom_intermediate`, `spell_swiftmend`, `spell_curse_of_doom`, `spell_power_infusion`,
-  `spell_shatter_mage`, `spell_blessing_of_light`, `spell_healing_way`, `spell_seal_of_the_crusader`, `spell_shadowguard`, `spell_blizzard`
+  `spell_shatter_mage`, `spell_retaliation_warrior`, `spell_blessing_of_light`, `spell_healing_way`, `spell_seal_of_the_crusader`, `spell_shadowguard`, `spell_blizzard`
 * Constants: `IsSealSpell`, `REACTIVE_TIMER_START`, `SPELL_ATTR_EX_DRAIN_ALL_POWER`, `TRIGGERED_IGNORE_HIT_CALCULATION`
 
 ## world/classspelltests.d
@@ -1303,6 +1304,10 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Files: `QuestDef.cpp`
 * Functions: `ObjectMgr::LoadQuests`, `Player::GetQuestLevelForPlayer`, `Quest::XPValue`
 * Constants: `MAX_QUEST_LOG_SIZE`, `QUEST_OBJECTIVES_COUNT`, `QUEST_REWARDS_COUNT`, `QUEST_REWARD_CHOICES_COUNT`, `SMSG_QUESTGIVER_QUEST_INVALID`
+
+## world/realclassspelltests.d
+
+* Projects: CMaNGOS (the client's DBC files and its classic world database, as the server runs on them)
 
 ## world/realm.d
 
