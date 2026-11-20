@@ -1339,6 +1339,14 @@ struct AnubisathGuardian
             me.castSpell(explode);
     }
 
+    /// One it called, slain, frees its place (as the swarmers'): it calls again.
+    void on(ref CreatureContext me, const ref SummonedDied e)
+    {
+        foreach (ref s; summoned)
+            if (s == e.summoned)
+                s = EntityRef.init;
+    }
+
     void on(ref CreatureContext me, Step step)
     {
         final switch (step)

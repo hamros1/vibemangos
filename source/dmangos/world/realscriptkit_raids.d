@@ -100,7 +100,7 @@ final class Scene
                 map.random.seed(seed); // the copy's rolls the same at every run
             }
             assert(me.player.data.map == mapId && me.instanceId == instance, "not there");
-            hero.read();
+            note(hero.read(), k == 0); // what met it as it came (a boss that saw it: its aggro line)
             heroes ~= hero;
         }
         fill();
@@ -157,7 +157,8 @@ final class Scene
                     if (distance(hero(k).position, stayWith.position) > stayWithin)
                         moveHero(k, stayWith.position);
                     // The raid's blows go on (a point each: what a script checks as it is hurt it checks again).
-                    if (pressing && stayWith.ai.inCombat && hero(k).alive)
+                    if (pressing && stayWith.ai.inCombat && hero(k).alive
+                            && !(stayWith.values.get!UNIT_FIELD_FLAGS & 0x0200_0000)) // not one none can touch
                         dealDamage(heroUnit(k), map.unitOf(stayWith), 1, Blow.spell());
                 }
         }
@@ -451,11 +452,16 @@ final class Scene
         return o.data;
     }
 
-    /// Every creature within `radius` of `center` but those of `keep` taken off the map (the trash cleared).
+    /**
+     * Every creature within `radius` of `center` that one could fight, but those of `keep`, taken off the map (the
+     * trash cleared); the unselectable and unattackable (triggers, the scenery's creatures) stay.
+     */
     void clear(Position center, float radius, const(uint)[] keep)
     {
+        enum uint nonAttackable = 0x2, notSelectable = 0x0200_0000;
         foreach (c; map.creaturesNear(center, radius))
-            if (!keep.canFind(c.spawn.entry) && !c.petOwner)
+            if (!keep.canFind(c.spawn.entry) && !c.petOwner
+                    && !(c.values.get!UNIT_FIELD_FLAGS & (nonAttackable | notSelectable)))
                 map.removeObject(c.guid);
         listen();
     }
@@ -527,6 +533,14 @@ final class Scene
         ByteWriter w;
         w.put(id);
         heroes[0].write(Opcode.CMSG_AREATRIGGER, w.data);
+        listen();
+    }
+
+    /// Character `k` casts `spell` at `target` at once (triggered: no cast time, no cost), as a stand-in for its
+    /// many casts in a fight (a raid's frost on Viscidus).
+    void castTriggered(size_t k, uint spell, ulong target)
+    {
+        heroes[k].session.inWorld.castTriggeredAt(spell, target);
         listen();
     }
 

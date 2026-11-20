@@ -1015,6 +1015,15 @@ struct Viscidus
         }
     }
 
+    /// A glob slain does not come back to him. (Summoned to go when dead, a slain glob leaves the map at once, and
+    /// `alive` of a creature not here says yes: without this he waited for his slain globs for ever.)
+    void on(ref CreatureContext me, const ref SummonedDied e)
+    {
+        foreach (ref g; globs)
+            if (g == e.summoned)
+                g = EntityRef.init;
+    }
+
     void on(ref CreatureContext me, const ref Damaged e)
     {
         if (phase != Phase.frozen)
