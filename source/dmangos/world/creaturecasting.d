@@ -54,6 +54,7 @@ mixin template CreatureCasting()
         bool rangedMode_;              // and it does now (not out of mana)
         float chaseDistance_ = 0;      // how far from its victim it keeps
         int fleeTimer;                 // running in fear, for so long yet
+        bool critterFleeing;           // ... a critter's flight from its attacker: it gives up the fight after
         int despawnTimer;              // gone in so long (0: not)
         bool meleeEnabled = true;      // it swings at its victim
     }
@@ -808,6 +809,13 @@ mixin template CreatureCasting()
             world_.flushCreature(me);
             if (!me.spline.finalized)
                 stopMoving(me, world_);
+            // A critter's flight ends its fight (`CreatureAI::TimedFleeingEnded`, `ORDER_CRITTER_FLEE`).
+            if (critterFleeing)
+            {
+                critterFleeing = false;
+                if (me.alive && inCombat_)
+                    enterEvadeMode(world_);
+            }
             return;
         }
         if (!me.spline.finalized)
@@ -1285,19 +1293,46 @@ mixin template CreatureCasting()
         world_.flushCreature(me);
     }
 
-    /// ditto: in fear for 7 seconds.
+    /// ditto (`ACTION_T_FLEE_FOR_ASSIST`): in panic for `CreatureFamilyFleeDelay`, 10 seconds (`UnitAI::DoFlee`).
     bool scriptFlee()
     {
-        // Curse of Recklessness (`PREVENTS_FLEEING`) keeps it fighting (CMaNGOS's `DoFleeToGetAssistance`).
-        if (!victim || fleeTimer > 0 || me.auras.has(AuraType.preventsFleeing))
+        enum int creatureFamilyFleeDelay = 10_000;
+        return panic(creatureFamilyFleeDelay);
+    }
+
+    /**
+     * In panic for `ms` (`Unit::SetInPanic`): its cast stopped, `UNIT_FLAG_FLEEING`, running from its enemy. Not
+     * with Curse of Recklessness on it (`PREVENTS_FLEEING`), nor while disoriented, nor already running.
+     */
+    private bool panic(int ms)
+    {
+        if (!victim || fleeTimer > 0 || me.auras.has(AuraType.preventsFleeing) || me.auras.has(AuraType.modConfuse))
             return false;
         interruptCast();
-        fleeTimer = 7000;
+        fleeTimer = ms;
         me.values.set!UNIT_FIELD_FLAGS(me.values.get!UNIT_FIELD_FLAGS | UnitFlags.fleeing);
         world_.flushCreature(me);
         if (!me.spline.finalized)
             stopMoving(me, world_);
         return true;
+    }
+
+    /// `CreatureStaticFlags::NO_MELEE_FLEE` (`StaticFlags1`): no melee, and it runs from a player that attacks it.
+    enum uint staticFlagNoMeleeFlee = 0x00100000;
+
+    /**
+     * Entering a fight with `enemy`: a creature that does not melee (`NO_MELEE_FLEE`: a critter) runs from a player's
+     * side for 30 seconds, then gives the fight up (`Unit::SetInCombatWith`), unless made by a spell, rooted,
+     * already running, or casting.
+     */
+    void critterFleeAtAggro(UnitRef enemy)
+    {
+        if (!(me.template_.staticFlags1 & staticFlagNoMeleeFlee) || me.values.get!UNIT_CREATED_BY_SPELL
+                || me.immobilized || fleeTimer > 0 || casting_ !is null || !enemy
+                || !(enemy.kind == UnitKind.player || enemy.relating.playerOwned))
+            return;
+        if (panic(30_000))
+            critterFleeing = true;
     }
 
     /// ditto: the allies within `radius` yards that may help join in now.
@@ -1789,4 +1824,37 @@ unittest
     assert(rage >= 50);
     assert(keeper.ai.castSpell(context.data.spells.spell(drain), me.guid, 0));
     assert(me.values.get!UNIT_FIELD_POWER1(Power.rage) == rage - 50, "50 of its rage drained");
+}
+
+/// A critter (`NO_MELEE_FLEE`): it never swings; attacked by a player it runs for 30 seconds, then gives up the fight.
+unittest
+{
+    import core.time : MonoTime, msecs, seconds;
+    import dmangos.world.creature : Creature;
+    import dmangos.world.defines : UnitFlags;
+    import dmangos.world.objects : HighGuid, makeGuid;
+    import dmangos.world.testclient;
+    import dmangos.world.updatefields : UNIT_FIELD_FLAGS;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    context.data.creatureTemplates.edit(creatureInnkeeper).staticFlags1 = 0x00100000; // NO_MELEE_FLEE
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f, 1.97f));
+    anduin.read();
+    const innkeeper = makeGuid(HighGuid.unit, creatureInnkeeper, innkeeperSpawn);
+    auto critter = cast(Creature) context.map(0).findObject(innkeeper);
+    assert(critter !is null);
+    anduin.write(Opcode.CMSG_ATTACKSWING, ClientGuid(innkeeper));
+    anduin.session.update(50.msecs);
+    assert(critter.ai.inCombat && critter.ai.fleeingAtLowHealth, "running");
+    assert(critter.values.get!UNIT_FIELD_FLAGS & UnitFlags.fleeing);
+    foreach (_; 0 .. 31)
+    {
+        now += 1.seconds;
+        context.map(0).update(1000.msecs);
+    }
+    assert(!critter.ai.fleeingAtLowHealth && !(critter.values.get!UNIT_FIELD_FLAGS & UnitFlags.fleeing));
+    assert(!critter.ai.inCombat || critter.ai.runningHome, "it gave up the fight");
 }

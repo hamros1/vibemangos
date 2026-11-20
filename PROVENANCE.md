@@ -770,8 +770,8 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 ## world/creaturecasting.d
 
 * Projects: CMaNGOS, EventAI
-* Functions: `Spell::CheckRange`, `Spell::cast`, `Spell::prepare`, `UnitAI::DoCastSpellIfCan`
-* Constants: `CAST_FORCE_TARGET_SELF`, `EVENT_T_FRIENDLY_HP`, `SMSG_SPELL_FAILURE`, `SMSG_SPELL_GO`, `SPELL_EFFECT_APPLY_AURA`, `SPELL_EFFECT_HEAL`, `TEMPSPAWN_TIMED_OOC_DESPAWN`, `TEMPSPAWN_TIMED_OOC_OR_DEAD_DESPAWN`, `UNIT_STAT_NO_COMBAT_MOVEMENT`
+* Functions: `Spell::CheckRange`, `Spell::cast`, `Spell::prepare`, `UnitAI::DoCastSpellIfCan`, `UnitAI::DoFlee`, `Unit::SetFleeing`, `Unit::SetInCombatWith` (the critter flee), `CreatureAI::CreatureAI`, `CreatureAI::TimedFleeingEnded`, `PanicMovementGenerator::Update`
+* Constants: `CreatureStaticFlags::NO_MELEE_FLEE`, `CONFIG_UINT32_CREATURE_FAMILY_FLEE_DELAY`, `ORDER_CRITTER_FLEE`, `ACTION_T_FLEE_FOR_ASSIST`, `CAST_FORCE_TARGET_SELF`, `EVENT_T_FRIENDLY_HP`, `SMSG_SPELL_FAILURE`, `SMSG_SPELL_GO`, `SPELL_EFFECT_APPLY_AURA`, `SPELL_EFFECT_HEAL`, `TEMPSPAWN_TIMED_OOC_DESPAWN`, `TEMPSPAWN_TIMED_OOC_OR_DEAD_DESPAWN`, `UNIT_STAT_NO_COMBAT_MOVEMENT`
 * Also: `Spell::EffectSendEvent` (a creature's `SPELL_EFFECT_SEND_EVENT`), `Unit::RemoveAura` (its script told, `AuraRemoved`)
 * Also: `Creature::DoFleeToGetAssistance` (`SPELL_AURA_PREVENTS_FLEEING`)
 
