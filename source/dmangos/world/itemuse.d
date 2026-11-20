@@ -157,6 +157,22 @@ mixin template ItemUseHandlers()
         }
     }
 
+    /**
+     * The cooldown category of a cast of `spell` from item `itemEntry` (0: none): the item's `spellcategory_N`
+     * for that spell if it names one, else the spell's (`Player::AddCooldown`, `IsSpellReady`). 456 items name
+     * one their spell lacks or differs from, as the Swiftness Potion (2379: none; the item: 4, the healing
+     * potions') and the Minor Healthstone (6262: 30; the item: 1153).
+     */
+    package uint cooldownCategoryOf(const(SpellInfo)* spell, uint itemEntry)
+    {
+        if (itemEntry)
+            if (const proto = itemEntry in context.data.items)
+                foreach (i, ref use; proto.details.spells)
+                    if (use.id == spell.id)
+                        return proto.spellCategory[i] ? proto.spellCategory[i] : spell.category;
+        return spell.category;
+    }
+
     // -----------------------------------------------------------------------
     // Wear
     // -----------------------------------------------------------------------

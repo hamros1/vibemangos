@@ -1039,7 +1039,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 
 * Projects: CMaNGOS
 * Files: `SpellHandler.cpp`, `Spell.cpp`, `Item.cpp`, `Player.cpp`, `Unit.cpp`
-* Functions: `Item::SendTimeUpdate`, `Item::UpdateDuration`, `Player::AddCooldown`, `Player::AddItemDurations`, `Player::ApplyEquipCooldown`, `Player::DurabilityPointLossForEquipSlot`, `Player::DurabilityPointsLoss`, `Player::UpdateItemDuration`, `Spell::CheckItems`, `Spell::TakeAmmo`, `Spell::TakeCastItem`, `Unit::DealDamage`, `WorldSession::HandleUseItemOpcode`
+* Functions: `Item::SendTimeUpdate`, `Item::UpdateDuration`, `Player::AddCooldown`, `Player::AddItemDurations`, `Player::ApplyEquipCooldown`, `Player::DurabilityPointLossForEquipSlot`, `Player::DurabilityPointsLoss`, `Player::IsSpellReady`, `Player::UpdateItemDuration`, `Spell::CheckItems`, `Spell::TakeAmmo`, `Spell::TakeCastItem`, `Unit::DealDamage`, `WorldSession::HandleUseItemOpcode`
 * Constants: `BIND_WHEN_USE`, `CONFIG_FLOAT_RATE_DURABILITY_LOSS_DAMAGE`, `ITEM_EXTRA_REAL_TIME_DURATION`, `ITEM_FLAG_NO_EQUIPCOOLDOWN`, `SMSG_ITEM_COOLDOWN`, `SMSG_ITEM_TIME_UPDATE`, `SPELL_FAILED_NO_CHARGES_REMAIN`
 
 ## world/meetingstone.d

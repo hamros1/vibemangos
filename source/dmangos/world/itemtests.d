@@ -329,6 +329,69 @@ unittest
     assert(castReason(wearer.read(), extra) == SpellCastResult.ok, "over");
 }
 
+/**
+ * An item's own cooldown category (`spellcategory_N`) counts like its spell's (`Player::IsSpellReady` with the
+ * item). The rows as item_template and spell_template have them: Major Healing Potion (13446: spell 17534 of
+ * category 4, the item: 120000, category 4, 120000) shares its category with the Swiftness Potion (2379: spell
+ * 2379 of no category, the item: 120000, category 4, 120000); the Minor Healthstone (5512: spell 6262 of category
+ * 30, the item: 0, category 1153, 120000) with Fishliver Oil (1322: spell 7396 of category 4, the item: -1,
+ * category 1153, 120000).
+ */
+unittest
+{
+    import dmangos.world.worlddata : ItemTemplate;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    void potion(uint entry, uint spellId, uint spellCategory, uint spellCategoryMs, int itemMs, uint itemCategory,
+        int itemCategoryMs)
+    {
+        context.data.spells.spells[spellId] = testSpell(spellId, 10, 1, 1); // a heal on the caster stands in
+        with (*context.data.spells.spells.edit(spellId))
+        {
+            category = spellCategory;
+            recoveryTime = 0;
+            categoryRecoveryTime = spellCategoryMs;
+        }
+        ItemTemplate t = context.data.items[itemJerky];
+        t.entry = entry;
+        t.stackable = 5;
+        t.spellCharges[0] = -1;
+        t.spellCategory[0] = itemCategory;
+        t.details.spells[0].id = spellId;
+        t.details.spells[0].trigger = 0;
+        t.details.spells[0].cooldown = itemMs;
+        t.details.spells[0].categoryCooldown = itemCategoryMs;
+        context.data.items[entry] = t;
+    }
+    potion(13446, 17534, 4, 10_000, 120_000, 4, 120_000);  // Major Healing Potion
+    potion(2459, 2379, 0, 0, 120_000, 4, 120_000);          // Swiftness Potion
+    potion(5512, 6262, 30, 0, 0, 1153, 120_000);            // Minor Healthstone
+    potion(1322, 7396, 4, 0, -1, 1153, 120_000);            // Fishliver Oil
+
+    auto user = loggedIn(context, db, 7, "Drinker", Position(-8949.95f, -132.49f, 83.53f));
+    auto me = cast(Player) user.session.character;
+    foreach (entry; [13446, 2459, 5512, 1322])
+        user.session.inWorld.storeLoot(entry, 2, 0, false);
+    user.read();
+    uint extra;
+    SpellCastResult use(uint entry)
+    {
+        now += 2.seconds;
+        user.write(Opcode.CMSG_USE_ITEM, useItem(inventorySlotBag0, backpackSlotOf(me, entry)));
+        return castReason(user.read(), extra);
+    }
+    assert(use(13446) == SpellCastResult.ok);
+    assert(use(2459) == SpellCastResult.notReady, "the Swiftness Potion waits on the healing potion's category 4");
+    assert(use(5512) == SpellCastResult.ok);
+    assert(use(1322) == SpellCastResult.notReady, "Fishliver Oil waits on the healthstone's category 1153");
+    assert(use(5512) == SpellCastResult.notReady, "and the healthstone on its own item category");
+    now += 120.seconds;
+    assert(use(2459) == SpellCastResult.ok && use(1322) == SpellCastResult.ok, "over");
+}
+
 /// A timed item: the client is told its time (`SMSG_ITEM_TIME_UPDATE`); it counts down by the second, and goes at 0.
 unittest
 {

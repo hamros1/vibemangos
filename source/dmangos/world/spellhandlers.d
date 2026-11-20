@@ -1165,9 +1165,11 @@ private:
                 if (const at = spell.id in spellReadyAt)
                     if (*at > now)
                         return SpellCastResult.notReady;
-            if (spell.category && !cooldownCheat)
-                if (const at = spell.category in categoryReadyAt)
-                    if (*at > now)
+            // The category of a cast from an item is the item's if it names one (a Swiftness Potion's is the
+            // healing potions' 4, though its spell has none: `Player::IsSpellReady` with the item).
+            if (const category = cooldownCategoryOf(spell, itemEntry))
+                if (const at = category in categoryReadyAt)
+                    if (*at > now && !cooldownCheat)
                         return SpellCastResult.notReady;
             if (spell.casting.startRecoveryCategory == 133 && gcdReadyAt > now && !cooldownCheat)
                 return SpellCastResult.notReady;
@@ -2281,7 +2283,7 @@ private:
             entry.spell = cast(ushort) spellId;
             entry.item = cast(ushort) item;
             if (const info = context.data.spells.spell(spellId))
-                entry.category = cast(ushort) info.category;
+                entry.category = cast(ushort) cooldownCategoryOf(info, item);
             entry.spellMs = 1;
             entry.categoryMs = 0x80000000;
             list ~= entry;
@@ -2297,6 +2299,9 @@ private:
         w.put(player.guid);
         deliver(Opcode.SMSG_CLEAR_COOLDOWN, w.data);
         spellReadyAt.remove(spell);
+        // The category it started (an item's own, as a potion's), else the spell's.
+        if (const category = cooldownCategory.get(spell, 0))
+            categoryReadyAt.remove(category);
         if (const info = context.data.spells.spell(spell))
             if (info.category)
                 categoryReadyAt.remove(info.category);
@@ -2331,7 +2336,7 @@ private:
     private void startCooldown(const(SpellInfo)* spell, uint itemEntry, MonoTime now)
     {
         int recovery = spell.recoveryTime, categoryRecovery = spell.categoryRecoveryTime;
-        uint category = spell.category;
+        const category = cooldownCategoryOf(spell, itemEntry);
         if (itemEntry)
             if (const proto = itemEntry in context.data.items)
                 foreach (i, ref use; proto.details.spells)
@@ -2341,8 +2346,7 @@ private:
                             recovery = use.cooldown;
                         if (use.categoryCooldown >= 0)
                             categoryRecovery = use.categoryCooldown;
-                        if (proto.spellCategory[i])
-                            category = proto.spellCategory[i];
+                        break;
                     }
         recovery = spellMod(SpellModOp.cooldown, spell, recovery);
         categoryRecovery = spellMod(SpellModOp.cooldown, spell, categoryRecovery);
