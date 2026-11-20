@@ -591,33 +591,38 @@ unittest
         }
         assert(false, "no crit");
     }
-    const plain = critOf();
+    const plainCrit = critOf();
     talent(w, who, 16494);
     const impaled = critOf();
-    assert(impaled * 10 >= plain * 11 - 10 && impaled * 10 <= plain * 11 + 10,
-        format!"Impale: 2.2 times not 2: %s against %s"(impaled, plain));
+    assert(impaled * 10 >= plainCrit * 11 - 10 && impaled * 10 <= plainCrit * 11 + 10,
+        format!"Impale: 2.2 times not 2: %s against %s"(impaled, plainCrit));
 
-    // Improved Overpower: about half of them crit, not a twentieth.
+    // Improved Overpower: half again of them crit (the share of crits, out of 300 that land, with and without it).
     drop(who, 1719);
-    talent(w, who, 12963);
-    uint crits, landed;
-    foreach (_; 0 .. 60)
+    uint[2] overpowers()
     {
-        healFull(w, hogger);
-        setPower(who, Power.rage, 1000);
-        me.swingDodgedBy(hogger, MeleeHitOutcome.dodge); // the dodge Overpower needs
-        who.read();
-        w.now += 6.seconds;
-        w.castAt(who, 11585, hogger);
-        foreach (s; strikes(who))
-            if (s.spell == 11585 && s.damage)
-            {
-                ++landed;
-                crits += s.crit;
-            }
+        uint crits, landed;
+        while (landed < 300)
+        {
+            healFull(w, hogger);
+            setPower(who, Power.rage, 1000);
+            me.swingDodgedBy(hogger, MeleeHitOutcome.dodge); // the dodge Overpower needs
+            who.read();
+            w.now += 6.seconds;
+            w.castAt(who, 11585, hogger);
+            foreach (s; strikes(who))
+                if (s.spell == 11585 && s.damage)
+                {
+                    ++landed;
+                    crits += s.crit;
+                }
+        }
+        return [crits, landed];
     }
-    assert(landed >= 30, format!"Overpower landed %s times"(landed));
-    assert(crits * 100 >= landed * 35, format!"Improved Overpower: %s crits of %s"(crits, landed));
+    const plain = overpowers();
+    talent(w, who, 12963);
+    const improved = overpowers();
+    assert(improved[0] >= plain[0] + 100, format!"Improved Overpower: %s crits against %s of 300"(improved[0], plain[0]));
 }
 
 /**
@@ -1872,10 +1877,10 @@ unittest
         }
         return n;
     }
-    const plain = crits(300);
+    const plain = crits(600);
     talent(w, who, 19160);
-    const savage = crits(300);
-    assert(savage >= plain + 30, format!"Savage Strikes: %s crits against %s"(savage, plain));
+    const savage = crits(600);
+    assert(savage >= plain + 60, format!"Savage Strikes: %s crits against %s"(savage, plain)); // (120 expected)
 }
 
 /**
@@ -2054,5 +2059,39 @@ unittest
         }
         assert(shots > 200, format!"%s shots"(shots));
         assert(rank ? fitsChance(quick, shots, 5) : quick == 0, format!"Quick Shots: %s of %s"(quick, shots));
+    }
+}
+
+/// Entrapment (19184, 19387...19390: 5% to 25%): a trap's effect (Immolation Trap's, 14301) roots its target 5 sec
+/// (19185).
+unittest
+{
+    if (!haveRealData())
+        return;
+    auto w = RealWorld.make();
+    foreach (k, rank; [19184u, 19390])
+    {
+        auto who = hunter(w, 550 + cast(uint) k, [14301]);
+        talent(w, who, rank);
+        const hogger = foe(w, who, 448);
+        auto target = creatureOf(w, hogger);
+        uint rooted, n;
+        foreach (_; 0 .. 400)
+        {
+            foreach (a; target.auras.list.dup)
+                if (a.spell.id == 19185 || a.spell.id == 14301)
+                    target.auras.remove(a, target.values);
+            w.now += 2.seconds;
+            w.castAt(who, 14301, hogger); // the trap's effect, as the trap casts it
+            if (target.auras.find(14301) is null)
+                continue;
+            ++n;
+            if (auto root = target.auras.find(19185))
+            {
+                ++rooted;
+                assert(root.maxDuration == 5000);
+            }
+        }
+        assert(n > 200 && fitsChance(rooted, n, k ? 25 : 5), format!"Entrapment: %s of %s"(rooted, n));
     }
 }

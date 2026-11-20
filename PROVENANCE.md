@@ -1286,7 +1286,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 
 * Not from an emulator: the warrior's, rogue's and hunter's rules from their 1.12.1 tooltips and data
   (docs/spells/warrior.md, rogue.md, hunter.md; docs/FORMULAS.md): Last Stand's 30% of the maximum health, Tactical
-  Mastery's rage kept by its script number's rank, Improved Sap's stealth, Pathfinding on the aspects' speed.
+  Mastery's rage kept by its script number's rank, Improved Sap's stealth, Pathfinding on the aspects' speed, Entrapment on a trap's effect only.
 
 ## world/realclass_warrior_rogue_hunter.d
 

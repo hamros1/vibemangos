@@ -182,7 +182,7 @@ mixin template ProcHandlers()
     import std.random : uniform01;
     import dmangos.world.auras : Aura, AuraType;
     import dmangos.world.classspells : CustomValues;
-    import dmangos.world.physicalclasses : flatChanceProcs;
+    import dmangos.world.physicalclasses : flatChanceProcs, procOnTrapActivation, trapActivationProcs;
     import dmangos.world.aurahandlers : ProcFlag;
     import dmangos.world.procs : effectProcsOn, ppmChance, procEventMatches, ProcHit, takenProcFlags;
     import dmangos.world.spellcast : SpellTargets, TargetFlags;
@@ -222,6 +222,8 @@ mixin template ProcHandlers()
                 continue;
             const event = context.data.spells.procEvent(aura.spell.id);
             const auraFlags = event !is null && event.procFlags ? event.procFlags : aura.spell.casting.procFlags;
+            if (trapActivationProcs.canFind(aura.spell.id) && !(flags & procOnTrapActivation))
+                continue; // Entrapment: a trap's, not any harmful spell's (dmangos.world.physicalclasses)
             if (!procEventMatches(auraFlags, event, flags, hit))
                 continue;
             // An aura does not proc on its own spell (but on its ticks).

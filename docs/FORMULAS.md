@@ -84,3 +84,5 @@ pipeline; each tested in world/realclass_warrior_rogue_hunter.d). **Source: the 
   effect", Sap, Freezing Trap, Blind) end at any damage it takes.
 - **Improved Aspect of the Hawk:** Aspect of the Hawk's own chance (0) and the talent's modifier (1% to 5%) for Quick
   Shots on a normal ranged attack.
+- **Entrapment:** procs only as a trap's effect lands (Immolation, Explosive and Frost Trap's: the tooltip's three,
+  not Freezing Trap's), on each target; its higher ranks' other proc flags (any harmful spell) are not taken.

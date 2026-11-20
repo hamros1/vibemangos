@@ -12,6 +12,13 @@ module dmangos.world.physicalclasses;
 static immutable uint[] flatChanceProcs = [12322, 12999, 13000, 13001, 13002, 12284, 12701, 12702, 12703, 12704,
     13709, 13800, 13801, 13802, 13803];
 
+/// The proc flag of a hunter's trap going off (`PROC_FLAG` 0x200000: Entrapment's only one at rank 1).
+enum uint procOnTrapActivation = 0x200000;
+
+/// Entrapment's ranks: they proc on a trap going off only ("Gives your Immolation Trap, Frost Trap, and Explosive
+/// Trap a 25% chance to entrap the target"), whatever else their higher ranks' flags name.
+static immutable uint[] trapActivationProcs = [19184, 19387, 19388, 19389, 19390];
+
 /// See the module documentation.
 mixin template PhysicalClassRules()
 {
@@ -70,6 +77,24 @@ mixin template PhysicalClassRules()
         if (ofFamily(spell, SpellFamily.hunter, cheetahAndPack)
                 && spell.casting.applyAuraName[0] == AuraType.modIncreaseSpeed)
             values[0] += spellMod(SpellModOp.effect2, spell, 0);
+    }
+
+    /**
+     * A hunter's trap effect (`spell`, cast by its trap) reached `landed`: Immolation, Explosive and Frost Trap's
+     * effects set off what procs on a trap going off (Entrapment), at each target.
+     */
+    package void trapEffectLanded(const(SpellInfo)* spell, const(ulong)[] landed)
+    {
+        import dmangos.world.classspells : ofFamily;
+        import dmangos.world.procs : ProcEx, ProcHit;
+
+        enum ulong entrapping = 0x4 | 0x10; // Immolation and Explosive Trap's effects, Frost Trap's
+        if (!ofFamily(spell, SpellFamily.hunter, entrapping) || player.data.classId != PlayerClass.hunter)
+            return;
+        foreach (target; landed)
+            if (target != player.guid)
+                if (auto unit = map.unit(target))
+                    procAuras(procOnTrapActivation, unit, ProcHit(spell, ProcEx.normalHit, 0, 0, true));
     }
 
     /**

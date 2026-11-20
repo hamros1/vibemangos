@@ -1980,6 +1980,7 @@ private:
                 dodgedBy ~= r.guid;
         }
         landedWithoutDamageProcs(spell, c.triggered, landed);
+        trapEffectLanded(spell, landed); // Entrapment (dmangos.world.physicalclasses)
         classAfterEffects(spell, landed, dodgedBy);
         flushPlayerChanges();
         return SpellCastResult.ok;
