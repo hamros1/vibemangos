@@ -960,20 +960,20 @@ unittest
     auto orc = thrall.session.inWorld, human = anduin.session.inWorld;
     thrall.read();
 
-    // Level 20 on level 20, no ranks: (10 * 0.25) * (20 + 1) * 1.05 = 55.
+    // Level 20 on level 20, no ranks (as rank 1): 24 at 19 by 41/24 a tenth up, 25.3: 25.
     orc.playerKilledByMe(human);
     auto credit = thrall.read().filter!(p => p.opcode == Opcode.SMSG_PVP_CREDIT).array;
     assert(credit.length == 1);
     auto r = ByteReader(credit[0].body_);
-    assert(r.read!uint == 55 && r.read!ulong == human.player.guid);
+    assert(r.read!uint == 25 && r.read!ulong == human.player.guid);
     const v = &orc.player.values;
     assert((v.get!PLAYER_FIELD_SESSION_KILLS & 0xFFFF) == 1 && v.get!PLAYER_FIELD_LIFETIME_HONORBALE_KILLS == 1);
-    assert(v.get!PLAYER_FIELD_THIS_WEEK_CONTRIBUTION == 55 && v.get!PLAYER_FIELD_THIS_WEEK_KILLS == 1);
+    assert(v.get!PLAYER_FIELD_THIS_WEEK_CONTRIBUTION == 25 && v.get!PLAYER_FIELD_THIS_WEEK_KILLS == 1);
 
-    // The second kill of the same victim the same day is worth a little less.
+    // The second kill of the same victim the same day is worth a tenth less.
     orc.playerKilledByMe(human);
     r = ByteReader(thrall.read().filter!(p => p.opcode == Opcode.SMSG_PVP_CREDIT).array[0].body_);
-    assert(r.read!uint == 49, "(9 * 0.25) * 21 * 1.05 = 49.6");
+    assert(r.read!uint == 22, "90% of 25: 22.5");
 
     // None for an Honorless Target, one of one's own side, or one grey to the killer.
     if (const spell = context.data.spells.spell(spellHonorlessTarget))
@@ -993,7 +993,7 @@ unittest
     assert(db.honorRows[9].points.length == 2 && db.honorRows[9].points[0].type == HonorType.honorable);
     orc.loadHonor();
     assert(orc.player.values.get!PLAYER_FIELD_LIFETIME_HONORBALE_KILLS == 2);
-    assert(orc.player.values.get!PLAYER_FIELD_THIS_WEEK_CONTRIBUTION == 104);
+    assert(orc.player.values.get!PLAYER_FIELD_THIS_WEEK_CONTRIBUTION == 47); // 25 + 22.5
 }
 
 // What ranks bring (`dmangos.world.honor`): the rank from rank points, the highest kept, a vendor's

@@ -5,9 +5,9 @@
  * player who opens a neutral or enemy banner assaults the base: it is contested by its side for a
  * minute, then the side's. Opening one's own side's banner on a base the other side contests (one
  * that was one's own) defends it at once. Each side's bases bring resources at a pace set by how many
- * it holds (10 every 12, 9, 6 or 3 seconds for one to four; 30 a second for all five); every 260
- * resources bring the side one kill's bonus honor and every 160, 10 reputation (the League of Arathor,
- * the Defilers). The first to 2000 wins; at 1800 everyone is told it is near.
+ * it holds (10 every 12, 9, 6 or 3 seconds for one to four; 30 a second for all five); every 330
+ * resources (200 on its holiday) bring the side a bonus honor unit and every 160, 10 reputation (the League of
+ * Arathor, the Defilers). The first to 2000 wins, and a unit more; at 1800 everyone is told it is near.
  *
  * A base's banners are the map's battleground events: event1 is the base, event2 its state (0
  * neutral, 1 contested by the Alliance, 2 by the Horde, 3 the Alliance's, 4 the Horde's), shown three
@@ -36,10 +36,11 @@ enum Duration captureTime = 60.seconds, bannerDelay = 3.seconds;
 /// `BG_AB_MAX_TEAM_SCORE`, `BG_AB_WARNING_NEAR_VICTORY_SCORE`
 enum uint maxResources = 2000, nearVictory = 1800;
 
-/// Resources each `honorInterval` bring one kill's bonus honor; each `reputationInterval`, `reputationGain`.
-enum uint honorInterval = 260, reputationInterval = 160;
+/// Resources each `honorInterval` bring a bonus honor unit (Wowpedia "Honor system (pre-2.0 formulas)": "every time
+/// your team collects a multiple of 330 resource", 200 on the holiday); each `reputationInterval`, `reputationGain`.
+enum uint honorInterval = 330, reputationInterval = 160;
 /// The same on a Call to Arms weekend.
-enum uint weekendHonorInterval = 160, weekendReputationInterval = 120;
+enum uint weekendHonorInterval = 200, weekendReputationInterval = 120;
 /// ditto
 enum int reputationGain = 10;
 
@@ -304,15 +305,13 @@ final class ArathiRules : BattlegroundRules
         return a > h ? winnerAlliance : h > a ? winnerHorde : winnerNone;
     }
 
-    /// One kill's bonus honor more to the winner, and one to both sides for the battle (`EndBattleGround`).
+    /// A bonus honor unit more to the winner (Wowpedia: "an additional bonus honor award for winning the match").
     override void ending(Battleground copy, ubyte winner)
     {
         if (winner == winnerAlliance)
             copy.rewardHonorToTeam(1, 0);
         else if (winner == winnerHorde)
             copy.rewardHonorToTeam(1, 1);
-        copy.rewardHonorToTeam(1, 1);
-        copy.rewardHonorToTeam(1, 0);
     }
 
 private:
