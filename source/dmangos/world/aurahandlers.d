@@ -1203,7 +1203,7 @@ private:
                 import std.random : uniform;
 
                 damage = partiallyResisted(damage, targetResistance(cast(int) target.values.get!UNIT_FIELD_RESISTANCES(school), school),
-                    player.data.level, target.fighter, isBinarySpell(*aura.spell), false,
+                    player.data.level, target.fighter, isBinarySpell(*aura.spell),
                     uniform!"[]"(1u, 10000u, map.random)).damage;
             }
             if (aura.type(i) == AuraType.periodicLeech)

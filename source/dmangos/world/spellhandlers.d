@@ -2955,7 +2955,7 @@ private:
         Fighter victim;
         victim.player = true;
         victim.level = level;
-        const r = partiallyResisted(damage, resistance, player.data.level, victim, false, true,
+        const r = partiallyResisted(damage, resistance, player.data.level, victim, false,
             uniform!"[]"(1u, 10000u, map.random));
         damage = r.damage;
         return r.resisted;
@@ -3481,7 +3481,7 @@ private:
             import std.random : uniform;
 
             const r = partiallyResisted(damage, targetResistance(cast(int) victim.values.get!UNIT_FIELD_RESISTANCES(school), school),
-                player.data.level, victim.fighter, false, true, uniform!"[]"(1u, 10000u, map.random));
+                player.data.level, victim.fighter, false, uniform!"[]"(1u, 10000u, map.random));
             damage = r.damage;
             resisted = r.resisted;
         }

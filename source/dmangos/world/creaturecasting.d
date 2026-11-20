@@ -735,7 +735,7 @@ mixin template CreatureCasting()
             if (!isBinarySpell(*spell)) // nothing to roll for a binary spell
             {
                 const r = partiallyResisted(damage, other.resistance(school), me.values.get!UNIT_FIELD_LEVEL,
-                    other.fighter, false, true, uniform!"[]"(1u, 10000u, world_.random));
+                    other.fighter, false, uniform!"[]"(1u, 10000u, world_.random));
                 damage = r.damage;
                 resisted = r.resisted;
             }

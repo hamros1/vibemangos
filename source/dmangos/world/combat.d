@@ -1224,6 +1224,29 @@ float effectiveResistPercent(int resistance, uint attackerLevel, uint victimLeve
 }
 
 /**
+ * The partial-resist table's chances (hundredths of a percent) of 0%, 25%, 50%, 75% and 100% resisted at an
+ * effective resistance of `percent` (0 .. 75): its row, interpolated between whole percents (the hundredth of a
+ * percent rounded, so that 15 a hair under is 15).
+ */
+uint[5] resistDistribution(float percent) pure nothrow @nogc @safe
+{
+    import std.math : round;
+
+    const index = percent <= 0 ? 0 : cast(uint) round(percent * 100);
+    const row = index / 100 < partialResistRows.length ? index / 100 : partialResistRows.length - 1;
+    const step = index / 100 < partialResistRows.length ? index % 100 : 0;
+    uint[5] chances;
+    foreach (c; 0 .. 5)
+    {
+        const base = partialResistRows[row][c];
+        const ahead = row + 1 < partialResistRows.length ? partialResistRows[row + 1][c] : base;
+        const value = base + round((cast(double) ahead - base) * (step / 100.0));
+        chances[c] = value < 0 ? 0 : cast(uint) value;
+    }
+    return chances;
+}
+
+/**
  * The chance (percent) a magic spell is resisted whole by a victim with `resistance` of its school: a
  * binary spell by the whole effective resistance, another only as often as the partial-resist table
  * resists all of it.
@@ -1234,7 +1257,7 @@ float fullResistChance(int resistance, uint attackerLevel, uint victimLevel, boo
     const percent = effectiveResistPercent(resistance, attackerLevel, victimLevel, victimCreature);
     if (!(percent > 0))
         return 0;
-    return binary ? percent : partialResistRows[cast(uint) percent][4] * 0.01f;
+    return binary ? percent : resistDistribution(percent)[4] * 0.01f;
 }
 
 unittest
@@ -1242,49 +1265,35 @@ unittest
     // 150 fire resistance against a level 60 caster: 37.5%; a binary spell is resisted that often, another
     // whole only as the table's last column says.
     assert(fullResistChance(150, 60, 60, true, false) == 37.5f);
-    assert(fullResistChance(150, 60, 60, false, false) == partialResistRows[37][4] * 0.01f);
+    assert(fullResistChance(150, 60, 60, false, false) == resistDistribution(37.5f)[4] * 0.01f);
     assert(fullResistChance(0, 60, 60, true, false) == 0);
 }
 
 /**
- * A partial resist roll: the share of the damage resisted (0, 0.25, 0.5
- * or 0.75; never all, which was the hit roll's), from `percent` and a `roll` of 1 .. 10000. Negative
- * percents are vulnerability: a negative share. A direct hit with more than 54% never goes whole.
+ * A partial resist roll: the share of the damage resisted (0, 0.25, 0.5 or 0.75; never all, which was the hit
+ * roll's), from `percent` and a `roll` of 1 .. 10000: `resistDistribution` without its last column, what is left of
+ * Blizzard's distribution once the spell was not resisted whole. Negative percents are vulnerability: a negative
+ * share.
  */
-float rollPartialResist(float percent, uint roll, bool direct = true) pure nothrow @nogc @safe
+float rollPartialResist(float percent, uint roll) pure nothrow @nogc @safe
 {
-    import std.math : round;
-
     if (percent < 0)
         return percent * 0.01f;
-    const index = cast(uint)(percent * 100);
-    if (index == 0)
+    if (percent * 100 < 0.5f)
         return 0;
-    const row = index / 100, step = index % 100;
-    uint[5] chances;
-    foreach (c; 0 .. 5)
-    {
-        const base = partialResistRows[row][c];
-        const ahead = row + 1 < partialResistRows.length ? partialResistRows[row + 1][c] : base;
-        const value = base + round((cast(double) ahead - base) * (step / 100.0));
-        chances[c] = value < 0 ? 0 : cast(uint) value;
-    }
-    uint portion = 4;
+    const chances = resistDistribution(percent);
+    const total = chances[0] + chances[1] + chances[2] + chances[3];
+    if (total == 0)
+        return 0.75f;
+    const scaled = (cast(ulong) roll * total + 9999) / 10_000; // 1 .. total
     uint sum;
-    foreach (ubyte c; 0 .. 5)
+    foreach (ubyte c; 0 .. 4)
     {
         sum += chances[c];
-        if (roll <= sum)
-        {
-            portion = c;
-            break;
-        }
+        if (scaled <= sum)
+            return c / 4.0f;
     }
-    if (portion > 3)
-        portion = 3;
-    if (portion == 0 && percent > 54.0f && direct)
-        ++portion;
-    return portion / 4.0f;
+    return 0.75f;
 }
 
 unittest
@@ -1293,11 +1302,34 @@ unittest
     // 300 fire resistance against a level 60 caster: 300/300*100*0.75 = 75% (the cap).
     assert(effectiveResistPercent(300, 60, 60, true) == 75);
     assert(rollPartialResist(75, 10000) == 0.75f && rollPartialResist(75, 5000) == 0.75f, "at 75%: mostly three quarters");
-    assert(rollPartialResist(75, 1) == 0.25f, "never whole above 54%");
+    assert(rollPartialResist(75, 1) == 0, "Blizzard: 1% chance to take full damage, even at 75%");
     // A level 63 boss against level 60: 15 skill above, 6% more.
     assert(effectiveResistPercent(0, 60, 63, true) == 6);
     assert(rollPartialResist(10, 1) == 0 && rollPartialResist(10, 10000) > 0);
     assert(effectiveResistPercent(-50, 60, 60, true) < 0 && rollPartialResist(-10, 1) < 0);
+}
+
+/**
+ * Blizzard's published distribution (worldofwarcraft.com, "Resistances", 2006; docs/FORMULAS.md): against a level-50
+ * caster, 50 to 250 resistance (15% to 75% average) resists 100%, 75%, 50%, 25% and none of a direct-damage spell
+ * this often (percent). The table holds these rows exactly; the rows between are an emulator's fit.
+ */
+unittest
+{
+    import std.math : isClose, round;
+
+    static immutable ubyte[5][5] blizzard = [ // full, 75%, 50%, 25%, none
+        [0, 2, 11, 33, 54], [1, 6, 24, 49, 20], [1, 18, 48, 26, 7], [11, 34, 40, 14, 1], [25, 55, 16, 3, 1]];
+    foreach (i, resistance; [50, 100, 150, 200, 250])
+    {
+        const percent = effectiveResistPercent(resistance, 50, 50, false);
+        assert(isClose(percent, 15.0f * (i + 1)));
+        const row = partialResistRows[cast(size_t) round(percent)];
+        assert(row == [blizzard[i][4] * 100, blizzard[i][3] * 100, blizzard[i][2] * 100, blizzard[i][1] * 100,
+            blizzard[i][0] * 100]);
+        assert(isClose(fullResistChance(resistance, 50, 50, false, false), blizzard[i][0]));
+        assert(isClose(fullResistChance(resistance, 50, 50, true, false), percent), "most spells: the average, whole");
+    }
 }
 
 // Hit auras make misses rarer.
@@ -1324,19 +1356,17 @@ struct Resisted
  * A spell's `damage` against `victim`, after the partial resist of its `resistance` to the spell's school,
  * for every caster kind and victim kind alike. `roll` is a number from 1 to 10000.
  *
- * The level bonus of `effectiveResistPercent` counts for a creature victim of a spell that is not binary.
- * A binary spell's direct damage is not resisted in part (it was resisted whole, or not at all, by the hit
- * roll); its ticks are, at a tenth of the resistance. A negative resistance adds to the damage.
+ * The level bonus of `effectiveResistPercent` counts for a creature victim of a spell that is not binary. A binary
+ * spell is never resisted in part, neither its direct damage nor its ticks: it was resisted whole, or not at all, by
+ * the hit roll ("the straight % chance to completely resist the spell"). A negative resistance adds to the damage.
  */
 Resisted partiallyResisted(uint damage, int resistance, uint casterLevel, const Fighter victim, bool binary,
-    bool direct, uint roll) pure nothrow @nogc @safe
+    uint roll) pure nothrow @nogc @safe
 {
-    if (binary && direct)
+    if (binary)
         return Resisted(damage, 0);
-    float percent = effectiveResistPercent(resistance, casterLevel, victim.level, !victim.player && !binary);
-    if (binary && percent > 0)
-        percent *= 0.1f;
-    const share = rollPartialResist(percent, roll, direct);
+    const percent = effectiveResistPercent(resistance, casterLevel, victim.level, !victim.player);
+    const share = rollPartialResist(percent, roll);
     if (share > 0)
     {
         const taken = cast(uint)(damage * share);
@@ -1353,9 +1383,9 @@ pure nothrow @nogc @safe unittest
     wolf.level = 60;
     player.level = 60;
     player.player = true;
-    assert(partiallyResisted(100, 0, 60, wolf, false, true, 5000) == Resisted(100, 0), "no resistance: all lands");
-    assert(partiallyResisted(100, 300, 60, wolf, true, true, 1) == Resisted(100, 0), "binary direct: never in part");
-    const half = partiallyResisted(100, 300, 60, player, false, true, 10000);
+    assert(partiallyResisted(100, 0, 60, wolf, false, 5000) == Resisted(100, 0), "no resistance: all lands");
+    assert(partiallyResisted(100, 300, 60, wolf, true, 1) == Resisted(100, 0), "binary: never in part");
+    const half = partiallyResisted(100, 300, 60, player, false, 10000);
     assert(half.damage + half.resisted == 100 && half.resisted > 0, "75% effective: a share resisted");
     // The level bonus is the creature's only: a level-63 creature resists more than a level-63 player.
     Fighter boss = wolf, champion = player;
@@ -1367,7 +1397,7 @@ pure nothrow @nogc @safe unittest
 {
     Fighter weak;
     weak.level = 10;
-    const more = partiallyResisted(100, -50, 60, weak, false, true, 5000);
+    const more = partiallyResisted(100, -50, 60, weak, false, 5000);
     assert(more.damage >= 100 && more.resisted == 0, "a negative resistance adds");
 }
 

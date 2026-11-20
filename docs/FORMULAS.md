@@ -538,3 +538,50 @@ and patch 5.0.4 (Warcraft Wiki "Dodge", oldid 6594641): "Ranged attacks can now 
 (Auto Shot, a wand) and a ranged ability are never dodged nor parried; they may be blocked from the front. **What
 changed:** an Auto Shot could be dodged (`rollMeleeOutcome` asked no attack type) while Aimed Shot could not.
 CMaNGOS-classic: `CanDodgeAbility` melee abilities only, `CanDodgeInCombat` for swings and shots alike, as dmangos had.
+
+## Spell resistance
+
+**What:** a hostile spell's chance to be resisted whole, and the share of a direct-damage spell resisted
+(combat.d `effectiveResistPercent`, `resistDistribution`, `fullResistChance`, `rollPartialResist`,
+`partiallyResisted`; spellcast.d `spellMissChance`, `isBinarySpell`).
+
+**Source: Blizzard's own page** (worldofwarcraft.com/info/basics/resistances.html, the 2006-07-21 copy in the Internet
+Archive): "When hit by a spell, you have two chances to resist the spell. The first chance is based on your level ...
+(minimum of 1%). If you make this resistance chance, you are completely unaffected by the spell. The second chance to
+resist is based on your resistance score and the level of the caster ... up to a maximum of 75%. Against most spells,
+this resistance percentage is the straight % chance to completely resist the spell. Against direct-damage spells
+(spells that deliver their full damage upon impact, such as Fireball, Mind Blast, and Earth Shock), this resistance is
+the percentage of damage you will resist on average. When you are hit by a direct-damage spell, you have a chance to
+resist 100%, 75%, 50%, 25%, or 0% of the spell's damage". Its table against level-50 spells:
+
+| resistance | 50 | 100 | 150 | 200 | 250 |
+|---|---|---|---|---|---|
+| average resisted | 15% | 30% | 45% | 60% | 75% |
+| 100% resisted | 0% | 1% | 1% | 11% | 25% |
+| 75% | 2% | 6% | 18% | 34% | 55% |
+| 50% | 11% | 24% | 48% | 40% | 16% |
+| 25% | 33% | 49% | 26% | 14% | 3% |
+| none | 54% | 20% | 7% | 1% | 1% |
+
+**Rule:** the average is `resistance / (5 × caster level, at least 100) × 0.75`, at most 75% (Blizzard's 50 and 250
+against level 50: 15% and 75%). The table `partialResistRows` holds Blizzard's five columns exactly (tested); its rows
+between are an emulator's fit, interpolated. A direct-damage spell is resisted whole by the table's last column (in the
+hit roll), and otherwise in part by the other four, renormalized: at 75% one cast in 75 not resisted whole lands
+whole. A spell with no direct damage, or whose direct damage lays a debuff on the same targets (Frostbolt's slow, Frost
+Nova's root: "spells which deal a debuff", the documented 1.x research of Wowpedia "Resistance", oldid 6675993), is
+binary: resisted whole by the average, never in part, its ticks included. Earth Shock's interrupt is no aura, and
+Fireball's burn is damage: both in part, as Blizzard names them. Negative resistance adds the same share.
+
+**The level miss (no Blizzard numbers):** 4%, 5%, 6% at 0 to 2 levels above, then 11% a level against creatures and 7%
+against players, 1% at least (Wowpedia "Resistance", "Spell hit": documented research; Blizzard's page gives only the
+1% minimum). A creature above the caster has 2% more average resistance a level for spells that are not binary
+(Wowpedia: "8 resist (believed ...) ... not apply to binary spells"; 8 points are 2% at 60). Both unchanged.
+
+**What changed (2026-11-20):** a direct hit above 54% average was never let land whole (Blizzard: 1%); a direct hit
+not resisted whole drew from all five columns and turned the 100% column into 75% (more 75% resists than the table);
+a binary spell's ticks were resisted in part at a tenth of the resistance (an emulator rule; Blizzard: resisted whole
+or not at all); Earth Shock, and any direct damage with a non-aura extra (an interrupt), was binary.
+
+**Second opinion (CMaNGOS-classic):** `IsBinarySpell` makes any non-damage effect on the targets of the damage binary
+(Earth Shock binary); the partial roll bumps 0% to 25% above 54% for direct damage, and binary periodic damage rolls
+partial resists at a tenth.

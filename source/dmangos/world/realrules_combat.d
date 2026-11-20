@@ -192,3 +192,47 @@ unittest
     assert(rollMeleeOutcome(hunter, boss, AttackType.ranged, 801) != MeleeHitOutcome.dodge,
         "past the 8% miss: before, a dodge");
 }
+
+/**
+ * Binary or resisted in part, by Blizzard's rule ("Against direct-damage spells (... such as Fireball, Mind Blast,
+ * and Earth Shock), this resistance is the percentage of damage you will resist on average"; the rest resisted whole
+ * or not at all): Earth Shock (8042: damage and an interrupt) in part, which the rule before made binary; Fireball
+ * (133) in part; Corruption (172) and Frost Nova (122: a root on its damage) and Frostbolt (116: a slow) binary.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    import dmangos.world.spellcast : isBinarySpell;
+
+    auto w = RealWorld.make();
+    assert(!isBinarySpell(*spellOf(w, 8042)), "Earth Shock: Blizzard's example of a spell resisted in part");
+    assert(!isBinarySpell(*spellOf(w, 133)), "Fireball");
+    assert(isBinarySpell(*spellOf(w, 172)), "Corruption");
+    assert(isBinarySpell(*spellOf(w, 122)), "Frost Nova");
+    assert(isBinarySpell(*spellOf(w, 116)), "Frostbolt");
+}
+
+/**
+ * Resisted in part: at the 75% cap a direct-damage spell still lands whole 1% of the time in Blizzard's table, 1.3%
+ * of the casts not resisted whole (the rule before: never above 54%); a binary spell's ticks (Corruption on a level
+ * 60 with 300 shadow resistance) are never resisted in part ("the straight % chance to completely resist the spell":
+ * the rule before resisted them at a tenth of the resistance).
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    auto w = RealWorld.make();
+    uint whole;
+    foreach (roll; 1 .. 10_001)
+        whole += rollPartialResist(75, roll) == 0;
+    assert(abs(whole - 133.0) <= 2, format!"%s of 10000 whole at 75%%"(whole));
+    auto who = w.character(506, "Warded", classWarriorId, 60, []);
+    auto victim = (cast(Character) who.session.inWorld).player.fighter;
+    const corruption = spellOf(w, 172);
+    import dmangos.world.spellcast : isBinarySpell;
+
+    foreach (roll; 1 .. 10_001)
+        assert(partiallyResisted(100, 300, 60, victim, isBinarySpell(*corruption), roll) == Resisted(100, 0));
+}
