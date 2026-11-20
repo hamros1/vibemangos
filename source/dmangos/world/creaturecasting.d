@@ -139,6 +139,8 @@ mixin template CreatureCasting()
         const triggered = (flags & castTriggered) != 0;
         if (evadingHome && !triggered)
             return false;
+        if (!triggered && refusedByCrowdControl(spell))
+            return false;
         if (casting_ !is null && !(flags & (castTriggered | castInterruptPrevious)))
             return false;
         if (!triggered && spell.casting.school < schoolLockMs.length && schoolLockMs[spell.casting.school] > 0)
@@ -225,6 +227,29 @@ mixin template CreatureCasting()
     }
 
     private int[7] schoolLockMs; /// each school's lockout left (an interrupt's), in milliseconds
+
+    /**
+     * What its state refuses (CMaNGOS's `CheckCasterAuras`): nothing while stunned, feared or disoriented, no
+     * silence-type spell silenced, no pacify-type one pacified.
+     */
+    private bool refusedByCrowdControl(const(SpellInfo)* spell)
+    {
+        const flags = me.values.get!UNIT_FIELD_FLAGS;
+        if (flags & (UnitFlags.stunned | UnitFlags.fleeing | UnitFlags.confused))
+            return true;
+        enum uint preventionSilence = 1, preventionPacify = 2;
+        return ((flags & UnitFlags.silenced) && spell.casting.preventionType == preventionSilence)
+            || ((flags & UnitFlags.pacified) && spell.casting.preventionType == preventionPacify);
+    }
+
+    /// Crowd control began (`silenceOnly`: a silence): the cast under way stops if it is one that stops.
+    package void crowdControlBegan(bool silenceOnly)
+    {
+        if (casting_ is null)
+            return;
+        if (!silenceOnly || casting_.casting.preventionType == 1)
+            interruptCast();
+    }
 
     /// The cast stops (`SMSG_SPELL_FAILURE` around); an interrupt locks its school for `lockMs`.
     void interruptCast(int lockMs = 0)
@@ -702,6 +727,56 @@ mixin template CreatureCasting()
     // -----------------------------------------------------------------------
     // Fleeing
     // -----------------------------------------------------------------------
+
+    /**
+     * Feared (`SPELL_AURA_MOD_FEAR`) or disoriented (`MOD_CONFUSE`): walked by the aura, as CMaNGOS's fleeing and
+     * confused movement generators do: feared, away from whoever feared it, about 10 yards at a time; disoriented,
+     * a few yards any way. It neither fights nor casts meanwhile. As it ends, it stops where it is.
+     */
+    package void updateControlledWalk(bool feared)
+    {
+        import std.math : cos, sin, PI;
+
+        controlledWalking = true;
+        if (!me.spline.finalized)
+            return;
+        auto from = me.position;
+        if (feared)
+            foreach (aura; me.auras.list)
+                if (aura.has(AuraType.modFear))
+                    if (auto caster = world_.unit(aura.caster))
+                    {
+                        from = caster.fighter.position;
+                        break;
+                    }
+        const angle = feared && (from.x != me.position.x || from.y != me.position.y)
+            ? angleTo(from, me.position) + uniform(-0.6f, 0.6f, world_.random) : uniform(0.0f, 2 * PI, world_.random);
+        const distance = feared ? 10.0f : uniform(3.0f, 6.0f, world_.random);
+        const x = me.position.x + distance * cos(angle), y = me.position.y + distance * sin(angle);
+        auto z = world_.groundHeight(x, y, me.position.z + 2, false);
+        if (!(z > -100_000))
+            z = me.position.z;
+        Vector3[] points = [Vector3(0, 0, 0), Vector3(x, y, z)];
+        launch(me, world_, points, !feared, float.nan, true);
+    }
+
+    /// The fear or disorientation ended: it stops, and fights again.
+    package void controlledWalkEnded()
+    {
+        if (!controlledWalking)
+            return;
+        controlledWalking = false;
+        if (!me.spline.finalized)
+            stopMoving(me, world_);
+    }
+
+    private bool controlledWalking; // walked by a fear or disorientation
+
+    /// Running away at low health (`fleeTimer`), not by an aura.
+    @property bool fleeingAtLowHealth() const
+    {
+        return fleeTimer > 0;
+    }
 
     /// Running in fear from its victim: away, and again when it gets there; it does not fight meanwhile.
     private void updateFleeing(int diff)

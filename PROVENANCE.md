@@ -692,6 +692,13 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Functions: `Player::RewardRage`, `Unit::CalculateEffectiveMagicResistancePercent`, `Unit::RollMagicResistanceMultiplierOutcomeAgainst`, `WorldObject::HasInArc`
 * Constants: `ATTACK_DISPLAY_DELAY`, `ATTACK_DISTANCE`, `BASE_MELEERANGE_OFFSET`, `CLASSMASK_WAND_USERS`, `CONFIG_UINT32_WORLD_BOSS_LEVEL_DIFF`, `MELEE_LEEWAY`, `SMSG_ATTACKERSTATEUPDATE`, `SMSG_ATTACKSTART`, `SMSG_ATTACKSTOP`, `SPELL_PARTIAL_RESIST_DISTRIBUTION`, `TYPEID_PLAYER`, `UNIT_FIELD_COMBATREACH`, `UNIT_FIELD_MINDAMAGE`, `UNIT_FLAG_PLAYER_CONTROLLED`
 
+## world/crowdcontrol.d
+
+* Projects: CMaNGOS
+* Files: `Unit.cpp`, `Player.cpp`, `Spell.cpp`, `SpellAuras.cpp`, `FleeingMovementGenerator.cpp`, `ConfusedMovementGenerator.cpp`
+* Functions: `Unit::SetFleeing`, `Unit::SetConfused`, `Unit::SetStunned`, `Player::UpdateClientControl`, `Spell::CheckCasterAuras`, `Aura::HandleModFear`, `Aura::HandleModConfuse`
+* Constants: `SMSG_CLIENT_CONTROL_UPDATE`, `UNIT_FLAG_FLEEING`, `UNIT_FLAG_CONFUSED`, `UNIT_FLAG_SILENCED`, `UNIT_FLAG_PACIFIED`, `UNIT_FLAG_DISARMED`, `SPELL_FAILED_STUNNED`, `SPELL_FAILED_SILENCED`, `SPELL_FAILED_PACIFIED`, `SPELL_FAILED_FLEEING`, `SPELL_FAILED_CONFUSED`, `SPELL_PREVENTION_TYPE_SILENCE`, `SPELL_PREVENTION_TYPE_PACIFY`
+
 ## world/combathandlers.d
 
 * Projects: CMaNGOS

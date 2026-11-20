@@ -1107,9 +1107,11 @@ private:
         input.level = data.level;
         input.levelStats = world.levelStats(data.race, data.classId, data.level);
         input.classStats = world.classStats(data.classId, data.level);
+        const disarmed = (values.get!UNIT_FIELD_FLAGS & UnitFlags.disarmed) != 0;
         foreach (ubyte slot; 0 .. equipmentSlotEnd)
             if (const item = inventory.equipped(slot))
-                if (item.durability != 0 || item.maxDurability == 0) // a broken item gives nothing
+                if ((item.durability != 0 || item.maxDurability == 0) // a broken item gives nothing
+                        && !(disarmed && slot == equipmentSlotMainhand)) // nor a weapon taken (Disarm)
                 {
                     input.equipment[slot] = item.proto;
                     // Its enchantments: the permanent, the temporary and the random property's.

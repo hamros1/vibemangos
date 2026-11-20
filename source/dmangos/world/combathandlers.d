@@ -351,7 +351,9 @@ private:
         const ms = cast(uint) elapsed.total!"msecs";
         foreach (ref timer; attackTimer)
             timer = ms >= timer ? 0 : timer - ms;
-        if (meleeAttacking)
+        // Stunned, feared, disoriented or pacified, it does not swing (CMaNGOS's `UNIT_STAT_CAN_NOT_REACT`).
+        enum uint cannotSwing = UnitFlags.stunned | UnitFlags.fleeing | UnitFlags.confused | UnitFlags.pacified;
+        if (meleeAttacking && !(player.values.get!UNIT_FIELD_FLAGS & cannotSwing))
             updateMeleeAttackingState();
         if (player.values.get!UNIT_FIELD_FLAGS & UnitFlags.inCombat && threatenedBy.length == 0
             && context.clock() >= combatUntil)

@@ -765,7 +765,30 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
         const held = immobilized;
         const stunned = auras.has(AuraType.modStun);
         const flags = values.get!UNIT_FIELD_FLAGS;
-        const flagged = stunned ? flags | UnitFlags.stunned : flags & ~UnitFlags.stunned;
+        // Crowd control on its flags (CMaNGOS's `SetStunned`, `SetFleeing`, `SetConfused`, silence, pacify, disarm).
+        uint flagged = flags & ~(UnitFlags.stunned | UnitFlags.fleeing | UnitFlags.confused | UnitFlags.silenced
+            | UnitFlags.pacified | UnitFlags.disarmed);
+        if (stunned)
+            flagged |= UnitFlags.stunned;
+        if ((auras.has(AuraType.modFear) && !auras.has(AuraType.preventsFleeing)) || (ai !is null && ai.fleeingAtLowHealth))
+            flagged |= UnitFlags.fleeing;
+        if (auras.has(AuraType.modConfuse))
+            flagged |= UnitFlags.confused;
+        if (auras.has(AuraType.modSilence))
+            flagged |= UnitFlags.silenced;
+        if (auras.has(AuraType.modPacify))
+            flagged |= UnitFlags.pacified;
+        if (auras.has(AuraType.modDisarm))
+            flagged |= UnitFlags.disarmed;
+        // As a stun, fear or disorientation begins its cast stops; a silence stops a spell it prevents.
+        if (ai !is null)
+        {
+            enum uint stopsAll = UnitFlags.stunned | UnitFlags.fleeing | UnitFlags.confused;
+            if ((flagged & stopsAll) & ~(flags & stopsAll))
+                ai.crowdControlBegan(false);
+            else if ((flagged & UnitFlags.silenced) && !(flags & UnitFlags.silenced))
+                ai.crowdControlBegan(true);
+        }
         if (flagged != flags)
         {
             values.set!UNIT_FIELD_FLAGS(flagged);
@@ -1043,7 +1066,9 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
                 updateAuras(combat, diff);
         if (!alive)
             return;
-        if (auras.list.length || auraHeld || auraSpeedFactor != 1)
+        enum uint crowdControlFlags = UnitFlags.stunned | UnitFlags.fleeing | UnitFlags.confused | UnitFlags.silenced
+            | UnitFlags.pacified | UnitFlags.disarmed;
+        if (auras.list.length || auraHeld || auraSpeedFactor != 1 || (values.get!UNIT_FIELD_FLAGS & crowdControlFlags))
             refreshAuraMovement(world);
         if (ai !is null)
             if (auto combat = cast(CombatWorld) world)
