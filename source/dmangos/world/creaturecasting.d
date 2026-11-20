@@ -538,238 +538,38 @@ mixin template CreatureCasting()
             else if (r.guid in attacked) // a hostile spell landed: what that ends (`AURA_INTERRUPT_FLAG_HOSTILE_ACTION`)
                 if (auto other = world_.unit(r.guid))
                     other.hostileSpellLanded();
-        bool auraDone;
-        bool[3] summonedBy; // the effects done once whatever their targets (a summon, an event)
+        // The effects on each target they reached (`dmangos.world.spelleffects`, as a player's): each target's aura
+        // has the aura effects at it.
+        import dmangos.world.caster : Caster;
+        import dmangos.world.spelleffects : applyEffect, SpellCast;
+
+        SpellCast c;
+        c.spell = spell;
+        c.targets = targetsOf(target);
+        c.triggered = !takeMana;
+        c.active = true;
+        c.weaponRolls = weaponRolls;
         foreach (i; 0 .. 3)
         {
-            const effect = spell.effect[i];
-            if (effect == SpellEffect.none)
+            if (spell.effect[i] == SpellEffect.applyAreaAuraParty || spell.effect[i] == SpellEffect.applyAreaAuraPet)
+                c.auraEffects[me.guid] |= cast(ubyte)(1 << i);
+            else if (spell.effect[i] == SpellEffect.applyAura)
+                foreach (guid; reached[i])
+                    c.auraEffects[guid] |= cast(ubyte)(1 << i);
+        }
+        auto caster = spellCaster();
+        foreach (i; 0 .. 3)
+        {
+            if (spell.effect[i] == SpellEffect.none)
                 continue;
-            int value = levelScaled(spell, i, effectValue(*spell, i, level, uniform01(world_.random)));
-            // A pet's spell: its owner's talents count (Improved Imp on Firebolt, Improved Voidwalker on Torment).
-            if (auto owner = petModOwner())
-            {
-                import dmangos.world.spellmods : SpellModOp;
-
-                value = owner.petEffectMod(spell, i, value, me);
-                if (effect == SpellEffect.schoolDamage)
-                    value = owner.petSpellMod(SpellModOp.damage, spell, value, me);
-            }
-            // A totem's spell: its owner's talents count (Call of Flame on Searing Totem's attack).
-            else if (me.totemOwner)
-                if (auto owner = world_.unit(me.totemOwner))
-                    if (owner.session !is null && owner.session.player !is null)
-                    {
-                        import dmangos.world.spellmods : SpellModOp;
-
-                        value = owner.session.effectMod(spell, i, value);
-                        if (effect == SpellEffect.schoolDamage)
-                            value = owner.session.spellMod(SpellModOp.damage, spell, value);
-                    }
             foreach (guid; reached[i])
             {
                 if (guid in missed)
                     continue;
-                if (guid != me.guid) // an effect its target is immune to (a stunned paladin under Divine Shield)
-                    if (auto other = world_.unit(guid))
-                    {
-                        const immune = other.fighter.immune;
-                        if (immune.any && immune.toEffect(effect, spell.casting.effectMechanic[i],
-                                spell.casting.applyAuraName[i]))
-                            continue;
-                    }
                 if (!me.alive)
                     return;
-                final switch (effect) // every effect decided: done, or listed as not done below
-                {
-                case SpellEffect.schoolDamage:
-                    if (guid != me.guid)
-                    {
-                        spellDamageTo(spell, guid, value > 0 ? value : 0, spell.casting.school);
-                        if (auto other = world_.unit(guid)) // a pet's procs (`dmangos.world.creatureprocs`)
-                        {
-                            import dmangos.world.procs : ProcHit, spellProcFlags;
-
-                            procAuras(spellProcFlags(*spell, false, false), other, ProcHit(spell));
-                        }
-                    }
-                    break;
-                case SpellEffect.weaponDamageNoschool, SpellEffect.weaponPercentDamage, SpellEffect.weaponDamage, SpellEffect.normalizedWeaponDmg:
-                    if (auto d = guid in weaponRolls)
-                    {
-                        uint damage = d.damage;
-                        if (effect == SpellEffect.weaponPercentDamage)
-                            damage = cast(uint)(damage * (value > 0 ? value : 0) / 100.0f);
-                        else if (value > 0)
-                            damage += cast(uint) armorReducedDamage(level,
-                                world_.unit(guid) ? world_.unit(guid).fighter.armor : 0, value);
-                        spellDamageTo(spell, guid, damage, -1);
-                        if (auto other = world_.unit(guid)) // a pet's procs (`dmangos.world.creatureprocs`)
-                        {
-                            import dmangos.world.procs : procExOfSwing, ProcHit, spellProcFlags;
-
-                            procAuras(spellProcFlags(*spell, false, false), other, ProcHit(spell,
-                                procExOfSwing(d.outcome), damage, 0, damage != 0));
-                        }
-                    }
-                    break;
-                case SpellEffect.applyAura:
-                    if (!auraDone)
-                        auraOn(spell, guid);
-                    break;
-                // An area aura on its caster, which gives it to its party or its master (`updatePetAreaAuras`):
-                // a pet's Blood Pact, Paranoia; its owner's talents' (Master Demonologist, Spirit Bond).
-                case SpellEffect.applyAreaAuraParty, SpellEffect.applyAreaAuraPet:
-                    if (!auraDone)
-                        auraOn(spell, me.guid);
-                    break;
-                case SpellEffect.threat: // SPELL_EFFECT_THREAT: threat on a creature (Torment, Suffering, Intimidation)
-                    if (guid != me.guid)
-                        if (auto other = world_.creatureAt(guid))
-                            if (other.alive && other.ai !is null)
-                            {
-                                other.ai.addThreat(world_.unitOf(me), value);
-                                world_.wake(other.guid);
-                            }
-                    break;
-                case SpellEffect.heal:
-                    healCreature(spell, guid == me.guid ? me : world_.creatureAt(guid), value);
-                    break;
-                case SpellEffect.triggerSpell:
-                    if (const triggered = lore.spellInfo(spell.triggerSpell[i]))
-                        castSpell(triggered, guid, castTriggered);
-                    break;
-                case SpellEffect.dummy, SpellEffect.scriptEffect: // SPELL_EFFECT_DUMMY, SPELL_EFFECT_SCRIPT_EFFECT: the spell's script
-                    spellEffectScript(spell, i, guid, value);
-                    break;
-                case SpellEffect.interruptCast: // SPELL_EFFECT_INTERRUPT_CAST: and the school locked for the interrupt's duration
-                    if (guid != me.guid)
-                        if (auto other = world_.unit(guid))
-                        {
-                            import dmangos.world.spellcast : duration;
-
-                            other.castInterruptedBy(me.guid, duration(*spell, lore.clientData,
-                                me.values.get!UNIT_FIELD_LEVEL));
-                        }
-                    break;
-                case SpellEffect.none:
-                    break;
-                case SpellEffect.sendEvent: // SPELL_EFFECT_SEND_EVENT: the event's scripts, once, the caster its source
-                    if (!summonedBy[i])
-                    {
-                        summonedBy[i] = true;
-                        lore.scriptedEvent(cast(uint) spell.miscValue[i], world_, me.guid, guid == me.guid ? 0 : guid);
-                    }
-                    break;
-                case SpellEffect.summon, SpellEffect.summonWild, SpellEffect.summonGuardian:
-                    if (!summonedBy[i]) // once for the effect, whatever its targets
-                    {
-                        summonedBy[i] = true;
-                        summonBySpell(spell, i, value);
-                    }
-                    break;
-                case SpellEffect.knockBack: // SPELL_EFFECT_KNOCK_BACK: a player thrown from the caster
-                    if (guid != me.guid)
-                        if (auto other = world_.unit(guid))
-                            if (other.session !is null)
-                                other.session.knockedBack(me.position, spell.miscValue[i] / 10.0f, value / 10.0f);
-                    break;
-                case SpellEffect.healthLeech: // SPELL_EFFECT_HEALTH_LEECH: damage, and as much health to the caster
-                    if (guid != me.guid && value > 0)
-                    {
-                        spellDamageTo(spell, guid, value, spell.casting.school);
-                        const multiple = spell.casting.multipleValue[i];
-                        healCreature(spell, me, cast(int)(value * (multiple > 0 ? multiple : 1)));
-                    }
-                    break;
-                case SpellEffect.powerDrain, SpellEffect.powerBurn: // a player's power drained to the caster, or burnt
-                    if (guid != me.guid && value > 0)
-                        if (auto other = world_.unit(guid))
-                            if (other.session !is null)
-                            {
-                                const taken = other.session.drainPower(cast(ubyte) spell.miscValue[i], value);
-                                const multiple = spell.casting.multipleValue[i];
-                                const worth = cast(int)(taken * (multiple > 0 ? multiple : 1));
-                                if (effect == SpellEffect.powerBurn)
-                                    spellDamageTo(spell, guid, worth, spell.casting.school);
-                                else if (worth > 0)
-                                {
-                                    const mana = me.values.get!UNIT_FIELD_POWER1(0), maximum = me.values.get!UNIT_FIELD_MAXPOWER1(0);
-                                    me.values.set!UNIT_FIELD_POWER1(0, mana + worth > maximum ? maximum : mana + worth);
-                                }
-                            }
-                    break;
-                case SpellEffect.durabilityDamage, SpellEffect.durabilityDamagePct: // a player's gear worn (`dmangos.world.durability`)
-                    if (auto other = world_.unit(guid))
-                        if (other.session !is null)
-                            other.session.durabilityDamageEffect(spell, i, value,
-                                effect == SpellEffect.durabilityDamagePct, me.guid);
-                    break;
-                case SpellEffect.reputation: // SPELL_EFFECT_REPUTATION: a player it hits gains (or loses) standing
-                    if (auto other = world_.unit(guid))
-                        if (other.session !is null && spell.miscValue[i] > 0)
-                            other.session.spellReputation(cast(uint) spell.miscValue[i], value);
-                    break;
-                case SpellEffect.teleportUnits: // SPELL_EFFECT_TELEPORT_UNITS: a player to the spell's place
-                    if (guid != me.guid)
-                        lore.teleportBySpell(guid, spell.id);
-                    break;
-                case SpellEffect.instantKill: // SPELL_EFFECT_INSTAKILL
-                    if (auto other = world_.unit(guid))
-                        if (other.alive)
-                        {
-                            other.spellHitBy(me.guid, other.health);
-                            if (!other.alive)
-                                raiseScript(KilledUnit(EntityRef(guid)));
-                        }
-                    break;
-                // Not done by a creature's cast:
-                case SpellEffect.portalTeleport,
-                    SpellEffect.environmentalDamage, SpellEffect.bind, SpellEffect.portal, SpellEffect.ritualBase, SpellEffect.ritualSpecialize,
-                    SpellEffect.ritualActivatePortal, SpellEffect.questComplete, SpellEffect.resurrect,
-                    SpellEffect.addExtraAttacks, SpellEffect.dodge, SpellEffect.evade, SpellEffect.parry,
-                    SpellEffect.block, SpellEffect.createItem, SpellEffect.weapon, SpellEffect.defense,
-                    SpellEffect.persistentAreaAura, SpellEffect.leap, SpellEffect.energize,
-                    SpellEffect.triggerMissile, SpellEffect.openLock, SpellEffect.summonChangeItem,
-                    SpellEffect.learnSpell, SpellEffect.spellDefense,
-                    SpellEffect.dispel, SpellEffect.language, SpellEffect.dualWield, SpellEffect.teleportUnitsFaceCaster, SpellEffect.skillStep,
-                    SpellEffect.addHonor, SpellEffect.spawn, SpellEffect.tradeSkill, SpellEffect.stealth,
-                    SpellEffect.detect, SpellEffect.transDoor, SpellEffect.forceCriticalHit,
-                    SpellEffect.guaranteeHit, SpellEffect.enchantItem, SpellEffect.enchantItemTemporary,
-                    SpellEffect.tamecreature, SpellEffect.summonPet, SpellEffect.learnPetSpell,
-                    SpellEffect.openLockItem, SpellEffect.proficiency,
-                    SpellEffect.healthFunnel, SpellEffect.powerFunnel,
-                    SpellEffect.healMaxHealth, SpellEffect.distract, SpellEffect.pull, SpellEffect.pickpocket,
-                    SpellEffect.addFarsight, SpellEffect.summonPossessed, SpellEffect.summonTotem,
-                    SpellEffect.healMechanical, SpellEffect.summonObjectWild, SpellEffect.attack,
-                    SpellEffect.sanctuary, SpellEffect.addComboPoints, SpellEffect.createHouse,
-                    SpellEffect.bindSight, SpellEffect.duel, SpellEffect.stuck, SpellEffect.summonPlayer,
-                    SpellEffect.activateObject, SpellEffect.summonTotemSlot1, SpellEffect.summonTotemSlot2,
-                    SpellEffect.summonTotemSlot3, SpellEffect.summonTotemSlot4, SpellEffect.threatAll,
-                    SpellEffect.enchantHeldItem, SpellEffect.summonPhantasm, SpellEffect.selfResurrect,
-                    SpellEffect.skinning, SpellEffect.charge, SpellEffect.summonCritter, SpellEffect.disenchant, SpellEffect.inebriate, SpellEffect.feedPet, SpellEffect.dismissPet,
-                    SpellEffect.summonObjectSlot1, SpellEffect.summonObjectSlot2,
-                    SpellEffect.summonObjectSlot3, SpellEffect.summonObjectSlot4, SpellEffect.dispelMechanic,
-                    SpellEffect.summonDeadPet, SpellEffect.destroyAllTotems,
-                    SpellEffect.summonDemon, SpellEffect.resurrectNew, SpellEffect.attackMe,
-                    SpellEffect.skinPlayerCorpse, SpellEffect.spiritHeal,
-                    SpellEffect.skill, SpellEffect.teleportGraveyard,
-                    SpellEffect.n122, SpellEffect.sendTaxi, SpellEffect.pullTowards,
-                    SpellEffect.modifyThreatPercent, SpellEffect.n126, SpellEffect.n127,
-                    SpellEffect.applyAreaAuraFriend, SpellEffect.applyAreaAuraEnemy:
-                    static bool[SpellEffect] told; // once per effect
-                    if (effect !in told)
-                    {
-                        told[effect] = true;
-                        imported!"dmangos.log".info!"spell effect %s (%s, of spell %s) is not done by a creature's cast yet"(effect,
-                            cast(uint) effect, spell.id);
-                    }
-                    break;
-                }
+                applyEffect(caster, spell, i, guid, c);
             }
-            if (effect == SpellEffect.applyAura || effect == SpellEffect.applyAreaAuraParty
-                    || effect == SpellEffect.applyAreaAuraPet)
-                auraDone = true;
         }
         foreach (r; results) // its script hears whom it hit, once the effects are done (`SpellHitTarget`)
             if (r.miss == SpellMissInfo.none && script !is null && me.alive)
@@ -777,8 +577,92 @@ mixin template CreatureCasting()
         world_.flushCreature(me);
     }
 
+    /// It as a spell's caster (`dmangos.world.caster`): its map is the world's only `CombatWorld`, its lore the
+    /// `WorldContext`.
+    package imported!"dmangos.world.caster".Caster spellCaster()
+    {
+        import dmangos.world.caster : Caster;
+        import dmangos.world.context : WorldContext;
+        import dmangos.world.map : Map;
+
+        return Caster.of(me, cast(Map) world_, cast(WorldContext) lore);
+    }
+
+    /**
+     * The amount of effect `i` of `spell` as it casts it: rolled at its level (and scaled by it:
+     * `SPELL_ATTR_SCALES_WITH_CREATURE_LEVEL`); a pet's or a totem's with its owner's talents (Improved Imp on
+     * Firebolt, Improved Voidwalker on Torment, Call of Flame on Searing Totem's attack).
+     */
+    package int effectAmount(const(SpellInfo)* spell, size_t i)
+    {
+        import dmangos.world.spellmods : SpellModOp;
+
+        int value = levelScaled(spell, i, effectValue(*spell, i, me.values.get!UNIT_FIELD_LEVEL, uniform01(world_.random)));
+        const effect = spell.effect[i];
+        if (auto owner = petModOwner())
+        {
+            value = owner.petEffectMod(spell, i, value, me);
+            if (effect == SpellEffect.schoolDamage)
+                value = owner.petSpellMod(SpellModOp.damage, spell, value, me);
+        }
+        else if (me.totemOwner)
+            if (auto owner = world_.unit(me.totemOwner))
+                if (owner.session !is null && owner.session.player !is null)
+                {
+                    value = owner.session.effectMod(spell, i, value);
+                    if (effect == SpellEffect.schoolDamage)
+                        value = owner.session.spellMod(SpellModOp.damage, spell, value);
+                }
+        return value;
+    }
+
+    /// Its spell killed `guid` outright (an instant kill): its script hears of it.
+    package void killedBySpell(ulong guid)
+    {
+        raiseScript(KilledUnit(EntityRef(guid)));
+    }
+
+    /// A weapon spell's damage to `guid`, its melee roll `d` made at the hit roll: the effect's bonus (or percentage).
+    package void weaponSpellDamage(const(SpellInfo)* spell, size_t i, ulong guid, MeleeDamage d, int value)
+    {
+        uint damage = d.damage;
+        if (spell.effect[i] == SpellEffect.weaponPercentDamage)
+            damage = cast(uint)(damage * (value > 0 ? value : 0) / 100.0f);
+        else if (value > 0)
+            damage += cast(uint) armorReducedDamage(me.values.get!UNIT_FIELD_LEVEL,
+                world_.unit(guid) ? world_.unit(guid).fighter.armor : 0, value);
+        spellDamageTo(spell, guid, damage, -1);
+        if (auto other = world_.unit(guid)) // a pet's procs (`dmangos.world.creatureprocs`)
+        {
+            import dmangos.world.procs : procExOfSwing, ProcHit, spellProcFlags;
+
+            procAuras(spellProcFlags(*spell, false, false), other, ProcHit(spell, procExOfSwing(d.outcome), damage, 0,
+                damage != 0));
+        }
+    }
+
+    /// `SPELL_EFFECT_POWER_DRAIN` and `_POWER_BURN`: a player's power drained to it, or burnt as damage.
+    package void powerDrainOrBurn(const(SpellInfo)* spell, size_t i, ulong guid, int value)
+    {
+        if (guid == me.guid || value <= 0)
+            return;
+        auto other = world_.unit(guid);
+        if (!other || other.session is null)
+            return;
+        const taken = other.session.drainPower(cast(ubyte) spell.miscValue[i], value);
+        const multiple = spell.casting.multipleValue[i];
+        const worth = cast(int)(taken * (multiple > 0 ? multiple : 1));
+        if (spell.effect[i] == SpellEffect.powerBurn)
+            spellDamageTo(spell, guid, worth, spell.casting.school);
+        else if (worth > 0)
+        {
+            const mana = me.values.get!UNIT_FIELD_POWER1(0), maximum = me.values.get!UNIT_FIELD_MAXPOWER1(0);
+            me.values.set!UNIT_FIELD_POWER1(0, mana + worth > maximum ? maximum : mana + worth);
+        }
+    }
+
     /// A school's damage to a player, armor taking some of physical; -1: already through armor.
-    private void spellDamageTo(const(SpellInfo)* spell, ulong guid, uint damage, int school)
+    package void spellDamageTo(const(SpellInfo)* spell, ulong guid, uint damage, int school)
     {
         auto other = world_.unit(guid);
         if (!other)
@@ -823,15 +707,27 @@ mixin template CreatureCasting()
             raiseScript(KilledUnit(EntityRef(guid)));
     }
 
-    /// `SPELL_EFFECT_APPLY_AURA`: a debuff on an enemy (a player, a pet, another creature), a buff on itself or a friend.
-    package void auraOn(const(SpellInfo)* spell, ulong guid)
+    /**
+     * `SPELL_EFFECT_APPLY_AURA` (at the spell's first aura effect at `guid`, for all of them): a debuff on an enemy (a
+     * player, a pet, another creature), a buff on itself or a friend. `effects` (bits; 0: all the aura effects) are
+     * those at this target: the aura has only them (Smoke Bomb's stun on its enemies, not on itself).
+     */
+    package void auraOn(const(SpellInfo)* spell, size_t i, ulong guid, ubyte effects = 0)
     {
+        bool auraEffect(size_t j)
+        {
+            const effect = spell.effect[j];
+            return (effect == SpellEffect.applyAura || effect == SpellEffect.applyAreaAuraParty
+                || effect == SpellEffect.applyAreaAuraPet) && (!effects || (effects & (1 << j)));
+        }
+        foreach (j; 0 .. i)
+            if (auraEffect(j))
+                return;
         const level = me.values.get!UNIT_FIELD_LEVEL;
         int[3] values;
         auto owner = petModOwner();
         foreach (j; 0 .. 3)
-            if (spell.effect[j] == SpellEffect.applyAura || spell.effect[j] == SpellEffect.applyAreaAuraParty
-                    || spell.effect[j] == SpellEffect.applyAreaAuraPet)
+            if (auraEffect(j))
             {
                 values[j] = levelScaled(spell, j, effectValue(*spell, j, level, uniform01(world_.random)));
                 if (owner !is null) // a pet's: its owner's talents (Improved Imp on Fire Shield and Blood Pact)
@@ -851,6 +747,8 @@ mixin template CreatureCasting()
                 || !canAttack(relating, creature.ai.relating, me.client);
             bool isNew;
             auto aura = makeAura(spell, me.guid, level, ms, positive, values);
+            if (effects)
+                aura.effects &= effects;
             if (!positive) // it may break early (`SPELL_ATTR_HEARTBEAT_RESIST`)
                 aura.setHeartbeatResist(imported!"dmangos.world.spellcast".heartbeatResistChance(me.fighter,
                     creature.fighter, *spell, cast(int) creature.values.get!UNIT_FIELD_RESISTANCES(spell.casting.school),
@@ -873,7 +771,7 @@ mixin template CreatureCasting()
             return;
         }
         if (auto other = world_.unit(guid))
-            other.auraFrom(me.guid, spell, level, ms, values);
+            other.auraFrom(me.guid, spell, level, ms, values, effects);
     }
 
     /// `SPELL_EFFECT_HEAL` on itself or a friend.
@@ -881,7 +779,7 @@ mixin template CreatureCasting()
      * `SPELL_EFFECT_SUMMON`, `_SUMMON_WILD`, `_SUMMON_GUARDIAN`: the creature of the effect's misc value (several for
      * a wild summon's value, at most five) beside the caster, for the spell's duration, fighting its victim.
      */
-    private void summonBySpell(const(SpellInfo)* spell, size_t i, int value)
+    package void summonBySpell(const(SpellInfo)* spell, size_t i, int value)
     {
         import std.math : cos, sin, PI;
         import dmangos.world.creature : TempSpawnType;
@@ -906,7 +804,7 @@ mixin template CreatureCasting()
         }
     }
 
-    private void healCreature(const(SpellInfo)* spell, Creature who, int value)
+    package void healCreature(const(SpellInfo)* spell, Creature who, int value)
     {
         if (value <= 0 || who is null || !who.alive)
             return;
@@ -1867,10 +1765,10 @@ unittest
     banker.factionTemplate = context.client.factionTemplates.lookup(playerSide); // as a pet would be
 
     keeper.ai.moveInLineOfSight(map.unit(banker.guid), map); // as the map does: the AI learns its world
-    keeper.ai.auraOn(rot in context.data.spells.spells, banker.guid);
+    keeper.ai.auraOn(rot in context.data.spells.spells, 0, banker.guid);
     auto debuff = banker.auras.find(rot);
     assert(debuff !is null && !debuff.positive, "on an enemy creature: a debuff, in a negative slot");
-    keeper.ai.auraOn(ward in context.data.spells.spells, keeper.guid);
+    keeper.ai.auraOn(ward in context.data.spells.spells, 0, keeper.guid);
     auto buff = keeper.auras.find(ward);
     assert(buff !is null && buff.positive, "on itself: a buff");
 }

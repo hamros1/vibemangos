@@ -1,8 +1,8 @@
 # Spells creatures cast that the NPC sweep (source/dmangos/world/realnpcsweep.d) casts on the real data and that
 # do not yet do what their data says, each with why: "id: cause". The sweep fails at a failure not listed here, and
 # says which listed ones pass now (take them off). Generated from the sweep's own classification
-# (DMANGOS_NPC_SWEEP_REPORT); the causes: "not done: <effect>" (dmangos.world.creaturecasting lists the effect as not
-# done by a creature's cast), "aura <type>: not on the <unit>" (or on it without its effect), "targeting: ...",
+# (DMANGOS_NPC_SWEEP_REPORT); the causes: "not done: <effect>" (dmangos.world.spelleffects.doneBy says a creature's
+# cast does not do the effect), "aura <type>: not on the <unit>" (or on it without its effect), "targeting: ...",
 # "refused: <reason>", "crash: ...", "no caster: ..." (no creature casts it in the data).
 1: Word of Recall (OLD): refused: noPower
 53: Backstab: not done: addComboPoints (effect 2)
@@ -78,7 +78,6 @@
 7344: Recombobulate: no caster: no creature casts it in the data
 7741: Summoned Demon: not done: spawn (effect 0)
 7750: Consuming Rage: aura periodicDamage: on the caster, no damage (effect 0)
-7761: Shared Bonds: targeting: aura modRoot at the player, not the caster (effect 1)
 7762: Summon Gunther's Visage: not done: spawn (effect 0)
 7965: Cobrahn Serpent Form: aura transform: on the caster, its look unchanged (effect 0)
 7976: Summon Party Bot - summon effect: not done: spawn (effect 0)
@@ -112,7 +111,6 @@
 8721: Backstab: not done: addComboPoints (effect 2)
 8722: Summon Succubus: not done: summonPet (effect 0: no creature 10928)
 8814: Flame Spike: not done: persistentAreaAura (effect 1: no area, nothing on the player)
-8817: Smoke Bomb: targeting: aura modFear at the player, not the caster (effect 1)
 8832: Ward of Zanzil: not done: summonTotem (effect 0: no creature 6386)
 8853: Summon Skeleton: not done: summonPet (effect 0: no creature 6412)
 8985: Summon Fire Elemental: not done: summonPet (effect 0: no creature 575)
@@ -132,7 +130,6 @@
 10161: Cone of Cold: refused: noPower
 10179: Frostbolt: refused: noPower
 10185: Blizzard: not done: persistentAreaAura (effect 0: no area, nothing on the player)
-10212: Arcane Missiles: targeting: aura dummy at the caster, not the player (effect 1)
 10227: Beast Tracking: not done: learnSpell (effect 0); not done: skillStep (effect 1)
 10266: Lung Puncture: aura periodicDamage: on the caster, no damage (effect 0)
 10267: Slush: schoolDamage: no damage to the caster (effect 0); aura transform: on the caster, its look unchanged (effect 1)
@@ -163,7 +160,6 @@
 11086: Ward of Zum'rah: not done: summonTotem (effect 0: no creature 7785)
 11089: Theka Transform: aura transform: on the caster, its look unchanged (effect 0)
 11293: Sinister Strike: not done: addComboPoints (effect 1)
-11309: Fire Nova: not done: threat (effect 0)
 11433: Death & Decay: not done: persistentAreaAura (effect 0: no area, nothing on the player)
 11462: Summon Pirate Treasure and Trigger Mob: no caster: no creature casts it in the data
 11463: Summon Treasure Hunting Pirate: no caster: no creature casts it in the data
@@ -174,7 +170,7 @@
 11528: Create Red Punch Card: no caster: no creature casts it in the data
 11545: Create Prismatic Punch Card: no caster: no creature casts it in the data
 11595: Discombobulator Ray: no caster: no creature casts it in the data
-11638: Radiation Poisoning: not done: applyAreaAuraParty (effect 0: aura modDecreaseSpeed: not on the caster); not done: applyAreaAuraParty (effect 1: aura periodicDamage: not on the caster)
+11638: Radiation Poisoning: aura periodicDamage: on the caster, no damage (effect 1)
 11668: Immolate: refused: noPower
 11672: Corruption: refused: noPower
 11700: Drain Life: refused: noPower
@@ -183,7 +179,6 @@
 11829: Flamestrike: not done: persistentAreaAura (effect 1: no area, nothing on the player)
 11899: Healing Ward: not done: summonTotemSlot1 (effect 0: no creature 8179)
 11990: Rain of Fire: not done: persistentAreaAura (effect 0: no area, nothing on the player)
-12021: Fixate: targeting: aura modMeleeHaste at the player, not the caster (effect 1)
 12218: Man Down!: no caster: no creature casts it in the data
 12420: Summon Skeletal Servant: not done: summonPet (effect 0: no creature 8477)
 12468: Flamestrike: not done: persistentAreaAura (effect 1: no area, nothing on the player)
@@ -220,13 +215,11 @@
 15727: Demoralizing Roar: aura modAttackPower: not on the player (effect 0)
 15729: Remove Curse: not done: dispel (effect 0: nothing of dispel type 2 taken from the friendly creature)
 15734: Summon: not done: teleportUnitsFaceCaster (effect 0: the player did not move)
-15735: Arcane Missiles: targeting: aura dummy at the caster, not the player (effect 2)
 15746: Disturb Rookery Egg: not done: activateObject (effect 0)
 15749: Shield Charge: not done: charge (effect 0: the caster did not move)
 15750: Rookery Whelp Spawn-in Spell: not done: spawn (effect 0)
 15786: Earthbind Totem: not done: summonTotemSlot2 (effect 0: no creature 2630)
 15787: Moonflare Totem: not done: summonTotemSlot4 (effect 0: no creature 10183)
-15790: Arcane Missiles: targeting: aura dummy at the caster, not the player (effect 2)
 15867: Flame Buffet Totem: not done: summonTotemSlot1 (effect 0: no creature 10217)
 15869: Superior Healing Ward: not done: summonTotem (effect 0: no creature 10218)
 16005: Rain of Fire: not done: persistentAreaAura (effect 0: no area, nothing on the player)
@@ -322,12 +315,10 @@
 21367: Blizzard: not done: persistentAreaAura (effect 0: no area, nothing on the player)
 21655: Blink: not done: leap (effect 0: the caster did not move)
 21727: Summon Player: not done: teleportUnitsFaceCaster (effect 0: the player did not move)
-21808: Summon Shardlings: targeting: aura modStun at the caster, not the player (effect 1)
 21896: Zaetar's Release (DND): not done: spawn (effect 0)
 21950: Recite Words of Celebras: not done: activateObject (effect 0)
 22120: Charge: not done: charge (effect 0: the caster did not move)
 22191: Heated Ground: not done: persistentAreaAura (effect 0: no area, nothing on the nobody)
-22272: Arcane Missiles: targeting: aura dummy at the caster, not the player (effect 2)
 22275: Flamestrike: not done: persistentAreaAura (effect 1: no area, nothing on the player)
 22438: Mark of Detonation: targeting: aura procTriggerSpell at the caster, not the player (effect 0)
 22559: Brood Power: Blue: aura modMeleeHaste: not on the player (effect 0)
@@ -361,7 +352,7 @@
 23187: Frost Burn: aura modMeleeHaste: not on the player (effect 1)
 23272: Soul Flame: not done: spawn (effect 2)
 23299: Stinging Trauma: aura periodicDamage: on the caster, no damage (effect 0)
-23331: Blast Wave: aura modDecreaseSpeed: not on the player (effect 1)
+23331: Blast Wave: schoolDamage: no damage to the player (effect 0); aura modDecreaseSpeed: not on the player (effect 1)
 23362: Raise Drakonids: not done: activateObject (effect 0)
 23363: Summon Drakonid Corpse Trigger: not done: summonObjectWild (effect 0: no object 179804)
 23460: Teleport to Blackwing Lair DND: no caster: no creature casts it in the data
@@ -439,7 +430,6 @@
 24831: Cannon Prep: no caster: no creature casts it in the data
 24840: Poison Cloud: not done: persistentAreaAura (effect 0: no area, nothing on the player)
 24904: Summon Putrid Mushroom: not done: summonObjectWild (effect 0: no object 180517)
-24937: Using Control Console: targeting: aura effectImmunity at the player, not the caster (effect 1); targeting: aura modPacify at the player, not the caster (effect 2)
 24958: Despawn Putrid Mushrooms: not done: activateObject (effect 0)
 25000: Spirit Totem: not done: summonTotemSlot2 (effect 0: no creature 15363)
 25007: Wickerman Guardian Ember: not done: summonObjectWild (effect 0: no object 180574)
@@ -453,6 +443,7 @@
 25108: Bronze Dragon Transform DND: aura transform: on the caster, its look unchanged (effect 0)
 25112: Summon Voidwalker: not done: summonPet (effect 0: no creature 1860)
 25155: Quest - Self Healing from resurrect: not done: energize (effect 1: no power 0 to the caster)
+25174: Sundering Cleave: aura modResistance: not on the player (effect 1): the player killed by its damage first, as the sweep's rolls before it decide
 25198: Poison Cloud: not done: persistentAreaAura (effect 0: no area, nothing on the player)
 25201: Anachronos Quest Credit DND: not done: questComplete (effect 0)
 25304: Frostbolt: refused: noPower

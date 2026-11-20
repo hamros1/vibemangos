@@ -16,9 +16,9 @@
  * damage hurt), a persistent area exists or hurt, a summoned creature or object stands near, power was given, a
  * dispel took the aura of its type, a charge moved the caster, a teleport the target, an instant kill killed.
  *
- * A failure is classified (`not done: <effect>`, the effects `dmangos.world.creaturecasting` lists as not done by a
- * creature's cast; `aura <type> ...: not on the <unit>`; `targeting: ...`; `refused: <reason>`; `crash: ...`) and is
- * either fixed or listed in tools/harness/realnpc-known.txt: the sweep fails at a failure not listed there and
+ * A failure is classified (`not done: <effect>`, an effect `dmangos.world.spelleffects.doneBy` says a creature's
+ * cast does not do; `aura <type> ...: not on the <unit>`; `targeting: ...`; `refused: <reason>`; `crash: ...`) and
+ * is either fixed or listed in tools/harness/realnpc-known.txt: the sweep fails at a failure not listed there and
  * says which listed ones pass now. Runs with the other real-data tests (`DMANGOS_REAL_DATA`); `DMANGOS_NPC_SWEEP_ONLY`
  * (ids, comma separated) sweeps only those, and says what each did; `DMANGOS_NPC_SWEEP_REPORT` names a file the
  * outcome of every spell is written to (`id<TAB>outcome<TAB>source<TAB>casters`).
@@ -298,26 +298,15 @@ private uint[][string] scriptSpells(const WorldData data)
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// What a creature's cast does not do yet (dmangos.world.creaturecasting's list), to name a failure's cause
+// What a creature's cast does not do yet (`dmangos.world.spelleffects.doneBy`), to name a failure's cause
 // ---------------------------------------------------------------------------------------------------------------
 
 private bool notDoneByCreatures(SpellEffect e)
 {
-    with (SpellEffect)
-        return e.among(portalTeleport, environmentalDamage, bind, portal, ritualBase, ritualSpecialize,
-            ritualActivatePortal, questComplete, resurrect, addExtraAttacks, dodge, evade, parry, block, createItem,
-            weapon, defense, persistentAreaAura, leap, energize, triggerMissile, openLock, summonChangeItem,
-            applyAreaAuraParty, learnSpell, spellDefense, dispel, language, dualWield, teleportUnitsFaceCaster,
-            skillStep, addHonor, spawn, tradeSkill, stealth, detect, transDoor, forceCriticalHit, guaranteeHit,
-            enchantItem, enchantItemTemporary, tamecreature, summonPet, learnPetSpell, openLockItem, proficiency,
-            threat, healthFunnel, powerFunnel, healMaxHealth, distract, pull, pickpocket, addFarsight,
-            summonPossessed, summonTotem, healMechanical, summonObjectWild, attack, sanctuary, addComboPoints,
-            createHouse, bindSight, duel, stuck, summonPlayer, activateObject, summonTotemSlot1, summonTotemSlot2,
-            summonTotemSlot3, summonTotemSlot4, threatAll, enchantHeldItem, summonPhantasm, selfResurrect, skinning,
-            charge, summonCritter, disenchant, inebriate, feedPet, dismissPet, summonObjectSlot1, summonObjectSlot2,
-            summonObjectSlot3, summonObjectSlot4, dispelMechanic, summonDeadPet, destroyAllTotems, summonDemon,
-            resurrectNew, attackMe, skinPlayerCorpse, spiritHeal, skill, applyAreaAuraPet, teleportGraveyard, n122,
-            sendTaxi, pullTowards, modifyThreatPercent, n126, n127, applyAreaAuraFriend, applyAreaAuraEnemy) != 0;
+    import dmangos.world.spelleffects : doneBy;
+    import dmangos.world.unit : UnitKind;
+
+    return !doneBy(UnitKind.creature, e);
 }
 
 // ---------------------------------------------------------------------------------------------------------------

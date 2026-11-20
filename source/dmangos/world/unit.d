@@ -260,20 +260,23 @@ struct UnitRef
     }
 
     /// An aura of `spell` from `caster`.
-    void auraFrom(ulong caster, const(SpellInfo)* spell, uint casterLevel, int durationMs, const int[3] values)
+    void auraFrom(ulong caster, const(SpellInfo)* spell, uint casterLevel, int durationMs, const int[3] values,
+        ubyte effects = 0)
     {
         final switch (kind)
         {
         case UnitKind.none:
             return;
         case UnitKind.player:
-            return session.auraFrom(caster, spell, casterLevel, durationMs, values);
+            return session.auraFrom(caster, spell, casterLevel, durationMs, values, effects);
         case UnitKind.creature:
             import dmangos.world.spellcast : heartbeatResistChance;
             import dmangos.world.updatefields : UNIT_FIELD_RESISTANCES;
 
             bool isNew;
             auto aura = makeAura(spell, caster, casterLevel, durationMs, false, values);
+            if (effects)
+                aura.effects &= effects;
             if (auto from = map.unit(caster)) // it may break early (`SPELL_ATTR_HEARTBEAT_RESIST`)
                 aura.setHeartbeatResist(heartbeatResistChance(from.fighter, creature.fighter, *spell,
                     cast(int) creature.values.get!UNIT_FIELD_RESISTANCES(spell.casting.school), 0), durationMs);

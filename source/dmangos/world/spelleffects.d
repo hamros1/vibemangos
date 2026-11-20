@@ -1,0 +1,516 @@
+/**
+ * The effect stage of the spell pipeline (docs/SPELLS.md): what each spell effect does to a target it reached,
+ * whoever cast it, through one `final switch` over `SpellEffect`.
+ *
+ * Every effect is decided here: done for every caster, done only for a player's cast (what needs its inventory,
+ * spellbook, client or pet: `doneByCreatures` lists the others), or not done by any yet (logged once each). Where
+ * the caster's kind still matters, the case says so (`caster.character`: a player's; `caster.ai`: a creature's,
+ * a pet's or a totem's).
+ */
+module dmangos.world.spelleffects;
+
+import dmangos.world.caster : Caster;
+import dmangos.world.combat : MeleeDamage;
+import dmangos.world.spellcast : SpellTargets;
+import dmangos.world.spellids;
+import dmangos.world.spells : SpellInfo;
+import dmangos.world.unit : UnitKind, UnitRef;
+
+/// A cast whose effects are being done: what the effects need of it beyond the spell.
+struct SpellCast
+{
+    const(SpellInfo)* spell;
+    SpellTargets targets;
+    int timer;            /// milliseconds until it goes
+    uint castItemEntry;   /// the item it is cast from: no power, the item's cooldown
+    bool triggered;
+    bool active;
+    ubyte persistentDone; /// effects done once a cast, not once a target (a persistent area, a summon)
+    ulong castItemGuid;   /// ... that very item, whose charges it takes (`dmangos.world.itemuse`)
+    int castTime;         /// its whole cast time (pushback adds back at most up to it); last: built by position
+    imported!"dmangos.world.classspells".CustomValues custom; /// its own effect amounts (`castCustom`)
+    /// Each target's aura effects (bits): each target's aura has only those at it (CMaNGOS's holder per
+    /// target), so Arcane Missiles' trigger stays on the caster and its dummy on the enemy.
+    ubyte[ulong] auraEffects;
+    /// A creature's weapon spell: the melee roll against each target (its hit roll).
+    MeleeDamage[ulong] weaponRolls;
+
+    /// Whether effect `i` is to be done once this cast (the first target), and marks it done.
+    bool once(size_t i)
+    {
+        if (persistentDone & (1 << i))
+            return false;
+        persistentDone |= cast(ubyte)(1 << i);
+        return true;
+    }
+}
+
+/// The effects no caster's cast does yet (some, such as skills and proficiencies, are done when a spell is learned).
+private immutable SpellEffect[] notDoneByAny = [SpellEffect.portalTeleport, SpellEffect.environmentalDamage,
+    SpellEffect.bind, SpellEffect.portal, SpellEffect.ritualBase, SpellEffect.ritualSpecialize,
+    SpellEffect.ritualActivatePortal, SpellEffect.dodge, SpellEffect.evade, SpellEffect.parry, SpellEffect.block,
+    SpellEffect.weapon, SpellEffect.defense, SpellEffect.triggerMissile, SpellEffect.summonChangeItem,
+    SpellEffect.spellDefense, SpellEffect.language, SpellEffect.dualWield, SpellEffect.teleportUnitsFaceCaster,
+    SpellEffect.skillStep, SpellEffect.addHonor, SpellEffect.spawn, SpellEffect.tradeSkill, SpellEffect.stealth,
+    SpellEffect.forceCriticalHit, SpellEffect.guaranteeHit, SpellEffect.proficiency, SpellEffect.healthFunnel,
+    SpellEffect.powerFunnel, SpellEffect.pull, SpellEffect.healMechanical, SpellEffect.createHouse,
+    SpellEffect.bindSight, SpellEffect.activateObject, SpellEffect.threatAll, SpellEffect.enchantHeldItem,
+    SpellEffect.summonPhantasm, SpellEffect.inebriate, SpellEffect.destroyAllTotems, SpellEffect.summonDemon,
+    SpellEffect.spiritHeal, SpellEffect.skill, SpellEffect.teleportGraveyard, SpellEffect.n122, SpellEffect.sendTaxi,
+    SpellEffect.pullTowards, SpellEffect.modifyThreatPercent, SpellEffect.n126, SpellEffect.n127,
+    SpellEffect.applyAreaAuraFriend, SpellEffect.applyAreaAuraEnemy];
+
+/// What a creature's cast does of what a player's does (the rest of the effects a player's does are its own yet).
+private immutable SpellEffect[] creaturesDo = [SpellEffect.none, SpellEffect.schoolDamage,
+    SpellEffect.weaponDamageNoschool, SpellEffect.weaponPercentDamage, SpellEffect.weaponDamage,
+    SpellEffect.normalizedWeaponDmg, SpellEffect.applyAura, SpellEffect.applyAreaAuraParty,
+    SpellEffect.applyAreaAuraPet, SpellEffect.threat, SpellEffect.heal, SpellEffect.triggerSpell, SpellEffect.dummy,
+    SpellEffect.scriptEffect, SpellEffect.interruptCast, SpellEffect.sendEvent, SpellEffect.summon,
+    SpellEffect.summonWild, SpellEffect.summonGuardian, SpellEffect.knockBack, SpellEffect.healthLeech,
+    SpellEffect.powerDrain, SpellEffect.powerBurn, SpellEffect.durabilityDamage, SpellEffect.durabilityDamagePct,
+    SpellEffect.reputation, SpellEffect.teleportUnits, SpellEffect.instantKill];
+
+/// Whether a cast of `kind` does `effect` (the NPC sweep names what is not done by this).
+bool doneBy(UnitKind kind, SpellEffect effect) pure nothrow @nogc @safe
+{
+    import std.algorithm.searching : canFind;
+
+    if (notDoneByAny.canFind(effect))
+        return false;
+    final switch (kind)
+    {
+    case UnitKind.none: return false;
+    case UnitKind.player: return true;
+    case UnitKind.creature: return creaturesDo.canFind(effect);
+    }
+}
+
+/// An effect a cast of `caster`'s kind does not do yet: said once per effect and kind.
+private void notDone(ref Caster caster, const(SpellInfo)* spell, size_t i)
+{
+    import dmangos.log : info;
+
+    static bool[SpellEffect][UnitKind.max + 1] told;
+    const effect = spell.effect[i];
+    if (effect in told[caster.kind])
+        return;
+    told[caster.kind][effect] = true;
+    info!"spell effect %s (%s, of spell %s) is not done by a %s's cast yet"(effect, cast(uint) effect, spell.id,
+        caster.kind == UnitKind.player ? "player" : "creature");
+}
+
+/**
+ * Effect `i` of `c`'s spell, cast by `caster`, on `target` (a guid: a unit, or the caster, or a game object the
+ * cast was aimed at), which it reached: what it does.
+ */
+void applyEffect(ref Caster caster, const(SpellInfo)* spell, size_t i, ulong target, ref SpellCast c)
+{
+    import dmangos.world.creature : Creature;
+    import dmangos.world.movement : Position;
+    import dmangos.world.updatefields;
+
+    const effect = spell.effect[i];
+    if (!doneBy(caster.kind, effect) && effect != SpellEffect.none)
+        return notDone(caster, spell, i);
+    auto map = caster.map;
+    auto context = caster.context;
+    // An effect the target is immune to (a stun on a boss, beside the damage it still takes) does nothing.
+    if (target != caster.guid)
+        if (auto other = map.unit(target))
+        {
+            enum uint noImmunities = 0x20000000; // SPELL_ATTR_NO_IMMUNITIES
+            const immune = other.fighter.immune;
+            if (immune.any && !(spell.attributes & noImmunities) && immune.toEffect(effect,
+                    spell.casting.effectMechanic[i], spell.casting.applyAuraName[i]))
+                return;
+        }
+    auto p = caster.character; // a player's cast: what is its own
+    auto ai = caster.ai;       // a creature's
+    if (p !is null)
+        p.effectCustom = c.custom;
+    scope (exit)
+        if (p !is null)
+            p.effectCustom = typeof(p.effectCustom).init;
+    const value = p !is null ? p.effectAmount(spell, i) : ai.effectAmount(spell, i);
+    final switch (effect) // every effect decided: done, or listed as not done below
+    {
+    case SpellEffect.schoolDamage: // SPELL_EFFECT_SCHOOL_DAMAGE
+        if (p !is null)
+        {
+            import dmangos.world.spellmods : SpellModOp;
+
+            // (its modifiers, `SPELLMOD_DAMAGE`, on the damage with the spell power: `spellDamage`)
+            const damage = p.classSchoolDamage(spell, i, target, value);
+            if (auto creature = cast(Creature) map.findObject(target))
+                p.spellDamage(spell, creature, damage > 0 ? damage : 0, spell.casting.school, true, SpellModOp.damage);
+            else if (auto other = p.enemyPlayer(target))
+                p.spellDamageToPlayer(spell, other, damage > 0 ? damage : 0, true, SpellModOp.damage);
+        }
+        else if (target != caster.guid)
+        {
+            ai.spellDamageTo(spell, target, value > 0 ? value : 0, spell.casting.school);
+            if (auto other = map.unit(target)) // a pet's procs (`dmangos.world.creatureprocs`)
+            {
+                import dmangos.world.procs : ProcHit, spellProcFlags;
+
+                ai.procAuras(spellProcFlags(*spell, false, false), other, ProcHit(spell));
+            }
+        }
+        break;
+    case SpellEffect.dummy, SpellEffect.scriptEffect: // SPELL_EFFECT_DUMMY, SPELL_EFFECT_SCRIPT_EFFECT: the spell's script, then its database script
+        if (p !is null)
+        {
+            import dmangos.world.dbscripts : DbScriptType;
+
+            if (p.classDummyEffect(spell, i, target, value, c.castItemEntry) || p.spellEffectScript(spell, i, target, value))
+                break;
+            context.startScript(DbScriptType.spell, spell.id, map, caster.guid, target ? target : c.targets.gameObject);
+        }
+        else
+            ai.spellEffectScript(spell, i, target, value);
+        break;
+    case SpellEffect.summonWild: // SPELL_EFFECT_SUMMON_WILD: creatures of its entry, at the destination or near the caster
+        if (p !is null)
+        {
+            import dmangos.world.creature : TempSpawnType;
+            import dmangos.world.spellcast : duration, TargetFlags;
+
+            const entry = cast(uint) spell.miscValue[i];
+            if (!entry)
+                break;
+            const ms = p.modDuration(spell, duration(*spell, context.client, caster.level));
+            const count = value > 0 ? value : 1;
+            foreach (n; 0 .. count)
+            {
+                Position at; // all zeros: near the caster
+                if ((c.targets.mask & TargetFlags.destLocation) && n == 0)
+                    at = Position(c.targets.dest[0], c.targets.dest[1], c.targets.dest[2], caster.position.orientation);
+                context.summonCreature(map, entry, at, ms > 0 ? TempSpawnType.timedOrDead : TempSpawnType.dead,
+                    ms > 0 ? ms : 0, caster.guid);
+            }
+        }
+        else if (c.once(i)) // once for the effect, whatever its targets
+            ai.summonBySpell(spell, i, value);
+        break;
+    case SpellEffect.persistentAreaAura: // SPELL_EFFECT_PERSISTENT_AREA_AURA: a spot that hurts who stands in it, made once a cast
+        if (c.once(i))
+            p.makePersistentArea(spell, i, c.targets, value);
+        break;
+    case SpellEffect.transDoor: // SPELL_EFFECT_TRANS_DOOR: an object the spell puts down (a fishing bobber, a ritual's portal)
+        if (p.isRitualPortal(cast(uint) spell.miscValue[i] in context.data.gameObjectTemplates))
+            p.openRitualPortal(spell, i); // `dmangos.world.rituals`
+        else if (p.isFishingBobber(cast(uint) spell.miscValue[i] in context.data.gameObjectTemplates))
+            p.castBobber(spell, i);
+        else
+            p.transmitObject(spell, i, c.targets); // a mage's portal, a Lightwell
+        break;
+    case SpellEffect.sendEvent: // SPELL_EFFECT_SEND_EVENT: the event's script, the caster its source and a game object its target
+        if (p !is null)
+            context.scriptedEvent(cast(uint) spell.miscValue[i], map, caster.guid, c.targets.gameObject);
+        else if (c.once(i))
+            context.scriptedEvent(cast(uint) spell.miscValue[i], map, caster.guid, target == caster.guid ? 0 : target);
+        break;
+    case SpellEffect.duel: // SPELL_EFFECT_DUEL
+        p.startDuel(target);
+        break;
+    case SpellEffect.tamecreature: // SPELL_EFFECT_TAMECREATURE
+        p.tameCreature(spell, target ? target : c.targets.unit);
+        break;
+    case SpellEffect.summonPet: // SPELL_EFFECT_SUMMON_PET
+        p.summonPetEffect(spell, i);
+        break;
+    case SpellEffect.dismissPet: // SPELL_EFFECT_DISMISS_PET
+        p.dismissPetEffect();
+        break;
+    case SpellEffect.summonDeadPet: // SPELL_EFFECT_SUMMON_DEAD_PET
+        p.reviveDeadPet(value);
+        break;
+    case SpellEffect.instantKill: // SPELL_EFFECT_INSTAKILL
+        if (p !is null)
+            p.instakill(spell, target);
+        else if (auto other = map.unit(target))
+            if (other.alive)
+            {
+                other.spellHitBy(caster.guid, other.health);
+                if (!other.alive)
+                    ai.killedBySpell(target);
+            }
+        break;
+    case SpellEffect.learnSpell: // SPELL_EFFECT_LEARN_SPELL: the pet (a teaching spell aimed at it), or the target player, learns
+    {
+        const learned = spell.triggerSpell[i];
+        if (spell.implicitTargetA[i] == ImplicitTarget.unitCasterPet)
+            p.teachPet(learned);
+        else if (learned)
+            p.learn(learned);
+        break;
+    }
+    case SpellEffect.learnPetSpell: // SPELL_EFFECT_LEARN_PET_SPELL
+        p.teachPet(spell.triggerSpell[i]);
+        break;
+    case SpellEffect.summonTotem, SpellEffect.summonTotemSlot1, SpellEffect.summonTotemSlot2, SpellEffect.summonTotemSlot3, SpellEffect.summonTotemSlot4: // SPELL_EFFECT_SUMMON_TOTEM, _SLOT1 .. _SLOT4 (fire, earth, water, air)
+        p.summonTotem(spell, i, value);
+        break;
+    case SpellEffect.selfResurrect: // SPELL_EFFECT_SELF_RESURRECT
+        p.selfResurrect(spell, i, value);
+        break;
+    case SpellEffect.resurrect, SpellEffect.resurrectNew: // SPELL_EFFECT_RESURRECT (a share of health and mana), SPELL_EFFECT_RESURRECT_NEW (amounts)
+        p.resurrectEffect(spell, i, target, value, c);
+        break;
+    case SpellEffect.dispel: // SPELL_EFFECT_DISPEL
+        p.dispelEffect(spell, i, target, value);
+        break;
+    case SpellEffect.pickpocket: // SPELL_EFFECT_PICKPOCKET
+        p.pickPocket(target);
+        break;
+    case SpellEffect.skinning: // SPELL_EFFECT_SKINNING
+        p.skinCreature(target);
+        break;
+    case SpellEffect.openLock, SpellEffect.openLockItem: // SPELL_EFFECT_OPEN_LOCK, _OPEN_LOCK_ITEM: a game object's lock, or an item's
+        if (c.targets.gameObject)
+            p.openLock(spell, i, c.targets.gameObject, c.castItemEntry);
+        else if (c.targets.item)
+            p.openItemLock(spell, i, c.targets.item, c.castItemEntry);
+        break;
+    case SpellEffect.questComplete: // SPELL_EFFECT_QUEST_COMPLETE: the target player's quest of the misc value (`AreaExploredOrEventHappens`)
+    {
+        auto who = target == caster.guid ? p : cast(typeof(p)) context.onlinePlayer(target);
+        if (who !is null && who.player !is null && spell.miscValue[i] > 0)
+            who.areaExploredOrEventHappens(cast(uint) spell.miscValue[i]);
+        break;
+    }
+    case SpellEffect.disenchant: // SPELL_EFFECT_DISENCHANT
+        p.disenchantItem(spell, c.targets.item);
+        break;
+    case SpellEffect.interruptCast: // SPELL_EFFECT_INTERRUPT_CAST: the target's cast ends, and its school is locked out for the interrupt's time
+    {
+        import dmangos.world.spellcast : duration;
+
+        const lockMs = duration(*spell, context.client, caster.level);
+        if (p !is null)
+        {
+            if (auto creature = cast(Creature) map.findObject(target))
+                creature.ai.interruptedBySpell(lockMs);
+            else if (auto other = p.enemyPlayer(target))
+                other.castInterruptedBy(caster.guid, lockMs);
+        }
+        else if (target != caster.guid)
+            if (auto other = map.unit(target))
+                other.castInterruptedBy(caster.guid, lockMs);
+        break;
+    }
+    case SpellEffect.weaponDamageNoschool: // SPELL_EFFECT_WEAPON_DAMAGE_NOSCHOOL
+    case SpellEffect.weaponDamage: // SPELL_EFFECT_WEAPON_DAMAGE
+    case SpellEffect.normalizedWeaponDmg: // SPELL_EFFECT_NORMALIZED_WEAPON_DMG
+    case SpellEffect.weaponPercentDamage: // SPELL_EFFECT_WEAPON_PERCENT_DAMAGE
+        if (p !is null)
+        {
+            if (auto victim = map.unit(target)) // a creature or a player (a duel, world PvP)
+                p.weaponSpellDamage(spell, i, victim, value);
+        }
+        else if (auto d = target in c.weaponRolls)
+            ai.weaponSpellDamage(spell, i, target, *d, value);
+        break;
+    case SpellEffect.heal: // SPELL_EFFECT_HEAL
+        if (p !is null)
+        {
+            import dmangos.world.spellmods : SpellModOp;
+
+            p.heal(spell, target, p.spellMod(SpellModOp.damage, spell, value));
+        }
+        else
+            ai.healCreature(spell, target == caster.guid ? caster.creature : map.creatureAt(target), value);
+        break;
+    case SpellEffect.summonCritter: // SPELL_EFFECT_SUMMON_CRITTER: a companion; the same again sends it away
+        p.summonCompanion(spell, i);
+        break;
+    case SpellEffect.addComboPoints: // SPELL_EFFECT_ADD_COMBO_POINTS: Sinister Strike, Claw
+        if (target != caster.guid)
+            p.addComboPoints(target, value);
+        break;
+    case SpellEffect.skinPlayerCorpse: // SPELL_EFFECT_SKIN_PLAYER_CORPSE: Remove Insignia, a dead enemy's
+        p.removeInsigniaEffect(c.targets);
+        break;
+    case SpellEffect.addFarsight: // SPELL_EFFECT_ADD_FARSIGHT: Far Sight, Eagle Eye: a spot to see from
+        p.makeFarSightSpot(spell, i, c.targets);
+        break;
+    case SpellEffect.energize: // SPELL_EFFECT_ENERGIZE
+        p.energize(spell, i, target, value);
+        break;
+    case SpellEffect.reputation: // SPELL_EFFECT_REPUTATION: the faction of the misc value, by the value
+        if (p !is null)
+        {
+            auto who = target == caster.guid ? p : cast(typeof(p)) context.onlinePlayer(target);
+            if (who !is null && who.player !is null && spell.miscValue[i] > 0)
+                who.modifyReputation(cast(uint) spell.miscValue[i], value);
+        }
+        else if (auto other = map.unit(target)) // a player it hits gains (or loses) standing
+            if (other.session !is null && spell.miscValue[i] > 0)
+                other.session.spellReputation(cast(uint) spell.miscValue[i], value);
+        break;
+    case SpellEffect.teleportUnits: // SPELL_EFFECT_TELEPORT_UNITS
+        if (p !is null)
+            p.teleportUnits(spell, i, c);
+        else if (target != caster.guid) // a player to the spell's place
+            context.teleportBySpell(target, spell.id);
+        break;
+    case SpellEffect.createItem:
+        if (spell.itemType[i])
+            if (p.giveItem(spell.itemType[i], value > 0 ? value : 1, true, true)) // "You create"
+                p.updateCraftSkill(spell.id); // made: a chance to learn from it
+        break;
+    case SpellEffect.feedPet: // SPELL_EFFECT_FEED_PET
+        p.feedPet(c.targets.item);
+        break;
+    case SpellEffect.enchantItem: // SPELL_EFFECT_ENCHANT_ITEM (at the trade window: the other's item)
+        p.enchantTarget(c.targets, cast(uint) spell.miscValue[i], false, 0);
+        p.updateCraftSkill(spell.id);
+        break;
+    case SpellEffect.enchantItemTemporary: // SPELL_EFFECT_ENCHANT_ITEM_TEMPORARY
+        p.enchantTarget(c.targets, cast(uint) spell.miscValue[i], true, value);
+        break;
+    case SpellEffect.triggerSpell: // SPELL_EFFECT_TRIGGER_SPELL
+        if (const triggered = context.data.spells.spell(spell.triggerSpell[i]))
+        {
+            if (p !is null)
+                p.castSpell(triggered, c.targets, true, 0);
+            else
+                caster.castTriggered(triggered, target);
+        }
+        break;
+    case SpellEffect.applyAura: // SPELL_EFFECT_APPLY_AURA
+        if (p !is null)
+            p.applyAuraEffect(spell, i, target, c.auraEffects.get(target, 0));
+        else
+            ai.auraOn(spell, i, target, c.auraEffects.get(target, 0));
+        break;
+    case SpellEffect.applyAreaAuraParty: // SPELL_EFFECT_APPLY_AREA_AURA_PARTY: on the caster, and from it on its party (`updateAreaAuras`)
+    case SpellEffect.applyAreaAuraPet: // SPELL_EFFECT_APPLY_AREA_AURA_PET: on the caster, and from it on its pet (`updatePetAreaAuras`)
+        if (p !is null)
+            p.applyAuraEffect(spell, i, caster.guid, c.auraEffects.get(caster.guid, 0));
+        else
+            ai.auraOn(spell, i, caster.guid, c.auraEffects.get(caster.guid, 0));
+        break;
+    case SpellEffect.attack: // SPELL_EFFECT_ATTACK
+        break;
+    case SpellEffect.threat: // SPELL_EFFECT_THREAT: Distracting Shot, Cower, Feint
+        if (p !is null)
+            p.threatEffect(spell, i, target, value);
+        else if (target != caster.guid) // a creature's on a creature (a pet's Torment, Suffering)
+            if (auto other = map.creatureAt(target))
+                if (other.alive && other.ai !is null)
+                {
+                    other.ai.addThreat(caster.unit, value);
+                    map.wake(other.guid);
+                }
+        break;
+    case SpellEffect.attackMe: // SPELL_EFFECT_ATTACK_ME: Growl, Taunt
+        p.attackMeEffect(spell, i, target);
+        break;
+    case SpellEffect.sanctuary: // SPELL_EFFECT_SANCTUARY: Vanish, Divine Intervention
+        p.sanctuaryEffect(spell, i, target);
+        break;
+    case SpellEffect.charge: // SPELL_EFFECT_CHARGE: Charge, Intercept, Feral Charge
+        p.chargeEffect(spell, target != caster.guid ? target : c.targets.unit);
+        break;
+    case SpellEffect.leap: // SPELL_EFFECT_LEAP: Blink
+        p.leapEffect(spell, i);
+        break;
+    case SpellEffect.stuck: // SPELL_EFFECT_STUCK: the help menu's Stuck
+        p.stuckEffect();
+        break;
+    case SpellEffect.powerBurn: // SPELL_EFFECT_POWER_BURN: Mana Burn
+    case SpellEffect.powerDrain: // SPELL_EFFECT_POWER_DRAIN: Dark Pact
+        if (p !is null)
+        {
+            if (effect == SpellEffect.powerBurn)
+                p.powerBurnEffect(spell, i, target, value);
+            else
+                p.powerDrainEffect(spell, i, target, value);
+        }
+        else
+            ai.powerDrainOrBurn(spell, i, target, value);
+        break;
+    case SpellEffect.healthLeech: // SPELL_EFFECT_HEALTH_LEECH: Death Coil
+        if (p !is null)
+            p.healthLeechEffect(spell, i, target, value);
+        else if (target != caster.guid && value > 0) // damage, and as much health to the caster
+        {
+            ai.spellDamageTo(spell, target, value, spell.casting.school);
+            const multiple = spell.casting.multipleValue[i];
+            ai.healCreature(spell, caster.creature, cast(int)(value * (multiple > 0 ? multiple : 1)));
+        }
+        break;
+    case SpellEffect.healMaxHealth: // SPELL_EFFECT_HEAL_MAX_HEALTH: Lay on Hands
+        p.healMaxHealthEffect(spell, target);
+        break;
+    case SpellEffect.addExtraAttacks: // SPELL_EFFECT_ADD_EXTRA_ATTACKS: Sword Specialization, Reckoning
+        p.addExtraAttacksEffect(spell, i, target, value);
+        break;
+    case SpellEffect.dispelMechanic: // SPELL_EFFECT_DISPEL_MECHANIC: Escape Artist
+        p.dispelMechanicEffect(spell, i, target, value);
+        break;
+    case SpellEffect.distract: // SPELL_EFFECT_DISTRACT: Distract
+        p.distractEffect(spell, i, target, value, c.targets);
+        break;
+    case SpellEffect.summonObjectSlot1, SpellEffect.summonObjectSlot2, SpellEffect.summonObjectSlot3,
+            SpellEffect.summonObjectSlot4: // SPELL_EFFECT_SUMMON_OBJECT_SLOT1 .. 4: the hunters' traps
+        if (target == caster.guid)
+            p.summonTrapEffect(spell, i, c.targets);
+        break;
+    case SpellEffect.detect: // SPELL_EFFECT_DETECT: Detect's marker; CMaNGOS does nothing with it either
+        break;
+    case SpellEffect.summonGuardian, SpellEffect.summon, SpellEffect.summonObjectWild: // SPELL_EFFECT_SUMMON_GUARDIAN,
+        // _SUMMON, _SUMMON_OBJECT_WILD (`dmangos.world.guardians`): once a cast, whatever its targets
+        if (!c.once(i))
+            break;
+        if (p is null)
+            ai.summonBySpell(spell, i, value);
+        else if (effect == SpellEffect.summonObjectWild)
+            p.summonWildObjectEffect(spell, i, c.targets);
+        else
+            p.summonGuardianEffect(spell, i, value, c.targets, c.triggered, c.castItemEntry, effect == SpellEffect.summon);
+        break;
+    case SpellEffect.summonPossessed: // SPELL_EFFECT_SUMMON_POSSESSED: a creature the caster becomes (Eye of Kilrogg)
+        if (c.once(i))
+            p.summonPossessedEffect(spell, i);
+        break;
+    case SpellEffect.summonPlayer: // SPELL_EFFECT_SUMMON_PLAYER: the target asked to come (`dmangos.world.rituals`)
+        if (c.once(i))
+            p.summonPlayerEffect(c.targets.unit ? c.targets.unit : target);
+        break;
+    case SpellEffect.durabilityDamage, SpellEffect.durabilityDamagePct: // a player's gear worn (`dmangos.world.durability`)
+    {
+        auto other = target == caster.guid ? caster.unit : map.unit(target);
+        if (other.kind == UnitKind.player)
+            other.session.durabilityDamageEffect(spell, i, value, effect == SpellEffect.durabilityDamagePct, caster.guid);
+        break;
+    }
+    case SpellEffect.knockBack: // SPELL_EFFECT_KNOCK_BACK: a player thrown from the caster
+        if (target != caster.guid)
+            if (auto other = map.unit(target))
+                if (other.kind == UnitKind.player && p is null)
+                    other.session.knockedBack(caster.position, spell.miscValue[i] / 10.0f, value / 10.0f);
+        break;
+    case SpellEffect.none:
+        break;
+    // Not done by any caster's cast (`notDoneByAny`):
+    case SpellEffect.portalTeleport, SpellEffect.environmentalDamage, SpellEffect.bind, SpellEffect.portal,
+        SpellEffect.ritualBase, SpellEffect.ritualSpecialize, SpellEffect.ritualActivatePortal, SpellEffect.dodge,
+        SpellEffect.evade, SpellEffect.parry, SpellEffect.block, SpellEffect.weapon, SpellEffect.defense,
+        SpellEffect.triggerMissile, SpellEffect.summonChangeItem, SpellEffect.spellDefense,
+        SpellEffect.language, SpellEffect.dualWield,
+        SpellEffect.teleportUnitsFaceCaster, SpellEffect.skillStep, SpellEffect.addHonor, SpellEffect.spawn,
+        SpellEffect.tradeSkill, SpellEffect.stealth, SpellEffect.forceCriticalHit, SpellEffect.guaranteeHit,
+        SpellEffect.proficiency, SpellEffect.healthFunnel, SpellEffect.powerFunnel, SpellEffect.pull,
+        SpellEffect.healMechanical,
+        SpellEffect.createHouse, SpellEffect.bindSight, SpellEffect.activateObject,
+        SpellEffect.threatAll, SpellEffect.enchantHeldItem, SpellEffect.summonPhantasm,
+        SpellEffect.inebriate, SpellEffect.destroyAllTotems,
+        SpellEffect.summonDemon, SpellEffect.spiritHeal, SpellEffect.skill,
+        SpellEffect.teleportGraveyard, SpellEffect.n122, SpellEffect.sendTaxi,
+        SpellEffect.pullTowards, SpellEffect.modifyThreatPercent, SpellEffect.n126, SpellEffect.n127,
+        SpellEffect.applyAreaAuraFriend, SpellEffect.applyAreaAuraEnemy:
+        assert(0, "not done by any caster: `doneBy` returned before the switch");
+    }
+}

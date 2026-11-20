@@ -87,7 +87,7 @@ private:
     }
 
     /// A spell learned by a GM's command: the spellbook, `SMSG_LEARNED_SPELL`, and `character_spell`.
-    bool learn(uint spell)
+    package bool learn(uint spell)
     {
         if (player.knowsSpell(spell) || context.data.spells.spell(spell) is null)
             return false;

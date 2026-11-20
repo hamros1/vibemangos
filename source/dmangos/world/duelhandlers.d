@@ -66,7 +66,7 @@ private:
      * The Duel spell's effect: a flag midway between the two, the request to both, and each one's side
      * of the duel.
      */
-    void startDuel(ulong target)
+    package void startDuel(ulong target)
     {
         auto other = cast(typeof(this)) context.onlinePlayer(target);
         if (other is null || other is this || other.player is null || other.map !is map)

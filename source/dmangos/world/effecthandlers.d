@@ -128,7 +128,7 @@ mixin template EffectHandlers()
      * `value`, times the player's threat auras for the spell's school (`MOD_THREAT`). Threat added pulls it into a
      * fight; threat taken never leaves less than none, and a creature not fighting the player is left alone.
      */
-    void threatEffect(const(SpellInfo)* spell, size_t i, ulong target, int value)
+    package void threatEffect(const(SpellInfo)* spell, size_t i, ulong target, int value)
     {
         auto creature = livingCreature(target);
         if (creature is null || creature.petOwner || !player.alive)
@@ -154,7 +154,7 @@ mixin template EffectHandlers()
      * (`CreatureAI.taunt`); one already attacking it is not taunted again. Its taunt aura (`MOD_TAUNT`, the
      * spell's other effect) then keeps it on the player while it lasts.
      */
-    void attackMeEffect(const(SpellInfo)* spell, size_t i, ulong target)
+    package void attackMeEffect(const(SpellInfo)* spell, size_t i, ulong target)
     {
         auto creature = livingCreature(target);
         if (creature is null || creature.petOwner || creature.ai.currentVictim == player.guid)
@@ -188,7 +188,7 @@ mixin template EffectHandlers()
      * `SPELL_EFFECT_SANCTUARY` (Vanish, Divine Intervention): the target leaves every fight; Vanish frees its
      * rogue of what roots it as well (CMaNGOS's `EffectSanctuary`).
      */
-    void sanctuaryEffect(const(SpellInfo)* spell, size_t i, ulong target)
+    package void sanctuaryEffect(const(SpellInfo)* spell, size_t i, ulong target)
     {
         enum uint familyRogue = 8;
         enum ulong vanish = 0x800;
@@ -488,7 +488,7 @@ mixin template EffectHandlers()
      * (`SMSG_MONSTER_MOVE` of the player, which its own client follows too), and the player is where it ends.
      * At an enemy it starts attacking (CMaNGOS's `EffectCharge`, `MoveCharge`).
      */
-    void chargeEffect(const(SpellInfo)* spell, ulong target)
+    package void chargeEffect(const(SpellInfo)* spell, ulong target)
     {
         import dmangos.vmap.math : Vector3;
         import dmangos.world.motion : nextSplineId;
@@ -545,7 +545,7 @@ mixin template EffectHandlers()
      * what is built and where the ground falls away or climbs too steeply (`leapDestination`); without map
      * data the ground is taken as level.
      */
-    void leapEffect(const(SpellInfo)* spell, size_t i)
+    package void leapEffect(const(SpellInfo)* spell, size_t i)
     {
         import dmangos.world.effecthandlers : leapDestination;
         import dmangos.world.spellcast : radius;
@@ -575,7 +575,7 @@ mixin template EffectHandlers()
      * `SPELL_EFFECT_STUCK` (Stuck, from the help menu): a ghost goes to its graveyard; the living hearth home if
      * the Hearthstone is in the bags and ready, else are nudged ten yards ahead (CMaNGOS's `EffectStuck`).
      */
-    void stuckEffect()
+    package void stuckEffect()
     {
         import dmangos.world.player : DeathState;
 
@@ -652,7 +652,7 @@ mixin template EffectHandlers()
      * away, and the target takes the burned amount times the effect's multiplier as the spell's damage (with no
      * spell power: CMaNGOS's `EffectPowerBurn`). A target of another power is not touched.
      */
-    void powerBurnEffect(const(SpellInfo)* spell, size_t i, ulong target, int value)
+    package void powerBurnEffect(const(SpellInfo)* spell, size_t i, ulong target, int value)
     {
         const kind = spell.miscValue[i];
         auto victim = map.unit(target);
@@ -674,7 +674,7 @@ mixin template EffectHandlers()
      * effect's kind goes to the caster, times the effect's multiplier if that is the caster's power too
      * (`SMSG_SPELLENERGIZELOG`), and the combat log says how much was drained (CMaNGOS's `EffectPowerDrain`).
      */
-    void powerDrainEffect(const(SpellInfo)* spell, size_t i, ulong target, int value)
+    package void powerDrainEffect(const(SpellInfo)* spell, size_t i, ulong target, int value)
     {
         const kind = spell.miscValue[i];
         auto victim = map.unit(target);
@@ -718,7 +718,7 @@ mixin template EffectHandlers()
      * `SPELL_EFFECT_HEALTH_LEECH` (Death Coil): the spell's damage to the target (at most what health it has),
      * and the caster healed by it times the effect's multiplier (CMaNGOS's `EffectHealthLeech`).
      */
-    void healthLeechEffect(const(SpellInfo)* spell, size_t i, ulong target, int value)
+    package void healthLeechEffect(const(SpellInfo)* spell, size_t i, ulong target, int value)
     {
         auto victim = map.unit(target);
         if (value < 0 || !victim || !victim.alive)
@@ -739,7 +739,7 @@ mixin template EffectHandlers()
      * `SPELL_EFFECT_HEAL_MAX_HEALTH` (Lay on Hands): the target healed by the caster's maximum health, its heal
      * logged (CMaNGOS's `EffectHealMaxHealth`).
      */
-    void healMaxHealthEffect(const(SpellInfo)* spell, ulong target)
+    package void healMaxHealthEffect(const(SpellInfo)* spell, ulong target)
     {
         import dmangos.world.spellcast : healLog;
 
@@ -772,7 +772,7 @@ mixin template EffectHandlers()
      * player's victim, at most five owed, swung at its next melee update (CMaNGOS's `EffectAddExtraAttacks` and
      * `DoExtraAttacks`); the combat log's "You gain 1 extra attack".
      */
-    void addExtraAttacksEffect(const(SpellInfo)* spell, size_t i, ulong target, int value)
+    package void addExtraAttacksEffect(const(SpellInfo)* spell, size_t i, ulong target, int value)
     {
         if (target != player.guid || !player.alive || value <= 0)
             return;
@@ -796,7 +796,7 @@ mixin template EffectHandlers()
      * least one) of the target's auras of the effect's mechanic go, picked at random (CMaNGOS's
      * `EffectDispelMechanic`).
      */
-    void dispelMechanicEffect(const(SpellInfo)* spell, size_t i, ulong target, int value)
+    package void dispelMechanicEffect(const(SpellInfo)* spell, size_t i, ulong target, int value)
     {
         import std.random : uniform;
 
@@ -840,7 +840,7 @@ mixin template EffectHandlers()
      * `SPELL_EFFECT_DISTRACT` (Distract): a creature out of combat stops, faces the spot thrown at and stands
      * so for `value` seconds (`CreatureAI.distract`; CMaNGOS's `EffectDistract`).
      */
-    void distractEffect(const(SpellInfo)* spell, size_t i, ulong target, int value, const ref SpellTargets targets)
+    package void distractEffect(const(SpellInfo)* spell, size_t i, ulong target, int value, const ref SpellTargets targets)
     {
         auto creature = livingCreature(target);
         if (creature is null || creature.ai.inCombat)
@@ -864,7 +864,7 @@ mixin template EffectHandlers()
      * radius ahead), owned by the player and of its level, for the spell's duration; the slot's old one goes
      * (CMaNGOS's `EffectSummonObject`). It springs on the first enemy within its radius (`updateTraps`).
      */
-    void summonTrapEffect(const(SpellInfo)* spell, size_t i, const ref SpellTargets targets)
+    package void summonTrapEffect(const(SpellInfo)* spell, size_t i, const ref SpellTargets targets)
     {
         import dmangos.world.gameobject : GameObjectSpawn;
         import dmangos.world.spellcast : duration, radius;

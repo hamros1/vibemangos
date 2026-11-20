@@ -384,7 +384,8 @@ final class Character : OnlinePlayer, Looter
     }
 
     /// See `UnitRef`.
-    void auraFrom(ulong caster, const(SpellInfo)* spell, uint casterLevel, int durationMs, const int[3] values)
+    void auraFrom(ulong caster, const(SpellInfo)* spell, uint casterLevel, int durationMs, const int[3] values,
+        ubyte effects = 0)
     {
         if (player is null || player.deathState != DeathState.alive)
             return;
@@ -400,6 +401,8 @@ final class Character : OnlinePlayer, Looter
                 return; // immune for now
         }
         auto aura = makeAura(spell, caster, casterLevel, lasts, false, values);
+        if (effects) // only those at it (`SpellCast.auraEffects`)
+            aura.effects &= effects;
         if (from) // it may break early (`SPELL_ATTR_HEARTBEAT_RESIST`)
             aura.setHeartbeatResist(heartbeatResistChance(from.fighter, player.fighter, *spell,
                 cast(int) player.values.get!UNIT_FIELD_RESISTANCES(spell.casting.school), 0), durationMs);
@@ -762,7 +765,7 @@ private:
      * and to each player who sees it the fields it may see: group mates and strangers see different
      * health values.
      */
-    void flushPlayerChanges(bool toSelf = true)
+    package void flushPlayerChanges(bool toSelf = true)
     {
         UpdateData forSelf;
         if (toSelf && player.addChanges(forSelf, Viewer.self))
