@@ -524,7 +524,7 @@ private:
                     AuraType.modDamagePercentDone, AuraType.modDamagePercentTaken, AuraType.modDamageTaken, AuraType.modDamageDoneVersus,
                     AuraType.modCritPercentVersus, AuraType.modThreat, AuraType.modMechanicResistance, AuraType.modShieldBlockvaluePct,
                     AuraType.modMeleeHaste, AuraType.modRangedHaste, AuraType.modAttackSpeed, AuraType.modRangedAmmoHaste,
-                    AuraType.modResistanceExclusive, AuraType.modCastingSpeed:
+                    AuraType.modResistanceExclusive, AuraType.modCastingSpeed, AuraType.modResistanceOfStatPercent:
                 stats = true;
                 break;
             // Speeds (`dmangos.world.moveorders`: `speedRate`).

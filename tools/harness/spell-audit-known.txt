@@ -4,7 +4,5 @@ aura addTargetTrigger: talents that proc on the target (Frostbite, Improved Scor
 aura overrideClassScripts: talents each with code of their own (Arcane Concentration, Illumination): the class spells' work
 aura aurasVisible: Detect Magic shows a target's auras: the client's, nothing yet sent for it
 aura empathy: Beast Lore's special info (UNIT_DYNFLAG_SPECIALINFO for the caster only): needs a per-viewer field
-aura modLanguage: Curse of Tongues' language: chat in another tongue, not yet done
-aura modResistanceOfStatPercent: Arcane Resilience's armor from intellect: not yet done
 aura reflectSpellsSchool: the Wards' reflection (a talent's chance; 0 without): not yet done
 effect summonPossessed: Eye of Kilrogg: a summon to possess, not yet done (charm and possession are)

@@ -1280,6 +1280,16 @@ private:
             || chat.type == ChatType.CHAT_MSG_RAID || chat.type == ChatType.CHAT_MSG_RAID_LEADER
             || chat.type == ChatType.CHAT_MSG_RAID_WARNING))
             language = Language.LANG_UNIVERSAL;
+        else
+        {
+            // Curse of Tongues: `SPELL_AURA_MOD_LANGUAGE` makes it speak the aura's tongue (CMaNGOS's `HandleMessagechatOpcode`).
+            import dmangos.world.spellids : AuraType;
+
+            foreach (aura; player.auras.list)
+                foreach (i; 0 .. 3)
+                    if ((aura.effects & (1 << i)) && aura.type(i) == AuraType.modLanguage)
+                        language = cast(Language) aura.misc(i);
+        }
 
         if (chat.type == ChatType.CHAT_MSG_AFK || chat.type == ChatType.CHAT_MSG_DND)
             return setAway(chat.type, chat.text);
