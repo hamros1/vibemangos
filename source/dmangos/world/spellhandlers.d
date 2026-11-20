@@ -60,6 +60,9 @@ private:
         ulong castItemGuid;   // ... that very item, whose charges it takes (`dmangos.world.itemuse`)
         int castTime;         // its whole cast time (pushback adds back at most up to it); last: built by position
         imported!"dmangos.world.classspells".CustomValues custom; // its own effect amounts (`castCustom`)
+        /// Each target's aura effects (bits): each target's aura has only those at it (CMaNGOS's holder per
+        /// target), so Arcane Missiles' trigger stays on the caster and its dummy on the enemy.
+        ubyte[ulong] auraEffects;
     }
 
     /// A missile's effect on its target, due when it arrives.
@@ -84,6 +87,7 @@ private:
         int amplitude;  // ms between ticks
         int timer;      // ms to the next tick
         int left;       // ms it lasts yet
+        bool[ulong] holding; // those its aura is on: till they leave it, or it ends (CMaNGOS's `PersistentAreaAura`)
     }
 
     Casting generic;                 // the spell being cast (with a cast time), if any
@@ -727,6 +731,11 @@ private:
             }
             else if (auto other = map.unit(channelTarget))
                 other.auraRemovedBy(spell.id);
+            // Its effects on the caster (Arcane Missiles' trigger, Mind Control's) go with it.
+            if (channelTarget != player.guid)
+                if (auto aura = player.auras.find(spell.id))
+                    if (aura.caster == player.guid)
+                        removeAura(aura);
             map.sendToWatchers(this, Opcode.SMSG_SPELL_FAILURE,
                 spellFailurePacket(player.guid, spell.id, SpellCastResult.interrupted), true);
         }
@@ -772,6 +781,47 @@ private:
      * fishable). The fish bites 3, 7, 13 or 17 seconds before the channel would end, and the bobber
      * waits 5 seconds more for the angler.
      */
+    /// Whether `t` is a fishing bobber's template.
+    static bool isFishingBobber(const(imported!"dmangos.world.gameobject".GameObjectTemplate)* t)
+    {
+        return t !is null && t.type == imported!"dmangos.world.gameobject".GameObjectType.fishingNode;
+    }
+
+    /**
+     * `SPELL_EFFECT_TRANS_DOOR` of an object that is no bobber nor ritual (CMaNGOS's `EffectTransmitted`): a mage's
+     * portal, a Lightwell, at the spot thrown at, else its radius ahead, else somewhere in its range ahead; the
+     * caster's, of its level, for the spell's duration.
+     */
+    void transmitObject(const(SpellInfo)* spell, size_t i, const ref SpellTargets targets)
+    {
+        import std.math : cos, sin;
+        import std.random : uniform01;
+        import dmangos.world.spellcast : duration, radius, range;
+
+        const entry = cast(uint) spell.miscValue[i];
+        if (entry !in context.data.gameObjectTemplates)
+            return;
+        auto at = player.position;
+        if (targets.mask & TargetFlags.destLocation)
+            at = Position(targets.dest[0], targets.dest[1], targets.dest[2], at.orientation);
+        else
+        {
+            const r = range(*spell, context.client);
+            const distance = spell.casting.radiusIndex[i] && spell.casting.speed == 0 ? radius(*spell, i, context.client)
+                : uniform01(map.random) * (r[1] - r[0]) + r[0];
+            at.x += distance * cos(at.orientation);
+            at.y += distance * sin(at.orientation);
+        }
+        const ms = modDuration(spell, duration(*spell, context.client, player.data.level));
+        auto go = context.summonWildGameObject(map, entry, at, ms > 0 ? cast(uint)(ms / 1000) : 0);
+        if (go is null)
+            return;
+        go.owner = player.guid;
+        go.values.set!OBJECT_FIELD_CREATED_BY(player.guid);
+        go.values.set!GAMEOBJECT_LEVEL(player.data.level);
+        map.flushGameObject(go);
+    }
+
     void castBobber(const(SpellInfo)* spell, size_t i)
     {
         import std.math : cos, sin;
@@ -896,10 +946,12 @@ private:
                 {
                     return (p.x - at.x) ^^ 2 + (p.y - at.y) ^^ 2 + (p.z - at.z) ^^ 2 <= r * r;
                 }
-                // Damage over time hurts; another aura (a slow, a stun) is held on those inside, a little past each tick.
+                // Damage over time hurts; another aura (Flare's, a slow) is on those inside for what the area has
+                // left, until they leave it.
                 const auraType = area.spell.casting.applyAuraName[area.effect];
                 const hurts = auraType == 0 || auraType == AuraType.periodicDamage;
-                const holdMs = area.amplitude + 500;
+                const holdMs = area.left > area.amplitude ? area.left : area.amplitude;
+                bool[ulong] inArea;
                 foreach (creature; map.creaturesNear(at, r))
                 {
                     if (!inside(creature.position) || !spellEnemy(creature))
@@ -911,6 +963,10 @@ private:
                     }
                     else
                     {
+                        inArea[creature.guid] = true;
+                        if (creature.guid in area.holding)
+                            continue;
+                        area.holding[creature.guid] = true;
                         bool isNew;
                         creature.auras.apply(makeAura(area.spell, player.guid, player.data.level, holdMs, false,
                             areaAuraValues(area)), creature.values, isNew);
@@ -928,16 +984,48 @@ private:
                         if (hurts)
                             spellDamageToPlayer(area.spell, other, area.value);
                         else
-                            other.addAura(makeAura(area.spell, player.guid, player.data.level, holdMs, false,
-                                areaAuraValues(area)));
+                        {
+                            inArea[other.player.guid] = true;
+                            if (other.player.guid !in area.holding)
+                                other.addAura(makeAura(area.spell, player.guid, player.data.level, holdMs, false,
+                                    areaAuraValues(area)));
+                            area.holding[other.player.guid] = true;
+                        }
+                    }
+                foreach (guid; area.holding.keys) // those who left it lose it
+                    if (guid !in inArea)
+                    {
+                        loseAreaAura(guid, area.spell);
+                        area.holding.remove(guid);
                     }
             }
             if (area.left <= 0)
             {
+                foreach (guid; area.holding.keys)
+                    loseAreaAura(guid, area.spell);
                 map.removeObject(area.spot.guid);
                 persistentAreas = persistentAreas[0 .. k] ~ persistentAreas[k + 1 .. $];
             }
         }
+    }
+
+    /// `guid` loses this player's aura of the persistent area of `spell`.
+    private void loseAreaAura(ulong guid, const(SpellInfo)* spell)
+    {
+        if (auto creature = map.creatureAt(guid))
+        {
+            if (auto aura = creature.auras.find(spell.id))
+                if (aura.caster == player.guid)
+                {
+                    creature.loseAura(aura, map);
+                    map.flushCreature(creature);
+                }
+        }
+        else if (auto other = cast(typeof(this)) context.onlinePlayer(guid))
+            if (other.player !is null)
+                if (auto aura = other.player.auras.find(spell.id))
+                    if (aura.caster == player.guid)
+                        other.removeAura(aura);
     }
 
     /// A missile's flight time, in milliseconds: to `target` at the spell's speed (yards a second); 0: at once.
@@ -1531,7 +1619,7 @@ private:
     }
 
     /// The power `spell` costs this player.
-    int costOf(const ref SpellInfo spell)
+    package int costOf(const ref SpellInfo spell)
     {
         if (powerCheat)
             return 0;
@@ -1556,7 +1644,8 @@ private:
             const a = spell.implicitTargetA[i];
             if (a == ImplicitTarget.enemy)
                 needsEnemy = true;
-            else if (a == ImplicitTarget.unit || a == ImplicitTarget.friend)
+            else if (a == ImplicitTarget.unit || a == ImplicitTarget.friend || a == ImplicitTarget.unitRaid
+                    || a == ImplicitTarget.unitFriendChainHeal)
                 needsUnit = true;
         }
         if (!needsEnemy && !needsUnit)
@@ -1635,6 +1724,9 @@ private:
      */
     SpellCastResult go(Casting c)
     {
+        // `TARGET_FLAG_UNIT`, `_UNIT_ENEMY`, `_UNIT_ALLY`, `_CORPSE_ENEMY`, `_UNIT_DEAD`, `_CORPSE_ALLY`: a spell's
+        // `Targets` that let the client name a unit.
+        enum uint unitTargetFlags = 0x0002 | 0x0080 | 0x0100 | 0x0200 | 0x0400 | 0x8000;
         const spell = c.spell;
         const result = checkCast(spell, c.targets, c.triggered, c.castItemEntry, false);
         if (result != SpellCastResult.ok)
@@ -1683,8 +1775,6 @@ private:
                 foreach (i, reagent; spell.reagents)
                     if (reagent > 0 && spell.casting.reagentCount[i])
                         player.inventory.destroyCount(reagent, spell.casting.reagentCount[i]);
-                if (!autoRepeats(spell))
-                    takeAmmo(spell); // an auto-repeating shot's is taken as it shoots
             }
             else
                 takeCastItem(c.castItemEntry, c.castItemGuid); // its charges, and the item if used up
@@ -1706,20 +1796,35 @@ private:
                 targets = [player.guid];
             else if (area.length || isAreaTarget(spell, i))
                 targets = area.dup; // an area, a cone, the party
+            else if (a == ImplicitTarget.none && spell.casting.implicitTargetB[i] == ImplicitTarget.none
+                    && c.targets.unit && (spell.casting.targets & unitTargetFlags))
+                targets = [c.targets.unit]; // no implicit target: the one the client named, as its `Targets` let it
+                                            // (CMaNGOS's `FillFromTargetFlags`: a resurrection at a dead player)
             else if (a == ImplicitTarget.caster || a == ImplicitTarget.none)
                 targets = [player.guid];
+            else if (a == ImplicitTarget.unitCasterPet) // TARGET_UNIT_CASTER_PET: Mend Pet, Health Funnel, Dark Pact
+            {
+                if (ownPet is null || !ownPet.alive)
+                    continue;
+                targets = [ownPet.guid];
+            }
             else if (a == ImplicitTarget.enemy || a == ImplicitTarget.unit || a == ImplicitTarget.friend)
             {
                 targets = [c.targets.unit ? c.targets.unit : player.guid];
                 if (spell.casting.chainTarget[i] > 1 && a == ImplicitTarget.enemy)
                     targets ~= chainTargets(targets[0], spell.casting.chainTarget[i] - 1);
             }
-            else if (a == ImplicitTarget.unitRaid) // TARGET_UNIT_RAID: the target, if of the caster's group (the costumes)
+            else if (a == ImplicitTarget.unitRaid || a == ImplicitTarget.unitFriendChainHeal)
             {
+                // TARGET_UNIT_RAID, TARGET_UNIT_FRIEND_CHAIN_HEAL: the target if it may be helped, grouped or not
+                // (CMaNGOS's `CanAssistSpell`: Power Word: Shield, Healing Wave at any friend); Chain Heal jumps on
+                // to the most hurt friends near.
                 const target = c.targets.unit ? c.targets.unit : player.guid;
-                if (target != player.guid && !context.sameGroup(player.guid, target))
+                if (target != player.guid && !assistable(target))
                     continue;
                 targets = [target];
+                if (a == ImplicitTarget.unitFriendChainHeal && spell.casting.chainTarget[i] > 1)
+                    targets ~= friendlyChainTargets(target, spell.casting.chainTarget[i] - 1);
             }
             else if (a == ImplicitTarget.gameObject || a == ImplicitTarget.gameObjectItem)
             {
@@ -1745,6 +1850,14 @@ private:
                     results ~= TargetResult(target, missOf[target]);
                 }
             }
+        }
+        // The ammunition (or the thrown weapon) goes once the hits are rolled, as CMaNGOS's `Spell::cast` takes
+        // it after `FillTargetMap`: the last throwing knife is thrown with the skill of the hand that held it.
+        // An auto-repeating shot's is taken as it shoots.
+        if (!c.triggered && c.castItemEntry == 0 && !autoRepeats(spell))
+        {
+            takeAmmo(spell);
+            flushInventory();
         }
         enum uint notAnAction = 0x10000000; // SPELL_ATTR_EX2_NOT_AN_ACTION
         if (!c.triggered)
@@ -1780,6 +1893,14 @@ private:
         foreach (aura; player.auras.list)
             if (aura.charges)
                 chargedAtStart ~= aura;
+        foreach (i; 0 .. 3)
+        {
+            if (spell.effect[i] == SpellEffect.applyAreaAuraParty) // on the caster, whoever else it reaches
+                c.auraEffects[player.guid] |= cast(ubyte)(1 << i);
+            else if (spell.effect[i] == SpellEffect.applyAura)
+                foreach (target; effectTargets[i])
+                    c.auraEffects[target] |= cast(ubyte)(1 << i);
+        }
         // A missile (`speed`) reaches each target after its flight: the effects then.
         foreach (i; 0 .. 3)
             foreach (target; effectTargets[i])
@@ -1954,8 +2075,10 @@ private:
         case SpellEffect.transDoor: // SPELL_EFFECT_TRANS_DOOR: an object the spell puts down (a fishing bobber, a ritual's portal)
             if (isRitualPortal(cast(uint) spell.miscValue[i] in context.data.gameObjectTemplates))
                 openRitualPortal(spell, i); // `dmangos.world.rituals`
-            else
+            else if (isFishingBobber(cast(uint) spell.miscValue[i] in context.data.gameObjectTemplates))
                 castBobber(spell, i);
+            else
+                transmitObject(spell, i, c.targets); // a mage's portal, a Lightwell
             break;
         case SpellEffect.sendEvent: // SPELL_EFFECT_SEND_EVENT: the event's script, the caster its source and a game object its target
         {
@@ -2119,10 +2242,10 @@ private:
                 castSpell(triggered, c.targets, true, 0);
             break;
         case SpellEffect.applyAura: // SPELL_EFFECT_APPLY_AURA
-            applyAuraEffect(spell, i, target);
+            applyAuraEffect(spell, i, target, c.auraEffects.get(target, 0));
             break;
         case SpellEffect.applyAreaAuraParty: // SPELL_EFFECT_APPLY_AREA_AURA_PARTY: on the caster, and from it on its party (`updateAreaAuras`)
-            applyAuraEffect(spell, i, player.guid);
+            applyAuraEffect(spell, i, player.guid, c.auraEffects.get(player.guid, 0));
             break;
         case SpellEffect.attack: // SPELL_EFFECT_ATTACK
             break;
@@ -2412,7 +2535,7 @@ private:
     private ubyte castCombo; // the points the finishing move being cast uses (its value, its duration)
 
     /// A finishing move: it uses the combo points (`SPELL_ATTR_EX_FINISHING_MOVE_DAMAGE`, `_DURATION`).
-    static bool usesComboPoints(const ref SpellInfo spell) pure nothrow @nogc @safe
+    package static bool usesComboPoints(const ref SpellInfo spell) pure nothrow @nogc @safe
     {
         enum uint finishingDamage = 0x00100000, finishingDuration = 0x00400000;
         return (spell.attributesEx & (finishingDamage | finishingDuration)) != 0;
@@ -2899,6 +3022,50 @@ private:
         with (ImplicitTarget)
             return kind.among(enemiesAroundSource, enemiesAroundDest, enemiesInCone, partyAroundSource, partyInRange,
                 friendsAroundSource, friendsAroundDest, party, unitFriendAndParty) != 0;
+    }
+
+    /// Whether this player may help `guid` with a spell: a unit here it may not attack.
+    private bool assistable(ulong guid)
+    {
+        auto unit = map.unit(guid);
+        return unit && unit.alive && !canAttack(relatingNow(), unit.relating(), context.client);
+    }
+
+    /**
+     * A healing chain's further targets (CMaNGOS's `SCHEME_LOWEST_HP_CHAIN`): from `first`, `count` times, the
+     * most hurt (by its share of health) of the friendly players within 10 yards of the last, alive and hurt.
+     */
+    ulong[] friendlyChainTargets(ulong first, uint count)
+    {
+        enum float jump = 10;
+        ulong[] chain;
+        bool[ulong] taken = [first: true];
+        auto last = map.unit(first);
+        if (!last)
+            return null;
+        Position at = last.position;
+        foreach (_; 0 .. count)
+        {
+            UnitRef next;
+            uint lowest = 100;
+            foreach (other; map.playersNear(at, jump))
+            {
+                if (other.combatGuid in taken || !assistable(other.combatGuid))
+                    continue;
+                const percent = other.healthPercent;
+                if (percent < lowest)
+                {
+                    lowest = percent;
+                    next = other;
+                }
+            }
+            if (!next)
+                break;
+            chain ~= next.combatGuid;
+            taken[next.combatGuid] = true;
+            at = next.position;
+        }
+        return chain;
     }
 
     /// Chain targets: from `first`, the nearest enemy within 10 yards of the last, `count` times.

@@ -666,6 +666,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Also: `Aura::HandleAuraTransform` and `Unit::RestoreDisplayId` (a player's), `Unit::Heartbeat` and
   `WorldObject::GetHeartbeatDuration` (`Aura::OnHeartbeat`), `Aura::OnPeriodicTickEnd`, `SpellAuraHolder` removal
   (`AURA_REMOVE_BY_EXPIRE`), `Aura::PeriodicTick`'s `SPELL_AURA_PERIODIC_MANA_LEECH` from a creature
+* Also: a `SpellAuraHolder` per target with only the effects at it (`Spell::DoSpellHitOnUnit`)
 
 ## world/aurastate.d
 
@@ -947,12 +948,14 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Files: `GameObject.cpp`
 * Functions: `GameObject::Create`, `GameObject::Update`, `GameObjectInfo::GetLockId`, `Object::BuildCreateUpdateBlockForPlayer`
 * Constants: `GAMEOBJECT_DYN_FLAGS`, `GAMEOBJECT_TYPE_GOOBER`, `GAMEOBJECT_TYPE_MO_TRANSPORT`, `GO_DYNFLAG_LO_ACTIVATE`, `GO_JUST_DEACTIVATED`
+* Also: `GAMEOBJECT_TYPE_SPELLCASTER`
 
 ## world/gameobjecthandlers.d
 
 * Projects: CMaNGOS
 * Functions: `GameObject::ActivateToQuest`, `GameObject::Use`, `Loot::Loot`, `Loot::Release`, `Player::GetSpellRank`, `Player::UpdateGatherSkill`, `Player::UpdateSkillPro`, `Spell::CanOpenLock`, `Spell::EffectOpenLock`, `Spell::SendLoot`
 * Constants: `GAMEOBJECT_TYPE_CHAIR`, `INTERACTION_DISTANCE`, `SCRIPT_COMMAND_OPEN_DOOR`
+* Also: `GameObject::Use`'s `GAMEOBJECT_TYPE_SPELLCASTER` (`spellcaster.partyOnly`, `charges`, `GO_FLAG_LOCKED`)
 
 ## world/gmactions.d
 
@@ -1307,6 +1310,13 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Files: `Master.cpp`, `World.cpp`
 * Constants: `REALM_FLAG_OFFLINE`
 
+## world/realspellsweep.d
+
+* Projects: CMaNGOS (cross-checked against)
+* Functions: `CalculateSpellDuration` (the oracle's durations), `Player::AddCooldown` (no `SMSG_SPELL_COOLDOWN` for a
+  cast: the client starts its own; `SMSG_COOLDOWN_EVENT` for `SPELL_ATTR_COOLDOWN_ON_EVENT`), `Spell::FillTargetMap`
+  (which unit each implicit target names)
+
 ## world/relations.d
 
 * Projects: CMaNGOS
@@ -1350,6 +1360,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Constants: `SMSG_CAST_RESULT`, `SMSG_SPELLENERGIZELOG`, `SMSG_SPELLHEALLOG`, `SMSG_SPELLLOGMISS`, `SMSG_SPELLNONMELEEDAMAGELOG`, `SMSG_SPELL_FAILURE`, `SMSG_SPELL_GO`, `SMSG_SPELL_START`, `SPELL_ATTR_CANT_USED_IN_COMBAT`, `SPELL_ATTR_CASTABLE_WHILE_DEAD`, `SPELL_ATTR_EX2_CANT_CRIT`, `SPELL_ATTR_EX3_ALWAYS_HIT`, `SPELL_ATTR_ON_NEXT_SWING`, `SPELL_ATTR_ON_NEXT_SWING_NO_DAMAGE`, `SPELL_ATTR_HEARTBEAT_RESIST`, `SPELL_ATTR_EX3_COMPLETELY_BLOCKED`, `SPELL_MISS_BLOCK`
 * Also: `SpellLog::Initialize`, `SpellLog::AddLog`, `SpellLog::SendToSet` (`SMSG_SPELLLOGEXECUTE`; the targets' guids packed for the 1.12 client, where CMaNGOS writes them whole)
 * Also: `Spell::IsInterruptible` (`SPELL_INTERRUPT_FLAG_COMBAT`, `SPELL_PREVENTION_TYPE_SILENCE`), `CalculateSpellDuration` (combo points), `POWER_HEALTH`
+* Also: `IsSpellUseWeaponSkill` and `Unit::CalculateEffectiveMissChance` (an ability no weapon's: `GetSkillMaxForLevel`)
 
 ## world/spellhandlers.d
 
@@ -1359,9 +1370,13 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Constants: `CMSG_CANCEL_CHANNELLING`, `CURRENT_CHANNELED_SPELL`, `CURRENT_GENERIC_SPELL`, `CURRENT_MELEE_SPELL`, `FISHING_BOBBER_READY_TIME`, `MSG_CHANNEL_START`, `MSG_CHANNEL_UPDATE`, `SMSG_CLEAR_COOLDOWN`, `SMSG_FISH_NOT_HOOKED`, `SMSG_INITIAL_SPELLS`, `SMSG_SPELLINSTAKILLLOG`, `SMSG_SPELL_GO`, `SMSG_SPELL_START`, `SPELL_ATTR_EX_IS_CHANNELED`, `SPELL_AURA_MOD_DAMAGE_DONE`, `SPELL_AURA_MOD_HEALING_DONE`, `SPELL_AURA_PERIODIC_DAMAGE`, `SPELL_EFFECT_APPLY_AURA`, `SPELL_FAILED_EQUIPPED_ITEM_CLASS`, `SPELL_INTERRUPT_FLAG_MOVEMENT`, `TARGET_ALL_ENEMY_IN_AREA`, `TARGET_CASTER_COORDINATES`, `TRIGGERED_OLD_TRIGGERED`
 * Also: `TARGET_UNIT_SCRIPT_NEAR_CASTER`, `Spell::CheckScriptTargeting` (`spell_script_target`), `TARGET_UNIT_FRIEND_AND_PARTY`
 * Also: `Spell::OnCheckCast` (a script's refusal last of `CheckCast`), `Spell::OnSuccessfulStart` (in `Spell::Prepare`),
-  `TARGET_UNIT_RAID` (`Unit::IsInRaidWith`)
+  `TARGET_UNIT_RAID`
 * Also: `Unit::MeleeDamageBonusDone`'s `SPELL_AURA_RANGED_ATTACK_POWER_ATTACKER_BONUS`
 * Also: `WorldObject::IsSpellReady` (an item's cooldown category, the lockout only of `SPELL_PREVENTION_TYPE_SILENCE`), `Player::AddCooldown`, `Spell::EffectInterruptCast`, `Spell::TakePower` and `Spell::CheckPower` (`POWER_HEALTH`), `SpellAuraHolder::UpdateHolder` (`manaPerSecond`)
+* Also: `Spell::FillFromTargetFlags` (no implicit target: the client's unit), `Unit::CanAssistSpell` for `TARGET_UNIT_RAID`
+  and `TARGET_UNIT_FRIEND_CHAIN_HEAL` (`SCHEME_LOWEST_HP_CHAIN`), `TARGET_UNIT_CASTER_PET`, `Spell::TakeAmmo` after
+  `Spell::FillTargetMap` in `Spell::cast`, `Spell::EffectTransmitted` (`GAMEOBJECT_TYPE_SPELLCASTER`),
+  `PersistentAreaAura` (the dynamic object's duration, lost on leaving)
 
 ## world/spellscripting.d
 

@@ -67,30 +67,36 @@ private:
     float manaFromDrink = 0; // drink's mana not yet whole
 
     /**
-     * `SPELL_EFFECT_APPLY_AURA` (at the spell's first aura effect, for all of them): the aura on its
-     * target, this player or another, or a creature.
+     * `SPELL_EFFECT_APPLY_AURA` (at the spell's first aura effect at `target`, for all of them): the aura on
+     * its target, this player or another, or a creature. `effects` (bits; 0: all the aura effects) are those at
+     * this target: the aura has only them (Mind Control's possession on the creature, its dummy on the caster).
      */
-    package void applyAuraEffect(const(SpellInfo)* spell, size_t i, ulong target)
+    package void applyAuraEffect(const(SpellInfo)* spell, size_t i, ulong target, ubyte effects = 0)
     {
-        static bool auraEffect(uint effect) { return effect == SpellEffect.applyAura || effect == SpellEffect.applyAreaAuraParty; }
+        bool auraEffect(size_t j)
+        {
+            const effect = spell.effect[j];
+            return (effect == SpellEffect.applyAura || effect == SpellEffect.applyAreaAuraParty)
+                && (!effects || (effects & (1 << j)));
+        }
         foreach (j; 0 .. i)
-            if (auraEffect(spell.effect[j]))
+            if (auraEffect(j))
                 return;
         int[3] values;
         foreach (j; 0 .. 3)
-            if (auraEffect(spell.effect[j]))
+            if (auraEffect(j))
                 values[j] = effectMod(spell, j, effectCustom.has(j) ? effectCustom.values[j]
                     : effectValue(*spell, j, player.data.level, uniform01(map.random)));
         classAuraValues(spell, values); // Rip's and Rupture's attack power, Mana Shield's spell power
         const ms = modDuration(spell, duration(*spell, context.client, player.data.level));
         // Damage over time (`SPELLMOD_DOT`): what each tick deals.
         foreach (j; 0 .. 3)
-            if (auraEffect(spell.effect[j]) && spell.casting.applyAuraName[j] == AuraType.periodicDamage)
+            if (auraEffect(j) && spell.casting.applyAuraName[j] == AuraType.periodicDamage)
                 values[j] = spellMod(SpellModOp.dot, spell, values[j]);
         // The caster's spell damage or healing bonus over time: the bonus times the duration over
         // 15 seconds (at most whole), shared out among the ticks.
         foreach (j; 0 .. 3)
-            if (auraEffect(spell.effect[j]) && spell.casting.amplitude[j] > 0 && ms > 0)
+            if (auraEffect(j) && spell.casting.amplitude[j] > 0 && ms > 0)
             {
                 const type = cast(AuraType) spell.casting.applyAuraName[j];
                 int done;
@@ -110,10 +116,15 @@ private:
         {
             if (!creature.alive)
                 return;
-            auto aura = makeAura(spell, player.guid, player.data.level, ms, false, values);
-            aura.setHeartbeatResist(heartbeatResistChance(player.fighter, creature.fighter, *spell,
-                targetResistance(cast(int) creature.values.get!UNIT_FIELD_RESISTANCES(spell.casting.school),
-                spell.casting.school), spellHitBonus), ms);
+            // A friendly creature's (one's pet's: Mend Pet) is a buff, and no attack on it.
+            const hostile = canAttack(relatingNow(), creature.ai.relatingOf(), context.client);
+            auto aura = makeAura(spell, player.guid, player.data.level, ms, !hostile, values);
+            if (effects)
+                aura.effects &= effects;
+            if (hostile)
+                aura.setHeartbeatResist(heartbeatResistChance(player.fighter, creature.fighter, *spell,
+                    targetResistance(cast(int) creature.values.get!UNIT_FIELD_RESISTANCES(spell.casting.school),
+                    spell.casting.school), spellHitBonus), ms);
             bool isNew;
             if (auto displaced = creature.auras.displacedBy(aura, creature.values)) // another's that may not stay beside it
                 creature.loseAura(displaced, map);
@@ -122,11 +133,11 @@ private:
                 classCreatureAuraApplied(creature, applied); // the sting or curse it replaces
             map.flushObjectChanges(creature);
             foreach (j; 0 .. 3)
-                if (auraEffect(spell.effect[j]))
+                if (auraEffect(j))
                     auraAppliedScript(spell, j, target, values[j]);
             // A charm (Enslave Demon) or a possession (Mind Control, Eyes of the Beast): the creature is the player's.
             foreach (j; 0 .. 3)
-                if (auraEffect(spell.effect[j]))
+                if (auraEffect(j))
                 {
                     const kind = spell.casting.applyAuraName[j];
                     if (kind == AuraType.modCharm || kind == AuraType.modPossess || kind == AuraType.modPossessPet)
@@ -135,7 +146,7 @@ private:
                         break;
                     }
                 }
-            if (charmed is creature)
+            if (charmed is creature || !hostile)
                 return;
             spellAttacked(creature, 0);
             return;
@@ -146,6 +157,8 @@ private:
         // On an enemy (a duel's opponent) it is a debuff.
         const hostile = who !is this && canAttack(relatingNow(), who.relatingNow(), context.client);
         auto given = makeAura(spell, player.guid, player.data.level, ms, !hostile, values);
+        if (effects)
+            given.effects &= effects;
         if (hostile)
             given.setHeartbeatResist(heartbeatResistChance(player.fighter, who.player.fighter, *spell,
                 targetResistance(cast(int) who.player.values.get!UNIT_FIELD_RESISTANCES(spell.casting.school),
