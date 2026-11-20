@@ -55,6 +55,15 @@ mixin template PetBehaviour()
 
     /// Its spells' cooldowns left, in milliseconds (saved with the pet).
     int[uint] petCooldowns;
+    /// Its spell categories' cooldowns left, in milliseconds: most pet spells have only their category's (Bite:
+    /// RecoveryTime 0, category 19, 10 s), and spells of one category wait together (Growl and Cower, 82).
+    int[uint] petCategoryCooldowns;
+
+    /// Whether `info` is off its cooldown and its category's (`WorldObject::IsSpellReady`).
+    bool petSpellReady(const(SpellInfo)* info) const
+    {
+        return info.id !in petCooldowns && (!info.category || info.category !in petCategoryCooldowns);
+    }
 
     private
     {
@@ -142,6 +151,9 @@ mixin template PetBehaviour()
         foreach (spell; petCooldowns.keys)
             if ((petCooldowns[spell] -= diff) <= 0)
                 petCooldowns.remove(spell);
+        foreach (category; petCategoryCooldowns.keys)
+            if ((petCategoryCooldowns[category] -= diff) <= 0)
+                petCategoryCooldowns.remove(category);
         updateCasting(diff);
         if (!me.alive)
             return;
@@ -219,7 +231,7 @@ mixin template PetBehaviour()
     bool petCastByCommand(const(SpellInfo)* info, ulong target, CombatWorld world)
     {
         world_ = world;
-        if (info is null || info.id in petCooldowns || !me.alive)
+        if (info is null || !petSpellReady(info) || !me.alive)
             return false;
         UnitRef enemy;
         if (target && target != me.guid)
@@ -252,6 +264,8 @@ mixin template PetBehaviour()
         if (!cooldown)
             return;
         petCooldowns[info.id] = cooldown;
+        if (info.category && info.categoryRecoveryTime)
+            petCategoryCooldowns[info.category] = info.categoryRecoveryTime;
         if (auto owner = world.unit(me.petOwner))
             owner.tell(Opcode.SMSG_SPELL_COOLDOWN, petCooldownPacket(me.guid, info.id, info.recoveryTime));
     }
@@ -263,10 +277,10 @@ mixin template PetBehaviour()
             return;
         foreach (s; pet.spells)
         {
-            if (s.active != ActiveState.enabled || s.spell in petCooldowns)
+            if (s.active != ActiveState.enabled)
                 continue;
             const info = lore.spellInfo(s.spell);
-            if (info is null || !isAutocastable(*info))
+            if (info is null || !petSpellReady(info) || !isAutocastable(*info))
                 continue;
             if (castSpell(info, victim, 0))
             {

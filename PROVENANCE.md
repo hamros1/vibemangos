@@ -681,7 +681,8 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Files: `SpellAuras.cpp`
 * Functions: `SpellAuraHolder::Update`, `Unit::AddSpellAuraHolder`, `SpellAuraHolder::SetHeartbeatResist`, `SpellAuraHolder::UpdateHeartbeatResist`
 * Constants: `MAX_AURAS`, `MAX_POSITIVE_AURAS`, `SPELL_ATTR_NO_AURA_CANCEL`, `UNIT_FIELD_AURA`
-* Also: `Aura::HandleAuraModStalked` (`UNIT_DYNFLAG_TRACK_UNIT`), `Unit::SetFeignDeath` (`UNIT_DYNFLAG_DEAD`), `Aura::HandleAuraUntrackable` (`UNIT_VIS_FLAG_UNTRACKABLE`), `Aura::HandleAuraModScale` (`ApplyPercentModFloatValue`)
+* Also: `Aura::HandleAuraModStalked` (`UNIT_DYNFLAG_TRACK_UNIT`), `Unit::SetFeignDeath` (`UNIT_DYNFLAG_DEAD`), `Aura::HandleAuraUntrackable` (`UNIT_VIS_FLAG_UNTRACKABLE`), `Aura::HandleAuraModScale` (`ApplyPercentModFloatValue`), `Aura::HandleInvisibilityDetect` (the strongest detection of a type)
+* Also: `SpellStacker::IsSpellStackableWithSpellForDifferentCasters`, `SpellStacker::IsStackableAuraEffect`, `SpellAuraHolder::ModStackAmount`, `SpellAuraHolder::SetStackAmount` (the same spell from two casters)
 
 ## world/battleground.d
 
@@ -951,7 +952,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 ## world/gameobjecthandlers.d
 
 * Projects: CMaNGOS
-* Functions: `GameObject::ActivateToQuest`, `GameObject::Use`, `Loot::Loot`, `Loot::Release`, `Player::UpdateGatherSkill`, `Player::UpdateSkillPro`, `Spell::CanOpenLock`, `Spell::EffectOpenLock`, `Spell::SendLoot`
+* Functions: `GameObject::ActivateToQuest`, `GameObject::Use`, `Loot::Loot`, `Loot::Release`, `Player::GetSpellRank`, `Player::UpdateGatherSkill`, `Player::UpdateSkillPro`, `Spell::CanOpenLock`, `Spell::EffectOpenLock`, `Spell::SendLoot`
 * Constants: `GAMEOBJECT_TYPE_CHAIR`, `INTERACTION_DISTANCE`, `SCRIPT_COMMAND_OPEN_DOOR`
 
 ## world/gmactions.d
@@ -1040,7 +1041,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 
 * Projects: CMaNGOS
 * Files: `SpellHandler.cpp`, `Spell.cpp`, `Item.cpp`, `Player.cpp`, `Unit.cpp`
-* Functions: `Item::SendTimeUpdate`, `Item::UpdateDuration`, `Player::AddCooldown`, `Player::AddItemDurations`, `Player::ApplyEquipCooldown`, `Player::DurabilityPointLossForEquipSlot`, `Player::DurabilityPointsLoss`, `Player::UpdateItemDuration`, `Spell::CheckItems`, `Spell::TakeAmmo`, `Spell::TakeCastItem`, `Unit::DealDamage`, `WorldSession::HandleUseItemOpcode`
+* Functions: `Item::SendTimeUpdate`, `Item::UpdateDuration`, `Player::AddCooldown`, `Player::AddItemDurations`, `Player::ApplyEquipCooldown`, `Player::DurabilityPointLossForEquipSlot`, `Player::DurabilityPointsLoss`, `Player::IsSpellReady`, `Player::UpdateItemDuration`, `Spell::CheckItems`, `Spell::TakeAmmo`, `Spell::TakeCastItem`, `Unit::DealDamage`, `WorldSession::HandleUseItemOpcode`
 * Constants: `BIND_WHEN_USE`, `CONFIG_FLOAT_RATE_DURABILITY_LOSS_DAMAGE`, `ITEM_EXTRA_REAL_TIME_DURATION`, `ITEM_FLAG_NO_EQUIPCOOLDOWN`, `SMSG_ITEM_COOLDOWN`, `SMSG_ITEM_TIME_UPDATE`, `SPELL_FAILED_NO_CHARGES_REMAIN`
 
 ## world/meetingstone.d
@@ -1235,7 +1236,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 ## world/petai.d
 
 * Projects: CMaNGOS
-* Functions: `CharmInfo::GetCommandState`, `PetAI::AttackStart`, `PetAI::MoveInLineOfSight`, `PetAI::UpdateAI`, `PetAI::m_followDist`, `Creature::AddCooldown` (`SMSG_SPELL_COOLDOWN` to the owner)
+* Functions: `CharmInfo::GetCommandState`, `PetAI::AttackStart`, `PetAI::MoveInLineOfSight`, `PetAI::UpdateAI`, `PetAI::m_followDist`, `Creature::AddCooldown` (`SMSG_SPELL_COOLDOWN` to the owner, the category's cooldown), `WorldObject::IsSpellReady`
 * Constants: `ACT_ENABLED`, `CMSG_PET_ACTION`, `CMSG_PET_CAST_SPELL`, `SPELL_ATTR_EX_NO_AUTOCAST_AI`
 
 ## world/pethandlers.d
@@ -1353,6 +1354,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Functions: `Spell::CalculatePowerCost`, `SpellCastTargets::read`, `SpellCastTargets::write`, `Unit::MeleeSpellHitResult`, `Unit::MagicSpellHitResult`, `Unit::CanBlockAbility`, `Spell::DoSpellHitOnUnit` (heartbeat resistance)
 * Constants: `SMSG_CAST_RESULT`, `SMSG_SPELLENERGIZELOG`, `SMSG_SPELLHEALLOG`, `SMSG_SPELLLOGMISS`, `SMSG_SPELLNONMELEEDAMAGELOG`, `SMSG_SPELL_FAILURE`, `SMSG_SPELL_GO`, `SMSG_SPELL_START`, `SPELL_ATTR_CANT_USED_IN_COMBAT`, `SPELL_ATTR_CASTABLE_WHILE_DEAD`, `SPELL_ATTR_EX2_CANT_CRIT`, `SPELL_ATTR_EX3_ALWAYS_HIT`, `SPELL_ATTR_ON_NEXT_SWING`, `SPELL_ATTR_ON_NEXT_SWING_NO_DAMAGE`, `SPELL_ATTR_HEARTBEAT_RESIST`, `SPELL_ATTR_EX3_COMPLETELY_BLOCKED`, `SPELL_MISS_BLOCK`
 * Also: `SpellLog::Initialize`, `SpellLog::AddLog`, `SpellLog::SendToSet` (`SMSG_SPELLLOGEXECUTE`; the targets' guids packed for the 1.12 client, where CMaNGOS writes them whole)
+* Also: `Spell::IsInterruptible` (`SPELL_INTERRUPT_FLAG_COMBAT`, `SPELL_PREVENTION_TYPE_SILENCE`), `CalculateSpellDuration` (combo points), `POWER_HEALTH`
 
 ## world/spellhandlers.d
 
@@ -1364,6 +1366,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Also: `Spell::OnCheckCast` (a script's refusal last of `CheckCast`), `Spell::OnSuccessfulStart` (in `Spell::Prepare`),
   `TARGET_UNIT_RAID` (`Unit::IsInRaidWith`)
 * Also: `Unit::MeleeDamageBonusDone`'s `SPELL_AURA_RANGED_ATTACK_POWER_ATTACKER_BONUS`
+* Also: `WorldObject::IsSpellReady` (an item's cooldown category, the lockout only of `SPELL_PREVENTION_TYPE_SILENCE`), `Player::AddCooldown`, `Spell::EffectInterruptCast`, `Spell::TakePower` and `Spell::CheckPower` (`POWER_HEALTH`), `SpellAuraHolder::UpdateHolder` (`manaPerSecond`)
 
 ## world/spellscripting.d
 
@@ -1380,6 +1383,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 
 * Projects: CMaNGOS
 * Constants: `SPELL_ATTR_DO_NOT_DISPLAY`, `SPELL_ATTR_EX2_ALLOW_WHILE_NOT_SHAPESHIFTED`, `SPELL_ATTR_EX_CAST_WHEN_LEARNED`, `SPELL_ATTR_PASSIVE`, `TARGET_UNIT_CASTER_PET`
+* Also: `SpellMgr::LoadSpellAffects` (`doForHighRanks`: `spell_affect` for every rank)
 
 ## world/spline.d
 

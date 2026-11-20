@@ -487,7 +487,15 @@ mixin template PetHandlers()
         const now = context.unixTime;
         foreach (c; cooldowns)
             if (c[1] > now)
-                pet_.ai.petCooldowns[cast(uint) c[0]] = cast(int)((c[1] - now) * 1000);
+            {
+                const left = cast(int)((c[1] - now) * 1000);
+                pet_.ai.petCooldowns[cast(uint) c[0]] = left;
+                // Its category waits as long (the spells sharing it), no longer than the category's own time.
+                if (const info = context.data.spells.spell(cast(uint) c[0]))
+                    if (info.category && info.categoryRecoveryTime)
+                        pet_.ai.petCategoryCooldowns[info.category] = left < info.categoryRecoveryTime ? left
+                            : info.categoryRecoveryTime;
+            }
         map.flushObjectChanges(pet_);
     }
 
@@ -1451,7 +1459,7 @@ mixin template PetHandlers()
         const info = context.data.spells.spell(spell);
         if (info is null || info.isPassive)
             return;
-        if (spell in pet.ai.petCooldowns)
+        if (!pet.ai.petSpellReady(info))
             return; // not ready: nothing said (`HandlePetCastSpellOpcode`)
         if (pet.ai.petCastByCommand(info, target, map))
         {

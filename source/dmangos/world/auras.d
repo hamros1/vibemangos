@@ -56,6 +56,157 @@ enum ubyte auraFlagCancelable = 0x01, auraFlagPositive = 0x04 /* what the client
 /// A spell attribute: its aura cannot be cancelled by the player.
 enum uint spellAttrNoAuraCancel = 0x80000000;
 
+/**
+ * Whether the same spell's auras from two casters stand side by side on one unit (CMaNGOS's
+ * `SpellStacker::IsSpellStackableWithSpellForDifferentCasters` with the spell itself): damage and healing over time
+ * do; a class's buff does not (two priests' Power Word: Fortitude), nor a debuff of which one caster's is enough
+ * (Sunder Armor, Fire Vulnerability, Demoralizing Shout). `positive`: the aura is a buff here.
+ */
+bool stacksAcrossCasters(const ref SpellInfo spell, bool positive, bool targetPlayerControlled) pure nothrow @nogc @safe
+{
+    enum uint passiveAttr = 0x40, noAuraCancel = 0x80000000, auraUnique = 0x800, dotStackingRule = 0x80,
+        notAnAction = 0x10000000, channelled = 0x04 | 0x40;
+    const c = &spell.casting;
+    if (c.attributesEx3 & dotStackingRule)
+        return true;
+    if (spell.attributesEx & auraUnique)
+        return false;
+    if (spell.attributes & noAuraCancel)
+        return true;
+    const family = c.spellFamilyName != 0;
+    const multirank = family && c.spellFamilyFlags != 0; // `related && siblings && player`: it is itself
+    const isChannelled = (spell.attributesEx & channelled) != 0;
+    foreach (i; 0 .. 3)
+    {
+        const aura = c.applyAuraName[i];
+        if (!spell.effect[i] || aura == AuraType.none)
+            continue;
+        bool nonmui; // one instance of it on a unit
+        switch (aura)
+        {
+        case AuraType.dummy, AuraType.periodicTriggerSpell:
+            // Reincarnation's passive, Tranquility
+            if (multirank && ((c.spellFamilyName == 11 && (c.spellFamilyFlags & 0x200))
+                    || (c.spellFamilyName == 7 && (c.spellFamilyFlags & 0x80))))
+                continue;
+            break;
+        case AuraType.periodicLeech, AuraType.periodicManaLeech:
+            if (targetPlayerControlled)
+                return false;
+            break;
+        case AuraType.periodicDamage, AuraType.periodicDamagePercent, AuraType.powerBurnMana, AuraType.obsModHealth,
+                AuraType.obsModMana:
+            continue;
+        case AuraType.rangedAttackPowerAttackerBonus, AuraType.meleeAttackPowerAttackerBonus:
+            return false; // Hunter's Mark: one
+        case AuraType.modAttackPower:
+            if (!positive && spell.basePoints[i] < 1)
+            {
+                if (family)
+                    return false; // Demoralizing Shout, Curse of Weakness
+                continue;
+            }
+            break;
+        case AuraType.modResistance:
+            if (positive)
+            {
+                if (c.dispel && !family)
+                    return false; // scrolls
+            }
+            else if (c.preventionType)
+                return false; // Sunder Armor
+            break;
+        case AuraType.modResistancePct:
+            if (positive && c.dispel)
+                return false;
+            nonmui = true;
+            break;
+        case AuraType.modStat:
+            if (spell.id == 5320 || spell.id == 15366) // Echeyakee's Grace, Songflower Serenade
+                continue;
+            if (positive)
+            {
+                if (!family && (c.dispel || (spell.attributesEx2 & notAnAction)))
+                    return false;
+            }
+            else
+            {
+                if (c.dispel)
+                    return false;
+                nonmui = true;
+            }
+            break;
+        case AuraType.modTotalStatPercentage, AuraType.modPercentStat, AuraType.modIncreaseHealthPercent,
+                AuraType.modDamageTaken, AuraType.modDamagePercentTaken, AuraType.modDecreaseSpeed,
+                AuraType.modIncreaseSpeed, AuraType.modHealthRegenPercent, AuraType.preventsFleeing,
+                AuraType.procTriggerSpell:
+            nonmui = true;
+            break;
+        case AuraType.modHealingDone, AuraType.modHealingPct:
+            if (!positive)
+                continue; // Mortal Strike's, from two warriors
+            break;
+        case AuraType.modMeleeHaste, AuraType.modRangedHaste, AuraType.modDamageDone, AuraType.modDamagePercentDone:
+            if (positive)
+                continue;
+            nonmui = true;
+            break;
+        case AuraType.modSpellCritChance, AuraType.modSpellHitChance:
+            if (multirank && (spell.attributes & passiveAttr))
+                continue;
+            nonmui = true;
+            break;
+        case AuraType.spellMagnet:
+            continue;
+        case AuraType.modPossess, AuraType.modPossessPet, AuraType.modCharm, AuraType.aoeCharm, AuraType.damageShield,
+                AuraType.modShapeshift, AuraType.mounted, AuraType.empathy, AuraType.modCastingSpeed,
+                AuraType.modMountedSpeedNotStack, AuraType.modDetectRange:
+            return false;
+        default:
+            break;
+        }
+        if (nonmui && !isChannelled)
+            return false;
+        if (multirank && positive)
+            return false;
+    }
+    return true;
+}
+
+unittest
+{
+    // As spell_template has them. Sunder Armor (11597): MOD_RESISTANCE -armor, PreventionType 2, StackAmount 5.
+    SpellInfo sunder;
+    sunder.effect[0] = SpellEffect.applyAura;
+    sunder.casting.applyAuraName[0] = AuraType.modResistance;
+    sunder.casting.preventionType = 2;
+    sunder.casting.spellFamilyName = 4;
+    sunder.casting.spellFamilyFlags = 0x4000;
+    assert(!stacksAcrossCasters(sunder, false, false), "one Sunder Armor stack for all the warriors");
+    // Corruption (172): PERIODIC_DAMAGE: each warlock's own.
+    SpellInfo corruption;
+    corruption.effect[0] = SpellEffect.applyAura;
+    corruption.casting.applyAuraName[0] = AuraType.periodicDamage;
+    corruption.casting.spellFamilyName = 5;
+    corruption.casting.spellFamilyFlags = 0x2;
+    assert(stacksAcrossCasters(corruption, false, false));
+    // Power Word: Fortitude (1243): MOD_STAT stamina, magic, priest family flags 0x8: one, whoever cast it.
+    SpellInfo fortitude;
+    fortitude.effect[0] = SpellEffect.applyAura;
+    fortitude.casting.applyAuraName[0] = AuraType.modStat;
+    fortitude.casting.dispel = 1;
+    fortitude.casting.spellFamilyName = 6;
+    fortitude.casting.spellFamilyFlags = 0x8;
+    assert(!stacksAcrossCasters(fortitude, true, false));
+    // Winter's Chill (12579): MOD_ATTACKER_SPELL_CRIT_CHANCE, family flags 0: each mage's own stack.
+    SpellInfo chill;
+    chill.effect[0] = SpellEffect.applyAura;
+    chill.casting.applyAuraName[0] = AuraType.modAttackerSpellCritChance;
+    chill.casting.dispel = 1;
+    chill.casting.spellFamilyName = 3;
+    assert(stacksAcrossCasters(chill, false, false));
+}
+
 /// One spell's aura on a unit, with each of its aura effects.
 final class Aura
 {
@@ -131,9 +282,15 @@ struct AuraSet
      */
     Aura apply(Aura aura, ref UpdateValues values, out bool isNew)
     {
+        // The same caster's again; or another's of a spell that stacks (`StackAmount`) but not side by side: one
+        // stack for them all, now the new caster's (Sunder Armor from two warriors: `SetStackAmount`).
+        enum uint channelled = 0x04 | 0x40;
+        const shared_ = aura.spell.casting.stackAmount && !aura.passive && !(aura.spell.attributesEx & channelled)
+            && !stacksAcrossCasters(*aura.spell, aura.positive, playerControlled(values));
         foreach (existing; list)
-            if (existing.spell.id == aura.spell.id && existing.caster == aura.caster)
+            if (existing.spell.id == aura.spell.id && (existing.caster == aura.caster || (shared_ && !existing.passive)))
             {
+                existing.caster = aura.caster;
                 existing.duration = existing.maxDuration = aura.maxDuration;
                 if (existing.stacks < (aura.spell.casting.stackAmount ? aura.spell.casting.stackAmount : 1))
                     ++existing.stacks;
@@ -157,6 +314,28 @@ struct AuraSet
         writeSlot(aura, values);
         showOnFields(aura, true, values);
         return aura;
+    }
+
+    /**
+     * Another caster's aura of `aura`'s spell that `aura` takes the place of (CMaNGOS's `AddSpellAuraHolder`): one that
+     * may not stand beside it (two priests' Power Word: Fortitude); null if none. The caller takes it away, with what
+     * it did, before applying `aura`. One that stacks is shared instead (`apply`).
+     */
+    Aura displacedBy(const Aura aura, ref UpdateValues values)
+    {
+        if (aura.passive || aura.spell.casting.stackAmount)
+            return null;
+        foreach (existing; list)
+            if (existing.spell.id == aura.spell.id && existing.caster != aura.caster && !existing.passive)
+                return stacksAcrossCasters(*aura.spell, aura.positive, playerControlled(values)) ? null : existing;
+        return null;
+    }
+
+    /// Whether the unit is a player's or a player's pet (`UNIT_FLAG_PLAYER_CONTROLLED`).
+    private static bool playerControlled(ref UpdateValues values)
+    {
+        enum uint playerControlledFlag = 0x00000008;
+        return (values.get!UNIT_FIELD_FLAGS & playerControlledFlag) != 0;
     }
 
     /// The aura goes, and its slot empties.
@@ -417,8 +596,8 @@ struct AuraSet
     }
 
     /**
-     * Whether one with these auras sees through `target`'s invisibility (`MOD_INVISIBILITY` levels by type against
-     * this set's `MOD_INVISIBILITY_DETECTION`): what `combat.seesThrough` decides, from the auras alone, for the
+     * Whether one with these auras sees through `target`'s invisibility (`MOD_INVISIBILITY` levels by type, summed,
+     * against this set's strongest `MOD_INVISIBILITY_DETECTION` of the type): what `combat.seesThrough` decides, from the auras alone, for the
      * map's sight checks (no `Fighter` to build for each object).
      */
     bool seesThroughInvisibility(const ref AuraSet target) const
@@ -433,7 +612,7 @@ struct AuraSet
                     if (level <= 0)
                         continue;
                     invisible = true;
-                    if (level <= totalByMisc(AuraType.modInvisibilityDetection, type))
+                    if (level <= greatestByMisc(AuraType.modInvisibilityDetection, type))
                         return true;
                 }
         return !invisible;
@@ -448,6 +627,21 @@ struct AuraSet
                 if ((aura.effects & (1 << i)) && aura.type(i) == type && aura.misc(i) == misc)
                     sum += aura.amount[i] * cast(int) aura.stacks;
         return sum;
+    }
+
+    /// The greatest of those whose misc value is `misc` (0 if none).
+    int greatestByMisc(AuraType type, int misc) const
+    {
+        int greatest;
+        foreach (aura; list)
+            foreach (i; 0 .. 3)
+                if ((aura.effects & (1 << i)) && aura.type(i) == type && aura.misc(i) == misc)
+                {
+                    const amount = aura.amount[i] * cast(int) aura.stacks;
+                    if (amount > greatest)
+                        greatest = amount;
+                }
+        return greatest;
     }
 
     /// The sum of those whose misc value has a bit of `mask`.
@@ -617,6 +811,44 @@ unittest
     assert(!isNew && set.list.length == 1);
 }
 
+/**
+ * Invisibility detection: only the strongest of a type counts (CMaNGOS's `HandleInvisibilityDetect`). The rows of
+ * spell_template, all misc value 0: Greater Invisibility (10228) 300; Detect Lesser Invisibility (132) 100,
+ * Detect Invisibility (2970) 200, Detect Greater Invisibility (11743) 300.
+ */
+unittest
+{
+    import dmangos.world.combat : Fighter, seesThrough;
+    import dmangos.world.updatefields : TypeId;
+
+    SpellInfo[4] spells;
+    foreach (n, row; [[10228, AuraType.modInvisibility], [132, AuraType.modInvisibilityDetection],
+            [2970, AuraType.modInvisibilityDetection], [11743, AuraType.modInvisibilityDetection]])
+    {
+        spells[n].id = row[0];
+        spells[n].effect[0] = SpellEffect.applyAura;
+        spells[n].casting.applyAuraName[0] = cast(AuraType) row[1];
+    }
+    auto hidden = UpdateValues(TypeId.unit), seeing = UpdateValues(TypeId.unit);
+    AuraSet target, viewer;
+    bool isNew;
+    target.apply(makeAura(&spells[0], 1, 60, 60_000, true, [300, 0, 0]), hidden, isNew);
+    viewer.apply(makeAura(&spells[1], 2, 60, 60_000, true, [100, 0, 0]), seeing, isNew);
+    viewer.apply(makeAura(&spells[2], 2, 60, 60_000, true, [200, 0, 0]), seeing, isNew);
+    bool sees()
+    {
+        Fighter v, t;
+        v.invisibilityFrom(viewer);
+        t.invisibilityFrom(target);
+        const bySight = viewer.seesThroughInvisibility(target);
+        assert(bySight == seesThrough(v, t), "the map and combat agree");
+        return bySight;
+    }
+    assert(!sees(), "100 and 200 do not add up to Greater Invisibility's 300");
+    viewer.apply(makeAura(&spells[3], 2, 60, 60_000, true, [300, 0, 0]), seeing, isNew);
+    assert(sees(), "Detect Greater Invisibility's 300 does");
+}
+
 // An aura for one kind of weapon counts only with it in hand.
 unittest
 {
@@ -760,4 +992,54 @@ unittest
     auto brief = new Aura;
     brief.setHeartbeatResist(5, 1500, 1);
     assert(brief.heartbeatChance == 10 && brief.heartbeatInterval == 1000, "a diminished one: more, and sooner");
+}
+
+/**
+ * The same spell from two casters: two warriors' Sunder Armor is one stack, the newest caster's; two warlocks'
+ * Corruption stand side by side; a second priest's Power Word: Fortitude takes the first's place.
+ */
+unittest
+{
+    import dmangos.world.updatefields : TypeId;
+
+    auto values = UpdateValues(TypeId.unit);
+    // As spell_template has them: Sunder Armor (11597) MOD_RESISTANCE, PreventionType 2, StackAmount 5; Corruption
+    // (172) PERIODIC_DAMAGE; Power Word: Fortitude (1243) MOD_STAT, Dispel 1, priest family flags 0x8.
+    SpellInfo sunder, corruption, fortitude;
+    sunder.id = 11597;
+    sunder.effect[0] = SpellEffect.applyAura;
+    sunder.casting.applyAuraName[0] = AuraType.modResistance;
+    sunder.casting.preventionType = 2;
+    sunder.casting.stackAmount = 5;
+    sunder.casting.spellFamilyName = 4;
+    sunder.casting.spellFamilyFlags = 0x4000;
+    corruption.id = 172;
+    corruption.effect[0] = SpellEffect.applyAura;
+    corruption.casting.applyAuraName[0] = AuraType.periodicDamage;
+    corruption.casting.spellFamilyName = 5;
+    corruption.casting.spellFamilyFlags = 0x2;
+    fortitude.id = 1243;
+    fortitude.effect[0] = SpellEffect.applyAura;
+    fortitude.casting.applyAuraName[0] = AuraType.modStat;
+    fortitude.casting.dispel = 1;
+    fortitude.casting.spellFamilyName = 6;
+    fortitude.casting.spellFamilyFlags = 0x8;
+
+    AuraSet set;
+    bool isNew;
+    auto first = set.apply(makeAura(&sunder, 1, 60, 30_000, false, [-450, 0, 0]), values, isNew);
+    set.apply(makeAura(&sunder, 1, 60, 30_000, false, [-450, 0, 0]), values, isNew);
+    auto shared_ = set.apply(makeAura(&sunder, 2, 60, 30_000, false, [-450, 0, 0]), values, isNew);
+    assert(!isNew && shared_ is first && first.stacks == 3 && first.caster == 2, "one stack, the newest caster's");
+    assert(set.total(AuraType.modResistance) == -1350);
+
+    set.apply(makeAura(&corruption, 1, 60, 18_000, false, [100, 0, 0]), values, isNew);
+    set.apply(makeAura(&corruption, 2, 60, 18_000, false, [100, 0, 0]), values, isNew);
+    assert(isNew && set.total(AuraType.periodicDamage) == 200, "each warlock's");
+
+    auto one = makeAura(&fortitude, 1, 60, 1_800_000, true, [54, 0, 0]);
+    set.apply(one, values, isNew);
+    auto other = makeAura(&fortitude, 2, 60, 1_800_000, true, [54, 0, 0]);
+    assert(set.displacedBy(other, values) is one, "the second priest's takes its place");
+    assert(set.displacedBy(makeAura(&corruption, 3, 60, 18_000, false, [100, 0, 0]), values) is null);
 }
