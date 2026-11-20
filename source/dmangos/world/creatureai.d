@@ -521,12 +521,19 @@ final class CreatureAI : Scripted, CreatureHost
         else if (inCombat_)
         {
             updateCombatManager(world, diff);
-            if (!me.auras.has(AuraType.modStun) && fleeTimer <= 0)
+            const feared = me.auras.has(AuraType.modFear), confused = me.auras.has(AuraType.modConfuse);
+            if (!me.auras.has(AuraType.modStun) && fleeTimer <= 0 && !feared && !confused)
                 spellListTick(world, diff);
-            if (inCombat_ && fleeTimer > 0)
-                updateFleeing(diff);
-            else if (inCombat_ && !me.auras.has(AuraType.modStun)) // stunned, it does nothing
-                updateAI(world);
+            if (inCombat_ && (feared || confused))
+                updateControlledWalk(feared);
+            else
+            {
+                controlledWalkEnded();
+                if (inCombat_ && fleeTimer > 0)
+                    updateFleeing(diff);
+                else if (inCombat_ && !me.auras.has(AuraType.modStun)) // stunned, it does nothing
+                    updateAI(world);
+            }
             if (inCombat_)
                 updateReachability(world, diff);
             if (inCombat_ && assistanceReceivers.length)
@@ -1192,7 +1199,7 @@ private:
     {
         import std.math : PI;
 
-        if (!meleeAttacking || attackTimer || !meleeEnabled)
+        if (!meleeAttacking || attackTimer || !meleeEnabled || (me.values.get!UNIT_FIELD_FLAGS & UnitFlags.pacified))
             return;
         const self = me.fighter, other = target.fighter;
         if (!canReachWithMelee(self, other) || !hasInArc(self.position, other.position, 2 * PI / 3) || !other.alive)

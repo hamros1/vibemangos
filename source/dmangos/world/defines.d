@@ -137,6 +137,7 @@ enum UnitFlags : uint
     immuneToNpc = 0x00000200,
     looting = 0x00000400,          /// its loot window is open
     pvp = 0x00001000,
+    silenced = 0x00002000,         /// no spells of `SPELL_PREVENTION_TYPE_SILENCE`
     swimming = 0x00008000,         /// swims (a creature of the water, in it)
     untargetable = 0x00010000,
     pacified = 0x00020000,
@@ -144,6 +145,7 @@ enum UnitFlags : uint
     inCombat = 0x00080000,
     taxiFlight = 0x00100000,
     disarmed = 0x00200000,
+    confused = 0x00400000,         /// disoriented: Polymorph, Blind, Scatter Shot
     fleeing = 0x00800000,          /// running in fear
     uninteractible = 0x02000000,
     skinnable = 0x04000000,        /// a creature with a skin to take; a player dead in a battleground: its insignia

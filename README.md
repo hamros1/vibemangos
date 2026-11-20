@@ -398,6 +398,11 @@ What works now:
   * **Creatures fight:** attacked, they fight back; aggressive ones
     (not `CREATURE_EXTRA_FLAG_NO_AGGRO_ON_SIGHT`) attack a hostile player that comes within their
     aggro radius (`Detection`, a yard more for each level the player is below them) and in sight.
+    Crowd control: a stunned, feared or disoriented creature neither fights nor casts (a cast under way
+    stops); feared it runs from whoever feared it, disoriented it wanders; silenced it casts no spell that silence
+    prevents, pacified it does not swing. A feared or disoriented player loses control of its character
+    (`SMSG_CLIENT_CONTROL_UPDATE`) and the server walks it; stunned, silenced, pacified, feared or disoriented,
+    its casts are refused with the client's reasons, and Disarm takes its main-hand weapon's damage.
     A stealthed player (Stealth, Prowl) is seen only in front of them and near enough: CMaNGOS's 30
     points, 5 a level above the first and detection auras, less the stealth's strength, three tenths
     of a yard a point (a level 60 monster sees Stealth rank 4 at 7.5 yards); a little further, a

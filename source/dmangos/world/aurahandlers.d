@@ -526,8 +526,36 @@ private:
                 if (apply)
                     interruptAuras(AuraInterrupt.shapeshifting, aura);
                 break;
-            case AuraType.modRoot, AuraType.modStun:
+            case AuraType.modRoot:
                 movement = true;
+                break;
+            // Crowd control (CMaNGOS's `SetStunned`, `SetFleeing`, `SetConfused`, silence, pacify, disarm): on the
+            // unit's flags while any such aura lasts; as it begins, what it stops stops.
+            case AuraType.modStun:
+                movement = true;
+                crowdControlFlag(UnitFlags.stunned, AuraType.modStun, apply, true);
+                break;
+            case AuraType.modFear:
+                crowdControlFlag(UnitFlags.fleeing, AuraType.modFear, apply, true);
+                break;
+            case AuraType.modConfuse:
+                crowdControlFlag(UnitFlags.confused, AuraType.modConfuse, apply, true);
+                break;
+            case AuraType.modSilence:
+                crowdControlFlag(UnitFlags.silenced, AuraType.modSilence, apply, false);
+                if (apply && generic.active && generic.spell.casting.preventionType == 1)
+                    interruptCast(SpellCastResult.interrupted);
+                if (apply && channelSpell !is null && channelSpell.casting.preventionType == 1)
+                    endChannel(true);
+                break;
+            case AuraType.modPacify:
+                crowdControlFlag(UnitFlags.pacified, AuraType.modPacify, apply, false);
+                if (apply)
+                    stopAttack(false);
+                break;
+            case AuraType.modDisarm:
+                crowdControlFlag(UnitFlags.disarmed, AuraType.modDisarm, apply, false);
+                stats = true; // the weapon's damage goes
                 break;
             default:
                 break;
@@ -620,6 +648,23 @@ private:
                     if (mask & (1u << bit))
                         if (const total = spellModTotal(type, op, bit))
                             sendSpellMod(type, bit, op, total);
+        }
+    }
+
+    /**
+     * `flag` on the player's unit flags while it has an aura of `type` (taken off with the last); `stopsCasting`:
+     * as the first begins, the cast and channel under way stop (a stun, a fear, a disorientation).
+     */
+    private void crowdControlFlag(uint flag, AuraType type, bool apply, bool stopsCasting)
+    {
+        const flags = player.values.get!UNIT_FIELD_FLAGS;
+        const on = player.auras.hasType(type);
+        player.values.set!UNIT_FIELD_FLAGS(on ? flags | flag : flags & ~flag);
+        if (apply && stopsCasting)
+        {
+            interruptCast(SpellCastResult.interrupted);
+            if (channelSpell !is null)
+                endChannel(true);
         }
     }
 
