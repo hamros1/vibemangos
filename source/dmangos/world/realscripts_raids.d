@@ -86,8 +86,7 @@ Creature setUp(const ref Boss b, out Scene s)
     if (b.heroAt.x == 0)
         heroAt.x += 3;
     s = new Scene(b.map, heroAt, b.classes);
-    s.run(400.msecs); // its cells loaded
-    s.forget();
+    s.run(400.msecs); // its cells loaded (a boss may see them come: what it does then is seen too)
     auto boss = b.arrive !is null ? b.arrive(s) : b.summonAt.x != 0 ? s.summon(b.entry, at) : s.find(b.entry);
     assert(boss !is null, format!"%s: not on the map"(b.name));
     s.clear(boss.position, 80, b.keep ~ b.entry);
@@ -832,4 +831,228 @@ unittest
     s.run(2.seconds);
     assert(s.ask(1) == 3, "the Rajaxx encounter not done");
     assert(andorov.alive && (andorov.values.get!UNIT_NPC_FLAGS & vendorFlag), "Andorov does not trade");
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Temple of Ahn'Qiraj (531)
+// ---------------------------------------------------------------------------------------------------------------
+
+/**
+ * The Prophet Skeram, Battleguard Sartura, Fankriss, Princess Huhuran, Ouro: each one's abilities, the copy's
+ * encounter. Skeram at 75% splits into three (two images); his death opens his gate. Sartura enrages under 25%;
+ * Huhuran goes berserk under 30%. Ouro comes up from his sand when it is disturbed, sweeps and blasts, and after 90 s
+ * goes under, his dirt mounds chasing.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    enum : uint { skeramEntry = 15263, spawnOfFankriss = 15630, hatchling = 15962, ouroEntry = 15517,
+        ouroSpawner = 15957, dirtMound = 15712 }
+    const Boss[] bosses = [
+        // Skeram: his line; Arcane Explosion (two in melee: one in ten of the raid and one more), True Fulfillment
+        // (the second on his threat); at 75% two images (his health then, shared).
+        Boss("The Prophet Skeram", 531, skeramEntry, 0, [], [Stage(0, 16, [26192, 785]),
+            Stage(74, 3, null, null, [[skeramEntry, 3]])], -1_531_000, -1_531_002, 2, Position.init,
+            [classWarrior, classMage], (Scene s, Creature boss) {
+                assert(s.doorOpen(180636), "Skeram's gate shut after his death");
+                assert(s.all(skeramEntry).length == 0, "his images outlive him");
+            }),
+        // Sartura: her line; Sundering Cleave, Whirlwind; under 25% enrage and its emote.
+        Boss("Battleguard Sartura", 531, 15516, 2, [], [Stage(0, 20, [25174, 26083]),
+            Stage(24, 2, [8269], [-1_000_002])], -1_531_008, -1_531_010),
+        // Fankriss: Mortal Wound; an entangle (720, 731 or 1121) at someone not his victim and two Vekniss
+        // Hatchlings there; Spawns of Fankriss (30 .. 50 s).
+        Boss("Fankriss the Unyielding", 531, 15510, 3, [], [Stage(0, 52, [25646], null,
+            [[spawnOfFankriss, 1], [hatchling, 2]])]),
+        // Huhuran: Acid Spit, Noxious Poison, Frenzy (25 .. 35 s; its emote), Wyvern Sting; under 30% Berserk.
+        Boss("Princess Huhuran", 531, 15509, 5, [], [Stage(0, 46, [26050, 26053, 26051, 26180], [-1_000_001]),
+            Stage(29, 2, [26068], [-1_000_004])]),
+        // Ouro: his sand disturbed, he comes up (Birth); Sweep (20 s), Sand Blast (25 s); at 90 s under the sand,
+        // his dirt mounds after the raid; under 20% Berserk. A wipe sends him back under (his sand wakes again).
+        Boss("Ouro", 531, ouroEntry, 7, [ouroSpawner], [Stage(0, 33, [26586, 26103, 26102]),
+            Stage(0, 62, [26063], null, [[dirtMound, 1]]),
+            Stage(19, 33, [26615])], 0, 0, 2, Position.init, [classWarrior, classMage], null, 20, true, null,
+            spawnOf(531, ouroSpawner), (Scene s) {
+                auto spawner = s.the(ouroSpawner);
+                s.moveHeroes(spawner.position);
+                s.engage(spawner);
+                assert(s.runUntil(() => s.find(ouroEntry) !is null, 5.seconds), "Ouro does not come up");
+                return s.the(ouroEntry);
+            }),
+    ];
+    foreach (b; bosses)
+    {
+        fight(b);
+        wipe(b);
+    }
+}
+
+/**
+ * The Bug Trio: Lord Kri, Princess Yauj and Vem fight together; the first two to fall are devoured by the others
+ * (the emote; they heal fully) and the encounter goes on; the last one dies, and it is done. Their own: Kri's
+ * Cleave and Toxic Volley, Vem's Knock Away and Knockdown, Yauj's Fear and Ravage. Wowpedia: when one dies the
+ * others are healed to full.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    enum uint kri = 15511, yauj = 15543, vem = 15544;
+    auto at = spawnOf(531, kri);
+    auto s = new Scene(531, Position(at.x + 3, at.y, at.z), [classWarrior, classMage]);
+    s.run(1.seconds);
+    auto k = s.the(kri), y = s.the(yauj), v = s.the(vem);
+    s.clear(k.position, 60, [kri, yauj, vem]);
+    s.stayWith = k;
+    s.stayWithin = 15;
+    foreach (c; [k, y, v])
+        s.engage(c);
+    s.run(1.seconds);
+    assert(s.ask(1) == 1, "the trio's encounter not in progress");
+    s.run(24.seconds);
+    foreach (pair; [[kri, 26350], [kri, 25812], [vem, 18670], [vem, 19128], [yauj, 26580], [yauj, 3242]])
+        assert(s.castBy(pair[0], pair[1]), format!"%s: %s not cast\n%s"(pair[0], pair[1], s.seen()));
+    // Kri falls first: devoured, the others whole again.
+    s.hurtTo(y, 50);
+    s.hurtTo(v, 50);
+    s.kill(k);
+    s.run(4.seconds);
+    assert(s.said(-1_531_048), "no emote as Kri is devoured\n" ~ s.seen());
+    assert(s.find(kri) is null, "Kri not gone");
+    assert(s.healthOf(y) >= 100 && s.healthOf(v) >= 100, "the others not healed");
+    assert(s.ask(1) == 1, "the encounter over with two alive");
+    // Vem next; then Yauj, the last, dies.
+    s.stayWith = y;
+    s.kill(v);
+    s.run(4.seconds);
+    assert(s.find(vem) is null && y.alive, "Vem not devoured");
+    s.kill(y);
+    s.run(2.seconds);
+    assert(!y.alive && s.ask(1) == 3, format!"Yauj does not die, or the encounter is not done (%s)"(s.ask(1)));
+}
+
+/**
+ * Viscidus: Poison Shock, Poisonbolt Volley; frost slows him (100 hits: the emote), slows him more (150), freezes
+ * him (200); struck 150 times frozen he shatters into globs (a glob for each 5% of his health) that crawl back;
+ * those slain do not come back, and with none back he dies. Wowpedia: 200 frost hits to freeze, 150 melee hits to
+ * shatter; he reforms with the health of the globs that reach him.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    enum uint viscidusEntry = 15299, glob = 15667, frostbolt = 116;
+    const b = Boss("Viscidus", 531, viscidusEntry, 4, [], null);
+    Scene s;
+    auto viscidus = setUp(b, s);
+    s.engage(viscidus);
+    s.run(16.seconds);
+    assert(s.castBy(viscidusEntry, 25993) && s.castBy(viscidusEntry, 25991), "no Poison Shock or Volley\n" ~ s.seen());
+    s.hurtTo(viscidus, 50);
+    // Frost until he freezes (a resisted bolt does not count: some more than 200).
+    foreach (k; 0 .. 400)
+    {
+        if (s.said(-1_531_043))
+            break;
+        s.castTriggered(1, frostbolt, viscidus.guid);
+        if (k % 10 == 0)
+            s.run(200.msecs);
+    }
+    s.run(1.seconds);
+    foreach (line; [-1_531_041, -1_531_042, -1_531_043])
+        assert(s.said(line), format!"Viscidus: line %s not said (frost)\n%s"(line, s.seen()));
+    s.pressing = false;
+    foreach (k; 0 .. 150)
+        s.engage(viscidus); // a blow from each
+    s.run(1.seconds);
+    assert(s.said(-1_531_046), "Viscidus does not shatter\n" ~ s.seen());
+    auto globs = s.all(glob);
+    assert(globs.length >= 9, format!"%s globs (half his health: ten)"(globs.length));
+    foreach (g; globs)
+        s.kill(g);
+    assert(s.runUntil(() => !viscidus.alive, 10.seconds), "every glob slain, but Viscidus lives on");
+    assert(s.ask(4) == 3, "his encounter not done");
+}
+
+/**
+ * The Twin Emperors: their lines; Vek'lor's Shadow Bolt, Blizzard and Arcane Burst, Vek'nilash's Uppercut and
+ * Unbalancing Strike; one health between them (a blow to one is felt by both); at 35 s they swap places; one slain,
+ * both die. Wowpedia: they share health, teleport every 30-35 s, and heal each other when close.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    enum uint veklor = 15276, veknilash = 15275;
+    auto at = spawnOf(531, veknilash);
+    auto s = new Scene(531, Position(at.x + 3, at.y, at.z), [classWarrior, classMage]);
+    s.run(1.seconds);
+    auto lor = s.the(veklor), nilash = s.the(veknilash);
+    s.clear(nilash.position, 100, [veklor, veknilash]);
+    s.engage(nilash);
+    s.engage(lor);
+    s.stayWith = nilash;
+    s.stayWithin = 200; // the mage reaches Vek'lor from afar
+    s.run(1.seconds);
+    assert(s.ask(6) == 1, "the twins' encounter not in progress");
+    assert(s.texts.length >= 2, "their aggro lines\n" ~ s.seen());
+    s.run(36.seconds);
+    foreach (pair; [[veklor, 26006], [veklor, 568], [veknilash, 26613]])
+        assert(s.castBy(pair[0], pair[1]), format!"%s: %s not cast\n%s"(pair[0], pair[1], s.seen()));
+    assert(s.castBy(veklor, 800) || s.castBy(veknilash, 800), "they do not swap\n" ~ s.seen());
+    s.hurtTo(nilash, 60);
+    s.run(1.seconds);
+    // (shared, then healed by his brother's Heal Brother as they stand close: a few points over)
+    assert(s.healthOf(lor) < 70, format!"Vek'lor at %s%%: the blow not shared"(s.healthOf(lor)));
+    s.kill(nilash);
+    s.run(2.seconds);
+    assert(!lor.alive && !nilash.alive, "one slain, the other lives");
+    assert(s.said(-1_531_024) && s.said(-1_531_031), "their death lines\n" ~ s.seen());
+    assert(s.ask(6) == 3 && s.doorOpen(180635), "the encounter not done, or the way out shut");
+}
+
+/**
+ * C'Thun: the Eye fights first (Eye Beam, Dark Glare at 48 s, a Claw Tentacle at 8 s, eight Eye Tentacles at 45 s);
+ * slain, C'Thun rises (his carapace), sends a Giant Claw Tentacle (10 s), eight Eye Tentacles (35 s), a Giant Eye
+ * Tentacle (40 s), and swallows players into his stomach (Mouth Tentacle, then the stomach's Digestive Acid), where
+ * two Flesh Tentacles grow; both slain, he is weakened (the emote, Vulnerable); his death ends it.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    enum : uint
+    {
+        eyeEntry = 15589, cthunEntry = 15727, claw = 15725, eyeTentacle = 15726, giantClaw = 15728, giantEye = 15334,
+        flesh = 15802,
+    }
+    const b = Boss("Eye of C'Thun", 531, eyeEntry, 8, [cthunEntry], null);
+    Scene s;
+    auto eye = setUp(b, s);
+    auto cthun = s.the(cthunEntry);
+    s.stayWithin = 40;
+    s.engage(eye);
+    s.run(50.seconds);
+    assert(s.ask(8) == 1, "the encounter not in progress");
+    assert(s.castBy(eyeEntry, 32950) || s.castBy(eyeEntry, 26134), "no Eye Beam\n" ~ s.seen());
+    assert(s.castBy(eyeEntry, 26029), "no Dark Glare\n" ~ s.seen());
+    assert(s.all(claw).length >= 1 && s.all(eyeTentacle).length >= 8, format!"tentacles: %s claws, %s eyes"(
+        s.all(claw).length, s.all(eyeTentacle).length));
+    s.kill(eye);
+    s.stayWith = cthun;
+    s.forget();
+    s.run(50.seconds);
+    assert(s.castBy(cthunEntry, 26156) || cthun.auras.find(26156) !is null, "C'Thun without his carapace");
+    assert(s.all(giantClaw).length >= 1 && s.all(giantEye).length >= 1,
+        format!"%s giant claws, %s giant eyes"(s.all(giantClaw).length, s.all(giantEye).length));
+    assert(s.cast_(26332), "no one seized by a Mouth Tentacle\n" ~ s.seen());
+    assert(s.all(flesh).length == 2, format!"%s Flesh Tentacles"(s.all(flesh).length));
+    foreach (f; s.all(flesh))
+        s.kill(f);
+    s.run(2.seconds);
+    assert(cthun.auras.find(26235) !is null, "C'Thun not weakened, his Flesh Tentacles slain");
+    s.kill(cthun);
+    s.run(2.seconds);
+    assert(s.ask(8) == 3, "his encounter not done");
 }

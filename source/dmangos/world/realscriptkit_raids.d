@@ -530,6 +530,14 @@ final class Scene
         listen();
     }
 
+    /// Character `k` casts `spell` at `target` at once (triggered: no cast time, no cost), as a stand-in for its
+    /// many casts in a fight (a raid's frost on Viscidus).
+    void castTriggered(size_t k, uint spell, ulong target)
+    {
+        heroes[k].session.inWorld.castTriggeredAt(spell, target);
+        listen();
+    }
+
     /// Whether the (first) door of `entry` on the map stands open; asserts there is one.
     bool doorOpen(uint entry)
     {
