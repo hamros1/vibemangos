@@ -585,3 +585,49 @@ or not at all); Earth Shock, and any direct damage with a non-aura extra (an int
 **Second opinion (CMaNGOS-classic):** `IsBinarySpell` makes any non-damage effect on the targets of the damage binary
 (Earth Shock binary); the partial roll bumps 0% to 25% above 54% for direct damage, and binary periodic damage rolls
 partial resists at a tenth.
+
+## Procs
+
+**What:** what an aura procs on, how often, and how long it waits (procs.d `procRule`, `procFlagsOf`, `runProcs`).
+
+**Sources: Blizzard's data.** The 1.12.1 Spell.dbc has each aura's `ProcFlags`, `ProcChance` and `ProcCharges` (the
+world database's `spell_template` holds them as the DBC has them). Classic Era's SpellAuraOptions (wago.tools, build
+1.15.9.70576) has the same three, and `ProcCategoryRecovery`, the milliseconds before an aura may proc again, which
+1.12's client data lacks. `tools/fetch-procs.py DATA_DIR` writes it to `DATA_DIR/procs.csv` (not committed);
+`ClientData.procOptions` reads it.
+
+**The encoding.** `ProcTypeMask_0` is the later encoding. Compared with 1.12's `ProcFlags` over the 1065 auras with a
+flag in either: 951 have the same mask; bits 0 to 20 (a kill 0x2 to any damage taken 0x100000) co-occur one to one;
+0x80000000 rides on all 68 auras of damage over time taken (a later event); bit 21, 1.12's trap going off (Entrapment
+only), is in Classic Era on damage over time dealt (Nightfall 0x250000, Pyroclasm 0x240000). So a mask is taken as its
+bits 0 to 20 (`procFlagsOf`). Verified on the real data (dmangos.world.realrules_combat) on Lightning Shield, Blood
+Craze, Flurry, Seal of Command, Ignite, Arcane Concentration, Nightfall, Pyroclasm, Vampiric Embrace and Spinal Reaper.
+
+**Rule:** the flags, chance and charges are the aura's spell's (1.12's); the cooldown is Blizzard's
+`ProcCategoryRecovery` where Classic Era has the aura as 1.12 has it (the same flags, chance and charges: 100 of the 102
+auras with a recovery), else the world database's. Classic Era changed some auras after 1.12: Omen of Clarity procs
+from spells there (0x14014, 10 s; its 1.12 tooltip: "Each of the Druid's melee attacks"), so it keeps the database's.
+
+| aura | `spell_proc_event` | Blizzard |
+|---|---|---|
+| Lightning Shield, Shadowguard | 3 s | 3.5 s |
+| Seal of Command | 3 s | 1 s |
+| Hand of Justice | 3 s | 2 s |
+| Unbridled Wrath, Mace Specialization, Seals of Justice, Light, Wisdom, Reckoning, Expose Weakness, Bloodfang, Lightning Strike, Heroism, Decapitate | 3 s | none |
+| Sword Specialization | none | 0.2 s |
+| Setup, Arcane Concentration's ranks, Magic Absorption, Force Reactive Disk, Mana Surge | none (or 1 s) | 1 s |
+| Seal Fate, Flurry (shaman), Head Rush | none | 0.5 s |
+| Thrash, Ironfoe, the Absorption items and other item and creature auras | none | 0.2 to 240 s |
+
+**Still from the world database (no Blizzard data):** what hits an aura takes (`procEx`: a crit only, a dodge, a
+block), its school and spell family masks, the flags it gives where the spell has none (Improved Blizzard, Improved
+Mend Pet, Improved Aspect of the Hawk) or narrows (Arcane Concentration without ranged attacks; Illusion Passive), and
+rates a minute: SpellAuraOptions' `SpellProcsPerMinuteID` is 0 on every row, so the rates (Seal of Command 7, Crusader
+1, ...) stay the database's. Where a talent's tooltip gives a flat chance the class passes took it (Unbridled Wrath,
+Mace Specialization: "a 40% chance"), and Blizzard's `ProcChance` agrees (8% to 40%, 1% to 6%).
+
+**`spell_affect` stays.** SpellEffect's `EffectSpellClassMask` is in Classic Era's own family-flag numbering, rebuilt
+since 1.12 (2335 of 3060 effect masks differ from 1.12's `EffectItemType`). Translated through the spells each names
+(SpellClassOptions) back to 1.12's flags, 70 of the 132 `spell_affect` rows agree and 62 do not, both ways (Fire
+Power's would take in Frostbolt, Polymorph and the conjures, whose 1.12 flag 0x40000000 a fire spell shares, and lose Ignite's 0x8000000). It is no source for 1.12's masks;
+`spell_affect` and the tooltip fixes (`world/tooltipmasks.d`) stay.

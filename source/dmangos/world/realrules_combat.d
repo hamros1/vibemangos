@@ -236,3 +236,106 @@ unittest
     foreach (roll; 1 .. 10_001)
         assert(partiallyResisted(100, 300, 60, victim, isBinarySpell(*corruption), roll) == Resisted(100, 0));
 }
+
+/**
+ * Classic Era's `ProcTypeMask_0` against the 1.12 Spell.dbc's `ProcFlags`, on the real data: bits 0 to 20 are the same
+ * events. Every aura of `spell_proc_event` Classic Era has as 1.12 has it matches on them; most auras of all have the
+ * same mask. Nightfall's and Pyroclasm's bit 21 and Vampiric Embrace's and Illusion's 0x80000000 are later events,
+ * which the mapping drops.
+ */
+unittest
+{
+    if (!haveRealData() || haveProcData() == false)
+        return;
+    import dmangos.world.procs : procFlagsOf;
+
+    auto w = RealWorld.make();
+    const procs = w.context.client.procOptions;
+    uint same, either;
+    foreach (id, ref o; procs)
+        if (const s = w.context.data.spells.spell(id))
+            if (s.casting.procFlags || o.typeMask)
+            {
+                ++either;
+                same += procFlagsOf(o.typeMask) == s.casting.procFlags;
+            }
+    assert(same >= 950 && same * 10 >= either * 8, format!"%s of %s the same"(same, either));
+    // Known auras of each kind of event: struck (Lightning Shield, Blood Craze), a swing (Flurry, Seal of Command), a
+    // spell (Ignite, Arcane Concentration), ticks dealt (Nightfall, Pyroclasm) and taken (Vampiric Embrace), a kill
+    // (Spinal Reaper).
+    foreach (id; [324u, 10432, 16487, 12966, 20375, 11119, 11213, 18094, 18096, 15286, 21185])
+    {
+        const o = id in procs;
+        assert(o !is null, format!"%s: no proc data"(id));
+        assert(procFlagsOf(o.typeMask) == spellOf(w, id).casting.procFlags,
+            format!"%s: %#x against 1.12's %#x"(id, o.typeMask, spellOf(w, id).casting.procFlags));
+    }
+    assert(procs[18094].typeMask != spellOf(w, 18094).casting.procFlags, "Nightfall: a later bit beside");
+    assert(procs[15286].typeMask != spellOf(w, 15286).casting.procFlags, "Vampiric Embrace: a later bit beside");
+}
+
+/// Whether data/procs.csv was there (`ClientData.procOptions`).
+private bool haveProcData()
+{
+    auto w = RealWorld.make();
+    return w.context.client.procOptions.length != 0;
+}
+
+/**
+ * Proc cooldowns from Blizzard's data (SpellAuraOptions.ProcCategoryRecovery) where Classic Era has the aura as 1.12
+ * has it, else `spell_proc_event`'s: Lightning Shield 3.5 s (the world database's 3), Seal of Command 1 s (3),
+ * Unbridled Wrath and Mace Specialization none (3), Sword Specialization 0.2 s (none), Setup 1 s (none); Omen of
+ * Clarity, which Classic Era made proc from spells too, keeps the world database's 3 s.
+ */
+unittest
+{
+    if (!haveRealData() || !haveProcData())
+        return;
+    import dmangos.world.procs : procRule;
+
+    auto w = RealWorld.make();
+    uint cooldown(uint id, bool blizzard = true)
+    {
+        const rule = procRule(spellOf(w, id), w.context.data.spells.procEvent(id), w.context.client.procOptions);
+        assert(rule.blizzardCooldown == blizzard, format!"%s: Blizzard's %s"(id, rule.blizzardCooldown));
+        return rule.cooldown;
+    }
+    assert(cooldown(324) == 3500 && cooldown(10432) == 3500, "Lightning Shield");
+    assert(cooldown(20375) == 1000, "Seal of Command");
+    assert(cooldown(12322) == 0 && cooldown(13002) == 0, "Unbridled Wrath");
+    assert(cooldown(12284) == 0 && cooldown(12704) == 0, "Mace Specialization");
+    assert(cooldown(12281) == 200, "Sword Specialization");
+    assert(cooldown(13983) == 1000, "Setup");
+    assert(cooldown(16864, false) == 3000, "Omen of Clarity: not the aura 1.12 has");
+}
+
+/**
+ * Lightning Shield (324) fires once in 3.5 s: struck again 3.2 s after a ball fired, the shaman keeps its next one
+ * (the world database's 3 s let it fire).
+ */
+unittest
+{
+    if (!haveRealData() || !haveProcData())
+        return;
+    import dmangos.world.aurahandlers : ProcFlag;
+    import dmangos.world.procs : ProcEx, ProcHit;
+
+    auto w = RealWorld.make();
+    auto who = w.character(507, "Thrall", 7, 60, [324], raceOrc);
+    auto me = cast(Character) who.session.inWorld;
+    me.player.movement.position.orientation = 0;
+    const kobold = w.enemy(who);
+    assert(w.cast_(who, 324) == imported!"dmangos.world.spellcast".SpellCastResult.ok);
+    auto shield = me.player.auras.find(324);
+    assert(shield !is null && shield.charges == 3);
+    auto attacker = w.context.map(0).unit(kobold);
+    const swing = ProcHit(null, ProcEx.normalHit, 5);
+    me.runProcs(ProcFlag.takeMeleeSwing, attacker, swing);
+    assert(shield.charges == 2, "a ball fired");
+    w.now += 3200.msecs;
+    me.runProcs(ProcFlag.takeMeleeSwing, attacker, swing);
+    assert(shield.charges == 2, "3.2 s on: none (Blizzard's 3.5 s)");
+    w.now += 400.msecs;
+    me.runProcs(ProcFlag.takeMeleeSwing, attacker, swing);
+    assert(shield.charges == 1, "3.6 s on: the next");
+}

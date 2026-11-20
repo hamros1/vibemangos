@@ -1621,6 +1621,7 @@ unittest
         foreach (_; 0 .. n)
         {
             me.clearComboPoints();
+            w.now += 1100.msecs; // past its recovery (SpellAuraOptions: 1 sec)
             struck(w, who, hogger, MeleeHitOutcome.dodge);
             points += me.comboPoints == 1 && me.comboTarget == hogger;
         }
