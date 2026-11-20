@@ -61,6 +61,8 @@ enum SpellCastResult : ubyte
     notKnown = 0x38,
     notReady = 0x3C,
     notStanding = 0x3E,
+    notMounted = 0x39,         /// "You are mounted"
+    notOnTaxi = 0x3A,          /// "You are in flight"
     notWhileGhost = 0x42,
     noPet = 0x4C,
     lowLevel = 0x2B,

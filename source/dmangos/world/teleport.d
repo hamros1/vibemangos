@@ -398,6 +398,7 @@ private:
         sendInitialPacketsAfterAddToMap();
         resetMovementCheck();
         startFallAt(player.position.z);
+        dismountOnArrival(); // a dungeon without mounts
         petsOnArrival();
         pvpArrived();
         battlegroundArrived();

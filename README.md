@@ -959,6 +959,7 @@ source/dmangos/world/       the world server
   terrain.d                   the .map files: ground heights, areas, liquids per tile, and zones from them
   exploration.d               zones and areas from the map, explored areas, experience
   environment.d               breath, fatigue, lava, falling: mirror timers and environmental damage
+  mounting.d                  riding: casts refused mounted, no melee, dismounting for objects and dungeons
   moveorders.d                speed, root, knockback, water walk, slow fall, hover orders and their acknowledgements
   inventory.d                 items and bags, and the rules for storing, equipping, swapping, saving them
   conditions.d                the conditions table: requirements of menus, lessons and wares

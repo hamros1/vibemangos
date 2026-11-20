@@ -41,6 +41,7 @@ struct Relating
     uint playerFlags;                       /// `PLAYER_FLAGS` of the player it is or that controls it (FFA, contested)
     bool playerOwned;                       /// a player's pet, totem or guardian: it has a controlling player
     ulong controller;                       /// the player in control: the player itself, or a pet's owner; 0: none
+    bool mounted;                           /// a player on its mount (or a flight's): it may start no attack
 
     /// Whether a player is in control: a player, or a unit one controls.
     @property bool hasControllingPlayer() const pure nothrow @nogc @safe
@@ -253,10 +254,10 @@ bool canAttack(const Relating self, const Relating unit, const ClientData client
     return isEnemy(self, unit, client) || isEnemy(unit, self, client);
 }
 
-/// Whether `self` may attack `unit` now: both alive (being mounted is not checked: there are no mounts yet).
+/// Whether `self` may attack `unit` now: both alive, and `self` not mounted (`Unit::CanAttackNow`).
 bool canAttackNow(const Relating self, const Relating unit, const ClientData client, bool sameGroup = false)
 {
-    return self.alive && unit.alive && canAttack(self, unit, client, sameGroup);
+    return self.alive && !self.mounted && unit.alive && canAttack(self, unit, client, sameGroup);
 }
 
 unittest
@@ -288,6 +289,9 @@ unittest
     assert(!canAttack(human, unit(3, false, UnitFlags.immuneToPlayer), client));
     wolf.alive = false;
     assert(!canAttackNow(human, wolf, client) && canAttack(human, wolf, client));
+    wolf.alive = true;
+    human.mounted = true;
+    assert(!canAttackNow(human, wolf, client) && canAttack(human, wolf, client), "no attack started mounted");
 
     assert(reputationToRank(0) == ReputationRank.neutral && reputationToRank(-1) == ReputationRank.unfriendly);
     assert(reputationToRank(3000) == ReputationRank.friendly && reputationToRank(-42_000) == ReputationRank.hated);

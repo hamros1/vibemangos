@@ -963,6 +963,13 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Files: `LFG/LFGDefines.h`, `LFG/LFGMgr.cpp`, `LFG/LFGQueue.cpp`, `Group/Group.cpp`, `Server/Packets/Misc.cpp`
 * Functions: `LFGMgr::CalculateRoles`, `LFGMgr::GetPriority`, `LFGQueue::Update`, `LFGQueue::FindRoleToGroup`, `Group::CalculateLFGRoles`, `Group::FillPremadeLFG`
 
+## world/mounting.d
+
+* Projects: CMaNGOS
+* Files: `Spell.cpp`, `Relations.cpp`, `Unit.cpp`, `GameObject.cpp`, `GameObject.h`, `MovementHandler.cpp`, `Player.cpp`, `Pet.cpp`
+* Functions: `Spell::CheckCast`, `Unit::CanAttackNow`, `Unit::Attack`, `GameObject::Use`, `GameObjectInfo::IsUsableMounted`, `WorldSession::HandleMoveWorldportAckOpcode`, `Map::IsMountAllowed`, `Player::Mount`, `Player::Unmount`, `Pet::SetModeFlags`
+* Constants: `SPELL_ATTR_ALLOW_WHILE_MOUNTED`, `SPELL_FAILED_NOT_MOUNTED`, `SPELL_FAILED_NOT_ON_TAXI`, `SPELL_AURA_MOUNTED`, `PET_MODE_DISABLE_ACTIONS`, `SMSG_PET_MODE`, `SMSG_ATTACKSTOP`
+
 ## world/guild.d
 
 * Projects: CMaNGOS

@@ -481,6 +481,7 @@ private:
                         display = t.modelId1;
                 player.values.set!UNIT_FIELD_MOUNTDISPLAYID(display);
                 interruptAuras(apply ? AuraInterrupt.mounting : AuraInterrupt.dismount, aura);
+                petModeAtMount(apply); // the pet's bar greyed out while riding (`dmangos.world.mounting`)
                 break;
             // An immunity purges what ends with one (a carried flag: `AURA_INTERRUPT_FLAG_INVULNERABILITY_BUFF_CANCELS`):
             // an effect immunity that helps, a school immunity with `SPELL_ATTR_EX_IMMUNITY_PURGES_EFFECT`.

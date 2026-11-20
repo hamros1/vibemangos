@@ -1133,6 +1133,9 @@ private:
             const refused = crowdControlRefusal(spell);
             if (refused != SpellCastResult.ok)
                 return refused;
+            const riding = mountedCastRefusal(spell, triggered); // "You are mounted" (`dmangos.world.mounting`)
+            if (riding != SpellCastResult.ok)
+                return riding;
         }
         if (start && !triggered)
         {

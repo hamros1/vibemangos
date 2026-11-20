@@ -89,6 +89,7 @@ mixin template GameObjectHandlers()
         // Never for these: generic objects are used by spells, and some may not be touched.
         if (go.type == GameObjectType.generic || (go.values.get!GAMEOBJECT_FLAGS & goFlagNoInteract))
             return;
+        dismountToUse(go); // by hand, off the mount unless usable mounted (`dmangos.world.mounting`)
         useGameObject(go);
     }
 
