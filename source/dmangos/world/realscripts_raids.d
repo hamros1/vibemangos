@@ -1462,3 +1462,41 @@ unittest
     s.summon(livingPoison, Position(at.x + 4, at.y, at.z));
     assert(s.runUntil(() => s.cast_(28_433), 30.seconds), "no Living Poison explodes by a player\n" ~ s.seen());
 }
+
+/**
+ * What bosses call again and again keeps coming when the raid slays it: Anub'Rekhan's Crypt Guards (one at 20 s, one
+ * after each Locust Swarm), Ayamiss' swarmers (one every five seconds; they pass), an Anubisath Guardian's warriors
+ * or swarmguards (one every fifteen). Each script keeps its calls in a few places, freed as they die; a slain one leaves
+ * the map at once, and its place was never freed (`alive` of a creature not on the map is true), so after the first
+ * few no more came.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    /// The creatures of `entries` that come in `seconds` of `b`'s fight, each slain as it comes.
+    size_t called(const Boss b, const(uint)[] entries, uint seconds)
+    {
+        Scene s;
+        auto boss = setUp(b, s);
+        s.engage(boss);
+        bool[ulong] seen;
+        s.runUntil(() {
+            foreach (e; entries)
+                foreach (c; s.all(e))
+                {
+                    seen[c.guid] = true;
+                    s.kill(c);
+                }
+            return false;
+        }, seconds.seconds, 1.seconds);
+        return seen.length;
+    }
+    const anub = called(Boss("Anub'Rekhan", 533, 15_956, 0), [16_573], 600);
+    assert(anub >= 5, format!"Anub'Rekhan called %s Crypt Guards in ten minutes"(anub));
+    const ayamiss = called(Boss("Ayamiss", 509, 15_369, 4, [], null, 0, 0, 2, Position.init,
+        [classWarrior, classMage], null, 60), [15_546], 120);
+    assert(ayamiss >= 18, format!"Ayamiss called %s swarmers in two minutes"(ayamiss));
+    const guardian = called(Boss("Anubisath Guardian", 509, 15_355), [15_537, 15_538], 100);
+    assert(guardian >= 5, format!"an Anubisath Guardian called %s in 100 s"(guardian));
+}

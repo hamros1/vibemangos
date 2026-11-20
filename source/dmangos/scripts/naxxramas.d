@@ -509,6 +509,15 @@ struct AnubRekhan
             break;
         }
     }
+
+    /// A guard slain frees its place. (Summoned to go when dead, it leaves the map as it dies, and `alive` of a
+    /// creature not here says yes: after four guards no more came.)
+    void on(ref CreatureContext me, const ref SummonedDied e)
+    {
+        foreach (ref g; guards)
+            if (g == e.summoned)
+                g = EntityRef.init;
+    }
 }
 
 /// Grand Widow Faerlina: Poison Bolt Volley, Rain of Fire, and an enrage every minute (her worshippers'
@@ -1711,8 +1720,8 @@ struct Thaddius
 {
     static immutable uint[3] aggroLines = [13_086, 13_087, 13_088];
     enum uint slayLine = 13_096, deathLine = 13_089, sayElect = 13_090;
-    enum : uint { spawn = 28_160, lightningVisual = 28_136, ballLightning = 28_299, chainLightning = 28_167,
-        polarityShift = 28_089, berserk = 27_680 }
+    enum : uint { spawn = 28_160, ballLightning = 28_299, chainLightning = 28_167, polarityShift = 28_089,
+        berserk = 27_680 }
     enum Step : ubyte { wake, polarity, chain, ball, berserk }
     Schedule!Step steps;
     bool awake;
@@ -1750,10 +1759,10 @@ struct Thaddius
         {
         case Step.wake:
             // Thadius Spawn (28160) is the stun he waits in (ScriptDev casts it as he spawns and takes it off as
-            // the coils' lightning wakes him: `SPELL_THADIUS_LIGHTNING_VISUAL`); cast here, it stunned him for good.
+            // the coils' lightning wakes him, with its visual, 28136, left out here); cast here, it stunned him for
+            // good.
             awake = true;
             me.removeAura(me.self, spawn);
-            me.castSelf(lightningVisual, true);
             me.unitFlags(UnitFlag.uninteractible | UnitFlag.immuneToPlayer, false);
             me.reactState(Reaction.aggressive);
             me.zoneCombat();
