@@ -103,6 +103,7 @@ struct Fighter
     float[2][3] damage = 0;    /// by attack type: minimum, maximum (`UNIT_FIELD_MINDAMAGE`, ...)
     uint[3] damageSchool;      /// by attack type: the school index (0: physical)
     float crit = 0;            /// its crit chance: a player's from agility; a creature's 5
+    float auraCrit = 0;        /// the part of `crit` its auras give (talents, buffs, gear's crit), not its agility
     float hitBonus = 0;        /// percent less often missed (`MOD_HIT_CHANCE` auras)
     bool dualWield;            /// it has an off-hand weapon to attack with
     float[3] damageDone = 1;   /// by attack type: what its auras multiply its blows by (`MOD_DAMAGE_PERCENT_DONE`)
@@ -531,68 +532,92 @@ private float clamp100(float chance) pure nothrow @nogc @safe
     return chance < 0 ? 0 : chance > 100 ? 100 : chance;
 }
 
-/// The chance to miss: 5%, more for dual wielding and better defense, less for skill.
+/**
+ * The defense of `victim` over the weapon skill of `attacker` (negative: the skill is higher): what the chances of
+ * the attack table move by.
+ */
+private int skillGap(const Fighter attacker, const Fighter victim, AttackType type) pure nothrow @nogc @safe
+{
+    return int(defenseSkillValue(victim, attacker)) - int(weaponSkillValue(attacker, type, victim));
+}
+
+/// ditto, the attacker's skill at most five a level (`min(level * 5, skill)`): what parries, glances and crits go by.
+private int cappedSkillGap(const Fighter attacker, const Fighter victim, AttackType type) pure nothrow @nogc @safe
+{
+    const cap = skillMaxForLevel(attacker, victim);
+    const skill = weaponSkillValue(attacker, type, victim);
+    return int(defenseSkillValue(victim, attacker)) - int(skill < cap ? skill : cap);
+}
+
+/// Whether `victim` is a creature to the attack table: a monster, not a player nor a player's pet.
+private bool isMob(const Fighter victim) pure nothrow @nogc @safe
+{
+    return !victim.playerControlled;
+}
+
+/**
+ * The chance to miss (docs/FORMULAS.md, "The melee attack table"). Against a player, 5% and 0.04% a point of
+ * defense over skill. Against a creature, 5% and 0.1% a point, 0.2% a point past 10; past 10 the first
+ * `(gap - 10) * 0.2`% of the attacker's hit counts for nothing (8% at a 15-point gap, so the hit cap is 9%); against
+ * one below level 10, its level in tenths of that. Dual wielding adds 19%.
+ */
 float missChance(const Fighter attacker, const Fighter victim, AttackType type) pure nothrow @nogc @safe
 {
-    float chance = 5; // totems aside, everyone is missed 5% of the time
+    const gap = skillGap(attacker, victim, type);
+    float chance = 5, hit = attacker.hitBonus;
+    if (isMob(victim))
+    {
+        chance += gap * (gap > 10 ? 0.2f : 0.1f);
+        if (gap > 10) // hit suppression: "the first 1% of +hit ... ignored" at a gap of 15
+        {
+            const suppressed = (gap - 10) * 0.2f;
+            hit = hit > suppressed ? hit - suppressed : 0;
+        }
+        if (victim.level < 10)
+            chance *= victim.level / 10.0f;
+    }
+    else
+        chance += gap * 0.04f;
     if (type != AttackType.ranged && attacker.dualWield)
         chance += 19;
-    int difference = int(defenseSkillValue(victim, attacker)) - int(weaponSkillValue(attacker, type, victim));
-    float factor = 0.04f;
-    if (!victim.playerControlled && difference > 0)
-    {
-        if (difference > 10)
-        {
-            chance += 10 * 0.1f;
-            difference -= 10;
-            factor = 0.4f;
-            chance += difference * 0.2f;
-        }
-        else
-            factor = 0.1f;
-    }
-    chance += difference * factor;
-    chance -= attacker.hitBonus;
+    chance -= hit;
     chance -= victim.attackerHit[type == AttackType.ranged ? 1 : 0]; // Heightened Senses: less often hit
-    const minimum = difference > 10 ? 1.0f : 0.0f;
-    return chance < minimum ? minimum : chance > 100 ? 100 : chance;
+    return clamp100(chance);
 }
 
-/// The chance the victim dodges.
+/// The chance the victim dodges: its own, and 0.1% a point of defense over skill for a creature, 0.04% for a player.
 float dodgeChance(const Fighter victim, const Fighter attacker, AttackType type) pure nothrow @nogc @safe
 {
-    float chance = victim.dodge;
-    if (chance < 0.005f)
+    if (victim.dodge < 0.005f)
         return 0;
-    const difference = int(defenseSkillValue(victim, attacker)) - int(weaponSkillValue(attacker, type, victim));
-    const factor = !victim.playerControlled && difference > 0 ? 0.1f : 0.04f;
-    return clamp100(chance + difference * factor);
+    return clamp100(victim.dodge + skillGap(attacker, victim, type) * (isMob(victim) ? 0.1f : 0.04f));
 }
 
-/// The chance the victim parries.
+/**
+ * The chance the victim parries (never a ranged attack). A creature's goes by the attacker's skill at most five a
+ * level: 0.1% a point, 0.6% a point past 10 (14% three levels above, whatever the weapon skill); a player's 0.04%
+ * a point.
+ */
 float parryChance(const Fighter victim, const Fighter attacker, AttackType type) pure nothrow @nogc @safe
 {
-    if (type == AttackType.ranged)
+    if (type == AttackType.ranged || victim.parry < 0.005f)
         return 0;
-    float chance = victim.parry;
-    if (chance < 0.005f)
-        return 0;
-    const difference = int(defenseSkillValue(victim, attacker)) - int(weaponSkillValue(attacker, type, victim));
-    float factor = 0.04f;
-    if (!victim.playerControlled && difference > 0)
-        factor = difference > 10 ? 0.6f : 0.1f;
-    return clamp100(chance + difference * factor);
+    if (!isMob(victim))
+        return clamp100(victim.parry + skillGap(attacker, victim, type) * 0.04f);
+    const gap = cappedSkillGap(attacker, victim, type);
+    return clamp100(victim.parry + gap * (gap > 10 ? 0.6f : 0.1f));
 }
 
-/// The chance the victim blocks.
+/// The chance the victim blocks: a creature's never above its own (0.1% less a point of skill over its defense), a
+/// player's 0.04% a point of defense over skill.
 float blockChance(const Fighter victim, const Fighter attacker, AttackType type) pure nothrow @nogc @safe
 {
-    float chance = victim.block;
-    if (chance < 0.005f)
+    if (victim.block < 0.005f)
         return 0;
-    const difference = int(defenseSkillValue(victim, attacker)) - int(weaponSkillValue(attacker, type, victim));
-    const factor = !victim.playerControlled && difference > 0 ? 0.0f : 0.04f;
-    return clamp100(chance + difference * factor);
+    const gap = skillGap(attacker, victim, type);
+    if (isMob(victim))
+        return clamp100(victim.block + (gap < 0 ? gap * 0.1f : 0));
+    return clamp100(victim.block + gap * 0.04f);
 }
 
 /// The chance of a crushing blow: 15% and 2% a point when the weapon beats the capped defense by 15.
@@ -606,15 +631,11 @@ float crushChance(const Fighter attacker, const Fighter victim, AttackType type)
     return deficit >= 15 ? clamp100(2 * deficit - 15) : 0;
 }
 
-/// The chance of a glancing blow: from 10% up with the victim's defense over the capped skill.
+/// The chance of a glancing blow: 10%, and 2% a point of defense over the capped skill.
 float glanceChance(const Fighter attacker, const Fighter victim, AttackType type) pure nothrow @nogc @safe
 {
-    const cap = skillMaxForLevel(attacker);
-    auto skill = weaponSkillValue(attacker, type, victim);
-    if (skill > cap)
-        skill = cap;
     const level = int(levelFor(attacker, victim));
-    const difference = int(defenseSkillValue(victim, attacker)) - int(skill);
+    const difference = cappedSkillGap(attacker, victim, type);
     float chance;
     if (attacker.player && isWandUser(attacker.classId))
         chance = (level < 30 ? level : 30) + difference * 2;
@@ -623,16 +644,28 @@ float glanceChance(const Fighter attacker, const Fighter victim, AttackType type
     return clamp100(chance);
 }
 
-/// The chance of a critical hit: against creatures, 1% less for each level above the attacker.
+/// The crit from auras a creature three levels above the attacker takes away (`Fighter.auraCrit`, at most this).
+enum float auraCritSuppression = 1.8f;
+
+/**
+ * The chance of a critical hit. Against a creature, by the attacker's skill at most five a level: 0.2% less a point
+ * of defense over it (1% a level), 0.04% more a point under; and one three or more levels above takes away up to
+ * 1.8% of the crit the attacker's auras give (talents, buffs, gear's crit). Against a player, 0.04% a point.
+ */
 float critChance(const Fighter attacker, const Fighter victim, AttackType type) pure nothrow @nogc @safe
 {
     float chance = attacker.crit;
     if (chance < 0.005f)
         return 0;
-    const vsPlayer = victim.playerControlled;
-    const skill = !vsPlayer ? weaponSkillValue(attacker, type, victim) : skillMaxForLevel(attacker, victim);
-    const difference = int(skill) - int(defenseSkillValue(victim, attacker));
-    chance += difference * (vsPlayer ? 0.04f : 0.2f);
+    if (isMob(victim))
+    {
+        const gap = cappedSkillGap(attacker, victim, type);
+        chance -= gap * (gap > 0 ? 0.2f : 0.04f);
+        if (levelFor(victim, attacker) >= levelFor(attacker, victim) + 3)
+            chance -= attacker.auraCrit < auraCritSuppression ? attacker.auraCrit : auraCritSuppression;
+    }
+    else
+        chance -= skillGap(attacker, victim, type) * 0.04f;
     chance += victim.attackerCrit[type == AttackType.ranged ? 1 : 0]; // Sleight of Hand: crit less often
     return clamp100(chance);
 }
@@ -707,7 +740,8 @@ MeleeHitOutcome rollMeleeOutcome(const Fighter attacker, const Fighter victim, A
         chance[5] = 10_000; // a player sitting down is always hit critically
     else
     {
-        if (canDodge(victim, attacker))
+        // Dodge and Parry: "a chance to dodge enemy melee attacks"; Block: "melee and ranged attacks" (1.12 tooltips).
+        if (type != AttackType.ranged && canDodge(victim, attacker))
             chance[1] = hundredths(dodgeChance(victim, attacker, type));
         if (canParry(victim, attacker))
             chance[2] = hundredths(parryChance(victim, attacker, type));
@@ -1000,10 +1034,33 @@ unittest
     // Three levels above: 15 points of defense over the skill.
     wolf.level = 13;
     const miss = missChance(player, wolf, AttackType.mainHand);
-    assert(miss > 5 + 1 + 1 + 1.99f && miss < 5 + 1 + 1 + 2.01f, "1% for the first 10 points, then 0.6% a point");
+    assert(miss > 7.99f && miss < 8.01f, "Blizzard: 8% against a creature three levels above");
     const crit = critChance(player, wolf, AttackType.mainHand);
     assert(crit > 1.99f && crit < 2.01f, "crit 1% less per level against creatures");
     assert(glanceChance(player, wolf, AttackType.mainHand) == 40);
+    const parry = parryChance(wolf, player, AttackType.mainHand);
+    assert(parry > 13.99f && parry < 14.01f, "Blizzard: 14% parry three levels above");
+    const dodge = dodgeChance(wolf, player, AttackType.mainHand);
+    assert(dodge > 6.49f && dodge < 6.51f, "Blizzard: 6.5% dodge three levels above");
+    // The first 1% of hit counts for nothing at a gap of 15 (the hit cap is 9%), none at 10 or less.
+    player.hitBonus = 3;
+    const hitMiss = missChance(player, wolf, AttackType.mainHand);
+    assert(hitMiss > 5.99f && hitMiss < 6.01f, "8% less 3% hit, of which 1% suppressed");
+    player.hitBonus = 9;
+    assert(missChance(player, wolf, AttackType.mainHand) == 0, "the hit cap: 9%");
+    player.weaponSkill[0] = player.weaponSkillMax[0] = 55; // +5 skill: a 10-point gap
+    player.hitBonus = 0;
+    const skilled = missChance(player, wolf, AttackType.mainHand);
+    assert(skilled > 5.99f && skilled < 6.01f, "+5 skill: 6%");
+    assert(parryChance(wolf, player, AttackType.mainHand) > 13.99f, "parry by the capped skill: still 14%");
+    player.weaponSkill[0] = player.weaponSkillMax[0] = 50;
+    // Crit from auras: up to 1.8% of it is taken away three levels above.
+    player.crit = 8;
+    player.auraCrit = 3;
+    const auraCrit = critChance(player, wolf, AttackType.mainHand);
+    assert(auraCrit > 3.19f && auraCrit < 3.21f, "8 - 3 - 1.8");
+    player.crit = 5;
+    player.auraCrit = 0;
 
     // The table, in order: a low roll misses; one past miss, dodge and parry is a block; past everything, a hit.
     wolf.level = 10;
@@ -1167,6 +1224,29 @@ float effectiveResistPercent(int resistance, uint attackerLevel, uint victimLeve
 }
 
 /**
+ * The partial-resist table's chances (hundredths of a percent) of 0%, 25%, 50%, 75% and 100% resisted at an
+ * effective resistance of `percent` (0 .. 75): its row, interpolated between whole percents (the hundredth of a
+ * percent rounded, so that 15 a hair under is 15).
+ */
+uint[5] resistDistribution(float percent) pure nothrow @nogc @safe
+{
+    import std.math : round;
+
+    const index = percent <= 0 ? 0 : cast(uint) round(percent * 100);
+    const row = index / 100 < partialResistRows.length ? index / 100 : partialResistRows.length - 1;
+    const step = index / 100 < partialResistRows.length ? index % 100 : 0;
+    uint[5] chances;
+    foreach (c; 0 .. 5)
+    {
+        const base = partialResistRows[row][c];
+        const ahead = row + 1 < partialResistRows.length ? partialResistRows[row + 1][c] : base;
+        const value = base + round((cast(double) ahead - base) * (step / 100.0));
+        chances[c] = value < 0 ? 0 : cast(uint) value;
+    }
+    return chances;
+}
+
+/**
  * The chance (percent) a magic spell is resisted whole by a victim with `resistance` of its school: a
  * binary spell by the whole effective resistance, another only as often as the partial-resist table
  * resists all of it.
@@ -1177,7 +1257,7 @@ float fullResistChance(int resistance, uint attackerLevel, uint victimLevel, boo
     const percent = effectiveResistPercent(resistance, attackerLevel, victimLevel, victimCreature);
     if (!(percent > 0))
         return 0;
-    return binary ? percent : partialResistRows[cast(uint) percent][4] * 0.01f;
+    return binary ? percent : resistDistribution(percent)[4] * 0.01f;
 }
 
 unittest
@@ -1185,49 +1265,35 @@ unittest
     // 150 fire resistance against a level 60 caster: 37.5%; a binary spell is resisted that often, another
     // whole only as the table's last column says.
     assert(fullResistChance(150, 60, 60, true, false) == 37.5f);
-    assert(fullResistChance(150, 60, 60, false, false) == partialResistRows[37][4] * 0.01f);
+    assert(fullResistChance(150, 60, 60, false, false) == resistDistribution(37.5f)[4] * 0.01f);
     assert(fullResistChance(0, 60, 60, true, false) == 0);
 }
 
 /**
- * A partial resist roll: the share of the damage resisted (0, 0.25, 0.5
- * or 0.75; never all, which was the hit roll's), from `percent` and a `roll` of 1 .. 10000. Negative
- * percents are vulnerability: a negative share. A direct hit with more than 54% never goes whole.
+ * A partial resist roll: the share of the damage resisted (0, 0.25, 0.5 or 0.75; never all, which was the hit
+ * roll's), from `percent` and a `roll` of 1 .. 10000: `resistDistribution` without its last column, what is left of
+ * Blizzard's distribution once the spell was not resisted whole. Negative percents are vulnerability: a negative
+ * share.
  */
-float rollPartialResist(float percent, uint roll, bool direct = true) pure nothrow @nogc @safe
+float rollPartialResist(float percent, uint roll) pure nothrow @nogc @safe
 {
-    import std.math : round;
-
     if (percent < 0)
         return percent * 0.01f;
-    const index = cast(uint)(percent * 100);
-    if (index == 0)
+    if (percent * 100 < 0.5f)
         return 0;
-    const row = index / 100, step = index % 100;
-    uint[5] chances;
-    foreach (c; 0 .. 5)
-    {
-        const base = partialResistRows[row][c];
-        const ahead = row + 1 < partialResistRows.length ? partialResistRows[row + 1][c] : base;
-        const value = base + round((cast(double) ahead - base) * (step / 100.0));
-        chances[c] = value < 0 ? 0 : cast(uint) value;
-    }
-    uint portion = 4;
+    const chances = resistDistribution(percent);
+    const total = chances[0] + chances[1] + chances[2] + chances[3];
+    if (total == 0)
+        return 0.75f;
+    const scaled = (cast(ulong) roll * total + 9999) / 10_000; // 1 .. total
     uint sum;
-    foreach (ubyte c; 0 .. 5)
+    foreach (ubyte c; 0 .. 4)
     {
         sum += chances[c];
-        if (roll <= sum)
-        {
-            portion = c;
-            break;
-        }
+        if (scaled <= sum)
+            return c / 4.0f;
     }
-    if (portion > 3)
-        portion = 3;
-    if (portion == 0 && percent > 54.0f && direct)
-        ++portion;
-    return portion / 4.0f;
+    return 0.75f;
 }
 
 unittest
@@ -1236,11 +1302,34 @@ unittest
     // 300 fire resistance against a level 60 caster: 300/300*100*0.75 = 75% (the cap).
     assert(effectiveResistPercent(300, 60, 60, true) == 75);
     assert(rollPartialResist(75, 10000) == 0.75f && rollPartialResist(75, 5000) == 0.75f, "at 75%: mostly three quarters");
-    assert(rollPartialResist(75, 1) == 0.25f, "never whole above 54%");
+    assert(rollPartialResist(75, 1) == 0, "Blizzard: 1% chance to take full damage, even at 75%");
     // A level 63 boss against level 60: 15 skill above, 6% more.
     assert(effectiveResistPercent(0, 60, 63, true) == 6);
     assert(rollPartialResist(10, 1) == 0 && rollPartialResist(10, 10000) > 0);
     assert(effectiveResistPercent(-50, 60, 60, true) < 0 && rollPartialResist(-10, 1) < 0);
+}
+
+/**
+ * Blizzard's published distribution (worldofwarcraft.com, "Resistances", 2006; docs/FORMULAS.md): against a level-50
+ * caster, 50 to 250 resistance (15% to 75% average) resists 100%, 75%, 50%, 25% and none of a direct-damage spell
+ * this often (percent). The table holds these rows exactly; the rows between are an emulator's fit.
+ */
+unittest
+{
+    import std.math : isClose, round;
+
+    static immutable ubyte[5][5] blizzard = [ // full, 75%, 50%, 25%, none
+        [0, 2, 11, 33, 54], [1, 6, 24, 49, 20], [1, 18, 48, 26, 7], [11, 34, 40, 14, 1], [25, 55, 16, 3, 1]];
+    foreach (i, resistance; [50, 100, 150, 200, 250])
+    {
+        const percent = effectiveResistPercent(resistance, 50, 50, false);
+        assert(isClose(percent, 15.0f * (i + 1)));
+        const row = partialResistRows[cast(size_t) round(percent)];
+        assert(row == [blizzard[i][4] * 100, blizzard[i][3] * 100, blizzard[i][2] * 100, blizzard[i][1] * 100,
+            blizzard[i][0] * 100]);
+        assert(isClose(fullResistChance(resistance, 50, 50, false, false), blizzard[i][0]));
+        assert(isClose(fullResistChance(resistance, 50, 50, true, false), percent), "most spells: the average, whole");
+    }
 }
 
 // Hit auras make misses rarer.
@@ -1267,19 +1356,17 @@ struct Resisted
  * A spell's `damage` against `victim`, after the partial resist of its `resistance` to the spell's school,
  * for every caster kind and victim kind alike. `roll` is a number from 1 to 10000.
  *
- * The level bonus of `effectiveResistPercent` counts for a creature victim of a spell that is not binary.
- * A binary spell's direct damage is not resisted in part (it was resisted whole, or not at all, by the hit
- * roll); its ticks are, at a tenth of the resistance. A negative resistance adds to the damage.
+ * The level bonus of `effectiveResistPercent` counts for a creature victim of a spell that is not binary. A binary
+ * spell is never resisted in part, neither its direct damage nor its ticks: it was resisted whole, or not at all, by
+ * the hit roll ("the straight % chance to completely resist the spell"). A negative resistance adds to the damage.
  */
 Resisted partiallyResisted(uint damage, int resistance, uint casterLevel, const Fighter victim, bool binary,
-    bool direct, uint roll) pure nothrow @nogc @safe
+    uint roll) pure nothrow @nogc @safe
 {
-    if (binary && direct)
+    if (binary)
         return Resisted(damage, 0);
-    float percent = effectiveResistPercent(resistance, casterLevel, victim.level, !victim.player && !binary);
-    if (binary && percent > 0)
-        percent *= 0.1f;
-    const share = rollPartialResist(percent, roll, direct);
+    const percent = effectiveResistPercent(resistance, casterLevel, victim.level, !victim.player);
+    const share = rollPartialResist(percent, roll);
     if (share > 0)
     {
         const taken = cast(uint)(damage * share);
@@ -1296,9 +1383,9 @@ pure nothrow @nogc @safe unittest
     wolf.level = 60;
     player.level = 60;
     player.player = true;
-    assert(partiallyResisted(100, 0, 60, wolf, false, true, 5000) == Resisted(100, 0), "no resistance: all lands");
-    assert(partiallyResisted(100, 300, 60, wolf, true, true, 1) == Resisted(100, 0), "binary direct: never in part");
-    const half = partiallyResisted(100, 300, 60, player, false, true, 10000);
+    assert(partiallyResisted(100, 0, 60, wolf, false, 5000) == Resisted(100, 0), "no resistance: all lands");
+    assert(partiallyResisted(100, 300, 60, wolf, true, 1) == Resisted(100, 0), "binary: never in part");
+    const half = partiallyResisted(100, 300, 60, player, false, 10000);
     assert(half.damage + half.resisted == 100 && half.resisted > 0, "75% effective: a share resisted");
     // The level bonus is the creature's only: a level-63 creature resists more than a level-63 player.
     Fighter boss = wolf, champion = player;
@@ -1310,7 +1397,7 @@ pure nothrow @nogc @safe unittest
 {
     Fighter weak;
     weak.level = 10;
-    const more = partiallyResisted(100, -50, 60, weak, false, true, 5000);
+    const more = partiallyResisted(100, -50, 60, weak, false, 5000);
     assert(more.damage >= 100 && more.resisted == 0, "a negative resistance adds");
 }
 

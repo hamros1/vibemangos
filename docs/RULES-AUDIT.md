@@ -88,13 +88,16 @@ not on wago.tools). These are the measured values of emulator projects, with no 
 
 ## Re-derive first
 
-1. **The melee attack table**: combat.d `missChance`, `dodgeChance`, `parryChance`, `glanceChance`, `glanceAmount`,
+1. **Done** (FORMULAS.md "The melee attack table", "Ranged attacks: no dodge"; crushing blows have no source).
+   **The melee attack table**: combat.d `missChance`, `dodgeChance`, `parryChance`, `glanceChance`, `glanceAmount`,
    `critChance`, `crushChance`, `rollMeleeOutcome`, plus creature.d `fighter` (flat 5% creature crit/dodge/parry/block).
    Source: Magey "Attack-table" (measured Classic Era formulas for miss, dodge, glance chance and damage, and crit
    suppression), and the Blizzard statements it quotes (+3 creature parry 14%, crit −1% per level). Already known to
    differ: the miss rate past a 10-point skill deficit (0.6%/pt here, 0.2%/pt measured). No published source for
    crushing blows.
-2. **Procs**: spells.d `spell_proc_event`, `spell_affect`; procs.d `procEventMatches`, `ppmChance`, `runProcs`;
+2. **Done** as far as the data goes (FORMULAS.md "Procs": the cooldowns are Blizzard's, the flags 1.12's; hit
+   kinds, school and family masks and PPM have no Blizzard data; `spell_affect` stays, Classic Era's masks being
+   renumbered). **Procs**: spells.d `spell_proc_event`, `spell_affect`; procs.d `procEventMatches`, `ppmChance`, `runProcs`;
    combathandlers.d `castItemCombatSpells`. Source: SpellAuraOptions (ProcTypeMask, ProcChance, ProcCategoryRecovery,
    ProcCharges) and SpellEffect.EffectSpellClassMask. PPM rates have no DB2 data. Also note that PPM procs here use the
    hasted attack time while item procs use the base time.
@@ -105,7 +108,8 @@ not on wago.tools). These are the measured values of emulator projects, with no 
 4. **Done** (FORMULAS.md "Quest experience": 1.12's money / 0.6 per quest, which Classic Era's QuestXP re-rounds;
    the falloff to fives; quests of no level). **Quest XP**: quests.d `questXp` derives XP from RewMoneyMaxLevel. Source: DB2 QuestXP. Level −1 (player-level)
    quests give 0 XP here, and Blizzard's values are rounded.
-5. **Spell hit and resistance**: spellcast.d `spellMissChance`, combat.d `partialResistRows`, `effectiveResistPercent`,
+5. **Done** (FORMULAS.md "Spell resistance": Blizzard's 2006 resistance page; the level miss table stays documented
+   research). **Spell hit and resistance**: spellcast.d `spellMissChance`, combat.d `partialResistRows`, `effectiveResistPercent`,
    `fullResistChance`. Source: Wowpedia "Spell hit" and "Resistance" (verify which version they describe). The
    101×5 partial-resist table is an emulator fit; the binary-DoT "1/10 resist per tick" rule looks emulator-only.
 6. **Base stats → derived stats**: stats.d `agilityPerPercent` (a linear lvl 1→60 fit per class),
@@ -137,9 +141,9 @@ group in the open world (**done**: all to each, FORMULAS.md "Reputation"; CMaNGO
 `bonusHonor` uses level 60 for every bracket (**done**: by bracket, FORMULAS.md "Honor"); taxihandlers.d compared the
 start distance with `(2·5)^3` (**fixed**: the flight master within 10 yd of its node, squared; every flight master in
 the data stands within 7.1 yd); no fix made for the rest: spellcast.d `powerCost` applies
-`manaCostPerLevel × (level/5 − baseLevel)`; there are no
-diminishing returns on crowd control (auras.d `setHeartbeatResist` always gets level 0); auto-shot can be dodged
-while ranged abilities can't (combat.d `canDodge` vs spellcast.d `rollSpellHit`).
+`manaCostPerLevel × (level/5 − baseLevel)`. **Done:** there were no
+diminishing returns on crowd control (now the 1.x patch notes', FORMULAS.md "Diminishing returns"); auto-shot could
+be dodged while ranged abilities couldn't (now neither, by the 1.12 Dodge tooltip: "enemy melee attacks").
 
 ## Encounter and zone scripts
 
@@ -207,23 +211,23 @@ risk.
 
 | where | what | emulator origin | primary source | risk |
 |---|---|---|---|---|
-| combat.d:missChance | 5% base, +19% dual wield; ±0.04%/skill pt; vs NPC def>skill: ≤10 pts 0.1/pt, >10: +1 then 0.6/pt (0.2+0.4); minus hit | CalculateEffectiveMissChance | Magey "Attack-table" (measured Classic Era: 0.1%/pt, 0.2%/pt past 10, DW +19% flat) | H: every swing; the >10 branch differs from measured 0.2/pt |
-| combat.d:dodgeChance | Victim dodge + diff×0.04 (NPC def>skill: 0.1) | CalculateEffectiveDodgeChance | Magey "Attack-table": 5% + (5×TL − skill)×0.1% | H: every swing |
-| combat.d:parryChance | Parry + diff×0.04; NPC diff>0: 0.1, >10: 0.6; never vs ranged | CalculateEffectiveParryChance | Blizzard statement quoted on Magey "Attack-table": +3 creatures parry 14%; measured 13.5–14% | H |
-| combat.d:crushChance | Creature vs player-controlled: skill − min(def, 5×lvl) ≥ 15 → 2×deficit − 15 % | CalculateEffectiveCrushChance | none found published for 1.12 (Magey wiki lacks it); measured Classic Era logs | H: constant for tanks |
-| combat.d:glanceChance | Player vs creature lvl>10: 10 + 2×(def − capped skill)%; wand classes min(lvl,30) + 2×diff | CalculateEffectiveGlanceChance | Magey "Attack-table": 10% + (5×TL − min(5×AL, skill))×2% (10/20/30/40%) | H: 40% vs boss |
-| combat.d:glanceAmount | High 1.2−0.03d (casters 0.9), low 1.3−0.05d (casters 0.6); clamps 0.2–0.99 / 0.01–0.91 | glance damage reduction | Magey "Attack-table" (same formula, measured) | H: every glance |
-| combat.d:critChance | Crit + diff×0.2 vs NPC (weapon − def) or 0.04 vs player; + attackerCrit | CalculateEffectiveCritChance | Magey "Attack-table" (0.2%/pt below, 0.04%/pt above; Blizzard: −1% per level); aura-crit suppression ~1.8% unconfirmed | H |
-| combat.d:rollMeleeOutcome | One roll, order miss→dodge→parry→block→glance→crit→crush; sitting player always crit | RollMeleeOutcomeAgainst | Magey "Attack-table" (single-roll table, measured) | H: core table |
+| combat.d:missChance | 5% base, +19% dual wield; ±0.04%/skill pt; vs NPC def>skill: ≤10 pts 0.1/pt, >10: +1 then 0.6/pt (0.2+0.4); minus hit | CalculateEffectiveMissChance | Magey "Attack-table" (measured Classic Era: 0.1%/pt, 0.2%/pt past 10, DW +19% flat) | H: every swing. **Done:** 8% at +3, hit suppression, low-level creatures (FORMULAS.md "The melee attack table") |
+| combat.d:dodgeChance | Victim dodge + diff×0.04 (NPC def>skill: 0.1) | CalculateEffectiveDodgeChance | Magey "Attack-table": 5% + (5×TL − skill)×0.1% | H: every swing. **Done:** 0.1%/pt both ways for creatures |
+| combat.d:parryChance | Parry + diff×0.04; NPC diff>0: 0.1, >10: 0.6; never vs ranged | CalculateEffectiveParryChance | Blizzard statement quoted on Magey "Attack-table": +3 creatures parry 14%; measured 13.5–14% | H. **Done:** by the capped skill (14% at +3 whatever the weapon skill) |
+| combat.d:crushChance | Creature vs player-controlled: skill − min(def, 5×lvl) ≥ 15 → 2×deficit − 15 % | CalculateEffectiveCrushChance | none found published for 1.12 (Magey wiki lacks it); measured Classic Era logs | H: constant for tanks. **Done:** no source found (FORMULAS.md), unchanged |
+| combat.d:glanceChance | Player vs creature lvl>10: 10 + 2×(def − capped skill)%; wand classes min(lvl,30) + 2×diff | CalculateEffectiveGlanceChance | Magey "Attack-table": 10% + (5×TL − min(5×AL, skill))×2% (10/20/30/40%) | H: 40% vs boss. **Done:** already matched; casters' no source |
+| combat.d:glanceAmount | High 1.2−0.03d (casters 0.9), low 1.3−0.05d (casters 0.6); clamps 0.2–0.99 / 0.01–0.91 | glance damage reduction | Magey "Attack-table" (same formula, measured) | H: every glance. **Done:** already matched |
+| combat.d:critChance | Crit + diff×0.2 vs NPC (weapon − def) or 0.04 vs player; + attackerCrit | CalculateEffectiveCritChance | Magey "Attack-table" (0.2%/pt below, 0.04%/pt above; Blizzard: −1% per level); aura-crit suppression ~1.8% unconfirmed | H. **Done:** capped skill, 0.04%/pt above, 1.8% of aura crit at +3 |
+| combat.d:rollMeleeOutcome | One roll, order miss→dodge→parry→block→glance→crit→crush; sitting player always crit | RollMeleeOutcomeAgainst | Magey "Attack-table" (single-roll table, measured) | H: core table. **Done:** ranged never dodged (1.12 tooltips) |
 | combat.d:armorReducedDamage | DR = A/(A+400+85×attackerLevel), cap 75% | CalcArmorReducedDamage | Wowpedia "Armor" (pre-2.x formula; verify version) | H: every physical hit |
 | combat.d:calculateMeleeDamage | Crit ×2, crushing ×1.5, block subtracts block value; flat/pct taken | CalculateMeleeDamage | Wowpedia "Critical strike", "Crushing blow" (verify) | H |
 | combat.d:rageReward | c = 0.0091107836L² + 3.225598133L + 4.2652911; rage = dmg/c × 7.5 dealt, × 2.5 taken | Player::RewardRage | current Wowpedia "Rage" lacks the pre-2.4 formula (checked); Blizzard 1.x posts on rage conversion (none found online) | H: every warrior swing |
-| combat.d:partialResistRows | 101×5 table of 0/25/50/75/100% resist chances by resist% | SPELL_PARTIAL_RESIST_DISTRIBUTION | Wowpedia "Resistance" (verify; classic binomial distribution) | H: every magic hit; emulator-fitted table |
-| combat.d:effectiveResistPercent | R/max(5×attLvl,100)×0.75, +0.4/pt level-skill for creatures, cap 75 | CalculateEffectiveMagicResistancePercent | Wowpedia "Resistance" (verify) | H |
-| combat.d:fullResistChance / rollPartialResist | Binary: whole resist = percent; partial interpolated; binary DoT ticks at 1/10 resist; negative resist adds damage | RollMagicResistanceMultiplierOutcomeAgainst | Wowpedia "Resistance" (verify) | H: binary-tick 1/10 rule looks emulator-only |
-| spellcast.d:spellMissChance | 4% + (vL−cL) up to +2; beyond +2: 11%/level (NPC) or 7%/level (player); min 1% | MagicSpellHitResult | Wowpedia "Spell hit" (verify; 96/95/94/83% table is widely cited) | H: every spell |
+| combat.d:partialResistRows | 101×5 table of 0/25/50/75/100% resist chances by resist% | SPELL_PARTIAL_RESIST_DISTRIBUTION | Wowpedia "Resistance" (verify; classic binomial distribution) | H: every magic hit; emulator-fitted table. **Done:** Blizzard's five published rows match exactly (worldofwarcraft.com "Resistances", 2006; tested); the rows between stay the fit |
+| combat.d:effectiveResistPercent | R/max(5×attLvl,100)×0.75, +0.4/pt level-skill for creatures, cap 75 | CalculateEffectiveMagicResistancePercent | Wowpedia "Resistance" (verify) | H. **Done:** Blizzard's page confirms the average and 75% cap; the level bonus stays documented research |
+| combat.d:fullResistChance / rollPartialResist | Binary: whole resist = percent; partial interpolated; binary DoT ticks at 1/10 resist; negative resist adds damage | RollMagicResistanceMultiplierOutcomeAgainst | Wowpedia "Resistance" (verify) | H: binary-tick 1/10 rule looks emulator-only. **Done:** binary ticks never resisted in part; no bump above 54% (Blizzard: 1% land whole) |
+| spellcast.d:spellMissChance | 4% + (vL−cL) up to +2; beyond +2: 11%/level (NPC) or 7%/level (player); min 1% | MagicSpellHitResult | Wowpedia "Spell hit" (verify; 96/95/94/83% table is widely cited) | H: every spell. **Done:** Blizzard gives only the 1% minimum; the table stays documented research (FORMULAS.md) |
 | spellcast.d:magicMissChance | Miss − hit + mechanic resist + full-resist chance | MagicSpellHitResult | Wowpedia "Spell hit" (verify) | H |
-| spellcast.d:rollSpellHit | Evade/immune; melee/ranged abilities miss→dodge/parry (ranged never dodged); block only if fully blocked; magic miss/resist | MeleeSpellHitResult, CanBlockAbility | SpellCategories.DefenseType; SpellMisc Attributes | H: inconsistent with auto-shot |
+| spellcast.d:rollSpellHit | Evade/immune; melee/ranged abilities miss→dodge/parry (ranged never dodged); block only if fully blocked; magic miss/resist | MeleeSpellHitResult, CanBlockAbility | SpellCategories.DefenseType; SpellMisc Attributes | H: inconsistent with auto-shot. **Done:** consistent: no ranged dodge either way |
 | effecthandlers.d:feignDeathAura | FD resist = level-based spell-miss chance vs highest attacker | HandleFeignDeath | none found | H: emulator guess |
 | spellhandlers.d:damagedWhileCasting (cast) | Pushback 1000/800/600/400/200 ms then 200; DoTs don't push | InterruptOrDelaySpell, Spell::Delayed | Wowpedia "Pushback" (verify) | H: constant in combat |
 | spellhandlers.d:damagedWhileCasting (channel) | Channel shortened by same series; counter not reset at channel start | Spell::DelayedChannel | Wowpedia "Pushback" (verify; classic channel loses 25%?) | H |
@@ -234,22 +238,22 @@ risk.
 | creatureai.d:selectNextVictim | Highest threat, current kept unless exceeded by 110% (melee) / 130% (range); taunt forces | ThreatContainer::selectNextVictim | Magey "Threat-Mechanics" (measured Classic Era: 110%/130%) | H: constant |
 | creatureai.d:damageTaken / addThreat | Threat = damage × MOD_THREAT; first contact 0 threat | ThreatManager::addThreat | Magey "Threat-Mechanics" | H |
 | creatureai.d:assistThreat | Healing: 0.5 × heal split evenly among creatures fighting the target | HostileRefManager::threatAssist | Magey "Threat-Mechanics" (0.5 per point healed) | H: every healer |
-| creature.d:fighter | Creature crit/dodge/parry/block flat 5% regardless of level diff | creature defaults | Magey "Attack-table" (dodge/parry vs mobs scale with level/skill) | H: ignores level for crit/block |
+| creature.d:fighter | Creature crit/dodge/parry/block flat 5% regardless of level diff | creature defaults | Magey "Attack-table" (dodge/parry vs mobs scale with level/skill) | H: ignores level for crit/block. **Done:** the 5% bases agree with Blizzard; the level scaling is in combat.d |
 | combat.d:levelFor | World boss (rank 3) counts as target level +3 (cap 255) | CONFIG_UINT32_WORLD_BOSS_LEVEL_DIFF | Wowpedia "Boss" (verify); Magey "Attack-table" treats bosses as level 63 | M: sets every boss roll |
 | combat.d:weaponSkillValue / defenseSkillValue / skillMaxForLevel | Creature skill = 5×level; vs a player a player uses max(skill, maxSkill) | GetWeaponSkillValue, GetDefenseSkillValue | Magey "Attack-table" (measured Classic Era) | M: constant in PvP |
 | combat.d:meleeReach / canReachWithMelee | Reach = both combat reaches + 1.33, min 5 yd; +8/3 yd if both moving; players 3D, creatures 2D | ATTACK_DISTANCE, BASE_MELEERANGE_OFFSET, MELEE_LEEWAY | CreatureModelData.CombatReach (DB2); none found for offset/leeway | M: every swing |
 | combat.d:hasInArc (+ combathandlers swing check) | Swing needs target in 120° front arc; "front" for dodge/parry/block = 180° | WorldObject::HasInArc | none found | M |
-| combat.d:blockChance | Block + diff×0.04; NPC with diff>0: factor 0 | CalculateEffectiveBlockChance | Magey "Attack-table" (verify) | M |
-| combat.d:canDodge / canParry / canBlock | Player dodges only from the front, creature from anywhere; parry front only; block physical + front + shield; auto-shot can be dodged (no attack-type check) | CanDodge, CanParry, CanBlock | none found (Wowpedia "Attack table" is retail) | M: decides behind-attacks |
+| combat.d:blockChance | Block + diff×0.04; NPC with diff>0: factor 0 | CalculateEffectiveBlockChance | Magey "Attack-table" (verify) | M. **Done:** a creature's at most 5%, 0.1%/pt less for skill above |
+| combat.d:canDodge / canParry / canBlock | Player dodges only from the front, creature from anywhere; parry front only; block physical + front + shield; auto-shot can be dodged (no attack-type check) | CanDodge, CanParry, CanBlock | none found (Wowpedia "Attack table" is retail) | M: decides behind-attacks. **Done:** no dodge or parry of ranged attacks (1.12 tooltips) |
 | combat.d:parryHasted | Parry haste: timer >60% → −40% of speed; 20–60% → set to 20% | DealMeleeDamage | Magey "Parry-haste" (measured Classic Era) | M |
 | combat.d:damageFactor / DamageMods.of | Done%, versus-type% and taken% multiply | TOTAL_PCT mods | none found for stacking rule | M |
 | combathandlers.d:takeBlow | Non-periodic hit stands sitter up; warrior rage from damage taken | Unit::DealDamage | none found | M |
 | combathandlers.d:attack / attackPlayer | No melee mounted; off hand starts half a swing late; damage interrupts auras | Unit::Attack | none found | M |
 | spellcast.d:powerCost | manaCost + manaCostPerLevel×(level/5 − baseLevel); % of base mana | Spell::CalculatePowerCost | Spell.dbc / SpellPower (ManaCostPerLevel) | M: per-level term looks wrong |
-| spellcast.d:isBinarySpell | Binary = non-damage, all auras, all DoT, or non-damage effect sharing targets of direct damage | IsBinarySpell (pre-WotLK) | Wowpedia "Resistance" (binary spells) (verify) | M |
+| spellcast.d:isBinarySpell | Binary = non-damage, all auras, all DoT, or non-damage effect sharing targets of direct damage | IsBinarySpell (pre-WotLK) | Wowpedia "Resistance" (binary spells) (verify) | M. **Done:** Blizzard's rule: direct damage in part unless a debuff rides on it (Earth Shock in part) |
 | spellcast.d:heartbeatResistChance | HEARTBEAT_RESIST auras break with the miss/resist chance at each heartbeat | heartbeat resist | none found | M |
 | spellmods.d:applySpellMod / affects | Same family + mask; (value+flat)×(100+Σpct)/100 (percents add) | ApplySpellMod, isAffectedOnSpell | SpellEffect.EffectSpellClassMask | M: every talent |
-| auras.d:setHeartbeatResist | Chance×(1+DR), interval duration/(2+DR); no diminishing returns at all (DR always 0) | SetHeartbeatResist | Blizzard 1.x patch notes on diminishing returns (verify) | M: no DR exists |
+| auras.d:setHeartbeatResist | Chance×(1+DR), interval duration/(2+DR); no diminishing returns at all (DR always 0) | SetHeartbeatResist | Blizzard 1.x patch notes on diminishing returns (verify) | M: no DR exists. **Done:** patch 1.4.0–1.11.0 categories (FORMULAS.md "Diminishing returns", diminishing.d); the heartbeat's DR factor stays 0 |
 | auras.d:attackTimeFactor / castTimeFactor | Haste → 100/(100+a); slow (100−a)/100; slow on main hand only | ApplyAttackTimePercentMod | none found | M |
 | aurahandlers.d:applyAuraEffect | DoT/HoT get power × coefficient per tick; buff on someone in combat adds 0-threat assist | EffectApplyAura | SpellEffect.EffectBonusCoefficient | M |
 | aurahandlers.d:absorbIncoming | Absorb up to remaining; mana shield costs multipleValue mana/pt | CalculateDamageAbsorbAndResist | Spell.dbc EffectMultipleValue | M |
@@ -305,12 +309,12 @@ risk.
 | where | what | emulator origin | primary source | risk |
 |---|---|---|---|---|
 | combathandlers.d:castItemCombatSpells | Chance-on-hit: PPM → base speed×ppm/600, else ProcChance; enchant: spell_proc_item_enchant PPM, else amount%, else speed×1.8/1000 (OH 1.6) | CastItemCombatSpell, GetWeaponProcChance | SpellAuraOptions.ProcChance, SpellItemEnchantment (DB2); PPM: none in DB2 (SpellProcsPerMinuteID all 0) | H: every weapon proc |
-| procs.d:procEventMatches | Kill always procs; ticks proc only for periodic/harmful auras; school/family filter; default procEx hit/crit | IsSpellProcEventCanTriggeredBy | SpellAuraOptions.ProcTypeMask (1759 rows with a mask) | H: all procs |
-| procs.d:ppmChance / runProcs | PPM chance = hasted attackTime×ppm/600; else row CustomChance or ProcChance; cooldown from row; one charge per proc | GetPPMProcChance, ProcDamageAndSpell | SpellAuraOptions ProcChance / ProcCategoryRecovery / ProcCharges; PPM: Blizzard posts per item (none in DB2) | H: PPM uses hasted speed (item procs use base speed) |
-| spells.d:spell_proc_event | Per-spell override of proc flags/procEx/school/family mask/PPM/chance/cooldown | LoadSpellProcEvents | SpellAuraOptions (ProcTypeMask, ProcChance, ProcCategoryRecovery, ProcCharges) + SpellEffect.EffectSpellClassMask; PPM: none in DB2 | H: emulator-authored; e.g. Lightning Shield 324 cooldown 3 s here, ProcCategoryRecovery 3500 ms in DB2 |
+| procs.d:procEventMatches | Kill always procs; ticks proc only for periodic/harmful auras; school/family filter; default procEx hit/crit | IsSpellProcEventCanTriggeredBy | SpellAuraOptions.ProcTypeMask (1759 rows with a mask) | H: all procs. **Done:** the flags are 1.12's Spell.dbc's, which Classic Era's mask confirms (bits 0–20, FORMULAS.md "Procs"); hit kinds have no Blizzard data |
+| procs.d:ppmChance / runProcs | PPM chance = hasted attackTime×ppm/600; else row CustomChance or ProcChance; cooldown from row; one charge per proc | GetPPMProcChance, ProcDamageAndSpell | SpellAuraOptions ProcChance / ProcCategoryRecovery / ProcCharges; PPM: Blizzard posts per item (none in DB2) | H: PPM uses hasted speed (item procs use base speed). **Done:** cooldown from ProcCategoryRecovery (`procRule`); PPM and the hasted speed unchanged (no data) |
+| spells.d:spell_proc_event | Per-spell override of proc flags/procEx/school/family mask/PPM/chance/cooldown | LoadSpellProcEvents | SpellAuraOptions (ProcTypeMask, ProcChance, ProcCategoryRecovery, ProcCharges) + SpellEffect.EffectSpellClassMask; PPM: none in DB2 | H: emulator-authored; e.g. Lightning Shield 324 cooldown 3 s here, ProcCategoryRecovery 3500 ms in DB2. **Done:** its cooldowns replaced where Classic Era has the aura as 1.12 (100 auras); procEx, school, family masks, PPM stay (no Blizzard data) |
 | procs.d:spellProcFlags | Spell → proc flag by dmgClass, auto-repeat, ability, positive | PrepareMasksForProcSystem | SpellAuraOptions.ProcTypeMask_0/1 | M |
-| procs.d:effectProcsOn / affectMaskOf | Row family mask, else spell_affect/EffectItemType mask | IsTriggeredAtSpellProcEvent | SpellEffect.EffectSpellClassMask_0..3 | M |
-| spells.d:spell_affect | Talent → spell family mask per effect, copied to higher ranks | LoadSpellAffects | SpellEffect.EffectSpellClassMask_0..3 | M |
+| procs.d:effectProcsOn / affectMaskOf | Row family mask, else spell_affect/EffectItemType mask | IsTriggeredAtSpellProcEvent | SpellEffect.EffectSpellClassMask_0..3 | M. **Checked:** Classic Era renumbered the family flags; no source for 1.12's masks (FORMULAS.md "Procs") |
+| spells.d:spell_affect | Talent → spell family mask per effect, copied to higher ranks | LoadSpellAffects | SpellEffect.EffectSpellClassMask_0..3 | M. **Checked:** translated back, 62 of 132 rows disagree both ways: not a 1.12 source; kept with tooltipmasks.d |
 | effecthandlers.d:blockDamageProcs | PROC_TRIGGER_DAMAGE on swing taken procs only on block | HandleProcTriggerDamageAuraProc (spell_proc_event) | SpellAuraOptions ProcTypeMask/ProcChance | M |
 | combathandlers.d:killedCreature | Kill procs only for non-grey kills | Unit::Kill (PROC_FLAG_KILL) | none found | L |
 

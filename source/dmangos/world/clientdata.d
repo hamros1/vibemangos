@@ -668,6 +668,19 @@ struct SpellCoefficient
     float value = 0;
 }
 
+/**
+ * One aura's proc data as Classic Era's SpellAuraOptions has it. Its type mask is the later encoding: bits 0 to 20
+ * mean what 1.12's `ProcFlags` bits mean, the others are later events (`dmangos.world.procs.procFlagsOf`).
+ */
+struct ProcOptions
+{
+    uint typeMask;   /// `ProcTypeMask_0`
+    uint typeMask1;  /// `ProcTypeMask_1`
+    uint chance;     /// `ProcChance`, percent (101: none of its own)
+    uint recovery;   /// `ProcCategoryRecovery`: milliseconds before it may proc again
+    uint charges;    /// `ProcCharges`
+}
+
 final class ClientData
 {
     @DbcFile("CharSections") DbcStore!(CharSectionsEntry, charSectionsFormat) charSections;
@@ -711,6 +724,9 @@ final class ClientData
     /// Blizzard's reset interval of each instanced map (data/instance-resets.csv, tools/fetch-instance-resets.py:
     /// MapDifficulty's `ResetInterval`, see `resetIntervalDays`). Empty without the file: `instance_template` then.
     ubyte[uint] instanceResets;
+    /// Blizzard's proc data of each aura that procs (data/procs.csv, tools/fetch-procs.py: SpellAuraOptions). Empty
+    /// without the file: the world database's `spell_proc_event` then (`dmangos.world.procs.procRule`).
+    ProcOptions[uint] procOptions;
     const(TaxiPathNodeEntry)*[][uint] taxiPathPoints;
     bool[uint] taxiNetwork;
     @DbcFile("AuctionHouse") DbcStore!(AuctionHouseEntry, auctionHouseFormat) auctionHouses;
@@ -755,6 +771,7 @@ final class ClientData
         data.buildIndexes();
         data.loadCoefficients(buildPath(dataDir, "coefficients.csv"));
         data.loadInstanceResets(buildPath(dataDir, "instance-resets.csv"));
+        data.loadProcs(buildPath(dataDir, "procs.csv"));
         info!"loaded client data from %s (%s races, %s classes, %s skill lines, %s skill abilities)"(dir,
             data.races.rows.length, data.classes.rows.length, data.skillLines.rows.length,
             data.skillLineAbilities.rows.length);
@@ -792,6 +809,35 @@ final class ClientData
             spellCoefficients[spell][index] = SpellCoefficient(true, f[2].to!ushort, f[3].to!ushort, f[4].to!float);
         }
         info!"spell power coefficients of %s spells from %s"(spellCoefficients.length, path);
+    }
+
+    /**
+     * The proc data of `path` (`spell,proc type mask 0,proc type mask 1,proc chance,proc category recovery,proc
+     * charges` a line, `#` comments), if it is there.
+     */
+    void loadProcs(string path)
+    {
+        import std.array : split;
+        import std.conv : to;
+        import std.file : exists, readText;
+        import std.string : lineSplitter, strip;
+
+        if (!exists(path))
+        {
+            warning!"no %s (tools/fetch-procs.py): proc cooldowns from spell_proc_event"(path);
+            return;
+        }
+        foreach (line; readText(path).lineSplitter)
+        {
+            line = line.strip;
+            if (line.length == 0 || line[0] == '#')
+                continue;
+            const f = line.split(",");
+            if (f.length == 6)
+                procOptions[f[0].to!uint] = ProcOptions(f[1].to!uint, f[2].to!uint, f[3].to!uint, f[4].to!uint,
+                    f[5].to!uint);
+        }
+        info!"proc data of %s spells from %s"(procOptions.length, path);
     }
 
     /// The instance reset intervals of `path` (`map,reset interval,max players` a line, `#` comments), if it is there.

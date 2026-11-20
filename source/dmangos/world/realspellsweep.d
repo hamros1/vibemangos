@@ -360,9 +360,9 @@ private final class Choices
 // ---------------------------------------------------------------------------------------------------------------
 
 /// The targets an implicit target names, as the sweep sets them up.
-private enum Who { nobody, caster, enemy, friend, pet }
+package enum Who { nobody, caster, enemy, friend, pet }
 
-private Who whoOf(ImplicitTarget a, ImplicitTarget b, bool hasFriend, bool harmful)
+package Who whoOf(ImplicitTarget a, ImplicitTarget b, bool hasFriend, bool harmful)
 {
     with (ImplicitTarget) switch (a)
     {
@@ -386,7 +386,7 @@ private Who whoOf(ImplicitTarget a, ImplicitTarget b, bool hasFriend, bool harmf
 }
 
 /// Whether the spell harms: a damaging effect, or an aura only an enemy is given (for `TARGET_UNIT`, anyone).
-private bool harms(const ref SpellInfo s)
+package bool harms(const ref SpellInfo s)
 {
     with (AuraType) with (SpellEffect) foreach (i; 0 .. 3)
     {
@@ -402,7 +402,7 @@ private bool harms(const ref SpellInfo s)
 }
 
 /// Who effect `i` of `s` is at.
-private Who whoOf(const ref SpellInfo s, size_t i, bool hasFriend)
+package Who whoOf(const ref SpellInfo s, size_t i, bool hasFriend)
 {
     return whoOf(s.implicitTargetA[i], s.casting.implicitTargetB[i], hasFriend, harms(s));
 }
@@ -1128,7 +1128,7 @@ private imported!"dmangos.world.inventory".Item wornOf(Player player, int itemCl
 }
 
 /// Whether `unit` has an aura of dispel type `type`.
-private bool hasDispellable(UnitRef unit, int type)
+package bool hasDispellable(UnitRef unit, int type)
 {
     if (auto set = unit.auraSet)
         foreach (aura; set.list)
@@ -1156,7 +1156,7 @@ private void putAura(Character me, UnitRef unit, const(SpellInfo)* spell)
 }
 
 /// Whether `effect` summons a creature.
-private bool summonsCreature(SpellEffect effect)
+package bool summonsCreature(SpellEffect effect)
 {
     with (SpellEffect)
         return effect.among(summon, summonWild, summonGuardian, summonPet, summonTotem, summonTotemSlot1,
@@ -1164,7 +1164,7 @@ private bool summonsCreature(SpellEffect effect)
 }
 
 /// Whether `effect` summons a game object.
-private bool summonsObject(SpellEffect effect)
+package bool summonsObject(SpellEffect effect)
 {
     with (SpellEffect)
         return effect.among(summonObjectWild, transDoor, summonObjectSlot1, summonObjectSlot2, summonObjectSlot3,
@@ -1172,7 +1172,7 @@ private bool summonsObject(SpellEffect effect)
 }
 
 /// Whether a game object of `entry` stands near `at`.
-private bool objectNear(imported!"dmangos.world.map".Map map, Position at, int entry)
+package bool objectNear(imported!"dmangos.world.map".Map map, Position at, int entry)
 {
     import dmangos.world.gameobject : GameObject;
 
@@ -1184,7 +1184,7 @@ private bool objectNear(imported!"dmangos.world.map".Map map, Position at, int e
 }
 
 /// Whether a creature of `entry` stands near `at`.
-private bool summoned(imported!"dmangos.world.map".Map map, Position at, int entry)
+package bool summoned(imported!"dmangos.world.map".Map map, Position at, int entry)
 {
     foreach (c; map.creaturesNear(at, 40))
         if (c.values.get!OBJECT_FIELD_ENTRY == entry)

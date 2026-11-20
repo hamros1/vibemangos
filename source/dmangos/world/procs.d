@@ -14,6 +14,7 @@
 module dmangos.world.procs;
 
 import dmangos.world.aurahandlers : ProcFlag;
+import dmangos.world.clientdata : ProcOptions;
 import dmangos.world.spells : SpellInfo, SpellProcEvent;
 
 /// How a hit that may set off procs landed (`ProcFlagsEx`).
@@ -166,6 +167,86 @@ bool effectProcsOn(const(SpellInfo)* auraSpell, size_t i, const(SpellProcEvent)*
     return !((required & (ProcEx.normalHit | ProcEx.criticalHit) & hit.procEx) && !hit.damaging);
 }
 
+/**
+ * The bits of Classic Era's `ProcTypeMask_0` (SpellAuraOptions, the later encoding) that mean what 1.12's
+ * `ProcFlags` bits mean: 0 to 20, from a kill (0x2) to a damage over time taken (0x80000) and any damage taken
+ * (0x100000). Of the 1065 auras with flags in either, 951 have the same mask in both; in the rest these bits agree
+ * but where Classic Era changed the aura. Bit 21 does not: 1.12's is a trap going off (Entrapment only), Classic
+ * Era's rides on damage over time (Nightfall, Pyroclasm); 0x80000000 rides on every damage over time taken; the
+ * others are events 1.12 has not. docs/FORMULAS.md, "Procs".
+ */
+enum uint procFlagsShared = 0x1F_FFFF;
+
+/// Classic Era's `ProcTypeMask_0` as 1.12 `ProcFlag`s: its shared bits.
+uint procFlagsOf(uint typeMask) pure nothrow @nogc @safe
+{
+    return typeMask & procFlagsShared;
+}
+
+/// What an aura procs on and how often (`procRule`), for any unit's aura.
+struct ProcRule
+{
+    uint flags;                    /// `ProcFlag`s
+    float chance = 0;              /// percent
+    float ppm = 0;                 /// procs a minute at the weapon's speed (the world database's); 0: by `chance`
+    uint cooldown;                 /// milliseconds before it may proc again
+    bool blizzardCooldown;         /// `cooldown` is Blizzard's (SpellAuraOptions), not the world database's
+    const(SpellProcEvent)* event;  /// the world database's row (hit kinds, school, family masks), or null
+}
+
+/**
+ * What the aura of `spell` procs on, and how often: its flags, chance and charges are its spell's (the 1.12
+ * Spell.dbc's), or the world database's `spell_proc_event` row `event` where that names flags the data has none of
+ * (Improved Blizzard) or narrows them; its rate a minute, hit kinds, school and family masks are the row's (no
+ * Blizzard data holds them); its cooldown is Blizzard's `ProcCategoryRecovery` (`procs`, Classic Era's
+ * SpellAuraOptions) where Classic Era has the aura as 1.12 has it (the same flags, chance and charges), else the
+ * row's. docs/FORMULAS.md, "Procs".
+ */
+ProcRule procRule(const(SpellInfo)* spell, const(SpellProcEvent)* event, const ProcOptions[uint] procs)
+    pure nothrow @safe
+{
+    ProcRule rule;
+    rule.event = event;
+    rule.flags = event !is null && event.procFlags ? event.procFlags : spell.casting.procFlags;
+    rule.chance = event !is null && event.customChance ? event.customChance : spell.casting.procChance;
+    if (event !is null)
+    {
+        rule.ppm = event.ppmRate;
+        rule.cooldown = event.cooldown * 1000;
+    }
+    if (const options = spell.id in procs)
+        if (procFlagsOf(options.typeMask) == spell.casting.procFlags && options.chance == spell.casting.procChance
+                && options.charges == spell.casting.procCharges)
+        {
+            rule.cooldown = options.recovery;
+            rule.blizzardCooldown = true;
+        }
+    return rule;
+}
+
+///
+unittest
+{
+    SpellInfo shield;
+    shield.id = 324; // Lightning Shield: the world database's 3 s, Blizzard's 3.5 s
+    shield.casting.procFlags = 0x222A8;
+    shield.casting.procChance = 100;
+    shield.casting.procCharges = 3;
+    SpellProcEvent row;
+    row.cooldown = 3;
+    row.procEx = ProcEx.normalHit;
+    assert(procRule(&shield, &row, null).cooldown == 3000, "no Blizzard data: the row's");
+    ProcOptions[uint] procs;
+    procs[324] = ProcOptions(0x222A8, 0, 100, 3500, 3);
+    auto rule = procRule(&shield, &row, procs);
+    assert(rule.cooldown == 3500 && rule.blizzardCooldown && rule.flags == 0x222A8 && rule.chance == 100);
+    procs[324] = ProcOptions(0x222A8 | 0x14000, 0, 100, 10_000, 3); // as if Classic Era had changed it
+    assert(procRule(&shield, &row, procs).cooldown == 3000, "not the aura 1.12 has: the row's");
+    procs[324] = ProcOptions(0x800222A8, 0, 100, 3500, 3); // a later bit beside 1.12's
+    assert(procRule(&shield, &row, procs).cooldown == 3500);
+    assert(procFlagsOf(0x00250000) == 0x50000, "Nightfall: Classic Era's bit 21 is not 1.12's trap");
+}
+
 /// `Unit::GetPPMProcChance`: the chance in percent of a proc `ppm` times a minute at `attackTime` ms a swing.
 float ppmChance(uint attackTime, float ppm) pure nothrow @nogc @safe
 {
@@ -180,14 +261,14 @@ enum uint takenProcFlags = ProcFlag.takeMeleeSwing | ProcFlag.takeMeleeAbility |
 /// The proc engine of a player (mixed into `dmangos.world.character.Character`); see the module documentation.
 mixin template ProcHandlers()
 {
-    import core.time : MonoTime, seconds;
+    import core.time : MonoTime, msecs;
     import std.algorithm.searching : canFind;
     import std.random : uniform01;
     import dmangos.world.auras : Aura, AuraType;
     import dmangos.world.classspells : CustomValues;
     import dmangos.world.physicalclasses : flatChanceProcs, procOnTrapActivation, trapActivationProcs;
     import dmangos.world.aurahandlers : ProcFlag;
-    import dmangos.world.procs : effectProcsOn, ppmChance, procEventMatches, ProcHit, takenProcFlags;
+    import dmangos.world.procs : effectProcsOn, ppmChance, procEventMatches, ProcHit, ProcRule, procRule, takenProcFlags;
     import dmangos.world.spellcast : SpellTargets, TargetFlags;
     import dmangos.world.spellids : SpellEffect;
     import dmangos.world.spellmods : SpellModOp;
@@ -213,7 +294,7 @@ mixin template ProcHandlers()
         {
             Aura aura;
             ubyte effects;
-            const(SpellProcEvent)* event;
+            ProcRule rule;
         }
 
         Rolled[] rolled;
@@ -223,8 +304,9 @@ mixin template ProcHandlers()
         {
             if (aura.has(AuraType.procTriggerDamage)) // Holy Shield's kind: on a block, `blockDamageProcs`
                 continue;
-            const event = context.data.spells.procEvent(aura.spell.id);
-            const auraFlags = event !is null && event.procFlags ? event.procFlags : aura.spell.casting.procFlags;
+            const rule = procRule(aura.spell, context.data.spells.procEvent(aura.spell.id), context.client.procOptions);
+            const event = rule.event;
+            const auraFlags = rule.flags;
             if (trapActivationProcs.canFind(aura.spell.id) && !(flags & procOnTrapActivation))
                 continue; // Entrapment: a trap's, not any harmful spell's (dmangos.world.physicalclasses)
             if (!procEventMatches(auraFlags, event, flags, hit))
@@ -243,13 +325,13 @@ mixin template ProcHandlers()
             if (const at = aura.spell.id in procReadyAt)
                 if (*at > now)
                     continue;
-            float chance = event !is null && event.customChance ? event.customChance : aura.spell.casting.procChance;
-            if (!victim && event !is null && event.ppmRate && !flatChanceProcs.canFind(aura.spell.id))
-                chance = ppmChance(player.stats.attackTime[hit.hand < 3 ? hit.hand : 0], event.ppmRate);
+            float chance = rule.chance;
+            if (!victim && rule.ppm && !flatChanceProcs.canFind(aura.spell.id))
+                chance = ppmChance(player.stats.attackTime[hit.hand < 3 ? hit.hand : 0], rule.ppm);
             chance = spellMod(SpellModOp.chanceOfSuccess, aura.spell, chance);
             if (uniform01(map.random) * 100 >= chance)
                 continue;
-            rolled ~= Rolled(aura, effects, event);
+            rolled ~= Rolled(aura, effects, rule);
         }
         ProcCast[] casts;
         Aura[] spent;
@@ -264,9 +346,9 @@ mixin template ProcHandlers()
                 c.by = r.aura.spell;
             if (!procced)
                 continue;
-            // (in seconds: spell_proc_event's 3 for Lightning Shield, 120 for 22648; CMaNGOS-classic of its time)
-            if (r.event !is null && r.event.cooldown)
-                procReadyAt[r.aura.spell.id] = now + r.event.cooldown.seconds;
+            // Blizzard's recovery where it has the aura (Lightning Shield's 3.5 s), else spell_proc_event's.
+            if (r.rule.cooldown)
+                procReadyAt[r.aura.spell.id] = now + r.rule.cooldown.msecs;
             if (r.aura.charges && --r.aura.charges == 0)
                 spent ~= r.aura;
         }

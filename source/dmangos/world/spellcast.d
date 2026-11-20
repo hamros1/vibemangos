@@ -646,48 +646,45 @@ ubyte[] spellMissLog(uint spell, ulong caster, ulong target, SpellMissInfo miss)
 }
 
 /**
- * Whether a spell is binary (as before WotLK): a spell resisted whole or not at all, whose resistance adds to its
- * chance to miss instead of taking a share of its damage: all its effects are not damage, or all are
- * auras, or all its damage is over time, or a non-damage effect hits the targets of a direct damage
- * one (Frostbolt's slow). Dummy (3) and trigger spell (64) effects do not count.
+ * Whether a spell is binary: resisted whole or not at all, its resistance adding to its chance to miss instead of
+ * taking a share of its damage. Blizzard (docs/FORMULAS.md, "Spell resistance"): "Against most spells, this
+ * resistance percentage is the straight % chance to completely resist the spell. Against direct-damage spells
+ * (spells that deliver their full damage upon impact, such as Fireball, Mind Blast, and Earth Shock), this
+ * resistance is the percentage of damage you will resist on average." So a spell is resisted in part when it deals
+ * damage on impact and lays no debuff beside it: Fireball's burn is damage, Earth Shock's interrupt no aura. A
+ * spell without direct damage (an aura, a damage over time alone, a stun) is binary, and so is one whose direct
+ * damage carries a debuff on the same targets (Frostbolt's slow, Frost Nova's root: "spells which deal a debuff",
+ * documented 1.x research). Dummy (3) and trigger spell (64) effects do not count.
  */
 bool isBinarySpell(const ref SpellInfo spell) pure nothrow @nogc @safe
 {
-    ubyte valid, nonDamage, aura;
+    bool any;
+    ubyte direct, debuffs;
     foreach (i; 0 .. 3)
     {
         const effect = spell.effect[i];
         if (effect == 0 || effect == SpellEffect.dummy || effect == SpellEffect.triggerSpell)
             continue;
-        const ubyte bit = cast(ubyte)(1 << i);
-        valid |= bit;
+        any = true;
         const auraName = spell.casting.applyAuraName[i];
-        bool damage;
         if (auraName)
         {
-            aura |= bit;
-            damage = auraName == AuraType.periodicDamage || auraName == AuraType.periodicLeech || auraName == AuraType.periodicManaLeech
-                || auraName == AuraType.periodicDamagePercent;
+            if (auraName != AuraType.periodicDamage && auraName != AuraType.periodicLeech
+                    && auraName != AuraType.periodicManaLeech && auraName != AuraType.periodicDamagePercent)
+                debuffs |= 1 << i;
         }
-        else
-            damage = effect == SpellEffect.schoolDamage || effect == SpellEffect.environmentalDamage || effect == SpellEffect.healthLeech
-                || effect == SpellEffect.weaponDamageNoschool || effect == SpellEffect.weaponPercentDamage || effect == SpellEffect.weaponDamage
-                || effect == SpellEffect.normalizedWeaponDmg;
-        if (!damage)
-            nonDamage |= bit;
+        else if (effect == SpellEffect.schoolDamage || effect == SpellEffect.environmentalDamage
+                || effect == SpellEffect.healthLeech || effect == SpellEffect.weaponDamageNoschool
+                || effect == SpellEffect.weaponPercentDamage || effect == SpellEffect.weaponDamage
+                || effect == SpellEffect.normalizedWeaponDmg)
+            direct |= 1 << i;
     }
-    if (!valid)
-        return false;
-    if (nonDamage == valid || aura == valid)
-        return true;
-    const ubyte damageMask = valid & ~nonDamage, dots = damageMask & aura;
-    if (damageMask == dots)
-        return true;
-    const ubyte direct = damageMask & ~dots;
+    if (!direct)
+        return any;
     foreach (i; 0 .. 3)
         if (direct & (1 << i))
             foreach (j; 0 .. 3)
-                if ((nonDamage & (1 << j)) && spell.implicitTargetA[i] == spell.implicitTargetA[j]
+                if ((debuffs & (1 << j)) && spell.implicitTargetA[i] == spell.implicitTargetA[j]
                     && spell.casting.implicitTargetB[i] == spell.casting.implicitTargetB[j])
                     return true;
     return false;
@@ -700,7 +697,15 @@ unittest
     assert(!isBinarySpell(bolt), "Fireball's direct part");
     bolt.effect[1] = SpellEffect.applyAura; // a slow on the same target
     bolt.casting.applyAuraName[1] = AuraType.modDecreaseSpeed;
-    assert(isBinarySpell(bolt), "Frostbolt");
+    assert(isBinarySpell(bolt), "Frostbolt: a debuff on its damage");
+    SpellInfo shock;
+    shock.effect[0] = SpellEffect.schoolDamage;
+    shock.effect[1] = SpellEffect.interruptCast;
+    assert(!isBinarySpell(shock), "Earth Shock: Blizzard's own example of a spell resisted in part");
+    SpellInfo burn = shock;
+    burn.effect[1] = SpellEffect.applyAura;
+    burn.casting.applyAuraName[1] = AuraType.periodicDamage;
+    assert(!isBinarySpell(burn), "Fireball with its burn: Blizzard's example too");
     SpellInfo dot;
     dot.effect[0] = SpellEffect.applyAura;
     dot.casting.applyAuraName[0] = AuraType.periodicDamage;

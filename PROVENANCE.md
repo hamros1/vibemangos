@@ -797,6 +797,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Functions: `MapEntry::IsBattleGround`, `MapEntry::IsContinent`, `MapEntry::IsDungeon`, `MapEntry::IsRaid`, `MapManager::IsValidMapCoord`, `Player::InitDisplayIds`, `Player::TeamForRace`
 * Constants: `CLASSMASK_ALL_PLAYABLE`, `MAX_OUTFIT_ITEMS`, `MAX_SKILL_STEP`, `MAX_TALENT_RANK`, `RACEMASK_ALL_PLAYABLE`, `SECTION_FLAG_UNAVAILABLE`, `SKILL_FLAG_MAXIMIZED`
 * Not from an emulator: `instanceResets`, `resetIntervalDays` (Classic Era's MapDifficulty.db2, `tools/fetch-instance-resets.py`; docs/FORMULAS.md)
+* Not from an emulator: `procOptions`, `ProcOptions` (Classic Era's SpellAuraOptions.db2, `tools/fetch-procs.py`; docs/FORMULAS.md, "Procs")
 
 ## world/combat.d
 
@@ -805,6 +806,13 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Functions: `Player::RewardRage`, `Unit::CalculateEffectiveMagicResistancePercent`, `Unit::RollMagicResistanceMultiplierOutcomeAgainst`, `WorldObject::HasInArc`
 * Constants: `ATTACK_DISPLAY_DELAY`, `ATTACK_DISTANCE`, `BASE_MELEERANGE_OFFSET`, `CLASSMASK_WAND_USERS`, `CONFIG_UINT32_WORLD_BOSS_LEVEL_DIFF`, `MELEE_LEEWAY`, `SMSG_ATTACKERSTATEUPDATE`, `SMSG_ATTACKSTART`, `SMSG_ATTACKSTOP`, `SPELL_PARTIAL_RESIST_DISTRIBUTION`, `TYPEID_PLAYER`, `UNIT_FIELD_COMBATREACH`, `UNIT_FIELD_MINDAMAGE`, `UNIT_FLAG_PLAYER_CONTROLLED`
 * Not from an emulator: `armorAgainst`, the armor a blow ignores (Serrated Blades' tooltip and data)
+* Not from an emulator: the attack table's chances (`missChance`, `dodgeChance`, `parryChance`, `blockChance`,
+  `critChance` with `auraCritSuppression`, `glanceChance`), from Blizzard's statements and Classic Era's
+  measurements (Magey's "Attack-table"); no dodge of ranged attacks (the 1.12 tooltips of Dodge, Parry and Block);
+  `rollPartialResist`, `fullResistChance` and `partiallyResisted` by Blizzard's resistance page (its five published
+  rows of `partialResistRows` checked; the rows between still CMaNGOS's fit). docs/FORMULAS.md, "The melee attack
+  table", "Ranged attacks: no dodge", "Spell resistance". Still CMaNGOS's: `crushChance`, casters' glancing,
+  `effectiveResistPercent`'s level bonus.
 
 ## world/crowdcontrol.d
 
@@ -933,6 +941,11 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Projects: CMaNGOS
 * Files: `ItemPrototype.h`, `Player.h`, `SharedDefines.h`
 * Constants: `INVENTORY_SLOT_BAG_0`, `MAX_ACTION_BUTTONS`, `MAX_POWERS`, `NULL_BAG`, `NULL_SLOT`, `PLAYER_EXPLORED_ZONES_SIZE`, `UNIT_FIELD_FLAGS`, `UNIT_FLAG_FLEEING`, `UNIT_FLAG_LOOTING`
+
+## world/diminishing.d
+
+* Not from an emulator: diminishing returns in PvP from Blizzard's patch notes 1.4.0 to 1.11.0 (docs/FORMULAS.md,
+  "Diminishing returns").
 
 ## world/duelhandlers.d
 
@@ -1328,6 +1341,9 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Not from an emulator: `SPELL_ATTR_EX3` 0x80000 read as "either hand's weapon" (only Sword Specialization has it;
   its tooltip asks for a sword, which CMaNGOS's "no equip requirement" did not); Unbridled Wrath's and Mace
   Specialization's chance the tooltip's flat one, not spell_proc_event's rate a minute (`flatChanceProcs`).
+* Not from an emulator: `procRule`, `procFlagsOf`: the proc cooldowns Blizzard's (Classic Era's SpellAuraOptions
+  `ProcCategoryRecovery`, its `ProcTypeMask` mapped to 1.12's flags), `spell_proc_event` the fallback
+  (docs/FORMULAS.md, "Procs").
 
 ## world/physicalclasses.d
 
@@ -1382,6 +1398,11 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 ## world/realclassspelltests.d
 
 * Projects: CMaNGOS (the client's DBC files and its classic world database, as the server runs on them)
+
+## world/realrules_combat.d
+
+* Not from an emulator: tests of the attack table, spell resistance, Blizzard's proc data and diminishing returns
+  on the client's DBC files, the classic world database and data/procs.csv.
 
 ## world/realm.d
 
@@ -1442,6 +1463,9 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Also: `Spell::IsInterruptible` (`SPELL_INTERRUPT_FLAG_COMBAT`, `SPELL_PREVENTION_TYPE_SILENCE`), `CalculateSpellDuration` (combo points), `POWER_HEALTH`
 * Not from an emulator: `bonusCoefficient`, Blizzard's spell power coefficients (Classic Era's SpellEffect.db2, `tools/fetch-coefficients.py`) with the 1.12 rules as fallback (docs/FORMULAS.md)
 * Also: `IsSpellUseWeaponSkill` and `Unit::CalculateEffectiveMissChance` (an ability no weapon's: `GetSkillMaxForLevel`)
+* Not from an emulator: `isBinarySpell` by Blizzard's resistance page (a direct-damage spell resisted in part unless
+  a debuff rides on it; docs/FORMULAS.md, "Spell resistance"). `spellMissChance`'s level table is documented
+  research (Wowpedia), as CMaNGOS has it.
 
 ## world/spellhandlers.d
 

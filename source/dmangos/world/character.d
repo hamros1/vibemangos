@@ -391,8 +391,16 @@ final class Character : OnlinePlayer, Looter
         import dmangos.world.spellcast : heartbeatResistChance;
         import dmangos.world.updatefields : UNIT_FIELD_RESISTANCES;
 
-        auto aura = makeAura(spell, caster, casterLevel, durationMs, false, values);
-        if (auto from = map.unit(caster)) // it may break early (`SPELL_ATTR_HEARTBEAT_RESIST`)
+        auto from = map.unit(caster);
+        int lasts = durationMs;
+        if (from && from.fighter.playerControlled) // a player's pet or totem: PvP, diminished
+        {
+            lasts = diminishedDuration(spell, durationMs);
+            if (lasts == 0 && durationMs > 0)
+                return; // immune for now
+        }
+        auto aura = makeAura(spell, caster, casterLevel, lasts, false, values);
+        if (from) // it may break early (`SPELL_ATTR_HEARTBEAT_RESIST`)
             aura.setHeartbeatResist(heartbeatResistChance(from.fighter, player.fighter, *spell,
                 cast(int) player.values.get!UNIT_FIELD_RESISTANCES(spell.casting.school), 0), durationMs);
         addAura(aura);

@@ -471,6 +471,202 @@ data had it, quoting the tooltip:
   Burning Wish (18789), the Voidwalker Fel Stamina (18790), the Succubus Touch of Shadow (18791), the Felhunter Fel
   Energy (18792), each of which the aura's own tooltip describes alike; a demon summoned cancels it.
 
+## The melee attack table
+
+**What:** the chances of one swing or weapon ability (combat.d `missChance`, `dodgeChance`, `parryChance`,
+`blockChance`, `glanceChance`, `glanceAmount`, `critChance`, `crushChance`, `rollMeleeOutcome`): one roll through
+miss, dodge, parry, block, glance, crit, crush, hit.
+
+**Sources:** Blizzard's statements of 2019 on Classic (forum thread "Bug: Hit Tables", posts 12 and 32; "Bug: Berserker
+Stance", post 8), as Magey's wiki quotes them (github.com/magey/classic-warrior/wiki/Attack-table, commit f385839), and
+the measurements on that page (Classic Era 1.13, tens of thousands of white swings per row), which agree with Beaza's
+1.x formulas (wowwiki "Miss", oldid 347982; "Dodge", 347957; "Block", 349026; "Critical strike", 349108; "Weapon skill",
+349241). Blizzard:
+
+- "Creatures at your level have a **5%** chance to Dodge your attacks. Each additional level the target has over the
+  player grants them **0.5%** additional chance to dodge."
+- "Creatures that are 3 levels above the player have a **14%** Parry chance."
+- "Players have an **8%** chance to miss a creature that is 3 levels above them."
+- "Critical Strike chance is reduced by **1%** per each additional level the target has over the player."
+- "the **first 1%** of +hit gained from talents or gear to be **ignored** against monsters with more than **10**
+  Defense Skill above the attacking player's Weapon Skill ... the so-called 'hit cap' is in effect **9%**".
+- "Modifiers to Critical Strike chance are reduced against enemies 3 levels higher than the player-character. There is
+  a single modifier placed on total Critical Strike gained from auras".
+
+**Rule** (gap = the victim's defense less the attacker's weapon skill; a creature's defense and skill are five a
+level; "capped" skill is at most five times the attacker's level):
+
+- **Miss:** against a creature 5% + 0.1% a point of gap, 0.2% a point past 10 (8% at 15); past 10 the attacker's hit
+  loses `(gap − 10) × 0.2`% (the first 1% at 15); below level 10 the creature is missed its level in tenths as often.
+  Against a player 5% + 0.04% a point. Dual wield +19% (measured: "the dual-wield miss penalty in Classic is indeed a
+  flat 19%"). Never below 0.
+- **Dodge:** a creature's 5% + 0.1% a point of gap (6.5% three levels above; 6% with +5 skill, measured 6.04%), a
+  player's own + 0.04% a point.
+- **Parry:** a creature's by the capped skill: 5% + 0.1% a point, 0.6% a point past 10 (14% at 15). Measured: 13.97%
+  at +3, and 13.49% with +5 weapon skill (where a parry by the weapon skill would be 6%). A player's own + 0.04%.
+- **Block:** a creature's at most its 5% ("mobs cannot block more than 5% of attacks regardless of rating
+  difference"; measured 4.94% at +3), less 0.1% a point of skill above its defense; a player's own + 0.04%.
+- **Glance:** 10% + 2% a point of the victim's defense over the capped skill (40% at +3, measured 40.36%); glancing
+  damage 1.3 − 0.05·gap (at most 0.91) to 1.2 − 0.03·gap (0.2 to 0.99) by the uncapped skill (35% less at +3, 15% with
+  +5 skill: measured 35.12% and 14.82%). Unchanged.
+- **Crit:** against a creature by the capped skill: 0.2% less a point of gap (1% a level), 0.04% more a point under;
+  three or more levels above, 1.8% less of the crit auras give (talents, buffs, gear's crit; not agility), at most what
+  they give (measured: "~4.84% average suppression ... the suppression to aura crit is likely ~1.8%"; with 1% aura crit
+  it was all suppressed). Against a player 0.04% a point.
+
+**What changed (2026-11-20):** a creature three levels above was missed 9% (CMaNGOS's 0.2% + 0.4% a point past
+10), and at least 1% whatever the hit: now 8%, and 0% at 9% hit. A creature's parry went by the weapon skill: +5 skill
+cut a +3 creature's parry from 14% to 6%; now 14%. A creature's dodge moved 0.04% a point when the skill was above its
+defense, now 0.1%; its block did not fall with skill above, now 0.1% a point. Crit against creatures went by the
+uncapped weapon skill, and no crit from auras was suppressed. Creatures below level 10 were missed 5%.
+
+**Unchanged, with no source:** crushing blows, `(skill − capped defense) × 2 − 15`% from a gap of 15 (15% from a
+level 63 at 300 defense): no Blizzard statement and no Classic Era measurement was found (the warcraft.wiki.gg page
+gives only the post-3.0 rule, its talk page's pre-3.0 posts disagree whether defense above the cap counts; a 2024
+Blizzard forum thread has only players' claims). Casters' glancing (their chance from `min(level, 30)%`, their damage
+0.6 to 0.9): Magey's page says only that "non-melee formula [is] slightly different". Creatures below level 10 block
+less (Beaza) by no stated amount. A creature's own 5% crit, dodge, parry and block (creature.d `fighter`) agree with
+Blizzard's 5% at the same level and the community's 440 defense to be uncrittable by a boss (5% + 15 × 0.04%).
+
+**Second opinion (CMaNGOS-classic, compared afterwards):** `CalculateEffectiveMissChance` the 9% and 1% minimum;
+`CalculateEffectiveParryChance` and `CalculateEffectiveBlockChance` by the weapon skill, block not falling;
+`CalculateEffectiveCritChance` by the weapon skill against creatures (its own comment: "weapon skill does not benefit
+crit% vs NPCs", the code the reverse), no aura-crit suppression.
+
+## Ranged attacks: no dodge
+
+**Source: the 1.12.1 tooltips** (Spell.dbc): Dodge (81) "Gives a chance to dodge enemy melee attacks", Parry (3127)
+"Gives a chance to parry enemy melee attacks", Block (107) "Gives a chance to block enemy melee and ranged attacks";
+and patch 5.0.4 (Warcraft Wiki "Dodge", oldid 6594641): "Ranged attacks can now be dodged". **Rule:** a ranged attack
+(Auto Shot, a wand) and a ranged ability are never dodged nor parried; they may be blocked from the front. **What
+changed:** an Auto Shot could be dodged (`rollMeleeOutcome` asked no attack type) while Aimed Shot could not.
+CMaNGOS-classic: `CanDodgeAbility` melee abilities only, `CanDodgeInCombat` for swings and shots alike, as dmangos had.
+
+## Spell resistance
+
+**What:** a hostile spell's chance to be resisted whole, and the share of a direct-damage spell resisted
+(combat.d `effectiveResistPercent`, `resistDistribution`, `fullResistChance`, `rollPartialResist`,
+`partiallyResisted`; spellcast.d `spellMissChance`, `isBinarySpell`).
+
+**Source: Blizzard's own page** (worldofwarcraft.com/info/basics/resistances.html, the 2006-07-21 copy in the Internet
+Archive): "When hit by a spell, you have two chances to resist the spell. The first chance is based on your level ...
+(minimum of 1%). If you make this resistance chance, you are completely unaffected by the spell. The second chance to
+resist is based on your resistance score and the level of the caster ... up to a maximum of 75%. Against most spells,
+this resistance percentage is the straight % chance to completely resist the spell. Against direct-damage spells
+(spells that deliver their full damage upon impact, such as Fireball, Mind Blast, and Earth Shock), this resistance is
+the percentage of damage you will resist on average. When you are hit by a direct-damage spell, you have a chance to
+resist 100%, 75%, 50%, 25%, or 0% of the spell's damage". Its table against level-50 spells:
+
+| resistance | 50 | 100 | 150 | 200 | 250 |
+|---|---|---|---|---|---|
+| average resisted | 15% | 30% | 45% | 60% | 75% |
+| 100% resisted | 0% | 1% | 1% | 11% | 25% |
+| 75% | 2% | 6% | 18% | 34% | 55% |
+| 50% | 11% | 24% | 48% | 40% | 16% |
+| 25% | 33% | 49% | 26% | 14% | 3% |
+| none | 54% | 20% | 7% | 1% | 1% |
+
+**Rule:** the average is `resistance / (5 × caster level, at least 100) × 0.75`, at most 75% (Blizzard's 50 and 250
+against level 50: 15% and 75%). The table `partialResistRows` holds Blizzard's five columns exactly (tested); its rows
+between are an emulator's fit, interpolated. A direct-damage spell is resisted whole by the table's last column (in the
+hit roll), and otherwise in part by the other four, renormalized: at 75% one cast in 75 not resisted whole lands
+whole. A spell with no direct damage, or whose direct damage lays a debuff on the same targets (Frostbolt's slow, Frost
+Nova's root: "spells which deal a debuff", the documented 1.x research of Wowpedia "Resistance", oldid 6675993), is
+binary: resisted whole by the average, never in part, its ticks included. Earth Shock's interrupt is no aura, and
+Fireball's burn is damage: both in part, as Blizzard names them. Negative resistance adds the same share.
+
+**The level miss (no Blizzard numbers):** 4%, 5%, 6% at 0 to 2 levels above, then 11% a level against creatures and 7%
+against players, 1% at least (Wowpedia "Resistance", "Spell hit": documented research; Blizzard's page gives only the
+1% minimum). A creature above the caster has 2% more average resistance a level for spells that are not binary
+(Wowpedia: "8 resist (believed ...) ... not apply to binary spells"; 8 points are 2% at 60). Both unchanged.
+
+**What changed (2026-11-20):** a direct hit above 54% average was never let land whole (Blizzard: 1%); a direct hit
+not resisted whole drew from all five columns and turned the 100% column into 75% (more 75% resists than the table);
+a binary spell's ticks were resisted in part at a tenth of the resistance (an emulator rule; Blizzard: resisted whole
+or not at all); Earth Shock, and any direct damage with a non-aura extra (an interrupt), was binary.
+
+**Second opinion (CMaNGOS-classic):** `IsBinarySpell` makes any non-damage effect on the targets of the damage binary
+(Earth Shock binary); the partial roll bumps 0% to 25% above 54% for direct damage, and binary periodic damage rolls
+partial resists at a tenth.
+
+## Procs
+
+**What:** what an aura procs on, how often, and how long it waits (procs.d `procRule`, `procFlagsOf`, `runProcs`).
+
+**Sources: Blizzard's data.** The 1.12.1 Spell.dbc has each aura's `ProcFlags`, `ProcChance` and `ProcCharges` (the
+world database's `spell_template` holds them as the DBC has them). Classic Era's SpellAuraOptions (wago.tools, build
+1.15.9.70576) has the same three, and `ProcCategoryRecovery`, the milliseconds before an aura may proc again, which
+1.12's client data lacks. `tools/fetch-procs.py DATA_DIR` writes it to `DATA_DIR/procs.csv` (not committed);
+`ClientData.procOptions` reads it.
+
+**The encoding.** `ProcTypeMask_0` is the later encoding. Compared with 1.12's `ProcFlags` over the 1065 auras with a
+flag in either: 951 have the same mask; bits 0 to 20 (a kill 0x2 to any damage taken 0x100000) co-occur one to one;
+0x80000000 rides on all 68 auras of damage over time taken (a later event); bit 21, 1.12's trap going off (Entrapment
+only), is in Classic Era on damage over time dealt (Nightfall 0x250000, Pyroclasm 0x240000). So a mask is taken as its
+bits 0 to 20 (`procFlagsOf`). Verified on the real data (dmangos.world.realrules_combat) on Lightning Shield, Blood
+Craze, Flurry, Seal of Command, Ignite, Arcane Concentration, Nightfall, Pyroclasm, Vampiric Embrace and Spinal Reaper.
+
+**Rule:** the flags, chance and charges are the aura's spell's (1.12's); the cooldown is Blizzard's
+`ProcCategoryRecovery` where Classic Era has the aura as 1.12 has it (the same flags, chance and charges: 100 of the 102
+auras with a recovery), else the world database's. Classic Era changed some auras after 1.12: Omen of Clarity procs
+from spells there (0x14014, 10 s; its 1.12 tooltip: "Each of the Druid's melee attacks"), so it keeps the database's.
+
+| aura | `spell_proc_event` | Blizzard |
+|---|---|---|
+| Lightning Shield, Shadowguard | 3 s | 3.5 s |
+| Seal of Command | 3 s | 1 s |
+| Hand of Justice | 3 s | 2 s |
+| Unbridled Wrath, Mace Specialization, Seals of Justice, Light, Wisdom, Reckoning, Expose Weakness, Bloodfang, Lightning Strike, Heroism, Decapitate | 3 s | none |
+| Sword Specialization | none | 0.2 s |
+| Setup, Arcane Concentration's ranks, Magic Absorption, Force Reactive Disk, Mana Surge | none (or 1 s) | 1 s |
+| Seal Fate, Flurry (shaman), Head Rush | none | 0.5 s |
+| Thrash, Ironfoe, the Absorption items and other item and creature auras | none | 0.2 to 240 s |
+
+**Still from the world database (no Blizzard data):** what hits an aura takes (`procEx`: a crit only, a dodge, a
+block), its school and spell family masks, the flags it gives where the spell has none (Improved Blizzard, Improved
+Mend Pet, Improved Aspect of the Hawk) or narrows (Arcane Concentration without ranged attacks; Illusion Passive), and
+rates a minute: SpellAuraOptions' `SpellProcsPerMinuteID` is 0 on every row, so the rates (Seal of Command 7, Crusader
+1, ...) stay the database's. Where a talent's tooltip gives a flat chance the class passes took it (Unbridled Wrath,
+Mace Specialization: "a 40% chance"), and Blizzard's `ProcChance` agrees (8% to 40%, 1% to 6%).
+
+**`spell_affect` stays.** SpellEffect's `EffectSpellClassMask` is in Classic Era's own family-flag numbering, rebuilt
+since 1.12 (2335 of 3060 effect masks differ from 1.12's `EffectItemType`). Translated through the spells each names
+(SpellClassOptions) back to 1.12's flags, 70 of the 132 `spell_affect` rows agree and 62 do not, both ways (Fire
+Power's would take in Frostbolt, Polymorph and the conjures, whose 1.12 flag 0x40000000 a fire spell shares, and lose Ignite's 0x8000000). It is no source for 1.12's masks;
+`spell_affect` and the tooltip fixes (`world/tooltipmasks.d`) stay.
+
+## Diminishing returns
+
+**What:** crowd control in PvP lasting less when repeated (diminishing.d; aurahandlers.d `diminishedDuration`, a
+player's own and a pet's or totem's on a player, character.d `auraFrom`).
+
+**Source: Blizzard's 1.x patch notes** (Warcraft Wiki "Patch 1.4.0", oldid 6971245, and 1.8.0, 1.9.0, 1.10.0, 1.11.0).
+1.4.0: "When a spell with diminishing returns is used against a target in PvP, the first effect has full duration. On
+the second use of the same category of spell (e.g. slowing), that spell's duration is reduced by 50%. On the third use,
+the duration is reduced by 75%. On the fourth attempt, the target becomes immune to the spell. Spells must be used on
+the same target within 15 seconds of the *end* of the duration in order to be diminished." It added "Frost Shock"
+("considered a slowing effect"), "Entangling Roots", "Frost Nova" ("an immobilizing effect"), and "Seduction (Succubus) -
+Is now considered a Fear effect". 1.8.0: "Death Coil ... now causes a short Fear effect that is not diminished";
+"Gnomish Mind Control Cap - Is now subject to diminishing returns in the Charm category". 1.9.0: the stuns of
+Improved Starfire, Improved Concussive Shot, Impact, Seal of Justice, Blackout, Mace Specialization, Pyroclasm and
+Improved Revenge "no longer diminish or [are] diminished by controlled stun abilities and spells (e.g. Cheap Shot,
+Hammer of Justice, Charge etc.)". 1.10.0: "Freezing Traps are now affected by diminishing returns". 1.11.0: "Grenades
+and Mortars now are set to use the 'Controlled Stun' mechanic".
+
+**Rule:** PvP only (a player's, or its pet's or totem's, hostile aura on a player). Categories: controlled stuns (the
+stun mechanic, but the eight proc stuns of 1.9.0), fear (the fear mechanic, and Seduction), charm (the charm mechanic),
+immobilizing (Entangling Roots, Frost Nova), slowing (Frost Shock), Freezing Trap (the freeze mechanic). Full, half, a
+quarter, then immune until 15 s after the last one's end (its break counts as its end). Other crowd control is not
+diminished: the notes say "It is our goal to set as few spells as possible to be diminished".
+
+**Not from a source:** whether the 1.9.0 proc stuns diminish among themselves (taken: not at all); the immune
+attempt shows nothing (no "Immune" in the combat log yet). Classic Era resets "dynamically between 15-20 seconds"
+(Warcraft Wiki "Diminishing returns"), a later implementation; 1.12's 15 s is kept.
+
+**Second opinion (CMaNGOS-classic):** `GetDiminishingReturnsGroupForSpell` diminishes by mechanic far beyond the notes
+(polymorph, sleep, every root, knockout, Blind, Kidney Shot apart, banish, horror, silence, disarm) and splits
+triggered stuns and roots into groups of their own.
+
 ## Pets
 
 **What:** what a pet has of its own and of its owner (world/petauras.d, pet.d, creatureprocs.d; each talent tested in

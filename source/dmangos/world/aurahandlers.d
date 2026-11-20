@@ -155,9 +155,16 @@ private:
         auto who = target == player.guid ? this : cast(typeof(this)) context.onlinePlayer(target);
         if (who is null || who.player is null || who.map !is map)
             return;
-        // On an enemy (a duel's opponent) it is a debuff.
+        // On an enemy (a duel's opponent) it is a debuff, diminished by those of its kind before it.
         const hostile = who !is this && canAttack(relatingNow(), who.relatingNow(), context.client);
-        auto given = makeAura(spell, player.guid, player.data.level, ms, !hostile, values);
+        int lasts = ms;
+        if (hostile)
+        {
+            lasts = who.diminishedDuration(spell, ms);
+            if (lasts == 0 && ms > 0)
+                return; // immune for now
+        }
+        auto given = makeAura(spell, player.guid, player.data.level, lasts, !hostile, values);
         if (given.charges)
             given.charges = spellMod(SpellModOp.charges, spell, given.charges);
         if (effects)
@@ -486,9 +493,27 @@ private:
         return true;
     }
 
+    /// This player's diminishing returns on crowd control in PvP (`dmangos.world.diminishing`).
+    private imported!"dmangos.world.diminishing".DiminishingReturns diminishing;
+
+    /**
+     * How long a hostile aura of `spell` lasting `ms`, cast by a player or a player's pet or totem, lasts on this
+     * player: diminished by the auras of its category before it (full, half, a quarter); 0 when it is immune to them
+     * for now.
+     */
+    package int diminishedDuration(const(SpellInfo)* spell, int ms)
+    {
+        import dmangos.world.diminishing : drCategory;
+
+        uint level;
+        return diminishing.apply(drCategory(*spell), ms, context.clock(), level);
+    }
+
     /// The aura ends (`expired`: its time ran out): its slot empties, its effects end.
     package void removeAura(Aura aura, bool expired = false)
     {
+        if (!aura.positive) // a diminished one's 15 seconds count from its end, broken early or not
+            diminishing.ended(imported!"dmangos.world.diminishing".drCategory(*aura.spell), context.clock());
         player.auras.remove(aura, player.values);
         auraEffects(aura, false);
         if (aura.caster == player.guid)
@@ -1223,7 +1248,7 @@ private:
                 import std.random : uniform;
 
                 damage = partiallyResisted(damage, targetResistance(cast(int) target.values.get!UNIT_FIELD_RESISTANCES(school), school),
-                    player.data.level, target.fighter, isBinarySpell(*aura.spell), false,
+                    player.data.level, target.fighter, isBinarySpell(*aura.spell),
                     uniform!"[]"(1u, 10000u, map.random)).damage;
             }
             if (aura.type(i) == AuraType.periodicLeech)

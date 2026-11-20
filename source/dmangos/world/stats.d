@@ -417,6 +417,7 @@ unittest
 struct MeleeChances
 {
     float crit = 0, rangedCrit = 0, dodge = 0, parry = 0, block = 0; /// what the rolls use
+    float auraCrit = 0, auraRangedCrit = 0; /// the part of `crit` and `rangedCrit` auras give
     float critShown = 0, rangedCritShown = 0, dodgeShown = 0, parryShown = 0, blockShown = 0; /// the fields
     uint shieldBlock;            /// the shield's block value
     bool canParry, canBlock;     /// the Parry and Block spells are known
@@ -463,6 +464,8 @@ MeleeChances meleeChances(const ChanceInputs input) pure nothrow @nogc @safe
     const critRate = agilityPerPercent(input.classId, input.level, false);
     const agilityCrit = critRate > 0 ? input.agility / critRate : 0;
     r.crit = agilityCrit + input.auraCrit;
+    r.auraCrit = input.auraCrit;
+    r.auraRangedCrit = input.auraRangedCrit;
     r.rangedCrit = agilityCrit + input.auraRangedCrit;
     r.critShown = clampPct(r.crit + (int(input.mainHandSkill) - int(cap)) * 0.04f);
     r.rangedCritShown = clampPct(r.rangedCrit + (int(input.rangedSkill) - int(cap)) * 0.04f);
