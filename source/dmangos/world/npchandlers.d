@@ -349,17 +349,27 @@ private:
         send(message);
     }
 
-    /// The text of menu `menuId`: the one whose condition is the highest one met.
-    uint gossipTextId(uint menuId, Npc creature)
+    /**
+     * The text of menu `menuId`: the one whose condition is the highest one met. Its `script_id` starts with the
+     * player as the source and the creature or game object (`source`) as the target, once while it runs for
+     * that target (`Player::GetGossipTextId`).
+     */
+    uint gossipTextId(uint menuId, Npc creature, ulong source = 0)
     {
-        uint textId = defaultGossipMessage, lastCondition;
+        import dmangos.world.dbscripts : DbScriptType, ScriptUnique;
+
+        uint textId = defaultGossipMessage, lastCondition, scriptId;
         foreach (ref text; context.data.npcs.menus.get(menuId, null))
             if ((!text.conditionId && !lastCondition)
                 || (text.conditionId > lastCondition && conditionMet(text.conditionId, creature)))
             {
                 lastCondition = text.conditionId;
                 textId = text.textId;
+                scriptId = text.scriptId;
             }
+        if (scriptId)
+            context.startScript(DbScriptType.gossip, scriptId, map, player.guid,
+                creature !is null ? creature.guid : source, ScriptUnique.byTarget);
         return textId;
     }
 
@@ -372,9 +382,10 @@ private:
         // The option's script, the NPC the source and the player the target.
         if (item.actionScript)
         {
-            import dmangos.world.dbscripts : DbScriptType;
+            import dmangos.world.dbscripts : DbScriptType, ScriptUnique;
 
-            context.startScript(DbScriptType.gossip, item.actionScript, map, creature.guid, player.guid);
+            context.startScript(DbScriptType.gossip, item.actionScript, map, creature.guid, player.guid,
+                ScriptUnique.bySource);
         }
         switch (item.optionId)
         {
@@ -939,6 +950,23 @@ unittest
     // Deputy Willem is 17 yards away: too far to talk to.
     anduin.write(Opcode.CMSG_GOSSIP_HELLO, ClientNpcGuid(makeGuid(HighGuid.unit, creatureWillem, 79942)));
     assert(anduin.read().length == 0);
+
+    // The text chosen starts its `script_id` (the player its source, the trainer its target), once while it runs.
+    {
+        import dmangos.world.dbscripts : DbScriptStep, DbScriptType, ScriptCommand;
+        import dmangos.world.npcdata : GossipMenuText;
+
+        context.data.npcs.menus[100][0] = GossipMenuText(100, 1001, 7001, 0);
+        DbScriptStep emote = {id: 7001, delay: 5000, command: ScriptCommand.emote, dataint: [1, 0, 0, 0]};
+        context.data.dbScripts.add(DbScriptType.gossip, emote);
+        const before = context.runningScripts;
+        anduin.write(Opcode.CMSG_GOSSIP_HELLO, ClientNpcGuid(trainer));
+        assert(packet!ServerGossipMessage(anduin.read()).textId == 1001);
+        assert(context.runningScripts == before + 1, "the menu's script runs");
+        anduin.write(Opcode.CMSG_GOSSIP_HELLO, ClientNpcGuid(trainer));
+        anduin.read();
+        assert(context.runningScripts == before + 1, "not again while it runs for the trainer");
+    }
 }
 
 /// Trainers: the list with each spell's state, a lesson bought, and what it teaches.

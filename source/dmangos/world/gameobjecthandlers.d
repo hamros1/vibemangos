@@ -408,7 +408,7 @@ mixin template GameObjectHandlers()
             prepareQuestMenu(*giver);
         ServerGossipMessage message;
         message.guid = go.guid;
-        message.textId = gossipTextId(menuId, null);
+        message.textId = gossipTextId(menuId, null, go.guid);
         foreach (i, ref item; gossipItems)
             message.items ~= GossipMessageItem(cast(uint) i, cast(ubyte) item.icon, item.coded, item.message);
         message.quests = questMenu.dup;
@@ -418,14 +418,16 @@ mixin template GameObjectHandlers()
     /// The player picked option `index` of a game object's menu: its script, its next menu or point of interest.
     package void onGameObjectGossipSelect(GameObject go, uint index)
     {
-        import dmangos.world.dbscripts : DbScriptType;
+        import dmangos.world.dbscripts : DbScriptType, ScriptUnique;
         import dmangos.world.npcdata : GossipOption;
 
         if (index >= gossipItems.length)
             return;
         const item = gossipItems[index];
+        // The player the source, the object the target (`Player::OnGossipSelect`).
         if (item.actionScript)
-            context.startScript(DbScriptType.gossip, item.actionScript, map, go.guid, player.guid);
+            context.startScript(DbScriptType.gossip, item.actionScript, map, player.guid, go.guid,
+                ScriptUnique.byTarget);
         if (item.optionId == GossipOption.questGiver)
         {
             QuestGiver giver;
