@@ -17,7 +17,7 @@ mixin template ReputationHandlers()
     import dmangos.bytes : ByteReader, ByteWriter;
     import dmangos.log : info;
     import dmangos.world.creature : Creature;
-    import dmangos.world.experience : isTrivialLevelDifference, questGreenRange;
+    import dmangos.world.experience : isGray;
     import dmangos.world.opcodes;
     import dmangos.world.quests : Quest, questReputations, QuestState;
     import dmangos.world.relations : ReputationRank;
@@ -135,9 +135,10 @@ mixin template ReputationHandlers()
         const current = player.data.level;
         if (level > 0)
         {
-            if (source == ReputationSource.kill && isTrivialLevelDifference(current, level))
-                percent *= max(context.config.rateReputationLowLevelKill,
-                    1.0f - 0.2f * (cast(int) current - cast(int) questGreenRange(current) - cast(int) level));
+            // A grey kill: a fifth (Wowpedia "Reputation": "Grey mobs used to give 20% of the normal reputation
+            // until the release of Patch 3.0.8").
+            if (source == ReputationSource.kill && isGray(current, level))
+                percent *= context.config.rateReputationLowLevelKill;
             else if (source == ReputationSource.quest && current > level + 5)
                 percent *= max(context.config.rateReputationLowLevelQuest, 1.0f - 0.2f * (current - (level + 5)));
         }
