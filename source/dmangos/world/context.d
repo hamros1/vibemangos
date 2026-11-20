@@ -69,7 +69,7 @@ import dmangos.cluster.protocol : GmRemote, GroupCommand, KillShare, ScriptSigna
 import dmangos.world.map : Inhabitant, Map, MapObject, MapSettings, VisibilityFacts;
 import dmangos.world.online : OnlinePlayer;
 import dmangos.world.playercreate : CreationSettings;
-import dmangos.world.worlddata : EventCreature, EventMail, Ship, SpellListEntry, WorldData;
+import dmangos.world.worlddata : EventCreature, EventMail, PoolMember, Ship, SpellListEntry, WorldData;
 
 /// How a player simulated on another node than its client's talks to the other node.
 interface PlayerRelay
@@ -922,6 +922,29 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return true;
     }
 
+    /// Whether a spawn is up in its pool (`pool_*`): in none, or rolled.
+    bool upInPool(PoolMember.Kind kind, uint guid)
+    {
+        return data.pools is null || data.pools.spawns(kind, guid);
+    }
+
+    /**
+     * A pooled spawn's respawn time is up: its pool rolls again (CMaNGOS's `UpdatePool`). True if it comes back
+     * itself; otherwise the member rolled in its place comes after a respawn time of its own (`respawnIn`, given
+     * the member: saved as its respawn), and this one stays away.
+     */
+    private bool rerolledBack(PoolMember.Kind kind, uint guid, scope void delegate(uint member) respawnIn)
+    {
+        if (data.pools is null || !data.pools.inPool(kind, guid))
+            return true;
+        const next = data.pools.reroll(kind, guid, spawnRandom);
+        if (next == guid)
+            return true;
+        if (next)
+            respawnIn(next);
+        return false;
+    }
+
     /// The events made active and inactive by the clock; their spawns come and go in the loaded cells.
     private void updateGameEvents(MonoTime now, bool force = false)
     {
@@ -1064,7 +1087,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                         foreach (index; indexes)
                         {
                             const spawn = &data.creatureSpawns[index];
-                            if (spawn.guid !in data.creatureGameEvents || !creatureInEvents(spawn.guid))
+                            if (spawn.guid !in data.creatureGameEvents || !creatureInEvents(spawn.guid)
+                                    || !upInPool(PoolMember.Kind.creature, spawn.guid))
                                 continue;
                             if (awaitingRespawn(spawn.guid))
                                 continue;
@@ -1081,7 +1105,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                         {
                             const spawn = &data.gameObjectSpawns[index];
                             if (spawn.guid !in data.gameObjectGameEvents || !gameObjectInEvents(spawn.guid)
-                                || spawn.respawnSeconds < 0)
+                                || spawn.respawnSeconds < 0 || !upInPool(PoolMember.Kind.gameObject, spawn.guid))
                                 continue;
                             auto go = makeGameObject(spawn);
                             if (go.guid in present)
@@ -1878,7 +1902,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             {
                 if (state !is null && data.creatureSpawns[index].guid in state.dead)
                     continue;
-                if (!creatureInEvents(data.creatureSpawns[index].guid))
+                if (!creatureInEvents(data.creatureSpawns[index].guid)
+                        || !upInPool(PoolMember.Kind.creature, data.creatureSpawns[index].guid))
                     continue;
                 if (copy !is null && !copy.spawnAllowed(data.creatureSpawns[index].guid in data.creatureBattleEvents))
                     continue;
@@ -1896,7 +1921,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             {
                 const spawn = &data.gameObjectSpawns[index];
                 if (spawn.respawnSeconds < 0 || (state !is null && spawn.guid in state.usedUp)
-                    || !gameObjectInEvents(spawn.guid))
+                    || !gameObjectInEvents(spawn.guid) || !upInPool(PoolMember.Kind.gameObject, spawn.guid))
                     continue;
                 const event = spawn.guid in data.gameObjectBattleEvents;
                 if (copy !is null && !copy.spawnAllowed(event))
@@ -2314,6 +2339,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                     continue; // dead: it comes back when its time is up
                 if (!creatureInEvents(data.creatureSpawns[index].guid))
                     continue; // its game event says it is away
+                if (!upInPool(PoolMember.Kind.creature, data.creatureSpawns[index].guid))
+                    continue; // another of its pool is up
                 if (auto creature = makeCreature(&data.creatureSpawns[index]))
                 {
                     spawned ~= creature;
@@ -2325,7 +2352,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             {
                 const spawn = &data.gameObjectSpawns[index];
                 // Not spawned by default (`spawntimesecs` < 0: events and scripts spawn it), or used up.
-                if (spawn.respawnSeconds < 0 || gameObjectAwaitingRespawn(spawn.guid) || !gameObjectInEvents(spawn.guid))
+                if (spawn.respawnSeconds < 0 || gameObjectAwaitingRespawn(spawn.guid) || !gameObjectInEvents(spawn.guid)
+                        || !upInPool(PoolMember.Kind.gameObject, spawn.guid))
                     continue;
                 spawned ~= makeGameObject(spawn);
             }
@@ -4035,6 +4063,14 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             if (index is null)
                 continue;
             const spawn = &data.gameObjectSpawns[*index];
+            if (!rerolledBack(PoolMember.Kind.gameObject, guid, (uint member) {
+                    if (const i = member in gameObjectSpawnIndex)
+                    {
+                        gameObjectRespawnAt[member] = time + data.gameObjectSpawns[*i].respawnSeconds;
+                        database.saveGameObjectRespawn(member, gameObjectRespawnAt[member]);
+                    }
+                }))
+                continue;
             auto there = existingMap(spawn.map);
             if (there !is null && there.cellLoaded(cellKeyAt(spawn.x, spawn.y)))
                 there.addObject(makeGameObject(spawn));
@@ -4225,6 +4261,14 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             if (index is null)
                 continue;
             const spawn = &data.creatureSpawns[*index];
+            if (!rerolledBack(PoolMember.Kind.creature, guid, (uint member) {
+                    if (const i = member in spawnIndex)
+                    {
+                        respawnAt[member] = time + data.creatureSpawns[*i].respawnSeconds;
+                        database.saveCreatureRespawn(member, respawnAt[member]);
+                    }
+                }))
+                continue;
             auto there = existingMap(spawn.map);
             if (there is null || !there.cellLoaded(cellKeyAt(spawn.x, spawn.y)))
                 continue;

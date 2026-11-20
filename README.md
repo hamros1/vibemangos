@@ -307,7 +307,9 @@ What works now:
     tutorial flags, saved as they change.
   * **Creatures and game objects:** every `creature` and `gameobject` spawn of the world database
     (pools, spawn groups and game events decide which; a spawn group's members without an entry of
-    their own get its entries by their `MinCount`, `MaxCount` and chances), created when a player first comes near
+    their own get its entries by their `MinCount`, `MaxCount` and chances; each time a pool's member is due
+    to respawn the pool rolls again, so a rare spawn comes back at one of its places, the one rolled after a
+    respawn time of its own), created when a player first comes near
     their cell, with their levels, health, models, equipment, mounts and emotes. Their names come
     from `CMSG_CREATURE_QUERY` and `CMSG_GAMEOBJECT_QUERY`. Game objects whose `spawntimesecs` is
     below 0 wait for events and scripts to spawn them.
