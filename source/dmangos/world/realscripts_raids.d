@@ -450,3 +450,386 @@ unittest
         wipe(b);
     }
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// Blackwing Lair (469)
+// ---------------------------------------------------------------------------------------------------------------
+
+/**
+ * Broodlord Lashlayer, the three drakes and Chromaggus: each one's abilities by its timers, its encounter. Chromaggus
+ * breathes the two breaths the copy drew for him (its answers 9 and 10), shimmers, frenzies, and enrages under 20%.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    auto breaths = (Scene s, Creature boss) {
+        foreach (side; [9, 10])
+        {
+            const breath = cast(uint) s.ask(side);
+            assert(breath, format!"the copy drew no breath for side %s"(side));
+            assert(s.castBy(14020, breath), format!"Chromaggus: breath %s not breathed\n%s"(breath, s.seen()));
+        }
+    };
+    const Boss[] bosses = [
+        // Broodlord: his line; Cleave (8 s), Knock Away (12 s), Blast Wave (20 s), Mortal Strike (30 s).
+        Boss("Broodlord Lashlayer", 469, 12017, 2, [], [Stage(0, 32, [15284, 18670, 23331, 24573])], -1_469_000),
+        // The drakes: their own (Firemaw's Flame Buffet, Ebonroc's Shadow of Ebonroc at 45 s, Flamegor's Frenzy
+        // and its emote), Shadow Flame (18 s), Wing Buffet (30 s), Thrash.
+        Boss("Firemaw", 469, 11983, 3, [], [Stage(0, 32, [23341, 22539, 23339, 3391])]),
+        Boss("Ebonroc", 469, 14601, 4, [], [Stage(0, 47, [23340, 22539, 23339, 3391])]),
+        Boss("Flamegor", 469, 11981, 5, [], [Stage(0, 32, [23342, 22539, 23339, 3391], [-1_000_002])]),
+        Boss("Chromaggus", 469, 14020, 6, [], [
+            Stage(0, 62, [22276, 23173, 23128], [-1_469_003, -1_000_001]),
+            Stage(0, 1, null, null, null, null, toDelegate(breaths)),
+            Stage(19, 2, [23537], [-1_000_002])]),
+    ];
+    foreach (b; bosses)
+    {
+        fight(b);
+        wipe(b);
+    }
+}
+
+/**
+ * Razorgore's room: Grethok attacked, the room wakes (the encounter in progress, the main gate shut) and the
+ * generators send their defenders; every egg broken, the orb goes dark (the emotes), the defenders flee, Razorgore
+ * is freed whole and fights (Cleave, Conflagration, Fireball Volley, War Stomp); his death opens the way on.
+ * Brought down while an egg is whole, he does not die: the room fails (his line).
+ * The original fight has a player take Razorgore through the Orb of Domination to break the eggs; the script lets
+ * players break them by hand (its documentation says why).
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    enum : uint
+    {
+        grethok = 12557, razorgoreEntry = 12435, egg = 177807, legionnaire = 12416, mage = 12420, dragonspawn = 12422,
+        gateIn = 176964, gateOut = 176965,
+    }
+    auto s = new Scene(469, Position(-7612, -1024, 413), [classWarrior, classMage]);
+    s.run(1.seconds);
+    auto razorgore = s.the(razorgoreEntry);
+    assert(s.doorOpen(gateIn) && !s.doorOpen(gateOut), "the gates before the fight");
+    s.engage(s.the(grethok));
+    s.run(1.seconds);
+    assert(s.ask(0) == 1, "Grethok attacked: the room not awake");
+    assert(!s.doorOpen(gateIn), "the main gate open during the fight");
+    // (Another copy: the defenders sent after 40 s; Razorgore brought down with his eggs whole does not die, the
+    // room fails.)
+    auto t = new Scene(469, Position(-7570, -1085, 413), [classWarrior]);
+    t.run(1.seconds);
+    auto other = t.the(grethok);
+    t.engage(other);
+    t.run(41.seconds);
+    assert(t.all(legionnaire).length + t.all(mage).length + t.all(dragonspawn).length > 0, "no defenders sent");
+    auto hisTwin = t.the(razorgoreEntry);
+    t.kill(hisTwin);
+    t.run(2.seconds);
+    assert(hisTwin.alive, "Razorgore died with his eggs whole");
+    assert(t.ask(0) == 2 && t.said(-1_469_025), format!"the room did not fail (%s)\n%s"(t.ask(0), t.seen()));
+
+    // Grethok and his guards slain (as the raid does first), every egg broken.
+    s.kill(s.the(grethok));
+    foreach (guard; s.all(14456))
+        s.kill(guard);
+    s.run(1.seconds);
+    s.moveHero(1, Position(-7643, -1080, 409)); // the second by Nefarian's troops (their emotes are heard 25 yards off)
+    s.forget();
+    const eggCount = s.objects(egg).length;
+    foreach (e; s.objects(egg))
+    {
+        s.moveHero(0, e.position);
+        s.run(400.msecs);
+        s.use(e);
+        s.run(400.msecs);
+    }
+    s.run(2.seconds);
+    assert(s.ask(0) == 4, format!"the eggs broken, but the room is %s (%s eggs left of %s)"(s.ask(0), s.objects(egg).length, eggCount));
+    assert(s.said(-1_469_035) && s.said(-1_469_033), "no emotes as the orb goes dark\n" ~ s.seen());
+    assert(s.castBy(razorgoreEntry, 23040) && s.healthOf(razorgore) >= 100, "Razorgore not freed whole");
+    // His fight.
+    s.stayWith = razorgore;
+    s.moveHeroes(razorgore.position);
+    s.forget();
+    s.engage(razorgore);
+    s.run(31.seconds);
+    foreach (spell; [19632, 23023, 22425, 24375])
+        assert(s.castBy(razorgoreEntry, spell), format!"Razorgore: %s not cast\n%s"(spell, s.seen()));
+    s.kill(razorgore);
+    s.run(2.seconds);
+    assert(!razorgore.alive && s.ask(0) == 3, "Razorgore's encounter not done");
+    assert(s.doorOpen(gateOut) && s.doorOpen(gateIn), "the way on not open");
+}
+
+/**
+ * Vaelastrasz: lying at 30%; players come near (the area trigger 3626), Nefarius comes and corrupts him (his two
+ * lines, Red Lightning); spoken to, Vaelastrasz says his three lines and turns on them: Essence of the Red, Fire
+ * Nova, Cleave, Flame Breath, Burning Adrenaline (at one with mana), Tail Sweep, Burning Adrenaline on his victim
+ * (45 s); under 15% his line. Wowpedia: he starts at 30% health; Burning Adrenaline every 15 s on a mana user, every
+ * 45 s on the tank.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    enum uint vaelEntry = 13020, nefarius = 10162;
+    auto s = new Scene(469, Position(-7480, -1016, 408.6f), [classWarrior, classMage]);
+    s.run(1.seconds);
+    auto vael = s.the(vaelEntry);
+    assert(s.healthOf(vael) <= 31, format!"Vaelastrasz at %s%%, not 30%%"(s.healthOf(vael)));
+    s.enterTrigger(3626);
+    s.run(20.seconds);
+    assert(s.ask(1) == 4, format!"the trigger did not begin his scene (%s)"(s.ask(1)));
+    assert(s.find(nefarius) !is null || s.all(nefarius, true).length, "no Nefarius at the throne");
+    assert(s.said(-1_469_006) && s.said(-1_469_032), "Nefarius' lines\n" ~ s.seen());
+    assert(s.cast_(23642) && s.cast_(19484), "no corruption or Red Lightning\n" ~ s.seen());
+    s.stayWith = vael;
+    s.moveHeroes(vael.position);
+    s.run(400.msecs);
+    s.gossip(vael, [0, 0]);
+    s.run(1.seconds);
+    assert(s.said(-1_469_026), "Vaelastrasz does not answer\n" ~ s.seen());
+    assert(s.runUntil(() => vael.ai.inCombat, 40.seconds), "Vaelastrasz does not turn on them\n" ~ s.seen());
+    assert(s.said(-1_469_027) && s.said(-1_469_028), "his speech\n" ~ s.seen());
+    assert(s.ask(1) == 1, "his encounter not in progress");
+    s.run(1.seconds);
+    assert(s.castBy(vaelEntry, 23513), "no Essence of the Red as he turns\n" ~ s.seen());
+    s.forget();
+    s.run(46.seconds);
+    foreach (spell; [23462, 19983, 23461, 23620, 15847, 18173])
+        assert(s.castBy(vaelEntry, spell), format!"Vaelastrasz: %s not cast\n%s"(spell, s.seen()));
+    s.hurtTo(vael, 14);
+    s.run(1.seconds);
+    assert(s.said(-1_469_029), "no line under 15%");
+    s.kill(vael);
+    s.run(2.seconds);
+    assert(s.ask(1) == 3 && s.doorOpen(179364), "his encounter not done, or his door shut");
+}
+
+/**
+ * Nefarius and Nefarian: spoken to, Nefarius begins the games (his two lines) and fights from his hall (Shadow Bolt,
+ * Fear, Shadow Bolt Volley, Silence, Shadow Command, Shadowblink) while drakonids pour from the tunnels; forty-two
+ * slain, Nefarian comes (his lines as he flies in), lands and fights: Cleave, Tail Lash, Shadow Flame, Veil of
+ * Shadow, Bellowing Roar, his class calls (the warrior's and the mage's, with their lines); under 20% the
+ * drakonids' bones rise (his line), under 5% his line; his death.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    enum uint nefariusEntry = 10162, nefarianEntry = 11583;
+    static immutable uint[6] drakonids = [14261, 14262, 14263, 14264, 14265, 14302];
+    auto s = new Scene(469, Position(-7585, -1262, 481.6f), [classWarrior, classMage]);
+    s.run(1.seconds);
+    auto nefarius = s.the(nefariusEntry);
+    s.gossip(nefarius, [0, 0, 0]);
+    assert(s.runUntil(() => nefarius.ai.inCombat, 15.seconds), "Nefarius does not begin\n" ~ s.seen());
+    assert(s.said(-1_469_004) && s.said(-1_469_005), "his lines\n" ~ s.seen());
+    assert(s.ask(7) == 1, "the encounter not in progress");
+    s.stayWith = nefarius;
+    s.run(41.seconds);
+    foreach (spell; [22677, 22678, 22665, 22666, 22667, 22664])
+        assert(s.castBy(nefariusEntry, spell), format!"Nefarius: %s not cast\n%s"(spell, s.seen()));
+    // The tunnels' spawners: each one's Spawn Drakonid (22659, the tick of its Drakonid Spawner) calls a drakonid of
+    // its colour. (The tick itself is not cast: a creature's periodic trigger auras do nothing yet, see the report;
+    // the spawners' EventAI sends a chromatic one a minute. So the test casts the tick, and summons the rest.)
+    {
+        import dmangos.world.eventai : castTriggered;
+
+        static immutable uint[2][5] colours = [[14307, 14265], [14309, 14264], [14310, 14262], [14311, 14263],
+            [14312, 14261]];
+        foreach (c; colours)
+        {
+            auto spawner = s.find(c[0]);
+            if (spawner is null)
+                continue;
+            const before = s.all(c[1]).length;
+            assert(spawner.ai.scriptCast(22659, spawner.guid, castTriggered), "Spawn Drakonid not cast");
+            s.run(400.msecs);
+            assert(s.all(c[1]).length == before + 1, format!"spawner %s called no drakonid %s"(c[0], c[1]));
+        }
+    }
+    // Forty-two drakonids slain (those the tunnels send, and as many more as they would have).
+    s.stayWith = null;
+    s.forget();
+    size_t slain;
+    const enough = s.runUntil(() {
+        foreach (entry; drakonids)
+            foreach (d; s.all(entry))
+            {
+                s.kill(d);
+                ++slain;
+            }
+        if (s.ask(7) == 1)
+            s.summon(drakonids[slain % 5], Position(-7599.32f, -1191.72f, 475.545f));
+        return s.ask(7) == 4;
+    }, 120.seconds, 1.seconds);
+    assert(enough, format!"%s drakonids slain, no Nefarian"(slain));
+    assert(slain >= 42, format!"Nefarian comes after %s drakonids"(slain));
+    assert(s.runUntil(() => s.find(nefarianEntry) !is null, 10.seconds), "no Nefarian");
+    auto nefarian = s.the(nefarianEntry);
+    assert(s.runUntil(() => nefarian.ai.inCombat, 60.seconds), "Nefarian does not land to fight\n" ~ s.seen());
+    // (His first line, -1469007, he yells where he appears: 330 yards from the hall, beyond a yell's 300.)
+    assert(s.said(-1_469_009), "his line as he comes\n" ~ s.seen());
+    s.stayWith = nefarian;
+    s.run(36.seconds);
+    foreach (spell; [19983, 23364, 22539, 22687, 22686])
+        assert(s.castBy(nefarianEntry, spell), format!"Nefarian: %s not cast\n%s"(spell, s.seen()));
+    assert((s.castBy(nefarianEntry, 23397) && s.said(-1_469_014)) || (s.castBy(nefarianEntry, 23410)
+        && s.said(-1_469_013)), "no class call\n" ~ s.seen());
+    s.hurtTo(nefarian, 19);
+    s.run(5.seconds);
+    assert(s.castBy(nefarianEntry, 23362) && s.said(-1_469_010), format!"the bones do not rise (%s%%)\n%s"(s.healthOf(nefarian), s.seen()));
+    s.hurtTo(nefarian, 4);
+    s.run(1.seconds);
+    assert(s.said(-1_469_008), "no line under 5%");
+    s.kill(nefarian);
+    s.run(2.seconds);
+    assert(s.said(-1_469_012) && s.ask(7) == 3, "his death");
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Ruins of Ahn'Qiraj (509)
+// ---------------------------------------------------------------------------------------------------------------
+
+/// Whether `boss` has an aura of `spell`.
+bool hasAura(Creature boss, uint spell)
+{
+    return boss.auras.find(spell) !is null;
+}
+
+/**
+ * Kurinnaxx, Moam, Buru, Ayamiss, Ossirian: each one's abilities; the copy's encounter in progress as it fights,
+ * done at its death, failed after a wipe (ScriptDev's `OnCreatureEvade`). Kurinnaxx's death brings General Andorov
+ * and his four Kaldorei Elites, and Ossirian's line. Moam turns to stone at 90 s (three Mana Fiends, Energize and its
+ * emote) and wakes when they are slain. Buru takes his prey (his emote), and under 20% transforms (Creeping Plague)
+ * and his eggs hatch. Ayamiss flies (Stinger, Paralyze and a larva at the altar, swarmers), lands at 70% (Lash) and
+ * frenzies under 20%. Ossirian is supreme until a crystal is used by him (one of the five weaknesses).
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    enum : uint
+    {
+        andorov = 15471, kaldorei = 15473, manaFiend = 15527, buruEgg = 15514, hatchling = 15521, larva = 15555,
+        swarmer = 15546, sandVortex = 15428, crystal = 180619, ossirianEntry = 15339, energize = 25685, supreme = 25176,
+    }
+    static immutable uint[5] weaknesses = [25177, 25178, 25180, 25181, 25183];
+    auto stone = (Scene s, Creature moam) {
+        assert(hasAura(moam, energize), "Moam not turned to stone");
+        foreach (f; s.all(manaFiend))
+            s.kill(f);
+    };
+    auto awake = (Scene s, Creature moam) { assert(!hasAura(moam, energize), "Moam still stone, his fiends slain"); };
+    auto useCrystal = (Scene s, Creature ossirian) {
+        auto crystals = s.objects(crystal);
+        assert(crystals.length, "no Ossirian Crystal");
+        // The raid takes him to the crystal (its weakness strikes only within reach of where it stands).
+        s.stayWith = null;
+        s.moveHeroes(crystals[0].position);
+        assert(s.runUntil(() => Scene.distance(ossirian.position, crystals[0].position) < 15, 30.seconds),
+            format!"Ossirian does not follow to the crystal at %s: at %s, %s crystals"(crystals[0].position, ossirian.position, crystals.length));
+        s.use(crystals[0]);
+    };
+    auto weakened = (Scene s, Creature ossirian) {
+        bool weak;
+        foreach (w; weaknesses)
+            weak |= hasAura(ossirian, w);
+        assert(weak && !hasAura(ossirian, supreme), "Ossirian not weakened by the crystal\n" ~ s.seen());
+    };
+    const Boss[] bosses = [
+        // Kurinnaxx: Thrash, Sand Trap, Mortal Wound, Wide Slash; at 30% enrage and its emote.
+        // (Ossirian's line is a zone yell, type 6, heard by the whole copy in CMaNGOS; here a yell's 300 yards: the
+        // second character waits by him.)
+        Boss("Kurinnaxx", 509, 15348, 0, [], [Stage(0, 16, [3391, 26524, 25646, 25814]),
+            Stage(29, 2, [26527], [-1_000_002], null, null, (Scene s, Creature boss) {
+                s.following = 1;
+                s.moveHero(1, spawnOf(509, 15339));
+            })], 0, 0, 2, Position.init, [classWarrior, classMage],
+            (Scene s, Creature boss) {
+                assert(s.all(andorov).length == 1 && s.all(kaldorei).length == 4, format!"Andorov %s, elites %s"(
+                    s.all(andorov).length, s.all(kaldorei).length));
+                assert(s.said(-1_509_022), "no Ossirian line at Kurinnaxx's death\n" ~ s.seen());
+            }),
+        // Moam: his emote; Drain Mana, Trample, Double Attack; at 90 s three Mana Fiends and stone.
+        Boss("Moam", 509, 15340, 2, [], [Stage(0, 12, [25676, 15550, 18941]),
+            Stage(0, 80, [25685], [-1_509_028], [[manaFiend, 3]]),
+            Stage(0, 2, null, null, null, null, toDelegate(stone)),
+            Stage(0, 1, null, null, null, null, toDelegate(awake))], -1_509_000),
+        // Buru: Thorns, Dismember, Gathering Speed, Full Speed at 60 s; under 20% his transformation, Creeping
+        // Plague, hatchlings.
+        Boss("Buru the Gorger", 509, 15370, 3, [buruEgg], [Stage(0, 62, [25640, 96, 1834, 1557], [-1_509_002]),
+            Stage(19, 8, [24721, 20512], null, [[hatchling, 1]])]),
+        // Ayamiss: Poison Stinger, swarmers, Paralyze (a larva), Stinger Spray; at 70% she lands: Lash, Thrash; under
+        // 20% Frenzy and its emote.
+        Boss("Ayamiss", 509, 15369, 4, [], [Stage(0, 31, [25748, 25725, 25749], null, [[swarmer, 1]]),
+            Stage(0, 0, null, null, null, null, (Scene s, Creature boss) {
+                assert(s.cast_(25721), "no larva fed on the paralyzed\n" ~ s.seen()); // (it goes as it feeds)
+            }),
+            Stage(69, 12, [25852, 3391]),
+            Stage(19, 2, [8269], [-1_000_002])], 0, 0, 2, Position.init, [classWarrior, classMage], null, 60),
+        // Ossirian: Supreme, his line, a sand vortex; Cyclone (20 s), War Stomp, Curse of Tongues (30 s); a crystal
+        // used by him weakens him.
+        Boss("Ossirian", 509, ossirianEntry, 5, [], [Stage(0, 32, [25189, 25188, 25195], null, [[sandVortex, 1]]),
+            Stage(0, 2, null, null, null, null, toDelegate(useCrystal)),
+            Stage(0, 1, null, null, null, null, toDelegate(weakened))], -1_509_025, -1_509_027),
+    ];
+    foreach (b; bosses)
+    {
+        fight(b);
+        wipe(b);
+    }
+}
+
+/**
+ * General Rajaxx's army: Kurinnaxx slain, General Andorov and his Kaldorei come and walk to the ruins' gates, where
+ * he waits; asked, he speaks (his lines) and leads the attack: the copy's Rajaxx encounter is in progress and the
+ * army's waves charge, each beaten bringing the next (Rajaxx's yells at the third to the seventh), then Rajaxx
+ * himself (his line); his death ends it, and Andorov trades. Wowpedia: seven waves, then Rajaxx; Andorov and his
+ * elites help, and sell to those who earned it.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    enum : uint { andorovEntry = 15471, rajaxxEntry = 15341, gossipFlag = 1, vendorFlag = 0x80 }
+    static immutable uint[9] armies = [15385, 15388, 15386, 15390, 15389, 15392, 15391, 15387, 15344];
+    auto s = new Scene(509, Position(-8822, 1630, 21), [classWarrior, classMage]);
+    s.run(1.seconds);
+    s.kill(s.the(15348));
+    s.run(2.seconds);
+    auto andorov = s.the(andorovEntry);
+    s.stayWith = andorov;
+    s.stayWithin = 15;
+    s.pressing = false;
+    assert(s.runUntil(() => (andorov.values.get!UNIT_NPC_FLAGS & gossipFlag) != 0, 120.seconds),
+        format!"Andorov does not wait at the gates (at %s)"(andorov.position));
+    s.moveHeroes(andorov.position);
+    s.run(400.msecs);
+    s.forget();
+    s.gossip(andorov, [0]);
+    assert(s.runUntil(() => s.ask(1) == 1, 90.seconds), format!"the army does not come (Andorov at %s)\n%s"(
+        andorov.position, s.seen()));
+    foreach (line; [-1_509_004, -1_509_003, -1_509_029, -1_509_030])
+        assert(s.said(line), format!"Andorov: line %s not said\n%s"(line, s.seen()));
+    // The waves beaten one by one: every one of the army that fights is slain.
+    auto rajaxx = s.the(rajaxxEntry);
+    s.stayWith = null;
+    const beaten = s.runUntil(() {
+        foreach (entry; armies)
+            foreach (c; s.all(entry))
+                if (c.ai.inCombat)
+                    s.kill(c);
+        return rajaxx.ai.inCombat;
+    }, 600.seconds, 1.seconds);
+    assert(beaten, "Rajaxx never comes\n" ~ s.seen());
+    foreach (line; [-1_509_005, -1_509_006, -1_509_007, -1_509_008, -1_509_009, -1_509_010])
+        assert(s.said(line), format!"Rajaxx: line %s not said\n%s"(line, s.seen()));
+    s.kill(rajaxx);
+    s.run(2.seconds);
+    assert(s.ask(1) == 3, "the Rajaxx encounter not done");
+    assert(andorov.alive && (andorov.values.get!UNIT_NPC_FLAGS & vendorFlag), "Andorov does not trade");
+}

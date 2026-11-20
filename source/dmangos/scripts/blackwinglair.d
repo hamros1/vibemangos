@@ -1395,6 +1395,31 @@ struct Nefarian
 /// The week's Chromaggus breaths and Nefarian's drakonids (`event_weekly_chromatic_selection`), and Razorgore
 /// possessed through the Orb of Domination (`event_razorgore_possess`): the copy's script takes them
 /// (`EventHappened`); the events' own scripts let them through to it.
+/**
+ * Spawn Drakonid (22659), the tick of a drakonid spawner's Drakonid Spawner (22653, every five seconds): the spawner
+ * calls a drakonid of its colour (CMaNGOS's `Spell::EffectDummy` case: the spawners' EventAI casts only the chromatic
+ * one, once a minute). Without it Nefarian's forty-two came in some twenty minutes.
+ */
+@spell("spell_spawn_drakonid") @spellIds(22659)
+struct SpawnDrakonid
+{
+    void on(ref SpellContext it, const ref EffectHit e)
+    {
+        it.consume();
+        uint summon;
+        switch (e.caster.entry)
+        {
+        case 14312: summon = 22658; break; // blue
+        case 14310: summon = 22656; break; // green
+        case 14311: summon = 22657; break; // bronze
+        case 14309: summon = 22655; break; // red
+        case 14307: summon = 22654; break; // black
+        default: return;
+        }
+        it.castSpell(e.caster, summon, e.caster);
+    }
+}
+
 @scriptedEvent("event_weekly_chromatic_selection", "event_razorgore_possess")
 struct BlackwingLairEvent
 {

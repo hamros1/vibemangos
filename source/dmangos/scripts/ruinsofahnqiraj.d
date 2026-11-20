@@ -761,6 +761,15 @@ struct Moam
         }
     }
 
+    /// A fiend slain (or gone) is no longer waited for. (Summoned to go when dead, a slain fiend leaves the map at
+    /// once, and `alive` of a creature not here says yes: without this he stayed stone.)
+    void on(ref CreatureContext me, const ref SummonedDied e)
+    {
+        foreach (ref f; fiends)
+            if (f == e.summoned)
+                f = EntityRef.init;
+    }
+
     void on(ref CreatureContext me, const ref Reset e)
     {
         steps.clear();
@@ -1083,7 +1092,7 @@ struct Ayamiss
             steps.after(step, me.castSpell(lash) == ActionResult.ok ? between(me, 8000, 15_000) : retry);
             break;
         case Step.thrash:
-            steps.after(step, me.castSpell(thrash) == ActionResult.ok ? between(me, 5000, 7000) : retry);
+            steps.after(step, me.castSelf(thrash) == ActionResult.ok ? between(me, 5000, 7000) : retry);
             break;
         }
     }

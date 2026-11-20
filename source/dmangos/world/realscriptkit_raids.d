@@ -152,9 +152,14 @@ final class Scene
                 fill();
             listen();
             if (stayWith !is null && stayWith.alive && elapsedMs % 1000 == 0)
-                foreach (k; 0 .. heroes.length)
+                foreach (k; 0 .. heroes.length < following ? heroes.length : following)
+                {
                     if (distance(hero(k).position, stayWith.position) > stayWithin)
                         moveHero(k, stayWith.position);
+                    // The raid's blows go on (a point each: what a script checks as it is hurt it checks again).
+                    if (pressing && stayWith.ai.inCombat && hero(k).alive)
+                        dealDamage(heroUnit(k), map.unitOf(stayWith), 1, Blow.spell());
+                }
         }
     }
 
@@ -162,6 +167,8 @@ final class Scene
     /// teleport): each moved beside it when it is more than `stayWithin` yards off, every second. null: none.
     Creature stayWith;
     float stayWithin = 10;
+    bool pressing = true; /// the characters strike it (a point a second each) while it fights
+    size_t following = size_t.max; /// only the first this many keep close (the others are elsewhere)
 
     /// The distance between two places.
     static float distance(Position a, Position b)
@@ -200,18 +207,20 @@ final class Scene
         foreach (k, ref h; heroes)
         {
             auto packets = h.read();
-            if (k == 0)
-                note(packets);
+            note(packets, k == 0);
         }
     }
 
-    /// What the first character was sent: noted.
-    void note(const(imported!"dmangos.world.testclient".ServerPacketRead)[] packets)
+    /// What a character was sent: noted (of the others than the first, only the lines none heard yet).
+    void note(const(imported!"dmangos.world.testclient".ServerPacketRead)[] packets, bool first = true)
     {
         {
             foreach (p; packets)
             {
-                opcodes[p.opcode]++;
+                if (!first && p.opcode != Opcode.SMSG_MESSAGECHAT)
+                    continue;
+                if (first)
+                    opcodes[p.opcode]++;
                 auto r = ByteReader(p.body_);
                 switch (p.opcode)
                 {
@@ -232,7 +241,9 @@ final class Scene
                     const name = r.readCString();
                     r.read!ulong;
                     r.read!uint;
-                    texts ~= SeenText(type, name.idup, r.readCString().idup, elapsedMs);
+                    const line = SeenText(type, name.idup, r.readCString().idup, elapsedMs);
+                    if (first || !texts.canFind!(t => t.text == line.text && t.atMs == line.atMs))
+                        texts ~= line;
                     break;
                 case Opcode.SMSG_EMOTE:
                     emotes ~= r.read!uint;
@@ -498,6 +509,35 @@ final class Scene
         }
         assert(hero.data.map == mapId && heroes[0].session.inWorld.instanceId == instance, "not back in the copy");
         run(400.msecs);
+    }
+
+    /// The first character walks into area trigger `id` (`AreaTrigger.dbc`): moved to its middle, its client says so.
+    void enterTrigger(uint id)
+    {
+        import dmangos.world.packets : ClientTeleportAck;
+
+        const entry = w.context.client.areaTriggers.lookup(id);
+        assert(entry !is null && entry.mapId == mapId, format!"no area trigger %s on map %s"(id, mapId));
+        auto me = heroes[0].session.inWorld;
+        me.teleportTo(mapId, Position(entry.x, entry.y, entry.z), null, instance, true);
+        heroes[0].write(Opcode.MSG_MOVE_TELEPORT_ACK, ClientTeleportAck(me.player.guid, 0, 0));
+        listen();
+        import dmangos.bytes : ByteWriter;
+
+        ByteWriter w;
+        w.put(id);
+        heroes[0].write(Opcode.CMSG_AREATRIGGER, w.data);
+        listen();
+    }
+
+    /// Whether the (first) door of `entry` on the map stands open; asserts there is one.
+    bool doorOpen(uint entry)
+    {
+        import dmangos.world.gameobject : goStateActive;
+
+        auto found = objects(entry);
+        assert(found.length, format!"no door %s on the map"(entry));
+        return found[0].goState == goStateActive;
     }
 
     /// The first character uses the game object `go` (it must be within reach).
