@@ -57,10 +57,13 @@ db_start || exit 1
 python3 "$REPO/tools/harness/spell-audit.py" env LD_LIBRARY_PATH="$(dirname "$MYSQL_LIB")" "$MARIADB_ROOT/usr/bin/mariadb" \
     -S "$SOCK" -u root classicmangos -- "$CLIENT_DATA/dbc" || { echo "FAIL: a learnable spell does what the server does not"; exit 1; }
 echo "== spells on the real data (dmangos.world.realspelltests, and the sweep of every learnable spell:"
-echo "   dmangos.world.realspellsweep, its known failures in tools/harness/realspell-known.txt)"
+echo "   dmangos.world.realspellsweep, its known failures in tools/harness/realspell-known.txt; and of every spell"
+echo "   a creature casts: dmangos.world.realnpcsweep, its known failures in tools/harness/realnpc-known.txt)"
 if ! DMANGOS_REAL_DATA="$CLIENT_DATA|$MYSQL_LIB|$(db_info classicmangos)" "$H/unittest/test" > "$H/unittest/real.log" 2>&1; then
-    grep -m 10 -E "Error@|Exception@|realspellsweep: FAILS" "$H/unittest/real.log"; echo "FAIL: a spell on the real data"; exit 1
+    grep -m 10 -E "Error@|Exception@|realspellsweep: FAILS|realnpcsweep: FAILS" "$H/unittest/real.log"
+    echo "FAIL: a spell on the real data"; exit 1
 fi
 grep "^realspellsweep:" "$H/unittest/real.log"
+grep -E "^realnpcsweep: ([0-9]|passes now)" "$H/unittest/real.log"
 echo "== cluster regression"
 sh "$REPO/tools/harness/regression.sh"
