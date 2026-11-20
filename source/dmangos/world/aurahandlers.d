@@ -472,6 +472,10 @@ private:
                         : (aura.spell.attributesEx & immunityPurges) != 0))
                     interruptAuras(invulnerabilityCancels);
                 break;
+            case AuraType.addFlatModifier, AuraType.addPctModifier: // talents: the client's numbers
+                if (map !is null) // in the world (at login they all go at once: `sendAllSpellMods`)
+                    spellModChanged(aura, i);
+                break;
             case AuraType.modStealth: // who sees it changes (`Map`'s `playerSees`); a carried flag falls
                 if (apply)
                     interruptAuras(AuraInterrupt.stealthInvisCancels, aura);
@@ -541,6 +545,64 @@ private:
             sendMovementOrder!(Opcode.SMSG_FORCE_MOVE_ROOT)();
         else if (player.deathState != DeathState.corpse)
             sendMovementOrder!(Opcode.SMSG_FORCE_MOVE_UNROOT)();
+    }
+
+    // -----------------------------------------------------------------------
+    // The client's spell modifiers
+    // -----------------------------------------------------------------------
+
+    /**
+     * The total of the player's modifiers of `type` (`ADD_FLAT_MODIFIER` or `ADD_PCT_MODIFIER`) for `op` whose
+     * spell mask has `bit`: what the client adds to the spells of its family with that bit (CMaNGOS's
+     * `Player::AddSpellMod`). The client shows tooltips, costs, cast times and ranges with them, and refuses a cast
+     * at a talent's longer range without them.
+     */
+    private int spellModTotal(AuraType type, int op, uint bit)
+    {
+        int total;
+        foreach (aura; player.auras.list)
+            foreach (i; 0 .. 3)
+                if ((aura.effects & (1 << i)) && aura.type(i) == type && aura.misc(i) == op
+                        && (aura.spell.itemType[i] & (1u << bit)))
+                    total += aura.amount[i];
+        return total;
+    }
+
+    private void sendSpellMod(AuraType type, uint bit, int op, int value)
+    {
+        ByteWriter w;
+        w.put(cast(ubyte) bit);
+        w.put(cast(ubyte) op);
+        w.put(value);
+        deliver(type == AuraType.addFlatModifier ? Opcode.SMSG_SET_FLAT_SPELL_MODIFIER
+            : Opcode.SMSG_SET_PCT_SPELL_MODIFIER, w.data);
+    }
+
+    /// A modifier came or went (effect `i` of `aura`): the client's totals for each bit of its mask, anew.
+    private void spellModChanged(Aura aura, size_t i)
+    {
+        const type = aura.type(i), op = aura.misc(i), mask = aura.spell.itemType[i];
+        foreach (uint bit; 0 .. 32)
+            if (mask & (1u << bit))
+                sendSpellMod(type, bit, op, spellModTotal(type, op, bit));
+    }
+
+    /// Every modifier total the player has, for a client logging in or arriving after a far teleport.
+    package void sendAllSpellMods()
+    {
+        foreach (type; [AuraType.addFlatModifier, AuraType.addPctModifier])
+        {
+            uint[int] masks; // op: the bits any modifier of it has
+            foreach (aura; player.auras.list)
+                foreach (i; 0 .. 3)
+                    if ((aura.effects & (1 << i)) && aura.type(i) == type)
+                        masks[aura.misc(i)] |= aura.spell.itemType[i];
+            foreach (op, mask; masks)
+                foreach (uint bit; 0 .. 32)
+                    if (mask & (1u << bit))
+                        if (const total = spellModTotal(type, op, bit))
+                            sendSpellMod(type, bit, op, total);
+        }
     }
 
     /// What standing up, moving, damage, casting or attacking ends (`except`: the aura that causes it, kept).

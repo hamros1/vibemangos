@@ -410,6 +410,7 @@ final class WorldData
     AreaTriggerTeleport[uint] areaTriggers; /// `areatrigger_teleport`, by trigger id
     GameTele[] teleports;                   /// `game_tele`, in id order
     SpellTarget[uint] spellTargets;         /// `spell_target_position`: where a spell sends its target, by spell
+    bool[uint] spellFacing;                 /// `spell_facing`: spells whose target must be in front of the caster
     /// Instance round 2: `spell_script_target` (type 1, living creatures): the creatures of these entries a spell's
     /// `TARGET_UNIT_SCRIPT_NEAR_CASTER` means, by spell.
     uint[][uint] spellScriptTargets;
@@ -1121,6 +1122,9 @@ final class WorldData
                 spellTargets[row.id] = SpellTarget(row.map, Position(row.x, row.y, row.z, row.orientation));
         foreach (row; world.query!"SELECT id FROM areatrigger_tavern"())
             taverns[row.get!uint(0)] = true;
+        foreach (row; world.query!"SELECT entry, facingcasterflag FROM spell_facing"())
+            if (row.get!uint(1) & 1)
+                spellFacing[row.get!uint(0)] = true;
         foreach (row; world.select!(SpellScriptTargetRow, "FROM spell_script_target"))
             if (row.type == 1)
                 spellScriptTargets[row.entry] ~= row.targetEntry;

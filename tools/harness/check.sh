@@ -15,7 +15,8 @@ rm -f "$H/unittest/test"
 # separate compilation needs), then linked: seconds, where one dmd for all of them took ten minutes.
 rm -rf "$H/unittest/obj" && mkdir -p "$H/unittest/obj"
 : > "$H/unittest/build.log"
-if ! find source -name '*.d' ! -name main.d | xargs -P "$(nproc)" -I{} \
+# CHECK_JOBS limits the compilers at once (each can take 4 GB): set it low when other builds run alongside.
+if ! find source -name '*.d' ! -name main.d | xargs -P "${CHECK_JOBS:-$(nproc)}" -I{} \
         sh -c 'dmd -c -unittest -allinst -Isource -od="$1" -op "$2" > "$1/$(echo "$2" | tr / _).log" 2>&1' _ "$H/unittest/obj" {}; then
     cat "$H/unittest/obj"/*.log >> "$H/unittest/build.log"
     grep -m 20 Error "$H/unittest/build.log"; echo "FAIL: the tests do not compile"; exit 1

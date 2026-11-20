@@ -282,6 +282,19 @@ struct UnitRef
             session.interruptAuras(AuraInterrupt.hostileAction);
     }
 
+    /// Its `UNIT_FIELD_FLAGS` (in combat, stunned, ...).
+    @property uint unitFlags() const
+    {
+        import dmangos.world.updatefields : UNIT_FIELD_FLAGS;
+
+        final switch (kind)
+        {
+        case UnitKind.none: return 0;
+        case UnitKind.player: return session.character.values.get!UNIT_FIELD_FLAGS;
+        case UnitKind.creature: return creature.values.get!UNIT_FIELD_FLAGS;
+        }
+    }
+
     /// A spell from `caster` hit it for `damage`: `dealDamage`.
     void spellHitBy(ulong caster, uint damage)
     {

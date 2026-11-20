@@ -19,6 +19,14 @@ import dmangos.world.combat : Fighter;
 enum SpellCastResult : ubyte
 {
     noComboPoints = 0x46, /// "That ability requires combo points"
+    equippedItemClassMainhand = 0x1A,
+    notBehind = 0x33,
+    notShapeshift = 0x3D,
+    onlyOutdoors = 0x55,
+    onlyShapeshift = 0x56,
+    onlyStealthed = 0x57,
+    targetAffectingCombat = 0x66,
+    unitNotInfront = 0x7C,
     affectingCombat = 0x00,
     alreadyAtFullHealth = 0x01,
     alreadyAtFullPower = 0x02,
@@ -594,7 +602,9 @@ SpellMissInfo rollSpellHit(Rng)(const Fighter caster, const Fighter victim, cons
     int resistance, float hitBonus, ref Rng rng)
 {
     import std.random : uniform01;
-    import dmangos.world.combat : AttackType, dodgeChance, missChance, parryChance;
+    import dmangos.world.combat : AttackType, canDodge, canParry, dodgeChance, missChance, parryChance;
+
+    enum uint noActiveDefense = 0x00200000; // SPELL_ATTR_NO_ACTIVE_DEFENSE: never dodged or parried (Overpower, Ambush)
 
     if (victim.evading)
         return SpellMissInfo.evade;
@@ -607,10 +617,17 @@ SpellMissInfo rollSpellHit(Rng)(const Fighter caster, const Fighter victim, cons
         float edge = missChance(caster, victim, type);
         if (roll < edge)
             return SpellMissInfo.miss;
-        edge += dodgeChance(victim, caster, type);
-        if (roll < edge)
-            return SpellMissInfo.dodge;
-        edge += parryChance(victim, caster, type);
+        if (spell.attributes & noActiveDefense)
+            return SpellMissInfo.none;
+        // As a swing: no dodge or parry where a swing has none (a player from behind, parry only from the front).
+        if (type != AttackType.ranged && canDodge(victim, caster))
+        {
+            edge += dodgeChance(victim, caster, type);
+            if (roll < edge)
+                return SpellMissInfo.dodge;
+        }
+        if (type != AttackType.ranged && canParry(victim, caster))
+            edge += parryChance(victim, caster, type);
         return roll < edge ? SpellMissInfo.parry : SpellMissInfo.none;
     }
     return roll < magicMissChance(caster, victim, spell, resistance, hitBonus) ? SpellMissInfo.resist
@@ -648,6 +665,20 @@ unittest
     wolf.evading = false;
     bolt.casting.dmgClass = DamageClass.none;
     assert(rollSpellHit(mage, wolf, bolt, 0, 0, low) == SpellMissInfo.none, "no damage class: no roll");
+
+    // A melee ability: dodged by a roll past the miss chance, unless it cannot be (Overpower, Ambush).
+    SpellInfo strike;
+    strike.casting.dmgClass = DamageClass.melee;
+    wolf.dodge = 5;
+    wolf.canDodge = true;
+    wolf.position.orientation = 3.14159f; // facing the warrior (at its west)
+    mage.position.x = -1;
+    import dmangos.world.combat : AttackType, missChance;
+
+    auto dodged = Fixed(cast(ulong) hits(missChance(mage, wolf, AttackType.mainHand) + 2.5f)); // past the miss
+    assert(rollSpellHit(mage, wolf, strike, 0, 0, dodged) == SpellMissInfo.dodge);
+    strike.attributes = 0x00200000; // SPELL_ATTR_NO_ACTIVE_DEFENSE
+    assert(rollSpellHit(mage, wolf, strike, 0, 0, dodged) == SpellMissInfo.none, "it cannot be dodged");
 }
 
 // A victim's resistance to a mechanic (a dwarf's or a talent's against fear) adds to the magic miss chance.
