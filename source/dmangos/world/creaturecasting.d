@@ -145,7 +145,8 @@ mixin template CreatureCasting()
      */
     bool castSpell(const(SpellInfo)* spell, ulong target, uint flags)
     {
-        if (spell is null || lore is null || !me.alive || world_ is null)
+        // A dead creature may still cast (CMaNGOS refuses only dead players): EventAI's spells on its death.
+        if (spell is null || lore is null || world_ is null)
             return false;
         const triggered = (flags & castTriggered) != 0;
         if (evadingHome && !triggered)
