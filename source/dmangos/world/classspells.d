@@ -1,7 +1,7 @@
 /**
  * The class abilities whose behaviour is code, not data (CMaNGOS's spell-family cases in `SpellEffects.cpp`,
  * `SpellAuras.cpp`, `Spell.cpp` and `UnitAuraProcHandler.cpp`; the class spell scripts bound by `spell_scripts`
- * are in `dmangos.scripts.classes`). Mixed into `dmangos.world.character.Character`; the cast pipeline calls in
+ * are in `dmangos.scripts.spells`: Execute, Life Tap, Preparation, Vanish). Mixed into `dmangos.world.character.Character`; the cast pipeline calls in
  * at a few points: a cast's checks (`classCastCheck`), an effect's damage (`classSchoolDamage`), a dummy or script
  * effect (`classDummyEffect`), after the effects (`classAfterEffects`), an aura's amounts and its coming and going
  * (`classAuraValues`, `classAuraChanged`), and the procs (`classProcTrigger`, `classDummyProc`, `classScriptProc`).
@@ -13,7 +13,8 @@
  * By class:
  * $(UL
  * $(LI Warrior: Revenge and Overpower after a dodge, a parry or a block (the aura states and reactive timers),
- *   Bloodthirst's attack power damage and its healing aura, Deep Wounds' bleed of the weapon's damage.)
+ *   Bloodthirst's attack power damage and its healing aura, Deep Wounds' bleed of the weapon's damage, Sweeping
+ *   Strikes' second blow, Retaliation (not from behind).)
  * $(LI Paladin: Judgement's aura state while a seal lasts, Seal of the Crusader's slower damage, Seal of Righteousness' holy damage
  *   by the weapon's speed, Judgement of Command (half unless stunned), Holy Shock (a heal or a blast), Holy Light
  *   and Flash of Light (their heals), Judgement of Light and of Wisdom (the striker healed or given mana),
@@ -21,7 +22,8 @@
  * $(LI Warlock: Conflagrate (needs and consumes Immolate), Nightfall's Shadow Trance, Curse of Doom not at players.)
  * $(LI Mage: Cold Snap, Ignite, Combustion, Master of Elements, Shatter against frozen targets, Mana Shield's bonus,
  *   Improved Blizzard's chill.)
- * $(LI Rogue: Rupture's attack power, Ambush's bonus, Ruthlessness' and Seal Fate's points after the move; Vanish's
+ * $(LI Rogue: Rupture's attack power, Ambush's bonus, Blade Flurry's second blow, Ruthlessness' and Seal Fate's
+ *   points after the move; Vanish's
  *   Stealth (a script's call: `hostCastHighestRank`).)
  * $(LI Priest: Weakened Soul, Holy Nova's heal, Vampiric Embrace, Blessed Recovery, Touch of Weakness, Shadowguard.)
  * $(LI Druid: Ferocious Bite's extra energy, Rip's attack power, Swiftmend, Enrage, Frenzied Regeneration.)
@@ -29,6 +31,8 @@
  *   Stormstrike's charges.)
  * $(LI Hunter: Counterattack after a parry, Mongoose Bite after a dodge, Wyvern Sting's poison as it wakes.)
  * )
+ * And every class's Add Target Trigger talents (Frostbite, Improved Scorch, Shadow Weaving, Relentless Strikes):
+ * `targetTriggers`.
  */
 module dmangos.world.classspells;
 
