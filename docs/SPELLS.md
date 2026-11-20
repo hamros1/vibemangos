@@ -133,6 +133,12 @@ primary sources (docs/FORMULAS.md); CMaNGOS and vmangos are second opinions.
 | 5. targets once | not yet: a creature still resolves its implicit targets in `creaturecasting.d` (`targetsFor`), a player in `spellhandlers.d` (`go`, `areaTargets`) |  |
 | 6. procs once | in part: every creature's auras proc now (a mob's Thrash, not only a pet's), through `creatureprocs.d`; a player's are `procs.d`'s, with its class rules, cooldowns and weapon checks |  |
 
+Performance: the 500-player crowd (`tools/harness/bench.sh LABEL crowd 500`, release builds, run in turn
+three times each on a machine with no compiler running) is the same before and after: loop busy 7.5, 7.5,
+7.6% before and 7.6, 7.6, 7.5% after; tick 0.387, 0.391, 0.385 ms before and 0.389, 0.400, 0.386 ms
+after; 113 to 114 KB allocated a tick both. The crowd casts few spells: the abstraction's cost there is
+`Caster` values made per effect and per hit, with no allocation of their own.
+
 Not done by a creature's cast yet (`doneBy`): activating game objects, teleports facing the caster,
 leaps, taxis, inebriation, pulls, and the effects only a player's spellbook, inventory or client make sense
 for (duels, taming, pickpocketing, enchanting, far sight...).
