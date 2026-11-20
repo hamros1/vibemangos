@@ -112,6 +112,21 @@ struct LordKazzak
     }
 }
 
+/// Mark of Kazzak: it drains its target's mana; one drained dry bursts (hurting those around it), and the mark goes.
+@spell("spell_mark_of_lord_kazzak")
+struct MarkOfKazzak
+{
+    enum uint markExplosion = 21058;
+
+    void on(ref SpellContext it, const ref AuraTickEnded e)
+    {
+        if (it.power(e.target, Power.mana) != 0) // mana left, or none to have (-1)
+            return;
+        it.castSpell(e.target, markExplosion, EntityRef.init);
+        it.removeAura(e.target, it.spellId);
+    }
+}
+
 unittest
 {
     import dmangos.scripts.testhost : Driven;

@@ -416,6 +416,29 @@ struct AuraSet
         return factor;
     }
 
+    /**
+     * Whether one with these auras sees through `target`'s invisibility (`MOD_INVISIBILITY` levels by type against
+     * this set's `MOD_INVISIBILITY_DETECTION`): what `combat.seesThrough` decides, from the auras alone, for the
+     * map's sight checks (no `Fighter` to build for each object).
+     */
+    bool seesThroughInvisibility(const ref AuraSet target) const
+    {
+        bool invisible;
+        foreach (aura; target.list)
+            foreach (i; 0 .. 3)
+                if ((aura.effects & (1 << i)) && aura.type(i) == AuraType.modInvisibility)
+                {
+                    const type = aura.misc(i);
+                    const level = target.totalByMisc(AuraType.modInvisibility, type);
+                    if (level <= 0)
+                        continue;
+                    invisible = true;
+                    if (level <= totalByMisc(AuraType.modInvisibilityDetection, type))
+                        return true;
+                }
+        return !invisible;
+    }
+
     /// The sum of those whose misc value is `misc`.
     int totalByMisc(AuraType type, int misc) const
     {

@@ -121,6 +121,32 @@ struct Fighter
     /// Winter's Chill, Sleight of Hand), hits on it (`MOD_ATTACKER_*_HIT_CHANCE`: Heightened Senses).
     float[3] attackerCrit = 0, attackerHit = 0;
     int rangedTakenFlat;       /// `MOD_RANGED_DAMAGE_TAKEN` (Elune's Grace): added to each ranged blow against it
+    /// Its invisibility by type (`MOD_INVISIBILITY`'s misc value: 0 general, ...) and what it sees through
+    /// (`MOD_INVISIBILITY_DETECTION`): the levels, summed.
+    int[invisibilityTypes] invisibility, invisibilityDetect;
+
+    /// Fills `invisibility` and `invisibilityDetect` from `auras`.
+    void invisibilityFrom(A)(const ref A auras)
+    {
+        import dmangos.world.spellids : AuraType;
+
+        if (!auras.hasType(AuraType.modInvisibility) && !auras.hasType(AuraType.modInvisibilityDetection))
+            return; // the common case: nothing to sum
+        foreach (int i; 0 .. cast(int) invisibilityTypes)
+        {
+            invisibility[i] = auras.totalByMisc(AuraType.modInvisibility, i);
+            invisibilityDetect[i] = auras.totalByMisc(AuraType.modInvisibilityDetection, i);
+        }
+    }
+
+    /// Whether it is invisible in any way.
+    @property bool invisible() const pure nothrow @nogc @safe
+    {
+        foreach (level; invisibility)
+            if (level > 0)
+                return true;
+        return false;
+    }
 
     /// Fills `attackerCrit` and `attackerHit` from `auras`.
     void attackerChancesFrom(A)(const ref A auras)
@@ -341,6 +367,42 @@ unittest
     Immunities shielded;
     shielded.schools = 0x7F; // Divine Shield: every school
     assert(shielded.toSpell(4, 0, 0) && shielded.toDamage(0));
+}
+
+/// The invisibility types `Fighter.invisibility` covers (the data uses 0 to 5).
+enum size_t invisibilityTypes = 8;
+
+/**
+ * Whether `viewer` sees `target` through its invisibility (CMaNGOS's `VisibilityData::CanDetectInvisibilityOf`):
+ * not invisible at all, or one of its invisibility types no stronger than the viewer's detection of it (Detect
+ * Invisibility, a quest's detection potion; a creature's innate detection).
+ */
+bool seesThrough(const Fighter viewer, const Fighter target) pure nothrow @nogc @safe
+{
+    bool invisible;
+    foreach (i; 0 .. invisibilityTypes)
+        if (target.invisibility[i] > 0)
+        {
+            invisible = true;
+            if (target.invisibility[i] <= viewer.invisibilityDetect[i])
+                return true;
+        }
+    return !invisible;
+}
+
+unittest
+{
+    Fighter ghost, viewer;
+    assert(seesThrough(viewer, ghost), "nothing to see through");
+    ghost.invisibility[0] = 300;
+    assert(!seesThrough(viewer, ghost));
+    viewer.invisibilityDetect[0] = 100;
+    assert(!seesThrough(viewer, ghost), "not strong enough");
+    viewer.invisibilityDetect[0] = 300;
+    assert(seesThrough(viewer, ghost));
+    viewer.invisibilityDetect[0] = 0;
+    viewer.invisibilityDetect[1] = 500;
+    assert(!seesThrough(viewer, ghost), "another type");
 }
 
 /// The spell mechanics (`Mechanics`) `Fighter.mechanicResist` covers.

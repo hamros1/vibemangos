@@ -426,8 +426,9 @@ mixin template HonorHandlers()
     {
         if (victim is null || victim is this || victim.player is null)
             return;
-        if (victim.player.auras.find(spellHonorlessTarget) !is null)
-            return;
+        if (victim.player.auras.find(spellHonorlessTarget) !is null
+                || victim.player.auras.hasType(imported!"dmangos.world.spellids".AuraType.noPvpCredit))
+            return; // `SPELL_AURA_NO_PVP_CREDIT`
         if (context.client.teamForRace(victim.player.data.race) == context.client.teamForRace(player.data.race))
             return;
         if (greyForHonor(player.data.level, victim.player.data.level))

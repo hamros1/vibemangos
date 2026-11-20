@@ -150,6 +150,11 @@ interface CreatureLore
     /// Whether the player `player` (a pet's owner for a pet) meets condition `id` (`conditions`); false if the
     /// player is not online here.
     bool conditionMet(uint id, ulong player);
+
+    // Spell scripts of items, quests and the world:
+
+    /// The creature entries `spell_script_target` gives spell `spell` (type 1); empty if none.
+    const(uint)[] spellScriptTargets(uint spell);
 }
 
 /// What a creature's AI needs of its map.
@@ -384,6 +389,14 @@ final class CreatureAI : Scripted, CreatureHost
             return;
         if (!world.inLineOfSight(me.position, target.position))
             return;
+        // An invisible one (a Lesser Invisibility potion) only if it sees through it.
+        if (target.invisible)
+        {
+            import dmangos.world.combat : seesThrough;
+
+            if (!seesThrough(me.fighter, target))
+                return;
+        }
         // A stealthed one only if it detects it: in front, near enough for its level and the stealth's strength.
         // Short of that but within the alert range, its script hears of it (a lookout on its guard).
         if (target.stealthed)
@@ -622,6 +635,8 @@ private:
         if (distance == 0)
             return 0;
         distance -= levelDiff;
+        // Mind Soothe, Soothe Animal: `MOD_DETECT_RANGE` on it (CMaNGOS's `Unit::GetAttackDistance`).
+        distance += me.auras.total(AuraType.modDetectRange);
         return distance < 5 ? 5 : distance;
     }
 

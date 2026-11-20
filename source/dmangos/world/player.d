@@ -1153,6 +1153,7 @@ private:
         input.auras.offHandDamage = auras.multiplier(AuraType.modOffhandDamagePct);
         foreach (uint type; 0 .. 3)
             input.auras.attackTime[type] = auras.attackTimeFactor(type);
+        input.auras.armorFromIntellect = auras.totalByMiscMask(AuraType.modResistanceOfStatPercent, 1); // armor only
         stats = computeStats(input);
         chances = meleeChances(chanceInputs(world));
         damageMods = DamageMods.of(auras, (ubyte slot) {
@@ -1233,6 +1234,7 @@ private:
 
             f.immune = Immunities.of(auras);
             f.attackerChancesFrom(auras);
+            f.invisibilityFrom(auras);
         }
         return f;
     }

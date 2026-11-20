@@ -309,6 +309,49 @@ mixin template CreatureScripting()
         lore.scriptRuntime.raise(handle, c, EffectHit(EntityRef(me.guid), EntityRef(target), cast(ubyte) i, value));
     }
 
+    /// Spell scripts of items, quests and the world: `event` (an aura's) reaches `spell`'s script, if it has one,
+    /// with this creature its host, acting on `world`.
+    package void spellScriptEvent(E)(const(SpellInfo)* spell, const auto ref E event, CombatWorld world)
+    {
+        import dmangos.script.api : SpellContext;
+
+        if (lore is null || world is null)
+            return;
+        auto handle = lore.spellScript(spell.id);
+        if (!handle)
+            return;
+        world_ = world;
+        auto outer = scriptSpell;
+        scriptSpell = spell;
+        scope (exit)
+            scriptSpell = outer;
+        auto c = SpellContext(castHost);
+        lore.scriptRuntime.raise(handle, c, event);
+    }
+
+    /// The targets of effect `i` of its spell its script keeps (`TargetChecked`): all if the spell has none.
+    package ulong[] scriptPicked(const(SpellInfo)* spell, size_t i, ulong[] targets)
+    {
+        import dmangos.script.api : SpellContext, TargetChecked;
+
+        auto handle = lore is null ? ScriptHandle.init : lore.spellScript(spell.id);
+        if (!handle || targets.length == 0)
+            return targets;
+        auto outer = scriptSpell;
+        scriptSpell = spell;
+        scope (exit)
+            scriptSpell = outer;
+        ulong[] kept;
+        foreach (guid; targets)
+        {
+            auto c = SpellContext(castHost);
+            lore.scriptRuntime.raise(handle, c, TargetChecked(EntityRef(me.guid), EntityRef(guid), cast(ubyte) i));
+            if (!c.excluded)
+                kept ~= guid;
+        }
+        return kept;
+    }
+
     private final class CastHost : SpellHost
     {
         uint hostSpellId() { return scriptSpell is null ? 0 : scriptSpell.id; }
@@ -366,6 +409,11 @@ mixin template CreatureScripting()
                 }
             return ActionResult.notHere;
         }
+
+        // Spell scripts of items, quests and the world (`dmangos.world.spellscripting`):
+        private CombatWorld scriptWorld() { return world_; }
+        import dmangos.world.spellscripting : SpellScriptActions;
+        mixin SpellScriptActions;
     }
 
     private CastHost castHost_;
@@ -375,6 +423,13 @@ mixin template CreatureScripting()
         if (castHost_ is null)
             castHost_ = new CastHost;
         return castHost_;
+    }
+
+    /// A spell script acts on it (`dmangos.world.spellscripting`): through its own script's host, on `world`.
+    CreatureHost hostIn(CombatWorld world)
+    {
+        world_ = world;
+        return this;
     }
 
     /// A spell script has it cast `spellId` at `target`.

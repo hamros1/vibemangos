@@ -214,6 +214,19 @@ struct Rinji
     }
 }
 
+/// The Super Snapper FX's picture (The Super Snapper FX): only of Gammerita.
+@spell("spell_gammerita_turtle_camera")
+struct GammeritaTurtleCamera
+{
+    enum uint gammerita = 7977;
+
+    void on(ref SpellContext it, const ref CastChecked e)
+    {
+        if (!e.target || e.target.entry != gammerita)
+            it.refuse();
+    }
+}
+
 unittest
 {
     import dmangos.scripts.testhost : creatureRef, Driven;

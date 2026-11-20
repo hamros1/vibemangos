@@ -423,6 +423,12 @@ private:
                 interruptAurasOnCast(AuraInterrupt.itemUse, spell);
             interruptAurasOnCast(AuraInterrupt.action, spell);
         }
+        // The cast began: the spell's script hears of it before anything of it happens (`OnSuccessfulStart`).
+        {
+            import dmangos.script.api : CastStarted, EntityRef;
+
+            spellScriptEvent(spell, CastStarted(EntityRef(player.guid), EntityRef(targets.unit)));
+        }
         if (!triggered)
         {
             c.timer = castTimeCheat || tradeSpellCompleting ? 0 : max(0, cast(int)(spellMod(SpellModOp.castingTime, spell,
@@ -1215,6 +1221,14 @@ private:
             if (toolResult != SpellCastResult.ok)
                 return toolResult;
         }
+        // Last, the spell's script may refuse it (CMaNGOS's `OnCheckCast`): a capture's creature, a camera's turtle.
+        {
+            import dmangos.script.api : CastChecked, CastRefusal, EntityRef;
+
+            CastRefusal refusal;
+            if (spellScriptEvent(spell, CastChecked(EntityRef(player.guid), EntityRef(targets.unit)), refusal))
+                return cast(SpellCastResult) refusal;
+        }
         // At the trade window's "will not be traded" item: kept for the trade's end (`dmangos.world.tradehandlers`).
         if (targets.mask & TargetFlags.tradeItem)
             return tradeSpellCheck(spell, targets, itemEntry);
@@ -1626,6 +1640,13 @@ private:
                 targets = [c.targets.unit ? c.targets.unit : player.guid];
                 if (spell.casting.chainTarget[i] > 1 && a == ImplicitTarget.enemy)
                     targets ~= chainTargets(targets[0], spell.casting.chainTarget[i] - 1);
+            }
+            else if (a == ImplicitTarget.unitRaid) // TARGET_UNIT_RAID: the target, if of the caster's group (the costumes)
+            {
+                const target = c.targets.unit ? c.targets.unit : player.guid;
+                if (target != player.guid && !context.sameGroup(player.guid, target))
+                    continue;
+                targets = [target];
             }
             else if (a == ImplicitTarget.gameObject || a == ImplicitTarget.gameObjectItem)
             {
@@ -4672,4 +4693,85 @@ unittest
     assert(!opcodesOf(priest.read()).canFind(Opcode.SMSG_SPELL_GO), "pushed back");
     priest.session.update(1800.msecs);
     assert(opcodesOf(priest.read()).canFind(Opcode.SMSG_SPELL_GO), "then it goes");
+}
+
+/// An invisible creature is not seen until the player sees through its invisibility (Detect Invisibility).
+unittest
+{
+    import dmangos.auth.accounts : AccountLevel;
+    import dmangos.world.auras : makeAura;
+    import dmangos.world.creature : Creature;
+    import dmangos.world.movement : Position;
+    import dmangos.world.objects : HighGuid, makeGuid;
+    import dmangos.world.spells : SpellInfo;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto unseen = SpellInfo(90071);
+    unseen.effect[0] = SpellEffect.applyAura;
+    unseen.casting.applyAuraName[0] = AuraType.modInvisibility;
+    unseen.miscValue[0] = 0;
+    auto detect = SpellInfo(90072);
+    detect.effect[0] = SpellEffect.applyAura;
+    detect.casting.applyAuraName[0] = AuraType.modInvisibilityDetection;
+    detect.miscValue[0] = 0;
+    context.data.spells.spells[90071] = unseen;
+    context.data.spells.spells[90072] = detect;
+
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f), AccountLevel.player);
+    anduin.read();
+    auto session = anduin.session.inWorld;
+    auto map = context.map(0);
+    auto keeper = cast(Creature) map.findObject(makeGuid(HighGuid.unit, creatureInnkeeper, innkeeperSpawn));
+    assert(map.seesObject(7, keeper.guid));
+    bool isNew;
+    keeper.auras.apply(makeAura((90071 in context.data.spells.spells), 0, 60, -1, true, [300, 0, 0]), keeper.values, isNew);
+    map.refreshVisibility(session);
+    assert(!map.seesObject(7, keeper.guid), "invisible: gone from the player's sight");
+    session.addAura(makeAura((90072 in context.data.spells.spells), 7, 60, 60_000, true, [300, 0, 0]));
+    assert(map.seesObject(7, keeper.guid), "seen through it");
+}
+
+/// A charm (Enslave Demon): the creature is the player's pet while the aura lasts, then its own again.
+unittest
+{
+    import std.algorithm.searching : canFind;
+    import dmangos.auth.accounts : AccountLevel;
+    import dmangos.world.creature : Creature;
+    import dmangos.world.movement : Position;
+    import dmangos.world.objects : HighGuid, makeGuid;
+    import dmangos.world.opcodes : Opcode;
+    import dmangos.world.spellcast : SpellCastResult, SpellTargets, TargetFlags;
+    import dmangos.world.spells : SpellInfo;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+    import dmangos.world.updatefields : UNIT_FIELD_CHARMEDBY, UNIT_FIELD_FACTIONTEMPLATE;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto enslave = SpellInfo(1098);
+    enslave.effect[0] = SpellEffect.applyAura;
+    enslave.implicitTargetA[0] = ImplicitTarget.enemy;
+    enslave.casting.applyAuraName[0] = AuraType.modCharm;
+    enslave.casting.durationIndex = 0; // until cancelled
+    enslave.casting.rangeIndex = 0;
+    context.data.spells.spells[1098] = enslave;
+
+    auto warlock = loggedIn(context, db, 7, "Gul", Position(-8949.95f, -132.49f, 83.53f), AccountLevel.player);
+    warlock.read();
+    auto session = warlock.session.inWorld;
+    auto map = context.map(0);
+    auto keeper = cast(Creature) map.findObject(makeGuid(HighGuid.unit, creatureInnkeeper, innkeeperSpawn));
+    const ownFaction = keeper.values.get!UNIT_FIELD_FACTIONTEMPLATE;
+    session.applyAuraEffect((1098 in context.data.spells.spells), 0, keeper.guid);
+    assert(session.charmed is keeper && keeper.petOwner == 7, "the player's");
+    assert(keeper.values.get!UNIT_FIELD_CHARMEDBY == 7);
+    assert(keeper.values.get!UNIT_FIELD_FACTIONTEMPLATE == session.player.values.get!UNIT_FIELD_FACTIONTEMPLATE);
+    assert(opcodesOf(warlock.read()).canFind(Opcode.SMSG_PET_SPELLS), "its pet bar");
+
+    keeper.loseAura(keeper.auras.find(1098), map);
+    assert(session.charmed is null && keeper.petOwner == 0 && keeper.petData is null, "its own again");
+    assert(keeper.values.get!UNIT_FIELD_FACTIONTEMPLATE == ownFaction);
 }

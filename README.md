@@ -398,6 +398,9 @@ What works now:
   * **Creatures fight:** attacked, they fight back; aggressive ones
     (not `CREATURE_EXTRA_FLAG_NO_AGGRO_ON_SIGHT`) attack a hostile player that comes within their
     aggro radius (`Detection`, a yard more for each level the player is below them) and in sight.
+    Charm and possession (Enslave Demon, Mind Control, Eyes of the Beast): the creature is the player's pet
+    while the aura lasts (its spells on the bar, the player's faction, out of its fights); possessed, the client
+    moves it and sees as it. When it ends the creature is its own again and turns on the player.
     Crowd control: a stunned, feared or disoriented creature neither fights nor casts (a cast under way
     stops); feared it runs from whoever feared it, disoriented it wanders; silenced it casts no spell that silence
     prevents, pacified it does not swing. A feared or disoriented player loses control of its character
@@ -445,7 +448,13 @@ What works now:
     Traitor's escort to Moonbrook ("The Defias Brotherhood": his lines on the way, the quest's event
     at the hideout, the quest failed if he is left behind or killed), Lady Katrana Prestor's
     conversation for "The True Masters", the scent of Lar'korwi's mate in Un'Goro, Life Tap
-    (health into mana), Curse of Agony's growing ticks, Hate to Zero (a creature's threat wipe), and
+    (health into mana), Curse of Agony's growing ticks, Hate to Zero (a creature's threat wipe), the spell
+    scripts of items, quests and the world (food's chewing, the enemies an opening calls on, the Muisek
+    vessels and the Super Snapper FX only at their creatures, the Wondervolt's shapes and the Orb of
+    Deception's looks, the stone skin of statues, the end of the Hex of Jammal'an, the Mark of Kazzak's
+    burst) and the item and holiday spells CMaNGOS's core scripts by id (the Deviate Fish, the
+    Noggenfogger Elixir, the engineers' gadgets, the Six Demon Bag, the Hallow's End treats and costumes,
+    the tributes, the heart candies, Elune's Candle), and
     Shadowfang Keep (its doors with their guardians, the prisoners who lead the way to the courtyard
     and open it, Archmage Arugal's bolts, curse and Thundershock), and Wailing Caverns (once the
     four Fanglords are slain, the Disciple of Naralex leads the way through two ambushes and

@@ -422,7 +422,7 @@ mixin template PetHandlers()
     private void writePet(uint slot)
     {
         auto state = petState();
-        if (state is null)
+        if (state is null || pet_ is charmed_) // a charm is no pet to keep
             return;
         if (slot == PetSlot.current && !pet_.alive)
             slot = PetSlot.notInSlot;
@@ -498,6 +498,8 @@ mixin template PetHandlers()
     {
         if (pet_ is null)
             return;
+        if (pet_ is charmed_) // a charmed creature is let go, not sent away
+            return endCharm();
         auto state = petState();
         if (deleted)
             context.database.deletePet(player.data.guid, state.number);
@@ -953,6 +955,136 @@ mixin template PetHandlers()
     // What happens to the pet and its owner
     // -----------------------------------------------------------------------
 
+    // -----------------------------------------------------------------------
+    // Charm: a creature made the player's for a while (Enslave Demon, Mind Control, Eyes of the Beast)
+    // -----------------------------------------------------------------------
+
+    private Creature charmed_;         // the creature charmed, null if none
+    private uint charmedFaction;       // its own faction, back when the charm ends
+    private uint charmedFlags;         // its own unit flags, ditto
+    private uint charmSpell;           // the charm's spell
+    private bool possessing;           // the player moves and sees as it (Mind Control, Eyes of the Beast)
+
+    /// The creature charmed, if any.
+    package @property Creature charmed()
+    {
+        return charmed_;
+    }
+
+    /**
+     * `creature` is the player's for as long as `spell`'s aura lasts (CMaNGOS's `Unit::TakeCharmOf`): a pet the
+     * player commands from a pet bar of the creature's own spells, of the player's faction, out of the fights it
+     * was in; a pet out is set aside first. `possess` (`SPELL_AURA_MOD_POSSESS`, `MOD_POSSESS_PET`): the player
+     * also moves it and sees as it (`TakePossessOf`): the client's control and camera are on it.
+     */
+    package void takeCharm(Creature creature, const(SpellInfo)* spell, bool possess)
+    {
+        if (creature is null || !creature.alive || creature is charmed_)
+            return;
+        if (charmed_ !is null)
+            endCharm();
+        const ownPet = creature is pet_; // Eyes of the Beast: one's own pet, possessed
+        if (pet_ !is null && !ownPet)
+            unsummonPet(PetSlot.current); // set aside, as CMaNGOS's `UnsummonPetTemporaryIfAny`
+        charmSpell = spell.id;
+        possessing = possess;
+        if (!ownPet)
+        {
+            charmedFaction = creature.values.get!UNIT_FIELD_FACTIONTEMPLATE;
+            charmedFlags = creature.values.get!UNIT_FIELD_FLAGS;
+            creature.ai.dropThreat(map);
+            creature.ai.petStopAttack(map);
+            auto state = new PetState;
+            state.type = PetType.guardian; // never saved: `writePet` keeps no charm
+            state.owner = player.guid;
+            state.createdBySpell = spell.id;
+            state.name = creature.template_.name;
+            state.bar = ActionBar.initial();
+            // Its own spells on the bar (`InitCharmCreateSpells`): its spell list's.
+            if (const list = creature.template_.spellList in context.data.creatureSpellLists)
+                foreach (entry; *list)
+                    if (const info = context.data.spells.spell(entry.spell))
+                        state.learn(entry.spell, info.isPassive, isAutocastable(*info));
+            creature.petOwner = player.guid;
+            creature.petData = state;
+            const faction = player.values.get!UNIT_FIELD_FACTIONTEMPLATE;
+            creature.values.set!UNIT_FIELD_FACTIONTEMPLATE(faction);
+            creature.factionTemplate = context.client.factionTemplates.lookup(faction);
+            creature.values.set!UNIT_FIELD_FLAGS(charmedFlags | UnitFlags.playerControlled);
+            creature.ai.react = ReactState.defensive;
+            pet_ = creature;
+        }
+        charmed_ = creature;
+        creature.values.set!UNIT_FIELD_CHARMEDBY(player.guid);
+        player.values.set!UNIT_FIELD_CHARM(creature.guid);
+        map.flushObjectChanges(creature);
+        flushPlayerChanges();
+        sendPetSpells();
+        if (possess)
+            possessBegins(creature);
+    }
+
+    /// The charm ends (its aura went, the creature died, the player left): the creature is its own again and,
+    /// if it lives, turns on the player (CMaNGOS's `Unit::Uncharm`).
+    package void endCharm()
+    {
+        auto creature = charmed_;
+        if (creature is null)
+            return;
+        charmed_ = null;
+        if (possessing)
+            possessEnds(creature);
+        possessing = false;
+        creature.values.set!UNIT_FIELD_CHARMEDBY(0UL);
+        player.values.set!UNIT_FIELD_CHARM(0UL);
+        if (creature.petData !is null && creature.petData.type == PetType.guardian && creature.petOwner == player.guid
+                && pet_ is creature)
+        {
+            if (creature.ai !is null && creature.alive)
+                creature.ai.petStopAttack(map);
+            creature.petOwner = 0;
+            creature.petData = null;
+            creature.values.set!UNIT_FIELD_FACTIONTEMPLATE(charmedFaction);
+            creature.factionTemplate = context.client.factionTemplates.lookup(charmedFaction);
+            creature.values.set!UNIT_FIELD_FLAGS(charmedFlags & ~UnitFlags.playerControlled);
+            pet_ = null;
+            deliver(Opcode.SMSG_PET_SPELLS, noPetSpellsPacket());
+            if (creature.alive && creature.ai !is null && canAttack(creature.ai.relatingOf(), relatingNow(), context.client))
+                creature.ai.attackedBy(unit, map); // it remembers who held it
+        }
+        map.flushObjectChanges(creature);
+        flushPlayerChanges();
+        // Its aura goes with the charm, whichever ended first.
+        if (auto aura = creature.auras.find(charmSpell))
+            if (aura.caster == player.guid)
+                creature.loseAura(aura, map);
+    }
+
+    /// The player takes control of `creature` (`TakePossessOf`): the client moves it and sees as it.
+    private void possessBegins(Creature creature)
+    {
+        activeMover = creature.guid;
+        ByteWriter w;
+        w.putPackedGuid(creature.guid);
+        w.put(ubyte(1));
+        deliver(Opcode.SMSG_CLIENT_CONTROL_UPDATE, w.data);
+        seeFrom(creature.guid);
+    }
+
+    /// ... and gives it back: the client moves the player again, and sees as it.
+    private void possessEnds(Creature creature)
+    {
+        activeMover = 0;
+        ByteWriter w;
+        w.putPackedGuid(creature.guid);
+        w.put(ubyte(0));
+        deliver(Opcode.SMSG_CLIENT_CONTROL_UPDATE, w.data);
+        seeFrom(0);
+    }
+
+    /// The unit the client moves when it is not the player's own (a possessed creature); 0 for the player.
+    package ulong activeMover;
+
     /// The pet died: a demon goes back at once; a beast lies dead a while, a third of its happiness lost (not in a battleground).
     public void ownPetDied()
     {
@@ -1192,6 +1324,7 @@ mixin template PetHandlers()
     /// with its owner (or set aside if dead), to come back with it.
     package void petsOnLeave()
     {
+        endCharm(); // a charm stays where it is, its own again
         removeGuardians(player is null || player.fighter.alive); // at its death, only those not fighting
         unsummonTotems(); // totems do not follow their owner
         if (pet_ !is null)

@@ -280,6 +280,9 @@ tools/harness/check.sh --quick          # without the regression: unit tests (ea
 tools/harness/regression.sh             # two nodes, 250 bots in a crowd while regions split and merge
 tools/harness/bench.sh LABEL crowd 500  # one benchmark run (docs/BENCHMARKS.md), report in LABEL.md
 tools/harness/db.sh start|stop|status
+# The full check also runs tools/harness/spell-audit.py: every spell a player can learn (trainers, starting
+# spells, talents, what they trigger) against what the server does; it fails on an effect left undone or an aura
+# type the code never names, unless tools/harness/spell-audit-known.txt lists it with its reason.
 ```
 
 The harness lives in `~/.cache/dmangos-harness` (`DMANGOS_HARNESS`). It needs an unpacked MariaDB

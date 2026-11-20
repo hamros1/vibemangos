@@ -834,12 +834,20 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
         speeds[MoveType.run] = baseMoveSpeed[MoveType.run] * t.speedRun * auraSpeedFactor;
     }
 
-    /// Its aura goes (it ran out, was dispelled or cancelled, or a script took it away): its script hears of it.
-    void loseAura(Aura aura, CombatWorld world)
+    /// Its aura goes (it ran out, `expired`, was dispelled or cancelled, or a script took it away): its script, and
+    /// its spell's, hear of it.
+    void loseAura(Aura aura, CombatWorld world, bool expired = false)
     {
+        import dmangos.script.api : AuraEnded, EntityRef;
+
         auras.remove(aura, values);
-        if (ai !is null)
-            ai.auraLost(aura.caster, aura.spell.id, world);
+        if (ai is null)
+            return;
+        ai.auraLost(aura.caster, aura.spell.id, world);
+        foreach (i; 0 .. 3)
+            if (aura.effects & (1 << i))
+                ai.spellScriptEvent(aura.spell, AuraEnded(EntityRef(aura.caster), EntityRef(guid), cast(ubyte) i, expired),
+                    world);
     }
 
     /// Its auras' time passes: their casters do what their ticks do; those that ended go.
@@ -863,7 +871,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
             if (!expired.canFind(aura) && uniform01(world.random) * 100 < aura.heartbeatChance)
                 expired ~= aura;
         foreach (aura; expired)
-            loseAura(aura, world);
+            loseAura(aura, world, true);
         if (expired.length)
             world.flushCreature(this);
     }
@@ -979,7 +987,10 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
             if (auras.list.length || template_.mechanicImmuneMask || template_.schoolImmuneMask)
                 f.immune = Immunities.of(auras, template_.mechanicImmuneMask, template_.schoolImmuneMask);
             if (auras.list.length)
+            {
                 f.attackerChancesFrom(auras);
+                f.invisibilityFrom(auras);
+            }
         }
         // Crit, dodge, parry and block chances: 5% each for creatures.
         f.crit = f.dodge = f.parry = f.block = 5;

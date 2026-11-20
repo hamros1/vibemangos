@@ -52,5 +52,9 @@ for c in worldserver authserver loadgen; do
 done
 echo "built"
 [ "$1" = "--quick" ] && { echo "PASS (quick: no regression)"; exit 0; }
+echo "== spells a player can learn, against what the server does"
+db_start || exit 1
+python3 "$REPO/tools/harness/spell-audit.py" env LD_LIBRARY_PATH="$(dirname "$MYSQL_LIB")" "$MARIADB_ROOT/usr/bin/mariadb" \
+    -S "$SOCK" -u root classicmangos -- "$CLIENT_DATA/dbc" || { echo "FAIL: a learnable spell does what the server does not"; exit 1; }
 echo "== cluster regression"
 sh "$REPO/tools/harness/regression.sh"

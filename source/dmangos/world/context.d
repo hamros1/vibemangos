@@ -1403,7 +1403,11 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             {
                 import dmangos.world.combat : detects, maxPlayerStealthDetectRange;
 
-                f.detected = detects(watcher.player.fighter, hidden.player.fighter, maxPlayerStealthDetectRange);
+                import dmangos.world.combat : seesThrough;
+
+                const watcherFighter = watcher.player.fighter, hiddenFighter = hidden.player.fighter;
+                f.detected = (!hiddenFighter.stealthed || detects(watcherFighter, hiddenFighter, maxPlayerStealthDetectRange))
+                    && seesThrough(watcherFighter, hiddenFighter);
             }
         }
         if (auto local = cast(Character) onlinePlayer(viewer))
@@ -2118,6 +2122,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             }
         }
         info!"scripts: %s script names served, %s in the world database not (yet): those run as before"(served, unserved);
+        info!"scripts: %s spells served by id (what CMaNGOS's core scripts by id)"(scripts.spellsServedById.length);
         import std.conv : to;
 
         foreach (k; [ScriptKind.creature, ScriptKind.instance, ScriptKind.gameObject, ScriptKind.spell,
@@ -3184,7 +3189,10 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
     /// The script of spell `id` (`spell_scripts`); no handle if none serves it. One per spell.
     ScriptHandle spellScript(uint id)
     {
-        return statelessScript(ScriptKind.spell, id, data.spellScriptNames, spellScripts);
+        // Where `spell_scripts` names none, a script serving the spell by id (what CMaNGOS's core scripts by id).
+        if (id in data.spellScriptNames)
+            return statelessScript(ScriptKind.spell, id, data.spellScriptNames, spellScripts);
+        return statelessScript(ScriptKind.spell, id, scripts.spellsServedById, spellScripts);
     }
 
     /// The script of area trigger `id` (`scripted_areatrigger`); no handle if none serves it. One per trigger.
@@ -3860,6 +3868,14 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         if (auto map = cast(Map) world)
             if (map.instanceId == 0)
                 signalWorld(map.id, from, id, value);
+    }
+
+    /// See `CreatureLore.spellScriptTargets`.
+    const(uint)[] spellScriptTargets(uint spell)
+    {
+        if (const entries = spell in data.spellScriptTargets)
+            return *entries;
+        return null;
     }
 
     /// See `CreatureLore.conditionMet`.

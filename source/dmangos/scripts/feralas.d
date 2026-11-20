@@ -352,6 +352,37 @@ struct KindalMoonweaver
     }
 }
 
+/// The Muisek vessels of Feralas (the wildkin's, hippogryph's, faerie dragon's, treant's and mountain giant's): each
+/// captures only a creature of its kind.
+@spell("spell_capture_wildkin", "spell_capture_hippogryph", "spell_capture_faerie_dragon", "spell_capture_treant",
+    "spell_capture_mountain_giant")
+struct FeralasCapture
+{
+    static immutable uint[] wildkin = [2927, 2928, 2929, 7808], hippogryph = [5300, 5304, 5305, 5306],
+        faerieDragon = [5276, 5278], treant = [7584], mountainGiant = [5357, 5358];
+
+    static const(uint)[] targetsOf(uint spell)
+    {
+        switch (spell)
+        {
+        case 11885: return treant;
+        case 11886: return wildkin;
+        case 11887: return hippogryph;
+        case 11888: return faerieDragon;
+        case 11889: return mountainGiant;
+        default: return null;
+        }
+    }
+
+    void on(ref SpellContext it, const ref CastChecked e)
+    {
+        import std.algorithm.searching : canFind;
+
+        if (!e.target || !targetsOf(it.spellId).canFind(e.target.entry))
+            it.refuse();
+    }
+}
+
 unittest
 {
     import dmangos.scripts.kalimdortesting;
