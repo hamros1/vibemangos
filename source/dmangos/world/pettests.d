@@ -679,3 +679,56 @@ unittest
     mode = ByteReader(bodyOf(gul.read(), Opcode.SMSG_PET_MODE));
     assert(mode.read!ulong == pet.guid && mode.read!uint != petModeDisableActions);
 }
+
+/**
+ * A pet's category cooldowns (`Creature::AddCooldown` with the spell's category): Growl and Cower as
+ * spell_template has them (2649 and 1742: RecoveryTime 0, Category 82, CategoryRecoveryTime 5000) wait together,
+ * and Growl again is not ready though it has no cooldown of its own.
+ */
+unittest
+{
+    import dmangos.world.database : PetSpellRecord;
+    import dmangos.world.spellcast : SpellTargets, TargetFlags;
+    import dmangos.world.spellhandlers : testSpell;
+    import dmangos.world.spellids : SpellEffect;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto gul = loggedIn(context, db, 7, "Guldan", Position(-8949.95f, -132.49f, 83.53f, 0), AccountLevel.player,
+        raceHuman, 0, 1, (ref c) { c.classId = classMage; });
+    gul.read();
+    addPetData(&gul, context);
+    auto session = gul.session.inWorld;
+    enum uint growl = 2649, cower = 1742;
+    foreach (id; [growl, cower])
+    {
+        context.data.spells.spells[id] = testSpell(id, SpellEffect.dummy, 1, 0); // on itself, as a stand-in
+        with (*context.data.spells.spells.edit(id))
+        {
+            recoveryTime = 0;
+            category = 82;
+            categoryRecoveryTime = 5000;
+        }
+    }
+    auto summonImp = effectSpell(spellSummonImp, 56, imp);
+    session.summonPetEffect(&summonImp, 0);
+    auto pet = session.ownPet;
+    pet.petData.spells ~= [PetSpellRecord(growl, ActiveState.passive), PetSpellRecord(cower, ActiveState.passive)];
+    gul.read();
+    ubyte[] castAt(uint spell)
+    {
+        ByteWriter w;
+        w.put(pet.guid);
+        w.put(spell);
+        SpellTargets(TargetFlags.unit, pet.guid).write(w);
+        return w.data.dup;
+    }
+
+    gul.write(Opcode.CMSG_PET_CAST_SPELL, castAt(growl));
+    assert(bodyOf(gul.read(), Opcode.SMSG_SPELL_COOLDOWN) !is null, "Growl cast");
+    gul.write(Opcode.CMSG_PET_CAST_SPELL, castAt(cower));
+    assert(gul.read().length == 0, "Cower waits on Growl's category");
+    assert(!pet.ai.petSpellReady(context.data.spells.spell(cower)));
+    gul.write(Opcode.CMSG_PET_CAST_SPELL, castAt(growl));
+    assert(gul.read().length == 0, "Growl too");
+}

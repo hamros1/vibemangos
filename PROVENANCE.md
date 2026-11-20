@@ -950,7 +950,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 ## world/gameobjecthandlers.d
 
 * Projects: CMaNGOS
-* Functions: `GameObject::ActivateToQuest`, `GameObject::Use`, `Loot::Loot`, `Loot::Release`, `Player::UpdateGatherSkill`, `Player::UpdateSkillPro`, `Spell::CanOpenLock`, `Spell::EffectOpenLock`, `Spell::SendLoot`
+* Functions: `GameObject::ActivateToQuest`, `GameObject::Use`, `Loot::Loot`, `Loot::Release`, `Player::GetSpellRank`, `Player::UpdateGatherSkill`, `Player::UpdateSkillPro`, `Spell::CanOpenLock`, `Spell::EffectOpenLock`, `Spell::SendLoot`
 * Constants: `GAMEOBJECT_TYPE_CHAIR`, `INTERACTION_DISTANCE`, `SCRIPT_COMMAND_OPEN_DOOR`
 
 ## world/gmactions.d
@@ -1234,7 +1234,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 ## world/petai.d
 
 * Projects: CMaNGOS
-* Functions: `CharmInfo::GetCommandState`, `PetAI::AttackStart`, `PetAI::MoveInLineOfSight`, `PetAI::UpdateAI`, `PetAI::m_followDist`, `Creature::AddCooldown` (`SMSG_SPELL_COOLDOWN` to the owner)
+* Functions: `CharmInfo::GetCommandState`, `PetAI::AttackStart`, `PetAI::MoveInLineOfSight`, `PetAI::UpdateAI`, `PetAI::m_followDist`, `Creature::AddCooldown` (`SMSG_SPELL_COOLDOWN` to the owner, the category's cooldown), `WorldObject::IsSpellReady`
 * Constants: `ACT_ENABLED`, `CMSG_PET_ACTION`, `CMSG_PET_CAST_SPELL`, `SPELL_ATTR_EX_NO_AUTOCAST_AI`
 
 ## world/pethandlers.d
