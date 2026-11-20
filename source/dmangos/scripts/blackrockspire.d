@@ -440,7 +440,7 @@ struct BlackrockSpire
             if (flamewreathWave == 0 && last)
                 brs.say(last, sayRookeryStart);
             const wave = flamewreathWave++;
-            steps.after(Step.flamewreathWave, (wave < 4 ? 30 : wave < 5 ? 40 : 10).seconds);
+            steps.after(Step.flamewreathWave, (wave < 4 ? 30 : 40).seconds); // ScriptDev2: 30 s, the last two 40 s
         }
         else
         {

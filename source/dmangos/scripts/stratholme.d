@@ -171,8 +171,11 @@ struct Stratholme
         case baron: baronRef = e.creature; break;
         case barthilas: barthilasRef = e.creature; break;
         case aurius: auriusRef = e.creature; break;
-        case acolyte: acolyteCandidates.add(e.creature); break;
-        case crystal: crystalCandidates.add(e.creature); break;
+        case acolyte, crystal:
+            (e.creature.entry == acolyte ? acolyteCandidates : crystalCandidates).add(e.creature);
+            if (zigguratsSorted)
+                sortZiggurats(strat); // one loaded since (its cell far from the first master's): its ziggurat's
+            break;
         case abomBile, abomVenom: abominations.add(e.creature); break;
         case crimsonInitiate, crimsonGallant, crimsonGuardsman, crimsonConjurer, crimsonBattleMage:
             Location at;
@@ -505,11 +508,11 @@ struct Stratholme
         }
     }
 
-    /// Each master's acolytes are those around his ziggurat's door; its crystal is the one near it.
+    /// Each master's acolytes are those around his ziggurat's door; its crystal is the one near it. Done at each
+    /// master's death and as more of them load (ScriptDev2 sorts the ones left at each death): those loaded later
+    /// are sorted too.
     private void sortZiggurats(ref InstanceContext strat)
     {
-        if (zigguratsSorted)
-            return;
         zigguratsSorted = true;
         Location at;
         foreach (who; acolyteCandidates)

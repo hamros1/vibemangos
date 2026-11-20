@@ -379,8 +379,10 @@ struct DireMaul
             {
                 dm.say(chorushRef, sayChorushKingDead);
                 dm.setFaction(chorushRef, factionFriendly);
-                dm.summon(mizzle, mizzleSpawn);
             }
+            // Mizzle comes for the tribute whether Cho'Rush lives or not (ScriptDev2 has him summoned by Cho'Rush's
+            // creature, dead or alive).
+            dm.summon(mizzle, mizzleSpawn);
             break;
         default:
             break;

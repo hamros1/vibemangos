@@ -930,7 +930,8 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Also: `Creature::DoFleeToGetAssistance` (`SPELL_AURA_PREVENTS_FLEEING`)
 * Not from an emulator: a pet's spells by its owner's spell modifiers (`petModOwner`: effects, damage, cast time, duration), its own damage done on its spells, its area auras on itself, the threat effect on a creature, `TARGET_UNIT_CASTER_MASTER`
 * Also: vmangos's `Spell::CheckPower` (a creature without a mana pool casts its mana spells; no creature pays another power)
-* Also: `Spell::DoSpellHitOnUnit` (a creature hit by a creature's spell: its AI's `SpellHit`)
+* Also: `Spell::DoSpellHitOnUnit` (a creature hit by a creature's spell: its AI's `SpellHit`), `CHAT_TYPE_ZONE_YELL`
+  (`DoScriptText`: heard in the whole zone; a dungeon's copy)
 * Moved out (2026-11-20): its effect switch to `spelleffects.d`, its damage, heals and drains to `spelldamage.d`, its auras to `spellauras.d`
 
 ## world/crypt.d

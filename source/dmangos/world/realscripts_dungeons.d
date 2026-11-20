@@ -10,7 +10,7 @@ module dmangos.world.realscripts_dungeons;
 
 version (unittest):
 
-import core.time : msecs, seconds;
+import core.time : minutes, msecs, seconds;
 import std.algorithm.searching : canFind;
 import std.format : format;
 import dmangos.world.creature : Creature;
@@ -999,4 +999,258 @@ unittest
     assert(!(shade.values.get!UNIT_FIELD_FLAGS & UnitFlags.immuneToPlayer), "and then the shade");
     d.restart();
     assert(Dungeon.isOpen(d.objectOf(barrier)), "down after a restart");
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Scholomance (289)
+// ---------------------------------------------------------------------------------------------------------------
+
+/**
+ * Scholomance: the six masters of the rooms (Malicia 10505, Theolen 11261, Polkelt 10901, Ravenian 10507, Alexei
+ * 10504, Illucia 10502) dead, Darkmaster Gandling (1853) comes (-1289000); in his fight his Shadow Portal (17950) sends
+ * someone off to a room. Rattlegore (11622) dead, the entrance room fills again.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    enum uint gandling = 1853, rattlegore = 11622;
+    auto d = Dungeon.enter(289, 60);
+    foreach (master; [10505u, 11261, 10901, 10507, 10504, 10502])
+    {
+        auto m = d.spawned(master, 0, 40);
+        d.kill(m);
+        d.run(1.seconds);
+    }
+    d.goTo(Position(180.771f, -5.4286f, 75.5702f));
+    d.run(3.seconds);
+    assert(d.summoned(gandling) == 1 || d.find(gandling) !is null, "Gandling comes\n" ~ d.story);
+    auto him = d.find(gandling);
+    assert(him !is null && him.alive);
+    d.pull(him);
+    const before = d.player.position;
+    bool ported() { return d.cast_(17950, gandling); }
+    assert(d.runUntil(&ported, 60.seconds), "his Shadow Portal\n" ~ d.story);
+    d.run(3.seconds);
+    const after = d.player.position;
+    assert((after.x - before.x) ^^ 2 + (after.y - before.y) ^^ 2 > 100, "sent off to a room");
+    d.forget();
+    auto bones = d.spawned(rattlegore, 0, 40);
+    d.kill(bones);
+    d.run(3.seconds);
+    assert(d.summons.length >= 17, "the entrance room fills again\n" ~ d.story);
+}
+
+/// Jandice Barov (10503): her Curse of Blood (16098), and her illusions (Summon Illusions 17773: 11439) come in her fight.
+unittest
+{
+    if (!haveRealData())
+        return;
+    enum uint jandice = 10503;
+    auto d = Dungeon.enter(289, 60);
+    auto her = d.spawned(jandice, 0, 30);
+    d.pull(her);
+    d.run(30.seconds);
+    assert(d.cast_(16098, jandice), "Curse of Blood\n" ~ d.story);
+    assert(d.cast_(17773, jandice) && d.summoned(11439) > 0, "her illusions\n" ~ d.story);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Stratholme (329)
+// ---------------------------------------------------------------------------------------------------------------
+
+/**
+ * Stratholme's ziggurats, fought one after another as players go: each master dead (the Baroness 10436, Nerub'enkan
+ * 10437, Maleki 10438) opens his ziggurat; the acolytes (10399) around it dead, its crystal (10415) dies, and an
+ * acolyte announces it (-1329004 .. -1329006); the three crystals dead, the Baron (-1329007) opens the square
+ * (the gauntlet's and slaughter square's ports, 175374, 175373).
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    enum uint acolyte = 10399, crystal = 10415, port = 175374;
+    static immutable uint[3] masters = [10436, 10437, 10438];
+    static immutable uint[3] doors = [175380, 175379, 175381];
+    auto d = Dungeon.enter(329, 60);
+    foreach (i, master; masters)
+    {
+        auto m = d.spawned(master, 0, 30);
+        d.kill(m);
+        d.run(2.seconds);
+        assert(Dungeon.isOpen(d.objectOf(doors[i])), format!"ziggurat %s opens"(i));
+        // Its acolytes, around its door.
+        const door = d.objectRow(doors[i]);
+        foreach (a; d.all(acolyte))
+            if ((a.position.x - door.x) ^^ 2 + (a.position.y - door.y) ^^ 2 < 35 ^^ 2)
+                d.kill(a);
+        d.run(2.seconds);
+        assert(d.heard(-1329004 - cast(int) i), format!"ziggurat %s's crystal dies\n%s"(i, d.story));
+    }
+    assert(d.heard(-1329007), "the Baron's yell\n" ~ d.story);
+    assert(Dungeon.isOpen(d.objectOf(port)), "the square opens");
+}
+
+/**
+ * The Baron's run: the Gauntlet's gate (175357) opened starts it (-1329009); the Baron warns at ten and five minutes
+ * left (-1329010, -1329011), and at forty-five minutes Ysida dies (-1329012).
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    enum uint gate = 175357;
+    auto d = Dungeon.enter(329, 60);
+    d.spawned(10440, 0, 60); // the Baron, loaded
+    d.use(d.objectOf(gate));
+    d.run(3.seconds);
+    assert(d.heard(-1329009), "the run starts\n" ~ d.story);
+    // Near him, his cell loaded (his warnings need him there: one whose cell is not loaded says nothing).
+    d.spawned(10440, 0, 60);
+    d.run(35.minutes + 5.seconds, 1.seconds);
+    assert(d.heard(-1329010), "ten minutes left, the Baron's warning\n" ~ d.story);
+    d.run(5.minutes, 1.seconds);
+    assert(d.heard(-1329011), "five minutes left\n" ~ d.story);
+    d.run(5.minutes + 15.seconds, 1.seconds);
+    assert(d.heard(-1329012), "the time is up: Ysida dies\n" ~ d.story);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Blackrock Depths (230)
+// ---------------------------------------------------------------------------------------------------------------
+
+/**
+ * The Ring of Law (area trigger 1526): High Justice Grimstone (10096) comes and sentences the party; two waves of one
+ * kind of beast come through the east gate, then (both dead) a champion through the north gate; all dead, the ring is
+ * won, its gates open (saved).
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    enum uint grimstone = 10096;
+    static immutable uint[6] beasts = [8925, 8926, 8927, 8928, 8933, 8932];
+    static immutable uint[6] champions = [9027, 9028, 9029, 9030, 9031, 9032];
+    auto d = Dungeon.enter(230, 55);
+    d.trigger(1526);
+    d.run(30.seconds);
+    assert(d.summoned(grimstone) == 1, "Grimstone\n" ~ d.story);
+    uint kinds;
+    foreach (b; beasts)
+        kinds += d.summoned(b) > 0;
+    assert(kinds == 1, "beasts of one kind\n" ~ d.story);
+    bool champion()
+    {
+        foreach (b; beasts)
+            if (d.summoned(b))
+                d.killSummons([b]);
+        foreach (c; champions)
+            if (d.summoned(c))
+                return true;
+        return false;
+    }
+    assert(d.runUntil(&champion, 60.seconds), "a champion\n" ~ d.story);
+    d.killSummons(champions[]);
+    d.run(10.seconds);
+    import dmangos.scripts.blackrockdepths : BlackrockDepths, Fight;
+
+    assert(d.saved!BlackrockDepths.ring == Fight.done, "the ring is won");
+}
+
+/**
+ * The Tomb of the Seven: Doom'rel (9039) challenged (his gossip), the dwarves (9034 .. 9038, 9040) turn on the party one
+ * after another, Doom'rel last; all dead, the copy remembers the tomb done.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    import dmangos.scripts.blackrockdepths : BlackrockDepths, Fight;
+
+    enum uint doomrel = 9039;
+    auto d = Dungeon.enter(230, 55);
+    auto him = d.spawned(doomrel, 0, 15);
+    d.talkTo(him);
+    d.choose(him, 0);
+    d.run(3.seconds);
+    bool done()
+    {
+        foreach (dwarf; BlackrockDepths.tombDwarves)
+            foreach (c; d.all(dwarf))
+                if (c.ai.inCombat)
+                    d.kill(c);
+        return d.saved!BlackrockDepths.tomb == Fight.done;
+    }
+    assert(d.runUntil(&done, 400.seconds), format!"the seven fall (round %s, tomb %s)\n%s"(d.saved!BlackrockDepths.dwarfRound, d.saved!BlackrockDepths.tomb, d.story));
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Blackrock Spire (229)
+// ---------------------------------------------------------------------------------------------------------------
+
+/**
+ * Pyroguard Emberseer (9816): his altar's event (4884) frees the Blackhand Incarcerators (10316) to be fought; they dead,
+ * he grows to his full strength and fights; dead, his way out (175153) opens and the copy remembers.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    enum uint emberseer = 9816, incarcerator = 10316, outDoor = 175153;
+    auto d = Dungeon.enter(229, 60);
+    auto boss = d.spawned(emberseer, 0, 15);
+    d.event(4884);
+    d.run(2.seconds);
+    auto guards = d.all(incarcerator);
+    assert(guards.length > 0, "his incarcerators");
+    foreach (g; guards)
+    {
+        d.pull(g);
+        d.kill(g);
+    }
+    bool fighting() { return boss.ai.inCombat; }
+    assert(d.runUntil(&fighting, 60.seconds), "he breaks free and fights\n" ~ d.story);
+    d.kill(boss);
+    d.run(2.seconds);
+    assert(Dungeon.isOpen(d.objectOf(outDoor)), "his way out opens");
+    d.restart();
+    assert(Dungeon.isOpen(d.objectOf(outDoor)), "open after a restart");
+}
+
+/**
+ * Overlord Wyrmthalak (9568): below half his health (51%) he calls two guards (9583, 9268, 9216) to his side.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    enum uint wyrmthalak = 9568;
+    auto d = Dungeon.enter(229, 60);
+    auto boss = d.spawned(wyrmthalak, 0, 30);
+    d.pull(boss);
+    d.hurtTo(boss, 45);
+    d.run(3.seconds);
+    assert(d.summoned(9583) + d.summoned(9268) + d.summoned(9216) >= 2, "his guards\n" ~ d.story);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Dire Maul (429)
+// ---------------------------------------------------------------------------------------------------------------
+
+/**
+ * Dire Maul North: King Gordok (11501) dead, Mizzle the Crafty (14353) comes for the tribute, Cho'Rush the Observer
+ * (14324) killed before him or not.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    enum uint king = 11501, chorush = 14324, mizzle = 14353;
+    auto d = Dungeon.enter(429, 60);
+    auto observer = d.spawned(chorush, 0, 30);
+    d.kill(observer);
+    auto him = d.spawned(king, 0, 30);
+    d.kill(him);
+    d.run(3.seconds);
+    assert(d.summoned(mizzle) == 1, "Mizzle comes\n" ~ d.story);
 }

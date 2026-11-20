@@ -1346,8 +1346,13 @@ mixin template CreatureCasting()
                 other.tell(Opcode.SMSG_MESSAGECHAT, body_);
         }
         else
-            world_.sendInRange(me.position, lore.listenRange(type == ChatType.CHAT_MSG_RAID_BOSS_EMOTE
+        {
+            // (Dungeon-script tests, a small fix: a zone yell, `CHAT_TYPE_ZONE_YELL` 6, is heard in the whole zone: in a
+            // dungeon, its whole copy (Baron Rivendare's warnings across Stratholme). The open world's still by range.)
+            const zoneWide = text.chatType == 6 && me.instanceId;
+            world_.sendInRange(me.position, zoneWide ? 2000 : lore.listenRange(type == ChatType.CHAT_MSG_RAID_BOSS_EMOTE
                 ? ChatType.CHAT_MSG_MONSTER_YELL : type), Opcode.SMSG_MESSAGECHAT, body_);
+        }
         if (text.emotes[0].emote)
             scriptEmote(text.emotes[0].emote);
     }
