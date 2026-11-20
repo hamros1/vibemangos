@@ -449,7 +449,9 @@ What works now:
     scripts of items, quests and the world (food's chewing, the enemies an opening calls on, the Muisek
     vessels and the Super Snapper FX only at their creatures, the Wondervolt's shapes and the Orb of
     Deception's looks, the stone skin of statues, the end of the Hex of Jammal'an, the Mark of Kazzak's
-    burst), and
+    burst) and the item and holiday spells CMaNGOS's core scripts by id (the Deviate Fish, the
+    Noggenfogger Elixir, the engineers' gadgets, the Six Demon Bag, the Hallow's End treats and costumes,
+    the tributes, the heart candies, Elune's Candle), and
     Shadowfang Keep (its doors with their guardians, the prisoners who lead the way to the courtyard
     and open it, Archmage Arugal's bolts, curse and Thundershock), and Wailing Caverns (once the
     four Fanglords are slain, the Disciple of Naralex leads the way through two ambushes and

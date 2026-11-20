@@ -1453,6 +1453,11 @@ interface SpellHost
     uint hostNativeDisplay(EntityRef who);
     ActionResult hostTransformModel(EntityRef who, uint model);
     ActionResult hostSayBroadcast(EntityRef speaker, uint text, EntityRef target);
+    bool hostHasAura(EntityRef who, uint spell);
+    ubyte hostRaceOf(EntityRef who);
+    ubyte hostGenderOf(EntityRef who);
+    ActionResult hostPlaySound(EntityRef player, uint sound);
+    ActionResult hostDespawn(EntityRef creature, uint delayMs);
 }
 
 /// `Powers`, as scripts use them.
@@ -1584,6 +1589,21 @@ struct SpellContext
     {
         return host.hostSayBroadcast(speaker, text, target);
     }
+
+    /// Whether a unit here has `spell`'s aura.
+    bool hasAura(EntityRef who, uint spell) { return host.hostHasAura(who, spell); }
+
+    /// A player's race (`Races`: 1 human ... 8 troll); 0 for anything else.
+    ubyte raceOf(EntityRef who) { return host.hostRaceOf(who); }
+
+    /// A player's sex: 0 male, 1 female (`Gender`); 2 for anything else.
+    ubyte genderOf(EntityRef who) { return host.hostGenderOf(who); }
+
+    /// `SMSG_PLAY_SOUND` for a player alone (`PlayDirectSound` to it).
+    ActionResult playSound(EntityRef player, uint sound) { return host.hostPlaySound(player, sound); }
+
+    /// A creature goes after `delayMs` (`ForcedDespawn`).
+    ActionResult despawn(EntityRef creature, uint delayMs = 0) { return host.hostDespawn(creature, delayMs); }
 
     /// For `TargetChecked`: the effect passes this target over.
     void exclude() { excluded_ = true; }

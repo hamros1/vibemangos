@@ -231,7 +231,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 
 * Projects: CMaNGOS
 * Files: `AI/ScriptDevAI/scripts/kalimdor/dire_maul/instance_dire_maul.cpp`, `dire_maul.h`, `dire_maul.cpp`
-* Functions/ScriptNames: `instance_dire_maul` (`SortPylonGuards`, `PylonGuardJustDied`, `ProcessForceFieldOpening`), `Update` (the ritual's failure), `ProcessDreadsteedRitualStart`, `GetRitualSymbolGuids`; `event_spells_warlock_dreadsteed`, `npc_warlock_mount_ritual`, `go_dreadsteed_quest_objects` (`DreadsteedQuestObjects`), `go_fixed_trap`
+* Functions/ScriptNames: `instance_dire_maul` (`SortPylonGuards`, `PylonGuardJustDied`, `ProcessForceFieldOpening`), `Update` (the ritual's failure), `ProcessDreadsteedRitualStart`, `GetRitualSymbolGuids`; `event_spells_warlock_dreadsteed`, `npc_warlock_mount_ritual`, `go_dreadsteed_quest_objects` (`DreadsteedQuestObjects`), `go_fixed_trap`, `spell_ritual_candle_aura` (`RitualCandleAura::OnCheckTarget`)
 
 ## scripts/durotar.d
 
@@ -490,6 +490,19 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
   `spell_banish_exile`, `spell_orb_of_deception` (`GetAuraScriptCustomizationValue`), `spell_scourge_strike`,
   `spell_communique_trigger`, `spell_despawner_self`
 * Constants: `SPELL_VISUAL_KIT_FOOD`, `SPELL_VISUAL_KIT_DRINK`, `SPELL_COMMUNIQUE_CAMP_TO_RELAY`, `SPELL_SPIRIT_SPAWN_OUT`
+
+## scripts/itemeffects.d
+
+* Projects: CMaNGOS
+* Files: `Spells/SpellEffects.cpp`
+* Functions: the generic cases of `Spell::EffectDummy` (8063 Deviate Fish, 8213 Savory Deviate Delight, 8344
+  Gnomish Universal Remote, 9976 Polly Eats the E.C.A.C., 13006 Gnomish Shrink Ray, 13120 Net-O-Matic, 13180
+  Gnomish Mind Control Cap, 14537 Six Demon Bag, 15998 Capture Worg Pup, 16589 Noggenfogger Elixir, 17271 Test
+  Fetid Skull, 23074, 23075, 23076 the dragonlings, 23133 Gnomish Battle Chicken, 23453 Gnomish Transporter, 23645
+  Hourglass Sand, 24930 Hallow's End Treat, 26374 Elune's Candle, 26899 Give Friendship Bracers, 28414 Call of the
+  Ashbringer) and of `Spell::EffectScriptEffect` (8856 Bending Shinbone, 23853 Jubling Cooldown, 24194 Uther's
+  Tribute, 24195 Grom's Tribute, 24717, 24718, 24719, 24720, 24737 the costumes, 24935 Summon RC Tank, 26678 Create
+  Heart Candy)
 
 ## scripts/worldmaps.d
 
@@ -1250,7 +1263,8 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Functions: `GameObject::Use`, `Player::ClearCooldownForSpell`, `Player::ClearCooldownsOnLine`, `Player::HasItemFitToSpellReqirements`, `Player::UpdateFishingSkill`, `Player::_LoadSpellCooldowns`, `Player::_SaveSpellCooldowns`, `Spell::CheckCast`, `Spell::CheckItems`, `Spell::EffectEnergize`, `Spell::EffectHeal`, `Spell::EffectInstaKill`, `Spell::EffectPersistentAA`, `Spell::EffectTeleportUnits`, `Spell::EffectTransmitted`, `Spell::EffectWeaponDmg`, `Spell::SendChannelStart`, `Spell::SendChannelUpdate`, `Spell::SetTargetMap`, `Spell::SpellStart`, `Spell::cancel`, `Spell::cast`, `Spell::m_delayMoment`, `Spell::update`, `Unit::AttackerStateUpdate`, `Unit::CalculateSpellDamage`, `Unit::SpellDamageBonusDone`, `Unit::SpellHealingBonusDone`, `Unit::SpellHitResult`
 * Constants: `CMSG_CANCEL_CHANNELLING`, `CURRENT_CHANNELED_SPELL`, `CURRENT_GENERIC_SPELL`, `CURRENT_MELEE_SPELL`, `FISHING_BOBBER_READY_TIME`, `MSG_CHANNEL_START`, `MSG_CHANNEL_UPDATE`, `SMSG_CLEAR_COOLDOWN`, `SMSG_FISH_NOT_HOOKED`, `SMSG_INITIAL_SPELLS`, `SMSG_SPELLINSTAKILLLOG`, `SMSG_SPELL_GO`, `SMSG_SPELL_START`, `SPELL_ATTR_EX_IS_CHANNELED`, `SPELL_AURA_MOD_DAMAGE_DONE`, `SPELL_AURA_MOD_HEALING_DONE`, `SPELL_AURA_PERIODIC_DAMAGE`, `SPELL_EFFECT_APPLY_AURA`, `SPELL_FAILED_EQUIPPED_ITEM_CLASS`, `SPELL_INTERRUPT_FLAG_MOVEMENT`, `TARGET_ALL_ENEMY_IN_AREA`, `TARGET_CASTER_COORDINATES`, `TRIGGERED_OLD_TRIGGERED`
 * Also: `TARGET_UNIT_SCRIPT_NEAR_CASTER`, `Spell::CheckScriptTargeting` (`spell_script_target`)
-* Also: `Spell::OnCheckCast` (a script's refusal last of `CheckCast`), `Spell::OnSuccessfulStart` (in `Spell::Prepare`)
+* Also: `Spell::OnCheckCast` (a script's refusal last of `CheckCast`), `Spell::OnSuccessfulStart` (in `Spell::Prepare`),
+  `TARGET_UNIT_RAID` (`Unit::IsInRaidWith`)
 * Also: `Unit::MeleeDamageBonusDone`'s `SPELL_AURA_RANGED_ATTACK_POWER_ATTACKER_BONUS`
 
 ## world/spellscripting.d

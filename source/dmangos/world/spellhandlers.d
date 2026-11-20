@@ -1634,6 +1634,13 @@ private:
                 if (spell.casting.chainTarget[i] > 1 && a == ImplicitTarget.enemy)
                     targets ~= chainTargets(targets[0], spell.casting.chainTarget[i] - 1);
             }
+            else if (a == ImplicitTarget.unitRaid) // TARGET_UNIT_RAID: the target, if of the caster's group (the costumes)
+            {
+                const target = c.targets.unit ? c.targets.unit : player.guid;
+                if (target != player.guid && !context.sameGroup(player.guid, target))
+                    continue;
+                targets = [target];
+            }
             else if (a == ImplicitTarget.gameObject || a == ImplicitTarget.gameObjectItem)
             {
                 if (!c.targets.gameObject && !(a == ImplicitTarget.gameObjectItem && c.targets.item))

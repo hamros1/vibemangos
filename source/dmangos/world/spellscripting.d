@@ -123,6 +123,36 @@ ActionResult transformModel(CombatWorld world, EntityRef who, uint spell, uint m
     return unit.session.transformModel(spell, model) ? ActionResult.ok : ActionResult.failed;
 }
 
+/// Byte `index` of a player's `UNIT_FIELD_BYTES_0` (0 its race, 2 its sex); `otherwise` for anything else.
+ubyte playerByte(CombatWorld world, EntityRef who, uint index, ubyte otherwise)
+{
+    import dmangos.world.unit : UnitKind;
+
+    if (world is null)
+        return otherwise;
+    auto unit = world.unit(who.guid);
+    auto v = unit.fields;
+    return unit.kind == UnitKind.player && v !is null ? v.getByte!UNIT_FIELD_BYTES_0(index) : otherwise;
+}
+
+/// `SMSG_PLAY_SOUND` for a player alone.
+ActionResult playSound(CombatWorld world, EntityRef player, uint sound)
+{
+    import dmangos.bytes : ByteWriter;
+    import dmangos.world.opcodes : Opcode;
+    import dmangos.world.unit : UnitKind;
+
+    if (world is null)
+        return ActionResult.notHere;
+    auto unit = world.unit(player.guid);
+    if (unit.kind != UnitKind.player)
+        return ActionResult.notHere;
+    ByteWriter w;
+    w.put(sound);
+    unit.tell(Opcode.SMSG_PLAY_SOUND, w.data);
+    return ActionResult.ok;
+}
+
 /// The `SpellHost` functions every host does alike; the host has `scriptWorld()`, the map it acts on.
 mixin template SpellScriptActions()
 {
@@ -222,6 +252,36 @@ mixin template SpellScriptActions()
     {
         auto h = dmangos.world.spellscripting.creatureHost(scriptWorld(), speaker);
         return h is null ? ActionResult.notHere : h.hostSayBroadcast(speaker, text, target);
+    }
+
+    bool hostHasAura(EntityRef who, uint spell)
+    {
+        auto world = scriptWorld();
+        return world !is null && world.unit(who.guid).hasAuraOf(spell);
+    }
+
+    ubyte hostRaceOf(EntityRef who)
+    {
+        return dmangos.world.spellscripting.playerByte(scriptWorld(), who, 0, 0);
+    }
+
+    ubyte hostGenderOf(EntityRef who)
+    {
+        return dmangos.world.spellscripting.playerByte(scriptWorld(), who, 2, 2);
+    }
+
+    ActionResult hostPlaySound(EntityRef player, uint sound)
+    {
+        return dmangos.world.spellscripting.playSound(scriptWorld(), player, sound);
+    }
+
+    ActionResult hostDespawn(EntityRef creature, uint delayMs)
+    {
+        auto h = dmangos.world.spellscripting.creatureHost(scriptWorld(), creature);
+        if (h is null)
+            return ActionResult.notHere;
+        h.hostDespawn(delayMs);
+        return ActionResult.ok;
     }
 
     ActionResult hostTransformModel(EntityRef who, uint model)

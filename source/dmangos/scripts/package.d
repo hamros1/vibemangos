@@ -76,6 +76,7 @@ static import dmangos.scripts.guards;
 static import dmangos.scripts.worldmaps;
 // Spell scripts of items, quests and the world:
 static import dmangos.scripts.worldspells;
+static import dmangos.scripts.itemeffects;
 
 /// Every module holding scripts.
 alias scriptModules = AliasSeq!(dmangos.scripts.deadmines, dmangos.scripts.westfall, dmangos.scripts.spells,
@@ -105,4 +106,4 @@ alias scriptModules = AliasSeq!(dmangos.scripts.deadmines, dmangos.scripts.westf
     dmangos.scripts.professions, dmangos.scripts.emeralddragons, dmangos.scripts.worldobjects,
     dmangos.scripts.guards, dmangos.scripts.worldmaps,
     // Spell scripts of items, quests and the world:
-    dmangos.scripts.worldspells);
+    dmangos.scripts.worldspells, dmangos.scripts.itemeffects);

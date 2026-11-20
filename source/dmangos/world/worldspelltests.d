@@ -321,3 +321,45 @@ unittest
     guardian.ai.castFor(map, 28265, hero.session.character.guid, true);
     assert(v.get!UNIT_FIELD_HEALTH == health, "a player passed over");
 }
+
+/// The spells CMaNGOS's core scripts by id (`@spellIds`), with no `spell_scripts` row: the Deviate Fish's surprise,
+/// a costume of the target's sex, a tribute of the user's race, Hourglass Sand taking the bronze affliction.
+unittest
+{
+    import dmangos.scripts.itemeffects : DeviateFish;
+    import dmangos.world.auras : makeAura;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto fish = scripted(context, 8063, SpellEffect.dummy, "");
+    foreach (surprise; DeviateFish.surprises)
+        scripted(context, surprise, SpellEffect.applyAura, "", AuraType.dummy);
+    auto costume = scripted(context, 24717, SpellEffect.scriptEffect, "", AuraType.none, ImplicitTarget.unitRaid);
+    foreach (pirate; [24708u, 24709])
+        scripted(context, pirate, SpellEffect.applyAura, "", AuraType.dummy);
+    auto tribute = scripted(context, 24194, SpellEffect.scriptEffect, "");
+    scripted(context, 24105, SpellEffect.applyAura, "", AuraType.dummy); // the human's
+    auto sand = scripted(context, 23645, SpellEffect.dummy, "");
+    auto bronze = scripted(context, 23170, SpellEffect.applyAura, "", AuraType.dummy);
+    assert(8063 !in context.data.spellScriptNames);
+
+    auto hero = loggedIn(context, db, 7, "Varian", here, AccountLevel.player, raceHuman, mapEasternKingdoms, 20);
+    hero.read();
+    auto session = hero.session.inWorld;
+    session.castSpell(fish, SpellTargets(TargetFlags.self, 0), true, 0);
+    size_t surprises;
+    foreach (surprise; DeviateFish.surprises)
+        surprises += session.hasAuraOf(surprise);
+    assert(surprises == 1, "one surprise");
+
+    const man = session.player.values.getByte!UNIT_FIELD_BYTES_0(2) == 0;
+    session.castSpell(costume, SpellTargets(TargetFlags.self, 0), true, 0);
+    assert(session.hasAuraOf(man ? 24708 : 24709) && !session.hasAuraOf(man ? 24709 : 24708), "its own sex's pirate");
+
+    session.castSpell(tribute, SpellTargets(TargetFlags.self, 0), true, 0);
+    assert(session.hasAuraOf(24105), "a human's blessing");
+
+    session.addAura(makeAura(bronze, session.player.guid, 63, 60_000, false, [0, 0, 0]));
+    session.castSpell(sand, SpellTargets(TargetFlags.self, 0), true, 0);
+    assert(!session.hasAuraOf(23170), "the affliction gone");
+}
