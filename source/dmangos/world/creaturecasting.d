@@ -340,6 +340,25 @@ mixin template CreatureCasting()
             }
             return found;
         }
+        // A script's area around the caster (`TARGET_ENUM_UNITS_SCRIPT_AOE_AT_SRC_LOC`): the living creatures there
+        // `spell_script_target` names, or (it names none) every unit there, the caster too, which its script picks
+        // from (CMaNGOS's `SPELL_TARGETS_ALL`). Without either, its target as before.
+        const named = lore.spellScriptTargets(spell.id);
+        if ((a == ImplicitTarget.enumUnitsScriptAoeAtSrcLoc || b == ImplicitTarget.enumUnitsScriptAoeAtSrcLoc)
+            && (named.length || lore.spellScript(spell.id)))
+        {
+            import std.algorithm.searching : canFind;
+
+            const r = radius(*spell, i, lore.clientData);
+            ulong[] found;
+            foreach (other; world_.creaturesNear(me.position, r))
+                if (named.length ? other.alive && named.canFind(other.spawn.entry) : true)
+                    found ~= other.guid;
+            if (!named.length)
+                foreach (other; world_.playersNear(me.position, r))
+                    found ~= other.combatGuid;
+            return found;
+        }
         if (a == ImplicitTarget.caster || target == 0)
             return [me.guid];
         return [target];
@@ -364,7 +383,7 @@ mixin template CreatureCasting()
         foreach (i; 0 .. 3)
             if (spell.effect[i])
             {
-                reached[i] = targetsFor(spell, i, target);
+                reached[i] = scriptPicked(spell, i, targetsFor(spell, i, target));
                 foreach (guid; reached[i])
                     if (guid !in all)
                     {
@@ -671,6 +690,15 @@ mixin template CreatureCasting()
             if (creature !is me)
                 world_.flushCreature(creature);
             world_.wake(creature.guid);
+            if (isNew) // its spell's script hears of each of its effects (Stoned's statue, a woodcutter's empty hands)
+            {
+                import dmangos.script.api : AuraApplied;
+
+                foreach (j; 0 .. 3)
+                    if (spell.effect[j] == SpellEffect.applyAura)
+                        spellScriptEvent(spell, AuraApplied(EntityRef(me.guid), EntityRef(guid), cast(ubyte) j, values[j]),
+                            world_);
+            }
             return;
         }
         if (auto other = world_.unit(guid))

@@ -401,16 +401,69 @@ private:
             auraEffects(applied, true);
         sendAuraDuration(applied);
         flushPlayerChanges();
+        if (isNew) // its spell's script hears of each of its effects (whoever cast it)
+        {
+            import dmangos.script.api : AuraApplied, EntityRef;
+
+            foreach (i; 0 .. 3)
+                if (applied.effects & (1 << i))
+                    spellScriptEvent(applied.spell, AuraApplied(EntityRef(applied.caster), EntityRef(player.guid),
+                        cast(ubyte) i, applied.amount[i]));
+        }
     }
 
-    /// The aura ends: its slot empties, its effects end.
-    package void removeAura(Aura aura)
+    /**
+     * The model the player shows without the transform that went: the newest transform left's (a harmful one
+     * first), else its own (CMaNGOS's `RestoreDisplayId`). A ghost keeps its wisp.
+     */
+    private void restoreDisplay()
+    {
+        if (player.deathState != DeathState.alive)
+            return;
+        int model;
+        bool harmful;
+        foreach (aura; player.auras.list)
+            foreach (i; 0 .. 3)
+                if ((aura.effects & (1 << i)) && aura.type(i) == AuraType.transform && aura.amount[i] > 0
+                        && (!harmful || !aura.positive))
+                {
+                    model = aura.amount[i];
+                    harmful = !aura.positive;
+                }
+        player.values.set!UNIT_FIELD_DISPLAYID(model > 0 ? cast(uint) model : player.values.get!UNIT_FIELD_NATIVEDISPLAYID);
+    }
+
+    /// The transform aura of `spell` on this player shows `model` (a script's: the Orb of Deception's); false if it
+    /// has no such aura.
+    package bool transformModel(uint spell, uint model)
+    {
+        auto aura = player is null || model == 0 ? null : player.auras.find(spell);
+        if (aura is null)
+            return false;
+        foreach (i; 0 .. 3)
+            if ((aura.effects & (1 << i)) && aura.type(i) == AuraType.transform)
+                aura.amount[i] = cast(int) model;
+        restoreDisplay();
+        flushPlayerChanges();
+        return true;
+    }
+
+    /// The aura ends (`expired`: its time ran out): its slot empties, its effects end.
+    package void removeAura(Aura aura, bool expired = false)
     {
         player.auras.remove(aura, player.values);
         auraEffects(aura, false);
         if (aura.caster == player.guid)
             cooldownEvent(aura.spell); // Presence of Mind's cooldown starts now
         flushPlayerChanges();
+        {
+            import dmangos.script.api : AuraEnded, EntityRef;
+
+            foreach (i; 0 .. 3)
+                if (aura.effects & (1 << i))
+                    spellScriptEvent(aura.spell, AuraEnded(EntityRef(aura.caster), EntityRef(player.guid), cast(ubyte) i,
+                        expired));
+        }
         if (battleground_.instance)
             if (auto copy = currentBattleground())
                 copy.rules.auraLost(copy, player.guid, aura.spell.id); // a flag's: it falls
@@ -472,6 +525,26 @@ private:
                 break;
             case AuraType.waterBreathing, AuraType.modWaterBreathing:
                 breathing = true;
+                break;
+            // A transform (the Wondervolt's shapes, a hex): the model of its misc value's creature (a script's for none:
+            // the Orb of Deception's), until it goes and the newest left shows (CMaNGOS's `HandleAuraTransform`).
+            case AuraType.transform:
+                if (apply)
+                {
+                    import dmangos.world.creature : chooseDisplay;
+
+                    enum uint pinkPig = 16358; // an unknown creature's
+                    aura.amount[i] = 0;
+                    if (const misc = aura.misc(i))
+                    {
+                        const t = cast(uint) misc in context.data.creatureTemplates;
+                        aura.amount[i] = t is null ? pinkPig : cast(int) chooseDisplay(*t, map.random);
+                    }
+                    if (aura.amount[i] > 0 && player.deathState == DeathState.alive)
+                        player.values.set!UNIT_FIELD_DISPLAYID(aura.amount[i]);
+                }
+                else
+                    restoreDisplay();
                 break;
             case AuraType.mounted:
                 speeds = true; // mounted, the mount's speed counts instead of the speed on foot
@@ -784,13 +857,28 @@ private:
     void updateAuras(Duration elapsed)
     {
         const ms = cast(int) elapsed.total!"msecs";
-        if (player.auras.list.length == 0 || ms <= 0)
+        if (ms <= 0)
+            return;
+        if ((heartbeatIn -= ms) <= 0)
+        {
+            heartbeatIn = heartbeatMs;
+            auraHeartbeat();
+        }
+        if (player.auras.list.length == 0)
             return;
         AuraTick[] ticks;
         Aura[] expired;
         player.auras.update(ms, ticks, expired);
         foreach (tick; ticks)
+        {
+            import dmangos.script.api : AuraTickEnded, EntityRef;
+
             selfTick(tick.aura, tick.effect);
+            if (player is null)
+                return;
+            spellScriptEvent(tick.aura.spell, AuraTickEnded(EntityRef(tick.aura.caster), EntityRef(player.guid),
+                cast(ubyte) tick.effect));
+        }
         // Drink (`MOD_POWER_REGEN` of mana) adds its mana every 5 seconds' worth.
         const drink = player.auras.totalByMisc(AuraType.modPowerRegen, Power.mana);
         if (drink > 0 && player.deathState == DeathState.alive)
@@ -803,9 +891,23 @@ private:
             }
         }
         foreach (aura; expired)
-            removeAura(aura);
+            removeAura(aura, true);
         if (ticks.length || drink > 0)
             flushPlayerChanges();
+    }
+
+    private enum int heartbeatMs = 5000; // CMaNGOS's `GetHeartbeatDuration`
+    private int heartbeatIn = heartbeatMs; // until the player's next heartbeat
+
+    /// The player's heartbeat: the scripts of its auras' spells hear of each effect (food's chewing).
+    private void auraHeartbeat()
+    {
+        import dmangos.script.api : AuraHeartbeat, EntityRef;
+
+        foreach (aura; player.auras.list.dup)
+            foreach (i; 0 .. 3)
+                if (aura.effects & (1 << i))
+                    spellScriptEvent(aura.spell, AuraHeartbeat(EntityRef(aura.caster), EntityRef(player.guid), cast(ubyte) i));
     }
 
     /// One periodic tick of an aura on this player.
@@ -846,7 +948,7 @@ private:
                         return aura.type(i) == AuraType.periodicLeech ? caster.leechTick(unit, aura, i, amount)
                             : caster.manaLeechTick(unit, aura, i, amount);
             if (aura.type(i) == AuraType.periodicManaLeech)
-                return;
+                return creatureManaLeechTick(aura, i, amount);
             goto case AuraType.periodicDamage; // a creature's: damage over time
         case AuraType.periodicDamage:
         {
@@ -896,6 +998,34 @@ private:
             if (auto healer = map.unit(aura.caster))
                 imported!"dmangos.world.creatureai".assistThreat(map, threateners, healer,
                     health + healed > maxHealth ? maxHealth - health : healed, *aura.spell);
+    }
+
+    /**
+     * A creature's drain of this player's power (Mark of Kazzak, `SPELL_AURA_PERIODIC_MANA_LEECH`): as much as the
+     * tick takes, if the player has it, and to the creature by the effect's multiplier if it has that power.
+     */
+    private void creatureManaLeechTick(Aura aura, size_t i, uint amount)
+    {
+        const kind = aura.misc(i);
+        if (kind < 0 || kind > Power.happiness)
+            return;
+        const power = cast(Power) kind;
+        auto v = &player.values;
+        if (v.get!UNIT_FIELD_MAXPOWER1(power) == 0)
+            return;
+        const now = v.get!UNIT_FIELD_POWER1(power);
+        const drained = now < amount ? now : amount;
+        player.modifyPower(power, -cast(int) drained);
+        auto drainer = cast(Creature) map.findObject(aura.caster);
+        const factor = drainer !is null && drainer.alive && drainer.values.get!UNIT_FIELD_MAXPOWER1(power) > 0
+            ? multiplier(aura.spell, i) : 0.0f;
+        periodicLog(player.guid, aura, i, drained, power, 0, factor);
+        const gain = cast(uint)(drained * factor);
+        if (gain == 0)
+            return;
+        const top = drainer.values.get!UNIT_FIELD_MAXPOWER1(power), has = drainer.values.get!UNIT_FIELD_POWER1(power);
+        drainer.values.set!UNIT_FIELD_POWER1(power, has + gain > top ? top : has + gain);
+        map.flushObjectChanges(drainer);
     }
 
     /// `SMSG_PERIODICAURALOG` (a mana leech's with what its caster gains of each point, `gainMultiplier`)

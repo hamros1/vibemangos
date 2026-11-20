@@ -423,6 +423,12 @@ private:
                 interruptAurasOnCast(AuraInterrupt.itemUse, spell);
             interruptAurasOnCast(AuraInterrupt.action, spell);
         }
+        // The cast began: the spell's script hears of it before anything of it happens (`OnSuccessfulStart`).
+        {
+            import dmangos.script.api : CastStarted, EntityRef;
+
+            spellScriptEvent(spell, CastStarted(EntityRef(player.guid), EntityRef(targets.unit)));
+        }
         if (!triggered)
         {
             c.timer = castTimeCheat ? 0 : max(0, cast(int)(spellMod(SpellModOp.castingTime, spell,
@@ -1210,6 +1216,14 @@ private:
             const toolResult = checkTools(spell);
             if (toolResult != SpellCastResult.ok)
                 return toolResult;
+        }
+        // Last, the spell's script may refuse it (CMaNGOS's `OnCheckCast`): a capture's creature, a camera's turtle.
+        {
+            import dmangos.script.api : CastChecked, CastRefusal, EntityRef;
+
+            CastRefusal refusal;
+            if (spellScriptEvent(spell, CastChecked(EntityRef(player.guid), EntityRef(targets.unit)), refusal))
+                return cast(SpellCastResult) refusal;
         }
         return SpellCastResult.ok;
     }

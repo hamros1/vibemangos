@@ -150,6 +150,11 @@ interface CreatureLore
     /// Whether the player `player` (a pet's owner for a pet) meets condition `id` (`conditions`); false if the
     /// player is not online here.
     bool conditionMet(uint id, ulong player);
+
+    // Spell scripts of items, quests and the world:
+
+    /// The creature entries `spell_script_target` gives spell `spell` (type 1); empty if none.
+    const(uint)[] spellScriptTargets(uint spell);
 }
 
 /// What a creature's AI needs of its map.

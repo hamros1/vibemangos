@@ -9,8 +9,8 @@ module dmangos.world.sessionscripting;
 /// See the module documentation.
 mixin template SessionScripting()
 {
-    import dmangos.script.api : ActionResult, AreaTriggerContext, AreaTriggerHost, EventContext, EventStarted, EffectHit, EntityRef, Location,
-        QuestProgress, SpellContext, SpellHost, TriggerEntered;
+    import dmangos.script.api : ActionResult, AreaTriggerContext, AreaTriggerHost, CastRefusal, EventContext, EventStarted, EffectHit,
+        EntityRef, Location, QuestProgress, SpellContext, SpellHost, TriggerEntered;
     import dmangos.script.registry : ScriptHandle;
     import dmangos.world.spells : SpellInfo;
     import dmangos.world.updatefields : UNIT_FIELD_HEALTH;
@@ -65,6 +65,32 @@ mixin template SessionScripting()
         context.scripts.raise(handle, c, AuraTicked(EntityRef(player.guid), EntityRef(target), cast(ubyte) i, tick,
             ticks, amount));
         return c.amountChanged ? c.amount : amount;
+    }
+
+    /**
+     * Spell scripts of items, quests and the world: `event` (a cast's, an aura's) reaches `spell`'s script, if
+     * it has one, around this player; true if the script refused the cast (`CastChecked`), for `refusal`.
+     */
+    package bool spellScriptEvent(E)(const(SpellInfo)* spell, const auto ref E event, out CastRefusal refusal)
+    {
+        auto handle = context.spellScript(spell.id);
+        if (!handle)
+            return false;
+        auto outer = scriptSpell;
+        scriptSpell = spell;
+        scope (exit)
+            scriptSpell = outer;
+        auto c = SpellContext(scriptHost);
+        context.scripts.raise(handle, c, event);
+        refusal = c.refusal;
+        return c.refused;
+    }
+
+    /// ditto, but for an event no script refuses.
+    package void spellScriptEvent(E)(const(SpellInfo)* spell, const auto ref E event)
+    {
+        CastRefusal refusal;
+        spellScriptEvent(spell, event, refusal);
     }
 
     /// Scripted event `event` (started by `source`, at `target`) reached its script, around this player: true if the
@@ -161,6 +187,10 @@ mixin template SessionScripting()
         ActionResult hostTeleportPlayer(EntityRef who, Location at) { return this.outer.hostTeleportPlayer(who, at); }
         bool hostHasAura(EntityRef who, uint spell) { return this.outer.hostHasAura(who, spell); }
         ActionResult hostModifyThreat(EntityRef creature, EntityRef target, int percent) { return this.outer.hostModifyThreat(creature, target, percent); }
+        // Spell scripts of items, quests and the world (`dmangos.world.spellscripting`):
+        private imported!"dmangos.world.creatureai".CombatWorld scriptWorld() { return map; }
+        import dmangos.world.spellscripting : SpellScriptActions;
+        mixin SpellScriptActions;
         // Eastern Kingdoms scripts:
         void hostKillCreditAt(EntityRef who, uint entry) { this.outer.hostKillCredit(who, entry); }
         ActionResult hostSayAt(EntityRef speaker, int entry, EntityRef target)

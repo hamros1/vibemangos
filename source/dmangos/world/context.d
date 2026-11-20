@@ -3839,6 +3839,14 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
                 signalWorld(map.id, from, id, value);
     }
 
+    /// See `CreatureLore.spellScriptTargets`.
+    const(uint)[] spellScriptTargets(uint spell)
+    {
+        if (const entries = spell in data.spellScriptTargets)
+            return *entries;
+        return null;
+    }
+
     /// See `CreatureLore.conditionMet`.
     bool conditionMet(uint id, ulong player)
     {
