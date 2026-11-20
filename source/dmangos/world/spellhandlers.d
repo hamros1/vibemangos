@@ -3018,7 +3018,10 @@ private:
         // The fixed bonus is by the weapon percentage too, but Ambush's by its own (`EffectWeaponDmg`).
         const bonusFactor = classWeaponBonusFactor(spell);
         damage = damage * percent / 100 + fixed * (bonusFactor ? bonusFactor : percent / 100);
-        damage = armorReducedDamage(me.level, it.armor, damage);
+        // Armor takes off a physical strike's, not a holy one's (Seal of Command's: its spell's school).
+        const school = spell.casting.school;
+        if (school == 0)
+            damage = armorReducedDamage(me.level, it.armor, damage);
         bool crit;
         if (uniform01(map.random) * 100 < critChance(me, it, type) + classCritBonus(spell, victim))
         {
@@ -3030,20 +3033,20 @@ private:
             blocked = 0; // creatures carry no shield values yet
         const total = damage > 0 ? cast(uint) damage : 0;
         map.sendToWatchers(this, Opcode.SMSG_SPELLNONMELEEDAMAGELOG, nonMeleeDamageLog(target: victim.combatGuid, attacker: player.guid,
-            spell.id, total, 0, 0, 0, false, blocked, crit), true);
+            spell.id, total, school, 0, 0, false, blocked, crit), true);
         enterCombatFor(combatLinger);
         final switch (victim.kind)
         {
         case UnitKind.none:
             break;
         case UnitKind.creature:
-            spellAttacked(victim.creature, total);
+            spellAttacked(victim.creature, total, false, school);
             break;
         case UnitKind.player:
             import dmangos.world.unit : Blow, dealDamage;
 
             if (victim.fighter.alive)
-                dealDamage(unit, victim, total, Blow.spell());
+                dealDamage(unit, victim, total, Blow.spell(school));
             break;
         }
         spellHitProcs(spell, victim, crit, total, cast(ubyte) type);

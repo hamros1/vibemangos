@@ -1044,3 +1044,40 @@ unittest
         assert(attempt < 29, "the rank's shadow damage");
     }
 }
+
+/// Seal of Command: its proc strikes for 70% of the weapon's damage as holy damage, which armor does not reduce.
+unittest
+{
+    auto a = new Arena(PlayerClass.paladin);
+    auto seal = a.spell(20375, SpellEffect.applyAura, ImplicitTarget.caster);
+    a.auraEffect(seal, 0, AuraType.procTriggerSpell, ImplicitTarget.caster);
+    seal.triggerSpell[0] = 20424;
+    with (seal.casting)
+    {
+        spellFamilyName = 10;
+        spellFamilyFlags = 0x2000000;
+        procFlags = 0x4;
+        procChance = 100;
+        durationIndex = 1;
+    }
+    with (a.spell(20424, SpellEffect.weaponPercentDamage, ImplicitTarget.enemy, 70))
+    {
+        casting.school = 1;
+        casting.dmgClass = DamageClass.melee;
+        attributesEx2 |= 0x20000000; // (no crit, for the test)
+    }
+    a.foe.values.set!UNIT_FIELD_RESISTANCES(0, 5000u); // much armor
+    a.cast_(20375);
+    a.hero.read();
+    uint[2][] logs;
+    foreach (attempt; 0 .. 60)
+    {
+        a.me.swing(a.foe, imported!"dmangos.world.combat".AttackType.mainHand);
+        logs = a.damageLogs();
+        if (logs.canFind!(l => l[0] == 20424))
+            break;
+    }
+    const weapon = a.player.fighter.damage[0];
+    const low = cast(uint)(weapon[0] < weapon[1] ? weapon[0] : weapon[1]) * 70 / 100;
+    assert(logs.canFind!(l => l[0] == 20424 && l[1] >= low && l[1] > 0), "70% of the weapon, holy: through the armor");
+}
