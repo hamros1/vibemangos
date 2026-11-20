@@ -121,8 +121,9 @@ struct Fighter
     /// Winter's Chill, Sleight of Hand), hits on it (`MOD_ATTACKER_*_HIT_CHANCE`: Heightened Senses).
     float[3] attackerCrit = 0, attackerHit = 0;
     int rangedTakenFlat;       /// `MOD_RANGED_DAMAGE_TAKEN` (Elune's Grace): added to each ranged blow against it
-    /// Its invisibility by type (`MOD_INVISIBILITY`'s misc value: 0 general, ...) and what it sees through
-    /// (`MOD_INVISIBILITY_DETECTION`): the levels, summed.
+    /// Its invisibility by type (`MOD_INVISIBILITY`'s misc value: 0 general, ...), the levels summed, and what it
+    /// sees through (`MOD_INVISIBILITY_DETECTION`): only the strongest of a type counts, as in Classic (CMaNGOS's
+    /// `HandleInvisibilityDetect`: Detect Invisibility's 200 and a Magic Potion's 200 see 200, not Fade's 500).
     int[invisibilityTypes] invisibility, invisibilityDetect;
 
     /// Fills `invisibility` and `invisibilityDetect` from `auras`.
@@ -135,7 +136,7 @@ struct Fighter
         foreach (int i; 0 .. cast(int) invisibilityTypes)
         {
             invisibility[i] = auras.totalByMisc(AuraType.modInvisibility, i);
-            invisibilityDetect[i] = auras.totalByMisc(AuraType.modInvisibilityDetection, i);
+            invisibilityDetect[i] = auras.greatestByMisc(AuraType.modInvisibilityDetection, i);
         }
     }
 

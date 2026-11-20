@@ -681,7 +681,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Files: `SpellAuras.cpp`
 * Functions: `SpellAuraHolder::Update`, `Unit::AddSpellAuraHolder`, `SpellAuraHolder::SetHeartbeatResist`, `SpellAuraHolder::UpdateHeartbeatResist`
 * Constants: `MAX_AURAS`, `MAX_POSITIVE_AURAS`, `SPELL_ATTR_NO_AURA_CANCEL`, `UNIT_FIELD_AURA`
-* Also: `Aura::HandleAuraModStalked` (`UNIT_DYNFLAG_TRACK_UNIT`), `Unit::SetFeignDeath` (`UNIT_DYNFLAG_DEAD`), `Aura::HandleAuraUntrackable` (`UNIT_VIS_FLAG_UNTRACKABLE`), `Aura::HandleAuraModScale` (`ApplyPercentModFloatValue`)
+* Also: `Aura::HandleAuraModStalked` (`UNIT_DYNFLAG_TRACK_UNIT`), `Unit::SetFeignDeath` (`UNIT_DYNFLAG_DEAD`), `Aura::HandleAuraUntrackable` (`UNIT_VIS_FLAG_UNTRACKABLE`), `Aura::HandleAuraModScale` (`ApplyPercentModFloatValue`), `Aura::HandleInvisibilityDetect` (the strongest detection of a type)
 
 ## world/battleground.d
 
