@@ -489,6 +489,7 @@ private:
         updateTotems();
         updatePetMood(elapsed);
         updateTaxi(cast(int) elapsed.total!"msecs");
+        updateCrowdControl(cast(int) elapsed.total!"msecs");
         updateTimedQuests();
         refreshQuestObjects();
         updateRaidReset();
@@ -576,8 +577,8 @@ private:
      */
     package bool takeMovement(const MovementInfo movement, Opcode opcode)
     {
-        // In flight the server moves the player (the client may still send heartbeats).
-        if (flying)
+        // In flight, feared or disoriented the server moves the player (the client may still send heartbeats).
+        if (flying || !inControl)
             return false;
         // A position the client cannot be at.
         const p = movement.position;

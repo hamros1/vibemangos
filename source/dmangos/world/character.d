@@ -49,6 +49,7 @@ import dmangos.world.reputationhandlers : ReputationHandlers;
 import dmangos.world.gameobjecthandlers : GameObjectHandlers;
 import dmangos.world.auctionhandlers : AuctionHandlers;
 import dmangos.world.taxihandlers : TaxiHandlers;
+import dmangos.world.crowdcontrol : CrowdControlHandlers;
 import dmangos.world.unit : Blow, UnitRef;
 import dmangos.world.auras : Aura, makeAura;
 import dmangos.world.spells : SpellInfo;
@@ -796,6 +797,7 @@ private:
     mixin GameObjectHandlers;
     mixin AuctionHandlers;
     mixin TaxiHandlers;
+    mixin CrowdControlHandlers;
     mixin PvPHandlers;
     mixin BattlegroundHandlers;
     mixin EnchantingHandlers;

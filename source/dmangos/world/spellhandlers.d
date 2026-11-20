@@ -1039,6 +1039,12 @@ private:
             return SpellCastResult.noComboPoints;
         if (player.deathState != DeathState.alive && !(spell.attributes & spellAttrCastableWhileDead))
             return player.deathState == DeathState.ghost ? SpellCastResult.notWhileGhost : SpellCastResult.casterDead;
+        if (!triggered)
+        {
+            const refused = crowdControlRefusal(spell);
+            if (refused != SpellCastResult.ok)
+                return refused;
+        }
         if (start && !triggered)
         {
             if (generic.active)
@@ -1116,6 +1122,38 @@ private:
             if (toolResult != SpellCastResult.ok)
                 return toolResult;
         }
+        return SpellCastResult.ok;
+    }
+
+    /**
+     * What the caster's state refuses (CMaNGOS's `CheckCasterAuras`): nothing while stunned, feared or disoriented,
+     * no silence-type spell silenced, no pacify-type ability pacified; but a spell that frees from it (Will of the
+     * Forsaken, Escape Artist, the insignia: an immunity to a mechanic, or its dispel) may be cast.
+     */
+    SpellCastResult crowdControlRefusal(const(SpellInfo)* spell)
+    {
+        enum uint states = UnitFlags.stunned | UnitFlags.silenced | UnitFlags.pacified | UnitFlags.fleeing
+            | UnitFlags.confused;
+        const flags = player.values.get!UNIT_FIELD_FLAGS;
+        if (!(flags & states))
+            return SpellCastResult.ok;
+        foreach (i; 0 .. 3)
+            if (spell.effect[i] == SpellEffect.dispelMechanic
+                    || (spell.effect[i] == SpellEffect.applyAura
+                        && (spell.casting.applyAuraName[i] == AuraType.mechanicImmunity
+                            || spell.casting.applyAuraName[i] == AuraType.mechanicImmunityMask)))
+                return SpellCastResult.ok;
+        enum uint preventionSilence = 1, preventionPacify = 2;
+        if (flags & UnitFlags.stunned)
+            return SpellCastResult.stunned;
+        if ((flags & UnitFlags.silenced) && spell.casting.preventionType == preventionSilence)
+            return SpellCastResult.silenced;
+        if ((flags & UnitFlags.pacified) && spell.casting.preventionType == preventionPacify)
+            return SpellCastResult.pacified;
+        if (flags & UnitFlags.fleeing)
+            return SpellCastResult.fleeing;
+        if (flags & UnitFlags.confused)
+            return SpellCastResult.confused;
         return SpellCastResult.ok;
     }
 
