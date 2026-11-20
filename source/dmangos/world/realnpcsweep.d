@@ -1,0 +1,1020 @@
+/**
+ * Every spell a creature casts in the data, cast by a creature that casts it, on the real data, each effect checked
+ * against what the data says it does: the NPC side of `dmangos.world.realspellsweep`.
+ *
+ * The spells, read from the world database at the run: `creature_ai_scripts` (the cast action, 11: its first
+ * parameter), `creature_spell_list` (by the creatures whose `SpellList` names it), `creature_template_spells`
+ * (spell1 .. spell10), `dbscripts_on_*` (the cast command, 15: `datalong` and the `dataint`s it may pick instead,
+ * by the creature the script runs on), and the spells the scripts in dmangos/scripts cast (the constants passed to a
+ * `cast...(` call in a `@creature` script, by the creatures of that `ScriptName`). Each is cast by one of the
+ * creatures that cast it, summoned in a quiet place (no spawn within 250 yards): through `castSpell` of its AI, as
+ * EventAI, its spell list, its script and the database scripts call it (the flags they would give), at its target
+ * chosen from the spell's implicit targets: itself, a hostile player of its level (a warrior; a mage for what takes
+ * mana), a friendly creature (another of its entry, or the creature `spell_script_target` names). Then, its cast
+ * time and its first ticks gone by, each effect by its kind: damage took health, a heal was logged, an aura is on
+ * the unit its implicit target names (and a stun, fear, disorientation, silence or pacify set its flag, a periodic
+ * damage hurt), a persistent area exists or hurt, a summoned creature or object stands near, power was given, a
+ * dispel took the aura of its type, a charge moved the caster, a teleport the target, an instant kill killed.
+ *
+ * A failure is classified (`not done: <effect>`, the effects `dmangos.world.creaturecasting` lists as not done by a
+ * creature's cast; `aura <type> ...: not on the <unit>`; `targeting: ...`; `refused: <reason>`; `crash: ...`) and is
+ * either fixed or listed in tools/harness/realnpc-known.txt: the sweep fails at a failure not listed there and
+ * says which listed ones pass now. Runs with the other real-data tests (`DMANGOS_REAL_DATA`); `DMANGOS_NPC_SWEEP_ONLY`
+ * (ids, comma separated) sweeps only those, and says what each did; `DMANGOS_NPC_SWEEP_REPORT` names a file the
+ * outcome of every spell is written to (`id<TAB>outcome<TAB>source<TAB>casters`).
+ */
+module dmangos.world.realnpcsweep;
+
+version (unittest):
+
+import core.time : msecs;
+import std.algorithm.comparison : among, clamp, max, min;
+import std.algorithm.searching : canFind;
+import std.format : format;
+import dmangos.world.creature : Creature, TempSpawnType;
+import dmangos.world.movement : Position;
+import dmangos.world.opcodes : Opcode;
+import dmangos.world.realspelltests : haveRealData, RealWorld;
+import dmangos.world.realspellsweep : harms, hasDispellable, objectNear, summoned, summonsCreature, summonsObject,
+    Who, whoOf;
+import dmangos.world.spellids : AuraType, ImplicitTarget, SpellEffect;
+import dmangos.world.spells : SpellInfo;
+import dmangos.world.testclient : TestClient;
+import dmangos.world.unit : UnitRef;
+import dmangos.world.updatefields;
+import dmangos.world.worlddata : WorldData;
+
+/// A spell creatures cast: who casts it (the first is the sweep's caster), with what cast flags, named where.
+struct NpcSpell
+{
+    uint id;
+    uint[] casters;   /// creature entries
+    uint flags;       /// the caster's cast flags (`dmangos.world.eventai`'s `cast*`)
+    string source;    /// eai, list, script, template, dbscript
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// The set
+// ---------------------------------------------------------------------------------------------------------------
+
+/// Column `k` of `row` if it is a positive number that fits a `uint`, else 0.
+private uint positive(R)(const ref R row, size_t k)
+{
+    const v = row.get!long(k);
+    return v > 0 && v <= uint.max ? cast(uint) v : 0;
+}
+
+/// The world database the real data was loaded from (`DMANGOS_REAL_DATA`'s third part), and the MySQL library.
+private string[2] worldConnection()
+{
+    import std.array : split;
+    import std.process : environment;
+
+    const parts = environment.get("DMANGOS_REAL_DATA").split("|");
+    return [parts[2], parts[1]];
+}
+
+/**
+ * The spells creatures cast, from the world database and the scripts' sources; each with every creature entry
+ * that casts it, the first of the most direct source (EventAI, a spell list, a script, the template's spells, a
+ * database script) first. Spells not in the data are left out.
+ */
+NpcSpell[] npcSpells(const WorldData data)
+{
+    import std.algorithm.sorting : sort;
+    import dmangos.mysql : ConnectionInfo, MySqlConnection;
+
+    const named = worldConnection();
+    auto db = new MySqlConnection(ConnectionInfo.parse(named[0]), named[1]);
+    scope (exit)
+        db.close();
+
+    NpcSpell[uint] found;
+    void add(uint spell, uint entry, string source, uint flags)
+    {
+        if (spell == 0 || data.spells.spell(spell) is null)
+            return;
+        auto sp = spell in found;
+        if (sp is null)
+        {
+            found[spell] = NpcSpell(spell, null, flags, source);
+            sp = spell in found;
+        }
+        if (entry && (entry in data.creatureTemplates) !is null && !sp.casters.canFind(entry))
+        {
+            if (!sp.casters.length) // the first real caster's source and flags
+            {
+                sp.source = source;
+                sp.flags = flags;
+            }
+            sp.casters ~= entry;
+        }
+    }
+
+    // EventAI: the cast action (11), its spell, its flags.
+    enum eaiCast = 11, eaiRelay = 53;
+    uint[][uint] relayCreatures; // relay script -> the creatures whose EventAI starts it
+    foreach (row; db.query!("SELECT creature_id, action1_type, action1_param1, action1_param3, action2_type, "
+            ~ "action2_param1, action2_param3, action3_type, action3_param1, action3_param3 FROM creature_ai_scripts")())
+        foreach (k; 0 .. 3)
+        {
+            const type = positive(row, 1 + 3 * k), param = positive(row, 2 + 3 * k);
+            if (type == eaiCast && param > 0)
+                add(param, positive(row, 0), "eai", positive(row, 3 + 3 * k));
+            else if (type == eaiRelay && param > 0)
+                relayCreatures[param] ~= positive(row, 0);
+        }
+    // Spell lists: by the creatures whose `SpellList` names the list (else the entry its id is a hundred times).
+    uint[][uint] listCreatures;
+    foreach (row; db.query!"SELECT Entry, SpellList FROM creature_template WHERE SpellList <> 0"())
+        listCreatures[positive(row, 1)] ~= positive(row, 0);
+    foreach (row; db.query!"SELECT Id, SpellId FROM creature_spell_list ORDER BY Id, Position"())
+    {
+        const list = positive(row, 0), spell = positive(row, 1);
+        if (auto who = list in listCreatures)
+            foreach (entry; *who)
+                add(spell, entry, "list", 0);
+        else
+            add(spell, list / 100, "list", 0);
+    }
+    // The scripts' own.
+    foreach (name, spells; scriptSpells(data))
+        foreach (entry, scriptName; data.creatureScriptNames)
+            if (scriptName == name)
+                foreach (spell; spells)
+                    add(spell, entry, "script", 0);
+    // The template's (a pet's, a totem's, a charmed creature's bar).
+    foreach (row; db.query!("SELECT entry, spell1, spell2, spell3, spell4, spell5, spell6, spell7, spell8, spell9, "
+            ~ "spell10 FROM creature_template_spells")())
+        foreach (k; 1 .. 11)
+            add(positive(row, k), positive(row, 0), "template", 0);
+    // Database scripts: by the creature each runs on (its buddy, if the buddy is the source).
+    {
+        enum uint castTriggered = 0x02, buddyAsTarget = 0x01, reverseDirection = 0x02;
+        uint[][uint] movementCreatures, questStarters, questEnders, gossipCreatures;
+        foreach (row; db.query!"SELECT Entry, ScriptId FROM creature_movement_template WHERE ScriptId <> 0"())
+            movementCreatures[positive(row, 1)] ~= positive(row, 0);
+        foreach (row; db.query!("SELECT c.id, m.ScriptId FROM creature_movement m JOIN creature c ON c.guid = m.Id "
+                ~ "WHERE m.ScriptId <> 0")())
+            movementCreatures[positive(row, 1)] ~= positive(row, 0);
+        foreach (row; db.query!("SELECT r.id, q.StartScript FROM creature_questrelation r JOIN quest_template q "
+                ~ "ON q.entry = r.quest WHERE q.StartScript <> 0")())
+            questStarters[positive(row, 1)] ~= positive(row, 0);
+        foreach (row; db.query!("SELECT r.id, q.CompleteScript FROM creature_involvedrelation r JOIN quest_template q "
+                ~ "ON q.entry = r.quest WHERE q.CompleteScript <> 0")())
+            questEnders[positive(row, 1)] ~= positive(row, 0);
+        foreach (row; db.query!("SELECT t.Entry, g.script_id FROM gossip_menu g JOIN creature_template t "
+                ~ "ON t.GossipMenuId = g.entry WHERE g.script_id <> 0 UNION SELECT t.Entry, o.action_script_id "
+                ~ "FROM gossip_menu_option o JOIN creature_template t ON t.GossipMenuId = o.menu_id "
+                ~ "WHERE o.action_script_id <> 0")())
+            gossipCreatures[positive(row, 1)] ~= positive(row, 0);
+        void scripts(string table)(uint[] delegate(uint id) creaturesOf)
+        {
+            foreach (row; db.query!("SELECT id, datalong, buddy_entry, data_flags, dataint, dataint2, dataint3, "
+                    ~ "dataint4 FROM " ~ table ~ " WHERE command = 15")())
+            {
+                const id = positive(row, 0), buddy = positive(row, 2), flags = positive(row, 3);
+                // CMaNGOS: a buddy found is the source (unless it is the target), the two swapped by
+                // `SCRIPT_FLAG_REVERSE_DIRECTION`.
+                bool buddySource = buddy && !(flags & buddyAsTarget);
+                if (buddy && (flags & reverseDirection))
+                    buddySource = !buddySource;
+                const(uint)[] who = buddySource ? [buddy] : creaturesOf is null ? null : creaturesOf(id);
+                uint[] spells = [positive(row, 1)];
+                foreach (k; 4 .. 8)
+                    if (positive(row, k) > 0)
+                        spells ~= positive(row, k);
+                foreach (spell; spells)
+                {
+                    add(spell, 0, "dbscript", castTriggered);
+                    foreach (entry; who)
+                        add(spell, entry, "dbscript", castTriggered);
+                }
+            }
+        }
+        uint[] none(uint) { return null; }
+        scripts!"dbscripts_on_creature_movement"(id => id in movementCreatures ? movementCreatures[id] : null);
+        scripts!"dbscripts_on_creature_death"(id => [id]);
+        scripts!"dbscripts_on_quest_start"(id => id in questStarters ? questStarters[id] : null);
+        scripts!"dbscripts_on_quest_end"(id => id in questEnders ? questEnders[id] : null);
+        scripts!"dbscripts_on_gossip"(id => id in gossipCreatures ? gossipCreatures[id] : null);
+        scripts!"dbscripts_on_relay"(id => id in relayCreatures ? relayCreatures[id] : null);
+        scripts!"dbscripts_on_event"(&none);
+        scripts!"dbscripts_on_spell"(&none);
+        scripts!"dbscripts_on_go_use"(&none);
+        scripts!"dbscripts_on_go_template_use"(&none);
+    }
+    auto spells = found.values;
+    spells.sort!((a, b) => a.id < b.id);
+    return spells;
+}
+
+/**
+ * The spells each creature script of dmangos/scripts casts, by its `ScriptName`: in each `@creature("...")`
+ * script, the constants (or numbers) given to a `cast...(` call, as its first argument, else its second (a
+ * `castSpell(caster, spell)`), resolved by the script's own constants first, then the file's.
+ */
+private uint[][string] scriptSpells(const WorldData data)
+{
+    import std.conv : to;
+    import std.file : dirEntries, readText, SpanMode;
+    import std.path : buildNormalizedPath, dirName;
+    import std.regex : ctRegex, matchAll;
+    import std.string : indexOf, strip;
+
+    enum constant = ctRegex!`\b([A-Za-z_]\w*)\s*=\s*(\d[\d_]*)u?\b`;
+    enum call = ctRegex!`\bcast[A-Z]\w*\(\s*([^,\)]*)(?:,\s*([^,\)]*))?`;
+    enum token = ctRegex!`[A-Za-z_]\w*|\d[\d_]*`;
+    enum attribute = ctRegex!`(?m)^@(\w+)\("([^"]*)"\)`;
+    uint[string] constantsOf(string text)
+    {
+        uint[string] found;
+        foreach (m; matchAll(text, constant))
+            if (m[1] !in found)
+            {
+                import std.array : replace;
+
+                const digits = m[2].replace("_", "");
+                if (digits.length < 10)
+                    found[m[1]] = digits.to!ulong > uint.max ? 0 : digits.to!uint;
+            }
+        return found;
+    }
+
+    uint[][string] result;
+    const dir = buildNormalizedPath(dirName(__FILE_FULL_PATH__), "..", "scripts");
+    foreach (file; dirEntries(dir, "*.d", SpanMode.shallow))
+    {
+        const text = readText(file.name);
+        const global = constantsOf(text);
+        // Each attributed script: from its attribute to the next.
+        size_t[] starts;
+        string[] kinds, names;
+        foreach (m; matchAll(text, attribute))
+        {
+            starts ~= m.pre.length;
+            kinds ~= m[1];
+            names ~= m[2];
+        }
+        foreach (k, start; starts)
+        {
+            if (kinds[k] != "creature")
+                continue;
+            const block = text[start .. k + 1 < starts.length ? starts[k + 1] : text.length];
+            const local = constantsOf(block);
+            uint resolve(string arg)
+            {
+                foreach (t; matchAll(arg, token))
+                {
+                    const word = t.hit;
+                    uint id;
+                    if (word[0] >= '0' && word[0] <= '9')
+                    {
+                        import std.array : replace;
+
+                        const digits = word.replace("_", "");
+                        id = digits.length < 10 ? digits.to!uint : 0;
+                    }
+                    else if (const v = word in local)
+                        id = *v;
+                    else if (const v = word in global)
+                        id = *v;
+                    if (id > 0 && data.spells.spell(id) !is null)
+                        return id;
+                }
+                return 0;
+            }
+            foreach (m; matchAll(block, call))
+            {
+                auto id = resolve(m[1]);
+                if (!id && m[2].length)
+                    id = resolve(m[2]);
+                if (id && !result.get(names[k], null).canFind(id))
+                    result[names[k]] ~= id;
+            }
+        }
+    }
+    return result;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// What a creature's cast does not do yet (dmangos.world.creaturecasting's list), to name a failure's cause
+// ---------------------------------------------------------------------------------------------------------------
+
+private bool notDoneByCreatures(SpellEffect e)
+{
+    with (SpellEffect)
+        return e.among(portalTeleport, environmentalDamage, bind, portal, ritualBase, ritualSpecialize,
+            ritualActivatePortal, questComplete, resurrect, addExtraAttacks, dodge, evade, parry, block, createItem,
+            weapon, defense, persistentAreaAura, leap, energize, triggerMissile, openLock, summonChangeItem,
+            applyAreaAuraParty, learnSpell, spellDefense, dispel, language, dualWield, teleportUnitsFaceCaster,
+            skillStep, addHonor, spawn, tradeSkill, stealth, detect, transDoor, forceCriticalHit, guaranteeHit,
+            enchantItem, enchantItemTemporary, tamecreature, summonPet, learnPetSpell, openLockItem, proficiency,
+            threat, healthFunnel, powerFunnel, healMaxHealth, distract, pull, pickpocket, addFarsight,
+            summonPossessed, summonTotem, healMechanical, summonObjectWild, attack, sanctuary, addComboPoints,
+            createHouse, bindSight, duel, stuck, summonPlayer, activateObject, summonTotemSlot1, summonTotemSlot2,
+            summonTotemSlot3, summonTotemSlot4, threatAll, enchantHeldItem, summonPhantasm, selfResurrect, skinning,
+            charge, summonCritter, disenchant, inebriate, feedPet, dismissPet, summonObjectSlot1, summonObjectSlot2,
+            summonObjectSlot3, summonObjectSlot4, dispelMechanic, summonDeadPet, destroyAllTotems, summonDemon,
+            resurrectNew, attackMe, skinPlayerCorpse, spiritHeal, skill, applyAreaAuraPet, teleportGraveyard, n122,
+            sendTaxi, pullTowards, modifyThreatPercent, n126, n127, applyAreaAuraFriend, applyAreaAuraEnemy) != 0;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// One cast
+// ---------------------------------------------------------------------------------------------------------------
+
+/// What one spell's sweep came to.
+struct NpcOutcome
+{
+    bool ok;
+    string why;      /// the failure, its cause first
+    bool mayRoll;    /// it failed where a roll may have (a miss, a resist): worth another try
+    bool unchecked;  /// it passed with none of its effects checked (a dummy's, a script's, no oracle)
+}
+
+/// The quiet place: on Eastern Kingdoms, no spawn within 250 yards (its height looked up at the start).
+private enum float spotX = 3050, spotY = -2050;
+
+private final class NpcSweeper
+{
+    RealWorld w;
+    Position spot;
+    uint nextGuid = 5000;
+    bool verbose;
+
+    this(RealWorld w, bool verbose)
+    {
+        this.w = w;
+        this.verbose = verbose;
+        auto map = w.context.map(0);
+        spot = Position(spotX, spotY, 0);
+        spot.z = map.groundHeight(spotX, spotY, 1000, false);
+        if (spot.z < -1000)
+            spot.z = 0;
+    }
+
+    NpcOutcome sweep(const NpcSpell sp)
+    {
+        NpcOutcome last;
+        foreach (attempt; 0 .. 5) // a miss, a dodge, a resist: again (a fault fails every time)
+        {
+            try
+                last = once(sp);
+            catch (Throwable t)
+            {
+                import std.string : lineSplitter;
+                import std.range : front;
+
+                const msg = t.msg.length ? t.msg.lineSplitter.front : typeid(t).name;
+                last = NpcOutcome(false, format!"crash: %s (%s:%s)"(msg, baseName(t.file), t.line), false);
+                w = RealWorld.make(); // what it left behind is not to be trusted
+            }
+            if (last.ok || !last.mayRoll)
+                break;
+        }
+        return last;
+    }
+
+    private static string baseName(string file)
+    {
+        import std.path : baseName;
+
+        return baseName(file);
+    }
+
+    private NpcOutcome once(const NpcSpell sp)
+    {
+        import dmangos.world.eventai : castForceTargetSelf;
+        import dmangos.world.relations : canAttack;
+        import dmangos.world.spellcast : castTime, isNextMeleeSwingSpell, range;
+
+        auto context = w.context;
+        auto map = context.map(0);
+        const data = context.data;
+        const s = data.spells.spell(sp.id);
+        const entry = sp.casters[0];
+        const t = entry in data.creatureTemplates;
+        string[] problems;
+        bool mayRoll, checkedAny;
+
+        // Who each effect is at: the scripted targets (`spell_script_target`) are a friend of that entry.
+        const scripted = data.spellScriptTargets.get(sp.id, null);
+        // A spell of no range (`Self Only`) is cast at itself, its friend that, unless it names a single enemy
+        // (reached in melee, as CMaNGOS reaches it).
+        const r = range(*s, context.client);
+        bool singleEnemy;
+        foreach (i; 0 .. 3)
+            singleEnemy |= s.effect[i] && (s.implicitTargetA[i] == ImplicitTarget.enemy
+                || (s.implicitTargetA[i] == ImplicitTarget.unit && harms(*s)));
+        const atItself = r[1] == 0 && !singleEnemy;
+        Who who(size_t i)
+        {
+            const a = s.implicitTargetA[i], b = s.casting.implicitTargetB[i];
+            with (ImplicitTarget)
+                if (scripted.length && (a.among(unitScriptNearCaster, enumUnitsScriptAoeAtSrcLoc,
+                        enumUnitsScriptAoeAtDestLoc, enumUnitsScriptInCone60) || b.among(unitScriptNearCaster,
+                        enumUnitsScriptAoeAtSrcLoc, enumUnitsScriptAoeAtDestLoc, enumUnitsScriptInCone60)))
+                    return Who.friend;
+            const by = whoOf(*s, i, true);
+            return by == Who.pet ? Who.nobody : by == Who.friend && atItself ? Who.caster : by;
+        }
+        bool any(Who wanted)
+        {
+            foreach (i; 0 .. 3)
+                if (s.effect[i] && who(i) == wanted)
+                    return true;
+            return false;
+        }
+        const wantsEnemy = any(Who.enemy), wantsFriend = any(Who.friend);
+
+        // The hostile player: of the caster's level, a mage where mana is taken.
+        bool takesMana;
+        foreach (i; 0 .. 3)
+            takesMana |= (s.effect[i].among(SpellEffect.powerBurn, SpellEffect.powerDrain) && s.miscValue[i] == 0)
+                || (s.effect[i] == SpellEffect.applyAura && s.casting.applyAuraName[i].among(
+                    AuraType.periodicManaLeech, AuraType.powerBurnMana) && s.miscValue[i] == 0);
+        const level = clamp(t.maxLevel, 1, 60);
+        const distance = r[1] <= 5 ? 2.0f : max(2.0f, min(r[0] + 3, r[1] - 1));
+        auto heroAt = spot;
+        heroAt.x += distance;
+        heroAt.orientation = PI;
+        const guid = nextGuid++;
+        auto hero = player(guid, takesMana ? 8 : 1, level, heroAt);
+        auto me = hero.session.inWorld;
+        Creature caster, friend;
+        scope (exit)
+        {
+            foreach (o; map.objectsNear(spot, 120))
+                if (o.guid != me.player.guid && imported!"dmangos.world.objects".highGuidOf(o.guid)
+                        != imported!"dmangos.world.objects".HighGuid.player)
+                    map.removeObject(o.guid);
+            hero.write(Opcode.CMSG_LOGOUT_REQUEST, null);
+        }
+
+        // The caster, and its friend; neither fights on its own.
+        caster = context.summonCreature(map, entry, spot, TempSpawnType.manual, 0, 0);
+        if (caster is null)
+            return NpcOutcome(false, format!"no caster: creature %s not summoned"(entry));
+        void quiet(Creature c)
+        {
+            c.ai.bind(map);
+            c.ai.setScript(null, data.eventAi);
+            c.ai.releaseBehaviour(); // its script's own casts not mixed with the sweep's
+            c.ai.scriptReactState(0);
+            c.ai.scriptMelee(false);
+            c.ai.scriptCombatMovement(false);
+            foreach (power; 0 .. 5)
+                c.values.set!UNIT_FIELD_POWER1(power, c.values.get!UNIT_FIELD_MAXPOWER1(power));
+        }
+        quiet(caster);
+        caster.movement.position.orientation = 0; // facing the player (east): a cone reaches it
+        // An enemy of the player for what harms it (one friendly to it is made a monster: as it would cast at its
+        // enemies).
+        auto heroUnit = map.unit(me.player.guid);
+        const hostileSpell = harms(*s);
+        // What keeps it out of a fight (immune to players, not attackable: what its event takes off) taken off.
+        void fighting(Creature c)
+        {
+            import dmangos.world.defines : UnitFlags;
+
+            enum uint peaceful = UnitFlags.spawning | UnitFlags.notAttackable1 | UnitFlags.immuneToPlayer
+                | UnitFlags.immuneToNpc | UnitFlags.untargetable | UnitFlags.uninteractible;
+            c.values.set!UNIT_FIELD_FLAGS(c.values.get!UNIT_FIELD_FLAGS & ~peaceful);
+        }
+        if (hostileSpell)
+            fighting(caster);
+        const makeHostile = hostileSpell && !canAttack(caster.ai.relatingOf, heroUnit.relating, context.client);
+        if (makeHostile)
+            caster.ai.scriptFaction(14);
+        if (wantsFriend)
+        {
+            auto at = spot;
+            at.y += 3;
+            friend = context.summonCreature(map, scripted.length ? scripted[0] : entry, at, TempSpawnType.manual, 0, 0);
+            if (friend is null)
+                return NpcOutcome(false, format!"no friend: creature %s not summoned"(scripted.length ? scripted[0] : entry));
+            quiet(friend);
+            if (hostileSpell)
+                fighting(friend);
+            if (makeHostile)
+                friend.ai.scriptFaction(14);
+        }
+        hero.read();
+
+        UnitRef unitOf(Who x)
+        {
+            final switch (x)
+            {
+            case Who.nobody, Who.pet: return UnitRef.init;
+            case Who.caster: return map.unitOf(caster);
+            case Who.enemy: return map.unit(me.player.guid);
+            case Who.friend: return friend is null ? UnitRef.init : map.unitOf(friend);
+            }
+        }
+        string kindOf(Who x)
+        {
+            final switch (x)
+            {
+            case Who.nobody, Who.pet: return "nobody";
+            case Who.caster: return "caster";
+            case Who.enemy: return "player";
+            case Who.friend: return friend !is null && scripted.length ? "scripted creature" : "friendly creature";
+            }
+        }
+
+        // Hurt where it heals, drained where it gives power, an aura to take where it dispels.
+        foreach (i; 0 .. 3)
+        {
+            auto unit = unitOf(who(i));
+            if (!unit)
+                continue;
+            auto fields = unit.fields;
+            with (SpellEffect) switch (s.effect[i])
+            {
+            case heal, healMaxHealth, healMechanical:
+                fields.set!UNIT_FIELD_HEALTH(max(1, fields.get!UNIT_FIELD_MAXHEALTH / 2));
+                break;
+            case energize:
+                if (s.miscValue[i] >= 0 && s.miscValue[i] < 5)
+                    fields.set!UNIT_FIELD_POWER1(s.miscValue[i], fields.get!UNIT_FIELD_MAXPOWER1(s.miscValue[i]) / 2);
+                break;
+            case dispel:
+                if (const aura = dispellable(data, s.miscValue[i], unit.combatGuid != me.player.guid))
+                    putAura(unit, aura, me.player.guid);
+                break;
+            default:
+                break;
+            }
+        }
+        hero.read();
+
+        // Its target: the player for what is at an enemy, else its friend, else itself.
+        ulong target = wantsEnemy ? me.player.guid : wantsFriend && friend !is null ? friend.guid : caster.guid;
+        // A spell of no range (around itself) is cast at itself, as its script would.
+        if ((sp.flags & castForceTargetSelf) || atItself)
+            target = caster.guid;
+
+        // What there is before.
+        const all = [Who.caster, Who.enemy, Who.friend];
+        uint[3] healthOf, powerOf;
+        bool[3] dispellableBefore;
+        foreach (i; 0 .. 3)
+            if (auto unit = unitOf(who(i)))
+            {
+                healthOf[i] = unit.fields.get!UNIT_FIELD_HEALTH;
+                const power = s.effect[i] == SpellEffect.energize ? s.miscValue[i] : 0;
+                if (power >= 0 && power < 5)
+                    powerOf[i] = unit.fields.get!UNIT_FIELD_POWER1(power);
+                if (s.effect[i] == SpellEffect.dispel)
+                    dispellableBefore[i] = hasDispellable(unit, s.miscValue[i]);
+            }
+        const casterBefore = caster.position;
+        const heroBefore = me.player.position;
+        uint[Who] displayBefore;
+        foreach (x; all)
+            if (auto unit = unitOf(x))
+                displayBefore[x] = unit.fields.get!UNIT_FIELD_DISPLAYID;
+
+        // The cast, as its AI casts it.
+        const ok = caster.ai.castSpell(s, target, sp.flags);
+        map.wake(caster.guid);
+        if (!ok)
+            return NpcOutcome(false, format!"refused: %s"(caster.ai.castRefusal));
+        // A spell on its next swing goes with the swing: it fights the player.
+        const onSwing = isNextMeleeSwingSpell(*s);
+        if (onSwing)
+        {
+            caster.ai.scriptReactState(1); // defensive: a passive one attacks nothing
+            caster.ai.scriptMelee(true);
+            caster.ai.scriptAttack(me.player.guid);
+        }
+
+        // Its cast time, then its first ticks.
+        int amplitude;
+        foreach (i; 0 .. 3)
+            if (s.effect[i].among(SpellEffect.applyAura, SpellEffect.persistentAreaAura, SpellEffect.applyAreaAuraParty))
+                amplitude = max(amplitude, s.casting.amplitude[i]);
+        const total = ((sp.flags & 0x02) ? 0 : castTime(*s, context.client, caster.values.get!UNIT_FIELD_LEVEL))
+            + 1200 + min(amplitude, 5000) + (amplitude ? 300 : 0);
+        bool[Who][3] auraSeen;
+        bool[Who][3] flagSeen;
+        bool[3] summonSeen, healLogged;
+        bool[ulong] damageLogged; // the units its damage log names
+        bool areaSeen, displayChanged;
+        uint[3] leastHealth = healthOf, mostPower = powerOf;
+        bool[Who] diedSeen;
+        enum step = 200;
+        for (int ms = 0; ms <= total; ms += step)
+        {
+            if (ms)
+            {
+                w.now += step.msecs;
+                me.update(step.msecs);
+                map.update(step.msecs);
+                map.wake(caster.guid);
+            }
+            foreach (p; hero.read())
+                if (p.opcode == Opcode.SMSG_SPELLHEALLOG)
+                {
+                    import dmangos.bytes : ByteReader;
+
+                    auto rd = ByteReader(p.body_);
+                    const healed = rd.readPackedGuid();
+                    rd.readPackedGuid();
+                    const spell = rd.read!uint, amount = rd.read!uint;
+                    if (spell == sp.id && amount > 0)
+                        foreach (i; 0 .. 3)
+                            if (auto unit = unitOf(who(i)))
+                                healLogged[i] |= unit.combatGuid == healed;
+                }
+                else if (p.opcode == Opcode.SMSG_SPELLNONMELEEDAMAGELOG)
+                {
+                    import dmangos.bytes : ByteReader;
+
+                    auto rd = ByteReader(p.body_);
+                    const hurt = rd.readPackedGuid();
+                    rd.readPackedGuid();
+                    const spell = rd.read!uint, amount = rd.read!uint;
+                    if (spell == sp.id && amount > 0)
+                        damageLogged[hurt] = true;
+                    if (verbose)
+                        imported!"std.stdio".stderr.writefln("  %s: %s %(%02x %)", ms, cast(Opcode) p.opcode, p.body_);
+                }
+                else if (verbose && p.opcode.among(Opcode.SMSG_SPELL_GO, Opcode.SMSG_SPELL_START,
+                        Opcode.SMSG_SPELL_FAILURE, Opcode.SMSG_SPELLLOGMISS, Opcode.SMSG_SPELLNONMELEEDAMAGELOG))
+                    imported!"std.stdio".stderr.writefln("  %s: %s %(%02x %)", ms, cast(Opcode) p.opcode, p.body_);
+                else if (p.opcode == Opcode.SMSG_SPELLLOGMISS)
+                    mayRoll = true;
+            foreach (i; 0 .. 3)
+            {
+                foreach (x; all)
+                    if (auto unit = unitOf(x))
+                        if (auto set = unit.auraSet)
+                            if (set.find(sp.id) !is null)
+                            {
+                                auraSeen[i][x] = true;
+                                if (s.effect[i] == SpellEffect.applyAura)
+                                    if (const flag = flagOf(s.casting.applyAuraName[i]))
+                                        flagSeen[i][x] = flagSeen[i].get(x, false) || (unit.unitFlags & flag) != 0;
+                            }
+                if (auto unit = unitOf(who(i)))
+                {
+                    leastHealth[i] = min(leastHealth[i], unit.fields.get!UNIT_FIELD_HEALTH);
+                    const power = s.effect[i] == SpellEffect.energize ? s.miscValue[i] : 0;
+                    if (power >= 0 && power < 5)
+                        mostPower[i] = max(mostPower[i], unit.fields.get!UNIT_FIELD_POWER1(power));
+                }
+                if (s.miscValue[i] > 0 && !summonSeen[i])
+                    summonSeen[i] = summonsObject(s.effect[i]) ? objectNear(map, spot, s.miscValue[i])
+                        : summonsCreature(s.effect[i]) && summoned(map, spot, s.miscValue[i]);
+            }
+            foreach (x; all)
+                if (auto unit = unitOf(x))
+                {
+                    if (!unit.alive)
+                        diedSeen[x] = true;
+                    if (x in displayBefore && unit.fields.get!UNIT_FIELD_DISPLAYID != displayBefore[x])
+                        displayChanged = true;
+                }
+            foreach (o; map.objectsNear(spot, 60))
+                if (auto spotOf = cast(imported!"dmangos.world.dynobject".DynamicObject) o)
+                    areaSeen |= spotOf.values.get!DYNAMICOBJECT_SPELLID == sp.id;
+        }
+
+        // Each effect.
+        foreach (i; 0 .. 3)
+        {
+            const effect = s.effect[i];
+            if (effect == SpellEffect.none)
+                continue;
+            const x = who(i);
+            auto unit = unitOf(x);
+            const name = kindOf(x);
+            string failed; // what is wrong with this effect; null: nothing (or nothing to check)
+            bool checked = true;
+            with (SpellEffect) switch (effect)
+            {
+            case schoolDamage, weaponDamage, weaponDamageNoschool, normalizedWeaponDmg, weaponPercentDamage,
+                    healthLeech, environmentalDamage, powerBurn:
+                if (unit && !damageLogged.get(unit.combatGuid, false)
+                        && (onSwing || (leastHealth[i] >= healthOf[i] && !diedSeen.get(x, false))))
+                {
+                    failed = format!"no damage to the %s"(name);
+                    mayRoll = true;
+                }
+                break;
+            case heal, healMaxHealth, healMechanical:
+                if (unit && !healLogged[i])
+                    failed = format!"no heal of the %s"(name);
+                break;
+            case applyAura, applyAreaAuraParty, applyAreaAuraFriend, applyAreaAuraEnemy, applyAreaAuraPet:
+                if (!unit)
+                    break;
+                const kind = s.casting.applyAuraName[i];
+                if (!auraSeen[i].get(x, false))
+                {
+                    string elsewhere;
+                    foreach (other; all)
+                        if (other != x && auraSeen[i].get(other, false))
+                            elsewhere = kindOf(other);
+                    if (elsewhere.length)
+                        failed = format!"targeting: aura %s at the %s, not the %s"(kind, elsewhere, name);
+                    else
+                    {
+                        failed = format!"aura %s: not on the %s"(kind, name);
+                        mayRoll = true;
+                    }
+                }
+                else if (flagOf(kind) && !flagSeen[i].get(x, false))
+                    failed = format!"aura %s: on the %s, its unit flag not set"(kind, name);
+                else if (kind == AuraType.periodicDamage && s.casting.amplitude[i] && s.casting.amplitude[i] <= 5000
+                        && leastHealth[i] >= healthOf[i] && !diedSeen.get(x, false) && healthOf[i] > 0)
+                    failed = format!"aura %s: on the %s, no damage"(kind, name);
+                else if (kind == AuraType.transform && !displayChanged)
+                    failed = format!"aura %s: on the %s, its look unchanged"(kind, name);
+                break;
+            case persistentAreaAura:
+                if (!areaSeen && !(unit && auraSeen[i].get(x, false)))
+                    failed = format!"no area, nothing on the %s"(name);
+                break;
+            case energize:
+                if (unit && mostPower[i] <= powerOf[i])
+                    failed = format!"no power %s to the %s"(s.miscValue[i], name);
+                break;
+            case powerDrain:
+                if (unit && s.miscValue[i] == 0 && takesMana)
+                {
+                    const mana = unit.fields.get!UNIT_FIELD_POWER1(0);
+                    if (mana >= unit.fields.get!UNIT_FIELD_MAXPOWER1(0))
+                        failed = format!"no mana drained from the %s"(name);
+                }
+                break;
+            case summon, summonWild, summonGuardian, summonPet, summonTotem, summonTotemSlot1, summonTotemSlot2,
+                    summonTotemSlot3, summonTotemSlot4, summonPossessed, summonCritter, summonPhantasm, summonDemon:
+                if (s.miscValue[i] > 0 && !summonSeen[i])
+                    failed = format!"no creature %s"(s.miscValue[i]);
+                break;
+            case summonObjectWild, transDoor, summonObjectSlot1, summonObjectSlot2, summonObjectSlot3,
+                    summonObjectSlot4:
+                if (s.miscValue[i] > 0 && !summonSeen[i])
+                    failed = format!"no object %s"(s.miscValue[i]);
+                break;
+            case charge, leap:
+                const now = caster.position;
+                if (now.x == casterBefore.x && now.y == casterBefore.y && now.z == casterBefore.z)
+                    failed = "the caster did not move";
+                break;
+            case teleportUnits, teleportUnitsFaceCaster:
+                if (x == Who.enemy)
+                {
+                    const now = me.player.position;
+                    if (me.player.data.map == 0 && now.x == heroBefore.x && now.y == heroBefore.y)
+                        failed = "the player did not move";
+                }
+                else
+                    checked = false;
+                break;
+            case instantKill:
+                if (unit && !diedSeen.get(x, false))
+                    failed = format!"the %s lives"(name);
+                break;
+            case dispel:
+                if (unit && dispellableBefore[i] && hasDispellable(unit, s.miscValue[i]))
+                    failed = format!"nothing of dispel type %s taken from the %s"(s.miscValue[i], name);
+                else if (unit && !dispellableBefore[i])
+                    checked = false;
+                break;
+            default:
+                checked = false;
+                break;
+            }
+            with (SpellEffect)
+                checkedAny |= checked && (cast(bool) unit || summonsCreature(effect) || summonsObject(effect)
+                    || effect.among(charge, leap, persistentAreaAura) != 0);
+            if (failed.length || (!checked && notDoneByCreatures(effect)))
+            {
+                import std.algorithm.searching : startsWith;
+
+                if (notDoneByCreatures(effect))
+                    problems ~= format!"not done: %s (effect %s%s)"(effect, i, failed.length ? ": " ~ failed : "");
+                else if (failed.startsWith("aura ") || failed.startsWith("targeting: "))
+                    problems ~= format!"%s (effect %s)"(failed, i);
+                else
+                    problems ~= format!"%s: %s (effect %s)"(effect, failed, i);
+            }
+        }
+        if (verbose)
+            imported!"std.stdio".stderr.writefln("%s %s (by %s, %s, flags %#x): %s", sp.id, s.casting.name, entry,
+                sp.source, sp.flags, problems.length ? joinProblems(problems) : "ok");
+        if (!problems.length)
+            return NpcOutcome(true, null, false, !checkedAny);
+        return NpcOutcome(false, joinProblems(problems), mayRoll);
+    }
+
+    /// A character of `classId` (a human, or a troll for a mage) and `level` at `at`, logged in, its power full.
+    private TestClient player(uint guid, ubyte classId, uint level, Position at)
+    {
+        import dmangos.auth.accounts : AccountLevel;
+        import dmangos.world.player : CharacterData, Player;
+        import dmangos.world.testclient : loggedIn;
+
+        auto clock = &w.now;
+        w.context.clock = () => *clock;
+        auto client = loggedIn(w.context, w.db, guid, format!"Npcsweep%s"(guid), at, AccountLevel.player, 1, 0, level,
+            (ref CharacterData c) { c.classId = classId; });
+        auto me = cast(Player) client.session.character;
+        foreach (power; 0 .. 5)
+            me.values.set!UNIT_FIELD_POWER1(power, me.values.get!UNIT_FIELD_MAXPOWER1(power));
+        client.read();
+        return client;
+    }
+}
+
+private enum float PI = 3.14159265f;
+
+/// The unit flag an aura of `kind` sets (0: none the sweep checks).
+private uint flagOf(AuraType kind)
+{
+    import dmangos.world.defines : UnitFlags;
+
+    switch (kind)
+    {
+    case AuraType.modStun: return UnitFlags.stunned;
+    case AuraType.modFear: return UnitFlags.fleeing;
+    case AuraType.modConfuse: return UnitFlags.confused;
+    case AuraType.modSilence: return UnitFlags.silenced;
+    case AuraType.modPacify: return UnitFlags.pacified;
+    default: return 0;
+    }
+}
+
+/// A spell whose aura is of dispel type `type`, harmful or helpful; null if none (the lowest id).
+private const(SpellInfo)* dispellable(const WorldData data, int type, bool harmful)
+{
+    static const(SpellInfo)*[string] cache;
+    const key = format!"%s/%s"(type, harmful);
+    if (auto found = key in cache)
+        return *found;
+    const(SpellInfo)* best;
+    foreach (id, ref s; data.spells.spells)
+    {
+        if (s.casting.dispel != type || !s.hasEffect(SpellEffect.applyAura) || harms(s) != harmful
+                || s.attributesEx & 0x44 || s.attributes & 0x40)
+            continue;
+        if (best is null || id < best.id)
+            best = &s;
+    }
+    return cache[key] = best;
+}
+
+/// `spell`'s aura put on `unit` (by `caster`), for a minute.
+private void putAura(UnitRef unit, const(SpellInfo)* spell, ulong caster)
+{
+    import dmangos.world.auras : makeAura;
+    import dmangos.world.spellcast : effectValue;
+    import dmangos.world.unit : UnitKind;
+
+    auto aura = makeAura(spell, caster, 60, 60_000, !harms(*spell),
+        [effectValue(*spell, 0, 60, 0), effectValue(*spell, 1, 60, 0), effectValue(*spell, 2, 60, 0)]);
+    if (unit.kind == UnitKind.player)
+        unit.session.addAura(aura);
+    else
+    {
+        bool isNew;
+        unit.creature.auras.apply(aura, unit.creature.values, isNew);
+    }
+}
+
+private string joinProblems(string[] problems)
+{
+    import std.array : join;
+
+    return problems.join("; ");
+}
+
+/// The known failures: spell id -> reason.
+private string[uint] knownFailures()
+{
+    import std.conv : to;
+    import std.file : exists, readText;
+    import std.path : buildNormalizedPath, dirName;
+    import std.string : indexOf, lineSplitter, strip;
+
+    const path = buildNormalizedPath(dirName(__FILE_FULL_PATH__), "..", "..", "..", "tools", "harness",
+        "realnpc-known.txt");
+    string[uint] known;
+    if (!path.exists)
+        return known;
+    foreach (line; readText(path).lineSplitter)
+    {
+        const text = line.strip;
+        if (!text.length || text[0] == '#')
+            continue;
+        const colon = text.indexOf(':');
+        assert(colon > 0, "realnpc-known.txt: id: reason, not " ~ text);
+        known[text[0 .. colon].strip.to!uint] = text[colon + 1 .. $].strip;
+    }
+    return known;
+}
+
+/// The cause of a failure, for the counts: its first problem, without the effect's index or the numbers.
+private string causeOf(string why)
+{
+    import std.regex : ctRegex, replaceAll;
+    import std.string : indexOf;
+
+    auto first = why.indexOf("; ") < 0 ? why : why[0 .. why.indexOf("; ")];
+    if (const at = first.indexOf(" (effect ") + 1)
+        first = first[0 .. at - 1];
+    return first.replaceAll(ctRegex!`\b\d+\b`, "#");
+}
+
+/// The sweep.
+unittest
+{
+    import std.algorithm.iteration : map, splitter;
+    import std.algorithm.sorting : sort;
+    import std.array : array;
+    import std.conv : to;
+    import std.datetime.stopwatch : StopWatch, AutoStart;
+    import std.process : environment;
+    import std.stdio : File, stderr;
+
+    if (!haveRealData())
+        return;
+    auto watch = StopWatch(AutoStart.yes);
+    auto first = RealWorld.make();
+    const data = first.context.data;
+    auto spells = npcSpells(data);
+    const only = environment.get("DMANGOS_NPC_SWEEP_ONLY");
+    if (only !is null)
+    {
+        const wanted = only.splitter(',').map!(x => x.to!uint).array;
+        NpcSpell[] picked;
+        foreach (sp; spells)
+            if (wanted.canFind(sp.id))
+                picked ~= sp;
+        spells = picked;
+    }
+    auto sweeper = new NpcSweeper(first, only !is null);
+    string[uint] failed;
+    size_t passed, noCaster, unchecked;
+    size_t[string] causes;
+    uint[][string] examples;
+    string[] report;
+    foreach (sp; spells)
+    {
+        NpcOutcome outcome;
+        if (!sp.casters.length)
+            outcome = NpcOutcome(false, "no caster: no creature casts it in the data");
+        else
+            outcome = sweeper.sweep(sp);
+        if (outcome.ok)
+        {
+            ++passed;
+            unchecked += outcome.unchecked;
+        }
+        else
+        {
+            failed[sp.id] = outcome.why;
+            const cause = causeOf(outcome.why);
+            ++causes[cause];
+            if (examples.get(cause, null).length < 4)
+                examples[cause] ~= sp.id;
+            noCaster += cause.length >= 9 && cause[0 .. 9] == "no caster";
+        }
+        report ~= format!"%s\t%s\t%s\t%(%s,%)"(sp.id, outcome.ok ? outcome.unchecked ? "ok (unchecked)" : "ok"
+            : outcome.why, sp.source, sp.casters);
+    }
+    if (const path = environment.get("DMANGOS_NPC_SWEEP_REPORT"))
+    {
+        auto f = File(path, "w");
+        foreach (line; report)
+            f.writeln(line);
+    }
+    const known = knownFailures();
+    string[] news, fixed;
+    foreach (id, why; failed)
+        if (id !in known)
+            news ~= format!"%s: %s (%s)"(id, why, data.spells.spell(id).casting.name);
+    if (only is null)
+        foreach (id, why; known)
+            if (id !in failed)
+                fixed ~= format!"%s (%s)"(id, why);
+    news.sort();
+    fixed.sort();
+    stderr.writefln("realnpcsweep: %s spells creatures cast, %s as their data says (%s of them with no effect the "
+        ~ "sweep checks), %s known failures (realnpc-known.txt; %s with no creature to cast them), %s new, in %s s",
+        spells.length, passed, unchecked, failed.length - news.length, noCaster, news.length,
+        watch.peek.total!"seconds");
+    auto byCount = causes.keys;
+    byCount.sort!((a, b) => causes[a] > causes[b] || (causes[a] == causes[b] && a < b));
+    foreach (cause; byCount)
+        stderr.writefln("realnpcsweep:   %5s %s (%(%s, %))", causes[cause], cause, examples[cause]);
+    foreach (line; fixed)
+        stderr.writeln("realnpcsweep: passes now, take it off realnpc-known.txt: ", line);
+    foreach (line; news)
+        stderr.writeln("realnpcsweep: FAILS: ", line);
+    assert(!news.length, "a creature's spell on the real data does not do what its data says (see above)");
+}
