@@ -1645,6 +1645,14 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Functions: `AhnQirajData::GetData`, `AhnQirajData::GetDaysRemaining`, `WorldState::Load` (`SAVE_ID_AHN_QIRAJ`), `WorldState::Save`, `WorldState::Update` (the war effort's timer), `WorldState::AddWarEffortProgress`, `WorldState::HandleWarEffortPhaseTransition`, `WorldState::StartWarEffortEvent`, `WorldState::StopWarEffortEvent`, `WorldState::SpawnWarEffortGos`, `WorldState::ChangeWarEffortGoSpawns`, `WorldState::ChangeWarEffortPhase2Tier`, `WorldState::SetSilithusBossKilled`, `WorldState::GetResourceInfo`, `WorldState::GetResourceCounterAndMax`, `GetResourceTier`, `WorldState::HandlePlayerEnterZone`, `WorldState::FillInitialWorldStates` (the war effort's part)
 * Constants: `AQResources`, `AQResourceGroup`, `AQPhase`, `AQSilithusBoss`, `aqWorldstateMap`, `aqWorldStateTotalsMap`, `warEffortSpawns`, `WAR_EFFORT_DB_GUID_PREFIX`, `GAME_EVENT_AHN_QIRAJ_EFFORT_PHASE_1`..`_5`, `GAME_EVENT_ASHI_DEAD`, `GAME_EVENT_REGAL_DEAD`, `GAME_EVENT_ZORA_DEAD`, `WORLD_STATE_AQ_*`, `ZONEID_*` (the capitals)
 
+## world/worldpvp.d
+
+* Projects: none. Written from the 1.12.1 client's data (`WorldStateUI.dbc`, `AreaPOI.dbc`, `GameObjectArtKit.dbc`,
+  `AreaTrigger.dbc`, `WorldSafeLocs.dbc`, `SpellIcon.dbc`, `FactionTemplate.dbc`), the world database (the capture
+  points' `gameobject_template` data, `dbscripts_on_event`, `quest_template`, `broadcast_text`, `spell_template`) and
+  warcraft.wiki.gg (docs/FORMULAS.md, "World PvP"); CMaNGOS-classic's `OutdoorPvP/OutdoorPvPEP.cpp` and
+  `OutdoorPvPSI.cpp` were compared afterwards only.
+
 ## world/weather.d
 
 * Projects: CMaNGOS

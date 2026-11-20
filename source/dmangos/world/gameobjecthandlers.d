@@ -132,6 +132,9 @@ mixin template GameObjectHandlers()
         if (auto copy = currentBattleground())
             if (copy.rules.objectUsed(copy, player.guid, go))
                 return copy.pvpActive(player.guid);
+        // World PvP's (Silithyst, Northpass's shrines).
+        if (worldPvpObjectUsed(go))
+            return;
         // Its script first: it may handle the use itself.
         if (context.gameObjectUsed(go, map, player.guid))
             return;

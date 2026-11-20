@@ -539,6 +539,7 @@ private:
         if (zoneTimer.update(elapsed) && zoneTimer.consume())
         {
             checkZone();
+            worldPvpCheck(); // the towers' capture bar, the zones' buffs, the Silithyst (`dmangos.world.worldpvp`)
             if (const target = migrationTarget())
                 return migrateTo(target); // the player is simulated there from now on
         }

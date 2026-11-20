@@ -163,6 +163,7 @@ private:
         player.values.set!PLAYER_SELF_RES_SPELL(selfResurrectionSpell());
         petsOnLeave(); // the pet goes with its owner's death, and comes back with its life
         spellsOnLeave();
+        worldPvpDied(); // Silithyst falls where its carrier does
         removeAurasOnDeath();
         cancelTrade(true);
         stopAttack(false);
@@ -245,8 +246,10 @@ private:
         const at = player.position;
         uint[2] zoneAndArea = [player.data.zone, player.area];
         serverZoneAndArea(zoneAndArea);
-        const grave = closestGraveyard(context.data, context.client, player.data.map, at, teamId,
-            zoneAndArea[0], zoneAndArea[1], battlegroundGraveyards());
+        auto grave = worldPvpGraveyard(zoneAndArea[1]);
+        if (grave is null)
+            grave = closestGraveyard(context.data, context.client, player.data.map, at, teamId,
+                zoneAndArea[0], zoneAndArea[1], battlegroundGraveyards());
         deathTimer = 0;
         if (grave !is null)
             commandTeleport(grave.map, Position(grave.x, grave.y, grave.z, 0));

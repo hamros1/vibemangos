@@ -1,13 +1,14 @@
 # Cluster services
 
 A **cluster service** is a responsibility with an identity of its own that belongs to no place in
-the world: the chat channels, the battleground queues, the Ahn'Qiraj war effort. The cluster (docs/CLUSTER.md) places each
+the world: the chat channels, the battleground queues, the Ahn'Qiraj war effort, world PvP. The cluster (docs/CLUSTER.md) places each
 service on one node, and every node calls it by what it is, not by where it runs. A call to a
 service on the caller's own node is a direct function call; a call to one on another node goes over
 the cluster's links and its reply comes back the same way. Callers do not know which it was.
 
 The code is `cluster/services.d`. The services are `ChannelsHost` (`world/channelservice.d`),
-`BattlegroundQueueHost` (`world/bgqueue.d`) and `WarEffortHost` (`world/wareffort.d`).
+`BattlegroundQueueHost` (`world/bgqueue.d`), `WarEffortHost` (`world/wareffort.d`) and `WorldPvpHost`
+(`world/worldpvp.d`).
 
 ## Why services
 
@@ -62,8 +63,8 @@ methods:
 * **The dispatcher** (`Hosted!S.dispatch`) runs a call from its request's bytes and writes its
   reply's. There is no virtual dispatch per call and no registry filled at run time.
 
-The kinds of service are an enum, `ServiceKind`: `channels`, `battlegroundQueue`, `warEffort`, and
-`example` for tests. `clusterServiceKinds` lists those a cluster places.
+The kinds of service are an enum, `ServiceKind`: `channels`, `battlegroundQueue`, `warEffort`, `worldPvp`,
+and `example` for tests. `clusterServiceKinds` lists those a cluster places.
 
 ## Hosting
 
@@ -199,6 +200,39 @@ it: it starts and stops the phases' game events (120 to 124, and 125 to 127 for 
 `GameEvents.start`, brings and takes away the piles of supplies (a spawn's presence is worked out from the
 state), and sends the capitals' world states to its own players as they change. After a move the service
 goes on with the state it moved with; started anew (first grant, or its node lost), it reads the row.
+
+### World PvP
+
+`WorldPvpHost` (`world/worldpvp.d`) holds the state of 1.12's world PvP (`WorldPvp`): each Eastern Plaguelands tower's
+slider, holder and how often it was taken, and Silithus's Silithyst counts and favored side.
+
+**Why a service, not the node that owns the zone.** A tower is taken by the players within 80 yards of it, and those
+need not be on one node: regions split maps, and a player near a border stays on the node it came from until the ground
+25 yards around it is another's (docs/CLUSTER.md). A zone's buffs reach players in another map too (Echoes of
+Lordaeron in Stratholme, Cenarion Favor in the Ahn'Qiraj raids), which a dungeon's node runs. And the turn-ins in
+Silithus come from wherever its camps are simulated. So the state is a service, placed like the others, and the
+nodes report to it:
+
+* Each node counts, once a second, the players it simulates at each tower (alive, flagged for PvP, not stealthed or
+  invisible) and calls `present` with its counts when they change, and every 5 seconds while any are there. The
+  service sums the reports it has had in the last 15 seconds (a lost node's players stop counting when its report
+  ages out) and moves the sliders once a second.
+* A turn-in at a camp calls `silithyst` from the player's node.
+* `current` answers a node starting.
+
+The service announces the whole state as news at every change a client would see (a holder, a map state, the
+slider's whole percent, a count), and once a minute besides. Each node keeps what it heard
+(`WorldContext.worldPvp`, a `WorldPvpFollower`) and follows it for what it simulates: its players' world states (the
+map's tower states, the towers held, the capture bar, the counts) and buffs (Echoes of Lordaeron by towers held,
+Cenarion Favor), the banners' art kits, Crown Guard's graveyard, Northpass's shrine (a spawn present or not, as the
+war effort's piles). A tower taken (its `taken` count went up) rewards that node's players counted there and tells
+its players in the zone; the node that simulates the tower's capture point runs the capture's event script (the
+flight master, the squad), and a lost tower's are taken away there. A node hearing the state for the first time
+follows it without the rewards and events, which happened before it listened.
+
+**Not saved.** 1.12 kept neither zone's state over a restart ("A server reboot will reset the battle", of Silithus),
+so the service has no row in `world_state`: it moves with its state (`saveState`), and starts anew on a first grant
+or when its node is lost.
 
 ## Gateways
 

@@ -532,7 +532,7 @@ private:
                 enum uint invulnerabilityCancels = 0x00200000, immunityPurges = 0x00008000;
                 if (apply && (aura.type(i) == AuraType.effectImmunity ? aura.positive
                         : (aura.spell.attributesEx & immunityPurges) != 0))
-                    interruptAuras(invulnerabilityCancels);
+                    interruptAuras(invulnerabilityCancels, aura); // not itself (Silithyst, 29519, has both)
                 break;
             // A mechanic's immunity that purges (Berserker Rage and fear, Blessing of Freedom and roots): the
             // player's auras of that mechanic go (CMaNGOS's `RemoveAurasAtMechanicImmunity`).

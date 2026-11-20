@@ -704,3 +704,87 @@ except where said.
   tooltip names (`$24406s1`).
 - **Improved Scorpid Sting:** 10%, 20%, 30% (the tooltip's; its override scripts 2388 .. 2390 carry no amount) of the
   sting's strength reduction, as 19486's stamina reduction ("Stamina reduced by $s1").
+
+## World PvP
+
+**What:** the Eastern Plaguelands' four towers and Silithus's Silithyst, added in 1.12 (world/worldpvp.d).
+
+**Source: the 1.12.1 client's data and the world database first.** Most of the rules are data:
+
+- **The capture points** (`gameobject_template` 181899, 182096, 182097, 182098, type 29), all four alike: radius 80
+  (data 0); the capture bar's world states 2426 (shown), 2427 (the slider), 2428 (the neutral band; data 2, 3, 13);
+  the neutral band 20% (12); superiority counted from 1 to 5 (14, 15); 480 and 1200 seconds (16, 17); start 50 (20).
+  Their events: data 4, 5 "win", 6, 7 "contested", 8, 9 "progress", 10, 11 "neutral" (the type's field names). Only the
+  progress events have database scripts, and those are what a capture brings (`dbscripts_on_event` 10691, 10692:
+  Eastwall's squads; 10700, 10701: Plaguewood's flight master): a tower is taken at its progress event.
+  `WorldStateUI.dbc` row 138 is the bar ("CAPTUREPOINT", 2427 and 2428), rows 136 and 137 the towers each side holds
+  (2327, 2328). `AreaPOI.dbc` gives each tower seven map states: nobody's; each side's "Progressing" (drawn with the
+  side's banner), "Contested" (drawn with the grey one) and held. Plaguewood's "Horde, Contested" has no point of
+  interest; its state is taken as the gap in its run (2367).
+- **The banners:** `GameObjectArtKit.dbc` 1, 2, 21 are `BattlefieldBanner_State_Flag{H,A,N}_Plaguelands`: the capture
+  point and the two `Tower Banner`s (182106) at each tower show their holder's.
+- **The rewards:** Echoes of Lordaeron (`Increases ... damage dealt to Undead by $s1%`), four ranks a side by icon
+  (`INV_BannerPVP_02` the Alliance's 11413, 11414, 11415, 1386; `_01` the Horde's 30880, 30683, 30682, 29520): 1%, 2%,
+  3%, 5%. The quests "Establishing New Outposts" (9664) and "Bolstering Our Defenses" (9665) count each tower's
+  capture credit (17689, 17690, 17696, 17698). Crown Guard's graveyard is `WorldSafeLocs.dbc` 927 ("Graveyard CG
+  Tower"). Northpass's shrines (181682 with the Alliance's faction template 1315, 181955 with the Horde's 1314) are
+  spawned but not in the world (`spawntimesecs` -180). The flight master William Kielar's template has the Alliance's
+  faction 84; the Horde's holds him with its counterpart 83. The zone is told "... has been taken by the Alliance!" and
+  "All four towers are now in control of ..." (`broadcast_text` 13629 to 13638).
+- **Silithyst:** the geysers (181598) cast "Sillithus Flag Click"; the carrier's aura, Silithyst (29519), is an
+  immunity to being summoned, ends on mounting, stealth and invulnerability (`AuraInterruptFlags` 0x3A0000), and its
+  periodic "ToWoW - Sillithus PvP Flag" (30176, no effect) is the flag kept up while it is carried. "Sillithus Flag
+  Drop (DND)" (29533) makes the mound (181597) for three minutes (`SpellDuration.dbc` 25). The camps are
+  `AreaTrigger.dbc` 4162 (by "Sillithus Flag Stand, Alliance") and 4168 (the Horde's), their quest credit 17090 and
+  18199 ("Scouring the Desert", 9419, 9422). Traces of Silithyst (29534, 5% damage for 30 minutes). The counters are
+  `WorldStateUI.dbc` 126 and 127, "%2313w/%2317w" and "%2314w/%2317w". Cenarion Favor (30754) is 25% more Cenarion
+  Circle reputation from kills.
+
+**Source: documented research** (warcraft.wiki.gg "A Game of Towers", "Echoes of Lordaeron", "Northpass Tower",
+"Silithyst", "The Silithyst Must Flow", "Cenarion Favor"; Patch 1.12.1's notes) where the data is silent:
+
+- 189 bonus honor to each player of the side "directly taking part" in a capture; the towers' roles (the graveyard, the
+  squad marching on Northpass "regardless of which faction controls the tower", the shrine, the flight master's free
+  flights); the message in the local defense channel. 1.12.1: "Players who die in the Fungal Vale will now port to the
+  Crown Guard Tower graveyard if their faction controls that tower"; stealthed players get no honor for a capture
+  (dmangos counts only players seen: not stealthed or invisible, alive, not on a flight, and flagged for PvP, "A player
+  must have PvP enabled").
+- Echoes of Lordaeron in the Eastern Plaguelands and Stratholme, to the whole side; 1.12.1 kept it through death (dmangos
+  gives it again at the next second's check, alive).
+- Silithyst: "The first faction to collect 200 Silithyst wins the race"; Cenarion Favor to the winners in Silithus and
+  the Ahn'Qiraj raids until the other side wins; "A server reboot will reset the battle"; a carrier who loses it drops a
+  mound anyone may take; each turn-in "20 Cenarion Circle reputation, 1 Honor Point" (the honor taken as one bonus
+  honor unit at the player's level: 198 at 60, see Honor). The data's Silithyst Cap Reward (31247, triggered by
+  Traces of Silithyst) names faction 609 and 10 through an effect 1.12 does not have (122); it is not counted on top.
+
+**Interpretations (no source found):**
+
+- The slider moves the whole length (0 to 100) in 1200 seconds at a lead of one and 480 at five or more, linearly
+  between (out of the neutral band from the middle: 120 and 48 seconds); it moves once a second. Nobody (or even
+  numbers) leaves it where it is.
+- A held tower is "Progressing" while its side last pushed and the slider is short of the end, "Contested" while the
+  other side last pushed; it is lost when the slider enters the neutral band.
+- Neither zone's state is saved: the wiki says so of Silithus; nothing says the towers outlived a restart.
+- After a race is won both counts start again at 0. Cenarion Favor also holds at the Gates of Ahn'Qiraj (a zone of its
+  own in Silithus).
+- A lost tower takes its flight master and its side's squad away.
+
+**Second opinion (CMaNGOS-classic, `OutdoorPvP/OutdoorPvPEP.cpp`, `OutdoorPvPSI.cpp`, `GameObject::TickCapturePoint`),
+compared after the implementation:** it agrees on the capture's rate, its taking at the progress events and losing in
+the neutral band, the 189 honor (its comment: "guessed, same factor as silithus"), the buffs, the graveyard, the
+shrines, the flight master's and the squads' removal, the 200 and the reset of both counts. It differs:
+
+- it moves the slider every 5 seconds (its note: "On retail: Ticks every 5.2 seconds"); dmangos every second, at the same
+  rate;
+- it counts players on a PvP realm without the flag, and not game masters;
+- it shows only three map states per tower (nobody's, each side's), never "Progressing" or "Contested";
+- it summons Eastwall's squad only when Northpass is not the capturing side's; dmangos always (the wiki's "regardless");
+- it gives the flight master factions 774 and 775 and a particle aura; dmangos the template's 84 and its Horde
+  counterpart 83, no particles;
+- it does not send "All four towers ..." (marked not yet implemented) nor port the Fungal Vale's dead to Crown Guard;
+- it sends the defense message to every player in the open world; dmangos to those in the zone (the zone's channel);
+- Echoes of Lordaeron also in Scholomance, Cenarion Favor also at the Gates of Ahn'Qiraj (dmangos agrees on the gates);
+- a turn-in's honor is 199 (dmangos 198, the unit at 60); reputation 20 (agrees).
+
+dmangos's first implementation took a tower only at the slider's end, with "Progressing" for a tower nobody held; the
+progress events' scripts and the map's banners showed otherwise, and the comparison agreed: changed before commit.
