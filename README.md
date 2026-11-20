@@ -184,6 +184,14 @@ What works now:
   * **Movement** (`MSG_MOVE_*`) is shown to those who see the player and saved. It is checked
     against the player's speed (`movement_speed_check`): a player that moves faster than it can
     run is put back.
+  * **Movement orders:** speed changes (auras, mounts, snares, which slow running backwards too),
+    roots, knockbacks, water walking, slow fall and hover are ordered to the client and, once it
+    acknowledges them, shown to those who see the player (`MSG_MOVE_SET_*_SPEED`, `MSG_MOVE_ROOT`,
+    `MSG_MOVE_KNOCK_BACK`, ...), as CMaNGOS does.
+  * **Environment:** breath under water (the breath bar; Water Breathing, Underwater Breathing),
+    fatigue in deep water, drowning and exhaustion, lava, falling damage (Safe Fall, Slow Fall) and
+    falling under the world, with `SMSG_ENVIRONMENTALDAMAGELOG`. Slime does nothing (as in CMaNGOS)
+    but Naxxramas's, whose spell is cast.
   * **Teleports:** near and far teleports with the client's acknowledgements
     (`MSG_MOVE_TELEPORT_ACK`, `SMSG_TRANSFER_PENDING`, `SMSG_NEW_WORLD`, `MSG_MOVE_WORLDPORT_ACK`).
     Instance portals and the other `areatrigger_teleport` triggers check level, raid group, items and
@@ -757,6 +765,9 @@ database at the same time; a cluster's nodes take their ids in blocks from its c
 | `rate_reputation_gain`, `rate_reputation_lowlevel_kill`, `rate_reputation_lowlevel_quest` | reputation rates; the least share for grey kills and low quests | `1`, `0.2`, `0.2` |
 | `max_player_level` | the level cap | `60` |
 | `movement_speed_check`, `movement_speed_tolerance`, `movement_speed_slack` | the movement check: allow this factor over running speed, plus these yards | `true`, `1.5`, `15` |
+| `rate_damage_fall` | falling damage rate | `1` |
+| `mirror_timer_fatigue_max`, `mirror_timer_breath_max`, `mirror_timer_environmental_max` | seconds in deep water, under water and in lava before they hurt | `60`, `60`, `1` |
+| `environmental_damage_min`, `environmental_damage_max` | lava's damage each time | `605`, `610` |
 | `start_player_level`, `start_gm_level`, `start_player_money` | new characters' level; their level on moderator accounts and up; their money in copper | `1`, `1`, `0` |
 | `max_primary_trade_skill`, `trade_skill_gm_ignore_max_primary` | primary professions a character may learn; the account level from which the limit is ignored | `2`, `4` |
 | `strict_player_names`, `min_player_name` | the character name rules (0 any one script, bit 0 basic Latin, bit 1 the realm zone's script); the shortest name | `0`, `2` |
@@ -874,6 +885,8 @@ source/dmangos/world/       the world server
   itemhandlers.d              handlers: moving, equipping, banking and destroying items; buying, selling, repairs
   terrain.d                   the .map files: ground heights, areas, liquids per tile, and zones from them
   exploration.d               zones and areas from the map, explored areas, experience
+  environment.d               breath, fatigue, lava, falling: mirror timers and environmental damage
+  moveorders.d                speed, root, knockback, water walk, slow fall, hover orders and their acknowledgements
   inventory.d                 items and bags, and the rules for storing, equipping, swapping, saving them
   conditions.d                the conditions table: requirements of menus, lessons and wares
   commandtable.d              the GM command tables
