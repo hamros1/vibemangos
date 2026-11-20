@@ -3,9 +3,10 @@
  *
  * $(UL
  *   $(LI A kill of an enemy player who is not grey to the killer gives honor (`honorableKillPoints`):
- *        more for a higher-ranked victim, less for each kill of the same one that day (none from the
- *        tenth), shared in a group. A grey civilian creature of the other side (flagged for PvP) costs
- *        rank points (`dishonorableKillPoints`); a racial leader gives 398 to each.)
+ *        more for a higher-ranked victim and at a higher level, a tenth less for each kill of the same one
+ *        that day (none from the eleventh), shared in a group. A civilian creature of the other side
+ *        (flagged for PvP) costs rank points (`dishonorableKillPoints`); a racial leader gives 398 to each.
+ *        The rules and their sources: docs/FORMULAS.md, "Honor".)
  *   $(LI Each gain is a `character_honor_cp` row of the day. Today's, yesterday's, this week's and last
  *        week's kills and honor are counted from the rows (`updateHonor`); the weekly maintenance
  *        (`dmangos.world.honorweek`) turns a week's honor into rank points, gives last week's standing,
@@ -170,45 +171,73 @@ enum HonorType : ubyte
     dishonorable = 2,
 }
 
-/// Whether `targetLevel` is grey to a unit of `level` (the honor tables' steps).
-bool greyForHonor(uint level, uint targetLevel) pure nothrow @nogc @safe
+/**
+ * The honor of an honorable kill at level 60 by the victim's rank (1 Private/Scout to 14 Grand Marshal/High Warlord):
+ * Wowpedia "Honor system (pre-2.0 formulas)", "CP for Kill (1.8+)". A victim of no rank counts as rank 1 (no
+ * source gives one).
+ */
+private immutable float[14] killHonorByRank = [198, 210, 221, 233, 246, 260, 274, 289, 305, 321, 339, 357, 377, 398];
+
+/**
+ * The honor a rank-1 kill gives at the top of each battleground bracket (Wowpedia "Honor system (pre-2.0
+ * formulas)": "The BHU is determined by the CP that would be awarded to the highest level in the range, if they made
+ * an honorable kill on a Rank 1 target"): 24 at 19, 41 at 29, 68 at 39, 113 at 49, 189 at 59, 198 at 60.
+ */
+private immutable uint[2][6] rankOneHonor = [[19, 24], [29, 41], [39, 68], [49, 113], [59, 189], [60, 198]];
+
+/**
+ * The honor of a kill of a rank-1 player of one's own level, at `level`: the documented values at the brackets' tops,
+ * between them by the same ratio a level (each ten levels are about 0.6 of the next, so between the points the
+ * honor grows geometrically); below 19 by the ratio of 19 to 29.
+ */
+float rankOneHonorAt(uint level) pure nothrow @nogc @safe
 {
-    if (level <= targetLevel)
-        return false;
-    static immutable uint[13] limit = [4, 4, 5, 5, 6, 6, 7, 7, 8, 9, 10, 11, 12];
-    const step = level / 5;
-    return level - targetLevel > limit[step < 12 ? step : 12];
+    import std.math : pow;
+
+    if (level >= 60)
+        return 198;
+    size_t i = 1;
+    while (i + 1 < rankOneHonor.length && rankOneHonor[i][0] < level)
+        ++i;
+    const lo = rankOneHonor[i - 1], hi = rankOneHonor[i];
+    const perLevel = pow(cast(float) hi[1] / lo[1], 1.0f / (hi[0] - lo[0]));
+    return hi[1] * pow(perLevel, -cast(float)(hi[0] - cast(int) level));
 }
 
 /**
- * The honor of a kill of a player of `victimLevel`, `victimRP` rank points
- * and visual rank `victimVisualRank` by one of `killerLevel` and `killerRP`, who has killed it
- * `killsToday` times today before, shared among `groupSize`.
+ * The honor of a kill of a player of `victimLevel` and visual rank `victimVisualRank` by one of `killerLevel`, who
+ * has killed it `killsToday` times today before, shared among `groupSize`.
+ *
+ * The rank's honor at 60 (`killHonorByRank`), scaled to the killer's level as the battleground bonus shows it
+ * (`rankOneHonorAt`), less a tenth for each kill of the same victim that day (Wowpedia: "Within a 24 hour period you
+ * will only get credit for 10 HKs against a given player", 100% down to 10%), shared equally ("The CP per HK are
+ * divided among all the groups that caused damage"; the group's members alike). Between levels, no source gives
+ * the rule: the victim's level over the killer's is CMaNGOS's (docs/FORMULAS.md, "Honor").
  */
-float honorableKillPoints(uint killerLevel, float killerRP, uint victimLevel, float victimRP, int victimVisualRank,
-    uint killsToday, uint groupSize) pure nothrow @nogc @safe
+float honorableKillPoints(uint killerLevel, uint victimLevel, int victimVisualRank, uint killsToday,
+    uint groupSize) pure nothrow @nogc @safe
 {
-    const rank = victimVisualRank > 0 ? victimVisualRank : 0; // a negative rank counts as 0, not as a huge unsigned one
-    const diffHonor = victimRP / (killerRP + 1) + 1;
-    const diffLevel = victimLevel * (1.0 / (killerLevel ? killerLevel : 1));
-    const f = killsToday < 10 ? 10 - killsToday : 0;
-    const honor = cast(int)((f * 0.25) * (killerLevel + (rank * 5 + 1)) * (1 + 0.05 * diffHonor) * diffLevel);
-    return (honor <= 400 ? honor : 400) / (groupSize ? groupSize : 1);
+    import std.math : round;
+
+    if (killsToday >= 10 || killerLevel == 0)
+        return 0;
+    const rank = victimVisualRank < 1 ? 1 : victimVisualRank > 14 ? 14 : victimVisualRank;
+    const full = round(killHonorByRank[rank - 1] * rankOneHonorAt(killerLevel) / 198
+        * victimLevel / killerLevel);
+    return full * (10 - killsToday) / 10 / (groupSize ? groupSize : 1);
 }
 
-/// The rank points a dishonorable kill costs at `level`.
+/**
+ * The rank points a dishonorable kill costs at `level`: Wowpedia "Honor system (pre-2.0 formulas)", "Dishonorable
+ * Kills" (10 to 29, then by level to 100 at 60; "accurate to +/-1 RP").
+ */
 float dishonorableKillPoints(uint level) pure nothrow @nogc @safe
 {
-    float points = 10;
-    if (level >= 30 && level <= 35)
-        points += 1.5f * (level - 29);
-    else if (level >= 36 && level <= 41)
-        points += 9 + 2 * (level - 35);
-    else if (level >= 42 && level <= 50)
-        points += 21 + 3.2f * (level - 41);
-    else if (level >= 51)
-        points += 50 + 4 * (level - 50);
-    return points > 100 ? 100 : points;
+    static immutable float[31] from30 = [11.5, 13.0, 14.5, 16.0, 17.5, 19.0, 21.0, 23.0, 25.0, 27.0, 29.0, 31.0, 34.2,
+        37.4, 40.7, 43.9, 47.1, 50.3, 53.6, 56.8, 60.0, 64.0, 68.0, 72.0, 76.0, 80.0, 84.0, 88.0, 92.0, 96.0, 100.0];
+    if (level < 30)
+        return 10;
+    return level - 30 < from30.length ? from30[level - 30] : 100;
 }
 
 /// A racial leader's kill (`RacialLeader` creatures), to each who earns it.
@@ -216,13 +245,18 @@ enum float racialLeaderHonor = 398;
 
 unittest
 {
-    // Level 60 on level 60, no ranks, the first kill today: (10 * 0.25) * (60 + 1) * 1.05 * 1 = 160.
-    assert(honorableKillPoints(60, 0, 60, 0, 0, 0, 1) == 160);
-    assert(honorableKillPoints(60, 0, 60, 0, 0, 0, 2) == 80, "shared");
-    assert(honorableKillPoints(60, 0, 60, 0, 0, 9, 1) == 16 && honorableKillPoints(60, 0, 60, 0, 0, 10, 1) == 0,
-        "the tenth kill of one victim in a day is worth nothing");
-    assert(dishonorableKillPoints(20) == 10 && dishonorableKillPoints(55) == 80 && dishonorableKillPoints(60) == 100);
-    assert(greyForHonor(60, 47) && !greyForHonor(60, 48) && greyForHonor(10, 4) && !greyForHonor(10, 5));
+    // Level 60 on level 60: the rank's honor; rank 0 as rank 1.
+    assert(honorableKillPoints(60, 60, 1, 0, 1) == 198 && honorableKillPoints(60, 60, 14, 0, 1) == 398);
+    assert(honorableKillPoints(60, 60, 0, 0, 1) == 198);
+    assert(honorableKillPoints(60, 60, 1, 0, 2) == 99, "shared");
+    assert(honorableKillPoints(60, 60, 1, 9, 1) == 19.8f && honorableKillPoints(60, 60, 1, 10, 1) == 0,
+        "the tenth kill of one victim in a day is worth a tenth, the eleventh nothing");
+    // The brackets' tops (the battleground bonus unit), and between.
+    foreach (p; rankOneHonor)
+        assert(honorableKillPoints(p[0], p[0], 1, 0, 1) == p[1]);
+    assert(rankOneHonorAt(54) > 113 && rankOneHonorAt(54) < 189 && rankOneHonorAt(10) < 24 && rankOneHonorAt(10) > 0);
+    assert(dishonorableKillPoints(20) == 10 && dishonorableKillPoints(42) == 34.2f && dishonorableKillPoints(50) == 60
+        && dishonorableKillPoints(55) == 80 && dishonorableKillPoints(60) == 100);
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -327,6 +361,7 @@ mixin template HonorHandlers()
 {
     import dmangos.bytes : ByteReader, ByteWriter;
     import dmangos.world.database : HonorColumns, HonorPointRecord;
+    import dmangos.world.experience : isGray;
     import dmangos.world.honor;
     import dmangos.world.pvp : spellHonorlessTarget;
     import dmangos.world.defines : UnitFlags;
@@ -431,17 +466,17 @@ mixin template HonorHandlers()
             return; // `SPELL_AURA_NO_PVP_CREDIT`
         if (context.client.teamForRace(victim.player.data.race) == context.client.teamForRace(player.data.race))
             return;
-        if (greyForHonor(player.data.level, victim.player.data.level))
+        if (isGray(player.data.level, victim.player.data.level))
             return;
-        const points = honorableKillPoints(player.data.level, rankPoints, victim.player.data.level,
-            victim.rankPoints, victim.honorRank.visualRank, killsTodayOf(victim.player.data.guid), groupSize);
+        const points = honorableKillPoints(player.data.level, victim.player.data.level,
+            victim.honorRank.visualRank, killsTodayOf(victim.player.data.guid), groupSize);
         addHonorPoints(points, HonorType.honorable, 4, victim.player.data.guid, victim.player.guid,
             victim.honorRank.rank);
     }
 
     /**
-     * Honor for a creature killed: a racial leader gives 398, a grey civilian of the
-     * other side (flagged for PvP) costs rank points.
+     * Honor for a creature killed: a racial leader gives 398, a civilian of the other side (flagged for PvP) costs
+     * rank points, whatever its level (Wowpedia "Civilian": an NPC "that would garner a dishonorable kill if killed").
      */
     package void rewardHonorForCreature(Creature victim)
     {
@@ -449,10 +484,8 @@ mixin template HonorHandlers()
 
         if (victim.auras.find(spellHonorlessTarget) !is null)
             return;
-        const level = victim.values.get!UNIT_FIELD_LEVEL;
         const flagged = (victim.values.get!UNIT_FIELD_FLAGS & UnitFlags.pvp) != 0;
-        if (victim.template_.civilian && flagged && greyForHonor(player.data.level, level)
-            && isEnemy(victim.ai.relatingOf(), relatingNow(), context.client))
+        if (victim.template_.civilian && flagged && isEnemy(victim.ai.relatingOf(), relatingNow(), context.client))
             addHonorPoints(dishonorableKillPoints(player.data.level), HonorType.dishonorable, 3,
                 victim.template_.entry, victim.guid, 0);
         else if (victim.template_.racialLeader)

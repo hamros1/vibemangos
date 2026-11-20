@@ -138,6 +138,19 @@ private:
             }
         }
 
+        // Five new dungeon or raid copies an hour (`WorldContext.instanceLimitReached`), game masters aside.
+        const entersCopy = context.instanceable(mapId) && !mapEntry.isBattleground && player.data.map != mapId
+            && account.level < AccountLevel.gameMaster;
+        if (entersCopy && !checked)
+        {
+            const would = toInstance != uint.max ? toInstance : context.boundInstance(player.guid, mapId);
+            if (context.instanceLimitReached(account.id, would))
+            {
+                deliver(Opcode.SMSG_TRANSFER_ABORTED, [cast(ubyte) TransferAbortReason.TRANSFER_ABORT_TOO_MANY_INSTANCES]);
+                return false;
+            }
+        }
+
         if (context.instanceable(mapId) && !context.hostsDungeon(mapId))
         {
             import dmangos.world.inworld : ArrivalAction;
@@ -153,8 +166,11 @@ private:
             action.teleportMap = mapId;
             action.teleportTo = destination;
             action.teleportInstance = toInstance;
+            const counted = toInstance != uint.max ? toInstance : context.boundInstance(player.guid, mapId);
             if (context.askDungeonEntry is null)
             {
+                if (entersCopy)
+                    context.enteredInstance(account.id, counted);
                 migrateTo(host, action);
                 return true;
             }
@@ -173,6 +189,8 @@ private:
                         return deliver(Opcode.SMSG_TRANSFER_ABORTED, [abort]);
                     info!"%s: '%s' goes into map %s, which node %s hosts: moving there"(remoteAddress,
                         player.data.name, mapId, host);
+                    if (entersCopy)
+                        context.enteredInstance(account.id, counted);
                     migrateTo(host, action);
                 });
             return true;
@@ -222,6 +240,8 @@ private:
                         deliver(Opcode.SMSG_TRANSFER_ABORTED, [transferAbortMaxPlayers]);
                         return false;
                     }
+        if (entersCopy && instance)
+            context.enteredInstance(account.id, instance);
         if (player.data.map == mapId && instance == instanceId_)
         {
             teleporting = Teleport.near;

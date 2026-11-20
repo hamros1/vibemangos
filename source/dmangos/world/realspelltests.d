@@ -61,7 +61,7 @@ struct RealWorld
     WorldContext context;
     MonoTime now;
 
-    static RealWorld make()
+    static RealWorld make(uint seed = 20_261_120)
     {
         RealWorld w;
         w.db = newDatabase();
@@ -69,6 +69,13 @@ struct RealWorld
         config.logoutDelay = 0;
         w.context = new WorldContext(config, w.db, realWorldData, realClient);
         w.now = MonoTime.currTime;
+        // The same rolls at every run: a test passes or fails for good, not one run in twenty.
+        {
+            import std.random : rndGen;
+
+            w.context.map(0).random.seed(seed);
+            rndGen.seed(seed);
+        }
         return w;
     }
 

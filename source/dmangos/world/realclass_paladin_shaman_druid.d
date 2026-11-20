@@ -257,6 +257,8 @@ private long observe(ref RealWorld w, ref TestClient who, const ref ModClaim c)
             if (!aura.passive)
                 me.removeAura(aura);
         const target = spell.implicitTargetA[0] == 6 ? foe(w, who) : me.player.guid;
+        if (spell.casterAuraState == imported!"dmangos.world.aurastate".AuraState.judgement) // Judgement: a seal on
+            me.castCustom(20154, me.player.guid);
         const r = target == me.player.guid ? w.cast_(who, c.spell) : w.castAt(who, c.spell, target);
         assert(r == SpellCastResult.ok, format!"%s: %s cast: %s"(c.name, c.spell, r));
         // Tenths of a second until it is ready again.
@@ -572,8 +574,8 @@ unittest
         refresh(w, paladin);
         target.values.set!UNIT_FIELD_HEALTH(max / 5 + 2);
         assert(w.castAt(paladin, spell, hogger) != SpellCastResult.ok, "over a fifth");
-        target.values.set!UNIT_FIELD_HEALTH(max / 5);
-        assert(w.castAt(paladin, spell, hogger) == SpellCastResult.ok, "a fifth");
+        target.values.set!UNIT_FIELD_HEALTH(max / 5 - 1); // (under a fifth: the aura state's; the tooltip says "20% or less")
+        assert(w.castAt(paladin, spell, hogger) == SpellCastResult.ok, "under a fifth");
         foreach (_; 0 .. 4)
             pass(w, paladin, 500.msecs);
         const range = valueRange(w, spell, 0, 60);
@@ -1117,7 +1119,7 @@ unittest
     }
 }
 
-/// Turn Undead (2878, 5627, 10326): an undead flees for 10, 15, 20 seconds; another creature does not.
+/// Turn Undead (2878, 5627, 10326): an undead flees for 10, 15, 20 seconds, till damage ends it; another creature does not.
 unittest
 {
     if (!haveRealData())
@@ -1140,7 +1142,9 @@ unittest
         }
         assert(turned !is null, format!"%s: fleeing"(spell));
         assert(turned.duration <= valueDuration(w, spell));
-        // ("Damage caused may interrupt the effect": not done yet, for any fear or root; see the report of 2026-11-20.)
+        // "Damage caused may interrupt the effect": its `ProcChance` (100%) at the first blow.
+        dealDamage(paladin.session.inWorld.unit, w.context.map(0).unit(zombie), 1, Blow.spell(1));
+        assert(creatureOf(w, zombie).auras.find(spell) is null, "damage ends it");
         // Not at a creature that is not undead.
         w.now += 31.seconds;
         const hogger = foe(w, paladin);
@@ -1726,6 +1730,7 @@ unittest
     }
     assert(storm !is null && storm.charges == 2 && storm.amount[1] == 20 && storm.duration <= 12_000, storm is null ? "no storm" : format!"%s %s %s"(storm.charges, storm.amount, storm.duration));
     assert(!me.spellIsReady(17364));
+    storm.duration = 120_000; // (its charges are what is tested here, not its 12 seconds)
     uint landed;
     foreach (bolt; 0 .. 8) // (a bolt may miss)
     {
@@ -1733,10 +1738,12 @@ unittest
         assert(w.castAt(who, 15208, hogger) == SpellCastResult.ok);
         foreach (_; 0 .. 4)
             pass(w, who, 1000.msecs);
-        landed += damageOf(who, 15208).canFind!(d => d > 0);
+        const logs = damageOf(who, 15208);
+        landed += logs.canFind!(d => d > 0);
+        assert(logs.length <= 1, format!"%s"(logs));
         if (landed == 2)
             break;
-        assert(creatureOf(w, hogger).auras.find(17364) !is null, "one nature hit: one charge left");
+        assert(creatureOf(w, hogger).auras.find(17364) !is null, format!"one nature hit: one charge left (%s landed)"(landed));
     }
     assert(landed == 2 && creatureOf(w, hogger).auras.find(17364) is null, "two nature hits");
 }

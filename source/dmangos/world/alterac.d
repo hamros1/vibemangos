@@ -97,9 +97,10 @@ enum uint creditMine = 13796, creditGraveyard = 13756, creditTower = 13778;
 /// The spell that completes the sides' "the general is dead" quests.
 enum uint spellGeneralDead = 23658;
 
-/// Honor (in kills' worth) and reputation: a general, a captain, a tower; surviving ones at the end; graves and
-/// mines held at the end. The second of each pair is a Call to Arms weekend's.
-enum uint honorBoss = 4, honorCaptain = 3, honorTower = 3, honorSurvivingTower = 2, honorSurvivingCaptain = 2;
+/// Honor (in bonus honor units) and reputation: a general, a captain, a tower; surviving ones at the end; graves and
+/// mines held at the end. The second of each pair is a Call to Arms weekend's. The honor: Wowpedia "Honor system
+/// (pre-2.0 formulas)", Alterac Valley's table (the general 4, the others 1).
+enum uint honorBoss = 4, honorCaptain = 1, honorTower = 1, honorSurvivingTower = 1, honorSurvivingCaptain = 1;
 /// ditto
 immutable int[2] repBoss = [350, 525], repCaptain = [125, 185], repTower = [12, 18], repSurvivingTower = [12, 18],
     repSurvivingCaptain = [125, 175], repOwnedGrave = [12, 18], repOwnedMine = [24, 36];

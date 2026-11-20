@@ -436,6 +436,8 @@ mixin template SessionScripting()
             const health = player.values.get!UNIT_FIELD_HEALTH;
             if (health == 0)
                 return ActionResult.notAllowed;
+            if (scriptSpell !is null) // less by its cost modifiers (28830: "Reduces health cost of your Life Tap")
+                amount = spellMod(imported!"dmangos.world.spellmods".SpellModOp.cost, scriptSpell, amount);
             player.values.set!UNIT_FIELD_HEALTH(amount >= health ? 0 : health - amount);
             flushPlayerChanges();
             if (amount >= health)

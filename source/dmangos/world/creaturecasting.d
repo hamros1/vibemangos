@@ -445,6 +445,7 @@ mixin template CreatureCasting()
         foreach (i; 0 .. 3)
             weapon |= spell.effect[i] == SpellEffect.weaponDamageNoschool || spell.effect[i] == SpellEffect.weaponPercentDamage
                 || spell.effect[i] == SpellEffect.weaponDamage || spell.effect[i] == SpellEffect.normalizedWeaponDmg;
+        imported!"dmangos.world.unit".UnitRef[] reflectedBy, resistedBy;
         foreach (guid; inOrder)
         {
             auto miss = SpellMissInfo.none;
@@ -479,10 +480,26 @@ mixin template CreatureCasting()
 
                         miss = rollSpellHit(me.fighter, f, *spell, other.resistance(spell.casting.school), 0,
                             world_.random);
+                        // A player's ward may send it back (Fire Ward, Frost Ward); a whole resist is the player's
+                        // to proc on (Magic Absorption).
+                        if (other.kind == imported!"dmangos.world.unit".UnitKind.player)
+                        {
+                            if (miss == SpellMissInfo.none && other.session.reflectsSpell(spell))
+                            {
+                                miss = SpellMissInfo.reflect;
+                                reflectedBy ~= other;
+                            }
+                            else if (miss == SpellMissInfo.resist)
+                                resistedBy ~= other;
+                        }
                     }
                 }
             results ~= TargetResult(guid, miss);
         }
+        foreach (other; reflectedBy)
+            other.session.reflectBack(spell, me.guid);
+        foreach (other; resistedBy)
+            other.session.spellResistedBy(spell, world_.unit(me.guid));
         auto targets = targetsOf(target);
         world_.sendToObservers(me.guid, Opcode.SMSG_SPELL_GO, spellGoPacket(me.guid, spell.id, results, targets));
         foreach (r; results) // the combat log's line for each miss, as for a player's spell

@@ -361,7 +361,7 @@ mixin template EffectHandlers()
         tellAround(victim.combatGuid, Opcode.SMSG_SPELLNONMELEEDAMAGELOG, nonMeleeDamageLog(victim.combatGuid,
             player.guid, aura.spell.id, damage, school, absorbed, 0, true, 0, false));
         if (victim.kind == UnitKind.creature)
-            spellAttacked(victim.creature, damage, true, school);
+            spellAttacked(victim.creature, damage, true, school, aura.spell);
         else
             dealDamage(unit, victim, damage, Blow.periodic(school));
         const factor = aura.spell.casting.multipleValue[i] > 0 ? aura.spell.casting.multipleValue[i] : 1.0f;
@@ -386,6 +386,7 @@ mixin template EffectHandlers()
         const power = cast(Power) kind;
         const drained = now < amount ? now : amount;
         takePower(victim, power, drained);
+        classManaDrained(victim, aura, drained); // Improved Drain Mana
         const gainFactor = player.values.get!UNIT_FIELD_MAXPOWER1(power) > 0 ? multiplier(aura.spell, i) : 0.0f;
         periodicLog(victim.combatGuid, aura, i, drained, power, 0, gainFactor);
         const gain = cast(int)(drained * gainFactor);

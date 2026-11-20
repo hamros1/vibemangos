@@ -65,6 +65,7 @@ struct CustomValues
     int[3] values;
     ubyte which;
     bool alwaysHits; /// `TRIGGERED_IGNORE_HIT_CALCULATION`: no hit roll (a judgement)
+    const(SpellInfo)* by; /// the aura whose proc cast it (`m_triggeredByAuraSpell`), its missile's flight over too
 
     /// Just effect 0's.
     static CustomValues first(int value) pure nothrow @nogc @safe
@@ -578,11 +579,13 @@ mixin template ClassSpells()
         enum uint shadowguard = 28376;
         if (spell.id == shadowguard)
         {
-            if (procAuraSpell !is null)
-                if (const damage = rankSpell(shadowguardDamage, procAuraSpell.id))
+            if (const by = procAuraSpell !is null ? procAuraSpell : effectCustom.by)
+                if (const damage = rankSpell(shadowguardDamage, by.id))
                     castCustom(damage, targetGuid);
             return true;
         }
+        if (physicalClassDummy(spell, i, target, value)) // the warrior's, rogue's, hunter's (dmangos.world.physicalclasses)
+            return true;
         switch (cast(SpellFamily) spell.casting.spellFamilyName)
         {
         case SpellFamily.mage:
@@ -596,9 +599,10 @@ mixin template ClassSpells()
             return false;
         case SpellFamily.priest:
             enum uint touchOfWeakness = 28598;
-            if (spell.id == touchOfWeakness && procAuraSpell !is null)
+            const by = procAuraSpell !is null ? procAuraSpell : effectCustom.by;
+            if (spell.id == touchOfWeakness && by !is null)
             {
-                if (const curse = rankSpell(touchOfWeaknessCurse, procAuraSpell.id))
+                if (const curse = rankSpell(touchOfWeaknessCurse, by.id))
                     castCustom(curse, targetGuid);
                 return true;
             }
@@ -619,6 +623,8 @@ mixin template ClassSpells()
                 return true;
             }
             return false;
+        case SpellFamily.warlock:
+            return createHealthstone(spell);
         case SpellFamily.paladin:
             return paladinDummy(spell, i, target, value);
         case SpellFamily.shaman:
@@ -861,7 +867,15 @@ mixin template ClassSpells()
                 castCustom(precast, target);
         foreach (target; dodgedBy)
             swingDodgedBy(target, MeleeHitOutcome.dodge);
-        targetTriggers(spell, hit);
+        // (a missile's targets when it lands: `missileLanded`)
+        ulong[] reached;
+        foreach (target; hit)
+            if (!missileOnTheWay(spell, target))
+                reached ~= target;
+        targetTriggers(spell, reached);
+        foreach (target; hit)
+            if (spell.hasEffect(SpellEffect.schoolDamage))
+                pyroclasm(spell, target); // Hellfire's ticks, Soul Fire
         auto held = heldProcs;
         heldProcs = null;
         foreach (c; held)
@@ -875,7 +889,7 @@ mixin template ClassSpells()
      * Improved Scorch, Shadow Weaving, Relentless Strikes, Initiative) may cast its spell at each target hit, by its
      * amount as a chance (and its points a combo point).
      */
-    private void targetTriggers(const(SpellInfo)* spell, const(ulong)[] hit)
+    package void targetTriggers(const(SpellInfo)* spell, const(ulong)[] hit)
     {
         import dmangos.world.spellmods : affects;
 
@@ -889,6 +903,10 @@ mixin template ClassSpells()
                 const chance = aura.amount[k] + aura.spell.casting.pointsPerComboPoint[k] * castCombo;
                 foreach (target; hit)
                 {
+                    // Once for each it struck: the caster, an effect of its own on it (Eviscerate's), only if it
+                    // struck no other (Relentless Strikes' "20% chance per combo point", not twice that).
+                    if (target == player.guid && hit.canFind!(t => t != player.guid))
+                        continue;
                     auto unit = target == player.guid ? UnitRef.of(this) : map.unit(target);
                     if (unit && unit.alive && uniform01(map.random) * 100 < chance)
                         casts ~= ProcCast(aura.spell.triggerSpell[k], target);
@@ -899,11 +917,55 @@ mixin template ClassSpells()
     }
 
     /**
+     * An effect's value after its index's modifiers (`effectMod`), by the class rules. The slows' talents ("reduces the
+     * target's speed by an additional", "increases the speed reduction of your Curse of Exhaustion") are modifiers of
+     * the second effect: the speed of a chill (Chilled's), but the damage of Frostbolt and Cone of Cold (their slows
+     * are their first), and nothing of Curse of Exhaustion (its slow is its only effect). Their amount goes to the
+     * spell's slow, wherever it is, and never to its damage: Permafrost, Improved Curse of Exhaustion, Amplify Curse.
+     */
+    package int classEffectMod(const(SpellInfo)* spell, size_t i, int value)
+    {
+        import dmangos.world.spellmods : affects, SpellModOp;
+
+        static immutable uint[] slowTalents = [11175, 18310, 18288]; // (their first ranks)
+        if (spell.casting.spellFamilyName != SpellFamily.mage && spell.casting.spellFamilyName != SpellFamily.warlock)
+            return value;
+        const slow = spell.casting.applyAuraName[i] == AuraType.modDecreaseSpeed;
+        foreach (aura; player.auras.list)
+        {
+            const first = chainFirstRank(aura.spell.id);
+            if (!slowTalents.canFind(first ? first : aura.spell.id))
+                continue;
+            foreach (k; 0 .. 3)
+                if ((aura.effects & (1 << k)) && aura.misc(k) == SpellModOp.effect2 && affects(aura, k, *spell))
+                {
+                    if (i == 1 && !slow)
+                        value -= aura.amount[k]; // (the modifier of index 1 added it to the damage)
+                    else if (i != 1 && slow)
+                        value += aura.amount[k];
+                }
+        }
+        // Improved Enslave Demon: "Reduces the Attack Speed and Casting Speed penalty": its casting speed is a
+        // modifier of the third effect (Enslave Demon's casting speed), its attack speed one its data names 24 (no
+        // effect index): it goes to the attack speed (`MOD_MELEE_HASTE`) effect.
+        enum uint improvedEnslaveDemon = 18821;
+        enum int attackSpeedOp = 24;
+        if (spell.casting.applyAuraName[i] == AuraType.modMeleeHaste)
+            foreach (aura; player.auras.list)
+                if (chainFirstRank(aura.spell.id) == improvedEnslaveDemon)
+                    foreach (k; 0 .. 3)
+                        if ((aura.effects & (1 << k)) && aura.misc(k) == attackSpeedOp && affects(aura, k, *spell))
+                            value += aura.amount[k];
+        return value;
+    }
+
+    /**
      * The amounts of an aura of `spell` about to go on (`Aura` creation's class cases): Rip and Rupture take a share
      * of the attack power for each combo point (at most four, and three); Mana Shield half the spell power.
      */
     package void classAuraValues(const(SpellInfo)* spell, ref int[3] values)
     {
+        physicalClassAuraValues(spell, values); // Pathfinding (dmangos.world.physicalclasses)
         foreach (i; 0 .. 3)
         {
             const type = spell.casting.applyAuraName[i];
@@ -923,6 +985,16 @@ mixin template ClassSpells()
      */
     package void classAuraChanged(Aura aura, bool apply)
     {
+        // Shadow Trance (Nightfall's): "the casting time of your next Shadow Bolt"; its data gives it no charge to be
+        // spent by it, as Presence of Mind's has.
+        enum uint shadowTrance = 17941;
+        if (apply && aura.spell.id == shadowTrance && aura.charges == 0)
+            aura.charges = 1;
+        if (!apply)
+        {
+            spiritOfRedemptionEnded(aura);
+            possessedSummonEnded(aura);
+        }
         if (apply)
             foreach (other; replacedBy(player.auras, aura))
                 removeAura(other);
@@ -1071,6 +1143,8 @@ mixin template ClassSpells()
     package void classAreaTick(const(SpellInfo)* spell, UnitRef target)
     {
         static immutable uint[2][] improvedBlizzardChill = [[836, 12484], [988, 12485], [989, 12486]];
+        if (target && target.alive)
+            pyroclasm(spell, target.combatGuid); // Rain of Fire
         if (!ofFamily(spell, SpellFamily.mage, 0x80) || !target || !target.alive)
             return;
         uint chill;
@@ -1081,6 +1155,260 @@ mixin template ClassSpells()
                         chill = ranked;
         if (chill)
             castCustom(chill, target.combatGuid);
+        arcaneConcentrationTick();
+    }
+
+    /**
+     * Whether this player's ward sends `spell` back (`SPELL_AURA_REFLECT_SPELLS_SCHOOL`, of the spell's school): Fire
+     * Ward's and Frost Ward's amount is none, the chance their talents' (Improved Fire Ward's, Frost Warding's dummy
+     * effect: "gives your Frost Ward a 20% chance to reflect Frost spells and effects while active").
+     */
+    package bool reflectsSpell(const(SpellInfo)* spell)
+    {
+        enum uint magic = 1; // SPELL_DAMAGE_CLASS_MAGIC
+        if (spell.casting.dmgClass != magic || spell.casting.school >= 7)
+            return false;
+        foreach (aura; player.auras.list)
+            foreach (k; 0 .. 3)
+                if ((aura.effects & (1 << k)) && aura.type(k) == AuraType.reflectSpellsSchool
+                        && (aura.misc(k) & (1 << spell.casting.school)))
+                {
+                    const chance = aura.amount[k] + wardTalentChance(aura.spell);
+                    if (chance > 0 && uniform01(map.random) * 100 < chance)
+                        return true;
+                }
+        return false;
+    }
+
+    /// The reflect chance a mage's talent gives `ward` (Fire Ward: Improved Fire Ward; Frost Ward: Frost Warding).
+    private int wardTalentChance(const(SpellInfo)* ward)
+    {
+        import dmangos.world.spellcast : effectValue;
+
+        static immutable uint[] improvedFireWard = [11094, 13043], frostWarding = [11189, 28332];
+        const(uint)[] ranks = ofFamily(ward, SpellFamily.mage, 0x8) ? improvedFireWard
+            : ofFamily(ward, SpellFamily.mage, 0x100) ? frostWarding : null;
+        int chance;
+        foreach (id; ranks)
+            if (player.knowsSpell(id))
+                if (const talent = context.data.spells.spell(id))
+                    foreach (i; 0 .. 3)
+                        if (talent.effect[i] == SpellEffect.dummy)
+                            chance = effectValue(*talent, i, player.data.level, 0);
+        return chance;
+    }
+
+    /// A creature's `spell` came back off this player's ward: this player's now, at the creature (`caster`).
+    package void reflectBack(const(SpellInfo)* spell, ulong caster)
+    {
+        castCustom(spell, SpellTargets(TargetFlags.unit, caster), CustomValues.init);
+    }
+
+    /// A creature's `spell` at this player was resisted whole: what procs on that (Magic Absorption).
+    package void spellResistedBy(const(SpellInfo)* spell, UnitRef caster)
+    {
+        import dmangos.world.aurahandlers : ProcFlag;
+        import dmangos.world.procs : ProcEx, ProcHit;
+
+        procAuras(ProcFlag.takeHarmfulSpell, caster, ProcHit(spell, ProcEx.resist, 0, 0, false));
+    }
+
+    // -----------------------------------------------------------------------
+    // Priest
+    // -----------------------------------------------------------------------
+
+    /**
+     * Spirit of Redemption (20711, a dummy aura): "Upon death, the priest becomes the Spirit of Redemption for 10
+     * sec." A blow that would kill a priest with it leaves the priest at 1 health in the spirit's form (27827: 10 sec),
+     * which cannot move or attack, nor be attacked, and heals free (27792, 27795); true if so. Its end is the death
+     * (`classAuraChanged`).
+     */
+    package bool spiritOfRedemption()
+    {
+        enum uint talent = 20711, form = 27827, unattackable = 27792, pacified = 27795;
+        if (player.auras.find(talent) is null || player.auras.find(form) !is null)
+            return false;
+        player.values.set!UNIT_FIELD_HEALTH(1u);
+        foreach (spell; [form, unattackable, pacified])
+            castCustom(spell, player.guid);
+        flushPlayerChanges();
+        return player.auras.find(form) !is null;
+    }
+
+    /// The Spirit of Redemption's form ended (`spiritOfRedemption`): the rest of it goes, and the priest dies.
+    private void spiritOfRedemptionEnded(Aura aura)
+    {
+        enum uint form = 27827, unattackable = 27792, pacified = 27795;
+        if (aura.spell.id != form || player is null || !player.alive)
+            return;
+        foreach (spell; [unattackable, pacified])
+            if (auto other = player.auras.find(spell))
+                removeAura(other);
+        player.values.set!UNIT_FIELD_HEALTH(0u);
+        flushPlayerChanges();
+        playerDied(false);
+    }
+
+    // -----------------------------------------------------------------------
+    // Warlock
+    // -----------------------------------------------------------------------
+
+    /**
+     * `SPELL_EFFECT_SUMMON_POSSESSED` (Eye of Kilrogg: "Summons an Eye of Kilrogg and binds your vision to it"): the
+     * creature of its misc value, in front of the caster, for the spell's time, possessed (`takeCharm`: the player
+     * moves it and sees as it). The caster's aura of the spell (its dummy: "Controlling Eye of Kilrogg") lasts as
+     * long; as either ends, the other does and the creature goes (`possessedSummonEnded`).
+     */
+    package void summonPossessedEffect(const(SpellInfo)* spell, size_t i)
+    {
+        import std.math : cos, sin;
+        import dmangos.world.creature : TempSpawnType;
+        import dmangos.world.spellcast : duration;
+
+        const entry = cast(uint) spell.miscValue[i];
+        const ms = modDuration(spell, duration(*spell, context.client, player.data.level));
+        if (!entry || ms <= 0)
+            return;
+        auto at = player.position;
+        at.x += 2 * cos(at.orientation);
+        at.y += 2 * sin(at.orientation);
+        auto creature = context.summonCreature(map, entry, at, TempSpawnType.timedOrCorpse, ms, player.guid);
+        if (creature is null)
+            return;
+        possessedSummon = creature.guid;
+        takeCharm(creature, spell, true);
+    }
+
+    private ulong possessedSummon; // the creature of a `summonPossessedEffect`, while possessed
+
+    /// The possession of a summoned creature ends (its spell's aura went, or it died): the creature goes.
+    private void possessedSummonEnded(Aura aura)
+    {
+        if (!possessedSummon || !aura.spell.hasEffect(SpellEffect.summonPossessed))
+            return;
+        auto creature = cast(Creature) map.findObject(possessedSummon);
+        possessedSummon = 0;
+        if (creature !is null && charmed is creature)
+            endCharm();
+        if (creature !is null)
+            map.removeObject(creature.guid);
+    }
+
+    /**
+     * This player's aura (`aura`, on a creature now dead) procs on its death: Drain Soul's Soul Siphon (18371), its
+     * chance its spell's (none) and Improved Drain Soul's (`SPELLMOD_CHANCE_OF_SUCCESS`: 50%, 100%).
+     */
+    package void deathAuraProc(Aura aura)
+    {
+        import dmangos.world.spellmods : SpellModOp;
+
+        foreach (i; 0 .. 3)
+            if ((aura.effects & (1 << i)) && aura.type(i) == AuraType.procTriggerSpell && aura.spell.triggerSpell[i])
+            {
+                const chance = spellMod(SpellModOp.chanceOfSuccess, aura.spell, cast(float) aura.spell.casting.procChance);
+                if (chance > 0 && uniform01(map.random) * 100 < chance)
+                    castCustom(aura.spell.triggerSpell[i], player.guid);
+            }
+    }
+
+    /**
+     * Create Healthstone's script effect (its five sizes): the stone, or Improved Healthstone's (10%, 20%: "Increases
+     * the amount of Health restored by your Healthstone") of the same size, whose own spell heals that much more.
+     */
+    private bool createHealthstone(const(SpellInfo)* spell)
+    {
+        // The create spell, its stone, and the stones of Improved Healthstone's two ranks (the items heal 100, 110,
+        // 120; 250, 275, 300; 500, 550, 600; 800, 880, 960; 1200, 1320, 1440).
+        static immutable uint[4][] stones = [[6201, 5512, 19004, 19005], [6202, 5511, 19006, 19007],
+            [5699, 5509, 19008, 19009], [11729, 5510, 19010, 19011], [11730, 9421, 19012, 19013]];
+        enum uint improvedRank1 = 18692, improvedRank2 = 18693;
+        foreach (ref row; stones)
+            if (row[0] == spell.id)
+            {
+                const rank = player.auras.find(improvedRank2) !is null ? 2 : player.auras.find(improvedRank1) !is null
+                    ? 1 : 0;
+                storeLoot(row[1 + rank], 1, 0, false);
+                return true;
+            }
+        return false;
+    }
+
+    /**
+     * Pyroclasm (override scripts 2188, 2189: "Gives your Rain of Fire, Hellfire, and Soul Fire spells a 13%" and "a
+     * 26% chance to stun the target for 3 sec", 18093) at `target`: the spell's chance, shared by its ticks (Rain of
+     * Fire's four, Hellfire's fifteen: their data's duration over their period), a Soul Fire's whole. Its data's proc
+     * (a Dummy Trigger on damage over time) is this, not a cast of its own.
+     */
+    private void pyroclasm(const(SpellInfo)* spell, ulong target)
+    {
+        import dmangos.world.spellcast : castTime, duration;
+
+        enum uint stun = 18093, hellfire = 1949;
+        if (!ofFamily(spell, SpellFamily.warlock, 0x20 | 0x40) || target == player.guid)
+            return;
+        // Its ticks: of its own area (Rain of Fire), of Hellfire's channel (its Hellfire Effect is instant), none.
+        int ticks = 1;
+        const(SpellInfo)* periodic = ofFamily(spell, SpellFamily.warlock, 0x20) ? spell
+            : castTime(*spell, context.client, player.data.level) == 0 ? context.data.spells.spell(hellfire) : null;
+        if (periodic !is null)
+            foreach (i; 0 .. 3)
+                if (periodic.casting.amplitude[i] > 0)
+                {
+                    ticks = duration(*periodic, context.client, player.data.level) / periodic.casting.amplitude[i];
+                    break;
+                }
+        foreach (aura; player.auras.list)
+            foreach (i; 0 .. 3)
+                if ((aura.effects & (1 << i)) && aura.type(i) == AuraType.overrideClassScripts)
+                {
+                    const script = cast(int) aura.misc(i);
+                    const chance = (script == 2188 ? 13.0f : script == 2189 ? 26.0f : 0) / (ticks > 0 ? ticks : 1);
+                    if (chance > 0 && uniform01(map.random) * 100 < chance)
+                        castCustom(stun, target);
+                }
+    }
+
+    /**
+     * Improved Drain Mana (override scripts 2028, 2029: 15%, 30%): a share of the mana Drain Mana drained from
+     * `victim` damages it.
+     */
+    package void classManaDrained(UnitRef victim, Aura aura, uint drained)
+    {
+        if (!ofFamily(aura.spell, SpellFamily.warlock, 0x10) || !victim || !victim.alive || !drained)
+            return;
+        int share;
+        foreach (a; player.auras.list)
+            foreach (i; 0 .. 3)
+                if ((a.effects & (1 << i)) && a.type(i) == AuraType.overrideClassScripts)
+                    share = a.misc(i) == 2028 ? 15 : a.misc(i) == 2029 ? 30 : share;
+        if (!share)
+            return;
+        const damage = drained * share / 100;
+        if (victim.kind == UnitKind.creature)
+            spellDamage(aura.spell, victim.creature, damage, aura.spell.casting.school, false, -1, true); // (a tick's)
+        else if (auto other = enemyPlayer(victim.combatGuid))
+            spellDamageToPlayer(aura.spell, other, damage, false);
+    }
+
+    /**
+     * Arcane Concentration's override scripts (1388 to 1392, one a rank, their mask Blizzard's): a Blizzard tick that
+     * hits is "a damage spell [that] hits a target" though no spell hit sets off its proc (its ticks are a persistent
+     * area's), so each such tick rolls the rank's chance (2% a rank: the talent's own proc chance) of Clearcasting.
+     */
+    private void arcaneConcentrationTick()
+    {
+        enum uint clearcasting = 12536;
+        foreach (aura; player.auras.list)
+            foreach (i; 0 .. 3)
+                if ((aura.effects & (1 << i)) && aura.type(i) == AuraType.overrideClassScripts)
+                {
+                    const script = cast(int) aura.misc(i);
+                    if (script >= 1388 && script <= 1392 && uniform01(map.random) * 100 < aura.spell.casting.procChance)
+                    {
+                        castCustom(clearcasting, player.guid);
+                        return;
+                    }
+                }
     }
 
     /// The crit chance a class rule adds to `spell` against `target`: Shatter's against a frozen one.
@@ -1128,7 +1456,14 @@ mixin template ClassSpells()
      */
     package bool classProcTrigger(Aura aura, size_t i, const ref ProcHit hit, UnitRef other, ref ProcCast c)
     {
+        // The warrior's, rogue's and hunter's (dmangos.world.physicalclasses): Improved Sap's stealth.
+        bool casts;
+        if (physicalClassProcTrigger(aura, c, casts))
+            return casts;
         const spell = aura.spell;
+        enum uint pyroclasmFirst = 18096;
+        if (chainFirstRank(spell.id) == pyroclasmFirst)
+            return false; // (`pyroclasm`)
         // Deep Wounds (its data names no family flags)
         if (spell.casting.spellFamilyName == SpellFamily.warrior && !spell.casting.spellFamilyFlags
                 && spell.casting.spellIconId == 243)
@@ -1140,8 +1475,14 @@ mixin template ClassSpells()
             const offHand = hit.hand == AttackType.offHand;
             const average = (player.values.get!UNIT_FIELD_MINDAMAGE + player.values.get!UNIT_FIELD_MAXDAMAGE) / 2;
             const offAverage = (player.values.get!UNIT_FIELD_MINOFFHANDDAMAGE + player.values.get!UNIT_FIELD_MAXOFFHANDDAMAGE) / 2;
+            // The share over its 12 seconds: each of its ticks (every 3 seconds) a part.
+            import dmangos.world.spellcast : duration;
+
+            const bleed = context.data.spells.spell(deepWound);
+            const ticks = bleed is null || bleed.casting.amplitude[0] <= 0 ? 4
+                : duration(*bleed, context.client, player.data.level) / bleed.casting.amplitude[0];
             c = ProcCast(deepWound, other.combatGuid,
-                CustomValues.first(cast(int)((offHand ? offAverage : average) * share / 100 / 6)));
+                CustomValues.first(cast(int)((offHand ? offAverage : average) * share / 100 / ticks)));
             return true;
         }
         // Lightning Shield
@@ -1179,7 +1520,7 @@ mixin template ClassSpells()
             if (castCombo)
             {
                 heldProcs ~= c;
-                return true;
+                return false; // (cast then, not now as well)
             }
         }
         return true;
@@ -1272,6 +1613,19 @@ mixin template ClassSpells()
             }
             casts ~= ProcCast(combustionCrit, player.guid);
             return crit;
+        }
+        // Magic Absorption: a spell resisted whole gives back a share of the mana (29442), once a second at most
+        // (its `spell_proc_event` row).
+        enum uint magicAbsorption = 29441, magicAbsorptionMana = 29442;
+        if (chainFirstRank(spell.id) == magicAbsorption && i == 0)
+        {
+            import dmangos.world.defines : Power;
+
+            if (!(hit.procEx & ProcEx.resist))
+                return false;
+            const mana = cast(int)(player.values.get!UNIT_FIELD_MAXPOWER1(Power.mana) * aura.amount[i] / 100);
+            casts ~= ProcCast(magicAbsorptionMana, player.guid, CustomValues.first(mana));
+            return true;
         }
         // Master of Elements
         if (ofFamily(spell, SpellFamily.mage) && spell.casting.spellIconId == 1920)
@@ -1421,11 +1775,6 @@ mixin template ClassSpells()
             if (aura.spell.id == vampiricEmbrace && aura.caster == player.guid && hit.spell !is null
                     && hit.spell.casting.school == 5 && hit.damage)
                 casts ~= ProcCast(vampiricHeal, player.guid, CustomValues.first(cast(int)(hit.damage * aura.amount[0] / 100)));
-            enum uint stormstrike = 17364;
-            // Stormstrike (17364, of no family): its nature damage taken lasts its charges (`spell_proc_event`: nature).
-            if (aura.spell.id == stormstrike && aura.charges
-                    && hit.spell !is null && hit.spell.casting.school == 3 && hit.damage && --aura.charges == 0)
-                spent ~= aura;
         }
         foreach (aura; spent)
             takeAuraFrom(victim, aura);

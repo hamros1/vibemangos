@@ -224,16 +224,13 @@ def main():
     for path in glob.glob(os.path.join(SOURCE, '**', '*.d'), recursive=True):
         if not path.endswith('spellids.d'):
             code[os.path.relpath(path, REPO)] = open(path).read()
-    # The real-data test modules: realspelltests.d, realclassspelltests.d, realclass_*.d.
-    real_paths = {os.path.relpath(p, REPO) for p in glob.glob(os.path.join(SOURCE, 'world', 'real*.d'))
-                  if re.search(r'real(spell|classspell)tests\.d$|realclass_\w+\.d$', p)}
-    real_tests = ''.join(code[p] for p in real_paths)
+    real_tests = ''.join(t for p, t in code.items() if re.match(r'real(spell|classspell)tests\.d$|realclass_\w+\.d$', os.path.basename(p)))
 
     def where(ids):
         """The source files naming one of `ids` (as a number), but the real-data tests."""
         pattern = re.compile(r'(?<![\w.])(%s)(?![\w.])' % '|'.join(str(i) for i in ids))
         return sorted(os.path.basename(p) for p, t in code.items()
-                      if p not in real_paths and pattern.search(t))
+                      if not p.endswith('realspelltests.d') and pattern.search(t))
 
     def tested(ids):
         return bool(re.search(r'(?<![\w.])(%s)(?![\w.])' % '|'.join(str(i) for i in ids), real_tests))

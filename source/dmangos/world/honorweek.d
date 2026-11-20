@@ -18,9 +18,12 @@ module dmangos.world.honorweek;
 
 import dmangos.world.honor;
 
-/// The standing's breakpoints, as fractions of the list (the top place first).
-private immutable float[14] breakpoints = [1.000, 0.858, 0.715, 0.587, 0.477, 0.377, 0.287, 0.207, 0.137, 0.077,
-    0.037, 0.017, 0.007, 0.002];
+/**
+ * The standing's breakpoints, as fractions of the list (the top place first): patch 1.12's, Wowpedia "Honor system
+ * (pre-2.0 formulas)", "1.12 BreakPt" (the earlier 0.858, 0.715, ... 0.002 were before 1.12).
+ */
+private immutable float[14] breakpoints = [1.000, 0.845, 0.697, 0.566, 0.436, 0.327, 0.228, 0.159, 0.100, 0.060,
+    0.035, 0.020, 0.008, 0.003];
 
 /// What `standingScores` works out of a week's standing.
 struct StandingScores

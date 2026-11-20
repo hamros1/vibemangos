@@ -86,13 +86,10 @@ private:
         foreach (j; 0 .. 3)
             if (auraEffect(j))
                 values[j] = effectMod(spell, j, effectCustom.has(j) ? effectCustom.values[j]
-                    : effectValue(*spell, j, player.data.level, uniform01(map.random)));
+                    : effectValue(*spell, j, player.data.level, uniform01(map.random))
+                        + cast(int)(spell.casting.pointsPerComboPoint[j] * castCombo)); // a finisher's (Expose Armor)
         classAuraValues(spell, values); // Rip's and Rupture's attack power, Mana Shield's spell power
         const ms = modDuration(spell, duration(*spell, context.client, player.data.level));
-        // Damage over time (`SPELLMOD_DOT`): what each tick deals.
-        foreach (j; 0 .. 3)
-            if (auraEffect(j) && spell.casting.applyAuraName[j] == AuraType.periodicDamage)
-                values[j] = spellMod(SpellModOp.dot, spell, values[j]);
         // The caster's spell power over time: each tick its coefficient's share (`bonusCoefficient`).
         foreach (j; 0 .. 3)
             if (auraEffect(j) && spell.casting.amplitude[j] > 0 && ms > 0)
@@ -108,6 +105,11 @@ private:
                 if (done > 0)
                     values[j] += cast(int)(done * bonusCoefficient(*spell, j, context.client, player.data.level));
             }
+        // Damage over time (`SPELLMOD_DOT`): what each tick deals or drains, its spell power's share with it.
+        foreach (j; 0 .. 3)
+            if (auraEffect(j) && (spell.casting.applyAuraName[j] == AuraType.periodicDamage
+                    || spell.casting.applyAuraName[j] == AuraType.periodicLeech))
+                values[j] = spellMod(SpellModOp.dot, spell, values[j]);
         if (auto creature = cast(Creature) map.findObject(target))
         {
             if (!creature.alive)
@@ -115,12 +117,14 @@ private:
             // A friendly creature's (one's pet's: Mend Pet) is a buff, and no attack on it.
             const hostile = canAttack(relatingNow(), creature.ai.relatingOf(), context.client);
             auto aura = makeAura(spell, player.guid, player.data.level, ms, !hostile, values);
+            if (aura.charges) // (`SPELLMOD_CHARGES`: Improved Shield Block)
+                aura.charges = spellMod(SpellModOp.charges, spell, aura.charges);
             if (effects)
                 aura.effects &= effects;
             if (hostile)
                 aura.setHeartbeatResist(heartbeatResistChance(player.fighter, creature.fighter, *spell,
                     targetResistance(cast(int) creature.values.get!UNIT_FIELD_RESISTANCES(spell.casting.school),
-                    spell.casting.school), spellHitBonus), ms);
+                    spell.casting.school), spellHitBonusOf(spell)), ms);
             bool isNew;
             if (auto displaced = creature.auras.displacedBy(aura, creature.values)) // another's that may not stay beside it
                 creature.loseAura(displaced, map);
@@ -153,12 +157,14 @@ private:
         // On an enemy (a duel's opponent) it is a debuff.
         const hostile = who !is this && canAttack(relatingNow(), who.relatingNow(), context.client);
         auto given = makeAura(spell, player.guid, player.data.level, ms, !hostile, values);
+        if (given.charges)
+            given.charges = spellMod(SpellModOp.charges, spell, given.charges);
         if (effects)
             given.effects &= effects;
         if (hostile)
             given.setHeartbeatResist(heartbeatResistChance(player.fighter, who.player.fighter, *spell,
                 targetResistance(cast(int) who.player.values.get!UNIT_FIELD_RESISTANCES(spell.casting.school),
-                spell.casting.school), spellHitBonus), ms);
+                spell.casting.school), spellHitBonusOf(spell)), ms);
         who.addAura(given);
         if (!hostile && who !is this) // a buff on one fighting: those it fights fight this player too
             imported!"dmangos.world.creatureai".assistThreat(map, who.threateners, unit, 0, *spell);
@@ -333,7 +339,10 @@ private:
                 uint take = damage < cast(uint) aura.amount[i] ? damage : cast(uint) aura.amount[i];
                 if (type == AuraType.manaShield)
                 {
-                    const perPoint = aura.spell.casting.multipleValue[i];
+                    // (less by its caster's modifiers: Improved Mana Shield, `SPELLMOD_MULTIPLE_VALUE`)
+                    const perPoint = aura.caster == player.guid
+                        ? spellMod(SpellModOp.multipleValue, aura.spell, aura.spell.casting.multipleValue[i])
+                        : aura.spell.casting.multipleValue[i];
                     const mana = player.values.get!UNIT_FIELD_POWER1(0);
                     if (perPoint > 0 && take * perPoint > mana)
                         take = cast(uint)(mana / perPoint);
@@ -586,7 +595,9 @@ private:
             // player's auras of that mechanic go (CMaNGOS's `RemoveAurasAtMechanicImmunity`).
             case AuraType.mechanicImmunity, AuraType.mechanicImmunityMask:
                 enum uint immunityPurgesEffect = 0x00008000; // SPELL_ATTR_EX_IMMUNITY_PURGES_EFFECT
-                if (apply && (aura.spell.attributesEx & immunityPurgesEffect))
+                // (and Improved Sprint's, 30918, which is there only to "remove all movement impairing effects")
+                enum uint improvedSprintPurge = 30918;
+                if (apply && ((aura.spell.attributesEx & immunityPurgesEffect) || aura.spell.id == improvedSprintPurge))
                 {
                     const misc = aura.misc(i);
                     const mask = aura.type(i) == AuraType.mechanicImmunity
@@ -638,12 +649,19 @@ private:
                     map.refreshVisibility(this);
                 break;
             case AuraType.modShapeshift:
+                // One form, one stance at a time: the one it was in ends first.
+                if (apply)
+                    foreach (other; player.auras.list.dup)
+                        if (other !is aura && other.has(AuraType.modShapeshift))
+                            removeAura(other);
                 player.values.setByte!UNIT_FIELD_BYTES_1(2, apply ? cast(ubyte) aura.misc(i) : 0);
                 if (apply)
                     interruptAuras(AuraInterrupt.shapeshifting, aura);
                 refreshFormBoundPassives(); // the form's own passives, its talents'
                 if (apply)
                     classShapeshifted(cast(ubyte) aura.misc(i));
+                if (apply && map !is null) // (in the world: a stance taken, not one put back at login)
+                    warriorStanceTaken();
                 break;
             case AuraType.modRoot:
                 movement = true;
@@ -701,8 +719,24 @@ private:
             player.setStandState(1);
             send(ServerStandStateUpdate(1));
         }
+        // The health Last Stand's aura grants (12976, `MOD_INCREASE_HEALTH`: "grants you 30% of your maximum hit
+        // points... After the effect expires, the hit points are lost"): the health itself, not only its maximum.
+        enum uint lastStandHealth = 12976;
+        int granted;
+        foreach (i; 0 .. 3)
+            if ((aura.effects & (1 << i)) && aura.type(i) == AuraType.modIncreaseHealth && map !is null
+                    && aura.spell.id == lastStandHealth)
+                granted += aura.amount[i];
+        const healthBefore = cast(int) player.values.get!UNIT_FIELD_HEALTH;
         if (stats)
             player.refreshEquipmentStats(context.data);
+        if (granted && player.alive)
+        {
+            const max = cast(int) player.values.get!UNIT_FIELD_MAXHEALTH;
+            int health = apply ? healthBefore + granted : healthBefore - granted;
+            health = health < 1 ? 1 : health > max ? max : health;
+            player.values.set!UNIT_FIELD_HEALTH(cast(uint) health);
+        }
         if (speeds)
             refreshSpeeds();
         if (movement)
@@ -983,7 +1017,14 @@ private:
             if (classPeriodicTrigger(aura, i)) // Frenzied Regeneration
                 return;
             if (const spell = context.data.spells.spell(aura.spell.triggerSpell[i]))
-                castSpell(spell, SpellTargets(TargetFlags.self, player.guid), true, 0);
+            {
+                // A channel's ticks (Arcane Missiles' missiles) go at what it is channelled at.
+                const channelled = aura.caster == player.guid ? channelledAt(aura.spell) : 0;
+                if (channelled && channelled != player.guid)
+                    castSpell(spell, SpellTargets(TargetFlags.unit, channelled), true, 0);
+                else
+                    castSpell(spell, SpellTargets(TargetFlags.self, player.guid), true, 0);
+            }
             return;
         case AuraType.periodicLeech, AuraType.periodicManaLeech:
             // Another player's drain (a duel, world PvP): its caster's doing, as on a creature.
@@ -1163,7 +1204,7 @@ private:
             if (aura.type(i) == AuraType.periodicLeech)
                 return leechTick(map.unitOf(target), aura, i, damage);
             periodicLog(target.guid, aura, i, damage, aura.spell.casting.school);
-            spellAttacked(target, damage, true, aura.spell.casting.school);
+            spellAttacked(target, damage, true, aura.spell.casting.school, aura.spell);
             tickProcs(map.unitOf(target), aura.spell, damage); // Nightfall, Vampiric Embrace
             break;
         case AuraType.periodicManaLeech:

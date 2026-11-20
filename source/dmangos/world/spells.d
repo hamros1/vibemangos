@@ -414,6 +414,7 @@ final class SpellData
         buildChains(client, chainRows);
         buildLearnSpells(client, learnRows);
         spreadAffectMasks();
+        imported!"dmangos.world.tooltipmasks".fixAffectMasks(this);
     }
 
 private:

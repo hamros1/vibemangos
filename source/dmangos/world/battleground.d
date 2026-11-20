@@ -77,19 +77,25 @@ enum Duration prematureFinish = 5.minutes;
 immutable uint[2][4] markSpells = [[0, 0], [24955, 24954], [24951, 24950], [24953, 24952]];
 
 /**
- * The honor formula at the battleground's top level (60 for all three):
- * the bonus honor worth `kills` honorable kills.
+ * The bonus honor of `units` bonus honor units (BHU) to a player of `level` in battleground `t`: each unit is what a
+ * rank-1 kill gives at the top of the player's bracket (Wowpedia "Honor system (pre-2.0 formulas)": 24 in 10-19,
+ * 41, 68, 113, 189, and 198 at 60 and in Alterac Valley's 51-60; `rankOneHonorAt`).
  */
-uint bonusHonor(uint kills) pure nothrow @nogc @safe
+uint bonusHonor(uint units, const ref BattlegroundTemplate t, uint level) pure nothrow @nogc @safe
 {
-    import std.math : ceil, exp;
+    import std.math : round;
+    import dmangos.world.honor : rankOneHonorAt;
 
-    return cast(uint) ceil(kills * (-0.53177 + 0.59357 * exp((60 + 23.54042) / 26.07859)));
+    const top = t.minLevel + 10 * (bracketOf(t, level) + 1) - 1;
+    return units * cast(uint) round(rankOneHonorAt(top < t.maxLevel ? top : t.maxLevel));
 }
 
 unittest
 {
-    assert(bonusHonor(1) == 15 && bonusHonor(2) == 29 && bonusHonor(3) == 43 && bonusHonor(4) == 57);
+    BattlegroundTemplate warsong = {minLevel: 10, maxLevel: 60}, alterac = {minLevel: 51, maxLevel: 60};
+    assert(bonusHonor(1, warsong, 10) == 24 && bonusHonor(1, warsong, 19) == 24 && bonusHonor(1, warsong, 25) == 41);
+    assert(bonusHonor(2, warsong, 55) == 378 && bonusHonor(2, warsong, 60) == 396, "a capture: 2 units");
+    assert(bonusHonor(4, alterac, 51) == 792, "the general: 4 units, Alterac Valley's one bracket at 198");
 }
 
 /**
@@ -481,17 +487,22 @@ final class Battleground
             c.interruptAuras(AuraInterrupt.pvpActiveCancels);
     }
 
-    /// Bonus honor worth `kills` kills to everyone of `team` here, on their scores.
-    void rewardHonorToTeam(uint kills, ubyte team)
+    /// `units` bonus honor units to everyone of `team` here, each by its bracket (`bonusHonor`), on their scores.
+    void rewardHonorToTeam(uint units, ubyte team)
     {
         import dmangos.world.character : Character;
 
-        const honor = bonusHonor(kills);
+        const t = template_;
+        if (t is null)
+            return;
         foreach (guid, ref m; members)
             if (m.team == team && m.offlineSince == MonoTime.init)
                 if (auto c = cast(Character) context.onlinePlayer(guid))
+                {
+                    const honor = bonusHonor(units, *t, c.player.data.level);
                     if (c.battlegroundBonusHonor(honor))
                         m.bonusHonor += honor;
+                }
     }
 
     /// Reputation: `amount` with `faction` to everyone of `team` here.
@@ -2027,7 +2038,8 @@ unittest
     assert(heard(varian) && !heard(thrall));
 
     copy.rewardHonorToTeam(1, 0);
-    assert(copy.members[7].bonusHonor == 15 && copy.members[9].bonusHonor == 15 && copy.members[8].bonusHonor == 0);
+    // One unit, in the bracket 10-19 (the players' level 1 below it): 24.
+    assert(copy.members[7].bonusHonor == 24 && copy.members[9].bonusHonor == 24 && copy.members[8].bonusHonor == 0);
 
     thrall.read();
     copy.end(winnerAlliance);

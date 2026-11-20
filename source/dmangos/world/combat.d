@@ -91,6 +91,7 @@ struct Fighter
     ubyte classId;             /// a player's (casters glance less)
     Position position;         /// with its orientation
     float combatReach = 1.5f;  /// `UNIT_FIELD_COMBATREACH`
+    uint armorIgnored;         /// of its victims' armor, by its physical blows (`MOD_TARGET_RESISTANCE`: Serrated Blades)
     bool runningAround;        /// moving, and not walking
     bool alive = true;
     bool standing = true;      /// standing up: a player not standing is hit critically
@@ -752,6 +753,12 @@ struct MeleeDamage
     uint absorbed;             /// what the victim's shields took (`damage` is after it)
 }
 
+/// The armor of `victim` against `attacker`'s physical blows: less what its blows ignore (Serrated Blades).
+uint armorAgainst(const Fighter attacker, const Fighter victim) pure nothrow @nogc @safe
+{
+    return victim.armor > attacker.armorIgnored ? victim.armor - attacker.armorIgnored : 0;
+}
+
 /// Damage after armor: armor takes up to 75%, less against higher levels.
 float armorReducedDamage(uint attackerLevel, uint armor, float damage) pure nothrow @nogc @safe
 {
@@ -830,7 +837,7 @@ MeleeDamage calculateMeleeDamage(const Fighter attacker, const Fighter victim, A
     if (d.school < 7 && victim.damageTakenFlat[d.school]) // the victim's flat part, as its percent takes it
         damage = imported!"std.algorithm.comparison".max(0.0f, damage + victim.damageTakenFlat[d.school] * victim.damageTaken[d.school]);
     if (d.school == 0)
-        damage = armorReducedDamage(attacker.level, victim.armor, damage);
+        damage = armorReducedDamage(attacker.level, armorAgainst(attacker, victim), damage);
     d.damage = cast(uint) damage;
     d.cleanDamage = d.damage;
 

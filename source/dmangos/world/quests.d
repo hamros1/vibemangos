@@ -183,32 +183,31 @@ struct Quest
     }
 }
 
-/// The experience for turning the quest in at `playerLevel` (quest rate 1).
+/**
+ * The experience for turning the quest in at `playerLevel` (quest rate 1).
+ *
+ * A quest's full experience is its money at the highest level over 0.6: that money is 60% of the experience in
+ * copper (`RewMoneyMaxLevel`, as 1.12's quest data has it; Wowpedia's pre-4.0 quest pages: Shipment to Stormwind,
+ * 800 XP "or 4s 80c at max level"). Classic Era's QuestXP table holds the same values for most quests, but rounds a
+ * fifth of them differently (Bounty on Garrick Padfoot: 340 in 1.12, 335 in the table): the 1.12 values win
+ * (docs/FORMULAS.md, "Quest experience").
+ *
+ * Five levels above the quest the experience falls to 80%, 60%, 40%, 20%, and 10% from ten levels above, rounded to
+ * fives (Wowpedia "Experience point", "Quest XP"). A quest of no level (-1 or 0) is of the player's.
+ */
 uint questXp(const ref Quest quest, uint playerLevel) pure nothrow @nogc @safe
 {
-    import std.math : ceil;
+    import std.math : round;
 
     if (quest.rewMoneyMaxLevel == 0)
         return 0;
-    const qLevel = quest.questLevel > 0 ? cast(uint) quest.questLevel : 0;
-    float full = 0;
-    if (qLevel >= 65)
-        full = quest.rewMoneyMaxLevel / 6.0f;
-    else if (qLevel == 64)
-        full = quest.rewMoneyMaxLevel / 4.8f;
-    else if (qLevel == 63)
-        full = quest.rewMoneyMaxLevel / 3.6f;
-    else if (qLevel == 62)
-        full = quest.rewMoneyMaxLevel / 2.4f;
-    else if (qLevel == 61)
-        full = quest.rewMoneyMaxLevel / 1.2f;
-    else if (qLevel > 0)
-        full = quest.rewMoneyMaxLevel / 0.6f;
-    static immutable float[5] reduced = [0.8f, 0.6f, 0.4f, 0.2f, 0.1f];
+    const full = round(quest.rewMoneyMaxLevel / 0.6);
+    const qLevel = quest.levelFor(playerLevel);
     if (playerLevel <= qLevel + 5)
-        return cast(uint) ceil(full);
+        return cast(uint) full;
+    static immutable double[5] reduced = [0.8, 0.6, 0.4, 0.2, 0.1];
     const over = playerLevel - qLevel - 6;
-    return cast(uint) ceil(full * reduced[over < 4 ? over : 4]);
+    return cast(uint)(round(full * reduced[over < 4 ? over : 4] / 5) * 5);
 }
 
 /// A character's progress in a quest (a `character_queststatus` row).
@@ -393,7 +392,11 @@ unittest
     q.questLevel = 5;
     q.rewMoneyMaxLevel = 150;
     assert(questXp(q, 5) == 250 && questXp(q, 10) == 250, "full up to five levels above");
-    assert(questXp(q, 11) == 200 && questXp(q, 15) == 25 && questXp(q, 30) == 25);
+    assert(questXp(q, 11) == 200 && questXp(q, 14) == 50 && questXp(q, 15) == 25 && questXp(q, 30) == 25);
+    q.rewMoneyMaxLevel = 204; // Bounty on Garrick Padfoot: 340 XP
+    assert(questXp(q, 5) == 340 && questXp(q, 11) == 270 && questXp(q, 12) == 205, "80%, 60%, to fives");
+    q.questLevel = -1;
+    assert(questXp(q, 30) == 340, "of the player's level");
 
     auto data = new QuestData;
     Quest first, second;

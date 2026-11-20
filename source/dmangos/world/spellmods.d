@@ -64,10 +64,11 @@ T applySpellMod(T)(const(Aura)[] auras, SpellModOp op, const ref SpellInfo spell
                 continue;
             if (aura.spell.id == spell.id || !affects(aura, i, spell))
                 continue;
+            // (each stack's: Combustion's 10% a fire spell)
             if (type == AuraType.addFlatModifier)
-                flat += aura.amount[i];
+                flat += aura.amount[i] * cast(int) aura.stacks;
             else
-                percent += aura.amount[i];
+                percent += aura.amount[i] * cast(int) aura.stacks;
         }
     if (flat == 0 && percent == 0)
         return value;
