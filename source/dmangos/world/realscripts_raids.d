@@ -451,7 +451,14 @@ unittest
                 assert(aura !is null && aura.stacks == 5, format!"Hakkar's Power: %s stacks, not 5"(
                     aura is null ? 0 : aura.stacks));
             }),
-            Stage(0, 90, [24327, 24178, 24328, 24324])], -1_309_020),
+            Stage(0, 90, [24327, 24178, 24328, 24324]),
+            // a priest slain (Jeklik's death told to the copy): a stack fewer
+            Stage(0, 1, null, null, null, null, (Scene s, Creature boss) { s.signalCopy(0, 3); }),
+            Stage(0, 1, null, null, null, null, (Scene s, Creature boss) {
+                const aura = boss.auras.find(hakkarsPower);
+                assert(aura !is null && aura.stacks == 4, format!"Hakkar's Power: %s stacks, a priest slain"(
+                    aura is null ? 0 : aura.stacks));
+            })], -1_309_020),
         // Renataki (summoned by the Edge of Madness): list 1508401 (Thousand Blades, Gouge, Thrash, Vanish).
         Boss("Renataki", 309, 15084, -1, [], [Stage(0, 32, [24649, 24698, 3391, 24699])], 0, 0, 2,
             Position(-11560, -1627, 41.3f)),
