@@ -77,6 +77,22 @@ struct StatInputs
     const(ItemTemplate)*[equipmentSlotEnd] equipment; /// null where nothing is equipped
     AuraMods auras;      /// what auras add (`dmangos.world.auras`)
     EnchantmentBonus enchantments; /// what the worn items' enchantments add (`dmangos.world.enchantments`)
+    const(ItemTemplate)* ammo; /// the ammunition set (`PLAYER_AMMO_ID`); null if none
+}
+
+/**
+ * The damage per second the ammunition `ammo` adds to `weapon`'s shots: its own damage, if it is a
+ * projectile that fits the weapon (arrows a bow or crossbow, bullets a gun); else none
+ * (CMaNGOS `Player::_ApplyAmmoBonuses`, `CheckAmmoCompatibility`).
+ */
+DamageRange ammoDps(const(ItemTemplate)* weapon, const(ItemTemplate)* ammo) pure nothrow @nogc @safe
+{
+    enum uint projectile = 6, arrow = 2, bullet = 3, bow = 2, gun = 3, crossbow = 18;
+    if (weapon is null || ammo is null || weapon.itemClass != ItemClass.weapon || ammo.itemClass != projectile)
+        return DamageRange(0, 0);
+    const fits = weapon.subClass == bow || weapon.subClass == crossbow ? ammo.subClass == arrow
+        : weapon.subClass == gun ? ammo.subClass == bullet : false;
+    return fits ? DamageRange(ammo.details.damage[0].min, ammo.details.damage[0].max) : DamageRange(0, 0);
 }
 
 /// What a player's auras add to its stats (`SPELL_AURA_MOD_STAT`, `MOD_RESISTANCE`, `MOD_ATTACK_POWER`, ...).
@@ -270,7 +286,8 @@ private float rangedAttackPower(ubyte classId, uint level, const float[5] s) pur
     }
 }
 
-/// Physical weapon damage, without auras or ammo.
+/// Physical weapon damage, without auras; a ranged weapon's with its ammunition's damage per second times its
+/// speed (CMaNGOS `Player::CalculateMinMaxDamage`).
 private void weaponDamage(const ref StatInputs input, AttackType type, ref PlayerStats result) pure nothrow @safe
 {
     static immutable ubyte[3] slots = [equipmentSlotMainhand, equipmentSlotOffhand, equipmentSlotRanged];
@@ -292,6 +309,12 @@ private void weaponDamage(const ref StatInputs input, AttackType type, ref Playe
     const fromAttackPower = max(attackPower, 0) / 14.0f * (result.attackTime[type] / 1000.0f);
     weaponMin += input.enchantments.damage[type];
     weaponMax += input.enchantments.damage[type];
+    if (type == AttackType.ranged && isWeapon)
+    {
+        const ammo = ammoDps(weapon, input.ammo), speed = result.attackTime[type] / 1000.0f;
+        weaponMin += ammo.min * speed;
+        weaponMax += ammo.max * speed;
+    }
     const pct = type == AttackType.offHand ? offHandDamagePct * input.auras.offHandDamage : 1.0f;
     result.damage[type] = DamageRange(max((fromAttackPower + weaponMin) * pct, 0.0f),
         max((fromAttackPower + weaponMax) * pct, 0.0f));
@@ -490,4 +513,36 @@ unittest
     const buffed = meleeChances(input);
     assert(buffed.crit == plain.crit + 5 && buffed.rangedCrit == plain.rangedCrit + 1);
     assert(buffed.dodge == plain.dodge + 2 && buffed.parry == 8 && buffed.block == 9);
+}
+
+// Ammunition adds its damage per second times the ranged weapon's speed; arrows add nothing to a gun.
+unittest
+{
+    import std.math : isClose;
+
+    auto bow = ItemTemplate.display(8106, 15);
+    bow.itemClass = ItemClass.weapon;
+    bow.subClass = 2;
+    bow.details.delay = 2000;
+    bow.details.damage[0].min = 3;
+    bow.details.damage[0].max = 6;
+    auto arrows = ItemTemplate.display(5996, 24);
+    arrows.itemClass = 6;
+    arrows.subClass = 2;
+    arrows.details.damage[0].min = 2;
+    arrows.details.damage[0].max = 2.5f;
+
+    StatInputs input;
+    input.race = 2;
+    input.classId = PlayerClass.hunter;
+    input.level = 1;
+    input.levelStats = LevelStats([20, 20, 20, 20, 20]);
+    input.classStats = ClassLevelStats(20, 0);
+    input.equipment[equipmentSlotRanged] = &bow;
+    const without = computeStats(input).damage[AttackType.ranged];
+    input.ammo = &arrows;
+    const with_ = computeStats(input).damage[AttackType.ranged];
+    assert(isClose(with_.min, without.min + 4) && isClose(with_.max, without.max + 5), "2 and 2.5 a second, 2 seconds");
+    bow.subClass = 3; // a gun
+    assert(computeStats(input).damage[AttackType.ranged] == without);
 }

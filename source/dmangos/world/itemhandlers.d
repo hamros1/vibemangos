@@ -80,10 +80,10 @@ private:
         send(ServerSellItem(vendor is null ? 0 : vendor.guid, item, result));
     }
 
-    /// "You receive item: ...". `received`: from an NPC; `created`: made.
-    void sendNewItem(const Item item, uint count, bool received, bool created)
+    /// "You receive item: ...". `received`: from an NPC; `created`: made ("You create: ..."); `showInChat`: a chat line.
+    void sendNewItem(const Item item, uint count, bool received, bool created, bool showInChat = true)
     {
-        send(ServerItemPushResult(player.guid, received, created, 1, item.bagSlot,
+        send(ServerItemPushResult(player.guid, received, created, showInChat, item.bagSlot,
             item.count == count ? item.slot : uint.max, item.entry, 0,
             cast(int) item.values[ITEM_FIELD_RANDOM_PROPERTIES_ID], count));
     }
@@ -100,6 +100,8 @@ private:
             refreshEquipSpells(); // their equip spells on or off
             player.refreshEquipmentStats(context.data);
         }
+        if (inventory.justEquipped.length)
+            applyEquipCooldowns();
         // Quest objectives that count items, first: a quest they complete changes the log's fields, which go
         // out in the same update as the items.
         if (inventory.hasChanges)
@@ -405,6 +407,7 @@ private:
                 return sendEquipError(EquipError(result, null, null, 0, request.item));
             player.values.set!PLAYER_AMMO_ID(request.item);
         }
+        player.refreshEquipmentStats(context.data); // the ammunition's damage in the ranged damage
         flushPlayerChanges();
     }
 

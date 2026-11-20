@@ -129,17 +129,41 @@ private:
         return true;
     }
 
-    /// One of the quests before it done (positive) or taken (negative).
+    /// Whether quest `id` is taken and not yet turned in (CMaNGOS `IsCurrentQuest`).
+    bool questIsCurrent(uint id)
+    {
+        const state = questState(id);
+        return state == QuestState.incomplete || (state == QuestState.complete && !questRewarded(id));
+    }
+
+    /**
+     * One of the quests before it done (positive) or taken (negative) (CMaNGOS
+     * `Player::SatisfyQuestPreviousQuest`). A quest before it in an exclusive group of its own kind, "each of
+     * all" (a negative `ExclusiveGroup`), counts only with every other quest of the group done (or taken)
+     * too, unless the quest asked for comes after another branch (its `PrevQuestId` is not where the group leads).
+     */
     bool satisfyPrevious(const ref Quest quest)
     {
         if (quest.prevQuests.length == 0)
             return true;
         foreach (prev; quest.prevQuests)
         {
-            if (prev > 0 && questRewarded(prev))
-                return true;
-            if (prev < 0 && questState(-prev) == QuestState.incomplete)
-                return true;
+            const prevId = prev < 0 ? -prev : prev;
+            const prevQuest = context.data.quests.quest(prevId);
+            if (prevQuest is null)
+                continue;
+            const met = prev > 0 ? questRewarded(prevId) : questIsCurrent(prevId);
+            if (!met)
+                continue;
+            if (prevQuest.exclusiveGroup >= 0)
+                return true; // none, or one of all
+            const leadsTo = prev > 0 ? quest.prevQuestId : (quest.prevQuestId < 0 ? -quest.prevQuestId : quest.prevQuestId);
+            if (quest.prevQuestId != 0 && prevQuest.nextQuestId != leadsTo)
+                return true; // a branch the group does not hold back
+            foreach (other; context.data.quests.exclusiveGroups.get(prevQuest.exclusiveGroup, null))
+                if (other != prevId && !(prev > 0 ? questRewarded(other) : questIsCurrent(other)))
+                    return false;
+            return true;
         }
         return false;
     }
@@ -722,6 +746,7 @@ private:
     /// Adds the quest to the log, its objectives at zero (items: what is carried), its starting item given.
     package void addQuest(const ref Quest quest)
     {
+        questObjectsStale = true;
         const slot = questSlot(0);
         auto q = &statusOf(quest.id);
         q.status = QuestState.incomplete;
@@ -733,7 +758,7 @@ private:
         q.timer = (quest.specialFlags & specialTimed) ? context.unixTime + quest.limitTime : 0;
         setQuestSlot(slot, quest.id, cast(uint) q.timer);
         if (quest.srcItemId && player.inventory.count(quest.srcItemId) == 0)
-            giveItem(quest.srcItemId, quest.srcItemCount ? quest.srcItemCount : 1);
+            giveItem(quest.srcItemId, quest.srcItemCount ? quest.srcItemCount : 1, true, false); // "You receive"
         foreach (i; 0 .. questObjectives)
             if (quest.reqItemId[i])
             {
@@ -746,6 +771,7 @@ private:
     /// The quest's objectives met; the log shows it complete.
     void completeQuest(uint id)
     {
+        questObjectsStale = true;
         auto q = &statusOf(id);
         q.status = QuestState.complete;
         q.changed = true;
@@ -755,6 +781,10 @@ private:
         ByteWriter w;
         w.put(id);
         deliver(Opcode.SMSG_QUESTUPDATE_COMPLETE, w.data);
+        // A flag quest (`QUEST_FLAGS_AUTO_REWARDED`) is turned in as soon as it is complete (CMaNGOS `CompleteQuest`).
+        if (const quest = context.data.quests.quest(id))
+            if (quest.questFlags & questFlagAutoRewarded)
+                rewardQuest(*quest, 0);
     }
 
     /// The quest's place found (or its event happened); complete if that was all.
@@ -789,6 +819,7 @@ private:
     /// A quest under way failed (a script found the player too far, or its creature dead).
     package void failQuest(uint id)
     {
+        questObjectsStale = true;
         auto q = id in player.questStatus;
         if (q is null || q.status != QuestState.incomplete)
             return;
@@ -807,9 +838,26 @@ private:
         flushPlayerChanges();
     }
 
+    /**
+     * The player released its spirit: its quests that must be done alive (`QUEST_FLAGS_STAY_ALIVE`) and are not
+     * yet complete fail (CMaNGOS `Player::FailQuestsOnDeath`, from `BuildPlayerRepop`).
+     */
+    package void failQuestsOnDeath()
+    {
+        uint[] failing;
+        foreach (id, ref q; player.questStatus)
+            if (q.status == QuestState.incomplete)
+                if (const quest = context.data.quests.quest(id))
+                    if ((quest.questFlags & questFlagStayAlive) && !quest.autoComplete)
+                        failing ~= id;
+        foreach (id; failing)
+            failQuest(id);
+    }
+
     /// An objective no longer met (an item given away).
     void incompleteQuest(uint id)
     {
+        questObjectsStale = true;
         auto q = &statusOf(id);
         q.status = QuestState.incomplete;
         q.changed = true;
@@ -942,14 +990,17 @@ private:
 
     void rewardQuest(const ref Quest quest, uint reward)
     {
+        questObjectsStale = true;
         foreach (i; 0 .. questObjectives)
             if (quest.reqItemId[i])
                 player.inventory.destroyCount(quest.reqItemId[i], quest.reqItemCount[i]);
         if (quest.rewChoiceCount && quest.rewChoiceItemId[reward])
-            giveItem(quest.rewChoiceItemId[reward], quest.rewChoiceItemCount[reward]);
+            giveItem(quest.rewChoiceItemId[reward], quest.rewChoiceItemCount[reward], true, false, false);
+        // Received from the quest, not made, and no chat line of its own: the reward window lists them
+        // (CMaNGOS `RewardQuest`).
         foreach (i; 0 .. questRewards)
             if (quest.rewItemId[i])
-                giveItem(quest.rewItemId[i], quest.rewItemCount[i]);
+                giveItem(quest.rewItemId[i], quest.rewItemCount[i], true, false, false);
         const slot = questSlot(quest.id);
         if (slot < maxQuestLogSize)
             setQuestSlot(slot, 0);
@@ -1187,6 +1238,13 @@ private:
         const id = player.values[PLAYER_QUEST_LOG_1_1 + 3 * slot];
         if (id)
         {
+            // The item the quest gave to start it (`SrcItemId`) is taken back (CMaNGOS `TakeQuestSourceItem`).
+            if (const quest = context.data.quests.quest(id))
+                if (quest.srcItemId)
+                {
+                    player.inventory.destroyCount(quest.srcItemId, quest.srcItemCount ? quest.srcItemCount : 1, true);
+                    flushInventory();
+                }
             auto q = &statusOf(id);
             q.status = QuestState.none;
             q.mobCount = 0;
@@ -1194,6 +1252,7 @@ private:
             q.changed = true;
         }
         setQuestSlot(slot, 0);
+        questObjectsStale = true;
         flushPlayerChanges();
         saveQuests();
     }
@@ -1202,17 +1261,79 @@ private:
     // Objectives
     // -----------------------------------------------------------------------
 
-    /// A creature of `entry` killed counts for the quests that ask for it.
+    /// A creature of `entry` killed counts for the quests that ask for it (in a raid group, raid quests only).
     package void killedMonster(uint entry, ulong guid)
     {
+        creditCreatureOrGo(cast(int) entry, 0, guid, true);
+    }
+
+    /**
+     * Whether `quest` progresses here: not in a raid group, or a raid quest (`QUEST_TYPE_RAID`; CMaNGOS
+     * `Quest::IsAllowedInRaid`, `Quests.IgnoreRaid` off). In a raid group kills, quest drops and quest objects
+     * count only for raid quests.
+     */
+    bool questAllowedHere(const ref Quest quest)
+    {
+        enum uint questTypeRaid = 62;
+        if (quest.type == questTypeRaid)
+            return true;
+        auto group = context.groups.of(player.guid);
+        return group is null || !group.isRaid;
+    }
+
+    /**
+     * The player's talk with `entry` (a gossip menu closed by its option): "speak to" objectives, which name the
+     * creature with no spell, count it (CMaNGOS `Player::TalkedToCreature`).
+     */
+    package void talkedToCreature(uint entry, ulong guid)
+    {
         creditCreatureOrGo(cast(int) entry, 0, guid);
+    }
+
+    /**
+     * A spell (0: a use) of this player's hit the creature or game object `guid`: its quest objectives count
+     * for the player, or in a group for each member at the group reward distance, alive or not yet released
+     * (CMaNGOS `Player::RewardPlayerAndGroupAtCast`). Pets do not count.
+     */
+    package void rewardPlayerAndGroupAtCast(ulong guid, uint spell)
+    {
+        import dmangos.world.character : Character;
+        import dmangos.world.creature : Creature;
+        import dmangos.world.gameobject : GameObject;
+        import dmangos.world.movement : Position;
+        import dmangos.world.player : DeathState;
+
+        int target;
+        Position at;
+        if (auto creature = cast(Creature) map.findObject(guid))
+        {
+            if (creature.petOwner)
+                return;
+            target = cast(int) creature.template_.entry;
+            at = creature.position;
+        }
+        else if (auto go = cast(GameObject) map.findObject(guid))
+        {
+            target = -cast(int) go.template_.entry;
+            at = go.position;
+        }
+        else
+            return;
+        auto group = context.groups.of(player.guid);
+        if (group is null)
+            return creditCreatureOrGo(target, spell, guid);
+        foreach (ref slot; group.members)
+            if (auto member = cast(Character) context.onlinePlayer(slot.guid))
+                if (member.player !is null && member.player.deathState != DeathState.ghost
+                        && (member is this || member.atGroupRewardDistance(map, at)))
+                    member.creditCreatureOrGo(target, spell, guid);
     }
 
     /**
      * Credit for a kill, or a spell cast on a creature or game object: `target` (a creature's entry, or minus a game
      * object's) counts for the objectives that ask for it with `spell` (0: killed, or used).
      */
-    package void creditCreatureOrGo(int target, uint spell, ulong guid)
+    package void creditCreatureOrGo(int target, uint spell, ulong guid, bool kill = false)
     {
         foreach (slot; 0 .. maxQuestLogSize)
         {
@@ -1223,6 +1344,8 @@ private:
             auto q = id in player.questStatus;
             if (quest is null || q is null || q.status != QuestState.incomplete || !quest.killOrCast)
                 continue;
+            if (kill && !questAllowedHere(*quest))
+                continue;
             foreach (i; 0 .. questObjectives)
             {
                 if (quest.reqCreatureOrGoId[i] != target || quest.reqSpellCast[i] != spell)
@@ -1231,6 +1354,7 @@ private:
                     continue;
                 ++q.mobCount[i];
                 q.changed = true;
+                questObjectsStale = true;
                 ByteWriter w;
                 w.put(id);
                 // A game object's entry as the client expects it: with the high bit.
@@ -1247,6 +1371,33 @@ private:
         flushPlayerChanges();
     }
 
+    /// The quest objects the client has may sparkle otherwise now: set when the quests or their items change.
+    package bool questObjectsStale;
+
+    /**
+     * Each tick, if the quests changed: the quest objects (chests and goobers whose quests need them) the client
+     * has are sent their sparkle (`GAMEOBJECT_DYN_FLAGS`) again, as it is for this player now.
+     */
+    package void refreshQuestObjects()
+    {
+        import dmangos.world.gameobject : GameObject;
+
+        if (!questObjectsStale || map is null || player is null)
+            return;
+        questObjectsStale = false;
+        foreach (o; map.objectsNear(player.position, context.config.visibilityDistance))
+            if (auto go = cast(GameObject) o)
+                if (go.activatesFor !is null)
+                    map.refreshViewer(player.guid, go);
+    }
+
+    /// Whether the player is on a battleground's map.
+    @property bool inBattlegroundMap()
+    {
+        const entry = map is null ? null : context.client.maps.lookup(map.id);
+        return entry !is null && entry.isBattleground;
+    }
+
     /// Whether a quest under way still needs `target` (as `creditCreatureOrGo` counts it).
     package bool needsCreatureOrGo(int target)
     {
@@ -1255,9 +1406,13 @@ private:
             if (q.status != QuestState.incomplete)
                 continue;
             if (const quest = context.data.quests.quest(id))
+            {
+                if (target < 0 && !questAllowedHere(*quest))
+                    continue; // a quest object of a non-raid quest is shut in a raid group
                 foreach (i; 0 .. questObjectives)
                     if (quest.reqCreatureOrGoId[i] == target && q.mobCount[i] < quest.reqCreatureOrGoCount[i])
                         return true;
+            }
         }
         return false;
     }
@@ -1299,6 +1454,7 @@ private:
                 }
                 q.itemCount[i] = counted;
                 q.changed = true;
+                questObjectsStale = true; // a chest that holds it may stop (or start) sparkling
             }
             if (q.status == QuestState.incomplete && canCompleteQuest(id))
                 completeQuest(id);
@@ -1324,6 +1480,8 @@ private:
             auto q = id in player.questStatus;
             if (quest is null || q is null || q.status != QuestState.incomplete)
                 continue;
+            if (!questAllowedHere(*quest) && !inBattlegroundMap)
+                continue; // hidden in a raid group, but in a battleground
             foreach (i; 0 .. questObjectives)
             {
                 if (quest.reqItemId[i] == item && q.itemCount[i] < quest.reqItemCount[i])

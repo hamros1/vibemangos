@@ -222,6 +222,7 @@ private:
         sendMovementOrder!(Opcode.SMSG_FORCE_MOVE_UNROOT)();
         sendReclaimDelay();
         flushPlayerChanges();
+        failQuestsOnDeath(); // on release, as CMaNGOS confirms
     }
 
     /// Tells the client how long until the ghost may take its body back, in milliseconds.

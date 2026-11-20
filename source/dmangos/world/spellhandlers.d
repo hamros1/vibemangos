@@ -55,6 +55,7 @@ private:
         bool triggered;
         bool active;
         ubyte persistentDone; // effects whose persistent area is made (once a cast, not once a target)
+        ulong castItemGuid;   // ... that very item, whose charges it takes (`dmangos.world.itemuse`)
     }
 
     /// A missile's effect on its target, due when it arrives.
@@ -146,6 +147,9 @@ private:
         const proto = item.proto;
         if (proto.requiredLevel > player.data.level)
             return sendEquipError(InventoryResult.cantEquipLevel, item);
+        if (const error = useItemError(player.inventory[bag, slot]))
+            return sendEquipError(error);
+        bindOnUse(player.inventory[bag, slot]);
         enum uint triggerOnUse = 0;
         foreach (ref use; proto.details.spells)
         {
@@ -160,7 +164,11 @@ private:
                 deliver(Opcode.SMSG_CAST_RESULT, castResultPacket(spell.id, SpellCastResult.dontReport, spell));
                 return;
             }
+            if (!hasChargesLeft(item))
+                return deliver(Opcode.SMSG_CAST_RESULT, castResultPacket(spell.id, SpellCastResult.noChargesRemain, spell));
+            usingItemGuid = item.fullGuid; // its charges are taken when the cast goes
             castSpell(spell, targets, false, proto.entry);
+            usingItemGuid = 0;
             break;
         }
     }
@@ -392,6 +400,7 @@ private:
             return result;
         }
         auto c = Casting(spell, targets, 0, itemEntry, triggered, true);
+        c.castItemGuid = itemEntry ? usingItemGuid : 0;
         // What a cast ends as it starts (`Spell::Prepare`): an item's use, then any action; not a triggered spell's,
         // nor one that is not an action (`SPELL_ATTR_EX2_NOT_AN_ACTION`).
         enum uint notAnAction = 0x10000000;
@@ -580,6 +589,8 @@ private:
         // Tame Beast's twenty seconds are up: the beast is tamed.
         if (!cancelled && spell.id == imported!"dmangos.world.pethandlers".spellTameBeast)
             tameBeastChannelDone(channelTarget);
+        if (!cancelled && channelTarget)
+            rewardPlayerAndGroupAtCast(channelTarget, spell.id); // a channel at a quest's creature or object
         // A channel cancelled: its spots go with it.
         if (cancelled)
             foreach_reverse (k, ref area; persistentAreas)
@@ -1075,6 +1086,14 @@ private:
         const goResult = checkGameObjectTarget(spell, targets, itemEntry);
         if (goResult != SpellCastResult.ok)
             return goResult;
+        // An item: disenchanted, its lock picked (`dmangos.world.professions`).
+        const itemResult = checkItemTarget(spell, targets, itemEntry, start);
+        if (itemResult != SpellCastResult.ok)
+            return itemResult;
+        // Its spell focus near (an anvil, a forge, a fire), then reagents, then tools in the bags.
+        const focusResult = checkSpellFocus(spell);
+        if (focusResult != SpellCastResult.ok)
+            return focusResult;
         if (!triggered && itemEntry == 0)
         {
             const cost = costOf(*spell);
@@ -1085,6 +1104,12 @@ private:
                     return SpellCastResult.reagents;
             if (!hasAmmoFor(spell))
                 return SpellCastResult.noAmmo;
+        }
+        if (!triggered)
+        {
+            const toolResult = checkTools(spell);
+            if (toolResult != SpellCastResult.ok)
+                return toolResult;
         }
         return SpellCastResult.ok;
     }
@@ -1357,10 +1382,8 @@ private:
                 if (!autoRepeats(spell))
                     takeAmmo(spell); // an auto-repeating shot's is taken as it shoots
             }
-            else if (const proto = c.castItemEntry in context.data.items)
-                foreach (i, ref use; proto.details.spells)
-                    if (use.id == spell.id && proto.spellCharges[i] < 0)
-                        player.inventory.destroyCount(c.castItemEntry, 1);
+            else
+                takeCastItem(c.castItemEntry, c.castItemGuid); // its charges, and the item if used up
             flushInventory();
         }
 
@@ -1389,9 +1412,9 @@ private:
             }
             else if (a == ImplicitTarget.gameObject || a == ImplicitTarget.gameObjectItem)
             {
-                if (!c.targets.gameObject)
-                    continue; // an item's lock: not yet
-                targets = [c.targets.gameObject];
+                if (!c.targets.gameObject && !(a == ImplicitTarget.gameObjectItem && c.targets.item))
+                    continue;
+                targets = [c.targets.gameObject ? c.targets.gameObject : player.guid]; // an item: the caster's own
             }
             else if (a == ImplicitTarget.unitScriptNearCaster)
             {
@@ -1467,6 +1490,11 @@ private:
                 if (auto creature = cast(Creature) map.findObject(r.guid))
                     if (creature.alive && creature.ai !is null)
                         creature.ai.spellHitBy(player.guid, spell.id, 1u << spell.casting.school, map);
+        // Quest objectives for a spell cast at a creature or game object (`ReqSpellCast`), a channel's when it ends.
+        if (!(spell.attributesEx & (channeled | selfChanneled)) && !autoRepeats(spell) && !isNextMeleeSwingSpell(*spell))
+            foreach (r; results)
+                if (r.miss == SpellMissInfo.none)
+                    rewardPlayerAndGroupAtCast(r.guid, spell.id);
         spendChargedMods(spell, chargedAtStart, c.triggered);
         if (castCombo)
         {
@@ -1627,8 +1655,21 @@ private:
         case SpellEffect.skinning: // SPELL_EFFECT_SKINNING
             skinCreature(target);
             break;
-        case SpellEffect.openLock: // SPELL_EFFECT_OPEN_LOCK
-            openLock(spell, i, target, c.castItemEntry);
+        case SpellEffect.openLock, SpellEffect.openLockItem: // SPELL_EFFECT_OPEN_LOCK, _OPEN_LOCK_ITEM: a game object's lock, or an item's
+            if (c.targets.gameObject)
+                openLock(spell, i, c.targets.gameObject, c.castItemEntry);
+            else if (c.targets.item)
+                openItemLock(spell, i, c.targets.item, c.castItemEntry);
+            break;
+        case SpellEffect.questComplete: // SPELL_EFFECT_QUEST_COMPLETE: the target player's quest of the misc value (`AreaExploredOrEventHappens`)
+        {
+            auto who = target == player.guid ? this : cast(typeof(this)) context.onlinePlayer(target);
+            if (who !is null && who.player !is null && spell.miscValue[i] > 0)
+                who.areaExploredOrEventHappens(cast(uint) spell.miscValue[i]);
+            break;
+        }
+        case SpellEffect.disenchant: // SPELL_EFFECT_DISENCHANT
+            disenchantItem(spell, c.targets.item);
             break;
         case SpellEffect.interruptCast: // SPELL_EFFECT_INTERRUPT_CAST: the target's cast ends, and its school is locked out for the interrupt's time
         {
@@ -1710,7 +1751,7 @@ private:
             break;
         case SpellEffect.createItem:
             if (spell.itemType[i])
-                if (giveItem(spell.itemType[i], value > 0 ? value : 1))
+                if (giveItem(spell.itemType[i], value > 0 ? value : 1, true, true)) // "You create"
                     updateCraftSkill(spell.id); // made: a chance to learn from it
             break;
         case SpellEffect.feedPet: // SPELL_EFFECT_FEED_PET
@@ -1740,21 +1781,21 @@ private:
         // Not done by a player's cast (some, such as skills and proficiencies, are done when a spell is learned):
         case SpellEffect.portalTeleport, SpellEffect.environmentalDamage, SpellEffect.powerDrain,
             SpellEffect.healthLeech, SpellEffect.bind, SpellEffect.portal, SpellEffect.ritualBase,
-            SpellEffect.ritualSpecialize, SpellEffect.ritualActivatePortal, SpellEffect.questComplete,
+            SpellEffect.ritualSpecialize, SpellEffect.ritualActivatePortal,
             SpellEffect.addExtraAttacks, SpellEffect.dodge, SpellEffect.evade, SpellEffect.parry,
             SpellEffect.block, SpellEffect.weapon, SpellEffect.defense, SpellEffect.summon, SpellEffect.leap,
             SpellEffect.triggerMissile, SpellEffect.summonChangeItem, SpellEffect.spellDefense,
             SpellEffect.language, SpellEffect.dualWield, SpellEffect.summonGuardian,
             SpellEffect.teleportUnitsFaceCaster, SpellEffect.skillStep, SpellEffect.addHonor, SpellEffect.spawn,
             SpellEffect.tradeSkill, SpellEffect.stealth, SpellEffect.detect, SpellEffect.forceCriticalHit,
-            SpellEffect.guaranteeHit, SpellEffect.openLockItem, SpellEffect.proficiency, SpellEffect.powerBurn,
+            SpellEffect.guaranteeHit, SpellEffect.proficiency, SpellEffect.powerBurn,
             SpellEffect.threat, SpellEffect.healthFunnel, SpellEffect.powerFunnel, SpellEffect.healMaxHealth,
             SpellEffect.distract, SpellEffect.pull, SpellEffect.summonPossessed,
             SpellEffect.healMechanical, SpellEffect.summonObjectWild, SpellEffect.sanctuary,
             SpellEffect.createHouse, SpellEffect.bindSight, SpellEffect.stuck,
             SpellEffect.summonPlayer, SpellEffect.activateObject, SpellEffect.threatAll,
             SpellEffect.enchantHeldItem, SpellEffect.summonPhantasm, SpellEffect.charge,
-            SpellEffect.knockBack, SpellEffect.disenchant, SpellEffect.inebriate,
+            SpellEffect.knockBack, SpellEffect.inebriate,
             SpellEffect.summonObjectSlot1, SpellEffect.summonObjectSlot2, SpellEffect.summonObjectSlot3,
             SpellEffect.summonObjectSlot4, SpellEffect.dispelMechanic, SpellEffect.destroyAllTotems,
             SpellEffect.durabilityDamage, SpellEffect.summonDemon, SpellEffect.attackMe,

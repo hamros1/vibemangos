@@ -131,6 +131,7 @@ struct LootStores
     LootStore skinning;   /// `skinning_loot_template`: a creature's skin (by `SkinningLootId`)
     LootStore pickpocketing; /// `pickpocketing_loot_template`: a creature's pockets (by `PickpocketLootId`)
     LootStore mail;       /// `mail_loot_template`: what a templated letter holds (by its template)
+    LootStore disenchant; /// `disenchant_loot_template`: what an item disenchants into (by its `DisenchantID`)
 
     /// Every store, empty (each named after its table: `creature_loot_template`, ...).
     static LootStores create()
@@ -370,6 +371,8 @@ final class Loot
     void delegate() changed;
     /// Told when nobody has anything left to take.
     void delegate() lootedForAll;
+    /// Told first when a looter releases it (a disenchanted item's loot: what is left goes into the bags).
+    void delegate(Looter) beforeRelease;
 
     ///
     this(ulong target, FindLooter find)
@@ -755,6 +758,8 @@ final class Loot
     /// `looter` releases a corpse's loot: the window closes; the current looter lets its items go to the others.
     void release(Looter looter)
     {
+        if (beforeRelease !is null)
+            beforeRelease(looter);
         const guid = looter.looterGuid;
         if (guid == currentLooter)
             foreach (item; items)

@@ -55,6 +55,13 @@ enum SpellCastResult : ubyte
     noPower = 0x4D,
     outOfRange = 0x59,
     reagents = 0x5C,
+    requiresSpellFocus = 0x5E, /// "Requires %s": the spell focus id follows
+    totems = 0x78,             /// a tool missing: the spell's tools follow
+    cantBeDisenchanted = 0x0C,
+    itemGone = 0x26,
+    itemNotFound = 0x27,
+    tryAgain = 0x7A,           /// "Failed attempt"
+    noChargesRemain = 0x44,
     noAmmo = 0x43,
     spellInProgress = 0x61,
     targetsDead = 0x65,
@@ -355,12 +362,20 @@ ubyte[] castResultPacket(uint spell, SpellCastResult result, const SpellInfo* in
             w.put(cast(uint) info.equippedItemSubClassMask);
         }
         else if (info !is null && result == SpellCastResult.reagents)
+        {
             foreach (i, reagent; info.reagents)
                 if (reagent > 0)
                 {
                     w.put(cast(uint) reagent);
                     break;
                 }
+        }
+        else if (info !is null && result == SpellCastResult.requiresSpellFocus)
+            w.put(info.casting.requiresSpellFocus);
+        else if (info !is null && result == SpellCastResult.totems)
+            foreach (totem; info.casting.totems)
+                if (totem)
+                    w.put(totem);
     }
     return w.data.dup;
 }

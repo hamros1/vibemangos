@@ -755,6 +755,17 @@ final class Map : CombatWorld, GameObjectWorld
             replicator.values(peer, id, who.character.guid, bytes);
     }
 
+    /**
+     * What one viewer sees of a `PerViewer`'s personal fields is sent to it again, if its client has the object:
+     * its quests changed, and with them which quest objects sparkle for it (CMaNGOS `UpdateForQuestWorldObjects`).
+     */
+    void refreshViewer(ulong viewer, MapObject object)
+    {
+        if (cast(PerViewer) object is null || !seesObject(viewer, object.guid))
+            return;
+        personalize(at(slotFor(viewer)).player, object, true);
+    }
+
     /// Whether the player's client has the object.
     bool seesObject(ulong player, ulong object) const
     {

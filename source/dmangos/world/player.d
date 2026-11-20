@@ -226,6 +226,7 @@ final class Player : InventoryOwner
         inventory = new Inventory(world, this, &values, nextItemGuid);
 
         loadItems();
+        values.set!PLAYER_AMMO_ID(character.ammoId); // its damage counts in the ranged damage
         computeDerived(world);
         setPlayerFields(world, client);
         setSkills(abilities.skills);
@@ -1080,6 +1081,7 @@ private:
                         if (const effects = item.enchantment(enchantSlot) in world.enchantmentEffects)
                             input.enchantments.add(*effects, attack);
                 }
+        input.ammo = values[PLAYER_AMMO_ID] in world.items;
         // What auras add (stat and resistance modifiers, ...).
         foreach (i; 0 .. 5)
         {

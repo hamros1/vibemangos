@@ -241,20 +241,21 @@ private:
     /**
      * For every item worn: the on-equip spells of the unbroken items
      * worn are on as auras (lasting while worn), and the bonuses of the item sets they make up;
-     * those of items taken off (or broken) go.
+     * those of items taken off (or broken) go. The bags in the bag slots count as worn (CMaNGOS
+     * `_ApplyAllItemMods` goes up to `INVENTORY_SLOT_BAG_END`): a quiver's or ammo pouch's ranged haste.
      */
     package void refreshEquipSpells()
     {
-        import dmangos.world.defines : equipmentSlotEnd;
+        import dmangos.world.defines : inventorySlotBag0, inventorySlotBagEnd;
 
         import dmangos.world.enchantments : EnchantmentType;
 
         enum uint onEquip = 1, applyAura = 6;
         uint[uint] wanted; // spell -> how many worn items give it
         uint[uint] worn; // item set -> items of it worn
-        foreach (ubyte slot; 0 .. equipmentSlotEnd)
+        foreach (ubyte slot; 0 .. inventorySlotBagEnd)
         {
-            const item = player.inventory.equipped(slot);
+            const item = player.inventory[inventorySlotBag0, slot];
             if (item is null || item.proto is null || (item.maxDurability && item.durability == 0))
                 continue;
             foreach (ref s; item.proto.details.spells)

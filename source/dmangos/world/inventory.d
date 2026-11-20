@@ -695,6 +695,10 @@ final class Inventory
 
     /// Whether worn items changed, so the owner's stats must be worked out again.
     bool equipmentChanged;
+    /// Items put on (`equip`) since the owner last looked: their on-use spells' equip cooldown starts.
+    Item[] justEquipped;
+    /// Items with a duration (`ITEM_FIELD_DURATION`) that came into the inventory since the owner last looked.
+    Item[] newlyTimed;
 
     /// `nextGuid` numbers new items; `fields` are the owner's.
     this(const WorldData world, InventoryOwner owner, UpdateValues* fields, uint delegate() nextGuid)
@@ -1468,6 +1472,7 @@ final class Inventory
     /// Wears `item` at `pos`, binding it if it binds.
     Item equip(ushort pos, Item item)
     {
+        justEquipped ~= item;
         visualize(pos & 0xFF, item);
         if (owner.alive)
             equipmentChanged = true; // its stats change the owner's
@@ -2121,6 +2126,8 @@ private:
     {
         if (!item.sent && !toCreate.canFind!(other => other is item))
             toCreate ~= item;
+        if (item.values[ITEM_FIELD_DURATION])
+            newlyTimed ~= item;
     }
 
     /// The item is gone: the client forgets it if it was told about it.
