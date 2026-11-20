@@ -458,7 +458,7 @@ ubyte[] nonMeleeDamageLog(ulong target, ulong attacker, uint spell, uint damage,
 {
     enum uint hitTypeCrit = 0x02;
     ByteWriter w;
-    w.put(target); // whole, as CMaNGOS and vmangos write it (the caster packed)
+    w.putPackedGuid(target);
     w.putPackedGuid(attacker);
     w.put(spell);
     w.put(damage);
@@ -477,7 +477,7 @@ ubyte[] nonMeleeDamageLog(ulong target, ulong attacker, uint spell, uint damage,
 ubyte[] healLog(ulong target, ulong caster, uint spell, uint amount, bool crit)
 {
     ByteWriter w;
-    w.put(target); // whole, as CMaNGOS and vmangos write it (the caster packed)
+    w.putPackedGuid(target);
     w.putPackedGuid(caster);
     w.put(spell);
     w.put(amount);
@@ -489,7 +489,7 @@ ubyte[] healLog(ulong target, ulong caster, uint spell, uint amount, bool crit)
 ubyte[] energizeLog(ulong target, ulong caster, uint spell, uint power, uint amount)
 {
     ByteWriter w;
-    w.put(target); // whole, as CMaNGOS and vmangos write it (the caster packed)
+    w.putPackedGuid(target);
     w.putPackedGuid(caster);
     w.put(spell);
     w.put(power);
