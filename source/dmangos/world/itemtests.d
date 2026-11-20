@@ -159,7 +159,8 @@ unittest
 /**
  * A lockbox (an item with a lockpicking lock): it does not open unpicked; Pick Lock with too little skill is
  * refused (`LOW_CASTLEVEL`), with enough it unlocks it (`ITEM_DYNFLAG_UNLOCKED`) and shows its loot; picked
- * again it is `ALREADY_OPEN`.
+ * again it is `ALREADY_OPEN`. Pick Lock as spell_template has it (1804: misc 1, base points 4, dice 1, 5 points
+ * a level from spellLevel 1), cast by a level 60 rogue: its lockpicking skill counts, not its level.
  */
 unittest
 {
@@ -178,13 +179,22 @@ unittest
     lockRow[9] = 1;  // lockpicking
     lockRow[17] = 50; // at 50
     context.client.locks = typeof(context.client.locks).parse(buildDbc(lockFormat, [lockRow]), "Lock.dbc");
-    context.data.spells.spells[pickLock] = testSpell(pickLock, 33, 26, 0); // SPELL_EFFECT_OPEN_LOCK, locked target
-    context.data.spells.spells.edit(pickLock).miscValue[0] = 1; // opens lockpicking locks
-    context.data.spells.spells.edit(pickLock).casting.dmgClass = DamageClass.none;
+    context.data.spells.spells[pickLock] = testSpell(pickLock, 33, 26, 5); // SPELL_EFFECT_OPEN_LOCK, locked target
+    with (*context.data.spells.spells.edit(pickLock))
+    {
+        miscValue[0] = 1; // opens lockpicking locks
+        basePoints[0] = 4;
+        baseDice[0] = 1;
+        casting.realPointsPerLevel[0] = 5;
+        spellLevel = 1;
+        casting.baseLevel = 1;
+        casting.dmgClass = DamageClass.none;
+    }
     context.data.items.edit(itemJerky).details.lockId = boxLock; // the "jerky" is a lockbox now
     context.data.loot.item.add(itemJerky, lootRow(itemShirt, 100, 0, 1, 1, 0));
 
-    auto rogue = loggedIn(context, db, 7, "Rogue", Position(-8949.95f, -132.49f, 83.53f));
+    auto rogue = loggedIn(context, db, 7, "Rogue", Position(-8949.95f, -132.49f, 83.53f), AccountLevel.player,
+        raceHuman, 0, 60);
     auto me = cast(Player) rogue.session.character;
     me.spells ~= pickLock;
     rogue.session.inWorld.storeLoot(itemJerky, 1, 0, false);
@@ -201,7 +211,7 @@ unittest
 
     me.setSkill(lockpicking, 10, 100);
     rogue.write(Opcode.CMSG_CAST_SPELL, castAt(pickLock, t));
-    assert(castReason(rogue.read(), extra) == SpellCastResult.lowCastLevel, "skill 10 against 50");
+    assert(castReason(rogue.read(), extra) == SpellCastResult.lowCastLevel, "skill 10 against 50, at level 60");
 
     me.setSkill(lockpicking, 150, 300); // far above: it never resists
     rogue.write(Opcode.CMSG_CAST_SPELL, castAt(pickLock, t));
