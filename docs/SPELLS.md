@@ -131,7 +131,7 @@ primary sources (docs/FORMULAS.md); CMaNGOS and vmangos are second opinions.
 | 3. auras and their ticks | done | 556 |
 | 4. what creatures lacked: wild objects, persistent areas, pets, items, spells taught, spawn, dispels, charges, extra attacks, totems, mana; the hit roll shared | done | 204 (101 with no creature to cast them) |
 | 5. targets once | not yet: a creature still resolves its implicit targets in `creaturecasting.d` (`targetsFor`), a player in `spellhandlers.d` (`go`, `areaTargets`) |  |
-| 6. procs once | not yet: a pet's procs are `creatureprocs.d`'s, a player's `procs.d`'s |  |
+| 6. procs once | in part: every creature's auras proc now (a mob's Thrash, not only a pet's), through `creatureprocs.d`; a player's are `procs.d`'s, with its class rules, cooldowns and weapon checks |  |
 
 Not done by a creature's cast yet (`doneBy`): activating game objects, teleports facing the caster,
 leaps, taxis, inebriation, pulls, and the effects only a player's spellbook, inventory or client make sense

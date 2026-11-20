@@ -66,9 +66,10 @@ def main():
     played = [s for s in known if any(e not in (0, LEARN_SPELL) for e in spells[s][1])]
 
     effect_names, aura_names = enum_names('SpellEffect'), enum_names('AuraType')
-    handlers = open(os.path.join(SOURCE, 'world', 'spellhandlers.d')).read()
-    tell = handlers.index('static bool[SpellEffect] told')
-    undone_block = handlers[handlers.rindex('case SpellEffect.', 0, tell - 1500):tell]
+    # The effects no caster's cast does: the list the effect switch is checked against (`notDoneByAny`).
+    effects_code = open(os.path.join(SOURCE, 'world', 'spelleffects.d')).read()
+    start = effects_code.index('notDoneByAny = [')
+    undone_block = effects_code[start:effects_code.index('];', start)]
     undone = set(re.findall(r'SpellEffect\.(\w+)', undone_block))
     code = ''
     for path in glob.glob(os.path.join(SOURCE, '**', '*.d'), recursive=True):

@@ -46,7 +46,7 @@ struct SpellCast
 }
 
 /// The effects no caster's cast does yet (some, such as skills and proficiencies, are done when a spell is learned).
-private immutable SpellEffect[] notDoneByAny = [SpellEffect.portalTeleport, SpellEffect.environmentalDamage,
+private enum SpellEffect[] notDoneByAny = [SpellEffect.portalTeleport, SpellEffect.environmentalDamage,
     SpellEffect.bind, SpellEffect.portal, SpellEffect.ritualBase, SpellEffect.ritualSpecialize,
     SpellEffect.ritualActivatePortal, SpellEffect.dodge, SpellEffect.evade, SpellEffect.parry, SpellEffect.block,
     SpellEffect.weapon, SpellEffect.defense, SpellEffect.triggerMissile, SpellEffect.summonChangeItem,
@@ -77,7 +77,7 @@ imported!"dmangos.world.spellcast".SpellMissInfo rollHit(ref Caster caster, cons
 }
 
 /// What a creature's cast does of what a player's does (the rest of the effects a player's does are its own yet).
-private immutable SpellEffect[] creaturesDo = [SpellEffect.none, SpellEffect.schoolDamage,
+private enum SpellEffect[] creaturesDo = [SpellEffect.none, SpellEffect.schoolDamage,
     SpellEffect.weaponDamageNoschool, SpellEffect.weaponPercentDamage, SpellEffect.weaponDamage,
     SpellEffect.normalizedWeaponDmg, SpellEffect.applyAura, SpellEffect.applyAreaAuraParty,
     SpellEffect.applyAreaAuraPet, SpellEffect.threat, SpellEffect.heal, SpellEffect.triggerSpell, SpellEffect.dummy,
@@ -94,16 +94,25 @@ private immutable SpellEffect[] creaturesDo = [SpellEffect.none, SpellEffect.sch
 /// Whether a cast of `kind` does `effect` (the NPC sweep names what is not done by this).
 bool doneBy(UnitKind kind, SpellEffect effect) pure nothrow @nogc @safe
 {
-    import std.algorithm.searching : canFind;
-
-    if (notDoneByAny.canFind(effect))
+    if (effect > SpellEffect.max || undoneByAny[effect])
         return false;
     final switch (kind)
     {
     case UnitKind.none: return false;
     case UnitKind.player: return true;
-    case UnitKind.creature: return creaturesDo.canFind(effect);
+    case UnitKind.creature: return doneByCreatures[effect];
     }
+}
+
+/// The two lists as tables by effect, made at compile time.
+private immutable bool[SpellEffect.max + 1] undoneByAny = table(notDoneByAny), doneByCreatures = table(creaturesDo);
+
+private bool[SpellEffect.max + 1] table(const SpellEffect[] effects) pure nothrow @safe
+{
+    bool[SpellEffect.max + 1] t;
+    foreach (e; effects)
+        t[e] = true;
+    return t;
 }
 
 /// An effect a cast of `caster`'s kind does not do yet: said once per effect and kind.
@@ -579,28 +588,16 @@ void applyEffect(ref Caster caster, const(SpellInfo)* spell, size_t i, ulong tar
     case SpellEffect.knockBack: // SPELL_EFFECT_KNOCK_BACK: a player thrown from the caster
         if (target != caster.guid)
             if (auto other = map.unit(target))
-                if (other.kind == UnitKind.player && p is null)
+                if (other.kind == UnitKind.player)
                     other.session.knockedBack(caster.position, spell.miscValue[i] / 10.0f, value / 10.0f);
         break;
     case SpellEffect.none:
         break;
-    // Not done by any caster's cast (`notDoneByAny`):
-    case SpellEffect.portalTeleport, SpellEffect.environmentalDamage, SpellEffect.bind, SpellEffect.portal,
-        SpellEffect.ritualBase, SpellEffect.ritualSpecialize, SpellEffect.ritualActivatePortal, SpellEffect.dodge,
-        SpellEffect.evade, SpellEffect.parry, SpellEffect.block, SpellEffect.weapon, SpellEffect.defense,
-        SpellEffect.triggerMissile, SpellEffect.summonChangeItem, SpellEffect.spellDefense,
-        SpellEffect.language, SpellEffect.dualWield,
-        SpellEffect.teleportUnitsFaceCaster, SpellEffect.skillStep, SpellEffect.addHonor,
-        SpellEffect.tradeSkill, SpellEffect.stealth, SpellEffect.forceCriticalHit, SpellEffect.guaranteeHit,
-        SpellEffect.proficiency, SpellEffect.healthFunnel, SpellEffect.powerFunnel, SpellEffect.pull,
-        SpellEffect.healMechanical,
-        SpellEffect.createHouse, SpellEffect.bindSight, SpellEffect.activateObject,
-        SpellEffect.threatAll, SpellEffect.enchantHeldItem, SpellEffect.summonPhantasm,
-        SpellEffect.inebriate, SpellEffect.destroyAllTotems,
-        SpellEffect.summonDemon, SpellEffect.spiritHeal, SpellEffect.skill,
-        SpellEffect.teleportGraveyard, SpellEffect.n122, SpellEffect.sendTaxi,
-        SpellEffect.pullTowards, SpellEffect.modifyThreatPercent, SpellEffect.n126, SpellEffect.n127,
-        SpellEffect.applyAreaAuraFriend, SpellEffect.applyAreaAuraEnemy:
+    // Not done by any caster's cast: `doneBy` returned before the switch.
+    static foreach (notDone; notDoneByAny)
+    {
+    case notDone:
         assert(0, "not done by any caster: `doneBy` returned before the switch");
+    }
     }
 }

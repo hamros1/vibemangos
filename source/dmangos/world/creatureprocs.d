@@ -1,6 +1,6 @@
 /**
- * Procs of a pet's auras: what a player's proc engine (`dmangos.world.procs`) does for its auras, for the auras of
- * the creature it owns, mixed into `dmangos.world.creatureai.CreatureAI`. A pet's swing or spell that hit (or
+ * Procs of a creature's auras: what a player's proc engine (`dmangos.world.procs`) does for its auras, for a
+ * creature's, mixed into `dmangos.world.creatureai.CreatureAI`. A creature's swing or spell that hit (or
  * missed) is a set of `ProcFlag`s and a `ProcHit`; each of its Proc Trigger Spell auras that the flags (its
  * `spell_proc_event` row's, else its spell's) and the
  * hit kinds allow rolls its chance, changed by its owner's talents (`SPELLMOD_CHANCE_OF_SUCCESS`: Frenzy on the
@@ -8,8 +8,9 @@
  * targets say: Frenzy Effect). A proc uses a charge (Intimidation's one), and an aura out of them goes. What a proc
  * casts sets off no procs.
  *
- * Only a pet's (a creature a player owns) proc so far: the world's creatures' auras with procs (a mob's Thrash) cast
- * spells whose effects a creature's cast does not all do yet.
+ * Every creature's auras proc so: a pet's, and the world's creatures' (a mob's Thrash, whose extra swings a creature's
+ * cast does now: `dmangos.world.spelleffects`). A player's proc engine (`dmangos.world.procs`) keeps its class rules,
+ * cooldowns and weapon checks of its own: one engine for both is still to come (docs/SPELLS.md, step 6).
  */
 module dmangos.world.creatureprocs;
 
@@ -29,7 +30,7 @@ mixin template CreatureProcs()
         import dmangos.world.context : WorldContext;
         import dmangos.world.spellmods : SpellModOp;
 
-        if (inCreatureProc || !me.petOwner || !me.alive || world_ is null || me.auras.list.length == 0)
+        if (inCreatureProc || !me.alive || world_ is null || me.auras.list.length == 0)
             return;
         auto context = cast(WorldContext) lore;
         if (context is null)
