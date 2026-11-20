@@ -448,7 +448,13 @@ What works now:
     Traitor's escort to Moonbrook ("The Defias Brotherhood": his lines on the way, the quest's event
     at the hideout, the quest failed if he is left behind or killed), Lady Katrana Prestor's
     conversation for "The True Masters", the scent of Lar'korwi's mate in Un'Goro, Life Tap
-    (health into mana), Curse of Agony's growing ticks, Hate to Zero (a creature's threat wipe), and
+    (health into mana), Curse of Agony's growing ticks, Hate to Zero (a creature's threat wipe), the spell
+    scripts of items, quests and the world (food's chewing, the enemies an opening calls on, the Muisek
+    vessels and the Super Snapper FX only at their creatures, the Wondervolt's shapes and the Orb of
+    Deception's looks, the stone skin of statues, the end of the Hex of Jammal'an, the Mark of Kazzak's
+    burst) and the item and holiday spells CMaNGOS's core scripts by id (the Deviate Fish, the
+    Noggenfogger Elixir, the engineers' gadgets, the Six Demon Bag, the Hallow's End treats and costumes,
+    the tributes, the heart candies, Elune's Candle), and
     Shadowfang Keep (its doors with their guardians, the prisoners who lead the way to the courtyard
     and open it, Archmage Arugal's bolts, curse and Thundershock), and Wailing Caverns (once the
     four Fanglords are slain, the Disciple of Naralex leads the way through two ambushes and

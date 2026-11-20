@@ -1363,6 +1363,65 @@ struct AuraTicked
     int amount;
 }
 
+// Spell scripts of items, quests and the world:
+
+/// The spell is about to be cast at `target` (its unit target; nothing if none): `SpellContext.refuse`
+/// makes the cast fail (CMaNGOS's `OnCheckCast`), as the spell's own rules would.
+struct CastChecked
+{
+    EntityRef caster;
+    EntityRef target;
+}
+
+/// The cast began (CMaNGOS's `OnSuccessfulStart`): its time runs, nothing of it happened yet.
+struct CastStarted
+{
+    EntityRef caster;
+    EntityRef target;
+}
+
+/// The spell's aura (its effect `effect`) is on `target`, five seconds more (CMaNGOS's `OnHeartbeat`: the
+/// unit's heartbeat).
+struct AuraHeartbeat
+{
+    EntityRef caster;
+    EntityRef target;
+    ubyte effect;
+}
+
+/// The spell's aura (its effect `effect`) went from `target`: its time ran out (`expired`), or it was cancelled, dispelled or
+/// taken away (CMaNGOS's `OnApply` with `apply` false; its `AURA_REMOVE_BY_EXPIRE`).
+struct AuraEnded
+{
+    EntityRef caster;
+    EntityRef target;
+    ubyte effect;
+    bool expired;
+}
+
+/// The spell's effect `effect` is about to reach `target` (CMaNGOS's `OnCheckTarget`): `SpellContext.exclude` passes
+/// it over. Asked of a creature's spells.
+struct TargetChecked
+{
+    EntityRef caster;
+    EntityRef target;
+    ubyte effect;
+}
+
+/// A periodic effect of the spell's aura on `target` ticked, its work done (CMaNGOS's `OnPeriodicTickEnd`).
+struct AuraTickEnded
+{
+    EntityRef caster;
+    EntityRef target;
+    ubyte effect;
+}
+
+/// Why a script refuses a cast (`SpellCastResult`, as the client shows it).
+enum CastRefusal : ubyte
+{
+    badTargets = 0x0A,      /// SPELL_FAILED_BAD_TARGETS: "Invalid target"
+}
+
 /// The core's side of a spell script's context (the caster's session, or creature, implements it).
 interface SpellHost
 {
@@ -1377,6 +1436,28 @@ interface SpellHost
     ActionResult hostSignalCreature(EntityRef to, uint id, int value);
     void hostLog(string text);
     ActionResult hostModifyThreat(EntityRef creature, EntityRef target, int percent);
+
+    // Spell scripts of items, quests and the world:
+    uint hostRandom(uint below);
+    ActionResult hostAddThreat(EntityRef creature, EntityRef target, float amount);
+    ActionResult hostSay(EntityRef speaker, int textEntry, EntityRef target);
+    ActionResult hostPlayVisual(EntityRef who, uint kit);
+    size_t hostEnemiesNear(EntityRef of, float range, EntityRef[] into);
+    ActionResult hostAttack(EntityRef creature, EntityRef victim);
+    bool hostInCombat(EntityRef who);
+    ActionResult hostUnitFlags(EntityRef creature, uint flags, bool set);
+    ActionResult hostRooted(EntityRef creature, bool on);
+    ActionResult hostArmed(EntityRef creature, bool armed);
+    ActionResult hostRemoveAura(EntityRef who, uint spell);
+    int hostPower(EntityRef who, ubyte power);
+    uint hostNativeDisplay(EntityRef who);
+    ActionResult hostTransformModel(EntityRef who, uint model);
+    ActionResult hostSayBroadcast(EntityRef speaker, uint text, EntityRef target);
+    bool hostHasAura(EntityRef who, uint spell);
+    ubyte hostRaceOf(EntityRef who);
+    ubyte hostGenderOf(EntityRef who);
+    ActionResult hostPlaySound(EntityRef player, uint sound);
+    ActionResult hostDespawn(EntityRef creature, uint delayMs);
 }
 
 /// `Powers`, as scripts use them.
@@ -1395,6 +1476,9 @@ struct SpellContext
     private bool consumed_;
     private bool amountSet;
     private int amount_;
+    private bool refused_;
+    private CastRefusal refusal_;
+    private bool excluded_;
 
     @disable this(this);
 
@@ -1445,6 +1529,99 @@ struct SpellContext
     {
         return host.hostModifyThreat(creature, target, percent);
     }
+
+    // Spell scripts of items, quests and the world:
+
+    /// A number below `below` (0 if it is 0), from the map's dice.
+    uint random(uint below) { return host.hostRandom(below); }
+
+    /// `AddThreat`: `target` is on `creature`'s threat list, by `amount` more (0: just on it).
+    ActionResult addThreat(EntityRef creature, EntityRef target, float amount = 0)
+    {
+        return host.hostAddThreat(creature, target, amount);
+    }
+
+    /// A creature says the `script_texts` row `entry` (negative), with its sound and emote, at `target`.
+    ActionResult say(EntityRef speaker, int entry, EntityRef target = EntityRef.init)
+    {
+        return host.hostSay(speaker, entry, target);
+    }
+
+    /// `SMSG_PLAY_SPELL_VISUAL`: visual kit `kit` (`SpellVisualKit.dbc`) on a unit, for all who see it.
+    ActionResult playVisual(EntityRef who, uint kit) { return host.hostPlayVisual(who, kit); }
+
+    /// The living creatures within `range` yards of `of` that are its enemies (critters not), as many as
+    /// `into` holds.
+    size_t enemiesNear(EntityRef of, float range, EntityRef[] into) { return host.hostEnemiesNear(of, range, into); }
+
+    /// A creature attacks `victim` (`AttackStart`).
+    ActionResult attack(EntityRef creature, EntityRef victim) { return host.hostAttack(creature, victim); }
+
+    /// Whether a unit is fighting.
+    bool inCombat(EntityRef who) { return host.hostInCombat(who); }
+
+    /// Sets (or clears) a creature's `UnitFlag`s.
+    ActionResult unitFlags(EntityRef creature, uint flags, bool set = true)
+    {
+        return host.hostUnitFlags(creature, flags, set);
+    }
+
+    /// A creature is held where it stands (`UNIT_STAT_ROOT`), or let go.
+    ActionResult rooted(EntityRef creature, bool on) { return host.hostRooted(creature, on); }
+
+    /// A creature's hands are empty (`LoadEquipment(0)`), or hold its own equipment again.
+    ActionResult armed(EntityRef creature, bool armed) { return host.hostArmed(creature, armed); }
+
+    /// A unit's aura of `spell` goes.
+    ActionResult removeAura(EntityRef who, uint spell) { return host.hostRemoveAura(who, spell); }
+
+    /// A unit's power of a kind; -1 if it has none of it (a warrior's mana) or is not here.
+    int power(EntityRef who, Power kind) { return host.hostPower(who, kind); }
+
+    /// A unit's own model (`UNIT_FIELD_NATIVEDISPLAYID`); 0 if it is not here.
+    uint nativeDisplay(EntityRef who) { return host.hostNativeDisplay(who); }
+
+    /// For the spell's transform aura on `who` (one of no creature's): it shows `model` (the Orb of Deception's).
+    ActionResult transformModel(EntityRef who, uint model) { return host.hostTransformModel(who, model); }
+
+    /// A creature says `broadcast_text` `text` (its sound and emote too), at `target`.
+    ActionResult sayBroadcast(EntityRef speaker, uint text, EntityRef target = EntityRef.init)
+    {
+        return host.hostSayBroadcast(speaker, text, target);
+    }
+
+    /// Whether a unit here has `spell`'s aura.
+    bool hasAura(EntityRef who, uint spell) { return host.hostHasAura(who, spell); }
+
+    /// A player's race (`Races`: 1 human ... 8 troll); 0 for anything else.
+    ubyte raceOf(EntityRef who) { return host.hostRaceOf(who); }
+
+    /// A player's sex: 0 male, 1 female (`Gender`); 2 for anything else.
+    ubyte genderOf(EntityRef who) { return host.hostGenderOf(who); }
+
+    /// `SMSG_PLAY_SOUND` for a player alone (`PlayDirectSound` to it).
+    ActionResult playSound(EntityRef player, uint sound) { return host.hostPlaySound(player, sound); }
+
+    /// A creature goes after `delayMs` (`ForcedDespawn`).
+    ActionResult despawn(EntityRef creature, uint delayMs = 0) { return host.hostDespawn(creature, delayMs); }
+
+    /// For `TargetChecked`: the effect passes this target over.
+    void exclude() { excluded_ = true; }
+
+    /// Whether a handler excluded the target.
+    @property bool excluded() const { return excluded_; }
+
+    /// For `CastChecked`: the cast fails, for `reason`.
+    void refuse(CastRefusal reason = CastRefusal.badTargets)
+    {
+        refused_ = true;
+        refusal_ = reason;
+    }
+
+    /// Whether a handler refused the cast, and why.
+    @property bool refused() const { return refused_; }
+    /// ditto
+    @property CastRefusal refusal() const { return refusal_; }
 
     /// For `AuraTicked`: what this tick does instead.
     void setAmount(int amount)

@@ -73,6 +73,22 @@ struct spell
     }
 }
 
+/**
+ * Spell scripts of items, quests and the world: a spell script serves these spells by id too, where
+ * `spell_scripts` names none: the spells CMaNGOS's core scripts by id (the item and holiday cases of
+ * `Spell::EffectDummy` and `EffectScriptEffect`). Beside `@spell`, whose first name it goes by.
+ */
+struct spellIds
+{
+    uint[] ids;
+
+    ///
+    this(uint[] ids...) pure nothrow @safe
+    {
+        this.ids = ids.dup;
+    }
+}
+
 /// An area trigger script, for the `scripted_areatrigger` rows with these `ScriptName`s.
 struct areaTrigger
 {
@@ -170,7 +186,9 @@ template KindInfo(ScriptKind kind)
     else static if (kind == ScriptKind.spell)
     {
         alias Context = SpellContext;
-        alias Events = AliasSeq!(EffectHit, AuraApplied, AuraTicked);
+        alias Events = AliasSeq!(EffectHit, AuraApplied, AuraTicked,
+            // Spell scripts of items, quests and the world:
+            CastChecked, CastStarted, AuraHeartbeat, AuraEnded, AuraTickEnded, TargetChecked);
         alias Attribute = .spell;
     }
     else static if (kind == ScriptKind.areaTrigger)
@@ -454,6 +472,21 @@ final class ScriptRuntime
     private ScriptType[] types;
     private Pool[] pools;
     private ushort[string][ScriptKind.max + 1] byName;
+    private string[uint] spellsById; // `spellIds`: the names of the scripts serving spells by id
+
+    /// The name of the spell script serving spell `id` by id (`spellIds`); null if none.
+    string spellScriptById(uint id) const
+    {
+        if (const name = id in spellsById)
+            return *name;
+        return null;
+    }
+
+    /// ditto: every spell served by id, with its script's name.
+    @property const(string[uint]) spellsServedById() const
+    {
+        return spellsById;
+    }
 
     /// The scripts of `Modules`, found and checked at compile time.
     static ScriptRuntime of(Modules...)()
@@ -475,6 +508,13 @@ final class ScriptRuntime
                             static foreach (uda; getUDAs!(S, KindInfo!kind.Attribute))
                                 foreach (name; uda.names)
                                     runtime.add(describe!(S, kind)(name));
+                            static if (kind == ScriptKind.spell)
+                                static foreach (uda; getUDAs!(S, spellIds))
+                                    foreach (id; uda.ids)
+                                    {
+                                        assert(id !in runtime.spellsById, "two scripts serve a spell by id");
+                                        runtime.spellsById[id] = getUDAs!(S, .spell)[0].names[0];
+                                    }
                         }
                     }}
         return runtime;
