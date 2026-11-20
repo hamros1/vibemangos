@@ -339,3 +339,40 @@ unittest
     me.runProcs(ProcFlag.takeMeleeSwing, attacker, swing);
     assert(shield.charges == 1, "3.6 s on: the next");
 }
+
+/**
+ * Diminishing returns in PvP (patch 1.4.0): an orc warlock's Fear (6215, 20 s) on a flagged human lasts 20 s, then
+ * 10, then 5, then not at all; 15 s after the last one ended, 20 again. Polymorph (118), which no 1.x patch note puts
+ * in a category, is never diminished. The rule before: every Fear lasted 20 s.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    import dmangos.world.defines : UnitFlags;
+    import dmangos.world.updatefields : UNIT_FIELD_FLAGS;
+
+    auto w = RealWorld.make();
+    auto lock = w.character(508, "Gulvar", 9, 60, [], raceOrc);
+    auto mark = w.character(509, "Marcus", classWarriorId, 60, []);
+    auto caster = cast(Character) lock.session.inWorld, victim = cast(Character) mark.session.inWorld;
+    victim.player.values.set!UNIT_FIELD_FLAGS(victim.player.values.get!UNIT_FIELD_FLAGS | UnitFlags.pvp);
+    int feared(uint spell)
+    {
+        caster.applyAuraEffect(spellOf(w, spell), 0, victim.player.guid);
+        auto aura = victim.player.auras.find(spell);
+        const lasts = aura is null ? 0 : aura.maxDuration;
+        if (aura !is null)
+            victim.removeAura(aura); // it ends (broken, say) at once
+        w.now += 1.seconds;
+        return lasts;
+    }
+    assert(feared(6215) == 20_000, "the first: whole");
+    assert(feared(6215) == 10_000, "the second: half");
+    assert(feared(6215) == 5000, "the third: a quarter");
+    assert(feared(6215) == 0, "the fourth: immune");
+    w.now += 15.seconds;
+    assert(feared(6215) == 20_000, "15 s after the last ended: whole again");
+    foreach (_; 0 .. 4)
+        assert(feared(118) == 20_000, "Polymorph: no category");
+}

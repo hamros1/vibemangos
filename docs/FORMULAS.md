@@ -631,3 +631,35 @@ since 1.12 (2335 of 3060 effect masks differ from 1.12's `EffectItemType`). Tran
 (SpellClassOptions) back to 1.12's flags, 70 of the 132 `spell_affect` rows agree and 62 do not, both ways (Fire
 Power's would take in Frostbolt, Polymorph and the conjures, whose 1.12 flag 0x40000000 a fire spell shares, and lose Ignite's 0x8000000). It is no source for 1.12's masks;
 `spell_affect` and the tooltip fixes (`world/tooltipmasks.d`) stay.
+
+## Diminishing returns
+
+**What:** crowd control in PvP lasting less when repeated (diminishing.d; aurahandlers.d `diminishedDuration`, a
+player's own and a pet's or totem's on a player, character.d `auraFrom`).
+
+**Source: Blizzard's 1.x patch notes** (Warcraft Wiki "Patch 1.4.0", oldid 6971245, and 1.8.0, 1.9.0, 1.10.0, 1.11.0).
+1.4.0: "When a spell with diminishing returns is used against a target in PvP, the first effect has full duration. On
+the second use of the same category of spell (e.g. slowing), that spell's duration is reduced by 50%. On the third use,
+the duration is reduced by 75%. On the fourth attempt, the target becomes immune to the spell. Spells must be used on
+the same target within 15 seconds of the *end* of the duration in order to be diminished." It added "Frost Shock"
+("considered a slowing effect"), "Entangling Roots", "Frost Nova" ("an immobilizing effect"), and "Seduction (Succubus) -
+Is now considered a Fear effect". 1.8.0: "Death Coil ... now causes a short Fear effect that is not diminished";
+"Gnomish Mind Control Cap - Is now subject to diminishing returns in the Charm category". 1.9.0: the stuns of
+Improved Starfire, Improved Concussive Shot, Impact, Seal of Justice, Blackout, Mace Specialization, Pyroclasm and
+Improved Revenge "no longer diminish or [are] diminished by controlled stun abilities and spells (e.g. Cheap Shot,
+Hammer of Justice, Charge etc.)". 1.10.0: "Freezing Traps are now affected by diminishing returns". 1.11.0: "Grenades
+and Mortars now are set to use the 'Controlled Stun' mechanic".
+
+**Rule:** PvP only (a player's, or its pet's or totem's, hostile aura on a player). Categories: controlled stuns (the
+stun mechanic, but the eight proc stuns of 1.9.0), fear (the fear mechanic, and Seduction), charm (the charm mechanic),
+immobilizing (Entangling Roots, Frost Nova), slowing (Frost Shock), Freezing Trap (the freeze mechanic). Full, half, a
+quarter, then immune until 15 s after the last one's end (its break counts as its end). Other crowd control is not
+diminished: the notes say "It is our goal to set as few spells as possible to be diminished".
+
+**Not from a source:** whether the 1.9.0 proc stuns diminish among themselves (taken: not at all); the immune
+attempt shows nothing (no "Immune" in the combat log yet). Classic Era resets "dynamically between 15-20 seconds"
+(Warcraft Wiki "Diminishing returns"), a later implementation; 1.12's 15 s is kept.
+
+**Second opinion (CMaNGOS-classic):** `GetDiminishingReturnsGroupForSpell` diminishes by mechanic far beyond the notes
+(polymorph, sleep, every root, knockout, Blind, Kidney Shot apart, banish, horror, silence, disarm) and splits
+triggered stuns and roots into groups of their own.
