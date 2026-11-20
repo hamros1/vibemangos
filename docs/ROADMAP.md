@@ -20,8 +20,9 @@
 | Creatures and game objects | Every spawn (with pools, spawn groups and game events), loaded per grid cell when players come near, with levels, health, models, equipment, mounts and emotes; creature and game object queries; `.npc info` | `creature.d`, `gameobject.d`, `map.d`, `worlddata.d` |
 | Creature movement | Wandering (`spawndist`) and waypoint paths (`creature_movement`, `creature_movement_template`; round, or back and forth) with waits and facings; `SMSG_MONSTER_MOVE`; walks in create blocks; moving creatures change cell and come into and out of sight | `spline.d`, `motion.d`, `map.d` |
 | NPC services | Gossip menus with their texts, conditions and map flags; trainers (lists with each spell's state, lessons that teach spells, ranks and profession skills); innkeepers (binding the hearthstone); bankers (opening the bank); vendors' lists | `npchandlers.d`, `npcdata.d`, `conditions.d` |
-| Inventory and trade | The inventory rules, shared by creation and the world: moving, swapping, splitting, equipping (two-handers, dual wield, quivers, unique items), bags, the bank and its bag slots, the keyring, destroying, ammo; buying (with vendors' limited stock), selling, buyback and repairs; every change saved at once with the money | `inventory.d`, `itemhandlers.d` |
+| Inventory and trade | The inventory rules, shared by creation and the world: moving, swapping, splitting, equipping (two-handers, dual wield, quivers, unique items), bags, the bank and its bag slots, the keyring, destroying, ammo; buying (with vendors' limited stock), selling, buyback and repairs; every change saved at once with the money; reputation-gated items, item use checks, bind on use, charges, the equip cooldown, timed items, wear on hit, ammo damage and quiver haste | `inventory.d`, `itemhandlers.d`, `itemuse.d` |
 | Movement checks | Speed checked against running speed; offenders put back. Positions outside the map disconnect | `world/inworld.d` |
+| Movement orders and environment | Speeds (auras, mounts, snares), roots, knockbacks, water walk, slow fall and hover ordered and shown to others on the client's acknowledgement; breath, fatigue, drowning, lava, falling damage | `world/moveorders.d`, `world/environment.d` |
 
 ### Known gaps in what exists
 
@@ -40,6 +41,9 @@
   and hills; doors are not in them, and swimmers path over the ground under the water.
 * **Movement:** the speed check assumes running speed; it must learn mounts, speed auras,
   knockbacks and taxis when those exist.
+* **Environment:** the feign death timer (dying of feigning too long) is not run; mirror timers are not
+  frozen for game masters (they take no damage instead) and start afresh after moving between nodes.
+  Creatures do not hover, water walk or slow fall (`SMSG_SPLINE_MOVE_*`).
 * **Instances:** each group gets its own copy of a dungeon, saved with its binds and dead; a raid's
   copies reset together at fixed times, with warnings; encounters are not tracked. In a cluster a dungeon's copies are all on the node owning its one region, and move
   with it (their creatures as they were); only after a node's crash do they start from their spawns.
@@ -55,7 +59,8 @@
   * Random properties are done, and so are enchantments' stats, resistances, weapon damage and equip
     spells.
   * Enchanting is done: permanent enchantments, and temporary ones (stones, oils, poisons) that
-    run down and expire. Crafting raises professions.
+    run down and expire. Crafting raises professions. Spell foci and tools are enforced; disenchanting
+    and picking lockboxes are done.
   * Weapon enchantments' procs (poisons, Crusader) are done.
   * Not yet: enchanting another player's item through
     trade, and wrapping. Readable items and pages (`page_text`): done. Loot in items is done (`CMSG_OPEN_ITEM`). Dying and the spirit healer wear gear
@@ -119,8 +124,9 @@ The largest area. In order:
    instance data, and paths by id in scripts: done. Not yet: summons handed over between nodes,
    movement maps for chasing, help from another node's creatures in a cluster.
 3. **Death: done** (`death.d`, `corpse.d`; README's "Death"), resurrection sickness and battleground
-   spirit guides included, and ghosts hidden from the living. Not yet: the ghost's own auras (applied by
-   hand), bones, corpses of a player on another node of a cluster (a corpse is put on
+   spirit guides included, and ghosts hidden from the living. Bones (an hour where a body was, bare; CMaNGOS's
+   `Death.Bones` on): done. Not yet: the ghost's own auras (applied by
+   hand), corpses of a player on another node of a cluster (a corpse is put on
    the map its player's node simulates; a node that does not own the cell keeps it anyway).
 4. **Experience and loot: done** (`experience.d`, `loot.d`, `loothandlers.d`; README's "Experience
    and loot"). Quest drops, skinning, pickpocketing and random
@@ -161,9 +167,6 @@ The largest area. In order:
    * Milestone E, Alterac Valley: **done** (`alterac.d`): reinforcements, graveyards and towers, mines,
      captains and generals; the turn-in quests' events not yet.
    * Not yet:
-     * Removing stealth and the like on objectives (`AURA_INTERRUPT_FLAG_PVP_ACTIVE_CANCELS`).
-     * A flag dropped when its carrier becomes immune.
-     * Insignia loot from the dead.
      * pvpstats.
      * A queue service that moves to another node starts empty.
 
@@ -192,7 +195,7 @@ the Eastern Kingdoms' world map script, and the mechanics the raids approximate 
 control, Heigan's floor).
 Reputation is done (`reputation.d`, `reputationhandlers.d`; README's "Reputation"): kills, quests,
 spillover, war and peace, discounts, requirements. Not yet: `SMSG_SET_FORCED_REACTIONS` (spells force
-none yet), the PvP rank's discount. Reputation from spells (effect 103): done.
+none yet). Reputation from spells (effect 103) and the PvP rank's discount: done.
 
 ### Talents
 
@@ -202,8 +205,9 @@ use for stats and combat: crit, dodge, parry, block and hit chances; percentages
 armor and resistances, attack power and the off hand's damage (`stats.d`); weapon and defense skill
 bonuses; damage done and taken by school and by creature type, crit by creature type, threat
 (`combat.d`'s `DamageMods`); the five-second rule and Meditation; resistance to a mechanic; spell power
-from spirit (Spiritual Guidance); shield block value; lowering the target's resistances. Not yet:
-charges, `overrideClassScripts` (each talent its own), procs on the target.
+from spirit (Spiritual Guidance); shield block value; lowering the target's resistances; modifiers with
+charges (Clearcasting, Presence of Mind, Nature's Swiftness: spent by the cast they change). Not yet:
+`overrideClassScripts` (each talent its own), procs on the target.
 
 ### Mail
 

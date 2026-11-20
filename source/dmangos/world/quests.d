@@ -38,7 +38,7 @@ enum DialogStatus : ubyte
 }
 
 /// Bits of the `QuestFlags` column.
-enum uint questFlagPartyAccept = 0x02, questFlagSharable = 0x08, questFlagHiddenRewards = 0x200,
+enum uint questFlagStayAlive = 0x01, questFlagPartyAccept = 0x02, questFlagSharable = 0x08, questFlagHiddenRewards = 0x200,
     questFlagAutoRewarded = 0x400;
 
 /// Bits of the `SpecialFlags` column (some worked out at load).

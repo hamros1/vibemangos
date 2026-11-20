@@ -184,6 +184,14 @@ What works now:
   * **Movement** (`MSG_MOVE_*`) is shown to those who see the player and saved. It is checked
     against the player's speed (`movement_speed_check`): a player that moves faster than it can
     run is put back.
+  * **Movement orders:** speed changes (auras, mounts, snares, which slow running backwards too),
+    roots, knockbacks, water walking, slow fall and hover are ordered to the client and, once it
+    acknowledges them, shown to those who see the player (`MSG_MOVE_SET_*_SPEED`, `MSG_MOVE_ROOT`,
+    `MSG_MOVE_KNOCK_BACK`, ...), as CMaNGOS does.
+  * **Environment:** breath under water (the breath bar; Water Breathing, Underwater Breathing),
+    fatigue in deep water, drowning and exhaustion, lava, falling damage (Safe Fall, Slow Fall) and
+    falling under the world, with `SMSG_ENVIRONMENTALDAMAGELOG`. Slime does nothing (as in CMaNGOS)
+    but Naxxramas's, whose spell is cast.
   * **Teleports:** near and far teleports with the client's acknowledgements
     (`MSG_MOVE_TELEPORT_ACK`, `SMSG_TRANSFER_PENDING`, `SMSG_NEW_WORLD`, `MSG_MOVE_WORLDPORT_ACK`).
     Instance portals and the other `areatrigger_teleport` triggers check level, raid group, items and
@@ -283,6 +291,16 @@ What works now:
   * **Items:** moving, stacking, splitting, equipping, bags, the bank and
     its bag slots, the keyring, destroying, ammo; buying (with limited stock), selling, buyback and
     repairs. Every change is saved to `character_inventory` and `item_instance` as it happens.
+    Items asking for a reputation (`RequiredReputationFaction`/`Rank`) are worn by the player's real rank.
+    Using an item checks it may be used (worn if it is to be worn, class, skill, reputation, out-of-combat
+    spells) and binds one that binds on use. Charges count down (`ITEM_FIELD_SPELL_CHARGES`): out of them,
+    a used-up item goes and one with positive charges stays ("No charges remain"). Putting on an item with
+    an on-use spell starts its 30-second equip cooldown (`SMSG_ITEM_COOLDOWN`). Timed items
+    (`Duration`) run down by the second while carried and go at 0, the client told their time
+    (`SMSG_ITEM_TIME_UPDATE`); those flagged real-time lose the time logged out too. Damage dealt or
+    taken wears a random worn item now and then (0.5%), a thrown weapon that does not stack each throw.
+    Ammunition adds its damage per second, times the weapon's speed, to a bow's, crossbow's or gun's
+    damage; a quiver's or ammo pouch's haste applies while it is in a bag slot.
   * **Queries:** name, item (`SMSG_ITEM_QUERY_SINGLE_RESPONSE`, from every `item_template`
     column), time and played time.
   * **Settings:** sitting and standing, target selection, action bar buttons and toggles, and
@@ -383,6 +401,8 @@ What works now:
     of a yard a point (a level 60 monster sees Stealth rank 4 at 7.5 yards); a little further, a
     script hears a `StealthAlert`. Players see a stealthed player of their group or side; an enemy by
     the same rule, worked out again once a second.
+    Far Sight, Eagle Eye and Mind Vision move the player's sight to their spot or target (`PLAYER_FARSIGHT`)
+    while the channel lasts; others still see the player where it stands.
     They keep a threat list (damage is threat; a new victim needs 110% of the current one's in melee
     reach, 130% elsewhere), chase in straight lines, swing with the attack table (crushing
     blows included), and give warriors rage. They give up (evade) when nobody is left to fight, or
@@ -511,7 +531,12 @@ What works now:
     orange, three times in four yellow, one in four green, never grey. Items with loot (clams, sacks, boxes of
     supplies) open in the bags (`CMSG_OPEN_ITEM`, unless a lock needs picking) to their
     `item_loot_template` loot and money; emptied, they are gone (an item left half looted keeps its
-    loot until logout, not across it: `item_loot` is not used).
+    loot until logout, not across it: `item_loot` is not used). A recipe needing a spell focus (an anvil,
+    a forge, a cooking fire: `RequiresSpellFocus`) is refused away from one ("Requires ...") and one needing
+    tools (`Totem1/2`: a hammer, a mining pick, thieves' tools) without them in the bags. Disenchanting
+    opens an uncommon to epic weapon's or armor's `disenchant_loot_template` loot (what is left goes into
+    the bags on release) and destroys it. A lockbox is picked open by Pick Lock with the lockpicking skill
+    its lock asks for (an orange one may resist: "Failed attempt"), raising the skill, then opens as any.
   * **Spells:** a known spell is checked (alive, not busy, its cooldown and category cooldown and the global
     cooldown over, standing, the power and reagents it costs, an enemy or friend in range and in
     sight), shown with its cast time (`SpellCastTimes.dbc`; moving interrupts most), then goes: its
@@ -575,7 +600,8 @@ What works now:
   * **Quests:** quest givers (`creature_questrelation`, `creature_involvedrelation`) show what they have for the player
     (the exclamation and question marks), list their quests in their gossip (or open the only one),
     and give them as `quest_template` says who may take them (class, race, level, skill, condition,
-    the quests before, exclusive groups, done unless repeatable). The quest log holds 20 quests with
+    the quests before, exclusive groups (a negative one asks for every quest of the group), done unless
+    repeatable). The quest log holds 20 quests with
     their kill counters. An escort for the party (`QuestFlags` 0x2) taken by one member is offered to
     the others who could take it. Kills count for the player and its group near the kill; the items asked
     for count as they are carried (and quest drops are looted only while a quest asks for them); a
@@ -588,6 +614,13 @@ What works now:
     the one who shared it hears who took it. A timed quest shows its end in the log (one at a time)
     and fails when its time is up. A list of several quests is headed by the giver's
     `questgiver_greeting` and its emote. Progress is saved in `character_queststatus`.
+    A spell cast at a quest's creature or object counts for an objective that names it (`ReqSpellCast`,
+    for the group near too; a channel's when it ends), as a quest-complete spell effect completes its
+    quest and closing a gossip menu counts "speak to" objectives. An abandoned quest takes its source item
+    back; a quest to be done alive (`QUEST_FLAGS_STAY_ALIVE`) fails when the player releases its spirit; a
+    flag quest (`QUEST_FLAGS_AUTO_REWARDED`) is turned in as it completes. In a raid group only raid quests
+    count kills, quest drops and quest objects. Quest objects' sparkle is sent again as the quests change.
+    Reward and source items are "received", not "created" (rewards with no chat line of their own).
   * **Flight masters:** a flight master's node (`TaxiNodes.dbc`) is learned at the first talk and saved in `taximask`; then the
     master shows the known nodes. A flight to one, directly or over several legs (`TaxiPath.dbc`,
     `TaxiPathNode.dbc`), costs the paths' prices (10% less at honored with the master's faction),
@@ -681,6 +714,12 @@ What works now:
       events (as in CMaNGOS), the herald speaking (its lines are battleground messages).
     * The players of a team who came alone are in one raid in the copy (its raid frames), made as the
     second arrives and left as they leave; those who came with a group stay in it.
+    * Taking an objective (a flag, a banner, a capture) ends Stealth, Divine Shield and the like
+    (`AURA_INTERRUPT_FLAG_PVP_ACTIVE_CANCELS`); a carried flag falls when its aura goes otherwise (clicked off,
+    or purged as its carrier becomes immune).
+    * A player killed there may have their insignia taken by an enemy (Remove Insignia, from the body or the
+    corpse): released if not yet, the corpse turns to bones the enemy loots (a little money by level, the
+    battleground's `PlayerSkinReflootId`). Elsewhere a body taken back or healed leaves bones for an hour.
   * **The update tick** (every 50 ms, `update_interval`): health, mana, rage and energy regenerate
     (health and the loss of rage only out of combat, and only for the living); inns and capitals give rested XP, also while offline; characters are saved every
     15 minutes (`player_save_interval`).
@@ -749,6 +788,9 @@ database at the same time; a cluster's nodes take their ids in blocks from its c
 | `rate_reputation_gain`, `rate_reputation_lowlevel_kill`, `rate_reputation_lowlevel_quest` | reputation rates; the least share for grey kills and low quests | `1`, `0.2`, `0.2` |
 | `max_player_level` | the level cap | `60` |
 | `movement_speed_check`, `movement_speed_tolerance`, `movement_speed_slack` | the movement check: allow this factor over running speed, plus these yards | `true`, `1.5`, `15` |
+| `rate_damage_fall` | falling damage rate | `1` |
+| `mirror_timer_fatigue_max`, `mirror_timer_breath_max`, `mirror_timer_environmental_max` | seconds in deep water, under water and in lava before they hurt | `60`, `60`, `1` |
+| `environmental_damage_min`, `environmental_damage_max` | lava's damage each time | `605`, `610` |
 | `start_player_level`, `start_gm_level`, `start_player_money` | new characters' level; their level on moderator accounts and up; their money in copper | `1`, `1`, `0` |
 | `max_primary_trade_skill`, `trade_skill_gm_ignore_max_primary` | primary professions a character may learn; the account level from which the limit is ignored | `2`, `4` |
 | `strict_player_names`, `min_player_name` | the character name rules (0 any one script, bit 0 basic Latin, bit 1 the realm zone's script); the shortest name | `0`, `2` |
@@ -866,6 +908,8 @@ source/dmangos/world/       the world server
   itemhandlers.d              handlers: moving, equipping, banking and destroying items; buying, selling, repairs
   terrain.d                   the .map files: ground heights, areas, liquids per tile, and zones from them
   exploration.d               zones and areas from the map, explored areas, experience
+  environment.d               breath, fatigue, lava, falling: mirror timers and environmental damage
+  moveorders.d                speed, root, knockback, water walk, slow fall, hover orders and their acknowledgements
   inventory.d                 items and bags, and the rules for storing, equipping, swapping, saving them
   conditions.d                the conditions table: requirements of menus, lessons and wares
   commandtable.d              the GM command tables

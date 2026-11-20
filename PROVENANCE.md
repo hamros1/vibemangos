@@ -809,6 +809,13 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Functions: `DynamicObject::Create`
 * Constants: `HIGHGUID_DYNAMICOBJECT`
 
+## world/environment.d
+
+* Projects: CMaNGOS
+* Files: `MovementHandler.cpp`, `World.cpp` (`MirrorTimer.*.Max`, `EnvironmentalDamage.Min/Max`, `Rate.Damage.Fall`)
+* Functions: `MirrorTimer` (`Start`, `Stop`, `SetScale`, `SetDuration`, `SetFrozen`, `Update`, `FetchStatus`), `Player::UpdateMirrorTimers`, `Player::CheckMirrorTimerActivation`, `Player::CheckMirrorTimerDeactivation`, `Player::OnMirrorTimerExpirationPulse`, `Player::GetMirrorTimerMaxDuration`, `Player::SendMirrorTimers`, `Player::SendMirrorTimerStart`, `Player::SendMirrorTimerStop`, `Player::SetEnvironmentFlags`, `Player::UpdateTerainEnvironmentFlags`, `Player::SetWaterBreathingIntervalMultiplier`, `Player::GetWaterBreathingInterval`, `Player::EnvironmentalDamage`, `Player::HandleFall`, `Player::UpdateFallInformationIfNeed`, `Player::SetFallInformation`, `Unit::SendEnvironmentalDamageLog`, `Unit::GetCollisionHeight`, `Aura::HandleWaterBreathing`, `Aura::HandleModWaterBreathing`, `WorldSession::HandleMoverRelocation` (below -500), `WorldSession::ProcessMovementInfo`
+* Constants: `EnvironmentFlags`, `EnvironmentalDamageType`, `MAP_ALL_LIQUIDS`, `SMSG_START_MIRROR_TIMER`, `SMSG_STOP_MIRROR_TIMER`, `SMSG_ENVIRONMENTALDAMAGELOG`, `AURA_INTERRUPT_FLAG_UNDERWATER_CANCELS`, `AURA_INTERRUPT_FLAG_ABOVEWATER_CANCELS`
+
 ## world/eventai.d
 
 * Projects: CMaNGOS, EventAI
@@ -923,6 +930,13 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Files: `GroupHandler.cpp`; vmangos `LFGHandler.cpp`, `LFGQueue.cpp`, `Group.cpp`
 * Functions: `Player::CanUninviteFromGroup`, `WorldSession::HandleGroupInviteOpcode`, `WorldSession::LogoutPlayer`, `WorldSession::SendPartyResult`
 
+## world/itemuse.d
+
+* Projects: CMaNGOS
+* Files: `SpellHandler.cpp`, `Spell.cpp`, `Item.cpp`, `Player.cpp`, `Unit.cpp`
+* Functions: `Item::SendTimeUpdate`, `Item::UpdateDuration`, `Player::AddCooldown`, `Player::AddItemDurations`, `Player::ApplyEquipCooldown`, `Player::DurabilityPointLossForEquipSlot`, `Player::DurabilityPointsLoss`, `Player::UpdateItemDuration`, `Spell::CheckItems`, `Spell::TakeAmmo`, `Spell::TakeCastItem`, `Unit::DealDamage`, `WorldSession::HandleUseItemOpcode`
+* Constants: `BIND_WHEN_USE`, `CONFIG_FLOAT_RATE_DURABILITY_LOSS_DAMAGE`, `ITEM_EXTRA_REAL_TIME_DURATION`, `ITEM_FLAG_NO_EQUIPCOOLDOWN`, `SMSG_ITEM_COOLDOWN`, `SMSG_ITEM_TIME_UPDATE`, `SPELL_FAILED_NO_CHARGES_REMAIN`
+
 ## world/meetingstone.d
 
 * Projects: vmangos
@@ -958,7 +972,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 
 * Projects: CMaNGOS
 * Files: `Bag.cpp`, `Item.cpp`, `Item.h`, `ItemPrototype.h`, `Player.cpp`, `SharedDefines.h`
-* Functions: `Bag::Create`, `Bag::IsEmpty`, `Bag::RemoveItem`, `Bag::StoreItem`, `Item::CalculateDurabilityRepairCost`, `Item::CanBeMergedPartlyWith`, `Item::CloneItem`, `Item::Create`, `Item::CreateItem`, `Item::GetBagSlot`, `Item::GetBaseRepairCost`, `Item::GetPos`, `Item::GetSellPrice`, `Item::GetSkill`, `Item::IsBag`, `Item::IsBindedNotWith`, `Item::IsEquipped`, `Item::IsSoulBound`, `Item::LoadFromDB`, `Item::SaveToDB`, `Item::SetBinding`, `Item::SetState`, `ItemPosCount::isContainedIn`, `ItemPrototype::CanChangeEquipStateInCombat`, `Player::AddItemToBuyBackSlot`, `Player::AutoUnequipOffhandIfNeed`, `Player::CanBankItem`, `Player::CanDualWield`, `Player::CanEquipItem`, `Player::CanEquipNewItem`, `Player::CanStoreItem`, `Player::CanStoreNewItem`, `Player::CanUnequipItem`, `Player::CanUseAmmo`, `Player::CanUseItem`, `Player::DestroyItem`, `Player::DestroyItemCount`, `Player::EquipItem`, `Player::EquipNewItem`, `Player::FindEquipSlot`, `Player::GetBankBagSlotCount`, `Player::GetItemByGuid`, `Player::GetItemByPos`, `Player::GetItemCount`, `Player::GetItemFromBuyBackSlot`, `Player::GetMaxKeyringClientSize`, `Player::HasItemWithIdEquipped`, `Player::HasSpell`, `Player::IsBagPos`, `Player::IsBankPos`, `Player::IsEquipmentPos`, `Player::IsInventoryPos`, `Player::IsTwoHandUsed`, `Player::IsValidPos`, `Player::RemoveItem`, `Player::RemoveItemFromBuyBackSlot`, `Player::SaveItemToInventory`, `Player::SendEquipError`, `Player::SetBankBagSlotCount`, `Player::SetVisibleItemSlot`, `Player::SplitItem`, `Player::StoreItem`, `Player::StoreNewItem`, `Player::SwapItem`, `Player::ViableEquipSlots`, `Player::VisualizeItem`, `Player::_CanStoreItem`, `Player::_CanStoreItem_InBag`, `Player::_CanStoreItem_InInventorySlots`, `Player::_CanStoreItem_InSpecificSlot`, `Player::_CanTakeMoreSimilarItems`, `Player::_LoadInventory`, `Player::_SaveInventory`, `Player::_StoreItem`, `Player::m_items`
+* Functions: `Bag::Create`, `Bag::IsEmpty`, `Bag::RemoveItem`, `Bag::StoreItem`, `Item::CalculateDurabilityRepairCost`, `Item::CanBeMergedPartlyWith`, `Item::CloneItem`, `Item::CreateItem`, `Item::Create`, `Item::GetBagSlot`, `Item::GetBaseRepairCost`, `Item::GetPos`, `Item::GetSellPrice`, `Item::GetSkill`, `Item::IsBag`, `Item::IsBindedNotWith`, `Item::IsEquipped`, `Item::IsSoulBound`, `Item::LoadFromDB`, `Item::SaveToDB`, `Item::SetBinding`, `Item::SetState`, `ItemPosCount::isContainedIn`, `ItemPrototype::CanChangeEquipStateInCombat`, `Player::AddItemToBuyBackSlot`, `Player::AutoUnequipOffhandIfNeed`, `Player::CanBankItem`, `Player::CanDualWield`, `Player::CanEquipItem`, `Player::CanEquipNewItem`, `Player::CanStoreItem`, `Player::CanStoreNewItem`, `Player::CanUnequipItem`, `Player::CanUseAmmo`, `Player::CanUseItem`, `Player::DestroyItemCount`, `Player::DestroyItem`, `Player::EquipItem`, `Player::EquipNewItem`, `Player::FindEquipSlot`, `Player::GetBankBagSlotCount`, `Player::GetItemByGuid`, `Player::GetItemByPos`, `Player::GetItemCount`, `Player::GetItemFromBuyBackSlot`, `Player::GetMaxKeyringClientSize`, `Player::HasItemWithIdEquipped`, `Player::HasSpell`, `Player::IsBagPos`, `Player::IsBankPos`, `Player::IsEquipmentPos`, `Player::IsInventoryPos`, `Player::IsTwoHandUsed`, `Player::IsValidPos`, `Player::RemoveItemFromBuyBackSlot`, `Player::RemoveItem`, `Player::SaveItemToInventory`, `Player::SendEquipError`, `Player::SetBankBagSlotCount`, `Player::SetVisibleItemSlot`, `Player::SplitItem`, `Player::StoreItem`, `Player::StoreNewItem`, `Player::SwapItem`, `Player::ViableEquipSlots`, `Player::VisualizeItem`, `Player::_CanStoreItem_InBag`, `Player::_CanStoreItem_InInventorySlots`, `Player::_CanStoreItem_InSpecificSlot`, `Player::_CanStoreItem`, `Player::_CanTakeMoreSimilarItems`, `Player::_LoadInventory`, `Player::_SaveInventory`, `Player::_StoreItem`, `Player::m_items`
 * Constants: `EQUIP_ERR_NONE`, `ITEM_DYNFLAG_BINDED`, `ITEM_DYNFLAG_UNLOCKED`, `ITEM_DYNFLAG_WRAPPED`, `SMSG_BUY_FAILED`, `SMSG_INVENTORY_CHANGE_FAILURE`, `SMSG_SELL_ITEM`
 
 ## world/inworld.d
@@ -971,7 +985,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 
 * Projects: ArcEmu, CMaNGOS
 * Files: `ItemHandler.cpp`, `NPCHandler.cpp`
-* Functions: `Player::BuyItemFromVendor`, `Player::DurabilityRepair`, `Player::DurabilityRepairAll`, `Player::SendBuyError`, `Player::SendEquipError`, `Player::SendNewItem`, `Player::SendSellError`, `Player::SetAmmo`, `WorldSession::HandleAutoBankItemOpcode`, `WorldSession::HandleAutoEquipItemOpcode`, `WorldSession::HandleAutoEquipItemSlotOpcode`, `WorldSession::HandleAutoStoreBagItemOpcode`, `WorldSession::HandleAutoStoreBankItemOpcode`, `WorldSession::HandleBuyBankSlotOpcode`, `WorldSession::HandleBuyItemInSlotOpcode`, `WorldSession::HandleBuyItemOpcode`, `WorldSession::HandleBuybackItem`, `WorldSession::HandleDestroyItemOpcode`, `WorldSession::HandleRepairItemOpcode`, `WorldSession::HandleSellItemOpcode`, `WorldSession::HandleSetAmmoOpcode`, `WorldSession::HandleSplitItemOpcode`, `WorldSession::HandleSwapInvItemOpcode`, `WorldSession::HandleSwapItem`
+* Functions: `Player::BuyItemFromVendor`, `Player::DurabilityRepairAll`, `Player::DurabilityRepair`, `Player::SendBuyError`, `Player::SendEquipError`, `Player::SendNewItem`, `Player::SendSellError`, `Player::SetAmmo`, `Player::_ApplyAmmoBonuses`, `WorldSession::HandleAutoBankItemOpcode`, `WorldSession::HandleAutoEquipItemOpcode`, `WorldSession::HandleAutoEquipItemSlotOpcode`, `WorldSession::HandleAutoStoreBagItemOpcode`, `WorldSession::HandleAutoStoreBankItemOpcode`, `WorldSession::HandleBuyBankSlotOpcode`, `WorldSession::HandleBuyItemInSlotOpcode`, `WorldSession::HandleBuyItemOpcode`, `WorldSession::HandleBuybackItem`, `WorldSession::HandleDestroyItemOpcode`, `WorldSession::HandleRepairItemOpcode`, `WorldSession::HandleSellItemOpcode`, `WorldSession::HandleSetAmmoOpcode`, `WorldSession::HandleSplitItemOpcode`, `WorldSession::HandleSwapInvItemOpcode`, `WorldSession::HandleSwapItem`
 * Constants: `RANK_REQUIRE`
 
 ## world/loot.d
@@ -1012,6 +1026,13 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Projects: CMaNGOS
 * Functions: `FactorySelector::selectMovementGenerator`, `Map::GetHeight`, `MotionMaster::Initialize`, `MotionMaster::MovePoint`, `MoveSplineInit::Launch`, `MoveSplineInit::MoveTo`, `MoveSplineInit::Stop`, `TerrainInfo::GetWaterOrGroundLevel`, `Unit::InterruptMoving`, `Unit::StopMoving`, `Unit::UpdateAllowedPositionZ`, `Unit::UpdateSplineMovement`, `WaypointManager::Load`
 * Constants: `SCRIPT_COMMAND_PAUSE_WAYPOINTS`
+
+## world/moveorders.d
+
+* Projects: CMaNGOS
+* Files: `MovementHandler.cpp`, `SpellAuras.cpp`, `Unit.h` (`SetSpeed2Opc_table`)
+* Functions: `Unit::UpdateSpeed`, `Unit::SetSpeedRate`, `Unit::SetWaterWalk`, `Unit::SetFeatherFall`, `Unit::SetHover`, `Unit::Mount`, `Unit::Unmount`, `Aura::HandleAuraModIncreaseSpeed`, `Aura::HandleAuraModDecreaseSpeed`, `Aura::HandleAuraModUseNormalSpeed`, `Aura::HandleAuraGhost`, `WorldSession::HandleForceSpeedChangeAckOpcodes`, `WorldSession::HandleMoveRootAck`, `WorldSession::HandleMoveKnockBackAck`, `WorldSession::HandleMoveFlagChangeOpcode`, `WorldSession::SendKnockBack`
+* Constants: `MOVEFLAG_WATERWALKING`, `SPELL_AURA_MOD_SPEED_ALWAYS`, `SPELL_AURA_MOD_MOUNTED_SPEED_ALWAYS`, `SPELL_AURA_MOD_SPEED_NOT_STACK`, `SPELL_AURA_MOD_MOUNTED_SPEED_NOT_STACK`, `SPELL_AURA_USE_NORMAL_MOVEMENT_SPEED`
 
 ## world/movement.d
 
@@ -1095,6 +1116,13 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Functions: `Player::Create`, `Player::GetSkillInfo`, `Player::HasSpell`, `Player::InitPrimaryProfessions`, `Player::IsNeedCastPassiveLikeSpellAtLearn`, `Player::LoadFromDB`, `Player::SetAmmo`, `Player::SetSkill`, `Player::StoreNewItemInBestSlots`, `Player::ValidateAppearance`, `Player::addSpell`, `Player::learnSpell`, `Spell::EffectLearnSpell`, `SpellMgr::GetSpellBookSuccessorSpellId`, `SpellMgr::IsPrimaryProfessionFirstRankSpell`, `SpellMgr::IsSpellValid`
 * Constants: `AT_LOGIN_FIRST`, `CMSG_CHAR_CREATE`, `ITEM_DYNFLAG_BINDED`, `MAX_ENCHANTMENT_SLOT`, `SMSG_LEARNED_SPELL`, `SMSG_SUPERCEDED_SPELL`
 
+## world/professions.d
+
+* Projects: CMaNGOS
+* Files: `GridNotifiers.h`, `LootMgr.cpp`, `Spell.cpp`, `SpellEffects.cpp`
+* Functions: `GameObjectFocusCheck`, `Loot::Release`, `ObjectMgr::LoadItemPrototypes`, `Spell::CanOpenLock`, `Spell::CheckCast`, `Spell::CheckItems`, `Spell::EffectDisEnchant`, `Spell::EffectOpenLock`, `Spell::SendCastResult`, `WorldObject::IsWithinDistInMap`
+* Constants: `ITEM_DYNFLAG_UNLOCKED`, `LOOT_DISENCHANTING`, `SPELL_FAILED_ALREADY_OPEN`, `SPELL_FAILED_CANT_BE_DISENCHANTED`, `SPELL_FAILED_ITEM_GONE`, `SPELL_FAILED_REQUIRES_SPELL_FOCUS`, `SPELL_FAILED_TOTEMS`, `SPELL_FAILED_TRY_AGAIN`
+
 ## world/pvp.d
 
 * Projects: CMaNGOS
@@ -1110,8 +1138,8 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 
 * Projects: CMaNGOS
 * Files: `GossipDef.cpp`, `QuestHandler.cpp`
-* Functions: `Player::AddQuest`, `Player::AreaExploredOrEventHappens`, `Player::CanShareQuest`, `Player::CompleteQuest`, `Player::FailQuest`, `Player::HasQuestForItem`, `Player::IncompleteQuest`, `Player::KilledMonsterCredit`, `Player::PrepareQuestMenu`, `Player::RewardQuest`, `Player::SatisfyQuest`, `Player::SendPreparedQuest`, `Player::Update`, `WorldSession::getDialogStatus`
-* Constants: `SMSG_QUESTGIVER_STATUS`
+* Functions: `Player::AddQuest`, `Player::AreaExploredOrEventHappens`, `Player::CanShareQuest`, `Player::CastedCreatureOrGO`, `Player::CompleteQuest`, `Player::FailQuest`, `Player::FailQuestsOnDeath`, `Player::HasQuestForItem`, `Player::IncompleteQuest`, `Player::IsCurrentQuest`, `Player::KilledMonsterCredit`, `Player::PrepareQuestMenu`, `Player::RewardPlayerAndGroupAtCast`, `Player::RewardQuest`, `Player::SatisfyQuestPreviousQuest`, `Player::SatisfyQuest`, `Player::SendNewItem`, `Player::SendPreparedQuest`, `Player::TakeQuestSourceItem`, `Player::TalkedToCreature`, `Player::UpdateForQuestWorldObjects`, `Player::Update`, `Quest::IsAllowedInRaid`, `WorldSession::HandleQuestLogRemoveQuest`, `WorldSession::getDialogStatus`
+* Constants: `QUEST_FLAGS_AUTO_REWARDED`, `QUEST_FLAGS_STAY_ALIVE`, `QUEST_TYPE_RAID`, `SMSG_QUESTGIVER_STATUS`
 
 ## world/quests.d
 
@@ -1197,13 +1225,13 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 
 * Projects: CMaNGOS
 * Files: `StatSystem.cpp`
-* Functions: `Player::GetHealthBonusFromStamina`, `Player::GetManaBonusFromIntellect`, `Player::GetMeleeCritFromAgility`, `Player::InitStatsForLevel`, `Player::UpdateCritPercentage`, `Player::_ApplyItemBonuses`, `Unit::m_modCritChance`
+* Functions: `Player::CalculateMinMaxDamage`, `Player::CheckAmmoCompatibility`, `Player::GetHealthBonusFromStamina`, `Player::GetManaBonusFromIntellect`, `Player::GetMeleeCritFromAgility`, `Player::InitStatsForLevel`, `Player::UpdateCritPercentage`, `Player::_ApplyItemBonuses`, `Unit::m_modCritChance`
 * Constants: `MOD_ATTACK_POWER`, `MOD_INCREASE_ENERGY`, `MOD_INCREASE_HEALTH`, `MOD_PERCENT_STAT`, `MOD_RANGED_ATTACK_POWER`, `MOD_RESISTANCE`, `MOD_STAT`, `SPELL_AURA_MOD_STAT`
 
 ## world/talenthandlers.d
 
 * Projects: CMaNGOS
-* Functions: `Player::AddItemsSetItem`, `Player::ApplyItemEquipSpell`, `Player::LearnTalent`, `Player::Reset_Talents`, `Player::resetTalents`, `Player::resetTalentsCost`
+* Functions: `Player::AddItemsSetItem`, `Player::ApplyItemEquipSpell`, `Player::LearnTalent`, `Player::Reset_Talents`, `Player::_ApplyAllItemMods`, `Player::resetTalentsCost`, `Player::resetTalents`
 * Constants: `ITEM_SPELLTRIGGER_ON_EQUIP`, `PLAYER_CHARACTER_POINTS1`
 
 ## world/taxi.d

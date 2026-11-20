@@ -15,7 +15,8 @@ rm -f "$H/unittest/test"
 # separate compilation needs), then linked: seconds, where one dmd for all of them took ten minutes.
 rm -rf "$H/unittest/obj" && mkdir -p "$H/unittest/obj"
 : > "$H/unittest/build.log"
-if ! find source -name '*.d' ! -name main.d | xargs -P "$(nproc)" -I{} \
+# CHECK_JOBS limits the compilers at once (each can take 4 GB): set it low when other builds run alongside.
+if ! find source -name '*.d' ! -name main.d | xargs -P "${CHECK_JOBS:-$(nproc)}" -I{} \
         sh -c 'dmd -c -unittest -allinst -Isource -od="$1" -op "$2" > "$1/$(echo "$2" | tr / _).log" 2>&1' _ "$H/unittest/obj" {}; then
     cat "$H/unittest/obj"/*.log >> "$H/unittest/build.log"
     grep -m 20 Error "$H/unittest/build.log"; echo "FAIL: the tests do not compile"; exit 1
@@ -31,11 +32,15 @@ python3 "$REPO/tools/harness/mixin-names.py" || { echo "FAIL: a name is defined 
 echo "== release builds"
 # `release-fast` (dub.json): optimized without -inline, which made DMD take ten minutes on context.d alone; the
 # three at once. About 13% slower at run time (docs/BENCHMARKS.md): build `-b release` to measure speed.
+pids=""
 for c in worldserver authserver loadgen; do
     dub build -q -c $c -b release-fast > "$H/unittest/dub-$c.log" 2>&1 &
+    pids="$pids $!"
 done
+# Each waited for by its pid: `$(jobs -p)` runs in a subshell, which has no jobs, so it waited for none and the
+# regression started while dub was still writing bin/worldserver ("not found").
 failed=0
-for job in $(jobs -p); do wait "$job" || failed=1; done
+for pid in $pids; do wait "$pid" || failed=1; done
 if [ $failed = 1 ]; then
     for c in worldserver authserver loadgen; do grep -m 10 -E "Error|error" "$H/unittest/dub-$c.log"; done
     echo "FAIL: a release build failed"; exit 1

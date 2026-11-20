@@ -85,7 +85,7 @@ struct SpellCastInfo
     uint stancesNot;
     uint targets;              /// `Targets`: `TARGET_FLAG_*` the client sends
     uint targetCreatureType;
-    uint requiresSpellFocus;
+    uint requiresSpellFocus;   /// a spell focus (`GAMEOBJECT_TYPE_SPELL_FOCUS` data0) that must be near: an anvil, a forge
     uint targetAuraState;
     uint castingTimeIndex;
     uint interruptFlags;       /// `SPELL_INTERRUPT_FLAG_*`
@@ -128,6 +128,8 @@ struct SpellCastInfo
     DamageClass dmgClass;
     uint preventionType;
     float[3] dmgMultiplier = 0;
+    uint[3] effectMechanic;    /// `EffectMechanic1..3`: each effect's own mechanic (a stun on a damaging spell)
+    uint[2] totems;            /// `Totem1/2`: tools that must be in the bags (a blacksmith hammer, thieves' tools)
 }
 
 /// `spell_template`'s casting columns, in `SpellCastRow` order.
@@ -145,7 +147,7 @@ enum spellCastQuery = "SELECT Id, SpellName, School, Dispel, Mechanic, Attribute
     ~ "EffectPointsPerComboPoint1, EffectPointsPerComboPoint2, EffectPointsPerComboPoint3, SpellVisual, SpellIconID, "
     ~ "ManaCostPercentage, StartRecoveryCategory, StartRecoveryTime, MaxTargetLevel, SpellFamilyName, "
     ~ "SpellFamilyFlags, MaxAffectedTargets, DmgClass, PreventionType, DmgMultiplier1, DmgMultiplier2, "
-    ~ "DmgMultiplier3 FROM spell_template";
+    ~ "DmgMultiplier3, EffectMechanic1, EffectMechanic2, EffectMechanic3, Totem1, Totem2 FROM spell_template";
 
 /// One row of `spellCastQuery` (flat, for `Row.as`).
 struct SpellCastRow
@@ -173,6 +175,8 @@ struct SpellCastRow
     ulong spellFamilyFlags;
     uint maxAffectedTargets, dmgClass, preventionType;
     float dm1, dm2, dm3;
+    uint em1, em2, em3;
+    uint totem1, totem2;
 
     SpellCastInfo toInfo() const
     {
@@ -197,6 +201,8 @@ struct SpellCastRow
         c.chainTarget = [ct1, ct2, ct3];
         c.pointsPerComboPoint = [pc1, pc2, pc3];
         c.dmgMultiplier = [dm1, dm2, dm3];
+        c.effectMechanic = [em1, em2, em3];
+        c.totems = [totem1, totem2];
         return c;
     }
 }

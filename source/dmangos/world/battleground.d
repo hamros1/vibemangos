@@ -119,6 +119,9 @@ class BattlegroundRules
     /// `who` used `go` (a flag, a banner); true if it was the battleground's to handle.
     bool objectUsed(Battleground copy, ulong who, GameObject go) { return false; }
 
+    /// `who` lost the aura of `spell` (cancelled, purged by an immunity, dispelled).
+    void auraLost(Battleground copy, ulong who, uint spell) {}
+
     /// `who` walked into `trigger`; true if the trigger is the battleground's (handled).
     bool areaTrigger(Battleground copy, ulong who, uint trigger) { return false; }
 
@@ -460,6 +463,22 @@ final class Battleground
             }
         }
         rules.playerKilled(this, victim: victim, killer: killer);
+        // Its insignia may be taken from its body (`removedInsignia`).
+        if (auto dead = cast(imported!"dmangos.world.character".Character) context.onlinePlayer(victim))
+            if (dead.player !is null)
+                dead.markInsignia();
+    }
+
+    /**
+     * `who` acted on an objective (took a flag or a banner, captured): what ends with that ends
+     * (`AURA_INTERRUPT_FLAG_PVP_ACTIVE_CANCELS`: Stealth, Divine Shield, Ice Block and the like).
+     */
+    void pvpActive(ulong who)
+    {
+        import dmangos.world.auras : AuraInterrupt;
+
+        if (auto c = cast(imported!"dmangos.world.character".Character) context.onlinePlayer(who))
+            c.interruptAuras(AuraInterrupt.pvpActiveCancels);
     }
 
     /// Bonus honor worth `kills` kills to everyone of `team` here, on their scores.
@@ -1959,6 +1978,42 @@ unittest
     assert(copy.members[7].killingBlows == 1 && copy.members[7].honorableKills == 1);
     assert(copy.members[9].honorableKills == 0 && copy.members[9].killingBlows == 0);
     assert(copy.members[8].deaths == 1);
+
+    // Thrall dead in it: his insignia may be taken; Anduin takes it from his body (not yet released). He is
+    // released, his corpse turns to bones, and Anduin gets their loot (a little money).
+    {
+        import std.algorithm.searching : canFind;
+        import dmangos.world.character : Character;
+        import dmangos.world.corpse : Corpse, CorpseType, corpseDynLootable;
+        import dmangos.world.defines : UnitFlags;
+        import dmangos.world.player : DeathState;
+        import dmangos.world.updatefields : CORPSE_FIELD_DYNAMIC_FLAGS, UNIT_FIELD_FLAGS, UNIT_FIELD_HEALTH;
+
+        auto dead = cast(Character) context.onlinePlayer(8), looter = cast(Character) context.onlinePlayer(7);
+        dead.player.values.set!UNIT_FIELD_HEALTH(0u);
+        dead.playerDied(false);
+        assert(dead.player.values.get!UNIT_FIELD_FLAGS & UnitFlags.skinnable, "marked for his insignia");
+        thrall.read();
+        anduin.read();
+        dead.removedInsignia(looter);
+        assert(dead.player.deathState == DeathState.ghost, "released");
+        assert(thrall.read().canFind!(p => p.opcode == Opcode.SMSG_PLAYER_SKINNED));
+        Corpse bones;
+        map.forEachObject((MapObject o) {
+            if (auto c = cast(Corpse) o)
+                if (c.type == CorpseType.bones)
+                    bones = c;
+        });
+        size_t bodies;
+        map.forEachObject((MapObject o) {
+            if (auto c = cast(Corpse) o)
+                bodies += c.type != CorpseType.bones;
+        });
+        assert(bodies == 0, "his body gone");
+        assert(bones !is null && bones.loot !is null, "lootable bones (no money at level 1: CMaNGOS's formula)");
+        assert(bones.values.get!CORPSE_FIELD_DYNAMIC_FLAGS == corpseDynLootable);
+        assert(anduin.read().canFind!(p => p.opcode == Opcode.SMSG_LOOT_RESPONSE), "the loot shown to Anduin");
+    }
 
     // Battleground chat is the team's.
     anduin.write(Opcode.CMSG_MESSAGECHAT, chatBody(ChatType.CHAT_MSG_BATTLEGROUND, "for the Alliance"));

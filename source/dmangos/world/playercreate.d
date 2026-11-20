@@ -549,6 +549,12 @@ final class CharacterBuilder : InventoryOwner
         return skillValue(skill);
     }
 
+    /// A new character is neutral (3) with everyone as far as items go.
+    ubyte reputationRank(uint faction) const
+    {
+        return 3;
+    }
+
     @property bool dualWields() const
     {
         return dualWield;

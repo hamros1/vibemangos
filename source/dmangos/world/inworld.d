@@ -70,6 +70,8 @@ private:
     {
         // The map it is on: `deathOnLogout` may put its saved place at a graveyard of another map.
         auto leaving = map;
+        if (loggingOut)
+            interruptAuras(AuraInterrupt.leaveWorld);
         releaseLootOnLeave();
         spellsOnLeave();
         petsOnLeave();
@@ -83,6 +85,7 @@ private:
         saveReputation();
         saveHonor();
         saveEnchantmentTimes();
+        saveItemDurations();
         battlegroundLoggedOut();
         saveBattleground();
         deathOnLogout();
@@ -244,6 +247,7 @@ private:
         saveHonor();
         saveBattleground();
         saveEnchantmentTimes();
+        saveItemDurations();
         context.settleWrites(); // in the database before the next node loads it
 
         ByteWriter w;
@@ -393,6 +397,7 @@ private:
         loadHonor();
         loadBattleground();
         loadEnchantmentTimers();
+        loadItemDurations(0);
         loadCooldowns();
         loadTalentReset();
         loadSocial();
@@ -450,7 +455,7 @@ private:
 
     /**
      * One tick: the logout countdown, regeneration every
-     * two seconds, rest, the zone check every second, and the periodic save.
+     * two seconds, rest, breath and fatigue, the zone check every second, and the periodic save.
      */
     void updateInWorld(Duration elapsed)
     {
@@ -474,13 +479,18 @@ private:
             return;
         updateSpells(elapsed);
         updateAuras(elapsed);
+        updateMirrorTimers(elapsed);
+        if (player is null)
+            return;
         updateEnchantments(elapsed);
+        updateItemDurations(elapsed);
         updateAutoRepeat(elapsed);
         updateAreaAuras(elapsed);
         updateTotems();
         updatePetMood(elapsed);
         updateTaxi(cast(int) elapsed.total!"msecs");
         updateTimedQuests();
+        refreshQuestObjects();
         updateRaidReset();
         updateDuel();
         updatePvPTimers(cast(int) elapsed.total!"msecs");
@@ -541,28 +551,54 @@ private:
     @Handles(movementOpcodes, WorldState.inWorld)
     void handleMovement(const MovementInfo movement, Opcode opcode)
     {
+        if (!takeMovement(movement, opcode))
+            return;
+        // Those who see the player see it move: the same opcode, with the mover's guid and the server's time.
+        relayMovement(opcode, movement);
+        movedOn(movement, opcode);
+    }
+
+    /**
+     * `CMSG_MOVE_FALL_RESET`: a jump that hit something on the way up comes down sooner. Taken like any move,
+     * but not shown to others: their clients have no handler for it (CMaNGOS).
+     */
+    @Handles(Opcode.CMSG_MOVE_FALL_RESET, WorldState.inWorld)
+    void handleMoveFallReset(const MovementInfo movement)
+    {
+        if (takeMovement(movement, Opcode.CMSG_MOVE_FALL_RESET))
+            movedOn(movement, Opcode.CMSG_MOVE_FALL_RESET);
+    }
+
+    /**
+     * The first half of taking a client's move (its movement packets, and the acknowledgements that carry one:
+     * CMaNGOS `ProcessMovementInfo`): checked, a landing's fall damage, then the player's movement. False if it
+     * is not taken (nothing more is done with it). After showing it to others, `movedOn` does the rest.
+     */
+    package bool takeMovement(const MovementInfo movement, Opcode opcode)
+    {
         // In flight the server moves the player (the client may still send heartbeats).
         if (flying)
-            return;
+            return false;
         // A position the client cannot be at.
         const p = movement.position;
         if (!context.client.isValidMapCoord(player.data.map, p.x, p.y, p.z, p.orientation))
         {
             warning!"%s: '%s' sent an invalid position; disconnecting"(remoteAddress, player.data.name);
-            return disconnect();
+            disconnect();
+            return false;
         }
         // Until the client confirms a teleport, its movement packets are from before it; a player
         // logging out is rooted.
         if (teleporting != Teleport.none || loggingOut)
-            return;
-        // On a transport the position is relative to it; without transports, keep the last world position.
-        if (movement.has(MovementFlags.onTransport))
-            return;
+            return false;
+        // The fall it ends, judged before anything else (`dmangos.world.environment`).
+        if (opcode == Opcode.MSG_MOVE_FALL_LAND)
+            landed(movement);
         // On a ship or an elevator the player moves with it: not checked, and checked afresh once off.
         if (movement.has(MovementFlags.onTransport))
             checkpoint = p, checkpointTime = context.clock();
         else if (!passesSpeedCheck(p))
-            return;
+            return false;
         player.movement = movement;
         spellsOnMovement(movement.flags);
 
@@ -574,14 +610,26 @@ private:
             player.setEmoteState(0);
             flushPlayerChanges();
         }
+        return true;
+    }
 
-        // Those who see the player see it move: the same opcode, with the mover's guid and the server's time.
+    /// Shows the player's move to those who see it: `opcode`, its guid, the move at the server's time, then `extra`.
+    package void relayMovement(Opcode opcode, const MovementInfo movement, scope const(ubyte)[] extra = null)
+    {
         ByteWriter relay;
         relay.putPackedGuid(player.guid);
         MovementInfo relayed = movement;
         relayed.time = serverTime();
         relayed.write(relay);
+        relay.putBytes(extra);
         map.sendToWatchers(this, opcode, relay.data);
+    }
+
+    /// The second half of taking a move (see `takeMovement`): where the player is now, for the map, the group,
+    /// its zone and surroundings, and its fall.
+    package void movedOn(const MovementInfo movement, Opcode opcode)
+    {
+        const p = movement.position;
         map.relocated(this);
 
         // Group members who do not see the player follow it on their map.
@@ -592,6 +640,9 @@ private:
                 group.updatePlayerOutOfRange(this, GroupUpdate.position);
             }
         afterMove();
+        trackFall(movement, opcode);
+        if (p.z < -500)
+            fellUnderMap();
     }
 
     /**
@@ -1028,6 +1079,7 @@ private:
         const emote = reader.read!uint;
         if (player.deathState != DeathState.alive || (emote != emoteNone && emote != emoteWave))
             return;
+        interruptAuras(AuraInterrupt.animCancels);
         map.sendToWatchers(this, Opcode.SMSG_EMOTE, packetBody(ServerEmote(emote, player.guid)), true);
     }
 
@@ -1084,6 +1136,7 @@ private:
         enum : uint { stand = 0, sit = 1, sleep = 3, kneel = 8 }
         if (request.state != stand && request.state != sit && request.state != sleep && request.state != kneel)
             return;
+        interruptAuras(AuraInterrupt.animCancels);
         player.setStandState(cast(ubyte) request.state);
         if (request.state == stand)
             interruptAuras(AuraInterrupt.standingCancels); // food and drink end
@@ -1372,6 +1425,8 @@ private:
 
         // A one-shot animation, or a state that lasts until the player moves.
         const emote = textEntry.emote;
+        if (emote != oneshotNone && emote != stateSleep && emote != stateSit && emote != stateKneel)
+            interruptAuras(AuraInterrupt.animCancels);
         if (emote != oneshotNone && emote != stateSleep && emote != stateSit && emote != stateKneel)
             if (const entry = context.client.emotes.lookup(emote))
             {

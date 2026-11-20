@@ -268,6 +268,7 @@ private:
             }
             else
                 send(ServerTransferPending(mapId));
+            interruptAuras(AuraInterrupt.leaveWorld | AuraInterrupt.moving | AuraInterrupt.turning);
             map.remove(this);
             // From here on the character is saved at its destination (a dungeon: its instance).
             teleporting = Teleport.far;
@@ -387,6 +388,7 @@ private:
         if (teleporting != Teleport.far)
             return;
         teleporting = Teleport.none;
+        interruptAuras(AuraInterrupt.enterWorld);
         sendInitialPacketsBeforeAddToMap();
         showShipsHere(); // before the player's own create block, as at login
         const self = player.createForSelf(serverTime());
@@ -395,6 +397,7 @@ private:
         map.add(this, true);
         sendInitialPacketsAfterAddToMap();
         resetMovementCheck();
+        startFallAt(player.position.z);
         petsOnArrival();
         pvpArrived();
         battlegroundArrived();
@@ -467,6 +470,7 @@ private:
             return;
         teleporting = Teleport.none;
         resetMovementCheck();
+        startFallAt(player.position.z);
         pvpArrived();
         if (auto group = context.groups.of(player.guid))
             group.updatePlayerOutOfRange(this, GroupUpdate.position);

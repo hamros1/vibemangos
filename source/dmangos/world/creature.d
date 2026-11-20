@@ -104,6 +104,8 @@ struct CreatureTemplate
     int resistanceHoly, resistanceFire, resistanceNature; /// `Resistance*`
     int resistanceFrost, resistanceShadow, resistanceArcane;
     uint spellList;             /// `SpellList`: its `creature_spell_list` (0: none)
+    uint mechanicImmuneMask;    /// `MechanicImmuneMask`: bit `mechanic - 1` for each mechanic it ignores (bosses: stuns, fear)
+    uint schoolImmuneMask;      /// `SchoolImmuneMask`: the schools that cannot hurt it
 
     /// Its resistance to `school` (1 holy .. 6 arcane).
     int resistance(uint school) const pure nothrow @nogc @safe
@@ -138,7 +140,7 @@ enum creatureTemplateQuery = "SELECT Entry, Name, IFNULL(SubName, ''), MinLevel,
     ~ "Armor, MeleeAttackPower, RangedAttackPower, DamageSchool, Detection, Pursuit, Leash, ExperienceMultiplier, "
     ~ "LootId, MinLootGold, MaxLootGold, SkinningLootId, PickpocketLootId, StaticFlags1, CallForHelp, "
     ~ "ResistanceHoly, ResistanceFire, ResistanceNature, ResistanceFrost, ResistanceShadow, ResistanceArcane, "
-    ~ "SpellList FROM creature_template";
+    ~ "SpellList, MechanicImmuneMask, SchoolImmuneMask FROM creature_template";
 
 /// When a summoned creature goes (`none`: not a summon).
 enum TempSpawnType : ubyte
@@ -747,6 +749,19 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
                 world.sendToObservers(guid, cast(Opcode) pair[0], w.data);
             }
         }
+        // Its attack times by its haste and slows (Thunder Clap, Chilled): the template's, scaled.
+        {
+            const melee = cast(uint)(template_.meleeBaseAttackTime * auras.attackTimeFactor(0)),
+                ranged = cast(uint)(template_.rangedBaseAttackTime * auras.attackTimeFactor(2));
+            if (melee != values.get!UNIT_FIELD_BASEATTACKTIME || ranged != values.get!UNIT_FIELD_RANGEDATTACKTIME)
+            {
+                values.set!UNIT_FIELD_BASEATTACKTIME(melee);
+                values.set!UNIT_FIELD_BASEATTACKTIME(1, melee);
+                values.set!UNIT_FIELD_RANGEDATTACKTIME(ranged);
+                if (auto combat = cast(CombatWorld) world)
+                    combat.flushCreature(this);
+            }
+        }
         const held = immobilized;
         const stunned = auras.has(AuraType.modStun);
         const flags = values.get!UNIT_FIELD_FLAGS;
@@ -921,6 +936,10 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
                     f.stealth = auras.total(AuraType.modStealth) + auras.total(AuraType.modStealthLevel);
                 f.stealthDetect = auras.totalByMisc(AuraType.modStealthDetect, 0);
             }
+            import dmangos.world.combat : Immunities;
+
+            if (auras.list.length || template_.mechanicImmuneMask || template_.schoolImmuneMask)
+                f.immune = Immunities.of(auras, template_.mechanicImmuneMask, template_.schoolImmuneMask);
         }
         // Crit, dodge, parry and block chances: 5% each for creatures.
         f.crit = f.dodge = f.parry = f.block = 5;

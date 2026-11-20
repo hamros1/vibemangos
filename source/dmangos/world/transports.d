@@ -563,11 +563,21 @@ unittest
     sailor.read();
     ashore.read();
 
-    // Aboard, three yards along its deck.
+    // Aboard, three yards along its deck: the client says so in a movement packet, as a real one does.
     auto me = cast(Player) sailor.session.character;
-    me.movement.flags = MovementFlags.onTransport;
-    me.movement.transportGuid = shipGuid;
-    me.movement.transportOffset = Position(3, 0, 5, 0);
+    {
+        import dmangos.bytes : ByteWriter;
+
+        auto aboard = me.movement;
+        aboard.flags = MovementFlags.onTransport;
+        aboard.transportGuid = shipGuid;
+        aboard.transportOffset = Position(3, 0, 5, 0);
+        ByteWriter w;
+        aboard.write(w);
+        sailor.write(Opcode.MSG_MOVE_HEARTBEAT, w.data);
+    }
+    assert(me.movement.has(MovementFlags.onTransport) && me.movement.transportGuid == shipGuid,
+        "a passenger's movement is taken");
 
     // The crossing: it leaves map 0, with its passenger.
     size_t crossing;

@@ -37,6 +37,7 @@ import dmangos.world.stats;
 import dmangos.world.auras : AuraSet, AuraType;
 import dmangos.world.quests : QuestData, QuestStatus;
 import dmangos.world.reputation : Reputation;
+import dmangos.world.relations : ReputationRank;
 import dmangos.world.combat : AttackType, DamageMods, Fighter;
 import dmangos.world.updatefields;
 import dmangos.world.worlddata : CreateAction, maxLevel, WorldData;
@@ -225,6 +226,7 @@ final class Player : InventoryOwner
         inventory = new Inventory(world, this, &values, nextItemGuid);
 
         loadItems();
+        values.set!PLAYER_AMMO_ID(character.ammoId); // its damage counts in the ranged damage
         computeDerived(world);
         setPlayerFields(world, client);
         setSkills(abilities.skills);
@@ -277,6 +279,12 @@ final class Player : InventoryOwner
     ushort skillRank(uint skill) const
     {
         return skillValue(skill)[0];
+    }
+
+    /// Neutral until the reputation is loaded, and with a faction that has none (CMaNGOS `GetReputationRank`).
+    ubyte reputationRank(uint faction) const
+    {
+        return reputation is null ? ReputationRank.neutral : reputation.rankWith(faction);
     }
 
     @property bool dualWields() const
@@ -1073,6 +1081,7 @@ private:
                         if (const effects = item.enchantment(enchantSlot) in world.enchantmentEffects)
                             input.enchantments.add(*effects, attack);
                 }
+        input.ammo = values[PLAYER_AMMO_ID] in world.items;
         // What auras add (stat and resistance modifiers, ...).
         foreach (i; 0 .. 5)
         {
@@ -1081,7 +1090,8 @@ private:
                 + auras.totalByMisc(AuraType.modPercentStat, -1);
         }
         foreach (school; 0 .. 7)
-            input.auras.resistances[school] = auras.totalByMiscMask(AuraType.modResistance, 1 << school);
+            input.auras.resistances[school] = auras.totalByMiscMask(AuraType.modResistance, 1 << school)
+                + auras.greatestByMiscMask(AuraType.modResistanceExclusive, 1 << school);
         input.auras.attackPower = auras.total(AuraType.modAttackPower);
         input.auras.rangedAttackPower = auras.total(AuraType.modRangedAttackPower);
         input.auras.health = auras.total(AuraType.modIncreaseHealth);
@@ -1101,6 +1111,8 @@ private:
         input.auras.healthTotal = auras.multiplier(AuraType.modIncreaseHealthPercent);
         input.auras.attackPowerTotal = auras.multiplier(AuraType.modAttackPowerPct);
         input.auras.offHandDamage = auras.multiplier(AuraType.modOffhandDamagePct);
+        foreach (uint type; 0 .. 3)
+            input.auras.attackTime[type] = auras.attackTimeFactor(type);
         stats = computeStats(input);
         chances = meleeChances(chanceInputs(world));
         damageMods = DamageMods.of(auras, (ubyte slot) {
@@ -1175,6 +1187,12 @@ private:
         if (f.stealthed)
             f.stealth = auras.total(AuraType.modStealth) + auras.total(AuraType.modStealthLevel);
         f.stealthDetect = auras.totalByMisc(AuraType.modStealthDetect, 0);
+        if (auras.list.length)
+        {
+            import dmangos.world.combat : Immunities;
+
+            f.immune = Immunities.of(auras);
+        }
         return f;
     }
 

@@ -481,3 +481,10 @@ A stealthed player counts as one-way in the map's visibility (as a ghost does): 
 enemies that detect it see it, worked out again once a second while anyone on the map is stealthed. With no one
 stealthed nothing changes on the hot path but one aura check per relocation: `crowd` 500, release-fast builds,
 alternated: busy 7.7-7.9% before, 7.7-7.8% after; tick 0.32-0.35 ms both.
+
+## Far Sight in visibility (2026-11-19)
+
+A player seeing from an eye (Far Sight, Eagle Eye, Mind Vision) is one-way, like a ghost: what it sees is near
+the eye, who sees it is near where it stands. With nobody far-seeing the cost is one field read per
+`updateVisibility`: `crowd` 500, release-fast, alternated on a quiet machine: busy 7.6-7.8% before, 7.7-7.8%
+after; tick 0.34-0.35 ms both. (Runs while another build compiled read 12-17% for both: compare only quiet runs.)

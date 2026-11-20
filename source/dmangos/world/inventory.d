@@ -662,6 +662,9 @@ interface InventoryOwner
     @property ubyte highestHonorRank() const;
     /// Whether the character knows `spell`.
     bool hasSpell(uint spell) const;
+    /// Its reputation rank with `faction` (Faction.dbc id; `ReputationRank`, hated 0 to exalted 7), which
+    /// items' `RequiredReputationFaction`/`RequiredReputationRank` ask for.
+    ubyte reputationRank(uint faction) const;
     /// Whether the character can wield a weapon in each hand.
     @property bool dualWields() const;
     ///
@@ -692,6 +695,10 @@ final class Inventory
 
     /// Whether worn items changed, so the owner's stats must be worked out again.
     bool equipmentChanged;
+    /// Items put on (`equip`) since the owner last looked: their on-use spells' equip cooldown starts.
+    Item[] justEquipped;
+    /// Items with a duration (`ITEM_FIELD_DURATION`) that came into the inventory since the owner last looked.
+    Item[] newlyTimed;
 
     /// `nextGuid` numbers new items; `fields` are the owner's.
     this(const WorldData world, InventoryOwner owner, UpdateValues* fields, uint delegate() nextGuid)
@@ -962,8 +969,9 @@ final class Inventory
             if (!owner.skillRank(skill))
                 return InventoryResult.noRequiredProficiency;
         }
-        // Reputation is not kept yet: every faction is neutral (3).
-        if (item.proto.requiredReputationFaction && 3 < item.proto.requiredReputationRank)
+        // CMaNGOS Player::CanUseItem(Item*): only here, not for a bare template (need-before-greed).
+        if (item.proto.requiredReputationFaction
+            && owner.reputationRank(item.proto.requiredReputationFaction) < item.proto.requiredReputationRank)
             return InventoryResult.cantEquipReputation;
         return InventoryResult.ok;
     }
@@ -1464,6 +1472,7 @@ final class Inventory
     /// Wears `item` at `pos`, binding it if it binds.
     Item equip(ushort pos, Item item)
     {
+        justEquipped ~= item;
         visualize(pos & 0xFF, item);
         if (owner.alive)
             equipmentChanged = true; // its stats change the owner's
@@ -2117,6 +2126,8 @@ private:
     {
         if (!item.sent && !toCreate.canFind!(other => other is item))
             toCreate ~= item;
+        if (item.values[ITEM_FIELD_DURATION])
+            newlyTimed ~= item;
     }
 
     /// The item is gone: the client forgets it if it was told about it.
@@ -2284,6 +2295,7 @@ version (unittest)
             return skill == skillSwords || skill == skillStaves || skill == skillBows ? 1 : 0;
         }
         bool hasSpell(uint spell) const { return false; }
+        ubyte reputationRank(uint faction) const { return faction == 59 ? 5 : 3; } // honored with Thorium Brotherhood
         @property bool dualWields() const { return dualWield; }
         @property bool alive() const { return true; }
         @property bool inCombat() const { return false; }
@@ -2455,4 +2467,21 @@ unittest
     UpdateData gone;
     assert(!inventory.writeUpdates(gone) && inventory.writeForgotten(gone) && gone.blockCount == 1,
         "one out-of-range block, nothing created");
+}
+
+/// Reputation-gated items (`RequiredReputationFaction`/`Rank`) ask for the owner's real rank with the faction.
+unittest
+{
+    auto world = testWorldData(testClientData());
+    UpdateValues* fields;
+    auto inventory = testInventory(world, fields);
+    world.items.edit(itemShirt).requiredReputationFaction = 59; // Thorium Brotherhood: the owner is honored
+    world.items.edit(itemShirt).requiredReputationRank = 5;
+    auto shirt = inventory.create(itemShirt, 1);
+    assert(inventory.canUse(shirt) == InventoryResult.ok);
+    world.items.edit(itemShirt).requiredReputationRank = 6; // revered
+    assert(inventory.canUse(shirt) == InventoryResult.cantEquipReputation);
+    world.items.edit(itemShirt).requiredReputationFaction = 21; // neutral with the Booty Bay pirates
+    world.items.edit(itemShirt).requiredReputationRank = 3;
+    assert(inventory.canUse(shirt) == InventoryResult.ok);
 }

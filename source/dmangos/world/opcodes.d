@@ -122,6 +122,39 @@ enum Opcode : uint
     SMSG_MONSTER_MOVE = 0x0DD,
     SMSG_MOVE_WATER_WALK = 0x0DE,
     SMSG_MOVE_LAND_WALK = 0x0DF,
+    // Movement orders the client acknowledges, and what others are told of them (CMaNGOS `MovementHandler.cpp`).
+    MSG_MOVE_SET_WALK_SPEED = 0x0D1,
+    MSG_MOVE_SET_TURN_RATE = 0x0D8,
+    CMSG_FORCE_RUN_SPEED_CHANGE_ACK = 0x0E3,
+    CMSG_FORCE_RUN_BACK_SPEED_CHANGE_ACK = 0x0E5,
+    CMSG_FORCE_SWIM_SPEED_CHANGE_ACK = 0x0E7,
+    CMSG_FORCE_MOVE_ROOT_ACK = 0x0E9,
+    CMSG_FORCE_MOVE_UNROOT_ACK = 0x0EB,
+    MSG_MOVE_ROOT = 0x0EC,
+    MSG_MOVE_UNROOT = 0x0ED,
+    CMSG_MOVE_KNOCK_BACK_ACK = 0x0F0,
+    MSG_MOVE_KNOCK_BACK = 0x0F1,
+    SMSG_MOVE_FEATHER_FALL = 0x0F2,
+    SMSG_MOVE_NORMAL_FALL = 0x0F3,
+    SMSG_MOVE_SET_HOVER = 0x0F4,
+    SMSG_MOVE_UNSET_HOVER = 0x0F5,
+    CMSG_MOVE_HOVER_ACK = 0x0F6,
+    MSG_MOVE_HOVER = 0x0F7,
+    MSG_MOVE_FEATHER_FALL = 0x2B0,
+    MSG_MOVE_WATER_WALK = 0x2B1,
+    CMSG_MOVE_FALL_RESET = 0x2CA,
+    CMSG_MOVE_FEATHER_FALL_ACK = 0x2CF,
+    CMSG_MOVE_WATER_WALK_ACK = 0x2D0,
+    SMSG_FORCE_WALK_SPEED_CHANGE = 0x2DA,
+    CMSG_FORCE_WALK_SPEED_CHANGE_ACK = 0x2DB,
+    CMSG_FORCE_SWIM_BACK_SPEED_CHANGE_ACK = 0x2DD,
+    SMSG_FORCE_TURN_RATE_CHANGE = 0x2DE,
+    CMSG_FORCE_TURN_RATE_CHANGE_ACK = 0x2DF,
+    // Breath, fatigue and environmental damage (CMaNGOS `Player::SendMirrorTimer*`, `SendEnvironmentalDamageLog`).
+    SMSG_START_MIRROR_TIMER = 0x1D9,
+    SMSG_PAUSE_MIRROR_TIMER = 0x1DA,
+    SMSG_STOP_MIRROR_TIMER = 0x1DB,
+    SMSG_ENVIRONMENTALDAMAGELOG = 0x1FC,
     SMSG_PET_CAST_FAILED = 0x138,
     CMSG_REPOP_REQUEST = 0x15A,
     SMSG_PET_TAME_FAILURE = 0x173,
@@ -149,6 +182,7 @@ enum Opcode : uint
     CMSG_REQUEST_PET_INFO = 0x279,
     SMSG_PET_BROKEN = 0x2AF,
     SMSG_DURABILITY_DAMAGE_DEATH = 0x2BD,
+    SMSG_PLAYER_SKINNED = 0x2BC,
     SMSG_FORCE_RUN_SPEED_CHANGE = 0x0E2,
     SMSG_FORCE_RUN_BACK_SPEED_CHANGE = 0x0E4,
     SMSG_FORCE_SWIM_SPEED_CHANGE = 0x0E6,
@@ -300,6 +334,10 @@ enum Opcode : uint
     SMSG_SPELL_GO = 0x132,
     SMSG_SPELL_FAILURE = 0x133,
     SMSG_SPELL_COOLDOWN = 0x134,
+    SMSG_COOLDOWN_EVENT = 0x135,
+    SMSG_SET_FLAT_SPELL_MODIFIER = 0x266,
+    SMSG_SET_PCT_SPELL_MODIFIER = 0x267,
+    SMSG_CANCEL_AUTO_REPEAT = 0x29C,
     CMSG_CANCEL_AURA = 0x136,
     SMSG_UPDATE_AURA_DURATION = 0x137,
     SMSG_SPELLHEALLOG = 0x150,
@@ -455,6 +493,8 @@ enum Opcode : uint
     SMSG_BATTLEGROUND_PLAYER_LEFT = 0x2ED,
     CMSG_BATTLEMASTER_JOIN = 0x2EE,
     SMSG_ITEM_ENCHANT_TIME_UPDATE = 0x1EB,
+    SMSG_ITEM_TIME_UPDATE = 0x1EA,
+    SMSG_ITEM_COOLDOWN = 0x0B0,
     SMSG_SPIRIT_HEALER_CONFIRM = 0x222,
     SMSG_INIT_WORLD_STATES = 0x2C2,
     SMSG_UPDATE_WORLD_STATE = 0x2C3,
@@ -660,8 +700,9 @@ enum Language : uint
 /**
  * The client's movement opcodes, whose bodies are a `MovementInfo` and nothing
  * else: every `MSG_MOVE_*` opcode except `MSG_MOVE_TIME_SKIPPED` (a guid and a
- * time), the teleport messages, which have handlers of their own, and the
- * speed changes the server sends. Collected
+ * time), the teleport messages, which have handlers of their own, and what the
+ * server sends others when the client acknowledges an order (speeds, root, knockback, water walk, feather
+ * fall, hover: `dmangos.world.moveorders`). Collected
  * from `Opcode` at compile time, so an opcode added there is routed to the
  * movement handler without further changes.
  */
@@ -671,7 +712,8 @@ enum Opcode[] movementOpcodes = () {
     // Not a MovementInfo, or a reply to the server rather than a move to show others.
     enum notMovement = ["MSG_MOVE_TIME_SKIPPED", "MSG_MOVE_TELEPORT", "MSG_MOVE_TELEPORT_ACK",
         "MSG_MOVE_WORLDPORT_ACK", "MSG_MOVE_SET_RUN_SPEED", "MSG_MOVE_SET_RUN_BACK_SPEED", "MSG_MOVE_SET_SWIM_SPEED",
-        "MSG_MOVE_SET_SWIM_BACK_SPEED"];
+        "MSG_MOVE_SET_SWIM_BACK_SPEED", "MSG_MOVE_SET_WALK_SPEED", "MSG_MOVE_SET_TURN_RATE", "MSG_MOVE_ROOT",
+        "MSG_MOVE_UNROOT", "MSG_MOVE_KNOCK_BACK", "MSG_MOVE_HOVER", "MSG_MOVE_FEATHER_FALL", "MSG_MOVE_WATER_WALK"];
     Opcode[] opcodes;
     static foreach (name; __traits(allMembers, Opcode))
         static if (name.startsWith("MSG_MOVE_") && !notMovement.canFind(name))

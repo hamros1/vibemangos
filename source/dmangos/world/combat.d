@@ -115,6 +115,8 @@ struct Fighter
     uint shieldBlock;          /// what its shield stops of a blocked blow
     uint armor;
     float[7] damageTaken = 1;  /// by school: what its auras multiply blows against it by (`MOD_DAMAGE_PERCENT_TAKEN`)
+    int[7] damageTakenFlat;    /// by school: what its auras add to each blow first (`MOD_DAMAGE_TAKEN`: Blessing of Sanctuary)
+    Immunities immune;         /// what cannot touch it
     float[mechanics] mechanicResist = 0; /// percent more often it resists spells of each mechanic (`MOD_MECHANIC_RESISTANCE`)
     uint creatureType = creatureTypeHumanoid; /// `CreatureType` (a player is a humanoid)
     bool stealthed;            /// under a `MOD_STEALTH` aura (Stealth, Prowl)
@@ -173,6 +175,7 @@ struct DamageMods
     float[creatureTypes] versus = 1;
     float[creatureTypes] critVersus = 0;
     float[7] taken = 1;
+    int[7] takenFlat;          /// `MOD_DAMAGE_TAKEN`, by school
     float[7] threat = 1;       /// by school: what its damage is worth in threat (`MOD_THREAT`)
     float[mechanics] mechanicResist = 0;
 
@@ -199,6 +202,7 @@ struct DamageMods
         {
             m.school[s] = auras.multiplier(AuraType.modDamagePercentDone, (int mask) => (mask & (1 << s)) != 0, -1);
             m.taken[s] = auras.multiplier(AuraType.modDamagePercentTaken, (int mask) => (mask & (1 << s)) != 0);
+            m.takenFlat[s] = auras.totalByMiscMask(AuraType.modDamageTaken, 1 << s);
             m.threat[s] = auras.multiplier(AuraType.modThreat, (int mask) => (mask & (1 << s)) != 0);
         }
         foreach (int mechanic; 1 .. cast(int) mechanics)
@@ -218,8 +222,109 @@ struct DamageMods
         f.damageVersus = versus;
         f.critVersus = critVersus;
         f.damageTaken = taken;
+        f.damageTakenFlat = takenFlat;
         f.mechanicResist = mechanicResist;
     }
+}
+
+/**
+ * What a unit cannot be touched by (CMaNGOS's `IsImmuneToSpell`, `IsImmuneToSpellEffect`, `IsImmuneToDamage`): a
+ * creature's template (`MechanicImmuneMask`, `SchoolImmuneMask`: a boss and stuns) and its auras (Divine Shield
+ * and Ice Block a school immunity, Blessing of Freedom and Berserker Rage a mechanic's).
+ */
+struct Immunities
+{
+    uint schools;   /// school mask: no spell of these schools, no blow (`SCHOOL_IMMUNITY`)
+    uint damage;    /// school mask: no damage of these schools (`DAMAGE_IMMUNITY`)
+    uint mechanics; /// bit `mechanic - 1` (`MECHANIC_IMMUNITY`, `_MASK`)
+    uint dispels;   /// bit `dispel type` (`DISPEL_IMMUNITY`): Faerie Fire's victims and the like
+    ulong[3] effects; /// bit `effect` (`EFFECT_IMMUNITY`)
+    ulong[4] states;  /// bit `aura type` (`STATE_IMMUNITY`)
+
+    /// From a creature's template masks (0 for a player) and `auras`.
+    static Immunities of(A)(const ref A auras, uint mechanicMask = 0, uint schoolMask = 0)
+    {
+        import dmangos.world.spellids : AuraType;
+
+        Immunities m;
+        m.mechanics = mechanicMask;
+        m.schools = schoolMask;
+        foreach (aura; auras.list)
+            foreach (i; 0 .. 3)
+            {
+                if (!(aura.effects & (1 << i)))
+                    continue;
+                const misc = aura.misc(i);
+                switch (aura.type(i))
+                {
+                case AuraType.schoolImmunity: m.schools |= misc; break;
+                case AuraType.damageImmunity: m.damage |= misc; break;
+                case AuraType.mechanicImmunity:
+                    if (misc > 0 && misc <= 32)
+                        m.mechanics |= 1u << (misc - 1);
+                    break;
+                case AuraType.mechanicImmunityMask: m.mechanics |= misc; break;
+                case AuraType.dispelImmunity:
+                    if (misc >= 0 && misc < 32)
+                        m.dispels |= 1u << misc;
+                    break;
+                case AuraType.effectImmunity:
+                    if (misc >= 0 && misc < 192)
+                        m.effects[misc / 64] |= 1UL << (misc % 64);
+                    break;
+                case AuraType.stateImmunity:
+                    if (misc >= 0 && misc < 256)
+                        m.states[misc / 64] |= 1UL << (misc % 64);
+                    break;
+                default:
+                    break;
+                }
+            }
+        return m;
+    }
+
+    /// Whether it has any.
+    bool any() const pure nothrow @nogc @safe
+    {
+        return schools || damage || mechanics || dispels || effects != effects.init || states != states.init;
+    }
+
+    /// Whether `mechanic` (1 ..) cannot touch it.
+    bool toMechanic(uint mechanic) const pure nothrow @nogc @safe
+    {
+        return mechanic > 0 && mechanic <= 32 && (mechanics & (1u << (mechanic - 1))) != 0;
+    }
+
+    /// Whether a hostile spell (`school` an index, its `dispel` type and `mechanic`) cannot touch it at all.
+    bool toSpell(uint school, uint dispel, uint mechanic) const pure nothrow @nogc @safe
+    {
+        return (school < 7 && (schools & (1u << school))) || (dispel < 32 && dispel && (dispels & (1u << dispel)))
+            || toMechanic(mechanic);
+    }
+
+    /// Whether one effect (`effect`, its `mechanic`, the aura type it applies) cannot touch it.
+    bool toEffect(uint effect, uint mechanic, uint auraType) const pure nothrow @nogc @safe
+    {
+        return (effect < 192 && (effects[effect / 64] & (1UL << (effect % 64)))) || toMechanic(mechanic)
+            || (auraType && auraType < 256 && (states[auraType / 64] & (1UL << (auraType % 64))));
+    }
+
+    /// Whether damage of `school` (an index) cannot hurt it.
+    bool toDamage(uint school) const pure nothrow @nogc @safe
+    {
+        return school < 7 && ((schools | damage) & (1u << school)) != 0;
+    }
+}
+
+unittest
+{
+    Immunities boss;
+    boss.mechanics = 1u << (12 - 1); // MECHANIC_STUN
+    assert(boss.toMechanic(12) && !boss.toMechanic(5));
+    assert(boss.toEffect(6, 12, 12) && !boss.toEffect(2, 0, 0), "a stun effect, not the damage beside it");
+    Immunities shielded;
+    shielded.schools = 0x7F; // Divine Shield: every school
+    assert(shielded.toSpell(4, 0, 0) && shielded.toDamage(0));
 }
 
 /// The spell mechanics (`Mechanics`) `Fighter.mechanicResist` covers.
@@ -452,7 +557,7 @@ private bool isWandUser(ubyte classId) pure nothrow @nogc @safe
 }
 
 /// Whether the victim may dodge: a player dodges only what comes from the front.
-private bool canDodge(const Fighter victim, const Fighter attacker) pure nothrow @nogc @safe
+bool canDodge(const Fighter victim, const Fighter attacker) pure nothrow @nogc @safe
 {
     if (!victim.canDodge || victim.dodge < 0.005f)
         return false;
@@ -483,7 +588,7 @@ unittest
 }
 
 /// Whether the victim may parry: only from the front.
-private bool canParry(const Fighter victim, const Fighter attacker) pure nothrow @nogc @safe
+bool canParry(const Fighter victim, const Fighter attacker) pure nothrow @nogc @safe
 {
     return victim.canParry && victim.parry >= 0.005f && isFacingFront(attacker, victim);
 }
@@ -625,7 +730,17 @@ MeleeDamage calculateMeleeDamage(const Fighter attacker, const Fighter victim, A
         return d;
     d.hitInfo = type == AttackType.offHand ? HitInfo.leftSwing : HitInfo.normalSwing2;
 
+    // A victim its school cannot hurt (Divine Shield, a boss immune to physical): "Immune", no roll.
+    if (victim.immune.toDamage(d.school))
+    {
+        d.outcome = MeleeHitOutcome.normal;
+        d.targetState = VictimState.isImmune;
+        d.damage = d.cleanDamage = 0;
+        return d;
+    }
     float damage = weaponDamage(attacker, type, rng) * damageFactor(attacker, victim, type, d.school);
+    if (d.school < 7 && victim.damageTakenFlat[d.school]) // the victim's flat part, as its percent takes it
+        damage = imported!"std.algorithm.comparison".max(0.0f, damage + victim.damageTakenFlat[d.school] * victim.damageTaken[d.school]);
     if (d.school == 0)
         damage = armorReducedDamage(attacker.level, victim.armor, damage);
     d.damage = cast(uint) damage;
@@ -850,6 +965,11 @@ unittest
     wolf.evading = true;
     const evaded = calculateMeleeDamage(player, wolf, AttackType.mainHand, rng);
     assert(evaded.outcome == MeleeHitOutcome.evade && evaded.targetState == VictimState.evades && evaded.damage == 0);
+    wolf.evading = false;
+    wolf.immune.schools = 1; // physical: Divine Shield's kind
+    const immune = calculateMeleeDamage(player, wolf, AttackType.mainHand, rng);
+    assert(immune.targetState == VictimState.isImmune && immune.damage == 0);
+    wolf.immune.schools = 0;
 
     // Rage: a level 1 warrior hitting for 10 gets 10 / 7.49 * 7.5 = 10.0 rage, 100 in the field.
     const rage = rageReward(1, 10, true);

@@ -55,6 +55,7 @@ private:
         bool triggered;
         bool active;
         ubyte persistentDone; // effects whose persistent area is made (once a cast, not once a target)
+        ulong castItemGuid;   // ... that very item, whose charges it takes (`dmangos.world.itemuse`)
     }
 
     /// A missile's effect on its target, due when it arrives.
@@ -146,6 +147,9 @@ private:
         const proto = item.proto;
         if (proto.requiredLevel > player.data.level)
             return sendEquipError(InventoryResult.cantEquipLevel, item);
+        if (const error = useItemError(player.inventory[bag, slot]))
+            return sendEquipError(error);
+        bindOnUse(player.inventory[bag, slot]);
         enum uint triggerOnUse = 0;
         foreach (ref use; proto.details.spells)
         {
@@ -160,7 +164,11 @@ private:
                 deliver(Opcode.SMSG_CAST_RESULT, castResultPacket(spell.id, SpellCastResult.dontReport, spell));
                 return;
             }
+            if (!hasChargesLeft(item))
+                return deliver(Opcode.SMSG_CAST_RESULT, castResultPacket(spell.id, SpellCastResult.noChargesRemain, spell));
+            usingItemGuid = item.fullGuid; // its charges are taken when the cast goes
             castSpell(spell, targets, false, proto.entry);
+            usingItemGuid = 0;
             break;
         }
     }
@@ -235,6 +243,14 @@ private:
             player.inventory.destroyCount(entry, 1);
             flushInventory();
         }
+        else if (spell.attributes & 0x2) // a thrown weapon that does not stack wears instead (`Spell::TakeAmmo`)
+        {
+            import dmangos.world.defines : equipmentSlotRanged, InventoryType;
+
+            const weapon = player.inventory.equipped(equipmentSlotRanged);
+            if (weapon !is null && weapon.proto.inventoryType == InventoryType.thrown && weapon.proto.stackable <= 1)
+                loseDurability(equipmentSlotRanged, 1);
+        }
     }
 
     /// Whether `spell` is off its cooldown.
@@ -301,6 +317,15 @@ private:
         return SpellCastResult.ok;
     }
 
+    /// The server stops the shooting: the client is told (`SMSG_CANCEL_AUTO_REPEAT`), or its button stays lit.
+    package void stopAutoRepeat()
+    {
+        if (autoRepeat is null)
+            return;
+        autoRepeat = null;
+        deliver(Opcode.SMSG_CANCEL_AUTO_REPEAT, null);
+    }
+
     /// The client stops shooting.
     @Handles(Opcode.CMSG_CANCEL_AUTO_REPEAT_SPELL, WorldState.inWorld)
     void handleCancelAutoRepeat()
@@ -325,10 +350,7 @@ private:
         if (player.movement.flags & moving)
         {
             if (autoRepeat.casting.channelInterruptFlags & movingCancels)
-            {
-                autoRepeat = null;
-                return;
-            }
+                return stopAutoRepeat();
             autoRepeatWindUp = true;
             return;
         }
@@ -344,17 +366,13 @@ private:
             return;
         const target = player.values.get!UNIT_FIELD_TARGET;
         if (!target)
-        {
-            autoRepeat = null;
-            return;
-        }
+            return stopAutoRepeat();
         auto targets = SpellTargets(TargetFlags.unit, target);
         const result = checkCast(autoRepeat, targets, false, 0, false);
         if (result != SpellCastResult.ok)
         {
             deliver(Opcode.SMSG_CAST_RESULT, castResultPacket(autoRepeat.id, result, autoRepeat));
-            autoRepeat = null;
-            return;
+            return stopAutoRepeat();
         }
         const spell = autoRepeat;
         if (!hasAmmoFor(spell))
@@ -392,6 +410,16 @@ private:
             return result;
         }
         auto c = Casting(spell, targets, 0, itemEntry, triggered, true);
+        c.castItemGuid = itemEntry ? usingItemGuid : 0;
+        // What a cast ends as it starts (`Spell::Prepare`): an item's use, then any action; not a triggered spell's,
+        // nor one that is not an action (`SPELL_ATTR_EX2_NOT_AN_ACTION`).
+        enum uint notAnAction = 0x10000000;
+        if (!triggered && !(spell.attributesEx2 & notAnAction))
+        {
+            if (itemEntry)
+                interruptAurasOnCast(AuraInterrupt.itemUse, spell);
+            interruptAurasOnCast(AuraInterrupt.action, spell);
+        }
         if (!triggered)
         {
             c.timer = castTimeCheat ? 0 : max(0, spellMod(SpellModOp.castingTime, spell,
@@ -484,6 +512,55 @@ private:
         player.values.set!UNIT_CHANNEL_SPELL(spell.id);
         player.values.set!UNIT_FIELD_CHANNEL_OBJECT(channelTarget);
         flushPlayerChanges();
+        // Mind Vision (`SPELL_AURA_BIND_SIGHT`): the player sees through the channel's target while it lasts.
+        import dmangos.world.spellids : AuraType;
+
+        foreach (j; 0 .. 3)
+            if (spell.effect[j] == SpellEffect.applyAura && spell.casting.applyAuraName[j] == AuraType.bindSight
+                    && channelTarget != player.guid)
+                seeFrom(channelTarget);
+    }
+
+    /// Far Sight's spot (`SPELL_EFFECT_ADD_FARSIGHT`): a dynamic object at the spell's destination, seen from
+    /// until the channel ends (it is the channel's object).
+    void makeFarSightSpot(const(SpellInfo)* spell, size_t i, const ref SpellTargets targets)
+    {
+        import dmangos.world.dynobject : DynamicObject;
+        import dmangos.world.spellcast : radius;
+
+        Position at = player.position;
+        if (targets.mask & TargetFlags.destLocation)
+            at = Position(targets.dest[0], targets.dest[1], targets.dest[2], at.orientation);
+        removeFarSightSpot();
+        auto spot = new DynamicObject(context.nextTemporaryCounter(), player.guid, spell.id, i,
+            radius(*spell, i, context.client), at);
+        map.addObject(spot);
+        farSightSpot = spot.guid;
+        channelObject = spot.guid;
+        seeFrom(spot.guid);
+    }
+
+    /**
+     * The player sees from `eye` (an object or unit on its map: `Map.eyeOf`), or from where it stands again (0):
+     * `PLAYER_FARSIGHT`, which the client moves its camera to, and the map's sight worked out from there.
+     */
+    void seeFrom(ulong eye)
+    {
+        import dmangos.world.updatefields : PLAYER_FARSIGHT;
+
+        if (player.values.get!PLAYER_FARSIGHT == eye)
+            return;
+        player.values.set!PLAYER_FARSIGHT(eye);
+        if (map !is null)
+            map.refreshVisibility(this); // the eye's surroundings (and the spot itself) before the camera moves
+        flushPlayerChanges();
+    }
+
+    private void removeFarSightSpot()
+    {
+        if (farSightSpot && map !is null)
+            map.removeObject(farSightSpot);
+        farSightSpot = 0;
     }
 
     /**
@@ -522,6 +599,8 @@ private:
         // Tame Beast's twenty seconds are up: the beast is tamed.
         if (!cancelled && spell.id == imported!"dmangos.world.pethandlers".spellTameBeast)
             tameBeastChannelDone(channelTarget);
+        if (!cancelled && channelTarget)
+            rewardPlayerAndGroupAtCast(channelTarget, spell.id); // a channel at a quest's creature or object
         // A channel cancelled: its spots go with it.
         if (cancelled)
             foreach_reverse (k, ref area; persistentAreas)
@@ -530,6 +609,9 @@ private:
                     map.removeObject(area.spot.guid);
                     persistentAreas = persistentAreas[0 .. k] ~ persistentAreas[k + 1 .. $];
                 }
+        // Far Sight, Eagle Eye, Mind Vision: the camera comes back, the spot goes.
+        seeFrom(0);
+        removeFarSightSpot();
         ByteWriter w;
         w.put(0u);
         deliver(Opcode.MSG_CHANNEL_UPDATE, w.data);
@@ -951,6 +1033,10 @@ private:
     {
         enum uint castableWhileSitting = 0x08000000; // SPELL_ATTR_CASTABLE_WHILE_SITTING
         const now = context.clock();
+        // A finishing move needs combo points on its target (Slice and Dice, cast on oneself: on anyone).
+        if (!triggered && usesComboPoints(*spell)
+                && (comboPoints == 0 || (targets.unit && targets.unit != player.guid && targets.unit != comboTarget)))
+            return SpellCastResult.noComboPoints;
         if (player.deathState != DeathState.alive && !(spell.attributes & spellAttrCastableWhileDead))
             return player.deathState == DeathState.ghost ? SpellCastResult.notWhileGhost : SpellCastResult.casterDead;
         if (start && !triggered)
@@ -977,14 +1063,9 @@ private:
             // The item the spell needs worn (a fishing pole, a ranged weapon to shoot).
             if (spell.equippedItemClass >= 0 && !hasItemFitToSpell(spell))
                 return SpellCastResult.equippedItemClass;
-            // A spell for some stances (or forms) only in one of them.
-            enum uint allowWhileNotShapeshifted = 0x00080000; // SPELL_ATTR_EX2_ALLOW_WHILE_NOT_SHAPESHIFTED
-            enum SpellCastResult onlyShapeshift = cast(SpellCastResult) 0x56;
-            const form = player.values.getByte!UNIT_FIELD_BYTES_1(2);
-            if (form == 0 && spell.stances && !(spell.attributesEx2 & allowWhileNotShapeshifted))
-                return onlyShapeshift;
-            if (form != 0 && spell.stances && !(spell.stances & (1u << (form - 1))))
-                return onlyShapeshift;
+            const attributeResult = checkCastAttributes(spell, targets);
+            if (attributeResult != SpellCastResult.ok)
+                return attributeResult;
         }
         if (start && !triggered)
         {
@@ -1010,6 +1091,14 @@ private:
         const goResult = checkGameObjectTarget(spell, targets, itemEntry);
         if (goResult != SpellCastResult.ok)
             return goResult;
+        // An item: disenchanted, its lock picked (`dmangos.world.professions`).
+        const itemResult = checkItemTarget(spell, targets, itemEntry, start);
+        if (itemResult != SpellCastResult.ok)
+            return itemResult;
+        // Its spell focus near (an anvil, a forge, a fire), then reagents, then tools in the bags.
+        const focusResult = checkSpellFocus(spell);
+        if (focusResult != SpellCastResult.ok)
+            return focusResult;
         if (!triggered && itemEntry == 0)
         {
             const cost = costOf(*spell);
@@ -1021,6 +1110,88 @@ private:
             if (!hasAmmoFor(spell))
                 return SpellCastResult.noAmmo;
         }
+        if (!triggered)
+        {
+            const toolResult = checkTools(spell);
+            if (toolResult != SpellCastResult.ok)
+                return toolResult;
+        }
+        return SpellCastResult.ok;
+    }
+
+    /**
+     * What a spell's attributes ask of the caster and its target as the cast starts (CMaNGOS's `Spell::CheckCast`
+     * and `GetErrorAtShapeshiftedCast`): its form, outdoors, stealth, a weapon in the main hand; behind the
+     * target (Backstab), facing it, a target out of combat (Sap).
+     */
+    SpellCastResult checkCastAttributes(const(SpellInfo)* spell, const ref SpellTargets targets)
+    {
+        import dmangos.world.clientdata : actsAsShapeshifted;
+        import dmangos.world.combat : hasInArc;
+        import dmangos.world.defines : equipmentSlotMainhand;
+        import dmangos.world.player : PlayerFlags;
+
+        enum : uint
+        {
+            isAbility = 0x10, onlyOutdoors = 0x8000, notShapeshift = 0x10000, onlyStealthed = 0x20000,
+            doNotSheath = 0x40000, cancelsAutoAttack = 0x100000,                       // Attributes
+            initiatesCombat = 0x200, onlyPeacefulTargets = 0x100,                      // AttributesEx
+            allowWhileNotShapeshifted = 0x00080000, initiateCombatPostCast = 0x100000, // AttributesEx2
+            requiresMainHand = 0x400,                                                  // AttributesEx3
+        }
+        // Its form: a stance (or Stealth, Shadowform) is cast as unshifted; Cat or Bear Form are not.
+        const form = player.values.getByte!UNIT_FIELD_BYTES_1(2);
+        const formMask = form ? 1u << (form - 1) : 0;
+        if (formMask & spell.casting.stancesNot)
+            return SpellCastResult.notShapeshift;
+        if (!(formMask & spell.stances))
+        {
+            if (actsAsShapeshifted(context.client, form))
+            {
+                if (spell.attributes & notShapeshift)
+                    return SpellCastResult.notShapeshift;
+                if (spell.stances)
+                    return SpellCastResult.onlyShapeshift;
+            }
+            else if (spell.stances && !(spell.attributesEx2 & allowWhileNotShapeshifted))
+                return SpellCastResult.onlyShapeshift;
+        }
+        if ((spell.attributes & onlyOutdoors) && !player.hasFlag(PlayerFlags.gm))
+            if (auto terrain = map.collision)
+                if (terrain.hasVmaps)
+                {
+                    const p = player.position;
+                    if (!terrain.isOutdoors(p.x, p.y, p.z + 2.0f))
+                        return SpellCastResult.onlyOutdoors;
+                }
+        if ((spell.attributes & onlyStealthed) && !player.auras.hasType(AuraType.modStealth))
+            return SpellCastResult.onlyStealthed;
+        if (spell.casting.attributesEx3 & requiresMainHand)
+        {
+            const weapon = player.inventory.equipped(equipmentSlotMainhand);
+            if (weapon is null || weapon.proto.itemClass != 2 || weapon.durability == 0 && weapon.maxDurability
+                    || (player.values.get!UNIT_FIELD_FLAGS & UnitFlags.disarmed))
+                return SpellCastResult.equippedItemClassMainhand;
+        }
+        // Its target: where it stands to the caster, and whether it fights.
+        if (targets.unit == 0 || targets.unit == player.guid)
+            return SpellCastResult.ok;
+        auto other = map.unit(targets.unit);
+        if (!other)
+            return SpellCastResult.ok;
+        const me = player.position, it = other.fighter.position;
+        enum ulong pounce = 0x20000;
+        enum uint familyDruid = 7;
+        if ((spell.attributesEx & initiatesCombat) && (spell.attributesEx2 & initiateCombatPostCast)
+                && !(spell.casting.spellFamilyName == familyDruid && (spell.casting.spellFamilyFlags & pounce)))
+            if (hasInArc(it, me) || !hasInArc(me, it)) // seen by it, or not facing it: not at its back
+                return SpellCastResult.notBehind;
+        if (spell.attributes == (isAbility | notShapeshift | doNotSheath | cancelsAutoAttack) && !hasInArc(me, it))
+            return SpellCastResult.notInfront; // Gouge
+        if ((spell.id in context.data.spellFacing) && !hasInArc(me, it))
+            return SpellCastResult.unitNotInfront;
+        if ((spell.attributesEx & onlyPeacefulTargets) && (other.unitFlags & UnitFlags.inCombat))
+            return SpellCastResult.targetAffectingCombat; // Sap, Distract
         return SpellCastResult.ok;
     }
 
@@ -1263,38 +1434,25 @@ private:
             return result;
         }
         const now = context.clock();
+        int paid; // the power it cost: most of it back for each target it missed (`DISCOUNT_POWER_ON_MISS`)
         if (!c.triggered)
         {
-            // The cooldowns start: the item's, else the spell's.
-            int recovery = spell.recoveryTime, categoryRecovery = spell.categoryRecoveryTime;
-            uint category = spell.category;
-            if (c.castItemEntry)
-                if (const proto = c.castItemEntry in context.data.items)
-                    foreach (i, ref use; proto.details.spells)
-                        if (use.id == spell.id)
-                        {
-                            if (use.cooldown >= 0)
-                                recovery = use.cooldown;
-                            if (use.categoryCooldown >= 0)
-                                categoryRecovery = use.categoryCooldown;
-                            if (proto.spellCategory[i])
-                                category = proto.spellCategory[i];
-                        }
-            recovery = spellMod(SpellModOp.cooldown, spell, recovery);
-            categoryRecovery = spellMod(SpellModOp.cooldown, spell, categoryRecovery);
-            if (recovery > 0 && !cooldownCheat)
-                spellReadyAt[spell.id] = now + recovery.msecs;
-            if (category && categoryRecovery > 0 && !cooldownCheat)
-                categoryReadyAt[category] = now + categoryRecovery.msecs;
-            if ((recovery > 0 || (category && categoryRecovery > 0)) && !cooldownCheat)
+            // The cooldowns start: the item's, else the spell's; one that starts on an event (Presence of Mind,
+            // Nature's Swiftness: `SPELL_ATTR_COOLDOWN_ON_EVENT`) when its aura ends (`cooldownEvent`), the spell
+            // held in use until then.
+            enum uint cooldownOnEvent = 0x02000000;
+            if (spell.attributes & cooldownOnEvent && !cooldownCheat)
             {
-                cooldownCategory[spell.id] = category && categoryRecovery > 0 ? category : 0;
-                cooldownItem[spell.id] = c.castItemEntry;
+                eventCooldowns[spell.id] = c.castItemEntry;
+                spellReadyAt[spell.id] = MonoTime.max;
             }
+            else
+                startCooldown(spell, c.castItemEntry, now);
             // The power and reagents taken, and an item used up (`spellcharges` -1: one use).
             if (c.castItemEntry == 0)
             {
                 const cost = costOf(*spell);
+                paid = cost;
                 if (cost > 0)
                 {
                     player.modifyPower(cast(Power) spell.casting.powerType, -cost);
@@ -1307,10 +1465,8 @@ private:
                 if (!autoRepeats(spell))
                     takeAmmo(spell); // an auto-repeating shot's is taken as it shoots
             }
-            else if (const proto = c.castItemEntry in context.data.items)
-                foreach (i, ref use; proto.details.spells)
-                    if (use.id == spell.id && proto.spellCharges[i] < 0)
-                        player.inventory.destroyCount(c.castItemEntry, 1);
+            else
+                takeCastItem(c.castItemEntry, c.castItemGuid); // its charges, and the item if used up
             flushInventory();
         }
 
@@ -1339,9 +1495,9 @@ private:
             }
             else if (a == ImplicitTarget.gameObject || a == ImplicitTarget.gameObjectItem)
             {
-                if (!c.targets.gameObject)
-                    continue; // an item's lock: not yet
-                targets = [c.targets.gameObject];
+                if (!c.targets.gameObject && !(a == ImplicitTarget.gameObjectItem && c.targets.item))
+                    continue;
+                targets = [c.targets.gameObject ? c.targets.gameObject : player.guid]; // an item: the caster's own
             }
             else if (a == ImplicitTarget.unitScriptNearCaster)
             {
@@ -1362,12 +1518,21 @@ private:
                 }
             }
         }
+        enum uint notAnAction = 0x10000000; // SPELL_ATTR_EX2_NOT_AN_ACTION
         if (!c.triggered)
         {
-            interruptAuras(AuraInterrupt.action); // auras that end when the player casts
+            if (!(spell.attributesEx2 & notAnAction))
+                interruptAurasOnCast(AuraInterrupt.actionLate, spell); // what a cast ends as it completes
             deliver(Opcode.SMSG_CAST_RESULT, castResultPacket(spell.id, SpellCastResult.ok));
         }
         map.sendToWatchers(this, Opcode.SMSG_SPELL_GO, spellGoPacket(player.guid, spell.id, results, c.targets), true);
+        // A hostile spell landed on another player (a duel, world PvP): what that ends (`HOSTILE_ACTION`).
+        foreach (r; results)
+            if (r.miss == SpellMissInfo.none && r.guid != player.guid)
+                if (auto other = cast(typeof(this)) context.onlinePlayer(r.guid))
+                    if (other.player !is null && other.map is map
+                            && canAttack(relatingNow(), other.relatingNow(), context.client))
+                        other.interruptAuras(AuraInterrupt.hostileAction);
         foreach (r; results)
             if (r.miss != SpellMissInfo.none)
             {
@@ -1376,6 +1541,16 @@ private:
                 if (auto creature = cast(Creature) map.findObject(r.guid))
                     spellAttacked(creature, 0);
             }
+        // A finishing move uses the combo points (its values, its duration), spent once it is done unless it
+        // missed an enemy (CMaNGOS's `Spell::finish`).
+        castCombo = !c.triggered && usesComboPoints(*spell) ? comboPoints : 0;
+        scope (exit)
+            castCombo = 0;
+        // The modifiers with charges it has now: those that may be spent by it (`spendChargedMods`).
+        Aura[] chargedAtStart;
+        foreach (aura; player.auras.list)
+            if (aura.charges)
+                chargedAtStart ~= aura;
         // A missile (`speed`) reaches each target after its flight: the effects then.
         foreach (i; 0 .. 3)
             foreach (target; effectTargets[i])
@@ -1398,6 +1573,35 @@ private:
                 if (auto creature = cast(Creature) map.findObject(r.guid))
                     if (creature.alive && creature.ai !is null)
                         creature.ai.spellHitBy(player.guid, spell.id, 1u << spell.casting.school, map);
+        // Quest objectives for a spell cast at a creature or game object (`ReqSpellCast`), a channel's when it ends.
+        if (!(spell.attributesEx & (channeled | selfChanneled)) && !autoRepeats(spell) && !isNextMeleeSwingSpell(*spell))
+            foreach (r; results)
+                if (r.miss == SpellMissInfo.none)
+                    rewardPlayerAndGroupAtCast(r.guid, spell.id);
+        spendChargedMods(spell, chargedAtStart, c.triggered);
+        // A rage or energy ability that missed, was dodged or parried costs a fifth (CMaNGOS's `Spell::finish`).
+        enum uint discountPowerOnMiss = 0x08000000; // SPELL_ATTR_EX_DISCOUNT_POWER_ON_MISS
+        if ((spell.attributesEx & discountPowerOnMiss) && paid > 0)
+            foreach (r; results)
+                if (r.miss == SpellMissInfo.miss || r.miss == SpellMissInfo.dodge || r.miss == SpellMissInfo.parry
+                        || r.miss == SpellMissInfo.deflect)
+                    player.modifyPower(cast(Power) spell.casting.powerType, cast(int)(paid * 0.8f));
+        // What stops the caster's own attack (Gouge, Sap, Blind, Polymorph, Scatter Shot): its swings, its shots.
+        enum uint cancelsAutoAttack = 0x00100000; // SPELL_ATTR_CANCELS_AUTO_ATTACK_COMBAT
+        if (spell.attributes & cancelsAutoAttack)
+        {
+            if (spell.casting.dmgClass == DamageClass.ranged)
+                stopAutoRepeat();
+            stopAttack(false);
+        }
+        if (castCombo)
+        {
+            bool missedEnemy;
+            foreach (r; results)
+                missedEnemy |= r.miss != SpellMissInfo.none && r.guid != player.guid;
+            if (!missedEnemy)
+                clearComboPoints();
+        }
         flushPlayerChanges();
         return SpellCastResult.ok;
     }
@@ -1433,7 +1637,29 @@ private:
 
     void doEffect(const(SpellInfo)* spell, size_t i, ulong target, ref Casting c)
     {
-        const value = effectMod(spell, i, effectValue(*spell, i, player.data.level, uniform01(map.random)));
+        // An effect the target is immune to (a stun on a boss, beside the damage it still takes) does nothing.
+        if (target != player.guid)
+            if (auto other = map.unit(target))
+            {
+                enum uint noImmunities = 0x20000000; // SPELL_ATTR_NO_IMMUNITIES
+                const immune = other.fighter.immune;
+                if (immune.any && !(spell.attributes & noImmunities) && immune.toEffect(spell.effect[i],
+                        spell.casting.effectMechanic[i], spell.casting.applyAuraName[i]))
+                    return;
+            }
+        int base = effectValue(*spell, i, player.data.level, uniform01(map.random));
+        // A finishing move: more for each combo point (`EffectPointsPerComboPoint`); Eviscerate 3% of the attack
+        // power a point too (CMaNGOS's `EffectSchoolDMG`).
+        if (castCombo)
+        {
+            base += cast(int)(spell.casting.pointsPerComboPoint[i] * castCombo);
+            enum ulong eviscerate = 0x00020000;
+            enum uint familyRogue = 8;
+            if (spell.effect[i] == SpellEffect.schoolDamage && spell.casting.spellFamilyName == familyRogue
+                    && (spell.casting.spellFamilyFlags & eviscerate))
+                base += cast(int)(player.stats.attackPower * castCombo * 0.03f);
+        }
+        const value = effectMod(spell, i, base);
         final switch (spell.effect[i]) // every effect decided: done, or listed as not done below
         {
         case SpellEffect.schoolDamage: // SPELL_EFFECT_SCHOOL_DAMAGE
@@ -1537,8 +1763,21 @@ private:
         case SpellEffect.skinning: // SPELL_EFFECT_SKINNING
             skinCreature(target);
             break;
-        case SpellEffect.openLock: // SPELL_EFFECT_OPEN_LOCK
-            openLock(spell, i, target, c.castItemEntry);
+        case SpellEffect.openLock, SpellEffect.openLockItem: // SPELL_EFFECT_OPEN_LOCK, _OPEN_LOCK_ITEM: a game object's lock, or an item's
+            if (c.targets.gameObject)
+                openLock(spell, i, c.targets.gameObject, c.castItemEntry);
+            else if (c.targets.item)
+                openItemLock(spell, i, c.targets.item, c.castItemEntry);
+            break;
+        case SpellEffect.questComplete: // SPELL_EFFECT_QUEST_COMPLETE: the target player's quest of the misc value (`AreaExploredOrEventHappens`)
+        {
+            auto who = target == player.guid ? this : cast(typeof(this)) context.onlinePlayer(target);
+            if (who !is null && who.player !is null && spell.miscValue[i] > 0)
+                who.areaExploredOrEventHappens(cast(uint) spell.miscValue[i]);
+            break;
+        }
+        case SpellEffect.disenchant: // SPELL_EFFECT_DISENCHANT
+            disenchantItem(spell, c.targets.item);
             break;
         case SpellEffect.interruptCast: // SPELL_EFFECT_INTERRUPT_CAST: the target's cast ends, and its school is locked out for the interrupt's time
         {
@@ -1569,6 +1808,42 @@ private:
         case SpellEffect.summonCritter: // SPELL_EFFECT_SUMMON_CRITTER: a companion; the same again sends it away
             summonCompanion(spell, i);
             break;
+        case SpellEffect.addComboPoints: // SPELL_EFFECT_ADD_COMBO_POINTS: Sinister Strike, Claw
+            if (target != player.guid)
+                addComboPoints(target, value);
+            break;
+        case SpellEffect.skinPlayerCorpse: // SPELL_EFFECT_SKIN_PLAYER_CORPSE: Remove Insignia, a dead enemy's
+        {
+            import dmangos.world.corpse : Corpse, CorpseFlags;
+            import dmangos.world.defines : UnitFlags;
+
+            // The corpse (`TARGET_FLAG_PVP_CORPSE`), or the body not yet released; within reach, and marked for it.
+            ulong owner = c.targets.unit;
+            Position at;
+            bool marked;
+            if (auto body_ = c.targets.corpse ? cast(Corpse) map.findObject(c.targets.corpse) : null)
+            {
+                owner = body_.values.get!CORPSE_FIELD_OWNER;
+                at = body_.position;
+                marked = (body_.values.get!CORPSE_FIELD_FLAGS & CorpseFlags.lootable) != 0;
+            }
+            auto victim = owner ? cast(typeof(this)) context.onlinePlayer(owner) : null;
+            if (victim is null || victim is this || victim.player is null || victim.map !is map
+                    || victim.player.deathState == DeathState.alive || victim.teamId == teamId)
+                break;
+            if (!c.targets.corpse)
+            {
+                at = victim.player.position;
+                marked = (victim.player.values.get!UNIT_FIELD_FLAGS & UnitFlags.skinnable) != 0;
+            }
+            const p = player.position;
+            if (marked && (p.x - at.x) ^^ 2 + (p.y - at.y) ^^ 2 + (p.z - at.z) ^^ 2 <= 10.0f ^^ 2)
+                victim.removedInsignia(this);
+            break;
+        }
+        case SpellEffect.addFarsight: // SPELL_EFFECT_ADD_FARSIGHT: Far Sight, Eagle Eye: a spot to see from
+            makeFarSightSpot(spell, i, c.targets);
+            break;
         case SpellEffect.energize: // SPELL_EFFECT_ENERGIZE
             energize(spell, i, target, value);
             break;
@@ -1584,7 +1859,7 @@ private:
             break;
         case SpellEffect.createItem:
             if (spell.itemType[i])
-                if (giveItem(spell.itemType[i], value > 0 ? value : 1))
+                if (giveItem(spell.itemType[i], value > 0 ? value : 1, true, true)) // "You create"
                     updateCraftSkill(spell.id); // made: a chance to learn from it
             break;
         case SpellEffect.feedPet: // SPELL_EFFECT_FEED_PET
@@ -1614,25 +1889,25 @@ private:
         // Not done by a player's cast (some, such as skills and proficiencies, are done when a spell is learned):
         case SpellEffect.portalTeleport, SpellEffect.environmentalDamage, SpellEffect.powerDrain,
             SpellEffect.healthLeech, SpellEffect.bind, SpellEffect.portal, SpellEffect.ritualBase,
-            SpellEffect.ritualSpecialize, SpellEffect.ritualActivatePortal, SpellEffect.questComplete,
+            SpellEffect.ritualSpecialize, SpellEffect.ritualActivatePortal,
             SpellEffect.addExtraAttacks, SpellEffect.dodge, SpellEffect.evade, SpellEffect.parry,
             SpellEffect.block, SpellEffect.weapon, SpellEffect.defense, SpellEffect.summon, SpellEffect.leap,
             SpellEffect.triggerMissile, SpellEffect.summonChangeItem, SpellEffect.spellDefense,
             SpellEffect.language, SpellEffect.dualWield, SpellEffect.summonGuardian,
             SpellEffect.teleportUnitsFaceCaster, SpellEffect.skillStep, SpellEffect.addHonor, SpellEffect.spawn,
             SpellEffect.tradeSkill, SpellEffect.stealth, SpellEffect.detect, SpellEffect.forceCriticalHit,
-            SpellEffect.guaranteeHit, SpellEffect.openLockItem, SpellEffect.proficiency, SpellEffect.powerBurn,
+            SpellEffect.guaranteeHit, SpellEffect.proficiency, SpellEffect.powerBurn,
             SpellEffect.threat, SpellEffect.healthFunnel, SpellEffect.powerFunnel, SpellEffect.healMaxHealth,
-            SpellEffect.distract, SpellEffect.pull, SpellEffect.addFarsight, SpellEffect.summonPossessed,
+            SpellEffect.distract, SpellEffect.pull, SpellEffect.summonPossessed,
             SpellEffect.healMechanical, SpellEffect.summonObjectWild, SpellEffect.sanctuary,
-            SpellEffect.addComboPoints, SpellEffect.createHouse, SpellEffect.bindSight, SpellEffect.stuck,
+            SpellEffect.createHouse, SpellEffect.bindSight, SpellEffect.stuck,
             SpellEffect.summonPlayer, SpellEffect.activateObject, SpellEffect.threatAll,
             SpellEffect.enchantHeldItem, SpellEffect.summonPhantasm, SpellEffect.charge,
-            SpellEffect.knockBack, SpellEffect.disenchant, SpellEffect.inebriate,
+            SpellEffect.knockBack, SpellEffect.inebriate,
             SpellEffect.summonObjectSlot1, SpellEffect.summonObjectSlot2, SpellEffect.summonObjectSlot3,
             SpellEffect.summonObjectSlot4, SpellEffect.dispelMechanic, SpellEffect.destroyAllTotems,
             SpellEffect.durabilityDamage, SpellEffect.summonDemon, SpellEffect.attackMe,
-            SpellEffect.durabilityDamagePct, SpellEffect.skinPlayerCorpse, SpellEffect.spiritHeal,
+            SpellEffect.durabilityDamagePct, SpellEffect.spiritHeal,
             SpellEffect.skill, SpellEffect.applyAreaAuraPet, SpellEffect.teleportGraveyard, SpellEffect.n122,
             SpellEffect.sendTaxi, SpellEffect.pullTowards, SpellEffect.modifyThreatPercent, SpellEffect.n126,
             SpellEffect.n127, SpellEffect.applyAreaAuraFriend, SpellEffect.applyAreaAuraEnemy:
@@ -1772,13 +2047,179 @@ private:
     /// A duration with the modifiers (an aura's that lasts until cancelled stays so).
     int modDuration(const(SpellInfo)* spell, int ms)
     {
+        // A finishing move lasts longer for each combo point: toward its greatest duration, a fifth a point
+        // (CMaNGOS's `CalculateSpellDuration`).
+        if (castCombo && ms > 0)
+            if (const entry = context.client.spellDurations.lookup(spell.casting.durationIndex))
+                if (entry.maximum > ms)
+                    ms += (entry.maximum - ms) * castCombo / 5;
         return ms > 0 ? max(0, spellMod(SpellModOp.duration, spell, ms)) : ms;
+    }
+
+    /// The cooldowns of a cast of `spell` (from the item `itemEntry`, 0: none) start at `now`: the item's, else the spell's.
+    private void startCooldown(const(SpellInfo)* spell, uint itemEntry, MonoTime now)
+    {
+        int recovery = spell.recoveryTime, categoryRecovery = spell.categoryRecoveryTime;
+        uint category = spell.category;
+        if (itemEntry)
+            if (const proto = itemEntry in context.data.items)
+                foreach (i, ref use; proto.details.spells)
+                    if (use.id == spell.id)
+                    {
+                        if (use.cooldown >= 0)
+                            recovery = use.cooldown;
+                        if (use.categoryCooldown >= 0)
+                            categoryRecovery = use.categoryCooldown;
+                        if (proto.spellCategory[i])
+                            category = proto.spellCategory[i];
+                    }
+        recovery = spellMod(SpellModOp.cooldown, spell, recovery);
+        categoryRecovery = spellMod(SpellModOp.cooldown, spell, categoryRecovery);
+        if (recovery > 0 && !cooldownCheat)
+            spellReadyAt[spell.id] = now + recovery.msecs;
+        if (category && categoryRecovery > 0 && !cooldownCheat)
+            categoryReadyAt[category] = now + categoryRecovery.msecs;
+        if ((recovery > 0 || (category && categoryRecovery > 0)) && !cooldownCheat)
+        {
+            cooldownCategory[spell.id] = category && categoryRecovery > 0 ? category : 0;
+            cooldownItem[spell.id] = itemEntry;
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Combo points
+    // -----------------------------------------------------------------------
+
+    /// The combo points (0 to 5) on `comboTarget`, built by Sinister Strike and the like, spent by finishing moves.
+    package ubyte comboPoints;
+    package ulong comboTarget;     /// ditto: whom they are on
+    private ubyte castCombo; // the points the finishing move being cast uses (its value, its duration)
+
+    /// A finishing move: it uses the combo points (`SPELL_ATTR_EX_FINISHING_MOVE_DAMAGE`, `_DURATION`).
+    static bool usesComboPoints(const ref SpellInfo spell) pure nothrow @nogc @safe
+    {
+        enum uint finishingDamage = 0x00100000, finishingDuration = 0x00400000;
+        return (spell.attributesEx & (finishingDamage | finishingDuration)) != 0;
+    }
+
+    /// `count` combo points on `target` (CMaNGOS's `Unit::AddComboPoints`): added on the same target, else they
+    /// start again on it; at most five.
+    package void addComboPoints(ulong target, int count)
+    {
+        if (count == 0 || target == 0)
+            return;
+        const now = target == comboTarget ? comboPoints + count : count;
+        comboTarget = target;
+        comboPoints = cast(ubyte)(now < 0 ? 0 : now > 5 ? 5 : now);
+        sendComboPoints();
+    }
+
+    /// The combo points are spent (or lost).
+    package void clearComboPoints()
+    {
+        if (comboTarget == 0)
+            return;
+        comboPoints = 0;
+        sendComboPoints();
+        comboTarget = 0;
+    }
+
+    private void sendComboPoints()
+    {
+        player.values.set!PLAYER__FIELD_COMBO_TARGET(comboTarget);
+        player.values.setByte!PLAYER_FIELD_BYTES(1, comboPoints);
+        flushPlayerChanges();
+    }
+
+    /// The spells whose cooldown waits for their aura to end, with the item each was cast from.
+    private uint[uint] eventCooldowns;
+
+    /**
+     * The aura of a spell whose cooldown starts on an event ended: its cooldown starts now, and the client's
+     * (`SMSG_COOLDOWN_EVENT`, CMaNGOS's `SendCooldownEvent`).
+     */
+    package void cooldownEvent(const(SpellInfo)* spell)
+    {
+        const item = spell.id in eventCooldowns;
+        if (item is null)
+            return;
+        const itemEntry = *item;
+        eventCooldowns.remove(spell.id);
+        spellReadyAt.remove(spell.id);
+        startCooldown(spell, itemEntry, context.clock());
+        ByteWriter w;
+        w.put(spell.id);
+        w.put(player.guid);
+        deliver(Opcode.SMSG_COOLDOWN_EVENT, w.data);
     }
 
     /// `value` of `spell`'s property `op`, with this player's spell modifiers (talents).
     T spellMod(T)(SpellModOp op, const(SpellInfo)* spell, T value)
     {
-        return applySpellMod(player.auras.list, op, *spell, value);
+        const modified = applySpellMod(player.auras.list, op, *spell, value);
+        if (modified != value)
+            noteChargedMods(op, spell);
+        return modified;
+    }
+
+    /// The modifiers with charges (Clearcasting, Presence of Mind, Nature's Swiftness) that changed a cast of a
+    /// spell, by spell: spent when that cast completes (`spendChargedMods`).
+    private ChargedModUse[] chargedModsUsed;
+
+    private struct ChargedModUse
+    {
+        Aura aura;
+        uint spell;
+    }
+
+    private void noteChargedMods(SpellModOp op, const(SpellInfo)* spell)
+    {
+        import std.algorithm.searching : canFind;
+        import dmangos.world.spellmods : affects;
+
+        foreach (aura; player.auras.list)
+        {
+            if (aura.charges == 0 || aura.spell.id == spell.id)
+                continue;
+            foreach (i; 0 .. 3)
+            {
+                const type = aura.spell.casting.applyAuraName[i];
+                if ((type == AuraType.addFlatModifier || type == AuraType.addPctModifier) && aura.misc(i) == op
+                        && (aura.effects & (1 << i)) && affects(aura, i, *spell))
+                {
+                    if (!chargedModsUsed.canFind!(u => u.aura is aura && u.spell == spell.id))
+                        chargedModsUsed ~= ChargedModUse(aura, spell.id);
+                    break;
+                }
+            }
+        }
+    }
+
+    /**
+     * A cast of `spell` completed: each modifier with charges that changed it loses one, and goes with its last
+     * (CMaNGOS's `RemoveSpellMods`); only those it had as its effects began (not a Clearcasting it set off). A
+     * triggered cast spends none.
+     */
+    private void spendChargedMods(const(SpellInfo)* spell, const(Aura)[] hadAtStart, bool triggered)
+    {
+        import std.algorithm.searching : canFind;
+
+        auto used = chargedModsUsed;
+        chargedModsUsed = null;
+        foreach (u; used)
+        {
+            if (u.spell != spell.id)
+            {
+                chargedModsUsed ~= u; // another cast's, still going
+                continue;
+            }
+            if (triggered || !hadAtStart.canFind!(a => a is u.aura) || !player.auras.list.canFind!(a => a is u.aura))
+                continue;
+            if (u.aura.charges > 1)
+                --u.aura.charges;
+            else
+                removeAura(u.aura);
+        }
     }
 
     /// An effect's value with the modifiers of its own index and of all effects.
@@ -1886,7 +2327,7 @@ private:
         import dmangos.world.corpse : Corpse;
         import dmangos.world.player : DeathState;
 
-        enum uint noResurrectTimer = 0x00100000; // SPELL_ATTR_EX3_NO_RES_TIMER
+        enum uint noResurrectTimer = 0x00000010; // SPELL_ATTR_EX3_NO_RES_TIMER
         ulong owner = target;
         if (c.targets.corpse)
             if (auto corpse = cast(Corpse) map.findObject(c.targets.corpse))
@@ -2110,7 +2551,8 @@ private:
     package void spellDamageToPlayer(const(SpellInfo)* spell, typeof(this) other, uint damage)
     {
         damage += spellDamageBonus(spell, spell.casting.school); // spell power, as against a creature
-        damage = spellDamageFactors(damage, spell.casting.school, creatureTypeHumanoid, other.player.damageMods.taken);
+        damage = spellDamageFactors(damage, spell.casting.school, creatureTypeHumanoid, other.player.damageMods.taken,
+            other.player.damageMods.takenFlat);
         const crit = !(spell.attributesEx2 & spellAttrEx2CantCrit) && uniform01(map.random) * 100 < spellCritOf(spell);
         if (crit)
             damage = damage * 3 / 2;
@@ -2209,7 +2651,8 @@ private:
      * `damage` with what auras make of it: the caster's for its school and the victim's creature type
      * (`MOD_DAMAGE_PERCENT_DONE`, `MOD_DAMAGE_DONE_VERSUS`), the victim's for the school (`taken`).
      */
-    uint spellDamageFactors(uint damage, uint school, uint victimType, const ref float[7] taken)
+    uint spellDamageFactors(uint damage, uint school, uint victimType, const ref float[7] taken,
+        const ref int[7] takenFlat)
     {
         import dmangos.world.combat : creatureTypes;
 
@@ -2217,7 +2660,8 @@ private:
             return damage;
         const mods = &player.damageMods;
         const versus = victimType < creatureTypes ? mods.versus[victimType] : 1;
-        return cast(uint)(damage * mods.school[school] * versus * taken[school]);
+        const total = (damage * mods.school[school] * versus + takenFlat[school]) * taken[school];
+        return total > 0 ? cast(uint) total : 0;
     }
 
     void spellDamage(const(SpellInfo)* spell, Creature victim, uint damage, uint school)
@@ -2225,7 +2669,8 @@ private:
         damage += spellDamageBonus(spell, school);
         {
             const victimFighter = victim.fighter;
-            damage = spellDamageFactors(damage, school, victimFighter.creatureType, victimFighter.damageTaken);
+            damage = spellDamageFactors(damage, school, victimFighter.creatureType, victimFighter.damageTaken,
+                victimFighter.damageTakenFlat);
         }
         const crit = !(spell.attributesEx2 & spellAttrEx2CantCrit) && uniform01(map.random) * 100 < spellCritOf(spell);
         if (crit)
@@ -2332,8 +2777,9 @@ private:
             return;
         pvpAssisted(who);
         value += healingBonus(spell);
+        value = cast(int)(value * player.auras.multiplier(AuraType.modHealingDonePercent)); // the healer's
         const crit = !(spell.attributesEx2 & spellAttrEx2CantCrit) && uniform01(map.random) * 100 < spellCritOf(spell);
-        uint amount = crit ? value * 3 / 2 : value;
+        uint amount = who.player.auras.healingTaken(crit ? value * 3 / 2 : value, spell.casting.school);
         auto v = &who.player.values;
         const health = v.get!UNIT_FIELD_HEALTH, maxHealth = v.get!UNIT_FIELD_MAXHEALTH;
         if (health == 0)
@@ -2365,6 +2811,8 @@ private:
 
     /// The player's companion (a mini-pet: `SUMMON_CRITTER`), if out; 0 if none.
     package ulong companion;
+    /// Far Sight's or Eagle Eye's spot, while the player sees from it; 0 if none.
+    ulong farSightSpot;
 
     /**
      * `SUMMON_CRITTER` (CMaNGOS's `EffectSummonCritter`): the effect's creature beside the player, of its faction,
@@ -2537,6 +2985,50 @@ unittest
         auto t = SpellTargets(target ? TargetFlags.unit : TargetFlags.self, target);
         t.write(w);
         return w.data.dup;
+    }
+
+    // Combo points: a builder puts them on its target (at most five); a finishing move uses them (more damage
+    // a point) and spends them, unless it missed.
+    {
+        import dmangos.world.spellcast : SpellCastResult;
+
+        enum uint builder = 90011, finisher = 90012;
+        with (context.data.spells)
+        {
+            spells[builder] = testSpell(builder, 80, 6, 1);    // SPELL_EFFECT_ADD_COMBO_POINTS, 1 point
+            spells[finisher] = testSpell(finisher, 2, 6, 10);  // 10 damage
+            spells.edit(finisher).attributesEx = 0x00100000;   // a finishing move
+            spells.edit(finisher).casting.pointsPerComboPoint[0] = 50;
+        }
+        auto session = anduin.session.inWorld;
+        assert(session.castSpell((finisher in context.data.spells.spells), SpellTargets(TargetFlags.unit, keeper.guid),
+            false, 0) == SpellCastResult.noComboPoints, "none yet");
+        foreach (_; 0 .. 40)
+        {
+            if (session.comboPoints >= 2)
+                break;
+            now += 2.seconds;
+            session.castSpell((builder in context.data.spells.spells), SpellTargets(TargetFlags.unit, keeper.guid), false, 0);
+        }
+        assert(session.comboPoints == 2 && session.comboTarget == keeper.guid);
+        assert(me.values.getByte!PLAYER_FIELD_BYTES(1) == 2 && me.values.get!PLAYER__FIELD_COMBO_TARGET == keeper.guid,
+            "the client sees them");
+        foreach (_; 0 .. 10)
+            session.castSpell((builder in context.data.spells.spells), SpellTargets(TargetFlags.unit, keeper.guid), false, 0);
+        assert(session.comboPoints <= 5);
+        const pointsBefore = session.comboPoints;
+        const before = keeper.values.get!UNIT_FIELD_HEALTH;
+        now += 2.seconds;
+        assert(session.castSpell((finisher in context.data.spells.spells), SpellTargets(TargetFlags.unit, keeper.guid),
+            false, 0) == SpellCastResult.ok);
+        const dealt = before - keeper.values.get!UNIT_FIELD_HEALTH;
+        if (session.comboPoints == 0)
+            assert(dealt > 10 && dealt >= (10 + 50 * pointsBefore) / 4, "a hit: more a point (a partial resist at most 75%), and they are spent");
+        else
+            assert(dealt == 0 && session.comboPoints == pointsBefore, "a miss: they stay");
+        keeper.values.set!UNIT_FIELD_HEALTH(500u);
+        now += 2.seconds; // past the global cooldown
+        anduin.read();
     }
 
     // The bolt: started, then gone 1.5 s later, its damage dealt unless resisted.
@@ -3233,6 +3725,25 @@ unittest
     assert(mage.session.inWorld.castSpell((29102 in context.data.spells.spells), SpellTargets(TargetFlags.self, 0), false, 0)
         == SpellCastResult.ok);
     assert(me.values.get!UNIT_FIELD_POWER1 == 850, "not of its mask: the whole cost");
+
+    // With a charge (Clearcasting): spent by the first spell it changes, not by one it does not; then gone.
+    me.auras.remove(me.auras.find(29103), me.values);
+    auto charged = makeAura((29103 in context.data.spells.spells), me.guid, 10, -1, true, [-50, 0, 0]);
+    charged.charges = 1;
+    me.auras.apply(charged, me.values, isNew);
+    now += 2.seconds;
+    assert(mage.session.inWorld.castSpell((29102 in context.data.spells.spells), SpellTargets(TargetFlags.self, 0), false, 0)
+        == SpellCastResult.ok);
+    assert(me.auras.find(29103) !is null, "not spent by a spell it did not change");
+    now += 2.seconds;
+    assert(mage.session.inWorld.castSpell((29101 in context.data.spells.spells), SpellTargets(TargetFlags.self, 0), false, 0)
+        == SpellCastResult.ok);
+    assert(me.values.get!UNIT_FIELD_POWER1 == 700, "half the cost, once");
+    assert(me.auras.find(29103) is null, "its charge spent: gone");
+    now += 2.seconds;
+    assert(mage.session.inWorld.castSpell((29101 in context.data.spells.spells), SpellTargets(TargetFlags.self, 0), false, 0)
+        == SpellCastResult.ok);
+    assert(me.values.get!UNIT_FIELD_POWER1 == 600, "the whole cost again");
 }
 
 /// Struck in melee: a damage shield hurts the attacker; an aura that procs on being struck casts its spell, until out of charges.
@@ -3730,4 +4241,130 @@ unittest
     const again = anduin.session.inWorld.companion;
     anduin.write(Opcode.CMSG_LOGOUT_REQUEST, null); // a game master's account: at once
     assert(context.map(0).findObject(again) is null, "gone with its owner");
+}
+
+/// Casting ends what ends with an action (Stealth), but not for a spell allowed while stealthed (Pick Pocket).
+unittest
+{
+    import core.time : MonoTime, seconds;
+    import dmangos.auth.accounts : AccountLevel;
+    import dmangos.world.auras : AuraInterrupt, makeAura;
+    import dmangos.world.movement : Position;
+    import dmangos.world.player : Player;
+    import dmangos.world.spellcast : SpellCastResult, SpellTargets, TargetFlags;
+    import dmangos.world.spells : SpellInfo;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    auto stealth = SpellInfo(1784);
+    stealth.effect[0] = SpellEffect.applyAura;
+    stealth.casting.applyAuraName[0] = AuraType.modStealth;
+    stealth.casting.dispel = 5; // DISPEL_STEALTH
+    stealth.casting.auraInterruptFlags = AuraInterrupt.action | AuraInterrupt.damage;
+    context.data.spells.spells[1784] = stealth;
+    foreach (id, attributesEx; [921u: 0x20u, 29104u: 0u]) // Pick Pocket (allowed while stealthed), another
+    {
+        auto s = SpellInfo(id);
+        s.effect[0] = SpellEffect.dummy;
+        s.implicitTargetA[0] = ImplicitTarget.caster;
+        s.attributesEx = attributesEx;
+        context.data.spells.spells[id] = s;
+    }
+
+    auto rogue = loggedIn(context, db, 7, "Valeera", Position(-8949.95f, -132.49f, 83.53f), AccountLevel.player);
+    rogue.read();
+    auto me = cast(Player) rogue.session.character;
+    bool isNew;
+    me.auras.apply(makeAura((1784 in context.data.spells.spells), me.guid, 10, -1, true, [0, 0, 0]), me.values, isNew);
+    assert(rogue.session.inWorld.castSpell((921 in context.data.spells.spells), SpellTargets(TargetFlags.self, 0), false, 0)
+        == SpellCastResult.ok);
+    assert(me.auras.find(1784) !is null, "still stealthed");
+    now += 2.seconds;
+    assert(rogue.session.inWorld.castSpell((29104 in context.data.spells.spells), SpellTargets(TargetFlags.self, 0), false, 0)
+        == SpellCastResult.ok);
+    assert(me.auras.find(1784) is null, "another cast ends it");
+}
+
+/// A cooldown that starts on an event (Presence of Mind): held while its aura lasts, started as it ends.
+unittest
+{
+    import core.time : MonoTime, seconds;
+    import dmangos.auth.accounts : AccountLevel;
+    import dmangos.world.auras : makeAura;
+    import dmangos.world.movement : Position;
+    import dmangos.world.opcodes : Opcode;
+    import dmangos.world.player : Player;
+    import dmangos.world.spellcast : SpellCastResult, SpellTargets, TargetFlags;
+    import dmangos.world.spells : SpellInfo;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    auto presence = SpellInfo(12043);
+    presence.effect[0] = SpellEffect.dummy;
+    presence.implicitTargetA[0] = ImplicitTarget.caster;
+    presence.attributes = 0x02000000; // SPELL_ATTR_COOLDOWN_ON_EVENT
+    presence.recoveryTime = 180_000;
+    context.data.spells.spells[12043] = presence;
+    const spell = 12043 in context.data.spells.spells;
+
+    auto mage = loggedIn(context, db, 7, "Jaina", Position(-8949.95f, -132.49f, 83.53f), AccountLevel.player);
+    mage.read();
+    auto me = cast(Player) mage.session.character;
+    assert(mage.session.inWorld.castSpell(spell, SpellTargets(TargetFlags.self, 0), false, 0) == SpellCastResult.ok);
+    bool isNew;
+    auto aura = me.auras.apply(makeAura(spell, me.guid, 10, -1, true, [0, 0, 0]), me.values, isNew);
+    now += 600.seconds;
+    assert(!mage.session.inWorld.spellIsReady(12043), "held while its aura lasts");
+    mage.read();
+    mage.session.inWorld.removeAura(aura);
+    bool told;
+    foreach (p; mage.read())
+        told |= p.opcode == Opcode.SMSG_COOLDOWN_EVENT;
+    assert(told, "the client's cooldown starts");
+    now += 170.seconds;
+    assert(!mage.session.inWorld.spellIsReady(12043), "three minutes from the aura's end");
+    now += 11.seconds;
+    assert(mage.session.inWorld.spellIsReady(12043));
+}
+
+/// A talent's modifier tells the client its new total for each bit of its mask (`SMSG_SET_PCT_SPELL_MODIFIER`).
+unittest
+{
+    import dmangos.auth.accounts : AccountLevel;
+    import dmangos.world.auras : makeAura;
+    import dmangos.world.movement : Position;
+    import dmangos.world.opcodes : Opcode;
+    import dmangos.world.spells : SpellInfo;
+    import dmangos.world.spellmods : SpellModOp;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto talent = SpellInfo(29103);
+    talent.effect[0] = SpellEffect.applyAura;
+    talent.casting.applyAuraName[0] = AuraType.addPctModifier;
+    talent.miscValue[0] = SpellModOp.cost;
+    talent.itemType[0] = 0x5; // bits 0 and 2
+    context.data.spells.spells[29103] = talent;
+
+    auto mage = loggedIn(context, db, 7, "Jaina", Position(-8949.95f, -132.49f, 83.53f), AccountLevel.player);
+    mage.read();
+    auto session = mage.session.inWorld;
+    session.addAura(makeAura((29103 in context.data.spells.spells), 7, 10, -1, true, [-10, 0, 0]));
+    ubyte[][] mods;
+    foreach (p; mage.read())
+        if (p.opcode == Opcode.SMSG_SET_PCT_SPELL_MODIFIER)
+            mods ~= p.body_.dup;
+    assert(mods.length == 2, "one for each bit of its mask");
+    assert(mods[0][0] == 0 && mods[0][1] == SpellModOp.cost && *cast(int*) &mods[0][2] == -10);
+    assert(mods[1][0] == 2);
 }

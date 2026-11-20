@@ -135,6 +135,8 @@ struct ItemDetails
     uint itemSet;
     uint area;
     uint map;
+    uint disenchantId;      /// `DisenchantID`: its `disenchant_loot_template`; 0: it cannot be disenchanted
+    uint extraFlags;        /// `ExtraFlags` (CMaNGOS's own): 0x01 its duration runs while logged out too
 }
 
 /**
@@ -167,7 +169,7 @@ private enum string[2][] itemDetailColumns = () {
         ["PageMaterial", "pageMaterial"], ["startquest", "startQuest"], ["lockid", "lockId"],
         ["minMoneyLoot", "minMoneyLoot"], ["maxMoneyLoot", "maxMoneyLoot"],
         ["Material", "material"], ["sheath", "sheath"], ["block", "block"], ["itemset", "itemSet"],
-        ["area", "area"], ["Map", "map"]];
+        ["area", "area"], ["Map", "map"], ["DisenchantID", "disenchantId"], ["ExtraFlags", "extraFlags"]];
     return columns;
 }();
 
@@ -179,7 +181,7 @@ private enum itemDetailQuery = () {
     return "SELECT entry, " ~ itemDetailColumns.map!(column => column[0]).join(", ") ~ " FROM item_template";
 }();
 
-static assert(itemDetailColumns.length == 6 + 20 + 15 + 7 + 3 + 25 + 14);
+static assert(itemDetailColumns.length == 6 + 20 + 15 + 7 + 3 + 25 + 16);
 
 /// `creature_model_info`: a model's size.
 struct ModelInfo
@@ -408,6 +410,7 @@ final class WorldData
     AreaTriggerTeleport[uint] areaTriggers; /// `areatrigger_teleport`, by trigger id
     GameTele[] teleports;                   /// `game_tele`, in id order
     SpellTarget[uint] spellTargets;         /// `spell_target_position`: where a spell sends its target, by spell
+    bool[uint] spellFacing;                 /// `spell_facing`: spells whose target must be in front of the caster
     /// Instance round 2: `spell_script_target` (type 1, living creatures): the creatures of these entries a spell's
     /// `TARGET_UNIT_SCRIPT_NEAR_CASTER` means, by spell.
     uint[][uint] spellScriptTargets;
@@ -599,6 +602,18 @@ final class WorldData
             if (auto item = data.items.edit(row.get!uint(0)))
                 static foreach (i, column; itemDetailColumns)
                     mixin("item.details." ~ column[1]) = row.get!(typeof(mixin("item.details." ~ column[1])))(i + 1);
+        // Only uncommon to epic weapons and armor are disenchanted (CMaNGOS `ObjectMgr::LoadItemPrototypes`).
+        uint[] notDisenchanted;
+        foreach (entry, ref const item; data.items)
+            if (item.details.disenchantId && (item.details.quality < 2 || item.details.quality > 4
+                    || (item.itemClass != 2 && item.itemClass != 4))) // weapon, armor
+            {
+                warning!"item %s (quality %s, class %s) cannot be disenchanted: its DisenchantID is ignored"(entry,
+                    item.details.quality, item.itemClass);
+                notDisenchanted ~= entry;
+            }
+        foreach (entry; notDisenchanted)
+            data.items.edit(entry).details.disenchantId = 0;
         foreach (row; world.query!"SELECT lvl, xp_for_next_level FROM player_xp_for_level"())
         {
             const level = row.get!uint(0);
@@ -737,7 +752,8 @@ final class WorldData
         foreach (row; world.query!"SELECT faction, quest_rate, creature_rate, spell_rate FROM reputation_reward_rate"())
             reputationRates[row.get!uint(0)] = [row.get!float(1), row.get!float(2), row.get!float(3)];
         static foreach (table; [["creature", "creature"], ["reference", "reference"], ["gameobject", "gameObject"],
-                ["item", "item"], ["fishing", "fishing"], ["skinning", "skinning"], ["pickpocketing", "pickpocketing"], ["mail", "mail"]])
+                ["item", "item"], ["fishing", "fishing"], ["skinning", "skinning"], ["pickpocketing", "pickpocketing"], ["mail", "mail"],
+                ["disenchant", "disenchant"]])
             foreach (row; world.query!("SELECT " ~ lootColumns ~ " FROM " ~ table[0] ~ "_loot_template")())
                 __traits(getMember, loot, table[1]).add(row.get!uint(0), lootRow(row.get!uint(1), row.get!float(2),
                     row.get!uint(3), row.get!int(4), row.get!uint(5), row.get!uint(6)));
@@ -1106,6 +1122,9 @@ final class WorldData
                 spellTargets[row.id] = SpellTarget(row.map, Position(row.x, row.y, row.z, row.orientation));
         foreach (row; world.query!"SELECT id FROM areatrigger_tavern"())
             taverns[row.get!uint(0)] = true;
+        foreach (row; world.query!"SELECT entry, facingcasterflag FROM spell_facing"())
+            if (row.get!uint(1) & 1)
+                spellFacing[row.get!uint(0)] = true;
         foreach (row; world.select!(SpellScriptTargetRow, "FROM spell_script_target"))
             if (row.type == 1)
                 spellScriptTargets[row.entry] ~= row.targetEntry;

@@ -2860,6 +2860,38 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
     private uint summonsMade; // the summons' guid counters: above every spawn's, 65536 for each node
 
+    /// Bones lying on a map here, with when they go (`bonesLifetime` after they were left).
+    private struct LyingBones
+    {
+        uint map, instance;
+        ulong guid;
+        long goesAt;
+    }
+
+    private LyingBones[] bones_;
+
+    /// `bones` were left on `where`: they go in an hour (`removeExpiredBones`).
+    package void bonesLeft(Map where, imported!"dmangos.world.corpse".Corpse bones)
+    {
+        import dmangos.world.corpse : bonesLifetime;
+
+        bones_ ~= LyingBones(where.id, bones.instanceId, bones.guid, unixTime + bonesLifetime);
+    }
+
+    /// Takes away the bones whose hour is up (they lie in time order).
+    private void removeExpiredBones()
+    {
+        size_t gone;
+        while (gone < bones_.length && bones_[gone].goesAt <= unixTime)
+        {
+            if (auto there = existingMap(bones_[gone].map, bones_[gone].instance))
+                there.removeObject(bones_[gone].guid);
+            ++gone;
+        }
+        if (gone)
+            bones_ = bones_[gone .. $].dup;
+    }
+
     /// A guid counter for an object of this run only (a summon, a fishing bobber): this node's range.
     uint nextTemporaryCounter()
     {
@@ -4653,6 +4685,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         services.tick(elapsed);
         battlegrounds.tick(elapsed);
         updateGameEvents(now);
+        removeExpiredBones();
         if (forwardGroup is null) // the coordinator, or alone (not while starting: who coordinates is not known yet)
         {
             eventMails();

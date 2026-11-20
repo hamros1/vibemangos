@@ -18,6 +18,15 @@ import dmangos.world.combat : Fighter;
 /// `SpellCastResult` (1.12's values); `ok` is never sent as a failure.
 enum SpellCastResult : ubyte
 {
+    noComboPoints = 0x46, /// "That ability requires combo points"
+    equippedItemClassMainhand = 0x1A,
+    notBehind = 0x33,
+    notShapeshift = 0x3D,
+    onlyOutdoors = 0x55,
+    onlyShapeshift = 0x56,
+    onlyStealthed = 0x57,
+    targetAffectingCombat = 0x66,
+    unitNotInfront = 0x7C,
     affectingCombat = 0x00,
     alreadyAtFullHealth = 0x01,
     alreadyAtFullPower = 0x02,
@@ -54,6 +63,13 @@ enum SpellCastResult : ubyte
     noPower = 0x4D,
     outOfRange = 0x59,
     reagents = 0x5C,
+    requiresSpellFocus = 0x5E, /// "Requires %s": the spell focus id follows
+    totems = 0x78,             /// a tool missing: the spell's tools follow
+    cantBeDisenchanted = 0x0C,
+    itemGone = 0x26,
+    itemNotFound = 0x27,
+    tryAgain = 0x7A,           /// "Failed attempt"
+    noChargesRemain = 0x44,
     noAmmo = 0x43,
     spellInProgress = 0x61,
     targetsDead = 0x65,
@@ -354,12 +370,20 @@ ubyte[] castResultPacket(uint spell, SpellCastResult result, const SpellInfo* in
             w.put(cast(uint) info.equippedItemSubClassMask);
         }
         else if (info !is null && result == SpellCastResult.reagents)
+        {
             foreach (i, reagent; info.reagents)
                 if (reagent > 0)
                 {
                     w.put(cast(uint) reagent);
                     break;
                 }
+        }
+        else if (info !is null && result == SpellCastResult.requiresSpellFocus)
+            w.put(info.casting.requiresSpellFocus);
+        else if (info !is null && result == SpellCastResult.totems)
+            foreach (totem; info.casting.totems)
+                if (totem)
+                    w.put(totem);
     }
     return w.data.dup;
 }
@@ -578,10 +602,17 @@ SpellMissInfo rollSpellHit(Rng)(const Fighter caster, const Fighter victim, cons
     int resistance, float hitBonus, ref Rng rng)
 {
     import std.random : uniform01;
-    import dmangos.world.combat : AttackType, dodgeChance, missChance, parryChance;
+    import dmangos.world.combat : AttackType, canDodge, canParry, dodgeChance, missChance, parryChance;
+
+    enum uint noActiveDefense = 0x00200000; // SPELL_ATTR_NO_ACTIVE_DEFENSE: never dodged or parried (Overpower, Ambush)
 
     if (victim.evading)
         return SpellMissInfo.evade;
+    // Immune to it (its school, dispel type or mechanic): "Immune", unless it ignores immunities (Charge).
+    enum uint noImmunities = 0x20000000; // SPELL_ATTR_NO_IMMUNITIES
+    if (!(spell.attributes & noImmunities)
+            && victim.immune.toSpell(spell.casting.school, spell.casting.dispel, spell.casting.mechanic))
+        return SpellMissInfo.immune;
     if ((spell.casting.attributesEx3 & spellAttrEx3AlwaysHit) || spell.casting.dmgClass == DamageClass.none)
         return SpellMissInfo.none;
     const roll = uniform01(rng) * 100;
@@ -591,10 +622,17 @@ SpellMissInfo rollSpellHit(Rng)(const Fighter caster, const Fighter victim, cons
         float edge = missChance(caster, victim, type);
         if (roll < edge)
             return SpellMissInfo.miss;
-        edge += dodgeChance(victim, caster, type);
-        if (roll < edge)
-            return SpellMissInfo.dodge;
-        edge += parryChance(victim, caster, type);
+        if (spell.attributes & noActiveDefense)
+            return SpellMissInfo.none;
+        // As a swing: no dodge or parry where a swing has none (a player from behind, parry only from the front).
+        if (type != AttackType.ranged && canDodge(victim, caster))
+        {
+            edge += dodgeChance(victim, caster, type);
+            if (roll < edge)
+                return SpellMissInfo.dodge;
+        }
+        if (type != AttackType.ranged && canParry(victim, caster))
+            edge += parryChance(victim, caster, type);
         return roll < edge ? SpellMissInfo.parry : SpellMissInfo.none;
     }
     return roll < magicMissChance(caster, victim, spell, resistance, hitBonus) ? SpellMissInfo.resist
@@ -632,6 +670,29 @@ unittest
     wolf.evading = false;
     bolt.casting.dmgClass = DamageClass.none;
     assert(rollSpellHit(mage, wolf, bolt, 0, 0, low) == SpellMissInfo.none, "no damage class: no roll");
+
+    // A melee ability: dodged by a roll past the miss chance, unless it cannot be (Overpower, Ambush).
+    SpellInfo strike;
+    strike.casting.dmgClass = DamageClass.melee;
+    wolf.dodge = 5;
+    wolf.canDodge = true;
+    wolf.position.orientation = 3.14159f; // facing the warrior (at its west)
+    mage.position.x = -1;
+    import dmangos.world.combat : AttackType, missChance;
+
+    auto dodged = Fixed(cast(ulong) hits(missChance(mage, wolf, AttackType.mainHand) + 2.5f)); // past the miss
+    assert(rollSpellHit(mage, wolf, strike, 0, 0, dodged) == SpellMissInfo.dodge);
+    strike.attributes = 0x00200000; // SPELL_ATTR_NO_ACTIVE_DEFENSE
+    assert(rollSpellHit(mage, wolf, strike, 0, 0, dodged) == SpellMissInfo.none, "it cannot be dodged");
+
+    // A victim immune to the spell's mechanic (a boss and Hammer of Justice's stun): "Immune", whatever the roll.
+    SpellInfo hammer;
+    hammer.casting.dmgClass = DamageClass.magic;
+    hammer.casting.mechanic = 12; // MECHANIC_STUN
+    wolf.immune.mechanics = 1u << (12 - 1);
+    assert(rollSpellHit(mage, wolf, hammer, 0, 0, high) == SpellMissInfo.immune);
+    hammer.attributes = 0x20000000; // SPELL_ATTR_NO_IMMUNITIES
+    assert(rollSpellHit(mage, wolf, hammer, 0, 0, high) == SpellMissInfo.none);
 }
 
 // A victim's resistance to a mechanic (a dwarf's or a talent's against fear) adds to the magic miss chance.

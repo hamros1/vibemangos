@@ -343,6 +343,7 @@ mixin template CreatureCasting()
                     }
             }
         TargetResult[] results;
+        bool[ulong] attacked; // the targets it may attack (rolled)
         MeleeDamage[ulong] weaponRolls;
         bool weapon;
         foreach (i; 0 .. 3)
@@ -360,6 +361,7 @@ mixin template CreatureCasting()
                         results ~= TargetResult(guid, miss);
                         continue;
                     }
+                    attacked[guid] = true;
                     const f = other.fighter;
                     if (weapon)
                     {
@@ -394,6 +396,9 @@ mixin template CreatureCasting()
         foreach (r; results)
             if (r.miss != SpellMissInfo.none)
                 missed[r.guid] = true;
+            else if (r.guid in attacked) // a hostile spell landed: what that ends (`AURA_INTERRUPT_FLAG_HOSTILE_ACTION`)
+                if (auto other = world_.unit(r.guid))
+                    other.hostileSpellLanded();
         bool auraDone;
         bool[3] summonedBy; // the effects done once whatever their targets (a summon, an event)
         foreach (i; 0 .. 3)
@@ -406,6 +411,14 @@ mixin template CreatureCasting()
             {
                 if (guid in missed)
                     continue;
+                if (guid != me.guid) // an effect its target is immune to (a stunned paladin under Divine Shield)
+                    if (auto other = world_.unit(guid))
+                    {
+                        const immune = other.fighter.immune;
+                        if (immune.any && immune.toEffect(effect, spell.casting.effectMechanic[i],
+                                spell.casting.applyAuraName[i]))
+                            continue;
+                    }
                 if (!me.alive)
                     return;
                 final switch (effect) // every effect decided: done, or listed as not done below
@@ -665,6 +678,7 @@ mixin template CreatureCasting()
     {
         if (value <= 0 || who is null || !who.alive)
             return;
+        value = who.auras.healingTaken(value, spell.casting.school); // Mortal Strike on it: half
         const health = who.values.get!UNIT_FIELD_HEALTH, maximum = who.values.get!UNIT_FIELD_MAXHEALTH;
         const healed = health + value > maximum ? maximum - health : value;
         who.values.set!UNIT_FIELD_HEALTH(health + healed);

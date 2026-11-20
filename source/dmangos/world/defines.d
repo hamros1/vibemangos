@@ -146,5 +146,6 @@ enum UnitFlags : uint
     disarmed = 0x00200000,
     fleeing = 0x00800000,          /// running in fear
     uninteractible = 0x02000000,
+    skinnable = 0x04000000,        /// a creature with a skin to take; a player dead in a battleground: its insignia
 }
 

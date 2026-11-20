@@ -156,7 +156,7 @@ private:
      * The player died: a tenth of what it wears is worn out (killed
      * by a creature), it stops fighting, and lies rooted where it fell until it releases its spirit.
      */
-    void playerDied(bool byCreature)
+    package void playerDied(bool byCreature)
     {
         info!"%s: '%s' died"(remoteAddress, player.data.name);
         // A way back of its own (a Soulstone, Reincarnation): the client offers it while it lies dead.
@@ -205,6 +205,15 @@ private:
         setGhost(true);
         corpse = new Corpse(player, CorpseType.resurrectablePve, context.unixTime);
         corpse.instanceId = instanceId_;
+        // In a battleground the body's insignia may be taken (`removedInsignia`), from the corpse now.
+        if (player.values.get!UNIT_FIELD_FLAGS & UnitFlags.skinnable)
+        {
+            import dmangos.world.corpse : CorpseFlags;
+
+            player.values.set!UNIT_FIELD_FLAGS(player.values.get!UNIT_FIELD_FLAGS & ~UnitFlags.skinnable);
+            corpse.values.set!CORPSE_FIELD_FLAGS(corpse.values.get!CORPSE_FIELD_FLAGS | CorpseFlags.lootable);
+            corpse.values.clearChanges();
+        }
         map.addObject(corpse);
         auto record = CorpseRecord(player.data.guid, corpse.at.x, corpse.at.y, corpse.at.z, corpse.at.orientation,
             corpse.map, corpse.ghostTime, cast(ubyte) corpse.type);
@@ -213,6 +222,7 @@ private:
         sendMovementOrder!(Opcode.SMSG_FORCE_MOVE_UNROOT)();
         sendReclaimDelay();
         flushPlayerChanges();
+        failQuestsOnDeath(); // on release, as CMaNGOS confirms
     }
 
     /// Tells the client how long until the ghost may take its body back, in milliseconds.
@@ -252,7 +262,8 @@ private:
 
     /**
      * The ghost aura (8326), and the night elf's wisp (20584): the ghost flag, run and swim speeds
-     * 25% up (the wisp's 50%, and its look), and walking on water; or all of it gone.
+     * 25% up (the wisp's 50%, and its look), and walking on water; or all of it gone
+     * (`dmangos.world.moveorders`: `refreshSpeeds`, `refreshMovementAuras`).
      */
     void setGhost(bool on)
     {
@@ -263,21 +274,8 @@ private:
         player.values.set!PLAYER_FLAGS(on ? flags | PlayerFlags.ghost : flags & ~PlayerFlags.ghost);
         if (wisp)
             player.values.set!UNIT_FIELD_DISPLAYID(on ? wispDisplay : player.values.get!UNIT_FIELD_NATIVEDISPLAYID);
-        const factor = !on ? 1.0f : wisp ? 1.5f : 1.25f;
-        forceSpeed!(Opcode.SMSG_FORCE_RUN_SPEED_CHANGE)(MoveType.run, baseMoveSpeed[MoveType.run] * factor);
-        forceSpeed!(Opcode.SMSG_FORCE_SWIM_SPEED_CHANGE)(MoveType.swim, baseMoveSpeed[MoveType.swim] * factor);
-        if (on)
-            sendMovementOrder!(Opcode.SMSG_MOVE_WATER_WALK)();
-        else
-            sendMovementOrder!(Opcode.SMSG_MOVE_LAND_WALK)();
-    }
-
-    /// `SMSG_FORCE_*_SPEED_CHANGE` for one kind of movement.
-    void forceSpeed(Opcode opcode)(MoveType type, float speed)
-    {
-        player.speeds[type] = speed;
-        send(ServerForceSpeedChange!opcode(player.guid, moveOrderCounter++, speed));
-        resetMovementCheck();
+        refreshSpeeds();
+        refreshMovementAuras();
     }
 
     /// The ghost takes its body back, if near it and the delay is over.
@@ -558,16 +556,83 @@ private:
         info!"%s: '%s' came back to life"(remoteAddress, player.data.name);
     }
 
-    /// The corpse is gone (bones are not kept), and so is its row.
-    void spawnCorpseBones()
+    /**
+     * The corpse is gone, and so is its row; bones lie where it was for an hour (CMaNGOS's
+     * `ConvertCorpseForPlayer`, `Death.Bones.World` and `.BattleGround` on), if its map is here. Returns them.
+     */
+    Corpse spawnCorpseBones()
     {
+        import dmangos.world.objects : HighGuid, makeGuid;
+
         if (corpse is null)
-            return;
+            return null;
+        Corpse bones;
         if (auto there = context.existingMap(corpse.map, corpse.instanceId))
+        {
             there.removeObject(corpse.guid);
+            bones = new Corpse(corpse, makeGuid(HighGuid.corpse, context.nextTemporaryCounter()), context.unixTime);
+            there.addObject(bones);
+            context.bonesLeft(there, bones);
+        }
         context.database.deleteCorpse(player.data.guid);
         corpse = null;
         savePlayer();
+        return bones;
+    }
+
+    /// Dead in a battleground: its insignia may be taken (`UNIT_FLAG_SKINNABLE`, then the corpse's lootable flag).
+    package void markInsignia()
+    {
+        player.values.set!UNIT_FIELD_FLAGS(player.values.get!UNIT_FIELD_FLAGS | UnitFlags.skinnable);
+        flushPlayerChanges();
+    }
+
+    /**
+     * An enemy (`looter`) took this player's insignia in a battleground (`SPELL_EFFECT_SKIN_PLAYER_CORPSE`,
+     * CMaNGOS's `Player::RemovedInsignia`): released if it was not, its corpse turned to bones the looter may
+     * loot: a little money by its level, and the battleground's reference loot.
+     */
+    package void removedInsignia(typeof(this) looter)
+    {
+        import std.random : uniform;
+        import dmangos.world.corpse : corpseDynLootable;
+        import dmangos.world.loot : Loot, Looter;
+
+        auto copy = currentBattleground();
+        if (copy is null)
+            return;
+        bool repop;
+        if (player.deathState == DeathState.corpse)
+        {
+            buildPlayerRepop();
+            repopAtGraveyard();
+            repop = true;
+        }
+        if (corpse is null)
+            return;
+        ByteWriter w;
+        w.put(ubyte(repop));
+        deliver(Opcode.SMSG_PLAYER_SKINNED, w.data);
+        auto bones = spawnCorpseBones();
+        if (bones is null || looter.map is null)
+            return;
+        bones.values.set!CORPSE_FIELD_DYNAMIC_FLAGS(corpseDynLootable);
+        auto loot = new Loot(bones.guid, (ulong guid) => guid == looter.player.guid ? cast(Looter) looter : null);
+        loot.clock = () => context.unixTime;
+        loot.owners[looter.player.guid] = true;
+        loot.currentLooter = looter.player.guid;
+        if (const t = copy.type in context.data.battlegroundTemplates)
+            if (t.skinLoot)
+                if (const template_ = context.data.loot.reference[t.skinLoot])
+                    loot.fill(template_, context.data.loot, context.data.items, looter.map.random, (uint) => true,
+                        (ulong, item) => true);
+        // "lvl10: ~6copper, lvl70: ~9silver"
+        loot.gold = cast(uint)(uniform(50, 151) * 0.016f * ((cast(float) player.data.level) / 5.76f) ^^ 2.5f);
+        auto there = looter.map;
+        loot.changed = () => there.flushObjectChanges(bones);
+        bones.loot = loot;
+        there.flushObjectChanges(bones);
+        loot.showContentTo(looter);
     }
 
     /// What it wears (and with `inventory` what it carries) loses `percent` of its durability.

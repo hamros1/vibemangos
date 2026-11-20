@@ -3,7 +3,9 @@
  * ticks, and cancelling them; mixed into `dmangos.world.character.Character`.
  *
  * What an aura does while it lasts: stats, resistances, armor and attack power (the stats are worked
- * out again), speeds (and mounts), a stance or form, being rooted or stunned, and periodic effects:
+ * out again), speeds (and mounts), water walking, slow fall and hover (`dmangos.world.moveorders`),
+ * breathing under water (`dmangos.world.environment`), a stance or form, being rooted or stunned, and
+ * periodic effects:
  * damage and heals over time, food's health and drink's mana, energize, triggered spells. Auras end
  * when their time is up, when cancelled (positive ones), at death, and by what their
  * `AuraInterruptFlags` say: standing up (food and drink), moving, taking damage, casting, attacking.
@@ -397,7 +399,12 @@ private:
     {
         player.auras.remove(aura, player.values);
         auraEffects(aura, false);
+        if (aura.caster == player.guid)
+            cooldownEvent(aura.spell); // Presence of Mind's cooldown starts now
         flushPlayerChanges();
+        if (battleground_.instance)
+            if (auto copy = currentBattleground())
+                copy.rules.auraLost(copy, player.guid, aura.spell.id); // a flag's: it falls
     }
 
     /// The negative auras go, and with `positive` the positive ones too (not the passive).
@@ -427,7 +434,7 @@ private:
      */
     void auraEffects(Aura aura, bool apply)
     {
-        bool stats, speeds, movement;
+        bool stats, speeds, movement, movementAuras, breathing;
         foreach (i; 0 .. 3)
         {
             if (!(aura.effects & (1 << i)))
@@ -439,29 +446,83 @@ private:
                     AuraType.modTotalStatPercentage, AuraType.modBaseResistancePct, AuraType.modResistancePct,
                     AuraType.modIncreaseHealthPercent, AuraType.modIncreaseEnergyPercent, AuraType.modAttackPowerPct,
                     AuraType.modOffhandDamagePct, AuraType.modSkill, AuraType.modSkillTalent,
-                    AuraType.modDamagePercentDone, AuraType.modDamagePercentTaken, AuraType.modDamageDoneVersus,
-                    AuraType.modCritPercentVersus, AuraType.modThreat, AuraType.modMechanicResistance, AuraType.modShieldBlockvaluePct:
+                    AuraType.modDamagePercentDone, AuraType.modDamagePercentTaken, AuraType.modDamageTaken, AuraType.modDamageDoneVersus,
+                    AuraType.modCritPercentVersus, AuraType.modThreat, AuraType.modMechanicResistance, AuraType.modShieldBlockvaluePct,
+                    AuraType.modMeleeHaste, AuraType.modRangedHaste, AuraType.modAttackSpeed, AuraType.modRangedAmmoHaste,
+                    AuraType.modResistanceExclusive:
                 stats = true;
                 break;
-            case AuraType.modIncreaseSpeed, AuraType.modDecreaseSpeed, AuraType.modIncreaseSwimSpeed:
+            // Speeds (`dmangos.world.moveorders`: `speedRate`).
+            case AuraType.modIncreaseSpeed, AuraType.modDecreaseSpeed, AuraType.modIncreaseSwimSpeed,
+                    AuraType.modIncreaseMountedSpeed, AuraType.modSpeedAlways, AuraType.modMountedSpeedAlways,
+                    AuraType.modSpeedNotStack, AuraType.modMountedSpeedNotStack, AuraType.useNormalMovementSpeed:
                 speeds = true;
                 break;
-            case AuraType.modIncreaseMountedSpeed:
-                speeds = true;
+            case AuraType.waterWalk, AuraType.featherFall, AuraType.hover:
+                movementAuras = true;
+                break;
+            case AuraType.waterBreathing, AuraType.modWaterBreathing:
+                breathing = true;
                 break;
             case AuraType.mounted:
+                speeds = true; // mounted, the mount's speed counts instead of the speed on foot
                 uint display;
                 if (apply)
                     if (const t = cast(uint) aura.misc(i) in context.data.creatureTemplates)
                         display = t.modelId1;
                 player.values.set!UNIT_FIELD_MOUNTDISPLAYID(display);
+                interruptAuras(apply ? AuraInterrupt.mounting : AuraInterrupt.dismount, aura);
                 break;
-            case AuraType.modStealth: // who sees it changes (`Map`'s `playerSees`)
+            // An immunity purges what ends with one (a carried flag: `AURA_INTERRUPT_FLAG_INVULNERABILITY_BUFF_CANCELS`):
+            // an effect immunity that helps, a school immunity with `SPELL_ATTR_EX_IMMUNITY_PURGES_EFFECT`.
+            case AuraType.effectImmunity, AuraType.schoolImmunity:
+                enum uint invulnerabilityCancels = 0x00200000, immunityPurges = 0x00008000;
+                if (apply && (aura.type(i) == AuraType.effectImmunity ? aura.positive
+                        : (aura.spell.attributesEx & immunityPurges) != 0))
+                    interruptAuras(invulnerabilityCancels);
+                break;
+            // A mechanic's immunity that purges (Berserker Rage and fear, Blessing of Freedom and roots): the
+            // player's auras of that mechanic go (CMaNGOS's `RemoveAurasAtMechanicImmunity`).
+            case AuraType.mechanicImmunity, AuraType.mechanicImmunityMask:
+                enum uint immunityPurgesEffect = 0x00008000; // SPELL_ATTR_EX_IMMUNITY_PURGES_EFFECT
+                if (apply && (aura.spell.attributesEx & immunityPurgesEffect))
+                {
+                    const misc = aura.misc(i);
+                    const mask = aura.type(i) == AuraType.mechanicImmunity
+                        ? (misc > 0 && misc <= 32 ? 1u << (misc - 1) : 0) : cast(uint) misc;
+                    bool hasMechanic(const Aura other)
+                    {
+                        static bool inMask(uint mechanic, uint mask) { return mechanic && mechanic <= 32 && (mask & (1u << (mechanic - 1))); }
+                        if (inMask(other.spell.casting.mechanic, mask))
+                            return true;
+                        foreach (j; 0 .. 3)
+                            if ((other.effects & (1 << j)) && inMask(other.spell.casting.effectMechanic[j], mask))
+                                return true;
+                        return false;
+                    }
+                    foreach (other; player.auras.list.dup)
+                        if (other !is aura && !other.passive && hasMechanic(other))
+                            removeAura(other);
+                }
+                break;
+            case AuraType.addFlatModifier, AuraType.addPctModifier: // talents: the client's numbers
+                if (map !is null) // in the world (at login they all go at once: `sendAllSpellMods`)
+                    spellModChanged(aura, i);
+                break;
+            case AuraType.modStealth: // who sees it changes (`Map`'s `playerSees`); a carried flag falls
+                if (apply)
+                    interruptAuras(AuraInterrupt.stealthInvisCancels, aura);
                 if (map !is null)
                     map.refreshVisibility(this);
                 break;
+            case AuraType.modInvisibility:
+                if (apply)
+                    interruptAuras(AuraInterrupt.stealthInvisCancels, aura);
+                break;
             case AuraType.modShapeshift:
                 player.values.setByte!UNIT_FIELD_BYTES_1(2, apply ? cast(ubyte) aura.misc(i) : 0);
+                if (apply)
+                    interruptAuras(AuraInterrupt.shapeshifting, aura);
                 break;
             case AuraType.modRoot, AuraType.modStun:
                 movement = true;
@@ -483,27 +544,10 @@ private:
             refreshSpeeds();
         if (movement)
             refreshRooted();
-    }
-
-    /// Run and swim speeds by the strongest speed-up (or mount) and slow.
-    void refreshSpeeds()
-    {
-        const auras = &player.auras;
-        int up = auras.strongest(AuraType.modIncreaseSpeed, true);
-        const mounted = auras.strongest(AuraType.modIncreaseMountedSpeed, true);
-        if (mounted > up)
-            up = mounted;
-        const down = auras.strongest(AuraType.modDecreaseSpeed, false);
-        float factor = (1 + up / 100.0f) * (1 + down / 100.0f);
-        if (player.deathState == DeathState.ghost)
-            factor *= player.data.race == 4 ? 1.5f : 1.25f;
-        const run = baseMoveSpeed[MoveType.run] * factor;
-        if (run != player.speeds[MoveType.run])
-            forceSpeed!(Opcode.SMSG_FORCE_RUN_SPEED_CHANGE)(MoveType.run, run);
-        const swimFactor = factor * (1 + auras.strongest(AuraType.modIncreaseSwimSpeed, true) / 100.0f);
-        const swim = baseMoveSpeed[MoveType.swim] * swimFactor;
-        if (swim != player.speeds[MoveType.swim])
-            forceSpeed!(Opcode.SMSG_FORCE_SWIM_SPEED_CHANGE)(MoveType.swim, swim);
+        if (movementAuras)
+            refreshMovementAuras();
+        if (breathing)
+            refreshWaterBreathing();
     }
 
     /// Rooted while any root or stun lasts (and stunned while a stun does).
@@ -519,20 +563,103 @@ private:
             sendMovementOrder!(Opcode.SMSG_FORCE_MOVE_UNROOT)();
     }
 
-    /// What standing up, moving, damage, casting or attacking ends.
-    package void interruptAuras(uint flags)
+    // -----------------------------------------------------------------------
+    // The client's spell modifiers
+    // -----------------------------------------------------------------------
+
+    /**
+     * The total of the player's modifiers of `type` (`ADD_FLAT_MODIFIER` or `ADD_PCT_MODIFIER`) for `op` whose
+     * spell mask has `bit`: what the client adds to the spells of its family with that bit (CMaNGOS's
+     * `Player::AddSpellMod`). The client shows tooltips, costs, cast times and ranges with them, and refuses a cast
+     * at a talent's longer range without them.
+     */
+    private int spellModTotal(AuraType type, int op, uint bit)
+    {
+        int total;
+        foreach (aura; player.auras.list)
+            foreach (i; 0 .. 3)
+                if ((aura.effects & (1 << i)) && aura.type(i) == type && aura.misc(i) == op
+                        && (aura.spell.itemType[i] & (1u << bit)))
+                    total += aura.amount[i];
+        return total;
+    }
+
+    private void sendSpellMod(AuraType type, uint bit, int op, int value)
+    {
+        ByteWriter w;
+        w.put(cast(ubyte) bit);
+        w.put(cast(ubyte) op);
+        w.put(value);
+        deliver(type == AuraType.addFlatModifier ? Opcode.SMSG_SET_FLAT_SPELL_MODIFIER
+            : Opcode.SMSG_SET_PCT_SPELL_MODIFIER, w.data);
+    }
+
+    /// A modifier came or went (effect `i` of `aura`): the client's totals for each bit of its mask, anew.
+    private void spellModChanged(Aura aura, size_t i)
+    {
+        const type = aura.type(i), op = aura.misc(i), mask = aura.spell.itemType[i];
+        foreach (uint bit; 0 .. 32)
+            if (mask & (1u << bit))
+                sendSpellMod(type, bit, op, spellModTotal(type, op, bit));
+    }
+
+    /// Every modifier total the player has, for a client logging in or arriving after a far teleport.
+    package void sendAllSpellMods()
+    {
+        foreach (type; [AuraType.addFlatModifier, AuraType.addPctModifier])
+        {
+            uint[int] masks; // op: the bits any modifier of it has
+            foreach (aura; player.auras.list)
+                foreach (i; 0 .. 3)
+                    if ((aura.effects & (1 << i)) && aura.type(i) == type)
+                        masks[aura.misc(i)] |= aura.spell.itemType[i];
+            foreach (op, mask; masks)
+                foreach (uint bit; 0 .. 32)
+                    if (mask & (1u << bit))
+                        if (const total = spellModTotal(type, op, bit))
+                            sendSpellMod(type, bit, op, total);
+        }
+    }
+
+    /// What standing up, moving, damage, casting or attacking ends (`except`: the aura that causes it, kept).
+    package void interruptAuras(uint flags, const Aura except = null)
     {
         if (player is null)
             return;
         foreach (aura; player.auras.interruptedBy(flags))
-            removeAura(aura);
+            if (aura !is except)
+                removeAura(aura);
     }
 
-    /// Every aura goes on death but the passive ones.
+    /**
+     * What casting `spell` ends (CMaNGOS's `RemoveAurasOnCast`): the auras with `flag`, but its own aura from
+     * this player, Stealth for a spell allowed while stealthed (Pick Pocket, Distract), and invisibility for one
+     * allowed while invisible.
+     */
+    package void interruptAurasOnCast(uint flag, const(SpellInfo)* spell)
+    {
+        enum uint dispelStealth = 5, dispelInvisibility = 6;
+        enum uint allowWhileStealthed = 0x00000020, allowWhileInvisible = 0x00004000; // attributes ex, ex 2
+        if (player is null)
+            return;
+        foreach (aura; player.auras.interruptedBy(flag))
+        {
+            if (aura.spell.id == spell.id && aura.caster == player.guid)
+                continue;
+            if (aura.spell.casting.dispel == dispelStealth && (spell.attributesEx & allowWhileStealthed))
+                continue;
+            if (aura.spell.casting.dispel == dispelInvisibility && (spell.attributesEx2 & allowWhileInvisible))
+                continue;
+            removeAura(aura);
+        }
+    }
+
+    /// Every aura goes on death but the passive ones and those that last through it (CMaNGOS `RemoveAllAurasOnDeath`).
     package void removeAurasOnDeath()
     {
+        enum uint allowAuraWhileDead = 0x00100000; // SPELL_ATTR_EX3_ALLOW_AURA_WHILE_DEAD: flasks, Deserter, sickness
         foreach (aura; player.auras.list.dup)
-            if (!aura.passive)
+            if (!aura.passive && !(aura.spell.casting.attributesEx3 & allowAuraWhileDead))
                 removeAura(aura);
     }
 
@@ -615,7 +742,10 @@ private:
         uint healed;
         switch (aura.type(i))
         {
-        case AuraType.periodicHeal, AuraType.modRegen:
+        case AuraType.periodicHeal:
+            healed = player.auras.healingTaken(amount, aura.spell.casting.school);
+            break;
+        case AuraType.modRegen:
             healed = amount;
             break;
         case AuraType.obsModHealth:

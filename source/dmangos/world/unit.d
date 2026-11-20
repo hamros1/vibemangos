@@ -273,6 +273,28 @@ struct UnitRef
         }
     }
 
+    /// A hostile spell landed on it: a player's auras that end with that go (Sap, Polymorph, Stealth...).
+    void hostileSpellLanded()
+    {
+        import dmangos.world.auras : AuraInterrupt;
+
+        if (kind == UnitKind.player)
+            session.interruptAuras(AuraInterrupt.hostileAction);
+    }
+
+    /// Its `UNIT_FIELD_FLAGS` (in combat, stunned, ...).
+    @property uint unitFlags() const
+    {
+        import dmangos.world.updatefields : UNIT_FIELD_FLAGS;
+
+        final switch (kind)
+        {
+        case UnitKind.none: return 0;
+        case UnitKind.player: return session.character.values.get!UNIT_FIELD_FLAGS;
+        case UnitKind.creature: return creature.values.get!UNIT_FIELD_FLAGS;
+        }
+    }
+
     /// A spell from `caster` hit it for `damage`: `dealDamage`.
     void spellHitBy(ulong caster, uint damage)
     {
@@ -363,6 +385,14 @@ Character creditedPlayer(UnitRef unit)
  */
 void dealDamage(UnitRef attacker, UnitRef victim, uint damage, const Blow blow)
 {
+    // A player's worn items wear a little with the damage it deals and takes (`Unit::DealDamage`).
+    if (damage)
+    {
+        if (attacker.kind == UnitKind.player && attacker != victim)
+            attacker.session.wearOnHit();
+        if (victim.kind == UnitKind.player)
+            victim.session.wearOnHit();
+    }
     if (blow.kind == BlowKind.melee && blow.melee.targetState == VictimState.parry)
         final switch (victim.kind)
         {
