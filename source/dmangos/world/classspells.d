@@ -1087,7 +1087,7 @@ mixin template ClassSpells()
         {
             import dmangos.world.combat : hasInArc;
 
-            if (!other || !hasInArc(player.position, other.fighter.position))
+            if (!other || !hasInArc(player.position, other.position))
                 return false;
             casts ~= ProcCast(retaliationStrike, other.combatGuid);
             return true;

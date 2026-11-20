@@ -980,7 +980,7 @@ private:
         if (combatTimer == 0 && victim && !inDungeon)
             if (auto target = world.unit(victim))
             {
-                const at = target.fighter.position;
+                const at = target.position;
                 const dx = at.x - lastRefresh.x, dy = at.y - lastRefresh.y;
                 if (dx * dx + dy * dy > leashRadius * leashRadius)
                     return enterEvadeMode(world);
@@ -1050,7 +1050,7 @@ private:
         if (casting_ !is null)
         {
             // Casting: it stands, facing its target.
-            me.movement.position.orientation = angleTo(me.position, target.fighter.position);
+            me.movement.position.orientation = angleTo(me.position, target.position);
             return;
         }
         chase(target, world);

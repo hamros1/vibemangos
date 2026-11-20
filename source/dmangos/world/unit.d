@@ -105,6 +105,17 @@ struct UnitRef
         }
     }
 
+    /// Where it is: what `fighter.position` says, without building a `Fighter`.
+    @property imported!"dmangos.world.movement".Position position() const
+    {
+        final switch (kind)
+        {
+        case UnitKind.none: return typeof(return).init;
+        case UnitKind.player: return session.player is null ? typeof(return).init : session.player.position;
+        case UnitKind.creature: return creature.position;
+        }
+    }
+
     /// Alive: what `fighter.alive` says, without building a `Fighter` (a player's whole stats, its immunities).
     @property bool alive() const
     {

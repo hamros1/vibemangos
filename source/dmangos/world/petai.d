@@ -155,7 +155,7 @@ mixin template PetBehaviour()
             {
                 if (casting_ !is null)
                 {
-                    me.movement.position.orientation = angleTo(me.position, target.fighter.position);
+                    me.movement.position.orientation = angleTo(me.position, target.position);
                     return;
                 }
                 petAutocast(world);

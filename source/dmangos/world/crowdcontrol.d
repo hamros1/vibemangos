@@ -115,7 +115,7 @@ mixin template CrowdControlHandlers()
                 if (aura.has(AuraType.modFear))
                     if (auto caster = map.unit(aura.caster))
                     {
-                        from = caster.fighter.position;
+                        from = caster.position;
                         break;
                     }
             angle = (from.x == at.x && from.y == at.y) ? uniform(0.0f, 2 * PI, map.random)

@@ -53,7 +53,7 @@ size_t enemiesNear(CombatWorld world, EntityRef of, float range, EntityRef[] int
         return 0;
     const relating = self.relating;
     size_t n;
-    foreach (c; world.creaturesNear(self.fighter.position, range))
+    foreach (c; world.creaturesNear(self.position, range))
     {
         if (n == into.length)
             break;

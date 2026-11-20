@@ -1339,7 +1339,7 @@ private:
         auto other = map.unit(targets.unit);
         if (!other)
             return SpellCastResult.ok;
-        const me = player.position, it = other.fighter.position;
+        const me = player.position, it = other.position;
         enum ulong pounce = 0x20000;
         enum uint familyDruid = 7;
         if ((spell.attributesEx & initiatesCombat) && (spell.attributesEx2 & initiateCombatPostCast)

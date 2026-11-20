@@ -489,7 +489,7 @@ mixin template EffectHandlers()
         auto victim = map.unit(target);
         if (!victim || target == player.guid || !player.alive)
             return;
-        const from = player.position, to = victim.fighter.position;
+        const from = player.position, to = victim.position;
         const reach = victim.fighter.combatReach;
         const dx = from.x - to.x, dy = from.y - to.y;
         const apart = sqrt(dx * dx + dy * dy);

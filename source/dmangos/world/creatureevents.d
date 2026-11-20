@@ -112,7 +112,7 @@ mixin template CreatureEvents()
         auto other = victim ? world_.unit(victim) : UnitRef.init;
         if (!other || distanceTo(victim) > 5)
             return false;
-        const inFront = hasInArc(other.fighter.position, me.position, PI);
+        const inFront = hasInArc(other.position, me.position, PI);
         return front == inFront;
     }
 
@@ -171,7 +171,7 @@ mixin template CreatureEvents()
             {
                 if ((castFlags & castAuraNotPresent) && other.hasAuraOf(spell.id))
                     return false;
-                if (!inRangeFor(spell, guid) || !world_.inLineOfSight(me.position, other.fighter.position))
+                if (!inRangeFor(spell, guid) || !world_.inLineOfSight(me.position, other.position))
                     return false;
             }
             return true;
@@ -319,7 +319,7 @@ mixin template CreatureEvents()
     {
         if (script is null || !script.watchesLineOfSight || victim || !me.alive || who.combatGuid == me.guid)
             return;
-        const at = who.fighter.position;
+        const at = who.position;
         const dx = at.x - me.position.x, dy = at.y - me.position.y, dz = at.z - me.position.z;
         import std.math : sqrt;
 

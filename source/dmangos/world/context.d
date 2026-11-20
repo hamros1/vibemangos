@@ -3082,7 +3082,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             || session.untouchable)
             return;
         // The creature's aggro radius against the player (as `CreatureAI.attackDistance`).
-        const at = session.fighter.position, from = replica.position;
+        const at = session.player.position, from = replica.position;
         int levelDiff = int(session.fighter.level) - int(values.get!UNIT_FIELD_LEVEL);
         if (levelDiff < -25)
             levelDiff = -25;

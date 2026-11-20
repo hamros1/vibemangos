@@ -497,3 +497,6 @@ every player (the reactive aura states' timers): `crowd` 500, release-fast, quie
 busy 7.7% / tick 0.33 ms (the evening's build) to 8.8% / 0.61 ms. `Player.alive` (which said "players do not die
 yet") and a new `UnitRef.alive` answer it from the death state and health; 41 call sites use them: 8.3-8.4% /
 0.39 ms. A bisect over the day's merges put the rest on the merge of the systems branch with main (neither alone).
+`UnitRef.position` likewise for 16 sites: no measurable change (8.3%). What remains of the day's rise (7.7% to
+8.3%, busy only: the loop's packets, not the tick) is still to be found; the gdb sampler cannot run the server
+under load any more (gdb fails, "Recursive internal problem"), so the next step is a sampler that attaches briefly.

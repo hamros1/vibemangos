@@ -325,7 +325,7 @@ mixin template CreatureCasting()
             return 0;
         Position p;
         if (auto other = world_.unit(target))
-            p = other.fighter.position;
+            p = other.position;
         else if (auto friend = world_.creatureAt(target))
             p = friend.position;
         else
@@ -355,7 +355,7 @@ mixin template CreatureCasting()
             auto center = me.position;
             if (area && a != ImplicitTarget.casterSource && a != ImplicitTarget.caster && target != me.guid)
                 if (auto other = world_.unit(target))
-                    center = other.fighter.position;
+                    center = other.position;
             const r = radius(*spell, i, lore.clientData);
             ulong[] found;
             foreach (other; world_.playersNear(center, r))
@@ -822,7 +822,7 @@ mixin template CreatureCasting()
                 if (aura.has(AuraType.modFear))
                     if (auto caster = world_.unit(aura.caster))
                     {
-                        from = caster.fighter.position;
+                        from = caster.position;
                         break;
                     }
         const angle = feared && (from.x != me.position.x || from.y != me.position.y)
@@ -878,7 +878,7 @@ mixin template CreatureCasting()
             return;
         auto from = me.position;
         if (auto enemy = world_.unit(victim))
-            from = enemy.fighter.position;
+            from = enemy.position;
         // Away from the enemy, a little to one side or the other.
         const angle = angleTo(from, me.position) + uniform(-0.6f, 0.6f, world_.random);
         import std.math : cos, sin;
