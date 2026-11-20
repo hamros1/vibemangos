@@ -36,25 +36,16 @@
 2591: Backstab: not done: addComboPoints (effect 2)
 2643: Multi-Shot: refused: noPower
 2974: Wing Clip: refused: noPower
-3287: Ghoul Form: aura transform: on the caster, its look unchanged (effect 0)
-3329: Creature - Frog Form: aura transform: on the caster, its look unchanged (effect 0)
 3332: Slow Poison: refused: noPower
 3391: Thrash: not done: addExtraAttacks (effect 0)
 3408: Crippling Poison: not done: enchantItemTemporary (effect 0)
-3416: Fiend Fury: aura transform: on the caster, its look unchanged (effect 0)
 3420: Crippling Poison: not done: createItem (effect 0)
 3599: Searing Totem: not done: summonTotemSlot1 (effect 0: no creature 2523)
-4063: Argus Shadow Mage Transform: aura transform: on the caster, its look unchanged (effect 0)
 4507: Target Dummy Spawn Effect: refused: dontReport
-4933: Prismatic Form: Fire: aura transform: on the caster, its look unchanged (effect 0)
-4934: Prismatic Form: Earth: aura transform: on the caster, its look unchanged (effect 0)
-4935: Prismatic Form: Water: aura transform: on the caster, its look unchanged (effect 0)
-4936: Prismatic Form: Thunder: aura transform: on the caster, its look unchanged (effect 0)
 4947: Magic Backlash: heal: no heal of the caster (effect 0)
 4971: Healing Ward: not done: summonTotemSlot1 (effect 0: no creature 2992)
 5108: Voidwalker: not done: summonPet (effect 0: no creature 8996)
 5172: Bloodsail Companion: not done: summonPet (effect 0: no creature 3450)
-5402: Gazban Transform: aura transform: on the caster, its look unchanged (effect 0)
 5605: Healing Ward: not done: summonTotemSlot1 (effect 0: no creature 3560)
 5740: Rain of Fire: not done: persistentAreaAura (effect 0: no area, nothing on the player)
 6060: Smite: refused: noPower
@@ -72,16 +63,12 @@
 7107: Summon Wolfguard Worg: not done: summonPet (effect 0: no creature 5058)
 7140: Expose Weakness: aura modDamageTaken: not on the player (effect 0)
 7259: Nature Protection Potion: not done: createItem (effect 0)
-7293: Zombie Form: aura transform: on the caster, its look unchanged (effect 0)
 7322: Frostbolt: refused: noPower
 7344: Recombobulate: no caster: no creature casts it in the data
 7741: Summoned Demon: not done: spawn (effect 0)
-7750: Consuming Rage: aura periodicDamage: on the caster, no damage (effect 0)
 7762: Summon Gunther's Visage: not done: spawn (effect 0)
-7965: Cobrahn Serpent Form: aura transform: on the caster, its look unchanged (effect 0)
 7976: Summon Party Bot - summon effect: not done: spawn (effect 0)
 8000: Area Burn: not done: persistentAreaAura (effect 1: no area, nothing on the player)
-8041: Serpent Form: aura transform: on the caster, its look unchanged (effect 0)
 8143: Tremor Totem: not done: summonTotemSlot2 (effect 0: no creature 5913)
 8154: Stoneskin Totem: not done: summonTotemSlot2 (effect 0: no creature 5919)
 8160: Strength of Earth Totem: not done: summonTotemSlot2 (effect 0: no creature 5921)
@@ -105,7 +92,6 @@
 8629: Gouge: not done: addComboPoints (effect 1)
 8656: Summon Crawler: not done: summonPet (effect 0: no creature 6250)
 8675: Warlock Channeling: not done: persistentAreaAura (effect 0: no area, nothing on the caster)
-8699: Unholy Frenzy: aura periodicDamage: on the friendly creature, no damage (effect 1)
 8721: Backstab: not done: addComboPoints (effect 2)
 8722: Summon Succubus: not done: summonPet (effect 0: no creature 10928)
 8814: Flame Spike: not done: persistentAreaAura (effect 1: no area, nothing on the player)
@@ -113,7 +99,6 @@
 8853: Summon Skeleton: not done: summonPet (effect 0: no creature 6412)
 8985: Summon Fire Elemental: not done: summonPet (effect 0: no creature 575)
 9010: Create Filled Containment Coffer: not done: summonObjectWild (effect 0: no object 103574)
-9192: "Plucky" Resumes Human Form: aura transform: on the caster, its look unchanged (effect 0)
 9220: "Plucky" Resumes Chicken Form: aura transform: on the caster, its look unchanged (effect 0)
 9653: Summon Gelkis Rumbler: not done: summonPet (effect 0: no creature 4661)
 9735: Sapta Sight: targeting: aura modInvisibilityDetection at the friendly creature, not the caster (effect 1); not done: activateObject (effect 2)
@@ -126,8 +111,6 @@
 10179: Frostbolt: refused: noPower
 10185: Blizzard: not done: persistentAreaAura (effect 0: no area, nothing on the player)
 10227: Beast Tracking: not done: learnSpell (effect 0); not done: skillStep (effect 1)
-10266: Lung Puncture: aura periodicDamage: on the caster, no damage (effect 0)
-10267: Slush: schoolDamage: no damage to the caster (effect 0); aura transform: on the caster, its look unchanged (effect 1)
 10308: Hammer of Justice: refused: noPower
 10341: Radiation Cloud: not done: persistentAreaAura (effect 0: no area, nothing on the player)
 10389: Spawn Smoke: not done: spawn (effect 0)
@@ -151,7 +134,6 @@
 10951: Inner Fire: refused: noPower
 10967: Echoing Roar: aura modResistancePct: not on the player (effect 0)
 11086: Ward of Zum'rah: not done: summonTotem (effect 0: no creature 7785)
-11089: Theka Transform: aura transform: on the caster, its look unchanged (effect 0)
 11293: Sinister Strike: not done: addComboPoints (effect 1)
 11433: Death & Decay: not done: persistentAreaAura (effect 0: no area, nothing on the player)
 11462: Summon Pirate Treasure and Trigger Mob: no caster: no creature casts it in the data
@@ -163,7 +145,6 @@
 11528: Create Red Punch Card: no caster: no creature casts it in the data
 11545: Create Prismatic Punch Card: no caster: no creature casts it in the data
 11595: Discombobulator Ray: no caster: no creature casts it in the data
-11638: Radiation Poisoning: aura periodicDamage: on the caster, no damage (effect 1)
 11668: Immolate: refused: noPower
 11672: Corruption: refused: noPower
 11700: Drain Life: refused: noPower
@@ -195,7 +176,6 @@
 14267: Wing Clip: refused: noPower
 14295: Volley: not done: persistentAreaAura (effect 0: no area, nothing on the player)
 14514: Blink: not done: leap (effect 0: the caster did not move)
-14888: Arei Transform: aura transform: on the caster, its look unchanged (effect 0)
 14894: Smelt Dark Iron: not done: learnSpell (effect 0)
 15038: Scorching Totem: not done: summonTotemSlot1 (effect 0: no creature 9637)
 15065: Create Tablet Transcript: no caster: no creature casts it in the data
@@ -221,24 +201,20 @@
 16102: Flamestrike: not done: persistentAreaAura (effect 1: no area, nothing on the player)
 16136: Summoning Portal: not done: persistentAreaAura (effect 0: no area, nothing on the nobody)
 16139: Summoning Portal: not done: persistentAreaAura (effect 0: no area, nothing on the nobody)
-16167: Rend Blackhand Mounts: aura transform: on the caster, its look unchanged (effect 0)
 16171: Empower Will: not done: dispelMechanic (effect 0); not done: dispelMechanic (effect 1); not done: dispelMechanic (effect 2)
 16351: Create Cache of Mau'ari: not done: createItem (effect 0)
 16419: Flamestrike: not done: persistentAreaAura (effect 1: no area, nothing on the player)
-16467: Kirtonos Transform: aura transform: on the caster, its look unchanged (effect 0)
 16472: Wicked Milking: no caster: no creature casts it in the data
 16473: Summoned Urok: not done: spawn (effect 0)
 16556: Disturb Rookery Egg (FAST): not done: activateObject (effect 0)
 16569: Health Funnel: targeting: aura periodicHeal at the caster, not the friendly creature (effect 0)
 16636: Berserker Charge: not done: charge (effect 0: the caster did not move)
-16794: Transformation: aura transform: on the caster, its look unchanged (effect 0)
 16843: Crimson Fury: not done: addExtraAttacks (effect 0)
 17012: Devour Magic: not done: dispel (effect 0: nothing of dispel type 1 taken from the player)
 17042: Master Swordsmith: not done: learnSpell (effect 0)
 17043: Master Axesmith: not done: learnSpell (effect 0)
 17044: Master Hammersmith: not done: learnSpell (effect 0)
 17164: Summon Scarlet Hound: not done: summonPet (effect 0: no creature 10979)
-17186: Ras Becomes a Boy!: aura transform: on the caster, its look unchanged (effect 0)
 17201: Dispel Magic: not done: dispel (effect 0: nothing of dispel type 1 taken from the friendly creature)
 17321: Spirit Spawn-in: not done: spawn (effect 0)
 17529: Vitreous Focuser: not done: createItem (effect 0)
@@ -279,9 +255,7 @@
 20221: Goblin Engineering: no caster: no creature casts it in the data
 20294: Immolate: refused: noPower
 20296: Flamestrike: not done: persistentAreaAura (effect 1: no area, nothing on the player)
-20409: Lady Prestor Transforms DND: aura transform: on the caster, its look unchanged (effect 0)
 20477: Summon Player: not done: teleportUnitsFaceCaster (effect 0: the player did not move)
-20514: Ruul Snowhoof Shapechange (DND): aura transform: on the caster, its look unchanged (effect 0)
 20534: Teleport: teleportUnits: the player did not move (effect 0)
 20618: Teleport: teleportUnits: the player did not move (effect 0)
 20680: Blizzard: not done: persistentAreaAura (effect 0: no area, nothing on the player)
@@ -308,8 +282,6 @@
 22191: Heated Ground: not done: persistentAreaAura (effect 0: no area, nothing on the nobody)
 22275: Flamestrike: not done: persistentAreaAura (effect 1: no area, nothing on the player)
 22438: Mark of Detonation: targeting: aura procTriggerSpell at the caster, not the player (effect 0)
-22660: Dire Wolf Form: aura transform: on the caster, its look unchanged (effect 0)
-22688: Tree Form: aura transform: on the caster, its look unchanged (effect 0)
 22802: Choking Spores: not done: persistentAreaAura (effect 0: no area, nothing on the player)
 22814: Gordok Ogre Suit: not done: learnSpell (effect 0)
 22816: Gordok Ogre Suit: not done: learnSpell (effect 0)
@@ -336,7 +308,6 @@
 23176: Summon Pirate Booty (DND): not done: summonObjectWild (effect 0: no object 179697)
 23187: Frost Burn: aura modMeleeHaste: not on the player (effect 1)
 23272: Soul Flame: not done: spawn (effect 2)
-23299: Stinging Trauma: aura periodicDamage: on the caster, no damage (effect 0)
 23331: Blast Wave: schoolDamage: no damage to the player (effect 0); aura modDecreaseSpeed: not on the player (effect 1)
 23362: Raise Drakonids: not done: activateObject (effect 0)
 23363: Summon Drakonid Corpse Trigger: not done: summonObjectWild (effect 0: no object 179804)
@@ -355,20 +326,15 @@
 23768: Sayge's Dark Fortune of Damage: no caster: no creature casts it in the data
 23769: Sayge's Dark Fortune of Resistance: no caster: no creature casts it in the data
 23774: System Shock: powerDrain: no mana drained from the player (effect 1): the player killed by its leech first (a dead player is not drained: CMaNGOS's EffectPowerDrain)
-23849: Venoxis Transform: aura transform: on the caster, its look unchanged (effect 0)
 23859: Dispel Magic: not done: dispel (effect 0: nothing of dispel type 1 taken from the friendly creature)
 23861: Poison Cloud: not done: persistentAreaAura (effect 0: no area, nothing on the player)
 23958: Mind Exhaustion: no caster: no creature casts it in the data
-23966: Jeklik Transform: aura transform: on the caster, its look unchanged (effect 0)
 24022: Cleanse Nova: not done: dispel (effect 0)
 24023: Charge: not done: charge (effect 0: the caster did not move)
 24063: Disease Cloud: not done: persistentAreaAura (effect 0: no area, nothing on the player)
 24082: Hatch Spider Egg: not done: activateObject (effect 0)
 24083: Hatch Eggs: not done: activateObject (effect 0)
-24084: Mar'li Transform: aura transform: on the caster, its look unchanged (effect 0)
-24169: Thekal Transform: aura transform: on the caster, its look unchanged (effect 0); not done: healMaxHealth (effect 1: no heal of the caster)
 24179: Create Seal of the Dawn: not done: createItem (effect 0)
-24190: Arlokk Transform: aura transform: on the caster, its look unchanged (effect 0)
 24201: Create Rune of the Dawn: not done: createItem (effect 0)
 24202: Create Heart of Hakkar Rift: no caster: no creature casts it in the data
 24203: Heart of Hakkar Banning: no caster: no creature casts it in the data
@@ -390,11 +356,9 @@
 24612: Flamestrike: not done: persistentAreaAura (effect 1: no area, nothing on the player)
 24669: Rain of Fire: not done: persistentAreaAura (effect 0: no area, nothing on the player)
 24670: Inferno: not done: summonDemon (effect 0: no creature 89)
-24672: Unholy Frenzy: aura periodicDamage: on the friendly creature, no damage (effect 1)
 24683: Lightning Cloud: not done: persistentAreaAura (effect 1: no area, nothing on the player)
 24690: Aspect of Arlokk: not done: sanctuary (effect 2)
 24705: Invocation of the Wickerman: no caster: no creature casts it in the data
-24721: Buru Transform: aura transform: on the caster, its look unchanged (effect 0)
 24730: Cannon Prep: no caster: no creature casts it in the data
 24745: Summon Templar, Trigger: no caster: no creature casts it in the data
 24747: Summon Templar Fire, Trigger: no caster: no creature casts it in the data
@@ -421,11 +385,6 @@
 25033: Lightning Cloud: not done: persistentAreaAura (effect 1: no area, nothing on the player)
 25035: Elemental Spawn-in: not done: spawn (effect 0)
 25085: Bright Campfire: not done: transDoor (effect 0: no object 31511)
-25098: Transform Hero: aura transform: on the caster, its look unchanged (effect 0)
-25105: Green Dragon Transform DND: aura transform: on the caster, its look unchanged (effect 0)
-25106: Red Dragon Transform DND: aura transform: on the caster, its look unchanged (effect 0)
-25107: Blue Dragon Transform DND: aura transform: on the caster, its look unchanged (effect 0)
-25108: Bronze Dragon Transform DND: aura transform: on the caster, its look unchanged (effect 0)
 25112: Summon Voidwalker: not done: summonPet (effect 0: no creature 1860)
 25174: Sundering Cleave: aura modResistance: not on the player (effect 1): the player killed by its damage first, as the sweep's rolls before it decide
 25198: Poison Cloud: not done: persistentAreaAura (effect 0: no area, nothing on the player)
@@ -442,7 +401,6 @@
 25821: Charge: not done: charge (effect 0: the caster did not move)
 25843: Create Hive'Zora Scout Report: not done: createItem (effect 0)
 25845: Create Hive'Ashi Scout Report: not done: createItem (effect 0)
-25846: Eranikus Night Elf DND: aura transform: on the caster, its look unchanged (effect 0)
 25847: Create Hive'Regal Scout Report: not done: createItem (effect 0)
 26047: Birth: not done: spawn (effect 0)
 26063: Ouro Submerge Visual: not done: activateObject (effect 1)
@@ -450,7 +408,6 @@
 26096: Jandice Drops Journal DND: not done: summonObjectWild (effect 0: no object 180794)
 26102: Sand Blast: aura modStun: not on the player (effect 1)
 26229: Summon Player: not done: teleportUnitsFaceCaster (effect 0: the player did not move)
-26232: Transform C'Thun -> Phase 2: aura transform: on the caster, its look unchanged (effect 0)
 26262: Birth: not done: spawn (effect 0)
 26300: Cluster Rocket, BLUE - N: not done: summonObjectWild (effect 0: no object 180854)
 26301: Cluster Rocket, BLUE - D: not done: summonObjectWild (effect 0: no object 180854)
@@ -537,11 +494,9 @@
 26550: Lightning Cloud: not done: persistentAreaAura (effect 1: no area, nothing on the player)
 26561: Berserker Charge: not done: charge (effect 0: the caster did not move)
 26586: Birth: not done: spawn (effect 0)
-26601: Poison Bolt: aura periodicDamage: not on the player (effect 1): the player killed by its damage first, as the rolls decide
 26607: Blizzard: not done: persistentAreaAura (effect 0: no area, nothing on the player); not done: persistentAreaAura (effect 1: no area, nothing on the player)
 26613: Unbalancing Strike: aura modSkill: not on the player (effect 1)
 27530: Hurricane: not done: persistentAreaAura (effect 0: no area, nothing on the player); not done: persistentAreaAura (effect 1: no area, nothing on the player)
-27546: Faerie Dragon Form: aura transform: on the caster, its look unchanged (effect 0)
 27618: Blizzard: refused: noPower
 27621: Windfury Totem: not done: summonTotemSlot4 (effect 0: no creature 7484)
 27627: Drop Obsidian: not done: summonObjectWild (effect 0: no object 181068)
@@ -578,17 +533,12 @@
 28431: Poison Charge: not done: charge (effect 0: the caster did not move)
 28434: Spider Web: not done: pullTowards (effect 0)
 28439: Create Eternal Quintessence: not done: createItem (effect 0)
-28443: Transform Ghost: aura transform: on the caster, its look unchanged (effect 0)
 28450: Arcane Explosion: aura modStun: on the caster, its unit flag not set (effect 0)
 28478: Frostbolt: aura modDecreaseSpeed: not on the player (effect 1)
-28479: aura modDecreaseSpeed: not on the player (effect 1): Kel'Thuzad's Frostbolt, its slow seen or not by the rolls before it (main's build alone, DMANGOS_NPC_SWEEP_ONLY=28479, misses it too)
 28522: Icebolt: aura modStun: not on the player (effect 0); aura periodicTriggerSpell: not on the player (effect 2)
-28533: Transform: aura transform: on the caster, its look unchanged (effect 0)
 28547: Chill: not done: persistentAreaAura (effect 0: no area, nothing on the player); not done: persistentAreaAura (effect 1: no area, nothing on the player)
 28622: Web Wrap: refused: dontReport
 28794: Rain of Fire: not done: persistentAreaAura (effect 0: no area, nothing on the player)
-28988: Plague Slime (Blue): aura transform: on the caster, its look unchanged (effect 0)
-28990: Plague Slime (Red): aura transform: on the caster, its look unchanged (effect 0)
 29060: Taunt: not done: attackMe (effect 0)
 29099: Create Flame of Darnassus: no caster: no creature casts it in the data
 29101: Create Flame of Stormwind: no caster: no creature casts it in the data

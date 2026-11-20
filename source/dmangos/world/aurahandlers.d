@@ -66,118 +66,14 @@ mixin template AuraHandlers()
 private:
     float manaFromDrink = 0; // drink's mana not yet whole
 
-    /**
-     * `SPELL_EFFECT_APPLY_AURA` (at the spell's first aura effect at `target`, for all of them): the aura on
-     * its target, this player or another, or a creature. `effects` (bits; 0: all the aura effects) are those at
-     * this target: the aura has only them (Mind Control's possession on the creature, its dummy on the caster).
-     */
+    /// `SPELL_EFFECT_APPLY_AURA` by this player at `target` (`dmangos.world.spellauras.applyAura`).
     package void applyAuraEffect(const(SpellInfo)* spell, size_t i, ulong target, ubyte effects = 0)
     {
-        bool auraEffect(size_t j)
-        {
-            const effect = spell.effect[j];
-            return (effect == SpellEffect.applyAura || effect == SpellEffect.applyAreaAuraParty
-                || effect == SpellEffect.applyAreaAuraPet) && (!effects || (effects & (1 << j)));
-        }
-        foreach (j; 0 .. i)
-            if (auraEffect(j))
-                return;
-        int[3] values;
-        foreach (j; 0 .. 3)
-            if (auraEffect(j))
-                values[j] = effectMod(spell, j, effectCustom.has(j) ? effectCustom.values[j]
-                    : effectValue(*spell, j, player.data.level, uniform01(map.random))
-                        + cast(int)(spell.casting.pointsPerComboPoint[j] * castCombo)); // a finisher's (Expose Armor)
-        classAuraValues(spell, values); // Rip's and Rupture's attack power, Mana Shield's spell power
-        const ms = modDuration(spell, duration(*spell, context.client, player.data.level));
-        // The caster's spell power over time: each tick its coefficient's share (`bonusCoefficient`).
-        foreach (j; 0 .. 3)
-            if (auraEffect(j) && spell.casting.amplitude[j] > 0 && ms > 0)
-            {
-                import dmangos.world.spellcast : bonusCoefficient;
+        import dmangos.world.caster : Caster;
+        import dmangos.world.spellauras : applyAura;
 
-                const type = cast(AuraType) spell.casting.applyAuraName[j];
-                int done;
-                if ((type == AuraType.periodicDamage || type == AuraType.periodicLeech) && spell.casting.school != 0)
-                    done = spellPower(1 << spell.casting.school);
-                else if (type == AuraType.periodicHeal)
-                    done = healingPower();
-                if (done > 0)
-                    values[j] += cast(int)(done * bonusCoefficient(*spell, j, context.client, player.data.level));
-            }
-        // Damage over time (`SPELLMOD_DOT`): what each tick deals or drains, its spell power's share with it.
-        foreach (j; 0 .. 3)
-            if (auraEffect(j) && (spell.casting.applyAuraName[j] == AuraType.periodicDamage
-                    || spell.casting.applyAuraName[j] == AuraType.periodicLeech))
-                values[j] = spellMod(SpellModOp.dot, spell, values[j]);
-        if (auto creature = cast(Creature) map.findObject(target))
-        {
-            if (!creature.alive)
-                return;
-            // A friendly creature's (one's pet's: Mend Pet) is a buff, and no attack on it.
-            const hostile = canAttack(relatingNow(), creature.ai.relatingOf(), context.client);
-            auto aura = makeAura(spell, player.guid, player.data.level, ms, !hostile, values);
-            if (aura.charges) // (`SPELLMOD_CHARGES`: Improved Shield Block)
-                aura.charges = spellMod(SpellModOp.charges, spell, aura.charges);
-            if (effects)
-                aura.effects &= effects;
-            if (hostile)
-                aura.setHeartbeatResist(heartbeatResistChance(player.fighter, creature.fighter, *spell,
-                    targetResistance(cast(int) creature.values.get!UNIT_FIELD_RESISTANCES(spell.casting.school),
-                    spell.casting.school), spellHitBonusOf(spell)), ms);
-            bool isNew;
-            if (auto displaced = creature.auras.displacedBy(aura, creature.values)) // another's that may not stay beside it
-                creature.loseAura(displaced, map);
-            auto applied = creature.auras.apply(aura, creature.values, isNew);
-            if (isNew)
-                classCreatureAuraApplied(creature, applied); // the sting or curse it replaces
-            scorpidStingLanded(applied, map.unitOf(creature)); // Improved Scorpid Sting (dmangos.world.physicalclasses)
-            map.flushObjectChanges(creature);
-            foreach (j; 0 .. 3)
-                if (auraEffect(j))
-                    auraAppliedScript(spell, j, target, values[j]);
-            // A charm (Enslave Demon) or a possession (Mind Control, Eyes of the Beast): the creature is the player's.
-            foreach (j; 0 .. 3)
-                if (auraEffect(j))
-                {
-                    const kind = spell.casting.applyAuraName[j];
-                    if (kind == AuraType.modCharm || kind == AuraType.modPossess || kind == AuraType.modPossessPet)
-                    {
-                        takeCharm(creature, spell, kind != AuraType.modCharm);
-                        break;
-                    }
-                }
-            if (charmed is creature || !hostile)
-                return;
-            spellAttacked(creature, 0);
-            return;
-        }
-        auto who = target == player.guid ? this : cast(typeof(this)) context.onlinePlayer(target);
-        if (who is null || who.player is null || who.map !is map)
-            return;
-        // On an enemy (a duel's opponent) it is a debuff, diminished by those of its kind before it.
-        const hostile = who !is this && canAttack(relatingNow(), who.relatingNow(), context.client);
-        int lasts = ms;
-        if (hostile)
-        {
-            lasts = who.diminishedDuration(spell, ms);
-            if (lasts == 0 && ms > 0)
-                return; // immune for now
-        }
-        auto given = makeAura(spell, player.guid, player.data.level, lasts, !hostile, values);
-        if (given.charges)
-            given.charges = spellMod(SpellModOp.charges, spell, given.charges);
-        if (effects)
-            given.effects &= effects;
-        if (hostile)
-            given.setHeartbeatResist(heartbeatResistChance(player.fighter, who.player.fighter, *spell,
-                targetResistance(cast(int) who.player.values.get!UNIT_FIELD_RESISTANCES(spell.casting.school),
-                spell.casting.school), spellHitBonusOf(spell)), ms);
-        who.addAura(given);
-        if (hostile)
-            scorpidStingLanded(given, who.unit); // Improved Scorpid Sting (dmangos.world.physicalclasses)
-        if (!hostile && who !is this) // a buff on one fighting: those it fights fight this player too
-            imported!"dmangos.world.creatureai".assistThreat(map, who.threateners, unit, 0, *spell);
+        auto me = Caster.of(this);
+        applyAura(me, spell, i, map.unit(target), effects);
     }
 
     // -----------------------------------------------------------------------
@@ -1172,38 +1068,15 @@ private:
         map.flushObjectChanges(drainer);
     }
 
-    /// `SMSG_PERIODICAURALOG` (a mana leech's with what its caster gains of each point, `gainMultiplier`)
+    /// A periodic aura's log (`dmangos.world.spellauras.periodicLog`).
     void periodicLog(ulong target, const Aura aura, size_t i, uint amount, uint powerOrSchool, uint absorbed = 0,
         float gainMultiplier = 0)
     {
-        ByteWriter w;
-        w.putPackedGuid(target);
-        w.putPackedGuid(aura.caster);
-        w.put(aura.spell.id);
-        w.put(1u);
-        w.put(cast(uint) aura.type(i));
-        switch (aura.type(i))
-        {
-        case AuraType.periodicDamage:
-            w.put(amount);
-            w.put(aura.spell.casting.school);
-            w.put(absorbed);
-            w.put(0);
-            break;
-        case AuraType.periodicHeal, AuraType.obsModHealth:
-            w.put(amount);
-            break;
-        case AuraType.periodicManaLeech:
-            w.put(powerOrSchool);
-            w.put(amount);
-            w.put(gainMultiplier);
-            break;
-        default:
-            w.put(powerOrSchool);
-            w.put(amount);
-            break;
-        }
-        tellAround(target, Opcode.SMSG_PERIODICAURALOG, w.data);
+        import dmangos.world.caster : Caster;
+        static import dmangos.world.spellauras;
+
+        auto me = Caster.of(this);
+        dmangos.world.spellauras.periodicLog(me, target, aura, i, amount, powerOrSchool, absorbed, gainMultiplier);
     }
 
     /// A log about `target` (this player or another unit) for everyone who sees it, and for this player.
@@ -1216,52 +1089,16 @@ private:
             deliver(opcode, body_);
     }
 
-    /**
-     * See `UnitRef.auraTick`: a periodic effect of this player's aura on a creature ticked: damage
-     * over time hurts it as a spell would (tapping, threat, the kill); a leech heals this player.
-     */
+    /// See `UnitRef.auraTick` (`dmangos.world.spellauras.periodicTick`).
     public void auraTick(Creature target, Aura aura, size_t i)
     {
-        if (!target.alive || player is null)
-            return;
-        // Its spell's script may make this tick another amount (`auraTickScript`).
-        int scripted = aura.amount[i];
-        if (aura.period[i] > 0 && aura.maxDuration > 0)
-            scripted = auraTickScript(aura.spell, i, target.guid, (aura.maxDuration - aura.duration) / aura.period[i],
-                aura.maxDuration / aura.period[i], aura.amount[i]);
-        const amount = scripted > 0 ? cast(uint) scripted : 0;
-        switch (aura.type(i))
-        {
-        case AuraType.periodicHeal: // (the creature healed itself: `Creature.selfTick`) Improved Mend Pet
-            hunterHealTick(aura, map.unitOf(target));
-            break;
-        case AuraType.periodicDamage, AuraType.periodicLeech:
-            uint damage = amount;
-            const school = aura.spell.casting.school;
-            if (school == 0)
-                damage = cast(uint) armorReducedDamage(player.data.level, target.fighter.armor, damage);
-            else if (school != 1)
-            {
-                // A tick partly resisted; a binary spell's at a tenth of the resistance.
-                import dmangos.world.combat : partiallyResisted;
-                import dmangos.world.spellcast : isBinarySpell;
-                import std.random : uniform;
+        import dmangos.world.caster : Caster;
+        import dmangos.world.spellauras : periodicTick;
 
-                damage = partiallyResisted(damage, targetResistance(cast(int) target.values.get!UNIT_FIELD_RESISTANCES(school), school),
-                    player.data.level, target.fighter, isBinarySpell(*aura.spell),
-                    uniform!"[]"(1u, 10000u, map.random)).damage;
-            }
-            if (aura.type(i) == AuraType.periodicLeech)
-                return leechTick(map.unitOf(target), aura, i, damage);
-            periodicLog(target.guid, aura, i, damage, aura.spell.casting.school);
-            spellAttacked(target, damage, true, aura.spell.casting.school, aura.spell);
-            tickProcs(map.unitOf(target), aura.spell, damage); // Nightfall, Vampiric Embrace
-            break;
-        case AuraType.periodicManaLeech:
-            return manaLeechTick(map.unitOf(target), aura, i, amount);
-        default:
-            break;
-        }
+        if (player is null)
+            return;
+        auto me = Caster.of(this);
+        periodicTick(me, target, aura, i);
     }
 }
 

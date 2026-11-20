@@ -345,60 +345,24 @@ mixin template EffectHandlers()
     // Drains over time
     // -----------------------------------------------------------------------
 
-    /**
-     * A tick of this player's `SPELL_AURA_PERIODIC_LEECH` (Drain Life, Siphon Life) on `victim`: its damage,
-     * logged as a periodic spell hit (`SMSG_SPELLNONMELEEDAMAGELOG`, as CMaNGOS's leech sends), and the player
-     * healed by what it took (at most the victim's health) times the effect's multiplier (`healSelf`).
-     */
+    /// A tick of this player's leech on `victim` (`dmangos.world.spellauras.leechTick`).
     package void leechTick(UnitRef victim, Aura aura, size_t i, uint damage)
     {
-        import dmangos.world.spellcast : nonMeleeDamageLog;
-        import dmangos.world.unit : Blow, dealDamage;
+        import dmangos.world.caster : Caster;
+        static import dmangos.world.spellauras;
 
-        if (!victim || !victim.alive)
-            return;
-        const school = aura.spell.casting.school;
-        const absorbed = victim.absorb(school, damage);
-        const health = victim.health;
-        const dealt = damage < health ? damage : health;
-        tellAround(victim.combatGuid, Opcode.SMSG_SPELLNONMELEEDAMAGELOG, nonMeleeDamageLog(victim.combatGuid,
-            player.guid, aura.spell.id, damage, school, absorbed, 0, true, 0, false));
-        if (victim.kind == UnitKind.creature)
-            spellAttacked(victim.creature, damage, true, school, aura.spell);
-        else
-            dealDamage(unit, victim, damage, Blow.periodic(school));
-        const factor = aura.spell.casting.multipleValue[i] > 0 ? aura.spell.casting.multipleValue[i] : 1.0f;
-        if (player.alive)
-            healSelf(aura.spell, cast(uint)(dealt * spellMod(SpellModOp.multipleValue, aura.spell, factor)));
-        tickProcs(victim, aura.spell, damage); // a tick as any damage over time's: Nightfall, Vampiric Embrace
+        auto me = Caster.of(this);
+        dmangos.world.spellauras.leechTick(me, victim, aura, i, damage);
     }
 
-    /**
-     * A tick of this player's `SPELL_AURA_PERIODIC_MANA_LEECH` (Drain Mana, Viper Sting) on `victim`: up to its
-     * amount of the victim's power of the misc value's kind is drained, logged (`SMSG_PERIODICAURALOG` with the
-     * gain multiplier), and the player gets it times the multiplier if it has that power at all; a creature
-     * drained hates it by half the gain (CMaNGOS's `PERIODIC_MANA_LEECH` tick).
-     */
+    /// A tick of this player's mana leech on `victim` (`dmangos.world.spellauras.manaLeechTick`).
     package void manaLeechTick(UnitRef victim, Aura aura, size_t i, uint amount)
     {
-        const kind = aura.misc(i);
-        uint now;
-        if (!victim || !victim.alive || !player.alive || kind < 0 || kind > Power.happiness
-                || !powerOf(victim, cast(Power) kind, now))
-            return;
-        const power = cast(Power) kind;
-        const drained = now < amount ? now : amount;
-        takePower(victim, power, drained);
-        classManaDrained(victim, aura, drained); // Improved Drain Mana
-        const gainFactor = player.values.get!UNIT_FIELD_MAXPOWER1(power) > 0 ? multiplier(aura.spell, i) : 0.0f;
-        periodicLog(victim.combatGuid, aura, i, drained, power, 0, gainFactor);
-        const gain = cast(int)(drained * gainFactor);
-        if (gain <= 0)
-            return;
-        player.modifyPower(power, gain);
-        flushPlayerChanges();
-        if (victim.kind == UnitKind.creature && victim.creature.ai !is null)
-            victim.creature.ai.addThreat(unit, gain * 0.5f);
+        import dmangos.world.caster : Caster;
+        static import dmangos.world.spellauras;
+
+        auto me = Caster.of(this);
+        dmangos.world.spellauras.manaLeechTick(me, victim, aura, i, amount);
     }
 
     // -----------------------------------------------------------------------

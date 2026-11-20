@@ -579,12 +579,14 @@ mixin template CreatureCasting()
 
     /// It as a spell's caster (`dmangos.world.caster`): its map is the world's only `CombatWorld`, its lore the
     /// `WorldContext`.
-    package imported!"dmangos.world.caster".Caster spellCaster()
+    package imported!"dmangos.world.caster".Caster spellCaster(CombatWorld world = null)
     {
         import dmangos.world.caster : Caster;
         import dmangos.world.context : WorldContext;
         import dmangos.world.map : Map;
 
+        if (world !is null)
+            world_ = world;
         return Caster.of(me, cast(Map) world_, cast(WorldContext) lore);
     }
 
@@ -661,71 +663,13 @@ mixin template CreatureCasting()
         raiseScript(KilledUnit(EntityRef(victim.combatGuid)));
     }
 
-    /**
-     * `SPELL_EFFECT_APPLY_AURA` (at the spell's first aura effect at `guid`, for all of them): a debuff on an enemy (a
-     * player, a pet, another creature), a buff on itself or a friend. `effects` (bits; 0: all the aura effects) are
-     * those at this target: the aura has only them (Smoke Bomb's stun on its enemies, not on itself).
-     */
+    /// `SPELL_EFFECT_APPLY_AURA` by it at `guid` (`dmangos.world.spellauras.applyAura`).
     package void auraOn(const(SpellInfo)* spell, size_t i, ulong guid, ubyte effects = 0)
     {
-        bool auraEffect(size_t j)
-        {
-            const effect = spell.effect[j];
-            return (effect == SpellEffect.applyAura || effect == SpellEffect.applyAreaAuraParty
-                || effect == SpellEffect.applyAreaAuraPet) && (!effects || (effects & (1 << j)));
-        }
-        foreach (j; 0 .. i)
-            if (auraEffect(j))
-                return;
-        const level = me.values.get!UNIT_FIELD_LEVEL;
-        int[3] values;
-        auto owner = petModOwner();
-        foreach (j; 0 .. 3)
-            if (auraEffect(j))
-            {
-                values[j] = levelScaled(spell, j, effectValue(*spell, j, level, uniform01(world_.random)));
-                if (owner !is null) // a pet's: its owner's talents (Improved Imp on Fire Shield and Blood Pact)
-                    values[j] = owner.petEffectMod(spell, j, values[j], me);
-            }
-        int ms = duration(*spell, lore.clientData, level);
-        if (owner !is null && ms > 0) // (Improved Succubus on Seduction and Lesser Invisibility)
-        {
-            import dmangos.world.spellmods : SpellModOp;
+        import dmangos.world.spellauras : applyAura;
 
-            ms = owner.petSpellMod(SpellModOp.duration, spell, ms, me);
-        }
-        if (auto creature = guid == me.guid ? me : world_.creatureAt(guid))
-        {
-            // On an enemy (a player's pet, a creature of another side) it is a debuff, as a player's would be.
-            const positive = creature is me || creature.ai is null
-                || !canAttack(relating, creature.ai.relating, me.client);
-            bool isNew;
-            auto aura = makeAura(spell, me.guid, level, ms, positive, values);
-            if (effects)
-                aura.effects &= effects;
-            if (!positive) // it may break early (`SPELL_ATTR_HEARTBEAT_RESIST`)
-                aura.setHeartbeatResist(imported!"dmangos.world.spellcast".heartbeatResistChance(me.fighter,
-                    creature.fighter, *spell, cast(int) creature.values.get!UNIT_FIELD_RESISTANCES(spell.casting.school),
-                    0), ms);
-            if (auto displaced = creature.auras.displacedBy(aura, creature.values)) // another's that may not stay
-                creature.loseAura(displaced, world_);
-            creature.auras.apply(aura, creature.values, isNew);
-            if (creature !is me)
-                world_.flushCreature(creature);
-            world_.wake(creature.guid);
-            if (isNew) // its spell's script hears of each of its effects (Stoned's statue, a woodcutter's empty hands)
-            {
-                import dmangos.script.api : AuraApplied;
-
-                foreach (j; 0 .. 3)
-                    if (aura.effects & (1 << j))
-                        spellScriptEvent(spell, AuraApplied(EntityRef(me.guid), EntityRef(guid), cast(ubyte) j, values[j]),
-                            world_);
-            }
-            return;
-        }
-        if (auto other = world_.unit(guid))
-            other.auraFrom(me.guid, spell, level, ms, values, effects);
+        auto caster = spellCaster();
+        applyAura(caster, spell, i, guid == me.guid ? world_.unitOf(me) : world_.unit(guid), effects);
     }
 
     /// `SPELL_EFFECT_HEAL` on itself or a friend.

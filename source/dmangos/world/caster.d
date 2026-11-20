@@ -407,6 +407,46 @@ struct Caster
         }
     }
 
+    /**
+     * The amount of effect `i` of `spell` as it casts it (`SpellCast` its cast's): a player's rolled (or its cast's
+     * own) with its combo points and modifiers; a creature's rolled at its level and scaled by it, a pet's or a
+     * totem's with its owner's talents.
+     */
+    int effectAmount(const(SpellInfo)* spell, size_t i)
+    {
+        final switch (kind)
+        {
+        case UnitKind.none: return 0;
+        case UnitKind.player: return character.effectAmount(spell, i);
+        case UnitKind.creature: return ai.effectAmount(spell, i);
+        }
+    }
+
+    /// `ms` of `spell`'s duration as its modifiers make it (`SPELLMOD_DURATION`: a player's talents, a finisher's
+    /// combo points; a pet's or a totem's owner's: Improved Succubus).
+    int modDuration(const(SpellInfo)* spell, int ms)
+    {
+        import dmangos.world.spellmods : SpellModOp;
+
+        final switch (kind)
+        {
+        case UnitKind.none: return ms;
+        case UnitKind.player: return character.modDuration(spell, ms);
+        case UnitKind.creature: return ms > 0 ? spellMod(SpellModOp.duration, spell, ms) : ms;
+        }
+    }
+
+    /// A log about `target` (it or another unit) for everyone who sees `target`, and for a player caster itself.
+    void tellAround(ulong target, Opcode opcode, const(ubyte)[] body_)
+    {
+        final switch (kind)
+        {
+        case UnitKind.none: return;
+        case UnitKind.player: return character.tellAround(target, opcode, body_);
+        case UnitKind.creature: return map.sendToObservers(target, opcode, body_);
+        }
+    }
+
     /// Its power type (`UNIT_FIELD_BYTES_0`'s fourth byte: mana, rage, focus, energy).
     @property ubyte powerType()
     {

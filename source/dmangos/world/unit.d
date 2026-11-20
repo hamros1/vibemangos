@@ -245,11 +245,22 @@ struct UnitRef
             session.threatRemoved(creature);
     }
 
-    /// An aura this unit cast on `target` ticked: its effect, done by its caster (a player's).
+    /// An aura this unit cast on `target` ticked: its effect, done by its caster (`dmangos.world.spellauras.periodicTick`).
     void auraTick(Creature target, Aura aura, size_t effect)
     {
-        if (kind == UnitKind.player)
-            session.auraTick(target, aura, effect);
+        final switch (kind)
+        {
+        case UnitKind.none:
+            return;
+        case UnitKind.player:
+            return session.auraTick(target, aura, effect);
+        case UnitKind.creature:
+            if (creature.ai is null)
+                return;
+            auto caster = creature.ai.spellCaster(map);
+            imported!"dmangos.world.spellauras".periodicTick(caster, target, aura, effect);
+            return;
+        }
     }
 
     /// An aura this unit cast on `target` ended.
@@ -259,34 +270,6 @@ struct UnitRef
             session.classCreatureAuraLost(target, aura);
     }
 
-    /// An aura of `spell` from `caster`.
-    void auraFrom(ulong caster, const(SpellInfo)* spell, uint casterLevel, int durationMs, const int[3] values,
-        ubyte effects = 0)
-    {
-        final switch (kind)
-        {
-        case UnitKind.none:
-            return;
-        case UnitKind.player:
-            return session.auraFrom(caster, spell, casterLevel, durationMs, values, effects);
-        case UnitKind.creature:
-            import dmangos.world.spellcast : heartbeatResistChance;
-            import dmangos.world.updatefields : UNIT_FIELD_RESISTANCES;
-
-            bool isNew;
-            auto aura = makeAura(spell, caster, casterLevel, durationMs, false, values);
-            if (effects)
-                aura.effects &= effects;
-            if (auto from = map.unit(caster)) // it may break early (`SPELL_ATTR_HEARTBEAT_RESIST`)
-                aura.setHeartbeatResist(heartbeatResistChance(from.fighter, creature.fighter, *spell,
-                    cast(int) creature.values.get!UNIT_FIELD_RESISTANCES(spell.casting.school), 0), durationMs);
-            if (auto displaced = creature.auras.displacedBy(aura, creature.values)) // another's that may not stay
-                creature.loseAura(displaced, map);
-            creature.auras.apply(aura, creature.values, isNew);
-            map.flushObjectChanges(creature);
-            return;
-        }
-    }
 
     /// Its aura of `spell` goes (its caster stopped channelling it, or a script took it away).
     void auraRemovedBy(uint spell)

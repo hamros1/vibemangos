@@ -13,7 +13,7 @@ module dmangos.world.creature;
 import dmangos.world.pet : PetState;
 
 import dmangos.world.combat : Fighter;
-import dmangos.world.auras : AuraSet, AuraTick, Aura;
+import dmangos.world.auras : AuraSet, AuraTick, Aura, AuraType;
 import dmangos.world.loot : Loot;
 import dmangos.world.creatureai : CombatWorld, CreatureAI;
 import dmangos.world.clientdata : FactionTemplateEntry;
@@ -834,6 +834,42 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
         speeds[MoveType.run] = baseMoveSpeed[MoveType.run] * t.speedRun * auraSpeedFactor;
     }
 
+    /**
+     * `aura`, made by whoever cast it (`dmangos.world.spellauras.applyAura`), on it: another's of the same spell that
+     * may not stay beside it goes, and it shows what it does to its look. Returns the aura it has now (the one it had,
+     * one stack more: `isNew` false).
+     */
+    Aura receiveAura(Aura aura, CombatWorld world, out bool isNew)
+    {
+        if (auto displaced = auras.displacedBy(aura, values)) // another's that may not stay
+            loseAura(displaced, world);
+        auto applied = auras.apply(aura, values, isNew);
+        if (isNew && applied.has(AuraType.transform))
+            refreshLook();
+        return applied;
+    }
+
+    /**
+     * The model it shows: its newest transform's (a harmful one first: Hex over a shape it took), else its own
+     * (CMaNGOS's `RestoreDisplayId`); a transform's model is in its amount (`spellauras.transformLook`).
+     */
+    void refreshLook()
+    {
+        if (!alive)
+            return;
+        int model;
+        bool harmful;
+        foreach (aura; auras.list)
+            foreach (i; 0 .. 3)
+                if ((aura.effects & (1 << i)) && aura.type(i) == AuraType.transform && aura.amount[i] > 0
+                        && (!harmful || !aura.positive))
+                {
+                    model = aura.amount[i];
+                    harmful = !aura.positive;
+                }
+        values.set!UNIT_FIELD_DISPLAYID(model > 0 ? cast(uint) model : values.get!UNIT_FIELD_NATIVEDISPLAYID);
+    }
+
     /// Its aura goes (it ran out, `expired`, was dispelled or cancelled, or a script took it away): its script, and
     /// its spell's, hear of it.
     void loseAura(Aura aura, CombatWorld world, bool expired = false)
@@ -841,6 +877,8 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
         import dmangos.script.api : AuraEnded, EntityRef;
 
         auras.remove(aura, values);
+        if (aura.has(AuraType.transform))
+            refreshLook();
         if (auto caster = world.unit(aura.caster)) // its caster's class rules (Wyvern Sting's poison as it wakes)
             caster.auraEndedOn(this, aura);
         if (ai is null)
