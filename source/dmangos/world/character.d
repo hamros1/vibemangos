@@ -324,12 +324,12 @@ final class Character : OnlinePlayer, Looter
         import dmangos.world.combat : MeleeHitOutcome;
 
         takeBlow(attacker, damage, blow);
-        if (damage && player !is null && player.fighter.alive) // a cast under way pushed back, a channel cut short
+        if (damage && player !is null && player.alive) // a cast under way pushed back, a channel cut short
             damagedWhileCasting(blow.kind == BlowKind.periodic,
                 attacker.kind == imported!"dmangos.world.unit".UnitKind.player && attacker.session is this);
         // A swing that landed: its damage shields strike back. Its auras may proc on it, and on a dodge, a parry or a
         // block (those that ask for one: `dmangos.world.procs`).
-        if (blow.kind == BlowKind.melee && attacker && player !is null && player.fighter.alive
+        if (blow.kind == BlowKind.melee && attacker && player !is null && player.alive
                 && blow.melee.outcome != MeleeHitOutcome.evade)
         {
             import dmangos.world.procs : ProcHit, procExOfSwing;
@@ -340,11 +340,11 @@ final class Character : OnlinePlayer, Looter
                 damageShields(attacker);
             if (blow.melee.outcome == MeleeHitOutcome.block)
                 blockDamageProcs(attacker); // Holy Shield
-            if (player !is null && player.fighter.alive)
+            if (player !is null && player.alive)
                 procAuras(ProcFlag.takeMeleeSwing, attacker, ProcHit(null, procExOfSwing(blow.melee.outcome), damage,
                     cast(ubyte) blow.melee.type, damage != 0));
         }
-        else if (blow.kind == BlowKind.spell && damage && attacker && player !is null && player.fighter.alive)
+        else if (blow.kind == BlowKind.spell && damage && attacker && player !is null && player.alive)
             procAuras(ProcFlag.takeHarmfulSpell, attacker);
     }
 

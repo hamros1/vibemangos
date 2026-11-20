@@ -623,7 +623,7 @@ mixin template CreatureScripting()
         if (auto creature = world_.creatureAt(who.guid))
             return creature.alive;
         if (auto player = world_.unit(who.guid))
-            return player.fighter.alive;
+            return player.alive;
         return true;
     }
 
@@ -763,7 +763,7 @@ mixin template CreatureScripting()
         if (world_ is null)
             return ActionResult.notHere;
         auto victim_ = world_.unit(target.guid);
-        if (!victim_ || !victim_.fighter.alive)
+        if (!victim_ || !victim_.alive)
             return ActionResult.notHere;
         if (attacker.guid == me.guid)
         {
@@ -1042,7 +1042,7 @@ mixin template CreatureScripting()
         if (auto leader = world_.unit(player.guid))
             leader.questEventHappened(quest);
         foreach (other; world_.playersNear(me.position, 100))
-            if (other.combatGuid != player.guid && other.fighter.alive && lore.sameGroup(player.guid, other.combatGuid))
+            if (other.combatGuid != player.guid && other.alive && lore.sameGroup(player.guid, other.combatGuid))
                 other.questEventHappened(quest);
     }
 
@@ -1111,7 +1111,7 @@ mixin template CreatureScripting()
         float bestDistance = float.infinity;
         foreach (player; world_.playersNear(here, range))
         {
-            if (!player.fighter.alive || player.untouchable)
+            if (!player.alive || player.untouchable)
                 continue;
             Position at;
             if (!world_.positionOf(player.combatGuid, at))
@@ -1149,7 +1149,7 @@ mixin template CreatureScripting()
         foreach (guid, _; threat)
         {
             auto who = world_.unit(guid);
-            if (!who || !who.fighter.alive || who.untouchable)
+            if (!who || !who.alive || who.untouchable)
                 continue;
             const isPlayer = who.kind == UnitKind.player;
             if ((filter & PickFilter.player) && !isPlayer)
@@ -1242,7 +1242,7 @@ mixin template CreatureScripting()
             return 0;
         size_t n;
         foreach (p; world_.playersNear(me.position, range))
-            if (p.fighter.alive && n < into.length)
+            if (p.alive && n < into.length)
                 into[n++] = EntityRef(p.combatGuid);
         return n;
     }

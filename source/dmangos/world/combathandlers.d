@@ -242,7 +242,7 @@ private:
     /// Attacks `victim` in melee; false if it cannot.
     bool attack(Creature victim)
     {
-        if (!player.fighter.alive || !victim.alive || victim.ai.runningHome || mounted) // no melee mounted (`Unit::Attack`)
+        if (!player.alive || !victim.alive || victim.ai.runningHome || mounted) // no melee mounted (`Unit::Attack`)
             return false;
         if (attacking)
         {
@@ -282,7 +282,7 @@ private:
     /// Attacks a player (a duel's opponent) in melee.
     void attackPlayer(typeof(this) other)
     {
-        if (!player.fighter.alive || mounted)
+        if (!player.alive || mounted)
             return;
         if (attacking && attacking != other.player.guid)
             stopAttack(false, true);
@@ -318,7 +318,7 @@ private:
             player.modifyPower(Power.rage, rageReward(player.data.level, d.damage, true));
         flushPlayerChanges();
         dealDamage(unit, other.unit, d.damage, Blow.swing(d));
-        if (d.damage && other.player !is null && other.player.fighter.alive)
+        if (d.damage && other.player !is null && other.player.alive)
         {
             import dmangos.world.aurahandlers : ProcFlag;
 
@@ -334,7 +334,7 @@ private:
 
         const hit = ProcHit(null, procExOfSwing(d.outcome), d.damage, cast(ubyte) hand);
         procAuras(ProcFlag.dealMeleeSwing, victim, hit);
-        if (victim.fighter.alive)
+        if (victim.alive)
             victimAuraProcs(victim, ProcFlag.dealMeleeSwing, hit);
     }
 
@@ -416,7 +416,7 @@ private:
                 swingAtPlayer(other, AttackType.mainHand);
                 attackTimer[AttackType.mainHand] = player.stats.attackTime[AttackType.mainHand];
             }
-            if (dualWield && attackTimer[AttackType.offHand] == 0 && other.player.fighter.alive)
+            if (dualWield && attackTimer[AttackType.offHand] == 0 && other.player.alive)
             {
                 if (attackTimer[AttackType.mainHand] < attackDisplayDelay)
                     attackTimer[AttackType.mainHand] = attackDisplayDelay;

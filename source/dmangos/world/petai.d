@@ -129,7 +129,7 @@ mixin template PetBehaviour()
     {
         if (react == ReactState.passive || victim || !me.alive || !enemy)
             return;
-        if (!enemy.fighter.alive || !canAttack(relating, enemy.relating, me.client))
+        if (!enemy.alive || !canAttack(relating, enemy.relating, me.client))
             return;
         petAttack(enemy, world);
     }
@@ -148,7 +148,7 @@ mixin template PetBehaviour()
         if (victim)
         {
             auto target = world.unit(victim);
-            if (!target || !target.fighter.alive || target.untouchable
+            if (!target || !target.alive || target.untouchable
                 || !canAttack(relating, target.relating, me.client))
                 petStopAttack(world);
             else

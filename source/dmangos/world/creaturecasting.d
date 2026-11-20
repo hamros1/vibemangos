@@ -179,7 +179,7 @@ mixin template CreatureCasting()
         {
             if (auto other = world_.unit(target))
             {
-                if (!other.fighter.alive)
+                if (!other.alive)
                     return refuse(SpellCastResult.targetsDead);
                 if ((flags & castAuraNotPresent) && other.hasAuraOf(spell.id))
                     return refuse(SpellCastResult.dontReport);
@@ -245,7 +245,7 @@ mixin template CreatureCasting()
         {
             auto other = world_.unit(castTarget);
             auto friend = !other ? world_.creatureAt(castTarget) : null;
-            if ((!other || !other.fighter.alive) && (friend is null || !friend.alive))
+            if ((!other || !other.alive) && (friend is null || !friend.alive))
                 return interruptCast();
         }
         castTimer -= diff;
@@ -605,10 +605,10 @@ mixin template CreatureCasting()
                     break;
                 case SpellEffect.instantKill: // SPELL_EFFECT_INSTAKILL
                     if (auto other = world_.unit(guid))
-                        if (other.fighter.alive)
+                        if (other.alive)
                         {
                             other.spellHitBy(me.guid, other.health);
-                            if (!other.fighter.alive)
+                            if (!other.alive)
                                 raiseScript(KilledUnit(EntityRef(guid)));
                         }
                     break;
@@ -700,9 +700,9 @@ mixin template CreatureCasting()
         if (damage)
             triggerCombatTimer();
         other.spellHitBy(me.guid, damage);
-        if (!other.fighter.alive && script !is null)
+        if (!other.alive && script !is null)
             script.killed(this, guid);
-        if (!other.fighter.alive)
+        if (!other.alive)
             raiseScript(KilledUnit(EntityRef(guid)));
     }
 
@@ -1049,7 +1049,7 @@ mixin template CreatureCasting()
         if (!me.instanceId || !me.alive)
             return;
         foreach (p; world_.playersNear(me.position, 10_000))
-            if (p.fighter.alive)
+            if (p.alive)
                 attackedBy(p, world_);
     }
 
@@ -1164,7 +1164,7 @@ mixin template CreatureCasting()
         }
         foreach (guid, _; threat)
             if (auto other = world_.unit(guid))
-                if (other.fighter.alive)
+                if (other.alive)
                     other.questEventHappened(quest);
     }
 

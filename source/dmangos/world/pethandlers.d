@@ -1325,7 +1325,7 @@ mixin template PetHandlers()
     package void petsOnLeave()
     {
         endCharm(); // a charm stays where it is, its own again
-        removeGuardians(player is null || player.fighter.alive); // at its death, only those not fighting
+        removeGuardians(player is null || player.alive); // at its death, only those not fighting
         unsummonTotems(); // totems do not follow their owner
         if (pet_ !is null)
             unsummonPet(PetSlot.current);
@@ -1403,7 +1403,7 @@ mixin template PetHandlers()
                 }
                 if (!target)
                     return sendPetFeedback(PetFeedback.nothingToAttack);
-                if (target.combatGuid == pet.guid || !target.fighter.alive
+                if (target.combatGuid == pet.guid || !target.alive
                     || !canAttack(pet.ai.relatingOf, target.relating, context.client))
                     return sendPetFeedback(PetFeedback.cantAttackTarget);
                 if (pet.ai.currentVictim != target.combatGuid)

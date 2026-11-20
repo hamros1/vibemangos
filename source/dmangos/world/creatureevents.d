@@ -159,7 +159,7 @@ mixin template CreatureEvents()
         bool suitable(ulong guid)
         {
             auto other = world_.unit(guid);
-            if (!other || !other.fighter.alive || (playerOnly && other.kind != UnitKind.player))
+            if (!other || !other.alive || (playerOnly && other.kind != UnitKind.player))
                 return false;
             if (type == EventTarget.hostileRandomMana && other.manaPercent == uint.max)
                 return false;

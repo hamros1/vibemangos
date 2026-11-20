@@ -362,7 +362,7 @@ private:
     package void procAuras(uint flags, UnitRef other, imported!"dmangos.world.procs".ProcHit hit
         = imported!"dmangos.world.procs".ProcHit.init)
     {
-        if (player is null || !player.fighter.alive || inProc)
+        if (player is null || !player.alive || inProc)
             return;
         inProc = true;
         scope (exit)
@@ -388,7 +388,7 @@ private:
                     hits ~= [cast(uint) aura.amount[i], aura.spell.casting.school];
         foreach (hit; hits)
         {
-            if (!attacker.fighter.alive)
+            if (!attacker.alive)
                 return;
             ByteWriter w;
             w.put(player.guid);

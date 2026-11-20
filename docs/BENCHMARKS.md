@@ -488,3 +488,12 @@ A player seeing from an eye (Far Sight, Eagle Eye, Mind Vision) is one-way, like
 the eye, who sees it is near where it stands. With nobody far-seeing the cost is one field read per
 `updateVisibility`: `crowd` 500, release-fast, alternated on a quiet machine: busy 7.6-7.8% before, 7.7-7.8%
 after; tick 0.34-0.35 ms both. (Runs while another build compiled read 12-17% for both: compare only quiet runs.)
+
+## Alive without a Fighter (2026-11-20)
+
+A day of features made `Player.fighter` (and `UnitRef.fighter`) heavier: immunities, attackers' chances,
+invisibility, stealth. Many places built a whole `Fighter` only to ask whether a unit lives, some every tick for
+every player (the reactive aura states' timers): `crowd` 500, release-fast, quiet machine, alternated, went from
+busy 7.7% / tick 0.33 ms (the evening's build) to 8.8% / 0.61 ms. `Player.alive` (which said "players do not die
+yet") and a new `UnitRef.alive` answer it from the death state and health; 41 call sites use them: 8.3-8.4% /
+0.39 ms. A bisect over the day's merges put the rest on the merge of the systems branch with main (neither alone).

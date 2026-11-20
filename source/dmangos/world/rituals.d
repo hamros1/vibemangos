@@ -214,7 +214,7 @@ mixin template RitualSummoning()
         if (acceptGmSummonOffer())
             return;
         const summoner = response.summoner;
-        if (!player.fighter.alive || inCombat)
+        if (!player.alive || inCombat)
             return;
         const point = summonPoint;
         if (summoner != point.summoner || point.summoner == 0 || point.expires < context.unixTime)

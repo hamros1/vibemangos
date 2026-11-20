@@ -884,7 +884,7 @@ private:
                 foreach (u; map.playersNear(at, r))
                     if (auto other = enemyPlayer(u.combatGuid))
                     {
-                        if (!other.player.fighter.alive || !inside(other.player.position))
+                        if (!other.player.alive || !inside(other.player.position))
                             continue;
                         if (hurts)
                             spellDamageToPlayer(area.spell, other, area.value);
@@ -2821,7 +2821,7 @@ private:
                     found ~= creature.guid;
             foreach (who; map.near(center, r))
                 if (auto other = enemyPlayer(who.character.guid))
-                    if (other.fighter.alive && within(other.player.position))
+                    if (other.player !is null && other.player.alive && within(other.player.position))
                         found ~= other.player.guid;
             return found;
         }
@@ -2910,7 +2910,7 @@ private:
         import dmangos.world.unit : Blow, dealDamage;
 
         dealDamage(unit, other.unit, damage, Blow.spell(school));
-        if (other.player !is null && other.player.fighter.alive)
+        if (other.player !is null && other.player.alive)
         {
             import dmangos.world.aurahandlers : ProcFlag;
 
@@ -3101,7 +3101,7 @@ private:
         case UnitKind.player:
             import dmangos.world.unit : Blow, dealDamage;
 
-            if (victim.fighter.alive)
+            if (victim.alive)
                 dealDamage(unit, victim, total, Blow.spell(school));
             break;
         }
@@ -3114,12 +3114,12 @@ private:
     {
         import dmangos.world.procs : ProcEx, ProcHit, spellProcFlags;
 
-        if (!victim || !victim.fighter.alive)
+        if (!victim || !victim.alive)
             return;
         const hit = ProcHit(spell, crit ? ProcEx.criticalHit : ProcEx.normalHit, damage, hand, damage != 0);
         const flags = spellProcFlags(*spell, false, false);
         procAuras(flags, victim, hit);
-        if (victim.fighter.alive)
+        if (victim.alive)
             victimAuraProcs(victim, flags, hit);
     }
 

@@ -854,7 +854,7 @@ private:
         if (me.values.get!UNIT_FIELD_FLAGS & (UnitFlags.spawning | UnitFlags.uninteractible | UnitFlags.immuneToNpc))
             return false;
         const self = relating, target = enemy.relating;
-        if (!enemy.fighter.alive || enemy.untouchable || !canAttack(self, target, me.client))
+        if (!enemy.alive || enemy.untouchable || !canAttack(self, target, me.client))
             return false;
         if (instanceable)
             return victim != enemy.combatGuid;
@@ -1034,7 +1034,7 @@ private:
         foreach (guid, _; threat)
         {
             auto who = world.unit(guid);
-            if (!who || !who.fighter.alive || who.untouchable || !canAttack(relating, who.relating, me.client))
+            if (!who || !who.alive || who.untouchable || !canAttack(relating, who.relating, me.client))
                 gone ~= guid;
         }
         foreach (guid; gone)
@@ -1290,7 +1290,7 @@ private:
             ulong[] players;
             foreach (guid, _; threat)
                 if (auto who = world.unit(guid))
-                    if (who.kind == imported!"dmangos.world.unit".UnitKind.player && who.fighter.alive && (!nonTank || guid != victim))
+                    if (who.kind == imported!"dmangos.world.unit".UnitKind.player && who.alive && (!nonTank || guid != victim))
                         players ~= guid;
             if (players.length == 0)
                 return nonTank ? victim : 0;
@@ -1334,9 +1334,9 @@ private:
         if (d.damage)
             triggerCombatTimer(); // direct damage either way
         target.meleeHitBy(me.guid, d);
-        if (!target.fighter.alive && script !is null)
+        if (!target.alive && script !is null)
             script.killed(this, target.combatGuid); // `KilledUnit`
-        if (!target.fighter.alive)
+        if (!target.alive)
             raiseScript(KilledUnit(EntityRef(target.combatGuid)));
     }
 

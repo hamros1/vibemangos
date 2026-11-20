@@ -131,7 +131,7 @@ mixin template EffectHandlers()
     void threatEffect(const(SpellInfo)* spell, size_t i, ulong target, int value)
     {
         auto creature = livingCreature(target);
-        if (creature is null || creature.petOwner || !player.fighter.alive)
+        if (creature is null || creature.petOwner || !player.alive)
             return;
         const school = spell.casting.school;
         const amount = value * (school < 7 ? player.damageMods.threat[school] : 1);
@@ -352,7 +352,7 @@ mixin template EffectHandlers()
         import dmangos.world.spellcast : nonMeleeDamageLog;
         import dmangos.world.unit : Blow, dealDamage;
 
-        if (!victim || !victim.fighter.alive)
+        if (!victim || !victim.alive)
             return;
         const school = aura.spell.casting.school;
         const absorbed = victim.absorb(school, damage);
@@ -365,7 +365,7 @@ mixin template EffectHandlers()
         else
             dealDamage(unit, victim, damage, Blow.periodic(school));
         const factor = aura.spell.casting.multipleValue[i] > 0 ? aura.spell.casting.multipleValue[i] : 1.0f;
-        if (player.fighter.alive)
+        if (player.alive)
             healSelf(aura.spell, cast(uint)(dealt * spellMod(SpellModOp.multipleValue, aura.spell, factor)));
     }
 
@@ -379,7 +379,7 @@ mixin template EffectHandlers()
     {
         const kind = aura.misc(i);
         uint now;
-        if (!victim || !victim.fighter.alive || !player.fighter.alive || kind < 0 || kind > Power.happiness
+        if (!victim || !victim.alive || !player.alive || kind < 0 || kind > Power.happiness
                 || !powerOf(victim, cast(Power) kind, now))
             return;
         const power = cast(Power) kind;
@@ -424,7 +424,7 @@ mixin template EffectHandlers()
             {
                 if (!(aura.effects & (1 << i)) || aura.type(i) != AuraType.procTriggerDamage || aura.amount[i] <= 0)
                     continue;
-                if (uniform01(map.random) * 100 >= aura.spell.casting.procChance || !attacker.fighter.alive)
+                if (uniform01(map.random) * 100 >= aura.spell.casting.procChance || !attacker.alive)
                     continue;
                 const school = aura.spell.casting.school;
                 const damage = cast(uint) aura.amount[i];
@@ -457,7 +457,7 @@ mixin template EffectHandlers()
                         || !(aura.misc(i) & (1 << school)) || aura.amount[i] <= 0 || aura.caster == player.guid)
                     continue;
                 auto caster = playerHere(aura.caster);
-                if (caster is null || !caster.player.fighter.alive)
+                if (caster is null || !caster.player.alive)
                     continue;
                 const take = damage < cast(uint) aura.amount[i] ? damage : cast(uint) aura.amount[i];
                 damage -= take;
@@ -487,7 +487,7 @@ mixin template EffectHandlers()
         import dmangos.world.terrain : invalidHeight;
 
         auto victim = map.unit(target);
-        if (!victim || target == player.guid || !player.fighter.alive)
+        if (!victim || target == player.guid || !player.alive)
             return;
         const from = player.position, to = victim.fighter.position;
         const reach = victim.fighter.combatReach;
@@ -648,7 +648,7 @@ mixin template EffectHandlers()
         const kind = spell.miscValue[i];
         auto victim = map.unit(target);
         uint now;
-        if (kind < 0 || kind > Power.happiness || value <= 0 || !victim || !victim.fighter.alive
+        if (kind < 0 || kind > Power.happiness || value <= 0 || !victim || !victim.alive
                 || !powerOf(victim, cast(Power) kind, now))
             return;
         const burned = now < value ? now : cast(uint) value;
@@ -670,7 +670,7 @@ mixin template EffectHandlers()
         const kind = spell.miscValue[i];
         auto victim = map.unit(target);
         uint now;
-        if (kind < 0 || kind > Power.happiness || value < 0 || !victim || !victim.fighter.alive
+        if (kind < 0 || kind > Power.happiness || value < 0 || !victim || !victim.alive
                 || !powerOf(victim, cast(Power) kind, now))
             return;
         const power = cast(Power) kind;
@@ -712,7 +712,7 @@ mixin template EffectHandlers()
     void healthLeechEffect(const(SpellInfo)* spell, size_t i, ulong target, int value)
     {
         auto victim = map.unit(target);
-        if (value < 0 || !victim || !victim.fighter.alive)
+        if (value < 0 || !victim || !victim.alive)
             return;
         const health = victim.health;
         uint dealt;
@@ -722,7 +722,7 @@ mixin template EffectHandlers()
             dealt = spellDamageToPlayer(spell, other, cast(uint) value);
         if (dealt > health)
             dealt = health;
-        if (player.fighter.alive)
+        if (player.alive)
             healSelf(spell, cast(uint)(dealt * multiplier(spell, i)));
     }
 
@@ -761,7 +761,7 @@ mixin template EffectHandlers()
      */
     void addExtraAttacksEffect(const(SpellInfo)* spell, size_t i, ulong target, int value)
     {
-        if (target != player.guid || !player.fighter.alive || value <= 0)
+        if (target != player.guid || !player.alive || value <= 0)
             return;
         extraAttacks = cast(ubyte)(extraAttacks + value > 5 ? 5 : extraAttacks + value);
         logExecute(spell, i, executeTarget(target, cast(uint) value));
@@ -947,7 +947,7 @@ mixin template EffectHandlers()
                 return creature.guid;
         foreach (who; map.near(at, radius))
             if (auto other = enemyPlayer(who.character.guid))
-                if (other.fighter.alive)
+                if (other.player !is null && other.player.alive)
                     return other.player.guid;
         return 0;
     }

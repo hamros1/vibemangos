@@ -15,6 +15,9 @@
 	"buildTypes": {
 		"release-fast": {
 			"buildOptions": ["releaseMode", "optimize"]
+		},
+		"profile": {
+			"buildOptions": ["releaseMode", "optimize", "debugInfo"]
 		}
 	},
 	"configurations": [

@@ -374,7 +374,7 @@ final class InstanceScript : InstanceHost
             return c.alive;
         if (map !is null && creature.isPlayer)
             if (auto player = map.unit(creature.guid))
-                return player.fighter.alive;
+                return player.alive;
         return false;
     }
 
@@ -439,7 +439,7 @@ final class InstanceScript : InstanceHost
         foreach (who; map.playersNow())
             if (who.character !is null)
                 if (auto unit = map.unit(who.character.guid))
-                    if (unit.fighter.alive && !unit.untouchable)
+                    if (unit.alive && !unit.untouchable)
                         return EntityRef(unit.combatGuid);
         return EntityRef.init;
     }

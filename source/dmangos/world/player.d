@@ -292,10 +292,10 @@ final class Player : InventoryOwner
         return dualWield;
     }
 
-    /// Players do not die yet.
+    /// Alive (not a corpse, not a ghost) with health: what `fighter.alive` says, without building a `Fighter`.
     @property bool alive() const
     {
-        return true;
+        return deathState == DeathState.alive && values.get!UNIT_FIELD_HEALTH > 0;
     }
 
     /// Nobody fights yet.

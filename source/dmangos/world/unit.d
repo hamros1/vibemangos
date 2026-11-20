@@ -105,6 +105,17 @@ struct UnitRef
         }
     }
 
+    /// Alive: what `fighter.alive` says, without building a `Fighter` (a player's whole stats, its immunities).
+    @property bool alive() const
+    {
+        final switch (kind)
+        {
+        case UnitKind.none: return false;
+        case UnitKind.player: return session.player !is null && session.player.alive;
+        case UnitKind.creature: return creature.alive;
+        }
+    }
+
     /// What the formulas need of it now.
     Fighter fighter() const
     {

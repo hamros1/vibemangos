@@ -3078,7 +3078,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         if (flags & (UnitFlags.spawning | UnitFlags.uninteractible))
             return;
         const self = Relating(flags, faction, false, 0, 0, true), other = session.relating;
-        if (!canAttack(self, other, client) || !isEnemy(self, other, client) || !session.fighter.alive
+        if (!canAttack(self, other, client) || !isEnemy(self, other, client) || !session.player.alive
             || session.untouchable)
             return;
         // The creature's aggro radius against the player (as `CreatureAI.attackDistance`).
@@ -3255,7 +3255,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         import dmangos.world.character : Character;
 
         auto session = cast(Character) who;
-        if (session is null || session.character is null || !session.fighter.alive)
+        if (session is null || session.character is null || !session.player.alive)
             return;
         if (unixTime < trap.trapReadyAt || trap.lootState != GoLootState.ready)
             return;

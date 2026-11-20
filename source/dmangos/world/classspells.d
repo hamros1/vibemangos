@@ -309,7 +309,7 @@ mixin template ClassSpells()
     {
         if (player is null)
             return;
-        const dead = !player.fighter.alive;
+        const dead = !player.alive;
         foreach (kind; 0 .. reactiveLeft.length)
         {
             if (reactiveLeft[kind] <= 0)
@@ -606,7 +606,7 @@ mixin template ClassSpells()
         {
             // `spell_judgement`: the seal on goes, and its judgement (its third effect's amount names it) strikes,
             // without a hit roll.
-            if (!target.fighter.alive)
+            if (!target.alive)
                 return true;
             foreach (seal; player.auras.list)
             {
@@ -638,7 +638,7 @@ mixin template ClassSpells()
             return true;
         case holyLightIcon, flashOfLightIcon:
             // The heal itself, of the amount rolled; the spell for Illumination's mana back.
-            if (spell.effect[i] != SpellEffect.scriptEffect || !target.fighter.alive)
+            if (spell.effect[i] != SpellEffect.scriptEffect || !target.alive)
                 return false;
             castCustom(spell.casting.spellIconId == holyLightIcon ? holyLightHeal : flashOfLightHeal, target.combatGuid,
                 CustomValues([value, cast(int) spell.id, 0], 0b11));
@@ -773,7 +773,7 @@ mixin template ClassSpells()
                 foreach (target; hit)
                 {
                     auto unit = target == player.guid ? UnitRef.of(this) : map.unit(target);
-                    if (unit && unit.fighter.alive && uniform01(map.random) * 100 < chance)
+                    if (unit && unit.alive && uniform01(map.random) * 100 < chance)
                         casts ~= ProcCast(aura.spell.triggerSpell[k], target);
                 }
             }
@@ -930,7 +930,7 @@ mixin template ClassSpells()
     package void classAreaTick(const(SpellInfo)* spell, UnitRef target)
     {
         static immutable uint[2][] improvedBlizzardChill = [[836, 12484], [988, 12485], [989, 12486]];
-        if (!ofFamily(spell, SpellFamily.mage, 0x80) || !target || !target.fighter.alive)
+        if (!ofFamily(spell, SpellFamily.mage, 0x80) || !target || !target.alive)
             return;
         uint chill;
         foreach (aura; player.auras.list)
@@ -1209,7 +1209,7 @@ mixin template ClassSpells()
     {
         enum int nightfall = 4309;
         enum uint shadowTrance = 17941;
-        if (!other || !other.fighter.alive)
+        if (!other || !other.alive)
             return false;
         if (aura.misc(i) == nightfall)
         {
@@ -1229,7 +1229,7 @@ mixin template ClassSpells()
         import dmangos.world.aurahandlers : ProcFlag;
 
         auto set = aurasOf(victim);
-        if (set is null || !victim.fighter.alive)
+        if (set is null || !victim.alive)
             return;
         ProcCast[] casts;
         Aura[] spent;
