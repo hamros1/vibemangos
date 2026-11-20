@@ -275,6 +275,8 @@ struct UnitRef
             if (auto from = map.unit(caster)) // it may break early (`SPELL_ATTR_HEARTBEAT_RESIST`)
                 aura.setHeartbeatResist(heartbeatResistChance(from.fighter, creature.fighter, *spell,
                     cast(int) creature.values.get!UNIT_FIELD_RESISTANCES(spell.casting.school), 0), durationMs);
+            if (auto displaced = creature.auras.displacedBy(aura, creature.values)) // another's that may not stay
+                creature.loseAura(displaced, map);
             creature.auras.apply(aura, creature.values, isNew);
             map.flushObjectChanges(creature);
             return;
@@ -300,14 +302,15 @@ struct UnitRef
         }
     }
 
-    /// Its cast is interrupted by the creature `by`; its school locked for `lockMs`.
+    /// An interrupt (`SPELL_EFFECT_INTERRUPT_CAST`) by `by`: its cast or channel stops if interruptible, its school
+    /// locked for `lockMs`.
     void castInterruptedBy(ulong by, int lockMs = 0)
     {
         final switch (kind)
         {
         case UnitKind.none: return;
         case UnitKind.player: return session.castInterruptedBy(by, lockMs);
-        case UnitKind.creature: return creature.ai.interruptCast(lockMs);
+        case UnitKind.creature: return creature.ai.interruptedBySpell(lockMs);
         }
     }
 

@@ -37,7 +37,7 @@ mixin template SpellHandlers()
     import dmangos.world.unit : UnitKind, UnitRef;
     import dmangos.world.gameobject : GameObject;
     import dmangos.world.loot : LootItem;
-    import dmangos.world.defines : Power, Stat;
+    import dmangos.world.defines : maxPowers, Power, Stat;
     import dmangos.world.movement : MovementFlags, Position;
     import dmangos.world.opcodes;
     import dmangos.world.player : DeathState;
@@ -299,12 +299,11 @@ private:
         deliver(Opcode.SMSG_SPELL_COOLDOWN, w.data);
     }
 
+    /// The cooldowns of `spell`, not cast from an item, start now: its own and its category's (Reincarnation has
+    /// only its category's hour), with the talents' (Improved Reincarnation).
     package void startCooldown(const(SpellInfo)* spell)
     {
-        import core.time : msecs;
-
-        if (spell.recoveryTime > 0 && !cooldownCheat)
-            spellReadyAt[spell.id] = context.clock() + (cast(long) spell.recoveryTime).msecs;
+        startCooldown(spell, 0, context.clock());
     }
 
     /// An auto-repeating spell (`SPELL_ATTR_EX2_AUTOREPEAT_FLAG`) cast by the client.
@@ -487,6 +486,8 @@ private:
             if (due.length)
                 flushPlayerChanges();
         }
+        if (channelSpell !is null)
+            payChannelCost(cast(int) elapsed.total!"msecs");
         if (channelSpell !is null && (channelTimer -= cast(int) elapsed.total!"msecs") <= 0)
             endChannel(false);
         if (!generic.active)
@@ -609,6 +610,7 @@ private:
         channelTarget = channelObject ? channelObject : target ? target : player.guid;
         channelObject = 0;
         channelTimer = ms;
+        channelCostTimer = 1000;
         ByteWriter w;
         w.put(spell.id);
         w.put(cast(uint) ms);
@@ -623,6 +625,36 @@ private:
             if (spell.effect[j] == SpellEffect.applyAura && spell.casting.applyAuraName[j] == AuraType.bindSight
                     && channelTarget != player.guid)
                 seeFrom(channelTarget);
+    }
+
+    private int channelCostTimer; // ms to the channel's next second's cost
+
+    /**
+     * A channel's cost each second (`ManaPerSecond`: Health Funnel's health), the caster's; one that costs health
+     * the caster has no more of ends (CMaNGOS's `SpellAuraHolder::UpdateHolder`).
+     */
+    private void payChannelCost(int ms)
+    {
+        const spell = channelSpell;
+        const perSecond = cast(int)(spell.casting.manaPerSecond + spell.casting.manaPerSecondPerLevel * player.data.level);
+        if (perSecond <= 0)
+            return;
+        for (channelCostTimer -= ms; channelCostTimer <= 0; channelCostTimer += 1000)
+        {
+            if (spell.casting.powerType == powerHealth)
+            {
+                const health = player.values.get!UNIT_FIELD_HEALTH;
+                if (health <= perSecond)
+                {
+                    endChannel(true);
+                    break;
+                }
+                player.values.set!UNIT_FIELD_HEALTH(health - perSecond);
+            }
+            else if (spell.casting.powerType < maxPowers)
+                player.modifyPower(cast(Power) spell.casting.powerType, -perSecond);
+        }
+        flushPlayerChanges();
     }
 
     /// Far Sight's spot (`SPELL_EFFECT_ADD_FARSIGHT`): a dynamic object at the spell's destination, seen from
@@ -1165,15 +1197,18 @@ private:
                 if (const at = spell.id in spellReadyAt)
                     if (*at > now)
                         return SpellCastResult.notReady;
-            if (spell.category && !cooldownCheat)
-                if (const at = spell.category in categoryReadyAt)
-                    if (*at > now)
+            // The category's: an item's own if it has one (Restoring Balm's 1153, its spell none).
+            if (const category = cooldownCategoryOf(spell, itemEntry))
+                if (const at = category in categoryReadyAt)
+                    if (*at > now && !cooldownCheat)
                         return SpellCastResult.notReady;
             if (spell.casting.startRecoveryCategory == 133 && gcdReadyAt > now && !cooldownCheat)
                 return SpellCastResult.notReady;
-            if (spell.casting.school < schoolLockedUntil.length && schoolLockedUntil[spell.casting.school] > now
-                    && !cooldownCheat)
-                return SpellCastResult.notReady; // its school locked out by an interrupt
+            // Its school locked out by an interrupt: only a spell that silence stops (`PreventionType`), not
+            // Arcane Shot or a Serpent Sting (`WorldObject::IsSpellReady`).
+            if (spell.casting.preventionType == 1 && spell.casting.school < schoolLockedUntil.length
+                    && schoolLockedUntil[spell.casting.school] > now && !cooldownCheat)
+                return SpellCastResult.notReady;
             if ((spell.attributes & spellAttrNotInCombat) && inCombat)
                 return SpellCastResult.affectingCombat;
             if (player.values.getByte!UNIT_FIELD_BYTES_1(0) != 0 && !(spell.attributes & castableWhileSitting))
@@ -1226,7 +1261,14 @@ private:
         if (!triggered && itemEntry == 0)
         {
             const cost = costOf(*spell);
-            if (cost > 0 && player.values.get!UNIT_FIELD_POWER1(cast(Power) spell.casting.powerType) < cost)
+            // Health as the power (Bloodrage, Health Funnel): more than it costs, or `CASTER_AURASTATE`.
+            if (spell.casting.powerType == powerHealth)
+            {
+                if (cost > 0 && player.values.get!UNIT_FIELD_HEALTH <= cost)
+                    return SpellCastResult.casterAuraState;
+            }
+            else if (cost > 0 && (spell.casting.powerType >= maxPowers
+                    || player.values.get!UNIT_FIELD_POWER1(cast(Power) spell.casting.powerType) < cost))
                 return SpellCastResult.noPower;
             foreach (i, reagent; spell.reagents)
                 if (reagent > 0 && player.inventory.count(reagent) < spell.casting.reagentCount[i])
@@ -1272,7 +1314,8 @@ private:
                         && (spell.casting.applyAuraName[i] == AuraType.mechanicImmunity
                             || spell.casting.applyAuraName[i] == AuraType.mechanicImmunityMask)))
                 return SpellCastResult.ok;
-        enum uint preventionSilence = 1, preventionPacify = 2;
+        import dmangos.world.spellcast : preventionPacify, preventionSilence;
+
         if (flags & UnitFlags.stunned)
             return SpellCastResult.stunned;
         if ((flags & UnitFlags.silenced) && spell.casting.preventionType == preventionSilence)
@@ -1493,10 +1536,10 @@ private:
             return 0;
         const level = player.data.level;
         const createMana = player.stats.baseMana, createHealth = player.stats.baseHealth;
-        const maxPower = spell.casting.powerType < 5
+        const maxPower = spell.casting.powerType < maxPowers
             ? player.values.get!UNIT_FIELD_MAXPOWER1(cast(Power) spell.casting.powerType) : 0;
         enum uint drainAllPower = 0x2; // SPELL_ATTR_EX_DRAIN_ALL_POWER: Lay on Hands takes all the mana
-        if ((spell.attributesEx & drainAllPower) && spell.casting.powerType < 5)
+        if ((spell.attributesEx & drainAllPower) && spell.casting.powerType < maxPowers)
             return cast(int) player.values.get!UNIT_FIELD_POWER1(cast(Power) spell.casting.powerType);
         return max(0, spellMod(SpellModOp.cost, &spell, powerCost(spell, level, createMana, createHealth, maxPower)));
     }
@@ -1623,7 +1666,14 @@ private:
             {
                 const cost = costOf(*spell);
                 paid = cost;
-                if (cost > 0)
+                if (cost > 0 && spell.casting.powerType == powerHealth)
+                {
+                    // Health as the power: taken as it is, no damage (`Spell::TakePower`); there was more.
+                    const health = player.values.get!UNIT_FIELD_HEALTH;
+                    player.values.set!UNIT_FIELD_HEALTH(health > cost ? health - cost : 1);
+                    paid = 0;
+                }
+                else if (cost > 0 && spell.casting.powerType < maxPowers)
                 {
                     player.modifyPower(cast(Power) spell.casting.powerType, -cost);
                     if (spell.casting.powerType == Power.mana)
@@ -1981,14 +2031,9 @@ private:
 
             const lockMs = duration(*spell, context.client, player.data.level);
             if (auto creature = cast(Creature) map.findObject(target))
-                creature.ai.interruptCast(lockMs);
+                creature.ai.interruptedBySpell(lockMs);
             else if (auto other = enemyPlayer(target))
-                if (other.generic.active)
-                {
-                    const school = other.generic.spell.casting.school;
-                    other.interruptCast(SpellCastResult.interrupted);
-                    other.lockOutSchool(school, lockMs);
-                }
+                other.castInterruptedBy(player.guid, lockMs);
             break;
         }
         case SpellEffect.weaponDamageNoschool: // SPELL_EFFECT_WEAPON_DAMAGE_NOSCHOOL
@@ -2318,20 +2363,29 @@ private:
     /// A duration with the modifiers (an aura's that lasts until cancelled stays so).
     int modDuration(const(SpellInfo)* spell, int ms)
     {
-        // A finishing move lasts longer for each combo point: toward its greatest duration, a fifth a point
-        // (CMaNGOS's `CalculateSpellDuration`).
-        if (castCombo && ms > 0)
+        if (castCombo)
             if (const entry = context.client.spellDurations.lookup(spell.casting.durationIndex))
-                if (entry.maximum > ms)
-                    ms += (entry.maximum - ms) * castCombo / 5;
+                ms = comboDuration(ms, entry.maximum, castCombo);
         return ms > 0 ? max(0, spellMod(SpellModOp.duration, spell, ms)) : ms;
+    }
+
+    /// The cooldown category of a cast of `spell` from the item `itemEntry` (0: none): the item's for the spell if it
+    /// has one, else the spell's (`WorldObject::IsSpellReady`).
+    package uint cooldownCategoryOf(const(SpellInfo)* spell, uint itemEntry)
+    {
+        if (itemEntry)
+            if (const proto = itemEntry in context.data.items)
+                foreach (i, ref use; proto.details.spells)
+                    if (use.id == spell.id && proto.spellCategory[i])
+                        return proto.spellCategory[i];
+        return spell.category;
     }
 
     /// The cooldowns of a cast of `spell` (from the item `itemEntry`, 0: none) start at `now`: the item's, else the spell's.
     private void startCooldown(const(SpellInfo)* spell, uint itemEntry, MonoTime now)
     {
         int recovery = spell.recoveryTime, categoryRecovery = spell.categoryRecoveryTime;
-        uint category = spell.category;
+        const category = cooldownCategoryOf(spell, itemEntry);
         if (itemEntry)
             if (const proto = itemEntry in context.data.items)
                 foreach (i, ref use; proto.details.spells)
@@ -2341,8 +2395,6 @@ private:
                             recovery = use.cooldown;
                         if (use.categoryCooldown >= 0)
                             categoryRecovery = use.categoryCooldown;
-                        if (proto.spellCategory[i])
-                            category = proto.spellCategory[i];
                     }
         recovery = spellMod(SpellModOp.cooldown, spell, recovery);
         categoryRecovery = spellMod(SpellModOp.cooldown, spell, categoryRecovery);
@@ -4473,15 +4525,20 @@ unittest
     auto context = newCreationContext(db);
     auto now = MonoTime.currTime;
     context.clock = () => now;
-    enum uint fire = 97401, frost = 97402;
-    context.data.spells.spells[fire] = testSpell(fire, 6, ImplicitTarget.caster, 0);
-    context.data.spells.spells.edit(fire).casting.school = 2;
-    context.data.spells.spells[frost] = testSpell(frost, 6, ImplicitTarget.caster, 0);
-    context.data.spells.spells.edit(frost).casting.school = 4;
+    // As spell_template has them (instant, at the caster here): a fire spell and a frost one that silence stops
+    // (Fireball 133, Frostbolt 116: PreventionType 1), and Arcane Shot (3044), arcane but pacify's (PreventionType 2):
+    // an interrupt's lockout does not reach it.
+    enum uint fire = 133, frost = 116, arcaneShot = 3044;
+    foreach (row; [[fire, 2, 1], [frost, 4, 1], [arcaneShot, 6, 2]])
+    {
+        context.data.spells.spells[row[0]] = testSpell(row[0], 6, ImplicitTarget.caster, 0);
+        context.data.spells.spells.edit(row[0]).casting.school = row[1];
+        context.data.spells.spells.edit(row[0]).casting.preventionType = row[2];
+    }
     auto jaina = loggedIn(context, db, 7, "Jaina", Position(-8949.95f, -132.49f, 83.53f));
     jaina.read();
     auto session = jaina.session.inWorld;
-    (cast(Player) session.character).spells ~= [fire, frost];
+    (cast(Player) session.character).spells ~= [fire, frost, arcaneShot];
     const self = SpellTargets(TargetFlags.self, 0);
 
     // What the client hears of casting `spell` at itself: its failure's reason, or 0.
@@ -4504,6 +4561,239 @@ unittest
     assert(castReason(frost) != SpellCastResult.notReady, "frost not");
     now += 4001.msecs;
     assert(castReason(fire) != SpellCastResult.notReady, "the lockout over");
+    session.lockOutSchool(6, 4000);
+    jaina.read();
+    now += 2000.msecs; // past the global cooldown
+    assert(castReason(arcaneShot) != SpellCastResult.notReady, "Arcane Shot is not a spell an interrupt locks out");
+}
+
+/**
+ * An interrupt (Kick, Pummel, Counterspell: `castInterruptedBy`) stops a channel as it does a cast, and locks out its
+ * school; but not a cast that may not be interrupted (`Spell::IsInterruptible`): Aimed Shot is pacify's.
+ */
+unittest
+{
+    import core.time : MonoTime, msecs;
+    import dmangos.dbc : buildDbc;
+    import dmangos.world.clientdata : spellCastTimesFormat, spellDurationFormat;
+    import dmangos.world.movement : Position;
+    import dmangos.world.player : Player;
+    import dmangos.world.opcodes : Opcode;
+    import dmangos.world.spellcast : ImplicitTarget, SpellCastResult, SpellTargets, TargetFlags;
+    import dmangos.world.testclient;
+    import dmangos.world.updatefields;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    context.client.spellCastTimes = typeof(context.client.spellCastTimes).parse(buildDbc(spellCastTimesFormat,
+        [[1u, 0, 0, 0], [14u, 3000, 0, 3000], [16u, 1500, 0, 1500]]), "SpellCastTimes.dbc");
+    context.client.spellDurations = typeof(context.client.spellDurations).parse(buildDbc(spellDurationFormat,
+        [[27u, 3000, 0, 3000]]), "SpellDuration.dbc");
+    // As spell_template has them: Arcane Missiles (5143) channelled, arcane, InterruptFlags 15, PreventionType 1,
+    // DurationIndex 27; Aimed Shot (19434) physical, a 3 s cast (CastingTimeIndex 14), InterruptFlags 15,
+    // PreventionType 2; Frostbolt (116) frost, 1.5 s here, InterruptFlags 15, PreventionType 1.
+    enum uint missiles = 5143, aimed = 19434, frostbolt = 116;
+    with (context.data.spells)
+    {
+        spells[missiles] = testSpell(missiles, 6, ImplicitTarget.caster, 0);
+        spells.edit(missiles).attributesEx = 268453004;
+        spells.edit(missiles).casting.school = 6;
+        spells.edit(missiles).casting.interruptFlags = 15;
+        spells.edit(missiles).casting.preventionType = 1;
+        spells.edit(missiles).casting.durationIndex = 27;
+        spells[aimed] = testSpell(aimed, 2, ImplicitTarget.caster, 0, 14);
+        spells.edit(aimed).casting.interruptFlags = 15;
+        spells.edit(aimed).casting.preventionType = 2;
+        spells[frostbolt] = testSpell(frostbolt, 2, ImplicitTarget.caster, 0, 16);
+        spells.edit(frostbolt).casting.school = 4;
+        spells.edit(frostbolt).casting.interruptFlags = 15;
+        spells.edit(frostbolt).casting.preventionType = 1;
+    }
+    auto jaina = loggedIn(context, db, 7, "Jaina", Position(-8949.95f, -132.49f, 83.53f));
+    jaina.read();
+    auto session = jaina.session.inWorld;
+    auto me = cast(Player) session.character;
+    me.spells ~= [missiles, aimed, frostbolt];
+
+    const self = SpellTargets(TargetFlags.self, me.guid);
+    assert(session.castSpell(missiles in context.data.spells.spells, self, false, 0) == SpellCastResult.ok);
+    assert(me.values.get!UNIT_CHANNEL_SPELL == missiles, "channelling");
+    session.castInterruptedBy(0, 4000);
+    assert(me.values.get!UNIT_CHANNEL_SPELL == 0, "the channel interrupted");
+    assert(session.castSpell(missiles in context.data.spells.spells, self, false, 0) == SpellCastResult.notReady,
+        "arcane locked out");
+    now += 4001.msecs;
+    assert(session.castSpell(aimed in context.data.spells.spells, self, false, 0) == SpellCastResult.ok);
+    session.castInterruptedBy(0, 4000);
+    assert(session.castingSpell, "Aimed Shot goes on");
+    {
+        import dmangos.bytes : ByteWriter;
+
+        ByteWriter w;
+        w.put(aimed);
+        jaina.write(Opcode.CMSG_CANCEL_CAST, w.data);
+    }
+    assert(!session.castingSpell);
+    assert(session.castSpell(frostbolt in context.data.spells.spells, self, false, 0) == SpellCastResult.ok);
+    session.castInterruptedBy(0, 4000);
+    assert(!session.castingSpell, "Frostbolt interrupted");
+}
+
+/**
+ * Reincarnation used: its hour starts, which is its category's (it has no cooldown of its own), less Improved
+ * Reincarnation's ten minutes; it is not offered again until then.
+ */
+unittest
+{
+    import core.time : MonoTime, minutes;
+    import dmangos.world.auras : AuraType, makeAura;
+    import dmangos.world.movement : Position;
+    import dmangos.world.opcodes : Opcode;
+    import dmangos.world.player : DeathState, Player;
+    import dmangos.world.spellcast : ImplicitTarget;
+    import dmangos.world.spellmods : SpellModOp;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+    import dmangos.world.unit : Blow, UnitRef;
+    import dmangos.world.updatefields;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    enum uint passive = 20608, reincarnation = 21169, improved = 16184, ankh = 17030;
+    with (context.data.spells)
+    {
+        // As spell_template has them: Reincarnation (21169) SPELL_EFFECT_SELF_RESURRECT 20%, an Ankh, RecoveryTime 0,
+        // Category 1161, CategoryRecoveryTime 3600000, shaman family flags 0x200; Improved Reincarnation (16184) a
+        // flat cooldown modifier of -600000 on that mask (`spell_affect`).
+        spells[passive] = testSpell(passive, 6, ImplicitTarget.caster, 0);
+        spells[reincarnation] = testSpell(reincarnation, 94, 0, 20);
+        spells.edit(reincarnation).reagents[0] = ankh;
+        spells.edit(reincarnation).casting.reagentCount[0] = 1;
+        spells.edit(reincarnation).category = 1161;
+        spells.edit(reincarnation).categoryRecoveryTime = 3_600_000;
+        spells.edit(reincarnation).casting.spellFamilyName = 11;
+        spells.edit(reincarnation).casting.spellFamilyFlags = 0x200;
+        spells[improved] = testSpell(improved, 6, ImplicitTarget.caster, 0);
+        spells.edit(improved).attributes = 464; // passive: it stays through death
+        spells.edit(improved).casting.applyAuraName[0] = AuraType.addFlatModifier;
+        spells.edit(improved).miscValue[0] = SpellModOp.cooldown;
+        spells.edit(improved).casting.spellFamilyName = 11;
+        spells.edit(improved).casting.affectMask[0] = 0x200;
+    }
+    context.data.items[ankh] = context.data.items[itemJerky];
+    context.data.items.edit(ankh).entry = ankh;
+    auto thrall = loggedIn(context, db, 7, "Thrall", Position(-8949.95f, -132.49f, 83.53f));
+    auto session = thrall.session.inWorld;
+    auto me = cast(Player) session.character;
+    me.spells ~= passive;
+    session.addAura(makeAura(improved in context.data.spells.spells, me.guid, 1, -1, true, [-600_000, 0, 0]));
+    session.storeLoot(ankh, 2, 0, false);
+    thrall.read();
+
+    session.sufferDamage(UnitRef.init, 1_000_000, Blow.spell());
+    assert(me.values.get!PLAYER_SELF_RES_SPELL == reincarnation, "offered");
+    thrall.write(Opcode.CMSG_SELF_RES, null);
+    assert(me.deathState == DeathState.alive && me.inventory.count(ankh) == 1);
+    assert(!session.spellIsReady(reincarnation), "its category's cooldown");
+    now += 49.minutes;
+    assert(!session.spellIsReady(reincarnation), "fifty minutes with the talent");
+    now += 2.minutes;
+    assert(session.spellIsReady(reincarnation));
+}
+
+/**
+ * A spell that costs health (`PowerType` -2): Bloodrage takes a fifth of the base health, as health, not some
+ * power; with no more health than that it is refused (`CASTER_AURASTATE`).
+ */
+unittest
+{
+    import dmangos.world.movement : Position;
+    import dmangos.world.player : Player;
+    import dmangos.world.spellcast : ImplicitTarget, powerHealth, SpellCastResult, SpellTargets, TargetFlags;
+    import dmangos.world.testclient;
+    import dmangos.world.updatefields;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    // Bloodrage (2687) as spell_template has it: PowerType -2, ManaCost 0, ManaCostPercentage 20 (here a dummy).
+    enum uint bloodrage = 2687;
+    context.data.spells.spells[bloodrage] = testSpell(bloodrage, 3, ImplicitTarget.caster, 0);
+    context.data.spells.spells.edit(bloodrage).casting.powerType = powerHealth;
+    context.data.spells.spells.edit(bloodrage).casting.manaCostPercentage = 20;
+    auto varian = loggedIn(context, db, 7, "Varian", Position(-8949.95f, -132.49f, 83.53f));
+    varian.read();
+    auto session = varian.session.inWorld;
+    auto me = cast(Player) session.character;
+    me.spells ~= bloodrage;
+    const cost = me.stats.baseHealth / 5, health = me.values.get!UNIT_FIELD_HEALTH;
+    assert(cost > 0 && health > cost);
+    const self = SpellTargets(TargetFlags.self, me.guid);
+    assert(session.castSpell(bloodrage in context.data.spells.spells, self, false, 0) == SpellCastResult.ok);
+    assert(me.values.get!UNIT_FIELD_HEALTH == health - cost, "a fifth of the base health");
+    me.values.set!UNIT_FIELD_HEALTH(cost);
+    assert(session.castSpell(bloodrage in context.data.spells.spells, self, false, 0)
+        == SpellCastResult.casterAuraState);
+}
+
+/**
+ * A channel that costs every second (`ManaPerSecond`): Health Funnel takes its caster's health as it goes, and
+ * ends when there is no more to take.
+ */
+unittest
+{
+    import core.time : MonoTime, msecs;
+    import dmangos.dbc : buildDbc;
+    import dmangos.world.clientdata : spellDurationFormat;
+    import dmangos.world.movement : Position;
+    import dmangos.world.player : Player;
+    import dmangos.world.spellcast : ImplicitTarget, powerHealth, SpellCastResult, SpellTargets, TargetFlags;
+    import dmangos.world.testclient;
+    import dmangos.world.updatefields;
+
+    import dmangos.world.config : WorldConfig;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db, (ref WorldConfig c) { c.rateHealth = 0; }); // no regeneration to blur it
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    context.client.spellDurations = typeof(context.client.spellDurations).parse(buildDbc(spellDurationFormat,
+        [[1u, 10_000, 0, 10_000]]), "SpellDuration.dbc");
+    // Health Funnel rank 1 (755) as spell_template has it: channelled (AttributesEx 16388), PowerType -2, ManaCost 11,
+    // ManaPerSecond 5, DurationIndex 1 (10 s); at the caster here, not at a pet.
+    enum uint funnel = 755;
+    context.data.spells.spells[funnel] = testSpell(funnel, 6, ImplicitTarget.caster, 0);
+    with (context.data.spells.spells)
+    {
+        edit(funnel).attributesEx = 16388;
+        edit(funnel).casting.powerType = powerHealth;
+        edit(funnel).casting.manaCost = 11;
+        edit(funnel).casting.manaPerSecond = 5;
+        edit(funnel).casting.durationIndex = 1;
+    }
+    auto gul = loggedIn(context, db, 7, "Guldan", Position(-8949.95f, -132.49f, 83.53f));
+    gul.read();
+    auto session = gul.session.inWorld;
+    auto me = cast(Player) session.character;
+    me.spells ~= funnel;
+    const health = me.values.get!UNIT_FIELD_HEALTH;
+    assert(health > 30);
+    assert(session.castSpell(funnel in context.data.spells.spells, SpellTargets(TargetFlags.self, me.guid), false, 0)
+        == SpellCastResult.ok);
+    assert(me.values.get!UNIT_FIELD_HEALTH == health - 11 && me.values.get!UNIT_CHANNEL_SPELL == funnel);
+    foreach (_; 0 .. 3)
+    {
+        now += 1000.msecs;
+        gul.session.update(1000.msecs);
+    }
+    assert(me.values.get!UNIT_FIELD_HEALTH == health - 11 - 3 * 5, "5 a second");
+    me.values.set!UNIT_FIELD_HEALTH(5u);
+    now += 1000.msecs;
+    gul.session.update(1000.msecs);
+    assert(me.values.get!UNIT_CHANNEL_SPELL == 0 && me.values.get!UNIT_FIELD_HEALTH == 5, "no more to take: it ends");
 }
 
 // Spell power counts against players too: +35 fire damage done on an instant 20-damage fire spell, 35 in all.

@@ -609,15 +609,23 @@ final class Character : OnlinePlayer, Looter
     }
 
     /// See `UnitRef`.
-    void castInterruptedBy(ulong creature, int lockMs = 0)
+    void castInterruptedBy(ulong by, int lockMs = 0)
     {
-        import dmangos.world.spellcast : SpellCastResult;
+        import dmangos.world.spellcast : isInterruptible, SpellCastResult;
 
-        if (!generic.active)
-            return;
-        const school = generic.spell.casting.school;
-        interruptCast(SpellCastResult.interrupted);
-        lockOutSchool(school, lockMs);
+        // The cast and the channel (Arcane Missiles, Mind Flay, Drain Life) alike, if interruptible.
+        if (generic.active && isInterruptible(*generic.spell))
+        {
+            const school = generic.spell.casting.school;
+            interruptCast(SpellCastResult.interrupted);
+            lockOutSchool(school, lockMs);
+        }
+        if (channelSpell !is null && isInterruptible(*channelSpell))
+        {
+            const school = channelSpell.casting.school;
+            endChannel(true);
+            lockOutSchool(school, lockMs);
+        }
     }
 
     // -----------------------------------------------------------------------

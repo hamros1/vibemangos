@@ -329,6 +329,50 @@ unittest
     assert(castReason(wearer.read(), extra) == SpellCastResult.ok, "over");
 }
 
+/**
+ * An item's own cooldown category: the items of one share their cooldown though their spells have none. As the
+ * world database has them: Crystal Basilisk Spine (1703, Crystal Protection 1138) and Restoring Balm (1970,
+ * Rejuvenation 8070), each `spellcategory_1` 1153, `spellcategorycooldown_1` 120000, `spellcharges_1` -1; the
+ * spells' `Category` 0.
+ */
+unittest
+{
+    import dmangos.world.worlddata : ItemTemplate;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
+    enum uint spine = 1703, balm = 1970;
+    foreach (pair; [[spine, 1138], [balm, 8070]])
+    {
+        context.data.spells.spells[pair[1]] = testSpell(pair[1], 6, 1, 0); // an aura on the user
+        ItemTemplate item = context.data.items[itemJerky];
+        item.entry = pair[0];
+        item.spellCharges[0] = -1;
+        item.spellCategory[0] = 1153;
+        item.details.spells[0].id = pair[1];
+        item.details.spells[0].trigger = 0;
+        item.details.spells[0].cooldown = 0;
+        item.details.spells[0].categoryCooldown = 120_000;
+        context.data.items[pair[0]] = item;
+    }
+    auto user = loggedIn(context, db, 7, "User", Position(-8949.95f, -132.49f, 83.53f));
+    auto me = cast(Player) user.session.character;
+    user.session.inWorld.storeLoot(spine, 1, 0, false);
+    user.session.inWorld.storeLoot(balm, 1, 0, false);
+    user.read();
+    uint extra;
+    user.write(Opcode.CMSG_USE_ITEM, useItem(inventorySlotBag0, backpackSlotOf(me, spine)));
+    assert(castReason(user.read(), extra) == SpellCastResult.ok);
+    now += 2.seconds;
+    user.write(Opcode.CMSG_USE_ITEM, useItem(inventorySlotBag0, backpackSlotOf(me, balm)));
+    assert(castReason(user.read(), extra) == SpellCastResult.notReady, "the category's two minutes");
+    now += 119.seconds;
+    user.write(Opcode.CMSG_USE_ITEM, useItem(inventorySlotBag0, backpackSlotOf(me, balm)));
+    assert(castReason(user.read(), extra) == SpellCastResult.ok, "over");
+}
+
 /// A timed item: the client is told its time (`SMSG_ITEM_TIME_UPDATE`); it counts down by the second, and goes at 0.
 unittest
 {

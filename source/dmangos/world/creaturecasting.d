@@ -34,7 +34,7 @@ mixin template CreatureCasting()
     import dmangos.world.relations : canAttack;
     import dmangos.world.spellcast : castTime, duration, effectValue, healLog, spellMissLog, isNextMeleeSwingSpell, nonMeleeDamageLog,
         powerCost, radius, range, spellGoPacket, spellStartPacket, SpellMissInfo, SpellTargets,
-        TargetFlags, TargetResult;
+        TargetFlags, TargetResult, preventionPacify, preventionSilence;
     import dmangos.world.spells : SpellInfo;
     import dmangos.world.updatefields;
     import dmangos.world.npcdata : BroadcastText;
@@ -168,8 +168,10 @@ mixin template CreatureCasting()
             return refuse(SpellCastResult.dontReport);
         if (casting_ !is null && !(flags & (castTriggered | castInterruptPrevious)))
             return refuse(SpellCastResult.spellInProgress);
-        if (!triggered && spell.casting.school < schoolLockMs.length && schoolLockMs[spell.casting.school] > 0)
-            return refuse(SpellCastResult.notReady); // its school locked out
+        // Its school locked out: only for a spell silence stops (`WorldObject::IsSpellReady`).
+        if (!triggered && spell.casting.preventionType == preventionSilence && spell.casting.school < schoolLockMs.length
+                && schoolLockMs[spell.casting.school] > 0)
+            return refuse(SpellCastResult.notReady);
         // `CAST_FORCE_TARGET_SELF`: the target casts it on itself; only it itself can be made to.
         if ((flags & castForceTargetSelf) && target != me.guid)
             return refuse(SpellCastResult.badTargets);
@@ -267,7 +269,6 @@ mixin template CreatureCasting()
         const flags = me.values.get!UNIT_FIELD_FLAGS;
         if (flags & (UnitFlags.stunned | UnitFlags.fleeing | UnitFlags.confused))
             return true;
-        enum uint preventionSilence = 1, preventionPacify = 2;
         return ((flags & UnitFlags.silenced) && spell.casting.preventionType == preventionSilence)
             || ((flags & UnitFlags.pacified) && spell.casting.preventionType == preventionPacify);
     }
@@ -277,8 +278,18 @@ mixin template CreatureCasting()
     {
         if (casting_ is null)
             return;
-        if (!silenceOnly || casting_.casting.preventionType == 1)
+        if (!silenceOnly || casting_.casting.preventionType == preventionSilence)
             interruptCast();
+    }
+
+    /// An interrupt (Kick, Pummel, Counterspell) hit it: the cast stops if it may be interrupted
+    /// (`Spell::IsInterruptible`), and its school is locked for `lockMs`.
+    void interruptedBySpell(int lockMs)
+    {
+        import dmangos.world.spellcast : isInterruptible;
+
+        if (casting_ !is null && isInterruptible(*casting_))
+            interruptCast(lockMs);
     }
 
     /// The cast stops (`SMSG_SPELL_FAILURE` around); an interrupt locks its school for `lockMs`.
@@ -726,6 +737,8 @@ mixin template CreatureCasting()
                 aura.setHeartbeatResist(imported!"dmangos.world.spellcast".heartbeatResistChance(me.fighter,
                     creature.fighter, *spell, cast(int) creature.values.get!UNIT_FIELD_RESISTANCES(spell.casting.school),
                     0), ms);
+            if (auto displaced = creature.auras.displacedBy(aura, creature.values)) // another's that may not stay
+                creature.loseAura(displaced, world_);
             creature.auras.apply(aura, creature.values, isNew);
             if (creature !is me)
                 world_.flushCreature(creature);
@@ -1484,6 +1497,8 @@ unittest
     {
         spells[bolt] = testSpell(bolt, 2, 6, 7, 2);         // 7 fire damage, 1.5 s
         spells.edit(bolt).casting.school = 2;
+        spells.edit(bolt).casting.interruptFlags = 15; // as Fireball's (133): one an interrupt stops
+        spells.edit(bolt).casting.preventionType = 1;
         spells.edit(bolt).casting.dmgClass = DamageClass.none;                  // never resisted, for the test
         spells.edit(bolt).casting.manaCost = 50;
         spells[mend] = testSpell(mend, 10, 1, 200);         // heals itself 200

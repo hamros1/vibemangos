@@ -132,6 +132,37 @@ enum SpellMissInfo : ubyte
 
 /// What interrupts a cast (`Spell.dbc`'s interrupt flags).
 enum uint interruptMovement = 0x01, interruptDamagePushback = 0x02, interruptDamageCancels = 0x10;
+/// ... `SPELL_INTERRUPT_FLAG_COMBAT`
+enum uint interruptCombat = 0x08;
+/// `POWER_HEALTH`: a spell's `PowerType` when it costs health (Bloodrage, Health Funnel, Life Tap), -2 in the data.
+enum uint powerHealth = uint.max - 1;
+/// `PreventionType`: what stops a spell: silence (a caster's spells), or pacify (Aimed Shot, Slam, Arcane Shot).
+enum uint preventionSilence = 1, preventionPacify = 2;
+
+/**
+ * Whether an interrupt (Kick, Pummel, Counterspell) stops `spell` being cast or channelled, and so locks out its
+ * school: one that combat interrupts and silence stops (CMaNGOS's `Spell::IsInterruptible`). Not Aimed Shot or
+ * Volley (pacify's), not a trade skill's.
+ */
+bool isInterruptible(const ref SpellInfo spell) pure nothrow @nogc @safe
+{
+    return (spell.casting.interruptFlags & interruptCombat) && spell.casting.preventionType == preventionSilence;
+}
+
+unittest
+{
+    // As spell_template has them: Frostbolt (116) InterruptFlags 15, PreventionType 1; Aimed Shot (19434) 15, 2;
+    // Volley (1510) 9, 2; Copper Dagger (8880) 15, 0.
+    SpellInfo frostbolt, aimed, volley, dagger;
+    frostbolt.casting.interruptFlags = 15;
+    frostbolt.casting.preventionType = 1;
+    aimed.casting.interruptFlags = 15;
+    aimed.casting.preventionType = 2;
+    volley.casting.interruptFlags = 9;
+    volley.casting.preventionType = 2;
+    dagger.casting.interruptFlags = 15;
+    assert(isInterruptible(frostbolt) && !isInterruptible(aimed) && !isInterruptible(volley) && !isInterruptible(dagger));
+}
 
 /// `SPELL_ATTR_ON_NEXT_SWING_NO_DAMAGE` and `SPELL_ATTR_ON_NEXT_SWING`: Heroic Strike and its kind.
 enum uint spellAttrOnNextSwing1 = 0x00000004, spellAttrOnNextSwing2 = 0x00000400;
@@ -253,6 +284,26 @@ int duration(const ref SpellInfo spell, const ClientData client, uint level)
     return value;
 }
 
+/**
+ * A finishing move's duration with `points` combo points: toward its greatest duration (`maximum`), a fifth a point
+ * (CMaNGOS's `CalculateSpellDuration`); from nothing for one whose base is 0 (Kidney Shot rank 1). One that lasts
+ * until cancelled (-1) stays so.
+ */
+int comboDuration(int base, int maximum, uint points) pure nothrow @nogc @safe
+{
+    return base >= 0 && maximum > base ? base + (maximum - base) * cast(int) points / 5 : base;
+}
+
+unittest
+{
+    // `SpellDuration.dbc` as Kidney Shot rank 1 (408, DurationIndex 187: 0, 0, 5000) and rank 2 (8643, index 285:
+    // 1000, 0, 6000) and Slice and Dice (5171, index 185: 6000, 0, 21000) have it.
+    assert(comboDuration(0, 5000, 1) == 1000 && comboDuration(0, 5000, 5) == 5000, "Kidney Shot rank 1: a second a point");
+    assert(comboDuration(1000, 6000, 1) == 2000 && comboDuration(1000, 6000, 5) == 6000);
+    assert(comboDuration(6000, 21000, 3) == 15000);
+    assert(comboDuration(-1, -1, 5) == -1);
+}
+
 /// The spell's least and greatest range (yards).
 float[2] range(const ref SpellInfo spell, const ClientData client)
 {
@@ -313,7 +364,7 @@ int powerCost(const ref SpellInfo spell, uint level, uint createMana, uint creat
     }
     if (c.manaCostPercentage)
     {
-        enum uint powerMana = 0, powerHealth = uint.max - 1;
+        enum uint powerMana = 0;
         if (c.powerType == powerMana)
             cost += c.manaCostPercentage * createMana / 100;
         else if (c.powerType == powerHealth)
