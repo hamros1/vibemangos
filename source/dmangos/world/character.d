@@ -1078,6 +1078,8 @@ unittest
     victim.values.set!UNIT_FIELD_HEALTH(0u);
     me.prepareBodyLoot(victim);
     assert(victim.skinnable, "nothing to loot, a skin to take: skinnable at once");
+    assert(me.checkSkinning(victim.guid) == SpellCastResult.lowCastLevel, "a level 1 creature asks for skill 1");
+    me.player.setSkill(393, 1, 75);
     assert(me.checkSkinning(victim.guid) == SpellCastResult.ok);
     me.skinCreature(victim.guid);
     assert(!victim.skinnable && victim.loot !is null && victim.skinned);
@@ -1328,4 +1330,95 @@ unittest
     anduin.write(Opcode.CMSG_SELF_RES, null);
     assert(me.deathState == DeathState.alive && me.values.get!PLAYER_SELF_RES_SPELL == 0);
     assert(me.values.get!UNIT_FIELD_HEALTH == me.values.get!UNIT_FIELD_MAXHEALTH * 20 / 100, "with a fifth of its health");
+}
+
+// The real data's (docs/FORMULAS.md; the other rules' are in `dmangos.world.realrules_world`).
+/// Skinning: a creature of level 10 or less asks for skill 1, of level 15 for 50, of level 25 for 125 (5 a level).
+unittest
+{
+    import dmangos.world.realspelltests : haveRealData, RealWorld;
+    import dmangos.world.player : Player;
+    import dmangos.world.creature : Creature;
+    import dmangos.world.opcodes : Opcode;
+    import dmangos.world.spellcast : SpellCastResult;
+    import dmangos.world.updatefields;
+
+    if (!haveRealData())
+        return;
+    auto w = RealWorld.make();
+    auto hunter = w.character(1, "Rexxar", cast(ubyte) 1, 60, []);
+    auto me = hunter.session.inWorld;
+    auto player = cast(Player) hunter.session.character;
+    enum uint mountainBoar = 1190, skinning = 393;
+    auto boar = cast(Creature) w.context.map(0).findObject(w.enemy(hunter, mountainBoar));
+    assert(boar.template_.skinningLootId, "the boar has a skin");
+    boar.values.set!UNIT_FIELD_HEALTH(0u);
+    boar.loot = null;
+    boar.values.set!UNIT_FIELD_FLAGS(boar.values.get!UNIT_FIELD_FLAGS | Creature.unitFlagSkinnable);
+    void needs(uint level, ushort skill)
+    {
+        boar.values.set!UNIT_FIELD_LEVEL(level);
+        player.setSkill(skinning, cast(ushort)(skill - 1), 300);
+        assert(me.checkSkinning(boar.guid) == SpellCastResult.lowCastLevel, "one short");
+        player.setSkill(skinning, skill, 300);
+        assert(me.checkSkinning(boar.guid) == SpellCastResult.ok);
+    }
+    needs(10, 1);
+    needs(15, 50);
+    needs(20, 100);
+    needs(25, 125);
+    needs(60, 300);
+}
+
+/// Fishing: a fish that got away raises no skill (in Stormwind, -20 in `skill_fishing_base_level`, skill 1 lands a
+/// quarter of its fish).
+unittest
+{
+    import dmangos.world.gameobject : GameObject, GameObjectSpawn;
+
+    import dmangos.world.realspelltests : haveRealData, RealWorld;
+    import dmangos.world.player : Player;
+    import dmangos.world.creature : Creature;
+    import dmangos.world.opcodes : Opcode;
+    import dmangos.world.spellcast : SpellCastResult;
+    import dmangos.world.updatefields;
+
+    if (!haveRealData())
+        return;
+    auto w = RealWorld.make();
+    auto angler = w.character(1, "Nat", cast(ubyte) 1, 60, []);
+    auto me = angler.session.inWorld;
+    auto player = cast(Player) angler.session.character;
+    enum uint fishing = 356, bobberEntry = 35591;
+    const t = bobberEntry in w.context.data.gameObjectTemplates;
+    assert(t !is null, "the fishing bobber");
+    auto map = w.context.map(0);
+    int escaped, caught;
+    foreach (i; 0 .. 60)
+    {
+        player.setSkill(fishing, 1, 75);
+        GameObjectSpawn spawn = {guid: w.context.nextTemporaryCounter(), entry: bobberEntry, map: 0,
+            x: player.position.x + 5, y: player.position.y, z: player.position.z, respawnSeconds: -1};
+        auto go = new GameObject(spawn, t);
+        go.owner = player.guid;
+        map.addObject(go);
+        me.bobber = go.guid;
+        me.bobberAge = me.bobberBite = 0;
+        me.bobberGone = 5000;
+        me.bobberLooted = false;
+        angler.read();
+        me.useBobber(go);
+        bool gotAway;
+        foreach (p; angler.read())
+            gotAway = gotAway || p.opcode == Opcode.SMSG_FISH_ESCAPED;
+        if (gotAway)
+        {
+            ++escaped;
+            assert(player.skillValue(fishing)[0] == 1, "no skill from a fish that got away");
+        }
+        else
+            ++caught;
+        me.removeBobber();
+    }
+    assert(escaped > 0 && caught > 0, "some of each");
 }
