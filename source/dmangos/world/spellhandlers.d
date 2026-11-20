@@ -56,6 +56,7 @@ private:
         bool active;
         ubyte persistentDone; // effects whose persistent area is made (once a cast, not once a target)
         ulong castItemGuid;   // ... that very item, whose charges it takes (`dmangos.world.itemuse`)
+        int castTime;         // its whole cast time (pushback adds back at most up to it); last: built by position
     }
 
     /// A missile's effect on its target, due when it arrives.
@@ -424,6 +425,8 @@ private:
         {
             c.timer = castTimeCheat ? 0 : max(0, spellMod(SpellModOp.castingTime, spell,
                 castTime(*spell, context.client, player.data.level)));
+            c.castTime = c.timer;
+            pushbacks = 0;
             enum uint gcdCategory = 133;
             if (spell.casting.startRecoveryCategory == gcdCategory && spell.casting.startRecoveryTime)
                 gcdReadyAt = context.clock() + spell.casting.startRecoveryTime.msecs;
@@ -475,6 +478,88 @@ private:
         auto c = generic;
         generic.active = false;
         go(c);
+    }
+
+    private uint pushbacks; // of the cast or channel under way: each pushes back less (1000 ms, 800, ..., 200)
+
+    /**
+     * Hurt while casting (CMaNGOS's `Unit::InterruptOrDelaySpell`): a cast that damage cancels stops, one with
+     * pushback goes back by 1000, 800, 600, 400 and then 200 milliseconds a blow, never past its whole time
+     * (`SMSG_SPELL_DELAYED`); a channel that damage shortens is shortened by as much, its auras too
+     * (`MSG_CHANNEL_UPDATE`), one that damage breaks breaks. Damage over time pushes nothing back; talents and
+     * `RESIST_PUSHBACK` give a chance to lose nothing (Concentration Aura).
+     */
+    package void damagedWhileCasting(bool periodic, bool bySelf)
+    {
+        import std.random : uniform;
+
+        enum uint interruptPushback = 0x02, interruptDamageCancels = 0x10; // SPELL_INTERRUPT_FLAG_*
+        enum uint channelDamage = 0x02, channelDamageDuration = 0x4000;   // AURA_INTERRUPT_FLAG_* of a channel
+        bool resisted(const(SpellInfo)* spell)
+        {
+            const chance = spellMod(SpellModOp.notLoseCastingTime, spell, 100) - 100
+                + player.auras.total(AuraType.resistPushback);
+            return chance > 0 && uniform(0, 100, map.random) < chance;
+        }
+        int nextDelay()
+        {
+            return pushbacks < 5 ? 1000 - 200 * pushbacks++ : 200;
+        }
+        if (!periodic && generic.active && generic.timer > 0)
+        {
+            const spell = generic.spell;
+            if (spell.casting.interruptFlags & interruptDamageCancels)
+                interruptCast(SpellCastResult.interrupted);
+            else if ((spell.casting.interruptFlags & interruptPushback) && !resisted(spell))
+            {
+                int delay = nextDelay();
+                if (generic.timer + delay > generic.castTime)
+                    delay = generic.castTime - generic.timer;
+                generic.timer += delay;
+                ByteWriter w;
+                w.put(player.guid);
+                w.put(cast(uint) delay);
+                deliver(Opcode.SMSG_SPELL_DELAYED, w.data);
+            }
+        }
+        if (channelSpell is null)
+            return;
+        const flags = channelSpell.casting.channelInterruptFlags;
+        if (!periodic && (flags & channelDamageDuration))
+        {
+            if (bySelf || resisted(channelSpell))
+                return;
+            int delay = nextDelay();
+            if (channelTimer < delay)
+                delay = channelTimer;
+            channelTimer -= delay;
+            shortenChannelAuras(delay);
+            ByteWriter w;
+            w.put(cast(uint) channelTimer);
+            deliver(Opcode.MSG_CHANNEL_UPDATE, w.data);
+        }
+        else if (flags & channelDamage)
+            endChannel(true);
+    }
+
+    /// The channel's auras on its target (and on the player) last `delay` milliseconds less, as it does.
+    private void shortenChannelAuras(int delay)
+    {
+        const spell = channelSpell;
+        if (auto creature = cast(Creature) map.findObject(channelTarget))
+        {
+            if (auto aura = creature.auras.find(spell.id))
+                if (aura.caster == player.guid && aura.duration > 0)
+                    aura.duration = aura.duration > delay ? aura.duration - delay : 1;
+        }
+        else if (auto other = channelTarget == player.guid ? this : cast(typeof(this)) context.onlinePlayer(channelTarget))
+            if (other.player !is null)
+                if (auto aura = other.player.auras.find(spell.id))
+                    if (aura.caster == player.guid && aura.duration > 0)
+                    {
+                        aura.duration = aura.duration > delay ? aura.duration - delay : 1;
+                        other.sendAuraDuration(aura);
+                    }
     }
 
     /// The cast in progress stops; the player and everyone around are told.
@@ -4405,4 +4490,47 @@ unittest
     assert(mods.length == 2, "one for each bit of its mask");
     assert(mods[0][0] == 0 && mods[0][1] == SpellModOp.cost && *cast(int*) &mods[0][2] == -10);
     assert(mods[1][0] == 2);
+}
+
+/// Pushback: a cast with SPELL_INTERRUPT_FLAG_DAMAGE_PUSHBACK goes back 1000 ms, then 800, as damage lands.
+unittest
+{
+    import core.time : msecs;
+    import std.algorithm.searching : canFind;
+    import dmangos.auth.accounts : AccountLevel;
+    import dmangos.dbc : buildDbc;
+    import dmangos.world.clientdata : spellCastTimesFormat;
+    import dmangos.world.movement : Position;
+    import dmangos.world.opcodes : Opcode;
+    import dmangos.world.spellcast : SpellCastResult, SpellTargets, TargetFlags;
+    import dmangos.world.spells : SpellInfo;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    context.client.spellCastTimes = typeof(context.client.spellCastTimes).parse(buildDbc(spellCastTimesFormat,
+        [[1u, 0, 0, 0], [3u, 3000, 0, 3000]]), "SpellCastTimes.dbc");
+    auto heal = SpellInfo(2050);
+    heal.effect[0] = SpellEffect.dummy;
+    heal.implicitTargetA[0] = ImplicitTarget.caster;
+    heal.casting.castingTimeIndex = 3;
+    heal.casting.interruptFlags = 0x02; // pushback
+    context.data.spells.spells[2050] = heal;
+
+    auto priest = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f), AccountLevel.player);
+    priest.read();
+    auto session = priest.session.inWorld;
+    assert(session.castSpell((2050 in context.data.spells.spells), SpellTargets(TargetFlags.self, 0), false, 0)
+        == SpellCastResult.ok);
+    priest.session.update(1500.msecs); // half way
+    priest.read();
+    session.unit.spellHitBy(0, 10);
+    session.unit.spellHitBy(0, 10);
+    const got = priest.read();
+    assert(opcodesOf(got).canFind(Opcode.SMSG_SPELL_DELAYED), "the client's cast bar goes back");
+    priest.session.update(1600.msecs); // 1500 left, plus 1000 and 800 pushed back: not yet
+    assert(!opcodesOf(priest.read()).canFind(Opcode.SMSG_SPELL_GO), "pushed back");
+    priest.session.update(1800.msecs);
+    assert(opcodesOf(priest.read()).canFind(Opcode.SMSG_SPELL_GO), "then it goes");
 }

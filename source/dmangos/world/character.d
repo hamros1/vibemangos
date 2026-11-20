@@ -316,6 +316,9 @@ final class Character : OnlinePlayer, Looter
         import dmangos.world.combat : MeleeHitOutcome;
 
         takeBlow(attacker, damage, blow);
+        if (damage && player !is null && player.fighter.alive) // a cast under way pushed back, a channel cut short
+            damagedWhileCasting(blow.kind == BlowKind.periodic,
+                attacker.kind == imported!"dmangos.world.unit".UnitKind.player && attacker.session is this);
         // A swing that landed: its damage shields strike back, and its auras may proc.
         if (blow.kind == BlowKind.melee && attacker && player !is null && player.fighter.alive
                 && blow.melee.outcome != MeleeHitOutcome.miss && blow.melee.outcome != MeleeHitOutcome.dodge
