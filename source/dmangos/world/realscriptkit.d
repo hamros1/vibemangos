@@ -189,6 +189,34 @@ final class Dungeon
         collect();
     }
 
+    /// Character `i` takes quest `quest` from `giver` (`CMSG_QUESTGIVER_ACCEPT_QUEST`), standing beside it.
+    void acceptQuest(Creature giver, uint quest, size_t i = 0)
+    {
+        import dmangos.bytes : ByteWriter;
+
+        const at = giver.position;
+        goTo(Position(at.x + 2, at.y, at.z), i);
+        ByteWriter b;
+        b.put(giver.guid);
+        b.put(quest);
+        party[i].write(Opcode.CMSG_QUESTGIVER_ACCEPT_QUEST, b.data.dup);
+        collect();
+    }
+
+    /// Character `i` has done quest `quest` before (rewarded: what a quest after it needs).
+    void questDone(uint quest, size_t i = 0)
+    {
+        import dmangos.world.quests : QuestState, QuestStatus;
+
+        player(i).questStatus[quest] = QuestStatus(quest, QuestState.complete, true);
+    }
+
+    /// Where character `i` stands with quest `quest`.
+    imported!"dmangos.script.api".QuestProgress questStatus(uint quest, size_t i = 0)
+    {
+        return unit(i).questStatusOf(quest);
+    }
+
     /// Character `i` talks to `c` (`CMSG_GOSSIP_HELLO`), standing beside it.
     void talkTo(Creature c, size_t i = 0)
     {
@@ -529,8 +557,8 @@ final class Dungeon
                     const caster = r.readPackedGuid();
                     const spell = r.read!uint;
                     casts ~= Cast(caster, entryOfGuid(caster), spell, p.opcode == Opcode.SMSG_SPELL_START);
-                    if (trace && p.opcode == Opcode.SMSG_SPELL_GO)
-                        imported!"std.stdio".stderr.writefln("  [%s] cast by %s: %s", (w.now - started).total!"msecs", entryOfGuid(caster), spell);
+                    if (trace)
+                        imported!"std.stdio".stderr.writefln("  [%s] cast by %s: %s%s", (w.now - started).total!"msecs", entryOfGuid(caster), spell, p.opcode == Opcode.SMSG_SPELL_START ? " (starts)" : "");
                 }
             }
         }

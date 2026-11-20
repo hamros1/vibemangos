@@ -35,7 +35,8 @@ struct RazorfenDowns
 
     ubyte wave;      /// waves called so far
     bool tutenKashDead;
-    Pack!8 summoned; /// the wave under way
+    /// The wave under way; not saved: a restart takes its creatures away, and the gong may call the next.
+    @transient Pack!8 summoned;
     @transient EntityRef gongRef;
 
     /// The corridors they come from, by turns.
@@ -48,7 +49,11 @@ struct RazorfenDowns
     void on(ref InstanceContext downs, const ref ObjectLoaded e)
     {
         if (e.object.entry == gong)
+        {
             gongRef = e.object;
+            if (summoned.alive == 0 && !tutenKashDead)
+                downs.objectFlags(e.object, 0, ObjectFlag.noInteract);
+        }
     }
 
     void on(ref InstanceContext downs, const ref EventHappened e)

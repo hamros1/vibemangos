@@ -36,7 +36,10 @@ struct BlackfathomDeeps
     bool kelrisDead;
     Fight shrine, aquanis;
     ubyte wavesCalled;
-    Pack!12[4] waves;
+    /// The waves' creatures, and the baron called: not saved, as a restart takes them away (the shrine's waves are
+    /// done with then; the Fathom Stone may call him again).
+    @transient Pack!12[4] waves;
+    @transient bool aquanisCalled;
     @transient EntityRef portal;
     @transient EntityRef[4] fires;
 
@@ -57,7 +60,7 @@ struct BlackfathomDeeps
     ];
 
     enum Step : ubyte { wave0, wave1, wave2, wave3 }
-    Schedule!(Step, 4) steps;
+    @transient Schedule!(Step, 4) steps;
 
     void on(ref InstanceContext deeps, const ref ObjectLoaded e)
     {
@@ -113,8 +116,9 @@ struct BlackfathomDeeps
             steps.after(cast(Step) wavesCalled++, 3.seconds);
             break;
         case Signals.stoneUsed:
-            if (aquanis == Fight.notStarted)
+            if (aquanis != Fight.done && !aquanisCalled)
             {
+                aquanisCalled = true;
                 aquanis = Fight.inProgress;
                 deeps.summon(baronAquanis, Location(-782.21f, -63.26f, -42.43f, 2.36f));
             }

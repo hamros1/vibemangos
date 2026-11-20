@@ -556,6 +556,13 @@ mixin template CreatureCasting()
         foreach (r; results) // the combat log's line for each miss, as for a player's spell
             if (r.miss != SpellMissInfo.none)
                 world_.sendToObservers(me.guid, Opcode.SMSG_SPELLLOGMISS, spellMissLog(spell.id, me.guid, r.guid, r.miss));
+        // (Dungeon-script tests, a small fix: creatures hit by a creature's spell hear of it, `SpellHit`, as they do of
+        // a player's; Whitemane's Scarlet Resurrection raising Mograine waits on it. Not the caster itself.)
+        foreach (r; results)
+            if (r.miss == SpellMissInfo.none && r.guid != me.guid)
+                if (auto hit = world_.creatureAt(r.guid))
+                    if (hit.ai !is null)
+                        hit.ai.spellHitBy(me.guid, spell.id, 1u << spell.casting.school, world_);
         bool[ulong] missed;
         foreach (r; results)
             if (r.miss != SpellMissInfo.none)
