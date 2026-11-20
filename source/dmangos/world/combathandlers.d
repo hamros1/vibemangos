@@ -40,6 +40,8 @@ mixin template CombatHandlers()
             1u << (player.data.classId - 1), v.get!UNIT_FIELD_HEALTH > 0, v.get!PLAYER_DUEL_ARBITER,
             v.get!PLAYER_DUEL_TEAM, player.reputation, v.get!PLAYER_FLAGS);
         r.controller = player.guid;
+        r.mounted = v.get!UNIT_FIELD_MOUNTDISPLAYID != 0;
+        r.forced = &forcedReactions;
         return r;
     }
 
@@ -232,15 +234,15 @@ private:
         Relating r = Relating(creature.values.get!UNIT_FIELD_FLAGS,
             context.client.factionTemplates.lookup(creature.values.get!UNIT_FIELD_FACTIONTEMPLATE), false, 0, 0,
             creature.alive);
-        r.playerOwned = creature.petOwner != 0;
-        r.controller = creature.petOwner;
+        r.playerOwned = creature.petOwner != 0 || creature.guardianOwner != 0;
+        r.controller = creature.petOwner ? creature.petOwner : creature.guardianOwner;
         return r;
     }
 
     /// Attacks `victim` in melee; false if it cannot.
     bool attack(Creature victim)
     {
-        if (!player.fighter.alive || !victim.alive || victim.ai.runningHome)
+        if (!player.fighter.alive || !victim.alive || victim.ai.runningHome || mounted) // no melee mounted (`Unit::Attack`)
             return false;
         if (attacking)
         {
@@ -280,7 +282,7 @@ private:
     /// Attacks a player (a duel's opponent) in melee.
     void attackPlayer(typeof(this) other)
     {
-        if (!player.fighter.alive)
+        if (!player.fighter.alive || mounted)
             return;
         if (attacking && attacking != other.player.guid)
             stopAttack(false, true);

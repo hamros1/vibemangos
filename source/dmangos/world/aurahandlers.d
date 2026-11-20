@@ -45,7 +45,7 @@ mixin template AuraHandlers()
     import dmangos.world.opcodes;
     import dmangos.world.player : DeathState;
     import dmangos.world.relations : canAttack;
-    import dmangos.world.spellcast : duration, effectValue, SpellTargets, TargetFlags;
+    import dmangos.world.spellcast : duration, effectValue, heartbeatResistChance, SpellTargets, TargetFlags;
     import dmangos.world.combat : armorReducedDamage;
     import dmangos.world.packets : ServerStandStateUpdate;
     import dmangos.world.spells : SpellInfo;
@@ -97,6 +97,9 @@ private:
             if (!creature.alive)
                 return;
             auto aura = makeAura(spell, player.guid, player.data.level, ms, false, values);
+            aura.setHeartbeatResist(heartbeatResistChance(player.fighter, creature.fighter, *spell,
+                targetResistance(cast(int) creature.values.get!UNIT_FIELD_RESISTANCES(spell.casting.school),
+                spell.casting.school), spellHitBonus), ms);
             bool isNew;
             creature.auras.apply(aura, creature.values, isNew);
             map.flushObjectChanges(creature);
@@ -124,7 +127,12 @@ private:
             return;
         // On an enemy (a duel's opponent) it is a debuff.
         const hostile = who !is this && canAttack(relatingNow(), who.relatingNow(), context.client);
-        who.addAura(makeAura(spell, player.guid, player.data.level, ms, !hostile, values));
+        auto given = makeAura(spell, player.guid, player.data.level, ms, !hostile, values);
+        if (hostile)
+            given.setHeartbeatResist(heartbeatResistChance(player.fighter, who.player.fighter, *spell,
+                targetResistance(cast(int) who.player.values.get!UNIT_FIELD_RESISTANCES(spell.casting.school),
+                spell.casting.school), spellHitBonus), ms);
+        who.addAura(given);
         if (!hostile && who !is this) // a buff on one fighting: those it fights fight this player too
             imported!"dmangos.world.creatureai".assistThreat(map, who.threateners, unit, 0, *spell);
     }
@@ -539,6 +547,9 @@ private:
             case AuraType.waterBreathing, AuraType.modWaterBreathing:
                 breathing = true;
                 break;
+            case AuraType.forceReaction: // a disguise: `dmangos.world.reputationhandlers`
+                forceReaction(cast(uint) aura.misc(i), aura.amount[i], apply);
+                break;
             // A transform (the Wondervolt's shapes, a hex): the model of its misc value's creature (a script's for none:
             // the Orb of Deception's), until it goes and the newest left shows (CMaNGOS's `HandleAuraTransform`).
             case AuraType.transform:
@@ -567,6 +578,7 @@ private:
                         display = t.modelId1;
                 player.values.set!UNIT_FIELD_MOUNTDISPLAYID(display);
                 interruptAuras(apply ? AuraInterrupt.mounting : AuraInterrupt.dismount, aura);
+                petModeAtMount(apply); // the pet's bar greyed out while riding (`dmangos.world.mounting`)
                 break;
             // An immunity purges what ends with one (a carried flag: `AURA_INTERRUPT_FLAG_INVULNERABILITY_BUFF_CANCELS`):
             // an effect immunity that helps, a school immunity with `SPELL_ATTR_EX_IMMUNITY_PURGES_EFFECT`.
@@ -893,8 +905,8 @@ private:
         if (player.auras.list.length == 0)
             return;
         AuraTick[] ticks;
-        Aura[] expired;
-        player.auras.update(ms, ticks, expired);
+        Aura[] expired, heartbeats;
+        player.auras.update(ms, ticks, expired, heartbeats);
         foreach (tick; ticks)
         {
             import dmangos.script.api : AuraTickEnded, EntityRef;
@@ -904,6 +916,14 @@ private:
                 return;
             spellScriptEvent(tick.aura.spell, AuraTickEnded(EntityRef(tick.aura.caster), EntityRef(player.guid),
                 cast(ubyte) tick.effect));
+        }
+        // Crowd control breaking early (`SPELL_ATTR_HEARTBEAT_RESIST`).
+        foreach (aura; heartbeats)
+        {
+            import std.algorithm.searching : canFind;
+
+            if (!expired.canFind(aura) && uniform01(map.random) * 100 < aura.heartbeatChance)
+                expired ~= aura;
         }
         // Drink (`MOD_POWER_REGEN` of mana) adds its mana every 5 seconds' worth.
         const drink = player.auras.totalByMisc(AuraType.modPowerRegen, Power.mana);
@@ -1426,4 +1446,43 @@ unittest
     session.removeAura(him.auras.find(devotion));
     session.updateAreaAuras(1000.msecs);
     assert(her.auras.find(devotion) is null, "gone with the paladin's");
+}
+
+/// A root with `SPELL_ATTR_HEARTBEAT_RESIST` on a creature keeps its chance to break, and breaks at a heartbeat.
+unittest
+{
+    import dmangos.world.creature : Creature;
+    import dmangos.world.objects : HighGuid, makeGuid;
+    import dmangos.world.spellcast : spellAttrHeartbeatResist, SpellTargets, TargetFlags;
+    import dmangos.world.spellhandlers : testSpell;
+    import dmangos.world.spellids : AuraType, SpellEffect;
+    import dmangos.world.testclient;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    enum uint roots = 91_701;
+    context.client.spellDurations = typeof(context.client.spellDurations).parse(imported!"dmangos.dbc".buildDbc(
+        imported!"dmangos.world.clientdata".spellDurationFormat, [[6u, 8000, 0, 8000]]), "SpellDuration.dbc");
+    context.data.spells.spells[roots] = testSpell(roots, SpellEffect.applyAura, 6, 0); // at the target
+    with (context.data.spells.spells.edit(roots))
+    {
+        casting.durationIndex = 6;
+        casting.applyAuraName[0] = AuraType.modRoot;
+        attributes = spellAttrHeartbeatResist;
+        casting.attributesEx3 = 0x00040000; // SPELL_ATTR_EX3_ALWAYS_HIT: the hit roll left out of the test
+        casting.school = 3;
+    }
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f, 1.97f));
+    auto me = anduin.session.inWorld;
+    const innkeeper = makeGuid(HighGuid.unit, creatureInnkeeper, innkeeperSpawn);
+    auto keeper = cast(Creature) context.map(0).findObject(innkeeper);
+    me.castSpell(context.data.spells.spell(roots), SpellTargets(TargetFlags.unit, innkeeper), true, 0);
+    auto aura = keeper.auras.find(roots);
+    assert(aura !is null && aura.heartbeatChance > 0, "the chance to miss it, kept");
+    aura.duration = 8000;
+    aura.setHeartbeatResist(100, 8000); // certain, to see it break
+    keeper.updateAuras(context.map(0), 3000);
+    assert(keeper.auras.find(roots) !is null);
+    keeper.updateAuras(context.map(0), 1500);
+    assert(keeper.auras.find(roots) is null, "broken at the heartbeat");
 }

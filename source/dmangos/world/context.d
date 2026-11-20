@@ -1013,12 +1013,15 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             database.setGameEventStatus(id, on);
             foreach (ref m; data.gameEventMails.get(on ? cast(short) id : cast(short)(-cast(int) id), null))
                 foreach (guid; database.charactersFor(m.raceMask, m.quest))
-                    eventLetter(m, guid);
+                    templateLetter(m.mailTemplate, m.sender, guid);
         }
     }
 
-    /// One `game_event_mail` letter to character `guid`: its template's text and the first item its loot gives.
-    private void eventLetter(const ref EventMail m, uint guid)
+    /**
+     * A letter of `MailTemplate.dbc` from creature `sender` to character `guid` (a `game_event_mail`'s, a
+     * `mail_level_reward`'s): its template's text and the first item its loot gives.
+     */
+    package void templateLetter(uint mailTemplate, uint sender, uint guid)
     {
         import std.random : rndGen;
         import dmangos.world.database : MailRecord;
@@ -1029,10 +1032,10 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         enum ubyte mailCreature = 3;
         MailRecord mail;
         mail.messageType = mailCreature;
-        mail.sender = m.sender;
+        mail.sender = sender;
         mail.receiver = guid;
-        mail.templateId = m.mailTemplate;
-        if (const template_ = data.loot.mail[m.mailTemplate])
+        mail.templateId = mailTemplate;
+        if (const template_ = data.loot.mail[mailTemplate])
         {
             auto loot = new Loot(0, null);
             loot.fill(template_, data.loot, data.items, rndGen, (uint c) => true, null);
@@ -2607,6 +2610,20 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return true;
     }
 
+    /// `creature` at `level`: its health, mana, armor and damage the class stats' for it (`InitStatsForLevel`).
+    void setCreatureLevel(Creature creature, uint level)
+    {
+        import dmangos.world.updatefields : UNIT_FIELD_DISPLAYID, UNIT_FIELD_LEVEL;
+
+        const t = creature.template_;
+        const display = creature.values.get!UNIT_FIELD_DISPLAYID;
+        creature.values.set!UNIT_FIELD_LEVEL(level);
+        auto parts = creatureParts(*t, creature.spawn.guid, display, level, t.equipmentTemplateId);
+        creature.changeEntry(t, display, parts, client);
+        creature.values.set!(dmangos.world.updatefields.UNIT_FIELD_HEALTH)(
+            creature.values.get!(dmangos.world.updatefields.UNIT_FIELD_MAXHEALTH));
+    }
+
     /**
      * A creature made while event `shape.event` is on: its model, and its spell's auras (a transformation
      * takes the named creature's model). It is marked with the event, to be made again when it ends.
@@ -3960,6 +3977,12 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
     /// Raid scripts: a game object of `entry` at `at` on `map`, of no spawn of the map's (it is in no
     /// other copy, and comes back nowhere), gone after `seconds` (0: with the map); null if there is no such object.
+    /// A game object nobody owns (a spell's, `dmangos.world.guardians`) at `at`, for `seconds` (0: for good).
+    GameObject summonWildGameObject(Map map, uint entry, Position at, uint seconds)
+    {
+        return summonGameObjectAt(map, entry, Location(at.x, at.y, at.z, at.orientation), seconds);
+    }
+
     private GameObject summonGameObjectAt(Map map, uint entry, Location at, uint seconds)
     {
         import std.math : cos, sin;

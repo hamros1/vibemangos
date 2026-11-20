@@ -213,6 +213,14 @@ struct LockEntry
 
 enum lockFormat = "niiiiiiiiiiiiiiiiiiiiiiiixxxxxxxx"; ///
 
+/// `MailTemplate.dbc`: the letters the client knows the subject and text of, by id.
+struct MailTemplateEntry
+{
+    uint id;
+}
+
+enum mailTemplateFormat = "nxxxxxxxxx"; ///
+
 /// `ItemRandomProperties.dbc`: a random property, and the enchantments it gives (up to three).
 struct ItemRandomPropertiesEntry
 {
@@ -681,6 +689,7 @@ final class ClientData
     @DbcFile("WMOAreaTable") DbcStore!(WmoAreaTableEntry, wmoAreaTableFormat) wmoAreas;
     @DbcFile("Faction") DbcStore!(FactionEntry, factionFormat) factions;
     @DbcFile("Lock") DbcStore!(LockEntry, lockFormat) locks;
+    @DbcFile("MailTemplate") DbcStore!(MailTemplateEntry, mailTemplateFormat) mailTemplates;
     @DbcFile("TaxiNodes") DbcStore!(TaxiNodesEntry, taxiNodesFormat) taxiNodes;
     @DbcFile("TaxiPath") DbcStore!(TaxiPathEntry, taxiPathFormat) taxiPaths;
     @DbcFile("TaxiPathNode") DbcStore!(TaxiPathNodeEntry, taxiPathNodeFormat) taxiPathNodes;

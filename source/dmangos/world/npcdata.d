@@ -33,7 +33,7 @@ struct GossipMenuOption
     uint actionPoiId;        /// a `points_of_interest` flag it shows
     uint actionScriptId;
     bool boxCoded;
-    uint boxMoney;
+    uint boxMoney;        /// unused: the 1.12 menu has no price to confirm (TBC's; CMaNGOS classic leaves it unread)
     string boxText;
     uint boxBroadcastText;
     uint conditionId;

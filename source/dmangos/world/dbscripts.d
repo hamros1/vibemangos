@@ -234,6 +234,14 @@ struct ScriptThing
     }
 }
 
+/// Whether a script starts again while the same one runs (`Map::ScriptExecutionParam`).
+enum ScriptUnique
+{
+    no,       /// it always starts
+    bySource, /// not while it runs with the same source (`SCRIPT_EXEC_PARAM_UNIQUE_BY_SOURCE`)
+    byTarget, /// not while it runs with the same target (`SCRIPT_EXEC_PARAM_UNIQUE_BY_TARGET`)
+}
+
 /// A script under way on a map: its steps, from one start.
 final class ScriptRun
 {
@@ -272,15 +280,23 @@ mixin template DbScriptRunner()
 
     /**
      * Script `id` of `type` begins on `map` with `source` and `target` (either
-     * may be 0); false if there is no such script.
+     * may be 0); false if there is no such script. With `unique`, not while it runs already for the same source
+     * or target (true: it is under way).
      */
-    bool startScript(DbScriptType type, uint id, Map map, ulong source, ulong target)
+    bool startScript(DbScriptType type, uint id, Map map, ulong source, ulong target,
+        ScriptUnique unique = ScriptUnique.no)
     {
         if (map is null || id == 0)
             return false;
         const steps = data.dbScripts.steps(type, id);
         if (steps.length == 0)
             return false;
+        if (unique != ScriptUnique.no)
+            foreach (run; scriptRuns)
+                if (run.type == type && run.id == id && run.next < run.steps.length && run.mapId == map.id
+                        && run.instanceId == map.instanceId
+                        && (unique == ScriptUnique.bySource ? run.source == source : run.target == target))
+                    return true;
         auto run = new ScriptRun;
         run.type = type;
         run.id = id;

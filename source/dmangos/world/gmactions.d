@@ -30,11 +30,29 @@ private:
         if (changed)
             player.restartLevelTime(secondsInWorld()); // the time played at this level starts again
         send(info);
+        if (changed)
+            levelRewardLetter(level);
         flushPlayerChanges();
         petOwnerLevelChanged();
         if (auto group = context.groups.of(player.guid))
             group.updatePlayerOutOfRange(this, GroupUpdate.level | GroupUpdate.currentHealth | GroupUpdate.maxHealth
                 | GroupUpdate.powerType);
+    }
+
+    /**
+     * At a new level, the letter `mail_level_reward` has for it and the player's race (`Player::GiveLevel`). Only
+     * a template the client knows is sent (`ObjectMgr::LoadMailLevelRewards` drops the others): the rows of the
+     * classic database are TBC's riding letters, which a 1.12 client has no template for.
+     */
+    void levelRewardLetter(uint level)
+    {
+        const raceMask = 1u << (player.data.race - 1);
+        foreach (ref m; context.data.levelRewardMails.get(level, null))
+            if ((m.raceMask & raceMask) && context.client.mailTemplates.lookup(m.mailTemplate) !is null)
+            {
+                context.templateLetter(m.mailTemplate, m.sender, player.data.guid);
+                break; // one letter a level (`GetMailLevelReward`)
+            }
     }
 
     /// `.modify speed`: the run, swim and run-back speeds; the player is told with
@@ -77,6 +95,10 @@ private:
         send(ServerLearnedSpell(spell));
         context.database.saveSpell(player.data.guid, spell, true, false);
         player.recordSpellRow(NewSpell(spell, true, false));
+        // A primary profession takes one of the free slots, while there is one (`Player::learnSpell`).
+        const free = player.values.get!PLAYER_CHARACTER_POINTS2;
+        if (free && isPrimaryProfessionFirstRank(spell))
+            player.values.set!PLAYER_CHARACTER_POINTS2(free - 1);
         return true;
     }
 
@@ -91,6 +113,15 @@ private:
         send(ServerRemovedSpell(cast(ushort) spell));
         context.database.deleteSpell(player.data.guid, spell);
         player.forgetSpellRow(spell);
+        // A primary profession forgotten gives its slot back, up to the most (`Player::removeSpell`).
+        if (isPrimaryProfessionFirstRank(spell))
+        {
+            const settings = context.creationSettings;
+            const most = cast(uint) account.level < settings.gmIgnoreMaxPrimarySkills ? settings.maxPrimaryTradeSkill : 10;
+            const free = player.values.get!PLAYER_CHARACTER_POINTS2 + 1;
+            if (free <= most)
+                player.values.set!PLAYER_CHARACTER_POINTS2(free);
+        }
         return true;
     }
 

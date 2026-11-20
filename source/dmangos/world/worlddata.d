@@ -348,6 +348,14 @@ struct EventMail
     uint sender;         /// the creature entry it comes from
 }
 
+/// A `mail_level_reward` row: the letter a race's players get on reaching its level.
+struct LevelRewardMail
+{
+    uint raceMask;
+    uint mailTemplate;   /// `MailTemplate.dbc` (its items: `mail_loot_template`)
+    uint sender;         /// the creature entry it comes from
+}
+
 /// A `creature_spell_list` row: a spell a creature casts in a fight, its target, its chance, and its timers (milliseconds).
 struct SpellListEntry
 {
@@ -440,6 +448,7 @@ final class WorldData
     short[uint] gameObjectGameEvents;               /// `game_event_gameobject`: ditto
     GameEvent[] gameEvents;                         /// `game_event` and `game_event_time`
     EventMail[][short] gameEventMails;              /// `game_event_mail`: by event (negative: sent as it ends)
+    LevelRewardMail[][uint] levelRewardMails;       /// `mail_level_reward`: by level
     ushort[][uint] questGameEvents;                 /// `game_event_quest`: the events a quest is given during
     CreatureLinks creatureLinks;                    /// `creature_linking` and `creature_linking_template`
     Formation[uint] formations;                     /// `spawn_group_formation`, by spawn group
@@ -455,6 +464,7 @@ final class WorldData
     string[uint] serverStrings;                     /// `mangos_string`'s default texts
     GhostEntrance[uint] ghostEntrances;             /// `instance_template`'s ghost entrances, by instance map
     uint[uint] instanceMaxPlayers;                  /// `instance_template.maxPlayers`, by instance map
+    bool[uint] instanceMountAllowed;                /// `instance_template.mountAllowed`: dungeons one may ride in
     int[uint] fishingBaseSkill;                     /// `skill_fishing_base_level`: area or zone -> skill to fish there
     uint[uint] instanceResetDays;                   /// `instance_template.reset_delay` (a raid's lockout), by map
     WaypointStore waypoints;                        /// `creature_movement` and `creature_movement_template`
@@ -829,8 +839,11 @@ final class WorldData
             if (row.get!uint(5))
                 scriptTextSounds[row.get!int(0)] = row.get!uint(5);
         }
-        foreach (row; world.query!"SELECT map, ghostEntranceMap, ghostEntranceX, ghostEntranceY, maxPlayers, reset_delay FROM instance_template"())
+        foreach (row; world.query!("SELECT map, ghostEntranceMap, ghostEntranceX, ghostEntranceY, maxPlayers, reset_delay, "
+            ~ "mountAllowed FROM instance_template")())
         {
+            if (row.get!uint(6))
+                instanceMountAllowed[row.get!uint(0)] = true;
             if (row.get!uint(5))
                 instanceResetDays[row.get!uint(0)] = row.get!uint(5);
             ghostEntrances[row.get!uint(0)] = GhostEntrance(row.get!int(1), row.get!float(2), row.get!float(3));
@@ -1049,6 +1062,8 @@ final class WorldData
             gameEventMails[cast(short) row.get!int(0)] ~= EventMail(row.get!uint(1), row.get!uint(2), row.get!uint(3),
                 row.get!uint(4));
         info!"loaded %s game events"(gameEvents.length);
+        foreach (row; world.query!"SELECT level, raceMask, mailTemplateId, senderEntry FROM mail_level_reward"())
+            levelRewardMails[row.get!uint(0)] ~= LevelRewardMail(row.get!uint(1), row.get!uint(2), row.get!uint(3));
     }
 
     /**

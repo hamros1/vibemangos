@@ -18,6 +18,23 @@ enum float petFollowAngle = 1.5707964f;
 /// `SPELL_ATTR_EX_NO_AUTOCAST_AI`
 enum uint spellAttrExNoAutocast = 0x0002_0000;
 
+/// `SMSG_SPELL_COOLDOWN` for a pet's spell: the pet, the spell, its recovery time in milliseconds.
+ubyte[] petCooldownPacket(ulong pet, uint spell, uint recoveryMs) pure nothrow @safe
+{
+    import dmangos.bytes : ByteWriter;
+
+    ByteWriter w;
+    w.put(pet);
+    w.put(spell);
+    w.put(recoveryMs);
+    return w.data.dup;
+}
+
+unittest
+{
+    assert(petCooldownPacket(0x42, 3110, 1600) == [0x42, 0, 0, 0, 0, 0, 0, 0, 0x26, 0x0C, 0, 0, 0x40, 0x06, 0, 0]);
+}
+
 /// Neither passive nor marked not to be autocast.
 bool isAutocastable(const ref imported!"dmangos.world.spells".SpellInfo spell) pure nothrow @nogc @safe
 {
@@ -217,12 +234,26 @@ mixin template PetBehaviour()
         }
         if (!castSpell(info, target, 0))
             return false;
-        const cooldown = info.recoveryTime > info.categoryRecoveryTime ? info.recoveryTime : info.categoryRecoveryTime;
-        if (cooldown)
-            petCooldowns[info.id] = cooldown;
+        startPetCooldown(info, world);
         if (cast(bool) enemy && victim != enemy.combatGuid && react != ReactState.passive)
             petAttack(enemy, world);
         return true;
+    }
+
+    /**
+     * Its cooldown for `info` begins; its owner's bar shows it (`Creature::AddCooldown`: `SMSG_SPELL_COOLDOWN` with
+     * the pet, the spell and its recovery time).
+     */
+    private void startPetCooldown(const(SpellInfo)* info, CombatWorld world)
+    {
+        import dmangos.world.petai : petCooldownPacket;
+
+        const cooldown = info.recoveryTime > info.categoryRecoveryTime ? info.recoveryTime : info.categoryRecoveryTime;
+        if (!cooldown)
+            return;
+        petCooldowns[info.id] = cooldown;
+        if (auto owner = world.unit(me.petOwner))
+            owner.tell(Opcode.SMSG_SPELL_COOLDOWN, petCooldownPacket(me.guid, info.id, info.recoveryTime));
     }
 
     /// The spells it casts by itself, at its victim, when ready and in range.
@@ -243,10 +274,7 @@ mixin template PetBehaviour()
                 if (auto owner = world.unit(me.petOwner))
                     if (owner.session !is null)
                         owner.session.petCastSpell(s.spell);
-                const cooldown = info.recoveryTime > info.categoryRecoveryTime ? info.recoveryTime
-                    : info.categoryRecoveryTime;
-                if (cooldown)
-                    petCooldowns[s.spell] = cooldown;
+                startPetCooldown(info, world);
                 return;
             }
         }

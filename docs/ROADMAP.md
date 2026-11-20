@@ -19,10 +19,10 @@
 | Update loop | A 50 ms tick: 20-second logout, regeneration, rested XP in inns and capitals (and offline), periodic saves, timed shutdowns | `net/server.d`, `context.d`, `inworld.d`, `timer.d` |
 | Creatures and game objects | Every spawn (with pools, spawn groups and game events), loaded per grid cell when players come near, with levels, health, models, equipment, mounts and emotes; creature and game object queries; `.npc info` | `creature.d`, `gameobject.d`, `map.d`, `worlddata.d` |
 | Creature movement | Wandering (`spawndist`) and waypoint paths (`creature_movement`, `creature_movement_template`; round, or back and forth) with waits and facings; `SMSG_MONSTER_MOVE`; walks in create blocks; moving creatures change cell and come into and out of sight | `spline.d`, `motion.d`, `map.d` |
-| NPC services | Gossip menus with their texts, conditions and map flags; trainers (lists with each spell's state, lessons that teach spells, ranks and profession skills); innkeepers (binding the hearthstone); bankers (opening the bank); vendors' lists | `npchandlers.d`, `npcdata.d`, `conditions.d` |
+| NPC services | Gossip menus with their texts, conditions, map flags and scripts (`gossip_menu.script_id`, options' `action_script_id`; `box_money` is TBC's and unused, as in CMaNGOS classic); trainers (lists with each spell's state, lessons that teach spells, ranks and profession skills); innkeepers (binding the hearthstone); bankers (opening the bank); vendors' lists | `npchandlers.d`, `npcdata.d`, `conditions.d` |
 | Inventory and trade | The inventory rules, shared by creation and the world: moving, swapping, splitting, equipping (two-handers, dual wield, quivers, unique items), bags, the bank and its bag slots, the keyring, destroying, ammo; buying (with vendors' limited stock), selling, buyback and repairs; every change saved at once with the money; reputation-gated items, item use checks, bind on use, charges, the equip cooldown, timed items, wear on hit, ammo damage and quiver haste | `inventory.d`, `itemhandlers.d`, `itemuse.d` |
 | Movement checks | Speed checked against running speed; offenders put back. Positions outside the map disconnect | `world/inworld.d` |
-| Movement orders and environment | Speeds (auras, mounts, snares), roots, knockbacks, water walk, slow fall and hover ordered and shown to others on the client's acknowledgement; breath, fatigue, drowning, lava, falling damage | `world/moveorders.d`, `world/environment.d` |
+| Movement orders and environment | Speeds (auras, mounts, snares), roots, knockbacks, water walk, slow fall and hover ordered and shown to others on the client's acknowledgement; breath, fatigue, drowning, lava, falling damage; riding's rules (no casting but `ALLOW_WHILE_MOUNTED` spells, no melee, dismounted by game objects and mountless dungeons, the pet's bar greyed out) | `world/moveorders.d`, `world/environment.d`, `world/mounting.d` |
 
 ### Known gaps in what exists
 
@@ -62,9 +62,10 @@
     run down and expire. Crafting raises professions. Spell foci and tools are enforced; disenchanting
     and picking lockboxes are done.
   * Weapon enchantments' procs (poisons, Crusader) are done.
-  * Not yet: enchanting another player's item through
-    trade, and wrapping. Readable items and pages (`page_text`): done. Loot in items is done (`CMSG_OPEN_ITEM`). Dying and the spirit healer wear gear
-  down; a broken worn item's stats come back when it is repaired.
+  * Enchanting another player's item through trade (the "will not be traded" slot): done. Not yet: wrapping.
+    Readable items and pages (`page_text`): done. Loot in items is done (`CMSG_OPEN_ITEM`). Dying and the spirit healer
+    wear gear down (the spirit healer what is in the bags too); a broken worn item's stats come back when it is repaired.
+    Unlearning a primary profession forgets all its spells and gives its slot back.
 * **GM system:** commands that need missing systems answer "Not yet implemented."
   (COMMANDS.md lists them); GM invisibility (`.invisible`) needs sight to be one-sided first. The
   `c` letter makes speech universal but does not also teach the language skills, as the GM contract does.
@@ -144,7 +145,9 @@ The largest area. In order:
    classes' trainable spells beyond damage and healing (threat, taunts, charges, Blink, burns, drains and
    leeches, extra swings, Vanish, Feign Death, Fade, Distract, the hunters' traps, tracking, Hunter's Mark,
    regeneration's auras, Holy Shield, Blessing of Sacrifice; `effecthandlers.d`, README's "Effects beyond
-   damage and healing"): done. Not yet: Eye of Kilrogg (`SUMMON_POSSESSED`), invisibility and its
+   damage and healing"): done. Players' guardians (engineering dragonlings, dummies, the sheep; `guardians.d`), wild objects,
+   and wear by spells (`durability.d`), Ritual of Summoning and the meeting stones' summons (`rituals.d`): done; a guardian's evade walks back to where it was summoned before it follows
+   again. Not yet: Eye of Kilrogg (`SUMMON_POSSESSED`), invisibility and its
    detection, traps hidden from those not in the hunter's group.
 6. **Duels and trades: done** (`tradehandlers.d`, `duelhandlers.d`; README's "Trading" and
    "Duels"). Players fight players in melee and with spells where the relations allow (duelists,
@@ -228,8 +231,9 @@ charges (Clearcasting, Presence of Mind, Nature's Swiftness: spent by the cast t
 
 ### Mail
 
-**Done** (`mailhandlers.d`; README's "Mail"), auctions' mail and expiry included. Next: the mail
-templates NPCs and quests send (`RewMailTemplateId`).
+**Done** (`mailhandlers.d`; README's "Mail"), auctions' mail and expiry included, quest and game event letters, and
+`mail_level_reward`'s letter at a new level (TBC CMaNGOS's; only for templates a 1.12 client has, so none of the
+classic database's TBC rows is sent).
 
 ### Auctions
 

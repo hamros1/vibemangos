@@ -349,3 +349,40 @@ unittest
     anduin.session.inWorld.giveXP(30);
     assert(me.data.level == 2 && me.values[PLAYER_XP] == 20);
 }
+
+/// A level reached: the letter `mail_level_reward` has for it and the race, if the client knows its template.
+unittest
+{
+    import dmangos.dbc : buildDbc;
+    import dmangos.world.clientdata : mailTemplateFormat;
+    import dmangos.world.player : Player;
+    import dmangos.world.testclient;
+    import dmangos.world.updatefields : PLAYER_NEXT_LEVEL_XP, PLAYER_XP;
+    import dmangos.world.worlddata : LevelRewardMail;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    context.client.mailTemplates = typeof(context.client.mailTemplates).parse(buildDbc(mailTemplateFormat,
+        [[100u, 0, 0, 0, 0, 0, 0, 0, 0, 0]]), "MailTemplate.dbc");
+    context.data.xpForNextLevel = [0, 400, 900, 1400];
+    enum uint human = 1, orc = 2;
+    context.data.levelRewardMails[2] = [LevelRewardMail(1u << (orc - 1), 100, 4752),
+        LevelRewardMail(1u << (human - 1), 100, 4732)];
+    context.data.levelRewardMails[3] = [LevelRewardMail(1u << (human - 1), 224, 4732)]; // TBC's: no such template
+
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f));
+    auto me = cast(Player) anduin.session.character;
+    assert(me.data.race == human);
+    anduin.read();
+    me.values.set!PLAYER_XP(390u);
+    anduin.session.inWorld.giveXP(30);
+    assert(me.data.level == 2);
+    assert(opcodesOf(anduin.read()).canFind(Opcode.SMSG_RECEIVED_MAIL), "told of the letter");
+    auto mail = db.loadMail(me.data.guid);
+    assert(mail.length == 1 && mail[0].templateId == 100 && mail[0].sender == 4732 && mail[0].messageType == 3);
+
+    // Level 3's template is not the client's: no letter.
+    me.values.set!PLAYER_XP(me.values[PLAYER_NEXT_LEVEL_XP] - 1);
+    anduin.session.inWorld.giveXP(1);
+    assert(me.data.level == 3 && db.loadMail(me.data.guid).length == 1);
+}

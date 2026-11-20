@@ -968,6 +968,11 @@ source/dmangos/world/       the world server
   terrain.d                   the .map files: ground heights, areas, liquids per tile, and zones from them
   exploration.d               zones and areas from the map, explored areas, experience
   environment.d               breath, fatigue, lava, falling: mirror timers and environmental damage
+  guardians.d                 a player's guardians (dragonlings, dummies, the sheep) and wild objects
+  durability.d                wear by spells and death: points or shares, worn or carried (bags too)
+  rituals.d                   Ritual of Summoning, meeting stones' summons, the summons request and answer
+  homebind.d                  out of a dungeon a minute after leaving its group (SMSG_RAID_GROUP_ONLY)
+  mounting.d                  riding: casts refused mounted, no melee, dismounting for objects and dungeons
   moveorders.d                speed, root, knockback, water walk, slow fall, hover orders and their acknowledgements
   inventory.d                 items and bags, and the rules for storing, equipping, swapping, saving them
   conditions.d                the conditions table: requirements of menus, lessons and wares

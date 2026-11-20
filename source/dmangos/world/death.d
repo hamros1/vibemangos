@@ -635,39 +635,6 @@ private:
         loot.showContentTo(looter);
     }
 
-    /// What it wears (and with `inventory` what it carries) loses `percent` of its durability.
-    void durabilityLossAll(double percent, bool inventory)
-    {
-        import dmangos.world.defines : equipmentSlotEnd, inventorySlotBag0, inventorySlotItemEnd,
-            inventorySlotItemStart;
-        import dmangos.world.inventory : ItemState;
-
-        void lose(ubyte bag, ubyte slot)
-        {
-            auto item = player.inventory[bag, slot];
-            if (item is null || item.maxDurability == 0)
-                return;
-            uint points = cast(uint)(item.maxDurability * percent);
-            if (points < 1)
-                points = 1;
-            const old = item.durability;
-            const now = old > points ? old - points : 0;
-            if (now == old)
-                return;
-            item.values.set!ITEM_FIELD_DURABILITY(now);
-            player.inventory.setState(item, ItemState.changed);
-            if (now == 0 && slot < equipmentSlotEnd && bag == inventorySlotBag0)
-                player.inventory.equipmentChanged = true; // broken: its stats go
-        }
-
-        foreach (ubyte slot; 0 .. equipmentSlotEnd)
-            lose(inventorySlotBag0, slot);
-        if (inventory)
-            foreach (ubyte slot; inventorySlotItemStart .. inventorySlotItemEnd)
-                lose(inventorySlotBag0, slot);
-        flushInventory(true);
-    }
-
     /// The death timer: a body not released in six minutes is released.
     void updateDeath(Duration elapsed)
     {

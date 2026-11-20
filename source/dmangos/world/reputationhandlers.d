@@ -271,6 +271,50 @@ private:
         player.reputation.setInactive(id, flag != 0);
     }
 
+    /// Reactions forced by auras (`SPELL_AURA_FORCE_REACTION`: disguises), by faction (`ReputationMgr::m_forcedReactions`).
+    package ReputationRank[uint] forcedReactions;
+
+    /**
+     * `SPELL_AURA_FORCE_REACTION` begins (`apply`) or ends (`Aura::HandleForceReaction`): `faction` reacts to the
+     * player as `rank`, the client told (`SMSG_SET_FORCED_REACTIONS`: each faction and rank). Friendly now, the
+     * player and that faction's creatures stop fighting each other (`StopAttackFaction`).
+     */
+    package void forceReaction(uint faction, int rank, bool apply)
+    {
+        if (apply)
+            forcedReactions[faction] = cast(ReputationRank) rank;
+        else
+            forcedReactions.remove(faction);
+        ByteWriter w;
+        w.put(cast(uint) forcedReactions.length);
+        foreach (id, forced; forcedReactions)
+        {
+            w.put(id);
+            w.put(uint(forced));
+        }
+        deliver(Opcode.SMSG_SET_FORCED_REACTIONS, w.data);
+        if ((apply && rank >= ReputationRank.friendly)
+                || (!apply && player.reputation.rankWith(faction) >= ReputationRank.friendly))
+            stopAttackFaction(faction);
+    }
+
+    /// The fights with `faction`'s creatures end: this player's swing at one, and theirs at it (`StopAttackFaction`).
+    private void stopAttackFaction(uint faction)
+    {
+        bool ofFaction(Creature c)
+        {
+            const t = c is null ? null : context.client.factionTemplates.lookup(c.values.get!UNIT_FIELD_FACTIONTEMPLATE);
+            return t !is null && t.faction == faction;
+        }
+
+        if (attacking && ofFaction(cast(Creature) map.findObject(attacking)))
+            stopAttack(false);
+        foreach (guid; threateners)
+            if (auto c = cast(Creature) map.findObject(guid))
+                if (ofFaction(c) && c.ai !is null)
+                    c.ai.forget(player.guid, map);
+    }
+
     /// The player picks the faction shown on the experience bar.
     @Handles(Opcode.CMSG_SET_WATCHED_FACTION, WorldState.inWorld)
     void handleSetWatchedFaction(ref ByteReader reader)
@@ -402,4 +446,32 @@ unittest
     anduin.write(Opcode.CMSG_CAST_SPELL, w.data);
     anduin.read();
     assert(me.reputation.standingWith(armorsmiths) == 500);
+}
+
+/// A disguise (`SPELL_AURA_FORCE_REACTION`): the faction's reaction forced and told to the client, then undone.
+unittest
+{
+    import dmangos.bytes : ByteReader;
+    import dmangos.world.auras : AuraType, makeAura;
+    import dmangos.world.relations : ReputationRank;
+    import dmangos.world.spellhandlers : testSpell;
+    import dmangos.world.testclient;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    enum uint disguise = 91_901, defias = 15;
+    context.data.spells.spells[disguise] = testSpell(disguise, 6, 1, 0);
+    context.data.spells.spells.edit(disguise).casting.applyAuraName[0] = AuraType.forceReaction;
+    context.data.spells.spells.edit(disguise).miscValue[0] = defias;
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f));
+    auto me = anduin.session.inWorld;
+    anduin.read();
+    auto aura = makeAura(context.data.spells.spell(disguise), me.player.guid, 1, -1, true,
+        [int(ReputationRank.friendly), 0, 0]);
+    me.addAura(aura);
+    auto r = ByteReader(bodyOf(anduin.read(), Opcode.SMSG_SET_FORCED_REACTIONS));
+    assert(r.read!uint == 1 && r.read!uint == defias && r.read!uint == ReputationRank.friendly);
+    assert((*me.relatingNow().forced).get(defias, ReputationRank.hated) == ReputationRank.friendly);
+    me.removeAura(me.player.auras.find(disguise));
+    assert(bodyOf(anduin.read(), Opcode.SMSG_SET_FORCED_REACTIONS) == [0, 0, 0, 0], "none forced now");
 }

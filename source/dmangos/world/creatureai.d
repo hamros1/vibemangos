@@ -295,6 +295,7 @@ final class CreatureAI : Scripted, CreatureHost
         enum uint noAggroOnSight = 0x02; // CREATURE_EXTRA_FLAG_NO_AGGRO_ON_SIGHT
         this.me = me;
         react = (me.template_.extraFlags & noAggroOnSight) ? ReactState.defensive : ReactState.aggressive;
+        meleeEnabled = !(me.template_.staticFlags1 & staticFlagNoMeleeFlee); // `CreatureAI::CreatureAI`
     }
 
     /// Whether it is in combat.
@@ -477,6 +478,7 @@ final class CreatureAI : Scripted, CreatureHost
             interruptCast();
         casting_ = nextSwing = null;
         fleeTimer = 0;
+        critterFleeing = false;
         if (script !is null && world !is null)
             script.died(this, victim);
         if (world !is null)
@@ -622,8 +624,8 @@ private:
     @property Relating relating() const
     {
         Relating r = Relating(me.values.get!UNIT_FIELD_FLAGS, me.factionTemplate, false, 0, 0, me.alive);
-        r.playerOwned = me.petOwner != 0;
-        r.controller = me.petOwner;
+        r.playerOwned = me.petOwner != 0 || me.guardianOwner != 0;
+        r.controller = me.petOwner ? me.petOwner : me.guardianOwner;
         r.playerFlags = me.controllerPlayerFlags;
         return r;
     }
@@ -794,6 +796,7 @@ private:
             if (script !is null)
                 script.combatStarted(this, guid);
             raiseScript(EnteredCombat(EntityRef(guid)));
+            critterFleeAtAggro(who); // after its aggro hooks, which may cast (`creaturecasting`)
             if (lore !is null && me.instanceId) // its dungeon's script: an encounter may begin
                 lore.dungeonFight(me.instanceId, EntityRef(me.guid), EntityRef(guid));
             // `CREATURE_EXTRA_FLAG_AGGRO_ZONE`: a boss pulled by a player in a dungeon fights everyone in it.
@@ -1359,6 +1362,7 @@ private:
         if (fleeTimer > 0)
         {
             fleeTimer = 0;
+            critterFleeing = false;
             me.values.set!UNIT_FIELD_FLAGS(me.values.get!UNIT_FIELD_FLAGS & ~UnitFlags.fleeing);
         }
         combatMovement_ = true;

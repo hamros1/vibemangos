@@ -664,7 +664,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 
 * Projects: CMaNGOS
 * Files: `SpellAuras.cpp`
-* Functions: `SpellAuraHolder::Update`, `Unit::AddSpellAuraHolder`
+* Functions: `SpellAuraHolder::Update`, `Unit::AddSpellAuraHolder`, `SpellAuraHolder::SetHeartbeatResist`, `SpellAuraHolder::UpdateHeartbeatResist`
 * Constants: `MAX_AURAS`, `MAX_POSITIVE_AURAS`, `SPELL_ATTR_NO_AURA_CANCEL`, `UNIT_FIELD_AURA`
 * Also: `Aura::HandleAuraModStalked` (`UNIT_DYNFLAG_TRACK_UNIT`), `Unit::SetFeignDeath` (`UNIT_DYNFLAG_DEAD`), `Aura::HandleAuraUntrackable` (`UNIT_VIS_FLAG_UNTRACKABLE`), `Aura::HandleAuraModScale` (`ApplyPercentModFloatValue`)
 
@@ -812,8 +812,8 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 ## world/creaturecasting.d
 
 * Projects: CMaNGOS, EventAI
-* Functions: `Spell::CheckRange`, `Spell::cast`, `Spell::prepare`, `UnitAI::DoCastSpellIfCan`
-* Constants: `CAST_FORCE_TARGET_SELF`, `EVENT_T_FRIENDLY_HP`, `SMSG_SPELL_FAILURE`, `SMSG_SPELL_GO`, `SPELL_EFFECT_APPLY_AURA`, `SPELL_EFFECT_HEAL`, `TEMPSPAWN_TIMED_OOC_DESPAWN`, `TEMPSPAWN_TIMED_OOC_OR_DEAD_DESPAWN`, `UNIT_STAT_NO_COMBAT_MOVEMENT`
+* Functions: `Spell::CheckRange`, `Spell::cast`, `Spell::prepare`, `UnitAI::DoCastSpellIfCan`, `UnitAI::DoFlee`, `Unit::SetFleeing`, `Unit::SetInCombatWith` (the critter flee), `CreatureAI::CreatureAI`, `CreatureAI::TimedFleeingEnded`, `PanicMovementGenerator::Update`
+* Constants: `CreatureStaticFlags::NO_MELEE_FLEE`, `CONFIG_UINT32_CREATURE_FAMILY_FLEE_DELAY`, `ORDER_CRITTER_FLEE`, `ACTION_T_FLEE_FOR_ASSIST`, `CAST_FORCE_TARGET_SELF`, `EVENT_T_FRIENDLY_HP`, `SMSG_SPELL_FAILURE`, `SMSG_SPELL_GO`, `SPELL_EFFECT_APPLY_AURA`, `SPELL_EFFECT_HEAL`, `TEMPSPAWN_TIMED_OOC_DESPAWN`, `TEMPSPAWN_TIMED_OOC_OR_DEAD_DESPAWN`, `UNIT_STAT_NO_COMBAT_MOVEMENT`
 * Also: `Spell::EffectSendEvent` (a creature's `SPELL_EFFECT_SEND_EVENT`), `Unit::RemoveAura` (its script told, `AuraRemoved`)
 * Also: `TARGET_ENUM_UNITS_SCRIPT_AOE_AT_SRC_LOC` (`Spell::SetTargetMap`, `SPELL_TARGETS_ALL`), `Spell::OnCheckTarget`
 * Also: `Creature::DoFleeToGetAssistance` (`SPELL_AURA_PREVENTS_FLEEING`)
@@ -834,7 +834,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Projects: CMaNGOS, EventAI
 * Files: `ScriptMgr.cpp`
 * Functions: `Map::ScriptsProcess`, `Map::ScriptsStart`
-* Constants: `FORCED_MOVEMENT_RUN`, `SCRIPT_COMMAND_MOVE_TO`, `SCRIPT_COMMAND_RESPAWN_GAMEOBJECT`, `SCRIPT_COMMAND_TERMINATE_SCRIPT`, `SCRIPT_FLAG_BUDDY_AS_TARGET`, `SCRIPT_FLAG_BUDDY_BY_GUID`, `SPELL_EFFECT_SEND_EVENT`, `TYPEMASK_CREATURE_OR_GAMEOBJECT`
+* Constants: `SCRIPT_EXEC_PARAM_UNIQUE_BY_SOURCE`, `SCRIPT_EXEC_PARAM_UNIQUE_BY_TARGET`, `FORCED_MOVEMENT_RUN`, `SCRIPT_COMMAND_MOVE_TO`, `SCRIPT_COMMAND_RESPAWN_GAMEOBJECT`, `SCRIPT_COMMAND_TERMINATE_SCRIPT`, `SCRIPT_FLAG_BUDDY_AS_TARGET`, `SCRIPT_FLAG_BUDDY_BY_GUID`, `SPELL_EFFECT_SEND_EVENT`, `TYPEMASK_CREATURE_OR_GAMEOBJECT`
 * Also: `InstanceData::OnObjectCreate` (an object the script spawns, told to the dungeon's script)
 
 ## world/death.d
@@ -914,7 +914,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 ## world/gmactions.d
 
 * Projects: ArcEmu, CMaNGOS
-* Functions: `Player::DestroyItemCount`, `Player::GiveLevel`, `Player::SaveToDB`, `Player::SetPlayerSpeed`, `Player::SetSkill`, `Player::learnSpell`, `Player::removeSpell`, `World::SendGMWorldText`, `World::SendWorldText`, `World::SendWorldWideScreenText`
+* Functions: `Player::DestroyItemCount`, `Player::learnSpell`, `Player::removeSpell` (the free primary professions), `Player::GiveLevel` (TBC's mail at level-up), `ObjectMgr::LoadMailLevelRewards` (TBC), `Player::SaveToDB`, `Player::SetPlayerSpeed`, `Player::SetSkill`, `Player::learnSpell`, `Player::removeSpell`, `World::SendGMWorldText`, `World::SendWorldText`, `World::SendWorldWideScreenText`
 * Constants: `SMSG_AREA_TRIGGER_MESSAGE`, `SMSG_LEARNED_SPELL`, `SMSG_LEVELUP_INFO`
 
 ## world/gmdebug.d
@@ -1006,6 +1006,41 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Files: `LFG/LFGDefines.h`, `LFG/LFGMgr.cpp`, `LFG/LFGQueue.cpp`, `Group/Group.cpp`, `Server/Packets/Misc.cpp`
 * Functions: `LFGMgr::CalculateRoles`, `LFGMgr::GetPriority`, `LFGQueue::Update`, `LFGQueue::FindRoleToGroup`, `Group::CalculateLFGRoles`, `Group::FillPremadeLFG`
 
+## world/guardians.d
+
+* Projects: CMaNGOS
+* Files: `SpellEffects.cpp`, `GuardianAI.cpp`, `CreatureAISelector.cpp`, `Unit.cpp`, `Player.cpp`
+* Functions: `Spell::EffectSummon`, `Spell::EffectSummonGuardian`, `Spell::EffectSummonObjectWild`, `GuardianAI::GuardianAI`, `GuardianAI::UpdateAI`, `FactorySelector::selectAI`, `Unit::FindGuardianWithEntry`, `Unit::RemoveGuardians`, `Player::SetDeathState`
+* Constants: `SPELL_EFFECT_SUMMON`, `SPELL_EFFECT_SUMMON_GUARDIAN`, `SPELL_EFFECT_SUMMON_OBJECT_WILD`, `GUARDIAN_PET`, `UNIT_BYTE2_FLAG_SUPPORTABLE`, `UNIT_BYTE2_FLAG_UNK5`, `UNIT_FIELD_SUMMONEDBY`, `UNIT_FIELD_CREATEDBY`, `UNIT_CREATED_BY_SPELL`, `SKILL_ENGINEERING`, `INVTYPE_TRINKET`
+
+## world/durability.d
+
+* Projects: CMaNGOS
+* Files: `Player.cpp`, `SpellEffects.cpp`, `Spell.h`
+* Functions: `Player::DurabilityLossAll`, `Player::DurabilityLoss`, `Player::DurabilityPointsLossAll`, `Player::DurabilityPointsLoss`, `Spell::EffectDurabilityDamage`, `Spell::EffectDurabilityDamagePCT`, `SpellLog::AddLog`
+* Constants: `SPELL_EFFECT_DURABILITY_DAMAGE`, `SPELL_EFFECT_DURABILITY_DAMAGE_PCT`, `SMSG_SPELLLOGEXECUTE`, `INVENTORY_SLOT_BAG_START`, `INVENTORY_SLOT_ITEM_START`
+
+## world/rituals.d
+
+* Projects: CMaNGOS
+* Files: `SpellEffects.cpp`, `GameObject.cpp`, `GameObject.h`, `MovementHandler.cpp`, `Player.cpp`, `Player.h`
+* Functions: `Spell::EffectTransmitted`, `Spell::EffectSummonPlayer`, `GameObject::Use`, `GameObject::IsUseRequirementMet`, `GameObject::TriggerSummoningRitual`, `GameObject::AddUniqueUse`, `WorldSession::HandleSummonResponseOpcode`, `Player::SetSummonPoint`, `Player::SummonIfPossible`
+* Constants: `GAMEOBJECT_TYPE_SUMMONING_RITUAL`, `GAMEOBJECT_TYPE_MEETINGSTONE`, `SPELL_EFFECT_TRANS_DOOR`, `SPELL_EFFECT_SUMMON_PLAYER`, `SMSG_SUMMON_REQUEST`, `CMSG_SUMMON_RESPONSE`, `MAX_PLAYER_SUMMON_DELAY`, `SPELL_ATTR_NOT_IN_COMBAT_ONLY_PEACEFUL`, `TRIGGERED_CHANNEL_ONLY`
+
+## world/homebind.d
+
+* Projects: CMaNGOS
+* Files: `Player.cpp`, `Group.cpp`, `MovementHandler.cpp`
+* Functions: `Player::UpdateHomebindTime`, `Group::_homebindIfInstance`, `Group::AddMember`, `WorldSession::HandleMoveWorldportAckOpcode`
+* Constants: `SMSG_RAID_GROUP_ONLY`, `ERR_RAID_GROUP_NONE`
+
+## world/mounting.d
+
+* Projects: CMaNGOS
+* Files: `Spell.cpp`, `Relations.cpp`, `Unit.cpp`, `GameObject.cpp`, `GameObject.h`, `MovementHandler.cpp`, `Player.cpp`, `Pet.cpp`
+* Functions: `Spell::CheckCast`, `Unit::CanAttackNow`, `Unit::Attack`, `GameObject::Use`, `GameObjectInfo::IsUsableMounted`, `WorldSession::HandleMoveWorldportAckOpcode`, `Map::IsMountAllowed`, `Player::Mount`, `Player::Unmount`, `Pet::SetModeFlags`
+* Constants: `SPELL_ATTR_ALLOW_WHILE_MOUNTED`, `SPELL_FAILED_NOT_MOUNTED`, `SPELL_FAILED_NOT_ON_TAXI`, `SPELL_AURA_MOUNTED`, `PET_MODE_DISABLE_ACTIONS`, `SMSG_PET_MODE`, `SMSG_ATTACKSTOP`
+
 ## world/guild.d
 
 * Projects: CMaNGOS
@@ -1042,7 +1077,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 
 * Projects: ArcEmu, CMaNGOS
 * Files: `ChatHandler.cpp`, `ItemHandler.cpp`, `MiscHandler.cpp`, `MovementHandler.cpp`, `QueryHandler.cpp`
-* Functions: `Player::RegenerateAll`, `Player::Say`, `Player::Update`, `Player::Whisper`, `Unit::HandleEmote`, `WorldSession::HandleLogoutRequestOpcode`, `WorldSession::LogoutPlayer`, `WorldSession::Update`, `WorldSession::VerifyMovementInfo`, `WorldSession::m_muted`
+* Functions: `WorldSession::HandleUnlearnSkillOpcode`, `Player::UpdateSkillTrainedSpells`, `Player::RegenerateAll`, `Player::Say`, `Player::Update`, `Player::Whisper`, `Unit::HandleEmote`, `WorldSession::HandleLogoutRequestOpcode`, `WorldSession::LogoutPlayer`, `WorldSession::Update`, `WorldSession::VerifyMovementInfo`, `WorldSession::m_muted`
 
 ## world/itemhandlers.d
 
@@ -1157,14 +1192,14 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 ## world/petai.d
 
 * Projects: CMaNGOS
-* Functions: `CharmInfo::GetCommandState`, `PetAI::AttackStart`, `PetAI::MoveInLineOfSight`, `PetAI::UpdateAI`, `PetAI::m_followDist`
+* Functions: `CharmInfo::GetCommandState`, `PetAI::AttackStart`, `PetAI::MoveInLineOfSight`, `PetAI::UpdateAI`, `PetAI::m_followDist`, `Creature::AddCooldown` (`SMSG_SPELL_COOLDOWN` to the owner)
 * Constants: `ACT_ENABLED`, `CMSG_PET_ACTION`, `CMSG_PET_CAST_SPELL`, `SPELL_ATTR_EX_NO_AUTOCAST_AI`
 
 ## world/pethandlers.d
 
 * Projects: CMaNGOS
 * Files: `NPCHandler.cpp`, `PetHandler.cpp`, `SpellEffects.cpp`
-* Functions: `CreatureInfo::isTameable`, `ObjectMgr::CheckPetName`, `ObjectMgr::GetXPForPetLevel`, `Pet::GivePetXP`, `Pet::InitPetCreateSpells`, `Pet::LoadPetFromDB`, `Pet::SavePetToDB`, `Pet::ToggleAutocast`, `Pet::TryLoadFromDB`, `Pet::Unsummon`, `Pet::Update`, `PetAI::PetAI`, `Player::LoadPet`, `Player::PetSpellInitialize`, `Player::SynchronizeLevelWithOwner`, `Spell::CheckCast`, `TameBeastChannel::OnCheckCast`, `WorldSession::HandlePetAction`
+* Functions: `CreatureInfo::isTameable`, `ObjectMgr::CheckPetName`, `ObjectMgr::GetXPForPetLevel`, `Pet::GivePetXP`, `Pet::InitPetCreateSpells`, `Pet::LoadPetFromDB`, `Pet::SavePetToDB`, `Pet::ToggleAutocast`, `Pet::TryLoadFromDB`, `Pet::Unsummon`, `Pet::Update`, `PetAI::PetAI`, `Player::LoadPet`, `Player::PetSpellInitialize`, `Player::SynchronizeLevelWithOwner`, `Spell::CheckCast`, `TameBeastChannel::OnCheckCast`, `WorldSession::HandlePetAction`, `WorldSession::HandlePetCastSpellOpcode`, `Spell::SendCastResult` (a pet's cast), `Player::IsPetNeedBeTemporaryUnsummoned`
 * Constants: `CLASS_HUNTER`, `CLASS_WARLOCK`, `CMSG_PET_CANCEL_AURA`, `CMSG_REQUEST_PET_INFO`, `CONFIG_UINT32_MIN_PET_NAME`, `CORPSE_DECAY_NORMAL`, `CREATURE_TYPEFLAGS_TAMEABLE`, `CREATURE_TYPE_BEAST`, `MAX_PET_NAME`, `PETTAME_DEAD`, `SMSG_PET_ACTION_FEEDBACK`, `SMSG_PET_TAME_FAILURE`, `SMSG_STABLE_RESULT`, `SPELL_ATTR_EX_DISMISS_PET_FIRST`, `SPELL_EFFECT_DISMISS_PET`, `SPELL_EFFECT_SUMMON_DEAD_PET`, `SPELL_EFFECT_SUMMON_PET`, `SPELL_EFFECT_TAMECREATURE`, `UNIT_FLAG_PET_ABANDON`, `UNIT_FLAG_PET_RENAME`
 * Also: `Unit::TakeCharmOf`, `Unit::TakePossessOf`, `Unit::Uncharm`, `CharmInfo::InitCharmCreateSpells`, `UNIT_FIELD_CHARM`, `UNIT_FIELD_CHARMEDBY`, `SMSG_CLIENT_CONTROL_UPDATE`, `CMSG_SET_ACTIVE_MOVER`
 
@@ -1224,7 +1259,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 
 * Projects: CMaNGOS
 * Files: `Relations.cpp`
-* Functions: `CGUnit_C::UnitReaction`, `Player::IsPvP`, `ReputationMgr::GetBaseReputation`, `ReputationMgr::ReputationToRank`, `Unit::CanAttack`, `Unit::CanAttackNow`, `Unit::GetReactionTo`, `Unit::IsEnemy`, `Unit::IsFriend`
+* Functions: `CGUnit_C::UnitReaction`, `Player::IsPvP`, `ReputationMgr::GetBaseReputation`, `ReputationMgr::ReputationToRank`, `Unit::CanAttack`, `Unit::CanAttackNow`, `Unit::GetReactionTo`, `Unit::IsEnemy`, `Unit::IsFriend`, `ReputationMgr::GetForcedRankIfAny` (in `Unit::GetReactionTo` and `GetFactionReaction`)
 * Constants: `FACTION_FLAG_AT_WAR`, `FACTION_TEMPLATE_FLAG_ASSIST_PLAYERS`, `FACTION_TEMPLATE_FLAG_ATTACK_PVP_ACTIVE_PLAYERS`, `PLAYER_DUEL_ARBITER`, `PLAYER_DUEL_TEAM`, `PLAYER_FLAGS`, `PLAYER_FLAGS_CONTESTED_PVP`, `PLAYER_FLAGS_FFA_PVP`, `PLAYER_FLAGS_PVP_DESIRED`, `UNIT_FIELD_FLAGS`
 
 ## world/reputation.d
@@ -1238,7 +1273,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 
 * Projects: CMaNGOS
 * Files: `MiscHandler.cpp`
-* Functions: `Player::CalculateReputationGain`, `Player::GetReputationPriceDiscount`, `Player::ReputationChanged`, `Player::RewardReputation`, `ReputationMgr::LoadFromDB`, `ReputationMgr::ModifyReputation`, `ReputationMgr::SaveToDB`
+* Functions: `Player::CalculateReputationGain`, `Player::GetReputationPriceDiscount`, `Player::ReputationChanged`, `Player::RewardReputation`, `ReputationMgr::LoadFromDB`, `ReputationMgr::ModifyReputation`, `ReputationMgr::SaveToDB`, `Aura::HandleForceReaction`, `ReputationMgr::ApplyForceReaction`, `ReputationMgr::SendForceReactions`, `Player::StopAttackFaction`
 * Constants: `SMSG_INITIALIZE_FACTIONS`, `SMSG_SET_FACTION_STANDING`
 
 ## world/session.d
@@ -1259,8 +1294,8 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 
 * Projects: CMaNGOS
 * Files: `Spell.cpp`
-* Functions: `Spell::CalculatePowerCost`, `SpellCastTargets::read`, `SpellCastTargets::write`
-* Constants: `SMSG_CAST_RESULT`, `SMSG_SPELLENERGIZELOG`, `SMSG_SPELLHEALLOG`, `SMSG_SPELLLOGMISS`, `SMSG_SPELLNONMELEEDAMAGELOG`, `SMSG_SPELL_FAILURE`, `SMSG_SPELL_GO`, `SMSG_SPELL_START`, `SPELL_ATTR_CANT_USED_IN_COMBAT`, `SPELL_ATTR_CASTABLE_WHILE_DEAD`, `SPELL_ATTR_EX2_CANT_CRIT`, `SPELL_ATTR_EX3_ALWAYS_HIT`, `SPELL_ATTR_ON_NEXT_SWING`, `SPELL_ATTR_ON_NEXT_SWING_NO_DAMAGE`
+* Functions: `Spell::CalculatePowerCost`, `SpellCastTargets::read`, `SpellCastTargets::write`, `Unit::MeleeSpellHitResult`, `Unit::MagicSpellHitResult`, `Unit::CanBlockAbility`, `Spell::DoSpellHitOnUnit` (heartbeat resistance)
+* Constants: `SMSG_CAST_RESULT`, `SMSG_SPELLENERGIZELOG`, `SMSG_SPELLHEALLOG`, `SMSG_SPELLLOGMISS`, `SMSG_SPELLNONMELEEDAMAGELOG`, `SMSG_SPELL_FAILURE`, `SMSG_SPELL_GO`, `SMSG_SPELL_START`, `SPELL_ATTR_CANT_USED_IN_COMBAT`, `SPELL_ATTR_CASTABLE_WHILE_DEAD`, `SPELL_ATTR_EX2_CANT_CRIT`, `SPELL_ATTR_EX3_ALWAYS_HIT`, `SPELL_ATTR_ON_NEXT_SWING`, `SPELL_ATTR_ON_NEXT_SWING_NO_DAMAGE`, `SPELL_ATTR_HEARTBEAT_RESIST`, `SPELL_ATTR_EX3_COMPLETELY_BLOCKED`, `SPELL_MISS_BLOCK`
 * Also: `SpellLog::Initialize`, `SpellLog::AddLog`, `SpellLog::SendToSet` (`SMSG_SPELLLOGEXECUTE`; the targets' guids packed for the 1.12 client, where CMaNGOS writes them whole)
 
 ## world/spellhandlers.d
@@ -1321,7 +1356,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 
 * Projects: CMaNGOS
 * Files: `TaxiHandler.cpp`, `Player.cpp`
-* Functions: `Player::ActivateTaxiPathTo`, `Player::LoadFromDB` (the saved flight), `Player::TaxiFlightResume`
+* Functions: `Player::ActivateTaxiPathTo`, `Player::LoadFromDB` (the saved flight), `Player::TaxiFlightResume`, `Player::Mount` and `Player::Unmount` (the pet set aside for the flight)
 * Constants: `SMSG_MONSTER_MOVE`
 
 ## world/teleport.d
@@ -1342,8 +1377,8 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 
 * Projects: CMaNGOS
 * Files: `TradeHandler.cpp`
-* Functions: `Item::CanBeTraded`, `Player::TradeCancel`, `TradeData::SetAccepted`
-* Constants: `ITEM_FIELD_GIFTCREATOR`, `TRADE_DISTANCE`, `TRADE_SLOT_COUNT`, `TRADE_SLOT_TRADED_COUNT`
+* Functions: `Item::CanBeTraded`, `Player::TradeCancel`, `TradeData::SetAccepted`, `TradeData::SetSpell`, `TradeData::SetItem`, `WorldSession::HandleAcceptTradeOpcode`, `WorldSession::SendUpdateTrade`, `Spell::CheckCast` (the trade slot), `SpellCastTargets::setTradeItemTarget`
+* Constants: `ITEM_FIELD_GIFTCREATOR`, `TRADE_DISTANCE`, `TRADE_SLOT_COUNT`, `TRADE_SLOT_TRADED_COUNT`, `TRADE_SLOT_NONTRADED`, `TARGET_FLAG_TRADE_ITEM`, `SPELL_FAILED_NOT_TRADING`, `SPELL_FAILED_ITEM_NOT_READY`, `SPELL_FAILED_DONT_REPORT`, `TRIGGERED_FORCE_COSTS`
 
 ## world/unit.d
 

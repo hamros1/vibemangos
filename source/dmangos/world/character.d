@@ -51,6 +51,11 @@ import dmangos.world.gameobjecthandlers : GameObjectHandlers;
 import dmangos.world.auctionhandlers : AuctionHandlers;
 import dmangos.world.taxihandlers : TaxiHandlers;
 import dmangos.world.crowdcontrol : CrowdControlHandlers;
+import dmangos.world.mounting : MountRules;
+import dmangos.world.guardians : GuardianSummons;
+import dmangos.world.durability : DurabilityRules;
+import dmangos.world.rituals : RitualSummoning;
+import dmangos.world.homebind : HomebindTimer;
 import dmangos.world.unit : Blow, UnitRef;
 import dmangos.world.auras : Aura, makeAura;
 import dmangos.world.spells : SpellInfo;
@@ -360,7 +365,14 @@ final class Character : OnlinePlayer, Looter
     {
         if (player is null || player.deathState != DeathState.alive)
             return;
-        addAura(makeAura(spell, caster, casterLevel, durationMs, false, values));
+        import dmangos.world.spellcast : heartbeatResistChance;
+        import dmangos.world.updatefields : UNIT_FIELD_RESISTANCES;
+
+        auto aura = makeAura(spell, caster, casterLevel, durationMs, false, values);
+        if (auto from = map.unit(caster)) // it may break early (`SPELL_ATTR_HEARTBEAT_RESIST`)
+            aura.setHeartbeatResist(heartbeatResistChance(from.fighter, player.fighter, *spell,
+                cast(int) player.values.get!UNIT_FIELD_RESISTANCES(spell.casting.school), 0), durationMs);
+        addAura(aura);
     }
 
     /// See `UnitRef`.
@@ -671,6 +683,7 @@ final class Character : OnlinePlayer, Looter
         if (player is null)
             return;
         updateLeaderFlag();
+        instanceValidityOnGroupChange(); // out of the group inside a dungeon: sent out (`dmangos.world.homebind`)
         if (transferring)
             return;
         map.refreshVisibility(this); // a ghost and its group see each other
@@ -805,6 +818,11 @@ private:
     mixin AuctionHandlers;
     mixin TaxiHandlers;
     mixin CrowdControlHandlers;
+    mixin MountRules;
+    mixin GuardianSummons;
+    mixin DurabilityRules;
+    mixin RitualSummoning;
+    mixin HomebindTimer;
     mixin PvPHandlers;
     mixin BattlegroundHandlers;
     mixin EnchantingHandlers;

@@ -197,6 +197,11 @@ mixin template TaxiHandlers()
     /// Mounted on `display`, flagged, along `flight` from where the player is.
     private void takeOff(ref TaxiFlight flight, uint display)
     {
+        import dmangos.world.pet : PetSlot;
+
+        // The pet stays behind until the landing (`Player::Mount` without an aura: `UnsummonPetTemporaryIfAny`).
+        if (ownPet !is null)
+            unsummonPet(PetSlot.current);
         const at = player.position;
         player.values.set!UNIT_FIELD_MOUNTDISPLAYID(display);
         player.values.set!UNIT_FIELD_FLAGS(player.values.get!UNIT_FIELD_FLAGS | UnitFlags.taxiFlight);
@@ -312,6 +317,7 @@ mixin template TaxiHandlers()
         pvpArrived();
         if (destination !is null)
             teleportTo(map.id, Position(destination.x, destination.y, destination.z, player.position.orientation));
+        petsOnArrival(); // the pet comes back (`Player::Unmount`: `ResummonPetTemporaryUnSummonedIfAny`)
     }
 
     /**

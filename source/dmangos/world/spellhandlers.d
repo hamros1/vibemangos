@@ -431,7 +431,7 @@ private:
         }
         if (!triggered)
         {
-            c.timer = castTimeCheat ? 0 : max(0, cast(int)(spellMod(SpellModOp.castingTime, spell,
+            c.timer = castTimeCheat || tradeSpellCompleting ? 0 : max(0, cast(int)(spellMod(SpellModOp.castingTime, spell,
                 castTime(*spell, context.client, player.data.level)) * player.auras.castTimeFactor()));
             c.castTime = c.timer;
             pushbacks = 0;
@@ -690,6 +690,7 @@ private:
         }
         if (bobber && !bobberLooted)
             removeBobber();
+        closeRitualPortal(); // a ritual's portal goes with its caster's channel
         // Tame Beast's twenty seconds are up: the beast is tamed.
         if (!cancelled && spell.id == imported!"dmangos.world.pethandlers".spellTameBeast)
             tameBeastChannelDone(channelTarget);
@@ -1139,6 +1140,9 @@ private:
             const refused = crowdControlRefusal(spell);
             if (refused != SpellCastResult.ok)
                 return refused;
+            const riding = mountedCastRefusal(spell, triggered); // "You are mounted" (`dmangos.world.mounting`)
+            if (riding != SpellCastResult.ok)
+                return riding;
         }
         if (start && !triggered)
         {
@@ -1225,6 +1229,9 @@ private:
             if (spellScriptEvent(spell, CastChecked(EntityRef(player.guid), EntityRef(targets.unit)), refusal))
                 return cast(SpellCastResult) refusal;
         }
+        // At the trade window's "will not be traded" item: kept for the trade's end (`dmangos.world.tradehandlers`).
+        if (targets.mask & TargetFlags.tradeItem)
+            return tradeSpellCheck(spell, targets, itemEntry);
         return SpellCastResult.ok;
     }
 
@@ -1855,8 +1862,11 @@ private:
                 makePersistentArea(spell, i, c.targets, value);
             }
             break;
-        case SpellEffect.transDoor: // SPELL_EFFECT_TRANS_DOOR: an object the spell puts down (a fishing bobber)
-            castBobber(spell, i);
+        case SpellEffect.transDoor: // SPELL_EFFECT_TRANS_DOOR: an object the spell puts down (a fishing bobber, a ritual's portal)
+            if (isRitualPortal(cast(uint) spell.miscValue[i] in context.data.gameObjectTemplates))
+                openRitualPortal(spell, i); // `dmangos.world.rituals`
+            else
+                castBobber(spell, i);
             break;
         case SpellEffect.sendEvent: // SPELL_EFFECT_SEND_EVENT: the event's script, the caster its source and a game object its target
         {
@@ -2013,12 +2023,12 @@ private:
         case SpellEffect.feedPet: // SPELL_EFFECT_FEED_PET
             feedPet(c.targets.item);
             break;
-        case SpellEffect.enchantItem: // SPELL_EFFECT_ENCHANT_ITEM
-            enchantItem(c.targets.item, cast(uint) spell.miscValue[i], false, 0);
+        case SpellEffect.enchantItem: // SPELL_EFFECT_ENCHANT_ITEM (at the trade window: the other's item)
+            enchantTarget(c.targets, cast(uint) spell.miscValue[i], false, 0);
             updateCraftSkill(spell.id);
             break;
         case SpellEffect.enchantItemTemporary: // SPELL_EFFECT_ENCHANT_ITEM_TEMPORARY
-            enchantItem(c.targets.item, cast(uint) spell.miscValue[i], true, value);
+            enchantTarget(c.targets, cast(uint) spell.miscValue[i], true, value);
             break;
         case SpellEffect.triggerSpell: // SPELL_EFFECT_TRIGGER_SPELL
             if (const triggered = context.data.spells.spell(spell.triggerSpell[i]))
@@ -2078,22 +2088,47 @@ private:
             break;
         case SpellEffect.detect: // SPELL_EFFECT_DETECT: Detect's marker; CMaNGOS does nothing with it either
             break;
+        case SpellEffect.summonGuardian, SpellEffect.summon, SpellEffect.summonObjectWild: // SPELL_EFFECT_SUMMON_GUARDIAN,
+            // _SUMMON, _SUMMON_OBJECT_WILD (`dmangos.world.guardians`): once a cast, whatever its targets
+            if (!(c.persistentDone & (1 << i)))
+            {
+                c.persistentDone |= cast(ubyte)(1 << i);
+                if (spell.effect[i] == SpellEffect.summonObjectWild)
+                    summonWildObjectEffect(spell, i, c.targets);
+                else
+                    summonGuardianEffect(spell, i, value, c.targets, c.triggered, c.castItemEntry,
+                        spell.effect[i] == SpellEffect.summon);
+            }
+            break;
+        case SpellEffect.summonPlayer: // SPELL_EFFECT_SUMMON_PLAYER: the target asked to come (`dmangos.world.rituals`)
+            if (!(c.persistentDone & (1 << i)))
+            {
+                c.persistentDone |= cast(ubyte)(1 << i);
+                summonPlayerEffect(c.targets.unit ? c.targets.unit : target);
+            }
+            break;
+        case SpellEffect.durabilityDamage, SpellEffect.durabilityDamagePct: // a player's gear worn (`dmangos.world.durability`)
+            if (auto who = target == player.guid ? this : cast(typeof(this)) context.onlinePlayer(target))
+                if (who.player !is null && who.map is map)
+                    who.durabilityDamageEffect(spell, i, value, spell.effect[i] == SpellEffect.durabilityDamagePct,
+                        player.guid);
+            break;
         case SpellEffect.none:
             break;
         // Not done by a player's cast (some, such as skills and proficiencies, are done when a spell is learned):
         case SpellEffect.portalTeleport, SpellEffect.environmentalDamage, SpellEffect.bind, SpellEffect.portal,
             SpellEffect.ritualBase, SpellEffect.ritualSpecialize, SpellEffect.ritualActivatePortal, SpellEffect.dodge,
             SpellEffect.evade, SpellEffect.parry, SpellEffect.block, SpellEffect.weapon, SpellEffect.defense,
-            SpellEffect.summon, SpellEffect.triggerMissile, SpellEffect.summonChangeItem, SpellEffect.spellDefense,
-            SpellEffect.language, SpellEffect.dualWield, SpellEffect.summonGuardian,
+            SpellEffect.triggerMissile, SpellEffect.summonChangeItem, SpellEffect.spellDefense,
+            SpellEffect.language, SpellEffect.dualWield,
             SpellEffect.teleportUnitsFaceCaster, SpellEffect.skillStep, SpellEffect.addHonor, SpellEffect.spawn,
             SpellEffect.tradeSkill, SpellEffect.stealth, SpellEffect.forceCriticalHit, SpellEffect.guaranteeHit,
             SpellEffect.proficiency, SpellEffect.healthFunnel, SpellEffect.powerFunnel, SpellEffect.pull,
-            SpellEffect.summonPossessed, SpellEffect.healMechanical, SpellEffect.summonObjectWild,
-            SpellEffect.createHouse, SpellEffect.bindSight, SpellEffect.summonPlayer, SpellEffect.activateObject,
+            SpellEffect.summonPossessed, SpellEffect.healMechanical,
+            SpellEffect.createHouse, SpellEffect.bindSight, SpellEffect.activateObject,
             SpellEffect.threatAll, SpellEffect.enchantHeldItem, SpellEffect.summonPhantasm, SpellEffect.knockBack,
-            SpellEffect.inebriate, SpellEffect.destroyAllTotems, SpellEffect.durabilityDamage,
-            SpellEffect.summonDemon, SpellEffect.durabilityDamagePct, SpellEffect.spiritHeal, SpellEffect.skill,
+            SpellEffect.inebriate, SpellEffect.destroyAllTotems,
+            SpellEffect.summonDemon, SpellEffect.spiritHeal, SpellEffect.skill,
             SpellEffect.applyAreaAuraPet, SpellEffect.teleportGraveyard, SpellEffect.n122, SpellEffect.sendTaxi,
             SpellEffect.pullTowards, SpellEffect.modifyThreatPercent, SpellEffect.n126, SpellEffect.n127,
             SpellEffect.applyAreaAuraFriend, SpellEffect.applyAreaAuraEnemy:

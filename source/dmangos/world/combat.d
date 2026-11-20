@@ -674,7 +674,7 @@ bool canParry(const Fighter victim, const Fighter attacker) pure nothrow @nogc @
 }
 
 /// Whether the victim may block: physical attacks from the front.
-private bool canBlock(const Fighter victim, const Fighter attacker, uint school) pure nothrow @nogc @safe
+bool canBlock(const Fighter victim, const Fighter attacker, uint school) pure nothrow @nogc @safe
 {
     return school == 0 && victim.canBlock && victim.block >= 0.005f && isFacingFront(attacker, victim);
 }

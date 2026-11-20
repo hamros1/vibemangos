@@ -61,6 +61,9 @@ enum SpellCastResult : ubyte
     notKnown = 0x38,
     notReady = 0x3C,
     notStanding = 0x3E,
+    notTrading = 0x40,         /// "Tried to enchant a trade item, but not trading"
+    notMounted = 0x39,         /// "You are mounted"
+    notOnTaxi = 0x3A,          /// "You are in flight"
     notWhileGhost = 0x42,
     noPet = 0x4C,
     lowLevel = 0x2B,
@@ -639,6 +642,40 @@ float magicMissChance(const Fighter caster, const Fighter victim, const ref Spel
     return chance;
 }
 
+/// `SPELL_ATTR_HEARTBEAT_RESIST`: a hostile aura of the spell may break early, at each heartbeat.
+enum uint spellAttrHeartbeatResist = 0x40000000;
+
+/// `SPELL_ATTR_EX3_COMPLETELY_BLOCKED`: an ability a shield blocks whole (a miss), not in part.
+enum uint spellAttrEx3CompletelyBlocked = 0x00000008;
+
+/**
+ * The chance (percent) a hostile aura of `spell` breaks at each heartbeat (CMaNGOS's `MeleeSpellHitResult` and
+ * `MagicSpellHitResult` keep it): its chance to miss or be resisted at the hit, for a spell with
+ * `SPELL_ATTR_HEARTBEAT_RESIST`; none for others, nor for a spell without a damage class (never avoided).
+ */
+float heartbeatResistChance(const Fighter caster, const Fighter victim, const ref SpellInfo spell, int resistance,
+    float hitBonus) pure nothrow @nogc @safe
+{
+    import dmangos.world.combat : AttackType, missChance;
+
+    if (!(spell.attributes & spellAttrHeartbeatResist))
+        return 0;
+    float chance = 0;
+    switch (spell.casting.dmgClass)
+    {
+    case DamageClass.melee, DamageClass.ranged:
+        chance = missChance(caster, victim, spell.casting.dmgClass == DamageClass.ranged ? AttackType.ranged
+            : AttackType.mainHand);
+        break;
+    case DamageClass.magic:
+        chance = magicMissChance(caster, victim, spell, resistance, hitBonus);
+        break;
+    default:
+        break;
+    }
+    return chance > 0 ? chance : 0;
+}
+
 /**
  * How `spell` fares against one target it may attack, for every caster kind and victim kind alike: an
  * evading creature evades; a spell that always hits, or has no damage class, hits; a melee or ranged one
@@ -649,7 +686,8 @@ SpellMissInfo rollSpellHit(Rng)(const Fighter caster, const Fighter victim, cons
     int resistance, float hitBonus, ref Rng rng)
 {
     import std.random : uniform01;
-    import dmangos.world.combat : AttackType, canDodge, canParry, dodgeChance, missChance, parryChance;
+    import dmangos.world.combat : AttackType, blockChance, canBlock, canDodge, canParry, dodgeChance, missChance,
+        parryChance;
 
     enum uint noActiveDefense = 0x00200000; // SPELL_ATTR_NO_ACTIVE_DEFENSE: never dodged or parried (Overpower, Ambush)
 
@@ -679,8 +717,19 @@ SpellMissInfo rollSpellHit(Rng)(const Fighter caster, const Fighter victim, cons
                 return SpellMissInfo.dodge;
         }
         if (type != AttackType.ranged && canParry(victim, caster))
+        {
             edge += parryChance(victim, caster, type);
-        return roll < edge ? SpellMissInfo.parry : SpellMissInfo.none;
+            if (roll < edge)
+                return SpellMissInfo.parry;
+        }
+        // An ability a shield blocks whole: blocked on the same roll (`CanBlockAbility` with `miss`).
+        if ((spell.casting.attributesEx3 & spellAttrEx3CompletelyBlocked) && canBlock(victim, caster, 0))
+        {
+            edge += blockChance(victim, caster, type);
+            if (roll < edge)
+                return SpellMissInfo.block;
+        }
+        return SpellMissInfo.none;
     }
     return roll < magicMissChance(caster, victim, spell, resistance, hitBonus) ? SpellMissInfo.resist
         : SpellMissInfo.none;
@@ -740,6 +789,30 @@ unittest
     assert(rollSpellHit(mage, wolf, hammer, 0, 0, high) == SpellMissInfo.immune);
     hammer.attributes = 0x20000000; // SPELL_ATTR_NO_IMMUNITIES
     assert(rollSpellHit(mage, wolf, hammer, 0, 0, high) == SpellMissInfo.none);
+
+    // An ability a shield blocks whole (`SPELL_ATTR_EX3_COMPLETELY_BLOCKED`): blocked past the dodge; others not.
+    import dmangos.world.combat : blockChance, dodgeChance;
+
+    SpellInfo bash;
+    bash.casting.dmgClass = DamageClass.melee;
+    wolf.block = 10;
+    wolf.canBlock = true;
+    const pastDodge = missChance(mage, wolf, AttackType.mainHand) + dodgeChance(wolf, mage, AttackType.mainHand);
+    auto blocked = Fixed(cast(ulong) hits(pastDodge + blockChance(wolf, mage, AttackType.mainHand) / 2));
+    assert(rollSpellHit(mage, wolf, bash, 0, 0, blocked) == SpellMissInfo.none, "blocked in part only, later");
+    bash.casting.attributesEx3 = spellAttrEx3CompletelyBlocked;
+    assert(rollSpellHit(mage, wolf, bash, 0, 0, blocked) == SpellMissInfo.block);
+    bash.casting.dmgClass = DamageClass.magic; // not for spells
+    assert(rollSpellHit(mage, wolf, bash, 0, 0, blocked) != SpellMissInfo.block);
+
+    // Heartbeat resistance: the chance to miss or be resisted, for spells marked so.
+    SpellInfo root;
+    root.casting.dmgClass = DamageClass.magic;
+    root.casting.school = 3; // nature
+    assert(heartbeatResistChance(mage, wolf, root, 0, 0) == 0, "not marked");
+    root.attributes = spellAttrHeartbeatResist;
+    assert(heartbeatResistChance(mage, wolf, root, 0, 0) == magicMissChance(mage, wolf, root, 0, 0));
+    assert(heartbeatResistChance(mage, wolf, root, 0, 0) > 0);
 }
 
 // A victim's resistance to a mechanic (a dwarf's or a talent's against fear) adds to the magic miss chance.
