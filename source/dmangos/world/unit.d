@@ -385,6 +385,14 @@ Character creditedPlayer(UnitRef unit)
  */
 void dealDamage(UnitRef attacker, UnitRef victim, uint damage, const Blow blow)
 {
+    // A player's worn items wear a little with the damage it deals and takes (`Unit::DealDamage`).
+    if (damage)
+    {
+        if (attacker.kind == UnitKind.player && attacker != victim)
+            attacker.session.wearOnHit();
+        if (victim.kind == UnitKind.player)
+            victim.session.wearOnHit();
+    }
     if (blow.kind == BlowKind.melee && blow.melee.targetState == VictimState.parry)
         final switch (victim.kind)
         {

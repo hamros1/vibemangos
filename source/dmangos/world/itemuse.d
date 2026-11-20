@@ -20,6 +20,8 @@
  *   the time left (`SMSG_ITEM_TIME_UPDATE`) at login and when such an item comes into the inventory; the
  *   field counts down each second, and is saved every half minute and when the character is saved
  *   (`Player::UpdateItemDuration`, `Item::UpdateDuration`).)
+ * $(LI Wear: each blow dealt or taken has a 0.5% chance to take a point of durability from a random worn item
+ *   (`Unit::DealDamage`); a thrown weapon that does not stack loses one a throw.)
  * )
  */
 module dmangos.world.itemuse;
@@ -51,6 +53,7 @@ mixin template ItemUseHandlers()
 {
     import core.time : Duration, msecs, seconds;
     import dmangos.bytes : ByteWriter;
+    import dmangos.world.defines : inventorySlotBag0;
     import dmangos.world.inventory : EquipError, InventoryResult, Item, ItemState;
     import dmangos.world.itemuse : chargesAfterUse, secondsLeftAfter;
     import dmangos.world.opcodes : Opcode;
@@ -152,6 +155,40 @@ mixin template ItemUseHandlers()
             uint one = 1;
             player.inventory.destroyCount(item, one);
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // Wear
+    // -----------------------------------------------------------------------
+
+    /**
+     * Damage dealt or taken: a chance in two hundred (`DurabilityLossChance.Damage`, 0.5%) that a worn item of a
+     * random equipment slot loses a point of durability; broken, its stats go (CMaNGOS `Unit::DealDamage`,
+     * `Player::DurabilityPointLossForEquipSlot`).
+     */
+    package void wearOnHit()
+    {
+        import std.random : uniform, uniform01;
+        import dmangos.world.defines : equipmentSlotEnd;
+
+        enum float chancePercent = 0.5f;
+        if (player is null || uniform01(map.random) * 100 >= chancePercent)
+            return;
+        loseDurability(cast(ubyte) uniform(0, equipmentSlotEnd, map.random), 1);
+    }
+
+    /// The worn item in `slot` loses `points` of durability (not below 0); broken, its stats go.
+    package void loseDurability(ubyte slot, uint points)
+    {
+        auto item = player.inventory[inventorySlotBag0, slot];
+        if (item is null || !item.maxDurability || !item.durability)
+            return;
+        const now = item.durability > points ? item.durability - points : 0;
+        item.values.set!ITEM_FIELD_DURABILITY(now);
+        if (now == 0)
+            player.inventory.equipmentChanged = true; // broken: its stats go
+        player.inventory.setState(item, ItemState.changed);
+        flushInventory();
     }
 
     // -----------------------------------------------------------------------

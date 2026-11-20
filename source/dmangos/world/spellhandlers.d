@@ -243,6 +243,14 @@ private:
             player.inventory.destroyCount(entry, 1);
             flushInventory();
         }
+        else if (spell.attributes & 0x2) // a thrown weapon that does not stack wears instead (`Spell::TakeAmmo`)
+        {
+            import dmangos.world.defines : equipmentSlotRanged, InventoryType;
+
+            const weapon = player.inventory.equipped(equipmentSlotRanged);
+            if (weapon !is null && weapon.proto.inventoryType == InventoryType.thrown && weapon.proto.stackable <= 1)
+                loseDurability(equipmentSlotRanged, 1);
+        }
     }
 
     /// Whether `spell` is off its cooldown.

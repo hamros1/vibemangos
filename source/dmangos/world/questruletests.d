@@ -121,7 +121,6 @@ unittest
     me.spells ~= [sprinkle, finish];
     session.addQuest(*context.data.quests.quest(cast_.id));
     session.addQuest(*context.data.quests.quest(event.id));
-    session.flushInventory(true);
     const given = client.read();
     assert(me.inventory.count(itemJerky) == 2);
     const push = bodyOf(given, Opcode.SMSG_ITEM_PUSH_RESULT);
@@ -142,9 +141,19 @@ unittest
     assert(opcodesOf(client.read()).canFind(Opcode.SMSG_QUESTUPDATE_COMPLETE) && me.questStatus[event.id].explored,
         "the effect completes it");
 
-    // Rewarded: the shirt is received, not created, with no chat line of its own.
-    session.rewardQuest(*context.data.quests.quest(cast_.id), 0);
-    foreach (p; client.read())
+    // Rewarded (the trainer ends it): the shirt is received, not created, with no chat line of its own.
+    context.data.quests.creatureEnds[creatureTrainer] = [cast_.id];
+    auto trainer = cast(Creature) context.map(0).findObject(makeGuid(HighGuid.unit, creatureTrainer, trainerSpawn));
+    trainer.values.set!UNIT_NPC_FLAGS(trainer.values.get!UNIT_NPC_FLAGS | 0x2);
+    trainer.movement.position = Position(-8948.5f, -132.49f, 83.53f, 0);
+    ByteWriter choose;
+    choose.put(trainer.guid);
+    choose.put(cast_.id);
+    choose.put(0u);
+    client.write(Opcode.CMSG_QUESTGIVER_CHOOSE_REWARD, choose.data);
+    const rewarded = client.read();
+    assert(opcodesOf(rewarded).canFind(Opcode.SMSG_QUESTGIVER_QUEST_COMPLETE) && me.inventory.count(itemShirt) >= 1);
+    foreach (p; rewarded)
         if (p.opcode == Opcode.SMSG_ITEM_PUSH_RESULT)
         {
             auto pr = ByteReader(p.body_);
@@ -154,12 +163,15 @@ unittest
 
     // Abandoned: the source item goes back.
     session.addQuest(*context.data.quests.quest(cast_.id)); // (rewarded, but taken again for the test)
-    session.flushInventory(true);
     client.read();
     const jerky = me.inventory.count(itemJerky);
     assert(jerky >= 2);
     ByteWriter w;
-    w.put(cast(ubyte) session.questSlot(cast_.id));
+    ubyte slot;
+    foreach (ubyte i; 0 .. 20)
+        if (me.values[PLAYER_QUEST_LOG_1_1 + 3 * i] == cast_.id)
+            slot = i;
+    w.put(slot);
     client.write(Opcode.CMSG_QUESTLOG_REMOVE_QUEST, w.data);
     assert(me.inventory.count(itemJerky) == jerky - 2, "taken back");
 }

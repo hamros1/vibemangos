@@ -638,11 +638,12 @@ private:
         }
     }
 
-    /// Every aura goes on death but the passive ones.
+    /// Every aura goes on death but the passive ones and those that last through it (CMaNGOS `RemoveAllAurasOnDeath`).
     package void removeAurasOnDeath()
     {
+        enum uint allowAuraWhileDead = 0x00100000; // SPELL_ATTR_EX3_ALLOW_AURA_WHILE_DEAD: flasks, Deserter, sickness
         foreach (aura; player.auras.list.dup)
-            if (!aura.passive)
+            if (!aura.passive && !(aura.spell.casting.attributesEx3 & allowAuraWhileDead))
                 removeAura(aura);
     }
 
