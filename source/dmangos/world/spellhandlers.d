@@ -4677,3 +4677,45 @@ unittest
     session.addAura(makeAura((90072 in context.data.spells.spells), 7, 60, 60_000, true, [300, 0, 0]));
     assert(map.seesObject(7, keeper.guid), "seen through it");
 }
+
+/// A charm (Enslave Demon): the creature is the player's pet while the aura lasts, then its own again.
+unittest
+{
+    import std.algorithm.searching : canFind;
+    import dmangos.auth.accounts : AccountLevel;
+    import dmangos.world.creature : Creature;
+    import dmangos.world.movement : Position;
+    import dmangos.world.objects : HighGuid, makeGuid;
+    import dmangos.world.opcodes : Opcode;
+    import dmangos.world.spellcast : SpellCastResult, SpellTargets, TargetFlags;
+    import dmangos.world.spells : SpellInfo;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+    import dmangos.world.updatefields : UNIT_FIELD_CHARMEDBY, UNIT_FIELD_FACTIONTEMPLATE;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto enslave = SpellInfo(1098);
+    enslave.effect[0] = SpellEffect.applyAura;
+    enslave.implicitTargetA[0] = ImplicitTarget.enemy;
+    enslave.casting.applyAuraName[0] = AuraType.modCharm;
+    enslave.casting.durationIndex = 0; // until cancelled
+    enslave.casting.rangeIndex = 0;
+    context.data.spells.spells[1098] = enslave;
+
+    auto warlock = loggedIn(context, db, 7, "Gul", Position(-8949.95f, -132.49f, 83.53f), AccountLevel.player);
+    warlock.read();
+    auto session = warlock.session.inWorld;
+    auto map = context.map(0);
+    auto keeper = cast(Creature) map.findObject(makeGuid(HighGuid.unit, creatureInnkeeper, innkeeperSpawn));
+    const ownFaction = keeper.values.get!UNIT_FIELD_FACTIONTEMPLATE;
+    session.applyAuraEffect((1098 in context.data.spells.spells), 0, keeper.guid);
+    assert(session.charmed is keeper && keeper.petOwner == 7, "the player's");
+    assert(keeper.values.get!UNIT_FIELD_CHARMEDBY == 7);
+    assert(keeper.values.get!UNIT_FIELD_FACTIONTEMPLATE == session.player.values.get!UNIT_FIELD_FACTIONTEMPLATE);
+    assert(opcodesOf(warlock.read()).canFind(Opcode.SMSG_PET_SPELLS), "its pet bar");
+
+    keeper.loseAura(keeper.auras.find(1098), map);
+    assert(session.charmed is null && keeper.petOwner == 0 && keeper.petData is null, "its own again");
+    assert(keeper.values.get!UNIT_FIELD_FACTIONTEMPLATE == ownFaction);
+}

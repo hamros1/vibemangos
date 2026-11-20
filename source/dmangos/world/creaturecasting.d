@@ -86,6 +86,17 @@ mixin template CreatureCasting()
     void auraLost(ulong caster, uint spell, CombatWorld world)
     {
         world_ = world;
+        // A charm's aura went: the charmer lets it go (`Unit::Uncharm`).
+        if (me.petOwner == caster && caster)
+            if (const info = lore.spellInfo(spell))
+                foreach (i; 0 .. 3)
+                {
+                    const kind = info.casting.applyAuraName[i];
+                    if (kind == AuraType.modCharm || kind == AuraType.modPossess || kind == AuraType.modPossessPet)
+                        if (auto charmer = world.unit(caster))
+                            if (charmer.kind == imported!"dmangos.world.unit".UnitKind.player)
+                                charmer.session.endCharm();
+                }
         raiseScript(AuraRemoved(EntityRef(caster), spell));
     }
 

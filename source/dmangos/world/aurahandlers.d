@@ -58,7 +58,7 @@ private:
      * `SPELL_EFFECT_APPLY_AURA` (at the spell's first aura effect, for all of them): the aura on its
      * target, this player or another, or a creature.
      */
-    void applyAuraEffect(const(SpellInfo)* spell, size_t i, ulong target)
+    package void applyAuraEffect(const(SpellInfo)* spell, size_t i, ulong target)
     {
         static bool auraEffect(uint effect) { return effect == SpellEffect.applyAura || effect == SpellEffect.applyAreaAuraParty; }
         foreach (j; 0 .. i)
@@ -103,6 +103,19 @@ private:
             foreach (j; 0 .. 3)
                 if (auraEffect(spell.effect[j]))
                     auraAppliedScript(spell, j, target, values[j]);
+            // A charm (Enslave Demon) or a possession (Mind Control, Eyes of the Beast): the creature is the player's.
+            foreach (j; 0 .. 3)
+                if (auraEffect(spell.effect[j]))
+                {
+                    const kind = spell.casting.applyAuraName[j];
+                    if (kind == AuraType.modCharm || kind == AuraType.modPossess || kind == AuraType.modPossessPet)
+                    {
+                        takeCharm(creature, spell, kind != AuraType.modCharm);
+                        break;
+                    }
+                }
+            if (charmed is creature)
+                return;
             spellAttacked(creature, 0);
             return;
         }
