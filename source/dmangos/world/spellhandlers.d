@@ -257,11 +257,18 @@ private:
         }
     }
 
-    /// Whether `spell` is off its cooldown.
+    /// Whether `spell` is off its cooldown: its own, and its category's (Ice Block's, the Hearthstone's).
     package bool spellIsReady(uint spell)
     {
+        const now = context.clock();
         if (auto at = spell in spellReadyAt)
-            return context.clock() >= *at;
+            if (now < *at)
+                return false;
+        if (const info = context.data.spells.spell(spell))
+            if (info.category)
+                if (auto at = info.category in categoryReadyAt)
+                    if (now < *at)
+                        return false;
         return true;
     }
 

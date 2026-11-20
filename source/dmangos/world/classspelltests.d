@@ -401,17 +401,33 @@ unittest
         casting.school = 2;
         casting.spellFamilyName = 3;
     }
+    // Ice Block as spell_template has it: no cooldown of its own, its category's 5 minutes.
+    with (a.spell(11958, SpellEffect.dummy, ImplicitTarget.caster))
+    {
+        recoveryTime = 0;
+        category = 37;
+        categoryRecoveryTime = 300_000;
+        casting.school = 4;
+        casting.spellFamilyName = 3;
+        casting.spellFamilyFlags = 0x80000;
+    }
     with (a.spell(12472, SpellEffect.dummy, ImplicitTarget.caster))
         casting.spellFamilyName = 3;
     a.cast_(122);
     a.cast_(2136);
-    assert(!a.me.spellIsReady(122) && !a.me.spellIsReady(2136));
+    a.tick(1600);
+    a.cast_(11958);
+    assert(!a.me.spellIsReady(122) && !a.me.spellIsReady(2136) && !a.me.spellIsReady(11958));
     a.tick(1600);
     a.hero.read();
     a.cast_(12472);
-    auto cleared = a.packet(Opcode.SMSG_CLEAR_COOLDOWN);
-    assert(cleared !is null && ByteReader(cleared).read!uint == 122, "the client told");
-    assert(a.me.spellIsReady(122) && !a.me.spellIsReady(2136), "frost only");
+    uint[] cleared;
+    foreach (p; a.hero.read())
+        if (p.opcode == Opcode.SMSG_CLEAR_COOLDOWN)
+            cleared ~= ByteReader(p.body_).read!uint;
+    import std.algorithm.searching : canFind;
+    assert(cleared.canFind(122) && cleared.canFind(11958) && !cleared.canFind(2136), "the client told, frost only");
+    assert(a.me.spellIsReady(122) && a.me.spellIsReady(11958) && !a.me.spellIsReady(2136), "frost only");
 }
 
 /// Preparation (`spell_preparation`): the rogue's other abilities are ready again.

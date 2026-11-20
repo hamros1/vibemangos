@@ -699,15 +699,21 @@ mixin template ClassSpells()
      */
     package uint resetCooldowns(uint family, uint schoolMask, uint except)
     {
-        uint ended;
+        // The spells cooling down by their own time or their category's (Ice Block has only a category's).
+        bool[uint] cooling;
         foreach (id; spellReadyAt.keys)
+            cooling[id] = true;
+        foreach (id; cooldownCategory.keys)
+            cooling[id] = true;
+        uint ended;
+        foreach (id; cooling.keys)
         {
             const spell = context.data.spells.spell(id);
             if (spell is null || id == except || spell.casting.spellFamilyName != family)
                 continue;
             if (schoolMask && !(schoolMask & (1u << spell.casting.school)))
                 continue;
-            if (spell.recoveryTime == 0 && spell.categoryRecoveryTime == 0)
+            if ((spell.recoveryTime == 0 && spell.categoryRecoveryTime == 0) || spellIsReady(id))
                 continue;
             clearCooldownFor(id);
             ++ended;
