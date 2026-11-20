@@ -198,13 +198,19 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 
 * Projects: CMaNGOS
 * Files: `ScriptDevAI/scripts/eastern_kingdoms/boss_kazzak.cpp`
-* Functions/ScriptNames: `boss_kazzak`
+* Functions/ScriptNames: `boss_kazzak`, `spell_mark_of_lord_kazzak` (`MarkOfLordKazzak::OnPeriodicTickEnd`)
 
 ## scripts/burningsteppes.d
 
 * Projects: CMaNGOS
 * Files: `ScriptDevAI/scripts/eastern_kingdoms/burning_steppes.cpp`
 * Functions/ScriptNames: `npc_grark_lorkrub`, `npc_klinfran`
+
+## scripts/deadmines.d
+
+* Projects: CMaNGOS
+* Files: `ScriptDevAI/scripts/eastern_kingdoms/deadmines/deadmines.cpp`
+* Functions/ScriptNames: `spell_unarmed_woodcutter` (`UnarmedWoodcutter::OnApply`)
 
 ## scripts/darkshore.d
 
@@ -257,7 +263,8 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Files: `AI/ScriptDevAI/scripts/kalimdor/feralas.cpp`, `AI/ScriptDevAI/scripts/kalimdor/world_kalimdor.cpp`
   (`TYPE_FREEDOM_CREATURES`)
 * Functions/ScriptNames: `npc_oox22fe`, `npc_shay_leafrunner` (with `ShaysBell`), `npc_captured_sprite_darter`,
-  `go_cage_door`, `npc_kindal_moonweaver`
+  `go_cage_door`, `npc_kindal_moonweaver`, `spell_capture_wildkin`, `spell_capture_hippogryph`,
+  `spell_capture_faerie_dragon`, `spell_capture_treant`, `spell_capture_mountain_giant` (`SpecificTargetScript::OnCheckCast`)
 
 ## scripts/gnomeregan.d
 
@@ -269,7 +276,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 
 * Projects: CMaNGOS
 * Files: `ScriptDevAI/scripts/eastern_kingdoms/hinterlands.cpp`
-* Functions/ScriptNames: `npc_00x09hl`, `npc_rinji`
+* Functions/ScriptNames: `npc_00x09hl`, `npc_rinji`, `spell_gammerita_turtle_camera` (`GammeritaTurtleCamera::OnCheckCast`)
 
 ## scripts/lochmodan.d
 
@@ -377,7 +384,8 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 
 * Projects: CMaNGOS
 * Files: `AI/ScriptDevAI/scripts/eastern_kingdoms/sunken_temple/sunken_temple.cpp`, `sunken_templeScripts.cpp`, `sunken_temple.h`
-* Functions/ScriptNames: `instance_sunken_temple` (`ProcessStatueEvent`, `DoSpawnAtalarionIfCan`, `Update`), `event_antalarion_statue_activation`, `event_avatar_of_hakkar`, `go_eternal_flame`, `at_shade_of_eranikus`, `npc_malfurion_stormrage`, `spell_summon_hakkar`
+* Functions/ScriptNames: `instance_sunken_temple` (`ProcessStatueEvent`, `DoSpawnAtalarionIfCan`, `Update`), `event_antalarion_statue_activation`, `event_avatar_of_hakkar`, `go_eternal_flame`, `at_shade_of_eranikus`, `npc_malfurion_stormrage`, `spell_summon_hakkar`,
+  `spell_hex_of_jammalan` (`HexOfJammalanAura::OnApply`)
 
 ## scripts/swamp.d
 
@@ -469,7 +477,19 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 
 * Projects: CMaNGOS
 * Files: `ScriptDevAI/scripts/world/go_scripts.cpp`, `item_scripts.cpp`, `areatrigger_scripts.cpp`, `ScriptDevAI/scripts/kalimdor/azshara.cpp`, `stonetalon_mountains.cpp`, `ScriptDevAI/scripts/eastern_kingdoms/blasted_lands.cpp`, `hinterlands.cpp`
-* Functions/ScriptNames: `go_bells`, `go_darkmoon_faire_music`, `go_elemental_rift`, `go_dragon_head`, `go_unadorned_spike`, `go_lightning`, `go_covert_ops`, `go_transpolyporter_bb` (`TrapTargetSearch`), `go_rune_of_the_defiler`, `event_arcanite_buoy`, `event_wildhammer_message`, `item_orb_of_draconic_energy`, `at_wondervolt`, `at_hive_tower`, `at_stormwind_recruiter`
+* Functions/ScriptNames: `go_bells`, `go_darkmoon_faire_music`, `go_elemental_rift`, `go_dragon_head`, `go_unadorned_spike`, `go_lightning`, `go_covert_ops`, `go_transpolyporter_bb` (`TrapTargetSearch`), `go_rune_of_the_defiler`, `event_arcanite_buoy`, `event_wildhammer_message`, `item_orb_of_draconic_energy`, `at_wondervolt`, `at_hive_tower`, `at_stormwind_recruiter`, `spell_wondervolt_trap`
+  (`ScriptDevAI/scripts/world/spell_scripts.cpp`: `WondervoltTrap`)
+
+## scripts/worldspells.d
+
+* Projects: CMaNGOS
+* Files: `ScriptDevAI/scripts/world/spell_scripts.cpp`, `item_scripts.cpp`, `scourge_invasion.cpp`, `scourge_invasion.h`
+* Functions/ScriptNames: `spell_food_animation`, `spell_drink_animation` (`FoodAnimation`, `DrinkAnimation::OnHeartbeat`),
+  `spell_gameobject_call_for_help_on_usage` (`OnSuccessfulStart`), `spell_hate_to_half`, `spell_random_aggro`,
+  `spell_arcane_cloaking`, `spell_stoned` (with `Spell::EffectDummy`'s 10254, Stone Dwarf Awaken Visual),
+  `spell_banish_exile`, `spell_orb_of_deception` (`GetAuraScriptCustomizationValue`), `spell_scourge_strike`,
+  `spell_communique_trigger`, `spell_despawner_self`
+* Constants: `SPELL_VISUAL_KIT_FOOD`, `SPELL_VISUAL_KIT_DRINK`, `SPELL_COMMUNIQUE_CAMP_TO_RELAY`, `SPELL_SPIRIT_SPAWN_OUT`
 
 ## scripts/worldmaps.d
 
@@ -617,6 +637,9 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Functions: `Aura::PeriodicTick`, `Player::_LoadAuras`, `Player::_SaveAuras`, `Spell::EffectApplyAura`, `SpellAuraHolder::Update`, `Unit::DispelAll`
 * Constants: `MOD_POWER_REGEN`, `SMSG_PERIODICAURALOG`, `SMSG_UPDATE_AURA_DURATION`, `SPELLMOD_DOT`, `SPELL_EFFECT_APPLY_AURA`
 * Also: `Aura::PeriodicTick`'s `SPELL_AURA_PERIODIC_LEECH` (`SendSpellNonMeleeDamageLog`, periodic) and `SPELL_AURA_PERIODIC_MANA_LEECH`, `Unit::SendPeriodicAuraLog`'s mana leech format, `Aura::HandleFeignDeath`, `Aura::HandleAuraModTotalThreat`, `Aura::HandleAuraTrackCreatures`, `Aura::HandleAuraTrackResources`, `Unit::CalculateDamageAbsorbAndResist`'s `SPELL_AURA_SPLIT_DAMAGE_FLAT`
+* Also: `Aura::HandleAuraTransform` and `Unit::RestoreDisplayId` (a player's), `Unit::Heartbeat` and
+  `WorldObject::GetHeartbeatDuration` (`Aura::OnHeartbeat`), `Aura::OnPeriodicTickEnd`, `SpellAuraHolder` removal
+  (`AURA_REMOVE_BY_EXPIRE`), `Aura::PeriodicTick`'s `SPELL_AURA_PERIODIC_MANA_LEECH` from a creature
 
 ## world/auras.d
 
@@ -773,6 +796,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Functions: `Spell::CheckRange`, `Spell::cast`, `Spell::prepare`, `UnitAI::DoCastSpellIfCan`
 * Constants: `CAST_FORCE_TARGET_SELF`, `EVENT_T_FRIENDLY_HP`, `SMSG_SPELL_FAILURE`, `SMSG_SPELL_GO`, `SPELL_EFFECT_APPLY_AURA`, `SPELL_EFFECT_HEAL`, `TEMPSPAWN_TIMED_OOC_DESPAWN`, `TEMPSPAWN_TIMED_OOC_OR_DEAD_DESPAWN`, `UNIT_STAT_NO_COMBAT_MOVEMENT`
 * Also: `Spell::EffectSendEvent` (a creature's `SPELL_EFFECT_SEND_EVENT`), `Unit::RemoveAura` (its script told, `AuraRemoved`)
+* Also: `TARGET_ENUM_UNITS_SCRIPT_AOE_AT_SRC_LOC` (`Spell::SetTargetMap`, `SPELL_TARGETS_ALL`), `Spell::OnCheckTarget`
 * Also: `Creature::DoFleeToGetAssistance` (`SPELL_AURA_PREVENTS_FLEEING`)
 
 ## world/crypt.d
@@ -1226,7 +1250,14 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Functions: `GameObject::Use`, `Player::ClearCooldownForSpell`, `Player::ClearCooldownsOnLine`, `Player::HasItemFitToSpellReqirements`, `Player::UpdateFishingSkill`, `Player::_LoadSpellCooldowns`, `Player::_SaveSpellCooldowns`, `Spell::CheckCast`, `Spell::CheckItems`, `Spell::EffectEnergize`, `Spell::EffectHeal`, `Spell::EffectInstaKill`, `Spell::EffectPersistentAA`, `Spell::EffectTeleportUnits`, `Spell::EffectTransmitted`, `Spell::EffectWeaponDmg`, `Spell::SendChannelStart`, `Spell::SendChannelUpdate`, `Spell::SetTargetMap`, `Spell::SpellStart`, `Spell::cancel`, `Spell::cast`, `Spell::m_delayMoment`, `Spell::update`, `Unit::AttackerStateUpdate`, `Unit::CalculateSpellDamage`, `Unit::SpellDamageBonusDone`, `Unit::SpellHealingBonusDone`, `Unit::SpellHitResult`
 * Constants: `CMSG_CANCEL_CHANNELLING`, `CURRENT_CHANNELED_SPELL`, `CURRENT_GENERIC_SPELL`, `CURRENT_MELEE_SPELL`, `FISHING_BOBBER_READY_TIME`, `MSG_CHANNEL_START`, `MSG_CHANNEL_UPDATE`, `SMSG_CLEAR_COOLDOWN`, `SMSG_FISH_NOT_HOOKED`, `SMSG_INITIAL_SPELLS`, `SMSG_SPELLINSTAKILLLOG`, `SMSG_SPELL_GO`, `SMSG_SPELL_START`, `SPELL_ATTR_EX_IS_CHANNELED`, `SPELL_AURA_MOD_DAMAGE_DONE`, `SPELL_AURA_MOD_HEALING_DONE`, `SPELL_AURA_PERIODIC_DAMAGE`, `SPELL_EFFECT_APPLY_AURA`, `SPELL_FAILED_EQUIPPED_ITEM_CLASS`, `SPELL_INTERRUPT_FLAG_MOVEMENT`, `TARGET_ALL_ENEMY_IN_AREA`, `TARGET_CASTER_COORDINATES`, `TRIGGERED_OLD_TRIGGERED`
 * Also: `TARGET_UNIT_SCRIPT_NEAR_CASTER`, `Spell::CheckScriptTargeting` (`spell_script_target`)
+* Also: `Spell::OnCheckCast` (a script's refusal last of `CheckCast`), `Spell::OnSuccessfulStart` (in `Spell::Prepare`)
 * Also: `Unit::MeleeDamageBonusDone`'s `SPELL_AURA_RANGED_ATTACK_POWER_ATTACKER_BONUS`
+
+## world/spellscripting.d
+
+* Projects: CMaNGOS
+* Files: `Spells/Scripts/SpellScript.h`, `Grids/GridNotifiers.h`
+* Functions: `WorldObject::PlaySpellVisual`, `MaNGOS::AnyUnfriendlyUnitInObjectRangeCheck`, `Unit::IsEnemy`
 
 ## world/spellmods.d
 

@@ -323,7 +323,7 @@ struct OrbOfDraconicEnergy
 struct Wondervolt
 {
     enum uint spellWondervoltTrap = 26275;
-    private static immutable uint[4] transformations = [26272, 26157, 26273, 26274];
+    static immutable uint[4] transformations = [26272, 26157, 26273, 26274];
 
     void on(ref AreaTriggerContext at, const ref TriggerEntered e)
     {
@@ -332,6 +332,17 @@ struct Wondervolt
                 return;
         at.castSpell(e.player, spellWondervoltTrap, e.player);
         at.consume();
+    }
+}
+
+/// The Wondervolt's trap (cast at who walks in): it changes into one of its four shapes.
+@spell("spell_wondervolt_trap")
+struct WondervoltTrap
+{
+    void on(ref SpellContext it, const ref EffectHit e)
+    {
+        if (e.effect == 0 && e.target)
+            it.castSpell(e.target, Wondervolt.transformations[it.random(4)], e.target);
     }
 }
 
