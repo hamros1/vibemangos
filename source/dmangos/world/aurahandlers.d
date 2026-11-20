@@ -112,6 +112,8 @@ private:
         // On an enemy (a duel's opponent) it is a debuff.
         const hostile = who !is this && canAttack(relatingNow(), who.relatingNow(), context.client);
         who.addAura(makeAura(spell, player.guid, player.data.level, ms, !hostile, values));
+        if (!hostile && who !is this) // a buff on one fighting: those it fights fight this player too
+            imported!"dmangos.world.creatureai".assistThreat(map, who.threateners, unit, 0, *spell);
     }
 
     // -----------------------------------------------------------------------
@@ -785,6 +787,10 @@ private:
         v.set!UNIT_FIELD_HEALTH(health + healed > maxHealth ? maxHealth : health + healed);
         if (aura.type(i) != AuraType.modRegen) // food shows no log
             periodicLog(player.guid, aura, i, healed, 0);
+        if (aura.type(i) == AuraType.periodicHeal) // a heal over time angers as a heal does
+            if (auto healer = map.unit(aura.caster))
+                imported!"dmangos.world.creatureai".assistThreat(map, threateners, healer,
+                    health + healed > maxHealth ? maxHealth - health : healed, *aura.spell);
     }
 
     /// `SMSG_PERIODICAURALOG`

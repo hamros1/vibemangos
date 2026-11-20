@@ -2789,6 +2789,7 @@ private:
         map.sendToWatchers(this, Opcode.SMSG_SPELLHEALLOG, healLog(target: target, caster: player.guid, spell.id, amount, crit), true);
         if (who !is this)
             who.flushPlayerChanges();
+        imported!"dmangos.world.creatureai".assistThreat(map, who.threateners, unit, healed, *spell);
     }
 
     /// Power given back, of the effect's kind (`EffectMiscValue`).

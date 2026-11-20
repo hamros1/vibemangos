@@ -1245,6 +1245,58 @@ private:
     }
 }
 
+/// `SPELL_ATTR_EX_NO_THREAT`, `SPELL_ATTR_EX2_NO_INITIAL_THREAT`: spells that anger nobody.
+enum uint spellAttrExNoThreat = 0x00000400, spellAttrEx2NoInitialThreat = 0x00400000;
+
+/**
+ * Threat from helping (CMaNGOS's `HostileRefManager::threatAssist`): `helper` healed `amount` of `helped`'s
+ * health (or buffed it: no amount). Each of the creatures fighting `helped` (`fightingHelped`) that may attack
+ * the helper and is not held (stunned, fleeing, confused) takes the helper into its fight, with half the heal
+ * shared out among them as threat (`assistThreatEach`). A spell with `SPELL_ATTR_EX_NO_THREAT` or
+ * `SPELL_ATTR_EX2_NO_INITIAL_THREAT` angers no one.
+ */
+void assistThreat(CombatWorld world, const(ulong)[] fightingHelped, UnitRef helper, uint amount,
+    const ref SpellInfo spell)
+{
+    import dmangos.world.auras : AuraType;
+    import dmangos.world.relations : canAttack;
+
+    if (!helper || fightingHelped.length == 0 || spell.attributesEx & spellAttrExNoThreat
+            || spell.attributesEx2 & spellAttrEx2NoInitialThreat)
+        return;
+    Creature[] angered;
+    foreach (guid; fightingHelped)
+    {
+        auto c = world.creatureAt(guid);
+        if (c is null || !c.alive || c.ai is null || !c.ai.inCombat || c.ai.runningHome || c.guid == helper.combatGuid)
+            continue;
+        if (c.values.get!UNIT_FIELD_FLAGS & (UnitFlags.stunned | UnitFlags.fleeing) || c.auras.has(AuraType.modConfuse))
+            continue;
+        if (canAttack(c.ai.relatingOf, helper.relating, c.client))
+            angered ~= c;
+    }
+    const each = assistThreatEach(amount, angered.length);
+    foreach (c; angered)
+    {
+        c.ai.addThreat(helper, each);
+        world.wake(c.guid);
+    }
+}
+
+/// Each creature's threat from a heal of `amount` shared among `creatures`: half the heal, divided.
+float assistThreatEach(uint amount, size_t creatures) pure nothrow @nogc @safe
+{
+    return creatures ? amount * 0.5f / creatures : 0;
+}
+
+unittest
+{
+    assert(assistThreatEach(1000, 2) == 250, "half of it, shared by two");
+    assert(assistThreatEach(1000, 1) == 500);
+    assert(assistThreatEach(0, 3) == 0, "a buff: in the fight, without threat");
+    assert(assistThreatEach(100, 0) == 0);
+}
+
 /// Whether a faction template has no enemies and no friends: neutral to everyone.
 bool isNeutralToAll(const ref FactionTemplateEntry t) pure nothrow @nogc @safe
 {
