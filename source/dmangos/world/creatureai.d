@@ -1357,7 +1357,6 @@ enum uint spellAttrExNoThreat = 0x00000400, spellAttrEx2NoInitialThreat = 0x0040
 void assistThreat(CombatWorld world, const(ulong)[] fightingHelped, UnitRef helper, uint amount,
     const ref SpellInfo spell)
 {
-    import dmangos.world.auras : AuraType;
     import dmangos.world.relations : canAttack;
 
     if (!helper || fightingHelped.length == 0 || spell.attributesEx & spellAttrExNoThreat
@@ -1369,7 +1368,7 @@ void assistThreat(CombatWorld world, const(ulong)[] fightingHelped, UnitRef help
         auto c = world.creatureAt(guid);
         if (c is null || !c.alive || c.ai is null || !c.ai.inCombat || c.ai.runningHome || c.guid == helper.combatGuid)
             continue;
-        if (c.values.get!UNIT_FIELD_FLAGS & (UnitFlags.stunned | UnitFlags.fleeing) || c.auras.has(AuraType.modConfuse))
+        if (c.values.get!UNIT_FIELD_FLAGS & (UnitFlags.stunned | UnitFlags.fleeing | UnitFlags.confused))
             continue;
         if (canAttack(c.ai.relatingOf, helper.relating, c.client))
             angered ~= c;

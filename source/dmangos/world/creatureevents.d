@@ -54,7 +54,7 @@ mixin template CreatureEvents()
                 continue;
             if (other !is me && isEnemy(relating, other.ai.relating, me.client))
                 continue;
-            if (other.values.get!UNIT_FIELD_FLAGS & (UnitFlags.stunned | UnitFlags.fleeing)
+            if (other.values.get!UNIT_FIELD_FLAGS & (UnitFlags.stunned | UnitFlags.fleeing | UnitFlags.confused)
                     || other.auras.has(AuraType.modRoot) || other.auras.has(AuraType.modStun)
                     || other.auras.has(AuraType.modDecreaseSpeed) || other.auras.has(AuraType.modConfuse)
                     || other.auras.has(AuraType.modFear))
