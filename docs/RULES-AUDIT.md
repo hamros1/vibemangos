@@ -118,22 +118,26 @@ not on wago.tools). These are the measured values of emulator projects, with no 
    page links Blizzard's "Official Honor Guide". The level-based emulator formula here is a reconstruction, and its
    grey table differs from the XP grey level (≤47 vs ≤51 at 60). The weekly side (20% decay, the brackets) already
    matches.
-8. **Profession skill-ups and gathering**: enchanting.d `craftSkillChance` (the green midpoint is assumed),
+8. **Profession skill-ups and gathering** (**done** except the gathering failure rate: FORMULAS.md "Crafting
+   skill-ups", "Skinning", "Fishing"): enchanting.d `craftSkillChance` (the green midpoint is assumed),
    gameobjecthandlers.d `updateGatherSkill`, `checkGameObjectTarget` (gathering never fails), spellhandlers.d
    `checkSkinning` (two formulas that disagree), `useBobber`. Source: SkillLineAbility TrivialSkillLineRankHigh/Low
    (1.12 DBC and DB2), Lock.dbc Skill; measured Classic Era for the failure chance.
-9. **Creature evade and aggro**: creatureai.d `enterEvadeMode` (no full heal on evade; health comes back at 1/3 per
+9. **Creature evade and aggro** (**done** but call for help, no source: FORMULAS.md "Aggro radius", "Leash",
+   "Evade"): creatureai.d `enterEvadeMode` (no full heal on evade; health comes back at 1/3 per
    5 s), `attackDistance` (no 45 yd cap), `callAssistance`, `updateCombatManager` (leash). Source: measured
    Classic Era (mobs are widely reported to reset to full health on evade; verify), Wowpedia "Aggro radius" (page exists); Magey "Threat-Mechanics"
    confirms the 110%/130% and 0.5-per-heal rules already used.
-10. **Instance limits and resets**: the missing 5-instances-per-hour limit (only the transfer-abort code exists), and
+10. **Instance limits and resets** (**done**: FORMULAS.md "Instances per hour", "Raid resets"): the missing 5-instances-per-hour limit (only the transfer-abort code exists), and
     context.d `nextRaidReset` taking each raid's delay from emulator data. Source: MapDifficulty.ResetInterval (DB2),
     and Blizzard's 1.x patch notes for the hourly instance limit (verify).
 
 Also likely wrong, found on the way: loothandlers.d `rewardAtKill` splits kill reputation 1/n in a
 group in the open world (**done**: all to each, FORMULAS.md "Reputation"; CMaNGOS also splits 1/n); battleground.d
-`bonusHonor` uses level 60 for every bracket (**done**: by bracket, FORMULAS.md "Honor"); no fix made for the rest: spellcast.d `powerCost` applies
-`manaCostPerLevel × (level/5 − baseLevel)`; taxihandlers.d compares the start distance with `(2·5)^3`; there are no
+`bonusHonor` uses level 60 for every bracket (**done**: by bracket, FORMULAS.md "Honor"); taxihandlers.d compared the
+start distance with `(2·5)^3` (**fixed**: the flight master within 10 yd of its node, squared; every flight master in
+the data stands within 7.1 yd); no fix made for the rest: spellcast.d `powerCost` applies
+`manaCostPerLevel × (level/5 − baseLevel)`; there are no
 diminishing returns on crowd control (auras.d `setHeartbeatResist` always gets level 0); auto-shot can be dodged
 while ranged abilities can't (combat.d `canDodge` vs spellcast.d `rollSpellHit`).
 
@@ -366,11 +370,11 @@ risk.
 | where | what | emulator origin | primary source | risk |
 |---|---|---|---|---|
 | combat.d:stealthDetectRange / detects | (30 + 5(lvl−1) + detect − stealth)×0.3 yd, player cap 30 yd, alert +8% +1.5 yd; front arc only | GetStealthVisibilityDistance | Wowpedia "Stealth" (verify) | H: every rogue/druid; formula looks arbitrary |
-| creatureai.d:attackDistance | Aggro radius = template Detection − (target lvl − own lvl), diff floored at −25, min 5 yd, + MOD_DETECT_RANGE; no 45 yd cap (only map notice 50 yd) | Unit::GetAttackDistance | Wowpedia "Aggro radius" (page exists) | H: every pull |
+| creatureai.d:attackDistance | Aggro radius = template Detection − (target lvl − own lvl), diff floored at −25, min 5 yd, + MOD_DETECT_RANGE; no 45 yd cap (only map notice 50 yd) | Unit::GetAttackDistance | Wowpedia "Aggro radius" (page exists) | H: every pull. **Done:** 45 yd cap (FORMULAS.md "Aggro radius") |
 | creatureai.d:moveInLineOfSight | Aggro on sight: aggressive, not neutral-to-all, enemy, in radius and LOS; stealth needs detection | UnitAI::MoveInLineOfSight, DetectOrAttack | none found | H |
 | creatureai.d:callAssistance | Once per fight, allies within template CallForHelp yd (default 5) with LOS arrive after 1500 ms; no chain calls | Creature::CallAssistance | Wowpedia "Aggro" (page exists; verify) | H: radius/delay emulator config |
-| creatureai.d:updateCombatManager | Pursuit timer; leash check every 1200 ms: victim >30 yd from start → evade (not in dungeons); template Leash distance | CombatManager::Update, LEASH_RADIUS | none found | H: every chase |
-| creatureai.d:enterEvadeMode / reachedHome | Evade clears threat and tap, removes auras, runs home; no instant full heal (regen 1/3 per 5 s) | EnterEvadeMode, HomeMovementGenerator::Finalize | measured Classic Era (mobs reset to full on evade) | H: visible difference |
+| creatureai.d:updateCombatManager | Pursuit timer; leash check every 1200 ms: victim >30 yd from start → evade (not in dungeons); template Leash distance | CombatManager::Update, LEASH_RADIUS | measured Classic Era (Warcraft Tavern), Blizzard post 2019-10-23 | H: every chase. **Done:** time by level (FORMULAS.md "Leash"); the 30 yd stays |
+| creatureai.d:enterEvadeMode / reachedHome | Evade clears threat and tap, removes auras, runs home; no instant full heal (regen 1/3 per 5 s) | EnterEvadeMode, HomeMovementGenerator::Finalize | Warcraft Wiki "Evade" (checked: regenerates as out of combat, no instant heal) | H. **Done:** already matches (FORMULAS.md "Evade") |
 | unit.d:dealDamage / creatureDamaged | Any damage wears gear; parry haste; 0 damage still aggros; tap credit to owner of pet/totem/guardian | Unit::DealDamage | none found | M |
 | effecthandlers.d:threatEffect | Threat × MOD_THREAT; reduction capped | EffectThreat | Spell.dbc | M |
 | effecthandlers.d:attackMeEffect | Taunt sets top target | EffectTaunt | none found | M |
@@ -420,12 +424,12 @@ risk.
 | where | what | emulator origin | primary source | risk |
 |---|---|---|---|---|
 | combathandlers.d:updateCombatSkills | Weapon/defense skill-up chance = max(room/5,1)/(cap/5)×100, +2%/INT pt; extra rise gate | Player::UpdateCombatSkills | Wowpedia "Weapon skill" (verify) | H: every swing while levelling; looks emulator-invented |
-| spellhandlers.d:useBobber | Catch if roll ≤ skill − zone + 5; skill-up (skill<75 ? 100 : 2500/(skill−50)) | UpdateFishingSkill | none found (skill_fishing_base_level is emulator data) | H |
-| spellhandlers.d:checkSkinning / skinCreature | Required skill skill<100 ? (lvl−10)×10 : lvl×5; skill-up requirement formula differs | CheckCast skinning, UpdateGatherSkill | Wowpedia "Skinning" (verify) | H: two formulas disagree |
+| spellhandlers.d:useBobber | Catch if roll ≤ skill − zone + 5; skill-up (skill<75 ? 100 : 2500/(skill−50)) | UpdateFishingSkill | Warcraft Wiki "Fishing" (pre-3.1: no skill-up on a getaway); measured Classic Era catches per point | H. **Done:** FORMULAS.md "Fishing" (zone skills stay emulator data) |
+| spellhandlers.d:checkSkinning / skinCreature | Required skill skill<100 ? (lvl−10)×10 : lvl×5; skill-up requirement formula differs | CheckCast skinning, UpdateGatherSkill | Wowpedia "Skinning" (1 / 10L−100 / 5L) | H. **Done:** one formula (FORMULAS.md "Skinning") |
 | player.d:updateSkillsForLevel | Weapon/defense max = 5×level | UpdateSkillsForLevel | SkillRaceClassInfo flags; SkillTiers.dbc | H: feeds combat table |
-| gameobjecthandlers.d:updateGatherSkill | Gather skill-up chance vs required: grey 0, green 25%, yellow 75%, orange 100% (+100/+50/+25 bands) | UpdateGatherSkill | Wowpedia "Herbalism", "Mining" (verify); Lock.dbc Skill (required rank) | H: every gather |
-| gameobjecthandlers.d:checkGameObjectTarget / openLock | Herb/mining nodes never fail (CMaNGOS has an orange failure roll) | CheckCast (open lock) | Wowpedia "Mining" (verify); measured Classic Era (gathering can fail) | H |
-| enchanting.d:craftSkillChance / updateCraftSkill | Craft skill-up: ≥grey 0, ≥green ((grey+yellow)/2) 25%, ≥yellow 75%, else 100% | UpdateCraftSkill | SkillLineAbility TrivialSkillLineRankHigh/Low (DBC/DB2); green midpoint none found | H: every craft |
+| gameobjecthandlers.d:updateGatherSkill | Gather skill-up chance vs required: grey 0, green 25%, yellow 75%, orange 100% (+100/+50/+25 bands) | UpdateGatherSkill | Warcraft Wiki "Forever mining techniques" (checked: veins 1/25/50/100, Tin 65/90/115/165: the +25/+50/+100 bands); Lock.dbc Skill | H: bands match; the 75%/25% chances have no source (left) |
+| gameobjecthandlers.d:checkGameObjectTarget / openLock | Herb/mining nodes never fail (CMaNGOS has an orange failure roll) | CheckCast (open lock) | Patch 3.1.0 notes ("You can no longer fail when Mining, Herbing, and Skinning": failing existed); no failure rate found | H. **Left:** no source for the chance |
+| enchanting.d:craftSkillChance / updateCraftSkill | Craft skill-up: ≥grey 0, ≥green ((grey+yellow)/2) 25%, ≥yellow 75%, else 100% | UpdateCraftSkill | SkillLineAbility TrivialSkillLineRankHigh/Low (DBC/DB2); in-between chance: community formula only | H. **Done:** (grey−skill)/(grey−yellow) (FORMULAS.md "Crafting skill-ups") |
 | spellhandlers.d:castBobber / updateBobber | Bobber placement; bite at duration − {3,7,13,17} s; 5 s hook | EffectTransmitted | none found | M |
 | playercreate.d:learnDefaultSkills | Starting skill values: languages 300, level-range 1/5×L, tiered from SkillTiers | Player::Create | SkillTiers.dbc, SkillRaceClassInfo.dbc | M |
 | gameobjecthandlers.d:canOpenLock | Lock opens with key or skill ≥ Lock Skill; value via spell effect at level skill/5 | CanOpenLock, GetSpellRank | Lock.dbc Skill/Type | M |
@@ -577,7 +581,7 @@ risk.
 | where | what | emulator origin | primary source | risk |
 |---|---|---|---|---|
 | arathi.d:tick | Resource ticks 10 per 12/9/6/3 s, 30 per 1 s at 5 bases; win 2000 | BattleGroundAB::Update | Wowpedia "Arathi Basin" (verify) | H: decides every AB |
-| (missing) 5 instances per hour | Not implemented; only the transfer-abort enum exists | — | Blizzard patch notes 1.x (instance limit; verify) | H: missing rule |
+| (missing) 5 instances per hour | Not implemented; only the transfer-abort enum exists | — | Blizzard (Kaivax 2020-06-16: "the current limit of 5 instances per hour", realm-wide, not battlegrounds) | H. **Done:** FORMULAS.md "Instances per hour" (per node, in memory) |
 | death.d:removedInsignia | Insignia gold = rand(50..150)×0.016×(level/5.76)^2.5 | RemovedInsignia | none found | M: arbitrary formula |
 | mounting.d:dismountOnArrival | Dungeon with mountAllowed=0 dismounts | Map::IsMountAllowed | none found (instance_template) | M |
 | homebind.d:updateHomebindTimer | Ungrouped player in instance ported out after 60 s | UpdateHomebindTime | Wowpedia "Instance" (verify) | M |
@@ -601,7 +605,7 @@ risk.
 | meetingstone.d:rolesOf / priorityOf | Class role priorities | vmangos LFGMgr::CalculateRoles | none found | M: vmangos invention |
 | meetingstone.d:update / fillRoles | 1 tank + 1 healer + 3 damage; queue rules | vmangos LFGQueue::Update | Wowpedia "Meeting Stone" (verify); LFGDungeons (DB2) for levels | M |
 | teleport.d:teleportTo (raid lock) | Bound to a different raid copy → refused | InstanceMap::CanEnter | none found | M |
-| context.d:raidResetAt / nextRaidReset | All raids reset together at 04:00 every reset_delay days (default 7) | MapPersistentStateMgr | MapDifficulty.ResetInterval (DB2) | M: 20-man raids reset every 3 days |
+| context.d:raidResetAt / nextRaidReset | All raids reset together at 04:00 every reset_delay days (default 7) | MapPersistentStateMgr | MapDifficulty.ResetInterval (DB2), patch 1.9.0 days | M. **Done:** FORMULAS.md "Raid resets" (the old data already agreed) |
 | context.d (dungeon reset) | Dungeon resets when empty for 1800 s | InstanceMap unload | none found | M |
 | creatureai.d:attackStart | AGGRO_ZONE flag: pulled in dungeon → zone-wide combat | CREATURE_EXTRA_FLAG_AGGRO_ZONE | none found | L |
 | battleground.d:playerKilled | HK to teammates within 74 yd | HandleKillPlayer | none found | L |

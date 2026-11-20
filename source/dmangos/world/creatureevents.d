@@ -538,12 +538,12 @@ unittest
     keeper.auras.apply(makeAura(&corruption, anduin.session.character.guid, 60, 18_000, false, [10, 0, 0]),
         keeper.values, isNew);
     keeper.auras.apply(makeAura(&thrash, keeper.guid, 60, -1, true, [0, 0, 0]), keeper.values, isNew);
-    // It stands; the player walks 40 yards off: the pursuit time (none) is out, the victim got away.
+    // It stands; the player walks 40 yards off: once its pursuit time is out (11 s at its level), the victim got away.
     keeper.ai.scriptCombatMovement(false);
     anduin.write(Opcode.CMSG_ATTACKSTOP, null);
     walkTo(anduin, Position(at.x + 40, at.y, at.z, at.orientation), &tick);
     assert(anduin.session.inWorld.character.position.x > at.x + 39, "it walked away");
-    foreach (_; 0 .. 4)
+    foreach (_; 0 .. 28)
         tick(500);
     assert(!keeper.ai.inCombat, "the open world: it gave up");
     assert(keeper.auras.find(172) is null, "the player's damage over time went with the fight");

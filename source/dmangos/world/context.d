@@ -86,6 +86,47 @@ interface PlayerRelay
     void remoteDone(uint account);
 }
 
+/// A dungeon or raid copy an account went into, and when (Unix time).
+struct InstanceEntry
+{
+    uint instance; /// 0: one not known where it was counted (a copy another node was to make)
+    long at;
+}
+
+/// The most dungeon and raid copies an account goes into in an hour (docs/FORMULAS.md, "Instances per hour").
+enum maxInstancesPerHour = 5;
+
+/// The entries of `entries` made less than an hour before `now`.
+InstanceEntry[] withinTheHour(InstanceEntry[] entries, long now) pure nothrow @safe
+{
+    import std.algorithm.iteration : filter;
+    import std.array : array;
+
+    return entries.filter!(e => now - e.at < 3600).array;
+}
+
+/// Whether, having gone into `recent` within the hour, going into copy `instance` (0: a new one) is one too many.
+bool tooManyInstances(const(InstanceEntry)[] recent, uint instance) pure nothrow @nogc @safe
+{
+    import std.algorithm.searching : canFind;
+
+    if (instance && recent.canFind!(e => e.instance == instance))
+        return false;
+    return recent.length >= maxInstancesPerHour;
+}
+
+unittest
+{
+    InstanceEntry[] recent = [InstanceEntry(11, 1000), InstanceEntry(12, 1100), InstanceEntry(13, 1200),
+        InstanceEntry(14, 1300)];
+    assert(!tooManyInstances(recent, 0), "a fifth");
+    recent ~= InstanceEntry(15, 1400);
+    assert(tooManyInstances(recent, 0) && tooManyInstances(recent, 16), "a sixth new copy within the hour");
+    assert(!tooManyInstances(recent, 12), "back into one of the five");
+    assert(withinTheHour(recent, 4600).length == 4 && !tooManyInstances(withinTheHour(recent, 4600), 0),
+        "the first an hour old: room for another");
+}
+
 /// A player another node of the cluster simulates, as its node described it.
 struct RemotePlayer
 {
@@ -1782,6 +1823,35 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return 0;
     }
 
+    /// The dungeon and raid copies each account went into in the last hour (`instanceLimitReached`), by account.
+    private InstanceEntry[][uint] recentInstances;
+
+    /**
+     * Whether `account` may go into no new dungeon or raid copy now (docs/FORMULAS.md, "Instances per hour"): it
+     * went into five other copies in the last hour, whichever of its characters did. `instance`: the copy it
+     * would go into (0: a new one); going back into one of those five is no new copy. Battlegrounds do not count.
+     * Kept by this node: in a cluster each node counts the entries made from it.
+     */
+    bool instanceLimitReached(uint account, uint instance)
+    {
+        auto recent = account in recentInstances;
+        if (recent is null)
+            return false;
+        *recent = withinTheHour(*recent, unixTime);
+        return tooManyInstances(*recent, instance);
+    }
+
+    /// `account` went into dungeon or raid copy `instance` (0: one not known here yet).
+    void enteredInstance(uint account, uint instance)
+    {
+        import std.algorithm.searching : canFind;
+
+        auto recent = withinTheHour(recentInstances.get(account, null), unixTime);
+        if (instance == 0 || !recent.canFind!(e => e.instance == instance))
+            recent ~= InstanceEntry(instance, unixTime);
+        recentInstances[account] = recent;
+    }
+
     /// Asks the node hosting a dungeon whether a player may go in (`dungeonEntryProblem` there); null standalone.
     void delegate(ushort host, ulong player, uint map, uint instance, bool gameMaster,
         void delegate(ubyte abort) then) askDungeonEntry;
@@ -1820,7 +1890,7 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
     /**
      * When the raid `mapId`'s copies next reset, all together: at `instance_reset_time_hour` every
-     * `reset_delay` days (`instance_template`), counted on from the last, kept in `instance_reset`.
+     * `raidResetDays` days, counted on from the last, kept in `instance_reset`.
      */
     long raidResetAt(uint mapId)
     {
@@ -1833,10 +1903,21 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         auto t = raidResets_.get(mapId, 0);
         if (t > now)
             return t;
-        const t2 = nextRaidReset(t, now, data.instanceResetDays.get(mapId, 7), config.instanceResetTimeHour);
+        const t2 = nextRaidReset(t, now, raidResetDays(mapId), config.instanceResetTimeHour);
         raidResets_[mapId] = t2;
         database.saveRaidReset(mapId, t2);
         return t2;
+    }
+
+    /**
+     * How many days apart raid `mapId`'s copies reset: Blizzard's interval (`ClientData.resetIntervalDays`), else
+     * (no data/instance-resets.csv) `instance_template.reset_delay`, else a week.
+     */
+    uint raidResetDays(uint mapId) const
+    {
+        bool known;
+        const days = client.resetIntervalDays(mapId, known);
+        return known && days ? days : data.instanceResetDays.get(mapId, 7);
     }
 
     /**
