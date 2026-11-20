@@ -619,4 +619,135 @@ final class Scene
         const st = w.context.instanceState(instance);
         return st is null ? null : st.data;
     }
+
+    // -----------------------------------------------------------------------------------------------------------
+    // The world's scripts: characters of a race, quests, escorts (dmangos.world.realscripts_world)
+    // -----------------------------------------------------------------------------------------------------------
+
+    /// One character of `race.id` (a human, an orc, ...), `classId` and `level` at `at` on continent `mapId`.
+    this(uint mapId, Position at, Race race, ubyte classId = classWarrior, uint level = 60, uint seed = 20_261_120)
+    {
+        import dmangos.world.packets : ClientTeleportAck;
+
+        w = RealWorld.make(seed);
+        this.mapId = mapId;
+        this.seed = seed;
+        auto hero = w.character(900, "Heroa", classId, level, [], race.id);
+        auto me = hero.session.inWorld;
+        assert(me.teleportTo(mapId, at, null, uint.max, true), format!"hero not let onto map %s"(mapId));
+        if (mapId == 0)
+            hero.write(Opcode.MSG_MOVE_TELEPORT_ACK, ClientTeleportAck(me.player.guid, 0, 0));
+        else
+            hero.write(Opcode.MSG_MOVE_WORLDPORT_ACK, null);
+        assert(me.player.data.map == mapId, "not there");
+        hero.read();
+        heroes ~= hero;
+        fill();
+    }
+
+    /// The first character's state in `quest` (`QuestState.none` if it has none).
+    imported!"dmangos.world.quests".QuestState questState(uint quest)
+    {
+        if (auto q = quest in heroes[0].session.inWorld.player.questStatus)
+            return q.status;
+        return imported!"dmangos.world.quests".QuestState.none;
+    }
+
+    /**
+     * The first character takes `quest` from `giver` (`CMSG_QUESTGIVER_ACCEPT_QUEST`, as its client does), the quests
+     * before it in its chain counted as rewarded first (`PrevQuestId` and those its `prevQuests` name); whether it
+     * has it now.
+     */
+    bool takeQuest(Creature giver, uint quest)
+    {
+        import dmangos.bytes : ByteWriter;
+        import dmangos.world.quests : QuestState, QuestStatus;
+
+        auto me = heroes[0].session.inWorld;
+        const q = w.context.data.quests.quest(quest);
+        assert(q !is null, format!"no quest %s"(quest));
+        void rewarded(int prev, int depth)
+        {
+            if (prev == 0 || depth > 20)
+                return;
+            const id = prev < 0 ? -prev : prev;
+            if (prev > 0)
+                me.player.questStatus[id] = QuestStatus(id, QuestState.none, true);
+            if (const p = w.context.data.quests.quest(id))
+            {
+                rewarded(p.prevQuestId, depth + 1);
+                foreach (pp; p.prevQuests)
+                    if (pp > 0)
+                        rewarded(pp, depth + 1);
+            }
+        }
+        rewarded(q.prevQuestId, 0);
+        foreach (pp; q.prevQuests)
+            if (pp > 0)
+                rewarded(pp, 0);
+        // What the quest asks to be handed over (Grark's Thorium Shackles), as the chain before it gave.
+        foreach (k, item; q.reqItemId)
+            if (item && q.reqItemCount[k])
+                me.storeLoot(item, q.reqItemCount[k], 0, false);
+        ByteWriter accept;
+        accept.put(giver.guid);
+        accept.put(quest);
+        heroes[0].write(Opcode.CMSG_QUESTGIVER_ACCEPT_QUEST, accept.data);
+        listen();
+        return questState(quest) == QuestState.incomplete || questState(quest) == QuestState.complete;
+    }
+
+    /// Kills every creature within `range` of the first character fighting it or `ward` (an escort's ambushers).
+    size_t killAttackers(Creature ward, float range = 60)
+    {
+        size_t n;
+        import dmangos.world.relations : canAttack;
+
+        // Who the character stands by: itself, the ward, and the ward's summons friendly to it (Tirion come to help).
+        bool[ulong] friends = [hero.guid: true];
+        if (ward !is null)
+        {
+            friends[ward.guid] = true;
+            foreach (c; map.creaturesNear(hero.position, range))
+                if (c.summon.summoner == ward.guid && !canAttack(c.ai.relatingOf, heroUnit.relating, w.context.client))
+                    friends[c.guid] = true;
+        }
+        foreach (c; map.creaturesNear(hero.position, range))
+            if (c !is ward && c.alive && c.guid !in friends)
+            {
+                auto v = c.ai.inCombat ? c.ai.hostVictim().guid : 0;
+                if (v in friends)
+                    v = hero.guid; // (one fighting any of them is fought)
+                else
+                    v = 0;
+                // The ward's own summons that are the character's enemies are its ambush, in a fight or not yet
+                // (one that cannot reach it from the water still counts for its script).
+                const ambusher = ward !is null && c.summon.summoner == ward.guid
+                    && canAttack(c.ai.relatingOf, heroUnit.relating, w.context.client);
+                if (ambusher || (v && (v == hero.guid || (ward !is null && v == ward.guid))))
+                {
+                    // One of a scripted scene (Isillien, Lexlort's executioner) is fought, a twentieth of its health
+                    // a second, so its script plays out; the rest are slain at once.
+                    if ((c.spawn.entry in w.context.data.creatureScriptNames) !is null)
+                    {
+                        // (fought once it fights: before, it may have lines to say; a fiftieth a second, and not
+                        // below a twentieth by the character alone: its scene may want another to finish it, Tirion
+                        // Isillien)
+                        const top = c.values.get!UNIT_FIELD_MAXHEALTH;
+                        if (v && elapsedMs % 1000 == 0 && c.values.get!UNIT_FIELD_HEALTH > top / 20 + top / 50)
+                            dealDamage(heroUnit, map.unitOf(c), top / 50 + 1, Blow.spell());
+                        continue;
+                    }
+                    kill(c);
+                    ++n;
+                }
+            }
+        return n;
+    }
+}
+
+/// A race, for `Scene`'s constructor of one character.
+struct Race
+{
+    ubyte id;
 }

@@ -58,17 +58,20 @@ struct Muglash
         const point = escort.reached(me, e);
         if (point == uint.max)
             return;
+        // The points of this world database's path (`script_waypoint` 12717, thirty of them): the brazier is by
+        // point 25 (ScriptDev numbers it 15, 16, 17 on another path; on this one Muglash stopped at 15, a hundred
+        // yards short of the brazier he could not make usable, and the quest failed).
         switch (point + 1)
         {
-        case 15: // at the brazier
+        case 25: // at the brazier
             escort.paused = true;
             eventId = 0;
             steps.after(Step.event, 2.seconds);
             break;
-        case 16:
+        case 26:
             escort.paused = true;
             break;
-        case 17:
+        case 27:
             escort.paused = true;
             eventId = 5;
             steps.after(Step.event, 2.seconds);
@@ -503,14 +506,14 @@ unittest
     m.host.objects[Muglash.nagaBrazier] = EntityRef(0xF110_0000_0000_0001);
     m.raise(QuestAccepted(hero, Muglash.questVorsha));
     assert(m.host.has("faction 33"));
-    m.walkTo(14);
+    m.walkTo(24);
     m.run(5000);
     assert(m.host.has("text 8556") && m.host.has("usable") && m.host.has("cast 20861"));
-    assert(!m.host.has("move 15"), "he waits at the brazier");
+    assert(!m.host.has("move 25"), "he waits at the brazier");
     m.raise(Signal(EntityRef(0xF110_0000_0000_0001), Muglash.signalBrazierLit));
     m.run(2100);
-    assert(m.host.has("text 8410") && m.host.summons == 3 && m.host.has("move 15"));
-    m.walkTo(15);
+    assert(m.host.has("text 8410") && m.host.summons == 3 && m.host.has("move 25"));
+    m.walkTo(25);
     foreach (c; m.host.summoned[0 .. 3])
         m.raise(SummonedDied(c, hero));
     assert(m.host.summons == 6, "the second wave");
@@ -519,8 +522,8 @@ unittest
     foreach (c; m.host.summoned[3 .. 6])
         m.raise(SummonedDied(c, hero));
     m.run(100);
-    assert(m.host.has("summon 12940") && m.host.has("move 16"));
-    m.walkTo(16);
+    assert(m.host.has("summon 12940") && m.host.has("move 26"));
+    m.walkTo(26);
     m.raise(SummonedDied(m.host.summoned[6], hero));
     m.run(20_000);
     assert(m.host.has("event 6641") && m.host.has("text 8565"));
@@ -530,7 +533,7 @@ unittest
     // Nobody lights the brazier: he gives up.
     auto late = Driven!self("npc_muglash", 12_717, 30);
     late.raise(QuestAccepted(hero, Muglash.questVorsha));
-    late.walkTo(14);
+    late.walkTo(24);
     late.run(305_000);
     assert(late.host.has("text 8409") && late.host.has("fail 6641"));
 

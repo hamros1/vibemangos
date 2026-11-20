@@ -1430,6 +1430,12 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
   Wowpedia and warcraft.wiki.gg describe them, and the scripts' own documentation (CMaNGOS ScriptDev only as a
   second opinion).
 
+## world/realscripts_world.d
+
+* Not from an emulator: tests of the world's scripts (the escort quests the scripts start, found in their sources)
+  on the client's DBC files and the classic world database: `quest_template`, `script_waypoint` and
+  `waypoint_path`, `script_texts`; CMaNGOS ScriptDev's escort AI (`MAX_PLAYER_DISTANCE`) as a second opinion.
+
 ## world/realspellsweep.d
 
 * Projects: CMaNGOS (cross-checked against)
