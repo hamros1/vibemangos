@@ -1300,3 +1300,77 @@ unittest
         wipe(b);
     }
 }
+
+/**
+ * High Priest Thekal and Zealots Lor'Khan and Zath: brought down, each lies as if dead and rises in ten seconds
+ * (Resurrect, whole again) unless all three are down together; then Thekal rises as the tiger (Tiger Form, list
+ * 1450902: Force Punch, Charge, Speed Slash, Frenzy), and his death ends it (his line; the Zealots go). Wowpedia: the
+ * three must die within ten seconds of each other, then Thekal's tiger phase.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    enum uint thekalEntry = 14_509, lorkhan = 11_347, zath = 11_348;
+    const b = Boss("High Priest Thekal", 309, thekalEntry, 3, [lorkhan, zath], null);
+    Scene s;
+    auto thekal = setUp(b, s);
+    auto lk = s.the(lorkhan), z = s.the(zath);
+    s.stayWithin = 20;
+    foreach (c; [thekal, lk, z])
+        s.engage(c);
+    s.run(2.seconds);
+    assert(s.said(-1_309_009), "no aggro line\n" ~ s.seen());
+    assert(s.ask(3) == 1, "his encounter not in progress");
+    // Alone brought down, he rises again whole.
+    s.kill(thekal);
+    s.run(1.seconds);
+    assert(thekal.alive && s.ask(3) == 4, format!"Thekal not down as if dead (%s)"(s.ask(3)));
+    assert(s.runUntil(() => s.ask(3) == 1 && s.healthOf(thekal) >= 100, 12.seconds), "Thekal does not rise");
+    assert(s.castBy(thekalEntry, 24_173), "no Resurrect\n" ~ s.seen());
+    // All three down together: the tiger.
+    s.forget();
+    foreach (c; [lk, z, thekal])
+        s.kill(c);
+    assert(s.runUntil(() => s.castBy(thekalEntry, 24_169), 20.seconds), "no Tiger Form\n" ~ s.seen());
+    s.run(16.seconds);
+    assert(lk.alive && z.alive && s.ask(6) == 4 && s.ask(7) == 4, "the Zealots rose again");
+    foreach (spell; [24_189, 24_408])
+        assert(s.castBy(thekalEntry, spell), format!"the tiger: %s not cast\n%s"(spell, s.seen()));
+    s.kill(thekal);
+    s.run(2.seconds);
+    assert(!thekal.alive && s.ask(3) == 3 && s.said(-1_309_010), "his death\n" ~ s.seen());
+}
+
+/**
+ * The Gong of Bethekk: struck, High Priestess Arlokk comes ten seconds later (`dbscripts_on_event` 9066) and her
+ * encounter is under way (the forcefield up, her prowlers sent from the panther triggers); her line; list 1451501
+ * (Mark of Arlokk, Shadow Word: Pain, Gouge); at 30 s the panther (24190; list 1451502: Ravage, Whirlwind, Vanish);
+ * her death opens the forcefield (her line). A wipe sends her away until the gong is struck again.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    enum : uint { arlokkEntry = 14_515, gong = 180_526, prowler = 15_101, forcefield = 180_497 }
+    auto gongAt = objectSpawnOf(309, gong);
+    auto arrive = (Scene s) {
+        auto g = s.objects(gong);
+        assert(g.length, "no Gong of Bethekk");
+        s.use(g[0]);
+        assert(s.runUntil(() => s.find(arlokkEntry) !is null, 15.seconds), "the gong called no Arlokk");
+        return s.the(arlokkEntry);
+    };
+    auto shut = (Scene s, Creature boss) {
+        assert(!s.doorOpen(forcefield), "the forcefield down while she fights");
+    };
+    const b = Boss("High Priestess Arlokk", 309, arlokkEntry, 4, [prowler], [
+        Stage(0, 2, null, null, null, null, toDelegate(shut)),
+        Stage(0, 16, [24_210, 24_212, 12_540], null, [[prowler, 1]]),
+        Stage(0, 30, [24_190, 24_213, 24_236, 24_223])], -1_309_011, -1_309_013, 2, Position.init,
+        [classWarrior, classMage], (Scene s, Creature boss) {
+            assert(s.doorOpen(forcefield), "the forcefield up after her death");
+        }, 10, true, null, Position(gongAt.x + 3, gongAt.y, gongAt.z), toDelegate(arrive));
+    fight(b);
+    wipe(b);
+}

@@ -157,7 +157,8 @@ final class Scene
                     if (distance(hero(k).position, stayWith.position) > stayWithin)
                         moveHero(k, stayWith.position);
                     // The raid's blows go on (a point each: what a script checks as it is hurt it checks again).
-                    if (pressing && stayWith.ai.inCombat && hero(k).alive)
+                    if (pressing && stayWith.ai.inCombat && hero(k).alive
+                            && !(stayWith.values.get!UNIT_FIELD_FLAGS & 0x0200_0000)) // not one none can touch
                         dealDamage(heroUnit(k), map.unitOf(stayWith), 1, Blow.spell());
                 }
         }
