@@ -426,6 +426,12 @@ private:
                 interruptAurasOnCast(AuraInterrupt.itemUse, spell);
             interruptAurasOnCast(AuraInterrupt.action, spell);
         }
+        // The cast began: the spell's script hears of it before anything of it happens (`OnSuccessfulStart`).
+        {
+            import dmangos.script.api : CastStarted, EntityRef;
+
+            spellScriptEvent(spell, CastStarted(EntityRef(player.guid), EntityRef(targets.unit)));
+        }
         if (!triggered)
         {
             c.timer = castTimeCheat ? 0 : max(0, cast(int)(spellMod(SpellModOp.castingTime, spell,
@@ -1223,6 +1229,14 @@ private:
             if (toolResult != SpellCastResult.ok)
                 return toolResult;
         }
+        // Last, the spell's script may refuse it (CMaNGOS's `OnCheckCast`): a capture's creature, a camera's turtle.
+        {
+            import dmangos.script.api : CastChecked, CastRefusal, EntityRef;
+
+            CastRefusal refusal;
+            if (spellScriptEvent(spell, CastChecked(EntityRef(player.guid), EntityRef(targets.unit)), refusal))
+                return cast(SpellCastResult) refusal;
+        }
         return SpellCastResult.ok;
     }
 
@@ -1634,6 +1648,13 @@ private:
                 targets = [c.targets.unit ? c.targets.unit : player.guid];
                 if (spell.casting.chainTarget[i] > 1 && a == ImplicitTarget.enemy)
                     targets ~= chainTargets(targets[0], spell.casting.chainTarget[i] - 1);
+            }
+            else if (a == ImplicitTarget.unitRaid) // TARGET_UNIT_RAID: the target, if of the caster's group (the costumes)
+            {
+                const target = c.targets.unit ? c.targets.unit : player.guid;
+                if (target != player.guid && !context.sameGroup(player.guid, target))
+                    continue;
+                targets = [target];
             }
             else if (a == ImplicitTarget.gameObject || a == ImplicitTarget.gameObjectItem)
             {

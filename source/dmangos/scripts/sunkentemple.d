@@ -333,6 +333,21 @@ struct SunkenTemple
 }
 
 /// An Eternal Flame: put out (with the Hakkari blood), it tells the temple.
+/// Hex of Jammal'an: one it holds to the end is struck by its caster's two curses.
+@spell("spell_hex_of_jammalan")
+struct HexOfJammalan
+{
+    enum uint hexEnd1 = 12480, hexEnd2 = 12483;
+
+    void on(ref SpellContext it, const ref AuraEnded e)
+    {
+        if (!e.expired || !e.caster)
+            return;
+        it.castSpell(e.caster, hexEnd1, e.target);
+        it.castSpell(e.caster, hexEnd2, e.target);
+    }
+}
+
 @gameObject("go_eternal_flame")
 struct EternalFlame
 {

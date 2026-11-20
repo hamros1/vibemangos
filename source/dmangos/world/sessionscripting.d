@@ -9,8 +9,8 @@ module dmangos.world.sessionscripting;
 /// See the module documentation.
 mixin template SessionScripting()
 {
-    import dmangos.script.api : ActionResult, AreaTriggerContext, AreaTriggerHost, EventContext, EventStarted, EffectHit, EntityRef, Location,
-        QuestProgress, SpellContext, SpellHost, TriggerEntered;
+    import dmangos.script.api : ActionResult, AreaTriggerContext, AreaTriggerHost, CastRefusal, EventContext, EventStarted, EffectHit,
+        EntityRef, Location, QuestProgress, SpellContext, SpellHost, TriggerEntered;
     import dmangos.script.registry : ScriptHandle;
     import dmangos.world.spells : SpellInfo;
     import dmangos.world.updatefields : UNIT_FIELD_HEALTH;
@@ -70,36 +70,30 @@ mixin template SessionScripting()
         return c.amountChanged ? c.amount : amount;
     }
 
-    /// This player cast `spell` at `target` (before its hits are rolled): the spell's script hears of it (`OnCast`).
-    package void spellCastScript(const(SpellInfo)* spell, ulong target)
+    /**
+     * Spell scripts of items, quests and the world: `event` (a cast's, an aura's) reaches `spell`'s script, if
+     * it has one, around this player; true if the script refused the cast (`CastChecked`), for `refusal`.
+     */
+    package bool spellScriptEvent(E)(const(SpellInfo)* spell, const auto ref E event, out CastRefusal refusal)
     {
-        import dmangos.script.api : SpellCast;
-
         auto handle = context.spellScript(spell.id);
         if (!handle)
-            return;
-        const outer = scriptSpell; // (a script's cast runs scripts of its own)
+            return false;
+        auto outer = scriptSpell;
         scriptSpell = spell;
         scope (exit)
             scriptSpell = outer;
         auto c = SpellContext(scriptHost);
-        context.scripts.raise(handle, c, SpellCast(EntityRef(player.guid), EntityRef(target)));
+        context.scripts.raise(handle, c, event);
+        refusal = c.refusal;
+        return c.refused;
     }
 
-    /// This player's `spell` reached `target`, or `missed` it: the spell's script hears of it (`OnHit`).
-    package void spellLandedScript(const(SpellInfo)* spell, ulong target, bool missed)
+    /// ditto, but for an event no script refuses.
+    package void spellScriptEvent(E)(const(SpellInfo)* spell, const auto ref E event)
     {
-        import dmangos.script.api : SpellLanded;
-
-        auto handle = context.spellScript(spell.id);
-        if (!handle)
-            return;
-        const outer = scriptSpell; // (a script's cast runs scripts of its own)
-        scriptSpell = spell;
-        scope (exit)
-            scriptSpell = outer;
-        auto c = SpellContext(scriptHost);
-        context.scripts.raise(handle, c, SpellLanded(EntityRef(player.guid), EntityRef(target), missed));
+        CastRefusal refusal;
+        spellScriptEvent(spell, event, refusal);
     }
 
     /// Scripted event `event` (started by `source`, at `target`) reached its script, around this player: true if the
@@ -198,7 +192,6 @@ mixin template SessionScripting()
         ActionResult hostModifyThreat(EntityRef creature, EntityRef target, int percent) { return this.outer.hostModifyThreat(creature, target, percent); }
         // Class spells (`dmangos.world.classspells`):
         ActionResult hostCastCustom(EntityRef caster, uint spellId, EntityRef target, int[3] values, ubyte which) { return this.outer.hostCastCustom(caster, spellId, target, values, which); }
-        int hostPower(EntityRef who, ubyte power) { return this.outer.hostPower(who, power); }
         ActionResult hostSetPower(EntityRef who, ubyte power, int value) { return this.outer.hostSetPower(who, power, value); }
         float hostDamageMultiplier(ubyte effect) { return scriptSpell is null || effect > 2 ? 1 : scriptSpell.casting.dmgMultiplier[effect]; }
         uint hostResetCooldowns(EntityRef who, uint family, uint schoolMask, uint except) { return this.outer.hostResetCooldowns(who, family, schoolMask, except); }
@@ -213,6 +206,10 @@ mixin template SessionScripting()
         ActionResult hostCastHighestRank(EntityRef who, uint firstRank, bool resetCooldown) { return this.outer.hostCastHighestRank(who, firstRank, resetCooldown); }
         int hostAffectingAuraTotal(EntityRef who, ubyte auraType) { return scriptSpell is null ? 0 : this.outer.affectingAuraTotal(who, scriptSpell, auraType); }
         int hostSpellPower(EntityRef who) { return scriptSpell is null || who.guid != player.guid ? 0 : cast(int) spellDamageBonus(scriptSpell, scriptSpell.casting.school); }
+        // Spell scripts of items, quests and the world (`dmangos.world.spellscripting`):
+        private imported!"dmangos.world.creatureai".CombatWorld scriptWorld() { return map; }
+        import dmangos.world.spellscripting : SpellScriptActions;
+        mixin SpellScriptActions;
         // Eastern Kingdoms scripts:
         void hostKillCreditAt(EntityRef who, uint entry) { this.outer.hostKillCredit(who, entry); }
         ActionResult hostSayAt(EntityRef speaker, int entry, EntityRef target)

@@ -150,6 +150,11 @@ interface CreatureLore
     /// Whether the player `player` (a pet's owner for a pet) meets condition `id` (`conditions`); false if the
     /// player is not online here.
     bool conditionMet(uint id, ulong player);
+
+    // Spell scripts of items, quests and the world:
+
+    /// The creature entries `spell_script_target` gives spell `spell` (type 1); empty if none.
+    const(uint)[] spellScriptTargets(uint spell);
 }
 
 /// What a creature's AI needs of its map.
@@ -628,6 +633,8 @@ private:
         if (distance == 0)
             return 0;
         distance -= levelDiff;
+        // Mind Soothe, Soothe Animal: `MOD_DETECT_RANGE` on it (CMaNGOS's `Unit::GetAttackDistance`).
+        distance += me.auras.total(AuraType.modDetectRange);
         return distance < 5 ? 5 : distance;
     }
 

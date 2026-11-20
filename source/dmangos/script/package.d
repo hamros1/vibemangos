@@ -30,6 +30,7 @@ public import dmangos.script.escort : Escort;
 public import dmangos.script.follower : Follower; // Kalimdor scripts
 public import dmangos.script.pack : Pack;
 public import dmangos.script.walk : Walk;
-public import dmangos.script.registry : areaTrigger, creature, gameObject, instance, item, scriptedEvent, spell, world;
+public import dmangos.script.registry : areaTrigger, creature, gameObject, instance, item, scriptedEvent, spell, spellIds,
+    world;
 public import dmangos.script.schedule : Schedule;
 public import dmangos.script.state : transient;

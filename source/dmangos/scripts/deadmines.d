@@ -175,3 +175,20 @@ struct DefiasCannon
         cannon.signalDungeon(Deadmines.Signals.cannonFired);
     }
 }
+
+/// Unarmed Woodcutter (a Goblin Woodcarver's): while it lasts the woodcarver's hands are empty.
+@spell("spell_unarmed_woodcutter")
+struct UnarmedWoodcutter
+{
+    void on(ref SpellContext it, const ref AuraApplied e)
+    {
+        if (e.effect == 0 && e.target.isCreature)
+            it.armed(e.target, false);
+    }
+
+    void on(ref SpellContext it, const ref AuraEnded e)
+    {
+        if (e.effect == 0 && e.target.isCreature)
+            it.armed(e.target, true);
+    }
+}

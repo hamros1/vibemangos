@@ -595,6 +595,17 @@ struct WarlockMountRitual
     }
 }
 
+/// The Ritual Candle Aura's burning: the demons about the circle, never a player or a pet.
+@spell("spell_ritual_candle_aura")
+struct RitualCandleAura
+{
+    void on(ref SpellContext it, const ref TargetChecked e)
+    {
+        if (!e.target.isCreature)
+            it.exclude();
+    }
+}
+
 unittest
 {
     import dmangos.scripts.testing;

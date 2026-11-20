@@ -1264,6 +1264,22 @@ mixin template ClassSpells()
 
     import dmangos.script.api : ActionResult, EntityRef;
 
+    /// This player cast `spell` at `target` (before its hits are rolled): the spell's script hears of it (`OnCast`).
+    package void spellCastScript(const(SpellInfo)* spell, ulong target)
+    {
+        import dmangos.script.api : SpellCast;
+
+        spellScriptEvent(spell, SpellCast(EntityRef(player.guid), EntityRef(target)));
+    }
+
+    /// This player's `spell` reached `target`, or `missed` it: the spell's script hears of it (`OnHit`).
+    package void spellLandedScript(const(SpellInfo)* spell, ulong target, bool missed)
+    {
+        import dmangos.script.api : SpellLanded;
+
+        spellScriptEvent(spell, SpellLanded(EntityRef(player.guid), EntityRef(target), missed));
+    }
+
     ActionResult hostCastCustom(EntityRef caster, uint spellId, EntityRef target, int[3] values, ubyte which)
     {
         if (caster.guid != player.guid)
@@ -1273,7 +1289,7 @@ mixin template ClassSpells()
             : ActionResult.notAllowed;
     }
 
-    int hostPower(EntityRef who, ubyte power)
+    int classPower(EntityRef who, ubyte power)
     {
         import dmangos.world.defines : Power;
 
@@ -1288,7 +1304,7 @@ mixin template ClassSpells()
 
         if (who.guid != player.guid || power > Power.happiness)
             return ActionResult.notAllowed;
-        player.modifyPower(cast(Power) power, value - hostPower(who, power));
+        player.modifyPower(cast(Power) power, value - classPower(who, power));
         flushPlayerChanges();
         return ActionResult.ok;
     }
