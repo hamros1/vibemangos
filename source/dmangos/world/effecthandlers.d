@@ -96,11 +96,14 @@ mixin template EffectHandlers()
     import dmangos.world.unit : UnitKind, UnitRef;
     import dmangos.world.updatefields;
 
-    /// The combat log's line of effect `i` of `spell` on its target (`targetData`: `executeTarget`).
+    /// The combat log's line of effect `i` of `spell` on its target (`dmangos.world.spelldamage.logExecute`).
     private void logExecute(const(SpellInfo)* spell, size_t i, const(ubyte)[] targetData)
     {
-        map.sendToWatchers(this, Opcode.SMSG_SPELLLOGEXECUTE, executeLog(player.guid, spell.id,
-            cast(uint) spell.effect[i], targetData), true);
+        import dmangos.world.caster : Caster;
+        static import dmangos.world.spelldamage;
+
+        auto me = Caster.of(this);
+        dmangos.world.spelldamage.logExecute(me, spell, i, targetData);
     }
 
     /// The player `guid` on this map: this one, or another online here; null if neither.
@@ -605,40 +608,22 @@ mixin template EffectHandlers()
     // Power and health
     // -----------------------------------------------------------------------
 
-    /// A unit's power of `power` now, and whether that is its power at all (a warrior has no mana).
+    /// A unit's power of `power` now, and whether that is its power at all (`dmangos.world.spelldamage.unitPower`).
     private bool powerOf(UnitRef who, Power power, out uint now)
     {
-        final switch (who.kind)
-        {
-        case UnitKind.none:
-            return false;
-        case UnitKind.player:
-            now = who.session.player.values.get!UNIT_FIELD_POWER1(power);
-            return power == Power.happiness || who.session.player.powerType == power;
-        case UnitKind.creature:
-            now = who.creature.values.get!UNIT_FIELD_POWER1(power);
-            return power == Power.happiness || who.creature.values.getByte!UNIT_FIELD_BYTES_0(3) == power;
-        }
+        import dmangos.world.spelldamage : unitPower;
+
+        return unitPower(who, power, now);
     }
 
     /// Takes `amount` of a unit's `power` (it has as much).
     private void takePower(UnitRef who, Power power, uint amount)
     {
-        final switch (who.kind)
-        {
-        case UnitKind.none:
-            return;
-        case UnitKind.player:
-            who.session.player.modifyPower(power, -cast(int) amount);
-            if (who.session !is this)
-                who.session.flushPlayerChanges();
-            return;
-        case UnitKind.creature:
-            const now = who.creature.values.get!UNIT_FIELD_POWER1(power);
-            who.creature.values.set!UNIT_FIELD_POWER1(power, now > amount ? now - amount : 0);
-            map.flushObjectChanges(who.creature);
-            return;
-        }
+        import dmangos.world.caster : Caster;
+        import dmangos.world.spelldamage : changeUnitPower;
+
+        auto me = Caster.of(this);
+        changeUnitPower(me, who, power, -cast(int) amount);
     }
 
     /// The effect's multiplier (`EffectMultipleValue`) as the caster's talents make it (`SPELLMOD_MULTIPLE_VALUE`).
@@ -647,54 +632,7 @@ mixin template EffectHandlers()
         return spellMod(SpellModOp.multipleValue, spell, spell.casting.multipleValue[i]);
     }
 
-    /**
-     * `SPELL_EFFECT_POWER_BURN` (Mana Burn): up to `value` of the target's power of the effect's kind is burned
-     * away, and the target takes the burned amount times the effect's multiplier as the spell's damage (with no
-     * spell power: CMaNGOS's `EffectPowerBurn`). A target of another power is not touched.
-     */
-    package void powerBurnEffect(const(SpellInfo)* spell, size_t i, ulong target, int value)
-    {
-        const kind = spell.miscValue[i];
-        auto victim = map.unit(target);
-        uint now;
-        if (kind < 0 || kind > Power.happiness || value <= 0 || !victim || !victim.alive
-                || !powerOf(victim, cast(Power) kind, now))
-            return;
-        const burned = now < value ? now : cast(uint) value;
-        takePower(victim, cast(Power) kind, burned);
-        const damage = cast(uint)(burned * multiplier(spell, i));
-        if (victim.kind == UnitKind.creature)
-            spellDamage(spell, victim.creature, damage, spell.casting.school, false);
-        else if (auto other = enemyPlayer(target))
-            spellDamageToPlayer(spell, other, damage, false);
-    }
 
-    /**
-     * `SPELL_EFFECT_POWER_DRAIN` (Dark Pact, Drain Mana's kind at once): up to `value` of the target's power of the
-     * effect's kind goes to the caster, times the effect's multiplier if that is the caster's power too
-     * (`SMSG_SPELLENERGIZELOG`), and the combat log says how much was drained (CMaNGOS's `EffectPowerDrain`).
-     */
-    package void powerDrainEffect(const(SpellInfo)* spell, size_t i, ulong target, int value)
-    {
-        const kind = spell.miscValue[i];
-        auto victim = map.unit(target);
-        uint now;
-        if (kind < 0 || kind > Power.happiness || value < 0 || !victim || !victim.alive
-                || !powerOf(victim, cast(Power) kind, now))
-            return;
-        const power = cast(Power) kind;
-        const drained = now < value ? now : cast(uint) value;
-        takePower(victim, power, drained);
-        const gainFactor = player.powerType == power && target != player.guid ? multiplier(spell, i) : 1.0f;
-        logExecute(spell, i, executeTarget(target, drained, cast(uint) power, gainFactor));
-        if (const gain = cast(int)(drained * gainFactor))
-        {
-            player.modifyPower(power, gain);
-            map.sendToWatchers(this, Opcode.SMSG_SPELLENERGIZELOG, energizeLog(player.guid, player.guid, spell.id,
-                power, gain), true);
-            flushPlayerChanges();
-        }
-    }
 
     /**
      * Health back to this player from its own spell (a leech's), as much as it lacks, and the heal log
@@ -702,63 +640,14 @@ mixin template EffectHandlers()
      */
     package void healSelf(const(SpellInfo)* spell, uint amount)
     {
-        import dmangos.world.spellcast : healLog;
+        import dmangos.world.caster : Caster;
+        import dmangos.world.spelldamage : SpellHeal, spellHeal;
 
-        if (amount == 0 || player.values.get!UNIT_FIELD_HEALTH == 0)
-            return;
-        amount = player.auras.healingTaken(amount, spell.casting.school);
-        const health = player.values.get!UNIT_FIELD_HEALTH, maxHealth = player.values.get!UNIT_FIELD_MAXHEALTH;
-        player.values.set!UNIT_FIELD_HEALTH(health + amount > maxHealth ? maxHealth : health + amount);
-        map.sendToWatchers(this, Opcode.SMSG_SPELLHEALLOG, healLog(player.guid, player.guid, spell.id, amount, false),
-            true);
-        flushPlayerChanges();
+        auto me = Caster.of(this);
+        spellHeal(me, spell, unit, cast(int) amount, SpellHeal(true));
     }
 
-    /**
-     * `SPELL_EFFECT_HEALTH_LEECH` (Death Coil): the spell's damage to the target (at most what health it has),
-     * and the caster healed by it times the effect's multiplier (CMaNGOS's `EffectHealthLeech`).
-     */
-    package void healthLeechEffect(const(SpellInfo)* spell, size_t i, ulong target, int value)
-    {
-        auto victim = map.unit(target);
-        if (value < 0 || !victim || !victim.alive)
-            return;
-        const health = victim.health;
-        uint dealt;
-        if (victim.kind == UnitKind.creature)
-            dealt = spellDamage(spell, victim.creature, cast(uint) value, spell.casting.school);
-        else if (auto other = enemyPlayer(target))
-            dealt = spellDamageToPlayer(spell, other, cast(uint) value);
-        if (dealt > health)
-            dealt = health;
-        if (player.alive)
-            healSelf(spell, cast(uint)(dealt * multiplier(spell, i)));
-    }
 
-    /**
-     * `SPELL_EFFECT_HEAL_MAX_HEALTH` (Lay on Hands): the target healed by the caster's maximum health, its heal
-     * logged (CMaNGOS's `EffectHealMaxHealth`).
-     */
-    package void healMaxHealthEffect(const(SpellInfo)* spell, ulong target)
-    {
-        import dmangos.world.spellcast : healLog;
-
-        auto who = playerHere(target);
-        if (who is null || who.player.values.get!UNIT_FIELD_HEALTH == 0)
-            return;
-        const amount = player.values.get!UNIT_FIELD_MAXHEALTH;
-        auto v = &who.player.values;
-        const health = v.get!UNIT_FIELD_HEALTH, maxHealth = v.get!UNIT_FIELD_MAXHEALTH;
-        v.set!UNIT_FIELD_HEALTH(health + amount > maxHealth ? maxHealth : health + amount);
-        if (who !is this)
-            pvpAssisted(who);
-        map.sendToWatchers(this, Opcode.SMSG_SPELLHEALLOG, healLog(target, player.guid, spell.id, amount, false), true);
-        who.flushPlayerChanges();
-        // A heal as any other: its procs (Improved Lay on Hands' armor on its target).
-        import dmangos.world.procs : ProcEx, ProcHit, spellProcFlags;
-
-        procAuras(spellProcFlags(*spell, true, false), who.unit, ProcHit(spell, ProcEx.normalHit, amount, 0, true));
-    }
 
     // -----------------------------------------------------------------------
     // Extra swings, mechanics, distraction

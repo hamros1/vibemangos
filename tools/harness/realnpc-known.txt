@@ -71,7 +71,6 @@
 6927: Shadowstalker Slash: not done: addComboPoints (effect 2)
 7107: Summon Wolfguard Worg: not done: summonPet (effect 0: no creature 5058)
 7140: Expose Weakness: aura modDamageTaken: not on the player (effect 0)
-7162: First Aid: not done: healMaxHealth (effect 0: no heal of the friendly creature)
 7259: Nature Protection Potion: not done: createItem (effect 0)
 7293: Zombie Form: aura transform: on the caster, its look unchanged (effect 0)
 7322: Frostbolt: refused: noPower
@@ -94,7 +93,6 @@
 8274: Summon Tamed Battleboar: not done: summonPet (effect 0: no creature 4535)
 8276: Summon Tamed Hyena: not done: summonPet (effect 0: no creature 4534)
 8293: Lightning Cloud: not done: persistentAreaAura (effect 1: no area, nothing on the player)
-8358: Mana Spike: not done: energize (effect 0: no power 0 to the caster)
 8364: Blizzard: not done: persistentAreaAura (effect 0: no area, nothing on the player)
 8372: Summon Aqua Guardian: not done: summonPet (effect 0: no creature 6047)
 8401: Fireball: refused: noPower
@@ -117,12 +115,9 @@
 9010: Create Filled Containment Coffer: not done: summonObjectWild (effect 0: no object 103574)
 9192: "Plucky" Resumes Human Form: aura transform: on the caster, its look unchanged (effect 0)
 9220: "Plucky" Resumes Chicken Form: aura transform: on the caster, its look unchanged (effect 0)
-9232: Scarlet Resurrection: not done: healMaxHealth (effect 0: no heal of the scripted creature); not done: energize (effect 1: no power 0 to the scripted creature)
-9257: Lay on Hands: not done: healMaxHealth (effect 0: no heal of the scripted creature); not done: energize (effect 1: no power 0 to the scripted creature)
 9653: Summon Gelkis Rumbler: not done: summonPet (effect 0: no creature 4661)
 9735: Sapta Sight: targeting: aura modInvisibilityDetection at the friendly creature, not the caster (effect 1); not done: activateObject (effect 2)
 9738: Rift Spawn Becomes Visible: no caster: no creature casts it in the data
-9776: Irradiated: schoolDamage: no damage to the caster (effect 0)
 9789: Artisan Weaponsmith: not done: learnSpell (effect 0)
 9790: Artisan Armorsmith: not done: learnSpell (effect 0)
 9949: Thieves' Tool Rack Conjure: not done: createItem (effect 0)
@@ -133,9 +128,7 @@
 10227: Beast Tracking: not done: learnSpell (effect 0); not done: skillStep (effect 1)
 10266: Lung Puncture: aura periodicDamage: on the caster, no damage (effect 0)
 10267: Slush: schoolDamage: no damage to the caster (effect 0); aura transform: on the caster, its look unchanged (effect 1)
-10268: Decimate: schoolDamage: no damage to the caster (effect 1)
 10308: Hammer of Justice: refused: noPower
-10310: Lay on Hands: not done: healMaxHealth (effect 0: no heal of the friendly creature); not done: energize (effect 1: no power 0 to the friendly creature)
 10341: Radiation Cloud: not done: persistentAreaAura (effect 0: no area, nothing on the player)
 10389: Spawn Smoke: not done: spawn (effect 0)
 10451: Implosion: aura modStun: not on the player (effect 1)
@@ -247,13 +240,9 @@
 17164: Summon Scarlet Hound: not done: summonPet (effect 0: no creature 10979)
 17186: Ras Becomes a Boy!: aura transform: on the caster, its look unchanged (effect 0)
 17201: Dispel Magic: not done: dispel (effect 0: nothing of dispel type 1 taken from the friendly creature)
-17233: Lay on Hands: not done: healMaxHealth (effect 0: no heal of the friendly creature)
-17288: Balnazzar Transform: not done: healMaxHealth (effect 0: no heal of the caster); not done: energize (effect 1: no power 0 to the caster)
 17321: Spirit Spawn-in: not done: spawn (effect 0)
 17529: Vitreous Focuser: not done: createItem (effect 0)
 17550: Purification: not done: dispel (effect 0: nothing of dispel type 2 taken from the caster); not done: dispel (effect 1: nothing of dispel type 3 taken from the caster); not done: dispel (effect 2: nothing of dispel type 4 taken from the caster)
-17683: Full Heal: not done: healMaxHealth (effect 0: no heal of the caster)
-17689: Disease Burst: schoolDamage: no damage to the caster (effect 1)
 17742: Cloud of Disease: not done: persistentAreaAura (effect 0: no area, nothing on the player)
 17960: Kodo Bones Trap: no caster: no creature casts it in the data
 18108: Fireball: refused: noPower
@@ -295,7 +284,6 @@
 20514: Ruul Snowhoof Shapechange (DND): aura transform: on the caster, its look unchanged (effect 0)
 20534: Teleport: teleportUnits: the player did not move (effect 0)
 20618: Teleport: teleportUnits: the player did not move (effect 0)
-20620: Aegis of Ragnaros: not done: healMaxHealth (effect 2: no heal of the caster)
 20680: Blizzard: not done: persistentAreaAura (effect 0: no area, nothing on the player)
 20687: Starfall: not done: persistentAreaAura (effect 0: no area, nothing on the player)
 20733: Black Arrow: refused: outOfRange
@@ -307,7 +295,6 @@
 20827: Flamestrike: not done: persistentAreaAura (effect 1: no area, nothing on the player)
 21066: Void Bolt: aura modDecreaseSpeed: not on the player (effect 1)
 21070: Noxious Cloud: not done: persistentAreaAura (effect 0: no area, nothing on the player)
-21090: Champion: not done: healMaxHealth (effect 1: no heal of the scripted creature)
 21097: Manastorm: not done: persistentAreaAura (effect 0: no area, nothing on the player); not done: persistentAreaAura (effect 1: no area, nothing on the player)
 21099: Frost Breath: not done: dispelMechanic (effect 2)
 21100: Conjure Elegant Letter: not done: createItem (effect 0)
@@ -321,7 +308,6 @@
 22191: Heated Ground: not done: persistentAreaAura (effect 0: no area, nothing on the nobody)
 22275: Flamestrike: not done: persistentAreaAura (effect 1: no area, nothing on the player)
 22438: Mark of Detonation: targeting: aura procTriggerSpell at the caster, not the player (effect 0)
-22559: Brood Power: Blue: aura modMeleeHaste: not on the player (effect 0)
 22660: Dire Wolf Form: aura transform: on the caster, its look unchanged (effect 0)
 22688: Tree Form: aura transform: on the caster, its look unchanged (effect 0)
 22802: Choking Spores: not done: persistentAreaAura (effect 0: no area, nothing on the player)
@@ -342,7 +328,6 @@
 22968: Smelt Elementium: not done: learnSpell (effect 0)
 22994: Entangle: teleportUnits: the player did not move (effect 2)
 22995: Summon: not done: teleportUnitsFaceCaster (effect 0: the player did not move)
-23040: Warming Flames: not done: healMaxHealth (effect 0: no heal of the caster)
 23059: Create Thorium Brotherhood Contract DND: no caster: no creature casts it in the data
 23072: Seething Plague: not done: spawn (effect 0)
 23105: Lightning Cloud: not done: persistentAreaAura (effect 1: no area, nothing on the player)
@@ -369,11 +354,11 @@
 23767: Sayge's Dark Fortune of Armor: no caster: no creature casts it in the data
 23768: Sayge's Dark Fortune of Damage: no caster: no creature casts it in the data
 23769: Sayge's Dark Fortune of Resistance: no caster: no creature casts it in the data
+23774: System Shock: powerDrain: no mana drained from the player (effect 1): the player killed by its leech first (a dead player is not drained: CMaNGOS's EffectPowerDrain)
 23849: Venoxis Transform: aura transform: on the caster, its look unchanged (effect 0)
 23859: Dispel Magic: not done: dispel (effect 0: nothing of dispel type 1 taken from the friendly creature)
 23861: Poison Cloud: not done: persistentAreaAura (effect 0: no area, nothing on the player)
 23958: Mind Exhaustion: no caster: no creature casts it in the data
-23965: Instant Heal: not done: healMaxHealth (effect 0: no heal of the caster)
 23966: Jeklik Transform: aura transform: on the caster, its look unchanged (effect 0)
 24022: Cleanse Nova: not done: dispel (effect 0)
 24023: Charge: not done: charge (effect 0: the caster did not move)
@@ -442,7 +427,6 @@
 25107: Blue Dragon Transform DND: aura transform: on the caster, its look unchanged (effect 0)
 25108: Bronze Dragon Transform DND: aura transform: on the caster, its look unchanged (effect 0)
 25112: Summon Voidwalker: not done: summonPet (effect 0: no creature 1860)
-25155: Quest - Self Healing from resurrect: not done: energize (effect 1: no power 0 to the caster)
 25174: Sundering Cleave: aura modResistance: not on the player (effect 1): the player killed by its damage first, as the sweep's rolls before it decide
 25198: Poison Cloud: not done: persistentAreaAura (effect 0: no area, nothing on the player)
 25201: Anachronos Quest Credit DND: not done: questComplete (effect 0)
@@ -553,6 +537,7 @@
 26550: Lightning Cloud: not done: persistentAreaAura (effect 1: no area, nothing on the player)
 26561: Berserker Charge: not done: charge (effect 0: the caster did not move)
 26586: Birth: not done: spawn (effect 0)
+26601: Poison Bolt: aura periodicDamage: not on the player (effect 1): the player killed by its damage first, as the rolls decide
 26607: Blizzard: not done: persistentAreaAura (effect 0: no area, nothing on the player); not done: persistentAreaAura (effect 1: no area, nothing on the player)
 26613: Unbalancing Strike: aura modSkill: not on the player (effect 1)
 27530: Hurricane: not done: persistentAreaAura (effect 0: no area, nothing on the player); not done: persistentAreaAura (effect 1: no area, nothing on the player)

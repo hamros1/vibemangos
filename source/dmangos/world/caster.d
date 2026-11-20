@@ -20,6 +20,7 @@ import dmangos.world.movement : Position;
 import dmangos.world.objects : UpdateValues;
 import dmangos.world.opcodes : Opcode;
 import dmangos.world.relations : Relating;
+import dmangos.world.spellids : DamageClass;
 import dmangos.world.spells : SpellInfo;
 import dmangos.world.unit : UnitKind, UnitRef;
 
@@ -203,6 +204,215 @@ struct Caster
             ai.castSpell(spell, target, castTriggered);
             return;
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // The numbers its spells get
+    // -----------------------------------------------------------------------
+
+    /// Its modifier `op` of `spell` on `value` (`SPELLMOD_*`): a player's talents, a pet's or a totem's owner's
+    /// (Improved Imp, Call of Flame); none for any other creature.
+    T spellMod(T)(imported!"dmangos.world.spellmods".SpellModOp op, const(SpellInfo)* spell, T value)
+    {
+        final switch (kind)
+        {
+        case UnitKind.none:
+            return value;
+        case UnitKind.player:
+            return character.spellMod(op, spell, value);
+        case UnitKind.creature:
+            auto owner = modOwner();
+            if (owner is null)
+                return value;
+            return creature.petOwner ? owner.petSpellMod(op, spell, value, creature) : owner.spellMod(op, spell, value);
+        }
+    }
+
+    /// Its spell power for spells of the schools in `schoolMask` (`SpellBaseDamageBonusDone`): its `MOD_DAMAGE_DONE`
+    /// auras (a player's spirit's share too).
+    int spellPower(uint schoolMask)
+    {
+        import dmangos.world.auras : AuraType;
+
+        final switch (kind)
+        {
+        case UnitKind.none: return 0;
+        case UnitKind.player: return character.spellPower(schoolMask);
+        case UnitKind.creature: return creature.auras.totalByMiscMask(AuraType.modDamageDone, cast(int) schoolMask);
+        }
+    }
+
+    /// Its healing power: its `MOD_HEALING_DONE` auras (a player's spirit's share too).
+    int healingPower()
+    {
+        import dmangos.world.auras : AuraType;
+
+        final switch (kind)
+        {
+        case UnitKind.none: return 0;
+        case UnitKind.player: return character.healingPower();
+        case UnitKind.creature: return creature.auras.total(AuraType.modHealingDone);
+        }
+    }
+
+    /**
+     * `damage` of `school` with what auras make of it: its own for the school and the victim's creature type
+     * (`MOD_DAMAGE_PERCENT_DONE`, `MOD_DAMAGE_DONE_VERSUS`), the victim's for the school (`MOD_DAMAGE_TAKEN`,
+     * `MOD_DAMAGE_PERCENT_TAKEN`).
+     */
+    uint damageFactors(uint damage, uint school, const ref Fighter victim)
+    {
+        import dmangos.world.auras : AuraType;
+
+        if (school >= 7)
+            return damage;
+        final switch (kind)
+        {
+        case UnitKind.none:
+            return damage;
+        case UnitKind.player:
+            return character.spellDamageFactors(damage, school, victim.creatureType, victim.damageTaken,
+                victim.damageTakenFlat);
+        case UnitKind.creature:
+            const done = creature.auras.list.length
+                ? creature.auras.multiplier(AuraType.modDamagePercentDone, (int mask) => (mask & (1 << school)) != 0, -1) : 1;
+            const total = (damage * done + victim.damageTakenFlat[school]) * victim.damageTaken[school];
+            return total > 0 ? cast(uint) total : 0;
+        }
+    }
+
+    /**
+     * The crit chance of its spell `spell` (no victim's part): a player's from its intellect, class and level; a
+     * creature's 5% (CMaNGOS's `Unit::GetCritChance`: "base crit chance, needed for units only"); and what their
+     * auras add, to every spell and to its school's, and the spell's modifiers.
+     */
+    float spellCritChance(const(SpellInfo)* spell)
+    {
+        import dmangos.world.auras : AuraType;
+        import dmangos.world.spellmods : SpellModOp;
+
+        final switch (kind)
+        {
+        case UnitKind.none:
+            return 0;
+        case UnitKind.player:
+            return character.spellCritOf(spell);
+        case UnitKind.creature:
+            enum float creatureBase = 5;
+            return creatureBase + spellMod(SpellModOp.critChance, spell, 0) + creature.auras.total(AuraType.modSpellCritChance)
+                + creature.auras.totalByMiscMask(AuraType.modSpellCritChanceSchool, 1 << spell.casting.school);
+        }
+    }
+
+    /// The crit chance of `spell` at `victim`: a melee or ranged ability's is its weapon's, a spell's the spell crit
+    /// (`spellCritChance`); a player's class rules add theirs (Shatter).
+    float critChance(const(SpellInfo)* spell, UnitRef victim)
+    {
+        import dmangos.world.combat : AttackType, meleeCritChance = critChance;
+        import dmangos.world.spellmods : SpellModOp;
+
+        final switch (kind)
+        {
+        case UnitKind.none:
+            return 0;
+        case UnitKind.player:
+            return character.critChanceOf(spell, victim);
+        case UnitKind.creature:
+            if (victim && weaponCrit(spell))
+                return meleeCritChance(creature.fighter, victim.fighter, spell.casting.dmgClass == DamageClass.ranged
+                    ? AttackType.ranged : AttackType.mainHand) + spellMod(SpellModOp.critChance, spell, 0);
+            return spellCritChance(spell);
+        }
+    }
+
+    /// Whether `spell` is a melee or ranged ability: it crits as its weapon does, for double.
+    static bool weaponCrit(const(SpellInfo)* spell) pure nothrow @nogc @safe
+    {
+        return spell.casting.dmgClass == DamageClass.melee || spell.casting.dmgClass == DamageClass.ranged;
+    }
+
+    /**
+     * A crit's damage (`SpellCriticalDamageBonus`): double for a melee or ranged ability, half again for a spell; the
+     * bonus more by the spell's modifiers (`SPELLMOD_CRIT_DAMAGE_BONUS`: Ice Shards, Ruin double a spell's half).
+     */
+    uint critDamage(const(SpellInfo)* spell, uint damage)
+    {
+        import dmangos.world.spellmods : SpellModOp;
+
+        const bonus = weaponCrit(spell) ? damage : damage / 2;
+        return damage + spellMod(SpellModOp.critDamageBonus, spell, bonus);
+    }
+
+    /// A target's resistance to `school` as its spells meet it: less by its `MOD_TARGET_RESISTANCE` (negative
+    /// amounts: Arcane Subtlety), never below none.
+    int targetResistance(int resistance, uint school)
+    {
+        import dmangos.world.auras : AuraType;
+
+        const reduced = resistance + (school < 7 ? auras.totalByMiscMask(AuraType.modTargetResistance, 1 << school) : 0);
+        return reduced > 0 ? reduced : 0;
+    }
+
+    /// Percent less often its spells miss: its `MOD_SPELL_HIT_CHANCE` auras and the spell's modifiers
+    /// (`SPELLMOD_RESIST_MISS_CHANCE`: Arcane Focus).
+    float hitBonus(const(SpellInfo)* spell)
+    {
+        import dmangos.world.auras : AuraType;
+        import dmangos.world.spellmods : SpellModOp;
+
+        final switch (kind)
+        {
+        case UnitKind.none: return 0;
+        case UnitKind.player: return character.spellHitBonusOf(spell);
+        case UnitKind.creature: return creature.auras.total(AuraType.modSpellHitChance) + spellMod(SpellModOp.resistMissChance, spell, 0);
+        }
+    }
+
+    /// It dealt `damage` with a spell: it is in combat (a player for a while; a creature's pursuit restarts).
+    void enteredCombat(uint damage)
+    {
+        final switch (kind)
+        {
+        case UnitKind.none:
+            return;
+        case UnitKind.player:
+            return character.enterCombatFor(character.combatLinger);
+        case UnitKind.creature:
+            if (damage)
+                ai.triggerCombatTimer();
+            return;
+        }
+    }
+
+    /**
+     * Its spell `spell` hurt `victim` for `damage` (`periodic`: a tick): its procs and the victim's (a player's proc
+     * engine; a pet's, `dmangos.world.creatureprocs`); a creature's script hears of a kill.
+     */
+    void damageDealt(const(SpellInfo)* spell, UnitRef victim, bool crit, uint damage, bool periodic)
+    {
+        final switch (kind)
+        {
+        case UnitKind.none:
+            return;
+        case UnitKind.player:
+            if (!victim.alive)
+                return;
+            if (periodic)
+                character.tickProcs(victim, spell, damage);
+            else
+                character.spellHitProcs(spell, victim, crit, damage);
+            return;
+        case UnitKind.creature:
+            return ai.spellDamageDealt(spell, victim, crit, damage);
+        }
+    }
+
+    /// Its power type (`UNIT_FIELD_BYTES_0`'s fourth byte: mana, rage, focus, energy).
+    @property ubyte powerType()
+    {
+        import dmangos.world.updatefields : UNIT_FIELD_BYTES_0;
+
+        return kind == UnitKind.none ? 0 : fields.getByte!UNIT_FIELD_BYTES_0(3);
     }
 
     /**

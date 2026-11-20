@@ -992,7 +992,7 @@ private:
 
     /// Its pursuit time again, from where it is: by its level (`pursuitTime`), not the template's `Pursuit`,
     /// which the database holds at one default (15 s) for every creature.
-    void triggerCombatTimer()
+    package void triggerCombatTimer()
     {
         combatTimer = pursuitTime(me.template_.minLevel);
         lastRefresh = me.position;

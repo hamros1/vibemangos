@@ -590,29 +590,18 @@ mixin template CreatureCasting()
 
     /**
      * The amount of effect `i` of `spell` as it casts it: rolled at its level (and scaled by it:
-     * `SPELL_ATTR_SCALES_WITH_CREATURE_LEVEL`); a pet's or a totem's with its owner's talents (Improved Imp on
-     * Firebolt, Improved Voidwalker on Torment, Call of Flame on Searing Totem's attack).
+     * `SPELL_ATTR_SCALES_WITH_CREATURE_LEVEL`); a pet's or a totem's with its owner's talents (Improved Voidwalker on
+     * Torment; their damage's, Improved Imp's and Call of Flame's, are `Caster.spellMod`'s in `spellDamage`).
      */
     package int effectAmount(const(SpellInfo)* spell, size_t i)
     {
-        import dmangos.world.spellmods : SpellModOp;
-
         int value = levelScaled(spell, i, effectValue(*spell, i, me.values.get!UNIT_FIELD_LEVEL, uniform01(world_.random)));
-        const effect = spell.effect[i];
         if (auto owner = petModOwner())
-        {
             value = owner.petEffectMod(spell, i, value, me);
-            if (effect == SpellEffect.schoolDamage)
-                value = owner.petSpellMod(SpellModOp.damage, spell, value, me);
-        }
         else if (me.totemOwner)
             if (auto owner = world_.unit(me.totemOwner))
                 if (owner.session !is null && owner.session.player !is null)
-                {
                     value = owner.session.effectMod(spell, i, value);
-                    if (effect == SpellEffect.schoolDamage)
-                        value = owner.session.spellMod(SpellModOp.damage, spell, value);
-                }
         return value;
     }
 
@@ -641,70 +630,35 @@ mixin template CreatureCasting()
         }
     }
 
-    /// `SPELL_EFFECT_POWER_DRAIN` and `_POWER_BURN`: a player's power drained to it, or burnt as damage.
-    package void powerDrainOrBurn(const(SpellInfo)* spell, size_t i, ulong guid, int value)
-    {
-        if (guid == me.guid || value <= 0)
-            return;
-        auto other = world_.unit(guid);
-        if (!other || other.session is null)
-            return;
-        const taken = other.session.drainPower(cast(ubyte) spell.miscValue[i], value);
-        const multiple = spell.casting.multipleValue[i];
-        const worth = cast(int)(taken * (multiple > 0 ? multiple : 1));
-        if (spell.effect[i] == SpellEffect.powerBurn)
-            spellDamageTo(spell, guid, worth, spell.casting.school);
-        else if (worth > 0)
-        {
-            const mana = me.values.get!UNIT_FIELD_POWER1(0), maximum = me.values.get!UNIT_FIELD_MAXPOWER1(0);
-            me.values.set!UNIT_FIELD_POWER1(0, mana + worth > maximum ? maximum : mana + worth);
-        }
-    }
 
-    /// A school's damage to a player, armor taking some of physical; -1: already through armor.
+    /// A school's damage to `guid` (`dmangos.world.spelldamage.spellDamage`); -1: a weapon's, its roll made already.
     package void spellDamageTo(const(SpellInfo)* spell, ulong guid, uint damage, int school)
     {
+        import dmangos.world.spelldamage : spellDamage, SpellDamage;
+
         auto other = world_.unit(guid);
         if (!other)
             return;
-        // What the victim's auras make of the school's damage (`MOD_DAMAGE_PERCENT_TAKEN`: a stance, a curse).
-        const victim = other.fighter;
-        const schoolIndex = school < 0 ? 0 : school;
-        // Its own auras' damage of the school (`MOD_DAMAGE_PERCENT_DONE`: a hunter pet's Unleashed Fury, Soul Link's
-        // share); a weapon's damage has had them in its roll.
-        if (school >= 0 && school < 7 && me.auras.list.length)
-            damage = cast(uint)(damage * me.auras.multiplier(AuraType.modDamagePercentDone,
-                (int mask) => (mask & (1 << school)) != 0, -1));
-        if (schoolIndex < 7)
-            damage = cast(uint)(damage * victim.damageTaken[schoolIndex]);
-        uint resisted;
-        if (school == 0)
-            damage = cast(uint) armorReducedDamage(me.values.get!UNIT_FIELD_LEVEL, victim.armor, damage);
-        else if (school > 1)
-        {
-            // Partly resisted by its resistance (a binary spell was resisted whole or not at all), as a player's.
-            import std.random : uniform;
-            import dmangos.world.combat : partiallyResisted;
-            import dmangos.world.spellcast : isBinarySpell;
+        auto caster = spellCaster();
+        SpellDamage how;
+        how.weaponRolled = school < 0;
+        spellDamage(caster, spell, other, damage, school < 0 ? 0 : school, how);
+    }
 
-            if (!isBinarySpell(*spell)) // nothing to roll for a binary spell
-            {
-                const r = partiallyResisted(damage, other.resistance(school), me.values.get!UNIT_FIELD_LEVEL,
-                    other.fighter, false, uniform!"[]"(1u, 10000u, world_.random));
-                damage = r.damage;
-                resisted = r.resisted;
-            }
-        }
-        const absorbed = other.absorb(school < 0 ? 0 : school, damage);
-        world_.sendToObservers(me.guid, Opcode.SMSG_SPELLNONMELEEDAMAGELOG, nonMeleeDamageLog(target: guid, attacker: me.guid,
-            spell.id, damage, school < 0 ? 0 : school, absorbed, resisted, false, 0, false));
-        if (damage)
-            triggerCombatTimer();
-        other.spellHitBy(me.guid, damage);
-        if (!other.alive && script !is null)
-            script.killed(this, guid);
-        if (!other.alive)
-            raiseScript(KilledUnit(EntityRef(guid)));
+    /// Its spell hurt `victim` (`Caster.damageDealt`): a pet's procs (`dmangos.world.creatureprocs`), and its script
+    /// hears of a kill.
+    package void spellDamageDealt(const(SpellInfo)* spell, UnitRef victim, bool crit, uint damage)
+    {
+        import dmangos.world.procs : ProcEx, ProcHit, spellProcFlags;
+
+        if (victim.alive)
+            procAuras(spellProcFlags(*spell, false, false), victim, ProcHit(spell, crit ? ProcEx.criticalHit
+                : ProcEx.normalHit, damage, 0, damage != 0));
+        if (victim.alive)
+            return;
+        if (script !is null)
+            script.killed(this, victim.combatGuid);
+        raiseScript(KilledUnit(EntityRef(victim.combatGuid)));
     }
 
     /**
@@ -804,19 +758,6 @@ mixin template CreatureCasting()
         }
     }
 
-    package void healCreature(const(SpellInfo)* spell, Creature who, int value)
-    {
-        if (value <= 0 || who is null || !who.alive)
-            return;
-        value = who.auras.healingTaken(value, spell.casting.school); // Mortal Strike on it: half
-        const health = who.values.get!UNIT_FIELD_HEALTH, maximum = who.values.get!UNIT_FIELD_MAXHEALTH;
-        const healed = health + value > maximum ? maximum - health : value;
-        who.values.set!UNIT_FIELD_HEALTH(health + healed);
-        world_.sendToObservers(who.guid, Opcode.SMSG_SPELLHEALLOG,
-            healLog(target: who.guid, caster: me.guid, spell.id, healed, false));
-        if (who !is me)
-            world_.flushCreature(who);
-    }
 
     /// The spell on its next swing, instead of the swing (`true`): its weapon damage.
     private bool swingSpell(UnitRef target)
@@ -1638,6 +1579,7 @@ unittest
     trainer.ai.attackedBy(anduin.session.inWorld.unit, map);
     enum uint mendOther = 95012;
     context.data.spells.spells[mendOther] = testSpell(mendOther, 10, 21, 200);
+    context.data.spells.spells.edit(mendOther).attributesEx2 = 0x20000000; // SPELL_ATTR_EX2_CANT_CRIT: exactly 200
     EventAiEvent friendly = {id: 4, type: EventType.friendlyHp, chance: 100, flags: eventRepeatable,
         params: [100, 30, 3000, 3000, 0, 0]};
     friendly.actions[0] = EventAiAction(ActionType.castSpell, [mendOther, EventTarget.eventSpecific, 0]);

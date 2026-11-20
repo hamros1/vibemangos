@@ -150,7 +150,7 @@ private:
     bool[ulong] threatenedBy;      // the creatures that have this player in their threat list
 
     /// In combat (`UNIT_FLAG_IN_COMBAT`) at least for `linger` more.
-    void enterCombatFor(Duration linger)
+    package void enterCombatFor(Duration linger)
     {
         const until = context.clock() + linger;
         if (until > combatUntil)
@@ -175,7 +175,7 @@ private:
     MonoTime combatUntil;          // in combat (`UNIT_FLAG_IN_COMBAT`) until then
 
     /// How long a player stays in combat after its last swing.
-    enum combatLinger = 5.seconds;
+    package enum combatLinger = 5.seconds;
 
     /// The client starts attacking its target.
     @Handles(Opcode.CMSG_ATTACKSWING, WorldState.inWorld)

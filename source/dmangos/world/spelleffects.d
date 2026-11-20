@@ -68,7 +68,8 @@ private immutable SpellEffect[] creaturesDo = [SpellEffect.none, SpellEffect.sch
     SpellEffect.scriptEffect, SpellEffect.interruptCast, SpellEffect.sendEvent, SpellEffect.summon,
     SpellEffect.summonWild, SpellEffect.summonGuardian, SpellEffect.knockBack, SpellEffect.healthLeech,
     SpellEffect.powerDrain, SpellEffect.powerBurn, SpellEffect.durabilityDamage, SpellEffect.durabilityDamagePct,
-    SpellEffect.reputation, SpellEffect.teleportUnits, SpellEffect.instantKill];
+    SpellEffect.reputation, SpellEffect.teleportUnits, SpellEffect.instantKill, SpellEffect.energize,
+    SpellEffect.healMaxHealth];
 
 /// Whether a cast of `kind` does `effect` (the NPC sweep names what is not done by this).
 bool doneBy(UnitKind kind, SpellEffect effect) pure nothrow @nogc @safe
@@ -135,28 +136,22 @@ void applyEffect(ref Caster caster, const(SpellInfo)* spell, size_t i, ulong tar
     final switch (effect) // every effect decided: done, or listed as not done below
     {
     case SpellEffect.schoolDamage: // SPELL_EFFECT_SCHOOL_DAMAGE
-        if (p !is null)
-        {
-            import dmangos.world.spellmods : SpellModOp;
+    {
+        import dmangos.world.spelldamage : mayHurt, spellDamage, SpellDamage;
+        import dmangos.world.spellmods : SpellModOp;
 
-            // (its modifiers, `SPELLMOD_DAMAGE`, on the damage with the spell power: `spellDamage`)
-            const damage = p.classSchoolDamage(spell, i, target, value);
-            if (auto creature = cast(Creature) map.findObject(target))
-                p.spellDamage(spell, creature, damage > 0 ? damage : 0, spell.casting.school, true, SpellModOp.damage);
-            else if (auto other = p.enemyPlayer(target))
-                p.spellDamageToPlayer(spell, other, damage > 0 ? damage : 0, true, SpellModOp.damage);
-        }
-        else if (target != caster.guid)
-        {
-            ai.spellDamageTo(spell, target, value > 0 ? value : 0, spell.casting.school);
-            if (auto other = map.unit(target)) // a pet's procs (`dmangos.world.creatureprocs`)
-            {
-                import dmangos.world.procs : ProcHit, spellProcFlags;
-
-                ai.procAuras(spellProcFlags(*spell, false, false), other, ProcHit(spell));
-            }
-        }
+        auto victim = map.unit(target);
+        if (!victim)
+            break;
+        // A player's at a creature or an enemy; a creature's at whatever its targets are, itself too (Quiet Suicide).
+        if (!mayHurt(caster, victim))
+            break;
+        // (its modifiers, `SPELLMOD_DAMAGE`, on the damage with the spell power)
+        const damage = p !is null ? p.classSchoolDamage(spell, i, target, value) : value;
+        spellDamage(caster, spell, victim, damage > 0 ? damage : 0, spell.casting.school,
+            SpellDamage(true, SpellModOp.damage));
         break;
+    }
     case SpellEffect.dummy, SpellEffect.scriptEffect: // SPELL_EFFECT_DUMMY, SPELL_EFFECT_SCRIPT_EFFECT: the spell's script, then its database script
         if (p !is null)
         {
@@ -312,15 +307,13 @@ void applyEffect(ref Caster caster, const(SpellInfo)* spell, size_t i, ulong tar
             ai.weaponSpellDamage(spell, i, target, *d, value);
         break;
     case SpellEffect.heal: // SPELL_EFFECT_HEAL
-        if (p !is null)
-        {
-            import dmangos.world.spellmods : SpellModOp;
+    {
+        import dmangos.world.spelldamage : spellHeal;
+        import dmangos.world.spellmods : SpellModOp;
 
-            p.heal(spell, target, p.spellMod(SpellModOp.damage, spell, value));
-        }
-        else
-            ai.healCreature(spell, target == caster.guid ? caster.creature : map.creatureAt(target), value);
+        spellHeal(caster, spell, map.unit(target), caster.spellMod(SpellModOp.damage, spell, value));
         break;
+    }
     case SpellEffect.summonCritter: // SPELL_EFFECT_SUMMON_CRITTER: a companion; the same again sends it away
         p.summonCompanion(spell, i);
         break;
@@ -335,8 +328,12 @@ void applyEffect(ref Caster caster, const(SpellInfo)* spell, size_t i, ulong tar
         p.makeFarSightSpot(spell, i, c.targets);
         break;
     case SpellEffect.energize: // SPELL_EFFECT_ENERGIZE
-        p.energize(spell, i, target, value);
+    {
+        import dmangos.world.spelldamage : energize;
+
+        energize(caster, spell, i, map.unit(target), value);
         break;
+    }
     case SpellEffect.reputation: // SPELL_EFFECT_REPUTATION: the faction of the misc value, by the value
         if (p !is null)
         {
@@ -420,30 +417,33 @@ void applyEffect(ref Caster caster, const(SpellInfo)* spell, size_t i, ulong tar
         p.stuckEffect();
         break;
     case SpellEffect.powerBurn: // SPELL_EFFECT_POWER_BURN: Mana Burn
-    case SpellEffect.powerDrain: // SPELL_EFFECT_POWER_DRAIN: Dark Pact
-        if (p !is null)
-        {
-            if (effect == SpellEffect.powerBurn)
-                p.powerBurnEffect(spell, i, target, value);
-            else
-                p.powerDrainEffect(spell, i, target, value);
-        }
-        else
-            ai.powerDrainOrBurn(spell, i, target, value);
+    {
+        import dmangos.world.spelldamage : powerBurn;
+
+        powerBurn(caster, spell, i, map.unit(target), value);
         break;
+    }
+    case SpellEffect.powerDrain: // SPELL_EFFECT_POWER_DRAIN: Dark Pact, Drain Mana's kind at once
+    {
+        import dmangos.world.spelldamage : powerDrain;
+
+        powerDrain(caster, spell, i, map.unit(target), value);
+        break;
+    }
     case SpellEffect.healthLeech: // SPELL_EFFECT_HEALTH_LEECH: Death Coil
-        if (p !is null)
-            p.healthLeechEffect(spell, i, target, value);
-        else if (target != caster.guid && value > 0) // damage, and as much health to the caster
-        {
-            ai.spellDamageTo(spell, target, value, spell.casting.school);
-            const multiple = spell.casting.multipleValue[i];
-            ai.healCreature(spell, caster.creature, cast(int)(value * (multiple > 0 ? multiple : 1)));
-        }
+    {
+        import dmangos.world.spelldamage : healthLeech;
+
+        healthLeech(caster, spell, i, map.unit(target), value);
         break;
+    }
     case SpellEffect.healMaxHealth: // SPELL_EFFECT_HEAL_MAX_HEALTH: Lay on Hands
-        p.healMaxHealthEffect(spell, target);
+    {
+        import dmangos.world.spelldamage : healMaxHealth;
+
+        healMaxHealth(caster, spell, map.unit(target));
         break;
+    }
     case SpellEffect.addExtraAttacks: // SPELL_EFFECT_ADD_EXTRA_ATTACKS: Sword Specialization, Reckoning
         p.addExtraAttacksEffect(spell, i, target, value);
         break;

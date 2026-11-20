@@ -310,17 +310,17 @@ unittest
                 petCasts(w, imp, firebolt, kobold.guid);
             pass(w, warlock, 100.msecs);
             bolts[with_] ~= damageLogs(warlock, firebolt);
-            if (bolts[with_].length >= 3)
+            if (bolts[with_].length >= 8)
                 break;
         }
-        assert(bolts[with_].length >= 3, format!"Firebolts landed: %s %s %s"(bolts[with_], imp.ai.castRefusal, imp.alive));
+        assert(bolts[with_].length >= 8, format!"Firebolts landed: %s %s %s"(bolts[with_], imp.ai.castRefusal, imp.alive));
     }
     assert(shield[1] == cast(int)(shield[0] * 1.3) && pact[1] == cast(int)(pact[0] * 1.3), format!"30%%: %s %s"(shield, pact));
-    // Firebolt's damage: a roll within its range; with the talent, the range is 30% higher (a kobold resists no fire).
-    import std.algorithm.searching : maxElement, minElement;
+    // Firebolt's damage: a roll within its range (7 to 9 at the imp's level), a crit half again; with the talent, the
+    // range is 30% higher (9 to 11; a kobold resists no fire). Eight of each: their means, apart by about 2.4.
+    import std.algorithm.iteration : sum;
 
-    assert(bolts[1].minElement > bolts[0].minElement && bolts[1].maxElement > bolts[0].maxElement,
-        format!"Firebolt %s, %s"(bolts[0], bolts[1]));
+    assert(bolts[1].sum * bolts[0].length > bolts[0].sum * bolts[1].length, format!"Firebolt %s, %s"(bolts[0], bolts[1]));
 }
 
 /// Improved Firebolt (18126, 18127): "Reduces the casting time of your Imp's Firebolt spell by 1 sec" (0.5 a rank).

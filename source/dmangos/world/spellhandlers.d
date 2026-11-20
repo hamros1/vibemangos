@@ -2720,17 +2720,15 @@ private:
         return spell.casting.dmgClass == DamageClass.melee || spell.casting.dmgClass == DamageClass.ranged;
     }
 
-    /**
-     * A crit's damage (`SpellCriticalDamageBonus`): double for a melee or ranged ability, half again for a spell; the
-     * bonus more by the spell's modifiers (`SPELLMOD_CRIT_DAMAGE_BONUS`: Ice Shards, Ruin double a spell's half).
-     */
+    /// A crit's damage (`Caster.critDamage`).
     package uint critDamage(const(SpellInfo)* spell, uint damage)
     {
-        const bonus = weaponCrit(spell) ? damage : damage / 2;
-        return damage + spellMod(SpellModOp.critDamageBonus, spell, bonus);
+        import dmangos.world.caster : Caster;
+
+        return Caster.of(this).critDamage(spell, damage);
     }
 
-    float spellCritOf(const(SpellInfo)* spell)
+    package float spellCritOf(const(SpellInfo)* spell)
     {
         import dmangos.world.auras : AuraType;
 
@@ -2995,71 +2993,29 @@ private:
         return chain;
     }
 
-    /// A school's damage to a player: a crit is half again; armor for physical. Without `withBonus`, no spell
-    /// power (Mana Burn's). `modOp` (if any): the spell's modifiers of the damage with the spell power (Fire Power's
-    /// share of the whole: "the damage done by your Fire spells"). Returns the damage dealt.
+    /// A school's damage to a player (`dmangos.world.spelldamage.spellDamage`). Returns the damage dealt.
     package uint spellDamageToPlayer(const(SpellInfo)* spell, typeof(this) other, uint damage, bool withBonus = true,
         int modOp = -1)
     {
-        if (withBonus)
-            damage += spellDamageBonus(spell, spell.casting.school); // spell power, as against a creature
-        if (modOp >= 0)
-            damage = spellMod(cast(SpellModOp) modOp, spell, damage);
-        damage = spellDamageFactors(damage, spell.casting.school, creatureTypeHumanoid, other.player.damageMods.taken,
-            other.player.damageMods.takenFlat);
-        const crit = !(spell.attributesEx2 & spellAttrEx2CantCrit) && uniform01(map.random) * 100 < critChanceOf(spell, other.unit)
-            + (weaponCrit(spell) ? 0 : spellCritTaken(other.player.auras, spell.casting.school)); // (a weapon's has the victim's in it)
-        if (crit)
-            damage = critDamage(spell, damage);
-        const school = spell.casting.school;
-        uint resisted;
-        if (school == 0)
-            damage = cast(uint) armorReducedDamage(player.data.level, armorAgainst(player.fighter, other.player.fighter), damage);
-        else if (school != 1 && !isBinarySpell(*spell))
-            resisted = partialResist(damage, targetResistance(cast(int) other.player.values.get!UNIT_FIELD_RESISTANCES(school), school),
-                other.player.data.level);
-        const absorbed = other.absorbIncoming(school, damage);
-        map.sendToWatchers(this, Opcode.SMSG_SPELLNONMELEEDAMAGELOG, nonMeleeDamageLog(target: other.player.guid, attacker: player.guid,
-            spell.id, damage, school, absorbed, resisted, false, 0, crit), true);
-        enterCombatFor(combatLinger);
-        import dmangos.world.unit : Blow, dealDamage;
+        import dmangos.world.caster : Caster;
+        import dmangos.world.spelldamage : SpellDamage;
+        static import dmangos.world.spelldamage;
 
-        dealDamage(unit, other.unit, damage, Blow.spell(school, crit));
-        if (other.player !is null && other.player.alive)
-        {
-            import dmangos.world.aurahandlers : ProcFlag;
-
-            spellHitProcs(spell, other.unit, crit, damage);
-        }
-        return damage;
+        auto me = Caster.of(this);
+        return dmangos.world.spelldamage.spellDamage(me, spell, other.unit, damage, spell.casting.school,
+            SpellDamage(withBonus, modOp));
     }
 
-    /**
-     * The damage bonus of a direct spell: the caster's `SPELL_AURA_MOD_DAMAGE_DONE` for the spell's school (its
-     * items' and talents' "damage done by spells") and spirit's share, times its damage effect's coefficient
-     * (`bonusCoefficient`). Physical spells get none.
-     */
+    /// The damage bonus of a direct spell (`dmangos.world.spelldamage.spellDamageBonus`).
     package uint spellDamageBonus(const(SpellInfo)* spell, uint school)
     {
-        if (school == 0)
-            return 0;
-        const done = spellPower(1 << school);
-        if (done <= 0)
-            return 0;
-        return cast(uint)(done * directCoefficient(spell, false));
+        import dmangos.world.caster : Caster;
+        static import dmangos.world.spelldamage;
+
+        auto me = Caster.of(this);
+        return dmangos.world.spelldamage.spellDamageBonus(me, spell, school);
     }
 
-    /// The coefficient (`bonusCoefficient`) of `spell`'s direct damage effect (`heal`: its heal), its first.
-    float directCoefficient(const(SpellInfo)* spell, bool heal)
-    {
-        import dmangos.world.spellcast : bonusCoefficient;
-
-        foreach (i; 0 .. 3)
-            if (heal ? spell.effect[i] == SpellEffect.heal
-                : (spell.effect[i] == SpellEffect.schoolDamage || spell.effect[i] == SpellEffect.healthLeech))
-                return bonusCoefficient(*spell, i, context.client, player.data.level);
-        return 0;
-    }
 
     /**
      * The caster's spell power for spells of the schools in `schoolMask` (`SpellBaseDamageBonusDone`): its
@@ -3096,28 +3052,29 @@ private:
         return cast(int)(player.values.get!UNIT_FIELD_STAT0(Stat.spirit) * percent / 100.0f);
     }
 
-    /// A target's resistance to `school` as this caster's spells meet it: less by its `MOD_TARGET_RESISTANCE`
-    /// (negative amounts: Arcane Subtlety), never below none.
+    /// A target's resistance to `school` as this caster's spells meet it (`Caster.targetResistance`).
     package int targetResistance(int resistance, uint school)
     {
-        const reduced = resistance + player.auras.totalByMiscMask(AuraType.modTargetResistance, 1 << school);
-        return reduced > 0 ? reduced : 0;
+        import dmangos.world.caster : Caster;
+
+        return Caster.of(this).targetResistance(resistance, school);
     }
 
-    /// The healing bonus: the caster's `SPELL_AURA_MOD_HEALING_DONE` and spirit's share, times its heal's coefficient.
+    /// The healing bonus (`dmangos.world.spelldamage.healingBonus`).
     package uint healingBonus(const(SpellInfo)* spell)
     {
-        const done = healingPower();
-        if (done <= 0)
-            return 0;
-        return cast(uint)(done * directCoefficient(spell, true));
+        import dmangos.world.caster : Caster;
+        static import dmangos.world.spelldamage;
+
+        auto me = Caster.of(this);
+        return dmangos.world.spelldamage.healingBonus(me, spell);
     }
 
     /**
      * `damage` with what auras make of it: the caster's for its school and the victim's creature type
      * (`MOD_DAMAGE_PERCENT_DONE`, `MOD_DAMAGE_DONE_VERSUS`), the victim's for the school (`taken`).
      */
-    uint spellDamageFactors(uint damage, uint school, uint victimType, const ref float[7] taken,
+    package uint spellDamageFactors(uint damage, uint school, uint victimType, const ref float[7] taken,
         const ref int[7] takenFlat)
     {
         import dmangos.world.combat : creatureTypes;
@@ -3130,59 +3087,26 @@ private:
         return total > 0 ? cast(uint) total : 0;
     }
 
-    /**
-     * The crit chance more of a spell of `school` at the bearer of `auras` (`MOD_ATTACKER_SPELL_CRIT_CHANCE`, of the
-     * schools of its misc value: Winter's Chill's frost only, "a Frost spell will critically hit").
-     */
+    /// The crit chance more of a spell of `school` at the bearer of `auras` (`dmangos.world.spelldamage.spellCritTaken`).
     package static float spellCritTaken(A)(const ref A auras, uint school)
     {
-        return school < 7 ? auras.totalByMiscMask(AuraType.modAttackerSpellCritChance, 1 << school) : 0;
+        static import dmangos.world.spelldamage;
+
+        return dmangos.world.spelldamage.spellCritTaken(auras, school);
     }
 
-    /**
-     * A school's damage to a creature (see `spellDamageToPlayer`). Returns the damage dealt. A persistent area's
-     * tick (`periodic`: Blizzard's, Rain of Fire's) never crits, and sets off what a tick sets off (`tickProcs`).
-     */
+    /// A school's damage to a creature (`dmangos.world.spelldamage.spellDamage`; `periodic`: a persistent area's
+    /// tick). Returns the damage dealt.
     package uint spellDamage(const(SpellInfo)* spell, Creature victim, uint damage, uint school, bool withBonus = true,
         int modOp = -1, bool periodic = false)
     {
-        if (withBonus)
-            damage += spellDamageBonus(spell, school);
-        if (modOp >= 0)
-            damage = spellMod(cast(SpellModOp) modOp, spell, damage);
-        float victimCrit = 0;
-        {
-            const victimFighter = victim.fighter;
-            damage = spellDamageFactors(damage, school, victimFighter.creatureType, victimFighter.damageTaken,
-                victimFighter.damageTakenFlat);
-            victimCrit = spellCritTaken(victim.auras, school); // Winter's Chill
-        }
-        const crit = !periodic && !(spell.attributesEx2 & spellAttrEx2CantCrit)
-            && uniform01(map.random) * 100 < critChanceOf(spell, map.unitOf(victim)) + (weaponCrit(spell) ? 0 : victimCrit);
-        if (crit)
-            damage = critDamage(spell, damage);
-        uint resisted;
-        if (school == 0)
-            damage = cast(uint) armorReducedDamage(player.data.level, armorAgainst(player.fighter, victim.fighter), damage);
-        else if (school != 1 && !isBinarySpell(*spell)) // holy: no resistance; a binary spell: all or nothing
-        {
-            // A partial resist: a share of it resisted.
-            import dmangos.world.combat : partiallyResisted;
-            import std.random : uniform;
+        import dmangos.world.caster : Caster;
+        import dmangos.world.spelldamage : SpellDamage;
+        static import dmangos.world.spelldamage;
 
-            const r = partiallyResisted(damage, targetResistance(cast(int) victim.values.get!UNIT_FIELD_RESISTANCES(school), school),
-                player.data.level, victim.fighter, false, uniform!"[]"(1u, 10000u, map.random));
-            damage = r.damage;
-            resisted = r.resisted;
-        }
-        map.sendToWatchers(this, Opcode.SMSG_SPELLNONMELEEDAMAGELOG, nonMeleeDamageLog(target: victim.guid, attacker: player.guid,
-            spell.id, damage, school, 0, resisted, false, 0, crit), true);
-        spellAttacked(victim, damage, periodic, school, spell);
-        if (victim.alive && periodic)
-            tickProcs(map.unitOf(victim), spell, damage);
-        else if (victim.alive)
-            spellHitProcs(spell, map.unitOf(victim), crit, damage);
-        return damage;
+        auto me = Caster.of(this);
+        return dmangos.world.spelldamage.spellDamage(me, spell, map.unitOf(victim), damage, school,
+            SpellDamage(withBonus, modOp, periodic));
     }
 
     /**
@@ -3347,57 +3271,16 @@ private:
         dealDamage(unit, map.unitOf(victim), damage, blow);
     }
 
-    /// A heal: health back, a crit half again, and the heal log sent.
+    /// A heal of `target` (`dmangos.world.spelldamage.spellHeal`).
     package void heal(const(SpellInfo)* spell, ulong target, int value)
     {
-        if (value <= 0)
-            return;
-        auto who = target == player.guid ? this : cast(typeof(this)) context.onlinePlayer(target);
-        if (who is null || who.player is null || who.map !is map)
-            return;
-        pvpAssisted(who);
-        value = classHeal(spell, who.unit, value); // Swiftmend, Blessing of Light, Healing Way
-        value += healingBonus(spell);
-        value = cast(int)(value * player.auras.multiplier(AuraType.modHealingDonePercent)); // the healer's
-        const crit = !(spell.attributesEx2 & spellAttrEx2CantCrit) && uniform01(map.random) * 100 < spellCritOf(spell);
-        uint amount = who.player.auras.healingTaken(crit ? value * 3 / 2 : value, spell.casting.school);
-        auto v = &who.player.values;
-        const health = v.get!UNIT_FIELD_HEALTH, maxHealth = v.get!UNIT_FIELD_MAXHEALTH;
-        if (health == 0)
-            return;
-        const healed = health + amount > maxHealth ? maxHealth - health : amount;
-        v.set!UNIT_FIELD_HEALTH(health + healed);
-        map.sendToWatchers(this, Opcode.SMSG_SPELLHEALLOG, healLog(target: target, caster: player.guid, spell.id, amount, crit), true);
-        if (who !is this)
-            who.flushPlayerChanges();
-        {
-            import dmangos.world.procs : ProcEx, ProcHit, spellProcFlags;
+        import dmangos.world.caster : Caster;
+        import dmangos.world.spelldamage : spellHeal;
 
-            procAuras(spellProcFlags(*spell, true, false), who.unit, ProcHit(spell, crit ? ProcEx.criticalHit
-                : ProcEx.normalHit, amount, 0, amount != 0));
-        }
-        // Its threat, less by the healer's talents (Healing Grace, Subtlety, Improved Tranquility).
-        const threat = spellMod(SpellModOp.threat, spell, cast(int) healed);
-        imported!"dmangos.world.creatureai".assistThreat(map, who.threateners, unit, threat > 0 ? threat : 0, *spell);
+        auto me = Caster.of(this);
+        spellHeal(me, spell, map.unit(target), value);
     }
 
-    /// Power given back, of the effect's kind (`EffectMiscValue`).
-    package void energize(const(SpellInfo)* spell, size_t i, ulong target, int value)
-    {
-        if (value <= 0)
-            return;
-        auto who = target == player.guid ? this : cast(typeof(this)) context.onlinePlayer(target);
-        if (who is null || who.player is null)
-            return;
-        const power = cast(Power) spell.miscValue[i];
-        if (power > Power.happiness)
-            return;
-        who.player.modifyPower(power, value);
-        map.sendToWatchers(this, Opcode.SMSG_SPELLENERGIZELOG, energizeLog(target, player.guid, spell.id, power,
-            value), true);
-        if (who !is this)
-            who.flushPlayerChanges();
-    }
 
     /// The player's companion (a mini-pet: `SUMMON_CRITTER`), if out; 0 if none.
     package ulong companion;
