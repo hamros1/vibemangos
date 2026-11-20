@@ -550,12 +550,12 @@ Three modules, split by what they depend on:
   timer, its phase, and the checks, chances and repeats. It acts through the `Scripted` interface,
   which `CreatureAI` implements; the AI calls it at its moments (combat starting, a kill, death,
   evading, home) and in its update. `creaturecasting.d` is that implementation, mixed into
-  `CreatureAI`: a creature's casts (`castSpell`: checks, cast time, `go` with the targets and
-  effects), fleeing, and the actions' texts, emotes and target choice. What it needs of the world's
-  data (spells, the client's tables, broadcast texts, listen ranges) comes through `CreatureLore`,
-  which `WorldContext` implements and hands to a scripted creature as it makes it; units take its
-  spells through `UnitRef` (`spellHitBy`, `auraFrom`); a friend (a heal) never rolls to be missed. The
-  area ones are found with `CombatWorld.playersNear`, texts go out with `CombatWorld.sendInRange`.
+  `CreatureAI`: a creature's casts (`castSpell`: checks, cast time, `go` with the targets, whose effects
+  are the shared pipeline's: docs/SPELLS.md), fleeing, and the actions' texts, emotes and target choice.
+  What it needs of the world's data (spells, the client's tables, broadcast texts, listen ranges) comes
+  through `CreatureLore`, which `WorldContext` implements and hands to a scripted creature as it makes it;
+  as a caster it is a `Caster` (`spellCaster`); a friend (a heal) never rolls to be missed. The area
+  ones are found with `CombatWorld.playersNear`, texts go out with `CombatWorld.sendInRange`.
 
 ## Pets
 
@@ -584,29 +584,45 @@ The map shows a pet's owner-only fields (its experience, training points) to its
 
 ## Spells
 
-`spells.d` loads `spell_template` (`SpellInfo`, with what casting needs in `SpellInfo.casting`),
-`spellcast.d` holds what needs no session: cast targets (`SpellTargets`), cast times, durations,
-ranges and radii from the DBCs, `effectValue` (base points, per level, dice), `powerCost`, the
-magic hit roll, and the packets. `spellhandlers.d` is the character's side: the
-cast in progress (`generic`) and the one for the next swing (`nextSwing`), cooldowns by spell and
-category and the global one, `checkCast`, `go` (cooldowns, cost, hit rolls, `SMSG_SPELL_GO`), and
-the effects. Damage to creatures goes the way melee's does (`spellAttacked`: threat, tapping, the
-kill).
+docs/SPELLS.md is the design: one pipeline for every caster. `spells.d` loads `spell_template`
+(`SpellInfo`, with what casting needs in `SpellInfo.casting`), `spellcast.d` holds what needs no caster:
+cast targets (`SpellTargets`), cast times, durations, ranges and radii from the DBCs, `effectValue` (base
+points, per level, dice), `powerCost`, the spell hit table, and the packets.
+
+The stages written once, over `caster.d`'s `Caster` (a player, or a creature: a pet's and a totem's casts
+are a creature's) and `UnitRef` targets:
+
+* `spelleffects.d`: the hit roll (`rollHit`) and the effect stage, `applyEffect`, the one `final switch`
+  over `SpellEffect`; `doneBy` says which effects a kind of caster does (the NPC sweep names its "not done"
+  failures by it).
+* `spelldamage.d`: spell damage (`spellDamage`: the caster's spell power, modifiers and crit, the
+  victim's auras, armor or resistance, shields, the log, `dealDamage`, the procs), heals, energize, burns,
+  drains, leeches.
+* `spellauras.d`: an aura's amounts and duration, its application to a unit, its periodic ticks done for
+  whoever cast it, dispels.
+* `spellareas.d` (persistent areas), `spellsummons.d` (wild objects, totems), `spellmoves.d` (a charge's
+  end).
+
+What stays a kind's own: `spellhandlers.d` is the character's side (the cast opcodes, the cast in progress
+(`generic`) and the one for the next swing (`nextSwing`), cooldowns by spell and category and the global
+one, `checkCast`, `go`: cooldowns, cost, reagents, combo points, the targets, `SMSG_SPELL_GO`), with
+`effecthandlers.d` (threat, taunts, leaps, traps), `classspells.d` and `physicalclasses.d` (class rules)
+and `procs.d`; `creaturecasting.d` is the creature's (its cast flags, cast time, mana, its targets and
+weapon rolls, its script's notifications, its persistent areas and totems).
 
 ## Auras
 
 `auras.d` is a unit's `AuraSet`: applying (slot, refresh, stacks), removing, the aura fields, the
 countdown of durations and periodic timers (`update` returns the ticks and the expired), and the
-sums stats and speeds are made of. Players and creatures each have one. `aurahandlers.d` is the
-session's side: `SPELL_EFFECT_APPLY_AURA`, what each aura type does as it begins and ends
+sums stats and speeds are made of. Players and creatures each have one. A cast's aura is put on a unit by
+`spellauras.applyAura`, whoever cast it; what it does then is the target's: `aurahandlers.d` for a player
 (`auraEffects`: stats through `StatInputs.auras` and `refreshEquipmentStats`, speeds, roots, forms,
-mounts), the player's own ticks, the interrupt flags, and `UnitRef.auraTick` for the ticks of its
-auras on creatures (a creature's tick asks its caster's session, so damage over time taps and kills
-like any spell). A player's shields absorb damage before it lands (`absorbDamage`); damage shields
-strike back at melee attackers (`damageShields`); `procAuras` fires the auras that trigger a spell on
-an event (`ProcFlag`), and a spell a proc casts sets off no procs. A creature's slows, roots and stuns
-change its movement on its next tick (`Creature.refreshAuraMovement`). Dispels are
-`SpellHandlers.dispelEffect`.
+mounts; its own ticks; the interrupt flags), `Creature.receiveAura` and `refreshLook` for a creature (its
+transform), and `Creature.refreshAuraMovement` (its slows, roots and stuns, on its next tick). An aura's
+periodic damage on a creature is its caster's doing (`UnitRef.auraTick`, `spellauras.periodicTick`), so it
+taps and kills like any spell, a creature's own too. A player's shields absorb damage before it lands
+(`absorbDamage`); damage shields strike back at melee attackers (`damageShields`); `procAuras` fires the
+auras that trigger a spell on an event (`ProcFlag`), and a spell a proc casts sets off no procs.
 
 ## Quests
 

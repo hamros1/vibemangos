@@ -60,20 +60,8 @@ private:
         int left;      // ms of flight left
     }
 
-    /// A persistent area aura's spot under way (`DynamicObject` with its aura).
-    static struct PersistentArea
-    {
-        import dmangos.world.dynobject : DynamicObject;
-
-        DynamicObject spot;
-        const(SpellInfo)* spell;
-        size_t effect;
-        int value;      // each tick's damage
-        int amplitude;  // ms between ticks
-        int timer;      // ms to the next tick
-        int left;       // ms it lasts yet
-        bool[ulong] holding; // those its aura is on: till they leave it, or it ends (CMaNGOS's `PersistentAreaAura`)
-    }
+    /// A persistent area aura's spot under way (`dmangos.world.spellareas`).
+    alias PersistentArea = imported!"dmangos.world.spellareas".PersistentArea;
 
     Casting generic;                 // the spell being cast (with a cast time), if any
     const(SpellInfo)* channelSpell;  // the spell being channelled, if any
@@ -818,13 +806,14 @@ private:
         if (!cancelled && channelTarget)
             rewardPlayerAndGroupAtCast(channelTarget, spell.id); // a channel at a quest's creature or object
         // A channel cancelled: its spots go with it.
-        if (cancelled)
-            foreach_reverse (k, ref area; persistentAreas)
-                if (area.spell is spell)
-                {
-                    map.removeObject(area.spot.guid);
-                    persistentAreas = persistentAreas[0 .. k] ~ persistentAreas[k + 1 .. $];
-                }
+        if (cancelled && persistentAreas.length)
+        {
+            import dmangos.world.caster : Caster;
+            import dmangos.world.spellareas : endPersistentAreas;
+
+            auto me = Caster.of(this);
+            endPersistentAreas(me, persistentAreas, spell);
+        }
         // Far Sight, Eagle Eye, Mind Vision: the camera comes back, the spot goes.
         seeFrom(0);
         removeFarSightSpot();
@@ -964,157 +953,28 @@ private:
         }
     }
 
-    /**
-     * A persistent area effect: a dynamic object at the destination (or the caster) of the effect's
-     * radius, lasting the spell's duration; every amplitude it hurts the creatures the caster may
-     * attack within it (`SPELL_AURA_PERIODIC_DAMAGE`'s ticks).
-     */
+    /// A persistent area aura's spot (`dmangos.world.spellareas.makePersistentArea`).
     package void makePersistentArea(const(SpellInfo)* spell, size_t i, const ref SpellTargets targets, int value)
     {
-        import dmangos.world.dynobject : DynamicObject;
-        import dmangos.world.spellcast : duration, radius;
+        import dmangos.world.caster : Caster;
+        static import dmangos.world.spellareas;
 
-        const r = spellMod(SpellModOp.radius, spell, radius(*spell, i, context.client)),
-            ms = modDuration(spell, duration(*spell, context.client, player.data.level));
-        if (r <= 0 || ms <= 0)
-            return;
-        Position at = player.position;
-        if (targets.mask & TargetFlags.destLocation)
-            at = Position(targets.dest[0], targets.dest[1], targets.dest[2], at.orientation);
-        auto spot = new DynamicObject(context.nextTemporaryCounter(), player.guid, spell.id, i, r, at);
-        map.addObject(spot);
-        const amplitude = spell.casting.amplitude[i] > 0 ? spell.casting.amplitude[i] : 1000;
-        persistentAreas ~= PersistentArea(spot, spell, i, value > 0 ? value : 0, amplitude, amplitude, ms);
+        auto me = Caster.of(this);
+        dmangos.world.spellareas.makePersistentArea(me, persistentAreas, spell, i, targets, value);
     }
 
-    /// A persistent area's aura amounts: its own effect's (the spot's value), the others' as cast.
-    private int[3] areaAuraValues(const ref PersistentArea area)
-    {
-        int[3] values;
-        foreach (j; 0 .. 3)
-            values[j] = j == area.effect ? area.value
-                : effectValue(*area.spell, j, player.data.level, uniform01(map.random));
-        return values;
-    }
 
-    /**
-     * A persistent area's tick of damage (Blizzard's, Rain of Fire's): its value, the caster's spell power by the
-     * tick's coefficient (`bonusCoefficient`), the damage over time modifiers on both (`SPELLMOD_DOT`: Piercing Ice).
-     */
-    private uint areaTick(const ref PersistentArea area)
-    {
-        import dmangos.world.spellcast : bonusCoefficient;
 
-        int tick = area.value;
-        const school = area.spell.casting.school;
-        if (school != 0)
-            if (const done = spellPower(1 << school))
-                if (done > 0)
-                    tick += cast(int)(done * bonusCoefficient(*area.spell, area.effect, context.client, player.data.level));
-        tick = spellMod(SpellModOp.dot, area.spell, tick);
-        return tick > 0 ? tick : 0;
-    }
-
-    /// The spots' ticks and ends.
+    /// The spots' ticks and ends (`dmangos.world.spellareas.updatePersistentAreas`).
     void updatePersistentAreas(int diff)
     {
-        import dmangos.world.auras : AuraType, makeAura;
-        import dmangos.world.spellcast : radius;
+        import dmangos.world.caster : Caster;
+        static import dmangos.world.spellareas;
 
-        foreach_reverse (k, ref area; persistentAreas)
-        {
-            area.left -= diff;
-            area.timer -= diff;
-            while (area.timer <= 0 && area.left > -area.amplitude)
-            {
-                area.timer += area.amplitude;
-                const r = radius(*area.spell, area.effect, context.client);
-                const at = area.spot.position;
-                bool inside(Position p)
-                {
-                    return (p.x - at.x) ^^ 2 + (p.y - at.y) ^^ 2 + (p.z - at.z) ^^ 2 <= r * r;
-                }
-                // Damage over time hurts; another aura (Flare's, a slow) is on those inside for what the area has
-                // left, until they leave it.
-                const auraType = area.spell.casting.applyAuraName[area.effect];
-                const hurts = auraType == 0 || auraType == AuraType.periodicDamage;
-                const holdMs = area.left > area.amplitude ? area.left : area.amplitude;
-                bool[ulong] inArea;
-                foreach (creature; map.creaturesNear(at, r))
-                {
-                    if (!inside(creature.position) || !spellEnemy(creature))
-                        continue;
-                    if (hurts)
-                    {
-                        spellDamage(area.spell, creature, areaTick(area), area.spell.casting.school, false, -1, true);
-                        classAreaTick(area.spell, map.unitOf(creature)); // Improved Blizzard's chill
-                    }
-                    else
-                    {
-                        inArea[creature.guid] = true;
-                        if (creature.guid in area.holding)
-                            continue;
-                        area.holding[creature.guid] = true;
-                        bool isNew;
-                        creature.auras.apply(makeAura(area.spell, player.guid, player.data.level, holdMs, false,
-                            areaAuraValues(area)), creature.values, isNew);
-                        map.flushObjectChanges(creature);
-                        if (isNew)
-                            spellAttacked(creature, 0);
-                    }
-                }
-                // Players it may fight (a duel's opponent, the other faction where that is allowed).
-                foreach (u; map.playersNear(at, r))
-                    if (auto other = enemyPlayer(u.combatGuid))
-                    {
-                        if (!other.player.alive || !inside(other.player.position))
-                            continue;
-                        if (hurts)
-                            spellDamageToPlayer(area.spell, other, areaTick(area), false);
-                        else
-                        {
-                            inArea[other.player.guid] = true;
-                            if (other.player.guid !in area.holding)
-                                other.addAura(makeAura(area.spell, player.guid, player.data.level, holdMs, false,
-                                    areaAuraValues(area)));
-                            area.holding[other.player.guid] = true;
-                        }
-                    }
-                foreach (guid; area.holding.keys) // those who left it lose it
-                    if (guid !in inArea)
-                    {
-                        loseAreaAura(guid, area.spell);
-                        area.holding.remove(guid);
-                    }
-            }
-            if (area.left <= 0)
-            {
-                foreach (guid; area.holding.keys)
-                    loseAreaAura(guid, area.spell);
-                map.removeObject(area.spot.guid);
-                persistentAreas = persistentAreas[0 .. k] ~ persistentAreas[k + 1 .. $];
-            }
-        }
+        auto me = Caster.of(this);
+        dmangos.world.spellareas.updatePersistentAreas(me, persistentAreas, diff);
     }
 
-    /// `guid` loses this player's aura of the persistent area of `spell`.
-    private void loseAreaAura(ulong guid, const(SpellInfo)* spell)
-    {
-        if (auto creature = map.creatureAt(guid))
-        {
-            if (auto aura = creature.auras.find(spell.id))
-                if (aura.caster == player.guid)
-                {
-                    creature.loseAura(aura, map);
-                    map.flushCreature(creature);
-                }
-        }
-        else if (auto other = cast(typeof(this)) context.onlinePlayer(guid))
-            if (other.player !is null)
-                if (auto aura = other.player.auras.find(spell.id))
-                    if (aura.caster == player.guid)
-                        other.removeAura(aura);
-    }
 
     /// A missile's flight time, in milliseconds: to `target` at the spell's speed (yards a second); 0: at once.
     int flightTime(const(SpellInfo)* spell, ulong target)
@@ -1284,9 +1144,14 @@ private:
         if (generic.active)
             interruptCast(SpellCastResult.interrupted);
         endChannel(true);
-        foreach (ref area; persistentAreas)
-            map.removeObject(area.spot.guid);
-        persistentAreas = null;
+        if (persistentAreas.length)
+        {
+            import dmangos.world.caster : Caster;
+            import dmangos.world.spellareas : endPersistentAreas;
+
+            auto me = Caster.of(this);
+            endPersistentAreas(me, persistentAreas);
+        }
         removeTraps();
         nextSwing.active = false;
     }
@@ -2113,30 +1978,14 @@ private:
         return SpellCastResult.ok;
     }
 
-    /**
-     * The hit roll against a creature: a magic spell misses (resisted) by
-     * the level-based spell miss chance; a melee one by the attack table (miss, dodge, parry, block).
-     * Friendly targets are always hit.
-     */
+    /// The hit roll at `target` (`dmangos.world.spelleffects.rollHit`).
     SpellMissInfo rollHit(const ref SpellInfo spell, ulong target)
     {
-        import dmangos.world.spellcast : rollSpellHit;
+        import dmangos.world.caster : Caster;
+        static import dmangos.world.spelleffects;
 
-        // Only an enemy is rolled against: a friend (a heal, a buff) is never missed.
-        const school = spell.casting.school;
-        if (auto creature = cast(Creature) map.findObject(target))
-        {
-            if (!creature.alive || !canAttack(relatingNow(), creature.ai.relatingOf(), context.client))
-                return SpellMissInfo.none;
-            return rollSpellHit(player.fighter, creature.fighter, spell,
-                targetResistance(cast(int) creature.values.get!UNIT_FIELD_RESISTANCES(school), school), spellHitBonusOf(&spell), map.random);
-        }
-        auto other = target == player.guid ? null : cast(typeof(this)) context.onlinePlayer(target);
-        if (other is null || other.player is null || !canAttack(relatingNow(), other.relatingNow(), context.client))
-            return SpellMissInfo.none;
-        return rollSpellHit(player.fighter, other.player.fighter, spell,
-            targetResistance(cast(int) other.player.values.get!UNIT_FIELD_RESISTANCES(school), school), spellHitBonusOf(&spell),
-            map.random);
+        auto me = Caster.of(this);
+        return dmangos.world.spelleffects.rollHit(me, &spell, target == player.guid ? UnitRef.init : map.unit(target));
     }
 
     // -----------------------------------------------------------------------
@@ -2562,75 +2411,14 @@ private:
         return spellMod(SpellModOp.allEffects, spell, classEffectMod(spell, i, spellMod(effectOp(i), spell, value)));
     }
 
-    /**
-     * Dispelling (spell effect 38): up to `count` (at least one) of the target's auras of the effect's dispel
-     * type (its misc value; 7: magic, curses, diseases and poisons), chosen at random, go. Magic is taken
-     * only where it hurts: harmful magic off a friend, helpful magic off an enemy. Passive auras stay. The
-     * auras removed are told to those around (`SMSG_SPELLDISPELLOG`).
-     */
+    /// `SPELL_EFFECT_DISPEL` by this player at `target` (0: itself) (`dmangos.world.spellauras.dispel`).
     package void dispelEffect(const(SpellInfo)* spell, size_t i, ulong target, int count)
     {
-        import std.algorithm.mutation : remove;
-        import std.random : uniform;
-        import dmangos.bytes : ByteWriter;
-        import dmangos.world.auras : Aura;
+        import dmangos.world.caster : Caster;
+        import dmangos.world.spellauras : dispel;
 
-        enum uint dispelMagic = 1, dispelAll = 7;
-        const type = spell.miscValue[i];
-        const uint mask = type == dispelAll ? 0b11110 : type < 32 ? 1u << type : 0;
-        Creature creature;
-        typeof(this) other;
-        bool friendly;
-        if (target == 0 || target == player.guid)
-        {
-            other = this;
-            friendly = true;
-        }
-        else if ((creature = cast(Creature) map.findObject(target)) !is null)
-            friendly = !canAttack(relatingNow(), creature.ai.relatingOf(), context.client);
-        else
-        {
-            other = cast(typeof(this)) context.onlinePlayer(target);
-            if (other is null || other.player is null || other.map !is map)
-                return;
-            friendly = enemyPlayer(target) is null;
-        }
-        Aura[] eligible;
-        foreach (aura; creature !is null ? creature.auras.list : other.player.auras.list)
-        {
-            if (aura.passive || !(mask & (1u << aura.spell.casting.dispel)))
-                continue;
-            if (aura.spell.casting.dispel == dispelMagic && aura.positive == friendly)
-                continue;
-            eligible ~= aura;
-        }
-        Aura[] removed;
-        foreach (_; 0 .. count > 0 ? count : 1)
-        {
-            if (eligible.length == 0)
-                break;
-            const at = uniform(0, eligible.length, map.random);
-            removed ~= eligible[at];
-            eligible = eligible.remove(at);
-        }
-        if (removed.length == 0)
-            return;
-        ByteWriter w;
-        w.putPackedGuid(creature !is null ? creature.guid : other.player.guid);
-        w.putPackedGuid(player.guid);
-        w.put(cast(uint) removed.length);
-        foreach (aura; removed)
-            w.put(aura.spell.id);
-        map.sendToWatchers(this, Opcode.SMSG_SPELLDISPELLOG, w.data, true);
-        foreach (aura; removed)
-        {
-            if (creature !is null)
-                creature.loseAura(aura, map);
-            else
-                other.removeAura(aura);
-        }
-        if (creature !is null)
-            map.flushObjectChanges(creature);
+        auto me = Caster.of(this);
+        dispel(me, spell, i, target == 0 ? unit : map.unit(target), count);
     }
 
     /**

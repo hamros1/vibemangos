@@ -704,6 +704,12 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Functions: `BattleGround::RemovePlayerAtLeave`, `BattleGroundMgr::BuildBattleGroundStatusPacket`, `BattleGroundMgr::GetBattleGroundBracketIdFromLevel`, `BattleGroundMgr::ToggleTesting`, `BattleGroundQueue::BuildBattleGroundListPacket`, `BattleGroundQueue::GetAverageQueueWaitTime`, `BattleGroundQueueItem::Update`, `WorldSession::LogoutPlayer`
 * Constants: `CMSG_BATTLEFIELD_PORT`, `CMSG_LEAVE_BATTLEFIELD`, `COUNT_OF_PLAYERS_TO_AVERAGE_WAIT_TIME`, `INVITATION_REMIND_TIME`, `INVITE_ACCEPT_WAIT_TIME`, `MAX_BATTLEGROUND_BRACKETS`, `PLAYER_MAX_BATTLEGROUND_QUEUES`, `SMSG_BATTLEFIELD_LIST`, `SMSG_BATTLEFIELD_STATUS`, `SMSG_GROUP_JOINED_BATTLEGROUND`
 
+## world/caster.d
+
+* Projects: CMaNGOS, vmangos
+* Functions: `Unit::GetSpellModOwner`, `Unit::GetCritChance` (a creature's 5% base), `Unit::SpellCriticalDamageBonus`, `Unit::SpellBaseDamageBonusDone`, `Unit::SpellBaseHealingBonusDone`
+* Moved here (2026-11-20): a player's damage factors, crit chance and damage, target resistance and hit bonus hooks from `spellhandlers.d`; a pet's and a totem's owner's modifiers from `creaturecasting.d` (`petModOwner`, the totem's `effectMod`)
+
 ## world/channel.d
 
 * Projects: ArcEmu, CMaNGOS, mangosd
@@ -909,6 +915,8 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Also: `TARGET_ENUM_UNITS_SCRIPT_AOE_AT_SRC_LOC` (`Spell::SetTargetMap`, `SPELL_TARGETS_ALL`), `Spell::OnCheckTarget`
 * Also: `Creature::DoFleeToGetAssistance` (`SPELL_AURA_PREVENTS_FLEEING`)
 * Not from an emulator: a pet's spells by its owner's spell modifiers (`petModOwner`: effects, damage, cast time, duration), its own damage done on its spells, its area auras on itself, the threat effect on a creature, `TARGET_UNIT_CASTER_MASTER`
+* Also: vmangos's `Spell::CheckPower` (a creature without a mana pool casts its mana spells; no creature pays another power)
+* Moved out (2026-11-20): its effect switch to `spelleffects.d`, its damage, heals and drains to `spelldamage.d`, its auras to `spellauras.d`
 
 ## world/crypt.d
 
@@ -1453,6 +1461,20 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Functions: `PlayerSocial::HasIgnore`, `PlayerSocial::LoadFromDB`, `PlayerSocial::SendFriendList`
 * Constants: `CHAT_MSG_IGNORED`, `SMSG_FRIEND_STATUS`, `SOCIALMGR_FRIEND_LIMIT`, `SOCIALMGR_IGNORE_LIMIT`
 
+## world/spellareas.d
+
+* Projects: CMaNGOS
+* Functions: `Spell::EffectPersistentAA`, `PersistentAreaAura`, `DynamicObject::Update`
+* Moved here (2026-11-20): the persistent areas of `spellhandlers.d` (`makePersistentArea`, `areaTick`, `updatePersistentAreas`, `loseAreaAura`), now for a creature's casts too
+
+## world/spellauras.d
+
+* Projects: CMaNGOS
+* Files: `SpellAuras.cpp`, `SpellEffects.cpp`
+* Functions: `Spell::EffectApplyAura`, `Aura::PeriodicTick` (`SPELL_AURA_PERIODIC_DAMAGE`, `_LEECH`, `_MANA_LEECH`), `Unit::SendPeriodicAuraLog`, `Aura::HandleAuraTransform`, `Spell::EffectDispel`, `Spell::EffectDispelMechanic`
+* Constants: `SMSG_PERIODICAURALOG`, `SMSG_SPELLDISPELLOG`, `SPELLMOD_DOT`, `SPELLMOD_CHARGES`, `SPELL_ATTR_HEARTBEAT_RESIST`
+* Moved here (2026-11-20): `applyAuraEffect`, `auraTick` and `periodicLog` of `aurahandlers.d`, `leechTick` and `manaLeechTick` and `dispelMechanicEffect` of `effecthandlers.d`, `dispelEffect` of `spellhandlers.d`, `auraOn` of `creaturecasting.d`, `auraFrom` of `character.d` and `unit.d`
+
 ## world/spellcast.d
 
 * Projects: CMaNGOS
@@ -1466,6 +1488,21 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Not from an emulator: `isBinarySpell` by Blizzard's resistance page (a direct-damage spell resisted in part unless
   a debuff rides on it; docs/FORMULAS.md, "Spell resistance"). `spellMissChance`'s level table is documented
   research (Wowpedia), as CMaNGOS has it.
+
+## world/spelldamage.d
+
+* Projects: CMaNGOS
+* Files: `SpellEffects.cpp`, `Unit.cpp`
+* Functions: `Unit::SpellNonMeleeDamageLog`, `Unit::CalculateSpellDamage`, `Unit::SpellDamageBonusDone`, `Unit::SpellHealingBonusDone`, `Unit::DealHeal`, `Spell::EffectHeal`, `Spell::EffectEnergize`, `Spell::EffectPowerBurn`, `Spell::EffectPowerDrain`, `Spell::EffectHealthLeech`, `Spell::EffectHealMaxHealth`
+* Constants: `SMSG_SPELLNONMELEEDAMAGELOG`, `SMSG_SPELLHEALLOG`, `SMSG_SPELLENERGIZELOG`, `SMSG_SPELLLOGEXECUTE`, `SPELL_ATTR_EX2_CANT_CRIT`, `SPELLMOD_MULTIPLE_VALUE`, `SPELLMOD_THREAT`
+* Moved here (2026-11-20): `spellDamage`, `spellDamageToPlayer`, `spellDamageBonus`, `healingBonus`, `directCoefficient`, `heal`, `energize` of `spellhandlers.d`; `powerBurnEffect`, `powerDrainEffect`, `healthLeechEffect`, `healMaxHealthEffect`, `healSelf`, `powerOf`, `takePower` of `effecthandlers.d`; `spellDamageTo`, `healCreature` and the drains of `creaturecasting.d`
+
+## world/spelleffects.d
+
+* Projects: CMaNGOS
+* Files: `SpellEffects.cpp`
+* Functions: `Spell::HandleEffects`, `Spell::EffectLearnSpell` (a creature's at a player), `Spell::DoCreateItem` (a creature's for a player), `Spell::EffectAddComboPoints` (a player's only), `Spell::EffectSpawn`, `Spell::EffectAddExtraAttacks`, `Spell::EffectSummonPet` (a creature's), `Unit::SpellHitResult`
+* Moved here (2026-11-20): the effect switches of `spellhandlers.d` (`doEffect`) and `creaturecasting.d` (`go`), and the player's hit roll (`rollHit`)
 
 ## world/spellhandlers.d
 
@@ -1489,6 +1526,12 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
   `Spell::FillTargetMap` in `Spell::cast`, `Spell::EffectTransmitted` (`GAMEOBJECT_TYPE_SPELLCASTER`),
   `PersistentAreaAura` (the dynamic object's duration, lost on leaving)
 
+## world/spellmoves.d
+
+* Projects: CMaNGOS
+* Functions: `Spell::EffectCharge`, `MotionMaster::MoveCharge`
+* Moved here (2026-11-20): the end of a charge from `effecthandlers.d` (`chargeEffect`), now for a creature's too
+
 ## world/spellscripting.d
 
 * Projects: CMaNGOS
@@ -1507,6 +1550,12 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Projects: CMaNGOS
 * Constants: `SPELL_ATTR_DO_NOT_DISPLAY`, `SPELL_ATTR_EX2_ALLOW_WHILE_NOT_SHAPESHIFTED`, `SPELL_ATTR_EX_CAST_WHEN_LEARNED`, `SPELL_ATTR_PASSIVE`, `TARGET_UNIT_CASTER_PET`
 * Also: `SpellMgr::LoadSpellAffects` (`doForHighRanks`: `spell_affect` for every rank)
+
+## world/spellsummons.d
+
+* Projects: CMaNGOS
+* Functions: `Spell::EffectSummonObjectWild`, `Spell::EffectTransmitted`, `Spell::EffectSummonTotem`, `TotemAI::UpdateAI`
+* Moved here (2026-11-20): `summonWildObjectEffect` of `guardians.d`, `summonTotem` and `updateTotems` of `pethandlers.d`, now for a creature's casts too
 
 ## world/spline.d
 

@@ -51,7 +51,7 @@ private immutable SpellEffect[] notDoneByAny = [SpellEffect.portalTeleport, Spel
     SpellEffect.ritualActivatePortal, SpellEffect.dodge, SpellEffect.evade, SpellEffect.parry, SpellEffect.block,
     SpellEffect.weapon, SpellEffect.defense, SpellEffect.triggerMissile, SpellEffect.summonChangeItem,
     SpellEffect.spellDefense, SpellEffect.language, SpellEffect.dualWield, SpellEffect.teleportUnitsFaceCaster,
-    SpellEffect.skillStep, SpellEffect.addHonor, SpellEffect.spawn, SpellEffect.tradeSkill, SpellEffect.stealth,
+    SpellEffect.skillStep, SpellEffect.addHonor, SpellEffect.tradeSkill, SpellEffect.stealth,
     SpellEffect.forceCriticalHit, SpellEffect.guaranteeHit, SpellEffect.proficiency, SpellEffect.healthFunnel,
     SpellEffect.powerFunnel, SpellEffect.pull, SpellEffect.healMechanical, SpellEffect.createHouse,
     SpellEffect.bindSight, SpellEffect.activateObject, SpellEffect.threatAll, SpellEffect.enchantHeldItem,
@@ -59,6 +59,22 @@ private immutable SpellEffect[] notDoneByAny = [SpellEffect.portalTeleport, Spel
     SpellEffect.spiritHeal, SpellEffect.skill, SpellEffect.teleportGraveyard, SpellEffect.n122, SpellEffect.sendTaxi,
     SpellEffect.pullTowards, SpellEffect.modifyThreatPercent, SpellEffect.n126, SpellEffect.n127,
     SpellEffect.applyAreaAuraFriend, SpellEffect.applyAreaAuraEnemy];
+
+/**
+ * The hit roll of `caster`'s `spell` at `target` (`rollSpellHit`): only an enemy is rolled against, a friend (a heal,
+ * a buff) never missed; the caster's hit (`MOD_SPELL_HIT_CHANCE`, its modifiers) and the target's resistance as the
+ * caster's spells meet it count.
+ */
+imported!"dmangos.world.spellcast".SpellMissInfo rollHit(ref Caster caster, const(SpellInfo)* spell, UnitRef target)
+{
+    import dmangos.world.spellcast : rollSpellHit, SpellMissInfo;
+
+    if (!target || !target.alive || !caster.hostileTo(target))
+        return SpellMissInfo.none;
+    const school = spell.casting.school;
+    return rollSpellHit(caster.fighter, target.fighter, *spell, caster.targetResistance(target.resistance(school),
+        school), caster.hitBonus(spell), caster.map.random);
+}
 
 /// What a creature's cast does of what a player's does (the rest of the effects a player's does are its own yet).
 private immutable SpellEffect[] creaturesDo = [SpellEffect.none, SpellEffect.schoolDamage,
@@ -69,7 +85,11 @@ private immutable SpellEffect[] creaturesDo = [SpellEffect.none, SpellEffect.sch
     SpellEffect.summonWild, SpellEffect.summonGuardian, SpellEffect.knockBack, SpellEffect.healthLeech,
     SpellEffect.powerDrain, SpellEffect.powerBurn, SpellEffect.durabilityDamage, SpellEffect.durabilityDamagePct,
     SpellEffect.reputation, SpellEffect.teleportUnits, SpellEffect.instantKill, SpellEffect.energize,
-    SpellEffect.healMaxHealth];
+    SpellEffect.healMaxHealth, SpellEffect.summonObjectWild, SpellEffect.transDoor, SpellEffect.summonPet,
+    SpellEffect.learnSpell, SpellEffect.createItem, SpellEffect.addComboPoints, SpellEffect.spawn, SpellEffect.detect,
+    SpellEffect.attack, SpellEffect.persistentAreaAura, SpellEffect.dispel, SpellEffect.dispelMechanic,
+    SpellEffect.charge, SpellEffect.addExtraAttacks, SpellEffect.summonTotem, SpellEffect.summonTotemSlot1,
+    SpellEffect.summonTotemSlot2, SpellEffect.summonTotemSlot3, SpellEffect.summonTotemSlot4];
 
 /// Whether a cast of `kind` does `effect` (the NPC sweep names what is not done by this).
 bool doneBy(UnitKind kind, SpellEffect effect) pure nothrow @nogc @safe
@@ -188,11 +208,22 @@ void applyEffect(ref Caster caster, const(SpellInfo)* spell, size_t i, ulong tar
             ai.summonBySpell(spell, i, value);
         break;
     case SpellEffect.persistentAreaAura: // SPELL_EFFECT_PERSISTENT_AREA_AURA: a spot that hurts who stands in it, made once a cast
-        if (c.once(i))
+        if (!c.once(i))
+            break;
+        if (p !is null)
             p.makePersistentArea(spell, i, c.targets, value);
+        else
+            ai.makePersistentArea(spell, i, c.targets, value);
         break;
     case SpellEffect.transDoor: // SPELL_EFFECT_TRANS_DOOR: an object the spell puts down (a fishing bobber, a ritual's portal)
-        if (p.isRitualPortal(cast(uint) spell.miscValue[i] in context.data.gameObjectTemplates))
+        if (p is null) // a creature's: the object by it
+        {
+            import dmangos.world.spellsummons : summonWildObject;
+
+            if (c.once(i))
+                summonWildObject(caster, spell, i, c.targets);
+        }
+        else if (p.isRitualPortal(cast(uint) spell.miscValue[i] in context.data.gameObjectTemplates))
             p.openRitualPortal(spell, i); // `dmangos.world.rituals`
         else if (p.isFishingBobber(cast(uint) spell.miscValue[i] in context.data.gameObjectTemplates))
             p.castBobber(spell, i);
@@ -212,7 +243,10 @@ void applyEffect(ref Caster caster, const(SpellInfo)* spell, size_t i, ulong tar
         p.tameCreature(spell, target ? target : c.targets.unit);
         break;
     case SpellEffect.summonPet: // SPELL_EFFECT_SUMMON_PET
-        p.summonPetEffect(spell, i);
+        if (p !is null)
+            p.summonPetEffect(spell, i);
+        else if (c.once(i)) // a creature's (a cultist's imp): beside it, fighting its victim (`EffectSummonPet`)
+            ai.summonBySpell(spell, i, 1);
         break;
     case SpellEffect.dismissPet: // SPELL_EFFECT_DISMISS_PET
         p.dismissPetEffect();
@@ -234,17 +268,26 @@ void applyEffect(ref Caster caster, const(SpellInfo)* spell, size_t i, ulong tar
     case SpellEffect.learnSpell: // SPELL_EFFECT_LEARN_SPELL: the pet (a teaching spell aimed at it), or the target player, learns
     {
         const learned = spell.triggerSpell[i];
-        if (spell.implicitTargetA[i] == ImplicitTarget.unitCasterPet)
+        if (p !is null && spell.implicitTargetA[i] == ImplicitTarget.unitCasterPet)
             p.teachPet(learned);
         else if (learned)
-            p.learn(learned);
+        {
+            // A creature's teaches the player it is aimed at (CMaNGOS's `EffectLearnSpell`: `unitTarget`'s).
+            auto other = map.unit(target);
+            auto who = p !is null ? p : other.kind == UnitKind.player ? other.session : null;
+            if (who !is null)
+                who.learn(learned);
+        }
         break;
     }
     case SpellEffect.learnPetSpell: // SPELL_EFFECT_LEARN_PET_SPELL
         p.teachPet(spell.triggerSpell[i]);
         break;
     case SpellEffect.summonTotem, SpellEffect.summonTotemSlot1, SpellEffect.summonTotemSlot2, SpellEffect.summonTotemSlot3, SpellEffect.summonTotemSlot4: // SPELL_EFFECT_SUMMON_TOTEM, _SLOT1 .. _SLOT4 (fire, earth, water, air)
-        p.summonTotem(spell, i, value);
+        if (p !is null)
+            p.summonTotem(spell, i, value);
+        else if (c.once(i))
+            ai.summonTotem(spell, i, value);
         break;
     case SpellEffect.selfResurrect: // SPELL_EFFECT_SELF_RESURRECT
         p.selfResurrect(spell, i, value);
@@ -253,8 +296,12 @@ void applyEffect(ref Caster caster, const(SpellInfo)* spell, size_t i, ulong tar
         p.resurrectEffect(spell, i, target, value, c);
         break;
     case SpellEffect.dispel: // SPELL_EFFECT_DISPEL
-        p.dispelEffect(spell, i, target, value);
+    {
+        import dmangos.world.spellauras : dispel;
+
+        dispel(caster, spell, i, target == 0 || target == caster.guid ? caster.unit : map.unit(target), value);
         break;
+    }
     case SpellEffect.pickpocket: // SPELL_EFFECT_PICKPOCKET
         p.pickPocket(target);
         break;
@@ -317,8 +364,9 @@ void applyEffect(ref Caster caster, const(SpellInfo)* spell, size_t i, ulong tar
     case SpellEffect.summonCritter: // SPELL_EFFECT_SUMMON_CRITTER: a companion; the same again sends it away
         p.summonCompanion(spell, i);
         break;
-    case SpellEffect.addComboPoints: // SPELL_EFFECT_ADD_COMBO_POINTS: Sinister Strike, Claw
-        if (target != caster.guid)
+    case SpellEffect.addComboPoints: // SPELL_EFFECT_ADD_COMBO_POINTS: Sinister Strike, Claw: a player's only
+        // (CMaNGOS's `EffectAddComboPoints`: none for any other caster)
+        if (p !is null && target != caster.guid)
             p.addComboPoints(target, value);
         break;
     case SpellEffect.skinPlayerCorpse: // SPELL_EFFECT_SKIN_PLAYER_CORPSE: Remove Insignia, a dead enemy's
@@ -351,10 +399,18 @@ void applyEffect(ref Caster caster, const(SpellInfo)* spell, size_t i, ulong tar
         else if (target != caster.guid) // a player to the spell's place
             context.teleportBySpell(target, spell.id);
         break;
-    case SpellEffect.createItem:
-        if (spell.itemType[i])
+    case SpellEffect.createItem: // SPELL_EFFECT_CREATE_ITEM: a player's for itself; a creature's for the player it is
+        // aimed at (CMaNGOS's `DoCreateItem`: `unitTarget`'s)
+        if (!spell.itemType[i])
+            break;
+        if (p !is null)
+        {
             if (p.giveItem(spell.itemType[i], value > 0 ? value : 1, true, true)) // "You create"
                 p.updateCraftSkill(spell.id); // made: a chance to learn from it
+        }
+        else if (auto other = map.unit(target))
+            if (other.kind == UnitKind.player)
+                other.session.giveItem(spell.itemType[i], value > 0 ? value : 1, true, true);
         break;
     case SpellEffect.feedPet: // SPELL_EFFECT_FEED_PET
         p.feedPet(c.targets.item);
@@ -407,8 +463,11 @@ void applyEffect(ref Caster caster, const(SpellInfo)* spell, size_t i, ulong tar
     case SpellEffect.sanctuary: // SPELL_EFFECT_SANCTUARY: Vanish, Divine Intervention
         p.sanctuaryEffect(spell, i, target);
         break;
-    case SpellEffect.charge: // SPELL_EFFECT_CHARGE: Charge, Intercept, Feral Charge
-        p.chargeEffect(spell, target != caster.guid ? target : c.targets.unit);
+    case SpellEffect.charge: // SPELL_EFFECT_CHARGE: Charge, Intercept, Feral Charge; a creature's rush
+        if (p !is null)
+            p.chargeEffect(spell, target != caster.guid ? target : c.targets.unit);
+        else if (target != caster.guid)
+            ai.chargeAt(spell, map.unit(target));
         break;
     case SpellEffect.leap: // SPELL_EFFECT_LEAP: Blink
         p.leapEffect(spell, i);
@@ -444,12 +503,26 @@ void applyEffect(ref Caster caster, const(SpellInfo)* spell, size_t i, ulong tar
         healMaxHealth(caster, spell, map.unit(target));
         break;
     }
-    case SpellEffect.addExtraAttacks: // SPELL_EFFECT_ADD_EXTRA_ATTACKS: Sword Specialization, Reckoning
-        p.addExtraAttacksEffect(spell, i, target, value);
+    case SpellEffect.addExtraAttacks: // SPELL_EFFECT_ADD_EXTRA_ATTACKS: Sword Specialization, Reckoning, a creature's
+        // Thrash: `value` more swings at its victim, at most five owed, at its next melee (CMaNGOS's
+        // `EffectAddExtraAttacks`); the combat log's "gains 1 extra attack"
+        if (target == caster.guid && caster.alive && value > 0)
+        {
+            import dmangos.world.spelldamage : logExecute;
+            import dmangos.world.spellcast : executeTarget;
+
+            ubyte* owed = p !is null ? &p.extraAttacks : &ai.extraAttacks;
+            *owed = cast(ubyte)(*owed + value > 5 ? 5 : *owed + value);
+            logExecute(caster, spell, i, executeTarget(target, cast(uint) value));
+        }
         break;
     case SpellEffect.dispelMechanic: // SPELL_EFFECT_DISPEL_MECHANIC: Escape Artist
-        p.dispelMechanicEffect(spell, i, target, value);
+    {
+        import dmangos.world.spellauras : dispelMechanic;
+
+        dispelMechanic(caster, spell, i, target == caster.guid ? caster.unit : map.unit(target), value);
         break;
+    }
     case SpellEffect.distract: // SPELL_EFFECT_DISTRACT: Distract
         p.distractEffect(spell, i, target, value, c.targets);
         break;
@@ -460,14 +533,31 @@ void applyEffect(ref Caster caster, const(SpellInfo)* spell, size_t i, ulong tar
         break;
     case SpellEffect.detect: // SPELL_EFFECT_DETECT: Detect's marker; CMaNGOS does nothing with it either
         break;
+    case SpellEffect.spawn: // SPELL_EFFECT_SPAWN: the caster's spawning in (its animation, the client's) is over: it
+        // may be fought (CMaNGOS's `EffectSpawn`: Rookery Whelp Spawn-in Spell, Birth)
+    {
+        import dmangos.world.defines : UnitFlags;
+
+        auto v = caster.fields;
+        if (v.get!UNIT_FIELD_FLAGS & UnitFlags.spawning)
+        {
+            v.set!UNIT_FIELD_FLAGS(v.get!UNIT_FIELD_FLAGS & ~UnitFlags.spawning);
+            caster.flush();
+        }
+        break;
+    }
     case SpellEffect.summonGuardian, SpellEffect.summon, SpellEffect.summonObjectWild: // SPELL_EFFECT_SUMMON_GUARDIAN,
         // _SUMMON, _SUMMON_OBJECT_WILD (`dmangos.world.guardians`): once a cast, whatever its targets
         if (!c.once(i))
             break;
-        if (p is null)
+        if (effect == SpellEffect.summonObjectWild)
+        {
+            import dmangos.world.spellsummons : summonWildObject;
+
+            summonWildObject(caster, spell, i, c.targets);
+        }
+        else if (p is null)
             ai.summonBySpell(spell, i, value);
-        else if (effect == SpellEffect.summonObjectWild)
-            p.summonWildObjectEffect(spell, i, c.targets);
         else
             p.summonGuardianEffect(spell, i, value, c.targets, c.triggered, c.castItemEntry, effect == SpellEffect.summon);
         break;
@@ -500,7 +590,7 @@ void applyEffect(ref Caster caster, const(SpellInfo)* spell, size_t i, ulong tar
         SpellEffect.evade, SpellEffect.parry, SpellEffect.block, SpellEffect.weapon, SpellEffect.defense,
         SpellEffect.triggerMissile, SpellEffect.summonChangeItem, SpellEffect.spellDefense,
         SpellEffect.language, SpellEffect.dualWield,
-        SpellEffect.teleportUnitsFaceCaster, SpellEffect.skillStep, SpellEffect.addHonor, SpellEffect.spawn,
+        SpellEffect.teleportUnitsFaceCaster, SpellEffect.skillStep, SpellEffect.addHonor,
         SpellEffect.tradeSkill, SpellEffect.stealth, SpellEffect.forceCriticalHit, SpellEffect.guaranteeHit,
         SpellEffect.proficiency, SpellEffect.healthFunnel, SpellEffect.powerFunnel, SpellEffect.pull,
         SpellEffect.healMechanical,

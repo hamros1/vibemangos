@@ -228,27 +228,14 @@ mixin template GuardianSummons()
                 g.ai.attackedBy(foe, map); // out of a fight: it starts one (`AttackStart`)
     }
 
-    /**
-     * `SPELL_EFFECT_SUMMON_OBJECT_WILD`: game object `spell.miscValue[i]` at the destination or beside the caster,
-     * for the spell's duration (its object without an owner, `EffectSummonObjectWild`).
-     */
+    /// `SPELL_EFFECT_SUMMON_OBJECT_WILD` by this player (`dmangos.world.spellsummons.summonWildObject`).
     package void summonWildObjectEffect(const(SpellInfo)* spell, size_t i, const ref SpellTargets targets)
     {
-        const entry = cast(uint) spell.miscValue[i];
-        if (entry !in context.data.gameObjectTemplates)
-            return;
-        const me = player.position;
-        auto at = Position(me.x + cos(me.orientation), me.y + sin(me.orientation), me.z, me.orientation);
-        if (targets.mask & TargetFlags.destLocation)
-            at = Position(targets.dest[0], targets.dest[1], targets.dest[2], me.orientation);
-        else
-        {
-            const ground = map.groundHeight(at.x, at.y, me.z + 2, false);
-            if (ground > -100_000 && (ground - at.z) ^^ 2 < 25)
-                at.z = ground;
-        }
-        const ms = modDuration(spell, duration(*spell, context.client, player.data.level));
-        context.summonWildGameObject(map, entry, at, ms > 0 ? cast(uint)(ms / 1000) : 0);
+        import dmangos.world.caster : Caster;
+        import dmangos.world.spellsummons : summonWildObject;
+
+        auto me = Caster.of(this);
+        summonWildObject(me, spell, i, targets);
     }
 }
 

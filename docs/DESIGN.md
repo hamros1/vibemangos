@@ -75,8 +75,9 @@ the code branches on the kind with a `final switch`, which the compiler checks c
 There are no virtual interfaces. Creature against player, player against player, and pet against
 anything take the same path.
 
-**Status.** Damage, the death that follows, and the reactions to it are unified (step 2). Healing and
-aura application still keep a path per kind behind `UnitRef`.
+**Status.** Damage, the death that follows, and the reactions to it are unified (step 2). A spell's
+effects, damage, heals, power and auras are one pipeline for every caster over `Caster` and `UnitRef`
+(docs/SPELLS.md); casting itself (checks, costs, cooldowns, targets) keeps a side per kind.
 
 ## Connection and character
 

@@ -57,6 +57,8 @@ mixin template CreatureCasting()
         bool critterFleeing;           // ... a critter's flight from its attacker: it gives up the fight after
         int despawnTimer;              // gone in so long (0: not)
         bool meleeEnabled = true;      // it swings at its victim
+        imported!"dmangos.world.spellareas".PersistentArea[] persistentAreas_; // its spots of persistent area auras
+        ulong[] totems_;               // its totems (`dmangos.world.spellsummons`)
     }
 
     bool deathPrevention;              /// damage leaves it at 1 health
@@ -203,7 +205,7 @@ mixin template CreatureCasting()
         {
             if (!inRangeFor(spell, target))
                 return refuse(SpellCastResult.outOfRange);
-            if (spell.casting.powerType == 0 && manaCost(spell) > me.values.get!UNIT_FIELD_POWER1)
+            if (paysMana(spell) && manaCost(spell) > me.values.get!UNIT_FIELD_POWER1)
             {
                 // Out of mana, it comes in to fight (unless told not to).
                 if (rangedMode_ && !(flags & castNoMeleeIfOom))
@@ -248,6 +250,18 @@ mixin template CreatureCasting()
         foreach (ref t; schoolLockMs)
             if (t > 0)
                 t -= diff;
+        if (totems_.length)
+            updateTotems();
+        if (persistentAreas_.length)
+        {
+            import dmangos.world.spellareas : endPersistentAreas, updatePersistentAreas;
+
+            auto caster = spellCaster();
+            if (me.alive)
+                updatePersistentAreas(caster, persistentAreas_, diff);
+            else // its spots go with it
+                endPersistentAreas(caster, persistentAreas_);
+        }
         if (casting_ is null)
             return;
         if (castTarget != me.guid)
@@ -325,6 +339,17 @@ mixin template CreatureCasting()
         auto owner = world_.unit(me.petOwner);
         return owner.kind == imported!"dmangos.world.unit".UnitKind.player && owner.session.player !is null
             ? owner.session : null;
+    }
+
+    /**
+     * Whether it pays `spell`'s cost: in mana, if it has a mana pool or is a pet. A creature without one (a warrior's
+     * class: Lucifron, casting Shadow Shock in every account of his fight) casts its mana spells freely, and no
+     * creature pays another power (vmangos's `Spell::CheckPower`: "Allow creatures to cast spells that require a
+     * power type they don't have"; CMaNGOS refuses them, which leaves such bosses without their spells).
+     */
+    private bool paysMana(const(SpellInfo)* spell)
+    {
+        return spell.casting.powerType == 0 && (me.petOwner || me.values.get!UNIT_FIELD_MAXPOWER1 > 0);
     }
 
     /// The spell's mana cost for it.
@@ -443,7 +468,7 @@ mixin template CreatureCasting()
      */
     private void go(const(SpellInfo)* spell, ulong target, bool takeMana)
     {
-        if (takeMana && spell.casting.powerType == 0)
+        if (takeMana && paysMana(spell))
         {
             const cost = manaCost(spell), mana = me.values.get!UNIT_FIELD_POWER1;
             me.values.set!UNIT_FIELD_POWER1(cost >= mana ? 0 : mana - cost);
@@ -504,8 +529,8 @@ mixin template CreatureCasting()
                         // As a player's spell is rolled (dmangos.world.spellcast.rollSpellHit), whoever the target.
                         import dmangos.world.spellcast : rollSpellHit;
 
-                        miss = rollSpellHit(me.fighter, f, *spell, other.resistance(spell.casting.school), 0,
-                            world_.random);
+                        auto caster = spellCaster();
+                        miss = imported!"dmangos.world.spelleffects".rollHit(caster, spell, other);
                         // A player's ward may send it back (Fire Ward, Frost Ward); a whole resist is the player's
                         // to proc on (Magic Absorption).
                         if (other.kind == imported!"dmangos.world.unit".UnitKind.player)
@@ -605,6 +630,74 @@ mixin template CreatureCasting()
                 if (owner.session !is null && owner.session.player !is null)
                     value = owner.session.effectMod(spell, i, value);
         return value;
+    }
+
+    /// `SPELL_EFFECT_PERSISTENT_AREA_AURA` by it (`dmangos.world.spellareas.makePersistentArea`): a spot it keeps.
+    package void makePersistentArea(const(SpellInfo)* spell, size_t i, const ref SpellTargets targets, int value)
+    {
+        static import dmangos.world.spellareas;
+
+        auto caster = spellCaster();
+        dmangos.world.spellareas.makePersistentArea(caster, persistentAreas_, spell, i, targets, value);
+        world_.wake(me.guid);
+    }
+
+    /**
+     * `SPELL_EFFECT_CHARGE` by it: it rushes to `victim` at the spell's speed (27 yards a second if it has none),
+     * stopping at its reach and facing it, and fights it (CMaNGOS's `EffectCharge`).
+     */
+    package void chargeAt(const(SpellInfo)* spell, UnitRef victim)
+    {
+        import dmangos.vmap.math : Vector3;
+        import dmangos.world.effecthandlers : baseChargeSpeed;
+        import dmangos.world.spellmoves : chargeEnd;
+
+        if (!victim || !victim.alive || !me.alive)
+            return;
+        const end = chargeEnd(world_, me.position, victim);
+        const speed = spell.casting.speed > 0 ? spell.casting.speed : baseChargeSpeed;
+        if ((end.x - me.position.x) ^^ 2 + (end.y - me.position.y) ^^ 2 >= 0.01f)
+            launch(me, world_, [Vector3(me.position.x, me.position.y, me.position.z), Vector3(end.x, end.y, end.z)],
+                false, end.orientation, true, speed);
+        attackStart(victim, world_);
+        world_.wake(me.guid);
+    }
+
+    /// `SPELL_EFFECT_SUMMON_TOTEM` by it (`dmangos.world.spellsummons.summonTotem`): a totem it keeps while it lasts.
+    package void summonTotem(const(SpellInfo)* spell, size_t i, int value)
+    {
+        static import dmangos.world.spellsummons;
+
+        auto caster = spellCaster();
+        if (auto totem = dmangos.world.spellsummons.summonTotem(caster, spell, i, value, uint.max))
+            totems_ ~= totem.guid;
+        world_.wake(me.guid);
+    }
+
+    /// Its totems: those gone forgotten, its active ones casting at its enemies; they go when it dies.
+    private void updateTotems()
+    {
+        import dmangos.world.spellsummons : totemsAct;
+
+        Creature[] alive;
+        ulong[] kept;
+        foreach (guid; totems_)
+            if (auto totem = world_.creatureAt(guid))
+                if (totem.alive)
+                {
+                    alive ~= totem;
+                    kept ~= guid;
+                }
+        totems_ = kept;
+        if (!me.alive)
+        {
+            foreach (totem; alive)
+                totem.ai.scriptDespawn(0);
+            totems_ = null;
+            return;
+        }
+        auto caster = spellCaster();
+        totemsAct(caster, alive);
     }
 
     /// Its spell killed `guid` outright (an instant kill): its script hears of it.

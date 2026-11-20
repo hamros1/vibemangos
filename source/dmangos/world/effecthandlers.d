@@ -459,26 +459,14 @@ mixin template EffectHandlers()
     {
         import dmangos.vmap.math : Vector3;
         import dmangos.world.motion : nextSplineId;
+        import dmangos.world.spellmoves : chargeEnd;
         import dmangos.world.spline : monsterMove, MoveSpline, SplineFlags;
-        import dmangos.world.terrain : invalidHeight;
 
         auto victim = map.unit(target);
         if (!victim || target == player.guid || !player.alive)
             return;
-        const from = player.position, to = victim.position;
-        const reach = victim.fighter.combatReach;
-        const dx = from.x - to.x, dy = from.y - to.y;
-        const apart = sqrt(dx * dx + dy * dy);
-        Position end = to;
-        if (apart > reach)
-        {
-            end.x = to.x + dx / apart * reach;
-            end.y = to.y + dy / apart * reach;
-        }
-        const ground = map.groundHeight(end.x, end.y, end.z + 2, false);
-        if (ground > invalidHeight)
-            end.z = ground;
-        end.orientation = atan2(to.y - end.y, to.x - end.x);
+        const from = player.position;
+        const end = chargeEnd(map, from, victim);
         if ((end.x - from.x) ^^ 2 + (end.y - from.y) ^^ 2 >= 0.01f)
         {
             auto path = map.pathBetween(Vector3(from.x, from.y, from.z), Vector3(end.x, end.y, end.z));
@@ -620,74 +608,8 @@ mixin template EffectHandlers()
     package ubyte extraAttacks;          /// swings owed by Sword Specialization, Reckoning (`updateMeleeAttackingState`)
     package bool extraAttacksExecuting;  /// ... being swung: they grant no more of them
 
-    /**
-     * `SPELL_EFFECT_ADD_EXTRA_ATTACKS` (Sword Specialization, Reckoning): `value` more main-hand swings at the
-     * player's victim, at most five owed, swung at its next melee update (CMaNGOS's `EffectAddExtraAttacks` and
-     * `DoExtraAttacks`); the combat log's "You gain 1 extra attack".
-     */
-    package void addExtraAttacksEffect(const(SpellInfo)* spell, size_t i, ulong target, int value)
-    {
-        if (target != player.guid || !player.alive || value <= 0)
-            return;
-        extraAttacks = cast(ubyte)(extraAttacks + value > 5 ? 5 : extraAttacks + value);
-        logExecute(spell, i, executeTarget(target, cast(uint) value));
-    }
 
-    /// Whether the aura is of mechanic `mechanic` (its spell's, or one of its effects').
-    private static bool ofMechanic(const Aura aura, uint mechanic)
-    {
-        if (aura.spell.casting.mechanic == mechanic)
-            return true;
-        foreach (j; 0 .. 3)
-            if ((aura.effects & (1 << j)) && aura.spell.casting.effectMechanic[j] == mechanic)
-                return true;
-        return false;
-    }
 
-    /**
-     * `SPELL_EFFECT_DISPEL_MECHANIC` (Escape Artist's roots and snares, Polymorph's mount): up to `value` (at
-     * least one) of the target's auras of the effect's mechanic go, picked at random (CMaNGOS's
-     * `EffectDispelMechanic`).
-     */
-    package void dispelMechanicEffect(const(SpellInfo)* spell, size_t i, ulong target, int value)
-    {
-        import std.random : uniform;
-
-        const mechanic = cast(uint) spell.miscValue[i];
-        if (mechanic == 0)
-            return;
-        auto count = value > 0 ? value : 1;
-        if (auto creature = livingCreature(target))
-        {
-            Aura[] found;
-            foreach (aura; creature.auras.list)
-                if (ofMechanic(aura, mechanic))
-                    found ~= aura;
-            for (; count > 0 && found.length; --count)
-            {
-                const k = uniform(0, found.length, map.random);
-                creature.loseAura(found[k], map);
-                found = found[0 .. k] ~ found[k + 1 .. $];
-            }
-            map.flushObjectChanges(creature);
-        }
-        else if (auto who = playerHere(target))
-        {
-            Aura[] found;
-            foreach (aura; who.player.auras.list)
-                if (!aura.passive && ofMechanic(aura, mechanic))
-                    found ~= aura;
-            for (; count > 0 && found.length; --count)
-            {
-                const k = uniform(0, found.length, map.random);
-                who.removeAura(found[k]);
-                found = found[0 .. k] ~ found[k + 1 .. $];
-            }
-        }
-        else
-            return;
-        logExecute(spell, i, executeTarget(target));
-    }
 
     /**
      * `SPELL_EFFECT_DISTRACT` (Distract): a creature out of combat stops, faces the spot thrown at and stands

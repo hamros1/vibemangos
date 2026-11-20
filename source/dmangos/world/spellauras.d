@@ -373,3 +373,114 @@ void manaLeechTick(ref Caster caster, UnitRef victim, Aura aura, size_t i, uint 
     if (victim.kind == UnitKind.creature && victim.creature.ai !is null)
         victim.creature.ai.addThreat(caster.unit, gain * 0.5f);
 }
+
+/// `unit` loses `aura` (a dispel's, a cleanse's), whoever it is.
+void loseAuraOf(imported!"dmangos.world.map".Map map, UnitRef unit, Aura aura)
+{
+    final switch (unit.kind)
+    {
+    case UnitKind.none:
+        return;
+    case UnitKind.creature:
+        unit.creature.loseAura(aura, map);
+        map.flushObjectChanges(unit.creature);
+        return;
+    case UnitKind.player:
+        unit.session.removeAura(aura);
+        return;
+    }
+}
+
+/**
+ * `SPELL_EFFECT_DISPEL` (Dispel Magic, Purge, Cleanse, Remove Curse): up to `count` (at least one) of `target`'s
+ * auras of the effect's dispel type (all of them: 7), picked at random; magic only the caster's enemy's buffs or its
+ * friend's debuffs. `SMSG_SPELLDISPELLOG` names what went.
+ */
+void dispel(ref Caster caster, const(SpellInfo)* spell, size_t i, UnitRef target, int count)
+{
+    import std.algorithm.mutation : remove;
+    import std.random : uniform;
+    import dmangos.bytes : ByteWriter;
+    import dmangos.world.opcodes : Opcode;
+
+    enum uint dispelMagic = 1, dispelAll = 7;
+    if (!target)
+        return;
+    auto auras = target.auraSet;
+    if (auras is null)
+        return;
+    const type = spell.miscValue[i];
+    const uint mask = type == dispelAll ? 0b11110 : type < 32 ? 1u << type : 0;
+    const friendly = !caster.hostileTo(target);
+    Aura[] eligible;
+    foreach (aura; auras.list)
+    {
+        if (aura.passive || !(mask & (1u << aura.spell.casting.dispel)))
+            continue;
+        if (aura.spell.casting.dispel == dispelMagic && aura.positive == friendly)
+            continue;
+        eligible ~= aura;
+    }
+    Aura[] removed;
+    foreach (_; 0 .. count > 0 ? count : 1)
+    {
+        if (eligible.length == 0)
+            break;
+        const at = uniform(0, eligible.length, caster.map.random);
+        removed ~= eligible[at];
+        eligible = eligible.remove(at);
+    }
+    if (removed.length == 0)
+        return;
+    ByteWriter w;
+    w.putPackedGuid(target.combatGuid);
+    w.putPackedGuid(caster.guid);
+    w.put(cast(uint) removed.length);
+    foreach (aura; removed)
+        w.put(aura.spell.id);
+    caster.sendAround(Opcode.SMSG_SPELLDISPELLOG, w.data);
+    foreach (aura; removed)
+        loseAuraOf(caster.map, target, aura);
+}
+
+/// Whether the aura is of mechanic `mechanic` (its spell's, or one of its effects').
+bool ofMechanic(const Aura aura, uint mechanic) pure nothrow @nogc @safe
+{
+    if (aura.spell.casting.mechanic == mechanic)
+        return true;
+    foreach (j; 0 .. 3)
+        if ((aura.effects & (1 << j)) && aura.spell.casting.effectMechanic[j] == mechanic)
+            return true;
+    return false;
+}
+
+/**
+ * `SPELL_EFFECT_DISPEL_MECHANIC` (Escape Artist's roots and snares, Polymorph's mount): up to `value` (at least one)
+ * of the target's auras of the effect's mechanic go, picked at random (a player's passive ones stay; CMaNGOS's
+ * `EffectDispelMechanic`).
+ */
+void dispelMechanic(ref Caster caster, const(SpellInfo)* spell, size_t i, UnitRef target, int value)
+{
+    import std.random : uniform;
+    import dmangos.world.spelldamage : logExecute;
+    import dmangos.world.spellcast : executeTarget;
+
+    const mechanic = cast(uint) spell.miscValue[i];
+    if (mechanic == 0 || !target || !target.alive)
+        return;
+    auto auras = target.auraSet;
+    if (auras is null)
+        return;
+    auto count = value > 0 ? value : 1;
+    Aura[] found;
+    foreach (aura; auras.list)
+        if ((target.kind != UnitKind.player || !aura.passive) && ofMechanic(aura, mechanic))
+            found ~= aura;
+    for (; count > 0 && found.length; --count)
+    {
+        const k = uniform(0, found.length, caster.map.random);
+        loseAuraOf(caster.map, target, found[k]);
+        found = found[0 .. k] ~ found[k + 1 .. $];
+    }
+    logExecute(caster, spell, i, executeTarget(target.combatGuid));
+}

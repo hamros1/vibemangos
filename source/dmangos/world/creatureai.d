@@ -365,7 +365,8 @@ final class CreatureAI : Scripted, CreatureHost
     @property bool active() const
     {
         return inCombat_ || evadingHome || despawnTimer > 0 || me.values.get!UNIT_FIELD_HEALTH < me.values.get!UNIT_FIELD_MAXHEALTH
-            || me.values.get!UNIT_FIELD_POWER1 < me.values.get!UNIT_FIELD_MAXPOWER1 || casting_ !is null || fleeTimer > 0 || (script !is null && script.wantsTicks) || behaviourBusy || me.petOwner != 0;
+            || me.values.get!UNIT_FIELD_POWER1 < me.values.get!UNIT_FIELD_MAXPOWER1 || casting_ !is null || fleeTimer > 0 || (script !is null && script.wantsTicks) || behaviourBusy || me.petOwner != 0
+            || persistentAreas_.length || totems_.length;
     }
 
     /// Whether it may attack anyone on sight at all: aggressive, alive, not neutral to all
@@ -1371,6 +1372,25 @@ private:
         attackTimer = me.values.get!UNIT_FIELD_BASEATTACKTIME;
         if (swingSpell(target))
             return;
+        swing(target, world);
+        // The extra swings it is owed (Thrash, Sword Specialization: `SPELL_EFFECT_ADD_EXTRA_ATTACKS`), at once; they
+        // give no more of them (CMaNGOS's `DoExtraAttacks`).
+        for (; extraAttacks && target.alive && me.alive; --extraAttacks)
+        {
+            extraSwing = true;
+            scope (exit)
+                extraSwing = false;
+            swing(target, world);
+        }
+    }
+
+    package ubyte extraAttacks; /// swings owed (`SPELL_EFFECT_ADD_EXTRA_ATTACKS`)
+    private bool extraSwing;    /// one of them being swung
+
+    /// One swing at `target`.
+    private void swing(UnitRef target, CombatWorld world)
+    {
+        const self = me.fighter, other = target.fighter;
         auto d = calculateMeleeDamage(self, other, AttackType.mainHand, world.random);
         if ((d.absorbed = target.absorb(d.school, d.damage)) != 0)
             d.hitInfo |= HitInfo.absorb;

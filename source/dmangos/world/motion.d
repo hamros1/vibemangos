@@ -712,10 +712,10 @@ package uint nextSplineId() @safe nothrow @nogc
  * Starts a walk (or run) along `points` from where the creature is, tells
  * the clients, and returns its duration in milliseconds. `facing` (radians, unless NaN) is where it
  * looks at the end. With `generatePath`, a walk from one point to another goes round what is in the
- * way (`MotionWorld.pathBetween`).
+ * way (`MotionWorld.pathBetween`). `speed` (yards a second, unless NaN: its own) is a charge's.
  */
 int launch(Creature creature, MotionWorld world, Vector3[] points, bool walk, float facing = float.nan,
-    bool generatePath = false)
+    bool generatePath = false, float speed = float.nan)
 in (points.length > 1)
 {
     const at = creature.spline.finalized ? creature.position : creature.spline.position;
@@ -747,7 +747,7 @@ in (points.length > 1)
         move.flags &= ~MovementFlags.walkMode;
     move.flags |= MovementFlags.splineEnabled | MovementFlags.forward;
 
-    const velocity = creature.speeds[walk ? MoveType.walk : MoveType.run];
+    const velocity = isNaN(speed) ? creature.speeds[walk ? MoveType.walk : MoveType.run] : speed;
     if (!(velocity > 0) || creature.immobilized)
         return 0; // it cannot move (rooted or stunned)
     creature.spline = MoveSpline(points, flags, velocity, nextSplineId(), angle);

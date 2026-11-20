@@ -110,6 +110,29 @@ primary sources (docs/FORMULAS.md); CMaNGOS and vmangos are second opinions.
   lets a creature that is not a pet cast a spell of a power it has none of (`Spell::CheckPower`: "creature
   without mana (unit class warrior)", and any power other than mana); CMaNGOS refuses it. A pet pays.
 
+* **A creature's spells crit** at the 5% base CMaNGOS gives every unit that is not a player
+  (`Unit::GetCritChance`), more by its auras; a weapon ability as its melee does.
+* **Only a player's cast gains combo points** (CMaNGOS's `EffectAddComboPoints`); a creature's Backstab
+  and Gouge do the rest of what they do.
+* **A creature's create-item and learn-spell effects** give the item to, and teach the spell to, the player
+  they are aimed at (CMaNGOS's `DoCreateItem`, `EffectLearnSpell`: `unitTarget`).
+* **A dead target gets no aura and is not drained** (CMaNGOS); a creature's spell whose damage kills the
+  NPC sweep's player before its debuff lands is listed with that note.
+* **A creature's active totems** cast at the players and creatures it fights; a player's at creatures, as
+  before.
+
 ## Status
 
-The steps done, and what they measured, are listed here as they land.
+| Step | State | NPC sweep's known failures |
+|---|---|---|
+| before | two pipelines | 630 (101 with no creature to cast them) |
+| 1. the caster, one effect switch | done | 621 |
+| 2. damage, heals, power | done | 606 |
+| 3. auras and their ticks | done | 556 |
+| 4. what creatures lacked: wild objects, persistent areas, pets, items, spells taught, spawn, dispels, charges, extra attacks, totems, mana; the hit roll shared | done | 204 (101 with no creature to cast them) |
+| 5. targets once | not yet: a creature still resolves its implicit targets in `creaturecasting.d` (`targetsFor`), a player in `spellhandlers.d` (`go`, `areaTargets`) |  |
+| 6. procs once | not yet: a pet's procs are `creatureprocs.d`'s, a player's `procs.d`'s |  |
+
+Not done by a creature's cast yet (`doneBy`): activating game objects, teleports facing the caster,
+leaps, taxis, inebriation, pulls, and the effects only a player's spellbook, inventory or client make sense
+for (duels, taming, pickpocketing, enchanting, far sight...).
