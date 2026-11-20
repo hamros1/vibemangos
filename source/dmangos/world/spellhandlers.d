@@ -2642,6 +2642,15 @@ private:
         if ((kind == ImplicitTarget.enemiesAroundDest || kind == ImplicitTarget.friendsAroundDest)
             && (targets.mask & TargetFlags.destLocation))
             center = Position(targets.dest[0], targets.dest[1], targets.dest[2]);
+        // The target and its party (Prayer of Fortitude, Arcane Brilliance, Gift of the Wild: `TARGET_UNIT_FRIEND_AND_PARTY`),
+        // around it.
+        ulong partyOf = player.guid;
+        if (kind == ImplicitTarget.unitFriendAndParty && targets.unit && targets.unit != player.guid)
+            if (auto friend = map.find(targets.unit))
+            {
+                partyOf = targets.unit;
+                center = friend.character.position;
+            }
         bool within(Position p)
         {
             if ((p.x - center.x) ^^ 2 + (p.y - center.y) ^^ 2 + (p.z - center.z) ^^ 2 > r * r)
@@ -2668,14 +2677,18 @@ private:
                         found ~= other.player.guid;
             return found;
         }
-        // The party (or every friend, here the party too) within the radius, itself included.
-        found ~= player.guid;
-        if (auto group = context.groups.of(player.guid))
+        // The party (or every friend, here the party too) within the radius, itself included: in a raid, its own
+        // subgroup's (`Spell::SetTargetMap`'s party targets).
+        found ~= partyOf;
+        if (auto group = context.groups.of(partyOf))
+        {
+            const subGroup = group.subGroupOf(partyOf);
             foreach (ref slot; group.members)
-                if (slot.guid != player.guid)
+                if (slot.guid != partyOf && slot.subGroup == subGroup)
                     if (auto member = map.find(slot.guid))
                         if (within(member.character.position))
                             found ~= slot.guid;
+        }
         return found;
     }
 
@@ -2685,7 +2698,7 @@ private:
 
         with (ImplicitTarget)
             return kind.among(enemiesAroundSource, enemiesAroundDest, enemiesInCone, partyAroundSource, partyInRange,
-                friendsAroundSource, friendsAroundDest, party) != 0;
+                friendsAroundSource, friendsAroundDest, party, unitFriendAndParty) != 0;
     }
 
     /// Chain targets: from `first`, the nearest enemy within 10 yards of the last, `count` times.

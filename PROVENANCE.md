@@ -711,7 +711,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
   `SpellStacker::IsStackableAuraEffect` (a helpful spell's ranks), `Aura::HandleChannelDeathItem`
 * Functions/ScriptNames: `spell_judgement`, `spell_judgement_of_command`, `spell_judgement_of_light_intermediate`,
   `spell_judgement_of_wisdom_intermediate`, `spell_swiftmend`, `spell_curse_of_doom`, `spell_power_infusion`,
-  `spell_shatter_mage`, `spell_blessing_of_light`, `spell_healing_way`, `spell_seal_of_the_crusader`
+  `spell_shatter_mage`, `spell_blessing_of_light`, `spell_healing_way`, `spell_seal_of_the_crusader`, `spell_shadowguard`, `spell_blizzard`
 * Constants: `IsSealSpell`, `REACTIVE_TIMER_START`, `SPELL_ATTR_EX_DRAIN_ALL_POWER`, `TRIGGERED_IGNORE_HIT_CALCULATION`
 
 ## world/classspelltests.d
@@ -1254,7 +1254,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Files: `Spell.cpp`, `SpellEffects.cpp`, `SpellHandler.cpp`
 * Functions: `GameObject::Use`, `Player::ClearCooldownForSpell`, `Player::ClearCooldownsOnLine`, `Player::HasItemFitToSpellReqirements`, `Player::UpdateFishingSkill`, `Player::_LoadSpellCooldowns`, `Player::_SaveSpellCooldowns`, `Spell::CheckCast`, `Spell::CheckItems`, `Spell::EffectEnergize`, `Spell::EffectHeal`, `Spell::EffectInstaKill`, `Spell::EffectPersistentAA`, `Spell::EffectTeleportUnits`, `Spell::EffectTransmitted`, `Spell::EffectWeaponDmg`, `Spell::SendChannelStart`, `Spell::SendChannelUpdate`, `Spell::SetTargetMap`, `Spell::SpellStart`, `Spell::cancel`, `Spell::cast`, `Spell::m_delayMoment`, `Spell::update`, `Unit::AttackerStateUpdate`, `Unit::CalculateSpellDamage`, `Unit::SpellDamageBonusDone`, `Unit::SpellHealingBonusDone`, `Unit::SpellHitResult`
 * Constants: `CMSG_CANCEL_CHANNELLING`, `CURRENT_CHANNELED_SPELL`, `CURRENT_GENERIC_SPELL`, `CURRENT_MELEE_SPELL`, `FISHING_BOBBER_READY_TIME`, `MSG_CHANNEL_START`, `MSG_CHANNEL_UPDATE`, `SMSG_CLEAR_COOLDOWN`, `SMSG_FISH_NOT_HOOKED`, `SMSG_INITIAL_SPELLS`, `SMSG_SPELLINSTAKILLLOG`, `SMSG_SPELL_GO`, `SMSG_SPELL_START`, `SPELL_ATTR_EX_IS_CHANNELED`, `SPELL_AURA_MOD_DAMAGE_DONE`, `SPELL_AURA_MOD_HEALING_DONE`, `SPELL_AURA_PERIODIC_DAMAGE`, `SPELL_EFFECT_APPLY_AURA`, `SPELL_FAILED_EQUIPPED_ITEM_CLASS`, `SPELL_INTERRUPT_FLAG_MOVEMENT`, `TARGET_ALL_ENEMY_IN_AREA`, `TARGET_CASTER_COORDINATES`, `TRIGGERED_OLD_TRIGGERED`
-* Also: `TARGET_UNIT_SCRIPT_NEAR_CASTER`, `Spell::CheckScriptTargeting` (`spell_script_target`)
+* Also: `TARGET_UNIT_SCRIPT_NEAR_CASTER`, `Spell::CheckScriptTargeting` (`spell_script_target`), `TARGET_UNIT_FRIEND_AND_PARTY`
 
 ## world/spellmods.d
 

@@ -24,7 +24,7 @@
  *   Improved Blizzard's chill.)
  * $(LI Rogue: Rupture's attack power, Ambush's bonus, Ruthlessness' and Seal Fate's points after the move; Vanish's
  *   Stealth (a script's call: `hostCastHighestRank`).)
- * $(LI Priest: Weakened Soul, Holy Nova's heal, Vampiric Embrace, Blessed Recovery, Touch of Weakness.)
+ * $(LI Priest: Weakened Soul, Holy Nova's heal, Vampiric Embrace, Blessed Recovery, Touch of Weakness, Shadowguard.)
  * $(LI Druid: Ferocious Bite's extra energy, Rip's attack power, Swiftmend, Enrage, Frenzied Regeneration.)
  * $(LI Shaman: Lightning Shield's ranks, Flametongue (weapon and totem) by the weapon's speed, Healing Way,
  *   Stormstrike's charges, Windfury's extra attacks.)
@@ -544,6 +544,17 @@ mixin template ClassSpells()
     package bool classDummyEffect(const(SpellInfo)* spell, size_t i, ulong targetGuid, int value, uint castItemEntry)
     {
         auto target = map.unit(targetGuid);
+        // Shadowguard (`spell_shadowguard`): the charge's shadow damage, of the rank of the aura that procced.
+        static immutable uint[2][] shadowguardDamage = [[18137, 28377], [19308, 28378], [19309, 28379], [19310, 28380],
+            [19311, 28381], [19312, 28382]];
+        enum uint shadowguard = 28376;
+        if (spell.id == shadowguard)
+        {
+            if (procAuraSpell !is null)
+                if (const damage = rankSpell(shadowguardDamage, procAuraSpell.id))
+                    castCustom(damage, targetGuid);
+            return true;
+        }
         switch (cast(SpellFamily) spell.casting.spellFamilyName)
         {
         case SpellFamily.mage:

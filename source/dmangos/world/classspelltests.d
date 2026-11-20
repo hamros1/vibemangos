@@ -18,7 +18,8 @@ import dmangos.dbc : buildDbc;
 import dmangos.world.auras : Aura, makeAura;
 import dmangos.world.aurastate;
 import dmangos.world.character : Character;
-import dmangos.world.clientdata : factionTemplateFormat, spellCastTimesFormat, spellDurationFormat, spellRangeFormat;
+import dmangos.world.clientdata : factionTemplateFormat, spellCastTimesFormat, spellDurationFormat, spellRadiusFormat,
+    spellRangeFormat;
 import dmangos.world.combat : MeleeDamage, MeleeHitOutcome;
 import dmangos.world.context : WorldContext;
 import dmangos.world.creature : Creature, TempSpawnType;
@@ -62,6 +63,8 @@ private final class Arena
         context.client.spellDurations = typeof(context.client.spellDurations).parse(buildDbc(spellDurationFormat,
             [[1u, 10_000, 0, 10_000], [2u, 12_000, 0, 12_000], [3u, 4000, 0, 4000], [4u, -1, 0, -1]]),
             "SpellDuration.dbc");
+        context.client.spellRadii = typeof(context.client.spellRadii).parse(buildDbc(spellRadiusFormat,
+            [[12u, bits(100), 0, 0]]), "SpellRadius.dbc");
         hero = loggedIn(context, db, 7, "Varian", Position(-8949.95f, -132.49f, 83.53f, 0), AccountLevel.player,
             raceHuman, mapEasternKingdoms, 60);
         hero.read();
@@ -1006,4 +1009,52 @@ unittest
     a.player.movement.position.orientation = 3.14159f; // its back to the creature
     a.swing(true, MeleeHitOutcome.normal, 5);
     assert(!a.damageLogs().canFind!(l => l[0] == 22858), "not from behind");
+}
+
+/**
+ * A party buff at a friend (`TARGET_UNIT_FRIEND_AND_PARTY`: Prayer of Fortitude) goes on that friend and its party,
+ * not on the caster outside it.
+ */
+unittest
+{
+    auto a = new Arena(PlayerClass.priest);
+    auto jaina = loggedIn(a.context, a.db, 8, "Jaina", Position(-8948.0f, -133.5f, 83.53f, 0), AccountLevel.player,
+        raceHuman, mapEasternKingdoms, 60);
+    jaina.read();
+    auto prayer = a.spell(21562, SpellEffect.applyAura, ImplicitTarget.unitFriendAndParty);
+    a.auraEffect(prayer, 0, AuraType.modStat, ImplicitTarget.unitFriendAndParty, 54, 2);
+    prayer.casting.durationIndex = 4;
+    prayer.casting.radiusIndex[0] = 12;
+    assert(a.cast_(21562, jaina.session.character.guid) == SpellCastResult.ok);
+    assert((cast(Player) jaina.session.character).auras.find(21562) !is null, "on her");
+    assert(!a.hasAura(21562), "not on the priest: no party of hers");
+}
+
+/// Shadowguard (`spell_shadowguard`): a swing at the priest brings the rank's shadow damage on the striker.
+unittest
+{
+    auto a = new Arena(PlayerClass.priest);
+    auto guard = a.spell(18137, SpellEffect.applyAura, ImplicitTarget.caster);
+    a.auraEffect(guard, 0, AuraType.procTriggerSpell, ImplicitTarget.caster);
+    guard.triggerSpell[0] = 28376;
+    with (guard.casting)
+    {
+        procFlags = 0x8;
+        procChance = 100;
+        procCharges = 3;
+        durationIndex = 1;
+    }
+    with (a.spell(28376, SpellEffect.dummy, ImplicitTarget.enemy))
+        casting.spellFamilyName = 11;
+    with (a.spell(28377, SpellEffect.schoolDamage, ImplicitTarget.enemy, 25))
+        casting.school = 5;
+    a.cast_(18137);
+    a.hero.read();
+    foreach (attempt; 0 .. 30)
+    {
+        a.swing(true, MeleeHitOutcome.normal, 5);
+        if (a.damageLogs().canFind!(l => l[0] == 28377))
+            break;
+        assert(attempt < 29, "the rank's shadow damage");
+    }
 }
