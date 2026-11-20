@@ -3,7 +3,7 @@
 description, with the numbers the spell's data gives filled in), and how it does it: what in it the data alone
 does not say, so the server's own code must (a dummy or script effect, a dummy aura, a proc, a class script, an
 aura state, a modifier of other spells). Each such spell is listed with where the server does it and whether a test
-casts it on the real data (source/dmangos/world/realspelltests.d). Writes docs/spells/.
+casts it on the real data (source/dmangos/world/realspelltests.d, realclassspelltests.d, realclass_*.d). Writes docs/spells/.
 
     tools/spellspec.py MYSQL_COMMAND... -- DBC_DIR
 
@@ -224,13 +224,16 @@ def main():
     for path in glob.glob(os.path.join(SOURCE, '**', '*.d'), recursive=True):
         if not path.endswith('spellids.d'):
             code[os.path.relpath(path, REPO)] = open(path).read()
-    real_tests = code.get(os.path.join('source', 'dmangos', 'world', 'realspelltests.d'), '')
+    # The real-data test modules: realspelltests.d, realclassspelltests.d, realclass_*.d.
+    real_paths = {os.path.relpath(p, REPO) for p in glob.glob(os.path.join(SOURCE, 'world', 'real*.d'))
+                  if re.search(r'real(spell|classspell)tests\.d$|realclass_\w+\.d$', p)}
+    real_tests = ''.join(code[p] for p in real_paths)
 
     def where(ids):
         """The source files naming one of `ids` (as a number), but the real-data tests."""
         pattern = re.compile(r'(?<![\w.])(%s)(?![\w.])' % '|'.join(str(i) for i in ids))
         return sorted(os.path.basename(p) for p, t in code.items()
-                      if not p.endswith('realspelltests.d') and pattern.search(t))
+                      if p not in real_paths and pattern.search(t))
 
     def tested(ids):
         return bool(re.search(r'(?<![\w.])(%s)(?![\w.])' % '|'.join(str(i) for i in ids), real_tests))
@@ -301,7 +304,7 @@ def main():
                  'edit. Each spell a %s can learn (or that one of them casts, procs or triggers), its tooltip with the '
                  'numbers of its highest rank, and what the data alone does not say. **code**: the source files that '
                  'name one of its ranks; **real test**: a test casts it on the real data '
-                 '(source/dmangos/world/realspelltests.d).' % klass, '']
+                 '(source/dmangos/world/realspelltests.d, realclassspelltests.d, realclass_*.d).' % klass, '']
         scripted = done = coded = 0
         plain = []
         for name, ids in entries:

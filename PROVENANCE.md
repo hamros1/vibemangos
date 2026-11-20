@@ -755,11 +755,23 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
   Seal Fate), `Unit::HandleOverrideClassScriptAuraProc` (Nightfall), `Unit::ProcDamageAndSpell` (the reactive states),
   `Unit::UpdateReactives`, `Unit::ClearAllReactives`, `Player::RemoveSomeCooldown`, `SpellMgr::GetSpellSpecific`,
   `SpellStacker::IsStackableAuraEffect` (a helpful spell's ranks), `Unit::CalculateLevelPenalty`,
-  `Unit::GetBaseWeaponDamage`, `Unit::SpellBaseDamageBonusDone`
+  `Unit::SpellBaseDamageBonusDone`
 * Functions/ScriptNames: `spell_judgement`, `spell_judgement_of_command`, `spell_judgement_of_light_intermediate`,
   `spell_judgement_of_wisdom_intermediate`, `spell_swiftmend`, `spell_curse_of_doom`, `spell_power_infusion`,
   `spell_shatter_mage`, `spell_retaliation_warrior`, `spell_blessing_of_light`, `spell_healing_way`, `spell_seal_of_the_crusader`, `spell_shadowguard`, `spell_blizzard`
 * Constants: `IsSealSpell`, `REACTIVE_TIMER_START`, `SPELL_ATTR_EX_DRAIN_ALL_POWER`, `TRIGGERED_IGNORE_HIT_CALCULATION`
+* Not from an emulator (2026-11-20, from the 1.12 tooltips and data; tested in world/realclass_paladin_shaman_druid.d):
+  Seal of Righteousness' swing damage (the tooltip's expression: its amount by the weapon's speed in hundredths) and
+  Improved Seal of Righteousness on it; Blessing of Light by the heal spell's own coefficient; Eye for an Eye (its
+  share of a spell's crit, at most half the paladin's health); a spell's `TargetCreatureType` at its target; a dummy
+  effect's spell spending its caster's charged modifiers (Divine Favor by Holy Light's heal); Holy Shield's 20% more
+  threat; Stormstrike's charges (17364, of no family); a spell's crit damage bonus by its modifiers (Elemental Fury,
+  Vengeance); heals' threat by their modifiers (Healing Grace, Subtlety, Improved Tranquility); a cast's end as a proc
+  (Elemental Focus); a missile's charged modifiers spent as it lands (Elemental Mastery's crit); a totem's spells and
+  auras by its owner's talents (Enhancing, Guardian, Restorative Totems, Totemic Mastery, Call of Flame, Improved Fire
+  Totems), its periodic spells cast (Fire Nova, Magma, Earthbind) and its weapon enchantments given to the party;
+  Improved Weapon Totems' masks (its tooltip, not `spell_affect`); the passives bound to a weapon, a shield or a
+  shapeshift form on while those are
 
 ## world/classspelltests.d
 

@@ -234,6 +234,7 @@ void swingReactions(UnitRef attacker, UnitRef victim, const ref MeleeDamage d)
 /// See the module documentation.
 mixin template ClassSpells()
 {
+    import std.algorithm.comparison : min;
     import std.algorithm.searching : canFind;
     import std.random : uniform01;
     import dmangos.world.aurastate;
@@ -467,6 +468,15 @@ mixin template ClassSpells()
     package SpellCastResult classCastCheck(const(SpellInfo)* spell, const ref SpellTargets targets)
     {
         auto target = targets.unit && targets.unit != player.guid ? map.unit(targets.unit) : UnitRef.of(this);
+        // Only at the creature types it names (`TargetCreatureType`: Turn Undead at the undead, Hibernate at beasts and
+        // dragonkin); a player is a humanoid.
+        if (const types = spell.casting.targetCreatureType)
+            if (target && target.combatGuid != player.guid)
+            {
+                const type = target.fighter.creatureType;
+                if (type && !(types & (1u << (type - 1))))
+                    return SpellCastResult.badTargets;
+            }
         // Conflagrate
         if (ofFamily(spell, SpellFamily.warlock, 0x200) && spell.hasEffect(SpellEffect.schoolDamage))
             if (familyAuraOn(target, SpellFamily.warlock, 0x4, AuraType.periodicDamage, player.guid) is null)
@@ -558,6 +568,10 @@ mixin template ClassSpells()
     package bool classDummyEffect(const(SpellInfo)* spell, size_t i, ulong targetGuid, int value, uint castItemEntry)
     {
         auto target = map.unit(targetGuid);
+        const outer = castingFor;
+        castingFor = spell;
+        scope (exit)
+            castingFor = outer;
         // Shadowguard (`spell_shadowguard`): the charge's shadow damage, of the rank of the aura that procced.
         static immutable uint[2][] shadowguardDamage = [[18137, 28377], [19308, 28378], [19309, 28379], [19310, 28380],
             [19311, 28381], [19312, 28382]];
@@ -694,6 +708,8 @@ mixin template ClassSpells()
     }
 
     package AttackType procHand; /// the hand whose swing set the current item procs off
+    /// The spell whose dummy or script effect is under way (what it casts spends its charged modifiers as its own).
+    package const(SpellInfo)* castingFor;
 
     /**
      * The player's cooldowns end on its spells of `family` that have one (and of a school in `schoolMask`, if
@@ -911,16 +927,18 @@ mixin template ClassSpells()
         }
         foreach (aura; set.list)
         {
-            // Blessing of Light: effect 0 for Holy Light, 1 for Flash of Light, as spell power (by the cast time).
+            // Blessing of Light: effect 0 for Holy Light's heal, 1 for Flash of Light's, as healing power ("up to"):
+            // the heal's share of it (Blizzard's coefficient).
             if (ofFamily(aura.spell, SpellFamily.paladin, 0x10000000) && aura.has(AuraType.dummy))
             {
-                const which = ofFamily(spell, SpellFamily.paladin, 0x80000000) ? 0
-                    : ofFamily(spell, SpellFamily.paladin, 0x40000000) ? 1 : 3;
+                enum ulong holyLightHeal = 0x4000, flashOfLightHeal = 0x2000; // 19968 (19980..19982), 19993
+                const which = ofFamily(spell, SpellFamily.paladin, holyLightHeal) ? 0
+                    : ofFamily(spell, SpellFamily.paladin, flashOfLightHeal) ? 1 : 3;
                 if (which < 3 && (aura.effects & (1 << which)))
                 {
-                    int time = castTime(*spell, context.client, player.data.level);
-                    time = time < 1500 ? 1500 : time > 3500 ? 3500 : time;
-                    value += aura.amount[which] * time / 3500;
+                    import dmangos.world.spellcast : bonusCoefficient;
+
+                    value += cast(int)(aura.amount[which] * bonusCoefficient(*spell, 0, context.client, player.data.level));
                 }
             }
             else if (aura.spell.id == healingWay && ofFamily(spell, SpellFamily.shaman, 0x40)) // by its stacks (3 at most)
@@ -1103,6 +1121,8 @@ mixin template ClassSpells()
             casts ~= ProcCast(retaliationStrike, other.combatGuid, always);
             return true;
         }
+        if (paladinDummyProc(aura, i, hit, other, casts))
+            return true;
         // Seal of Righteousness
         if (ofFamily(spell, SpellFamily.paladin, 0x8000000) && i == 0)
         {
@@ -1153,6 +1173,24 @@ mixin template ClassSpells()
     }
 
     /**
+     * A paladin's dummy aura procced: Eye for an Eye deals its share of a spell's crit back to the caster (25997), never
+     * more than half the paladin's health (its tooltip).
+     */
+    private bool paladinDummyProc(Aura aura, size_t i, const ref ProcHit hit, UnitRef other, ref ProcCast[] casts)
+    {
+        static immutable uint[] eyeForAnEye = [9799, 25988];
+        enum uint eyeForAnEyeDamage = 25997;
+        if (!eyeForAnEye.canFind(aura.spell.id))
+            return false;
+        if (!other || !other.alive || !(hit.procEx & ProcEx.criticalHit) || !hit.damage)
+            return false;
+        const half = player.values.get!UNIT_FIELD_MAXHEALTH / 2;
+        const back = cast(int) min(hit.damage * aura.amount[i] / 100, half);
+        casts ~= ProcCast(eyeForAnEyeDamage, other.combatGuid, CustomValues.first(back));
+        return back > 0;
+    }
+
+    /**
      * A haste aura procced (`HandleHasteAuraProc`): Blade Flurry strikes another enemy near for the swing's damage; true
      * if it did (a charge, as for the others, goes then).
      */
@@ -1186,31 +1224,39 @@ mixin template ClassSpells()
     }
 
     /**
-     * Seal of Righteousness' damage on a swing of the main hand's weapon (`HandleDummyAuraProc`): by its speed and
-     * its damage, more with a two-handed one, and a share of the holy spell power.
+     * Seal of Righteousness' damage on a swing of the main hand's weapon: its amount by the weapon's speed, in hundredths
+     * (the 1.12 tooltip's own expression: "$/87;s to $/25;s Holy damage", from 1.15 to 4.0 seconds a swing), and what
+     * Improved Seal of Righteousness adds. The spell power is the damage spell's own (Blizzard's coefficient of it,
+     * `bonusCoefficient`).
      */
     private int sealOfRighteousnessAmount(int amount, const(SpellInfo)* seal)
     {
-        import std.math : ceil;
         import dmangos.world.defines : equipmentSlotMainhand;
 
-        enum uint twoHanded = 17; // INVTYPE_2HWEAPON
+        enum uint unarmed = 2000; // a fist's swing
         const item = player.inventory.equipped(equipmentSlotMainhand);
-        const speed = (item is null || item.proto is null ? 2000 : item.proto.details.delay) / 1000.0f;
-        float base;
-        if (item !is null && item.proto !is null && item.proto.inventoryType == twoHanded)
-        {
-            base = 1.20f * amount * 1.2f * 1.03f * speed / 100.0f + 1;
-        }
-        else
-        {
-            base = 0.85f * ceil(amount * 1.2f * 1.03f * speed / 100.0f) - 1;
-        }
-        // The weapon's own damage (`GetBaseWeaponDamage`: its first line, no attack power), a fist's without one.
-        const weapon = item is null || item.proto is null ? (1 + 2) / 2.0f
-            : (item.proto.details.damage[0].min + item.proto.details.damage[0].max) / 2;
-        // The spell power is the damage spell's own (Blizzard's 0.1 of it, less below level 20: `bonusCoefficient`).
-        return cast(int)(base + 0.03f * weapon) + 1;
+        const speed = (item is null || item.proto is null || !item.proto.details.delay ? unarmed
+            : item.proto.details.delay) / 1000.0f;
+        return cast(int)(amount * speed / 100 * (100 + improvedSealOfRighteousness()) / 100);
+    }
+
+    /**
+     * Improved Seal of Righteousness' percent: its data names Judgement of Righteousness (family flag 0x400) for both, but
+     * the seal's own swing damage (25713 and its ranks, of no family flags) is what its tooltip names first.
+     */
+    private int improvedSealOfRighteousness()
+    {
+        import dmangos.world.procs : affectMaskOf;
+
+        enum ulong judgementOfRighteousness = 0x400;
+        int percent;
+        foreach (aura; player.auras.list)
+            foreach (k; 0 .. 3)
+                if ((aura.effects & (1 << k)) && aura.type(k) == AuraType.addPctModifier
+                        && aura.spell.casting.spellFamilyName == SpellFamily.paladin
+                        && affectMaskOf(aura.spell, k) == judgementOfRighteousness)
+                    percent += aura.amount[k];
+        return percent;
     }
 
     /// An override class script aura procced: Nightfall's Shadow Trance on a Corruption or Drain Life tick.
@@ -1258,8 +1304,9 @@ mixin template ClassSpells()
             if (aura.spell.id == vampiricEmbrace && aura.caster == player.guid && hit.spell !is null
                     && hit.spell.casting.school == 5 && hit.damage)
                 casts ~= ProcCast(vampiricHeal, player.guid, CustomValues.first(cast(int)(hit.damage * aura.amount[0] / 100)));
-            // Stormstrike: its nature damage taken lasts its charges (`spell_proc_event`: nature).
-            if (ofFamily(aura.spell, SpellFamily.shaman) && aura.spell.casting.spellIconId == 302 && aura.charges
+            enum uint stormstrike = 17364;
+            // Stormstrike (17364, of no family): its nature damage taken lasts its charges (`spell_proc_event`: nature).
+            if (aura.spell.id == stormstrike && aura.charges
                     && hit.spell !is null && hit.spell.casting.school == 3 && hit.damage && --aura.charges == 0)
                 spent ~= aura;
         }

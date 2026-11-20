@@ -414,6 +414,9 @@ mixin template EffectHandlers()
         import dmangos.world.spellcast : nonMeleeDamageLog;
         import dmangos.world.unit : Blow, dealDamage;
 
+        import dmangos.world.classspells : ofFamily, SpellFamily;
+
+        enum uint holyShieldIcon = 453;
         if (!attacker || player is null)
             return;
         Aura[] spent;
@@ -431,7 +434,11 @@ mixin template EffectHandlers()
                 const damage = cast(uint) aura.amount[i];
                 tellAround(attacker.combatGuid, Opcode.SMSG_SPELLNONMELEEDAMAGELOG, nonMeleeDamageLog(
                     attacker.combatGuid, player.guid, aura.spell.id, damage, school, 0, 0, false, 0, false));
-                dealDamage(unit, attacker, damage, Blow.spell(school));
+                auto blow = Blow.spell(school);
+                // Holy Shield: its damage causes 20% more threat (its tooltip; spell_threat's flat 20 to 40 is not it).
+                if (ofFamily(aura.spell, SpellFamily.paladin) && aura.spell.casting.spellIconId == holyShieldIcon)
+                    blow.threat = 1.2f;
+                dealDamage(unit, attacker, damage, blow);
                 if (aura.charges && --aura.charges == 0)
                     spent ~= aura;
             }
@@ -746,6 +753,10 @@ mixin template EffectHandlers()
             pvpAssisted(who);
         map.sendToWatchers(this, Opcode.SMSG_SPELLHEALLOG, healLog(target, player.guid, spell.id, amount, false), true);
         who.flushPlayerChanges();
+        // A heal as any other: its procs (Improved Lay on Hands' armor on its target).
+        import dmangos.world.procs : ProcEx, ProcHit, spellProcFlags;
+
+        procAuras(spellProcFlags(*spell, true, false), who.unit, ProcHit(spell, ProcEx.normalHit, amount, 0, true));
     }
 
     // -----------------------------------------------------------------------

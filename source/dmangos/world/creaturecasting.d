@@ -378,6 +378,13 @@ mixin template CreatureCasting()
                     continue;
                 found ~= other.combatGuid;
             }
+            // A player's totem's (Fire Nova, Magma Totem): the creatures there its owner may attack too.
+            if (me.totemOwner)
+                foreach (other; world_.creaturesNear(center, r))
+                    if (other !is me && other.alive && !other.totemOwner && other.ai !is null
+                            && canAttack(relating, other.ai.relatingOf, me.client)
+                            && (a != ImplicitTarget.enemiesInCone || hasInArc(me.position, other.position, PI / 2)))
+                        found ~= other.guid;
             return found;
         }
         // A script's area around the caster (`TARGET_ENUM_UNITS_SCRIPT_AOE_AT_SRC_LOC`): the living creatures there
@@ -495,7 +502,18 @@ mixin template CreatureCasting()
             const effect = spell.effect[i];
             if (effect == SpellEffect.none)
                 continue;
-            const value = levelScaled(spell, i, effectValue(*spell, i, level, uniform01(world_.random)));
+            int value = levelScaled(spell, i, effectValue(*spell, i, level, uniform01(world_.random)));
+            // A totem's spell: its owner's talents count (Call of Flame on Searing Totem's attack).
+            if (me.totemOwner)
+                if (auto owner = world_.unit(me.totemOwner))
+                    if (owner.session !is null && owner.session.player !is null)
+                    {
+                        import dmangos.world.spellmods : SpellModOp;
+
+                        value = owner.session.effectMod(spell, i, value);
+                        if (effect == SpellEffect.schoolDamage)
+                            value = owner.session.spellMod(SpellModOp.damage, spell, value);
+                    }
             foreach (guid; reached[i])
             {
                 if (guid in missed)

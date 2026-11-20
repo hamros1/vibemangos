@@ -135,6 +135,23 @@ struct SpellCastInfo
 }
 
 /**
+ * `spell_affect` rows that name other spells than the talent's tooltip (the client's `EffectItemType` names none):
+ * Improved Weapon Totems' (29192: "the melee attack power bonus of your Windfury Totem ... the damage caused by your
+ * Flametongue Totem") are the weapons' (Windfury Weapon's 0x800000, Flametongue Weapon's 0x200000), not the totems'
+ * attacks (Windfury Totem's 8516, 10608, 10610: 0x200000000; Flametongue Totem's 16368: 0x2000000).
+ */
+private static immutable struct AffectMaskFix
+{
+    uint spell;
+    uint effect;
+    ulong mask;
+}
+
+/// ditto
+private static immutable AffectMaskFix[] affectMaskFixes = [AffectMaskFix(29192, 0, 0x200000000),
+    AffectMaskFix(29192, 1, 0x2000000)];
+
+/**
  * `spell_proc_event`: what an aura that procs procs on, beside (or instead of) its spell's own `ProcFlags` and
  * `ProcChance`: a school (`schoolMask`), a family and its spells (`familyMask`, per effect), hit kinds (`procEx`:
  * a crit only, a dodge...), a rate a minute instead of a chance, and a cooldown. One row stands for every rank.
@@ -341,6 +358,9 @@ final class SpellData
             if (auto spell = data.spells.edit(row.get!uint(0)))
                 if (row.get!uint(1) < 3)
                     spell.casting.affectMask[row.get!uint(1)] = row.get!ulong(2);
+        foreach (ref fix; affectMaskFixes)
+            if (auto spell = data.spells.edit(fix.spell))
+                spell.casting.affectMask[fix.effect] = fix.mask;
         foreach (row; world.query!("SELECT entry, SchoolMask, SpellFamilyName, SpellFamilyMask0, SpellFamilyMask1, "
                 ~ "SpellFamilyMask2, procFlags, procEx, ppmRate, CustomChance, Cooldown FROM spell_proc_event")())
             data.procEvents[row.get!uint(0)] = SpellProcEvent(row.get!uint(1), row.get!uint(2),

@@ -437,7 +437,7 @@ private:
         enum uint selfResurrectEffect = 94;
         foreach (i; 0 .. 3)
             if (spell.effect[i] == selfResurrectEffect)
-                selfResurrect(spell, i, effectValue(*spell, i, player.data.level, uniform01(map.random)));
+                selfResurrect(spell, i, effectMod(spell, i, effectValue(*spell, i, player.data.level, uniform01(map.random)))); // (Improved Reincarnation)
     }
 
     /// Spell effect 94: the player comes back by itself, with the effect's share (or, negative, amount) of health and mana.

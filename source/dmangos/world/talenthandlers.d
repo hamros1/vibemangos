@@ -92,6 +92,7 @@ private:
         player.values.set!PLAYER_CHARACTER_POINTS1(free - (rank + 1 - known));
         if (const spell = context.data.spells.spell(spellId))
             applyPassive(spell);
+        refreshEquipBoundPassives();
         flushPlayerChanges();
         info!"%s: '%s' learned talent %s rank %s (spell %s)"(remoteAddress, player.data.name, talentId, rank + 1,
             spellId);
@@ -300,7 +301,8 @@ private:
             foreach (i; 0 .. 3)
                 if (spell.effect[i] == applyAura)
                 {
-                    values[i] = effectValue(*spell, i, player.data.level, 0) * cast(int) count;
+                    // (with the player's talents: Elemental Weapons on Rockbiter Weapon's attack power)
+                    values[i] = effectMod(spell, i, effectValue(*spell, i, player.data.level, 0)) * cast(int) count;
                     any = true;
                 }
             if (!any)
@@ -319,6 +321,57 @@ private:
             if (const spell = context.data.spells.spell(id))
                 if (spell.isPassive)
                     applyPassive(spell);
+        refreshEquipBoundPassives();
+    }
+
+    /**
+     * The passive spells bound to a kind of weapon or armour (their `EquippedItemClass`: Redoubt to a shield, One-Handed
+     * Weapon Specialization to a one-handed weapon, Weapon Mastery to any): on while one is worn (a weapon in either
+     * hand, a shield in the off hand), off when none is.
+     */
+    package void refreshEquipBoundPassives()
+    {
+        import dmangos.world.defines : equipmentSlotMainhand, equipmentSlotOffhand, ItemClass;
+
+        enum uint applyAura = 6;
+        bool worn(const(SpellInfo)* spell)
+        {
+            const slots = spell.equippedItemClass == ItemClass.armor ? [equipmentSlotOffhand]
+                : [equipmentSlotMainhand, equipmentSlotOffhand];
+            foreach (slot; slots)
+                if (const item = player.inventory.equipped(cast(ubyte) slot))
+                    if (item.proto !is null && item.proto.itemClass == spell.equippedItemClass
+                            && (item.durability != 0 || item.maxDurability == 0)
+                            && (spell.equippedItemSubClassMask <= 0 || (spell.equippedItemSubClassMask & (1 << item.proto.subClass))))
+                        return true;
+            return false;
+        }
+        foreach (id; player.spells)
+        {
+            const spell = context.data.spells.spell(id);
+            if (spell is null || !spell.isPassive || spell.equippedItemClass < 0)
+                continue;
+            auto on = player.auras.find(id);
+            const wanted = worn(spell);
+            if (on !is null && !wanted)
+                removeAura(on);
+            else if (on is null && wanted)
+            {
+                int[3] values;
+                bool any;
+                foreach (i; 0 .. 3)
+                    if (spell.effect[i] == applyAura)
+                    {
+                        values[i] = effectValue(*spell, i, player.data.level, 0);
+                        any = true;
+                    }
+                if (!any)
+                    continue;
+                auto aura = makeAura(spell, player.guid, player.data.level, -1, true, values);
+                aura.passive = true;
+                addAura(aura);
+            }
+        }
     }
 }
 

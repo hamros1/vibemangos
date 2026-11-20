@@ -345,7 +345,12 @@ final class Character : OnlinePlayer, Looter
                     cast(ubyte) blow.melee.type, damage != 0));
         }
         else if (blow.kind == BlowKind.spell && damage && attacker && player !is null && player.alive)
-            procAuras(ProcFlag.takeHarmfulSpell, attacker);
+        {
+            import dmangos.world.procs : ProcEx, ProcHit;
+
+            procAuras(ProcFlag.takeHarmfulSpell, attacker, ProcHit(null, blow.crit ? ProcEx.criticalHit : ProcEx.normalHit,
+                damage));
+        }
     }
 
 

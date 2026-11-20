@@ -1631,7 +1631,7 @@ mixin template PetHandlers()
         const ground = map.groundHeight(at.x, at.y, at.z + 2, false);
         if (ground > -100_000 && (ground - at.z) ^^ 2 < 25)
             at.z = ground;
-        const ms = duration(*spell, context.client, player.data.level);
+        const ms = modDuration(spell, duration(*spell, context.client, player.data.level)); // (Improved Fire Totems)
         auto totem = context.summonCreature(map, entry, at, ms > 0 ? TempSpawnType.timedOrDead : TempSpawnType.dead,
             ms > 0 ? ms : 0, player.guid);
         if (totem is null)
@@ -1664,10 +1664,19 @@ mixin template PetHandlers()
                     // Its aura on itself, whence it reaches the party.
                     int[3] amounts;
                     foreach (j; 0 .. 3)
-                        amounts[j] = effectValue(*info, j, player.data.level, 0);
+                        amounts[j] = effectMod(info, j, effectValue(*info, j, player.data.level, 0)); // (Enhancing Totems)
+                    auto aura = makeAura(info, totem.guid, player.data.level, -1, true, amounts);
+                    // Its first tick: sooner by the owner's talents (Improved Fire Totems: Fire Nova Totem's nova).
+                    foreach (j; 0 .. 3)
+                        if (aura.period[j] > 0)
+                        {
+                            import dmangos.world.spellmods : SpellModOp;
+
+                            aura.period[j] = aura.periodTimer[j] = max(1, spellMod(SpellModOp.activationTime, info,
+                                aura.period[j]));
+                        }
                     bool isNew;
-                    totem.auras.apply(makeAura(info, totem.guid, player.data.level, -1, true, amounts), totem.values,
-                        isNew);
+                    totem.auras.apply(aura, totem.values, isNew);
                 }
             }
         map.flushObjectChanges(totem);
@@ -1730,6 +1739,92 @@ mixin template PetHandlers()
             if (nearest !is null)
                 totem.ai.castSpell(info, nearest.guid, 0);
         }
+    }
+
+    /**
+     * Each tick: a totem's aura that casts a spell now and then (`SPELL_AURA_PERIODIC_TRIGGER_SPELL`), whose ticks the
+     * totem itself has no caster to do: at each of its periods the totem casts it (Fire Nova Totem's nova, Magma
+     * Totem's fire, Earthbind Totem's slow, the cleansing totems'). One that enchants a held item (Flametongue Totem,
+     * Windfury Totem: `SPELL_EFFECT_ENCHANT_HELD_ITEM`) gives it to the main hand weapon of each party member within
+     * the spell's radius, for two periods: it lasts while they stay near (the tooltips: "enchants all party members'
+     * main-hand weapons ... if they are within 20 yards").
+     */
+    package void updateTotemEnchants()
+    {
+        import core.time : msecs;
+        import dmangos.world.auras : AuraType;
+        import dmangos.world.defines : equipmentSlotMainhand;
+        import dmangos.world.spellcast : radius;
+        import dmangos.world.spells : SpellEffect;
+
+        const now = context.clock();
+        foreach (totem; ownTotems())
+            foreach (aura; totem.auras.list)
+                foreach (k; 0 .. 3)
+                {
+                    if (!(aura.effects & (1 << k)) || aura.type(k) != AuraType.periodicTriggerSpell)
+                        continue;
+                    const trigger = context.data.spells.spell(aura.spell.triggerSpell[k]);
+                    const period = aura.period[k];
+                    if (trigger is null || period <= 0)
+                        continue;
+                    const key = TotemTick(totem.guid, aura.spell.id);
+                    if (const at = key in totemTickAt)
+                    {
+                        if (*at > now)
+                            continue;
+                    }
+                    else if (!trigger.hasEffect(SpellEffect.enchantHeldItem))
+                    {
+                        totemTickAt[key] = now + period.msecs; // its first tick a period after it stands
+                        continue;
+                    }
+                    totemTickAt[key] = now + period.msecs;
+                    if (!trigger.hasEffect(SpellEffect.enchantHeldItem))
+                    {
+                        import dmangos.world.eventai : castTriggered;
+
+                        totem.ai.castSpell(trigger, totem.guid, castTriggered);
+                        continue;
+                    }
+                    foreach (i; 0 .. 3)
+                        if (trigger.effect[i] == SpellEffect.enchantHeldItem)
+                        {
+                            const reach = radius(*trigger, i, context.client), enchantment = cast(uint) trigger.miscValue[i];
+                            foreach (m; partyHere())
+                            {
+                                const p = m.player.position;
+                                if ((p.x - totem.position.x) ^^ 2 + (p.y - totem.position.y) ^^ 2 > reach * reach)
+                                    continue;
+                                if (const weapon = m.player.inventory.equipped(equipmentSlotMainhand))
+                                    if (weapon.proto !is null && weapon.proto.itemClass == 2)
+                                        m.enchantItem(weapon.fullGuid, enchantment, true, period * 2 / 1000);
+                            }
+                        }
+                }
+    }
+
+    private MonoTime[TotemTick] totemTickAt; // a totem's aura -> when it ticks again
+
+    private static struct TotemTick
+    {
+        ulong totem;
+        uint spell;
+    }
+
+    /// This player and its party's members on its map, alive.
+    private typeof(this)[] partyHere()
+    {
+        import dmangos.world.player : DeathState;
+
+        typeof(this)[] members = [this];
+        if (auto group = context.groups.of(player.guid))
+            foreach (ref m; group.members)
+                if (m.guid != player.guid)
+                    if (auto s = cast(typeof(this)) context.onlinePlayer(m.guid))
+                        if (s.player !is null && s.map is map && s.player.deathState == DeathState.alive)
+                            members ~= s;
+        return members;
     }
 
     /// The player's totems out.

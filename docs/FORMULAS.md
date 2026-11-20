@@ -36,5 +36,42 @@ spells learned before level 20.
   top of what every spell got. The data gives Mana Shield none, and the proc spells a flat 0.1 (Seal of
   Righteousness's less below level 20).
 
-**Still from an emulator (to replace when a primary source is found):** Seal of Righteousness's base damage by weapon
-speed (`sealOfRighteousnessAmount`, CMaNGOS's formula). Flametongue's base damage by weapon speed.
+## Damage by weapon speed: Seal of Righteousness, Flametongue
+
+**What:** the holy damage Seal of Righteousness adds to a swing, and the fire damage of a Flametongue Weapon or Totem
+hit, by the speed of the weapon.
+
+**Source: the 1.12 tooltips (Blizzard's own expressions in Spell.dbc).** Seal of Righteousness rank 8's description
+says "an additional `$/87;20286s3` to `$/25;20286s3` Holy damage. Slower weapons cause more", and Flametongue Weapon's
+"`$/77;16344m1` to `$/25;16344M1` additional Fire damage, based on the speed of the weapon": the amount divided by 100
+over the speed, from the fastest weapon (1.15 and 1.3 seconds: 100/87, 100/77) to the slowest (4.0: 100/25). So each
+is the amount times the speed in seconds, over 100 (`sealOfRighteousnessAmount`, `flametongue` in world/classspells.d;
+a fist swings at 2.0). Rank 8's 1786 is 20.5 a swing with a 1.15 weapon, 71.4 with a 4.0 one. Spell power comes on top
+by the damage spell's own coefficient (above).
+
+Until 2026-11-20 Seal of Righteousness used CMaNGOS's formula (0.85 of the amount by 1.2 * 1.03 for a one-handed
+weapon, 1.2 for a two-handed one, plus 3% of the weapon's damage), which matches measurements of the Burning Crusade
+(warcraft.wiki.gg's talk page on the seal), not the 1.12 tooltip; Flametongue was already the tooltip's.
+
+## Seal of the Crusader's slower damage
+
+**What:** its swings are 40% quicker (its second amount) and each deals 1/1.4 of its damage, so its damage a second
+stays (`crusaderDamageFactor`). The tooltip says only "deals less damage with each attack". **Source: CMaNGOS**
+(`spell_seal_of_the_crusader`); a candidate to replace.
+
+## Holy Shield's threat
+
+**What:** its damage causes 20% more threat. **Source: the tooltip** ("Damage caused by Holy Shield causes 20% additional
+threat"). The world database's `spell_threat` (flat 20, 30, 40 for the ranks) is not used.
+
+## Eye for an Eye
+
+**What:** a spell's crit against the paladin deals 15% (30% at rank 2) of its damage back as holy damage (25997), at
+most half the paladin's health. **Source: the tooltip** and the talent's amount.
+
+## Totem enchantments
+
+**What:** Flametongue Totem and Windfury Totem enchant the main hand weapons of the party within the spell's radius at
+each of their periods (5 seconds), for two periods: the enchantment lasts while its bearer stays near. **Source: the
+tooltips** ("enchants all party members' main-hand weapons with fire if they are within 20 yards"); how long one lasts
+once out of reach is not said, and is this server's choice.

@@ -99,6 +99,36 @@ private:
     bool channelFailed;              // an effect of the spell failed (not fishable): no channel
     PersistentArea[] persistentAreas; // this caster's spots of persistent area auras
     PendingHit[] pendingHits;         // missiles on their way: their effects when they arrive
+    MissileSpend[] missileSpends;     // casts whose charged modifiers wait for their missiles to land
+
+    /// Whether a charged modifier changes a spell's effects where they land (its crit, its damage), not its cast.
+    static bool changesImpact(const Aura aura)
+    {
+        import dmangos.world.spellmods : SpellModOp;
+
+        foreach (i; 0 .. 3)
+        {
+            const type = aura.spell.casting.applyAuraName[i];
+            if (type != AuraType.addFlatModifier && type != AuraType.addPctModifier)
+                continue;
+            switch (aura.misc(i))
+            {
+            case SpellModOp.damage, SpellModOp.critChance, SpellModOp.critDamageBonus, SpellModOp.allEffects,
+                    SpellModOp.effect1, SpellModOp.effect2, SpellModOp.effect3, SpellModOp.dot:
+                return true;
+            default:
+                break;
+            }
+        }
+        return false;
+    }
+
+    static struct MissileSpend
+    {
+        const(SpellInfo)* spell;
+        Aura[] hadAtStart;
+        bool triggered;
+    }
     ulong channelTarget;             // ... at whom
     int channelTimer;                // ... for so many more milliseconds
     Casting nextSwing;               // the spell waiting for the next main-hand swing, if any
@@ -487,6 +517,19 @@ private:
             pendingHits = still;
             foreach (hit; due)
                 doEffect(hit.spell, hit.effect, hit.target, hit.casting);
+            // The charged modifiers of casts whose missiles have all landed.
+            if (missileSpends.length)
+            {
+                import std.algorithm.searching : any;
+
+                MissileSpend[] waiting;
+                foreach (m; missileSpends)
+                    if (pendingHits.any!(h => h.spell is m.spell))
+                        waiting ~= m;
+                    else
+                        spendChargedMods(m.spell, m.hadAtStart, m.triggered);
+                missileSpends = waiting;
+            }
             if (due.length)
                 flushPlayerChanges();
         }
@@ -1928,7 +1971,37 @@ private:
             foreach (r; results)
                 if (r.miss == SpellMissInfo.none)
                     rewardPlayerAndGroupAtCast(r.guid, spell.id);
-        spendChargedMods(spell, chargedAtStart, c.triggered);
+        // The cast is over: the procs that wait for that (`PROC_EX_CAST_END`: Elemental Focus), on a harmful spell at an
+        // enemy as such, else as a helpful one.
+        if (!c.triggered && results.length)
+        {
+            import dmangos.world.procs : ProcEx, ProcHit, spellProcFlags;
+
+            bool harmful;
+            UnitRef first;
+            foreach (r; results)
+                if (r.guid != player.guid)
+                    if (auto u = map.unit(r.guid))
+                    {
+                        harmful |= canAttack(relatingNow(), u.relating, context.client);
+                        if (!first)
+                            first = u;
+                    }
+            procAuras(spellProcFlags(*spell, !harmful, false), first, ProcHit(spell, ProcEx.castEnd, 0, 0, harmful));
+        }
+        // A missile's that change what it does where it lands (Elemental Mastery's crit) are spent as it lands; the
+        // others (Presence of Mind's cast time) now.
+        import std.algorithm.iteration : filter;
+        import std.algorithm.searching : any;
+        import std.array : array;
+
+        if (pendingHits.any!(h => h.spell is spell))
+        {
+            missileSpends ~= MissileSpend(spell, chargedAtStart.filter!(a => changesImpact(a)).array, c.triggered);
+            spendChargedMods(spell, chargedAtStart.filter!(a => !changesImpact(a)).array, c.triggered);
+        }
+        else
+            spendChargedMods(spell, chargedAtStart, c.triggered);
         // A rage or energy ability that missed, was dodged or parried costs a fifth (CMaNGOS's `Spell::finish`).
         enum uint discountPowerOnMiss = 0x08000000; // SPELL_ATTR_EX_DISCOUNT_POWER_ON_MISS
         if ((spell.attributesEx & discountPowerOnMiss) && paid > 0)
@@ -2488,7 +2561,7 @@ private:
     }
 
     /// A duration with the modifiers (an aura's that lasts until cancelled stays so).
-    int modDuration(const(SpellInfo)* spell, int ms)
+    package int modDuration(const(SpellInfo)* spell, int ms)
     {
         if (castCombo)
             if (const entry = context.client.spellDurations.lookup(spell.casting.durationIndex))
@@ -2626,7 +2699,7 @@ private:
     }
 
     /// `value` of `spell`'s property `op`, with this player's spell modifiers (talents).
-    T spellMod(T)(SpellModOp op, const(SpellInfo)* spell, T value)
+    package T spellMod(T)(SpellModOp op, const(SpellInfo)* spell, T value)
     {
         const modified = applySpellMod(player.auras.list, op, *spell, value);
         if (modified != value)
@@ -2659,8 +2732,10 @@ private:
                 if ((type == AuraType.addFlatModifier || type == AuraType.addPctModifier) && aura.misc(i) == op
                         && (aura.effects & (1 << i)) && affects(aura, i, *spell))
                 {
-                    if (!chargedModsUsed.canFind!(u => u.aura is aura && u.spell == spell.id))
-                        chargedModsUsed ~= ChargedModUse(aura, spell.id);
+                    // (a spell a dummy effect casts is its caster's: Holy Light's heal spends Divine Favor)
+                    const owner = castingFor !is null ? castingFor.id : spell.id;
+                    if (!chargedModsUsed.canFind!(u => u.aura is aura && u.spell == owner))
+                        chargedModsUsed ~= ChargedModUse(aura, owner);
                     break;
                 }
             }
@@ -2695,7 +2770,7 @@ private:
     }
 
     /// An effect's value with the modifiers of its own index and of all effects.
-    int effectMod(const(SpellInfo)* spell, size_t i, int value)
+    package int effectMod(const(SpellInfo)* spell, size_t i, int value)
     {
         return spellMod(SpellModOp.allEffects, spell, spellMod(effectOp(i), spell, value));
     }
@@ -2853,9 +2928,11 @@ private:
     }
 
     /// A crit's damage (`SpellCriticalDamageBonus`): double for a melee or ranged ability, half again for a spell.
-    static uint critDamage(const(SpellInfo)* spell, uint damage)
+    package uint critDamage(const(SpellInfo)* spell, uint damage)
     {
-        return weaponCrit(spell) ? damage * 2 : damage * 3 / 2;
+        // The bonus (all of it, or half), more by the talents that add to it (Elemental Fury, Vengeance).
+        const bonus = spellMod(SpellModOp.critDamageBonus, spell, weaponCrit(spell) ? damage : damage / 2);
+        return damage + bonus;
     }
 
     float spellCritOf(const(SpellInfo)* spell)
@@ -3128,7 +3205,7 @@ private:
         enterCombatFor(combatLinger);
         import dmangos.world.unit : Blow, dealDamage;
 
-        dealDamage(unit, other.unit, damage, Blow.spell(school));
+        dealDamage(unit, other.unit, damage, Blow.spell(school, crit));
         if (other.player !is null && other.player.alive)
         {
             import dmangos.world.aurahandlers : ProcFlag;
@@ -3331,7 +3408,7 @@ private:
             import dmangos.world.unit : Blow, dealDamage;
 
             if (victim.alive)
-                dealDamage(unit, victim, total, Blow.spell(school));
+                dealDamage(unit, victim, total, Blow.spell(school, crit));
             break;
         }
         spellHitProcs(spell, victim, crit, total, cast(ubyte) type);
@@ -3393,7 +3470,9 @@ private:
             procAuras(spellProcFlags(*spell, true, false), who.unit, ProcHit(spell, crit ? ProcEx.criticalHit
                 : ProcEx.normalHit, amount, 0, amount != 0));
         }
-        imported!"dmangos.world.creatureai".assistThreat(map, who.threateners, unit, healed, *spell);
+        // Its threat, less by the healer's talents (Healing Grace, Subtlety, Improved Tranquility).
+        const threat = spellMod(SpellModOp.threat, spell, cast(int) healed);
+        imported!"dmangos.world.creatureai".assistThreat(map, who.threateners, unit, threat > 0 ? threat : 0, *spell);
     }
 
     /// Power given back, of the effect's kind (`EffectMiscValue`).

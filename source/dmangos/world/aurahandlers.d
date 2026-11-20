@@ -193,8 +193,12 @@ private:
         import dmangos.world.spellcast : radius;
 
         foreach (i; 0 .. 3)
-            if (spell.effect[i] == SpellEffect.applyAreaAuraParty)
-                return radius(*spell, i, context.client);
+            if (spell.effect[i] == SpellEffect.applyAreaAuraParty) // (the player's talents: Totemic Mastery)
+            {
+                import dmangos.world.spellmods : SpellModOp;
+
+                return spellMod(SpellModOp.radius, spell, radius(*spell, i, context.client));
+            }
         return 0;
     }
 
@@ -519,8 +523,9 @@ private:
                     AuraType.modDamagePercentDone, AuraType.modDamagePercentTaken, AuraType.modDamageTaken, AuraType.modDamageDoneVersus,
                     AuraType.modCritPercentVersus, AuraType.modThreat, AuraType.modMechanicResistance, AuraType.modShieldBlockvaluePct,
                     AuraType.modMeleeHaste, AuraType.modRangedHaste, AuraType.modAttackSpeed, AuraType.modRangedAmmoHaste,
-                    AuraType.modResistanceExclusive, AuraType.modCastingSpeed, AuraType.modResistanceOfStatPercent:
-                stats = true;
+                    AuraType.modResistanceExclusive, AuraType.modCastingSpeed, AuraType.modResistanceOfStatPercent,
+                    AuraType.modCritPercent, AuraType.modDodgePercent, AuraType.modParryPercent, AuraType.modBlockPercent:
+                stats = true; // (the melee chances too: Holy Shield's block, a talent's crit)
                 break;
             // Speeds (`dmangos.world.moveorders`: `speedRate`).
             case AuraType.modIncreaseSpeed, AuraType.modDecreaseSpeed, AuraType.modIncreaseSwimSpeed,
@@ -1031,8 +1036,15 @@ private:
             periodicLog(player.guid, aura, i, healed, 0);
         if (aura.type(i) == AuraType.periodicHeal) // a heal over time angers as a heal does
             if (auto healer = map.unit(aura.caster))
-                imported!"dmangos.world.creatureai".assistThreat(map, threateners, healer,
-                    health + healed > maxHealth ? maxHealth - health : healed, *aura.spell);
+            {
+                import dmangos.world.spellmods : SpellModOp;
+
+                int threat = health + healed > maxHealth ? maxHealth - health : healed;
+                if (healer.kind == imported!"dmangos.world.unit".UnitKind.player) // less by the healer's talents
+                    threat = healer.session.spellMod(SpellModOp.threat, aura.spell, threat);
+                imported!"dmangos.world.creatureai".assistThreat(map, threateners, healer, threat > 0 ? threat : 0,
+                    *aura.spell);
+            }
     }
 
     /**

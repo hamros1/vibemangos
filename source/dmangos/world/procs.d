@@ -110,6 +110,9 @@ bool procEventMatches(uint auraFlags, const(SpellProcEvent)* event, uint flags, 
     if ((flags & auraFlags & ProcFlag.takeHarmfulPeriodic) && auraFlags != ProcFlag.takeHarmfulPeriodic
             && !(auraFlags & (ProcFlag.takeHarmfulSpell | ProcFlag.takeHarmfulAbility)))
         return false;
+    // A cast's end procs only what asks for it (Elemental Focus: `PROC_EX_CAST_END`).
+    if (hit.procEx == ProcEx.castEnd && (event is null || !(event.procEx & ProcEx.castEnd)))
+        return false;
     uint required;
     if (event !is null)
     {

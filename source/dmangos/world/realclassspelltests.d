@@ -185,8 +185,8 @@ unittest
 }
 
 /**
- * Seal of Righteousness, rank 1 (20154, learned at level 1), on a swing without a weapon: its holy damage (25742) is of
- * the weapon's own damage (a fist's 1 to 2), not the attack power's; and Blizzard's coefficient of 25742 (0.029: 0.1
+ * Seal of Righteousness, rank 1 (20154, learned at level 1), on a swing without a weapon: its holy damage (25742) is by
+ * the fist's speed (2.0), not the attack power's damage; and Blizzard's coefficient of 25742 (0.029: 0.1
  * less the level 1 penalty) of the spell power, each of Unstable Power's six stacks' (102), once.
  */
 unittest
@@ -203,9 +203,9 @@ unittest
     me.player.movement.position.orientation = 0;
     giveAura(w, paladin, 24659, 17, 6);
     const seal = w.context.data.spells.spell(20154);
-    // Its 108 and 18 a level to level 7: 216. 0.85 * ceil(216 * 1.2 * 1.03 * 2.0 / 100) - 1 = 4.1; 0.03 of the fist's
-    // 1.5; 1; and 102 * 0.029.
-    const expected = cast(int)(4.1f + 0.045f) + 1 + cast(int)(102 * 0.029f);
+    // Its 108 and 18 a level to level 7: 216, by the speed in hundredths (the tooltip's): 216 * 2.0 / 100 = 4.3; and
+    // 102 * 0.029.
+    const expected = cast(int)(216 * 2.0f / 100) + cast(int)(102 * 0.029f);
     const hogger = w.enemy(paladin, 448);
     uint[] struck;
     foreach (attempt; 0 .. 60)

@@ -487,6 +487,7 @@ private:
         updateAutoRepeat(elapsed);
         updateAreaAuras(elapsed);
         updateTotems();
+        updateTotemEnchants();
         updatePetMood(elapsed);
         updateTaxi(cast(int) elapsed.total!"msecs");
         updateCrowdControl(cast(int) elapsed.total!"msecs");
