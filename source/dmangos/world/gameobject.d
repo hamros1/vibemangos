@@ -47,6 +47,8 @@ enum GameObjectType : uint
     fishingNode = 17,   /// the bobber
     summoningRitual = 18, /// a ritual's portal (`dmangos.world.rituals`)
     mailbox = 19,
+    spellCaster = 22,   /// casts its spell on whoever uses it (a mage's portal, a Lightwell): data 0 the spell,
+                        /// 1 its charges (0: unlimited), 2 for its owner's party only
     meetingStone = 23,  /// data 0, 1: the levels it serves; data 2: the area it queues for
     flagStand = 24,     /// a battleground's flag at its base
     fishingHole = 25,   /// a school of fish: a catch near it comes from it
@@ -128,6 +130,7 @@ final class GameObject : Replicable, Moving, PerViewer
     uint holeCatches;            /// a fishing hole's catches so far, against `holeMaxCatches`
     uint holeMaxCatches;         /// ... chosen between its least and greatest when first fished
     uint trapUses;               /// a trap's springs so far, against its charges
+    uint casterUses;             /// a spell caster's (a Lightwell's) uses so far, against its charges
     uint gatherUses;             /// a vein's (or herb's) times emptied so far, against its least and most opens
     int despawnTimer;            /// ms until a chest opened but not emptied goes; 0: none
     bool[ulong] skilledUp;       /// those it gave a skill-up: once until it respawns

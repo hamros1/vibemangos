@@ -772,6 +772,16 @@ float heartbeatResistChance(const Fighter caster, const Fighter victim, const re
  * may be missed, dodged or parried as a blow is; a magic one missed or resisted whole (`magicMissChance`).
  * One number is drawn from `rng`, and only when there is something to roll.
  */
+/// Whether the spell's hit is rolled at its caster's weapon skill: a weapon it needs, a melee ability, a shot from
+/// the ranged slot (CMaNGOS's `IsSpellUseWeaponSkill`).
+bool usesWeaponSkill(const ref SpellInfo spell) pure nothrow @nogc @safe
+{
+    enum int itemClassWeapon = 2;
+    enum uint usesRangedSlot = 0x2; // SPELL_ATTR_USES_RANGED_SLOT
+    return spell.equippedItemClass == itemClassWeapon || spell.casting.dmgClass == DamageClass.melee
+        || (spell.casting.dmgClass == DamageClass.ranged && (spell.attributes & usesRangedSlot));
+}
+
 SpellMissInfo rollSpellHit(Rng)(const Fighter caster, const Fighter victim, const ref SpellInfo spell,
     int resistance, float hitBonus, ref Rng rng)
 {
@@ -793,29 +803,36 @@ SpellMissInfo rollSpellHit(Rng)(const Fighter caster, const Fighter victim, cons
     const roll = uniform01(rng) * 100;
     if (spell.casting.dmgClass == DamageClass.melee || spell.casting.dmgClass == DamageClass.ranged)
     {
+        import dmangos.world.combat : Fighter, levelFor;
+
         const type = spell.casting.dmgClass == DamageClass.ranged ? AttackType.ranged : AttackType.mainHand;
-        float edge = missChance(caster, victim, type);
+        // An ability that is no weapon's (Blind: ranged, but not from the ranged slot) is rolled at the most skill
+        // the caster's level allows, not at a weapon's it may not hold (CMaNGOS's `IsSpellUseWeaponSkill`).
+        Fighter attacker = caster;
+        if (!usesWeaponSkill(spell))
+            attacker.weaponSkill[type] = attacker.weaponSkillMax[type] = levelFor(caster, victim) * 5;
+        float edge = missChance(attacker, victim, type);
         if (roll < edge)
             return SpellMissInfo.miss;
         if (spell.attributes & noActiveDefense)
             return SpellMissInfo.none;
         // As a swing: no dodge or parry where a swing has none (a player from behind, parry only from the front).
-        if (type != AttackType.ranged && canDodge(victim, caster))
+        if (type != AttackType.ranged && canDodge(victim, attacker))
         {
-            edge += dodgeChance(victim, caster, type);
+            edge += dodgeChance(victim, attacker, type);
             if (roll < edge)
                 return SpellMissInfo.dodge;
         }
-        if (type != AttackType.ranged && canParry(victim, caster))
+        if (type != AttackType.ranged && canParry(victim, attacker))
         {
-            edge += parryChance(victim, caster, type);
+            edge += parryChance(victim, attacker, type);
             if (roll < edge)
                 return SpellMissInfo.parry;
         }
         // An ability a shield blocks whole: blocked on the same roll (`CanBlockAbility` with `miss`).
-        if ((spell.casting.attributesEx3 & spellAttrEx3CompletelyBlocked) && canBlock(victim, caster, 0))
+        if ((spell.casting.attributesEx3 & spellAttrEx3CompletelyBlocked) && canBlock(victim, attacker, 0))
         {
-            edge += blockChance(victim, caster, type);
+            edge += blockChance(victim, attacker, type);
             if (roll < edge)
                 return SpellMissInfo.block;
         }

@@ -203,6 +203,24 @@ mixin template GameObjectHandlers()
             spellId = t.data[10];
             break;
         }
+        case GameObjectType.spellCaster:
+        {
+            // A mage's portal, a Lightwell: its spell on its user, of its owner's party if it says (CMaNGOS's
+            // `GAMEOBJECT_TYPE_SPELLCASTER` use); its charges spent, it is locked.
+            enum uint goFlagLocked = 0x2;
+            const t = go.template_;
+            if (go.values.get!GAMEOBJECT_FLAGS & goFlagLocked)
+                return;
+            if (t.data[2] && go.owner != player.guid && !context.sameGroup(go.owner, player.guid))
+                return;
+            spellId = t.data[0];
+            if (t.data[1] > 0 && ++go.casterUses >= t.data[1])
+            {
+                go.values.set!GAMEOBJECT_FLAGS(go.values.get!GAMEOBJECT_FLAGS | goFlagLocked);
+                map.flushGameObject(go);
+            }
+            break;
+        }
         case GameObjectType.camera:
             if (const cinematic = go.template_.data[1])
             {
