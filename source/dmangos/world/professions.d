@@ -41,6 +41,37 @@ bool focusInReach(uint type, uint goFocus, uint goDistance, uint focus, float di
     return type == spellFocusType && goFocus == focus && distance < goDistance + combatReach;
 }
 
+/**
+ * The skinning skill a creature of `level` asks for (docs/FORMULAS.md, "Skinning"): 1 up to level 10, ten a level
+ * from there (100 at level 20), then five a level (300 at level 60).
+ */
+int skinningSkillFor(int level) pure nothrow @nogc @safe
+{
+    if (level <= 10)
+        return 1;
+    return level <= 20 ? (level - 10) * 10 : level * 5;
+}
+
+/**
+ * The chance in a thousand that a fish caught raises fishing `skill` (without what a pole or lure adds) by one
+ * (docs/FORMULAS.md, "Fishing"): every catch below 100, then a point every 2 catches, and one catch more every 25
+ * points from 115 (10 catches a point from 290).
+ */
+int fishingSkillUpChance(int skill) pure nothrow @nogc @safe
+{
+    const catches = skill < 100 ? 1 : (skill - 90) / 25 + 2;
+    return 1000 / catches;
+}
+
+unittest
+{
+    assert(skinningSkillFor(5) == 1 && skinningSkillFor(10) == 1 && skinningSkillFor(11) == 10);
+    assert(skinningSkillFor(20) == 100 && skinningSkillFor(21) == 105 && skinningSkillFor(60) == 300);
+    assert(fishingSkillUpChance(1) == 1000 && fishingSkillUpChance(99) == 1000);
+    assert(fishingSkillUpChance(100) == 500 && fishingSkillUpChance(114) == 500 && fishingSkillUpChance(115) == 333);
+    assert(fishingSkillUpChance(140) == 250 && fishingSkillUpChance(289) == 111 && fishingSkillUpChance(290) == 100);
+}
+
 unittest
 {
     assert(focusInReach(8, 1, 10, 1, 11, 1.5f), "within its 10 yards and the caster's reach");

@@ -12,29 +12,29 @@
  * survives a logout.
  *
  * Crafting (an item made by a spell, an enchantment) may raise the spell's profession by one, by how
- * the player's skill compares with the recipe's levels in `SkillLineAbility.dbc`: orange always, yellow
- * three times in four, green one in four, grey never.
+ * the player's skill compares with the recipe's levels in `SkillLineAbility.dbc`: always below its yellow
+ * level, never from its grey one, and between the two a chance falling evenly from all to none
+ * (docs/FORMULAS.md, "Crafting skill-ups").
  */
 module dmangos.world.enchanting;
 
 /// The chance in a thousand that crafting a recipe raises its skill: by the skill against the recipe's
-/// grey (`maxValue`) and yellow (`minValue`) levels, green halfway between.
+/// yellow (`minValue`) and grey (`maxValue`) levels, (grey - skill) / (grey - yellow) between the two.
 int craftSkillChance(uint skill, uint grey, uint yellow) pure nothrow @nogc @safe
 {
-    const green = (grey + yellow) / 2;
     if (skill >= grey)
         return 0;
-    if (skill >= green)
-        return 250;
-    if (skill >= yellow)
-        return 750;
-    return 1000;
+    if (skill < yellow || grey <= yellow)
+        return 1000;
+    return cast(int)(1000 * (grey - skill) / (grey - yellow));
 }
 
 unittest
 {
-    assert(craftSkillChance(1, 40, 1) == 750 && craftSkillChance(0, 40, 1) == 1000);
-    assert(craftSkillChance(25, 40, 10) == 250 && craftSkillChance(40, 40, 10) == 0);
+    // Linen Bandage (3275): yellow 30, (green 45,) grey 60.
+    assert(craftSkillChance(1, 60, 30) == 1000 && craftSkillChance(29, 60, 30) == 1000);
+    assert(craftSkillChance(30, 60, 30) == 1000 && craftSkillChance(45, 60, 30) == 500);
+    assert(craftSkillChance(54, 60, 30) == 200 && craftSkillChance(59, 60, 30) == 33 && craftSkillChance(60, 60, 30) == 0);
 }
 
 /// See the module documentation.

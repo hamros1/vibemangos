@@ -235,10 +235,10 @@ private:
         uint rested;
         if (victim)
         {
-            rested = cast(uint) player.restBonus;
-            if (rested > xp)
-                rested = xp;
-            player.setRestBonus(player.restBonus - rested, maxLevel);
+            import dmangos.world.experience : restAfterKill, restedBonus;
+
+            rested = restedBonus(xp, player.restBonus);
+            player.setRestBonus(restAfterKill(xp, player.restBonus), maxLevel);
         }
         if (victim)
         {

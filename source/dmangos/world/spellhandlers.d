@@ -1119,12 +1119,14 @@ private:
     /**
      * The angler uses its own bobber: before the bite nothing is hooked; in the bite's
      * 5 seconds the catch depends on the fishing skill against the area's (or zone's)
-     * `skill_fishing_base_level` (5% at that skill, more above it), and every try may raise the skill;
-     * a catch is looted from `fishing_loot_template`, else the fish escaped.
+     * `skill_fishing_base_level` (5% at that skill, more above it; a pole's and a lure's bonus count), and a
+     * catch may raise the skill (`professions.fishingSkillUpChance`; a fish that got away gives none, docs/FORMULAS.md
+     * "Fishing"); a catch is looted from `fishing_loot_template`, else the fish escaped.
      */
     package void useBobber(GameObject go)
     {
         import std.random : uniform;
+        import dmangos.world.professions : fishingSkillUpChance;
 
         enum uint skillFishing = 356;
         if (go.owner != player.guid || go.guid != bobber)
@@ -1138,13 +1140,12 @@ private:
         int zoneSkill = context.data.fishingBaseSkill.get(area, 0);
         if (!zoneSkill)
             zoneSkill = context.data.fishingBaseSkill.get(zone, 0);
-        const skill = cast(int) player.skillValue(skillFishing)[0];
+        const skill = cast(int) player.skillWithBonus(skillFishing);
         const chance = skill - zoneSkill + 5;
         const success = skill >= zoneSkill && chance >= uniform!"[]"(1, 100, map.random);
-        // Every try may raise the fishing skill, less often the higher it is.
-        const pure_ = player.skillValue(skillFishing)[0];
-        updateSkillPro(skillFishing, (pure_ < 75 ? 100 : 2500 / (pure_ - 50)) * 10, 1);
-        if (!success)
+        if (success)
+            updateSkillPro(skillFishing, fishingSkillUpChance(player.skillValue(skillFishing)[0]), 1);
+        else
         {
             // Junk, if the server gives it (`fishing_loot_template` entry 0); else the fish escaped.
             auto junk = context.config.skillFailLootFishing && context.data.loot.fishing !is null
@@ -1556,10 +1557,12 @@ private:
 
     /**
      * Whether `target` may be skinned by this player: a creature, dead, looted, with its skin on, and
-     * the player's skill high enough for its level (under 100 skill, (level - 10) x 10; then level x 5).
+     * the player's skill high enough for its level (`professions.skinningSkillFor`).
      */
     SpellCastResult checkSkinning(ulong target)
     {
+        import dmangos.world.professions : skinningSkillFor;
+
         auto creature = cast(Creature) map.findObject(target);
         if (creature is null)
             return SpellCastResult.badTargets;
@@ -1571,8 +1574,7 @@ private:
             return SpellCastResult.targetNotLooted;
         const value = cast(int) player.skillValue(creature.skinningSkill)[0];
         const level = cast(int) creature.values.get!UNIT_FIELD_LEVEL;
-        const required = value < 100 ? (level - 10) * 10 : level * 5;
-        if (required > value)
+        if (skinningSkillFor(level) > value)
             return SpellCastResult.lowCastLevel;
         return SpellCastResult.ok;
     }
@@ -1585,6 +1587,7 @@ private:
     void skinCreature(ulong target)
     {
         import dmangos.world.loot : ClientLootType, Loot, LootRule;
+        import dmangos.world.professions : skinningSkillFor;
 
         auto creature = cast(Creature) map.findObject(target);
         if (creature is null || !creature.skinnable)
@@ -1599,9 +1602,8 @@ private:
         if (const template_ = context.data.loot.skinning[t.skinningLootId])
             loot.fill(template_, context.data.loot, context.data.items, map.random, (uint condition) => conditionMet(condition),
                 (ulong, const LootItem item) => item.condition == 0 || conditionMet(item.condition));
-        // The skill: a chance to rise by the level's requirement.
-        const level = cast(int) creature.values.get!UNIT_FIELD_LEVEL;
-        const required = level < 10 ? 0 : level < 20 ? (level - 10) * 10 : level * 5;
+        // The skill: a chance to rise by the level's requirement, the one `checkSkinning` asked for.
+        const required = skinningSkillFor(cast(int) creature.values.get!UNIT_FIELD_LEVEL);
         const skill = creature.skinningSkill;
         enum uint rankNormal = 0, rankRare = 4;
         updateGatherSkill(skill, player.skillValue(skill)[0], required,

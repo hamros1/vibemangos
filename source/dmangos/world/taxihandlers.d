@@ -168,9 +168,11 @@ mixin template TaxiHandlers()
         const start = context.client.taxiNodes.lookup(nodes[0]);
         if (start is null)
             return sendTaxiReply(TaxiReply.noSuchPath);
-        const at = player.position;
+        // The first node is the flight master's own: within 10 yards of it (every flight master in the world
+        // database stands within 7.1 yards of its node). The player is within reach of the flight master already.
+        const at = npc.position;
         if (start.mapId != map.id || (start.x - at.x) ^^ 2 + (start.y - at.y) ^^ 2 + (start.z - at.z) ^^ 2
-            > (2 * interactionDistance) ^^ 3)
+            > (2 * interactionDistance) ^^ 2)
             return sendTaxiReply(TaxiReply.tooFarAway);
         TaxiFlight flight;
         if (!planFlight(context.client, nodes, reputationPriceDiscount(npc.npcValues.get!UNIT_FIELD_FACTIONTEMPLATE),
@@ -386,12 +388,14 @@ unittest
         row[15] = creatureInnkeeper;
         return row;
     }
+    // Node 6, 20 yards from the flight master: another's.
     context.client.taxiNodes = typeof(context.client.taxiNodes).parse(buildDbc(taxiNodesFormat,
-        [node(2, -8949, -132, 83.5f), node(5, -8629, -132, 83.5f)]), "TaxiNodes.dbc");
-    context.client.taxiPaths = typeof(context.client.taxiPaths).parse(buildDbc(taxiPathFormat, [[10u, 2, 5, 120]]),
-        "TaxiPath.dbc");
+        [node(2, -8949, -132, 83.5f), node(5, -8629, -132, 83.5f), node(6, -8929, -132, 83.5f)]), "TaxiNodes.dbc");
+    context.client.taxiPaths = typeof(context.client.taxiPaths).parse(buildDbc(taxiPathFormat,
+        [[10u, 2, 5, 120], [11u, 6, 5, 100]]), "TaxiPath.dbc");
     context.client.taxiPathNodes = typeof(context.client.taxiPathNodes).parse(buildDbc(taxiPathNodeFormat,
-        [[1u, 10, 0, 0, bits(-8949), bits(-132), bits(100), 0, 0], [2u, 10, 1, 0, bits(-8629), bits(-132), bits(100), 0, 0]]),
+        [[1u, 10, 0, 0, bits(-8949), bits(-132), bits(100), 0, 0], [2u, 10, 1, 0, bits(-8629), bits(-132), bits(100), 0, 0],
+         [3u, 11, 0, 0, bits(-8929), bits(-132), bits(100), 0, 0], [4u, 11, 1, 0, bits(-8629), bits(-132), bits(100), 0, 0]]),
         "TaxiPathNode.dbc");
     context.client.buildIndexes();
 
@@ -421,6 +425,17 @@ unittest
     anduin.write(Opcode.CMSG_ACTIVATETAXI, flyTo(5));
     assert(opcodesOf(anduin.read()) == [Opcode.SMSG_ACTIVATETAXIREPLY] && !anduin.session.inWorld.flying);
     learnNode(me.data.taxiMask, 5);
+    // Not from node 6: it is not this flight master's (20 yards off).
+    learnNode(me.data.taxiMask, 6);
+    {
+        ByteWriter w;
+        w.put(master.guid);
+        w.put(6u);
+        w.put(5u);
+        anduin.write(Opcode.CMSG_ACTIVATETAXI, w.data.dup);
+        assert(opcodesOf(anduin.read()) == [Opcode.SMSG_ACTIVATETAXIREPLY] && !anduin.session.inWorld.flying,
+            "another flight master's node");
+    }
     anduin.write(Opcode.CMSG_ACTIVATETAXI, flyTo(5));
     assert(opcodesOf(anduin.read()).canFind(Opcode.SMSG_MONSTER_MOVE) && anduin.session.inWorld.flying);
     assert(me.money == Copper(500 - 120) && me.values.get!UNIT_FIELD_MOUNTDISPLAYID != 0);

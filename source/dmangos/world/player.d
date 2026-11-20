@@ -755,12 +755,14 @@ final class Player : InventoryOwner
         return true;
     }
 
-    /// Sets the rested XP: at most one and a half levels, shown as "rested" over 10.
+    /// Sets the rest (`dmangos.world.experience.restCap`: at most one and a half levels), shown as "rested" over 10.
     void setRestBonus(float bonus, uint maxPlayerLevel)
     {
+        import dmangos.world.experience : restCap;
+
         if (data.level >= maxPlayerLevel || bonus < 0)
             bonus = 0;
-        const maximum = values.get!PLAYER_NEXT_LEVEL_XP * 1.5f / 2;
+        const maximum = restCap(values.get!PLAYER_NEXT_LEVEL_XP);
         restBonus = bonus > maximum ? maximum : bonus;
         if (restBonus > 10)
             values.setByte!PLAYER_BYTES_2(3, RestState.rested);
@@ -769,10 +771,13 @@ final class Player : InventoryOwner
         values.set!PLAYER_REST_STATE_EXPERIENCE(cast(uint) restBonus);
     }
 
-    /// The rested XP earned in `seconds`; a full level takes 1152000 s (13.3 days) at rate 1.
+    /// The rested XP earned in `seconds` (`dmangos.world.experience.restEarned`: 5% of a level each 8 hours, as the
+    /// client shows it, at rate 1).
     float computeRest(long seconds, float rate) const
     {
-        return seconds * (values.get!PLAYER_NEXT_LEVEL_XP / 1_152_000.0f) * rate;
+        import dmangos.world.experience : restEarned;
+
+        return restEarned(seconds, values.get!PLAYER_NEXT_LEVEL_XP, rate);
     }
 
     /// Starts or stops resting (the resting flag); `trigger` is the inn's area trigger, if any.
