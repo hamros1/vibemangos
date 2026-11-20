@@ -963,6 +963,20 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Files: `LFG/LFGDefines.h`, `LFG/LFGMgr.cpp`, `LFG/LFGQueue.cpp`, `Group/Group.cpp`, `Server/Packets/Misc.cpp`
 * Functions: `LFGMgr::CalculateRoles`, `LFGMgr::GetPriority`, `LFGQueue::Update`, `LFGQueue::FindRoleToGroup`, `Group::CalculateLFGRoles`, `Group::FillPremadeLFG`
 
+## world/guardians.d
+
+* Projects: CMaNGOS
+* Files: `SpellEffects.cpp`, `GuardianAI.cpp`, `CreatureAISelector.cpp`, `Unit.cpp`, `Player.cpp`
+* Functions: `Spell::EffectSummon`, `Spell::EffectSummonGuardian`, `Spell::EffectSummonObjectWild`, `GuardianAI::GuardianAI`, `GuardianAI::UpdateAI`, `FactorySelector::selectAI`, `Unit::FindGuardianWithEntry`, `Unit::RemoveGuardians`, `Player::SetDeathState`
+* Constants: `SPELL_EFFECT_SUMMON`, `SPELL_EFFECT_SUMMON_GUARDIAN`, `SPELL_EFFECT_SUMMON_OBJECT_WILD`, `GUARDIAN_PET`, `UNIT_BYTE2_FLAG_SUPPORTABLE`, `UNIT_BYTE2_FLAG_UNK5`, `UNIT_FIELD_SUMMONEDBY`, `UNIT_FIELD_CREATEDBY`, `UNIT_CREATED_BY_SPELL`, `SKILL_ENGINEERING`, `INVTYPE_TRINKET`
+
+## world/durability.d
+
+* Projects: CMaNGOS
+* Files: `Player.cpp`, `SpellEffects.cpp`, `Spell.h`
+* Functions: `Player::DurabilityLossAll`, `Player::DurabilityLoss`, `Player::DurabilityPointsLossAll`, `Player::DurabilityPointsLoss`, `Spell::EffectDurabilityDamage`, `Spell::EffectDurabilityDamagePCT`, `SpellLog::AddLog`
+* Constants: `SPELL_EFFECT_DURABILITY_DAMAGE`, `SPELL_EFFECT_DURABILITY_DAMAGE_PCT`, `SMSG_SPELLLOGEXECUTE`, `INVENTORY_SLOT_BAG_START`, `INVENTORY_SLOT_ITEM_START`
+
 ## world/mounting.d
 
 * Projects: CMaNGOS

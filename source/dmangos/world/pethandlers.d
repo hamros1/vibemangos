@@ -985,6 +985,7 @@ mixin template PetHandlers()
     /// The owner attacks or is attacked: the pet joins its owner's fight against `enemy`.
     package void petAssistAgainst(ulong enemy)
     {
+        guardiansAssist(enemy); // and the guardians (`dmangos.world.guardians`)
         if (pet_ is null || !pet_.alive || petState().command == CommandState.stay)
             return;
         if (auto other = map.unit(enemy))
@@ -1191,6 +1192,7 @@ mixin template PetHandlers()
     /// with its owner (or set aside if dead), to come back with it.
     package void petsOnLeave()
     {
+        removeGuardians(player is null || player.fighter.alive); // at its death, only those not fighting
         unsummonTotems(); // totems do not follow their owner
         if (pet_ !is null)
             unsummonPet(PetSlot.current);

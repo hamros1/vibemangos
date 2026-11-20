@@ -410,7 +410,8 @@ Character creditedPlayer(UnitRef unit)
     case UnitKind.player:
         return unit.session;
     case UnitKind.creature:
-        const owner = unit.creature.petOwner ? unit.creature.petOwner : unit.creature.totemOwner;
+        const c = unit.creature;
+        const owner = c.petOwner ? c.petOwner : c.totemOwner ? c.totemOwner : c.guardianOwner;
         if (!owner)
             return null;
         return cast(Character) unit.map.find(owner);

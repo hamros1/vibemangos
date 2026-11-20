@@ -144,7 +144,9 @@ The largest area. In order:
    classes' trainable spells beyond damage and healing (threat, taunts, charges, Blink, burns, drains and
    leeches, extra swings, Vanish, Feign Death, Fade, Distract, the hunters' traps, tracking, Hunter's Mark,
    regeneration's auras, Holy Shield, Blessing of Sacrifice; `effecthandlers.d`, README's "Effects beyond
-   damage and healing"): done. Not yet: Eye of Kilrogg (`SUMMON_POSSESSED`), invisibility and its
+   damage and healing"): done. Players' guardians (engineering dragonlings, dummies, the sheep; `guardians.d`), wild objects,
+   and wear by spells (`durability.d`): done; a guardian's evade walks back to where it was summoned before it follows
+   again. Not yet: Eye of Kilrogg (`SUMMON_POSSESSED`), invisibility and its
    detection, traps hidden from those not in the hunter's group.
 6. **Duels and trades: done** (`tradehandlers.d`, `duelhandlers.d`; README's "Trading" and
    "Duels"). Players fight players in melee and with spells where the relations allow (duelists,

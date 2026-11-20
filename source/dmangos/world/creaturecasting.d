@@ -540,6 +540,12 @@ mixin template CreatureCasting()
                                 }
                             }
                     break;
+                case SpellEffect.durabilityDamage, SpellEffect.durabilityDamagePct: // a player's gear worn (`dmangos.world.durability`)
+                    if (auto other = world_.unit(guid))
+                        if (other.session !is null)
+                            other.session.durabilityDamageEffect(spell, i, value,
+                                effect == SpellEffect.durabilityDamagePct, me.guid);
+                    break;
                 case SpellEffect.reputation: // SPELL_EFFECT_REPUTATION: a player it hits gains (or loses) standing
                     if (auto other = world_.unit(guid))
                         if (other.session !is null && spell.miscValue[i] > 0)
@@ -585,9 +591,9 @@ mixin template CreatureCasting()
                     SpellEffect.skinning, SpellEffect.charge, SpellEffect.summonCritter, SpellEffect.disenchant, SpellEffect.inebriate, SpellEffect.feedPet, SpellEffect.dismissPet,
                     SpellEffect.summonObjectSlot1, SpellEffect.summonObjectSlot2,
                     SpellEffect.summonObjectSlot3, SpellEffect.summonObjectSlot4, SpellEffect.dispelMechanic,
-                    SpellEffect.summonDeadPet, SpellEffect.destroyAllTotems, SpellEffect.durabilityDamage,
+                    SpellEffect.summonDeadPet, SpellEffect.destroyAllTotems,
                     SpellEffect.summonDemon, SpellEffect.resurrectNew, SpellEffect.attackMe,
-                    SpellEffect.durabilityDamagePct, SpellEffect.skinPlayerCorpse, SpellEffect.spiritHeal,
+                    SpellEffect.skinPlayerCorpse, SpellEffect.spiritHeal,
                     SpellEffect.skill, SpellEffect.applyAreaAuraPet, SpellEffect.teleportGraveyard,
                     SpellEffect.n122, SpellEffect.sendTaxi, SpellEffect.pullTowards,
                     SpellEffect.modifyThreatPercent, SpellEffect.n126, SpellEffect.n127,

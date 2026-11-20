@@ -233,8 +233,8 @@ private:
         Relating r = Relating(creature.values.get!UNIT_FIELD_FLAGS,
             context.client.factionTemplates.lookup(creature.values.get!UNIT_FIELD_FACTIONTEMPLATE), false, 0, 0,
             creature.alive);
-        r.playerOwned = creature.petOwner != 0;
-        r.controller = creature.petOwner;
+        r.playerOwned = creature.petOwner != 0 || creature.guardianOwner != 0;
+        r.controller = creature.petOwner ? creature.petOwner : creature.guardianOwner;
         return r;
     }
 

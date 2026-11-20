@@ -52,6 +52,8 @@ import dmangos.world.auctionhandlers : AuctionHandlers;
 import dmangos.world.taxihandlers : TaxiHandlers;
 import dmangos.world.crowdcontrol : CrowdControlHandlers;
 import dmangos.world.mounting : MountRules;
+import dmangos.world.guardians : GuardianSummons;
+import dmangos.world.durability : DurabilityRules;
 import dmangos.world.unit : Blow, UnitRef;
 import dmangos.world.auras : Aura, makeAura;
 import dmangos.world.spells : SpellInfo;
@@ -807,6 +809,8 @@ private:
     mixin TaxiHandlers;
     mixin CrowdControlHandlers;
     mixin MountRules;
+    mixin GuardianSummons;
+    mixin DurabilityRules;
     mixin PvPHandlers;
     mixin BattlegroundHandlers;
     mixin EnchantingHandlers;

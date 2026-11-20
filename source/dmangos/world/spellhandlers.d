@@ -2060,22 +2060,40 @@ private:
             break;
         case SpellEffect.detect: // SPELL_EFFECT_DETECT: Detect's marker; CMaNGOS does nothing with it either
             break;
+        case SpellEffect.summonGuardian, SpellEffect.summon, SpellEffect.summonObjectWild: // SPELL_EFFECT_SUMMON_GUARDIAN,
+            // _SUMMON, _SUMMON_OBJECT_WILD (`dmangos.world.guardians`): once a cast, whatever its targets
+            if (!(c.persistentDone & (1 << i)))
+            {
+                c.persistentDone |= cast(ubyte)(1 << i);
+                if (spell.effect[i] == SpellEffect.summonObjectWild)
+                    summonWildObjectEffect(spell, i, c.targets);
+                else
+                    summonGuardianEffect(spell, i, value, c.targets, c.triggered, c.castItemEntry,
+                        spell.effect[i] == SpellEffect.summon);
+            }
+            break;
+        case SpellEffect.durabilityDamage, SpellEffect.durabilityDamagePct: // a player's gear worn (`dmangos.world.durability`)
+            if (auto who = target == player.guid ? this : cast(typeof(this)) context.onlinePlayer(target))
+                if (who.player !is null && who.map is map)
+                    who.durabilityDamageEffect(spell, i, value, spell.effect[i] == SpellEffect.durabilityDamagePct,
+                        player.guid);
+            break;
         case SpellEffect.none:
             break;
         // Not done by a player's cast (some, such as skills and proficiencies, are done when a spell is learned):
         case SpellEffect.portalTeleport, SpellEffect.environmentalDamage, SpellEffect.bind, SpellEffect.portal,
             SpellEffect.ritualBase, SpellEffect.ritualSpecialize, SpellEffect.ritualActivatePortal, SpellEffect.dodge,
             SpellEffect.evade, SpellEffect.parry, SpellEffect.block, SpellEffect.weapon, SpellEffect.defense,
-            SpellEffect.summon, SpellEffect.triggerMissile, SpellEffect.summonChangeItem, SpellEffect.spellDefense,
-            SpellEffect.language, SpellEffect.dualWield, SpellEffect.summonGuardian,
+            SpellEffect.triggerMissile, SpellEffect.summonChangeItem, SpellEffect.spellDefense,
+            SpellEffect.language, SpellEffect.dualWield,
             SpellEffect.teleportUnitsFaceCaster, SpellEffect.skillStep, SpellEffect.addHonor, SpellEffect.spawn,
             SpellEffect.tradeSkill, SpellEffect.stealth, SpellEffect.forceCriticalHit, SpellEffect.guaranteeHit,
             SpellEffect.proficiency, SpellEffect.healthFunnel, SpellEffect.powerFunnel, SpellEffect.pull,
-            SpellEffect.summonPossessed, SpellEffect.healMechanical, SpellEffect.summonObjectWild,
+            SpellEffect.summonPossessed, SpellEffect.healMechanical,
             SpellEffect.createHouse, SpellEffect.bindSight, SpellEffect.summonPlayer, SpellEffect.activateObject,
             SpellEffect.threatAll, SpellEffect.enchantHeldItem, SpellEffect.summonPhantasm, SpellEffect.knockBack,
-            SpellEffect.inebriate, SpellEffect.destroyAllTotems, SpellEffect.durabilityDamage,
-            SpellEffect.summonDemon, SpellEffect.durabilityDamagePct, SpellEffect.spiritHeal, SpellEffect.skill,
+            SpellEffect.inebriate, SpellEffect.destroyAllTotems,
+            SpellEffect.summonDemon, SpellEffect.spiritHeal, SpellEffect.skill,
             SpellEffect.applyAreaAuraPet, SpellEffect.teleportGraveyard, SpellEffect.n122, SpellEffect.sendTaxi,
             SpellEffect.pullTowards, SpellEffect.modifyThreatPercent, SpellEffect.n126, SpellEffect.n127,
             SpellEffect.applyAreaAuraFriend, SpellEffect.applyAreaAuraEnemy:

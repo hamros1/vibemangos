@@ -603,8 +603,8 @@ private:
     @property Relating relating() const
     {
         Relating r = Relating(me.values.get!UNIT_FIELD_FLAGS, me.factionTemplate, false, 0, 0, me.alive);
-        r.playerOwned = me.petOwner != 0;
-        r.controller = me.petOwner;
+        r.playerOwned = me.petOwner != 0 || me.guardianOwner != 0;
+        r.controller = me.petOwner ? me.petOwner : me.guardianOwner;
         r.playerFlags = me.controllerPlayerFlags;
         return r;
     }

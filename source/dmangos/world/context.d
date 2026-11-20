@@ -2478,6 +2478,20 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
         return true;
     }
 
+    /// `creature` at `level`: its health, mana, armor and damage the class stats' for it (`InitStatsForLevel`).
+    void setCreatureLevel(Creature creature, uint level)
+    {
+        import dmangos.world.updatefields : UNIT_FIELD_DISPLAYID, UNIT_FIELD_LEVEL;
+
+        const t = creature.template_;
+        const display = creature.values.get!UNIT_FIELD_DISPLAYID;
+        creature.values.set!UNIT_FIELD_LEVEL(level);
+        auto parts = creatureParts(*t, creature.spawn.guid, display, level, t.equipmentTemplateId);
+        creature.changeEntry(t, display, parts, client);
+        creature.values.set!(dmangos.world.updatefields.UNIT_FIELD_HEALTH)(
+            creature.values.get!(dmangos.world.updatefields.UNIT_FIELD_MAXHEALTH));
+    }
+
     /**
      * A creature made while event `shape.event` is on: its model, and its spell's auras (a transformation
      * takes the named creature's model). It is marked with the event, to be made again when it ends.
@@ -3781,6 +3795,12 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
 
     /// Raid scripts: a game object of `entry` at `at` on `map`, of no spawn of the map's (it is in no
     /// other copy, and comes back nowhere), gone after `seconds` (0: with the map); null if there is no such object.
+    /// A game object nobody owns (a spell's, `dmangos.world.guardians`) at `at`, for `seconds` (0: for good).
+    GameObject summonWildGameObject(Map map, uint entry, Position at, uint seconds)
+    {
+        return summonGameObjectAt(map, entry, Location(at.x, at.y, at.z, at.orientation), seconds);
+    }
+
     private GameObject summonGameObjectAt(Map map, uint entry, Location at, uint seconds)
     {
         import std.math : cos, sin;

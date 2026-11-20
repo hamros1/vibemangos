@@ -637,6 +637,7 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
     /// A pet's owner (a player's guid); 0 for any other creature.
     ulong petOwner;
     ulong totemOwner;           /// a totem's owner (0: not a totem)
+    ulong guardianOwner;        /// a guardian's owner (`dmangos.world.guardians`; 0: not a guardian)
     uint totemSpell;            /// what a totem casts: its aura, or (active) at enemies
     bool totemActive;           /// it casts its spell at enemies (its spell has a cast time); else it holds an aura
     ushort eventShape;          /// the game event whose `game_event_creature_data` it was made with (0: none)
