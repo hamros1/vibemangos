@@ -98,10 +98,12 @@ not on wago.tools). These are the measured values of emulator projects, with no 
    combathandlers.d `castItemCombatSpells`. Source: SpellAuraOptions (ProcTypeMask, ProcChance, ProcCategoryRecovery,
    ProcCharges) and SpellEffect.EffectSpellClassMask. PPM rates have no DB2 data. Also note that PPM procs here use the
    hasted attack time while item procs use the base time.
-3. **Kill XP multipliers**: experience.d `killGain` gives elites ×2.5 everywhere but raids; `groupRate` gives raids
+3. **Done** (FORMULAS.md "Experience": elites ×2, ×2.5 in five-player instances; the raid rate has no source).
+   **Kill XP multipliers**: experience.d `killGain` gives elites ×2.5 everywhere but raids; `groupRate` gives raids
    1 − 0.05n. Source: Wowpedia "Mob experience" (checked): elites give double XP (2.5× is cited only for soloed
    dungeon elites, unverified), party factors 1/1/1.166/1.3/1.4, raids lose XP with no formula given.
-4. **Quest XP**: quests.d `questXp` derives XP from RewMoneyMaxLevel. Source: DB2 QuestXP. Level −1 (player-level)
+4. **Done** (FORMULAS.md "Quest experience": 1.12's money / 0.6 per quest, which Classic Era's QuestXP re-rounds;
+   the falloff to fives; quests of no level). **Quest XP**: quests.d `questXp` derives XP from RewMoneyMaxLevel. Source: DB2 QuestXP. Level −1 (player-level)
    quests give 0 XP here, and Blizzard's values are rounded.
 5. **Spell hit and resistance**: spellcast.d `spellMissChance`, combat.d `partialResistRows`, `effectiveResistPercent`,
    `fullResistChance`. Source: Wowpedia "Spell hit" and "Resistance" (verify which version they describe). The
@@ -110,7 +112,7 @@ not on wago.tools). These are the measured values of emulator projects, with no 
    spellhandlers.d `spellCrit` (an INT fit), player.d `healthRegenPerSecond`, `spiritManaPerSecond`.
    No 1.12 data exists. Source: Classic Era's character sheet (measured), and Wowpedia "Spirit" (page exists) for the
    per-class 1.12 regen table.
-7. **Honor per kill**: honor.d `honorableKillPoints`, `greyForHonor`, `dishonorableKillPoints`. Source: Wowpedia
+7. **Done** (FORMULAS.md "Honor", with the battleground units and the 1.12 standing). **Honor per kill**: honor.d `honorableKillPoints`, `greyForHonor`, `dishonorableKillPoints`. Source: Wowpedia
    "Honor system (pre-2.0 formulas)" (checked). It gives contribution points as a table by the victim's rank
    (198 at rank 1 … 398 at rank 14) and diminishing returns of 10 kills per victim per 24 hours, 10% less each. That
    page links Blizzard's "Official Honor Guide". The level-based emulator formula here is a reconstruction, and its
@@ -128,8 +130,9 @@ not on wago.tools). These are the measured values of emulator projects, with no 
     context.d `nextRaidReset` taking each raid's delay from emulator data. Source: MapDifficulty.ResetInterval (DB2),
     and Blizzard's 1.x patch notes for the hourly instance limit (verify).
 
-Also likely wrong, found on the way (no fix made): loothandlers.d `rewardAtKill` splits kill reputation 1/n in a
-group in the open world (CMaNGOS splits by level share; what Classic Era does needs measuring); battleground.d `bonusHonor` uses level 60 for every bracket; spellcast.d `powerCost` applies
+Also likely wrong, found on the way: loothandlers.d `rewardAtKill` splits kill reputation 1/n in a
+group in the open world (**done**: all to each, FORMULAS.md "Reputation"; CMaNGOS also splits 1/n); battleground.d
+`bonusHonor` uses level 60 for every bracket (**done**: by bracket, FORMULAS.md "Honor"); no fix made for the rest: spellcast.d `powerCost` applies
 `manaCostPerLevel × (level/5 − baseLevel)`; taxihandlers.d compares the start distance with `(2·5)^3`; there are no
 diminishing returns on crowd control (auras.d `setHeartbeatResist` always gets level 0); auto-shot can be dodged
 while ranged abilities can't (combat.d `canDodge` vs spellcast.d `rollSpellHit`).
@@ -311,20 +314,20 @@ risk.
 
 | where | what | emulator origin | primary source | risk |
 |---|---|---|---|---|
-| experience.d:baseGain | Kill XP = 5×level + 45; +5%/level above, cap +4; below: × (1 − diff/ZD) | MaNGOS::XP::BaseGain | Wowpedia "Mob experience" (checked: 5×L+45, +5%/level up to +4, ZD falloff) | H: every kill |
-| experience.d:zeroDifference | ZD table 5/6/7/8/9/11/12/13/14/15/16/17 | XP::GetZeroDifference | Wowpedia "Mob experience" (checked: same table) | H |
-| experience.d:killGain | Elite ×2.5 everywhere except raid maps (×2.0) | XP::Gain | Wowpedia "Mob experience" (checked: elites double XP; 2.5× only for dungeon elites soloed, unverified) | H: open-world elites likely +25% too much |
-| experience.d:groupRate | 1–2: 1.0, 3: 1.166, 4: 1.3, 5: 1.4; 6+: 1 − 0.05n | XP::xp_in_group_rate | Wowpedia "Mob experience" (checked: 1/1/1.166/1.3/1.4; raids lose XP, no formula) | H: raid formula looks invented |
-| loothandlers.d:rewardAtKill (group XP) | XP at highest non-gray level × rate × level/sumLevel; gray-top ×0.5+1; pet half | Group::RewardGroupAtKill | Wowpedia "Mob experience" (checked: level-ratio split) | H: every group kill |
-| player.d:computeRest (+ inworld.d) | Accrual: one level per 1 152 000 s (5% per 8 h) at inn | Player::ComputeRest | Exhaustion.InnHours (8) / OutdoorHours (DBC/DB2) | H: every player |
-| quests.d:questXp | Quest XP = RewMoneyMaxLevel/0.6 (/1.2…/6 above 60); full to qL+5, then ×.8/.6/.4/.2, ×.1 at +10; ceil; level ≤0 → 0 | Quest::XPValue | QuestXP (DB2): XP by quest level × Difficulty_0..9 (values rounded to 5/10/50); per-quest difficulty index not in DB2 (server data); Wowpedia "Experience point" (quest % falloff) | H: every quest; −1-level quests give 0, rounding differs |
-| experience.d:grayLevel | ≤5→0; ≤39: L−5−L/10; ≤59: L−1−L/5; else L−9 | XP::GetGrayLevel | Wowpedia "Mob experience" (checked: same) | M |
-| experience.d:isTrivialLevelDifference / questGreenRange | Second gray table by level/5 [4,4,5,5,6,6,7,7,8,9,10,11], else 12; differs at 60 (≤47 vs ≤51) | IsTrivialLevelDifference, GetQuestGreenRange | Wowpedia "Mob experience" | M: two gray definitions |
+| experience.d:baseGain | Kill XP = 5×level + 45; +5%/level above, cap +4; below: × (1 − diff/ZD) | MaNGOS::XP::BaseGain | Wowpedia "Mob experience" (checked: 5×L+45, +5%/level up to +4, ZD falloff) | H: every kill; **Done** (FORMULAS.md "Experience") |
+| experience.d:zeroDifference | ZD table 5/6/7/8/9/11/12/13/14/15/16/17 | XP::GetZeroDifference | Wowpedia "Mob experience" (checked: same table) | H; **Done** (FORMULAS.md "Experience") |
+| experience.d:killGain | Elite ×2.5 everywhere except raid maps (×2.0) | XP::Gain | Wowpedia "Mob experience" (checked: elites double XP; 2.5× only for dungeon elites soloed, unverified) | H: open-world elites likely +25% too much; **Done** (FORMULAS.md "Experience") |
+| experience.d:groupRate | 1–2: 1.0, 3: 1.166, 4: 1.3, 5: 1.4; 6+: 1 − 0.05n | XP::xp_in_group_rate | Wowpedia "Mob experience" (checked: 1/1/1.166/1.3/1.4; raids lose XP, no formula) | H: raid formula looks invented; **Done: the party rates; the raid rate has no source** (FORMULAS.md "Experience") |
+| loothandlers.d:rewardAtKill (group XP) | XP at highest non-gray level × rate × level/sumLevel; gray-top ×0.5+1; pet half | Group::RewardGroupAtKill | Wowpedia "Mob experience" (checked: level-ratio split) | H: every group kill; **Done** (FORMULAS.md "Experience") |
+| player.d:computeRest (+ inworld.d) | Accrual: one level per 1 152 000 s (5% per 8 h) at inn | Player::ComputeRest | Exhaustion.InnHours (8) / OutdoorHours (DBC/DB2) | H: every player; **Done** (FORMULAS.md "Experience") |
+| quests.d:questXp | Quest XP = RewMoneyMaxLevel/0.6 (/1.2…/6 above 60); full to qL+5, then ×.8/.6/.4/.2, ×.1 at +10; ceil; level ≤0 → 0 | Quest::XPValue | QuestXP (DB2): XP by quest level × Difficulty_0..9 (values rounded to 5/10/50); per-quest difficulty index not in DB2 (server data); Wowpedia "Experience point" (quest % falloff) | H: every quest; −1-level quests give 0, rounding differs; **Done** (FORMULAS.md "Quest experience") |
+| experience.d:grayLevel | ≤5→0; ≤39: L−5−L/10; ≤59: L−1−L/5; else L−9 | XP::GetGrayLevel | Wowpedia "Mob experience" (checked: same) | M; **Done** (FORMULAS.md "Experience") |
+| experience.d:isTrivialLevelDifference / questGreenRange | Second gray table by level/5 [4,4,5,5,6,6,7,7,8,9,10,11], else 12; differs at 60 (≤47 vs ≤51) | IsTrivialLevelDifference, GetQuestGreenRange | Wowpedia "Mob experience" | M: two gray definitions; **Done** (FORMULAS.md "Experience") |
 | experience.d:groupXpDistance | Kill share 74 yd; whole map in dungeons (used by honor, quests, loot) | CONFIG_FLOAT_GROUP_XP_DISTANCE | none found | M |
-| exploration.d:giveXP | Rested bonus on kills = min(rest, xp) | Player::GiveXP | Exhaustion.dbc / DB2 (Factor 2 for Rested) | M |
+| exploration.d:giveXP | Rested bonus on kills = min(rest, xp) | Player::GiveXP | Exhaustion.dbc / DB2 (Factor 2 for Rested) | M; **Done** (FORMULAS.md "Experience") |
 | exploration.d:checkAreaExplore | Exploration XP from exploration_basexp by area level with ±5 level rules | CheckAreaExploreAndOutdoor | AreaTable.ExplorationLevel (DBC/DB2); exploration_basexp none found (emulator table) | M |
-| player.d:setRestBonus | Rest pool cap 1.5 levels of double XP | SetRestBonus | Exhaustion (DBC/DB2: Rested threshold); Wowpedia "Rest" (verify) | M |
-| charscreen.d:makePlayer | Offline rest outside inn ×1/4 | LoadFromDB | Exhaustion.OutdoorHours | M |
+| player.d:setRestBonus | Rest pool cap 1.5 levels of double XP | SetRestBonus | Exhaustion (DBC/DB2: Rested threshold); Wowpedia "Rest" (verify) | M; **Done** (FORMULAS.md "Experience") |
+| charscreen.d:makePlayer | Offline rest outside inn ×1/4 | LoadFromDB | Exhaustion.OutdoorHours | M; **Done** (FORMULAS.md "Experience") |
 | player.d:changeLevel | Level up: full HP/mana, stats from levelstats | GiveLevel | none for stats (player_levelstats is emulator data) | M |
 | loothandlers.d:killValue | No XP for critters or NO_XP; elite = rank not normal/rare | CreatureStaticFlags::NO_XP | CreatureType (DB2) | L |
 
@@ -395,22 +398,22 @@ risk.
 
 | where | what | emulator origin | primary source | risk |
 |---|---|---|---|---|
-| honor.d:greyForHonor | No honor for grey victims; step table [4..12] by level/5 (at 60 ≤47 grey) — differs from XP grey (≤51) | MaNGOS::Honor, Unit::Kill | Wowpedia "Honor system (pre-2.0 formulas)" (page exists, checked) | H |
-| honor.d:honorableKillPoints | Honor = (10−killsToday)×0.25×(killerLvl + rank×5 + 1)×(1 + 0.05×(…))×(victimLvl/killerLvl), cap 400, ÷ group; −10%/kill/day | MaNGOS::Honor | Wowpedia "Honor system (pre-2.0 formulas)" (checked: CP by victim rank table, 198 at R1 … 398 at R14; 10 kills/24 h at −10% each); links Blizzard's "Official Honor Guide" | H: emulator reconstruction differs from documented per-rank table |
-| honor.d:dishonorableKillPoints | DK RP penalty by level bands, cap 100; only for grey PvP-flagged civilians | MaNGOS::Honor | Wowpedia "Dishonorable kill" (verify) | H: grey-only condition looks wrong |
-| honorweek.d:standingScores | Bracket fractions [1, .858, … .002]; bracket RP 0, 400, 1000 … 13000 | GenerateScores | Wowpedia "Honor system (pre-2.0 formulas)" (checked: breakpoints as fractions of NR, CP→RP piecewise to 13000) | H |
-| honorweek.d:rankPointEarning | Linear interpolation of RP between brackets | CalculateRpEarning | Wowpedia "Honor system (pre-2.0 formulas)" (checked) | H |
-| battleground.d:bonusHonor | BG bonus honor curve fixed at level 60 for all brackets | MaNGOS::Honor | none found | H: low brackets get level-60 honor |
+| honor.d:greyForHonor | No honor for grey victims; step table [4..12] by level/5 (at 60 ≤47 grey) — differs from XP grey (≤51) | MaNGOS::Honor, Unit::Kill | Wowpedia "Honor system (pre-2.0 formulas)" (page exists, checked) | H; **Done** (FORMULAS.md "Honor") |
+| honor.d:honorableKillPoints | Honor = (10−killsToday)×0.25×(killerLvl + rank×5 + 1)×(1 + 0.05×(…))×(victimLvl/killerLvl), cap 400, ÷ group; −10%/kill/day | MaNGOS::Honor | Wowpedia "Honor system (pre-2.0 formulas)" (checked: CP by victim rank table, 198 at R1 … 398 at R14; 10 kills/24 h at −10% each); links Blizzard's "Official Honor Guide" | H: emulator reconstruction differs from documented per-rank table; **Done: by rank and level; unequal levels are still CMaNGOS's** (FORMULAS.md "Honor") |
+| honor.d:dishonorableKillPoints | DK RP penalty by level bands, cap 100; only for grey PvP-flagged civilians | MaNGOS::Honor | Wowpedia "Dishonorable kill" (verify) | H: grey-only condition looks wrong; **Done** (FORMULAS.md "Honor") |
+| honorweek.d:standingScores | Bracket fractions [1, .858, … .002]; bracket RP 0, 400, 1000 … 13000 | GenerateScores | Wowpedia "Honor system (pre-2.0 formulas)" (checked: breakpoints as fractions of NR, CP→RP piecewise to 13000) | H; **Done** (FORMULAS.md "Honor") |
+| honorweek.d:rankPointEarning | Linear interpolation of RP between brackets | CalculateRpEarning | Wowpedia "Honor system (pre-2.0 formulas)" (checked) | H; **Done** (FORMULAS.md "Honor") |
+| battleground.d:bonusHonor | BG bonus honor curve fixed at level 60 for all brackets | MaNGOS::Honor | none found | H: low brackets get level-60 honor; **Done** (FORMULAS.md "Honor") |
 | pvp.d:pvpZoneChanged | Honorless Target 2479 on arrival in enforced zone | UpdateZone | Spell.dbc 2479 | M |
-| honor.d:killsTodayOf | DR count per victim per server-local day | CalculateTotalKills | Wowpedia "Honor system (pre-2.0 formulas)" (checked: 24 h) | M |
+| honor.d:killsTodayOf | DR count per victim per server-local day | CalculateTotalKills | Wowpedia "Honor system (pre-2.0 formulas)" (checked: 24 h) | M; **Done** (FORMULAS.md "Honor") |
 | honor.d:playerKilledByMe | Honor shared within 74 yd, equal shares | RewardGroupAtKill, RewardHonor | none found | M |
 | honor.d:racialLeaderHonor | Racial leader kill 398 honor | MaNGOS::Honor | Wowpedia "Honor system (pre-2.0 formulas)" (verify) | M |
-| honor.d:rankOf / rankBar | RP → rank: <2000 R1; then RP/5000 + 2; >60000 R14 | GetRankPoints, UpdateHonor | Wowpedia "Honor system (pre-2.0 formulas)" (verify) | M |
+| honor.d:rankOf / rankBar | RP → rank: <2000 R1; then RP/5000 + 2; >60000 R14 | GetRankPoints, UpdateHonor | Wowpedia "Honor system (pre-2.0 formulas)" (verify) | M; **Done** (FORMULAS.md "Honor") |
 | honor.d:lastMaintenanceDay | Honor week starts Wednesday, server local | GetDateLastMaintenanceDay | Blizzard regional maintenance schedule | M |
-| honorweek.d:runHonorMaintenance | ≥15 HKs to be ranked; per faction | FlushRankPoints | Wowpedia (verify 15 HK) | M |
+| honorweek.d:runHonorMaintenance | ≥15 HKs to be ranked; per faction | FlushRankPoints | Wowpedia (verify 15 HK) | M; **Done** (FORMULAS.md "Honor") |
 | honor.d:rewardHonorForPlayer | No honor vs Honorless Target, same faction, grey | RewardHonor | Wowpedia "Honorless Target" (verify) | L |
 | honor.d:updateHonor | Highest rank tracking; day/week totals | UpdateHonor | none found | L |
-| honorweek.d:decayedRankPoints | Decay 20%; negative delta halved, capped −2500 | CalculateRpDecay | Wowpedia "Honor system (pre-2.0 formulas)" (checked: same) | L: matches |
+| honorweek.d:decayedRankPoints | Decay 20%; negative delta halved, capped −2500 | CalculateRpDecay | Wowpedia "Honor system (pre-2.0 formulas)" (checked: same) | L: matches; **Done** (FORMULAS.md "Honor") |
 
 ### Professions (21)
 
@@ -442,8 +445,8 @@ risk.
 
 | where | what | emulator origin | primary source | risk |
 |---|---|---|---|---|
-| loothandlers.d:rewardAtKill (reputation share) | Group kill rep ×1/nearCount in open world, full in dungeons (CMaNGOS uses level share) | Group::RewardGroupAtKill | none found (measured Classic Era: full rep per member) | H: differs from both origin and likely Blizzard |
-| reputationhandlers.d:reputationGain | Racial %, low-level kill/quest falloff 0.2/level, per-faction rates | CalculateReputationGain | Spell.dbc 20599; QuestFactionReward (DB2); reputation_reward_rate is emulator data | M |
+| loothandlers.d:rewardAtKill (reputation share) | Group kill rep ×1/nearCount in open world, full in dungeons (CMaNGOS uses level share) | Group::RewardGroupAtKill | none found (measured Classic Era: full rep per member) | H: differs from both origin and likely Blizzard; **Done** (FORMULAS.md "Reputation") |
+| reputationhandlers.d:reputationGain | Racial %, low-level kill/quest falloff 0.2/level, per-faction rates | CalculateReputationGain | Spell.dbc 20599; QuestFactionReward (DB2); reputation_reward_rate is emulator data | M; **Done: grey kills; the quest falloff and the rates have no source** (FORMULAS.md "Reputation") |
 | reputationhandlers.d:rewardKillReputation | creature_onkill_reputation caps; parent faction gets half | RewardReputation | Faction.dbc parent; none found for the half | M |
 | reputation.d:change | Spillover via reputation_spillover_template; standing clamp −42000..42999 | ModifyReputation | Faction.dbc / DB2 (ParentFactionMod, ParentFactionCap — verify 1.12 fields) | M |
 | reputation.d:changeOne / setAtWar | Hostile forces war; rising to neutral ends it | SetAtWar | Faction.ReputationFlags | M |
@@ -587,14 +590,14 @@ risk.
 | bgqueue.d:inviteTime | Invitation 80 s; reminder 60 s | INVITE_ACCEPT_WAIT_TIME | none found | M |
 | bgqueue.d:update | Fill running copies first; minPerTeam to start | BattleGroundQueueItem::Update | BattlemasterList MinPlayers/MaxPlayers (DB2) | M |
 | alterac.d:reinforcements | 600 each; death −1, captain −100, tower −75 | UpdateScore | Wowpedia "Alterac Valley" (verify; changed by 1.x patches) | M |
-| alterac.d:generals / captains | General ends BG; honor/rep values | HandleKillUnit | Wowpedia "Alterac Valley" (verify) | M |
+| alterac.d:generals / captains | General ends BG; honor/rep values | HandleKillUnit | Wowpedia "Alterac Valley" (verify) | M; **Done: the honor units; not the reputation** (FORMULAS.md "Honor") |
 | alterac.d:assault / defend / destroyed | Node falls 4 min after assault (Snowfall 5) | ProcessPlayerAssaultsPoint | Wowpedia "Alterac Valley" (verify) | M |
 | alterac.d:mines | +1 reinforcement per 45 s; revert after 20 min | ChangeMineOwner | Wowpedia "Alterac Valley" (verify) | M |
 | alterac.d:ending | End-of-match honor/rep per surviving tower/captain/node/mine | EndBattleGround | Wowpedia "Alterac Valley" (verify) | M |
-| warsong.d:capture / ending | 3 captures; honor and rep per capture | EventPlayerCapturedFlag | Wowpedia "Warsong Gulch" (verify) | M |
+| warsong.d:capture / ending | 3 captures; honor and rep per capture | EventPlayerCapturedFlag | Wowpedia "Warsong Gulch" (verify) | M; **Done: the honor units; not the reputation** (FORMULAS.md "Honor") |
 | warsong.d:tick / flags | Dropped flag returns after 10 s; respawn 23 s | BG_WS_FLAG_DROP_TIME | Wowpedia "Warsong Gulch" (verify) | M |
 | arathi.d:objectUsed / taken | Base captured 60 s after assault | BG_AB_FLAG_CAPTURING_TIME | Wowpedia "Arathi Basin" (verify) | M |
-| arathi.d:tick (rewards) / ending | Honor per 260 resources, rep per 160; end bonuses | BattleGroundAB::Update | Wowpedia "Arathi Basin" (verify) | M |
+| arathi.d:tick (rewards) / ending | Honor per 260 resources, rep per 160; end bonuses | BattleGroundAB::Update | Wowpedia "Arathi Basin" (verify) | M; **Done: the honor units; not the reputation** (FORMULAS.md "Honor") |
 | meetingstone.d:rolesOf / priorityOf | Class role priorities | vmangos LFGMgr::CalculateRoles | none found | M: vmangos invention |
 | meetingstone.d:update / fillRoles | 1 tank + 1 healer + 3 damage; queue rules | vmangos LFGQueue::Update | Wowpedia "Meeting Stone" (verify); LFGDungeons (DB2) for levels | M |
 | teleport.d:teleportTo (raid lock) | Bound to a different raid copy → refused | InstanceMap::CanEnter | none found | M |

@@ -643,6 +643,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Projects: CMaNGOS
 * Files: `BattleGroundAV.cpp`, `BattleGroundAV.h`
 * Functions: `BattleGroundAV::Reset`, `Update`, `HandleKillPlayer`, `HandleKillUnit`, `HandlePlayerClickedOnFlag`, `ProcessPlayerAssaultsPoint`, `ProcessPlayerDefendsPoint`, `ProcessPlayerDestroyedPoint`, `ChangeMineOwner`, `UpdateScore`, `EndBattleGround`, `GetPrematureWinner`, `HandleAreaTrigger`
+* Not from an emulator: the bonus honor units of the general, captain and towers (Wowpedia "Honor system (pre-2.0 formulas)")
 
 ## world/auctionhandlers.d
 
@@ -689,8 +690,9 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 
 * Projects: ArcEmu, CMaNGOS, MaNGOS
 * Files: `BattleGroundHandler.cpp`
-* Functions: `BattleGround::AddPlayer`, `BattleGround::EndBattleGround`, `BattleGround::EventPlayerLoggedOut`, `BattleGround::HandleKillPlayer`, `BattleGround::RemovePlayerAtLeave`, `BattleGround::SendMessageToAll`, `BattleGround::Update`, `BattleGroundMap::Update`, `BattleGroundMgr::BuildPvpLogDataPacket`, `BattleGroundMgr::SendBattleGroundList`, `BattleGroundMgr::SendToBattleGround`, `BattleGroundMgr::ToggleTesting`, `CBattleground::Close`, `Creature::CanInteractWithBattleMaster`, `Group::CanJoinBattleGroundQueue`, `MaNGOS::Honor`, `Player::CanJoinToBattleground`, `Player::LeaveBattleground`, `Player::LoadFromDB`, `Player::TeleportToBGEntryPoint`, `Player::_LoadBGData`, `Player::_SaveBGData`, `WorldSession::LogoutPlayer`
+* Functions: `BattleGround::AddPlayer`, `BattleGround::EndBattleGround`, `BattleGround::EventPlayerLoggedOut`, `BattleGround::HandleKillPlayer`, `BattleGround::RemovePlayerAtLeave`, `BattleGround::SendMessageToAll`, `BattleGround::Update`, `BattleGroundMap::Update`, `BattleGroundMgr::BuildPvpLogDataPacket`, `BattleGroundMgr::SendBattleGroundList`, `BattleGroundMgr::SendToBattleGround`, `BattleGroundMgr::ToggleTesting`, `CBattleground::Close`, `Creature::CanInteractWithBattleMaster`, `Group::CanJoinBattleGroundQueue`, `Player::CanJoinToBattleground`, `Player::LeaveBattleground`, `Player::LoadFromDB`, `Player::TeleportToBGEntryPoint`, `Player::_LoadBGData`, `Player::_SaveBGData`, `WorldSession::LogoutPlayer`
 * Constants: `BG_EVENT_DOOR`, `BG_EVENT_NONE`, `CHAT_MSG_BATTLEGROUND`, `CMSG_AREA_SPIRIT_HEALER_QUEUE`, `CMSG_BATTLEFIELD_PORT`, `MAX_OFFLINE_TIME`, `MSG_BATTLEGROUND_PLAYER_POSITIONS`, `MSG_PVP_LOG_DATA`, `SMSG_AREA_SPIRIT_HEALER_TIME`, `SMSG_GROUP_JOINED_BATTLEGROUND`, `SMSG_INIT_WORLD_STATES`, `SMSG_MESSAGECHAT`, `SOUND_BG_START`, `SPELL_ID_BATTLEGROUND_DESERTER`, `TEAM_INVALID`, `TIME_TO_AUTOREMOVE`
+* Not from an emulator: `bonusHonor`, a bonus honor unit by the player's bracket (Wowpedia "Honor system (pre-2.0 formulas)"; docs/FORMULAS.md, "Honor"); the units of Warsong Gulch (warsong.d) and Arathi Basin (arathi.d) from the same page
 
 ## world/bgqueue.d
 
@@ -933,9 +935,9 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 ## world/experience.d
 
 * Projects: CMaNGOS, MaNGOS
-* Files: `Formulas.h`
-* Functions: `MaNGOS::XP`, `XP::BaseGain`, `XP::Gain`, `XP::GetGrayLevel`, `XP::GetQuestGreenRange`, `XP::GetZeroDifference`, `XP::IsTrivialLevelDifference`, `XP::xp_in_group_rate`
+* Functions: `XP::xp_in_group_rate` (a raid's rate), `Player::ComputeRest` (the client doubling the rest field)
 * Constants: `CONFIG_FLOAT_GROUP_XP_DISTANCE`, `NO_XP`
+* Not from an emulator: `baseGain`, `zeroDifference`, `grayLevel`/`isGray` (47 at 60), `eliteFactor`, the party rates, `restEarned`, `restCap`, `restedBonus`, `restAfterKill`: Wowpedia's 1.x research and Exhaustion.dbc (docs/FORMULAS.md, "Experience")
 
 ## world/exploration.d
 
@@ -1105,13 +1107,15 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 
 * Projects: ArcEmu, CMaNGOS, MaNGOS
 * Files: `HonorHandler.cpp`
-* Functions: `HonorCP::isKill`, `MaNGOS::Honor`, `Player::AddHonorCP`, `Player::CalculateTotalKills`, `Player::GetRankPoints`, `Player::RewardHonor`, `Player::UpdateHonor`, `Unit::Kill`, `World::GetDateLastMaintenanceDay`, `WorldSession::HandleInspectHonorStatsOpcode`
+* Not from an emulator: `honorableKillPoints`, `rankOneHonorAt`, `dishonorableKillPoints`, the grey (`isGray`) and the civilian rule: Wowpedia "Honor system (pre-2.0 formulas)", "Civilian" (docs/FORMULAS.md, "Honor"); from CMaNGOS still: the victim's level over the killer's, equal shares within 74 yards, a racial leader's 398
+* Functions: `HonorCP::isKill`, `Player::AddHonorCP`, `Player::CalculateTotalKills`, `Player::GetRankPoints`, `Player::RewardHonor`, `Player::UpdateHonor`, `Unit::Kill`, `World::GetDateLastMaintenanceDay`, `WorldSession::HandleInspectHonorStatsOpcode`
 * Constants: `SMSG_PVP_CREDIT`, `TYPE_OF_HONOR`
 
 ## world/honorweek.d
 
 * Projects: CMaNGOS, MaNGOS
-* Functions: `MaNGOS::Honor`, `ObjectMgr::CalculateRpDecay`, `ObjectMgr::CalculateRpEarning`, `ObjectMgr::FlushRankPoints`, `ObjectMgr::GenerateScores`, `World::ServerMaintenanceStart`
+* Functions: `ObjectMgr::CalculateRpDecay`, `ObjectMgr::CalculateRpEarning`, `ObjectMgr::FlushRankPoints`, `ObjectMgr::GenerateScores`, `World::ServerMaintenanceStart`
+* Not from an emulator: the standing's 1.12 breakpoints; the decay, the 15 kills and the rank points agree with Wowpedia "Honor system (pre-2.0 formulas)" (docs/FORMULAS.md, "Honor")
 
 ## world/inventory.d
 
@@ -1144,6 +1148,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 
 * Projects: CMaNGOS
 * Files: `LootHandler.cpp`
+* Not from an emulator: a group kill's reputation, all of it to each member near it (docs/FORMULAS.md, "Reputation"); the shares of experience agree with Wowpedia "Mob experience" (CMaNGOS's half-plus-one when the highest member finds the kill grey has no source)
 * Functions: `Creature::PrepareBodyLootState`, `CreatureStaticFlags::NO_LOOT`, `CreatureStaticFlags::NO_XP`, `Group::RewardGroupAtKill`, `Item::m_loot`, `LockEntry::Skill`, `Loot::Loot`, `Loot::Release`, `Loot::SetGroupLootRight`, `Loot::SetPlayerIsLooting`, `ObjectMgr::IsConditionSatisfied`, `Player::IsAtGroupRewardDistance`, `Player::RemoveFromWorld`, `Player::RewardSinglePlayerAtKill`, `Player::SendLootError`, `Unit::DealDamage`, `Unit::Kill`, `XP::Gain`
 * Constants: `CMSG_AUTOSTORE_LOOT_ITEM`, `CMSG_LOOT_MASTER_GIVE`, `CMSG_LOOT_ROLL`, `SMSG_PARTYKILLLOG`, `UNIT_FLAG_LOOTING`
 
@@ -1302,7 +1307,8 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 
 * Projects: CMaNGOS
 * Files: `QuestDef.cpp`
-* Functions: `ObjectMgr::LoadQuests`, `Player::GetQuestLevelForPlayer`, `Quest::XPValue`
+* Functions: `ObjectMgr::LoadQuests`, `Player::GetQuestLevelForPlayer`
+* Not from an emulator: `questXp`, from 1.12's quest money and Wowpedia's falloff (docs/FORMULAS.md, "Quest experience")
 * Constants: `MAX_QUEST_LOG_SIZE`, `QUEST_OBJECTIVES_COUNT`, `QUEST_REWARDS_COUNT`, `QUEST_REWARD_CHOICES_COUNT`, `SMSG_QUESTGIVER_QUEST_INVALID`
 
 ## world/realclassspelltests.d
@@ -1340,6 +1346,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 
 * Projects: CMaNGOS
 * Files: `MiscHandler.cpp`
+* Not from an emulator: a grey kill's fifth of the reputation (Wowpedia "Reputation"; docs/FORMULAS.md, "Reputation")
 * Functions: `Player::CalculateReputationGain`, `Player::GetReputationPriceDiscount`, `Player::ReputationChanged`, `Player::RewardReputation`, `ReputationMgr::LoadFromDB`, `ReputationMgr::ModifyReputation`, `ReputationMgr::SaveToDB`, `Aura::HandleForceReaction`, `ReputationMgr::ApplyForceReaction`, `ReputationMgr::SendForceReactions`, `Player::StopAttackFaction`
 * Constants: `SMSG_INITIALIZE_FACTIONS`, `SMSG_SET_FACTION_STANDING`
 
