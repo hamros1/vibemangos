@@ -133,7 +133,8 @@ ExclusiveKind exclusiveKind(const(SpellInfo)* spell) pure nothrow @safe
     case SpellFamily.warlock:
         return spell.casting.dispel == dispelCurse ? ExclusiveKind.curse : ExclusiveKind.none;
     case SpellFamily.mage:
-        return spell.casting.spellFamilyFlags & 0x12080000 ? ExclusiveKind.mageArmor : ExclusiveKind.none;
+        // Frost and Ice Armor (0x2000000), Mage Armor (0x10000000); not 0x80000, every frost spell's (Ice Barrier's).
+        return spell.casting.spellFamilyFlags & 0x12000000 ? ExclusiveKind.mageArmor : ExclusiveKind.none;
     case SpellFamily.generic:
         enum uint aspectOfTheBeastIcon = 1510; // (the data leaves it out of the hunter's family)
         return spell.casting.spellIconId == aspectOfTheBeastIcon && spell.casting.name.length > 6
@@ -195,6 +196,8 @@ static immutable uint[2][] touchOfWeaknessCurse = [[2652, 2943], [19261, 19249],
 static immutable uint[2][] wyvernStingPoison = [[19386, 24131], [24132, 24134], [24133, 24135]];
 /// Blessed Recovery's ranks and its heal.
 static immutable uint[2][] blessedRecoveryHeal = [[27811, 27813], [27815, 27817], [27816, 27818]];
+/// Judgement of Command's damage, by rank (CMaNGOS's `spell_judgement_of_command`; spell_template gives them no family).
+static immutable uint[] judgementOfCommandDamage = [20467, 20963, 20964, 20965, 20966];
 /// Shatter's override script numbers and the crit chance each adds against a frozen target (`spell_shatter_mage`).
 static immutable uint[2][] shatterCrit = [[849, 10], [910, 20], [911, 30], [912, 40], [913, 50]];
 
@@ -519,8 +522,9 @@ mixin template ClassSpells()
             damage += cast(int)(player.stats.attackPower * 0.03f * castCombo);
             return damage;
         }
-        // Judgement of Command (`spell_judgement_of_command`): half, unless its target is stunned.
-        if (ofFamily(spell, SpellFamily.paladin) && spell.casting.spellIconId == 561)
+        // Judgement of Command (`spell_judgement_of_command`): half, unless its target is stunned. Its damage spells
+        // (what the judgement's dummy names) are of no family.
+        if (judgementOfCommandDamage.canFind(spell.id))
         {
             auto target = map.unit(targetGuid);
             if (auto set = aurasOf(target))
@@ -734,7 +738,7 @@ mixin template ClassSpells()
         {
             if (const aura = rankSpell(bloodthirstAura, spell.id))
                 castCustom(aura, player.guid);
-            if (const heal = rankSpell(holyNovaHeal, spell.id))
+            if (const heal = rankSpell(holyNovaHeal, spell.id)) // (its caster is among them, an enemy near or not)
                 castCustom(heal, player.guid);
         }
         uint precast;
@@ -1015,13 +1019,15 @@ mixin template ClassSpells()
             c.spell = rankSpell(lightningShieldDamage, spell.id);
             return c.spell != 0 && other;
         }
-        // Illumination: the heal's mana back (of the spell cast: Holy Light's, Flash of Light's, Holy Shock's).
+        // Illumination: the heal's mana back (of the spell cast: Holy Light's, Flash of Light's, Holy Shock's), by its
+        // own spell (the data's trigger is 18350, a Dummy Trigger).
         if (ofFamily(spell, SpellFamily.paladin) && spell.casting.spellIconId == 241)
         {
+            enum uint illuminationMana = 20272;
             const healed = hit.spell is null ? null : illuminatedSpell(hit.spell);
             if (healed is null)
                 return false;
-            c = ProcCast(c.spell, player.guid, CustomValues.first(cast(int) healed.casting.manaCost));
+            c = ProcCast(illuminationMana, player.guid, CustomValues.first(cast(int) healed.casting.manaCost));
             return true;
         }
         // Blessed Recovery: a third of a share of the blow each tick.

@@ -345,6 +345,68 @@ unittest
     assert(!(a.player.values.get!UNIT_FIELD_AURASTATE & auraStateFlag(AuraState.judgement)), "nothing left to judge");
 }
 
+/**
+ * Judgement of Command (`spell_judgement_of_command`): judging Seal of Command strikes with the judgement's damage
+ * spell (20467: spell_template gives it no family), at half unless the target is stunned.
+ */
+unittest
+{
+    auto a = new Arena(PlayerClass.paladin);
+    auto seal = a.spell(20375, SpellEffect.applyAura, ImplicitTarget.caster); // Seal of Command, rank 1
+    a.auraEffect(seal, 0, AuraType.procTriggerSpell, ImplicitTarget.caster);
+    a.auraEffect(seal, 2, AuraType.dummy, ImplicitTarget.caster, 20425);
+    with (seal.casting)
+    {
+        school = 1;
+        spellFamilyName = 10;
+        spellFamilyFlags = 0x2000000;
+        spellIconId = 561;
+        durationIndex = 1;
+    }
+    with (a.spell(20271, SpellEffect.scriptEffect, ImplicitTarget.enemy, 0)) // Judgement
+    {
+        casterAuraState = AuraState.judgement;
+        casting.school = 1;
+        casting.spellFamilyName = 10;
+        casting.spellFamilyFlags = 0x800000;
+    }
+    a.context.data.spellScriptNames[20271] = "spell_judgement";
+    with (a.spell(20425, SpellEffect.dummy, ImplicitTarget.enemy, 20467)) // Judgement of Command, rank 1
+    {
+        casting.school = 1;
+        casting.spellFamilyName = 10;
+        casting.spellIconId = 561;
+    }
+    with (a.spell(20467, SpellEffect.schoolDamage, ImplicitTarget.enemy, 93)) // its damage: no family
+    {
+        casting.school = 1;
+        casting.spellIconId = 561;
+        casting.dmgClass = DamageClass.melee;
+    }
+    uint[] judged()
+    {
+        uint[] damage;
+        foreach (attempt; 0 .. 20)
+        {
+            a.tick(2000);
+            a.cast_(20375);
+            a.tick(1600);
+            a.hero.read();
+            a.cast_(20271, a.foe.guid);
+            foreach (l; a.damageLogs())
+                if (l[0] == 20467 && l[1])
+                    damage ~= l[1];
+        }
+        return damage;
+    }
+    assert(judged().canFind!(d => d == 46), "93 halved: the target is not stunned");
+    auto stun = a.spell(90101, SpellEffect.applyAura, ImplicitTarget.enemy);
+    a.auraEffect(stun, 0, AuraType.modStun, ImplicitTarget.enemy);
+    bool isNew;
+    a.foe.auras.apply(makeAura(stun, a.player.guid, 60, -1, false, [0, 0, 0]), a.foe.values, isNew);
+    assert(judged().canFind!(d => d == 93), "whole against a stunned target");
+}
+
 /// Conflagrate: refused without the warlock's Immolate on the target; with it, it strikes and the Immolate goes.
 unittest
 {
@@ -549,6 +611,33 @@ unittest
     a.tick(11_000);
     assert(!a.hasAura(17) && a.hasAura(6788));
     assert(a.cast_(17) == SpellCastResult.targetAuraState, "no shield while the soul is weak");
+}
+
+/// Holy Nova (15237) heals the priest's party by its own spell (23455) though no enemy is near to hurt.
+unittest
+{
+    auto a = new Arena(PlayerClass.priest);
+    with (a.spell(15237, SpellEffect.schoolDamage, ImplicitTarget.casterSource, 28))
+    {
+        casting.implicitTargetB[0] = ImplicitTarget.enemiesAroundSource;
+        casting.radiusIndex[0] = 12; // (13, 10 yards, in the world: the test's client data has 12)
+        casting.school = 1;
+        casting.spellFamilyName = 6;
+        casting.spellFamilyFlags = 0x400000;
+    }
+    with (a.spell(23455, SpellEffect.heal, ImplicitTarget.partyInRange, 52))
+    {
+        casting.radiusIndex[0] = 12;
+        casting.school = 1;
+        casting.spellFamilyName = 6;
+        casting.spellFamilyFlags = 0x8000000;
+    }
+    // The creature a friend: nothing to hurt.
+    a.foe.factionTemplate = a.context.client.factionTemplates.lookup(a.player.values.get!UNIT_FIELD_FACTIONTEMPLATE);
+    a.player.values.set!UNIT_FIELD_MAXHEALTH(1000u);
+    a.player.values.set!UNIT_FIELD_HEALTH(500u);
+    assert(a.cast_(15237) == SpellCastResult.ok);
+    assert(a.player.values.get!UNIT_FIELD_HEALTH >= 552, "healed by 23455");
 }
 
 /// Ferocious Bite: the energy left after its cost is damage too (by the multiplier), and is spent.
@@ -825,15 +914,16 @@ unittest
     }
     auto illumination = a.spell(20210, SpellEffect.applyAura, ImplicitTarget.caster);
     a.auraEffect(illumination, 0, AuraType.procTriggerSpell, ImplicitTarget.caster);
-    illumination.triggerSpell[0] = 20272;
+    illumination.triggerSpell[0] = 18350; // a Dummy Trigger, as spell_template has it
     with (illumination.casting)
     {
         spellFamilyName = 10;
         spellIconId = 241;
-        procFlags = 0x4000;
-        procChance = 100;
+        procFlags = 0x4400;
+        procChance = 100; // (rank 5's)
     }
-    a.context.data.spells.procEvents[20210] = SpellProcEvent(0, 10, [0xC0206000, 0, 0], 0, 0x2);
+    a.spell(18350, SpellEffect.dummy, ImplicitTarget.caster);
+    a.context.data.spells.procEvents[20210] = SpellProcEvent(0, 10, [0xC0206000, 0xC0206000, 0xC0206000], 0, 0x2);
     with (a.spell(20272, SpellEffect.energize, ImplicitTarget.caster, 0))
         miscValue[0] = Power.mana;
     auto sure = a.spell(90100, SpellEffect.applyAura, ImplicitTarget.caster);
@@ -909,6 +999,60 @@ unittest
     }
     assert(a.hasAura(a.foe, 980) && !a.hasAura(a.foe, 702), "one curse from each warlock");
 
+}
+
+/**
+ * A mage has one armor (Ice Armor's flag 0x2000000, Mage Armor's 0x10000000); a frost spell's 0x80000, which Ice Armor
+ * has too, makes no armor of Ice Barrier or Frost Ward (spell_template's rows, the fields that matter).
+ */
+unittest
+{
+    auto a = new Arena(PlayerClass.mage);
+    auto iceArmor = a.spell(7302, SpellEffect.applyAura, ImplicitTarget.caster); // Ice Armor, rank 1
+    a.auraEffect(iceArmor, 0, AuraType.modResistance, ImplicitTarget.caster, 290, 16);
+    with (iceArmor.casting)
+    {
+        school = 4;
+        spellFamilyName = 3;
+        spellFamilyFlags = 0x2080000;
+        durationIndex = 4;
+    }
+    auto barrier = a.spell(11426, SpellEffect.applyAura, ImplicitTarget.caster); // Ice Barrier, rank 1
+    a.auraEffect(barrier, 0, AuraType.schoolAbsorb, ImplicitTarget.caster, 438, 127);
+    with (barrier.casting)
+    {
+        school = 4;
+        spellFamilyName = 3;
+        spellFamilyFlags = 0x80000;
+        durationIndex = 1;
+    }
+    auto frostWard = a.spell(6143, SpellEffect.applyAura, ImplicitTarget.caster); // Frost Ward, rank 1
+    a.auraEffect(frostWard, 0, AuraType.schoolAbsorb, ImplicitTarget.caster, 165, 16);
+    with (frostWard.casting)
+    {
+        school = 4;
+        spellFamilyName = 3;
+        spellFamilyFlags = 0x80100;
+        durationIndex = 1;
+    }
+    auto mageArmor = a.spell(6117, SpellEffect.applyAura, ImplicitTarget.caster); // Mage Armor, rank 1
+    a.auraEffect(mageArmor, 0, AuraType.modResistance, ImplicitTarget.caster, 5, 126);
+    with (mageArmor.casting)
+    {
+        school = 6;
+        spellFamilyName = 3;
+        spellFamilyFlags = 0x10000000;
+        durationIndex = 4;
+    }
+    a.cast_(7302);
+    a.tick(1600);
+    a.cast_(11426);
+    a.tick(1600);
+    a.cast_(6143);
+    assert(a.hasAura(7302) && a.hasAura(11426) && a.hasAura(6143), "Ice Barrier and Frost Ward are no armor");
+    a.tick(1600);
+    a.cast_(6117);
+    assert(a.hasAura(6117) && !a.hasAura(7302), "Mage Armor replaces Ice Armor");
 }
 
 /// Vanish (`spell_vanish`): the rogue stealths at once by the highest Stealth it knows, its cooldown ended.
