@@ -634,6 +634,17 @@ private:
     private int channelCostTimer; // ms to the channel's next second's cost
 
     /**
+     * What this player channels (or last channelled) `spell` at; 0 if it is not that channel's. A channel's last
+     * tick comes as it ends (Arcane Missiles' third missile): its target is still known.
+     */
+    package ulong channelledAt(const(SpellInfo)* spell)
+    {
+        return spell !is null && (channelSpell is spell || lastChannelSpell is spell) ? channelTarget : 0;
+    }
+
+    private const(SpellInfo)* lastChannelSpell; // the channel that ended last (`channelledAt`)
+
+    /**
      * A channel's cost each second (`ManaPerSecond`: Health Funnel's health), the caster's; one that costs health
      * the caster has no more of ends (CMaNGOS's `SpellAuraHolder::UpdateHolder`).
      */
@@ -713,6 +724,7 @@ private:
             return;
         const spell = channelSpell;
         channelSpell = null;
+        lastChannelSpell = cancelled ? null : spell;
         if (cancelled)
         {
             if (auto creature = cast(Creature) map.findObject(channelTarget))
@@ -927,6 +939,24 @@ private:
         return values;
     }
 
+    /**
+     * A persistent area's tick of damage (Blizzard's, Rain of Fire's): its value, the caster's spell power by the
+     * tick's coefficient (`bonusCoefficient`), the damage over time modifiers on both (`SPELLMOD_DOT`: Piercing Ice).
+     */
+    private uint areaTick(const ref PersistentArea area)
+    {
+        import dmangos.world.spellcast : bonusCoefficient;
+
+        int tick = area.value;
+        const school = area.spell.casting.school;
+        if (school != 0)
+            if (const done = spellPower(1 << school))
+                if (done > 0)
+                    tick += cast(int)(done * bonusCoefficient(*area.spell, area.effect, context.client, player.data.level));
+        tick = spellMod(SpellModOp.dot, area.spell, tick);
+        return tick > 0 ? tick : 0;
+    }
+
     /// The spots' ticks and ends.
     void updatePersistentAreas(int diff)
     {
@@ -958,7 +988,7 @@ private:
                         continue;
                     if (hurts)
                     {
-                        spellDamage(area.spell, creature, area.value, area.spell.casting.school);
+                        spellDamage(area.spell, creature, areaTick(area), area.spell.casting.school, false, -1, true);
                         classAreaTick(area.spell, map.unitOf(creature)); // Improved Blizzard's chill
                     }
                     else
@@ -982,7 +1012,7 @@ private:
                         if (!other.player.alive || !inside(other.player.position))
                             continue;
                         if (hurts)
-                            spellDamageToPlayer(area.spell, other, area.value);
+                            spellDamageToPlayer(area.spell, other, areaTick(area), false);
                         else
                         {
                             inArea[other.player.guid] = true;
@@ -1915,7 +1945,8 @@ private:
         // A channelled spell goes on (`SPELL_ATTR_EX_IS_CHANNELED`, `_IS_SELF_CHANNELED`).
         enum uint channeled = 0x04, selfChanneled = 0x40;
         if ((spell.attributesEx & (channeled | selfChanneled)) && !c.triggered && !channelFailed)
-            startChannel(spell, results.length ? results[0].guid : c.targets.unit);
+            startChannel(spell, c.targets.unit ? c.targets.unit : results.length ? results[0].guid : 0); // (what it is
+                // aimed at: Arcane Missiles' aura is on its caster)
         channelFailed = false;
         // `SpellHit` for the creatures hit (their scripts).
         foreach (r; results)
@@ -1963,6 +1994,7 @@ private:
                 dodgedBy ~= r.guid;
         }
         classAfterEffects(spell, landed, dodgedBy);
+        harmlessHitProcs(spell, landed);
         flushPlayerChanges();
         return SpellCastResult.ok;
     }
@@ -1983,13 +2015,14 @@ private:
             if (!creature.alive || !canAttack(relatingNow(), creature.ai.relatingOf(), context.client))
                 return SpellMissInfo.none;
             return rollSpellHit(player.fighter, creature.fighter, spell,
-                targetResistance(cast(int) creature.values.get!UNIT_FIELD_RESISTANCES(school), school), spellHitBonus, map.random);
+                targetResistance(cast(int) creature.values.get!UNIT_FIELD_RESISTANCES(school), school), spellHitBonusOf(&spell), map.random);
         }
         auto other = target == player.guid ? null : cast(typeof(this)) context.onlinePlayer(target);
         if (other is null || other.player is null || !canAttack(relatingNow(), other.relatingNow(), context.client))
             return SpellMissInfo.none;
         return rollSpellHit(player.fighter, other.player.fighter, spell,
-            targetResistance(cast(int) other.player.values.get!UNIT_FIELD_RESISTANCES(school), school), spellHitBonus, map.random);
+            targetResistance(cast(int) other.player.values.get!UNIT_FIELD_RESISTANCES(school), school), spellHitBonusOf(&spell),
+            map.random);
     }
 
     // -----------------------------------------------------------------------
@@ -2029,11 +2062,12 @@ private:
         {
         case SpellEffect.schoolDamage: // SPELL_EFFECT_SCHOOL_DAMAGE
         {
-            const damage = classSchoolDamage(spell, i, target, spellMod(SpellModOp.damage, spell, value));
+            // (its modifiers, `SPELLMOD_DAMAGE`, on the damage with the spell power: `spellDamage`)
+            const damage = classSchoolDamage(spell, i, target, value);
             if (auto creature = cast(Creature) map.findObject(target))
-                spellDamage(spell, creature, damage > 0 ? damage : 0, spell.casting.school);
+                spellDamage(spell, creature, damage > 0 ? damage : 0, spell.casting.school, true, SpellModOp.damage);
             else if (auto other = enemyPlayer(target))
-                spellDamageToPlayer(spell, other, damage > 0 ? damage : 0);
+                spellDamageToPlayer(spell, other, damage > 0 ? damage : 0, true, SpellModOp.damage);
             break;
         }
         case SpellEffect.dummy, SpellEffect.scriptEffect: // SPELL_EFFECT_DUMMY, SPELL_EFFECT_SCRIPT_EFFECT: the spell's script, then its database script
@@ -2626,7 +2660,7 @@ private:
     }
 
     /// `value` of `spell`'s property `op`, with this player's spell modifiers (talents).
-    T spellMod(T)(SpellModOp op, const(SpellInfo)* spell, T value)
+    package T spellMod(T)(SpellModOp op, const(SpellInfo)* spell, T value)
     {
         const modified = applySpellMod(player.auras.list, op, *spell, value);
         if (modified != value)
@@ -2694,10 +2728,10 @@ private:
         }
     }
 
-    /// An effect's value with the modifiers of its own index and of all effects.
-    int effectMod(const(SpellInfo)* spell, size_t i, int value)
+    /// An effect's value with the modifiers of its own index and of all effects (and the class rules': Permafrost).
+    package int effectMod(const(SpellInfo)* spell, size_t i, int value)
     {
-        return spellMod(SpellModOp.allEffects, spell, spellMod(effectOp(i), spell, value));
+        return spellMod(SpellModOp.allEffects, spell, classEffectMod(spell, i, spellMod(effectOp(i), spell, value)));
     }
 
     /**
@@ -2832,6 +2866,12 @@ private:
         return player.auras.total(AuraType.modSpellHitChance);
     }
 
+    /// ditto, for `spell`: and its modifiers' (`SPELLMOD_RESIST_MISS_CHANCE`: Arcane Focus, Suppression, Shadow Focus).
+    package float spellHitBonusOf(const(SpellInfo)* spell)
+    {
+        return spellHitBonus + spellMod(SpellModOp.resistMissChance, spell, 0);
+    }
+
     /// The crit chance of `spell`: this player's (`spellCrit`) and the spell's modifiers.
     /**
      * The crit chance of `spell` at `victim` (`Unit::RollSpellCritOutcome`): a melee or ranged ability's is its
@@ -2852,10 +2892,14 @@ private:
         return spell.casting.dmgClass == DamageClass.melee || spell.casting.dmgClass == DamageClass.ranged;
     }
 
-    /// A crit's damage (`SpellCriticalDamageBonus`): double for a melee or ranged ability, half again for a spell.
-    static uint critDamage(const(SpellInfo)* spell, uint damage)
+    /**
+     * A crit's damage (`SpellCriticalDamageBonus`): double for a melee or ranged ability, half again for a spell; the
+     * bonus more by the spell's modifiers (`SPELLMOD_CRIT_DAMAGE_BONUS`: Ice Shards, Ruin double a spell's half).
+     */
+    package uint critDamage(const(SpellInfo)* spell, uint damage)
     {
-        return weaponCrit(spell) ? damage * 2 : damage * 3 / 2;
+        const bonus = weaponCrit(spell) ? damage : damage / 2;
+        return damage + spellMod(SpellModOp.critDamageBonus, spell, bonus);
     }
 
     float spellCritOf(const(SpellInfo)* spell)
@@ -3104,15 +3148,19 @@ private:
     }
 
     /// A school's damage to a player: a crit is half again; armor for physical. Without `withBonus`, no spell
-    /// power (Mana Burn's). Returns the damage dealt.
-    package uint spellDamageToPlayer(const(SpellInfo)* spell, typeof(this) other, uint damage, bool withBonus = true)
+    /// power (Mana Burn's). `modOp` (if any): the spell's modifiers of the damage with the spell power (Fire Power's
+    /// share of the whole: "the damage done by your Fire spells"). Returns the damage dealt.
+    package uint spellDamageToPlayer(const(SpellInfo)* spell, typeof(this) other, uint damage, bool withBonus = true,
+        int modOp = -1)
     {
         if (withBonus)
             damage += spellDamageBonus(spell, spell.casting.school); // spell power, as against a creature
+        if (modOp >= 0)
+            damage = spellMod(cast(SpellModOp) modOp, spell, damage);
         damage = spellDamageFactors(damage, spell.casting.school, creatureTypeHumanoid, other.player.damageMods.taken,
             other.player.damageMods.takenFlat);
         const crit = !(spell.attributesEx2 & spellAttrEx2CantCrit) && uniform01(map.random) * 100 < critChanceOf(spell, other.unit)
-            + (weaponCrit(spell) ? 0 : other.player.fighter.attackerCrit[2]); // (a weapon's has the victim's in it)
+            + (weaponCrit(spell) ? 0 : spellCritTaken(other.player.auras, spell.casting.school)); // (a weapon's has the victim's in it)
         if (crit)
             damage = critDamage(spell, damage);
         const school = spell.casting.school;
@@ -3234,19 +3282,34 @@ private:
         return total > 0 ? cast(uint) total : 0;
     }
 
-    /// A school's damage to a creature (see `spellDamageToPlayer`). Returns the damage dealt.
-    uint spellDamage(const(SpellInfo)* spell, Creature victim, uint damage, uint school, bool withBonus = true)
+    /**
+     * The crit chance more of a spell of `school` at the bearer of `auras` (`MOD_ATTACKER_SPELL_CRIT_CHANCE`, of the
+     * schools of its misc value: Winter's Chill's frost only, "a Frost spell will critically hit").
+     */
+    package static float spellCritTaken(A)(const ref A auras, uint school)
+    {
+        return school < 7 ? auras.totalByMiscMask(AuraType.modAttackerSpellCritChance, 1 << school) : 0;
+    }
+
+    /**
+     * A school's damage to a creature (see `spellDamageToPlayer`). Returns the damage dealt. A persistent area's
+     * tick (`periodic`: Blizzard's, Rain of Fire's) never crits, and sets off what a tick sets off (`tickProcs`).
+     */
+    uint spellDamage(const(SpellInfo)* spell, Creature victim, uint damage, uint school, bool withBonus = true,
+        int modOp = -1, bool periodic = false)
     {
         if (withBonus)
             damage += spellDamageBonus(spell, school);
+        if (modOp >= 0)
+            damage = spellMod(cast(SpellModOp) modOp, spell, damage);
         float victimCrit = 0;
         {
             const victimFighter = victim.fighter;
             damage = spellDamageFactors(damage, school, victimFighter.creatureType, victimFighter.damageTaken,
                 victimFighter.damageTakenFlat);
-            victimCrit = victimFighter.attackerCrit[2]; // Winter's Chill
+            victimCrit = spellCritTaken(victim.auras, school); // Winter's Chill
         }
-        const crit = !(spell.attributesEx2 & spellAttrEx2CantCrit)
+        const crit = !periodic && !(spell.attributesEx2 & spellAttrEx2CantCrit)
             && uniform01(map.random) * 100 < critChanceOf(spell, map.unitOf(victim)) + (weaponCrit(spell) ? 0 : victimCrit);
         if (crit)
             damage = critDamage(spell, damage);
@@ -3266,8 +3329,10 @@ private:
         }
         map.sendToWatchers(this, Opcode.SMSG_SPELLNONMELEEDAMAGELOG, nonMeleeDamageLog(target: victim.guid, attacker: player.guid,
             spell.id, damage, school, 0, resisted, false, 0, crit), true);
-        spellAttacked(victim, damage, false, school);
-        if (victim.alive)
+        spellAttacked(victim, damage, periodic, school, spell);
+        if (victim.alive && periodic)
+            tickProcs(map.unitOf(victim), spell, damage);
+        else if (victim.alive)
             spellHitProcs(spell, map.unitOf(victim), crit, damage);
         return damage;
     }
@@ -3337,6 +3402,36 @@ private:
         spellHitProcs(spell, victim, crit, total, cast(ubyte) type);
     }
 
+    /**
+     * A harmful spell that deals no damage of its own (Counterspell, Polymorph, a curse, a damage over time as it
+     * lands) reached the enemies `landed`: its caster's procs on each (Improved Counterspell's silence, Blackout); a
+     * damaging one's are its hits' (`spellHitProcs`). They proc as on no damage (`ProcHit.damaging`).
+     */
+    private void harmlessHitProcs(const(SpellInfo)* spell, const(ulong)[] landed)
+    {
+        import dmangos.world.procs : ProcEx, ProcHit, spellProcFlags;
+
+        foreach (i; 0 .. 3)
+            switch (spell.effect[i])
+            {
+            case SpellEffect.schoolDamage, SpellEffect.weaponDamage, SpellEffect.weaponDamageNoschool,
+                    SpellEffect.normalizedWeaponDmg, SpellEffect.weaponPercentDamage, SpellEffect.healthLeech,
+                    SpellEffect.powerBurn:
+                return;
+            default:
+                break;
+            }
+        foreach (guid; landed)
+        {
+            if (guid == player.guid)
+                continue;
+            auto victim = map.unit(guid);
+            if (!victim || !victim.alive || !hostileTo(victim))
+                continue;
+            procAuras(spellProcFlags(*spell, false, false), victim, ProcHit(spell, ProcEx.normalHit, 0, 0, false));
+        }
+    }
+
     /// This player's damaging spell (`spell`) hit `victim` for `damage`: its procs and the victim's
     /// (`dmangos.world.procs`, `victimAuraProcs`).
     package void spellHitProcs(const(SpellInfo)* spell, UnitRef victim, bool crit, uint damage, ubyte hand = 0)
@@ -3353,15 +3448,19 @@ private:
     }
 
     /// A creature hit (or missed) by this player's spell, or its aura's tick: it fights back, takes the
-    /// damage, and may die (`dmangos.world.unit.dealDamage`).
-    void spellAttacked(Creature victim, uint damage, bool tick = false, uint school = 0)
+    /// damage, and may die (`dmangos.world.unit.dealDamage`). The threat is less or more by `spell`'s modifiers
+    /// (`SPELLMOD_THREAT`: Shadow Affinity).
+    void spellAttacked(Creature victim, uint damage, bool tick = false, uint school = 0, const(SpellInfo)* spell = null)
     {
         import dmangos.world.unit : Blow, dealDamage;
 
         if (!victim.alive)
             return;
         enterCombatFor(combatLinger);
-        dealDamage(unit, map.unitOf(victim), damage, tick ? Blow.periodic(school) : Blow.spell(school));
+        auto blow = tick ? Blow.periodic(school) : Blow.spell(school);
+        if (spell !is null)
+            blow.threat = spellMod(SpellModOp.threat, spell, 1.0f);
+        dealDamage(unit, map.unitOf(victim), damage, blow);
     }
 
     /// A heal: health back, a crit half again, and the heal log sent.

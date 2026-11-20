@@ -361,7 +361,7 @@ mixin template EffectHandlers()
         tellAround(victim.combatGuid, Opcode.SMSG_SPELLNONMELEEDAMAGELOG, nonMeleeDamageLog(victim.combatGuid,
             player.guid, aura.spell.id, damage, school, absorbed, 0, true, 0, false));
         if (victim.kind == UnitKind.creature)
-            spellAttacked(victim.creature, damage, true, school);
+            spellAttacked(victim.creature, damage, true, school, aura.spell);
         else
             dealDamage(unit, victim, damage, Blow.periodic(school));
         const factor = aura.spell.casting.multipleValue[i] > 0 ? aura.spell.casting.multipleValue[i] : 1.0f;

@@ -46,6 +46,7 @@ struct Blow
     BlowKind kind;
     MeleeDamage melee; /// a swing's outcome, hit flags and damage before blocks
     uint school;       /// a spell's or a tick's school index (a swing's is its own)
+    float threat = 1;  /// its threat's factor by its spell's modifiers (`SPELLMOD_THREAT`)
 
     ///
     static Blow swing(const ref MeleeDamage d)
@@ -518,7 +519,7 @@ private void creatureDamaged(UnitRef attacker, UnitRef victim, uint damage, cons
         if (attacker.kind == UnitKind.player && blow.school < 7)
             if (const p = attacker.session.character)
                 threat = p.damageMods.threat[blow.school];
-        creature.ai.damageTaken(attacker, damage, threat);
+        creature.ai.damageTaken(attacker, damage, threat * blow.threat);
     }
     map.wake(creature.guid);
     if (damage == 0)

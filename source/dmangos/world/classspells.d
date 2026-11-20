@@ -790,6 +790,38 @@ mixin template ClassSpells()
     }
 
     /**
+     * An effect's value after its index's modifiers (`effectMod`), by the class rules. The slows' talents ("reduces the
+     * target's speed by an additional", "increases the speed reduction of your Curse of Exhaustion") are modifiers of
+     * the second effect: the speed of a chill (Chilled's), but the damage of Frostbolt and Cone of Cold (their slows
+     * are their first), and nothing of Curse of Exhaustion (its slow is its only effect). Their amount goes to the
+     * spell's slow, wherever it is, and never to its damage: Permafrost, Improved Curse of Exhaustion, Amplify Curse.
+     */
+    package int classEffectMod(const(SpellInfo)* spell, size_t i, int value)
+    {
+        import dmangos.world.spellmods : affects, SpellModOp;
+
+        static immutable uint[] slowTalents = [11175, 18310, 18288]; // (their first ranks)
+        if (spell.casting.spellFamilyName != SpellFamily.mage && spell.casting.spellFamilyName != SpellFamily.warlock)
+            return value;
+        const slow = spell.casting.applyAuraName[i] == AuraType.modDecreaseSpeed;
+        foreach (aura; player.auras.list)
+        {
+            const first = chainFirstRank(aura.spell.id);
+            if (!slowTalents.canFind(first ? first : aura.spell.id))
+                continue;
+            foreach (k; 0 .. 3)
+                if ((aura.effects & (1 << k)) && aura.misc(k) == SpellModOp.effect2 && affects(aura, k, *spell))
+                {
+                    if (i == 1 && !slow)
+                        value -= aura.amount[k]; // (the modifier of index 1 added it to the damage)
+                    else if (i != 1 && slow)
+                        value += aura.amount[k];
+                }
+        }
+        return value;
+    }
+
+    /**
      * The amounts of an aura of `spell` about to go on (`Aura` creation's class cases): Rip and Rupture take a share
      * of the attack power for each combo point (at most four, and three); Mana Shield half the spell power.
      */
@@ -946,6 +978,28 @@ mixin template ClassSpells()
                         chill = ranked;
         if (chill)
             castCustom(chill, target.combatGuid);
+        arcaneConcentrationTick();
+    }
+
+    /**
+     * Arcane Concentration's override scripts (1388 to 1392, one a rank, their mask Blizzard's): a Blizzard tick that
+     * hits is "a damage spell [that] hits a target" though no spell hit sets off its proc (its ticks are a persistent
+     * area's), so each such tick rolls the rank's chance (2% a rank: the talent's own proc chance) of Clearcasting.
+     */
+    private void arcaneConcentrationTick()
+    {
+        enum uint clearcasting = 12536;
+        foreach (aura; player.auras.list)
+            foreach (i; 0 .. 3)
+                if ((aura.effects & (1 << i)) && aura.type(i) == AuraType.overrideClassScripts)
+                {
+                    const script = cast(int) aura.misc(i);
+                    if (script >= 1388 && script <= 1392 && uniform01(map.random) * 100 < aura.spell.casting.procChance)
+                    {
+                        castCustom(clearcasting, player.guid);
+                        return;
+                    }
+                }
     }
 
     /// The crit chance a class rule adds to `spell` against `target`: Shatter's against a frozen one.
