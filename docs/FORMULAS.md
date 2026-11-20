@@ -467,3 +467,74 @@ data had it, quoting the tooltip:
 
 - Barkskin (22812): "Physical damage taken is reduced by 20%" and "melee combat is slowed by 25%". Its data has only
   the pushback immunity and the second longer casts.
+
+## The melee attack table
+
+**What:** the chances of one swing or weapon ability (combat.d `missChance`, `dodgeChance`, `parryChance`,
+`blockChance`, `glanceChance`, `glanceAmount`, `critChance`, `crushChance`, `rollMeleeOutcome`): one roll through
+miss, dodge, parry, block, glance, crit, crush, hit.
+
+**Sources:** Blizzard's statements of 2019 on Classic (forum thread "Bug: Hit Tables", posts 12 and 32; "Bug: Berserker
+Stance", post 8), as Magey's wiki quotes them (github.com/magey/classic-warrior/wiki/Attack-table, commit f385839), and
+the measurements on that page (Classic Era 1.13, tens of thousands of white swings per row), which agree with Beaza's
+1.x formulas (wowwiki "Miss", oldid 347982; "Dodge", 347957; "Block", 349026; "Critical strike", 349108; "Weapon skill",
+349241). Blizzard:
+
+- "Creatures at your level have a **5%** chance to Dodge your attacks. Each additional level the target has over the
+  player grants them **0.5%** additional chance to dodge."
+- "Creatures that are 3 levels above the player have a **14%** Parry chance."
+- "Players have an **8%** chance to miss a creature that is 3 levels above them."
+- "Critical Strike chance is reduced by **1%** per each additional level the target has over the player."
+- "the **first 1%** of +hit gained from talents or gear to be **ignored** against monsters with more than **10**
+  Defense Skill above the attacking player's Weapon Skill ... the so-called 'hit cap' is in effect **9%**".
+- "Modifiers to Critical Strike chance are reduced against enemies 3 levels higher than the player-character. There is
+  a single modifier placed on total Critical Strike gained from auras".
+
+**Rule** (gap = the victim's defense less the attacker's weapon skill; a creature's defense and skill are five a
+level; "capped" skill is at most five times the attacker's level):
+
+- **Miss:** against a creature 5% + 0.1% a point of gap, 0.2% a point past 10 (8% at 15); past 10 the attacker's hit
+  loses `(gap − 10) × 0.2`% (the first 1% at 15); below level 10 the creature is missed its level in tenths as often.
+  Against a player 5% + 0.04% a point. Dual wield +19% (measured: "the dual-wield miss penalty in Classic is indeed a
+  flat 19%"). Never below 0.
+- **Dodge:** a creature's 5% + 0.1% a point of gap (6.5% three levels above; 6% with +5 skill, measured 6.04%), a
+  player's own + 0.04% a point.
+- **Parry:** a creature's by the capped skill: 5% + 0.1% a point, 0.6% a point past 10 (14% at 15). Measured: 13.97%
+  at +3, and 13.49% with +5 weapon skill (where a parry by the weapon skill would be 6%). A player's own + 0.04%.
+- **Block:** a creature's at most its 5% ("mobs cannot block more than 5% of attacks regardless of rating
+  difference"; measured 4.94% at +3), less 0.1% a point of skill above its defense; a player's own + 0.04%.
+- **Glance:** 10% + 2% a point of the victim's defense over the capped skill (40% at +3, measured 40.36%); glancing
+  damage 1.3 − 0.05·gap (at most 0.91) to 1.2 − 0.03·gap (0.2 to 0.99) by the uncapped skill (35% less at +3, 15% with
+  +5 skill: measured 35.12% and 14.82%). Unchanged.
+- **Crit:** against a creature by the capped skill: 0.2% less a point of gap (1% a level), 0.04% more a point under;
+  three or more levels above, 1.8% less of the crit auras give (talents, buffs, gear's crit; not agility), at most what
+  they give (measured: "~4.84% average suppression ... the suppression to aura crit is likely ~1.8%"; with 1% aura crit
+  it was all suppressed). Against a player 0.04% a point.
+
+**What changed (2026-11-20):** a creature three levels above was missed 9% (CMaNGOS's 0.2% + 0.4% a point past
+10), and at least 1% whatever the hit: now 8%, and 0% at 9% hit. A creature's parry went by the weapon skill: +5 skill
+cut a +3 creature's parry from 14% to 6%; now 14%. A creature's dodge moved 0.04% a point when the skill was above its
+defense, now 0.1%; its block did not fall with skill above, now 0.1% a point. Crit against creatures went by the
+uncapped weapon skill, and no crit from auras was suppressed. Creatures below level 10 were missed 5%.
+
+**Unchanged, with no source:** crushing blows, `(skill − capped defense) × 2 − 15`% from a gap of 15 (15% from a
+level 63 at 300 defense): no Blizzard statement and no Classic Era measurement was found (the warcraft.wiki.gg page
+gives only the post-3.0 rule, its talk page's pre-3.0 posts disagree whether defense above the cap counts; a 2024
+Blizzard forum thread has only players' claims). Casters' glancing (their chance from `min(level, 30)%`, their damage
+0.6 to 0.9): Magey's page says only that "non-melee formula [is] slightly different". Creatures below level 10 block
+less (Beaza) by no stated amount. A creature's own 5% crit, dodge, parry and block (creature.d `fighter`) agree with
+Blizzard's 5% at the same level and the community's 440 defense to be uncrittable by a boss (5% + 15 × 0.04%).
+
+**Second opinion (CMaNGOS-classic, compared afterwards):** `CalculateEffectiveMissChance` the 9% and 1% minimum;
+`CalculateEffectiveParryChance` and `CalculateEffectiveBlockChance` by the weapon skill, block not falling;
+`CalculateEffectiveCritChance` by the weapon skill against creatures (its own comment: "weapon skill does not benefit
+crit% vs NPCs", the code the reverse), no aura-crit suppression.
+
+## Ranged attacks: no dodge
+
+**Source: the 1.12.1 tooltips** (Spell.dbc): Dodge (81) "Gives a chance to dodge enemy melee attacks", Parry (3127)
+"Gives a chance to parry enemy melee attacks", Block (107) "Gives a chance to block enemy melee and ranged attacks";
+and patch 5.0.4 (Warcraft Wiki "Dodge", oldid 6594641): "Ranged attacks can now be dodged". **Rule:** a ranged attack
+(Auto Shot, a wand) and a ranged ability are never dodged nor parried; they may be blocked from the front. **What
+changed:** an Auto Shot could be dodged (`rollMeleeOutcome` asked no attack type) while Aimed Shot could not.
+CMaNGOS-classic: `CanDodgeAbility` melee abilities only, `CanDodgeInCombat` for swings and shots alike, as dmangos had.

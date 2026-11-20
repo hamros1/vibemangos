@@ -103,6 +103,7 @@ struct Fighter
     float[2][3] damage = 0;    /// by attack type: minimum, maximum (`UNIT_FIELD_MINDAMAGE`, ...)
     uint[3] damageSchool;      /// by attack type: the school index (0: physical)
     float crit = 0;            /// its crit chance: a player's from agility; a creature's 5
+    float auraCrit = 0;        /// the part of `crit` its auras give (talents, buffs, gear's crit), not its agility
     float hitBonus = 0;        /// percent less often missed (`MOD_HIT_CHANCE` auras)
     bool dualWield;            /// it has an off-hand weapon to attack with
     float[3] damageDone = 1;   /// by attack type: what its auras multiply its blows by (`MOD_DAMAGE_PERCENT_DONE`)
@@ -531,68 +532,92 @@ private float clamp100(float chance) pure nothrow @nogc @safe
     return chance < 0 ? 0 : chance > 100 ? 100 : chance;
 }
 
-/// The chance to miss: 5%, more for dual wielding and better defense, less for skill.
+/**
+ * The defense of `victim` over the weapon skill of `attacker` (negative: the skill is higher): what the chances of
+ * the attack table move by.
+ */
+private int skillGap(const Fighter attacker, const Fighter victim, AttackType type) pure nothrow @nogc @safe
+{
+    return int(defenseSkillValue(victim, attacker)) - int(weaponSkillValue(attacker, type, victim));
+}
+
+/// ditto, the attacker's skill at most five a level (`min(level * 5, skill)`): what parries, glances and crits go by.
+private int cappedSkillGap(const Fighter attacker, const Fighter victim, AttackType type) pure nothrow @nogc @safe
+{
+    const cap = skillMaxForLevel(attacker, victim);
+    const skill = weaponSkillValue(attacker, type, victim);
+    return int(defenseSkillValue(victim, attacker)) - int(skill < cap ? skill : cap);
+}
+
+/// Whether `victim` is a creature to the attack table: a monster, not a player nor a player's pet.
+private bool isMob(const Fighter victim) pure nothrow @nogc @safe
+{
+    return !victim.playerControlled;
+}
+
+/**
+ * The chance to miss (docs/FORMULAS.md, "The melee attack table"). Against a player, 5% and 0.04% a point of
+ * defense over skill. Against a creature, 5% and 0.1% a point, 0.2% a point past 10; past 10 the first
+ * `(gap - 10) * 0.2`% of the attacker's hit counts for nothing (8% at a 15-point gap, so the hit cap is 9%); against
+ * one below level 10, its level in tenths of that. Dual wielding adds 19%.
+ */
 float missChance(const Fighter attacker, const Fighter victim, AttackType type) pure nothrow @nogc @safe
 {
-    float chance = 5; // totems aside, everyone is missed 5% of the time
+    const gap = skillGap(attacker, victim, type);
+    float chance = 5, hit = attacker.hitBonus;
+    if (isMob(victim))
+    {
+        chance += gap * (gap > 10 ? 0.2f : 0.1f);
+        if (gap > 10) // hit suppression: "the first 1% of +hit ... ignored" at a gap of 15
+        {
+            const suppressed = (gap - 10) * 0.2f;
+            hit = hit > suppressed ? hit - suppressed : 0;
+        }
+        if (victim.level < 10)
+            chance *= victim.level / 10.0f;
+    }
+    else
+        chance += gap * 0.04f;
     if (type != AttackType.ranged && attacker.dualWield)
         chance += 19;
-    int difference = int(defenseSkillValue(victim, attacker)) - int(weaponSkillValue(attacker, type, victim));
-    float factor = 0.04f;
-    if (!victim.playerControlled && difference > 0)
-    {
-        if (difference > 10)
-        {
-            chance += 10 * 0.1f;
-            difference -= 10;
-            factor = 0.4f;
-            chance += difference * 0.2f;
-        }
-        else
-            factor = 0.1f;
-    }
-    chance += difference * factor;
-    chance -= attacker.hitBonus;
+    chance -= hit;
     chance -= victim.attackerHit[type == AttackType.ranged ? 1 : 0]; // Heightened Senses: less often hit
-    const minimum = difference > 10 ? 1.0f : 0.0f;
-    return chance < minimum ? minimum : chance > 100 ? 100 : chance;
+    return clamp100(chance);
 }
 
-/// The chance the victim dodges.
+/// The chance the victim dodges: its own, and 0.1% a point of defense over skill for a creature, 0.04% for a player.
 float dodgeChance(const Fighter victim, const Fighter attacker, AttackType type) pure nothrow @nogc @safe
 {
-    float chance = victim.dodge;
-    if (chance < 0.005f)
+    if (victim.dodge < 0.005f)
         return 0;
-    const difference = int(defenseSkillValue(victim, attacker)) - int(weaponSkillValue(attacker, type, victim));
-    const factor = !victim.playerControlled && difference > 0 ? 0.1f : 0.04f;
-    return clamp100(chance + difference * factor);
+    return clamp100(victim.dodge + skillGap(attacker, victim, type) * (isMob(victim) ? 0.1f : 0.04f));
 }
 
-/// The chance the victim parries.
+/**
+ * The chance the victim parries (never a ranged attack). A creature's goes by the attacker's skill at most five a
+ * level: 0.1% a point, 0.6% a point past 10 (14% three levels above, whatever the weapon skill); a player's 0.04%
+ * a point.
+ */
 float parryChance(const Fighter victim, const Fighter attacker, AttackType type) pure nothrow @nogc @safe
 {
-    if (type == AttackType.ranged)
+    if (type == AttackType.ranged || victim.parry < 0.005f)
         return 0;
-    float chance = victim.parry;
-    if (chance < 0.005f)
-        return 0;
-    const difference = int(defenseSkillValue(victim, attacker)) - int(weaponSkillValue(attacker, type, victim));
-    float factor = 0.04f;
-    if (!victim.playerControlled && difference > 0)
-        factor = difference > 10 ? 0.6f : 0.1f;
-    return clamp100(chance + difference * factor);
+    if (!isMob(victim))
+        return clamp100(victim.parry + skillGap(attacker, victim, type) * 0.04f);
+    const gap = cappedSkillGap(attacker, victim, type);
+    return clamp100(victim.parry + gap * (gap > 10 ? 0.6f : 0.1f));
 }
 
-/// The chance the victim blocks.
+/// The chance the victim blocks: a creature's never above its own (0.1% less a point of skill over its defense), a
+/// player's 0.04% a point of defense over skill.
 float blockChance(const Fighter victim, const Fighter attacker, AttackType type) pure nothrow @nogc @safe
 {
-    float chance = victim.block;
-    if (chance < 0.005f)
+    if (victim.block < 0.005f)
         return 0;
-    const difference = int(defenseSkillValue(victim, attacker)) - int(weaponSkillValue(attacker, type, victim));
-    const factor = !victim.playerControlled && difference > 0 ? 0.0f : 0.04f;
-    return clamp100(chance + difference * factor);
+    const gap = skillGap(attacker, victim, type);
+    if (isMob(victim))
+        return clamp100(victim.block + (gap < 0 ? gap * 0.1f : 0));
+    return clamp100(victim.block + gap * 0.04f);
 }
 
 /// The chance of a crushing blow: 15% and 2% a point when the weapon beats the capped defense by 15.
@@ -606,15 +631,11 @@ float crushChance(const Fighter attacker, const Fighter victim, AttackType type)
     return deficit >= 15 ? clamp100(2 * deficit - 15) : 0;
 }
 
-/// The chance of a glancing blow: from 10% up with the victim's defense over the capped skill.
+/// The chance of a glancing blow: 10%, and 2% a point of defense over the capped skill.
 float glanceChance(const Fighter attacker, const Fighter victim, AttackType type) pure nothrow @nogc @safe
 {
-    const cap = skillMaxForLevel(attacker);
-    auto skill = weaponSkillValue(attacker, type, victim);
-    if (skill > cap)
-        skill = cap;
     const level = int(levelFor(attacker, victim));
-    const difference = int(defenseSkillValue(victim, attacker)) - int(skill);
+    const difference = cappedSkillGap(attacker, victim, type);
     float chance;
     if (attacker.player && isWandUser(attacker.classId))
         chance = (level < 30 ? level : 30) + difference * 2;
@@ -623,16 +644,28 @@ float glanceChance(const Fighter attacker, const Fighter victim, AttackType type
     return clamp100(chance);
 }
 
-/// The chance of a critical hit: against creatures, 1% less for each level above the attacker.
+/// The crit from auras a creature three levels above the attacker takes away (`Fighter.auraCrit`, at most this).
+enum float auraCritSuppression = 1.8f;
+
+/**
+ * The chance of a critical hit. Against a creature, by the attacker's skill at most five a level: 0.2% less a point
+ * of defense over it (1% a level), 0.04% more a point under; and one three or more levels above takes away up to
+ * 1.8% of the crit the attacker's auras give (talents, buffs, gear's crit). Against a player, 0.04% a point.
+ */
 float critChance(const Fighter attacker, const Fighter victim, AttackType type) pure nothrow @nogc @safe
 {
     float chance = attacker.crit;
     if (chance < 0.005f)
         return 0;
-    const vsPlayer = victim.playerControlled;
-    const skill = !vsPlayer ? weaponSkillValue(attacker, type, victim) : skillMaxForLevel(attacker, victim);
-    const difference = int(skill) - int(defenseSkillValue(victim, attacker));
-    chance += difference * (vsPlayer ? 0.04f : 0.2f);
+    if (isMob(victim))
+    {
+        const gap = cappedSkillGap(attacker, victim, type);
+        chance -= gap * (gap > 0 ? 0.2f : 0.04f);
+        if (levelFor(victim, attacker) >= levelFor(attacker, victim) + 3)
+            chance -= attacker.auraCrit < auraCritSuppression ? attacker.auraCrit : auraCritSuppression;
+    }
+    else
+        chance -= skillGap(attacker, victim, type) * 0.04f;
     chance += victim.attackerCrit[type == AttackType.ranged ? 1 : 0]; // Sleight of Hand: crit less often
     return clamp100(chance);
 }
@@ -707,7 +740,8 @@ MeleeHitOutcome rollMeleeOutcome(const Fighter attacker, const Fighter victim, A
         chance[5] = 10_000; // a player sitting down is always hit critically
     else
     {
-        if (canDodge(victim, attacker))
+        // Dodge and Parry: "a chance to dodge enemy melee attacks"; Block: "melee and ranged attacks" (1.12 tooltips).
+        if (type != AttackType.ranged && canDodge(victim, attacker))
             chance[1] = hundredths(dodgeChance(victim, attacker, type));
         if (canParry(victim, attacker))
             chance[2] = hundredths(parryChance(victim, attacker, type));
@@ -1000,10 +1034,33 @@ unittest
     // Three levels above: 15 points of defense over the skill.
     wolf.level = 13;
     const miss = missChance(player, wolf, AttackType.mainHand);
-    assert(miss > 5 + 1 + 1 + 1.99f && miss < 5 + 1 + 1 + 2.01f, "1% for the first 10 points, then 0.6% a point");
+    assert(miss > 7.99f && miss < 8.01f, "Blizzard: 8% against a creature three levels above");
     const crit = critChance(player, wolf, AttackType.mainHand);
     assert(crit > 1.99f && crit < 2.01f, "crit 1% less per level against creatures");
     assert(glanceChance(player, wolf, AttackType.mainHand) == 40);
+    const parry = parryChance(wolf, player, AttackType.mainHand);
+    assert(parry > 13.99f && parry < 14.01f, "Blizzard: 14% parry three levels above");
+    const dodge = dodgeChance(wolf, player, AttackType.mainHand);
+    assert(dodge > 6.49f && dodge < 6.51f, "Blizzard: 6.5% dodge three levels above");
+    // The first 1% of hit counts for nothing at a gap of 15 (the hit cap is 9%), none at 10 or less.
+    player.hitBonus = 3;
+    const hitMiss = missChance(player, wolf, AttackType.mainHand);
+    assert(hitMiss > 5.99f && hitMiss < 6.01f, "8% less 3% hit, of which 1% suppressed");
+    player.hitBonus = 9;
+    assert(missChance(player, wolf, AttackType.mainHand) == 0, "the hit cap: 9%");
+    player.weaponSkill[0] = player.weaponSkillMax[0] = 55; // +5 skill: a 10-point gap
+    player.hitBonus = 0;
+    const skilled = missChance(player, wolf, AttackType.mainHand);
+    assert(skilled > 5.99f && skilled < 6.01f, "+5 skill: 6%");
+    assert(parryChance(wolf, player, AttackType.mainHand) > 13.99f, "parry by the capped skill: still 14%");
+    player.weaponSkill[0] = player.weaponSkillMax[0] = 50;
+    // Crit from auras: up to 1.8% of it is taken away three levels above.
+    player.crit = 8;
+    player.auraCrit = 3;
+    const auraCrit = critChance(player, wolf, AttackType.mainHand);
+    assert(auraCrit > 3.19f && auraCrit < 3.21f, "8 - 3 - 1.8");
+    player.crit = 5;
+    player.auraCrit = 0;
 
     // The table, in order: a low roll misses; one past miss, dodge and parry is a block; past everything, a hit.
     wolf.level = 10;
