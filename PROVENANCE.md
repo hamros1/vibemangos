@@ -666,8 +666,8 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Also: `Aura::HandleAuraTransform` and `Unit::RestoreDisplayId` (a player's), `Unit::Heartbeat` and
   `WorldObject::GetHeartbeatDuration` (`Aura::OnHeartbeat`), `Aura::OnPeriodicTickEnd`, `SpellAuraHolder` removal
   (`AURA_REMOVE_BY_EXPIRE`), `Aura::PeriodicTick`'s `SPELL_AURA_PERIODIC_MANA_LEECH` from a creature
-* Not from an emulator: `SPELLMOD_CHARGES` on a cast's aura (Improved Shield Block's tooltip), the health a
-  `MOD_INCREASE_HEALTH` aura grants and takes back (Last Stand's tooltip), one shapeshift aura at a time (a stance
+* Not from an emulator: `SPELLMOD_CHARGES` on a cast's aura (Improved Shield Block's tooltip), the health Last
+  Stand's `MOD_INCREASE_HEALTH` aura grants and takes back (its tooltip), one shapeshift aura at a time (a stance
   ends the one before), a finisher's aura amounts by its combo points, Improved Sprint's purge
 * Also: a `SpellAuraHolder` per target with only the effects at it (`Spell::DoSpellHitOnUnit`)
 

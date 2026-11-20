@@ -705,11 +705,13 @@ private:
             player.setStandState(1);
             send(ServerStandStateUpdate(1));
         }
-        // The health an aura grants (`MOD_INCREASE_HEALTH`: Last Stand's "grants you 30% of your maximum hit
+        // The health Last Stand's aura grants (12976, `MOD_INCREASE_HEALTH`: "grants you 30% of your maximum hit
         // points... After the effect expires, the hit points are lost"): the health itself, not only its maximum.
+        enum uint lastStandHealth = 12976;
         int granted;
         foreach (i; 0 .. 3)
-            if ((aura.effects & (1 << i)) && aura.type(i) == AuraType.modIncreaseHealth && map !is null)
+            if ((aura.effects & (1 << i)) && aura.type(i) == AuraType.modIncreaseHealth && map !is null
+                    && aura.spell.id == lastStandHealth)
                 granted += aura.amount[i];
         const healthBefore = cast(int) player.values.get!UNIT_FIELD_HEALTH;
         if (stats)

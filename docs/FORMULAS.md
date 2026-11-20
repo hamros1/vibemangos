@@ -53,7 +53,7 @@ pipeline; each tested in world/realclass_warrior_rogue_hunter.d). **Source: the 
   damage done and taken auras a swing takes (Enrage's 25% more, Hemorrhage's 7 more).
 - **Stances:** a stance ends the one before; changing stance loses the rage but what Tactical Mastery keeps ("You
   retain up to 25 of your rage points": 5 for each rank, its override script numbers 831 to 835 being ranks 1 to 5).
-- **Last Stand:** 30% of the maximum health, granted as health too, and taken back when it ends ("temporarily grants
+- **Last Stand:** 30% of the maximum health, granted as health too (its aura only, 12976), and taken back when it ends ("temporarily grants
   you 30% of your maximum hit points... After the effect expires, the hit points are lost").
 - **Deep Wounds:** the share of the weapon's average damage over the bleed's 12 seconds, split over its ticks (12721:
   every 3 seconds, 4 ticks).
