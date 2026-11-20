@@ -434,6 +434,7 @@ mixin template CharacterLogin()
         spells.spells = player.spells.map!(id => InitialSpell(cast(ushort) id)).array;
         spells.cooldowns = initialCooldowns();
         send(spells);
+        sendAllSpellMods(); // the talents' modifiers, as the client adds them to its spells
         send(ServerActionButtons(player.actionButtons));
         deliver(Opcode.SMSG_INITIALIZE_FACTIONS, initialReputations());
         send(ServerLoginSetTimeSpeed(gameTimeBits()));

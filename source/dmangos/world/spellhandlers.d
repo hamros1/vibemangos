@@ -301,6 +301,15 @@ private:
         return SpellCastResult.ok;
     }
 
+    /// The server stops the shooting: the client is told (`SMSG_CANCEL_AUTO_REPEAT`), or its button stays lit.
+    package void stopAutoRepeat()
+    {
+        if (autoRepeat is null)
+            return;
+        autoRepeat = null;
+        deliver(Opcode.SMSG_CANCEL_AUTO_REPEAT, null);
+    }
+
     /// The client stops shooting.
     @Handles(Opcode.CMSG_CANCEL_AUTO_REPEAT_SPELL, WorldState.inWorld)
     void handleCancelAutoRepeat()
@@ -325,10 +334,7 @@ private:
         if (player.movement.flags & moving)
         {
             if (autoRepeat.casting.channelInterruptFlags & movingCancels)
-            {
-                autoRepeat = null;
-                return;
-            }
+                return stopAutoRepeat();
             autoRepeatWindUp = true;
             return;
         }
@@ -344,17 +350,13 @@ private:
             return;
         const target = player.values.get!UNIT_FIELD_TARGET;
         if (!target)
-        {
-            autoRepeat = null;
-            return;
-        }
+            return stopAutoRepeat();
         auto targets = SpellTargets(TargetFlags.unit, target);
         const result = checkCast(autoRepeat, targets, false, 0, false);
         if (result != SpellCastResult.ok)
         {
             deliver(Opcode.SMSG_CAST_RESULT, castResultPacket(autoRepeat.id, result, autoRepeat));
-            autoRepeat = null;
-            return;
+            return stopAutoRepeat();
         }
         const spell = autoRepeat;
         if (!hasAmmoFor(spell))
@@ -1042,14 +1044,9 @@ private:
             // The item the spell needs worn (a fishing pole, a ranged weapon to shoot).
             if (spell.equippedItemClass >= 0 && !hasItemFitToSpell(spell))
                 return SpellCastResult.equippedItemClass;
-            // A spell for some stances (or forms) only in one of them.
-            enum uint allowWhileNotShapeshifted = 0x00080000; // SPELL_ATTR_EX2_ALLOW_WHILE_NOT_SHAPESHIFTED
-            enum SpellCastResult onlyShapeshift = cast(SpellCastResult) 0x56;
-            const form = player.values.getByte!UNIT_FIELD_BYTES_1(2);
-            if (form == 0 && spell.stances && !(spell.attributesEx2 & allowWhileNotShapeshifted))
-                return onlyShapeshift;
-            if (form != 0 && spell.stances && !(spell.stances & (1u << (form - 1))))
-                return onlyShapeshift;
+            const attributeResult = checkCastAttributes(spell, targets);
+            if (attributeResult != SpellCastResult.ok)
+                return attributeResult;
         }
         if (start && !triggered)
         {
@@ -1086,6 +1083,82 @@ private:
             if (!hasAmmoFor(spell))
                 return SpellCastResult.noAmmo;
         }
+        return SpellCastResult.ok;
+    }
+
+    /**
+     * What a spell's attributes ask of the caster and its target as the cast starts (CMaNGOS's `Spell::CheckCast`
+     * and `GetErrorAtShapeshiftedCast`): its form, outdoors, stealth, a weapon in the main hand; behind the
+     * target (Backstab), facing it, a target out of combat (Sap).
+     */
+    SpellCastResult checkCastAttributes(const(SpellInfo)* spell, const ref SpellTargets targets)
+    {
+        import dmangos.world.clientdata : actsAsShapeshifted;
+        import dmangos.world.combat : hasInArc;
+        import dmangos.world.defines : equipmentSlotMainhand;
+        import dmangos.world.player : PlayerFlags;
+
+        enum : uint
+        {
+            isAbility = 0x10, onlyOutdoors = 0x8000, notShapeshift = 0x10000, onlyStealthed = 0x20000,
+            doNotSheath = 0x40000, cancelsAutoAttack = 0x100000,                       // Attributes
+            initiatesCombat = 0x200, onlyPeacefulTargets = 0x100,                      // AttributesEx
+            allowWhileNotShapeshifted = 0x00080000, initiateCombatPostCast = 0x100000, // AttributesEx2
+            requiresMainHand = 0x400,                                                  // AttributesEx3
+        }
+        // Its form: a stance (or Stealth, Shadowform) is cast as unshifted; Cat or Bear Form are not.
+        const form = player.values.getByte!UNIT_FIELD_BYTES_1(2);
+        const formMask = form ? 1u << (form - 1) : 0;
+        if (formMask & spell.casting.stancesNot)
+            return SpellCastResult.notShapeshift;
+        if (!(formMask & spell.stances))
+        {
+            if (actsAsShapeshifted(context.client, form))
+            {
+                if (spell.attributes & notShapeshift)
+                    return SpellCastResult.notShapeshift;
+                if (spell.stances)
+                    return SpellCastResult.onlyShapeshift;
+            }
+            else if (spell.stances && !(spell.attributesEx2 & allowWhileNotShapeshifted))
+                return SpellCastResult.onlyShapeshift;
+        }
+        if ((spell.attributes & onlyOutdoors) && !player.hasFlag(PlayerFlags.gm))
+            if (auto terrain = map.collision)
+                if (terrain.hasVmaps)
+                {
+                    const p = player.position;
+                    if (!terrain.isOutdoors(p.x, p.y, p.z + 2.0f))
+                        return SpellCastResult.onlyOutdoors;
+                }
+        if ((spell.attributes & onlyStealthed) && !player.auras.hasType(AuraType.modStealth))
+            return SpellCastResult.onlyStealthed;
+        if (spell.casting.attributesEx3 & requiresMainHand)
+        {
+            const weapon = player.inventory.equipped(equipmentSlotMainhand);
+            if (weapon is null || weapon.proto.itemClass != 2 || weapon.durability == 0 && weapon.maxDurability
+                    || (player.values.get!UNIT_FIELD_FLAGS & UnitFlags.disarmed))
+                return SpellCastResult.equippedItemClassMainhand;
+        }
+        // Its target: where it stands to the caster, and whether it fights.
+        if (targets.unit == 0 || targets.unit == player.guid)
+            return SpellCastResult.ok;
+        auto other = map.unit(targets.unit);
+        if (!other)
+            return SpellCastResult.ok;
+        const me = player.position, it = other.fighter.position;
+        enum ulong pounce = 0x20000;
+        enum uint familyDruid = 7;
+        if ((spell.attributesEx & initiatesCombat) && (spell.attributesEx2 & initiateCombatPostCast)
+                && !(spell.casting.spellFamilyName == familyDruid && (spell.casting.spellFamilyFlags & pounce)))
+            if (hasInArc(it, me) || !hasInArc(me, it)) // seen by it, or not facing it: not at its back
+                return SpellCastResult.notBehind;
+        if (spell.attributes == (isAbility | notShapeshift | doNotSheath | cancelsAutoAttack) && !hasInArc(me, it))
+            return SpellCastResult.notInfront; // Gouge
+        if ((spell.id in context.data.spellFacing) && !hasInArc(me, it))
+            return SpellCastResult.unitNotInfront;
+        if ((spell.attributesEx & onlyPeacefulTargets) && (other.unitFlags & UnitFlags.inCombat))
+            return SpellCastResult.targetAffectingCombat; // Sap, Distract
         return SpellCastResult.ok;
     }
 
@@ -1328,6 +1401,7 @@ private:
             return result;
         }
         const now = context.clock();
+        int paid; // the power it cost: most of it back for each target it missed (`DISCOUNT_POWER_ON_MISS`)
         if (!c.triggered)
         {
             // The cooldowns start: the item's, else the spell's; one that starts on an event (Presence of Mind,
@@ -1345,6 +1419,7 @@ private:
             if (c.castItemEntry == 0)
             {
                 const cost = costOf(*spell);
+                paid = cost;
                 if (cost > 0)
                 {
                     player.modifyPower(cast(Power) spell.casting.powerType, -cost);
@@ -1468,6 +1543,21 @@ private:
                     if (creature.alive && creature.ai !is null)
                         creature.ai.spellHitBy(player.guid, spell.id, 1u << spell.casting.school, map);
         spendChargedMods(spell, chargedAtStart, c.triggered);
+        // A rage or energy ability that missed, was dodged or parried costs a fifth (CMaNGOS's `Spell::finish`).
+        enum uint discountPowerOnMiss = 0x08000000; // SPELL_ATTR_EX_DISCOUNT_POWER_ON_MISS
+        if ((spell.attributesEx & discountPowerOnMiss) && paid > 0)
+            foreach (r; results)
+                if (r.miss == SpellMissInfo.miss || r.miss == SpellMissInfo.dodge || r.miss == SpellMissInfo.parry
+                        || r.miss == SpellMissInfo.deflect)
+                    player.modifyPower(cast(Power) spell.casting.powerType, cast(int)(paid * 0.8f));
+        // What stops the caster's own attack (Gouge, Sap, Blind, Polymorph, Scatter Shot): its swings, its shots.
+        enum uint cancelsAutoAttack = 0x00100000; // SPELL_ATTR_CANCELS_AUTO_ATTACK_COMBAT
+        if (spell.attributes & cancelsAutoAttack)
+        {
+            if (spell.casting.dmgClass == DamageClass.ranged)
+                stopAutoRepeat();
+            stopAttack(false);
+        }
         if (castCombo)
         {
             bool missedEnemy;
@@ -2178,7 +2268,7 @@ private:
         import dmangos.world.corpse : Corpse;
         import dmangos.world.player : DeathState;
 
-        enum uint noResurrectTimer = 0x00100000; // SPELL_ATTR_EX3_NO_RES_TIMER
+        enum uint noResurrectTimer = 0x00000010; // SPELL_ATTR_EX3_NO_RES_TIMER
         ulong owner = target;
         if (c.targets.corpse)
             if (auto corpse = cast(Corpse) map.findObject(c.targets.corpse))
@@ -4184,4 +4274,38 @@ unittest
     assert(!mage.session.inWorld.spellIsReady(12043), "three minutes from the aura's end");
     now += 11.seconds;
     assert(mage.session.inWorld.spellIsReady(12043));
+}
+
+/// A talent's modifier tells the client its new total for each bit of its mask (`SMSG_SET_PCT_SPELL_MODIFIER`).
+unittest
+{
+    import dmangos.auth.accounts : AccountLevel;
+    import dmangos.world.auras : makeAura;
+    import dmangos.world.movement : Position;
+    import dmangos.world.opcodes : Opcode;
+    import dmangos.world.spells : SpellInfo;
+    import dmangos.world.spellmods : SpellModOp;
+    import dmangos.world.testclient;
+    import dmangos.world.testdata;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto talent = SpellInfo(29103);
+    talent.effect[0] = SpellEffect.applyAura;
+    talent.casting.applyAuraName[0] = AuraType.addPctModifier;
+    talent.miscValue[0] = SpellModOp.cost;
+    talent.itemType[0] = 0x5; // bits 0 and 2
+    context.data.spells.spells[29103] = talent;
+
+    auto mage = loggedIn(context, db, 7, "Jaina", Position(-8949.95f, -132.49f, 83.53f), AccountLevel.player);
+    mage.read();
+    auto session = mage.session.inWorld;
+    session.addAura(makeAura((29103 in context.data.spells.spells), 7, 10, -1, true, [-10, 0, 0]));
+    ubyte[][] mods;
+    foreach (p; mage.read())
+        if (p.opcode == Opcode.SMSG_SET_PCT_SPELL_MODIFIER)
+            mods ~= p.body_.dup;
+    assert(mods.length == 2, "one for each bit of its mask");
+    assert(mods[0][0] == 0 && mods[0][1] == SpellModOp.cost && *cast(int*) &mods[0][2] == -10);
+    assert(mods[1][0] == 2);
 }
