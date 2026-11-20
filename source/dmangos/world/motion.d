@@ -42,6 +42,7 @@ enum MotionType : uint
     path = 3,
     linearWaypoint = 4,
     point = 8,
+    distract = 11, /// standing, distracted (Distract)
     follow = 14,  /// after a linked leader (`dmangos.world.creaturelinking`)
 }
 
@@ -574,6 +575,42 @@ final class PointMovement : MovementGenerator
 }
 
 /**
+ * Distracted (Distract): standing where it was stopped, facing what distracted it, for a while; then
+ * what it did before goes on from where it stands (CMaNGOS's `DistractMovementGenerator`).
+ */
+final class DistractMovement : MovementGenerator
+{
+    private int left;                // ms it stands yet
+    package MovementGenerator after; // what it goes back to
+
+    ///
+    this(int ms, MovementGenerator after)
+    {
+        left = ms;
+        this.after = after;
+    }
+
+    override @property MotionType type() const
+    {
+        return MotionType.distract;
+    }
+
+    override void update(Creature creature, MotionWorld world, int diff)
+    {
+        if ((left -= diff) > 0)
+            return;
+        creature.generator = after is null ? new IdleMovement : after;
+        creature.generator.initialize(creature, world);
+    }
+
+    /// Milliseconds it stands yet.
+    @property int remaining() const
+    {
+        return left;
+    }
+}
+
+/**
  * Following a leader (a linked creature): it keeps `distance` yards from it at `angle` from the
  * leader's facing, as their spawns stood, walking after it when it moves (running to catch up when
  * far behind). If the leader is gone it stands.
@@ -664,7 +701,7 @@ MovementGenerator selectMovement(const Creature creature, const WaypointStore wa
 /// The next spline id (`splineCounter`): one counter for every unit on the server, whichever thread moves it.
 private shared uint splineCounter = 1;
 
-private uint nextSplineId() @safe nothrow @nogc
+package uint nextSplineId() @safe nothrow @nogc
 {
     import core.atomic : atomicOp;
 

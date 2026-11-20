@@ -3077,6 +3077,8 @@ final class WorldContext : GroupDirectory, IdCounters, SessionHandler, CreatureL
             return;
         if (unixTime < trap.trapReadyAt || trap.lootState != GoLootState.ready)
             return;
+        if (trap.owner)
+            return; // a hunter's: its owner's spell, sprung on its owner's enemies (`Character.updateTraps`)
         const spell = cast(uint) trap.template_.data[3];
         if (spell == 0)
             return;
