@@ -393,9 +393,31 @@ final class SpellData
         buildLearnSkills();
         buildChains(client, chainRows);
         buildLearnSpells(client, learnRows);
+        spreadAffectMasks();
     }
 
 private:
+    /**
+     * `spell_affect` names a talent's first rank only; its higher ranks affect the same spells (CMaNGOS's
+     * `LoadSpellAffects`, `doForHighRanks`): Fire Power rank 2 (12378) has no `EffectItemType` of its own.
+     */
+    void spreadAffectMasks()
+    {
+        foreach (id; ascending(chains.keys.dup))
+        {
+            const first = chains[id].first;
+            if (first == id)
+                continue;
+            const firstSpell = first in spells;
+            auto spell = spells.edit(id);
+            if (firstSpell is null || spell is null)
+                continue;
+            foreach (i; 0 .. 3)
+                if (firstSpell.casting.affectMask[i] && !spell.casting.affectMask[i])
+                    spell.casting.affectMask[i] = firstSpell.casting.affectMask[i];
+        }
+    }
+
     /// Spells with a SPELL_EFFECT_SKILL effect teach that skill.
     void buildLearnSkills()
     {
@@ -652,4 +674,20 @@ unittest
     assert(data.nextInChain(100) == [101]);
     assert(data.learnsSpell(100, 200) && data.learnedWith(300) == [SpellLearnSpellNode(301, true, false)]);
     assert(data.learnedSkill(200).skill == 98 && data.learnedSkill(200).step == 1);
+}
+
+/// `spell_affect` names a talent's first rank; its higher ranks affect the same spells.
+unittest
+{
+    auto data = new SpellData;
+    // Fire Power as the world database has it: rank 1 (11124) with `spell_affect` (11124, 0, 0x8C20017); rank 2
+    // (12378) with neither an `EffectItemType1` nor a row of its own.
+    foreach (id; [11124, 12378])
+        data.spells[id] = SpellInfo(id);
+    data.spells.edit(11124).casting.affectMask[0] = 0x8C20017;
+    auto client = new ClientData;
+    client.buildIndexes();
+    data.build(client, [SpellChainRow(11124, 0, 11124, 1, 0), SpellChainRow(12378, 11124, 11124, 2, 0)], null);
+    assert(data.spell(12378).casting.affectMask[0] == 0x8C20017, "rank 2 affects Fireball as rank 1 does");
+    assert(data.spell(12378).casting.affectMask[1] == 0);
 }
