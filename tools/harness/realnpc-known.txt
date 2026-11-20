@@ -512,7 +512,6 @@
 25112: Summon Voidwalker: not done: summonPet (effect 0: no creature 1860)
 25155: Quest - Self Healing from resurrect: not done: energize (effect 1: no power 0 to the caster)
 25163: Oozeling's Disgusting Aura: not done: applyAreaAuraPet (effect 0: aura modResistance: not on the caster); not done: applyAreaAuraPet (effect 1: aura modSkill: not on the caster)
-25174: Sundering Cleave: aura modResistance: not on the player (effect 1)
 25198: Poison Cloud: not done: persistentAreaAura (effect 0: no area, nothing on the player)
 25201: Anachronos Quest Credit DND: not done: questComplete (effect 0)
 25304: Frostbolt: refused: noPower
@@ -670,7 +669,6 @@
 28443: Transform Ghost: aura transform: on the caster, its look unchanged (effect 0)
 28450: Arcane Explosion: aura modStun: on the caster, its unit flag not set (effect 0)
 28478: Frostbolt: aura modDecreaseSpeed: not on the player (effect 1)
-28479: Frostbolt: aura modDecreaseSpeed: not on the player (effect 1)
 28522: Icebolt: aura modStun: not on the player (effect 0); aura periodicTriggerSpell: not on the player (effect 2)
 28533: Transform: aura transform: on the caster, its look unchanged (effect 0)
 28547: Chill: not done: persistentAreaAura (effect 0: no area, nothing on the player); not done: persistentAreaAura (effect 1: no area, nothing on the player)
