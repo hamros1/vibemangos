@@ -210,6 +210,7 @@ mixin template SessionScripting()
             return scriptSpell is null || effect > 2 ? 0
                 : effectValue(*scriptSpell, effect, player.data.level, uniform01(map.random));
         }
+        ActionResult hostCastHighestRank(EntityRef who, uint firstRank, bool resetCooldown) { return this.outer.hostCastHighestRank(who, firstRank, resetCooldown); }
         int hostAffectingAuraTotal(EntityRef who, ubyte auraType) { return scriptSpell is null ? 0 : this.outer.affectingAuraTotal(who, scriptSpell, auraType); }
         int hostSpellPower(EntityRef who) { return scriptSpell is null || who.guid != player.guid ? 0 : cast(int) spellDamageBonus(scriptSpell, scriptSpell.casting.school); }
         // Eastern Kingdoms scripts:

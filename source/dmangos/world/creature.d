@@ -1017,7 +1017,12 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
         corpseTimer = decay * 1000;
         respawnAt = now + respawnDelay;
         foreach (aura; auras.list.dup) // every aura goes on death
+        {
             auras.remove(aura, values);
+            if (auto combat = cast(CombatWorld) world) // its caster hears of it (a Soul Shard from Drain Soul)
+                if (auto caster = combat.unit(aura.caster))
+                    caster.auraEndedOn(this, aura);
+        }
         values.set!UNIT_NPC_FLAGS(0u);
         stopMoving(this, world);
         generator = new IdleMovement;

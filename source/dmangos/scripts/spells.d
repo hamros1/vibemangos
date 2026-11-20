@@ -75,6 +75,30 @@ struct Preparation
     }
 }
 
+/// Vanish (`spell_vanish`): as it is cast, the rogue stealths at once, by the highest Stealth it knows (its
+/// cooldown ended for it).
+@spell("spell_vanish")
+struct Vanish
+{
+    enum uint stealth = 1784;
+
+    void on(ref SpellContext it, const ref SpellCast e)
+    {
+        it.castHighestRank(e.caster, stealth);
+    }
+}
+
+/// Improved Sap (`spell_improved_sap`): the Sap done, the rogue may stealth again at once.
+@spell("spell_improved_sap")
+struct ImprovedSap
+{
+    void on(ref SpellContext it, const ref EffectHit e)
+    {
+        it.consume();
+        it.castHighestRank(e.caster, Vanish.stealth);
+    }
+}
+
 /// Hate to Zero (a creature's spell): the target's threat on the caster is gone; it fights on with
 /// whoever has the most now.
 @spell("spell_hate_to_zero")

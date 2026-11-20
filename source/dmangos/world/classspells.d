@@ -6,20 +6,27 @@
  * effect (`classDummyEffect`), after the effects (`classAfterEffects`), an aura's amounts and its coming and going
  * (`classAuraValues`, `classAuraChanged`), and the procs (`classProcTrigger`, `classDummyProc`, `classScriptProc`).
  *
+ * Auras replace each other as CMaNGOS's stacking rules have it for class spells: one aura of an exclusive kind from
+ * each caster (a seal, a blessing, a paladin aura, an aspect, a sting, a curse, a mage armor: `exclusiveKind`), and a
+ * helpful spell's higher rank over its lower one.
+ *
  * By class:
  * $(UL
  * $(LI Warrior: Revenge and Overpower after a dodge, a parry or a block (the aura states and reactive timers),
  *   Bloodthirst's attack power damage and its healing aura, Deep Wounds' bleed of the weapon's damage.)
- * $(LI Paladin: one seal at a time and Judgement's aura state while it lasts, Seal of Righteousness' holy damage
+ * $(LI Paladin: Judgement's aura state while a seal lasts, Seal of the Crusader's slower damage, Seal of Righteousness' holy damage
  *   by the weapon's speed, Judgement of Command (half unless stunned), Holy Shock (a heal or a blast), Holy Light
  *   and Flash of Light (their heals), Judgement of Light and of Wisdom (the striker healed or given mana),
  *   Forbearance, Hammer of Wrath under a fifth of health, Illumination's mana back, Blessing of Light.)
- * $(LI Warlock: Conflagrate (needs and consumes Immolate), Nightfall's Shadow Trance, Curse of Doom not at players.)
+ * $(LI Warlock: Conflagrate (needs and consumes Immolate), Nightfall's Shadow Trance, Curse of Doom not at players,
+ *   Drain Soul's and Shadowburn's Soul Shard.)
  * $(LI Mage: Cold Snap, Ignite, Combustion, Master of Elements, Shatter against frozen targets, Mana Shield's bonus.)
- * $(LI Rogue: Rupture's attack power, Ambush's bonus, Ruthlessness' and Seal Fate's points after the move.)
+ * $(LI Rogue: Rupture's attack power, Ambush's bonus, Ruthlessness' and Seal Fate's points after the move; Vanish's
+ *   Stealth (a script's call: `hostCastHighestRank`).)
  * $(LI Priest: Weakened Soul, Holy Nova's heal, Vampiric Embrace, Blessed Recovery, Touch of Weakness.)
  * $(LI Druid: Ferocious Bite's extra energy, Rip's attack power, Swiftmend, Enrage, Frenzied Regeneration.)
- * $(LI Shaman: Lightning Shield's ranks, Flametongue (weapon and totem) by the weapon's speed, Healing Way.)
+ * $(LI Shaman: Lightning Shield's ranks, Flametongue (weapon and totem) by the weapon's speed, Healing Way,
+ *   Stormstrike's charges, Windfury's extra attacks.)
  * $(LI Hunter: Counterattack after a parry, Mongoose Bite after a dodge, Wyvern Sting's poison as it wakes.)
  * )
  */
@@ -78,6 +85,72 @@ bool ofFamily(const(SpellInfo)* spell, SpellFamily family, ulong mask = 0) pure 
 bool isSeal(const(SpellInfo)* spell) pure nothrow @nogc @safe
 {
     return ofFamily(spell, SpellFamily.paladin, 0x000000000A000200);
+}
+
+/**
+ * The kinds of aura of which a unit has one from each caster (CMaNGOS's `GetSpellSpecific`, `SPELL_SEAL` and the
+ * rest): a new one puts out the other.
+ */
+enum ExclusiveKind : ubyte
+{
+    none,
+    seal,
+    blessing,
+    paladinAura,
+    aspect,
+    sting,
+    curse,
+    mageArmor,
+}
+
+/// The exclusive kind of `spell`'s aura.
+ExclusiveKind exclusiveKind(const(SpellInfo)* spell) pure nothrow @safe
+{
+    import dmangos.world.spellids : SpellEffect;
+
+    enum uint dispelCurse = 2, dispelPoison = 4;
+    switch (spell.casting.spellFamilyName)
+    {
+    case SpellFamily.paladin:
+        if (isSeal(spell))
+            return ExclusiveKind.seal;
+        if (spell.casting.spellFamilyFlags & 0x10000000)
+            return ExclusiveKind.blessing;
+        if (spell.hasEffect(SpellEffect.applyAreaAuraParty))
+            return ExclusiveKind.paladinAura;
+        return ExclusiveKind.none;
+    case SpellFamily.hunter:
+        if (spell.casting.dispel == dispelPoison)
+            return ExclusiveKind.sting;
+        enum uint aspectOfTheWildIcon = 266;
+        if ((spell.casting.spellFamilyFlags & 0x380000) || spell.casting.spellIconId == aspectOfTheWildIcon)
+            return ExclusiveKind.aspect;
+        return ExclusiveKind.none;
+    case SpellFamily.warlock:
+        return spell.casting.dispel == dispelCurse ? ExclusiveKind.curse : ExclusiveKind.none;
+    case SpellFamily.mage:
+        return spell.casting.spellFamilyFlags & 0x12080000 ? ExclusiveKind.mageArmor : ExclusiveKind.none;
+    case SpellFamily.generic:
+        enum uint aspectOfTheBeastIcon = 1510; // (the data leaves it out of the hunter's family)
+        return spell.casting.spellIconId == aspectOfTheBeastIcon && spell.casting.name.length > 6
+            && spell.casting.name[0 .. 6] == "Aspect" ? ExclusiveKind.aspect : ExclusiveKind.none;
+    default:
+        return ExclusiveKind.none;
+    }
+}
+
+/**
+ * The share of its main hand's damage a paladin keeps under Seal of the Crusader (`spell_seal_of_the_crusader`): its
+ * attack speed is quicker by the seal's second amount, its damage less by as much, so its damage a second stays.
+ */
+float crusaderDamageFactor(A)(const(A)[] auras)
+{
+    float factor = 1;
+    foreach (aura; auras)
+        if (ofFamily(aura.spell, SpellFamily.paladin, 0x200) && isSeal(aura.spell) && (aura.effects & 0b10)
+                && aura.amount[1] > -100)
+            factor *= 100.0f / (100 + aura.amount[1]);
+    return factor;
 }
 
 /// The spell of `table` for `rank` (a rank of a talent or spell, as CMaNGOS lists them); 0 if none.
@@ -757,31 +830,88 @@ mixin template ClassSpells()
     }
 
     /**
-     * An aura on this player begins (`apply`) or ends: a seal puts out any other seal of the player's and lets it
-     * judge (`AURA_STATE_JUDGEMENT`) while one lasts.
+     * An aura on this player begins (`apply`) or ends: the auras it replaces go (`replacedBy`); a seal lets it judge
+     * (`AURA_STATE_JUDGEMENT`) while one lasts.
      */
     package void classAuraChanged(Aura aura, bool apply)
     {
+        if (apply)
+            foreach (other; replacedBy(player.auras, aura))
+                removeAura(other);
         if (!isSeal(aura.spell) || aura.caster != player.guid)
             return;
         if (apply)
-        {
-            foreach (other; player.auras.list.dup)
-                if (other !is aura && isSeal(other.spell) && other.caster == player.guid)
-                    removeAura(other);
             modifyAuraState(AuraState.judgement, true);
-        }
         else if (!player.auras.list.canFind!(a => a !is aura && isSeal(a.spell)))
             modifyAuraState(AuraState.judgement, false);
     }
 
-    /// This player's aura on `target` ended: Wyvern Sting's sleep leaves its poison.
+    /// An aura of this player's went on `target`: the auras it replaces there go (a sting, a curse).
+    package void classCreatureAuraApplied(Creature target, Aura aura)
+    {
+        foreach (other; replacedBy(target.auras, aura))
+            takeAuraFrom(map.unitOf(target), other);
+    }
+
+    /**
+     * The auras of `set` that `aura`, just on, replaces (CMaNGOS's stacking rules for class spells): another of its
+     * exclusive kind from its caster (a seal, a blessing, an aspect, a sting, a curse...), and another rank of a
+     * helpful spell (Power Word: Fortitude over a lower one, whoever cast it).
+     */
+    private Aura[] replacedBy(ref AuraSet set, Aura aura)
+    {
+        if (aura.passive)
+            return null;
+        const kind = exclusiveKind(aura.spell);
+        const first = chainFirstRank(aura.spell.id);
+        Aura[] replaced;
+        foreach (other; set.list)
+        {
+            if (other is aura || other.passive)
+                continue;
+            if (kind != ExclusiveKind.none && exclusiveKind(other.spell) == kind && other.caster == aura.caster)
+                replaced ~= other;
+            else if (aura.positive && other.positive && other.spell.id != aura.spell.id && first
+                    && chainFirstRank(other.spell.id) == first)
+                replaced ~= other;
+        }
+        return replaced;
+    }
+
+    /// The first rank of `id`'s chain (itself if it is the first); 0 if it is in none.
+    private uint chainFirstRank(uint id)
+    {
+        if (const node = id in context.data.spells.chains)
+            return node.first ? node.first : id;
+        return 0;
+    }
+
+    /**
+     * This player's aura on `target` ended: Wyvern Sting's sleep leaves its poison; a Drain Soul or Shadowburn on a
+     * creature that died of it gives its item (a Soul Shard: `HandleChannelDeathItem`), if it was worth experience.
+     */
     package void classCreatureAuraLost(Creature target, Aura aura)
     {
-        if (!target.alive || !ofFamily(aura.spell, SpellFamily.hunter, 0x10000) || !aura.has(AuraType.modStun))
+        if (!target.alive)
+        {
+            foreach (i; 0 .. 3)
+                if ((aura.effects & (1 << i)) && aura.type(i) == AuraType.channelDeathItem && aura.spell.itemType[i]
+                        && givesExperience(target))
+                    scriptGiveItem(aura.spell.itemType[i], 1);
+            return;
+        }
+        if (!ofFamily(aura.spell, SpellFamily.hunter, 0x10000) || !aura.has(AuraType.modStun))
             return;
         if (const poison = rankSpell(wyvernStingPoison, aura.spell.id))
             castCustom(poison, target.guid);
+    }
+
+    /// Whether killing `creature` is worth experience to this player (not grey: `isHonorOrXPTarget`).
+    private bool givesExperience(Creature creature)
+    {
+        import dmangos.world.experience : grayLevel;
+
+        return creature.values.get!UNIT_FIELD_LEVEL > grayLevel(player.data.level);
     }
 
     /// The factor of a weapon ability's fixed bonus instead of its weapon percentage (`EffectWeaponDmg`): Ambush's.
@@ -1066,6 +1196,7 @@ mixin template ClassSpells()
         if (set is null || !victim.fighter.alive)
             return;
         ProcCast[] casts;
+        Aura[] spent;
         enum uint vampiricEmbrace = 15286, vampiricHeal = 15290;
         foreach (aura; set.list)
         {
@@ -1080,7 +1211,13 @@ mixin template ClassSpells()
             if (aura.spell.id == vampiricEmbrace && aura.caster == player.guid && hit.spell !is null
                     && hit.spell.casting.school == 5 && hit.damage)
                 casts ~= ProcCast(vampiricHeal, player.guid, CustomValues.first(cast(int)(hit.damage * aura.amount[0] / 100)));
+            // Stormstrike: its nature damage taken lasts its charges (`spell_proc_event`: nature).
+            if (ofFamily(aura.spell, SpellFamily.shaman) && aura.spell.casting.spellIconId == 302 && aura.charges
+                    && hit.spell !is null && hit.spell.casting.school == 3 && hit.damage && --aura.charges == 0)
+                spent ~= aura;
         }
+        foreach (aura; spent)
+            takeAuraFrom(victim, aura);
         foreach (c; casts)
             castCustom(c.spell, c.target, c.custom);
     }
@@ -1118,6 +1255,30 @@ mixin template ClassSpells()
         player.modifyPower(cast(Power) power, value - hostPower(who, power));
         flushPlayerChanges();
         return ActionResult.ok;
+    }
+
+    /// `CastHighestStealthRank` and the like: the highest rank this player knows of the chain of `firstRank`, cast at
+    /// itself (its cooldown ended first, if asked).
+    ActionResult hostCastHighestRank(EntityRef who, uint firstRank, bool resetCooldown)
+    {
+        if (who.guid != player.guid)
+            return ActionResult.notAllowed;
+        uint best;
+        ubyte bestRank;
+        foreach (id; player.spells)
+        {
+            const node = id in context.data.spells.chains;
+            if ((id == firstRank || (node !is null && node.first == firstRank)) && (node is null ? 1 : node.rank) >= bestRank)
+            {
+                best = id;
+                bestRank = node is null ? 1 : node.rank;
+            }
+        }
+        if (!best)
+            return ActionResult.failed;
+        if (resetCooldown && !spellIsReady(best))
+            clearCooldownFor(best);
+        return castCustom(best, player.guid) == SpellCastResult.ok ? ActionResult.ok : ActionResult.notAllowed;
     }
 
     uint hostResetCooldowns(EntityRef who, uint family, uint schoolMask, uint except)

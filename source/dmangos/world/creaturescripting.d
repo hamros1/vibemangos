@@ -381,6 +381,7 @@ mixin template CreatureScripting()
         }
         int hostAffectingAuraTotal(EntityRef, ubyte) { return 0; }
         int hostSpellPower(EntityRef) { return 0; }
+        ActionResult hostCastHighestRank(EntityRef, uint, bool) { return ActionResult.failed; }
     }
 
     private CastHost castHost_;

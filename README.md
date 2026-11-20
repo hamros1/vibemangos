@@ -609,8 +609,9 @@ What works now:
     active one (Searing Totem) casts its spell at the nearest enemy in range. Their kills are their
     owner's. Dispels (Dispel Magic, Cleanse, Remove Curse, Purge) take random auras of their type:
     harmful magic off friends, helpful magic off enemies. Creatures are slowed and sped up by their
-    auras, and stand still while rooted or stunned. Not yet: procs on a creature's own auras (beside
-    Judgement of Light, of Wisdom and Vampiric Embrace), spell stacking groups beside the seals.
+    auras, and stand still while rooted or stunned. A seal, a blessing, an aspect, a sting, a curse puts out its
+    caster's other one, and a buff's higher rank its lower. Not yet: procs on a creature's own auras (beside
+    Judgement of Light, of Wisdom, Vampiric Embrace and Stormstrike), the stacking rules of other spells.
   * **Quests:** quest givers (`creature_questrelation`, `creature_involvedrelation`) show what they have for the player
     (the exclamation and question marks), list their quests in their gossip (or open the only one),
     and give them as `quest_template` says who may take them (class, race, level, skill, condition,

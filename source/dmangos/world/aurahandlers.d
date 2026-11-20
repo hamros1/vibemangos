@@ -112,7 +112,9 @@ private:
                 return;
             auto aura = makeAura(spell, player.guid, player.data.level, ms, false, values);
             bool isNew;
-            creature.auras.apply(aura, creature.values, isNew);
+            auto applied = creature.auras.apply(aura, creature.values, isNew);
+            if (isNew)
+                classCreatureAuraApplied(creature, applied); // the sting or curse it replaces
             map.flushObjectChanges(creature);
             foreach (j; 0 .. 3)
                 if (auraEffect(spell.effect[j]))

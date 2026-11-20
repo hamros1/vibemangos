@@ -827,3 +827,124 @@ unittest
     assert(a.player.values.get!UNIT_FIELD_HEALTH == 100 + 66, "44 healed by 19968, a crit");
     assert(a.player.values.get!UNIT_FIELD_POWER1(Power.mana) == 500 - 35 + 35, "Holy Light's mana back");
 }
+
+/**
+ * What replaces what: a hunter has one aspect, a warlock one curse on a target, and a higher rank of a buff replaces
+ * the lower; a Drain Soul on a creature that dies of it gives a Soul Shard.
+ */
+unittest
+{
+    auto a = new Arena(PlayerClass.hunter);
+    foreach (id, flags; [13165u: 0x100000UL, 5118u: 0x200000UL])
+    {
+        auto aspect = a.spell(id, SpellEffect.applyAura, ImplicitTarget.caster);
+        a.auraEffect(aspect, 0, AuraType.dummy, ImplicitTarget.caster);
+        aspect.casting.spellFamilyName = 9;
+        aspect.casting.spellFamilyFlags = flags;
+        aspect.casting.durationIndex = 4;
+    }
+    a.cast_(13165);
+    a.tick(1600);
+    a.cast_(5118);
+    assert(a.hasAura(5118) && !a.hasAura(13165), "one aspect at a time");
+
+    // Power Word: Fortitude, ranks 1 and 2: the second replaces the first.
+    foreach (id; [1243u, 1244u])
+    {
+        auto fortitude = a.spell(id, SpellEffect.applyAura, ImplicitTarget.friend);
+        a.auraEffect(fortitude, 0, AuraType.modStat, ImplicitTarget.friend, 3, 2);
+        fortitude.casting.durationIndex = 4;
+    }
+    a.context.data.spells.chains[1243] = imported!"dmangos.world.spells".SpellChainNode(0, 1243, 1, 0);
+    a.context.data.spells.chains[1244] = imported!"dmangos.world.spells".SpellChainNode(1243, 1243, 2, 0);
+    a.cast_(1243);
+    a.tick(1600);
+    a.cast_(1244);
+    assert(a.hasAura(1244) && !a.hasAura(1243), "the higher rank replaces the lower");
+
+    // Curses: one of the warlock's on its target.
+    foreach (id; [702u, 980u])
+    {
+        auto curse = a.spell(id, SpellEffect.applyAura, ImplicitTarget.enemy);
+        a.auraEffect(curse, 0, AuraType.periodicDamage, ImplicitTarget.enemy, 1);
+        curse.casting.spellFamilyName = 5;
+        curse.casting.dispel = 2;
+        curse.casting.durationIndex = 1;
+        curse.casting.amplitude[0] = 2000;
+    }
+    foreach (attempt; 0 .. 30)
+    {
+        a.tick(1600);
+        a.cast_(702, a.foe.guid);
+        if (a.hasAura(a.foe, 702))
+            break;
+    }
+    foreach (attempt; 0 .. 30)
+    {
+        a.tick(1600);
+        a.cast_(980, a.foe.guid);
+        if (a.hasAura(a.foe, 980))
+            break;
+    }
+    assert(a.hasAura(a.foe, 980) && !a.hasAura(a.foe, 702), "one curse from each warlock");
+
+    // Drain Soul: the creature dies of it, a Soul Shard.
+    auto drain = a.spell(1120, SpellEffect.applyAura, ImplicitTarget.enemy);
+    a.auraEffect(drain, 0, AuraType.channelDeathItem, ImplicitTarget.enemy);
+    drain.itemType[0] = itemJerky; // (an item the test world has)
+    drain.casting.durationIndex = 1;
+    a.foe.values.set!UNIT_FIELD_LEVEL(60u);
+    foreach (attempt; 0 .. 30)
+    {
+        a.tick(1600);
+        a.cast_(1120, a.foe.guid);
+        if (a.hasAura(a.foe, 1120))
+            break;
+    }
+    const before = a.player.inventory.count(itemJerky);
+    dealDamage(a.me.unit, a.map.unitOf(a.foe), 20_000, Blow.spell());
+    assert(!a.foe.alive && a.player.inventory.count(itemJerky) == before + 1, "a shard");
+}
+
+/// Vanish (`spell_vanish`): the rogue stealths at once by the highest Stealth it knows, its cooldown ended.
+unittest
+{
+    auto a = new Arena(PlayerClass.rogue);
+    foreach (id; [1784u, 1785u])
+    {
+        auto stealth = a.spell(id, SpellEffect.applyAura, ImplicitTarget.caster);
+        a.auraEffect(stealth, 0, AuraType.modStealth, ImplicitTarget.caster, id == 1784 ? 5 : 10);
+        stealth.casting.durationIndex = 4;
+        stealth.recoveryTime = 10_000;
+    }
+    a.context.data.spells.chains[1784] = imported!"dmangos.world.spells".SpellChainNode(0, 1784, 1, 0);
+    a.context.data.spells.chains[1785] = imported!"dmangos.world.spells".SpellChainNode(1784, 1784, 2, 0);
+    a.player.spells ~= [1784u, 1785u];
+    a.spell(1856, SpellEffect.dummy, ImplicitTarget.caster);
+    a.context.data.spellScriptNames[1856] = "spell_vanish";
+    a.cast_(1785);
+    a.me.removeAura(a.player.auras.find(1785));
+    assert(!a.me.spellIsReady(1785));
+    a.tick(1600);
+    a.cast_(1856);
+    assert(a.hasAura(1785) && !a.hasAura(1784), "stealthed by rank 2");
+}
+
+/// Seal of the Crusader: its quicker swings are as much less: the damage a second stays.
+unittest
+{
+    import dmangos.world.classspells : crusaderDamageFactor;
+    import std.math : isClose;
+
+    auto a = new Arena(PlayerClass.paladin);
+    auto seal = a.spell(20162, SpellEffect.applyAura, ImplicitTarget.caster);
+    a.auraEffect(seal, 0, AuraType.modAttackPower, ImplicitTarget.caster, 50);
+    a.auraEffect(seal, 1, AuraType.modAttackSpeed, ImplicitTarget.caster, 40);
+    a.auraEffect(seal, 2, AuraType.dummy, ImplicitTarget.caster, 20188);
+    seal.casting.spellFamilyName = 10;
+    seal.casting.spellFamilyFlags = 0x200;
+    seal.casting.durationIndex = 1;
+    a.cast_(20162);
+    assert(isClose(crusaderDamageFactor(a.player.auras.list), 100.0f / 140), "40% quicker, 1/1.4 the damage");
+    assert(isClose(a.player.damageMods.swing[0], 100.0f / 140));
+}

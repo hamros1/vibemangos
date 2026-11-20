@@ -354,7 +354,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Projects: CMaNGOS
 * Files: `Spells/Scripts/Scripting/ClassScripts/Warlock.cpp`, `Warrior.cpp`, `Rogue.cpp`
 * Functions/ScriptNames: `spell_life_tap`, `spell_warrior_execute`, `spell_warrior_execute_damage`, `spell_preparation`,
-  `spell_curse_of_agony`, `spell_hate_to_zero`
+  `spell_vanish`, `spell_improved_sap`, `CastHighestStealthRank`, `spell_curse_of_agony`, `spell_hate_to_zero`
 
 ## scripts/stonetalon.d
 
@@ -707,10 +707,11 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
   `Unit::HandleDummyAuraProc` (Seal of Righteousness, Ignite, Combustion, Master of Elements, Vampiric Embrace),
   `Unit::HandleProcTriggerSpellAuraProc` (Deep Wounds, Lightning Shield, Illumination, Blessed Recovery, Ruthlessness,
   Seal Fate), `Unit::HandleOverrideClassScriptAuraProc` (Nightfall), `Unit::ProcDamageAndSpell` (the reactive states),
-  `Unit::UpdateReactives`, `Unit::ClearAllReactives`, `Player::RemoveSomeCooldown`
+  `Unit::UpdateReactives`, `Unit::ClearAllReactives`, `Player::RemoveSomeCooldown`, `SpellMgr::GetSpellSpecific`,
+  `SpellStacker::IsStackableAuraEffect` (a helpful spell's ranks), `Aura::HandleChannelDeathItem`
 * Functions/ScriptNames: `spell_judgement`, `spell_judgement_of_command`, `spell_judgement_of_light_intermediate`,
   `spell_judgement_of_wisdom_intermediate`, `spell_swiftmend`, `spell_curse_of_doom`, `spell_power_infusion`,
-  `spell_shatter_mage`, `spell_blessing_of_light`, `spell_healing_way`
+  `spell_shatter_mage`, `spell_blessing_of_light`, `spell_healing_way`, `spell_seal_of_the_crusader`
 * Constants: `IsSealSpell`, `REACTIVE_TIMER_START`, `SPELL_ATTR_EX_DRAIN_ALL_POWER`, `TRIGGERED_IGNORE_HIT_CALCULATION`
 
 ## world/classspelltests.d

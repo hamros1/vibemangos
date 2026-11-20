@@ -1401,6 +1401,7 @@ interface SpellHost
     int hostEffectValue(ubyte effect);
     int hostAffectingAuraTotal(EntityRef who, ubyte auraType);
     int hostSpellPower(EntityRef who);
+    ActionResult hostCastHighestRank(EntityRef who, uint firstRank, bool resetCooldown);
 }
 
 /// `Powers`, as scripts use them.
@@ -1505,6 +1506,13 @@ struct SpellContext
      * mask has it: Improved Life Tap's dummy).
      */
     int affectingAuraTotal(EntityRef who, ubyte auraType) { return host.hostAffectingAuraTotal(who, auraType); }
+
+    /// `who` casts the highest rank it knows of the chain of `firstRank` at itself (its cooldown ended first, if
+    /// `resetCooldown`): Vanish's Stealth.
+    ActionResult castHighestRank(EntityRef who, uint firstRank, bool resetCooldown = true)
+    {
+        return host.hostCastHighestRank(who, firstRank, resetCooldown);
+    }
 
     /// What `who`'s spell power adds to the spell (`SpellDamageBonusDone`, by its cast time).
     int spellPower(EntityRef who) { return host.hostSpellPower(who); }

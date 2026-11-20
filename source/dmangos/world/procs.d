@@ -195,6 +195,7 @@ mixin template ProcHandlers()
         uint spell;
         ulong target;
         CustomValues custom;
+        const(SpellInfo)* by; /// the aura that procced it (`m_triggeredByAuraSpell`)
     }
 
     private MonoTime[uint] procReadyAt; // an aura's spell -> when it may proc again (`spell_proc_event.Cooldown`)
@@ -246,9 +247,12 @@ mixin template ProcHandlers()
         foreach (r; rolled)
         {
             bool procced;
+            const before = casts.length;
             foreach (i; 0 .. 3)
                 if (r.effects & (1 << i))
                     procced |= procEffect(r.aura, i, hit, other, casts);
+            foreach (ref c; casts[before .. $])
+                c.by = r.aura.spell;
             if (!procced)
                 continue;
             if (r.event !is null && r.event.cooldown)
@@ -261,7 +265,12 @@ mixin template ProcHandlers()
                 removeAura(aura);
         foreach (c; casts)
             if (const spell = context.data.spells.spell(c.spell))
+            {
+                procAuraSpell = c.by;
+                scope (exit)
+                    procAuraSpell = null;
                 castCustom(spell, SpellTargets(TargetFlags.unit, c.target ? c.target : player.guid), c.custom);
+            }
     }
 
     /// What effect `i` of an aura that procced does; true if it did anything (then a charge goes).
