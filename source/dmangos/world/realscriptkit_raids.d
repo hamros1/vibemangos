@@ -711,6 +711,20 @@ final class Scene
         return questState(quest) == QuestState.incomplete || questState(quest) == QuestState.complete;
     }
 
+    /// The first character on `quest` (as if taken from its giver), and with it `complete` if asked (its objectives done).
+    void giveQuest(uint quest, bool complete = false)
+    {
+        import dmangos.world.quests : QuestState;
+
+        auto me = heroes[0].session.inWorld;
+        const q = w.context.data.quests.quest(quest);
+        assert(q !is null, format!"no quest %s"(quest));
+        me.addQuest(*q);
+        if (complete)
+            me.player.questStatus[quest].status = QuestState.complete;
+        listen();
+    }
+
     /// Kills every creature within `range` of the first character fighting it or `ward` (an escort's ambushers).
     size_t killAttackers(Creature ward, float range = 60)
     {
