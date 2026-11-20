@@ -26,11 +26,18 @@ enum : uint
 struct Deadmines
 {
     enum Signals : uint { cannonFired = 1 }
+    enum : int { sayAlarm1 = -1036000, sayAlarm2 = -1036001 }
+    /// The guards of the Iron Clad Door (the world database's spawns): two run to it when it is blown, one walks.
+    enum : uint { guardFast1 = 3600148, guardFast2 = 3600149, guardSlow = 3600150 }
 
     bool[3] guardianDead;              /// Rhahk'Zor, Sneed, Gilnid
     bool ironCladOpen;
     @transient EntityRef[4] doors;     /// as they load (their guids are their spawns')
     @transient EntityRef smite;        /// Mr. Smite, once loaded
+    @transient EntityRef[3] guards;    /// the door's guards, once loaded
+
+    enum Step : ubyte { blowDoor, secondAlarm }
+    Schedule!Step steps;
 
     private static immutable uint[3] guardians = [rhahkZor, sneed, gilnid];
     private static immutable uint[4] doorEntries = [factoryDoor, mastRoomDoor, foundryDoor, ironCladDoor];
@@ -50,6 +57,9 @@ struct Deadmines
     {
         if (e.creature.entry == mrSmite)
             smite = e.creature;
+        foreach (i, spawn; [guardFast1, guardFast2, guardSlow])
+            if ((e.creature.guid & 0xFF_FFFF) == spawn)
+                guards[i] = e.creature;
     }
 
     void on(ref InstanceContext copy, const ref CreatureDied e)
@@ -69,11 +79,33 @@ struct Deadmines
         if (e.id == Signals.cannonFired && !ironCladOpen)
         {
             ironCladOpen = true;
+            // The door goes half a second on, with the cannon's shot.
+            steps.after(Step.blowDoor, 500.msecs);
+        }
+    }
+
+    void on(ref InstanceContext copy, Step step)
+    {
+        final switch (step)
+        {
+        case Step.blowDoor:
             copy.log("the cannon blew the Iron Clad Door open");
             if (doors[3])
                 copy.door(doors[3], true);
             if (smite)
-                copy.signal(smite, MrSmite.Signals.alarm);
+                copy.say(smite, sayAlarm1); // "You there! Check out that noise."
+            // Its guards come to see: two at a run, one walking.
+            Location at;
+            if (doors[3] && copy.locationOf(doors[3], at))
+                foreach (i, guard; guards)
+                    if (guard && copy.alive(guard))
+                        copy.moveTo(guard, at, 0, i < 2);
+            steps.after(Step.secondAlarm, 15.seconds);
+            break;
+        case Step.secondAlarm:
+            if (smite)
+                copy.say(smite, sayAlarm2); // "We're under attack! A vast, ye swabs! Repel the invaders!"
+            break;
         }
     }
 
@@ -84,39 +116,68 @@ struct Deadmines
 }
 
 /**
- * Mr. Smite: slams his foe; at two thirds and one third of his health he stuns everyone near with a
- * stomp, kneels to take up new weapons (two axes, then a great hammer), and fights on.
+ * Mr. Smite (as ScriptDev2 has him, from sniffs): Nimble Reflexes on him until his first stomp. Below two thirds of his
+ * health he stomps (Smite Stomp: everyone near stunned), runs to his chest, kneels, and takes up two axes (Thrash on
+ * him while he wields them); below one third he stomps again and takes up his great hammer (Smite's Hammer), and
+ * slams his foe (Smite Slam) every eleven seconds.
  */
 @creature("boss_mr_smite")
 struct MrSmite
 {
-    enum Signals : uint { alarm = 1 }
-    enum : int { sayAlarm = -1036001, sayPhaseTwo = -1036002, sayPhaseThree = -1036003 }
-    enum : uint { smiteStomp = 6432, smiteSlam = 6435 }
-    enum : uint { reaver = 5196, mightyHammer = 7230 }
+    enum : int { sayPhaseTwo = -1036002, sayPhaseThree = -1036003 }
+    enum : uint { smiteStomp = 6432, nimbleReflexes = 6433, smiteSlam = 6435, smitesHammer = 6436, thrash = 12787 }
+    enum : uint { axe = 2183, hammer = 10756 } /// "Monster - Axe, Metal Badass", "Monster - Mace2H, Smite's Mighty Hammer"
+    enum uint smiteChest = 144111;
+    enum uint pointChest = 1;
 
-    enum Step : ubyte { slam, rearm }
+    enum Phase : ubyte { one, two, three, toChest, atChest, rearmed }
+    enum Step : ubyte { slam, toChest, rearm, fight }
     Schedule!Step steps;
-    ubyte phase; /// 0, then 1 (axes), then 2 (hammer)
+    Phase phase;
 
-    void on(ref CreatureContext me, const ref EnteredCombat e)
+    void on(ref CreatureContext me, const ref Reset e)
     {
-        steps.every(Step.slam, 6.seconds, 9.seconds);
+        phase = Phase.one;
+        steps.clear();
+        me.restoreEquipment();
+        me.standState(StandState.stand);
+        me.sheath(Sheath.melee);
+        me.combatMovement(true);
+        me.melee(true);
+        if (!me.hasAura(me.self, nimbleReflexes))
+            me.castSelf(nimbleReflexes, true);
+    }
+
+    void on(ref CreatureContext me, const ref Spawned e)
+    {
+        if (!me.hasAura(me.self, nimbleReflexes))
+            me.castSelf(nimbleReflexes, true);
     }
 
     void on(ref CreatureContext me, const ref Damaged e)
     {
-        if ((phase == 0 && e.crossed(66)) || (phase == 1 && e.crossed(33)))
+        if ((phase == Phase.one && e.after < 66) || (phase == Phase.two && e.after < 33))
         {
-            ++phase;
+            me.castSelf(smiteStomp);
+            me.say(e.after < 33 ? sayPhaseThree : sayPhaseTwo);
+            me.removeAura(me.self, phase == Phase.one ? nimbleReflexes : thrash);
+            phase = Phase.toChest;
             steps.clear();
-            me.castSelf(smiteStomp, true);
-            me.say(phase == 1 ? sayPhaseTwo : sayPhaseThree);
-            me.combatMovement(false);
             me.melee(false);
-            me.standState(StandState.kneel);
-            steps.after(Step.rearm, 2500.msecs);
+            me.combatMovement(false);
+            steps.after(Step.toChest, 2500.msecs);
         }
+    }
+
+    void on(ref CreatureContext me, const ref MovementDone e)
+    {
+        if (e.point != pointChest || phase != Phase.toChest)
+            return;
+        me.sheath(Sheath.unarmed);
+        me.standState(StandState.kneel);
+        me.equip(0, 0, 0);
+        phase = Phase.atChest;
+        steps.after(Step.rearm, 3.seconds);
     }
 
     void on(ref CreatureContext me, Step step)
@@ -126,38 +187,62 @@ struct MrSmite
         case Step.slam:
             me.castSpell(smiteSlam);
             break;
-        case Step.rearm:
-            if (phase == 1)
-                me.equip(reaver, reaver);
+        case Step.toChest:
+            Location chest;
+            const found = me.objectNearby(smiteChest, 100);
+            if (found && me.locationOf(found, chest))
+            {
+                // Beside it, on his side.
+                const here = me.location;
+                const dx = here.x - chest.x, dy = here.y - chest.y;
+                const length = (dx * dx + dy * dy) ^^ 0.5f;
+                if (length > 1.5f)
+                {
+                    chest.x += dx / length * 1.5f;
+                    chest.y += dy / length * 1.5f;
+                }
+                me.moveNow(chest, pointChest, true);
+            }
             else
-                me.equip(mightyHammer);
+            {
+                MovementDone there;
+                there.point = pointChest;
+                on(me, there); // no chest: he rearms where he stands
+            }
+            break;
+        case Step.rearm:
+            if (me.healthPercent < 33)
+            {
+                me.equip(hammer);
+                me.castSelf(smitesHammer);
+            }
+            else
+                me.equip(axe, axe);
             me.standState(StandState.stand);
+            phase = Phase.rearmed;
+            steps.after(Step.fight, 1.seconds);
+            break;
+        case Step.fight:
+            me.sheath(Sheath.melee);
+            phase = me.healthPercent < 33 ? Phase.three : Phase.two;
+            if (phase == Phase.two)
+                me.castSelf(thrash, true);
+            else
+                steps.every(Step.slam, 9.seconds, 11.seconds);
             me.combatMovement(true);
             me.melee(true);
-            steps.every(Step.slam, 6.seconds, 9.seconds);
+            const foe = me.selectTarget(Pick.topThreat);
+            if (foe)
+                me.attack(foe);
+            else
+                me.evade();
             break;
         }
-    }
-
-    void on(ref CreatureContext me, const ref Reset e)
-    {
-        phase = 0;
-        steps.clear();
-        me.restoreEquipment();
-        me.standState(StandState.stand);
-        me.combatMovement(true);
-        me.melee(true);
     }
 
     void on(ref CreatureContext me, const ref Died e)
     {
         steps.clear();
-    }
-
-    void on(ref CreatureContext me, const ref Signal e)
-    {
-        if (e.id == Signals.alarm)
-            me.say(sayAlarm); // the whole ship hears it
     }
 }
 
