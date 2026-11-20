@@ -158,6 +158,12 @@ float crusaderDamageFactor(A)(const(A)[] auras)
     return factor;
 }
 
+/// `Unit::CalculateLevelPenalty`: the share of the spell power a spell learned before level 20 gets (3.75% less a level).
+float levelPenalty(const(SpellInfo)* spell) pure nothrow @nogc @safe
+{
+    return spell.spellLevel > 0 && spell.spellLevel < 20 ? 1.0f - (20.0f - spell.spellLevel) * 0.0375f : 1.0f;
+}
+
 /// The spell of `table` for `rank` (a rank of a talent or spell, as CMaNGOS lists them); 0 if none.
 uint rankSpell(const(uint[2])[] table, uint rank) pure nothrow @nogc @safe
 {
@@ -684,15 +690,12 @@ mixin template ClassSpells()
         return true;
     }
 
-    /// The caster's `MOD_DAMAGE_DONE` for schools of `schoolMask` (`SpellBaseDamageBonusDone`).
+    /// The caster's spell power for schools of `schoolMask` (`SpellBaseDamageBonusDone`): its `MOD_DAMAGE_DONE` (each
+    /// stack's: Unstable Power's twelve), and a share of its spirit (`MOD_SPELL_DAMAGE_OF_STAT_PERCENT`).
     private int spellDamageBonusRaw(uint schoolMask)
     {
-        int done;
-        foreach (aura; player.auras.list)
-            foreach (k; 0 .. 3)
-                if ((aura.effects & (1 << k)) && aura.type(k) == AuraType.modDamageDone && (aura.misc(k) & schoolMask))
-                    done += aura.amount[k];
-        return done;
+        return player.auras.totalByMiscMask(AuraType.modDamageDone, cast(int) schoolMask)
+            + spellPowerFromSpirit(AuraType.modSpellDamageOfStatPercent, cast(int) schoolMask);
     }
 
     package AttackType procHand; /// the hand whose swing set the current item procs off
@@ -808,7 +811,7 @@ mixin template ClassSpells()
                     values[i] += player.stats.attackPower * (castCombo > 3 ? 3 : castCombo) / 100;
             }
             else if (type == AuraType.manaShield && ofFamily(spell, SpellFamily.mage, 0x8000))
-                values[i] += spellDamageBonusRaw(1 << spell.casting.school) / 2;
+                values[i] += cast(int)(spellDamageBonusRaw(1 << spell.casting.school) * 0.5f * levelPenalty(spell));
         }
     }
 
@@ -927,8 +930,8 @@ mixin template ClassSpells()
                     value += aura.amount[which] * time / 3500;
                 }
             }
-            else if (aura.spell.id == healingWay && ofFamily(spell, SpellFamily.shaman, 0x40))
-                value = value * (aura.amount[0] + 100) / 100;
+            else if (aura.spell.id == healingWay && ofFamily(spell, SpellFamily.shaman, 0x40)) // by its stacks (3 at most)
+                value = value * (aura.amount[0] * cast(int) aura.stacks + 100) / 100;
         }
         return value;
     }
@@ -1209,10 +1212,12 @@ mixin template ClassSpells()
             base = 0.85f * ceil(amount * 1.2f * 1.03f * speed / 100.0f) - 1;
             coefficient = 0.092f * speed;
         }
-        const weapon = (player.values.get!UNIT_FIELD_MINDAMAGE + player.values.get!UNIT_FIELD_MAXDAMAGE) / 2;
+        // The weapon's own damage (`GetBaseWeaponDamage`: its first line, no attack power), a fist's without one.
+        const weapon = item is null || item.proto is null ? (1 + 2) / 2.0f
+            : (item.proto.details.damage[0].min + item.proto.details.damage[0].max) / 2;
         int damage = cast(int)(base + 0.03f * weapon) + 1;
         if (damage >= 0)
-            damage += cast(int)(spellDamageBonusRaw(1 << seal.casting.school) * coefficient);
+            damage += cast(int)(spellDamageBonusRaw(1 << seal.casting.school) * coefficient * levelPenalty(seal));
         return damage;
     }
 

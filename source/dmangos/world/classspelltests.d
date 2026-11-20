@@ -1079,6 +1079,109 @@ unittest
     assert(a.hasAura(1785) && !a.hasAura(1784), "stealthed by rank 2");
 }
 
+/**
+ * Seal of Righteousness, rank 1 (20154: 108, learned at level 1), on a swing without a weapon (2.0 seconds, a fist's
+ * 1 to 2): its holy damage (25742) is of the weapon's own damage, not of the damage the attack power adds; its spell
+ * power share is less for a spell learned before level 20 (`CalculateLevelPenalty`: 0.2875 at level 1).
+ */
+unittest
+{
+    auto a = new Arena(PlayerClass.paladin);
+    auto seal = a.spell(20154, SpellEffect.applyAura, ImplicitTarget.caster);
+    a.auraEffect(seal, 0, AuraType.dummy, ImplicitTarget.caster, 108);
+    seal.spellLevel = 1;
+    with (seal.casting)
+    {
+        school = 1;
+        spellFamilyName = 10;
+        spellFamilyFlags = 0x8000000;
+        procFlags = 0x4;
+        procChance = 100;
+        durationIndex = 1;
+    }
+    with (a.spell(25742, SpellEffect.schoolDamage, ImplicitTarget.enemy, 0))
+    {
+        casting.school = 1;
+        casting.spellFamilyName = 10;
+        casting.dmgClass = DamageClass.melee;
+        attributesEx2 = 0x20000000; // it cannot crit
+    }
+    uint struck()
+    {
+        foreach (attempt; 0 .. 60)
+        {
+            a.tick(2000);
+            if (!a.hasAura(20154))
+                a.cast_(20154);
+            // What the attack power makes of a swing, which the seal does not take.
+            a.player.values.set!UNIT_FIELD_MINDAMAGE(300.0f);
+            a.player.values.set!UNIT_FIELD_MAXDAMAGE(400.0f);
+            a.hero.read();
+            a.me.swing(a.foe, imported!"dmangos.world.combat".AttackType.mainHand);
+            foreach (l; a.damageLogs())
+                if (l[0] == 25742)
+                    return l[1];
+        }
+        assert(false, "a swing lands");
+    }
+    // 0.85 * ceil(108 * 1.2 * 1.03 * 2.0 / 100) - 1 = 1.55; 0.03 of the fist's 1.5; and 1.
+    assert(struck() == 2, "of the weapon's own damage");
+    auto power = a.spell(90102, SpellEffect.applyAura, ImplicitTarget.caster); // 100 holy spell power
+    a.auraEffect(power, 0, AuraType.modDamageDone, ImplicitTarget.caster, 100, 2);
+    a.me.addAura(makeAura(power, a.player.guid, 60, -1, true, [100, 0, 0]));
+    // 100 * 0.092 * 2.0 * 0.2875 = 5 more (and what every holy spell gets of it besides: 1.5 / 3.5).
+    const damage = struck();
+    assert(damage == 2 + 5 || damage == 2 + 5 + 42, "a level 1 spell's share of the spell power");
+}
+
+/// Mana Shield (1463: 120) absorbs half the arcane spell power more: each stack of Unstable Power (24659: 17).
+unittest
+{
+    auto a = new Arena(PlayerClass.mage);
+    auto shield = a.spell(1463, SpellEffect.applyAura, ImplicitTarget.caster);
+    a.auraEffect(shield, 0, AuraType.manaShield, ImplicitTarget.caster, 120);
+    shield.spellLevel = 20;
+    with (shield.casting)
+    {
+        school = 6;
+        spellFamilyName = 3;
+        spellFamilyFlags = 0x8000;
+        durationIndex = 1;
+    }
+    auto unstable = a.spell(24659, SpellEffect.applyAura, ImplicitTarget.caster);
+    a.auraEffect(unstable, 0, AuraType.modDamageDone, ImplicitTarget.caster, 17, 126);
+    unstable.casting.stackAmount = 12;
+    unstable.casting.durationIndex = 1;
+    foreach (_; 0 .. 3)
+        a.me.addAura(makeAura(unstable, a.player.guid, 60, 10_000, true, [17, 0, 0]));
+    assert(a.player.auras.find(24659).stacks == 3);
+    a.cast_(1463);
+    assert(a.player.auras.find(1463).amount[0] == 120 + 3 * 17 / 2, "half of three stacks' 51");
+}
+
+/// Healing Way (29203: 6% a stack, three at most) adds to Healing Wave (331: 34) by its stacks.
+unittest
+{
+    auto a = new Arena(PlayerClass.shaman);
+    auto way = a.spell(29203, SpellEffect.applyAura, ImplicitTarget.caster);
+    a.auraEffect(way, 0, AuraType.dummy, ImplicitTarget.caster, 6);
+    way.casting.stackAmount = 3;
+    way.casting.durationIndex = 1;
+    with (a.spell(331, SpellEffect.heal, ImplicitTarget.friend, 34))
+    {
+        casting.school = 3;
+        casting.spellFamilyName = 11;
+        casting.spellFamilyFlags = 0x40;
+    }
+    foreach (_; 0 .. 3)
+        a.me.addAura(makeAura(way, a.player.guid, 60, 10_000, true, [6, 0, 0]));
+    a.player.values.set!UNIT_FIELD_MAXHEALTH(1000u);
+    a.player.values.set!UNIT_FIELD_HEALTH(500u);
+    a.cast_(331);
+    const healed = a.player.values.get!UNIT_FIELD_HEALTH - 500;
+    assert(healed == 34 * 118 / 100 || healed == 34 * 118 / 100 * 3 / 2, "18% more (a crit half again)");
+}
+
 /// Seal of the Crusader: its quicker swings are as much less: the damage a second stays.
 unittest
 {

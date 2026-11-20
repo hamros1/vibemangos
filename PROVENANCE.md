@@ -752,7 +752,8 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
   `Unit::HandleProcTriggerSpellAuraProc` (Deep Wounds, Lightning Shield, Illumination, Blessed Recovery, Ruthlessness,
   Seal Fate), `Unit::HandleOverrideClassScriptAuraProc` (Nightfall), `Unit::ProcDamageAndSpell` (the reactive states),
   `Unit::UpdateReactives`, `Unit::ClearAllReactives`, `Player::RemoveSomeCooldown`, `SpellMgr::GetSpellSpecific`,
-  `SpellStacker::IsStackableAuraEffect` (a helpful spell's ranks)
+  `SpellStacker::IsStackableAuraEffect` (a helpful spell's ranks), `Unit::CalculateLevelPenalty`,
+  `Unit::GetBaseWeaponDamage`, `Unit::SpellBaseDamageBonusDone`
 * Functions/ScriptNames: `spell_judgement`, `spell_judgement_of_command`, `spell_judgement_of_light_intermediate`,
   `spell_judgement_of_wisdom_intermediate`, `spell_swiftmend`, `spell_curse_of_doom`, `spell_power_infusion`,
   `spell_shatter_mage`, `spell_blessing_of_light`, `spell_healing_way`, `spell_seal_of_the_crusader`, `spell_shadowguard`, `spell_blizzard`
