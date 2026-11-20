@@ -115,6 +115,8 @@ private:
                 targetResistance(cast(int) creature.values.get!UNIT_FIELD_RESISTANCES(spell.casting.school),
                 spell.casting.school), spellHitBonus), ms);
             bool isNew;
+            if (auto displaced = creature.auras.displacedBy(aura, creature.values)) // another's that may not stay beside it
+                creature.loseAura(displaced, map);
             auto applied = creature.auras.apply(aura, creature.values, isNew);
             if (isNew)
                 classCreatureAuraApplied(creature, applied); // the sting or curse it replaces
@@ -404,6 +406,8 @@ private:
     package void addAura(Aura aura)
     {
         bool isNew;
+        if (auto displaced = player.auras.displacedBy(aura, player.values)) // another's that may not stay beside it
+            removeAura(displaced);
         auto applied = player.auras.apply(aura, player.values, isNew);
         if (isNew)
             auraEffects(applied, true);
