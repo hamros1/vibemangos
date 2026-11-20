@@ -552,6 +552,9 @@ private:
     @Handles(movementOpcodes, WorldState.inWorld)
     void handleMovement(const MovementInfo movement, Opcode opcode)
     {
+        // Possessing a creature (Mind Control, Eyes of the Beast), the client moves it, not the player.
+        if (activeMover)
+            return moveMover(movement, opcode);
         if (!takeMovement(movement, opcode))
             return;
         // Those who see the player see it move: the same opcode, with the mover's guid and the server's time.
@@ -615,6 +618,32 @@ private:
     }
 
     /// Shows the player's move to those who see it: `opcode`, its guid, the move at the server's time, then `extra`.
+    /// The possessed creature moves where the client says, as those who see it are shown.
+    private void moveMover(const MovementInfo movement, Opcode opcode)
+    {
+        auto creature = cast(Creature) map.findObject(activeMover);
+        if (creature is null || !creature.alive)
+            return;
+        const p = movement.position;
+        if (!context.client.isValidMapCoord(player.data.map, p.x, p.y, p.z, p.orientation))
+            return;
+        creature.movement.position = p;
+        creature.movement.flags = movement.flags;
+        ByteWriter relay;
+        relay.putPackedGuid(creature.guid);
+        MovementInfo relayed = movement;
+        relayed.time = serverTime();
+        relayed.write(relay);
+        map.sendToObservers(creature.guid, opcode, relay.data);
+        map.objectRelocated(creature);
+    }
+
+    /// The client says which unit it moves (as possession begins and ends): the server already knows.
+    @Handles(Opcode.CMSG_SET_ACTIVE_MOVER, WorldState.inWorld)
+    void handleSetActiveMover(ref ByteReader reader)
+    {
+    }
+
     package void relayMovement(Opcode opcode, const MovementInfo movement, scope const(ubyte)[] extra = null)
     {
         ByteWriter relay;

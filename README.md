@@ -398,6 +398,9 @@ What works now:
   * **Creatures fight:** attacked, they fight back; aggressive ones
     (not `CREATURE_EXTRA_FLAG_NO_AGGRO_ON_SIGHT`) attack a hostile player that comes within their
     aggro radius (`Detection`, a yard more for each level the player is below them) and in sight.
+    Charm and possession (Enslave Demon, Mind Control, Eyes of the Beast): the creature is the player's pet
+    while the aura lasts (its spells on the bar, the player's faction, out of its fights); possessed, the client
+    moves it and sees as it. When it ends the creature is its own again and turns on the player.
     Crowd control: a stunned, feared or disoriented creature neither fights nor casts (a cast under way
     stops); feared it runs from whoever feared it, disoriented it wanders; silenced it casts no spell that silence
     prevents, pacified it does not swing. A feared or disoriented player loses control of its character
