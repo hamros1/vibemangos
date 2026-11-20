@@ -189,8 +189,8 @@ private uint scaled(uint value, double factor)
 /**
  * A pet's passive auras are its family's (`CreatureFamily.dbc`, `SkillLineAbility.dbc`): a tamed beast's "Tamed Pet
  * Passive" 8875, 19580 .. 19591, 20784, and its family's own (a boar's 7000); an imp's 18728, 18737, 18740. Without
- * talents, the first change nothing; an orc's Command ("Damage dealt by Hunter and Warlock pets increased by 5%")
- * adds to 8875.
+ * talents, the first change nothing; an orc's Command (20576, 20575: "Damage dealt by Hunter and Warlock pets
+ * increased by 5%") adds to 8875 and 18727.
  */
 unittest
 {
@@ -212,6 +212,11 @@ unittest
     auto imp = warlockWith(w, warlock, summonImp);
     foreach (id; [18728, 18737, 18740])
         assert(imp.auras.find(id) !is null, format!"the imp's passive %s"(id));
+    // An orc warlock's Command (20575) on its voidwalker's melee (18727's "Damage increased by 0%").
+    auto orc = w.character(3, "Ner'zhul", classWarlock, 60, [], raceOrc);
+    auto voidwalker = warlockWith(w, orc, summonVoidwalker);
+    assert(orc.session.inWorld.player.auras.find(20575) !is null, "Command, the orc's");
+    assert(isClose(voidwalker.fighter.damageDone[0], 1.05f), format!"5%% more: %s"(voidwalker.fighter.damageDone[0]));
 }
 
 // ---------------------------------------------------------------------------
