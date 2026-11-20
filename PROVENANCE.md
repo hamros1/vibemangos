@@ -616,6 +616,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Files: `SpellAuras.cpp`
 * Functions: `Aura::PeriodicTick`, `Player::_LoadAuras`, `Player::_SaveAuras`, `Spell::EffectApplyAura`, `SpellAuraHolder::Update`, `Unit::DispelAll`
 * Constants: `MOD_POWER_REGEN`, `SMSG_PERIODICAURALOG`, `SMSG_UPDATE_AURA_DURATION`, `SPELLMOD_DOT`, `SPELL_EFFECT_APPLY_AURA`
+* Also: `Aura::PeriodicTick`'s `SPELL_AURA_PERIODIC_LEECH` (`SendSpellNonMeleeDamageLog`, periodic) and `SPELL_AURA_PERIODIC_MANA_LEECH`, `Unit::SendPeriodicAuraLog`'s mana leech format, `Aura::HandleFeignDeath`, `Aura::HandleAuraModTotalThreat`, `Aura::HandleAuraTrackCreatures`, `Aura::HandleAuraTrackResources`, `Unit::CalculateDamageAbsorbAndResist`'s `SPELL_AURA_SPLIT_DAMAGE_FLAT`
 
 ## world/auras.d
 
@@ -623,6 +624,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Files: `SpellAuras.cpp`
 * Functions: `SpellAuraHolder::Update`, `Unit::AddSpellAuraHolder`
 * Constants: `MAX_AURAS`, `MAX_POSITIVE_AURAS`, `SPELL_ATTR_NO_AURA_CANCEL`, `UNIT_FIELD_AURA`
+* Also: `Aura::HandleAuraModStalked` (`UNIT_DYNFLAG_TRACK_UNIT`), `Unit::SetFeignDeath` (`UNIT_DYNFLAG_DEAD`), `Aura::HandleAuraUntrackable` (`UNIT_VIS_FLAG_UNTRACKABLE`), `Aura::HandleAuraModScale` (`ApplyPercentModFloatValue`)
 
 ## world/battleground.d
 
@@ -749,6 +751,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Files: `CombatManager.cpp`, `CreatureAI.cpp`, `ThreatManager.cpp`, `UnitAI.cpp`
 * Functions: `CombatManager::IsEvadingHome`, `CombatManager::IsInEvadeMode`, `CombatManager::StartEvadeTimer`, `CombatManager::TriggerCombatTimer`, `CombatManager::Update`, `CombatManager::m_combatTimer`, `CombatManager::m_evadeTimer`, `Creature::CallAssistance`, `Creature::RegenerateAll`, `Creature::Update`, `FactionTemplateEntry::IsNeutralToAll`, `HomeMovementGenerator::Finalize`, `ThreatContainer::selectNextVictim`, `ThreatManager::addThreat`, `Unit::Attack`, `Unit::EvadeTimerExpired`, `Unit::GetAttackDistance`, `Unit::SelectHostileTarget`, `UnitAI::AttackStart`, `UnitAI::AttackedBy`, `UnitAI::CheckForHelp`, `UnitAI::EnterEvadeMode`, `UnitAI::MoveInLineOfSight`, `UnitAI::UpdateAI`
 * Constants: `AI_REACTION_HOSTILE`, `COMBAT_MANAGER_TICK`, `CONFIG_FLOAT_LEASH_RADIUS`, `CREATURE_EXTRA_FLAG_NO_AGGRO_ON_SIGHT`, `CREATURE_EXTRA_FLAG_NO_CALL_ASSIST`, `EVADE_HOME`, `REGEN_TIME_FULL_UNIT`, `STATE_SUPPRESSED`, `UNIT_STAT_MELEE_ATTACKING`, `UNIT_STAT_STUNNED`
+* Also: `Spell::EffectTaunt`, `ThreatManager::TauntUpdate` and the taunt states (`taunt`, `tauntedBy`), `Unit::CombatStop`'s deleted hostile references (`forget`), `MotionMaster::MoveDistract` (`distract`)
 
 ## world/creaturecasting.d
 
@@ -756,6 +759,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Functions: `Spell::CheckRange`, `Spell::cast`, `Spell::prepare`, `UnitAI::DoCastSpellIfCan`
 * Constants: `CAST_FORCE_TARGET_SELF`, `EVENT_T_FRIENDLY_HP`, `SMSG_SPELL_FAILURE`, `SMSG_SPELL_GO`, `SPELL_EFFECT_APPLY_AURA`, `SPELL_EFFECT_HEAL`, `TEMPSPAWN_TIMED_OOC_DESPAWN`, `TEMPSPAWN_TIMED_OOC_OR_DEAD_DESPAWN`, `UNIT_STAT_NO_COMBAT_MOVEMENT`
 * Also: `Spell::EffectSendEvent` (a creature's `SPELL_EFFECT_SEND_EVENT`), `Unit::RemoveAura` (its script told, `AuraRemoved`)
+* Also: `Creature::DoFleeToGetAssistance` (`SPELL_AURA_PREVENTS_FLEEING`)
 
 ## world/crypt.d
 
@@ -802,6 +806,13 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Files: `DynamicObject.cpp`
 * Functions: `DynamicObject::Create`
 * Constants: `HIGHGUID_DYNAMICOBJECT`
+
+## world/effecthandlers.d
+
+* Projects: CMaNGOS
+* Files: `SpellEffects.cpp`, `SpellAuras.cpp`, `Spell.cpp`, `Unit.cpp`, `GameObject.cpp`, `MotionMaster.cpp`
+* Functions: `Spell::EffectThreat`, `Spell::EffectTaunt`, `Spell::EffectSanctuary`, `Spell::EffectCharge`, `MotionMaster::MoveCharge`, `Spell::EffectLeapForward` (and `TARGET_LOCATION_CASTER_FRONT_LEAP`'s steps in `Spell::SetTargetMap`), `Spell::EffectStuck`, `Spell::EffectPowerBurn`, `Spell::EffectPowerDrain`, `Spell::EffectHealthLeech`, `Spell::EffectHealMaxHealth`, `Spell::EffectAddExtraAttacks`, `Unit::DoExtraAttacks`, `Spell::EffectDispelMechanic`, `Spell::EffectDistract`, `Spell::EffectSummonObject`, `GameObject::Update` (traps), `GameObject::Use` (traps), `Unit::CombatStop`, `Aura::HandleFeignDeath`, `Unit::SetFeignDeath`, `HostileRefManager::threatTemporaryFade`, `Aura::HandleAuraTrackCreatures`, `Aura::HandleAuraTrackResources`, `Aura::PeriodicTick` (`SPELL_AURA_PERIODIC_LEECH`, `SPELL_AURA_PERIODIC_MANA_LEECH`), `Unit::HandleProcTriggerDamageAuraProc`, `Unit::CalculateDamageAbsorbAndResist` (`SPELL_AURA_SPLIT_DAMAGE_FLAT`)
+* Constants: `BASE_CHARGE_SPEED`, `SMSG_SPELLLOGEXECUTE`, `SMSG_FEIGN_DEATH_RESISTED`, `SMSG_GAMEOBJECT_SPAWN_ANIM_OBSOLETE`, `SMSG_MONSTER_MOVE`, `SPELL_EFFECT_ATTACK_ME`, `SPELL_EFFECT_SUMMON_OBJECT_SLOT1`, `SPELLMOD_MULTIPLE_VALUE`, `PLAYER_TRACK_CREATURES`, `PLAYER_TRACK_RESOURCES`, `PROC_EX_BLOCK` (`spell_proc_event` of Holy Shield and Blessing of Sanctuary)
 
 ## world/environment.d
 
@@ -1020,6 +1031,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Projects: CMaNGOS
 * Functions: `FactorySelector::selectMovementGenerator`, `Map::GetHeight`, `MotionMaster::Initialize`, `MotionMaster::MovePoint`, `MoveSplineInit::Launch`, `MoveSplineInit::MoveTo`, `MoveSplineInit::Stop`, `TerrainInfo::GetWaterOrGroundLevel`, `Unit::InterruptMoving`, `Unit::StopMoving`, `Unit::UpdateAllowedPositionZ`, `Unit::UpdateSplineMovement`, `WaypointManager::Load`
 * Constants: `SCRIPT_COMMAND_PAUSE_WAYPOINTS`
+* Also: `DistractMovementGenerator`, `DISTRACT_MOTION_TYPE`
 
 ## world/moveorders.d
 
@@ -1102,6 +1114,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Projects: ArcEmu, CMaNGOS
 * Functions: `Aura::HandleAuraModStat`, `Group::_updateMembersOnRosterChanged`, `Object::BuildValuesUpdate`, `Player::BuildCreateUpdateBlockForPlayer`, `Player::CanDualWield`, `Player::ComputeRest`, `Player::ExploreArea`, `Player::GetChatTag`, `Player::GiveLevel`, `Player::HasItemCount`, `Player::HasSpell`, `Player::LoadFromDB`, `Player::ModifyMoney`, `Player::RegenerateAll`, `Player::SaveToDB`, `Player::SendInitialPacketsBeforeAddToMap`, `Player::SetRestBonus`, `Player::SetRestType`, `Player::SetSkill`, `Player::UpdateFreeTalentPoints`, `Player::UpdateSkillsForLevel`, `Player::_ApplyItemMods`, `Player::_LoadInventory`, `Player::autoReplyMsg`, `Player::bGMTagOn`, `Player::m_areaUpdateId`, `Spell::EffectDualWield`, `Spell::EffectProficiency`, `Unit::GetPowerType`, `Unit::HandleEmoteState`, `Unit::OCTRegenHPPerSpirit`, `Unit::OCTRegenMPPerSpirit`, `Unit::SetStandState`, `Unit::SetStunned`, `Unit::SetTargetGuid`, `Unit::m_speed_rate`
 * Constants: `CORPSE`, `DEAD`, `MAX_MONEY_AMOUNT`, `PLAYER_EXPLORED_ZONES_1`, `PLAYER_FIELD_COINAGE`, `SKILL_FLAG_MAXIMIZED`, `SMSG_ACTION_BUTTONS`, `SMSG_LEVELUP_INFO`, `SMSG_SET_PROFICIENCY`, `SPELL_EFFECT_DUAL_WIELD`
+* Also: `Player::RegenerateHealth` (`SPELL_AURA_MOD_REGEN_DURING_COMBAT`, `SPELL_AURA_MOD_HEALTH_REGEN_PERCENT`, `SPELL_AURA_MOD_HEALTH_REGEN_IN_COMBAT`), `Player::Regenerate` and `Player::UpdateManaRegen` (`SPELL_AURA_MOD_POWER_REGEN_PERCENT`), `Aura::HandleInterruptRegen` (`SetInDummyCombatState`, spells 5229 and 29131)
 
 ## world/playercreate.d
 
@@ -1189,6 +1202,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Files: `Spell.cpp`
 * Functions: `Spell::CalculatePowerCost`, `SpellCastTargets::read`, `SpellCastTargets::write`
 * Constants: `SMSG_CAST_RESULT`, `SMSG_SPELLENERGIZELOG`, `SMSG_SPELLHEALLOG`, `SMSG_SPELLLOGMISS`, `SMSG_SPELLNONMELEEDAMAGELOG`, `SMSG_SPELL_FAILURE`, `SMSG_SPELL_GO`, `SMSG_SPELL_START`, `SPELL_ATTR_CANT_USED_IN_COMBAT`, `SPELL_ATTR_CASTABLE_WHILE_DEAD`, `SPELL_ATTR_EX2_CANT_CRIT`, `SPELL_ATTR_EX3_ALWAYS_HIT`, `SPELL_ATTR_ON_NEXT_SWING`, `SPELL_ATTR_ON_NEXT_SWING_NO_DAMAGE`
+* Also: `SpellLog::Initialize`, `SpellLog::AddLog`, `SpellLog::SendToSet` (`SMSG_SPELLLOGEXECUTE`; the targets' guids packed for the 1.12 client, where CMaNGOS writes them whole)
 
 ## world/spellhandlers.d
 
@@ -1197,6 +1211,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Functions: `GameObject::Use`, `Player::ClearCooldownForSpell`, `Player::ClearCooldownsOnLine`, `Player::HasItemFitToSpellReqirements`, `Player::UpdateFishingSkill`, `Player::_LoadSpellCooldowns`, `Player::_SaveSpellCooldowns`, `Spell::CheckCast`, `Spell::CheckItems`, `Spell::EffectEnergize`, `Spell::EffectHeal`, `Spell::EffectInstaKill`, `Spell::EffectPersistentAA`, `Spell::EffectTeleportUnits`, `Spell::EffectTransmitted`, `Spell::EffectWeaponDmg`, `Spell::SendChannelStart`, `Spell::SendChannelUpdate`, `Spell::SetTargetMap`, `Spell::SpellStart`, `Spell::cancel`, `Spell::cast`, `Spell::m_delayMoment`, `Spell::update`, `Unit::AttackerStateUpdate`, `Unit::CalculateSpellDamage`, `Unit::SpellDamageBonusDone`, `Unit::SpellHealingBonusDone`, `Unit::SpellHitResult`
 * Constants: `CMSG_CANCEL_CHANNELLING`, `CURRENT_CHANNELED_SPELL`, `CURRENT_GENERIC_SPELL`, `CURRENT_MELEE_SPELL`, `FISHING_BOBBER_READY_TIME`, `MSG_CHANNEL_START`, `MSG_CHANNEL_UPDATE`, `SMSG_CLEAR_COOLDOWN`, `SMSG_FISH_NOT_HOOKED`, `SMSG_INITIAL_SPELLS`, `SMSG_SPELLINSTAKILLLOG`, `SMSG_SPELL_GO`, `SMSG_SPELL_START`, `SPELL_ATTR_EX_IS_CHANNELED`, `SPELL_AURA_MOD_DAMAGE_DONE`, `SPELL_AURA_MOD_HEALING_DONE`, `SPELL_AURA_PERIODIC_DAMAGE`, `SPELL_EFFECT_APPLY_AURA`, `SPELL_FAILED_EQUIPPED_ITEM_CLASS`, `SPELL_INTERRUPT_FLAG_MOVEMENT`, `TARGET_ALL_ENEMY_IN_AREA`, `TARGET_CASTER_COORDINATES`, `TRIGGERED_OLD_TRIGGERED`
 * Also: `TARGET_UNIT_SCRIPT_NEAR_CASTER`, `Spell::CheckScriptTargeting` (`spell_script_target`)
+* Also: `Unit::MeleeDamageBonusDone`'s `SPELL_AURA_RANGED_ATTACK_POWER_ATTACKER_BONUS`
 
 ## world/spellmods.d
 

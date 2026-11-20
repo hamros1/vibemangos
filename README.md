@@ -575,6 +575,22 @@ What works now:
     creatures' (without the creature's level bonus). Ground effects (persistent area auras:
     Consecration, Blizzard, a frost trap) hurt the enemies inside every tick, players it may fight
     too, or hold their other aura (a slow) on them while they stay.
+  * **Effects beyond damage and healing** (`effecthandlers.d`; the combat log's lines in
+    `SMSG_SPELLLOGEXECUTE`): threat (Distracting Shot adds it, Cower and Feint take it, never below none) and
+    taunts (Growl, Taunt: the creature's threat raised to the top's and attacked at once; a taunt aura, with
+    Challenging Shout and Mocking Blow, keeps it on the taunter whatever the threat while it lasts); charges
+    (Charge, Intercept, Feral Charge: the player runs to its target at the spell's speed, shown to everyone
+    and its own client by `SMSG_MONSTER_MOVE`, stops at the target's reach and attacks it); Blink (20 yards
+    ahead by a near teleport, two yards at a time, stopping before walls, cliffs' edges and slopes over 50
+    degrees); power burns (Mana Burn: mana burned, and half of it as arcane damage), drains (Dark Pact) and
+    leeches (Death Coil heals its caster by its damage), Lay on Hands (the caster's whole health); Sword
+    Specialization's and Reckoning's extra swings (at most five owed, swung at the next melee update, granting
+    no more); Escape Artist (auras of a mechanic removed); Vanish and Divine Intervention (every creature
+    fighting the player forgets it, out of combat; Vanish frees of roots too); Distract (creatures out of
+    combat stop and face the spot for its seconds); Stuck (a ghost to its graveyard, else the Hearthstone if
+    ready, else a nudge ten yards ahead); the hunters' traps (one per slot, replacing the old, the hunter's
+    level, for the spell's duration; it springs on the first enemy creature or player within its radius, its
+    spell cast by the hunter at it from the trap's place, then waits its cooldown and goes after its charges).
   * **Auras:** buffs and debuffs fill the aura fields
     (positive slots 0..31, negative 32..47) and the buff bar's durations, refresh and stack, and end
     when their time is up, when clicked off, at death, or by their interrupt flags (standing up ends
@@ -596,7 +612,19 @@ What works now:
     active one (Searing Totem) casts its spell at the nearest enemy in range. Their kills are their
     owner's. Dispels (Dispel Magic, Cleanse, Remove Curse, Purge) take random auras of their type:
     harmful magic off friends, helpful magic off enemies. Creatures are slowed and sped up by their
-    auras, and stand still while rooted or stunned. Not yet: procs on heals and other events.
+    auras, and stand still while rooted or stunned. Drains over time: Drain Life and Siphon Life hurt
+    (`SMSG_SPELLNONMELEEDAMAGELOG`, periodic) and heal their caster by it, Drain Mana and Viper Sting take
+    mana and give it (`SMSG_PERIODICAURALOG` with the gain); between players too. Feign Death looks dead
+    (`UNIT_DYNFLAG_DEAD`) and, unless the highest-level creature fighting the hunter sees through it (its spell
+    miss chance; `SMSG_FEIGN_DEATH_RESISTED`), leaves every fight and creatures let it be until it stands; Fade
+    takes its amount of threat with every creature while it lasts. Tracking (`PLAYER_TRACK_CREATURES`,
+    `PLAYER_TRACK_RESOURCES`), Hunter's Mark (the track-unit flag, and its attack power for ranged attacks at the
+    target), Aspect of the Beast (untrackable), Bestial Wrath's size. Regeneration's auras: Innervate, Evocation
+    and Adrenaline Rush multiply their power's regeneration, Regeneration's health out of combat, its share in
+    combat, Demon Armor's health every second whatever; Bloodrage and Enrage stop regeneration (and rage's decay)
+    as combat does. Holy Shield and Blessing of Sanctuary strike back at whoever's swing the player blocks
+    (their charges used); Blessing of Sacrifice passes up to its amount of each blow to its paladin; Curse of
+    Recklessness keeps a creature from fleeing. Not yet: procs on heals and other events.
   * **Quests:** quest givers (`creature_questrelation`, `creature_involvedrelation`) show what they have for the player
     (the exclamation and question marks), list their quests in their gossip (or open the only one),
     and give them as `quest_template` says who may take them (class, race, level, skill, condition,

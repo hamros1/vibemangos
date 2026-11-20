@@ -135,7 +135,12 @@ The largest area. In order:
    `auras.d`, `aurahandlers.d`; README's "Spells" and "Auras"); creatures' spells come with their
    scripts (above), talents with milestone 7. Channelled spells, area, cone, party and chain targets, persistent area auras, missiles' flight, items'
    equip spells, spell and healing power (direct and over time), creatures' partial resists: done.
-   Binary spells and resisted ticks, and resists against players: done.
+   Binary spells and resisted ticks, and resists against players: done. The effects and aura types of the
+   classes' trainable spells beyond damage and healing (threat, taunts, charges, Blink, burns, drains and
+   leeches, extra swings, Vanish, Feign Death, Fade, Distract, the hunters' traps, tracking, Hunter's Mark,
+   regeneration's auras, Holy Shield, Blessing of Sacrifice; `effecthandlers.d`, README's "Effects beyond
+   damage and healing"): done. Not yet: Eye of Kilrogg (`SUMMON_POSSESSED`), invisibility and its
+   detection, traps hidden from those not in the hunter's group.
 6. **Duels and trades: done** (`tradehandlers.d`, `duelhandlers.d`; README's "Trading" and
    "Duels"). Players fight players in melee and with spells where the relations allow (duelists,
    PvP-flagged enemies). The PvP flag (`pvp.d`): `/pvp`, enforced zones, contested players, free-for-all
