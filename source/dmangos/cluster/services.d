@@ -456,6 +456,18 @@ final class ServiceHost
         auto p = sequence in pending;
         if (p is null)
             return;
+        // Parked while it was nowhere, and it came here: run from its bytes now.
+        if (hosts(p.kind))
+        {
+            ubyte[] reply;
+            auto then = p.then;
+            const known = dispatch(p.kind, p.call, p.request, reply);
+            pending.remove(sequence);
+            ++counts.local;
+            if (known && then !is null)
+                then(reply);
+            return;
+        }
         const node = placement is null ? 0 : placement(p.kind);
         if (node == 0 || node == self || sendCall is null)
         {
@@ -725,6 +737,7 @@ unittest
     assert(host.local!Counter().total == 0);
     host.tick(50.msecs);
     assert(host.local!Counter().ticks == 1);
+    assert(host.pendingCalls == 0 && host.local!Counter().notes == ["five", "a"], "the parked call ran here once it was");
     auto counter = host.local!Counter();
     host.release(ServiceKind.example);
     assert(counter.stopped && !host.hosts(ServiceKind.example));
