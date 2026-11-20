@@ -986,7 +986,7 @@ struct Mandokir
         Location(-12266.1f, -1940.72f, 132.606f, 0.70910f),
     ];
 
-    enum Step : ubyte { ohganCheck, gaze }
+    enum Step : ubyte { gaze }
     Schedule!Step steps;
     ubyte kills;
     EntityRef ohgan;
@@ -1015,7 +1015,6 @@ struct Mandokir
             chained[i] = me.summon(npcChainedSpirit, at);
         ohgan = me.summon(npcOhgan, Location.init, 0, me.victim);
         me.signalDungeon(ZgEncounter.ohgan, EncounterState.inProgress);
-        steps.every(Step.ohganCheck, 1.seconds);
         steps.every(Step.gaze, 500.msecs);
     }
 
@@ -1023,20 +1022,21 @@ struct Mandokir
     {
         final switch (step)
         {
-        case Step.ohganCheck:
-            // Ohgan slain: his master rages.
-            if (ohgan && !me.alive(ohgan))
-            {
-                ohgan = EntityRef.init;
-                me.castSelf(enrage, true);
-                me.say(emoteRage);
-                steps.cancel(Step.ohganCheck);
-            }
-            break;
         case Step.gaze:
             watch(me);
             break;
         }
+    }
+
+    /// Ohgan slain: his master rages. (Told by his death: summoned to go when dead, he is gone from the map at
+    /// once, and `alive` of a creature not here says yes.)
+    void on(ref CreatureContext me, const ref SummonedDied e)
+    {
+        if (e.gone || e.summoned != ohgan)
+            return;
+        ohgan = EntityRef.init;
+        me.castSelf(enrage, true);
+        me.say(emoteRage);
     }
 
     /// His gaze: who it falls on is told and watched; it over, the one who gained threat on him meanwhile is charged.
