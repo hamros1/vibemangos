@@ -72,6 +72,7 @@ struct StatInputs
     ubyte race;
     ubyte classId;
     uint level;
+    ubyte form;          /// the shapeshift form (`UNIT_FIELD_BYTES_1`'s third byte; 0: none)
     LevelStats levelStats;
     ClassLevelStats classStats;
     const(ItemTemplate)*[equipmentSlotEnd] equipment; /// null where nothing is equipped
@@ -218,7 +219,7 @@ out (result; result.maxHealth >= 1, "a living character has at least one health 
         result.resistances[i + 1] = cast(int)(resistance[i] * input.auras.resistanceTotal[i + 1]);
 
     // Attack power and damage
-    result.attackPower = cast(int)((meleeAttackPower(input.classId, input.level, result.stats) + input.auras.attackPower)
+    result.attackPower = cast(int)((meleeAttackPower(input.classId, input.level, result.stats, input.form) + input.auras.attackPower)
         * input.auras.attackPowerTotal);
     result.rangedAttackPower = cast(int)(rangedAttackPower(input.classId, input.level, result.stats)
         + input.auras.rangedAttackPower);
@@ -250,15 +251,17 @@ private void addStatBonus(ref PlayerStats result, Stat stat, float value) pure n
         result.negativeBonus[stat] += value;
 }
 
-private float meleeAttackPower(ubyte classId, uint level, const float[5] s) pure nothrow @nogc @safe
+private float meleeAttackPower(ubyte classId, uint level, const float[5] s, ubyte form = 0) pure nothrow @nogc @safe
 {
+    enum ubyte catForm = 1;
     const l = float(level);
     switch (classId)
     {
     case PlayerClass.warrior:
     case PlayerClass.paladin:
-    case PlayerClass.druid: // in caster form
         return l * 3 + s[Stat.strength] * 2 - 20;
+    case PlayerClass.druid: // none by its level (1.12); in Cat Form agility too (the tooltip: "40 plus Agility")
+        return s[Stat.strength] * 2 - 20 + (form == catForm ? s[Stat.agility] : 0);
     case PlayerClass.rogue:
     case PlayerClass.hunter:
         return l * 2 + s[Stat.strength] + s[Stat.agility] - 20;

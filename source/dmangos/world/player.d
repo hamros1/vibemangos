@@ -1105,6 +1105,7 @@ private:
         input.race = data.race;
         input.classId = data.classId;
         input.level = data.level;
+        input.form = values.getByte!UNIT_FIELD_BYTES_1(2);
         input.levelStats = world.levelStats(data.race, data.classId, data.level);
         input.classStats = world.classStats(data.classId, data.level);
         const disarmed = (values.get!UNIT_FIELD_FLAGS & UnitFlags.disarmed) != 0;

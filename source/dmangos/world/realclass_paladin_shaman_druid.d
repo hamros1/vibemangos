@@ -77,8 +77,11 @@ private void learnPassive(ref RealWorld w, ref TestClient who, uint id)
     if (!me.player.knowsSpell(id))
         me.player.spells ~= id;
     me.applyPassive(spellOf(w, id));
-    me.refreshEquipBoundPassives(); // (one bound to a weapon or a shield: if worn)
-    assert(me.player.auras.find(id) !is null, format!"%s's aura on"(id));
+    me.refreshEquipBoundPassives(); // (one bound to a weapon or a shield: if worn; to forms: in them)
+    me.refreshFormBoundPassives();
+    const spell = spellOf(w, id);
+    if (!spell.stances && spell.equippedItemClass < 0)
+        assert(me.player.auras.find(id) !is null, format!"%s's aura on"(id));
 }
 
 /// An aura of the real spell `id` on the character, as its own (`stacks` times).
@@ -1192,7 +1195,8 @@ private void checkStatClaims(StatClaim[] claims)
             const now = c.observe(me);
             const want = c.percent ? base * (1 + c.perRank * (rank + 1) / 100) : base + c.perRank * (rank + 1);
             const slack = c.percent ? 1.0f : 0.02f; // (whole numbers: armor, a shield's block)
-            assert(now > want - slack - want * 0.002f && now < want + slack + want * 0.002f,
+            const margin = slack + (want < 0 ? -want : want) * 0.002f;
+            assert(now > want - margin && now < want + margin,
                 format!"%s (%s): %s -> %s, not %s"(c.name, talent, base, now, want));
         }
 }
@@ -1711,7 +1715,7 @@ unittest
     const hogger = foe(w, who);
     refresh(w, who);
     Aura storm;
-    foreach (attempt; 0 .. 5)
+    foreach (attempt; 0 .. 20) // (a strike may miss)
     {
         w.now += 21.seconds;
         refresh(w, who);
@@ -1720,16 +1724,21 @@ unittest
         if (storm !is null)
             break;
     }
-    assert(storm !is null && storm.charges == 2 && storm.amount[1] == 20 && storm.duration <= 12_000);
+    assert(storm !is null && storm.charges == 2 && storm.amount[1] == 20 && storm.duration <= 12_000, storm is null ? "no storm" : format!"%s %s %s"(storm.charges, storm.amount, storm.duration));
     assert(!me.spellIsReady(17364));
-    foreach (bolt; 0 .. 2)
+    uint landed;
+    foreach (bolt; 0 .. 8) // (a bolt may miss)
     {
         refresh(w, who);
         assert(w.castAt(who, 15208, hogger) == SpellCastResult.ok);
         foreach (_; 0 .. 4)
             pass(w, who, 1000.msecs);
+        landed += damageOf(who, 15208).canFind!(d => d > 0);
+        if (landed == 2)
+            break;
+        assert(creatureOf(w, hogger).auras.find(17364) !is null, "one nature hit: one charge left");
     }
-    assert(creatureOf(w, hogger).auras.find(17364) is null, "two nature hits");
+    assert(landed == 2 && creatureOf(w, hogger).auras.find(17364) is null, "two nature hits");
 }
 
 /// The equipped main hand weapon of `who`: its guid.
@@ -2064,4 +2073,855 @@ unittest
         assert(novaAt >= delay && novaAt <= delay + 200, format!"Improved Fire Totems %s: the nova at %s ms"(rank, novaAt));
         cast(void) hogger;
     }
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Druid
+// ---------------------------------------------------------------------------------------------------------------------
+
+/// The druid's form passives, which a druid learns with its Feral Combat skill: Cat Form's (3025), Bear Form's (1178,
+/// 21178), Dire Bear Form's (9635).
+private static immutable uint[] formPassives = [3025, 1178, 21178, 9635];
+
+/// A druid (a night elf, else `race`) at level 60 knowing `spells` and its forms' passives.
+private TestClient druid(ref RealWorld w, uint guid, const(uint)[] spells, ubyte race = raceNightElf)
+{
+    auto who = w.character(guid, "Malfurion", PlayerClass.druid, 60, spells ~ formPassives, race);
+    if (race == raceTauren)
+        guestOfStormwind(who);
+    who.session.inWorld.applyPassiveSpells();
+    return who;
+}
+
+/// Druid modifier talents, every rank.
+unittest
+{
+    if (!haveRealData())
+        return;
+    enum D = PlayerClass.druid;
+    enum ubyte R = raceNightElf;
+    enum uint healingTouch = 9889, regrowth = 9858, rejuvenation = 9841, tranquility = 9862, wrath = 9912,
+        starfire = 9876, moonfire = 9835, thorns = 9910, markOfTheWild = 9885, giftOfTheWild = 21850,
+        entanglingRoots = 9853, hibernate = 18658, faerieFire = 9907, demoralizingRoar = 9898, maul = 9881, swipe = 9908,
+        claw = 9850, rake = 9904, shred = 9830, ferociousBite = 22829, rip = 9896, bash = 8983, pounce = 9827;
+    with (Observed)
+    {
+        ModClaim[] claims;
+        foreach (rank, talent; [16814u, 16815, 16816, 16817, 16818])
+            claims ~= ModClaim("Improved Wrath", talent, wrath, castTime, -100 * cast(int)(rank + 1), 0, D, R);
+        foreach (rank, talent; [16850u, 16923, 16924, 16925, 16926])
+            claims ~= ModClaim("Improved Starfire", talent, starfire, castTime, -100 * cast(int)(rank + 1), 0, D, R);
+        foreach (rank, talent; [17069u, 17070, 17071, 17072, 17073])
+            claims ~= ModClaim("Improved Healing Touch", talent, healingTouch, castTime, -100 * cast(int)(rank + 1), 0, D, R);
+        foreach (rank, talent; [16821u, 16822, 16823, 16824, 16825])
+            claims ~= ModClaim("Improved Moonfire", talent, moonfire, critChance, 2 * cast(int)(rank + 1), 0, D, R);
+        foreach (rank, talent; [17074u, 17075, 17076, 17077, 17078])
+            claims ~= ModClaim("Improved Regrowth", talent, regrowth, critChance, 10 * cast(int)(rank + 1), 0, D, R);
+        foreach (rank, talent; [16819u, 16820])
+            foreach (spell; [wrath, entanglingRoots, faerieFire, moonfire, starfire])
+                claims ~= ModClaim("Nature's Reach", talent, spell, range, 0, 10 * cast(int)(rank + 1), D, R);
+        foreach (rank, talent; [16845u, 16846, 16847])
+            foreach (spell; [moonfire, starfire, wrath, healingTouch, regrowth, rejuvenation])
+                claims ~= ModClaim("Moonglow", talent, spell, cost, 0, -3 * cast(int)(rank + 1), D, R);
+        foreach (rank, talent; [16833u, 16834, 16835])
+            foreach (spell; [768u, 5487, 9634, 783, 24858])
+                claims ~= ModClaim("Natural Shapeshifter", talent, spell, cost, 0, -10 * cast(int)(rank + 1), D, R);
+        foreach (rank, talent; [24968u, 24969, 24970, 24971, 24972])
+            foreach (spell; [healingTouch, tranquility])
+                claims ~= ModClaim("Tranquil Spirit", talent, spell, cost, 0, -2 * cast(int)(rank + 1), D, R);
+        foreach (rank, talent; [17063u, 17065, 17066, 17067, 17068])
+            foreach (spell; [healingTouch, regrowth, tranquility])
+                claims ~= ModClaim("Nature's Focus", talent, spell, pushback, 14 * cast(int)(rank + 1), 0, D, R);
+        foreach (rank, talent; [16918u, 16919, 16920])
+            claims ~= ModClaim("Improved Entangling Roots", talent, entanglingRoots, pushback, [40, 70, 100][rank], 0, D, R);
+        foreach (rank, talent; [16940u, 16941])
+            foreach (spell; [bash, pounce])
+                claims ~= ModClaim("Brutal Impact", talent, spell, duration, 500 * cast(int)(rank + 1), 0, D, R);
+        foreach (rank, talent; [16934u, 16935, 16936, 16937, 16938])
+        {
+            foreach (spell; [maul, swipe]) // rage in tenths
+                claims ~= ModClaim("Ferocity", talent, spell, cost, -10 * cast(int)(rank + 1), 0, D, R);
+            foreach (spell; [claw, rake])
+                claims ~= ModClaim("Ferocity", talent, spell, cost, -cast(int)(rank + 1), 0, D, R);
+        }
+        foreach (rank, talent; [16966u, 16968])
+            claims ~= ModClaim("Improved Shred", talent, shred, cost, -6 * cast(int)(rank + 1), 0, D, R);
+        foreach (rank, talent; [16858u, 16859, 16860, 16861, 16862])
+        {
+            claims ~= ModClaim("Feral Aggression", talent, ferociousBite, damage, 0, 3 * cast(int)(rank + 1), D, R);
+        }
+        foreach (rank, talent; [16998u, 16999])
+            foreach (spell; [claw, rake, maul, swipe])
+                claims ~= ModClaim("Savage Fury", talent, spell, damage, 0, 10 * cast(int)(rank + 1), D, R);
+        foreach (rank, talent; [16836u, 16839, 16840])
+            claims ~= ModClaim("Improved Thorns", talent, thorns, amount, 0, 25 * cast(int)(rank + 1), D, R);
+        foreach (rank, talent; [17050u, 17051, 17053, 17054, 17055])
+            claims ~= ModClaim("Improved Mark of the Wild", talent, markOfTheWild, amount, 0, 7 * cast(int)(rank + 1), D, R);
+        foreach (rank, talent; [17111u, 17112, 17113])
+            claims ~= ModClaim("Improved Rejuvenation", talent, rejuvenation, amount, 0, 5 * cast(int)(rank + 1), D, R);
+        foreach (rank, talent; [17104u, 24943, 24944, 24945, 24946])
+            foreach (spell; [rejuvenation])
+                claims ~= ModClaim("Gift of Nature", talent, spell, amount, 0, 2 * cast(int)(rank + 1), D, R);
+        checkClaims(claims);
+    }
+}
+
+/// `who` takes the form of `spell` (Cat Form 768, Bear Form 5487, Dire Bear Form 9634; 0: back to none).
+private void shift(ref RealWorld w, ref TestClient who, uint spell)
+{
+    auto me = who.session.inWorld;
+    foreach (aura; me.player.auras.list.dup)
+        if (aura.has(AuraType.modShapeshift))
+            me.removeAura(aura);
+    if (spell)
+    {
+        refresh(w, who);
+        const r = w.cast_(who, spell);
+        assert(r == SpellCastResult.ok, format!"%s: %s"(spell, r));
+    }
+    pass(w, who, 100.msecs);
+}
+
+/**
+ * The forms: Cat Form (768) its passive's melee attack power and the agility's (its tooltip: "40 plus Agility", at level
+ * 20; 2 more a level); Bear Form (5487) its passive's, 180% armor from items, 20 health; Dire Bear Form (9634) its
+ * passive's, 360%, 600: their passives (3025, 1178, 9635) while in them only. A druid's attack power has no share of
+ * its level besides.
+ */
+unittest
+{
+    import dmangos.world.defines : Stat;
+
+    if (!haveRealData())
+        return;
+    auto w = RealWorld.make();
+    auto who = druid(w, 380, [768, 5487, 9634]);
+    auto me = who.session.inWorld;
+    wear(who, 15824); // a robe of 76 armor
+    pass(w, who, 100.msecs);
+    const strength = me.player.stats.stats[Stat.strength], agility = me.player.stats.stats[Stat.agility];
+    const power = me.player.stats.attackPower, armor = me.unit.fighter.armor;
+    const health = me.player.values.get!UNIT_FIELD_MAXHEALTH;
+    assert(power == cast(int)(strength * 2 - 20), format!"caster form: %s, not strength's %s"(power, strength * 2 - 20));
+    foreach (passive; formPassives)
+        assert(me.player.auras.find(passive) is null, "no form, no form passive");
+    shift(w, who, 768);
+    assert(me.player.auras.find(3025) !is null && me.player.auras.find(1178) is null);
+    // (the passives' attack power grows with the level: Cat Form's 40 at level 20, 2 more a level)
+    const catPower = valueRange(w, 3025, 0, 60)[0], bearPower = valueRange(w, 1178, 2, 60)[0],
+        direPower = valueRange(w, 9635, 2, 60)[0];
+    assert(me.player.stats.attackPower == cast(int)(strength * 2 - 20 + agility) + catPower, format!"Cat Form: %s"(
+        me.player.stats.attackPower));
+    shift(w, who, 5487);
+    assert(me.player.auras.find(1178) !is null && me.player.auras.find(3025) is null);
+    assert(me.player.stats.attackPower == power + bearPower, format!"Bear Form: %s + %s"(me.player.stats.attackPower, bearPower));
+    assert(me.unit.fighter.armor >= armor + 76 * 180 / 100 - 1, format!"Bear Form armor: %s -> %s"(armor, me.unit.fighter.armor));
+    assert(me.player.values.get!UNIT_FIELD_MAXHEALTH >= health + 20, "Bear Form health");
+    shift(w, who, 9634);
+    assert(me.player.auras.find(9635) !is null && me.player.auras.find(1178) is null);
+    assert(me.player.stats.attackPower == power + direPower, format!"Dire Bear Form: %s"(me.player.stats.attackPower));
+    assert(me.unit.fighter.armor >= armor + 76 * 360 / 100 - 1, "Dire Bear Form armor");
+    assert(me.player.values.get!UNIT_FIELD_MAXHEALTH >= health + 600, "Dire Bear Form health");
+    shift(w, who, 0);
+    foreach (passive; formPassives)
+        assert(me.player.auras.find(passive) is null, "out of form");
+    assert(me.player.stats.attackPower == power);
+}
+
+/**
+ * The feral talents bound to forms: Predatory Strikes (16972, 16974, 16975) 50, 100, 150% of the level in attack power
+ * in Cat, Bear and Dire Bear Form; Sharpened Claws (16942, 16943, 16944) 2% crit a rank in them; Feline Swiftness
+ * (17002, 24866) 15, 30% speed in Cat Form; Leader of the Pack (17007): 3% crit (24932) for the party in them;
+ * Furor (17056 .. 17061: 20% a rank) 10 rage entering Bear Form, 40 energy entering Cat Form.
+ */
+unittest
+{
+    import dmangos.world.movement : MoveType;
+    import dmangos.world.moveorders : speedRate;
+
+    if (!haveRealData())
+        return;
+    foreach (rank, talent; [16972u, 16974, 16975])
+    {
+        auto w = RealWorld.make();
+        auto who = druid(w, 381, [768, 9634]);
+        auto me = who.session.inWorld;
+        learnPassive(w, who, talent);
+        pass(w, who, 100.msecs);
+        const power = me.player.stats.attackPower;
+        shift(w, who, 9634);
+        assert(me.player.stats.attackPower == power + valueRange(w, 9635, 2, 60)[0] + 60 * 50 * (rank + 1) / 100,
+            format!"Predatory Strikes %s: %s -> %s"(
+            talent, power, me.player.stats.attackPower));
+        shift(w, who, 0);
+        assert(me.player.stats.attackPower == power, "not out of form");
+    }
+    foreach (rank, talent; [16942u, 16943, 16944])
+    {
+        auto w = RealWorld.make();
+        auto who = druid(w, 382, [768]);
+        auto me = who.session.inWorld;
+        learnPassive(w, who, talent);
+        pass(w, who, 100.msecs);
+        const crit = me.unit.fighter.crit;
+        shift(w, who, 768);
+        assert(me.unit.fighter.crit > crit + 2 * (rank + 1) - 0.01f && me.unit.fighter.crit < crit + 2 * (rank + 1) + 0.01f,
+            format!"Sharpened Claws %s: %s -> %s"(talent, crit, me.unit.fighter.crit));
+    }
+    foreach (rank, talent; [17002u, 24866])
+    {
+        auto w = RealWorld.make();
+        auto who = druid(w, 383, [768]);
+        auto me = who.session.inWorld;
+        learnPassive(w, who, talent);
+        assert(speedRate(MoveType.run, me.player.auras, false) == 1, "not out of Cat Form");
+        shift(w, who, 768);
+        const run = speedRate(MoveType.run, me.player.auras, false), want = 1 + 0.15f * (rank + 1);
+        assert(run > want - 0.001f && run < want + 0.001f, format!"Feline Swiftness %s: %s"(talent, run));
+    }
+    {
+        auto w = RealWorld.make();
+        auto who = druid(w, 384, [768, 17007]);
+        auto me = who.session.inWorld;
+        auto friend = w.character(385, "Tyrande", PlayerClass.warrior, 60, [], raceNightElf);
+        auto group = w.context.groups.newGroup();
+        group.addLeaderInvite(me.player.guid, "Malfurion");
+        group.create();
+        group.addMember(friend.session.inWorld.player.guid, "Tyrande");
+        me.applyPassiveSpells();
+        assert(me.player.auras.find(24932) is null, "no form, no pack");
+        shift(w, who, 768);
+        pass(w, who, 1100.msecs);
+        auto pack = me.player.auras.find(24932);
+        assert(pack !is null && pack.amount[0] == 3, "the pack's crit");
+        assert(friend.session.inWorld.player.auras.find(24932) !is null, "the party's too");
+        shift(w, who, 0);
+        pass(w, who, 1100.msecs);
+        assert(me.player.auras.find(24932) is null && friend.session.inWorld.player.auras.find(24932) is null);
+    }
+    foreach (rank, talent; [17056u, 17058, 17059, 17060, 17061])
+    {
+        auto w = RealWorld.make();
+        auto who = druid(w, 386, [768, 5487]);
+        auto me = who.session.inWorld;
+        learnPassive(w, who, talent);
+        uint rage, energy;
+        enum tries = 50;
+        foreach (_; 0 .. tries)
+        {
+            shift(w, who, 0);
+            me.player.values.set!UNIT_FIELD_POWER1(Power.rage, 0u);
+            shift(w, who, 5487);
+            rage += me.player.values.get!UNIT_FIELD_POWER1(Power.rage) == 100;
+            shift(w, who, 0);
+            shift(w, who, 768);
+            me.player.values.set!UNIT_FIELD_POWER1(Power.energy, 0u); // (what Cat Form starts with aside)
+            cast(void) energy;
+        }
+        const want = cast(int)(20 * (rank + 1) * tries / 100);
+        assert(cast(int) rage >= want - 12 && rage <= want + 12, format!"Furor %s: %s of %s"(talent, rage, tries));
+    }
+}
+
+/**
+ * The druid's procs: Omen of Clarity (16864): swings bring Clearcasting (16870), whose next damage or healing spell or
+ * ability costs nothing; Nature's Grace (16880): a spell's crit makes the next spell 0.5 seconds quicker (16886);
+ * Improved Starfire (16850, 16923 .. 16926: 3% a rank) stuns Starfire's target for 3 seconds (16922); Nature's Grasp
+ * (16689 .. 16813, 17329) roots who strikes the druid (19975 .. 19970: rank 6's 19970), 35% of the time, once; Improved
+ * Nature's Grasp (17245, 17247, 17248, 17249) 15, 30, 45, 65% more.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    enum uint wrath = 9912, starfire = 9876, healingTouch = 9889;
+    {
+        auto w = RealWorld.make();
+        auto who = druid(w, 390, [16864, healingTouch]);
+        auto me = who.session.inWorld;
+        wear(who, 35); // a staff
+        refresh(w, who);
+        assert(w.cast_(who, 16864) == SpellCastResult.ok);
+        const hogger = foe(w, who);
+        assert(swingUntil(w, who, hogger, () => me.player.auras.find(16870) !is null), "Clearcasting, at last");
+        const mana = me.player.values.get!UNIT_FIELD_POWER1(Power.mana);
+        me.player.values.set!UNIT_FIELD_HEALTH(1u);
+        w.now += 2.seconds;
+        assert(w.cast_(who, healingTouch) == SpellCastResult.ok);
+        foreach (_; 0 .. 4)
+            pass(w, who, 1000.msecs);
+        assert(me.player.values.get!UNIT_FIELD_POWER1(Power.mana) >= mana, "free");
+        assert(me.player.auras.find(16870) is null, "spent");
+    }
+    {
+        auto w = RealWorld.make();
+        auto who = druid(w, 391, [wrath]);
+        auto me = who.session.inWorld;
+        learnPassive(w, who, 16880);
+        giveAura(w, who, 23434, [100, 0, 0]); // every spell crits
+        const hogger = foe(w, who);
+        refresh(w, who);
+        assert(w.castAt(who, wrath, hogger) == SpellCastResult.ok);
+        foreach (_; 0 .. 4)
+            pass(w, who, 1000.msecs);
+        assert(me.player.auras.find(16886) !is null, "Nature's Grace after a crit");
+        {
+            import dmangos.world.spellmods : SpellModOp;
+
+            const quicker = me.spellMod(SpellModOp.castingTime, spellOf(w, wrath), 2000);
+            assert(quicker == 2000 - 500, format!"0.5 seconds quicker: %s"(quicker));
+        }
+    }
+    foreach (rank, talent; [16850u, 16923, 16924, 16925, 16926])
+    {
+        auto w = RealWorld.make();
+        auto who = druid(w, 392, [starfire]);
+        auto me = who.session.inWorld;
+        learnPassive(w, who, talent);
+        const hogger = foe(w, who);
+        uint stuns;
+        enum tries = 60;
+        foreach (_; 0 .. tries)
+        {
+            auto target = creatureOf(w, hogger);
+            if (auto s = target.auras.find(16922))
+            {
+                target.auras.remove(s, target.values);
+            }
+            refresh(w, who);
+            assert(w.castAt(who, starfire, hogger) == SpellCastResult.ok);
+            foreach (__; 0 .. 4)
+                pass(w, who, 1000.msecs);
+            stuns += creatureOf(w, hogger).auras.find(16922) !is null;
+        }
+        const want = cast(int)(3 * (rank + 1) * tries / 100);
+        assert(stuns <= want + 8 && (rank < 4 || stuns >= 2), format!"Improved Starfire %s: %s of %s"(talent, stuns, tries));
+    }
+    foreach (k, talent; [0u, 17245, 17247, 17248, 17249])
+    {
+        auto w = RealWorld.make();
+        auto who = druid(w, 393, [17329]);
+        auto me = who.session.inWorld;
+        if (talent)
+            learnPassive(w, who, talent);
+        const hogger = foe(w, who);
+        uint rooted;
+        enum tries = 40;
+        foreach (_; 0 .. tries)
+        {
+            auto target = creatureOf(w, hogger);
+            if (auto s = target.auras.find(19970))
+            {
+                target.auras.remove(s, target.values);
+            }
+            w.now += 61.seconds;
+            refresh(w, who);
+            assert(w.cast_(who, 17329) == SpellCastResult.ok);
+            struck(w, who, hogger, MeleeHitOutcome.normal);
+            if (creatureOf(w, hogger).auras.find(19970) !is null)
+            {
+                ++rooted;
+                assert(me.player.auras.find(17329) is null, "one charge");
+            }
+        }
+        const chance = 35 + [0, 15, 30, 45, 65][k];
+        const want = (chance > 100 ? 100 : chance) * tries / 100;
+        assert(rooted >= want - 10 && rooted <= want + 10, format!"Nature's Grasp +%s: %s of %s"(talent, rooted, tries));
+    }
+}
+
+/**
+ * Vengeance (16909 .. 16913): Wrath's crit bonus 20% more a rank (rank 5: twice the damage). Moonfury (16896, 16897,
+ * 16899, 16900, 16901): 2% more Wrath damage a rank. Gift of Nature (17104, 24943 .. 24946): 2% more Healing Touch a
+ * rank. Improved Moonfire (16821 .. 16825): 2% more Moonfire damage a rank.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    enum uint wrath = 9912, healingTouch = 9889, moonfire = 9835;
+    foreach (rank, talent; [0u, 16909, 16910, 16911, 16912, 16913])
+    {
+        auto w = RealWorld.make();
+        auto who = druid(w, 394, [wrath]);
+        if (talent)
+            learnPassive(w, who, talent);
+        giveAura(w, who, 23434, [100, 0, 0]);
+        const hogger = foe(w, who);
+        const range = valueRange(w, wrath, 0, 60);
+        const factor = 1 + 0.5f * (1 + 0.2f * rank);
+        foreach (attempt; 0 .. 4)
+        {
+            refresh(w, who);
+            assert(w.castAt(who, wrath, hogger) == SpellCastResult.ok);
+            foreach (_; 0 .. 4)
+                pass(w, who, 1000.msecs);
+            foreach (d; damageOf(who, wrath))
+                assert(d == 0 || (d >= range[0] * factor - 2 && d <= range[1] * factor + 2), format!"Vengeance %s: %s, not %s x%s"(
+                    rank, d, range, factor));
+        }
+    }
+    foreach (rank, talent; [0u, 16896, 16897, 16899, 16900, 16901])
+    {
+        auto w = RealWorld.make();
+        auto who = druid(w, 395, [wrath]);
+        if (talent)
+            learnPassive(w, who, talent);
+        const hogger = foe(w, who);
+        const range = valueRange(w, wrath, 0, 60);
+        foreach (attempt; 0 .. 5)
+        {
+            refresh(w, who);
+            assert(w.castAt(who, wrath, hogger) == SpellCastResult.ok);
+            foreach (_; 0 .. 4)
+                pass(w, who, 1000.msecs);
+            foreach (d; damageOf(who, wrath))
+                assert(d == 0 || inRange(d, range[0], range[1], 2 * cast(int) rank), format!"Moonfury %s: %s, not %s"(rank, d, range));
+        }
+    }
+    foreach (rank, talent; [0u, 16821, 16822, 16823, 16824, 16825])
+    {
+        auto w = RealWorld.make();
+        auto who = druid(w, 396, [moonfire]);
+        if (talent)
+            learnPassive(w, who, talent);
+        const hogger = foe(w, who);
+        const range = valueRange(w, moonfire, 1, 60); // (its second effect: the burn; the first is its ticks)
+        foreach (attempt; 0 .. 5)
+        {
+            w.now += 13.seconds;
+            refresh(w, who);
+            assert(w.castAt(who, moonfire, hogger) == SpellCastResult.ok);
+            foreach (d; damageOf(who, moonfire))
+                assert(d == 0 || inRange(d, range[0], range[1], 2 * cast(int) rank), format!"Improved Moonfire %s: %s, not %s"(
+                    rank, d, range));
+        }
+    }
+    foreach (rank, talent; [0u, 17104, 24943, 24944, 24945, 24946])
+    {
+        auto w = RealWorld.make();
+        auto who = druid(w, 397, [healingTouch]);
+        if (talent)
+            learnPassive(w, who, talent);
+        const range = valueRange(w, healingTouch, 0, 60);
+        foreach (attempt; 0 .. 4)
+            foreach (l; healsOf(w, who, healingTouch))
+                assert(inRange(l[1], range[0], range[1], 2 * cast(int) rank), format!"Gift of Nature %s: %s, not %s"(rank, l[1],
+                    range));
+    }
+}
+
+/**
+ * Subtlety (17118 .. 17122): 4% less threat a rank from the druid's heals; Improved Tranquility (17123, 17124): 50%,
+ * 100% less from Tranquility's.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    float ratio(uint talent, uint spell)
+    {
+        auto w = RealWorld.make();
+        auto who = druid(w, 398, [spell]);
+        auto friend = w.character(399, "Fandral", PlayerClass.warrior, 60, [], raceNightElf);
+        if (talent)
+            learnPassive(w, who, talent);
+        const hogger = foe(w, friend, 448, 20);
+        auto creature = creatureOf(w, hogger);
+        creature.ai.react = imported!"dmangos.world.creatureai".ReactState.defensive;
+        bool isNew;
+        creature.auras.apply(makeAura(spellOf(w, 9853), 0, 60, 60_000, false, [0, 0, 0]), creature.values, isNew);
+        dealDamage(friend.session.inWorld.unit, w.context.map(0).unit(hogger), 1, Blow.spell(0));
+        if (spell == 9862) // Tranquility: the party's
+        {
+            auto group = w.context.groups.newGroup();
+            group.addLeaderInvite(who.session.inWorld.player.guid, "Malfurion");
+            group.create();
+            group.addMember(friend.session.inWorld.player.guid, "Fandral");
+        }
+        friend.session.inWorld.player.values.set!UNIT_FIELD_HEALTH(1u);
+        refresh(w, who);
+        const before = creature.ai.threatOf(who.session.inWorld.player.guid);
+        const r = spell == 9862 ? w.cast_(who, spell) : w.castAt(who, spell, friend.session.inWorld.player.guid);
+        assert(r == SpellCastResult.ok, format!"%s: %s"(spell, r));
+        uint healed; // (what the friend gained: Tranquility's ticks are periodic logs)
+        foreach (_; 0 .. 6)
+        {
+            pass(w, who, 1000.msecs);
+            friend.session.inWorld.update(1000.msecs); // (the friend's auras tick in its own time)
+            healed += friend.session.inWorld.player.values.get!UNIT_FIELD_HEALTH - 1;
+            friend.session.inWorld.player.values.set!UNIT_FIELD_HEALTH(1u);
+        }
+        assert(healed, format!"%s healed (%s %s %s)"(spell, who.session.inWorld.player.auras.find(spell) !is null, friend.session.inWorld.player.auras.find(spell) !is null, w.context.groups.of(friend.session.inWorld.player.guid) !is null));
+        return (creature.ai.threatOf(who.session.inWorld.player.guid) - before) / healed;
+    }
+    const plain = ratio(0, 9889);
+    assert(plain > 0, "a heal angers");
+    foreach (rank, talent; [17118u, 17119, 17120, 17121, 17122])
+    {
+        const less = ratio(talent, 9889), want = plain * (1 - 0.04f * (rank + 1));
+        assert(less > want - 0.01f && less < want + 0.01f, format!"Subtlety %s: %s, not %s"(talent, less, want));
+    }
+    const tranquil = ratio(0, 9862);
+    foreach (rank, talent; [17123u, 17124])
+    {
+        const less = ratio(talent, 9862), want = tranquil * (1 - 0.5f * (rank + 1));
+        assert(less > want - 0.01f && less < want + 0.01f, format!"Improved Tranquility %s: %s, not %s"(talent, less, want));
+    }
+}
+
+/// The shaman's and the druid's talents of the data alone.
+unittest
+{
+    import dmangos.world.character : Character;
+    import dmangos.world.defines : Stat;
+
+    if (!haveRealData())
+        return;
+    StatClaim[] shaman = [
+        StatClaim("Ancestral Knowledge", [17485, 17486, 17487, 17488, 17489], 1, true,
+            (Character m) => cast(float) m.player.values.get!UNIT_FIELD_MAXPOWER1(Power.mana)),
+        StatClaim("Anticipation", [16254, 16271, 16272, 16273, 16274], 1, false, (Character m) => m.unit.fighter.dodge),
+        StatClaim("Elemental Warding", [28996, 28997, 28998], -1, false, (Character m) => (m.player.damageMods.taken[2] - 1) * 100),
+        StatClaim("Nature's Guidance", [16180, 16196, 16198], 1, false, (Character m) => m.unit.fighter.hitBonus),
+        StatClaim("Shield Specialization", [16253, 16298, 16299, 16300, 16301], 1, false, (Character m) => m.unit.fighter.block,
+            [1200], [107]),
+        StatClaim("Shield Specialization", [16253, 16298, 16299, 16300, 16301], 5, true,
+            (Character m) => cast(float) m.unit.fighter.shieldBlock - (m.player.stats.stats[Stat.strength] / 20 - 1), [4129], [107]),
+        StatClaim("Thundering Strikes", [16255, 16302, 16303, 16304, 16305], 1, false, (Character m) => m.unit.fighter.crit, [5757]),
+        StatClaim("Toughness", [16252, 16306, 16307, 16308, 16309], 2, true, (Character m) => cast(float) m.unit.fighter.armor
+            - m.player.stats.stats[Stat.agility] * 2, [15824]),
+        StatClaim("Weapon Mastery", [29082, 29084, 29086, 29087, 29088], 2, true, (Character m) => m.player.damageMods.swing[0],
+            [5757]),
+    ];
+    // Elemental Warding: 4, 7, 10% (not 1 a rank): each rank on its own.
+    shaman[2].ranks = [28996];
+    shaman[2].perRank = -4;
+    shaman ~= StatClaim("Elemental Warding", [28997], -7, false, shaman[2].observe);
+    shaman ~= StatClaim("Elemental Warding", [28998], -10, false, shaman[2].observe);
+    foreach (ref c; shaman)
+    {
+        c.classId = PlayerClass.shaman;
+        c.race = raceOrc;
+    }
+    StatClaim[] druid = [
+        StatClaim("Natural Weapons", [16902, 16903, 16904, 16905, 16906], 2, true, (Character m) => m.player.damageMods.swing[0]),
+        StatClaim("Thick Hide", [16929, 16930, 16931, 16932, 16933], 2, true, (Character m) => cast(float) m.unit.fighter.armor
+            - m.player.stats.stats[Stat.agility] * 2, [15824]),
+        StatClaim("Heart of the Wild", [17003, 17004, 17005, 17006, 24894], 4, true,
+            (Character m) => cast(float) m.player.stats.stats[Stat.intellect]),
+        StatClaim("Reflection", [17106, 17107, 17108], 5, false,
+            (Character m) => cast(float) m.player.auras.total(AuraType.modManaRegenInterrupt)),
+    ];
+    foreach (ref c; druid)
+    {
+        c.classId = PlayerClass.druid;
+        c.race = raceNightElf;
+    }
+    checkStatClaims(shaman ~ druid);
+}
+
+/**
+ * Heart of the Wild (17003 .. 17006, 24894: 4% a rank): the stamina in Bear and Dire Bear Form, the strength in Cat Form.
+ * Feral Instinct (16947 .. 16951): 3% more threat a rank in the bear forms (Bear Form (Passive2), 21178: 30%).
+ */
+unittest
+{
+    import dmangos.world.defines : Stat;
+
+    if (!haveRealData())
+        return;
+    foreach (rank, talent; [17003u, 17004, 17005, 17006, 24894])
+    {
+        auto w = RealWorld.make();
+        auto who = druid(w, 400, [768, 9634]);
+        auto me = who.session.inWorld;
+        shift(w, who, 9634);
+        const stamina = me.player.stats.stats[Stat.stamina];
+        shift(w, who, 768);
+        const strength = me.player.stats.stats[Stat.strength];
+        shift(w, who, 0);
+        learnPassive(w, who, talent);
+        const percent = 4 * cast(int)(rank + 1);
+        shift(w, who, 9634);
+        assert(changedBy(cast(long) me.player.stats.stats[Stat.stamina], cast(long) stamina, percent), format!"%s: stamina %s -> %s"(
+            talent, stamina, me.player.stats.stats[Stat.stamina]));
+        shift(w, who, 768);
+        assert(changedBy(cast(long) me.player.stats.stats[Stat.strength], cast(long) strength, percent), format!"%s: strength %s -> %s"(
+            talent, strength, me.player.stats.stats[Stat.strength]));
+    }
+    foreach (rank, talent; [0u, 16947, 16948, 16949, 16950, 16951])
+    {
+        auto w = RealWorld.make();
+        auto who = druid(w, 401, [9634]);
+        auto me = who.session.inWorld;
+        if (talent)
+            learnPassive(w, who, talent);
+        assert(me.player.auras.find(21178) is null, "no bear, no bear's threat");
+        shift(w, who, 9634);
+        auto threat = me.player.auras.find(21178);
+        assert(threat !is null && threat.amount[0] == 30 + 3 * cast(int) rank, format!"Feral Instinct %s"(rank));
+    }
+}
+
+/**
+ * Primal Fury (16958, 16961: 50, 100%): 5 rage (16959) at a crit in the bear forms. Blood Frenzy (16952, 16954: 50,
+ * 100%): a combo point more (16953) at a crit of a Cat Form ability that gives one (Claw, 9850). Enrage (5229): 20 rage
+ * over 10 seconds; Improved Enrage (17079, 17082): 5, 10 at once (17080, 17081).
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    {
+        auto w = RealWorld.make();
+        auto who = druid(w, 402, [9634]);
+        auto me = who.session.inWorld;
+        learnPassive(w, who, 16961);
+        shift(w, who, 9634);
+        const hogger = foe(w, who);
+        bool fury;
+        swingUntil(w, who, hogger, () {
+            fury |= spellLogs(who, Opcode.SMSG_SPELLENERGIZELOG).canFind!(l => l[0] == 16959);
+            return fury;
+        });
+        assert(fury, "Primal Fury's rage at a crit");
+    }
+    {
+        auto w = RealWorld.make();
+        auto who = druid(w, 403, [768, 9850]);
+        auto me = who.session.inWorld;
+        learnPassive(w, who, 16954);
+        giveAura(w, who, 3232, [100, 0, 0]); // every swing and ability crits ("Gouge Stun Test": 100% melee crit)
+        shift(w, who, 768);
+        const hogger = foe(w, who);
+        bool two;
+        foreach (attempt; 0 .. 10)
+        {
+            me.player.values.set!UNIT_FIELD_POWER1(Power.energy, 100u);
+            w.now += 2.seconds;
+            who.read();
+            const r = w.castAt(who, 9850, hogger);
+            assert(r == SpellCastResult.ok, format!"Claw: %s"(r));
+            if (me.comboPoints == 2)
+            {
+                two = true;
+                break;
+            }
+            me.clearComboPoints();
+        }
+        assert(two, "Blood Frenzy's point at a crit");
+    }
+    foreach (rank, talent; [0u, 17079, 17082])
+    {
+        auto w = RealWorld.make();
+        auto who = druid(w, 404, [5487, 5229]);
+        auto me = who.session.inWorld;
+        if (talent)
+            learnPassive(w, who, talent);
+        shift(w, who, 5487);
+        me.player.values.set!UNIT_FIELD_POWER1(Power.rage, 0u);
+        w.now += 2.seconds;
+        assert(w.cast_(who, 5229) == SpellCastResult.ok);
+        assert(me.player.values.get!UNIT_FIELD_POWER1(Power.rage) == 50 * rank, format!"Improved Enrage %s: %s at once"(rank,
+            me.player.values.get!UNIT_FIELD_POWER1(Power.rage)));
+        me.player.values.set!UNIT_FIELD_POWER1(Power.rage, 0u);
+        {
+            import dmangos.world.defines : UnitFlags;
+
+            assert(me.player.values.get!UNIT_FIELD_FLAGS & UnitFlags.inCombat, "considered in combat");
+        }
+        uint[] track;
+        foreach (_; 0 .. 11)
+        {
+            pass(w, who, 1000.msecs);
+            track ~= me.player.values.get!UNIT_FIELD_POWER1(Power.rage);
+        }
+        // (2 a second for its 10 seconds, none lost out of combat meanwhile; the loss starts as it ends)
+        import std.algorithm.searching : maxElement;
+
+        assert(track[8] == 180, format!"Enrage: %s: 2 rage a second, 10 seconds"(track));
+        cast(void) maxElement(track);
+    }
+}
+
+/**
+ * Nature's Swiftness (17116): the next nature spell is instant, and it goes. Barkskin (22812): no casting time lost to
+ * damage, and 1 second more for Healing Touch (9889) and the other spells it names. Demoralizing Roar (9898): its
+ * attack power less at its targets, Feral Aggression's (above) more.
+ */
+unittest
+{
+    import dmangos.world.spellmods : SpellModOp;
+
+    if (!haveRealData())
+        return;
+    {
+        auto w = RealWorld.make();
+        auto who = druid(w, 405, [9889, 17116]);
+        auto me = who.session.inWorld;
+        refresh(w, who);
+        assert(w.cast_(who, 17116) == SpellCastResult.ok);
+        w.now += 2.seconds;
+        me.player.values.set!UNIT_FIELD_HEALTH(1u);
+        who.read();
+        assert(w.cast_(who, 9889) == SpellCastResult.ok);
+        assert(spellLogs(who, Opcode.SMSG_SPELLHEALLOG).length == 1, "instant");
+        assert(me.player.auras.find(17116) is null, "spent");
+    }
+    {
+        auto w = RealWorld.make();
+        auto who = druid(w, 406, [9889, 22812]);
+        auto me = who.session.inWorld;
+        const touch = spellOf(w, 9889);
+        const plain = me.spellMod(SpellModOp.castingTime, touch, 3500);
+        refresh(w, who);
+        assert(w.cast_(who, 22812) == SpellCastResult.ok);
+        assert(me.spellMod(SpellModOp.castingTime, touch, 3500) == plain + 1000, "1 second more");
+        assert(me.player.auras.total(AuraType.resistPushback) >= 100, "no time lost");
+    }
+    foreach (rank, talent; [0u, 16858, 16859, 16860, 16861, 16862])
+    {
+        auto w = RealWorld.make();
+        auto who = druid(w, 407, [5487, 9898]);
+        if (talent)
+            learnPassive(w, who, talent);
+        shift(w, who, 5487);
+        const hogger = foe(w, who);
+        Aura roar;
+        foreach (attempt; 0 .. 10) // (it may miss)
+        {
+            who.session.inWorld.player.values.set!UNIT_FIELD_POWER1(Power.rage, 1000u);
+            w.now += 2.seconds;
+            const r = w.cast_(who, 9898);
+            assert(r == SpellCastResult.ok, format!"%s"(r));
+            roar = creatureOf(w, hogger).auras.find(9898);
+            if (roar !is null)
+                break;
+        }
+        assert(roar !is null, "roared at");
+        assert(changedBy(-roar.amount[0], -valueRange(w, 9898, 0, 60)[0], 8 * cast(int) rank), format!"Feral Aggression %s: %s"(
+            rank, roar.amount[0]));
+    }
+}
+
+/**
+ * Regrowth (9858, rank 9): its heal of the tooltip's 1003 to 1119, then 1064 over 21 seconds (152 every 3 seconds);
+ * Improved Regrowth's crit (above) the heal's.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    auto w = RealWorld.make();
+    auto who = druid(w, 408, [9858]);
+    auto me = who.session.inWorld;
+    const range = valueRange(w, 9858, 0, 60);
+    const heals = healsOf(w, who, 9858);
+    assert(heals.length == 1 && inRange(heals[0][1], range[0], range[1]), format!"%s"(heals));
+    auto hot = me.player.auras.find(9858);
+    assert(hot !is null && hot.amount[1] == valueRange(w, 9858, 1, 60)[0] && hot.period[1] == 3000, "its ticks");
+    me.player.values.set!UNIT_FIELD_HEALTH(1u);
+    foreach (_; 0 .. 22)
+        pass(w, who, 1000.msecs);
+    assert(me.player.values.get!UNIT_FIELD_HEALTH >= 1 + 7 * valueRange(w, 9858, 1, 60)[0], "seven ticks");
+}
+
+/// Moonkin Form (24858): 360% armor from items (its passive, 24905) and 3% spell crit for the party (24907), in it only.
+unittest
+{
+    if (!haveRealData())
+        return;
+    auto w = RealWorld.make();
+    auto who = druid(w, 409, [24858, 24905, 24907, 9912]);
+    auto me = who.session.inWorld;
+    wear(who, 15824); // a robe of 76 armor
+    pass(w, who, 100.msecs);
+    const armor = me.unit.fighter.armor;
+    const crit = me.critChanceOf(spellOf(w, 9912), UnitRef.init);
+    assert(me.player.auras.find(24905) is null && me.player.auras.find(24907) is null);
+    shift(w, who, 24858);
+    pass(w, who, 1100.msecs);
+    assert(me.player.auras.find(24905) !is null && me.player.auras.find(24907) !is null, "its passive and its aura");
+    assert(me.unit.fighter.armor >= armor + 76 * 360 / 100 - 1, format!"armor %s -> %s"(armor, me.unit.fighter.armor));
+    const moonkinCrit = me.critChanceOf(spellOf(w, 9912), UnitRef.init);
+    assert(moonkinCrit > crit + 2.99f && moonkinCrit < crit + 3.01f, format!"spell crit %s -> %s"(crit, moonkinCrit));
+    shift(w, who, 0);
+    pass(w, who, 1100.msecs);
+    assert(me.player.auras.find(24905) is null && me.player.auras.find(24907) is null, "out of it");
+}
+
+/**
+ * Regrowth with the Dreamwalker Raiment's six pieces (28744, override class script 4537): its heal and each of its
+ * ticks give its target Blessing of the Claw (28750: 50 more maximum health), stacking to 7.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    auto w = RealWorld.make();
+    auto who = druid(w, 410, [9858]);
+    auto me = who.session.inWorld;
+    giveAura(w, who, 28744);
+    const max = me.player.values.get!UNIT_FIELD_MAXHEALTH;
+    healsOf(w, who, 9858);
+    auto claw = me.player.auras.find(28750);
+    assert(claw !is null, "its heal: the claw");
+    me.player.values.set!UNIT_FIELD_HEALTH(1u);
+    foreach (_; 0 .. 9)
+    {
+        pass(w, who, 1000.msecs);
+        me.player.values.set!UNIT_FIELD_HEALTH(1u);
+    }
+    claw = me.player.auras.find(28750);
+    assert(claw !is null && claw.stacks >= 3, format!"its ticks stack it: %s"(claw is null ? 0 : claw.stacks));
+    assert(me.player.values.get!UNIT_FIELD_MAXHEALTH >= max + 50 * 3, "more maximum health");
+}
+
+/**
+ * Sentry Totem (6495): a totem of 100 health, and its aura on the shaman (to see through it). Far Sight (6196): the
+ * shaman's view at the place, a minute.
+ */
+unittest
+{
+    import dmangos.world.spellcast : SpellTargets, TargetFlags;
+
+    if (!haveRealData())
+        return;
+    auto w = RealWorld.make();
+    auto who = shaman(w, 411, [6495, 6196]);
+    auto me = who.session.inWorld;
+    auto totem = summoned(w, who, 6495);
+    assert(totem.values.get!UNIT_FIELD_MAXHEALTH == 100, format!"%s health"(totem.values.get!UNIT_FIELD_MAXHEALTH));
+    assert(me.player.auras.find(6495) !is null, "its aura on the shaman");
+    refresh(w, who);
+    SpellTargets at;
+    at.mask = 0x40; // a place
+    at.dest = [me.player.position.x + 20, me.player.position.y, me.player.position.z];
+    const r = me.castSpell(spellOf(w, 6196), at, false, 0);
+    assert(r == SpellCastResult.ok, format!"Far Sight: %s"(r));
+    foreach (_; 0 .. 3)
+        pass(w, who, 1000.msecs);
+    assert(me.player.values.get!PLAYER_FARSIGHT != 0, "seeing from there");
+}
+
+/// Travel Form (783): 40% faster (its passive, 5419), in it only; Bear Form's rage starts at none.
+unittest
+{
+    import dmangos.world.movement : MoveType;
+    import dmangos.world.moveorders : speedRate;
+
+    if (!haveRealData())
+        return;
+    auto w = RealWorld.make();
+    auto who = druid(w, 412, [783, 5419, 5487]);
+    auto me = who.session.inWorld;
+    assert(speedRate(MoveType.run, me.player.auras, false) == 1, "not out of Travel Form");
+    shift(w, who, 783);
+    const run = speedRate(MoveType.run, me.player.auras, false);
+    assert(run > 1.399f && run < 1.401f, format!"Travel Form: %s"(run));
+    shift(w, who, 0);
+    me.player.values.set!UNIT_FIELD_POWER1(Power.rage, 500u);
+    shift(w, who, 5487);
+    assert(me.player.values.get!UNIT_FIELD_POWER1(Power.rage) == 0, "Bear Form's rage starts at none");
 }

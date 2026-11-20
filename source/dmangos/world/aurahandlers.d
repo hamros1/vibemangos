@@ -410,6 +410,8 @@ private:
         auto applied = player.auras.apply(aura, player.values, isNew);
         if (isNew)
             auraEffects(applied, true);
+        else // one more stack (Blessing of the Claw's health): the stats of its amounts again
+            player.refreshEquipmentStats(context.data);
         sendAuraDuration(applied);
         flushPlayerChanges();
         if (isNew) // its spell's script hears of each of its effects (whoever cast it)
@@ -639,6 +641,9 @@ private:
                 player.values.setByte!UNIT_FIELD_BYTES_1(2, apply ? cast(ubyte) aura.misc(i) : 0);
                 if (apply)
                     interruptAuras(AuraInterrupt.shapeshifting, aura);
+                refreshFormBoundPassives(); // the form's own passives, its talents'
+                if (apply)
+                    classShapeshifted(cast(ubyte) aura.misc(i));
                 break;
             case AuraType.modRoot:
                 movement = true;
@@ -1028,6 +1033,10 @@ private:
         default:
             return;
         }
+        if (aura.type(i) == AuraType.periodicHeal) // what the healer's class rules do at its ticks
+            if (auto healer = map.unit(aura.caster))
+                if (healer.kind == imported!"dmangos.world.unit".UnitKind.player)
+                    healer.session.classHealed(aura.spell, unit);
         const health = v.get!UNIT_FIELD_HEALTH, maxHealth = v.get!UNIT_FIELD_MAXHEALTH;
         if (health >= maxHealth)
             return;

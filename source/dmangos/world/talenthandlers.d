@@ -93,6 +93,7 @@ private:
         if (const spell = context.data.spells.spell(spellId))
             applyPassive(spell);
         refreshEquipBoundPassives();
+        refreshFormBoundPassives();
         flushPlayerChanges();
         info!"%s: '%s' learned talent %s rank %s (spell %s)"(remoteAddress, player.data.name, talentId, rank + 1,
             spellId);
@@ -218,9 +219,13 @@ private:
         enum uint applyAura = 6;
         if (!spell.isPassive || player.auras.find(spell.id) !is null)
             return;
-        // Those bound to a kind of weapon or armour are not applied yet.
-        if (spell.equippedItemClass >= 0)
+        // Those bound to a kind of weapon or armour, or to shapeshift forms, are on while those are
+        // (`refreshEquipBoundPassives`, `refreshFormBoundPassives`).
+        if (spell.equippedItemClass >= 0 || formBound(spell))
             return;
+        foreach (ref granted; classFormPassives())
+            if (granted.spell == spell.id)
+                return;
         int[3] values;
         bool any;
         foreach (i; 0 .. 3)
@@ -322,8 +327,55 @@ private:
                 if (spell.isPassive)
                     applyPassive(spell);
         refreshEquipBoundPassives();
+        refreshFormBoundPassives();
     }
 
+    /// Whether `spell` is a passive of shapeshift forms only (its `Stances`; one also for no form is not).
+    private static bool formBound(const(SpellInfo)* spell)
+    {
+        enum uint allowWhileNotShapeshifted = 0x00000002; // SPELL_ATTR_EX2_ALLOW_WHILE_NOT_SHAPESHIFTED
+        return spell.stances != 0 && !(spell.attributesEx2 & allowWhileNotShapeshifted);
+    }
+
+    /**
+     * The passive spells bound to shapeshift forms (`Stances`: a druid's Cat Form, Bear Form and Dire Bear Form
+     * passives, Sharpened Claws, Feline Swiftness, Feral Instinct): on while the player is in one of their forms, off
+     * otherwise; and what its class's rules give a form (`classFormPassives`: Leader of the Pack, Predatory Strikes).
+     */
+    package void refreshFormBoundPassives()
+    {
+        import dmangos.world.updatefields : UNIT_FIELD_BYTES_1;
+
+        enum uint applyAura = 6;
+        const form = player.values.getByte!UNIT_FIELD_BYTES_1(2);
+        void set(const(SpellInfo)* spell, bool wanted, int[3] values)
+        {
+            auto on = player.auras.find(spell.id);
+            if (on !is null && (!wanted || on.amount != values))
+                removeAura(on);
+            if (wanted && (on is null || on.amount != values))
+            {
+                auto aura = makeAura(spell, player.guid, player.data.level, -1, true, values);
+                aura.passive = true;
+                addAura(aura);
+            }
+        }
+        foreach (id; player.spells)
+        {
+            const spell = context.data.spells.spell(id);
+            if (spell is null || !spell.isPassive || !formBound(spell) || spell.equippedItemClass >= 0)
+                continue;
+            int[3] values;
+            foreach (i; 0 .. 3)
+                if (spell.effect[i] == applyAura)
+                    values[i] = effectMod(spell, i, effectValue(*spell, i, player.data.level, 0));
+            set(spell, form && (spell.stances & (1u << (form - 1))), values);
+        }
+        foreach (ref granted; classFormPassives())
+            if (const spell = context.data.spells.spell(granted.spell))
+                set(spell, form && ((granted.forms ? granted.forms : spell.stances) & (1u << (form - 1))) && granted.known,
+                    granted.values);
+    }
     /**
      * The passive spells bound to a kind of weapon or armour (their `EquippedItemClass`: Redoubt to a shield, One-Handed
      * Weapon Specialization to a one-handed weapon, Weapon Mastery to any): on while one is worn (a weapon in either

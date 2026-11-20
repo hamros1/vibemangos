@@ -391,6 +391,9 @@ unittest
         casting.spellIconId = 561;
         casting.dmgClass = DamageClass.melee;
     }
+    // (the foe does not fight back: the judgements are what is tested, not the paladin's health)
+    a.foe.ai.react = imported!"dmangos.world.creatureai".ReactState.passive;
+    a.foe.ai.scriptMelee(false);
     uint[] judged()
     {
         uint[] damage;

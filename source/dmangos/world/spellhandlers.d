@@ -1988,6 +1988,19 @@ private:
                             first = u;
                     }
             procAuras(spellProcFlags(*spell, !harmful, false), first, ProcHit(spell, ProcEx.castEnd, 0, 0, harmful));
+            // A spell that neither hurts nor heals (Enrage) lands as a hit of no damage: the auras that name it proc
+            // (Improved Enrage); those of damage and heals proc where they land.
+            bool dealsOrHeals;
+            foreach (i; 0 .. 3)
+                with (SpellEffect) dealsOrHeals |= spell.effect[i] == schoolDamage || spell.effect[i] == heal
+                    || spell.effect[i] == healthLeech || spell.effect[i] == weaponDamage
+                    || spell.effect[i] == weaponDamageNoschool || spell.effect[i] == normalizedWeaponDmg
+                    || spell.effect[i] == weaponPercentDamage || spell.effect[i] == healMaxHealth
+                    || (spell.effect[i] == applyAura && (spell.casting.applyAuraName[i] == AuraType.periodicDamage
+                        || spell.casting.applyAuraName[i] == AuraType.periodicHeal));
+            if (!dealsOrHeals)
+                procAuras(spellProcFlags(*spell, !harmful, false), first ? first : unit,
+                    ProcHit(spell, ProcEx.normalHit, 0, 0, false));
         }
         // A missile's that change what it does where it lands (Elemental Mastery's crit) are spent as it lands; the
         // others (Presence of Mind's cast time) now.

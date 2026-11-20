@@ -611,6 +611,11 @@ mixin template ClassSpells()
                 // is none).
                 const reduction = player.auras.find(direBearForm) !is null ? -16 : -27;
                 castCustom(enrageArmor, player.guid, CustomValues([0, reduction, 0], 0b10));
+                // "The druid is considered in combat for the duration" (its tooltip): no rage lost meanwhile.
+                import core.time : msecs;
+                import dmangos.world.spellcast : duration;
+
+                enterCombatFor(duration(*spell, context.client, player.data.level).msecs);
                 return true;
             }
             return false;
@@ -705,6 +710,94 @@ mixin template ClassSpells()
         total = cast(int)(value * 0.01f * speed);
         castCustom(weapon ? weaponAttack : totemAttack, target.combatGuid, CustomValues.first(total));
         return true;
+    }
+
+    // -----------------------------------------------------------------------
+    // Druid: forms
+    // -----------------------------------------------------------------------
+
+    /// A passive a class rule gives in some forms: its spell, whether it is had, its amounts, its forms (0: its `Stances`).
+    static struct FormPassive
+    {
+        uint spell;
+        bool known;
+        int[3] values;
+        uint forms;
+    }
+
+    /**
+     * The passives a druid's talents give in its forms (their own spells are dummies), Moonkin Form's party aura and
+     * Bear Form's threat: Leader of the Pack's party aura
+     * (17007: 24932, 3% crit), Predatory Strikes' attack power (16972, 16974, 16975: 24868, by 50, 100, 150% of the
+     * druid's level; the tooltip: "Increases your melee attack power in Cat, Bear and Dire Bear Forms by 150% of your
+     * level").
+     */
+    package FormPassive[] classFormPassives()
+    {
+        if (player.data.classId != PlayerClass.druid)
+            return null;
+        enum uint leaderOfThePack = 17007, packAura = 24932, predatoryStrikesAttackPower = 24868, bearThreat = 21178;
+        enum uint bearForms = 1u << (5 - 1) | 1u << (8 - 1);
+        static immutable uint[] predatoryStrikes = [16972, 16974, 16975];
+        FormPassive[] passives;
+        if (const pack = context.data.spells.spell(packAura))
+            passives ~= FormPassive(packAura, player.knowsSpell(leaderOfThePack), [pack.simpleValue(0), 0, 0]);
+        int share;
+        foreach (rank; predatoryStrikes)
+            if (player.knowsSpell(rank))
+                if (const talent = context.data.spells.spell(rank))
+                    share = talent.simpleValue(0);
+        passives ~= FormPassive(predatoryStrikesAttackPower, share != 0,
+            [cast(int)(player.data.level * share / 100), 0, 0]);
+        // Heart of the Wild's forms (its tooltip: "while in Bear or Dire Bear Form your Stamina is increased by 20% and
+        // while in Cat Form your Strength"): its effects of no amount, 24899 and 24900, by the talent's.
+        static immutable uint[] heartOfTheWild = [17003, 17004, 17005, 17006, 24894];
+        enum uint heartBear = 24899, heartCat = 24900;
+        int heart;
+        foreach (rank; heartOfTheWild)
+            if (player.knowsSpell(rank))
+                if (const talent = context.data.spells.spell(rank))
+                    heart = talent.simpleValue(0);
+        passives ~= FormPassive(heartBear, heart != 0, [heart, 0, 0]);
+        passives ~= FormPassive(heartCat, heart != 0, [heart, 0, 0]);
+        // Travel Form's speed (5419, of no `Stances`): Travel Form's.
+        enum uint travelSpeed = 5419;
+        if (const travel = context.data.spells.spell(travelSpeed))
+            passives ~= FormPassive(travelSpeed, player.knowsSpell(travelSpeed), [travel.simpleValue(0), 0, 0], 1u << (3 - 1));
+        // Moonkin Aura (24907: the party's 3% spell crit), which a druid learns with its Balance skill, not passive.
+        enum uint moonkinAura = 24907;
+        if (const aura = context.data.spells.spell(moonkinAura))
+            passives ~= FormPassive(moonkinAura, player.knowsSpell(moonkinAura), [aura.simpleValue(0), 0, 0]);
+        // Bear Form (Passive2)'s 30% more threat, of no `Stances`: the bear forms' (Feral Instinct adds to it).
+        if (const threat = context.data.spells.spell(bearThreat))
+            passives ~= FormPassive(bearThreat, player.knowsSpell(bearThreat), [effectMod(threat, 0, threat.simpleValue(0)),
+                0, 0], bearForms);
+        return passives;
+    }
+
+    /**
+     * A druid took a form (`form`, `ShapeshiftForm`): its rage or energy starts at none; Furor's chance (17056 .. 17061: 20% a rank) of 10 rage in Bear or
+     * Dire Bear Form (17057), of 40 energy in Cat Form (17099).
+     */
+    package void classShapeshifted(ubyte form)
+    {
+        enum ubyte cat = 1, bear = 5, direBear = 8;
+        enum uint furorRage = 17057, furorEnergy = 17099;
+        static immutable uint[] furor = [17056, 17058, 17059, 17060, 17061];
+        if (player.data.classId != PlayerClass.druid || (form != cat && form != bear && form != direBear))
+            return;
+        // A form's own power starts at none (what made "powershifting" with Furor worth it).
+        import dmangos.world.defines : Power;
+
+        player.modifyPower(form == cat ? Power.energy : Power.rage,
+            -cast(int) player.values.get!UNIT_FIELD_POWER1(form == cat ? Power.energy : Power.rage));
+        foreach (aura; player.auras.list)
+            if (furor.canFind(aura.spell.id))
+            {
+                if (uniform01(map.random) * 100 < aura.amount[0])
+                    castCustom(form == cat ? furorEnergy : furorRage, player.guid);
+                break;
+            }
     }
 
     package AttackType procHand; /// the hand whose swing set the current item procs off
@@ -925,6 +1018,8 @@ mixin template ClassSpells()
             takeAuraFrom(target, shortest);
             return value;
         }
+        if (spell.hasEffect(imported!"dmangos.world.spellids".SpellEffect.heal))
+            classHealed(spell, target); // (its initial heal; the ticks: `periodicHeal`)
         foreach (aura; set.list)
         {
             // Blessing of Light: effect 0 for Holy Light's heal, 1 for Flash of Light's, as healing power ("up to"):
@@ -945,6 +1040,28 @@ mixin template ClassSpells()
                 value = value * (aura.amount[0] * cast(int) aura.stacks + 100) / 100;
         }
         return value;
+    }
+
+    /**
+     * This player's heal or heal over time (`spell`) landed on `target`, a tick of it too: Regrowth with the
+     * Dreamwalker Raiment's six pieces (their override class script 4537, 28744: "Your initial cast and Regrowth ticks
+     * will increase the maximum health of your target by up to 50, stacking up to 7 times") gives Blessing of the Claw
+     * (28750).
+     */
+    package void classHealed(const(SpellInfo)* spell, UnitRef target)
+    {
+        enum int dreamwalkerRegrowth = 4537;
+        enum uint blessingOfTheClaw = 28750;
+        if (!ofFamily(spell, SpellFamily.druid, 0x40) || !target || !target.alive)
+            return;
+        foreach (aura; player.auras.list)
+            foreach (i; 0 .. 3)
+                if ((aura.effects & (1 << i)) && aura.type(i) == AuraType.overrideClassScripts
+                        && aura.misc(i) == dreamwalkerRegrowth)
+                {
+                    castCustom(blessingOfTheClaw, target.combatGuid);
+                    return;
+                }
     }
 
     /**

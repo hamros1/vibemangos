@@ -771,7 +771,9 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
   auras by its owner's talents (Enhancing, Guardian, Restorative Totems, Totemic Mastery, Call of Flame, Improved Fire
   Totems), its periodic spells cast (Fire Nova, Magma, Earthbind) and its weapon enchantments given to the party;
   Improved Weapon Totems' masks (its tooltip, not `spell_affect`); the passives bound to a weapon, a shield or a
-  shapeshift form on while those are
+  shapeshift form on while those are; a druid's forms (their passives, Moonkin Aura, Bear Form's threat), Predatory
+  Strikes, Leader of the Pack, Furor, Heart of the Wild's forms, Enrage's combat state; a spell that neither hurts nor
+  heals procs as it lands (Improved Enrage)
 
 ## world/classspelltests.d
 
@@ -1426,6 +1428,8 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Files: `StatSystem.cpp`
 * Functions: `Player::CalculateMinMaxDamage`, `Player::CheckAmmoCompatibility`, `Player::GetHealthBonusFromStamina`, `Player::GetManaBonusFromIntellect`, `Player::GetMeleeCritFromAgility`, `Player::InitStatsForLevel`, `Player::UpdateCritPercentage`, `Player::_ApplyItemBonuses`, `Unit::m_modCritChance`
 * Constants: `MOD_ATTACK_POWER`, `MOD_INCREASE_ENERGY`, `MOD_INCREASE_HEALTH`, `MOD_PERCENT_STAT`, `MOD_RANGED_ATTACK_POWER`, `MOD_RESISTANCE`, `MOD_STAT`, `SPELL_AURA_MOD_STAT`
+* Not from an emulator (2026-11-20): a druid's melee attack power (strength's, in Cat Form agility's too, none of its
+  level: the Cat Form tooltip and warcraft.wiki.gg's Attack Power page; docs/FORMULAS.md)
 
 ## world/talenthandlers.d
 

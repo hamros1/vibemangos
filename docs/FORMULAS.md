@@ -75,3 +75,20 @@ most half the paladin's health. **Source: the tooltip** and the talent's amount.
 each of their periods (5 seconds), for two periods: the enchantment lasts while its bearer stays near. **Source: the
 tooltips** ("enchants all party members' main-hand weapons with fire if they are within 20 yards"); how long one lasts
 once out of reach is not said, and is this server's choice.
+
+## A druid's attack power
+
+**What:** a druid's melee attack power is its strength's (twice, less 20), none of its level; in Cat Form its agility's
+too (`meleeAttackPower` in world/stats.d). The forms add their passives' amounts, which grow with the level as their
+data has it (Cat Form's 40 at level 20, 2 more a level: 120 at 60), Predatory Strikes a share of the level in them (50,
+100, 150%).
+
+**Source: the tooltips** (Cat Form: "increasing melee attack power by 40 plus Agility"; Predatory Strikes: "by 150% of
+your level") and documented 1.12 research (warcraft.wiki.gg's Attack Power page: a druid's base is Strength x 2 - 20).
+Until 2026-11-20 a druid had a warrior's three a level as well.
+
+## Heart of the Wild in the forms
+
+**What:** its percent of stamina in Bear and Dire Bear Form, of strength in Cat Form (world/player.d). **Source: the
+tooltip** ("while in Bear or Dire Bear Form your Stamina is increased by 20% and while in Cat Form your Strength"); its
+data has only the intellect.

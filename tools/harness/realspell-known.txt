@@ -2,7 +2,7 @@
 # data says, each with why: "id: reason". The sweep fails at a failure not listed here, and says which listed ones
 # pass now (take them off).
 126: Eye of Kilrogg: SPELL_EFFECT_SUMMON_POSSESSED is not done yet (see spell-audit-known.txt)
-877: Elemental Fury: its aura is at the caster's pet (TARGET_UNIT_CASTER_PET), and a shaman has none to give it
+877: Elemental Fury: not the shaman's talent (16089): no class's in the client's data (no SkillLineAbility row); taught by 1229, which the world database's warrior trainers list at level 6; its aura (10 more physical damage) is at the caster's pet (TARGET_UNIT_CASTER_PET), which the sweep's caster has none of
 7620: Fishing: the bobber needs water in front of the caster; the sweep casts in Stormwind's Trade District
 7731: Fishing: as 7620
 18248: Fishing: as 7620
