@@ -117,7 +117,11 @@ mixin template CombatHandlers()
                 killer.playerKilledByMe(this);
             if (auto copy = currentBattleground()) // the battleground counts the death and the kill
                 copy.playerKilled(victim: player.guid, killer: killer !is null && killer !is this ? killer.player.guid : 0);
-            playerDied(attacker.kind != UnitKind.player); // only a player's kill costs no durability
+            // Gear wears by a tenth unless a player's side killed (the player, its pet, totem or guardian), nor in
+            // a battleground (`Unit::DealDamage`: `!responsiblePlayer && !InBattleGround()`).
+            const byPlayerSide = attacker.kind == UnitKind.player || (attacker.kind == UnitKind.creature
+                && (attacker.creature.petOwner || attacker.creature.totemOwner || attacker.creature.guardianOwner));
+            playerDied(!byPlayerSide && currentBattleground() is null);
         }
     }
 

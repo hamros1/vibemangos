@@ -800,6 +800,27 @@ unittest
     assert(me.deathState == DeathState.alive && 7 !in db.corpses);
     anduin.read();
 
+    // Killed by another player's pet: no durability lost (`Unit::DealDamage`: a responsible player).
+    {
+        import dmangos.world.defines : equipmentSlotMainhand, inventorySlotBag0;
+
+        auto sword = me.inventory[inventorySlotBag0, equipmentSlotMainhand];
+        const before = sword is null ? 0 : sword.durability;
+        keeper.petOwner = 8; // a player's guid
+        anduin.session.inWorld.unit.meleeHitBy(innkeeper, blow);
+        keeper.petOwner = 0;
+        const petKill = opcodesOf(anduin.read());
+        assert(me.deathState == DeathState.corpse, "killed");
+        assert(!petKill.canFind(Opcode.SMSG_DURABILITY_DAMAGE_DEATH), "a pet's kill costs no durability");
+        assert(sword is null || sword.durability == before);
+        anduin.write(Opcode.CMSG_REPOP_REQUEST, null);
+        anduin.write(Opcode.MSG_MOVE_TELEPORT_ACK, ClientTeleportAck(me.guid, 0, 0));
+        anduin.read();
+        anduin.write(Opcode.CMSG_SPIRIT_HEALER_ACTIVATE, ClientGuid(innkeeper));
+        assert(me.deathState == DeathState.alive);
+        anduin.read();
+    }
+
     // A creature killed: its corpse lasts 60 s, then it goes; it comes back 120 s after its death.
     keeper.values.set!UNIT_FIELD_HEALTH(0u);
     keeper.die(context.map(0), context.unixTime);
