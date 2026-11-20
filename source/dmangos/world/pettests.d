@@ -622,3 +622,60 @@ unittest
     rexxar.write(Opcode.CMSG_PET_UNLEARN, w.data);
     assert(me.money == money - Copper(1000) - Copper(5000), "then 50");
 }
+
+/**
+ * The owner's view of its pet's casts: a refused one says why (`SMSG_CAST_RESULT`), one cast shows its cooldown on
+ * the bar (`SMSG_SPELL_COOLDOWN`) and is not cast again till then; mounting greys the bar out (`SMSG_PET_MODE`).
+ */
+unittest
+{
+    import dmangos.world.auras : AuraType, makeAura;
+    import dmangos.world.database : PetSpellRecord;
+    import dmangos.world.mounting : petModeDisableActions;
+    import dmangos.world.spellcast : castResultPacket, SpellCastResult, SpellTargets, TargetFlags;
+    import dmangos.world.spellhandlers : testSpell;
+    import dmangos.world.spellids : SpellEffect;
+
+    auto db = newDatabase();
+    auto context = newCreationContext(db);
+    auto gul = loggedIn(context, db, 7, "Guldan", Position(-8949.95f, -132.49f, 83.53f, 0), AccountLevel.player,
+        raceHuman, 0, 1, (ref c) { c.classId = classMage; });
+    gul.read();
+    addPetData(&gul, context);
+    auto session = gul.session.inWorld;
+    enum uint firebolt = 97_801, horse = 97_802;
+    context.data.spells.spells[firebolt] = testSpell(firebolt, SpellEffect.dummy, 1, 0);
+    context.data.spells.spells.edit(firebolt).recoveryTime = 1600;
+    context.data.spells.spells[horse] = testSpell(horse, 6, 1, 0);
+    context.data.spells.spells.edit(horse).casting.applyAuraName[0] = AuraType.mounted;
+    context.data.spells.spells.edit(horse).miscValue[0] = creatureInnkeeper;
+    auto summonImp = effectSpell(spellSummonImp, 56, imp);
+    session.summonPetEffect(&summonImp, 0);
+    auto pet = session.ownPet;
+    pet.petData.spells ~= PetSpellRecord(firebolt, ActiveState.passive);
+    gul.read();
+    ubyte[] castAt(ulong target)
+    {
+        ByteWriter w;
+        w.put(pet.guid);
+        w.put(firebolt);
+        SpellTargets(TargetFlags.unit, target).write(w);
+        return w.data.dup;
+    }
+
+    gul.write(Opcode.CMSG_PET_CAST_SPELL, castAt(0xF130_0000_0000_9999UL)); // nobody there
+    assert(bodyOf(gul.read(), Opcode.SMSG_CAST_RESULT) == castResultPacket(firebolt, SpellCastResult.badTargets));
+    gul.write(Opcode.CMSG_PET_CAST_SPELL, castAt(pet.guid));
+    auto cooldown = ByteReader(bodyOf(gul.read(), Opcode.SMSG_SPELL_COOLDOWN));
+    assert(cooldown.read!ulong == pet.guid && cooldown.read!uint == firebolt && cooldown.read!uint == 1600);
+    gul.write(Opcode.CMSG_PET_CAST_SPELL, castAt(pet.guid));
+    assert(gul.read().length == 0, "not ready: nothing said");
+
+    // Mounted: the pet's bar greyed out; off the mount, its own mode again.
+    session.addAura(makeAura(context.data.spells.spell(horse), session.character.guid, 1, -1, true, [0, 0, 0]));
+    auto mode = ByteReader(bodyOf(gul.read(), Opcode.SMSG_PET_MODE));
+    assert(mode.read!ulong == pet.guid && mode.read!uint == petModeDisableActions);
+    session.dismount();
+    mode = ByteReader(bodyOf(gul.read(), Opcode.SMSG_PET_MODE));
+    assert(mode.read!ulong == pet.guid && mode.read!uint != petModeDisableActions);
+}

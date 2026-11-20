@@ -150,7 +150,7 @@ mixin template PetHandlers()
     import dmangos.world.pet;
     import dmangos.world.petai : isAutocastable;
     import dmangos.world.pethandlers;
-    import dmangos.world.spellcast : SpellCastResult, SpellTargets, TargetFlags;
+    import dmangos.world.spellcast : castResultPacket, SpellCastResult, SpellTargets, TargetFlags;
     import dmangos.world.spells : SpellEffect, SpellInfo;
     import dmangos.world.updatefields;
 
@@ -1203,7 +1203,8 @@ mixin template PetHandlers()
     {
         import dmangos.world.player : DeathState;
 
-        if (pet_ !is null || player is null || player.deathState != DeathState.alive)
+        // Not in flight: it comes back at the landing (`Player::IsPetNeedBeTemporaryUnsummoned`).
+        if (pet_ !is null || player is null || player.deathState != DeathState.alive || flying)
             return;
         foreach (r; savedPets())
             if (r.slot == PetSlot.current)
@@ -1317,6 +1318,8 @@ mixin template PetHandlers()
         const info = context.data.spells.spell(spell);
         if (info is null || info.isPassive)
             return;
+        if (spell in pet.ai.petCooldowns)
+            return; // not ready: nothing said (`HandlePetCastSpellOpcode`)
         if (pet.ai.petCastByCommand(info, target, map))
         {
             petCastSpell(spell);
@@ -1325,6 +1328,8 @@ mixin template PetHandlers()
             w.put(2u);
             deliver(Opcode.SMSG_AI_REACTION, w.data);
         }
+        else // why not, to the owner (`Spell::SendCastResult` of a pet's cast)
+            deliver(Opcode.SMSG_CAST_RESULT, castResultPacket(spell, pet.ai.castRefusal, info));
     }
 
     /// The client casts a spell from the pet's spellbook.

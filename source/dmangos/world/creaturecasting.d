@@ -129,56 +129,72 @@ mixin template CreatureCasting()
     // Casting
     // -----------------------------------------------------------------------
 
+    /// Why the last `castSpell` that could not did not (`SPELL_FAILED_*`, a pet's owner told it).
+    imported!"dmangos.world.spellcast".SpellCastResult castRefusal;
+
     /**
      * Casts `spell` at `target` (itself, or a player) as `flags`
-     * (`castTriggered`, ...) allow; false if it could not.
+     * (`castTriggered`, ...) allow; false if it could not (`castRefusal` says why).
      */
     bool castSpell(const(SpellInfo)* spell, ulong target, uint flags)
     {
-        if (spell is null || lore is null || !me.alive || world_ is null)
+        import dmangos.world.spellcast : SpellCastResult;
+
+        // Why it could not, for a pet's owner (`castRefusal`).
+        bool refuse(SpellCastResult why)
+        {
+            castRefusal = why;
             return false;
+        }
+
+        if (spell is null || lore is null || !me.alive || world_ is null)
+            return refuse(SpellCastResult.error);
         const triggered = (flags & castTriggered) != 0;
         if (evadingHome && !triggered)
-            return false;
+            return refuse(SpellCastResult.dontReport);
         if (!triggered && refusedByCrowdControl(spell))
-            return false;
+            return refuse(SpellCastResult.dontReport);
         if (casting_ !is null && !(flags & (castTriggered | castInterruptPrevious)))
-            return false;
+            return refuse(SpellCastResult.spellInProgress);
         if (!triggered && spell.casting.school < schoolLockMs.length && schoolLockMs[spell.casting.school] > 0)
-            return false; // its school locked out
+            return refuse(SpellCastResult.notReady); // its school locked out
         // `CAST_FORCE_TARGET_SELF`: the target casts it on itself; only it itself can be made to.
         if ((flags & castForceTargetSelf) && target != me.guid)
-            return false;
+            return refuse(SpellCastResult.badTargets);
         if (target == 0)
             target = victim ? victim : me.guid;
         if (target != me.guid)
         {
             if (auto other = world_.unit(target))
             {
-                if (!other.fighter.alive || ((flags & castAuraNotPresent) && other.hasAuraOf(spell.id)))
-                    return false;
+                if (!other.fighter.alive)
+                    return refuse(SpellCastResult.targetsDead);
+                if ((flags & castAuraNotPresent) && other.hasAuraOf(spell.id))
+                    return refuse(SpellCastResult.dontReport);
             }
             else if (auto friend = world_.creatureAt(target))
             {
                 // A friend (to heal, to buff).
-                if (!friend.alive || ((flags & castAuraNotPresent) && friend.auras.find(spell.id) !is null))
-                    return false;
+                if (!friend.alive)
+                    return refuse(SpellCastResult.targetsDead);
+                if ((flags & castAuraNotPresent) && friend.auras.find(spell.id) !is null)
+                    return refuse(SpellCastResult.dontReport);
             }
             else
-                return false;
+                return refuse(SpellCastResult.badTargets);
         }
         else if ((flags & castAuraNotPresent) && me.auras.find(spell.id) !is null)
-            return false;
+            return refuse(SpellCastResult.dontReport);
         if (!(flags & (castForceCast | castForceTargetSelf)) && !triggered)
         {
             if (!inRangeFor(spell, target))
-                return false;
+                return refuse(SpellCastResult.outOfRange);
             if (spell.casting.powerType == 0 && manaCost(spell) > me.values.get!UNIT_FIELD_POWER1)
             {
                 // Out of mana, it comes in to fight (unless told not to).
                 if (rangedMode_ && !(flags & castNoMeleeIfOom))
                     rangedMode_ = false;
-                return false;
+                return refuse(SpellCastResult.noPower);
             }
         }
         if (casting_ !is null)
