@@ -328,6 +328,7 @@ mixin template CharacterLogin()
         context.enterWorld(this, true); // after the player's own create block: now others see it, and it sees them
         context.database.setOnline(guid, account.id, true, context.config.realmId);
         resetMovementCheck();
+        startFallAt(player.position.z);
 
         // The group, which the character may have been in while offline.
         if (auto group = context.groups.of(player.guid))

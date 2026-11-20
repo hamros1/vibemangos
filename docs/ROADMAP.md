@@ -22,6 +22,7 @@
 | NPC services | Gossip menus with their texts, conditions and map flags; trainers (lists with each spell's state, lessons that teach spells, ranks and profession skills); innkeepers (binding the hearthstone); bankers (opening the bank); vendors' lists | `npchandlers.d`, `npcdata.d`, `conditions.d` |
 | Inventory and trade | The inventory rules, shared by creation and the world: moving, swapping, splitting, equipping (two-handers, dual wield, quivers, unique items), bags, the bank and its bag slots, the keyring, destroying, ammo; buying (with vendors' limited stock), selling, buyback and repairs; every change saved at once with the money | `inventory.d`, `itemhandlers.d` |
 | Movement checks | Speed checked against running speed; offenders put back. Positions outside the map disconnect | `world/inworld.d` |
+| Movement orders and environment | Speeds (auras, mounts, snares), roots, knockbacks, water walk, slow fall and hover ordered and shown to others on the client's acknowledgement; breath, fatigue, drowning, lava, falling damage | `world/moveorders.d`, `world/environment.d` |
 
 ### Known gaps in what exists
 
@@ -40,6 +41,9 @@
   and hills; doors are not in them, and swimmers path over the ground under the water.
 * **Movement:** the speed check assumes running speed; it must learn mounts, speed auras,
   knockbacks and taxis when those exist.
+* **Environment:** the feign death timer (dying of feigning too long) is not run; mirror timers are not
+  frozen for game masters (they take no damage instead) and start afresh after moving between nodes.
+  Creatures do not hover, water walk or slow fall (`SMSG_SPLINE_MOVE_*`).
 * **Instances:** each group gets its own copy of a dungeon, saved with its binds and dead; a raid's
   copies reset together at fixed times, with warnings; encounters are not tracked. In a cluster a dungeon's copies are all on the node owning its one region, and move
   with it (their creatures as they were); only after a node's crash do they start from their spawns.

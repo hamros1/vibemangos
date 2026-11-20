@@ -261,7 +261,8 @@ private:
 
     /**
      * The ghost aura (8326), and the night elf's wisp (20584): the ghost flag, run and swim speeds
-     * 25% up (the wisp's 50%, and its look), and walking on water; or all of it gone.
+     * 25% up (the wisp's 50%, and its look), and walking on water; or all of it gone
+     * (`dmangos.world.moveorders`: `refreshSpeeds`, `refreshMovementAuras`).
      */
     void setGhost(bool on)
     {
@@ -272,21 +273,8 @@ private:
         player.values.set!PLAYER_FLAGS(on ? flags | PlayerFlags.ghost : flags & ~PlayerFlags.ghost);
         if (wisp)
             player.values.set!UNIT_FIELD_DISPLAYID(on ? wispDisplay : player.values.get!UNIT_FIELD_NATIVEDISPLAYID);
-        const factor = !on ? 1.0f : wisp ? 1.5f : 1.25f;
-        forceSpeed!(Opcode.SMSG_FORCE_RUN_SPEED_CHANGE)(MoveType.run, baseMoveSpeed[MoveType.run] * factor);
-        forceSpeed!(Opcode.SMSG_FORCE_SWIM_SPEED_CHANGE)(MoveType.swim, baseMoveSpeed[MoveType.swim] * factor);
-        if (on)
-            sendMovementOrder!(Opcode.SMSG_MOVE_WATER_WALK)();
-        else
-            sendMovementOrder!(Opcode.SMSG_MOVE_LAND_WALK)();
-    }
-
-    /// `SMSG_FORCE_*_SPEED_CHANGE` for one kind of movement.
-    void forceSpeed(Opcode opcode)(MoveType type, float speed)
-    {
-        player.speeds[type] = speed;
-        send(ServerForceSpeedChange!opcode(player.guid, moveOrderCounter++, speed));
-        resetMovementCheck();
+        refreshSpeeds();
+        refreshMovementAuras();
     }
 
     /// The ghost takes its body back, if near it and the delay is over.

@@ -397,6 +397,7 @@ private:
         map.add(this, true);
         sendInitialPacketsAfterAddToMap();
         resetMovementCheck();
+        startFallAt(player.position.z);
         petsOnArrival();
         pvpArrived();
         battlegroundArrived();
@@ -469,6 +470,7 @@ private:
             return;
         teleporting = Teleport.none;
         resetMovementCheck();
+        startFallAt(player.position.z);
         pvpArrived();
         if (auto group = context.groups.of(player.guid))
             group.updatePlayerOutOfRange(this, GroupUpdate.position);

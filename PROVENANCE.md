@@ -803,6 +803,13 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Functions: `DynamicObject::Create`
 * Constants: `HIGHGUID_DYNAMICOBJECT`
 
+## world/environment.d
+
+* Projects: CMaNGOS
+* Files: `MovementHandler.cpp`, `World.cpp` (`MirrorTimer.*.Max`, `EnvironmentalDamage.Min/Max`, `Rate.Damage.Fall`)
+* Functions: `MirrorTimer` (`Start`, `Stop`, `SetScale`, `SetDuration`, `SetFrozen`, `Update`, `FetchStatus`), `Player::UpdateMirrorTimers`, `Player::CheckMirrorTimerActivation`, `Player::CheckMirrorTimerDeactivation`, `Player::OnMirrorTimerExpirationPulse`, `Player::GetMirrorTimerMaxDuration`, `Player::SendMirrorTimers`, `Player::SendMirrorTimerStart`, `Player::SendMirrorTimerStop`, `Player::SetEnvironmentFlags`, `Player::UpdateTerainEnvironmentFlags`, `Player::SetWaterBreathingIntervalMultiplier`, `Player::GetWaterBreathingInterval`, `Player::EnvironmentalDamage`, `Player::HandleFall`, `Player::UpdateFallInformationIfNeed`, `Player::SetFallInformation`, `Unit::SendEnvironmentalDamageLog`, `Unit::GetCollisionHeight`, `Aura::HandleWaterBreathing`, `Aura::HandleModWaterBreathing`, `WorldSession::HandleMoverRelocation` (below -500), `WorldSession::ProcessMovementInfo`
+* Constants: `EnvironmentFlags`, `EnvironmentalDamageType`, `MAP_ALL_LIQUIDS`, `SMSG_START_MIRROR_TIMER`, `SMSG_STOP_MIRROR_TIMER`, `SMSG_ENVIRONMENTALDAMAGELOG`, `AURA_INTERRUPT_FLAG_UNDERWATER_CANCELS`, `AURA_INTERRUPT_FLAG_ABOVEWATER_CANCELS`
+
 ## world/eventai.d
 
 * Projects: CMaNGOS, EventAI
@@ -1006,6 +1013,13 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Projects: CMaNGOS
 * Functions: `FactorySelector::selectMovementGenerator`, `Map::GetHeight`, `MotionMaster::Initialize`, `MotionMaster::MovePoint`, `MoveSplineInit::Launch`, `MoveSplineInit::MoveTo`, `MoveSplineInit::Stop`, `TerrainInfo::GetWaterOrGroundLevel`, `Unit::InterruptMoving`, `Unit::StopMoving`, `Unit::UpdateAllowedPositionZ`, `Unit::UpdateSplineMovement`, `WaypointManager::Load`
 * Constants: `SCRIPT_COMMAND_PAUSE_WAYPOINTS`
+
+## world/moveorders.d
+
+* Projects: CMaNGOS
+* Files: `MovementHandler.cpp`, `SpellAuras.cpp`, `Unit.h` (`SetSpeed2Opc_table`)
+* Functions: `Unit::UpdateSpeed`, `Unit::SetSpeedRate`, `Unit::SetWaterWalk`, `Unit::SetFeatherFall`, `Unit::SetHover`, `Unit::Mount`, `Unit::Unmount`, `Aura::HandleAuraModIncreaseSpeed`, `Aura::HandleAuraModDecreaseSpeed`, `Aura::HandleAuraModUseNormalSpeed`, `Aura::HandleAuraGhost`, `WorldSession::HandleForceSpeedChangeAckOpcodes`, `WorldSession::HandleMoveRootAck`, `WorldSession::HandleMoveKnockBackAck`, `WorldSession::HandleMoveFlagChangeOpcode`, `WorldSession::SendKnockBack`
+* Constants: `MOVEFLAG_WATERWALKING`, `SPELL_AURA_MOD_SPEED_ALWAYS`, `SPELL_AURA_MOD_MOUNTED_SPEED_ALWAYS`, `SPELL_AURA_MOD_SPEED_NOT_STACK`, `SPELL_AURA_MOD_MOUNTED_SPEED_NOT_STACK`, `SPELL_AURA_USE_NORMAL_MOVEMENT_SPEED`
 
 ## world/movement.d
 

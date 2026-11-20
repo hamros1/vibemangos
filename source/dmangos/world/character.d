@@ -68,6 +68,8 @@ import dmangos.world.gmquest : QuestCommands;
 import dmangos.world.gmlevel3 : Level3Commands;
 import dmangos.world.grouphandlers : GroupHandlers;
 import dmangos.world.exploration : Exploration;
+import dmangos.world.environment : EnvironmentHandlers;
+import dmangos.world.moveorders : MovementOrders;
 import dmangos.world.inworld : InWorldHandlers;
 import dmangos.world.itemhandlers : ItemHandlers;
 import dmangos.world.npchandlers : NpcHandlers;
@@ -496,7 +498,9 @@ final class Character : OnlinePlayer, Looter
             return;
         const p = player.position;
         const angle = atan2(p.y - from.y, p.x - from.x);
-        send(ServerKnockBack(player.guid, moveOrderCounter++, cos(angle), sin(angle), horizontal, vertical));
+        // The vertical speed is sent negated: the client counts upwards as negative, as in its jumps (CMaNGOS
+        // `SendKnockBack`). Its acknowledgement shows the throw to others (`dmangos.world.moveorders`).
+        send(ServerKnockBack(player.guid, moveOrderCounter++, cos(angle), sin(angle), horizontal, -vertical));
     }
 
     /// Up to `amount` of power `type` taken (a creature's drain or burn): what was taken.
@@ -768,6 +772,8 @@ private:
     mixin NpcHandlers;
     mixin ItemHandlers;
     mixin Exploration;
+    mixin EnvironmentHandlers;
+    mixin MovementOrders;
     mixin ChatCommands;
     mixin GmActions;
     mixin GmTargets;
