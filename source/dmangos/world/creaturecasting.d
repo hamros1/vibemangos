@@ -451,6 +451,11 @@ mixin template CreatureCasting()
                     found ~= other.combatGuid;
             return found;
         }
+        // (Dungeon-script tests, a small fix: a script's area at a destination this cast does not resolve
+        // (`TARGET_ENUM_UNITS_SCRIPT_AOE_AT_DEST_LOC`, none named) reaches nobody, not its caster: Emi Shortfuse's
+        // Explosion, an instant kill at the tunnel's `spell_target_position`, killed Emi herself.)
+        if (b == ImplicitTarget.enumUnitsScriptAoeAtDestLoc && !named.length)
+            return null;
         // Its master (`TARGET_UNIT_CASTER_MASTER`: a voidwalker's Sacrifice shields its warlock).
         if (a == ImplicitTarget.unitCasterMaster)
         {
@@ -556,6 +561,13 @@ mixin template CreatureCasting()
         foreach (r; results) // the combat log's line for each miss, as for a player's spell
             if (r.miss != SpellMissInfo.none)
                 world_.sendToObservers(me.guid, Opcode.SMSG_SPELLLOGMISS, spellMissLog(spell.id, me.guid, r.guid, r.miss));
+        // (Dungeon-script tests, a small fix: creatures hit by a creature's spell hear of it, `SpellHit`, as they do of
+        // a player's; Whitemane's Scarlet Resurrection raising Mograine waits on it. Not the caster itself.)
+        foreach (r; results)
+            if (r.miss == SpellMissInfo.none && r.guid != me.guid)
+                if (auto hit = world_.creatureAt(r.guid))
+                    if (hit.ai !is null)
+                        hit.ai.spellHitBy(me.guid, spell.id, 1u << spell.casting.school, world_);
         bool[ulong] missed;
         foreach (r; results)
             if (r.miss != SpellMissInfo.none)
@@ -1334,8 +1346,13 @@ mixin template CreatureCasting()
                 other.tell(Opcode.SMSG_MESSAGECHAT, body_);
         }
         else
-            world_.sendInRange(me.position, lore.listenRange(type == ChatType.CHAT_MSG_RAID_BOSS_EMOTE
+        {
+            // (Dungeon-script tests, a small fix: a zone yell, `CHAT_TYPE_ZONE_YELL` 6, is heard in the whole zone: in a
+            // dungeon, its whole copy (Baron Rivendare's warnings across Stratholme). The open world's still by range.)
+            const zoneWide = text.chatType == 6 && me.instanceId;
+            world_.sendInRange(me.position, zoneWide ? 2000 : lore.listenRange(type == ChatType.CHAT_MSG_RAID_BOSS_EMOTE
                 ? ChatType.CHAT_MSG_MONSTER_YELL : type), Opcode.SMSG_MESSAGECHAT, body_);
+        }
         if (text.emotes[0].emote)
             scriptEmote(text.emotes[0].emote);
     }

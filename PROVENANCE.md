@@ -209,8 +209,11 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 ## scripts/deadmines.d
 
 * Projects: CMaNGOS
-* Files: `ScriptDevAI/scripts/eastern_kingdoms/deadmines/deadmines.cpp`
-* Functions/ScriptNames: `spell_unarmed_woodcutter` (`UnarmedWoodcutter::OnApply`)
+* Files: `ScriptDevAI/scripts/eastern_kingdoms/deadmines/deadmines.cpp`, `instance_deadmines.cpp`, `boss_mr_smite.cpp`,
+  `deadmines.h`
+* Functions/ScriptNames: `spell_unarmed_woodcutter` (`UnarmedWoodcutter::OnApply`), `instance_deadmines`
+  (`SetData(TYPE_IRON_CLAD_DOOR)`, `Update`: the two alarms, the guards run to the door), `boss_mr_smite`
+  (`PhaseEquipStart`, `PhaseEquipProcess`, `PhaseEquipEnd`, `UpdateAI`: Nimble Reflexes, Thrash, the chest)
 
 ## scripts/darkshore.d
 
@@ -342,7 +345,10 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 
 * Projects: CMaNGOS
 * Files: `AI/ScriptDevAI/scripts/eastern_kingdoms/shadowfang_keep/instance_shadowfang_keep.cpp`, `shadowfang_keep.cpp`, `shadowfang_keep.h`
-* Functions/ScriptNames: `instance_shadowfang_keep` (`DoSpeech`, `JustDidDialogueStep`, `OnCreatureDeath`), `npc_shadowfang_prisoner`, `npc_deathstalker_vincent`, `mob_arugal_voidwalker`, `boss_arugal`
+* Functions/ScriptNames: `instance_shadowfang_keep` (`DoSpeech`, `JustDidDialogueStep`, `OnCreatureDeath`,
+  `SetData(TYPE_FENRUS)`, `SetData(TYPE_VOIDWALKER)`: the Fenrus event), `npc_shadowfang_prisoner` (`WaypointReached`,
+  `HandleSpeech`), `npc_deathstalker_vincent`, `mob_arugal_voidwalker` (`InitVoidWalkersGroup`, `ExecuteAction`),
+  `boss_arugal` (`ExecuteAction`: the Shadow Ports, `ReceiveAIEvent`)
 
 ## scripts/silithus.d
 
@@ -438,6 +444,14 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Functions/ScriptNames: `at_scent_larkorwi`, `npc_ame01`, `npc_ringo`, `npc_simone_the_inconspicuous`,
   `npc_simone_seductress`, `npc_precious_the_devourer`
 
+## scripts/wailingcaverns.d
+
+* Projects: CMaNGOS
+* Files: `AI/ScriptDevAI/scripts/kalimdor/wailing_caverns/wailing_caverns.cpp`, `wailing_cavernsScripts.cpp`,
+  `wailing_caverns.h`
+* Functions/ScriptNames: `instance_wailing_caverns` (`SetData`), `npc_disciple_of_naralex` (`WaypointReached`,
+  `UpdateEscortAI`: the three stops and the ritual, `AttackedBy`, `GossipHello`, `GossipSelect`)
+
 ## scripts/wareffort.d
 
 * Projects: CMaNGOS
@@ -472,7 +486,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 
 * Projects: CMaNGOS
 * Files: `AI/ScriptDevAI/scripts/kalimdor/zulfarrak/instance_zulfarrak.cpp`, `zulfarrak.cpp`, `boss_zumrah.cpp`, `zulfarrak.h`
-* Functions/ScriptNames: `instance_zulfarrak` (`Update`, `OnCreatureEnterCombat`, `OnCreatureEvade`), `event_go_zulfarrak_gong`, `event_spell_unlocking`, `at_zulfarrak`, `boss_zumrah`
+* Functions/ScriptNames: `instance_zulfarrak` (`Update`, `OnCreatureEnterCombat`, `OnCreatureEvade`), `event_go_zulfarrak_gong`, `event_spell_unlocking`, `at_zulfarrak`, `boss_zumrah` (`SetFactionTemporary`, `TEMPFACTION_TOGGLE_IMMUNE_TO_PLAYER`)
 
 ## scripts/professions.d
 
@@ -916,6 +930,8 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Also: `Creature::DoFleeToGetAssistance` (`SPELL_AURA_PREVENTS_FLEEING`)
 * Not from an emulator: a pet's spells by its owner's spell modifiers (`petModOwner`: effects, damage, cast time, duration), its own damage done on its spells, its area auras on itself, the threat effect on a creature, `TARGET_UNIT_CASTER_MASTER`
 * Also: vmangos's `Spell::CheckPower` (a creature without a mana pool casts its mana spells; no creature pays another power)
+* Also: `Spell::DoSpellHitOnUnit` (a creature hit by a creature's spell: its AI's `SpellHit`), `CHAT_TYPE_ZONE_YELL`
+  (`DoScriptText`: heard in the whole zone; a dungeon's copy)
 * Moved out (2026-11-20): its effect switch to `spelleffects.d`, its damage, heals and drains to `spelldamage.d`, its auras to `spellauras.d`
 
 ## world/crypt.d
@@ -1403,6 +1419,16 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Not from an emulator: `questXp`, from 1.12's quest money and Wowpedia's falloff (docs/FORMULAS.md, "Quest experience")
 * Constants: `MAX_QUEST_LOG_SIZE`, `QUEST_OBJECTIVES_COUNT`, `QUEST_REWARDS_COUNT`, `QUEST_REWARD_CHOICES_COUNT`, `SMSG_QUESTGIVER_QUEST_INVALID`
 
+## world/realscriptkit.d
+
+* Not from an emulator: a harness for tests of the scripts on the client's DBC files and the classic world database.
+
+## world/realscripts_dungeons.d
+
+* Not from an emulator: tests of the five-player dungeons' scripts on the client's DBC files and the classic world
+  database; the expectations from the data, then Wowpedia's and warcraft.wiki.gg's pages of the encounters, with
+  ScriptDev2's scripts (`AI/ScriptDevAI/scripts`) as a second opinion.
+
 ## world/realclassspelltests.d
 
 * Projects: CMaNGOS (the client's DBC files and its classic world database, as the server runs on them)
@@ -1685,6 +1711,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 ## world/worlddata.d
 
 * Projects: CMaNGOS, mangosd
+* Also: `ObjectMgr::LoadGameObjects` (`gameobject_spawn_entry`: a spawn without an entry takes one of its entries)
 * Functions: `GraveyardManager::GraveyardLinkKey`, `PoolGroup::RollOne`, `PoolGroup::SpawnObject`, `PoolManager::UpdatePool`, `ObjectMgr::GetBaseXP`, `ObjectMgr::GetGameTele`, `ObjectMgr::GetMapEntranceTrigger`, `ObjectMgr::GetXPForLevel`, `ObjectMgr::LoadAreaTriggerTeleports`, `ObjectMgr::LoadCreatureTemplates`, `ObjectMgr::LoadCreatures`, `ObjectMgr::LoadGameTele`, `ObjectMgr::LoadItemPrototypes`, `ObjectMgr::LoadPlayerInfo`, `Player::IsActionButtonDataValid`, `WaypointManager::Load`
 * Constants: `GRAVEYARD_AREALINK`, `GRAVEYARD_MAPLINK`, `MAX_LEVEL`, `SMSG_ITEM_QUERY_SINGLE_RESPONSE`
 * Also: `SpellMgr::LoadSpellScriptTarget` (`spell_script_target`)

@@ -934,6 +934,9 @@ final class WorldData
             creatureCells[row.map][cellKeyAt(row.x, row.y)] ~= creatureSpawns.length;
             creatureSpawns ~= row;
         }
+        uint[][uint] objectSpawnEntries;
+        foreach (row; world.query!"SELECT guid, entry FROM gameobject_spawn_entry"())
+            objectSpawnEntries[row.get!uint(0)] ~= row.get!uint(1);
         foreach (row; world.query!("SELECT guid, id, map, position_x, position_y, position_z, orientation, rotation0, "
             ~ "rotation1, rotation2, rotation3, spawntimesecsmin FROM gameobject")())
         {
@@ -951,7 +954,16 @@ final class WorldData
             if (s.guid >= 1 << 24 || !groups.spawns(1, s.guid))
                 continue;
             if (s.entry == 0)
-                s.entry = groups.entryFor(s.guid, rng);
+            {
+                // (Dungeon-script tests, a small fix: as a creature's, one of `gameobject_spawn_entry`'s first;
+                // Zul'Farrak's forty graves had none.)
+                import std.random : uniform;
+
+                if (auto entries = s.guid in objectSpawnEntries)
+                    s.entry = (*entries)[uniform(0, entries.length, rng)];
+                else
+                    s.entry = groups.entryFor(s.guid, rng);
+            }
             const t = s.entry in gameObjectTemplates;
             if (t is null || t.type == GameObjectType.moTransport || !client.isValidMapCoord(s.map, s.x, s.y, s.z))
             {

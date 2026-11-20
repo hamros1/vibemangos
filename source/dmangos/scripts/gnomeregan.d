@@ -51,14 +51,15 @@ struct Gnomeregan
     enum Fight : int { notStarted, inProgress, done, failed }
 
     Fight grubbisFight, thermapluggFight;
-    bool[6] faceArmed;
-    Pack!16 bombs;                 /// the walking bombs out
+    /// Thermaplugg's fight as it goes: not saved (a restart ends it: no face spits at nobody, the chamber opens).
+    @transient bool[6] faceArmed;
+    @transient Pack!16 bombs;      /// the walking bombs out
     @transient EntityRef door, emi;
     @transient EntityRef[6] faces;
     @transient EntityRef[2] caveIns; /// south, north
 
     enum Step : ubyte { face0, face1, face2, face3, face4, face5 }
-    Schedule!(Step, 6) bombTimers;
+    @transient Schedule!(Step, 6) bombTimers;
 
     private static immutable uint[6] faceEntries = [gnomeFace1, gnomeFace2, gnomeFace3, gnomeFace4, gnomeFace5, gnomeFace6];
     /// Where the faces are (their spawns), and Thermaplugg.
@@ -73,7 +74,16 @@ struct Gnomeregan
     {
         const entry = e.object.entry;
         if (entry == finalChamber)
+        {
             door = e.object;
+            if (thermapluggFight == Fight.inProgress && !bombTimers.busy)
+                thermapluggFight = Fight.failed; // a fight cut by a restart: over
+            if (thermapluggFight != Fight.inProgress)
+            {
+                city.objectFlags(e.object, 0, ObjectFlag.locked);
+                city.door(e.object, true);
+            }
+        }
         else if (entry == caveInSouth || entry == caveInNorth)
             caveIns[entry == caveInSouth ? 0 : 1] = e.object;
         foreach (i, face; faceEntries)

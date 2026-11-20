@@ -30,6 +30,7 @@ enum : uint
     deadHero = 7276,
 
     shallowGrave = 128403,
+    shallowGrave2 = 128308, // the graves' spawns are one or the other (`gameobject_spawn_entry`)
     endDoor = 146084,
 }
 
@@ -57,7 +58,7 @@ struct ZulFarrak
 
     void on(ref InstanceContext zf, const ref ObjectLoaded e)
     {
-        if (e.object.entry == shallowGrave)
+        if (e.object.entry == shallowGrave || e.object.entry == shallowGrave2)
             graves.add(e.object);
         else if (e.object.entry == endDoor)
         {
@@ -257,6 +258,8 @@ struct Zumrah
                 hostile = true;
                 steps.cancel(Step.watch);
                 me.setFaction(factionHostile);
+                // As ScriptDev2's TEMPFACTION_TOGGLE_IMMUNE_TO_PLAYER: his template is immune to players.
+                me.unitFlags(UnitFlag.immuneToPlayer, false);
                 me.say(sayIntro);
                 me.attack(player);
             }

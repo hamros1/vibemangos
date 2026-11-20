@@ -138,7 +138,8 @@ struct BlackrockDepths
     ubyte ringStage;
     bool banner, theldrenFight; /// the Banner of Provocation planted; Theldren came for it
     EntityRef ringPlayer, grimstoneRef;
-    Pack!12 ringMobs;
+    Pack!24 ringMobs;              /// two waves of beetles are fourteen
+    ubyte ringBeast;               /// the run's beasts (both waves the same kind)
     // The Tomb of the Seven.
     Fight tomb;
     ubyte dwarfRound;
@@ -381,8 +382,10 @@ struct BlackrockDepths
         const entry = e.creature.entry;
         if (ring == Fight.inProgress && ringMobs.has(e.creature))
             failRing(brd);
-        foreach (dwarf; tombDwarves)
-            if (entry == dwarf && tomb == Fight.inProgress)
+        // One of the Seven called down gave up: the challenge fails. One not called yet (pulled in by another's call
+        // for help, while still friendly) does not count.
+        foreach (i, dwarf; tombDwarves)
+            if (entry == dwarf && tomb == Fight.inProgress && i < dwarfRound)
                 failTomb(brd);
         if (entry == magmus && ironHall == Fight.inProgress)
         {
@@ -521,7 +524,9 @@ struct BlackrockDepths
             break;
         case 3, 4:
         {
-            const kind = brd.random(6);
+            if (stage == 3)
+                ringBeast = cast(ubyte) brd.random(6);
+            const kind = ringBeast;
             foreach (_; 0 .. beastCount[kind])
                 summonRingMob(brd, beasts[kind], eastSpawn);
             if (stage == 3)
@@ -583,6 +588,7 @@ struct BlackrockDepths
     private void failRing(ref InstanceContext brd)
     {
         ring = Fight.failed;
+        banner = theldrenFight = false; // the banner must be planted again (ScriptDev2's FAIL overwrites it)
         steps.cancel(Step.ring);
         foreach (mob; ringMobs)
             brd.despawn(mob);
@@ -627,6 +633,7 @@ struct BlackrockDepths
         if (dwarf && brd.alive(dwarf))
         {
             brd.setFaction(dwarf, factionDwarfHostile);
+            brd.unitFlags(dwarf, UnitFlag.immuneToPlayer, false); // their templates are immune to players
             if (const target = brd.anyPlayer())
                 brd.attack(dwarf, target);
         }
@@ -642,7 +649,10 @@ struct BlackrockDepths
             brd.door(tombIn, true);
         foreach (dwarf; dwarves)
             if (dwarf && brd.alive(dwarf))
+            {
                 brd.setFaction(dwarf, 0);
+                brd.unitFlags(dwarf, UnitFlag.immuneToPlayer);
+            }
     }
 
     private void openGolemRooms(ref InstanceContext brd, bool open)

@@ -393,12 +393,25 @@ struct Whitemane
             Location at;
             const him = me.creatureNearby(mograine, 100);
             if (him && me.locationOf(him, at))
-                me.moveTo(at, pointMograine, true);
+            {
+                // Beside him (in a fight: `moveTo` would wait until it is over).
+                const here = me.location;
+                const dx = here.x - at.x, dy = here.y - at.y, length = (dx * dx + dy * dy) ^^ 0.5f;
+                if (length > 2)
+                {
+                    at.x += dx / length * 2;
+                    at.y += dy / length * 2;
+                }
+                me.moveNow(at, pointMograine, true);
+            }
             else
                 steps.after(Step.raise, 3.seconds);
             break;
         case Step.raise:
-            me.castSelf(scarletResurrection);
+            // At him: its target (`TARGET_UNIT_SCRIPT_NEAR_CASTER`, `spell_script_target` 3976) named, as creatures'
+            // casts do not look it up.
+            if (const him = me.creatureNearby(mograine, 30))
+                me.castSpell(scarletResurrection, him);
             me.say(sayRaise);
             steps.after(Step.salute, 3400.msecs);
             steps.after(Step.fightAgain, 5700.msecs);
@@ -510,8 +523,13 @@ struct Herod
     void on(ref CreatureContext me, const ref Died e)
     {
         steps.clear();
-        foreach (_; 0 .. 20)
-            me.summon(scarletTrainee, trainees, 600_000);
+        // The first of them calls the others (ScriptDev2: Herod's `JustSummoned`, its first).
+        foreach (i; 0 .. 20)
+        {
+            const trainee = me.summon(scarletTrainee, trainees, 600_000);
+            if (i == 0 && trainee)
+                me.sayOther(trainee, ScarletTrainee.sayAvenge);
+        }
     }
 }
 
@@ -528,8 +546,6 @@ struct ScarletTrainee
     void on(ref CreatureContext me, const ref Spawned e)
     {
         steps.after(Step.start, (1000 + me.random(5000)).msecs);
-        if (!me.creatureNearby(scarletTrainee, 3)) // the first of them calls the others
-            me.say(sayAvenge);
     }
 
     void on(ref CreatureContext me, Step step)
@@ -675,7 +691,7 @@ unittest
     wh.raise(EnteredCombat(playerRef));
     wh.host.health = 45;
     wh.run(1000);
-    assert(wh.host.done("cast 9256") && wh.host.done("move 2"));
+    assert(wh.host.done("cast 9256"), "her sleep (then she runs to him, `moveNow`)");
     wh.raise(MovementDone(Whitemane.pointMograine));
     wh.run(9000);
     assert(wh.host.done("cast 9232") && wh.host.done("say -1189010") && wh.host.done("death prevention false"));

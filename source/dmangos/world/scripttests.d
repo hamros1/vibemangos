@@ -37,8 +37,8 @@ unittest
     smiteTemplate.entry = mrSmite;
     context.data.creatureTemplates[mrSmite] = smiteTemplate;
     context.data.creatureScriptNames[mrSmite] = "boss_mr_smite";
-    context.data.items[MrSmite.reaver] = context.data.items[itemSword];
-    context.data.items[MrSmite.mightyHammer] = context.data.items[itemStaff];
+    context.data.items[MrSmite.axe] = context.data.items[itemSword];
+    context.data.items[MrSmite.hammer] = context.data.items[itemStaff];
     const before = context.scripts.liveScripts;
 
     const at = Position(-8949.95f, -132.49f, 83.53f);
@@ -62,12 +62,14 @@ unittest
 
     hit(30); // 100% -> 70%: still phase one
     assert(smite.ai.inCombat && smite.values.getByte!UNIT_FIELD_BYTES_1(0) == 0);
-    hit(10); // -> 60%: past two thirds: he kneels to rearm
+    hit(10); // -> 60%: past two thirds: he stomps, and goes to his chest (none here: he kneels where he is) to rearm
+    assert(smite.values.getByte!UNIT_FIELD_BYTES_1(0) == 0, "not before his stomp is done");
+    smite.ai.update(map, 2600);
     assert(smite.values.getByte!UNIT_FIELD_BYTES_1(0) == 8, "kneeling");
     smite.ai.update(map, 1000);
     assert(smite.values.getByte!UNIT_FIELD_BYTES_1(0) == 8, "not yet");
-    smite.ai.update(map, 1600);
-    const axe = context.data.items[MrSmite.reaver].displayId;
+    smite.ai.update(map, 2100);
+    const axe = context.data.items[MrSmite.axe].displayId;
     assert(smite.values.getByte!UNIT_FIELD_BYTES_1(0) == 0, "up again");
     assert(smite.values.get!UNIT_VIRTUAL_ITEM_SLOT_DISPLAY(0) == axe && smite.values.get!UNIT_VIRTUAL_ITEM_SLOT_DISPLAY(1) == axe);
 
@@ -77,7 +79,7 @@ unittest
     auto elsewhere = newCreationContext(db);
     elsewhere.data.creatureTemplates[mrSmite] = smiteTemplate;
     elsewhere.data.creatureScriptNames[mrSmite] = "boss_mr_smite";
-    elsewhere.data.items[MrSmite.mightyHammer] = elsewhere.data.items[itemStaff];
+    elsewhere.data.items[MrSmite.hammer] = elsewhere.data.items[itemStaff];
     auto moved = elsewhere.makeCreature(&spawn);
     auto r = ByteReader(w.data);
     moved.loadState(r);
@@ -86,10 +88,13 @@ unittest
     // Past one third there: his last change, the hammer (from phase two, so not the axes again).
     const movedMax = moved.values.get!UNIT_FIELD_MAXHEALTH;
     moved.values.set!UNIT_FIELD_HEALTH(movedMax * 40 / 100);
+    moved.ai.update(there, 1100); // back in the fight with his axes
     moved.ai.damageTaken(hero.session.inWorld.unit, movedMax * 10 / 100);
-    assert(moved.values.getByte!UNIT_FIELD_BYTES_1(0) == 8, "the phase came along");
+    moved.values.set!UNIT_FIELD_HEALTH(movedMax * 30 / 100);
     moved.ai.update(there, 2600);
-    assert(moved.values.get!UNIT_VIRTUAL_ITEM_SLOT_DISPLAY(0) == elsewhere.data.items[MrSmite.mightyHammer].displayId);
+    assert(moved.values.getByte!UNIT_FIELD_BYTES_1(0) == 8, "the phase came along: the next change");
+    moved.ai.update(there, 3100);
+    assert(moved.values.get!UNIT_VIRTUAL_ITEM_SLOT_DISPLAY(0) == elsewhere.data.items[MrSmite.hammer].displayId);
     assert(moved.values.get!UNIT_VIRTUAL_ITEM_SLOT_DISPLAY(1) == 0, "one two-handed hammer");
 
     // Gone from the map: his script's state is freed.
@@ -217,7 +222,7 @@ unittest
     context.update(MonoTime.currTime); // and its tick goes on
 }
 
-/// The Defias Cannon fired: the Iron Clad Door opens, and Mr. Smite raises the alarm.
+/// The Defias Cannon fired: the Iron Clad Door opens half a second on, and Mr. Smite raises the alarm.
 unittest
 {
     import dmangos.scripts.deadmines : ironCladDoor, mrSmite;
@@ -249,9 +254,11 @@ unittest
     context.data.creatureCells[mapDeadmines][cellKeyAt(smiteAt.x, smiteAt.y)] ~= context.data.creatureSpawns.length - 1;
     context.data.instanceScriptNames[mapDeadmines] = "instance_deadmines";
     BroadcastText alarm;
-    alarm.maleText = "We're under attack!";
+    alarm.maleText = "You there! Check out that noise.";
     alarm.chatType = 1;
-    context.data.scriptTexts[-1036001] = alarm;
+    context.data.scriptTexts[-1036000] = alarm;
+    auto now = MonoTime.currTime;
+    context.clock = () => now;
 
     const outside = Position(deadminesEntrance[0], deadminesEntrance[1], deadminesEntrance[2]);
     auto hero = loggedIn(context, db, 7, "Varian", outside, AccountLevel.administrator, raceHuman, mapEasternKingdoms, 60);
@@ -263,6 +270,10 @@ unittest
     auto door = cast(GameObject) map.findObject(makeDoorGuid(ironCladDoor, 90011));
     assert(cannon !is null && cannon.behaviour && door.goState == 1);
     hero.session.inWorld.useGameObject(cannon);
+    assert(door.goState == 1, "not at once");
+    context.update(now);
+    now += 600.msecs;
+    context.update(now);
     assert(door.goState == 0, "blown open");
     const heard = hero.read();
     assert(opcodesOf(heard).canFind(Opcode.SMSG_MESSAGECHAT), "the alarm");
@@ -628,8 +639,8 @@ unittest
 
 /**
  * The Disciple of Naralex (here in the test world's dungeon): silent until the four Fanglords are
- * slain; then he leads the way (two ambushes), performs the ritual at Naralex (three waves, Mutanus
- * last), and with Mutanus dead Naralex wakes and both go.
+ * slain; then he leads the way (two ambushes, each waited out until its creatures are dead), performs
+ * the ritual at Naralex (three waves, Mutanus last), and with Mutanus dead Naralex wakes and both go.
  */
 unittest
 {
@@ -656,7 +667,7 @@ unittest
         context.data.creatureSpawns ~= CreatureSpawn(nextGuid++, w.entry, mapDeadmines, w.x, start.y, start.z);
         context.data.creatureCells[mapDeadmines][cellKeyAt(w.x, start.y)] ~= context.data.creatureSpawns.length - 1;
     }
-    foreach (entry; [ravager, viper, moccasin, ectoplasm, mutanus])
+    foreach (entry; [ravager, viper, DiscipleOfNaralex.adder, moccasin, ectoplasm, mutanus])
     {
         auto t = cast() context.data.creatureTemplates[creatureInnkeeper];
         t.entry = entry;
@@ -719,20 +730,41 @@ unittest
     }
     assert(options == 1, "the event may begin");
     hero.write(Opcode.CMSG_GOSSIP_SELECT_OPTION, ClientGossipSelectOption(guide.guid, 0));
+    // Each stop's creatures, killed by the hero: the disciple goes on when they are dead.
+    void kill(uint entry)
+    {
+        import dmangos.world.unit : Blow, dealDamage;
+
+        foreach (c; map.creaturesNear(guide.position, 1000))
+            if (c.spawn.entry == entry && c.alive)
+                dealDamage(hero.session.inWorld.unit, map.unitOf(c), c.values.get!UNIT_FIELD_HEALTH, Blow.spell());
+    }
+    size_t anywhere(uint entry)
+    {
+        size_t n;
+        foreach (c; map.creaturesNear(guide.position, 1000))
+            n += c.spawn.entry == entry && c.alive;
+        return n;
+    }
     run(10);
-    assert(count(ravager) == 2, "the first ambush");
+    assert(anywhere(ravager) == 2, "the first ambush");
     run(10);
-    assert(count(viper) == 3, "the second");
+    assert(anywhere(viper) + anywhere(DiscipleOfNaralex.adder) == 0, "he waits while the raptors live");
+    kill(ravager);
     run(30);
-    assert(count(moccasin) == 3, "the ritual: the first nightmares");
-    run(35);
-    assert(count(ectoplasm) == 5);
-    run(35);
-    auto devourer = find(mutanus);
-    assert(devourer !is null, "Mutanus");
-    devourer.die(map, context.unixTime);
-    context.creatureDied(devourer);
+    assert(anywhere(viper) + anywhere(DiscipleOfNaralex.adder) == 3, "the second, after his Cleansing");
+    kill(viper);
+    kill(DiscipleOfNaralex.adder);
+    run(45);
+    assert(anywhere(moccasin) == 3, "the ritual: the first nightmares");
+    kill(moccasin);
+    run(5);
+    assert(anywhere(ectoplasm) == 7);
+    kill(ectoplasm);
     run(25);
+    assert(anywhere(mutanus) == 1, "Mutanus");
+    kill(mutanus);
+    run(70);
     assert(find(naralex) is null && find(disciple) is null, "awake, and gone");
     const saved = db.loadInstances().instances;
     assert(saved.length == 1 && saved[0].data.length > 30, "the caverns remember");
