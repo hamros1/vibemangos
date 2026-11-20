@@ -542,8 +542,11 @@ private:
                 break;
             // Tracking: the minimap's creature types and resources (`PLAYER_TRACK_CREATURES`, `_RESOURCES`), a bit
             // for each type (the misc value, from 1).
-            case AuraType.trackCreatures, AuraType.trackResources:
+            case AuraType.trackCreatures, AuraType.trackResources, AuraType.trackStealthed:
                 trackingAura(aura, i, apply);
+                break;
+            case AuraType.modUnattackable: // Divine Intervention: out of every fight, and nothing may target it
+                unattackableAura(apply);
                 break;
             default:
                 break;

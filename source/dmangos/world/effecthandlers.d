@@ -287,6 +287,14 @@ mixin template EffectHandlers()
      */
     void trackingAura(const Aura aura, size_t i, bool apply)
     {
+        if (aura.type(i) == AuraType.trackStealthed) // Track Hidden: `PLAYER_FIELD_BYTE_TRACK_STEALTHED`
+        {
+            enum ubyte trackStealthed = 0x02;
+            const bytes = player.values.getByte!PLAYER_FIELD_BYTES(0);
+            player.values.setByte!PLAYER_FIELD_BYTES(0, cast(ubyte)(player.auras.has(AuraType.trackStealthed)
+                ? bytes | trackStealthed : bytes & ~trackStealthed));
+            return;
+        }
         const misc = aura.misc(i);
         if (misc < 1 || misc > 32)
             return;
@@ -301,6 +309,19 @@ mixin template EffectHandlers()
             const now = player.values.get!PLAYER_TRACK_RESOURCES;
             player.values.set!PLAYER_TRACK_RESOURCES(apply ? now | bit : now & ~bit);
         }
+    }
+
+    /**
+     * `SPELL_AURA_MOD_UNATTACKABLE` (Divine Intervention): as it begins the player leaves every fight; while any
+     * lasts nothing may target it (`UNIT_FLAG_UNTARGETABLE`; CMaNGOS's `HandleModUnattackable`).
+     */
+    void unattackableAura(bool apply)
+    {
+        if (apply && map !is null)
+            leaveAllFights();
+        const flags = player.values.get!UNIT_FIELD_FLAGS;
+        player.values.set!UNIT_FIELD_FLAGS(player.auras.has(AuraType.modUnattackable) ? flags | UnitFlags.untargetable
+            : flags & ~UnitFlags.untargetable);
     }
 
     /// The attack power `victim`'s auras give a ranged attack at it (Hunter's Mark).
@@ -1506,4 +1527,29 @@ unittest
     a.cast_(stuck);
     assert(Arena.bodies(a.hero.read(), Opcode.MSG_MOVE_TELEPORT_ACK).length == 1);
     assert(abs(a.me.position.x - (from.x + 10 * cos(from.orientation))) < 0.1f);
+}
+
+/// Track Hidden's flag while it lasts; Divine Intervention's untargetable flag, and out of the fight.
+unittest
+{
+    import dmangos.world.auras : AuraType;
+    import dmangos.world.defines : UnitFlags;
+    import dmangos.world.updatefields;
+
+    auto a = new Arena;
+    enum uint hidden = 96035, intervention = 96036;
+    auto s = a.spell(hidden, SpellEffect.applyAura, ImplicitTarget.caster, 0);
+    s.casting.applyAuraName[0] = AuraType.trackStealthed;
+    s.casting.durationIndex = 1;
+    s = a.spell(intervention, SpellEffect.applyAura, ImplicitTarget.caster, 0);
+    s.casting.applyAuraName[0] = AuraType.modUnattackable;
+    s.casting.durationIndex = 1;
+    a.keeper.ai.attackedBy(a.hero.session.inWorld.unit, a.map);
+    a.cast_(hidden);
+    a.cast_(intervention);
+    assert(a.me.values.getByte!PLAYER_FIELD_BYTES(0) & 0x02);
+    assert((a.me.values.get!UNIT_FIELD_FLAGS & UnitFlags.untargetable) && (a.me.guid in a.keeper.ai.threatList) is null);
+    a.tick(10_000);
+    assert(!(a.me.values.getByte!PLAYER_FIELD_BYTES(0) & 0x02));
+    assert(!(a.me.values.get!UNIT_FIELD_FLAGS & UnitFlags.untargetable));
 }
