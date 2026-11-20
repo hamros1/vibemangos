@@ -55,6 +55,7 @@ import dmangos.world.mounting : MountRules;
 import dmangos.world.guardians : GuardianSummons;
 import dmangos.world.durability : DurabilityRules;
 import dmangos.world.rituals : RitualSummoning;
+import dmangos.world.homebind : HomebindTimer;
 import dmangos.world.unit : Blow, UnitRef;
 import dmangos.world.auras : Aura, makeAura;
 import dmangos.world.spells : SpellInfo;
@@ -682,6 +683,7 @@ final class Character : OnlinePlayer, Looter
         if (player is null)
             return;
         updateLeaderFlag();
+        instanceValidityOnGroupChange(); // out of the group inside a dungeon: sent out (`dmangos.world.homebind`)
         if (transferring)
             return;
         map.refreshVisibility(this); // a ghost and its group see each other
@@ -820,6 +822,7 @@ private:
     mixin GuardianSummons;
     mixin DurabilityRules;
     mixin RitualSummoning;
+    mixin HomebindTimer;
     mixin PvPHandlers;
     mixin BattlegroundHandlers;
     mixin EnchantingHandlers;

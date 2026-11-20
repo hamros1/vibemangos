@@ -984,6 +984,13 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Functions: `Spell::EffectTransmitted`, `Spell::EffectSummonPlayer`, `GameObject::Use`, `GameObject::IsUseRequirementMet`, `GameObject::TriggerSummoningRitual`, `GameObject::AddUniqueUse`, `WorldSession::HandleSummonResponseOpcode`, `Player::SetSummonPoint`, `Player::SummonIfPossible`
 * Constants: `GAMEOBJECT_TYPE_SUMMONING_RITUAL`, `GAMEOBJECT_TYPE_MEETINGSTONE`, `SPELL_EFFECT_TRANS_DOOR`, `SPELL_EFFECT_SUMMON_PLAYER`, `SMSG_SUMMON_REQUEST`, `CMSG_SUMMON_RESPONSE`, `MAX_PLAYER_SUMMON_DELAY`, `SPELL_ATTR_NOT_IN_COMBAT_ONLY_PEACEFUL`, `TRIGGERED_CHANNEL_ONLY`
 
+## world/homebind.d
+
+* Projects: CMaNGOS
+* Files: `Player.cpp`, `Group.cpp`, `MovementHandler.cpp`
+* Functions: `Player::UpdateHomebindTime`, `Group::_homebindIfInstance`, `Group::AddMember`, `WorldSession::HandleMoveWorldportAckOpcode`
+* Constants: `SMSG_RAID_GROUP_ONLY`, `ERR_RAID_GROUP_NONE`
+
 ## world/mounting.d
 
 * Projects: CMaNGOS

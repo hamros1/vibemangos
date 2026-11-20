@@ -962,6 +962,7 @@ source/dmangos/world/       the world server
   guardians.d                 a player's guardians (dragonlings, dummies, the sheep) and wild objects
   durability.d                wear by spells and death: points or shares, worn or carried (bags too)
   rituals.d                   Ritual of Summoning, meeting stones' summons, the summons request and answer
+  homebind.d                  out of a dungeon a minute after leaving its group (SMSG_RAID_GROUP_ONLY)
   mounting.d                  riding: casts refused mounted, no melee, dismounting for objects and dungeons
   moveorders.d                speed, root, knockback, water walk, slow fall, hover orders and their acknowledgements
   inventory.d                 items and bags, and the rules for storing, equipping, swapping, saving them

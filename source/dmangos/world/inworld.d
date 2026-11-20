@@ -493,6 +493,7 @@ private:
         updateTimedQuests();
         refreshQuestObjects();
         updateRaidReset();
+        updateHomebindTimer(cast(int) elapsed.total!"msecs");
         updateDuel();
         updatePvPTimers(cast(int) elapsed.total!"msecs");
         updateDeath(elapsed);
