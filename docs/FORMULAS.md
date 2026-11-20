@@ -87,7 +87,9 @@ damage over time modifiers (Piercing Ice's on Blizzard). It procs as a tick (`ti
   ticks (its four) and Hellfire's (its fifteen), as the data gives their duration and period.
 - Improved Drain Mana: 15% or 30% of the mana drained, as damage of Drain Mana's school (no crit: a tick's).
 - Damage taken breaks a hold whose spell's proc flags take it ("Damage caused may interrupt the effect": Frost Nova,
-  Fear, Psychic Scream, Howl of Terror, Frostbite), by its `ProcChance` (100 in the data).
+  Fear, Psychic Scream, Howl of Terror, Frostbite), by its `ProcChance` (100 in the data): the first hit breaks it.
+  CMaNGOS rolls a chance by the damage (damage / (25 × level − 150)); no primary source for either, and the project
+  chose the data's (2026-11-20).
 - Shadow Vulnerability (Improved Shadow Bolt) lasts its four charges, one a damaging hit of the kinds its proc flags
   take ("until 4 non-periodic damage sources are applied").
 - Spirit of Redemption: the killing blow leaves the priest at 1 health in the spirit's form (27827, with 27792 and
