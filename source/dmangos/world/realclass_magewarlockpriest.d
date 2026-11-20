@@ -299,6 +299,19 @@ private void swingAt(ref RealWorld w, ref TestClient who, ulong attacker, uint d
     dealDamage(w.context.map(0).unit(attacker), me.unit, damage, Blow.swing(d));
 }
 
+/// Frost Nova (10230) cast until it roots the kobold (a spell may miss).
+private void novaUntilFrozen(ref RealWorld w, ref TestClient who, ulong kobold)
+{
+    foreach (_; 0 .. 10)
+    {
+        if (creatureOf(w, kobold).auras.find(10230) !is null)
+            return;
+        w.now += 26.seconds;
+        topUp(who);
+        assert(w.cast_(who, 10230) == SpellCastResult.ok);
+    }
+}
+
 /// The least and the most effect `i` of `spell` rolls at level 60.
 private int[2] rolls(ref RealWorld w, uint spell, size_t i)
 {
@@ -394,8 +407,7 @@ unittest
     auto who = w.character(1005, "Wide", mage, 60, [10230]);
     learn(w, who, 16758);
     const kobold = toughEnemy(w, who, 11, 6);
-    topUp(who);
-    assert(w.cast_(who, 10230) == SpellCastResult.ok);
+    novaUntilFrozen(w, who, kobold);
     assert(creatureOf(w, kobold).auras.find(10230) !is null, "rooted 11 yards off");
 }
 
@@ -914,8 +926,7 @@ unittest
     auto who = w.character(1030, "Shatterer", mage, 60, [10230]);
     auto me = who.session.inWorld;
     const kobold = toughEnemy(w, who, 5);
-    topUp(who);
-    assert(w.cast_(who, 10230) == SpellCastResult.ok);
+    novaUntilFrozen(w, who, kobold);
     assert(auraOn(w, kobold, 10230) !is null, "frozen");
     auto target = w.context.map(0).unit(kobold);
     const plain = me.critChanceOf(spellOf(w, 10181), target);
@@ -989,10 +1000,17 @@ unittest
     topUp(who);
     assert(w.castAt(who, 5143, target) == SpellCastResult.ok);
     pass(w, who, 4.seconds);
-    const missiles = spellLogs(who, Opcode.SMSG_SPELLNONMELEEDAMAGELOG);
-    import std.algorithm.searching : count;
-
-    assert(missiles.count!(l => l[0] == 7268) == 3, format!"%s"(missiles));
+    // Each missile shot (`SMSG_SPELL_GO`; one may miss, and log no damage).
+    uint missiles;
+    foreach (p; who.read())
+        if (p.opcode == Opcode.SMSG_SPELL_GO)
+        {
+            auto r = ByteReader(p.body_);
+            r.readPackedGuid();
+            r.readPackedGuid();
+            missiles += r.read!uint == 7268;
+        }
+    assert(missiles == 3, format!"%s missiles"(missiles));
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -1192,10 +1210,17 @@ unittest
     auto w = RealWorld.make();
     auto who = w.character(1055, "Novaer", mage, 60, [10230, 10199]);
     const kobold = toughEnemy(w, who, 5);
-    assert(w.cast_(who, 10230) == SpellCastResult.ok);
+    novaUntilFrozen(w, who, kobold);
     assert(auraOn(w, kobold, 10230) !is null, "frozen");
-    w.now += 2.seconds;
-    assert(w.castAt(who, 10199, kobold) == SpellCastResult.ok);
+    foreach (_; 0 .. 5) // (until a Fire Blast lands)
+    {
+        w.now += 9.seconds;
+        topUp(who);
+        who.read();
+        assert(w.castAt(who, 10199, kobold) == SpellCastResult.ok);
+        if (spellLogs(who, Opcode.SMSG_SPELLNONMELEEDAMAGELOG).canFind!(l => l[0] == 10199 && l[1]))
+            break;
+    }
     assert(auraOn(w, kobold, 10230) is null, "free again");
 }
 
@@ -1330,4 +1355,266 @@ unittest
         ModRow("Focused Casting", [14743, 27828], Op.notLoseCastingTime, true, [100, 100], heals ~ [smite, holyFire,
             mindBlast, mindFlay, manaBurn], 100),
     ]);
+}
+
+/// Aftermath (2% a rank): a Destruction spell (Shadow Bolt) dazes its target (18118: 50% slower) for 5 sec.
+unittest
+{
+    if (!haveRealData())
+        return;
+    auto w = RealWorld.make();
+    assertChances(w, "Aftermath", [18119, 18120, 18121, 18122, 18123], [2, 4, 6, 8, 10]);
+    auto who = w.character(1101, "Dazer", warlock, 60, [686]);
+    learn(w, who, 18123);
+    const target = toughEnemy(w, who, 10);
+    foreach (_; 0 .. 150)
+    {
+        topUp(who);
+        w.castAt(who, 686, target);
+        pass(w, who, 2.seconds);
+        if (auto daze = auraOn(w, target, 18118))
+        {
+            assert(daze.maxDuration == 5000 && daze.amount[0] == -50);
+            return;
+        }
+    }
+    assert(false, "never dazed");
+}
+
+/**
+ * Improved Shadow Bolt (4% a rank): a Shadow Bolt crit leaves Shadow Vulnerability (17794 ... 17800: 4% ... 20% more
+ * shadow damage taken) for 4 damaging hits at most.
+ */
+unittest
+{
+    import std.math : isClose;
+
+    if (!haveRealData())
+        return;
+    auto w = RealWorld.make();
+    foreach (k, rank; [17793u, 17796, 17801, 17802, 17803])
+    {
+        const vulnerability = spellOf(w, rank).triggerSpell[0];
+        assert(rolls(w, vulnerability, 0)[0] == 4 * (k + 1), format!"rank %s: %s%%"(k + 1, 4 * (k + 1)));
+    }
+    auto who = w.character(1102, "Crit", warlock, 60, [686, 5676]);
+    learn(w, who, 17803);
+    giveAura(w, who, 23434, 100); // every spell a crit
+    const target = toughEnemy(w, who, 10);
+    foreach (_; 0 .. 5)
+    {
+        if (auraOn(w, target, 17800) !is null)
+            break;
+        topUp(who);
+        w.castAt(who, 686, target);
+        pass(w, who, 3.seconds);
+    }
+    auto vulnerable = auraOn(w, target, 17800);
+    assert(vulnerable !is null && vulnerable.charges == 4, "4 hits");
+    assert(isClose(creatureOf(w, target).fighter.damageTaken[5], 1.2f, 0.001), "20% more shadow damage");
+    foreach (_; 0 .. 12)
+    {
+        if (auraOn(w, target, 17800) is null)
+            break;
+        topUp(who);
+        w.castAt(who, 5676, target); // Searing Pain: a hit of another school spends a charge too
+        pass(w, who, 2.seconds);
+    }
+    assert(auraOn(w, target, 17800) is null, "spent by the fourth");
+}
+
+/// Pyroclasm (13%, 26%): Rain of Fire's (5740) ticks stun (18093) for 3 sec.
+unittest
+{
+    if (!haveRealData())
+        return;
+    auto w = RealWorld.make();
+    auto who = w.character(1103, "Pyroclast", warlock, 60, [5740]);
+    learn(w, who, 18073);
+    const kobold = toughEnemy(w, who, 10);
+    foreach (_; 0 .. 12)
+    {
+        w.now += 2.seconds;
+        topUp(who);
+        assert(castAtSpot(w, who, 5740, kobold) == SpellCastResult.ok);
+        foreach (second; 0 .. 9)
+        {
+            pass(w, who, 1.seconds);
+            if (auto stun = auraOn(w, kobold, 18093))
+            {
+                assert(stun.maxDuration == 3000);
+                return;
+            }
+        }
+    }
+    assert(false, "never stunned");
+}
+
+/// Improved Drain Mana rank 2 (18393): 30% of the mana Drain Mana (5138) drains damages its target.
+unittest
+{
+    if (!haveRealData())
+        return;
+    auto w = RealWorld.make();
+    auto who = w.character(1104, "Drainer", warlock, 60, [5138]);
+    learn(w, who, 18393);
+    const target = toughEnemy(w, who, 10);
+    auto c = creatureOf(w, target);
+    c.values.setByte!UNIT_FIELD_BYTES_0(3, cast(ubyte) Power.mana); // (a kobold of mana)
+    c.values.set!UNIT_FIELD_MAXPOWER1(Power.mana, 100_000u);
+    c.values.set!UNIT_FIELD_POWER1(Power.mana, 100_000u);
+    who.read();
+    assert(w.castAt(who, 5138, target) == SpellCastResult.ok);
+    pass(w, who, 1500.msecs);
+    const drained = 100_000 - c.values.get!UNIT_FIELD_POWER1(Power.mana);
+    assert(drained > 0, "drained");
+    const hurt = spellLogs(who, Opcode.SMSG_SPELLNONMELEEDAMAGELOG);
+    assert(hurt.canFind!(l => l[0] == 5138 && l[1] == drained * 30 / 100), format!"30%% of %s: %s"(drained, hurt));
+}
+
+/**
+ * Drain Soul (1120): its target dying under it gives a Soul Shard; with Improved Drain Soul rank 2 (18372: 100%)
+ * Soul Siphon too (18371: mana regeneration 100% more for 10 sec).
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    auto w = RealWorld.make();
+    auto who = w.character(1105, "Soulsucker", warlock, 60, [1120]);
+    auto me = who.session.inWorld;
+    learn(w, who, 18372);
+    const target = toughEnemy(w, who, 10);
+    auto c = creatureOf(w, target);
+    c.values.set!UNIT_FIELD_LEVEL(60u); // (not grey to the warlock)
+    c.values.set!UNIT_FIELD_HEALTH(5u);
+    foreach (_; 0 .. 5) // (a drain may miss)
+        if (c.alive)
+        {
+            topUp(who);
+            w.castAt(who, 1120, target);
+            pass(w, who, 4.seconds);
+        }
+    assert(!c.alive, "drained to death");
+    assert(me.player.inventory.count(6265) == 1, "a Soul Shard");
+    auto siphon = me.player.auras.find(18371);
+    assert(siphon !is null && siphon.maxDuration == 10_000, "Soul Siphon");
+}
+
+/// Life Tap rank 6 (11689) with Plagueheart's set bonus (28830): the health cost 12% less, the mana as much.
+unittest
+{
+    if (!haveRealData())
+        return;
+    auto w = RealWorld.make();
+    auto who = w.character(1106, "Tapper", warlock, 60, [11689]);
+    auto me = who.session.inWorld;
+    giveAura(w, who, 28830);
+    me.player.values.set!UNIT_FIELD_POWER1(Power.mana, 0u);
+    const health = me.player.values.get!UNIT_FIELD_HEALTH;
+    assert(w.cast_(who, 11689) == SpellCastResult.ok);
+    const lost = health - me.player.values.get!UNIT_FIELD_HEALTH;
+    const mana = me.player.values.get!UNIT_FIELD_POWER1(Power.mana);
+    // (420 and the spell power's share: the mana as much, the health 12% less)
+    assert(mana >= 420 && lost == cast(uint)(mana * 0.88f), format!"%s health for %s mana"(lost, mana));
+}
+
+/// Nightfall (2%, 4%) gives Shadow Trance (17941): the next Shadow Bolt (686) instant, and it goes with it.
+unittest
+{
+    if (!haveRealData())
+        return;
+    auto w = RealWorld.make();
+    assertChances(w, "Nightfall", [18094, 18095], [2, 4]);
+    auto who = w.character(1107, "Tranced", warlock, 60, [686]);
+    auto me = who.session.inWorld;
+    giveAura(w, who, 17941);
+    const target = toughEnemy(w, who, 10);
+    who.read();
+    assert(w.castAt(who, 686, target) == SpellCastResult.ok);
+    assert(startedCastTime(who, 686) == 0, "instant");
+    assert(me.player.auras.find(17941) is null, "spent");
+}
+
+/// Amplify Curse (18288): the next Curse of Agony (980) half again as strong, and it goes with it.
+unittest
+{
+    if (!haveRealData())
+        return;
+    auto w = RealWorld.make();
+    auto who = w.character(1108, "Amplifier", warlock, 60, [980, 18288]);
+    auto me = who.session.inWorld;
+    assert(w.cast_(who, 18288) == SpellCastResult.ok);
+    const target = toughEnemy(w, who, 10);
+    w.now += 2.seconds;
+    assert(w.castAt(who, 980, target) == SpellCastResult.ok);
+    assert(me.player.auras.find(18288) is null, "spent");
+    auto agony = auraOn(w, target, 980);
+    assert(agony !is null && agony.amount[0] == rolls(w, 980, 0)[0] * 3 / 2, "half again");
+}
+
+/// Fear (5782) and Howl of Terror (5484): "Damage caused may interrupt the effect".
+unittest
+{
+    if (!haveRealData())
+        return;
+    auto w = RealWorld.make();
+    auto who = w.character(1109, "Terror", warlock, 60, [5782, 5484, 5676]);
+    foreach (fear; [5782u, 5484])
+    {
+        const target = toughEnemy(w, who, 5);
+        foreach (_; 0 .. 5)
+            if (auraOn(w, target, fear) is null)
+            {
+                w.now += 41.seconds;
+                topUp(who);
+                fear == 5782 ? w.castAt(who, fear, target) : w.cast_(who, fear);
+                pass(w, who, 2500.msecs);
+            }
+        assert(auraOn(w, target, fear) !is null, "afraid");
+        foreach (_; 0 .. 5)
+            if (auraOn(w, target, fear) !is null)
+            {
+                topUp(who);
+                w.castAt(who, 5676, target);
+                pass(w, who, 2.seconds);
+            }
+        assert(auraOn(w, target, fear) is null, "the damage ended it");
+    }
+}
+
+/**
+ * Create Healthstone (6201, 6202, 5699, 11729, 11730): the stone of its size; with Improved Healthstone (10%, 20%)
+ * the one that heals that much more (Minor: 100, 110, 120).
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    auto w = RealWorld.make();
+    // The spells, and the stones.
+    static immutable uint[4][] stones = [[6201, 5512, 19004, 19005], [6202, 5511, 19006, 19007],
+        [5699, 5509, 19008, 19009], [11729, 5510, 19010, 19011], [11730, 9421, 19012, 19013]];
+    foreach (k, talent; [0u, 18692, 18693])
+    {
+        auto who = w.character(cast(uint)(1110 + k), format!"Stoner%s"(k), warlock, 60, [6201, 6202, 5699, 11729,
+            11730]);
+        auto me = who.session.inWorld;
+        if (talent)
+            learn(w, who, talent);
+        foreach (ref row; stones)
+        {
+            topUp(who);
+            me.storeLoot(6265, 1, 0, false); // a Soul Shard, its reagent
+            w.now += 2.seconds;
+            const r = w.cast_(who, row[0]);
+            assert(r == SpellCastResult.ok, format!"%s: %s"(row[0], r));
+            pass(w, who, 4.seconds); // (its cast time)
+            assert(me.player.inventory.count(row[1 + k]) == 1, format!"%s: the stone %s"(row[0], row[1 + k]));
+        }
+    }
+    // What each heals: its own spell's (the improved Minor ones 110, 120).
+    import dmangos.world.spellcast : effectValue;
+
+    assert(rolls(w, 23468, 0)[0] == 110 && rolls(w, 23469, 0)[0] == 120 && rolls(w, 6262, 0)[0] == 100);
 }

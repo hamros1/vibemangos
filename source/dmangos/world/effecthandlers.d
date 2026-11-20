@@ -386,6 +386,7 @@ mixin template EffectHandlers()
         const power = cast(Power) kind;
         const drained = now < amount ? now : amount;
         takePower(victim, power, drained);
+        classManaDrained(victim, aura, drained); // Improved Drain Mana
         const gainFactor = player.values.get!UNIT_FIELD_MAXPOWER1(power) > 0 ? multiplier(aura.spell, i) : 0.0f;
         periodicLog(victim.combatGuid, aura, i, drained, power, 0, gainFactor);
         const gain = cast(int)(drained * gainFactor);

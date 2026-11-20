@@ -600,6 +600,8 @@ mixin template ClassSpells()
                 return true;
             }
             return false;
+        case SpellFamily.warlock:
+            return createHealthstone(spell);
         case SpellFamily.paladin:
             return paladinDummy(spell, i, target, value);
         case SpellFamily.shaman:
@@ -758,6 +760,9 @@ mixin template ClassSpells()
             if (!missileOnTheWay(spell, target))
                 reached ~= target;
         targetTriggers(spell, reached);
+        foreach (target; hit)
+            if (spell.hasEffect(SpellEffect.schoolDamage))
+                pyroclasm(spell, target); // Hellfire's ticks, Soul Fire
         auto held = heldProcs;
         heldProcs = null;
         foreach (c; held)
@@ -851,6 +856,11 @@ mixin template ClassSpells()
      */
     package void classAuraChanged(Aura aura, bool apply)
     {
+        // Shadow Trance (Nightfall's): "the casting time of your next Shadow Bolt"; its data gives it no charge to be
+        // spent by it, as Presence of Mind's has.
+        enum uint shadowTrance = 17941;
+        if (apply && aura.spell.id == shadowTrance && aura.charges == 0)
+            aura.charges = 1;
         if (apply)
             foreach (other; replacedBy(player.auras, aura))
                 removeAura(other);
@@ -973,6 +983,8 @@ mixin template ClassSpells()
     package void classAreaTick(const(SpellInfo)* spell, UnitRef target)
     {
         static immutable uint[2][] improvedBlizzardChill = [[836, 12484], [988, 12485], [989, 12486]];
+        if (target && target.alive)
+            pyroclasm(spell, target.combatGuid); // Rain of Fire
         if (!ofFamily(spell, SpellFamily.mage, 0x80) || !target || !target.alive)
             return;
         uint chill;
@@ -1039,6 +1051,92 @@ mixin template ClassSpells()
         import dmangos.world.procs : ProcEx, ProcHit;
 
         procAuras(ProcFlag.takeHarmfulSpell, caster, ProcHit(spell, ProcEx.resist, 0, 0, false));
+    }
+
+    // -----------------------------------------------------------------------
+    // Warlock
+    // -----------------------------------------------------------------------
+
+    /**
+     * This player's aura (`aura`, on a creature now dead) procs on its death: Drain Soul's Soul Siphon (18371), its
+     * chance its spell's (none) and Improved Drain Soul's (`SPELLMOD_CHANCE_OF_SUCCESS`: 50%, 100%).
+     */
+    package void deathAuraProc(Aura aura)
+    {
+        import dmangos.world.spellmods : SpellModOp;
+
+        foreach (i; 0 .. 3)
+            if ((aura.effects & (1 << i)) && aura.type(i) == AuraType.procTriggerSpell && aura.spell.triggerSpell[i])
+            {
+                const chance = spellMod(SpellModOp.chanceOfSuccess, aura.spell, cast(float) aura.spell.casting.procChance);
+                if (chance > 0 && uniform01(map.random) * 100 < chance)
+                    castCustom(aura.spell.triggerSpell[i], player.guid);
+            }
+    }
+
+    /**
+     * Create Healthstone's script effect (its five sizes): the stone, or Improved Healthstone's (10%, 20%: "Increases
+     * the amount of Health restored by your Healthstone") of the same size, whose own spell heals that much more.
+     */
+    private bool createHealthstone(const(SpellInfo)* spell)
+    {
+        // The create spell, its stone, and the stones of Improved Healthstone's two ranks (the items heal 100, 110,
+        // 120; 250, 275, 300; 500, 550, 600; 800, 880, 960; 1200, 1320, 1440).
+        static immutable uint[4][] stones = [[6201, 5512, 19004, 19005], [6202, 5511, 19006, 19007],
+            [5699, 5509, 19008, 19009], [11729, 5510, 19010, 19011], [11730, 9421, 19012, 19013]];
+        enum uint improvedRank1 = 18692, improvedRank2 = 18693;
+        foreach (ref row; stones)
+            if (row[0] == spell.id)
+            {
+                const rank = player.auras.find(improvedRank2) !is null ? 2 : player.auras.find(improvedRank1) !is null
+                    ? 1 : 0;
+                storeLoot(row[1 + rank], 1, 0, false);
+                return true;
+            }
+        return false;
+    }
+
+    /**
+     * Pyroclasm (override scripts 2188, 2189: "a 13%" and "a 26% chance to stun the target for 3 sec", 18093): a
+     * Rain of Fire tick, a Hellfire tick, a Soul Fire at `target`. Its data's proc (a Dummy Trigger on damage over
+     * time) is this, not a cast of its own.
+     */
+    private void pyroclasm(const(SpellInfo)* spell, ulong target)
+    {
+        enum uint stun = 18093;
+        if (!ofFamily(spell, SpellFamily.warlock, 0x20 | 0x40) || target == player.guid)
+            return;
+        foreach (aura; player.auras.list)
+            foreach (i; 0 .. 3)
+                if ((aura.effects & (1 << i)) && aura.type(i) == AuraType.overrideClassScripts)
+                {
+                    const script = cast(int) aura.misc(i);
+                    const chance = script == 2188 ? 13 : script == 2189 ? 26 : 0;
+                    if (chance && uniform01(map.random) * 100 < chance)
+                        castCustom(stun, target);
+                }
+    }
+
+    /**
+     * Improved Drain Mana (override scripts 2028, 2029: 15%, 30%): a share of the mana Drain Mana drained from
+     * `victim` damages it.
+     */
+    package void classManaDrained(UnitRef victim, Aura aura, uint drained)
+    {
+        if (!ofFamily(aura.spell, SpellFamily.warlock, 0x10) || !victim || !victim.alive || !drained)
+            return;
+        int share;
+        foreach (a; player.auras.list)
+            foreach (i; 0 .. 3)
+                if ((a.effects & (1 << i)) && a.type(i) == AuraType.overrideClassScripts)
+                    share = a.misc(i) == 2028 ? 15 : a.misc(i) == 2029 ? 30 : share;
+        if (!share)
+            return;
+        const damage = drained * share / 100;
+        if (victim.kind == UnitKind.creature)
+            spellDamage(aura.spell, victim.creature, damage, aura.spell.casting.school, false, -1, true); // (a tick's)
+        else if (auto other = enemyPlayer(victim.combatGuid))
+            spellDamageToPlayer(aura.spell, other, damage, false);
     }
 
     /**
@@ -1108,6 +1206,9 @@ mixin template ClassSpells()
     package bool classProcTrigger(Aura aura, size_t i, const ref ProcHit hit, UnitRef other, ref ProcCast c)
     {
         const spell = aura.spell;
+        enum uint pyroclasmFirst = 18096;
+        if (chainFirstRank(spell.id) == pyroclasmFirst)
+            return false; // (`pyroclasm`)
         // Deep Wounds (its data names no family flags)
         if (spell.casting.spellFamilyName == SpellFamily.warrior && !spell.casting.spellFamilyFlags
                 && spell.casting.spellIconId == 243)
