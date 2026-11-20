@@ -586,6 +586,8 @@ mixin template ClassSpells()
         }
         if (physicalClassDummy(spell, i, target, value)) // the warrior's, rogue's, hunter's (dmangos.world.physicalclasses)
             return true;
+        if (petAuraDummy(spell, targetGuid)) // Soul Link (dmangos.world.petauras)
+            return true;
         switch (cast(SpellFamily) spell.casting.spellFamilyName)
         {
         case SpellFamily.mage:
@@ -1049,6 +1051,7 @@ mixin template ClassSpells()
     /// This player's aura on `target` ended: Wyvern Sting's sleep leaves its poison.
     package void classCreatureAuraLost(Creature target, Aura aura)
     {
+        scorpidStingLost(target, aura); // Improved Scorpid Sting's stamina with it (dmangos.world.physicalclasses)
         if (!target.alive || !ofFamily(aura.spell, SpellFamily.hunter, 0x10000) || !aura.has(AuraType.modStun))
             return;
         if (const poison = rankSpell(wyvernStingPoison, aura.spell.id))

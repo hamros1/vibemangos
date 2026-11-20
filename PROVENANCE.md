@@ -867,6 +867,14 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Files: `Creature.cpp`
 * Functions: `Creature::ChooseDisplayId`, `Creature::Create`, `Creature::GetVendorItemCurrentCount`, `Creature::InspectingLoot`, `Creature::IsTappedBy`, `Creature::SelectLevel`, `Creature::SetDeathState`, `Creature::SetLootRecipient`, `Creature::Update`, `Creature::UpdateDamagePhysical`, `Creature::UpdateVendorItemCurrentCount`, `Creature::m_vendorItemCounts`, `Object::BuildCreateUpdateBlockForPlayer`, `Object::BuildValuesUpdate`, `Pet::Create`, `TemporarySpawn::Update`, `Unit::DealDamage`, `Unit::GetCollisionHeight`, `Unit::Kill`, `Unit::SetPowerType`, `Unit::m_attackers`
 * Constants: `DEFAULT_COLLISION_HEIGHT`, `FACTION_TEMPLATE_FLAG_ASSIST_PLAYERS`, `HIGHGUID_PET`, `NO_LOOT`, `NO_XP`, `PLAYER_FLAGS`, `UNIT_DYNFLAG_LOOTABLE`, `UNIT_DYNFLAG_TAPPED`, `UNIT_MOD_DAMAGE_OFFHAND`
+* Not from an emulator: crit, dodge, parry and block chances from its auras; a pet's stats from its auras (`showPetStats`); the ticks that heal it or give it power, whoever cast them (`selfTick`: Mend Pet, Spirit Bond, Consume Shadows)
+
+## world/creatureprocs.d
+
+* Projects: CMaNGOS (the proc checks it shares with world/procs.d: `SpellMgr::IsSpellProcEventCanTriggeredBy`,
+  `Aura::CanProcFrom`; `spell_proc_event`)
+* Not from an emulator: a pet's Proc Trigger Spell auras on its swings and spell hits, their chance by its owner's
+  `SPELLMOD_CHANCE_OF_SUCCESS` (Frenzy's tooltip and data)
 
 ## world/creatureai.d
 
@@ -892,6 +900,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Also: `Spell::EffectSendEvent` (a creature's `SPELL_EFFECT_SEND_EVENT`), `Unit::RemoveAura` (its script told, `AuraRemoved`)
 * Also: `TARGET_ENUM_UNITS_SCRIPT_AOE_AT_SRC_LOC` (`Spell::SetTargetMap`, `SPELL_TARGETS_ALL`), `Spell::OnCheckTarget`
 * Also: `Creature::DoFleeToGetAssistance` (`SPELL_AURA_PREVENTS_FLEEING`)
+* Not from an emulator: a pet's spells by its owner's spell modifiers (`petModOwner`: effects, damage, cast time, duration), its own damage done on its spells, its area auras on itself, the threat effect on a creature, `TARGET_UNIT_CASTER_MASTER`
 
 ## world/crypt.d
 
@@ -1268,12 +1277,23 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Projects: CMaNGOS
 * Functions: `CharmInfo::PetActionBar`, `ObjectMgr::GeneratePetName`, `Pet::InitStatsForLevel`, `Pet::addSpell`, `Player::PetSpellInitialize`
 * Constants: `ACTION_BAR_INDEX_START`, `MAKE_UNIT_ACTION_BUTTON`, `MAX_PET_STABLES`, `MSG_LIST_STABLED_PETS`, `SMSG_PET_NAME_QUERY_RESPONSE`, `SMSG_PET_SPELLS`, `UNIT_ACTION_BUTTON_ACTION`, `UNIT_FIELD_PETNUMBER`
+* Not from an emulator: `withAuras`, `showPetStats` (a pet's stats from its auras as a player's, docs/FORMULAS.md "Pets"); `spell_pet_auras` is CMaNGOS's table, read only where the data links no aura (docs/FORMULAS.md "Pets")
+
+## world/petauras.d
+
+* Projects: CMaNGOS (`spell_pet_auras`, its table; `Unit::GetSpellModOwner` as the idea of an owner's modifiers on
+  its pet's spells)
+* Not from an emulator: the passives from `CreatureFamily.dbc` and `SkillLineAbility.dbc`, the owner's modifiers on
+  them (outdoors-only ones outdoors), `SPELL_EFFECT_APPLY_AREA_AURA_PET` (a pet's to its owner, an owner's to its pet),
+  `SPELL_AURA_SPLIT_DAMAGE_PCT` to the aura's caster, Soul Link's dummy, Demonic Sacrifice by its tooltip
+  (docs/FORMULAS.md "Pets")
 
 ## world/petai.d
 
 * Projects: CMaNGOS
 * Functions: `CharmInfo::GetCommandState`, `PetAI::AttackStart`, `PetAI::MoveInLineOfSight`, `PetAI::UpdateAI`, `PetAI::m_followDist`, `Creature::AddCooldown` (`SMSG_SPELL_COOLDOWN` to the owner, the category's cooldown), `WorldObject::IsSpellReady`
 * Constants: `ACT_ENABLED`, `CMSG_PET_ACTION`, `CMSG_PET_CAST_SPELL`, `SPELL_ATTR_EX_NO_AUTOCAST_AI`
+* Not from an emulator: a pet's cooldowns by its owner's `SPELLMOD_COOLDOWN` (Improved Lash of Pain's tooltip)
 
 ## world/pethandlers.d
 
@@ -1314,6 +1334,12 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 * Not from an emulator: the warrior's, rogue's and hunter's rules from their 1.12.1 tooltips and data
   (docs/spells/warrior.md, rogue.md, hunter.md; docs/FORMULAS.md): Last Stand's 30% of the maximum health, Tactical
   Mastery's rage kept by its script number's rank, Improved Sap's stealth, Pathfinding on the aspects' speed, Entrapment on a trap's effect only.
+* Not from an emulator: Improved Mend Pet (24406, its tooltip's, at its amount's chance a tick) and Improved Scorpid Sting (its tooltip's 10% a rank of the strength reduced, as 19486)
+
+## world/realclass_pets.d
+
+* Not from an emulator: tests of the 1.12.1 tooltips' claims of the warlock's and the hunter's pet talents on the
+  client's DBC files and the classic world database.
 
 ## world/realclass_warrior_rogue_hunter.d
 
@@ -1511,6 +1537,7 @@ modules, whose names are ArcEmu 2.4.3's (`arcemu-world`).
 ## world/tooltipeffects.d
 
 * Not from an emulator: effects the 1.12.1 tooltips state that the data lacks (Barkskin's), docs/FORMULAS.md "Effects only a tooltip gives"
+* Not from an emulator: Demonic Sacrifice's effect by demon, from its tooltip
 
 ## world/tradehandlers.d
 

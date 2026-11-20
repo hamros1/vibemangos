@@ -467,3 +467,44 @@ data had it, quoting the tooltip:
 
 - Barkskin (22812): "Physical damage taken is reduced by 20%" and "melee combat is slowed by 25%". Its data has only
   the pushback immunity and the second longer casts.
+- Demonic Sacrifice (18788): its data only kills the demon. What the warlock gets is its tooltip's, by demon: the Imp
+  Burning Wish (18789), the Voidwalker Fel Stamina (18790), the Succubus Touch of Shadow (18791), the Felhunter Fel
+  Energy (18792), each of which the aura's own tooltip describes alike; a demon summoned cancels it.
+
+## Pets
+
+**What:** what a pet has of its own and of its owner (world/petauras.d, pet.d, creatureprocs.d; each talent tested in
+world/realclass_pets.d). **Source: the 1.12.1 client's data and the tooltips** (docs/spells/warlock.md, hunter.md),
+except where said.
+
+- **A pet's passive auras** are the spells `SkillLineAbility.dbc` has learned on getting its family's skill lines
+  (`CreatureFamily.dbc`: "Pet - Boar", "Pet - Generic"; "Pet - Imp"...): a hunter pet's Tamed Pet Passives 8875, 19580
+  .. 19591, 20784, its family's own (a boar's 7000: 10% less physical damage, 9% more armor, 4% more health); a
+  demon's 18727 .. 18742. Their amounts are 0 but for the family's own: the talents are modifiers of their effects.
+- **The owner's spell modifiers** count for its pet's spells and auras (its effects, damage, cast time, cooldown,
+  duration, proc chance), as for its own: Fel Stamina's "15% more maximum Health" is 15 added to all effects of 18735
+  .. 18738 ("Max Health increased by 0%"). A modifier of an outdoors-only talent (Bestial Swiftness,
+  `SPELL_ATTR_OUTDOORS_ONLY`) counts while the pet is outdoors.
+- **A pet's stats with its auras** are made as a player's are: `MOD_STAT` and its percentages; health 10 and mana 15
+  for each point of stamina and intellect above its level's (`pet_levelstats`), 2 armor for each point of agility above
+  it; then the percentages (`MOD_INCREASE_HEALTH_PERCENT`, `_ENERGY_PERCENT`, `MOD_BASE_RESISTANCE_PCT` and
+  `MOD_RESISTANCE_PCT` on its armor, all base armor). The 10, 15 and 2 are the player's for points above 20; nothing
+  primary gives a pet's (not from an emulator).
+- **Crit, dodge, parry and block** of a creature: 5% each and what its auras add (Ferocity's 19591).
+- **`SPELL_EFFECT_APPLY_AREA_AURA_PET`:** the aura is its caster's and its caster's pet's, or (cast by a pet) its
+  owner's: Master Demonologist ("Grants both the Warlock and the summoned demon"), Spirit Bond ("you and your pet"),
+  Soul Link.
+- **`SPELL_AURA_SPLIT_DAMAGE_PCT`:** its share of the damage its bearer takes goes to the aura's caster. Soul Link's
+  aura is cast by the demon, so on the warlock it sends 30% to the demon ("30% of all damage taken by the caster is
+  taken by your ... demon instead"); on the demon (its caster itself) it does nothing.
+- **Which aura a pet gets for its owner's talent** where the data does not link them (dummy auras and effects:
+  Master Demonologist by demon, Spirit Bond, Soul Link): the world database's `spell_pet_auras`, CMaNGOS's table, the
+  only source; each aura's own tooltip agrees ("Reduces threat caused by 20%", "Regenerate 2% of total health every
+  10 sec", "30% of damage taken by master is split with demon").
+- **A pet's procs** (Frenzy's 20784 "Chance to proc frenzy", Intimidation): its Proc Trigger Spell auras on its hits,
+  their chance by its owner's `SPELLMOD_CHANCE_OF_SUCCESS` (Frenzy adds 20% a rank to 20784's 0%), only at a crit for
+  Frenzy as `spell_proc_event` and the tooltip ("after dealing a critical strike") have it.
+- **Improved Mend Pet:** the chance a tick is the talent's amount (15%, 50%); what cleanses is 24406, which the
+  tooltip names (`$24406s1`).
+- **Improved Scorpid Sting:** 10%, 20%, 30% (the tooltip's; its override scripts 2388 .. 2390 carry no amount) of the
+  sting's strength reduction, as 19486's stamina reduction ("Stamina reduced by $s1").

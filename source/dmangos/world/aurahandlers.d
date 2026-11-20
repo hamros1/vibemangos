@@ -76,8 +76,8 @@ private:
         bool auraEffect(size_t j)
         {
             const effect = spell.effect[j];
-            return (effect == SpellEffect.applyAura || effect == SpellEffect.applyAreaAuraParty)
-                && (!effects || (effects & (1 << j)));
+            return (effect == SpellEffect.applyAura || effect == SpellEffect.applyAreaAuraParty
+                || effect == SpellEffect.applyAreaAuraPet) && (!effects || (effects & (1 << j)));
         }
         foreach (j; 0 .. i)
             if (auraEffect(j))
@@ -131,6 +131,7 @@ private:
             auto applied = creature.auras.apply(aura, creature.values, isNew);
             if (isNew)
                 classCreatureAuraApplied(creature, applied); // the sting or curse it replaces
+            scorpidStingLanded(applied, map.unitOf(creature)); // Improved Scorpid Sting (dmangos.world.physicalclasses)
             map.flushObjectChanges(creature);
             foreach (j; 0 .. 3)
                 if (auraEffect(j))
@@ -166,6 +167,8 @@ private:
                 targetResistance(cast(int) who.player.values.get!UNIT_FIELD_RESISTANCES(spell.casting.school),
                 spell.casting.school), spellHitBonusOf(spell)), ms);
         who.addAura(given);
+        if (hostile)
+            scorpidStingLanded(given, who.unit); // Improved Scorpid Sting (dmangos.world.physicalclasses)
         if (!hostile && who !is this) // a buff on one fighting: those it fights fight this player too
             imported!"dmangos.world.creatureai".assistThreat(map, who.threateners, unit, 0, *spell);
     }
@@ -224,6 +227,7 @@ private:
         if (sinceAreaAuras < 1.seconds || player is null)
             return;
         sinceAreaAuras = Duration.zero;
+        updatePetAreaAuras(); // (`dmangos.world.petauras`)
         struct Source
         {
             ulong guid;
@@ -248,6 +252,17 @@ private:
                     given ~= aura;
             sources ~= Source(totem.guid, totem.position, given, true);
         }
+        // Its pet's (an imp's Blood Pact, a felhunter's Paranoia), as a totem's.
+        if (auto pet = ownPet)
+            if (pet !is charmed_ && map.findObject(pet.guid) is pet)
+            {
+                Aura[] given;
+                if (pet.alive)
+                    foreach (aura; pet.auras.list)
+                        if (aura.caster == pet.guid && partyAreaAura(aura.spell))
+                            given ~= aura;
+                sources ~= Source(pet.guid, pet.position, given, true);
+            }
         typeof(this)[] members = [this];
         if (auto group = context.groups.of(player.guid))
             foreach (ref m; group.members)
@@ -357,6 +372,7 @@ private:
         foreach (aura; spent)
             removeAura(aura);
         splitDamage(school, damage); // Blessing of Sacrifice: a share to its paladin
+        splitDamagePct(school, damage); // Soul Link: a share to the demon (`dmangos.world.petauras`)
         if (absorbed)
             flushPlayerChanges();
         return absorbed;
@@ -520,6 +536,7 @@ private:
     {
         bool stats, speeds, movement, movementAuras, breathing;
         classAuraChanged(aura, apply); // a seal
+        petOwnerAuraChanged(aura, apply); // a talent of its pet's (`dmangos.world.petauras`)
         {
             import dmangos.world.tooltipeffects : hiddenEffectsOf;
 
@@ -1190,6 +1207,9 @@ private:
         const amount = scripted > 0 ? cast(uint) scripted : 0;
         switch (aura.type(i))
         {
+        case AuraType.periodicHeal: // (the creature healed itself: `Creature.selfTick`) Improved Mend Pet
+            hunterHealTick(aura, map.unitOf(target));
+            break;
         case AuraType.periodicDamage, AuraType.periodicLeech:
             uint damage = amount;
             const school = aura.spell.casting.school;

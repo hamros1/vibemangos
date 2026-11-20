@@ -276,6 +276,9 @@ struct AuraTick
 struct AuraSet
 {
     Aura[] list;
+    /// Counts each aura applied, refreshed or removed: what is made of the auras (a pet's stats) is made again when it
+    /// changed.
+    uint changes;
 
     /**
      * Applies `aura`, or the same spell's from the same caster is
@@ -297,6 +300,7 @@ struct AuraSet
                     ++existing.stacks;
                 existing.amount = aura.amount;
                 writeSlot(existing, values);
+                ++changes;
                 isNew = false;
                 return existing;
             }
@@ -312,6 +316,7 @@ struct AuraSet
                 }
         }
         list ~= aura;
+        ++changes;
         writeSlot(aura, values);
         showOnFields(aura, true, values);
         return aura;
@@ -349,6 +354,7 @@ struct AuraSet
         if (at < 0)
             return;
         list = list.remove_(at);
+        ++changes;
         if (aura.slot != noSlot)
         {
             values.set!UNIT_FIELD_AURA(aura.slot, 0u);
@@ -751,7 +757,8 @@ Aura makeAura(const(SpellInfo)* spell, ulong caster, uint casterLevel, int durat
     aura.charges = spell.casting.procCharges;
     foreach (i; 0 .. 3)
     {
-        if (spell.effect[i] != SpellEffect.applyAura && spell.effect[i] != SpellEffect.applyAreaAuraParty)
+        if (spell.effect[i] != SpellEffect.applyAura && spell.effect[i] != SpellEffect.applyAreaAuraParty
+                && spell.effect[i] != SpellEffect.applyAreaAuraPet)
             continue;
         aura.effects |= cast(ubyte)(1 << i);
         aura.amount[i] = values[i];

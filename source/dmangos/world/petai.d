@@ -260,14 +260,22 @@ mixin template PetBehaviour()
     {
         import dmangos.world.petai : petCooldownPacket;
 
-        const cooldown = info.recoveryTime > info.categoryRecoveryTime ? info.recoveryTime : info.categoryRecoveryTime;
-        if (!cooldown)
+        int recovery = info.recoveryTime, categoryRecovery = info.categoryRecoveryTime;
+        if (auto modOwner = petModOwner()) // its owner's talents (Improved Lash of Pain)
+        {
+            import dmangos.world.spellmods : SpellModOp;
+
+            recovery = modOwner.petSpellMod(SpellModOp.cooldown, info, recovery, me);
+            categoryRecovery = modOwner.petSpellMod(SpellModOp.cooldown, info, categoryRecovery, me);
+        }
+        const cooldown = recovery > categoryRecovery ? recovery : categoryRecovery;
+        if (cooldown <= 0)
             return;
         petCooldowns[info.id] = cooldown;
-        if (info.category && info.categoryRecoveryTime)
-            petCategoryCooldowns[info.category] = info.categoryRecoveryTime;
+        if (info.category && categoryRecovery > 0)
+            petCategoryCooldowns[info.category] = categoryRecovery;
         if (auto owner = world.unit(me.petOwner))
-            owner.tell(Opcode.SMSG_SPELL_COOLDOWN, petCooldownPacket(me.guid, info.id, info.recoveryTime));
+            owner.tell(Opcode.SMSG_SPELL_COOLDOWN, petCooldownPacket(me.guid, info.id, recovery > 0 ? recovery : 0));
     }
 
     /// The spells it casts by itself, at its victim, when ready and in range.

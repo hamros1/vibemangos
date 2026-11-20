@@ -247,33 +247,18 @@ mixin template PetHandlers()
             minScale, minScaleLevel, maxScale, maxScaleLevel);
         auto v = &creature.values;
         v.set!UNIT_FIELD_LEVEL(level);
-        const health = v.get!UNIT_FIELD_HEALTH;
-        v.set!UNIT_FIELD_MAXHEALTH(s.health);
-        v.set!UNIT_FIELD_HEALTH(full || health > s.health ? s.health : health);
+        state.base = s;
         if (state.type == PetType.hunter)
         {
             v.set!UNIT_FIELD_MAXPOWER1(0, 0u);
             v.set!UNIT_FIELD_POWER1(0, 0u);
         }
-        else
-        {
-            const mana = v.get!UNIT_FIELD_POWER1(0);
-            v.set!UNIT_FIELD_MAXPOWER1(0, s.mana);
-            v.set!UNIT_FIELD_POWER1(0, full || mana > s.mana ? s.mana : mana);
-        }
         v.set!UNIT_FIELD_MAXPOWER1(1, 0u); // no rage
         v.set!UNIT_FIELD_POWER1(1, 0u);
-        v.set!UNIT_FIELD_RESISTANCES(0, s.armor);
-        v.set!UNIT_FIELD_STAT0(s.stats[0]);
-        v.set!UNIT_FIELD_STAT1(s.stats[1]);
-        v.set!UNIT_FIELD_STAT2(s.stats[2]);
-        v.set!UNIT_FIELD_STAT3(s.stats[3]);
-        v.set!UNIT_FIELD_STAT4(s.stats[4]);
-        v.set!UNIT_FIELD_ATTACK_POWER(s.attackPower);
-        v.set!UNIT_FIELD_MINDAMAGE(s.minDamage);
-        v.set!UNIT_FIELD_MAXDAMAGE(s.maxDamage);
         if (s.scale > 0)
             v.set!OBJECT_FIELD_SCALE_X(s.scale);
+        refreshPetPassives(creature); // its family's passive auras and its owner's talents' (`dmangos.world.petauras`)
+        showPetStats(creature, full);
     }
 
     /// The experience a pet needs for its next level: a quarter of what a player needs.
@@ -518,6 +503,7 @@ mixin template PetHandlers()
         if (map.findObject(pet_.guid) is pet_)
             map.removeObject(pet_.guid);
         pet_ = null;
+        updatePetAreaAuras(); // what it gave its owner goes (dmangos.world.petauras)
         if (player !is null)
         {
             player.values.set!UNIT_FIELD_SUMMON(0UL);
@@ -911,6 +897,7 @@ mixin template PetHandlers()
                 loadPet(*r);
             return;
         }
+        demonSummoned(); // a Demonic Sacrifice's effect is cancelled (dmangos.world.petauras)
         if (pet_ !is null)
             unsummonPet(PetSlot.notInSlot);
         foreach (r; savedPets())

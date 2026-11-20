@@ -229,6 +229,9 @@ final class PetState
     string teachSpells;
     uint resetCost;   /// what its last untraining cost, and when (Unix time)
     long resetTime;   /// ditto
+    PetStats base;    /// its stats at its level, without auras (`showPetStats` adds theirs)
+    uint statsShownAt = uint.max; /// its auras' `changes` when its stats were last shown
+    uint[] passives;  /// the passive auras it was given (`dmangos.world.petauras`), to take back when they change
 
     /// Whether it knows `spell`.
     bool knows(uint spell) const
@@ -334,17 +337,20 @@ struct PetLevelStats
     uint[5] stats; /// strength, agility, stamina, intellect, spirit
 }
 
-/// The stats a pet has at a level, without auras.
+/// The stats a pet has at a level, without auras (`petStats`), or with them (`withAuras`).
 struct PetStats
 {
     uint health;
     uint mana;
     uint armor;
+    int[6] resistances; /// holy .. arcane
     uint[5] stats;
     int attackPower;
     float minDamage = 0;
     float maxDamage = 0;
     float scale = 0; /// a hunter pet's size by its family and level; 0: its model's own
+    float weaponMin = 0, weaponMax = 0; /// its weapon, before its attack power's share
+    float apPerStrength = 2, apOffset = -20; /// its attack power by its strength
 }
 
 /**
@@ -409,18 +415,120 @@ PetStats petStats(PetType type, const ref CreatureTemplate t, uint level, const(
             weaponMax = (mDmg - mDmg / 4) * 1.5f;
         }
     }
-    const strength = float(s.stats[0]);
-    const ap = t.entry == imp ? strength - 10 : 2 * strength - 20;
+    if (t.entry == imp)
+    {
+        s.apPerStrength = 1;
+        s.apOffset = -10;
+    }
+    s.weaponMin = weaponMin;
+    s.weaponMax = weaponMax;
+    setDamage(s, s.apPerStrength * s.stats[0] + s.apOffset);
+    if (s.health < 1)
+        s.health = 1;
+    return s;
+}
+
+/// Its attack power `ap`, and a fourteenth of it added to each end of its weapon.
+private void setDamage(ref PetStats s, float ap) pure nothrow @nogc @safe
+{
     s.attackPower = cast(int) ap;
-    s.minDamage = weaponMin + ap / 14;
-    s.maxDamage = weaponMax + ap / 14;
+    s.minDamage = s.weaponMin + ap / 14;
+    s.maxDamage = s.weaponMax + ap / 14;
     if (s.minDamage < 0)
         s.minDamage = 0;
     if (s.maxDamage < s.minDamage)
         s.maxDamage = s.minDamage;
-    if (s.health < 1)
-        s.health = 1;
+}
+
+/**
+ * A pet's stats with its auras, as a player's are made of its own (`dmangos.world.stats.computeStats`): its stats
+ * by `MOD_STAT` and the percentages of them; health by `MOD_INCREASE_HEALTH` and 10 for each point of stamina above
+ * its level's, times `MOD_INCREASE_HEALTH_PERCENT` (Endurance Training's, Fel Stamina's); mana by 15 for each point
+ * of intellect above and `MOD_INCREASE_ENERGY`, times `MOD_INCREASE_ENERGY_PERCENT` (Fel Intellect's); armor by 2 for
+ * each point of agility above and `MOD_RESISTANCE`, times `MOD_BASE_RESISTANCE_PCT` and `MOD_RESISTANCE_PCT` (Thick
+ * Hide's: a pet's armor is all base armor); resistances by `MOD_RESISTANCE` (and the strongest exclusive one) times
+ * theirs; attack power by its strength and `MOD_ATTACK_POWER`, times `MOD_ATTACK_POWER_PCT`. The points above its
+ * level's count as a player's points above 20 do (docs/FORMULAS.md).
+ */
+PetStats withAuras(A)(const PetStats base, const ref A auras)
+{
+    import std.math : round;
+    import dmangos.world.spellids : AuraType;
+
+    PetStats s = base;
+    if (auras.list.length == 0)
+        return s;
+    float[5] stats;
+    foreach (int i; 0 .. 5)
+    {
+        float v = base.stats[i] + auras.totalByMisc(AuraType.modStat, i) + auras.totalByMisc(AuraType.modStat, -1);
+        v *= 1 + (auras.totalByMisc(AuraType.modPercentStat, i) + auras.totalByMisc(AuraType.modPercentStat, -1)) / 100.0f;
+        v *= auras.multiplier(AuraType.modTotalStatPercentage, (int m) => m == i || m == -1);
+        stats[i] = v > 0 ? v : 0;
+        s.stats[i] = cast(uint) stats[i];
+    }
+    const health = (base.health + (stats[2] - base.stats[2]) * 10 + auras.total(AuraType.modIncreaseHealth))
+        * auras.multiplier(AuraType.modIncreaseHealthPercent);
+    s.health = health >= 1 ? cast(uint) round(health) : 1;
+    if (base.mana)
+    {
+        const mana = (base.mana + (stats[3] - base.stats[3]) * 15 + auras.totalByMisc(AuraType.modIncreaseEnergy, 0))
+            * auras.multiplier(AuraType.modIncreaseEnergyPercent, (int m) => m == 0);
+        s.mana = mana > 0 ? cast(uint) round(mana) : 0;
+    }
+    float resistance(int school, float baseValue)
+    {
+        const flat = baseValue + auras.totalByMiscMask(AuraType.modResistance, 1 << school)
+            + auras.greatestByMiscMask(AuraType.modResistanceExclusive, 1 << school);
+        return flat * auras.multiplier(AuraType.modBaseResistancePct, (int m) => (m & (1 << school)) != 0)
+            * auras.multiplier(AuraType.modResistancePct, (int m) => (m & (1 << school)) != 0);
+    }
+    const armor = resistance(0, base.armor + (stats[1] - base.stats[1]) * 2);
+    s.armor = armor > 0 ? cast(uint) round(armor) : 0;
+    foreach (int school; 1 .. 7)
+        s.resistances[school - 1] = cast(int) round(resistance(school, base.resistances[school - 1]));
+    setDamage(s, (s.apPerStrength * stats[0] + s.apOffset + auras.total(AuraType.modAttackPower))
+        * auras.multiplier(AuraType.modAttackPowerPct));
     return s;
+}
+
+/**
+ * The pet's stats with its auras (`withAuras`) on its fields: health, mana, armor and resistances, stats, attack
+ * power and damage. A pet at full health (or mana) stays full as its maximum rises (`full`: it is made full);
+ * otherwise it keeps what it has, at most the new maximum.
+ */
+void showPetStats(C)(C creature, bool full = false)
+{
+    import dmangos.world.updatefields;
+
+    auto state = creature.petData;
+    if (state is null || state.base.health == 0) // (a charmed creature keeps its own)
+        return;
+    const s = withAuras(state.base, creature.auras);
+    auto v = &creature.values;
+    const health = v.get!UNIT_FIELD_HEALTH, maxHealth = v.get!UNIT_FIELD_MAXHEALTH;
+    v.set!UNIT_FIELD_MAXHEALTH(s.health);
+    if (full || (health && (health >= maxHealth || health > s.health)))
+        v.set!UNIT_FIELD_HEALTH(s.health);
+    if (state.type != PetType.hunter)
+    {
+        const mana = v.get!UNIT_FIELD_POWER1(0), maxMana = v.get!UNIT_FIELD_MAXPOWER1(0);
+        v.set!UNIT_FIELD_MAXPOWER1(0, s.mana);
+        if (full || mana >= maxMana || mana > s.mana)
+            v.set!UNIT_FIELD_POWER1(0, s.mana);
+    }
+    v.set!UNIT_FIELD_RESISTANCES(0, s.armor);
+    foreach (school; 1 .. 7)
+        v.set!UNIT_FIELD_RESISTANCES(school, cast(uint)(s.resistances[school - 1] > 0 ? s.resistances[school - 1] : 0));
+    v.set!UNIT_FIELD_STAT0(s.stats[0]);
+    v.set!UNIT_FIELD_STAT1(s.stats[1]);
+    v.set!UNIT_FIELD_STAT2(s.stats[2]);
+    v.set!UNIT_FIELD_STAT3(s.stats[3]);
+    v.set!UNIT_FIELD_STAT4(s.stats[4]);
+    v.set!UNIT_FIELD_ATTACK_POWER(s.attackPower);
+    v.set!UNIT_FIELD_MINDAMAGE(s.minDamage);
+    v.set!UNIT_FIELD_MAXDAMAGE(s.maxDamage);
+    state.statsShownAt = creature.auras.changes;
 }
 
 // ---------------------------------------------------------------------------
@@ -433,6 +541,23 @@ struct PetData
     PetLevelStats[uint][uint] levelStats; /// by creature entry (1: every hunter pet), then level
     uint[4][uint] createSpells;           /// the spells a new pet of an entry starts with
     string[][2][uint] nameParts;          /// by entry: first halves, second halves
+    /// `spell_pet_auras`: the aura a pet of an entry (0: any) has while its owner has a spell (a talent: Master
+    /// Demonologist, Spirit Bond; Soul Link's spell), by the owner's spell, then the entry. CMaNGOS's table, read
+    /// only for what the spells' own data does not link: their dummy effects and auras name no aura of the pet's.
+    uint[uint][uint] petAuras;
+
+    /// The aura a pet of `entry` has while its owner has `spell`; 0 if none.
+    uint petAuraOf(uint spell, uint entry) const
+    {
+        if (const byEntry = spell in petAuras)
+        {
+            if (const aura = entry in *byEntry)
+                return *aura;
+            if (const aura = 0 in *byEntry)
+                return *aura;
+        }
+        return 0;
+    }
 
     /// The stats of entry `entry` at `level`; null if there are none.
     const(PetLevelStats)* statsFor(uint entry, uint level) const
@@ -467,6 +592,8 @@ struct PetData
         }
         foreach (row; world.query!"SELECT entry, Spell1, Spell2, Spell3, Spell4 FROM petcreateinfo_spell"())
             d.createSpells[row.get!uint(0)] = [row.get!uint(1), row.get!uint(2), row.get!uint(3), row.get!uint(4)];
+        foreach (row; world.query!"SELECT spell, pet, aura FROM spell_pet_auras"())
+            d.petAuras.require(row.get!uint(0))[row.get!uint(1)] = row.get!uint(2);
         foreach (row; world.query!"SELECT word, entry, half FROM pet_name_generation"())
             d.nameParts.require(row.get!uint(1))[row.get!uint(2) ? 1 : 0] ~= row.get!string(0);
         return d;
@@ -636,4 +763,46 @@ unittest
     PetData d;
     d.nameParts[416] = [["Aba"], ["zim"]];
     assert(d.generateName(416, "Imp") == "Abazim" && d.generateName(417, "Felhunter") == "Felhunter");
+    d.petAuras[23785] = [416: 23759, 417: 23762];
+    d.petAuras[19028] = [0: 25228];
+    assert(d.petAuraOf(23785, 417) == 23762 && d.petAuraOf(23785, 1860) == 0 && d.petAuraOf(19028, 1860) == 25228);
+}
+
+/// A pet's stats with its auras: 15% more health (Fel Stamina's share of 18735), 30% more armor, 5 more stamina.
+unittest
+{
+    import dmangos.world.auras : AuraSet, makeAura;
+    import dmangos.world.objects : UpdateValues;
+    import dmangos.world.spellids : AuraType, SpellEffect;
+    import dmangos.world.spells : SpellInfo;
+    import dmangos.world.updatefields : TypeId;
+
+    PetStats base;
+    base.health = 1000;
+    base.mana = 500;
+    base.armor = 200;
+    base.stats = [20, 20, 30, 40, 10];
+    base.apPerStrength = 2;
+    base.apOffset = -20;
+    SpellInfo health, armor, stamina;
+    health.id = 1;
+    health.effect[0] = SpellEffect.applyAura;
+    health.casting.applyAuraName[0] = AuraType.modIncreaseHealthPercent;
+    armor.id = 2;
+    armor.effect[0] = SpellEffect.applyAura;
+    armor.casting.applyAuraName[0] = AuraType.modResistancePct;
+    armor.miscValue[0] = 1;
+    stamina.id = 3;
+    stamina.effect[0] = SpellEffect.applyAura;
+    stamina.casting.applyAuraName[0] = AuraType.modStat;
+    stamina.miscValue[0] = 2;
+    auto values = UpdateValues(TypeId.unit);
+    AuraSet auras;
+    bool isNew;
+    assert(withAuras(base, auras).health == 1000, "nothing without auras");
+    auras.apply(makeAura(&health, 1, 60, -1, true, [15, 0, 0]), values, isNew);
+    auras.apply(makeAura(&armor, 1, 60, -1, true, [30, 0, 0]), values, isNew);
+    auras.apply(makeAura(&stamina, 1, 60, -1, true, [5, 0, 0]), values, isNew);
+    const s = withAuras(base, auras);
+    assert(s.health == cast(uint)((1000 + 5 * 10) * 1.15f + 0.5f) && s.armor == 260 && s.stats[2] == 35 && s.mana == 500);
 }

@@ -581,7 +581,8 @@ struct StableSlotPricesEntry
 
 enum stableSlotPricesFormat = "ni"; ///
 
-/// `CreatureFamily.dbc`: a beast family's size by level, and what its pets eat.
+/// `CreatureFamily.dbc`: a beast family's size by level, its pets' skill lines (their passive spells), and what its
+/// pets eat.
 struct CreatureFamilyEntry
 {
     uint id;
@@ -589,11 +590,12 @@ struct CreatureFamilyEntry
     uint minScaleLevel;
     float maxScale = 0;
     uint maxScaleLevel;
+    uint[2] skillLines; /// "Pet - Wolf", "Pet - Generic" (0: none)
     uint petFoodMask;
     string name;
 }
 
-enum creatureFamilyFormat = "nfifixxisxxxxxxxxx"; ///
+enum creatureFamilyFormat = "nfifiiiisxxxxxxxxx"; ///
 
 ///
 struct DurabilityCostsEntry

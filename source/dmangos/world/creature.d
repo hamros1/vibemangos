@@ -865,7 +865,8 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
         {
             if (!alive)
                 break;
-            if (auto caster = world.unit(tick.aura.caster))
+            selfTick(world, tick.aura, tick.effect); // what heals or gives it power, whoever cast it
+            if (auto caster = world.unit(tick.aura.caster)) // (and its caster's rules: Improved Mend Pet)
                 caster.auraTick(this, tick.aura, tick.effect);
         }
         // Crowd control breaking early (`SPELL_ATTR_HEARTBEAT_RESIST`).
@@ -876,6 +877,64 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
             loseAura(aura, world, true);
         if (expired.length)
             world.flushCreature(this);
+    }
+
+    /**
+     * A tick of an aura on it that heals it or gives it power, whoever cast it (a hunter's Mend Pet, its own Spirit
+     * Bond, a voidwalker's Consume Shadows): `PERIODIC_HEAL` its amount (less by what it takes: `healingTaken`),
+     * `OBS_MOD_HEALTH` and `OBS_MOD_MANA` that share of its maximum, `PERIODIC_ENERGIZE` its amount of its power;
+     * shown in the combat log (`SMSG_PERIODICAURALOG`). Damage is its caster's doing (`UnitRef.auraTick`).
+     */
+    private void selfTick(CombatWorld world, Aura aura, size_t i)
+    {
+        import dmangos.bytes : ByteWriter;
+        import dmangos.world.opcodes : Opcode;
+        import dmangos.world.spellids : AuraType;
+
+        const amount = aura.amount[i] > 0 ? aura.amount[i] : 0;
+        const type = aura.type(i);
+        uint power = 0, gained;
+        switch (type)
+        {
+        case AuraType.periodicHeal, AuraType.obsModHealth:
+        {
+            const health = values.get!UNIT_FIELD_HEALTH, top = values.get!UNIT_FIELD_MAXHEALTH;
+            uint heal = type == AuraType.obsModHealth ? cast(uint)(ulong(top) * amount / 100)
+                : auras.healingTaken(amount, aura.spell.casting.school);
+            gained = health + heal > top ? top - health : heal;
+            values.set!UNIT_FIELD_HEALTH(health + gained);
+            heal = gained;
+            break;
+        }
+        case AuraType.obsModMana, AuraType.periodicEnergize:
+        {
+            power = type == AuraType.obsModMana ? 0 : cast(uint) aura.misc(i);
+            if (power > 4)
+                return;
+            const has = values.get!UNIT_FIELD_POWER1(power), top = values.get!UNIT_FIELD_MAXPOWER1(power);
+            const add = type == AuraType.obsModMana ? cast(uint)(ulong(top) * amount / 100) : amount;
+            gained = has + add > top ? top - has : add;
+            values.set!UNIT_FIELD_POWER1(power, has + gained);
+            break;
+        }
+        default:
+            return;
+        }
+        ByteWriter w;
+        w.putPackedGuid(guid);
+        w.putPackedGuid(aura.caster);
+        w.put(aura.spell.id);
+        w.put(1u);
+        w.put(cast(uint) type);
+        if (type == AuraType.periodicHeal || type == AuraType.obsModHealth)
+            w.put(gained);
+        else
+        {
+            w.put(power);
+            w.put(gained);
+        }
+        world.sendToObservers(guid, Opcode.SMSG_PERIODICAURALOG, w.data);
+        world.flushCreature(this);
     }
 
     /// Someone looks into its loot; the corpse lasts two minutes more at least.
@@ -994,8 +1053,18 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
                 f.invisibilityFrom(auras);
             }
         }
-        // Crit, dodge, parry and block chances: 5% each for creatures.
+        // Crit, dodge, parry and block chances: 5% each for creatures, and what its auras add (a hunter pet's
+        // Ferocity, an enrage's crit).
         f.crit = f.dodge = f.parry = f.block = 5;
+        if (auras.list.length)
+        {
+            import dmangos.world.spellids : AuraType;
+
+            f.crit += auras.total(AuraType.modCritPercent);
+            f.dodge += auras.total(AuraType.modDodgePercent);
+            f.parry += auras.total(AuraType.modParryPercent);
+            f.block += auras.total(AuraType.modBlockPercent);
+        }
         f.canParry = !(template_.extraFlags & noParry);
         f.canBlock = !(template_.extraFlags & noBlock);
         f.armor = values.get!UNIT_FIELD_RESISTANCES(0);
@@ -1100,6 +1169,14 @@ final class Creature : Moving, Idler, Replicable, Npc, PerViewer
             | UnitFlags.pacified | UnitFlags.disarmed;
         if (auras.list.length || auraHeld || auraSpeedFactor != 1 || (values.get!UNIT_FIELD_FLAGS & crowdControlFlags))
             refreshAuraMovement(world);
+        if (petData !is null && petData.statsShownAt != auras.changes) // a pet's stats are made of its auras too
+        {
+            import dmangos.world.pet : showPetStats;
+
+            showPetStats(this);
+            if (auto combat = cast(CombatWorld) world)
+                combat.flushCreature(this);
+        }
         if (ai !is null)
             if (auto combat = cast(CombatWorld) world)
                 ai.update(combat, diff);

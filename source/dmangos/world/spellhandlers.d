@@ -2022,7 +2022,7 @@ private:
                 chargedAtStart ~= aura;
         foreach (i; 0 .. 3)
         {
-            if (spell.effect[i] == SpellEffect.applyAreaAuraParty) // on the caster, whoever else it reaches
+            if (spell.effect[i] == SpellEffect.applyAreaAuraParty || spell.effect[i] == SpellEffect.applyAreaAuraPet) // on the caster, whoever else it reaches
                 c.auraEffects[player.guid] |= cast(ubyte)(1 << i);
             else if (spell.effect[i] == SpellEffect.applyAura)
                 foreach (target; effectTargets[i])
@@ -2410,6 +2410,9 @@ private:
         case SpellEffect.applyAreaAuraParty: // SPELL_EFFECT_APPLY_AREA_AURA_PARTY: on the caster, and from it on its party (`updateAreaAuras`)
             applyAuraEffect(spell, i, player.guid, c.auraEffects.get(player.guid, 0));
             break;
+        case SpellEffect.applyAreaAuraPet: // SPELL_EFFECT_APPLY_AREA_AURA_PET: on the caster, and from it on its pet (`updatePetAreaAuras`)
+            applyAuraEffect(spell, i, player.guid, c.auraEffects.get(player.guid, 0));
+            break;
         case SpellEffect.attack: // SPELL_EFFECT_ATTACK
             break;
         case SpellEffect.threat: // SPELL_EFFECT_THREAT: Distracting Shot, Cower, Feint
@@ -2506,7 +2509,7 @@ private:
             SpellEffect.threatAll, SpellEffect.enchantHeldItem, SpellEffect.summonPhantasm, SpellEffect.knockBack,
             SpellEffect.inebriate, SpellEffect.destroyAllTotems,
             SpellEffect.summonDemon, SpellEffect.spiritHeal, SpellEffect.skill,
-            SpellEffect.applyAreaAuraPet, SpellEffect.teleportGraveyard, SpellEffect.n122, SpellEffect.sendTaxi,
+            SpellEffect.teleportGraveyard, SpellEffect.n122, SpellEffect.sendTaxi,
             SpellEffect.pullTowards, SpellEffect.modifyThreatPercent, SpellEffect.n126, SpellEffect.n127,
             SpellEffect.applyAreaAuraFriend, SpellEffect.applyAreaAuraEnemy:
             static bool[SpellEffect] told; // once per effect, not at every cast
@@ -2531,7 +2534,12 @@ private:
             if (!creature.alive)
                 return;
             map.sendToWatchers(this, Opcode.SMSG_SPELLINSTAKILLLOG, w.data, true);
-            return spellAttacked(creature, creature.values.get!UNIT_FIELD_HEALTH);
+            const given = petSacrificed(spell, creature); // Demonic Sacrifice (dmangos.world.petauras)
+            spellAttacked(creature, creature.values.get!UNIT_FIELD_HEALTH);
+            if (given)
+                if (const aura = context.data.spells.spell(given))
+                    castSpell(aura, SpellTargets(TargetFlags.self, player.guid), true, 0);
+            return;
         }
         auto other = target == player.guid ? this : cast(typeof(this)) context.onlinePlayer(target);
         if (other is null || other.player is null || other.map !is map || other.player.deathState != DeathState.alive)

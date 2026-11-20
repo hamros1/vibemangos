@@ -218,8 +218,15 @@ mixin template CreatureCasting()
             nextSwing = spell;
             return true;
         }
-        const time = triggered ? 0 : cast(int)(castTime(*spell, lore.clientData, me.values.get!UNIT_FIELD_LEVEL)
+        int time = triggered ? 0 : cast(int)(castTime(*spell, lore.clientData, me.values.get!UNIT_FIELD_LEVEL)
             * me.auras.castTimeFactor()); // Curse of Tongues
+        if (time > 0)
+            if (auto owner = petModOwner()) // a pet's: its owner's talents (Improved Firebolt)
+            {
+                import dmangos.world.spellmods : SpellModOp;
+
+                time = owner.petSpellMod(SpellModOp.castingTime, spell, time, me);
+            }
         if (time <= 0)
         {
             go(spell, target, !triggered);
@@ -305,6 +312,19 @@ mixin template CreatureCasting()
             world_.sendToObservers(me.guid, Opcode.SMSG_SPELL_FAILURE,
                 spellFailurePacket(me.guid, casting_.id, SpellCastResult.interrupted));
         casting_ = null;
+    }
+
+    /**
+     * The player whose talents change its spells (CMaNGOS's `GetSpellModOwner`): a pet's owner, here and in the world;
+     * null for any other creature (a totem's are its owner's too, by `effectMod`).
+     */
+    package imported!"dmangos.world.character".Character petModOwner()
+    {
+        if (!me.petOwner || world_ is null)
+            return null;
+        auto owner = world_.unit(me.petOwner);
+        return owner.kind == imported!"dmangos.world.unit".UnitKind.player && owner.session.player !is null
+            ? owner.session : null;
     }
 
     /// The spell's mana cost for it.
@@ -405,6 +425,12 @@ mixin template CreatureCasting()
                 foreach (other; world_.playersNear(me.position, r))
                     found ~= other.combatGuid;
             return found;
+        }
+        // Its master (`TARGET_UNIT_CASTER_MASTER`: a voidwalker's Sacrifice shields its warlock).
+        if (a == ImplicitTarget.unitCasterMaster)
+        {
+            const master = me.petOwner ? me.petOwner : me.guardianOwner ? me.guardianOwner : me.totemOwner;
+            return master ? [master] : null;
         }
         if (a == ImplicitTarget.caster || target == 0)
             return [me.guid];
@@ -520,8 +546,17 @@ mixin template CreatureCasting()
             if (effect == SpellEffect.none)
                 continue;
             int value = levelScaled(spell, i, effectValue(*spell, i, level, uniform01(world_.random)));
+            // A pet's spell: its owner's talents count (Improved Imp on Firebolt, Improved Voidwalker on Torment).
+            if (auto owner = petModOwner())
+            {
+                import dmangos.world.spellmods : SpellModOp;
+
+                value = owner.petEffectMod(spell, i, value, me);
+                if (effect == SpellEffect.schoolDamage)
+                    value = owner.petSpellMod(SpellModOp.damage, spell, value, me);
+            }
             // A totem's spell: its owner's talents count (Call of Flame on Searing Totem's attack).
-            if (me.totemOwner)
+            else if (me.totemOwner)
                 if (auto owner = world_.unit(me.totemOwner))
                     if (owner.session !is null && owner.session.player !is null)
                     {
@@ -549,7 +584,15 @@ mixin template CreatureCasting()
                 {
                 case SpellEffect.schoolDamage:
                     if (guid != me.guid)
+                    {
                         spellDamageTo(spell, guid, value > 0 ? value : 0, spell.casting.school);
+                        if (auto other = world_.unit(guid)) // a pet's procs (`dmangos.world.creatureprocs`)
+                        {
+                            import dmangos.world.procs : ProcHit, spellProcFlags;
+
+                            procAuras(spellProcFlags(*spell, false, false), other, ProcHit(spell));
+                        }
+                    }
                     break;
                 case SpellEffect.weaponDamageNoschool, SpellEffect.weaponPercentDamage, SpellEffect.weaponDamage, SpellEffect.normalizedWeaponDmg:
                     if (auto d = guid in weaponRolls)
@@ -561,11 +604,33 @@ mixin template CreatureCasting()
                             damage += cast(uint) armorReducedDamage(level,
                                 world_.unit(guid) ? world_.unit(guid).fighter.armor : 0, value);
                         spellDamageTo(spell, guid, damage, -1);
+                        if (auto other = world_.unit(guid)) // a pet's procs (`dmangos.world.creatureprocs`)
+                        {
+                            import dmangos.world.procs : procExOfSwing, ProcHit, spellProcFlags;
+
+                            procAuras(spellProcFlags(*spell, false, false), other, ProcHit(spell,
+                                procExOfSwing(d.outcome), damage, 0, damage != 0));
+                        }
                     }
                     break;
                 case SpellEffect.applyAura:
                     if (!auraDone)
                         auraOn(spell, guid);
+                    break;
+                // An area aura on its caster, which gives it to its party or its master (`updatePetAreaAuras`):
+                // a pet's Blood Pact, Paranoia; its owner's talents' (Master Demonologist, Spirit Bond).
+                case SpellEffect.applyAreaAuraParty, SpellEffect.applyAreaAuraPet:
+                    if (!auraDone)
+                        auraOn(spell, me.guid);
+                    break;
+                case SpellEffect.threat: // SPELL_EFFECT_THREAT: threat on a creature (Torment, Suffering, Intimidation)
+                    if (guid != me.guid)
+                        if (auto other = world_.creatureAt(guid))
+                            if (other.alive && other.ai !is null)
+                            {
+                                other.ai.addThreat(world_.unitOf(me), value);
+                                world_.wake(other.guid);
+                            }
                     break;
                 case SpellEffect.heal:
                     healCreature(spell, guid == me.guid ? me : world_.creatureAt(guid), value);
@@ -666,14 +731,14 @@ mixin template CreatureCasting()
                     SpellEffect.block, SpellEffect.createItem, SpellEffect.weapon, SpellEffect.defense,
                     SpellEffect.persistentAreaAura, SpellEffect.leap, SpellEffect.energize,
                     SpellEffect.triggerMissile, SpellEffect.openLock, SpellEffect.summonChangeItem,
-                    SpellEffect.applyAreaAuraParty, SpellEffect.learnSpell, SpellEffect.spellDefense,
+                    SpellEffect.learnSpell, SpellEffect.spellDefense,
                     SpellEffect.dispel, SpellEffect.language, SpellEffect.dualWield, SpellEffect.teleportUnitsFaceCaster, SpellEffect.skillStep,
                     SpellEffect.addHonor, SpellEffect.spawn, SpellEffect.tradeSkill, SpellEffect.stealth,
                     SpellEffect.detect, SpellEffect.transDoor, SpellEffect.forceCriticalHit,
                     SpellEffect.guaranteeHit, SpellEffect.enchantItem, SpellEffect.enchantItemTemporary,
                     SpellEffect.tamecreature, SpellEffect.summonPet, SpellEffect.learnPetSpell,
                     SpellEffect.openLockItem, SpellEffect.proficiency,
-                    SpellEffect.threat, SpellEffect.healthFunnel, SpellEffect.powerFunnel,
+                    SpellEffect.healthFunnel, SpellEffect.powerFunnel,
                     SpellEffect.healMaxHealth, SpellEffect.distract, SpellEffect.pull, SpellEffect.pickpocket,
                     SpellEffect.addFarsight, SpellEffect.summonPossessed, SpellEffect.summonTotem,
                     SpellEffect.healMechanical, SpellEffect.summonObjectWild, SpellEffect.attack,
@@ -688,7 +753,7 @@ mixin template CreatureCasting()
                     SpellEffect.summonDeadPet, SpellEffect.destroyAllTotems,
                     SpellEffect.summonDemon, SpellEffect.resurrectNew, SpellEffect.attackMe,
                     SpellEffect.skinPlayerCorpse, SpellEffect.spiritHeal,
-                    SpellEffect.skill, SpellEffect.applyAreaAuraPet, SpellEffect.teleportGraveyard,
+                    SpellEffect.skill, SpellEffect.teleportGraveyard,
                     SpellEffect.n122, SpellEffect.sendTaxi, SpellEffect.pullTowards,
                     SpellEffect.modifyThreatPercent, SpellEffect.n126, SpellEffect.n127,
                     SpellEffect.applyAreaAuraFriend, SpellEffect.applyAreaAuraEnemy:
@@ -702,7 +767,8 @@ mixin template CreatureCasting()
                     break;
                 }
             }
-            if (effect == SpellEffect.applyAura)
+            if (effect == SpellEffect.applyAura || effect == SpellEffect.applyAreaAuraParty
+                    || effect == SpellEffect.applyAreaAuraPet)
                 auraDone = true;
         }
         foreach (r; results) // its script hears whom it hit, once the effects are done (`SpellHitTarget`)
@@ -720,6 +786,11 @@ mixin template CreatureCasting()
         // What the victim's auras make of the school's damage (`MOD_DAMAGE_PERCENT_TAKEN`: a stance, a curse).
         const victim = other.fighter;
         const schoolIndex = school < 0 ? 0 : school;
+        // Its own auras' damage of the school (`MOD_DAMAGE_PERCENT_DONE`: a hunter pet's Unleashed Fury, Soul Link's
+        // share); a weapon's damage has had them in its roll.
+        if (school >= 0 && school < 7 && me.auras.list.length)
+            damage = cast(uint)(damage * me.auras.multiplier(AuraType.modDamagePercentDone,
+                (int mask) => (mask & (1 << school)) != 0, -1));
         if (schoolIndex < 7)
             damage = cast(uint)(damage * victim.damageTaken[schoolIndex]);
         uint resisted;
@@ -757,10 +828,22 @@ mixin template CreatureCasting()
     {
         const level = me.values.get!UNIT_FIELD_LEVEL;
         int[3] values;
+        auto owner = petModOwner();
         foreach (j; 0 .. 3)
-            if (spell.effect[j] == SpellEffect.applyAura)
+            if (spell.effect[j] == SpellEffect.applyAura || spell.effect[j] == SpellEffect.applyAreaAuraParty
+                    || spell.effect[j] == SpellEffect.applyAreaAuraPet)
+            {
                 values[j] = levelScaled(spell, j, effectValue(*spell, j, level, uniform01(world_.random)));
-        const ms = duration(*spell, lore.clientData, level);
+                if (owner !is null) // a pet's: its owner's talents (Improved Imp on Fire Shield and Blood Pact)
+                    values[j] = owner.petEffectMod(spell, j, values[j], me);
+            }
+        int ms = duration(*spell, lore.clientData, level);
+        if (owner !is null && ms > 0) // (Improved Succubus on Seduction and Lesser Invisibility)
+        {
+            import dmangos.world.spellmods : SpellModOp;
+
+            ms = owner.petSpellMod(SpellModOp.duration, spell, ms, me);
+        }
         if (auto creature = guid == me.guid ? me : world_.creatureAt(guid))
         {
             // On an enemy (a player's pet, a creature of another side) it is a debuff, as a player's would be.
@@ -783,7 +866,7 @@ mixin template CreatureCasting()
                 import dmangos.script.api : AuraApplied;
 
                 foreach (j; 0 .. 3)
-                    if (spell.effect[j] == SpellEffect.applyAura)
+                    if (aura.effects & (1 << j))
                         spellScriptEvent(spell, AuraApplied(EntityRef(me.guid), EntityRef(guid), cast(ubyte) j, values[j]),
                             world_);
             }

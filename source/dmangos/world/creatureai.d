@@ -297,6 +297,9 @@ final class CreatureAI : Scripted, CreatureHost
     import dmangos.world.petai : PetBehaviour;
 
     mixin PetBehaviour;
+    import dmangos.world.creatureprocs : CreatureProcs;
+
+    mixin CreatureProcs;
 
     private
     {
@@ -1375,6 +1378,13 @@ private:
         if (d.damage)
             triggerCombatTimer(); // direct damage either way
         target.meleeHitBy(me.guid, d);
+        {
+            import dmangos.world.aurahandlers : ProcFlag;
+            import dmangos.world.procs : procExOfSwing, ProcHit;
+
+            procAuras(ProcFlag.dealMeleeSwing, target, ProcHit(null, procExOfSwing(d.outcome), d.damage, 0,
+                d.damage != 0)); // a pet's (Frenzy at a crit, Intimidation at a hit)
+        }
         if (!target.alive && script !is null)
             script.killed(this, target.combatGuid); // `KilledUnit`
         if (!target.alive)

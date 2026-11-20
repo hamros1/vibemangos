@@ -24,6 +24,7 @@ mixin template PhysicalClassRules()
 {
     import dmangos.world.auras : Aura, AuraType;
     import dmangos.world.classspells : CustomValues, SpellFamily;
+    import dmangos.world.creature : Creature;
     import dmangos.world.defines : PlayerClass, Power;
     import dmangos.world.spells : SpellInfo;
     import dmangos.world.unit : UnitRef;
@@ -95,6 +96,73 @@ mixin template PhysicalClassRules()
             if (target != player.guid)
                 if (auto unit = map.unit(target))
                     procAuras(procOnTrapActivation, unit, ProcHit(spell, ProcEx.normalHit, 0, 0, true));
+    }
+
+    /**
+     * A tick of this hunter's heal over time on `target` (Mend Pet): Improved Mend Pet ("Gives the Mend Pet spell a
+     * 50% chance of cleansing $24406s1 Curse, Disease, Magic or Poison effect from the pet each tick": its override
+     * scripts 4086 and 4087, their amount the chance, on the spells of their mask) casts 24406, its tooltip's, at it.
+     */
+    package void hunterHealTick(Aura heal, UnitRef target)
+    {
+        import std.random : uniform01;
+        import dmangos.world.spellmods : affects;
+
+        enum uint cleansing = 24406;
+        if (!target || !target.alive || player.data.classId != PlayerClass.hunter)
+            return;
+        foreach (aura; player.auras.list)
+            foreach (k; 0 .. 3)
+                if ((aura.effects & (1 << k)) && aura.type(k) == AuraType.overrideClassScripts
+                        && (aura.misc(k) == 4086 || aura.misc(k) == 4087) && affects(aura, k, *heal.spell))
+                {
+                    if (uniform01(map.random) * 100 < aura.amount[k])
+                        castCustom(cleansing, target.combatGuid);
+                    return;
+                }
+    }
+
+    /**
+     * This hunter's Scorpid Sting went on `target`: Improved Scorpid Sting ("Reduces the Stamina of targets affected
+     * by your Scorpid Sting by 10% of the amount of Strength reduced", 20%, 30%: its override scripts 2388, 2389,
+     * 2390, whose data has no percentage) casts 19486, the stamina's ("Stamina reduced by $s1"), at it.
+     */
+    package void scorpidStingLanded(Aura sting, UnitRef target)
+    {
+        import dmangos.world.classspells : ofFamily;
+
+        enum uint staminaReduced = 19486;
+        enum ulong scorpidSting = 0x8000;
+        if (!target || !ofFamily(sting.spell, SpellFamily.hunter, scorpidSting) || sting.caster != player.guid)
+            return;
+        int percent;
+        foreach (aura; player.auras.list)
+            foreach (k; 0 .. 3)
+                if ((aura.effects & (1 << k)) && aura.type(k) == AuraType.overrideClassScripts
+                        && aura.misc(k) >= 2388 && aura.misc(k) <= 2390)
+                    percent = (aura.misc(k) - 2387) * 10;
+        if (!percent)
+            return;
+        int strength;
+        foreach (k; 0 .. 3)
+            if ((sting.effects & (1 << k)) && sting.type(k) == AuraType.modStat && sting.misc(k) == 0)
+                strength = sting.amount[k];
+        if (strength < 0)
+            castCustom(staminaReduced, target.combatGuid, CustomValues.first(strength * percent / 100));
+    }
+
+    /// This hunter's Scorpid Sting left `target`: the stamina Improved Scorpid Sting took goes with it ("targets
+    /// affected by your Scorpid Sting").
+    package void scorpidStingLost(Creature target, Aura sting)
+    {
+        import dmangos.world.classspells : ofFamily;
+
+        enum uint staminaReduced = 19486;
+        if (!ofFamily(sting.spell, SpellFamily.hunter, 0x8000) || sting.caster != player.guid)
+            return;
+        foreach (aura; target.auras.list.dup)
+            if (aura.spell.id == staminaReduced && aura.caster == player.guid)
+                target.loseAura(aura, map);
     }
 
     /**

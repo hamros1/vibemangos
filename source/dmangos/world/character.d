@@ -75,6 +75,7 @@ import dmangos.world.sessionscripting : SessionScripting;
 import dmangos.world.social : FriendInfo, SocialHandlers;
 import dmangos.world.guildhandlers : GuildHandlers;
 import dmangos.world.pethandlers : PetHandlers;
+import dmangos.world.petauras : PetAuraRules;
 import dmangos.script.api : MenuOption, QuestProgress;
 import dmangos.world.gmquest : QuestCommands;
 import dmangos.world.gmlevel3 : Level3Commands;
@@ -832,6 +833,7 @@ private:
     mixin SocialHandlers;
     mixin GuildHandlers;
     mixin PetHandlers;
+    mixin PetAuraRules;
     mixin CombatHandlers;
     mixin DeathHandlers;
     mixin LootHandlers;
