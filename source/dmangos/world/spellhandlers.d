@@ -1679,7 +1679,12 @@ private:
         enum uint drainAllPower = 0x2; // SPELL_ATTR_EX_DRAIN_ALL_POWER: Lay on Hands takes all the mana
         if ((spell.attributesEx & drainAllPower) && spell.casting.powerType < maxPowers)
             return cast(int) player.values.get!UNIT_FIELD_POWER1(cast(Power) spell.casting.powerType);
-        return max(0, spellMod(SpellModOp.cost, &spell, powerCost(spell, level, createMana, createHealth, maxPower)));
+        int cost = spellMod(SpellModOp.cost, &spell, powerCost(spell, level, createMana, createHealth, maxPower));
+        // `MOD_POWER_COST_SCHOOL_PCT` of its school (the Spirit of Redemption's holy spells free).
+        if (spell.casting.school < 7)
+            if (const percent = player.auras.totalByMiscMask(AuraType.modPowerCostSchoolPct, 1 << spell.casting.school))
+                cost = cost * (100 + percent) / 100;
+        return max(0, cost);
     }
 
     /// Whether the effects' implicit targets have what they need: an enemy, a friend, any unit, in range and sight.

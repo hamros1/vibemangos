@@ -846,8 +846,13 @@ unittest
     auto stacks = me.player.auras.find(28682);
     assert(stacks !is null && stacks.stacks == 1, "its first 10% at once");
     const before = me.critChanceOf(spellOf(w, 10199), w.context.map(0).unit(target));
-    topUp(who);
-    w.castAt(who, 10199, target);
+    foreach (_; 0 .. 5) // (until a Fire Blast lands)
+        if (stacks.stacks == 1 && me.player.auras.find(11129).charges == 3)
+        {
+            w.now += 9.seconds;
+            topUp(who);
+            w.castAt(who, 10199, target);
+        }
     assert(stacks.stacks == 2 || me.player.auras.find(11129).charges == 2, "a stack more, or a crit");
     import std.math : isClose;
 
@@ -1239,16 +1244,21 @@ unittest
     learn(w, who, 12592);
     foreach (spell, factor; [10199u: 0.7f, 10202u: 0.6f])
     {
-        const target = toughEnemy(w, who, spell == 10199 ? 10 : 3);
-        who.read();
-        topUp(who);
-        w.now += 9.seconds;
-        assert(w.castAt(who, spell, target) == SpellCastResult.ok);
+        const target = toughEnemy(w, who, spell == 10199 ? 15 : 3); // (the first out of the second's explosion)
         uint dealt;
-        foreach (l; spellLogs(who, Opcode.SMSG_SPELLNONMELEEDAMAGELOG))
-            if (l[0] == spell)
-                dealt += l[1];
-        assert(dealt);
+        foreach (_; 0 .. 5) // (until one lands)
+            if (!dealt)
+            {
+                who.read();
+                topUp(who);
+                w.now += 9.seconds;
+                const r = w.castAt(who, spell, target);
+                assert(r == SpellCastResult.ok, format!"%s: %s"(spell, r));
+                foreach (l; spellLogs(who, Opcode.SMSG_SPELLNONMELEEDAMAGELOG))
+                    if (l[0] == spell)
+                        dealt += l[1];
+            }
+        assert(dealt, format!"%s dealt nothing"(spell));
         const threat = creatureOf(w, target).ai.threatOf(me.player.guid);
         assert(isClose(threat, dealt * factor, 0.01), format!"%s: threat %s of %s"(spell, threat, dealt));
     }
@@ -1617,4 +1627,320 @@ unittest
     import dmangos.world.spellcast : effectValue;
 
     assert(rolls(w, 23468, 0)[0] == 110 && rolls(w, 23469, 0)[0] == 120 && rolls(w, 6262, 0)[0] == 100);
+}
+
+/// Blackout (2% a rank): a shadow damage spell (Mind Blast) stuns its target (15269) for 3 sec.
+unittest
+{
+    if (!haveRealData())
+        return;
+    auto w = RealWorld.make();
+    assertChances(w, "Blackout", [15268, 15323, 15324, 15325, 15326], [2, 4, 6, 8, 10]);
+    auto who = w.character(1201, "Blackouter", priest, 60, [8092]);
+    learn(w, who, 15326);
+    const target = toughEnemy(w, who, 10);
+    foreach (_; 0 .. 150)
+    {
+        w.now += 9.seconds;
+        topUp(who);
+        w.castAt(who, 8092, target);
+        pass(w, who, 2.seconds);
+        if (auto stun = auraOn(w, target, 15269))
+        {
+            assert(stun.maxDuration == 3000);
+            return;
+        }
+    }
+    assert(false, "never stunned");
+}
+
+/**
+ * Blessed Recovery (8%, 16%, 25%): a melee crit taken heals a share of it over 6 sec (27818: three ticks); Martyrdom
+ * (50%, 100%) gives Focused Casting (27828); Inner Fire (10952) loses a charge a blow.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    auto w = RealWorld.make();
+    auto who = w.character(1202, "Martyr", priest, 60, [10952]);
+    auto me = who.session.inWorld;
+    assertChances(w, "Martyrdom", [14531, 14774], [50, 100]);
+    learn(w, who, 27816);
+    learn(w, who, 14774);
+    assert(w.cast_(who, 10952) == SpellCastResult.ok);
+    assert(me.player.auras.find(10952).charges == 20);
+    const striker = toughEnemy(w, who);
+    swingAt(w, who, striker, 300, true);
+    auto heal = me.player.auras.find(27818);
+    assert(heal !is null && heal.maxDuration == 6000, "healing");
+    assert(heal.amount[0] == 300 * 25 / 100 / 3, format!"a third of 25%% of 300 a tick: %s"(heal.amount[0]));
+    assert(me.player.auras.find(27828) !is null, "Focused Casting");
+    assert(me.player.auras.find(10952).charges == 19, "a charge of Inner Fire");
+}
+
+/// Inspiration (8%, 16%, 25%): a crit of Flash Heal leaves its target 25% more armor (15359) for 15 sec.
+unittest
+{
+    if (!haveRealData())
+        return;
+    auto w = RealWorld.make();
+    auto who = w.character(1203, "Inspirer", priest, 60, [2061]);
+    auto me = who.session.inWorld;
+    foreach (k, rank; [14892u, 15362, 15363])
+        assert(rolls(w, spellOf(w, rank).triggerSpell[0], 0)[0] == [8, 16, 25][k]);
+    learn(w, who, 15363);
+    giveAura(w, who, 23434, 100); // every heal a crit
+    me.player.values.set!UNIT_FIELD_HEALTH(1u);
+    assert(w.cast_(who, 2061) == SpellCastResult.ok);
+    pass(w, who, 2.seconds);
+    auto armor = me.player.auras.find(15359);
+    assert(armor !is null && armor.maxDuration == 15_000 && armor.amount[0] == 25);
+}
+
+/// Shadow Weaving (20% a rank): shadow damage spells leave Shadow Vulnerability (15258: 3% a stack, five at most).
+unittest
+{
+    import std.math : isClose;
+
+    if (!haveRealData())
+        return;
+    auto w = RealWorld.make();
+    auto who = w.character(1204, "Weaver", priest, 60, [8092]);
+    foreach (k, rank; [15257u, 15331, 15332, 15333, 15334])
+        assert(rolls(w, rank, 0)[0] == 20 * (k + 1));
+    learn(w, who, 15334);
+    const target = toughEnemy(w, who, 10);
+    foreach (_; 0 .. 8)
+    {
+        w.now += 9.seconds;
+        topUp(who);
+        w.castAt(who, 8092, target);
+        pass(w, who, 2.seconds);
+    }
+    auto vulnerable = auraOn(w, target, 15258);
+    assert(vulnerable !is null && vulnerable.stacks == 5);
+    assert(isClose(creatureOf(w, target).fighter.damageTaken[5], 1.15f, 0.001), "15% more shadow damage");
+}
+
+/// Shadowguard rank 6 (19312): a blow at the priest strikes back (28382), three charges.
+unittest
+{
+    if (!haveRealData())
+        return;
+    auto w = RealWorld.make();
+    auto who = w.character(1205, "Guarded", priest, 60, [19312], 8 /* (a troll's) */);
+    auto me = who.session.inWorld;
+    assert(w.cast_(who, 19312) == SpellCastResult.ok);
+    assert(me.player.auras.find(19312).charges == 3);
+    const striker = toughEnemy(w, who);
+    who.read();
+    swingAt(w, who, striker, 10);
+    pass(w, who, 1.seconds); // (its missile's flight)
+    assert(spellLogs(who, Opcode.SMSG_SPELLNONMELEEDAMAGELOG).canFind!(l => l[0] == 28382), "struck back");
+    assert(me.player.auras.find(19312).charges == 2);
+}
+
+/// Touch of Weakness rank 6 (19266): the next blow at the priest strikes its attacker and weakens it (19254).
+unittest
+{
+    if (!haveRealData())
+        return;
+    auto w = RealWorld.make();
+    auto who = w.character(1206, "Touched", priest, 60, [19266], 5 /* (an undead's) */);
+    auto me = who.session.inWorld;
+    assert(w.cast_(who, 19266) == SpellCastResult.ok);
+    const striker = toughEnemy(w, who);
+    foreach (_; 0 .. 5)
+        if (auraOn(w, striker, 19254) is null)
+            swingAt(w, who, striker, 10);
+    assert(auraOn(w, striker, 19254) !is null, "weakened");
+    assert(me.player.auras.find(19266) is null, "spent");
+}
+
+/// Spirit Tap (20% a rank): a kill worth experience doubles the spirit (15271) for 15 sec.
+unittest
+{
+    if (!haveRealData())
+        return;
+    auto w = RealWorld.make();
+    auto who = w.character(1207, "Tapped", priest, 60, [8092]);
+    auto me = who.session.inWorld;
+    assertChances(w, "Spirit Tap", [15270, 15335, 15336, 15337, 15338], [20, 40, 60, 80, 100]);
+    learn(w, who, 15338);
+    const target = toughEnemy(w, who, 10);
+    auto c = creatureOf(w, target);
+    c.values.set!UNIT_FIELD_LEVEL(60u);
+    c.values.set!UNIT_FIELD_HEALTH(1u);
+    foreach (_; 0 .. 5)
+        if (c.alive)
+        {
+            w.now += 9.seconds;
+            w.castAt(who, 8092, target);
+            pass(w, who, 2.seconds);
+        }
+    assert(!c.alive);
+    auto tap = me.player.auras.find(15271);
+    assert(tap !is null && tap.maxDuration == 15_000 && tap.amount[0] == 100);
+}
+
+/// Vampiric Embrace with Improved Vampiric Embrace rank 2 (27840): 30% of the shadow damage heals the priest.
+unittest
+{
+    if (!haveRealData())
+        return;
+    auto w = RealWorld.make();
+    auto who = w.character(1208, "Embracer", priest, 60, [15286, 8092]);
+    auto me = who.session.inWorld;
+    learn(w, who, 27840);
+    const target = toughEnemy(w, who, 10);
+    assert(w.castAt(who, 15286, target) == SpellCastResult.ok);
+    foreach (_; 0 .. 5)
+    {
+        w.now += 9.seconds;
+        topUp(who);
+        me.player.values.set!UNIT_FIELD_HEALTH(1u);
+        who.read();
+        w.castAt(who, 8092, target);
+        pass(w, who, 2.seconds);
+        uint dealt, healed;
+        foreach (p; who.read())
+        {
+            auto r = ByteReader(p.body_);
+            if (p.opcode != Opcode.SMSG_SPELLNONMELEEDAMAGELOG && p.opcode != Opcode.SMSG_SPELLHEALLOG)
+                continue;
+            r.readPackedGuid();
+            r.readPackedGuid();
+            const spell = r.read!uint;
+            if (p.opcode == Opcode.SMSG_SPELLNONMELEEDAMAGELOG && spell == 8092)
+                dealt = r.read!uint;
+            else if (p.opcode == Opcode.SMSG_SPELLHEALLOG && spell == 15290)
+                healed = r.read!uint;
+        }
+        if (!dealt)
+            continue;
+        assert(healed == dealt * 30 / 100 || healed == dealt * 30 / 100 * 3 / 2, format!"%s of %s"(healed, dealt));
+        return;
+    }
+    assert(false, "no Mind Blast landed");
+}
+
+/// Inner Focus (14751): the next spell free and 25% likelier to crit; then it goes.
+unittest
+{
+    import std.math : isClose;
+    import dmangos.world.unit : UnitRef;
+
+    if (!haveRealData())
+        return;
+    auto w = RealWorld.make();
+    auto who = w.character(1209, "Focused", priest, 60, [14751, 2061]);
+    auto me = who.session.inWorld;
+    const crit = me.critChanceOf(spellOf(w, 2061), UnitRef.init);
+    assert(w.cast_(who, 14751) == SpellCastResult.ok);
+    assert(me.costOf(*spellOf(w, 2061)) == 0, "free");
+    assert(isClose(me.critChanceOf(spellOf(w, 2061), UnitRef.init), crit + 25), "25% more crit");
+    w.now += 2.seconds;
+    assert(w.cast_(who, 2061) == SpellCastResult.ok);
+    pass(w, who, 2.seconds);
+    assert(me.player.auras.find(14751) is null, "spent");
+}
+
+/**
+ * Spirit of Redemption (20711): a killing blow leaves the priest the spirit (27827) for 10 sec, its heals free and
+ * not to be attacked; then the priest dies.
+ */
+unittest
+{
+    import dmangos.world.player : DeathState;
+    import dmangos.world.unit : Blow, UnitRef;
+
+    if (!haveRealData())
+        return;
+    auto w = RealWorld.make();
+    auto who = w.character(1210, "Redeemed", priest, 60, [2061]);
+    auto me = who.session.inWorld;
+    learn(w, who, 20711);
+    me.sufferDamage(UnitRef.init, 1_000_000, Blow.spell());
+    assert(me.player.deathState == DeathState.alive && me.player.auras.find(27827) !is null, "the spirit");
+    assert(me.costOf(*spellOf(w, 2061)) == 0, "heals free");
+    assert(me.player.values.get!UNIT_FIELD_FLAGS & 0x00010000, "not to be attacked"); // UNIT_FLAG_UNTARGETABLE
+    pass(w, who, 11.seconds);
+    assert(me.player.deathState != DeathState.alive, "then dead");
+}
+
+/// Feedback rank 2 (19271, a human priest's): a spell at the priest burns its caster's mana (19268).
+unittest
+{
+    if (!haveRealData())
+        return;
+    auto w = RealWorld.make();
+    auto who = w.character(1211, "Fed", priest, 60, [19271], 1 /* (a human's) */);
+    auto me = who.session.inWorld;
+    const r = w.cast_(who, 19271);
+    assert(r == SpellCastResult.ok, format!"%s"(r));
+    const caster = toughEnemy(w, who, 10);
+    auto c = creatureOf(w, caster);
+    c.values.setByte!UNIT_FIELD_BYTES_0(3, cast(ubyte) Power.mana);
+    c.values.set!UNIT_FIELD_MAXPOWER1(Power.mana, 10_000u);
+    c.values.set!UNIT_FIELD_POWER1(Power.mana, 10_000u);
+    c.values.set!UNIT_FIELD_LEVEL(60u);
+    foreach (_; 0 .. 20)
+    {
+        if (c.values.get!UNIT_FIELD_POWER1(Power.mana) < 10_000)
+            break;
+        topUp(who);
+        creatureCasts(w, caster, 116, who);
+        pass(w, who, 2.seconds);
+    }
+    assert(c.values.get!UNIT_FIELD_POWER1(Power.mana) < 10_000, "its mana burned");
+}
+
+/// Psychic Scream (8122): "Damage caused may interrupt the effect".
+unittest
+{
+    if (!haveRealData())
+        return;
+    auto w = RealWorld.make();
+    auto who = w.character(1212, "Screamer", priest, 60, [8122, 8092]);
+    const target = toughEnemy(w, who, 5);
+    foreach (_; 0 .. 5)
+        if (auraOn(w, target, 8122) is null)
+        {
+            w.now += 31.seconds;
+            topUp(who);
+            w.cast_(who, 8122);
+        }
+    assert(auraOn(w, target, 8122) !is null, "afraid");
+    foreach (_; 0 .. 5)
+        if (auraOn(w, target, 8122) !is null)
+        {
+            w.now += 9.seconds;
+            topUp(who);
+            w.castAt(who, 8092, target);
+            pass(w, who, 2.seconds);
+        }
+    assert(auraOn(w, target, 8122) is null, "the damage ended it");
+}
+
+/// Mental Strength (2% a rank) more mana; Spell Warding (2% a rank) less spell damage taken; Silent Resolve (4% a
+/// rank) less threat.
+unittest
+{
+    import std.math : isClose;
+
+    if (!haveRealData())
+        return;
+    auto w = RealWorld.make();
+    auto who = w.character(1213, "Strong", priest, 60, []);
+    auto me = who.session.inWorld;
+    const mana = me.player.values.get!UNIT_FIELD_MAXPOWER1(Power.mana);
+    learn(w, who, 18555);
+    const more = me.player.values.get!UNIT_FIELD_MAXPOWER1(Power.mana);
+    assert(more >= mana * 109 / 100 && more <= mana * 111 / 100, "10% more mana");
+    learn(w, who, 27904);
+    assert(isClose(me.player.damageMods.taken[5], 0.9f, 0.001) && isClose(me.player.damageMods.taken[0], 1, 0.001),
+        "10% less spell damage");
+    learn(w, who, 14787);
+    assert(isClose(me.player.damageMods.threat[1], 0.8f, 0.001), "20% less threat");
 }

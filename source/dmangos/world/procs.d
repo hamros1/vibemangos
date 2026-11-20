@@ -273,7 +273,9 @@ mixin template ProcHandlers()
                 procAuraSpell = c.by;
                 scope (exit)
                     procAuraSpell = null;
-                castCustom(spell, SpellTargets(TargetFlags.unit, c.target ? c.target : player.guid), c.custom);
+                auto custom = c.custom;
+                custom.by = c.by;
+                castCustom(spell, SpellTargets(TargetFlags.unit, c.target ? c.target : player.guid), custom);
             }
     }
 

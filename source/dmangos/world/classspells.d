@@ -65,6 +65,7 @@ struct CustomValues
     int[3] values;
     ubyte which;
     bool alwaysHits; /// `TRIGGERED_IGNORE_HIT_CALCULATION`: no hit roll (a judgement)
+    const(SpellInfo)* by; /// the aura whose proc cast it (`m_triggeredByAuraSpell`), its missile's flight over too
 
     /// Just effect 0's.
     static CustomValues first(int value) pure nothrow @nogc @safe
@@ -564,8 +565,8 @@ mixin template ClassSpells()
         enum uint shadowguard = 28376;
         if (spell.id == shadowguard)
         {
-            if (procAuraSpell !is null)
-                if (const damage = rankSpell(shadowguardDamage, procAuraSpell.id))
+            if (const by = procAuraSpell !is null ? procAuraSpell : effectCustom.by)
+                if (const damage = rankSpell(shadowguardDamage, by.id))
                     castCustom(damage, targetGuid);
             return true;
         }
@@ -582,9 +583,10 @@ mixin template ClassSpells()
             return false;
         case SpellFamily.priest:
             enum uint touchOfWeakness = 28598;
-            if (spell.id == touchOfWeakness && procAuraSpell !is null)
+            const by = procAuraSpell !is null ? procAuraSpell : effectCustom.by;
+            if (spell.id == touchOfWeakness && by !is null)
             {
-                if (const curse = rankSpell(touchOfWeaknessCurse, procAuraSpell.id))
+                if (const curse = rankSpell(touchOfWeaknessCurse, by.id))
                     castCustom(curse, targetGuid);
                 return true;
             }
@@ -861,6 +863,8 @@ mixin template ClassSpells()
         enum uint shadowTrance = 17941;
         if (apply && aura.spell.id == shadowTrance && aura.charges == 0)
             aura.charges = 1;
+        if (!apply)
+            spiritOfRedemptionEnded(aura);
         if (apply)
             foreach (other; replacedBy(player.auras, aura))
                 removeAura(other);
@@ -1051,6 +1055,42 @@ mixin template ClassSpells()
         import dmangos.world.procs : ProcEx, ProcHit;
 
         procAuras(ProcFlag.takeHarmfulSpell, caster, ProcHit(spell, ProcEx.resist, 0, 0, false));
+    }
+
+    // -----------------------------------------------------------------------
+    // Priest
+    // -----------------------------------------------------------------------
+
+    /**
+     * Spirit of Redemption (20711, a dummy aura): "Upon death, the priest becomes the Spirit of Redemption for 10
+     * sec." A blow that would kill a priest with it leaves the priest at 1 health in the spirit's form (27827: 10 sec),
+     * which cannot move or attack, nor be attacked, and heals free (27792, 27795); true if so. Its end is the death
+     * (`classAuraChanged`).
+     */
+    package bool spiritOfRedemption()
+    {
+        enum uint talent = 20711, form = 27827, unattackable = 27792, pacified = 27795;
+        if (player.auras.find(talent) is null || player.auras.find(form) !is null)
+            return false;
+        player.values.set!UNIT_FIELD_HEALTH(1u);
+        foreach (spell; [form, unattackable, pacified])
+            castCustom(spell, player.guid);
+        flushPlayerChanges();
+        return player.auras.find(form) !is null;
+    }
+
+    /// The Spirit of Redemption's form ended (`spiritOfRedemption`): the rest of it goes, and the priest dies.
+    private void spiritOfRedemptionEnded(Aura aura)
+    {
+        enum uint form = 27827, unattackable = 27792, pacified = 27795;
+        if (aura.spell.id != form || player is null || !player.alive)
+            return;
+        foreach (spell; [unattackable, pacified])
+            if (auto other = player.auras.find(spell))
+                removeAura(other);
+        player.values.set!UNIT_FIELD_HEALTH(0u);
+        flushPlayerChanges();
+        playerDied(false);
     }
 
     // -----------------------------------------------------------------------
