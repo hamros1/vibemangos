@@ -596,8 +596,8 @@ struct AuraSet
     }
 
     /**
-     * Whether one with these auras sees through `target`'s invisibility (`MOD_INVISIBILITY` levels by type against
-     * this set's `MOD_INVISIBILITY_DETECTION`): what `combat.seesThrough` decides, from the auras alone, for the
+     * Whether one with these auras sees through `target`'s invisibility (`MOD_INVISIBILITY` levels by type, summed,
+     * against this set's strongest `MOD_INVISIBILITY_DETECTION` of the type): what `combat.seesThrough` decides, from the auras alone, for the
      * map's sight checks (no `Fighter` to build for each object).
      */
     bool seesThroughInvisibility(const ref AuraSet target) const
@@ -612,7 +612,7 @@ struct AuraSet
                     if (level <= 0)
                         continue;
                     invisible = true;
-                    if (level <= totalByMisc(AuraType.modInvisibilityDetection, type))
+                    if (level <= greatestByMisc(AuraType.modInvisibilityDetection, type))
                         return true;
                 }
         return !invisible;
@@ -627,6 +627,21 @@ struct AuraSet
                 if ((aura.effects & (1 << i)) && aura.type(i) == type && aura.misc(i) == misc)
                     sum += aura.amount[i] * cast(int) aura.stacks;
         return sum;
+    }
+
+    /// The greatest of those whose misc value is `misc` (0 if none).
+    int greatestByMisc(AuraType type, int misc) const
+    {
+        int greatest;
+        foreach (aura; list)
+            foreach (i; 0 .. 3)
+                if ((aura.effects & (1 << i)) && aura.type(i) == type && aura.misc(i) == misc)
+                {
+                    const amount = aura.amount[i] * cast(int) aura.stacks;
+                    if (amount > greatest)
+                        greatest = amount;
+                }
+        return greatest;
     }
 
     /// The sum of those whose misc value has a bit of `mask`.
@@ -794,6 +809,44 @@ unittest
     // The same spell from the same caster refreshes.
     set.apply(makeAura(&buff, 1, 10, 60_000, true, [2, 0, 0]), values, isNew);
     assert(!isNew && set.list.length == 1);
+}
+
+/**
+ * Invisibility detection: only the strongest of a type counts (CMaNGOS's `HandleInvisibilityDetect`). The rows of
+ * spell_template, all misc value 0: Greater Invisibility (10228) 300; Detect Lesser Invisibility (132) 100,
+ * Detect Invisibility (2970) 200, Detect Greater Invisibility (11743) 300.
+ */
+unittest
+{
+    import dmangos.world.combat : Fighter, seesThrough;
+    import dmangos.world.updatefields : TypeId;
+
+    SpellInfo[4] spells;
+    foreach (n, row; [[10228, AuraType.modInvisibility], [132, AuraType.modInvisibilityDetection],
+            [2970, AuraType.modInvisibilityDetection], [11743, AuraType.modInvisibilityDetection]])
+    {
+        spells[n].id = row[0];
+        spells[n].effect[0] = SpellEffect.applyAura;
+        spells[n].casting.applyAuraName[0] = cast(AuraType) row[1];
+    }
+    auto hidden = UpdateValues(TypeId.unit), seeing = UpdateValues(TypeId.unit);
+    AuraSet target, viewer;
+    bool isNew;
+    target.apply(makeAura(&spells[0], 1, 60, 60_000, true, [300, 0, 0]), hidden, isNew);
+    viewer.apply(makeAura(&spells[1], 2, 60, 60_000, true, [100, 0, 0]), seeing, isNew);
+    viewer.apply(makeAura(&spells[2], 2, 60, 60_000, true, [200, 0, 0]), seeing, isNew);
+    bool sees()
+    {
+        Fighter v, t;
+        v.invisibilityFrom(viewer);
+        t.invisibilityFrom(target);
+        const bySight = viewer.seesThroughInvisibility(target);
+        assert(bySight == seesThrough(v, t), "the map and combat agree");
+        return bySight;
+    }
+    assert(!sees(), "100 and 200 do not add up to Greater Invisibility's 300");
+    viewer.apply(makeAura(&spells[3], 2, 60, 60_000, true, [300, 0, 0]), seeing, isNew);
+    assert(sees(), "Detect Greater Invisibility's 300 does");
 }
 
 // An aura for one kind of weapon counts only with it in hand.

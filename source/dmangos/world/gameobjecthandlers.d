@@ -265,7 +265,7 @@ mixin template GameObjectHandlers()
 
     /**
      * Whether effect `i` of `spell` opens lock `lockId`: the key item it was cast with,
-     * or the lock type the effect opens and enough of its skill (the effect's points added). Gives the
+     * or the lock type the effect opens and enough of its skill (the effect's points at the skill's rank). Gives the
      * skill and the values the skill-up needs.
      */
     SpellCastResult canOpenLock(const(SpellInfo)* spell, size_t i, uint lockId, uint castItem, out uint skillId,
@@ -295,8 +295,12 @@ mixin template GameObjectHandlers()
                 if (skillId)
                 {
                     required = lock.skill[j];
-                    skillValue = castItem ? 0 : player.skillValue(skillId)[0];
-                    skillValue += effectValue(*spell, i, player.data.level, 0);
+                    // The effect's value at the player's rank in the skill, as five "levels" a point
+                    // (`Player::GetSpellRank`): about the skill itself. Pick Lock (1804: 4 + 5 a level from 1) at
+                    // lockpicking 150 is 150, Mining (2575: 0 + 5 a level) at mining 1 is 0, not the character's
+                    // level's 300. A key (an item's cast) is its own value alone.
+                    const rank = castItem ? 0 : player.skillValue(skillId)[0];
+                    skillValue = effectValue(*spell, i, rank / 5, 0);
                     if (skillValue < required)
                         return SpellCastResult.lowCastLevel;
                 }
@@ -667,7 +671,7 @@ unittest
     import dmangos.world.packets : ClientGuid;
     import dmangos.world.player : Player;
     import dmangos.world.quests : Quest, QuestState, QuestStatus, specialKillOrCast;
-    import dmangos.world.spellcast : SpellTargets, TargetFlags;
+    import dmangos.world.spellcast : castResultPacket, SpellCastResult, SpellTargets, TargetFlags;
     import dmangos.world.spellhandlers : testSpell;
     import dmangos.world.testclient;
     import dmangos.world.testdata;
@@ -677,17 +681,30 @@ unittest
     auto context = newCreationContext(db);
     auto now = MonoTime.currTime;
     context.clock = () => now;
-    enum uint herbLock = 99, herbLoot = 500, gather = 2366, herbalism = 182;
-    // Lock: id, 8 types, 8 indexes, 8 skills, 8 skipped. Herbalism (type 2) at 1.
-    auto lockRow = new uint[lockFormat.length];
+    enum uint herbLock = 99, herbLoot = 500, gather = 2366, herbalism = 182, thoriumLock = 400, mine = 2575, mining = 186;
+    // Lock: id, 8 types, 8 indexes, 8 skills, 8 skipped. Peacebloom's (Lock.dbc 29): herbalism (type 2) at 0; and
+    // Small Thorium Vein's (400): mining (3) at 245.
+    auto lockRow = new uint[lockFormat.length], thoriumRow = new uint[lockFormat.length];
     lockRow[0] = herbLock;
     lockRow[1] = 2;
     lockRow[9] = 2;
-    lockRow[17] = 1;
-    context.client.locks = typeof(context.client.locks).parse(buildDbc(lockFormat, [lockRow]), "Lock.dbc");
-    context.data.spells.spells[gather] = testSpell(gather, 33, 26, 0);
-    context.data.spells.spells.edit(gather).miscValue[0] = 2; // opens herbalism locks
-    context.data.spells.spells.edit(gather).casting.dmgClass = DamageClass.none;
+    lockRow[17] = 0;
+    thoriumRow[0] = thoriumLock;
+    thoriumRow[1] = 2;
+    thoriumRow[9] = 3;
+    thoriumRow[17] = 245;
+    context.client.locks = typeof(context.client.locks).parse(buildDbc(lockFormat, [lockRow, thoriumRow]), "Lock.dbc");
+    // Herb Gathering and Mining as spell_template has them (2366, 2575: base points -1, dice 1, 5 points a level).
+    foreach (id, lockType; [gather: 2, mine: 3])
+    {
+        context.data.spells.spells[id] = testSpell(id, 33, 26, 0);
+        with (*context.data.spells.spells.edit(id))
+        {
+            miscValue[0] = lockType;
+            casting.realPointsPerLevel[0] = 5;
+            casting.dmgClass = DamageClass.none;
+        }
+    }
     context.data.loot.gameObject.add(herbLoot, lootRow(itemJerky, 100, 0, 1, 1, 0));
 
     GameObjectTemplate door = {entry: 9001, type: GameObjectType.door, displayId: 1, name: "Door"};
@@ -705,10 +722,12 @@ unittest
         GameObjectSpawn(90002, 9002, 0, -8950, -133, 83.53f, 0, [0, 0, 0, 0], 60),
         GameObjectSpawn(90003, 9003, 0, -8951, -131, 83.53f)];
 
-    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f));
+    // At level 60: the skill counts, not the level.
+    auto anduin = loggedIn(context, db, 7, "Anduin", Position(-8949.95f, -132.49f, 83.53f), AccountLevel.player,
+        raceHuman, 0, 60);
     anduin.read();
     auto me = cast(Player) anduin.session.character;
-    me.spells ~= gather;
+    me.spells ~= [gather, mine];
     auto map = context.map(0);
     GameObject[3] gos;
     foreach (i; 0 .. 3)
@@ -753,10 +772,10 @@ unittest
     }
 
     // The herb: no herbalism, no picking.
-    ubyte[] gatherAt(ulong go)
+    ubyte[] gatherAt(ulong go, uint spell = gather)
     {
         ByteWriter w;
-        w.put(gather);
+        w.put(spell);
         SpellTargets t;
         t.mask = TargetFlags.gameObject;
         t.gameObject = go;
@@ -764,10 +783,23 @@ unittest
         return w.data.dup;
     }
     anduin.read();
-    anduin.write(Opcode.CMSG_CAST_SPELL, gatherAt(gos[1].guid));
-    const refused = anduin.read();
-    assert(!opcodesOf(refused).canFind(Opcode.SMSG_LOOT_RESPONSE) && opcodesOf(refused).canFind(Opcode.SMSG_CAST_RESULT),
-        "no skill");
+    // A thorium vein (a chest with its lock stands in) at mining 1, level 60: "requires 245", the skill's 0 against it
+    // (not the level's 300).
+    {
+        GameObjectTemplate vein = {entry: 9004, type: GameObjectType.chest, displayId: 4, name: "Small Thorium Vein"};
+        vein.data[0] = thoriumLock;
+        context.data.gameObjectTemplates[9004] = vein;
+        context.data.gameObjectSpawns ~= GameObjectSpawn(90004, 9004, 0, -8950, -132, 83.53f);
+        auto go = context.makeGameObject(&context.data.gameObjectSpawns[$ - 1]);
+        map.addObject(go);
+        anduin.read();
+        me.setSkill(mining, 1, 75);
+        anduin.write(Opcode.CMSG_CAST_SPELL, gatherAt(go.guid, mine));
+        const refused = anduin.read();
+        assert(!opcodesOf(refused).canFind(Opcode.SMSG_LOOT_RESPONSE)
+            && bodyOf(refused, Opcode.SMSG_CAST_RESULT) == castResultPacket(mine, SpellCastResult.lowCastLevel),
+            "mining 1 against 245");
+    }
     // With herbalism 1: the loot, and a skill-up (sure at that level).
     me.setSkill(herbalism, 1, 75);
     anduin.write(Opcode.CMSG_CAST_SPELL, gatherAt(gos[1].guid));

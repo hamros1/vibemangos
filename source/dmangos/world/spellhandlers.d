@@ -1197,7 +1197,8 @@ private:
                 if (const at = spell.id in spellReadyAt)
                     if (*at > now)
                         return SpellCastResult.notReady;
-            // The category's: an item's own if it has one (Restoring Balm's 1153, its spell none).
+            // The category of a cast from an item is the item's if it names one (a Swiftness Potion's is the
+            // healing potions' 4, though its spell has none: `Player::IsSpellReady` with the item).
             if (const category = cooldownCategoryOf(spell, itemEntry))
                 if (const at = category in categoryReadyAt)
                     if (*at > now && !cooldownCheat)
@@ -2326,7 +2327,7 @@ private:
             entry.spell = cast(ushort) spellId;
             entry.item = cast(ushort) item;
             if (const info = context.data.spells.spell(spellId))
-                entry.category = cast(ushort) info.category;
+                entry.category = cast(ushort) cooldownCategoryOf(info, item);
             entry.spellMs = 1;
             entry.categoryMs = 0x80000000;
             list ~= entry;
@@ -2342,6 +2343,9 @@ private:
         w.put(player.guid);
         deliver(Opcode.SMSG_CLEAR_COOLDOWN, w.data);
         spellReadyAt.remove(spell);
+        // The category it started (an item's own, as a potion's), else the spell's.
+        if (const category = cooldownCategory.get(spell, 0))
+            categoryReadyAt.remove(category);
         if (const info = context.data.spells.spell(spell))
             if (info.category)
                 categoryReadyAt.remove(info.category);
@@ -2369,18 +2373,6 @@ private:
         return ms > 0 ? max(0, spellMod(SpellModOp.duration, spell, ms)) : ms;
     }
 
-    /// The cooldown category of a cast of `spell` from the item `itemEntry` (0: none): the item's for the spell if it
-    /// has one, else the spell's (`WorldObject::IsSpellReady`).
-    package uint cooldownCategoryOf(const(SpellInfo)* spell, uint itemEntry)
-    {
-        if (itemEntry)
-            if (const proto = itemEntry in context.data.items)
-                foreach (i, ref use; proto.details.spells)
-                    if (use.id == spell.id && proto.spellCategory[i])
-                        return proto.spellCategory[i];
-        return spell.category;
-    }
-
     /// The cooldowns of a cast of `spell` (from the item `itemEntry`, 0: none) start at `now`: the item's, else the spell's.
     private void startCooldown(const(SpellInfo)* spell, uint itemEntry, MonoTime now)
     {
@@ -2395,6 +2387,7 @@ private:
                             recovery = use.cooldown;
                         if (use.categoryCooldown >= 0)
                             categoryRecovery = use.categoryCooldown;
+                        break;
                     }
         recovery = spellMod(SpellModOp.cooldown, spell, recovery);
         categoryRecovery = spellMod(SpellModOp.cooldown, spell, categoryRecovery);

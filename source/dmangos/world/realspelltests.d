@@ -176,6 +176,121 @@ unittest
     assert(!me.spellIsReady(presenceOfMind));
 }
 
+/// The first backpack slot holding item `entry`.
+private ubyte backpackSlot(Player me, uint entry)
+{
+    import dmangos.world.defines : inventorySlotBag0;
+
+    foreach (ubyte s; 23 .. 39)
+        if (const item = me.inventory[inventorySlotBag0, s])
+            if (item.entry == entry)
+                return s;
+    assert(false, "not in the backpack");
+}
+
+/**
+ * An item's own cooldown category: the Swiftness Potion (2459, spell 2379 of no category; the item's
+ * spellcategory_1 4) waits on the Major Healing Potion (13446, category 4, two minutes).
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    import dmangos.bytes : ByteWriter;
+    import dmangos.world.defines : inventorySlotBag0;
+    import dmangos.world.updatefields : UNIT_FIELD_HEALTH;
+
+    auto w = RealWorld.make();
+    enum uint majorHealing = 13446, swiftness = 2459, speed = 2379;
+    auto hero = w.character(3, "Drinker", classWarriorId, 60, []);
+    auto me = cast(Player) hero.session.character;
+    hero.session.inWorld.storeLoot(majorHealing, 1, 0, false);
+    hero.session.inWorld.storeLoot(swiftness, 1, 0, false);
+    me.values.set!UNIT_FIELD_HEALTH(1u); // hurt: the potion has something to heal
+    hero.read();
+    void use(uint entry)
+    {
+        ByteWriter b;
+        b.put(inventorySlotBag0);
+        b.put(backpackSlot(me, entry));
+        b.put(ubyte(1));
+        SpellTargets(TargetFlags.self).write(b);
+        hero.write(Opcode.CMSG_USE_ITEM, b.data.dup);
+        hero.read();
+    }
+    use(majorHealing);
+    assert(me.inventory.count(majorHealing) == 0, "drunk");
+    w.now += 2.seconds;
+    use(swiftness);
+    assert(me.inventory.count(swiftness) == 1 && me.auras.find(speed) is null, "the potions' category 4 waits");
+    w.now += 120.seconds;
+    use(swiftness);
+    assert(me.inventory.count(swiftness) == 0 && me.auras.find(speed) !is null, "two minutes on");
+}
+
+/**
+ * Pick Lock (1804) by a level 60 rogue: its lockpicking skill counts, not its level. A Heavy Junkbox (16885: Lock.dbc
+ * 599, lockpicking 250) is beyond lockpicking 10, within 300.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    import dmangos.world.defines : inventorySlotBag0;
+
+    auto w = RealWorld.make();
+    enum uint pickLock = 1804, junkbox = 16885, lockpicking = 633;
+    auto rogue = w.character(4, "Picker", classRogueId, 60, [pickLock]);
+    auto me = cast(Player) rogue.session.character;
+    rogue.session.inWorld.storeLoot(junkbox, 1, 0, false);
+    rogue.session.inWorld.storeLoot(5060, 1, 0, false); // Thieves' Tools, its Totem1
+    rogue.read();
+    SpellTargets t;
+    t.mask = TargetFlags.item;
+    t.item = me.inventory[inventorySlotBag0, backpackSlot(me, junkbox)].fullGuid;
+    const info = w.context.data.spells.spell(pickLock);
+    me.setSkill(lockpicking, 10, 300);
+    assert(rogue.session.inWorld.castSpell(info, t, false, 0) == SpellCastResult.lowCastLevel, "10 against 250");
+    me.setSkill(lockpicking, 300, 300);
+    {
+        import std.format : format;
+
+        const r = rogue.session.inWorld.castSpell(info, t, false, 0);
+        assert(r == SpellCastResult.ok, format!"300 against 250: %s"(r));
+    }
+}
+
+/**
+ * Invisibility detection takes the strongest of a type: Detect Lesser Invisibility (132) and Detect Invisibility
+ * (2970) together do not see through Greater Invisibility (10228); Detect Greater Invisibility (11743) does.
+ */
+unittest
+{
+    if (!haveRealData())
+        return;
+    import dmangos.world.auras : AuraSet, makeAura;
+    import dmangos.world.spellcast : effectValue;
+    import dmangos.world.objects : UpdateValues;
+    import dmangos.world.updatefields : TypeId;
+
+    auto w = RealWorld.make();
+    auto hiddenValues = UpdateValues(TypeId.unit), seeingValues = UpdateValues(TypeId.unit);
+    AuraSet hidden, seeing;
+    void put(ref AuraSet set, ref UpdateValues values, uint id)
+    {
+        const info = w.context.data.spells.spell(id);
+        assert(info !is null);
+        bool isNew;
+        set.apply(makeAura(info, 1, 60, 60_000, true, [effectValue(*info, 0, 60, 0), 0, 0]), values, isNew);
+    }
+    put(hidden, hiddenValues, 10228);
+    put(seeing, seeingValues, 132);
+    put(seeing, seeingValues, 2970);
+    assert(!seeing.seesThroughInvisibility(hidden), "100 and 200 are not 300");
+    put(seeing, seeingValues, 11743);
+    assert(seeing.seesThroughInvisibility(hidden));
+}
+
 enum ubyte classShamanId = 7;
 
 /// Fire Power rank 2 (12378): 4% more Fireball (133) damage, by its first rank's `spell_affect` mask (0x8C20017).
